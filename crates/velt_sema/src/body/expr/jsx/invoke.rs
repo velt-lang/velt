@@ -67,7 +67,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
         for (h, param) in args.iter().zip(&c.params) {
             self.cx.match_ty(param.ty, h.ty, &mut slots);
         }
-        let type_args = self.solve_slots(&c, &slots, false, span);
+        let type_args = self.solve_slots(&c, &slots, false, span, &[]);
         let mut hargs = vec![];
         for (h, param) in args.into_iter().zip(&c.params) {
             let target = self.cx.subst(param.ty, &type_args);

@@ -91,7 +91,8 @@ impl FnCx<'_, '_> {
                 | AssignTarget::Record(_)
                 | AssignTarget::Setter(_)
                 | AssignTarget::Indexer(_)
-                | AssignTarget::Dynamic(_),
+                | AssignTarget::Dynamic(_)
+                | AssignTarget::Keyed(..),
             ) => {}
         }
         let rhs = ast::Expr {

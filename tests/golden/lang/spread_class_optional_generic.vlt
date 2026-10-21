@@ -1,0 +1,18 @@
+// A class's optional field in a generic spread (#350): it is an own property even while
+// unset, so its `undefined` is copied, over an earlier `n: number | undefined` as in a
+// concrete spread; an optional field inherited from a generic base class has the base's
+// type argument.
+class C { n?: number; s = "c"; }
+type W = { n: number | undefined; s: string };
+function both<A extends object, B extends object>(a: A, b: B) { return { ...a, ...b }; }
+const w: W = { n: 5, s: "w" };
+const t5: W = { ...w, ...new C() };
+console.log(JSON.stringify(t5), t5.n);
+const g6 = both(w, new C());
+console.log(JSON.stringify(g6), g6.n);
+class B<T> { x?: T; k = "b"; }
+class S extends B<string> { y?: { z: number }; }
+type X = { x?: string; k: string; y?: { z: number } };
+const base: X = { x: "q", k: "x", y: { z: 1 } };
+const g7 = both(base, new S());
+console.log(JSON.stringify(g7), g7.x, g7.y);

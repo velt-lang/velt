@@ -52,6 +52,15 @@ impl Cx<'_> {
             }
             // Sema replaces every error-set variable before lowering.
             TyKind::Op(velt_sema::hir::TyOp::ErrSite(n), _) => format!("errsite{n}"),
+            TyKind::Op(velt_sema::hir::TyOp::Spread, args) => {
+                format!("op...<{}>", list(args, stack))
+            }
+            TyKind::Op(velt_sema::hir::TyOp::Convert(c), args) => {
+                format!("opas{c}<{}>", list(args, stack))
+            }
+            TyKind::Op(velt_sema::hir::TyOp::Inline(i), args) => {
+                format!("opi{i}<{}>", list(args, stack))
+            }
             // Anonymous object types are structural: one shape can be several defs (a generic
             // def's instance, sema's concrete def, Cx::canon), and its symbols must not depend
             // on which one a program happens to use.

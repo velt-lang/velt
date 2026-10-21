@@ -24,13 +24,13 @@ use crate::hir::{AdtKind, DefId, PassMode, TyId, TyKind};
 /// The interfaces written through and how their implementations store fields.
 #[derive(Default)]
 pub(crate) struct IfaceWrites {
-    /// Interfaces with setter slots.
-    written: FxHashSet<DefId>,
+    /// Interfaces with setter slots, and where the first write through each is.
+    written: FxHashMap<DefId, Span>,
     /// Per `Ctx::impls` index: how each field of its interface is stored, in field order. An
     /// implementation without an entry cannot be written through.
     sources: FxHashMap<u32, Vec<SetterSrc>>,
     /// `(interface, field)`: a part of this `readonly` field is written through the interface.
-    parts: FxHashSet<(DefId, usize)>,
+    parts: FxHashMap<(DefId, usize), Span>,
     /// The names of interface fields whose values a read copies ([`Ctx::copied_part`]).
     copied_names: Option<FxHashSet<String>>,
 }
@@ -53,6 +53,19 @@ pub(crate) enum SetterSrc {
         index: u32,
         fn_ty: TyId,
         param: TyId,
+    },
+    /// Class `d`'s `set name(v)` (or the trampoline dispatching to it): the setter slot itself.
+    /// Only for writes of the whole field: a part write through a class's accessor is an error
+    /// ([`Ctx::accessor_part`]).
+    Method { def: DefId, d: DefId, name: String },
+    /// A class `d` with a `get` accessor and no `set` for field `name` (of type `ty`): its
+    /// setter slot stops with Node's `TypeError` (`collect::getters::getter_only_setter`), and
+    /// a part write through it is an error, as for [`SetterSrc::Method`].
+    GetterOnly {
+        d: DefId,
+        self_ty: TyId,
+        name: String,
+        ty: TyId,
     },
     /// An object literal (at `span`) with a getter and no setter for field `name`.
     Missing { span: Span, name: String },
@@ -117,9 +130,15 @@ impl Ctx<'_> {
             .map_or(vec![], |i| (0..i.fields.len()).collect())
     }
 
+    /// How implementation `index` stores the writable fields of its interface (`None`: it
+    /// cannot be written through).
+    pub(crate) fn setter_sources(&self, index: u32) -> Option<&Vec<SetterSrc>> {
+        self.iface_writes.sources.get(&index)
+    }
+
     /// Does the program write a field through `iface`?
     pub(crate) fn iface_written(&self, iface: DefId) -> bool {
-        self.iface_writes.written.contains(&iface)
+        self.iface_writes.written.contains_key(&iface)
     }
 
     /// The setter slot of field `field` of `iface`.
@@ -128,31 +147,90 @@ impl Ctx<'_> {
         (field < i.fields.len()).then_some((i.methods.len() + i.fields.len() + field) as u32)
     }
 
-    /// A part of `readonly` field `field` of `iface` is written through the interface at
-    /// `span` (its setter writes the changed part back). Reports the object literals that
-    /// cannot take it (a getter without a setter) and returns false then.
+    /// A part of field `field` of `iface` is written through the interface at `span` (its
+    /// setter writes the changed part back). Reports the implementations that cannot take it
+    /// (an object literal's getter without a setter for a `readonly` field, a class's `get`
+    /// accessor) and returns false then.
     pub(crate) fn mark_part_written(&mut self, iface: DefId, field: usize, span: Span) -> bool {
         if !self.mark_iface_written(iface, span) {
             return false;
         }
-        if !self.iface_writes.parts.insert((iface, field)) {
+        if self.iface_writes.parts.contains_key(&(iface, field)) {
             return true;
         }
+        self.iface_writes.parts.insert((iface, field), span);
         let mut found = vec![];
         for (&i, srcs) in &self.iface_writes.sources {
             if self.impls[i as usize].iface != iface {
                 continue;
             }
-            if let Some(SetterSrc::Unwritable { span, name, .. }) = srcs.get(field) {
-                found.push((*span, name.clone()));
+            match srcs.get(field) {
+                Some(SetterSrc::Unwritable { span, name, .. }) => {
+                    found.push((*span, name.clone(), None));
+                }
+                Some(SetterSrc::Method { d, name, .. } | SetterSrc::GetterOnly { d, name, .. }) => {
+                    let at = self.adt(*d).map_or(Span::DUMMY, |a| a.span);
+                    found.push((at, name.clone(), Some(*d)));
+                }
+                _ => {}
             }
         }
-        found.sort_by_key(|(s, _)| (s.file, s.lo, s.hi));
+        found.sort_by_key(|(s, _, _)| (s.file, s.lo, s.hi));
         let ok = found.is_empty();
-        for (span, name) in found {
-            self.part_unwritable(iface, span, &name);
+        for (at, name, class) in found {
+            match class {
+                Some(d) => self.accessor_part(iface, d, &name, Some(span)),
+                None => self.part_unwritable(iface, at, &name),
+            }
         }
         ok
+    }
+
+    /// A part of field `name` of `iface` is changed through it (at `write`, when known) and
+    /// class `d` provides the field with a `get` accessor: Node changes the object the getter
+    /// returns in place, while Velt would change a copy and write it back through a setter
+    /// Node never calls, so this is an error.
+    fn accessor_part(&mut self, iface: DefId, d: DefId, name: &str, write: Option<Span>) {
+        // Through an intersection (`{ k: number } & I`), the interface part declaring the
+        // field, as written.
+        let declared = (self.iface(iface).is_some_and(|i| i.decl.is_none()))
+            .then(|| self.declaring_iface(d, name))
+            .flatten();
+        let iname = declared.unwrap_or_else(|| self.iface_name(iface));
+        let (cname, at) = self
+            .adt(d)
+            .map_or((String::new(), Span::DUMMY), |a| (a.name.clone(), a.span));
+        let mut e = Diagnostic::error(
+            format!("`{cname}` provides `{name}` with a `get` accessor, and a part of `{name}` is changed through `{iname}`, which is not supported yet (#350)"),
+            at,
+        )
+        .with_note("Node changes the object the getter returns in place and never calls a setter; Velt reads a copy here and would have to write it back through a setter")
+        .with_note(format!("store `{name}` as a field of `{cname}`, or assign the whole value through `{iname}` (`x.{name} = …`)"));
+        if let Some(w) = write {
+            e = e.with_label(
+                w,
+                format!("a part of `{name}` is changed through `{iname}` here"),
+            );
+        }
+        self.error(e);
+    }
+
+    /// The name of an interface class `d` (or a base class) implements that declares field
+    /// `name`.
+    fn declaring_iface(&self, d: DefId, name: &str) -> Option<String> {
+        let mut cur = Some(d);
+        for _ in 0..64 {
+            let a = self.adt(cur?)?;
+            for b in &a.implements {
+                if let Some(i) = self.iface(b.iface).filter(|i| i.decl.is_some()) {
+                    if i.fields.iter().any(|f| f.name == name) {
+                        return Some(i.name.clone());
+                    }
+                }
+            }
+            cur = a.base.and_then(|b| self.class_of(b)).map(|(b, _)| b);
+        }
+        None
     }
 
     fn part_unwritable(&mut self, iface: DefId, span: Span, name: &str) {
@@ -198,13 +276,28 @@ impl Ctx<'_> {
             );
             return false;
         }
-        self.iface_writes.written.insert(iface);
+        self.iface_writes.written.insert(iface, span);
         for i in impls {
             self.add_setters(i);
         }
         // The dispatch groups gain the setters (`throws/groups.rs`): built again on next use.
         self.groups = None;
         true
+    }
+
+    /// An implementation of `iface` with no setters is created after a write through `iface`
+    /// (where the write is): reported as when it existed at the write.
+    pub(crate) fn no_setters_after_write(&mut self, index: u32) {
+        let iface = self.impls[index as usize].iface;
+        let Some(&span) = self.iface_writes.written.get(&iface) else {
+            return;
+        };
+        let ty = self.impls[index as usize].ty;
+        let (iname, tn) = (self.iface_name(iface), self.display(ty));
+        self.err(
+            format!("writing a field through `{iname}` is not supported yet: `{tn}` implements it in a way that has no setters"),
+            span,
+        );
     }
 
     fn iface_name(&self, iface: DefId) -> String {
@@ -240,6 +333,22 @@ impl Ctx<'_> {
                     fn_ty,
                     param,
                 } => defs.push(self.literal_setter(d, self_ty, (index, fn_ty), param)),
+                SetterSrc::Method { d, name, .. } | SetterSrc::GetterOnly { d, name, .. }
+                    if self.iface_writes.parts.contains_key(&(iface, k)) =>
+                {
+                    let write = self.iface_writes.parts.get(&(iface, k)).copied();
+                    self.accessor_part(iface, d, &name, write);
+                    return;
+                }
+                SetterSrc::Method { def, .. } => defs.push(def),
+                SetterSrc::GetterOnly {
+                    d,
+                    self_ty,
+                    name,
+                    ty,
+                } => defs.push(crate::collect::getters::getter_only_setter(
+                    self, d, self_ty, &name, ty,
+                )),
                 SetterSrc::Missing { span, name } => {
                     let iname = self.iface_name(iface);
                     self.error(
@@ -258,7 +367,7 @@ impl Ctx<'_> {
                     self_ty,
                     ty,
                 } => {
-                    if self.iface_writes.parts.contains(&(iface, k)) {
+                    if self.iface_writes.parts.contains_key(&(iface, k)) {
                         self.part_unwritable(iface, span, &name);
                         return;
                     }

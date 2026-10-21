@@ -263,6 +263,10 @@ impl FnCx<'_, '_> {
             // parameter be left out, so a wrapper calls it without the argument.
             return self.adapt_fn(h, exp);
         }
+        let h = match self.deferred_convert(h, exp) {
+            Ok(h) => return Ok(h),
+            Err(h) => h,
+        };
         let h = match self.copy_object(h, exp) {
             Ok(h) => return Ok(h),
             Err(h) => h,
@@ -348,6 +352,18 @@ impl FnCx<'_, '_> {
         if let TyKind::Dyn(have, from) = self.cx.ty.kind(h.ty).clone() {
             if have == iface && self.cx.dynamic(h.ty).is_none() {
                 return self.adapt_iface(h, exp, iface, &from, args);
+            }
+            // An interface value where an interface whose members it has is expected (a part
+            // of an intersection, a `Pick` of it, an interface it extends): the same object
+            // (`crate::synth_ifaces`).
+            if self.cx.dynamic(h.ty).is_none()
+                && self.cx.dynamic(exp).is_none()
+                && self.cx.iface_upcast((have, &from), (iface, args))
+            {
+                let mut h = h;
+                self.force_move(&mut h);
+                let span = h.span;
+                return Ok(self.mk(H::Upcast(Box::new(h)), exp, span));
             }
         }
         let Some((index, iargs, imp_ty)) = self.cx.find_impl(h.ty, iface) else {
@@ -499,6 +515,9 @@ impl FnCx<'_, '_> {
         if let Some(note) = self.class_to_data_note(expected, found) {
             d = d.with_note(format!("`{e}` has only fields, so it is a data type, like `type {e} = {{ … }}`: a class instance is shared by reference and is not one"))
                 .with_note(note);
+        }
+        if let Some(note) = self.cx.object_part_note(expected, found.ty) {
+            d = d.with_note(note);
         }
         if self.only_optional_differs(expected, found.ty) {
             d = d.with_note(

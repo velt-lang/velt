@@ -465,6 +465,10 @@ pub(crate) struct AliasInfo<'m> {
     /// Expanded at least once; an alias never used is checked on its own at the end
     /// ([`crate::resolve::check_unused_aliases`]).
     pub used: bool,
+    /// Declared in a generic function's body: that function's type parameters (and those of
+    /// the functions and class around it), which the alias may name. They are its first
+    /// parameters, before its own, and every use passes them on (`Ctx::item_type`).
+    pub outer: Vec<String>,
 }
 
 /// An `extend<G> Target { methods }` block.

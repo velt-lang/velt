@@ -1,0 +1,24 @@
+// A callback whose result is `T | Promise<T, E>` and whose parameter is a recursive union
+// (#1397): finding which type parameters only stand for errors walks the parameter's type,
+// whose members hold the union itself. Each type is looked at once.
+type Tree = string | Tree[];
+
+function count(t: Tree): number {
+  if (typeof t === "string") {
+    return 1;
+  }
+  let n = 0;
+  for (const c of t) {
+    n += count(c);
+  }
+  return n;
+}
+
+function run<T, E>(t: Tree, f: (t: Tree) => T | Promise<T, E>): T | Promise<T, E> {
+  return f(t);
+}
+
+function main() {
+  const r = run(["a", ["b", "c"]], (t): number | Promise<number> => count(t));
+  console.log(r);
+}

@@ -707,6 +707,83 @@ its solved type before the program is built (with the readonly twins), so loweri
 one; an error type that was only variables solved empty is no error type (`FnDef::throws` is
 `None`).
 
+## Spreads and conversions in generic bodies (#350)
+- `{ ...t, tag: e }` with a spread source whose fields are known only per instantiation (a type
+  parameter, or a deferred intersection or spread) is a `Call` of `Intrinsic::SpreadObject`
+  whose type is `TyOp::Spread` over the parts' types. Every argument is a place of an object
+  type, bound to a temporary in written order (a spread source that already is a place is
+  borrowed as it is): a spread source, or a run of explicit properties as an object literal of
+  their own. Sema reduces `TyOp::Spread` per instantiation to the object type of the merged
+  fields (public, non-private fields of each part in order; a later part's field overrides an
+  earlier one and keeps its position); a part that isn't an anonymous object type, struct or
+  class is an error at that instantiation. An optional field over an earlier value of it keeps
+  the earlier field's optionality and type: a required earlier field stays `F`, as TypeScript
+  types it (an error there when the two types differ). Lowering
+  (velt_vir `lower/spread_object.rs`) builds the reduced type, each field shared from the last
+  part that has it and is present (a part's optional field with a presence flag gives it only
+  while the flag is set, else an earlier part does; one of an object type without a flag
+  holding `undefined` is absent; a class's optional field is always present, as an own
+  property), its presence flag copied (set for a class field), a required field's value wrapped
+  when the field is `F | undefined`; a present `undefined` over a field that can't hold one
+  panics with a `TypeError`. A `SpreadObject`
+  used directly as another type of the body (`return { ...x, ...patch }` as a `T`) has that
+  type instead of an `Upcast` around it, with the requirement `TyOp::Convert` (reduced to the
+  target when the spread's fields are the target's, each of its type or that type with
+  `undefined`): lowering builds the target type from the parts.
+- A value of a generic body used as another type of that body, where TypeScript accepts it and
+  the fields are known only per instantiation (`s: T & { tag }` as `T` or as `{ tag }`, `{ ...t }`
+  as `T`, `{ ...t, tag }` as `T & { tag }`), is an `Upcast` of it: the same value. Sema records
+  the requirement `TyOp::Convert(n)` over `[from, to]` (`n` numbers the conversion, so each is
+  reported where it is written; never the type of an expression) as a type the body
+  mentions, so `type_level::instances` reduces it at every instantiation: to `to` when both are
+  one object type there (the same canonical type, or the same layout), else it reports the
+  instantiation, since a value can't be seen as an object type with other fields without a copy,
+  and a copy would be another object where TypeScript passes the same one. Lowering's `Upcast` is
+  the value itself.
+- `TyOp::Inline(n)` (additive): a conditional, mapped, indexed access, `keyof` or utility type
+  (`Partial`, `Required`, `Readonly`, `Pick`, `Omit`) written in a generic definition, not in an
+  alias, whose evaluation needs a type parameter (`{ [K in keyof M]: Topic<M[K]> }` in a
+  signature, `T[K]`, `keyof T`, `Partial<T>`). Its arguments are the definition's type parameters
+  (`Param(i)`), with `void` for the ones the form doesn't name, so it is known as soon as the
+  ones it names are. Forms written alike in one definition are one `n` (a key read's or write's
+  requirement, below, is its own). Like `TyOp::Alias` it is reduced per instantiation
+  (`Program::type_ops`).
+- `x[k]` and `x[k] = v` with `x` of a type parameter `T` and `k` of a key type known only per
+  instantiation (a type parameter `K extends keyof T`, or `keyof T`) are `Call`s of
+  `Intrinsic::KeyRead(x, k)` (type `T[K]`, the `TyOp::Inline` form the signature writes) and
+  `Intrinsic::KeyWrite(x, k, v)` (type `void`; `v: T[K]`, owned), `x` and `k` borrowed places
+  (`x` mutably for a write; any expressions, bound to temporaries in order when they are no
+  places). An object type written through `KeyWrite` at some instantiation is
+  `AdtDef::assigned`. Sema records the requirement that `K` is one key, or keys whose
+  fields have one type (an `Inline` form that is never a value's type, reduced like
+  `TyOp::Convert`'s); any other instantiation is an error. Lowering reads (shared) or assigns the
+  field the key's string literal type names, as `x.name` does, switching on the key's tag for a
+  union of keys.
+
+## Interface intersections and upcasts (#350)
+
+- An intersection with an interface with methods (`I & { errors: unknown }`, `A & B`), and
+  `Pick<I, K>` / `Omit<I, K>` of one, is `TyKind::Dyn` of an interface sema makes
+  (`velt_sema` `synth_ifaces.rs`), one per form, generic over the type parameters its parts
+  mention. Its `InterfaceDef` is an ordinary one: the members of every part (an intersection
+  also lists the interface parts as parents), in slot order. Nothing new reaches lowering
+  except the conversions below. An object literal implements it as any interface; a class
+  implementing every interface part implements it through an `ImplDef` whose slots are the
+  methods of those implementations (of a base class's too) and the getters of the class's
+  fields, with setters when the interface is written through. For a generic class it is generic
+  over the class's parameters when the parts' arguments are; else it is an `ImplDef` for the one
+  instance (`generics` 0), whose class methods take the instance's class arguments.
+- `Upcast(e)` with `e: Dyn(A, X)` and the result `Dyn(B, Y)`, `A != B` (additive): `B`'s members
+  are members of `A` with the same types (a part of an intersection, a `Pick` of it, an
+  interface `A` extends). The value is the same data pointer with `B`'s table for the concrete
+  type. `Program::upcasts[A]` lists the targets of `A`, in order; `Program::upcast_impls[i]`, for
+  each implementation `i` of `A`, the implementation of each target for the same type (sema
+  makes one when none exists, its slots the slots of `A`'s implementation for the same members).
+  Each table of `A` holds the table of target `k` at slot `n + k`, `n` being the number of
+  slots of `A`'s implementations; lowering loads it. Both `A` to `B` and `B` to `A` may be
+  recorded: each table holds the other (lowering fills a table's targets in once the table is
+  registered). Values of `A` are compared by identity when values of a target are.
+
 ## Canonical instances and optional fields (docs/internals/design/deferred-types.md, P1 and P2)
 - An instance of a generic object type is the object type it spells out: sema substitutes
   through `Ctx::subst`, which re-interns anonymous object types and unions from their

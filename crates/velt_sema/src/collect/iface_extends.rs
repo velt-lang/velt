@@ -48,7 +48,7 @@ fn flatten(cx: &mut Ctx, d: DefId, done: &mut Vec<bool>, stack: &mut Vec<DefId>)
     stack.pop();
     let mut ancestors: Vec<Bound> = vec![];
     for p in &ok_parents {
-        inherit_from(cx, d, p);
+        inherit_from(cx, d, p, &|_| true);
         let grand = cx.iface(p.iface).expect("ICE: iface").parents.clone();
         let substituted = grand.into_iter().map(|g| subst_bound(cx, &g, &p.args));
         for a in std::iter::once(p.clone()).chain(substituted) {
@@ -75,15 +75,16 @@ fn subst_bound(cx: &mut Ctx, b: &Bound, args: &[TyId]) -> Bound {
     }
 }
 
-/// Append parent `p`'s (already flattened) fields and methods to `d`.
-fn inherit_from(cx: &mut Ctx, d: DefId, p: &Bound) {
+/// Append parent `p`'s (already flattened) fields and methods to `d`: those whose names `keep`
+/// accepts (a synthesized `Pick` keeps some, `crate::synth_ifaces`).
+pub(crate) fn inherit_from(cx: &mut Ctx, d: DefId, p: &Bound, keep: &dyn Fn(&str) -> bool) {
     let parent = cx.iface(p.iface).expect("ICE: iface");
     let (pfields, pmethods, pname) = (
         parent.fields.clone(),
         parent.methods.clone(),
         parent.name.clone(),
     );
-    for mut f in pfields {
+    for mut f in pfields.into_iter().filter(|f| keep(&f.name)) {
         f.ty = cx.subst(f.ty, &p.args);
         inherit_field(cx, d, f, &pname);
     }
@@ -91,7 +92,7 @@ fn inherit_from(cx: &mut Ctx, d: DefId, p: &Bound) {
     // Parent methods are in terms of the parent's params plus its `Self` (= `d`'s `Self`).
     let mut args = p.args.clone();
     args.push(cx.ty.param(n));
-    for mut m in pmethods {
+    for mut m in pmethods.into_iter().filter(|m| keep(&m.name)) {
         // A generic method's own params follow `Self`: renumber them after `d`'s `Self`.
         let mut margs = args.clone();
         margs.extend((0..m.generics.len() as u32).map(|k| cx.ty.param(n + 1 + k)));
@@ -106,8 +107,12 @@ fn inherit_from(cx: &mut Ctx, d: DefId, p: &Bound) {
 
 fn inherit_field(cx: &mut Ctx, d: DefId, f: FieldInfo, pname: &str) {
     let i = cx.iface(d).expect("ICE: iface");
+    let synthesized = i.decl.is_none();
     match i.fields.iter().find(|g| g.name == f.name) {
         Some(g) if g.ty == f.ty => {}
+        // An intersection's field (`crate::synth_ifaces`) is the meet of its parts' types,
+        // checked where the intersection was made.
+        Some(_) if synthesized => {}
         Some(g) => {
             let span = g.span;
             cx.err(

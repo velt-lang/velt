@@ -155,22 +155,15 @@ fn mapped_types_over_literal_unions() {
 }
 
 #[test]
-fn inline_forms_over_type_parameters_are_errors() {
-    let e = err_src(
+fn inline_forms_over_type_parameters_are_deferred() {
+    // Evaluated per instantiation (`TyOp::Inline`), as TypeScript accepts them.
+    ok_src(
         "function g<T>(x: T extends string ? 1 : 2) {}
 function main() {}",
     );
-    assert!(
-        e.contains("a conditional type over a type parameter is not supported yet"),
-        "{e}"
-    );
-    let e = err_src(
+    ok_src(
         "class Box<T> { v: { [K in keyof T]: T[K] } | null = null; }
 function main() {}",
-    );
-    assert!(
-        e.contains("a mapped type over a type parameter is not supported yet"),
-        "{e}"
     );
     // Declaring such an alias without using it is fine.
     ok_src(
@@ -595,4 +588,42 @@ fn mapped_types_and_indexed_access_over_records() {
             ("Record<string, 2>[\"any\"]", "2"),
         ],
     );
+}
+
+#[test]
+fn a_call_breaking_a_key_constraint_is_not_instantiated() {
+    // One error, at the argument that widened `K` (as tsc reports it), and none from the body.
+    let e = err_src(
+        "function swap<T extends object, K extends keyof T>(o: T, a: K, b: K): void {
+           const t = o[a]; o[a] = o[b]; o[b] = t;
+         }
+         function get<T extends object, K extends keyof T>(o: T, k: K): T[K] { return o[k]; }
+         type Pt = { x: number; y: number };
+         function main() { const p: Pt = { x: 1, y: 2 }; swap(p, \"x\", \"w\"); get(p, \"w\"); }",
+    );
+    assert_eq!(e.matches("error:").count(), 2, "{e}");
+    assert_eq!(
+        e.matches("does not satisfy the constraint").count(),
+        2,
+        "{e}"
+    );
+    assert!(!e.contains("has no field"), "{e}");
+}
+
+#[test]
+fn an_instantiation_error_through_another_generic_labels_each_call() {
+    let e = err_src(
+        "function getA<T extends object, K extends keyof T>(o: T, k: K): T[K] { return o[k]; }
+         function outer<T extends object, K extends keyof T>(o: T, k: K): T[K] { return getA(o, k); }
+         type Pt = { x: number; name: string };
+         function main() {
+           const p: Pt = { x: 1, name: \"n\" };
+           const k: keyof Pt = p.x > 2 ? \"x\" : \"name\";
+           outer(p, k);
+         }",
+    );
+    assert!(e.contains("`getA` is instantiated here"), "{e}");
+    assert!(e.contains("`outer` is instantiated here"), "{e}");
+    assert!(e.contains("in `getA` at this instantiation"), "{e}");
+    assert!(e.contains("reached through `outer`"), "{e}");
 }

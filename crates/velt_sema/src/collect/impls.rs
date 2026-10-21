@@ -29,7 +29,10 @@ pub(super) fn build_impls(cx: &mut Ctx) {
         for b in implements {
             if let Some((imp, setters)) = check_impl(cx, d, &b, &mut getters) {
                 cx.impls.push(imp);
-                cx.note_setters(cx.impls.len() as u32 - 1, setters);
+                // A field with a getter and no setter leaves the implementation without setters.
+                if let Some(setters) = setters {
+                    cx.note_setters(cx.impls.len() as u32 - 1, setters);
+                }
             }
         }
     }
@@ -54,7 +57,7 @@ fn check_impl(
     d: DefId,
     b: &Bound,
     cache: &mut Getters,
-) -> Option<(ImplDef, Vec<SetterSrc>)> {
+) -> Option<(ImplDef, Option<Vec<SetterSrc>>)> {
     let a = cx.adt(d).expect("ICE: adt");
     let (n, span, cname) = (a.generics.len(), a.span, a.name.clone());
     let self_ty = self_type(cx, d, n);
@@ -85,13 +88,18 @@ fn check_impl(
 }
 
 /// The class must have every interface field (same type); each gets a getter and a setter
-/// source (`crate::iface_writes`).
-fn field_getters(cx: &mut Ctx, p: &Pair, cache: &mut Getters) -> (Vec<DefId>, Vec<SetterSrc>) {
+/// source (`crate::iface_writes`), or the implementation gets none (`None`: a writable field
+/// with a getter and no setter).
+fn field_getters(
+    cx: &mut Ctx,
+    p: &Pair,
+    cache: &mut Getters,
+) -> (Vec<DefId>, Option<Vec<SetterSrc>>) {
     let ifields = cx
         .iface(p.bound.iface)
         .map(|i| i.fields.clone())
         .unwrap_or_default();
-    let (mut getters, mut setters) = (vec![], vec![]);
+    let (mut getters, mut setters) = (vec![], Some(vec![]));
     for f in ifields {
         let want = cx.subst(f.ty, &p.bound.args);
         let have = cx
@@ -106,11 +114,32 @@ fn field_getters(cx: &mut Ctx, p: &Pair, cache: &mut Getters) -> (Vec<DefId>, Ve
             };
             cache.insert((p.d, i), g);
             getters.push(g);
-            setters.push(SetterSrc::Field {
-                d: p.d,
-                self_ty: p.self_ty,
-                index: i,
-                ty,
+            if let Some(setters) = setters.as_mut() {
+                setters.push(SetterSrc::Field {
+                    d: p.d,
+                    self_ty: p.self_ty,
+                    index: i,
+                    ty,
+                });
+            }
+        } else if let Some((g, set)) = accessor_slots(cx, p.d, p.self_ty, &f.name, want) {
+            // A `get` (and `set`) accessor of the class provides the field (a `readonly` one
+            // needs no `set`: its setter slot is used only by part writes, an error then).
+            getters.push(g);
+            let name = f.name.clone();
+            let src = match set {
+                Some(def) => Some(SetterSrc::Method { def, d: p.d, name }),
+                None if f.readonly => Some(SetterSrc::GetterOnly {
+                    d: p.d,
+                    self_ty: p.self_ty,
+                    name,
+                    ty: want,
+                }),
+                None => None,
+            };
+            setters = setters.zip(src).map(|(mut v, src)| {
+                v.push(src);
+                v
             });
         } else {
             let tn = cx.display(want);
@@ -125,6 +154,57 @@ fn field_getters(cx: &mut Ctx, p: &Pair, cache: &mut Getters) -> (Vec<DefId>, Ve
         }
     }
     (getters, setters)
+}
+
+/// The slots of field `name` (of type `want`) of an interface implemented by class `d`
+/// through its accessors: the `get name()` (own or inherited), and the `set name(v)` when it
+/// has one. Each dispatches virtually when it has a vtable slot, as a method does. `None`
+/// when the class has no such getter.
+pub(crate) fn accessor_slots(
+    cx: &mut Ctx,
+    d: DefId,
+    self_ty: TyId,
+    name: &str,
+    want: TyId,
+) -> Option<(DefId, Option<DefId>)> {
+    // The class's own type parameters, or one instance's arguments.
+    let self_args = match cx.ty.kind(self_ty) {
+        crate::hir::TyKind::Adt(_, args) => args.clone(),
+        _ => vec![],
+    };
+    let get = lookup_method(cx, d, &self_args, name)
+        .filter(|f| matches!(f, Found::Class { .. }) && !f.is_static())
+        .filter(|f| cx.fn_info(f.def()).is_getter)?;
+    let def = get.def();
+    let ret_ok = match super::ret_infer::is_pending(cx, def) {
+        true => true,
+        false => cx.subst(cx.fn_info(def).ret, &get.owner_args()) == want,
+    };
+    if !ret_ok {
+        return None;
+    }
+    let getter = accessor_slot(cx, d, self_ty, &get, name, want);
+    let key = crate::defs::member_key(name, true);
+    let set = lookup_method(cx, d, &self_args, &key)
+        .filter(|f| matches!(f, Found::Class { .. }) && !f.is_static())
+        .filter(|f| {
+            let info = cx.fn_info(f.def());
+            let ps: Vec<TyId> = info.params.iter().map(|p| p.ty).collect();
+            ps.len() == 1 && cx.subst(ps[0], &f.owner_args()) == want
+        });
+    let setter = set.map(|f| accessor_slot(cx, d, self_ty, &f, &key, cx.ty.unit));
+    Some((getter, setter))
+}
+
+/// The impl entry of accessor `f` (method-table key `key`): virtual through a trampoline when
+/// it has a vtable slot.
+fn accessor_slot(cx: &mut Ctx, d: DefId, self_ty: TyId, f: &Found, key: &str, want: TyId) -> DefId {
+    let def = f.def();
+    cx.fn_info_mut(def).fixed_modes = true;
+    match cx.adt(d).and_then(|a| a.vslots.get(key).copied()) {
+        Some(slot) => trampoline(cx, d, self_ty, f, (slot, Some(want))),
+        None => def,
+    }
 }
 
 /// The implementation of interface method `m`: the class's own / inherited method (virtual

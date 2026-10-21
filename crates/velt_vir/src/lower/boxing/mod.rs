@@ -154,6 +154,9 @@ pub(super) struct Facts {
     identity: FxHashSet<TyId>,
     /// `any` values compared by identity (`Boxing::any_identity`).
     any_identity: bool,
+    /// Interface upcasts made, `(from, to)` (upcast.rs): `from` values are compared by
+    /// identity when `to` values are.
+    upcasts: FxHashSet<(TyId, TyId)>,
     /// Value types a callee may change in place while it borrows them out of an array other
     /// references reach (stabilize.rs): counted, so the borrow can share the value itself.
     identity_borrows: FxHashSet<TyId>,
@@ -213,6 +216,11 @@ impl Cx<'_> {
     /// callee while it is borrowed out of an array other references reach.
     pub(super) fn note_identity_borrow(&mut self, t: TyId) {
         self.facts.identity_borrows.insert(t);
+    }
+
+    /// Record an interface upcast of a `from` value to `to` (upcast.rs).
+    pub(super) fn note_upcast(&mut self, from: TyId, to: TyId) {
+        self.facts.upcasts.insert((from, to));
     }
 
     /// Record that values of the interface `iface` are converted to `any` / `unknown`.
@@ -328,6 +336,19 @@ impl Cx<'_> {
             .filter(|t| matches!(self.kind(*t), TyKind::Dyn(..)))
             .collect();
         next.identity_dyns.extend(dyns);
+        loop {
+            let more: Vec<TyId> = self
+                .facts
+                .upcasts
+                .iter()
+                .filter(|(f, t)| next.identity_dyns.contains(t) && !next.identity_dyns.contains(f))
+                .map(|&(f, _)| f)
+                .collect();
+            if more.is_empty() {
+                break;
+            }
+            next.identity_dyns.extend(more);
+        }
         next.boxes
             .extend(self.facts.identity_borrows.iter().copied());
         self.close_proxies(&mut next);

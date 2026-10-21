@@ -1,6 +1,6 @@
-// Utility type errors: a key that isn't a field in Pick (in Omit it is only a warning), keys
-// that aren't string literals, a non-object type, a type parameter (#350), writing a Readonly
-// field, and a type that needs its own fields through an operator.
+// Utility type errors: a key that isn't a field in Pick (in Omit it is only a warning), keys that
+// aren't string literals, a non-object type, writing a Readonly field, and a type that needs its
+// own fields through an operator (`Partial<T>` of a type parameter is fine, #350).
 interface User {
   id: number;
   name: string;

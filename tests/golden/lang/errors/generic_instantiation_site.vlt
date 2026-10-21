@@ -1,0 +1,15 @@
+// An error at an instantiation of a generic function is reported in that function, where the
+// failing form is, with the call that instantiates it and the type arguments (#350); two
+// functions with the same type parameters each report their own.
+function getA<T extends object, K extends keyof T>(o: T, k: K): T[K] {
+  return o[k];
+}
+function getB<T extends object, K extends keyof T>(o: T, k: K): T[K] {
+  const v = o[k];
+  return v;
+}
+type Pt = { x: number; name: string };
+const p: Pt = { x: 1, name: "n" };
+const k: keyof Pt = p.x > 2 ? "x" : "name";
+console.log(getA(p, k));
+console.log(getB(p, "x"));

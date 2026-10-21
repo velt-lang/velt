@@ -10,7 +10,11 @@ use velt_syntax::ast;
 
 use super::args::Callable;
 use crate::body::FnCx;
+use crate::defs::Bound;
 use crate::hir::{TyId, TyKind};
+
+/// An argument of a call: its parameter's type, its own type and its span.
+pub(super) type ArgSite = (TyId, TyId, Span);
 
 impl FnCx<'_, '_> {
     /// The type an argument holding literals is checked against for a parameter of type `pty`
@@ -31,12 +35,19 @@ impl FnCx<'_, '_> {
         }
         let mut with_bounds = known.to_vec();
         let mut changed = false;
+        let mut fixed: Option<Vec<Option<TyId>>> = None;
         for (k, b) in c.constraints.iter().enumerate() {
             let Some(b) = *b else { continue };
             if slots.get(k).is_none_or(Option::is_some) {
                 continue;
             }
-            let b = self.cx.subst_known(b, slots);
+            // A slot breaking its interface bound is an error type here, as in `solve_slots`
+            // (no `keyof string` from `K extends keyof T` once `T extends HasA` failed).
+            let fixed = match &fixed {
+                Some(f) => f,
+                None => fixed.insert(self.unbroken_slots(c, slots)),
+            };
+            let b = self.cx.subst_known(b, fixed);
             if self.cx.has_literal_member(b) {
                 with_bounds[k] = Some(b);
                 changed = true;
@@ -48,23 +59,74 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// Report when type argument `t` of slot `k` of `c` breaks the slot's type bound.
-    pub(super) fn check_constraint(
+    /// `slots` with each one whose type breaks an interface bound of its slot an error type.
+    fn unbroken_slots(&mut self, c: &Callable, slots: &[Option<TyId>]) -> Vec<Option<TyId>> {
+        let mut out = slots.to_vec();
+        for (k, s) in out.iter_mut().enumerate() {
+            let (Some(t), Some(bounds)) = (*s, c.bounds.get(k)) else {
+                continue;
+            };
+            for b in bounds.clone() {
+                let b = Bound {
+                    iface: b.iface,
+                    args: b
+                        .args
+                        .iter()
+                        .map(|a| self.cx.subst_known(*a, slots))
+                        .collect(),
+                };
+                let in_scope = self.bounds.clone();
+                if !self.cx.satisfies(t, &b, &in_scope) {
+                    *s = Some(self.cx.ty.error);
+                    break;
+                }
+            }
+        }
+        out
+    }
+
+    /// The slot of `pty` when it is a type parameter an earlier argument fixed to string
+    /// literal types (`K extends keyof T`).
+    pub(super) fn literal_slot(&mut self, pty: TyId, slots: &[Option<TyId>]) -> Option<usize> {
+        let TyKind::Param(k) = *self.cx.ty.kind(pty) else {
+            return None;
+        };
+        let t = (*slots.get(k as usize)?)?;
+        self.string_literals(t).map(|_| k as usize)
+    }
+
+    /// Slot `k` (string literal types) with the string literal types `t` added.
+    pub(super) fn add_literal_key(&mut self, k: usize, t: TyId, slots: &mut [Option<TyId>]) {
+        let Some(prev) = slots[k] else { return };
+        if prev == t || self.string_literals(t).is_none() {
+            return;
+        }
+        slots[k] = Some(self.cx.union_of(&[prev, t], false, Span::DUMMY));
+    }
+
+    /// Report when type argument `t` of slot `k` of `c` breaks the slot's type bound (false),
+    /// at the explicit type argument, else the first argument of a parameter `T` (or `t?: T`)
+    /// whose own type breaks it (the `"w"` of `swap(p, "x", "w")`), else at the call.
+    fn check_constraint(
         &mut self,
         c: &Callable,
         k: usize,
         t: TyId,
-        slots: &[Option<TyId>],
+        (slots, sites): (&[Option<TyId>], &[ArgSite]),
         name: &str,
         span: Span,
-    ) {
+    ) -> bool {
         let Some(bound) = c.constraints.get(k).copied().flatten() else {
-            return;
+            return true;
         };
         let bound = self.cx.subst_known(bound, slots);
         if self.constraint_holds(t, bound) {
-            return;
+            return true;
         }
+        let at = sites
+            .iter()
+            .find(|&&(p, a, _)| self.slot_param(p) == Some(k) && !self.constraint_holds(a, bound));
+        let (t, span) = at.map_or((t, span), |&(_, a, s)| (a, s));
         let tn = self.cx.display(t);
         let bn = self.cx.display(bound);
         self.cx.error(
@@ -74,6 +136,139 @@ impl FnCx<'_, '_> {
             )
             .with_note(format!("required by `{name} extends {bn}` of {}", c.what)),
         );
+        false
+    }
+
+    /// Points the errors from `before` on that the type arguments of a call (at `span`) to `c`
+    /// cause outside it (where a deferred type of the signature is written) at the call: a
+    /// label and a note with the type arguments, as for an error in the callee's body
+    /// (`type_level::instances`).
+    pub(super) fn instance_context(
+        &mut self,
+        c: &Callable,
+        before: usize,
+        type_args: &[TyId],
+        span: Span,
+    ) {
+        if self.cx.diags.len() == before || type_args.is_empty() {
+            return;
+        }
+        let name = c.what.split('`').nth(1).unwrap_or(&c.what).to_string();
+        let list = crate::type_level::instances::type_args_text(self.cx, &c.slot_names, type_args);
+        let inside = |s: Span| s.file == span.file && s.lo >= span.lo && s.hi <= span.hi;
+        for d in &mut self.cx.diags[before..] {
+            if d.labels.first().is_none_or(|l| inside(l.span)) {
+                continue;
+            }
+            d.labels.push(velt_common::Label {
+                span,
+                message: format!("`{name}` is instantiated here"),
+            });
+            d.notes
+                .push(format!("in `{name}` at this instantiation: {list}"));
+        }
+    }
+
+    /// Unknown slots are errors (unless `quiet`: an argument's error was reported); check bounds
+    /// of the known ones (`sites`: each argument's parameter type, type and span). A slot whose
+    /// bound (an interface or a type) is broken is an error type.
+    pub(super) fn solve_slots(
+        &mut self,
+        c: &Callable,
+        slots: &[Option<TyId>],
+        quiet: bool,
+        span: Span,
+        sites: &[ArgSite],
+    ) -> Vec<TyId> {
+        let mut out = vec![];
+        if !quiet {
+            self.report_uninferred(c, slots, span);
+        }
+        // A broken slot is an error type in the bounds of the later ones too (no `keyof f64`
+        // from `K extends keyof T` once `T extends object` failed).
+        let mut broken: Option<Vec<Option<TyId>>> = None;
+        for (k, &s) in slots.iter().enumerate() {
+            let slots = broken.as_deref().unwrap_or(slots);
+            let name = c
+                .slot_names
+                .get(k)
+                .cloned()
+                .unwrap_or_else(|| format!("T{k}"));
+            let Some(t) = s else {
+                out.push(self.cx.ty.error);
+                continue;
+            };
+            let bounds = c.bounds.get(k).cloned().unwrap_or_default();
+            let mut ok = true;
+            for b in bounds {
+                let b = Bound {
+                    iface: b.iface,
+                    args: b
+                        .args
+                        .iter()
+                        .map(|a| self.cx.subst_known(*a, slots))
+                        .collect(),
+                };
+                let in_scope = self.bounds.clone();
+                if !self.cx.satisfies(t, &b, &in_scope) {
+                    ok = false;
+                    // At the first argument (or explicit type argument) of the slot that
+                    // breaks the bound, as `tsc` reports `getA(5, "x")` at `5`.
+                    let at = sites.iter().find(|&&(p, a, _)| {
+                        self.slot_param(p) == Some(k) && !self.cx.satisfies(a, &b, &in_scope)
+                    });
+                    let (t, span) = at.map_or((t, span), |&(_, a, s)| (a, s));
+                    let tn = self.cx.display(t);
+                    let bn = self
+                        .cx
+                        .iface(b.iface)
+                        .map(|i| i.name.clone())
+                        .unwrap_or_default();
+                    let mut d = Diagnostic::error(
+                        format!("the type `{tn}` does not implement `{bn}`"),
+                        span,
+                    )
+                    .with_note(format!("required by `{name} extends {bn}` of {}", c.what));
+                    if let Some(i) = self
+                        .cx
+                        .iface(b.iface)
+                        .filter(|_| self.cx.field_only.contains_key(&b.iface))
+                    {
+                        let fields: Vec<String> = i
+                            .fields
+                            .iter()
+                            .map(|f| format!("{}: {}", f.name, self.cx.display(f.ty)))
+                            .collect();
+                        d = d.with_note(format!(
+                            "`{bn}` has only fields: a type satisfies it by having them ({})",
+                            fields.join(", ")
+                        ));
+                    }
+                    self.cx.error(d);
+                }
+            }
+            // A call breaking a bound is not instantiated (no errors from its body or from the
+            // types of its signature).
+            match ok && self.check_constraint(c, k, t, (slots, sites), &name, span) {
+                true => out.push(t),
+                false => {
+                    out.push(self.cx.ty.error);
+                    let error = self.cx.ty.error;
+                    let first = broken.is_none().then(|| slots.to_vec());
+                    broken.get_or_insert_with(|| first.unwrap_or_default())[k] = Some(error);
+                }
+            }
+        }
+        out
+    }
+
+    /// The slot of a parameter of type `T` or `T | undefined` (`t?: T`).
+    fn slot_param(&self, p: TyId) -> Option<usize> {
+        let p = self.cx.ty.opt_payload(p).unwrap_or(p);
+        match *self.cx.ty.kind(p) {
+            TyKind::Param(j) => Some(j as usize),
+            _ => None,
+        }
     }
 
     /// Does `t` satisfy type bound `bound`? A type parameter of the function being checked

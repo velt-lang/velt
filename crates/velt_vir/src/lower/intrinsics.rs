@@ -40,6 +40,9 @@ impl FnLower<'_, '_> {
             (I::Print, _) => self.print(1, args),
             (I::SymbolStatic, [_, _, _]) => self.symbol_static(args),
             (I::SymbolRegistry, []) => self.symbol_registry(),
+            (I::SpreadObject, parts) => self.spread_object(parts, ty),
+            (I::KeyRead, [object, key]) => self.key_read(object, key, ty),
+            (I::KeyWrite, [object, key, value]) => self.key_write(object, key, value),
             (I::FieldAbsent, []) => {
                 // Outside a literal (which keeps the flag clear, adt.rs) it is just `null`; an
                 // absent `a?: any` holds the dynamic `undefined`.

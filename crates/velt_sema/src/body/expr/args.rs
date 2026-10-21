@@ -94,6 +94,9 @@ impl FnCx<'_, '_> {
     ) -> Checked {
         let collect = std::mem::take(&mut self.collect_iterable_args);
         let weak_key = std::mem::take(&mut self.weak_key_args);
+        let explicit = std::mem::take(&mut self.explicit_type_spans)
+            .filter(|(at, _)| *at == span)
+            .map_or_else(Vec::new, |(_, s)| s);
         let expanded;
         let args = match self.expand_spreads(c, args, span) {
             Ok(Some(a)) => {
@@ -140,16 +143,34 @@ impl FnCx<'_, '_> {
                 self.optional_slot(a, crate::body::OptionalSlot::Param);
             }
         }
+        let args_before = self.cx.diags.len();
         let checked = self.args_in_rounds(c, &mut slots, &context, args, collect);
+        let reported = self.cx.diags.len() > args_before;
         if let Some(e) = exp {
             self.prefer_context(c, &mut slots, &context, &checked, e);
             self.cx.match_ty(c.ret, e, &mut slots);
         }
         // An argument that is already an error (reported) leaves its slots unknown: no second
-        // error about inferring them.
-        let quiet = checked.iter().any(|h| h.ty == self.cx.ty.error);
+        // error about inferring them. So does one holding an error type when checking the
+        // arguments reported one (a callback returning a call that broke a bound); an
+        // unreported error placeholder (`{}` checked as a `Record<K, V>`) still asks for them.
+        let error = self.cx.ty.error;
+        let quiet = checked.iter().any(|h| h.ty == error)
+            || (reported
+                && slots.iter().any(Option::is_none)
+                && checked.iter().any(|h| self.cx.ty.has_error(h.ty)));
         self.default_slots(c, &mut slots);
-        let type_args = self.solve_slots(c, &slots, quiet, span);
+        // An explicit type argument is where its slot's bound is checked; then the arguments.
+        let typed = explicit.iter().filter_map(|&(k, s)| {
+            let t = slots.get(k).copied().flatten()?;
+            Some((self.cx.ty.param(k as u32), t, s))
+        });
+        let typed: Vec<super::constraints::ArgSite> = typed.collect();
+        let sites: Vec<super::constraints::ArgSite> = (typed.into_iter())
+            .chain((c.params.iter().zip(&checked)).map(|(p, h)| (p.ty, h.ty, h.span)))
+            .collect();
+        let type_args = self.solve_slots(c, &slots, quiet, span, &sites);
+        let before = self.cx.diags.len();
         let mut hargs = vec![];
         for (h, p) in checked.into_iter().zip(&c.params) {
             let outer = self.cx.type_level.use_site.replace(h.span);
@@ -215,6 +236,7 @@ impl FnCx<'_, '_> {
         let outer = self.cx.type_level.use_site.replace(span);
         let ret = self.cx.subst(c.ret, &type_args);
         self.cx.type_level.use_site = outer;
+        self.instance_context(c, before, &type_args, span);
         Checked {
             args: hargs,
             ret,
@@ -399,6 +421,8 @@ impl FnCx<'_, '_> {
         collect: bool,
     ) -> Vec<hir::Expr> {
         let order = self.arg_order(c, args);
+        // Slots fixed before any argument (explicit type arguments, the receiver's).
+        let given: Vec<bool> = slots.iter().map(Option::is_some).collect();
         let mut out: Vec<Option<hir::Expr>> = (0..args.len()).map(|_| None).collect();
         for i in order {
             let p = &c.params[i];
@@ -408,13 +432,28 @@ impl FnCx<'_, '_> {
             }
             let mut known: Vec<Option<TyId>> =
                 slots.iter().zip(context).map(|(s, c)| s.or(*c)).collect();
+            // A parameter of a type parameter that keeps literal keys (`K extends keyof T`)
+            // already fixed by an earlier key: this one adds to it (`"x" | "y"`), as in TS.
+            let keys = self
+                .literal_slot(p.ty, slots)
+                .filter(|&k| !given[k] && c.constraints.get(k).is_some_and(Option::is_some));
+            if let Some(k) = keys {
+                known[k] = None;
+            }
             if let Some(k) = self.infer_union_error(&args[i], p.ty, &known, slots) {
                 known[k] = slots[k];
             }
             let outer = self.cx.type_level.use_site.replace(args[i].span);
             let expected = self.cx.subst_known(p.ty, &known);
             self.cx.type_level.use_site = outer;
-            let expected = self.constraint_expected(c, &args[i], p.ty, expected, (&known, slots));
+            let expected = match keys {
+                Some(k) => {
+                    let mut open = slots.to_vec();
+                    open[k] = None;
+                    self.constraint_expected(c, &args[i], p.ty, expected, (&known, &open))
+                }
+                None => self.constraint_expected(c, &args[i], p.ty, expected, (&known, slots)),
+            };
             let mode = self.callback_mode(&args[i]);
             let arrow = as_arrow(&args[i]);
             let named = matches!(args[i].kind, ast::ExprKind::Ident(_));
@@ -467,6 +506,9 @@ impl FnCx<'_, '_> {
                 true => self.collected_arg(h, p.ty),
                 false => h,
             };
+            if let Some(k) = keys {
+                self.add_literal_key(k, h.ty, slots);
+            }
             self.cx.match_ty(p.ty, h.ty, slots);
             out[i] = Some(h);
         }
@@ -591,76 +633,6 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// Unknown slots are errors (unless `quiet`: an argument's error was reported); check bounds
-    /// of the known ones.
-    pub(super) fn solve_slots(
-        &mut self,
-        c: &Callable,
-        slots: &[Option<TyId>],
-        quiet: bool,
-        span: Span,
-    ) -> Vec<TyId> {
-        let mut out = vec![];
-        if !quiet {
-            self.report_uninferred(c, slots, span);
-        }
-        for (k, s) in slots.iter().enumerate() {
-            let name = c
-                .slot_names
-                .get(k)
-                .cloned()
-                .unwrap_or_else(|| format!("T{k}"));
-            let Some(t) = *s else {
-                out.push(self.cx.ty.error);
-                continue;
-            };
-            let bounds = c.bounds.get(k).cloned().unwrap_or_default();
-            for b in bounds {
-                let b = Bound {
-                    iface: b.iface,
-                    args: b
-                        .args
-                        .iter()
-                        .map(|a| self.cx.subst_known(*a, slots))
-                        .collect(),
-                };
-                let in_scope = self.bounds.clone();
-                if !self.cx.satisfies(t, &b, &in_scope) {
-                    let tn = self.cx.display(t);
-                    let bn = self
-                        .cx
-                        .iface(b.iface)
-                        .map(|i| i.name.clone())
-                        .unwrap_or_default();
-                    let mut d = Diagnostic::error(
-                        format!("the type `{tn}` does not implement `{bn}`"),
-                        span,
-                    )
-                    .with_note(format!("required by `{name} extends {bn}` of {}", c.what));
-                    if let Some(i) = self
-                        .cx
-                        .iface(b.iface)
-                        .filter(|_| self.cx.field_only.contains_key(&b.iface))
-                    {
-                        let fields: Vec<String> = i
-                            .fields
-                            .iter()
-                            .map(|f| format!("{}: {}", f.name, self.cx.display(f.ty)))
-                            .collect();
-                        d = d.with_note(format!(
-                            "`{bn}` has only fields: a type satisfies it by having them ({})",
-                            fields.join(", ")
-                        ));
-                    }
-                    self.cx.error(d);
-                }
-            }
-            self.check_constraint(c, k, t, slots, &name, span);
-            out.push(t);
-        }
-        out
-    }
-
     /// Slots nothing inferred take their defaults (while the slots before them are known); an
     /// error type parameter nothing fixed (it appears only as a promise's or function's error
     /// type) is `never`.
@@ -700,7 +672,7 @@ impl FnCx<'_, '_> {
     }
 
     /// One error naming every type parameter of `c` that no argument or expected type fixed.
-    fn report_uninferred(&mut self, c: &Callable, slots: &[Option<TyId>], span: Span) {
+    pub(super) fn report_uninferred(&mut self, c: &Callable, slots: &[Option<TyId>], span: Span) {
         let names: Vec<String> = (0..slots.len())
             .filter(|k| slots[*k].is_none())
             .map(|k| {
