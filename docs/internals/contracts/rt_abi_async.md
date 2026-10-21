@@ -589,10 +589,11 @@ network access`), and the accessors of a fetched response are unreachable (fatal
 | `velt_rt_atomic_store_i64` | `(i64* p, i64 v)` | |
 | `velt_rt_mutex_init` | `(u64* lock)` | the `Mutex<T>` lock word: 8 bytes, align 8, inside the shared object; no destroy needed |
 | `velt_rt_mutex_lock` / `velt_rt_mutex_unlock` | `(u64* lock)` | `m.with(f)` = lock; call f; unlock. Blocks the thread; bodies must not await. |
+| `velt_rt_mutex_lock_checked` | `(u64* lock)` | `velt_rt_mutex_lock` from code that may run in read mode (§9.1): there it stops the program before locking [additive, #708] |
 | `velt_rt_rwlock_init` | `(u64* lock)` | the `RwLock<T>` lock words: 19 words (152 bytes), align 8, at the start of the `RwLock<T>`, then the value (std `prelude/sync.vlt`; §9.2) [additive, #708] |
 | `velt_rt_rwlock_read` | `(u64* lock, u64 reader) -> u64 how` | `rw.read(f)`: the lock shared with other readers; the thread is in read mode (§9.1) until the unlock, which takes `how` back. `reader` is `how & ~7` of an earlier `read` or `write` in the same call of the calling function (never across an `await`: the task may continue on another thread), else 0 [additive, #708] |
 | `velt_rt_rwlock_read_unlock` | `(u64* lock, u64 how)` | the end of the read that returned `how`, on the same thread (callbacks never await) [additive, #708] |
-| `velt_rt_rwlock_write` | `(u64* lock, u64 reader) -> u64` | `rw.write(f)`: the lock exclusively; like `velt_rt_mutex_lock`, it leaves read mode for its duration. `reader` as for `read`; the result is this thread's reader state, for the unlock and later calls [additive, #708] |
+| `velt_rt_rwlock_write` | `(u64* lock, u64 reader) -> u64` | `rw.write(f)`: the lock exclusively; in read mode it stops the program before locking (§9.1). `reader` as for `read`; the result is this thread's reader state, for the unlock and later calls [additive, #708] |
 | `velt_rt_rwlock_write_unlock` | `(u64* lock, u64 reader)` | the end of the `write` that returned `reader` [additive, #708] |
 | `velt_rt_lk_mode` | `() -> u8` | 1 when this thread is in read mode (a thread-local read, §9.1) [additive, #708] |
 | `velt_rt_lk_write` | `(u64* count)` | a write of the lock-set object whose count word is at `count`: stops the program in read mode unless the reader made the object (§9.1) [additive, #708] |
@@ -618,10 +619,19 @@ counts and writes lock-set objects by these rules, inline (velt_vir `rc.rs`):
   store) it borrows, so their counts stay what the last writer left. No writer runs meanwhile;
 - a reader writes only `LOCAL` objects: anything else calls `velt_rt_lk_write`, which stops the
   program (sema rejects the writes it can see);
-- `velt_rt_mutex_lock` and `velt_rt_rwlock_write` leave read mode until their unlock.
+- a reader takes no lock exclusively: `velt_rt_rwlock_write` and `velt_rt_mutex_lock_checked`
+  (which code not known to run outside read mode calls instead of `velt_rt_mutex_lock`) stop the
+  program in read mode, since the inner callback could not tell the store's uncounted objects
+  from what it changes (sema rejects the ones written in a `read` callback's body);
+- a reader starts no promise or task (`velt_rt_fut_start*`, `velt_rt_spawn*` stop the program in
+  read mode once the program has made an `RwLock`): what it holds would outlive the callback
+  without leaving through its result;
+- what the callback returns leaves by these rules too (velt_vir `async_fn/sync.rs`), before the
+  unlock, whatever the calling code's mode: an object it shares with the store is copied, never
+  moved out.
 
 Code whose mode is fixed counts without asking: functions only called directly from outside read
-mode (and `with` / `write` callbacks) count as before; functions only called directly from a
+mode (and `with` / `write` callbacks, which never run in read mode) count as before; functions only called directly from a
 `read` callback literal use read mode's rules. Everything else (callbacks given as values,
 closures that may outlive the call, polls, glue in tables) asks `velt_rt_lk_mode` once per call.
 
@@ -630,17 +640,19 @@ closures that may outlive the call, polls, glue in tables) asks `velt_rt_lk_mode
 The lock is *biased* (Dice and Kogan, "BRAVO: Biased Locking for Reader-Writer Locks", 2019)
 until it is written: a reader names the lock in a slot of its own thread (a cache line no other
 thread writes, velt_rt `hazard.rs`) and checks that no writer came, so readers on many threads
-write nothing they share. A writer takes the lock's mutex and *revokes* the bias: it sets the
-lock's state and waits for the slots naming the lock to clear. From then on readers take the
-mutex as a `Mutex` is taken, so a lock written often costs about what a `Mutex` does, until a
-reader holding the mutex finds the revocation old enough and biases the lock again. How long a
-revocation lasts adapts to how long the bias before it lasted (at most 10 ms). The lock words
-are the mutex, then (on the next 128-byte line, which only revocations write) the state.
+write nothing they share. A writer takes the lock's underlying reader-writer lock (parking_lot's
+`RawRwLock`) exclusively and *revokes* the bias: it sets the lock's state and waits for the slots
+naming the lock to clear. From then on readers take the underlying lock shared, so they still
+run at once and a lock written often costs about what a `Mutex` does, until a reader holding it
+finds the revocation old enough and biases the lock again. A writer blocked on the underlying
+lock holds new readers back, so writers don't starve, and readers nesting reads of two locks in
+opposite orders never wait for each other. How long a revocation lasts adapts to how long the
+bias before it lasted (at most 10 ms). The lock words are the underlying lock, then (on the next
+128-byte line, which only revocations write) the state.
 
-A thread waiting for the mutex backs off exponentially between looks at it (about 0.5 µs
-doubling to 35 µs, yielding each time, parking after about 0.7 ms or once a thread sleeps on it):
-a waiter that looks takes the line from the holder, so short callbacks taking turns run several
-in a row on one core. Generated code passes each lock call the reader state an earlier one in
+A thread waiting for the underlying lock backs off exponentially between tries (about 0.5 µs
+doubling to 35 µs, yielding each time, blocking after about 0.7 ms): a waiter that tries takes
+the line from the holder, so short callbacks taking turns run several in a row on one core. Generated code passes each lock call the reader state an earlier one in
 the same call of the function returned, so the common reads and writes run without a
 thread-local lookup or a call.
 

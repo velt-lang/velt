@@ -82,15 +82,14 @@ async function main() {
   });
   console.log(names(top), st.read((s) => s.items[38].name));
 
-  // A callback given as a function value, and a `with` inside a `read`.
-  const counter = shared(new Mutex<i64>(0));
+  // A named function as the callback, and a counter a `read` adds to (a `with` there is
+  // refused: `rwlock_nested_refused.vlt`).
+  const counter = shared<i64>(0);
   console.log(st.read(count));
   st.read((s) => {
-    counter.with((c) => {
-      c += s.items.length as i64;
-    });
+    counter.add(s.items.length as i64);
   });
-  console.log(counter.with((c) => c));
+  console.log(counter.get());
 
   // A value that holds a function value: `read` takes the lock exclusively, still correct.
   const fns = shared(new RwLock<{ f: (x: number) => number }>({ f: (x) => x * 2 }));

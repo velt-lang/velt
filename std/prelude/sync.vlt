@@ -21,11 +21,13 @@ export struct Mutex<T> {
  * A lock around a value of type `T` that many readers may hold at once:
  * `shared(new RwLock<T>(x))`. `rw.read((v) => …)` runs the callback on the value while other
  * readers may run theirs; the callback cannot change the value. `rw.write((v) => …)` runs it
- * alone, like `Mutex.with`. Waiting writers go first, so neither side starves.
+ * alone, like `Mutex.with`. A writer that has waited a while holds new readers back, so writers
+ * don't starve. A `read` callback cannot run `with` or `write`, or start a promise or task.
  */
 export struct RwLock<T> {
-  // The runtime's words (rt_abi_async.md §9.2): the writers' mutex, then (a cache line on) the
-  // state readers read, with the value; padding after it keeps that line the lock's own.
+  // The runtime's words (rt_abi_async.md §9.2): the underlying reader-writer lock, then (a
+  // cache line on) the state readers read, with the value; padding after it keeps that line the
+  // lock's own.
   private lock: u64;
   private line1: u64;
   private line2: u64;

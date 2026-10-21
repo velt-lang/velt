@@ -49,13 +49,18 @@ pub unsafe extern "C" fn velt_rt_mutex_lock(p: *mut u64) {
         crate::panic::fatal("deadlock: Mutex locked again while held");
     }
     *p = 1;
-    enter_exclusive();
+}
+
+/// [`velt_rt_mutex_lock`] where the code may run in a `read` callback (velt_rt).
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_mutex_lock_checked(p: *mut u64) {
+    refuse_in_read("with");
+    velt_rt_mutex_lock(p)
 }
 
 /// Unlock.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_mutex_unlock(p: *mut u64) {
-    leave_exclusive();
     *p = 0;
 }
 
@@ -85,45 +90,48 @@ pub unsafe extern "C" fn velt_rt_rwlock_read_unlock(p: *mut u64, _how: u64) {
 /// Exclusive lock.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_rwlock_write(p: *mut u64, _reader: u64) -> u64 {
+    if *p != 0 && *p != u64::MAX && in_read() {
+        crate::panic::fatal("deadlock: `write` on an `RwLock` inside its own `read` callback");
+    }
+    refuse_in_read("write");
     if *p != 0 {
         crate::panic::fatal("deadlock: RwLock written while held");
     }
     *p = u64::MAX;
-    enter_exclusive();
     0
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_rwlock_write_unlock(p: *mut u64, _how: u64) {
-    leave_exclusive();
     *p = 0;
 }
 
 // Read mode (velt_rt `read_mode`): the compiled code counts by its rules inline; here only the
-// mode itself (one thread: a depth, saved by `write` sections) and the write check.
+// mode itself (one thread: a depth) and the checks.
 static mut READ_DEPTH: u32 = 0;
-static mut SAVED: u64 = 0;
 const LOCAL: u64 = 1 << 62;
-const EXCLUSIVE: u32 = 1 << 31;
-
-unsafe fn enter_exclusive() {
-    let was = READ_DEPTH != 0 && READ_DEPTH & EXCLUSIVE == 0;
-    SAVED = SAVED << 1 | u64::from(was);
-    if was {
-        READ_DEPTH |= EXCLUSIVE;
-    }
-}
-
-unsafe fn leave_exclusive() {
-    let was = SAVED & 1 == 1;
-    SAVED >>= 1;
-    if was {
-        READ_DEPTH &= !EXCLUSIVE;
-    }
-}
 
 unsafe fn in_read() -> bool {
-    READ_DEPTH != 0 && READ_DEPTH & EXCLUSIVE == 0
+    READ_DEPTH != 0
+}
+
+/// A promise or task starting in read mode stops the program (velt_rt `read_mode`).
+pub(crate) fn refuse_tasks_in_read() {
+    // SAFETY: one thread.
+    if unsafe { in_read() } {
+        crate::panic::fatal(
+            "a promise or task cannot start inside a `read` callback: what it holds would outlive the callback, which shares the `RwLock`'s value without counting it (start it after `read`, with what `read` returns)",
+        );
+    }
+}
+
+/// A `with` or `write` (`method`) in read mode stops the program (velt_rt `read_mode`).
+unsafe fn refuse_in_read(method: &str) {
+    if in_read() {
+        crate::panic::fatal(&format!(
+            "`{method}` cannot run inside a `read` callback: the callback shares the `RwLock`'s value with other readers without counting it, which `{method}` could not tell from what it changes (return what you need from `read` and lock after it)"
+        ));
+    }
 }
 #[no_mangle]
 pub extern "C" fn velt_rt_lk_mode() -> u8 {

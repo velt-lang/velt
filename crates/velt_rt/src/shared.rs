@@ -5,8 +5,8 @@
 //! All operate on memory owned by generated code (a refcount word, an `i64` cell, an 8-byte lock
 //! word inside the shared object), so none of them allocates.
 
-use lock_api::RawMutex as _;
-use parking_lot::RawMutex;
+use lock_api::{RawMutex as _, RawRwLock as _};
+use parking_lot::{RawMutex, RawRwLock};
 use std::sync::atomic::{fence, AtomicI64, AtomicU64, Ordering};
 
 /// Refcounts above this abort (a leak of `isize::MAX` clones is a bug, as in `Arc`).
@@ -70,13 +70,20 @@ pub unsafe extern "C" fn velt_rt_mutex_init(p: *mut u64) {
 pub unsafe extern "C" fn velt_rt_mutex_lock(p: *mut u64) {
     (*(p as *const RawMutex)).lock();
     crate::task::local::mutex_locked();
-    crate::read_mode::enter_exclusive();
+}
+
+/// [`velt_rt_mutex_lock`] from code that may run in a `read` callback (velt_vir: code not known
+/// to run outside one), where a `with` stops the program: the callback shares the `RwLock`'s
+/// value without counting it, which a `with` callback could not tell from what it changes.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_mutex_lock_checked(p: *mut u64) {
+    crate::read_mode::refuse_in_read("with");
+    velt_rt_mutex_lock(p)
 }
 
 /// Unlock a mutex locked by this thread's `velt_rt_mutex_lock`.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_mutex_unlock(p: *mut u64) {
-    crate::read_mode::leave_exclusive();
     crate::task::local::mutex_unlocked();
     (*(p as *const RawMutex)).unlock();
 }
@@ -85,35 +92,40 @@ pub unsafe extern "C" fn velt_rt_mutex_unlock(p: *mut u64) {
 /// `state`, `until` and `inhibit`, consecutive, align 8).
 pub const RWLOCK_WORDS: usize = 19;
 
-/// `state`: readers take `lock` as writers do (the bias is revoked).
+/// `state`: readers take `lock` too, shared (the bias is revoked).
 const MUTEX: u64 = 1;
 
 /// Tags in the low bits of a slot naming an `RwLock` (hazard.rs): the read took the lock's
-/// mutex; the read is nested in another read of the same lock on this thread (it took nothing).
+/// lock shared; the read is nested in another read of the same lock on this thread (it took
+/// nothing).
 const HELD: usize = 1;
 const NESTED: usize = 2;
 
 /// The longest a revoked bias stays revoked, in nanoseconds.
 const MAX_INHIBIT: u64 = 10_000_000;
 
-/// The words of an `RwLock<T>`. Writers take turns on `lock`, a parking_lot mutex. While the
+/// The words of an `RwLock<T>`. Writers take turns on `lock`, a parking_lot `RawRwLock`, taken
+/// exclusively. While the
 /// lock is *biased* (`state` 0) readers write nothing other threads read (Dice and Kogan,
 /// "BRAVO: Biased Locking for Reader-Writer Locks", 2019): a reader names the lock in its
 /// thread's slot (hazard.rs) and goes ahead while `state` stays 0; a writer sets `MUTEX`, then
 /// waits for the slots naming the lock to clear. That *revokes* the bias: until `until`
-/// (nanoseconds on the process clock) readers take `lock` too, exactly as a `Mutex` is taken,
-/// so a lock written often costs what a `Mutex` does. A reader holding `lock` after `until`
-/// biases it again (a thread looks at the clock after waiting for the mutex and on every 1024th
+/// (nanoseconds on the process clock) readers take `lock` too, shared (BRAVO's underlying
+/// reader-writer lock), so readers still run at once and a lock written often costs about what
+/// a `Mutex` does. A writer waiting for `lock` holds new readers back, so writers don't starve
+/// and two readers nesting reads of two locks in opposite orders don't wait for each other. A
+/// reader holding `lock` after `until`
+/// biases it again (a thread looks at the clock after waiting for `lock` and on every 1024th
 /// such read) and stores the time in `until`. How long a revocation lasts (`inhibit`) adapts:
 /// twice the last when the bias it ended lasted less than that, else half (at least nine times
 /// what waiting for the readers took, as in BRAVO), at most `MAX_INHIBIT`.
 ///
 /// `state` is 128 bytes past `lock` (a cache line on the largest lines there are): every reader
-/// reads it, writers rarely write it, and the mutex's line, which a lock written often moves
+/// reads it, writers rarely write it, and `lock`'s line, which a lock written often moves
 /// between threads, stays out of the readers' way.
 #[repr(C)]
 struct Words {
-    lock: RawMutex,
+    lock: RawRwLock,
     _line: [u64; 15],
     state: AtomicU64,
     until: AtomicU64,
@@ -135,8 +147,9 @@ fn now_ns() -> u64 {
 /// Initialize the words of an `RwLock<T>` at `p` (unlocked, biased).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_rwlock_init(p: *mut u64) {
+    crate::read_mode::rwlock_made();
     (p as *mut Words).write(Words {
-        lock: RawMutex::INIT,
+        lock: RawRwLock::INIT,
         _line: [0; 15],
         state: AtomicU64::new(0),
         until: AtomicU64::new(0),
@@ -146,7 +159,7 @@ pub unsafe extern "C" fn velt_rt_rwlock_init(p: *mut u64) {
 
 /// How a read went in, in the low bits of `velt_rt_rwlock_read`'s result (the rest is this
 /// thread's `hazard::Reader`, so the unlock needs no thread-local lookup; a read callback never
-/// awaits, so it ends on the thread it began on): named in its slot; holding the mutex; nested
+/// awaits, so it ends on the thread it began on): named in its slot; holding `lock`; nested
 /// in a read of the same lock.
 const FAST: u8 = 0;
 const TOOK: u8 = 1;
@@ -174,7 +187,7 @@ pub unsafe extern "C" fn velt_rt_rwlock_read(p: *mut u64, reader: u64) -> u64 {
         return read_nested(p, reader);
     }
     let w = &*(p as *const Words);
-    // A lock this thread last found revoked: the mutex at once (always safe), leaving `state`
+    // A lock this thread last found revoked: `lock` at once (always safe), leaving `state`
     // unread, which would delay taking it.
     if r.revoked.get() != p as usize {
         if w.state.load(Ordering::Relaxed) == 0 {
@@ -191,7 +204,7 @@ pub unsafe extern "C" fn velt_rt_rwlock_read(p: *mut u64, reader: u64) -> u64 {
         }
         r.revoked.set(p as usize);
     }
-    if !grab(&w.lock) {
+    if !w.lock.try_lock_shared() {
         return read_waiting(p, reader);
     }
     r.read_depth.set(1);
@@ -261,21 +274,21 @@ unsafe fn read_nested(p: *mut u64, reader: u64) -> u64 {
     entered(reader | how as u64)
 }
 
-/// An outermost read whose mutex is busy. One that waited looks at the bias at once (waiting
+/// An outermost read whose `lock` is held by a writer. One that waited looks at the bias at once (waiting
 /// cost more than the clock; long readers waiting on each other is what the bias is for).
 #[cold]
 #[inline(never)]
 unsafe fn read_waiting(p: *mut u64, reader: u64) -> u64 {
     let r = &*(reader as *const crate::hazard::Reader);
     let w = &*(p as *const Words);
-    lock_slow(&w.lock);
+    lock_slow(&w.lock, true);
     r.read_depth.set(1);
     r.holds.set(p as usize);
     look(r, w);
     entered(reader | TOOK as u64)
 }
 
-/// Every `LOOK_EVERY`th outermost read holding the mutex (it reads the clock, which costs as
+/// Every `LOOK_EVERY`th outermost read holding `lock` (it reads the clock, which costs as
 /// much as dozens of reads).
 #[cold]
 #[inline(never)]
@@ -287,8 +300,8 @@ unsafe fn read_looking(p: *mut u64, reader: u64) -> u64 {
     entered(reader | TOOK as u64)
 }
 
-/// An outermost read holding a mutex, after waiting for it or on every `LOOK_EVERY`th: is the bias back
-/// (then no longer go to the mutex at once), or due back (`rebias`)?
+/// An outermost read holding `lock`, after waiting for it or on every `LOOK_EVERY`th: is the bias back
+/// (then no longer go to `lock` at once), or due back (`rebias`)?
 #[cold]
 #[inline(never)]
 fn look(r: &crate::hazard::Reader, w: &Words) {
@@ -297,20 +310,10 @@ fn look(r: &crate::hazard::Reader, w: &Words) {
     }
 }
 
-/// How often an outermost read holding the mutex looks at the bias when it did not wait.
+/// How often an outermost read holding `lock` looks at the bias when it did not wait.
 const LOOK_EVERY: u32 = 1024;
 
-/// `lock`'s own fast path: one compare-and-swap of its byte from free to locked. parking_lot's
-/// `try_lock` reads the byte first, which under contention moves the line twice.
-#[inline]
-fn grab(lock: &RawMutex) -> bool {
-    // `unlock` releases what this takes as it releases `lock`'s.
-    lock_byte(lock)
-        .compare_exchange_weak(0, 1, Ordering::Acquire, Ordering::Relaxed)
-        .is_ok()
-}
-
-/// A nested read holding the mutex: its depth and which lock it holds (in its slot, which nested
+/// A nested read holding `lock`: its depth and which lock it holds (in its slot, which nested
 /// reads look at).
 #[inline]
 fn took(r: &crate::hazard::Reader, p: *mut u64) -> u8 {
@@ -329,43 +332,39 @@ fn took(r: &crate::hazard::Reader, p: *mut u64) -> u8 {
     TOOK
 }
 
-/// `lock`'s byte: bit 0 locked, bit 1 a thread is parked on it (parking_lot's `RawMutex`).
-fn lock_byte(lock: &RawMutex) -> &std::sync::atomic::AtomicU8 {
-    // SAFETY: a parking_lot `RawMutex` is one `AtomicU8` (asserted in the tests).
-    unsafe { std::sync::atomic::AtomicU8::from_ptr(lock as *const RawMutex as *mut u8) }
-}
-
-/// Rounds of backing off before parking: waiting between looks at the lock doubles from 64
-/// spins (about 0.5 µs) to 4096 (about 35 µs), about 0.7 ms in all.
+/// Rounds of backing off before blocking: waiting between tries doubles from 64 spins (about
+/// 0.5 µs) to 4096 (about 35 µs), about 0.7 ms in all.
 const BACKOFF_ROUNDS: u32 = 24;
 
-/// `lock` is busy: wait for it, backing off. A waiter that looks at the lock takes its cache
-/// line from the holder; one that rarely looks lets the holder lock it again where it is, so
-/// short callbacks taking turns run several in a row (Anderson's exponential backoff), more than
-/// `Mutex` (whose waiters look often) gets through. Each round yields, so a waiter never keeps
-/// the holder from a core; after the rounds, or once some thread sleeps on the lock, it parks
-/// as parking_lot does.
+/// `lock` is busy: wait for it (`shared`: as a reader), backing off. A waiter that tries the
+/// lock takes its cache line from the holder; one that rarely tries lets the holder lock it
+/// again where it is, so short callbacks taking turns run several in a row (Anderson's
+/// exponential backoff), more than `Mutex` (whose waiters look often) gets through. Each round
+/// yields, so a waiter never keeps the holder from a core; after the rounds it blocks as
+/// parking_lot does (a writer blocking there holds new readers back).
 #[cold]
 #[inline(never)]
-fn lock_slow(lock: &RawMutex) {
-    let b = lock_byte(lock);
+fn lock_slow(lock: &RawRwLock, shared: bool) {
     for i in 0..BACKOFF_ROUNDS {
         for _ in 0..1u32 << (i + 6).min(12) {
             std::hint::spin_loop();
         }
         std::thread::yield_now();
-        let v = b.load(Ordering::Relaxed);
-        if v & 2 != 0 {
-            break;
-        }
-        if v == 0 && grab(lock) {
+        let took = match shared {
+            true => lock.try_lock_shared(),
+            false => lock.try_lock_exclusive(),
+        };
+        if took {
             return;
         }
     }
-    lock.lock();
+    match shared {
+        true => lock.lock_shared(),
+        false => lock.lock_exclusive(),
+    }
 }
 
-/// A reader holding the mutex of a revoked `RwLock`: after `until`, bias it again (true).
+/// A reader holding `lock` of a revoked `RwLock`: after `until`, bias it again (true).
 fn rebias(w: &Words) -> bool {
     let now = now_ns();
     if now < w.until.load(Ordering::Relaxed) {
@@ -401,15 +400,13 @@ fn read_slow(r: &crate::hazard::Reader, p: *mut u64, w: &Words) -> u8 {
         s.store(std::ptr::null_mut(), Ordering::Release);
         r.leave();
     }
-    if !grab(&w.lock) {
-        lock_slow(&w.lock);
+    if !w.lock.try_lock_shared() {
+        lock_slow(&w.lock, true);
     }
     took(r, p)
 }
 
-/// The end of the innermost `velt_rt_rwlock_read`, which returned `how`. A read holding the
-/// mutex releases it last, as `Mutex` does: a thread that unlocks and locks again at once keeps
-/// it.
+/// The end of the innermost `velt_rt_rwlock_read`, which returned `how`.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_rwlock_read_unlock(p: *mut u64, how: u64) {
     if crate::task::local::module_used() {
@@ -444,17 +441,17 @@ unsafe fn read_unlock(p: *mut u64, how: u64) {
         }
         _ => {
             r.holds.set(0);
-            (*(p as *const Words)).lock.unlock();
+            (*(p as *const Words)).lock.unlock_shared();
         }
     }
 }
 
-/// The end of a read nested in another, and its mutex if it took one.
+/// The end of a read nested in another, and `lock` if it took it.
 #[inline(never)]
 unsafe fn read_unlock_nested_in(p: *mut u64, r: &crate::hazard::Reader, tag: u8) {
     read_unlock_nested(r, tag);
     if tag == TOOK {
-        (*(p as *const Words)).lock.unlock();
+        (*(p as *const Words)).lock.unlock_shared();
     }
 }
 
@@ -477,19 +474,11 @@ fn read_unlock_nested(r: &crate::hazard::Reader, how: u8) {
     }
 }
 
-/// `rw.write(f)`: take the lock alone, exactly as a `Mutex` is taken. A write inside a `read`
-/// callback of the same lock waits for itself, as with any lock (one that went ahead of the
-/// mutex stops the program, `revoke`).
+/// `rw.write(f)`: take the lock alone. Inside a `read` callback it stops the program, before
+/// taking anything: of the same lock it would wait for itself, and of another the callback
+/// could not tell the reader's uncounted objects from what it changes (read_mode.rs).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_rwlock_write(p: *mut u64, reader: u64) -> u64 {
-    let w = &*(p as *const Words);
-    if !grab(&w.lock) {
-        lock_slow(&w.lock);
-    }
-    if w.state.load(Ordering::Relaxed) == 0 {
-        revoke(p, w);
-    }
-    crate::task::local::mutex_locked();
     // This thread's state as for `velt_rt_rwlock_read`, returned for the unlock.
     let r = match reader {
         0 => this_reader(),
@@ -498,18 +487,33 @@ pub unsafe extern "C" fn velt_rt_rwlock_write(p: *mut u64, reader: u64) -> u64 {
             r as *const crate::hazard::Reader
         }
     };
-    crate::read_mode::enter_exclusive_in(&*r);
+    if (*r).read_depth.get() != 0 {
+        write_in_read(p, &*r);
+    }
+    let w = &*(p as *const Words);
+    if !w.lock.try_lock_exclusive() {
+        lock_slow(&w.lock, false);
+    }
+    if w.state.load(Ordering::Relaxed) == 0 {
+        revoke(p, w);
+    }
+    crate::task::local::mutex_locked();
     r as u64
+}
+
+#[cold]
+fn write_in_read(p: *mut u64, r: &crate::hazard::Reader) -> ! {
+    if r.reads(p) {
+        crate::panic::fatal("deadlock: `write` on an `RwLock` inside its own `read` callback");
+    }
+    crate::read_mode::refuse_in_read("write");
+    unreachable!("ICE: a write inside a read went on")
 }
 
 /// A writer holding `lock` of a biased `RwLock`: readers take `lock` from now on; wait for the
 /// ones in slots, and keep the bias revoked for a while.
 #[cold]
 fn revoke(p: *mut u64, w: &Words) {
-    let mine = crate::hazard::READER.with(|r| r.reads(p));
-    if mine {
-        crate::panic::fatal("deadlock: `write` on an `RwLock` inside its own `read` callback");
-    }
     w.state.store(MUTEX, Ordering::SeqCst);
     let t0 = now_ns();
     let mut spins = 0u32;
@@ -536,10 +540,9 @@ fn revoke(p: *mut u64, w: &Words) {
 /// Release the lock this thread took with `velt_rt_rwlock_write`.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_rwlock_write_unlock(p: *mut u64, reader: u64) {
-    // SAFETY: `velt_rt_rwlock_write` on this thread returned it.
-    crate::read_mode::leave_exclusive_in(&*((reader & !HOW) as *const crate::hazard::Reader));
+    let _ = reader;
     crate::task::local::mutex_unlocked();
-    (*(p as *const Words)).lock.unlock();
+    (*(p as *const Words)).lock.unlock_exclusive();
 }
 
 #[cfg(test)]
@@ -554,20 +557,20 @@ mod tests {
     fn rwlock_readers_share_and_writers_exclude() {
         let mut l = [1u64; RWLOCK_WORDS];
         let p = l.as_mut_ptr();
-        let held = |p: *mut u64| unsafe { !(*(p as *const RawMutex)).try_lock() };
+        let held = |p: *mut u64| unsafe { !(*(p as *const RawRwLock)).try_lock_exclusive() };
         unsafe {
             velt_rt_rwlock_init(p);
             let a = velt_rt_rwlock_read(p, 0);
             let b = velt_rt_rwlock_read(p, 0);
             assert_eq!((tag(a), tag(b)), (FAST, INSIDE));
-            // Biased: named in this thread's slot, the mutex free.
+            // Biased: named in this thread's slot, `lock` free.
             assert!(crate::hazard::named(p));
             assert!(!held(p));
-            (*(p as *const RawMutex)).unlock();
+            (*(p as *const RawRwLock)).unlock_exclusive();
             velt_rt_rwlock_read_unlock(p, b);
             velt_rt_rwlock_read_unlock(p, a);
             assert!(!crate::hazard::named(p));
-            // The first write revokes the bias: readers take the mutex.
+            // The first write revokes the bias: readers take the lock, shared.
             let wr = velt_rt_rwlock_write(p, 0);
             assert_eq!(l[16], MUTEX);
             velt_rt_rwlock_write_unlock(p, wr);
@@ -578,7 +581,7 @@ mod tests {
             velt_rt_rwlock_read_unlock(p, b);
             velt_rt_rwlock_read_unlock(p, a);
             assert!(!held(p));
-            (*(p as *const RawMutex)).unlock();
+            (*(p as *const RawRwLock)).unlock_exclusive();
             // After `until`, a reader biases it again.
             l[17] = 0;
             for _ in 0..LOOK_EVERY {
@@ -593,39 +596,49 @@ mod tests {
     }
 
     #[test]
-    fn grab_takes_a_parking_lot_mutex() {
-        assert_eq!(std::mem::size_of::<RawMutex>(), 1);
-        let m = RawMutex::INIT;
-        assert!(grab(&m) || grab(&m));
-        assert!(!m.try_lock());
-        assert!(m.is_locked());
-        unsafe { m.unlock() };
-        assert!(m.try_lock());
-        assert!(!grab(&m));
-        unsafe { m.unlock() };
+    fn revoked_readers_share_the_lock() {
+        // After a write, readers on two threads hold `lock` at once (a nested read of two locks
+        // in opposite orders can't wait on another reader), and a writer waits for both.
+        let mut l = [1u64; RWLOCK_WORDS];
+        let p = l.as_mut_ptr() as usize;
+        unsafe {
+            velt_rt_rwlock_init(p as *mut u64);
+            let wr = velt_rt_rwlock_write(p as *mut u64, 0);
+            velt_rt_rwlock_write_unlock(p as *mut u64, wr);
+            let a = velt_rt_rwlock_read(p as *mut u64, 0);
+            assert_eq!(tag(a), TOOK);
+            let other = std::thread::spawn(move || {
+                let b = velt_rt_rwlock_read(p as *mut u64, 0);
+                let t = tag(b);
+                velt_rt_rwlock_read_unlock(p as *mut u64, b);
+                t
+            });
+            assert_eq!(other.join().unwrap(), TOOK);
+            assert!(!(*(p as *const RawRwLock)).try_lock_exclusive());
+            velt_rt_rwlock_read_unlock(p as *mut u64, a);
+            assert!((*(p as *const RawRwLock)).try_lock_exclusive());
+            (*(p as *const RawRwLock)).unlock_exclusive();
+        }
     }
 
     #[test]
-    fn lock_slow_waits_and_sees_parked_threads() {
-        static M: RawMutex = RawMutex::INIT;
-        M.lock();
-        // A thread parked on the lock sets bit 1, which `lock_slow` takes as "queue behind it".
-        let parked = std::thread::spawn(|| {
-            M.lock();
-            unsafe { M.unlock() };
+    fn lock_slow_waits_as_reader_and_writer() {
+        static L: RawRwLock = RawRwLock::INIT;
+        L.lock_exclusive();
+        let reader = std::thread::spawn(|| {
+            lock_slow(&L, true);
+            unsafe { L.unlock_shared() };
         });
-        while lock_byte(&M).load(Ordering::Relaxed) & 2 == 0 {
-            std::thread::yield_now();
-        }
-        let waiter = std::thread::spawn(|| {
-            lock_slow(&M);
-            unsafe { M.unlock() };
+        let writer = std::thread::spawn(|| {
+            lock_slow(&L, false);
+            unsafe { L.unlock_exclusive() };
         });
-        unsafe { M.unlock() };
-        parked.join().unwrap();
-        waiter.join().unwrap();
-        assert!(M.try_lock());
-        unsafe { M.unlock() };
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        unsafe { L.unlock_exclusive() };
+        reader.join().unwrap();
+        writer.join().unwrap();
+        assert!(L.try_lock_exclusive());
+        unsafe { L.unlock_exclusive() };
     }
 
     #[test]

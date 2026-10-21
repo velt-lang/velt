@@ -436,6 +436,7 @@ unsafe fn start(f: *mut VeltFut, result_drop: Option<ResultDropFn>, rejecting: b
     if !node::is_lazy(f) {
         return;
     }
+    crate::read_mode::refuse_tasks_in_read();
     let tcx = CURRENT.with(Cell::get);
     if tcx.is_null() {
         return;

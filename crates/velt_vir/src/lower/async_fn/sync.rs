@@ -268,6 +268,11 @@ impl FnLower<'_, '_> {
         }
         let shared_read = read && rw && self.cx.shared_reads(vty);
         let (lock_fn, unlock_fn) = match (rw, shared_read) {
+            // Code that may run in a `read` callback, where a `with` stops the program (velt_rt
+            // `velt_rt_mutex_lock_checked`); code only run outside one locks as before.
+            (false, _) if self.mode != crate::lower::LkMode::Plain => {
+                (Rt::MutexLockChecked, Rt::MutexUnlock)
+            }
             (false, _) => (Rt::MutexLock, Rt::MutexUnlock),
             (true, true) => (Rt::RwLockRead, Rt::RwLockReadUnlock),
             (true, false) => (Rt::RwLockWrite, Rt::RwLockWriteUnlock),
@@ -346,7 +351,15 @@ impl FnLower<'_, '_> {
             ret: abi.ret,
         };
         let r = self.finish_call(callee, vec![env, arg], ret, None);
+        // A shared read's result leaves by read mode's rules whatever this code's mode: the
+        // store's objects are uncounted there, so one the result shares is copied, never moved
+        // out (it would look unique to the writers' counts).
+        let mode = self.mode;
+        if shared_read {
+            self.mode = crate::lower::LkMode::Read;
+        }
         let r = self.leave_lock(r, ret);
+        self.mode = mode;
         // A function value stored into the value while the lock was held may be called by
         // another thread next (glue/many.rs).
         self.many_check(value, vty);

@@ -12,9 +12,6 @@ use std::cell::Cell;
 use std::ptr::null_mut;
 use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 
-/// `Reader::read_depth`: a `write` / `with` section inside a read callback runs.
-pub(crate) const EXCLUSIVE: u32 = 1 << 31;
-
 /// Slots for read callbacks nested in each other (deeper ones only nest in a read of the same
 /// lock, shared.rs), then one more.
 pub(crate) const READ_SLOTS: usize = 16;
@@ -49,12 +46,9 @@ impl Drop for Owner {
 pub(crate) struct Reader {
     /// This thread's block (null until it first reads).
     block: Cell<*mut Block>,
-    /// The read callbacks this thread is in (`push`), with `EXCLUSIVE` while a `write` / `with`
-    /// section inside one runs: it is in read mode when nonzero without `EXCLUSIVE`
+    /// The read callbacks this thread is in (`push`): it is in read mode when nonzero
     /// (read_mode.rs).
     pub(crate) read_depth: Cell<u32>,
-    /// Read mode: the read depths saved by the `write` / `with` sections this thread is in.
-    pub(crate) saved: Cell<u64>,
     /// The `RwLock` whose mutex this thread's outermost read callback holds (shared.rs), or 0.
     pub(crate) holds: Cell<usize>,
     /// The `RwLock` this thread last found revoked (shared.rs): its outermost reads take the
@@ -69,7 +63,6 @@ thread_local! {
         Reader {
             block: Cell::new(null_mut()),
             read_depth: Cell::new(0),
-            saved: Cell::new(0),
             holds: Cell::new(0),
             revoked: Cell::new(0),
             took: Cell::new(0),
@@ -120,7 +113,7 @@ impl Reader {
     pub(crate) fn push(&self) -> (usize, Option<&'static AtomicPtr<u64>>) {
         let v = self.read_depth.get();
         self.read_depth.set(v + 1);
-        let d = (v & !EXCLUSIVE) as usize;
+        let d = v as usize;
         (d, (d < READ_SLOTS).then(|| self.slot(d)))
     }
 
@@ -153,7 +146,7 @@ impl Reader {
     /// Read callbacks this thread is in (that `push` counted).
     #[inline]
     pub(crate) fn depth(&self) -> usize {
-        (self.read_depth.get() & !EXCLUSIVE) as usize
+        self.read_depth.get() as usize
     }
 
     /// Leaving the innermost read callback (and read mode, when it is the last): its slot, if
@@ -162,7 +155,7 @@ impl Reader {
     pub(crate) fn pop(&self) -> Option<&'static AtomicPtr<u64>> {
         let v = self.read_depth.get() - 1;
         self.read_depth.set(v);
-        let d = (v & !EXCLUSIVE) as usize;
+        let d = v as usize;
         (d < READ_SLOTS).then(|| self.slot(d))
     }
 }
