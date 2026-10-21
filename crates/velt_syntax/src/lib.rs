@@ -17,6 +17,28 @@ mod work;
 
 use rustc_hash::FxHashMap;
 
+/// The name of the identifier a hole of an array literal parses as (`[a, , b]`): empty, so it
+/// prints as nothing and no source can name it. Only a destructuring assignment target takes
+/// one (`[a, , b] = xs`).
+pub const ARRAY_HOLE: &str = "";
+
+/// The name of the hidden loop variable of `for (target of xs)` (a target declared elsewhere),
+/// assigned to the target first thing in the body; no source can name it.
+pub const FOR_TARGET: &str = "#of";
+
+/// The key name of an object-pattern property whose computed key the parser reported (a key
+/// other than a name or a literal, `{ [f()]: v }`): its binding is checked as an error.
+pub const REPORTED_KEY: &str = "#reported-key";
+
+/// The variable a computed key `[NAME]` of an object pattern or literal names (the parser's
+/// `[NAME]` key, whose span is `NAME` alone), or `None` for any other key (a quoted `"[NAME]"`
+/// spans its quotes too; `[Symbol.iterator]` names a well-known symbol).
+pub fn computed_key_name(key: &ast::Ident) -> Option<&str> {
+    let inner = key.name.strip_prefix('[')?.strip_suffix(']')?;
+    let len = key.span.hi.checked_sub(key.span.lo)? as usize;
+    (!key.name.starts_with("[Symbol.") && len == inner.len()).then_some(inner)
+}
+
 use velt_common::{Diagnostics, FileId};
 
 /// Stack for the parser thread. The recursive-descent parser needs a few KB per nesting level

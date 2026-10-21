@@ -1,0 +1,11 @@
+// An `any` holding `undefined` converted to a `T | null` stops with a `TypeError`, as any other
+// value the type cannot hold: Node would keep the `undefined` (#1294). Its `null` is the `null`.
+function main(): void {
+  const n: any = null;
+  const u: any = undefined;
+  const a: number | null = n;
+  const b: number | undefined = u;
+  console.log(a, b);
+  const c: number | null = u;
+  console.log("not reached", c);
+}

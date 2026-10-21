@@ -4,7 +4,7 @@
 use super::FnCx;
 use velt_common::Span;
 
-use crate::hir::{self, ExprKind as H, LocalId, TyKind, UseMode};
+use crate::hir::{self, Callee, ExprKind as H, Intrinsic, LocalId, TyKind, UseMode};
 
 pub(crate) fn is_place(e: &hir::Expr) -> bool {
     matches!(
@@ -100,6 +100,12 @@ impl FnCx<'_, '_> {
     /// checks that its root may be mutated and marks the place `BorrowMut`.
     pub fn use_mutably(&mut self, e: &mut hir::Expr, what: &str) {
         if !is_place(e) {
+            if let H::Call { args, .. } = &e.kind {
+                if Self::is_frozen_view(e) {
+                    let (shared, span) = (args[0].clone(), e.span);
+                    self.frozen_write(&shared, span);
+                }
+            }
             return;
         }
         self.require_mutable(e, what);
@@ -109,6 +115,13 @@ impl FnCx<'_, '_> {
     /// Can the value behind place `e` be modified? Reports an error if not.
     pub fn require_mutable(&mut self, e: &hir::Expr, what: &str) -> bool {
         self.readonly_element_write(e);
+        if let H::Call { args, .. } = &root_expr(e).kind {
+            if Self::is_frozen_view(root_expr(e)) {
+                let shared = args[0].clone();
+                self.frozen_write(&shared, e.span);
+                return false;
+            }
+        }
         if let H::Global(d) = root_expr(e).kind {
             let (name, stored, mutable, module) = self
                 .cx
@@ -211,5 +224,38 @@ pub(crate) fn root_expr(e: &hir::Expr) -> &hir::Expr {
         | H::UnwrapSome(base, _)
         | H::UnwrapVariant { expr: base, .. } => root_expr(base),
         _ => e,
+    }
+}
+
+/// Is `e` a value read out of a `shared<T>` (`Intrinsic::SharedRead`), or a part of one?
+pub(crate) fn frozen_root(e: &hir::Expr) -> bool {
+    match &e.kind {
+        H::Call {
+            callee: Callee::Intrinsic(Intrinsic::SharedRead),
+            ..
+        } => true,
+        H::Field { base, .. }
+        | H::Index { base, .. }
+        | H::UnwrapSome(base, _)
+        | H::UnwrapVariant { expr: base, .. }
+        | H::Downcast(base) => frozen_root(base),
+        _ => false,
+    }
+}
+
+/// Is `e` a value read out of a `shared`, a part of one, or what a method of one returns (its
+/// elements may be the shared value's, as `slice()`'s are in JavaScript)?
+pub(crate) fn frozen_source(cx: &crate::ctx::Ctx, e: &hir::Expr) -> bool {
+    match &e.kind {
+        H::Call {
+            callee: Callee::Def(d, _),
+            args,
+        } if cx.fn_info(*d).this.is_some() => args.first().is_some_and(|a| frozen_source(cx, a)),
+        H::Call {
+            callee: Callee::Virtual { .. },
+            args,
+        } => args.first().is_some_and(|a| frozen_source(cx, a)),
+        H::Upcast(x) | H::Downcast(x) => frozen_source(cx, x),
+        _ => frozen_root(e),
     }
 }

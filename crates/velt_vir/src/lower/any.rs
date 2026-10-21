@@ -591,7 +591,10 @@ impl FnLower<'_, '_> {
             // payload's (`null` is `Some(None)`).
             let done = self.new_block();
             let tag = self.any_tag_of(desc.clone());
-            let nil = if matches!(self.cx.kind(inner), TyKind::Option(..)) {
+            // A two-state option takes only its own nothing too: the other one is checked as
+            // the payload, which rejects it with a `TypeError` (`undefined` is not a
+            // `number | null`), as Node keeps it.
+            let nil = if n != hir::Nothing::Both {
                 let own = if n.has_null() {
                     TAG_NULL
                 } else {

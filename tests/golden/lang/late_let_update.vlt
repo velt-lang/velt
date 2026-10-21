@@ -1,0 +1,22 @@
+// check: no leaks
+// `x++`, `++x`, `x--` as a value and compound assignments on a `let x!: T` (or `let x: T`)
+// that a closure assigns read it through the same check as a plain read. Expected output: Node's.
+function main(): void {
+  let n!: number;
+  let s!: string;
+  let k!: number;
+  const init = (): void => { n = 1; s = "a"; k = 5; };
+  init();
+  n++;
+  ++n;
+  s += "b";
+  k -= 2;
+  k *= 3;
+  const old = k--;
+  console.log(n, s, k, old);
+  let late!: string;
+  const set = (): void => { late = "x"; };
+  set();
+  late += "y";
+  console.log(late);
+}

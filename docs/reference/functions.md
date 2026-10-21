@@ -23,6 +23,11 @@ function scale(xs: f64[], k: f64 = 2.0): f64[] {
   so it is the function's own default whichever way it is called: through an interface whose
   method takes `x?: any`, through a base class whose method the class overrides, through a
   function value (`const g = d; g(undefined)`), or as a callback (`xs.map((v: any = 0) => …)`).
+  So does the default of a parameter whose type allows `undefined` (`x: number | undefined =
+  5`, or `status = 302` where an interface declares `status?: number`), which is a `number` in
+  the body. Any other default also applies to a passed `undefined`, tested where it is passed:
+  `f(undefined)`, and `f(v)` with a `v` that may be `undefined`
+  ([Null and undefined](types.md#null-and-undefined)).
 - An optional parameter `q?: T` is `q: T | undefined = undefined`, as in TypeScript. Left out,
   it is `undefined`: it prints `undefined`, `typeof q` is `"undefined"`, `q === undefined` is
   true and `q === null` false. A call may also pass `undefined` for it (or a value that may be
@@ -1123,7 +1128,8 @@ console.log(add.call(null, 1, 2), add.apply(null, pair)); // 3 7
   task returning it does; when it is stored in an
   object, array or map whose type reaches one of those places; and when it is passed directly to
   a function value or an interface or overridden method, which may keep it. A timer callback
-  (`setTimeout`) runs as a spawned task, so it is one too.
+  (`setTimeout`, `setInterval`) runs on the task that created the timer, so it stays (it
+  shares its captures, as in Node) unless it leaves another way.
 
 ```ts
 function apply(f: (x: i64) => i64, v: i64): i64 {

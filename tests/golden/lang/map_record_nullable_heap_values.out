@@ -1,0 +1,14 @@
+Map(3) { 'a' => [ 2, 3 ], 'b' => [ 4 ], 'c' => [ 5 ] } [ 2, 3 ] [ 4 ] undefined 3
+Map(2) { 'a' => null, 'b' => [ 4 ] }
+Map(1) { 'd' => [ 6 ] }
+Map(2) { 'x' => Foo { n: 2 }, 'y' => Foo { n: 3 } } Foo { n: 1 } Foo { n: 3 }
+Map(2) { 'a' => undefined, 'b' => [ 't' ] } [ undefined, [ 't' ] ]
+Map(3) { 'a' => [ 7 ], 'b' => null, 'c' => undefined }
+{ a: [ 2 ], b: [ 3 ], c: null } [ 'a', 'b', 'c' ]
+{ b: [ 3 ], c: null }
+{ a: Foo { n: 2 }, c: Foo { n: 3 } }
+{ a: [ 9 ], b: null } {"a":[9],"b":null}
+true true
+true true
+true true
+[ [ 1 ], null ]

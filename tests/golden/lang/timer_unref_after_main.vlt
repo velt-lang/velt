@@ -1,0 +1,7 @@
+// An unref()'d timer does not keep the process alive after a synchronous `main` returns, though its
+// callback is a promise of the task `main` ran on; a ref'd one does.
+function main(): void {
+  setTimeout(() => console.log("never"), 100000).unref();
+  setTimeout(() => console.log("ref'd"), 5);
+  console.log("main end");
+}

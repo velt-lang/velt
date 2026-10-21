@@ -172,8 +172,13 @@ impl<'a> Walk<'a, '_> {
                 }
             }
             E::Assign { target, .. } | E::Update { target, .. } => {
-                if let (true, E::Ident(id)) = (self.direct, &target.kind) {
-                    self.out.entry(id.name.as_str()).or_insert(e.span);
+                if self.direct {
+                    // Also every variable a destructuring target names (`[a, b] = [b, a]`).
+                    let mut names = vec![];
+                    target_names(target, &mut names);
+                    for id in names {
+                        self.out.entry(id.name.as_str()).or_insert(e.span);
+                    }
                 }
             }
             E::Arrow { params, body, .. } => {
@@ -281,3 +286,26 @@ fn bound_names<'a>(p: &'a ast::Pattern, out: &mut FxHashSet<&'a str>) {
 
 #[cfg(test)]
 mod tests;
+
+/// The variables assignment target `t` names, also in a destructuring target (`[a, { b }]`).
+pub(crate) fn target_names<'a>(t: &'a ast::Expr, out: &mut Vec<&'a ast::Ident>) {
+    use ast::ExprKind as E;
+    match &t.kind {
+        E::Ident(id) => out.push(id),
+        E::Paren(x) | E::Spread(x) => target_names(x, out),
+        E::Assign { target, .. } => target_names(target, out),
+        E::Array(items) => items.iter().for_each(|x| target_names(x, out)),
+        E::Object(props) => {
+            for p in props {
+                match p {
+                    ast::ObjectProp::KeyValue(_, x) | ast::ObjectProp::Spread(x) => {
+                        target_names(x, out)
+                    }
+                    ast::ObjectProp::Shorthand(id) => out.push(id),
+                    ast::ObjectProp::Method(_) => {}
+                }
+            }
+        }
+        _ => {}
+    }
+}

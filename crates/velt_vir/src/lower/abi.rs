@@ -101,6 +101,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Work::Oob(signed) => Self::build_oob(cx, *signed),
             Work::ArrayGrow => Self::build_array_grow(cx),
             Work::Main => Self::build_main(cx),
+            Work::SyncMainRoot => Self::build_sync_main_root(cx),
             Work::Poll(def, targs) => Self::build_poll(cx, *def, targs),
             Work::AsyncDrop(def, targs) => Self::build_async_drop(cx, *def, targs),
             Work::AsyncCloseStart(def, targs) => Self::build_close_start(cx, *def, targs),

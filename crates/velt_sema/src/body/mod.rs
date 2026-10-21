@@ -52,10 +52,13 @@ mod for_iter;
 mod for_map;
 mod gated;
 mod generators;
+mod index_keys;
 mod late_consts;
 pub(crate) mod literal_hosts;
 pub(crate) mod literal_locals;
 pub(crate) use generators::{weak_copy_error, GenCopy, LOCK_NOTE};
+mod chain_facts;
+mod literal_patterns;
 mod locals;
 mod loops;
 pub(crate) mod narrow;
@@ -90,6 +93,8 @@ use crate::resolve::TyEnv;
 
 pub(crate) use defaults::param_defaults;
 pub(crate) use driver::{check_bodies, ensure_body, ensure_global, field_defaults, printable};
+pub(crate) use expr::REPORTED;
+pub(crate) use pattern_defaults::UNDEFINED_OR;
 
 /// What the consumer of an expression's value does with it (only matters for non-Copy types).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -258,6 +263,9 @@ pub(crate) struct Frame {
     /// Locals declared with a read-only array type (`readonly T[]`, `ReadonlyArray<T>`), which
     /// the body may not write to (`readonly_arrays.rs`).
     pub readonly_arrays: rustc_hash::FxHashSet<LocalId>,
+    /// `const c = [2, "y"] as const` (literals of different types): its elements, which an
+    /// array pattern taking `c` apart reads as the literal (`literal_patterns`).
+    pub as_const_tuples: FxHashMap<LocalId, Vec<velt_syntax::ast::Expr>>,
     /// `const f = (…) => …`: the closure each such local holds, whose parameter defaults a
     /// call `f(…)` fills in.
     pub closure_consts: rustc_hash::FxHashMap<LocalId, DefId>,
@@ -317,6 +325,10 @@ pub(crate) struct Frame {
     /// `let x;` without a type or initializer, not assigned yet: where each is declared. The
     /// first assignment gives it its type (`untyped_let`).
     pub untyped_lets: FxHashMap<LocalId, Span>,
+    /// `let x: T;` without an initializer that a closure assigns (`closure_assigned`): held as
+    /// a `T | undefined` that starts `undefined`, and read through a check
+    /// ([`FnCx::late_let_read`]).
+    pub late_lets: rustc_hash::FxHashSet<LocalId>,
     /// `const { value, done } = r` of a union discriminated by the `bool` field `done`
     /// (`IteratorResult<T>`): per `done` binding, the other bindings of the pattern that are not
     /// null when `done` holds the given value (`property_pattern.rs`, issue #1114).
@@ -363,6 +375,7 @@ impl Frame {
             using_shares: vec![],
             await_using: Default::default(),
             readonly_arrays: Default::default(),
+            as_const_tuples: Default::default(),
             closure_consts: Default::default(),
             callable_writes: None,
             assign_targets: vec![],
@@ -387,6 +400,7 @@ impl Frame {
             const_lits: FxHashMap::default(),
             regex_consts: FxHashMap::default(),
             untyped_lets: FxHashMap::default(),
+            late_lets: Default::default(),
             destructured_discriminants: FxHashMap::default(),
             groups: Default::default(),
             late: Default::default(),

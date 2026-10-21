@@ -67,12 +67,10 @@ fn query_heads(item: &Item) -> Vec<String> {
 
 fn function(f: &FnDecl, out: &mut FxHashSet<String>) {
     let mut n = Names::default();
-    for p in &f.sig.params {
-        n.decls.insert(p.name.name.clone());
-        if let Some(d) = &p.default {
-            n.expr(d);
-        }
-    }
+    f.sig
+        .params
+        .iter()
+        .for_each(|p| n.param(&p.name, p.pattern.as_ref(), p.default.as_ref()));
     n.block(&f.body);
     n.finish(out);
 }
@@ -165,6 +163,17 @@ impl Names {
         }
     }
 
+    /// A parameter: its name, the names its pattern binds, the keys and defaults it reads.
+    fn param(&mut self, name: &Ident, pattern: Option<&Pattern>, default: Option<&Expr>) {
+        self.decls.insert(name.name.clone());
+        if let Some(q) = pattern {
+            self.pattern(q);
+        }
+        if let Some(d) = default {
+            self.expr(d);
+        }
+    }
+
     fn pattern(&mut self, p: &Pattern) {
         match &p.kind {
             PatternKind::Ident(id) => {
@@ -172,7 +181,13 @@ impl Names {
             }
             PatternKind::Wildcard => {}
             PatternKind::Object { fields, rest } => {
-                fields.iter().for_each(|(_, p)| self.pattern(p));
+                for (key, p) in fields {
+                    // `{ [k]: v }` reads `k`.
+                    if let Some(k) = crate::computed_key_name(key) {
+                        self.uses.insert(k.to_string());
+                    }
+                    self.pattern(p);
+                }
                 self.decls.extend(rest.iter().map(|r| r.name.clone()));
             }
             PatternKind::Array { elems, rest } => {
@@ -229,10 +244,9 @@ impl Names {
             }
             ExprKind::New { args, .. } => args.iter().for_each(|e| self.expr(e)),
             ExprKind::Arrow { params, body, .. } => {
-                for p in params {
-                    self.decls.insert(p.name.name.clone());
-                    p.default.iter().for_each(|d| self.expr(d));
-                }
+                params
+                    .iter()
+                    .for_each(|p| self.param(&p.name, p.pattern.as_ref(), p.default.as_ref()));
                 match body {
                     ArrowBody::Expr(e) => self.expr(e),
                     ArrowBody::Block(b) => self.block(b),
@@ -242,24 +256,30 @@ impl Names {
                 if !f.sig.name.name.is_empty() {
                     self.decls.insert(f.sig.name.name.clone());
                 }
-                for p in &f.sig.params {
-                    self.decls.insert(p.name.name.clone());
-                    p.default.iter().for_each(|d| self.expr(d));
-                }
+                f.sig
+                    .params
+                    .iter()
+                    .for_each(|p| self.param(&p.name, p.pattern.as_ref(), p.default.as_ref()));
                 self.block(&f.body);
             }
             ExprKind::Object(props) | ExprKind::StructLit { props, .. } => {
                 for p in props {
                     match p {
-                        ObjectProp::KeyValue(_, e) | ObjectProp::Spread(e) => self.expr(e),
+                        ObjectProp::KeyValue(key, e) => {
+                            // `{ [k]: v }` reads `k`, also as an assignment target.
+                            if let Some(k) = crate::computed_key_name(key) {
+                                self.uses.insert(k.to_string());
+                            }
+                            self.expr(e);
+                        }
+                        ObjectProp::Spread(e) => self.expr(e),
                         ObjectProp::Shorthand(id) => {
                             self.uses.insert(id.name.clone());
                         }
                         ObjectProp::Method(f) => {
-                            for p in &f.sig.params {
-                                self.decls.insert(p.name.name.clone());
-                                p.default.iter().for_each(|d| self.expr(d));
-                            }
+                            f.sig.params.iter().for_each(|p| {
+                                self.param(&p.name, p.pattern.as_ref(), p.default.as_ref())
+                            });
                             self.block(&f.body);
                         }
                     }

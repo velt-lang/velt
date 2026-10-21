@@ -1,0 +1,27 @@
+// check: no leaks
+// Numeric keys and `length` in object patterns over arrays and tuples read the element and the
+// length, as in JavaScript: declarations, defaults, nested patterns, `for...of`, parameters.
+// Expected output: Node's.
+const arr = ["x", "y", "z"];
+const { 0: first, 2: third, length } = arr;
+const t: [number, string] = [1, "a"];
+const { 0: t0, 1: t1 } = t;
+console.log(first, third, length, t0, t1);
+const { 1: second = "d", 5: missing = "none", length: n = 99 } = arr;
+console.log(second, missing, n);
+const nested: string[][] = [["a", "b"], ["c"]];
+const { 1: [inner], 0: { length: l0 } } = nested;
+console.log(inner, l0);
+const pairs: [string, number][] = [["k", 1], ["j", 2]];
+for (const { 0: k, 1: v } of pairs) console.log(k, v);
+function f({ 0: a, length }: number[]): number {
+  return a + length;
+}
+console.log(f([10, 20]));
+const objs = { 0: "zero", 1: 1 };
+const { 0: o0, 1: o1 } = objs;
+console.log(o0, o1);
+const { "1": q1, [0]: q0 } = arr;
+console.log(q0, q1);
+const [, , , , m = "hole"] = arr;
+console.log(m);

@@ -1,0 +1,11 @@
+// check: no leaks
+// An indexed access type of an optional field is `F | undefined`, as in TypeScript.
+type Options = { assets?: { css: string[] }; mode: string };
+
+function links(assets: Options["assets"]): string {
+  return assets === undefined ? "none" : assets.css.join(",");
+}
+
+const a: Options = { mode: "x" };
+const b: Options = { mode: "y", assets: { css: ["a.css", "b.css"] } };
+console.log(links(a.assets), links(b.assets), typeof a.assets);
