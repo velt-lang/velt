@@ -4,7 +4,7 @@
 
 use super::{Fail, PResult, Parser, Ternary};
 use crate::ast::*;
-use crate::lexer::{Kw, Tok};
+use crate::lexer::{Kw, Tok, TplPart};
 
 impl<'a> Parser<'a> {
     pub(super) fn parse_postfix(&mut self) -> PResult<Expr> {
@@ -25,22 +25,35 @@ impl<'a> Parser<'a> {
                     }
                 }
                 Tok::QuestionDot => self.parse_optional_chain(e)?,
-                Tok::LParen => ExprKind::Call {
-                    callee: Box::new(e),
-                    type_args: vec![],
-                    args: self.parse_args()?,
-                    optional: false,
-                },
-                Tok::LBracket if self.at_well_known_key() => ExprKind::Member {
-                    object: Box::new(e),
-                    prop: self.parse_symbol_key()?,
-                    optional: false,
-                },
-                Tok::LBracket => ExprKind::Index {
-                    index: Box::new(self.parse_index()?),
-                    object: Box::new(e),
-                    optional: false,
-                },
+                Tok::LParen => {
+                    self.warn_continuation();
+                    ExprKind::Call {
+                        callee: Box::new(e),
+                        type_args: vec![],
+                        args: self.parse_args()?,
+                        optional: false,
+                    }
+                }
+                Tok::LBracket if self.at_well_known_key() => {
+                    self.warn_continuation();
+                    ExprKind::Member {
+                        object: Box::new(e),
+                        prop: self.parse_symbol_key()?,
+                        optional: false,
+                    }
+                }
+                Tok::LBracket => {
+                    self.warn_continuation();
+                    ExprKind::Index {
+                        index: Box::new(self.parse_index()?),
+                        object: Box::new(e),
+                        optional: false,
+                    }
+                }
+                Tok::Template(_, TplPart::NoSub | TplPart::Head) => {
+                    self.reject_tagged_template();
+                    return Err(Fail);
+                }
                 Tok::Lt if matches!(e.kind, ExprKind::Ident(_) | ExprKind::Member { .. }) => {
                     match self.try_generic_call_args()? {
                         Some((type_args, args)) => ExprKind::Call {
@@ -52,7 +65,9 @@ impl<'a> Parser<'a> {
                         None => break,
                     }
                 }
-                Tok::PlusPlus | Tok::MinusMinus => ExprKind::Update {
+                // A restricted production: after a line break, `++` / `--` is the prefix
+                // operator of the next line's statement.
+                Tok::PlusPlus | Tok::MinusMinus if !self.line_break_before() => ExprKind::Update {
                     op: self.bump_update_op(),
                     prefix: false,
                     target: Box::new(e),
@@ -228,7 +243,7 @@ impl<'a> Parser<'a> {
     /// Can `t` be the first token of an expression? Every token `parse_unary_inner` and
     /// `parse_primary` accept (a contextual word such as `undefined`, `delete` or `super` is a
     /// `Tok::Ident`); keep the three in step.
-    fn can_start_expr(t: Tok) -> bool {
+    pub(super) fn can_start_expr(t: Tok) -> bool {
         match t {
             Tok::Ident
             | Tok::Int(_)
