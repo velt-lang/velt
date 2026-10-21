@@ -56,7 +56,9 @@ def main():
     if len(args) != 2:
         sys.exit(__doc__)
     base, head = load(args[0]), load(args[1])
-    print(f"base {len(base)} places, head {len(head)} places")
+    texts = lambda run: sum(len(ms) for ms in run.values())  # noqa: E731
+    print(f"base {len(base)} places ({texts(base)} with their messages)")
+    print(f"head {len(head)} places ({texts(head)} with their messages)")
     report("only in head", [p for p in head if p not in base], head, show)
     report("only in base", [p for p in base if p not in head], base, show)
     changed = [
