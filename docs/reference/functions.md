@@ -1123,7 +1123,8 @@ console.log(add.call(null, 1, 2), add.apply(null, pair)); // 3 7
   task returning it does; when it is stored in an
   object, array or map whose type reaches one of those places; and when it is passed directly to
   a function value or an interface or overridden method, which may keep it. A timer callback
-  (`setTimeout`) runs as a spawned task, so it is one too.
+  (`setTimeout`, `setInterval`) runs on the task that created the timer, so it stays (it
+  shares its captures, as in Node) unless it leaves another way.
 
 ```ts
 function apply(f: (x: i64) => i64, v: i64): i64 {

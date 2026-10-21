@@ -93,11 +93,15 @@ Promises behave like JavaScript's, at Rust's cost:
   in the order their timers were created, like `setTimeout` callbacks in Node. A timer that is
   already due when it is first waited for (`sleep(0)`, or a `sleep` awaited after its delay
   passed) also waits for its turn: the code after it never runs before the synchronous code
-  that started it, nor before timers due earlier. Timers of different tasks have no order
-  between them, since the tasks run in parallel.
+  that started it, nor before timers due earlier. `sleep`s of different tasks have no order
+  between them, since the tasks run in parallel; `setTimeout`, `setInterval` and `setImmediate`
+  callbacks do, whichever task created them: they run in Node's order, one list per delay
+  ([velt:timers](../std/timers.md)).
 - **A dropped promise is not cancelled**: a stored promise that is never awaited still runs to
   completion (its result is dropped), and the program waits for it before exiting, like Node
-  waits for pending work. A promise created outside async code (for example in a synchronous
+  waits for pending work. A synchronous `main` that starts promises, timers or microtasks runs
+  on a task like an `async main`, so they run as in Node: up to their first `await` when
+  created, and what they queued once `main` returns. A promise created outside async code (for example in a synchronous
   `main`) starts when it is awaited or spawned.
 - After `main` returns, the process also waits for *handles*, as in Node: a listening
   [server](../std/http.md) and a pending [timer](../std/timers.md) (`setTimeout`,
@@ -589,7 +593,12 @@ async function main() {
   code 1), like an unhandled rejection: a task spawned as a statement (`spawn(f());`, or
   `spawn(p);` of a stored promise), a spawned task whose handle was dropped without being
   awaited (when the task rejects, or when the handle is dropped after it did), and a stored
-  promise that rejects after it was dropped unawaited. A promise or handle handed to a
+  promise that rejects after it was dropped unawaited. As in Node, a stored promise that
+  rejects while its owner does not wait for it is reported too, once the callbacks queued
+  before have run (the microtask queue is drained), even though the owner still holds it:
+  `const p = f(); await sleep(10); await p;` ends the process at the rejection if `f` rejects
+  first. Awaiting it (or chaining `catch`, or handing it to a combinator) before then handles
+  it. A promise or handle handed to a
   combinator (`Promise.race`, `all`, `any`) is handled, and so is a `scope.spawn` child, whose
   error fails its `taskScope`.
 

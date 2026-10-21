@@ -1,0 +1,62 @@
+// Timer callbacks run in Node's order (lib/internal/timers.js): one list per delay, in the order
+// the timers were inserted; the lists run by expiry (the first timer's start plus the delay),
+// then by the order they were created. A timers pass reads the clock once and runs every timer
+// due by then, list by list. Each group below uses delays that are new and longer than the busy
+// waits before it, so a loaded machine pausing anywhere cannot change the order.
+function busy(ms: number) {
+  const s = Date.now();
+  while (Date.now() - s < ms) {}
+}
+
+function main() {
+  // `C` joins the 10 ms list of `A`, which comes before the 12 ms list of `B`.
+  setTimeout(() => console.log("A 10"), 10);
+  setTimeout(() => console.log("B 12"), 12);
+  busy(5);
+  setTimeout(() => console.log("C 10"), 10);
+  busy(5);
+
+  // `Y` joins the 40 ms list of `X`, before the 50 ms list of `Z`, though `Z` is due first.
+  setTimeout(() => console.log("X 40"), 40);
+  setTimeout(() => console.log("Z 50"), 50);
+  busy(30);
+  setTimeout(() => console.log("Y 40"), 40);
+  busy(5);
+
+  // A pass keeps the clock it read: `G`, created by `E`'s callback in the 60 ms list, is not due
+  // by then and waits for the next pass, after `F` (due already), though `E`'s callback runs on
+  // past `G`'s due time.
+  setTimeout(() => {
+    console.log("E 60");
+    setTimeout(() => {
+      console.log("G 60, created by E");
+      // An immediate runs once the timers pass is over, before the timers created after the
+      // pass began, however long ago they came due.
+      setTimeout(() => console.log("timeout 1, created by G"), 1);
+      busy(5);
+      setImmediate(() => console.log("immediate, created by G"));
+      interval();
+    }, 60);
+    busy(100);
+  }, 60);
+  setTimeout(() => console.log("D 60"), 60);
+  setTimeout(() => console.log("F 70"), 70);
+  busy(150);
+  console.log("main end");
+}
+
+// An interval's next run counts from just before its callback: due 100 ms after the run
+// started, before `T`, created 60 ms into the run with a 70 ms delay.
+function interval() {
+  let runs = 0;
+  const every = setInterval(() => {
+    runs++;
+    console.log("interval run", runs);
+    if (runs == 1) {
+      busy(60);
+      setTimeout(() => console.log("T 70, created by the interval"), 70);
+    } else {
+      clearInterval(every);
+    }
+  }, 100);
+}

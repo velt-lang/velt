@@ -1,0 +1,56 @@
+// check: no leaks
+// Timer callbacks run in Node's order (#1328): by due time (the clock in whole milliseconds when
+// the timer was created, plus its delay), timers due together in creation order, each callback
+// followed by the microtasks it queued before the next one starts. The timers are created in
+// the order they are due, except the group `outer` creates, whose delays are 100 ms apart: a
+// pause of a loaded machine between two `setTimeout` calls only makes the later timers later,
+// so the order follows from the delays and the creation order alone, never from how fast the
+// machine is.
+
+function main() {
+  // `setTimeout(f, 0)` is `setTimeout(f, 1)`: creation order.
+  setTimeout(() => console.log("delay 1"), 1);
+  setTimeout(() => console.log("delay 0"), 0);
+
+  // Equal delays: creation order.
+  for (const n of ["a", "b", "c", "d", "e"]) {
+    setTimeout(() => {
+      console.log("timeout", n);
+      queueMicrotask(() => console.log("microtask", n));
+    }, 50);
+  }
+
+  // A callback clears a timer due at the same time (created after it): it never runs.
+  let victim: Timer | null = null;
+  setTimeout(() => {
+    console.log("clearing");
+    if (victim != null) {
+      clearTimeout(victim);
+    }
+  }, 70);
+  victim = setTimeout(() => console.log("cleared timer ran"), 70);
+
+  // An interval runs in turn with a timeout due at the same time, which clears it.
+  const every = setInterval(() => console.log("interval"), 100);
+  setTimeout(() => {
+    console.log("stopping interval");
+    clearInterval(every);
+  }, 100);
+
+  // Timers created by a callback: a microtask first, then the immediate, then the timeout.
+  setTimeout(() => {
+    console.log("outer");
+    setTimeout(() => console.log("nested timeout"), 0);
+    setImmediate(() => console.log("nested immediate"));
+    queueMicrotask(() => console.log("nested microtask"));
+
+    // Shorter delays first, though created later (named by when they are due after `main`
+    // started; created here, so a loop that reaches `outer` late cannot run them before its
+    // immediate).
+    setTimeout(() => console.log("delay 500"), 380);
+    setTimeout(() => console.log("delay 400"), 280);
+    setTimeout(() => console.log("delay 300"), 180);
+  }, 120);
+
+  console.log("main end");
+}

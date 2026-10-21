@@ -39,7 +39,7 @@ mod transfer;
 mod waker;
 
 pub(super) use self::transfer::set_transfer;
-pub(super) use self::waker::{local_awaiter, queue};
+pub(super) use self::waker::{local_awaiter, mark_timer_starting, queue};
 
 pub(super) use self::owner::{deliver_unadopted, is_done, poll_unadopted};
 use self::owner::{started_drop, started_poll};
@@ -53,6 +53,8 @@ use crate::task::{DropFn, PollFn, VeltFut, READY};
 pub(super) const DONE: u32 = 1;
 /// The owner dropped its handle: the set disposes of the result.
 pub(super) const DETACHED: u32 = 2;
+/// The promise can reject (`velt_rt_fut_start_rejecting`): its result is a `Result`, tag first.
+const REJECTABLE: u32 = 4;
 /// The driving task was dropped before the state finished (the state was cancelled).
 pub(super) const CANCELLED: u32 = 8;
 /// In the set's ready queue.
@@ -63,6 +65,10 @@ pub(super) const STARTED: u32 = 32;
 const SET_REF: u32 = 64;
 /// Its owner drives it (see [`started_poll`]): its leaves hold the owner's wakers.
 const ADOPTED: u32 = 128;
+/// A combinator handles its outcome ([`mark_handled`]).
+const HANDLED: u32 = 256;
+/// A timer's promise ([`mark_timer`]): it does not keep its task's orphan alive.
+const TIMER: u32 = 512;
 
 /// `owner` bit of a lazy node: its state finished (it is polled by its owner only).
 const OWNER_DONE: u32 = 1;
@@ -290,8 +296,57 @@ pub(super) unsafe fn count_set(f: *mut VeltFut) {
 /// meanwhile may still be on its way into the set's queue, so then the set is kept alive.
 pub(super) unsafe fn finish_first(f: *mut VeltFut) {
     run_transfer(f);
-    if head(f).flags.fetch_or(DONE, Ordering::AcqRel) & QUEUED != 0 {
+    let prev = head(f).flags.fetch_or(DONE, Ordering::AcqRel);
+    if prev & QUEUED != 0 {
         count_set(f);
+    }
+    watch_rejection(f, prev);
+}
+
+/// Started node `f` can reject: an unclaimed rejection is reported at the task's next microtask
+/// checkpoint (unhandled.rs).
+pub(super) unsafe fn mark_rejectable(f: *mut VeltFut) {
+    head(f).flags.fetch_or(REJECTABLE, Ordering::Relaxed);
+}
+
+/// Started node `f` runs a timer's callback: the timer keeps the process alive while it is
+/// ref'd (std/prelude/timers.vlt), the promise itself does not (an orphan set of timers only
+/// does not hold a keep-alive reference).
+pub(super) unsafe fn mark_timer(f: *mut VeltFut) {
+    head(f).flags.fetch_or(TIMER, Ordering::Relaxed);
+}
+
+/// Was `f` marked with [`mark_timer`]?
+pub(super) unsafe fn is_timer(f: *mut VeltFut) -> bool {
+    head(f).flags.load(Ordering::Relaxed) & TIMER != 0
+}
+
+/// Node `f` finished with flags `prev` (before `DONE`) and nobody waits for it: if it rejected
+/// and nothing handles it, it is reported at the next checkpoint unless its owner awaits it
+/// before then, as Node reports a rejection without a handler (unhandled.rs).
+unsafe fn watch_rejection(f: *mut VeltFut, prev: u32) {
+    if prev & (REJECTABLE | DETACHED | HANDLED) == REJECTABLE && *state(f) != 0 {
+        super::unhandled::watch(f);
+    }
+}
+
+/// Is `f`'s rejection (see [`watch_rejection`]) still unclaimed: its owner neither awaited it
+/// nor gave it up or handed it to a combinator or another task?
+pub(super) unsafe fn rejection_unclaimed(f: *mut VeltFut) -> bool {
+    let h = head(f);
+    let fl = h.flags.load(Ordering::Acquire);
+    if fl & (DETACHED | HANDLED | ADOPTED) != 0
+        || h.owner.get() & OWNER_DELIVERED != 0
+        || !h.transfer.load(Ordering::Acquire).is_null()
+    {
+        return false;
+    }
+    match h.awaiter.take() {
+        Some(w) => {
+            h.awaiter.register(&w);
+            false
+        }
+        None => true,
     }
 }
 
@@ -305,7 +360,11 @@ pub(super) unsafe fn finish(f: *mut VeltFut) -> Option<Waker> {
         drop_result(f);
         return None;
     }
-    h.awaiter.take()
+    let w = h.awaiter.take();
+    if w.is_none() {
+        watch_rejection(f, prev);
+    }
+    w
 }
 
 /// The driving task went away before `f` finished: cancel the state.
@@ -350,9 +409,10 @@ pub(super) unsafe fn mark_handled(f: *mut VeltFut, quiet_drop: Option<ResultDrop
     if !is_started(f) {
         return;
     }
-    head(f)
-        .result_drop
+    let h = head(f);
+    h.result_drop
         .store(drop_fn_ptr(quiet_drop), Ordering::Release);
+    h.flags.fetch_or(HANDLED, Ordering::Relaxed);
 }
 
 /// Is the result of node `f` in its slot, for its owner to look at without claiming it

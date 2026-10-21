@@ -1,0 +1,31 @@
+// Immediates run in Node's check phase: after the timers due when the loop turns (also those
+// due when `main` returns, and whatever `main` cleared), and an immediate's callback ends the
+// phase, so the next pass reads the clock again: a timeout due by then runs before an immediate
+// created next to it.
+function busy(ms: number) {
+  const s = Date.now();
+  while (Date.now() - s < ms) {}
+}
+
+function main() {
+  setTimeout(() => console.log("t1 10"), 10);
+  setTimeout(() => {
+    console.log("t2 10");
+    // Created in the pass that runs `t2`: due after that pass's check phase however late the
+    // loop gets there.
+    setTimeout(() => {
+      console.log("t3 100");
+      setImmediate(() => {
+        console.log("t3 immediate");
+        setTimeout(() => console.log("timeout from immediate"), 1);
+        setImmediate(() => console.log("nested immediate"));
+        busy(10);
+      });
+    }, 100);
+  }, 10);
+  setImmediate(() => console.log("main immediate"));
+  const c = setTimeout(() => console.log("never"), 500);
+  clearTimeout(c);
+  busy(30);
+  console.log("main end");
+}

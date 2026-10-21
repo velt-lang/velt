@@ -151,6 +151,14 @@ impl<'h> Cx<'h> {
         self.func(Work::Fn(def, targs))
     }
 
+    /// Whether the code built so far starts promises or tasks (a synchronous `main` then runs as a
+    /// task, entry.rs).
+    pub(super) fn reaches_tasks(&self) -> bool {
+        self.extern_map
+            .keys()
+            .any(|s| s.starts_with("velt_rt_fut_start") || s.starts_with("velt_rt_spawn"))
+    }
+
     pub(super) fn rt(&mut self, r: Rt) -> ExternId {
         let (sym, params, ret, noreturn) = r.sig();
         self.extern_sym(sym, params, ret, noreturn)
