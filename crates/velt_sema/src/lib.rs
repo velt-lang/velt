@@ -44,6 +44,7 @@ mod defs;
 mod discriminants;
 mod dispatch;
 pub mod effects;
+mod enum_keys;
 mod finalize;
 mod flow;
 mod fresh_returns;

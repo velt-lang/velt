@@ -293,8 +293,12 @@ after a modifier (`readonly 7 = 4`), and so in a destructuring pattern (`const {
 reads it as `"-0"`). Such a name is for fields: a method or accessor named by a literal
 (`["a-b"]() {}`, `get "c d"()`, `get 1()`, `1e3() {}`) is not supported yet. A symbol made in
 place (`[Symbol("x")]: v`, also in an object literal) is an error that asks for a module
-constant. An enum member as a key (`[Flags.SKIP]?: boolean`) parses in a declaration but is not
-supported yet (#923). In a destructuring pattern, a computed key is a string or number literal
+constant. An enum member names the member its value spells, as in TypeScript:
+`[ReactiveFlags.SKIP]?: boolean` with `SKIP = "__v_skip"` is the member `__v_skip`, and a
+numeric enum's member is its number (`[Slot.First]` is `"0"`). It works in declarations, in
+object literals (`{ [ReactiveFlags.SKIP]: true }`), in `o[ReactiveFlags.SKIP]` (also as an
+assignment target) and in `ReactiveFlags.SKIP in o`, also with an imported enum. In a
+destructuring pattern, a computed key is a string or number literal
 or a name (`{ [KEY]: v } = o`); a path or another expression (`{ [t.tag]: v } = o`) is an error,
 and the property is read with an index instead (`const v = o[t.tag]`).
 A class or interface may declare a method, getter or setter with such a key (`[KEY]() {}`,

@@ -60,10 +60,62 @@ impl FnCx<'_, '_> {
                 {
                     Some(format!("[Symbol.{}]", prop.name))
                 }
-                _ => None,
+                _ => self.enum_key_of(e),
             },
             _ => None,
         }
+    }
+
+    /// The member name an enum member names as a key (`Flags.SKIP` for
+    /// `SKIP = "__v_skip"`: `__v_skip`; `crate::enum_keys`), if `Flags` is an enum not hidden by
+    /// a local.
+    pub(crate) fn enum_key_of(&mut self, e: &ast::Expr) -> Option<String> {
+        let ast::ExprKind::Member {
+            object,
+            prop,
+            optional: false,
+        } = &e.kind
+        else {
+            return None;
+        };
+        let ast::ExprKind::Ident(x) = &object.kind else {
+            return None;
+        };
+        if self.local_hides(&x.name) {
+            return None;
+        }
+        let path = format!("{}.{}", x.name, prop.name);
+        let key = self.cx.enum_key(self.module, &path)?;
+        self.cx.note_spelling(&key, &format!("[{path}]"));
+        Some(key)
+    }
+
+    /// `props` with each `[E.M]: v` whose key is an enum member (which the parser writes as a
+    /// key known only at run time, `...__computed_key(E.M, v)`) as the property its value
+    /// names; `None` if there is none.
+    pub(crate) fn enum_computed_keys(
+        &mut self,
+        props: &[ast::ObjectProp],
+    ) -> Option<Vec<ast::ObjectProp>> {
+        let mut out = Vec::with_capacity(props.len());
+        let mut any = false;
+        for p in props {
+            let entry = match p {
+                ast::ObjectProp::Spread(e) => super::record_literal::computed_entry(e),
+                _ => None,
+            };
+            match entry.and_then(|(k, v)| Some((self.enum_key_of(k)?, k.span, v))) {
+                Some((name, span, v)) => {
+                    any = true;
+                    out.push(ast::ObjectProp::KeyValue(
+                        ast::Ident { name, span },
+                        v.clone(),
+                    ));
+                }
+                None => out.push(p.clone()),
+            }
+        }
+        any.then_some(out)
     }
 
     /// Key `k` of an object literal as a member name: a computed key `[KEY]` becomes the name
