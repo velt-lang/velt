@@ -6,17 +6,26 @@
 //! param, which a counted array (one the program shares between variables) never is: a byte
 //! loop in a server then loads the header once per byte, and a vector loop once per vector.
 //!
-//! Two tags, under one root, and every other access untagged (untagged accesses may alias
+//! Three tags, under one root, and every other access untagged (untagged accesses may alias
 //! anything, so they stay correct whatever they touch):
 //! - **header**: a field of an array header, wherever the header lives (behind an array
 //!   value, inline in an object or async frame, in a local);
 //! - **element**: a scalar element read or written through a pointer computed from a header's
 //!   data field ([`element_pointers`]), and the vector loads and stores of the SIMD helpers.
 //!   One tag for every element type: a typed array reads the bytes of a `u8[]` as other types.
+//! - **object field**: a scalar field of a class object (`velt_vir::OBJECT_AGG_SUFFIX`). One tag
+//!   for every class: an object is read through its own layout and its base classes' (prefixes
+//!   of it). A typed array's element access reads its buffer from such a field, so this keeps
+//!   the field in a register across the element stores too.
 //!
-//! The two never touch the same memory: element memory is an array's data buffer of scalars,
+//! No two of them touch the same memory: element memory is an array's data buffer of scalars,
 //! and no header lives in a buffer of scalars (an array of arrays holds pointers to headers, an
-//! array of aggregates is read through aggregate places, which get no element tag).
+//! array of aggregates is read through aggregate places, which get no element tag). A class
+//! object is a heap object (or a local `heap_sroa` made of one), never inside a data buffer; a
+//! header stored inline in an object is reached by projecting its own fields, which get the
+//! header tag, and an object layout has no overlapping fields (async frames and enum views,
+//! which do, are not object layouts and stay untagged). The reference count before an object
+//! is read through an offset pointer and stays untagged.
 
 use velt_vir::vir::{self, AggId, Operand, Place, Proj, Rvalue, Stmt, Terminator, Ty};
 
@@ -25,6 +34,7 @@ use velt_vir::vir::{self, AggId, Operand, Place, Proj, Rvalue, Stmt, Terminator,
 pub(crate) enum Access {
     Header,
     Element,
+    Field,
 }
 
 impl Access {
@@ -40,8 +50,21 @@ impl Access {
                 ", !tbaa !{!{!\"velt array element\", !{!\"velt\"}, i64 0}, \
                  !{!\"velt array element\", !{!\"velt\"}, i64 0}, i64 0}"
             }
+            Access::Field => {
+                ", !tbaa !{!{!\"velt object field\", !{!\"velt\"}, i64 0}, \
+                 !{!\"velt object field\", !{!\"velt\"}, i64 0}, i64 0}"
+            }
         }
     }
+}
+
+/// Per aggregate of the program: whether it is a class object's.
+pub(crate) fn object_aggs(program: &vir::Program) -> Vec<bool> {
+    program
+        .aggs
+        .iter()
+        .map(|a| a.name.ends_with(velt_vir::OBJECT_AGG_SUFFIX))
+        .collect()
 }
 
 /// The program's array header aggregate, if it has arrays.

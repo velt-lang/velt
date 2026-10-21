@@ -77,7 +77,9 @@ impl FnLower<'_, '_> {
             }
         }
         let mut argv = pre;
-        argv.extend(self.lower_args(args, &modes, true));
+        // A quiet callee (quiet.rs) cannot reach what a borrow goes through: no stabilizing.
+        let user_code = !self.cx.quiet(def);
+        argv.extend(self.lower_args(args, &modes, user_code));
         let ret = self.cx.subst(ret, &targs);
         let throws = throws.map(|e| self.cx.subst(e, &targs));
         let throws = self.cx.error_ty(throws);

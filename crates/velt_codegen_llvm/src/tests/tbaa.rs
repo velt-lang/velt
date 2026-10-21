@@ -132,3 +132,46 @@ fn programs_without_arrays_get_no_tags() {
     let ir = emit_ir(&pb.finish(), "aarch64-unknown-linux-gnu").expect("emit_ir");
     assert!(!ir.contains("!tbaa"), "{ir}");
 }
+
+#[test]
+fn class_object_fields_are_tagged_and_other_aggregates_are_not() {
+    let mut pb = ProgramBuilder::new();
+    let object = pb.agg(
+        &format!("Box{}", velt_vir::OBJECT_AGG_SUFFIX),
+        16,
+        8,
+        &[(Ptr, 0), (U64, 8)],
+    );
+    let plain = pb.agg("Point", 16, 8, &[(U64, 0), (U64, 8)]);
+    let mut fb = FuncBuilder::internal("f", &[Ptr, Ptr], U64);
+    let (o, p) = (fb.param(0), fb.param(1));
+    let b = fb.block();
+    let (x, y) = (fb.local(U64), fb.local(U64));
+    let field = |l, agg, n| Place {
+        local: l,
+        proj: vec![Proj::Deref(Agg(agg)), Proj::Field(n)],
+    };
+    fb.assign(b, x, Rvalue::Use(copy_place(field(o, object, 1))));
+    fb.assign(b, y, Rvalue::Use(copy_place(field(p, plain, 1))));
+    fb.ret(b, copy_local(y));
+    pb.add(fb.finish());
+    let mut main = FuncBuilder::export("velt_main", &[], I32);
+    let b = main.block();
+    main.ret(b, int(0, I32));
+    pb.add(main.finish());
+    let ir = emit_ir(&pb.finish(), "aarch64-unknown-linux-gnu").expect("emit_ir");
+    let loads: Vec<&str> = ir.lines().filter(|l| l.contains("load i64")).collect();
+    assert_eq!(
+        loads
+            .iter()
+            .filter(|l| l.contains("!\"velt object field\""))
+            .count(),
+        1,
+        "{loads:?}"
+    );
+    assert_eq!(
+        loads.iter().filter(|l| l.contains("!tbaa")).count(),
+        1,
+        "{loads:?}"
+    );
+}

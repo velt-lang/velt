@@ -78,6 +78,7 @@ mod proxy_call;
 mod proxy_method;
 mod proxy_typed;
 mod proxy_write;
+mod quiet;
 mod rc;
 mod receiver;
 mod rt;
@@ -337,6 +338,8 @@ struct Cx<'h> {
     debug: Option<debug_vars::DebugTypes>,
     /// Memoized `tracks_caller` answers.
     tracked: FxHashMap<DefId, bool>,
+    /// Memoized `quiet` answers (quiet.rs).
+    quiet: FxHashMap<DefId, bool>,
     /// Interned static `VeltStr` objects (`static_str_object`).
     str_objects: FxHashMap<String, StaticId>,
     /// The records of the compiler's symbols (`Intrinsic::SymbolStatic`, symbols.rs).

@@ -90,6 +90,8 @@ struct Emitter<'a> {
     simd: crate::simd::Arch,
     /// The program's array header aggregate (tbaa.rs).
     array: Option<vir::AggId>,
+    /// Per aggregate: a class object's (tbaa.rs).
+    objects: Vec<bool>,
     /// Per local: it only ever points into an array's data buffer (`tbaa::element_pointers`).
     element_pointers: Vec<bool>,
     /// The program uses SIMD (it declares a `velt_simd_*` extern): on WebAssembly every
@@ -127,6 +129,7 @@ pub(crate) fn emit_function(
         rounds_by_conversion: target.rounds_by_conversion(),
         simd: crate::simd::Arch::of(target),
         array: crate::tbaa::array_agg(program),
+        objects: crate::tbaa::object_aggs(program),
         element_pointers: crate::tbaa::element_pointers(
             program,
             function,

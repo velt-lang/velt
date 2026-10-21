@@ -55,7 +55,13 @@ impl Emitter<'_> {
                     base_align,
                     ty: field_ty,
                     root,
-                    tbaa: (Some(id) == self.array).then_some(Access::Header),
+                    tbaa: if Some(id) == self.array {
+                        Some(Access::Header)
+                    } else if self.objects.get(id.0 as usize) == Some(&true) {
+                        Some(Access::Field)
+                    } else {
+                        None
+                    },
                 }
             }
             (Proj::Deref(pointee), l) if l.ty() == Ty::Ptr => {

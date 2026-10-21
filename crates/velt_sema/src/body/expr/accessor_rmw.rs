@@ -273,7 +273,7 @@ impl FnCx<'_, '_> {
         later: Option<&ast::Expr>,
         stmts: &mut Vec<hir::Stmt>,
     ) -> hir::Expr {
-        let stable = is_this(object) || later.is_none_or(is_pure_value);
+        let stable = is_this(object) || later.is_none_or(is_pure_value) || self.const_local(&obj);
         if stable && side_effect_free(object) && is_field_path(&obj) {
             return obj;
         }
@@ -281,6 +281,18 @@ impl FnCx<'_, '_> {
         let (ty, span) = (obj.ty, obj.span);
         let l = self.bind_temp(RECEIVER, obj, stmts);
         self.mk(H::Local(l, UseMode::Borrow), ty, span)
+    }
+
+    /// Is `obj` a `const` of this function? Nothing evaluated later can make it name another
+    /// object, so it needs no temporary (one would count a reference per statement).
+    fn const_local(&self, obj: &hir::Expr) -> bool {
+        match obj.kind {
+            H::Local(l, _) => matches!(
+                self.f.kinds.get(l.0 as usize),
+                Some(LocalKind::Const | LocalKind::Using)
+            ),
+            _ => false,
+        }
     }
 
     /// `if` condition under which `old op= v` assigns: `old == null` for `??=`, `!old` for
