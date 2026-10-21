@@ -122,6 +122,7 @@ pub(crate) mod tasks;
 mod this_param;
 mod this_type;
 mod three_state;
+mod throws_mismatch;
 mod truthiness;
 mod type_tests;
 mod union_coerce;

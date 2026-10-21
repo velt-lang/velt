@@ -33,6 +33,8 @@ pub(super) fn entries(module: &Module) -> Vec<Top<'_>> {
             ItemKind::Var(v)
                 if matches!(&v.pattern.kind, PatternKind::Ident(n)
                     if n.name == velt_syntax::ast::IMPORT_META) => {}
+            // And the import of its class.
+            ItemKind::Import(i) if velt_syntax::is_synthesized_import(i) => {}
             _ => out.push(Top::Item(item)),
         }
     }

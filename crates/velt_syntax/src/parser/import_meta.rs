@@ -58,62 +58,72 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// The module constant `import.meta` stands for (first mentioned at `span`):
-    /// `const import.meta: { readonly url: string; … } = { url: "", filename: "", dirname: "" };`.
+    /// The module constant `import.meta` stands for (first mentioned at `span`): `const
+    /// import.meta: __ImportMeta = new __ImportMeta("", "", false, "");` (see [`IMPORT_META`]).
     pub(super) fn import_meta_item(&mut self, span: Span) -> Item {
-        let props = IMPORT_META_FIELDS
-            .iter()
-            .map(|f| {
-                let value = self.mk_expr(ExprKind::Lit(Lit::Str(String::new())), span);
-                let key = Ident {
-                    name: (*f).into(),
-                    span,
-                };
-                ObjectProp::KeyValue(key, value)
-            })
-            .collect();
-        let init = self.mk_expr(ExprKind::Object(props), span);
-        // Its fields are read-only, also in a copy (`const m = import.meta; m.url = "x"` would
-        // otherwise write the copy, not `import.meta`).
-        let fields = IMPORT_META_FIELDS
-            .iter()
-            .map(|f| ObjectTypeField {
-                name: Ident {
-                    name: (*f).into(),
-                    span,
-                },
-                ty: TypeExpr {
-                    kind: TypeExprKind::Named {
-                        path: vec![Ident {
-                            name: "string".into(),
-                            span,
-                        }],
-                        args: vec![],
-                    },
-                    span,
-                },
-                optional: false,
-                readonly: true,
-                span,
-            })
-            .collect();
-        let ty = TypeExpr {
-            kind: TypeExprKind::Object(fields),
+        let ident = |name: &str| Ident {
+            name: name.into(),
             span,
         };
-        let name = Ident {
-            name: IMPORT_META.into(),
+        let class = TypeExpr {
+            kind: TypeExprKind::Named {
+                path: vec![ident(IMPORT_META_CLASS)],
+                args: vec![],
+            },
             span,
         };
-        let pattern = self.mk_pat(PatternKind::Ident(name), span);
+        let string = |p: &mut Self| p.mk_expr(ExprKind::Lit(Lit::Str(String::new())), span);
+        let args = vec![
+            string(self),
+            string(self),
+            self.mk_expr(ExprKind::Lit(Lit::Bool(false)), span),
+            string(self),
+        ];
+        let init = self.mk_expr(
+            ExprKind::New {
+                class: class.clone(),
+                args,
+            },
+            span,
+        );
+        let pattern = self.mk_pat(PatternKind::Ident(ident(IMPORT_META)), span);
         Item {
             kind: ItemKind::Var(VarDecl {
                 kind: VarKind::Const,
                 pattern,
-                ty: Some(ty),
+                ty: Some(class),
                 init: Some(init),
                 span,
             }),
+            exported: false,
+            span,
+        }
+    }
+
+    /// `import { ImportMeta as __ImportMeta } from "velt:import_meta"`, the class of
+    /// `import.meta`. Its span is empty, at the start of the file: it is not in the source
+    /// (`crate::is_synthesized_import`).
+    pub(super) fn import_meta_import(&self) -> Item {
+        let span = Span::new(self.file, 0, 0);
+        let import = Import {
+            names: vec![ImportName {
+                name: Ident {
+                    name: "ImportMeta".into(),
+                    span,
+                },
+                alias: Some(Ident {
+                    name: IMPORT_META_CLASS.into(),
+                    span,
+                }),
+                type_only: false,
+            }],
+            from: IMPORT_META_MODULE.into(),
+            from_span: span,
+            namespace: None,
+            all: false,
+        };
+        Item {
+            kind: ItemKind::Import(import),
             exported: false,
             span,
         }

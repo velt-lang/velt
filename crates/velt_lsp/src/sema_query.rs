@@ -28,6 +28,8 @@ pub fn scope_items(analysis: &Analysis, offset: u32) -> Vec<CompletionItem> {
     };
     ide.scope_at(analysis.file(), offset)
         .into_iter()
+        // Not the class of `import.meta`, which the parser imports under a name of its own.
+        .filter(|(name, _)| name != velt_syntax::ast::IMPORT_META_CLASS)
         .map(|(name, d)| def_item(analysis, &name, &d))
         .collect()
 }

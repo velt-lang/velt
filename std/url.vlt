@@ -5,7 +5,9 @@
 // `\` as a path separator and dot-segment removal; other schemes keep opaque hosts and paths.
 // Components are percent-encoded with the spec's encode sets. Known gaps: no IDNA/punycode
 // (a non-ASCII host is invalid), IPv6 literals are validated loosely and not compressed
-// (`[0:0::1]` stays as written), and `file:` URLs have no Windows drive-letter quirks.
+// (`[0:0::1]` stays as written). `file:` URLs follow the spec's Windows drive-letter rules:
+// `/x` keeps the base's drive letter, `..` never removes it, a first segment `C|` is `C:`, and a
+// relative path or a host that starts with a drive letter switches to it.
 //
 // Mutation: `searchParams` returns a copy; to change the query, edit the copy and assign it
 // back (`const p = u.searchParams; p.set("a", "1"); u.searchParams = p;`). Setters follow JS:
@@ -208,7 +210,8 @@ export class URL {
 
   set pathname(v: string) {
     if (!this.rec.opaque) {
-      this.rec.path = parsePath(removeTabNewline(v), [], isSpecial(this.rec.scheme));
+      const file = this.rec.scheme == "file";
+      this.rec.path = parsePath(removeTabNewline(v), [], isSpecial(this.rec.scheme), file);
     }
   }
 
