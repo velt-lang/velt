@@ -1,0 +1,10 @@
+// A spread of a type parameter's value that may be `undefined` (`...x` with `x: T | undefined`)
+// is not supported yet in a generic body (#350); testing it first is (`x === undefined ? {} :
+// { ...x }`).
+function k<T extends object>(x: T | undefined) {
+  return { ...x };
+}
+
+function main() {
+  console.log(JSON.stringify(k({ a: 1 })));
+}

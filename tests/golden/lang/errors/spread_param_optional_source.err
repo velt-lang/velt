@@ -1,0 +1,2 @@
+spread_param_optional_source.vlt:5:15: error: cannot spread a value of type `T | undefined` into an object
+  = note: a spread of a type parameter's value that may be `undefined` or `null` is not supported yet (#350); test it first (`x === undefined ? {} : { ...x }`)

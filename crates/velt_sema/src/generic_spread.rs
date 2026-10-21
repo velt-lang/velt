@@ -56,8 +56,17 @@ impl Ctx<'_> {
                 let mut d = Diagnostic::error(
                     format!("cannot spread a value of type `{tn}` into an object"),
                     span,
-                )
-                .with_note("in this generic function the spread's source is a type parameter; at this instantiation it is not an object type (object spread works on structs, classes and object types)");
+                );
+                let optional = self
+                    .ty
+                    .opt_payload(part)
+                    .is_some_and(|p| self.spread_part_fields(p).is_some());
+                d = match optional {
+                    // `...x` with `x: T | undefined` (JavaScript spreads nothing when it is
+                    // missing): its fields are known only per instantiation.
+                    true => d.with_note("in this generic function the spread's source may be `undefined` or `null`, and its type has a type parameter: such a spread is not supported yet (#350); test the source first (`x === undefined ? { ...a } : { ...a, ...x }`)"),
+                    false => d.with_note("in this generic function the spread's source is a type parameter; at this instantiation it is not an object type (object spread works on structs, classes and object types)"),
+                };
                 if self.is_method_iface(part) {
                     d = d.with_note(format!("`{tn}` is an interface with methods: a spread copies an object's own properties, which are its methods too for an object literal but not for a class instance, and an interface value can be either; spread a value of an object type, or build the object from the fields (`{{ a: x.a }}`)"));
                 }
@@ -74,7 +83,12 @@ impl Ctx<'_> {
                     // type is a union Velt doesn't build here.
                     Some(g) if f.optional => {
                         let read = self.ty.option_of(f.ty, Nothing::Undefined);
-                        let fits = class && self.canon(g.ty) == self.canon(read);
+                        // `a?: F | undefined` (a field of a source that may be missing) over
+                        // `a: F`: absent, the earlier value stays; a present `undefined` is a
+                        // `TypeError` (lowering), as for a concrete spread.
+                        let payload = self.ty.opt_payload(f.ty).map(|p| self.canon(p));
+                        let fits = (class && self.canon(g.ty) == self.canon(read))
+                            || payload == Some(self.canon(g.ty));
                         if self.canon(g.ty) != self.canon(f.ty) && !fits {
                             let (gt, ft) = (self.display(g.ty), self.display(f.ty));
                             let msg = format!("this generic function spreads an optional field `{}` of type `{ft}` over an earlier value of type `{gt}`, which is not supported yet at this instantiation (#350)", f.name);

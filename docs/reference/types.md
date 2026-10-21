@@ -1181,7 +1181,10 @@ field typed `number`, which Velt can't represent. A spread used directly as a `T
 (`return { ...x, ...patch }` from a function returning `T`) is built as `T` the same way. A source
 whose type argument is an interface with methods is an error at that instantiation: a spread
 copies an object's own properties, which are its methods for an object literal but not for a
-class instance, and an interface value may be either.
+class instance, and an interface value may be either. A source of a concrete type that may be
+`undefined` or `null` (`...v` with `v: V | undefined`) spreads nothing while missing, as in Node;
+one whose type has a type parameter (`x: T | undefined`) is not supported yet (#350): test it
+first (`x === undefined ? {} : { ...x }`).
 
 ```ts
 type Signal<T> = T & { $set: (v: T) => void };

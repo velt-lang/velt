@@ -48,6 +48,15 @@ impl FnCx<'_, '_> {
                     let h = self.expr(e, None, Want::Borrow);
                     let seen = crate::object_copies::Seen::Spread;
                     self.cx.object_copies.observe(h.ty, e.span, seen);
+                    // A source that may be `undefined` or `null` (`...v`, `v: V | undefined`):
+                    // the object of its fields, each absent while it is missing.
+                    let h = match self.cx.has_type_params(h.ty) {
+                        true => h,
+                        false => match self.optional_part(h, e.span, &mut lets) {
+                            Ok(o) => o,
+                            Err(h) => h,
+                        },
+                    };
                     let mut base = match is_place(&h) {
                         true => h,
                         false => self.temp("<spread>", h, &mut lets),

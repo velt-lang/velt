@@ -229,7 +229,11 @@ impl FnCx<'_, '_> {
                         format!("cannot spread a value of type `{tn}` into an object"),
                         e.span,
                     )
-                    .with_note("object spread works on structs, classes and object literals"),
+                    .with_note(match self.cx.has_type_params(h.ty) {
+                        // `...x` with `x: T | undefined`.
+                        true => "a spread of a type parameter's value that may be `undefined` or `null` is not supported yet (#350); test it first (`x === undefined ? {} : { ...x }`)",
+                        false => "object spread works on structs, classes and object literals",
+                    }),
                 );
             }
             return vec![];
@@ -310,6 +314,23 @@ impl FnCx<'_, '_> {
             return field;
         }
         self.intrinsic(Intrinsic::Share, vec![field], ty, span)
+    }
+
+    /// `{ ...h }` with `h` an object that may be `undefined` or `null` (`V | undefined`): an
+    /// object of its fields, each absent while `h` is missing, for a spread in a generic body
+    /// (`body/expr/generic_spread.rs`). `Err` gives back any other value.
+    pub(super) fn optional_part(
+        &mut self,
+        h: hir::Expr,
+        span: Span,
+        lets: &mut Vec<hir::Stmt>,
+    ) -> Result<hir::Expr, hir::Expr> {
+        let fields = self.optional_source(h, span, lets)?;
+        let entries = fields
+            .into_iter()
+            .map(|(n, h, src)| (n, Value::Read(h, src)))
+            .collect();
+        Ok(self.spread_anon(entries, span, lets))
     }
 
     fn spread_anon(
