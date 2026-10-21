@@ -1,0 +1,2 @@
+computed_key_errors.vlt:5:15: error: a symbol made in a computed key is not supported
+computed_key_errors.vlt:6:15: error: a symbol made in a computed key is not supported

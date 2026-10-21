@@ -1,0 +1,21 @@
+// A method or accessor named by a string or number literal (bare or in brackets) is not supported
+// yet: such names are for fields. TypeScript accepts them.
+
+class C {
+  ["a-b"](): number {
+    return 1;
+  }
+  get ["c d"](): number {
+    return 2;
+  }
+  1e3(): number {
+    return 3;
+  }
+}
+
+interface I {
+  ["x-y"](): void;
+  [2](): void;
+}
+
+const o = { ["p-q"]() { return 1; }, b: 2 };

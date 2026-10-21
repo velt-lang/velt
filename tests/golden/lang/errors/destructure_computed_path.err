@@ -1,0 +1,3 @@
+destructure_computed_path.vlt:10:11: error: a computed key in a destructuring pattern must be a name (`[k]`), a string or a number
+destructure_computed_path.vlt:11:11: error: a computed key in a destructuring pattern must be a name (`[k]`), a string or a number
+destructure_computed_path.vlt:12:11: error: a computed key in a destructuring pattern must be a name (`[k]`), a string or a number

@@ -1,0 +1,18 @@
+// Literal computed keys in destructuring patterns, on a `Record` and on a typed object, and
+// reads through an index with a key held in a constant. Output compared with Node.
+
+const KEY = "a";
+
+interface T {
+  a: number;
+  "b c": string;
+}
+
+function main() {
+  const o: Record<string, number> = { a: 1, "1.5": 2 };
+  const typed: T = { a: 3, "b c": "x" };
+  const { ["a"]: a, [1.5]: f } = o;
+  const { ["a"]: ta, ["b c"]: bc } = typed;
+  console.log(a, f, ta, bc);
+  console.log(o[KEY], typed[KEY]);
+}

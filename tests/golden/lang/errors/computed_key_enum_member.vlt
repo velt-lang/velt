@@ -1,0 +1,16 @@
+// An enum member as a computed key parses, as Vue writes it (`[ReactiveFlags.SKIP]?: boolean`),
+// but sema does not resolve it yet (#923).
+
+enum Flags {
+  SKIP = "__v_skip",
+}
+
+interface Target {
+  name: string;
+  [Flags.SKIP]?: boolean;
+}
+
+function main() {
+  const t: Target = { name: "t" };
+  console.log(t.name);
+}
