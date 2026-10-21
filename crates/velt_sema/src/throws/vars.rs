@@ -27,11 +27,18 @@
 //! check without them. A conversion that fails with the variables and as written fails
 //! without them too, and diagnostics show a type with variables as written (a variable as
 //! nothing), so neither raises that doubt.
+//!
+//! The comparisons see the variables in the fields of a non-generic anonymous object type
+//! (`{ print: (d: Doc) => string }`): its plain form is the object type of its fields' plain
+//! types, and after solving it is the first def of its solved shape (`solved_anon_twins`). A
+//! generic one (`T & { $set: (v: T) => void }`) keeps its def, since deferred types over it are
+//! reduced only for the instances sema saw; a mismatch where its fields hold a variable raises
+//! the doubt (`anon_vars_may_mismatch`).
 
 use rustc_hash::FxHashMap;
 
-use crate::ctx::Ctx;
 use crate::anon::ShapeField;
+use crate::ctx::Ctx;
 use crate::hir::{AdtKind, DefId, TyId, TyKind, TyOp};
 
 /// The constraints on the variables of one check.
@@ -52,6 +59,8 @@ pub(crate) struct VarSets {
     /// The earliest type id each plain or solved type stands for: the id it would have in a
     /// check without variables, as far as the order goes (`Ctx::solved_union`).
     first: FxHashMap<TyId, u32>,
+    /// The anonymous object defs made for the plain forms of others (`Ctx::plain_anon`).
+    plain_defs: rustc_hash::FxHashSet<crate::hir::DefId>,
     /// Memo of `mentions_err_var`.
     mentions: FxHashMap<TyId, bool>,
     /// Something the variables can't express was met: check again with the solved sets.
@@ -155,8 +164,8 @@ impl Ctx<'_> {
         m
     }
 
-    /// Does an anonymous object type in `t` have a field type with a variable? The
-    /// comparisons don't look into such fields (`plain_type`, `unify_parts`).
+    /// Does a generic anonymous object type in `t` have a field type with a variable? The
+    /// comparisons look into the fields of non-generic ones only ([`Ctx::seen_anon`]).
     pub(crate) fn anon_fields_hold_vars(&mut self, t: TyId) -> bool {
         if !self.fn_sites.use_vars || self.fn_sites.vars.is_empty() {
             return false;
@@ -170,12 +179,9 @@ impl Ctx<'_> {
             let k = self.ty.kind(t).clone();
             stack.extend(crate::types::children(&k));
             if let TyKind::Adt(d, _) = k {
-                if self
-                    .adt(d)
-                    .is_some_and(|a| a.kind == crate::hir::AdtKind::Anon)
-                {
+                if self.adt(d).is_some_and(|a| a.kind == AdtKind::Anon) {
                     let fs = self.anon_field_tys(d);
-                    if fs.iter().any(|f| self.mentions_err_var(*f)) {
+                    if self.seen_anon(d).is_none() && fs.iter().any(|f| self.mentions_err_var(*f)) {
                         return true;
                     }
                     stack.extend(fs);
@@ -185,8 +191,8 @@ impl Ctx<'_> {
         false
     }
 
-    /// Could a mismatch between `a` and `b` come from a variable in a field of an anonymous
-    /// object type, which the comparisons don't see yet? Only when one of them has such a field
+    /// Could a mismatch between `a` and `b` come from a variable in a field of a generic
+    /// anonymous object type, which the comparisons don't see? Only when one of them has such a field
     /// and the two have one shape but for their error types: an object type converted to an
     /// interface it does not implement, or to an object type with other fields, is a mismatch
     /// without variables too.
@@ -291,14 +297,25 @@ impl Ctx<'_> {
         p
     }
 
-    /// `t`'s anonymous object def and type arguments, when it is an anonymous object type.
+    /// `t`'s anonymous object def and type arguments, when it is an anonymous object type whose
+    /// fields the comparisons see ([`Ctx::seen_anon`]).
     fn anon_of(&self, t: TyId) -> Option<(DefId, Vec<TyId>)> {
         match self.ty.kind(t) {
-            TyKind::Adt(d, args) if self.adt(*d).is_some_and(|a| a.kind == AdtKind::Anon) => {
-                Some((*d, args.clone()))
-            }
+            TyKind::Adt(d, args) => self.seen_anon(*d).map(|()| (*d, args.clone())),
             _ => None,
         }
+    }
+
+    /// Is `d` an anonymous object def whose fields' variables the comparisons see: one that
+    /// is not generic and does not reach itself? After solving, such a def is the def of its
+    /// solved shape ([`Ctx::solved_anon_twins`]). A generic one (`T & { $set: (v: T) => void
+    /// }`) is not: deferred types over it are reduced for the instances sema saw, so it keeps
+    /// its def, and a mismatch it may cause is checked again without variables
+    /// ([`Ctx::anon_vars_may_mismatch`]).
+    fn seen_anon(&self, d: DefId) -> Option<()> {
+        let a = self.adt(d)?;
+        (a.kind == AdtKind::Anon && a.generics.names.is_empty() && !self.reaches_itself(d))
+            .then_some(())
     }
 
     /// Anonymous object type `d<args>` as written: the object type of its fields' plain
@@ -315,41 +332,52 @@ impl Ctx<'_> {
                 ..f
             })
             .collect();
+        let before = self.info.len();
         let (d2, params) = self.anon_def_with(&fields, module);
+        if self.info.len() > before {
+            self.fn_sites.var_sets.plain_defs.insert(d2);
+        }
         let args: Vec<TyId> = args.iter().map(|a| self.plain_type(*a)).collect();
-        let args2: Vec<TyId> = params.iter().map(|p| self.ty.subst(*p, &args)).collect();
+        let args2: Vec<TyId> = params.iter().map(|p| self.subst(*p, &args)).collect();
         self.ty.intern(TyKind::Adt(d2, args2))
     }
 
-    /// The anonymous object defs whose fields hold variables, each with the def of its solved
-    /// shape, which `crate::readonly::erase` puts in its place: a def of those field types
-    /// made while checking, or else the first def of that solved shape. Values of two such
-    /// types of one shape are stored as each other's unconverted (they were unified).
+    /// The anonymous object defs to replace by another def of their solved shape, each with
+    /// that def (which `crate::readonly::erase` puts in its place): the first def of the shape,
+    /// the one a check without variables has (the plain forms the comparisons made come
+    /// later). A def is replaced when it or that first def holds variables, or when it was
+    /// made for a plain form: values of those types were stored as each other's unconverted.
     pub(crate) fn solved_anon_twins(&mut self) -> Vec<(DefId, DefId)> {
         let mut out = vec![];
-        let mut first: FxHashMap<Vec<ShapeField>, DefId> = FxHashMap::default();
+        if self.fn_sites.vars.is_empty() {
+            return out;
+        }
+        // Each def's shape, solved, and whether its fields hold variables.
+        let mut shapes: Vec<(DefId, Vec<ShapeField>, bool)> = vec![];
         for i in 0..self.info.len() {
             let d = DefId(i as u32);
-            let Some(a) = self.adt(d).filter(|a| a.kind == AdtKind::Anon) else {
+            if self.seen_anon(d).is_none() {
+                continue;
+            }
+            let Some(a) = self.adt(d) else {
                 continue;
             };
             let fields: Vec<ShapeField> = a.fields.iter().map(crate::anon::shape_field).collect();
-            let tys: Vec<TyId> = a.fields.iter().map(|f| f.ty).collect();
-            if !tys.into_iter().any(|t| self.mentions_err_var(t)) || self.reaches_itself(d) {
-                continue;
-            }
-            let solved: Vec<ShapeField> = (fields.into_iter())
+            let holds = fields.iter().any(|f| self.mentions_err_var(f.ty));
+            let shape: Vec<ShapeField> = (fields.into_iter())
                 .map(|f| ShapeField {
-                    ty: self.solved_type(f.ty),
+                    ty: if holds { self.solved_type(f.ty) } else { f.ty },
                     ..f
                 })
                 .collect();
-            let twin = match self.anon.get(&solved) {
-                Some(&t) => t,
-                None => *first.entry(solved).or_insert(d),
-            };
-            if twin != d {
-                out.push((d, twin));
+            shapes.push((d, shape, holds));
+        }
+        let mut first: FxHashMap<&[ShapeField], (DefId, bool)> = FxHashMap::default();
+        for (d, shape, holds) in &shapes {
+            let (twin, twin_holds) = *first.entry(shape).or_insert((*d, *holds));
+            let plain = self.fn_sites.var_sets.plain_defs.contains(d);
+            if twin != *d && (*holds || twin_holds || plain) {
+                out.push((*d, twin));
             }
         }
         out
@@ -444,8 +472,8 @@ impl Ctx<'_> {
                 let fb = self.anon_field_tys(e);
                 if fa.len() == fb.len() {
                     for (x, y) in fa.into_iter().zip(fb) {
-                        let x = self.ty.subst(x, &xs);
-                        let y = self.ty.subst(y, &ys);
+                        let x = self.subst(x, &xs);
+                        let y = self.subst(y, &ys);
                         self.unify_parts(x, y, depth + 1);
                     }
                 }
