@@ -43,6 +43,7 @@ mod error_slots;
 mod error_view;
 mod errors;
 mod fn_union_call;
+mod frozen;
 mod gen_closure;
 mod gen_value;
 mod hidden_nothings;

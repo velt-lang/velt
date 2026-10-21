@@ -140,6 +140,11 @@ impl FnCx<'_, '_> {
         ))
     }
 
+    /// Is `length` of a `t` the intrinsic length of a string or array?
+    pub(super) fn has_length(&self, t: TyId) -> bool {
+        t == self.cx.ty.str_ || self.cx.ty.array_elem(t).is_some()
+    }
+
     fn no_field(&mut self, t: TyId, obj: Span, prop: &ast::Ident) {
         if self.private_accessor_outside(t, prop, false) || self.shadowed_private_name(t, prop) {
             return;
@@ -335,6 +340,13 @@ impl FnCx<'_, '_> {
         }
         let obj = self.unbrand(obj);
         let obj = self.widen_literal_receiver(obj, &prop.name);
+        // `s.length` on a `shared<string>` or `shared<T[]>`: the length of the value inside.
+        let obj = match self.cx.ty.kind(obj.ty) {
+            TyKind::Shared(t) if prop.name == "length" && self.has_length(*t) => {
+                self.frozen_view(obj, Some("length"))
+            }
+            _ => obj,
+        };
         if prop.name == "length" {
             let t = obj.ty;
             if t == self.cx.ty.str_ {
@@ -343,6 +355,22 @@ impl FnCx<'_, '_> {
             if self.cx.ty.array_elem(t).is_some() {
                 return self.intrinsic(Intrinsic::ArrayLen, vec![obj], self.cx.ty.usize, span);
             }
+        }
+        // `s.f` on a `shared<T>` of an object type with a field or getter `f`: the value
+        // inside's (#36). A getter is a call on it, refused where it may modify it, as a method
+        // is (`ownership/patch.rs`).
+        let shared = match self.cx.ty.kind(obj.ty) {
+            TyKind::Shared(t) => Some(*t),
+            _ => None,
+        };
+        let obj = match shared {
+            Some(t) if self.field_of(t, &prop.name).is_some() || self.has_getter(t, &prop.name) => {
+                self.frozen_view(obj, Some(&prop.name))
+            }
+            _ => obj,
+        };
+        if self.frozen_buffer_view(&obj, &prop.name, span) {
+            return self.error_expr(span);
         }
         let obj = self.error_union_accessor(obj, &prop.name);
         let obj = match self.getter_read(obj, prop, span) {
@@ -421,6 +449,10 @@ impl FnCx<'_, '_> {
         let obj = match self.dynamic_index(obj, index, want, span) {
             Ok(h) => return h,
             Err(obj) => obj,
+        };
+        let obj = match self.shared_indexed(obj, index, want, span) {
+            Ok(obj) => obj,
+            Err(e) => return e,
         };
         let t = obj.ty;
         // `o[KEY]` with a symbol constant: the member the symbol names.

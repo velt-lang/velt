@@ -8,7 +8,8 @@
 //! `U | null` when `T` converts to `U`, a fresh array or object to a wider one (`widen_fresh`),
 //! an object type to one with some of its fields, or the same ones in another order
 //! (`object_copy`), and a generic interface value to the same interface with `unknown` or `any`
-//! type arguments (`iface_adapt`).
+//! type arguments (`iface_adapt`), and a `shared<T>` to the `T` it holds, read in place
+//! (`frozen`).
 
 use velt_common::Diagnostic;
 
@@ -59,6 +60,14 @@ impl FnCx<'_, '_> {
         }
         if self.cx.unfreezes(h.ty, exp) {
             return Err(h);
+        }
+        // A `shared<T>` where a `T` is expected: the value inside, read (`frozen`, #36).
+        if matches!(self.cx.ty.kind(h.ty), TyKind::Shared(t) if *t == exp) {
+            let v = self.frozen_view(h, None);
+            return match Self::is_frozen_view(&v) {
+                true => Ok(v),
+                false => Err(v),
+            };
         }
         // A function with properties as its plain function type: its function (#921).
         if self.cx.is_callable_object(h.ty) && matches!(self.cx.ty.kind(exp), TyKind::FnPtr { .. })
@@ -406,6 +415,9 @@ impl FnCx<'_, '_> {
         }
         if let Some(note) = self.narrowing_note(found.ty) {
             d = d.with_note(note);
+        }
+        if matches!(self.cx.ty.kind(found.ty), TyKind::Shared(t) if *t == expected) {
+            d = d.with_note(self.unreadable_shared_note(found.ty));
         }
         if let TyKind::Dyn(..) = self.cx.ty.kind(expected) {
             d = match (

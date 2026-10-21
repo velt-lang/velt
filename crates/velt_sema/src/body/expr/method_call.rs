@@ -28,6 +28,20 @@ impl FnCx<'_, '_> {
         };
         // A branded value has its primitive's methods.
         let recv = self.unbrand(recv);
+        // A `shared<T>` has `T`'s methods (#36): they read the value inside, and one that
+        // modifies its receiver is an error (`frozen_write`).
+        let recv = match matches!(self.cx.ty.kind(recv.ty), TyKind::Shared(_))
+            && !self.method_exists(recv.ty, &prop.name)
+        {
+            true => self.frozen_view(recv, Some(&prop.name)),
+            false => recv,
+        };
+        if self.frozen_buffer_view(&recv, &prop.name, span) {
+            for a in args {
+                self.expr(a, None, Want::Borrow);
+            }
+            return self.error_expr(span);
+        }
         // `x.toFixed(2)`: a number's method (`literal_locals`).
         self.literal_use_number(&recv);
         // `s.replace(/a/g, "b")`: std/regex's method for a regex argument (`regex_args`).
@@ -357,6 +371,8 @@ impl FnCx<'_, '_> {
                 "`length` is a property, not a method; write `s.length`",
                 prop.span,
             );
+        } else if self.unreadable_shared(recv.ty) {
+            d = d.with_note(self.unreadable_shared_note(recv.ty));
         } else if let Some(note) = self.narrowing_note(recv.ty) {
             d = d.with_note(note);
         } else if let Some(note) = self.unnarrowed_note(recv.span) {

@@ -9,8 +9,9 @@ use velt_syntax::ast;
 
 use super::for_iter::ForOfParts;
 use super::pattern::BindCtx;
+use super::places::frozen_source;
 use super::{FnCx, LoopCx, Want};
-use crate::hir::{self, ExprKind as H, StmtKind as S, TyId};
+use crate::hir::{self, ExprKind as H, StmtKind as S, TyId, TyKind};
 
 impl FnCx<'_, '_> {
     fn true_lit(&self, span: Span) -> hir::Expr {
@@ -162,8 +163,12 @@ impl FnCx<'_, '_> {
                     true => self.for_await(iter, parts, out),
                     false => {
                         let it = self.for_of_source(iter);
+                        let (frozen, first) = (frozen_source(self.cx, &it), self.f.locals.len());
                         if !self.for_of_map(iter, &it, parts, out) {
                             self.for_of(it, parts, out)
+                        }
+                        if frozen {
+                            self.frozen_elements(pattern.span, first);
                         }
                     }
                 }
@@ -274,10 +279,25 @@ impl FnCx<'_, '_> {
         }
     }
 
+    /// Record the locals from `first` on that the `for…of` pattern at `pattern` declares (also
+    /// in a map's cursor loop and the iterator protocol's): elements of a value read out of a
+    /// `shared`.
+    fn frozen_elements(&mut self, pattern: Span, first: usize) {
+        let elems = self.f.locals[first..].iter().map(|l| l.span);
+        let elems = elems.filter(|s| pattern.lo <= s.lo && s.hi <= pattern.hi);
+        self.cx.frozen_elems.extend(elems);
+    }
+
     /// The checked source of a `for...of` or `for await`: a record is an error (it is not
     /// iterable in JS either; the message names `Object.keys`/`Object.entries`).
     pub(super) fn for_of_source(&mut self, iter: &ast::Expr) -> hir::Expr {
         let it = self.expr(iter, None, Want::Borrow);
+        // `for (const x of s)` over a `shared<T>`: the value inside (#36), whatever it iterates
+        // (an array, a string, a `Map`, a `Set`, a typed array).
+        let it = match *self.cx.ty.kind(it.ty) {
+            TyKind::Shared(_) => self.frozen_view(it, None),
+            _ => it,
+        };
         if self.record_args(it.ty).is_none() {
             return it;
         }
