@@ -1567,7 +1567,9 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   assignment, for `[…] as const` and for a `const c = [2, "y"] as const` taken apart, also in
   a closure or function that captures `c` and where `c` is a module constant; `c` itself
   stays a read-only array of the union, with `length`, indexing, iteration and the read
-  methods). Destructuring an `any` reads each element or property through it (`const [a, b] =
+  methods). Taking `c` apart reads its elements, so a write made through a cast
+  (`(c as unknown as (number | string)[])[0] = 7`) is seen; an element overwritten with a
+  value of another type stops with a `TypeError`. Destructuring an `any` reads each element or property through it (`const [a, b] =
   v` is `v[0]`, `v[1]`, each an `any`, read once; a default applies where the read gives
   `undefined`; a `...rest` of an `any` is not supported yet). A computed key naming a variable
   (`const { [k]: v = 0 } = r`, `({ [k]: p } = r)`, a local, an outer function's or a module
@@ -1575,8 +1577,9 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   string or a symbol (`[KEY]`) reads that member, also of an object, interface or class; a
   string, number or template key (`{ ["a"]: v }`, `{ [0]: v }`), like a quoted or numeric
   property name (`{ "a": v, 0: w }`), names that property. On an array or a tuple a numeric
-  key reads that element and `length` the length (`const { 0: first, length } = xs`, also with
-  defaults, nested, in `for...of` and in parameters; `...rest` there is not supported yet, nor
+  key reads that element and `length` the length, a tuple's arity (`const { 0: first, length }
+  = xs`, also with defaults, nested, also inside a tuple element, `const [i, { 0: c }] = t`, in
+  `for...of` and in parameters; `...rest` there is not supported yet, nor
   a numeric key above 4096). Any other key expression
   (`{ [f()]: v }`) is an error: store the key in a variable first. Next to a computed key a
   `...rest` is not supported yet. Defaults on a `Record` or index-signature pattern apply where
@@ -1606,8 +1609,10 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   `const [first = 0] = xs;` when the array is too short or the element is `undefined`, as in JS;
   a field or element declared `T | null` keeps its `null`, and so does an optional field
   declared `a?: T | null` that holds `null`. `for...of` patterns take defaults (and an object
-  rest) the same way: `for (const { name, port = 80 } of servers)`. Defaults in parameter
-  patterns are not supported.
+  rest) the same way: `for (const { name, port = 80 } of servers)`, and so do parameter
+  patterns (`function f({ a = 1 }: { a?: number })`). A nested pattern's defaults apply the
+  same way, also inside a tuple element (`const [i, { a = 5 }] = t` with
+  `t: [number, { a?: number }]`).
 - **Destructuring assignment** takes a value apart into places that already exist, as in JS:
   `[a, b] = [b, a]` swaps, and the targets may be variables, fields and elements
   (`[xs[i], xs[j]] = [xs[j], xs[i]]`, `[this.x, this.y] = [y, x]`, `({ w: box.width } = size)`),
