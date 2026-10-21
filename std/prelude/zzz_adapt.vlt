@@ -91,14 +91,8 @@ export function __spreadAny(r: Record<string, any>, o: any): void {
     return;
   }
   if (o instanceof Proxy) {
-    // Node's order: the keys first, then each key's property and value in turn.
-    for (const k of o.__ownKeys()) {
-      if (typeof k === "string") {
-        const d = o.__getOwnPropertyDescriptor(k);
-        if (d !== undefined && d.enumerable === true) {
-          r.__set(k, o.__get(k, o));
-        }
-      }
+    for (const [k, v] of __proxyEntries(o)) {
+      r.__set(k, v);
     }
     return;
   }
