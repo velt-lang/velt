@@ -18,7 +18,10 @@ last.
 
 `await` on a value that may or may not be a promise (`T | Promise<T>`, the result of a sync-or-async
 callback, or `Promise<T> | null`) awaits a promise and gives any other value as it is, as in JS:
-`await h(1)` where `h: (x: number) => Resp | Promise<Resp>` is a `Resp`.
+`await h(1)` where `h: (x: number) => Resp | Promise<Resp>` is a `Resp`. A promise that may be
+missing keeps its nothing: `await r["k"]` of a `Record<string, Promise<number>>` (or
+`await m.get(k)`) is a `number | undefined`, and so is `await x` with
+`x: number | Promise<void>`.
 
 An async function that returns a promise (`return Promise.resolve(x)`, `return load()`) or a value
 that may be one (`return fn()` with `fn: () => T | Promise<T>`) adopts it, as in JS: its own
@@ -237,7 +240,10 @@ like any stored promise:
   `p.then(null, g)` and `p.then(undefined, g)` are `p.catch(g)`, and `p.then(f, null)` is
   `p.then(f)`, as in JS.
 - `p.catch(g)`: `g(reason)` when `p` rejects; a value passes through, so `g` gives the
-  promise's value type (**Planned**: a `catch` that changes the value type, `T | U`).
+  promise's value type, or nothing: `p.catch(() => {})` (or an `async` handler) is a
+  `Promise<T | undefined>`, TypeScript's `Promise<T | void>`, which gives `p`'s value or
+  `undefined` once `g` handled a rejection (**Planned**: a `catch` that changes the value
+  type otherwise, `T | U`).
 - `p.finally(h)`: `h()` either way, then the value or the reason passes through.
 
 A callback that returns a promise is awaited (flattened): `p.then((id) => load(id))` is a

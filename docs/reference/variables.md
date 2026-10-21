@@ -24,8 +24,12 @@
 - One declaration may declare several variables, as in TypeScript: `let i: number, j = 0;` is
   `let i: number; let j = 0;` (at the top level, in a block and in a `for` initializer).
 - `let x!: T` (TypeScript's definite assignment assertion) declares `x` as `let x: T;` does.
-  Velt still checks that `x` is assigned before it is read; a variable assigned only inside a
-  closure (where TypeScript needs `!`) is not supported yet.
+  Velt still checks that `x` is assigned before it is read. A variable declared without an
+  initializer that a closure assigns (`let x: T;` or `let x!: T;`, read in another closure or
+  after a call as `x` or `x!`, which TypeScript does not check) is held so that each read
+  checks it was assigned: reading it before then stops the program with
+  ``TypeError: `x` was read before it was assigned`` (JavaScript would read `undefined`).
+  `x++`, `x += v` and the other compound assignments read it the same way.
 
   ```ts
   let lo: number, hi: number = 10;

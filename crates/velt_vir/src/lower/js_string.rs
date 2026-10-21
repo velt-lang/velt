@@ -20,7 +20,9 @@ impl FnLower<'_, '_> {
             return self.push_dyn_error(buf, place, ty);
         }
         if let TyKind::Option(e, n) = self.cx.kind(ty) {
-            if !self.js_object(e) {
+            // An object, or a union with an object member (`number | VNode | undefined`).
+            let union = self.cx.is_union(e) && self.union_has_object(e);
+            if !self.js_object(e) && !union {
                 return false;
             }
             let (some_bb, none_bb, done) = (self.new_block(), self.new_block(), self.new_block());

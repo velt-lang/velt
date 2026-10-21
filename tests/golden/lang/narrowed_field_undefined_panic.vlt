@@ -1,0 +1,17 @@
+// A narrowed optional field that a call sets back to `undefined` stops the program before the
+// read, naming the nothing it was set to.
+type Node1 = { next?: Node1; v: number };
+
+function clear(n: Node1): void {
+  n.next = undefined;
+}
+
+function main(): void {
+  const n: Node1 = { v: 1, next: { v: 2 } };
+  if (n.next !== undefined) {
+    console.log(n.next.v);
+    clear(n);
+    console.log(n.next.v);
+  }
+}
+

@@ -160,6 +160,8 @@ pub(crate) const VELT_GLOBALS: &[VeltOnly] = &[
     ("promiseAny", "use `Promise.any(…)`"),
     ("promiseCatch", "use `p.catch(…)`"),
     ("promiseCatchAsync", "use `p.catch(…)`"),
+    ("promiseCatchVoid", "use `p.catch(…)`"),
+    ("promiseCatchVoidAsync", "use `p.catch(…)`"),
     ("promiseFinally", "use `p.finally(…)`"),
     ("promiseFinallyAsync", "use `p.finally(…)`"),
     ("promiseFinallyAsyncThrows", "use `p.finally(…)`"),

@@ -228,6 +228,40 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let mut s = self.expr(value, None, crate::body::Want::Borrow);
+        // On an `any` (a variable, read again): `value === undefined ? default : value`.
+        if self.cx.dynamic(s.ty).is_some()
+            && matches!(value.kind, velt_syntax::ast::ExprKind::Ident(_))
+        {
+            use velt_syntax::ast::{self, ExprKind as A};
+            let mk = |kind| ast::Expr {
+                id: ast::NodeId(u32::MAX),
+                kind,
+                span,
+            };
+            let test = mk(A::Binary {
+                op: ast::BinaryOp::StrictEq,
+                lhs: Box::new(value.clone()),
+                rhs: Box::new(mk(A::Lit(ast::Lit::Undefined))),
+            });
+            let cond = mk(A::Cond {
+                cond: Box::new(test),
+                then: Box::new(mk(A::Cast {
+                    expr: Box::new(default.clone()),
+                    ty: ast::TypeExpr {
+                        kind: ast::TypeExprKind::Named {
+                            path: vec![ast::Ident {
+                                name: "any".into(),
+                                span,
+                            }],
+                            args: vec![],
+                        },
+                        span,
+                    },
+                })),
+                els: Box::new(value.clone()),
+            });
+            return self.expr(&cond, None, crate::body::Want::Move);
+        }
         if !self.is_three_state(s.ty) {
             return self.nullish_checked(s, default, exp, span);
         }

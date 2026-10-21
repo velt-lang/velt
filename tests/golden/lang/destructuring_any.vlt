@@ -1,0 +1,26 @@
+// check: no leaks
+// Destructuring an `any` reads each element or property through it (each an `any`), with
+// defaults where the read gives `undefined`. Expected output: Node's.
+function main(): void {
+  const anyv: any = [1, "two"];
+  const [a, b] = anyv;
+  console.log(a, b);
+  let c: any = 0, d: any = 0;
+  [c, d] = anyv;
+  console.log(c, d);
+  const [e, , f = "dflt", g = 5] = anyv;
+  console.log(e, f, g);
+  const o: any = { p: 1, q: "x", n: null as string | null };
+  const { p, q, z = "zz", n = "nn" } = o;
+  console.log(p, q, z, n);
+  let r: any = 0, s: any = 0;
+  ({ p: r, q: s } = o);
+  console.log(r, s);
+  const nested: any = { arr: [3, 4], inner: { k: "v" } };
+  const { arr: [h, i], inner: { k } } = nested;
+  console.log(h, i, k);
+  const u: unknown = [7, 8];
+  const w = u as any;
+  const [x1, x2] = w;
+  console.log(x1, x2);
+}

@@ -360,6 +360,7 @@ impl FnCx<'_, '_> {
         object: &ast::Expr,
         index: &ast::Expr,
         optional: bool,
+        exp: Option<TyId>,
         want: Want,
         span: Span,
     ) -> hir::Expr {
@@ -374,7 +375,10 @@ impl FnCx<'_, '_> {
         }
         let obj = self.expr(object, None, Want::Borrow);
         let r = self.in_place_receiver(object, obj);
-        let h = self.index_of(r.recv, index, want, span);
+        let h = match self.checked_array_read(r.recv, index, exp, want, span) {
+            Ok(h) => h,
+            Err(recv) => self.index_of(recv, index, want, span),
+        };
         let h = self.after_receiver(r.before, h);
         // `o["a"]` narrows like `o.a`: after `if (o["a"] !== null)` or `if (o.a !== null)`.
         match self.single_key(index) {

@@ -9,6 +9,8 @@ mod array_ctor;
 mod assign;
 mod assign_checks;
 mod assign_paths;
+mod assign_pattern;
+pub(crate) use assign_pattern::REPORTED;
 mod attempt;
 mod await_union;
 mod builtins;
@@ -24,6 +26,7 @@ mod coerce;
 mod constraints;
 mod construct;
 mod conversions;
+mod default_args;
 mod discriminated;
 mod dispose_call;
 mod division;
@@ -56,6 +59,7 @@ mod intrinsics;
 mod js_list;
 mod json_layout;
 pub(crate) mod jsx;
+mod late_let_update;
 mod lit;
 mod literal_keys;
 mod literal_types;
@@ -186,6 +190,15 @@ impl FnCx<'_, '_> {
         match &e.kind {
             A::Lit(l) => self.lit(l, exp, span, false),
             A::Template { quasis, exprs } => self.template(quasis, exprs, span),
+            A::Ident(id) if id.name == velt_syntax::ARRAY_HOLE => {
+                self.cx.err(
+                    "a hole in an array literal (`[1, , 2]`) is only allowed in a destructuring assignment (`[a, , b] = xs`); write `undefined`",
+                    span,
+                );
+                self.error_expr(span)
+            }
+            // A property already reported (`assign_pattern::reject_cover_inits`).
+            A::Ident(id) if id.name == assign_pattern::REPORTED => self.error_expr(span),
             A::Ident(id) => self.ident_expr(id, exp, want),
             A::This => self.this_expr(want, span),
             A::Super => {
@@ -197,7 +210,15 @@ impl FnCx<'_, '_> {
             }
             A::Unary { op, expr } => self.unary(*op, expr, exp, span),
             A::Binary { op, lhs, rhs } => self.binary(*op, lhs, rhs, exp, span),
+            A::Assign {
+                op: Some(op),
+                target,
+                value,
+            } if self.late_let_rmw(e) => self.late_let_compound(*op, target, value, exp, span),
             A::Assign { op, target, value } => self.assign_value(*op, target, value, exp, span),
+            A::Update { op, prefix, target } if self.late_let_rmw(e) => {
+                self.late_let_update(*op, *prefix, target, exp, span)
+            }
             A::Update { op, prefix, target } => self.update(*op, *prefix, target, true, span),
             A::Cond { cond, then, els } => self.ternary(cond, then, els, exp, span),
             A::Call {
@@ -248,11 +269,14 @@ impl FnCx<'_, '_> {
                 object,
                 index,
                 optional,
-            } => self.index_expr(object, index, *optional, want, span),
+            } => self.index_expr(object, index, *optional, exp, want, span),
             A::Arrow { .. } => self.closure(e, exp, true),
             A::Function(d) => self.function_expr(d, exp, span),
             A::Array(elems) => self.array_lit(elems, exp, span),
-            A::Object(props) => self.object_lit(props, exp, span),
+            A::Object(props) => match self.reject_cover_inits(props) {
+                Some(props) => self.object_lit(&props, exp, span),
+                None => self.object_lit(props, exp, span),
+            },
             A::StructLit { name, props } => self.struct_lit(name, props, exp, span),
             A::Spread(_) => self.unsupported_expr("spread arguments (`f(...xs)`)", span),
             A::Await(inner) => self.await_expr(inner, exp, span),

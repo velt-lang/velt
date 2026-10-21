@@ -64,6 +64,7 @@ impl<'h> Cx<'h> {
             anon: Default::default(),
             cur_def: None,
             nothing_clashes: vec![],
+            map_fields: 0,
         }
     }
 

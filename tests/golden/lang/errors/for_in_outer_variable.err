@@ -1,2 +1,0 @@
-for_in_outer_variable.vlt:4:10
-error: `for...of` and `for...in` require `const` or `let` before the loop variable

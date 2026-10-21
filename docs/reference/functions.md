@@ -23,6 +23,11 @@ function scale(xs: f64[], k: f64 = 2.0): f64[] {
   so it is the function's own default whichever way it is called: through an interface whose
   method takes `x?: any`, through a base class whose method the class overrides, through a
   function value (`const g = d; g(undefined)`), or as a callback (`xs.map((v: any = 0) => …)`).
+  So does the default of a parameter whose type allows `undefined` (`x: number | undefined =
+  5`, or `status = 302` where an interface declares `status?: number`), which is a `number` in
+  the body. Any other default also applies to a passed `undefined`, tested where it is passed:
+  `f(undefined)`, and `f(v)` with a `v` that may be `undefined`
+  ([Null and undefined](types.md#null-and-undefined)).
 - An optional parameter `q?: T` is `q: T | undefined = undefined`, as in TypeScript. Left out,
   it is `undefined`: it prints `undefined`, `typeof q` is `"undefined"`, `q === undefined` is
   true and `q === null` false. A call may also pass `undefined` for it (or a value that may be

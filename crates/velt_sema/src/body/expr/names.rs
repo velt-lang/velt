@@ -27,6 +27,14 @@ impl FnCx<'_, '_> {
         // A variable that a closure assigns is checked again where it is used, and read as it
         // is where a test checks it (`closure_assigned`).
         let reassigned = self.closure_assignment(l).is_some();
+        if reassigned
+            && want != Want::BorrowMut
+            && self.raw_read != Some(span)
+            && !self.is_narrowed(l)
+            && self.is_late_let(l)
+        {
+            return self.late_let_read(l, ty, want, span);
+        }
         if payload.is_some() && reassigned {
             if self.raw_read == Some(span) {
                 let mode = self.use_mode(ty, want);
