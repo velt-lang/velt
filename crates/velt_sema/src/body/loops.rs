@@ -145,7 +145,15 @@ impl FnCx<'_, '_> {
                 body,
                 is_await,
             } => {
-                let tested = match is_await {
+                let any = match is_await {
+                    true => None,
+                    false => self.for_in_any(pattern, iter, body),
+                };
+                let (iter, body) = match &any {
+                    Some((i, b)) => (i, b),
+                    None => (iter, body),
+                };
+                let tested = match *is_await || any.is_some() {
                     true => None,
                     false => self.for_in_presence_test(pattern, iter, body),
                 };

@@ -179,10 +179,11 @@ impl FnCx<'_, '_> {
             hir::TyKind::Adt(d, _) => {
                 let d = *d;
                 self.record_args(t).is_none()
-                    && self
-                        .cx
-                        .adt(d)
-                        .is_some_and(|a| matches!(a.kind, hir::AdtKind::Class | hir::AdtKind::Anon))
+                    && self.cx.adt(d).is_some_and(|a| match a.kind {
+                        hir::AdtKind::Class | hir::AdtKind::Anon => true,
+                        // A fields-only interface; not a Velt `struct`, a value type.
+                        hir::AdtKind::Struct => a.decl.is_none(),
+                    })
             }
             _ => false,
         };
@@ -217,6 +218,61 @@ impl FnCx<'_, '_> {
             els: Box::new(els),
         };
         Some(self.mk(kind, ty, span))
+    }
+
+    /// `"k" in x` of a class instance or an object `x` that may be a typed proxy:
+    /// `__proxyIn(x, "k", "k" in x)`, so a proxy's `has` trap answers. `None` otherwise.
+    pub(crate) fn proxy_in(
+        &mut self,
+        lhs: &ast::Expr,
+        rhs: &ast::Expr,
+        span: Span,
+    ) -> Option<hir::Expr> {
+        if self.proxy_keys_inner || !super::object_keys::reevaluable(rhs) {
+            return None;
+        }
+        let t = self.trial_type(rhs)?;
+        if !self.may_be_typed_proxy(t) {
+            return None;
+        }
+        let plain = super::setters::synth(
+            ast::ExprKind::Binary {
+                op: ast::BinaryOp::In,
+                lhs: Box::new(lhs.clone()),
+                rhs: Box::new(rhs.clone()),
+            },
+            span,
+        );
+        let args = vec![rhs.clone(), lhs.clone(), plain];
+        Some(self.proxy_wrapped("__proxyIn", args, span))
+    }
+
+    /// `Object.hasOwn(x, k)` of a class instance or an object `x` that may be a typed proxy:
+    /// `__proxyHasOwn(x, k, Object.keys(x))`, so a proxy's `getOwnPropertyDescriptor` trap
+    /// answers for `k` alone. `None` otherwise.
+    pub(crate) fn proxy_has_own(
+        &mut self,
+        o: &ast::Expr,
+        k: &ast::Expr,
+        keys: ast::Expr,
+        span: Span,
+    ) -> Option<hir::Expr> {
+        if self.proxy_keys_inner || !super::object_keys::reevaluable(o) {
+            return None;
+        }
+        let t = self.trial_type(o)?;
+        if !self.may_be_typed_proxy(t) {
+            return None;
+        }
+        Some(self.proxy_wrapped("__proxyHasOwn", vec![o.clone(), k.clone(), keys], span))
+    }
+
+    /// The call `f(args)` of velt:proxy/ops, checked without the typed proxy hooks inside it.
+    fn proxy_wrapped(&mut self, f: &str, args: Vec<ast::Expr>, span: Span) -> hir::Expr {
+        self.proxy_keys_inner = true;
+        let h = self.prelude_fn_call(f, args, span);
+        self.proxy_keys_inner = false;
+        h
     }
 
     /// A call of the prelude function `name` with the checked arguments `args`, of type `ret`.

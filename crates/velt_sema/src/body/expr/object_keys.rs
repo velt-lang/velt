@@ -121,6 +121,81 @@ impl FnCx<'_, '_> {
         })
     }
 
+    /// `for (const k in o) body` over an `any` `o` that is safe to evaluate again, in a program
+    /// that loads `Proxy`: a proxy's keys are its `ownKeys` (`__anyForInKeys`) and each is tested
+    /// just before its turn (`__anyForInHas`: its `getOwnPropertyDescriptor`), so one deleted
+    /// during the loop is skipped, as in Node. A plain value's keys are listed once, as
+    /// elsewhere. `None` for any other loop.
+    pub(crate) fn for_in_any(
+        &mut self,
+        pattern: &ast::Pattern,
+        iter: &ast::Expr,
+        body: &ast::Block,
+    ) -> Option<(ast::Expr, ast::Block)> {
+        let ast::ExprKind::Call { callee, args, .. } = &iter.kind else {
+            return None;
+        };
+        let (ast::ExprKind::Member { prop, .. }, [obj], ast::PatternKind::Ident(k)) =
+            (&callee.kind, args.as_slice(), &pattern.kind)
+        else {
+            return None;
+        };
+        if callee.span.lo != callee.span.hi || prop.name != "keys" || !reevaluable(obj) {
+            return None;
+        }
+        let ty = self.trial_type(obj)?;
+        if self.cx.dynamic(ty) != Some(crate::any::Dynamic::Any) || !self.uses_proxy() {
+            return None;
+        }
+        // The test reads the value's members through its descriptor.
+        self.note_dyn_members();
+        let empty = Span::new(iter.span.file, iter.span.lo, iter.span.lo);
+        let e = |kind| ast::Expr {
+            id: ast::NodeId(u32::MAX),
+            kind,
+            span: empty,
+        };
+        let key = e(ast::ExprKind::Ident(k.clone()));
+        let call = |f: &str, args: Vec<ast::Expr>| {
+            e(ast::ExprKind::Call {
+                callee: Box::new(e(ast::ExprKind::Ident(ast::Ident {
+                    name: f.to_string(),
+                    span: empty,
+                }))),
+                type_args: vec![],
+                args,
+                optional: false,
+            })
+        };
+        let keys = call("__anyForInKeys", vec![obj.clone()]);
+        let has = call("__anyForInHas", vec![obj.clone(), key]);
+        let test = ast::Stmt {
+            kind: ast::StmtKind::If {
+                cond: e(ast::ExprKind::Unary {
+                    op: ast::UnaryOp::Not,
+                    expr: Box::new(e(ast::ExprKind::Paren(Box::new(has)))),
+                }),
+                then: ast::Block {
+                    stmts: vec![ast::Stmt {
+                        kind: ast::StmtKind::Continue(None),
+                        span: empty,
+                    }],
+                    span: empty,
+                },
+                els: None,
+            },
+            span: empty,
+        };
+        let mut stmts = Vec::with_capacity(body.stmts.len() + 1);
+        stmts.push(test);
+        stmts.extend(body.stmts.iter().cloned());
+        let body = ast::Block {
+            stmts,
+            span: body.span,
+        };
+        Some((keys, body))
+    }
+
     /// `Object.keys(x)`, `Object.values(x)` or `Object.entries(x)` of the prelude's `Object`
     /// (`None`: another call, or an object literal for `values` / `entries`, which the generic
     /// signature reads as a record).

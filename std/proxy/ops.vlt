@@ -232,3 +232,55 @@ export function __anyIsArrayProxy(o: any): boolean {
   }
   return Array.isArray(o);
 }
+
+/**
+ * `"k" in x` of a class instance or an object `x` in a program that makes proxies: a typed
+ * proxy's `has` trap, else `plain` (the answer of `x`'s type).
+ */
+export function __proxyIn(o: any, k: string, plain: boolean): boolean {
+  if (o instanceof Proxy) {
+    return o.__has(k);
+  }
+  return plain;
+}
+
+/**
+ * `Object.hasOwn(x, k)` of a class instance or an object `x` in a program that makes proxies:
+ * a typed proxy's `getOwnPropertyDescriptor` trap for `k`, else whether `keys` (`x`'s own
+ * keys) has `k`.
+ */
+export function __proxyHasOwn(o: any, k: string, keys: string[]): boolean {
+  if (o instanceof Proxy) {
+    return o.__hasOwn(k);
+  }
+  return keys.includes(k);
+}
+
+/**
+ * The keys `for (const k in o)` of an `any` `o` visits, each tested just before its turn
+ * (`__anyForInHasProxy`): a proxy's string keys from its `ownKeys` trap, else `Object.keys(o)`.
+ */
+export function __anyForInKeys(o: any): string[] {
+  if (o instanceof Proxy) {
+    const out: string[] = [];
+    for (const k of o.__ownKeys()) {
+      if (typeof k === "string") {
+        out.push(k as string);
+      }
+    }
+    return out;
+  }
+  return Object.keys(o);
+}
+
+/**
+ * Whether `for (const k in o)` visits `k` at its turn: a proxy's `getOwnPropertyDescriptor`
+ * trap finds it enumerable; a plain value's keys were listed when the loop began.
+ */
+export function __anyForInHas(o: any, k: string): boolean {
+  if (o instanceof Proxy) {
+    const d = o.__getOwnPropertyDescriptor(k);
+    return d !== undefined && d.enumerable === true;
+  }
+  return true;
+}

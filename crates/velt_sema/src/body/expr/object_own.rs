@@ -187,6 +187,9 @@ impl FnCx<'_, '_> {
             },
             o.span,
         );
+        if let Some(h) = self.proxy_has_own(o, k, keys.clone(), span) {
+            return h;
+        }
         let call = synth(
             ast::ExprKind::Call {
                 callee: Box::new(synth(

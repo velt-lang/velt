@@ -2734,7 +2734,13 @@ typed `any` (`new Proxy(t, handler as any)`) works too: its traps are called thr
 `JSON.stringify` of a proxy reads it through its traps in Node's order (`toJSON`, then the
 keys, whether each is enumerable and their values; an array target's `length` and elements).
 `Object.keys(s)` and `for (k in s)` of a typed proxy `s` run its `ownKeys` and
-`getOwnPropertyDescriptor` traps, as in Node.
+`getOwnPropertyDescriptor` traps, `Object.hasOwn(s, k)` and `hasOwnProperty.call(s, k)` its
+`getOwnPropertyDescriptor` trap for `k`, and `"k" in s` its `has` trap, as in Node (for a
+proxy typed as a class, an interface or an object type, named by a variable, `this` or a
+property). `for (k in p)` of an `any` proxy `p` runs its `ownKeys` trap once and its
+`getOwnPropertyDescriptor` trap just before each key's turn, visiting the enumerable ones, so a
+key deleted during the loop is skipped, as Node does. (Of a plain value through `any`, the keys
+are listed when the loop begins, and one deleted during the loop is still visited.)
 
 `p.push(…)`, `p.pop()`, `p.shift()`, `p.unshift(…)`, `p.splice(…)`, `p.map(f)`, `p.filter(f)`,
 `p.forEach(f)`, `p.some(f)`, `p.every(f)`, `p.find(f)`, `p.includes(x)`, `p.indexOf(x)`,
