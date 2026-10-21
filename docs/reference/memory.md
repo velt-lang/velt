@@ -37,8 +37,8 @@ explanation, see [Memory without a garbage collector](../book/memory.md).
   it. A parameter the body stores or returns takes ownership: a caller that does not use its
   variable again hands it over for free, one that does shares it. Returning a field of a class
   instance (a getter's `return this.ctl.sig`) shares the field and only borrows the instance.
-- A **promise** has one owner: `await` a stored promise once; using a promise variable after
-  handing it on is ``use of moved value `p` ``.
+- A **promise** is shared like an object: every holder may `await` it and gets the result
+  ([Async](async.md#promises)).
 - Dropping a long chain of objects never overflows the stack, however it is linked: a
   linked list through a `next: Node | null` field or a tree through `left` and `right` is
   freed in a loop (when the class is not part of a class hierarchy, with no base class and no

@@ -70,6 +70,13 @@ impl<'c, 'h> FnLower<'c, 'h> {
             .iter()
             .find(|(_, mode, ty)| *mode == PassMode::Owned && lw.cx.uncopyable(*ty))
             .map(|c| c.2);
+        // Calls from several threads at once would also share a captured promise between
+        // tasks: one held this way is awaited on one task (#212).
+        let unshareable = caps.iter().find_map(|(_, mode, ty)| {
+            (*mode == PassMode::Owned)
+                .then(|| lw.cx.unshareable_part(*ty).map(|_| *ty))
+                .flatten()
+        });
         // A local async closure's calls share what it captured (async_fn/ctor.rs
         // `take_capture`): calls from several threads would update the counts at once. Sema
         // keeps such closures away from these places (ownership/local_async); this catches a
@@ -81,7 +88,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
                     .any(|(_, mode, ty)| *mode == PassMode::Owned && lw.cx.holds_counted(*ty)));
         let (caps2, cells2) = (caps.clone(), cells.clone());
         lw.check_if_tagged(env, |lw, e| {
-            if let Some(t) = uncopyable {
+            if let Some(t) = unshareable {
                 lw.panic_many_threads(t);
             }
             if local {

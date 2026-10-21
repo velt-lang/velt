@@ -110,7 +110,7 @@ pub unsafe extern "C" fn velt_rt_spawn_transfer(
 ) -> *mut VeltFut {
     let f = velt_rt_fut_box(poll, drop, state, state_size, state_align);
     if let Some(t) = result_transfer {
-        super::local::velt_rt_fut_transfer(f, t);
+        super::local::velt_rt_fut_transfer(f, Some(t));
     }
     velt_rt_spawn_fut(f, result_size, result_drop)
 }

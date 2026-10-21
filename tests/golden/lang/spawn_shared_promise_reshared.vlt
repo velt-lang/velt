@@ -1,0 +1,30 @@
+// check: no leaks
+// A holder of a shared promise handed to another task is a promise of that task there (#212):
+// it is shared again, awaited through both holders, and one of them handed on to a third task
+// in turn. Node prints the same.
+class Obj {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+async function make(n: number): Promise<Obj> {
+  await Promise.resolve();
+  return new Obj(n);
+}
+async function inner(p: Promise<Obj>): Promise<number> {
+  return (await p).n * 10;
+}
+async function use(p: Promise<Obj>): Promise<number> {
+  const again = p;
+  const third = again;
+  const t = spawn(inner(third));
+  return (await again).n + (await p).n + (await t);
+}
+async function main() {
+  const p = make(1);
+  const q = p;
+  const t = spawn(use(q));
+  console.log(await t);
+  console.log((await p).n);
+}

@@ -1,0 +1,5 @@
+all 2 5
+all objects 4 10
+allSettled 7 8
+any 8 8
+race 10 10
