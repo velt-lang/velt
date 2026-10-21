@@ -153,10 +153,9 @@ impl FnCx<'_, '_> {
         }
         // A broken slot is an error type in the bounds of the later ones too (no `keyof f64`
         // from `K extends keyof T` once `T extends object` failed).
-        let mut known = slots.to_vec();
-        let slots = &mut known;
-        for k in 0..slots.len() {
-            let s = slots[k];
+        let mut broken: Option<Vec<Option<TyId>>> = None;
+        for (k, &s) in slots.iter().enumerate() {
+            let slots = broken.as_deref().unwrap_or(slots);
             let name = c
                 .slot_names
                 .get(k)
@@ -221,7 +220,9 @@ impl FnCx<'_, '_> {
                 true => out.push(t),
                 false => {
                     out.push(self.cx.ty.error);
-                    slots[k] = Some(self.cx.ty.error);
+                    let error = self.cx.ty.error;
+                    let first = broken.is_none().then(|| slots.to_vec());
+                    broken.get_or_insert_with(|| first.unwrap_or_default())[k] = Some(error);
                 }
             }
         }
