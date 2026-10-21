@@ -32,6 +32,11 @@ pub fn try_flush_stdout() {
     stdout::try_flush();
 }
 
+/// Called by the runtime's start-up, before the program runs: see [`stdout::init_mode`].
+pub fn init_stdout() {
+    stdout::init_mode();
+}
+
 /// Called after every poll of a compiled future by the runtime: makes this thread's output visible
 /// in order before the task can continue on another thread.
 pub fn publish_thread_output() {

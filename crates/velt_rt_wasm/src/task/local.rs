@@ -76,10 +76,17 @@ unsafe fn start(f: *mut VeltFut, result_drop: Option<ResultDropFn>, rejectable: 
 /// are moved or copied at the same points as on native targets (rt_abi_async.md §1). A race
 /// passes the mark to its children; a second mark, and any other future, is ignored.
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_fut_transfer(f: *mut VeltFut, transfer: ResultDropFn) {
+pub unsafe extern "C" fn velt_rt_fut_transfer(f: *mut VeltFut, transfer: Option<ResultDropFn>) {
+    if super::shared::is_shared(f) {
+        return super::shared::hand_over(f, transfer);
+    }
     if super::race::pass_transfer(f, transfer) {
         return;
     }
+    // A result with nothing to move or copy: only a holder of a shared promise is handed over.
+    let Some(transfer) = transfer else {
+        return;
+    };
     let started = std::ptr::fn_addr_eq(
         (*f).poll.0,
         started_poll as unsafe extern "C" fn(*mut VeltFut, *mut c_void) -> u32,
@@ -170,7 +177,8 @@ unsafe fn adopt(
     (*trailer(f)).started = Rc::into_raw(st.clone());
     *f = VeltFut::new(started_poll, started_drop);
     executor::count_local(true);
-    let id = executor::spawn(new_leaf(driver(f, st.clone())), 0, None);
+    let logical = Some(executor::logical_task()).filter(|l| *l != 0);
+    let id = executor::spawn_for(new_leaf(driver(f, st.clone())), 0, None, logical);
     st.borrow_mut().task = id;
     (id, st)
 }
@@ -247,6 +255,9 @@ pub unsafe extern "C" fn velt_rt_futs_handled(
 /// pending (also for futures that only run when awaited), as in velt_rt.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_fut_peek(f: *mut VeltFut) -> u8 {
+    if super::shared::is_shared(f) {
+        return super::shared::peek(f) as u8;
+    }
     if boxed::is_lazy(f) {
         return ((*trailer(f)).live == 0) as u8;
     }
@@ -427,6 +438,11 @@ thread_local! {
     static MODULE_STATE: Cell<*mut u8> = const { Cell::new(std::ptr::null_mut()) };
     /// How many of its slots are initialized (`u64::MAX` once `init` returned).
     static MODULE_READY: Cell<u64> = const { Cell::new(0) };
+}
+
+/// Has the program's module state been set up (it has some, and `init` ran or runs)?
+pub(crate) fn module_state_used() -> bool {
+    !MODULE_STATE.with(Cell::get).is_null()
 }
 
 /// The module state, allocated zeroed and initialized by `desc.init` on first access, to reach
@@ -635,8 +651,8 @@ mod tests {
         let st = s as *mut i64;
         if *st.add(1) == 0 {
             let p = started_child();
-            velt_rt_fut_transfer(p, tag);
-            velt_rt_fut_transfer(p, tag);
+            velt_rt_fut_transfer(p, Some(tag));
+            velt_rt_fut_transfer(p, Some(tag));
             log("marked");
             *st.add(2) = p as i64;
             *st.add(1) = 1;

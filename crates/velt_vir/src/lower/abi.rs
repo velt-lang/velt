@@ -197,6 +197,10 @@ impl<'c, 'h> FnLower<'c, 'h> {
         }
         let mut func = lw.finish(symbol, params, abi.ret);
         func.param_attrs = attrs;
+        func.target = hir_prog.cpu_targets.get(&def).map(|t| match t {
+            hir::CpuTarget::ShaArm => crate::simd::Ext::ShaArm,
+            hir::CpuTarget::ShaX86 => crate::simd::Ext::ShaX86,
+        });
         func
     }
 

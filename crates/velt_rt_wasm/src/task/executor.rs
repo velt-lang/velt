@@ -47,7 +47,12 @@ struct Task {
     fut: *mut VeltFut,
     result_size: usize,
     join: Option<Rc<RefCell<JoinState>>>,
+    /// The logical task it runs for ([`logical_task`]).
+    logical: u64,
 }
+
+/// The logical task of the `block_on` root.
+const ROOT_LOGICAL: u64 = 1;
 
 /// A pending timer (ordered by deadline, then creation order).
 struct Timer {
@@ -128,6 +133,8 @@ struct Executor {
     resumed: std::collections::HashSet<u64>,
     /// Queued tasks of promises a combinator gave up ([`refresh_first`]).
     refresh: Vec<usize>,
+    /// The last logical task id handed out (after [`ROOT_LOGICAL`]).
+    logicals: u64,
 }
 
 /// An entry of the microtask queue: whom to run when the queue reaches it.
@@ -369,6 +376,20 @@ fn begin_poll(id: usize) {
     });
 }
 
+/// The logical task being polled (0 outside a poll): the `block_on` root, a spawned task, or
+/// the task that started the promise being driven. Never reused (velt_rt's `velt_rt_task_id`).
+pub fn logical_task() -> u64 {
+    with_exec(|e| match e.polling.last() {
+        None => 0,
+        Some((ROOT, _)) => ROOT_LOGICAL,
+        Some((id, _)) => e
+            .tasks
+            .get(id - 1)
+            .and_then(Option::as_ref)
+            .map_or(0, |t| t.logical),
+    })
+}
+
 /// Back to the turn the poll interrupted.
 fn end_poll() {
     with_exec(|e| {
@@ -451,10 +472,29 @@ pub extern "C" fn velt_rt_keep_alive_release() {
 /// Start `fut` as a task (queued now); on completion its `result_size` result bytes move into
 /// `join` (if any) and the future is freed. Returns the task id.
 pub fn spawn(fut: *mut VeltFut, result_size: usize, join: Option<Rc<RefCell<JoinState>>>) -> usize {
+    spawn_for(fut, result_size, join, None)
+}
+
+/// [`spawn`] for logical task `logical` (`None`: a new one). A started promise's driving task
+/// runs for the logical task that started it, as on native targets, where the task's own set
+/// drives it.
+pub fn spawn_for(
+    fut: *mut VeltFut,
+    result_size: usize,
+    join: Option<Rc<RefCell<JoinState>>>,
+    logical: Option<u64>,
+) -> usize {
+    let logical = logical.unwrap_or_else(|| {
+        with_exec(|e| {
+            e.logicals = e.logicals.max(ROOT_LOGICAL) + 1;
+            e.logicals
+        })
+    });
     let task = Task {
         fut,
         result_size,
         join,
+        logical,
     };
     let id = with_exec(|e| match e.free.pop() {
         Some(slot) => {

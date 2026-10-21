@@ -209,6 +209,13 @@ impl FnLower<'_, '_> {
                 (Ty::Unit, _) => {
                     self.expr(a);
                 }
+                (Ty::Agg(_), PassMode::Borrow) if self.is_table(a) => {
+                    // A table to a param that only reads it: its read-only data (#1334).
+                    let place = self
+                        .table_read(a)
+                        .unwrap_or_else(|| ice("table without data"));
+                    argv.push(self.addr(place));
+                }
                 (t @ Ty::Agg(_), PassMode::Borrow | PassMode::BorrowMut) => {
                     let v = match user_code {
                         true => self.stable_borrow(a, &args[i + 1..]),
@@ -270,7 +277,16 @@ impl FnLower<'_, '_> {
         for (i, (a, later)) in args.iter().zip(later).enumerate() {
             let t = self.vty(a.ty);
             let mode = modes.and_then(|m| m.get(i).copied());
-            let v = if is_moved(a) {
+            // A table (a module constant of number literals, #1334) to a param that only reads it:
+            // its read-only data, not a new array (sema rejects every use that could write or
+            // keep a table, and an array with `cap == 0` owns no buffer to free).
+            let table = match (mode, transfer) {
+                (Some(PassMode::Borrow), false) if self.is_table(a) => self.table_read(a),
+                _ => None,
+            };
+            let v = if let Some(p) = table {
+                Operand::Copy(p)
+            } else if is_moved(a) {
                 let v = self.consume(a);
                 let ty = self.sub(a.ty);
                 self.own_value(v, ty)

@@ -143,6 +143,13 @@ fn release(how: u8) {
     });
 }
 
+/// Does this thread hold the lock (for a task's poll, or outside a task)? Every task that
+/// reaches module state holds it while it runs, so values from there (a shared promise kept in a
+/// `Map`, task/shared.rs) may move between those tasks.
+pub(crate) fn held() -> bool {
+    used() && HELD.with(Cell::get) != NOT_HELD
+}
+
 /// Code outside a task is done for now (`main` returned, or the program goes on in tasks): let
 /// the tasks have the lock.
 pub(crate) fn release_outside() {
@@ -323,5 +330,22 @@ mod tests {
         assert_eq!(HELD.with(Cell::get), IN_POLL);
         end_poll(took);
         assert_eq!(HELD.with(Cell::get), NOT_HELD);
+    }
+
+    /// Code outside a task may put holders of the outside home's promises in module state, where
+    /// tasks holding the lock use them: the home's polls take the lock too (task/shared.rs).
+    #[test]
+    fn the_outside_home_polls_with_the_lock_in_a_program_with_module_state() {
+        // As the first `velt_rt_module_state` call does; no other test depends on it being
+        // unset (a task takes the lock only once it touched module state).
+        USED.store(true, Ordering::Relaxed);
+        let mut inside = false;
+        super::super::in_outside_home(|| inside = held());
+        assert!(inside, "the home's step runs with the module lock");
+        assert!(
+            super::super::OUTSIDE_HOME.lock().4,
+            "the home is a touched task"
+        );
+        assert_eq!(HELD.with(Cell::get), NOT_HELD, "and gives the lock back");
     }
 }

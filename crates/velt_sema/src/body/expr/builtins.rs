@@ -108,6 +108,9 @@ impl FnCx<'_, '_> {
             self.check_args_loose(args);
             return self.error_expr(span);
         }
+        if rest == "target" {
+            return self.target_stmt(args, span);
+        }
         let Some(i) = intrinsic_named(rest) else {
             self.cx
                 .err(format!("unknown intrinsic `{}`", id.name), id.span);
@@ -139,7 +142,11 @@ impl FnCx<'_, '_> {
                 self.throw_src(crate::defs::ThrowSrc::Direct(e, span));
             }
         }
-        self.intrinsic(i, ck.args, ck.ret, span)
+        let e = self.intrinsic(i, ck.args, ck.ret, span);
+        if i == Intrinsic::SpawnHandled {
+            self.spawned_promises(&e);
+        }
+        e
     }
 
     /// `console.log(...)`, `console.error(...)`, `process.exit(code)`, `process.memoryUsage()`,
@@ -325,22 +332,13 @@ impl FnCx<'_, '_> {
         {
             let t = recv.ty;
             self.no_generator_copy(t, crate::body::GenCopy::Clone, prop.span);
-        } else if i == Intrinsic::Clone && matches!(self.cx.ty.kind(recv.ty), TyKind::Promise(..)) {
-            self.cx.error(
-                Diagnostic::error("a promise cannot be copied", prop.span).with_note(
-                    "it runs once and has one owner; pass the promise itself on, or await it and copy the result",
-                ),
-            );
         } else if i == Intrinsic::Clone && self.cx.owns_uncopyable(recv.ty) {
             let why = self.cx.uncopyable_why(recv.ty);
             let part = self.cx.uncopyable_part(recv.ty).unwrap_or(recv.ty);
-            let note = match self.cx.ty.kind(part) {
-                TyKind::Promise(..) => "a promise runs once and has one owner; await it and copy the result".to_string(),
-                _ => format!(
-                    "a copy would share the resource and release it twice; give `{}` a `clone()` method that duplicates the resource (a deep copy then calls it)",
-                    self.cx.display(part)
-                ),
-            };
+            let note = format!(
+                "a copy would share the resource and release it twice; give `{}` a `clone()` method that duplicates the resource (a deep copy then calls it)",
+                self.cx.display(part)
+            );
             self.cx.error(
                 Diagnostic::error(
                     format!("{why}, so it has no automatic `clone()`"),

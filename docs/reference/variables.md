@@ -174,10 +174,16 @@ function main() {
   import) stops the program with that `ReferenceError`
   (`Cannot access 'b' before initialization`, exit code 1), as an uncaught one does in Node;
   it cannot be caught.
-- Module state cannot hold a promise (`let p = work();`, `let t = spawn(work());`, also
-  `Promise<T> | null`, or an object type with a promise field): it is initialized before `main` runs, where nothing awaits it, and a
-  promise has one owner while every task reads the state. Start the work in `main` and pass
-  the promise, or its result, where it is needed.
+- Module state cannot hold a promise itself (`let p = work();`, `let t = spawn(work());`, also
+  `Promise<T> | null`, or an object type with a promise field): it is initialized before
+  `main` runs, outside async code, where a promise does not start until something awaits it
+  (Node starts it at once). Start the work in `main` and pass the promise, or its result,
+  where it is needed. A class, an array or a `Map` in module state may hold promises that the
+  program puts there as it runs, such as a cache of requests in flight
+  (`const inflight = new Map<string, Promise<T>>()`): a promise read from there on any task is
+  another holder of the same promise ([shared promises](async.md#promises)), which runs on the
+  task that started it, and every holder gets the same result (an object result is the same
+  object, as everything reached through module state is shared by the tasks).
 - A `Mutex` `with` callback cannot use module state, directly or through a function it calls
   (``the function passed to `with` may use module state``). Code that runs without a call
   counts too: field initializers at `new`, and the `toString()`, `toJSON()` and
@@ -245,9 +251,11 @@ function main() {
 - Each element is a number or boolean literal, also negated or converted with `as`, or a module
   constant that is one. Any other array constant (strings, nested arrays, objects, computed
   elements) is not a table but [module state](#module-state), evaluated once per process.
+- Passed to a function or method that only reads it (`f(K)` when `f` doesn't modify its parameter,
+  `K.includes(x)`, `K.indexOf(x)`, `u32x4.load(K, i)`), a table is that read-only data too:
+  nothing is built, so such calls are as cheap in a hot loop as indexing.
 - Used in any other way, a table is what every module constant is: evaluated at that use, here
-  to a new array with those elements. `K.includes(x)`, `f(K)` and `K.slice()` each build one, so
-  in a hot loop index the table or iterate it instead of passing it along.
+  to a new array with those elements. `K.slice()` is the one to use for a copy.
 - Nothing can modify a table or take it over, and a use that could is a compile error. That is
   `K[0] = 1`, `K.push(1)`, `K.fill(0)`, and passing `K` to a function that modifies its
   parameter (``cannot modify module-level constant `K` ``), as for any module constant. For a

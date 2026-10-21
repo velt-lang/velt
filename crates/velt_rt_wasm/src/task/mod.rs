@@ -20,6 +20,7 @@ pub mod leaf;
 pub mod local;
 pub mod order;
 pub mod race;
+pub mod shared;
 pub mod spawn;
 pub mod waiters;
 

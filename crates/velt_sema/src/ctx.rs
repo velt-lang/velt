@@ -128,6 +128,8 @@ pub(crate) struct Ctx<'m> {
     pub fn_defs: Vec<DefId>,
     /// Named functions used as values (`FnRef`) with type arguments, checked after ownership.
     pub fn_values: Vec<(DefId, Vec<TyId>, Span)>,
+    /// Gated functions found so far (`body::gated`), for `hir::Program::cpu_targets`.
+    pub cpu_targets: FxHashMap<DefId, crate::hir::CpuTarget>,
     /// Dispatch groups for error types (`crate::throws`), built on first use.
     pub groups: Option<crate::throws::Groups>,
     /// Bodies that may hold object literals implementing interfaces (`body::literal_hosts`).
@@ -326,6 +328,7 @@ impl<'m> Ctx<'m> {
             closure_counts: FxHashMap::default(),
             fn_defs: vec![],
             fn_values: vec![],
+            cpu_targets: FxHashMap::default(),
             groups: None,
             literal_hosts: Default::default(),
             provisional_slots: vec![],
@@ -554,13 +557,13 @@ impl<'m> Ctx<'m> {
 
     /// Semantics stage 2: a non-Copy value that is *shared* — another reference to the same
     /// value — where its place stays in use or cannot be moved from, instead of being moved
-    /// (strings, objects, arrays, maps, closures). Promises have one owner (`await` takes the
-    /// result out), so values that hold one are moved as before.
+    /// (strings, objects, arrays, maps, closures, promises: another holder of the same
+    /// promise, #212): every type that is not Copy.
     pub fn is_shared_value(&mut self, t: TyId) -> bool {
         if let Some(&b) = self.shared_memo.get(&t) {
             return b;
         }
-        let b = !self.is_copy(t) && !self.holds_promise_in(t, 0);
+        let b = !self.is_copy(t);
         self.shared_memo.insert(t, b);
         b
     }

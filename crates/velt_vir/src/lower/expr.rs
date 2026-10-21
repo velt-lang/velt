@@ -244,6 +244,30 @@ impl FnLower<'_, '_> {
     /// `None`, for the initializer to be evaluated, also when the array is empty (nothing to
     /// store) or an element is not one `table_const` folds.
     pub(super) fn table_read(&mut self, e: &hir::Expr) -> Option<Place> {
+        let (data, len) = self.table_data(e)?;
+        let a = self.cx.array_agg();
+        let t = self.temp(Ty::Agg(a));
+        self.assign(
+            Place::local(t),
+            Rvalue::Aggregate(
+                a,
+                vec![
+                    Operand::Const(Const::Static(data), Ty::Ptr),
+                    cint(len as i128, Ty::U64),
+                    cint(0, Ty::U64),
+                ],
+            ),
+        );
+        Some(Place::local(t))
+    }
+
+    /// Whether `e` names a table that lowering stores as read-only data (`table_read`).
+    pub(super) fn is_table(&mut self, e: &hir::Expr) -> bool {
+        self.table_data(e).is_some()
+    }
+
+    /// The read-only data of the table `e` names, and its length (stored on first use).
+    fn table_data(&mut self, e: &hir::Expr) -> Option<(vir::StaticId, usize)> {
         let hir::ExprKind::Global(d) = e.kind else {
             return None;
         };
@@ -264,20 +288,7 @@ impl FnLower<'_, '_> {
                 stored?
             }
         };
-        let a = self.cx.array_agg();
-        let t = self.temp(Ty::Agg(a));
-        self.assign(
-            Place::local(t),
-            Rvalue::Aggregate(
-                a,
-                vec![
-                    Operand::Const(Const::Static(data), Ty::Ptr),
-                    cint(len as i128, Ty::U64),
-                    cint(0, Ty::U64),
-                ],
-            ),
-        );
-        Some(Place::local(t))
+        Some((data, len))
     }
 
     /// The elements of table `g` as static data, with their number; `None` when `g` is not a

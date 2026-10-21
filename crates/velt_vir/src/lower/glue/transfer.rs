@@ -407,7 +407,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
     }
 
     fn transfer_elems(&mut self, arr: &Place, e: TyId) {
-        if !self.cx.holds_counted(e) {
+        if !self.cx.transfers(e) {
             return;
         }
         let k = self.temp(Ty::U64);
@@ -422,19 +422,21 @@ impl<'c, 'h> FnLower<'c, 'h> {
     /// A promise: the runtime transfers its result where it is produced (a started promise
     /// finishes on the task that started it), before anyone on another task can see it. A
     /// lazy one (a `Promise.all` kept as a value) is started first, so this task drives it and
-    /// the inputs it reads stay here.
+    /// the inputs it reads stay here: the objects, and the holders of shared promises it awaits
+    /// (a `Promise.all` over one, #212). A result with nothing counted needs no glue (null), but
+    /// the runtime still hears of the promise: a holder of a shared one is handed over.
     fn transfer_promise(&mut self, place: &Place, ty: TyId) {
         let slot = self.cx.promise_slot(ty);
-        if !self.cx.holds_counted(slot) {
-            return;
-        }
         let f = self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(place.clone())));
         let done = self.new_block();
         let nn = self.non_null(f.clone());
         self.when(nn, done);
         let unclaimed = self.unclaimed_drop_fn(ty);
         self.call_rt(Rt::FutStart, vec![f.clone(), unclaimed], None);
-        let g = cfunc(self.cx.func(Work::Glue(Glue::TransferRoot, slot)));
+        let g = match self.cx.holds_counted(slot) {
+            true => cfunc(self.cx.func(Work::Glue(Glue::TransferRoot, slot))),
+            false => cint(0, Ty::Ptr),
+        };
         self.call_rt(Rt::FutTransfer, vec![f, g], None);
         self.goto(done);
         self.switch_to(done);
