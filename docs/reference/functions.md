@@ -58,8 +58,9 @@ function scale(xs: f64[], k: f64 = 2.0): f64[] {
   (TS2370). A rest parameter typed by a type parameter (`...args: A` with
   `A extends unknown[]`, which TypeScript infers as the tuple of the argument types) is not
   supported yet (#943).
-  An arrow function, a function expression or an object-literal method may have one too,
-  typed the same ways: a
+  An arrow function, a function expression or an object-literal method may have one too (a
+  method of a literal implementing an interface not yet, nor an interface method), typed the
+  same ways: a
   module-level constant `const total = (...xs: Nums) => …` is the function
   `function total(...xs: Nums)` (its parameters must be typed), and any other is a closure whose
   function type ends in the rest parameter (see Function types below).
@@ -903,10 +904,7 @@ async function main() {
   (`(event, a, b) => …`, which TypeScript accepts) is not supported yet. A rest parameter typed
   by a tuple is that tuple's parameters: `(...args: [string, number]) => R` is
   `(a: string, b: number) => R`, also when the tuple is a type argument
-  (`type Factory<A extends unknown[], T> = (...args: A) => T`), and
-  `Parameters<F>` is the tuple of `F`'s parameters. A generic function whose rest parameter is
-  typed by its type parameter (`wrap<A extends unknown[], R>(f: (...args: A) => R)`) is not
-  supported yet.
+  (`type Factory<A extends unknown[], T> = (...args: A) => T`).
 
   ```ts
   type Listener = (event: string, ...args: number[]) => void;
@@ -921,6 +919,22 @@ async function main() {
   }
   ```
 
+- A named function or a function value passed where a function type with the other kind of
+  parameters is expected is adapted as TypeScript allows. A function with a rest parameter
+  gets every argument the caller passes (`const h: (a: number, b: number) => number = sum`
+  gives `sum` both). A function with fixed parameters, passed where the function type ends
+  in a rest parameter, gets the rest arguments one by one (`call(Math.max)`); a
+  parameter whose argument is missing gets its default, or `undefined`, which its type (or
+  the rest element type) must then admit (`(a: any) => …`, `b?: number`); one of another type
+  is an error. Calling a union of function types where one has a rest parameter, or a
+  function with a rest parameter through `any`, is not supported yet.
+- In type-level code, `F extends (...args: any[]) => any` holds for every function type, and
+  `Parameters<F>` of `(...xs: T[]) => R` is `T[]`, as is `A` in
+  `F extends (...a: infer A) => R ? A : never`. For a function type with fixed parameters before
+  its rest parameter, `Parameters` would be a variadic tuple type
+  (`[e: string, ...xs: number[]]`), which is not supported yet. A generic function whose rest
+  parameter is typed by its type parameter (`wrap<A extends unknown[], R>(f: (...args: A) => R)`)
+  is not supported yet.
 - **Planned** (#943): generic function types (`<T>(description: string) => Token<T>`, a value
   each call instantiates) and construct signatures (`new (buffer: ArrayBuffer) => View`, a class
   passed as a value). They parse, and using one is an error saying it is not supported yet.
