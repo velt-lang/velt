@@ -233,7 +233,12 @@ pub(crate) fn ensure_global(cx: &mut Ctx, d: DefId) {
 /// once). A class, an array or a `Map` in module state may hold promises that tasks put there:
 /// each read is another holder of the shared promise (#212), and the tasks that use module
 /// state run one at a time.
-fn promise_in_state(cx: &mut Ctx, d: DefId, ty: crate::hir::TyId, span: velt_common::Span) {
+pub(crate) fn promise_in_state(
+    cx: &mut Ctx,
+    d: DefId,
+    ty: crate::hir::TyId,
+    span: velt_common::Span,
+) {
     if !holds_promise_by_value(cx, ty, 0) {
         return;
     }

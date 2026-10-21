@@ -132,19 +132,33 @@ pub(crate) fn keep_readers(cx: &mut Ctx) {
             keep(cx, a);
         }
     }
+    let mut refused = FxHashSet::default();
     loop {
         let mut changed = false;
         for &d in &consts {
-            if cx.kept_consts.contains(&d) {
+            if cx.kept_consts.contains(&d) || refused.contains(&d) {
                 continue;
             }
             let Some(init) = cx.global(d).and_then(|g| g.init.clone()) else {
                 continue;
             };
-            if reaches_kept(cx, &init) {
-                set_stored(cx, d, true);
-                cx.kept_consts.push(d);
+            if !reaches_kept(cx, &init) {
+                continue;
+            }
+            // Through `keep`, whose limits hold here too: one it refuses (it holds a promise,
+            // which module state cannot) would see the changes evaluated at each use, so it is
+            // the error a module state promise is.
+            if keep(cx, d) {
+                if !cx.kept_consts.contains(&d) {
+                    cx.kept_consts.push(d);
+                }
                 changed = true;
+            } else {
+                refused.insert(d);
+                if let Some(g) = cx.global(d) {
+                    let (ty, span) = (g.ty, g.src.span);
+                    crate::body::promise_in_state(cx, d, ty, span);
+                }
             }
         }
         if !changed {
