@@ -1,0 +1,13 @@
+// A union of function types whose longest member has an optional parameter, called with every
+// argument: the member taking none ignores them.
+type F = ((a: number, b?: number) => void) | (() => void);
+
+function call(f: F, a: number, b: number | undefined) {
+  f(a, b);
+}
+
+function main() {
+  call((a, b) => console.log("two", a, b), 1, 2);
+  call((a, b) => console.log("two", a, b), 3, undefined);
+  call(() => console.log("none"), 4, 5);
+}

@@ -33,6 +33,7 @@
 //!   `Lit(true)`. **`do body while (c)`** → see the hir.rs header (two forms).
 //! - **Ternary** → `ExprKind::If`. Statement `if` without braces is a one-statement block.
 
+mod arrow_scans;
 mod assign_ends;
 mod assign_narrow;
 pub(crate) mod assigned;
@@ -459,8 +460,10 @@ pub(crate) struct FnCx<'a, 'm> {
     /// closure it becomes is recorded in `Ctx::thread_adapters`.
     pub thread_adapter: Option<Span>,
     /// The member of a union of function types each arrow (by span) was typed by, for the
-    /// members it was tried against and the types it could see (`expr/closure.rs`).
-    pub member_choices: FxHashMap<(Span, Vec<TyId>, u64), TyId>,
+    /// members it was tried against and the types of the locals it names (`expr/closure.rs`).
+    pub member_choices: FxHashMap<(Span, Vec<TyId>, Vec<TyId>), TyId>,
+    /// What scans of each arrow's syntax found (`arrow_scans`).
+    pub arrow_scans: arrow_scans::ArrowScans,
     /// Checking an expression outside any body (a field initializer, a parameter default, a
     /// module-level constant): it has no frame to hold temporary locals (`driver::detached`).
     pub detached: bool,
@@ -531,6 +534,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             await_body: None,
             thread_adapter: None,
             member_choices: FxHashMap::default(),
+            arrow_scans: Default::default(),
             detached: false,
             immediate_hint: None,
             collect_iterable_args: false,
