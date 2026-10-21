@@ -460,6 +460,9 @@ pub(crate) struct FnCx<'a, 'm> {
     /// The span of the callback arrow of a timer call (`setTimeout(() => …, ms)`) that is not
     /// `async`: it is checked as an async arrow (`expr/timer_task.rs`).
     pub void_task: Option<Span>,
+    /// An arrow whose rest parameter is checked as an ordinary last parameter holding the
+    /// packed arguments (`expr/rest_shapes.rs`).
+    pub packed_rest: Option<Span>,
     /// A timer's callback that is a function value, not an arrow (`expr/callback.rs`).
     pub task_callback: Option<Span>,
     /// The handler arrow of a server call (`serve`) that is not `async`: checked as an async
@@ -542,6 +545,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             call_temps: vec![],
             callee_effects: None,
             void_task: None,
+            packed_rest: None,
             task_callback: None,
             thread_task: None,
             thread_callback: None,

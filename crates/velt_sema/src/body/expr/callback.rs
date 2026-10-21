@@ -59,7 +59,7 @@ pub(crate) enum CallbackMode {
 }
 
 /// What a wrapper calls.
-enum Callee {
+pub(super) enum Callee {
     /// A module-level function, by name.
     Named(ast::Expr),
     /// A function value, read once (and the closure a closure `const` holds).
@@ -68,7 +68,7 @@ enum Callee {
 
 /// How a wrapper calls the function it wraps.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Wrap {
+pub(super) enum Wrap {
     /// `(p…) => f(p…)`.
     Call,
     /// `(p…) => { const p = f(p…); }`: the started promise runs on its own.
@@ -134,7 +134,7 @@ impl FnCx<'_, '_> {
             // so each call copies what it captured like any async closure.
             if let Some(sig) = self.named_fn_sig(arg, false) {
                 if sig.required <= n || want.rest {
-                    let args = self.adapter_args(want, elem, &sig, arg.span);
+                    let args = self.adapter_args(want, elem, &sig, arg);
                     let callee = self.callback_callee(arg);
                     return Some(match args {
                         Some(args) => self.wrap(callee, want, &args, Wrap::Thread, Some(exp)),
@@ -152,7 +152,7 @@ impl FnCx<'_, '_> {
                 },
                 _ => return Some(value),
             };
-            let Some(args) = self.adapter_args(want, elem, &sig, arg.span) else {
+            let Some(args) = self.adapter_args(want, elem, &sig, arg) else {
                 return Some(self.error_expr(arg.span));
             };
             return Some(self.wrap(
@@ -185,7 +185,7 @@ impl FnCx<'_, '_> {
         if sig.shape() == want && !drops_result && !widens_result && !becomes_task {
             return None;
         }
-        let Some(args) = self.adapter_args(want, elem, &sig, arg.span) else {
+        let Some(args) = self.adapter_args(want, elem, &sig, arg) else {
             return Some(self.error_expr(arg.span));
         };
         let wrap = if becomes_task {
@@ -237,7 +237,7 @@ impl FnCx<'_, '_> {
 
     /// The wrapper arrow of shape `want` calling `callee` with `args`, checked against `exp`. A value is held in a hidden local first: `{ const f = value; (p0, …) => f(p0, …) }`;
     /// the wrapper owns `f` (it outlives the block).
-    fn wrap(
+    pub(super) fn wrap(
         &mut self,
         callee: Callee,
         want: Shape,
@@ -310,7 +310,7 @@ impl FnCx<'_, '_> {
 
     /// Checking a module-level constant or a field initializer itself (not a closure body in
     /// it): there is no frame to hold the hidden local a wrapper keeps its function in.
-    fn frameless(&self) -> bool {
+    pub(super) fn frameless(&self) -> bool {
         self.detached && self.outer.is_empty()
     }
 
@@ -318,17 +318,17 @@ impl FnCx<'_, '_> {
     /// it in place, `(p…) => (e)(p…)`, with `e` checked as `inner` (a function of shape
     /// `want`). Outside any body `e` captures nothing, so making the closure at each call
     /// is the same as making it once.
-    fn immediate_wrapper(
+    pub(super) fn immediate_wrapper(
         &mut self,
         e: &ast::Expr,
         inner: TyId,
-        want: Shape,
+        (want, plan): (Shape, &Plan),
         wrap: Wrap,
         exp: Option<TyId>,
     ) -> hir::Expr {
         let span = e.span;
         let callee = synth(ast::ExprKind::Paren(Box::new(e.clone())), span);
-        let arrow = wrapper(callee, want, &want.same(), wrap == Wrap::Discard, span);
+        let arrow = wrapper(callee, want, plan, wrap == Wrap::Discard, span);
         self.immediate_hint = Some((span, inner));
         let w = self.closure(&arrow, exp, true);
         self.immediate_hint = None;
@@ -374,7 +374,7 @@ impl FnCx<'_, '_> {
         };
         if self.frameless() {
             let wrap = if discard { Wrap::Discard } else { Wrap::Call };
-            return Some(self.immediate_wrapper(e, async_ty, shape, wrap, exp));
+            return Some(self.immediate_wrapper(e, async_ty, (shape, &shape.same()), wrap, exp));
         }
         let f = self.closure(e, Some(async_ty), true);
         if self.thread_adapter == Some(e.span) {
@@ -437,7 +437,13 @@ impl FnCx<'_, '_> {
             rest,
         });
         if self.frameless() {
-            return Some(self.immediate_wrapper(e, member_ty, shape, Wrap::Call, exp));
+            return Some(self.immediate_wrapper(
+                e,
+                member_ty,
+                (shape, &shape.same()),
+                Wrap::Call,
+                exp,
+            ));
         }
         let f = self.closure(e, Some(member_ty), true);
         let exp = match self.cx.ty.kind(f.ty).clone() {

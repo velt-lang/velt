@@ -101,6 +101,7 @@ mod record_compound;
 mod record_literal;
 mod record_logical;
 mod regex_args;
+mod rest_shapes;
 mod setters;
 mod simd_call;
 pub(crate) mod spawn_promises;

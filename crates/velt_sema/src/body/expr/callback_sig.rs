@@ -75,20 +75,29 @@ impl FnCx<'_, '_> {
     /// The arguments a wrapper of shape `want` (whose rest arguments are `elem`s) passes to the
     /// function `sig` describes (`callback_wrap::plan`). A parameter it fills from a rest
     /// argument that may not have been passed gets `undefined` then, as in JavaScript: its
-    /// type or `elem` must admit `undefined`; `None` after reporting one that doesn't.
+    /// type or `elem` must admit `undefined` (or, for a function `arg` names, it gets its
+    /// default); `None` after reporting one that doesn't.
     pub(super) fn adapter_args(
         &mut self,
         want: Shape,
         elem: Option<TyId>,
         sig: &FnSig,
-        span: velt_common::Span,
+        arg: &ast::Expr,
     ) -> Option<Plan> {
+        let span = arg.span;
         let own = sig.shape();
         let passed = match want.rest {
             true => own.fixed,
             false => own.fixed.min(want.fixed),
         };
-        let args = plan(want, own, passed, sig.required);
+        // A function value is called with every parameter (a call by name fills in defaults).
+        let by_name = match &arg.kind {
+            ast::ExprKind::Ident(id) => !self.is_local_name(&id.name),
+            ast::ExprKind::Member { .. } => true,
+            _ => false,
+        };
+        let required = if by_name { sig.required } else { own.fixed };
+        let args = plan(want, own, passed, required);
         let read = args.may_be_missing();
         let admits =
             |cx: &crate::ctx::Ctx, t: TyId| cx.dynamic(t).is_some() || cx.ty.core(t).is_some();
