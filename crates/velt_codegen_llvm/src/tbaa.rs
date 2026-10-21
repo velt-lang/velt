@@ -94,6 +94,14 @@ pub(crate) fn element_pointers(
             }
         }
     }
+    // A candidate never assigned holds no pointer this function made.
+    let mut assigned = vec![false; n];
+    for &(local, _) in &defs {
+        assigned[local] = true;
+    }
+    for (e, a) in elem.iter_mut().zip(&assigned) {
+        *e &= *a;
+    }
     loop {
         let mut changed = false;
         for &(local, rvalue) in &defs {

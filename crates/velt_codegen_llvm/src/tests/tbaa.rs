@@ -42,13 +42,25 @@ fn program() -> Program {
         fb.local(U64),
     );
     // An element pointer, a copy of it and one further on: element tags.
-    fb.assign(b, elem, bin(BinOp::PtrAdd, copy_place(data.clone()), copy_local(i)));
+    fb.assign(
+        b,
+        elem,
+        bin(BinOp::PtrAdd, copy_place(data.clone()), copy_local(i)),
+    );
     fb.assign(b, copied, Rvalue::Use(copy_local(elem)));
-    fb.assign(b, stepped, bin(BinOp::PtrAdd, copy_local(copied), int(1, U64)));
+    fb.assign(
+        b,
+        stepped,
+        bin(BinOp::PtrAdd, copy_local(copied), int(1, U64)),
+    );
     fb.push(b, Stmt::Assign(deref(copied, U8), Rvalue::Use(int(1, U8))));
     fb.push(b, Stmt::Assign(deref(stepped, U8), Rvalue::Use(int(2, U8))));
     // The same pointer in a local whose address is taken: it could be changed through `slot`.
-    fb.assign(b, exposed, bin(BinOp::PtrAdd, copy_place(data), copy_local(i)));
+    fb.assign(
+        b,
+        exposed,
+        bin(BinOp::PtrAdd, copy_place(data), copy_local(i)),
+    );
     fb.assign(b, slot, Rvalue::AddrOf(Place::local(exposed)));
     fb.push(b, Stmt::Assign(deref(exposed, U8), Rvalue::Use(int(3, U8))));
     // A pointer from a call and a pointer param: anything.
@@ -79,11 +91,17 @@ fn element_and_header_accesses_are_tagged_and_nothing_else() {
     let ir = emit_ir(&program(), "aarch64-unknown-linux-gnu").expect("emit_ir");
     for v in [1, 2] {
         let line = store_of(&ir, v);
-        assert!(line.contains(ELEMENT), "store {v} should have the element tag: {line}");
+        assert!(
+            line.contains(ELEMENT),
+            "store {v} should have the element tag: {line}"
+        );
     }
     for v in [3, 4, 5] {
         let line = store_of(&ir, v);
-        assert!(!line.contains("!tbaa"), "store {v} should have no tag: {line}");
+        assert!(
+            !line.contains("!tbaa"),
+            "store {v} should have no tag: {line}"
+        );
     }
     let header: Vec<&str> = ir.lines().filter(|l| l.contains(HEADER)).collect();
     assert!(
