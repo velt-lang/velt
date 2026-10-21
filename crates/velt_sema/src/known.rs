@@ -467,8 +467,8 @@ impl Ctx<'_> {
             return None;
         }
         let parts: Vec<TyId> = match self.ty.kind(t).clone() {
-            TyKind::Shared(_) | TyKind::FnPtr { .. } => return None,
-            TyKind::Promise(..) => return Some(t),
+            // A promise is copied by sharing it (#212).
+            TyKind::Shared(_) | TyKind::FnPtr { .. } | TyKind::Promise(..) => return None,
             TyKind::Adt(d, _) if self.own_clone(d).is_some() => return None,
             TyKind::Adt(d, args) => {
                 let tys: Vec<TyId> = match &self.info[d.0 as usize] {
@@ -491,18 +491,11 @@ impl Ctx<'_> {
     }
 
     /// Why a `t` cannot be deep-copied, for a diagnostic: "`Conn` owns a resource
-    /// (`[Symbol.dispose]`) and has no `clone()`", "`Pair` holds a `Conn`, which …", or "…
-    /// holds a promise, which cannot be copied".
+    /// (`[Symbol.dispose]`) and has no `clone()`", or "`Pair` holds a `Conn`, which …".
     pub fn uncopyable_why(&mut self, t: TyId) -> String {
         let tn = self.display(t);
         let part = self.uncopyable_part(t).unwrap_or(t);
         let resource = "owns a resource (`[Symbol.dispose]`) and has no `clone()`";
-        if matches!(self.ty.kind(part), TyKind::Promise(..)) {
-            return match part == t {
-                true => "a promise cannot be copied".to_string(),
-                false => format!("`{tn}` holds a promise, which cannot be copied"),
-            };
-        }
         match part == t {
             true => format!("`{tn}` {resource}"),
             false => {

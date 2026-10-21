@@ -1,0 +1,13 @@
+fetch 1
+user1 user1 true
+fetch 2
+a user2
+b user2
+fetch 3
+c user3
+loaded
+x 42
+y 42
+then1 str
+then2 str
+after then str

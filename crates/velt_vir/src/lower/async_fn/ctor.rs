@@ -146,7 +146,10 @@ impl<'c, 'h> FnLower<'c, 'h> {
             // call runs on the task that owns the environment, and a call spawned through a
             // function value works on a copy of the closure made for the task (callee.rs
             // `call_indirect`), whose transfer rejects a resource still referenced here.
-            PassMode::Owned if self.cx.uncopyable(ty) => self.share_value(Operand::Copy(slot), ty),
+            // So is a promise, which a copy would hand over to another task (#212).
+            PassMode::Owned if self.cx.unshareable_part(ty).is_some() => {
+                self.share_value(Operand::Copy(slot), ty)
+            }
             // A generator sees the objects the closure captured, as in JS: its state never
             // leaves this thread (glue/transfer.rs), so the generators of one closure may share
             // them. So do the calls of a local async closure, which never leaves its task

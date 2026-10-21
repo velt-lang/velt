@@ -19,6 +19,7 @@ pub mod latch;
 pub mod leaf;
 pub mod local;
 pub mod race;
+pub mod shared;
 pub mod spawn;
 pub mod waiters;
 
