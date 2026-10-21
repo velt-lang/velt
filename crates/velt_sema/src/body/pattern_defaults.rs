@@ -272,10 +272,14 @@ impl FnCx<'_, '_> {
     }
 
     /// `kind [a, b = d] = tmp;` on a tuple: an ordinary destructuring without the defaults,
-    /// except for elements that may be `undefined` (`b = tmp[1] ?? d`).
+    /// except for elements that may be `undefined` (`b = tmp[1] ?? d`). A tuple always has its
+    /// elements, so a default directly on one applies only then; when one does, or an element's
+    /// own pattern has defaults, numeric keys or an object rest (`[i, { a = 5 }]`,
+    /// `[i, { 0: c }]`), each element is taken apart from `tmp[k]` on its own.
     fn tuple_decl(&mut self, kind: VarKind, p: &Pattern, tmp: Expr, out: &mut Vec<hir::Stmt>) {
         let span = p.span;
-        let elem_tys = match self.temp_ty(&tmp).map(|t| self.cx.ty.kind(t).clone()) {
+        let tuple_ty = self.temp_ty(&tmp);
+        let elem_tys = match tuple_ty.map(|t| self.cx.ty.kind(t).clone()) {
             Some(hir::TyKind::Tuple(ts)) => ts,
             _ => vec![],
         };
@@ -284,14 +288,39 @@ impl FnCx<'_, '_> {
                 matches!(e.kind, P::Default { .. })
                     && elem_tys.get(k).is_some_and(|t| self.has_undefined(*t))
             });
-            if applies {
-                if let Some(r) = rest {
+            let nested = elems.iter().any(|e| {
+                let inner = match &e.kind {
+                    P::Default { pattern, .. } => pattern,
+                    _ => e,
+                };
+                has_default(inner)
+                    || super::object_rest::has_object_rest(inner)
+                    || super::index_keys::has_index_key(inner)
+            });
+            if applies || nested {
+                if rest.is_some() || elems.len() > elem_tys.len() {
+                    // What an ordinary pattern reports, without taking it apart again.
+                    let shown = tuple_ty.map(|t| self.cx.display(t)).unwrap_or_default();
                     self.cx.err(
-                        "`...rest` next to a default of an element that may be `undefined` is not supported yet",
-                        r.span,
+                        format!("pattern does not match the tuple type `{shown}`"),
+                        span,
                     );
+                    let reported = mk(E::Ident(ident(crate::body::REPORTED, span)), span);
+                    let names = rest.iter().map(|r| pat(P::Ident(r.clone()), r.span));
+                    for sub in elems.iter().cloned().chain(names) {
+                        self.decl_with_defaults(
+                            kind,
+                            &without_defaults(&sub),
+                            reported.clone(),
+                            out,
+                        );
+                    }
+                    return;
                 }
-                for (k, sub) in elems.iter().enumerate().take(elem_tys.len()) {
+                for (k, sub) in elems.iter().enumerate() {
+                    if matches!(sub.kind, P::Wildcard) {
+                        continue;
+                    }
                     let elem = index(&tmp, k);
                     let (sub, value) = match &sub.kind {
                         P::Default { pattern, value } if self.has_undefined(elem_tys[k]) => {
