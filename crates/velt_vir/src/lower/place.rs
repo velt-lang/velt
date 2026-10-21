@@ -7,6 +7,7 @@ use std::rc::Rc;
 
 use velt_sema::hir::{self, LocalId, Pat, PatKind, TyId, TyKind, UseMode};
 
+use super::async_fn::BoxHold;
 use super::operand::proj;
 use super::types::VariantAt;
 use super::{ice, unit, FnLower};
@@ -79,7 +80,14 @@ impl FnLower<'_, '_> {
                 return self.take_part(fp, fty);
             }
         }
-        let v = self.projection_base(base, false);
+        // A part that is not a number goes on being read where it is (passed on, looped over, a
+        // method's receiver) while code may run.
+        let fty = self.cx.member_ty(bty, index);
+        let hold = match number(self.cx.ty(fty)) {
+            true => BoxHold::No,
+            false => BoxHold::IfReplaceable,
+        };
+        let v = self.projection_base(base, hold);
         let bp = self.place_of(v, bty);
         let p = self.field_place(&bp, bty, index);
         if frozen_base(base) {
@@ -143,27 +151,42 @@ impl FnLower<'_, '_> {
     }
 
     pub(super) fn index_expr(&mut self, base: &hir::Expr, index: &hir::Expr) -> Operand {
-        self.index_at(base, index, false, false)
+        let hold = match frozen_base(base) {
+            true => {
+                let bty = self.sub(base.ty);
+                let elem = self.elem_ty(bty);
+                match number(self.cx.ty(elem)) {
+                    true => BoxHold::No,
+                    false => BoxHold::IfReplaceable,
+                }
+            }
+            false => BoxHold::No,
+        };
+        self.index_at(base, index, false, hold)
     }
 
     /// `base[index]`; `in_place`: the element of a value inside a `shared` box is read in
     /// place even when it holds counted parts, because it is itself only the base of a
-    /// projection (`FnLower::projection_base`). `runs_code`: user code may run after this
-    /// projection, before what it reaches is read.
+    /// projection (`FnLower::projection_base`). `hold`: whether a `shared` box it reads is
+    /// retained for the statement ([`BoxHold`]).
     pub(super) fn index_at(
         &mut self,
         base: &hir::Expr,
         index: &hir::Expr,
         in_place: bool,
-        runs_code: bool,
+        hold: BoxHold,
     ) -> Operand {
         let bty = self.sub(base.ty);
         // A table's header is the inline value, also where arrays of its type are boxes.
         let arr = match self.table_read(base) {
             Some(table) => table,
             None => {
-                let runs_code = runs_code || (frozen_base(base) && self.may_write(index));
-                let v = self.projection_base(base, runs_code);
+                // An index that may write may give the handle's variable another handle itself.
+                let hold = match frozen_base(base) && self.may_write(index) {
+                    true => BoxHold::Yes,
+                    false => hold,
+                };
+                let v = self.projection_base(base, hold);
                 let arr = self.place_of(v, bty);
                 self.content(&arr, bty)
             }
@@ -744,4 +767,10 @@ pub(super) fn frozen_base(base: &hir::Expr) -> bool {
             ..
         }
     ) || super::expr::frozen_part(base)
+}
+
+/// Is a value of VIR type `t` a number (or bool), which a read copies out whole? A pointer (a
+/// counted object, a class object) still points into what it was read from.
+pub(super) fn number(t: Ty) -> bool {
+    t.is_scalar() && t != Ty::Ptr
 }

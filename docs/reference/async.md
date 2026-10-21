@@ -441,25 +441,28 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
   64-bit integers, `.add(n)`, `.get()` and `.set(v)` are atomic; `.add(n)` returns the new value.
   Any other `shared<T>` (one that holds no `Mutex`) never changes, so every task reads it at
   once, without a lock, like the `T` it holds: `s[i]` and `s.length` on a string or array,
-  `for (const x of s)`, a field (`s.name`), `T`'s methods (`s.includes(x)`,
-  `s.startsWith("a")`), and `s` passed where a `T` is expected (`count(s)` for
-  `count(xs: u8[])`). An index, a length or a field reads the value in place. Passed on as a
-  whole or in part, the value is borrowed too when nothing in it is reference counted
-  (numbers, strings, and arrays and objects of those, unless the program shares such arrays or
-  objects between variables elsewhere); otherwise what is passed on is a copy (of `s[i]` alone
-  for `f(s[i])`). What keeps the value or a
+  `for (const x of s)`, a field or getter (`s.name`, `s.size` of a `Map`), `T`'s methods
+  (`s.includes(x)`, `s.startsWith("a")`), and `s` passed where a `T` is expected (`count(s)`
+  for `count(xs: u8[])`). An index, a length or a field reads the value in place. Passed on as
+  a whole or in part, and as the receiver of a method, the value is borrowed too when nothing
+  in it is reference counted (numbers, strings, and arrays and objects of those, unless the
+  program shares such arrays or objects between variables elsewhere); otherwise what is passed
+  on is a copy (of `s[i]` alone for `f(s[i])`, of the whole value for a method of it, such as
+  `get` on a `shared<Map<string, Item>>`: `.clone()` such a value once per task for many
+  lookups). What keeps the value or a
   part of it gets a copy too: a parameter that keeps its argument (an `async` function's, a
   stored one), and a variable bound to a part (`const ps = s.ports`, a `for…of` element that
   the loop changes), so changing that copy leaves the shared value as it was.
-  `console.log(s)`, `[...s]` and `Object.keys(s)` read the value inside as well;
-  `JSON.stringify` does with the type written out (`JSON.stringify<u8[]>(s)`). A value of
+  `console.log(s)`, `[...s]`, `Object.keys(s)` and `JSON.stringify(s)` read the value inside
+  as well. A value of
   `T` that holds a class with subclasses or with a `clone()` of its own is not read like this
   (copying it would run that method on objects other threads read): `.clone()` the `shared`
-  and pass it on as a `shared<T>`. While a read runs code (a call it is passed to, a loop
-  over it), giving the variable that holds the handle another one is refused where it would
-  be for an array (the loop's body, a closure passed to the same call); where it is allowed
-  (a closure kept in a variable, a module `let` another function reassigns), the read keeps
-  the box it started with alive, as JavaScript keeps the old array.
+  and pass it on as a `shared<T>`. While the value or a part of it is read while code runs (a
+  call it is passed to, a loop over it, a method it is the receiver of, a later argument),
+  giving the variable that holds the handle another one is refused where it would be for an
+  array (the loop's body, a closure passed to the same call); where it is allowed (a closure
+  kept in a variable, a module `let` another function reassigns, a field or element holding
+  the handle), the read keeps the box it started with alive, as JavaScript keeps the old array.
   Changing the value is an error (``cannot modify a `shared<number[]>`: a shared value is
   read-only …``), and so is passing it to a function that may change it or to a function
   value: share a `Mutex` instead.

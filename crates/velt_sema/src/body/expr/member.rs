@@ -356,14 +356,15 @@ impl FnCx<'_, '_> {
                 return self.intrinsic(Intrinsic::ArrayLen, vec![obj], self.cx.ty.usize, span);
             }
         }
-        // `s.f` on a `shared<T>` of an object type with a field `f`: the field of the value
-        // inside (#36). A getter is a call, which may modify the object: not through `shared`.
+        // `s.f` on a `shared<T>` of an object type with a field or getter `f`: the value
+        // inside's (#36). A getter is a call on it, refused where it may modify it, as a method
+        // is (`ownership/patch.rs`).
         let shared = match self.cx.ty.kind(obj.ty) {
             TyKind::Shared(t) => Some(*t),
             _ => None,
         };
         let obj = match shared {
-            Some(t) if self.field_of(t, &prop.name).is_some() => {
+            Some(t) if self.field_of(t, &prop.name).is_some() || self.has_getter(t, &prop.name) => {
                 self.frozen_view(obj, Some(&prop.name))
             }
             _ => obj,

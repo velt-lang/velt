@@ -588,6 +588,7 @@ value is read: the object of `Index`, of a `Field` and of the `ArrayLen` / `StrL
 intrinsics, the source of a `ForOf`, the receiver of a method of `T` that `shared<T>` itself
 doesn't have, an expression converted to `T` (`coerce`: an argument, a variable, a field), and
 the argument of `console.log`, of an array spread and of `Object.keys` (`FnCx::read_shared`).
+`JSON.stringify` writes a `shared<T>` as its `T` (sema `json/mod.rs`, velt_vir `json/write.rs`).
 Never for a `T` that holds a `Mutex`, a weak map or ref, a promise, a function or interface
 value, a type parameter, or a class with subclasses or with a `clone()` of its own
 (`Ctx::frozen_readable`), nor for a `shared<int>` (its atomics). The exclusivity checker treats
@@ -606,10 +607,13 @@ another projection of it) it is read in the box whatever `T` holds, since only l
 code reads it there (`FnLower::projection_base`); the projected part is then a copy where it
 holds counted parts and is used as a value. Stabilization (`stable_borrow`) never shares or
 retains through it. The box itself is retained for the statement (one atomic count change,
-`FnLower::shared_value`) where code may run while the read is live (a call's argument or
-receiver, a loop's source, an index that calls something) and the place of `s` is one such
-code can give another handle (a variable in a shared cell, a module `let` some function
-reassigns, a field or element): otherwise that code could free the box being read.
+`FnLower::shared_value`, `BoxHold`) where code may run while the value or a part of it is read
+in place, and the place of `s` is one such code can give another handle (a variable in a shared
+cell, a module `let` some function reassigns, a field or element): the value as a call's
+argument or receiver or a loop's source, and a part of it (a field, an element) that is not a
+number, since such a part is passed on, looped over or a receiver where it is read. A number
+read out of it is copied at once and retains nothing. An index that may write (`may_write`)
+retains the box whatever the place: it may give the variable `s` reads another handle itself.
 A consumed `Field`, `Index`, `UnwrapSome` or `UnwrapVariant` of it is read with a borrow and
 deep-copied too: a move would leave the all-zero value in the box.
 

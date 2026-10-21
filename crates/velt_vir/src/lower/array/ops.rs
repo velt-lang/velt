@@ -1,6 +1,7 @@
 //! Array intrinsics: `length`, `push` (amortized growth), `pop`, and the `std/` helpers
 //! `__intrinsic_array_with_capacity/swap/remove/truncate/move/set_len`.
 
+use crate::lower::async_fn::BoxHold;
 use velt_sema::hir::{self, TyId};
 
 use crate::lower::operand::proj;
@@ -40,7 +41,7 @@ impl FnLower<'_, '_> {
                 self.finish_borrows(outer);
                 v
             }
-            false => self.projection_base(&args[0], false),
+            false => self.projection_base(&args[0], BoxHold::No),
         };
         let arr = self.place_of(av, aty);
         let arr = self.content(&arr, aty);

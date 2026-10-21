@@ -2,6 +2,7 @@
 
 use velt_sema::hir::{self, Intrinsic, TyId};
 
+use super::async_fn::BoxHold;
 use super::operand::proj;
 use super::rt::Rt;
 use super::{ice, unit, FnLower};
@@ -56,12 +57,15 @@ impl FnLower<'_, '_> {
             (I::TemplateToString, [a]) => self.stringify(a, ty, true),
             (I::StrConcat, [a, b]) => self.str_concat(a, b, ty),
             (I::StrLen, [a]) => {
-                let v = self.projection_base(a, false);
+                let v = self.projection_base(a, BoxHold::No);
                 self.str_len(v)
             }
             (I::StrCharCodeAt, [s, i]) => {
-                let runs_code = self.may_write(i);
-                let v = self.projection_base(s, runs_code);
+                let hold = match self.may_write(i) {
+                    true => BoxHold::Yes,
+                    false => BoxHold::No,
+                };
+                let v = self.projection_base(s, hold);
                 let i = self.expr(i);
                 self.str_char_code_at(v, i)
             }

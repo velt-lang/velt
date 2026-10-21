@@ -625,6 +625,10 @@ fn unserializable(cx: &mut Ctx, t: TyId, stack: &mut Vec<TyId>, parse: bool) -> 
         // `json/any.rs`).
         TyKind::Dyn(..) if !parse && cx.dynamic(t).is_some() => return None,
         TyKind::Array(e) | TyKind::Option(e, _) => vec![e],
+        // A `shared<T>` is written as the `T` inside, read in its box (velt_vir `json/write.rs`),
+        // except a `shared<int>`, whose atomics another task may be running; decoding makes no
+        // `shared` value.
+        TyKind::Shared(e) if !parse && cx.atomic_int(t).is_none() => vec![e],
         // Tuples are fixed-length arrays.
         TyKind::Tuple(es) => es,
         TyKind::Adt(d, args) => {
