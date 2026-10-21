@@ -83,17 +83,19 @@ impl Ctx<'_> {
                 params: pw,
                 ret: rw,
                 throws: tw,
+                rest: xw,
             },
             TyKind::FnPtr {
                 params: pn,
                 ret: rn,
                 throws: tn,
+                rest: xn,
             },
         ) = (self.ty.kind(wide).clone(), self.ty.kind(narrow).clone())
         else {
             return false;
         };
-        if pw.len() != pn.len() || rw != rn || tw != tn {
+        if pw.len() != pn.len() || rw != rn || tw != tn || xw != xn {
             return false;
         }
         pw.iter().zip(&pn).all(|(&w, &n)| {

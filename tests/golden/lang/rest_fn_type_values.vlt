@@ -1,0 +1,32 @@
+// Function values whose type ends in a rest parameter, kept in arrays, objects, generics and
+// unions (#943).
+type Log = (prefix: string, ...xs: number[]) => string;
+
+interface Bus {
+  name: string;
+  handler: Log;
+}
+
+function twice<F>(f: F): F[] {
+  return [f, f];
+}
+
+function fmt(prefix: string, ...xs: number[]): string {
+  return prefix + xs.join(",");
+}
+
+function main() {
+  let count = 0;
+  const handlers: Log[] = [fmt, (p, ...xs) => { count += xs.length; return p + count; }];
+  for (const h of handlers) {
+    console.log(h("a"), h("b", 1, 2));
+  }
+  const bus: Bus = { name: "bus", handler: fmt };
+  console.log(bus.handler("c", 3));
+  const fs = twice<Log>(fmt);
+  console.log(fs.length, fs[1]("d", 4, 5, 6));
+  const maybe: Log | undefined = handlers[1];
+  if (maybe !== undefined) {
+    console.log(maybe("e", 7));
+  }
+}

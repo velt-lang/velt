@@ -400,6 +400,7 @@ impl FnCx<'_, '_> {
             params,
             ret,
             throws,
+            rest,
         } = self.cx.ty.kind(fn_ty).clone()
         else {
             return None;
@@ -416,6 +417,7 @@ impl FnCx<'_, '_> {
             params,
             ret: promise,
             throws,
+            rest,
         });
         // A `void` callback's promise rejects with what the arrow throws.
         let async_ty = if discard {
@@ -468,6 +470,7 @@ impl FnCx<'_, '_> {
             params: ptys,
             ret: want,
             throws,
+            rest,
         } = self.cx.ty.kind(fn_ty).clone()
         else {
             return None;
@@ -486,6 +489,7 @@ impl FnCx<'_, '_> {
             params: ptys,
             ret: declared,
             throws,
+            rest,
         });
         if self.frameless() {
             return Some(self.immediate_wrapper(e, member_ty, ptys_len, Wrap::Call, exp));
@@ -645,6 +649,7 @@ impl FnCx<'_, '_> {
             params,
             ret,
             throws,
+            rest: false,
         })
     }
 

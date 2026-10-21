@@ -29,6 +29,7 @@ impl FnCx<'_, '_> {
             params,
             ret,
             throws,
+            rest,
         } = self.cx.ty.kind(exp).clone()
         else {
             return exp;
@@ -46,6 +47,7 @@ impl FnCx<'_, '_> {
             params: filled,
             ret,
             throws,
+            rest,
         })
     }
 

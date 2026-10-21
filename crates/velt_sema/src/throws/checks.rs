@@ -140,6 +140,7 @@ fn closure_type(cx: &mut Ctx, d: DefId, allowed: Option<TyId>) -> String {
         params,
         ret,
         throws,
+        rest: false,
     });
     cx.display(t)
 }

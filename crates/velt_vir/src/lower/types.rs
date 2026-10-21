@@ -95,10 +95,12 @@ impl<'h> Cx<'h> {
                 params,
                 ret,
                 throws,
+                rest,
             } => TyKind::FnPtr {
                 params: params.iter().map(|&a| c(self, a)).collect(),
                 ret: c(self, ret),
                 throws: c(self, throws),
+                rest,
             },
             _ => {
                 self.anon.memo.insert(t, t);
@@ -258,6 +260,7 @@ impl<'h> Cx<'h> {
                     params,
                     ret,
                     throws,
+                    ..
                 } => {
                     stack.extend(params);
                     stack.extend([ret, throws]);
@@ -289,6 +292,7 @@ impl<'h> Cx<'h> {
                 params,
                 ret,
                 throws,
+                ..
             } => {
                 params.iter().any(|x| self.mentions_params(*x))
                     || self.mentions_params(*ret)
@@ -366,10 +370,12 @@ impl<'h> Cx<'h> {
                 params,
                 ret,
                 throws,
+                rest,
             } => TyKind::FnPtr {
                 params: params.iter().map(|&a| s(self, a)).collect(),
                 ret: s(self, ret),
                 throws: s(self, throws),
+                rest,
             },
             _ => return t,
         };

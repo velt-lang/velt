@@ -248,6 +248,7 @@ impl Ctx<'_> {
             params,
             ret,
             throws,
+            rest: false,
         })
     }
 

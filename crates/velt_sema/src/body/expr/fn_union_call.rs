@@ -42,6 +42,7 @@ impl FnCx<'_, '_> {
                     params,
                     ret,
                     throws,
+                    rest: false,
                 } => sigs.push((params, ret, throws)),
                 _ => return Err(f),
             }

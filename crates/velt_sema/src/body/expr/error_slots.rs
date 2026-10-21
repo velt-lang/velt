@@ -45,6 +45,7 @@ impl FnCx<'_, '_> {
             params,
             ret,
             throws,
+            rest,
         } = self.cx.ty.kind(fn_ty).clone()
         else {
             return None;
@@ -70,6 +71,7 @@ impl FnCx<'_, '_> {
                     params: params.clone(),
                     ret: error,
                     throws: error,
+                    rest,
                 });
                 let expected = self.cx.subst_known(open, known);
                 let found = self.closure(a, Some(expected), false).ty;
@@ -88,6 +90,7 @@ impl FnCx<'_, '_> {
                     params,
                     ret,
                     throws,
+                    rest: false,
                 });
                 (trial, found)
             }
@@ -103,6 +106,7 @@ impl FnCx<'_, '_> {
                     params,
                     ret,
                     throws,
+                    rest: false,
                 });
                 (trial, h.ty)
             }
@@ -158,6 +162,7 @@ fn param_uses(cx: &mut crate::ctx::Ctx, t: TyId, k: u32) -> (bool, bool) {
             params,
             ret,
             throws,
+            ..
         } => {
             for p in params {
                 add(param_uses(cx, p, k));

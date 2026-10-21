@@ -152,29 +152,26 @@ impl Ctx<'_> {
                 TyKind::FnPtr {
                     params: sp,
                     ret: sr,
+                    rest: s_rest,
                     ..
                 },
                 TyKind::FnPtr {
                     params: pp,
                     ret: pr,
+                    rest: p_rest,
                     ..
                 },
             ) => {
-                // Parameters relate contravariantly (`--strict`'s strictFunctionTypes): the
-                // pattern's parameter must be assignable to the subject's. What an `infer X`
-                // in the pattern's parameter finds is a contravariant candidate.
-                sp.len() <= pp.len()
-                    && sp.iter().zip(&pp).all(|(x, y)| {
-                        if self.has_infer(*y) {
-                            slots.flipped = !slots.flipped;
-                            let ok = self.relate(*x, *y, slots);
-                            slots.flipped = !slots.flipped;
-                            ok
-                        } else {
-                            self.relate(*y, *x, &mut Slots::default())
-                        }
-                    })
-                    && self.relate(sr, pr, slots)
+                let ok = if p_rest && !s_rest {
+                    self.relate_to_rest(&sp, &pp, slots)
+                } else {
+                    sp.len() <= pp.len()
+                        && sp
+                            .iter()
+                            .zip(&pp)
+                            .all(|(x, y)| self.relate_param(*x, *y, slots))
+                };
+                ok && self.relate(sr, pr, slots)
             }
             (_, TyKind::Adt(..)) if self.record_type_args(p).is_some() => {
                 self.relate_to_record(s, p, slots)
@@ -201,6 +198,46 @@ impl Ctx<'_> {
     /// Is `p` an `infer` placeholder or a wildcard (which take `null` and `undefined` too)?
     fn binds_nothing(&self, p: TyId) -> bool {
         matches!(*self.ty.kind(p), TyKind::Param(i) if i >= UNKNOWN)
+    }
+
+    /// Parameters relate contravariantly (`--strict`'s strictFunctionTypes): the pattern's
+    /// parameter `p` must be assignable to the subject's `s`. What an `infer X` in the pattern's
+    /// parameter finds is a contravariant candidate.
+    fn relate_param(&mut self, s: TyId, p: TyId, slots: &mut Slots) -> bool {
+        if self.has_infer(p) {
+            slots.flipped = !slots.flipped;
+            let ok = self.relate(s, p, slots);
+            slots.flipped = !slots.flipped;
+            ok
+        } else {
+            self.relate(p, s, &mut Slots::default())
+        }
+    }
+
+    /// The parameters `sp` of a function type without a rest parameter against a pattern's
+    /// `pp` ending in one (`(...args: any[]) => any`, `(e: E, ...args: infer A) => void`): the
+    /// subject's parameters from the rest parameter's position on are its elements, or the
+    /// tuple an `infer` there finds (TypeScript's `Parameters<F>`).
+    fn relate_to_rest(&mut self, sp: &[TyId], pp: &[TyId], slots: &mut Slots) -> bool {
+        let Some((&last, fixed)) = pp.split_last() else {
+            return false;
+        };
+        let (head, tail) = sp.split_at(fixed.len().min(sp.len()));
+        if !head
+            .iter()
+            .zip(fixed)
+            .all(|(x, y)| self.relate_param(*x, *y, slots))
+        {
+            return false;
+        }
+        if self.has_infer(last) {
+            let tail = self.ty.intern(TyKind::Tuple(tail.to_vec()));
+            return self.relate_param(tail, last, slots);
+        }
+        match self.ty.array_elem(last) {
+            Some(e) => tail.iter().all(|x| self.relate_param(*x, e, slots)),
+            None => false,
+        }
     }
 
     /// Does `t` hold an `infer` placeholder?

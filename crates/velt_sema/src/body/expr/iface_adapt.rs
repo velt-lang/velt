@@ -279,14 +279,17 @@ fn value_ok(
                 params: p,
                 ret: r,
                 throws: t,
+                rest: rest_a,
             },
             TyKind::FnPtr {
                 params: q,
                 ret: s,
                 throws: u,
+                rest: rest_b,
             },
         ) => {
             p.len() == q.len()
+                && rest_a == rest_b
                 && t == u
                 && q.iter()
                     .zip(&p)
