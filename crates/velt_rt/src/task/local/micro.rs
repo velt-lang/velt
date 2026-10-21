@@ -145,7 +145,10 @@ pub(super) unsafe fn drain(d: &mut Driver<'_>) {
             w.wake();
             continue;
         }
-        t.credit.set(e.credit);
+        // The credit is for the step the waiter's `await` takes on resuming, which it takes
+        // only while the word is not 0; with the queue empty it goes on without one, and the
+        // credit must not pass to a later `await` of the same run.
+        t.credit.set(e.credit && t.word.get() != 0);
         set::resume(d, w);
         t.credit.set(false);
     }
