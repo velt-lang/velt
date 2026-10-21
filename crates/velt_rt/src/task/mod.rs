@@ -21,6 +21,7 @@ pub mod leaf;
 pub mod local;
 pub mod race;
 pub mod runtime;
+pub mod shared;
 pub mod spawn;
 
 use std::ffi::c_void;

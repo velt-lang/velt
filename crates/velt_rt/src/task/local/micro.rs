@@ -155,6 +155,21 @@ pub(super) unsafe fn drain(d: &mut Driver<'_>) {
     }
 }
 
+/// Would an `await` of the job being polled go on now (no step queued, no synchronous run
+/// waiting: the task's word is 0)? False outside a task.
+pub(crate) fn step_free() -> bool {
+    tcx().is_some_and(|t| t.word.get() == 0)
+}
+
+/// The job being polled resumes as the reaction of a promise that settled now, ahead of the
+/// waiters queued after it (a shared promise, task/shared.rs): its next step goes on at once,
+/// as when it was the only waiter and the task's word was 0.
+pub(crate) fn grant_step() {
+    if let Some(t) = tcx() {
+        t.credit.set(true);
+    }
+}
+
 /// Take the waiter's credit (see the module docs): true when this step is already taken.
 fn take_credit(t: &TaskCx) -> bool {
     t.credit.replace(false)

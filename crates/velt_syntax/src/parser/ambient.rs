@@ -18,7 +18,7 @@ impl Parser<'_> {
             return false;
         }
         let k = usize::from(self.at_kw(Kw::Export));
-        self.nth(k) == Tok::Kw(Kw::Declare) && self.is_var_word(k + 1)
+        self.nth(k) == Tok::Kw(Kw::Declare) && !self.line_break_after(k) && self.is_var_word(k + 1)
     }
 
     /// At a top-level `import` or `export` (not `import(…)` / `import.meta`): the file is a

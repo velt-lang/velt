@@ -21,6 +21,7 @@ mod local;
 mod losers;
 mod net;
 mod perf;
+mod shared;
 mod strings;
 mod text_perf;
 mod transfer;

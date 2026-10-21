@@ -9,7 +9,7 @@ use velt_sema::hir::{PassMode, TyId, TyKind};
 use super::{Glue, SLOT_CLONE};
 use crate::lower::operand::proj;
 use crate::lower::rt::Rt;
-use crate::lower::{cint, unit, FnLower};
+use crate::lower::{cfunc, cint, unit, FnLower, Work};
 use crate::vir::{self, BinOp, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
 impl FnLower<'_, '_> {
@@ -41,7 +41,8 @@ impl FnLower<'_, '_> {
     }
 
     fn clone_expand(&mut self, s: &Place, d: &Place, ty: TyId) {
-        if !self.cx.is_class(ty) && self.cx.uncopyable_part(ty) == Some(ty) {
+        let promise = matches!(self.cx.kind(ty), TyKind::Promise(..));
+        if !self.cx.is_class(ty) && !promise && self.cx.uncopyable_part(ty) == Some(ty) {
             // A disposable struct or union (classes: `obj_clone_body`).
             self.panic_cannot_copy("a", ty);
         }
@@ -104,12 +105,10 @@ impl FnLower<'_, '_> {
                 self.switch_to(done);
             }
             TyKind::FnPtr { .. } | TyKind::Closure(_) => self.clone_closure(s, d),
-            // Sema rejects copying promises; a generic instance that still reaches here (a
-            // `T` bound to a promise) must not duplicate the owning pointer.
+            // Another holder of the same promise (shared promises, #212).
             TyKind::Promise(..) => {
-                let msg = self.str_lit("a promise cannot be copied");
-                let at = self.operand_addr(msg, Ty::Agg(vir::STR_AGG));
-                self.call_rt(Rt::Panic, vec![at], None);
+                let f = self.share_promise(Operand::Copy(s.clone()), ty);
+                self.assign(d.clone(), Rvalue::Use(f));
             }
             TyKind::Dyn(..) => self.clone_dyn(s, d),
             _ => self.assign(d.clone(), Rvalue::Use(Operand::Copy(s.clone()))),
@@ -305,5 +304,36 @@ impl FnLower<'_, '_> {
             self.clone_into(src, dst, ty);
         }
         self.terminate(Terminator::Return(Operand::Copy(Place::local(out))));
+    }
+}
+
+impl FnLower<'_, '_> {
+    /// `velt_rt_fut_share(f, ...)`: another holder of promise `f` of type `ty` (#212), with the
+    /// glue that shares and drops its result slot.
+    pub(in crate::lower) fn share_promise(&mut self, f: Operand, ty: TyId) -> Operand {
+        let slot = self.cx.promise_slot(ty);
+        let vt = self.cx.ty(slot);
+        let size = self.cx.size_align(vt).0;
+        let share = if self.cx.needs_drop(slot) {
+            cfunc(self.cx.func(Work::Glue(Glue::ShareSlot, slot)))
+        } else {
+            cint(0, Ty::Ptr)
+        };
+        let drop = self
+            .result_drop_fn(slot)
+            .unwrap_or_else(|| cint(0, Ty::Ptr));
+        let out = self.temp(Ty::Ptr);
+        let args = vec![f, cint(size as i128, Ty::U64), share, drop];
+        self.call_rt(Rt::FutShare, args, Some(Place::local(out)));
+        Operand::Copy(Place::local(out))
+    }
+
+    /// `Glue::ShareSlot`: another reference to the value at `src`, written to `dst`.
+    pub(super) fn share_slot_body(&mut self, src: vir::Local, dst: vir::Local, ty: TyId) {
+        self.cx.note_share(ty);
+        let s = self.deref_param(src, ty);
+        let d = self.deref_param(dst, ty);
+        self.share_into(s, d, ty);
+        self.terminate(Terminator::Return(unit()));
     }
 }

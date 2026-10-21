@@ -257,6 +257,34 @@ impl Walk<'_> {
     }
 }
 
+/// Every target the root export (`"."`) of `exports` names, under any condition (also those no
+/// build matches, such as `browser` or `require`), in written order; `*` patterns aside.
+pub fn root_targets_any_condition(exports: &Json) -> Vec<String> {
+    let entry = match exports {
+        Json::Obj(fields) if fields.iter().any(|(k, _)| k.starts_with('.')) => {
+            match fields.iter().find(|(k, _)| k == ".") {
+                Some((_, entry)) => entry,
+                None => return vec![],
+            }
+        }
+        other => other,
+    };
+    let mut out = vec![];
+    collect_strings(entry, &mut out);
+    out
+}
+
+fn collect_strings(json: &Json, out: &mut Vec<String>) {
+    match json {
+        Json::Str(s) if is_valid_target(s) && !s.contains('*') && !out.contains(s) => {
+            out.push(s.clone());
+        }
+        Json::Arr(items) => items.iter().for_each(|j| collect_strings(j, out)),
+        Json::Obj(fields) => fields.iter().for_each(|(_, j)| collect_strings(j, out)),
+        _ => {}
+    }
+}
+
 /// Node's rule for a target: starts with `./`, and no segment is empty, `.`, `..` or
 /// `node_modules` after it.
 fn is_valid_target(target: &str) -> bool {

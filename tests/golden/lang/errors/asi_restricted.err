@@ -1,0 +1,2 @@
+asi_restricted.vlt:5:3: error: a line break is not permitted after `throw`
+asi_restricted.vlt:9:3: error: a line break is not permitted before `=>`

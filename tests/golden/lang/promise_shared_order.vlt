@@ -1,0 +1,44 @@
+// check: no leaks
+// Shared promises (#212): the awaiters of one pending promise resume in the order they started
+// waiting, among other microtasks, as in Node; a rejection reaches every awaiter.
+async function tick(tag: string, n: number): Promise<number> {
+  await Promise.resolve();
+  console.log(`${tag} settles`);
+  return n;
+}
+
+async function waiter(tag: string, p: Promise<number>): Promise<void> {
+  console.log(`${tag} waits`);
+  const v = await p;
+  console.log(`${tag} got ${v}`);
+}
+
+async function main() {
+  const p = tick("p", 7);
+  const w1 = waiter("w1", p);
+  const w2 = waiter("w2", p);
+  p.then((v) => console.log(`then ${v}`));
+  queueMicrotask(() => console.log("micro"));
+  const v = await p;
+  console.log(`main got ${v}`);
+  await w1;
+  await w2;
+  const r = Promise.reject<number>(new Error("boom"));
+  const r2 = r;
+  try {
+    await r;
+  } catch (e) {
+    console.log("caught 1", (e as Error).message);
+  }
+  try {
+    await r2;
+  } catch (e) {
+    console.log("caught 2", (e as Error).message);
+  }
+  const done = Promise.resolve(3);
+  const d2 = done;
+  console.log(await done, await d2);
+  const ps = [p, p];
+  const all = await Promise.all(ps);
+  console.log(all.join(","));
+}

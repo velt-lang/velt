@@ -445,7 +445,6 @@ fn ownership_passes(cx: &mut ctx::Ctx) {
     ownership::check_boundaries(cx);
     let weak = ownership::check_locked(cx);
     ownership::check_many_threads(cx);
-    promise_copies::check(cx);
     weak_threads::check(cx, weak);
 }
 

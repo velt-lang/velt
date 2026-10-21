@@ -174,10 +174,16 @@ function main() {
   import) stops the program with that `ReferenceError`
   (`Cannot access 'b' before initialization`, exit code 1), as an uncaught one does in Node;
   it cannot be caught.
-- Module state cannot hold a promise (`let p = work();`, `let t = spawn(work());`, also
-  `Promise<T> | null`, or an object type with a promise field): it is initialized before `main` runs, where nothing awaits it, and a
-  promise has one owner while every task reads the state. Start the work in `main` and pass
-  the promise, or its result, where it is needed.
+- Module state cannot hold a promise itself (`let p = work();`, `let t = spawn(work());`, also
+  `Promise<T> | null`, or an object type with a promise field): it is initialized before
+  `main` runs, outside async code, where a promise does not start until something awaits it
+  (Node starts it at once). Start the work in `main` and pass the promise, or its result,
+  where it is needed. A class, an array or a `Map` in module state may hold promises that the
+  program puts there as it runs, such as a cache of requests in flight
+  (`const inflight = new Map<string, Promise<T>>()`): a promise read from there on any task is
+  another holder of the same promise ([shared promises](async.md#promises)), which runs on the
+  task that started it, and every holder gets the same result (an object result is the same
+  object, as everything reached through module state is shared by the tasks).
 - A `Mutex` `with` callback cannot use module state, directly or through a function it calls
   (``the function passed to `with` may use module state``). Code that runs without a call
   counts too: field initializers at `new`, and the `toString()`, `toJSON()` and
