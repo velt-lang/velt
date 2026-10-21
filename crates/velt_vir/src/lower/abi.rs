@@ -65,6 +65,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             frozen_args: false,
             proj_hold: None,
             changed: None,
+            closure_changed: None,
             known_fns: FxHashMap::default(),
             frozen_binds: false,
             scope_ends: FxHashMap::default(),

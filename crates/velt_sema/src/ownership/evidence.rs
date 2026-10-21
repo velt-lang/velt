@@ -65,27 +65,43 @@ pub(super) fn modified_before_rebind(cx: &mut Ctx, b: &Block, l: LocalId) -> Opt
     Some(collect(cx, &mut prefix).mutated.contains(&l))
 }
 
-/// The locals whose value a `for…of` loop walks while the body changes an element it binds
-/// (`Ctx::loop_roots`): a map loop's bindings are not bound into its source, so `mutated`
-/// doesn't reach the source through them.
-pub(super) fn walked_changed(cx: &Ctx, f: &FnDef, ev: &Evidence) -> FxHashSet<LocalId> {
-    let mut out = FxHashSet::default();
-    if cx.loop_roots.is_empty() {
-        return out;
+/// The evidence of `f`'s body, where a program reads a `shared` also through what `for…of`
+/// loops walk (`Ctx::loop_roots`): a loop's bindings are not bound into its source (a map's
+/// cursor loop, the iterator protocol), so a change to an element (also through a closure, an
+/// alias or an element of an element) counts as a change of the source's local, for
+/// `FnInfo::modified_params`.
+pub(super) fn collect_in(cx: &mut Ctx, f: &mut FnDef) -> Evidence {
+    let (mut ev, aliases) = collect_aliased(cx, &mut f.body.block);
+    if !cx.frozen_reads || cx.loop_roots.is_empty() {
+        return ev;
     }
-    for (i, l) in f.body.locals.iter().enumerate() {
-        let id = LocalId(i as u32);
-        if let Some(&root) = cx.loop_roots.get(&l.span) {
-            if ev.mutated.contains(&id) || ev.modified.contains(&id) {
-                out.insert(root);
+    let elems: Vec<(LocalId, LocalId)> = (f.body.locals.iter().enumerate())
+        .filter_map(|(i, l)| Some((LocalId(i as u32), *cx.loop_roots.get(&l.span)?)))
+        .collect();
+    // Bounded: each round adds a root, and roots are locals.
+    for _ in 0..=elems.len() {
+        let mut grew = false;
+        for &(e, root) in &elems {
+            let changed =
+                ev.mutated.contains(&e) || ev.modified.contains(&e) || ev.weak.contains(&e);
+            if changed && ev.modified.insert(root) {
+                grew = true;
             }
         }
+        if !grew {
+            break;
+        }
+        ev.modified = through_aliases(&ev.modified, &aliases, false);
     }
-    out
+    ev
 }
 
 /// Collect the evidence of body `b`.
 pub(super) fn collect(cx: &mut Ctx, b: &mut Block) -> Evidence {
+    collect_aliased(cx, b).0
+}
+
+fn collect_aliased(cx: &mut Ctx, b: &mut Block) -> (Evidence, Aliases) {
     let mut v = Collector {
         cx,
         ev: Evidence::default(),
@@ -101,7 +117,7 @@ pub(super) fn collect(cx: &mut Ctx, b: &mut Block) -> Evidence {
     if !ev.modified.is_empty() {
         ev.modified = through_aliases(&ev.modified, &aliases, false);
     }
-    ev
+    (ev, aliases)
 }
 
 /// `set` plus the roots its borrowing bindings point into (only through bindings into their
@@ -214,7 +230,24 @@ impl VisitMut for Collector<'_, '_> {
                 if let E::Local(l, _) = place.kind {
                     self.ev.reassigned.entry(l).or_insert(e.span);
                     self.skip.insert(&**place as *const Expr);
+                } else if self.cx.frozen_reads {
+                    // `i.v = 1` on any local (an owned one too), `st.m.get(k)!.v = 1` through
+                    // what a method of `st` returned.
+                    self.ev.modified.extend(method_root(self.cx, place));
                 }
+            }
+            E::Field {
+                mode: UseMode::BorrowMut,
+                ..
+            }
+            | E::Index {
+                mode: UseMode::BorrowMut,
+                ..
+            }
+            | E::UnwrapSome(_, UseMode::BorrowMut)
+                if self.cx.frozen_reads =>
+            {
+                self.ev.modified.extend(method_root(self.cx, e));
             }
             E::Local(l, UseMode::BorrowMut) => {
                 self.ev.mutated.insert(*l);
@@ -231,6 +264,11 @@ impl VisitMut for Collector<'_, '_> {
                         match cap.mode {
                             PassMode::BorrowMut => self.ev.mutated.insert(cap.outer),
                             PassMode::Borrow if written => self.ev.weak.insert(cap.outer),
+                            // A closure sharing an object it changes changes the outer
+                            // variable's object too (`FnInfo::modified_params`).
+                            PassMode::Owned if written && self.cx.frozen_reads => {
+                                self.ev.modified.insert(cap.outer)
+                            }
                             _ => false,
                         };
                     }
@@ -246,16 +284,7 @@ impl VisitMut for Collector<'_, '_> {
                 callee: Callee::Def(d, _),
                 args,
             } if self.cx.frozen_reads => {
-                let info = self.cx.fn_info(*d);
-                let (bits, skip) = (info.modified_params, usize::from(info.this.is_some()));
-                // An owned parameter other than the receiver gets its own copy: changing it
-                // leaves the argument as it was.
-                let owned: u64 = (info.params.iter().enumerate())
-                    .filter(|(_, p)| p.mode == PassMode::Owned)
-                    .fold(0, |m, (k, _)| {
-                        m | 1u64.checked_shl((k + skip) as u32).unwrap_or(0)
-                    });
-                let bits = bits & !owned;
+                let bits = self.cx.fn_info(*d).modified_params;
                 for (i, a) in args.iter().enumerate().take(64) {
                     if bits & (1 << i) != 0 && !self.cx.is_copy(a.ty) {
                         self.ev.modified.extend(place_root(a));
@@ -265,4 +294,29 @@ impl VisitMut for Collector<'_, '_> {
             _ => {}
         }
     }
+}
+
+/// The local a place is a part of, also through what methods return (`st.m.get(k)!.tags`:
+/// `st`).
+fn method_root(cx: &Ctx, e: &Expr) -> Option<LocalId> {
+    fn walk(cx: &Ctx, e: &Expr, called: bool) -> Option<LocalId> {
+        let _ = called;
+        match &e.kind {
+            E::Local(l, _) => Some(*l),
+            // `s.m.get(k)!`: a match on what the method returned.
+            E::Match { scrutinee, .. } => walk(cx, scrutinee, called),
+            E::Field { base, .. }
+            | E::Index { base, .. }
+            | E::UnwrapSome(base, _)
+            | E::UnwrapVariant { expr: base, .. }
+            | E::Downcast(base)
+            | E::Upcast(base) => walk(cx, base, called),
+            E::Call {
+                callee: Callee::Def(d, _),
+                args,
+            } if cx.fn_info(*d).this.is_some() => walk(cx, args.first()?, true),
+            _ => None,
+        }
+    }
+    walk(cx, e, false)
 }

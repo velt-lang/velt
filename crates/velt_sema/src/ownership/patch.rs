@@ -42,7 +42,7 @@ pub(super) fn patch_calls(
     visit::exprs_mut(b, &mut |e: &mut Expr| {
         let returns_promise = matches!(cx.ty.kind(e.ty), TyKind::Promise(..));
         let span = e.span;
-        let (mut modified, mut receiver) = (0u64, false);
+        let mut modified = 0u64;
         let (modes, args, unknown) = match &mut e.kind {
             E::Call { callee, args } => {
                 // A closure literal passed to a parameter of a generic type may be kept as a
@@ -67,7 +67,7 @@ pub(super) fn patch_calls(
                 let unknown = modes.is_none() && !matches!(callee, Callee::Intrinsic(_));
                 if let (true, Callee::Def(d, _)) = (frozen, &*callee) {
                     let info = cx.fn_info(*d);
-                    (modified, receiver) = (info.modified_params, info.this.is_some());
+                    modified = info.modified_params;
                 }
                 (modes, args, unknown)
             }
@@ -82,15 +82,15 @@ pub(super) fn patch_calls(
         }
         if let Some(modes) = &modes {
             for (i, (a, m)) in args.iter_mut().zip(modes).enumerate() {
-                // An argument the callee changes though it doesn't take it `BorrowMut`: a
-                // receiver it takes owned (it returns `this`), or a borrowed value whose map
-                // entries a loop changes. Not one read out of a `shared`, whose change no one
-                // would see. (An owned parameter gets its own copy, as `force_move` gives it.)
+                // An argument the callee changes though it doesn't take it `BorrowMut`: one it
+                // takes owned (a receiver it returns, a parameter it keeps), or a borrowed value
+                // whose map entries a loop changes. Not one read out of a `shared`: the callee
+                // would change a copy, where JavaScript changes the shared value.
                 if modified != 0
                     && i < 64
                     && modified & (1 << i) != 0
-                    && (*m == PassMode::Borrow || *m == PassMode::Owned && i == 0 && receiver)
-                    && frozen_root(a)
+                    && matches!(m, PassMode::Borrow | PassMode::Owned)
+                    && frozen_part(cx, a)
                 {
                     modifies_frozen(cx, a, &mut errors);
                     continue;
@@ -482,4 +482,28 @@ fn callbacks(cx: &mut Ctx, args: &mut [Expr], errors: &mut Vec<Diagnostic>) -> b
         }
     }
     changed
+}
+
+/// Is `e` read out of a `shared`: a part of one, or an element a method of one returns
+/// (`s.m.get(k)!`: a type other than its receiver's, where `s.items.slice()` is a new array)?
+fn frozen_part(cx: &mut Ctx, e: &Expr) -> bool {
+    match &e.kind {
+        E::UnwrapSome(base, _) | E::Downcast(base) | E::Upcast(base) => frozen_part(cx, base),
+        // `s.m.get(k)!`: a match on what the method returned.
+        E::Match { scrutinee, .. } => frozen_part(cx, scrutinee),
+        E::Call {
+            callee: Callee::Def(d, _),
+            args,
+        } if cx.fn_info(*d).this.is_some() => {
+            let Some(r) = args.first() else {
+                return false;
+            };
+            let elem = match cx.ty.kind(e.ty) {
+                TyKind::Option(t, _) => *t,
+                _ => e.ty,
+            };
+            elem != r.ty && !cx.is_copy(elem) && frozen_part(cx, r)
+        }
+        _ => frozen_root(e),
+    }
 }

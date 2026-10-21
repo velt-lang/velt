@@ -3,7 +3,7 @@
 // variables below), read by several tasks at once through ordinary functions (#36, #708): each
 // call goes to an instance that neither changes nor counts the shared value, so nothing races
 // on its reference counts. Covers calls, `Map.get`, `switch` arms, closures, `const` bindings
-// by reference, owned params (which get copies) and identity.
+// by reference, owned params that keep their argument (which get copies) and identity.
 type Shape = { kind: "box"; side: i64 } | { kind: "bag"; items: string[] };
 
 class Item {
@@ -43,9 +43,9 @@ function score(i: Item): i64 {
   return i.id + (tags.length as i64) + weight(i.shape);
 }
 
-// Keeps its argument: gets a copy, and changing it changes nothing shared.
-function renamed(i: Item): Item {
-  i.name = "x";
+// Keeps its argument without changing it: gets a copy (changing it would be refused, as
+// JavaScript would change the shared value).
+function kept(i: Item): Item {
   return i;
 }
 
@@ -63,7 +63,7 @@ function total(s: Store, first: Item): i64 {
   if (found != null) {
     t += found.id;
   }
-  const r = renamed(s.items[0]);
+  const r = kept(s.items[0]);
   t += r.name.length as i64;
   return t;
 }

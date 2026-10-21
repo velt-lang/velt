@@ -601,11 +601,14 @@ it as a borrow of the place of `s` (`Collector::place_of`), so code that may giv
 another handle while the read is live (a `ForOf` body, a closure argument of the same call) is
 refused as it is for an array. Sema rejects every write through it (`require_mutable`,
 `use_mutably`) and every call that may modify it: a `BorrowMut` argument after inference, an
-`Owned` receiver the method modifies all the same (`FnInfo::modified_params`: a method
-returning the `this` it changes, such as `fill`, or calling one on `this`), a `Borrow` argument
-whose map entries the callee's loop changes (`Ctx::loop_roots`), a change to a
+`Owned` or `Borrow` argument the callee modifies all the same (`FnInfo::modified_params`: a
+method returning the `this` it changes, such as `fill`, a parameter it keeps and changes, an
+element a loop over it changes, `Ctx::loop_roots`, through aliases, elements of elements and
+closures, or a write through what a method of it returns, `st.m.get(k)!.v = 1`; the argument
+is a part of the read or an element a method of it returns, `s.m.get(k)!`), a change to a
 `for…of` element of it or of what a method of it returns (`Ctx::frozen_elems`) or of a
-variable bound to a part of it (`ownership/finish.rs`), `subarray()` and `buffer` of a typed array in it
+variable bound to a part of it, also through loops over those and bindings of them
+(`ownership/finish.rs`), `subarray()` and `buffer` of a typed array in it
 (`FnCx::frozen_buffer_view`), an
 argument of a call through a function value or next to one that may modify its arguments
 (`ownership/patch.rs`). Other threads read the same value at the same time, so lowering must

@@ -252,7 +252,7 @@ fn infer_body(cx: &mut Ctx, d: DefId, f: &mut FnDef) -> bool {
             changed = true;
         }
     }
-    let ev = super::evidence::collect(cx, &mut f.body.block);
+    let ev = super::evidence::collect_in(cx, f);
     changed |= super::mutation::apply(cx, d, f, &ev, &moved);
     let kinds = cx.fn_info(d).local_kinds.clone();
     let mut flip = Flip {

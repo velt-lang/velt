@@ -64,12 +64,7 @@ pub(super) fn apply(
     let has_this = info.this.is_some();
     // `modified_params` only matters to a program that reads a `shared` (`evidence`).
     let frozen = cx.frozen_reads;
-    let walked = match frozen {
-        true => evidence::walked_changed(cx, f, ev),
-        false => FxHashSet::default(),
-    };
-    let this_modified = has_this
-        && (ev.modified.contains(&f.params[0].local) || walked.contains(&f.params[0].local));
+    let this_modified = has_this && ev.modified.contains(&f.params[0].local);
     if this_modified && cx.fn_info(d).modified_params & 1 == 0 {
         cx.fn_info_mut(d).modified_params |= 1;
         changed = true;
@@ -86,10 +81,23 @@ pub(super) fn apply(
             changed = true;
         }
     }
+    let first = ncap + usize::from(has_this);
+    // What the body changes of each param, whatever its mode (an `async` function's and a
+    // generator's keep their arguments).
+    for (k, p) in f.params[first..].iter().enumerate() {
+        let bit = 1u64
+            .checked_shl((k + usize::from(has_this)) as u32)
+            .unwrap_or(0);
+        let modified = ev.mutated.contains(&p.local) || ev.modified.contains(&p.local);
+        let info = cx.fn_info_mut(d);
+        if frozen && modified && info.modified_params & bit == 0 {
+            info.modified_params |= bit;
+            changed = true;
+        }
+    }
     if kind == FnKind::Closure || is_async {
         return changed;
     }
-    let first = ncap + usize::from(has_this);
     let mut soft = vec![];
     for (k, p) in f.params[first..].iter().enumerate() {
         let (mut mutated, moved) = (ev.mutated.contains(&p.local), moved.contains(&p.local));
@@ -98,13 +106,6 @@ pub(super) fn apply(
             // `xs = []; xs.push(1)` only modifies the callee's own array.
             let before = evidence::modified_before_rebind(cx, &f.body.block, p.local);
             mutated = before.unwrap_or(true);
-        }
-        let bit = 1u64 << (k + usize::from(has_this)).min(63);
-        let modified = mutated || ev.modified.contains(&p.local) || walked.contains(&p.local);
-        let info = cx.fn_info_mut(d);
-        if frozen && modified && info.modified_params & bit == 0 {
-            info.modified_params |= bit;
-            changed = true;
         }
         let sig = &mut cx.fn_info_mut(d).params[k];
         let new = match sig.mode {

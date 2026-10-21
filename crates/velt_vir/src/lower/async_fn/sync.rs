@@ -128,7 +128,10 @@ impl FnLower<'_, '_> {
     fn handle_replaceable(&mut self, s: &hir::Expr) -> bool {
         use hir::ExprKind as K;
         match &s.kind {
-            K::Local(..) | K::Global(_) => self.in_shared_cell(s),
+            // A variable a closure assigns through a capture by reference is no cell, but a
+            // call reaching the closure gives it another handle all the same.
+            K::Local(l, _) => self.in_shared_cell(s) || self.closure_assigns(*l),
+            K::Global(_) => self.in_shared_cell(s),
             K::Field { .. }
             | K::Index { .. }
             | K::UnwrapSome(..)

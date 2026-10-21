@@ -299,6 +299,39 @@ impl Ctx<'_> {
         parts.into_iter().all(|p| self.frozen_readable_in(p, seen))
     }
 
+    /// Does a value of type `t` reach a `Mutex`, whose value is read only under
+    /// its lock (through a `shared`, a field, an element or a payload)? Interface and `any`
+    /// values are not looked into: what they hold was checked when it went in.
+    pub fn holds_lock(&mut self, t: TyId) -> bool {
+        self.holds_lock_in(t, &mut rustc_hash::FxHashSet::default())
+    }
+
+    fn holds_lock_in(&mut self, t: TyId, seen: &mut rustc_hash::FxHashSet<TyId>) -> bool {
+        if !seen.insert(t) || self.dynamic(t).is_some() {
+            return false;
+        }
+        let parts: Vec<TyId> = match self.ty.kind(t).clone() {
+            TyKind::Dyn(..) | TyKind::FnPtr { .. } | TyKind::Closure(_) | TyKind::Param(_) => {
+                return false
+            }
+            TyKind::Adt(d, _) if Some(d) == self.mutex_ty() => return true,
+            TyKind::Adt(d, args) => {
+                let tys: Vec<TyId> = match &self.info[d.0 as usize] {
+                    DefInfo::Adt(a) => a.fields.iter().map(|f| f.ty).collect(),
+                    DefInfo::Enum(e) => e
+                        .variants
+                        .iter()
+                        .flat_map(|v| v.payload.iter().copied())
+                        .collect(),
+                    _ => vec![],
+                };
+                tys.into_iter().map(|f| self.subst(f, &args)).collect()
+            }
+            k => crate::types::children(&k),
+        };
+        parts.into_iter().any(|p| self.holds_lock_in(p, seen))
+    }
+
     /// Does some class extend class `d`?
     fn has_subclass(&self, d: DefId) -> bool {
         let is_class = |s: DefId| self.adt(s).is_some_and(|a| a.kind == AdtKind::Class);

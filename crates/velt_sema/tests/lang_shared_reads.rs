@@ -164,11 +164,12 @@ fn a_method_returning_the_this_it_modifies_is_an_error() {
          function main() { const s = shared(new C()); s.again(); }",
     );
     assert!(r.contains("read out of a `shared` value"), "{r}");
-    // A function taking it owned gets its own copy, as `keep` in `shared_reads.vlt` does.
-    ok_src(
+    // So is a function that changes it though it takes it owned: it would change a copy.
+    let r = err_src(
         "function g(a: Float64Array): Float64Array { return a.fill(1); }
          function main() { const s = shared(new Float64Array(3)); g(s); }",
     );
+    assert!(r.contains("read out of a `shared` value"), "{r}");
     // Reading through such a method's sibling that leaves `this` alone is fine.
     ok_src(
         "class C { n: number = 0; bump(): C { this.n += 1; return this; } get(): number { return this.n; } }
@@ -285,4 +286,58 @@ fn json_of_a_shared_mutex_is_an_error() {
         "function main() { const m = shared(new Mutex<number[]>([1])); console.log(JSON.stringify(m)); }",
     );
     assert!(r.contains("has no JSON form"), "{r}");
+}
+
+#[test]
+fn changes_through_loops_aliases_closures_and_owned_params_are_errors() {
+    // Each would change a copy of a part of the shared value, where JavaScript changes the
+    // value itself.
+    let defs = "class Item { v: number = 3; tags: string[] = []; }
+        class Holder { st: Store = new Store(); }
+        class Store { m: Map<string, Item> = new Map<string, Item>();
+          mm: Map<string, Map<string, Item>> = new Map<string, Map<string, Item>>(); xs: Item[] = [new Item()]; }
+        function bump(i: Item) { i.v += 1000; }
+        let KEEP: Item[] = [];
+        let KEEPS: Store[] = [];
+        function keep(i: Item) { i.v += 1000; KEEP.push(i); }
+        function adopt(st: Store, h: Holder) { st.m.get(\"k1\")!.v = 77; h.st = st; }
+        function f(st: Store) { st.xs[0].v = 500; KEEPS.push(st); }
+        async function walk(st: Store): Promise<void> { await Promise.resolve(0); for (const [k, v] of st.m) bump(v); }
+        function* gen(st: Store): Generator<number> { for (const [k, v] of st.m) { bump(v); yield 1; } }
+        function walkMap(m: Map<string, Item>) { for (const v of m.values()) bump(v); }";
+    for body in [
+        "for (const [k, v] of s.m) { const g = () => { v.v = 50; }; g(); }",
+        "for (const [k, inner] of s.mm) { for (const [k2, v] of inner) bump(v); }",
+        "const m = s.m; for (const [k, v] of m) bump(v);",
+        "for (const [k, v] of s.m) { const w = v; w.v = 3; }",
+        "keep(s.m.get(\"k1\")!);",
+        "adopt(s, new Holder());",
+        "f(s);",
+        "walk(s);",
+        "for (const x of gen(s)) {}",
+        "walkMap(s.m);",
+    ] {
+        let r = err_src(&format!(
+            "{defs} async function main() {{ const s = shared(new Store()); {body} }}"
+        ));
+        assert!(r.contains("read out of a `shared` value"), "{body}: {r}");
+    }
+    ok_src(&format!(
+        "{defs} function sum(st: Store): number {{ let t = 0; for (const [k, v] of st.m) t += v.v; return t; }}
+         function main() {{ const s = shared(new Store()); console.log(sum(s)); }}"
+    ));
+}
+
+#[test]
+fn a_mutex_cannot_become_any() {
+    // `any` is read (printed, compared, written as JSON) without the lock.
+    for to in ["any", "unknown", "object"] {
+        let r = err_src(&format!(
+            "class C {{ xs: number[] = [1]; }} function main() {{ const m = shared(new Mutex<C>(new C())); const o: {to} = m; }}"
+        ));
+        assert!(r.contains("it holds a lock"), "{to}: {r}");
+    }
+    ok_src(
+        "class C { xs: number[] = [1]; } function main() { const m = shared(new Mutex<C>(new C())); const n: any = m.with((v) => v.xs.length); console.log(n); }",
+    );
 }

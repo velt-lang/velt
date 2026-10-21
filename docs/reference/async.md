@@ -480,9 +480,10 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
   `s.items.find((x) => x.v == 2) === s.items[2]` are `false`, where JavaScript compares the
   shared object with itself. A variable bound to a part cannot be changed, and neither can
   the elements of a `for…of` loop over the value (or over what a method of it returns, such
-  as `s.values()`), nor what a function changes through such an element; `subarray()` and
-  `buffer` of a shared typed array are refused: in JavaScript all of them reach the shared
-  value itself. Change a copy (`s.ports.slice()`) instead.
+  as `s.values()`), nor what a function changes through such an element (also an element of
+  an element, through an alias or in a closure); `subarray()` and `buffer` of a shared typed
+  array are refused: in JavaScript all of them reach the shared value itself. Change a copy
+  (`s.ports.slice()`) instead.
   `console.log(s)`, `[...s]`, `Object.keys(s)` and `JSON.stringify(s)` read the value inside
   as well. A value of
   `T` that holds a class with subclasses or with a `clone()` of its own is not read like this
@@ -494,9 +495,11 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
   kept in a variable, a module `let` another function reassigns, a field or element holding
   the handle), the read keeps the box it started with alive, as JavaScript keeps the old array.
   Changing the value is an error (``cannot modify a `shared<number[]>`: a shared value is
-  read-only …``), and so is passing it to a function that may change it or to a function
-  value, and calling a method of it that changes it (also one returning the value it changes,
-  such as `fill` or a method ending in `return this`): share a `Mutex` instead.
+  read-only …``), and so is passing it or a part of it (`s.m.get(k)!`) to a function that may
+  change it, also one that keeps its argument (an `async` function, a generator, a parameter
+  it stores) or changes what it returns (`st.m.get(k)!.v = 1`), or to a function value, and
+  calling a method of it that changes it (also one returning the value it changes, such as
+  `fill` or a method ending in `return this`): share a `Mutex` instead.
 
   ```ts
   async function count(xs: shared<u8[]>, b: u8): Promise<i64> {
@@ -521,7 +524,10 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
   }
   ```
 - `shared(new Mutex<T>(x))` with `m.with((v) => …)`: a synchronous lock. The callback gets the
-  value itself (assigning `v` updates it), returns a result, and must not be async. Nothing
+  value itself (assigning `v` updates it), returns a result, and must not be async. Its value
+  is read only there: a value holding a `Mutex` cannot be printed, written as JSON or
+  converted to `any`, `unknown` or `object` (``cannot convert a `shared<Mutex<C>>` to `any`:
+  it holds a lock``), all of which would read it without the lock. Nothing
   crosses the lock by reference, since other threads use the value as soon as it is released:
   - The result leaves the lock like a value going to another task: an object the callback made
     moves out, a part of the protected value comes out as a copy (`m.with((v) => v.inner)` is

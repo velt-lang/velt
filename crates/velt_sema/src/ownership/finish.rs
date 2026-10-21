@@ -11,6 +11,7 @@
 //!   returns), or a variable bound to a part of one, is an error: the binding holds a copy,
 //!   where JavaScript changes the shared value.
 
+use rustc_hash::FxHashMap;
 use velt_common::Diagnostic;
 
 use crate::body::places::{frozen_root, is_place};
@@ -111,27 +112,54 @@ pub(super) fn soft_args(cx: &mut Ctx, d: DefId, f: &mut FnDef) {
 }
 
 /// Bindings of a value read out of a `shared` that the body changes (module docs): `for…of`
-/// elements (`Ctx::frozen_elems`) and variables bound to a part (`const ps = s.ports`).
+/// elements (`Ctx::frozen_elems`), variables bound to a part (`const ps = s.ports`), and,
+/// through them, elements of loops over those (`Ctx::loop_roots`) and variables bound to them.
 pub(super) fn frozen_bindings(cx: &mut Ctx, f: &mut FnDef) {
     if !cx.frozen_reads {
         return;
     }
-    let mut binds: Vec<(LocalId, bool)> = (0..f.body.locals.len() as u32)
+    let mut binds: FxHashMap<LocalId, bool> = (0..f.body.locals.len() as u32)
         .map(LocalId)
         .filter(|l| cx.frozen_elems.contains(&f.body.locals[l.0 as usize].span))
         .map(|l| (l, true))
         .collect();
-    let mut parts = Parts(vec![]);
+    let mut parts = Parts {
+        roots: vec![],
+        from: vec![],
+    };
     visit::block(&mut f.body.block, &mut parts);
-    binds.extend(parts.0.into_iter().map(|l| (l, false)));
+    binds.extend(parts.roots.iter().map(|&l| (l, false)));
+    let loops: Vec<(LocalId, LocalId)> = (f.body.locals.iter().enumerate())
+        .filter_map(|(i, l)| Some((LocalId(i as u32), *cx.loop_roots.get(&l.span)?)))
+        .collect();
+    // Bounded: each round adds a local.
+    for _ in 0..=f.body.locals.len() {
+        let before = binds.len();
+        for &(e, root) in &loops {
+            if binds.contains_key(&root) {
+                binds.entry(e).or_insert(true);
+            }
+        }
+        for (l, src) in &parts.from {
+            if binds.contains_key(src) {
+                binds.entry(*l).or_insert(false);
+            }
+        }
+        if binds.len() == before {
+            break;
+        }
+    }
     if binds.is_empty() {
         return;
     }
     let ev = evidence::collect(cx, &mut f.body.block);
+    let mut binds: Vec<(LocalId, bool)> = binds.into_iter().collect();
+    binds.sort();
     for (l, elem) in binds {
         let local = &f.body.locals[l.0 as usize];
+        let changed = ev.mutated.contains(&l) || ev.modified.contains(&l) || ev.weak.contains(&l);
         // Hidden locals of desugared loops (`<map@N>`) hold the source; the body can't name them.
-        if local.name.starts_with('<') || !ev.mutated.contains(&l) && !ev.modified.contains(&l) {
+        if local.name.starts_with('<') || !changed || cx.is_copy(local.ty) {
             continue;
         }
         let (name, tn, span) = (local.name.clone(), cx.display(local.ty), local.span);
@@ -152,18 +180,32 @@ pub(super) fn frozen_bindings(cx: &mut Ctx, f: &mut FnDef) {
     }
 }
 
-/// The locals a `let` / `const` binds to a part of a value read out of a `shared`.
-struct Parts(Vec<LocalId>);
+/// The locals a `let` / `const` binds to a part of a value read out of a `shared` (`roots`),
+/// and the ones bound to another local or a part of one (`from`: the binding and that local).
+struct Parts {
+    roots: Vec<LocalId>,
+    from: Vec<(LocalId, LocalId)>,
+}
 
 impl visit::VisitMut for Parts {
     fn stmt(&mut self, s: &mut Stmt) {
-        match &s.kind {
+        let (bound, init) = match &s.kind {
             S::Let {
                 local,
                 init: Some(init),
-            } if frozen_root(strip(init)) => self.0.push(*local),
-            S::LetPat { pat, init } if frozen_root(strip(init)) => pat_locals(pat, &mut self.0),
-            _ => {}
+            } => (vec![*local], init),
+            S::LetPat { pat, init } => {
+                let mut ls = vec![];
+                pat_locals(pat, &mut ls);
+                (ls, init)
+            }
+            _ => return,
+        };
+        let init = strip(init);
+        if frozen_root(init) {
+            self.roots.extend(bound);
+        } else if let Some(src) = crate::body::places::place_root(init) {
+            self.from.extend(bound.into_iter().map(|l| (l, src)));
         }
     }
 }
