@@ -1,0 +1,17 @@
+// A module constant initialized from a property of `globalThis` or a module `let` keeps the
+// value it had when the module was evaluated, as in Node.
+import { current, early } from "./_global_this_early";
+
+type Seam = { __EARLY__?: number };
+const here = (globalThis as Seam).__EARLY__;
+let k = 1;
+const first = k;
+const wrapped = { k };
+
+function show(): void {
+  console.log(early, current(), here, first, wrapped.k, k);
+}
+
+(globalThis as Seam).__EARLY__ = 9;
+k = 2;
+show();

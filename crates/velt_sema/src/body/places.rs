@@ -137,7 +137,11 @@ impl FnCx<'_, '_> {
                     return false;
                 }
                 // An imported binding is read-only, as in ES modules: its contents are not.
-                if matches!(e.kind, H::Global(_)) && module != self.module && what == "assign to" {
+                if matches!(e.kind, H::Global(_))
+                    && module != self.module
+                    && what == "assign to"
+                    && !self.cx.global_props.is_slot(d)
+                {
                     self.cx.error(
                         velt_common::Diagnostic::error(
                             format!("cannot assign to imported binding `{name}`"),

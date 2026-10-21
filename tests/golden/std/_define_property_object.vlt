@@ -1,0 +1,5 @@
+// An `Object` of the program's own, imported as a namespace (define_property_object_namespace).
+export function defineProperty<T>(o: T, key: string, d: { get: () => number }): T {
+  console.log("own defineProperty", key, d.get());
+  return o;
+}

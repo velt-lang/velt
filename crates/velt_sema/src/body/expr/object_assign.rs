@@ -178,6 +178,7 @@ impl FnCx<'_, '_> {
                 if let Some(fields) = &fields {
                     if !fields.contains(&key) {
                         let tn = self.cx.display(tty);
+                        let key = self.cx.shown_name(&key);
                         self.cx.error(
                             Diagnostic::error(
                                 format!("`Object.assign` cannot add `{key}` to a `{tn}`: adding a field its type doesn't declare is not supported yet"),
@@ -472,7 +473,8 @@ impl FnCx<'_, '_> {
         let what = match self.cx.ty.kind(t) {
             TyKind::Adt(d, _) => match self.cx.adt(*d) {
                 Some(a) if a.kind == AdtKind::Anon => None,
-                Some(a) if a.kind == AdtKind::Class && !self.cx.scopes[a.module].is_std => None,
+                // The program's classes, and its interfaces and object types with fields only.
+                Some(a) if a.kind != AdtKind::Anon && !self.cx.scopes[a.module].is_std => None,
                 _ => Some("a value of a built-in type"),
             },
             TyKind::Closure(_) | TyKind::FnPtr { .. } => Some("a function (#921)"),
@@ -546,6 +548,16 @@ impl FnCx<'_, '_> {
                 return None;
             }
             out.push((k.name, k.optional && !class));
+        }
+        // Enumerable symbol-keyed properties are copied too, after the strings; a brand
+        // `defineProperty` made non-enumerable is not (`crate::defined_props`).
+        let symbols: Vec<(String, bool)> = (a.fields.iter())
+            .filter(|f| crate::property_order::symbol_key(&f.name).is_some())
+            .map(|f| (f.name.clone(), f.optional && !class))
+            .collect();
+        if !symbols.is_empty() {
+            let hidden = self.cx.hidden_keys();
+            out.extend(symbols.into_iter().filter(|(k, _)| !hidden.contains(k)));
         }
         Some(out)
     }

@@ -1,0 +1,97 @@
+// Accessors defined after construction that Velt can't follow yet, or that Node rejects (tsc
+// accepts all).
+interface Cell {
+  get value(): number;
+  set value(v: number);
+}
+
+let n = 0;
+
+// The target is a parameter, not a literal of this function.
+function redefine(c: Cell): void {
+  Object.defineProperty(c, "value", { get: () => n });
+}
+
+// A setter the literal doesn't have.
+interface ReadOnly {
+  get value(): number;
+}
+
+const ro: ReadOnly = {
+  get value() {
+    return n;
+  },
+};
+Object.defineProperty(ro, "value", { set: (v: number) => (n = v) });
+
+// An accessor and a value: Node throws.
+const c: Cell = {
+  get value() {
+    return n;
+  },
+  set value(v) {
+    n = v;
+  },
+};
+Object.defineProperty(c, "value", { get: () => 1, writable: true });
+redefine(c);
+
+// An accessor `undefined`: Node's property reads `undefined`, which the type doesn't allow.
+const u: Cell = {
+  get value() {
+    return n;
+  },
+  set value(v) {
+    n = v;
+  },
+};
+Object.defineProperty(u, "value", { get: undefined });
+
+// Defined again after `configurable: false` with the same function: Node compares them.
+function again(): Cell {
+  const c: Cell = {
+    get value() {
+      return n;
+    },
+    set value(v) {
+      n = v;
+    },
+  };
+  const g = () => 7;
+  for (let i = 0; i < 2; i++) {
+    Object.defineProperty(c, "value", { get: g, configurable: false });
+  }
+  return c;
+}
+
+console.log(again().value);
+
+// A loop variable named like the literal: which object a call means is not followed.
+function shadowed(list: Cell[]): Cell {
+  const o: Cell = {
+    get value() {
+      return n;
+    },
+    set value(v) {
+      n = v;
+    },
+  };
+  for (const o of list) {
+    Object.defineProperty(o, "value", { get: () => 5 });
+  }
+  return o;
+}
+
+console.log(shadowed([c]).value);
+
+// A getter that may be `undefined` is a type error.
+const maybe: (() => number) | undefined = n > 0 ? () => n : undefined;
+const m: Cell = {
+  get value() {
+    return n;
+  },
+  set value(v) {
+    n = v;
+  },
+};
+Object.defineProperty(m, "value", { get: maybe });

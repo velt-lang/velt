@@ -1,0 +1,9 @@
+// Installs the hook (global_this): a write from another module than the one declaring it.
+import { HOOK_KEY, type Hook } from "./_global_this_keys";
+
+export function install(): void {
+  const g = globalThis as { __HOOK__?: Hook };
+  if (g[HOOK_KEY] === undefined) {
+    g[HOOK_KEY] = { events: [] };
+  }
+}

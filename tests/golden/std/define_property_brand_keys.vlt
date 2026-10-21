@@ -1,0 +1,19 @@
+// Brand keys (#1299): a symbol from a module other than the type's, and descriptions held in
+// string constants.
+import { type Cell } from "./_define_property_cell";
+import { SHARED } from "./_define_property_key";
+
+const name = "local";
+const LOCAL: unique symbol = Symbol(name);
+
+interface Box {
+  v: number;
+}
+
+const cell: Cell = { n: 1 };
+Object.defineProperty(cell, SHARED, { value: "yes" });
+const box: Box = { v: 2 };
+Object.defineProperty(box, LOCAL, { value: 7, enumerable: true });
+const other: Box = { v: 3 };
+console.log(SHARED in cell, LOCAL in box, LOCAL in other);
+console.log(String(SHARED), LOCAL.description, box);

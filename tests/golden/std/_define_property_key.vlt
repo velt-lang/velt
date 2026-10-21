@@ -1,0 +1,3 @@
+// A symbol another module brands a third module's type with (define_property_brand_keys).
+const description = "shared";
+export const SHARED: unique symbol = Symbol(description);
