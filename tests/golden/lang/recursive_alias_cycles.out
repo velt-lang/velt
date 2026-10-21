@@ -1,0 +1,5 @@
+{"value":1,"kids":[{"value":2,"kids":[]}]}
+1 {"name":"a","b":{"id":1,"a":[]}}
+3 {"id":1,"c":[{"value":3,"d":null}]}
+true
+{"value":1,"kids":[]}

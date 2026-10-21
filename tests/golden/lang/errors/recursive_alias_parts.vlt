@@ -1,0 +1,24 @@
+// A recursive alias whose parts can't be rewritten into an interface's fields stays an error,
+// which names the part and why (#783): a type parameter (even one named like an alias of the
+// module), a generic alias, an interface with methods, and a field of two types.
+type Base = { value: number };
+type Tree<Base> = Base & { kids: Tree<Base>[] };
+
+type Box<T> = { item: T };
+type Boxed = Box<number> & { more: Boxed[] };
+
+interface Shape {
+  value: number;
+  area(): number;
+}
+type Shapes = Shape & { inner: Shapes[] };
+
+type Twice = Base & { value: string; kids: Twice[] };
+
+function main() {
+  const t: Tree<{ value: string }> = { value: "a", kids: [] };
+  const b: Boxed = { item: 1, more: [] };
+  const s: Shapes | null = null;
+  const w: Twice | null = null;
+  console.log(t, b, s, w);
+}

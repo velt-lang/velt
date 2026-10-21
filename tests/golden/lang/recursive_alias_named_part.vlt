@@ -1,5 +1,6 @@
 // A recursive alias may name an alias of an object type among its parts (#783): its fields
-// stand where its name does, so the alias is the interface with all the fields.
+// stand where its name does, so the alias is the interface with all the fields. The literals
+// are written in the types' field order, which is the order objects print in (#792).
 type Base = { value: number };
 type Labeled = Base & { label: string };
 type Tree = Base & { kids: Tree[] };
