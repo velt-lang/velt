@@ -623,9 +623,12 @@ fn unserializable(cx: &mut Ctx, t: TyId, stack: &mut Vec<TyId>, parse: bool) -> 
         TyKind::Dyn(..) if !parse && cx.dynamic(t).is_some() => return None,
         TyKind::Array(e) | TyKind::Option(e, _) => vec![e],
         // A `shared<T>` is written as the `T` inside, read in its box (velt_vir `json/write.rs`),
-        // except a `shared<int>`, whose atomics another task may be running; decoding makes no
-        // `shared` value.
-        TyKind::Shared(e) if !parse && cx.atomic_int(t).is_none() => vec![e],
+        // when it is read like its `T` (`frozen_readable`): not a `shared<int>`, whose atomics
+        // another task may be running, nor one holding a `Mutex`, read only under its lock.
+        // Decoding makes no `shared` value.
+        TyKind::Shared(e) if !parse && cx.atomic_int(t).is_none() && cx.frozen_readable(e) => {
+            vec![e]
+        }
         // Tuples are fixed-length arrays.
         TyKind::Tuple(es) => es,
         TyKind::Adt(d, args) => {

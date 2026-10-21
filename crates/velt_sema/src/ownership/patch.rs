@@ -469,7 +469,9 @@ fn callbacks(cx: &mut Ctx, args: &mut [Expr], errors: &mut Vec<Diagnostic>) -> b
             // A table can't be told apart from a copy here either: the function value may be
             // the one that modifies it.
             Callback::Unknown => {
-                super::evidence::in_root_memory(arg) || table_arg(cx, arg) || cx.frozen_reads && frozen_root(arg)
+                super::evidence::in_root_memory(arg)
+                    || table_arg(cx, arg)
+                    || cx.frozen_reads && frozen_root(arg)
             }
             Callback::None => false,
         };

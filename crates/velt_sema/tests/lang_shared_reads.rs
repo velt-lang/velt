@@ -277,3 +277,12 @@ fn a_function_changing_map_entries_it_loops_over_is_an_error() {
         "{defs} function main() {{ const s = shared(new Store()); console.log(sum(s)); }}"
     ));
 }
+
+#[test]
+fn json_of_a_shared_mutex_is_an_error() {
+    // Its value is read only under the lock, which writing it as JSON doesn't take.
+    let r = err_src(
+        "function main() { const m = shared(new Mutex<number[]>([1])); console.log(JSON.stringify(m)); }",
+    );
+    assert!(r.contains("has no JSON form"), "{r}");
+}
