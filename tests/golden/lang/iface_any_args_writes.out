@@ -2,3 +2,8 @@ root:root:none
 root:changed:rendered
 changed true
 child:kid:none root 2
+true true false
+extra changed, plain root, extra changed true false
+changed
+impl:changed:impl rendered
+2 true extra seven

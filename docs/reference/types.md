@@ -2626,7 +2626,13 @@ function main(): void {
 Calling `serialize("x")` through the `Handler[]` stops with `TypeError: the value is not a Date
 (it is a string)`. The wrapped value is the original object: a write through one is seen
 through the other, and every copy of the converted value (an array element read into a
-`const`, a second conversion to `Handler<any, any>`) wraps that same object.
+`const`, a second conversion to `Handler<any, any>`) wraps that same object. A field assigned
+through the converted value (`h.name = "x"` on a `Handler`) is assigned on the original, its
+value converted to the original's field type and checked as an argument is (a field of an
+interface type at `unknown` arguments does not convert back, a compile error naming #1185).
+The converted value and the original are one object to `===` and `instanceof`: a
+`Handler<Date, number>` read back from a `Handler[]` is `===` to it, and `instanceof` tests the
+original's class.
 
 A parameter of type `unknown[]`, `Map<unknown, unknown>` or `Set<unknown>` (a handler for
 arrays, maps or sets, as in a serializer's table) takes an array, map or set of any element

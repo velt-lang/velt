@@ -47,3 +47,34 @@ const asAny: Ctx<any, any> = child;
 asAny.parent = root;
 asAny.props = { n: 2 };
 console.log(show(child), child.parent?.name(), child.props.n);
+
+// The converted value is the original object: `===` and `instanceof` see through the
+// conversion, and so does a method called after narrowing it.
+console.log(child.parent === root, asAny === child, asAny.parent === asAny);
+
+class Impl implements Ctx<string, { n: number }> {
+  el: string = "seven";
+  props: { n: number } = { n: 3 };
+  renderFn: (() => string) | null = null;
+  parent: Ctx<any, any> | null = null;
+  name(): string {
+    return "impl";
+  }
+  extra(): string {
+    return "extra " + this.el;
+  }
+}
+
+function describe(c: Ctx<any, any>): string {
+  if (c instanceof Impl) {
+    return c.extra();
+  }
+  return "plain " + c.name();
+}
+
+const impl = new Impl();
+const both: Ctx<any, any>[] = [impl, root, impl];
+setRender(impl, () => "impl rendered");
+console.log(both.map(describe).join(", "), both[0] === both[2], both[0] === both[1]);
+console.log(impl.el);
+console.log(show(impl));

@@ -23,7 +23,8 @@ impl FnLower<'_, '_> {
         }
         if let K::Downcast(inner) = &e.kind {
             let v = self.consume(inner);
-            return self.downcast_value(v, inner.ty);
+            let owned = matches!(inner.kind, K::Local(_, hir::UseMode::Move));
+            return self.downcast_value(v, inner.ty, owned);
         }
         if let K::Call {
             callee: hir::Callee::Intrinsic(hir::Intrinsic::SharedRead),
@@ -223,7 +224,7 @@ impl FnLower<'_, '_> {
             }
             K::Downcast(inner) => {
                 let v = self.expr(inner);
-                self.downcast_value(v, inner.ty)
+                self.downcast_value(v, inner.ty, false)
             }
             K::ToDyn { expr, impl_index } => self.make_dyn(expr, *impl_index, e.ty),
             K::Throw(inner) => self.throw(inner),

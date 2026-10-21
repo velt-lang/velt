@@ -101,7 +101,10 @@ impl FnLower<'_, '_> {
     /// `place` (a class object or an interface value of type `ty`) is an instance of `class`.
     pub(super) fn instance_test(&mut self, place: &Place, ty: TyId, class: DefId) -> Operand {
         let id = match self.cx.kind(ty) {
-            TyKind::Dyn(..) => self.dyn_class_id(place, self.cx.has_proxies()),
+            TyKind::Dyn(..) => {
+                let place = self.through_adapters(place, ty);
+                self.dyn_class_id(&place, self.cx.has_proxies())
+            }
             _ if self.cx.proxiable(ty) => {
                 let obj = self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(place.clone())));
                 self.proxy_class_id(&obj, |lw| {
@@ -168,13 +171,18 @@ impl FnLower<'_, '_> {
     }
 
     /// The object of a narrowed value `v` of type `from`: the data pointer of an interface
-    /// value, a class object as it is.
-    pub(super) fn downcast_value(&mut self, v: Operand, from: TyId) -> Operand {
+    /// value (of the value its adapters wrap, adapters.rs), a class object as it is. `owned`
+    /// when `v` is moved out of a local, so the object is passed on in its place.
+    pub(super) fn downcast_value(&mut self, v: Operand, from: TyId, owned: bool) -> Operand {
         let from = self.sub(from);
         if !matches!(self.cx.kind(from), TyKind::Dyn(..)) || self.dead() {
             return v;
         }
         let p = self.place_of(v, from);
+        if owned {
+            return self.owned_through_adapters(p, from);
+        }
+        let p = self.through_adapters(&p, from);
         Operand::Copy(proj(&p, Proj::Field(0)))
     }
 
@@ -182,7 +190,7 @@ impl FnLower<'_, '_> {
     pub(super) fn downcast_place(&mut self, p: Place, from: TyId) -> Place {
         let from = self.sub(from);
         match self.cx.kind(from) {
-            TyKind::Dyn(..) => proj(&p, Proj::Field(0)),
+            TyKind::Dyn(..) => proj(&self.through_adapters(&p, from), Proj::Field(0)),
             _ => p,
         }
     }

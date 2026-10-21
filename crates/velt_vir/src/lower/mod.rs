@@ -20,6 +20,7 @@
 //!   (track_caller.rs for standard-library helpers such as `unwrap`).
 
 mod abi;
+mod adapters;
 mod adt;
 mod any;
 mod any_checks;

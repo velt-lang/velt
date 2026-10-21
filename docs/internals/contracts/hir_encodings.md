@@ -1036,7 +1036,12 @@ entry is an `ICE:`.
   `__unknownSetIn` (std/collections/set.vlt) on the `unknown` argument, and after the slot call
   (its result kept in a temporary) the matching `…Out` writes the copy back; the helpers use
   `AnyCall` / `AnyIndex` / `AnySetIndex`, and such an adapter sets `Program::dyn_members`.
-  Lowering sees only these ordinary forms.
+  Once a field of `I` is written through an interface value (`iface_writes`), the impl gets a
+  setter (`<I> adapter.<set f>`, `this` borrowed mutably, the value owned) per field, which
+  calls the field's setter slot on the wrapped value with the value converted as an argument
+  is. Lowering sees only these ordinary forms, and finds the adapters by their struct (a name
+  ending in ` adapter`, one interface field): their tables' class id word says so, and `===`,
+  `instanceof` and the downcast after it look through them at the wrapped value.
 - `object` and `Function` (issue #926) are two more interfaces of `z_dynamic.vlt`:
   `TyKind::Dyn(object | Function, [])`, named by `Program::object` / `Program::function` (set
   with `any_impl`). They are dynamic types like `any`: the same representation, `ToDyn` with
