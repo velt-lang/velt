@@ -1,0 +1,100 @@
+// A sigx-like reactive proxy of an array (sigx's signal.ts): its `set` trap compares the value
+// and the length before and after `Reflect.set`, so `pop`, `shift` and `splice` must keep the
+// length until they write `length`, and its `deleteProperty` trap sees the element go.
+function isIndex(k: string | symbol): boolean {
+  return typeof k === "string" && `${Number(k as string)}` === k;
+}
+
+function track(log: string[]): ProxyHandler<any> {
+  return {
+    set(obj: any, prop: string | symbol, v: any, r: any): boolean {
+      const oldLength = obj.length as number;
+      const oldValue = Reflect.get(obj, prop);
+      const hadKey = isIndex(prop) ? Number(prop as string) < oldLength : Object.hasOwn(obj, prop);
+      const ok = Reflect.set(obj, prop, v, r);
+      if (!hadKey) {
+        log.push(`add ${String(prop)}`);
+      } else if (oldValue !== v) {
+        log.push(`set ${String(prop)} ${oldValue} -> ${v}`);
+      } else {
+        log.push(`same ${String(prop)}`);
+      }
+      if (prop !== "length" && (obj.length as number) !== oldLength) {
+        log.push(`length ${oldLength} -> ${obj.length}`);
+      }
+      return ok;
+    },
+    deleteProperty(obj: any, prop: string | symbol): boolean {
+      const had = Object.prototype.hasOwnProperty.call(obj, prop);
+      const ok = Reflect.deleteProperty(obj, prop);
+      const still = Object.hasOwn(obj, prop);
+      const there = Reflect.has(obj, prop);
+      const d = Reflect.getOwnPropertyDescriptor(obj, prop);
+      log.push(
+        `delete ${String(prop)} had ${had} ok ${ok} own ${still} has ${there} desc ${d === undefined} get ${Reflect.get(obj, prop)} length ${obj.length}`,
+      );
+      log.push(`  keys ${Reflect.ownKeys(obj).join(",")}`);
+      return ok;
+    },
+  };
+}
+
+function run(name: string, start: number[], f: (p: any) => any): void {
+  const raw: number[] = start.slice();
+  const log: string[] = [];
+  const p: any = new Proxy(raw, track(log));
+  const r = f(p);
+  console.log(`${name}: ${JSON.stringify(r)} -> ${JSON.stringify(raw)} (${raw.length})`);
+  for (const l of log) {
+    console.log(`  ${l}`);
+  }
+}
+
+run("pop", [1, 2, 3], (p) => p.pop());
+run("pop one", [7], (p) => p.pop());
+run("shift", [1, 2, 3], (p) => p.shift());
+run("splice two", [1, 2, 3, 4], (p) => p.splice(0, 2));
+run("splice middle", [1, 2, 3, 4], (p) => p.splice(1, 1));
+run("splice replace", [1, 2, 3], (p) => p.splice(1, 2, 9));
+run("push", [1, 2], (p) => p.push(3));
+run("unshift", [1, 2, 3], (p) => p.unshift(8, 9));
+run("unshift three", [1, 2, 3], (p) => p.unshift(7, 8, 9));
+run("splice grow", [1, 2, 3], (p) => p.splice(1, 1, 5, 6, 7));
+run("length", [1, 2, 3], (p) => {
+  p.length = 1;
+  return p.length;
+});
+
+// The usual reactive `get` trap wraps what it reads when it is an object: an array method is a
+// function, so it is not wrapped, and calling it on a nested reactive array runs it there.
+function reactive(t: object, log: string[]): any {
+  return new Proxy(t, {
+    get(o: any, k: string | symbol, r: any): any {
+      log.push(`get ${String(k)}`);
+      const v = Reflect.get(o, k, r);
+      return typeof v === "object" && v !== null ? reactive(v, log) : v;
+    },
+    set(o: any, k: string | symbol, v: any, r: any): boolean {
+      log.push(`set ${String(k)}=${v}`);
+      return Reflect.set(o, k, v, r);
+    },
+  });
+}
+
+const log: string[] = [];
+const state: Record<string, any> = { list: [1, 2] };
+const s = reactive(state, log);
+s.list.push(3);
+console.log(state.list, log.join(", "));
+log.length = 0;
+console.log(s.list.pop(), state.list, log.join(", "));
+log.length = 0;
+console.log(s.list.map((x: number) => x * 10), typeof s.list.push, log.join(", "));
+
+const arr: any = [1, 2];
+const push = Reflect.get(arr, "push");
+console.log(typeof push, push, push === Reflect.get(arr, "push"), push === Reflect.get(arr, "pop"));
+const ctor = Reflect.get(arr, "constructor");
+console.log(typeof ctor, ctor);
+console.log({ m: Reflect.get(arr, "map") });
+// check: no leaks

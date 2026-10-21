@@ -744,6 +744,11 @@ impl FnLower<'_, '_> {
                 self.any_drop_args(argv, 0, argc);
                 self.ret_status(ST_UNSUPPORTED);
             }
+            // An array method (`Reflect.get(array, "push")`) runs only when called on a proxy.
+            TyKind::Adt(..) if self.cx.is_array_method(ty) => {
+                self.any_drop_args(argv, 0, argc);
+                self.ret_status(ST_UNSUPPORTED);
+            }
             _ => {
                 self.any_drop_args(argv, 0, argc);
                 self.ret_status(ST_NOT_FN);

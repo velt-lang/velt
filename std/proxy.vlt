@@ -13,7 +13,16 @@
 // A program that never names them doesn't load this module, and its operations on `any` don't
 // test for a proxy (velt:proxy/ops).
 
-import { __ArrayMethod, __proxyArrayCall, __proxyArrayMethod } from "velt:proxy/array";
+import {
+  __ArrayMethod,
+  __arrayDeleteIndex,
+  __arrayMethod,
+  __arrayHole,
+  __arrayOwnKeys,
+  __arraySetIndex,
+  __proxyArrayCall,
+  __proxyArrayMethod,
+} from "velt:proxy/array";
 
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
 
@@ -60,6 +69,21 @@ export type ProxyHandler<T> = {
 /** The array index the string `s` names (canonical decimal, 0 to 2^32 - 2), or -1. */
 function proxyIndex(s: string): number {
   return __arrayIndex(s) as number;
+}
+
+/**
+ * The element of the array `a` that `key` names (a string or a number), or -1; an element an
+ * array method on a proxy made (`__arrayHole`) is `-2`.
+ */
+function arrayElement(a: any, key: any): number {
+  if (typeof key !== "string" && typeof key !== "number") {
+    return -1;
+  }
+  const i = proxyIndex(typeof key === "string" ? (key as string) : `${key as number}`);
+  if (i < 0) {
+    return -1;
+  }
+  return __arrayHole(a, i) ? -2 : i;
 }
 
 /**
@@ -177,6 +201,15 @@ function proxyComplete(d: PropertyDescriptor): PropertyDescriptor {
       );
     }
     return { get: d.get, set: d.set, enumerable: enumerable, configurable: configurable };
+  }
+  if (!("value" in d)) {
+    // A data property's value left out is `undefined`, which Node lists.
+    return {
+      value: undefined,
+      writable: d.writable === true,
+      enumerable: enumerable,
+      configurable: configurable,
+    };
   }
   return {
     value: d.value,
@@ -563,23 +596,22 @@ export class Reflect {
       }
     }
     // An array element named by its string (`"1"`), as a trap passes it on.
+    if (Array.isArray(target) && arrayElement(target, key) != -1) {
+      const i = arrayElement(target, key);
+      return i >= 0 ? target[i] : undefined;
+    }
     if (typeof key === "string" && Array.isArray(target)) {
-      const i = proxyIndex(key);
-      if (i >= 0) {
-        return target[i];
-      }
       // `toJSON` (what `JSON.stringify` asks for): an array has none.
       if (key === "toJSON") {
         return undefined;
       }
       // A method that a call on a proxy runs through the proxy (`__arrayCall`).
       if (__proxyArrayMethod(key)) {
-        return new __ArrayMethod(key);
+        return __arrayMethod(key);
       }
-      // What `splice` reads to make its result (Node's `Array`; Velt has no constructor
-      // values yet): `undefined`, for which the result is an array too.
+      // What `splice`, `map`, `filter` and `slice` read to make their result: Node's `Array`.
       if (key === "constructor") {
-        return undefined;
+        return __arrayMethod("Array");
       }
     }
     if (typeof key === "symbol") {
@@ -608,15 +640,10 @@ export class Reflect {
         proxyReceiverUnsupported("set");
       }
     }
-    if (typeof key === "string" && Array.isArray(target)) {
-      const i = proxyIndex(key);
+    if (Array.isArray(target) && (typeof key === "string" || typeof key === "number")) {
+      const i = proxyIndex(proxyKey(key) as string);
       if (i >= 0) {
-        // Velt's arrays have no holes: a write past the end fills the gap with the value (a
-        // generic array method run on a proxy writes the gap's elements right after).
-        while ((target.length as number) < i) {
-          target[target.length] = value;
-        }
-        target[i] = value;
+        __arraySetIndex(target, i, value);
         return true;
       }
     }
@@ -641,11 +668,9 @@ export class Reflect {
       return plainKey(key) in target;
     }
     // An array element named by its string (`"1"`), as a `has` trap passes it on.
-    if (typeof key === "string" && Array.isArray(target)) {
-      const i = proxyIndex(key);
-      if (i >= 0) {
-        return i < (target.length as number);
-      }
+    if (Array.isArray(target) && arrayElement(target, key) != -1) {
+      const i = arrayElement(target, key);
+      return i >= 0 && i < (target.length as number);
     }
     return key in target;
   }
@@ -659,12 +684,12 @@ export class Reflect {
     if (target instanceof Proxy) {
       return target.__ownKeys();
     }
+    if (Array.isArray(target)) {
+      return __arrayOwnKeys(target);
+    }
     const out: (string | symbol)[] = [];
     for (const k of Object.keys(target)) {
       out.push(k);
-    }
-    if (Array.isArray(target)) {
-      out.push("length");
     }
     return out;
   }
@@ -674,6 +699,9 @@ export class Reflect {
     reflectTarget("deleteProperty", target);
     if (target instanceof Proxy) {
       return target.__deleteProperty(key);
+    }
+    if (Array.isArray(target) && arrayElement(target, key) != -1) {
+      return __arrayDeleteIndex(target, proxyIndex(proxyKey(key) as string));
     }
     return __anyDeletePlain(target, proxyKey(key));
   }
@@ -695,6 +723,13 @@ export class Reflect {
     const s = k as string;
     if (Array.isArray(target) && s === "length") {
       return { value: target.length, writable: true, enumerable: false, configurable: false };
+    }
+    if (Array.isArray(target) && arrayElement(target, s) != -1) {
+      const i = arrayElement(target, s);
+      if (i < 0 || i >= (target.length as number)) {
+        return undefined;
+      }
+      return { value: target[i], writable: true, enumerable: true, configurable: true };
     }
     if (!Object.hasOwn(target, s)) {
       return undefined;

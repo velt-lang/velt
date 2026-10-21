@@ -184,7 +184,7 @@ impl FnLower<'_, '_> {
         self.terminate(Terminator::Return(st));
     }
 
-    /// The type of the prelude's `__ArrayMethod`, when the program has it.
+    /// The type of velt:proxy's `__ArrayMethod`, when the program has it.
     fn array_method_ty(&mut self) -> Option<TyId> {
         let d = self
             .cx
@@ -316,5 +316,16 @@ impl FnLower<'_, '_> {
             })
             .collect();
         Some(format!("object {{ {} }}", fields.join("; ")))
+    }
+}
+
+impl super::Cx<'_> {
+    /// Is `t` velt:proxy's `__ArrayMethod` (an array method read through `Reflect.get`), which
+    /// `typeof` and `console.log` show as the function it stands for?
+    pub(super) fn is_array_method(&self, t: TyId) -> bool {
+        let TyKind::Adt(d, _) = self.types.kind(t) else {
+            return false;
+        };
+        matches!(self.hir.def(*d), hir::Def::Adt(a) if a.name == PRELUDE_ARRAY_METHOD)
     }
 }

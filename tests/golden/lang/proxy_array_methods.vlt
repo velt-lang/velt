@@ -48,9 +48,6 @@ run("splice negative", [1, 2, 3, 4], (p) => p.splice(-2));
 run("splice start only", [1, 2, 3], (p) => p.splice(1));
 run("splice no args", [1, 2], (p) => p.splice());
 run("splice past end", [1, 2], (p) => p.splice(5, 1, 3));
-// Deleting the last element through Reflect.deleteProperty, as pop does.
-const a: number[] = [1, 2, 3];
-console.log(`${Reflect.deleteProperty(a, "2")} ${a.indexOf(3)} ${Reflect.deleteProperty(a, "7")}`);
 // A handler without traps calls the method on the target.
 const q: any = new Proxy([1, 2], {});
 console.log(`${q.push(3)} ${q.pop()} ${q.length}`);

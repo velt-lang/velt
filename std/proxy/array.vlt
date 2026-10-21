@@ -12,8 +12,10 @@
 import { Proxy } from "velt:proxy";
 
 /**
- * An array method read through a proxy (`Reflect.get(array, "push")`): calling it on a proxy
- * runs the method on the proxy.
+ * An array method read through a proxy (`Reflect.get(array, "push")`), or `constructor`
+ * (`Array`): calling it on a proxy runs the method on the proxy. `typeof` and `console.log`
+ * show it as the function it stands for (velt_vir's `is_array_method`); called any other way,
+ * it is not supported yet.
  */
 export class __ArrayMethod {
   name: string;
@@ -21,6 +23,21 @@ export class __ArrayMethod {
   constructor(name: string) {
     this.name = name;
   }
+}
+
+/** The `__ArrayMethod`s read so far, one per name, so that a method read twice is the same. */
+let arrayMethods: __ArrayMethod[] = [];
+
+/** The `__ArrayMethod` named `name`. */
+export function __arrayMethod(name: string): __ArrayMethod {
+  for (const m of arrayMethods) {
+    if (m.name === name) {
+      return m;
+    }
+  }
+  const m = new __ArrayMethod(name);
+  arrayMethods.push(m);
+  return m;
 }
 
 /** Is `key` an array method a proxy runs generically (`__ArrayMethod`)? */
@@ -42,6 +59,130 @@ export function __proxyArrayMethod(key: string): boolean {
     key === "slice" ||
     key === "reverse" ||
     key === "sort";
+}
+
+/**
+ * How many array methods are running on proxies (`__proxyArrayCall`), and the holes they made
+ * in arrays: the elements of `holeArrays[i]` from `holeStarts[i]` up to `holeEnds[i]` are not
+ * there (Node's holes). `pop`, `shift` and `splice` delete the last elements before they write
+ * the shorter length, and `unshift` and `splice` write elements past the end before they fill
+ * the gap; Velt's arrays have no holes, so the elements stay (a gap is filled with the value
+ * written past it) and `Reflect` skips them until the method fills them or cuts them off.
+ */
+let arrayCalls = 0;
+let holeArrays: any[] = [];
+let holeStarts: number[] = [];
+let holeEnds: number[] = [];
+
+/** The position of `a` in `holeArrays`, or -1. */
+function holeAt(a: any): number {
+  const n = holeArrays.length as number;
+  for (let i = 0; i < n; i++) {
+    if (holeArrays[i] === a) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+/** The holes of `a` as `[start, end)` (an empty range when it has none). */
+function holesOf(a: any): [number, number] {
+  const at = holeAt(a);
+  if (at < 0) {
+    return [0, 0];
+  }
+  // A shorter length (written through `any` too) cuts holes off.
+  const end = Math.min(holeEnds[at], a.length as number);
+  return holeStarts[at] < end ? [holeStarts[at], end] : [0, 0];
+}
+
+/** Records the holes of `a` as `[start, end)`. */
+function setHoles(a: any, start: number, end: number): void {
+  const at = holeAt(a);
+  if (at >= 0) {
+    holeStarts[at] = start;
+    holeEnds[at] = end;
+    return;
+  }
+  if (start < end) {
+    holeArrays.push(a);
+    holeStarts.push(start);
+    holeEnds.push(end);
+  }
+}
+
+/** Is element `i` of the array `a` a hole an array method on a proxy made? */
+export function __arrayHole(a: any, i: number): boolean {
+  const [s, e] = holesOf(a);
+  return i >= s && i < e;
+}
+
+/**
+ * `Reflect.deleteProperty(a, i)` of an array `a` and an index `i`: an element past the end or
+ * a hole is not there; the last one (or the one before the holes at the end) goes while an
+ * array method runs on a proxy. Any other element would leave a hole, which Velt's arrays
+ * cannot have yet.
+ */
+export function __arrayDeleteIndex(a: any, i: number): boolean {
+  const n = a.length as number;
+  const [s, e] = holesOf(a);
+  if (i >= n || (i >= s && i < e)) {
+    return true;
+  }
+  const top = e == n && s < e ? s : n;
+  if (i == top - 1 && (s == e || e == n) && arrayCalls > 0) {
+    setHoles(a, i, n);
+    return true;
+  }
+  panic(
+    `TypeError: deleting element ${i} of an array of ${n} through \`any\` is not supported yet (#823): Velt's arrays have no holes`,
+  );
+}
+
+/**
+ * `Reflect.set(a, i, v)` of an array `a` and an index `i`: a hole at either end of the holes is
+ * filled; an element past the end is appended, and inside an array method on a proxy one past
+ * that leaves a gap of holes (filled with `v` until the method writes them). Anything else
+ * would leave a hole, which Velt's arrays cannot have yet.
+ */
+export function __arraySetIndex(a: any, i: number, v: any): void {
+  const n = a.length as number;
+  const [s, e] = holesOf(a);
+  if (i >= s && i < e) {
+    if (i == s) {
+      setHoles(a, s + 1, e);
+    } else if (i == e - 1) {
+      setHoles(a, s, e - 1);
+    } else {
+      panic(
+        `TypeError: writing element ${i} between the holes ${s} to ${e - 1} of an array is not supported yet (#823): Velt's arrays have no holes`,
+      );
+    }
+  } else if (i > n) {
+    if (arrayCalls == 0 || s < e) {
+      panic(
+        `TypeError: writing element ${i} past the end of an array of ${n} through \`any\` is not supported yet (#924): Velt's arrays have no holes`,
+      );
+    }
+    setHoles(a, n, i);
+    while ((a.length as number) < i) {
+      a[a.length] = v;
+    }
+  }
+  a[i] = v;
+}
+
+/** The keys of the array `a` that `Reflect.ownKeys` lists: its elements but holes. */
+export function __arrayOwnKeys(a: any): (string | symbol)[] {
+  const n = a.length as number;
+  const out: (string | symbol)[] = [];
+  for (let i = 0; i < n; i++) {
+    if (!__arrayHole(a, i)) {
+      out.push(`${i}`);
+    }
+  }
+  out.push("length");
+  return out;
 }
 
 /** JavaScript's `ToIntegerOrInfinity` of an argument (a number; anything else is 0). */
@@ -79,6 +220,33 @@ function arrayMove(p: Proxy, o: any, from: number, to: number): void {
  * method is the steps of `splice` that its own algorithm takes in the same order.
  */
 export function __proxyArrayCall(p: Proxy, name: string, args: any[], o: any): any {
+  arrayCalls++;
+  // A trap cannot throw yet (#1326), so the method runs to its end here.
+  const r = proxyArrayCall(p, name, args, o);
+  arrayCalls--;
+  if (arrayCalls == 0) {
+    // Holes a method's traps left (a delete without the shorter length after it, a write past
+    // the end without the gap's).
+    let left: [number, number] = [0, 0];
+    for (const a of holeArrays) {
+      const h = holesOf(a);
+      if (h[0] < h[1]) {
+        left = h;
+      }
+    }
+    holeArrays = [];
+    holeStarts = [];
+    holeEnds = [];
+    if (left[0] < left[1]) {
+      panic(
+        `TypeError: an array method on a proxy left holes at ${left[0]} to ${left[1] - 1} (#823): Velt's arrays have no holes`,
+      );
+    }
+  }
+  return r;
+}
+
+function proxyArrayCall(p: Proxy, name: string, args: any[], o: any): any {
   const n = arrayInt(p.__get("length", o));
   const len = n < 0 ? 0 : n;
   const none: any[] = [];
@@ -94,6 +262,11 @@ export function __proxyArrayCall(p: Proxy, name: string, args: any[], o: any): a
     const at = name === "pop" && len > 0 ? len - 1 : 0;
     const removed = proxySplice(p, o, len, at, len > 0 ? 1 : 0, none, 0, false);
     return len > 0 ? removed[0] : undefined;
+  }
+  if (name === "Array") {
+    panic(
+      "TypeError: calling an array's `constructor` through a proxy is not supported yet (#823)",
+    );
   }
   if (name !== "splice") {
     return proxyArrayRead(p, name, args, o, len);

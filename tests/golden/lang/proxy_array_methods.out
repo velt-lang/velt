@@ -32,5 +32,4 @@ splice no args: [] -> [1,2]
   get splice, get length, get constructor, set length=2
 splice past end: [] -> [1,2,3]
   get splice, get length, get constructor, set 2=3, set length=3
-true -1 true
 3 3 2
