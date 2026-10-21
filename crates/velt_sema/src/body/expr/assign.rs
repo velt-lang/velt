@@ -196,18 +196,15 @@ impl FnCx<'_, '_> {
             .and_then(|a| a.fields.get(*index as usize))
             .is_some_and(|f| f.readonly);
         if readonly && self.is_import_meta_type(base.ty) {
-            // `import.meta.url = …` is reported as a write to the module constant; a write
-            // through a copy (`const m = import.meta; m.url = …`) the same way, as in Node the
-            // copy is `import.meta` itself.
-            if !matches!(crate::body::places::root_expr(base).kind, H::Global(_)) {
-                self.cx.err(
-                    format!(
-                        "cannot assign to a field of module-level constant `{}`",
-                        ast::IMPORT_META
-                    ),
-                    place.span,
-                );
-            }
+            // `import.meta.url = …` is a write to the module constant, and so is one through
+            // another reference to it (`const m = import.meta; m.url = …`).
+            self.cx.err(
+                format!(
+                    "cannot assign to a field of module-level constant `{}`",
+                    ast::IMPORT_META
+                ),
+                place.span,
+            );
             return;
         }
         let in_ctor = self.f.kind == crate::defs::FnKind::Ctor

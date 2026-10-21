@@ -1,0 +1,13 @@
+// A `file:` URL keeps its base's Windows drive letter, as Node's URL does on every OS: a path
+// starting with `/` stays on the drive, and `..` stops at it. Output compared with Node.
+import { URL } from "velt:url";
+
+const b = "file:///C:/p/m.ts";
+console.log(new URL("/abs/x.js", b).href);
+console.log(new URL("../../../../x", b).href);
+console.log(
+  new URL("./y", b).href,
+  new URL("/D:/z", b).href,
+  new URL("/abs", "file:///p/m.ts").href,
+);
+console.log(new URL("..", "file:///C:/").href, new URL("/q", "http://h/C:/a").href);

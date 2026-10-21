@@ -28,12 +28,18 @@
   `velt build` is given) and `false` in the others, `import.meta.resolve(specifier)` resolves a
   specifier against the module's URL, and `import.meta.url` is the file's `file:` URL. They are
   fixed while compiling, so they name the source file, not the built program, wherever it runs.
-  `resolve` returns a URL (`node:fs`) as it is and joins a relative or absolute path
-  (`./data.json`, `/etc/hosts`) to the module's directory, without checking that the file
-  exists, as Node does; a package name throws (`Cannot find package 'x' imported from …`),
-  since packages are compiled into the program rather than looked up while it runs. `import.meta` used as a value of its own (`const m = import.meta`,
-  `return import.meta`) is a copy of the object. Its fields are read-only, also through a
-  copy (`m.url = "x"` is an error, as `import.meta.url = "x"` is).
+  `console.log(import.meta)` prints it as Node does (`[Object: null prototype] { dirname: …,
+  resolve: [Function: resolve], … }`), and `JSON.stringify` leaves `resolve` out.
+- `resolve` resolves as Node does, without checking that the file exists: an absolute URL as
+  the URL parser normalizes it (`HTTPS://Example.com/a` is `https://example.com/a`), a relative
+  or absolute path (`./data.json`, `../a?x=1#h`, `/etc/hosts`, which keeps a Windows drive
+  letter) against the module's URL, and one of Node's built-in modules as `node:<name>`
+  (`fs` is `node:fs`). Its type is `(specifier: string) => string`. A package name panics with
+  Node's message (`Cannot find package 'x' imported from <file>`), where Node throws: packages
+  are compiled into the program rather than looked up while it runs.
+- `import.meta` used as a value of its own (`const m = import.meta`, `return import.meta`) is
+  the same object. Its fields are read-only, also through such a value (`m.url = "x"` is an
+  error, as `import.meta.url = "x"` is).
 - A dynamic `import(…)` is an error: every module is loaded while compiling, so import it with
   a static `import` instead.
 

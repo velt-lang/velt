@@ -340,9 +340,6 @@ impl FnCx<'_, '_> {
                 let h = self.expr(init, exp, want);
                 self.literal_at(h, span)
             }
-            DefInfo::Global(_) if id.name == ast::IMPORT_META && want == Want::Move => {
-                self.import_meta_copy(d, id)
-            }
             DefInfo::Global(_) => self.global_read(d, want, span),
             _ => {
                 self.cx
@@ -350,32 +347,6 @@ impl FnCx<'_, '_> {
                 self.error_expr(span)
             }
         }
-    }
-
-    /// `import.meta` as a value of its own (`const m = import.meta`, `return import.meta`): a
-    /// copy, `{ url: import.meta.url, … }`, as the module constant cannot be moved out of.
-    fn import_meta_copy(&mut self, d: DefId, id: &ast::Ident) -> hir::Expr {
-        use super::setters::synth;
-        crate::body::driver::ensure_global(self.cx, d);
-        let ty = self.cx.global(d).expect("ICE: global").ty;
-        let span = id.span;
-        let props = ast::IMPORT_META_FIELDS
-            .iter()
-            .map(|f| {
-                let field = ast::Ident {
-                    name: (*f).into(),
-                    span,
-                };
-                let read = ast::ExprKind::Member {
-                    object: Box::new(synth(ast::ExprKind::Ident(id.clone()), span)),
-                    prop: field.clone(),
-                    optional: false,
-                };
-                ast::ObjectProp::KeyValue(field, synth(read, span))
-            })
-            .collect();
-        let copy = synth(ast::ExprKind::Object(props), span);
-        self.expr(&copy, Some(ty), Want::Move)
     }
 
     pub(crate) fn global_read(&mut self, d: DefId, want: Want, span: Span) -> hir::Expr {

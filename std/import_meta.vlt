@@ -1,70 +1,127 @@
-// std/import_meta (std-internal): `import.meta.resolve(specifier)` (docs/reference/modules.md).
-// The parser imports this module into every module that mentions `import.meta`, whose `resolve`
-// calls `__import_meta_resolve` with the module's `file:` URL. Not part of the public API.
+// std/import_meta (std-internal): the value of `import.meta` (docs/reference/modules.md). The
+// parser imports `ImportMeta` (as `__ImportMeta`) into every module that mentions `import.meta`
+// and makes the module constant `new __ImportMeta(dirname, filename, main, url)`, whose
+// arguments the compiler fills in. Not part of the public API.
 
-import { encodeSet, PATH } from "velt:url/encode";
+import { URL } from "velt:url";
 
 /**
- * `specifier` resolved against `base` (a module's `file:` URL), as Node's `import.meta.resolve`
- * resolves it: a URL (`node:fs`, `https://…`) is returned as it is, and a relative or absolute
- * path (`./x.ts`, `../y`, `/z`) is joined to `base`'s directory, with `.` and `..` segments
- * removed and the bytes a URL path cannot hold percent-encoded. The file need not exist. A
- * package name throws, as Node does for one it cannot find: a Velt program's packages are
- * compiled into it, not looked up while it runs.
+ * `import.meta`: Node's fields in Node's order, printed as Node prints them
+ * (`[Object: null prototype] { … }`), and in JSON without `resolve`.
  */
-export function __import_meta_resolve(specifier: string, base: string): string {
-  if (hasScheme(specifier)) {
-    return specifier;
+export class ImportMeta {
+  readonly dirname: string;
+  readonly filename: string;
+  readonly main: boolean;
+  readonly resolve: (specifier: string) => string;
+  readonly url: string;
+
+  constructor(dirname: string, filename: string, main: boolean, url: string) {
+    this.dirname = dirname;
+    this.filename = filename;
+    this.main = main;
+    this.resolve = (specifier: string): string => resolveSpecifier(specifier, url, filename);
+    this.url = url;
   }
-  const relative =
-    specifier == "." ||
-    specifier == ".." ||
-    specifier.startsWith("./") ||
-    specifier.startsWith("../");
-  if (!relative && !specifier.startsWith("/")) {
-    throw new Error(`Cannot find package '${specifier}' imported from ${base}`);
+
+  /** How `console.log` shows it, as Node does. */
+  __inspect(): string {
+    const fields = [
+      `dirname: ${quoted(this.dirname)}`,
+      `filename: ${quoted(this.filename)}`,
+      `main: ${this.main}`,
+      "resolve: [Function: resolve]",
+      `url: ${quoted(this.url)}`,
+    ];
+    return `[Object: null prototype] {\n  ${fields.join(",\n  ")}\n}`;
   }
-  const root = "file:///";
-  const segs: string[] = [];
-  if (relative) {
-    const dir = base.slice(root.length as i64, base.lastIndexOf("/"));
-    for (const s of dir.split("/")) {
-      if (s != "") {
-        segs.push(s);
-      }
-    }
+
+  /** Its JSON, as Node's `JSON.stringify` writes it: the function is left out. */
+  toJSON(): { dirname: string; filename: string; main: boolean; url: string } {
+    return { dirname: this.dirname, filename: this.filename, main: this.main, url: this.url };
   }
-  const parts = specifier.split("/");
-  for (let i: usize = 0; i < parts.length; i++) {
-    const p = parts[i];
-    const last = i + 1 == parts.length;
-    if (p == "." || p == "..") {
-      if (p == ".." && segs.length > 0) {
-        segs.pop();
-      }
-      if (last) {
-        segs.push("");
-      }
-    } else if (i > 0 || p != "") {
-      segs.push(encodeSet(p, PATH));
-    }
-  }
-  return root + segs.join("/");
 }
 
-/** Does `s` start with a URL scheme (`node:`, `https:`): a letter, then letters, digits, `+`, `-` or `.`, then `:`? */
-function hasScheme(s: string): bool {
-  const colon = s.indexOf(":");
-  if (colon < 1) {
-    return false;
-  }
-  for (let i: i64 = 0; i < colon; i++) {
-    const c = s.charCodeAt(i);
-    const letter = (c >= 65 && c <= 90) || (c >= 97 && c <= 122);
-    const other = (c >= 48 && c <= 57) || c == 43 || c == 45 || c == 46;
-    if (!(letter || (i > 0 && other))) {
-      return false;
+/**
+ * `specifier` resolved against `base` (the module's `file:` URL), as Node's
+ * `import.meta.resolve` resolves it: an absolute URL as the URL parser normalizes it, a relative
+ * or absolute path (`./x.ts`, `../y?q#h`, `/z`, `//host/p`) against `base`, and the name of one
+ * of Node's built-in modules as `node:<name>`. The file need not exist. A package name panics
+ * (`Cannot find package '…' imported from <file>`, Node's message): a Velt program's packages
+ * are compiled into it, not looked up while it runs, and `resolve`'s type has no `throws`.
+ */
+function resolveSpecifier(specifier: string, base: string, filename: string): string {
+  const path =
+    specifier.startsWith("/") ||
+    specifier.startsWith("./") ||
+    specifier.startsWith("../") ||
+    specifier == "." ||
+    specifier == "..";
+  if (path) {
+    const resolved = URL.parse(specifier, base);
+    if (resolved != null) {
+      return resolved.href;
+    }
+  } else {
+    const absolute = URL.parse(specifier);
+    if (absolute != null) {
+      return absolute.href;
+    }
+    if (!specifier.includes(" ") && NODE_BUILTINS.includes(` ${specifier} `)) {
+      return `node:${specifier}`;
     }
   }
-  return true;
+  panic(`Cannot find package '${specifier}' imported from ${filename}`);
+  return "";
+}
+
+/** Node's built-in modules that can be named without `node:` (`module.builtinModules`). */
+const NODE_BUILTINS =
+  " assert assert/strict async_hooks buffer child_process cluster console constants crypto dgram" +
+  " diagnostics_channel dns dns/promises domain events fs fs/promises http http2 https inspector" +
+  " inspector/promises module net os path path/posix path/win32 perf_hooks process punycode" +
+  " querystring readline readline/promises repl stream stream/consumers stream/promises" +
+  " stream/web string_decoder sys timers timers/promises tls trace_events tty url util" +
+  " util/types v8 vm wasi worker_threads zlib ";
+
+/**
+ * `s` as `console.log` quotes a string inside an object: in `'…'`, or in `"…"` or `` `…` `` when
+ * it holds `'` and not the other quote, with `\` and control characters escaped.
+ */
+function quoted(s: string): string {
+  let quote = "'";
+  if (s.includes("'")) {
+    if (!s.includes('"')) {
+      quote = '"';
+    } else if (!s.includes("`") && !s.includes("${")) {
+      quote = "`";
+    }
+  }
+  let out = quote;
+  for (let i: i64 = 0; i < (s.length as i64); i++) {
+    const c = s.charCodeAt(i);
+    const ch = s.charAt(i);
+    if (ch == "\\") {
+      out += "\\\\";
+    } else if (ch == quote) {
+      out += `\\${quote}`;
+    } else if (c == 10) {
+      out += "\\n";
+    } else if (c == 9) {
+      out += "\\t";
+    } else if (c == 13) {
+      out += "\\r";
+    } else if (c == 8) {
+      out += "\\b";
+    } else if (c == 12) {
+      out += "\\f";
+    } else if (c == 11) {
+      out += "\\v";
+    } else if (c < 32 || c == 127) {
+      out += `\\x${c < 16 ? "0" : ""}${c.toString(16).toUpperCase()}`;
+    } else {
+      out += ch;
+    }
+  }
+  return out + quote;
 }

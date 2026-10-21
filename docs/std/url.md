@@ -39,4 +39,6 @@ Notes / gaps:
   `\` treated as `/`, dot-segment removal, and IPv4 normalization (`127.1` becomes `127.0.0.1`).
 - No IDNA/punycode: a non-ASCII host is invalid.
 - IPv6 literals are validated loosely and not compressed.
-- `file:` URLs have no Windows drive-letter quirks.
+- Of the Windows drive-letter rules for `file:` URLs, a path starting with `/` keeps the base's
+  drive letter (`/x` against `file:///C:/p/m.ts` is `file:///C:/x`) and `..` never removes it;
+  `C|` is not rewritten to `C:`.

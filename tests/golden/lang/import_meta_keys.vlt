@@ -1,18 +1,33 @@
 // `import.meta` has Node's keys in Node's order: `dirname`, `filename`, `main` (true in the
-// program's root module) and `resolve` (a specifier resolved against the module's URL, without
-// looking the file up), and `url`. Output compared with Node.
+// program's root module), `resolve` (a specifier resolved against the module's URL as Node
+// resolves it, without looking the file up) and `url`. The output does not depend on where the
+// file is. Output compared with Node.
 import { libMeta } from "./_import_meta_keys_lib";
 
 console.log(Object.keys(import.meta).join(","));
 console.log(import.meta.main, libMeta(), typeof import.meta.resolve);
 const base = import.meta.url.slice(0, import.meta.url.lastIndexOf("/") + 1);
-console.log(import.meta.resolve("./a b.ts") === base + "a%20b.ts");
-console.log(import.meta.resolve("../m/./n.ts") === base.replace(/lang\/$/, "m/n.ts"));
-console.log(import.meta.resolve("node:fs"), import.meta.resolve("/abs/x.js"));
-try {
-  import.meta.resolve("no-such-package");
-} catch (e) {
-  console.log((e as Error).message.startsWith("Cannot find package 'no-such-package'"));
+const parent = base.slice(0, base.slice(0, base.length - 1).lastIndexOf("/") + 1);
+function shown(specifier: string): string {
+  const r = import.meta.resolve(specifier);
+  if (r.startsWith(base)) {
+    return `<dir>/${r.slice(base.length)}`;
+  }
+  return r.startsWith(parent) ? `<parent>/${r.slice(parent.length)}` : r;
 }
+console.log(shown("./a b.ts"), shown("./a?x=1#h"), shown("./a#b"));
+console.log(shown("./a[1]{x}|^`"), shown("../m/./n.ts"), shown("."));
+console.log(shown("node:fs"), shown("fs"), shown("fs/promises"), shown("node:test"));
+console.log(shown("HTTPS://Example.com/a"), shown("data:text/plain,x"));
+// `/abs` keeps a Windows drive letter, so only the end is the same everywhere.
+console.log(import.meta.resolve("/abs/x.js").endsWith(":///abs/x.js") || import.meta.resolve("/abs/x.js").endsWith(":/abs/x.js"));
 const meta = import.meta;
 console.log(meta.resolve("./q") === import.meta.resolve("./q"), meta.main);
+const resolve: (specifier: string) => string = import.meta.resolve;
+console.log(resolve("./z") === import.meta.resolve("./z"));
+const json = JSON.stringify(import.meta);
+console.log(json.startsWith('{"dirname":'), json.includes('"main":true,"url":'), json.includes("resolve"));
+if (import.meta.url === "") {
+  // Never runs: the paths differ between machines (import_meta_print.vlt shows the form).
+  console.log(import.meta);
+}

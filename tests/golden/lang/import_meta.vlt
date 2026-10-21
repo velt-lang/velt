@@ -13,7 +13,7 @@ function where(): string {
 }
 console.log(where().split(".")[0]);
 
-// `import.meta` as a value of its own is a copy.
+// `import.meta` as a value of its own is the same object.
 const meta = import.meta;
 function metaOf() {
   return import.meta;

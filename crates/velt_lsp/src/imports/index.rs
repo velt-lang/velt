@@ -234,7 +234,7 @@ mod tests {
     }
 
     /// The real std: modules marked internal, such as the one the parser imports for
-    /// `import.meta.resolve`, are not offered.
+    /// `import.meta`, are not offered.
     #[test]
     fn std_internal_modules_are_not_offered() {
         let std_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std");

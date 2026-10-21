@@ -1,7 +1,7 @@
 //! `import.meta` (`ast::IMPORT_META`): the parser adds a module constant with placeholder fields
 //! to a module that mentions it, and the loader, which knows the module's file, fills them in as
 //! Node does: `url` is the file's `file:` URL, `filename` its absolute path and `dirname` its
-//! directory, `main` is true in the program's root module, and `resolve` resolves against `url`.
+//! directory, `main` is true in the program's root module (`resolve` is std's, velt:import_meta).
 //! They name the source file, fixed while compiling.
 
 use std::path::Path;
@@ -31,45 +31,18 @@ pub(super) fn fill(module: &mut ast::Module, path: &Path, main: bool) {
         return;
     };
     let [url, filename, dirname] = meta_values(path);
-    let ast::ExprKind::Object(props) = &mut init.kind else {
+    // `new __ImportMeta(dirname, filename, main, url)`.
+    let ast::ExprKind::New { args, .. } = &mut init.kind else {
         return;
     };
-    for p in props {
-        let ast::ObjectProp::KeyValue(key, e) = p else {
-            continue;
-        };
-        let text = match key.name.as_str() {
-            "url" => url.clone(),
-            "filename" => filename.clone(),
-            "dirname" => dirname.clone(),
-            "main" => {
-                e.kind = ast::ExprKind::Lit(ast::Lit::Bool(main));
-                continue;
-            }
-            "resolve" => {
-                fill_resolve_base(e, &url);
-                continue;
-            }
-            _ => continue,
-        };
-        e.kind = ast::ExprKind::Lit(ast::Lit::Str(text));
-    }
-}
-
-/// Writes `url` into the base argument of `import.meta.resolve`'s arrow (`specifier =>
-/// __import_meta_resolve(specifier, "")`).
-fn fill_resolve_base(e: &mut ast::Expr, url: &str) {
-    let ast::ExprKind::Arrow {
-        body: ast::ArrowBody::Expr(call),
-        ..
-    } = &mut e.kind
-    else {
-        return;
-    };
-    if let ast::ExprKind::Call { args, .. } = &mut call.kind {
-        if let Some(base) = args.get_mut(1) {
-            base.kind = ast::ExprKind::Lit(ast::Lit::Str(url.to_string()));
-        }
+    let values = [
+        ast::Lit::Str(dirname),
+        ast::Lit::Str(filename),
+        ast::Lit::Bool(main),
+        ast::Lit::Str(url),
+    ];
+    for (arg, value) in args.iter_mut().zip(values) {
+        arg.kind = ast::ExprKind::Lit(value);
     }
 }
 

@@ -1,0 +1,6 @@
+// `import.meta.resolve` of a package name: Node throws "Cannot find package"; in Velt, whose
+// packages are compiled in rather than looked up while the program runs, it panics with Node's
+// message, since `resolve`'s type `(specifier: string) => string` cannot throw.
+console.log(import.meta.resolve("fs"));
+import.meta.resolve("no-such-package");
+console.log("not reached");
