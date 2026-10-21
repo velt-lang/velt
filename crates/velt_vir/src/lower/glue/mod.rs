@@ -71,6 +71,9 @@ pub(crate) enum Glue {
     Drop,
     Clone,
     Share,
+    /// `(src, dst)`: another reference to the value at `src` (`share_into`), the result glue of a
+    /// shared promise (#212).
+    ShareSlot,
     Format,
     Eq,
     Same,
@@ -135,6 +138,7 @@ impl Glue {
             Glue::Drop => "drop",
             Glue::Clone => "clone",
             Glue::Share => "share",
+            Glue::ShareSlot => "shareslot",
             Glue::Format => "format",
             Glue::Eq => "eq",
             Glue::Same => "same",
@@ -194,7 +198,7 @@ impl Glue {
             | Glue::Transfer
             | Glue::TransferRoot
             | Glue::ManyCheck => (vec![Ptr], Unit),
-            Glue::Clone | Glue::Share => (vec![Ptr, Ptr], Unit),
+            Glue::Clone | Glue::Share | Glue::ShareSlot => (vec![Ptr, Ptr], Unit),
             Glue::ObjClone
             | Glue::DynClone
             | Glue::DynShare
@@ -237,6 +241,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Glue::Drop => lw.drop_body(args[0], ty),
             Glue::Clone => lw.clone_body(args[0], args[1], ty),
             Glue::Share => lw.share_body(args[0], args[1], ty),
+            Glue::ShareSlot => lw.share_slot_body(args[0], args[1], ty),
             Glue::Format => lw.format_body(a(0), args[1], a(2), ty),
             Glue::Eq => lw.eq_body(args[0], args[1], ty),
             Glue::Same => lw.same_body(args[0], args[1], ty),

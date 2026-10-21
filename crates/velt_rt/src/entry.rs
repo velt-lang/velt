@@ -20,6 +20,7 @@ pub fn init() {
     crate::panic::install_hook();
     crate::process::init_clock();
     crate::process::init_script();
+    crate::io::init_stdout();
     ignore_sigpipe();
     #[cfg(all(debug_assertions, not(velt_rt_host)))]
     crate::debug_alloc::claim_faults();
@@ -55,6 +56,8 @@ pub fn run_main(velt_main: extern "C" fn() -> i32) -> i32 {
     let code = velt_main();
     // A synchronous `main` is done with the module state: tasks may take it now.
     crate::task::local::module_release_outside();
+    // The promises it handed to tasks go on in a task of their own.
+    crate::task::local::outside_done();
     // Servers and pending promises keep a program alive after `main` returns, but not after it
     // failed (an uncaught error, or an exit code): like Node, which exits on an uncaught
     // exception whatever is still listening.

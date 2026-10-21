@@ -1,0 +1,81 @@
+// check: no leaks
+// Reading promises out of collections and objects: each read is another holder of the same
+// promise, and every await of it gets the result.
+async function work(n: number): Promise<string> {
+  return `done ${n}`;
+}
+
+class Job {
+  run: Promise<string>;
+  constructor(run: Promise<string>) {
+    this.run = run;
+  }
+}
+
+interface Task {
+  name: string;
+  run: Promise<string>;
+}
+
+function first<T>(xs: T[]): T | undefined {
+  return xs.at(0);
+}
+
+function hold<T>(x: T): T {
+  const gs = [() => x];
+  gs[0]();
+  return x;
+}
+
+interface Getter<T> {
+  get(): T;
+}
+
+class Box<T> implements Getter<T> {
+  v: T;
+  constructor(v: T) {
+    this.v = v;
+  }
+  get(): T {
+    return this.v;
+  }
+}
+
+async function main() {
+  const arr: Promise<string>[] = [work(1), work(2)];
+  const w = arr[0];
+  console.log(await w, await arr[0], await arr[1]);
+  const later = arr.slice(1);
+  const at = arr.at(0);
+  const copy = [...arr];
+  const [a, b] = arr;
+  const f = first(arr);
+  console.log(await later[0], await at!, await copy[1], await a, await b, await f!);
+  const nested: Promise<string>[][] = [[work(3)]];
+  const flat = nested.flat();
+  const filled = new Array<Promise<string>>(2).fill(work(4));
+  console.log(await flat[0], await filled[0], await filled[1]);
+  const tasks: Task[] = [{ name: "t", run: work(5) }];
+  const t = tasks.at(0)!;
+  console.log(t.name, await t.run, await tasks[0].run);
+  const jobs: Job[] = [new Job(work(6))];
+  const j = jobs[0];
+  const { run } = j;
+  console.log(await jobs[0].run, await j.run, await run);
+  const m = new Map<string, Promise<string>>();
+  m.set("a", work(7));
+  const p = m.get("a")!;
+  const vals = [...m.values()];
+  for (const [k, v] of m) {
+    console.log(k, await v);
+  }
+  console.log(await p, await vals[0]);
+  const r: Record<string, Promise<string>> = {};
+  r["x"] = work(8);
+  const x = r["x"];
+  const ov = Object.values(r);
+  console.log(await x, await ov[0]);
+  const held = hold(work(9));
+  const g: Getter<Promise<string>> = new Box(work(10));
+  console.log(await held, await g.get(), await g.get());
+}

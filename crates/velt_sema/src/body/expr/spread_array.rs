@@ -264,7 +264,6 @@ impl FnCx<'_, '_> {
         (src_elem, elem): (TyId, TyId),
         span: Span,
     ) -> hir::Stmt {
-        self.reject_promise_spread(src_elem, span);
         let mode = self.elem_read_mode(src_elem);
         let e = self.new_local("<elem>", src_elem, false, span, LocalKind::Elem);
         let read = self.mk(H::Local(e, mode), src_elem, span);

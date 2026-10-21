@@ -1,0 +1,5 @@
+fail 1 runs
+no 1, no 1
+fail 2 runs
+caught no 2
+end

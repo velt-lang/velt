@@ -267,14 +267,12 @@ surprise ([Error handling](errors.md)).
   their `clear` functions are globals and take any callback (`() => console.log("x")`,
   `() => save(doc)`, `async () => { … }`), and a pending timer keeps the
   process alive unless it is `unref()`ed, as in Node ([`velt:timers`](../std/timers.md)). To wait, `await sleep(ms)`.
-- A promise has one owner (for now; shared promises are planned in #212). `const q = p` moves
-  it, so using `p` afterwards is an error, and a promise can't be copied out of a collection:
-  `arr[i]` moved or bound (`const p = arr[0]`), `[...arr]`, `const [a, b] = arr`, `m.get(k)`,
-  `Object.values(r)` and generic code that copies its elements report an error that says
-  TypeScript allows it and names the alternative. Take promises out with `pop()` or
-  `splice(i, 1)`, await them together with `Promise.all(arr)`, or store the awaited results.
-  Replacing one in place (`arr[i] = p`) works, and so does reading a class instance that holds
-  one (`m.get(k)` of a `Map<string, Job>`). Printing a promise is not supported yet (#413).
+- A promise is a shared value, as in TypeScript: `const q = p`, `m.get(k)` on a `Map` of
+  promises, `arr[i]`, a class or object field read by several callers, and `p.then(f); await p`
+  all hold the same promise, and every `await` of it gets the result (the same object for an
+  object result). A holder that goes to another task (`spawn`, a channel, a timer callback) is
+  awaited there through a copy of the result
+  ([Promises](../reference/async.md#promises)).
 - Std streams are async iterables: `for await` over a [channel](../std/channel.md), a file's
   `lines()`, standard input's `lines()`, a WebSocket, a Redis subscriber or a `Ticker`. Unlike
   a Node stream, whose iterator destroys the stream when the loop is left early, leaving the
@@ -326,7 +324,6 @@ server-side rendering ([TSX](../reference/tsx.md), [`velt:jsx`](../std/jsx.md)).
 | structural typing everywhere | object types and interfaces with only fields structural but exact; interfaces with methods nominal | — |
 | `any`, `unknown`, type assertions | none; `as` converts numbers; `JsonValue` for dynamic data | — |
 | `catch (e: unknown)` | `e` is the exact union of what the `try` can throw | — |
-| `const p = promises[0]`, `m.get(k)` on promises (several holders of one promise) | a promise has one owner: `pop()`, `splice`, `Promise.all(arr)`; shared promises are planned (#212) | `promises.pop()` |
 | `Promise<T>` rejects with anything | `Promise<T, E>` carries its rejection type | — |
 | floating promises lose errors | a floating promise is a compile error | — |
 | an unhandled rejection prints the source line and a stack, and is reported when no handler is attached by the end of the turn | prints `Uncaught <Type>: <message> at file:line:col` and exits with code 1, reported only once nothing can await the promise any more: `const h = spawn(f()); await sleep(100); await h;` handles `h`'s rejection | — |
@@ -339,7 +336,6 @@ server-side rendering ([TSX](../reference/tsx.md), [`velt:jsx`](../std/jsx.md)).
 | `xs.length = 0` | the same: setting `length` drops the elements past it; a larger `length` panics (arrays have no holes) | — |
 | `xs.splice(i, n, a, b)`, `xs.push(a, b)` | `splice(i, n)` removes; one `push(x)` per element | inserting `splice` and `push` with rest parameters |
 | `p.then(f).catch(g)` | the same; `catch(g)` gives the promise's value type | `catch` changing the value type |
-| `p.then(f); p.then(g);`, or `p.then(f)` and later `await p` | a promise has one consumer: the second use is ``use of moved value``; chain the calls or keep the promise `then` returns | shared promises (#212) |
 | `process.stdout.write(s)`, `process.stderr.write(s)`, `process.env.X` | the same on the builtin `process` (`process.env.X` is `string \| null`, with no `undefined`, so `process.env.NOPE !== null` is `false`; assigning to it is `setEnv` and `delete` is `removeEnv`, from `velt:process`) | — |
 | `Object.keys(process.env)`, `{ ...process.env }` | `envAll()` from `velt:process`: a `Record<string, string>` snapshot, in the same order | — |
 | `process.argv` | the same layout, `[runtime, script, ...args]`: the script is the source file under `velt run`, the executable for a built program; each read is a new array, so changing it in place is an error (copy it first) | — |
