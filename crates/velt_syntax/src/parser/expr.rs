@@ -75,21 +75,24 @@ impl<'a> Parser<'a> {
     }
 
     /// `yield`, `yield expr` or `yield* expr` (assignment precedence, like JS). The operand is
-    /// absent when the next token cannot start one (`yield;`, `f(yield)`).
+    /// absent when the next token cannot start one (`yield;`, `f(yield)`) or is on the next line
+    /// (a restricted production).
     fn parse_yield(&mut self) -> PResult<Expr> {
         let lo = self.cur_lo();
         self.bump(); // yield
-        let delegate = self.eat(Tok::Star);
-        let ends = matches!(
-            self.peek(),
-            Tok::Semi
-                | Tok::RParen
-                | Tok::RBracket
-                | Tok::RBrace
-                | Tok::Comma
-                | Tok::Colon
-                | Tok::Eof
-        );
+        let same_line = !self.line_break_before();
+        let delegate = same_line && self.eat(Tok::Star);
+        let ends = !same_line
+            || matches!(
+                self.peek(),
+                Tok::Semi
+                    | Tok::RParen
+                    | Tok::RBracket
+                    | Tok::RBrace
+                    | Tok::Comma
+                    | Tok::Colon
+                    | Tok::Eof
+            );
         let arg = if ends && !delegate {
             None
         } else {
@@ -235,6 +238,9 @@ impl<'a> Parser<'a> {
         while let Some((op, prec, ntoks)) = self.peek_binop() {
             if prec < min_prec {
                 break;
+            }
+            if let BinTok::Op(BinaryOp::Add | BinaryOp::Sub | BinaryOp::Div) = op {
+                self.warn_continuation();
             }
             for _ in 0..ntoks {
                 self.bump();

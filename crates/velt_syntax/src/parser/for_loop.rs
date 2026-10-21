@@ -60,7 +60,7 @@ impl<'a> Parser<'a> {
         } else {
             Some(self.parse_expr()?)
         };
-        self.expect_semi()?;
+        self.expect(Tok::Semi)?;
         let update = if self.at(Tok::RParen) {
             None
         } else {
@@ -165,7 +165,7 @@ impl<'a> Parser<'a> {
                 }
             }
         }
-        self.expect_semi()?;
+        self.expect(Tok::Semi)?;
         Ok(ForInit::Stmts(stmts))
     }
 

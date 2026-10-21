@@ -336,9 +336,15 @@ impl<'a> Lexer<'a> {
         loop {
             match self.at(0) {
                 b' ' | b'\t' | b'\n' | b'\r' | 0x0B | 0x0C => self.pos += 1,
+                // U+2028 and U+2029, JavaScript's other line terminators (the parser's
+                // `line_break_before` counts them as line breaks).
+                _ if self.at_unicode_line_break() => self.pos += 3,
                 b'/' if self.at(1) == b'/' => {
                     let start = self.pos;
-                    while self.pos < self.src.len() && self.src[self.pos] != b'\n' {
+                    while self.pos < self.src.len()
+                        && self.src[self.pos] != b'\n'
+                        && !self.at_unicode_line_break()
+                    {
                         self.pos += 1;
                     }
                     self.comment_done(start);
@@ -351,6 +357,11 @@ impl<'a> Lexer<'a> {
                 _ => return,
             }
         }
+    }
+
+    /// At U+2028 LINE SEPARATOR or U+2029 PARAGRAPH SEPARATOR (`E2 80 A8` / `E2 80 A9`)?
+    fn at_unicode_line_break(&self) -> bool {
+        self.at(0) == 0xE2 && self.at(1) == 0x80 && matches!(self.at(2), 0xA8 | 0xA9)
     }
 
     /// Records the comment `start..self.pos` (and a leading `@jsxImportSource` pragma).

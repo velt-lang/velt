@@ -68,6 +68,13 @@ impl<'a> Parser<'a> {
 
     /// One item, with optional `export`. `top` is false for items nested in blocks.
     pub(super) fn parse_item(&mut self, top: bool) -> PResult<Item> {
+        let outer = self.begin_statement();
+        let item = self.parse_item_here(top);
+        self.end_statement(outer);
+        item
+    }
+
+    fn parse_item_here(&mut self, top: bool) -> PResult<Item> {
         let lo = self.cur_lo();
         let mut exported = self.at_kw(Kw::Export);
         if exported {
@@ -114,7 +121,7 @@ impl<'a> Parser<'a> {
                 ItemKind::Import(self.parse_import()?)
             }
             Some(Kw::Function) => ItemKind::Function(self.parse_fn_decl(lo, false)?),
-            Some(Kw::Async) if self.nth(1) == Tok::Kw(Kw::Function) => {
+            Some(Kw::Async) if self.at_async_function() => {
                 self.bump();
                 ItemKind::Function(self.parse_fn_decl(lo, true)?)
             }
