@@ -51,6 +51,12 @@ impl Lexer<'_> {
             let c = *self.src.get(i)?;
             match c {
                 b'\n' | b'\r' => return None,
+                // U+2028 / U+2029 end a line too, also after a `\`.
+                0xE2 if self.src.get(i + 1) == Some(&0x80)
+                    && matches!(self.src.get(i + 2), Some(0xA8 | 0xA9)) =>
+                {
+                    return None
+                }
                 _ if escaped => escaped = false,
                 b'\\' => escaped = true,
                 b'[' => class = true,

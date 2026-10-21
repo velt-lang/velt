@@ -1,0 +1,2 @@
+asi_return_line_break.vlt:6:3: error: mismatched types
+expected f64, found void

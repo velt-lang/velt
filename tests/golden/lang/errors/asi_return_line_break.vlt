@@ -1,0 +1,12 @@
+// `return`, a line break, then a value returns nothing, as in Node (automatic semicolon
+// insertion ends the statement after `return`), so a function with a return type is missing its
+// value, as TypeScript reports too.
+
+function answer(): number {
+  return
+  42
+}
+
+function main() {
+  console.log(answer())
+}

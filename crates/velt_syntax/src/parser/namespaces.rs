@@ -12,6 +12,7 @@ impl<'a> Parser<'a> {
     /// At `namespace N {` or `namespace N.`? `n`: the offset of `namespace` from the cursor.
     pub(super) fn at_namespace(&mut self, n: usize) -> bool {
         self.nth_word(n, "namespace")
+            && !self.line_break_after(n)
             && Self::is_ident_like(self.nth(n + 1))
             && matches!(self.nth(n + 2), Tok::LBrace | Tok::Dot)
     }
