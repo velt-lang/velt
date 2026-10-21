@@ -1110,8 +1110,17 @@ console.log(e.id, grace.age, w.meta); // e1 45 m
   `xs.map((p) => ({ name: p.name }))`.
 - An alias may refer to itself through `&` when its parts are object types written out:
   `type Tree = { kids: Tree[] } & { v: number }` is the interface with the fields `kids` and
-  `v` (an alias that names itself otherwise is an error, as is one whose parts share a field
-  name).
+  `v`. A part may also name a non-generic alias of such a type, or an interface with only
+  fields, declared in the same module (`type Tree = Base & { kids: Tree[] }` with
+  `type Base = { v: number }` or `interface Base { v: number }`). A field in two parts is one
+  field when its type is written the same in both (`Base & { v: number; kids: Tree[] }`,
+  also for function types; not yet for index or call signatures). Object aliases may also
+  refer to each other (`type A = { b: B | null }; type B = { a: A[] }`, or through a named
+  part or an alias that renames another): each is an interface. An object alias that names
+  itself is one whatever other aliases name it back (`type Visitor = (t: Tree) => void`). A
+  recursive alias is an error otherwise: with a part that is a type parameter, a generic alias
+  (`Box<number> & { … }`), an alias or interface of another module, an interface with methods,
+  or a field of two types; the error points at that part.
 
 ```ts
 type Named = { name: string };

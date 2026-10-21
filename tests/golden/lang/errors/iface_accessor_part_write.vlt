@@ -2,7 +2,7 @@
 // accessor is not supported yet (#350): Node changes the object the getter returns in place and
 // never calls a setter, while Velt reads a copy and would have to write it back through
 // `set o(v)`. The error is at each such class, also one only read through the interface
-// elsewhere (`G` through `R`), with the write as a label.
+// elsewhere (`G` through `R`) or through an intersection, with the write as a label.
 interface I {
   o: { v: number };
   m(): number;
@@ -16,6 +16,13 @@ class Pair implements I {
 }
 function bump(x: I): void {
   x.o.v += 1;
+}
+// Through an intersection too: the error names the interface part declaring the field.
+class KPair extends Pair {
+  k = 1;
+}
+function bumpX(x: { k: number } & I): void {
+  x.o.v += 2;
 }
 
 interface R {
@@ -41,6 +48,7 @@ function wr(x: R): void {
 function main() {
   const p = new Pair();
   bump(p);
+  bumpX(new KPair());
   console.log(p._o.v, p.sets);
   rd(new G());
   wr(new P());

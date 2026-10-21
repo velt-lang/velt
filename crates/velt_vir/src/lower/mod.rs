@@ -29,6 +29,7 @@ mod any_has;
 mod any_keys;
 mod any_member;
 mod any_proxy;
+mod any_rest;
 mod any_set;
 mod any_set_site;
 mod append;

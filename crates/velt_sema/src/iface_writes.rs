@@ -30,7 +30,7 @@ pub(crate) struct IfaceWrites {
     /// implementation without an entry cannot be written through.
     sources: FxHashMap<u32, Vec<SetterSrc>>,
     /// `(interface, field)`: a part of this `readonly` field is written through the interface.
-    parts: FxHashSet<(DefId, usize)>,
+    parts: FxHashMap<(DefId, usize), Span>,
     /// The names of interface fields whose values a read copies ([`Ctx::copied_part`]).
     copied_names: Option<FxHashSet<String>>,
 }
@@ -155,9 +155,10 @@ impl Ctx<'_> {
         if !self.mark_iface_written(iface, span) {
             return false;
         }
-        if !self.iface_writes.parts.insert((iface, field)) {
+        if self.iface_writes.parts.contains_key(&(iface, field)) {
             return true;
         }
+        self.iface_writes.parts.insert((iface, field), span);
         let mut found = vec![];
         for (&i, srcs) in &self.iface_writes.sources {
             if self.impls[i as usize].iface != iface {
@@ -190,7 +191,12 @@ impl Ctx<'_> {
     /// returns in place, while Velt would change a copy and write it back through a setter
     /// Node never calls, so this is an error.
     fn accessor_part(&mut self, iface: DefId, d: DefId, name: &str, write: Option<Span>) {
-        let iname = self.iface_name(iface);
+        // Through an intersection (`{ k: number } & I`), the interface part declaring the
+        // field, as written.
+        let declared = (self.iface(iface).is_some_and(|i| i.decl.is_none()))
+            .then(|| self.declaring_iface(d, name))
+            .flatten();
+        let iname = declared.unwrap_or_else(|| self.iface_name(iface));
         let (cname, at) = self
             .adt(d)
             .map_or((String::new(), Span::DUMMY), |a| (a.name.clone(), a.span));
@@ -207,6 +213,24 @@ impl Ctx<'_> {
             );
         }
         self.error(e);
+    }
+
+    /// The name of an interface class `d` (or a base class) implements that declares field
+    /// `name`.
+    fn declaring_iface(&self, d: DefId, name: &str) -> Option<String> {
+        let mut cur = Some(d);
+        for _ in 0..64 {
+            let a = self.adt(cur?)?;
+            for b in &a.implements {
+                if let Some(i) = self.iface(b.iface).filter(|i| i.decl.is_some()) {
+                    if i.fields.iter().any(|f| f.name == name) {
+                        return Some(i.name.clone());
+                    }
+                }
+            }
+            cur = a.base.and_then(|b| self.class_of(b)).map(|(b, _)| b);
+        }
+        None
     }
 
     fn part_unwritable(&mut self, iface: DefId, span: Span, name: &str) {
@@ -310,9 +334,10 @@ impl Ctx<'_> {
                     param,
                 } => defs.push(self.literal_setter(d, self_ty, (index, fn_ty), param)),
                 SetterSrc::Method { d, name, .. } | SetterSrc::GetterOnly { d, name, .. }
-                    if self.iface_writes.parts.contains(&(iface, k)) =>
+                    if self.iface_writes.parts.contains_key(&(iface, k)) =>
                 {
-                    self.accessor_part(iface, d, &name, None);
+                    let write = self.iface_writes.parts.get(&(iface, k)).copied();
+                    self.accessor_part(iface, d, &name, write);
                     return;
                 }
                 SetterSrc::Method { def, .. } => defs.push(def),
@@ -342,7 +367,7 @@ impl Ctx<'_> {
                     self_ty,
                     ty,
                 } => {
-                    if self.iface_writes.parts.contains(&(iface, k)) {
+                    if self.iface_writes.parts.contains_key(&(iface, k)) {
                         self.part_unwritable(iface, span, &name);
                         return;
                     }

@@ -1,0 +1,43 @@
+// A recursive object alias on a cycle that also holds aliases of other kinds (#783): a
+// function alias, `Map` and array aliases, a union alias and a generic application. The
+// alias names itself, so it is an interface whatever else names it back; an identical
+// function-typed field in two parts is one field. The literals are
+// written in the types' field order, which is the order objects print in (#792).
+type Tree = { v: number; kids: Tree[]; visit: Visitor };
+type Visitor = (t: Tree) => void;
+
+type TNode = { name: string; kids: TNode[]; byName: Index; list: List };
+type Index = Map<string, TNode>;
+type List = TNode[];
+
+type T = { v: number; kids: T[]; j: J };
+type J = string | T[];
+
+type Opt<X> = X | null;
+type T2 = { v: number; next: Opt<T2>; me: Me };
+type Me = Opt<T2>;
+
+type Base = { value: number; f: (x: number) => number };
+type Fns = Base & { f: (x: number) => number; kids: Fns[] };
+
+function main() {
+  const seen: number[] = [];
+  const visit: Visitor = (t) => {
+    seen.push(t.v);
+  };
+  const tree: Tree = { v: 1, kids: [{ v: 2, kids: [], visit }], visit };
+  tree.visit(tree);
+  tree.kids[0].visit(tree.kids[0]);
+  console.log(seen.join(","));
+  const leaf: TNode = { name: "leaf", kids: [], byName: new Map(), list: [] };
+  const root: TNode = { name: "root", kids: [leaf], byName: new Map([["leaf", leaf]]), list: [leaf] };
+  console.log(root.byName.get("leaf")?.name, root.list.length);
+  const t: T = { v: 1, kids: [], j: "x" };
+  const u: T = { v: 2, kids: [t], j: [t] };
+  console.log(u.kids[0].v, typeof u.j === "string" ? u.j : u.j.length);
+  const a: T2 = { v: 1, next: null, me: null };
+  const b: T2 = { v: 2, next: a, me: a };
+  console.log(b.next?.v, b.me?.me === null);
+  const fns: Fns = { value: 1, f: (x) => x * 2, kids: [] };
+  console.log(fns.f(fns.value));
+}
