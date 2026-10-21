@@ -6,7 +6,9 @@
 //! interface with the same fields in the same order (`collect::field_only`): an object type
 //! like the alias's, with the same layout and printing, the same name in messages, and the same
 //! generics. Any other alias naming itself stays an error (`resolve::expand_alias`). The syntax
-//! is rewritten before collection, like `generic_arrows`.
+//! is rewritten before collection, like `generic_arrows`. A part may also name a non-generic
+//! alias of such a type in the same module (`type Tree = Base & { kids: Tree[] }`, #783), whose
+//! fields stand where its name does.
 
 use velt_syntax::ast;
 
@@ -15,9 +17,12 @@ use crate::SourceModule;
 /// The modules with their recursive object type aliases rewritten into interfaces, or `None`
 /// when no module has one (the common case: nothing is copied).
 pub(crate) fn rewrite(modules: &[SourceModule]) -> Option<Vec<SourceModule>> {
-    let any = modules
-        .iter()
-        .any(|m| m.ast.items.iter().any(|i| as_interface(i).is_some()));
+    let any = modules.iter().any(|m| {
+        m.ast
+            .items
+            .iter()
+            .any(|i| as_interface(i, &m.ast.items).is_some())
+    });
     if !any {
         return None;
     }
@@ -32,7 +37,7 @@ pub(crate) fn rewrite(modules: &[SourceModule]) -> Option<Vec<SourceModule>> {
                     .ast
                     .items
                     .iter()
-                    .map(|i| as_interface(i).unwrap_or_else(|| i.clone()))
+                    .map(|i| as_interface(i, &m.ast.items).unwrap_or_else(|| i.clone()))
                     .collect(),
                 span: m.ast.span,
                 jsx_import_source: m.ast.jsx_import_source.clone(),
@@ -44,29 +49,28 @@ pub(crate) fn rewrite(modules: &[SourceModule]) -> Option<Vec<SourceModule>> {
     Some(modules)
 }
 
-/// `item` as an interface, if it is a recursive alias of written-out object types.
-fn as_interface(item: &ast::Item) -> Option<ast::Item> {
+/// `item` as an interface, if it is a recursive alias of object types written out or named
+/// (`items` are its module's items).
+fn as_interface(item: &ast::Item, items: &[ast::Item]) -> Option<ast::Item> {
     let ast::ItemKind::TypeAlias(a) = &item.kind else {
         return None;
     };
-    let parts: Vec<&ast::TypeExpr> = match &a.ty.kind {
-        ast::TypeExprKind::Intersection(ps) => ps.iter().collect(),
-        ast::TypeExprKind::Object(_) => vec![&a.ty],
-        _ => return None,
-    };
-    let mut fields: Vec<ast::Field> = vec![];
-    for p in parts {
-        let ast::TypeExprKind::Object(fs) = &p.kind else {
-            return None;
-        };
-        for f in fs {
-            if fields.iter().any(|g| g.name.name == f.name.name) {
-                return None;
-            }
-            fields.push(interface_field(f));
-        }
+    if !matches!(
+        a.ty.kind,
+        ast::TypeExprKind::Intersection(_) | ast::TypeExprKind::Object(_)
+    ) {
+        return None;
     }
-    if fields.is_empty() || !names(&a.ty, &a.name.name) {
+    let mut parts = vec![];
+    object_parts(&a.ty, items, &mut vec![a.name.name.as_str()], &mut parts)?;
+    let mut fields: Vec<ast::Field> = vec![];
+    for f in parts {
+        if fields.iter().any(|g| g.name.name == f.name.name) {
+            return None;
+        }
+        fields.push(interface_field(f));
+    }
+    if fields.is_empty() || !fields.iter().any(|f| names(&f.ty, &a.name.name)) {
         return None;
     }
     let decl = ast::InterfaceDecl {
@@ -82,6 +86,44 @@ fn as_interface(item: &ast::Item) -> Option<ast::Item> {
         exported: item.exported,
         span: item.span,
     })
+}
+
+/// The fields of `t`, an object type, an intersection of them, or the name of a non-generic alias
+/// of one in the same module (`Base` in `type Tree = Base & { kids: Tree[] }`, #783), in order;
+/// `None` for any other type. `seen`: the aliases being expanded (an alias naming itself here
+/// has no fields to give).
+fn object_parts<'a>(
+    t: &'a ast::TypeExpr,
+    items: &'a [ast::Item],
+    seen: &mut Vec<&'a str>,
+    out: &mut Vec<&'a ast::ObjectTypeField>,
+) -> Option<()> {
+    match &t.kind {
+        ast::TypeExprKind::Object(fs) => out.extend(fs),
+        ast::TypeExprKind::Intersection(ps) => {
+            for p in ps {
+                object_parts(p, items, seen, out)?;
+            }
+        }
+        ast::TypeExprKind::Named { path, args } if path.len() == 1 && args.is_empty() => {
+            let name = path[0].name.as_str();
+            if seen.contains(&name) {
+                return None;
+            }
+            let alias = items.iter().find_map(|i| match &i.kind {
+                ast::ItemKind::TypeAlias(b) if b.name.name == name => Some(b),
+                _ => None,
+            })?;
+            if !alias.generics.is_empty() {
+                return None;
+            }
+            seen.push(name);
+            object_parts(&alias.ty, items, seen, out)?;
+            seen.pop();
+        }
+        _ => return None,
+    }
+    Some(())
 }
 
 /// An object type's field as an interface declares it (the type without the `| null` that the

@@ -602,7 +602,7 @@ impl Ctx<'_> {
                 format!("type alias `{}` refers to itself", decl.name.name),
                 t.span,
             )
-            .with_note("an alias may refer to itself when it is an object type or an intersection of object types written out (`{ kids: T[] } & { v: number }`) with no field named twice, or a union that names itself behind an array, an index signature, a `Map` or a function type (`type Json = string | Json[]`); give any other recursive type a nominal member, such as an interface or a class");
+            .with_note("an alias may refer to itself when it is an object type or an intersection of object types written out or named by aliases (`Base & { kids: T[] }`) with no field named twice, or a union that names itself behind an array, an index signature, a `Map` or a function type (`type Json = string | Json[]`); give any other recursive type a nominal member, such as an interface or a class");
             self.error(d);
             return self.ty.error;
         }

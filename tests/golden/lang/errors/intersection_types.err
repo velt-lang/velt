@@ -16,4 +16,4 @@ intersection_types.vlt:12:15: error: `&` combines object types; `string[]` is an
 intersection_types.vlt:13:18: error: intersections of function types (overloads) are not supported
   = note: declare one function type with the parameter types every call needs
 intersection_types.vlt:32:28: error: type alias `Tree` refers to itself
-  = note: an alias may refer to itself when it is an object type or an intersection of object types written out (`{ kids: T[] } & { v: number }`) with no field named twice, or a union that names itself behind an array, an index signature, a `Map` or a function type (`type Json = string | Json[]`); give any other recursive type a nominal member, such as an interface or a class
+  = note: an alias may refer to itself when it is an object type or an intersection of object types written out or named by aliases (`Base & { kids: T[] }`) with no field named twice, or a union that names itself behind an array, an index signature, a `Map` or a function type (`type Json = string | Json[]`); give any other recursive type a nominal member, such as an interface or a class

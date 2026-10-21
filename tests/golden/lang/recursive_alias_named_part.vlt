@@ -1,0 +1,41 @@
+// A recursive alias may name an alias of an object type among its parts (#783): its fields
+// stand where its name does, so the alias is the interface with all the fields.
+type Base = { value: number };
+type Labeled = Base & { label: string };
+type Tree = Base & { kids: Tree[] };
+type Menu = { items: Menu[] } & Labeled;
+// The named alias may itself name the recursive one.
+type Linked = { up: Folder | null };
+type Folder = Linked & { name: string };
+
+function total(t: Tree): number {
+  let s = t.value;
+  for (const k of t.kids) {
+    s += total(k);
+  }
+  return s;
+}
+
+function labels(m: Menu): string[] {
+  const out = [m.label];
+  for (const i of m.items) {
+    out.push(...labels(i));
+  }
+  return out;
+}
+
+function main() {
+  const t: Tree = { value: 1, kids: [{ value: 2, kids: [] }, { value: 3, kids: [] }] };
+  console.log(total(t), JSON.stringify(t));
+  const b: Base = t;
+  console.log(b.value);
+  const m: Menu = {
+    items: [{ items: [], value: 2, label: "open" }],
+    value: 1,
+    label: "file",
+  };
+  console.log(labels(m).join(","), JSON.stringify(m));
+  const root: Folder = { up: null, name: "/" };
+  const home: Folder = { up: root, name: "home" };
+  console.log(home.up?.name, home.up?.up === null);
+}

@@ -1049,8 +1049,9 @@ console.log(e.id, grace.age, w.meta); // e1 45 m
   `xs.map((p) => ({ name: p.name }))`.
 - An alias may refer to itself through `&` when its parts are object types written out:
   `type Tree = { kids: Tree[] } & { v: number }` is the interface with the fields `kids` and
-  `v` (an alias that names itself otherwise is an error, as is one whose parts share a field
-  name).
+  `v`. A part may also name a non-generic alias of such a type declared in the same module
+  (`type Tree = Base & { kids: Tree[] }` with `type Base = { v: number }`). An alias that names
+  itself otherwise is an error, as is one whose parts share a field name.
 
 ```ts
 type Named = { name: string };

@@ -27,6 +27,6 @@ function main() {
   const point: Tagged<Point> = new Point();
 }
 
-// An alias can refer to itself through `&` only when its parts are object types written out.
-type Base = { value: number };
+// An alias can refer to itself through `&` only when its parts' fields have distinct names.
+type Base = { kids: number };
 type Tree = Base & { kids: Tree[] };
