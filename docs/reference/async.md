@@ -451,8 +451,11 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
   `get` on a `shared<Map<string, Item>>`: `.clone()` such a value once per task for many
   lookups). What keeps the value or a
   part of it gets a copy too: a parameter that keeps its argument (an `async` function's, a
-  stored one), and a variable bound to a part (`const ps = s.ports`, a `for…of` element that
-  the loop changes), so changing that copy leaves the shared value as it was.
+  stored one), and a variable bound to a part (`const ps = s.ports`), so changing that copy
+  leaves the shared value as it was. A `for…of` loop over the value (or over what a method of
+  it returns, such as `s.values()`) cannot change its elements, and `subarray()` and `buffer`
+  of a shared typed array are refused: in JavaScript they reach the shared value itself
+  (`slice()` gives a copy).
   `console.log(s)`, `[...s]`, `Object.keys(s)` and `JSON.stringify(s)` read the value inside
   as well. A value of
   `T` that holds a class with subclasses or with a `clone()` of its own is not read like this

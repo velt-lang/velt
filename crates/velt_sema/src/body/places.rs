@@ -2,7 +2,7 @@
 //! after the consumer is known, and mutability of the place's root.
 
 use super::FnCx;
-use crate::hir::{self, ExprKind as H, LocalId, UseMode};
+use crate::hir::{self, Callee, ExprKind as H, Intrinsic, LocalId, UseMode};
 
 pub(crate) fn is_place(e: &hir::Expr) -> bool {
     matches!(
@@ -175,5 +175,38 @@ pub(crate) fn root_expr(e: &hir::Expr) -> &hir::Expr {
         | H::UnwrapSome(base, _)
         | H::UnwrapVariant { expr: base, .. } => root_expr(base),
         _ => e,
+    }
+}
+
+/// Is `e` a value read out of a `shared<T>` (`Intrinsic::SharedRead`), or a part of one?
+pub(crate) fn frozen_root(e: &hir::Expr) -> bool {
+    match &e.kind {
+        H::Call {
+            callee: Callee::Intrinsic(Intrinsic::SharedRead),
+            ..
+        } => true,
+        H::Field { base, .. }
+        | H::Index { base, .. }
+        | H::UnwrapSome(base, _)
+        | H::UnwrapVariant { expr: base, .. }
+        | H::Downcast(base) => frozen_root(base),
+        _ => false,
+    }
+}
+
+/// Is `e` a value read out of a `shared`, a part of one, or what a method of one returns (its
+/// elements may be the shared value's, as `slice()`'s are in JavaScript)?
+pub(crate) fn frozen_source(cx: &crate::ctx::Ctx, e: &hir::Expr) -> bool {
+    match &e.kind {
+        H::Call {
+            callee: Callee::Def(d, _),
+            args,
+        } if cx.fn_info(*d).this.is_some() => args.first().is_some_and(|a| frozen_source(cx, a)),
+        H::Call {
+            callee: Callee::Virtual { .. },
+            args,
+        } => args.first().is_some_and(|a| frozen_source(cx, a)),
+        H::Upcast(x) | H::Downcast(x) => frozen_source(cx, x),
+        _ => frozen_root(e),
     }
 }

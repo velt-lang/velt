@@ -128,6 +128,10 @@ pub(crate) struct Ctx<'m> {
     pub fn_defs: Vec<DefId>,
     /// Named functions used as values (`FnRef`) with type arguments, checked after ownership.
     pub fn_values: Vec<(DefId, Vec<TyId>, Span)>,
+    /// Declarations of the `for…of` bindings over a value read out of a `shared` (or what a
+    /// method of one returns): the ownership pass refuses changing them
+    /// (`ownership::finish::frozen_loop_elements`).
+    pub frozen_elems: HashSet<Span>,
     /// Dispatch groups for error types (`crate::throws`), built on first use.
     pub groups: Option<crate::throws::Groups>,
     /// Bodies that may hold object literals implementing interfaces (`body::literal_hosts`).
@@ -326,6 +330,7 @@ impl<'m> Ctx<'m> {
             closure_counts: HashMap::new(),
             fn_defs: vec![],
             fn_values: vec![],
+            frozen_elems: HashSet::new(),
             groups: None,
             literal_hosts: Default::default(),
             provisional_slots: vec![],

@@ -36,6 +36,12 @@ impl FnCx<'_, '_> {
             true => self.frozen_view(recv, Some(&prop.name)),
             false => recv,
         };
+        if self.frozen_buffer_view(&recv, &prop.name, span) {
+            for a in args {
+                self.expr(a, None, Want::Borrow);
+            }
+            return self.error_expr(span);
+        }
         // `x.toFixed(2)`: a number's method (`literal_locals`).
         self.literal_use_number(&recv);
         // `s.replace(/a/g, "b")`: std/regex's method for a regex argument (`regex_args`).

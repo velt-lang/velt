@@ -6,14 +6,16 @@
 //! - reassigning a non-Copy param of a function with a fixed ABI (closures, overridden and
 //!   interface methods) is an error: it cannot own its argument;
 //! - arguments for "soft" owned params (owned only because the callee reassigns them) are
-//!   recorded as soft moves: a caller that uses the value again passes a clone.
+//!   recorded as soft moves: a caller that uses the value again passes a clone;
+//! - changing a `for…of` element of a value read out of a `shared` (or of what a method of one
+//!   returns) is an error: the loop binds a copy, where JavaScript changes the shared value.
 
 use velt_common::Diagnostic;
 
 use crate::body::places::is_place;
 use crate::ctx::Ctx;
 use crate::defs::FnKind;
-use crate::hir::{Callee, DefId, Expr, ExprKind as E, FnDef, PassMode};
+use crate::hir::{Callee, DefId, Expr, ExprKind as E, FnDef, LocalId, PassMode};
 use crate::visit;
 
 use super::evidence;
@@ -102,5 +104,34 @@ pub(super) fn soft_args(cx: &mut Ctx, d: DefId, f: &mut FnDef) {
         if cx.is_shared_value(ty) {
             cx.fn_info_mut(d).soft_moves.push(span);
         }
+    }
+}
+
+/// `for…of` elements of a value read out of a `shared` that the loop changes (module docs).
+pub(super) fn frozen_loop_elements(cx: &mut Ctx, f: &mut FnDef) {
+    let elems: Vec<LocalId> = (0..f.body.locals.len() as u32)
+        .map(LocalId)
+        .filter(|l| cx.frozen_elems.contains(&f.body.locals[l.0 as usize].span))
+        .collect();
+    if elems.is_empty() {
+        return;
+    }
+    let ev = evidence::collect(cx, &mut f.body.block);
+    for l in elems {
+        if !ev.mutated.contains(&l) && !ev.modified.contains(&l) {
+            continue;
+        }
+        let local = &f.body.locals[l.0 as usize];
+        let (name, tn, span) = (local.name.clone(), cx.display(local.ty), local.span);
+        cx.error(
+            Diagnostic::error(
+                format!("the loop changes `{name}`, a `{tn}` read out of a `shared` value"),
+                span,
+            )
+            .with_note(
+                "a shared value is read-only, since other tasks read it at the same time: loop \
+                 over a copy, or share a `Mutex`",
+            ),
+        );
     }
 }

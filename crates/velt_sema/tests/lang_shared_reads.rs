@@ -194,3 +194,38 @@ fn for_of_and_index_read_maps_sets_and_typed_arrays_inside() {
     // Each loop reads the value at least once (a typed array per length and element).
     assert!(n >= 4, "{n}");
 }
+
+#[test]
+fn changing_loop_elements_of_it_is_an_error() {
+    let class = "class C { n: number = 0; bump(): C { this.n += 1; return this; } inc() { this.n += 1; } }";
+    for body in [
+        "const s = shared(new Map<string, Uint8Array>()); for (const [k, v] of s) { v.fill(1); }",
+        "const s = shared(new Set<C>()); for (const c of s) { c.bump(); }",
+        "const s = shared(new Map<string, C>()); for (const [k, v] of s) { v.bump(); }",
+        "const s = shared(new Map<string, C>()); for (const v of s.values()) { v.inc(); }",
+        "const s = shared([new C()]); for (const c of s) { c.inc(); }",
+        "const s = shared([[1], [2]]); for (const xs of s) { xs.push(3); }",
+        "const s = shared([new C()]); for (const c of s.slice()) { c.n = 2; }",
+    ] {
+        let r = err_src(&format!("{class} function main() {{ {body} }}"));
+        assert!(r.contains("the loop changes"), "{body}: {r}");
+    }
+    // Reading them is fine.
+    ok_src(&format!(
+        "{class} function main() {{ const s = shared(new Map<string, C>()); let t = 0; \
+         for (const [k, v] of s) {{ t += v.n; }} for (const c of s.values()) {{ t += c.n; }} console.log(t); }}"
+    ));
+}
+
+#[test]
+fn views_of_a_shared_typed_array_are_errors() {
+    for src in [
+        "function main() { const u = shared(new Uint8Array(3)); u.subarray(0, 2).fill(3); }",
+        "function main() { const u = shared(new Uint8Array(3)); const w = u.subarray(1); w[0] = 9; }",
+        "function main() { const u = shared(new Uint8Array(3)); const v = new Uint8Array(u.buffer); }",
+    ] {
+        let r = err_src(src);
+        assert!(r.contains("would share its buffer"), "{src}: {r}");
+    }
+    ok_src("function main() { const u = shared(new Uint8Array(3)); const c = u.slice(0, 2); c[0] = 1; console.log(c[0], u[0]); }");
+}

@@ -18,10 +18,10 @@ use std::collections::HashSet;
 use velt_common::{Diagnostic, Span};
 
 use super::infer::force_move;
-use crate::body::places::{is_place, set_place_mode};
+use crate::body::places::{frozen_root, is_place, set_place_mode};
 use crate::ctx::Ctx;
 use crate::hir::{
-    Block, Callee, Def, DefId, Expr, ExprKind as E, Intrinsic, LocalId, PassMode, TyKind, UseMode,
+    Block, Callee, Def, DefId, Expr, ExprKind as E, LocalId, PassMode, TyKind, UseMode,
 };
 use crate::visit;
 
@@ -374,22 +374,6 @@ fn modifies_frozen(cx: &Ctx, target: &Expr, errors: &mut Vec<Diagnostic>) {
         format!("this call may modify its argument, a `{tn}` read out of a `shared` value"),
         target.span,
     ).with_note("a shared value is read-only, since other tasks read it at the same time: pass a copy, or share a `Mutex`"));
-}
-
-/// Is `e` a value read out of a `shared<T>` (`Intrinsic::SharedRead`), or a part of one?
-fn frozen_root(e: &Expr) -> bool {
-    match &e.kind {
-        E::Call {
-            callee: Callee::Intrinsic(Intrinsic::SharedRead),
-            ..
-        } => true,
-        E::Field { base, .. }
-        | E::Index { base, .. }
-        | E::UnwrapSome(base, _)
-        | E::UnwrapVariant { expr: base, .. }
-        | E::Downcast(base) => frozen_root(base),
-        _ => false,
-    }
 }
 
 fn outer_mode(e: &Expr) -> Option<UseMode> {

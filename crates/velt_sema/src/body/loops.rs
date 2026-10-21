@@ -9,6 +9,7 @@ use velt_syntax::ast;
 
 use super::for_iter::ForOfParts;
 use super::pattern::BindCtx;
+use super::places::frozen_source;
 use super::{FnCx, LoopCx, Want};
 use crate::hir::{self, ExprKind as H, StmtKind as S, TyId, TyKind};
 
@@ -146,8 +147,12 @@ impl FnCx<'_, '_> {
                     true => self.for_await(iter, parts, out),
                     false => {
                         let it = self.for_of_source(iter);
+                        let (frozen, first) = (frozen_source(self.cx, &it), self.f.locals.len());
                         if !self.for_of_map(iter, &it, parts, out) {
                             self.for_of(it, parts, out)
+                        }
+                        if frozen {
+                            self.frozen_elements(pattern.span, first);
                         }
                     }
                 }
@@ -256,6 +261,15 @@ impl FnCx<'_, '_> {
             };
             Self::push(out, S::Block(blk), span);
         }
+    }
+
+    /// Record the locals from `first` on that the `for…of` pattern at `pattern` declares (also
+    /// in a map's cursor loop and the iterator protocol's): elements of a value read out of a
+    /// `shared`.
+    fn frozen_elements(&mut self, pattern: Span, first: usize) {
+        let elems = self.f.locals[first..].iter().map(|l| l.span);
+        let elems = elems.filter(|s| pattern.lo <= s.lo && s.hi <= pattern.hi);
+        self.cx.frozen_elems.extend(elems);
     }
 
     /// The checked source of a `for...of` or `for await`: a record is an error (it is not

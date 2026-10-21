@@ -7,10 +7,10 @@
 //! copy too. Writing through the view is an error (`frozen_write`), and so is a call that may
 //! modify it (`ownership/patch.rs`).
 
-use velt_common::Span;
+use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
-use crate::body::places::set_place_mode;
+use crate::body::places::{frozen_root, set_place_mode};
 use crate::body::{FnCx, Want};
 use crate::hir::{self, Callee, ExprKind as H, Intrinsic, TyKind, UseMode};
 
@@ -107,6 +107,37 @@ impl FnCx<'_, '_> {
                 ..
             }
         )
+    }
+
+    /// `subarray()` or `buffer` of a typed array or `DataView` read out of a `shared` (an
+    /// error, reported): JavaScript's result shares the shared value's buffer, so a write
+    /// through it would change that value, where a reader's copy would take it silently.
+    pub(crate) fn frozen_buffer_view(&mut self, obj: &hir::Expr, member: &str, span: Span) -> bool {
+        if !matches!(member, "subarray" | "buffer") || !frozen_root(obj) {
+            return false;
+        }
+        let view = self.cx.class_of(obj.ty).is_some_and(|(d, _)| {
+            self.cx
+                .adt(d)
+                .is_some_and(|a| a.qual_name.starts_with("std/typed_array/"))
+        });
+        if !view {
+            return false;
+        }
+        let tn = self.cx.display(obj.ty);
+        self.cx.error(
+            Diagnostic::error(
+                format!(
+                    "`{member}` of a `{tn}` read out of a `shared` value would share its buffer"
+                ),
+                span,
+            )
+            .with_note(
+                "a shared value is read-only, since other tasks read it at the same time: use \
+                 `slice()` for a copy, or share a `Mutex`",
+            ),
+        );
+        true
     }
 
     /// Report a write at `span` through a value read out of `shared`.
