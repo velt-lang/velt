@@ -602,7 +602,8 @@ another handle while the read is live (a `ForOf` body, a closure argument of the
 refused as it is for an array. Sema rejects every write through it (`require_mutable`,
 `use_mutably`) and every call that may modify it: a `BorrowMut` argument after inference, an
 `Owned` receiver the method modifies all the same (`FnInfo::modified_params`: a method
-returning the `this` it changes, such as `fill`, or calling one on `this`), a change to a
+returning the `this` it changes, such as `fill`, or calling one on `this`), a `Borrow` argument
+whose map entries the callee's loop changes (`Ctx::loop_roots`), a change to a
 `for…of` element of it or of what a method of it returns (`Ctx::frozen_elems`) or of a
 variable bound to a part of it (`ownership/finish.rs`), `subarray()` and `buffer` of a typed array in it
 (`FnCx::frozen_buffer_view`), an

@@ -26,8 +26,8 @@ use velt_common::Span;
 use crate::body::places::place_root;
 use crate::ctx::Ctx;
 use crate::hir::{
-    Block, Callee, Def, Expr, ExprKind as E, LocalId, PassMode, Pat, PatKind, Stmt, StmtKind as S,
-    UseMode,
+    Block, Callee, Def, Expr, ExprKind as E, FnDef, LocalId, PassMode, Pat, PatKind, Stmt,
+    StmtKind as S, UseMode,
 };
 use crate::visit::{self, VisitMut};
 
@@ -63,6 +63,25 @@ pub(super) fn modified_before_rebind(cx: &mut Ctx, b: &Block, l: LocalId) -> Opt
         span: b.span,
     };
     Some(collect(cx, &mut prefix).mutated.contains(&l))
+}
+
+/// The locals whose value a `for…of` loop walks while the body changes an element it binds
+/// (`Ctx::loop_roots`): a map loop's bindings are not bound into its source, so `mutated`
+/// doesn't reach the source through them.
+pub(super) fn walked_changed(cx: &Ctx, f: &FnDef, ev: &Evidence) -> FxHashSet<LocalId> {
+    let mut out = FxHashSet::default();
+    if cx.loop_roots.is_empty() {
+        return out;
+    }
+    for (i, l) in f.body.locals.iter().enumerate() {
+        let id = LocalId(i as u32);
+        if let Some(&root) = cx.loop_roots.get(&l.span) {
+            if ev.mutated.contains(&id) || ev.modified.contains(&id) {
+                out.insert(root);
+            }
+        }
+    }
+    out
 }
 
 /// Collect the evidence of body `b`.
@@ -225,7 +244,16 @@ impl VisitMut for Collector<'_, '_> {
                 callee: Callee::Def(d, _),
                 args,
             } if self.cx.frozen_reads => {
-                let bits = self.cx.fn_info(*d).modified_params;
+                let info = self.cx.fn_info(*d);
+                let (bits, skip) = (info.modified_params, usize::from(info.this.is_some()));
+                // An owned parameter other than the receiver gets its own copy: changing it
+                // leaves the argument as it was.
+                let owned: u64 = (info.params.iter().enumerate())
+                    .filter(|(_, p)| p.mode == PassMode::Owned)
+                    .fold(0, |m, (k, _)| {
+                        m | 1u64.checked_shl((k + skip) as u32).unwrap_or(0)
+                    });
+                let bits = bits & !owned;
                 for (i, a) in args.iter().enumerate().take(64) {
                     if bits & (1 << i) != 0 && !self.cx.is_copy(a.ty) {
                         self.ev.modified.extend(place_root(a));

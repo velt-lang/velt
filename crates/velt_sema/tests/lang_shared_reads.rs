@@ -255,3 +255,25 @@ fn views_of_a_shared_typed_array_are_errors() {
     }
     ok_src("function main() { const u = shared(new Uint8Array(3)); const c = u.slice(0, 2); c[0] = 1; console.log(c[0], u[0]); }");
 }
+
+#[test]
+fn a_function_changing_map_entries_it_loops_over_is_an_error() {
+    // A map loop's bindings are not bound into the map, so this is the loop's own evidence
+    // (`Ctx::loop_roots`) and not the parameter's mode.
+    let defs = "class Item { v: number = 1; tags: string[] = []; }
+        class Store { m: Map<string, Item> = new Map<string, Item>();
+          walk(): number { let t = 0; for (const v of this.m.values()) { bump(v); t += v.v; } return t; } }
+        function bump(i: Item) { i.v += 1000; }
+        function walk(st: Store): number { let t = 0; for (const [k, v] of st.m) { bump(v); t += v.v; } return t; }
+        function tag(st: Store) { for (const [k, v] of st.m) { v.tags.push(\"x\"); } }
+        function sum(st: Store): number { let t = 0; for (const [k, v] of st.m) { t += v.v; } return t; }";
+    for call in ["walk(s)", "s.walk()", "tag(s)"] {
+        let r = err_src(&format!(
+            "{defs} function main() {{ const s = shared(new Store()); console.log({call}); }}"
+        ));
+        assert!(r.contains("read out of a `shared` value"), "{call}: {r}");
+    }
+    ok_src(&format!(
+        "{defs} function main() {{ const s = shared(new Store()); console.log(sum(s)); }}"
+    ));
+}

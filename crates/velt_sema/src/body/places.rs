@@ -210,3 +210,20 @@ pub(crate) fn frozen_source(cx: &crate::ctx::Ctx, e: &hir::Expr) -> bool {
         _ => frozen_root(e),
     }
 }
+
+/// The local whose value `e`, a loop's source, is a part of, or what a method of one returns
+/// (whose elements may be that value's).
+pub(crate) fn source_root(cx: &crate::ctx::Ctx, e: &hir::Expr) -> Option<LocalId> {
+    match &e.kind {
+        H::Call {
+            callee: Callee::Def(d, _),
+            args,
+        } if cx.fn_info(*d).this.is_some() => source_root(cx, args.first()?),
+        H::Call {
+            callee: Callee::Virtual { .. },
+            args,
+        } => source_root(cx, args.first()?),
+        H::Upcast(x) | H::Downcast(x) => source_root(cx, x),
+        _ => place_root(e),
+    }
+}

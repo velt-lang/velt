@@ -40,16 +40,15 @@ pub(super) fn patch_calls(
     visit::exprs_mut(b, &mut |e: &mut Expr| {
         let returns_promise = matches!(cx.ty.kind(e.ty), TyKind::Promise(..));
         let span = e.span;
-        let modified = match &e.kind {
-            // Only the receiver: an owned parameter gets its own copy (as `force_move` gives
-            // it), but a method changing its receiver changes a copy no one would see.
+        let (modified, receiver) = match &e.kind {
             E::Call {
                 callee: Callee::Def(d, _),
                 ..
-            } if cx.frozen_reads && cx.fn_info(*d).this.is_some() => {
-                cx.fn_info(*d).modified_params & 1
+            } if cx.frozen_reads => {
+                let info = cx.fn_info(*d);
+                (info.modified_params, info.this.is_some())
             }
-            _ => 0,
+            _ => (0, false),
         };
         let (modes, args, unknown) = match &mut e.kind {
             E::Call { callee, args } => {
@@ -87,10 +86,15 @@ pub(super) fn patch_calls(
         if let Some(modes) = &modes {
             for (i, (a, m)) in args.iter_mut().zip(modes).enumerate() {
                 match m {
-                    // A receiver the method changes though it takes it owned (it returns `this`):
-                    // not one read out of a `shared`, whose change no one would see.
+                    // An argument the callee changes though it doesn't take it `BorrowMut`: a
+                    // receiver it takes owned (it returns `this`), or a borrowed value whose map
+                    // entries a loop changes. Not one read out of a `shared`, whose change no one
+                    // would see. (An owned parameter gets its own copy, as `force_move` gives it.)
                     PassMode::Owned | PassMode::Borrow
-                        if i < 64 && modified & (1 << i) != 0 && frozen_root(a) =>
+                        if i < 64
+                            && modified & (1 << i) != 0
+                            && (*m == PassMode::Borrow || i == 0 && receiver)
+                            && frozen_root(a) =>
                     {
                         modifies_frozen(cx, a, &mut errors)
                     }
