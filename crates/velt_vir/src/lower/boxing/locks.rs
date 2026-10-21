@@ -25,6 +25,13 @@ impl Cx<'_> {
         next.lock_values
             .extend(self.facts.lock_values.iter().copied());
         let values: Vec<TyId> = next.lock_values.iter().copied().collect();
+        // Every class hierarchy, array and object type a shared read's value reaches is counted,
+        // also one nothing aliases: read mode tells the store's objects from a reader's own by
+        // their count word (the write barrier, `LOCAL`), and a function value the callback calls
+        // may write any of them.
+        for &v in &values {
+            self.count_reached(next, v);
+        }
         for v in values {
             let mut roots = FxHashSet::default();
             let mut boxes = FxHashSet::default();
@@ -35,6 +42,65 @@ impl Cx<'_> {
                 next.lock_exclusive.insert(v);
             }
         }
+    }
+
+    /// Make the class hierarchies, arrays and object types `v` reaches counted in `next`, unless
+    /// `v`'s `read` is exclusive (it reaches what read mode cannot follow).
+    fn count_reached(&mut self, next: &mut Boxing, v: TyId) {
+        let mut reached = vec![];
+        if !self.lock_reach_all(next, v, &mut reached) {
+            return;
+        }
+        // Counted as sharing them would count them (classes by hierarchy, objects and arrays
+        // as boxes).
+        let mut work = reached;
+        let mut seen = FxHashSet::default();
+        while let Some(t) = work.pop() {
+            if seen.insert(t) {
+                self.close_share(t, next, &mut work);
+            }
+        }
+    }
+
+    /// [`lock_reach`](Self::lock_reach) collecting every class, array and object type `v`
+    /// reaches, counted or not, into `reached`.
+    fn lock_reach_all(&mut self, b: &Boxing, v: TyId, reached: &mut Vec<TyId>) -> bool {
+        let mut seen = FxHashSet::default();
+        let mut work = vec![v];
+        while let Some(t) = work.pop() {
+            if !seen.insert(t) {
+                continue;
+            }
+            if self.proxiable_in(b, t) {
+                return false;
+            }
+            let parts = match self.kind(t) {
+                TyKind::Shared(_) | TyKind::Str => continue,
+                TyKind::Dyn(..)
+                | TyKind::FnPtr { .. }
+                | TyKind::Closure(_)
+                | TyKind::Promise(..) => return false,
+                TyKind::Adt(d, _) if self.is_class(t) => {
+                    let root = self.class_root(d);
+                    if root != d || self.has_subclasses(d) || self.weak_class(t).is_some() {
+                        return false;
+                    }
+                    reached.push(t);
+                    self.adt_field_tys(t)
+                }
+                TyKind::Array(e) => {
+                    reached.push(t);
+                    vec![e]
+                }
+                TyKind::Adt(..) => {
+                    reached.push(t);
+                    self.part_types(t)
+                }
+                _ => self.part_types(t),
+            };
+            work.extend(parts);
+        }
+        true
     }
 
     /// Collect the counted types `v` reaches into `roots` (class hierarchies) and `boxes`;

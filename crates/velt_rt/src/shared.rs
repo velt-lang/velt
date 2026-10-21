@@ -109,11 +109,14 @@ const MAX_INHIBIT: u64 = 10_000_000;
 /// lock is *biased* (`state` 0) readers write nothing other threads read (Dice and Kogan,
 /// "BRAVO: Biased Locking for Reader-Writer Locks", 2019): a reader names the lock in its
 /// thread's slot (hazard.rs) and goes ahead while `state` stays 0; a writer sets `MUTEX`, then
-/// waits for the slots naming the lock to clear. That *revokes* the bias: until `until`
+/// waits for the slots naming the lock to clear, and only then takes `lock` (a writer holding
+/// it while it waited could wait for a reader whose nested read waits for that writer). That
+/// *revokes* the bias: until `until`
 /// (nanoseconds on the process clock) readers take `lock` too, shared (BRAVO's underlying
 /// reader-writer lock), so readers still run at once and a lock written often costs about what
-/// a `Mutex` does. A writer waiting for `lock` holds new readers back, so writers don't starve
-/// and two readers nesting reads of two locks in opposite orders don't wait for each other. A
+/// a `Mutex` does. A writer waiting for `lock` holds new outermost readers back, so writers don't
+/// starve, while a read nested in another goes past it, so readers nesting reads of two locks
+/// in opposite orders don't wait for each other's writers. A
 /// reader holding `lock` after `until`
 /// biases it again (a thread looks at the clock after waiting for `lock` and on every 1024th
 /// such read) and stores the time in `until`. How long a revocation lasts (`inhibit`) adapts:
@@ -505,9 +508,17 @@ pub unsafe extern "C" fn velt_rt_rwlock_write(p: *mut u64, reader: u64) -> u64 {
         write_in_read(p, &*r);
     }
     let w = &*(p as *const Words);
+    // The bias is revoked before `lock` is taken: a writer holding it while it waits for the
+    // readers' slots would wait for a reader whose nested read of another lock waits for that
+    // lock's writer, which may be waiting for this writer's readers in turn.
+    if w.state.load(Ordering::Relaxed) == 0 {
+        revoke(p, w);
+    }
     if !w.lock.try_lock_exclusive() {
         lock_slow(&w.lock, Take::Exclusive);
     }
+    // A reader that raced the revocation may have biased the lock again before `lock` was
+    // taken; holding it, no reader can now (rare).
     if w.state.load(Ordering::Relaxed) == 0 {
         revoke(p, w);
     }
@@ -524,10 +535,13 @@ fn write_in_read(p: *mut u64, r: &crate::hazard::Reader) -> ! {
     unreachable!("ICE: a write inside a read went on")
 }
 
-/// A writer holding `lock` of a biased `RwLock`: readers take `lock` from now on; wait for the
-/// ones in slots, and keep the bias revoked for a while.
+/// A writer about to take `lock` of a biased `RwLock` (or holding it, when a reader biased it
+/// again meanwhile): readers take `lock` from now on; wait for the ones in slots, and keep the
+/// bias revoked for a while.
 #[cold]
 fn revoke(p: *mut u64, w: &Words) {
+    // No reader biases the lock again while this waits (`rebias` waits for `until`).
+    let until = w.until.swap(u64::MAX, Ordering::Relaxed);
     w.state.store(MUTEX, Ordering::SeqCst);
     let t0 = now_ns();
     let mut spins = 0u32;
@@ -539,7 +553,10 @@ fn revoke(p: *mut u64, w: &Words) {
         }
     }
     let t1 = now_ns();
-    let biased_for = t0.saturating_sub(w.until.load(Ordering::Relaxed));
+    let biased_for = match until {
+        u64::MAX => 0,
+        u => t0.saturating_sub(u),
+    };
     let last = w.inhibit.load(Ordering::Relaxed);
     let floor = 9 * (t1 - t0).max(1000);
     let inhibit = match biased_for < last {

@@ -640,13 +640,14 @@ closures that may outlive the call, polls, glue in tables) asks `velt_rt_lk_mode
 The lock is *biased* (Dice and Kogan, "BRAVO: Biased Locking for Reader-Writer Locks", 2019)
 until it is written: a reader names the lock in a slot of its own thread (a cache line no other
 thread writes, velt_rt `hazard.rs`) and checks that no writer came, so readers on many threads
-write nothing they share. A writer takes the lock's underlying reader-writer lock (parking_lot's
-`RawRwLock`) exclusively and *revokes* the bias: it sets the lock's state and waits for the slots
-naming the lock to clear. From then on readers take the underlying lock shared, so they still
+write nothing they share. A writer *revokes* the bias: it sets the lock's state and waits for the
+slots naming the lock to clear, then takes the lock's underlying reader-writer lock (parking_lot's
+`RawRwLock`) exclusively. From then on readers take the underlying lock shared, so they still
 run at once and a lock written often costs about what a `Mutex` does, until a reader holding it
 finds the revocation old enough and biases the lock again. A writer blocked on the underlying
-lock holds new readers back, so writers don't starve, and readers nesting reads of two locks in
-opposite orders never wait for each other. How long a revocation lasts adapts to how long the
+lock holds new outermost readers back, so writers don't starve, while a read nested in another
+goes past it (a recursive shared lock), so readers nesting reads of two locks in opposite orders
+never wait for each other's writers. How long a revocation lasts adapts to how long the
 bias before it lasted (at most 10 ms). The lock words are the underlying lock, then (on the next
 128-byte line, which only revocations write) the state.
 

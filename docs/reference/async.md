@@ -557,6 +557,9 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
   need and lock after `read`, or count with a `shared<i64>` (`.add(n)`). Nor can it start a
   promise or task, which would outlive it (that stops the program too). A function value the
   callback calls is checked as it runs (a write to the value through it stops the program).
+  Inside the callback, an object of a type the value holds can be changed only when the
+  callback made it: read mode cannot tell another one (the caller's array of the same type)
+  from the value's own, so a write to it stops the program too.
   Reads of other `RwLock`s nest, in any order. A value that holds function
   or interface values, objects of a class hierarchy, weak references or promises is read under
   the exclusive lock instead.
