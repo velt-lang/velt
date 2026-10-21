@@ -44,6 +44,17 @@ impl FnCx<'_, '_> {
                     throws,
                     rest: false,
                 } => sigs.push((params, ret, throws)),
+                TyKind::FnPtr { rest: true, .. } => {
+                    self.cx.error(
+                        velt_common::Diagnostic::error(
+                            "calling a union of function types with a rest parameter is not supported yet",
+                            span,
+                        )
+                        .with_note("narrow the value to one function type first (`typeof`, a discriminant), or give the members the same parameters"),
+                    );
+                    self.check_args_loose(args);
+                    return Ok(self.error_expr(span));
+                }
                 _ => return Err(f),
             }
         }

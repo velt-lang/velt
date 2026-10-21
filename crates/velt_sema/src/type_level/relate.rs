@@ -162,14 +162,16 @@ impl Ctx<'_> {
                     ..
                 },
             ) => {
-                let ok = if p_rest && !s_rest {
-                    self.relate_to_rest(&sp, &pp, slots)
-                } else {
-                    sp.len() <= pp.len()
-                        && sp
-                            .iter()
-                            .zip(&pp)
-                            .all(|(x, y)| self.relate_param(*x, *y, slots))
+                let ok = match (s_rest, p_rest) {
+                    (false, true) => self.relate_to_rest(&sp, &pp, slots),
+                    (true, _) => self.relate_from_rest(&sp, &pp, p_rest, slots),
+                    (false, false) => {
+                        sp.len() <= pp.len()
+                            && sp
+                                .iter()
+                                .zip(&pp)
+                                .all(|(x, y)| self.relate_param(*x, *y, slots))
+                    }
                 };
                 ok && self.relate(sr, pr, slots)
             }
@@ -204,6 +206,19 @@ impl Ctx<'_> {
     /// parameter `p` must be assignable to the subject's `s`. What an `infer X` in the pattern's
     /// parameter finds is a contravariant candidate.
     fn relate_param(&mut self, s: TyId, p: TyId, slots: &mut Slots) -> bool {
+        // A pattern's `any` parameter, or `any` / `unknown` rest element, takes any argument.
+        let any = |cx: &Self, t: TyId| {
+            matches!(cx.dynamic(t), Some(Dynamic::Any))
+                || matches!(*cx.ty.kind(t), TyKind::Param(WILDCARD))
+        };
+        let top = |cx: &Self, t: TyId| {
+            any(cx, t)
+                || matches!(cx.dynamic(t), Some(Dynamic::Unknown))
+                || matches!(*cx.ty.kind(t), TyKind::Param(UNKNOWN))
+        };
+        if any(self, p) || self.ty.array_elem(p).is_some_and(|e| top(self, e)) {
+            return true;
+        }
         if self.has_infer(p) {
             slots.flipped = !slots.flipped;
             let ok = self.relate(s, p, slots);
@@ -241,6 +256,50 @@ impl Ctx<'_> {
     }
 
     /// Does `t` hold an `infer` placeholder?
+    /// The parameters `sp` of a function type ending in a rest parameter against a pattern's
+    /// `pp` (ending in one when `p_rest`): the subject takes any number of arguments from its
+    /// rest parameter's position on, each an element of its rest array. A pattern rest parameter
+    /// that is an `infer` (`(...a: infer A) => R`) finds the subject's rest array when the
+    /// subject has no other parameters past the pattern's fixed ones; with them it would be a
+    /// variadic tuple, which Velt doesn't have.
+    fn relate_from_rest(
+        &mut self,
+        sp: &[TyId],
+        pp: &[TyId],
+        p_rest: bool,
+        slots: &mut Slots,
+    ) -> bool {
+        let Some((&s_last, s_fixed)) = sp.split_last() else {
+            return false;
+        };
+        let Some(s_elem) = self.ty.array_elem(s_last) else {
+            return false;
+        };
+        let (p_fixed, p_last) = match (p_rest, pp.split_last()) {
+            (true, Some((&last, fixed))) => (fixed, Some(last)),
+            _ => (pp, None),
+        };
+        // Each pattern fixed parameter against the subject's at its position, or its element.
+        for (i, &y) in p_fixed.iter().enumerate() {
+            let x = s_fixed.get(i).copied().unwrap_or(s_elem);
+            if !self.relate_param(x, y, slots) {
+                return false;
+            }
+        }
+        let Some(p_last) = p_last else {
+            return true;
+        };
+        let extra = s_fixed.get(p_fixed.len()..).unwrap_or_default();
+        if self.has_infer(p_last) {
+            return extra.is_empty() && self.relate_param(s_last, p_last, slots);
+        }
+        let Some(p_elem) = self.ty.array_elem(p_last) else {
+            return false;
+        };
+        extra.iter().all(|x| self.relate_param(*x, p_elem, slots))
+            && self.relate_param(s_last, p_last, slots)
+    }
+
     fn has_infer(&self, t: TyId) -> bool {
         let mut ps = vec![];
         crate::types::collect_params(&self.ty, t, &mut ps);
