@@ -277,7 +277,8 @@ whose type is a type parameter that is `symbol` or a union holding a symbol (`` 
 
 A symbol a module constant holds names a member: `[KEY]: T` in an interface, an object type or
 a class, `{ [KEY]: v }` in an object literal, `o[KEY]` and `KEY in o`. The constant is
-initialized with `Symbol("...")` or `Symbol.for("...")` (TypeScript's `unique symbol`;
+initialized with `Symbol("...")` (the description a string literal or a string constant) or
+`Symbol.for("...")` (TypeScript's `unique symbol`;
 `const KEY: unique symbol = Symbol("k")` declares the same), or with another such constant, and
 may be imported. Velt objects have fixed fields, so the compiler resolves these members while
 compiling: reading `o[KEY]` costs what reading a named field does. A symbol key known only at
@@ -388,10 +389,10 @@ function check() {
 A module constant initialized with `Symbol(...)` or `Symbol.for("...")` is one symbol for the
 whole program, made while compiling (module constants are otherwise evaluated at each use), so
 reading it costs no call; `Symbol.for(k)` at run time gives that same symbol for its key. A symbol `Symbol(...)` makes at run time lives
-until the program ends. **Planned**: a symbol brand added with `Object.defineProperty(o, KEY,
-…)` as an optional symbol-keyed field of `o`'s type
-([#922](https://github.com/velt-lang/velt/issues/922)), and `PropertyKey` (`string | symbol`)
-for `Reflect` and proxies ([#823](https://github.com/velt-lang/velt/issues/823)).
+until the program ends. A symbol brand added with `Object.defineProperty(o, KEY, …)` is an
+optional symbol-keyed field of `o`'s type ([`Object` built-ins](#object-built-ins)).
+**Planned**: `PropertyKey` (`string | symbol`) for `Reflect` and proxies
+([#823](https://github.com/velt-lang/velt/issues/823)).
 
 ## SIMD vectors
 
@@ -1861,8 +1862,10 @@ does is an error saying it is not supported yet, never a quiet difference.
 - `Object.assign(target, ...sources)` writes each source's own fields to `target`, in order
   (through its setters, as JavaScript's assignment does; an absent optional field is not copied,
   and one holding `undefined` where the target can't hold it is a `TypeError`)
-  and returns `target` itself. A `Record` target takes any keys; an object or class target only
-  fields its type declares (adding one is not supported yet). `Object.assign(fn, { … })` onto a
+  and returns `target` itself, copying enumerable symbol-keyed fields too (a brand
+  `defineProperty` made with `enumerable: true`, below). A `Record` target takes any keys; an
+  object, interface or class target only fields its type declares (adding one is not supported
+  yet). `Object.assign(fn, { … })` onto a
   function makes a [function with properties](functions.md#functions-with-properties).
   Assigning from a value that may hold another class is not supported yet.
 - `Object.freeze({ ... })` of a new object literal returns it with every field readonly, so
@@ -1893,11 +1896,13 @@ does is an error saying it is not supported yet, never a quiet difference.
 
 - `Object.defineProperty(o, KEY, { value })` with a symbol constant `KEY` adds a brand: the
   compiler adds the optional field `[KEY]?: T` to the interface or object type `o` is declared
-  with (`const cell: Cell = { ... }`, or `{ ... } as Cell`; `T` is the type of the literal value),
+  with (`const cell: Cell = { ... }`, `{ ... } as Cell`, or a parameter `cell: Cell`; `T` is the
+  type of the literal value),
   so `KEY in v` tests any `Cell` for it, as Node finds the property on the objects that have it.
   Unless the descriptor says `enumerable: true`, it is hidden from `console.log` and spreads, as a
   non-enumerable property is; a property with that symbol written directly anywhere (`{ [KEY]: v
-  }`, `o[KEY] = v`) is an error, since it would be enumerable, or written where Node throws.
+  }`, `o[KEY] = v`) is an error, since it would be enumerable, or written where Node throws,
+  unless the descriptors say `enumerable: true, writable: true`.
   Defining a brand again with another value throws Node's `TypeError: Cannot redefine property:
   Symbol(k)` (values compared as `Object.is` does) unless the descriptors say `writable: true` or
   `configurable: true`; Velt keeps these attributes per symbol, so every call with one key gives
@@ -1950,12 +1955,13 @@ console.log(c.n); // 2
 
 The other `Object` functions (`seal`, `isFrozen`, `setPrototypeOf`, ...) are not supported yet.
 
-`typeof` of a global the program doesn't declare is what Node 22 gives: `"undefined"` for the
-browser's globals (`window`, `document`, `HTMLElement`, ...), `"object"` or `"function"` for
-Node's (`globalThis`, `navigator`, `URL`, ...), and `"function"` for a class's name, so
-`typeof window === "undefined"` tells the server from the browser. Reading a browser global
-throws Node's `ReferenceError` (`window is not defined`), so code that only runs in the browser
-still compiles.
+`typeof` of a global the program doesn't declare is what Node 22 gives in an ES module:
+`"undefined"` for the browser's globals (`window`, `document`, `HTMLElement`, ...), other
+runtimes' (`Deno`, `Bun`) and CommonJS's (`require`, `module`, `exports`, `__dirname`,
+`__filename`), `"object"` or `"function"` for Node's (`globalThis`, `global`, `navigator`, `URL`,
+...), and `"function"` for a class's or a function's name, so `typeof window === "undefined"`
+tells the server from the browser. Reading one of the absent globals throws Node's
+`ReferenceError` (`window is not defined`), so code that only runs elsewhere still compiles.
 
 ```ts
 class Point {

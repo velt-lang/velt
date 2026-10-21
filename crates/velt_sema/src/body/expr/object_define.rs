@@ -82,7 +82,9 @@ impl FnCx<'_, '_> {
                     self.check_args_loose(args);
                     return self.error_expr(span);
                 }
-                if let Some(at) = self.cx.direct_write(&k) {
+                // Written directly, an enumerable and writable property behaves as Node's does.
+                let plain = d.enumerable == Some(true) && d.writable == Some(true);
+                if let Some(at) = self.cx.direct_write(&k).filter(|_| !plain) {
                     let shown = self.cx.shown_name(&k);
                     self.cx.error(
                         Diagnostic::error(
@@ -90,7 +92,7 @@ impl FnCx<'_, '_> {
                             key.span,
                         )
                         .with_label(at, "written directly here")
-                        .with_note("a property `defineProperty` makes is not enumerable and not writable unless its descriptor says so, which Velt keeps per symbol"),
+                        .with_note("a property `defineProperty` makes is not enumerable and not writable unless its descriptor says so, which Velt keeps per symbol: with `enumerable: true, writable: true` it may also be written directly"),
                     );
                     self.check_args_loose(args);
                     return self.error_expr(span);
