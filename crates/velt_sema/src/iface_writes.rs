@@ -198,7 +198,7 @@ impl Ctx<'_> {
             format!("`{cname}` provides `{name}` with a `get` accessor, and a part of `{name}` is changed through `{iname}`, which is not supported yet (#350)"),
             at,
         )
-        .with_note(format!("Node changes the object the getter returns in place and never calls a setter; Velt reads a copy here and would have to write it back through a setter"))
+        .with_note("Node changes the object the getter returns in place and never calls a setter; Velt reads a copy here and would have to write it back through a setter")
         .with_note(format!("store `{name}` as a field of `{cname}`, or assign the whole value through `{iname}` (`x.{name} = …`)"));
         if let Some(w) = write {
             e = e.with_label(
