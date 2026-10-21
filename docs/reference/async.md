@@ -478,12 +478,13 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
   result that is a part of it (`s.get(k)` of a `shared<Map<string, Item>>`), and a call
   through a function value. Such a copy is another object: `s.get("k") === s.items[2]` and
   `s.items.find((x) => x.v == 2) === s.items[2]` are `false`, where JavaScript compares the
-  shared object with itself. A variable bound to a part cannot be changed, and neither can
-  the elements of a `for…of` loop over the value (or over what a method of it returns, such
-  as `s.values()`), nor what a function changes through such an element (also an element of
-  an element, through an alias or in a closure); `subarray()` and `buffer` of a shared typed
-  array are refused: in JavaScript all of them reach the shared value itself. Change a copy
-  (`s.ports.slice()`) instead.
+  shared object with itself. Nothing derived from the value can be changed: a variable bound
+  or assigned to a part, the elements of a `for…of` loop over it (or over what a method of it
+  returns, such as `s.values()`), and what these reach through a conditional, an array or
+  object literal, a constructor that keeps its argument, a method returning a part, a closure
+  at any depth, or a function changing such a value; `subarray()` and `buffer` of a shared
+  typed array are refused too: in JavaScript all of them reach the shared value itself.
+  Copying out is explicit: change a copy (`s.ports.slice()`, `structuredClone`) instead.
   `console.log(s)`, `[...s]`, `Object.keys(s)` and `JSON.stringify(s)` read the value inside
   as well. A value of
   `T` that holds a class with subclasses or with a `clone()` of its own is not read like this
@@ -527,7 +528,8 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
   value itself (assigning `v` updates it), returns a result, and must not be async. Its value
   is read only there: a value holding a `Mutex` cannot be printed, written as JSON or
   converted to `any`, `unknown` or `object` (``cannot convert a `shared<Mutex<C>>` to `any`:
-  it holds a lock``), all of which would read it without the lock. Nothing
+  it holds a lock``), all of which would read it without the lock, also not through a type
+  parameter (a generic function printing its `T` is refused where it is called with one). Nothing
   crosses the lock by reference, since other threads use the value as soon as it is released:
   - The result leaves the lock like a value going to another task: an object the callback made
     moves out, a part of the protected value comes out as a copy (`m.with((v) => v.inner)` is

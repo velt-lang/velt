@@ -44,6 +44,9 @@ pub(super) struct Evidence {
     /// the `this` it changes): no mode change, but the body modifies them too
     /// (`FnInfo::modified_params`).
     pub modified: FxHashSet<LocalId>,
+    /// Locals changed through one of their parts (`o.f.x = 1`) or given to a function that
+    /// may change them (`derived`'s held values), where a program reads a `shared`.
+    pub deep: FxHashSet<LocalId>,
 }
 
 /// Is local `l` modified before the body rebinds it for good? The rebinding is the first
@@ -70,28 +73,45 @@ pub(super) fn modified_before_rebind(cx: &mut Ctx, b: &Block, l: LocalId) -> Opt
 /// cursor loop, the iterator protocol), so a change to an element (also through a closure, an
 /// alias or an element of an element) counts as a change of the source's local, for
 /// `FnInfo::modified_params`.
-pub(super) fn collect_in(cx: &mut Ctx, f: &mut FnDef) -> Evidence {
+pub(super) fn collect_in(cx: &mut Ctx, d: crate::hir::DefId, f: &mut FnDef) -> Evidence {
     let (mut ev, aliases) = collect_aliased(cx, &mut f.body.block);
-    if !cx.frozen_reads || cx.loop_roots.is_empty() {
+    if !cx.frozen_reads {
         return ev;
     }
-    let elems: Vec<(LocalId, LocalId)> = (f.body.locals.iter().enumerate())
-        .filter_map(|(i, l)| Some((LocalId(i as u32), *cx.loop_roots.get(&l.span)?)))
-        .collect();
-    // Bounded: each round adds a root, and roots are locals.
-    for _ in 0..=elems.len() {
+    let mut edges = super::derived::edges(cx, f);
+    // Std's containers never change the values they store (`Map.set`'s value goes into an
+    // array the map then changes): what they hold is not followed in their own bodies.
+    if cx.modules[cx.fn_info(d).module].is_std {
+        edges.retain(|(_, r)| !r.held);
+    }
+    let mut changed: FxHashSet<LocalId> = ev.mutated.iter().copied().collect();
+    changed.extend(ev.modified.iter().copied());
+    changed.extend(ev.weak.iter().copied());
+    let mut deep: FxHashSet<LocalId> = ev.deep.iter().copied().collect();
+    deep.extend(ev.modified.iter().copied());
+    // Bounded: each round adds a local.
+    for _ in 0..=f.body.locals.len() {
         let mut grew = false;
-        for &(e, root) in &elems {
-            let changed =
-                ev.mutated.contains(&e) || ev.modified.contains(&e) || ev.weak.contains(&e);
-            if changed && ev.modified.insert(root) {
-                grew = true;
+        for (l, r) in &edges {
+            let through = match r.held {
+                true => deep.contains(l),
+                false => changed.contains(l),
+            };
+            if !through {
+                continue;
+            }
+            for &x in &r.locals {
+                ev.modified.insert(x);
+                grew |= changed.insert(x);
+                grew |= deep.insert(x);
             }
         }
         if !grew {
             break;
         }
         ev.modified = through_aliases(&ev.modified, &aliases, false);
+        changed.extend(ev.modified.iter().copied());
+        deep.extend(ev.modified.iter().copied());
     }
     ev
 }
@@ -233,7 +253,9 @@ impl VisitMut for Collector<'_, '_> {
                 } else if self.cx.frozen_reads {
                     // `i.v = 1` on any local (an owned one too), `st.m.get(k)!.v = 1` through
                     // what a method of `st` returned.
-                    self.ev.modified.extend(method_root(self.cx, place));
+                    self.ev
+                        .modified
+                        .extend(super::derived::roots(self.cx, place).locals);
                 }
             }
             E::Field {
@@ -247,7 +269,9 @@ impl VisitMut for Collector<'_, '_> {
             | E::UnwrapSome(_, UseMode::BorrowMut)
                 if self.cx.frozen_reads =>
             {
-                self.ev.modified.extend(method_root(self.cx, e));
+                self.ev
+                    .modified
+                    .extend(super::derived::roots(self.cx, e).locals);
             }
             E::Local(l, UseMode::BorrowMut) => {
                 self.ev.mutated.insert(*l);
@@ -258,6 +282,20 @@ impl VisitMut for Collector<'_, '_> {
                 }
             }
             E::Closure(def) => {
+                // A closure assigning a variable it captures by reference reassigns it (a
+                // borrowed parameter then owns its value: the old one may be freed).
+                let by_ref: Vec<(LocalId, LocalId)> = match &self.cx.defs[def.0 as usize] {
+                    Some(Def::Fn(c)) => (c.captures.iter())
+                        .filter(|c| c.mode == PassMode::BorrowMut)
+                        .map(|c| (c.outer, c.inner))
+                        .collect(),
+                    _ => vec![],
+                };
+                for (outer, inner) in by_ref {
+                    if closure_reassigns(self.cx, *def, inner, 0) {
+                        self.ev.reassigned.entry(outer).or_insert(e.span);
+                    }
+                }
                 if let Some(Def::Fn(c)) = &self.cx.defs[def.0 as usize] {
                     for cap in &c.captures {
                         let written = c.body.locals[cap.inner.0 as usize].mutable;
@@ -287,7 +325,11 @@ impl VisitMut for Collector<'_, '_> {
                 let bits = self.cx.fn_info(*d).modified_params;
                 for (i, a) in args.iter().enumerate().take(64) {
                     if bits & (1 << i) != 0 && !self.cx.is_copy(a.ty) {
+                        self.ev.deep.extend(place_root(a));
                         self.ev.modified.extend(place_root(a));
+                    }
+                    if let E::Local(l, UseMode::BorrowMut) = a.kind {
+                        self.ev.deep.insert(l);
                     }
                 }
             }
@@ -296,27 +338,36 @@ impl VisitMut for Collector<'_, '_> {
     }
 }
 
-/// The local a place is a part of, also through what methods return (`st.m.get(k)!.tags`:
-/// `st`).
-fn method_root(cx: &Ctx, e: &Expr) -> Option<LocalId> {
-    fn walk(cx: &Ctx, e: &Expr, called: bool) -> Option<LocalId> {
-        let _ = called;
-        match &e.kind {
-            E::Local(l, _) => Some(*l),
-            // `s.m.get(k)!`: a match on what the method returned.
-            E::Match { scrutinee, .. } => walk(cx, scrutinee, called),
-            E::Field { base, .. }
-            | E::Index { base, .. }
-            | E::UnwrapSome(base, _)
-            | E::UnwrapVariant { expr: base, .. }
-            | E::Downcast(base)
-            | E::Upcast(base) => walk(cx, base, called),
-            E::Call {
-                callee: Callee::Def(d, _),
-                args,
-            } if cx.fn_info(*d).this.is_some() => walk(cx, args.first()?, true),
-            _ => None,
-        }
+/// Does closure `def` (or one nested in it, through captures by reference) assign its local
+/// `l` as a whole?
+fn closure_reassigns(cx: &mut Ctx, def: crate::hir::DefId, l: LocalId, depth: u32) -> bool {
+    if depth > 16 {
+        return true;
     }
-    walk(cx, e, false)
+    let Some(Def::Fn(mut f)) = cx.defs[def.0 as usize].take() else {
+        return false;
+    };
+    let mut found = false;
+    let mut nested = vec![];
+    visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| match &e.kind {
+        E::Assign { place, .. } | E::CompoundAssign { place, .. } => {
+            found |= matches!(place.kind, E::Local(x, _) if x == l);
+        }
+        E::Closure(d) => nested.push(*d),
+        _ => {}
+    });
+    cx.defs[def.0 as usize] = Some(Def::Fn(f));
+    found
+        || nested.into_iter().any(|d| {
+            let inner: Vec<LocalId> = match &cx.defs[d.0 as usize] {
+                Some(Def::Fn(c)) => (c.captures.iter())
+                    .filter(|c| c.outer == l && c.mode == PassMode::BorrowMut)
+                    .map(|c| c.inner)
+                    .collect(),
+                _ => vec![],
+            };
+            inner
+                .into_iter()
+                .any(|i| closure_reassigns(cx, d, i, depth + 1))
+        })
 }

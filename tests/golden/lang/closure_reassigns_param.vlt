@@ -1,0 +1,35 @@
+// check: no leaks
+// A closure that assigns a parameter it captures by reference (directly or from a closure
+// nested in it) makes the parameter own its value: the caller passes a copy, and the old value
+// stays the caller's, as in JavaScript.
+class Store {
+  m: Map<string, number> = new Map<string, number>();
+}
+function mk(n: number): Store {
+  const s = new Store();
+  for (let i = 0; i < n; i++) {
+    s.m.set(`k${i}`, i);
+  }
+  return s;
+}
+function w(s: Store): number {
+  const f = () => {
+    s = mk(1);
+  };
+  f();
+  return s.m.size;
+}
+function w2(s: Store): number {
+  const f = () => {
+    const g = () => {
+      s = mk(2);
+    };
+    g();
+  };
+  f();
+  return s.m.size;
+}
+function main() {
+  const a = mk(5);
+  console.log(w(a), a.m.size, w2(a), a.m.size);
+}

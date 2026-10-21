@@ -341,3 +341,63 @@ fn a_mutex_cannot_become_any() {
         "class C { xs: number[] = [1]; } function main() { const m = shared(new Mutex<C>(new C())); const n: any = m.with((v) => v.xs.length); console.log(n); }",
     );
 }
+
+#[test]
+fn values_derived_from_a_shared_read_cannot_be_changed() {
+    // Whatever way a part travels (an assignment, a rebinding, a nested closure, a conditional,
+    // an array literal, a method returning its own type, a constructor keeping it), a change
+    // to it is refused; copying out (`slice()`) is explicit.
+    let defs = "class Item { v: number = 3; }
+        class Node { kids: Node[] = []; n: number = 1; first(): Node { return this.kids[0]; } }
+        class H { i: Item; constructor(i: Item) { this.i = i; this.i.v = 99; } }
+        class Store { m: Map<string, Item> = new Map<string, Item>(); items: Item[] = [new Item()]; root: Node = new Node(); }
+        function bumpn(n: Node) { n.n += 100; }";
+    for body in [
+        "let w = new Item(); for (const [k, v] of s.m) { w = v; w.v = 50; }",
+        "let y = new Item(); y = s.items[0]; y.v = 50;",
+        "for (const [k, v] of s.m) { const g = () => { const h = () => { v.v = 7; }; h(); }; g(); }",
+        "for (const [k, v] of s.m) { const w = k == \"k1\" ? v : v; w.v = 50; }",
+        "for (const [k, v] of s.m) { const a = [v]; a[0].v = 50; }",
+        "bumpn(s.root.first());",
+        "const h = new H(s.items[0]);",
+    ] {
+        let r = err_src(&format!(
+            "{defs} function main() {{ const s = shared(new Store()); {body} }}"
+        ));
+        assert!(r.contains("read out of a `shared` value"), "{body}: {r}");
+    }
+    for f in [
+        "function f(st: Store) { let y = new Item(); y = st.items[0]; y.v = 50; }",
+        "function f(st: Store) { for (const [k, v] of st.m) { const x = v; x.v = 5; } }",
+        "function f(st: Store) { for (const [k, v] of st.m) { const g = () => { const h = () => { v.v = 7; }; h(); }; g(); } }",
+    ] {
+        let r = err_src(&format!(
+            "{defs} {f} function main() {{ const s = shared(new Store()); f(s); }}"
+        ));
+        assert!(r.contains("read out of a `shared` value"), "{f}: {r}");
+    }
+    // Reading, copying out, and storing parts in a map or array of one's own are fine.
+    ok_src(&format!(
+        "{defs} function f(st: Store) {{ st.items.slice()[0] = new Item(); }}
+         function g(st: Store): number {{ let t = 0; for (const x of st.items) {{ const y = x; t += y.v; }} return t; }}
+         function main() {{ const s = shared(new Store()); f(s); console.log(g(s));
+           const idx = new Map<string, Item>(); const list: Item[] = [];
+           for (const [k, v] of s.m) {{ idx.set(k, v); list.push(v); }} console.log(idx.size, list.length); }}"
+    ));
+}
+
+#[test]
+fn a_lock_behind_a_type_parameter_is_not_read_without_it() {
+    let r = err_src(
+        "class C { xs: number[] = [1]; }
+         function show<T>(x: T) { const o: any = x; console.log(o); }
+         function show2<T>(x: T) { console.log(x, `${x}`); }
+         function main() { const m = shared(new Mutex<C>(new C())); show(m); show2(m); }",
+    );
+    assert_eq!(r.matches("read here without its lock").count(), 2, "{r}");
+    ok_src(
+        "class C { xs: number[] = [1]; }
+         function show<T>(x: T) { console.log(x, `${x}`); const o: any = x; }
+         function main() { show(new C()); show(3); }",
+    );
+}

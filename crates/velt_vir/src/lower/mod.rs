@@ -504,9 +504,6 @@ struct FnLower<'c, 'h> {
     proj_hold: Option<async_fn::BoxHold>,
     /// The locals this function's code may change (frozen.rs `changed_locals`), once asked.
     changed: Option<FxHashSet<LocalId>>,
-    /// The locals a closure in this function changes by reference (frozen.rs
-    /// `closure_changed`), once asked.
-    closure_changed: Option<FxHashSet<LocalId>>,
     /// Function params of a `Work::Frozen` instance given closure literals: their code
     /// (frozen.rs `KnownFn`).
     known_fns: FxHashMap<LocalId, frozen::KnownFn>,

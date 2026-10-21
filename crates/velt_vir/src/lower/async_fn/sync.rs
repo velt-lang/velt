@@ -128,9 +128,9 @@ impl FnLower<'_, '_> {
     fn handle_replaceable(&mut self, s: &hir::Expr) -> bool {
         use hir::ExprKind as K;
         match &s.kind {
-            // A variable a closure assigns through a capture by reference is no cell, but a
-            // call reaching the closure gives it another handle all the same.
-            K::Local(l, _) => self.in_shared_cell(s) || self.closure_assigns(*l),
+            // A variable the body may give another handle (an assignment anywhere, a closure
+            // assigning it by reference) is no cell, but the read keeps the box all the same.
+            K::Local(l, _) => self.in_shared_cell(s) || self.body_changes(*l),
             K::Global(_) => self.in_shared_cell(s),
             K::Field { .. }
             | K::Index { .. }

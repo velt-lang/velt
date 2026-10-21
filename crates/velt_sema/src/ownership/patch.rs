@@ -72,7 +72,13 @@ pub(super) fn patch_calls(
                 (modes, args, unknown)
             }
             E::New { def, args, .. } => match cx.adt(*def).and_then(|a| a.ctor) {
-                Some(c) => (Some(modes_of(cx, c)[1..].to_vec()), args, false),
+                Some(c) => {
+                    // What the constructor changes of its arguments (`this` is bit 0).
+                    if frozen {
+                        modified = cx.fn_info(c).modified_params >> 1;
+                    }
+                    (Some(modes_of(cx, c)[1..].to_vec()), args, false)
+                }
                 None => return,
             },
             _ => return,
@@ -337,7 +343,7 @@ fn borrow_mut(cx: &Ctx, e: &mut Expr, errors: &mut Vec<Diagnostic>) -> bool {
         E::Upcast(inner) | E::Downcast(inner) => &mut **inner,
         _ => e,
     };
-    if cx.frozen_reads && frozen_root(target) {
+    if cx.frozen_reads && frozen_part(cx, target) {
         modifies_frozen(cx, target, errors);
         return false;
     }
@@ -484,26 +490,7 @@ fn callbacks(cx: &mut Ctx, args: &mut [Expr], errors: &mut Vec<Diagnostic>) -> b
     changed
 }
 
-/// Is `e` read out of a `shared`: a part of one, or an element a method of one returns
-/// (`s.m.get(k)!`: a type other than its receiver's, where `s.items.slice()` is a new array)?
-fn frozen_part(cx: &mut Ctx, e: &Expr) -> bool {
-    match &e.kind {
-        E::UnwrapSome(base, _) | E::Downcast(base) | E::Upcast(base) => frozen_part(cx, base),
-        // `s.m.get(k)!`: a match on what the method returned.
-        E::Match { scrutinee, .. } => frozen_part(cx, scrutinee),
-        E::Call {
-            callee: Callee::Def(d, _),
-            args,
-        } if cx.fn_info(*d).this.is_some() => {
-            let Some(r) = args.first() else {
-                return false;
-            };
-            let elem = match cx.ty.kind(e.ty) {
-                TyKind::Option(t, _) => *t,
-                _ => e.ty,
-            };
-            elem != r.ty && !cx.is_copy(elem) && frozen_part(cx, r)
-        }
-        _ => frozen_root(e),
-    }
+/// Is `e` read out of a `shared`, or derived from such a read (`derived`)?
+fn frozen_part(cx: &Ctx, e: &Expr) -> bool {
+    super::derived::roots(cx, e).frozen
 }

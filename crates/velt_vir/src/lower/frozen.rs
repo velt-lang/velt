@@ -105,19 +105,18 @@ impl FnLower<'_, '_> {
         v
     }
 
-    /// Does a closure in this function assign local `l` through a capture by reference (it
-    /// is no cell then, but a call the closure reaches may still give it another value)?
-    pub(super) fn closure_assigns(&mut self, l: LocalId) -> bool {
-        if self.closure_changed.is_none() {
+    /// May this function's code give local `l` another value (an assignment anywhere in it,
+    /// also in a closure through a capture by reference, or a `BorrowMut` use)? Such a
+    /// variable is no cell, but a read of a `shared` handle in it must keep the box alive.
+    pub(super) fn body_changes(&mut self, l: LocalId) -> bool {
+        if self.changed.is_none() {
             let changed = match self.cx.cur_def.map(|d| self.cx.hir.def(d)) {
-                Some(hir::Def::Fn(f)) => closure_changed(self.cx.hir, &f.body.block),
+                Some(hir::Def::Fn(f)) => changed_locals(self.cx.hir, &f.body.block),
                 _ => FxHashSet::default(),
             };
-            self.closure_changed = Some(changed);
+            self.changed = Some(changed);
         }
-        self.closure_changed
-            .as_ref()
-            .is_some_and(|c| c.contains(&l))
+        self.changed.as_ref().is_some_and(|c| c.contains(&l))
     }
 
     /// The frozen value `e` read in place: its own use borrowed whatever its HIR mode, since
@@ -418,18 +417,6 @@ pub(super) fn changed_locals(hir: &hir::Program, body: &hir::Block) -> FxHashSet
     let mut c = Changed {
         hir,
         out: FxHashSet::default(),
-        closures_only: false,
-    };
-    c.block(body);
-    c.out
-}
-
-/// The locals of `body` a closure in it changes through a capture by reference.
-pub(super) fn closure_changed(hir: &hir::Program, body: &hir::Block) -> FxHashSet<LocalId> {
-    let mut c = Changed {
-        hir,
-        out: FxHashSet::default(),
-        closures_only: true,
     };
     c.block(body);
     c.out
@@ -438,8 +425,6 @@ pub(super) fn closure_changed(hir: &hir::Program, body: &hir::Block) -> FxHashSe
 struct Changed<'h> {
     hir: &'h hir::Program,
     out: FxHashSet<LocalId>,
-    /// Only what closures change (`closure_changed`).
-    closures_only: bool,
 }
 
 /// The local a place is rooted in.
@@ -507,7 +492,6 @@ impl Changed<'_> {
                     self.out.extend(changed.map(|c| c.outer));
                 }
             }
-            _ if self.closures_only => {}
             K::Assign { place, .. } | K::CompoundAssign { place, .. } => {
                 self.out.extend(place_root(place));
             }

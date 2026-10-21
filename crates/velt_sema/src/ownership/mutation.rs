@@ -44,8 +44,11 @@ pub(super) fn apply(
     for p in &f.params {
         let l = p.local;
         let local = &mut f.body.locals[l.0 as usize];
-        let written =
-            ev.mutated.contains(&l) || ev.weak.contains(&l) || ev.reassigned.contains_key(&l);
+        // What a closure nested in this one changes counts too, for `modified_params`.
+        let written = ev.mutated.contains(&l)
+            || ev.weak.contains(&l)
+            || ev.reassigned.contains_key(&l)
+            || cx.frozen_reads && ev.modified.contains(&l);
         // A change for the fixpoint: callers passing this closure / function read `mutable`
         // (`super::patch`, callback rule), and so does an enclosing body's evidence.
         if written && !local.mutable {
