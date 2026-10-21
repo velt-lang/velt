@@ -125,6 +125,11 @@ impl Ctx<'_> {
             methods.push(self.part_slot(&impls, name, false)?);
         }
         let own = self.adt(d)?.fields.clone();
+        // `own_ty`'s arguments: a field `val: T` of `Cell<string>` stores a `string`.
+        let own_args = match self.ty.kind(own_ty) {
+            TyKind::Adt(_, a) => a.clone(),
+            _ => vec![],
+        };
         // How each field is stored: a part's implementation's, or `d`'s own field.
         let mut stored: Vec<Option<SetterSrc>> = vec![];
         for (name, fty) in fields {
@@ -137,7 +142,7 @@ impl Ctx<'_> {
             let field = own
                 .iter()
                 .position(|f| f.name == name && f.private_to.is_none());
-            let Some(k) = field.filter(|&k| own[k].ty == want) else {
+            let Some(k) = field.filter(|&k| self.subst(own[k].ty, &own_args) == want) else {
                 // A `get` (and `set`) accessor of the class provides the field.
                 let (g, set) = crate::collect::impls::accessor_slots(self, d, own_ty, &name, want)?;
                 methods.push(g);

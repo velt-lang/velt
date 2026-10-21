@@ -47,6 +47,10 @@ impl Ctx<'_> {
         let module = self.type_level.op_modules.get(&op).copied().unwrap_or(0);
         let mut out: Vec<ShapeField> = vec![];
         for part in args {
+            // A class's optional field is an own property even while unset, so it is always
+            // copied, its `undefined` too (`anon::has_presence`).
+            let class = matches!(self.ty.kind(part), TyKind::Adt(d, _)
+                if self.adt(*d).is_some_and(|a| a.kind == AdtKind::Class));
             let Some(fields) = self.spread_part_fields(part) else {
                 let tn = self.display(part);
                 let mut d = Diagnostic::error(
@@ -69,7 +73,9 @@ impl Ctx<'_> {
                     // `TypeError` (lowering). TypeScript's `number | string` for one of another
                     // type is a union Velt doesn't build here.
                     Some(g) if f.optional => {
-                        if self.canon(g.ty) != self.canon(f.ty) {
+                        let read = self.ty.option_of(f.ty, Nothing::Undefined);
+                        let fits = class && self.canon(g.ty) == self.canon(read);
+                        if self.canon(g.ty) != self.canon(f.ty) && !fits {
                             let (gt, ft) = (self.display(g.ty), self.display(f.ty));
                             let msg = format!("this generic function spreads an optional field `{}` of type `{ft}` over an earlier value of type `{gt}`, which is not supported yet at this instantiation (#350)", f.name);
                             self.error(Diagnostic::error(msg, span).with_note(

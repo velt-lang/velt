@@ -1233,7 +1233,9 @@ Differences from TypeScript, each a compile error with a note on what to write i
   it as the same object, generic classes too, and a field written through it reaches the class's
   field. Writing through it a field that a class has only a `get` for stops the program with
   Node's `TypeError: Cannot set property n of #<C> which has only a getter` (what strict code
-  gets). Its values convert to each interface part as the same object (`===` holds). `Pick<I, K>`
+  gets), also when a subclass overrides only the getter of its base's pair. A generic class's
+  field provides a part's field at the instance's type arguments (`val: T` of `Cell<string>` for
+  `{ val: string }`). Its values convert to each interface part as the same object (`===` holds). `Pick<I, K>`
   and `Omit<I, K>` of such an interface are interfaces with those members, which values of `I`
   convert to the same way; in general an interface value converts to any interface whose members
   it has (an interface it extends, a structurally equal one, in both directions). Methods of one
