@@ -41,4 +41,7 @@ Notes / gaps:
 - IPv6 literals are validated loosely and not compressed.
 - Windows drive letters in `file:` URLs follow the URL spec: a path starting with `/` keeps the
   base's drive letter (`/x` against `file:///C:/p/m.ts` is `file:///C:/x`), `..` never removes
-  it, and a first segment `C|` is `C:`.
+  it, a first segment `C|` is `C:` (also through the `pathname` setter), a relative path that
+  starts with one takes none of the base's path (`C|/x` against `file:///D:/p/m.ts` is
+  `file:///C:/x`), and one where the host would be starts the path (`file://C:/x` is
+  `file:///C:/x`).

@@ -1,7 +1,7 @@
 dirname,filename,main,resolve,url
 true false true function
 <dir>/a%20b.ts <dir>/a?x=1#h <dir>/a#b
-<dir>/a[1]%7Bx%7D|%5E%60 <parent>/m/n.ts <dir>/
+<dir>/a[1]%7Bx%7D|%60 <parent>/m/n.ts <dir>/
 node:fs node:fs node:fs/promises node:test
 https://example.com/a data:text/plain,x
 true

@@ -201,7 +201,11 @@ function parseAbsolute(scheme: string, s: string, from: i64): UrlRecord | null {
   } else if (twoSlashes) {
     at = from + 2;
   }
-  if (at > from || (special && !file)) {
+  if (file && twoSlashes && startsWithDrive(s, at)) {
+    // `file://C:/x`: a drive letter where the host would be starts the path (the URL spec's
+    // file host state), so the host is empty.
+    r.hasHost = true;
+  } else if (at > from || (special && !file)) {
     const end = componentEnd(s, at, special, true);
     if (!parseAuthority(r, s, at, end, special)) {
       return null;
@@ -402,8 +406,14 @@ function parseRelative(rest: string, base: UrlRecord): UrlRecord | null {
     applyTail(r, rest, 0, drive, special);
     return r;
   }
-  const segs = base.path.length > 0 ? base.path.slice(1).split("/") : [];
-  segs.pop();
+  // A relative path continues from the base's directory, unless a `file:` URL's path starts
+  // with a drive letter (`C|/x`), which takes none of the base's path (the URL spec's file
+  // state).
+  const drive = r.scheme == "file" && startsWithDrive(rest, 0);
+  const segs = base.path.length > 0 && !drive ? base.path.slice(1).split("/") : [];
+  if (!drive) {
+    segs.pop();
+  }
   applyTail(r, rest, 0, segs, special);
   return r;
 }

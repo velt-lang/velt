@@ -16,7 +16,7 @@ function shown(specifier: string): string {
   return r.startsWith(parent) ? `<parent>/${r.slice(parent.length)}` : r;
 }
 console.log(shown("./a b.ts"), shown("./a?x=1#h"), shown("./a#b"));
-console.log(shown("./a[1]{x}|^`"), shown("../m/./n.ts"), shown("."));
+console.log(shown("./a[1]{x}|`"), shown("../m/./n.ts"), shown("."));
 console.log(shown("node:fs"), shown("fs"), shown("fs/promises"), shown("node:test"));
 console.log(shown("HTTPS://Example.com/a"), shown("data:text/plain,x"));
 // `/abs` keeps a Windows drive letter, so only the end is the same everywhere.

@@ -42,6 +42,10 @@
   that cannot throw is expected (`const r: (s: string) => string = import.meta.resolve` is an
   error): write that type with `throws Error`, or wrap it in an arrow,
   `const r = (s: string) => import.meta.resolve(s)`, whose type says it throws.
+- `import.meta` can be passed where an object type with some of its fields is expected
+  (`function f(p: { readonly url: string })`, `f(import.meta)`). That object is a copy of those
+  fields, as for any object type of another layout: assigning one of its fields is an error, and
+  it is not `===` to `import.meta`.
 - `import.meta` used as a value of its own (`const m = import.meta`, `return import.meta`) is
   the same object. Its fields are read-only, also through such a value (`m.url = "x"` is an
   error, as `import.meta.url = "x"` is).
