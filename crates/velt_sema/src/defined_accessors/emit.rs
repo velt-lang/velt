@@ -18,6 +18,8 @@ pub(super) struct Found {
     decls: FxHashMap<String, Decl>,
     /// Names declared more than once in the body: which one a call means is not followed.
     repeated: FxHashSet<String>,
+    /// The body declares its own `Object`: its `defineProperty` is not followed.
+    pub binds_object: bool,
     pub defines: Vec<Define>,
 }
 
@@ -47,7 +49,14 @@ impl Found {
                     self.stmt(e, in_loop);
                 }
             }
-            S::While { body, .. } | S::DoWhile { body, .. } | S::ForOf { body, .. } => {
+            S::While { body, .. } | S::DoWhile { body, .. } => self.stmts(&body.stmts, true),
+            // The loop variable hides a declaration of the same name: which one a call means is
+            // not followed.
+            S::ForOf { pattern, body, .. } => {
+                let mut names = vec![];
+                pattern_names(pattern, &mut names);
+                self.binds_object |= names.iter().any(|n| n == "Object");
+                self.repeated.extend(names);
                 self.stmts(&body.stmts, true)
             }
             S::For { init, body, .. } => {
@@ -78,6 +87,9 @@ impl Found {
 
     /// `const o: I = { … }` or `const o = { … } as I`.
     fn decl(&mut self, v: &ast::VarDecl) {
+        let mut names = vec![];
+        pattern_names(&v.pattern, &mut names);
+        self.binds_object |= names.iter().any(|n| n == "Object");
         let ast::PatternKind::Ident(name) = &v.pattern.kind else {
             return;
         };
@@ -122,10 +134,7 @@ impl Found {
             in_loop,
             span: e.span,
         };
-        for p in props {
-            let ast::ObjectProp::KeyValue(n, v) = p else {
-                continue;
-            };
+        for (n, v) in descriptor(props) {
             match n.name.as_str() {
                 "get" => d.get = Some(v.clone()),
                 "set" => d.set = Some(v.clone()),
@@ -139,6 +148,9 @@ impl Found {
 
     /// Rewrite the body's statements; report the definitions it can't follow.
     pub(super) fn rewrite(&self, stmts: &mut Vec<ast::Stmt>, diags: &mut Vec<Diagnostic>) {
+        if self.binds_object {
+            return;
+        }
         let mut plans: FxHashMap<(String, String), Plan> = FxHashMap::default();
         let mut skipped: FxHashSet<Span> = FxHashSet::default();
         for d in &self.defines {
@@ -167,6 +179,26 @@ impl Found {
                 Err(None) => {}
             }
         }
+        // Defined again after `configurable: false`, Node throws unless each accessor is the
+        // one the property has (SameValue): a function written in place is always another.
+        for d in &self.defines {
+            let fixed = plans
+                .get(&(d.object.clone(), d.key.clone()))
+                .is_some_and(|p| p.fixed);
+            let reused = [&d.get, &d.set]
+                .into_iter()
+                .flatten()
+                .any(|f| !is_function_literal(f));
+            if fixed && reused && skipped.insert(d.span) {
+                diags.push(
+                    Diagnostic::error(
+                        format!("`Object.defineProperty` of `{}` on `{}` with a function that is not written in the call, where the property may already be defined with `configurable: false`, is not supported yet", d.key, d.object),
+                        d.span,
+                    )
+                    .with_note("Node allows defining it again only with the same functions (SameValue), which Velt doesn't compare: write the accessor in the call (`get: () => …`)"),
+                );
+            }
+        }
         if !plans.is_empty() || !skipped.is_empty() {
             apply(stmts, &plans, &skipped);
         }
@@ -179,6 +211,19 @@ impl Found {
         }
         let decl = self.decls.get(&d.object).ok_or(None)?;
         let (o, k) = (&d.object, &d.key);
+        if let Some(f) = [&d.get, &d.set]
+            .into_iter()
+            .flatten()
+            .find(|f| is_undefined(f))
+        {
+            return Err(Some(
+                Diagnostic::error(
+                    format!("`Object.defineProperty` of `{k}` on `{o}` with an accessor `undefined` is not supported yet"),
+                    f.span,
+                )
+                .with_note("in Node, the property then reads `undefined` (a getter) or throws on a write (a setter), which the interface's type doesn't allow: give a function"),
+            ));
+        }
         if d.data {
             return Err(Some(
                 Diagnostic::error(
@@ -429,16 +474,26 @@ fn definition(e: &ast::Expr, plans: &FxHashMap<(String, String), Plan>) -> Optio
         ));
     }
     let mut fixes = false;
-    for p in props {
-        let ast::ObjectProp::KeyValue(n, v) = p else {
-            continue;
+    for (n, v) in descriptor(props) {
+        // Through a variable of the accessor's own type: a value that may be `undefined`
+        // (`get: maybe`) is a type error, not a call of nothing.
+        let mut replace = |which: &str, f: ast::Expr, ty: ast::TypeExpr| {
+            let fresh = cell(&o.name, k, &format!("new {which}"));
+            stmts.push(stmt(
+                S::Var(ast::VarDecl {
+                    kind: ast::VarKind::Const,
+                    pattern: ident_pattern(&fresh, span),
+                    ty: Some(ty),
+                    init: Some(f),
+                    span,
+                }),
+                span,
+            ));
+            stmts.push(assign(&cell(&o.name, k, which), ident(&fresh, span), span));
         };
         match n.name.as_str() {
-            "get" => stmts.push(assign(&cell(&o.name, k, "get"), v.clone(), span)),
-            "set" => {
-                let f = typed_setter(v.clone(), &member);
-                stmts.push(assign(&cell(&o.name, k, "set"), f, span));
-            }
+            "get" => replace("get", v, getter_type(&member)),
+            "set" => replace("set", typed_setter(v, &member), setter_type(&member)),
             "configurable" => fixes = matches!(v.kind, E::Lit(ast::Lit::Bool(false))),
             _ => {}
         }
@@ -448,6 +503,50 @@ fn definition(e: &ast::Expr, plans: &FxHashMap<(String, String), Plan>) -> Optio
         stmts.push(assign(&cell(&o.name, k, "fixed"), t, span));
     }
     Some(ast::Block { stmts, span })
+}
+
+/// The attributes of a descriptor literal, a shorthand `{ get }` as `{ get: get }`.
+fn descriptor(props: &[ast::ObjectProp]) -> Vec<(ast::Ident, ast::Expr)> {
+    props
+        .iter()
+        .filter_map(|p| match p {
+            ast::ObjectProp::KeyValue(n, v) => Some((n.clone(), v.clone())),
+            ast::ObjectProp::Shorthand(n) => Some((n.clone(), ident(&n.name, n.span))),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Is `e` a function written in place (each evaluation a new function)?
+fn is_function_literal(e: &ast::Expr) -> bool {
+    match &e.kind {
+        E::Arrow { .. } | E::Function(_) => true,
+        E::Paren(x) => is_function_literal(x),
+        _ => false,
+    }
+}
+
+/// Is `e` `undefined`?
+fn is_undefined(e: &ast::Expr) -> bool {
+    matches!(&e.kind, E::Lit(ast::Lit::Undefined))
+        || matches!(&e.kind, E::Ident(id) if id.name == "undefined")
+}
+
+/// The names pattern `p` binds.
+fn pattern_names(p: &ast::Pattern, out: &mut Vec<String>) {
+    match &p.kind {
+        ast::PatternKind::Ident(id) => out.push(id.name.clone()),
+        ast::PatternKind::Wildcard => {}
+        ast::PatternKind::Object { fields, rest } => {
+            fields.iter().for_each(|(_, p)| pattern_names(p, out));
+            out.extend(rest.iter().map(|r| r.name.clone()));
+        }
+        ast::PatternKind::Array { elems, rest } => {
+            elems.iter().for_each(|p| pattern_names(p, out));
+            out.extend(rest.iter().map(|r| r.name.clone()));
+        }
+        ast::PatternKind::Default { pattern, .. } => pattern_names(pattern, out),
+    }
 }
 
 /// The variable holding accessor `which` of property `k` of `o`.

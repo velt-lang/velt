@@ -1916,10 +1916,13 @@ does is an error saying it is not supported yet, never a quiet difference.
   setter), with `I` an interface that declares it ([object literals implementing
   interfaces](#object-literals-implementing-interfaces)), replaces the literal's getter or setter,
   as in Node: one the descriptor leaves out stays, and after `configurable: false` defining it
-  again throws `TypeError: Cannot redefine property: k`. `enumerable` changes nothing Velt shows,
-  since an interface value is not listed by key. Accessors defined on other objects (a
-  parameter, a class instance), with `this` inside them (#941), or that may throw (until #1326),
-  are not supported yet.
+  again throws `TypeError: Cannot redefine property: k`. A shorthand descriptor (`{ get }`) is
+  `{ get: get }`. `enumerable` changes nothing Velt shows, since an interface value is not
+  listed by key. Not supported yet: accessors defined on other objects (a parameter, a class
+  instance, a loop variable named like the literal), with `this` inside them (#941), that may
+  throw (until #1326), that are `undefined` (the property would read `undefined`), and a
+  function not written in the call where the property may already be defined with
+  `configurable: false` (Node compares the functions).
 
 ```ts
 interface Counter {

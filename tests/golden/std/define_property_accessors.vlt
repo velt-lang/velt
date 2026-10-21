@@ -113,3 +113,51 @@ function twice(): number {
 }
 
 console.log(twice());
+
+interface Pair {
+  get k(): number;
+  set k(v: number);
+}
+
+// A shorthand descriptor: `{ get }` is `{ get: get }`.
+function shorthand(): Pair {
+  let n = 1;
+  const o: Pair = {
+    get k() {
+      return n;
+    },
+    set k(v) {
+      n = v;
+    },
+  };
+  const get = () => 42;
+  const set = (v: number) => {
+    n = v * 2;
+  };
+  Object.defineProperty(o, "k", { get });
+  Object.defineProperty(o, "k", { set });
+  o.k = 5;
+  console.log(n);
+  return o;
+}
+
+console.log(shorthand().k);
+
+// A local `Object` is the program's own.
+function ownObject(): number {
+  const Object = {
+    defineProperty: (o: Pair, key: string, d: { get: () => number }): void => {
+      console.log("own defineProperty", key, d.get());
+    },
+  };
+  const o: Pair = {
+    get k() {
+      return 1;
+    },
+    set k(v) {},
+  };
+  Object.defineProperty(o, "k", { get: () => 2 });
+  return o.k;
+}
+
+console.log(ownObject());

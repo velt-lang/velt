@@ -1,3 +1,6 @@
+`Object.defineProperty` of `value` on `c` with a function that is not written in the call, where the property may already be defined with `configurable: false`, is not supported yet
 `Object.defineProperty` of a setter `value` on `ro`, whose object literal has no setter `value`, is not supported yet
 a property descriptor with an accessor and `value` or `writable`
+`Object.defineProperty` of `value` on `u` with an accessor `undefined` is not supported yet
+an accessor defined with `Object.defineProperty` is not supported yet here
 an accessor defined with `Object.defineProperty` is not supported yet here

@@ -6,3 +6,7 @@ a
 TypeError: Cannot redefine property: n
 typed
 201
+10
+42
+own defineProperty k 2
+1

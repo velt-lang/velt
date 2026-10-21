@@ -67,9 +67,24 @@ fn defines_accessors(module: &ast::Module) -> bool {
     f.0
 }
 
+/// Does `module` declare its own `Object` at module level (a variable, function, class or
+/// import)? Its `defineProperty` calls are then not `Object.defineProperty`'s.
+fn declares_object(module: &ast::Module) -> bool {
+    module.items.iter().any(|item| match &item.kind {
+        I::Var(v) => matches!(&v.pattern.kind, ast::PatternKind::Ident(n) if n.name == "Object"),
+        I::Function(f) => f.sig.name.name == "Object",
+        I::Class(t) | I::Struct(t) => t.name.name == "Object",
+        I::Import(imp) => {
+            (imp.names.iter()).any(|n| n.alias.as_ref().unwrap_or(&n.name).name == "Object")
+        }
+        _ => false,
+    })
+}
+
 /// The rewritten modules (`None`: no module defines an accessor), and the errors found.
 pub(crate) fn rewrite(modules: &[SourceModule]) -> (Vec<Diagnostic>, Option<Vec<SourceModule>>) {
-    let wanted = |m: &SourceModule| !m.is_std && defines_accessors(&m.ast);
+    let wanted =
+        |m: &SourceModule| !m.is_std && !declares_object(&m.ast) && defines_accessors(&m.ast);
     if !modules.iter().any(wanted) {
         return (vec![], None);
     }

@@ -35,3 +35,51 @@ const c: Cell = {
 };
 Object.defineProperty(c, "value", { get: () => 1, writable: true });
 redefine(c);
+
+// An accessor `undefined`: Node's property reads `undefined`, which the type doesn't allow.
+const u: Cell = {
+  get value() {
+    return n;
+  },
+  set value(v) {
+    n = v;
+  },
+};
+Object.defineProperty(u, "value", { get: undefined });
+
+// Defined again after `configurable: false` with the same function: Node compares them.
+function again(): Cell {
+  const c: Cell = {
+    get value() {
+      return n;
+    },
+    set value(v) {
+      n = v;
+    },
+  };
+  const g = () => 7;
+  for (let i = 0; i < 2; i++) {
+    Object.defineProperty(c, "value", { get: g, configurable: false });
+  }
+  return c;
+}
+
+console.log(again().value);
+
+// A loop variable named like the literal: which object a call means is not followed.
+function shadowed(list: Cell[]): Cell {
+  const o: Cell = {
+    get value() {
+      return n;
+    },
+    set value(v) {
+      n = v;
+    },
+  };
+  for (const o of list) {
+    Object.defineProperty(o, "value", { get: () => 5 });
+  }
+  return o;
+}
+
+console.log(shadowed([c]).value);
