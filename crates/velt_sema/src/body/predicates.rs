@@ -174,7 +174,10 @@ impl FnCx<'_, '_> {
                 | TyKind::Literal(_)
                 | TyKind::Symbol
                 | TyKind::Array(_)
-                | TyKind::Tuple(_) => true,
+                | TyKind::Tuple(_)
+                // A function value has no fields (one with members has an object type).
+                | TyKind::FnPtr { .. }
+                | TyKind::Closure(_) => true,
                 TyKind::Adt(d, _) => self.cx.adt(*d).is_some_and(|a| {
                     matches!(a.kind, crate::hir::AdtKind::Anon | crate::hir::AdtKind::Struct)
                 }),

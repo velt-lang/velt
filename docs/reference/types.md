@@ -1552,7 +1552,8 @@ Enums are not generic and have no payloads; use a discriminated union for tagged
   the instance of a generic interface with only fields. An instance whose field is `void`
   (`Box<void>`, or sigx's `__ref: TRef` brand with `TRef = void`) is accepted, as in
   TypeScript: the field holds no value, a write of an `any` to it is dropped, and a read of it
-  is `void` (which can't be printed or tested). A `void` field written in an object type, a
+  is `void` (which can't be printed or tested; nor, for now, can the object be printed or
+  written as JSON, where Node shows `v: undefined`). A `void` field written in an object type, a
   struct or a class, or a class instance with one (`new Holder<void>()`), is an error.
 
 ```ts
