@@ -18,4 +18,13 @@ function main() {
     console.log(key);
   }
   console.log(Object.values({}));
+  // Used as a value: the same messages as the statements above.
+  const kf = (): string => "a";
+  const v = (names[kf()] += "2");
+  const w = (counts[k] += 1);
+  console.log(v, w);
+  // Values that may be `null` already: the message names `null` once.
+  const maybe: Record<string, string | null> = {};
+  maybe["m"] += "!";
+  console.log(maybe);
 }

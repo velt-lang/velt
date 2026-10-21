@@ -605,7 +605,7 @@ impl FnCx<'_, '_> {
     }
 }
 
-/// How the literal stores each writable field of `iface` (`n_methods` methods), for the setter
+/// How the literal stores each field of `iface` (`n_methods` methods), for the setter
 /// slots of `crate::iface_writes`: a plain value in its field of struct `d`, a `get f()` through
 /// the `set f(v)` stored next to it, or missing.
 fn literal_setters(
@@ -616,12 +616,15 @@ fn literal_setters(
     (d, self_ty): (DefId, TyId),
     span: Span,
 ) -> Vec<SetterSrc> {
-    let names: Vec<String> = cx.iface(iface).map_or(vec![], |i| {
-        i.fields.iter().map(|f| f.name.clone()).collect()
+    let names: Vec<(String, bool)> = cx.iface(iface).map_or(vec![], |i| {
+        i.fields
+            .iter()
+            .map(|f| (f.name.clone(), f.readonly))
+            .collect()
     });
     let mut out = vec![];
-    for k in cx.writable_fields(iface) {
-        let name = &names[k];
+    for k in cx.setter_fields(iface) {
+        let (name, readonly) = &names[k];
         out.push(match slots.get(n_methods + k) {
             Some(Some(Slot::Value(j))) => SetterSrc::Field {
                 d,
@@ -644,13 +647,37 @@ fn literal_setters(
                         fn_ty: field_tys[j].1,
                         param,
                     },
-                    _ => SetterSrc::Missing {
-                        span,
-                        name: name.clone(),
+                    _ => match getter_ret(cx, slots.get(n_methods + k), field_tys) {
+                        Some(ty) if *readonly => SetterSrc::Unwritable {
+                            span,
+                            name: name.clone(),
+                            d,
+                            self_ty,
+                            ty,
+                        },
+                        _ => SetterSrc::Missing {
+                            span,
+                            name: name.clone(),
+                        },
                     },
                 }
             }
         });
     }
     out
+}
+
+/// The type a `get f()` in getter slot `slot` gives.
+fn getter_ret(
+    cx: &crate::ctx::Ctx,
+    slot: Option<&Option<Slot>>,
+    field_tys: &[(String, TyId)],
+) -> Option<TyId> {
+    let Some(Some(Slot::Call(j))) = slot else {
+        return None;
+    };
+    match cx.ty.kind(field_tys.get(*j as usize)?.1) {
+        TyKind::FnPtr { ret, .. } => Some(*ret),
+        _ => None,
+    }
 }

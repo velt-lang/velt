@@ -1,0 +1,83 @@
+// check: no leaks
+// TS `readonly` is shallow: a part of a readonly field (an element of a tuple, a field of an
+// object type, an element of an array) may change through an interface or a generic value,
+// and the object that holds the field sees the change, as in JS.
+interface R {
+  readonly t: [number, string];
+  readonly o: { v: number; w: [number, number] };
+  readonly arr: number[];
+  sum(): number;
+}
+
+class RC implements R {
+  readonly t: [number, string] = [1, "a"];
+  readonly o: { v: number; w: [number, number] } = { v: 1, w: [0, 0] };
+  readonly arr: number[] = [1];
+  sum(): number {
+    return this.t[0] + this.o.v + this.o.w[1] + this.arr[0];
+  }
+}
+
+function change(x: R): void {
+  x.t[0] = 5;
+  x.t[1] += "b";
+  x.o.v = 7;
+  x.o.w[1]++;
+  x.arr[0] = 9;
+}
+
+function viaGeneric<X extends R>(x: X): void {
+  x.t[0] *= 2;
+  x.o.v -= 1;
+}
+
+function lit(): R {
+  return {
+    t: [1, "l"],
+    o: { v: 2, w: [3, 4] },
+    arr: [5],
+    sum(): number {
+      return 0;
+    },
+  };
+}
+
+// A readonly field an object literal reads through a getter, never changed: fine.
+interface G {
+  readonly g: [number, number];
+  label: string;
+  size(): number;
+}
+
+function relabel(x: G): void {
+  x.label = "new";
+}
+
+function main() {
+  const r = new RC();
+  change(r);
+  console.log(r.t[0], r.t[1], r.o.v, r.o.w[1], r.arr[0], r.sum());
+  viaGeneric(r);
+  console.log(r.t[0], r.o.v, r.sum());
+  const keep = r.o;
+  change(r);
+  console.log(keep.v, r.o.v);
+
+  const l = lit();
+  const other = l;
+  change(l);
+  console.log(other.t[0], other.t[1], other.o.v, other.o.w[1], other.arr[0]);
+
+  const pair: [number, number] = [1, 2];
+  const g: G = {
+    get g(): [number, number] {
+      return pair;
+    },
+    label: "old",
+    size(): number {
+      return 2;
+    },
+  };
+  relabel(g);
+  console.log(g.g[1], g.label);
+}

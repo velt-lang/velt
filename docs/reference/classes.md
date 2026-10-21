@@ -499,6 +499,14 @@ console.log(p.len(), q.len());  // 4 4
   interface's table and writes through a setter that only interfaces the program writes
   through get, so other programs pay nothing; through a `T extends I` both are direct calls. An
   object literal implementing such an interface with `get f()` must give `set f(v)` too.
+  Changing a part of a field (`x.t[0] = 5` on a tuple field, `x.pos.p[1] += 1`, `x.t[0]++`)
+  changes the field the object holds, as in JS: the field is read through its getter, the part
+  changed and the field written back through its setter. The receiver is evaluated once, and a
+  right-hand side with an effect (a call, an `await`) runs before the field is read, so a
+  change it (or another task) makes to the same field is kept. `readonly` is shallow, as in
+  TypeScript: `x.o.v = 5` and `x.t[0] = 5` on a `readonly` field work, written back through a
+  setter the interface keeps for this; an object literal that implements the field with only
+  `get o()` then needs `set o(v)` too.
 - An **optional method** `m?(x: T): R` is an optional field of function type
   (`m?: (x: T) => R`): an implementing class declares the field as `m?: (x: T) => R` or
   `m: ((x: T) => R) | undefined = undefined`, and a caller writes `o.m?.(x)`.
