@@ -51,12 +51,19 @@ fn setters_through_interfaces_overrides_and_extend() {
         "interface Sized { get size(): i64; set size(v: i64); }
          class A implements Sized { n: i64 = 0; get size(): i64 { return this.n; }
            set size(v: i64) { this.n = v; } }
-         class B extends A { override set size(v: i64) { this.n = v * 2; } }
+         class B extends A { override get size(): i64 { return this.n; }
+           override set size(v: i64) { this.n = v * 2; } }
          struct P { x: i64; }
          extend P { get double(): i64 { return this.x * 2; } set double(v: i64) { this.x = v / 2; } }
          function grow<T extends Sized>(x: T) { x.size += 1; x.size = x.size * 2; }
          function main() { const a: A = new B(); a.size = 4; grow(a);
            let p = P { x: 1 }; p.double = 10; console.log(a.size, p.x); }",
+    );
+    // Overriding only the setter would hide the base getter (reads give `undefined` in JS).
+    err_src(
+        "class A { n: i64 = 0; get size(): i64 { return this.n; } set size(v: i64) { this.n = v; } }
+         class B extends A { override set size(v: i64) { this.n = v * 2; } }
+         function main() { const a: A = new B(); a.size = 4; console.log(a.size); }",
     );
 }
 

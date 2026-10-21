@@ -143,17 +143,21 @@ impl FnCx<'_, '_> {
                 self.optional_slot(a, crate::body::OptionalSlot::Param);
             }
         }
+        let args_before = self.cx.diags.len();
         let checked = self.args_in_rounds(c, &mut slots, &context, args, collect);
+        let reported = self.cx.diags.len() > args_before;
         if let Some(e) = exp {
             self.prefer_context(c, &mut slots, &context, &checked, e);
             self.cx.match_ty(c.ret, e, &mut slots);
         }
         // An argument that is already an error (reported) leaves its slots unknown: no second
-        // error about inferring them. So does one holding an error type (a callback returning
-        // a call that broke a bound).
+        // error about inferring them. So does one holding an error type when checking the
+        // arguments reported one (a callback returning a call that broke a bound); an
+        // unreported error placeholder (`{}` checked as a `Record<K, V>`) still asks for them.
         let error = self.cx.ty.error;
         let quiet = checked.iter().any(|h| h.ty == error)
-            || (slots.iter().any(Option::is_none)
+            || (reported
+                && slots.iter().any(Option::is_none)
                 && checked.iter().any(|h| self.cx.ty.has_error(h.ty)));
         self.default_slots(c, &mut slots);
         // An explicit type argument is where its slot's bound is checked; then the arguments.

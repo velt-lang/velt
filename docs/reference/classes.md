@@ -245,7 +245,8 @@ hidden classes and no runtime shape checks.
   getter or setter must be accessors too. An override of only the getter of a base class's
   `get`/`set` pair replaces the whole property, as in JS: writing it through the subclass is an
   error (TypeScript's TS2540), and through the base class, an interface or an intersection it
-  stops with Node's `TypeError: Cannot set property n of #<S> which has only a getter`.
+  stops with Node's `TypeError: Cannot set property n of #<S> which has only a getter`. Overriding only the setter is an error: the setter-only accessor would
+  hide the base getter (reads give `undefined` in JS), so override the getter too.
   Getters cannot be `static` or `async`. A getter's
   type may be inferred from its `return` like a method's
   ([Return types](functions.md#return-types)); an interface getter writes it.

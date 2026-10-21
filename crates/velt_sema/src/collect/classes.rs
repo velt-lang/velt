@@ -276,6 +276,7 @@ fn getter_only_overrides(cx: &mut Ctx, d: DefId, vt: &mut Vtable) {
     let self_args: Vec<TyId> = (0..n as u32).map(|i| cx.ty.param(i)).collect();
     let self_ty = cx.ty.intern(crate::hir::TyKind::Adt(d, self_args));
     for m in decl.methods.iter().filter(|m| m.is_override) {
+        hidden_getter(cx, d, (b, &bargs), m);
         let Some(key) = shadowed_setter(cx, d, m) else {
             continue;
         };
@@ -298,6 +299,40 @@ fn getter_only_overrides(cx: &mut Ctx, d: DefId, vt: &mut Vtable) {
             vt.entries[slot as usize] = def;
         }
     }
+}
+
+/// An error when method `m` of class `d` overrides only the setter of a `get`/`set` pair of
+/// its base `b`: in JavaScript the setter-only accessor replaces the whole property, so reads
+/// give `undefined`, which the getter's type can't hold.
+fn hidden_getter(cx: &mut Ctx, d: DefId, (b, bargs): (DefId, &[TyId]), m: &ast::Method) {
+    let Some(a) = cx.adt(d) else { return };
+    let (Some(decl), module) = (a.decl, a.module) else {
+        return;
+    };
+    let name = &m.decl.sig.name;
+    let own_getter = decl
+        .methods
+        .iter()
+        .any(|g| g.is_getter && !g.is_static && g.decl.sig.name.name == name.name);
+    if !m.is_setter || m.is_static || own_getter {
+        return;
+    }
+    let key = cx.method_key(module, name, false);
+    let inherited = lookup_method(cx, b, bargs, &key)
+        .filter(|f| matches!(f, Found::Class { .. }) && !f.is_static())
+        .is_some_and(|f| cx.fn_info(f.def()).is_getter);
+    if !inherited {
+        return;
+    }
+    let n = &name.name;
+    cx.error(
+        Diagnostic::error(
+            format!("`set {n}` overrides only the setter of the base class's `get {n}`/`set {n}` pair"),
+            name.span,
+        )
+        .with_note("in JavaScript a setter-only accessor replaces the whole property, so reading it would give `undefined`")
+        .with_note(format!("override the getter too (`override get {n}()`)")),
+    );
 }
 
 /// Vtable methods have a fixed ABI (no ownership inference).

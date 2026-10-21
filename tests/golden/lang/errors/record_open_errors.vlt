@@ -18,4 +18,5 @@ function main() {
     console.log(key);
   }
   console.log(Object.values({}));
+  console.log(Object.entries({}));
 }

@@ -18,3 +18,5 @@ record_open_errors.vlt:17:21: error: cannot iterate over a `Record<string, i64>`
 iterate its keys with `for (const k of Object.keys(counts))` or its entries with `for (const [k, v] of Object.entries(counts))`
 record_open_errors.vlt:20:15: error: cannot infer type parameters `K` and `V` of `Object.values`
 add explicit type arguments, e.g. `f<i64>(...)`, or annotate the result
+record_open_errors.vlt:21:15: error: cannot infer type parameters `K` and `V` of `Object.entries`
+add explicit type arguments, e.g. `f<i64>(...)`, or annotate the result
