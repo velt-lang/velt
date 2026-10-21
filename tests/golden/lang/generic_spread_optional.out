@@ -1,0 +1,5 @@
+{"name":"base","tags":["x"]} true
+{"name":"patched","tags":["x"]}
+{"name":"patched"} true false
+{} true true
+{} false

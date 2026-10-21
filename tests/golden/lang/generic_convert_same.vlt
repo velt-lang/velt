@@ -1,0 +1,28 @@
+// check: no leaks
+// Conversions between types of a generic body that are one object type at the instantiation
+// (#350): `T & { tag }` as `T` at a `T` that has `tag`, `T` as `T`, and `{ ...t }` as `T`. The
+// first two are the same object (identity and writes kept); the spread is a new one.
+// Expected output: Node's.
+type Tagged<T> = T & { tag: string };
+
+function unwrap<T>(s: Tagged<T>): T {
+  return s;
+}
+function copy<T extends object>(t: T): T {
+  return { ...t };
+}
+function same<T extends object>(t: T): T {
+  const s: T = t;
+  return s;
+}
+
+const x: Tagged<{ a: number }> = { a: 1, tag: "t" };
+const u = unwrap<Tagged<{ a: number }>>(x);
+console.log(u === x, u);
+u.a = 3;
+console.log(x.a);
+const k = same(x);
+k.tag = "k";
+console.log(k === x, x.tag);
+const c = copy(x);
+console.log(c === x, c);

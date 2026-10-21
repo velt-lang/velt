@@ -472,6 +472,7 @@ fn layout_fields(cx: &mut Ctx, d: DefId, stack: &mut Vec<DefId>) {
     let mut all = vec![];
     for mut f in inherited {
         f.ty = cx.subst(f.ty, &bargs);
+        f.declared = cx.subst(f.declared, &bargs);
         all.push(f);
     }
     let start = all.len();

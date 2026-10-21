@@ -1,7 +1,7 @@
 // Conditional, mapped and template literal types: what TypeScript rejects is an error (TS2322,
-// TS2353, TS1338), and a form written directly whose argument is still a type parameter, which
-// TypeScript keeps unevaluated, is "not supported yet" (#934) rather than an approximation (through
-// an alias it is deferred: lang/type_level_deferred).
+// TS2353, TS1338). A form whose argument is still a type parameter is deferred, as TypeScript
+// keeps it unevaluated (#350, lang/type_level_deferred): `generic` returns a `"no"` where it
+// declares the unevaluated conditional type, which TypeScript rejects too (TS2322).
 type IsString<T> = T extends string ? "yes" : "no";
 type Getters<T> = { [K in keyof T as `get${Capitalize<string & K>}`]: () => T[K] };
 type Unbox<T> = T extends { value: infer V } ? V : never;

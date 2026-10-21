@@ -23,11 +23,11 @@ impl Ctx<'_> {
         }
     }
 
-    /// Can `t` be branded (a string, number or boolean type)?
+    /// Can `t` be branded (a string, number, boolean or symbol type)?
     pub(crate) fn brandable(&self, t: TyId) -> bool {
         matches!(
             self.ty.kind(t),
-            TyKind::Str | TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool
+            TyKind::Str | TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Symbol
         )
     }
 

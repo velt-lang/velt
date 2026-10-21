@@ -50,6 +50,8 @@ pub(crate) struct Ctx<'m> {
     /// Interfaces written through and their setter slots (`crate::iface_writes`).
     pub(crate) iface_writes: crate::iface_writes::IfaceWrites,
     pub(crate) part_ifaces: crate::intersection_members::PartIfaces,
+    /// Interfaces made for intersections and `Pick`s of interfaces with methods.
+    pub(crate) synth_ifaces: crate::synth_ifaces::SynthIfaces,
     pub(crate) any: Option<crate::any::AnyDefs>,
     /// `impls` by interface (`Ctx::find_impl`).
     pub impl_index: crate::infer::ImplIndex,
@@ -112,6 +114,9 @@ pub(crate) struct Ctx<'m> {
     pub alias_names: FxHashMap<TyId, String>,
     /// (class, method key) of every `override` of a generic method (no vtable slot).
     pub generic_overrides: Vec<(DefId, String)>,
+    /// The throwing setters a getter-only override gets (`collect::classes`): a write through
+    /// the class itself is a type error, as in TypeScript, one through a base class throws.
+    pub getter_only_setters: FxHashSet<DefId>,
     /// Names of `Param(i)` in the definition being checked (for messages).
     pub display_params: Vec<String>,
     /// Functions whose parameter defaults are checked (or being checked): they are checked on
@@ -301,6 +306,7 @@ impl<'m> Ctx<'m> {
             impls: vec![],
             iface_writes: Default::default(),
             part_ifaces: Default::default(),
+            synth_ifaces: Default::default(),
             any: None,
             impl_index: Default::default(),
             anon: FxHashMap::default(),
@@ -330,6 +336,7 @@ impl<'m> Ctx<'m> {
             recursive_unions: FxHashMap::default(),
             alias_names: FxHashMap::default(),
             generic_overrides: vec![],
+            getter_only_setters: FxHashSet::default(),
             display_params: vec![],
             defaults_checked: FxHashSet::default(),
             hook_adapters: FxHashMap::default(),
@@ -696,6 +703,9 @@ impl<'m> Ctx<'m> {
                 DefInfo::Enum(e) => with_args(self, &e.name, args),
                 _ => "unknown".into(),
             },
+            TyKind::Dyn(d, args) if self.synth_display(*d, args, names).is_some() => {
+                self.synth_display(*d, args, names).unwrap_or_default()
+            }
             TyKind::Dyn(d, args) => match self.iface(*d) {
                 Some(i) => with_args(self, &i.name, args),
                 None => "unknown".into(),

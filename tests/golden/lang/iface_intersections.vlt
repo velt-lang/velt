@@ -1,0 +1,140 @@
+// check: no leaks
+// Intersections and `Pick` / `Omit` of interfaces with methods (#350): an interface with every
+// part's members, which an object literal implements and a class implementing each part
+// converts to as the same object; its values convert to each part (and to a `Pick` of it) as the
+// same object, so `===` holds and writes through one are seen through the other; an interface
+// value converts to an interface it extends the same way.
+interface Base {
+  refresh(): number;
+  readonly state: string;
+}
+interface Named {
+  name(): string;
+}
+
+type Wide = Base & { readonly errors: number };
+
+let calls = 0;
+function make(): Wide {
+  return {
+    get state() {
+      return "ready";
+    },
+    get errors() {
+      return calls;
+    },
+    refresh() {
+      calls += 1;
+      return calls;
+    },
+  };
+}
+
+class Both implements Base, Named {
+  readonly state = "both";
+  errors = 7;
+  refresh(): number {
+    return 42;
+  }
+  name(): string {
+    return "both";
+  }
+}
+
+// A generic alias over an interface part, per instantiation.
+interface StateBase<T> {
+  refresh(): T;
+}
+type Errored<T> = StateBase<T> & { readonly state: "errored"; readonly error: string };
+
+function errored<T>(v: T): Errored<T> {
+  return { refresh: () => v, state: "errored", error: "boom" };
+}
+
+// `T & { … }` at an interface `T`, inferred from an argument of the intersection.
+type Signal<T> = T & { $set: (v: T) => void };
+function relay<T extends object>(s: Signal<T>): Signal<T> {
+  return s;
+}
+
+// `T & object` at an interface or class `T` is `T`: the same value.
+function asObject<T>(t: T): T & object {
+  return t as T & object;
+}
+
+// An interface value converts to an interface it extends, as the same object.
+interface Small {
+  a(): number;
+}
+interface Large extends Small {
+  b(): string;
+}
+class K implements Large {
+  a() {
+    return 1;
+  }
+  b() {
+    return "k";
+  }
+}
+
+function* counter(): IterableIterator<number> {
+  yield 1;
+  yield 2;
+}
+function step(it: Iterator<number>): number {
+  const r = it.next();
+  return r.done ? -1 : r.value;
+}
+
+function main() {
+  const w = make();
+  console.log(w.state, w.errors, w.refresh(), w.errors);
+  const b: Base = w;
+  console.log(b.state, b.refresh(), w.errors, b === w);
+
+  const c = new Both();
+  const j: Base & Named & { errors: number } = c;
+  console.log(j.name(), j.refresh(), j.errors, j.state, j === c);
+  const n: Named = j;
+  console.log(n.name(), n === j);
+  c.errors = 9;
+  console.log(j.errors);
+
+  const p: Pick<Base, "refresh"> = b;
+  console.log(p.refresh(), p === b, p === w);
+  const q: Pick<Base, "refresh"> = { refresh: () => 5 };
+  console.log(q.refresh());
+  const o: Omit<Base & Named, "state"> = j;
+  console.log(o.name(), o.refresh(), o === j);
+
+  const e = errored(5);
+  console.log(e.state, e.error, e.refresh());
+  const base: StateBase<number> = e;
+  console.log(base.refresh(), base === e);
+
+  let last = "";
+  const s: Signal<Named> = {
+    name: () => "sig",
+    $set: (v) => {
+      last = v.name();
+    },
+  };
+  const r = relay(s);
+  r.$set(r);
+  console.log(last, r === s, r.name());
+  const plain: Named = r;
+  console.log(plain.name(), plain === r);
+
+  const x = asObject(c);
+  const y = asObject(n);
+  console.log(x === c, x.name(), y === n, y.name());
+
+  const large: Large = new K();
+  const small: Small = large;
+  const lit: Large = { a: () => 2, b: () => "lit" };
+  const litSmall: Small = lit;
+  console.log(small.a(), small === large, litSmall.a(), litSmall === lit);
+  const gen = counter();
+  console.log(step(gen), step(gen), step(gen));
+}

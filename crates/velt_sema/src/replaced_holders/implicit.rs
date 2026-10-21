@@ -542,6 +542,9 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::Share
         | I::FieldAbsent
         | I::FieldPresent
+        | I::SpreadObject
+        | I::KeyRead
+        | I::KeyWrite
         | I::NeedsTransfer
         | I::NeedsDrop
         | I::MayAlias

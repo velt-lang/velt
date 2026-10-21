@@ -388,7 +388,7 @@ impl FnCx<'_, '_> {
                 let k = self.cx.ty.str_;
                 return self.record_literal(d, k, v, props, span);
             }
-            return self.spread_object(props, None, None, span);
+            return self.spread_object(props, None, self.hint(exp), span);
         }
         let ps = self.props(props);
         let mut fields = vec![];

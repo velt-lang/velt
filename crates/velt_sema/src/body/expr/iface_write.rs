@@ -114,10 +114,7 @@ impl FnCx<'_, '_> {
                 name: prop.name.clone(),
                 span: prop.span,
             });
-        match f.readonly {
-            true => self.cx.mark_part_written(f.iface, f.index, prop.span),
-            false => self.cx.mark_iface_written(f.iface, prop.span),
-        }
+        self.cx.mark_part_written(f.iface, f.index, prop.span)
     }
 
     /// `recv.prop = arg` through the setter slot of interface field `f`.

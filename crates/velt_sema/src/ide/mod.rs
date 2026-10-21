@@ -22,6 +22,7 @@ use crate::hir::TyId;
 use crate::SourceModule;
 
 pub use defref::{DefKind, DefRef};
+pub(crate) use display::named_param;
 pub use effects::Mutation;
 pub use types::{FieldView, LiteralKind, NamedKind, NamedType, TypeRef, TypeView};
 
