@@ -530,17 +530,7 @@ impl FnCx<'_, '_> {
             }
             // `obj(os)[key(ks, 0)]` in a generic body: a key known only per instantiation.
             TyKind::Param(_) if want != Want::BorrowMut && literal_key(index).is_none() => {
-                let key = self.expr(index, None, Want::Borrow);
-                match self.key_read_of(obj, key, span) {
-                    Ok(h) => h,
-                    Err(parts) => {
-                        let (obj, key) = *parts;
-                        if !self.cx.ty.has_error(key.ty) {
-                            self.cannot_index(&obj);
-                        }
-                        self.error_expr(span)
-                    }
-                }
+                self.param_key_read(obj, index, span)
             }
             _ => {
                 self.cannot_index(&obj);

@@ -12,6 +12,27 @@ use crate::body::{FnCx, Want};
 use crate::hir::{self, Intrinsic, TyKind, TyOp, UseMode};
 
 impl FnCx<'_, '_> {
+    /// `obj[index]` with `obj` (checked) a type parameter's value and `index` a key expression
+    /// (`obj(os)[key(ks, 0)]`): its key read, or an error.
+    pub(super) fn param_key_read(
+        &mut self,
+        obj: hir::Expr,
+        index: &ast::Expr,
+        span: Span,
+    ) -> hir::Expr {
+        let key = self.expr(index, None, Want::Borrow);
+        match self.key_read_of(obj, key, span) {
+            Ok(h) => h,
+            Err(parts) => {
+                let (obj, key) = *parts;
+                if !self.cx.ty.has_error(key.ty) {
+                    self.cannot_index(&obj);
+                }
+                self.error_expr(span)
+            }
+        }
+    }
+
     /// `object[index]` read where `object` is a type parameter's value and `index` a key known
     /// only per instantiation, both paths (see [`Self::key_read_of`]).
     pub(super) fn generic_key_index(
