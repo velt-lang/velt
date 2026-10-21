@@ -1,6 +1,8 @@
 //! "mismatched types" for a function that throws where a function type that cannot throw is
 //! expected, directly (`const r: (s: string) => string = import.meta.resolve`) or as an object's
 //! field (`const m: { resolve: (s: string) => string } = import.meta`): a note with the ways out.
+//! In a user module such a type written without `throws` takes the function's errors instead
+//! (`throws::fn_types`); this is for the ones that can't (the standard library's).
 
 use velt_common::Diagnostic;
 

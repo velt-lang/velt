@@ -1,0 +1,115 @@
+// Function types written without `throws` in the fields of object types (#1154): what a closure
+// stored there throws reaches the calls through every object type its value passes through (a
+// narrower object type, a nested one, an array element, an optional field, an async loader).
+// Expected output: Node's.
+class Bad extends Error {}
+
+class Worse extends Error {}
+
+type Printer = { print: (d: string) => string; name?: string };
+
+function use(p: { print: (d: string) => string; name?: string }): string {
+  try {
+    return p.print("x");
+  } catch (e) {
+    return "caught " + (e as Error).message;
+  }
+}
+
+const printer: Printer = {
+  print: (d) => {
+    if (d === "x") {
+      throw new Bad("bad");
+    }
+    return d;
+  },
+};
+console.log(use(printer));
+
+const nested: { inner: { run: () => number } } = {
+  inner: {
+    run: () => {
+      throw new Worse("worse");
+    },
+  },
+};
+
+function go(n: { inner: { run: () => number } }): number {
+  try {
+    return n.inner.run();
+  } catch (e) {
+    console.log("nested", (e as Error).message);
+    return -1;
+  }
+}
+
+console.log(go(nested));
+
+const list: Array<{ f: () => void }> = [{ f: () => console.log("ok") }];
+list.push({
+  f: () => {
+    throw new Bad("pushed");
+  },
+});
+for (const x of list) {
+  try {
+    x.f();
+  } catch (e) {
+    console.log("list", (e as Error).message);
+  }
+}
+
+// An object type converted to one with fewer fields.
+type A = { run: () => void; id: number };
+type B = { run: () => void };
+const a: A = {
+  run: () => {
+    throw new Bad("from a");
+  },
+  id: 1,
+};
+const b: B = a;
+try {
+  b.run();
+} catch (e) {
+  console.log("b", (e as Error).message);
+}
+
+function wrap(x: { run: () => void }): { go: { run: () => void } } {
+  return { go: x };
+}
+
+const w = wrap(b);
+try {
+  w.go.run();
+} catch (e) {
+  console.log("w", (e as Error).message);
+}
+
+const r: { cb?: (n: number) => number } = {};
+r.cb = (n) => {
+  if (n > 1) {
+    throw new Bad("cb");
+  }
+  return n;
+};
+try {
+  console.log(r.cb?.(1));
+  r.cb?.(2);
+} catch (e) {
+  console.log("r", (e as Error).message);
+}
+
+async function later(o: { load: () => Promise<number> }): Promise<number> {
+  try {
+    return await o.load();
+  } catch (e) {
+    return 0;
+  }
+}
+
+later({
+  load: async () => {
+    throw new Bad("async");
+  },
+}).then((v) => console.log("later", v));

@@ -192,6 +192,9 @@ impl FnCx<'_, '_> {
                 h
             };
             let arg_ty = h.ty;
+            let site = self.param_site(p);
+            self.flow_into(&h, site);
+            let outer_target = self.set_target(site);
             let mut h = if weak_key && hargs.is_empty() {
                 self.weak_key_coerce(h, target)
             } else if self.cx.sigq.readonly_params.contains(&p.span)
@@ -210,6 +213,7 @@ impl FnCx<'_, '_> {
                     Err(h) => self.coerce(h, target),
                 }
             };
+            self.set_target(outer_target);
             if let Some(d) = &p.default {
                 h = self.default_on_undefined(h, arg_ty, d, &type_args);
             }
@@ -470,6 +474,9 @@ impl FnCx<'_, '_> {
                 Some(_) => None,
             };
             let owned = p.mode == PassMode::Owned;
+            // A closure created for the parameter throws into its site (`throws::fn_flows`).
+            let site = self.param_site(p);
+            let outer_target = self.set_target(site);
             let h = match (adapted, bound, arrow) {
                 (Some(h), _, _) => h,
                 (None, Some((a, fn_ty)), _) => self.bound_closure(&a, fn_ty, Some(owned)),
@@ -486,6 +493,7 @@ impl FnCx<'_, '_> {
                     _ => self.expr(&args[i], Some(expected), want_of(p.mode)),
                 },
             };
+            self.set_target(outer_target);
             // `f(xs.sort())` where `f` takes an array: the fix, not just a type mismatch.
             let h = match self.cx.ty.array_elem(expected).is_some()
                 && self.in_place_misuse(&args[i], &h, expected)

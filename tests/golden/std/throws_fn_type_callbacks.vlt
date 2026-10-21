@@ -1,0 +1,72 @@
+// check: no leaks
+// Function types written without `throws` and the standard library (#1154): a callback whose
+// type has inferred errors can be passed to `setTimeout` and `queueMicrotask` (an error it
+// throws there is uncaught, as in Node); interface methods implemented by an object literal
+// throw what its methods throw; the URI functions throw `URIError`.
+class Failed extends Error {
+  constructor(m: string) {
+    super(m);
+    this.name = "Failed";
+  }
+}
+
+function attempt(f: () => void) {
+  try {
+    f();
+  } catch (e) {
+    console.log("caught", (e as Error).message);
+  }
+}
+
+function later(cb: () => void) {
+  setTimeout(cb, 0);
+}
+
+interface Loader {
+  parse(s: string): URL;
+}
+
+const loader: Loader = {
+  parse(s) {
+    return new URL(s);
+  },
+};
+
+function loads() {
+  console.log(loader.parse("https://example.com/a").pathname);
+  try {
+    loader.parse("also not a url");
+  } catch (e) {
+    console.log("thrown", e instanceof TypeError, (e as Error).name);
+  }
+}
+
+function uris() {
+  for (const s of ["%", "%E0%A4%A", "a%20b"]) {
+    try {
+      console.log(decodeURIComponent(s));
+    } catch (e) {
+      console.log(e instanceof URIError, (e as Error).name, (e as Error).message);
+    }
+  }
+  try {
+    encodeURIComponent(String.fromCharCode(0xd800));
+  } catch (e) {
+    console.log(e instanceof URIError, String(e));
+  }
+}
+
+async function demo() {
+  attempt(() => {
+    throw new Failed("x");
+  });
+  later(() => console.log("tick"));
+  const queued: Array<() => void> = [() => console.log("queued")];
+  for (const q of queued) {
+    queueMicrotask(q);
+  }
+  loads();
+  uris();
+}
+
+await demo();

@@ -16,15 +16,20 @@
 
 mod checks;
 mod conventions;
+mod fn_flows;
+mod fn_types;
 mod groups;
 mod infer;
 mod inits;
 mod sets;
+mod vars;
 
 use rustc_hash::FxHashSet;
 
 use velt_common::Span;
 
+pub(crate) use fn_types::FnSites;
+pub(crate) use fn_types::FnTypeSeeds;
 pub(crate) use groups::Groups;
 pub(crate) use infer::infer_all;
 pub(crate) use inits::InitsSeen;
@@ -71,6 +76,7 @@ fn srcs_now_in(cx: &mut Ctx, srcs: &[ThrowSrc], visited: &mut Visited) -> Option
     for s in srcs {
         let t = match s {
             ThrowSrc::Direct(t, _) => Some(*t),
+            ThrowSrc::Indirect(t, site, _) => cx.indirect_error(*t, *site),
             ThrowSrc::Call(g, targs, _) => {
                 let t = def_now(cx, *g, visited);
                 subst_error(cx, t, targs)

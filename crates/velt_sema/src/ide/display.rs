@@ -105,6 +105,7 @@ impl Names {
                 .map(|t| self.show(*t, param))
                 .collect::<Vec<_>>()
                 .join(" & "),
+            TyKind::Op(crate::hir::TyOp::ErrSite(_), _) => "Error".to_string(),
             TyKind::Op(crate::hir::TyOp::Spread, args) => {
                 let parts: Vec<String> = args
                     .iter()

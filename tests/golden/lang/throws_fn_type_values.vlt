@@ -1,0 +1,70 @@
+// Function types written without `throws` hold what the closures stored into them throw
+// (#1154): values of one such type spread into an array of another, and a promise's reason
+// tested with `instanceof` in a callback.
+
+const mounted = new Map<string, Set<(force: boolean) => void>>();
+
+function add(key: string, f: (force: boolean) => void): void {
+  let s = mounted.get(key);
+  if (!s) {
+    s = new Set();
+    mounted.set(key, s);
+  }
+  s.add(f);
+}
+
+add("a", (force) => {
+  if (force) throw new Error("boom");
+  console.log("a", force);
+});
+add("b", (force) => console.log("b", force));
+
+const hits: Array<Array<(force: boolean) => void>> = [];
+for (const [, set] of mounted) {
+  if (set.size > 0) hits.push([...set]);
+}
+for (const h of hits) for (const f of h) f(false);
+try {
+  for (const h of hits) for (const f of h) f(true);
+} catch (e) {
+  console.log("caught", (e as Error).message);
+}
+
+type Loader<T> = () => Promise<T>;
+
+function guarded<T>(loader: Loader<T>, fallback: T): () => Promise<T> {
+  return () =>
+    loader().catch((err) => {
+      console.log(err instanceof Error ? "error" : "other");
+      return fallback;
+    });
+}
+
+async function run(): Promise<void> {
+  const ok = guarded(() => Promise.resolve(5), 0);
+  console.log(await ok());
+  const failing = guarded(async (): Promise<number> => {
+    throw new Error("no");
+  }, -1);
+  console.log(await failing());
+}
+
+// Arrays and a map's values of one function type spread into arrays of another.
+const fs: Array<(n: number) => void> = [];
+fs.push((n) => {
+  if (n > 1) throw new Error("big " + n);
+  console.log("f", n);
+});
+const gs: Array<(n: number) => void> = [...fs];
+const byName = new Map<string, (n: number) => void>();
+byName.set("a", fs[0]);
+const hs: Array<(n: number) => void> = [...byName.values()];
+for (const g of gs) g(1);
+for (const h of hs) h(0);
+try {
+  hs[0](5);
+} catch (e) {
+  console.log("caught", (e as Error).message);
+}
+
+await run();

@@ -38,10 +38,10 @@
   with Node's message (`Cannot find package 'x' imported from <file>`): packages are compiled
   into the program rather than looked up while it runs, so `try` / `catch` around
   `import.meta.resolve("optional-dep")` takes the `catch`. Its type is therefore
-  `(specifier: string) => string throws Error`, and it can't be used where a function type
-  that cannot throw is expected (`const r: (s: string) => string = import.meta.resolve` is an
-  error): write that type with `throws Error`, or wrap it in an arrow,
-  `const r = (s: string) => import.meta.resolve(s)`, whose type says it throws.
+  `(specifier: string) => string throws Error`. Stored as a function type written without
+  `throws` (`const r: (s: string) => string = import.meta.resolve`, or `import.meta` as a
+  `{ resolve: (s: string) => string }`), that type throws its errors, as every such type throws
+  what is stored into it ([Dynamic calls](errors.md#dynamic-calls)).
 - `import.meta` can be passed where an object type with some of its fields is expected
   (`function f(p: { readonly url: string })`, `f(import.meta)`). That object is a copy of those
   fields, as for any object type of another layout: assigning one of its fields is an error, and

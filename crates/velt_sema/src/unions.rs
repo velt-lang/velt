@@ -105,7 +105,8 @@ impl Ctx<'_> {
             }
         }
         let ty = &self.ty;
-        members.sort_by_key(|t| (has_params(ty, *t), t.0));
+        let vars = &self.fn_sites.var_sets;
+        members.sort_by_key(|t| (has_params(ty, *t), vars.order_key(*t), t.0));
         let core = match members.len() {
             0 if nothing == Some(Nothing::Null) => return self.ty.null_alone(),
             0 if nothing == Some(Nothing::Undefined) => return self.ty.undefined(),
@@ -265,6 +266,33 @@ impl Ctx<'_> {
         d
     }
 
+    /// Put the variants of union def `d` (without type parameters) in the order of `order`,
+    /// when they are exactly its members (`throws::vars`: a union re-interned after solving).
+    pub(crate) fn reorder_union_def(&mut self, d: DefId, order: &[TyId]) {
+        let names: Vec<String> = order.iter().map(|t| self.display(*t)).collect();
+        let DefInfo::Enum(e) = &mut self.info[d.0 as usize] else {
+            return;
+        };
+        if e.variants.len() != order.len()
+            || !(e.variants.iter()).all(|v| order.contains(&v.payload[0]))
+        {
+            return;
+        }
+        e.variants = (names.into_iter().zip(order).enumerate())
+            .map(|(i, (name, t))| VariantInfo {
+                name,
+                payload: vec![*t],
+                discriminant: i as i64,
+                str_value: None,
+            })
+            .collect();
+        let name = (e.variants.iter().map(|v| v.name.as_str()))
+            .collect::<Vec<_>>()
+            .join(" | ");
+        e.qual_name = name.clone();
+        e.name = name;
+    }
+
     /// `A | B` for diagnostics: the members of union `d` applied to `args` (which mention the
     /// parameters in scope, named `params`).
     pub(crate) fn display_union(&self, d: DefId, args: &[TyId], params: &[String]) -> String {
@@ -272,12 +300,37 @@ impl Ctx<'_> {
             return "unknown".into();
         };
         let names: Vec<String> = args.iter().map(|a| self.display_in(*a, params)).collect();
-        let parts: Vec<String> = e
-            .variants
-            .iter()
-            .map(|v| self.display_applied(v.payload[0], &names))
+        // Error-set variables are shown as written: not at all (`throws::vars`).
+        let shown = |v: &&crate::defs::VariantInfo| !self.is_err_var(v.payload[0]);
+        let members: Vec<TyId> = (e.variants.iter().filter(shown))
+            .map(|v| v.payload[0])
             .collect();
+        let mut parts: Vec<String> = (members.iter())
+            .map(|t| self.display_applied(*t, &names))
+            .collect();
+        // Members are ordered by interned id, which differs between programs; a union of
+        // named types (an error set: `RangeError | TypeError`) is shown sorted by name, so the
+        // same type reads the same from every entry file.
+        if members.iter().all(|t| self.is_named_ty(*t)) {
+            parts.sort();
+        }
+        if parts.is_empty() {
+            return "never".into();
+        }
         parts.join(" | ")
+    }
+
+    /// A class, interface or enum, which diagnostics show by its name.
+    fn is_named_ty(&self, t: TyId) -> bool {
+        match self.ty.kind(t) {
+            TyKind::Dyn(..) => true,
+            TyKind::Adt(d, _) => match &self.info[d.0 as usize] {
+                DefInfo::Adt(a) => a.kind != crate::hir::AdtKind::Anon,
+                DefInfo::Enum(e) => !e.is_union,
+                _ => false,
+            },
+            _ => false,
+        }
     }
 
     /// Display `t` with `Param(i)` named `names[i]`, parenthesizing arrays of parameters.
