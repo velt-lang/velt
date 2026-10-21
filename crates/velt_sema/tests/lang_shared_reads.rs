@@ -434,3 +434,52 @@ fn new_containers_hold_parts_and_writes_through_results_are_refused() {
         assert!(r.contains("read out of a `shared`"), "{body}: {r}");
     }
 }
+
+#[test]
+fn parts_out_of_holders_and_inline_containers_cannot_be_changed() {
+    let defs = "class Item { v: number = 3; tags: string[] = []; }
+        class Bx { it: Item = new Item(); }
+        class H2 { xs: Item[] = []; }
+        class Store { m: Map<string, Item> = new Map<string, Item>(); items: Item[] = [new Item(), new Item()];
+          get head(): Item { return this.items[0]; } pick(i: number): Item { return this.items[i]; } }";
+    for body in [
+        "(s.items.length > 0 ? s.head : s.pick(0)).v = 50;",
+        "(s.items.length > 0 ? s.head : s.pick(0)).tags.push(\"x\");",
+        "(s.items.length > 0 ? s.items[0] : s.items[1]).v = 50;",
+        "s.items.slice()[0].v = 50;",
+        "const xs = s.items; xs.slice()[0].v = 50;",
+        "[s.items[0]][0].v = 50;",
+        "s.m.values()[0].v = 50;",
+        "const a = [s.items[0]]; const q = a[0]; q.v = 50;",
+        "const b = new Bx(); b.it = s.items[0]; const q = b.it; q.v = 50;",
+        "const b = new H2(); b.xs = s.items; const q = b.xs; q.push(new Item());",
+        "const c = s.items.slice(); for (const x of c) { x.v = 50; }",
+        "const c = s.items.slice(); c.forEach((x) => { x.v = 50; });",
+        "[s.items[0]].forEach((x) => { x.v = 50; });",
+    ] {
+        let r = err_src(&format!(
+            "{defs} function main() {{ const s = shared(new Store()); {body} }}"
+        ));
+        assert!(r.contains("read out of a `shared`"), "{body}: {r}");
+    }
+    // One error per write, also through `??` and `!` (hidden locals).
+    for body in [
+        "(s.m.get(\"k0\") ?? new Item()).v = 50;",
+        "(s.items.length == 1 ? s.m.get(\"k0\")! : s.m.get(\"k1\")!).v = 50;",
+    ] {
+        let r = err_src(&format!(
+            "{defs} function main() {{ const s = shared(new Store()); {body} }}"
+        ));
+        assert_eq!(
+            r.matches("read out of a `shared`").count(),
+            1,
+            "{body}: {r}"
+        );
+    }
+    // A new container's own slots may change.
+    ok_src(&format!(
+        "{defs} function main() {{ const s = shared(new Store()); s.items.slice()[0] = new Item();
+           const c = s.items.slice(); c.sort((a, b) => a.v - b.v); c.forEach((x) => {{ console.log(x.v); }});
+           const a = [s.items[0]]; a[0] = new Item(); const q = a[0]; console.log(q.v); }}"
+    ));
+}

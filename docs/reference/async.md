@@ -485,9 +485,10 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
   and through a container holding it (`[s.items[0]]`, `xs.slice()`, an object's field; the
   container's own slots may change). `subarray()` and `buffer` of a shared typed array are
   refused too: in JavaScript all of them reach the shared value itself. Not yet followed (a
-  change lands on a copy, #1405): a part returned by an ordinary function, through a
-  generator, an `await`, `any` or a container filled with `push` / `set`. Change a copy
-  (`.clone()`, `s.ports.slice()`) instead.
+  change lands on a copy, #1405): a part returned by a function or closure (other than a method
+  or getter of the value: generic, static and interface functions, another object's method), a
+  spread or `Array.from` copy, a generator, an `await`, `any` or `Reflect`, and a container
+  filled with `push` / `set`. Change a copy (`.clone()`, `s.ports.slice()`) instead.
   `console.log(s)`, `[...s]`, `Object.keys(s)` and `JSON.stringify(s)` read the value inside
   as well. A value of
   `T` that holds a class with subclasses or with a `clone()` of its own is not read like this

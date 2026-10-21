@@ -138,7 +138,7 @@ pub(super) fn frozen_bindings(cx: &mut Ctx, f: &mut FnDef) {
                 Some(x) => binds.contains_key(&x).then(|| held.contains(&x)),
             };
             let Some(from_held) = from else { continue };
-            let as_held = e.held || from_held;
+            let as_held = e.held || from_held && !e.projected;
             match binds.contains_key(&e.bound) {
                 false => {
                     binds.insert(e.bound, elem(&f.body.locals[e.bound.0 as usize]));
@@ -157,6 +157,10 @@ pub(super) fn frozen_bindings(cx: &mut Ctx, f: &mut FnDef) {
     }
     let ev = evidence::collect(cx, &mut f.body.block);
     let mut errors = direct_writes(cx, f);
+    let written: Vec<velt_common::Span> = errors
+        .iter()
+        .filter_map(|d| d.labels.first().map(|l| l.span))
+        .collect();
     let mut binds: Vec<(LocalId, bool)> = binds.into_iter().collect();
     binds.sort();
     for (l, elem) in binds {
@@ -165,8 +169,13 @@ pub(super) fn frozen_bindings(cx: &mut Ctx, f: &mut FnDef) {
             true => ev.deep.contains(&l),
             false => ev.mutated.contains(&l) || ev.modified.contains(&l) || ev.weak.contains(&l),
         };
-        // A map loop's hidden local holds the source; the body can't name it.
-        if local.name.starts_with("<map@") || !changed || cx.is_copy(local.ty) {
+        // A map loop's hidden local holds the source; the body can't name it. One of `x!` or
+        // `?.` inside a write reported as a write is that write.
+        let covered = local.name.starts_with('<')
+            && written.iter().any(|w| {
+                w.file == local.span.file && w.lo <= local.span.lo && local.span.hi <= w.hi
+            });
+        if local.name.starts_with("<map@") || covered || !changed || cx.is_copy(local.ty) {
             continue;
         }
         let (name, tn, span) = (local.name.clone(), cx.display(local.ty), local.span);
@@ -199,6 +208,20 @@ pub(super) fn frozen_bindings(cx: &mut Ctx, f: &mut FnDef) {
 fn direct_writes(cx: &mut Ctx, f: &mut FnDef) -> Vec<Diagnostic> {
     let mut found = vec![];
     visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| {
+        // A callback changing what it is given, passed with a part (`[s.items[0]].forEach(…)`).
+        if let E::Call { args, .. } = &e.kind {
+            let changing = args
+                .iter()
+                .any(|a| matches!(a.kind, E::Closure(c) if cx.fn_info(c).modified_params != 0));
+            if changing {
+                for a in args.iter().filter(|a| !matches!(a.kind, E::Closure(_))) {
+                    let r = super::derived::roots(cx, a);
+                    if (r.frozen || r.held_frozen) && through_call(a) {
+                        found.push((a.span, a.ty));
+                    }
+                }
+            }
+        }
         let place = match &e.kind {
             E::Assign { place, .. } | E::CompoundAssign { place, .. } => &**place,
             E::Field {
@@ -211,7 +234,8 @@ fn direct_writes(cx: &mut Ctx, f: &mut FnDef) -> Vec<Diagnostic> {
             } => &*e,
             _ => return,
         };
-        if !matches!(place.kind, E::Local(..)) && through_call(place) {
+        let fresh_slot = matches!(&place.kind, E::Field { base, .. } | E::Index { base, .. } if super::derived::fresh(cx, base));
+        if !matches!(place.kind, E::Local(..)) && !fresh_slot && through_call(place) {
             let r = super::derived::roots(cx, place);
             if r.frozen {
                 found.push((place.span, place.ty));
@@ -256,7 +280,15 @@ fn through_call(e: &Expr) -> bool {
             callee: Callee::Intrinsic(crate::hir::Intrinsic::SharedRead),
             ..
         } => false,
-        E::Call { .. } | E::Match { .. } => true,
+        E::Call { .. }
+        | E::Match { .. }
+        | E::If { .. }
+        | E::Logical { .. }
+        | E::Block(_)
+        | E::ArrayLit(_)
+        | E::Tuple(_)
+        | E::AdtLit { .. }
+        | E::New { .. } => true,
         E::Field { base, .. }
         | E::Index { base, .. }
         | E::UnwrapSome(base, _)

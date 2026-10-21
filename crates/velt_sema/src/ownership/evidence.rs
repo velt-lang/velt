@@ -99,6 +99,8 @@ pub(super) fn collect_in(cx: &mut Ctx, d: crate::hir::DefId, f: &mut FnDef) -> E
                 false => changed.contains(&e.bound),
             };
             if through {
+                // A change to what was projected out of `x` (`q = a[0]; q.v = 1`) is a change
+                // through `x`, of what it holds.
                 ev.modified.insert(x);
                 grew |= changed.insert(x);
                 grew |= deep.insert(x);
@@ -251,7 +253,12 @@ impl VisitMut for Collector<'_, '_> {
                     // `i.v = 1` on any local (an owned one too), `st.m.get(k)!.v = 1` through
                     // what a method of `st` returned.
                     // Through a part (`o.f.x = 1`, not `o.f = 1`): a change of what `o` holds.
-                    let r = super::derived::roots(self.cx, place).locals;
+                    // A slot of a new container (`xs.slice()[0] = x`) is no one else's.
+                    let fresh_slot = matches!(&place.kind, E::Field { base, .. } | E::Index { base, .. } if super::derived::fresh(self.cx, base));
+                    let r = match fresh_slot {
+                        true => vec![],
+                        false => super::derived::roots(self.cx, place).locals,
+                    };
                     let own_slot = matches!(&place.kind, E::Field { base, .. } | E::Index { base, .. } if matches!(base.kind, E::Local(..)));
                     if !own_slot {
                         self.ev.deep.extend(r.iter().copied());
@@ -329,6 +336,18 @@ impl VisitMut for Collector<'_, '_> {
             } if self.cx.frozen_reads => {
                 let bits = self.cx.fn_info(*d).modified_params;
                 let std = self.cx.modules[self.cx.fn_info(*d).module].is_std;
+                // A callback changing what it is given (`xs.forEach((x) => { x.v = 1; })`)
+                // changes what the call's other arguments hold.
+                let changing_callback = args.iter().any(
+                    |a| matches!(a.kind, E::Closure(c) if self.cx.fn_info(c).modified_params != 0),
+                );
+                if changing_callback {
+                    for a in args.iter().filter(|a| !matches!(a.kind, E::Closure(_))) {
+                        let r = super::derived::roots(self.cx, a).locals;
+                        self.ev.deep.extend(r.iter().copied());
+                        self.ev.modified.extend(r);
+                    }
+                }
                 for (i, a) in args.iter().enumerate().take(64) {
                     if bits & (1 << i) != 0 && !self.cx.is_copy(a.ty) {
                         if !std {

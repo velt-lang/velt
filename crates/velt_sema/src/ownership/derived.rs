@@ -54,9 +54,9 @@ fn walk(cx: &Ctx, e: &Expr, r: &mut Roots, holds: bool, depth: u32) {
             callee: Callee::Intrinsic(Intrinsic::Share),
             args,
         } => args.iter().for_each(|a| go(a, r, holds)),
-        E::Field { base, .. }
-        | E::Index { base, .. }
-        | E::UnwrapSome(base, _)
+        // An element taken out of a new container is a part again (`[v][0]`, `xs.slice()[0]`).
+        E::Field { base, .. } | E::Index { base, .. } => elems(cx, base, r, holds, depth + 1),
+        E::UnwrapSome(base, _)
         | E::UnwrapVariant { expr: base, .. }
         | E::WrapSome(base)
         | E::Downcast(base)
@@ -95,6 +95,38 @@ fn walk(cx: &Ctx, e: &Expr, r: &mut Roots, holds: bool, depth: u32) {
     }
 }
 
+/// The roots of what an element or field of `e` is: for a new container (a literal, a
+/// constructor's arguments, a std copy) the parts it holds, else what `e` is part of.
+fn elems(cx: &Ctx, e: &Expr, r: &mut Roots, holds: bool, depth: u32) {
+    match &e.kind {
+        E::ArrayLit(es) | E::Tuple(es) => es.iter().for_each(|x| walk(cx, x, r, holds, depth + 1)),
+        E::AdtLit { fields: es, .. } | E::Variant { args: es, .. } | E::New { args: es, .. } => {
+            es.iter().for_each(|x| walk(cx, x, r, holds, depth + 1))
+        }
+        E::Call {
+            callee: Callee::Def(d, _),
+            args,
+        } if cx.fn_info(*d).this.is_some() && copies(cx, *d) => args
+            .first()
+            .iter()
+            .for_each(|a| walk(cx, a, r, holds, depth + 1)),
+        _ => walk(cx, e, r, holds, depth),
+    }
+}
+
+/// Is `e` a new container (a literal, a constructor call, a std copy): a write to its own slot
+/// changes nothing anything else holds?
+pub(super) fn fresh(cx: &Ctx, e: &Expr) -> bool {
+    match &e.kind {
+        E::ArrayLit(_) | E::Tuple(_) | E::AdtLit { .. } | E::Variant { .. } | E::New { .. } => true,
+        E::Call {
+            callee: Callee::Def(d, _),
+            ..
+        } => cx.fn_info(*d).this.is_some() && copies(cx, *d),
+        _ => false,
+    }
+}
+
 /// Is `d` a std method that returns a new container of the receiver's parts (`slice()`, a
 /// map's `entries()`)?
 fn copies(cx: &Ctx, d: crate::hir::DefId) -> bool {
@@ -125,6 +157,9 @@ pub(super) struct Edge {
     pub bound: LocalId,
     pub src: Option<LocalId>,
     pub held: bool,
+    /// What `bound` gets is projected out of the source (`a[0]`, `b.it`, a loop element): a
+    /// part of what the source holds, not the holder itself.
+    pub projected: bool,
 }
 
 /// Each local a statement or expression of `f`'s body binds or assigns, with what it gets a
@@ -133,7 +168,7 @@ pub(super) fn edges(cx: &mut Ctx, f: &mut FnDef) -> Vec<Edge> {
     let mut v = Edges { cx, out: vec![] };
     visit::block(&mut f.body.block, &mut v);
     let mut out = vec![];
-    for (bound, r, ty) in v.out {
+    for (bound, r, ty, projected) in v.out {
         let local = &f.body.locals[bound.0 as usize];
         // The iterator protocol's hidden locals change as the loop steps; its elements are
         // tied to the loop's source directly (`Ctx::loop_roots`). A value without references
@@ -145,7 +180,12 @@ pub(super) fn edges(cx: &mut Ctx, f: &mut FnDef) -> Vec<Edge> {
         {
             continue;
         }
-        let edge = |src, held| Edge { bound, src, held };
+        let edge = |src, held| Edge {
+            bound,
+            src,
+            held,
+            projected,
+        };
         out.extend(r.locals.iter().map(|&x| edge(Some(x), false)));
         out.extend(r.held.iter().map(|&x| edge(Some(x), true)));
         if r.frozen {
@@ -161,6 +201,7 @@ pub(super) fn edges(cx: &mut Ctx, f: &mut FnDef) -> Vec<Edge> {
                 bound: LocalId(i as u32),
                 src: Some(root),
                 held: false,
+                projected: true,
             });
         }
     }
@@ -169,14 +210,19 @@ pub(super) fn edges(cx: &mut Ctx, f: &mut FnDef) -> Vec<Edge> {
 
 struct Edges<'a, 'm> {
     cx: &'a Ctx<'m>,
-    /// Each binding, with the roots of what it gets and that value's type.
-    out: Vec<(LocalId, Roots, crate::hir::TyId)>,
+    /// Each binding, with the roots of what it gets, that value's type, and whether it is
+    /// projected out of its source (`Edge::projected`).
+    out: Vec<(LocalId, Roots, crate::hir::TyId, bool)>,
 }
 
 impl Edges<'_, '_> {
     fn bind(&mut self, bound: Vec<LocalId>, from: &Expr) {
+        self.bind_as(bound, from, projected(from));
+    }
+
+    fn bind_as(&mut self, bound: Vec<LocalId>, from: &Expr, projected: bool) {
         for l in bound {
-            self.out.push((l, roots(self.cx, from), from.ty));
+            self.out.push((l, roots(self.cx, from), from.ty, projected));
         }
     }
 }
@@ -189,7 +235,7 @@ impl VisitMut for Edges<'_, '_> {
                 init: Some(init),
             } => self.bind(vec![*local], init),
             S::LetPat { pat, init } => self.bind(pat_locals(pat), init),
-            S::ForOf { binding, iter, .. } => self.bind(pat_locals(binding), iter),
+            S::ForOf { binding, iter, .. } => self.bind_as(pat_locals(binding), iter, true),
             _ => {}
         }
     }
@@ -208,17 +254,30 @@ impl VisitMut for Edges<'_, '_> {
                             held_frozen: v.frozen || v.held_frozen,
                             ..Roots::default()
                         };
-                        self.out.push((l, held, value.ty));
+                        self.out.push((l, held, value.ty, false));
                     }
                 }
             },
             E::Match { scrutinee, arms } => {
                 for a in arms {
-                    self.bind(pat_locals(&a.pat), scrutinee);
+                    self.bind_as(pat_locals(&a.pat), scrutinee, true);
                 }
             }
             _ => {}
         }
+    }
+}
+
+/// Is `e` taken out of what it is part of (a field, an element, an unwrapped payload)?
+fn projected(e: &Expr) -> bool {
+    match &e.kind {
+        E::Field { .. } | E::Index { .. } | E::UnwrapSome(..) | E::UnwrapVariant { .. } => true,
+        E::Upcast(x) | E::Downcast(x) => projected(x),
+        E::Call {
+            callee: Callee::Intrinsic(Intrinsic::Share),
+            args,
+        } => args.first().is_some_and(projected),
+        _ => false,
     }
 }
 
