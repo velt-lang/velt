@@ -15,9 +15,15 @@ use crate::dispatch::{add_work, Pass};
 use crate::hir::{DefId, TyId, TyKind};
 use crate::types::children;
 
-/// The most types one walk visits: a generic type that grows as it recurses
-/// (`class A<T> { next: A<T[]> }`) has no end. A result the limit cut short is not kept.
-const MAX_WALK: usize = 4096;
+/// How many instances of one generic definition may be nested in each other on one path of a
+/// walk: a generic type that grows as it recurses (`class A<T> { next: A<T[]> }`) has no end,
+/// while the generics of a finite program nest a few levels deep. A result this limit cut short
+/// is not kept.
+const MAX_NESTING: u32 = 64;
+
+/// The most types one walk visits, as a last resort for generic types that grow in many ways at
+/// once: far more than a program's types.
+const MAX_WALK: usize = 1 << 20;
 
 /// The record key types `t` contains; `memo` holds the complete results of earlier calls.
 pub(crate) fn keys_in(cx: &mut Ctx, t: TyId, memo: &mut FxHashMap<TyId, Vec<TyId>>) -> Vec<TyId> {
@@ -28,16 +34,26 @@ pub(crate) fn keys_in(cx: &mut Ctx, t: TyId, memo: &mut FxHashMap<TyId, Vec<TyId
         let kind = cx.ty.kind(t).clone();
         let mut parts = children(&kind);
         if let Some((k, _)) = cx.record_type_args(t) {
-            return (Some(k), parts);
+            return Look {
+                key: Some(k),
+                parts,
+                generic: None,
+            };
         }
+        let mut generic = None;
         if let TyKind::Adt(d, args) = &kind {
+            generic = (!args.is_empty()).then_some(d.0);
             for m in member_types(cx, *d) {
                 parts.push(cx.subst(m, args));
             }
         }
-        (None, parts)
+        Look {
+            key: None,
+            parts,
+            generic,
+        }
     };
-    let (keys, visited) = walk(t, memo, MAX_WALK, &mut step);
+    let (keys, visited) = walk(t, memo, LIMITS, &mut step);
     // The types walked: the scaling tests compare this between program sizes.
     add_work(Pass::RecordKeys, visited as u64);
     keys
@@ -52,15 +68,36 @@ fn member_types(cx: &Ctx, d: DefId) -> Vec<TyId> {
     }
 }
 
-/// What a type is to a walk: the key it is (a `Record`'s key type), and the types it contains.
-type Step<'s> = dyn FnMut(TyId) -> (Option<TyId>, Vec<TyId>) + 's;
+/// What a type is to a walk.
+struct Look {
+    /// The key it is (a `Record`'s key type).
+    key: Option<TyId>,
+    /// The types it contains.
+    parts: Vec<TyId>,
+    /// The generic definition it instantiates (with type arguments).
+    generic: Option<u32>,
+}
 
-/// The keys `t` reaches by `step`, and how many types the walk visited (at most `limit`). The
-/// complete results of every type walked go into `memo`.
+type Step<'s> = dyn FnMut(TyId) -> Look + 's;
+
+/// Where a walk stops: [`MAX_NESTING`] and [`MAX_WALK`] (smaller in the tests).
+#[derive(Clone, Copy)]
+struct Limits {
+    nesting: u32,
+    total: usize,
+}
+
+const LIMITS: Limits = Limits {
+    nesting: MAX_NESTING,
+    total: MAX_WALK,
+};
+
+/// The keys `t` reaches by `step`, and how many types the walk visited. The complete results of
+/// every type walked go into `memo`.
 fn walk(
     t: TyId,
     memo: &mut FxHashMap<TyId, Vec<TyId>>,
-    limit: usize,
+    limits: Limits,
     step: &mut Step<'_>,
 ) -> (Vec<TyId>, usize) {
     let mut w = Walk {
@@ -68,8 +105,9 @@ fn walk(
         open: FxHashMap::default(),
         stack: vec![],
         cut_short: FxHashMap::default(),
+        nested: FxHashMap::default(),
         visited: 0,
-        limit,
+        limits,
     };
     let keys = w.visit(t, step).keys;
     (keys, w.visited)
@@ -83,15 +121,17 @@ struct Walk<'a> {
     open: FxHashMap<TyId, usize>,
     /// Those types, in visiting order.
     stack: Vec<TyId>,
-    /// Results of this walk that the limit cut short: used in it, never kept.
+    /// Results of this walk that a limit cut short: used in it, never kept.
     cut_short: FxHashMap<TyId, Vec<TyId>>,
+    /// Per generic definition, how many of its instances the path being walked goes through.
+    nested: FxHashMap<u32, u32>,
     visited: usize,
-    limit: usize,
+    limits: Limits,
 }
 
 /// What a type's walk found: its keys (those of its whole group once `low` is its own visiting
-/// number), the smallest visiting number of an open type it reaches, and whether the limit cut
-/// it short.
+/// number), the smallest visiting number of an open type it reaches, and whether a limit cut it
+/// short.
 struct Found {
     keys: Vec<TyId>,
     low: usize,
@@ -114,16 +154,23 @@ impl Walk<'_> {
             // In the group being walked: its keys join the group's when the group ends.
             return found(vec![], n, false);
         }
-        if self.visited >= self.limit {
+        if self.visited >= self.limits.total {
             return found(vec![], usize::MAX, true);
+        }
+        let look = step(t);
+        if let Some(g) = look.generic {
+            let depth = self.nested.entry(g).or_default();
+            if *depth >= self.limits.nesting {
+                return found(vec![], usize::MAX, true);
+            }
+            *depth += 1;
         }
         let n = self.visited;
         self.visited += 1;
         self.open.insert(t, n);
         self.stack.push(t);
-        let (key, parts) = step(t);
-        let mut f = found(key.into_iter().collect(), n, false);
-        for p in parts {
+        let mut f = found(look.key.into_iter().collect(), n, false);
+        for p in look.parts {
             let r = self.visit(p, step);
             f.low = f.low.min(r.low);
             f.cut |= r.cut;
@@ -148,6 +195,9 @@ impl Walk<'_> {
             }
             f.low = usize::MAX;
         }
+        if let Some(g) = look.generic {
+            *self.nested.entry(g).or_default() -= 1;
+        }
         f
     }
 }
@@ -160,12 +210,19 @@ mod tests {
     struct Graph(Vec<(Option<u32>, Vec<u32>)>);
 
     impl Graph {
-        fn keys(&self, t: u32, memo: &mut FxHashMap<TyId, Vec<TyId>>, limit: usize) -> Vec<u32> {
-            let mut step = |t: TyId| {
+        fn step(&self) -> impl FnMut(TyId) -> Look + '_ {
+            |t: TyId| {
                 let (k, parts) = &self.0[t.0 as usize];
-                (k.map(TyId), parts.iter().map(|&p| TyId(p)).collect())
-            };
-            let mut ks: Vec<u32> = walk(TyId(t), memo, limit, &mut step)
+                Look {
+                    key: k.map(TyId),
+                    parts: parts.iter().map(|&p| TyId(p)).collect(),
+                    generic: None,
+                }
+            }
+        }
+
+        fn keys(&self, t: u32, memo: &mut FxHashMap<TyId, Vec<TyId>>, limits: Limits) -> Vec<u32> {
+            let mut ks: Vec<u32> = walk(TyId(t), memo, limits, &mut self.step())
                 .0
                 .iter()
                 .map(|k| k.0)
@@ -196,15 +253,11 @@ mod tests {
         let want = vec![10, 11, 12];
         for first in 0..6 {
             let mut memo = FxHashMap::default();
-            g.keys(first, &mut memo, MAX_WALK);
+            g.keys(first, &mut memo, LIMITS);
             for t in [0, 1, 2, 5] {
-                assert_eq!(
-                    g.keys(t, &mut memo, MAX_WALK),
-                    want,
-                    "type {t} after {first}"
-                );
+                assert_eq!(g.keys(t, &mut memo, LIMITS), want, "type {t} after {first}");
             }
-            assert_eq!(g.keys(3, &mut memo, MAX_WALK), vec![12]);
+            assert_eq!(g.keys(3, &mut memo, LIMITS), vec![12]);
         }
     }
 
@@ -216,23 +269,57 @@ mod tests {
         types.extend((1..=30).map(|k| (None, vec![k - 1, k - 1])));
         let g = Graph(types);
         let mut memo = FxHashMap::default();
-        let mut step = |t: TyId| {
-            let (k, parts) = &g.0[t.0 as usize];
-            (k.map(TyId), parts.iter().map(|&p| TyId(p)).collect())
-        };
-        let (keys, visited) = walk(TyId(30), &mut memo, MAX_WALK, &mut step);
+        let (keys, visited) = walk(TyId(30), &mut memo, LIMITS, &mut g.step());
         assert_eq!((keys, visited), (vec![TyId(100)], 31));
-        assert_eq!(walk(TyId(30), &mut memo, MAX_WALK, &mut step).1, 0);
+        assert_eq!(walk(TyId(30), &mut memo, LIMITS, &mut g.step()).1, 0);
     }
 
-    /// A walk the limit cuts short keeps nothing: a later walk with room finds every key.
+    /// A type with 10,000 parts, the last a key, is walked completely: no limit counts the
+    /// parts of a finite graph, also when they are all instances of one generic definition
+    /// side by side.
     #[test]
-    fn a_result_cut_short_is_not_kept() {
-        let g = cycle();
+    fn wide_graphs_are_walked_completely() {
+        let n = 10_000u32;
+        let mut step = |t: TyId| match t.0 {
+            0 => Look {
+                key: None,
+                parts: (1..=n).map(TyId).collect(),
+                generic: None,
+            },
+            k => Look {
+                key: (k == n).then_some(TyId(u32::MAX)),
+                parts: vec![],
+                generic: Some(7),
+            },
+        };
         let mut memo = FxHashMap::default();
-        let short = g.keys(0, &mut memo, 2);
-        assert!(short.len() < 3, "{short:?}");
+        let (keys, visited) = walk(TyId(0), &mut memo, LIMITS, &mut step);
+        assert_eq!((keys, visited), (vec![TyId(u32::MAX)], n as usize + 1));
+        assert_eq!(memo.len(), n as usize + 1);
+    }
+
+    /// A generic type that grows as it recurses (type k holds type k+1, an instance of the same
+    /// definition, without end) is cut short, and its result is not kept: a later walk with
+    /// room is not given it.
+    #[test]
+    fn growing_generics_are_cut_short_and_not_kept() {
+        let mut step = |t: TyId| Look {
+            key: (t.0 == 3).then_some(TyId(99)),
+            parts: vec![TyId(t.0 + 1)],
+            generic: Some(1),
+        };
+        let mut memo = FxHashMap::default();
+        let (keys, visited) = walk(TyId(0), &mut memo, LIMITS, &mut step);
+        assert_eq!((keys, visited), (vec![TyId(99)], MAX_NESTING as usize));
+        assert!(memo.is_empty(), "{memo:?}");
+        // A walk cut short by the total keeps nothing either.
+        let g = cycle();
+        let tight = Limits {
+            nesting: MAX_NESTING,
+            total: 2,
+        };
+        assert!(g.keys(0, &mut memo, tight).len() < 3);
         assert!(memo.keys().all(|t| t.0 == 4 || t.0 == 3), "{memo:?}");
-        assert_eq!(g.keys(0, &mut memo, MAX_WALK), vec![10, 11, 12]);
+        assert_eq!(g.keys(0, &mut memo, LIMITS), vec![10, 11, 12]);
     }
 }

@@ -88,6 +88,7 @@ mod ts_protocol;
 mod type_defaults;
 mod type_level;
 mod type_queries;
+mod type_reach;
 mod types;
 mod undefined_args;
 mod unions;

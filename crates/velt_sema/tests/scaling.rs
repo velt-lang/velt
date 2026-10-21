@@ -14,7 +14,7 @@ use std::sync::{Mutex, MutexGuard};
 
 use common::hir_walk::func;
 use common::process_work;
-use common::programs::{load_src, ok_src, repo_root, Loaded};
+use common::programs::{err_src, load_src, ok_src, repo_root, Loaded};
 use velt_sema::hir::PassMode;
 use velt_sema::{instantiation_work, InstantiationWork};
 
@@ -256,7 +256,50 @@ fn sema_time_grows_linearly() {
 #[test]
 fn shared_type_graphs_are_walked_by_type() {
     assert_linear_work(&[100, 800], shared_type_graph, 1.5);
-    assert_slopes(&[100, 400, 1600], shared_type_graph, 2.0);
+    assert_slopes(&[200, 800, 3200], shared_type_graph, 2.0);
+}
+
+/// `n` interfaces `T{i}` and a type holding one of each, then `last`: a type far wider than a
+/// walk over the type graph visits in a real program.
+fn wide_holder(n: usize, generic: &str, last: &str) -> String {
+    let mut out = String::new();
+    for i in 0..n {
+        out += &format!("interface T{i} {{\n  v: number;\n}}\n");
+    }
+    out += &format!("interface Holder{generic} {{\n");
+    for i in 0..n {
+        out += &format!("  p{i}: T{i};\n");
+    }
+    out + &format!("  {last};\n}}\n")
+}
+
+/// The walks over the type graph search a wide type completely: only depth (and the nesting of
+/// generic types) limits them, not the number of types (#859).
+#[test]
+fn wide_types_are_searched_completely() {
+    // The promise after 4100 other fields still makes reading `h` of the union a copy of a
+    // value that owns one (`known::owns_resource`).
+    let src = wide_holder(4100, "", "res: Promise<number>")
+        + "interface A {\n  kind: \"a\";\n  h: Holder;\n}\n\
+           interface B {\n  kind: \"b\";\n  h: Holder;\n}\n\
+           function take(u: A | B): Holder {\n  return u.h;\n}\n\
+           function main() {}\n";
+    let e = err_src(&src);
+    assert!(
+        e.contains("cannot copy `h` of a union value `A | B`"),
+        "{e}"
+    );
+    // The record after them still brings its key into `g`, which `main` instantiates with a
+    // key type a record cannot have (`key_groups`).
+    let src = wide_holder(4100, "<K>", "r: Record<K, number>")
+        + "function g<K>(): number {\n  const h: Holder<K> | null = null;\n  return h === null ? 1 : 2;\n}\n\
+           function main() {\n  console.log(g<number>());\n}\n";
+    let e = err_src(&src);
+    assert!(e.contains("`f64` cannot be a `Record` key"), "{e}");
+    assert!(
+        e.contains("required because `g` uses it as a `Record` key"),
+        "{e}"
+    );
 }
 
 /// Choosing the member of a union of function types for nested arrows that each use the

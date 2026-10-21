@@ -570,17 +570,26 @@ impl<'m> Ctx<'m> {
 
     /// Ownership: can values of this type be duplicated bitwise?
     pub fn is_copy(&mut self, t: TyId) -> bool {
-        self.is_copy_depth(t, 0)
+        self.is_copy_depth(t, 0, &mut FxHashMap::default())
     }
 
-    fn is_copy_depth(&mut self, t: TyId, depth: u32) -> bool {
+    /// Is `t`, reached `depth` levels down, Copy? Past 32 levels nothing is, which stops a
+    /// generic type that grows as it recurses. `seen` keeps the answers per type and level of
+    /// this query, so types that share parts are not checked once per path.
+    fn is_copy_depth(
+        &mut self,
+        t: TyId,
+        depth: u32,
+        seen: &mut FxHashMap<(TyId, u32), bool>,
+    ) -> bool {
         if depth > 32 {
             return false;
         }
         if let Some(base) = self.brand_base(t) {
-            return self.is_copy_depth(base, depth + 1);
+            return self.is_copy_depth(base, depth + 1, seen);
         }
-        match self.ty.kind(t).clone() {
+        let kind = self.ty.kind(t).clone();
+        let parts = match kind {
             TyKind::Int(_)
             | TyKind::Float(_)
             | TyKind::Bool
@@ -589,14 +598,12 @@ impl<'m> Ctx<'m> {
             | TyKind::Literal(_)
             | TyKind::Unit
             | TyKind::Never
-            | TyKind::Error => true,
-            TyKind::Tuple(ts) => ts.iter().all(|t| self.is_copy_depth(*t, depth + 1)),
-            TyKind::Option(t, _) => self.is_copy_depth(t, depth + 1),
-            TyKind::Result(a, b) => {
-                self.is_copy_depth(a, depth + 1) && self.is_copy_depth(b, depth + 1)
-            }
+            | TyKind::Error => return true,
+            TyKind::Tuple(ts) => ts,
+            TyKind::Option(t, _) => vec![t],
+            TyKind::Result(a, b) => vec![a, b],
             // Copying a mutex would duplicate its lock word.
-            TyKind::Adt(d, _) if Some(d) == self.mutex_ty() => false,
+            TyKind::Adt(d, _) if Some(d) == self.mutex_ty() => return false,
             TyKind::Adt(d, args) => {
                 // Objects (structs included, semantics stage 2) are references: never Copy.
                 let tys: Vec<TyId> = match &self.info[d.0 as usize] {
@@ -607,13 +614,21 @@ impl<'m> Ctx<'m> {
                         .collect(),
                     _ => return false,
                 };
-                tys.into_iter().all(|f| {
-                    let f = self.subst(f, &args);
-                    self.is_copy_depth(f, depth + 1)
-                })
+                tys.into_iter().map(|f| self.subst(f, &args)).collect()
             }
-            _ => false,
+            _ => return false,
+        };
+        // The query's own type is asked at level 0 only once.
+        if let Some(&b) = seen.get(&(t, depth)).filter(|_| depth > 0) {
+            return b;
         }
+        let b = parts
+            .into_iter()
+            .all(|p| self.is_copy_depth(p, depth + 1, seen));
+        if depth > 0 {
+            seen.insert((t, depth), b);
+        }
+        b
     }
 
     /// Human-readable type for diagnostics.

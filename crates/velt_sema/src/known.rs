@@ -5,11 +5,10 @@
 //! interface behind `for...of` over iterables, and the `Generator<T, E>` / `AsyncGenerator<T, E>`
 //! classes generators create.
 
-use rustc_hash::FxHashSet;
-
 use crate::ctx::{Ctx, Item};
 use crate::defs::DefInfo;
 use crate::hir::{self, DefId, IntTy, TyId, TyKind};
+use crate::type_reach::Look;
 
 /// The method of the prelude's `Comparable<T>`; `a < b` on a bounded `T` calls it.
 pub(crate) const COMPARE_TO: &str = "compareTo";
@@ -20,9 +19,9 @@ const SYNC_RESULTS: [&str; 4] = ["Iterator", "Iterable", "IterableIterator", "It
 /// The interfaces an async generator may be declared to return.
 const ASYNC_RESULTS: [&str; 3] = ["AsyncIterator", "AsyncIterable", "AsyncIterableIterator"];
 
-/// The most types one walk over a type graph visits: a generic type that grows as it recurses
-/// (`class A<T> { next: A<T[]> }`) has no end.
-const MAX_WALK: usize = 4096;
+/// How many levels of fields, elements and payloads the searches for a resource look through: a
+/// generic type that grows as it recurses (`class A<T> { next: A<T[]> }`) has no end.
+const MAX_LEVELS: u32 = 32;
 
 impl Ctx<'_> {
     /// `interface Comparable<T> { compareTo(other: T): i64 }` from the prelude.
@@ -410,40 +409,36 @@ impl Ctx<'_> {
     /// resource handle (or the pointer to a future, which runs and is freed once) instead of
     /// duplicating the resource, so it is not available for these types.
     pub fn owns_resource(&mut self, t: TyId) -> bool {
-        let mut seen = FxHashSet::default();
-        self.owns_resource_in(t, &mut seen)
+        let mut look = |cx: &mut Self, t: TyId| match cx.ty.kind(t).clone() {
+            // A shared value's clone only bumps the reference count.
+            TyKind::Shared(_) => Look::Stop,
+            TyKind::Promise(..) => Look::Found,
+            // A function value owns its captures, not its parameter or result types.
+            TyKind::FnPtr { .. } => Look::Stop,
+            TyKind::Adt(d, _) if matches!(&cx.info[d.0 as usize], DefInfo::Adt(a) if a.has_dispose) => {
+                Look::Found
+            }
+            k => Look::Parts(cx.parts_of(k)),
+        };
+        self.find_within(t, MAX_LEVELS, &mut look).is_some()
     }
 
-    /// Is a resource reachable from `t` through types not in `seen` (those visited by this
-    /// query)? A type is walked once per query: reachability does not depend on the order, and
-    /// a type graph whose types share parts costs its size, not its number of paths.
-    /// Generic types that grow as they recurse (`next: A<T[]>`) stop after [`MAX_WALK`] types.
-    fn owns_resource_in(&mut self, t: TyId, seen: &mut FxHashSet<TyId>) -> bool {
-        if seen.len() >= MAX_WALK || !seen.insert(t) {
-            return false;
-        }
-        let parts: Vec<TyId> = match self.ty.kind(t).clone() {
-            // A shared value's clone only bumps the reference count.
-            TyKind::Shared(_) => return false,
-            TyKind::Promise(..) => return true,
-            // A function value owns its captures, not its parameter or result types.
-            TyKind::FnPtr { .. } => return false,
-            TyKind::Adt(d, args) => {
-                let tys: Vec<TyId> = match &self.info[d.0 as usize] {
-                    DefInfo::Adt(a) if a.has_dispose => return true,
-                    DefInfo::Adt(a) => a.fields.iter().map(|f| f.ty).collect(),
-                    DefInfo::Enum(e) => e
-                        .variants
-                        .iter()
-                        .flat_map(|v| v.payload.iter().copied())
-                        .collect(),
-                    _ => vec![],
-                };
-                tys.into_iter().map(|f| self.subst(f, &args)).collect()
-            }
-            k => crate::types::children(&k),
+    /// The field types of an object type of kind `k`, the payload types of an enum, the element
+    /// types of any other type.
+    fn parts_of(&mut self, k: TyKind) -> Vec<TyId> {
+        let TyKind::Adt(d, args) = k else {
+            return crate::types::children(&k);
         };
-        parts.into_iter().any(|p| self.owns_resource_in(p, seen))
+        let tys: Vec<TyId> = match &self.info[d.0 as usize] {
+            DefInfo::Adt(a) => a.fields.iter().map(|f| f.ty).collect(),
+            DefInfo::Enum(e) => e
+                .variants
+                .iter()
+                .flat_map(|v| v.payload.iter().copied())
+                .collect(),
+            _ => vec![],
+        };
+        tys.into_iter().map(|f| self.subst(f, &args)).collect()
     }
 
     /// Does a value of type `t` own a resource that no deep copy can duplicate: a value with a
@@ -459,35 +454,16 @@ impl Ctx<'_> {
     /// The part of `t` that makes it [`owns_uncopyable`](Self::owns_uncopyable): the resource
     /// type without `clone()`, or the promise type (`t` itself, or a field, element or payload).
     pub fn uncopyable_part(&mut self, t: TyId) -> Option<TyId> {
-        self.uncopyable_part_depth(t, 0)
-    }
-
-    fn uncopyable_part_depth(&mut self, t: TyId, depth: u32) -> Option<TyId> {
-        if depth > 32 {
-            return None;
-        }
-        let parts: Vec<TyId> = match self.ty.kind(t).clone() {
+        let mut look = |cx: &mut Self, t: TyId| match cx.ty.kind(t).clone() {
             // A promise is copied by sharing it (#212).
-            TyKind::Shared(_) | TyKind::FnPtr { .. } | TyKind::Promise(..) => return None,
-            TyKind::Adt(d, _) if self.own_clone(d).is_some() => return None,
-            TyKind::Adt(d, args) => {
-                let tys: Vec<TyId> = match &self.info[d.0 as usize] {
-                    DefInfo::Adt(a) if a.has_dispose => return Some(t),
-                    DefInfo::Adt(a) => a.fields.iter().map(|f| f.ty).collect(),
-                    DefInfo::Enum(e) => e
-                        .variants
-                        .iter()
-                        .flat_map(|v| v.payload.iter().copied())
-                        .collect(),
-                    _ => vec![],
-                };
-                tys.into_iter().map(|f| self.subst(f, &args)).collect()
+            TyKind::Shared(_) | TyKind::FnPtr { .. } | TyKind::Promise(..) => Look::Stop,
+            TyKind::Adt(d, _) if cx.own_clone(d).is_some() => Look::Stop,
+            TyKind::Adt(d, _) if matches!(&cx.info[d.0 as usize], DefInfo::Adt(a) if a.has_dispose) => {
+                Look::Found
             }
-            k => crate::types::children(&k),
+            k => Look::Parts(cx.parts_of(k)),
         };
-        parts
-            .into_iter()
-            .find_map(|p| self.uncopyable_part_depth(p, depth + 1))
+        self.find_within(t, MAX_LEVELS, &mut look)
     }
 
     /// Why a `t` cannot be deep-copied, for a diagnostic: "`Conn` owns a resource
