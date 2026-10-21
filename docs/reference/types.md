@@ -285,6 +285,22 @@ run time (a symbol made in a function) is an error: use a `Map`. In an object li
 key known only at run time (`{ [o.tag]: v }`, `{ [name]: v }` with a local `name`) makes the
 object a `Record<string, V>`, as TypeScript gives it a string index signature. A module constant
 holding a string literal names that field the same way (`const NAME = "name"`, `[NAME]: T`).
+In a declaration (an interface, an object type or a class), a string or number literal in
+brackets is the plain name (`["k"]: number` is `k: number`; `[1]: string` and `1: string` name
+the member `"1"`, `[-1]: string` the member `"-1"`, `1e3: number` the member `"1000"`), also
+after a modifier (`readonly 7 = 4`), and so in a destructuring pattern (`const { 1.5: a, [-1]: b
+} = o`). `[-0]` names the member `"0"`, as `String(-0)` is in JavaScript (TypeScript's checker
+reads it as `"-0"`). Such a name is for fields: a method or accessor named by a literal
+(`["a-b"]() {}`, `get "c d"()`, `get 1()`, `1e3() {}`) is not supported yet. A symbol made in
+place (`[Symbol("x")]: v`, also in an object literal) is an error that asks for a module
+constant. An enum member names the member its value spells, as in TypeScript:
+`[ReactiveFlags.SKIP]?: boolean` with `SKIP = "__v_skip"` is the member `__v_skip`, and a
+numeric enum's member is its number (`[Slot.First]` is `"0"`). It works in declarations, in
+object literals (`{ [ReactiveFlags.SKIP]: true }`), in `o[ReactiveFlags.SKIP]` (also as an
+assignment target) and in `ReactiveFlags.SKIP in o`, also with an imported enum. In a
+destructuring pattern, a computed key is a string or number literal
+or a name (`{ [KEY]: v } = o`); a path or another expression (`{ [t.tag]: v } = o`) is an error:
+store the key in a variable first (`const k = t.tag; const { [k]: v } = o`).
 A class or interface may declare a method, getter or setter with such a key (`[KEY]() {}`,
 `get [KEY]()`) or a well-known symbol key (`get [Symbol.toStringTag]()`); `o[KEY]`, `o[KEY]()`,
 `o[KEY] = v` and `KEY in o` find it. A quoted key is an ordinary string key, also one that reads
@@ -1729,7 +1745,9 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   `Record<string, V>` also where no record is expected (spreading a record into an object of a
   fixed shape is an error: its keys are known only at run time). A string or integer
   literal key in brackets is the plain key (`{ ["a"]: 1 }` is `{ a: 1 }`), as is a numeric
-  property name (`{ 7: v }` and `{ 0x10: v }` have the keys `"7"` and `"16"`). A computed key
+  property name, which is the number as `String` spells it (`{ 7: v }`, `{ 0x10: v }`,
+  `{ 1.50: v }` and `{ 1e3: v }` have the keys `"7"`, `"16"`, `"1.5"` and `"1000"`, and
+  `{ 9007199254740993: v }` the key `"9007199254740992"`, the nearest double). A computed key
   is a `string`, or a number converted to its string as in JavaScript (`{ [i + 0.5]: v }` with
   `i = 3` has the key `"3.5"`); a symbol made at run time is an error, and so is a key of any
   other type (`{ [true]: v }`, TypeScript's TS2464). In generic code, where the key type is a type
