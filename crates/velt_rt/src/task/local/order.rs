@@ -404,13 +404,28 @@ impl Order {
         }
     }
 
-    /// The first timer of the first list, and when it is due (whole milliseconds).
+    /// The first timer of the first list, and the list's expiry (whole milliseconds; the timer
+    /// itself is due then or later).
     fn earliest(&self) -> Option<(Key, u64)> {
-        let &(_, gate) = self.heads.first()?;
+        let &(expiry, gate) = self.heads.first()?;
         let group = &self.groups[&gate];
         let &(_, ms) = group.order.first()?;
-        let (seq, e) = group.lists[&ms].timers.first()?;
-        Some((Key { gate, ms, seq }, e.start.saturating_add(ms)))
+        let (seq, _) = group.lists[&ms].timers.first()?;
+        Some((Key { gate, ms, seq }, expiry.0))
+    }
+
+    /// The loop woke at the first list's expiry (the turn of `key`, its first timer) and found
+    /// nothing due: as Node's pass, the lists due by now whose next timer is not get their new
+    /// places (`max(start + ms, now + 1)`, a new id), and the timer that is first now sleeps
+    /// until its list's expiry.
+    fn expired(&mut self, look: &Peek, current: Option<&Arc<Gate>>, key: Key) {
+        self.loop_woke(look, current);
+        self.armed = None;
+        if let Some((k, _)) = self.earliest().filter(|(k, _)| *k != key) {
+            if let Some(w) = self.entry_mut(k).and_then(|e| e.waker.take()) {
+                w.wake();
+            }
+        }
     }
 }
 
@@ -585,6 +600,12 @@ impl Future for Turn {
         let Some(key) = h.key else {
             return Poll::Ready(());
         };
+        // Its sleep woke it (or it was woken otherwise): it sleeps again below only if it is
+        // still the earliest timer with nothing due.
+        let woke = order.armed == Some(key);
+        if woke {
+            order.armed = None;
+        }
         let current = super::with_gate(Arc::clone);
         let look = order.peek_cached(current.as_ref(), true, &mut clock_ms);
         let first = look.next.map(|(k, _)| k);
@@ -610,9 +631,6 @@ impl Future for Turn {
                 let polls = g.polls();
                 (g, polls)
             });
-            if order.armed == Some(key) {
-                order.armed = None;
-            }
             h.key = None;
             // Node reads the clock just before an interval's callback; its next run counts
             // from it.
@@ -628,16 +646,31 @@ impl Future for Turn {
             }
         }
         if first.is_none() {
-            if let Some((k, due)) = order.earliest().filter(|(k, _)| *k == key) {
-                // The earliest timer, nothing due yet: it wakes the loop when it is.
+            if let Some((k, expiry)) = order.earliest().filter(|(k, _)| *k == key) {
+                // The first timer of the first list, nothing due yet: it wakes the loop at the
+                // list's expiry, as Node's loop wakes then (its own due time may be later).
                 order.armed = Some(k);
                 let origin = crate::process::clock_origin();
-                let at = Instant::from_std(origin + Duration::from_millis(due)).max(h.at);
+                let at = Instant::from_std(origin + Duration::from_millis(expiry));
                 if self.sleep_until(at, cx) {
+                    order.expired(&look, current.as_ref(), key);
                     cx.waker().wake_by_ref();
                 }
             }
             return Poll::Pending;
+        }
+        // This turn's own sleep (it was the earliest) ended: the loop woke and runs a pass, which
+        // gives the lists it passes over their new places now, as Node's does. The timer that
+        // comes next may wait without a wake-up coming (the sleep may have ended late, after
+        // another list's timer came due): it is woken.
+        if woke {
+            order.loop_woke(&look, current.as_ref());
+        }
+        if let Some(w) = first
+            .and_then(|k| order.entry_mut(k))
+            .and_then(|e| e.waker.take())
+        {
+            w.wake();
         }
         if let Some(g) = first.and_then(|k| order.groups[&k.gate].gate.clone()) {
             g.note_blocking();

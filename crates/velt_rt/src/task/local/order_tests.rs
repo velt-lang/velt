@@ -192,3 +192,25 @@ fn immediates_run_between_passes() {
     assert!(o.take(t));
     assert!(o.is_empty());
 }
+
+/// Clearing a list's first timer leaves the list's expiry: the earliest timer sleeps until then,
+/// not until its own due time, and the pass the loop runs then gives the list its new place, so a
+/// list due before the list's next timer comes first.
+#[test]
+fn a_cleared_list_head_keeps_the_expiry_until_the_loop_wakes() {
+    let mut o = Order::new();
+    let a = o.insert_at(100, 0, None); // 100 list, expiry 100
+    let c = o.insert_at(120, 0, None); // 120 list, expiry 120
+    let b = o.insert_at(100, 50, None); // due 150
+    assert!(o.take(a));
+    assert_eq!(o.earliest(), Some((b, 100)));
+    // The loop wakes at 100: nothing is due, the 100 list waits for 150 with a new id.
+    let look = o.peek(None, true, &mut || 100);
+    assert!(look.next.is_none());
+    o.loop_woke(&look, None);
+    assert_eq!(o.earliest(), Some((c, 120)));
+    let mut clock = || 120;
+    assert_eq!(step(&mut o, &mut clock), Some(c));
+    assert!(o.take(c));
+    assert_eq!(o.earliest(), Some((b, 150)));
+}

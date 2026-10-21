@@ -25,7 +25,8 @@ pub(super) enum Phase {
 pub(super) struct Peek {
     /// The timer that comes next, and the phase it runs in.
     pub(super) next: Option<(Key, Phase)>,
-    /// The `now` of the pass it was chosen in (an immediate: of the pass that is over).
+    /// The `now` of the pass it was chosen in (an immediate: of the pass that is over; none
+    /// chosen: of the pass that found nothing).
     now: Option<u64>,
     /// The list of the timer chosen.
     list: Option<ListKey>,
@@ -147,6 +148,7 @@ impl Order {
                 }
             }
             if fresh {
+                p.now = Some(now);
                 return p;
             }
             p.passed_in_pass = p.partly;
@@ -189,7 +191,12 @@ impl Order {
 
     /// The lists due by `now` (and before list `before`) whose next timer is not get their new
     /// places, in the order the pass meets them: `max(start + ms, now + 1)`, a new id.
-    fn rekey_passed(&mut self, current: Option<&Arc<Gate>>, now: u64, before: Option<ListKey>) {
+    pub(super) fn rekey_passed(
+        &mut self,
+        current: Option<&Arc<Gate>>,
+        now: u64,
+        before: Option<ListKey>,
+    ) {
         let mut passed = Vec::new();
         for (&gate, group) in &self.groups {
             if group.busy_elsewhere(current) {
@@ -212,6 +219,15 @@ impl Order {
         passed.sort_unstable();
         for (_, gate, ms, due) in passed {
             self.rekey(gate, ms, due.max(now + 1));
+        }
+    }
+
+    /// The loop woke for a pass that chose `p`'s timer, another task's or one that takes its
+    /// turn later: the lists the pass passed over get their new places now, as Node's pass
+    /// gives them before it runs anything.
+    pub(super) fn loop_woke(&mut self, p: &Peek, current: Option<&Arc<Gate>>) {
+        if let (true, true, Some(now)) = (p.fresh, p.partly, p.now) {
+            self.rekey_passed(current, now, p.list);
         }
     }
 
