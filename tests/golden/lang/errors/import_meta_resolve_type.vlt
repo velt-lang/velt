@@ -1,7 +1,0 @@
-// `import.meta.resolve` throws when a specifier can't be resolved, so it is not a function type
-// that cannot throw; wrapping it in an arrow gives one that says it throws.
-const r: (s: string) => string = import.meta.resolve;
-console.log(r("./x"));
-// The same as a field of an object type.
-const m: { resolve: (s: string) => string } = import.meta;
-console.log(m.resolve("./y"));

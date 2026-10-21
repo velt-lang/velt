@@ -301,6 +301,9 @@ impl FnCx<'_, '_> {
             || self.cx.same_layout(from, to)
             // Equal but for their error-set variables (`throws::vars`), which become one set.
             || (self.cx.fn_sites.use_vars && self.cx.unify_err_vars(from, to))
+            // A function that throws into a function type written without `throws` (its sites
+            // take its errors), converted through a wrapper as a value is.
+            || self.cx.fn_throws_differ(from, to) == Some(true)
             || self.copy_plan(from, to, depth + 1).is_some()
     }
 }
