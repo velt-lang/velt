@@ -241,7 +241,7 @@ impl FnLower<'_, '_> {
             Rvalue::Binary(BinOp::Ne, Operand::Copy(Place::local(d)), cint(0, Ty::Ptr)),
         );
         let (yes, no, done) = (self.new_block(), self.new_block(), self.new_block());
-        self.branch(live, yes, no);
+        self.branch(live.clone(), yes, no);
         self.switch_to(yes);
         let w = self.temp(Ty::U64);
         self.call_rt(Rt::WeakrefWord, vec![r], Some(Place::local(w)));
@@ -253,18 +253,23 @@ impl FnLower<'_, '_> {
         self.assign(proj(&out, Proj::Field(1)), Rvalue::Use(desc));
         self.goto(done);
         self.switch_to(no);
-        self.any_nothing_into(Nothing::Undefined, &out);
+        // An option (`Inst | undefined`) is absent once the target is gone, with a payload of
+        // nothing to drop; an `object` holds JavaScript's `undefined`.
+        let option = t != obj && matches!(self.cx.ty(t), Ty::Agg(_));
+        if option {
+            let zero = self.zero_value(ovt);
+            self.assign(out.clone(), Rvalue::Use(zero));
+        } else {
+            self.any_nothing_into(Nothing::Undefined, &out);
+        }
         self.goto(done);
         self.switch_to(done);
         let v = Operand::Copy(out);
-        if t == obj {
+        if !option {
             return self.own_value(v, t);
         }
         // `build_agg` owns the option it builds.
-        match self.cx.ty(t) {
-            Ty::Agg(_) => self.build_agg(t, vec![Operand::Const(Const::Bool(true), Ty::Bool), v]),
-            _ => self.own_value(v, t),
-        }
+        self.build_agg(t, vec![live, v])
     }
 
     /// The trace glue's step into a dynamic value at `place`: visit its data pointer when its
