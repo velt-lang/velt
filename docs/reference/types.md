@@ -1021,6 +1021,11 @@ console.log(show("ab"), show(41)); // AB 42
 - A literal predicate type (`x is "a"` on `string | number`) narrows to the member it is a
   value of (`string`) when the call is true and leaves the variable as it is when false; a
   type no member of the variable's type is (`x is Dog` on `string | number`) does not narrow.
+  An object type that no member is or can hold (`v is Computed<unknown>` on a union of
+  primitives, arrays and object types without its members, such as a `JSXChild`) narrows to
+  nothing when the call is true, as TypeScript's intersection of the two has no value Velt can
+  hold: the code there type-checks (`v.value`) and does not run, and a predicate that returns
+  true anyway panics as above. When false, the variable is left as it is.
 - The function must be declared with `function` and not be generic for its calls to narrow; a
   predicate on an arrow or a function type (`(x: unknown) => x is T`) is just a `boolean`
   result. `this is T` is accepted and not used for narrowing yet.
@@ -1540,7 +1545,11 @@ Enums are not generic and have no payloads; use a discriminated union for tagged
   insertion order (`JSON.parse` too).
 - **Generic object types** are structural, as in TypeScript: an instance is the object type it
   spells out, so with `type Box<T> = { v: T }`, `Box<string>` *is* `{ v: string }`, and so is
-  the instance of a generic interface with only fields.
+  the instance of a generic interface with only fields. An instance whose field is `void`
+  (`Box<void>`, or sigx's `__ref: TRef` brand with `TRef = void`) is accepted, as in
+  TypeScript: the field holds no value, a write of an `any` to it is dropped, and a read of it
+  is `void` (which can't be printed or tested). A `void` field written in an object type, a
+  struct or a class, or a class instance with one (`new Holder<void>()`), is an error.
 
 ```ts
 type Box<T> = { v: T };
@@ -1906,9 +1915,15 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   `d[k] ?? 0`, `d[k] || 0` and `d[k]?.push(x)` work as in JavaScript. The value type may include
   `null` (`{ [k: string]: number | null }`): a key holding `null` is present (listed by
   `Object.keys`, written by `JSON.stringify`) and reads `null`, a missing key `undefined`. As for `readonly T[]`, a `readonly`
-  index signature is not checked for writes yet. Not supported yet (each is an error): named
-  members next to an index signature (`{ name?: string; [key: string]: string | undefined }`,
-  which needs `undefined`, #930), a `number` or `symbol` key, two index signatures in one type,
+  index signature is not checked for writes yet. Named members next to an index signature of
+  `any` or `unknown` values (`interface Props { children?: string; [key: string]: any }`) make
+  the type that record too: every member's type is one the values have, so a named member is a
+  key like any other and reads as `any` (or `unknown`). A key holding a function is called as a
+  method (`props.onClick()`, also on any `Record<string, any>`). A spread of a record that may be
+  `null` or `undefined` (`{ ...props }` with `props: Props | null`) is a record too, and copies
+  nothing when it is. Not supported yet (each is an error): named members next to an index
+  signature of other values (`{ name?: string; [key: string]: string | undefined }`, which needs
+  `undefined`, #930), a `number` or `symbol` key, two index signatures in one type,
   and an interface with an index signature that also has methods or `extends`. An object of a
   named object type does not convert to an index-signature type (TypeScript allows it for type
   aliases but not interfaces): build a record (`{ ...o }` with values of one type) instead.
