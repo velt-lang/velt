@@ -247,7 +247,11 @@ impl FnCx<'_, '_> {
                         .trial_type(e)
                         .is_some_and(|t| self.cx.ty.core(t).is_some());
                     complete = !nullable;
-                    let m = if nullable { "__extendMaybe" } else { "__extend" };
+                    let m = if nullable {
+                        "__extendMaybe"
+                    } else {
+                        "__extend"
+                    };
                     self.record_call(recv, m, std::slice::from_ref(e), e.span)
                 }
                 ast::ObjectProp::KeyValue(name, _) | ast::ObjectProp::Shorthand(name) => {
