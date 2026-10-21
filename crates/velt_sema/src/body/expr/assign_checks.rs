@@ -1,10 +1,14 @@
-//! Checks of assignment targets split out of `assign.rs`: writes to `static readonly` fields, and
-//! the field writes `crate::object_copies` needs to know about.
+//! Checks of assignment targets split out of `assign.rs`: writes to `static readonly` fields,
+//! the field writes `crate::object_copies` needs to know about, and `a ??= b` on a place.
 
 use velt_syntax::ast;
 
-use crate::body::FnCx;
-use crate::hir::{TyId, TyKind};
+use velt_common::{Diagnostic, Span};
+
+use super::assign::AssignTarget;
+use super::assign_paths::is_pure_place;
+use crate::body::{FnCx, Want};
+use crate::hir::{self, TyId, TyKind};
 
 impl FnCx<'_, '_> {
     /// `Type.NAME = v` on a `static readonly` field (reported; statics are constants).
@@ -51,5 +55,54 @@ impl FnCx<'_, '_> {
                 name: prop.name.clone(),
                 span: prop.span,
             });
+    }
+
+    /// `a ??= b` on a place (`checked` is the target as resolved; not a record key).
+    pub(super) fn logical_assign(
+        &mut self,
+        op: ast::BinaryOp,
+        checked: Option<AssignTarget>,
+        target: &ast::Expr,
+        value: &ast::Expr,
+        span: Span,
+    ) -> hir::Expr {
+        // `a ??= b` is `a = a ?? b` (likewise `&&=`, `||=`), and the assignment narrows `a`
+        // as usual. That reads the target twice, which is only right when reading it has no
+        // effect (JS evaluates `xs[f()]` once).
+        if !is_pure_place(target) {
+            self.cx.error(
+                Diagnostic::error(
+                    "`??=`, `||=` and `&&=` are not supported yet on a target that calls a function",
+                    target.span,
+                )
+                .with_note("store the index or object in a variable first: `const k = f(); m[k] ??= v;`"),
+            );
+            self.expr(value, None, Want::Borrow);
+            return self.error_expr(span);
+        }
+        // A target in error is reported once, here.
+        match checked {
+            None => {
+                self.expr(value, None, Want::Borrow);
+                return self.error_expr(span);
+            }
+            Some(
+                AssignTarget::Place(_)
+                | AssignTarget::Record(_)
+                | AssignTarget::Setter(_)
+                | AssignTarget::Indexer(_)
+                | AssignTarget::Dynamic(_),
+            ) => {}
+        }
+        let rhs = ast::Expr {
+            id: ast::NodeId(u32::MAX),
+            kind: ast::ExprKind::Binary {
+                op,
+                lhs: Box::new(target.clone()),
+                rhs: Box::new(value.clone()),
+            },
+            span: value.span,
+        };
+        self.assign(None, target, &rhs, span)
     }
 }

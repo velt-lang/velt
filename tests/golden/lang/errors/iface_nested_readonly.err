@@ -1,0 +1,5 @@
+iface_nested_readonly.vlt:18:21: error: this object literal has a getter but no setter for `p`, a part of which is changed through `Pair`
+  = note: add `set p(v)` to the object literal: the changed value is written back through it
+
+iface_nested_readonly.vlt:14:5: error: cannot assign to `p`: it is a readonly field
+  = note: `Pair` declares it `readonly`

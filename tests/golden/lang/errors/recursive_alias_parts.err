@@ -1,0 +1,12 @@
+recursive_alias_parts.vlt:6:34: error: type alias `Tree` refers to itself
+recursive_alias_parts.vlt:6:19: `Base` is a type parameter
+recursive_alias_parts.vlt:9:36: error: type alias `Boxed` refers to itself
+recursive_alias_parts.vlt:9:14: this part is a generic type or a type of another module
+recursive_alias_parts.vlt:15:32: error: type alias `Shapes` refers to itself
+recursive_alias_parts.vlt:15:15: `Shape` is an interface with type parameters, methods, call signatures or `extends`
+recursive_alias_parts.vlt:15:15: error: `&` combines object types; `Shape` is an interface with methods
+recursive_alias_parts.vlt:17:44: error: type alias `Twice` refers to itself
+recursive_alias_parts.vlt:17:23: field `value` has another type in another part
+recursive_alias_parts.vlt:17:14: error: no value has type `Base & { value: string; kids: _[] }`: field `value` is `f64` in one part and `string` in another
+recursive_alias_parts.vlt:20:60: error: type alias `Indexed` refers to itself
+recursive_alias_parts.vlt:20:26: field `m` is in two parts, and its types can't be compared

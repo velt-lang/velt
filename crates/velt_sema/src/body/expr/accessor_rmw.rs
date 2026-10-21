@@ -25,7 +25,7 @@ use crate::body::places::set_place_mode;
 use crate::body::{FnCx, LocalKind, Want};
 use crate::hir::{self, ExprKind as H, LocalId, UseMode};
 
-const RECEIVER: &str = "<receiver>";
+pub(super) const RECEIVER: &str = "<receiver>";
 const OLD: &str = "<old>";
 const NEW: &str = "<new>";
 

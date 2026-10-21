@@ -1,0 +1,4 @@
+6 {"value":1,"kids":[{"value":2,"kids":[]},{"value":3,"kids":[]}]}
+1
+file,open {"items":[{"items":[],"value":2,"label":"open"}],"value":1,"label":"file"}
+/ true

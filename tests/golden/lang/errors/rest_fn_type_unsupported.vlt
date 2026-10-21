@@ -1,0 +1,24 @@
+// Rest function types in forms Velt does not support yet (#943), each with its own error:
+// - a function whose fixed parameters would read missing rest arguments as `undefined` while
+//   their type doesn't admit it (TypeScript accepts it);
+// - `Parameters` of a function type with fixed parameters before its rest parameter, which is
+//   a variadic tuple type;
+// - calling a union of function types with a rest parameter.
+function two(a: number, b: number): number {
+  return a + b;
+}
+
+type Both = Parameters<(e: string, ...xs: number[]) => void>;
+
+function pick(k: boolean): ((...xs: number[]) => number) | ((a: number) => number) {
+  if (k) {
+    return (...xs: number[]) => xs.length;
+  }
+  return (a: number) => a * 10;
+}
+
+function main() {
+  const g: (...xs: number[]) => number = two;
+  const u = pick(true);
+  console.log(g(1, 2), u(1));
+}

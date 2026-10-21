@@ -172,6 +172,8 @@ pub(crate) struct Ctx<'m> {
     pub generic_arrow_fns: FxHashSet<Span>,
     /// Name spans of every function made from a generic arrow (diagnostics show arrows).
     pub generic_arrow_all: FxHashSet<Span>,
+    /// Why recursive aliases were not rewritten (`recursive_aliases::Blocked`).
+    pub alias_blocked: crate::recursive_aliases::Blocked,
     /// Name spans of capturing nested functions reported by `crate::nested_closures`.
     pub kept_nested: FxHashSet<Span>,
     /// Name spans of the `const`s that closures in their own initializer use (`body::late_consts`):
@@ -358,6 +360,7 @@ impl<'m> Ctx<'m> {
             group_names: FxHashMap::default(),
             group_defs: FxHashSet::default(),
             generic_arrow_all: FxHashSet::default(),
+            alias_blocked: Default::default(),
             has_overloads: false,
             gen_throw: false,
             overloaded_methods: FxHashSet::default(),
@@ -637,8 +640,13 @@ impl<'m> Ctx<'m> {
                 params,
                 ret,
                 throws,
+                rest,
             } => {
-                let ps: Vec<String> = params.iter().map(|p| self.display_in(*p, names)).collect();
+                let mut ps: Vec<String> =
+                    params.iter().map(|p| self.display_in(*p, names)).collect();
+                if let (true, Some(last)) = (*rest, ps.last_mut()) {
+                    last.insert_str(0, "...");
+                }
                 let th = if *throws == self.ty.never {
                     String::new()
                 } else {

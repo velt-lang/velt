@@ -48,6 +48,7 @@ pub mod effects;
 mod enum_keys;
 mod finalize;
 mod flow;
+mod fn_types;
 mod fresh_returns;
 mod generic_arrows;
 mod holds_promise;
@@ -245,7 +246,7 @@ fn check_on_current_thread(
     let modules = lifted.as_ref().map_or(modules, |l| &l.modules[..]);
     let overloaded = overloads::rewrite(modules);
     let modules = overloaded.as_ref().map_or(modules, |o| &o.modules[..]);
-    let rewritten = recursive_aliases::rewrite(modules);
+    let (rewritten, alias_blocked) = recursive_aliases::rewrite(modules);
     let modules = rewritten.as_deref().unwrap_or(modules);
     let (brands, branded) = defined_props::rewrite(modules);
     let modules = branded.as_deref().unwrap_or(modules);
@@ -264,6 +265,7 @@ fn check_on_current_thread(
         cx.held_borrows = held_borrows;
         cx.ns_private = ns_private.clone();
         cx.gen_throw = ts_protocol::calls_throw(modules);
+        cx.alias_blocked = alias_blocked.clone();
         if let Some(l) = &lifted {
             cx.generic_arrow_fns = l.local_fns.clone();
             cx.generic_arrow_all = l.all_fns.clone();

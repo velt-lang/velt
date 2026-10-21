@@ -135,8 +135,10 @@ impl Cx<'_> {
                 params,
                 ret,
                 throws,
+                rest,
             } => format!(
-                "fn({}) => {} throws {}",
+                "fn{}({}) => {} throws {}",
+                if *rest { "..." } else { "" },
                 list(params, stack),
                 self.type_key_in(*ret, env, stack),
                 self.type_key_in(*throws, env, stack)

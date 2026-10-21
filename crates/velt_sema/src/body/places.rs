@@ -2,7 +2,9 @@
 //! after the consumer is known, and mutability of the place's root.
 
 use super::FnCx;
-use crate::hir::{self, Callee, ExprKind as H, Intrinsic, LocalId, UseMode};
+use velt_common::Span;
+
+use crate::hir::{self, Callee, ExprKind as H, Intrinsic, LocalId, TyKind, UseMode};
 
 pub(crate) fn is_place(e: &hir::Expr) -> bool {
     matches!(
@@ -165,6 +167,53 @@ impl FnCx<'_, '_> {
         // point into the place they were bound from (`crate::ownership::evidence`).
         self.mark_mutated(l, span);
         true
+    }
+}
+
+impl FnCx<'_, '_> {
+    /// Does writing place `e` change an element of a tuple that is a temporary (`f()[1] = v`,
+    /// `m.get(k)![0] = v`, `(c ? a : b)[1] = v`)? Tuples are values, so the write would change
+    /// a copy the program never sees again, where JavaScript changes the array the call
+    /// returned: an error (reported at `span`) instead of a lost write.
+    pub(crate) fn temp_tuple_write(&mut self, e: &hir::Expr, span: Span) -> bool {
+        let (mut t, mut part) = (e, false);
+        loop {
+            match &t.kind {
+                H::Field { base, .. } | H::Index { base, .. }
+                    if matches!(self.cx.ty.kind(base.ty), TyKind::Tuple(_)) =>
+                {
+                    (t, part) = (base, true);
+                }
+                H::UnwrapSome(base, _)
+                | H::UnwrapVariant { expr: base, .. }
+                | H::Downcast(base)
+                    if part =>
+                {
+                    t = base;
+                }
+                _ => break,
+            }
+        }
+        // A receiver bound to a temporary for an assignment used as a value
+        // (`crate::body::expr::iface_nested`) stands for the expression it was bound from.
+        let temp = match &t.kind {
+            H::Local(l, _) => self.f.locals[l.0 as usize]
+                .name
+                .starts_with("<iface hoisted"),
+            _ => !is_place(t),
+        };
+        if part && temp {
+            self.cx.error(
+                velt_common::Diagnostic::error(
+                    "cannot write into an element of a tuple that is a temporary value: the write would change a copy",
+                    span,
+                )
+                .with_note(
+                    "tuples are values: read the tuple into a variable, change it there, and store it back where it came from",
+                ),
+            );
+        }
+        part && temp
     }
 }
 

@@ -120,6 +120,7 @@ impl FnCx<'_, '_> {
                 params,
                 ret: error,
                 throws: error,
+                rest: false,
             });
             let h = self.expr(a, Some(hint), Want::Move);
             if self.cx.ty.has_error(h.ty) {
