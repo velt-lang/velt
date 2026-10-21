@@ -131,14 +131,14 @@ impl FnLower<'_, '_> {
             .and_then(|e| self.frozen_share(e));
         if let Some(read) = read {
             // A map loop's hidden local holding a share of a frozen map only to keep it alive
-            // (sema for_map.rs): nothing replaces or changes a frozen value, so the local
-            // borrows it, frozen too, and has nothing to drop, where a share would be a copy.
-            self.push_scope(ScopeKind::Temps);
+            // (sema for_map.rs): nothing changes a frozen value, so the local borrows it,
+            // frozen too, and has nothing to drop, where a share would be a copy. Its temps
+            // (the retained `shared` box, when the body may give the handle another box) belong
+            // to the loop's block, so the box lives as long as the loop reads it.
             let v = self.frozen_read(read);
             if let Some(l) = self.info[local.0 as usize].vir {
                 self.store(Place::local(l), v);
             }
-            self.pop_scope();
             self.frozen.insert(local);
             return;
         }
