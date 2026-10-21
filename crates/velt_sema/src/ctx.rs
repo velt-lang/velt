@@ -588,8 +588,7 @@ impl<'m> Ctx<'m> {
         if let Some(base) = self.brand_base(t) {
             return self.is_copy_depth(base, depth + 1, seen);
         }
-        let kind = self.ty.kind(t).clone();
-        let parts = match kind {
+        match self.ty.kind(t).clone() {
             TyKind::Int(_)
             | TyKind::Float(_)
             | TyKind::Bool
@@ -598,12 +597,12 @@ impl<'m> Ctx<'m> {
             | TyKind::Literal(_)
             | TyKind::Unit
             | TyKind::Never
-            | TyKind::Error => return true,
-            TyKind::Tuple(ts) => ts,
-            TyKind::Option(t, _) => vec![t],
-            TyKind::Result(a, b) => vec![a, b],
+            | TyKind::Error => true,
+            TyKind::Tuple(ts) => self.parts_copy(t, depth, &ts, None, seen),
+            TyKind::Option(x, _) => self.parts_copy(t, depth, &[x], None, seen),
+            TyKind::Result(a, b) => self.parts_copy(t, depth, &[a, b], None, seen),
             // Copying a mutex would duplicate its lock word.
-            TyKind::Adt(d, _) if Some(d) == self.mutex_ty() => return false,
+            TyKind::Adt(d, _) if Some(d) == self.mutex_ty() => false,
             TyKind::Adt(d, args) => {
                 // Objects (structs included, semantics stage 2) are references: never Copy.
                 let tys: Vec<TyId> = match &self.info[d.0 as usize] {
@@ -614,12 +613,23 @@ impl<'m> Ctx<'m> {
                         .collect(),
                     _ => return false,
                 };
-                tys.into_iter().map(|f| self.subst(f, &args)).collect()
+                self.parts_copy(t, depth, &tys, Some(&args), seen)
             }
-            _ => return false,
-        };
-        // The first levels are checked without keeping answers: most types end there, and
-        // the paths to a level multiply only below them.
+            _ => false,
+        }
+    }
+
+    /// Are `parts` of `t` (at `depth`; an enum's payloads, of its type arguments `args`) all Copy? The first
+    /// levels are checked without keeping answers: most types end there, and the paths to a
+    /// level multiply only below them.
+    fn parts_copy(
+        &mut self,
+        t: TyId,
+        depth: u32,
+        parts: &[TyId],
+        args: Option<&[TyId]>,
+        seen: &mut Option<FxHashMap<(TyId, u32), bool>>,
+    ) -> bool {
         let keep = depth >= 3;
         if let Some(&b) = seen
             .as_ref()
@@ -628,9 +638,10 @@ impl<'m> Ctx<'m> {
         {
             return b;
         }
-        let b = parts
-            .into_iter()
-            .all(|p| self.is_copy_depth(p, depth + 1, seen));
+        let b = parts.iter().all(|&p| {
+            let p = args.map_or(p, |args| self.subst(p, args));
+            self.is_copy_depth(p, depth + 1, seen)
+        });
         if keep {
             seen.get_or_insert_with(FxHashMap::default)
                 .insert((t, depth), b);
