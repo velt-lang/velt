@@ -24,3 +24,5 @@ record_open_errors.vlt:24:14: error: cannot use `+=` on a key of a `Record<strin
 say what a missing key starts from: `counts[k] = (counts[k] ?? 0) + 1`
 record_open_errors.vlt:28:3: error: cannot use `+=` on a key of a `Record<string, string | null>`: the key may be missing, so `maybe["m"]` is `string | null`
 read `maybe["m"]` into a variable, check it for `null`, then assign the new value
+record_open_errors.vlt:30:15: error: cannot infer type parameters `K` and `V` of `Object.entries`
+add explicit type arguments, e.g. `f<i64>(...)`, or annotate the result

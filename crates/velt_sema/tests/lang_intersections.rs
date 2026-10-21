@@ -130,12 +130,12 @@ fn parts_that_are_not_object_types_are_errors_with_a_fix() {
         ),
         ("type A = f64[] & { y: f64 };", "is an array"),
         (
-            "type A = (() => void) & (() => void);",
+            "type A = ((x: string) => void) & ((x: f64) => void);",
             "function types (overloads)",
         ),
         (
-            "interface S { show(): string } type A = S & { y: f64 };",
-            "interface with methods",
+            "interface S { show(): string } interface R { show(): f64 } type A = S & R;",
+            "overloads are not supported",
         ),
         (
             "class K { x = 1 } type W<T> = T & { y: f64 }; type A = W<K>;",
@@ -145,6 +145,14 @@ fn parts_that_are_not_object_types_are_errors_with_a_fix() {
         let e = err_src(&format!("{src} function main() {{}}"));
         assert!(e.contains(needle), "{src}: {e}");
     }
+}
+
+#[test]
+fn an_interface_with_methods_and_an_object_type_make_an_interface() {
+    ok_src(
+        "interface S { show(): string } type A = S & { y: f64 };
+         function main() { const a: A = { show: () => \"s\", y: 1 }; const s: S = a; console.log(s.show(), a.y); }",
+    );
 }
 
 #[test]

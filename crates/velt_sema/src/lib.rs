@@ -27,6 +27,7 @@
 pub mod hir;
 
 mod absent_fields;
+mod alias_expand;
 mod anon;
 mod any;
 mod assigned_fields;
@@ -52,6 +53,7 @@ mod flow;
 mod fn_types;
 mod fresh_returns;
 mod generic_arrows;
+mod generic_spread;
 mod global_this;
 mod holds_promise;
 mod hooks;
@@ -88,6 +90,7 @@ mod replaced_holders;
 mod resolve;
 mod suggest;
 mod symbols;
+mod synth_ifaces;
 mod throws;
 mod ts_protocol;
 mod type_defaults;
@@ -315,6 +318,7 @@ fn check_on_current_thread(
     let anon_shapes = anon::concrete_shapes(&cx);
     let union_shapes = anon::concrete_unions(&cx);
     let dyn_members = any::dyn_members(&mut cx);
+    let (upcasts, upcast_impls) = cx.upcast_tables();
     let ctx::Ctx {
         ty,
         defs,
@@ -351,6 +355,8 @@ fn check_on_current_thread(
         dyn_members: dyn_members.map(|m| m.into_iter().collect()),
         generator_throw: gen_throw,
         super_calls: super_calls.into_iter().collect(),
+        upcasts,
+        upcast_impls,
         cpu_targets: cpu_targets.into_iter().collect(),
     };
     (Some(program), diags)

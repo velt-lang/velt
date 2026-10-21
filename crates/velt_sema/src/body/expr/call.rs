@@ -251,6 +251,11 @@ impl FnCx<'_, '_> {
         for (i, t) in type_args.iter().enumerate() {
             slots[start + i] = Some(self.resolve(t));
         }
+        let spans = type_args
+            .iter()
+            .enumerate()
+            .map(|(i, t)| (start + i, t.span));
+        self.explicit_type_spans = Some((span, spans.collect()));
         for k in start + type_args.len()..slots.len() {
             let Some(Some(d)) = defaults.get(k) else {
                 break;

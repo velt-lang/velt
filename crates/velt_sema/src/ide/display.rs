@@ -29,6 +29,8 @@ pub(crate) struct Names {
     pub aliases: FxHashMap<TyId, String>,
     /// Every type alias's name, by `Ctx::aliases` index (deferred types, `TyKind::Op`).
     pub alias_decls: Vec<String>,
+    /// Every deferred form written outside an alias, as written (`TyOp::Inline`).
+    pub inline_forms: Vec<String>,
 }
 
 impl Names {
@@ -42,6 +44,9 @@ impl Names {
                 .aliases
                 .iter()
                 .map(|a| a.decl.name.name.clone())
+                .collect(),
+            inline_forms: (cx.type_level.inline.forms.iter())
+                .map(|f| f.shown.clone())
                 .collect(),
         }
     }
@@ -100,6 +105,21 @@ impl Names {
                 .map(|t| self.show(*t, param))
                 .collect::<Vec<_>>()
                 .join(" & "),
+            TyKind::Op(crate::hir::TyOp::Spread, args) => {
+                let parts: Vec<String> = args
+                    .iter()
+                    .map(|t| format!("...{}", self.show(*t, param)))
+                    .collect();
+                format!("{{ {} }}", parts.join(", "))
+            }
+            TyKind::Op(crate::hir::TyOp::Inline(i), _) => {
+                (self.inline_forms.get(*i as usize)).map_or_else(|| "unknown".into(), |s| s.clone())
+            }
+            TyKind::Op(crate::hir::TyOp::Convert(_), args) => args
+                .iter()
+                .map(|t| self.show(*t, param))
+                .collect::<Vec<_>>()
+                .join(" as "),
             TyKind::FnPtr {
                 params,
                 ret,
