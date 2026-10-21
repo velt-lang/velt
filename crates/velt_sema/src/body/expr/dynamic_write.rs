@@ -195,6 +195,9 @@ impl FnCx<'_, '_> {
             self.note_dynamic_write(&name, index.span);
             let str_ = self.cx.ty.str_;
             let k = self.mk(H::Lit(Lit::Str(name)), str_, index.span);
+            if !self.uses_proxy() {
+                return Some(WriteKey::Str(k));
+            }
             let sym = self.expr(index, None, Want::Borrow);
             return Some(WriteKey::Sym(k, sym));
         }

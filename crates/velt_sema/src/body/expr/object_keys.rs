@@ -292,10 +292,10 @@ impl FnCx<'_, '_> {
             self.unknown_use_error(arg.span);
             return Some(self.error_expr(span));
         }
-        let f = match helper {
+        let f = self.proxy_op(match helper {
             "values" => "__anyValues",
             _ => "__anyEntries",
-        };
+        });
         let call = synth(
             ast::ExprKind::Call {
                 callee: Box::new(synth(

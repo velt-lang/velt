@@ -1,0 +1,12 @@
+// `delete` through `any` of a string, a number and a boolean, as in Node (strict code): a
+// string's characters and `length` can't go.
+const s: any = "ab";
+console.log(delete s.x, delete s["2"]);
+const n: any = 5;
+console.log(delete n.x);
+const b: any = true;
+console.log(delete b.toString);
+const r: any = { a: 1, b: 2 };
+console.log(delete r.a, Object.keys(r).join(","));
+console.log(delete s["1"]);
+console.log("not reached");

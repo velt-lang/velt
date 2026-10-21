@@ -415,7 +415,7 @@ impl FnCx<'_, '_> {
             let class = ast::TypeExpr {
                 kind: ast::TypeExprKind::Named {
                     path: vec![ast::Ident {
-                        name: "__HasOwnProperty".to_string(),
+                        name: self.proxy_op("__HasOwnProperty").to_string(),
                         span: id.span,
                     }],
                     args: vec![],

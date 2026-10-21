@@ -1,5 +1,5 @@
 //! The descriptor slots of a proxy (issue #823; hir_encodings.md "Proxy and Reflect"). A
-//! proxy is an `any` holding the prelude's `Proxy` object (std/prelude/zz_proxy.vlt); the
+//! proxy is an `any` holding the prelude's `Proxy` object (std/proxy.vlt); the
 //! member slots of its table (any_member.rs, any_set.rs) call that class's methods, which run
 //! the handler's traps or forward to the target:
 //!
@@ -23,12 +23,12 @@ use crate::vir::{self, BinOp, Operand, Place, Rvalue, Terminator, Ty, STR_AGG};
 
 /// The qualified names of the prelude's `Proxy` and `Reflect` classes: a program's own
 /// classes are named after their modules, which are never under `std/`.
-pub(super) const PRELUDE_PROXY: &str = "std/prelude/zz_proxy::Proxy";
-pub(super) const PRELUDE_REFLECT: &str = "std/prelude/zz_proxy::Reflect";
+pub(super) const PRELUDE_PROXY: &str = "std/proxy::Proxy";
+pub(super) const PRELUDE_REFLECT: &str = "std/proxy::Reflect";
 /// The start of the names of `Reflect`'s methods.
-pub(super) const PRELUDE_REFLECT_METHODS: &str = "std/prelude/zz_proxy::Reflect.";
-/// The prelude's array method read through a proxy (std/prelude/zzzzz_proxy_array.vlt).
-pub(super) const PRELUDE_ARRAY_METHOD: &str = "std/prelude/zzzzz_proxy_array::__ArrayMethod";
+pub(super) const PRELUDE_REFLECT_METHODS: &str = "std/proxy::Reflect.";
+/// The prelude's array method read through a proxy (std/proxy/array.vlt).
+pub(super) const PRELUDE_ARRAY_METHOD: &str = "std/proxy/array::__ArrayMethod";
 
 /// How the key reaches a proxy slot.
 #[derive(Clone, Copy)]

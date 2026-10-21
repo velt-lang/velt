@@ -13,7 +13,7 @@
 //! - arrays, tuples and strings: their indexes as strings;
 //! - booleans, numbers, symbols, functions and the standard library's classes (a `Map`, a
 //!   `Set`, an `Error`): none;
-//! - a proxy: `Proxy.__keys()` (std/prelude/zz_proxy.vlt), which runs its `ownKeys` and
+//! - a proxy: `Proxy.__keys()` (std/proxy.vlt), which runs its `ownKeys` and
 //!   `getOwnPropertyDescriptor` traps;
 //! - `JsonValue`: not yet.
 

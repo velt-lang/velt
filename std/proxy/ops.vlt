@@ -1,11 +1,82 @@
-// Prelude: the operations on `any` that a proxy answers with its traps when the key is a
-// symbol constant (`p[KEY]`, `KEY in p`, `delete p[KEY]`, `Object.hasOwn(p, KEY)`), and
-// `new Proxy(target, handler)` with a handler typed `any` (issue #823; docs/reference/types.md
-// "Proxy and Reflect").
+// std/proxy/ops: the operations on `any` that a proxy answers with its traps, which sema calls
+// in a program that has loaded `Proxy` (std/prelude/global/proxy.vlt) instead of the prelude's
+// (std/prelude/zzz_adapt.vlt): a spread, `Object.hasOwn`, `Object.values` / `entries` and
+// `delete` of an `any`; the operations whose key is a symbol constant (`p[KEY]`, `KEY in p`,
+// `delete p[KEY]`, `Object.hasOwn(p, KEY)`); and `new Proxy(target, handler)` with a handler
+// typed `any` (issue #823; docs/reference/types.md "Proxy and Reflect").
 //
 // A symbol constant names a member of a typed value by its key name (U+FFFF and `Symbol(d)`,
 // velt_sema's `symbols.rs`); sema passes both that name and the symbol itself, so a plain value
 // is read by the name, as before, and a proxy's trap sees the symbol, as in JavaScript.
+
+import { PropertyDescriptor, Proxy, ProxyHandler } from "velt:proxy";
+
+/** `{ ...o }` of an `any` `o` into `r`: a proxy's enumerable own entries, else `__spreadAny`. */
+export function __spreadAnyProxy(r: Record<string, any>, o: any): void {
+  if (o instanceof Proxy) {
+    for (const [k, v] of __proxyEntries(o)) {
+      r.__set(k, v);
+    }
+    return;
+  }
+  __spreadAny(r, o);
+}
+
+/** `Object.hasOwn(o, k)` of an `any` `o`: a proxy's `getOwnPropertyDescriptor` trap. */
+export function __anyHasOwnProxy(o: any, key: string | symbol): boolean {
+  if (o instanceof Proxy) {
+    return o.__hasOwn(key);
+  }
+  return __anyHasOwn(o, key);
+}
+
+/** `Object.values(o)` of an `any` `o`. */
+export function __anyValuesProxy(o: any): any[] {
+  if (o instanceof Proxy) {
+    const out: any[] = [];
+    for (const [_, v] of __proxyEntries(o)) {
+      out.push(v);
+    }
+    return out;
+  }
+  return __anyValues(o);
+}
+
+/** `Object.entries(o)` of an `any` `o`. */
+export function __anyEntriesProxy(o: any): [string, any][] {
+  if (o instanceof Proxy) {
+    return __proxyEntries(o);
+  }
+  return __anyEntries(o);
+}
+
+/**
+ * The enumerable own entries of the proxy `p`, in Node's order: its keys, then for each string
+ * key its property and, when that is enumerable, its value.
+ */
+function __proxyEntries(p: Proxy): [string, any][] {
+  const out: [string, any][] = [];
+  for (const k of p.__ownKeys()) {
+    if (typeof k === "string") {
+      const d = p.__getOwnPropertyDescriptor(k);
+      if (d !== undefined && d.enumerable === true) {
+        out.push([k, p.__get(k, p)]);
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * `delete o.k` / `delete o[k]` of an `any` `o` (strict code): a proxy's `deleteProperty` trap,
+ * which throws Node's `TypeError` when it answers `false`.
+ */
+export function __anyDeleteProxy(o: any, k: any): boolean {
+  if (o instanceof Proxy) {
+    return o.__delete(k);
+  }
+  return __anyDelete(o, k);
+}
 
 /** `o[KEY]` of an `any` `o` with a symbol constant `KEY` naming the member `name`. */
 export function __anyGetSym(o: any, name: string, key: symbol): any {
@@ -105,10 +176,10 @@ export function __proxyNewAny(target: any, handler: any): any {
  * `Object.prototype.hasOwnProperty` read as a value (`const hasOwn =
  * Object.prototype.hasOwnProperty`): `hasOwn.call(o, k)` is `Object.hasOwn(o, k)`.
  */
-export class __HasOwnProperty {
+export class __HasOwnPropertyProxy {
   /** Whether `o` has the own property `key`. */
   call(o: any, key: string | symbol): boolean {
-    return __anyHasOwn(o, key);
+    return __anyHasOwnProxy(o, key);
   }
 }
 

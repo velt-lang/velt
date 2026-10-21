@@ -2388,7 +2388,9 @@ left out are `false`, is a `TypeError` naming #823. `delete x.k` through `any` a
 an optional field absent; a key the value doesn't have as its own (a class's methods are on its
 prototype) gives `true`, and an array's `length` gives `false` (`delete a.length` throws Node's
 `TypeError: Cannot delete property 'length' of [object Array]`). A field the value's type fixes
-can't be removed: that is a `TypeError` naming #823.
+can't be removed: that is a `TypeError` naming #823. Deleting a string's `length` or one of its
+characters throws Node's `TypeError: Cannot delete property '0' of [object String]`; another key
+of a string, and any key of a number or a boolean, gives `true`.
 
 A trap sees a symbol key as the symbol (`p[KEY]`, `KEY in p`, `delete p[KEY]`,
 `Object.hasOwn(p, KEY)` with a symbol constant `KEY`), and `Reflect.get(t, KEY)` /
@@ -2399,9 +2401,12 @@ keys, whether each is enumerable and their values; an array target's `length` an
 `Object.keys(s)` and `for (k in s)` of a typed proxy `s` run its `ownKeys` and
 `getOwnPropertyDescriptor` traps, as in Node.
 
-`p.push(…)`, `p.pop()`, `p.shift()`, `p.unshift(…)` and `p.splice(…)` on a proxy of an array
-read the method through the `get` trap and run JavaScript's generic algorithm with the proxy as
-`this`, as Node does: every read of `length` or of an element, every write (`set`), `in` test
+`p.push(…)`, `p.pop()`, `p.shift()`, `p.unshift(…)`, `p.splice(…)`, `p.map(f)`, `p.filter(f)`,
+`p.forEach(f)`, `p.some(f)`, `p.every(f)`, `p.find(f)`, `p.includes(x)`, `p.indexOf(x)`,
+`p.join(sep)`, `p.slice(…)`, `p.reverse()` and `p.sort(compare)` on a proxy of an array read the
+method through the `get` trap and run JavaScript's generic algorithm with the proxy as `this`,
+as Node does (the callbacks get the element, its index and the proxy; a `thisArg` is not passed
+on yet; `map`, `filter` and `slice` give a new plain array): every read of `length` or of an element, every write (`set`), `in` test
 (`has`) and delete (`deleteProperty`) goes through the traps, in Node's order, and a trap that
 refuses throws Node's `TypeError`. A trap that forwards with `Reflect` reaches the array:
 `Reflect.has(a, "1")` tests an element, `Reflect.deleteProperty(a, k)` of the last element
@@ -2447,7 +2452,12 @@ there: the proxy object together with its target and handler, so it is still a p
 task, and changes there don't reach the original.
 
 Only the types a proxy is converted to (and the classes related to them) check for one, and only
-in a program that creates a proxy, so other programs and other types pay nothing.
+in a program that creates a proxy, so other programs and other types pay nothing. `Proxy`,
+`Reflect`, `ProxyHandler` and `PropertyDescriptor` are globals that a program loads when one of
+its modules names them, like `fetch` and `URL` ([the prelude](../std/prelude.md)): a program
+that never names them doesn't compile their code, and its operations on `any` (a spread,
+`Object.hasOwn`, `Object.values`, `Object.entries`, `delete`, `o[KEY]` with a symbol constant)
+don't test for a proxy.
 
 ```ts
 let reads = 0;
@@ -2477,7 +2487,8 @@ function main(): void {
 **Planned** (#823): a symbol known only at run time as the key of `o[k]` on an `any` (a trap
 answering one through `Reflect` works); a spread of a typed proxy (a `TypeError`); a completed
 descriptor's `value: undefined` (an optional `any` field cannot hold a present `undefined`,
-#930); the other array methods through a proxy of an array (`map`, `includes`, ...);
+#930); the other array methods through a proxy of an array (`lastIndexOf`, `findIndex`, `reduce`,
+`concat`, ...), and `Array.prototype[m].apply(p, arguments)` (#1381);
 an `ownKeys` trap answering an array-like object that is not an array; deleting a fixed field,
 an array element other than the last or a symbol-keyed member through `any` from a value
 that is not a proxy, and `Reflect.defineProperty` of a plain value with accessors or

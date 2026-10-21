@@ -846,22 +846,25 @@ entry is an `ICE:`.
   `lower/json/any.rs`; present only when the program writes one), after testing the tag for
   `undefined`, a function or a symbol (left out as a member, `null` as an element, a
   `TypeError` at the top).
-- Proxy and Reflect (#823): the prelude's `Proxy` class (std/prelude/zz_proxy.vlt; `#target:
-  any`, `#handler: ProxyHandler<any>`) and `Reflect` (static methods). Sema converts `new
+- Proxy and Reflect (#823): the `Proxy` class (std/proxy.vlt; `#target: any`, `#handler:
+  ProxyHandler<any>`) and `Reflect` (static methods), globals that a program loads when a module
+  names one of them (std/prelude/global/proxy.vlt); a program that doesn't has no proxies, and
+  sema calls the prelude's helpers below, which don't test for one. Sema converts `new
   Proxy(...)` (written outside the standard library; type arguments dropped) to `any` at once
   (`ToDyn`); `AnyTo` converts it to a typed value like any other `any`. The member slots of the
   `Proxy` class's `any` table call its `__get(key, receiver)`, `__set(key, value, receiver)`
   and `__has(key)` (velt_vir `lower/any_proxy.rs`), which run the handler's traps or forward
   to the target; its keys slot (`AnyKeys`) calls `__keys()` (the `ownKeys` and
   `getOwnPropertyDescriptor` traps). `delete o.k` / `delete o[k]` of an `any` or `object` is a
-  call of the prelude's `__anyDelete(o, k)` (a proxy's `deleteProperty` trap; another value's
+  call of the prelude's `__anyDelete(o, k)` (`__anyDeleteProxy` once `Proxy` is loaded: a proxy's `deleteProperty` trap; another value's
   `Intrinsic::AnyDelete`, std only, through slot 15 `AnyDelete (data, key: *string) -> u8` of
   its table, velt_vir `lower/any_delete.rs`), and the
-  prelude's spread, `Object.hasOwn`, `Object.values` and `Object.entries` helpers for `any`
-  (std/prelude/zzz_adapt.vlt) run a proxy's traps in Node's order. With a symbol constant as
+  versions of the prelude's spread, `Object.hasOwn`, `Object.values` and `Object.entries`
+  helpers for `any` (std/prelude/zzz_adapt.vlt) in velt:proxy/ops (`__spreadAnyProxy`, …,
+  called instead once `Proxy` is loaded) run a proxy's traps in Node's order. With a symbol constant as
   the key, `o[KEY]`, `o[KEY] = v`, `KEY in o`, `delete o[KEY]` and `Object.hasOwn(o, KEY)` of
-  an `any` are calls of the prelude's `__anyGetSym` / `__anySetSym` / `__anyHasSym` /
-  `__anyDeleteSym` / `__anyHasOwnSym(o, name, KEY)` (std/prelude/zzzz_proxy_ops.vlt), which
+  an `any` in a program that has loaded `Proxy` are calls of `__anyGetSym` / `__anySetSym` / `__anyHasSym` /
+  `__anyDeleteSym` / `__anyHasOwnSym(o, name, KEY)` (std/proxy/ops.vlt), which
   pass the symbol to a proxy and use the member name `name` on other values; `new Proxy(t, h)`
   with an `h` typed `any` is `__proxyNewAny(t, h)`. In a program whose own code has a `new
   Proxy`, `Object.keys(x)` of a class instance or object `x` is `__proxyKeys(x) ??
@@ -870,7 +873,7 @@ entry is an `ICE:`.
   Proxy` or a `Reflect.*` call in the program's own code does, and a `Reflect.set` call counts
   as a write of every field for `object_copies` (a `new Proxy` does not: every write reaching
   a target through a proxy starts at a noted write). Lowering recognizes the two classes by
-  their qualified names (`std/prelude/zz_proxy::Proxy`, `::Reflect`; a program's own class
+  their qualified names (`std/proxy::Proxy`, `::Reflect`; a program's own class
   named `Proxy` is its own) and numbers them last among class ids, so programs without them
   keep theirs.
 - Typed proxies (#823, velt_vir `lower/proxy_typed.rs`): in a program that lowers a `ToDyn` of

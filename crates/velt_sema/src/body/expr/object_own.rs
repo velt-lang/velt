@@ -103,12 +103,13 @@ impl FnCx<'_, '_> {
         self.note_dyn_members();
         // A symbol constant names the member it keys, as in `KEY in o`; a proxy's trap sees the
         // symbol itself.
-        if let Some(name) = self.symbol_key_of(k) {
+        if let Some(name) = self.symbol_key_of(k).filter(|_| self.uses_proxy()) {
             let name = synth(ast::ExprKind::Lit(ast::Lit::Str(name)), k.span);
             let args = vec![o.clone(), name, k.clone()];
             return Some(self.prelude_fn_call("__anyHasOwnSym", args, span));
         }
-        Some(self.prelude_fn_call("__anyHasOwn", vec![o.clone(), k.clone()], span))
+        let f = self.proxy_op("__anyHasOwn");
+        Some(self.prelude_fn_call(f, vec![o.clone(), k.clone()], span))
     }
 
     /// `Object.hasOwn(o, k)` / `Object.prototype.hasOwnProperty.call(o, k)` (`what`).

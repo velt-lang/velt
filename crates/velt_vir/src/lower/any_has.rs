@@ -3,7 +3,7 @@
 //! *string) -> u8`, present only when the program has such a test (`Boxing::any_has`). The
 //! slot answers `HAS_NO`, `HAS_YES` or `HAS_UNSUPPORTED` (a `TypeError`):
 //!
-//! - a proxy: its `has` trap (`Proxy.__has`, std/prelude/zz_proxy.vlt), or the target's answer;
+//! - a proxy: its `has` trap (`Proxy.__has`, std/proxy.vlt), or the target's answer;
 //! - class instances and object types: their fields, methods and accessors, and what every
 //!   object has from `Object.prototype` (an optional field with a presence flag, `a?: T |
 //!   null`, by its flag; another optional field, which cannot tell "absent" from a present

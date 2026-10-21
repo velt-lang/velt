@@ -11,7 +11,8 @@ Node's web globals need no import either: `fetch`, `Request`, `Response` and `He
 `TextDecoder`, `btoa` and `atob` ([velt:encoding](encoding.md)), `DOMException`
 ([Errors](#errors)), `ArrayBuffer`, `DataView`, `Uint8Array` and the other typed arrays
 ([typed arrays](typed_array.md)), and `ReadableStream` and its reader and controller
-([streams](streams.md)). They are loaded when a module names one and
+([streams](streams.md)), and `Proxy`, `Reflect`, `ProxyHandler` and `PropertyDescriptor`
+([Proxy and Reflect](../reference/types.md#proxy-and-reflect)). They are loaded when a module names one and
 doesn't bind that name itself. `structuredClone(x)` is a deep copy (`x.clone()`); a value that
 JS can't clone (a function, at any depth) or would copy as a plain object (an instance of a
 class of your own: write `x.clone()`) is a compile error. The builtin `process`

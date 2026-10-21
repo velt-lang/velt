@@ -74,7 +74,7 @@ impl Cx<'_> {
         // Explicit stack (deep hierarchies must not overflow the compiler's stack): (class,
         // whether its subclasses are numbered already).
         let mut stack: Vec<(DefId, bool)> = vec![];
-        // The prelude's `Proxy` and `Reflect` (std/prelude/zz_proxy.vlt) are numbered last, so
+        // The prelude's `Proxy` and `Reflect` (std/proxy.vlt) are numbered last, so
         // the classes of programs that don't use them keep their ids.
         let mut roots: Vec<DefId> = children.get(&None).cloned().unwrap_or_default();
         roots.sort_by_key(|&d| self.numbered_last(d));

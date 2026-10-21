@@ -15,7 +15,7 @@ use crate::hir::{self, ExprKind as H, Intrinsic, Lit, Nothing, TyId, TyKind, Use
 impl FnCx<'_, '_> {
     /// A member of an `any` is read, called or written here: lowering adds the member slots
     /// (`Program::dyn_members`). The standard library's own dynamic operations (`Proxy` and
-    /// `Reflect`, std/prelude/zz_proxy.vlt) don't count: they run only in a program whose own
+    /// `Reflect`, std/proxy.vlt) don't count: they run only in a program whose own
     /// code constructs a `Proxy` or calls `Reflect`, which counts there (`proxy.rs`).
     pub(crate) fn note_dyn_members(&mut self) {
         if !self.cx.scopes[self.module].is_std {
@@ -172,8 +172,11 @@ impl FnCx<'_, '_> {
                 self.dynamic_write_error(span);
                 return Ok(self.error_expr(span));
             }
-            // A proxy's `get` trap sees the symbol itself (`__anyGetSym`).
             let key = self.key_lit(&name, index.span);
+            if !self.uses_proxy() {
+                return Ok(self.intrinsic(Intrinsic::AnyGet, vec![obj, key], any, span));
+            }
+            // A proxy's `get` trap sees the symbol itself (`__anyGetSym`).
             let sym = self.expr(index, None, Want::Borrow);
             return Ok(self.prelude_hir_call("__anyGetSym", vec![obj, key, sym], any, span));
         }

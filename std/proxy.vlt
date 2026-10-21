@@ -1,5 +1,5 @@
-// Prelude: JavaScript's `Proxy` and `Reflect` (issue #823; docs/reference/types.md "Proxy and
-// Reflect").
+// std/proxy: JavaScript's `Proxy` and `Reflect` (issue #823; docs/reference/types.md "Proxy and
+// Reflect"), globals loaded when a module names one of them (std/prelude/global/proxy.vlt).
 //
 // A proxy is a dynamic value: `new Proxy(target, handler)` has the type `any` and holds a
 // `Proxy` object. Its descriptor slots (velt_vir `lower/any_proxy.rs`) call the `__` methods
@@ -8,9 +8,12 @@
 // handler leaves out forwards to the target, as in JavaScript. `Reflect.get` / `set` / `has`
 // do what the operations do on a plain value, and pass the receiver on to a proxy target.
 //
-// The file name sorts last, so the prelude modules before it keep their indexes. Its bodies
-// use dynamic operations without making the program pay for them: sema counts a program as
-// using `any` members only when its own code constructs a `Proxy` or calls `Reflect`.
+// Its bodies use dynamic operations without making the program pay for them: sema counts a
+// program as using `any` members only when its own code constructs a `Proxy` or calls `Reflect`.
+// A program that never names them doesn't load this module, and its operations on `any` don't
+// test for a proxy (velt:proxy/ops).
+
+import { __ArrayMethod, __proxyArrayCall, __proxyArrayMethod } from "velt:proxy/array";
 
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
 
@@ -56,19 +59,7 @@ export type ProxyHandler<T> = {
 
 /** The array index the string `s` names (canonical decimal, 0 to 2^32 - 2), or -1. */
 function proxyIndex(s: string): number {
-  const n = s.length as i64;
-  if (n == 0 || n > 10 || (n > 1 && s.charCodeAt(0) == 48)) {
-    return -1;
-  }
-  let v: i64 = 0;
-  for (let i: i64 = 0; i < n; i++) {
-    const c = s.charCodeAt(i);
-    if (c < 48 || c > 57) {
-      return -1;
-    }
-    v = v * 10 + (c - 48);
-  }
-  return v <= 4294967294 ? (v as number) : -1;
+  return __arrayIndex(s) as number;
 }
 
 /**
@@ -684,7 +675,7 @@ export class Reflect {
     if (target instanceof Proxy) {
       return target.__deleteProperty(key);
     }
-    return proxyDeletePlain(target, proxyKey(key));
+    return __anyDeletePlain(target, proxyKey(key));
   }
 
   /**
@@ -755,33 +746,4 @@ export class Reflect {
     }
     return true;
   }
-}
-
-/**
- * `delete o[k]` of a plain (not proxy) value `o`: a record's key is removed and an optional
- * field made absent; a key `o` does not have is `true` and an array's `length` `false`. Other
- * properties are fixed by their types, which Velt cannot remove yet.
- */
-function proxyDeletePlain(o: any, k: string | symbol): boolean {
-  if (typeof k !== "string") {
-    panic(
-      "TypeError: deleting a symbol-keyed property of this value through `any` is not supported yet (#823)",
-    );
-  }
-  // Velt's arrays have no holes: an element past the end is not there, and the last one goes
-  // (as `pop`, `shift` and `splice` delete it before they shorten the array).
-  if (Array.isArray(o)) {
-    const i = proxyIndex(k as string);
-    if (i >= 0) {
-      const n = o.length as number;
-      if (i >= n) {
-        return true;
-      }
-      if (i == n - 1) {
-        o.length = i;
-        return true;
-      }
-    }
-  }
-  return __intrinsic_any_delete(o, k as string);
 }

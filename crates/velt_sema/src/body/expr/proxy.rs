@@ -1,5 +1,9 @@
-//! `new Proxy(target, handler)` and `Reflect.*` (issue #823; the prelude's
-//! std/prelude/zz_proxy.vlt, hir_encodings.md "Proxy and Reflect").
+//! `new Proxy(target, handler)` and `Reflect.*` (issue #823; std/proxy.vlt, a global loaded on
+//! demand: std/prelude/global/proxy.vlt; hir_encodings.md "Proxy and Reflect").
+//!
+//! A program that never names `Proxy` or `Reflect` doesn't load them, and no value of it can be a
+//! proxy: its operations on `any` call the prelude's helpers (std/prelude/zzz_adapt.vlt), which
+//! don't test for one. Once loaded, `proxy_op` picks the versions that do (velt:proxy/ops).
 //!
 //! A proxy is a dynamic value: the `Proxy` object `new Proxy(...)` builds is converted to `any`
 //! at once, so every operation on it goes through the descriptor of the `Proxy` class, whose
@@ -19,6 +23,29 @@ use crate::body::FnCx;
 use crate::hir::{self, DefId, ExprKind as H};
 
 impl FnCx<'_, '_> {
+    /// Has the program loaded `Proxy` (a module names it: std/prelude/global/proxy.vlt)? Only
+    /// then can a value be a proxy.
+    pub(crate) fn uses_proxy(&self) -> bool {
+        self.cx.prelude_adt("Proxy").is_some()
+    }
+
+    /// The prelude helper `name` for an operation on `any`, or, in a program that has loaded
+    /// `Proxy`, its version that asks a proxy's traps (`<name>Proxy`, velt:proxy/ops).
+    pub(crate) fn proxy_op(&self, name: &'static str) -> &'static str {
+        if !self.uses_proxy() {
+            return name;
+        }
+        match name {
+            "__spreadAny" => "__spreadAnyProxy",
+            "__anyHasOwn" => "__anyHasOwnProxy",
+            "__anyValues" => "__anyValuesProxy",
+            "__anyEntries" => "__anyEntriesProxy",
+            "__anyDelete" => "__anyDeleteProxy",
+            "__HasOwnProperty" => "__HasOwnPropertyProxy",
+            _ => panic!("ICE: no proxy version of `{name}`"),
+        }
+    }
+
     /// Is `d` the prelude's `Proxy` class, used outside the standard library?
     fn user_proxy(&self, d: DefId) -> bool {
         Some(d) == self.cx.prelude_adt("Proxy") && !self.cx.scopes[self.module].is_std
@@ -122,6 +149,10 @@ impl FnCx<'_, '_> {
     pub(crate) fn program_makes_proxies(&mut self) -> bool {
         if let Some(b) = self.cx.object_copies.makes_proxies {
             return b;
+        }
+        if !self.uses_proxy() {
+            self.cx.object_copies.makes_proxies = Some(false);
+            return false;
         }
         struct Find(bool);
         impl<'a> velt_syntax::visit::Visit<'a> for Find {
@@ -242,14 +273,18 @@ impl FnCx<'_, '_> {
             super::record::RecordKey::Name(p) => lit(p.name.clone(), p.span),
             super::record::RecordKey::Index(e) | super::record::RecordKey::Computed(e) => {
                 // A symbol constant names the member it keys; a proxy's trap sees the symbol.
-                if let Some(name) = self.symbol_key_of(e) {
-                    let args = vec![object.clone(), lit(name, e.span), (*e).clone()];
-                    return Some(self.prelude_fn_call("__anyDeleteSym", args, span));
+                match self.symbol_key_of(e) {
+                    Some(name) if self.uses_proxy() => {
+                        let args = vec![object.clone(), lit(name, e.span), (*e).clone()];
+                        return Some(self.prelude_fn_call("__anyDeleteSym", args, span));
+                    }
+                    Some(name) => lit(name, e.span),
+                    None => (*e).clone(),
                 }
-                (*e).clone()
             }
         };
-        Some(self.prelude_fn_call("__anyDelete", vec![object.clone(), k], span))
+        let f = self.proxy_op("__anyDelete");
+        Some(self.prelude_fn_call(f, vec![object.clone(), k], span))
     }
 
     /// `key in obj` where `obj` is an `any`: `Intrinsic::AnyHas` (a proxy runs its `has`
@@ -264,7 +299,7 @@ impl FnCx<'_, '_> {
         let dynamic = self.cx.dynamic(t)?;
         // A symbol constant (`KEY in o`) names the member it keys; a proxy's `has` trap sees the
         // symbol itself.
-        if dynamic == crate::any::Dynamic::Any {
+        if dynamic == crate::any::Dynamic::Any && self.uses_proxy() {
             if let Some(name) = self.symbol_key_of(lhs) {
                 self.note_dyn_members();
                 let name = super::setters::synth(ast::ExprKind::Lit(ast::Lit::Str(name)), lhs.span);

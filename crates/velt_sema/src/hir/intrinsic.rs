@@ -382,7 +382,7 @@ pub enum Intrinsic {
     /// not supported yet. Sets `Program::dyn_members`.
     AnyHas,
     /// std only: `(x: borrow any, key: borrow string) -> bool`, `delete x[key]` of a value that
-    /// is not a proxy (std/prelude/zz_proxy.vlt, `Reflect.deleteProperty`): a record's entry is
+    /// is not a proxy (std/proxy.vlt, `Reflect.deleteProperty`): a record's entry is
     /// removed and an optional field made absent (`true`), a key the value does not have is
     /// `true`, an array's `length` is `false`; a `TypeError` for anything else (a fixed field).
     AnyDelete,
