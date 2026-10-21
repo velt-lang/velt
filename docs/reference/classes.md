@@ -242,7 +242,11 @@ hidden classes and no runtime shape checks.
   on the new one. A getter may change its object (a signal recording who read it). As a value, `x.size = v` is `v` (converted to the setter's parameter type, but
   non-null when `v` is; the getter is not read again; an object is shared, not copied) and `x.size ??= v` is the old value where it decides, else `v` (so
   non-null when `v` is). Implementations and overrides of a
-  getter or setter must be accessors too. Getters cannot be `static` or `async`. A getter's
+  getter or setter must be accessors too. An override of only the getter of a base class's
+  `get`/`set` pair replaces the whole property, as in JS: writing it through the subclass is an
+  error (TypeScript's TS2540), and through the base class, an interface or an intersection it
+  stops with Node's `TypeError: Cannot set property n of #<S> which has only a getter`.
+  Getters cannot be `static` or `async`. A getter's
   type may be inferred from its `return` like a method's
   ([Return types](functions.md#return-types)); an interface getter writes it.
 - Instances are references, as in JS ([Memory model](memory.md#values-and-references)):

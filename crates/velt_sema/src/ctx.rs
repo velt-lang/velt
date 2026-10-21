@@ -114,6 +114,9 @@ pub(crate) struct Ctx<'m> {
     pub alias_names: FxHashMap<TyId, String>,
     /// (class, method key) of every `override` of a generic method (no vtable slot).
     pub generic_overrides: Vec<(DefId, String)>,
+    /// The throwing setters a getter-only override gets (`collect::classes`): a write through
+    /// the class itself is a type error, as in TypeScript, one through a base class throws.
+    pub getter_only_setters: FxHashSet<DefId>,
     /// Names of `Param(i)` in the definition being checked (for messages).
     pub display_params: Vec<String>,
     /// Functions whose parameter defaults are checked (or being checked): they are checked on
@@ -324,6 +327,7 @@ impl<'m> Ctx<'m> {
             recursive_unions: FxHashMap::default(),
             alias_names: FxHashMap::default(),
             generic_overrides: vec![],
+            getter_only_setters: FxHashSet::default(),
             display_params: vec![],
             defaults_checked: FxHashSet::default(),
             hook_adapters: FxHashMap::default(),
