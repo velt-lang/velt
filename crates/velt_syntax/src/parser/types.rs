@@ -666,9 +666,11 @@ impl<'a> Parser<'a> {
             path.push(self.take_ident());
         }
         let mut args = vec![];
-        // Type arguments start on the line of the name, as in TypeScript: in an interface,
-        // `s: string` / `<T>(x: T): T` on the next line is a call signature.
-        if self.at(Tok::Lt) && !self.line_break_before() {
+        // In a type, type arguments start on the line of the name, as in TypeScript: in an
+        // interface, `s: string` / `<T>(x: T): T` on the next line is a call signature. After
+        // `new` and in `extends` / `implements` (expressions in TypeScript), they need not.
+        let any_line = std::mem::take(&mut self.type_args_any_line);
+        if self.at(Tok::Lt) && (any_line || !self.line_break_before()) {
             let ts = path.len() == 1 && PROTOCOL_TYPES.contains(&path[0].name.as_str());
             if speculative_args {
                 args = self

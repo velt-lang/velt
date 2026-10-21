@@ -73,8 +73,8 @@ fn insertion_points(src: &str) -> Vec<(usize, bool, usize)> {
 
 /// Would a line break between `before` and `after` change the program? Automatic semicolon
 /// insertion ends a statement at a line break after `return`, `throw`, `break`, `continue`,
-/// `yield` and `async`, and before `=>`, postfix `++` / `--`, a non-null `!`, type arguments and
-/// a conditional type's `extends`; a modifier other than `static`, `get` and `set` before a line
+/// `yield` and `async`, and before `=>`, postfix `++` / `--`, a non-null `!`, the type arguments
+/// of a type and a conditional type's `extends`; a modifier other than `static`, `get` and `set` before a line
 /// break is a name, and so are `type`, `interface`, `declare` and `namespace`.
 fn restricted(before: &str, after: &str) -> bool {
     let word_start = before
@@ -102,10 +102,25 @@ fn restricted(before: &str, after: &str) -> bool {
             | "type"
             | "interface"
             | "namespace"
-    ) || ["=>", "++", "--", "!", "<"]
-        .iter()
-        .any(|t| after.starts_with(t))
+    ) || ["=>", "++", "--", "!"].iter().any(|t| after.starts_with(t))
         || next_word == "extends"
+        || (after.starts_with('<') && type_name_before(&before[..word_start], word))
+}
+
+/// Is `word` (after `before`) a type's name whose type arguments a `<` would start, in a type
+/// position (not after `new`, `extends` or `implements`, where they may follow on the next line)?
+/// Read from the spelling: a capitalized name or a primitive type.
+fn type_name_before(before: &str, word: &str) -> bool {
+    let type_like = word.starts_with(|c: char| c.is_ascii_uppercase())
+        || matches!(
+            word,
+            "string" | "number" | "boolean" | "bigint" | "symbol" | "object"
+        );
+    let before = before.trim_end();
+    type_like
+        && !["new", "extends", "implements"]
+            .iter()
+            .any(|k| before.ends_with(k))
 }
 
 /// Where the scanner is: inside braces in code, a JSX tag or JSX children.

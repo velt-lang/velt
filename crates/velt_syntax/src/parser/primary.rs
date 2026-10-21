@@ -139,7 +139,10 @@ impl<'a> Parser<'a> {
     /// `new Foo<T>(args)`; the argument list is optional (`new Foo`).
     fn parse_new(&mut self) -> PResult<ExprKind> {
         self.bump(); // new
-        let class = self.parse_named_type()?;
+        self.type_args_any_line = true;
+        let class = self.parse_named_type();
+        self.type_args_any_line = false;
+        let class = class?;
         let args = if self.at(Tok::LParen) {
             self.parse_args()?
         } else {

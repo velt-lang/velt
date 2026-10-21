@@ -121,6 +121,10 @@ pub(crate) struct Parser<'a> {
     /// The block parsed next is a function body (`parse_fn_body`): a `var` may be declared
     /// directly in it.
     fn_body_next: bool,
+    /// The next type reference is an expression's (`new Map<K, V>()`) or a heritage clause's
+    /// (`extends Base<T>`): its type arguments may start on the next line
+    /// (`parse_named_type_with`).
+    type_args_any_line: bool,
     /// The statement parsed next is directly in a function body or at the top level, where
     /// `var` declares what `let` does (`var_stmt`). Taken by the statement it is set for.
     var_ok: bool,
@@ -177,6 +181,7 @@ impl<'a> Parser<'a> {
             fn_in_object: false,
             first_this_param: None,
             fn_body_next: false,
+            type_args_any_line: false,
             var_ok: false,
             stmt_start: 0,
             depth_scan: asi::DepthScan::default(),
@@ -344,11 +349,13 @@ impl<'a> Parser<'a> {
             .contains(['\n', '\r', '\u{2028}', '\u{2029}'])
     }
 
-    /// At `type`, `interface` or `declare` followed by a line break: not a declaration, as in
-    /// TypeScript (`nextTokenIsIdentifierOnSameLine`), so the word is read as an expression.
+    /// At `type`, `interface` or `declare` (also after `export`) followed by a line break: not a
+    /// declaration, as in TypeScript (`nextTokenIsIdentifierOnSameLine`), so the word is read as
+    /// an expression.
     fn at_decl_word_before_line_break(&mut self) -> bool {
-        matches!(self.cur_kw(), Some(Kw::Type | Kw::Interface | Kw::Declare))
-            && self.line_break_after(0)
+        let k = usize::from(self.at_kw(Kw::Export));
+        matches!(self.nth(k), Tok::Kw(Kw::Type | Kw::Interface | Kw::Declare))
+            && self.line_break_after(k)
     }
 
     /// At `async function` with no line break after `async` (a line break there ends a

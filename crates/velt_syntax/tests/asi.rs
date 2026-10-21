@@ -301,3 +301,58 @@ fn unicode_line_separators_are_line_breaks() {
     assert_eq!(expr_stmts("a\u{2029}++b"), ["a", "(++pre b)"]);
     assert!(parse("// c\u{2028}const x = 1").1.is_empty());
 }
+
+#[test]
+fn type_arguments_after_new_and_in_heritage_clauses_may_follow_a_line_break() {
+    // These are expressions with type arguments in TypeScript, with no line restriction.
+    let src = "class Base<T> { v: number = 4; }\ninterface I<T> { v: number }\nclass C extends Base\n<number> implements I\n<string> {}\ninterface J extends I\n<number> {}\nfunction f() {\n  const m = new Map\n  <string, number>();\n}";
+    let (m, d) = parse(src);
+    assert!(
+        d.is_empty(),
+        "{:?}",
+        d.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+    let ItemKind::Class(c) = &m.items[2].kind else {
+        panic!("{:?}", m.items[2].kind)
+    };
+    assert_eq!(ty(c.extends.as_ref().unwrap()), "Base<number>");
+    assert_eq!(ty(&c.implements[0]), "I<string>");
+}
+
+#[test]
+fn unicode_line_separators_end_a_regex() {
+    for src in [
+        "const r = /a\u{2028}b/;",
+        "const r = /[\u{2029}]/;",
+        "const r = /\\\u{2028}/;",
+    ] {
+        assert!(!errors(src).is_empty(), "{src}");
+    }
+    assert!(parse("const r = /a\\u2028b/;").1.is_empty());
+}
+
+#[test]
+fn a_parameter_modifier_before_a_line_break_is_its_name() {
+    assert!(!errors("class C { constructor(private\n  x: number) {} }").is_empty());
+    let m = parse_ok("class C { constructor(private x: number) {} }");
+    let ItemKind::Class(c) = &m.items[0].kind else {
+        panic!()
+    };
+    assert_eq!(c.fields.len(), 1);
+}
+
+#[test]
+fn export_and_a_declaration_word_before_a_line_break_declare_nothing() {
+    for src in [
+        "export type\nT = number",
+        "export interface\nI {}",
+        "export namespace\nN {}",
+    ] {
+        assert!(!errors(src).is_empty(), "{src}");
+    }
+    assert!(
+        parse("export type T = number\nexport interface I { a: number }")
+            .1
+            .is_empty()
+    );
+}
