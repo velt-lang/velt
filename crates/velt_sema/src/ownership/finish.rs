@@ -6,14 +6,19 @@
 //! - reassigning a non-Copy param of a function with a fixed ABI (closures, overridden and
 //!   interface methods) is an error: it cannot own its argument;
 //! - arguments for "soft" owned params (owned only because the callee reassigns them) are
-//!   recorded as soft moves: a caller that uses the value again passes a clone.
+//!   recorded as soft moves: a caller that uses the value again passes a clone;
+//! - changing a `for…of` element of a value read out of a `shared` (or of what a method of one
+//!   returns), or a variable bound to a part of one, is an error: the binding holds a copy,
+//!   where JavaScript changes the shared value.
 
 use velt_common::Diagnostic;
 
-use crate::body::places::is_place;
+use crate::body::places::{frozen_root, is_place};
 use crate::ctx::Ctx;
 use crate::defs::FnKind;
-use crate::hir::{Callee, DefId, Expr, ExprKind as E, FnDef, PassMode};
+use crate::hir::{
+    Callee, DefId, Expr, ExprKind as E, FnDef, LocalId, PassMode, Pat, PatKind, Stmt, StmtKind as S,
+};
 use crate::visit;
 
 use super::evidence;
@@ -102,5 +107,87 @@ pub(super) fn soft_args(cx: &mut Ctx, d: DefId, f: &mut FnDef) {
         if cx.is_shared_value(ty) {
             cx.fn_info_mut(d).soft_moves.push(span);
         }
+    }
+}
+
+/// Bindings of a value read out of a `shared` that the body changes (module docs): `for…of`
+/// elements (`Ctx::frozen_elems`) and variables bound to a part (`const ps = s.ports`).
+pub(super) fn frozen_bindings(cx: &mut Ctx, f: &mut FnDef) {
+    if !cx.frozen_reads {
+        return;
+    }
+    let mut binds: Vec<(LocalId, bool)> = (0..f.body.locals.len() as u32)
+        .map(LocalId)
+        .filter(|l| cx.frozen_elems.contains(&f.body.locals[l.0 as usize].span))
+        .map(|l| (l, true))
+        .collect();
+    let mut parts = Parts(vec![]);
+    visit::block(&mut f.body.block, &mut parts);
+    binds.extend(parts.0.into_iter().map(|l| (l, false)));
+    if binds.is_empty() {
+        return;
+    }
+    let ev = evidence::collect(cx, &mut f.body.block);
+    for (l, elem) in binds {
+        let local = &f.body.locals[l.0 as usize];
+        // Hidden locals of desugared loops (`<map@N>`) hold the source; the body can't name them.
+        if local.name.starts_with('<') || !ev.mutated.contains(&l) && !ev.modified.contains(&l) {
+            continue;
+        }
+        let (name, tn, span) = (local.name.clone(), cx.display(local.ty), local.span);
+        let what = match elem {
+            true => "the loop changes",
+            false => "this changes",
+        };
+        cx.error(
+            Diagnostic::error(
+                format!("{what} `{name}`, a `{tn}` read out of a `shared` value"),
+                span,
+            )
+            .with_note(
+                "a shared value is read-only, since other tasks read it at the same time: \
+                 change a copy (`.slice()`, `structuredClone`), or share a `Mutex`",
+            ),
+        );
+    }
+}
+
+/// The locals a `let` / `const` binds to a part of a value read out of a `shared`.
+struct Parts(Vec<LocalId>);
+
+impl visit::VisitMut for Parts {
+    fn stmt(&mut self, s: &mut Stmt) {
+        match &s.kind {
+            S::Let {
+                local,
+                init: Some(init),
+            } if frozen_root(strip(init)) => self.0.push(*local),
+            S::LetPat { pat, init } if frozen_root(strip(init)) => pat_locals(pat, &mut self.0),
+            _ => {}
+        }
+    }
+}
+
+fn strip(mut e: &Expr) -> &Expr {
+    while let E::Upcast(x) | E::Downcast(x) | E::WrapSome(x) = &e.kind {
+        e = x;
+    }
+    e
+}
+
+/// The locals pattern `p` binds.
+fn pat_locals(p: &Pat, out: &mut Vec<LocalId>) {
+    match &p.kind {
+        PatKind::Binding(l, _) => out.push(*l),
+        PatKind::Variant { args: ps, .. } | PatKind::Tuple(ps) | PatKind::Or(ps) => {
+            ps.iter().for_each(|x| pat_locals(x, out))
+        }
+        PatKind::Array { elems, rest } => {
+            elems.iter().for_each(|x| pat_locals(x, out));
+            out.extend(rest.iter().copied());
+        }
+        PatKind::Adt { fields } => fields.iter().for_each(|(_, x)| pat_locals(x, out)),
+        PatKind::Some(x) => pat_locals(x, out),
+        PatKind::Wildcard | PatKind::Lit(_) | PatKind::None | PatKind::InstanceOf(_) => {}
     }
 }

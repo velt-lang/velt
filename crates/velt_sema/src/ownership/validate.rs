@@ -359,6 +359,11 @@ pub(super) fn place_text(cx: &Ctx, locals: &[LocalDef], e: &Expr) -> String {
             let field = field.unwrap_or_else(|| index.to_string());
             format!("{}.{field}", place_text(cx, locals, base))
         }
+        // A `shared<T>` read in place: named by its handle.
+        E::Call {
+            callee: crate::hir::Callee::Intrinsic(crate::hir::Intrinsic::SharedRead),
+            args,
+        } if !args.is_empty() => place_text(cx, locals, &args[0]),
         _ => "the value".into(),
     }
 }

@@ -42,6 +42,7 @@ impl FnCx<'_, '_> {
                 continue;
             };
             let mut h = self.expr(inner, None, Want::Borrow);
+            h = self.read_shared(h);
             if self.cx.ty.array_elem(h.ty).is_none() {
                 match self.spread_iterable(h, inner) {
                     // A string's characters, a `Map`'s entries: spread as that array.

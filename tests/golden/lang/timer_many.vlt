@@ -1,0 +1,27 @@
+// check: no leaks
+// Many pending timers cost little each: 100k timers cleared at once and 100k that fire, in
+// Node's order (a timer's place costs logarithmic time, not a walk of the others).
+function main() {
+  const n = 100000;
+  const ts: Timer[] = [];
+  for (let i = 0; i < n; i++) {
+    ts.push(setTimeout(() => console.log("never"), 50));
+  }
+  for (const t of ts) {
+    clearTimeout(t);
+  }
+  let fired = 0;
+  let inOrder = true;
+  for (let i = 0; i < n; i++) {
+    setTimeout(() => {
+      if (fired != i) {
+        inOrder = false;
+      }
+      fired++;
+      if (fired == n) {
+        console.log("fired", fired, "in order", inOrder);
+      }
+    }, 1);
+  }
+  setTimeout(() => console.log("only this"), 60);
+}

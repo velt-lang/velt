@@ -713,7 +713,8 @@ impl FnCx<'_, '_> {
             span,
         };
         self.push_scope();
-        if let H::Local(l, _) = h.kind {
+        if let (H::Local(l, _), true) = (&h.kind, self.adapting) {
+            let l = *l;
             if self.local_kind(l) == LocalKind::Param {
                 // A function passed to the method is borrowed: the arrow calling it is passed on
                 // at once and never kept, so it borrows the parameter by name.

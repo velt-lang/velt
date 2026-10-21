@@ -187,6 +187,12 @@ impl Timers {
     /// `task`). Returns how many of the woken waited in a started promise before the first that
     /// `task` itself waited for (`None`: none of them), so the drain can resume the root at its
     /// place.
+    /// Is a registered timer due now?
+    pub(crate) fn has_due(&self) -> bool {
+        let mut s = self.state.lock();
+        s.queue.first_key().is_some_and(|k| k.0 <= Instant::now())
+    }
+
     pub(crate) fn fire(&self, task: &Waker) -> Option<usize> {
         let mut due = {
             let mut s = self.state.lock();

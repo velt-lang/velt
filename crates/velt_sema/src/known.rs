@@ -7,7 +7,7 @@
 
 use crate::ctx::{Ctx, Item};
 use crate::defs::DefInfo;
-use crate::hir::{self, DefId, IntTy, TyId, TyKind};
+use crate::hir::{self, AdtKind, DefId, IntTy, TyId, TyKind};
 use crate::type_reach::Look;
 
 /// The method of the prelude's `Comparable<T>`; `a < b` on a bounded `T` calls it.
@@ -250,6 +250,58 @@ impl Ctx<'_> {
         parts
             .into_iter()
             .any(|p| self.holds_weak_in(p, hiding, seen))
+    }
+
+    /// Can a `shared<T>` of `t` be read like a `T` (#36, `Intrinsic::SharedRead`)? Not when
+    /// `t` holds what a reader could change or must not copy (a `Mutex`, a weak map or ref, a
+    /// promise), or what the compiler cannot see into (a function or interface value, a type
+    /// parameter, a class with subclasses, whose objects may have more fields), nor when it
+    /// holds a type with a `clone()` of its own: copying what a read gets would run it on the
+    /// objects other threads read, as a side effect of reading. A `shared` inside is fine: it
+    /// counts atomically.
+    pub fn frozen_readable(&mut self, t: TyId) -> bool {
+        self.frozen_readable_in(t, &mut rustc_hash::FxHashSet::default())
+    }
+
+    fn frozen_readable_in(&mut self, t: TyId, seen: &mut rustc_hash::FxHashSet<TyId>) -> bool {
+        if !seen.insert(t) {
+            return true;
+        }
+        let parts: Vec<TyId> = match self.ty.kind(t).clone() {
+            TyKind::Shared(_) => return true,
+            TyKind::Dyn(..) | TyKind::FnPtr { .. } | TyKind::Promise(..) | TyKind::Param(_) => {
+                return false
+            }
+            TyKind::Adt(d, _) if Some(d) == self.mutex_ty() || self.is_weak_class(d) => {
+                return false
+            }
+            TyKind::Adt(d, _) if self.has_subclass(d) || self.own_clone(d).is_some() => {
+                return false
+            }
+            TyKind::Adt(d, args) => {
+                let tys: Vec<TyId> = match &self.info[d.0 as usize] {
+                    DefInfo::Adt(a) => a.fields.iter().map(|f| f.ty).collect(),
+                    DefInfo::Enum(e) => e
+                        .variants
+                        .iter()
+                        .flat_map(|v| v.payload.iter().copied())
+                        .collect(),
+                    _ => vec![],
+                };
+                tys.into_iter().map(|f| self.subst(f, &args)).collect()
+            }
+            k => crate::types::children(&k),
+        };
+        parts.into_iter().all(|p| self.frozen_readable_in(p, seen))
+    }
+
+    /// Does some class extend class `d`?
+    fn has_subclass(&self, d: DefId) -> bool {
+        let is_class = |s: DefId| self.adt(s).is_some_and(|a| a.kind == AdtKind::Class);
+        is_class(d)
+            && (0..self.info.len() as u32)
+                .map(DefId)
+                .any(|s| s != d && is_class(s) && self.class_extends(s, d))
     }
 
     /// Does a value of type `t` hold a function value (in a field, element or payload)?

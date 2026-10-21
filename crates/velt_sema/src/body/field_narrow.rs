@@ -177,6 +177,28 @@ impl FnCx<'_, '_> {
         Some((self.field_token(e)?, t))
     }
 
+    /// `e instanceof C` on a field path that is not all `readonly` (or not of classes), whose
+    /// type is a nullable `C` (`o.next instanceof A` with `next?: A | null`): when true, the
+    /// field is not null. Reads of it are checked again where they happen, as after `!= null`.
+    pub(crate) fn nullable_instance_field(
+        &mut self,
+        e: &ast::Expr,
+        class: hir::DefId,
+    ) -> Option<LocalId> {
+        let (root, path) = self.field_path(e)?;
+        let mut t = self.narrowed_local_ty(root);
+        for name in &path {
+            let t0 = self.cx.ty.core(t).unwrap_or(t);
+            t = self.cx.field_seen_from(t0, name, None)?.1;
+        }
+        let p = self.cx.ty.core(t)?;
+        let yes = matches!(
+            self.instance_kind(p, class),
+            Ok(super::expr::downcast::Instance::Yes)
+        );
+        yes.then(|| self.field_token(e)).flatten()
+    }
+
     /// The type local `l` reads as here (null, union member and subclass narrowing applied).
     fn narrowed_local_ty(&mut self, l: LocalId) -> TyId {
         let t = self.local_ty(l);

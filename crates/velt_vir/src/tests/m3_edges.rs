@@ -14,7 +14,7 @@ use super::run;
 
 /// `holder(s, moveIt)`: owns `s`, two derived strings (one conditionally moved away before the
 /// await, so it has a drop flag) and a sleep future while suspended. `outer(s)` embeds a
-/// `holder` child. `main` creates one promise of each and drops them unpolled.
+/// `holder` child. `main` creates one promise of each and drops them unawaited.
 fn cancel_program() -> Program {
     let mut pb = PB::new();
     let t = pb.t;
@@ -69,9 +69,11 @@ fn cancel_program() -> Program {
 }
 
 #[test]
-fn unpolled_promises_drop_their_arguments() {
+fn promises_a_synchronous_main_drops_still_run() {
+    // `main` starts promises, so it runs as a task (entry.rs) and they run to completion, as in
+    // JS; the interpreter checks that each frees what it owns.
     let out = run(&cancel_program());
-    assert_eq!(out.stdout, "");
+    assert_eq!(out.stdout, "abc tmpabc\nzz tmpzz\nzz!\n");
 }
 
 #[test]

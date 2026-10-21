@@ -51,9 +51,15 @@ impl FnCx<'_, '_> {
         let unit = self.cx.ty.unit;
         let never = self.cx.ty.never;
         let mut nullable = inner != sty;
+        // The result's nothing: `undefined` for an optional promise read as `undefined` (a
+        // `Record` or `Map` lookup) and for a `void` payload, as in Node.
+        let mut has_null = self.cx.ty.nothing_of(sty).is_some_and(|n| n.has_null());
         let mut values = vec![];
         for m in &members {
             let v = self.cx.ty.promise_payload(*m).unwrap_or(*m);
+            if self.cx.ty.nothing_of(v).is_some_and(|n| n.has_null()) {
+                has_null = true;
+            }
             if v == unit {
                 nullable = true;
             } else if v != never {
@@ -68,7 +74,13 @@ impl FnCx<'_, '_> {
         let ret = if values.is_empty() {
             unit
         } else {
-            self.cx.union_of(&values, nullable, span)
+            let t = self.cx.union_of(&values, nullable, span);
+            match *self.cx.ty.kind(t) {
+                hir::TyKind::Option(p, hir::Nothing::Null) if !has_null => {
+                    self.cx.ty.option_of(p, hir::Nothing::Undefined)
+                }
+                _ => t,
+            }
         };
         let unit_expr = |s: &mut Self| {
             let block = hir::Block {

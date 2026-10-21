@@ -1,0 +1,45 @@
+// check: no leaks
+// check: heap blocks at most 24
+// A `shared<T>` whose `T` holds counted parts (here `u8[]` and `Item`, which two variables
+// share below) is still read in its box by an index, a length or a field: no copy per read,
+// only of a counted part the program keeps or passes on (#36).
+class Item {
+  name: string;
+  tags: string[];
+  constructor(name: string) {
+    this.name = name;
+    this.tags = [name];
+  }
+}
+
+function describe(i: Item): string {
+  return `${i.name}:${i.tags.length}`;
+}
+
+function main() {
+  const a: u8[] = [1];
+  const b = a;
+  b.push(2);
+  const p = new Item("p");
+  const q = p;
+  q.name = "q";
+  console.log(a.length, p.name);
+
+  const bytes: u8[] = [];
+  for (let i = 0; i < 1000; i++) {
+    bytes.push((i % 7) as u8);
+  }
+  const s = shared(bytes);
+  let t: i64 = 0;
+  for (let i: usize = 0; i < s.length; i++) {
+    t += s[i] as i64;
+  }
+  console.log(t);
+
+  const items = shared([new Item("x"), new Item("y")]);
+  let n = 0;
+  for (let k = 0; k < 1000; k++) {
+    n += items[k % 2].name.length + items.length;
+  }
+  console.log(n, describe(items[1]));
+}
