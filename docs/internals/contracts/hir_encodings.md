@@ -596,6 +596,8 @@ it as a borrow of the place of `s` (`Collector::place_of`), so code that may giv
 another handle while the read is live (a `ForOf` body, a closure argument of the same call) is
 refused as it is for an array. Sema rejects every write through it (`require_mutable`,
 `use_mutably`) and every call that may modify it: a `BorrowMut` argument after inference, an
+`Owned` receiver the method modifies all the same (`FnInfo::modified_params`: a method
+returning the `this` it changes, such as `fill`, or calling one on `this`), an
 argument of a call through a function value or next to one that may modify its arguments
 (`ownership/patch.rs`). Other threads read the same value at the same time, so lowering must
 not touch a reference count in it either: where `T` holds no counted part (`Cx::holds_counted`)

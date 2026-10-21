@@ -62,8 +62,18 @@ pub(super) fn apply(
         info.is_async || info.is_generator,
     );
     let has_this = info.this.is_some();
+    let this_modified = has_this && ev.modified.contains(&f.params[0].local);
+    if this_modified && cx.fn_info(d).modified_params & 1 == 0 {
+        cx.fn_info_mut(d).modified_params |= 1;
+        changed = true;
+    }
     if has_this && ev.mutated.contains(&f.params[0].local) {
-        let t = cx.fn_info_mut(d).this.as_mut().expect("ICE: this");
+        let info = cx.fn_info_mut(d);
+        if info.modified_params & 1 == 0 {
+            info.modified_params |= 1;
+            changed = true;
+        }
+        let t = info.this.as_mut().expect("ICE: this");
         if t.mode == PassMode::Borrow {
             t.mode = PassMode::BorrowMut;
             changed = true;
@@ -81,6 +91,12 @@ pub(super) fn apply(
             // `xs = []; xs.push(1)` only modifies the callee's own array.
             let before = evidence::modified_before_rebind(cx, &f.body.block, p.local);
             mutated = before.unwrap_or(true);
+        }
+        let bit = 1u64 << (k + usize::from(has_this)).min(63);
+        let info = cx.fn_info_mut(d);
+        if (mutated || ev.modified.contains(&p.local)) && info.modified_params & bit == 0 {
+            info.modified_params |= bit;
+            changed = true;
         }
         let sig = &mut cx.fn_info_mut(d).params[k];
         let new = match sig.mode {

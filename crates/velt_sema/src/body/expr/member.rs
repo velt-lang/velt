@@ -141,7 +141,7 @@ impl FnCx<'_, '_> {
     }
 
     /// Is `length` of a `t` the intrinsic length of a string or array?
-    fn has_length(&self, t: TyId) -> bool {
+    pub(super) fn has_length(&self, t: TyId) -> bool {
         t == self.cx.ty.str_ || self.cx.ty.array_elem(t).is_some()
     }
 
@@ -443,11 +443,9 @@ impl FnCx<'_, '_> {
             Ok(h) => return h,
             Err(obj) => obj,
         };
-        // `s[i]` on a `shared<string>` or `shared<T[]>` reads the value inside (writes through
-        // it are reported where the element is assigned).
-        let obj = match self.cx.ty.kind(obj.ty) {
-            TyKind::Shared(t) if self.has_length(*t) => self.frozen_view(obj, None),
-            _ => obj,
+        let obj = match self.shared_indexed(obj, index, want, span) {
+            Ok(obj) => obj,
+            Err(e) => return e,
         };
         let t = obj.ty;
         // `o[KEY]` with a symbol constant: the member the symbol names.

@@ -365,6 +365,8 @@ impl FnCx<'_, '_> {
                 "`length` is a property, not a method; write `s.length`",
                 prop.span,
             );
+        } else if self.unreadable_shared(recv.ty) {
+            d = d.with_note(self.unreadable_shared_note(recv.ty));
         } else if let Some(note) = self.narrowing_note(recv.ty) {
             d = d.with_note(note);
         } else if let Some(note) = self.unnarrowed_note(recv.span) {

@@ -136,3 +136,61 @@ fn fields_and_for_of_read_the_value_inside() {
     );
     assert!(r.contains("a shared value is read-only"), "{r}");
 }
+
+#[test]
+fn typed_array_writes_through_it_are_errors() {
+    for src in [
+        "function main() { const s = shared(new Float64Array(3)); s[0] = 5; }",
+        "function main() { const s = shared(new Float64Array(3)); s.set([1, 2], 0); }",
+        "function main() { const s = shared(new Float64Array(3)); s.fill(1); }",
+    ] {
+        let r = err_src(src);
+        assert!(r.contains("read-only"), "{src}: {r}");
+    }
+}
+
+#[test]
+fn a_method_returning_the_this_it_modifies_is_an_error() {
+    // `bump` returns `this`, so it takes it owned: the change hides behind the move.
+    let r = err_src(
+        "class C { n: number = 0; bump(): C { this.n += 1; return this; } }
+         function twice(c: C): C { return c.bump().bump(); }
+         function main() { const s = shared(new C()); s.bump(); }",
+    );
+    assert!(r.contains("read out of a `shared` value"), "{r}");
+    // So is one that calls such a method on `this`.
+    let r = err_src(
+        "class C { n: number = 0; bump(): C { this.n += 1; return this; } again(): C { return this.bump(); } }
+         function main() { const s = shared(new C()); s.again(); }",
+    );
+    assert!(r.contains("read out of a `shared` value"), "{r}");
+    // A function taking it owned gets its own copy, as `keep` in `shared_reads.vlt` does.
+    ok_src(
+        "function g(a: Float64Array): Float64Array { return a.fill(1); }
+         function main() { const s = shared(new Float64Array(3)); g(s); }",
+    );
+    // Reading through such a method's sibling that leaves `this` alone is fine.
+    ok_src(
+        "class C { n: number = 0; bump(): C { this.n += 1; return this; } get(): number { return this.n; } }
+         function main() { const s = shared(new C()); console.log(s.get()); }",
+    );
+}
+
+#[test]
+fn for_of_and_index_read_maps_sets_and_typed_arrays_inside() {
+    let n = shared_reads(
+        "function main() {
+           const sm = shared(new Map<string, number>());
+           const ss = shared(new Set<string>());
+           const sf = shared(new Float64Array(2));
+           let t = 0;
+           for (const [k, v] of sm) { t += v; }
+           for (const k of ss) { t += k.length; }
+           for (const x of sf) { t += x; }
+           console.log(t, sf[0]);
+         }",
+        "main",
+    );
+    // Each loop reads the value at least once (a typed array per length and element).
+    assert!(n >= 4, "{n}");
+}

@@ -31,6 +31,8 @@ use crate::hir::{
 };
 use crate::visit::{self, VisitMut};
 
+use super::patch::{call_target, Target};
+
 /// What one body does to its locals.
 #[derive(Default)]
 pub(super) struct Evidence {
@@ -40,6 +42,10 @@ pub(super) struct Evidence {
     pub weak: HashSet<LocalId>,
     /// Locals assigned as a whole, with the first such assignment.
     pub reassigned: HashMap<LocalId, Span>,
+    /// Locals whose contents a callee modifies through a parameter it owns (a method returning
+    /// the `this` it changes): no mode change, but the body modifies them too
+    /// (`FnInfo::modified_params`).
+    pub modified: HashSet<LocalId>,
 }
 
 /// Is local `l` modified before the body rebinds it for good? The rebinding is the first
@@ -75,6 +81,7 @@ pub(super) fn collect(cx: &mut Ctx, b: &mut Block) -> Evidence {
     } = v;
     ev.mutated = through_aliases(&ev.mutated, &aliases, false);
     ev.weak = through_aliases(&ev.weak, &aliases, true);
+    ev.modified = through_aliases(&ev.modified, &aliases, false);
     ev
 }
 
@@ -210,6 +217,16 @@ impl VisitMut for Collector<'_, '_> {
                 callee: Callee::Indirect(_),
                 args,
             } => self.indirect_args(args),
+            E::Call { callee, args } => {
+                if let Some(Target::Fn(d)) = call_target(self.cx, callee, args) {
+                    let bits = self.cx.fn_info(d).modified_params;
+                    for (i, a) in args.iter().enumerate().take(64) {
+                        if bits & (1 << i) != 0 && !self.cx.is_copy(a.ty) {
+                            self.ev.modified.extend(place_root(a));
+                        }
+                    }
+                }
+            }
             _ => {}
         }
     }

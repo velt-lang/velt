@@ -440,8 +440,8 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
   passing or capturing it adds a reference (so does `.clone()`); it is never deep-copied. For
   64-bit integers, `.add(n)`, `.get()` and `.set(v)` are atomic; `.add(n)` returns the new value.
   Any other `shared<T>` (one that holds no `Mutex`) never changes, so every task reads it at
-  once, without a lock, like the `T` it holds: `s[i]` and `s.length` on a string or array,
-  `for (const x of s)`, a field or getter (`s.name`, `s.size` of a `Map`), `T`'s methods
+  once, without a lock, like the `T` it holds: `s[i]` and `s.length` on a string, array or
+  typed array, `for (const x of s)` (also over a `Map`, `Set` or typed array), a field or getter (`s.name`, `s.size` of a `Map`), `T`'s methods
   (`s.includes(x)`, `s.startsWith("a")`), and `s` passed where a `T` is expected (`count(s)`
   for `count(xs: u8[])`). An index, a length or a field reads the value in place. Passed on as
   a whole or in part, and as the receiver of a method, the value is borrowed too when nothing
@@ -465,7 +465,8 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
   the handle), the read keeps the box it started with alive, as JavaScript keeps the old array.
   Changing the value is an error (``cannot modify a `shared<number[]>`: a shared value is
   read-only …``), and so is passing it to a function that may change it or to a function
-  value: share a `Mutex` instead.
+  value, and calling a method of it that changes it (also one returning the value it changes,
+  such as `fill` or a method ending in `return this`): share a `Mutex` instead.
 
   ```ts
   async function count(xs: shared<u8[]>, b: u8): Promise<i64> {

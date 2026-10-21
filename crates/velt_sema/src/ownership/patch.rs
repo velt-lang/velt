@@ -40,6 +40,17 @@ pub(super) fn patch_calls(
     visit::exprs_mut(b, &mut |e: &mut Expr| {
         let returns_promise = matches!(cx.ty.kind(e.ty), TyKind::Promise(..));
         let span = e.span;
+        let modified = match &e.kind {
+            E::Call { callee, args } => match call_target(cx, callee, args) {
+                // Only the receiver: an owned parameter gets its own copy (as `force_move` gives
+                // it), but a method changing its receiver changes a copy no one would see.
+                Some(Target::Fn(d)) if cx.fn_info(d).this.is_some() => {
+                    cx.fn_info(d).modified_params & 1
+                }
+                _ => 0,
+            },
+            _ => 0,
+        };
         let (modes, args, unknown) = match &mut e.kind {
             E::Call { callee, args } => {
                 // A closure literal passed to a parameter of a generic type may be kept as a
@@ -74,8 +85,15 @@ pub(super) fn patch_calls(
             table_args(cx, args, &mut errors);
         }
         if let Some(modes) = &modes {
-            for (a, m) in args.iter_mut().zip(modes) {
+            for (i, (a, m)) in args.iter_mut().zip(modes).enumerate() {
                 match m {
+                    // A receiver the method changes though it takes it owned (it returns `this`):
+                    // not one read out of a `shared`, whose change no one would see.
+                    PassMode::Owned | PassMode::Borrow
+                        if i < 64 && modified & (1 << i) != 0 && frozen_root(a) =>
+                    {
+                        modifies_frozen(cx, a, &mut errors)
+                    }
                     PassMode::Owned => changed |= force_move(cx, a, &mut errors),
                     PassMode::BorrowMut => changed |= borrow_mut(cx, a, &mut errors),
                     _ => {}
@@ -318,11 +336,7 @@ fn borrow_mut(cx: &Ctx, e: &mut Expr, errors: &mut Vec<Diagnostic>) -> bool {
         _ => e,
     };
     if frozen_root(target) {
-        let tn = cx.display(target.ty);
-        errors.push(Diagnostic::error(
-            format!("this call may modify its argument, a `{tn}` read out of a `shared` value"),
-            target.span,
-        ).with_note("a shared value is read-only, since other tasks read it at the same time: pass a copy, or share a `Mutex`"));
+        modifies_frozen(cx, target, errors);
         return false;
     }
     if !is_place(target) || outer_mode(target) != Some(UseMode::Borrow) {
@@ -351,6 +365,15 @@ fn borrow_mut(cx: &Ctx, e: &mut Expr, errors: &mut Vec<Diagnostic>) -> bool {
     }
     set_place_mode(target, UseMode::BorrowMut);
     true
+}
+
+/// A call may modify `target`, a value read out of a `shared`: an error.
+fn modifies_frozen(cx: &Ctx, target: &Expr, errors: &mut Vec<Diagnostic>) {
+    let tn = cx.display(target.ty);
+    errors.push(Diagnostic::error(
+        format!("this call may modify its argument, a `{tn}` read out of a `shared` value"),
+        target.span,
+    ).with_note("a shared value is read-only, since other tasks read it at the same time: pass a copy, or share a `Mutex`"));
 }
 
 /// Is `e` a value read out of a `shared<T>` (`Intrinsic::SharedRead`), or a part of one?

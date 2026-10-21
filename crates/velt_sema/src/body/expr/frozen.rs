@@ -8,12 +8,38 @@
 //! modify it (`ownership/patch.rs`).
 
 use velt_common::Span;
+use velt_syntax::ast;
 
 use crate::body::places::set_place_mode;
-use crate::body::FnCx;
+use crate::body::{FnCx, Want};
 use crate::hir::{self, Callee, ExprKind as H, Intrinsic, TyKind, UseMode};
 
 impl FnCx<'_, '_> {
+    /// The object of `s[i]`: a `shared<string>`, `shared<T[]>` or `shared` typed array read as
+    /// the value inside (writes through an array's element are reported where it is assigned);
+    /// `Err` with the error expression for a write through a typed array's indexer, which those
+    /// checks don't see.
+    pub(super) fn shared_indexed(
+        &mut self,
+        obj: hir::Expr,
+        index: &ast::Expr,
+        want: Want,
+        span: Span,
+    ) -> Result<hir::Expr, hir::Expr> {
+        let TyKind::Shared(t) = *self.cx.ty.kind(obj.ty) else {
+            return Ok(obj);
+        };
+        if matches!(want, Want::BorrowMut) && self.has_indexer(t) {
+            self.frozen_write(&obj, span);
+            self.expr(index, None, Want::Borrow);
+            return Err(self.error_expr(span));
+        }
+        if self.has_length(t) || self.has_indexer(t) {
+            return Ok(self.frozen_view(obj, None));
+        }
+        Ok(obj)
+    }
+
     /// `h` as the `T` of its `shared<T>`, for a use that only reads it (`member`: the member
     /// read or called on it, which a `shared` value may have itself); anything else as it is.
     pub(crate) fn frozen_view(&mut self, h: hir::Expr, member: Option<&str>) -> hir::Expr {
@@ -46,6 +72,30 @@ impl FnCx<'_, '_> {
             TyKind::Shared(_) => self.frozen_view(h, None),
             _ => h,
         }
+    }
+
+    /// Is `ty` a `shared<T>` that is not read like its `T` (other than a `shared<int>`, whose
+    /// methods are its atomics)?
+    pub(crate) fn unreadable_shared(&mut self, ty: hir::TyId) -> bool {
+        match *self.cx.ty.kind(ty) {
+            TyKind::Shared(t) => !self.cx.ty.is_int(t) && !self.cx.frozen_readable(t),
+            _ => false,
+        }
+    }
+
+    /// Why the `shared<T>` type `shared` (one `frozen_readable` refuses) is not read like its `T`.
+    pub(crate) fn unreadable_shared_note(&mut self, shared: hir::TyId) -> String {
+        let f = self.cx.display(shared);
+        let e = match *self.cx.ty.kind(shared) {
+            TyKind::Shared(t) => self.cx.display(t),
+            _ => f.clone(),
+        };
+        format!(
+            "`{f}` cannot be read like a `{e}`: other threads read it at the same time, so it \
+             is read in place only when nothing in `{e}` could change it or run code on it \
+             (it holds a `Mutex`, a weak reference, a promise, a function or interface value, a \
+             type parameter, or a class with subclasses or with a `clone()` of its own)"
+        )
     }
 
     /// Is `h` a value read out of a `shared<T>` (`frozen_view`)?

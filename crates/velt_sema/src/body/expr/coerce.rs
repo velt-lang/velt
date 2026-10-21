@@ -411,13 +411,7 @@ impl FnCx<'_, '_> {
             d = d.with_note(note);
         }
         if matches!(self.cx.ty.kind(found.ty), TyKind::Shared(t) if *t == expected) {
-            d = d.with_note(format!(
-                "`{f}` cannot be read like a `{e}`: other threads read it at the same time, so it \
-                 is read in place only when nothing in `{e}` could change it or run code on it \
-                 (it holds a `Mutex`, a weak reference, a promise, a function or interface \
-                 value, a type parameter, or a class with subclasses or with a `clone()` of its \
-                 own)"
-            ));
+            d = d.with_note(self.unreadable_shared_note(found.ty));
         }
         if let TyKind::Dyn(..) = self.cx.ty.kind(expected) {
             d = match (

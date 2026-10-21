@@ -6,3 +6,4 @@ name,ports
 Cfg { name: 'a', ports: [ 1, 2 ] }
 [1,2,3] {"cfg":{"name":"a","ports":[1,2]},"n":1} 1
 1 2 1 true
+15 4 7 3
