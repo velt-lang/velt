@@ -12,7 +12,9 @@ impl Parser<'_> {
         self.guarded(|p| {
             let lo = p.cur_lo();
             let check = p.parse_union_type()?;
-            if !p.at_kw(Kw::Extends) {
+            // No line break before a conditional type's `extends`, as in TypeScript: in an
+            // interface, `a: A` / `extends?: B` on the next line is the next member.
+            if !p.at_kw(Kw::Extends) || p.line_break_before() {
                 return Ok(check);
             }
             // `C extends E ? T : F`. As in TypeScript, `E` is parsed without a conditional

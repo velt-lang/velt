@@ -69,6 +69,13 @@ impl<'a> Parser<'a> {
                 Tok::LBracket | Tok::Star | Tok::PrivateName | Tok::Str(_)
             )
         {
+            // Only `static`, `get` and `set` apply across a line break, as in TypeScript and
+            // JavaScript; any other modifier before one is the member's name (`async` / `foo()
+            // {}` is a field `async` and a method `foo`).
+            let across_lines = self.at_kw(Kw::Static) || self.at_word("get") || self.at_word("set");
+            if !across_lines && self.line_break_after(0) {
+                break;
+            }
             let flag = match self.cur_kw() {
                 Some(Kw::Readonly) => &mut m.readonly,
                 Some(Kw::Static) => &mut m.is_static,

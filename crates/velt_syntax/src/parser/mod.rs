@@ -3,10 +3,12 @@
 //! `items`/`type_decls`/`members` (declarations), `imports` (imports and re-exports), `stmt`,
 //! `expr` (operators), `postfix` (calls, members), `primary` (atoms), `jsx`, `arrow`, `for_loop`,
 //! `types`, `patterns`, `undefined` (the rejected `undefined`), `type_assertion` (the rejected
-//! `<T>x` of `.ts` files), and `recovery` (error synchronization).
+//! `<T>x` of `.ts` files), `asi` (the warning for lines that continue a statement under automatic
+//! semicolon insertion), and `recovery` (error synchronization).
 
 mod ambient;
 mod arrow;
+mod asi;
 mod augment;
 mod cast_types;
 mod expr;
@@ -119,9 +121,18 @@ pub(crate) struct Parser<'a> {
     /// The block parsed next is a function body (`parse_fn_body`): a `var` may be declared
     /// directly in it.
     fn_body_next: bool,
+    /// The next type reference is an expression's (`new Map<K, V>()`) or a heritage clause's
+    /// (`extends Base<T>`): its type arguments may start on the next line
+    /// (`parse_named_type_with`).
+    type_args_any_line: bool,
     /// The statement parsed next is directly in a function body or at the top level, where
     /// `var` declares what `let` does (`var_stmt`). Taken by the statement it is set for.
     var_ok: bool,
+    /// Token index where the statement (or item, or member) being parsed starts
+    /// (`asi::begin_statement`).
+    stmt_start: usize,
+    /// `asi::bracket_depth_at`'s progress.
+    depth_scan: asi::DepthScan,
 }
 
 /// What the lookahead at a `?` found (`question_is_ternary`).
@@ -170,7 +181,10 @@ impl<'a> Parser<'a> {
             fn_in_object: false,
             first_this_param: None,
             fn_body_next: false,
+            type_args_any_line: false,
             var_ok: false,
+            stmt_start: 0,
+            depth_scan: asi::DepthScan::default(),
             computed_keys: BTreeSet::new(),
             no_in: false,
             ambient: None,
@@ -310,8 +324,44 @@ impl<'a> Parser<'a> {
         Err(Fail)
     }
 
+    /// The end of a statement: a `;`, or, by automatic semicolon insertion (ECMAScript's rules,
+    /// as TypeScript and Node apply them), a line break before the cursor, a `}` or the end of
+    /// the file (`asi`). Consumes the `;` if there is one. A `for (;;)` header takes its `;`s
+    /// with `expect(Tok::Semi)` instead: no semicolon is ever inserted there.
     fn expect_semi(&mut self) -> PResult<()> {
+        if self.eat(Tok::Semi) || self.at_inserted_semi() {
+            return Ok(());
+        }
         self.expect(Tok::Semi)
+    }
+
+    /// Would automatic semicolon insertion end a statement before the cursor: a line break
+    /// before it, a `}` or the end of the file?
+    fn at_inserted_semi(&mut self) -> bool {
+        matches!(self.peek(), Tok::RBrace | Tok::Eof) || self.line_break_before()
+    }
+
+    /// Is there a line break between tokens `pos + n` and `pos + n + 1`?
+    fn line_break_after(&mut self, n: usize) -> bool {
+        let hi = self.tok(self.pos + n).hi;
+        let lo = self.tok(self.pos + n + 1).lo;
+        self.text(hi.min(lo), lo)
+            .contains(['\n', '\r', '\u{2028}', '\u{2029}'])
+    }
+
+    /// At `type`, `interface` or `declare` (also after `export`) followed by a line break: not a
+    /// declaration, as in TypeScript (`nextTokenIsIdentifierOnSameLine`), so the word is read as
+    /// an expression.
+    fn at_decl_word_before_line_break(&mut self) -> bool {
+        let k = usize::from(self.at_kw(Kw::Export));
+        matches!(self.nth(k), Tok::Kw(Kw::Type | Kw::Interface | Kw::Declare))
+            && self.line_break_after(k)
+    }
+
+    /// At `async function` with no line break after `async` (a line break there ends a
+    /// statement `async`, as in JavaScript).
+    fn at_async_function(&mut self) -> bool {
+        self.at_kw(Kw::Async) && self.nth(1) == Tok::Kw(Kw::Function) && !self.line_break_after(0)
     }
 
     /// Is there a line break between the last consumed token and the cursor (in whitespace or
@@ -329,8 +379,7 @@ impl<'a> Parser<'a> {
         if self.eat(Tok::Semi) {
             return true;
         }
-        !self.at(Tok::LBrace)
-            && (self.at(Tok::RBrace) || self.at(Tok::Eof) || self.line_break_before())
+        !self.at(Tok::LBrace) && self.at_inserted_semi()
     }
 
     /// The literal payload of a token.
