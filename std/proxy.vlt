@@ -70,11 +70,6 @@ function arrayHole(a: any, i: number): boolean {
   return __intrinsic_proxy_array_hole(a, i as i64, 0) == 1;
 }
 
-/** Is an array method running on a proxy (`__arrayCall`, velt:proxy/array)? */
-function inArrayCall(): boolean {
-  return __intrinsic_proxy_array_depth(0) > 0;
-}
-
 /** The element of an array that `key` (a string or a number) names, or -1. */
 function arrayElement(key: any): number {
   if (typeof key === "string") {
@@ -648,7 +643,8 @@ export class Reflect {
           // Node leaves holes before the element, which `unshift` and `splice` on a proxy fill
           // right after: Velt's arrays have none, so the gap holds the value meanwhile and is
           // recorded as holes. Elsewhere they would stay, which is not supported yet.
-          if (!inArrayCall()) {
+          // Only in a trap call of such a method on this array (velt_rt's `proxy_array`).
+          if (__intrinsic_proxy_array_hole(target, n as i64, 1) < 0) {
             panic(
               `TypeError: writing element ${i} past the end of an array of ${n} through \`any\` is not supported yet (#924): Velt's arrays have no holes`,
             );
@@ -731,17 +727,16 @@ export class Reflect {
       return target.__deleteProperty(key);
     }
     if (Array.isArray(target) && arrayElement(key) >= 0) {
-      // Node leaves a hole and keeps the length. Velt's arrays have no holes: while an array
-      // method runs on a proxy (`pop`, `shift` and `splice` delete the last elements before they
-      // write the shorter length) the element stays and is recorded as one; elsewhere a hole
-      // is not supported yet.
+      // Node leaves a hole and keeps the length. Velt's arrays have no holes: in a trap call of
+      // an array method on a proxy of this array (`pop`, `shift` and `splice` delete the last
+      // elements before they write the shorter length) the element stays and is recorded as
+      // one (velt_rt's `proxy_array`); elsewhere a hole is not supported yet.
       const i = arrayElement(key);
       const n = target.length as number;
       if (i >= n || arrayHole(target, i)) {
         return true;
       }
-      if (inArrayCall()) {
-        __intrinsic_proxy_array_hole(target, i as i64, 1);
+      if (__intrinsic_proxy_array_hole(target, i as i64, 1) >= 0) {
         return true;
       }
     }

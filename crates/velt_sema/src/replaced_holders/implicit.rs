@@ -569,7 +569,7 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::SourceLocation
         | I::PromiseWiden
         | I::PerfNow
-        | I::ProxyArrayDepth
+        | I::ProxyArrayCall
         | I::ProxyArrayHole
         | I::DateNow
         | I::SharedAdd

@@ -2542,14 +2542,15 @@ function to `typeof` and `console.log` (`[Function: push]`; `Reflect.get(a, "con
 `[Function: Array]`), so a reactive `get` trap that wraps only objects passes it through and a
 nested reactive array runs it. Each read gives a new one, so two reads are not `===` as in
 Node, and called other than on a proxy it is a `TypeError` naming #924. While such an algorithm
-runs, the holes it makes behave as in Node: `pop`, `shift` and `splice` delete the last elements
+runs, the holes its own trap calls make in its target behave as in Node: `pop`, `shift` and `splice` delete the last elements
 (`Reflect.deleteProperty(t, k)`) before they write the shorter `length`, and `unshift` and
 `splice` write an element past the end before they fill the gap. The array keeps its length and
 its elements (Velt's arrays have no holes; a gap holds the value written after it), and
 `Reflect.get`, `Reflect.has`, `Reflect.ownKeys`, `Reflect.getOwnPropertyDescriptor`,
 `Object.hasOwn` and `hasOwnProperty.call` see those elements as absent until the algorithm fills
 them or writes the shorter `length`. A trap that doesn't write it, so that holes would stay, is a
-`TypeError` naming #823. Elsewhere, deleting an element that is not past the end (`delete a[i]`
+`TypeError` naming #823, and so is a hole in another array or one made in a callback the
+algorithm calls (`forEach`'s, `sort`'s comparison). Elsewhere, deleting an element that is not past the end (`delete a[i]`
 through `any`, `Reflect.deleteProperty(a, i)`, the last element too) and `Reflect.set(a, i, v)`
 further past the end are `TypeError`s naming #823 and #924. `const hasOwn = Object.prototype.hasOwnProperty`
 reads a value whose `hasOwn.call(o, k)` is `Object.hasOwn(o, k)`.

@@ -414,22 +414,30 @@ thread) there is no lock.
 ## Array methods on a proxy [additive, #823]
 
 ```c
-int64_t velt_rt_proxy_array_depth(int64_t delta);
+int64_t velt_rt_proxy_array_call(const void *target, int64_t op);
 int64_t velt_rt_proxy_array_hole(const void *array, int64_t index, int64_t op);
 ```
 
 The state of the generic array methods `velt:proxy/array` runs on a proxy of an array
 (`p.push(…)`, `p.pop()`, …), per thread, so that the standard library keeps no module state.
-`velt_rt_proxy_array_depth` adds `delta` to the number of such methods running on this thread
-(a counter, so they nest) and returns the new number (0 or more); when it reaches 0 the holes
-below are forgotten. `velt_rt_proxy_array_hole` keeps the holes those methods made, Node's empty
-slots that Velt's arrays don't have, per array, identified by `array` (the data pointer of the
-`any` holding it, stable while a method runs): `op` 0 answers whether element `index` is one
-(1 or 0), 1 records it and 2 forgets it (both answer whether it was one), 3 forgets the holes
-from `index` on (a shorter length) and answers 0, 4 answers the first hole below `index` or -1.
-std/proxy.vlt's `Reflect` records them (a delete while a method runs, the gap before an
-element written past the end) and reports them as absent. Both runtimes provide them
-(`velt_rt/src/proxy_array.rs`, compiled into velt_rt_wasm too).
+Arrays are identified by the data pointer of the `any` holding them. Only a running method's
+target is ever recorded: its proxy keeps it alive, so its address is not reused while the
+method runs, and the records of a target go when its method returns.
+
+`velt_rt_proxy_array_call(target, op)`: `op` 1 starts a method on a proxy of `target` (methods
+nest), -1 ends it and answers the first hole it leaves in `target` (forgotten then; -1 for
+none; the standard library makes a left hole a `TypeError`), 2 starts one of the method's own
+trap calls (`has`, `get`, `set`, `deleteProperty` on the proxy), -2 ends it. Between trap calls
+(the method's user callbacks) no trap call is running.
+
+`velt_rt_proxy_array_hole(array, index, op)`: Node's empty slots, which Velt's arrays don't have.
+`op` 0 answers whether element `index` is one (1 or 0); 1 records it, only during a trap call of
+a method on `array` (answering whether it was one), else answers -1 and records nothing; 2
+forgets it (whether it was one); 3 forgets the holes from `index` on (a shorter length; 0); 4
+answers the first hole below `index`, or -1. std/proxy.vlt's `Reflect` records them (a delete,
+the gap before an element written past the end) and reports them as absent; elsewhere both are
+`TypeError`s. Both runtimes provide them (`velt_rt/src/proxy_array.rs`, compiled into
+velt_rt_wasm too).
 
 ## Output [M1]
 `stream`: 1 = stdout (buffered, flushed at exit / before any stderr write / on `velt_rt_flush`), 2 = stderr.

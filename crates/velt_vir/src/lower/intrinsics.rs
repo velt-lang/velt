@@ -165,9 +165,12 @@ impl FnLower<'_, '_> {
             (I::AnySetIndex, [o, i, v]) => self.any_set(o, i, v, true),
             (I::AnyHas, [o, k]) => self.any_has(o, k),
             (I::AnyDelete, [o, k]) => self.any_delete(o, k),
-            (I::ProxyArrayDepth, [d]) => {
-                let d = self.expr(d);
-                self.rt_i64(Rt::ProxyArrayDepth, vec![d])
+            (I::ProxyArrayCall, [o, op]) => {
+                let t = self.sub(o.ty);
+                let v = self.expr(o);
+                let (data, _) = self.any_parts(v, t);
+                let op = self.expr(op);
+                self.rt_i64(Rt::ProxyArrayCall, vec![data, op])
             }
             (I::ProxyArrayHole, [o, i, op]) => {
                 let t = self.sub(o.ty);

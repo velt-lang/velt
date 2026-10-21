@@ -61,19 +61,58 @@ function arrayInt(v: any): number {
 
 /** `Set(O, key, v, true)` through the proxy `p`: a trap answering `false` is Node's `TypeError`. */
 function arraySet(p: Proxy, o: any, key: string, v: any): void {
-  if (!p.__set(key, v, o)) {
+  if (!trapSet(p, key, v, o)) {
     panic(`TypeError: 'set' on proxy: trap returned falsish for property '${key}'`);
   }
+}
+
+/**
+ * The traps the generic algorithms below call on the proxy `p`, each a trap call of the method
+ * on `p`'s target: holes are recorded in the target (velt_rt's `proxy_array`) only during one,
+ * not during the user callbacks the algorithm calls between them.
+ */
+function trapGet(p: Proxy, key: string, o: any): any {
+  const t = p.__target();
+  __intrinsic_proxy_array_call(t, 2);
+  const v = p.__get(key, o);
+  __intrinsic_proxy_array_call(t, -2);
+  return v;
+}
+
+/** `p.__set(key, v, o)` (see `trapGet`). */
+function trapSet(p: Proxy, key: string, v: any, o: any): boolean {
+  const t = p.__target();
+  __intrinsic_proxy_array_call(t, 2);
+  const ok = p.__set(key, v, o);
+  __intrinsic_proxy_array_call(t, -2);
+  return ok;
+}
+
+/** `p.__has(key)` (see `trapGet`). */
+function trapHas(p: Proxy, key: string): boolean {
+  const t = p.__target();
+  __intrinsic_proxy_array_call(t, 2);
+  const yes = p.__has(key);
+  __intrinsic_proxy_array_call(t, -2);
+  return yes;
+}
+
+/** `p.__delete(key)` (see `trapGet`). */
+function trapDelete(p: Proxy, key: string): void {
+  const t = p.__target();
+  __intrinsic_proxy_array_call(t, 2);
+  p.__delete(key);
+  __intrinsic_proxy_array_call(t, -2);
 }
 
 /** Moves element `from` to `to` (`has`, then `get` and `set`, or `deleteProperty`). */
 function arrayMove(p: Proxy, o: any, from: number, to: number): void {
   const f = `${from}`;
   const t = `${to}`;
-  if (p.__has(f)) {
-    arraySet(p, o, t, p.__get(f, o));
+  if (trapHas(p, f)) {
+    arraySet(p, o, t, trapGet(p, f, o));
   } else {
-    p.__delete(t);
+    trapDelete(p, t);
   }
 }
 
@@ -82,16 +121,24 @@ function arrayMove(p: Proxy, o: any, from: number, to: number): void {
  * method is the steps of `splice` that its own algorithm takes in the same order.
  */
 export function __proxyArrayCall(p: Proxy, name: string, args: any[], o: any): any {
-  // While it runs, `Reflect` records the holes Node's algorithm makes in the target (and
-  // forgets them when the last such method returns): velt_rt's `proxy_array`.
-  __intrinsic_proxy_array_depth(1);
+  // While it runs, `Reflect` records the holes Node's algorithm makes in the target during the
+  // algorithm's trap calls (`trapGet`), and reports them: velt_rt's `proxy_array`.
+  const t = p.__target();
+  __intrinsic_proxy_array_call(t, 1);
   const r = proxyArrayCall(p, name, args, o);
-  __intrinsic_proxy_array_depth(-1);
+  const h = __intrinsic_proxy_array_call(t, -1);
+  if (h >= 0) {
+    // A trap didn't write the shorter length after a delete, or the gap before an element
+    // written past the end: Node keeps the holes.
+    panic(
+      `TypeError: an array method on a proxy left a hole at ${h} (#823): Velt's arrays have no holes`,
+    );
+  }
   return r;
 }
 
 function proxyArrayCall(p: Proxy, name: string, args: any[], o: any): any {
-  const n = arrayInt(p.__get("length", o));
+  const n = arrayInt(trapGet(p, "length", o));
   const len = n < 0 ? 0 : n;
   const none: any[] = [];
   if (name === "push") {
@@ -142,19 +189,19 @@ function proxySplice(
 ): any[] {
   const n = (items.length as number) > from ? (items.length as number) - from : 0;
   if (splice) {
-    p.__get("constructor", o);
+    trapGet(p, "constructor", o);
   }
   const removed: any[] = [];
   for (let k = 0; k < count; k++) {
     const key = `${start + k}`;
-    removed.push(!splice || p.__has(key) ? p.__get(key, o) : undefined);
+    removed.push(!splice || trapHas(p, key) ? trapGet(p, key, o) : undefined);
   }
   if (n < count) {
     for (let k = start; k < len - count; k++) {
       arrayMove(p, o, k + count, k + n);
     }
     for (let k = len; k > len - count + n; k--) {
-      p.__delete(`${k - 1}`);
+      trapDelete(p, `${k - 1}`);
     }
   }
   for (let k = len - count; k > start && n > count; k--) {
@@ -163,18 +210,7 @@ function proxySplice(
   for (let i = 0; i < n; i++) {
     arraySet(p, o, `${start + i}`, items[i + from]);
   }
-  const to = len - count + n;
-  arraySet(p, o, "length", to);
-  const t = p.__target();
-  if (!(t instanceof Proxy) && Array.isArray(t)) {
-    const h = __intrinsic_proxy_array_hole(t, (t.length as number) as i64, 4);
-    if (h >= 0) {
-      // The `set` trap didn't write the shorter length: Node keeps the holes.
-      panic(
-        `TypeError: an array method on a proxy left holes at ${h} to ${(t.length as number) - 1} (#823): Velt's arrays have no holes`,
-      );
-    }
-  }
+  arraySet(p, o, "length", len - count + n);
   return removed;
 }
 
@@ -211,7 +247,7 @@ function proxyArrayRead(p: Proxy, name: string, args: any[], o: any, len: number
   if (name === "find") {
     const f = arrayCallback(a0);
     for (let k = 0; k < len; k++) {
-      const v = p.__get(`${k}`, o);
+      const v = trapGet(p, `${k}`, o);
       if (f(v, k, o) ? true : false) {
         return v;
       }
@@ -231,11 +267,11 @@ function proxyArrayRead(p: Proxy, name: string, args: any[], o: any, len: number
     for (let k = arrayRel(from, len, 0); k < len; k++) {
       const key = `${k}`;
       if (name === "includes") {
-        const v = p.__get(key, o);
+        const v = trapGet(p, key, o);
         if (v === a0 || (v !== v && a0 !== a0)) {
           return found;
         }
-      } else if (p.__has(key) && p.__get(key, o) === a0) {
+      } else if (trapHas(p, key) && trapGet(p, key, o) === a0) {
         return k;
       }
     }
@@ -245,7 +281,7 @@ function proxyArrayRead(p: Proxy, name: string, args: any[], o: any, len: number
     const sep = a0 === undefined ? "," : String(a0);
     let out = "";
     for (let k = 0; k < len; k++) {
-      const v = p.__get(`${k}`, o);
+      const v = trapGet(p, `${k}`, o);
       out += (k > 0 ? sep : "") + (v === undefined || v === null ? "" : String(v));
     }
     return out;
@@ -266,14 +302,14 @@ function proxyArrayRead(p: Proxy, name: string, args: any[], o: any, len: number
   }
   const f = name === "slice" ? undefined : arrayCallback(a0);
   if (name === "map" || name === "filter" || name === "slice") {
-    p.__get("constructor", o);
+    trapGet(p, "constructor", o);
   }
   for (let k = from; k < to; k++) {
     const key = `${k}`;
-    if (!p.__has(key)) {
+    if (!trapHas(p, key)) {
       continue;
     }
-    const v = p.__get(key, o);
+    const v = trapGet(p, key, o);
     if (name === "slice") {
       out.push(v);
       continue;
@@ -304,19 +340,19 @@ function proxyReverse(p: Proxy, o: any, len: number): void {
   for (let lower = 0; lower < middle; lower++) {
     const lk = `${lower}`;
     const uk = `${len - lower - 1}`;
-    const lowerExists = p.__has(lk);
-    const lowerValue = lowerExists ? p.__get(lk, o) : undefined;
-    const upperExists = p.__has(uk);
-    const upperValue = upperExists ? p.__get(uk, o) : undefined;
+    const lowerExists = trapHas(p, lk);
+    const lowerValue = lowerExists ? trapGet(p, lk, o) : undefined;
+    const upperExists = trapHas(p, uk);
+    const upperValue = upperExists ? trapGet(p, uk, o) : undefined;
     if (upperExists) {
       arraySet(p, o, lk, upperValue);
     } else if (lowerExists) {
-      p.__delete(lk);
+      trapDelete(p, lk);
     }
     if (lowerExists) {
       arraySet(p, o, uk, lowerValue);
     } else if (upperExists) {
-      p.__delete(uk);
+      trapDelete(p, uk);
     }
   }
 }
@@ -333,8 +369,8 @@ function proxySort(p: Proxy, o: any, len: number, cmp: any): any {
   let undefs = 0;
   for (let k = 0; k < len; k++) {
     const key = `${k}`;
-    if (p.__has(key)) {
-      const v = p.__get(key, o);
+    if (trapHas(p, key)) {
+      const v = trapGet(p, key, o);
       if (v === undefined) {
         undefs++;
       } else {
@@ -359,7 +395,7 @@ function proxySort(p: Proxy, o: any, len: number, cmp: any): any {
     arraySet(p, o, `${j}`, undefined);
   }
   for (let j = n + undefs; j < len; j++) {
-    p.__delete(`${j}`);
+    trapDelete(p, `${j}`);
   }
   return o;
 }
