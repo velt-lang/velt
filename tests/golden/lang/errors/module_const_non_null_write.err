@@ -1,0 +1,5 @@
+module_const_non_null_write.vlt:12:1: error: cannot assign to a field of module-level constant `K`
+module_const_non_null_write.vlt:13:1: error: cannot assign to a field of module-level constant `K`
+module_const_non_null_write.vlt:14:2: error: cannot assign to a field of module-level constant `K`
+module_const_non_null_write.vlt:15:1: error: cannot assign to a field of module-level constant `U`
+module_const_non_null_write.vlt:16:2: error: cannot assign to a field of module-level constant `U`

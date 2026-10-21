@@ -1,0 +1,17 @@
+// A module constant evaluated at each use can't be written through `!`, `as` or `??` either,
+// as it can't be written directly (`K.v = 1`): the write would change a copy that the next use
+// doesn't see, where Node changes the one object (#1406).
+
+interface J {
+  v: number;
+}
+
+export const K: J | null = { v: 1 };
+export const U: { o: J | null } = { o: { v: 1 } };
+
+K!.v = 4;
+K!.v++;
+(K as J).v += 1;
+U.o!.v = 6;
+(U.o ?? { v: 0 }).v = 2;
+console.log(K!.v, U.o!.v);

@@ -171,6 +171,11 @@ function main() {
   module-level `let` or a property of `globalThis` (`const first = count;`): it keeps the
   value from when the module was evaluated, not the variable's current one. Through a function
   it calls (`const first = getCount();`) it is not kept yet.
+- A `const` whose value is a constant (numbers, strings, and objects and tuples of them:
+  `const K: P | null = { v: 1 }`) is not kept: it is evaluated at each use. Writing a field of
+  it is an error (``cannot assign to a field of module-level constant `K` ``), also through `!`,
+  `as` or `??` (`K!.v = 2`, `(K as P).v++`, `(K ?? d).v = 2`), where Node changes the one
+  object; a `let` is module state, so its fields can be written.
 - An initializer that throws (`JSON.parse` of invalid text, `new RegExp` of an invalid
   pattern, a function that throws) stops the program with `Uncaught …` and exit code 1, as an
   error thrown while Node evaluates a module does: the rest of that module and the modules that
