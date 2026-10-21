@@ -1,0 +1,29 @@
+// check: no leaks
+// A tuple is copied when it is assigned, passed or returned, but an object it holds is shared:
+// a write into that object's fields reaches every copy, as in JavaScript, also when the object
+// type holds only numbers and is written nowhere else.
+const held: [{ x: number }, number] = [{ x: 1 }, 2];
+const pick = (): [{ x: number }, number] => held;
+pick()[0].x = 5;
+console.log(held[0].x);
+const copy = held;
+copy[0].x = 6;
+console.log(held[0].x);
+const got = pick();
+got[0].x += 1;
+console.log(held[0].x, got[0].x);
+
+type P = { a: number; b: number };
+const pairs: [P, string][] = [[{ a: 1, b: 2 }, "p"]];
+const firstPair = pairs[0];
+firstPair[0].b = 20;
+console.log(pairs[0][0].b);
+
+const nested: [[{ n: number }, number], string] = [[{ n: 1 }, 2], "n"];
+const inner = nested[0];
+inner[0].n++;
+console.log(nested[0][0].n, inner[0].n);
+
+const ms = new Map<string, [{ v: number }, number]>([["k", [{ v: 1 }, 0]]]);
+ms.get("k")![0].v = 9;
+console.log(ms.get("k")![0].v);

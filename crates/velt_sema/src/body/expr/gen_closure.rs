@@ -169,6 +169,7 @@ impl FnCx<'_, '_> {
             params: ptys.clone(),
             ret: result,
             throws: never,
+            rest: false,
         });
         self.cx.fn_info_mut(def).escaping = true;
         let ret = self.cx.with_generator_error(ret, never);

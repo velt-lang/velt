@@ -159,10 +159,12 @@ impl Ctx<'_> {
                 params,
                 ret,
                 throws,
+                rest,
             } => TyKind::FnPtr {
                 params: params.iter().map(|a| c(self, *a)).collect(),
                 ret: c(self, ret),
                 throws: c(self, throws),
+                rest,
             },
             _ => {
                 self.canon_memo.insert(t, t);

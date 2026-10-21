@@ -27,6 +27,7 @@ impl PB {
             params,
             ret,
             throws,
+            rest: false,
         })
     }
 

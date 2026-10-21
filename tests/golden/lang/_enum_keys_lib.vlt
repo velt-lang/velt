@@ -1,0 +1,12 @@
+// The enums enum_member_keys.vlt imports, as Vue's constants.ts declares ReactiveFlags.
+export enum ReactiveFlags {
+  SKIP = "__v_skip",
+  IS_REACTIVE = "__v_isReactive",
+  IS_REF = "__v_isRef",
+}
+
+export enum Slot {
+  First,
+  Second = 5,
+  Third,
+}

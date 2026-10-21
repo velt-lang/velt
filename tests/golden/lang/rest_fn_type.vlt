@@ -1,0 +1,45 @@
+// Rest parameters in function types (#943): calls through the value pack the remaining
+// arguments into the rest parameter's array, as TypeScript does.
+type Listener = (event: string, ...args: number[]) => void;
+type Factory<TArgs extends unknown[], T> = (...args: TArgs) => T;
+
+function sum(...xs: number[]): number {
+  let s = 0;
+  for (const x of xs) {
+    s += x;
+  }
+  return s;
+}
+
+function emitter(): (event: string, ...args: any[]) => string {
+  return (event, ...args) => event + ":" + args.length;
+}
+
+function call(f: Listener) {
+  f("none");
+  f("one", 1);
+  f("three", 1, 2, 3);
+  const more = [4, 5];
+  f("spread", ...more);
+}
+
+function main() {
+  const total: (...xs: number[]) => number = sum;
+  console.log(total(), total(1), total(1, 2, 3));
+  const join: (sep: string, ...parts: string[]) => string = (sep, ...parts) => parts.join(sep);
+  console.log(join("-"), join("-", "a", "b"));
+  call((event, ...args) => console.log(event, args.length, sum(...args)));
+  const emit = emitter();
+  console.log(emit("x"), emit("y", 1, "two", true));
+  const make: Factory<[string, number], string> = (name, n) => name.repeat(n);
+  console.log(make("ab", 3));
+  const o = {
+    sum(label: string, ...xs: number[]): string {
+      return label + sum(...xs);
+    },
+  };
+  console.log(o.sum("s="), o.sum("s=", 4, 5));
+  type P = Parameters<(a: string, b: number) => void>;
+  const p: P = ["q", 2];
+  console.log(p[0], p[1]);
+}
