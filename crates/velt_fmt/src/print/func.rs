@@ -66,7 +66,7 @@ impl<'a> Printer<'a> {
         };
         group(cat![
             keyword,
-            sig.name.name.clone(),
+            self.prop_key(&sig.name),
             generics,
             params,
             ret,
