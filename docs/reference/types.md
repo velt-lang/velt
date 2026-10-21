@@ -2017,8 +2017,9 @@ Where an interface with methods is expected (an annotation, a parameter, a retur
 - Such a literal may be a module constant, exported or not (`export const upper: Handler = {
   … }`). Like every module constant it is evaluated at each use, and each use passed on is a
   new value, as for a function-valued constant
-  ([Variables](variables.md#module-constants-initialized-by-a-call)); one compared by identity
-  (`===`) is [module state](variables.md#module-state), one value as in Node.
+  ([Variables](variables.md#module-constants-initialized-by-a-call)), unless the program compares
+  it by identity (`===`): it is then [module state](variables.md#module-state), one value as in
+  Node.
 
 ```ts
 interface Counter {

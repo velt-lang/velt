@@ -29,6 +29,7 @@ pub(crate) struct Lens {
     closures: usize,
     reported: usize,
     completed: usize,
+    kept: usize,
     ide: Option<[usize; 4]>,
 }
 
@@ -45,6 +46,7 @@ impl Lens {
             closures: cx.closure_defs.len(),
             reported: cx.rec.reported.len(),
             completed: cx.rec.completed.len(),
+            kept: cx.kept_consts.len(),
             ide: cx
                 .ide
                 .as_ref()
@@ -150,6 +152,8 @@ impl Mark {
             cx.callback_wrappers.remove(&c);
         }
         cx.rec.reported.truncate(m.reported);
+        let kept = cx.kept_consts.split_off(m.kept.min(cx.kept_consts.len()));
+        crate::module_state::unkeep(cx, kept);
         if let (Some(r), Some([refs, types, scopes, params])) = (&mut cx.ide, m.ide) {
             r.refs.truncate(refs);
             r.types.truncate(types);
@@ -232,6 +236,8 @@ impl Mark {
         }
         keep_ranges(&mut cx.rec.reported, m.reported, &ranges(|l| l.reported));
         keep_ranges(&mut cx.rec.completed, m.completed, &ranges(|l| l.completed));
+        let kept = keep_ranges(&mut cx.kept_consts, m.kept, &ranges(|l| l.kept));
+        crate::module_state::unkeep(cx, kept);
         if let (Some(r), Some(start)) = (&mut cx.ide, m.ide) {
             let ide = |k: usize| -> Vec<(usize, usize)> {
                 segments
@@ -312,6 +318,7 @@ mod tests {
             closures: 0,
             reported: 0,
             completed,
+            kept: 0,
             ide: None,
         }
     }

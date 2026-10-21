@@ -216,7 +216,8 @@ function main() {
   another holder of the same promise ([shared promises](async.md#promises)), which runs on the
   task that started it, and every holder gets the same result (an object result is the same
   object, as everything reached through module state is shared by the tasks).
-- A `Mutex` `with` callback cannot use module state, directly or through a function it calls
+- A `Mutex` `with` callback cannot use module state, including a constant kept there by a use
+  elsewhere in the program, directly or through a function it calls
   (``the function passed to `with` may use module state``). Code that runs without a call
   counts too: field initializers at `new`, and the `toString()`, `toJSON()` and
   `[Symbol.dispose]()` methods of the values the callback handles, which `join`, a template,
@@ -230,8 +231,9 @@ function main() {
   of the generated `main` ([Scripts](modules.md#scripts-top-level-statements)); one that a
   function uses is module state, and its initializer runs before the first statement.
 - <a id="module-state-cost"></a>Cost: a program without module state pays nothing, and so
-  does a task that never uses it. Each read or write of a module-level `let` is a call into
-  the runtime that returns the state. A task takes the lock at its first use and at the start
+  does a task that never uses it. Each read or write of a module-level `let`, or of a constant
+  kept as module state, is a call into the runtime that returns the state (a constant only read
+  is not: one use that keeps it makes every use of it pay that). A task takes the lock at its first use and at the start
   of each later run between `await`s (one uncontended atomic operation when no other task
   holds it). Tasks on other cores that use module state at the same moment wait for each
   other, so keep long computations that many tasks run in parallel out of the code between
@@ -310,8 +312,10 @@ gives; any other initializer (a call with effects, a class instance, a `Map`) ma
 - each argument is a constant expression, another module constant, a function or a closure;
 - the callee and everything it calls have no loops, no recursion, no `throw`, no `await`, no
   calls through function values, and no effects (I/O, time, randomness, `console`, `shared`,
-  `spawn`, external functions). It may allocate, construct objects and create closures, as
-  `component` does below: the closures it returns run later as ordinary code;
+  `spawn`, external functions), and read no constant kept as [module state](#module-state),
+  which the program may change after Node evaluated the initializer. It may allocate, construct
+  objects and create closures, as `component` does below: the closures it returns run later as
+  ordinary code;
 - a closure it creates keeps no mutable state: it captures no variable that is assigned, and no
   object, array or class instance. Otherwise the constant is module state, one closure whose
   state carries over from call to call, as in Node;

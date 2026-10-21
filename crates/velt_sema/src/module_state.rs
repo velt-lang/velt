@@ -70,7 +70,7 @@ pub(crate) fn order(cx: &mut Ctx) -> Vec<DefId> {
                     span,
                 )
                 .with_note(format!(
-                    "module-level `let`s are initialized in order, and `{name}`'s initializer \
+                    "module state is initialized in order, and `{name}`'s initializer \
                      runs first (JavaScript throws a `ReferenceError` here)"
                 )),
             );
@@ -83,9 +83,9 @@ pub(crate) fn order(cx: &mut Ctx) -> Vec<DefId> {
 /// returns it), modifies it or compares it by identity, where a value evaluated at each use
 /// would be a different object from the one Node evaluates once. Kept, it is evaluated once like
 /// a module-level `let`, and each such use refers to that one object (a move shares it). Not for
-/// a constant of the standard library, a `static readonly` field, one whose type is an error, or
-/// one holding a promise (`driver::promise_in_state`): those keep their errors. Returns whether
-/// `d` is module state.
+/// a constant of the standard library, a `static readonly` field, `import.meta` (whose fields are
+/// read-only), one whose type is an error, or one holding a promise (`driver::promise_in_state`):
+/// those keep their errors. Returns whether `d` is module state.
 pub(crate) fn keep(cx: &mut Ctx, d: DefId) -> bool {
     let Some(g) = cx.global(d) else { return false };
     if g.stored {
@@ -93,15 +93,66 @@ pub(crate) fn keep(cx: &mut Ctx, d: DefId) -> bool {
     }
     let keepable = g.state == crate::defs::BodyState::Done
         && g.src.owner.is_none()
+        && g.name != velt_syntax::ast::IMPORT_META
         && !cx.modules[g.module].is_std
         && g.ty != cx.ty.error
         && !crate::body::holds_promise_by_value(cx, g.ty, 0);
     if keepable {
-        if let DefInfo::Global(g) = &mut cx.info[d.0 as usize] {
-            g.stored = true;
-        }
+        set_stored(cx, d, true);
+        cx.kept_consts.push(d);
     }
     keepable
+}
+
+/// Once every use is checked: a top-level constant evaluated at each use whose initializer reads
+/// a constant [`keep`] kept, directly or through the functions it calls, would see the changes
+/// the program makes to it, where Node evaluated it once before them. It is kept in the module
+/// state too (evaluated once, in Node's order).
+pub(crate) fn keep_readers(cx: &mut Ctx) {
+    if cx.kept_consts.is_empty() {
+        return;
+    }
+    // Purity was decided while constants were still being kept.
+    cx.pure_fns.clear();
+    let consts: Vec<DefId> = (0..cx.info.len())
+        .map(|i| DefId(i as u32))
+        .filter(|&d| {
+            cx.global(d).is_some_and(|g| {
+                !g.stored
+                    && g.init.is_some()
+                    && g.src.owner.is_none()
+                    && g.ty != cx.ty.error
+                    && !cx.modules[g.module].is_std
+            })
+        })
+        .collect();
+    for d in consts {
+        let Some(g) = cx.global(d) else { continue };
+        let (name, ty, init) = (g.name.clone(), g.ty, g.init.clone().expect("ICE: init"));
+        let mut kept = false;
+        reads(&init, &mut |r, _| kept |= cx.kept_consts.contains(&r));
+        if !kept && crate::body::pure_init::has_call(&init) {
+            let mut own = vec![];
+            crate::body::pure_init::check_init(cx, &name, &init, ty, &mut own);
+            kept = !own.is_empty();
+        }
+        if kept {
+            set_stored(cx, d, true);
+        }
+    }
+}
+
+/// Undo [`keep`] for `kept` (the constants a rolled-back check kept).
+pub(crate) fn unkeep(cx: &mut Ctx, kept: Vec<DefId>) {
+    for d in kept {
+        set_stored(cx, d, false);
+    }
+}
+
+fn set_stored(cx: &mut Ctx, d: DefId, stored: bool) {
+    if let DefInfo::Global(g) = &mut cx.info[d.0 as usize] {
+        g.stored = stored;
+    }
 }
 
 /// Module indices in evaluation order: those reachable from the root by a post-order walk over

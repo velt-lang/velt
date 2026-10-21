@@ -1,9 +1,10 @@
 //! Module constants initialized by a call (`const Counter = component(...)`, #383). Such a
 //! constant is not stored: like every module constant, its initializer is evaluated at each use
 //! (VIR `global()`). That matches TypeScript's evaluate-once only when the call is pure (no
-//! effects, bounded, cannot throw) and its result is a value, so this module checks both, and
-//! rejects comparing such a constant by identity, the one place where "a new value at each use"
-//! would show.
+//! effects, bounded, cannot throw, reads no constant the program changes) and its result is a
+//! value, so this module checks both. Where "a new value at each use" would show (a comparison
+//! by identity, a change through another name), the constant is kept in the module state
+//! instead (`crate::module_state::keep`).
 
 use rustc_hash::FxHashMap;
 
@@ -132,7 +133,7 @@ pub(crate) fn table_escapes(name: &str, msg: String, span: velt_common::Span) ->
 /// functions, and interface values made from object literals (whose fields can't be written
 /// through the interface: [`value_ty`]): a struct or object constant moved into a variable
 /// would be a copy that the constant doesn't see changes to (TypeScript aliases it), so those
-/// keep the move error.
+/// are kept in the module state instead (`crate::module_state::keep`).
 pub(crate) fn shares_on_move(cx: &mut Ctx, d: DefId) -> bool {
     let Some(g) = cx.global(d) else { return false };
     let ty = g.ty;
@@ -451,10 +452,20 @@ fn decide(cx: &mut Ctx, f: DefId) -> Result<(), Impure> {
         found: None,
         calls: vec![],
         closures: vec![],
+        globals: vec![],
     };
     visit::block(&mut body, &mut walk);
     if let Some(imp) = walk.found {
         return Err(imp);
+    }
+    // A constant kept in the module state may change while the program runs; Node evaluated
+    // the initializer once, before it did.
+    if let Some(&(_, span)) = walk
+        .globals
+        .iter()
+        .find(|(g, _)| cx.kept_consts.contains(g))
+    {
+        return at("reads module state that the program changes", span);
     }
     for (c, span) in walk.closures {
         if let Some(what) = kept_state(cx, c, &locals) {
@@ -500,11 +511,13 @@ fn kept_state(cx: &Ctx, c: DefId, locals: &[hir::LocalDef]) -> Option<String> {
     None
 }
 
-/// The first effect found in a body, the named functions it calls and the closures it creates.
+/// The first effect found in a body, the named functions it calls, the closures it creates and
+/// the module constants and `let`s it reads.
 struct Walk {
     found: Option<Impure>,
     calls: Vec<(DefId, Span)>,
     closures: Vec<(DefId, Span)>,
+    globals: Vec<(DefId, Span)>,
 }
 
 impl Walk {
@@ -546,6 +559,7 @@ impl VisitMut for Walk {
                 }
             },
             H::Closure(c) => self.closures.push((*c, e.span)),
+            H::Global(g) => self.globals.push((*g, e.span)),
             H::Await(_) => self.set_as("awaits", e.span, true),
             H::Throw(_) => self.set("may throw", e.span),
             _ => {}
@@ -649,6 +663,18 @@ fn reference_part(cx: &Ctx, t: TyId, depth: u32) -> Option<&'static str> {
     }
 }
 
+/// Can a change through one reference to a value of `t` show through another (an array, a map,
+/// an object or class instance, in part)? A copy of such a value would be told from the
+/// original; a function, a string or a number would not.
+pub(crate) fn mutable_identity(cx: &Ctx, t: TyId) -> bool {
+    match cx.ty.kind(t) {
+        TyKind::FnPtr { .. } | TyKind::Closure(_) => false,
+        TyKind::Option(x, _) => mutable_identity(cx, *x),
+        TyKind::Tuple(xs) => xs.iter().any(|x| mutable_identity(cx, *x)),
+        _ => identity_compared(cx, t, 0),
+    }
+}
+
 /// Does `===` compare values of `t` by identity (in part)?
 fn identity_compared(cx: &Ctx, t: TyId, depth: u32) -> bool {
     if depth > 16 {
@@ -672,6 +698,15 @@ pub(crate) fn check_identity(cx: &mut Ctx, operands: [&Expr; 2]) {
         let mut x = e;
         while let H::Upcast(i) | H::WrapSome(i) | H::Cast(i) = &x.kind {
             x = i;
+        }
+        // A part of a constant (`K.inner === x`) is the part of the one object Node evaluates.
+        if let H::Field { .. } = x.kind {
+            if let H::Global(d) = crate::body::places::root_expr(x).kind {
+                if identity_compared(cx, x.ty, 0) {
+                    crate::module_state::keep(cx, d);
+                }
+            }
+            continue;
         }
         let H::Global(d) = x.kind else { continue };
         let Some(g) = cx.global(d) else { continue };

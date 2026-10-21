@@ -77,12 +77,22 @@ impl FnCx<'_, '_> {
         if is_place(e) {
             set_place_mode(e, m);
         }
-        // A module constant bound by reference (`const v = ns.K`, `Cls.K`, `K!`): one that is a
-        // table can't be taken over, like `const v = K`.
+        // A module constant bound by reference (`const v = ns.K`, `Cls.K`, `K!`): taken over like
+        // `const v = K`, it is the one object the module state keeps; a table that can't be kept
+        // (`Cls.K`) can't be taken over.
         if let H::Global(d) = e.kind {
-            if crate::body::pure_init::is_table(self.cx, d)
-                && !crate::module_state::keep(self.cx, d)
-            {
+            let table = crate::body::pure_init::is_table(self.cx, d);
+            let object = table || crate::body::pure_init::mutable_identity(self.cx, e.ty);
+            let kept = object && crate::module_state::keep(self.cx, d);
+            if kept {
+                // Another reference to the object the module state keeps, as `global_read` makes
+                // for `const v = K`: without it the type may be stored inline, and the binding
+                // would be a copy.
+                let read = std::mem::replace(e, self.mk(H::Lit(hir::Lit::Null), e.ty, e.span));
+                *e = self.intrinsic(hir::Intrinsic::Share, vec![read], e.ty, e.span);
+                return;
+            }
+            if table && !kept {
                 let name = self
                     .cx
                     .global(d)

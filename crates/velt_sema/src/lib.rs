@@ -389,6 +389,7 @@ fn analyze_bodies(cx: &mut ctx::Ctx) {
     let before = error_count(cx);
     ownership_passes(cx);
     cx.borrow_pass_errors = error_count(cx) > before;
+    module_state::keep_readers(cx);
     // After `ownership_passes`: the JSON pass records the types `JSON.stringify` writes.
     object_copies::check(cx);
     replaced_holders::check(cx);

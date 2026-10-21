@@ -55,6 +55,22 @@ function keepBoth(k: Keep, xs: string[], f: () => number) {
   k.f = f;
 }
 
+// A method that keeps the closure while it reads the array: the closure only reads it.
+class Registry {
+  fs: (() => number)[] = [];
+  names: string[] = [];
+
+  add(xs: string[], f: () => number) {
+    this.names.push(xs[0]);
+    this.fs.push(f);
+  }
+}
+
+function register(r: Registry) {
+  const xs = ["a", "b"];
+  r.add(xs, () => xs.length);
+}
+
 function main() {
   const box: any = { current: 0 };
   let seen = "";
@@ -67,4 +83,7 @@ function main() {
   keepBoth(k, names, () => names.length);
   k.xs.push("b");
   console.log(k.f(), names.length, k.xs === names);
+  const r = new Registry();
+  register(r);
+  console.log(r.names, r.fs[0]());
 }

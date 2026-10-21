@@ -107,13 +107,14 @@ pub(crate) fn validate_moves(cx: &mut Ctx) {
     }
 }
 
-/// A part moved out of a module constant (`return K.inner`): the constant is the one object the
-/// module state keeps (`crate::module_state::keep`), and lowering shares the part, as Node
-/// refers to it. Not for a soft move (`soft`), which shares the part already.
+/// A part moved out of a module constant (`return K.inner`, `const a = K.inner`): the constant is
+/// the one object the module state keeps (`crate::module_state::keep`), and lowering shares the
+/// part from it, as Node refers to it. A soft move shares a part of a new evaluation of the
+/// constant otherwise, which only shows for a part with identity (an object, an array).
 fn keep_moved_constants(cx: &mut Ctx, b: &mut crate::hir::Block, soft: &FxHashSet<Span>) {
     let mut roots = vec![];
     visit::exprs_mut(b, &mut |e: &mut Expr| {
-        if soft.contains(&e.span) {
+        if soft.contains(&e.span) && !crate::body::pure_init::mutable_identity(cx, e.ty) {
             return;
         }
         let (E::Field {

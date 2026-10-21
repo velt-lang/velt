@@ -301,11 +301,15 @@ fn iface_modes(cx: &mut Ctx, iface: DefId, slot: u32) -> Option<Vec<PassMode>> {
 
 /// Tables passed to a callee whose parameter modes are not known (a function value): it may
 /// modify them, and they are read-only data.
-/// A table the program also uses in a way that needs one object is module state instead
-/// (`crate::module_state::keep`), which such a callee may modify.
+/// A module constant passed to such a callee, which may modify it, is the one object the module
+/// state keeps (`crate::module_state::keep`); a table that can't be kept is an error.
 fn table_args(cx: &mut Ctx, args: &[Expr], errors: &mut Vec<Diagnostic>) {
     for a in args {
-        if !table_arg(cx, a) || keep_root(cx, a) {
+        let table = table_arg(cx, a);
+        if !table && !object_global_arg(cx, a) {
+            continue;
+        }
+        if keep_root(cx, a) || !table {
             continue;
         }
         let name = global_root(cx, a).unwrap_or_default();
@@ -323,6 +327,16 @@ fn table_args(cx: &mut Ctx, args: &[Expr], errors: &mut Vec<Diagnostic>) {
             .with_note("the function may modify it, and a shared value is read-only: pass a copy, or call a named function"),
         );
     }
+}
+
+/// Is argument `a` (through upcasts) a module constant, or a part of one, that a change could be
+/// seen through (`crate::body::pure_init::mutable_identity`)?
+fn object_global_arg(cx: &Ctx, a: &Expr) -> bool {
+    let mut x = a;
+    while let E::Upcast(inner) | E::Downcast(inner) = &x.kind {
+        x = inner;
+    }
+    global_root(cx, x).is_some() && crate::body::pure_init::mutable_identity(cx, x.ty)
 }
 
 /// Is argument `a` a table (through upcasts)?
@@ -476,7 +490,10 @@ fn callbacks(cx: &mut Ctx, args: &mut [Expr], errors: &mut Vec<Diagnostic>) -> b
             // A table can't be told apart from a copy here either: the function value may be
             // the one that modifies it.
             Callback::Unknown => {
-                super::evidence::in_root_memory(arg) || table_arg(cx, arg) || frozen_root(arg)
+                super::evidence::in_root_memory(arg)
+                    || table_arg(cx, arg)
+                    || object_global_arg(cx, arg)
+                    || frozen_root(arg)
             }
             Callback::None => false,
         };

@@ -1,0 +1,4 @@
+closure_arg_modifies_borrowed.vlt:24:13: error: cannot move `xs` here: it is already borrowed by this call
+closure_arg_modifies_borrowed.vlt:24:9: borrowed here
+closure_arg_modifies_borrowed.vlt:32:16: error: cannot move `ps` here: it is already borrowed by this call
+closure_arg_modifies_borrowed.vlt:32:12: borrowed here

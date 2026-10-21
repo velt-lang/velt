@@ -91,11 +91,97 @@ pub(crate) fn check_exclusive(cx: &mut Ctx) {
         visit::block(&mut f.body.block, &mut checker);
         errors.extend(checker.errors);
         let shares = checker.shares;
+        // A closure that modifies or takes over what it captured keeps its conflict: the call
+        // would see it change under the borrow.
+        let (mut kept, mut conflicts) = (vec![], vec![]);
+        for (c, outer, err) in shares {
+            match modifies_capture(cx, c, outer, 0) {
+                true => conflicts.push(err),
+                false => kept.push((c, outer)),
+            }
+        }
+        errors.extend(conflicts);
+        let shares = kept;
         cx.diags.extend(errors);
         cx.defs[d.0 as usize] = Some(Def::Fn(f));
         for (c, outer) in shares {
             share_capture(cx, c, outer);
         }
+    }
+}
+
+/// Does closure `c` modify or take over what it captured of enclosing variable `outer`: through
+/// the captured name (an assignment, a modifying method, passing it to a function that modifies
+/// or keeps it), through the elements of a loop over it (unless each element is an object of
+/// its own), or through a closure it creates? Unknown cases count as modifying.
+fn modifies_capture(cx: &Ctx, c: DefId, outer: LocalId, depth: u32) -> bool {
+    let Some(Def::Fn(f)) = &cx.defs[c.0 as usize] else {
+        return true;
+    };
+    let Some(cap) = f.captures.iter().find(|k| k.outer == outer) else {
+        return false;
+    };
+    let inner = cap.inner;
+    if depth > 8 || f.body.locals[inner.0 as usize].mutable {
+        return true;
+    }
+    struct Scan<'a, 'm> {
+        cx: &'a Ctx<'m>,
+        f: &'a FnDef,
+        inner: LocalId,
+        depth: u32,
+        hit: bool,
+    }
+    impl VisitMut for Scan<'_, '_> {
+        fn stmt(&mut self, s: &mut Stmt) {
+            if let S::ForOf { binding, iter, .. } = &s.kind {
+                let over = matches!(iter.kind, E::Local(l, _) if l == self.inner);
+                if over && pat_modified(self.cx, self.f, binding) {
+                    self.hit = true;
+                }
+            }
+        }
+
+        fn expr(&mut self, e: &mut Expr) {
+            match e.kind {
+                E::Local(l, UseMode::BorrowMut | UseMode::Move) if l == self.inner => {
+                    self.hit = true
+                }
+                E::Closure(nc) => {
+                    self.hit |= modifies_capture(self.cx, nc, self.inner, self.depth + 1)
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut scan = Scan {
+        cx,
+        f,
+        inner,
+        depth,
+        hit: false,
+    };
+    visit::block(&mut f.body.block.clone(), &mut scan);
+    scan.hit
+}
+
+/// Does `pat` bind a variable that is modified, to an element stored in the array itself (not
+/// an object of its own: a class instance, an interface or `any` value)?
+fn pat_modified(cx: &Ctx, f: &FnDef, pat: &Pat) -> bool {
+    match &pat.kind {
+        PatKind::Binding(l, _) => {
+            let local = &f.body.locals[l.0 as usize];
+            let own =
+                cx.class_of(local.ty).is_some() || matches!(cx.ty.kind(local.ty), TyKind::Dyn(..));
+            local.mutable && !own
+        }
+        PatKind::Variant { args: ps, .. } | PatKind::Tuple(ps) | PatKind::Or(ps) => {
+            ps.iter().any(|p| pat_modified(cx, f, p))
+        }
+        PatKind::Array { elems, .. } => elems.iter().any(|p| pat_modified(cx, f, p)),
+        PatKind::Adt { fields } => fields.iter().any(|(_, p)| pat_modified(cx, f, p)),
+        PatKind::Some(p) => pat_modified(cx, f, p),
+        _ => false,
     }
 }
 
@@ -138,8 +224,9 @@ struct Checker<'a, 'm> {
     /// The function's soft moves (`FnInfo::soft_moves`).
     soft: &'a FxHashSet<Span>,
     errors: Vec<Diagnostic>,
-    /// Captures that share their variable ([`share_borrowed_captures`]).
-    shares: Vec<(DefId, LocalId)>,
+    /// Captures that may share their variable ([`share_borrowed_captures`]), with the error
+    /// to report if the closure modifies it.
+    shares: Vec<(DefId, LocalId, Diagnostic)>,
 }
 
 /// The argument uses of one call: `(direct, nested)` per argument.
@@ -200,9 +287,19 @@ impl Checker<'_, '_> {
                 u.access = Access::Unique;
             }
         }
-        self.shares.extend(share_borrowed_captures(&mut uses));
+        let shared = share_borrowed_captures(&mut uses);
         if let Some(d) = first_conflict(&uses) {
             self.errors.push(d);
+        } else if !shared.is_empty() {
+            // The conflict the shares resolve, for a closure that turns out to modify.
+            for &(i, k, ..) in &shared {
+                uses[i].0[k].access = Access::Move;
+            }
+            if let Some(err) = first_conflict(&uses) {
+                for (_, _, c, outer) in shared {
+                    self.shares.push((c, outer, err.clone()));
+                }
+            }
         }
     }
 }
@@ -210,8 +307,9 @@ impl Checker<'_, '_> {
 /// A closure argument that takes over a variable another argument of the call only borrows
 /// (`derive(parts, () => parts.length)`) shares it instead, as JavaScript refers to one value
 /// from both: the call's borrow stays valid, and the variable stays the caller's. Not when an
-/// argument may modify the variable, or takes it over too. Returns the captures to share.
-fn share_borrowed_captures(uses: &mut ArgUses) -> Vec<(DefId, LocalId)> {
+/// argument may modify the variable, or takes it over too. Returns the captures to share, with
+/// where their uses are (argument, index).
+fn share_borrowed_captures(uses: &mut ArgUses) -> Vec<(usize, usize, DefId, LocalId)> {
     let mut out = vec![];
     for i in 0..uses.len() {
         for k in 0..uses[i].0.len() {
@@ -234,7 +332,7 @@ fn share_borrowed_captures(uses: &mut ArgUses) -> Vec<(DefId, LocalId)> {
             }
             if borrowed && only_borrows {
                 uses[i].0[k].access = Access::Shared;
-                out.push((c, outer));
+                out.push((i, k, c, outer));
             }
         }
     }
