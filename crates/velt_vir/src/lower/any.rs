@@ -413,6 +413,14 @@ impl FnLower<'_, '_> {
         if matches!(self.cx.kind(ty), TyKind::Never) {
             return self.any_to_never(v, from, ty);
         }
+        if matches!(self.cx.kind(ty), TyKind::Unit) {
+            // `any` to `void` (a `T` at `T = void`: `f.__ref = null as any`) is accepted, as in
+            // TypeScript; a `void` has no value to keep, so the `any` is dropped.
+            let fvt = self.cx.ty(from);
+            let p = Place::local(self.copy_to_temp(v, fvt));
+            self.drop_glue(p, from);
+            return self.zero_value(Ty::Unit);
+        }
         if self.cx.is_dynamic(ty) {
             if self.is_object_ty(ty) && !self.cx.is_narrow_dynamic(from) {
                 // `any` / `unknown` to `object` (issue #926): a primitive is a `TypeError`;
