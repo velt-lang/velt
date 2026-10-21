@@ -49,4 +49,22 @@ async function run(): Promise<void> {
   console.log(await failing());
 }
 
+// Arrays and a map's values of one function type spread into arrays of another.
+const fs: Array<(n: number) => void> = [];
+fs.push((n) => {
+  if (n > 1) throw new Error("big " + n);
+  console.log("f", n);
+});
+const gs: Array<(n: number) => void> = [...fs];
+const byName = new Map<string, (n: number) => void>();
+byName.set("a", fs[0]);
+const hs: Array<(n: number) => void> = [...byName.values()];
+for (const g of gs) g(1);
+for (const h of hs) h(0);
+try {
+  hs[0](5);
+} catch (e) {
+  console.log("caught", (e as Error).message);
+}
+
 await run();

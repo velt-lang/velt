@@ -84,22 +84,21 @@ impl FnCx<'_, '_> {
             // Integers spread into a float array are numbers too (`[...[1, 2]]` as `number[]`,
             // `Math.max(...ints())`). An array's elements convert like any other value of the
             // literal, fresh ones too (#268).
+            // Function types that differ only in their error-set variables are one
+            // (`throws::vars`).
             let fits = match is_array {
                 true => self.spread_fits(et, elem),
-                // Function types that differ only in their error-set variables are one
-                // (`throws::vars`).
                 false => {
-                    let fits = et == elem
+                    et == elem
                         || (self.cx.ty.is_int(et) && self.float_elem(elem).is_some())
-                        || self.cx.unify_err_vars(et, elem);
-                    if !fits {
-                        // With the sets written in: the source's errors are added to the sites
-                        // of the element type, and the program is checked again with them.
-                        self.cx.fn_throws_differ(et, elem);
-                    }
-                    fits
+                        || self.cx.unify_err_vars(et, elem)
                 }
             };
+            if !fits {
+                // With the sets written in: the source's errors are added to the sites of the
+                // element type, and the program is checked again with them.
+                self.cx.fn_throws_differ(et, elem);
+            }
             if !fits && !self.cx.ty.has_error(et) {
                 let (from, to) = (self.cx.display(et), self.cx.display(elem));
                 self.cx.err(
@@ -242,6 +241,7 @@ impl FnCx<'_, '_> {
     pub(super) fn spread_fits(&mut self, et: TyId, elem: TyId) -> bool {
         et == elem
             || (self.cx.ty.is_int(et) && self.float_elem(elem).is_some())
+            || self.cx.unify_err_vars(et, elem)
             || self.converts_to(et, elem)
             || self.widens(et, elem)
     }
