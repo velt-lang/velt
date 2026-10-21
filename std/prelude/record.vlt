@@ -9,7 +9,7 @@
 // index marks the record `unordered`; then the readers (`__keyNames`, `__values`, `__entries`,
 // and the JSON and formatting glue through `__positions`) sort the entries they read, without
 // changing the record (they borrow it). A record without such keys pays one byte test per new
-// key (`Map.__newestKeyDigit`, then `__arrayIndex` for a key that starts with a digit). JSON reads
+// key (`Map.__newestKeyDigit`, then `arrayIndex` for a key that starts with a digit). JSON reads
 // and writes a record as an object (a decoded record is checked for such keys once,
 // `__decoded`), and `console.log` shows it like one.
 
@@ -18,8 +18,8 @@
 // The rank of a key that is not an array index: after every index.
 const NOT_INDEX: i64 = 4294967296;
 
-/** The array index `s` names (canonical decimal, 0 to 2^32 - 2), or -1. */
-export function __arrayIndex(s: string): i64 {
+// The array index `s` names (canonical decimal, 0 to 2^32 - 2), or -1.
+function arrayIndex(s: string): i64 {
   const n = s.length as i64;
   if (n == 0 || n > 10 || (n > 1 && s.charCodeAt(0) == 48)) {
     return -1;
@@ -61,14 +61,14 @@ export class Record<K, V> {
     const n = this.entries.size;
     this.entries.set(key, value);
     if (this.entries.size != n && !this.unordered) {
-      this.unordered = this.entries.__newestKeyDigit() && __arrayIndex(`${key}`) >= 0;
+      this.unordered = this.entries.__newestKeyDigit() && arrayIndex(`${key}`) >= 0;
     }
   }
 
   /** After JSON decoding (in document order): `unordered` when a key is an array index. */
   __decoded() {
     for (const k of this.entries.keys()) {
-      if (__arrayIndex(`${k}`) >= 0) {
+      if (arrayIndex(`${k}`) >= 0) {
         this.unordered = true;
         return;
       }
@@ -90,7 +90,7 @@ export class Record<K, V> {
     let last: i64 = -1;
     let other = false;
     for (const k of keys) {
-      const i = __arrayIndex(`${k}`);
+      const i = arrayIndex(`${k}`);
       if (i < 0) {
         other = true;
         rank.push(NOT_INDEX);
@@ -393,4 +393,9 @@ export function __computed_key<V>(key: string, value: V): Record<string, V> {
   const r: Record<string, V> = {};
   r[key] = value;
   return r;
+}
+
+/** The array index `s` names (canonical decimal, 0 to 2^32 - 2), or -1. */
+export function __arrayIndex(s: string): i64 {
+  return arrayIndex(s);
 }
