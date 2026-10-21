@@ -18,6 +18,7 @@
 //! Velt has (`globalThis.setTimeout`) is that global. Programs that don't name `globalThis` are
 //! not rewritten.
 
+mod keys;
 mod walk;
 
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -81,13 +82,13 @@ pub(crate) fn rewrite(
 ) -> (GlobalProps, Vec<Diagnostic>, Option<Vec<SourceModule>>) {
     let mut props = GlobalProps::default();
     let mut diags = vec![];
-    let names = |m: &SourceModule| !m.is_std && walk::mentions(&m.ast);
+    let names = |m: &SourceModule| !m.is_std && keys::mentions(&m.ast);
     if !modules.iter().any(names) {
         return (props, diags, None);
     }
     let consts: Vec<FxHashMap<String, String>> = modules
         .iter()
-        .map(|m| walk::string_consts(&m.ast))
+        .map(|m| keys::string_consts(&m.ast))
         .collect();
     let mut out: Vec<SourceModule> = modules
         .iter()
@@ -101,10 +102,10 @@ pub(crate) fn rewrite(
         })
         .collect();
     for (i, m) in out.iter_mut().enumerate() {
-        if m.is_std || !walk::mentions(&m.ast) {
+        if m.is_std || !keys::mentions(&m.ast) {
             continue;
         }
-        let keys = walk::visible_consts(m, modules, &consts, i);
+        let keys = keys::visible_consts(m, modules, &consts, i);
         let mut w = walk::Walk::new(i, &keys);
         w.module_items(&mut m.ast);
         props.sites.append(&mut w.sites);
