@@ -344,6 +344,13 @@ impl<'a> Parser<'a> {
             .contains(['\n', '\r', '\u{2028}', '\u{2029}'])
     }
 
+    /// At `type`, `interface` or `declare` followed by a line break: not a declaration, as in
+    /// TypeScript (`nextTokenIsIdentifierOnSameLine`), so the word is read as an expression.
+    fn at_decl_word_before_line_break(&mut self) -> bool {
+        matches!(self.cur_kw(), Some(Kw::Type | Kw::Interface | Kw::Declare))
+            && self.line_break_after(0)
+    }
+
     /// At `async function` with no line break after `async` (a line break there ends a
     /// statement `async`, as in JavaScript).
     fn at_async_function(&mut self) -> bool {

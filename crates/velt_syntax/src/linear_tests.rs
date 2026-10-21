@@ -123,3 +123,14 @@ fn nested_parentheses() {
         .join("\n")
     });
 }
+
+#[test]
+fn continuation_lines_around_nested_statements() {
+    // The continuation warning's bracket scan of the outer statement survives the statements
+    // nested in it (a method body in an object literal): the outer one is not rescanned from
+    // its start at each of its continuation lines.
+    assert_linear("continuation lines around method bodies", 1_000, |n| {
+        let entry = "  pI: 1\n    + 1,\n  mI(): number {\n    return 1\n      + 1;\n  },\n";
+        format!("export const o = {{\n{}}};\n", entry.repeat(n))
+    });
+}

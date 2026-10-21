@@ -22,17 +22,38 @@ pub(super) struct DepthScan {
     depth: i64,
 }
 
+/// The enclosing statement's start and depth scan, which [`Parser::end_statement`] restores: a
+/// nested statement (a method body in an object literal) must not cost the outer one its scan,
+/// or every continuation line of the outer statement would rescan it from its start.
+pub(super) struct StmtMark {
+    start: usize,
+    scan: DepthScan,
+}
+
 impl Parser<'_> {
     /// The statement starting at the cursor begins here (for `warn_continuation`); returns the
-    /// previous start, for the caller to restore.
-    pub(super) fn begin_statement(&mut self) -> usize {
-        std::mem::replace(&mut self.stmt_start, self.pos)
+    /// enclosing statement's state, for [`Self::end_statement`].
+    pub(super) fn begin_statement(&mut self) -> StmtMark {
+        StmtMark {
+            start: std::mem::replace(&mut self.stmt_start, self.pos),
+            scan: self.depth_scan,
+        }
+    }
+
+    /// The statement begun with `mark` ends: the enclosing one's start and scan are back.
+    pub(super) fn end_statement(&mut self, mark: StmtMark) {
+        self.stmt_start = mark.start;
+        self.depth_scan = mark.scan;
     }
 
     /// The token at the cursor continues an expression although a line break precedes it: warns
     /// if that line break is at the statement's level.
     pub(super) fn warn_continuation(&mut self) {
-        if self.speculating > 0 || !self.line_break_before() || self.bracket_depth_at() > 0 {
+        if self.speculating > 0
+            || !self.line_break_before()
+            || !self.line_starts_at_cursor()
+            || self.bracket_depth_at() > 0
+        {
             return;
         }
         let span = self.cur_span();
@@ -66,6 +87,7 @@ impl Parser<'_> {
         } else {
             (start, 0)
         };
+        crate::work::add(end.saturating_sub(i));
         while i < end {
             depth += match self.tok(i).kind {
                 Tok::LParen | Tok::LBracket | Tok::LBrace | Tok::Template(_, TplPart::Head) => 1,
@@ -81,4 +103,27 @@ impl Parser<'_> {
         };
         depth
     }
+
+    /// Does the cursor's token start a line: a line break between it and the token before,
+    /// outside block comments (`a /* … ⏎ … */ + b` continues on the same line)?
+    fn line_starts_at_cursor(&mut self) -> bool {
+        let lo = self.cur_lo();
+        let mut gap = self.text(self.prev_hi.min(lo), lo);
+        loop {
+            let Some(open) = gap.find("/*") else {
+                return has_line_break(gap);
+            };
+            if has_line_break(&gap[..open]) {
+                return true;
+            }
+            gap = match gap[open + 2..].find("*/") {
+                Some(close) => &gap[open + 2 + close + 2..],
+                None => "",
+            };
+        }
+    }
+}
+
+fn has_line_break(s: &str) -> bool {
+    s.contains(['\n', '\r', '\u{2028}', '\u{2029}'])
 }

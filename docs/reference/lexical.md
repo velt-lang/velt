@@ -56,7 +56,13 @@ export function larger(a: i64, b: i64): i64 {
   `yield` (`return` / a line break / `x` returns nothing, and `x` is the next statement),
   `break` and `continue` before a label, and postfix `++` / `--` (`a` / `++b` on two lines
   increments `b`). A line break after `throw`, before `=>`, or after `async` in an arrow
-  function is an error, as in TypeScript.
+  function is an error, as in TypeScript. Type arguments start on the line of their type
+  (`a: string` / `<T>(x: T): T` in an interface is a member and a call signature). A modifier
+  followed by a line break is a member name (`async` / `foo() {}` in a class is a field `async`
+  and a method `foo`), except `static`, `get` and `set`, which apply to the name on the next
+  line; `type`, `interface`, `declare` and `namespace` followed by a line break do not declare
+  anything, as in TypeScript.
+- The line terminators are line feed, carriage return, U+2028 and U+2029.
 - A line that starts with `(`, `[`, `+`, `-` or `/` continues the statement on the line
   before, as in Node: `const a = b` / `(c).run()` calls `b`. Velt warns about it ("this line
   continues the expression on the line before; add `;` at the end of that line if it is a new

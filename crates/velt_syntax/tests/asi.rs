@@ -150,6 +150,10 @@ fn continuation_lines_mean_what_they_mean_in_node_and_warn() {
     }
     // Only one per line: `/c/d` continues once.
     assert_eq!(warnings("a = b\n/c/d"), 1);
+    // A line break inside a block comment does not start a line; one in a line comment does.
+    assert_eq!(warnings("a = b /* x\n y */ + c"), 0);
+    assert_eq!(warnings("a = b /* x */\n+ c"), 1);
+    assert_eq!(warnings("a = b // x\n+ c"), 1);
 }
 
 #[test]
@@ -212,4 +216,88 @@ fn a_conditional_type_does_not_continue_across_a_line_break() {
         "{:?}",
         d.iter().map(|d| &d.message).collect::<Vec<_>>()
     );
+}
+
+#[test]
+fn type_arguments_do_not_continue_across_a_line_break() {
+    let (m, d) = parse("interface I {\n  a: string\n  (x: number): string\n  <T>(x: T): T\n}");
+    assert!(
+        d.is_empty(),
+        "{:?}",
+        d.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+    let Some(ItemKind::Interface(i)) = m.items.first().map(|i| &i.kind) else {
+        panic!("{:?}", m.items)
+    };
+    assert_eq!(i.fields.len(), 1);
+    assert_eq!(i.call_sigs.len(), 2);
+    // `Array` / `<number>` is not `Array<number>`, as in TypeScript (TS1109).
+    assert!(!parse("type B = Array\n<number>").1.is_empty());
+}
+
+#[test]
+fn modifiers_before_a_line_break() {
+    // In a class, `async` before a line break is a field named `async`; `static`, `get` and
+    // `set` still apply to the next line.
+    let m = parse_ok("class A {\n  async\n  = 2\n  static\n  s() {}\n  get\n  v() { return 1 }\n  readonly\n  = 3\n}");
+    let ItemKind::Class(c) = &m.items[0].kind else {
+        panic!()
+    };
+    let fields: Vec<_> = c
+        .fields
+        .iter()
+        .map(|f| (f.name.name.as_str(), f.readonly))
+        .collect();
+    assert_eq!(fields, [("async", false), ("readonly", false)]);
+    let methods: Vec<_> = c
+        .methods
+        .iter()
+        .map(|m| {
+            (
+                m.decl.sig.name.name.as_str(),
+                m.is_static,
+                m.decl.sig.is_async,
+            )
+        })
+        .collect();
+    assert!(methods.contains(&("s", true, false)), "{methods:?}");
+    // In an interface, `readonly` before a line break is a member named `readonly`.
+    let e = errors("interface I {\n  readonly\n  x: number\n}");
+    assert!(!e.is_empty());
+    // In an object literal, `async` before a line break is not a modifier: a syntax error.
+    let e = errors("const o = {\n  async\n  foo() { return 1 }\n}");
+    assert!(!e.is_empty());
+    assert!(parse("const o = { async foo() { return 1 } }").1.is_empty());
+}
+
+#[test]
+fn declaration_words_before_a_line_break_are_expressions() {
+    // `type`, `interface`, `declare` and `namespace` declare only with the name on their line.
+    for src in [
+        "type\nT = number",
+        "declare\nconst x: number",
+        "namespace\nN {}",
+    ] {
+        let m = parse(src).0;
+        assert!(
+            !m.items.iter().any(|i| matches!(
+                i.kind,
+                ItemKind::TypeAlias(_) | ItemKind::ExternFn(_) | ItemKind::Namespace(_)
+            )),
+            "{src}: {:?}",
+            m.items
+        );
+    }
+    assert!(!errors("interface\nI {}").is_empty());
+    assert!(parse("type T = number\ninterface I { a: number }")
+        .1
+        .is_empty());
+}
+
+#[test]
+fn unicode_line_separators_are_line_breaks() {
+    // U+2028 and U+2029 are whitespace that ends a line, as in JavaScript.
+    assert_eq!(expr_stmts("return\u{2028}1"), ["return", "1"]);
+    assert_eq!(expr_stmts("a\u{2029}++b"), ["a", "(++pre b)"]);
+    assert!(parse("// c\u{2028}const x = 1").1.is_empty());
 }

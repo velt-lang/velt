@@ -92,7 +92,7 @@ impl<'a> Parser<'a> {
             let lo = p.cur_lo();
             let outer = p.begin_statement();
             let kind = p.parse_stmt_kind();
-            p.stmt_start = outer;
+            p.end_statement(outer);
             let kind = kind?;
             Ok(Stmt {
                 kind,
@@ -165,6 +165,9 @@ impl<'a> Parser<'a> {
 
     /// Declarations allowed inside blocks (functions, types, ...).
     fn at_nested_item(&mut self) -> bool {
+        if self.at_decl_word_before_line_break() {
+            return false;
+        }
         match self.cur_kw() {
             Some(Kw::Function | Kw::Struct | Kw::Class | Kw::Interface | Kw::Enum | Kw::Export) => {
                 true

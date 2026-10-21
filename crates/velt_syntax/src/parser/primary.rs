@@ -372,8 +372,10 @@ impl<'a> Parser<'a> {
             };
             return Ok(Some(ObjectProp::KeyValue(name, self.mk_expr(call, span))));
         }
-        let is_async = self.at_kw(Kw::Async) && matches!(self.nth(1), Tok::Star | Tok::LBracket)
-            || (self.at_kw(Kw::Async)
+        // `async` [no LineTerminator here] the method name.
+        let async_kw = self.at_kw(Kw::Async) && !self.line_break_after(0);
+        let is_async = async_kw && matches!(self.nth(1), Tok::Star | Tok::LBracket)
+            || (async_kw
                 && Self::is_name(self.nth(1))
                 && matches!(self.nth(2), Tok::LParen | Tok::Lt));
         let off = usize::from(is_async);

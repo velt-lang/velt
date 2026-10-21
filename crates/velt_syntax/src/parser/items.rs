@@ -70,7 +70,7 @@ impl<'a> Parser<'a> {
     pub(super) fn parse_item(&mut self, top: bool) -> PResult<Item> {
         let outer = self.begin_statement();
         let item = self.parse_item_here(top);
-        self.stmt_start = outer;
+        self.end_statement(outer);
         item
     }
 

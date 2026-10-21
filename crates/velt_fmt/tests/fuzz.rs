@@ -73,8 +73,9 @@ fn insertion_points(src: &str) -> Vec<(usize, bool, usize)> {
 
 /// Would a line break between `before` and `after` change the program? Automatic semicolon
 /// insertion ends a statement at a line break after `return`, `throw`, `break`, `continue`,
-/// `yield` and `async`, and before `=>`, postfix `++` / `--`, a non-null `!` and a conditional
-/// type's `extends`.
+/// `yield` and `async`, and before `=>`, postfix `++` / `--`, a non-null `!`, type arguments and
+/// a conditional type's `extends`; a modifier other than `static`, `get` and `set` before a line
+/// break is a name, and so are `type`, `interface`, `declare` and `namespace`.
 fn restricted(before: &str, after: &str) -> bool {
     let word_start = before
         .rfind(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$'))
@@ -86,8 +87,24 @@ fn restricted(before: &str, after: &str) -> bool {
         .collect();
     matches!(
         word,
-        "return" | "throw" | "break" | "continue" | "yield" | "async"
-    ) || ["=>", "++", "--", "!"].iter().any(|t| after.starts_with(t))
+        "return"
+            | "throw"
+            | "break"
+            | "continue"
+            | "yield"
+            | "async"
+            | "readonly"
+            | "public"
+            | "private"
+            | "protected"
+            | "declare"
+            | "override"
+            | "type"
+            | "interface"
+            | "namespace"
+    ) || ["=>", "++", "--", "!", "<"]
+        .iter()
+        .any(|t| after.starts_with(t))
         || next_word == "extends"
 }
 

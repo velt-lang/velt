@@ -157,7 +157,7 @@ impl<'a> Parser<'a> {
         let start = self.pos;
         let outer = self.begin_statement();
         let result = f(self);
-        self.stmt_start = outer;
+        self.end_statement(outer);
         match result {
             Ok(v) => {
                 // A member ends at a line break, so one that consumed nothing could return

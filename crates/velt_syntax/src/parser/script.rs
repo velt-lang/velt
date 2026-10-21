@@ -16,6 +16,9 @@ use velt_common::Span;
 impl Parser<'_> {
     /// Does the cursor start a declaration (as opposed to a statement)?
     pub(super) fn at_item_start(&mut self) -> bool {
+        if self.at_decl_word_before_line_break() {
+            return false;
+        }
         match self.cur_kw() {
             Some(Kw::Import) => !matches!(self.nth(1), Tok::Dot | Tok::LParen),
             Some(
