@@ -1,6 +1,6 @@
-// check: no leaks
 // A callback whose function type has inferred errors (#1154) can be passed to `setTimeout`:
-// an error it throws there is uncaught, as in Node.
+// an error it throws there is uncaught, as in Node: it ends the process at the throw (with what
+// is still allocated, so this golden has no leak check).
 class Failed extends Error {
   constructor(m: string) {
     super(m);

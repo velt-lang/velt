@@ -111,7 +111,9 @@ what a function stored there may throw.
   and calls through it need no error check. For a type whose result is a `Promise`, the
   inferred errors are the promise's rejection type. Only `Error` classes are inferred: a closure
   stored there that throws another value (`throw "x"`, `throw null`) is reported, since the
-  inferred errors reach every function type of the same shape. The errors also come through other such types (a closure calling through one) and through
+  inferred errors can reach other function types of the same shape (a callback stored as a
+  `Map` value gives its errors to every such type). Throw an `Error` instead
+  (`throw new Error("x")`), or write the error type (`() => void throws string`). The errors also come through other such types (a closure calling through one) and through
   recursion, and a `let` without a type initialized with a closure (`let f = () => {}`) is
   such a type too. Function types of the standard library are not inferred this way: the
   timers (`setTimeout`, `setInterval`, `setImmediate`) and `queueMicrotask` take a callback

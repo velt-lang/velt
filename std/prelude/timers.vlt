@@ -8,8 +8,8 @@
 // when created). The callback runs on the task that created the timer, as a promise of that
 // task (never at the same time as its other code), so it shares what it captures with the code
 // around it, as in Node; it runs once the code that created it and the callbacks that code
-// queued are done. An error it throws is uncaught (the process exits like on an unhandled
-// rejection), so catch inside it.
+// queued are done. An error it throws is uncaught: it ends the process at the throw, as in Node,
+// so catch inside it.
 // A pending timer keeps the process alive after `main` returns, like a Node `Timeout` (a handle);
 // `unref()` lets the process exit without it. Spawned tasks and promises are not handles: what
 // keeps them going is what they wait for.
@@ -242,7 +242,7 @@ async function fireOnce<E>(
   timer: u64,
   task: () => Promise<void, E>,
   state: shared<Mutex<TimerState>>,
-): Promise<void, E> {
+): Promise<void> {
   await velt_rt_timer_turn(timer, 0);
   const go = state.with((s) => {
     s.release();
@@ -251,7 +251,11 @@ async function fireOnce<E>(
   if (!go) {
     return;
   }
-  await task();
+  try {
+    await task();
+  } catch (e) {
+    uncaught(e);
+  }
   state.with((s) => s.end(true));
 }
 
@@ -294,7 +298,7 @@ async function fireEvery<E>(
 }
 
 // One run of an interval: ends it in the state when its promise settles. An error is uncaught,
-// as in Node (the run is not awaited by the interval's task).
+// as in Node: it ends the process.
 async function runOnce<E>(
   task: () => Promise<void, E>,
   state: shared<Mutex<TimerState>>,
@@ -302,12 +306,23 @@ async function runOnce<E>(
   try {
     await task();
   } catch (e) {
-    spawn(rethrow(e));
+    uncaught(e);
   }
   state.with((s) => s.end(false));
 }
 
-// Rejects with `e`: spawned, an error nothing catches.
+declare function velt_rt_uncaught_now();
+
+// Reports `e` as uncaught and exits 1 at once, as Node does for an error a timer's callback
+// throws (an uncaught exception): the rejection of a promise nothing awaits, reported when it is
+// dropped (velt_rt_uncaught_now). An async callback's rejection ends the process at once too,
+// where Node first runs the microtasks queued before it (an unhandled rejection).
+function uncaught<E>(e: E) {
+  velt_rt_uncaught_now();
+  const p = rethrow(e);
+}
+
+// Rejects with `e`.
 async function rethrow<E>(e: E): Promise<void, E> {
   throw e;
 }

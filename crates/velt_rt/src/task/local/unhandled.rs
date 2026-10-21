@@ -24,6 +24,18 @@ use crate::task::VeltFut;
 thread_local! {
     /// The started promise whose result is being dropped right now (null: none).
     static DROPPING: Cell<*mut VeltFut> = const { Cell::new(std::ptr::null_mut()) };
+    /// The next rejection reported is an error thrown synchronously in a timer or microtask
+    /// callback (`velt_rt_uncaught_now`): reported at once.
+    static NOW: Cell<Option<*const crate::str::VeltStr>> = const { Cell::new(None) };
+}
+
+/// The next unhandled rejection is an error a timer or microtask callback threw (the prelude's
+/// `uncaught`): it ends the process at once, as Node's uncaught exception does, instead of
+/// waiting for the microtask queue.
+#[no_mangle]
+pub extern "C" fn velt_rt_uncaught_now() {
+    // Its report shows where the callback threw, not where the prelude throws it again.
+    NOW.with(|c| c.set(Some(crate::panic::velt_rt_throw_loc())));
 }
 
 /// Drop the unclaimed result of started node `f` with `d` (its `result_drop`), letting an
@@ -45,6 +57,10 @@ pub(super) unsafe fn drop_result(f: *mut VeltFut, d: unsafe extern "C" fn(*mut u
 pub extern "C" fn velt_rt_unhandled_defer() -> u8 {
     let f = DROPPING.with(|c| c.replace(std::ptr::null_mut()));
     let set = super::current_set();
+    if let Some(loc) = NOW.with(|c| c.take()) {
+        crate::panic::velt_rt_set_throw_loc(loc);
+        return 0;
+    }
     if f.is_null() || set.is_null() {
         return 0;
     }

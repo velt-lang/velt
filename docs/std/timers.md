@@ -11,7 +11,10 @@ out), which the compiler runs as an `async` one. The callback runs on the task t
 timer, never at the same time as that task's other code, so it shares what it captures with the
 code around it, as in Node: what it changes is seen afterwards, and what the creating code
 changes after `setTimeout` (`xs.push(2)`, `s = "changed"`) is seen by the callback. An error it
-throws is uncaught (catch inside the callback).
+throws is uncaught, as in Node: it is reported (`Uncaught RangeError: …`) and ends the process
+with exit code 1 at the throw, before the microtasks and timers queued after it run (catch inside
+the callback). An `async` callback's rejection ends the process at once too, where Node first
+runs the microtasks queued before it. The same holds for `queueMicrotask(f)`.
 
 - `setTimeout(task: () => Promise<void>, ms): Timer` (`ms` at least 1, like Node:
   `setTimeout(f, 0)` is `setTimeout(f, 1)`), `clearTimeout(t)`, `delay(ms)` (the same as
