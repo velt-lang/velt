@@ -1,0 +1,33 @@
+// Number property names in interfaces, object types, classes, object literals and destructuring
+// patterns, bare (`1.5: T`) or in brackets (`[-1]: T`): the name is the number as `String`
+// spells it (`1e3` is "1000"). Output compared with Node.
+
+interface I {
+  7: string;
+  1.5: string;
+  1e3: number;
+}
+
+type O = { 1.5: string };
+
+interface N {
+  [-1]: string;
+}
+
+class C {
+  1.5 = "a";
+  [7] = "seven";
+  [-2] = "m";
+}
+
+function main() {
+  const i: I = { 7: "s", 1.5: "f", 1e3: 3 };
+  const n: N = { [-1]: "neg" };
+  const o: O = { 1.5: "x" };
+  const c = new C();
+  const { 1.5: a, 1e3: b } = i;
+  const { [-1]: d } = n;
+  const { ["1.5"]: e } = o;
+  console.log(a, b, d, e);
+  console.log(JSON.stringify(c), Object.keys(i).join(","));
+}

@@ -206,28 +206,45 @@ impl<'a> Parser<'a> {
         Ok(props)
     }
 
+    /// After an error in an object literal's property: past the literal's `}`, so the
+    /// statement around it recovers at its own end.
+    fn skip_rest_of_object(&mut self) {
+        let mut depth = 0u32;
+        loop {
+            match self.peek() {
+                Tok::Eof => break,
+                Tok::LBrace | Tok::LParen | Tok::LBracket => depth += 1,
+                Tok::RBrace if depth == 0 => {
+                    self.bump();
+                    break;
+                }
+                Tok::RBrace | Tok::RParen | Tok::RBracket => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+            self.bump();
+        }
+    }
+
     fn parse_object_prop(&mut self) -> PResult<ObjectProp> {
         if self.eat(Tok::DotDotDot) {
             return Ok(ObjectProp::Spread(self.parse_assign()?));
         }
         if self.at_inline_symbol_key() {
             let fail = self.reject_inline_symbol_key();
-            // Past the literal's `}`, so the statement around it recovers at its own end.
-            let mut depth = 0u32;
-            loop {
-                match self.peek() {
-                    Tok::Eof => break,
-                    Tok::LBrace | Tok::LParen | Tok::LBracket => depth += 1,
-                    Tok::RBrace if depth == 0 => {
-                        self.bump();
-                        break;
-                    }
-                    Tok::RBrace | Tok::RParen | Tok::RBracket => depth = depth.saturating_sub(1),
-                    _ => {}
-                }
-                self.bump();
-            }
+            self.skip_rest_of_object();
             return Err(fail);
+        }
+        if self.at_literal_name() {
+            let len = match self.peek() {
+                Tok::LBracket => self.member_key_len(0, false),
+                _ => 1,
+            };
+            if self.nth(len) == Tok::LParen {
+                let name = self.parse_pattern_key()?;
+                self.reject_literal_method_name(&name);
+                self.skip_rest_of_object();
+                return Err(Fail);
+            }
         }
         if let Some(m) = self.try_object_method()? {
             return Ok(m);
@@ -312,6 +329,17 @@ impl<'a> Parser<'a> {
         let plain = match &key.kind {
             ExprKind::Lit(Lit::Str(s)) => Some(s.clone()),
             ExprKind::Lit(lit) => number_key(lit),
+            // `[-1]`: the key "-1" (and `[-0]` is "0", as `String(-0)` is).
+            ExprKind::Unary {
+                op: UnaryOp::Neg,
+                expr,
+            } => match &expr.kind {
+                ExprKind::Lit(lit) => number_key(lit).map(|n| match n.as_str() {
+                    "0" => n,
+                    _ => format!("-{n}"),
+                }),
+                _ => None,
+            },
             _ => None,
         };
         if let Some(name) = plain {

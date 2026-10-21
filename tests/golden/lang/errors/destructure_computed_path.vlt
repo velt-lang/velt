@@ -1,0 +1,13 @@
+// A destructuring pattern's computed key must be known while compiling (a literal or the name of
+// a module constant): a path such as `[t.tag]` or `[K.A]` names a property only known while the
+// program runs, so read it with an index instead.
+
+const K = { A: "a" } as const;
+
+function main() {
+  const t = { tag: "a" };
+  const o: Record<string, number> = { a: 1 };
+  const { [t.tag]: v } = o;
+  const { [K.A]: w } = o;
+  console.log(v, w);
+}

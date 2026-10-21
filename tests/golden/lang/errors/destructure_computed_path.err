@@ -1,0 +1,2 @@
+destructure_computed_path.vlt:10:11: error: a computed key in a destructuring pattern must be a literal or the name of a module constant
+destructure_computed_path.vlt:11:11: error: a computed key in a destructuring pattern must be a literal or the name of a module constant

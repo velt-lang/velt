@@ -107,7 +107,7 @@ impl<'a> Parser<'a> {
     /// After `get` / `set`: is the next token a name (or the next tokens a symbol key) followed
     /// by `(`?
     fn at_accessor_name(&mut self) -> bool {
-        let key = self.member_key_len(1);
+        let key = self.member_key_len(1, true);
         match key {
             0 => self.nth(2) == Tok::LParen,
             n => self.nth(1 + n) == Tok::LParen,
@@ -126,9 +126,13 @@ impl<'a> Parser<'a> {
         if star.is_some() {
             self.bump();
         }
+        let literal = self.at_literal_name();
         let name = self.parse_member_name()?;
         self.reject_protected(&mods, &name);
         let mods = self.private_name_mods(mods, &name);
+        if literal && self.at_method_start() {
+            self.reject_literal_method_name(&name);
+        }
         if !self.at_method_start() {
             if let Some(s) = star {
                 self.error("`*` marks a generator method: expected `(`", s);
@@ -404,17 +408,13 @@ impl<'a> Parser<'a> {
             );
             self.bump();
         }
-        let quoted = matches!(self.peek(), Tok::Str(_));
-        let name = if quoted {
-            self.parse_prop_key()?
-        } else {
-            self.parse_member_name()?
+        let literal = self.at_literal_name();
+        let name = match self.peek() {
+            Tok::Str(_) => self.parse_prop_key()?,
+            _ => self.parse_member_name()?,
         };
-        if quoted && self.at_method_start() {
-            self.error(
-                "a quoted name is supported for interface fields, not methods",
-                name.span,
-            );
+        if literal && self.at_method_start() {
+            self.reject_literal_method_name(&name);
         }
         self.reject_protected(&mods, &name);
         self.reject_private_name(&name);

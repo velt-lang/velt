@@ -528,13 +528,53 @@ impl<'a> Parser<'a> {
     /// A property name that may be quoted, as in TypeScript: `name`, a keyword, or a string
     /// literal (`"content-type"`, `"client:load"`) whose text becomes the name. Used where a
     /// field is named (object types, interface fields, destructuring); object literals take
-    /// quoted keys themselves (`parse_object_prop`).
+    /// quoted keys themselves (`parse_object_prop`). Also a number (`1.5: T`) and a computed
+    /// key ([`Self::member_key_len`], with paths).
     fn parse_prop_key(&mut self) -> PResult<Ident> {
+        self.parse_prop_key_with(true)
+    }
+
+    /// A key in a destructuring pattern: [`Self::parse_prop_key`] without paths (`{ [t.tag]: v }`
+    /// names a property only known while the program runs).
+    fn parse_pattern_key(&mut self) -> PResult<Ident> {
+        self.parse_prop_key_with(false)
+    }
+
+    fn parse_prop_key_with(&mut self, paths: bool) -> PResult<Ident> {
+        if !paths && self.at(Tok::LBracket) && self.member_key_len(0, false) == 0 {
+            let span = self.cur_span();
+            self.error(
+                "a computed key in a destructuring pattern must be a literal or the name of a module constant (`{ [\"k\"]: v }`, `{ [KEY]: v }`): read the property with an index instead (`const v = o[k]`)",
+                span,
+            );
+            // Past the key's `]`, so the rest of the pattern is still checked.
+            let mut depth = 0u32;
+            loop {
+                match self.peek() {
+                    Tok::Eof => break,
+                    Tok::LBracket | Tok::LParen | Tok::LBrace => depth += 1,
+                    Tok::RBracket if depth == 1 => {
+                        self.bump();
+                        break;
+                    }
+                    Tok::RBracket | Tok::RParen | Tok::RBrace => depth = depth.saturating_sub(1),
+                    _ => {}
+                }
+                self.bump();
+            }
+            return Ok(Ident {
+                name: String::new(),
+                span,
+            });
+        }
         if self.at_inline_symbol_key() {
             return Err(self.reject_inline_symbol_key());
         }
-        if self.member_key_len(0) > 0 {
+        if self.member_key_len(0, paths) > 0 {
             return self.parse_member_key();
+        }
+        if matches!(self.peek(), Tok::Int(_) | Tok::Float(_)) {
+            return self.parse_number_name();
         }
         if let Tok::Str(idx) = self.peek() {
             let key = Ident {

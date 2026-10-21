@@ -108,3 +108,49 @@ fn a_conditional_type_as_a_member_type() {
     let d = interface("interface C<T> { a: T extends string ? number : boolean; b: number }");
     assert_eq!(names(&d), ["a", "b"]);
 }
+
+#[test]
+fn number_names_in_declarations_and_patterns() {
+    let d = interface(
+        "interface I { 7: string; 1.5: string; 1e3: number; [-1]: string; [-0]: number }",
+    );
+    assert_eq!(names(&d), ["7", "1.5", "1000", "-1", "0"]);
+    let m = parse_ok("class C { 1.5 = \"a\"; [-2] = \"m\"; }");
+    let ItemKind::Class(c) = &m.items[0].kind else {
+        panic!()
+    };
+    let fields: Vec<_> = c.fields.iter().map(|f| f.name.name.as_str()).collect();
+    assert_eq!(fields, ["1.5", "-2"]);
+    assert_eq!(sx(&expr("({ [-1]: a, [-0]: b })")), "(paren {-1: a, 0: b})");
+    parse_ok("function f(o: O) { const { 1.5: a, 1e3: b, [-1]: c, [\"k\"]: d } = o; }");
+}
+
+#[test]
+fn a_pattern_takes_no_path_keys() {
+    // `{ [t.tag]: v } = o` reads the property `t.tag` names while the program runs.
+    let e = errors("function f() { const { [t.tag]: v, w } = o; g(); }");
+    assert_eq!(e.len(), 1, "{e:?}");
+    assert!(e[0].contains("destructuring pattern"), "{e:?}");
+    // In declarations they are member names.
+    parse_ok("interface T { [Flags.A]: string }");
+}
+
+#[test]
+fn literal_names_are_for_fields_not_methods() {
+    for src in [
+        "class C { [\"a-b\"](): number { return 1; } }",
+        "class C { get [\"c d\"](): number { return 2; } }",
+        "class C { 1e3() { return 1; } }",
+        "interface I { [2](): void; }",
+        "interface I { \"go\"(): void; }",
+        "const o = { [\"p-q\"]() { return 1; }, b: 2 };",
+        "const o = { 1.5() { return 1; } };",
+    ] {
+        let e = errors(src);
+        assert_eq!(e.len(), 1, "{src}: {e:?}");
+        assert!(
+            e[0].contains("supported for fields, not methods"),
+            "{src}: {e:?}"
+        );
+    }
+}

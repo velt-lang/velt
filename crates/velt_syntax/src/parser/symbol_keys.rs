@@ -63,21 +63,29 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// The number of tokens of the computed key of a declared member starting `n` tokens after
-    /// the cursor, or 0: a symbol key ([`Self::symbol_key_len`]), a string or number literal
-    /// (`["k"]`, `[1]`), or a constant's or enum member's path (`[Flags.SKIP]`, `[ns.E.A]`).
-    pub(super) fn member_key_len(&mut self, n: usize) -> usize {
+    /// The number of tokens of a computed key starting `n` tokens after the cursor, or 0: a
+    /// symbol key ([`Self::symbol_key_len`]), a string or number literal (`["k"]`, `[1]`,
+    /// `[-1]`), or, with `paths` (in a declaration: an interface, an object type or a class), a
+    /// constant's or enum member's path (`[Flags.SKIP]`, `[ns.E.A]`). A pattern takes no paths:
+    /// `{ [t.tag]: v } = o` reads the property `t.tag` names, which is not known while compiling.
+    pub(super) fn member_key_len(&mut self, n: usize, paths: bool) -> usize {
         match self.symbol_key_len(n) {
             0 if self.nth(n) == Tok::LBracket => {}
             len => return len,
         }
-        if matches!(self.nth(n + 1), Tok::Str(_) | Tok::Int(_) | Tok::Float(_)) {
-            return match self.nth(n + 2) == Tok::RBracket {
-                true => 3,
+        let minus = usize::from(self.nth(n + 1) == Tok::Minus);
+        let literal = match self.nth(n + 1 + minus) {
+            Tok::Int(_) | Tok::Float(_) => true,
+            Tok::Str(_) => minus == 0,
+            _ => false,
+        };
+        if literal {
+            return match self.nth(n + 2 + minus) == Tok::RBracket {
+                true => 3 + minus,
                 false => 0,
             };
         }
-        if self.nth(n + 1) != Tok::Ident || self.nth_word(n + 1, "Symbol") {
+        if !paths || self.nth(n + 1) != Tok::Ident || self.nth_word(n + 1, "Symbol") {
             return 0;
         }
         let mut k = n + 2;
@@ -90,13 +98,14 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// The computed key of a declared member (the caller checked [`Self::member_key_len`]): a
-    /// string or number literal names the member as if unquoted (`["k"]` is `k`, `[1.5]` is
-    /// `1.5`); a path names it as `[Flags.SKIP]`, spanning `Flags.SKIP`, which sema resolves
-    /// like a constant's `[KEY]`; the rest is [`Self::parse_symbol_key`].
+    /// The computed key at the cursor (the caller checked [`Self::member_key_len`]): a string
+    /// or number literal names the member as if unquoted (`["k"]` is `k`, `[1.5]` is `1.5`,
+    /// `[-1]` is `-1`); a path names it as `[Flags.SKIP]`, spanning `Flags.SKIP`, which sema
+    /// resolves like a constant's `[KEY]`; the rest is [`Self::parse_symbol_key`].
     pub(super) fn parse_member_key(&mut self) -> PResult<Ident> {
-        match self.nth(1) {
-            Tok::Str(idx) => {
+        let minus = self.nth(1) == Tok::Minus;
+        match self.nth(1 + usize::from(minus)) {
+            Tok::Str(idx) if !minus => {
                 self.bump(); // [
                 let key = Ident {
                     name: self.payload_text(idx),
@@ -109,15 +118,20 @@ impl<'a> Parser<'a> {
             }
             Tok::Int(_) | Tok::Float(_) => {
                 self.bump(); // [
-                let span = self.cur_span();
-                let lit = self.literal_at_cursor();
-                let Some(name) = lit.as_ref().and_then(super::primary::number_key) else {
-                    self.error_expected("property name");
-                    return Err(Fail);
-                };
-                self.bump();
+                let lo = self.cur_lo();
+                if minus {
+                    self.bump();
+                }
+                let mut key = self.parse_number_name()?;
+                if minus {
+                    key.name = match key.name.as_str() {
+                        "0" => "0".into(),
+                        n => format!("-{n}"),
+                    };
+                    key.span = self.span_from(lo);
+                }
                 self.bump(); // ]
-                return Ok(Ident { name, span });
+                return Ok(key);
             }
             _ => {}
         }
@@ -138,6 +152,44 @@ impl<'a> Parser<'a> {
             name: format!("[{path}]"),
             span: velt_common::Span::new(self.file, lo, lo + path.len() as u32),
         })
+    }
+
+    /// A number literal as a property name, the number as `String` spells it (`1.50` is `1.5`,
+    /// `1e3` is `1000`): the cursor is at the literal.
+    pub(super) fn parse_number_name(&mut self) -> PResult<Ident> {
+        let span = self.cur_span();
+        let lit = self.literal_at_cursor();
+        let Some(name) = lit.as_ref().and_then(super::primary::number_key) else {
+            self.error_expected("property name");
+            return Err(Fail);
+        };
+        self.bump();
+        Ok(Ident { name, span })
+    }
+
+    /// At a member name written as a string or number literal, bare or in brackets (`"a-b"`,
+    /// `1.5`, `["a-b"]`, `[-1]`)? Such a name is supported for fields, not methods.
+    pub(super) fn at_literal_name(&mut self) -> bool {
+        match self.peek() {
+            Tok::Str(_) | Tok::Int(_) | Tok::Float(_) => true,
+            Tok::LBracket => {
+                let minus = usize::from(self.nth(1) == Tok::Minus);
+                matches!(
+                    self.nth(1 + minus),
+                    Tok::Str(_) | Tok::Int(_) | Tok::Float(_)
+                ) && self.member_key_len(0, false) > 0
+            }
+            _ => false,
+        }
+    }
+
+    /// Reports a method or accessor whose name is a string or number literal
+    /// ([`Self::at_literal_name`]).
+    pub(super) fn reject_literal_method_name(&mut self, name: &Ident) {
+        self.error(
+            "a quoted or numeric name is supported for fields, not methods: name the method with an identifier",
+            name.span,
+        );
     }
 
     /// `[Symbol.<name>]` for a well-known symbol, or `[NAME]` (the caller checked
@@ -209,8 +261,11 @@ impl<'a> Parser<'a> {
         if self.at_inline_symbol_key() {
             return Err(self.reject_inline_symbol_key());
         }
-        if self.member_key_len(0) > 0 {
+        if self.member_key_len(0, true) > 0 {
             return self.parse_member_key();
+        }
+        if matches!(self.peek(), Tok::Int(_) | Tok::Float(_)) {
+            return self.parse_number_name();
         }
         if self.at(Tok::PrivateName) {
             return Ok(self.take_ident());
