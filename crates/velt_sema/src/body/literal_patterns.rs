@@ -116,7 +116,7 @@ impl FnCx<'_, '_> {
             Some(items) => items,
             // `const c = [2, "y"] as const; [b, t] = c;`: `c[0]` as a `number`, `c[1]` as a
             // `string`, each read only as far as the pattern goes.
-            None => match self.as_const_reads(init) {
+            None => match self.as_const_reads(init, elems) {
                 Some(reads) if reads.len() >= elems.len() => {
                     tuple_reads = reads;
                     &tuple_reads[..elems.len()]
@@ -130,6 +130,18 @@ impl FnCx<'_, '_> {
         let mut binds = vec![];
         self.literal_temps(elems, items, &mut binds, out);
         for (p, t) in binds {
+            // An element that cannot be `undefined` never takes its default (`[a, b = "d"] =
+            // [1, "s"]`), which is then not evaluated.
+            let p = match &p.kind {
+                P::Default { pattern, .. }
+                    if self.temp_ty(&t).is_some_and(|ty| {
+                        !self.has_undefined(ty) && self.cx.dynamic(ty).is_none()
+                    }) =>
+                {
+                    (**pattern).clone()
+                }
+                _ => p,
+            };
             self.decl_with_defaults(v.kind, &p, t, out);
         }
         true
@@ -294,8 +306,10 @@ impl FnCx<'_, '_> {
     /// the `const` variable `c` holds (`Frame::as_const_tuples`): a local of this function or an
     /// enclosing one, or a module constant. Each element is read from the array, as its
     /// literal's type (`c[0] as unknown as number`): the array may have been written through a
-    /// cast, so a value that is no longer of that type stops with a `TypeError`.
-    fn as_const_reads(&mut self, init: &Expr) -> Option<Vec<Expr>> {
+    /// cast, so a value that is no longer of that type stops with a `TypeError`. A hole of
+    /// `pattern` checks nothing: its position stands for the literal itself, which
+    /// is evaluated and dropped.
+    fn as_const_reads(&mut self, init: &Expr, pattern: &[ast::Pattern]) -> Option<Vec<Expr>> {
         let mut e = init;
         while let E::Paren(x) = &e.kind {
             e = x;
@@ -341,6 +355,9 @@ impl FnCx<'_, '_> {
             .enumerate()
             .map(|(k, x)| {
                 let ty = super::readonly_arrays::literal_type(x)?;
+                if pattern.get(k).is_none_or(|p| matches!(p.kind, P::Wildcard)) {
+                    return Some(x.clone());
+                }
                 let read = mk(
                     E::Index {
                         object: Box::new(e.clone()),

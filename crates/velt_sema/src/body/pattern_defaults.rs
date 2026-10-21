@@ -267,7 +267,7 @@ impl FnCx<'_, '_> {
     }
 
     /// Can a value of type `t` be `undefined`?
-    fn has_undefined(&self, t: hir::TyId) -> bool {
+    pub(super) fn has_undefined(&self, t: hir::TyId) -> bool {
         self.cx.ty.nothing_of(t).is_some_and(|n| n.has_undefined())
     }
 
