@@ -164,8 +164,8 @@ nothing; `null` means success).
   when its `name` ends in `Error` but is not the class's name (`class E extends TypeError {}`
   gives `E [TypeError]: boom`; `MyTypeError: boom` when the class's name contains the name).
   The class is the dynamic one (an `IoError` thrown through a function declared `throws Error`
-  reports `IoError`), and the location is where it was thrown;
-  for an error thrown inside the standard library, it is the line of your code that called
+  reports `IoError`), and the location is where it was thrown, also when a `finally` it leaves
+  through throws and catches another error; for an error thrown inside the standard library, it is the line of your code that called
   into it. This holds for `async function main()` too, and for an error a spawned task threw
   that `main` awaited. A thrown value that is not an `Error` is written as Node writes it, the
   way `console.log` prints it: `throw "too big"` reports `Uncaught too big`, `throw 42`
