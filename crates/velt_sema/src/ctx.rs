@@ -637,8 +637,13 @@ impl<'m> Ctx<'m> {
                 params,
                 ret,
                 throws,
+                rest,
             } => {
-                let ps: Vec<String> = params.iter().map(|p| self.display_in(*p, names)).collect();
+                let mut ps: Vec<String> =
+                    params.iter().map(|p| self.display_in(*p, names)).collect();
+                if let (true, Some(last)) = (*rest, ps.last_mut()) {
+                    last.insert_str(0, "...");
+                }
                 let th = if *throws == self.ty.never {
                     String::new()
                 } else {

@@ -575,6 +575,7 @@ impl FnCx<'_, '_> {
             params,
             ret,
             throws,
+            rest: false,
         })
     }
 

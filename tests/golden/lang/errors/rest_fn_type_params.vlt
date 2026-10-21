@@ -1,0 +1,15 @@
+// An arrow used as a function type with a rest parameter (#943): its own rest parameter stands
+// where the type's does, or it leaves the rest arguments out. Named parameters for the rest
+// arguments (TypeScript accepts them) are not supported yet; a rest parameter whose type is no
+// array type is TypeScript's TS2370. A rest parameter where the function type lists fixed
+// parameters (TypeScript accepts it too) is not supported yet.
+type Log = (prefix: string, ...xs: number[]) => string;
+type Bad = (...xs: number) => void;
+
+function main() {
+  const a: Log = (p, x) => p + x;
+  const b: Log = (p, q, ...xs) => p;
+  const c: Log = (p) => p;
+  const d: (a: number, b: number) => void = (...xs: number[]) => {};
+  console.log(c("x"));
+}

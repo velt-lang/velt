@@ -245,14 +245,17 @@ impl FnCx<'_, '_> {
                     params: p,
                     ret: r,
                     throws: t,
+                    rest: rest_a,
                 },
                 TyKind::FnPtr {
                     params: q,
                     ret: s,
                     throws: u,
+                    rest: rest_b,
                 },
             ) => {
                 p.len() == q.len()
+                    && rest_a == rest_b
                     && p.iter().zip(&q).all(|(x, y)| self.loosely_equal(*x, *y))
                     && self.loosely_equal(r, s)
                     && self.loosely_equal(t, u)
@@ -573,11 +576,13 @@ impl FnCx<'_, '_> {
                 params: fp,
                 ret: fr,
                 throws: ft,
+                rest: false,
             },
             TyKind::FnPtr {
                 params: tp,
                 ret: tr,
                 throws: tt,
+                rest: false,
             },
         ) = (self.cx.ty.kind(from), self.cx.ty.kind(to))
         else {

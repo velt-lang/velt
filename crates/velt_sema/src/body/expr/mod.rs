@@ -19,6 +19,7 @@ mod call_apply;
 mod callables;
 mod callback;
 mod callback_sig;
+mod callback_wrap;
 mod chain;
 mod closure;
 mod closure_sig;

@@ -1,0 +1,3 @@
+rest_fn_type_unsupported.vlt:21:42: error: this function takes a `f64` where the function type passes its rest arguments, which may be fewer
+rest_fn_type_unsupported.vlt:23:24: error: calling a union of function types with a rest parameter is not supported yet
+rest_fn_type_unsupported.vlt:11:13: error: variadic tuple types (`[a: A, ...rest: T[]]`, the `Parameters` of a function type with a rest parameter after others) are not supported yet

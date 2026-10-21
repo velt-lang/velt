@@ -2,5 +2,3 @@ param_defaults_unsupported.vlt:11:60
 error: a parameter default after a destructured parameter with defaults must be a constant for now
 param_defaults_unsupported.vlt:17:46
 error: a parameter default cannot use an earlier parameter (`p`) yet
-param_defaults_unsupported.vlt:24:10
-error: rest parameters of object-literal methods (`sum(...xs)`) are not supported yet

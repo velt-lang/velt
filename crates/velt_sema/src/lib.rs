@@ -48,6 +48,7 @@ pub mod effects;
 mod enum_keys;
 mod finalize;
 mod flow;
+mod fn_types;
 mod fresh_returns;
 mod generic_arrows;
 mod holds_promise;

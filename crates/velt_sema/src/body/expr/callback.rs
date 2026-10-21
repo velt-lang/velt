@@ -40,6 +40,8 @@
 use velt_syntax::ast;
 
 use super::args::as_arrow;
+use super::callback_sig::FnSig;
+use super::callback_wrap::{plan, wrapper, Plan, Shape};
 use crate::body::places::is_place;
 use crate::body::{FnCx, LocalKind, Want};
 use crate::collect::ret_infer::stmt_returns_value;
@@ -89,81 +91,6 @@ pub(super) fn synth(kind: ast::ExprKind, span: velt_common::Span) -> ast::Expr {
     }
 }
 
-/// `#arg{k}`: a parameter name the wrapped code cannot name.
-fn arg_name(k: usize, span: velt_common::Span) -> ast::Ident {
-    ast::Ident {
-        name: format!("#arg{k}"),
-        span,
-    }
-}
-
-/// `(#arg0, …, #arg{n-1}) => callee(#arg0, …, #arg{passed-1})`, or with `discard` a block body
-/// that keeps the call's value in a hidden `const` (a started promise runs to completion).
-pub(super) fn wrapper(
-    callee: ast::Expr,
-    n: usize,
-    passed: usize,
-    discard: bool,
-    span: velt_common::Span,
-) -> ast::Expr {
-    let call = synth(
-        ast::ExprKind::Call {
-            callee: Box::new(callee),
-            type_args: vec![],
-            args: (0..passed)
-                .map(|k| synth(ast::ExprKind::Ident(arg_name(k, span)), span))
-                .collect(),
-            optional: false,
-        },
-        span,
-    );
-    let body = if discard {
-        let pattern = ast::Pattern {
-            id: ast::NodeId(u32::MAX),
-            kind: ast::PatternKind::Ident(ast::Ident {
-                name: "#started".into(),
-                span,
-            }),
-            span,
-        };
-        ast::ArrowBody::Block(ast::Block {
-            stmts: vec![ast::Stmt {
-                kind: ast::StmtKind::Var(ast::VarDecl {
-                    kind: ast::VarKind::Const,
-                    pattern,
-                    ty: None,
-                    init: Some(call),
-                    span,
-                }),
-                span,
-            }],
-            span,
-        })
-    } else {
-        ast::ArrowBody::Expr(Box::new(call))
-    };
-    synth(
-        ast::ExprKind::Arrow {
-            type_params: vec![],
-            params: (0..n)
-                .map(|k| ast::ArrowParam {
-                    name: arg_name(k, span),
-                    pattern: None,
-                    ty: None,
-                    default: None,
-                    optional: false,
-                    rest: false,
-                })
-                .collect(),
-            ret: None,
-            throws: None,
-            body,
-            is_async: false,
-        },
-        span,
-    )
-}
-
 impl FnCx<'_, '_> {
     /// The function value `arg` adapted to the function type `expected`, when the two differ
     /// in a way TS allows (see the module docs): the value is evaluated once into a hidden local
@@ -187,32 +114,51 @@ impl FnCx<'_, '_> {
         let exp = expected;
         let expected = self.cx.ty.core(expected).unwrap_or(expected);
         let TyKind::FnPtr {
-            params: want,
+            params: want_tys,
             ret: want_ret,
+            rest: want_rest,
             ..
         } = self.cx.ty.kind(expected).clone()
         else {
             return None;
         };
-        let n = want.len();
+        let want = Shape::of(want_tys.len(), want_rest);
+        // The type of each rest argument, which the wrapper may read one by one.
+        let elem = want_tys
+            .last()
+            .filter(|_| want.rest)
+            .and_then(|t| self.cx.ty.array_elem(*t));
+        let n = want.fixed;
         if mode == CallbackMode::Thread {
             // Any function value for a handler that runs on several threads: an async wrapper,
             // so each call copies what it captured like any async closure.
             if let Some(sig) = self.named_fn_sig(arg, false) {
-                if sig.required <= n {
+                if sig.required <= n || want.rest {
+                    let args = self.adapter_args(want, elem, &sig, arg.span);
                     let callee = self.callback_callee(arg);
-                    return Some(self.wrap(callee, n, sig.params.min(n), Wrap::Thread, Some(exp)));
+                    return Some(match args {
+                        Some(args) => self.wrap(callee, want, &args, Wrap::Thread, Some(exp)),
+                        None => self.error_expr(arg.span),
+                    });
                 }
             }
             let value = self.callback_value(arg);
-            let passed = match self.cx.ty.kind(value.ty) {
-                TyKind::FnPtr { params, .. } => params.len().min(n),
+            let sig = match self.cx.ty.kind(value.ty).clone() {
+                TyKind::FnPtr { params, rest, .. } => FnSig {
+                    required: params.len() - usize::from(rest),
+                    params,
+                    rest,
+                    ret: None,
+                },
                 _ => return Some(value),
+            };
+            let Some(args) = self.adapter_args(want, elem, &sig, arg.span) else {
+                return Some(self.error_expr(arg.span));
             };
             return Some(self.wrap(
                 Callee::Value(value, None),
-                n,
-                passed,
+                want,
+                &args,
                 Wrap::Thread,
                 Some(exp),
             ));
@@ -233,13 +179,15 @@ impl FnCx<'_, '_> {
         let widens_result = ret_known.is_some_and(|r| self.result_widens(r, want_ret));
         // A sync function where a timer wants the promise to run: checked as an async arrow.
         let becomes_task = task && !returns_promise;
-        if sig.required > n {
+        if sig.required > n && !want.rest {
             return None;
         }
-        if sig.params == n && !drops_result && !widens_result && !becomes_task {
+        if sig.shape() == want && !drops_result && !widens_result && !becomes_task {
             return None;
         }
-        let passed = sig.params.min(n);
+        let Some(args) = self.adapter_args(want, elem, &sig, arg.span) else {
+            return Some(self.error_expr(arg.span));
+        };
         let wrap = if becomes_task {
             Wrap::Task
         } else if to_void && returns_promise {
@@ -249,7 +197,7 @@ impl FnCx<'_, '_> {
             Wrap::Call
         };
         let callee = self.callback_callee(arg);
-        Some(self.wrap(callee, n, passed, wrap, Some(exp)))
+        Some(self.wrap(callee, want, &args, wrap, Some(exp)))
     }
 
     /// What a wrapper of the function `arg` names calls: a module-level function by its name
@@ -287,14 +235,13 @@ impl FnCx<'_, '_> {
         v
     }
 
-    /// The wrapper arrow calling `callee` with `passed` of its `n` parameters, checked against
-    /// `exp`. A value is held in a hidden local first: `{ const f = value; (p0, …) => f(p0, …) }`;
+    /// The wrapper arrow of shape `want` calling `callee` with `args`, checked against `exp`. A value is held in a hidden local first: `{ const f = value; (p0, …) => f(p0, …) }`;
     /// the wrapper owns `f` (it outlives the block).
     fn wrap(
         &mut self,
         callee: Callee,
-        n: usize,
-        passed: usize,
+        want: Shape,
+        plan: &Plan,
         wrap: Wrap,
         exp: Option<TyId>,
     ) -> hir::Expr {
@@ -327,7 +274,7 @@ impl FnCx<'_, '_> {
             }
             (local, v)
         });
-        let arrow = wrapper(call, n, passed, wrap == Wrap::Discard, span);
+        let arrow = wrapper(call, want, plan, wrap == Wrap::Discard, span);
         match wrap {
             Wrap::Task => self.void_task = Some(arrow.span),
             Wrap::Thread => {
@@ -368,20 +315,20 @@ impl FnCx<'_, '_> {
     }
 
     /// The arrow `e` adapted where no frame holds a hidden local (`frameless`): the wrapper calls
-    /// it in place, `(p…) => (e)(p…)`, with `e` checked as `inner` (a function of `n`
-    /// parameters). Outside any body `e` captures nothing, so making the closure at each call
+    /// it in place, `(p…) => (e)(p…)`, with `e` checked as `inner` (a function of shape
+    /// `want`). Outside any body `e` captures nothing, so making the closure at each call
     /// is the same as making it once.
     fn immediate_wrapper(
         &mut self,
         e: &ast::Expr,
         inner: TyId,
-        n: usize,
+        want: Shape,
         wrap: Wrap,
         exp: Option<TyId>,
     ) -> hir::Expr {
         let span = e.span;
         let callee = synth(ast::ExprKind::Paren(Box::new(e.clone())), span);
-        let arrow = wrapper(callee, n, n, wrap == Wrap::Discard, span);
+        let arrow = wrapper(callee, want, &want.same(), wrap == Wrap::Discard, span);
         self.immediate_hint = Some((span, inner));
         let w = self.closure(&arrow, exp, true);
         self.immediate_hint = None;
@@ -400,6 +347,7 @@ impl FnCx<'_, '_> {
             params,
             ret,
             throws,
+            rest,
         } = self.cx.ty.kind(fn_ty).clone()
         else {
             return None;
@@ -411,11 +359,12 @@ impl FnCx<'_, '_> {
             self.promise_member(ret)?
         };
         let span = e.span;
-        let n = params.len();
+        let shape = Shape::of(params.len(), rest);
         let async_ty = self.cx.ty.intern(TyKind::FnPtr {
             params,
             ret: promise,
             throws,
+            rest,
         });
         // A `void` callback's promise rejects with what the arrow throws.
         let async_ty = if discard {
@@ -425,7 +374,7 @@ impl FnCx<'_, '_> {
         };
         if self.frameless() {
             let wrap = if discard { Wrap::Discard } else { Wrap::Call };
-            return Some(self.immediate_wrapper(e, async_ty, n, wrap, exp));
+            return Some(self.immediate_wrapper(e, async_ty, shape, wrap, exp));
         }
         let f = self.closure(e, Some(async_ty), true);
         if self.thread_adapter == Some(e.span) {
@@ -443,7 +392,7 @@ impl FnCx<'_, '_> {
             _ => exp,
         };
         let wrap = if discard { Wrap::Discard } else { Wrap::Call };
-        Some(self.wrap(Callee::Value(f, None), n, n, wrap, exp))
+        Some(self.wrap(Callee::Value(f, None), shape, &shape.same(), wrap, exp))
     }
 
     /// An arrow that is not `async` whose declared result type is a member of the union the
@@ -457,7 +406,6 @@ impl FnCx<'_, '_> {
         let ast::ExprKind::Arrow {
             ret: Some(ret),
             is_async: false,
-            params,
             ..
         } = &e.kind
         else {
@@ -468,6 +416,7 @@ impl FnCx<'_, '_> {
             params: ptys,
             ret: want,
             throws,
+            rest,
         } = self.cx.ty.kind(fn_ty).clone()
         else {
             return None;
@@ -480,15 +429,15 @@ impl FnCx<'_, '_> {
         if !self.result_widens(declared, want) {
             return None;
         }
-        let n = ptys.len().max(params.len());
-        let ptys_len = ptys.len();
+        let shape = Shape::of(ptys.len(), rest);
         let member_ty = self.cx.ty.intern(TyKind::FnPtr {
             params: ptys,
             ret: declared,
             throws,
+            rest,
         });
         if self.frameless() {
-            return Some(self.immediate_wrapper(e, member_ty, ptys_len, Wrap::Call, exp));
+            return Some(self.immediate_wrapper(e, member_ty, shape, Wrap::Call, exp));
         }
         let f = self.closure(e, Some(member_ty), true);
         let exp = match self.cx.ty.kind(f.ty).clone() {
@@ -500,11 +449,14 @@ impl FnCx<'_, '_> {
             }
             _ => exp,
         };
-        let passed = match self.cx.ty.kind(f.ty) {
-            TyKind::FnPtr { params, .. } => params.len().min(n),
-            _ => n,
+        let args = match self.cx.ty.kind(f.ty) {
+            TyKind::FnPtr { params, rest, .. } => {
+                let n = params.len();
+                plan(shape, Shape::of(n, *rest), n, n - usize::from(*rest))
+            }
+            _ => shape.same(),
         };
-        Some(self.wrap(Callee::Value(f, None), n, passed, Wrap::Call, exp))
+        Some(self.wrap(Callee::Value(f, None), shape, &args, Wrap::Call, exp))
     }
 
     /// An arrow that is not `async`, passed as the handler of a server that runs it on several
@@ -624,7 +576,13 @@ impl FnCx<'_, '_> {
         new: TyId,
         span: velt_common::Span,
     ) -> TyId {
-        let TyKind::FnPtr { params, throws, .. } = self.cx.ty.kind(fn_ty).clone() else {
+        let TyKind::FnPtr {
+            params,
+            throws,
+            rest,
+            ..
+        } = self.cx.ty.kind(fn_ty).clone()
+        else {
             return fn_ty;
         };
         let inner = self.cx.ty.core(ret).unwrap_or(ret);
@@ -645,6 +603,7 @@ impl FnCx<'_, '_> {
             params,
             ret,
             throws,
+            rest,
         })
     }
 
