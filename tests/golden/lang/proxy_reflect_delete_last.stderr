@@ -1,1 +1,0 @@
-TypeError: deleting element 2 of an array of 3 through `any` is not supported yet (#823): Velt's arrays have no holes

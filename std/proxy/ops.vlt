@@ -9,7 +9,7 @@
 // velt_sema's `symbols.rs`); sema passes both that name and the symbol itself, so a plain value
 // is read by the name, as before, and a proxy's trap sees the symbol, as in JavaScript.
 
-import { PropertyDescriptor, Proxy, ProxyHandler, Reflect } from "velt:proxy";
+import { PropertyDescriptor, Proxy, ProxyHandler } from "velt:proxy";
 
 /** `{ ...o }` of an `any` `o` into `r`: a proxy's enumerable own entries, else `__spreadAny`. */
 export function __spreadAnyProxy(r: Record<string, any>, o: any): void {
@@ -27,22 +27,7 @@ export function __anyHasOwnProxy(o: any, key: string | symbol): boolean {
   if (o instanceof Proxy) {
     return o.__hasOwn(key);
   }
-  if (arrayIndexKey(o, key)) {
-    // An element, which an array method on a proxy may have deleted (velt:proxy/array).
-    return Reflect.getOwnPropertyDescriptor(o, key) !== undefined;
-  }
   return __anyHasOwn(o, key);
-}
-
-/** Is `o` an array and `key` the string or number of an index? */
-function arrayIndexKey(o: any, key: any): boolean {
-  if (!Array.isArray(o)) {
-    return false;
-  }
-  if (typeof key === "number") {
-    return (__arrayIndex(`${key as number}`) as number) >= 0;
-  }
-  return typeof key === "string" && (__arrayIndex(key as string) as number) >= 0;
 }
 
 /** `Object.values(o)` of an `any` `o`. */
@@ -89,10 +74,6 @@ function __proxyEntries(p: Proxy): [string, any][] {
 export function __anyDeleteProxy(o: any, k: any): boolean {
   if (o instanceof Proxy) {
     return o.__delete(k);
-  }
-  if (arrayIndexKey(o, k)) {
-    // An element, which an array method on a proxy may delete (velt:proxy/array).
-    return Reflect.deleteProperty(o, k);
   }
   return __anyDelete(o, k);
 }
