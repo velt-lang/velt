@@ -37,6 +37,11 @@ function getA<T extends object, K extends keyof T>(o: T, k: K): T[K] {
   return o[k];
 }
 
+// On `new` too, an explicit type argument breaking its bound is reported there (TS2344).
+class G<T extends string> {
+  constructor(public v: T) {}
+}
+
 function main() {
   same("c");
   total({ a: "x" });
@@ -46,4 +51,8 @@ function main() {
   optional("c");
   list(["a", "z"]);
   getA(5, "x");
+  getA("str", "length");
+  getA(true, "x");
+  new G<boolean>(true);
+  [1, 2].map((x) => id<boolean>(x as any));
 }

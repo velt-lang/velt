@@ -149,8 +149,12 @@ impl FnCx<'_, '_> {
             self.cx.match_ty(c.ret, e, &mut slots);
         }
         // An argument that is already an error (reported) leaves its slots unknown: no second
-        // error about inferring them.
-        let quiet = checked.iter().any(|h| h.ty == self.cx.ty.error);
+        // error about inferring them. So does one holding an error type (a callback returning
+        // a call that broke a bound).
+        let error = self.cx.ty.error;
+        let quiet = checked.iter().any(|h| h.ty == error)
+            || (slots.iter().any(Option::is_none)
+                && checked.iter().any(|h| self.cx.ty.has_error(h.ty)));
         self.default_slots(c, &mut slots);
         // An explicit type argument is where its slot's bound is checked; then the arguments.
         let typed = explicit.iter().filter_map(|&(k, s)| {

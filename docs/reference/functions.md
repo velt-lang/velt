@@ -325,7 +325,9 @@ TypeScript: `T extends Record<string, V>`, `T extends readonly X[]`, `T extends 
 `T extends "a" | "b"`, an alias of one (`type Primitive = string | number | boolean | null`), a
 function type. The type argument is related to it as `tsc` relates types (structurally for object
 types); one that is not assignable is an error (``the type `boolean` does not satisfy the
-constraint `string | number` ``, TypeScript's TS2345 and TS2344). A literal argument for a type
+constraint `string | number` ``, TypeScript's TS2345 and TS2344), reported at an explicit type
+argument when there is one (`id<boolean>(x)`, `new G<boolean>(x)`), else at the argument. A
+literal argument for a type
 parameter whose bound has literal types keeps its literal type (`same("a")` of
 `same<T extends "a" | "b">` is `same<"a">`), also where the parameter's type contains the type
 parameter (`t?: T`, `t: T | null`, `t: T[]`, `o: { k: T }`). An overloaded call takes the first

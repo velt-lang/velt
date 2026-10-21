@@ -35,12 +35,19 @@ impl FnCx<'_, '_> {
         }
         let mut with_bounds = known.to_vec();
         let mut changed = false;
+        let mut fixed: Option<Vec<Option<TyId>>> = None;
         for (k, b) in c.constraints.iter().enumerate() {
             let Some(b) = *b else { continue };
             if slots.get(k).is_none_or(Option::is_some) {
                 continue;
             }
-            let b = self.cx.subst_known(b, slots);
+            // A slot breaking its interface bound is an error type here, as in `solve_slots`
+            // (no `keyof string` from `K extends keyof T` once `T extends HasA` failed).
+            let fixed = match &fixed {
+                Some(f) => f,
+                None => fixed.insert(self.unbroken_slots(c, slots)),
+            };
+            let b = self.cx.subst_known(b, fixed);
             if self.cx.has_literal_member(b) {
                 with_bounds[k] = Some(b);
                 changed = true;
@@ -50,6 +57,32 @@ impl FnCx<'_, '_> {
             true => self.cx.subst_known(pty, &with_bounds),
             false => expected,
         }
+    }
+
+    /// `slots` with each one whose type breaks an interface bound of its slot an error type.
+    fn unbroken_slots(&mut self, c: &Callable, slots: &[Option<TyId>]) -> Vec<Option<TyId>> {
+        let mut out = slots.to_vec();
+        for (k, s) in out.iter_mut().enumerate() {
+            let (Some(t), Some(bounds)) = (*s, c.bounds.get(k)) else {
+                continue;
+            };
+            for b in bounds.clone() {
+                let b = Bound {
+                    iface: b.iface,
+                    args: b
+                        .args
+                        .iter()
+                        .map(|a| self.cx.subst_known(*a, slots))
+                        .collect(),
+                };
+                let in_scope = self.bounds.clone();
+                if !self.cx.satisfies(t, &b, &in_scope) {
+                    *s = Some(self.cx.ty.error);
+                    break;
+                }
+            }
+        }
+        out
     }
 
     /// The slot of `pty` when it is a type parameter an earlier argument fixed to string
