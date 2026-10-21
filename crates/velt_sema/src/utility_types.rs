@@ -128,7 +128,7 @@ impl Ctx<'_> {
                 return self.ty.error;
             }
             Some(_) => self.relatable_fields(t),
-            None => match self.iface_members(t) {
+            None => match self.indexed_iface_members(t) {
                 Some(members) => Some(members),
                 None => self.object_fields(op, t, written, object.span),
             },
@@ -160,7 +160,7 @@ impl Ctx<'_> {
 
     /// The fields and getters of interface type `t` (one with methods), as an indexed access
     /// type reads them (`I["k"]`), with `t`'s type arguments substituted.
-    fn iface_members(&mut self, t: TyId) -> Option<Vec<ShapeField>> {
+    fn indexed_iface_members(&mut self, t: TyId) -> Option<Vec<ShapeField>> {
         let TyKind::Dyn(d, args) = self.ty.kind(t).clone() else {
             return None;
         };
