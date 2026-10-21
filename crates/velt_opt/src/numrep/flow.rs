@@ -146,10 +146,11 @@ impl Flow {
                 })
             }
             Operand::Copy(p) if self.is_array_len(func, p) => Some(Fact::int(0, ARRAY_LEN_MAX)),
-            // A value read from memory: any value of its type (a field's too, so that
-            // `len & mask` is bounded by the mask).
             Operand::Copy(p) => {
-                let ty = self.place_ty(func, p)?;
+                let ty = crate::visit::derefs(p).then(|| match p.proj.last() {
+                    Some(velt_vir::vir::Proj::Deref(t)) => *t,
+                    _ => Ty::Unit,
+                })?;
                 (ty.is_int() || ty.is_float()).then(|| Fact::top(ty))
             }
         }
@@ -190,8 +191,19 @@ impl Flow {
 
     /// Facts about the value of `rv`, assigned to a local of type `ty`.
     pub fn rvalue(&self, st: &State, func: &Function, rv: &Rvalue, ty: Ty) -> Fact {
-        let arg = |op: &Operand| self.operand(st, func, op);
-        let optype = |op: &Operand| operand_ty(func, op);
+        // A field read (`len & mask`) is any value of the field's type: its fact and type
+        // together, here only (other users of `operand` and `operand_ty` see no fact for it).
+        let field = |op: &Operand| match op {
+            Operand::Copy(p) if !p.proj.is_empty() && operand_ty(func, op) == Ty::Unit => {
+                self.place_ty(func, p).filter(|t| t.is_int())
+            }
+            _ => None,
+        };
+        let arg = |op: &Operand| {
+            self.operand(st, func, op)
+                .or_else(|| field(op).map(Fact::top))
+        };
+        let optype = |op: &Operand| field(op).unwrap_or_else(|| operand_ty(func, op));
         let f = match rv {
             Rvalue::Use(op) => arg(op),
             Rvalue::Cast(op, to) => arg(op).map(|a| fact::cast(optype(op), *to, a)),
