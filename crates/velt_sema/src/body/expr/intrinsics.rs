@@ -272,6 +272,7 @@ impl FnCx<'_, '_> {
             I::DateNow => (vec![], i64_, false),
             I::SharedAdd => (vec![(shared, B), (t, C)], t, true),
             I::SharedGet => (vec![(shared, B)], t, true),
+            I::SharedRead => (vec![(shared, B)], t, true),
             I::SharedSet => (vec![(shared, B), (t, C)], unit, true),
             I::MutexNew => {
                 let m = mutex.map_or(ty.error, |d| ty.intern(TyKind::Adt(d, vec![t])));

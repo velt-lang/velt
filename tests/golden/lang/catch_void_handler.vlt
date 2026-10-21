@@ -1,0 +1,28 @@
+// check: no leaks
+// `p.catch(handler)` where the handler returns nothing gives a `Promise<T | undefined>`
+// (TypeScript's `T | void`): `p`'s value, or `undefined` once the handler ran.
+async function load(fail: boolean): Promise<number> {
+  if (fail) throw new Error("boom");
+  return 5;
+}
+
+async function main(): Promise<void> {
+  const q = load(true).catch(() => {
+    console.log("caught");
+  });
+  console.log(await q);
+  const r = load(false).catch((e) => {
+    console.log("not reached", e);
+  });
+  console.log(await r);
+  load(true).catch(() => {});
+  const s = Promise.resolve("s");
+  void s.finally(() => {}).catch(() => {});
+  const t = await load(true).catch(async () => {
+    console.log("async handler");
+  });
+  console.log(t, typeof t);
+  const v = await load(false).catch(async () => {});
+  console.log(v === undefined ? "none" : v + 1);
+}
+

@@ -1,0 +1,25 @@
+// Errors in destructuring assignments name the places the program wrote, never the hidden
+// variables the assignment uses, and say nothing more after the pattern itself fails; `{ a = 1 }`
+// outside a destructuring target (TS1312) is reported once, the property then read as an error.
+function g(o: { a: number }): number {
+  return o.a;
+}
+function main(): void {
+  let a = 1;
+  let s = "";
+  [a, s] = ["s", 1] as [string, number];
+  const o: { p?: number } = {};
+  ({ p: a } = o);
+  [a] = 5;
+  const anyv: any = [1, 2];
+  let b = 0;
+  [a, b] = anyv;
+  const c = 1;
+  [c] = [2];
+  console.log(g({ a = 2 }));
+  const lit = { a = 1 };
+  const holes = [1, , 2];
+  let x = 0;
+  x = [a, b] = [3, 4];
+  console.log(a, b, s, c, lit, holes, x);
+}

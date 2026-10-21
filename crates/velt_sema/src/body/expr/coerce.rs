@@ -8,7 +8,8 @@
 //! `U | null` when `T` converts to `U`, a fresh array or object to a wider one (`widen_fresh`),
 //! an object type to one with some of its fields, or the same ones in another order
 //! (`object_copy`), and a generic interface value to the same interface with `unknown` or `any`
-//! type arguments (`iface_adapt`).
+//! type arguments (`iface_adapt`), and a `shared<T>` to the `T` it holds, read in place
+//! (`frozen`).
 
 use velt_common::Diagnostic;
 
@@ -59,6 +60,14 @@ impl FnCx<'_, '_> {
         }
         if self.cx.unfreezes(h.ty, exp) {
             return Err(h);
+        }
+        // A `shared<T>` where a `T` is expected: the value inside, read (`frozen`, #36).
+        if matches!(self.cx.ty.kind(h.ty), TyKind::Shared(t) if *t == exp) {
+            let v = self.frozen_view(h, None);
+            return match Self::is_frozen_view(&v) {
+                true => Ok(v),
+                false => Err(v),
+            };
         }
         // A function with properties as its plain function type: its function (#921).
         if self.cx.is_callable_object(h.ty) && matches!(self.cx.ty.kind(exp), TyKind::FnPtr { .. })
@@ -203,6 +212,12 @@ impl FnCx<'_, '_> {
             && matches!(self.cx.ty.kind(h.ty), TyKind::FnPtr { .. })
             && matches!(self.cx.ty.kind(exp), TyKind::FnPtr { .. })
         {
+            return self.adapt_fn(h, exp);
+        }
+        if self.drops_void_params(h.ty, exp) {
+            // `(value: void) => void` where `() => void` is expected (a `Promise<void>`'s
+            // `resolve` stored in a `() => void`): TypeScript lets a trailing `void`
+            // parameter be left out, so a wrapper calls it without the argument.
             return self.adapt_fn(h, exp);
         }
         let h = match self.copy_object(h, exp) {
@@ -404,6 +419,9 @@ impl FnCx<'_, '_> {
         if let Some(note) = self.narrowing_note(found.ty) {
             d = d.with_note(note);
         }
+        if matches!(self.cx.ty.kind(found.ty), TyKind::Shared(t) if *t == expected) {
+            d = d.with_note(self.unreadable_shared_note(found.ty));
+        }
         if let TyKind::Dyn(..) = self.cx.ty.kind(expected) {
             d = match (
                 self.adapt_refusal(expected, found.ty),
@@ -547,5 +565,31 @@ impl FnCx<'_, '_> {
                 .map(|x| x.fields.iter().map(|f| f.optional).collect::<Vec<_>>())
         };
         fa == fb && opt(self.cx, da) != opt(self.cx, db)
+    }
+}
+
+impl FnCx<'_, '_> {
+    /// Is function type `from` function type `to` with trailing `void` parameters added?
+    fn drops_void_params(&self, from: TyId, to: TyId) -> bool {
+        let (
+            TyKind::FnPtr {
+                params: fp,
+                ret: fr,
+                throws: ft,
+            },
+            TyKind::FnPtr {
+                params: tp,
+                ret: tr,
+                throws: tt,
+            },
+        ) = (self.cx.ty.kind(from), self.cx.ty.kind(to))
+        else {
+            return false;
+        };
+        fp.len() > tp.len()
+            && fp[..tp.len()] == tp[..]
+            && fp[tp.len()..].iter().all(|&p| p == self.cx.ty.unit)
+            && fr == tr
+            && ft == tt
     }
 }

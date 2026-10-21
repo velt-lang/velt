@@ -564,6 +564,15 @@ impl FnLower<'_, '_> {
         self.ret_status(ST_OK);
     }
 
+    /// A union, or an option of one (`string | number | null`), which `any_into` boxes as the
+    /// member or nothing it holds.
+    fn union_like(&self, t: TyId) -> bool {
+        match self.cx.kind(t) {
+            TyKind::Option(inner, _) => self.union_like(inner),
+            _ => self.cx.is_union(t),
+        }
+    }
+
     fn any_index_body(&mut self, data: vir::Local, i: vir::Local, out: vir::Local, ty: TyId) {
         let outp = self.any_out(out);
         if self.is_proxy(ty) {
@@ -589,6 +598,13 @@ impl FnLower<'_, '_> {
                     let ep = self.elem_place(&arr, idx, elem);
                     let v = self.share_value(Operand::Copy(ep), elem);
                     self.any_box_into(v, elem, &outp);
+                    self.ret_status(ST_OK);
+                } else if self.union_like(elem) {
+                    // A union element (`[1, "two"]` as `any`): the member it holds.
+                    let ep = self.elem_place(&arr, idx, elem);
+                    let v = self.share_value(Operand::Copy(ep), elem);
+                    let any = self.cx.any_ty();
+                    self.any_into(v, elem, any, &outp);
                     self.ret_status(ST_OK);
                 } else {
                     self.ret_status(ST_UNSUPPORTED);

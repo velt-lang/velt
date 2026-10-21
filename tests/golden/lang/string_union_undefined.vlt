@@ -1,0 +1,19 @@
+// check: no leaks
+// `String(x)` and a template of a value that may be `undefined` and holds a union with an
+// object member write the object as JavaScript does (`[object Object]`).
+interface VNode {
+  type: string;
+}
+
+function text(raw: string | number | VNode | undefined): string {
+  if (typeof raw === "string") return raw;
+  return String(raw);
+}
+
+function show(raw: number | VNode | undefined): string {
+  return `${raw}|${String(raw)}`;
+}
+
+const v: VNode = { type: "div" };
+console.log(text(v), text("s"), text(2), text(undefined));
+console.log(show(v), show(3), show(undefined));

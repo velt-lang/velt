@@ -1,0 +1,8 @@
+// An object pattern over an array with a `...rest` or a numeric key above 4096: one error
+// each, nothing at their uses.
+function main(): void {
+  const arr = ["x"];
+  const { 0: a, ...r } = arr;
+  const { 5000: b = "q" } = arr;
+  console.log(a, r, b.length, r.length);
+}

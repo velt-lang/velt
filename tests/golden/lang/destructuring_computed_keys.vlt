@@ -1,0 +1,39 @@
+// check: no leaks
+// A computed key naming a variable in an object pattern (`const { [k]: v } = r`,
+// `({ [k]: p } = r)`) reads `r[k]`, with its default. Expected output: Node's.
+function get(o: Record<string, number>, k: string): void {
+  const { [k]: v = 0 } = o;
+  let p: number | undefined = 0;
+  ({ [k]: p } = o);
+  console.log(v, p);
+}
+function run1(): void {
+  const o = { a: 1, b: "x" };
+  const k = "a";
+  const { [k]: v } = o;
+  let p = 0, q = "";
+  ({ [k]: p, b: q } = o);
+  console.log(v, p, q);
+  get({ z: 5 }, "z");
+  get({ z: 5 }, "y");
+}
+function run2(): void {
+  const r: Record<string, number> = { a: 1, b: 2 };
+  const keys = ["a", "zz"];
+  for (const k of keys) {
+    const { [k]: v = -1 } = r;
+    console.log(k, v);
+  }
+  const anyo: any = { m: "mm" };
+  const key = "m";
+  const { [key]: mv, other = "o" } = anyo;
+  console.log(mv, other);
+  let got: number | undefined = 0;
+  const kk = "b";
+  ({ [kk]: got } = r);
+  console.log(got);
+}
+function main(): void {
+  run1();
+  run2();
+}

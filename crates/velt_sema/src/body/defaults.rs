@@ -74,7 +74,21 @@ fn check_default(
 /// Does the function apply default `e` of a parameter of type `ty` itself (see the module
 /// doc)? For a dynamic type, unless the default is `undefined`, which a call passes anyway.
 pub(crate) fn in_callee(cx: &mut Ctx, e: &ast::Expr, ty: TyId) -> bool {
-    cx.dynamic(ty).is_some() && !is_undefined(e)
+    (cx.dynamic(ty).is_some() || undefined_only(cx, ty).is_some()) && !is_undefined(e)
+}
+
+/// The `T` of a parameter type `T | undefined` (not `T | null | undefined`, whose `!` would
+/// drop the `null` too): a default of such a parameter is applied by the function itself, to a
+/// passed `undefined` too (`default_prologue`), and the parameter is a `T` in the body.
+pub(crate) fn undefined_only(cx: &Ctx, ty: TyId) -> Option<TyId> {
+    match cx.ty.kind(ty) {
+        crate::hir::TyKind::Option(inner, crate::hir::Nothing::Undefined)
+            if cx.ty.nothing_of(*inner).is_none() && cx.dynamic(ty).is_none() =>
+        {
+            Some(*inner)
+        }
+        _ => None,
+    }
 }
 
 /// The value of an optional parameter (`p?: T`) a call leaves out: `undefined`, as in
@@ -91,9 +105,17 @@ fn optional_default(
 ) -> crate::hir::Expr {
     let saved = std::mem::replace(&mut cx.display_params, names.to_vec());
     let mut fcx = detached(cx, module, names);
-    let h = match fcx.cx.dynamic(ty).is_some() {
-        true => fcx.dynamic_nothing(crate::hir::Nothing::Undefined, ty, e.span),
-        false => fcx.expr_coerce(e, ty, Want::Move),
+    let h = if fcx.cx.dynamic(ty).is_some() {
+        fcx.dynamic_nothing(crate::hir::Nothing::Undefined, ty, e.span)
+    } else if undefined_only(fcx.cx, ty).is_some() {
+        let u = ast::Expr {
+            id: ast::NodeId(u32::MAX),
+            kind: ast::ExprKind::Lit(ast::Lit::Undefined),
+            span: e.span,
+        };
+        fcx.expr_coerce(&u, ty, Want::Move)
+    } else {
+        fcx.expr_coerce(e, ty, Want::Move)
     };
     cx.display_params = saved;
     h
@@ -175,8 +197,13 @@ impl super::FnCx<'_, '_> {
             let param = || synth(ast::ExprKind::Ident(name.clone()));
             let test = undefined_test(param(), span);
             let cond = self.cond(&test);
+            // A `T | undefined` parameter is a `T` once its default is applied.
+            let (ty, value) = match undefined_only(self.cx, ty) {
+                Some(inner) => (inner, synth(ast::ExprKind::NonNull(Box::new(param())))),
+                None => (ty, param()),
+            };
             let then = self.expr_coerce(e, ty, Want::Move);
-            let els = self.expr_coerce(&param(), ty, Want::Move);
+            let els = self.expr_coerce(&value, ty, Want::Move);
             let pick = crate::hir::ExprKind::If {
                 cond: Box::new(cond),
                 then: Box::new(then),

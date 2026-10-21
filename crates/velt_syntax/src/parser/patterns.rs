@@ -48,7 +48,11 @@ impl<'a> Parser<'a> {
                 break;
             }
             let shorthand_ok = self.at_ident_like();
-            let key = self.parse_prop_key()?;
+            let key = match self.peek() {
+                Tok::LBracket if !self.at_symbol_key() => self.parse_pattern_computed_key()?,
+                Tok::Int(_) => self.parse_pattern_number_key()?,
+                _ => self.parse_prop_key()?,
+            };
             let pat = if self.eat(Tok::Colon) {
                 self.parse_binding_pattern()?
             } else if shorthand_ok {
@@ -66,6 +70,66 @@ impl<'a> Parser<'a> {
         self.expect(Tok::RBrace)?;
         let span = self.span_from(lo);
         Ok(self.mk_pat(PatternKind::Object { fields, rest }, span))
+    }
+
+    /// `[key]` of an object pattern that is not a name (`[k]`, a `parse_prop_key`): a string, a
+    /// number or a template without substitutions names that property; any other expression is
+    /// reported (its binding is then an error, `crate::REPORTED_KEY`).
+    fn parse_pattern_computed_key(&mut self) -> PResult<Ident> {
+        let lo = self.cur_lo();
+        self.bump(); // [
+        let key = self.allow_in(|p| p.parse_assign())?;
+        self.expect(Tok::RBracket)?;
+        let span = self.span_from(lo);
+        let name = match &key.kind {
+            ExprKind::Lit(Lit::Str(s)) => Some(s.clone()),
+            ExprKind::Lit(Lit::Int {
+                value,
+                suffix: None,
+            }) if *value < 1 << 53 => Some(value.to_string()),
+            ExprKind::Template { quasis, exprs } if exprs.is_empty() && quasis.len() == 1 => {
+                Some(quasis[0].clone())
+            }
+            _ => None,
+        };
+        match name {
+            Some(name) => Ok(Ident {
+                name,
+                span: key.span,
+            }),
+            None => {
+                self.error(
+                    "a computed key in a destructuring pattern must be a name (`[k]`), a string or a number; store the key in a variable first (`const k = f(); const { [k]: v } = o;`)",
+                    span,
+                );
+                Ok(Ident {
+                    name: crate::REPORTED_KEY.into(),
+                    span,
+                })
+            }
+        }
+    }
+
+    /// A numeric property name in an object pattern, as in an object literal: `{ 0: v }` and
+    /// `{ 0x10: v }` read the keys "0" and "16".
+    fn parse_pattern_number_key(&mut self) -> PResult<Ident> {
+        match self.literal_at_cursor() {
+            Some(Lit::Int {
+                value,
+                suffix: None,
+            }) if value < 1 << 53 => {
+                let key = Ident {
+                    name: value.to_string(),
+                    span: self.cur_span(),
+                };
+                self.bump();
+                Ok(key)
+            }
+            _ => {
+                self.error_expected("property name");
+                Err(Fail)
+            }
+        }
     }
 
     /// `pat = value` after a field or element pattern.

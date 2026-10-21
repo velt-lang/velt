@@ -1,0 +1,11 @@
+// A computed key in an object pattern other than a name, a string, a number or a template
+// without substitutions is one parse error each, with no follow-on errors.
+const ks = { k: "a" };
+function k(s: string): string { return s; }
+function main(): void {
+  const o: Record<string, number> = { a: 1 };
+  const { [ks.k]: v } = o;
+  const { [k("a")]: w } = o;
+  const { [`${ks.k}`]: x } = o;
+  console.log(v, w, x);
+}

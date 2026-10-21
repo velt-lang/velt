@@ -115,13 +115,20 @@ adding `line.charCodeAt(i)` per byte adds ~0.4 s. Causes:
   ```
   **Fix:** make it an intrinsic lowered inline (`i < len ? ptr[i] : -1`), like `StrLen`.
 
-### 3. Multi-threaded: no read-only sharing across tasks (language / runtime)
-`main_mt.vlt` must pass `seq.clone()` to each of the 7 tasks (async parameters are owned), so it
-copies 7 × 125 MB and peaks at 1 GB RSS (Rust #7: 133 MB with an `Arc<Vec<u8>>`). `shared(seq)`
-does not help: `shared<u8[]>` can't be indexed or read (`no field length on type shared<u8[]>`,
-`cannot index a value of type shared<u8[]>`). **Proposed:** let `shared<T>` be read like a `T`
-borrow (index, `length`, `for…of`, passing to a borrowing param), which is sound because a
-`shared` value is immutable unless it holds a `Mutex`.
+### 3. Multi-threaded: read-only sharing across tasks (#36, done)
+`main_mt.vlt` used to pass `seq.clone()` to each of the 7 tasks (async parameters are owned),
+copying 7 × 125 MB and peaking at 1 GB RSS (Rust #7: 133 MB with an `Arc<Vec<u8>>`), because a
+`shared<u8[]>` could not be read. A `shared<T>` without a `Mutex` is now read like a `T`
+(index, `length`, `T`'s methods, passed where a `T` is read), so the tasks take one
+`shared(seq)` and pass it to `frequencies(seq: u8[], …)`. Lowering borrows the bytes in the
+shared box (the 24-byte header is copied into a local, so the loop keeps it in registers).
+Measured on an M-series Mac (macOS, 10 cores, under heavy load; 5 interleaved runs, 25M input,
+identical output):
+
+| `main_mt.vlt` | peak RSS | instructions | user CPU | sys CPU |
+|---|---:|---:|---:|---:|
+| `seq.clone()` per task | 971–1011 MB | 50.9–51.4 G | 9.11–9.24 s | 0.39–0.62 s |
+| one `shared(seq)` | 252–272 MB | 49.9–50.0 G | 8.83–9.03 s | 0.14–0.18 s |
 
 ## Friction for a TypeScript developer
 - No `Number.prototype.toFixed` at the time (filed as `std_number_to_fixed.vlt`): `main.vlt`

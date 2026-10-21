@@ -78,10 +78,10 @@ Smaller: `readAll` (`crates/velt_rt/src/stdin.rs`) does `String::from_utf8_lossy
 `String::from_utf8(buf)` with a lossy fallback avoids the copy.
 
 ## Multi-threaded version
-`main_mt.vlt` gives each of the 10 tasks its own `sequence.clone()` (async parameters are owned,
-and `shared<string>` can't be passed where a `string` is read: `expected string, found
-shared<string>`), so it peaks at 473–521 MB vs Rust's 201 MB. Proposal (as in
-k-nucleotide/NOTES.md): let `shared<T>` be read like a borrowed `T`.
+`main_mt.vlt` gives each of the 10 tasks `sequence.clone()`. For a string that is another
+reference (strings count atomically), not a copy: passing one `shared(sequence)` instead (#36)
+measured the same peak RSS and instructions, so the program keeps `clone()`. Its memory is the
+substitution chain's intermediate strings.
 
 ## Friction for a TypeScript developer
 - Module-level `const VARIANTS = [...]` is rejected ("module-level constants must be constant
