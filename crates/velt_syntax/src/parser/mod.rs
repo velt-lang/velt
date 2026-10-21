@@ -583,20 +583,19 @@ impl<'a> Parser<'a> {
         self.parse_prop_key_with(true)
     }
 
-    /// A key in a destructuring pattern: [`Self::parse_prop_key`] with literal keys only in
-    /// brackets (`{ [t.tag]: v }` and `{ [KEY]: v }` are reported).
+    /// A key in a destructuring pattern: [`Self::parse_prop_key`] without paths (`{ [t.tag]: v }`
+    /// is reported; `{ [KEY]: v }` is a name sema resolves).
     fn parse_pattern_key(&mut self) -> PResult<Ident> {
         self.parse_prop_key_with(false)
     }
 
     fn parse_prop_key_with(&mut self, paths: bool) -> PResult<Ident> {
-        // A pattern takes literal keys only: what `[KEY]` or `[t.tag]` names is not resolved
-        // there, so they are reported rather than read as a field named `[KEY]`.
-        let literal_key = self.member_key_len(0, false) > 0 && self.symbol_key_len(0) == 0;
-        if !paths && self.at(Tok::LBracket) && !literal_key {
+        // A pattern takes a literal key or a name (`[KEY]`, which sema resolves); a path or
+        // another expression (`[t.tag]`, `[K.A]`) is reported.
+        if !paths && self.at(Tok::LBracket) && self.member_key_len(0, false) == 0 {
             let span = self.cur_span();
             self.error(
-                "a computed key in a destructuring pattern must be a string or number literal (`{ [\"k\"]: v }`): read the property with an index instead (`const v = o[KEY]`)",
+                "a computed key in a destructuring pattern must be a string or number literal or a name (`{ [\"k\"]: v }`, `{ [KEY]: v }`): read the property with an index instead (`const v = o[t.tag]`)",
                 span,
             );
             // Past the key's `]`, so the rest of the pattern is still checked.

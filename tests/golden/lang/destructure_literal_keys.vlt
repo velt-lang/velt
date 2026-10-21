@@ -1,6 +1,5 @@
-// Literal computed keys in destructuring patterns, on a `Record` and on a typed object, and the
-// index a key held in a constant is read with (a pattern takes literal keys only:
-// errors/destructure_computed_path). Output compared with Node.
+// Literal computed keys in destructuring patterns, on a `Record` and on a typed object, and
+// reads through an index with a key held in a constant. Output compared with Node.
 
 const KEY = "a";
 

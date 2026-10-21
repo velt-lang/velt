@@ -294,9 +294,9 @@ reads it as `"-0"`). Such a name is for fields: a method or accessor named by a 
 (`["a-b"]() {}`, `get "c d"()`, `get 1()`, `1e3() {}`) is not supported yet. A symbol made in
 place (`[Symbol("x")]: v`, also in an object literal) is an error that asks for a module
 constant. An enum member as a key (`[Flags.SKIP]?: boolean`) parses in a declaration but is not
-supported yet (#923). In a destructuring pattern, a computed key must be a string or number
-literal: `{ [KEY]: v } = o` and `{ [t.tag]: v } = o` are errors, and the property is read with
-an index instead (`const v = o[KEY]`).
+supported yet (#923). In a destructuring pattern, a computed key is a string or number literal
+or a name (`{ [KEY]: v } = o`); a path or another expression (`{ [t.tag]: v } = o`) is an error,
+and the property is read with an index instead (`const v = o[t.tag]`).
 A class or interface may declare a method, getter or setter with such a key (`[KEY]() {}`,
 `get [KEY]()`) or a well-known symbol key (`get [Symbol.toStringTag]()`); `o[KEY]`, `o[KEY]()`,
 `o[KEY] = v` and `KEY in o` find it. A quoted key is an ordinary string key, also one that reads

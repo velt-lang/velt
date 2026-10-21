@@ -131,15 +131,18 @@ fn a_pattern_takes_no_path_keys() {
     let e = errors("function f() { const { [t.tag]: v, w } = o; g(); }");
     assert_eq!(e.len(), 1, "{e:?}");
     assert!(e[0].contains("destructuring pattern"), "{e:?}");
-    // Nor a constant's name: `{ [KEY]: v }` would read a field named `[KEY]`.
+    // Nor another expression; a name (`[KEY]`) is left to sema.
     for src in [
-        "function f() { const { [KEY]: v } = o; }",
-        "function f() { const k = \"b\"; const { [k]: v } = o; }",
+        "function f() { const { [K.A]: v } = o; }",
+        "function f() { const { [\"a\" + \"b\"]: v } = o; }",
+        "function f() { const { [`ab`]: v } = o; }",
+        "function f() { const { [+1]: v } = o; }",
     ] {
         let e = errors(src);
         assert_eq!(e.len(), 1, "{src}: {e:?}");
-        assert!(e[0].contains("string or number literal"), "{src}: {e:?}");
+        assert!(e[0].contains("destructuring pattern"), "{src}: {e:?}");
     }
+    parse_ok("function f() { const { [KEY]: v, [k]: w } = o; }");
     // In declarations they are member names.
     parse_ok("interface T { [Flags.A]: string; [KEY]: number }");
 }

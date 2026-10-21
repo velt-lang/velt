@@ -1,24 +1,14 @@
-// A destructuring pattern's computed key must be a string or number literal: what `[t.tag]`,
-// `[K.A]`, `[KEY]` or `[k]` names is not resolved in a pattern, so it is reported rather than read
-// as a field named `[KEY]`. Read the property with an index instead (`const v = o[KEY]`).
+// A destructuring pattern's computed key must be a string or number literal or a name: a path
+// or another expression (`[t.tag]`, `[K.A]`, `["a" + "b"]`) names a property only known while the
+// program runs, so read it with an index instead (`const v = o[t.tag]`).
 
 const K = { A: "a" } as const;
-const KEY = "a";
-const NK = 1.5;
-
-interface T {
-  a: number;
-}
 
 function main() {
   const t = { tag: "a" };
-  const o: Record<string, number> = { a: 1 };
-  const typed: T = { a: 1 };
+  const o: Record<string, number> = { a: 1, ab: 2 };
   const { [t.tag]: v } = o;
   const { [K.A]: w } = o;
-  const { [KEY]: x } = o;
-  const { [KEY]: y } = typed;
-  const k = "b";
-  const { [k]: z, [NK]: n } = o;
-  console.log(v, w, x, y, z, n);
+  const { ["a" + "b"]: x } = o;
+  console.log(v, w, x);
 }
