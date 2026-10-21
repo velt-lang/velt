@@ -1,0 +1,16 @@
+// An enum member key names a member the enum declares; another path is not a key the compiler
+// knows (#923).
+enum Flags {
+  SKIP = "__v_skip",
+}
+
+interface Target {
+  name: string;
+  [Flags.NOPE]?: boolean;
+  [Other.SKIP]?: boolean;
+}
+
+function main() {
+  const t: Target = { name: "t" };
+  console.log(t.name);
+}
