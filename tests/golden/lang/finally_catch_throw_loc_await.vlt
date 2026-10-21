@@ -1,0 +1,17 @@
+// A `finally` whose try/catch awaits a rejected promise keeps the location of the error passing
+// through it across the await (#1404, #356).
+async function fails(): Promise<void> {
+  throw new Error("in finally");
+}
+async function g(): Promise<void> {
+  try {
+    throw new RangeError("outer");
+  } finally {
+    try {
+      await fails();
+    } catch (e) {
+      console.log("swallowed", (e as Error).message);
+    }
+  }
+}
+await g();
