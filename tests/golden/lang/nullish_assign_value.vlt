@@ -1,0 +1,29 @@
+// check: no leaks
+// The value of `x ??= d` with a `d` that is not null is not null either, also for a
+// module-level variable, which is not narrowed (`(xs ??= []).push(f)`).
+let xs: (() => void)[] | null = null;
+let signal: { aborted: boolean } | undefined = undefined;
+
+function reg(f: () => void): void {
+  (xs ??= []).push(f);
+}
+
+function inert(): { aborted: boolean } {
+  return (signal ??= { aborted: false });
+}
+
+reg(() => console.log("a"));
+reg(() => console.log("b"));
+function runAll(): void {
+  for (const f of xs ?? []) f();
+}
+
+runAll();
+console.log(inert(), inert().aborted);
+
+function local(o: { n: number } | undefined): number {
+  const v = (o ??= { n: 1 }).n;
+  return v + o.n;
+}
+
+console.log(local(undefined), local({ n: 5 }));

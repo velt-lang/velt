@@ -1,0 +1,31 @@
+// check: no leaks
+// A module `let` named by a computed key inside functions, in a file with top-level statements:
+// the functions read it when they run (declarations, parameters, assignment targets). Expected
+// output: Node's.
+let KL = "a";
+const r: Record<string, number> = { a: 1, b: 2 };
+function get(): number {
+  const { [KL]: v = 0 } = r;
+  return v;
+}
+function getAssign(): number {
+  let w = 0;
+  ({ [KL]: w = 7 } = r);
+  return w;
+}
+function getParam({ [KL]: u = 5 }: Record<string, number>): number {
+  return u;
+}
+console.log(get(), getAssign(), getParam(r));
+KL = "b";
+console.log(get(), getAssign(), getParam(r));
+KL = "zz";
+console.log(get(), getAssign(), getParam(r));
+const later = () => {
+  const KA = "a";
+  return () => {
+    const { [KA]: q = -1 } = r;
+    return q;
+  };
+};
+console.log(later()());

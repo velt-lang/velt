@@ -1,0 +1,5 @@
+call_fn_union_short_errors.vlt:10:3: error: this function takes 2 arguments but 0 arguments were supplied
+call_fn_union_short_errors.vlt:11:3: error: this function takes 2 arguments but 1 argument was supplied
+call_fn_union_short_errors.vlt:15:13: error: this function takes 2 arguments but 1 argument was supplied
+call_fn_union_short_errors.vlt:16:18: error: a spread argument must have a tuple type or fill a rest parameter
+call_fn_union_short_errors.vlt:23:24: error: mismatched types

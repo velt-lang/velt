@@ -1,0 +1,5 @@
+cannot modify `s` while a `for...of` loop iterates over `s`
+cannot use `a` here: this call may modify it through another argument
+`a` is modified by this closure
+cannot use `u` here: this call may modify it through another argument
+`u` is modified by this closure

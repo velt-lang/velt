@@ -3,7 +3,11 @@
 //! for an `Error` (Node's first line), or `Uncaught <value>` for any other thrown value as
 //! `console.log` prints it (Node prints `a string` for `throw "a string"`), to stderr, is dropped,
 //! and makes the process exit with 1. An `async main` runs its state machine with
-//! `velt_rt_block_on` (state on `velt_main`'s stack) and reads the result at `state + 0`.
+//! `velt_rt_block_on` (state on `velt_main`'s stack) and reads the result at `state + 0`. So does
+//! a synchronous `main` of a program that starts promises or tasks (timers, microtasks, `spawn`):
+//! its root task (`SyncMainRoot`) calls `main` and stores the result, so what `main` starts runs
+//! on that task, as in Node, where `main end` prints before the callbacks `main` queued. A
+//! program that never does calls `main` directly.
 //!
 //! Before anything else, `velt_main` initializes the native libraries of packages
 //! (native_abi.md "Start-up"): for each, `rc = velt_native_init_<pkg>(velt_rt_native_api())`
@@ -14,7 +18,7 @@ use velt_sema::hir::{self, DefId, TyId, TyKind};
 use super::glue::SLOT_NAME;
 use super::operand::proj;
 use super::rt::Rt;
-use super::{cint, FnLower, ScopeKind};
+use super::{cint, FnLower, ScopeKind, Work};
 use crate::vir::{self, BinOp, Function, Linkage, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
 impl<'c, 'h> FnLower<'c, 'h> {
@@ -41,31 +45,87 @@ impl<'c, 'h> FnLower<'c, 'h> {
             return lw.finish_export();
         }
         let (ret, throws) = (f.ret, f.throws);
-        let fid = lw.cx.func_for(def, vec![]);
         let abi = lw.cx.ret_abi(ret, throws);
         lw.push_scope(ScopeKind::Block);
-        let callee = vir::Callee::Func(fid);
-        let never = lw.cx.is_never(ret) && throws.is_none();
-        let code = match (abi.out, throws) {
-            (Some(out), Some(err)) => {
-                let tmp = lw.temp(out);
-                let a = lw.addr(Place::local(tmp));
-                lw.call(callee, vec![a], None, false);
-                lw.uncaught_check(tmp, ret, err)
+        // Whether `main` (or a module initializer) reaches promises or tasks: everything else is
+        // built by now except what the module initializers call.
+        while let Some((fid, work)) = lw.cx.queue.pop_front() {
+            lw.cx.build_now(fid, &work);
+        }
+        let code = if lw.cx.reaches_tasks() {
+            let out = match (abi.out, throws) {
+                (Some(out), Some(_)) => out,
+                _ if abi.ret == Ty::I32 => Ty::I32,
+                _ => Ty::U8,
+            };
+            let s = lw.temp(out);
+            let a = lw.addr(Place::local(s));
+            let root = lw.cx.func(Work::SyncMainRoot);
+            lw.call_rt(Rt::BlockOn, vec![super::cfunc(root), a], None);
+            match throws {
+                Some(err) if abi.out.is_some() => lw.uncaught_check(s, ret, err),
+                _ if abi.ret == Ty::I32 => Operand::Copy(Place::local(s)),
+                _ => cint(0, Ty::I32),
             }
-            (_, _) if abi.ret == Ty::I32 => {
-                let d = lw.temp(Ty::I32);
-                lw.call(callee, vec![], Some(Place::local(d)), never);
-                Operand::Copy(Place::local(d))
-            }
-            _ => {
-                lw.call(callee, vec![], None, never);
-                cint(0, Ty::I32)
-            }
+        } else {
+            lw.call_main(def, None)
         };
         lw.terminate(Terminator::Return(code));
         lw.scopes.clear();
         lw.finish_export()
+    }
+
+    /// Calls the synchronous `main` `def`: with `state` (the root of `SyncMainRoot`), stores its
+    /// result there; else yields the exit code.
+    fn call_main(&mut self, def: DefId, state: Option<vir::Local>) -> Operand {
+        let f = self.cx.fn_def(def);
+        let (ret, throws) = (f.ret, f.throws);
+        let fid = self.cx.func_for(def, vec![]);
+        let abi = self.cx.ret_abi(ret, throws);
+        let callee = vir::Callee::Func(fid);
+        let never = self.cx.is_never(ret) && throws.is_none();
+        match (abi.out, throws) {
+            (Some(out), Some(err)) => {
+                if let Some(sp) = state {
+                    self.call(callee, vec![Operand::Copy(Place::local(sp))], None, false);
+                    return cint(0, Ty::I32);
+                }
+                let tmp = self.temp(out);
+                let a = self.addr(Place::local(tmp));
+                self.call(callee, vec![a], None, false);
+                self.uncaught_check(tmp, ret, err)
+            }
+            (_, _) if abi.ret == Ty::I32 => {
+                let d = match state {
+                    Some(sp) => proj(&Place::local(sp), Proj::Deref(Ty::I32)),
+                    None => Place::local(self.temp(Ty::I32)),
+                };
+                self.call(callee, vec![], Some(d.clone()), never);
+                Operand::Copy(d)
+            }
+            _ => {
+                self.call(callee, vec![], None, never);
+                cint(0, Ty::I32)
+            }
+        }
+    }
+
+    /// `(state, cx) -> READY`: the root task of a synchronous `main` that reaches promises or
+    /// tasks (`build_main`).
+    pub(super) fn build_sync_main_root(cx: &'c mut super::Cx<'h>) -> Function {
+        let mut lw = FnLower::bare(cx, vec![]);
+        let state = lw.new_local(Ty::Ptr, Some("state".into()));
+        lw.new_local(Ty::Ptr, Some("cx".into()));
+        let def = lw
+            .cx
+            .hir
+            .entry
+            .unwrap_or_else(|| super::ice("a main root without a main"));
+        lw.push_scope(ScopeKind::Block);
+        lw.call_main(def, Some(state));
+        lw.terminate(Terminator::Return(cint(1, Ty::U32)));
+        lw.scopes.clear();
+        lw.finish("_Gsync_main_root".into(), vec![Ty::Ptr, Ty::Ptr], Ty::U32)
     }
 
     /// `velt_rt_block_on(main$poll, &state)`; yields the exit code.

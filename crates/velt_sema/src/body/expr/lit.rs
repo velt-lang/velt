@@ -272,6 +272,18 @@ impl FnCx<'_, '_> {
 
     /// `null` / `undefined` (`what`) where `t` does not allow it (TS2322).
     fn nothing_mismatch(&mut self, what: &str, t: TyId, span: Span) -> hir::Expr {
+        let param = |s: &Self| {
+            s.optional_slots
+                .iter()
+                .rev()
+                .find(|(sp, _)| *sp == span)
+                .is_some_and(|(_, k)| *k == crate::body::OptionalSlot::Param)
+        };
+        if what == "undefined" && param(self) {
+            // For a parameter with a default, which the call gives instead (`default_args.rs`).
+            let u = self.cx.ty.undefined();
+            return self.mk(H::Lit(hir::Lit::Null), u, span);
+        }
         if what == "undefined" && self.optional_slot_error(span, false) {
             return self.error_expr(span);
         }

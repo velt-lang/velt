@@ -1,0 +1,30 @@
+// check: no leaks
+// Clearing the first timer of a delay list leaves the list's expiry where it was, as in Node:
+// the loop wakes then, finds the list's next timer not due, and gives the list a new place. A
+// timer of another list due in between runs on time, before it (`C` before `B`), whether the
+// cleared timer was a timeout or an interval. Each `B` is due 200 ms after its list's expiry,
+// so a loop that wakes up to 200 ms late still prints the same.
+function busy(ms: number) {
+  const s = Date.now();
+  while (Date.now() - s < ms) {}
+}
+
+function intervalVariant() {
+  const a = setInterval(() => console.log("never interval A"), 300);
+  setTimeout(() => console.log("interval: C 310"), 310);
+  busy(200);
+  setTimeout(() => console.log("interval: B 300 (due 500)"), 300);
+  clearInterval(a);
+}
+
+function main() {
+  const a = setTimeout(() => console.log("never A"), 300);
+  setTimeout(() => console.log("timeout: C 310"), 310);
+  busy(200);
+  setTimeout(() => {
+    console.log("timeout: B 300 (due 500)");
+    intervalVariant();
+  }, 300);
+  clearTimeout(a);
+  console.log("main end");
+}

@@ -1,7 +1,9 @@
 // `Promise.all` rejects as soon as one promise rejects, like JS: it does not wait for the
 // slower promises, which keep running to completion (their results and later rejections are
-// dropped). Within a case, timers start together and are far apart (except for the tie), and
-// each case waits for its losers before the next one starts, so a slow machine keeps the order.
+// dropped). Within a case, timers start together and are far apart (except for the tie), a
+// timer created later is due later unless it is due at least 590 ms earlier (a pause between two
+// calls only delays the later one), and each case waits for its losers before the next one
+// starts, so a slow machine keeps the order.
 class Failed extends Error {
   ms: i64;
 
@@ -33,7 +35,7 @@ async function startNow(name: string): Promise<string> throws Failed {
 
 async function main() {
   try {
-    await Promise.all([step("slow", 600, false), step("fails", 40, true), step("mid", 300, false)]);
+    await Promise.all([step("mid", 300, false), step("fails", 40, true), step("slow", 600, false)]);
   } catch (e) {
     console.log("all rejected:", e.message);
   }
@@ -48,7 +50,7 @@ async function main() {
   }
   await sleep(1000);
 
-  console.log("fulfilled:", await Promise.all([step("a", 300, false), step("b", 10, false)]));
+  console.log("fulfilled:", await Promise.all([step("a", 600, false), step("b", 10, false)]));
 
   // A tie goes to the first in array order: timers due in the same tick resume in creation order
   // (#157), so its handler runs before the siblings'.

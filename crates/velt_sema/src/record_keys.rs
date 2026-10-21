@@ -21,7 +21,7 @@ use crate::defs::DefInfo;
 use crate::dispatch::{add_work, instantiate, Dispatch, Pass, Rounds};
 use crate::hir::{Def, DefId, LitValue, TyId, TyKind};
 use crate::inst_sites::{self, carry_guard, resolve_param_calls, ParamCall, Uses};
-use crate::types::{children, collect_params};
+use crate::types::collect_params;
 
 const KEY_NOTE: &str =
     "record keys are `string`, a union of string literals or a string enum; use `Map<K, V>` for other keys";
@@ -198,7 +198,7 @@ fn requirements(
         }
     }
     for (t, span) in &u.types {
-        for k in keys_in(cx, *t, memo, &mut vec![]) {
+        for k in crate::key_groups::keys_in(cx, *t, memo) {
             reqs.push((k, *span, f, 0));
         }
     }
@@ -252,53 +252,4 @@ fn origin_note(cx: &Ctx, origin: DefId, here: DefId) -> Option<String> {
     };
     let std = name.starts_with("std/");
     (origin != here && !std).then(|| format!("required because `{name}` uses it as a `Record` key"))
-}
-
-/// The record key types `t` contains, also through the fields of structs, classes and unions
-/// (`stack`: types being visited, so recursive types terminate).
-fn keys_in(
-    cx: &mut Ctx,
-    t: TyId,
-    memo: &mut FxHashMap<TyId, Vec<TyId>>,
-    stack: &mut Vec<TyId>,
-) -> Vec<TyId> {
-    if let Some(ks) = memo.get(&t) {
-        return ks.clone();
-    }
-    if stack.contains(&t) {
-        return vec![];
-    }
-    stack.push(t);
-    let kind = cx.ty.kind(t).clone();
-    let mut parts = children(&kind);
-    let mut out = vec![];
-    if let Some((k, _)) = cx.record_type_args(t) {
-        out.push(k);
-    } else if let TyKind::Adt(d, args) = &kind {
-        for f in member_types(cx, *d) {
-            parts.push(cx.subst(f, args));
-        }
-    }
-    for p in parts {
-        for k in keys_in(cx, p, memo, stack) {
-            if !out.contains(&k) {
-                out.push(k);
-            }
-        }
-    }
-    stack.pop();
-    // Inner results may be cut short by the recursion guard: keep only complete ones.
-    if stack.is_empty() {
-        memo.insert(t, out.clone());
-    }
-    out
-}
-
-/// Field types of a struct, class or object type; payload types of an enum (generic).
-fn member_types(cx: &Ctx, d: DefId) -> Vec<TyId> {
-    match &cx.info[d.0 as usize] {
-        DefInfo::Adt(a) => a.fields.iter().map(|f| f.ty).collect(),
-        DefInfo::Enum(e) => e.variants.iter().flat_map(|v| v.payload.clone()).collect(),
-        _ => vec![],
-    }
 }
