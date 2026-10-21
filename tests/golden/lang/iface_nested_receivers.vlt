@@ -157,6 +157,12 @@ function heldTuples(): void {
   ws[wk]![0] = (() => { wk = 1; return 5; })();
   (ws[wk - 1] as [number, string])[1] += (() => { wk = 2; return "b"; })();
   console.log(ws, wk);
+  // An index behind an inner `!` is bound too.
+  const hh: { t: [number, string] | null }[] = [{ t: [0, "h"] }, { t: null }];
+  let hn = 0;
+  hh[hn]!.t![0] = (() => { hn = 1; return 9; })();
+  (hh[hn - 1]! as { t: [number, string] | null }).t![1] += (() => { hn = 5; return "i"; })();
+  console.log(JSON.stringify(hh), hn);
   // A variable a closure assigns.
   let held: [number, string] | null = [1, "o"];
   const replace = (): void => { held = [2, "n"]; };

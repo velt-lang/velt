@@ -34,8 +34,8 @@ use velt_common::Span;
 use velt_syntax::ast;
 
 use super::accessor_rmw::{block, stmt, RECEIVER};
-use super::assign_paths::{is_plain_path, is_pure_value};
-use super::member_keys::{literal_key, member_view};
+use super::assign_paths::{is_hoisted, is_literal, is_plain_path, is_pure_value, pure_indexes};
+use super::member_keys::member_view;
 use super::setters::synth;
 use crate::body::{FnCx, LocalKind, Want};
 use crate::hir::{self, ExprKind as H};
@@ -155,6 +155,30 @@ fn pure_below(target: &ast::Expr, depth: usize) -> bool {
             is_pure_value(index) && pure_below(object, depth - 1)
         }
         _ => false,
+    }
+}
+
+/// How [`FnCx::hoist`] binds the parts of a target.
+#[derive(Clone, Copy)]
+struct Hoist {
+    /// Also a receiver that may be checked again but not evaluated again (a call).
+    strict: bool,
+    /// Every index that is not a literal (or already bound).
+    all: bool,
+    /// The target's own index too (it is read again after the assignment).
+    own: bool,
+}
+
+impl Hoist {
+    /// Is `index` (of the target itself when `top`) kept as written?
+    fn keeps(self, index: &ast::Expr, top: bool) -> bool {
+        if is_literal(index) || is_hoisted(index) {
+            return true;
+        }
+        if top && !self.own {
+            return true;
+        }
+        !self.all && is_pure_value(index)
     }
 }
 
@@ -315,7 +339,16 @@ impl FnCx<'_, '_> {
         }
         let mut stmts = vec![];
         self.push_scope();
-        let target = self.hoist(target, true, false, &mut stmts);
+        let rhs_pure = match w {
+            NestedWrite::Assign(_, v) => is_pure_value(v),
+            NestedWrite::Update(..) => true,
+        };
+        let h = Hoist {
+            strict: false,
+            all: !rhs_pure || !pure_indexes(target),
+            own: false,
+        };
+        let target = self.hoist(target, true, h, &mut stmts);
         let (h, valued) = match w {
             NestedWrite::Assign(op, v) => self.assign_as(op, &target, v, as_value, span),
             NestedWrite::Update(op, prefix) => {
@@ -348,7 +381,7 @@ impl FnCx<'_, '_> {
                     return true;
                 }
             }
-            cur = inner(c);
+            cur = held_inner(c);
         }
         false
     }
@@ -384,12 +417,14 @@ impl FnCx<'_, '_> {
     /// `e` (a part of the target; `top`: the target itself) with its receiver and the indexes
     /// below it that have an effect bound to temporaries (appended to `stmts`), in evaluation
     /// order. `strict`: also a receiver that may be checked again but not evaluated again (a
-    /// call).
+    /// call). `all`: every index that is not a literal, the target's own too (a right-hand side
+    /// or another index may change a variable index before the target is read again). The
+    /// object of an element is seen through `!` and `as` ([`Self::hoist_held`]).
     fn hoist(
         &mut self,
         e: &ast::Expr,
         top: bool,
-        strict: bool,
+        h: Hoist,
         stmts: &mut Vec<hir::Stmt>,
     ) -> ast::Expr {
         let b = bare(e);
@@ -399,7 +434,7 @@ impl FnCx<'_, '_> {
                 prop,
                 optional: false,
             } => ast::ExprKind::Member {
-                object: Box::new(self.hoist(object, false, strict, stmts)),
+                object: Box::new(self.hoist(object, false, h, stmts)),
                 prop: prop.clone(),
                 optional: false,
             },
@@ -408,11 +443,10 @@ impl FnCx<'_, '_> {
                 index,
                 optional: false,
             } => {
-                let object = Box::new(self.hoist(object, false, strict, stmts));
-                let index = if top || is_pure_value(index) || literal_key(index).is_some() {
-                    index.clone()
-                } else {
-                    Box::new(self.bind_hoisted(index, stmts))
+                let object = Box::new(self.hoist_held(object, h, stmts));
+                let index = match h.keeps(index, top) {
+                    true => index.clone(),
+                    false => Box::new(self.bind_hoisted(index, stmts)),
                 };
                 ast::ExprKind::Index {
                     object,
@@ -420,7 +454,7 @@ impl FnCx<'_, '_> {
                     optional: false,
                 }
             }
-            _ if top || (!strict && peekable(b)) || is_plain_path(b) => return e.clone(),
+            _ if top || (!h.strict && peekable(b)) || is_plain_path(b) => return e.clone(),
             _ => return self.bind_hoisted(e, stmts),
         };
         ast::Expr {
@@ -443,38 +477,28 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> Option<hir::Expr> {
         let t = bare(target);
+        if !matches!(
+            t.kind,
+            ast::ExprKind::Index {
+                optional: false,
+                ..
+            } | ast::ExprKind::Member {
+                optional: false,
+                ..
+            }
+        ) {
+            return None;
+        }
         let mut stmts = vec![];
         self.push_scope();
-        let t = match &t.kind {
-            ast::ExprKind::Index {
-                object,
-                index,
-                optional: false,
-            } => {
-                let object = Box::new(self.hoist_held(object, &mut stmts));
-                let index = match is_pure_value(index) || literal_key(index).is_some() {
-                    true => index.clone(),
-                    false => Box::new(self.bind_hoisted(index, &mut stmts)),
-                };
-                let kind = ast::ExprKind::Index {
-                    object,
-                    index,
-                    optional: false,
-                };
-                ast::Expr {
-                    id: t.id,
-                    kind,
-                    span: t.span,
-                }
-            }
-            ast::ExprKind::Member {
-                optional: false, ..
-            } => self.hoist(t, true, true, &mut stmts),
-            _ => {
-                self.pop_scope();
-                return None;
-            }
+        // The target is read again after the assignment: it reads the slot written only when
+        // no right-hand side or other index changed a variable index meanwhile.
+        let h = Hoist {
+            strict: true,
+            all: !is_pure_value(value) || !pure_indexes(t),
+            own: true,
         };
+        let t = self.hoist(t, true, h, &mut stmts);
         let (a, valued) = self.assign_as(op, &t, value, true, span);
         let (unit, ty) = (self.cx.ty.unit, a.ty);
         let value = if valued || self.cx.ty.is_bottom(ty) || self.cx.ty.has_error(ty) {
@@ -489,21 +513,21 @@ impl FnCx<'_, '_> {
         Some(self.mk(H::Block(block(stmts, Some(value), span)), ty, span))
     }
 
-    /// [`Self::hoist`] of the receiver of an element assigned as a value, seeing through `!` and
-    /// `as`: `p!` and `p as T` name the place `p` names, so a tuple held there stays the place
-    /// written (`(opt![0] = 5)`, `((u as [number, string])[0] = 9)`), not a copy bound to a
-    /// temporary.
-    fn hoist_held(&mut self, e: &ast::Expr, stmts: &mut Vec<hir::Stmt>) -> ast::Expr {
+    /// [`Self::hoist`] of the object of an element, seeing through `!` and `as` on a member or an
+    /// element: `p!` and `p as T` name the place `p` names, so a tuple held there stays the
+    /// place written (`(opt![0] = 5)`, `is[q++].t![0]++`, `g[0]![0]![1] = 9`), not a copy bound
+    /// to a temporary.
+    fn hoist_held(&mut self, e: &ast::Expr, h: Hoist, stmts: &mut Vec<hir::Stmt>) -> ast::Expr {
         let b = bare(e);
         let kind = match &b.kind {
             ast::ExprKind::NonNull(x) => {
-                ast::ExprKind::NonNull(Box::new(self.hoist_held(x, stmts)))
+                ast::ExprKind::NonNull(Box::new(self.hoist_held(x, h, stmts)))
             }
             ast::ExprKind::Cast { expr, ty } => ast::ExprKind::Cast {
-                expr: Box::new(self.hoist_held(expr, stmts)),
+                expr: Box::new(self.hoist_held(expr, h, stmts)),
                 ty: ty.clone(),
             },
-            _ => return self.hoist(e, false, true, stmts),
+            _ => return self.hoist(e, false, h, stmts),
         };
         ast::Expr {
             id: b.id,

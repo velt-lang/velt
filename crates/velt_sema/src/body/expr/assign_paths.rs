@@ -92,20 +92,18 @@ impl crate::body::FnCx<'_, '_> {
             span: b.span,
         };
         let mut inner = self.bind_effects(inner, all, &mut lets);
-        let mut object = rebuild(&inner);
-        let mark = self.cx.diags.len();
-        let mut p = self.held_place(&inner);
-        let held = self.held_tuple(&p, cast) || self.held_member(&p, cast).is_some();
-        if !all && held && has_path_index(&inner) {
+        if !all && has_path_index(&inner) && self.peek_held(&inner, cast) {
             // The check after a right-hand side that may change memory reads the place again:
             // an index that is a variable or a path is bound too, so the check reads the slot
             // written (`ws[k]![0] = (() => { k = 1; return 5; })()`).
-            self.cx.diags.truncate(mark);
             inner = self.bind_effects(&inner, true, &mut lets);
-            object = rebuild(&inner);
-            p = self.held_place(&inner);
         }
+        let object = rebuild(&inner);
         self.call_temps.append(&mut lets);
+        let (temps, rechecks) = (self.call_temps.len(), self.held_recheck.len());
+        let mark = self.cx.diags.len();
+        let p = self.held_place(&inner);
+        let held = self.held_tuple(&p, cast) || self.held_member(&p, cast).is_some();
         let object = &object;
         if held {
             self.note_held_write(&inner, &p);
@@ -118,7 +116,7 @@ impl crate::body::FnCx<'_, '_> {
                     kind: hir::StmtKind::Expr(check),
                     span,
                 });
-                self.held_recheck = Some(HeldRecheck::Present(p.clone()));
+                self.held_recheck.push(HeldRecheck::Present(p.clone()));
                 let h = H::UnwrapSome(Box::new(p), hir::UseMode::Borrow);
                 return self.mk(h, payload, object.span);
             }
@@ -132,7 +130,7 @@ impl crate::body::FnCx<'_, '_> {
                 kind: hir::StmtKind::Expr(check),
                 span,
             });
-            self.held_recheck = Some(HeldRecheck::Assert(object.clone()));
+            self.held_recheck.push(HeldRecheck::Assert(object.clone()));
             let h = H::UnwrapVariant {
                 expr: Box::new(p),
                 variant,
@@ -140,8 +138,24 @@ impl crate::body::FnCx<'_, '_> {
             };
             return self.mk(h, member, object.span);
         }
+        // Not a place that holds a tuple: the checks an inner held target pushed are dropped.
+        self.call_temps.truncate(temps);
+        self.held_recheck.truncate(rechecks);
         self.cx.diags.truncate(mark);
         self.expr(object, None, Want::Borrow)
+    }
+
+    /// Is the checked `inner` a place that holds a tuple (`assign_receiver`)? Checked once to
+    /// learn this: its errors and hidden statements are dropped.
+    fn peek_held(&mut self, inner: &ast::Expr, cast: Option<&ast::TypeExpr>) -> bool {
+        let (temps, rechecks) = (self.call_temps.len(), self.held_recheck.len());
+        let mark = self.cx.diags.len();
+        let p = self.held_place(inner);
+        let held = self.held_tuple(&p, cast) || self.held_member(&p, cast).is_some();
+        self.call_temps.truncate(temps);
+        self.held_recheck.truncate(rechecks);
+        self.cx.diags.truncate(mark);
+        held
     }
 
     /// `f` checking an assignment: the target's hidden statements (`assign_receiver`) are
@@ -151,7 +165,7 @@ impl crate::body::FnCx<'_, '_> {
         f: impl FnOnce(&mut Self) -> R,
     ) -> (R, Vec<hir::Stmt>) {
         let outer = std::mem::take(&mut self.call_temps);
-        let recheck = self.held_recheck.take();
+        let recheck = std::mem::take(&mut self.held_recheck);
         let r = f(self);
         self.held_recheck = recheck;
         (r, std::mem::replace(&mut self.call_temps, outer))
@@ -162,34 +176,33 @@ impl crate::body::FnCx<'_, '_> {
     /// (`ht.t![0] = (() => { ht.t = null; return 5; })()`) stops the program with a message
     /// naming that, where Node writes into the tuple `p` held before (#1352).
     pub(super) fn held_rechecked(&mut self, v: hir::Expr) -> hir::Expr {
-        let Some(recheck) = self.held_recheck.take() else {
-            return v;
-        };
-        if !crate::effects::may_change_memory(&v) {
+        let rechecks = std::mem::take(&mut self.held_recheck);
+        if rechecks.is_empty() || !crate::effects::may_change_memory(&v) {
             return v;
         }
         let (ty, span) = (v.ty, v.span);
         let tmp = self.new_local("<value>", ty, false, span, LocalKind::Temp);
-        // The right-hand side, or another task during its `await`, cleared the place.
+        let mut stmts = vec![hir::Stmt {
+            kind: hir::StmtKind::Let {
+                local: tmp,
+                init: Some(v),
+            },
+            span,
+        }];
+        // The right-hand side, or another task during its `await`, cleared the place; an
+        // outer tuple (`g[0]!` of `g[0]![0]![1]`) is checked before the one inside it.
         let msg =
             "the tuple this assignment writes into was set to null while its right-hand side ran";
-        let check = match recheck {
-            HeldRecheck::Present(p) => self.checked_present(p, msg, None, true, span),
-            HeldRecheck::Assert(object) => self.expr(&object, None, Want::Borrow),
-        };
-        let stmts = vec![
-            hir::Stmt {
-                kind: hir::StmtKind::Let {
-                    local: tmp,
-                    init: Some(v),
-                },
-                span,
-            },
-            hir::Stmt {
+        for recheck in rechecks {
+            let check = match recheck {
+                HeldRecheck::Present(p) => self.checked_present(p, msg, None, true, span),
+                HeldRecheck::Assert(object) => self.expr(&object, None, Want::Borrow),
+            };
+            stmts.push(hir::Stmt {
                 kind: hir::StmtKind::Expr(check),
                 span,
-            },
-        ];
+            });
+        }
         let value = self.mk(H::Local(tmp, hir::UseMode::Move), ty, span);
         self.with_temps_value(stmts, value)
     }
@@ -198,6 +211,9 @@ impl crate::body::FnCx<'_, '_> {
     /// a closure assigns is read through a check of its narrowing, and its place is the variable
     /// itself.
     fn held_place(&mut self, inner: &ast::Expr) -> hir::Expr {
+        if let Some(p) = self.nested_held_place(inner) {
+            return p;
+        }
         let p = self.expr(inner, None, Want::Borrow);
         match p.kind {
             H::Match { scrutinee, .. }
@@ -207,6 +223,50 @@ impl crate::body::FnCx<'_, '_> {
             }
             _ => p,
         }
+    }
+
+    /// `inner` an element or member of a held target itself (`g[0]![0]` of `g[0]![0]![1]`,
+    /// `hh[n]!.t` of `hh[n]!.t![0]`): that part of the outer tuple's or object's place, after
+    /// its check (`assign_receiver`), so a write reaches the tuple inside it. `None`: `inner`
+    /// is not such a part, or the outer target is not a held place.
+    fn nested_held_place(&mut self, inner: &ast::Expr) -> Option<hir::Expr> {
+        let (object, index, prop) = match &strip_parens(inner).kind {
+            ast::ExprKind::Index {
+                object,
+                index,
+                optional: false,
+            } => (object, Some(index), None),
+            ast::ExprKind::Member {
+                object,
+                prop,
+                optional: false,
+            } => (object, None, Some(prop)),
+            _ => return None,
+        };
+        if !matches!(
+            strip_parens(object).kind,
+            ast::ExprKind::NonNull(_) | ast::ExprKind::Cast { .. }
+        ) {
+            return None;
+        }
+        let (temps, rechecks) = (self.call_temps.len(), self.held_recheck.len());
+        let mark = self.cx.diags.len();
+        let obj = self.assign_receiver(object);
+        let part = match (&obj.kind, index, prop) {
+            (H::UnwrapSome(..) | H::UnwrapVariant { .. }, Some(index), _) => {
+                Some(self.index_of(obj, index, Want::Borrow, inner.span))
+            }
+            (H::UnwrapSome(..) | H::UnwrapVariant { .. }, _, Some(prop)) => {
+                self.field_access(obj, prop, Want::Borrow, inner.span)
+            }
+            _ => None,
+        };
+        if part.is_none() {
+            self.call_temps.truncate(temps);
+            self.held_recheck.truncate(rechecks);
+            self.cx.diags.truncate(mark);
+        }
+        part
     }
 
     /// Is `p` (`p as cast` when given) a place that holds a tuple when present? `p as T` names
@@ -344,19 +404,21 @@ fn is_root(e: &ast::Expr) -> bool {
 }
 
 /// A temporary already bound for this target.
-fn is_hoisted(e: &ast::Expr) -> bool {
+pub(super) fn is_hoisted(e: &ast::Expr) -> bool {
     matches!(&strip_parens(e).kind, ast::ExprKind::Ident(id) if id.name.starts_with('<'))
 }
 
-fn is_literal(e: &ast::Expr) -> bool {
+pub(super) fn is_literal(e: &ast::Expr) -> bool {
     matches!(&strip_parens(e).kind, ast::ExprKind::Lit(_))
         || super::member_keys::literal_key(e).is_some()
 }
 
 /// Are the indexes of the held target `e` free of effects?
-fn pure_indexes(e: &ast::Expr) -> bool {
+pub(super) fn pure_indexes(e: &ast::Expr) -> bool {
     match &strip_parens(e).kind {
-        ast::ExprKind::Member { object, .. } => pure_indexes(object),
+        ast::ExprKind::Member { object, .. }
+        | ast::ExprKind::NonNull(object)
+        | ast::ExprKind::Cast { expr: object, .. } => pure_indexes(object),
         ast::ExprKind::Index { object, index, .. } => is_pure_value(index) && pure_indexes(object),
         _ => true,
     }
@@ -365,7 +427,9 @@ fn pure_indexes(e: &ast::Expr) -> bool {
 /// Has the held target `e` an index that is not a literal or a bound temporary?
 fn has_path_index(e: &ast::Expr) -> bool {
     match &strip_parens(e).kind {
-        ast::ExprKind::Member { object, .. } => has_path_index(object),
+        ast::ExprKind::Member { object, .. }
+        | ast::ExprKind::NonNull(object)
+        | ast::ExprKind::Cast { expr: object, .. } => has_path_index(object),
         ast::ExprKind::Index { object, index, .. } => {
             !(is_literal(index) || is_hoisted(index)) || has_path_index(object)
         }

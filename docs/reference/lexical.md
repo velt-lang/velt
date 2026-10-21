@@ -143,9 +143,11 @@ is out of bounds and panics, where JavaScript extends the array: `xs[0] += xs.po
 panics, on `[5, 6]` it makes `[11]` (Velt arrays never grow by assignment, see
 [Types](types.md#objects-arrays-tuples-and-maps)). An assignment to an element or a member is an
 expression with the value assigned, as in JS: `const v = (xs[i] = 7)`, `(c.t[1] += "z")` and
-`(get().n = 4)` evaluate the object and indices once. The target's object may be any expression
-that gives an object: `(c ? a : b).t[0] = 7` and `xs.find(f)!.t[1] = "x"` write into the object
-the conditional or the call gave, which every other reference to it sees. A tuple is a value, so
-a write into an element of a tuple that a call or a conditional gives (`m.get(k)![1] = 2`) is an
-error: it would change a copy. A postfix `!` after an expression on the same line is the
-non-null assertion (`m.get(k)!`).
+`(get().n = 4)` evaluate the object and indices once, before the right side, and give the
+element written even when the right side changes a variable index (`(xs[k] = next())`, where
+`next` changes `k`, gives the value written into the element `k` named before). The target's
+object may be any expression that gives an object: `(c ? a : b).t[0] = 7` and
+`xs.find(f)!.t[1] = "x"` write into the object the conditional or the call gave, which every
+other reference to it sees. A tuple is a value, so a write into an element of a tuple that a
+call or a conditional gives (`m.get(k)![1] = 2`) is an error: it would change a copy. A postfix
+`!` after an expression on the same line is the non-null assertion (`m.get(k)!`).
