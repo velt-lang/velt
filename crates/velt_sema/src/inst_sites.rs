@@ -84,7 +84,9 @@ pub(crate) fn collect(cx: &mut Ctx, signature: bool) -> Vec<(DefId, Uses)> {
         visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| {
             let guard = guards.get(&(e as *const Expr)).copied().unwrap_or(0);
             add_site(&mut u, &mut news, &mut seen, e, guard);
-            convert_site(&mut u, &mut seen, e, &converts);
+            if !converts.is_empty() {
+                convert_site(&mut u, &mut seen, e, &converts);
+            }
         });
         out.push((DefId(i as u32), u, news));
     }
@@ -92,7 +94,9 @@ pub(crate) fn collect(cx: &mut Ctx, signature: bool) -> Vec<(DefId, Uses)> {
     for_each_init(cx, &mut |d, e| {
         let (u, news, seen) = inits.entry(d).or_default();
         add_site(u, news, seen, e, 0);
-        convert_site(u, seen, e, &converts);
+        if !converts.is_empty() {
+            convert_site(u, seen, e, &converts);
+        }
     });
     let mut inits: Vec<_> = inits.into_iter().collect();
     inits.sort_by_key(|(d, _)| *d);
