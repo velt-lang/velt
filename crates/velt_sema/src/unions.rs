@@ -302,13 +302,35 @@ impl Ctx<'_> {
         let names: Vec<String> = args.iter().map(|a| self.display_in(*a, params)).collect();
         // Error-set variables are shown as written: not at all (`throws::vars`).
         let shown = |v: &&crate::defs::VariantInfo| !self.is_err_var(v.payload[0]);
-        let parts: Vec<String> = (e.variants.iter().filter(shown))
-            .map(|v| self.display_applied(v.payload[0], &names))
+        let members: Vec<TyId> = (e.variants.iter().filter(shown))
+            .map(|v| v.payload[0])
             .collect();
+        let mut parts: Vec<String> = (members.iter())
+            .map(|t| self.display_applied(*t, &names))
+            .collect();
+        // Members are ordered by interned id, which differs between programs; a union of
+        // named types (an error set: `RangeError | TypeError`) is shown sorted by name, so the
+        // same type reads the same from every entry file.
+        if members.iter().all(|t| self.is_named_ty(*t)) {
+            parts.sort();
+        }
         if parts.is_empty() {
             return "never".into();
         }
         parts.join(" | ")
+    }
+
+    /// A class, interface or enum, which diagnostics show by its name.
+    fn is_named_ty(&self, t: TyId) -> bool {
+        match self.ty.kind(t) {
+            TyKind::Dyn(..) => true,
+            TyKind::Adt(d, _) => match &self.info[d.0 as usize] {
+                DefInfo::Adt(a) => a.kind != crate::hir::AdtKind::Anon,
+                DefInfo::Enum(e) => !e.is_union,
+                _ => false,
+            },
+            _ => false,
+        }
     }
 
     /// Display `t` with `Param(i)` named `names[i]`, parenthesizing arrays of parameters.

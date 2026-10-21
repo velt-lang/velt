@@ -31,7 +31,8 @@
 use rustc_hash::FxHashMap;
 
 use crate::ctx::Ctx;
-use crate::hir::{TyId, TyKind, TyOp};
+use crate::anon::ShapeField;
+use crate::hir::{AdtKind, DefId, TyId, TyKind, TyOp};
 
 /// The constraints on the variables of one check.
 #[derive(Default)]
@@ -142,6 +143,10 @@ impl Ctx<'_> {
                 let mut parts = crate::types::children(&k);
                 if self.union_def(t).is_some() {
                     parts.extend(self.union_members(t).unwrap_or_default());
+                }
+                // The fields of an anonymous object type are part of the type.
+                if let Some((d, _)) = self.anon_of(t) {
+                    parts.extend(self.anon_field_tys(d));
                 }
                 parts.into_iter().any(|p| self.mentions_err_var(p))
             }
@@ -274,6 +279,8 @@ impl Ctx<'_> {
         } else if let Some(orig) = self.union_members(t) {
             let ms: Vec<TyId> = orig.iter().map(|m| self.plain_type(*m)).collect();
             self.solved_union(&orig, &ms)
+        } else if let Some((d, args)) = self.anon_of(t) {
+            self.plain_anon(d, &args)
         } else {
             let k = self.ty.kind(t).clone();
             let k = crate::types::map_children(&k, &mut |x| self.plain_type(x));
@@ -282,6 +289,70 @@ impl Ctx<'_> {
         self.fn_sites.var_sets.plain.insert(t, p);
         self.fn_sites.var_sets.note_first(p, t);
         p
+    }
+
+    /// `t`'s anonymous object def and type arguments, when it is an anonymous object type.
+    fn anon_of(&self, t: TyId) -> Option<(DefId, Vec<TyId>)> {
+        match self.ty.kind(t) {
+            TyKind::Adt(d, args) if self.adt(*d).is_some_and(|a| a.kind == AdtKind::Anon) => {
+                Some((*d, args.clone()))
+            }
+            _ => None,
+        }
+    }
+
+    /// Anonymous object type `d<args>` as written: the object type of its fields' plain
+    /// types (the def a literal of that shape has).
+    fn plain_anon(&mut self, d: DefId, args: &[TyId]) -> TyId {
+        let Some(a) = self.adt(d) else {
+            return self.ty.intern(TyKind::Adt(d, args.to_vec()));
+        };
+        let module = a.module;
+        let fields: Vec<ShapeField> = a.fields.iter().map(crate::anon::shape_field).collect();
+        let fields: Vec<ShapeField> = (fields.into_iter())
+            .map(|f| ShapeField {
+                ty: self.plain_type(f.ty),
+                ..f
+            })
+            .collect();
+        let (d2, params) = self.anon_def_with(&fields, module);
+        let args: Vec<TyId> = args.iter().map(|a| self.plain_type(*a)).collect();
+        let args2: Vec<TyId> = params.iter().map(|p| self.ty.subst(*p, &args)).collect();
+        self.ty.intern(TyKind::Adt(d2, args2))
+    }
+
+    /// The anonymous object defs whose fields hold variables, each with the def of its solved
+    /// shape, which `crate::readonly::erase` puts in its place: a def of those field types
+    /// made while checking, or else the first def of that solved shape. Values of two such
+    /// types of one shape are stored as each other's unconverted (they were unified).
+    pub(crate) fn solved_anon_twins(&mut self) -> Vec<(DefId, DefId)> {
+        let mut out = vec![];
+        let mut first: FxHashMap<Vec<ShapeField>, DefId> = FxHashMap::default();
+        for i in 0..self.info.len() {
+            let d = DefId(i as u32);
+            let Some(a) = self.adt(d).filter(|a| a.kind == AdtKind::Anon) else {
+                continue;
+            };
+            let fields: Vec<ShapeField> = a.fields.iter().map(crate::anon::shape_field).collect();
+            let tys: Vec<TyId> = a.fields.iter().map(|f| f.ty).collect();
+            if !tys.into_iter().any(|t| self.mentions_err_var(t)) || self.reaches_itself(d) {
+                continue;
+            }
+            let solved: Vec<ShapeField> = (fields.into_iter())
+                .map(|f| ShapeField {
+                    ty: self.solved_type(f.ty),
+                    ..f
+                })
+                .collect();
+            let twin = match self.anon.get(&solved) {
+                Some(&t) => t,
+                None => *first.entry(solved).or_insert(d),
+            };
+            if twin != d {
+                out.push((d, twin));
+            }
+        }
+        out
     }
 
     /// A value of type `from` used as a `to`: equal but for their variables. Records that the
@@ -365,6 +436,21 @@ impl Ctx<'_> {
                 self.fn_sites.var_sets.unsupported = true;
             }
             return;
+        }
+        // Anonymous object types of two defs: their fields, at their type arguments.
+        if let (Some((d, xs)), Some((e, ys))) = (self.anon_of(a), self.anon_of(b)) {
+            if d != e {
+                let fa = self.anon_field_tys(d);
+                let fb = self.anon_field_tys(e);
+                if fa.len() == fb.len() {
+                    for (x, y) in fa.into_iter().zip(fb) {
+                        let x = self.ty.subst(x, &xs);
+                        let y = self.ty.subst(y, &ys);
+                        self.unify_parts(x, y, depth + 1);
+                    }
+                }
+                return;
+            }
         }
         let ka = crate::types::children(self.ty.kind(a));
         let kb = crate::types::children(self.ty.kind(b));

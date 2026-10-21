@@ -1,2 +1,4 @@
 throws_fn_type_display.vlt:18:19: error: mismatched types
   = note: expected f64, found (() => void)[]
+throws_fn_type_display.vlt:30:19: error: mismatched types
+  = note: expected string, found (f64) => void throws Alpha | Zed

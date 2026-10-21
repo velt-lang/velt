@@ -21,16 +21,22 @@ pub(crate) fn erase(cx: &mut Ctx) {
     if cx.readonly_twins.is_empty() && cx.brands.is_empty() && cx.fn_sites.vars.is_empty() {
         return;
     }
-    let twins = cx.readonly_twins.clone();
+    let mut twins = cx.readonly_twins.clone();
+    // An anonymous object type holding error-set variables is the one of its solved shape.
+    for (d, twin) in cx.solved_anon_twins() {
+        let twin = twins.get(&twin).map_or(twin, |t| t.0);
+        twins.entry(d).or_insert((twin, None));
+    }
     // A branded type is its primitive from here on (`crate::brands`).
     let mut cache: FxHashMap<TyId, TyId> = FxHashMap::default();
-    // An error-set variable is its solved type (`throws::fn_types`).
-    for (t, s) in cx.solved_types() {
-        cache.insert(t, s);
-    }
     for (&d, &base) in &cx.brands {
         let brand = cx.ty.intern(TyKind::Adt(d, vec![]));
         cache.insert(brand, base);
+    }
+    // A type with error-set variables is its solved type (`throws::vars`), erased.
+    for (t, s) in cx.solved_types() {
+        let r = erase_ty(&mut cx.ty, &twins, &mut cache, s);
+        cache.insert(t, r);
     }
     let Ctx {
         ty,
