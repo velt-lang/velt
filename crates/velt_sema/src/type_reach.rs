@@ -33,9 +33,20 @@ impl Ctx<'_> {
         levels: u32,
         look: &mut dyn FnMut(&mut Self, TyId) -> Look,
     ) -> Option<TyId> {
+        // Most types have no parts to search: no queue for them.
+        let parts = match look(self, t) {
+            Look::Found => return Some(t),
+            Look::Parts(parts) if levels > 0 && !parts.is_empty() => parts,
+            Look::Stop | Look::Parts(_) => return None,
+        };
         let mut seen = FxHashSet::default();
         seen.insert(t);
-        let mut queue = VecDeque::from([(t, 0)]);
+        let mut queue = VecDeque::new();
+        for p in parts {
+            if seen.insert(p) {
+                queue.push_back((p, 1));
+            }
+        }
         while let Some((t, level)) = queue.pop_front() {
             match look(self, t) {
                 Look::Found => return Some(t),

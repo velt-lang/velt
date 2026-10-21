@@ -618,14 +618,16 @@ impl<'m> Ctx<'m> {
             }
             _ => return false,
         };
-        // The query's own type is asked at level 0 only once.
-        if let Some(&b) = seen.get(&(t, depth)).filter(|_| depth > 0) {
+        // The first levels are checked without keeping answers: most types end there, and
+        // the paths to a level multiply only below them.
+        let keep = depth >= 3;
+        if let Some(&b) = keep.then(|| seen.get(&(t, depth))).flatten() {
             return b;
         }
         let b = parts
             .into_iter()
             .all(|p| self.is_copy_depth(p, depth + 1, seen));
-        if depth > 0 {
+        if keep {
             seen.insert((t, depth), b);
         }
         b
