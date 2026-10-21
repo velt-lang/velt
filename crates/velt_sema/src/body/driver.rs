@@ -228,8 +228,11 @@ pub(crate) fn ensure_global(cx: &mut Ctx, d: DefId) {
     }
 }
 
-/// Module state cannot hold a promise: it is initialized before `main` runs, where nothing can
-/// await it, and a promise has one owner, while every task reads the state.
+/// Module state cannot hold a promise itself: it is initialized before `main` runs, outside
+/// async code, where a promise does not start until something awaits it (in Node it starts at
+/// once). A class, an array or a `Map` in module state may hold promises that tasks put there:
+/// each read is another holder of the shared promise (#212), and the tasks that use module
+/// state run one at a time.
 fn promise_in_state(cx: &mut Ctx, d: DefId, ty: crate::hir::TyId, span: velt_common::Span) {
     if !holds_promise_by_value(cx, ty, 0) {
         return;
@@ -241,12 +244,13 @@ fn promise_in_state(cx: &mut Ctx, d: DefId, ty: crate::hir::TyId, span: velt_com
             format!("module-level `{name}` holds a promise (`{shown}`): module state cannot hold one"),
             span,
         )
-        .with_note("module state is initialized before `main` runs and shared by every task, while a promise is awaited by one owner")
+        .with_note("module state is initialized before `main` runs, outside async code, where a promise would not start until something awaits it")
         .with_note("start the work in `main` (`const p = work();`) and pass the promise, or its result, where it is needed"),
     );
 }
 
-/// Does a value of `t` hold a promise itself (not behind a class or an array, which are shared)?
+/// Does a value of `t` hold a promise itself (not behind a class, an array or a `Map`, which
+/// tasks fill as they run)?
 fn holds_promise_by_value(cx: &Ctx, t: crate::hir::TyId, depth: u32) -> bool {
     use crate::hir::{AdtKind, TyKind};
     if depth > 8 {

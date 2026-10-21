@@ -53,8 +53,9 @@
 //! dictionaries, `Record.__positions` / `__decoded` / `set` for JSON): std code that runs no
 //! user code. Equality, hashing, sharing and truthiness are generated and call nothing.
 
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::BTreeSet;
 
 use crate::ctx::Ctx;
 use crate::defs::DefInfo;
@@ -87,9 +88,9 @@ impl Reach {
 pub(crate) struct Implicit {
     /// Each class with a hook, and the hooks of its family (bases and subclasses, which a value
     /// of it may be or inherit from): `[Symbol.dispose]()`, and the glue hooks.
-    hooks: HashMap<DefId, (Vec<DefId>, Vec<DefId>)>,
+    hooks: FxHashMap<DefId, (Vec<DefId>, Vec<DefId>)>,
     /// Each class's subclasses (transitively).
-    family: HashMap<DefId, Vec<DefId>>,
+    family: FxHashMap<DefId, Vec<DefId>>,
     /// Every generator function (4).
     pub(crate) generators: Vec<DefId>,
     /// The types of the values closures capture.
@@ -103,13 +104,13 @@ pub(crate) struct Implicit {
     weak_entries: Vec<(Option<TyId>, TyId)>,
     /// [`Reach`] of each type seen without type arguments known (types mentioning type
     /// parameters keep them as [`Reach::param`]).
-    memo: RefCell<HashMap<TyId, std::rc::Rc<Reach>>>,
+    memo: RefCell<FxHashMap<TyId, std::rc::Rc<Reach>>>,
 }
 
 impl Implicit {
     /// `weak_entries`: [`weak_entries`] of the program.
     pub(crate) fn new(cx: &Ctx, weak_entries: Vec<(Option<TyId>, TyId)>) -> Implicit {
-        let mut own: HashMap<DefId, (Vec<DefId>, Vec<DefId>)> = HashMap::new();
+        let mut own: FxHashMap<DefId, (Vec<DefId>, Vec<DefId>)> = FxHashMap::default();
         let mut bases: Vec<(DefId, DefId)> = Vec::new();
         for (i, info) in cx.info.iter().enumerate() {
             let DefInfo::Adt(a) = info else { continue };
@@ -125,12 +126,12 @@ impl Implicit {
             }
         }
         // Family: a class's bases and its subclasses, transitively.
-        let parent: HashMap<DefId, DefId> = bases.iter().copied().collect();
-        let mut children: HashMap<DefId, Vec<DefId>> = HashMap::new();
+        let parent: FxHashMap<DefId, DefId> = bases.iter().copied().collect();
+        let mut children: FxHashMap<DefId, Vec<DefId>> = FxHashMap::default();
         for &(d, b) in &bases {
             children.entry(b).or_default().push(d);
         }
-        let family: HashMap<DefId, Vec<DefId>> = parent
+        let family: FxHashMap<DefId, Vec<DefId>> = parent
             .keys()
             .chain(children.keys())
             .map(|&d| {
@@ -155,7 +156,7 @@ impl Implicit {
                 (d, v)
             })
             .collect();
-        let mut hooks: HashMap<DefId, (Vec<DefId>, Vec<DefId>)> = HashMap::new();
+        let mut hooks: FxHashMap<DefId, (Vec<DefId>, Vec<DefId>)> = FxHashMap::default();
         for (&d, h) in &own {
             for &m in family.get(&d).map_or(&[d][..], |v| &v[..]) {
                 let e = hooks.entry(m).or_default();
@@ -187,7 +188,7 @@ impl Implicit {
             weak_map,
             weak_entries,
             captures_reach: false,
-            memo: RefCell::new(HashMap::new()),
+            memo: RefCell::new(FxHashMap::default()),
         };
         im.captures_reach = im.captures.iter().any(|&t| {
             let r = im.reach(cx, t);
@@ -378,7 +379,7 @@ impl Implicit {
         cx: &mut Ctx,
         t: TyId,
         frame: &Option<Vec<TyId>>,
-        args: &HashSet<TyId>,
+        args: &FxHashSet<TyId>,
         open: &mut Option<Reach>,
     ) -> Reach {
         let t = match frame {
@@ -395,7 +396,7 @@ impl Implicit {
 
     /// What a type parameter or a function value may reach: what any type argument the program
     /// passes and any captured value reaches.
-    fn open(&self, cx: &Ctx, args: &HashSet<TyId>) -> Reach {
+    fn open(&self, cx: &Ctx, args: &FxHashSet<TyId>) -> Reach {
         let mut r = Reach::default();
         for &t in args.iter().chain(&self.captures) {
             r.add(&self.reach(cx, t));
@@ -552,6 +553,7 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::MayHoldPrimitive
         | I::FnCapturesNothing
         | I::ClosureSibling(_)
+        | I::SimdShuffle(..)
         | I::Sqrt
         | I::Floor
         | I::Ceil

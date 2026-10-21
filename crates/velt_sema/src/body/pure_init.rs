@@ -5,7 +5,7 @@
 //! rejects comparing such a constant by identity, the one place where "a new value at each use"
 //! would show.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use velt_common::{Diagnostic, Span};
 
@@ -42,7 +42,7 @@ fn own(out: &mut Vec<NotConstant>, diag: Diagnostic) {
 }
 
 /// Memoized purity of functions (`None` while being decided: a call back into it is recursion).
-pub(crate) type PurityMemo = HashMap<DefId, Option<Result<(), Impure>>>;
+pub(crate) type PurityMemo = FxHashMap<DefId, Option<Result<(), Impure>>>;
 
 /// Check the initializer of module constant `name` (type `ty`): constant expressions, and calls
 /// of pure named functions with constant arguments.

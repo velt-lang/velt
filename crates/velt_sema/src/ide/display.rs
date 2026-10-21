@@ -2,7 +2,7 @@
 //! the type definitions (so queries work after checking is done): `Map<string, i64>`, `Point`,
 //! `{ x: i64 }`, `(x: i64) => string`, generic parameters by their declared names.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use crate::ctx::Ctx;
 use crate::defs::DefInfo;
@@ -26,7 +26,7 @@ pub(crate) struct Names {
     pub table: TyTable,
     pub defs: Vec<TypeName>,
     /// Type alias names of structural types (`Ctx::alias_names`).
-    pub aliases: HashMap<TyId, String>,
+    pub aliases: FxHashMap<TyId, String>,
     /// Every type alias's name, by `Ctx::aliases` index (deferred types, `TyKind::Op`).
     pub alias_decls: Vec<String>,
 }

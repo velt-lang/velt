@@ -6,10 +6,10 @@
 //!
 //! The operations are calls of the `velt_simd_*` externs (`crate::simd`), like the prelude's.
 
-use velt_sema::hir::SimdTy;
+use velt_sema::hir::{self, SimdTy};
 
-use super::{cint, FnLower};
-use crate::simd::SimdCall;
+use super::{cint, ice, FnLower};
+use crate::simd::{shuffle_symbol, Lanes, SimdCall};
 use crate::vir::{Callee, Operand, Place, Ty};
 
 impl FnLower<'_, '_> {
@@ -22,6 +22,24 @@ impl FnLower<'_, '_> {
         let out = self.temp(ret);
         self.call(Callee::Extern(id), args, Some(Place::local(out)), false);
         Operand::Copy(Place::local(out))
+    }
+
+    /// `T.shuffle(a, b, …)` with the lane indices `mask` (one per lane of `simd`; sema checked
+    /// them): the shuffle extern whose symbol spells them.
+    pub(super) fn simd_shuffle(
+        &mut self,
+        simd: SimdTy,
+        mask: &[u8; 16],
+        a: &hir::Expr,
+        b: &hir::Expr,
+    ) -> Operand {
+        let lanes = Lanes::ALL
+            .into_iter()
+            .find(|l| l.name() == simd.name())
+            .unwrap_or_else(|| ice(format_args!("`{}` has no shuffle", simd.name())));
+        let symbol = shuffle_symbol(lanes, &mask[..lanes.count() as usize]);
+        let (a, b) = (self.expr(a), self.expr(b));
+        self.simd_call(&symbol, vec![a, b])
     }
 
     /// Whether the vectors `a` and `b` have the same bits (Bool operand).

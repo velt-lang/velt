@@ -41,7 +41,7 @@ use velt_common::Span;
 pub use fields::{DynMember, DynMemberKind, FieldDef, FieldInit};
 pub use intrinsic::Intrinsic;
 pub use nothing::Nothing;
-pub use numeric::{FloatTy, IntTy, SimdTy};
+pub use numeric::{CpuTarget, FloatTy, IntTy, SimdTy};
 pub use table::TyTable;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -187,6 +187,9 @@ pub struct Program {
     /// generator's resume function then also handles an error thrown in at each `yield`;
     /// otherwise it has no code for that.
     pub generator_throw: bool,
+    /// Gated functions (`__intrinsic_target`) and the CPU extension each is compiled for
+    /// (#1330): lowering gives the VIR function its target.
+    pub cpu_targets: HashMap<DefId, CpuTarget>,
 }
 
 /// Module-level `let`s: one slot each in a process-wide tuple (hir_encodings.md "Module state").
@@ -333,6 +336,11 @@ pub struct AdtDef {
     pub fields: Vec<FieldDef>,
     /// Sema's verdict: bitwise-copyable (all fields Copy, kind Struct/Anon).
     pub is_copy: bool,
+    /// Declared with `struct` (kind `Struct`, but not a field-only interface or a struct sema
+    /// made for an interface literal or a brand): a Velt value type, so its `Map` and `Set`
+    /// keys compare and hash by content, field by field (`Intrinsic::KeyEq`, `Intrinsic::Hash`),
+    /// while `===` still compares it by identity.
+    pub declared_struct: bool,
     /// Some field (own or inherited) is `private` or an ES private field (`#x`, whose name keeps
     /// the `#`). `JSON.parse` cannot build such a type: decoding does not run the constructor,
     /// and could forge the runtime handles std types keep in private fields.

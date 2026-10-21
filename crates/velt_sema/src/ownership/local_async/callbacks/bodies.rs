@@ -9,9 +9,9 @@ pub(super) struct Bodies {
     /// The fields each closure literal is assigned to (`i.onChange = (v) => …`,
     /// `{ f: () => … }`), as `(class or object type, field)`: a call of such a field is the
     /// call shown first.
-    pub(super) stores: HashMap<DefId, Vec<(DefId, u32)>>,
+    pub(super) stores: FxHashMap<DefId, Vec<(DefId, u32)>>,
     /// Per closure: the nodes of the locals it is stored into ([`super::held::homes`]).
-    pub(super) homes: HashMap<DefId, Vec<usize>>,
+    pub(super) homes: FxHashMap<DefId, Vec<usize>>,
 }
 
 impl Bodies {

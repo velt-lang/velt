@@ -3,7 +3,7 @@
 //! out-pointer for aggregate or `Result` returns, hidden env param for closures), allocates VIR
 //! locals for HIR locals and drop flags, then lowers the body.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_sema::hir::{self, DefId, FnDef, PassMode, TyId, TyKind};
 
@@ -60,8 +60,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
             ret_ty: None,
             throws: None,
             div_zero_bbs: vec![],
-            ref_bindings: HashSet::new(),
-            scope_ends: HashMap::new(),
+            ref_bindings: FxHashSet::default(),
+            scope_ends: FxHashMap::default(),
             asyncx: None,
             lazy_call: false,
             retain_hops: false,
@@ -78,8 +78,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
             init_locals: false,
             ctor_self: None,
             init_stack: vec![],
-            frame_closures: HashSet::new(),
-            direct_siblings: HashMap::new(),
+            frame_closures: FxHashSet::default(),
+            direct_siblings: FxHashMap::default(),
             self_env: None,
             in_reflect: false,
         };
@@ -196,6 +196,10 @@ impl<'c, 'h> FnLower<'c, 'h> {
         }
         let mut func = lw.finish(symbol, params, abi.ret);
         func.param_attrs = attrs;
+        func.target = hir_prog.cpu_targets.get(&def).map(|t| match t {
+            hir::CpuTarget::ShaArm => crate::simd::Ext::ShaArm,
+            hir::CpuTarget::ShaX86 => crate::simd::Ext::ShaX86,
+        });
         func
     }
 
@@ -210,7 +214,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             attrs.push(ParamAttrs::default());
             self.new_local(Ty::Ptr, Some("env".into()))
         });
-        let captured: HashSet<_> = f.captures.iter().map(|c| c.inner).collect();
+        let captured: FxHashSet<_> = f.captures.iter().map(|c| c.inner).collect();
         let by_ref = self.cx.by_ref_params.contains(&(def, self.targs.clone()));
         for p in &f.params {
             if captured.contains(&p.local) {

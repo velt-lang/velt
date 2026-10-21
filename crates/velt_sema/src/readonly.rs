@@ -9,7 +9,7 @@
 //! ([`Ctx::readonly_twins`]), so lowering sees one type per layout: the conversion is a no-op
 //! and both views share one object.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use crate::ctx::Ctx;
 use crate::hir::{Def, DefId, TyId, TyKind};
@@ -23,7 +23,7 @@ pub(crate) fn erase(cx: &mut Ctx) {
     }
     let twins = cx.readonly_twins.clone();
     // A branded type is its primitive from here on (`crate::brands`).
-    let mut cache: HashMap<TyId, TyId> = HashMap::new();
+    let mut cache: FxHashMap<TyId, TyId> = FxHashMap::default();
     for (&d, &base) in &cx.brands {
         let brand = cx.ty.intern(TyKind::Adt(d, vec![]));
         cache.insert(brand, base);
@@ -115,15 +115,15 @@ pub(crate) fn erase(cx: &mut Ctx) {
 /// `t` with every readonly object type replaced by its twin, at any depth.
 pub(crate) fn erase_ty(
     ty: &mut Types,
-    twins: &HashMap<DefId, (DefId, Option<Vec<TyId>>)>,
-    cache: &mut HashMap<TyId, TyId>,
+    twins: &FxHashMap<DefId, (DefId, Option<Vec<TyId>>)>,
+    cache: &mut FxHashMap<TyId, TyId>,
     t: TyId,
 ) -> TyId {
     if let Some(&r) = cache.get(&t) {
         return r;
     }
     let sub =
-        |ty: &mut Types, cache: &mut HashMap<TyId, TyId>, x: TyId| erase_ty(ty, twins, cache, x);
+        |ty: &mut Types, cache: &mut FxHashMap<TyId, TyId>, x: TyId| erase_ty(ty, twins, cache, x);
     let k = ty.kind(t).clone();
     let nk = match k {
         TyKind::Adt(d, args) => {

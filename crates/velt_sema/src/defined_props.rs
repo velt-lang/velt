@@ -16,7 +16,7 @@
 use velt_syntax::ast::{self, ExprKind as E};
 use velt_syntax::visit::{self, Visit};
 
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 
 use velt_common::Span;
 
@@ -61,7 +61,7 @@ pub(crate) fn rewrite(modules: &[SourceModule]) -> (Brands, Option<Vec<SourceMod
         let mut scan = Scan {
             module: i,
             declared: vec![],
-            strings: HashSet::new(),
+            strings: FxHashSet::default(),
             asserted: vec![],
             brands: &mut brands,
             adds: &mut adds,
@@ -216,7 +216,7 @@ struct Scan<'b> {
     /// type name, in source order (the last one wins).
     declared: Vec<(String, String)>,
     /// The constants initialized with a string (`const NAME = "name"`).
-    strings: HashSet<String>,
+    strings: FxHashSet<String>,
     /// The members asserted literals add ([`Scan::cast`]), before the string keys are dropped.
     asserted: Vec<(String, ast::Ident, ast::TypeExpr)>,
     brands: &'b mut Brands,
@@ -360,8 +360,8 @@ impl Scan<'_> {
 
 /// The names of `module`'s constants and imports: the names a computed key may resolve to
 /// (a script's top-level constants are in its generated `main`).
-fn module_consts(module: &ast::Module) -> HashSet<String> {
-    let mut names = HashSet::new();
+fn module_consts(module: &ast::Module) -> FxHashSet<String> {
+    let mut names = FxHashSet::default();
     let mut add = |v: &ast::VarDecl| {
         if let (ast::VarKind::Const, ast::PatternKind::Ident(n)) = (v.kind, &v.pattern.kind) {
             names.insert(n.name.clone());
@@ -456,12 +456,12 @@ fn literal_type(e: &ast::Expr) -> Option<ast::TypeExpr> {
 impl Ctx<'_> {
     /// The key names of the fields `defineProperty` brands hide (not `enumerable: true`),
     /// resolved once.
-    pub(crate) fn hidden_keys(&mut self) -> HashSet<String> {
+    pub(crate) fn hidden_keys(&mut self) -> FxHashSet<String> {
         if let Some(h) = &self.objects.hidden {
             return h.clone();
         }
         let sites = self.objects.brands.sites.clone();
-        let mut set = HashSet::new();
+        let mut set = FxHashSet::default();
         for b in sites.iter().filter(|b| !b.enumerable) {
             if let Ok(k) = self.resolve_key(b.module, &computed_key(&b.key)) {
                 set.insert(k);

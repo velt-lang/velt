@@ -12,7 +12,7 @@
 //! environment. No closure refers to its own environment, so a group that escapes (returned,
 //! stored) holds no reference cycle: the environment is freed with the last member value.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use velt_common::Span;
 use velt_syntax::ast;
@@ -33,9 +33,9 @@ pub(crate) struct Member {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct GroupFrame {
     /// The members of the groups declared in this frame, by group.
-    pub members: HashMap<usize, Vec<Member>>,
+    pub members: FxHashMap<usize, Vec<Member>>,
     /// Group and member of each member's local.
-    pub locals: HashMap<LocalId, (usize, usize)>,
+    pub locals: FxHashMap<LocalId, (usize, usize)>,
     /// This frame checks member (group, member)'s body.
     pub member_of: Option<(usize, usize)>,
     /// Hidden locals of this member's body holding other members (or itself): local,

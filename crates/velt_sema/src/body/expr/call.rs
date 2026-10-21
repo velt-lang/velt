@@ -279,6 +279,7 @@ impl FnCx<'_, '_> {
         if self.takes_this(d) {
             return self.this_fn_call(d, name, None, type_args, args, exp, span);
         }
+        self.check_gated_call(d, name, span);
         let c = self.fn_callable(d, format!("function `{name}`"), span);
         let n = c.slot_names.len();
         let mut slots = vec![None; n];
@@ -495,76 +496,6 @@ impl FnCx<'_, '_> {
             }
             None => self.namespace_builtin(id, prop, args, exp, span),
         }
-    }
-
-    /// The SIMD type `name` names in this module, where `item` is what it binds: the built-in
-    /// type in std, elsewhere the `export type u8x16 = u8x16` of `velt:simd` it imports.
-    fn simd_type_named(&self, name: &str, item: Option<Item>) -> Option<hir::SimdTy> {
-        match item {
-            Some(Item::Alias(a)) => {
-                let info = &self.cx.aliases[a as usize];
-                let exported = self.cx.scopes[info.module].is_std && info.decl.generics.is_empty();
-                exported
-                    .then(|| hir::SimdTy::named(&info.decl.name.name))
-                    .flatten()
-            }
-            None if self.cx.scopes[self.module].is_std => hir::SimdTy::named(name),
-            _ => None,
-        }
-    }
-
-    /// `u8x16.splat(x)`: a static method that an `extend` block of SIMD type `simd` declares.
-    /// The SIMD types are primitives with constructors of their own, which `static_call` does
-    /// not see.
-    #[allow(clippy::too_many_arguments)]
-    fn simd_static_call(
-        &mut self,
-        simd: hir::SimdTy,
-        id: &ast::Ident,
-        prop: &ast::Ident,
-        type_args: &[ast::TypeExpr],
-        args: &[ast::Expr],
-        exp: Option<TyId>,
-        span: Span,
-    ) -> Option<hir::Expr> {
-        if let Some(first) = type_args.first() {
-            let message = format!("`{}.{}` takes no type arguments", id.name, prop.name);
-            self.cx.err(message, first.span);
-        }
-        let target = self.cx.ty.intern(TyKind::Simd(simd));
-        let found = self.cx.extensions.iter().find_map(|x| {
-            let m = x.methods.get(prop.name.as_str())?;
-            (x.target == target).then_some(*m)
-        });
-        let Some(m) = found.filter(|m| m.is_static) else {
-            let what = match found {
-                Some(_) => "an instance method",
-                None => "not a static method",
-            };
-            let mut d =
-                Diagnostic::error(format!("`{}.{}` is {what}", id.name, prop.name), prop.span);
-            // No extension of the type at all: its API (`velt:simd`) is not loaded, which a std
-            // module that uses the built-in name without importing it gets.
-            if !self.cx.extensions.iter().any(|x| x.target == target) {
-                let name = simd.name();
-                d = d.with_note(format!(
-                    "the methods are loaded by importing the type: `import {{ {name} }} from \"velt:simd\";`"
-                ));
-            }
-            self.cx.error(d);
-            self.check_args_loose(args);
-            return Some(self.error_expr(span));
-        };
-        self.cx
-            .rec_ref(prop.span, crate::ide::record::Target::Def(m.def));
-        let c = self.fn_callable(m.def, format!("`{}.{}`", id.name, prop.name), span);
-        let slots = vec![None; c.slot_names.len()];
-        let ck = self.check_call(&c, slots, args, exp, span);
-        let kind = H::Call {
-            callee: Callee::Def(m.def, ck.type_args),
-            args: ck.args,
-        };
-        Some(self.mk(kind, ck.ret, span))
     }
 
     fn static_call(

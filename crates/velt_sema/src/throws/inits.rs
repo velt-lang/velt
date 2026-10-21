@@ -12,7 +12,7 @@
 //!
 //! [`ThrowSrc::Defaults`]: crate::defs::ThrowSrc::Defaults
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::hir::{DefId, TyId};
 use crate::types::{children, Types};
@@ -24,10 +24,10 @@ const MAX_GROWTH: usize = 16;
 /// `Box<E2>` throw different errors), and the chain being resolved.
 #[derive(Default)]
 pub(crate) struct InitsSeen {
-    seen: HashMap<DefId, HashSet<Vec<TyId>>>,
+    seen: FxHashMap<DefId, FxHashSet<Vec<TyId>>>,
     /// The instantiations the current resolution is inside, innermost last.
     chain: Vec<(DefId, Vec<TyId>)>,
-    growth: HashMap<DefId, usize>,
+    growth: FxHashMap<DefId, usize>,
 }
 
 impl InitsSeen {

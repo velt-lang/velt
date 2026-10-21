@@ -12,7 +12,7 @@
 //! (at the least fixpoint, whatever the visiting order); `super::worklist` schedules it so
 //! that only the bodies reading a changed function are visited again.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::{Diagnostic, Span};
 
@@ -70,8 +70,8 @@ pub(crate) fn infer_modes(cx: &mut Ctx) {
 /// Visit the bodies of `fns` until no mode changes.
 fn fixpoint(cx: &mut Ctx, fns: &[DefId], dispatch: &super::mutation::Dispatch) {
     let mut work = super::worklist::Worklist::new(cx, fns, dispatch);
-    let position: HashMap<DefId, usize> = fns.iter().copied().zip(0..).collect();
-    let mut reported = HashSet::new();
+    let position: FxHashMap<DefId, usize> = fns.iter().copied().zip(0..).collect();
+    let mut reported = FxHashSet::default();
     // Errors found while patching, reported in definition order (not visiting order).
     let mut errors = vec![];
     let mut changed = vec![];
@@ -138,8 +138,8 @@ pub(super) fn with_body(
 /// Neither do strings taken out of a larger value or captured by a closure: they become copies
 /// when the root stays alive (`super::strings`), so `return this.name` borrows `this`; nor do
 /// fields taken out of a class instance, which become shares.
-fn moved_roots(cx: &Ctx, b: &mut Block, soft: &HashSet<Span>) -> HashSet<LocalId> {
-    let mut out = HashSet::new();
+fn moved_roots(cx: &Ctx, b: &mut Block, soft: &FxHashSet<Span>) -> FxHashSet<LocalId> {
+    let mut out = FxHashSet::default();
     visit::exprs_mut(b, &mut |e: &mut Expr| match &e.kind {
         // A copy of a function value outlives the call: a function-typed param that is copied
         // (`.clone()`, an async-call argument) must own its closure (`super::fn_values`).
@@ -216,7 +216,7 @@ fn through_class(cx: &Ctx, e: &Expr) -> bool {
 }
 
 fn infer_body(cx: &mut Ctx, d: DefId, f: &mut FnDef) -> bool {
-    let soft: HashSet<Span> = cx.fn_info(d).soft_moves.iter().copied().collect();
+    let soft: FxHashSet<Span> = cx.fn_info(d).soft_moves.iter().copied().collect();
     let mut moved = moved_roots(cx, &mut f.body.block, &soft);
     // Parameters that must own their closure (`super::kept_fns`).
     moved.extend(
@@ -266,7 +266,7 @@ fn infer_body(cx: &mut Ctx, d: DefId, f: &mut FnDef) -> bool {
 
 /// Turns borrowed bindings that are moved from into moves (and moves the matched place).
 struct Flip<'a> {
-    moved: &'a HashSet<LocalId>,
+    moved: &'a FxHashSet<LocalId>,
     kinds: &'a [LocalKind],
     changed: bool,
 }

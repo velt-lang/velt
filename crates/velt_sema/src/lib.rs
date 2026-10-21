@@ -37,6 +37,7 @@ mod call_sigs;
 mod callables;
 mod collect;
 mod copy_flow;
+mod copy_types;
 mod creation_notes;
 mod ctx;
 mod defined_props;
@@ -61,6 +62,7 @@ mod intersection_members;
 mod intersections;
 mod js_api;
 mod json;
+mod key_groups;
 mod known;
 mod literals;
 mod module_chunks;
@@ -87,6 +89,7 @@ mod ts_protocol;
 mod type_defaults;
 mod type_level;
 mod type_queries;
+mod type_reach;
 mod types;
 mod undefined_args;
 mod unions;
@@ -310,6 +313,7 @@ fn check_on_current_thread(
         any,
         gen_throw,
         super_calls,
+        cpu_targets,
         ..
     } = cx;
     let defs = defs
@@ -321,19 +325,21 @@ fn check_on_current_thread(
         defs,
         entry,
         impls,
-        anon_shapes,
-        union_shapes,
+        // The HIR contract keeps std maps; the checker builds Fx maps.
+        anon_shapes: anon_shapes.into_iter().collect(),
+        union_shapes: union_shapes.into_iter().collect(),
         counted_objects,
         null_proto_records: objects.null_proto_records,
         module_state,
-        type_ops,
+        type_ops: type_ops.into_iter().collect(),
         any_impl: any.and_then(|a| a.imp),
         unknown: any.and_then(|a| a.imp.map(|_| a.unknown)),
         object: any.and_then(|a| a.imp.map(|_| a.object)),
         function: any.and_then(|a| a.imp.map(|_| a.function)),
-        dyn_members,
+        dyn_members: dyn_members.map(|m| m.into_iter().collect()),
         generator_throw: gen_throw,
-        super_calls,
+        super_calls: super_calls.into_iter().collect(),
+        cpu_targets: cpu_targets.into_iter().collect(),
     };
     (Some(program), diags)
 }
@@ -412,7 +418,6 @@ fn ownership_passes(cx: &mut ctx::Ctx) {
     ownership::check_boundaries(cx);
     let weak = ownership::check_locked(cx);
     ownership::check_many_threads(cx);
-    promise_copies::check(cx);
     weak_threads::check(cx, weak);
 }
 

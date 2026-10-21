@@ -1,0 +1,53 @@
+// check: no leaks
+// sigx's in-flight dedupe: a Map of entries holding a promise, awaited by several callers,
+// compared by identity, with a shared settle handler. Each caller prints its result when its
+// `await` resumes, interleaved with the settle handlers as in Node.
+interface InflightEntry {
+  key: string;
+  p: Promise<string>;
+  refs: number;
+}
+
+const inflight = new Map<string, InflightEntry>();
+
+async function fetcher(key: string): Promise<string> {
+  await Promise.resolve();
+  console.log(`fetching ${key}`);
+  return `value of ${key}`;
+}
+
+function acquire(key: string): InflightEntry {
+  let e = inflight.get(key);
+  if (!e) {
+    const p = fetcher(key);
+    const entry: InflightEntry = { key, p, refs: 0 };
+    inflight.set(key, entry);
+    p.then(
+      (v) => {
+        if (inflight.get(key) === entry) {
+          console.log(`write back ${v}`);
+          inflight.delete(key);
+        }
+      },
+      () => {
+        if (inflight.get(key) === entry) inflight.delete(key);
+      },
+    );
+    e = entry;
+  }
+  e.refs++;
+  return e;
+}
+
+async function run(tag: string, key: string): Promise<string> {
+  const entry = acquire(key);
+  const v = await entry.p;
+  console.log(`${tag}: ${v} (refs ${entry.refs})`);
+  return tag;
+}
+
+async function main() {
+  const done = await Promise.all([run("a", "k1"), run("b", "k1"), run("c", "k2")]);
+  console.log(done.join(","));
+  console.log(`left ${inflight.size}`);
+}

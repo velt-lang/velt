@@ -24,10 +24,10 @@ mod unhandled;
 pub use gate::{velt_rt_task_gate, velt_rt_task_gate_free, velt_rt_task_gate_wait};
 pub(crate) use losers::give_up;
 pub use losers::velt_rt_fut_detach;
-pub(crate) use micro::{settled, ticket_pending};
+pub(crate) use micro::{grant_step, settled, step_free, ticket_pending};
 pub use micro::{velt_rt_await_ready, velt_rt_await_tick, velt_rt_microtask};
 pub(crate) use module_state::{
-    drop_at_exit as module_drop_at_exit, mutex_locked, mutex_unlocked,
+    drop_at_exit as module_drop_at_exit, held as module_held, mutex_locked, mutex_unlocked,
     release_outside as module_release_outside,
 };
 pub use module_state::{velt_rt_module_ready, velt_rt_module_state};
@@ -97,6 +97,13 @@ fn current_set() -> *mut LocalSet {
     }
     // SAFETY: `CURRENT` is only set while its `TaskCx` lives (`Enter`).
     unsafe { *(*tcx).set }
+}
+
+/// Which logical task is being polled (0 outside a task): its [`velt_rt_task_id`], never reused,
+/// and kept by the task's local promises when they outlive its root (the orphan task driving
+/// them has the same id). Shared promises (task/shared.rs) check that they stay on one task.
+pub(crate) fn task_key() -> u64 {
+    velt_rt_task_id()
 }
 
 /// The turn of the task being polled (0 outside a task).
@@ -440,13 +447,19 @@ fn current_set_or_new() -> *mut LocalSet {
 /// (#160). A started or lazy promise node keeps the function for when its state finishes; a
 /// race passes it on to its children (the winner's result is theirs); anything else (a join
 /// handle, whose task already had its inputs transferred, or a runtime leaf) produces nothing
-/// to transfer.
+/// to transfer. A null `transfer` (a result with nothing to move or copy) only hands over a
+/// holder of a shared promise (task/shared.rs).
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_fut_transfer(f: *mut VeltFut, transfer: ResultDropFn) {
+pub unsafe extern "C" fn velt_rt_fut_transfer(f: *mut VeltFut, transfer: Option<ResultDropFn>) {
+    if crate::task::shared::is_shared(f) {
+        return crate::task::shared::hand_over(f, transfer);
+    }
     if crate::task::race::pass_transfer(f, transfer) {
         return;
     }
-    node::set_transfer(f, transfer);
+    if let Some(t) = transfer {
+        node::set_transfer(f, t);
+    }
 }
 
 /// What `console.log` shows of promise `f`, which its owner holds: 1 when its result is in the
@@ -455,7 +468,80 @@ pub unsafe extern "C" fn velt_rt_fut_transfer(f: *mut VeltFut, transfer: ResultD
 /// leaf, a join handle, a combinator, a promise created outside a task) reads as pending.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_fut_peek(f: *mut VeltFut) -> u8 {
+    if crate::task::shared::is_shared(f) {
+        return crate::task::shared::peek(f) as u8;
+    }
     node::peek(f) as u8
+}
+
+/// Is `f` a started promise (driven by its task's set)?
+pub(crate) unsafe fn is_started_node(f: *mut VeltFut) -> bool {
+    node::is_started(f)
+}
+
+/// Await started promise `f` without adopting it: its set drives it, and `cx`'s waker is woken
+/// as it finishes (a shared promise's hub, task/shared.rs). True once it finished; its owner
+/// then claims the result with [`deliver_unadopted`].
+pub(crate) unsafe fn await_unadopted(f: *mut VeltFut, cx: *mut std::ffi::c_void) -> bool {
+    node::poll_unadopted(f, cx)
+}
+
+/// The owner of finished started promise `f` claims its result.
+pub(crate) unsafe fn deliver_unadopted(f: *mut VeltFut) {
+    node::deliver_unadopted(f)
+}
+
+/// The task that runs the promises code outside a task hands to tasks (a holder of a shared
+/// promise given to a spawned call in a synchronous `main`, task/shared.rs): like any task it
+/// has an id and a set, so the promise is shared on it. Code outside a task enters it for each
+/// hand-over; once that code is done ([`outside_done`]), the set moves to an orphan task that
+/// drives what is still running (until then a wake only queues it).
+///
+/// In a program with module state it is a touched task (module_state.rs): code outside a task
+/// may have put holders of its promises in module state, where tasks holding the module lock
+/// use them (task/shared.rs `on_its_task`), so each of its polls takes the lock too, here and
+/// in the orphan.
+static OUTSIDE_HOME: parking_lot::Mutex<SetPtr> = parking_lot::Mutex::new(SetPtr::NONE);
+
+/// Run `f` (outside a task) as a step of the task of [`OUTSIDE_HOME`].
+pub(crate) fn in_outside_home(f: impl FnOnce()) {
+    if module_state::used() {
+        // The module lock first, then the home's: the order every taker of both keeps.
+        module_state::with_lock(|| outside_home_step(f));
+    } else {
+        outside_home_step(f);
+    }
+}
+
+fn outside_home_step(f: impl FnOnce()) {
+    let mut home = OUTSIDE_HOME.lock();
+    home.4 |= module_state::used();
+    // Its promises may start timers and I/O, which need the runtime.
+    let _rt = super::runtime::handle().enter();
+    let mut f = Some(f);
+    // SAFETY: the no-op waker is static; the set is the home's own.
+    unsafe {
+        home.enter(Waker::noop(), &mut || {
+            if let Some(f) = f.take() {
+                f()
+            }
+        })
+    };
+}
+
+/// Code outside a task is done (`main` returned): the promises the outside home runs go on in
+/// an orphan task, a touched one when the program has module state ([`OUTSIDE_HOME`]).
+pub(crate) fn outside_done() {
+    let mut home = std::mem::replace(&mut *OUTSIDE_HOME.lock(), SetPtr::NONE);
+    home.4 |= module_state::used();
+    if let Some(set) = home.take_busy() {
+        Orphan::spawn(set);
+    }
+}
+
+/// Has started promise `f` finished?
+pub(crate) unsafe fn node_done(f: *mut VeltFut) -> bool {
+    node::is_done(f)
 }
 
 /// The `n` futures in `futs` are handled by a combinator (`Promise.race`, `any`, `all`): a

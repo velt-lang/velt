@@ -20,14 +20,20 @@ mod work_dir;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-/// Goldens that cannot run on WebAssembly: the runtime has no sockets (nor `velt:http`), and a
-/// `resolve` called later resumes its waiters at the executor's next step instead of queueing
-/// them as microtasks (docs/reference/async.md).
+/// Goldens that cannot run on WebAssembly: the runtime has no sockets (nor `velt:http`), a
+/// `resolve` called later, or a shared promise settling, resumes its waiters at the executor's
+/// next step instead of queueing them as microtasks (docs/reference/async.md), and the tasks a
+/// synchronous `main` spawns never run (its executor runs only under an `async main`).
 const UNSUPPORTED: &[&str] = &[
     "tcp_echo",
     "http_server",
     "console_std_handles",
     "await_order_resolve",
+    "promise_shared_inflight",
+    "promise_shared_orphan",
+    "promise_shared_orphan_task",
+    "promise_shared_sync_main",
+    "promise_shared_sync_main_module",
 ];
 /// Goldens that need a file system (not available to browser modules).
 const NEEDS_FS: &[&str] = &["fs"];
@@ -199,6 +205,8 @@ const WASI_STD: &[&str] = &[
     "simd_load_range",
     "simd_names",
     "simd_positions",
+    "simd_sha",
+    "simd_shuffle",
     "simd_store_range",
     "simd_values",
     "utf8_valid",

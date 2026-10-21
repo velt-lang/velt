@@ -1,0 +1,23 @@
+// check: no leaks
+// Converting a promise held in a class field to a wider error type: the field keeps its
+// promise and the converted value is another holder of it (#212).
+class Oops extends Error {}
+class Other extends Error {}
+
+async function value(): Promise<string> throws Oops {
+  return "v";
+}
+
+class Holder {
+  p: Promise<string, Oops>;
+
+  constructor(p: Promise<string, Oops>) {
+    this.p = p;
+  }
+}
+
+async function main() {
+  const h = new Holder(value());
+  const w: Promise<string, Oops | Other> = h.p;
+  console.log(await w);
+}

@@ -12,7 +12,7 @@ pub(super) fn call_site(
     cx: &Ctx,
     g: &Graph,
     reached: &[(DefId, TyId, Why)],
-    requests: &HashSet<DefId>,
+    requests: &FxHashSet<DefId>,
     bodies: &Bodies,
     c: DefId,
     ty: TyId,
@@ -22,7 +22,7 @@ pub(super) fn call_site(
     let lit = g.ids.get(&Node::Lit(c)).copied();
     let homes = bodies.homes.get(&c).map(Vec::as_slice).unwrap_or_default();
     let flows = |n: usize, to: &[usize]| {
-        let mut seen = HashSet::new();
+        let mut seen = FxHashSet::default();
         let mut work = vec![n];
         while let Some(m) = work.pop() {
             if to.contains(&m) {

@@ -23,6 +23,7 @@ declare function velt_rt_bytes_xor_mask(b: u8[], mask: u32, start: i64, end: i64
 // here so that the prelude does not load it). `load` does not check its range.
 declare function velt_simd_u8x16_splat(x: u8): u8x16;
 declare function velt_simd_u8x16_load(from: u8[], at: u64): u8x16;
+declare function velt_simd_u8x16_store(v: u8x16, to: u8[], at: u64);
 declare function velt_simd_u8x16_eq(a: u8x16, b: u8x16): mask8x16;
 declare function velt_simd_mask8x16_any(m: mask8x16): bool;
 declare function velt_simd_mask8x16_first(m: mask8x16): u64;
@@ -182,6 +183,30 @@ extend Array<u8> {
    * array does not grow, so `src` must fit (panics with a RangeError otherwise, as JS throws).
    */
   set(src: u8[], offset: usize = 0) {
+    // 16 to 64 bytes (a digest, a key, a header): two or four 16-byte chunks, the last ones
+    // ending at `src`'s end (they overlap the first when `n` is not a multiple of 16), with no
+    // call into the runtime.
+    const n = src.length;
+    if (n >= 16 && n <= 64 && offset <= this.length && n <= this.length - offset) {
+      const at = offset as u64;
+      const last = (n - 16) as u64;
+      if (n <= 32) {
+        const a = velt_simd_u8x16_load(src, 0);
+        const b = velt_simd_u8x16_load(src, last);
+        velt_simd_u8x16_store(a, this, at);
+        velt_simd_u8x16_store(b, this, at + last);
+      } else {
+        const a = velt_simd_u8x16_load(src, 0);
+        const b = velt_simd_u8x16_load(src, 16);
+        const c = velt_simd_u8x16_load(src, last - 16);
+        const d = velt_simd_u8x16_load(src, last);
+        velt_simd_u8x16_store(a, this, at);
+        velt_simd_u8x16_store(b, this, at + 16);
+        velt_simd_u8x16_store(c, this, at + last - 16);
+        velt_simd_u8x16_store(d, this, at + last);
+      }
+      return;
+    }
     if (!velt_rt_bytes_set(this, src, offset as u64)) {
       panic("RangeError: offset is out of bounds");
     }

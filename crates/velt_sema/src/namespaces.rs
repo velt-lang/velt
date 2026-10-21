@@ -14,7 +14,7 @@
 //! - `import { N }` binds every exported `N.x` of the module as `N.x` (`collect::imports`), and
 //!   export lists re-export them (`collect::exports`).
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
@@ -24,7 +24,7 @@ use crate::SourceModule;
 
 /// Per module: the members declared without `export`, by flattened name, with the span of the
 /// namespace body they are visible in.
-pub(crate) type Private = HashMap<String, Span>;
+pub(crate) type Private = FxHashMap<String, Span>;
 
 /// The modules with their namespaces flattened, or `None` when no module has one; with each
 /// module's private members and the errors found (a namespace named like an import).
@@ -45,7 +45,7 @@ pub(crate) fn flatten(
     let out = modules
         .iter()
         .map(|m| {
-            let mut p = Private::new();
+            let mut p = Private::default();
             let mut ast = m.ast.clone();
             if has(m) {
                 import_conflicts(&m.ast.items, &mut diags);
@@ -71,7 +71,7 @@ pub(crate) fn flatten(
 /// another module's namespace is reported where its members are bound
 /// (`collect::imports`).
 fn import_conflicts(items: &[ast::Item], diags: &mut Vec<Diagnostic>) {
-    let namespaces: HashMap<&str, Span> = items
+    let namespaces: FxHashMap<&str, Span> = items
         .iter()
         .filter_map(|i| match &i.kind {
             ast::ItemKind::Namespace(n) => Some((n.name.name.as_str(), n.name.span)),
@@ -183,7 +183,7 @@ fn flatten_items(mut items: Vec<ast::Item>, private: &mut Private) -> Vec<ast::I
         }
     }
     // The exported members of every namespace path, over all of its blocks.
-    let mut members: HashMap<Vec<String>, Members> = HashMap::new();
+    let mut members: FxHashMap<Vec<String>, Members> = FxHashMap::default();
     for item in &items {
         if let ast::ItemKind::Namespace(ns) = &item.kind {
             let paths = Paths::default().push(&ns.name.name, ns.name.name.clone());
@@ -224,8 +224,8 @@ fn flatten_items(mut items: Vec<ast::Item>, private: &mut Private) -> Vec<ast::I
 /// (its own, or a block-unique one for an unexported member, [`Blocks::segment`]).
 #[derive(Clone, Default)]
 struct Members {
-    types: HashMap<String, String>,
-    namespaces: HashMap<String, String>,
+    types: FxHashMap<String, String>,
+    namespaces: FxHashMap<String, String>,
 }
 
 impl Members {
@@ -276,7 +276,7 @@ impl Paths {
 /// The blocks (by the start of the namespace declaration) declaring each member, by written
 /// namespace path, kind (namespace or type) and name.
 #[derive(Default)]
-struct Blocks(HashMap<(Vec<String>, bool, String), Vec<u32>>);
+struct Blocks(FxHashMap<(Vec<String>, bool, String), Vec<u32>>);
 
 impl Blocks {
     fn collect(&mut self, ns: &ast::Namespace, span: Span, path: &mut Vec<String>, ambient: bool) {
@@ -331,7 +331,7 @@ fn collect_members(
     paths: &Paths,
     ambient: bool,
     blocks: &Blocks,
-    out: &mut HashMap<Vec<String>, Members>,
+    out: &mut FxHashMap<Vec<String>, Members>,
 ) {
     let ambient = ambient || ns.declare;
     for item in &ns.items {
@@ -348,7 +348,7 @@ fn collect_members(
 }
 
 struct Flatten<'a> {
-    members: &'a HashMap<Vec<String>, Members>,
+    members: &'a FxHashMap<Vec<String>, Members>,
     blocks: &'a Blocks,
     private: &'a mut Private,
 }
@@ -466,7 +466,7 @@ fn generic_names(g: &[ast::GenericParam]) -> Vec<String> {
 /// enclosing namespace declares gets that namespace's path.
 struct Rewrite<'a> {
     /// The exported members of every namespace path.
-    members: &'a HashMap<Vec<String>, Members>,
+    members: &'a FxHashMap<Vec<String>, Members>,
     /// The unexported members of the blocks around the member, one per level of `path`.
     locals: &'a [Members],
     path: &'a [String],

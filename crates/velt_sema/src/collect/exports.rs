@@ -6,7 +6,7 @@
 //! other modules' imports), so they do not depend on the order modules are processed in. Chains
 //! and cycles of re-exports are followed up to [`MAX_DEPTH`] steps.
 
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 
 use velt_syntax::ast;
 
@@ -40,7 +40,7 @@ pub(crate) fn import_target(cx: &Ctx, m: usize, spec: &str) -> Option<usize> {
 }
 
 /// The identifier-like words of source text `src`.
-pub(crate) fn words(src: &str) -> HashSet<String> {
+pub(crate) fn words(src: &str) -> FxHashSet<String> {
     src.split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$'))
         .filter(|w| !w.is_empty())
         .map(str::to_string)
@@ -51,7 +51,7 @@ pub(crate) fn words(src: &str) -> HashSet<String> {
 /// from a module it recovered (`Ctx::recovered`): one whose source has the word, reached from
 /// `t` through re-exports (`export * from`, `export { name } from`).
 pub(crate) fn maybe_dropped(cx: &Ctx, t: usize, name: &str) -> bool {
-    fn go(cx: &Ctx, t: usize, name: &str, seen: &mut HashSet<usize>) -> bool {
+    fn go(cx: &Ctx, t: usize, name: &str, seen: &mut FxHashSet<usize>) -> bool {
         if !seen.insert(t) {
             return false;
         }
@@ -76,7 +76,7 @@ pub(crate) fn maybe_dropped(cx: &Ctx, t: usize, name: &str) -> bool {
         }
         false
     }
-    !cx.recovered.is_empty() && go(cx, t, name, &mut HashSet::new())
+    !cx.recovered.is_empty() && go(cx, t, name, &mut FxHashSet::default())
 }
 
 /// Whether member `name`, which values of type `t` don't have, may be one the parser dropped
@@ -102,7 +102,7 @@ pub(crate) fn def_member_maybe_dropped(cx: &Ctx, d: DefId, name: &str) -> bool {
         return false;
     }
     let mut todo = vec![d];
-    let mut seen = HashSet::new();
+    let mut seen = FxHashSet::default();
     while let Some(d) = todo.pop() {
         if !seen.insert(d) {
             continue;

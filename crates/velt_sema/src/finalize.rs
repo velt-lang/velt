@@ -1,19 +1,19 @@
 //! Build the final `hir::Def`s for type definitions, constants and externs (function bodies are
 //! already built by the body pass), and assemble the `hir::Program`.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use crate::collect::{self_type, DISPOSE};
 use crate::ctx::Ctx;
 use crate::defs::DefInfo;
 use crate::hir::{
-    self, AdtDef, Def, DefId, EnumDef, ExternFnDef, FieldDef, GlobalDef, InterfaceDef,
+    self, AdtDef, AdtKind, Def, DefId, EnumDef, ExternFnDef, FieldDef, GlobalDef, InterfaceDef,
     InterfaceMethodDef, VariantDef,
 };
 use crate::hooks;
 
 pub(crate) fn build_defs(cx: &mut Ctx) {
-    let mut memo: HashMap<DefId, Vec<Option<hir::Expr>>> = HashMap::new();
+    let mut memo: FxHashMap<DefId, Vec<Option<hir::Expr>>> = FxHashMap::default();
     let assigned = crate::assigned_fields::assigned_objects(cx);
     for i in 0..cx.info.len() {
         let d = DefId(i as u32);
@@ -158,7 +158,7 @@ fn slot_throws(cx: &mut Ctx, d: DefId, s: u32) -> Option<hir::TyId> {
 fn field_defaults(
     cx: &mut Ctx,
     d: DefId,
-    memo: &mut HashMap<DefId, Vec<Option<hir::Expr>>>,
+    memo: &mut FxHashMap<DefId, Vec<Option<hir::Expr>>>,
 ) -> Vec<Option<hir::Expr>> {
     if let Some(v) = memo.get(&d) {
         return v.clone();
@@ -216,7 +216,7 @@ fn inherited_inits(cx: &mut Ctx, d: DefId) -> (Vec<hir::FieldInit>, u32) {
 fn adt_def(
     cx: &mut Ctx,
     d: DefId,
-    memo: &mut HashMap<DefId, Vec<Option<hir::Expr>>>,
+    memo: &mut FxHashMap<DefId, Vec<Option<hir::Expr>>>,
     assigned: bool,
 ) -> AdtDef {
     let defaults = field_defaults(cx, d, memo);
@@ -246,6 +246,7 @@ fn adt_def(
             hidden: hidden.contains(&f.name),
         })
         .collect();
+    let declared_struct = a.kind == AdtKind::Struct && a.decl.is_some();
     let (name, kind, base, ctor, vtable, span) = (
         a.qual_name.clone(),
         a.kind,
@@ -269,6 +270,7 @@ fn adt_def(
         generics: n as u32,
         fields,
         is_copy: cx.is_copy(st),
+        declared_struct,
         private_fields,
         opaque,
         assigned,

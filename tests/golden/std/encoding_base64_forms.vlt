@@ -94,8 +94,14 @@ function main() {
   tryDecode("latin", "QUJDé", false);
   tryDecode("latin first", "éUJD", false);
   tryDecode("emoji", "QUJD😀QUJD", false);
+  // The last entry of the 256-entry digit tables, and the first code unit past them.
+  tryDecode("u+00ff", "QUJ\u00ff", false);
+  tryDecode("u+0100", "QUJ\u0100", false);
+  tryDecode("u+00ff url", "QUJ\u00ff", true);
+  tryDecode("empty", "", false);
+  tryDecode("empty url", "", true);
 
-  // Just under the table threshold, and at it.
+  // Just under the length from which a copy of the bytes is read, and at it.
   const under = base64Encode(bytes(15));
   const at = base64Encode(bytes(18));
   tryDecode("under", under, false);
@@ -106,7 +112,7 @@ function main() {
   tryDecode("threshold latin", `é${at.slice(1)}`, false);
   tryDecode("threshold url", base64UrlEncode(bytes(18)), true);
 
-  // The same in a text long enough for the table.
+  // The same in a text long enough for the copy.
   const long = base64Encode(bytes(600));
   tryDecode("long", long, false);
   tryDecode("long bad middle", `${long.slice(0, 401)}*${long.slice(402)}`, false);
@@ -117,4 +123,6 @@ function main() {
   tryDecode("long url", base64UrlEncode(bytes(600)), true);
   tryDecode("long extra digit", `${long}Q`, false);
   tryDecode("long pad inside", `${long.slice(0, 400)}=${long.slice(401)}`, false);
+  tryDecode("long u+00ff", `${long.slice(0, 500)}\u00ff${long.slice(501)}`, false);
+  tryDecode("long u+0100", `${long.slice(0, 500)}\u0100${long.slice(501)}`, false);
 }

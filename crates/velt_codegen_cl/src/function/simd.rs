@@ -4,7 +4,7 @@
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use cranelift_codegen::ir::{self, types, InstBuilder, MemFlags, StackSlotData, StackSlotKind};
 use cranelift_module::Module;
-use velt_vir::simd::{Lanes, MaskOp, Op, SimdCall};
+use velt_vir::simd::{reversed_bytes, Lanes, MaskOp, Op, ShaOp, SimdCall};
 use velt_vir::vir::{Callee, Const, Operand, Ty};
 
 use super::place::mem_flags;
@@ -40,6 +40,20 @@ fn mask_type(bits: u32) -> ir::Type {
     }
 }
 
+/// Whether `isa` shuffles bytes with one instruction: everything but x86-64 without SSSE3
+/// (`pshufb`), where Cranelift would call a library function for most masks.
+pub(super) fn has_byte_shuffles(isa: &dyn cranelift_codegen::isa::TargetIsa) -> bool {
+    if !matches!(
+        isa.triple().architecture,
+        target_lexicon::Architecture::X86_64
+    ) {
+        return true;
+    }
+    isa.isa_flags()
+        .iter()
+        .any(|f| f.name == "has_ssse3" && f.as_bool() == Some(true))
+}
+
 impl<M: Module> Translator<'_, '_, M> {
     /// The all-zero vector.
     pub(super) fn zero_vector(&mut self) -> ir::Value {
@@ -70,6 +84,12 @@ impl<M: Module> Translator<'_, '_, M> {
         Some(match call {
             SimdCall::Mask(bits, op) => Inlined::Value(self.simd_mask(bits, op, values)),
             SimdCall::Vector(lanes, op) => self.simd_vector(lanes, op, args, values),
+            // Cranelift has none of these instructions: the CPU "lacks" them here, so every
+            // check is false and the operations sit behind it as dead code (std/simd/sha.vlt
+            // runs the emulation). They give a zero value, never computed at run time.
+            SimdCall::Has(_) => Inlined::Value(self.builder.ins().iconst(types::I8, 0)),
+            SimdCall::Sha(ShaOp::Sha1H) => Inlined::Value(self.builder.ins().iconst(types::I32, 0)),
+            SimdCall::Sha(_) => Inlined::Value(self.zero_vector()),
         })
     }
 
@@ -147,6 +167,8 @@ impl<M: Module> Translator<'_, '_, M> {
             Op::WithLane => self.simd_with_lane(lanes, &args[1], values),
             Op::As(_) => values[0],
             Op::ZipLow | Op::ZipHigh => self.simd_zip(lanes, op == Op::ZipHigh, values),
+            Op::ReverseBytes => self.simd_shuffle(&reversed_bytes(lanes), values[0], values[0]),
+            Op::Shuffle(mask) => self.simd_shuffle(&mask, values[0], values[1]),
             Op::Narrow => self.simd_narrow(lanes, values),
             Op::Select => {
                 let x = self.lanes_of(values[1], ty);
@@ -266,6 +288,32 @@ impl<M: Module> Translator<'_, '_, M> {
         }
         let mask = self.builder.func.dfg.immediates.push(bytes.into());
         self.builder.ins().shuffle(values[0], values[1], mask)
+    }
+
+    /// Byte `i` of the result is byte `mask[i]` of the 32 bytes of `a` followed by `b`. Without
+    /// a byte shuffle instruction (`has_byte_shuffles`) the bytes go through memory instead of
+    /// Cranelift's `shuffle`, which there calls a `__cranelift_x86_pshufb` that nothing defines.
+    fn simd_shuffle(&mut self, mask: &[u8; 16], a: ir::Value, b: ir::Value) -> ir::Value {
+        if self.byte_shuffles {
+            let mask = self.builder.func.dfg.immediates.push(mask.to_vec().into());
+            return self.builder.ins().shuffle(a, b, mask);
+        }
+        let both = self.builder.create_sized_stack_slot(StackSlotData::new(
+            StackSlotKind::ExplicitSlot,
+            32,
+            4,
+        ));
+        let out = self.simd_spill(a);
+        self.builder.ins().stack_store(a, both, 0);
+        self.builder.ins().stack_store(b, both, 16);
+        for (i, &from) in mask.iter().enumerate() {
+            let byte = self
+                .builder
+                .ins()
+                .stack_load(types::I8, both, i32::from(from));
+            self.builder.ins().stack_store(byte, out, i as i32);
+        }
+        self.builder.ins().stack_load(types::I8X16, out, 0)
     }
 
     /// The lanes of both vectors at half the width, clamped. Unsigned lanes are capped first:

@@ -227,7 +227,7 @@ impl FnCx<'_, '_> {
 
     /// Drops from `facts` those about a variable `e` assigns, or about a field path of one.
     fn drop_assigned_facts(&mut self, facts: &mut Vec<Fact>, e: &ast::Expr) {
-        let mut names = super::assigned::Assigned::new();
+        let mut names = super::assigned::Assigned::default();
         super::assigned::assigned_in_expr(e, &mut names);
         if names.is_empty() {
             return;
@@ -610,7 +610,7 @@ impl FnCx<'_, '_> {
     /// A loop may run its body again after an assignment in it: narrowing of every local the
     /// loop assigns does not hold inside (or after) it.
     pub(crate) fn unnarrow_assigned_in(&mut self, lp: &ast::Stmt) {
-        let mut names = super::assigned::Assigned::new();
+        let mut names = super::assigned::Assigned::default();
         super::assigned::assigned_in_stmt(lp, &mut names);
         for name in names.into_keys() {
             let found = self

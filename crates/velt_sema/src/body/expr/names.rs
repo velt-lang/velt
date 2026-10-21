@@ -419,6 +419,9 @@ impl FnCx<'_, '_> {
             );
             return self.error_expr(span);
         }
+        if self.gated_value(d, &id.name, span) {
+            return self.error_expr(span);
+        }
         if let Some(h) = self.generator_value(d, None, exp, span) {
             return h;
         }

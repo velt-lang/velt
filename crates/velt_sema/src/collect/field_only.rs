@@ -10,7 +10,7 @@
 //! anonymous object type of its fields (`crate::readonly`), so it converts to and from object
 //! types of the same layout (an `Upcast`) and stays the same object.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use velt_syntax::ast;
 
@@ -25,7 +25,7 @@ pub(super) fn declare(cx: &mut Ctx) {
         .map(DefId)
         .filter(|d| matches!(&cx.info[d.0 as usize], DefInfo::Iface(i) if i.decl.is_some()))
         .collect();
-    let mut memo: HashMap<DefId, bool> = HashMap::new();
+    let mut memo: FxHashMap<DefId, bool> = FxHashMap::default();
     for d in &ifaces {
         is_field_only(cx, *d, &mut memo, &mut vec![]);
     }
@@ -52,14 +52,14 @@ pub(super) fn declare(cx: &mut Ctx) {
             own_fields_start: 0,
             redefined: vec![],
             base: None,
-            methods: HashMap::new(),
+            methods: FxHashMap::default(),
             ctor: None,
             own_ctor: None,
             vtable: vec![],
-            vslots: HashMap::new(),
+            vslots: FxHashMap::default(),
             implements: vec![],
             has_dispose: false,
-            statics: HashMap::new(),
+            statics: FxHashMap::default(),
             decl: None,
         };
         let span = i.span;
@@ -74,7 +74,7 @@ pub(super) fn declare(cx: &mut Ctx) {
 fn is_field_only(
     cx: &Ctx,
     d: DefId,
-    memo: &mut HashMap<DefId, bool>,
+    memo: &mut FxHashMap<DefId, bool>,
     stack: &mut Vec<DefId>,
 ) -> bool {
     if let Some(&known) = memo.get(&d) {

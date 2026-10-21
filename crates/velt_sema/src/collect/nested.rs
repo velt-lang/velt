@@ -8,7 +8,7 @@
 //! a hint to use an arrow function. For that message, every nested definition records the names
 //! bound in its enclosing functions (`Ctx::nested_locals`).
 
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 
 use velt_common::Span;
 use velt_syntax::ast;
@@ -33,7 +33,7 @@ enum Found<'m> {
 }
 
 pub(super) fn declare_nested(cx: &mut Ctx, defs: &mut Vec<DefId>) {
-    let mut used = HashSet::new();
+    let mut used = FxHashSet::default();
     for m in 0..cx.modules.len() {
         let module = &cx.modules[m];
         for item in &module.ast.items {
@@ -73,7 +73,7 @@ fn item_bodies<'m>(
     outer: &[String],
     class: Option<DefId>,
     defs: &mut Vec<DefId>,
-    used: &mut HashSet<String>,
+    used: &mut FxHashSet<String>,
 ) {
     let mut bodies: Vec<(String, &'m [ast::Param], &'m ast::Block)> = vec![];
     match &item.kind {
@@ -130,7 +130,7 @@ fn fn_body<'m>(
     outer: &[String],
     class: Option<DefId>,
     defs: &mut Vec<DefId>,
-    used: &mut HashSet<String>,
+    used: &mut FxHashSet<String>,
 ) {
     let mut found = vec![];
     walk_block(body, &mut |f| found.push(f));

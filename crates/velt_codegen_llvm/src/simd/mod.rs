@@ -3,7 +3,7 @@
 //! LLVM vector instruction or intrinsic, and reinterprets the result back. After inlining
 //! nothing of the helper or the reinterpretation is left.
 
-use velt_vir::simd::{Lanes, Op, SimdCall};
+use velt_vir::simd::{reversed_bytes, Lanes, Op, SimdCall};
 use velt_vir::vir::Ty;
 
 use crate::types::{abi_ret, abi_type};
@@ -13,6 +13,9 @@ use reshape::{convert, narrow, widen, zip};
 mod masks;
 mod partial;
 mod reshape;
+mod sha;
+
+pub(crate) use sha::has_ext;
 
 /// The instruction sets a helper's body depends on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -58,6 +61,8 @@ pub(crate) fn helper(symbol: &str, arch: Arch) -> Option<(String, Vec<String>, V
         }
         SimdCall::Vector(lanes, op) => vector(&mut body, lanes, op),
         SimdCall::Mask(bits, op) => mask(&mut body, bits, op, arch == Arch::Neon),
+        SimdCall::Has(ext) => Some(sha::has(&mut body, arch, ext)),
+        SimdCall::Sha(op) => Some(sha::op(&mut body, arch, op)),
     };
     let args: Vec<String> = params
         .iter()
@@ -68,7 +73,15 @@ pub(crate) fn helper(symbol: &str, arch: Arch) -> Option<(String, Vec<String>, V
         Some(value) => format!("ret {} {value}", crate::types::llvm_type(ret)?),
         None => "ret void".to_string(),
     };
-    let features = if arch == Arch::Wasm { WASM_SIMD } else { "" };
+    let ext_features;
+    let features = match call {
+        _ if arch == Arch::Wasm => WASM_SIMD,
+        SimdCall::Sha(op) if has_ext(arch, op.ext()) => {
+            ext_features = format!(" \"target-features\"=\"{}\"", op.ext().op_features());
+            ext_features.as_str()
+        }
+        _ => "",
+    };
     let definition = format!(
         "define internal {} {name}({}) alwaysinline nounwind{features} {{\n{}  {ret_line}\n}}",
         abi_ret(ret).ok()?,
@@ -188,6 +201,9 @@ fn vector(b: &mut Body, lanes: Lanes, op: Op) -> Option<String> {
         Op::WidenLow | Op::WidenHigh => return Some(widen(b, lanes, op == Op::WidenHigh)),
         Op::Narrow => return Some(narrow(b, lanes)),
         Op::Convert(to) => return Some(convert(b, lanes, to)),
+        // Byte shuffles: the helper's own `<16 x i8>` arguments, nothing to reinterpret.
+        Op::ReverseBytes => return Some(byte_shuffle(b, &reversed_bytes(lanes), false)),
+        Op::Shuffle(mask) => return Some(byte_shuffle(b, &mask, true)),
         Op::Splat => splat(b, lanes, "%a0"),
         Op::Index => index(b, lanes),
         Op::Load => {
@@ -208,6 +224,16 @@ fn vector(b: &mut Body, lanes: Lanes, op: Op) -> Option<String> {
         }
     };
     Some(b.bytes(&value, &ty))
+}
+
+/// The bytes `mask` picks from the arguments (`%a0` followed by `%a1`, or only `%a0`).
+fn byte_shuffle(b: &mut Body, mask: &[u8; 16], two: bool) -> String {
+    let picks: Vec<String> = mask.iter().map(|m| format!("i32 {m}")).collect();
+    let second = if two { "%a1" } else { "poison" };
+    b.inst(format!(
+        "shufflevector <16 x i8> %a0, <16 x i8> {second}, <16 x i32> <{}>",
+        picks.join(", ")
+    ))
 }
 
 /// The vector whose lanes are their own indices.

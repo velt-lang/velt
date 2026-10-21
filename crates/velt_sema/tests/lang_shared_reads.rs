@@ -197,7 +197,8 @@ fn for_of_and_index_read_maps_sets_and_typed_arrays_inside() {
 
 #[test]
 fn changing_loop_elements_of_it_is_an_error() {
-    let class = "class C { n: number = 0; bump(): C { this.n += 1; return this; } inc() { this.n += 1; } }";
+    let class =
+        "class C { n: number = 0; bump(): C { this.n += 1; return this; } inc() { this.n += 1; } }";
     for body in [
         "const s = shared(new Map<string, Uint8Array>()); for (const [k, v] of s) { v.fill(1); }",
         "const s = shared(new Set<C>()); for (const c of s) { c.bump(); }",

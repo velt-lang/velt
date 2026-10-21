@@ -22,7 +22,7 @@
 //! A value of a type without null, a field left out and the same optional field copied from
 //! another object by a spread or a conversion (absent there, absent here) are not stores.
 
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 
 use velt_common::{Diagnostic, Span};
 
@@ -39,7 +39,7 @@ pub(crate) fn check(cx: &mut Ctx) {
     if tests.is_empty() {
         return;
     }
-    let names: HashSet<String> = tests.iter().map(|t| t.0.clone()).collect();
+    let names: FxHashSet<String> = tests.iter().map(|t| t.0.clone()).collect();
     let mut stores: Vec<(String, Span)> = literals
         .into_iter()
         .filter(|(n, _)| names.contains(n))
@@ -61,7 +61,7 @@ pub(crate) fn check(cx: &mut Ctx) {
     // A literal's property may be found both while checking and by the walk: once each.
     stores.sort_by_key(|(_, s)| (s.file, s.lo, s.hi));
     stores.dedup_by(|a, b| a.0 == b.0 && (a.1.file, a.1.lo, a.1.hi) == (b.1.file, b.1.lo, b.1.hi));
-    let mut reported = HashSet::new();
+    let mut reported = FxHashSet::default();
     for (name, ty, at) in &tests {
         let mut of_name = stores.iter().filter(|(n, _)| n == name);
         let Some((_, store)) = of_name.next() else {
@@ -137,20 +137,20 @@ impl visit::VisitMut for Exprs<'_> {
 /// The stores of a possibly-null value into a field named in `names`, in one body.
 struct Walk<'a, 'm> {
     cx: &'a Ctx<'m>,
-    names: &'a HashSet<String>,
+    names: &'a FxHashSet<String>,
     stores: Vec<(String, Span)>,
     /// Places already judged where they are used (an assignment's target, the object of
     /// `o.b.c = v`): expressions visited later, by address.
-    judged: HashSet<*const Expr>,
+    judged: FxHashSet<*const Expr>,
 }
 
 impl<'a, 'm> Walk<'a, 'm> {
-    fn new(cx: &'a Ctx<'m>, names: &'a HashSet<String>) -> Self {
+    fn new(cx: &'a Ctx<'m>, names: &'a FxHashSet<String>) -> Self {
         Walk {
             cx,
             names,
             stores: vec![],
-            judged: HashSet::new(),
+            judged: FxHashSet::default(),
         }
     }
 

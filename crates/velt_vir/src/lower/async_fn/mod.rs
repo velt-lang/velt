@@ -42,7 +42,7 @@ mod tasks;
 mod value;
 mod widen;
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 pub(super) use generator::GenLocal;
 use velt_sema::hir::{self, DefId, FnDef, PassMode, TyId, TyKind};
@@ -221,7 +221,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         shared: Option<Vec<PassMode>>,
     ) -> Vec<Option<Local>> {
         let mut info: Vec<Option<LInfo>> = f.body.locals.iter().map(|_| None).collect();
-        let modes: HashMap<hir::LocalId, PassMode> = match shared {
+        let modes: FxHashMap<hir::LocalId, PassMode> = match shared {
             Some(ms) => f.captures.iter().map(|c| c.inner).zip(ms).collect(),
             None => f.captures.iter().map(|c| (c.inner, c.mode)).collect(),
         };

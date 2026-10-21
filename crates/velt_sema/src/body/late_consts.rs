@@ -19,7 +19,7 @@
 //! does not free: one object per such constant created stays allocated (documented in
 //! docs/reference/functions.md).
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
@@ -31,10 +31,10 @@ use crate::hir::{self, ExprKind as H, LocalId, StmtKind as S, TyId, UseMode};
 #[derive(Clone, Debug, Default)]
 pub(crate) struct LateFrame {
     /// The late `const`s this frame declares whose initializer is running, with their flags.
-    pub pending: HashMap<LocalId, LocalId>,
+    pub pending: FxHashMap<LocalId, LocalId>,
     /// This frame's captures of a late `const` made while its initializer ran, with this
     /// frame's capture of the flag.
-    pub caps: HashMap<LocalId, LocalId>,
+    pub caps: FxHashMap<LocalId, LocalId>,
     /// The flags the statement being checked reads a late `const` through (checked before it),
     /// with the constant's name.
     pub checks: Vec<(LocalId, String)>,
@@ -93,7 +93,7 @@ impl FnCx<'_, '_> {
         let Some(e) = v.init.as_ref() else {
             return false;
         };
-        if v.kind != ast::VarKind::Const || !closure_uses(e, &name.name) {
+        if v.kind != ast::VarKind::Const || !self.arrow_scans.late_const(e, &name.name) {
             return false;
         }
         let ty = match ann {

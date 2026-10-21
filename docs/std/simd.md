@@ -37,6 +37,8 @@ browser, Node.js, wasmtime and wasmer do).
 | `v.zipLow(o)` `v.zipHigh(o)` | the lanes of the low (high) halves of `v` and `o` in turn: `v0, o0, v1, o1, …` |
 | `v.widenLow()` `v.widenHigh()` | the low (high) half's lanes at twice the width, `u8x16` to `u16x8`: 8-, 16- and 32-bit integers |
 | `v.narrow(o)` | the lanes of `v`, then of `o`, at half the width, clamped to its range, two `u16x8` to a `u8x16`: 16- and 32-bit integers |
+| `T.shuffle(a, b, i0, …)` | one lane index per lane: lane `k` is lane `ik` of `a`'s lanes followed by `b`'s (`0` to `n - 1` from `a`, `n` to `2n - 1` from `b`), like WebAssembly's `i8x16.shuffle` and LLVM's `shufflevector`. The indices must be integer literals (a compile error otherwise): they are compiled into the instruction. `u32x4.shuffle(v, v, 1, 0, 3, 2)` swaps neighbouring lanes, `u8x16.shuffle(a, b, 8, 9, …, 23)` is the bytes from the middle of `a`, `b` (`palignr`) |
+| `v.reverseBytes()` | the bytes of each lane in reverse order, so big-endian words read with `load` become their values: 16-, 32- and 64-bit integers |
 | `toF32x4()` | `i32x4`, `u32x4`: each lane as the nearest `f32` |
 | `toI32x4()` `toU32x4()` | `f32x4`: each lane truncated toward zero and clamped to the range, NaN as 0 |
 | `v.asU8x16()`, … | the same 128 bits as another vector type, nothing converted: to and from `u8x16`, and between the types with as many lanes |
@@ -61,6 +63,48 @@ panic with their RangeError. A negative literal written there (`v.lane(-1)`) is 
 error instead, since the parameter is a `usize`. A lane value or shift count given as a `number` is converted as
 the standard library converts every `number` it takes as an integer: truncated, clamped to the
 type's range, NaN as 0 (`u8x16.splat(300)` is 255 in every lane).
+
+## SHA instructions
+
+`u32x4` has the CPU's SHA-1 and SHA-256 instructions as methods, named after the instruction,
+with its operands in the instruction's order and lane 0 the low 32 bits: the ARMv8 ones as in
+ARM's ACLE (`vsha256hq_u32(abcd, efgh, wk)` is `abcd.sha256h(efgh, wk)`) and the x86 ones as in
+Intel's intrinsics (`_mm_sha256rnds2_epu32(cdgh, abef, wk)` is `cdgh.sha256rnds2(abef, wk)`), so
+published code ports line by line.
+
+| Method | Instruction |
+|---|---|
+| `abcd.sha1c(e, wk)` `sha1p` `sha1m`, `u32x4.sha1h(e)` | ARM SHA1C, SHA1P, SHA1M (four rounds; `e` a `u32`), SHA1H |
+| `w0.sha1su0(w1, w2)`, `t.sha1su1(w3)` | ARM SHA1SU0, SHA1SU1 (W0 in lane 0) |
+| `abcd.sha256h(efgh, wk)`, `efgh.sha256h2(abcd, wk)` | ARM SHA256H, SHA256H2 (four rounds; state ABCD / EFGH, A in lane 0) |
+| `w0.sha256su0(w1)`, `t.sha256su1(w2, w3)` | ARM SHA256SU0, SHA256SU1 (W0 in lane 0) |
+| `cdgh.sha256rnds2(abef, wk)` | x86 SHA256RNDS2 (two rounds; state ABEF / CDGH with A in lane 3; `wk`'s lanes 0 and 1 are the implicit `xmm0`) |
+| `a.sha256msg1(b)`, `a.sha256msg2(b)` | x86 SHA256MSG1, SHA256MSG2 (W0 in lane 0) |
+| `abcd.sha1rnds4(ewk, func)` | x86 SHA1RNDS4 (four rounds, A in lane 3; `func` 0–3 is the immediate, a RangeError past 3) |
+| `a.sha1nexte(b)`, `a.sha1msg1(b)`, `a.sha1msg2(b)` | x86 SHA1NEXTE, SHA1MSG1, SHA1MSG2 (W0 in lane 3, as the state) |
+| `u32x4.hasShaArm()`, `u32x4.hasShaX86()` | whether the CPU has them (x86: SHA with SSSE3 and SSE4.1) |
+
+Every method works everywhere: it is the instruction where the CPU has it, and otherwise an
+exact emulation in Velt with the same result. The checks are false on another architecture, on
+WebAssembly, in debug builds (Cranelift has no SHA instructions) and when `VELT_SIMD_DISABLE=sha`
+is set (to test the emulation on a CPU that has them). In a loop of them the flag is read once,
+before the loop, and tested in every iteration (a predictable branch per method); std's hashes
+run their loops in functions compiled for the extension, where the check is known to be true
+and there is no branch. With the shuffles above (`T.shuffle`, `reverseBytes`) these are what the
+published SHA-1 / SHA-256 routines use:
+
+```ts
+import { u32x4 } from "velt:simd";
+
+function main() {
+  const abcd = u32x4.splat(0x6a09e667).withLane(1, 0xbb67ae85).withLane(2, 0x3c6ef372).withLane(3, 0xa54ff53a);
+  const efgh = u32x4.splat(0x510e527f).withLane(1, 0x9b05688c).withLane(2, 0x1f83d9ab).withLane(3, 0x5be0cd19);
+  const wk = u32x4.splat(0x428a2f98);
+  // Four SHA-256 rounds: the instruction on arm64 release builds, the emulation elsewhere.
+  const next = abcd.sha256h(efgh, wk);
+  console.log(next.lane(0).toString(16)); // ab76ba6d
+}
+```
 
 Generic code given a vector (`xs.includes(v)`, a `Map` key, `xs.join()`) compares and hashes
 all 128 bits (so NaN equals NaN and `0` differs from `-0` there) and prints the type's name,

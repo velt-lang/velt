@@ -394,4 +394,9 @@ pub enum Intrinsic {
     /// the fields of an object); a `TypeError` for `null` / `undefined` or a value not
     /// supported yet. Sets `Program::dyn_members`.
     AnyKeys,
+    /// `T.shuffle(a, b, i0, …)` of a SIMD vector type (`velt:simd`): `(a: T, b: T) -> T`, lane
+    /// `k` of the result being lane `lanes[k]` of `a`'s lanes followed by `b`'s. The indices
+    /// were integer literals in range (sema checks them), so they are part of the operation:
+    /// lowering calls the `velt_simd_<T>_shuffle_<i0>_<i1>…` extern (`velt_vir::simd`).
+    SimdShuffle(super::SimdTy, [u8; 16]),
 }

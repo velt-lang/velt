@@ -12,7 +12,7 @@
 //! `undefined` instead of a string, they are a `TypeError` (`JSON.stringify` returns a
 //! `string` in Velt).
 
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 
 use velt_sema::hir::{self, TyId, TyKind};
 
@@ -28,7 +28,7 @@ pub(in crate::lower) const SLOT_JSON: i128 = 14;
 impl FnLower<'_, '_> {
     /// Can the JSON writer (json/write.rs) write a value of the concrete type `t` that a dynamic
     /// value holds? `seen`: the types being checked (a recursive type is fine).
-    fn json_dyn_ok(&mut self, t: TyId, seen: &mut HashSet<TyId>) -> bool {
+    fn json_dyn_ok(&mut self, t: TyId, seen: &mut FxHashSet<TyId>) -> bool {
         if self.cx.is_dynamic(t) || self.cx.is_json_value(t) || !seen.insert(t) {
             return true;
         }
@@ -153,7 +153,7 @@ impl FnLower<'_, '_> {
     }
 
     fn any_json_body(&mut self, data: vir::Local, buf: vir::Local, ty: TyId) {
-        if self.is_proxy(ty) || !self.json_dyn_ok(ty, &mut HashSet::new()) {
+        if self.is_proxy(ty) || !self.json_dyn_ok(ty, &mut FxHashSet::default()) {
             return self.ret_status(ST_UNSUPPORTED);
         }
         let b = Operand::Copy(Place::local(buf));

@@ -15,7 +15,7 @@
 //! - Shared boxes: `{ count: u64, value: T }`; closure environments: `{ drop: ptr, clone: ptr,
 //!   transfer: ptr, captures... }` (borrowed captures are pointers; closure.rs).
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_sema::hir::{self, AdtKind, DefId, PassMode, TyId, TyKind};
 
@@ -24,40 +24,40 @@ use crate::vir::{AggId, AggLayout, Ty};
 
 #[derive(Default)]
 pub(super) struct Layouts {
-    value: HashMap<TyId, AggId>,
-    views: HashMap<TyId, Vec<AggId>>,
-    objs: HashMap<TyId, AggId>,
+    value: FxHashMap<TyId, AggId>,
+    views: FxHashMap<TyId, Vec<AggId>>,
+    objs: FxHashMap<TyId, AggId>,
     /// Roots of the class hierarchies whose objects start with a vtable pointer (built once).
-    headers: Option<HashSet<DefId>>,
+    headers: Option<FxHashSet<DefId>>,
     /// The classes some class of the program extends (`Cx::has_subclasses`).
-    extended: Option<HashSet<DefId>>,
+    extended: Option<FxHashSet<DefId>>,
     /// Class id ranges for `instanceof` (class_test.rs, built once).
-    pub(super) class_ids: Option<HashMap<DefId, (u64, u64)>>,
-    boxes: HashMap<TyId, AggId>,
-    envs: HashMap<(DefId, Vec<TyId>), AggId>,
-    in_progress: HashSet<TyId>,
+    pub(super) class_ids: Option<FxHashMap<DefId, (u64, u64)>>,
+    boxes: FxHashMap<TyId, AggId>,
+    envs: FxHashMap<(DefId, Vec<TyId>), AggId>,
+    in_progress: FxHashSet<TyId>,
     array: Option<AggId>,
     closure: Option<AggId>,
     dyn_value: Option<AggId>,
     /// Tables of generator instances (async_fn/gen_object.rs).
-    pub(super) gen_tables: HashMap<(DefId, Vec<TyId>), crate::vir::StaticId>,
+    pub(super) gen_tables: FxHashMap<(DefId, Vec<TyId>), crate::vir::StaticId>,
     /// State of the `Promise.all` wrapper future (async_fn/tasks.rs).
     pub(super) all_wrap: Option<AggId>,
     /// State of the settling `Promise.all` wrapper per child result type (all_settle.rs).
-    pub(super) settle_wraps: HashMap<TyId, AggId>,
+    pub(super) settle_wraps: FxHashMap<TyId, AggId>,
     /// State of the wrapper boxing a kept `Promise.race` per result slot type (kept.rs).
-    pub(super) race_boxes: HashMap<TyId, AggId>,
+    pub(super) race_boxes: FxHashMap<TyId, AggId>,
     /// State of the wrapper widening a promise, per target promise type (async_fn/widen.rs).
-    pub(super) widen_boxes: HashMap<TyId, AggId>,
+    pub(super) widen_boxes: FxHashMap<TyId, AggId>,
     /// Failure context of JSON decoders (json/).
     pub(super) json_ctx: Option<AggId>,
     /// Promise-value wrappers of throwing async functions: layout and inner-state field.
-    pub(super) value_wraps: HashMap<(DefId, Vec<TyId>), (AggId, u32)>,
+    pub(super) value_wraps: FxHashMap<(DefId, Vec<TyId>), (AggId, u32)>,
     /// Vtable statics (glue/vtable.rs).
-    pub(super) vtables: HashMap<super::VtableKey, crate::vir::StaticId>,
-    pub(super) drop_memo: HashMap<TyId, bool>,
+    pub(super) vtables: FxHashMap<super::VtableKey, crate::vir::StaticId>,
+    pub(super) drop_memo: FxHashMap<TyId, bool>,
     /// Foreign (runtime-facing) layouts of types containing boxed values (foreign.rs).
-    pub(super) foreign: HashMap<TyId, Ty>,
+    pub(super) foreign: FxHashMap<TyId, Ty>,
 }
 
 impl Cx<'_> {
@@ -295,8 +295,8 @@ impl Cx<'_> {
 
     /// The roots of the class hierarchies that need a vtable pointer: one pass over all classes
     /// (scanning them per hierarchy was quadratic in the number of classes).
-    fn hierarchy_headers(&self) -> HashSet<DefId> {
-        let mut roots = HashSet::new();
+    fn hierarchy_headers(&self) -> FxHashSet<DefId> {
+        let mut roots = FxHashSet::default();
         for i in 0..self.hir.defs.len() {
             let id = DefId(i as u32);
             if let hir::Def::Adt(a) = self.hir.def(id) {
@@ -319,8 +319,8 @@ impl Cx<'_> {
         self.lay.extended.as_ref().is_some_and(|e| e.contains(&d))
     }
 
-    fn extended_classes(&self) -> HashSet<DefId> {
-        let mut extended = HashSet::new();
+    fn extended_classes(&self) -> FxHashSet<DefId> {
+        let mut extended = FxHashSet::default();
         for def in &self.hir.defs {
             let hir::Def::Adt(a) = def else { continue };
             if let Some(TyKind::Adt(b, _)) = a.base.map(|b| self.types.kind(b)) {

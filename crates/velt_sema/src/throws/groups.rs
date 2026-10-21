@@ -17,7 +17,7 @@
 //! arguments; vtable entries of different instantiations never mix, because each
 //! `Iterator<T, E>` instantiation has its own vtable.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use velt_common::Diagnostic;
 
@@ -68,8 +68,8 @@ pub(crate) struct GroupOwner {
 /// Every dispatch group of the program.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Groups {
-    of: HashMap<DefId, usize>,
-    slots: HashMap<(DefId, u32), usize>,
+    of: FxHashMap<DefId, usize>,
+    slots: FxHashMap<(DefId, u32), usize>,
     pub list: Vec<Group>,
 }
 
@@ -91,7 +91,7 @@ impl Groups {
 }
 
 struct UnionFind {
-    ids: HashMap<Node, usize>,
+    ids: FxHashMap<Node, usize>,
     nodes: Vec<Node>,
     parent: Vec<usize>,
 }
@@ -128,7 +128,7 @@ impl UnionFind {
 /// Build the groups; reports conflicting or generic bounds.
 pub(crate) fn build(cx: &mut Ctx) -> Groups {
     let mut uf = UnionFind {
-        ids: HashMap::new(),
+        ids: FxHashMap::default(),
         nodes: vec![],
         parent: vec![],
     };
@@ -136,7 +136,7 @@ pub(crate) fn build(cx: &mut Ctx) -> Groups {
     link_interfaces(cx, &mut uf, &mut bounds);
     let roots = link_vtables(cx, &mut uf, &mut bounds);
     let mut groups = Groups::default();
-    let mut by_root: HashMap<usize, usize> = HashMap::new();
+    let mut by_root: FxHashMap<usize, usize> = FxHashMap::default();
     for i in 0..uf.nodes.len() {
         let r = uf.find(i);
         let g = *by_root.entry(r).or_insert_with(|| {

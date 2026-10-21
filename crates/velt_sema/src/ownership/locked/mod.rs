@@ -34,7 +34,7 @@ mod stores;
 mod summary;
 mod values;
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::{Diagnostic, Span};
 
@@ -68,14 +68,14 @@ pub(crate) fn check_locked(cx: &mut Ctx) -> WeakCrossings {
         opaque::check(cx, &mut cands, &mut res, &found.opaque);
     }
     let callbacks = found.callbacks;
-    let mut seen_named = HashSet::new();
+    let mut seen_named = FxHashSet::default();
     for &(g, span) in &found.named {
         if seen_named.insert((g, span)) {
             named_callback(cx, &summaries, g, span);
         }
     }
-    let mut done = HashSet::new();
-    let mut reported = HashSet::new();
+    let mut done = FxHashSet::default();
+    let mut reported = FxHashSet::default();
     let mut weak = vec![];
     for (c, direct) in callbacks {
         if !done.insert(c) {
@@ -133,14 +133,14 @@ fn async_callback_error(cx: &mut Ctx, c: DefId) {
 /// named functions of each.
 type Bodies = (
     Vec<(DefId, FnDef)>,
-    HashSet<Span>,
-    HashMap<Span, Vec<DefId>>,
+    FxHashSet<Span>,
+    FxHashMap<Span, Vec<DefId>>,
 );
 
 fn take_bodies(cx: &mut Ctx, res: &mut values::Resolver, c: DefId) -> Bodies {
     let mut seen: Vec<DefId> = vec![];
-    let mut resolved = HashSet::new();
-    let mut named: HashMap<Span, Vec<DefId>> = HashMap::new();
+    let mut resolved = FxHashSet::default();
+    let mut named: FxHashMap<Span, Vec<DefId>> = FxHashMap::default();
     let mut todo = vec![c];
     while let Some(d) = todo.pop() {
         if seen.contains(&d) {
@@ -229,8 +229,8 @@ fn crossings(
     s: &summary::Summaries,
     c: DefId,
     bodies: &mut [(DefId, FnDef)],
-    resolved: HashSet<Span>,
-    named: HashMap<Span, Vec<DefId>>,
+    resolved: FxHashSet<Span>,
+    named: FxHashMap<Span, Vec<DefId>>,
 ) -> Crossings {
     let mut r = regions::Regions::new(c, bodies);
     r.resolved = resolved;
@@ -282,7 +282,7 @@ fn check_callback(
     s: &summary::Summaries,
     res: &mut values::Resolver,
     (c, direct): (DefId, bool),
-    reported: &mut HashSet<Span>,
+    reported: &mut FxHashSet<Span>,
     weak: &mut WeakCrossings,
 ) {
     let (mut bodies, resolved, named) = take_bodies(cx, res, c);
@@ -324,10 +324,10 @@ fn weak_across(
     cx: &mut Ctx,
     (c, direct): (DefId, bool),
     bodies: &[(DefId, FnDef)],
-    reported: &mut HashSet<Span>,
+    reported: &mut FxHashSet<Span>,
     weak: &mut WeakCrossings,
 ) {
-    struct Made(HashSet<DefId>);
+    struct Made(FxHashSet<DefId>);
     impl VisitMut for Made {
         fn expr(&mut self, e: &mut Expr) {
             if let E::Closure(n) = e.kind {
@@ -335,7 +335,7 @@ fn weak_across(
             }
         }
     }
-    let mut made = Made(HashSet::new());
+    let mut made = Made(FxHashSet::default());
     for (_, f) in bodies {
         let mut b = f.body.block.clone();
         visit::block(&mut b, &mut made);
@@ -448,11 +448,11 @@ fn later_uses(
     res: &mut values::Resolver,
     c: DefId,
     inward: Vec<(crate::hir::LocalId, Span, bool)>,
-    reported: &mut HashSet<Span>,
+    reported: &mut FxHashSet<Span>,
 ) {
     let Some(f) = res.parent(cx, c) else { return };
     let at = cx.fn_info(c).span;
-    let mut seen = HashSet::new();
+    let mut seen = FxHashSet::default();
     for (l, stored, itself) in inward {
         if !seen.insert(l) {
             continue;

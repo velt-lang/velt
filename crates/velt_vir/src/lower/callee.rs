@@ -6,7 +6,7 @@
 //! All dynamic calls use the *borrow ABI*: aggregates by pointer, the caller keeps ownership of
 //! every argument; entries that need adapting (owned params, env param) are thunks (glue/thunk.rs).
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::rc::Rc;
 
 use velt_sema::hir::{self, DefId, PassMode, TyId, TyKind};
@@ -95,7 +95,7 @@ impl super::Cx<'_> {
     /// since programs may hold thousands of impls of one interface).
     pub(super) fn impls_of(&mut self, iface: DefId) -> Rc<[u32]> {
         let index = self.iface_impls.get_or_insert_with(|| {
-            let mut by_iface: HashMap<DefId, Vec<u32>> = HashMap::new();
+            let mut by_iface: FxHashMap<DefId, Vec<u32>> = FxHashMap::default();
             for (i, imp) in self.hir.impls.iter().enumerate() {
                 by_iface.entry(imp.iface).or_default().push(i as u32);
             }

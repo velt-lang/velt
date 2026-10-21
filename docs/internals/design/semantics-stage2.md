@@ -27,10 +27,10 @@ no count traffic. No benchmark shares a value, so every benchmark keeps its repr
 value". `Intrinsic::Clone` stays and means **deep copy**: `x.clone()`, and async closures'
 captures (§6).
 
-- **Shared values** (`Ctx::is_shared_value`): everything that is not Copy and holds no promise
-  (strings, objects, arrays, maps, closures, interface values). Structs and object literals are
-  objects and never Copy (checkpoint D). A promise has one owner: using a promise variable after
-  handing it on stays ``use of moved value``.
+- **Shared values** (`Ctx::is_shared_value`): everything that is not Copy (strings, objects,
+  arrays, maps, closures, interface values, promises). Structs and object literals are
+  objects and never Copy (checkpoint D). A share of a promise is another holder of the same
+  future (`velt_rt_fut_share`, rt_abi_async.md §1.2, #212).
 - **Soft moves for every shared value** (`ownership/shares.rs`, generalizing stage 1's strings):
   a move stays a move where the place is dead and becomes a share where it is used again
   (`moves` dataflow → `clone_reused`) or cannot be moved from (`validate`: borrowed params,
@@ -53,7 +53,9 @@ captures (§6).
   structural (`deepEqual`, `assertEq`). `Map` and `Set` keys compare with `__intrinsic_key_eq`
   (`Intrinsic::KeyEq`, JS SameValueZero: `Same` with `NaN` equal to itself) and hash with
   `__intrinsic_hash`, which hashes an object's identity; hashing an object type or array as a
-  key counts it (boxing/), so its pointer is the object wherever the map moves it.
+  key counts it (boxing/), so its pointer is the object wherever the map moves it. A type
+  declared with `struct` is a value type there: its keys compare and hash by content, field
+  by field (#641).
 
 ## 3. Lowering: representation
 
@@ -309,4 +311,5 @@ value's captures, an interface value's implementor) panics (glue/clone.rs). Stri
   stored into the value from a captured variable stays shared with the variable (it cannot
   be copied, and a callback cannot move what it captured even though `with` calls it once).
 - `Map` (and `Set`) keys of tuple type compare part by part, as `===` compares tuples (JS:
-  arrays, by identity). Object keys compare by identity (#1257, see §7).
+  arrays, by identity). Object keys compare by identity (#1257, see §7); `struct` keys by
+  content (#641).

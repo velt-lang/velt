@@ -19,7 +19,7 @@
 //! Evidence is flow-insensitive: a mutation on any path (one branch, a loop body, a closure)
 //! counts.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::Span;
 
@@ -37,15 +37,15 @@ use super::patch::{call_target, Target};
 #[derive(Default)]
 pub(super) struct Evidence {
     /// Locals whose contents are modified in place.
-    pub mutated: HashSet<LocalId>,
+    pub mutated: FxHashSet<LocalId>,
     /// Locals whose memory a function value may write (weak evidence, see the module docs).
-    pub weak: HashSet<LocalId>,
+    pub weak: FxHashSet<LocalId>,
     /// Locals assigned as a whole, with the first such assignment.
-    pub reassigned: HashMap<LocalId, Span>,
+    pub reassigned: FxHashMap<LocalId, Span>,
     /// Locals whose contents a callee modifies through a parameter it owns (a method returning
     /// the `this` it changes): no mode change, but the body modifies them too
     /// (`FnInfo::modified_params`).
-    pub modified: HashSet<LocalId>,
+    pub modified: FxHashSet<LocalId>,
 }
 
 /// Is local `l` modified before the body rebinds it for good? The rebinding is the first
@@ -72,8 +72,8 @@ pub(super) fn collect(cx: &mut Ctx, b: &mut Block) -> Evidence {
     let mut v = Collector {
         cx,
         ev: Evidence::default(),
-        aliases: HashMap::new(),
-        skip: HashSet::new(),
+        aliases: FxHashMap::default(),
+        skip: FxHashSet::default(),
     };
     visit::block(b, &mut v);
     let Collector {
@@ -87,7 +87,11 @@ pub(super) fn collect(cx: &mut Ctx, b: &mut Block) -> Evidence {
 
 /// `set` plus the roots its borrowing bindings point into (only through bindings into their
 /// root's own memory when `in_memory`).
-fn through_aliases(set: &HashSet<LocalId>, aliases: &Aliases, in_memory: bool) -> HashSet<LocalId> {
+fn through_aliases(
+    set: &FxHashSet<LocalId>,
+    aliases: &Aliases,
+    in_memory: bool,
+) -> FxHashSet<LocalId> {
     let mut out = set.clone();
     for &start in set {
         let mut l = start;
@@ -107,14 +111,14 @@ fn through_aliases(set: &HashSet<LocalId>, aliases: &Aliases, in_memory: bool) -
 
 /// Borrowing binding → (the local its matched place is rooted at, the place lies in that
 /// local's own memory).
-type Aliases = HashMap<LocalId, (LocalId, bool)>;
+type Aliases = FxHashMap<LocalId, (LocalId, bool)>;
 
 struct Collector<'a, 'm> {
     cx: &'a mut Ctx<'m>,
     ev: Evidence,
     aliases: Aliases,
     /// Whole-local assignment targets (not modifications of the local's contents).
-    skip: HashSet<*const Expr>,
+    skip: FxHashSet<*const Expr>,
 }
 
 impl Collector<'_, '_> {

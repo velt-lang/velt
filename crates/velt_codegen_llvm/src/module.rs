@@ -2,7 +2,8 @@
 //! intrinsics they use, and attribute groups. A module holds the whole program, or one codegen
 //! unit of it (see `units`).
 
-use std::collections::{BTreeSet, HashSet};
+use rustc_hash::FxHashSet;
+use std::collections::BTreeSet;
 use std::fmt::Write;
 
 use velt_vir::vir::{self, Linkage};
@@ -176,8 +177,8 @@ pub(crate) fn emit_unit(
 
 /// One `declare` per distinct extern symbol not defined in this module.
 fn extern_declarations(program: &vir::Program) -> CodegenResult<String> {
-    let defined: HashSet<&str> = program.funcs.iter().map(|f| f.symbol.as_str()).collect();
-    let mut declared = HashSet::new();
+    let defined: FxHashSet<&str> = program.funcs.iter().map(|f| f.symbol.as_str()).collect();
+    let mut declared = FxHashSet::default();
     let mut out = String::new();
     for e in &program.externs {
         if defined.contains(e.symbol.as_str()) || !declared.insert(e.symbol.as_str()) {

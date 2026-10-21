@@ -2,7 +2,7 @@
 //! as references to themselves, every recorded target becomes a [`DefRef`] (built once per
 //! definition), and the module / prelude / nested-item scopes and member tables are captured.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use velt_common::{FileId, Span};
 
@@ -32,7 +32,7 @@ pub(super) fn build(mut cx: Ctx) -> Analysis {
         names: &names,
         contexts: &rec.params,
     };
-    let mut cache: HashMap<Target, Option<DefRef>> = HashMap::new();
+    let mut cache: FxHashMap<Target, Option<DefRef>> = FxHashMap::default();
     let mut resolve = |t: &Target| cache.entry(t.clone()).or_insert_with(|| b.build(t)).clone();
     let refs = rec
         .refs
@@ -92,10 +92,10 @@ fn jsx_tags(
     cx: &Ctx,
     names: &Names,
     resolve: &mut impl FnMut(&Target) -> Option<DefRef>,
-) -> HashMap<FileId, JsxTags> {
+) -> FxHashMap<FileId, JsxTags> {
     // Built once per runtime (by its `IntrinsicElements` type), shared by its modules.
-    let mut by_type: HashMap<DefId, JsxTags> = HashMap::new();
-    let mut out = HashMap::new();
+    let mut by_type: FxHashMap<DefId, JsxTags> = FxHashMap::default();
+    let mut out = FxHashMap::default();
     for (&m, provider) in &cx.jsx_providers {
         let Some(p) = provider else { continue };
         let TyKind::Adt(d, _) = cx.ty.kind(p.intrinsics) else {
@@ -127,8 +127,8 @@ fn jsx_common(
     cx: &Ctx,
     names: &Names,
     resolve: &mut impl FnMut(&Target) -> Option<DefRef>,
-) -> HashMap<FileId, JsxTags> {
-    let mut out = HashMap::new();
+) -> FxHashMap<FileId, JsxTags> {
+    let mut out = FxHashMap::default();
     for (&m, provider) in &cx.jsx_providers {
         let Some(attrs) = provider.as_ref().and_then(|p| p.component_attrs.as_ref()) else {
             continue;
@@ -170,8 +170,12 @@ fn sorted_items<'a>(
 
 /// Types of locals (by declaring identifier), constants, static fields and the fields of
 /// non-generic structs, classes, object types and interfaces.
-fn def_types(cx: &Ctx, rec: &Recorder, no_generics: u32) -> HashMap<Span, (crate::hir::TyId, u32)> {
-    let mut out = HashMap::new();
+fn def_types(
+    cx: &Ctx,
+    rec: &Recorder,
+    no_generics: u32,
+) -> FxHashMap<Span, (crate::hir::TyId, u32)> {
+    let mut out = FxHashMap::default();
     // Scope entries cover locals never used by name (such as `this` while typing `this.`).
     let targets = rec.refs.iter().map(|(_, t)| t);
     for t in targets.chain(rec.scopes.iter().map(|e| &e.target)) {
