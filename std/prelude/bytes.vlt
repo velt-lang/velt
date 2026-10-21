@@ -56,16 +56,36 @@ function hit(at: usize, m: mask8x16): i64 {
 }
 
 // XORs `d[start..stop]` with the four bytes of `mask` (most significant first), repeating from
-// `start`. Sixteen bytes per step; the last bytes are done by a vector ending at `stop`, which
-// overlaps bytes already masked: it masks only its lanes past them, with the mask's bytes
-// rotated to where that vector starts.
+// `start`. 128 bytes per step, then 64, then sixteen; the last bytes are done by a vector ending
+// at `stop`, which overlaps bytes already masked: it masks only its lanes past them, with the
+// mask's bytes rotated to where that vector starts.
 function xorMaskRange(d: u8[], mask: u32, start: usize, stop: usize) {
   let i = start;
   if (stop >= 16 && stop - 16 >= start) {
     // The four mask bytes as one lane (the array's order is the lane's low byte first).
     const lane = (mask >> 24) | ((mask >> 8) & 0xff00) | ((mask << 8) & 0xff0000) | (mask << 24);
     const key = velt_simd_u32x4_as_u8x16(velt_simd_u32x4_splat(lane));
-    while (i + 64 <= stop) {
+    // 128 bytes per step, counted down: the loop's own counting is spread over eight vectors.
+    for (let blocks = (stop - i) >> 7; blocks > 0; blocks--) {
+      const v0 = velt_simd_u8x16_xor(velt_simd_u8x16_load(d, i as u64), key);
+      const v1 = velt_simd_u8x16_xor(velt_simd_u8x16_load(d, (i + 16) as u64), key);
+      const v2 = velt_simd_u8x16_xor(velt_simd_u8x16_load(d, (i + 32) as u64), key);
+      const v3 = velt_simd_u8x16_xor(velt_simd_u8x16_load(d, (i + 48) as u64), key);
+      const v4 = velt_simd_u8x16_xor(velt_simd_u8x16_load(d, (i + 64) as u64), key);
+      const v5 = velt_simd_u8x16_xor(velt_simd_u8x16_load(d, (i + 80) as u64), key);
+      const v6 = velt_simd_u8x16_xor(velt_simd_u8x16_load(d, (i + 96) as u64), key);
+      const v7 = velt_simd_u8x16_xor(velt_simd_u8x16_load(d, (i + 112) as u64), key);
+      velt_simd_u8x16_store(v0, d, i as u64);
+      velt_simd_u8x16_store(v1, d, (i + 16) as u64);
+      velt_simd_u8x16_store(v2, d, (i + 32) as u64);
+      velt_simd_u8x16_store(v3, d, (i + 48) as u64);
+      velt_simd_u8x16_store(v4, d, (i + 64) as u64);
+      velt_simd_u8x16_store(v5, d, (i + 80) as u64);
+      velt_simd_u8x16_store(v6, d, (i + 96) as u64);
+      velt_simd_u8x16_store(v7, d, (i + 112) as u64);
+      i += 128;
+    }
+    if (i + 64 <= stop) {
       const v0 = velt_simd_u8x16_xor(velt_simd_u8x16_load(d, i as u64), key);
       const v1 = velt_simd_u8x16_xor(velt_simd_u8x16_load(d, (i + 16) as u64), key);
       const v2 = velt_simd_u8x16_xor(velt_simd_u8x16_load(d, (i + 32) as u64), key);
