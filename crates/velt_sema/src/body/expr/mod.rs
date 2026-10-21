@@ -40,6 +40,7 @@ mod dynamic_optional;
 mod dynamic_relational;
 mod dynamic_write;
 mod env_globals;
+pub(crate) use env_globals::NODE_GLOBALS;
 mod error_slots;
 mod error_view;
 mod errors;

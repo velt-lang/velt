@@ -167,7 +167,10 @@ function main() {
   effects) is kept the same way, evaluated once per process, before `main`; every task sees
   the same object. Assigning it is an error. A regex constant (`const RE = /a+/g;`) is one
   `RegExp` object too, so the `lastIndex` of a `g` or `y` regex carries over from one
-  function's `RE.test(s)` to the next, as in Node.
+  function's `RE.test(s)` to the next, as in Node. So is a `const` whose initializer reads a
+  module-level `let` or a property of `globalThis` (`const first = count;`): it keeps the
+  value from when the module was evaluated, not the variable's current one. Through a function
+  it calls (`const first = getCount();`) it is not kept yet.
 - An initializer that throws (`JSON.parse` of invalid text, `new RegExp` of an invalid
   pattern, a function that throws) stops the program with `Uncaught …` and exit code 1, as an
   error thrown while Node evaluates a module does: the rest of that module and the modules that

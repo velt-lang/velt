@@ -277,7 +277,8 @@ whose type is a type parameter that is `symbol` or a union holding a symbol (`` 
 
 A symbol a module constant holds names a member: `[KEY]: T` in an interface, an object type or
 a class, `{ [KEY]: v }` in an object literal, `o[KEY]` and `KEY in o`. The constant is
-initialized with `Symbol("...")` or `Symbol.for("...")` (TypeScript's `unique symbol`;
+initialized with `Symbol("...")` (the description a string literal or a string constant) or
+`Symbol.for("...")` (TypeScript's `unique symbol`;
 `const KEY: unique symbol = Symbol("k")` declares the same), or with another such constant, and
 may be imported. Velt objects have fixed fields, so the compiler resolves these members while
 compiling: reading `o[KEY]` costs what reading a named field does. A symbol key known only at
@@ -388,10 +389,10 @@ function check() {
 A module constant initialized with `Symbol(...)` or `Symbol.for("...")` is one symbol for the
 whole program, made while compiling (module constants are otherwise evaluated at each use), so
 reading it costs no call; `Symbol.for(k)` at run time gives that same symbol for its key. A symbol `Symbol(...)` makes at run time lives
-until the program ends. **Planned**: a symbol brand added with `Object.defineProperty(o, KEY,
-…)` as an optional symbol-keyed field of `o`'s type
-([#922](https://github.com/velt-lang/velt/issues/922)), and `PropertyKey` (`string | symbol`)
-for `Reflect` and proxies ([#823](https://github.com/velt-lang/velt/issues/823)).
+until the program ends. A symbol brand added with `Object.defineProperty(o, KEY, …)` is an
+optional symbol-keyed field of `o`'s type ([`Object` built-ins](#object-built-ins)).
+**Planned**: `PropertyKey` (`string | symbol`) for `Reflect` and proxies
+([#823](https://github.com/velt-lang/velt/issues/823)).
 
 ## SIMD vectors
 
@@ -1362,7 +1363,8 @@ const id: UserId = "u-1"; // error: a plain `string` does not convert to it; bra
 
 `T["k"]` is the type of field `k` of a concrete object type `T`, and `T["a" | "b"]` the union
 of the fields' types, as in TypeScript: `Person["name"]` is `string`, and an optional field
-`email?: string` gives `string | undefined`. A key that is not a field
+`email?: string` gives `string | undefined`. On an interface with methods it reads a field or
+a getter (`get size(): number` gives `number`). A key that is not a field
 is an error. The key is a string literal type or a union of them; on a type parameter it is not
 supported yet (#350).
 
@@ -1972,8 +1974,10 @@ does is an error saying it is not supported yet, never a quiet difference.
 - `Object.assign(target, ...sources)` writes each source's own fields to `target`, in order
   (through its setters, as JavaScript's assignment does; an absent optional field is not copied,
   and one holding `undefined` where the target can't hold it is a `TypeError`)
-  and returns `target` itself. A `Record` target takes any keys; an object or class target only
-  fields its type declares (adding one is not supported yet). `Object.assign(fn, { … })` onto a
+  and returns `target` itself, copying enumerable symbol-keyed fields too (a brand
+  `defineProperty` made with `enumerable: true`, below). A `Record` target takes any keys; an
+  object, interface or class target only fields its type declares (adding one is not supported
+  yet). `Object.assign(fn, { … })` onto a
   function makes a [function with properties](functions.md#functions-with-properties).
   Assigning from a value that may hold another class is not supported yet.
 - `Object.freeze({ ... })` of a new object literal returns it with every field readonly, so
@@ -2004,28 +2008,77 @@ does is an error saying it is not supported yet, never a quiet difference.
 
 - `Object.defineProperty(o, KEY, { value })` with a symbol constant `KEY` adds a brand: the
   compiler adds the optional field `[KEY]?: T` to the interface or object type `o` is declared
-  with (`const cell: Cell = { ... }`, or `{ ... } as Cell`; `T` is the type of the literal value),
+  with (`const cell: Cell = { ... }`, `{ ... } as Cell`, or a parameter `cell: Cell`; `T` is the
+  type of the literal value),
   so `KEY in v` tests any `Cell` for it, as Node finds the property on the objects that have it.
   Unless the descriptor says `enumerable: true`, it is hidden from `console.log` and spreads, as a
   non-enumerable property is; a property with that symbol written directly anywhere (`{ [KEY]: v
-  }`, `o[KEY] = v`) is an error, since it would be enumerable, or written where Node throws.
+  }`, `o[KEY] = v`) is an error, since it would be enumerable, or written where Node throws,
+  unless the descriptors say `enumerable: true, writable: true`.
   Defining a brand again with another value throws Node's `TypeError: Cannot redefine property:
   Symbol(k)` (values compared as `Object.is` does) unless the descriptors say `writable: true` or
   `configurable: true`; Velt keeps these attributes per symbol, so every call with one key gives
   the same ones. With a string key naming a declared field and only a `value`, it assigns the
   field. The object is written in place and is the result (`Object.defineProperty(o, ...) === o`).
   A brand on a class instance (whose declared field is an own property from construction),
-  accessors (`get` / `set`, #941), other attributes and keys a type doesn't declare are not
-  supported yet, and neither is `Object.defineProperties`.
+  other attributes and keys a type doesn't declare are not supported yet, and neither is
+  `Object.defineProperties`.
+- `Object.defineProperty(o, "k", { get, set })`, as a statement, on a `const o: I = { … }` of
+  the same function whose literal has the accessor `get k() { … }` (and `set k(v) { … }` for a
+  setter), with `I` an interface that declares it ([object literals implementing
+  interfaces](#object-literals-implementing-interfaces)), replaces the literal's getter or setter,
+  as in Node: one the descriptor leaves out stays, and after `configurable: false` defining it
+  again throws `TypeError: Cannot redefine property: k`. A shorthand descriptor (`{ get }`) is
+  `{ get: get }`. `enumerable` changes nothing Velt shows, since an interface value is not
+  listed by key. Not supported yet: accessors defined on other objects (a parameter, a class
+  instance, a loop variable named like the literal), in a module that binds the name `Object`
+  anywhere (its `Object.defineProperty` may be its own), with `this` inside them (#941), that may
+  throw (until #1326), that are `undefined` (the property would read `undefined`), and a
+  function not written in the call where the property may already be defined with
+  `configurable: false` (Node compares the functions).
+
+```ts
+interface Counter {
+  get n(): number;
+  set n(v: number);
+}
+
+function counter(log: boolean): Counter {
+  let n = 0;
+  const c: Counter = {
+    get n() {
+      return n;
+    },
+    set n(v) {
+      n = v;
+    },
+  };
+  if (log) {
+    Object.defineProperty(c, "n", {
+      set(v: number) {
+        console.log("n =", v);
+        n = v;
+      },
+    });
+  }
+  return c;
+}
+
+const c = counter(true);
+c.n = 2; // n = 2
+console.log(c.n); // 2
+```
 
 The other `Object` functions (`seal`, `isFrozen`, `setPrototypeOf`, ...) are not supported yet.
 
-`typeof` of a global the program doesn't declare is what Node 22 gives: `"undefined"` for the
-browser's globals (`window`, `document`, `HTMLElement`, ...), `"object"` or `"function"` for
-Node's (`globalThis`, `navigator`, `URL`, ...), and `"function"` for a class's name, so
-`typeof window === "undefined"` tells the server from the browser. Reading a browser global
-throws Node's `ReferenceError` (`window is not defined`), so code that only runs in the browser
-still compiles.
+`typeof` of a global the program doesn't declare is what Node 22 gives in an ES module:
+`"undefined"` for the browser's globals (`window`, `document`, `HTMLElement`, ...), other
+runtimes' (`Deno`, `Bun`) and CommonJS's (`require`, `module`, `exports`, `__dirname`,
+`__filename`), `"object"` or `"function"` for Node's (`globalThis`, `global`, `navigator`, `URL`, `Intl`,
+`BigInt`, `AbortController`, `Headers`, `atob`, ...), and `"function"` for
+a class's or a function's name, so `typeof window === "undefined"` tells the server from the
+browser. Reading or calling one of the absent globals throws Node's `ReferenceError` (`window
+is not defined`), so code that only runs elsewhere still compiles.
 
 ```ts
 class Point {
@@ -2049,6 +2102,50 @@ console.log(Object.fromEntries([["a", 1], ["b", 2]])); // { a: 1, b: 2 }
 console.log(counts, "toString" in counts); // [Object: null prototype] { a: 1 } false
 console.log(Object.prototype.toString.call([1])); // [object Array]
 ```
+
+#### `globalThis`
+
+`globalThis` is a bag of typed properties, as libraries use it to share one value between
+modules or copies of themselves: `(globalThis as { K?: T }).K` reads and writes a variable for
+the whole process, which starts out `undefined`, as an unset property of Node's `globalThis`
+does. The key may also be a string constant (`(globalThis as Seam)[KEY]`), the object a constant
+that stands for `globalThis` (`const g = globalThis as Seam;`), and
+`Object.defineProperty(globalThis, "K", { value, writable: true, configurable: true })`
+assigns it. The property's type is `T["K"] | undefined` with `T` the asserted type; the
+assertions of one key must all give it the same type, and a site without one (`globalThis.K`,
+typed for tsc by a `declare global { var K: T }`, or asserted `any`) takes the type the others
+give. A property no site asserts a type for is an error. A Node global Velt has is that global
+(`globalThis.console.log(…)` is `console.log(…)`).
+
+```ts
+interface Hook {
+  events: string[];
+}
+type Seam = { __HOOK__?: Hook };
+
+function emit(e: string): void {
+  (globalThis as Seam).__HOOK__?.events.push(e);
+}
+
+function install(): void {
+  const g = globalThis as Seam;
+  g.__HOOK__ ??= { events: [] };
+}
+
+emit("lost");
+install();
+emit("kept");
+console.log((globalThis as Seam).__HOOK__?.events); // [ 'kept' ]
+```
+
+Not supported yet: `globalThis` as a value of its own (`console.log(globalThis)`,
+`Object.keys(globalThis)`), symbol keys, keys known only at run time, `defineProperty` on it
+without a `value`, neither writable nor configurable, without `writable: true` on a property
+the program also assigns (Node throws there), or with other `writable` and `configurable` than
+another call with the same key (an attribute a call leaves out is `false` on the property it
+makes, so whether Node throws depends on which runs first), and using the result of
+`defineProperty` on it.
+`enumerable` changes nothing Velt shows, since the keys of `globalThis` are not listed.
 
 ### The `in` operator
 

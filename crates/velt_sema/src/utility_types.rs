@@ -128,7 +128,10 @@ impl Ctx<'_> {
                 return self.ty.error;
             }
             Some(_) => self.relatable_fields(t),
-            None => self.object_fields(op, t, written, object.span),
+            None => match self.indexed_iface_members(t) {
+                Some(members) => Some(members),
+                None => self.object_fields(op, t, written, object.span),
+            },
         };
         let Some(fields) = fields else {
             return self.ty.error;
@@ -153,6 +156,47 @@ impl Ctx<'_> {
             [one] => *one,
             _ => self.union_of(&tys, false, key.span),
         }
+    }
+
+    /// The fields and getters of interface type `t` (one with methods), as an indexed access
+    /// type reads them (`I["k"]`), with `t`'s type arguments substituted.
+    fn indexed_iface_members(&mut self, t: TyId) -> Option<Vec<ShapeField>> {
+        let TyKind::Dyn(d, args) = self.ty.kind(t).clone() else {
+            return None;
+        };
+        if self.dynamic(t).is_some() {
+            return None;
+        }
+        let info = self.iface(d)?;
+        let mut out: Vec<ShapeField> = (info.fields.iter())
+            .map(|f| ShapeField {
+                name: f.name.clone(),
+                ty: f.declared,
+                readonly: f.readonly,
+                optional: f.optional,
+            })
+            .collect();
+        let setters: Vec<&str> = (info.methods.iter())
+            .filter_map(|m| m.name.strip_prefix("set "))
+            .collect();
+        out.extend(
+            info.methods
+                .iter()
+                .filter(|m| m.is_getter)
+                .map(|m| ShapeField {
+                    name: m.name.clone(),
+                    ty: m.ret,
+                    readonly: !setters.contains(&m.name.as_str()),
+                    optional: false,
+                }),
+        );
+        // The implementing type, which member types don't mention, follows the arguments.
+        let mut sargs = args;
+        sargs.push(self.ty.error);
+        for f in &mut out {
+            f.ty = self.subst(f.ty, &sargs);
+        }
+        Some(out)
     }
 
     /// The public fields of object type `t` (anonymous, a field-only interface, a struct or a

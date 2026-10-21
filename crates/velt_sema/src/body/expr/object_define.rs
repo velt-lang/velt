@@ -10,8 +10,10 @@
 //! - A string key naming a field `o`'s type declares, with only a `value`: the property keeps its
 //!   attributes in JavaScript, so this is an assignment.
 //!
-//! Accessors (`get` / `set`, #941), other attributes on a declared field, and keys a type doesn't
-//! declare are errors saying they are not supported yet.
+//! Accessors (`get` / `set`) are `crate::defined_accessors`'s, which rewrites the ones it
+//! follows; the others, other attributes on a declared field, and keys a type doesn't declare
+//! are errors saying they are not supported yet. On `globalThis`, the call assigns the
+//! property's variable (`crate::global_this`).
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
@@ -48,6 +50,9 @@ impl FnCx<'_, '_> {
             self.check_args_loose(args);
             return self.error_expr(span);
         };
+        if let Some(key) = global_key(o, key, self) {
+            return self.global_define(&key, &d, desc, span);
+        }
         let Some(value) = d.value else {
             self.not_yet(
                 "`Object.defineProperty` without a `value` is not supported yet",
@@ -77,7 +82,9 @@ impl FnCx<'_, '_> {
                     self.check_args_loose(args);
                     return self.error_expr(span);
                 }
-                if let Some(at) = self.cx.direct_write(&k) {
+                // Written directly, an enumerable and writable property behaves as Node's does.
+                let plain = d.enumerable == Some(true) && d.writable == Some(true);
+                if let Some(at) = self.cx.direct_write(&k).filter(|_| !plain) {
                     let shown = self.cx.shown_name(&k);
                     self.cx.error(
                         Diagnostic::error(
@@ -85,7 +92,7 @@ impl FnCx<'_, '_> {
                             key.span,
                         )
                         .with_label(at, "written directly here")
-                        .with_note("a property `defineProperty` makes is not enumerable and not writable unless its descriptor says so, which Velt keeps per symbol"),
+                        .with_note("a property `defineProperty` makes is not enumerable and not writable unless its descriptor says so, which Velt keeps per symbol: with `enumerable: true, writable: true` it may also be written directly"),
                     );
                     self.check_args_loose(args);
                     return self.error_expr(span);
@@ -228,6 +235,84 @@ impl FnCx<'_, '_> {
         };
         self.pop_scope();
         self.with_lets(lets, read)
+    }
+
+    /// `Object.defineProperty(globalThis, "K", d)`: an assignment of the variable standing for
+    /// property `K` (`crate::global_this`). `enumerable` changes nothing Velt shows: the keys of
+    /// `globalThis` are not listed.
+    fn global_define(
+        &mut self,
+        key: &str,
+        d: &Descriptor,
+        desc: &ast::Expr,
+        span: Span,
+    ) -> hir::Expr {
+        let Some(value) = d.value else {
+            self.not_yet(
+                "`Object.defineProperty` on `globalThis` without a `value` is not supported yet",
+                desc.span,
+                "give the property its value: `{ value: v, writable: true, configurable: true }`",
+            );
+            return self.error_expr(span);
+        };
+        // A new property's omitted attributes are `false`, an existing one's stay.
+        let writable = d.writable == Some(true);
+        let configurable = d.configurable == Some(true);
+        let first = *(self.cx.global_props.defined)
+            .entry(key.to_string())
+            .or_insert((writable, configurable, desc.span));
+        if (first.0, first.1) != (writable, configurable) {
+            self.cx.error(
+                Diagnostic::error(
+                    format!("`Object.defineProperty` of `globalThis.{key}` with different attributes at different calls is not supported yet"),
+                    desc.span,
+                )
+                .with_label(first.2, "defined with other attributes here")
+                .with_note("whether Node throws depends on which call runs first (the property's omitted attributes are `false` when a call makes it): give every call with this key the same `writable` and `configurable`"),
+            );
+            return self.error_expr(span);
+        }
+        if !writable && !configurable {
+            self.not_yet(
+                &format!("`Object.defineProperty` of `globalThis.{key}` neither writable nor configurable is not supported yet"),
+                desc.span,
+                "Velt keeps the property as a variable, which it can't make read-only: add `writable: true` or `configurable: true`",
+            );
+            return self.error_expr(span);
+        }
+        if let (false, Some(at)) = (writable, self.cx.global_props.direct_write(key)) {
+            self.cx.error(
+                Diagnostic::error(
+                    format!("`Object.defineProperty` of `globalThis.{key}` without `writable: true`, which the program also assigns, is not supported yet"),
+                    desc.span,
+                )
+                .with_label(at, "assigned here")
+                .with_note("in Node, assigning a property `defineProperty` made read-only throws a `TypeError`: add `writable: true`, or define it again instead of assigning it"),
+            );
+            return self.error_expr(span);
+        }
+        if !self.cx.global_props.slots.contains_key(key) {
+            return self.error_expr(span); // reported by the rewrite: no type
+        }
+        let slot = ast::Ident {
+            name: crate::global_this::slot_name(key),
+            span,
+        };
+        let assign = synth(
+            ast::ExprKind::Assign {
+                op: None,
+                target: Box::new(synth(ast::ExprKind::Ident(slot), span)),
+                value: Box::new(value.clone()),
+            },
+            span,
+        );
+        let h = self.expr_stmt(&assign);
+        let stmt = hir::Stmt {
+            span,
+            kind: hir::StmtKind::Expr(h),
+        };
+        let unit = self.mk(hir::ExprKind::Lit(hir::Lit::Unit), self.cx.ty.unit, span);
+        self.with_lets(vec![stmt], unit)
     }
 
     /// `if (key in o && o[key] !== value) throw new TypeError(msg)` (appended to `lets`): a
@@ -373,9 +458,9 @@ impl FnCx<'_, '_> {
                 }
                 ("get" | "set", _) => {
                     self.not_yet(
-                        "an accessor defined with `Object.defineProperty` is not supported yet",
+                        "an accessor defined with `Object.defineProperty` is not supported yet here",
                         name.span,
-                        "it waits for getters and setters in object literals (#941)",
+                        "Velt supports it as a statement on a `const o: I = { get k() { … } }` of the same function, `I` an interface declaring the accessor: the call replaces the literal's accessors",
                     );
                     return None;
                 }
@@ -409,6 +494,18 @@ impl FnCx<'_, '_> {
         self.cx
             .error(Diagnostic::error(msg.to_string(), span).with_note(note.to_string()));
     }
+}
+
+/// The key of `Object.defineProperty(globalThis, "K", d)`, as `crate::global_this` normalizes
+/// it (`None`: another object).
+fn global_key(o: &ast::Expr, key: &ast::Expr, cx: &FnCx) -> Option<String> {
+    let ast::ExprKind::Ident(id) = &o.kind else {
+        return None;
+    };
+    let ast::ExprKind::Lit(ast::Lit::Str(k)) = &key.kind else {
+        return None;
+    };
+    (id.name == "globalThis" && !cx.is_local_name(&id.name)).then(|| k.clone())
 }
 
 /// The temporary holding the object of the `defineProperty` call at `span`.
