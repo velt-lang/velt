@@ -36,6 +36,10 @@ pub(crate) struct Shared {
     closed: AtomicBool,
     /// Serializes disposing of nodes pushed after `closed` (no task consumes them then).
     closing: Mutex<()>,
+    /// The driving task is in a poll ([`Shared::begin_poll`]): a wake waits for its end.
+    polling: AtomicBool,
+    /// A wake came while `polling`: the poll's end polls again or wakes the task.
+    deferred: AtomicBool,
 }
 
 impl Shared {
@@ -46,6 +50,8 @@ impl Shared {
             waker: AtomicWaker::new(),
             closed: AtomicBool::new(false),
             closing: Mutex::new(()),
+            polling: AtomicBool::new(false),
+            deferred: AtomicBool::new(false),
         };
         s.waker.register(waker);
         s
@@ -71,9 +77,41 @@ impl Shared {
             let _g = self.closing.lock();
             self.release_queued();
         } else if !self.notified.swap(true, AcqRel) {
-            self.waker.wake();
+            self.wake_task();
         }
         true
+    }
+
+    /// Wakes the driving task; during its poll, leaves that to the poll's end
+    /// ([`Shared::end_poll`]): a task that wakes itself (a timer's turn waking the next one) is
+    /// polled again at once instead of through the scheduler, which would hand it to another
+    /// worker thread.
+    fn wake_task(&self) {
+        if self.polling.load(SeqCst) {
+            self.deferred.store(true, SeqCst);
+            // Checked again: the poll may have ended before it saw `deferred`.
+            if self.polling.load(SeqCst) || !self.deferred.swap(false, SeqCst) {
+                return;
+            }
+        }
+        self.waker.wake();
+    }
+
+    /// The driving task starts a poll.
+    pub(super) fn begin_poll(&self) {
+        self.polling.store(true, SeqCst);
+    }
+
+    /// The driving task's poll ended: true if a wake came during it (the task is to be polled
+    /// again; the caller does that or wakes it).
+    pub(super) fn end_poll(&self) -> bool {
+        self.polling.store(false, SeqCst);
+        self.deferred.swap(false, SeqCst)
+    }
+
+    /// Wakes the driving task (a wake [`Shared::end_poll`] reported).
+    pub(super) fn wake_now(&self) {
+        self.waker.wake();
     }
 
     /// Take every queued node, oldest first.

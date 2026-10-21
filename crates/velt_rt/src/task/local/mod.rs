@@ -47,6 +47,7 @@ use self::timers::Timers;
 use super::all::ResultDropFn;
 use super::{DropFn, PollFn, VeltFut};
 use std::sync::Arc;
+use tokio::task::coop::has_budget_remaining;
 
 /// What `velt_rt_fut_start` needs from the task being polled.
 struct TaskCx {
@@ -182,6 +183,26 @@ impl Drop for Enter {
     }
 }
 
+/// How a task's poll ended ([`SetPtr::enter`]).
+#[derive(Clone, Copy)]
+struct Ended {
+    /// The task was woken during the poll (the wake was held back for the poll's end).
+    woke: bool,
+    /// The poll yielded (`yieldNow()`): it waits behind the scheduler's other tasks.
+    yielded: bool,
+}
+
+impl Ended {
+    /// The task is polled again at once: it woke itself and did not yield, and the poll's
+    /// cooperative budget is not spent.
+    fn again(&self) -> bool {
+        self.woke && !self.yielded && has_budget_remaining()
+    }
+}
+
+/// How often a task that keeps waking itself is polled again within one poll of the scheduler.
+const REPOLLS: u32 = 64;
+
 /// Owned pointer to a task's local set (null = none yet), its id, its timers, its turn, and
 /// whether it touched module state (in the padding: the size stays 32 bytes).
 struct SetPtr(*mut LocalSet, u64, Option<Arc<Timers>>, u32, bool);
@@ -200,8 +221,13 @@ impl SetPtr {
     ///
     /// # Safety
     /// `waker` must stay valid during the call.
-    unsafe fn enter(&mut self, waker: *const Waker, root: &mut dyn FnMut()) {
+    unsafe fn enter(&mut self, waker: *const Waker, root: &mut dyn FnMut()) -> Ended {
         self.3 = next_turn(self.3);
+        // Wakes of the task during the poll wait for its end (set.rs `wake_task`).
+        let shared = self.0.as_ref().map(|s| Arc::as_ptr(&s.shared));
+        if let Some(sh) = shared {
+            (*sh).begin_poll();
+        }
         let took = module_state::start_poll(self.4);
         let tcx = TaskCx {
             set: &mut self.0,
@@ -259,6 +285,18 @@ impl SetPtr {
         }
         // Last: the module lock this poll took (module_state.rs).
         module_state::end_poll(tcx.module.took.get());
+        Ended {
+            woke: shared.is_some_and(|sh| (*sh).end_poll()),
+            yielded: tcx.yielded.get(),
+        }
+    }
+
+    /// Wakes the task through its set's waker (a wake its poll held back).
+    fn wake_task(&self) {
+        // SAFETY: null or a live set owned by `self`.
+        if let Some(s) = unsafe { self.0.as_ref() } {
+            s.shared.wake_now();
+        }
     }
 
     /// Hand the set over if promises in it are still running (it is dropped otherwise).
@@ -321,13 +359,25 @@ impl Locals {
     ) -> Poll<()> {
         let waker: *const Waker = cx.waker();
         let mut r = Poll::Pending;
-        let mut poll = || {
-            if r.is_pending() {
-                r = root(cx);
+        let mut n = 0;
+        loop {
+            let mut poll = || {
+                if r.is_pending() {
+                    r = root(cx);
+                }
+            };
+            // SAFETY: `cx`'s waker outlives this call.
+            let ended = unsafe { self.set.enter(waker, &mut poll) };
+            // A task that woke itself is polled again at once (`Ended::again`).
+            if !ended.woke {
+                break;
             }
-        };
-        // SAFETY: `cx`'s waker outlives this call.
-        unsafe { self.set.enter(waker, &mut poll) };
+            if r.is_ready() || !ended.again() || n == REPOLLS {
+                self.set.wake_task();
+                break;
+            }
+            n += 1;
+        }
         if r.is_ready() {
             if let Some(set) = self.set.take_busy() {
                 Orphan::spawn(set);
@@ -371,8 +421,20 @@ impl Future for Orphan {
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
         let this = self.get_mut();
-        // SAFETY: `cx`'s waker outlives the call.
-        unsafe { this.set.enter(cx.waker(), &mut || ()) };
+        let mut n = 0;
+        loop {
+            // SAFETY: `cx`'s waker outlives the call.
+            let ended = unsafe { this.set.enter(cx.waker(), &mut || ()) };
+            // Polled again at once after waking itself, as `Locals::poll_root`.
+            if !ended.woke {
+                break;
+            }
+            if this.set.is_idle() || !ended.again() || n == REPOLLS {
+                this.set.wake_task();
+                break;
+            }
+            n += 1;
+        }
         crate::io::publish_thread_output();
         if this.set.is_idle() {
             Poll::Ready(())
@@ -564,11 +626,14 @@ fn outside_home_step(f: impl FnOnce()) {
     let mut f = Some(f);
     // SAFETY: the no-op waker is static; the set is the home's own.
     unsafe {
-        home.enter(Waker::noop(), &mut || {
+        let ended = home.enter(Waker::noop(), &mut || {
             if let Some(f) = f.take() {
                 f()
             }
-        })
+        });
+        if ended.woke {
+            home.wake_task();
+        }
     };
 }
 
