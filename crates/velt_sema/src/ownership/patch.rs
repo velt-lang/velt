@@ -37,19 +37,12 @@ pub(super) fn patch_calls(
     let mut changed = false;
     let mut errors = vec![];
     let awaited = awaited_calls(b);
+    // Only a program that reads a `shared` has values read out of one to check.
+    let frozen = cx.frozen_reads;
     visit::exprs_mut(b, &mut |e: &mut Expr| {
         let returns_promise = matches!(cx.ty.kind(e.ty), TyKind::Promise(..));
         let span = e.span;
-        let (modified, receiver) = match &e.kind {
-            E::Call {
-                callee: Callee::Def(d, _),
-                ..
-            } if cx.frozen_reads => {
-                let info = cx.fn_info(*d);
-                (info.modified_params, info.this.is_some())
-            }
-            _ => (0, false),
-        };
+        let (mut modified, mut receiver) = (0u64, false);
         let (modes, args, unknown) = match &mut e.kind {
             E::Call { callee, args } => {
                 // A closure literal passed to a parameter of a generic type may be kept as a
@@ -72,6 +65,10 @@ pub(super) fn patch_calls(
                 }
                 let modes = call_modes(cx, callee, args);
                 let unknown = modes.is_none() && !matches!(callee, Callee::Intrinsic(_));
+                if let (true, Callee::Def(d, _)) = (frozen, &*callee) {
+                    let info = cx.fn_info(*d);
+                    (modified, receiver) = (info.modified_params, info.this.is_some());
+                }
                 (modes, args, unknown)
             }
             E::New { def, args, .. } => match cx.adt(*def).and_then(|a| a.ctor) {
@@ -85,19 +82,20 @@ pub(super) fn patch_calls(
         }
         if let Some(modes) = &modes {
             for (i, (a, m)) in args.iter_mut().zip(modes).enumerate() {
+                // An argument the callee changes though it doesn't take it `BorrowMut`: a
+                // receiver it takes owned (it returns `this`), or a borrowed value whose map
+                // entries a loop changes. Not one read out of a `shared`, whose change no one
+                // would see. (An owned parameter gets its own copy, as `force_move` gives it.)
+                if modified != 0
+                    && i < 64
+                    && modified & (1 << i) != 0
+                    && (*m == PassMode::Borrow || *m == PassMode::Owned && i == 0 && receiver)
+                    && frozen_root(a)
+                {
+                    modifies_frozen(cx, a, &mut errors);
+                    continue;
+                }
                 match m {
-                    // An argument the callee changes though it doesn't take it `BorrowMut`: a
-                    // receiver it takes owned (it returns `this`), or a borrowed value whose map
-                    // entries a loop changes. Not one read out of a `shared`, whose change no one
-                    // would see. (An owned parameter gets its own copy, as `force_move` gives it.)
-                    PassMode::Owned | PassMode::Borrow
-                        if i < 64
-                            && modified & (1 << i) != 0
-                            && (*m == PassMode::Borrow || i == 0 && receiver)
-                            && frozen_root(a) =>
-                    {
-                        modifies_frozen(cx, a, &mut errors)
-                    }
                     PassMode::Owned => changed |= force_move(cx, a, &mut errors),
                     PassMode::BorrowMut => changed |= borrow_mut(cx, a, &mut errors),
                     _ => {}
@@ -312,7 +310,7 @@ fn table_args(cx: &Ctx, args: &[Expr], errors: &mut Vec<Diagnostic>) {
         errors.push(crate::body::pure_init::table_escapes(&name, msg, a.span));
     }
     // The same for a value read out of a `shared<T>`, which other tasks read at the same time.
-    for a in args.iter().filter(|a| frozen_root(a)) {
+    for a in args.iter().filter(|a| cx.frozen_reads && frozen_root(a)) {
         let tn = cx.display(a.ty);
         errors.push(
             Diagnostic::error(
@@ -339,7 +337,7 @@ fn borrow_mut(cx: &Ctx, e: &mut Expr, errors: &mut Vec<Diagnostic>) -> bool {
         E::Upcast(inner) | E::Downcast(inner) => &mut **inner,
         _ => e,
     };
-    if frozen_root(target) {
+    if cx.frozen_reads && frozen_root(target) {
         modifies_frozen(cx, target, errors);
         return false;
     }
@@ -471,7 +469,7 @@ fn callbacks(cx: &mut Ctx, args: &mut [Expr], errors: &mut Vec<Diagnostic>) -> b
             // A table can't be told apart from a copy here either: the function value may be
             // the one that modifies it.
             Callback::Unknown => {
-                super::evidence::in_root_memory(arg) || table_arg(cx, arg) || frozen_root(arg)
+                super::evidence::in_root_memory(arg) || table_arg(cx, arg) || cx.frozen_reads && frozen_root(arg)
             }
             Callback::None => false,
         };

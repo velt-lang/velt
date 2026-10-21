@@ -98,7 +98,9 @@ pub(super) fn collect(cx: &mut Ctx, b: &mut Block) -> Evidence {
     } = v;
     ev.mutated = through_aliases(&ev.mutated, &aliases, false);
     ev.weak = through_aliases(&ev.weak, &aliases, true);
-    ev.modified = through_aliases(&ev.modified, &aliases, false);
+    if !ev.modified.is_empty() {
+        ev.modified = through_aliases(&ev.modified, &aliases, false);
+    }
     ev
 }
 
