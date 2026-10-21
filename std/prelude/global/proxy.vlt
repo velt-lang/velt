@@ -18,7 +18,6 @@ export {
   __anyValuesProxy,
   __HasOwnPropertyProxy,
   __proxyKeysOf,
-  __proxyForInKeys,
   __proxyHasOwn,
   __proxyIn,
   __proxyNewAny,

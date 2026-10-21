@@ -1,0 +1,69 @@
+// `for (const k in o)` keeps the object the loop began with, as in Node: reassigning `o` (a
+// variable or a property, typed or `any`) in the body changes neither the keys visited nor the
+// traps that run.
+interface Props {
+  a: number;
+  b: number;
+  c: number;
+}
+
+const plain: Props = { a: 1, b: 2, c: 3 };
+const hide: Props =
+  new Proxy({ a: 1, b: 2, c: 3 } as any, {
+    ownKeys(t: any): any {
+      console.log("ownKeys");
+      return Reflect.ownKeys(t);
+    },
+    getOwnPropertyDescriptor(t: any, k: string | symbol): PropertyDescriptor | undefined {
+      console.log("gopd", String(k));
+      return k === "b" ? undefined : Reflect.getOwnPropertyDescriptor(t, k);
+    },
+  }) as Props;
+let o: Props = plain;
+for (const k in o) {
+  console.log("plain->proxy", k);
+  o = hide;
+}
+let o2: Props = hide;
+for (const k in o2) {
+  console.log("proxy->plain", k);
+  o2 = plain;
+}
+
+class Holder {
+  s: Props = hide;
+}
+
+const h = new Holder();
+for (const k in h.s) {
+  console.log("prop", k);
+  h.s = plain;
+}
+let k2: string = "";
+for (k2 in hide) {
+  if (k2 === "a") {
+    continue;
+  }
+  console.log("outer var", k2);
+}
+outer: for (const x in hide) {
+  for (const y in plain) {
+    if (y === "b") {
+      continue outer;
+    }
+    console.log("nest", x, y);
+  }
+}
+
+const hideAny: any = new Proxy({ a: 1, b: 2, c: 3 } as any, {
+  getOwnPropertyDescriptor(t: any, k: string | symbol): PropertyDescriptor | undefined {
+    console.log("gopd", String(k));
+    return k === "b" ? undefined : Reflect.getOwnPropertyDescriptor(t, k);
+  },
+});
+let oAny: any = { a: 1, b: 2, c: 3 };
+for (const k in oAny) {
+  console.log("any plain->proxy", k);
+  oAny = hideAny;
+}
+// check: no leaks

@@ -197,6 +197,12 @@ impl FnCx<'_, '_> {
         if self.proxy_keys_inner {
             return None;
         }
+        if let ast::ExprKind::Ident(i) = &arg.kind {
+            if i.name.starts_with(crate::body::for_in_proxy::FOR_IN_OBJECT) {
+                // A `for...in` loop's plain value (for_in_proxy.rs).
+                return None;
+            }
+        }
         let t = self.trial_type(arg)?;
         if !self.may_be_typed_proxy(t) {
             return None;

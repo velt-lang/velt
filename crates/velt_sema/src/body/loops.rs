@@ -145,20 +145,10 @@ impl FnCx<'_, '_> {
                 body,
                 is_await,
             } => {
-                let once = match is_await {
-                    true => None,
-                    false => self.for_in_operand(iter, out),
-                };
-                let iter = once.as_ref().unwrap_or(iter);
-                let any = match is_await {
-                    true => None,
-                    false => self.for_in_any(pattern, iter, body),
-                };
-                let (iter, body) = match &any {
-                    Some((i, b)) => (i, b),
-                    None => (iter, body),
-                };
-                let tested = match *is_await || any.is_some() {
+                if !*is_await && self.for_in_proxy(*kind, pattern, iter, body, label, span, out) {
+                    return;
+                }
+                let tested = match is_await {
                     true => None,
                     false => self.for_in_presence_test(pattern, iter, body),
                 };

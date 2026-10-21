@@ -284,15 +284,3 @@ export function __anyForInHas(o: any, k: string): boolean {
   }
   return true;
 }
-
-/**
- * The keys `for (const k in x)` of a class instance or an object `x` in a program that makes
- * proxies visits: a typed proxy's string keys from its `ownKeys` trap, each tested just before
- * its turn (`__anyForInHas`), or `null` for a plain value (its type's keys).
- */
-export function __proxyForInKeys(o: any): string[] | null {
-  if (o instanceof Proxy) {
-    return __anyForInKeys(o);
-  }
-  return null;
-}

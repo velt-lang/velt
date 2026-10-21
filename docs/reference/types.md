@@ -2738,11 +2738,13 @@ keys, whether each is enumerable and their values; an array target's `length` an
 key's turn, `Object.hasOwn(s, k)` and `hasOwnProperty.call(s, k)` its
 `getOwnPropertyDescriptor` trap for `k`, and `"k" in s` its `has` trap, as in Node, for a
 proxy typed as a class, an interface or an object type (an operand such as a call,
-`Object.keys(getProps())`, is evaluated once). `for (k in p)` of an `any` proxy `p` (or of a
-call giving one, evaluated once) runs its `ownKeys` trap once and its
-`getOwnPropertyDescriptor` trap just before each key's turn, visiting the enumerable ones, so a
-key deleted during the loop is skipped, as Node does. (Of a plain value through `any`, the keys
-are listed when the loop begins, and one deleted during the loop is still visited.)
+`Object.keys(getProps())`, is evaluated once). `for (k in p)` of an `any` proxy `p` runs its
+`ownKeys` trap once and its `getOwnPropertyDescriptor` trap just before each key's turn,
+visiting the enumerable ones, so a key deleted during the loop is skipped, as Node does. A
+`for...in` loop evaluates its object once and keeps it: assigning another value to the variable
+or property in the body changes neither the keys visited nor the traps run. Whether the value is
+a proxy is tested once, before the loop; a plain value's keys (also through `any`) are listed
+when the loop begins, and one deleted during the loop is still visited.
 
 `p.push(…)`, `p.pop()`, `p.shift()`, `p.unshift(…)`, `p.splice(…)`, `p.map(f)`, `p.filter(f)`,
 `p.forEach(f)`, `p.some(f)`, `p.every(f)`, `p.find(f)`, `p.includes(x)`, `p.indexOf(x)`,

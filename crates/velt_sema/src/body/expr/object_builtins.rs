@@ -458,7 +458,7 @@ impl FnCx<'_, '_> {
     }
 
     /// The type `e` checks to, without keeping anything of the check (`None`: it has errors).
-    pub(super) fn trial_type(&mut self, e: &ast::Expr) -> Option<TyId> {
+    pub(crate) fn trial_type(&mut self, e: &ast::Expr) -> Option<TyId> {
         let mark = crate::body::recheck::Mark::here(self.cx);
         let frames = self.trial_frames();
         let diags = self.cx.diags.len();
