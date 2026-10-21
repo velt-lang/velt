@@ -121,7 +121,8 @@ impl FnCx<'_, '_> {
         })
     }
 
-    /// `for (const k in f())` of an `any`, in a program that loads `Proxy`: the operand, which is
+    /// `for (const k in f())` of an `any` or of a value that may be a typed proxy, in a program
+    /// that loads `Proxy`: the operand, which is
     /// not safe to evaluate again, bound to a hidden constant appended to `out` first, and the
     /// loop's keys of it (`Object.keys(#dN)`), so that `for_in_any` applies. `None` for any other
     /// loop.
@@ -143,7 +144,7 @@ impl FnCx<'_, '_> {
             return None;
         }
         let ty = self.trial_type(obj)?;
-        if self.cx.dynamic(ty) != Some(crate::any::Dynamic::Any) {
+        if self.cx.dynamic(ty) != Some(crate::any::Dynamic::Any) && !self.may_be_typed_proxy(ty) {
             return None;
         }
         let tmp = self.temp_with(obj.clone(), None, out);
@@ -154,11 +155,12 @@ impl FnCx<'_, '_> {
         Some(keys)
     }
 
-    /// `for (const k in o) body` over an `any` `o` that is safe to evaluate again, in a program
-    /// that loads `Proxy`: a proxy's keys are its `ownKeys` (`__anyForInKeys`) and each is tested
-    /// just before its turn (`__anyForInHas`: its `getOwnPropertyDescriptor`), so one deleted
-    /// during the loop is skipped, as in Node. A plain value's keys are listed once, as
-    /// elsewhere. `None` for any other loop.
+    /// `for (const k in o) body` over an `any` `o`, or a value of a class or object type that may
+    /// be a typed proxy, that is safe to evaluate again, in a program that loads `Proxy`: a
+    /// proxy's keys are its `ownKeys` (`__anyForInKeys`, `__proxyForInKeys`) and each is tested
+    /// just before its turn (`__anyForInHas`: its `getOwnPropertyDescriptor`), so one deleted or
+    /// hidden is skipped, as in Node. A plain value's keys are listed once, as elsewhere. `None`
+    /// for any other loop.
     pub(crate) fn for_in_any(
         &mut self,
         pattern: &ast::Pattern,
@@ -177,7 +179,8 @@ impl FnCx<'_, '_> {
             return None;
         }
         let ty = self.trial_type(obj)?;
-        if self.cx.dynamic(ty) != Some(crate::any::Dynamic::Any) || !self.uses_proxy() {
+        let any = self.cx.dynamic(ty) == Some(crate::any::Dynamic::Any);
+        if !(any || self.may_be_typed_proxy(ty)) || !self.uses_proxy() {
             return None;
         }
         // The test reads the value's members through its descriptor.
@@ -200,7 +203,15 @@ impl FnCx<'_, '_> {
                 optional: false,
             })
         };
-        let keys = call("__anyForInKeys", vec![obj.clone()]);
+        let keys = match any {
+            true => call("__anyForInKeys", vec![obj.clone()]),
+            // A plain value's keys are its type's (the loop's own `Object.keys`).
+            false => e(ast::ExprKind::Binary {
+                op: ast::BinaryOp::Nullish,
+                lhs: Box::new(call("__proxyForInKeys", vec![obj.clone()])),
+                rhs: Box::new(iter.clone()),
+            }),
+        };
         let has = call("__anyForInHas", vec![obj.clone(), key]);
         let test = ast::Stmt {
             kind: ast::StmtKind::If {
