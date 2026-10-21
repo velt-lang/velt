@@ -137,16 +137,15 @@ never wakes another thread.
   The options must be an object literal (a variable holding them is an error); `worker` may
   be given once. An index out of range is a panic:
   `spawn: worker 7 is out of range (the runtime has 4 workers)`.
-- A program that pins a task (`spawn(p, { worker })`) runs on the per-core scheduler: every
-  worker runs its own event loop, and a task stays on the worker it started on (an unpinned one
-  starts on the spawning worker unless that worker is clearly busier than another). Every other
-  program keeps the default work-stealing scheduler, unchanged, including one that only calls
-  `workerCount()` to size a pool of unpinned tasks (which the stealing scheduler runs faster)
-  or `currentWorker()`. `VELT_SCHEDULER=stealing` or
-  `per-core` overrides the choice (for measuring); with `stealing`, `{ worker }` is checked but
-  the task may run on any worker, and `currentWorker()` can change at any `await`.
-  `VELT_SCHEDULER=velt` selects the runtime's own executor, an experiment
-  ([`VELT_SCHEDULER`](../tooling/cli.md)); a pinned task stays on its worker there too.
+- Tasks run on the runtime's own scheduler: every worker runs its own event loop, a task stays
+  on the worker it started on (an unpinned one starts on the spawning worker), and another
+  worker takes on part of a worker's tasks only while that one stays busy and the help raises
+  how much gets done. A pinned task never moves. A task that computes without pausing for more
+  than a few milliseconds doesn't hold up the rest of its worker: its timers, sockets and woken
+  tasks go to another worker meanwhile. `VELT_SCHEDULER=stealing` or `per-core` selects one of
+  tokio's schedulers instead (for comparison; [`VELT_SCHEDULER`](../tooling/cli.md)); with
+  `stealing`, `{ worker }` is checked but the task may run on any worker, and
+  `currentWorker()` can change at any `await`.
 - A pinned task can't borrow an idle core: CPU-bound code in it delays everything else on its
   worker. `scope.spawn` takes no placement yet.
 

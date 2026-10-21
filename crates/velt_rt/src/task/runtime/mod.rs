@@ -3,17 +3,18 @@
 //! The runtime is a backend chosen once per process; everything else in the crate goes through
 //! the functions here ([`spawn`], [`spawn_with`], [`spawn_blocking`], [`enter`], [`block_on`])
 //! and the handles they give back ([`JoinHandle`], [`AbortHandle`]), never through a backend's
-//! own types. Backends, chosen by `VELT_SCHEDULER` (#211):
-//! - `stealing` (the default): one tokio multi-thread runtime; idle workers steal tasks.
+//! own types. Backends, chosen by `VELT_SCHEDULER` (#211, #1101):
+//! - `velt` (the default): the runtime's own executor on `mio` ([`velt`]): work stays on the
+//!   worker that made it, another worker is woken only for sustained backlog, and a pinned task
+//!   stays on its worker. Sockets, the HTTP server and timers are its own; everything else runs
+//!   on tokio through a bridge.
+//! - `stealing`: one tokio multi-thread runtime; idle workers steal tasks.
 //! - `per-core`: every worker is a one-worker tokio multi-thread runtime with its own I/O and
 //!   timer driver, and a task stays on the worker it started on, so its sockets, timers and data stay
 //!   on one core and no other worker is woken to run it. An unpinned spawn starts on the
 //!   spawning worker unless that worker runs [`STEAL_MARGIN`] more tasks than the least loaded
 //!   one, which then gets it: an idle worker taking a task before its first poll (steal before
 //!   start), decided when the task is spawned.
-//! - `velt` (experimental): the runtime's own executor on `mio` ([`velt`]): work stays on the
-//!   worker that made it, and another worker is woken only for sustained backlog. Sockets, the
-//!   HTTP server and timers are its own; everything else runs on tokio through a bridge.
 //!
 //! The runtime starts lazily on first use and lives until the process exits (there is no
 //! shutdown). Like Node, the program's entry ([`crate::entry::run_main`]) keeps the process alive
@@ -38,7 +39,7 @@ use super::{PollFn, SendPtr};
 use crate::panic::ThrowLoc;
 use std::cell::Cell;
 use std::future::Future;
-use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::OnceLock;
 
 /// Keep-alive references (Node's "ref'd handles"): while > 0, the process outlives `main`.
@@ -148,7 +149,7 @@ pub fn worker_count() -> usize {
         .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()))
 }
 
-/// Environment variable selecting the scheduler: `per-core`, `velt`, or `stealing` (the default).
+/// Environment variable selecting the scheduler: `velt` (the default), `stealing` or `per-core`.
 pub const SCHEDULER_ENV: &str = "VELT_SCHEDULER";
 
 /// How many more running tasks the spawning worker may have than the least loaded one before an
@@ -165,12 +166,6 @@ enum Backend {
 
 static BACKEND: OnceLock<Backend> = OnceLock::new();
 
-/// The scheduler the program asked for before the runtime started ([`velt_rt_set_scheduler`]):
-/// `SCHED_PER_CORE` when it uses the placement API, else `SCHED_DEFAULT`.
-static REQUESTED: AtomicU32 = AtomicU32::new(SCHED_DEFAULT);
-const SCHED_DEFAULT: u32 = 0;
-const SCHED_PER_CORE: u32 = 1;
-
 thread_local! {
     /// This thread's worker index in per-core mode (`usize::MAX`: not a worker thread).
     static WORKER: Cell<usize> = const { Cell::new(usize::MAX) };
@@ -179,26 +174,24 @@ thread_local! {
     static SPAWN_TARGET: Cell<Option<usize>> = const { Cell::new(None) };
 }
 
-/// `VELT_SCHEDULER` wins (`per-core` or `stealing`, for measurement); otherwise the scheduler the
-/// program requested. Decided on first use.
+/// `VELT_SCHEDULER` (`stealing` or `per-core`, for measurement and comparison), else the Velt
+/// executor. Decided on first use.
 fn backend() -> Backend {
     *BACKEND.get_or_init(
         || match std::env::var(SCHEDULER_ENV).as_deref().map(str::trim) {
             Ok("per-core") => Backend::PerCore,
             Ok("stealing") => Backend::Stealing,
-            Ok("velt") => Backend::Velt,
-            _ if REQUESTED.load(Ordering::Relaxed) == SCHED_PER_CORE => Backend::PerCore,
-            _ => Backend::Stealing,
+            _ => Backend::Velt,
         },
     )
 }
 
-/// `velt_rt_set_scheduler(1)`: run on the per-core scheduler (`velt_main` calls it first, before
-/// anything starts the runtime, when the program uses the placement API: `spawn(…, { worker })`,
-/// `workerCount()`, `currentWorker()`). `0` keeps the default. `VELT_SCHEDULER` overrides both.
+/// `velt_rt_set_scheduler(kind)`: `velt_main` calls it with `1` first when the program pins a
+/// task (`spawn(…, { worker })`). The default executor keeps pinned tasks on their workers
+/// itself, so nothing changes; kept for the programs compiled to call it.
 #[no_mangle]
 pub extern "C" fn velt_rt_set_scheduler(kind: u32) {
-    REQUESTED.store(kind, Ordering::Relaxed);
+    let _ = kind;
 }
 
 /// `workerCount()`: the per-core workers, or the stealing runtime's worker threads.
