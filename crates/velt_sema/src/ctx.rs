@@ -570,7 +570,7 @@ impl<'m> Ctx<'m> {
 
     /// Ownership: can values of this type be duplicated bitwise?
     pub fn is_copy(&mut self, t: TyId) -> bool {
-        self.is_copy_depth(t, 0, &mut FxHashMap::default())
+        self.is_copy_depth(t, 0, &mut None)
     }
 
     /// Is `t`, reached `depth` levels down, Copy? Past 32 levels nothing is, which stops a
@@ -580,7 +580,7 @@ impl<'m> Ctx<'m> {
         &mut self,
         t: TyId,
         depth: u32,
-        seen: &mut FxHashMap<(TyId, u32), bool>,
+        seen: &mut Option<FxHashMap<(TyId, u32), bool>>,
     ) -> bool {
         if depth > 32 {
             return false;
@@ -621,14 +621,19 @@ impl<'m> Ctx<'m> {
         // The first levels are checked without keeping answers: most types end there, and
         // the paths to a level multiply only below them.
         let keep = depth >= 3;
-        if let Some(&b) = keep.then(|| seen.get(&(t, depth))).flatten() {
+        if let Some(&b) = seen
+            .as_ref()
+            .filter(|_| keep)
+            .and_then(|m| m.get(&(t, depth)))
+        {
             return b;
         }
         let b = parts
             .into_iter()
             .all(|p| self.is_copy_depth(p, depth + 1, seen));
         if keep {
-            seen.insert((t, depth), b);
+            seen.get_or_insert_with(FxHashMap::default)
+                .insert((t, depth), b);
         }
         b
     }

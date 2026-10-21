@@ -39,7 +39,7 @@ impl Ctx<'_> {
             Look::Parts(parts) if levels > 0 && !parts.is_empty() => parts,
             Look::Stop | Look::Parts(_) => return None,
         };
-        let mut seen = FxHashSet::default();
+        let mut seen = Seen::default();
         seen.insert(t);
         let mut queue = VecDeque::new();
         for p in parts {
@@ -62,5 +62,30 @@ impl Ctx<'_> {
             }
         }
         None
+    }
+}
+
+/// The types a search has queued: a list while there are few (most searches), a set after.
+#[derive(Default)]
+struct Seen {
+    few: Vec<TyId>,
+    many: FxHashSet<TyId>,
+}
+
+impl Seen {
+    /// Adds `t`; false if it was there.
+    fn insert(&mut self, t: TyId) -> bool {
+        const FEW: usize = 16;
+        if self.few.len() < FEW {
+            if self.few.contains(&t) {
+                return false;
+            }
+            self.few.push(t);
+            return true;
+        }
+        if self.many.is_empty() {
+            self.many.extend(self.few.iter().copied());
+        }
+        self.many.insert(t)
     }
 }
