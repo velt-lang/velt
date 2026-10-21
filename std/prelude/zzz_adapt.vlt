@@ -227,8 +227,8 @@ export function __anyDelete(o: any, k: any): boolean {
   if (typeof o === "string") {
     // A string's characters and `length` are fixed; it has no other own properties.
     const key = typeof k === "string" ? (k as string) : `${k}`;
-    const i = __arrayIndex(key);
-    if (key === "length" || (i >= 0 && i < (o.length as i64))) {
+    const i = __arrayIndex(key) as number;
+    if (key === "length" || (i >= 0 && i < (o.length as number))) {
       panic(`TypeError: Cannot delete property '${key}' of [object String]`);
     }
     return true;
@@ -262,14 +262,14 @@ export function __anyDeletePlain(o: any, key: any): boolean {
   // Velt's arrays have no holes: an element past the end is not there, and the last one goes
   // (as `pop`, `shift` and `splice` delete it before they shorten the array).
   if (Array.isArray(o)) {
-    const i = __arrayIndex(k);
+    const i = __arrayIndex(k) as number;
     if (i >= 0) {
-      const n = o.length as i64;
+      const n = o.length as number;
       if (i >= n) {
         return true;
       }
       if (i == n - 1) {
-        o.length = i as number;
+        o.length = i;
         return true;
       }
     }

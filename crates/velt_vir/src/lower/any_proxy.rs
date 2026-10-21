@@ -30,6 +30,11 @@ pub(super) const PRELUDE_REFLECT_METHODS: &str = "std/proxy::Reflect.";
 /// The prelude's array method read through a proxy (std/proxy/array.vlt).
 pub(super) const PRELUDE_ARRAY_METHOD: &str = "std/proxy/array::__ArrayMethod";
 
+/// The prelude's `Object.prototype.hasOwnProperty` read as a value (std/prelude/zzz_adapt.vlt)
+/// and its version that asks a proxy (std/proxy/ops.vlt).
+pub(super) const PRELUDE_HAS_OWN: &str = "std/prelude/zzz_adapt::__HasOwnProperty";
+pub(super) const PROXY_HAS_OWN: &str = "std/proxy/ops::__HasOwnPropertyProxy";
+
 /// How the key reaches a proxy slot.
 #[derive(Clone, Copy)]
 pub(super) enum ProxyKey {

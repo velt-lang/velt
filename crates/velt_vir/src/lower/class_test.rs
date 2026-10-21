@@ -47,11 +47,20 @@ impl Cx<'_> {
         }
     }
 
-    /// Is `d` one of the prelude's proxy classes (`number_classes`)?
+    /// Is `d` one of the standard library's classes for proxies, or `hasOwnProperty` as a value
+    /// (`number_classes`)?
     fn numbered_last(&self, d: DefId) -> bool {
-        use super::any_proxy::{PRELUDE_ARRAY_METHOD, PRELUDE_PROXY, PRELUDE_REFLECT};
-        matches!(self.hir.def(d), hir::Def::Adt(a)
-            if [PRELUDE_PROXY, PRELUDE_REFLECT, PRELUDE_ARRAY_METHOD].contains(&a.name.as_str()))
+        use super::any_proxy::{
+            PRELUDE_ARRAY_METHOD, PRELUDE_HAS_OWN, PRELUDE_PROXY, PRELUDE_REFLECT, PROXY_HAS_OWN,
+        };
+        let last = [
+            PRELUDE_PROXY,
+            PRELUDE_REFLECT,
+            PRELUDE_ARRAY_METHOD,
+            PRELUDE_HAS_OWN,
+            PROXY_HAS_OWN,
+        ];
+        matches!(self.hir.def(d), hir::Def::Adt(a) if last.contains(&a.name.as_str()))
     }
 
     /// Pre-order ids of every class (from 1), with the last id of each subtree.
@@ -74,8 +83,8 @@ impl Cx<'_> {
         // Explicit stack (deep hierarchies must not overflow the compiler's stack): (class,
         // whether its subclasses are numbered already).
         let mut stack: Vec<(DefId, bool)> = vec![];
-        // The prelude's `Proxy` and `Reflect` (std/proxy.vlt) are numbered last, so
-        // the classes of programs that don't use them keep their ids.
+        // `Proxy` and `Reflect` (std/proxy.vlt) and the other classes of `numbered_last` are
+        // numbered last, so the classes of programs that don't use them keep their ids.
         let mut roots: Vec<DefId> = children.get(&None).cloned().unwrap_or_default();
         roots.sort_by_key(|&d| self.numbered_last(d));
         for &root in roots.iter().rev() {
