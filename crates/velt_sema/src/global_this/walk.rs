@@ -15,12 +15,17 @@ use crate::SourceModule;
 
 const GLOBAL_THIS: &str = "globalThis";
 
+/// The names of `globalThis` in Node: itself, and `global`.
+fn names_global(name: &str) -> bool {
+    name == GLOBAL_THIS || name == "global"
+}
+
 /// Does `module` name `globalThis` in an expression?
 pub(super) fn mentions(module: &ast::Module) -> bool {
     struct Finds(bool);
     impl Visit<'_> for Finds {
         fn expr(&mut self, e: &ast::Expr) {
-            self.0 |= matches!(&e.kind, E::Ident(id) if id.name == GLOBAL_THIS);
+            self.0 |= matches!(&e.kind, E::Ident(id) if names_global(&id.name));
         }
     }
     let mut f = Finds(false);
@@ -127,13 +132,21 @@ impl<'a> Walk<'a> {
     /// Rewrite every item of the module, its constants standing for `globalThis` first (a
     /// function may use one declared after it).
     pub(super) fn module_items(&mut self, module: &mut ast::Module) {
-        // Other module-level names are the module's constants (string keys).
+        // Other module-level names are the module's constants (string keys), unless they hide
+        // `globalThis` or `global`.
         for item in &module.items {
-            if let I::Var(v) = &item.kind {
-                if self.alias_of(v).is_some() {
-                    self.declare(v);
-                }
+            let mut names = vec![];
+            match &item.kind {
+                I::Var(v) if self.alias_of(v).is_some() => self.declare(v),
+                I::Var(v) => pattern_names(&v.pattern, &mut names),
+                I::Function(f) => names.push(f.sig.name.name.clone()),
+                I::Import(imp) => names.extend(
+                    (imp.names.iter()).map(|n| n.alias.as_ref().unwrap_or(&n.name).name.clone()),
+                ),
+                _ => {}
             }
+            names.retain(|n| names_global(n));
+            self.shadow(names);
         }
         module.items.retain(|item| match &item.kind {
             I::Var(v) => self.alias_of(v).is_none(),
@@ -184,7 +197,7 @@ impl<'a> Walk<'a> {
             }
             E::Ident(id) => match self.lookup(&id.name) {
                 Some(b) => b.clone(),
-                None => (id.name == GLOBAL_THIS).then_some(None),
+                None => names_global(&id.name).then_some(None),
             },
             _ => None,
         }

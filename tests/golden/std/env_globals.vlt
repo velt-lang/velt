@@ -16,3 +16,16 @@ function readWindow(): string {
   }
 }
 console.log(readWindow());
+// CommonJS's globals are not in an ES module, which a Velt module is (Node runs this file as one
+// when it is named `.mts`), nor other runtimes' (#1299).
+console.log(typeof require, typeof module, typeof exports, typeof __dirname, typeof __filename);
+// @ts-ignore: Deno's and Bun's globals are not declared for Node.
+console.log(typeof global, typeof Deno, typeof Bun, typeof structuredClone);
+function readDirname(): string {
+  try {
+    return String(__dirname);
+  } catch (e) {
+    return `${(e as Error).name}: ${(e as Error).message}`;
+  }
+}
+console.log(readDirname());

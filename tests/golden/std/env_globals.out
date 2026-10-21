@@ -3,3 +3,6 @@ function function object function object function
 false true false
 server
 ReferenceError: window is not defined
+undefined undefined undefined undefined undefined
+object undefined undefined function
+ReferenceError: __dirname is not defined

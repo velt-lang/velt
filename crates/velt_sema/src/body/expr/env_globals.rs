@@ -3,7 +3,7 @@
 //! `typeof window === "undefined"`; Velt runs where Node does, so:
 //!
 //! - `typeof X` of a global Velt has no value for is the constant Node 22 gives: `"undefined"`
-//!   for the browser's globals (`window`, `document`, `HTMLElement`, ...), `"object"` or
+//!   for other environments' globals (`window`, `document`, `Deno`, `require`, ...), `"object"` or
 //!   `"function"` for Node's own (`globalThis`, `process`, `navigator`, `Event`, ...). A class's
 //!   name is `"function"`.
 //! - Reading a browser global throws the `ReferenceError` Node throws (`window is not defined`),
@@ -18,11 +18,20 @@ use velt_syntax::ast;
 use super::setters::synth;
 use crate::body::FnCx;
 use crate::ctx::Item;
+use crate::defs::DefInfo;
 use crate::hir::{self, AdtKind};
 
-/// The browser's globals (TypeScript's `lib.dom`) that Node 22 doesn't have: `typeof` is
-/// `"undefined"`, and reading one throws a `ReferenceError`.
-const BROWSER_ONLY: [&str; 23] = [
+/// The globals of other environments that Node 22 doesn't have in an ES module: the browser's
+/// (TypeScript's `lib.dom`), other runtimes' (`Deno`, `Bun`) and CommonJS's (`require`,
+/// `__dirname`). `typeof` is `"undefined"`, and reading one throws a `ReferenceError`.
+const ABSENT: [&str; 30] = [
+    "require",
+    "module",
+    "exports",
+    "__dirname",
+    "__filename",
+    "Deno",
+    "Bun",
     "window",
     "document",
     "location",
@@ -50,8 +59,9 @@ const BROWSER_ONLY: [&str; 23] = [
 
 /// Node 22's own globals and what `typeof` gives for them, for names Velt may not have as values
 /// (`typeof process`, `typeof navigator`).
-pub(crate) const NODE_GLOBALS: [(&str, &str); 36] = [
+pub(crate) const NODE_GLOBALS: [(&str, &str); 37] = [
     ("globalThis", "object"),
+    ("global", "object"),
     ("process", "object"),
     ("console", "object"),
     ("Math", "object"),
@@ -104,6 +114,10 @@ impl FnCx<'_, '_> {
             .find(|(n, _)| *n == id.name)
             .map(|(_, t)| *t);
         match self.lookup_item(&id.name, id.span) {
+            // A function, generic or not.
+            Some(Item::Def(d)) if matches!(self.cx.info[d.0 as usize], DefInfo::Fn(_)) => {
+                Some("function")
+            }
             Some(Item::Def(d)) => {
                 let a = self.cx.adt(d)?;
                 // The standard library's version of a Node global (`Math` is a class here) is
@@ -114,15 +128,15 @@ impl FnCx<'_, '_> {
                 }
             }
             Some(_) => None,
-            None if BROWSER_ONLY.contains(&id.name.as_str()) => Some("undefined"),
+            None if ABSENT.contains(&id.name.as_str()) => Some("undefined"),
             None => node,
         }
     }
 
-    /// Reading a browser global the program doesn't declare: Node's `ReferenceError` (`None`:
+    /// Reading such a global the program doesn't declare: Node's `ReferenceError` (`None`:
     /// `id` is not one).
     pub(crate) fn browser_global_read(&mut self, id: &ast::Ident) -> Option<hir::Expr> {
-        if !BROWSER_ONLY.contains(&id.name.as_str()) || self.is_local_name(&id.name) {
+        if !ABSENT.contains(&id.name.as_str()) || self.is_local_name(&id.name) {
             return None;
         }
         if self.lookup_item(&id.name, id.span).is_some() {
