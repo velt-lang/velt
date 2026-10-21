@@ -385,13 +385,20 @@ impl<'a> Parser<'a> {
         let lo = self.cur_lo();
         // `get name() { … }` / `set name(v) { … }`: accessors (not `get(…)`, a method named `get`).
         if (self.at_word("get") || self.at_word("set"))
-            && (Self::is_name(self.nth(1)) || matches!(self.nth(1), Tok::Str(_)))
+            && (Self::is_name(self.nth(1))
+                || matches!(self.nth(1), Tok::Str(_) | Tok::Int(_) | Tok::Float(_)))
             && self.nth(2) == Tok::LParen
         {
             let kw = self.cur_span();
             let setter = self.at_word("set");
             self.bump();
+            let literal = self.at_literal_name();
             let name = self.parse_prop_key()?;
+            if literal {
+                self.reject_literal_method_name(&name);
+                self.skip_rest_of_object();
+                return Err(Fail);
+            }
             let ObjectProp::KeyValue(name, arrow) = self.finish_method_prop(lo, name, false)?
             else {
                 unreachable!("ICE: a method property is a key and a value");

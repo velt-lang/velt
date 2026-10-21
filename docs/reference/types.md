@@ -287,14 +287,16 @@ object a `Record<string, V>`, as TypeScript gives it a string index signature. A
 holding a string literal names that field the same way (`const NAME = "name"`, `[NAME]: T`).
 In a declaration (an interface, an object type or a class), a string or number literal in
 brackets is the plain name (`["k"]: number` is `k: number`; `[1]: string` and `1: string` name
-the member `"1"`, `[-1]: string` the member `"-1"`, `1e3: number` the member `"1000"`), and so
-in a destructuring pattern (`const { 1.5: a, [-1]: b } = o`). Such a name is for fields: a
-method or accessor named by a literal (`["a-b"]() {}`, `get "c d"()`, `1e3() {}`) is not
-supported yet. A symbol made in place (`[Symbol("x")]: v`, also in an object literal) is an
-error that asks for a module constant. An enum member as a key (`[Flags.SKIP]?: boolean`) parses
-in a declaration but is not supported yet (#923); in a destructuring pattern, a computed key
-must be a literal or the name of a module constant (`{ [t.tag]: v } = o` is an error: write
-`const v = o[t.tag]`).
+the member `"1"`, `[-1]: string` the member `"-1"`, `1e3: number` the member `"1000"`), also
+after a modifier (`readonly 7 = 4`), and so in a destructuring pattern (`const { 1.5: a, [-1]: b
+} = o`). `[-0]` names the member `"0"`, as `String(-0)` is in JavaScript (TypeScript's checker
+reads it as `"-0"`). Such a name is for fields: a method or accessor named by a literal
+(`["a-b"]() {}`, `get "c d"()`, `get 1()`, `1e3() {}`) is not supported yet. A symbol made in
+place (`[Symbol("x")]: v`, also in an object literal) is an error that asks for a module
+constant. An enum member as a key (`[Flags.SKIP]?: boolean`) parses in a declaration but is not
+supported yet (#923). In a destructuring pattern, a computed key must be a string or number
+literal: `{ [KEY]: v } = o` and `{ [t.tag]: v } = o` are errors, and the property is read with
+an index instead (`const v = o[KEY]`).
 A class or interface may declare a method, getter or setter with such a key (`[KEY]() {}`,
 `get [KEY]()`) or a well-known symbol key (`get [Symbol.toStringTag]()`); `o[KEY]`, `o[KEY]()`,
 `o[KEY] = v` and `KEY in o` find it. A quoted key is an ordinary string key, also one that reads

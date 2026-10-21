@@ -66,7 +66,12 @@ impl<'a> Parser<'a> {
         while Self::is_name(self.nth(1))
             || matches!(
                 self.nth(1),
-                Tok::LBracket | Tok::Star | Tok::PrivateName | Tok::Str(_)
+                Tok::LBracket
+                    | Tok::Star
+                    | Tok::PrivateName
+                    | Tok::Str(_)
+                    | Tok::Int(_)
+                    | Tok::Float(_)
             )
         {
             // Only `static`, `get` and `set` apply across a line break, as in TypeScript and
@@ -134,7 +139,11 @@ impl<'a> Parser<'a> {
             self.bump();
         }
         let literal = self.at_literal_name();
-        let name = self.parse_member_name()?;
+        let name = match self.peek() {
+            // A quoted method name, reported below (a quoted field name is not supported yet).
+            Tok::Str(_) if matches!(self.nth(1), Tok::LParen | Tok::Lt) => self.parse_prop_key()?,
+            _ => self.parse_member_name()?,
+        };
         self.reject_protected(&mods, &name);
         let mods = self.private_name_mods(mods, &name);
         if literal && self.at_method_start() {

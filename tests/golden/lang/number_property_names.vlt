@@ -20,6 +20,18 @@ class C {
   [-2] = "m";
 }
 
+// After a modifier too.
+class D {
+  readonly 7 = 4;
+  private 8 = 1;
+}
+
+interface R {
+  readonly 1: string;
+}
+
+type H = { readonly 0x10: boolean };
+
 function main() {
   const i: I = { 7: "s", 1.5: "f", 1e3: 3 };
   const n: N = { [-1]: "neg" };
@@ -30,4 +42,7 @@ function main() {
   const { ["1.5"]: e } = o;
   console.log(a, b, d, e);
   console.log(JSON.stringify(c), Object.keys(i).join(","));
+  const r: R = { 1: "one" };
+  const h: H = { 16: true };
+  console.log(JSON.stringify(new D()), JSON.stringify(r), JSON.stringify(h));
 }

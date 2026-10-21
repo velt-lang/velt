@@ -131,8 +131,17 @@ fn a_pattern_takes_no_path_keys() {
     let e = errors("function f() { const { [t.tag]: v, w } = o; g(); }");
     assert_eq!(e.len(), 1, "{e:?}");
     assert!(e[0].contains("destructuring pattern"), "{e:?}");
+    // Nor a constant's name: `{ [KEY]: v }` would read a field named `[KEY]`.
+    for src in [
+        "function f() { const { [KEY]: v } = o; }",
+        "function f() { const k = \"b\"; const { [k]: v } = o; }",
+    ] {
+        let e = errors(src);
+        assert_eq!(e.len(), 1, "{src}: {e:?}");
+        assert!(e[0].contains("string or number literal"), "{src}: {e:?}");
+    }
     // In declarations they are member names.
-    parse_ok("interface T { [Flags.A]: string }");
+    parse_ok("interface T { [Flags.A]: string; [KEY]: number }");
 }
 
 #[test]
@@ -145,6 +154,11 @@ fn literal_names_are_for_fields_not_methods() {
         "interface I { \"go\"(): void; }",
         "const o = { [\"p-q\"]() { return 1; }, b: 2 };",
         "const o = { 1.5() { return 1; } };",
+        "class C { get 1() { return 1; } }",
+        "class C { get \"x\"() { return 1; } }",
+        "class C { set 2(v: number) {} }",
+        "const o = { get 2() { return 1; } };",
+        "const o = { get \"x\"() { return 1; } };",
     ] {
         let e = errors(src);
         assert_eq!(e.len(), 1, "{src}: {e:?}");
@@ -170,4 +184,17 @@ fn type_arguments_after_new_and_in_heritage_clauses_may_follow_a_line_break() {
     };
     assert_eq!(ty(c.extends.as_ref().unwrap()), "Base<number>");
     assert_eq!(ty(&c.implements[0]), "I<string>");
+}
+
+#[test]
+fn number_names_after_modifiers() {
+    let m = parse_ok("class C { static readonly 2 = 3; readonly 7 = 4; private 8 = 1; }");
+    let ItemKind::Class(c) = &m.items[0].kind else {
+        panic!()
+    };
+    let fields: Vec<_> = c.fields.iter().map(|f| f.name.name.as_str()).collect();
+    assert_eq!(fields, ["2", "7", "8"]);
+    let d = interface("interface I { readonly 1: string; readonly 1e3: number }");
+    assert_eq!(names(&d), ["1", "1000"]);
+    parse_ok("type T = { readonly 0x10: boolean };");
 }
