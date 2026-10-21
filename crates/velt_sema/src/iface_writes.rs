@@ -11,7 +11,7 @@
 //! Every implementation records how it stores each writable field ([`SetterSrc`]) when it is
 //! created; the setter methods are synthesized only once the interface is written through.
 
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 
 use velt_common::{Diagnostic, Span};
 
@@ -23,8 +23,8 @@ use crate::hir::{DefId, PassMode, TyId};
 /// The interfaces written through and how their implementations store fields.
 #[derive(Default)]
 pub(crate) struct IfaceWrites {
-    /// Interfaces with setter slots.
-    written: FxHashSet<DefId>,
+    /// Interfaces with setter slots, and where the first write through each is.
+    written: FxHashMap<DefId, Span>,
     /// Per `Ctx::impls` index: how each writable field of its interface is stored, in field
     /// order. An implementation without an entry cannot be written through.
     sources: FxHashMap<u32, Vec<SetterSrc>>,
@@ -51,6 +51,14 @@ pub(crate) enum SetterSrc {
     },
     /// A class's `set f(v)` (or the trampoline dispatching to it): the setter slot itself.
     Method(DefId),
+    /// A class `d` with a `get` accessor and no `set` for field `name` (of type `ty`): its
+    /// setter slot stops with Node's `TypeError` (`collect::getters::getter_only_setter`).
+    GetterOnly {
+        d: DefId,
+        self_ty: TyId,
+        name: String,
+        ty: TyId,
+    },
     /// An object literal (at `span`) with a getter and no setter for field `name`.
     Missing { span: Span, name: String },
 }
@@ -73,7 +81,7 @@ impl Ctx<'_> {
 
     /// Does the program write a field through `iface`?
     pub(crate) fn iface_written(&self, iface: DefId) -> bool {
-        self.iface_writes.written.contains(&iface)
+        self.iface_writes.written.contains_key(&iface)
     }
 
     /// The setter slot of field `field` of `iface` (`None` for a `readonly` field).
@@ -118,13 +126,28 @@ impl Ctx<'_> {
             );
             return false;
         }
-        self.iface_writes.written.insert(iface);
+        self.iface_writes.written.insert(iface, span);
         for i in impls {
             self.add_setters(i);
         }
         // The dispatch groups gain the setters (`throws/groups.rs`): built again on next use.
         self.groups = None;
         true
+    }
+
+    /// An implementation of `iface` with no setters is created after a write through `iface`
+    /// (where the write is): reported as when it existed at the write.
+    pub(crate) fn no_setters_after_write(&mut self, index: u32) {
+        let iface = self.impls[index as usize].iface;
+        let Some(&span) = self.iface_writes.written.get(&iface) else {
+            return;
+        };
+        let ty = self.impls[index as usize].ty;
+        let (iname, tn) = (self.iface_name(iface), self.display(ty));
+        self.err(
+            format!("writing a field through `{iname}` is not supported yet: `{tn}` implements it in a way that has no setters"),
+            span,
+        );
     }
 
     fn iface_name(&self, iface: DefId) -> String {
@@ -161,6 +184,14 @@ impl Ctx<'_> {
                     param,
                 } => defs.push(self.literal_setter(d, self_ty, (index, fn_ty), param)),
                 SetterSrc::Method(def) => defs.push(def),
+                SetterSrc::GetterOnly {
+                    d,
+                    self_ty,
+                    name,
+                    ty,
+                } => defs.push(crate::collect::getters::getter_only_setter(
+                    self, d, self_ty, &name, ty,
+                )),
                 SetterSrc::Missing { span, name } => {
                     let iname = self.iface_name(iface);
                     self.error(

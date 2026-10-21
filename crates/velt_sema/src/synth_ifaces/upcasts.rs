@@ -141,7 +141,17 @@ impl Ctx<'_> {
                 // A `get` (and `set`) accessor of the class provides the field.
                 let (g, set) = crate::collect::impls::accessor_slots(self, d, own_ty, &name, want)?;
                 methods.push(g);
-                stored.push(set.map(SetterSrc::Method));
+                // Without a `set`, writing the field throws, as in Node.
+                let set = set.map_or_else(
+                    || SetterSrc::GetterOnly {
+                        d,
+                        self_ty: own_ty,
+                        name: name.clone(),
+                        ty: want,
+                    },
+                    SetterSrc::Method,
+                );
+                stored.push(Some(set));
                 continue;
             };
             methods.push(crate::collect::getters::field_getter(
@@ -165,8 +175,9 @@ impl Ctx<'_> {
         });
         let index = (self.impls.len() - 1) as u32;
         // A part written through in a way with no setters leaves this one without them too.
-        if let Some(setters) = setters {
-            self.note_setters(index, setters);
+        match setters {
+            Some(setters) => self.note_setters(index, setters),
+            None => self.no_setters_after_write(index),
         }
         Some(index)
     }

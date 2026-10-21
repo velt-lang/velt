@@ -40,3 +40,12 @@ const c = new Cell("a");
 const g: Get<string> & { value: string } = c;
 g.value = "b";
 console.log(g.get(), c.value, g.value);
+// A getter-only class and a plain field next to the accessor pair: reads through the same
+// intersection work for all three, and writes for the two that can store the field.
+class Cnt implements Base { get n() { return 1; } refresh() { return 0; } }
+const cc: Base & { n: number } = new Cnt();
+console.log(cc.n, cc.refresh());
+class Plain implements Base { n = 0; refresh() { return this.n; } }
+const pp: Base & { n: number } = new Plain();
+pp.n = 3;
+console.log(pp.n, pp.refresh());
