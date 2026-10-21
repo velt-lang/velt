@@ -594,11 +594,8 @@ impl Ctx<'_> {
             if let Some(own) = self.recursive_union_ref(a) {
                 return own;
             }
-            let d = velt_common::Diagnostic::error(
-                format!("type alias `{}` refers to itself", decl.name.name),
-                t.span,
-            )
-            .with_note("an alias may refer to itself when it is an object type or an intersection of object types written out or named by aliases (`Base & { kids: T[] }`) with no field named twice, or a union that names itself behind an array, an index signature, a `Map` or a function type (`type Json = string | Json[]`); give any other recursive type a nominal member, such as an interface or a class");
+            let d =
+                crate::recursive_aliases::self_reference(&self.alias_blocked, &decl.name, t.span);
             self.error(d);
             return self.ty.error;
         }

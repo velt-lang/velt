@@ -1,32 +1,47 @@
 //! Recursive type aliases of object types (#654): `type Tree = { kids: Tree[] } & { v: number }`
 //! and `type Tree = { kids: Tree[]; v: number }`. An alias is expanded where it is used, so one
 //! that names itself would expand without end; an interface is a definition that its own fields
-//! can name. Such an alias, whose body is an object type or an intersection of object types
-//! written out (`{ … } & { … }`) with no field named twice, is checked as the field-only
-//! interface with the same fields in the same order (`collect::field_only`): an object type
-//! like the alias's, with the same layout and printing, the same name in messages, and the same
-//! generics. Any other alias naming itself stays an error (`resolve::expand_alias`). The syntax
-//! is rewritten before collection, like `generic_arrows`. A part may also name a non-generic
-//! alias of such a type in the same module (`type Tree = Base & { kids: Tree[] }`, #783), whose
-//! fields stand where its name does.
+//! can name. Such an alias, whose body is an object type or an intersection of object types,
+//! is checked as the field-only interface with the same fields in the same order
+//! (`collect::field_only`): an object type like the alias's, with the same layout and printing,
+//! the same name in messages, and the same generics. The syntax is rewritten before collection,
+//! like `generic_arrows`.
+//!
+//! - A part may name a non-generic alias of such a type, or a field-only interface, declared in
+//!   the same module (`type Tree = Base & { kids: Tree[] }`, #783): its fields stand where its
+//!   name does. A field in two parts must have the same type in both.
+//! - Aliases naming each other (`type A = { b: B | null }; type B = { a: A[] }`) are rewritten
+//!   together: every object alias on such a cycle ([`cyclic_aliases`]) whose fields name one of
+//!   the cycle becomes an interface.
+//!
+//! Any other alias naming itself stays an error (`resolve::expand_alias`, [`self_reference`]);
+//! for one on a cycle, the error names the part that kept it from being rewritten.
 
 use rustc_hash::{FxHashMap, FxHashSet};
+use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
 use crate::SourceModule;
 
-/// The modules with their recursive object type aliases rewritten into interfaces, or `None`
-/// when no module has one (the common case: nothing is copied).
-pub(crate) fn rewrite(modules: &[SourceModule]) -> Option<Vec<SourceModule>> {
+/// Why an alias on a cycle was not rewritten, by the span of its name: the part (or field) that
+/// kept it from being rewritten, and what is wrong with it.
+pub(crate) type Blocked = FxHashMap<Span, (Span, String)>;
+
+/// The modules with their recursive object type aliases rewritten into interfaces (`None` when
+/// no module has one: the common case, nothing is copied), and why the others were not.
+pub(crate) fn rewrite(modules: &[SourceModule]) -> (Option<Vec<SourceModule>>, Blocked) {
+    let mut blocked = Blocked::default();
     let rewritten: Vec<Vec<Option<ast::Item>>> = modules
         .iter()
         .map(|m| {
             let mut x = Expander::new(&m.ast.items);
-            m.ast.items.iter().map(|i| x.as_interface(i)).collect()
+            let out = m.ast.items.iter().map(|i| x.as_interface(i)).collect();
+            blocked.extend(x.blocked);
+            out
         })
         .collect();
     if rewritten.iter().flatten().all(Option::is_none) {
-        return None;
+        return (None, blocked);
     }
     let modules = modules
         .iter()
@@ -46,71 +61,100 @@ pub(crate) fn rewrite(modules: &[SourceModule]) -> Option<Vec<SourceModule>> {
             jsx_runtime: m.jsx_runtime.clone(),
         })
         .collect();
-    Some(modules)
+    (Some(modules), blocked)
 }
 
-/// Expands one module's recursive object type aliases into their fields. A part may name an
-/// alias (`Base` in `type Tree = Base & { kids: Tree[] }`, #783). Only aliases on a cycle of
-/// aliases are expanded, and one expansion visits each alias at most once: a second visit is
-/// a field named twice (or an alias without fields), so aliases naming each other many times
-/// (`type A0 = A1 & A1`) cost their number, not the number of paths through them.
+/// The error for a use of alias `name` while it is being expanded: it refers to itself, with
+/// what kept it from being rewritten into an interface when the rewrite says so.
+pub(crate) fn self_reference(blocked: &Blocked, name: &ast::Ident, at: Span) -> Diagnostic {
+    let d = Diagnostic::error(format!("type alias `{}` refers to itself", name.name), at);
+    match blocked.get(&name.span) {
+        Some((part, why)) => d.with_label(*part, why.clone()).with_note(format!(
+            "`{}` would be checked as an interface, but {why}; parts must be object types, non-generic aliases of them or field-only interfaces declared in the same module, with no field of two types",
+            name.name
+        )),
+        None => d.with_note("an alias may refer to itself when it is an object type or an intersection of object types (written out, or non-generic aliases of them or field-only interfaces declared in the same module) with no field of two types, or a union that names itself behind an array, an index signature, a `Map` or a function type (`type Json = string | Json[]`); give any other recursive type a nominal member, such as an interface or a class"),
+    }
+}
+
+/// A type name a part may refer to.
+#[derive(Clone, Copy)]
+enum Decl<'a> {
+    Alias(&'a ast::TypeAlias),
+    Iface(&'a ast::InterfaceDecl),
+}
+
+/// Expands one module's recursive object type aliases into their fields. Only aliases on a cycle
+/// are expanded, and one expansion visits each named part at most once (naming it again names
+/// the same fields again), so aliases naming each other many times (`type A0 = A1 & A1`) cost
+/// their number, not the number of paths through them.
 struct Expander<'a> {
-    /// The module's non-generic type aliases, by name.
-    aliases: FxHashMap<&'a str, &'a ast::TypeAlias>,
-    /// The aliases on a cycle of aliases naming each other (or themselves): only those can be
-    /// recursive, so no other alias is expanded.
-    cyclic: FxHashSet<&'a str>,
-    /// The current expansion: the aliases being expanded, the aliases visited (and whether
-    /// they gave fields), and the names of the fields so far.
+    /// The module's type aliases and interfaces, by name.
+    decls: FxHashMap<&'a str, Decl<'a>>,
+    /// The cycle each alias that may be rewritten lies on ([`cyclic_aliases`]).
+    cyclic: FxHashMap<&'a str, usize>,
+    /// The alias being rewritten: its type parameters, the named parts being expanded, those
+    /// expanded already, and its fields so far.
+    generics: Vec<&'a str>,
     seen: Vec<&'a str>,
-    visited: FxHashMap<&'a str, bool>,
-    field_names: FxHashSet<&'a str>,
+    visited: FxHashSet<&'a str>,
+    fields: Vec<ast::Field>,
+    field_index: FxHashMap<String, usize>,
+    /// Why aliases on a cycle were not rewritten ([`Blocked`]).
+    blocked: Blocked,
     /// Parts visited, over all expansions (the unit tests' measure of work).
     steps: u64,
 }
 
 impl<'a> Expander<'a> {
     fn new(items: &'a [ast::Item]) -> Self {
-        let mut aliases = FxHashMap::default();
+        let mut decls = FxHashMap::default();
         for i in items {
-            if let ast::ItemKind::TypeAlias(a) = &i.kind {
-                if a.generics.is_empty() {
-                    aliases.entry(a.name.name.as_str()).or_insert(a);
-                }
-            }
+            let (name, d) = match &i.kind {
+                ast::ItemKind::TypeAlias(a) => (&a.name.name, Decl::Alias(a)),
+                ast::ItemKind::Interface(f) => (&f.name.name, Decl::Iface(f)),
+                _ => continue,
+            };
+            decls.entry(name.as_str()).or_insert(d);
         }
         Expander {
-            aliases,
+            decls,
             cyclic: cyclic_aliases(items),
+            generics: vec![],
             seen: vec![],
-            visited: FxHashMap::default(),
-            field_names: FxHashSet::default(),
+            visited: FxHashSet::default(),
+            fields: vec![],
+            field_index: FxHashMap::default(),
+            blocked: Blocked::default(),
             steps: 0,
         }
     }
 
-    /// `item` as an interface, if it is a recursive alias of object types written out or
-    /// named.
+    /// `item` as an interface, if it is an alias of object types on a cycle whose fields name
+    /// an alias of that cycle; for one that can't be rewritten, the reason in `blocked`.
     fn as_interface(&mut self, item: &'a ast::Item) -> Option<ast::Item> {
         let ast::ItemKind::TypeAlias(a) = &item.kind else {
             return None;
         };
-        if !self.cyclic.contains(a.name.name.as_str()) {
-            return None;
-        }
+        let &cycle = self.cyclic.get(a.name.name.as_str())?;
         if !matches!(
             a.ty.kind,
             ast::TypeExprKind::Intersection(_) | ast::TypeExprKind::Object(_)
         ) {
             return None;
         }
+        self.generics = a.generics.iter().map(|g| g.name.name.as_str()).collect();
         self.seen = vec![a.name.name.as_str()];
         self.visited.clear();
-        self.field_names.clear();
-        let mut parts = vec![];
-        self.object_parts(&a.ty, &mut parts)?;
-        let fields: Vec<ast::Field> = parts.into_iter().map(interface_field).collect();
-        if fields.is_empty() || !fields.iter().any(|f| names(&f.ty, &a.name.name)) {
+        self.fields.clear();
+        self.field_index.clear();
+        if let Err(why) = self.object_parts(&a.ty) {
+            self.blocked.insert(a.name.span, why);
+            return None;
+        }
+        let fields = std::mem::take(&mut self.fields);
+        let in_cycle = |n: &str| self.cyclic.get(n) == Some(&cycle);
+        if fields.is_empty() || !fields.iter().any(|f| any_name(&f.ty, &mut |n| in_cycle(n))) {
             return None;
         }
         let decl = ast::InterfaceDecl {
@@ -128,55 +172,152 @@ impl<'a> Expander<'a> {
         })
     }
 
-    /// Appends the fields of `t` to `out`: an object type, an intersection of them, or the name
-    /// of a non-generic alias of one in the same module, in order. `None` for any other type, an
-    /// alias that names one being expanded, or a field named twice.
-    fn object_parts(
-        &mut self,
-        t: &'a ast::TypeExpr,
-        out: &mut Vec<&'a ast::ObjectTypeField>,
-    ) -> Option<()> {
-        self.steps += 1;
-        match &t.kind {
-            ast::TypeExprKind::Object(fs) => {
-                for f in fs {
-                    if !self.field_names.insert(f.name.name.as_str()) {
-                        return None;
-                    }
-                    out.push(f);
+    /// Appends the fields of part `t` to `self.fields`: an object type, an intersection of
+    /// them, or the name of a non-generic alias of one or of a field-only interface in the same
+    /// module. `Err` with the part (or field) that can't be, and why. Walks with a stack of its
+    /// own, as a chain of aliases may be long.
+    fn object_parts(&mut self, t: &'a ast::TypeExpr) -> Result<(), (Span, String)> {
+        enum Work<'a> {
+            Part(&'a ast::TypeExpr),
+            /// Done with the named part being expanded.
+            Leave,
+        }
+        let mut work = vec![Work::Part(t)];
+        while let Some(w) = work.pop() {
+            let t = match w {
+                Work::Part(t) => t,
+                Work::Leave => {
+                    self.seen.pop();
+                    continue;
                 }
-                Some(())
-            }
-            ast::TypeExprKind::Intersection(ps) => {
-                ps.iter().try_for_each(|p| self.object_parts(p, out))
-            }
-            ast::TypeExprKind::Named { path, args } if path.len() == 1 && args.is_empty() => {
-                let name = path[0].name.as_str();
-                if self.seen.contains(&name) {
-                    return None;
+            };
+            self.steps += 1;
+            let name = match &t.kind {
+                ast::TypeExprKind::Object(fs) => {
+                    fs.iter().try_for_each(|f| self.add(interface_field(f)))?;
+                    continue;
                 }
-                // Visited before: its fields are in `out` already, so naming it again names
-                // them twice, unless it has none.
-                if let Some(&gave) = self.visited.get(name) {
-                    return (!gave).then_some(());
+                ast::TypeExprKind::Intersection(ps) => {
+                    work.extend(ps.iter().rev().map(Work::Part));
+                    continue;
                 }
-                let alias = *self.aliases.get(name)?;
-                let before = out.len();
-                self.seen.push(name);
-                self.object_parts(&alias.ty, out)?;
-                self.seen.pop();
-                self.visited.insert(name, out.len() > before);
-                Some(())
+                ast::TypeExprKind::Named { path, args } if path.len() == 1 && args.is_empty() => {
+                    path[0].name.as_str()
+                }
+                ast::TypeExprKind::Named { .. } => {
+                    let why = "this part is a generic type or a type of another module";
+                    return Err((t.span, why.into()));
+                }
+                _ => return Err((t.span, "this part is not an object type".into())),
+            };
+            let fail = |why: String| Err((t.span, why));
+            if self.generics.contains(&name) {
+                return fail(format!("`{name}` is a type parameter"));
             }
-            _ => None,
+            if self.seen.contains(&name) {
+                return fail(format!("`{name}` is part of itself"));
+            }
+            // Named again: the same fields again.
+            if !self.visited.insert(name) {
+                continue;
+            }
+            match self.decls.get(name).copied() {
+                Some(Decl::Alias(a)) if a.generics.is_empty() => {
+                    self.seen.push(name);
+                    work.push(Work::Leave);
+                    work.push(Work::Part(&a.ty));
+                }
+                Some(Decl::Alias(_)) => return fail(format!("`{name}` is a generic alias")),
+                Some(Decl::Iface(i))
+                    if i.generics.is_empty()
+                        && i.extends.is_empty()
+                        && i.methods.is_empty()
+                        && i.call_sigs.is_empty() =>
+                {
+                    i.fields.iter().try_for_each(|f| self.add(f.clone()))?;
+                }
+                Some(Decl::Iface(_)) => {
+                    return fail(format!(
+                        "`{name}` is an interface with type parameters, methods, call signatures or `extends`"
+                    ));
+                }
+                None => {
+                    return fail(format!(
+                        "`{name}` is not an alias or interface declared in this module"
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Adds field `f`; one with its name already there must be the same field (TypeScript
+    /// merges them; with different types they would be an intersection, which a field can't be).
+    fn add(&mut self, f: ast::Field) -> Result<(), (Span, String)> {
+        match self.field_index.get(&f.name.name).map(|&i| &self.fields[i]) {
+            None => {
+                self.field_index
+                    .insert(f.name.name.clone(), self.fields.len());
+                self.fields.push(f);
+                Ok(())
+            }
+            Some(g)
+                if g.optional == f.optional
+                    && g.readonly == f.readonly
+                    && type_key(&g.ty).is_some_and(|k| Some(k) == type_key(&f.ty)) =>
+            {
+                Ok(())
+            }
+            Some(_) => Err((
+                f.span,
+                format!("field `{}` has another type in another part", f.name.name),
+            )),
         }
     }
 }
 
-/// The type aliases among `items` that lie on a cycle of aliases naming each other (or
-/// themselves): Tarjan's strongly connected components, without recursion, in time linear in
-/// the aliases and the names they mention.
-fn cyclic_aliases(items: &[ast::Item]) -> FxHashSet<&str> {
+/// `t` written without spans, to compare two type expressions; `None` for kinds it doesn't
+/// cover (never equal).
+fn type_key(t: &ast::TypeExpr) -> Option<String> {
+    use ast::TypeExprKind as K;
+    let all = |ts: &[ast::TypeExpr], sep: &str| -> Option<String> {
+        let ks: Option<Vec<String>> = ts.iter().map(type_key).collect();
+        Some(ks?.join(sep))
+    };
+    Some(match &t.kind {
+        K::Named { path, args } => {
+            let p: Vec<&str> = path.iter().map(|i| i.name.as_str()).collect();
+            format!("{}<{}>", p.join("."), all(args, ",")?)
+        }
+        K::Array(e) => format!("{}[]", type_key(e)?),
+        K::Tuple(ts) => format!("[{}]", all(ts, ",")?),
+        K::Union(ts) => format!("({})", all(ts, "|")?),
+        K::Intersection(ts) => format!("({})", all(ts, "&")?),
+        K::Literal(l) => format!("{l:?}"),
+        K::Null => "null".into(),
+        K::Undefined => "undefined".into(),
+        K::Void => "void".into(),
+        K::Object(fs) => {
+            let ks: Option<Vec<String>> = fs
+                .iter()
+                .map(|f| {
+                    let k = type_key(&f.ty)?;
+                    Some(format!("{}{}{}:{k}", f.readonly, f.name.name, f.optional))
+                })
+                .collect();
+            format!("{{{}}}", ks?.join(";"))
+        }
+        _ => return None,
+    })
+}
+
+/// The type aliases among `items` on a cycle of aliases naming each other (or themselves), by
+/// the cycle: Tarjan's strongly connected components, without recursion, in time linear in the
+/// aliases and the names they mention (an alias's own type parameters are not names of
+/// aliases). Only cycles of aliases that are object types, intersections or names of other
+/// types count: one through a union (`type Json = string | Json[]`) is
+/// `recursive_unions`'s, and stays so.
+fn cyclic_aliases(items: &[ast::Item]) -> FxHashMap<&str, usize> {
     let aliases: Vec<&ast::TypeAlias> = items
         .iter()
         .filter_map(|i| match &i.kind {
@@ -194,16 +335,23 @@ fn cyclic_aliases(items: &[ast::Item]) -> FxHashSet<&str> {
         .map(|a| {
             let mut out = vec![];
             any_name(&a.ty, &mut |n| {
-                out.extend(index.get(n));
+                if !a.generics.iter().any(|g| g.name.name == n) {
+                    out.extend(index.get(n));
+                }
                 false
             });
             out
         })
         .collect();
+    let object = |a: &ast::TypeAlias| match &a.ty.kind {
+        ast::TypeExprKind::Object(_) | ast::TypeExprKind::Intersection(_) => true,
+        ast::TypeExprKind::Named { path, args } => path.len() == 1 && args.is_empty(),
+        _ => false,
+    };
     const NONE: usize = usize::MAX;
     let n = aliases.len();
     let (mut order, mut low, mut on_stack) = (vec![NONE; n], vec![0; n], vec![false; n]);
-    let (mut stack, mut next, mut cyclic) = (vec![], 0, FxHashSet::default());
+    let (mut stack, mut next, mut cyclic) = (vec![], 0, FxHashMap::default());
     for root in 0..n {
         if order[root] != NONE {
             continue;
@@ -243,8 +391,13 @@ fn cyclic_aliases(items: &[ast::Item]) -> FxHashSet<&str> {
                         break;
                     }
                 }
-                if component.len() > 1 || edges[v].contains(&v) {
-                    cyclic.extend(component.iter().map(|&w| aliases[w].name.name.as_str()));
+                let cycle = component.len() > 1 || edges[v].contains(&v);
+                if cycle && component.iter().all(|&w| object(aliases[w])) {
+                    cyclic.extend(
+                        component
+                            .iter()
+                            .map(|&w| (aliases[w].name.name.as_str(), v)),
+                    );
                 }
             }
         }
@@ -337,6 +490,7 @@ mod tests {
         assert!(d.is_empty(), "{d:?}");
         let mut x = Expander::new(&m.items);
         let rewritten = m.items.iter().filter_map(|i| x.as_interface(i)).count();
+        assert!(x.blocked.is_empty(), "{:?}", x.blocked);
         (x.steps, rewritten)
     }
 
@@ -383,8 +537,8 @@ mod tests {
 
     #[test]
     fn aliases_named_many_times_are_expanded_once() {
-        // `T`'s parts name `x` twice, so it stays an alias (and an error).
-        assert_linear(shared, 0);
+        // `A{n}` is one part of `T`, however many times it is named.
+        assert_linear(shared, 1);
     }
 
     #[test]

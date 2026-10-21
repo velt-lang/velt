@@ -342,8 +342,8 @@ fn an_alias_may_refer_to_itself_through_written_object_types() {
     // Parts that are not object types, or that share a field, still can't.
     let e = err_src("type A = string[]; type T = A & { kids: T[] }; function main() {}");
     assert!(e.contains("type alias `T` refers to itself"), "{e}");
-    let e = err_src("type T = { kids: T[] } & { kids: T[] }; function main() {}");
-    assert!(e.contains("an alias may refer to itself when"), "{e}");
+    let e = err_src("type T = { kids: T[] } & { kids: number }; function main() {}");
+    assert!(e.contains("field `kids` has another type"), "{e}");
 }
 
 #[test]
