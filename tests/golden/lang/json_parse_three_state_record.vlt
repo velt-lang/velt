@@ -1,0 +1,24 @@
+// check: no leaks
+// `JSON.parse` into a `Record` (or index signature) whose values are `V | null | undefined`
+// reads each value as its `V | null`: JSON has no `undefined`. Expected output: Node's.
+function more(): void {
+  const s = JSON.parse('{"a":"x","b":null}') as Record<string, string | null | undefined>;
+  console.log(s, s["b"] === null, s["zz"] === undefined);
+  const b = JSON.parse('{"a":true,"b":null}') as Record<string, boolean | null | undefined>;
+  console.log(b);
+  const arr = JSON.parse('{"a":[1],"b":null}') as Record<string, number[] | null | undefined>;
+  console.log(arr);
+  const mm = JSON.parse('{"o":{"p":{"x":2},"q":null}}') as { o: Record<string, { x: number } | null | undefined> };
+  console.log(mm.o, JSON.stringify(mm));
+  const mp = new Map(Object.entries(s));
+  console.log(mp);
+}
+function main(): void {
+  const r = JSON.parse('{"a":{"x":1},"b":null}') as Record<string, { x: number } | null | undefined>;
+  console.log(r, Object.keys(r), r["b"] === null, r["c"] === undefined);
+  const n = JSON.parse('{"z":2,"y":null}') as Record<string, number | null | undefined>;
+  console.log(n);
+  const m: { [k: string]: string | null | undefined } = JSON.parse('{"k":"v","n":null}');
+  console.log(m, JSON.stringify(m));
+  more();
+}

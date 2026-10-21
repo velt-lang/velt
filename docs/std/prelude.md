@@ -446,8 +446,8 @@ console.log(start.toISOString(), end.getUTCMonth(), start < end); // 2024-01-31T
 `then`, `catch` and `finally` with `queueMicrotask(f)`
 ([Async](../reference/async.md#then-catch-and-finally)), `shared(x)`, `Mutex<T>`,
 `performance.now()` and `Date.now()` ([Async](../reference/async.md)), and the timer
-functions `setTimeout`, `clearTimeout`, `setInterval` and `clearInterval` with their `Timer`
-handle ([velt:timers](timers.md)).
+functions `setTimeout`, `clearTimeout`, `setInterval`, `clearInterval`, `setImmediate` and
+`clearImmediate` with their `Timer` handle ([velt:timers](timers.md)).
 
 ```ts
 const words = "the cat and the hat".split(" ");

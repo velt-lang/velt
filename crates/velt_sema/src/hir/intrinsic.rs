@@ -221,6 +221,12 @@ pub enum Intrinsic {
     SharedAdd,
     SharedGet,
     SharedSet,
+    /// Compiler-internal (no source syntax): `s: shared<T>` (no `Mutex`) used as the `T` it
+    /// holds, where the value is only read (#36): `s[i]`, `s.length`, a method's receiver, an
+    /// argument. Its one argument is borrowed and the result is borrowed out of the shared box:
+    /// a borrow of the `T` itself when no part of `T` is reference counted, else (and where the
+    /// value is consumed) a copy. Nothing ever writes through it.
+    SharedRead,
     /// `new Mutex<T>(x)` → `Mutex<T>` (an ADT-like builtin: lock word + value)
     MutexNew,
     /// `m.with(f)` on `Mutex<T>` or `shared<Mutex<T>>`: lock, call `f(value)` (by reference), unlock, return f's result

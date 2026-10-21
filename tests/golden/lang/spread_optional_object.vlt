@@ -1,0 +1,28 @@
+// check: no leaks
+// Spreading an object that may be `undefined` or `null` copies nothing when it is missing, as
+// in Node: its fields are optional in the result.
+type Opts = { mode?: string; depth?: number };
+type Base = { a: number; b: string };
+
+function merged(existing: Opts | undefined, extra: Opts): Opts {
+  return { ...existing, ...extra };
+}
+
+function withB(o: Base | undefined) {
+  return { ...o, c: true };
+}
+
+function orNull(n: Base | null): { a?: number; b?: string; z: number } {
+  return { ...n, z: 1 };
+}
+
+function main(): void {
+  console.log(merged(undefined, { mode: "x" }));
+  console.log(merged({ mode: "a", depth: 2 }, { depth: 3 }));
+  console.log(merged({ depth: 1 }, {}));
+  const r1 = withB(undefined);
+  const r2 = withB({ a: 1, b: "two" });
+  console.log(r1, r2, JSON.stringify(r1), JSON.stringify(r2), Object.keys(r1));
+  console.log(r2.a, r1.a === undefined);
+  console.log(orNull(null), orNull({ a: 2, b: "x" }));
+}

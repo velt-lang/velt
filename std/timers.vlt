@@ -1,18 +1,22 @@
 // std/timers: timers that run a promise later (`setTimeout`, `setInterval` and their `clear`
-// functions, which are also globals: std/prelude/timers.vlt; `setImmediate`) and a pull-based,
-// drift-free interval (`Ticker`, like Go's `time.Ticker` / tokio's `interval`):
+// functions, which are also globals: std/prelude/timers.vlt, as are `setImmediate` and
+// `clearImmediate`) and a pull-based, drift-free interval (`Ticker`, like Go's `time.Ticker` /
+// tokio's `interval`):
 // `const t = new Ticker(100); while (await t.tick()) { ... }`, or `for await (const n of t)`.
 
 import { AbortController, AbortSignal } from "velt:task";
 
-// `setTimeout`, `clearTimeout`, `setInterval`, `clearInterval` and `Timer` are globals (the
-// prelude's), also importable from here.
-export { Timer, setTimeout, clearTimeout, setInterval, clearInterval } from "velt:prelude/timers";
-
-/** Calls `task` as soon as possible on its own task (after the current task yields). */
-export function setImmediate(task: () => Promise<void>): Timer {
-  return setTimeout(task, 0);
-}
+// `setTimeout`, `clearTimeout`, `setInterval`, `clearInterval`, `setImmediate`,
+// `clearImmediate` and `Timer` are globals (the prelude's), also importable from here.
+export {
+  Timer,
+  setTimeout,
+  clearTimeout,
+  setInterval,
+  clearInterval,
+  setImmediate,
+  clearImmediate,
+} from "velt:prelude/timers";
 
 /** Resolves after `ms` milliseconds (same as the built-in `sleep`). */
 export async function delay(ms: i64): Promise<void> {

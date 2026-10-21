@@ -47,7 +47,7 @@ impl<'a> Printer<'a> {
         match prop {
             ObjectProp::KeyValue(key, value) => {
                 let method = value.span.lo <= key.span.lo;
-                let doc = self.literal_key(key);
+                let doc = self.prop_key(key);
                 match &value.kind {
                     // `name(params) { body }`, which the parser gives as an arrow property whose
                     // span starts with the name (an arrow written after `name:` starts later).
@@ -66,6 +66,17 @@ impl<'a> Printer<'a> {
                         *is_async,
                         Some(doc),
                     ),
+                    // `{ a = 1 }` (a shorthand default in an assignment target), which the
+                    // parser gives as `a: a = 1` with the assignment starting at the key.
+                    ExprKind::Assign {
+                        op: None,
+                        target,
+                        value: dflt,
+                    } if value.span.lo == key.span.lo
+                        && matches!(&target.kind, ExprKind::Ident(t) if t.name == key.name) =>
+                    {
+                        cat![doc, " = ", self.expr(dflt)]
+                    }
                     // `*name(params) { body }` / `async *name()`, which the parser gives as a
                     // property holding a generator function whose span starts before the name.
                     ExprKind::Function(f) if method => {
@@ -162,16 +173,36 @@ impl<'a> Printer<'a> {
         self.assignment(key, ":", value)
     }
 
-    /// Was property name `key` written as a string literal (`"a-b"`)?
+    /// Was property name `key` written as a string literal (`"a-b"`) or a template (`` [`a-b`] ``)?
     pub(super) fn quoted(&self, key: &Ident) -> bool {
-        slice(self.src, key.span).starts_with(['"', '\''])
+        slice(self.src, key.span).starts_with(['"', '\'', '`'])
     }
 
-    /// A property name as written: identifier, or string literal (in house quotes).
+    /// A property name as written: identifier, string literal (in house quotes), or a template
+    /// without substitutions in its brackets (`` [`a-b`] ``, kept as written: its escapes are in
+    /// the source only), with the brackets of a string or number literal written in brackets
+    /// (`["k"]: T`, `[7]: 1`), which the parser gives as the plain name.
     pub(super) fn prop_key(&self, key: &Ident) -> Doc {
+        let before = self.src[..key.span.lo as usize].trim_end();
+        let after = self.src[key.span.hi as usize..].trim_start();
+        let template = slice(self.src, key.span).starts_with('`');
+        if before.ends_with('[')
+            && after.starts_with(']')
+            && !key.name.starts_with('[')
+            && !template
+        {
+            return cat!["[", self.plain_prop_key(key), "]"];
+        }
+        self.plain_prop_key(key)
+    }
+
+    /// [`Self::prop_key`] without the brackets.
+    fn plain_prop_key(&self, key: &Ident) -> Doc {
         let raw = slice(self.src, key.span);
         let printed = if raw.starts_with(['"', '\'']) {
             string_literal(raw)
+        } else if raw.starts_with('`') {
+            format!("[{raw}]")
         } else if raw.starts_with(|c: char| c.is_ascii_digit()) {
             // A numeric name (`7`, `0x10`) as written.
             raw.to_string()
@@ -179,17 +210,6 @@ impl<'a> Printer<'a> {
             key.name.clone()
         };
         text(printed)
-    }
-
-    /// The key of an object literal's `key: value`: [`Self::prop_key`], with the brackets of a
-    /// string or integer key written in brackets (`["a"]: 1`, `[7]: 1`), which the parser gives
-    /// as the plain key.
-    fn literal_key(&self, key: &Ident) -> Doc {
-        let before = self.src[..key.span.lo as usize].trim_end();
-        if before.ends_with('[') && !key.name.starts_with('[') {
-            return cat!["[", self.prop_key(key), "]"];
-        }
-        self.prop_key(key)
     }
 }
 

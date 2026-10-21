@@ -135,6 +135,14 @@ pub(crate) const VELT_GLOBALS: &[VeltOnly] = &[
         "throw an `Error` when the condition fails: `if (!c) throw new Error(msg)`",
     ),
     (
+        "clearImmediate",
+        "keep it out of shared code: it is Node's (the baseline has no Node types); use `clearTimeout`",
+    ),
+    (
+        "setImmediate",
+        "keep it out of shared code: it is Node's (the baseline has no Node types); use `setTimeout(f, 0)`",
+    ),
+    (
         "assertEq",
         "keep test assertions out of code shared with TypeScript",
     ),
@@ -154,6 +162,8 @@ pub(crate) const VELT_GLOBALS: &[VeltOnly] = &[
     ("promiseAny", "use `Promise.any(…)`"),
     ("promiseCatch", "use `p.catch(…)`"),
     ("promiseCatchAsync", "use `p.catch(…)`"),
+    ("promiseCatchVoid", "use `p.catch(…)`"),
+    ("promiseCatchVoidAsync", "use `p.catch(…)`"),
     ("promiseFinally", "use `p.finally(…)`"),
     ("promiseFinallyAsync", "use `p.finally(…)`"),
     ("promiseFinallyAsyncThrows", "use `p.finally(…)`"),

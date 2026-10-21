@@ -585,6 +585,48 @@ passes one that may modify its arguments; a move out of it, however it is named)
 array is never written either. The two lists must stay equal: an element sema accepts and lowering
 does not fold would make the table an array built at every read.
 
+## Reading a `shared<T>` (issue #36)
+
+`Call { Intrinsic(SharedRead), [s] }`, typed `T`, is the value inside the `shared<T>` `s` (its
+one argument, a `Borrow` place or any expression of that type). Sema emits it only where the
+value is read: the object of `Index`, of a `Field` and of the `ArrayLen` / `StrLen`
+intrinsics, the source of a `ForOf`, the receiver of a method of `T` that `shared<T>` itself
+doesn't have, an expression converted to `T` (`coerce`: an argument, a variable, a field), and
+the argument of `console.log`, of an array spread and of `Object.keys` (`FnCx::read_shared`).
+`JSON.stringify` writes a `shared<T>` as its `T` (sema `json/mod.rs`, velt_vir `json/write.rs`).
+Never for a `T` that holds a `Mutex`, a weak map or ref, a promise, a function or interface
+value, a type parameter, or a class with subclasses or with a `clone()` of its own
+(`Ctx::frozen_readable`), nor for a `shared<int>` (its atomics). The exclusivity checker treats
+it as a borrow of the place of `s` (`Collector::place_of`), so code that may give that place
+another handle while the read is live (a `ForOf` body, a closure argument of the same call) is
+refused as it is for an array. Sema rejects every write through it (`require_mutable`,
+`use_mutably`) and every call that may modify it: a `BorrowMut` argument after inference, an
+`Owned` receiver the method modifies all the same (`FnInfo::modified_params`: a method
+returning the `this` it changes, such as `fill`, or calling one on `this`), a change to a
+`for…of` element of it or of what a method of it returns (`Ctx::frozen_elems`) or of a
+variable bound to a part of it (`ownership/finish.rs`), `subarray()` and `buffer` of a typed array in it
+(`FnCx::frozen_buffer_view`), an
+argument of a call through a function value or next to one that may modify its arguments
+(`ownership/patch.rs`). Other threads read the same value at the same time, so lowering must
+not touch a reference count in it either: where `T` holds no counted part (`Cx::holds_counted`)
+the call is a borrow of the value in the box, read through a bitwise copy of its inline part
+that is never dropped; otherwise, and wherever the value is consumed (`FnLower::consume`), it is
+a deep copy (`clone_value`), dropped with the statement's temporaries or owned by the consumer.
+As the base of a projection (`Index`, `Field`, `ArrayLen`, `StrLen`, `StrCharCodeAt`, also of
+another projection of it) it is read in the box whatever `T` holds, since only lowering's own
+code reads it there (`FnLower::projection_base`); the projected part is then a copy where it
+holds counted parts and is used as a value. Stabilization (`stable_borrow`) never shares or
+retains through it. The box itself is retained for the statement (one atomic count change,
+`FnLower::shared_value`, `BoxHold`) where code may run while the value or a part of it is read
+in place, and the place of `s` is one such code can give another handle (a variable in a shared
+cell, a module `let` some function reassigns, a field or element): the value as a call's
+argument or receiver or a loop's source, and a part of it (a field, an element) that is not a
+number, since such a part is passed on, looped over or a receiver where it is read. A number
+read out of it is copied at once and retains nothing. An index that may write (`may_write`)
+retains the box whatever the place: it may give the variable `s` reads another handle itself.
+A consumed `Field`, `Index`, `UnwrapSome` or `UnwrapVariant` of it is read with a borrow and
+deep-copied too: a move would leave the all-zero value in the box.
+
 ## Module state
 
 A module-level `let`, and a module `const` sema keeps instead of evaluating at each use (an

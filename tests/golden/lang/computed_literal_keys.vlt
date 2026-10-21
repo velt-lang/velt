@@ -1,0 +1,30 @@
+// A string or number literal in brackets names a member by its plain name, in interfaces, object
+// types and classes as in object literals; a number literal names it by the number as `String`
+// spells it (`1.50` is "1.5", `1e3` is "1000"). Output compared with Node.
+
+interface Headers {
+  s: string;
+  ["content-type"]: string;
+  ["k"]?: number;
+}
+
+type Row = {
+  id: number
+  ["label"]: string
+};
+
+class Box {
+  ["size"] = 3;
+}
+
+function main() {
+  const h: Headers = { s: "a", "content-type": "text/plain" };
+  console.log(h["content-type"], h.k ?? "none", h.s);
+  const r: Row = { id: 1, label: "one" };
+  console.log(r.label, new Box().size);
+  const o = { 1.50: "y", 1e3: "x", 9007199254740993: "big", 0x10: "h", 7: "seven" };
+  console.log(JSON.stringify(o));
+  console.log(Object.keys(o).join(","));
+  const c = { [2.5]: "c", ["d"]: 4 };
+  console.log(JSON.stringify(c));
+}

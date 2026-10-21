@@ -213,6 +213,9 @@ impl Ctx<'_> {
                 .unwrap_or(module),
             _ => module,
         };
+        if let Some(key) = self.enum_key(module, inner) {
+            return Ok(key);
+        }
         let d = match self.lookup_item(module, inner) {
             Some(Item::Def(d)) if matches!(self.info[d.0 as usize], DefInfo::Global(_)) => d,
             _ => return Err(inner.to_string()),
@@ -224,8 +227,11 @@ impl Ctx<'_> {
                 None => Err(inner.to_string()),
             };
         }
+        // A module `let` may hold another string by the time the key is read: never a fixed
+        // member.
         match self
             .global(d)
+            .filter(|g| !g.mutable)
             .and_then(|g| g.src.init)
             .and_then(literal_text)
         {
@@ -237,10 +243,10 @@ impl Ctx<'_> {
     pub(crate) fn bad_key(&mut self, name: &str, inner: &str, span: Span) -> String {
         self.error(
             Diagnostic::error(
-                format!("`{name}` is not a member name the compiler knows: `{inner}` must be a module constant holding a symbol or a string"),
+                format!("`{name}` is not a member name the compiler knows: `{inner}` must be a module constant holding a symbol or a string, or an enum member"),
                 span,
             )
-            .with_note("Velt objects have fixed fields: a computed key names a well-known symbol (`[Symbol.iterator]`), or a module constant initialized with `Symbol(\"...\")`, `Symbol.for(\"...\")` or a string literal")
+            .with_note("Velt objects have fixed fields: a computed key names a well-known symbol (`[Symbol.iterator]`), a module constant initialized with `Symbol(\"...\")`, `Symbol.for(\"...\")` or a string literal, or an enum member (`[Flags.SKIP]`)")
             .with_note("for keys only known at run time, use a `Map` or a `Record<string, V>`"),
         );
         name.to_string()

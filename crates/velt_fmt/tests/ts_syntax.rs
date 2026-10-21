@@ -375,3 +375,15 @@ fn catch_binding_annotations() {
     round_trips("try {\n  f();\n} catch (e: unknown) {\n  g(e);\n}\n");
     round_trips("try {\n  f();\n} catch (err: any) {\n  g(err);\n}\n");
 }
+
+#[test]
+fn literal_and_number_member_names_keep_their_form() {
+    round_trips(
+        "interface I {\n  [\"x-y\"]: number;\n  [2]: string;\n  1.5: string;\n  [-1]: string;\n  [Flags.SKIP]?: boolean;\n}\n",
+    );
+    round_trips("class C {\n  [\"size\"] = 3;\n  1.5 = \"a\";\n  [-2] = \"m\";\n}\n");
+    round_trips("type O = { 1.5: string; [\"a b\"]: number };\n");
+    round_trips(
+        "const o = { 1.50: \"y\", [-1]: \"n\", [\"p\"]: 2 };\nconst { 1.5: a, [-1]: b } = o;\n",
+    );
+}

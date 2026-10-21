@@ -1,0 +1,14 @@
+// A `let` without an initializer that a closure assigns, read before anything assigned it:
+// JavaScript would read `undefined`; Velt stops with a `TypeError`.
+function main(): void {
+  let label: string;
+  const set = (): void => {
+    label = "set";
+  };
+  const show = (): void => {
+    console.log(label.length);
+  };
+  console.log("before");
+  show();
+  set();
+}

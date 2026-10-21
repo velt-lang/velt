@@ -1,6 +1,8 @@
 //! Shared-state intrinsics (rt_abi_async.md §9):
 //! - `shared<int>` `.add(n)` / `.get()` / `.set(v)`: atomics on the box's value cell
 //!   (`{ count, value }`); the value must be a 64-bit integer (the rt atomics are `i64`).
+//! - A `shared<T>` read as its `T` (`Intrinsic::SharedRead`, #36): the box's value cell,
+//!   borrowed, or a copy of it when the reader must not touch the counts in it.
 //! - `Mutex<T>`: a struct whose field 0 is the 8-byte lock word and field 1 the value (the
 //!   prelude declares it). `new Mutex(x)` zero-initializes the lock (`velt_rt_mutex_init`);
 //!   `m.with(f)` on a `Mutex<T>` or `shared<Mutex<T>>` locks, calls `f(value)` through the
@@ -19,6 +21,22 @@ use crate::lower::operand::proj;
 use crate::lower::rt::Rt;
 use crate::lower::{ice, FnLower};
 use crate::vir::{self, Operand, Place, Proj, Rvalue, Ty};
+
+/// When a read of a `shared<T>` in its box retains the box for the statement. While the value or
+/// a part of it is read there, code may run that gives the variable or object holding the handle
+/// another one, which frees this box (a call the value or part is passed to, a loop over it, a
+/// method it is the receiver of, an index or a later argument that calls something).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(in crate::lower) enum BoxHold {
+    /// Nothing runs while it is read (a number read out of it, a length).
+    No,
+    /// Code may run: retained when something other than this statement can give the handle's
+    /// place another handle (`handle_replaceable`).
+    IfReplaceable,
+    /// Code may run that this statement itself made able to (an index assigning the handle's
+    /// variable): retained whatever the place.
+    Yes,
+}
 
 impl FnLower<'_, '_> {
     pub(super) fn sync_intrinsic(&mut self, i: Intrinsic, args: &[hir::Expr], ty: TyId) -> Operand {
@@ -43,6 +61,7 @@ impl FnLower<'_, '_> {
                 self.call_rt(Rt::AtomicStore, vec![cell, v], None);
                 crate::lower::unit()
             }
+            (I::SharedRead, [s]) => self.shared_read(s),
             (I::MutexNew, [x]) => self.mutex_new(x, ty),
             (I::MutexWith, [m, f]) => self.mutex_with(m, f, ty),
             _ => ice(format_args!(
@@ -73,6 +92,131 @@ impl FnLower<'_, '_> {
         let bx = self.cx.shared_box(inner);
         let cell = proj(&proj(&p, Proj::Deref(Ty::Agg(bx))), Proj::Field(1));
         (self.addr(cell), vt)
+    }
+
+    /// The value inside the `shared<T>` that `s` evaluates to, in its box, retained for the
+    /// statement as `hold` says ([`BoxHold`]; one atomic count change).
+    fn shared_value(&mut self, s: &hir::Expr, hold: BoxHold) -> (Place, TyId) {
+        let sty = self.sub(s.ty);
+        let TyKind::Shared(inner) = self.cx.kind(sty) else {
+            ice("SharedRead of a non-shared value")
+        };
+        let held = match hold {
+            BoxHold::No => false,
+            BoxHold::IfReplaceable => self.handle_replaceable(s),
+            BoxHold::Yes => true,
+        };
+        let v = match held {
+            true => {
+                let v = self.expr(s);
+                let held = self.share_value(v, sty);
+                self.own_value(held, sty)
+            }
+            false => self.expr(s),
+        };
+        let p = self.operand_place(v, Ty::Ptr);
+        let bx = self.cx.shared_box(inner);
+        (
+            proj(&proj(&p, Proj::Deref(Ty::Agg(bx))), Proj::Field(1)),
+            inner,
+        )
+    }
+
+    /// Can code other than the reader's own statement give the place `s` reads another
+    /// `shared` handle? A variable a closure assigns, a module `let` some function reassigns,
+    /// and anything reached through an object or array (whose other owners may replace it).
+    fn handle_replaceable(&mut self, s: &hir::Expr) -> bool {
+        use hir::ExprKind as K;
+        match &s.kind {
+            K::Local(..) | K::Global(_) => self.in_shared_cell(s),
+            K::Field { .. }
+            | K::Index { .. }
+            | K::UnwrapSome(..)
+            | K::UnwrapVariant { .. }
+            | K::Downcast(_) => true,
+            _ => false,
+        }
+    }
+
+    /// `Intrinsic::SharedRead`: the `T` of a `shared<T>` read where it is borrowed (#36). Other
+    /// threads read the same value at the same time, so this reader must not change it, which
+    /// sema guarantees, nor any reference count in it, which are not atomic: when `T` holds a
+    /// counted part the reader gets a copy (dropped with the statement), else the value itself:
+    /// its inline part (an array's or string's header) copied bit for bit into a temporary
+    /// that only borrows it (never dropped). Nothing writes the box while it is shared, and in
+    /// a local the header stays in registers across the calls of a loop, where LLVM would
+    /// reload it from the box after each one.
+    fn shared_read(&mut self, s: &hir::Expr) -> Operand {
+        let (place, inner) = self.shared_value(s, BoxHold::IfReplaceable);
+        self.shared_read_at(place, inner)
+    }
+
+    /// [`shared_read`](Self::shared_read) of the value at `place` (of type `inner`).
+    fn shared_read_at(&mut self, place: Place, inner: TyId) -> Operand {
+        if !self.cx.holds_counted(inner) {
+            let vt = self.cx.ty(inner);
+            if vt == Ty::Unit {
+                return Operand::Copy(place);
+            }
+            let tmp = self.copy_to_temp(Operand::Copy(place), vt);
+            return Operand::Copy(Place::local(tmp));
+        }
+        let v = self.clone_value(Operand::Copy(place), inner);
+        self.own_value(v, inner)
+    }
+
+    /// `e` evaluated as the base of a projection (an element, a field, a length): a
+    /// `SharedRead` gives the value in its box without a copy even when `T` holds counted
+    /// parts, since only the code lowering emits for the projection reads it (no count
+    /// changes); the projected part is copied where it holds counted parts itself
+    /// (`frozen_part_read`). Anything else is evaluated as usual.
+    /// `hold`: whether the box is retained for the statement ([`BoxHold`]).
+    pub(in crate::lower) fn projection_base(&mut self, e: &hir::Expr, hold: BoxHold) -> Operand {
+        match &e.kind {
+            hir::ExprKind::Call {
+                callee: hir::Callee::Intrinsic(Intrinsic::SharedRead),
+                args,
+            } => {
+                let (place, inner) = self.shared_value(&args[0], hold);
+                match self.cx.holds_counted(inner) {
+                    true => Operand::Copy(place),
+                    false => self.shared_read_at(place, inner),
+                }
+            }
+            // A part of one, itself projected (`s.items[0].name`): in place too.
+            hir::ExprKind::Index { base, index, .. } if crate::lower::place::frozen_base(base) => {
+                self.index_at(base, index, true, hold)
+            }
+            hir::ExprKind::Field { base, index, .. }
+                if crate::lower::place::frozen_base(base)
+                    && !self.is_unit_field(base.ty, *index) =>
+            {
+                let bty = self.sub(base.ty);
+                let v = self.projection_base(base, hold);
+                let bp = self.place_of(v, bty);
+                Operand::Copy(self.field_place(&bp, bty, *index))
+            }
+            _ => self.expr(e),
+        }
+    }
+
+    /// The part at `p` (of type `ty`) of a value inside a `shared` box, read where it is
+    /// used: in place, or a copy (dropped with the statement) when it holds counted parts,
+    /// which whatever uses it could count.
+    pub(in crate::lower) fn frozen_part_read(&mut self, p: Place, ty: TyId) -> Operand {
+        let ty = self.sub(ty);
+        if !self.cx.holds_counted(ty) {
+            return Operand::Copy(p);
+        }
+        let v = self.clone_value(Operand::Copy(p), ty);
+        self.own_value(v, ty)
+    }
+
+    /// `Intrinsic::SharedRead` consumed (moved into a variable, an owned parameter, a field):
+    /// a copy of the value inside, which the consumer owns.
+    pub(in crate::lower) fn shared_read_owned(&mut self, s: &hir::Expr) -> Operand {
+        let (place, inner) = self.shared_value(s, BoxHold::No);
+        self.clone_value(Operand::Copy(place), inner)
     }
 
     /// `new Mutex<T>(x)`: `{ lock: 0, value: x }`.

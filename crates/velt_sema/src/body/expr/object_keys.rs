@@ -178,6 +178,7 @@ impl FnCx<'_, '_> {
             }
         }
         let obj = self.expr(arg, None, Want::Borrow);
+        let obj = self.read_shared(obj);
         if self.cx.ty.is_bottom(obj.ty) {
             return Some(self.error_expr(span));
         }

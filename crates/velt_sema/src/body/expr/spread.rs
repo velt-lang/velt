@@ -33,6 +33,9 @@ struct Src {
     presence: bool,
     /// The source field as a place, for the presence or null test of an optional one.
     place: Option<hir::Expr>,
+    /// For a source that may be `undefined` or `null` itself (`...o` with `o: T | undefined`):
+    /// whether the field is there (the source is present, and so is an optional field).
+    guard: Option<hir::Expr>,
 }
 
 /// A field value of a spread object literal.
@@ -90,6 +93,7 @@ impl FnCx<'_, '_> {
                             optional: false,
                             presence: false,
                             place: None,
+                            guard: None,
                         };
                         let prev = std::mem::replace(
                             &mut slot.1,
@@ -214,6 +218,10 @@ impl FnCx<'_, '_> {
                 span: e.span,
             });
         }
+        let h = match self.optional_source(h, e.span, lets) {
+            Ok(fields) => return fields,
+            Err(h) => h,
+        };
         let Some((d, args)) = self.adt_of(h.ty) else {
             if !self.cx.ty.is_bottom(h.ty) {
                 let tn = self.cx.display(h.ty);
@@ -267,6 +275,7 @@ impl FnCx<'_, '_> {
                 optional: f.optional,
                 presence,
                 place,
+                guard: None,
             };
             out.push((f.name.clone(), read, src));
         }
@@ -473,6 +482,7 @@ impl FnCx<'_, '_> {
             Value::Prop(k, value) => (self.prop_value(&k, value, Some(fty)), None),
             Value::Read(h, src) | Value::Over(h, src, _) => {
                 let guard = match src.place {
+                    _ if src.guard.is_some() => src.guard,
                     Some(p) if src.presence => {
                         let b = self.cx.ty.bool_;
                         Some(self.intrinsic(hir::Intrinsic::FieldPresent, vec![p], b, span))
@@ -558,6 +568,26 @@ impl FnCx<'_, '_> {
                 // `undefined`, present or not (TypeScript types the result so, too).
                 let keeps_undefined = expected
                     .is_none_or(|t| self.cx.ty.nothing_of(t).is_some_and(|n| n.has_undefined()));
+                if let Some(cond) = src.guard {
+                    // A field of a source that may be missing (`...o`, `o: T | undefined`):
+                    // copied only when it is there; a target field that cannot hold
+                    // `undefined` takes a present one's value.
+                    let then = match keeps_undefined {
+                        true => h,
+                        false => {
+                            let fail = self.undefined_into(expected, span);
+                            self.undefined_keeps(h, fail, span)
+                        }
+                    };
+                    let ty = then.ty;
+                    let prev = self.coerce(prev, ty);
+                    let kind = H::If {
+                        cond: Box::new(cond),
+                        then: Box::new(then),
+                        els: Box::new(prev),
+                    };
+                    return self.mk(kind, ty, span);
+                }
                 match src.place {
                     // A present `null` overrides; only an absent field keeps the earlier value.
                     Some(p) if src.presence && keeps_undefined => {
@@ -579,13 +609,7 @@ impl FnCx<'_, '_> {
                     Some(p) if src.presence => {
                         let b = self.cx.ty.bool_;
                         let cond = self.intrinsic(hir::Intrinsic::FieldPresent, vec![p], b, span);
-                        let shown = expected.map_or_else(String::new, |t| self.cx.display(t));
-                        let msg = self.str_lit(
-                            &format!("TypeError: a spread copies `undefined` into a field of type `{shown}`"),
-                            span,
-                        );
-                        let never = self.cx.ty.never;
-                        let fail = self.intrinsic(hir::Intrinsic::Panic, vec![msg], never, span);
+                        let fail = self.undefined_into(expected, span);
                         let then = self.undefined_keeps(h, fail, span);
                         let ty = then.ty;
                         let prev = self.coerce(prev, ty);
@@ -605,6 +629,94 @@ impl FnCx<'_, '_> {
                 }
             }
         }
+    }
+
+    /// The `TypeError` of a spread copying `undefined` into a field of type `expected`.
+    fn undefined_into(&mut self, expected: Option<TyId>, span: Span) -> hir::Expr {
+        let shown = expected.map_or_else(String::new, |t| self.cx.display(t));
+        let msg = self.str_lit(
+            &format!("TypeError: a spread copies `undefined` into a field of type `{shown}`"),
+            span,
+        );
+        let never = self.cx.ty.never;
+        self.intrinsic(hir::Intrinsic::Panic, vec![msg], never, span)
+    }
+
+    /// `...h` with `h` an object that may be `undefined` or `null` (`T | undefined`, `T | null`;
+    /// JavaScript spreads nothing then): its fields, each `undefined` while the source is
+    /// missing and copied only when it is there (`Src::guard`). `Err` gives back any other
+    /// value.
+    fn optional_source(
+        &mut self,
+        h: hir::Expr,
+        span: Span,
+        lets: &mut Vec<hir::Stmt>,
+    ) -> Result<Vec<(String, hir::Expr, Src)>, hir::Expr> {
+        let Some(core) = self.cx.ty.core(h.ty) else {
+            return Err(h);
+        };
+        let plain = self.cx.ty.opt_payload(h.ty) == Some(core);
+        let Some((d, args)) = self.adt_of(core).filter(|_| plain) else {
+            return Err(h);
+        };
+        if self.record_args(core).is_some() || self.is_class_def(d) {
+            return Err(h);
+        }
+        let opt = self.temp("<spread>", h, lets);
+        let there = self.null_test(opt.clone(), false, span);
+        let base = self.mk(H::UnwrapSome(Box::new(opt), UseMode::Borrow), core, span);
+        let (fields, kind) = match self.cx.adt(d) {
+            Some(a) => (a.fields.clone(), a.kind),
+            None => return Ok(vec![]),
+        };
+        let hidden = self.cx.hidden_keys();
+        let bool_ = self.cx.ty.bool_;
+        let mut out = vec![];
+        for (i, f) in fields.iter().enumerate() {
+            if f.name.starts_with(ast::PRIVATE_NAME_PREFIX)
+                || f.private_to.is_some_and(|o| !self.private_allowed(o))
+                || hidden.contains(&f.name)
+            {
+                continue;
+            }
+            let fty = self.cx.subst(f.ty, &args);
+            let rty = self.cx.ty.option_of(fty, hir::Nothing::Undefined);
+            let read = self.field_read(&base, i as u32, fty, false, span);
+            let read = self.coerce(read, rty);
+            let missing = self.nothing_value(hir::Nothing::Undefined, rty, span);
+            let value = H::If {
+                cond: Box::new(there.clone()),
+                then: Box::new(read),
+                els: Box::new(missing),
+            };
+            let value = self.mk(value, rty, span);
+            // An optional field is there only while present itself.
+            let field = H::Field {
+                base: Box::new(base.clone()),
+                index: i as u32,
+                mode: UseMode::Borrow,
+            };
+            let field = self.mk(field, fty, span);
+            let own = match (f.optional, crate::anon::has_presence(&self.cx.ty, kind, f)) {
+                (_, true) => self.intrinsic(hir::Intrinsic::FieldPresent, vec![field], bool_, span),
+                (true, false) => self.null_test(field, false, span),
+                (false, false) => self.mk(H::Lit(hir::Lit::Bool(true)), bool_, span),
+            };
+            let no = self.mk(H::Lit(hir::Lit::Bool(false)), bool_, span);
+            let guard = H::If {
+                cond: Box::new(there.clone()),
+                then: Box::new(own),
+                els: Box::new(no),
+            };
+            let src = Src {
+                optional: true,
+                presence: true,
+                place: None,
+                guard: Some(self.mk(guard, bool_, span)),
+            };
+            out.push((f.name.clone(), value, src));
+        }
+        Ok(out)
     }
 
     /// `h` (a `T | undefined`, or a `T | null | undefined`) as its payload (`T`, or the
