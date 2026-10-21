@@ -71,3 +71,40 @@ const h1 = (hs[n].opt![1] += (() => { n = 1; return "z"; })());
 const h2 = (hs[n++].opt![0]++);
 const h3 = ((hs[n - 2].u as [number, string])[0] = 8);
 console.log(h1, h2, h3, n, JSON.stringify(hs));
+
+// Strings and objects inside a tuple inside a held tuple.
+const gs: ([[number, string] | null, number] | null)[] = [[[1, "a"], 0]];
+gs[0]![0]![1] = "z";
+gs[0]![0]![0] += 5;
+const gs2: ([[string, number] | null, number] | null)[] = [[["a", 1], 0]];
+gs2[0]![0]![0] += "b";
+gs2[0]![0]![1]++;
+const gs3: { a: [[number, string] | null, number] | null }[] = [{ a: [[1, "x"], 2] }];
+gs3[0].a![0]![0] = 3;
+gs3[0].a![0]![1] += "y";
+const gs4: ([{ s: string } | null, number] | null)[] = [[{ s: "a" }, 1]];
+gs4[0]![0]!.s = "b";
+console.log(JSON.stringify([gs, gs2, gs3, gs4]), gs[0]![0]![1]);
+class A { v = 1; }
+const useA = (x: [A, number]): number => { const a = x[0]; return a.v + x[1]; };
+const gs5: ([[A, string] | null, number] | null)[] = [[[new A(), "a"], 0]];
+gs5[0]![0]![0].v = 7;
+gs5[0]![0]![1] += "q";
+console.log(useA([new A(), 2]), JSON.stringify(gs5));
+gs5[0]![0]![0] = new A();
+let si = 0;
+const s1 = (gs[si++]![0]![1] += (() => { si = 0; return "!"; })());
+const s2 = (gs2[si]![0]![0] = "c");
+const s3 = (gs3[si].a![0]![1] = "w");
+const s4 = (gs4[si]![0]!.s += "x");
+const s5 = (gs5[0]![0]![1] = (() => "r")());
+console.log(s1, s2, s3, s4, s5, si, JSON.stringify([gs, gs2, gs3, gs4, gs5]));
+interface J { t: [[number, string] | null, string] | null; m(): void }
+class KJ implements J { t: [[number, string] | null, string] | null = [[1, "k"], "o"]; m(): void {} }
+const kj = new KJ();
+const js: J[] = [kj];
+let jq = 0;
+js[jq++].t![0]![1] += "x";
+const j1 = (js[--jq].t![0]![0] += 10);
+const j2 = (js.find(() => true)!.t![0]![1] = "f");
+console.log(JSON.stringify(kj.t), j1, j2, jq);

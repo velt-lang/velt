@@ -506,7 +506,11 @@ impl FnCx<'_, '_> {
         } else {
             stmts.push(stmt(hir::StmtKind::Expr(a), span));
             let read = self.assigned_read(&t);
-            self.expr(&read, None, Want::Borrow)
+            // The assignment checked the target: its errors are reported there.
+            let mark = self.cx.diags.len();
+            let v = self.expr(&read, None, Want::Borrow);
+            self.cx.diags.truncate(mark);
+            v
         };
         self.pop_scope();
         let ty = if value.ty == unit { unit } else { value.ty };
@@ -620,7 +624,10 @@ impl FnCx<'_, '_> {
         // The value of `p[0] = v` is `v` converted to the element's type: the assignment, then
         // the element read again (the part is a local, nothing else changes it).
         let a = self.assign(op, target, value, span);
+        // The assignment checked the target: its errors are reported there.
+        let mark = self.cx.diags.len();
         let v = self.expr(target, None, Want::Borrow);
+        self.cx.diags.truncate(mark);
         let ty = v.ty;
         let b = block(vec![stmt(hir::StmtKind::Expr(a), span)], Some(v), span);
         (self.mk(H::Block(b), ty, span), true)
