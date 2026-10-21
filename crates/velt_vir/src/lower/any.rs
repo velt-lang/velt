@@ -574,11 +574,6 @@ impl FnLower<'_, '_> {
         self.build_agg(ty, vec![data, table])
     }
 
-    /// Is `t` TypeScript's `object` (issue #926)?
-    pub(super) fn is_object_ty(&self, t: TyId) -> bool {
-        matches!(self.cx.kind(t), TyKind::Dyn(d, args) if args.is_empty() && Some(d) == self.cx.hir.object)
-    }
-
     /// The value of type `ty` the `any` at `p` (owned, consumed here) holds.
     pub(super) fn any_unbox(&mut self, p: &Place, from: TyId, ty: TyId) -> Operand {
         if self.cx.is_dynamic(ty) {

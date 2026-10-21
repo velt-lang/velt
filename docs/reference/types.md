@@ -2689,41 +2689,39 @@ and `Reflect.has(t, k)` do what `t[k]`, `t[k] = v` and `k in t` do; given a rece
 and `Reflect.set` pass it on to a target that is itself a proxy. `console.log(p)` prints the
 target, without running traps, as Node does.
 
-The handler's `ownKeys` trap lists the proxy's own keys and `getOwnPropertyDescriptor` describes
-one of them, so a proxy may have keys only its handler knows (an empty target). As in Node,
+The handler's `ownKeys` trap lists the proxy's own keys and `getOwnPropertyDescriptor` describes one
+of them, so a proxy may have keys only its handler knows (an empty target). As in Node,
 `Object.keys(p)`, `Object.values(p)` and `Object.entries(p)` run `ownKeys`, then
 `getOwnPropertyDescriptor` for each string key (and `get` for an enumerable one, for values and
 entries); a spread `{ ...p }` does the same, key by key. `Object.hasOwn(p, k)` and
 `Object.prototype.hasOwnProperty.call(p, k)` run `getOwnPropertyDescriptor`. `delete p.k` and
 `delete p[k]` run the `deleteProperty` trap, and a trap that returns `false` throws Node's
-`TypeError: 'deleteProperty' on proxy: trap returned falsish for property 'k'`. A trap the
-handler leaves out forwards to the target: its keys are what `Object.keys` lists, each a data
-property (writable, enumerable and configurable; an array's `length` is not enumerable and
-not configurable). `Reflect.ownKeys(t)`,
-`Reflect.deleteProperty(t, k)`, `Reflect.getOwnPropertyDescriptor(t, k)` and
-`Reflect.defineProperty(t, k, attributes)` are those operations as functions (a
-`PropertyDescriptor` is `{ value?, writable?, get?, set?, enumerable?, configurable? }`), and a
-target that is not an object stops with Node's `TypeError: Reflect.ownKeys called on
-non-object`. The checks Node makes on what these traps answer apply, with Node's `TypeError`s:
-an `ownKeys` answer must be an array of strings and symbols without duplicates that lists the
-target's keys that are not configurable, and a `getOwnPropertyDescriptor`, `deleteProperty` or
-`defineProperty` answer must agree with the target's own property (a property may be reported
-non-configurable only when the target's is). When the target is itself a proxy, the target's
-traps run for these checks, in Node's order. A descriptor the `getOwnPropertyDescriptor` trap
-answers is completed: an accessor (`get` / `set`) or a data property, an attribute left out
-`false` (and a data property's `value` `undefined`). The handler's `defineProperty` trap runs
-for `Reflect.defineProperty(p, k, attributes)`, and `Reflect.set(t, k, v, p)` with a proxy `p` as the receiver runs `p`'s
-`getOwnPropertyDescriptor` and `defineProperty` traps, as Node does. `Reflect.defineProperty`
-of a plain value writes the value of an existing property; a new property, whose attributes
-left out are `false`, is a `TypeError` naming #823. `delete x.k` through `any` and
-`Reflect.deleteProperty(x, k)` of a value that is not a proxy remove a `Record`'s entry and make
-an object type's optional field absent; a key the value doesn't have as its own (a class's
-methods are on its prototype) gives `true`, and an array's `length` gives `false` (`delete a.length` throws Node's
-`TypeError: Cannot delete property 'length' of [object Array]`). A field the value's type fixes
-and a class's field (an own property even when optional) can't be removed: that is a
-`TypeError` naming #823. Deleting a string's `length` or one of its
-characters throws Node's `TypeError: Cannot delete property '0' of [object String]`; another key
-of a string, and any key of a number or a boolean, gives `true`.
+`TypeError: 'deleteProperty' on proxy: trap returned falsish for property 'k'`. A trap the handler
+leaves out forwards to the target: its keys are what `Object.keys` lists, each a data property
+(writable, enumerable and configurable; an array's `length` is not enumerable and not configurable).
+`Reflect.ownKeys(t)`, `Reflect.deleteProperty(t, k)`, `Reflect.getOwnPropertyDescriptor(t, k)` and
+`Reflect.defineProperty(t, k, attributes)` are those operations as functions (a `PropertyDescriptor`
+is `{ value?, writable?, get?, set?, enumerable?, configurable? }`), and a target that is not an
+object stops with Node's `TypeError: Reflect.ownKeys called on non-object`. The checks Node makes on
+what these traps answer apply, with Node's `TypeError`s: an `ownKeys` answer must be an array of
+strings and symbols without duplicates that lists the target's keys that are not configurable, and a
+`getOwnPropertyDescriptor`, `deleteProperty` or `defineProperty` answer must agree with the target's
+own property (a property may be reported non-configurable only when the target's is). When the
+target is itself a proxy, the target's traps run for these checks, in Node's order. A descriptor the
+`getOwnPropertyDescriptor` trap answers is completed: an accessor (`get` / `set`) or a data
+property, an attribute left out `false` (and a data property's `value` `undefined`). The handler's
+`defineProperty` trap runs for `Reflect.defineProperty(p, k, attributes)`, and `Reflect.set(t, k, v,
+p)` with a proxy `p` as the receiver runs `p`'s `getOwnPropertyDescriptor` and `defineProperty`
+traps, as Node does. `Reflect.defineProperty` of a plain value writes the value of an existing
+property; a new property, whose attributes left out are `false`, is a `TypeError` naming #823.
+`delete x.k` through `any` and `Reflect.deleteProperty(x, k)` of a value that is not a proxy remove
+a `Record`'s entry and make an object type's optional field absent; a key the value doesn't have as
+its own (a class's methods are on its prototype) gives `true`, and an array's `length` gives `false`
+(`delete a.length` throws Node's `TypeError: Cannot delete property 'length' of [object Array]`). A
+field the value's type fixes and a class's field (an own property even when optional) can't be
+removed: that is a `TypeError` naming #823. Deleting a string's `length` or one of its characters
+throws Node's `TypeError: Cannot delete property '0' of [object String]`; another key of a string,
+and any key of a number or a boolean, gives `true`.
 
 A trap sees a symbol key as the symbol (`p[KEY]`, `KEY in p`, `delete p[KEY]`,
 `Object.hasOwn(p, KEY)` with a symbol constant `KEY`), and `Reflect.get(t, KEY)` /
@@ -2737,28 +2735,32 @@ keys, whether each is enumerable and their values; an array target's `length` an
 `p.push(…)`, `p.pop()`, `p.shift()`, `p.unshift(…)`, `p.splice(…)`, `p.map(f)`, `p.filter(f)`,
 `p.forEach(f)`, `p.some(f)`, `p.every(f)`, `p.find(f)`, `p.includes(x)`, `p.indexOf(x)`,
 `p.join(sep)`, `p.slice(…)`, `p.reverse()` and `p.sort(compare)` on a proxy of an array read the
-method through the `get` trap and run JavaScript's generic algorithm with the proxy as `this`,
-as Node does (the callbacks get the element, its index and the proxy; a `thisArg` is not passed
-on yet; `map`, `filter` and `slice` give a new plain array): every read of `length` or of an element, every write (`set`), `in` test
-(`has`) and delete (`deleteProperty`) goes through the traps, in Node's order, and a trap that
-refuses throws Node's `TypeError`. A trap that forwards with `Reflect` reaches the array:
-`Reflect.has(a, "1")` tests an element, and `Reflect.get(a, "push")` is the method, a
-function to `typeof` and `console.log` (`[Function: push]`; `Reflect.get(a, "constructor")` is
-`[Function: Array]`), so a reactive `get` trap that wraps only objects passes it through and a
-nested reactive array runs it. Each read gives a new one, so two reads are not `===` as in
-Node, and called other than on a proxy it is a `TypeError` naming #924. While such an algorithm
-runs, the holes its own trap calls make in its target behave as in Node: `pop`, `shift` and `splice` delete the last elements
-(`Reflect.deleteProperty(t, k)`) before they write the shorter `length`, and `unshift` and
-`splice` write an element past the end before they fill the gap. The array keeps its length and
-its elements (Velt's arrays have no holes; a gap holds the value written after it), and
-`Reflect.get`, `Reflect.has`, `Reflect.ownKeys`, `Reflect.getOwnPropertyDescriptor`,
+method through the `get` trap and run JavaScript's generic algorithm with the proxy as `this`, as
+Node does (the callbacks get the element, its index and the proxy; a `thisArg` is not passed on yet;
+`map`, `filter` and `slice` give a new plain array): every read of `length` or of an element, every
+write (`set`), `in` test (`has`) and delete (`deleteProperty`) goes through the traps, in Node's
+order, and a trap that refuses throws Node's `TypeError`. A trap that forwards with `Reflect`
+reaches the array: `Reflect.has(a, "1")` tests an element, and `Reflect.get(a, "push")` is the
+method, a function to `typeof` and `console.log` (`[Function: push]`; `Reflect.get(a,
+"constructor")` is `[Function: Array]`), so a reactive `get` trap that wraps only objects passes it
+through and a nested reactive array runs it. Each read gives a new one, so two reads are not `===`
+as in Node, and called other than on a proxy it is a `TypeError` naming #924. While such an
+algorithm runs, the holes its own trap calls make in its target behave as in Node: `pop`, `shift`
+and `splice` delete the last elements (`Reflect.deleteProperty(t, k)`) before they write the shorter
+`length`, and `unshift` and `splice` write an element past the end before they fill the gap. The
+array keeps its length and its elements (Velt's arrays have no holes; a gap holds the value written
+after it), and `Reflect.get`, `Reflect.has`, `Reflect.ownKeys`, `Reflect.getOwnPropertyDescriptor`,
 `Object.hasOwn` and `hasOwnProperty.call` see those elements as absent until the algorithm fills
 them or writes the shorter `length`. A trap that doesn't write it, so that holes would stay, is a
-`TypeError` naming #823, and so is a hole in another array or one made in a callback the
-algorithm calls (`forEach`'s, `sort`'s comparison). Elsewhere, deleting an element that is not past the end (`delete a[i]`
-through `any`, `Reflect.deleteProperty(a, i)`, the last element too) and `Reflect.set(a, i, v)`
-further past the end are `TypeError`s naming #823 and #924. `const hasOwn = Object.prototype.hasOwnProperty`
-reads a value whose `hasOwn.call(o, k)` is `Object.hasOwn(o, k)`.
+`TypeError` naming #823, and so is a hole in another array or one made in a callback the algorithm
+calls (`forEach`'s, `sort`'s comparison). Behind a proxy of a proxy the holes are the array's at the
+end of the chain. `map` and `slice` of an element that is absent (a `has` trap answering `false`, a
+hole) are a `TypeError` naming #823 (Node keeps the hole in the new array); `filter`, `forEach`,
+`some` and `every` skip it, as in Node. `Array.isArray` of a proxy of an array, or of a proxy of
+one, is `true`, and `JSON.stringify` writes it as an array. Elsewhere, deleting an element that is
+not past the end (`delete a[i]` through `any`, `Reflect.deleteProperty(a, i)`, the last element too)
+and `Reflect.set(a, i, v)` further past the end are `TypeError`s naming #823 and #924. `const hasOwn
+= Object.prototype.hasOwnProperty` reads a value whose `hasOwn.call(o, k)` is `Object.hasOwn(o, k)`.
 
 The handler is a `ProxyHandler<T>`: its traps' parameters take their types from it, as in
 TypeScript (`target: any`, `p: string | symbol`, `receiver: any`). `new Proxy(target, handler)`

@@ -67,12 +67,24 @@ function arraySet(p: Proxy, o: any, key: string, v: any): void {
 }
 
 /**
+ * The array behind the proxy `p` (through proxies of proxies): the target a running method's
+ * holes are recorded in (velt_rt's `proxy_array`).
+ */
+function arrayTarget(p: Proxy): any {
+  let t = p.__target();
+  while (t instanceof Proxy) {
+    t = t.__target();
+  }
+  return t;
+}
+
+/**
  * The traps the generic algorithms below call on the proxy `p`, each a trap call of the method
  * on `p`'s target: holes are recorded in the target (velt_rt's `proxy_array`) only during one,
  * not during the user callbacks the algorithm calls between them.
  */
 function trapGet(p: Proxy, key: string, o: any): any {
-  const t = p.__target();
+  const t = arrayTarget(p);
   __intrinsic_proxy_array_call(t, 2);
   const v = p.__get(key, o);
   __intrinsic_proxy_array_call(t, -2);
@@ -81,7 +93,7 @@ function trapGet(p: Proxy, key: string, o: any): any {
 
 /** `p.__set(key, v, o)` (see `trapGet`). */
 function trapSet(p: Proxy, key: string, v: any, o: any): boolean {
-  const t = p.__target();
+  const t = arrayTarget(p);
   __intrinsic_proxy_array_call(t, 2);
   const ok = p.__set(key, v, o);
   __intrinsic_proxy_array_call(t, -2);
@@ -90,7 +102,7 @@ function trapSet(p: Proxy, key: string, v: any, o: any): boolean {
 
 /** `p.__has(key)` (see `trapGet`). */
 function trapHas(p: Proxy, key: string): boolean {
-  const t = p.__target();
+  const t = arrayTarget(p);
   __intrinsic_proxy_array_call(t, 2);
   const yes = p.__has(key);
   __intrinsic_proxy_array_call(t, -2);
@@ -99,7 +111,7 @@ function trapHas(p: Proxy, key: string): boolean {
 
 /** `p.__delete(key)` (see `trapGet`). */
 function trapDelete(p: Proxy, key: string): void {
-  const t = p.__target();
+  const t = arrayTarget(p);
   __intrinsic_proxy_array_call(t, 2);
   p.__delete(key);
   __intrinsic_proxy_array_call(t, -2);
@@ -123,9 +135,14 @@ function arrayMove(p: Proxy, o: any, from: number, to: number): void {
 export function __proxyArrayCall(p: Proxy, name: string, args: any[], o: any): any {
   // While it runs, `Reflect` records the holes Node's algorithm makes in the target during the
   // algorithm's trap calls (`trapGet`), and reports them: velt_rt's `proxy_array`.
-  const t = p.__target();
+  const t = arrayTarget(p);
   __intrinsic_proxy_array_call(t, 1);
   const r = proxyArrayCall(p, name, args, o);
+  // A shorter length written another way than `Reflect.set` (`t[k] = v` in a trap) cuts the
+  // holes off too.
+  if (Array.isArray(t)) {
+    __intrinsic_proxy_array_hole(t, (t.length as number) as i64, 3);
+  }
   const h = __intrinsic_proxy_array_call(t, -1);
   if (h >= 0) {
     // A trap didn't write the shorter length after a delete, or the gap before an element
@@ -307,6 +324,12 @@ function proxyArrayRead(p: Proxy, name: string, args: any[], o: any, len: number
   for (let k = from; k < to; k++) {
     const key = `${k}`;
     if (!trapHas(p, key)) {
+      if (name === "map" || name === "slice") {
+        // Node keeps the hole in the new array, which Velt's arrays cannot have.
+        panic(
+          `TypeError: \`${name}\` of a proxy of an array whose element ${k} is absent is not supported yet (#823): Velt's arrays have no holes`,
+        );
+      }
       continue;
     }
     const v = trapGet(p, key, o);

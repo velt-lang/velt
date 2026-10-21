@@ -417,6 +417,10 @@ pub enum Intrinsic {
     /// those from `index` on, 4 gives the first below `index` (or -1)
     /// (`velt_rt_proxy_array_hole`).
     ProxyArrayHole,
+    /// `(x: borrow T) -> bool`, made by sema only: whether the value of the class or object type
+    /// `T` is a typed proxy (velt_vir's tagged pointer, proxy_typed.rs); `false` for a type that
+    /// cannot hold one. A test of a bit, so a plain value keeps its own code path.
+    IsTypedProxy,
     /// `(x: borrow any) -> bool`: `Array.isArray(x)` (the value held is an array or a tuple).
     AnyIsArray,
     /// `(x: borrow any) -> string[]`: `Object.keys(x)`, the own enumerable string keys of the

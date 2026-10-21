@@ -574,6 +574,7 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::PerfNow
         | I::ProxyArrayCall
         | I::ProxyArrayHole
+        | I::IsTypedProxy
         | I::DateNow
         | I::SharedAdd
         | I::SharedGet

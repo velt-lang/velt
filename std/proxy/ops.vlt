@@ -203,15 +203,14 @@ export class __HasOwnPropertyProxy {
 }
 
 /**
- * `Object.keys(x)` of a class instance or an object `x` in a program that makes proxies: the
- * keys a typed proxy's traps list (`ownKeys`, `getOwnPropertyDescriptor`), or `null` for a
- * plain value (its type's keys).
+ * `Object.keys(x)` of a typed proxy `x` (velt_sema tests `Intrinsic::IsTypedProxy` first): the
+ * keys its traps list (`ownKeys`, `getOwnPropertyDescriptor`).
  */
-export function __proxyKeys(o: any): string[] | null {
+export function __proxyKeysOf(o: any): string[] {
   if (o instanceof Proxy) {
     return o.__keys();
   }
-  return null;
+  panic("ICE: `__proxyKeysOf` of a value that is not a proxy");
 }
 
 /**
@@ -224,4 +223,12 @@ export function __proxySpreadCheck(o: any): void {
       "TypeError: spreading a proxy typed as a class or object type is not supported yet (#823)",
     );
   }
+}
+
+/** `Array.isArray(o)` of an `any` `o` in a program that has loaded `Proxy`: a proxy of an array is one. */
+export function __anyIsArrayProxy(o: any): boolean {
+  if (o instanceof Proxy) {
+    return o.__isArray();
+  }
+  return Array.isArray(o);
 }

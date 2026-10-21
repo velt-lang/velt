@@ -175,6 +175,14 @@ impl FnLower<'_, '_> {
                 let op = self.expr(op);
                 self.rt_i64(Rt::ProxyArrayCall, vec![data, op])
             }
+            (I::IsTypedProxy, [x]) => {
+                let t = self.sub(x.ty);
+                if !self.cx.proxiable(t) || self.cx.ty(t) != Ty::Ptr {
+                    return crate::vir::Operand::Const(crate::vir::Const::Bool(false), Ty::Bool);
+                }
+                let v = self.expr(x);
+                self.proxy_tagged(v)
+            }
             (I::ProxyArrayHole, [o, i, op]) => {
                 let t = self.sub(o.ty);
                 let v = self.expr(o);

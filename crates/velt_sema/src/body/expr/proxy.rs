@@ -190,7 +190,7 @@ impl FnCx<'_, '_> {
     }
 
     /// `Object.keys(x)` / `for (k in x)` of a class instance or an object `x` that may be a
-    /// typed proxy: `__proxyKeys(x) ?? Object.keys(x)`, so a proxy's `ownKeys` and
+    /// typed proxy: `__proxyKeysOf(x)` when it is one (`Intrinsic::IsTypedProxy`), so a proxy's `ownKeys` and
     /// `getOwnPropertyDescriptor` traps list its keys. `None` otherwise.
     pub(crate) fn proxy_keys(&mut self, call: ast::Expr, arg: &ast::Expr) -> Option<hir::Expr> {
         if self.proxy_keys_inner {
@@ -200,35 +200,23 @@ impl FnCx<'_, '_> {
         if !self.may_be_typed_proxy(t) {
             return None;
         }
+        // `IsTypedProxy(x) ? __proxyKeysOf(x) : Object.keys(x)`: one test of a bit, and a plain
+        // value's own keys as without proxies.
         let span = call.span;
-        let callee = super::setters::synth(
-            ast::ExprKind::Ident(ast::Ident {
-                name: "__proxyKeys".to_string(),
-                span,
-            }),
-            span,
-        );
-        let lhs = super::setters::synth(
-            ast::ExprKind::Call {
-                callee: Box::new(callee),
-                type_args: vec![],
-                args: vec![arg.clone()],
-                optional: false,
-            },
-            span,
-        );
-        let e = super::setters::synth(
-            ast::ExprKind::Binary {
-                op: ast::BinaryOp::Nullish,
-                lhs: Box::new(lhs),
-                rhs: Box::new(call),
-            },
-            span,
-        );
+        let x = self.expr(arg, None, crate::body::Want::Borrow);
+        let b = self.cx.ty.bool_;
+        let cond = self.intrinsic(hir::Intrinsic::IsTypedProxy, vec![x], b, span);
         self.proxy_keys_inner = true;
-        let h = self.expr(&e, None, crate::body::Want::Move);
+        let then = self.prelude_fn_call("__proxyKeysOf", vec![arg.clone()], span);
+        let els = self.expr(&call, None, crate::body::Want::Move);
         self.proxy_keys_inner = false;
-        Some(h)
+        let ty = els.ty;
+        let kind = H::If {
+            cond: Box::new(cond),
+            then: Box::new(then),
+            els: Box::new(els),
+        };
+        Some(self.mk(kind, ty, span))
     }
 
     /// A call of the prelude function `name` with the checked arguments `args`, of type `ret`.

@@ -58,6 +58,10 @@ impl FnCx<'_, '_> {
         let arg = self.dynamic_is_array_arg(callee, args)?;
         let x = self.expr(arg, None, Want::Borrow);
         let b = self.cx.ty.bool_;
+        if self.uses_proxy() && !self.cx.scopes[self.module].is_std {
+            // A proxy of an array is one too.
+            return Some(self.prelude_hir_call("__anyIsArrayProxy", vec![x], b, span));
+        }
         Some(self.intrinsic(Intrinsic::AnyIsArray, vec![x], b, span))
     }
 

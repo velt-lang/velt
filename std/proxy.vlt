@@ -267,7 +267,7 @@ export class Proxy {
    */
   __plain(): boolean {
     const h = this.#handler;
-    return h.get == null && h.set == null && h.has == null && !Array.isArray(this.#target);
+    return h.get == null && h.set == null && h.has == null && !this.__isArray();
   }
 
   /**
@@ -276,6 +276,15 @@ export class Proxy {
    */
   __hasGet(): boolean {
     return this.#handler.get != null;
+  }
+
+  /** `Array.isArray(p)`: whether the target, through proxies of proxies, is an array. */
+  __isArray(): boolean {
+    const t = this.#target;
+    if (t instanceof Proxy) {
+      return t.__isArray();
+    }
+    return Array.isArray(t);
   }
 
   /** The target. */
@@ -545,7 +554,7 @@ export class Proxy {
         "TypeError: `JSON.stringify` of a proxy whose `toJSON` is a function is not supported yet (#823)",
       );
     }
-    if (Array.isArray(this.#target)) {
+    if (this.__isArray()) {
       const items: any[] = [];
       const len = this.__get("length", self);
       const n = typeof len === "number" ? (len as number) : 0;

@@ -998,8 +998,9 @@ entry is an `ICE:`.
   `__anyDeleteSym` / `__anyHasOwnSym(o, name, KEY)` (std/proxy/ops.vlt), which
   pass the symbol to a proxy and use the member name `name` on other values; `new Proxy(t, h)`
   with an `h` typed `any` is `__proxyNewAny(t, h)`. In a program whose own code has a `new
-  Proxy`, `Object.keys(x)` of a class instance or object `x` is `__proxyKeys(x) ??
-  Object.keys(x)` and a spread `{ ...x }` first calls `__proxySpreadCheck(x)`. The JSON slot of
+  Proxy`, `Object.keys(x)` of a class instance or object `x` is `IsTypedProxy(x) ?
+  __proxyKeysOf(x) : Object.keys(x)` (`Intrinsic::IsTypedProxy`, made by sema: a test of the
+  pointer's tag bit, `false` for a type that cannot hold a proxy) and a spread `{ ...x }` first calls `__proxySpreadCheck(x)`. The JSON slot of
   the `Proxy` class writes what `__json(receiver)` gives. The prelude's own dynamic operations don't set `Program::dyn_members`; a `new
   Proxy` or a `Reflect.*` call in the program's own code does, and a `Reflect.set` call counts
   as a write of every field for `object_copies` (a `new Proxy` does not: every write reaching
