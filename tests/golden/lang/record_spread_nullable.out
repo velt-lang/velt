@@ -1,0 +1,6 @@
+{ a: 1 } { a: 1, children: 'kids' } { a: 1, extra: true } 1 undefined
+{} { children: 'kids' } { extra: true } undefined undefined
+{ x: 1, y: 3, last: 9 }
+{ last: 9 }
+{ last: 9 }
+[ 'z', 'last' ]

@@ -53,7 +53,7 @@ fn record_method_fix(name: &str) -> &'static str {
         "__set" => "write a key with `r[k] = v` or `r.name = v`",
         "__delete" => "remove a key with `delete r[k]` (on a `Record<string, V>`)",
         "__has" => "test for a key with `r[k] != null` (on a `Record<string, V>`)",
-        "__extend" => "copy entries with a spread: `{ ...r, ...other }`",
+        "__extend" | "__extendMaybe" => "copy entries with a spread: `{ ...r, ...other }`",
         "__size" => "count the keys with `Object.keys(r).length`",
         "__values" => "list the values with `Object.values(r)`",
         "__entries" => "list the entries with `Object.entries(r)`",

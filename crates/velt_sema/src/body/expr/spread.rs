@@ -125,7 +125,7 @@ impl FnCx<'_, '_> {
     }
 
     /// The `Record` def and value type `V` of the first spread source of `props` that is a
-    /// variable or field path of type `Record<string, V>`.
+    /// variable or field path of type `Record<string, V>` (or `Record<string, V> | null`).
     pub(super) fn spread_string_record(
         &mut self,
         props: &[ast::ObjectProp],
@@ -135,7 +135,9 @@ impl FnCx<'_, '_> {
             let ast::ObjectProp::Spread(e) = p else {
                 return None;
             };
+            // A `Record<string, V> | null` too: spreading `null` or `undefined` adds nothing.
             let t = self.peek_ty(e)?;
+            let t = self.cx.ty.core(t).unwrap_or(t);
             let (k, v) = self.record_args(t)?;
             let TyKind::Adt(d, _) = self.cx.ty.kind(t) else {
                 return None;
