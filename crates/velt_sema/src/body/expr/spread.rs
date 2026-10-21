@@ -31,6 +31,9 @@ struct Src {
     optional: bool,
     /// It keeps "absent" apart from a present `null` (`a?: T | null`, `hir::FieldDef::presence`).
     presence: bool,
+    /// A class's optional field: an own property even while unset (holding `undefined`), so
+    /// it is always copied (`anon::has_presence`).
+    own: bool,
     /// The source field as a place, for the presence or null test of an optional one.
     place: Option<hir::Expr>,
 }
@@ -92,6 +95,7 @@ impl FnCx<'_, '_> {
                         let none = Src {
                             optional: false,
                             presence: false,
+                            own: false,
                             place: None,
                         };
                         let prev = std::mem::replace(
@@ -261,6 +265,7 @@ impl FnCx<'_, '_> {
             let src = Src {
                 optional: f.optional,
                 presence,
+                own: f.optional && kind == crate::hir::AdtKind::Class,
                 place,
             };
             out.push((f.name.clone(), read, src));
@@ -472,7 +477,8 @@ impl FnCx<'_, '_> {
                         let b = self.cx.ty.bool_;
                         Some(self.intrinsic(hir::Intrinsic::FieldPresent, vec![p], b, span))
                     }
-                    Some(p) if src.optional => Some(self.null_test(p, false, span)),
+                    // A class's optional field is always present: copied, `undefined` too.
+                    Some(p) if src.optional && !src.own => Some(self.null_test(p, false, span)),
                     _ => None,
                 };
                 (self.coerce(h, fty), guard)
@@ -560,6 +566,15 @@ impl FnCx<'_, '_> {
                         .ty
                         .nothing_of(target)
                         .is_some_and(|n| n.has_undefined());
+                // A class's optional field is always present: its `undefined` overrides, and
+                // is a `TypeError` over a field that can't hold it, as below.
+                if src.own {
+                    if keeps_undefined {
+                        return h;
+                    }
+                    let fail = self.spread_undefined_error(target, span);
+                    return self.undefined_keeps(h, fail, span);
+                }
                 match src.place {
                     // A present `null` overrides; only an absent field keeps the earlier value.
                     Some(p) if src.presence && keeps_undefined => {
@@ -581,13 +596,7 @@ impl FnCx<'_, '_> {
                     Some(p) if src.presence => {
                         let b = self.cx.ty.bool_;
                         let cond = self.intrinsic(hir::Intrinsic::FieldPresent, vec![p], b, span);
-                        let shown = self.cx.display(target);
-                        let msg = self.str_lit(
-                            &format!("TypeError: a spread copies `undefined` into a field of type `{shown}`"),
-                            span,
-                        );
-                        let never = self.cx.ty.never;
-                        let fail = self.intrinsic(hir::Intrinsic::Panic, vec![msg], never, span);
+                        let fail = self.spread_undefined_error(target, span);
                         let then = self.undefined_keeps(h, fail, span);
                         let ty = then.ty;
                         let prev = self.coerce(prev, ty);
@@ -607,6 +616,15 @@ impl FnCx<'_, '_> {
                 }
             }
         }
+    }
+
+    /// The `TypeError` of a present `undefined` spread into a field of type `target`.
+    fn spread_undefined_error(&mut self, target: TyId, span: Span) -> hir::Expr {
+        let shown = self.cx.display(target);
+        let msg = format!("TypeError: a spread copies `undefined` into a field of type `{shown}`");
+        let msg = self.str_lit(&msg, span);
+        let never = self.cx.ty.never;
+        self.intrinsic(hir::Intrinsic::Panic, vec![msg], never, span)
     }
 
     /// `h` (a `T | undefined`, or a `T | null | undefined`) as its payload (`T`, or the

@@ -4,7 +4,8 @@
 //! instantiation to the object type JavaScript's spread builds. Each part is a place of a
 //! concrete object type (a spread source, or a temporary holding a run of explicit properties);
 //! each field of the result is shared from the last part that has a field of that name, and an
-//! optional field (which sema allows only from one part) keeps that part's presence.
+//! optional field (which sema allows only from one part) keeps that part's presence. A class's
+//! optional field is always present (an own property holding `undefined` until set).
 
 use velt_sema::hir::{self, LitValue, TyId, TyKind};
 
@@ -100,9 +101,11 @@ impl FnLower<'_, '_> {
             let widen = !same
                 && matches!(self.cx.kind(fty), TyKind::Option(p, _) if self.vty(p) == self.vty(sft));
             // `a?: F` (without a presence flag) over an earlier `a: F`: its `undefined` is
-            // absent, and the earlier value stays.
+            // absent, and the earlier value stays; a class's optional field is an own property
+            // even while unset, so its `undefined` is copied (a `TypeError` below).
             let unwrap = !same && !widen;
-            let next = (!last && (slot.is_some() || unwrap)).then(|| self.new_block());
+            let own = unwrap && slot.is_none() && self.cx.is_class(*sty);
+            let next = (!last && (slot.is_some() || (unwrap && !own))).then(|| self.new_block());
             if let Some(next) = next.filter(|_| slot.is_some()) {
                 let then = self.new_block();
                 self.branch(present.clone(), then, next);

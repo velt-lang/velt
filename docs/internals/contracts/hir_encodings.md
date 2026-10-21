@@ -666,8 +666,9 @@ entry is an `ICE:`.
   types it (an error there when the two types differ). Lowering
   (velt_vir `lower/spread_object.rs`) builds the reduced type, each field shared from the last
   part that has it and is present (a part's optional field with a presence flag gives it only
-  while the flag is set, else an earlier part does; one without a flag holding `undefined` is
-  absent), its presence flag copied (set for a class field), a required field's value wrapped
+  while the flag is set, else an earlier part does; one of an object type without a flag
+  holding `undefined` is absent; a class's optional field is always present, as an own
+  property), its presence flag copied (set for a class field), a required field's value wrapped
   when the field is `F | undefined`; a present `undefined` over a field that can't hold one
   panics with a `TypeError`. A `SpreadObject`
   used directly as another type of the body (`return { ...x, ...patch }` as a `T`) has that

@@ -624,7 +624,10 @@ nothings alike:
 - An optional field of a class without an initializer is an own property holding `undefined`,
   as in Node with ES2022 class fields: `console.log` shows `a: undefined`, `JSON.stringify`
   leaves it out, and `"a" in o` is `true`. It can be set to `null` only when declared
-  `a?: T | null`; it then prints `null` and `JSON.stringify` writes `null`.
+  `a?: T | null`; it then prints `null` and `JSON.stringify` writes `null`. A spread always
+  copies it, set or not (in a generic function too): over an earlier value of a field that can
+  hold `undefined` its `undefined` overrides, as in Node, and over a required field (`{ ...u,
+  ...c }` with `u.n: number`) an unset one stops the program with the `TypeError` below.
 - An optional field of an object type or of an interface with only fields keeps an absent key
   apart from a key holding `undefined`, as Node does. An absent field is not printed by
   `console.log`, and `"a" in o` is `false`; `{ a: undefined }` is allowed, prints
@@ -1228,7 +1231,9 @@ Differences from TypeScript, each a compile error with a note on what to write i
   interface part, itself or through a base class (and has the object parts' fields, or `get`/`set`
   accessors for them, which reads and writes through it run), converts to
   it as the same object, generic classes too, and a field written through it reaches the class's
-  field. Its values convert to each interface part as the same object (`===` holds). `Pick<I, K>`
+  field. Writing through it a field that a class has only a `get` for stops the program with
+  Node's `TypeError: Cannot set property n of #<C> which has only a getter` (what strict code
+  gets). Its values convert to each interface part as the same object (`===` holds). `Pick<I, K>`
   and `Omit<I, K>` of such an interface are interfaces with those members, which values of `I`
   convert to the same way; in general an interface value converts to any interface whose members
   it has (an interface it extends, a structurally equal one, in both directions). Methods of one
