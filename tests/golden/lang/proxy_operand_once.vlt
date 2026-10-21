@@ -1,0 +1,70 @@
+// A typed proxy reached through a call (`Object.keys(get())`, `"a" in get()`,
+// `Object.hasOwn(get(), "b")`) and `for (const k in getP())` of an `any` proxy: the operand is
+// evaluated once, and the traps run as in Node.
+interface Props {
+  a: number;
+  b: number;
+}
+
+const log: string[] = [];
+const handler: ProxyHandler<any> = {
+  ownKeys(t: any): any {
+    log.push("ownKeys");
+    return ["a"];
+  },
+  getOwnPropertyDescriptor(t: any, k: string | symbol): PropertyDescriptor | undefined {
+    log.push(`gopd ${String(k)}`);
+    return { value: 1, writable: true, enumerable: true, configurable: true };
+  },
+  has(t: any, k: string | symbol): boolean {
+    log.push(`has ${String(k)}`);
+    return k === "b";
+  },
+};
+const raw: Props = { a: 1, b: 2 };
+const s = new Proxy(raw as any, handler) as Props;
+let calls = 0;
+
+function fresh(): Props {
+  return { a: 1, b: 2 };
+}
+
+function get(): Props {
+  calls++;
+  return s;
+}
+
+function show(what: string, v: any): void {
+  console.log(what, JSON.stringify(v), log.join(", "), calls);
+  log.length = 0;
+  calls = 0;
+}
+
+show("keys", Object.keys(get()));
+show("in a", "a" in get());
+show("in b", "b" in get());
+show("hasOwn b", Object.hasOwn(get(), "b"));
+show("hasOwnProperty a", Object.prototype.hasOwnProperty.call(get(), "a"));
+show("plain keys", Object.keys(fresh()));
+
+const r: Record<string, number> = { a: 1, b: 2, c: 3 };
+const p: any = new Proxy(r, {
+  getOwnPropertyDescriptor(t: any, k: string | symbol): PropertyDescriptor | undefined {
+    console.log("gopd", String(k));
+    return Reflect.getOwnPropertyDescriptor(t, k);
+  },
+});
+
+function getP(): any {
+  calls++;
+  return p;
+}
+
+for (const k in getP()) {
+  console.log("body", k);
+  if (k === "a") {
+    delete p.b;
+  }
+}
+console.log("getP calls", calls);
+// check: no leaks

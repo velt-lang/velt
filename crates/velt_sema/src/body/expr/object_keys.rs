@@ -121,6 +121,39 @@ impl FnCx<'_, '_> {
         })
     }
 
+    /// `for (const k in f())` of an `any`, in a program that loads `Proxy`: the operand, which is
+    /// not safe to evaluate again, bound to a hidden constant appended to `out` first, and the
+    /// loop's keys of it (`Object.keys(#dN)`), so that `for_in_any` applies. `None` for any other
+    /// loop.
+    pub(crate) fn for_in_operand(
+        &mut self,
+        iter: &ast::Expr,
+        out: &mut Vec<hir::Stmt>,
+    ) -> Option<ast::Expr> {
+        let ast::ExprKind::Call { callee, args, .. } = &iter.kind else {
+            return None;
+        };
+        let (ast::ExprKind::Member { prop, .. }, [obj]) = (&callee.kind, args.as_slice()) else {
+            return None;
+        };
+        if callee.span.lo != callee.span.hi || prop.name != "keys" || reevaluable(obj) {
+            return None;
+        }
+        if !self.uses_proxy() {
+            return None;
+        }
+        let ty = self.trial_type(obj)?;
+        if self.cx.dynamic(ty) != Some(crate::any::Dynamic::Any) {
+            return None;
+        }
+        let tmp = self.temp_with(obj.clone(), None, out);
+        let mut keys = iter.clone();
+        if let ast::ExprKind::Call { args, .. } = &mut keys.kind {
+            *args = vec![tmp];
+        }
+        Some(keys)
+    }
+
     /// `for (const k in o) body` over an `any` `o` that is safe to evaluate again, in a program
     /// that loads `Proxy`: a proxy's keys are its `ownKeys` (`__anyForInKeys`) and each is tested
     /// just before its turn (`__anyForInHas`: its `getOwnPropertyDescriptor`), so one deleted
@@ -251,6 +284,21 @@ impl FnCx<'_, '_> {
             if let Some(h) = self.proxy_keys(call, arg) {
                 return Some(h);
             }
+        } else if self.typed_proxy_once(arg) {
+            // `Object.keys(f())` of a typed proxy: the operand once, then as above.
+            let callee = callee.clone();
+            return Some(self.operand_once(arg, span, |cx, t| {
+                let call = super::setters::synth(
+                    ast::ExprKind::Call {
+                        callee: Box::new(callee),
+                        type_args: vec![],
+                        args: vec![t.clone()],
+                        optional: false,
+                    },
+                    span,
+                );
+                cx.expr(&call, None, Want::Move)
+            }));
         }
         let obj = self.expr(arg, None, Want::Borrow);
         let obj = self.read_shared(obj);

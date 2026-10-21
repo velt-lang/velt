@@ -201,6 +201,10 @@ impl FnCx<'_, '_> {
             return self.dynamic_key_in(lhs, rhs, span);
         };
         if matches!(key, InKey::Str(_)) {
+            if self.typed_proxy_once(rhs) {
+                // `"k" in f()` of a typed proxy: the operand once, then as below.
+                return self.operand_once(rhs, span, |cx, t| cx.key_in(lhs, t, span));
+            }
             if let Some(h) = self.proxy_in(lhs, rhs, span) {
                 return h;
             }

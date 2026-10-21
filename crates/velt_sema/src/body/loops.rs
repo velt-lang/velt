@@ -145,6 +145,11 @@ impl FnCx<'_, '_> {
                 body,
                 is_await,
             } => {
+                let once = match is_await {
+                    true => None,
+                    false => self.for_in_operand(iter, out),
+                };
+                let iter = once.as_ref().unwrap_or(iter);
                 let any = match is_await {
                     true => None,
                     false => self.for_in_any(pattern, iter, body),

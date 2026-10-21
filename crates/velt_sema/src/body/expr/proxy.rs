@@ -267,6 +267,29 @@ impl FnCx<'_, '_> {
         Some(self.proxy_wrapped("__proxyHasOwn", vec![o.clone(), k.clone(), keys], span))
     }
 
+    /// Is `e` a value that may be a typed proxy but is not safe to evaluate again (a call)? The
+    /// hooks above then bind it to a temporary first (`with_temp`).
+    pub(crate) fn typed_proxy_once(&mut self, e: &ast::Expr) -> bool {
+        if self.proxy_keys_inner || super::object_keys::reevaluable(e) {
+            return false;
+        }
+        match self.trial_type(e) {
+            Some(t) => self.may_be_typed_proxy(t),
+            None => false,
+        }
+    }
+
+    /// `{ const <operand> = e; f(<operand>) }`: `f` checked with `e` evaluated once.
+    pub(crate) fn operand_once(
+        &mut self,
+        e: &ast::Expr,
+        span: Span,
+        f: impl FnOnce(&mut Self, &ast::Expr) -> hir::Expr,
+    ) -> hir::Expr {
+        let h = self.expr(e, None, crate::body::Want::Move);
+        self.with_temp("<operand>", h, e.span, span, f)
+    }
+
     /// The call `f(args)` of velt:proxy/ops, checked without the typed proxy hooks inside it.
     fn proxy_wrapped(&mut self, f: &str, args: Vec<ast::Expr>, span: Span) -> hir::Expr {
         self.proxy_keys_inner = true;
