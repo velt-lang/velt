@@ -47,7 +47,11 @@ pub(crate) fn order(cx: &mut Ctx) -> Vec<DefId> {
         .into_iter()
         .filter(|(_, _, d)| !skipped.contains(d))
         .collect();
-    sorted.sort_by_key(|(m, start, _)| (rank.get(m).copied().unwrap_or(usize::MAX), *start));
+    // The properties of `globalThis` exist before any module runs (`crate::global_this`).
+    sorted.sort_by_key(|(m, start, d)| {
+        let rank = rank.get(m).copied().unwrap_or(usize::MAX);
+        (!cx.global_props.is_slot(*d), rank, *start)
+    });
     let order: Vec<DefId> = sorted.into_iter().map(|(_, _, d)| d).collect();
     let pos: FxHashMap<DefId, usize> = order.iter().enumerate().map(|(i, d)| (*d, i)).collect();
     for (i, &d) in order.iter().enumerate() {

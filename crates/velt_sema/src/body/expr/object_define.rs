@@ -48,6 +48,9 @@ impl FnCx<'_, '_> {
             self.check_args_loose(args);
             return self.error_expr(span);
         };
+        if let Some(key) = global_key(o, key, self) {
+            return self.global_define(&key, &d, desc, span);
+        }
         let Some(value) = d.value else {
             self.not_yet(
                 "`Object.defineProperty` without a `value` is not supported yet",
@@ -230,6 +233,68 @@ impl FnCx<'_, '_> {
         self.with_lets(lets, read)
     }
 
+    /// `Object.defineProperty(globalThis, "K", d)`: an assignment of the variable standing for
+    /// property `K` (`crate::global_this`). `enumerable` changes nothing Velt shows: the keys of
+    /// `globalThis` are not listed.
+    fn global_define(
+        &mut self,
+        key: &str,
+        d: &Descriptor,
+        desc: &ast::Expr,
+        span: Span,
+    ) -> hir::Expr {
+        let Some(value) = d.value else {
+            self.not_yet(
+                "`Object.defineProperty` on `globalThis` without a `value` is not supported yet",
+                desc.span,
+                "give the property its value: `{ value: v, writable: true, configurable: true }`",
+            );
+            return self.error_expr(span);
+        };
+        let writable = d.writable == Some(true);
+        if !writable && d.configurable != Some(true) {
+            self.not_yet(
+                &format!("`Object.defineProperty` of `globalThis.{key}` neither writable nor configurable is not supported yet"),
+                desc.span,
+                "Velt keeps the property as a variable, which it can't make read-only: add `writable: true` or `configurable: true`",
+            );
+            return self.error_expr(span);
+        }
+        if let (false, Some(at)) = (writable, self.cx.global_props.direct_write(key)) {
+            self.cx.error(
+                Diagnostic::error(
+                    format!("`Object.defineProperty` of `globalThis.{key}` without `writable: true`, which the program also assigns, is not supported yet"),
+                    desc.span,
+                )
+                .with_label(at, "assigned here")
+                .with_note("in Node, assigning a property `defineProperty` made read-only throws a `TypeError`: add `writable: true`, or define it again instead of assigning it"),
+            );
+            return self.error_expr(span);
+        }
+        if !self.cx.global_props.slots.contains_key(key) {
+            return self.error_expr(span); // reported by the rewrite: no type
+        }
+        let slot = ast::Ident {
+            name: crate::global_this::slot_name(key),
+            span,
+        };
+        let assign = synth(
+            ast::ExprKind::Assign {
+                op: None,
+                target: Box::new(synth(ast::ExprKind::Ident(slot), span)),
+                value: Box::new(value.clone()),
+            },
+            span,
+        );
+        let h = self.expr_stmt(&assign);
+        let stmt = hir::Stmt {
+            span,
+            kind: hir::StmtKind::Expr(h),
+        };
+        let unit = self.mk(hir::ExprKind::Lit(hir::Lit::Unit), self.cx.ty.unit, span);
+        self.with_lets(vec![stmt], unit)
+    }
+
     /// `if (key in o && o[key] !== value) throw new TypeError(msg)` (appended to `lets`): a
     /// property neither writable nor configurable defined again with another value. `value` is
     /// read twice: a value other than a literal is first held in a temporary.
@@ -409,6 +474,18 @@ impl FnCx<'_, '_> {
         self.cx
             .error(Diagnostic::error(msg.to_string(), span).with_note(note.to_string()));
     }
+}
+
+/// The key of `Object.defineProperty(globalThis, "K", d)`, as `crate::global_this` normalizes
+/// it (`None`: another object).
+fn global_key(o: &ast::Expr, key: &ast::Expr, cx: &FnCx) -> Option<String> {
+    let ast::ExprKind::Ident(id) = &o.kind else {
+        return None;
+    };
+    let ast::ExprKind::Lit(ast::Lit::Str(k)) = &key.kind else {
+        return None;
+    };
+    (id.name == "globalThis" && !cx.is_local_name(&id.name)).then(|| k.clone())
 }
 
 /// The temporary holding the object of the `defineProperty` call at `span`.

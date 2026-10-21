@@ -103,6 +103,8 @@ pub(crate) struct Ctx<'m> {
     pub module_slots: Vec<DefId>, // module state, in initialization order (module_state.rs)
     pub module_scripts: Vec<DefId>, // imported modules' top-level statements (module_scripts.rs)
     pub promoted_consts: FxHashSet<Span>, // `const`s kept in module state (module_chunks.rs)
+    /// The properties of `globalThis` the program uses (`crate::global_this`).
+    pub global_props: crate::global_this::GlobalProps,
     /// Module constants found to depend on themselves so far (`body::driver::ensure_global`).
     pub global_cycles: u32,
     /// Union enums by canonical member list (`crate::unions`).
@@ -325,6 +327,7 @@ impl<'m> Ctx<'m> {
             module_slots: Vec::new(),
             module_scripts: Vec::new(),
             promoted_consts: FxHashSet::default(),
+            global_props: Default::default(),
             global_cycles: 0,
             unions: FxHashMap::default(),
             recursive_unions: FxHashMap::default(),

@@ -50,7 +50,7 @@ const BROWSER_ONLY: [&str; 23] = [
 
 /// Node 22's own globals and what `typeof` gives for them, for names Velt may not have as values
 /// (`typeof process`, `typeof navigator`).
-const NODE_GLOBALS: [(&str, &str); 36] = [
+pub(crate) const NODE_GLOBALS: [(&str, &str); 36] = [
     ("globalThis", "object"),
     ("process", "object"),
     ("console", "object"),

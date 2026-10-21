@@ -1,0 +1,71 @@
+// `globalThis` as a typed property bag (#922): each property is one variable for the whole
+// program, read and written through type assertions, as in Node.
+import { count, emit } from "./_global_this_reader";
+import { install } from "./_global_this_writer";
+import type { Hook } from "./_global_this_keys";
+
+interface Scope {
+  name: string;
+  keepAlive?: (n: number) => void;
+}
+
+type Seam = { __SCOPE__?: Scope };
+
+const COUNT_KEY = "__COUNT__";
+
+function scope(): Scope | undefined {
+  return (globalThis as Seam).__SCOPE__;
+}
+
+// Through a constant standing for `globalThis`, as sigx installs its seams.
+function installScope(s: Scope): void {
+  const host = globalThis as { __SCOPE__?: Scope };
+  Object.defineProperty(host, "__SCOPE__", {
+    value: s,
+    writable: true,
+    configurable: true,
+    enumerable: false,
+  });
+}
+
+function bump(): number {
+  const g = globalThis as { __COUNT__?: number };
+  g[COUNT_KEY] = (g[COUNT_KEY] ?? 0) + 1;
+  return g.__COUNT__ ?? 0;
+}
+
+function shadowed(globalThis: { __COUNT__: number }): number {
+  return globalThis.__COUNT__;
+}
+
+console.log(scope()?.name, typeof (globalThis as Seam).__SCOPE__);
+(globalThis as Seam).__SCOPE__?.keepAlive?.(1);
+installScope({ name: "first", keepAlive: (n) => console.log("keep", n) });
+console.log(scope()?.name);
+(globalThis as Seam).__SCOPE__?.keepAlive?.(2);
+installScope({ name: "second" });
+console.log(scope()?.name, scope()?.keepAlive === undefined);
+
+bump();
+console.log(bump(), (globalThis as { __COUNT__?: number }).__COUNT__, shadowed({ __COUNT__: 7 }));
+(globalThis as { __COUNT__?: number }).__COUNT__ = bump() + 10;
+console.log((globalThis as { __COUNT__?: number })[COUNT_KEY]);
+// Without an assertion (tsc needs a `declare global` for it): the type the others give.
+// @ts-ignore
+console.log(globalThis.__COUNT__ ?? 0);
+
+(globalThis as { __FLAG__?: boolean }).__FLAG__ ??= true;
+(globalThis as { __FLAG__?: boolean }).__FLAG__ ??= false;
+console.log((globalThis as { __FLAG__?: boolean }).__FLAG__);
+
+// Modules share one variable per property.
+console.log(count());
+emit("lost");
+install();
+emit("a");
+install();
+emit("b");
+console.log(count(), (globalThis as { __HOOK__?: Hook }).__HOOK__?.events);
+
+// A Node global is that global.
+globalThis.console.log(typeof globalThis, globalThis.Math.max(1, 2));

@@ -1938,6 +1938,47 @@ console.log(counts, "toString" in counts); // [Object: null prototype] { a: 1 } 
 console.log(Object.prototype.toString.call([1])); // [object Array]
 ```
 
+#### `globalThis`
+
+`globalThis` is a bag of typed properties, as libraries use it to share one value between
+modules or copies of themselves: `(globalThis as { K?: T }).K` reads and writes a variable for
+the whole process, which starts out `undefined`, as an unset property of Node's `globalThis`
+does. The key may also be a string constant (`(globalThis as Seam)[KEY]`), the object a constant
+that stands for `globalThis` (`const g = globalThis as Seam;`), and
+`Object.defineProperty(globalThis, "K", { value, writable: true, configurable: true })`
+assigns it. The property's type is `T["K"] | undefined` with `T` the asserted type; the
+assertions of one key must all give it the same type, and a site without one (`globalThis.K`,
+typed for tsc by a `declare global { var K: T }`, or asserted `any`) takes the type the others
+give. A property no site asserts a type for is an error. A Node global Velt has is that global
+(`globalThis.console.log(…)` is `console.log(…)`).
+
+```ts
+interface Hook {
+  events: string[];
+}
+type Seam = { __HOOK__?: Hook };
+
+function emit(e: string): void {
+  (globalThis as Seam).__HOOK__?.events.push(e);
+}
+
+function install(): void {
+  const g = globalThis as Seam;
+  g.__HOOK__ ??= { events: [] };
+}
+
+emit("lost");
+install();
+emit("kept");
+console.log((globalThis as Seam).__HOOK__?.events); // [ 'kept' ]
+```
+
+Not supported yet: `globalThis` as a value of its own (`console.log(globalThis)`,
+`Object.keys(globalThis)`), symbol keys, keys known only at run time, `defineProperty` on it
+without a `value`, neither writable nor configurable, or without `writable: true` on a property
+the program also assigns (Node throws there), and using the result of `defineProperty` on it.
+`enumerable` changes nothing Velt shows, since the keys of `globalThis` are not listed.
+
 ### The `in` operator
 
 `"key" in o` tests whether the object `o` has the member `key`, as in JavaScript. Velt objects
