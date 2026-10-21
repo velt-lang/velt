@@ -142,22 +142,3 @@ function shorthand(): Pair {
 }
 
 console.log(shorthand().k);
-
-// A local `Object` is the program's own.
-function ownObject(): number {
-  const Object = {
-    defineProperty: (o: Pair, key: string, d: { get: () => number }): void => {
-      console.log("own defineProperty", key, d.get());
-    },
-  };
-  const o: Pair = {
-    get k() {
-      return 1;
-    },
-    set k(v) {},
-  };
-  Object.defineProperty(o, "k", { get: () => 2 });
-  return o.k;
-}
-
-console.log(ownObject());

@@ -83,3 +83,15 @@ function shadowed(list: Cell[]): Cell {
 }
 
 console.log(shadowed([c]).value);
+
+// A getter that may be `undefined` is a type error.
+const maybe: (() => number) | undefined = n > 0 ? () => n : undefined;
+const m: Cell = {
+  get value() {
+    return n;
+  },
+  set value(v) {
+    n = v;
+  },
+};
+Object.defineProperty(m, "value", { get: maybe });

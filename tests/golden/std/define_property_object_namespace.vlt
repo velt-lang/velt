@@ -1,0 +1,19 @@
+// `Object` imported as a namespace is the program's own: `Object.defineProperty` calls it.
+import * as Object from "./_define_property_object";
+
+interface Pair {
+  get k(): number;
+  set k(v: number);
+}
+
+let n = 1;
+const o: Pair = {
+  get k() {
+    return n;
+  },
+  set k(v) {
+    n = v;
+  },
+};
+Object.defineProperty(o, "k", { get: () => 2 });
+console.log(o.k);

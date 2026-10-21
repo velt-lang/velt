@@ -18,8 +18,6 @@ pub(super) struct Found {
     decls: FxHashMap<String, Decl>,
     /// Names declared more than once in the body: which one a call means is not followed.
     repeated: FxHashSet<String>,
-    /// The body declares its own `Object`: its `defineProperty` is not followed.
-    pub binds_object: bool,
     pub defines: Vec<Define>,
 }
 
@@ -55,7 +53,6 @@ impl Found {
             S::ForOf { pattern, body, .. } => {
                 let mut names = vec![];
                 pattern_names(pattern, &mut names);
-                self.binds_object |= names.iter().any(|n| n == "Object");
                 self.repeated.extend(names);
                 self.stmts(&body.stmts, true)
             }
@@ -87,9 +84,6 @@ impl Found {
 
     /// `const o: I = { … }` or `const o = { … } as I`.
     fn decl(&mut self, v: &ast::VarDecl) {
-        let mut names = vec![];
-        pattern_names(&v.pattern, &mut names);
-        self.binds_object |= names.iter().any(|n| n == "Object");
         let ast::PatternKind::Ident(name) = &v.pattern.kind else {
             return;
         };
@@ -148,9 +142,6 @@ impl Found {
 
     /// Rewrite the body's statements; report the definitions it can't follow.
     pub(super) fn rewrite(&self, stmts: &mut Vec<ast::Stmt>, diags: &mut Vec<Diagnostic>) {
-        if self.binds_object {
-            return;
-        }
         let mut plans: FxHashMap<(String, String), Plan> = FxHashMap::default();
         let mut skipped: FxHashSet<Span> = FxHashSet::default();
         for d in &self.defines {
@@ -533,7 +524,7 @@ fn is_undefined(e: &ast::Expr) -> bool {
 }
 
 /// The names pattern `p` binds.
-fn pattern_names(p: &ast::Pattern, out: &mut Vec<String>) {
+pub(super) fn pattern_names(p: &ast::Pattern, out: &mut Vec<String>) {
     match &p.kind {
         ast::PatternKind::Ident(id) => out.push(id.name.clone()),
         ast::PatternKind::Wildcard => {}

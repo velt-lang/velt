@@ -634,6 +634,10 @@ impl<'m> Ctx<'m> {
             TyKind::Tuple(ts) => format!("[{}]", list(self, ts)),
             // `undefined` alone is an option of `never` (`Types::undefined`).
             TyKind::Option(t, n) if *t == self.ty.never => n.suffix()[3..].to_string(),
+            // `(() => T) | undefined`, not the function type `() => T | undefined`.
+            TyKind::Option(t, n) if matches!(self.ty.kind(*t), TyKind::FnPtr { .. }) => {
+                format!("({}){}", self.display_in(*t, names), n.suffix())
+            }
             TyKind::Option(t, n) => format!("{}{}", self.display_in(*t, names), n.suffix()),
             TyKind::Result(a, b) => with_args(self, "Result", &[*a, *b]),
             TyKind::Promise(t, e) if *e == self.ty.never => with_args(self, "Promise", &[*t]),

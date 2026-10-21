@@ -4,3 +4,5 @@ a property descriptor with an accessor and `value` or `writable`
 `Object.defineProperty` of `value` on `u` with an accessor `undefined` is not supported yet
 an accessor defined with `Object.defineProperty` is not supported yet here
 an accessor defined with `Object.defineProperty` is not supported yet here
+mismatched types
+expected () => f64, found (() => f64) | undefined

@@ -67,18 +67,70 @@ fn defines_accessors(module: &ast::Module) -> bool {
     f.0
 }
 
-/// Does `module` declare its own `Object` at module level (a variable, function, class or
-/// import)? Its `defineProperty` calls are then not `Object.defineProperty`'s.
+/// Does `module` bind the name `Object` anywhere: a variable or destructured name, a
+/// parameter (of a function, method or arrow), a loop or `catch` variable, a function or class,
+/// or an import (a namespace too)? Its `Object.defineProperty` may then be the program's own,
+/// so the module is not rewritten.
 fn declares_object(module: &ast::Module) -> bool {
-    module.items.iter().any(|item| match &item.kind {
-        I::Var(v) => matches!(&v.pattern.kind, ast::PatternKind::Ident(n) if n.name == "Object"),
-        I::Function(f) => f.sig.name.name == "Object",
-        I::Class(t) | I::Struct(t) => t.name.name == "Object",
-        I::Import(imp) => {
-            (imp.names.iter()).any(|n| n.alias.as_ref().unwrap_or(&n.name).name == "Object")
+    struct Binds(bool);
+    impl Binds {
+        fn pattern(&mut self, p: &ast::Pattern) {
+            let mut names = vec![];
+            emit::pattern_names(p, &mut names);
+            self.name(names.iter().map(String::as_str));
         }
-        _ => false,
-    })
+        fn name<'n>(&mut self, mut names: impl Iterator<Item = &'n str>) {
+            self.0 |= names.any(|n| n == "Object");
+        }
+    }
+    impl Visit<'_> for Binds {
+        fn item(&mut self, item: &ast::Item) {
+            match &item.kind {
+                I::Function(f) => self.name(std::iter::once(f.sig.name.name.as_str())),
+                I::Class(t) | I::Struct(t) => self.name(std::iter::once(t.name.name.as_str())),
+                I::Import(imp) => {
+                    let names = imp
+                        .names
+                        .iter()
+                        .map(|n| n.alias.as_ref().unwrap_or(&n.name));
+                    self.name(names.chain(imp.namespace.iter()).map(|n| n.name.as_str()));
+                }
+                _ => {}
+            }
+        }
+        fn function(&mut self, sig: &ast::FnSig, _body: &ast::Block) {
+            self.name(sig.params.iter().map(|p| p.name.name.as_str()));
+            sig.params
+                .iter()
+                .filter_map(|p| p.pattern.as_ref())
+                .for_each(|p| self.pattern(p));
+        }
+        fn var_decl(&mut self, v: &ast::VarDecl) {
+            self.pattern(&v.pattern);
+        }
+        fn stmt(&mut self, s: &ast::Stmt) {
+            match &s.kind {
+                S::ForOf { pattern, .. } => self.pattern(pattern),
+                S::Try {
+                    catch: Some((Some(p), _)),
+                    ..
+                } => self.pattern(p),
+                _ => {}
+            }
+        }
+        fn expr(&mut self, e: &ast::Expr) {
+            if let E::Arrow { params, .. } = &e.kind {
+                self.name(params.iter().map(|p| p.name.name.as_str()));
+                params
+                    .iter()
+                    .filter_map(|p| p.pattern.as_ref())
+                    .for_each(|p| self.pattern(p));
+            }
+        }
+    }
+    let mut b = Binds(false);
+    visit::walk_module(module, &mut b);
+    b.0
 }
 
 /// The rewritten modules (`None`: no module defines an accessor), and the errors found.
