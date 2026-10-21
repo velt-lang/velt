@@ -132,6 +132,9 @@ pub(crate) struct Ctx<'m> {
     /// method of one returns): the ownership pass refuses changing them
     /// (`ownership::finish::frozen_loop_elements`).
     pub frozen_elems: FxHashSet<Span>,
+    /// Some body reads a `shared` like its `T` (`Intrinsic::SharedRead`): only then does the
+    /// ownership pass track `FnInfo::modified_params`.
+    pub frozen_reads: bool,
     /// Gated functions found so far (`body::gated`), for `hir::Program::cpu_targets`.
     pub cpu_targets: FxHashMap<DefId, crate::hir::CpuTarget>,
     /// Dispatch groups for error types (`crate::throws`), built on first use.
@@ -333,6 +336,7 @@ impl<'m> Ctx<'m> {
             fn_defs: vec![],
             fn_values: vec![],
             frozen_elems: FxHashSet::default(),
+            frozen_reads: false,
             cpu_targets: FxHashMap::default(),
             groups: None,
             literal_hosts: Default::default(),

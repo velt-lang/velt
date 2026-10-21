@@ -41,14 +41,14 @@ pub(super) fn patch_calls(
         let returns_promise = matches!(cx.ty.kind(e.ty), TyKind::Promise(..));
         let span = e.span;
         let modified = match &e.kind {
-            E::Call { callee, args } => match call_target(cx, callee, args) {
-                // Only the receiver: an owned parameter gets its own copy (as `force_move` gives
-                // it), but a method changing its receiver changes a copy no one would see.
-                Some(Target::Fn(d)) if cx.fn_info(d).this.is_some() => {
-                    cx.fn_info(d).modified_params & 1
-                }
-                _ => 0,
-            },
+            // Only the receiver: an owned parameter gets its own copy (as `force_move` gives
+            // it), but a method changing its receiver changes a copy no one would see.
+            E::Call {
+                callee: Callee::Def(d, _),
+                ..
+            } if cx.frozen_reads && cx.fn_info(*d).this.is_some() => {
+                cx.fn_info(*d).modified_params & 1
+            }
             _ => 0,
         };
         let (modes, args, unknown) = match &mut e.kind {

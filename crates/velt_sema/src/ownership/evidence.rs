@@ -31,8 +31,6 @@ use crate::hir::{
 };
 use crate::visit::{self, VisitMut};
 
-use super::patch::{call_target, Target};
-
 /// What one body does to its locals.
 #[derive(Default)]
 pub(super) struct Evidence {
@@ -221,13 +219,16 @@ impl VisitMut for Collector<'_, '_> {
                 callee: Callee::Indirect(_),
                 args,
             } => self.indirect_args(args),
-            E::Call { callee, args } => {
-                if let Some(Target::Fn(d)) = call_target(self.cx, callee, args) {
-                    let bits = self.cx.fn_info(d).modified_params;
-                    for (i, a) in args.iter().enumerate().take(64) {
-                        if bits & (1 << i) != 0 && !self.cx.is_copy(a.ty) {
-                            self.ev.modified.extend(place_root(a));
-                        }
+            // Only for a program that reads a `shared` (`FnInfo::modified_params`). Virtual
+            // calls don't reach a value read out of one (no class with subclasses is).
+            E::Call {
+                callee: Callee::Def(d, _),
+                args,
+            } if self.cx.frozen_reads => {
+                let bits = self.cx.fn_info(*d).modified_params;
+                for (i, a) in args.iter().enumerate().take(64) {
+                    if bits & (1 << i) != 0 && !self.cx.is_copy(a.ty) {
+                        self.ev.modified.extend(place_root(a));
                     }
                 }
             }

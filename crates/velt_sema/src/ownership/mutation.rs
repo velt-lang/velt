@@ -62,6 +62,8 @@ pub(super) fn apply(
         info.is_async || info.is_generator,
     );
     let has_this = info.this.is_some();
+    // `modified_params` only matters to a program that reads a `shared` (`evidence`).
+    let frozen = cx.frozen_reads;
     let this_modified = has_this && ev.modified.contains(&f.params[0].local);
     if this_modified && cx.fn_info(d).modified_params & 1 == 0 {
         cx.fn_info_mut(d).modified_params |= 1;
@@ -69,7 +71,7 @@ pub(super) fn apply(
     }
     if has_this && ev.mutated.contains(&f.params[0].local) {
         let info = cx.fn_info_mut(d);
-        if info.modified_params & 1 == 0 {
+        if frozen && info.modified_params & 1 == 0 {
             info.modified_params |= 1;
             changed = true;
         }
@@ -94,7 +96,8 @@ pub(super) fn apply(
         }
         let bit = 1u64 << (k + usize::from(has_this)).min(63);
         let info = cx.fn_info_mut(d);
-        if (mutated || ev.modified.contains(&p.local)) && info.modified_params & bit == 0 {
+        if frozen && (mutated || ev.modified.contains(&p.local)) && info.modified_params & bit == 0
+        {
             info.modified_params |= bit;
             changed = true;
         }

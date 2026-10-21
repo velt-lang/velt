@@ -54,6 +54,7 @@ impl FnCx<'_, '_> {
         if !self.cx.frozen_readable(inner) {
             return h;
         }
+        self.cx.frozen_reads = true;
         let span = h.span;
         let mut h = h;
         set_place_mode(&mut h, UseMode::Borrow);

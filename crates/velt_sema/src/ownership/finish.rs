@@ -109,6 +109,9 @@ pub(super) fn soft_args(cx: &mut Ctx, d: DefId, f: &mut FnDef) {
 
 /// `for…of` elements of a value read out of a `shared` that the loop changes (module docs).
 pub(super) fn frozen_loop_elements(cx: &mut Ctx, f: &mut FnDef) {
+    if cx.frozen_elems.is_empty() {
+        return;
+    }
     let elems: Vec<LocalId> = (0..f.body.locals.len() as u32)
         .map(LocalId)
         .filter(|l| cx.frozen_elems.contains(&f.body.locals[l.0 as usize].span))
