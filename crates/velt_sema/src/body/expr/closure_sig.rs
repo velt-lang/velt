@@ -169,6 +169,14 @@ impl FnCx<'_, '_> {
             _ => {}
         }
         let d = match own {
+            Some(p) if !exp_rest => Diagnostic::error(
+                format!(
+                    "the rest parameter `...{}` takes parameters the function type it is used as lists one by one, which is not supported yet",
+                    p.name.name
+                ),
+                p.name.span,
+            )
+            .with_note("the function type has fixed parameters and no rest parameter; take them one by one (`(a, b) => …`)"),
             Some(p) => Diagnostic::error(
                 format!(
                     "the rest parameter `...{}` must stand where the function type it is used as has its rest parameter",

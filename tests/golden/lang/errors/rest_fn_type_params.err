@@ -1,3 +1,4 @@
-rest_fn_type_params.vlt:9:22: error: parameter `x` takes an argument of the function type's rest parameter, which is not supported yet
-rest_fn_type_params.vlt:10:28: error: the rest parameter `...xs` must stand where the function type it is used as has its rest parameter
-rest_fn_type_params.vlt:6:20: error: a rest parameter must have an array type (`...xs: T[]`)
+rest_fn_type_params.vlt:10:22: error: parameter `x` takes an argument of the function type's rest parameter, which is not supported yet
+rest_fn_type_params.vlt:11:28: error: the rest parameter `...xs` must stand where the function type it is used as has its rest parameter
+rest_fn_type_params.vlt:13:49: error: the rest parameter `...xs` takes parameters the function type it is used as lists one by one, which is not supported yet
+rest_fn_type_params.vlt:7:20: error: a rest parameter must have an array type (`...xs: T[]`)

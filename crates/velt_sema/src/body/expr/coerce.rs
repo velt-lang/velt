@@ -576,11 +576,13 @@ impl FnCx<'_, '_> {
                 params: fp,
                 ret: fr,
                 throws: ft,
+                rest: false,
             },
             TyKind::FnPtr {
                 params: tp,
                 ret: tr,
                 throws: tt,
+                rest: false,
             },
         ) = (self.cx.ty.kind(from), self.cx.ty.kind(to))
         else {
