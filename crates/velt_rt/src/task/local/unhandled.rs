@@ -7,6 +7,13 @@
 //! `velt_rt_unhandled_defer`. While the runtime drops a started promise's result inside a task
 //! ([`drop_result`]), that keeps the promise and answers 1: the function returns without
 //! reporting, and [`flush`] calls it again after the queue was drained, when it reports.
+//!
+//! A started promise that rejects while its owner still holds it but does not wait for it
+//! (`const p = fail();` with no `await p` yet) is reported the same way, as Node reports a
+//! rejection that has no handler once the microtask queue is drained: unless the owner awaited
+//! it, gave it up, or handed it to a combinator or another task by then ([`watch`]). This needs
+//! to know that the result is a rejection: the compiler starts promises that can reject with
+//! `velt_rt_fut_start_rejecting`, whose result is a `Result`, tag first.
 
 use std::cell::Cell;
 
@@ -50,6 +57,25 @@ pub extern "C" fn velt_rt_unhandled_defer() -> u8 {
     1
 }
 
+/// Started node `f` rejected while nobody waits for it: report it at the next checkpoint unless
+/// its owner claims it first.
+pub(super) unsafe fn watch(f: *mut VeltFut) {
+    let set = super::current_set();
+    if set.is_null() {
+        return;
+    }
+    node::retain(f);
+    (*set).rejections.push(f);
+}
+
+/// Are rejections waiting for the microtask queue of the task owning `set`?
+///
+/// # Safety
+/// `set` is a live set.
+pub(super) unsafe fn waiting(set: *mut LocalSet) -> bool {
+    !(*set).unhandled.is_empty() || !(*set).rejections.is_empty()
+}
+
 /// The microtask queue of the task owning `set` was drained: report the rejections that waited
 /// for it (the first one ends the process).
 ///
@@ -60,6 +86,14 @@ pub(super) unsafe fn flush(set: *mut LocalSet) {
         let f = (*set).unhandled.remove(0);
         // The deferred node holds a reference; its result is still in the slot.
         node::drop_result_now(f);
+        node::release(f);
+    }
+    while !(*set).rejections.is_empty() {
+        let f = (*set).rejections.remove(0);
+        if node::rejection_unclaimed(f) {
+            // Reports the rejection and ends the process.
+            node::drop_result_now(f);
+        }
         node::release(f);
     }
 }

@@ -1,0 +1,298 @@
+//! The timer order of `setTimeout` / `setInterval` / `setImmediate` (velt_rt's
+//! task/local/order.rs), as Node's event loop runs them: one list per delay, in insertion order,
+//! the lists by (expiry, list id). The executor asks for the next phase ([`fire_phase`]) once
+//! the callbacks of the last one have taken their turns: a timers pass fires, list by list, every
+//! timer due by the `now` it read (a list whose next timer is not due yet waits for it with a new
+//! id); the check phase that follows fires the immediates created so far (`setImmediate`, delay
+//! 0). One thread runs everything here: firing a timer wakes its task at the back of the ready
+//! queue, so the callbacks run in firing order, each after the microtasks before it.
+
+use std::cell::{Cell, RefCell};
+use std::collections::{BTreeMap, BTreeSet};
+use std::rc::{Rc, Weak};
+use std::task::{Context, Poll, Waker};
+
+use super::executor;
+use super::leaf::new_leaf;
+use super::VeltFut;
+
+/// Whether a timer fired (or was cleared), and whom firing wakes.
+#[derive(Default)]
+struct Slot {
+    fired: Cell<bool>,
+    waker: RefCell<Option<Waker>>,
+    /// Fired by a phase whose turn is not taken yet ([`RUNNING`]).
+    counted: Cell<bool>,
+}
+
+impl Drop for Slot {
+    fn drop(&mut self) {
+        // A turn that never completes (its task was dropped) does not hold the loop.
+        if self.counted.get() {
+            RUNNING.with(|r| r.set(r.get() - 1));
+        }
+    }
+}
+
+impl Slot {
+    fn fire(&self) {
+        self.fired.set(true);
+        if let Some(w) = self.waker.borrow_mut().take() {
+            executor::wake_last(w);
+        }
+    }
+}
+
+/// A queued timer: when it was inserted, and its slot.
+struct Entry {
+    start: u64,
+    slot: Weak<Slot>,
+}
+
+struct List {
+    key: (u64, u64),
+    timers: BTreeMap<u64, Entry>,
+}
+
+#[derive(Default)]
+struct Lists {
+    by_ms: BTreeMap<u64, List>,
+    /// The immediates, in creation order.
+    immediates: BTreeMap<u64, Weak<Slot>>,
+    /// The lists by (expiry, id), with their delay.
+    order: BTreeSet<((u64, u64), u64)>,
+    seq: u64,
+    ids: u64,
+    /// The check phase comes next (a timers pass ran last).
+    check_next: bool,
+}
+
+thread_local! {
+    static LISTS: RefCell<Lists> = RefCell::new(Lists::default());
+    /// Timers the last phase fired whose turns are not taken yet: the next phase waits for them.
+    static RUNNING: Cell<usize> = const { Cell::new(0) };
+}
+
+/// The clock in whole milliseconds, one more: a timer is due once the clock (in whole
+/// milliseconds) reached its start plus its delay, so at least the delay after it was created.
+fn start_now() -> u64 {
+    crate::platform::monotonic_ms().floor() as u64 + 1
+}
+
+impl Lists {
+    fn insert(&mut self, ms: u64, start: u64, slot: &Rc<Slot>) -> (u64, u64) {
+        if ms == 0 {
+            self.seq += 1;
+            self.immediates.insert(self.seq, Rc::downgrade(slot));
+            return (0, self.seq);
+        }
+        let ids = &mut self.ids;
+        let order = &mut self.order;
+        let list = self.by_ms.entry(ms).or_insert_with(|| {
+            *ids += 1;
+            let key = (start.saturating_add(ms), *ids);
+            order.insert((key, ms));
+            List {
+                key,
+                timers: BTreeMap::new(),
+            }
+        });
+        self.seq += 1;
+        list.timers.insert(
+            self.seq,
+            Entry {
+                start,
+                slot: Rc::downgrade(slot),
+            },
+        );
+        (ms, self.seq)
+    }
+
+    fn remove(&mut self, (ms, seq): (u64, u64)) {
+        if ms == 0 {
+            self.immediates.remove(&seq);
+            return;
+        }
+        let Some(list) = self.by_ms.get_mut(&ms) else {
+            return;
+        };
+        if list.timers.remove(&seq).is_some() && list.timers.is_empty() {
+            self.order.remove(&(list.key, ms));
+            self.by_ms.remove(&ms);
+        }
+    }
+}
+
+/// When the next phase is due (whole milliseconds; 0: now), if there is one and the callbacks
+/// of the last one took their turns.
+pub(super) fn first_expiry() -> Option<f64> {
+    if RUNNING.with(Cell::get) > 0 {
+        return None;
+    }
+    LISTS.with(|l| {
+        let l = l.borrow();
+        // Immediates: a timers pass (maybe with nothing due) and the check phase, now.
+        if !l.immediates.is_empty() {
+            return Some(0.0);
+        }
+        l.order.first().map(|((e, _), _)| *e as f64)
+    })
+}
+
+impl Lists {
+    /// A timers pass at `now`: the due timers of every list due by then, list by list.
+    fn pass(&mut self, now: u64, fired: &mut Vec<Weak<Slot>>) {
+        while let Some(&((expiry, _), ms)) = self.order.first() {
+            if expiry > now {
+                return;
+            }
+            let list = self
+                .by_ms
+                .get_mut(&ms)
+                .expect("ICE: a timer list in the order");
+            let mut rekeyed = false;
+            while let Some(e) = list.timers.first_entry() {
+                let due = e.get().start.saturating_add(ms);
+                if due > now {
+                    self.ids += 1;
+                    let key = (due.max(now + 1), self.ids);
+                    self.order.remove(&(list.key, ms));
+                    list.key = key;
+                    self.order.insert((key, ms));
+                    rekeyed = true;
+                    break;
+                }
+                fired.push(e.remove().slot);
+            }
+            if !rekeyed {
+                let key = list.key;
+                self.by_ms.remove(&ms);
+                self.order.remove(&(key, ms));
+            }
+        }
+    }
+}
+
+/// The next phase of the loop at `now`, once the callbacks of the last one took their turns: a
+/// timers pass, then the check phase (the immediates created so far). False if nothing fired.
+pub(super) fn fire_phase(now: f64) -> bool {
+    if RUNNING.with(Cell::get) > 0 {
+        return false;
+    }
+    let now = now.floor() as u64;
+    let mut fired = Vec::new();
+    LISTS.with(|l| {
+        let mut l = l.borrow_mut();
+        for _ in 0..2 {
+            if std::mem::take(&mut l.check_next) {
+                fired.extend(std::mem::take(&mut l.immediates).into_values());
+            } else {
+                l.pass(now, &mut fired);
+                l.check_next = true;
+            }
+            if !fired.is_empty() {
+                return;
+            }
+        }
+    });
+    let slots: Vec<Rc<Slot>> = fired.into_iter().filter_map(|s| s.upgrade()).collect();
+    RUNNING.with(|r| r.set(r.get() + slots.len()));
+    // Woken outside the borrow: a waker may run nothing here, but stays clear of the lists.
+    for s in &slots {
+        s.counted.set(true);
+        s.fire();
+    }
+    !slots.is_empty()
+}
+
+/// A timer's place in the order and its slot (replaced for an interval's next run).
+struct Handle {
+    key: Option<(u64, u64)>,
+    slot: Rc<Slot>,
+    /// The clock when its turn last completed: an interval's next run counts from there.
+    ran: Option<u64>,
+}
+
+fn queue(ms: i64, start: u64) -> (Option<(u64, u64)>, Rc<Slot>) {
+    let slot = Rc::new(Slot::default());
+    let key = LISTS.with(|l| l.borrow_mut().insert(ms.max(0) as u64, start, &slot));
+    (Some(key), slot)
+}
+
+/// `velt_rt_timer_new`: a timer due `ms` milliseconds from now.
+#[no_mangle]
+pub extern "C" fn velt_rt_timer_new(ms: i64) -> u64 {
+    let (key, slot) = queue(ms, start_now());
+    Box::into_raw(Box::new(Handle {
+        key,
+        slot,
+        ran: None,
+    })) as u64
+}
+
+/// `velt_rt_timer_again`: the timer is due again `ms` milliseconds after its last turn.
+///
+/// # Safety
+/// `h` is a live handle from [`velt_rt_timer_new`].
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_timer_again(h: u64, ms: i64) {
+    let h = &mut *(h as *mut Handle);
+    if let Some(k) = h.key.take() {
+        LISTS.with(|l| l.borrow_mut().remove(k));
+    }
+    let (key, slot) = queue(ms, h.ran.unwrap_or_else(start_now));
+    h.key = key;
+    h.slot = slot;
+}
+
+/// `velt_rt_timer_clear`: out of the order; its turn completes at once.
+///
+/// # Safety
+/// `h` is a live handle from [`velt_rt_timer_new`].
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_timer_clear(h: u64) {
+    let h = &mut *(h as *mut Handle);
+    if let Some(k) = h.key.take() {
+        LISTS.with(|l| l.borrow_mut().remove(k));
+        h.slot.fire();
+    }
+}
+
+/// `velt_rt_timer_free`: out of the order; frees the handle.
+///
+/// # Safety
+/// `h` is a live handle from [`velt_rt_timer_new`], not used afterwards.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_timer_free(h: u64) {
+    let h = Box::from_raw(h as *mut Handle);
+    if let Some(k) = h.key {
+        LISTS.with(|l| l.borrow_mut().remove(k));
+    }
+}
+
+/// `velt_rt_timer_turn`: ready once a timers pass fired the timer (no gate is needed on one
+/// thread: velt_rt_task_gate).
+///
+/// # Safety
+/// `h` is a live handle from [`velt_rt_timer_new`] that outlives the future.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_timer_turn(h: u64, _gate: u64) -> *mut VeltFut {
+    super::local::mark_starting_timer();
+    let h = h as *mut Handle;
+    let slot = (*h).slot.clone();
+    new_leaf(move |cx: &mut Context<'_>| {
+        if slot.fired.get() {
+            // SAFETY: the handle outlives the turn.
+            let h = unsafe { &mut *h };
+            // Fired: out of the order. Node reads the clock just before an interval's callback.
+            if slot.counted.replace(false) {
+                RUNNING.with(|r| r.set(r.get() - 1));
+            }
+            h.key = None;
+            h.ran = Some(start_now());
+            return Poll::Ready(());
+        }
+        *slot.waker.borrow_mut() = Some(cx.waker().clone());
+        Poll::Pending
+    })
+}

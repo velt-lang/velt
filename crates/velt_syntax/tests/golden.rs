@@ -38,6 +38,7 @@ fn golden_m1_files_parse() {
                 | "type_param_defaults_required.vlt"
                 | "class_expression_named.vlt"
                 | "for_in_outer_variable.vlt"
+                | "destructuring_computed_key_expr.vlt"
                 | "overloads_missing_impl.vlt"
                 | "overloads_declarations.vlt"
                 | "object_literal_accessors.vlt"

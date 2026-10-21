@@ -1,0 +1,73 @@
+// check: no leaks
+// Patterns nested under a tuple element: numeric keys, `length`, defaults and an object rest
+// inside an element are taken apart from that element, in declarations, parameters, `for...of`
+// and assignments; `length` of a tuple is its arity. Expected output: Node's.
+const t: [number, string[]] = [1, ["ab"]];
+const [i, { 0: c }] = t;
+console.log(i, c);
+
+const t2: [number, [string, number]] = [1, ["x", 2]];
+const { 1: { 0: c2 } } = t2;
+console.log(c2);
+
+function f([i, { 0: c }]: [number, string[]]): string {
+  return `${i}${c}`;
+}
+console.log(f([3, ["q"]]));
+
+const xs: string[][] = [["a", "b"], ["c"]];
+for (const [i, { 0: c, length }] of xs.entries()) {
+  console.log(i, c, length);
+}
+
+const map = new Map<string, string[]>([["k", ["v", "w"]]]);
+for (const [k, { 0: v }] of map) {
+  console.log(k, v);
+}
+
+type O = { a?: number; b: string };
+const t3: [number, O] = [1, { b: "x" }];
+const [n3, { a = 5, ...others }] = t3;
+console.log(n3, a, others);
+
+const t4: [number, O, O] = [2, { a: 1, b: "y" }, { b: "z" }];
+const [, { a: p = 9 }, { a: q = 8, b }] = t4;
+console.log(p, q, b);
+
+const t6: [number, { a?: number }] = [1, {}];
+const [i6, { a: a6 = 5 }] = t6;
+console.log(i6, a6);
+
+function g([i, { a = 7 }]: [number, { a?: number }]): number {
+  return i + a;
+}
+console.log(g([1, {}]), g([1, { a: 1 }]));
+
+const pairs: [number, { a?: number }][] = [[1, {}], [2, { a: 3 }]];
+for (const [i, { a = 4 }] of pairs) {
+  console.log(i, a);
+}
+
+let x = 0;
+let y = 0;
+[x, { a: y = 6 }] = t3;
+console.log(x, y);
+
+const t5: [number, number[]] = [1, []];
+const [, { 0: z = 11 }] = t5;
+console.log(z);
+
+function lengths(): void {
+  const s: [number, string] = [1, "s"];
+  const { length: n } = s;
+  const { 0: first, length } = s;
+  const { length: m = 9 } = s;
+  console.log(n, first, length, m, arity([true, 1, "x"]));
+}
+function arity({ length: k }: [boolean, number, string]): number {
+  return k * 2;
+}
+lengths();
+for (const { 1: s1, length: l } of [[1, "p"]] as [number, string][]) {
+  console.log(s1, l);
+}

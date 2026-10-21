@@ -1,0 +1,6 @@
+{ mode: 'x' }
+{ mode: 'a', depth: 3 }
+{ depth: 1 }
+{ c: true } { a: 1, b: 'two', c: true } {"c":true} {"a":1,"b":"two","c":true} [ 'c' ]
+1 true
+{ z: 1 } { a: 2, b: 'x', z: 1 }

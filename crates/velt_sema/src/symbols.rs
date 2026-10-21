@@ -227,8 +227,11 @@ impl Ctx<'_> {
                 None => Err(inner.to_string()),
             };
         }
+        // A module `let` may hold another string by the time the key is read: never a fixed
+        // member.
         match self
             .global(d)
+            .filter(|g| !g.mutable)
             .and_then(|g| g.src.init)
             .and_then(literal_text)
         {

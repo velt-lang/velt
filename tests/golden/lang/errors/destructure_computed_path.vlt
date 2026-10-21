@@ -1,6 +1,6 @@
 // A destructuring pattern's computed key must be a string or number literal or a name: a path
-// or another expression (`[t.tag]`, `[K.A]`, `["a" + "b"]`) names a property only known while the
-// program runs, so read it with an index instead (`const v = o[t.tag]`).
+// or another expression (`[t.tag]`, `[K.A]`, `["a" + "b"]`) is reported; store the key in a
+// variable first (`const k = t.tag; const { [k]: v } = o`).
 
 const K = { A: "a" } as const;
 

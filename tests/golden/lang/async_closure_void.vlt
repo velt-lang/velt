@@ -4,7 +4,8 @@
 // an arrow is typed by the member that fits: a sync arrow by the void one (the only member it
 // fits here), an async arrow by the promise one.
 
-import { delay } from "velt:timers";
+// The two promises wait on channels, not timers, so the order holds on a loaded machine (#909).
+import { channel } from "velt:channel";
 
 type Attrs = { id: string; onClick?: () => void };
 
@@ -34,22 +35,27 @@ function kind(h: Handler | null): string {
 
 async function main() {
   let count = 0.0;
+  const fired = channel<bool>(1);
+  const firedRx = fired.clone();
+  const done = channel<bool>(1);
+  const doneTx = done.clone();
   click({ id: "sync", onClick: () => count++ });
   click({
     id: "async",
     onClick: async () => {
-      // Far apart: timers only a few ms apart can fire on the same tick, in either order, on
-      // Windows (whose timer tick is about 15.6 ms).
-      await delay(60);
+      // Finishes after the `fire` callback below.
+      await firedRx.receive();
       console.log("async onClick finished");
+      await doneTx.send(true);
     },
   });
   fire(async () => {
-    await delay(1);
+    await yieldNow();
     console.log("async fire finished");
+    await fired.send(true);
   });
   console.log(kind(() => count++), kind(async () => {}), kind(null));
   console.log(`count ${count}`);
-  await delay(150);
+  await done.receive();
   console.log("done");
 }

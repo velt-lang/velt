@@ -245,10 +245,36 @@ fn for_in_is_a_loop_over_object_keys() {
     ));
 }
 
+/// `for (k in o)` / `for (x of xs)` over a target declared elsewhere: a loop over a hidden
+/// `const` whose body first assigns it to the target.
+#[test]
+fn for_in_and_of_take_targets() {
+    for src in [
+        "function f() { for (k in o) {} }",
+        "function f() { for ([a, b] of xs) {} }",
+        "function f() { for (x.y in o) {} }",
+    ] {
+        let m = parse_ok(src);
+        let StmtKind::ForOf { pattern, body, .. } = &body(&m)[0].kind else {
+            panic!("{src}")
+        };
+        assert!(
+            matches!(&pattern.kind, PatternKind::Ident(i) if i.name == velt_syntax::FOR_TARGET)
+        );
+        assert!(matches!(
+            &body.stmts[0].kind,
+            StmtKind::Expr(Expr {
+                kind: ExprKind::Assign { op: None, .. },
+                ..
+            })
+        ));
+    }
+    let errs = errors("function f() { for (a, b of xs) {} }");
+    assert!(errs[0].contains("one loop variable or target"), "{errs:?}");
+}
+
 #[test]
 fn for_in_needs_a_declared_name() {
-    let errs = errors("function f() { for (k in o) {} }");
-    assert!(errs[0].contains("require `const` or `let`"), "{errs:?}");
     let errs = errors("function f() { for (const [a, b] in o) {} }");
     assert!(errs[0].contains("a single name"), "{errs:?}");
     let errs = errors("async function f() { for await (const k in o) {} }");
@@ -264,6 +290,4 @@ fn in_operator_with_string_keys() {
     parse_ok(
         r#"function f() { const t = "a" in o && !("b" in o); const u = "c" in o ? 1 : 2; for (let i = 0; "a" in o; i++) {} for (x = ("a" in o); ;) {} for (g = () => { return "a" in o; }; ;) {} for (x = id("a" in o); x; x = false) {} for (s = `${"a" in o}`; ;) {} for (y = true ? "a" in o ? 1 : 2 : 3; ;) {} for (z = ["a" in o, { b: "a" in o }][r["a" in o ? 0 : 1]]; ;) {} }"#,
     );
-    let errs = errors("function f() { for (x.y in o) {} }");
-    assert!(errs[0].contains("require `const` or `let`"), "{errs:?}");
 }

@@ -301,6 +301,21 @@ impl<'a> Parser<'a> {
     fn parse_elems_in(&mut self, close: Tok) -> PResult<Vec<Expr>> {
         let mut out = Vec::new();
         while !self.at(close) {
+            // A hole of an array literal (`[a, , b]`): an identifier with no name
+            // (`crate::ARRAY_HOLE`), which prints as nothing.
+            if close == Tok::RBracket && self.at(Tok::Comma) {
+                let at = self.cur_lo();
+                let id = Ident {
+                    name: crate::ARRAY_HOLE.into(),
+                    span: velt_common::Span::new(self.file, at, at),
+                };
+                out.push(self.mk_expr(
+                    ExprKind::Ident(id),
+                    velt_common::Span::new(self.file, at, at),
+                ));
+                self.bump();
+                continue;
+            }
             out.push(self.parse_elem()?);
             if !self.eat(Tok::Comma) {
                 break;

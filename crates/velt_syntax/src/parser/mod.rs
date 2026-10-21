@@ -583,41 +583,18 @@ impl<'a> Parser<'a> {
         self.parse_prop_key_with(true)
     }
 
-    /// A key in a destructuring pattern: [`Self::parse_prop_key`] without paths (`{ [t.tag]: v }`
-    /// is reported; `{ [KEY]: v }` is a name sema resolves).
+    /// A key in a destructuring pattern: a computed key other than a symbol key (`[k]`,
+    /// `["a"]`, `[1.5]`, `[-1]`; `parse_pattern_computed_key`), a number (`1.5`, through
+    /// `number_key`), or [`Self::parse_prop_key`]'s.
     fn parse_pattern_key(&mut self) -> PResult<Ident> {
-        self.parse_prop_key_with(false)
+        match self.peek() {
+            Tok::LBracket if !self.at_symbol_key() => self.parse_pattern_computed_key(),
+            Tok::Int(_) | Tok::Float(_) => self.parse_number_name(),
+            _ => self.parse_prop_key(),
+        }
     }
 
     fn parse_prop_key_with(&mut self, paths: bool) -> PResult<Ident> {
-        // A pattern takes a literal key or a name (`[KEY]`, which sema resolves); a path or
-        // another expression (`[t.tag]`, `[K.A]`) is reported.
-        if !paths && self.at(Tok::LBracket) && self.member_key_len(0, false) == 0 {
-            let span = self.cur_span();
-            self.error(
-                "a computed key in a destructuring pattern must be a string or number literal or a name (`{ [\"k\"]: v }`, `{ [KEY]: v }`): read the property with an index instead (`const v = o[t.tag]`)",
-                span,
-            );
-            // Past the key's `]`, so the rest of the pattern is still checked.
-            let mut depth = 0u32;
-            loop {
-                match self.peek() {
-                    Tok::Eof => break,
-                    Tok::LBracket | Tok::LParen | Tok::LBrace => depth += 1,
-                    Tok::RBracket if depth == 1 => {
-                        self.bump();
-                        break;
-                    }
-                    Tok::RBracket | Tok::RParen | Tok::RBrace => depth = depth.saturating_sub(1),
-                    _ => {}
-                }
-                self.bump();
-            }
-            return Ok(Ident {
-                name: String::new(),
-                span,
-            });
-        }
         if self.at_inline_symbol_key() {
             return Err(self.reject_inline_symbol_key());
         }

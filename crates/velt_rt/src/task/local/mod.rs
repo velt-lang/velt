@@ -17,6 +17,7 @@ mod losers;
 mod micro;
 mod module_state;
 mod node;
+mod order;
 mod set;
 mod timers;
 mod unhandled;
@@ -31,6 +32,7 @@ pub(crate) use module_state::{
     release_outside as module_release_outside,
 };
 pub use module_state::{velt_rt_module_ready, velt_rt_module_state};
+pub use order::{velt_rt_timer_again, velt_rt_timer_free, velt_rt_timer_new, velt_rt_timer_turn};
 pub(crate) use timers::TimerLeaf;
 pub use unhandled::velt_rt_unhandled_defer;
 
@@ -248,7 +250,7 @@ impl SetPtr {
             });
         }
         // Rejections nobody handles, reported once the queue is drained (unhandled.rs).
-        if !self.0.is_null() && !(*self.0).unhandled.is_empty() {
+        if !self.0.is_null() && unhandled::waiting(self.0) {
             unhandled::flush(self.0);
         }
         // The poll is over: timers this task created may run their callbacks (gate.rs).
@@ -336,15 +338,31 @@ impl Locals {
 }
 
 /// Local promises that outlived their task's root: driven to completion by a task of their own,
-/// which keeps the process alive meanwhile.
+/// which keeps the process alive meanwhile, unless only timers are left (a ref'd timer keeps it
+/// alive by itself, an `unref()`'d one must not).
 struct Orphan {
     set: SetPtr,
+    /// Holds a keep-alive reference.
+    held: bool,
 }
 
 impl Orphan {
     fn spawn(set: SetPtr) {
-        super::runtime::keep_alive_acquire();
-        super::runtime::spawn(Orphan { set });
+        let mut o = Orphan { set, held: false };
+        o.hold();
+        super::runtime::spawn(o);
+    }
+
+    /// Holds a keep-alive reference while promises other than timers are unfinished.
+    fn hold(&mut self) {
+        // SAFETY: null or a live set owned by `self`.
+        let want = unsafe { self.set.0.as_ref() }.is_some_and(LocalSet::has_work);
+        if want && !self.held {
+            super::runtime::keep_alive_acquire();
+        } else if !want && self.held {
+            super::runtime::keep_alive_release();
+        }
+        self.held = want;
     }
 }
 
@@ -359,6 +377,7 @@ impl Future for Orphan {
         if this.set.is_idle() {
             Poll::Ready(())
         } else {
+            this.hold();
             Poll::Pending
         }
     }
@@ -367,7 +386,9 @@ impl Future for Orphan {
 impl Drop for Orphan {
     fn drop(&mut self) {
         drop(std::mem::replace(&mut self.set, SetPtr::NONE));
-        super::runtime::keep_alive_release();
+        if self.held {
+            super::runtime::keep_alive_release();
+        }
     }
 }
 
@@ -397,6 +418,21 @@ pub unsafe extern "C" fn velt_rt_fut_box(
 /// runs when it is awaited or spawned).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_fut_start(f: *mut VeltFut, result_drop: Option<ResultDropFn>) {
+    start(f, result_drop, false);
+}
+
+/// [`velt_rt_fut_start`] for a promise that can reject (its result is a `Result`, tag first): a
+/// rejection its owner has not claimed by the next microtask checkpoint is reported as uncaught
+/// then, as in Node (unhandled.rs).
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_fut_start_rejecting(
+    f: *mut VeltFut,
+    result_drop: Option<ResultDropFn>,
+) {
+    start(f, result_drop, true);
+}
+
+unsafe fn start(f: *mut VeltFut, result_drop: Option<ResultDropFn>, rejecting: bool) {
     if !node::is_lazy(f) {
         return;
     }
@@ -407,11 +443,18 @@ pub unsafe extern "C" fn velt_rt_fut_start(f: *mut VeltFut, result_drop: Option<
     let set = task_set(&*tcx);
     node::stamp(f, (*tcx).turn);
     node::mark_started(f, &(*set).shared, result_drop);
+    if rejecting {
+        node::mark_rejectable(f);
+    }
     // The creator goes on after this first run, so the run's `await`s take their steps through
     // the queue (micro.rs).
     let t = &*tcx;
     micro::sync_enter(t);
+    // The credit of a waiter being resumed (micro.rs) is its own step: not one of the promise
+    // it starts, whose `await`s take steps of their own.
+    let credit = t.credit.replace(false);
     let finished = node::poll_first(f, t.word.as_ptr());
+    t.credit.set(credit);
     micro::sync_exit(t);
     if finished {
         // Finished before its first suspension: nobody awaits it yet, nothing to resume.

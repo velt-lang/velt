@@ -39,6 +39,18 @@ pub fn free_values<'a>(
     })
 }
 
+/// The identifiers of expression `e` (an arrow function, say) that name a value nothing inside
+/// `e` declares, as [`free_values`] finds them: the names `e` takes from its surroundings.
+pub fn free_in_expr(e: &Expr) -> Vec<&Ident> {
+    let mut w = Walker {
+        wanted: &|_| true,
+        scopes: vec![],
+        out: vec![],
+    };
+    w.expr(e);
+    w.out
+}
+
 struct Walker<'a, 'w> {
     wanted: &'w (dyn Fn(&str) -> bool + Sync),
     /// The wanted names each enclosing scope declares, innermost last.
@@ -534,7 +546,7 @@ impl<'a> Walker<'a, '_> {
 
 #[cfg(test)]
 mod tests {
-    use super::free_values;
+    use super::{free_in_expr, free_values};
     use crate::parse_ts_file;
     use velt_common::FileId;
 
@@ -623,5 +635,22 @@ mod tests {
         // A sibling scope's declaration does not hide it.
         let src = "function f(): void { const __DEV__ = 1; }\nfunction g(): boolean { return __DEV__; }\n";
         assert_eq!(free(src), [at(src, "__DEV__; }")]);
+    }
+
+    /// An arrow's free names: what it uses from around it, not its parameters or the locals
+    /// it or an arrow nested in it declares, wherever they are used before their declaration
+    /// in a sibling block.
+    #[test]
+    fn free_names_of_an_arrow() {
+        let src = "const f = (x) => { const u = a; { const b = 1; } \
+                   const g = (y) => { const v = b + y + u; return { c, d: v }; }; return x; };\n";
+        let (module, diags) = parse_ts_file(FileId(0), src);
+        assert!(diags.is_empty(), "{diags:?}");
+        let crate::ast::ItemKind::Var(v) = &module.items[0].kind else {
+            panic!("not a const: {:?}", module.items[0]);
+        };
+        let arrow = v.init.as_ref().expect("an initializer");
+        let names: Vec<&str> = free_in_expr(arrow).iter().map(|id| &id.name[..]).collect();
+        assert_eq!(names, ["a", "b", "c"]);
     }
 }

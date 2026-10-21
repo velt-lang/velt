@@ -1,6 +1,6 @@
-// `"k" in o` on an optional `any` field the program also stores a dynamic value in (which
-// may hold `undefined`, a key Node finds) is the #930 error: Velt keeps the field as its value
-// or nothing, so the test would answer `false`.
+// check: no leaks
+// `"k" in o` on an optional `any` field holding `undefined` (given in a literal, from a dynamic
+// value, or written later) finds the key, as Node does: the field keeps a presence flag (#1319).
 interface Cell { value: number; extra?: any }
 function has(x: Cell | null): boolean { return !!x && "extra" in x; }
 function main() {
