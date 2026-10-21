@@ -119,12 +119,10 @@ pub enum TyOp {
     /// A generic type alias (sema's alias #n) whose body (a conditional, mapped, indexed access
     /// or template literal type) needs its arguments, applied to the `Op`'s arguments.
     Alias(u32),
-    /// `A & B & …` with a part that is a type parameter or another deferred type (`T & { $set:
-    /// (v: T) => void }`, #350): the `Op`'s arguments are the parts in written order, and it
-    /// reduces to the object type `crate::intersections` builds from them.
+    /// `A & B & …` with a type parameter or deferred part (`T & { $set: (v: T) => void }`, #350):
+    /// the parts in written order; it reduces to the object type `crate::intersections` builds.
     Intersect,
-    /// Sema's error-set variable of site #n (hir_encodings.md); never reaches lowering.
-    ErrSite(u32),
+    ErrSite(u32), // sema's error-set variable of site #n (hir_encodings.md), never lowered
 }
 
 /// The value of a literal type.
