@@ -54,7 +54,7 @@ pub(crate) fn rwlock_made() {
 /// A promise or task starts: in read mode it stops the program. What it holds would outlive
 /// the callback without leaving through its result, so objects the callback made (counted by
 /// read mode's rules) or shares with the store could reach other threads and writers.
-#[inline]
+#[inline(always)]
 pub(crate) fn refuse_tasks_in_read() {
     if RWLOCKS.load(Ordering::Relaxed) && in_read() {
         tasks_in_read();
@@ -73,7 +73,7 @@ fn tasks_in_read() -> ! {
 pub(crate) fn refuse_in_read(method: &str) {
     if in_read() {
         crate::panic::fatal(&format!(
-            "`{method}` cannot run inside a `read` callback: the callback shares the `RwLock`'s value with other readers without counting it, which `{method}` could not tell from what it changes (return what you need from `read` and lock after it)"
+            "`{method}` cannot run inside a `read` callback, nor what locks (a promise's resolver, clearing a timer): the callback shares the `RwLock`'s value with other readers without counting it, which `{method}` could not tell from what it changes (return what you need from `read` and lock, resolve or clear after it)"
         ));
     }
 }

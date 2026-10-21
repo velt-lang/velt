@@ -277,7 +277,6 @@ pub unsafe extern "C" fn velt_rt_spawn(
     result_size: u64,
     result_drop: Option<ResultDropFn>,
 ) -> *mut VeltFut {
-    crate::read_mode::refuse_tasks_in_read();
     velt_rt_spawn_transfer(
         poll,
         drop,

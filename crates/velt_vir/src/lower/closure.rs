@@ -120,12 +120,17 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let ca = self.cx.closure_agg();
         let in_frame = self.frame_closures.contains(&def);
         // The read mode its code runs in: the literal a `with` / `write` (outside read mode) or
-        // `read` (in it) is about to call runs only there; one only borrowed by a call, or only
-        // called here, runs during this function, in its mode; any other closure may run
-        // anywhere.
+        // `read` (in it) is about to call runs only there; one only called here runs in this
+        // function's mode; one a call borrows runs during the call, but the callee may call it
+        // in a `read` callback, so plain code's asks (in a program with a lock set); any other
+        // closure may run anywhere.
         let mode = match std::mem::take(&mut self.lock_callback) {
             Some((d, m)) if d == def => m,
-            _ if borrowed || in_frame => self.mode,
+            _ if in_frame && !borrowed => self.mode,
+            _ if borrowed || in_frame => match self.mode {
+                LkMode::Plain if self.cx.has_lock_set() => LkMode::Checked,
+                m => m,
+            },
             _ => LkMode::Checked,
         };
         if f.captures.is_empty() {

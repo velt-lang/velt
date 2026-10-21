@@ -538,8 +538,8 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
   runs it alone, exactly as `with` does (a writer that has waited a while holds new readers
   back, so writers don't starve). While nobody writes, readers on different threads touch no
   memory they share, so reads scale with the cores; while writes come often, readers still run
-  at once between writes, and an `RwLock` is faster than a `Mutex` (its waiters back off, so
-  short callbacks run several in a row).
+  at once between writes. With several tasks reading it is usually faster than a `Mutex`; on
+  one task, or with tiny callbacks and rare writes on many, a `Mutex` can be faster (#1395).
   Both follow `with`'s rules below (synchronous, results leave the lock as copies of what the
   value holds). A `read` callback cannot change the value: one that may (it assigns to it, or
   passes it to a function that changes it) is an error ("the function passed to `read` modifies
@@ -550,11 +550,14 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
   `RwLock` holds inside its `read` callback …``). What a `read` returns is a copy of what it
   shares with the value (an element, a `slice()`, a `Map.get`), never the value's object
   itself. A `read` callback cannot lock anything else exclusively: a `with` or `write` in it is
-  an error, and one it reaches through a function it calls stops the program (the callback
-  shares the value without counting it, which the inner callback could not tell from what it
-  changes); return what you need and lock after `read`, or count with a `shared<i64>`
-  (`.add(n)`). Nor can it start a promise or task, which would outlive it (that stops the
-  program too). Reads of other `RwLock`s nest freely, in any order. A value that holds function
+  an error (for every `RwLock`, also one whose `read` takes the lock exclusively), and one it
+  reaches through a function it calls, a function value or what locks inside std (a promise's
+  resolver, clearing a timer) stops the program: the callback shares the value without
+  counting it, which the inner callback could not tell from what it changes. Return what you
+  need and lock after `read`, or count with a `shared<i64>` (`.add(n)`). Nor can it start a
+  promise or task, which would outlive it (that stops the program too). A function value the
+  callback calls is checked as it runs (a write to the value through it stops the program).
+  Reads of other `RwLock`s nest, in any order. A value that holds function
   or interface values, objects of a class hierarchy, weak references or promises is read under
   the exclusive lock instead.
 

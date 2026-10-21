@@ -5,7 +5,7 @@
 //! All operate on memory owned by generated code (a refcount word, an `i64` cell, an 8-byte lock
 //! word inside the shared object), so none of them allocates.
 
-use lock_api::{RawMutex as _, RawRwLock as _};
+use lock_api::{RawMutex as _, RawRwLock as _, RawRwLockRecursive as _};
 use parking_lot::{RawMutex, RawRwLock};
 use std::sync::atomic::{fence, AtomicI64, AtomicU64, Ordering};
 
@@ -281,7 +281,7 @@ unsafe fn read_nested(p: *mut u64, reader: u64) -> u64 {
 unsafe fn read_waiting(p: *mut u64, reader: u64) -> u64 {
     let r = &*(reader as *const crate::hazard::Reader);
     let w = &*(p as *const Words);
-    lock_slow(&w.lock, true);
+    lock_slow(&w.lock, Take::Shared);
     r.read_depth.set(1);
     r.holds.set(p as usize);
     look(r, w);
@@ -336,7 +336,16 @@ fn took(r: &crate::hazard::Reader, p: *mut u64) -> u8 {
 /// 0.5 µs) to 4096 (about 35 µs), about 0.7 ms in all.
 const BACKOFF_ROUNDS: u32 = 24;
 
-/// `lock` is busy: wait for it (`shared`: as a reader), backing off. A waiter that tries the
+/// How `lock_slow` takes the lock.
+#[derive(Clone, Copy)]
+enum Take {
+    Shared,
+    /// Shared, past waiting writers (a read nested in another, `read_slow`).
+    Nested,
+    Exclusive,
+}
+
+/// `lock` is busy: wait for it (as `take` says), backing off. A waiter that tries the
 /// lock takes its cache line from the holder; one that rarely tries lets the holder lock it
 /// again where it is, so short callbacks taking turns run several in a row (Anderson's
 /// exponential backoff), more than `Mutex` (whose waiters look often) gets through. Each round
@@ -344,23 +353,25 @@ const BACKOFF_ROUNDS: u32 = 24;
 /// parking_lot does (a writer blocking there holds new readers back).
 #[cold]
 #[inline(never)]
-fn lock_slow(lock: &RawRwLock, shared: bool) {
+fn lock_slow(lock: &RawRwLock, take: Take) {
     for i in 0..BACKOFF_ROUNDS {
         for _ in 0..1u32 << (i + 6).min(12) {
             std::hint::spin_loop();
         }
         std::thread::yield_now();
-        let took = match shared {
-            true => lock.try_lock_shared(),
-            false => lock.try_lock_exclusive(),
+        let took = match take {
+            Take::Shared => lock.try_lock_shared(),
+            Take::Nested => lock.try_lock_shared_recursive(),
+            Take::Exclusive => lock.try_lock_exclusive(),
         };
         if took {
             return;
         }
     }
-    match shared {
-        true => lock.lock_shared(),
-        false => lock.lock_exclusive(),
+    match take {
+        Take::Shared => lock.lock_shared(),
+        Take::Nested => lock.lock_shared_recursive(),
+        Take::Exclusive => lock.lock_exclusive(),
     }
 }
 
@@ -400,8 +411,11 @@ fn read_slow(r: &crate::hazard::Reader, p: *mut u64, w: &Words) -> u8 {
         s.store(std::ptr::null_mut(), Ordering::Release);
         r.leave();
     }
-    if !w.lock.try_lock_shared() {
-        lock_slow(&w.lock, true);
+    // A read nested in another takes the lock past a waiting writer, as a recursive read
+    // does: a writer waiting for it would wait for this thread's outer read, which another
+    // writer may be holding new readers back on.
+    if !w.lock.try_lock_shared_recursive() {
+        lock_slow(&w.lock, Take::Nested);
     }
     took(r, p)
 }
@@ -492,7 +506,7 @@ pub unsafe extern "C" fn velt_rt_rwlock_write(p: *mut u64, reader: u64) -> u64 {
     }
     let w = &*(p as *const Words);
     if !w.lock.try_lock_exclusive() {
-        lock_slow(&w.lock, false);
+        lock_slow(&w.lock, Take::Exclusive);
     }
     if w.state.load(Ordering::Relaxed) == 0 {
         revoke(p, w);
@@ -626,11 +640,11 @@ mod tests {
         static L: RawRwLock = RawRwLock::INIT;
         L.lock_exclusive();
         let reader = std::thread::spawn(|| {
-            lock_slow(&L, true);
+            lock_slow(&L, Take::Shared);
             unsafe { L.unlock_shared() };
         });
         let writer = std::thread::spawn(|| {
-            lock_slow(&L, false);
+            lock_slow(&L, Take::Exclusive);
             unsafe { L.unlock_exclusive() };
         });
         std::thread::sleep(std::time::Duration::from_millis(2));

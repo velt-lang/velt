@@ -299,9 +299,13 @@ impl FnLower<'_, '_> {
             self.drop_entry(&DropEntry::Local(id));
         } else if info.indirect {
             // Borrowed param written in place (`Mutex.with` callback): the caller's value is
-            // always initialized.
+            // always initialized. In read mode (a variable a `read` callback captured): the
+            // caller made that value, never the store (what a reader stores there is a copy),
+            // so it is released by the counts outside read mode, `LOCAL` or not.
             let p = self.local_place(id);
+            let mode = std::mem::replace(&mut self.mode, super::LkMode::Plain);
             self.drop_glue(p, ty);
+            self.mode = mode;
         }
     }
 
