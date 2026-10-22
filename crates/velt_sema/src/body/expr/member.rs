@@ -335,16 +335,11 @@ impl FnCx<'_, '_> {
             Ok(h) => return h,
             Err(obj) => obj,
         };
-        if let Some(member) = self.cx.record_view_member(obj.ty, &prop.name) {
-            // A required named member next to `[key: string]: any`: its declared type, checked
-            // at run time (an index write may have stored another type, as TypeScript allows).
-            let obj = self.unview(obj);
-            let read = self.record_read(obj, super::record::RecordKey::Name(prop), span);
-            let read = self.collapse_dynamic_option(read);
-            return self.cast_dynamic(read, member);
-        }
+        let obj = match self.record_view_read(obj, prop, span) {
+            Ok(h) => return h,
+            Err(obj) => obj,
+        };
         if self.record_args(obj.ty).is_some() {
-            let obj = self.unview(obj);
             return self.record_read(obj, super::record::RecordKey::Name(prop), span);
         }
         let obj = self.unbrand(obj);

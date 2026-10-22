@@ -144,9 +144,7 @@ impl FnCx<'_, '_> {
         target: TyId,
         parts: &[TyId],
     ) -> Option<(Vec<Fact>, Vec<Fact>)> {
-        if self.cx.union_def(u).is_none() {
-            return None;
-        }
+        self.cx.union_def(u)?;
         let required = self.required_members(target)?;
         if required.is_empty() {
             return None;

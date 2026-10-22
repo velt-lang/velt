@@ -460,7 +460,8 @@ impl FnLower<'_, '_> {
                 // A left-out optional field `q?: T` is JavaScript's `undefined` (its type's own
                 // nothing, whether absent or present).
                 let optional = f.optional;
-                if matches!(self.cx.kind(fty), TyKind::Unit) {
+                let anon = self.cx.adt_def(d).kind == hir::AdtKind::Anon;
+                if anon && matches!(self.cx.kind(fty), TyKind::Unit) {
                     self.void_field_panic(name);
                     self.ret_status(ST_UNSUPPORTED);
                 } else if self.cx.any_boxable(fty) {

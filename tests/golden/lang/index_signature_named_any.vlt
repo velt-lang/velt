@@ -82,3 +82,20 @@ const moved: Labeled = { ...g, label: "z" };
 moved.label = "w";
 console.log(describe(l), describe("s"), g.label, g.extra, byKey.get("k")?.label);
 console.log(label, others, moved.label, moved);
+
+// As a union member, the view asserts to its record (sigx's `mod as Record<string, any>`).
+type Load = () => string;
+interface Module {
+  default: Load;
+  [key: string]: any;
+}
+
+function pick(m: Load | Module): string {
+  if (typeof m === "function") {
+    return m();
+  }
+  const r = m as Record<string, any>;
+  return Object.keys(r).join(",") + ":" + m.default();
+}
+
+console.log(pick(() => "f"), pick({ default: () => "d", x: 1 }));

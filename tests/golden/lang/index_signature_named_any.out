@@ -12,3 +12,4 @@ AB 4
 1
 obj ab str s y [ 1 ] m
 y { n: 1, extra: [ 1 ] } w { label: 'w', n: 1, extra: [ 1 ] }
+f default,x:d

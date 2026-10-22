@@ -24,9 +24,10 @@ impl FnLower<'_, '_> {
         depth: &Operand,
     ) {
         let shown = self.shown_fields(ty);
+        let anon = matches!(self.cx.kind(ty), TyKind::Adt(d, _) if self.cx.adt_def(d).kind == AdtKind::Anon);
         let void = shown
             .iter()
-            .find(|(_, _, t)| matches!(self.cx.kind(*t), TyKind::Unit));
+            .find(|(_, _, t)| anon && matches!(self.cx.kind(*t), TyKind::Unit));
         if let Some((_, n, _)) = void {
             let n = n.clone();
             self.void_field_panic(&n);
@@ -52,7 +53,7 @@ impl FnLower<'_, '_> {
         });
     }
 
-    /// Panic: the object has a field that is `void` after substitution (velt_sema `void_fields`,
+    /// Panic: the object (of an object type) has a field that is `void` after substitution (velt_sema `void_fields`,
     /// #1411), which keeps no value, so what the program wrote to it (`ref: null as any`) can't be
     /// shown as Node shows it. Printing it through a generic or an `any`, or reading the field
     /// through an `any`, stops here rather than showing `undefined`.
