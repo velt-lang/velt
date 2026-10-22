@@ -41,7 +41,11 @@ impl FnCx<'_, '_> {
             match self.cx.field_seen_from(m, &prop.name, owner) {
                 Some((i, fty)) => fields.push((v, m, Some(i), fty)),
                 // An interface member reads the field through its getter slot.
-                None => match self.cx.iface_member(m).and_then(|_| self.cx.member_field_ty(m, &prop.name)) {
+                None => match self
+                    .cx
+                    .iface_member(m)
+                    .and_then(|_| self.cx.member_field_ty(m, &prop.name))
+                {
                     Some(fty) => fields.push((v, m, None, fty)),
                     None => without.push((v, m)),
                 },
@@ -388,7 +392,11 @@ impl FnCx<'_, '_> {
         if let Some((d, _)) = self.cx.iface_member(t) {
             let i = self.cx.iface(d)?;
             let fields = i.fields.iter().map(|f| f.name.clone());
-            return Some(fields.chain(i.methods.iter().map(|m| m.name.clone())).collect());
+            return Some(
+                fields
+                    .chain(i.methods.iter().map(|m| m.name.clone()))
+                    .collect(),
+            );
         }
         let (d, _) = self.adt_of(t)?;
         Some(

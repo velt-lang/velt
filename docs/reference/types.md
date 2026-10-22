@@ -115,7 +115,10 @@ and memory where you want a fixed width; code shared with TypeScript never names
   is checked like `x!`: TypeScript trusts it, Velt panics with `type assertion failed: …` when
   the value is not a `T`. In generic code, `x as T` of an `x: T | undefined` is checked only
   where `T` has no `undefined` of its own: at `T = U | undefined` every value of `x` is a `T`
-  and passes as it is. Other narrowing assertions in generic code are errors.
+  and passes as it is. `u as A` with `A` a member of `u` is checked in generic code too
+  (`mod as Mod<T>` with `mod: T | Mod<T>`); other narrowing assertions there are errors. A
+  tuple asserts element by element (`t as [object, string]` with `t: [any, string | symbol]`),
+  each element converted or checked as it would be alone.
   As in TypeScript, `as` and `satisfies` take a whole type: `x as A | B` is a union and
   `x as A & B` an intersection (a leading `|` may start the type on the next line), so a
   bitwise operator after a cast needs parentheses: `(x as i32) | y`. A number literal after

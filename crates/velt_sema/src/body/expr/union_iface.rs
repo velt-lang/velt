@@ -33,9 +33,10 @@ impl FnCx<'_, '_> {
                 None => return Err(recv),
             }
         }
-        let common = lines[0].iter().copied().find(|&a| {
-            self.declares_method(a, name) && lines[1..].iter().all(|l| l.contains(&a))
-        });
+        let common = lines[0]
+            .iter()
+            .copied()
+            .find(|&a| self.declares_method(a, name) && lines[1..].iter().all(|l| l.contains(&a)));
         if let Some(t) = common {
             return self.union_to_common(recv, t);
         }
@@ -61,7 +62,11 @@ impl FnCx<'_, '_> {
                 i += 1;
                 continue;
             };
-            let parents = self.cx.iface(d).map(|f| f.parents.clone()).unwrap_or_default();
+            let parents = self
+                .cx
+                .iface(d)
+                .map(|f| f.parents.clone())
+                .unwrap_or_default();
             for p in parents {
                 let pargs: Vec<TyId> = p.args.iter().map(|&a| self.cx.subst(a, &args)).collect();
                 let pt = self.cx.ty.intern(TyKind::Dyn(p.iface, pargs));

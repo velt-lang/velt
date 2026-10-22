@@ -1,0 +1,41 @@
+// `as` assertions tsc accepts (#893): a union with a type parameter as one of its members in
+// generic code (sigx's lazy `mod as ModuleWithDefault<T>` of a `T | { default: T }`), at
+// instantiations that are themselves unions, nullable or arrays, and a tuple as a tuple whose
+// elements each assert (sigx's `detected as [object, string]` of an `[any, string | symbol]`).
+interface Mod<T> {
+  default: T;
+}
+
+function pick<T>(mod: T | Mod<T>, isMod: boolean): T {
+  return isMod ? (mod as Mod<T>).default : (mod as T);
+}
+
+function unwrap<T>(mod: T | { default: T }): T {
+  return (mod as { default: T }).default;
+}
+
+function second(detected: [any, string | symbol]): string {
+  const t = detected as [object, string];
+  return t[1];
+}
+
+function parts(): [unknown, unknown] {
+  return [1, "x"];
+}
+
+function demo(): void {
+  console.log(pick<number>({ default: 4 }, true), pick<number>(5, false));
+  console.log(pick<string | number>({ default: "a" }, true), pick<string | number>(7, false));
+  console.log(pick<number | null>({ default: null }, true), pick<number | null>(null, false));
+  console.log(pick<boolean | undefined>(undefined, false));
+  console.log(unwrap<string>({ default: "s" }));
+  console.log(unwrap<string[]>({ default: ["x", "y"] }).length);
+  console.log(second([{}, "k"]));
+  const pair: [string | number, number[]] = ["a", [1, 2]];
+  const p2 = pair as [string, number[]];
+  console.log(p2[0], p2[1].length, pair[1].length);
+  const [n, s] = parts() as [number, string];
+  console.log(n + 1, s.length);
+}
+
+demo();

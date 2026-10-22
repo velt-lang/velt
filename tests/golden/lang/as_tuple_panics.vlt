@@ -1,0 +1,11 @@
+// A tuple asserted element by element is checked (#893): an element of another type stops the
+// program, where Node goes on with it.
+function second(detected: [any, string | symbol]): string {
+  const t = detected as [object, string];
+  return t[1];
+}
+
+function main() {
+  console.log(second([{}, "k"]));
+  console.log(second([{}, Symbol("s")]));
+}

@@ -1,6 +1,7 @@
 //! Type assertions that narrow (docs/reference/types.md "Type assertions"): `x as T` with
 //! `x: T | null` (or `| undefined`), `u as A` with `u` a union that has the member `A`, and
-//! `u as A | B` (also with `| undefined`) with `u` a union that has those members and more.
+//! `u as A | B` (also with `| undefined`) with `u` a union that has those members and more,
+//! and a tuple as a tuple whose elements are each one of these (or an `any` as a static type).
 //! TypeScript trusts them; Velt checks them, as it checks `x!`: the value is `T`'s, or the
 //! program panics (`type assertion failed: …`). A value of the wrong type never reads as `T`.
 //!
@@ -33,7 +34,14 @@ impl FnCx<'_, '_> {
         if self.cx.ty.has_error(h.ty) {
             return Err(h);
         }
+        let h = match self.tuple_assertion(h, target, span) {
+            Ok(h) => return Ok(h),
+            Err(h) => h,
+        };
         if generic(self, h.ty) || generic(self, target) {
+            if self.cx.ty.nothing_of(h.ty).is_none() && self.has_member(h.ty, target) {
+                return self.member_assertion(h, target, span);
+            }
             return self.param_present_assertion(h, target, span);
         }
         let h = match self.subunion_assertion(h, target, span) {
@@ -322,7 +330,10 @@ impl FnCx<'_, '_> {
         let cond = self.intrinsic(Intrinsic::HoldsNull, vec![probe], b, span);
         let null = self.intrinsic(Intrinsic::NullAs, vec![], core, span);
         let then = self.present_or(h.clone(), core, null, span);
-        let msg = format!("TypeError: type assertion failed: the value is {}", n.word());
+        let msg = format!(
+            "TypeError: type assertion failed: the value is {}",
+            n.word()
+        );
         let m = self.str_lit(&msg, span);
         let panic = self.intrinsic(Intrinsic::Panic, vec![m], never, span);
         let els = self.present_or(h, core, panic, span);
@@ -372,5 +383,78 @@ impl FnCx<'_, '_> {
             arms,
         };
         self.mk(kind, core, span)
+    }
+
+    /// `t as [A, B]` with `t` a tuple of as many elements, each of which asserts (or converts)
+    /// to its counterpart: `match (t) { (a, b) => (a as A, b as B) }`, element by element in
+    /// order, each checked as alone.
+    fn tuple_assertion(
+        &mut self,
+        h: hir::Expr,
+        target: TyId,
+        span: Span,
+    ) -> Result<hir::Expr, hir::Expr> {
+        let (hir::TyKind::Tuple(from), hir::TyKind::Tuple(to)) = (
+            self.cx.ty.kind(h.ty).clone(),
+            self.cx.ty.kind(target).clone(),
+        ) else {
+            return Err(h);
+        };
+        if from.len() != to.len() || from == to {
+            return Err(h);
+        }
+        let consume = !is_place(&h) || outer_mode(&h) == Some(UseMode::Move);
+        let (mut pats, mut elems) = (vec![], vec![]);
+        for (&f, &t) in from.iter().zip(&to) {
+            let mode = match (self.cx.is_copy(f), consume) {
+                (true, _) => UseMode::Copy,
+                (false, true) => UseMode::Move,
+                (false, false) => UseMode::Borrow,
+            };
+            let b = self.new_local("<element>", f, false, span, LocalKind::Bind);
+            pats.push(hir::Pat {
+                kind: P::Binding(b, mode),
+                ty: f,
+                span,
+            });
+            let value = self.mk(H::Local(b, mode), f, span);
+            let Ok(e) = self.element_assertion(value, t, span) else {
+                return Err(h);
+            };
+            elems.push(e);
+        }
+        let body = self.mk(H::Tuple(elems), target, span);
+        let arm = hir::Arm {
+            pat: hir::Pat {
+                kind: P::Tuple(pats),
+                ty: h.ty,
+                span,
+            },
+            guard: None,
+            body,
+        };
+        let kind = H::Match {
+            scrutinee: Box::new(h),
+            arms: vec![arm],
+        };
+        Ok(self.mk(kind, target, span))
+    }
+
+    /// One element of a [`tuple_assertion`](Self::tuple_assertion) as `t`.
+    fn element_assertion(
+        &mut self,
+        v: hir::Expr,
+        t: TyId,
+        span: Span,
+    ) -> Result<hir::Expr, hir::Expr> {
+        if v.ty == t {
+            return Ok(v);
+        }
+        if self.cx.dynamic(v.ty).is_some() {
+            return self.coerce_dynamic(v, t, true);
+        }
+        self.try_coerce(v, t)
+            .or_else(|h| self.param_as_object(h, t))
+            .or_else(|h| self.narrowing_assertion(h, t, span))
     }
 }

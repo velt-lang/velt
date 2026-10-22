@@ -479,7 +479,10 @@ fn a_cast_takes_readonly_array_types() {
     let none: Vec<String> = vec![];
     assert_eq!(errors("const y = x as readonly string[];"), none);
     assert_eq!(errors("const y = x as readonly [A, B] | null;"), none);
-    assert_eq!(errors("const y = x as readonly string[] | undefined;"), none);
+    assert_eq!(
+        errors("const y = x as readonly string[] | undefined;"),
+        none
+    );
 }
 
 #[test]
