@@ -8,8 +8,17 @@
 //! the class's name), and its instance converts to the signature's instance type. Its fields
 //! are hidden, like a callable object's function (`crate::callables`).
 //!
-//! - `new C(args)` with a variable (or module constant) `C` of that type calls `C.#new(args)`;
-//! - `v instanceof C` calls `C.#is(v)` (`v` converts to `unknown`); it doesn't narrow `v`;
+//! A class has one value per signature type, as JavaScript has one class object: a constant
+//! of the module state, made when the class is first named as a value of that type (types that
+//! differ only in their inferred error sets, `throws::vars`, share it) and initialized before
+//! any module runs (it reads nothing), so `===`, `includes`, `Map` and `Set` keys see one
+//! object. Only a signature type over type parameters (in a generic function) makes the
+//! object at each use.
+//!
+//! - `new C(args)` with a variable, a module constant, a member of one or a class's static
+//!   field `C` of that type calls `C.#new(args)`;
+//! - `v instanceof C` calls `C.#is(v)` (`v` converts to `unknown`) and narrows `v` to the
+//!   signature's class;
 //! - `C.name` reads `C.#name`; `typeof C` is `"function"` (`Ctx::typeof_tag`).
 
 use velt_common::{Diagnostic, Span};
@@ -18,7 +27,7 @@ use velt_syntax::ast;
 use super::callback::synth;
 use crate::body::{FnCx, Want};
 use crate::ctx::Item;
-use crate::defs::DefInfo;
+use crate::defs::{BodyState, DefInfo, GlobalInfo, GlobalSrc};
 use crate::fn_types::{IS, NAME, NEW};
 use crate::hir::{self, AdtKind, DefId, TyId, TyKind};
 
@@ -47,6 +56,21 @@ fn class_type(name: &str, span: Span) -> ast::TypeExpr {
         },
         span,
     }
+}
+
+/// `root.members…` as an expression.
+fn member_chain(root: &ast::Ident, members: &[ast::Ident]) -> ast::Expr {
+    let mut e = name_expr(&root.name, root.span);
+    for m in members {
+        let span = e.span.to(m.span);
+        let kind = ast::ExprKind::Member {
+            object: Box::new(e),
+            prop: m.clone(),
+            optional: false,
+        };
+        e = synth(kind, span);
+    }
+    e
 }
 
 fn arrow(params: Vec<ast::ArrowParam>, body: ast::Expr, span: Span) -> ast::Expr {
@@ -104,6 +128,78 @@ impl FnCx<'_, '_> {
             return Some(self.error_expr(span));
         };
         let f = self.cx.ctor_sig(target)?;
+        if let Some(g) = self.class_value_global(d, target, f, span) {
+            let read = self.global_read(g, want, span);
+            return Some(self.coerce(read, target));
+        }
+        let lit = self.class_value_lit(&id.name, &class, f, span)?;
+        Some(self.expr(&lit, Some(target), want))
+    }
+
+    /// The constant holding class `d`'s value of type `target` (module docs), made on first
+    /// use; `None` for a type over type parameters, or a class not named at its module's top
+    /// level.
+    fn class_value_global(&mut self, d: DefId, target: TyId, f: TyId, span: Span) -> Option<DefId> {
+        if self.cx.has_type_params(target) || self.cx.ty.has_error(target) {
+            return None;
+        }
+        let a = self.cx.adt(d)?;
+        let (module, name, qual, decl) = (a.module, a.name.clone(), a.qual_name.clone(), a.span);
+        if !matches!(self.cx.lookup_item(module, &name), Some(Item::Def(x)) if x == d) {
+            return None;
+        }
+        let key = match self.cx.fn_sites.use_vars {
+            true => (d, self.cx.plain_type(target)),
+            false => (d, target),
+        };
+        let values = &self.cx.objects.class_values;
+        if let Some((_, g)) = values.iter().find(|(k, _)| *k == key) {
+            return Some(*g);
+        }
+        let lit = self.class_value_lit(&name, &name, f, span)?;
+        let info = GlobalInfo {
+            name: format!("{name}#value"),
+            qual_name: format!("{qual}#value"),
+            module,
+            span: Span::DUMMY,
+            ty: target,
+            init: None,
+            state: BodyState::InProgress,
+            src: GlobalSrc {
+                ann: None,
+                init: None,
+                span: decl,
+                owner: None,
+                is_private: false,
+            },
+            mutable: false,
+            stored: true,
+        };
+        let g = self
+            .cx
+            .alloc_def(Span::DUMMY, DefInfo::Global(Box::new(info)));
+        self.cx.objects.class_values.push((key, g));
+        let init = {
+            let mut fcx = crate::body::driver::detached(self.cx, module, &[]);
+            fcx.fn_name = format!("{qual}#value");
+            fcx.expr(&lit, Some(target), Want::Move)
+        };
+        if let DefInfo::Global(info) = &mut self.cx.info[g.0 as usize] {
+            info.init = Some(init);
+            info.state = BodyState::Done;
+        }
+        Some(g)
+    }
+
+    /// The object literal of the value of the class named `class` here, called `shown`, whose
+    /// `#new` has function type `f` (module docs).
+    fn class_value_lit(
+        &mut self,
+        class: &str,
+        shown: &str,
+        f: TyId,
+        span: Span,
+    ) -> Option<ast::Expr> {
         let TyKind::FnPtr { params, rest, .. } = self.cx.ty.kind(f).clone() else {
             return None;
         };
@@ -121,7 +217,7 @@ impl FnCx<'_, '_> {
             .collect();
         let new = synth(
             ast::ExprKind::New {
-                class: class_type(&id.name, span),
+                class: class_type(class, span),
                 args,
             },
             span,
@@ -129,11 +225,11 @@ impl FnCx<'_, '_> {
         let test = synth(
             ast::ExprKind::InstanceOf {
                 expr: Box::new(name_expr("#v", span)),
-                ty: class_type(&id.name, span),
+                ty: class_type(class, span),
             },
             span,
         );
-        let name = synth(ast::ExprKind::Lit(ast::Lit::Str(class)), span);
+        let name = synth(ast::ExprKind::Lit(ast::Lit::Str(shown.into())), span);
         let lit = synth(
             ast::ExprKind::Object(vec![
                 ast::ObjectProp::KeyValue(hidden(NEW, span), arrow(ps, new, span)),
@@ -145,36 +241,18 @@ impl FnCx<'_, '_> {
             ]),
             span,
         );
-        Some(self.expr(&lit, Some(target), want))
+        Some(lit)
     }
 
     /// `X` after `new` or `instanceof` naming a variable or module constant of a construct
-    /// signature type, or a member of a variable (`new reg.ctor(x)`: a variable can't name a
-    /// class): that value as an expression.
+    /// signature type, or a member of a value (`new reg.ctor(x)`, `new Reg.DEF(x)` of a static
+    /// field: a value can't name a class): that value as an expression.
     fn ctor_value_named(&mut self, ty: &ast::TypeExpr) -> Option<ast::Expr> {
         if let Some((e, _)) = self.ctor_value_sig(ty) {
             return Some(e);
         }
-        let ast::TypeExprKind::Named { path, args } = &ty.kind else {
-            return None;
-        };
-        let (true, [root, members @ ..]) = (args.is_empty(), path.as_slice()) else {
-            return None;
-        };
-        if members.is_empty() || self.peek_local_ty(&root.name).is_none() {
-            return None;
-        }
-        let mut e = name_expr(&root.name, root.span);
-        for m in members {
-            let span = e.span.to(m.span);
-            let kind = ast::ExprKind::Member {
-                object: Box::new(e),
-                prop: m.clone(),
-                optional: false,
-            };
-            e = synth(kind, span);
-        }
-        Some(e)
+        let (root, members) = self.value_path(ty)?;
+        Some(member_chain(root, members))
     }
 
     /// Facts of `e instanceof C` through a class value `C` (for flow narrowing): when true, `e`
@@ -200,27 +278,89 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// [`Self::ctor_value_named`], with the signature's function type.
+    /// [`Self::ctor_value_named`], with the signature's function type, when the value has one.
     fn ctor_value_sig(&mut self, ty: &ast::TypeExpr) -> Option<(ast::Expr, TyId)> {
         let ast::TypeExprKind::Named { path, args } = &ty.kind else {
             return None;
         };
         let ([name], true) = (path.as_slice(), args.is_empty()) else {
-            return None;
+            let (root, members) = self.value_path(ty)?;
+            let t = self.value_path_ty(root, members)?;
+            let core = self.cx.ty.core(t).unwrap_or(t);
+            let f = self.cx.ctor_sig(core)?;
+            return Some((member_chain(root, members), f));
         };
         let t = match self.peek_local_ty(&name.name) {
             Some(t) => t,
-            None => match self.cx.lookup_item_at(self.module, &name.name, name.span)? {
-                Item::Def(d) if matches!(self.cx.info[d.0 as usize], DefInfo::Global(_)) => {
-                    crate::body::driver::ensure_global(self.cx, d);
-                    self.cx.global(d)?.ty
-                }
-                _ => return None,
-            },
+            None => self.constant_ty(name)?,
         };
         let core = self.cx.ty.core(t).unwrap_or(t);
         let f = self.cx.ctor_sig(core)?;
         Some((name_expr(&name.name, name.span), f))
+    }
+
+    /// The type of module constant `name` (`None`: it names no constant).
+    fn constant_ty(&mut self, name: &ast::Ident) -> Option<TyId> {
+        match self.cx.lookup_item_at(self.module, &name.name, name.span)? {
+            Item::Def(d) if matches!(self.cx.info[d.0 as usize], DefInfo::Global(_)) => {
+                crate::body::driver::ensure_global(self.cx, d);
+                Some(self.cx.global(d)?.ty)
+            }
+            _ => None,
+        }
+    }
+
+    /// `X.a.b` as written after `new` or `instanceof`, when `X` is a value (a variable or
+    /// module constant) or a class with a static field `a`: `X` and the members.
+    fn value_path<'t>(
+        &mut self,
+        ty: &'t ast::TypeExpr,
+    ) -> Option<(&'t ast::Ident, &'t [ast::Ident])> {
+        let ast::TypeExprKind::Named { path, args } = &ty.kind else {
+            return None;
+        };
+        let (true, [root, members @ ..]) = (args.is_empty(), path.as_slice()) else {
+            return None;
+        };
+        if members.is_empty() {
+            return None;
+        }
+        if self.peek_local_ty(&root.name).is_some() {
+            return Some((root, members));
+        }
+        let Item::Def(d) = self.cx.lookup_item_at(self.module, &root.name, root.span)? else {
+            return None;
+        };
+        let value = match &self.cx.info[d.0 as usize] {
+            DefInfo::Global(_) => true,
+            DefInfo::Adt(a) => a.statics.contains_key(&members[0].name),
+            _ => false,
+        };
+        value.then_some((root, members))
+    }
+
+    /// The type of `root.members…` ([`Self::value_path`]), read without checking it.
+    fn value_path_ty(&mut self, root: &ast::Ident, members: &[ast::Ident]) -> Option<TyId> {
+        let (mut t, rest) = match self.peek_local_ty(&root.name) {
+            Some(t) => (t, members),
+            None => match self.constant_ty(root) {
+                Some(t) => (t, members),
+                None => {
+                    let Item::Def(d) =
+                        self.cx.lookup_item_at(self.module, &root.name, root.span)?
+                    else {
+                        return None;
+                    };
+                    let g = *self.cx.adt(d)?.statics.get(&members[0].name)?;
+                    crate::body::driver::ensure_global(self.cx, g);
+                    (self.cx.global(g)?.ty, &members[1..])
+                }
+            },
+        };
+        for m in rest {
+            t = self.field_of(t, &m.name)?.1;
+        }
+        Some(t)
     }
 
     /// `new C(args)` through a class value `C` (module docs).
@@ -282,6 +422,18 @@ impl FnCx<'_, '_> {
                 self.error_expr(span)
             }
         }
+    }
+
+    /// `C.name` of class `d` (without a static `name`): its name, as the class object has it.
+    pub(super) fn class_name_read(
+        &mut self,
+        d: DefId,
+        prop: &ast::Ident,
+        span: Span,
+    ) -> Option<hir::Expr> {
+        let a = self.cx.adt(d).filter(|a| a.kind == AdtKind::Class)?;
+        let name = (prop.name == "name").then(|| a.name.clone())?;
+        Some(self.str_lit(&name, span))
     }
 
     /// `C.name` of a class value `C` of type `t`: its hidden name field.

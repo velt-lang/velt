@@ -1,5 +1,4 @@
-ctor_value_errors.vlt:13:35: error: mismatched types
-ctor_value_errors.vlt:14:11: error: class `A` used as a value needs a construct signature type
-ctor_value_errors.vlt:15:19: error: mismatched types
-ctor_value_errors.vlt:16:45: error: mismatched types
-ctor_value_errors.vlt:19:13: error: cannot apply binary operator `==` to type `Ctor`
+ctor_value_errors.vlt:12:35: error: mismatched types
+ctor_value_errors.vlt:13:11: error: class `A` used as a value needs a construct signature type
+ctor_value_errors.vlt:14:19: error: mismatched types
+ctor_value_errors.vlt:15:45: error: mismatched types

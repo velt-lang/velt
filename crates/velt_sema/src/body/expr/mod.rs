@@ -72,6 +72,7 @@ mod literal_keys;
 mod literal_types;
 mod matching;
 pub(crate) mod member;
+mod member_errors;
 mod member_keys;
 mod method;
 mod method_call;

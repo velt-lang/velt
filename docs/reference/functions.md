@@ -950,11 +950,16 @@ async function main() {
   as TypeScript checks it. Through a value `C` of that type, `new C(args)` constructs an
   instance (what the constructor throws, the call throws), `v instanceof C` tests for an
   instance of the class `C` holds (and narrows `v` to the signature's instance type when that
-  is a class), `C.name` is the class's name and `typeof C` is `"function"`. A class used as a
-  value without such a type (`const C = Point;`) is an error for now, as are generic construct
-  signatures (`new <T>(x: T) => Box<T>`), comparing two class values (`C === Point`), printing
-  or `JSON.stringify` of one, and `new` of an expression that is not a name
-  (`new (pick())(x)`).
+  is a class), `C.name` is the class's name and `typeof C` is `"function"` (also held as
+  `unknown`). `C` may be a variable, a module constant, a member of one (`new reg.Default(x)`)
+  or a class's static field (`new Registry.DEFAULT(x)`), and an optional parameter of the
+  signature may be left out (`new (x?: number) => Point`). A class has one value per signature
+  type, as JavaScript has one class object: `C === Point`, `kinds.includes(Point)`,
+  `Object.is` and `Map` and `Set` keys see the same object. A class used as a value without
+  such a type (`const C = Point;`) is an error for now, as are generic construct signatures
+  (`new <T>(x: T) => Box<T>`), printing or `JSON.stringify` of one, converting one to another
+  construct signature type (`new (x: number) => Point3` to `new (x: number) => Point`; name
+  the class instead), and `new` of an expression that is not a name (`new (pick())(x)`).
 
   ```ts
   class Point {
@@ -967,6 +972,7 @@ async function main() {
     const p = new K(1);
     console.log(K.name, p instanceof K, p instanceof Point3); // "Point true false", then "Point3 true true"
   }
+  console.log(kinds.indexOf(Point3), kinds[0] === Point); // 1 true
   ```
 - **Planned** (#943): generic function types (`<T>(description: string) => Token<T>`, a value
   each call instantiates). They parse, and using one is an error saying it is not supported
@@ -975,8 +981,9 @@ async function main() {
   (`([a, b]: [number, number]) => number`), which, like a name, is only for the reader.
 - A function type's parameter may be **optional** (`(app: App, options?: Options) => void`): its
   type is `Options | undefined`, as for a function's optional parameter, and a required parameter
-  cannot follow it (TypeScript's TS1016). A call through such a value passes every argument for
-  now; leaving the optional one out (`install(app)`) is not supported yet.
+  cannot follow it (TypeScript's TS1016). A call through such a value may leave it out
+  (`install(app)`), which passes `undefined`; so may a call of a parameter typed
+  `T | undefined`, which TypeScript requires to be passed.
 
 ### `this` parameters
 

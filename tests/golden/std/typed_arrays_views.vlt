@@ -1,7 +1,8 @@
 // Typed arrays and `DataView` as values of a construct signature type, `ArrayBufferView` (what
 // every view is: `buffer`, `byteOffset`, `byteLength`), `ArrayBuffer.isView` narrowing an
 // `unknown`, and `SharedArrayBuffer` (Node's global; no Velt buffer is one), as sigx's
-// serialize/bytes.ts uses them. Node prints the same.
+// serialize/bytes.ts uses them, and a class value is the same object wherever it is named. Node
+// prints the same.
 type ViewCtor = new (buffer: ArrayBuffer) => ArrayBufferView;
 const KINDS: readonly (readonly [string, ViewCtor])[] = [
   ["Uint8Array", Uint8Array],
@@ -37,3 +38,6 @@ try {
 } catch (e) {
   console.log((e as Error).name);
 }
+// One value per class and signature type: the array's elements are the classes.
+const again: ViewCtor = Uint8Array;
+console.log(KINDS.findIndex(([, C]) => C === again), KINDS[3][1] === DataView, again !== Int16Array);

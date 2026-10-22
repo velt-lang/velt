@@ -20,7 +20,8 @@ use velt_syntax::ast;
 
 use crate::anon::ShapeField;
 use crate::ctx::Ctx;
-use crate::hir::{TyId, TyKind};
+use crate::defs::DefInfo;
+use crate::hir::{DefId, TyId, TyKind};
 use crate::resolve::TyEnv;
 
 /// The fields of a construct signature's type, in order.
@@ -118,5 +119,27 @@ impl Ctx<'_> {
             return None;
         }
         Some((a.fields[0].ty, args.clone()))
+    }
+
+    /// Is `d` the constant holding a class's value (`body::expr::ctor_values`)?
+    pub(crate) fn is_class_value(&self, d: DefId) -> bool {
+        self.objects.class_values.iter().any(|(_, g)| *g == d)
+    }
+
+    /// Forgets class values made by a check that was undone (`body::recheck`): nothing reads
+    /// their constants, which leave the module state as `()`; the next check makes them again.
+    pub(crate) fn drop_class_values(&mut self, dropped: Vec<((DefId, TyId), DefId)>) {
+        let unit = self.ty.unit;
+        for (_, d) in dropped {
+            if let DefInfo::Global(g) = &mut self.info[d.0 as usize] {
+                g.init = Some(crate::hir::Expr {
+                    kind: crate::hir::ExprKind::Lit(crate::hir::Lit::Unit),
+                    ty: unit,
+                    span: velt_common::Span::DUMMY,
+                });
+                g.ty = unit;
+                g.stored = false;
+            }
+        }
     }
 }

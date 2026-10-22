@@ -7,3 +7,4 @@ false function
 [ 2, 4 ] false
 8 4
 RangeError
+0 true true

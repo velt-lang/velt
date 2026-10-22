@@ -1,8 +1,7 @@
 // Classes as values: a constructor that doesn't take the signature's parameters, a class
-// without a construct signature type to be a value of, an instance type the class doesn't
-// convert to, and a comparison of two class values. tsc --strict reports lines 13, 15 and 16
-// too (TS2322); it accepts `const C = A` (Velt needs the type) and the comparison (not
-// supported yet).
+// without a construct signature type to be a value of, and an instance type the class doesn't
+// convert to. tsc --strict reports lines 12, 14 and 15 too (TS2322); it accepts `const C = A`
+// (Velt needs the type).
 class A {
   n: number;
   constructor(n: number) {
@@ -14,6 +13,3 @@ const bad: new (s: string) => A = A;
 const C = A;
 const n: number = bad;
 const wrongRet: new (n: number) => string = A;
-const ks: Ctor[] = [A];
-const k: Ctor = A;
-console.log(ks[0] === k);

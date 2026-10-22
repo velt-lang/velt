@@ -23,9 +23,12 @@ pub(crate) fn erase(cx: &mut Ctx) {
     }
     let mut twins = cx.readonly_twins.clone();
     // An anonymous object type holding error-set variables is the one of its solved shape.
+    // A readonly one is that def's plain twin, not its own (whose fields hold the variables).
     for (d, twin) in cx.solved_anon_twins() {
         let twin = twins.get(&twin).map_or(twin, |t| t.0);
-        twins.entry(d).or_insert((twin, None));
+        if !matches!(twins.get(&d), Some((_, Some(_)))) {
+            twins.insert(d, (twin, None));
+        }
     }
     // A branded type is its primitive from here on (`crate::brands`).
     let mut cache: FxHashMap<TyId, TyId> = FxHashMap::default();

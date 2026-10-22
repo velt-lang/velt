@@ -30,6 +30,7 @@ pub(crate) struct Lens {
     reported: usize,
     completed: usize,
     kept: usize,
+    class_values: usize,
     ide: Option<[usize; 4]>,
 }
 
@@ -47,6 +48,7 @@ impl Lens {
             reported: cx.rec.reported.len(),
             completed: cx.rec.completed.len(),
             kept: cx.kept_consts.len(),
+            class_values: cx.objects.class_values.len(),
             ide: cx
                 .ide
                 .as_ref()
@@ -154,6 +156,9 @@ impl Mark {
         cx.rec.reported.truncate(m.reported);
         let kept = cx.kept_consts.split_off(m.kept.min(cx.kept_consts.len()));
         crate::kept_consts::unkeep(cx, kept);
+        let values = &mut cx.objects.class_values;
+        let values = values.split_off(m.class_values.min(values.len()));
+        cx.drop_class_values(values);
         if let (Some(r), Some([refs, types, scopes, params])) = (&mut cx.ide, m.ide) {
             r.refs.truncate(refs);
             r.types.truncate(types);
@@ -238,6 +243,9 @@ impl Mark {
         keep_ranges(&mut cx.rec.completed, m.completed, &ranges(|l| l.completed));
         let kept = keep_ranges(&mut cx.kept_consts, m.kept, &ranges(|l| l.kept));
         crate::kept_consts::unkeep(cx, kept);
+        let values = &mut cx.objects.class_values;
+        let values = keep_ranges(values, m.class_values, &ranges(|l| l.class_values));
+        cx.drop_class_values(values);
         if let (Some(r), Some(start)) = (&mut cx.ide, m.ide) {
             let ide = |k: usize| -> Vec<(usize, usize)> {
                 segments
@@ -319,6 +327,7 @@ mod tests {
             reported: 0,
             completed,
             kept: 0,
+            class_values: 0,
             ide: None,
         }
     }

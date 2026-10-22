@@ -1,0 +1,13 @@
+// A library module for ctor_value_identity.vlt: a class, its construct signature type, and
+// class values made here.
+export class A {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+export type Ctor = new (n: number) => A;
+export const libCtors: Ctor[] = [A];
+export function isA(c: Ctor): boolean {
+  return c === A;
+}
