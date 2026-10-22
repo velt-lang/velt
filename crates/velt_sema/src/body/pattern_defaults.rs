@@ -184,7 +184,7 @@ impl FnCx<'_, '_> {
         self.temp_with(init.clone(), Some(ty.clone()), out)
     }
 
-    fn temp_with(
+    pub(crate) fn temp_with(
         &mut self,
         init: Expr,
         ty: Option<ast::TypeExpr>,

@@ -1,0 +1,51 @@
+// A proxy typed as an interface or object type answers `Object.keys`, `Object.hasOwn`,
+// `hasOwnProperty.call` and `in` with its traps, as in Node.
+interface Props {
+  a: number;
+  b: number;
+}
+
+type Shape = { a: number; b: number };
+
+function handler(log: string[]): ProxyHandler<any> {
+  return {
+    ownKeys(t: any): any {
+      log.push("ownKeys");
+      return ["a"];
+    },
+    getOwnPropertyDescriptor(t: any, k: string | symbol): PropertyDescriptor | undefined {
+      log.push(`gopd ${String(k)}`);
+      return { value: 1, writable: true, enumerable: true, configurable: true };
+    },
+    has(t: any, k: string | symbol): boolean {
+      log.push(`has ${String(k)}`);
+      return k === "b";
+    },
+  };
+}
+
+function show(what: string, log: string[], v: any): void {
+  console.log(what, JSON.stringify(v), log.join(", "));
+  log.length = 0;
+}
+
+const log: string[] = [];
+const raw: Props = { a: 1, b: 2 };
+const s = new Proxy(raw as any, handler(log)) as Props;
+show("keys", log, Object.keys(s));
+show("hasOwn b", log, Object.hasOwn(s, "b"));
+show("hasOwnProperty a", log, Object.prototype.hasOwnProperty.call(s, "a"));
+show("in a", log, "a" in s);
+show("in b", log, "b" in s);
+
+const rawShape: Shape = { a: 1, b: 2 };
+const t = new Proxy(rawShape as any, handler(log)) as Shape;
+show("shape keys", log, Object.keys(t));
+show("shape hasOwn b", log, Object.hasOwn(t, "b"));
+show("shape in a", log, "a" in t);
+
+// A plain value of the same types keeps its own answers.
+show("plain keys", log, Object.keys(raw));
+show("plain hasOwn b", log, Object.hasOwn(raw, "b"));
+show("plain in a", log, "a" in raw);
+// check: no leaks
