@@ -117,6 +117,7 @@ pub(crate) fn emit_function(
     let define_dbg = debug
         .as_ref()
         .map_or(String::new(), |(_, f)| DebugInfo::define_suffix(f));
+    let array = crate::tbaa::array_agg(program);
     let mut emitter = Emitter {
         program,
         function,
@@ -128,13 +129,9 @@ pub(crate) fn emit_function(
         wide_pointer_slots: target.wide_pointer_slots(),
         rounds_by_conversion: target.rounds_by_conversion(),
         simd: crate::simd::Arch::of(target),
-        array: crate::tbaa::array_agg(program),
+        array,
         objects: crate::tbaa::object_aggs(program),
-        element_pointers: crate::tbaa::element_pointers(
-            program,
-            function,
-            crate::tbaa::array_agg(program),
-        ),
+        element_pointers: crate::tbaa::element_pointers(program, function, array),
         uses_simd: program
             .externs
             .iter()
