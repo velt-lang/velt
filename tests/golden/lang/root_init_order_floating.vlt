@@ -1,0 +1,17 @@
+// A promise statement started before a declaration sees it initialized after its first
+// `await`, as in Node: the declaration is evaluated before the program waits (#1438).
+let n = 0;
+function tick(): Promise<void> {
+  return new Promise((resolve) => setTimeout(() => resolve(), 1));
+}
+async function work(): Promise<void> {
+  console.log("work starts", n);
+  await tick();
+  console.log("work sees", Late.v, n);
+}
+work();
+n = 3;
+class Late {
+  static readonly v: number = n * 2;
+}
+n = 4;

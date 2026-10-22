@@ -3,7 +3,9 @@
 //! awaits). A top-level `const`/`let` moves into `main` with them, unless a declaration (a
 //! function, class, struct, `extend` block or a module constant that stays) refers to it
 //! (`script_names`) or a computed key names it (`[KEY]`, a symbol or string constant): then it
-//! stays a module constant, which those declarations can see.
+//! stays a module constant, which those declarations can see. Sema initializes the ones that
+//! are module state where they stand among the statements (#1438); a statement that uses a
+//! declaration below it directly is an error here (`script_tdz`).
 //!
 //! The generated function's name has an empty span at the first statement; sema uses that to
 //! reject statements in an imported module (only the root file runs them).

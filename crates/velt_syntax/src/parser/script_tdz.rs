@@ -142,6 +142,13 @@ impl<'a> Visit<'a> for Uses {
                     }
                 }
             }
+            ExprKind::Object(props) => {
+                for p in props {
+                    if let ObjectProp::Shorthand(id) = p {
+                        self.uses.push((id.name.clone(), id.span));
+                    }
+                }
+            }
             ExprKind::Arrow { .. } | ExprKind::Function(_) => self.deferred.push(e.span),
             _ => {}
         }
@@ -169,5 +176,50 @@ fn pattern_names(p: &Pattern, out: &mut Vec<String>) {
             out.extend(rest.iter().map(|r| r.name.clone()));
         }
         PatternKind::Default { pattern, .. } => pattern_names(pattern, out),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::parse_file;
+    use velt_common::FileId;
+
+    /// The "used before its declaration" errors of `src`.
+    fn early(src: &str) -> Vec<String> {
+        let (_, diags) = parse_file(FileId(0), src);
+        diags
+            .iter()
+            .filter(|d| d.message.contains("before its declaration"))
+            .map(|d| d.message.clone())
+            .collect()
+    }
+
+    #[test]
+    fn direct_uses_before_a_declaration_are_errors() {
+        assert_eq!(
+            early("console.log(K);\nconst K = 1;\nfunction f(): number { return K; }\n"),
+            ["`K` is used before its declaration"]
+        );
+        assert_eq!(
+            early("const o = { K };\nconsole.log(o);\nconst K = 1;\n"),
+            ["`K` is used before its declaration"]
+        );
+        assert_eq!(
+            early("if (true) { new C(); }\nclass C {}\n"),
+            ["class `C` is used before its declaration"]
+        );
+    }
+
+    #[test]
+    fn deferred_and_shadowed_uses_are_not() {
+        let src = "const f = (): number => K;\n\
+                   const g = function (): number { return K; };\n\
+                   const o = { m(): number { return K; } };\n\
+                   { const K = 2; console.log(K); }\n\
+                   for (const C of [1]) { console.log(C); }\n\
+                   const K = 1;\n\
+                   class C { v: number = K; static w: number = K; }\n\
+                   console.log(f(), g(), o.m(), K);\n";
+        assert_eq!(early(src), Vec::<String>::new());
     }
 }

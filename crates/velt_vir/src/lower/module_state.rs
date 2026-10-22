@@ -167,11 +167,11 @@ impl FnLower<'_, '_> {
     /// (the block is zeroed: nothing old to drop). An error an initializer throws ends the
     /// process (`Uncaught`). After the last slot every slot may be read (`u64::MAX`).
     pub(super) fn build_module_init(cx: &mut Cx<'_>, from: u32, to: u32) -> Function {
-        let all = cx
+        let (all, deferred) = cx
             .hir
             .module_state
             .as_ref()
-            .map(|m| m.slots.clone())
+            .map(|m| (m.slots.clone(), m.deferred))
             .unwrap_or_default();
         let len = all.len();
         let slots = all
@@ -217,9 +217,10 @@ impl FnLower<'_, '_> {
         }
         lw.pop_scope();
         lw.terminate(Terminator::Return(super::unit()));
-        let name = match from {
-            0 => "_Gmodule_init".to_string(),
-            _ => format!("_Gmodule_init_{from}"),
+        // The state's own initializer, or a part of the root file's slots.
+        let name = match (from, to) {
+            (0, t) if t == deferred => "_Gmodule_init".to_string(),
+            _ => format!("_Gmodule_init_{from}_{to}"),
         };
         lw.finish(name, vec![Ty::Ptr], Ty::Unit)
     }
