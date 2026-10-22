@@ -371,21 +371,21 @@ pub(crate) fn force_move(cx: &mut Ctx, e: &mut Expr, errors: &mut Vec<Diagnostic
                 };
                 return true;
             }
+            if crate::body::moved_const::reported(cx, *d, e.span) {
+                return false;
+            }
             if crate::body::pure_init::is_table(cx, *d) {
                 let msg = format!("cannot move out of module constant `{name}`");
                 errors.push(crate::body::pure_init::table_escapes(&name, msg, e.span));
             } else if !cx.is_copy(ty) && ty != cx.ty.str_ {
-                errors.push(
-                    Diagnostic::error(
-                        format!("cannot move out of module constant `{name}`"),
-                        e.span,
-                    )
-                    .with_note(format!("use `{name}.clone()` for an owned copy")),
-                );
+                errors.push(crate::body::moved_const::error(&name, Some(&name), e.span));
             }
             false
         }
         _ => {
+            // A part of a module constant evaluated at each use, kept by the callee
+            // (`m.set("x", N.a)`, `new Box(K!.a)`): a copy where TypeScript shares it.
+            per_use_part(cx, e, errors);
             if !is_place(e) {
                 return false;
             }
@@ -401,6 +401,89 @@ pub(crate) fn force_move(cx: &mut Ctx, e: &mut Expr, errors: &mut Vec<Diagnostic
             true
         }
     }
+}
+
+/// `e`, taken over by value, is a part of a module constant evaluated at each use, whose value
+/// is not copied: the constant is kept in the module state, or it is the error of
+/// `const a = N.a`.
+fn per_use_part(cx: &mut Ctx, e: &Expr, errors: &mut Vec<Diagnostic>) {
+    use crate::body::moved_const as mc;
+    if mc::copied_value(cx, e.ty) {
+        return;
+    }
+    let Some((d, part)) = mc::hir_root(cx, e) else {
+        return;
+    };
+    // Taken over, the constant is the one object the module state keeps, as in Node.
+    if mc::reported(cx, d, e.span) || crate::kept_consts::keep(cx, d) {
+        return;
+    }
+    let Some(name) = cx.global(d).map(|g| g.name.clone()) else {
+        return;
+    };
+    errors.push(mc::error(&name, part.as_deref(), e.span));
+}
+
+/// `e`, passed to parameter `param` of `f`, which `f` borrows: when `f` shares it into what it
+/// keeps (`fill(value)` storing `__intrinsic_share(value)`, or a function handing it to `fill`),
+/// the callee keeps the argument as an owned parameter would, so a part of a module constant
+/// evaluated at each use is taken over.
+pub(super) fn kept_by_share(
+    cx: &mut Ctx,
+    f: DefId,
+    param: usize,
+    e: &Expr,
+    errors: &mut Vec<Diagnostic>,
+) {
+    use crate::body::moved_const as mc;
+    if mc::copied_value(cx, e.ty) || mc::hir_root(cx, e).is_none() {
+        return;
+    }
+    if shares_param(cx, f, param, &mut FxHashSet::default()) {
+        per_use_part(cx, e, errors);
+    }
+}
+
+/// Does `f` share its borrowed parameter `param` (`__intrinsic_share(p)`), directly or by
+/// passing it on to a borrowed parameter of a function that does? (`seen`: the functions and
+/// parameters already followed.)
+fn shares_param(
+    cx: &mut Ctx,
+    f: DefId,
+    param: usize,
+    seen: &mut FxHashSet<(DefId, usize)>,
+) -> bool {
+    if !seen.insert((f, param)) {
+        return false;
+    }
+    let mut next = Vec::new();
+    let shares = with_body(cx, f, |cx, def| {
+        let Some(local) = def.params.get(param).map(|p| p.local) else {
+            return false;
+        };
+        let is_param = |a: &Expr| matches!(a.kind, E::Local(l, _) if l == local);
+        let mut shares = false;
+        visit::exprs_mut(&mut def.body.block, &mut |x: &mut Expr| match &x.kind {
+            E::Call {
+                callee: Callee::Intrinsic(Intrinsic::Share),
+                args,
+            } => shares |= args.first().is_some_and(is_param),
+            E::Call { callee, args } => {
+                let target = super::patch::call_target(cx, callee, args);
+                if let Some(super::patch::Target::Fn(g)) = target {
+                    let modes = super::patch::modes_of(cx, g);
+                    for (i, a) in args.iter().enumerate() {
+                        if is_param(a) && modes.get(i) == Some(&PassMode::Borrow) {
+                            next.push((g, i));
+                        }
+                    }
+                }
+            }
+            _ => {}
+        });
+        shares
+    });
+    shares || next.into_iter().any(|(g, i)| shares_param(cx, g, i, seen))
 }
 
 fn current_mode(e: &Expr) -> Option<UseMode> {

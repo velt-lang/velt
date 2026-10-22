@@ -1,0 +1,22 @@
+// A constant holding a promise can't be module state: writes and takeovers through `!`, `as`,
+// `??` and its parts, and arguments a callee keeps, stay errors (#1406).
+type Box = { p: Promise<number>; n: number; a: { b: number } };
+
+export const B: Box | null = { p: Promise.resolve(1), n: 0, a: { b: 0 } };
+
+async function main() {
+  const D: Box = { p: Promise.resolve(2), n: 0, a: { b: 0 } };
+  B!.n = 1;
+  (B as any).n = 2;
+  (B ?? D).n = 3;
+  const t = B!;
+  const u = B!.a;
+  const w = (B ?? D).a;
+  const m = new Map<string, { b: number }>();
+  m.set("x", B!.a);
+  const arr = [{ b: 0 }];
+  arr.fill(B!.a);
+  const { a } = B ?? D;
+  const sp = { ...B! };
+  console.log(t.n, u.b, w.b, a.b, sp.n, await D.p);
+}
