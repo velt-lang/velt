@@ -447,7 +447,12 @@ pub(super) fn kept_by_share(
 /// Does `f` share its borrowed parameter `param` (`__intrinsic_share(p)`), directly or by
 /// passing it on to a borrowed parameter of a function that does? (`seen`: the functions and
 /// parameters already followed.)
-fn shares_param(cx: &mut Ctx, f: DefId, param: usize, seen: &mut FxHashSet<(DefId, usize)>) -> bool {
+fn shares_param(
+    cx: &mut Ctx,
+    f: DefId,
+    param: usize,
+    seen: &mut FxHashSet<(DefId, usize)>,
+) -> bool {
     if !seen.insert((f, param)) {
         return false;
     }
