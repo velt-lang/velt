@@ -42,6 +42,7 @@ mod boxes;
 mod boxing;
 mod call;
 mod callee;
+mod caller_stores;
 mod cells;
 mod cfg;
 mod class_test;
@@ -562,9 +563,9 @@ struct FnLower<'c, 'h> {
     /// The closure literal a `with`, `write` or `read` is about to call, and the read mode its
     /// code runs in.
     lock_callback: Option<(DefId, LkMode)>,
-    /// The direct call about to be lowered is a statement: its result is dropped at once
-    /// (call.rs `call_def`, which takes it).
-    discarded: bool,
+    /// The owned arguments being lowered go into the caller's containers in a `read` callback
+    /// (call.rs `call_def`, caller_stores.rs `into_caller`).
+    args_to_caller: bool,
     /// With debug info: where the block declaring a local ends (debug_vars.rs).
     scope_ends: FxHashMap<LocalId, SrcLoc>,
     /// Set while lowering the body of an async function (a poll function).

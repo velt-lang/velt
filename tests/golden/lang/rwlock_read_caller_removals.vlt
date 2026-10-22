@@ -1,0 +1,110 @@
+// A `read` callback takes elements out of the caller's containers (`shift`, `pop`,
+// `length = 0`, `splice`, `Map.delete` and `clear`, `Set.delete`, a function replacing an
+// element and returning the old one), also keeping what it took or held before: each is freed
+// once (after the read when the reader still held it), and what it took is the same object.
+class Item {
+  v: i64 = 0;
+  nums: i64[] = [1, 2];
+  tags: string[] = ["a"];
+  constructor(v: i64) {
+    this.v = v;
+  }
+}
+
+class St {
+  items: Item[] = [new Item(1), new Item(2), new Item(3)];
+  names: string[] = ["x", "y"];
+}
+
+function takeFirst(a: Item[]): Item {
+  const x = a[0];
+  a[0] = new Item(9);
+  return x;
+}
+
+function arrays(rw: shared<RwLock<St>>) {
+  const out: Item[] = [new Item(1), new Item(2)];
+  const r = rw.read((s) => {
+    const t = out[0];
+    out.shift();
+    out.pop();
+    return t.v;
+  });
+  console.log(r, out.length);
+  const out2: Item[] = [new Item(1), new Item(2), new Item(3)];
+  const r2 = rw.read((s) => {
+    const t = out2[0];
+    const u = out2.shift()!;
+    const w = out2.pop()!;
+    return t.v + u.v + w.v;
+  });
+  console.log(r2, out2.length);
+  const out3: Item[] = [new Item(1), new Item(2)];
+  const r3 = rw.read((s) => {
+    const t = out3[0];
+    out3.splice(0, 2);
+    return t.v;
+  });
+  const xs: i64[][] = [[1], [2]];
+  const q = rw.read((s) => {
+    const t = xs[0];
+    xs.shift();
+    return t.length as i64;
+  });
+  console.log(r3, out3.length, q, xs.length);
+  const out4: Item[] = [new Item(4), new Item(5)];
+  const r4 = rw.read((s) => {
+    const rm = out4.splice(0, 1, new Item(7));
+    return (rm.length as i64) + rm[0].v;
+  });
+  console.log(r4, out4[0].v, out4.length);
+  const out5: Item[] = [new Item(3), new Item(1), new Item(2)];
+  const r5 = rw.read((s) => {
+    const t = out5[0];
+    out5.reverse();
+    out5.sort((a, b) => a.v - b.v);
+    out5.fill(new Item(9), 0, 1);
+    return t.v;
+  });
+  console.log(r5, out5.map((o) => o.v).join(","));
+  const a = new Item(8);
+  const out6: Item[] = [a];
+  const same = rw.read((s) => {
+    const u = out6.shift()!;
+    return u === a;
+  });
+  console.log(same, out6.length, a.v);
+}
+
+function collections(rw: shared<RwLock<St>>) {
+  const out: Item[] = [new Item(1), new Item(2), new Item(3)];
+  const m = new Map<string, Item>();
+  m.set("a", new Item(4));
+  m.set("b", new Item(5));
+  const st = new Set<Item>();
+  const x = new Item(6);
+  st.add(x);
+  const r = rw.read((s) => {
+    const t = out[0];
+    out.length = 0;
+    const q = m.get("a")!;
+    m.delete("a");
+    m.clear();
+    st.delete(x);
+    return t.v + q.v;
+  });
+  console.log(r, out.length, m.size, st.size);
+  const firsts: Item[] = [new Item(4)];
+  const f = rw.read((s) => {
+    const t = takeFirst(firsts);
+    return t.v;
+  });
+  console.log(f, firsts[0].v);
+}
+
+function main() {
+  const rw = shared(new RwLock<St>(new St()));
+  arrays(rw);
+  collections(rw);
+  rw.read((s) => console.log(s.items.length, s.items[2].v));
+}

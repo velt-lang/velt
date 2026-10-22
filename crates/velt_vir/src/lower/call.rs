@@ -59,7 +59,6 @@ impl FnLower<'_, '_> {
         pre: Vec<Operand>,
         args: &[hir::Expr],
     ) -> Operand {
-        let discarded = std::mem::take(&mut self.discarded);
         let f = self.cx.fn_def(def);
         let modes: Vec<PassMode> = f.params[pre.len()..].iter().map(|p| p.mode).collect();
         let (ret, throws) = self.cx.call_sig(f);
@@ -77,17 +76,18 @@ impl FnLower<'_, '_> {
         };
         // A method of what a `read` callback captured (the caller's `push`, `set`, `add`), or a
         // function changing it, runs by the counts outside read mode, freeing after the reads
-        // (`LkMode::Deferred`): what a reader passes it is a copy or frozen, never the store's
-        // counted object. Its result, when it needs dropping (`splice`'s removed elements, an
-        // iterator), counts the same way: a statement drops it at once by these rules; else
-        // the call runs in read mode, which would take that result for the store's.
+        // (`LkMode::Deferred`): what it is given to keep is counted the same way, or a copy of
+        // what may be the store's (caller_stores.rs `into_caller`), and its result is handed
+        // to the reader (`hand_to_reader`). A result read mode could not take over (an object
+        // outside the lock set holding lock-set objects, as an iterator) leaves the call in
+        // read mode.
         let changes_captured = pre.is_empty()
             && args.iter().zip(&modes).enumerate().any(|(i, (a, m))| {
                 (i == 0 && f.self_ty.is_some() || *m == PassMode::BorrowMut)
                     && self.captured_root(a)
             });
-        let drop_now = changes_captured && discarded && self.needs_drop(ret);
-        let plain = changes_captured && (drop_now || !self.needs_drop(ret));
+        let rty = self.cx.subst(ret, &targs);
+        let plain = changes_captured && (!self.needs_drop(rty) || self.hand_ok(rty));
         let mode = match plain {
             true => LkMode::Deferred,
             false => self.mode,
@@ -103,18 +103,16 @@ impl FnLower<'_, '_> {
         }
         let mut argv = pre;
         let outer = std::mem::replace(&mut self.frozen_args, frozen != 0);
+        let to_caller = std::mem::replace(&mut self.args_to_caller, plain);
         argv.extend(self.lower_args(args, &modes, true));
+        self.args_to_caller = to_caller;
         self.frozen_args = outer;
         let ret = self.cx.subst(ret, &targs);
         let throws = throws.map(|e| self.cx.subst(e, &targs));
         let throws = self.cx.error_ty(throws);
         let r = self.finish_call(vir::Callee::Func(fid), argv, ret, throws);
-        if let (true, Operand::Copy(p)) = (drop_now, &r) {
-            if self.take_temp(p) {
-                let mode = std::mem::replace(&mut self.mode, LkMode::Deferred);
-                self.drop_glue(p.clone(), ret);
-                self.mode = mode;
-            }
+        if plain && self.needs_drop(ret) {
+            self.hand_to_reader(&r, ret);
         }
         r
     }
@@ -266,12 +264,15 @@ impl FnLower<'_, '_> {
                 }
                 (t @ Ty::Agg(_), PassMode::Owned | PassMode::Copy) => {
                     // A fresh copy the callee now owns (Owned) or only reads (Copy structs).
-                    let v = self.consume(a);
+                    let v = match mode {
+                        PassMode::Owned => self.owned_arg(a),
+                        _ => self.consume(a),
+                    };
                     let tmp = self.copy_to_temp(v, t);
                     argv.push(self.addr(Place::local(tmp)));
                 }
                 (_, PassMode::Owned) => {
-                    let v = self.consume(a);
+                    let v = self.owned_arg(a);
                     argv.push(self.hold_owned(v, a.ty, later));
                 }
                 (_, m) => {

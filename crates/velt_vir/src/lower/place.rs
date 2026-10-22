@@ -476,7 +476,11 @@ impl FnLower<'_, '_> {
                 self.pin_target(place, &pre, later)
             }
         };
-        let v = self.consume(value);
+        // Into the caller's container in a `read` callback: counted as the caller counts.
+        let v = match self.captured_root(place) {
+            true => self.into_caller(value),
+            false => self.consume(value),
+        };
         if self.dead() {
             return unit();
         }
@@ -520,19 +524,14 @@ impl FnLower<'_, '_> {
     ) {
         let flag = self.presence_place(place, &p);
         // In read mode, the caller's container (rooted in what the `read` callback captured,
-        // frozen.rs `captured_root`) holds no store object: what the reader stores there is a
-        // copy of what it did not make, and the old value, which the caller made, is released
-        // by the counts outside read mode and freed after the reads (`LkMode::Deferred`: the
-        // reader may still point at it uncounted). Another container outside the lock set may
-        // be the reader's own, holding what it shares uncounted, so read mode's rules apply.
+        // frozen.rs `captured_root`) holds no store object (`into_caller` counted or copied
+        // what is stored), and the old value, which the caller made, is released by the counts
+        // outside read mode and freed after the reads (`LkMode::Deferred`: the reader may
+        // still point at it uncounted).
         let mode = self.mode;
         let outside = match &place.kind {
             hir::ExprKind::Field { .. } | hir::ExprKind::Index { .. } => self.captured_root(place),
             _ => false,
-        };
-        let v = match mode != super::LkMode::Plain && outside {
-            true => self.reader_copy(v, ty),
-            false => v,
         };
         if mode != super::LkMode::Plain && outside {
             self.mode = super::LkMode::Deferred;

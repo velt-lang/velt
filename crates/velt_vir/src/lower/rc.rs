@@ -94,7 +94,7 @@ impl FnLower<'_, '_> {
     }
 
     /// The `LOCAL` bit of the count word at `c` (a `Bool`): an object a reader made itself.
-    fn is_local(&mut self, c: &Place) -> Operand {
+    pub(super) fn is_local(&mut self, c: &Place) -> Operand {
         let b = self.rvalue_temp(
             Ty::U64,
             Rvalue::Binary(

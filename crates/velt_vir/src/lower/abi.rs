@@ -72,7 +72,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             rw_reader: None,
             mode: LkMode::Plain,
             own_captures: false,
-            discarded: false,
+            args_to_caller: false,
             lock_callback: None,
             scope_ends: FxHashMap::default(),
             asyncx: None,

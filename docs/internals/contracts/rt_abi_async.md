@@ -631,12 +631,18 @@ counts and writes lock-set objects by these rules, inline (velt_vir `rc.rs`):
   unlock, whatever the calling code's mode: an object it shares with the store is copied, never
   moved out;
 - the caller's containers (places rooted in a variable a `read` callback literal captured from
-  code outside read mode, velt_vir `Work::ReadOwn`) hold no store object: a store into one
-  copies what the reader did not make, and a method or function changing one runs by the counts
-  outside read mode (velt_vir `LkMode::Deferred`). There, and for the old value a store
-  replaces, a lock-set object whose last reference goes is handed to `velt_rt_free_after_reads`
-  with its drop glue: the reader may still point at it uncounted, so it is freed when the
-  thread's outermost read ends (at once outside read mode).
+  code outside read mode, velt_vir `Work::ReadOwn`) hold no store object and are counted by the
+  counts outside read mode. What a store, a `push` or a method or function changing one
+  (velt_vir `LkMode::Deferred`) keeps there gets a reference by those counts when it is a
+  place the caller holds already (also a reader's variable borrowing one; what comes from the
+  store sema copies), so it stays the same object; anything else is a copy of what the reader
+  did not make. What leaves one (an element removed, the old value a store replaces, such a
+  method's or function's result) loses its reference by those counts, and a lock-set object
+  whose last reference goes is handed to `velt_rt_free_after_reads` with its drop glue: the
+  reader may still point at it uncounted, so it is freed when the thread's outermost read ends
+  (at once outside read mode; the glue releases a reference, so one stored again meanwhile
+  lives on). A result the reader keeps is borrowed uncounted from then on, as the store's
+  objects are, unless the reader made it (`LOCAL`).
 
 Code whose mode is fixed counts without asking: functions only called directly from outside read
 mode (and `with` / `write` callbacks, which never run in read mode) count as before; functions only called directly from a
@@ -650,9 +656,12 @@ until it is written: a reader names the lock in a slot of its own thread (a cach
 thread writes, velt_rt `hazard.rs`) and checks that no writer came, so readers on many threads
 write nothing they share. A writer *revokes* the bias: it sets the lock's state and waits for the
 slots naming the lock to clear, then takes the lock's underlying reader-writer lock (parking_lot's
-`RawRwLock`) exclusively. While it waits the state says so (revoking): another writer, holding
-the underlying lock or not, writes only once the state says the bias is revoked, and waits for
-the revocation without holding the lock. It never waits for the slots while holding the
+`RawRwLock`) exclusively. While it waits the state says so (revoking): one writer revokes at a
+time, and another writer, holding the underlying lock or not, writes only once the state says
+the bias is revoked, and waits for the revocation without holding the lock. Each change of the
+state has one owner (biased to revoking: the revoker's compare-exchange; revoking to revoked:
+that revoker; revoked to biased: a reader's compare-exchange), so a revoker held up for any
+time never takes a later revocation for its own. It never waits for the slots while holding the
 underlying lock: a
 reader in a slot may be nested in a read of another lock whose writer waits for this writer's
 readers. A reader that biased the lock again before the writer took it (its revocation was old

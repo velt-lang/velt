@@ -562,8 +562,10 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
   captured from code outside any `read` callback, its fields and elements at any depth, and a
   method or function called with one of them to change it (`out.push(x)`, `seen.add(x)`,
   `m.set(k, x)`, `mine.v = x`, `out[0].tags.push("t")`, `sortItems(out)`). What the callback
-  stores there is a copy of what it did not make itself, and what it replaces there is freed
-  once the outermost `read` returns. Any other object of such a type cannot be told from the
+  stores there from the caller's own variables and containers is that same object, as in
+  JavaScript (`out.push(out[0])`, `out[0] = a`); anything else it did not make itself is a
+  copy (an element of the value, what a function returns). What it removes or replaces there
+  is freed once the outermost `read` returns, so a variable still holding it stays valid. Any other object of such a type cannot be told from the
   value's own, so a write to it stops the program: one a method of the caller's variable
   returns (`m.get(k)!.push(x)`), a loop over it gives (`for (const o of set) { o.v = 1; }`),
   a function value the callback calls reaches, or a closure made inside the callback captures.

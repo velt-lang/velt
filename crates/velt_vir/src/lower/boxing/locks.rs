@@ -195,6 +195,36 @@ impl Cx<'_> {
         }
     }
 
+    /// May a value of type `t` reach a lock-set object?
+    pub(in crate::lower) fn reaches_lock_set(&mut self, t: TyId) -> bool {
+        if self.boxing.lock_roots.is_empty() && self.boxing.lock_boxes.is_empty() {
+            return false;
+        }
+        let mut seen = FxHashSet::default();
+        let mut work = vec![t];
+        while let Some(t) = work.pop() {
+            if !seen.insert(t) {
+                continue;
+            }
+            if self.lock_counted(t) {
+                return true;
+            }
+            let parts = match self.kind(t) {
+                TyKind::Shared(_) | TyKind::Str => continue,
+                // What they hold is not followed here: may be.
+                TyKind::Dyn(..)
+                | TyKind::FnPtr { .. }
+                | TyKind::Closure(_)
+                | TyKind::Promise(..) => return true,
+                TyKind::Adt(..) if self.is_class(t) => self.adt_field_tys(t),
+                TyKind::Array(e) => vec![e],
+                _ => self.part_types(t),
+            };
+            work.extend(parts);
+        }
+        false
+    }
+
     /// May `read` on an `RwLock` of `v` run beside other readers (module docs)?
     pub(in crate::lower) fn shared_reads(&self, v: TyId) -> bool {
         self.boxing.lock_values.contains(&v) && !self.boxing.lock_exclusive.contains(&v)

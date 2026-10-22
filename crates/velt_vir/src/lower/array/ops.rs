@@ -5,7 +5,7 @@ use crate::lower::async_fn::BoxHold;
 use velt_sema::hir::{self, TyId};
 
 use crate::lower::operand::proj;
-use crate::lower::{cint, ice, unit, FnLower, Work};
+use crate::lower::{cint, ice, unit, FnLower, LkMode, Work};
 use crate::vir::{self, BinOp, Operand, Place, Proj, Rvalue, Ty};
 
 impl FnLower<'_, '_> {
@@ -50,8 +50,53 @@ impl FnLower<'_, '_> {
             self.write_barrier(Operand::Copy(arr.clone()), aty);
         }
         let arr = self.content(&arr, aty);
+        if self.mode != LkMode::Plain && self.captured_root(&args[0]) {
+            return self.caller_array_op(i, &args[1..], &arr, aty, ty);
+        }
+        self.array_op(i, &args[1..], &arr, aty, ty)
+    }
+
+    /// An array intrinsic on the caller's array in a `read` callback (caller_stores.rs): it
+    /// counts by the counts outside read mode, what it takes out handed to the reader.
+    fn caller_array_op(
+        &mut self,
+        i: hir::Intrinsic,
+        rest: &[hir::Expr],
+        arr: &Place,
+        aty: TyId,
+        ty: TyId,
+    ) -> Operand {
+        let outer = self.mode;
+        if let (hir::Intrinsic::ArrayPush, [x]) = (i, rest) {
+            let v = self.into_caller(x);
+            self.mode = LkMode::Deferred;
+            let elem = self.elem_ty(aty);
+            self.push_value(arr, elem, v);
+            self.mode = outer;
+            return unit();
+        }
+        self.mode = LkMode::Deferred;
+        let r = self.array_op(i, rest, arr, aty, ty);
+        self.mode = outer;
+        let rty = self.sub(ty);
+        if self.needs_drop(rty) {
+            self.hand_to_reader(&r, rty);
+        }
+        r
+    }
+
+    fn array_op(
+        &mut self,
+        i: hir::Intrinsic,
+        rest: &[hir::Expr],
+        arr: &Place,
+        aty: TyId,
+        ty: TyId,
+    ) -> Operand {
+        use hir::Intrinsic as I;
+        let arr = arr.clone();
         let elem = self.elem_ty(aty);
-        match (i, &args[1..]) {
+        match (i, rest) {
             (I::ArrayLen, []) => self.rvalue_temp(Ty::U64, Rvalue::Use(Self::arr_field(&arr, 1))),
             (I::ArrayPush, [x]) => self.push(&arr, elem, x),
             (I::ArrayPop, []) => self.pop(&arr, elem, ty),
@@ -86,7 +131,7 @@ impl FnLower<'_, '_> {
             }
             _ => ice(format_args!(
                 "intrinsic {i:?} called with {} arguments",
-                args.len()
+                rest.len() + 1
             )),
         }
     }
