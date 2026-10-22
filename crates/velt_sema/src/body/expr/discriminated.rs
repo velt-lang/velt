@@ -284,6 +284,18 @@ impl FnCx<'_, '_> {
         Ok(self.negated(test, negate, span))
     }
 
+    /// [`union_member_for`](Self::union_member_for) when `exp` hints a union, else `Ok(None)`.
+    pub(super) fn union_literal_member(
+        &mut self,
+        props: &[ast::ObjectProp],
+        exp: Option<TyId>,
+    ) -> Result<Option<TyId>, ()> {
+        match self.hint(exp).filter(|t| self.cx.union_def(*t).is_some()) {
+            Some(u) => self.union_member_for(props, u),
+            None => Ok(None),
+        }
+    }
+
     /// The member of union `u` an object literal builds: the one whose discriminants match the
     /// literal's (`kind: "circle"`), else the one with exactly the literal's fields, else the
     /// union's only `Record` member. `Ok(None)`
@@ -373,17 +385,53 @@ impl FnCx<'_, '_> {
                 ast::ObjectProp::Spread(_) | ast::ObjectProp::Method(_) => None,
             })
             .collect();
-        let exact: Vec<TyId> = cands
+        let mut exact: Vec<TyId> = cands
             .into_iter()
             .filter(|m| {
                 self.field_names(*m)
                     .is_some_and(|fs| same_names(&fs, &names))
             })
             .collect();
+        // Beside a dynamic member, a struct member takes only a literal its fields can hold
+        // (`{ default: "s" }` of a `Mod<number> | unknown` is the `unknown`'s).
+        if dynamic.is_some() {
+            exact.retain(|m| self.literal_fields_fit(props, *m));
+        }
         if exact.len() == 1 {
             return Ok(Some(exact[0]));
         }
         Ok(self.only_record_member(u).or(dynamic))
+    }
+
+    /// Do the fields of member `m` hold the literal values (`"s"`, `1`, `true`) of `props`?
+    fn literal_fields_fit(&mut self, props: &[ast::ObjectProp], m: TyId) -> bool {
+        for p in props {
+            let ast::ObjectProp::KeyValue(k, v) = p else {
+                continue;
+            };
+            let Some(l) = literal_of(v) else {
+                continue;
+            };
+            let ty = &self.cx.ty;
+            let lt = match l.lit {
+                ast::Lit::Str(_) => ty.str_,
+                ast::Lit::Int { .. } | ast::Lit::Float { .. } => ty.f64,
+                ast::Lit::Bool(_) => ty.bool_,
+                ast::Lit::Null | ast::Lit::Undefined => continue,
+            };
+            let Some(ft) = self.cx.member_field_ty(m, &k.name) else {
+                return false;
+            };
+            let ft = self.cx.widened(ft);
+            let mut params = vec![];
+            crate::types::collect_params(&self.cx.ty, ft, &mut params);
+            let open = self.cx.dynamic(ft).is_some() || !params.is_empty();
+            let numeric = lt == self.cx.ty.f64 && self.cx.ty.is_numeric(ft);
+            if !open && !numeric && !self.converts_to(lt, ft) {
+                return false;
+            }
+        }
+        true
     }
 
     /// The `Record` member of union `u` when it has exactly one: an object literal no struct

@@ -197,7 +197,10 @@ Promises behave like JavaScript's, at Rust's cost:
   ([below](#promisewithresolvers)).
 - `Promise.resolve(value): Promise<T>`: a promise fulfilled with `value` (`Promise.resolve()`
   is a `Promise<void>`; a promise passed in is returned as it is, as in JS). `T` comes from the
-  argument, the type argument (`Promise.resolve<number>(p)`) or the expected type.
+  argument, the type argument (`Promise.resolve<number>(p)`) or the expected type. A union with
+  promise members (`R | Promise<R>`, a sync-or-async callback's result) gives its promise
+  itself or a promise of its value; promises of another payload type than the others' are not
+  supported yet.
 - `Promise.reject(reason: E): Promise<T, E>`: a promise rejected with `reason`. `T` comes from
   the type argument (`Promise.reject<string>(e)`) or the expected type, else it is `never`.
 

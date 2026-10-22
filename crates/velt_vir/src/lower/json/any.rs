@@ -89,8 +89,6 @@ impl FnLower<'_, '_> {
         }
     }
 
-    /// Does the dynamic value at `place` have a JSON form (not `undefined`, a function or a
-    /// symbol)?
     /// Is `ty` a union with an `any` / `unknown` member (`T | string` at `T = unknown`)?
     pub(super) fn has_dynamic_member(&mut self, ty: TyId) -> bool {
         if !self.cx.is_union(ty) {
@@ -124,6 +122,8 @@ impl FnLower<'_, '_> {
         Operand::Copy(out)
     }
 
+    /// Does the dynamic value at `place` have a JSON form (not `undefined`, a function or a
+    /// symbol)?
     pub(super) fn any_json_present(&mut self, place: &Place) -> Operand {
         let desc = Operand::Copy(proj(place, Proj::Field(1)));
         let tag = self.any_tag_of(desc);

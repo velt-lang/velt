@@ -305,14 +305,14 @@ impl FnCx<'_, '_> {
         {
             return self.method_object(props, span);
         }
-        // A union's member is chosen by the literal's discriminants (`kind: "circle"`).
-        let exp = match self.hint(exp).filter(|t| self.cx.union_def(*t).is_some()) {
-            Some(u) => match self.union_member_for(props, u) {
-                Ok(Some(m)) => Some(m),
-                Ok(None) => exp,
-                Err(()) => return self.error_expr(span),
-            },
-            None => exp,
+        // A union's member by the literal's discriminants or fields (`union_member_for`).
+        let exp = match self.union_literal_member(props, exp) {
+            Ok(Some(d)) if self.cx.dynamic(d).is_some() => {
+                let h = self.object_lit(props, None, span);
+                return self.coerce(h, d);
+            }
+            Ok(m) => m.or(exp),
+            Err(()) => return self.error_expr(span),
         };
         if let Some(target) = self.literal_iface(exp) {
             return self.iface_object(props, target, span);

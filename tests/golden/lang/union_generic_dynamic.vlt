@@ -3,7 +3,9 @@
 // the member whose test it passes (else to the dynamic one), and `typeof` of a member that is
 // a type parameter is the tag of the instantiation's value; `null` is the dynamic member's.
 // Null tests, truthiness, `??`, `?.` and JSON ask that member's value itself, as they do a
-// plain `any` / `unknown`; an object literal of no other member's shape is that member's.
+// plain `any` / `unknown`; an object literal of no other member's shape (other fields, or
+// values its fields cannot hold) is that member's. `??` on a `T | Mod<T>` or a plain `T` tests
+// the value at every instantiation.
 interface Mod<T> {
   default: T;
 }
@@ -168,6 +170,60 @@ function nothings(): void {
   console.log(present<unknown>(0), shape<any>({ a: 1, b: 2 }), shape<unknown>({ default: 1, x: 2 }));
 }
 
+interface A {
+  a: number;
+}
+
+function keys<T>(x: T | A): string {
+  const u: unknown = x;
+  return String(Object.keys(u as object).length);
+}
+
+function readB<T>(x: T | A): string {
+  const u: any = x;
+  return String(u.b);
+}
+
+function readDefault<T>(x: T | Mod<number>): string {
+  const u: any = x;
+  return String(u.default);
+}
+
+function orDefault<T>(x: T | Mod<T>): string {
+  return String(x ?? "dflt");
+}
+
+function plainOr<T>(x: T): string {
+  return String(x ?? "d");
+}
+
+class Holder<T> {
+  v: T | Mod<T>;
+  constructor(v: T | Mod<T>) {
+    this.v = v;
+  }
+  get(): string {
+    return String(this.v ?? "box");
+  }
+}
+
+function inField<T>(o: { v: T | Mod<T> }): string {
+  return String(o.v ?? "obj");
+}
+
+function literals(): void {
+  console.log(keys<unknown>({ a: 1, b: 2, c: 3 }), keys<unknown>({ a: 1 }), keys<any>({ a: 1, z: 0 }));
+  console.log(readB<unknown>({ a: 1, b: 2 }), readB<any>({ a: 1, b: 2 }), readB<unknown>({ a: 1 }));
+  console.log(readDefault<unknown>({ default: "s" }), readDefault<unknown>({ default: 1 }));
+  console.log(orDefault<unknown>(null), orDefault<any>(undefined), orDefault<unknown>(0));
+  console.log(orDefault<number>(1), orDefault<unknown>({ default: 2 }) === "[object Object]");
+  console.log(plainOr<unknown>(null), plainOr<any>(undefined), plainOr<null>(null));
+  console.log(plainOr<number | null>(null), plainOr<number>(2), plainOr<string>("") === "");
+  console.log(new Holder<unknown>(null).get(), new Holder<unknown>(5).get(), new Holder<any>(undefined).get());
+  console.log(inField<unknown>({ v: undefined }), inField<unknown>({ v: "x" }), inField<any>({ v: null }));
+}
+
 demo();
 nothings();
+literals();
 later<unknown>(0).then((v) => console.log(v));

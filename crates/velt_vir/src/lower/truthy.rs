@@ -40,6 +40,25 @@ impl FnLower<'_, '_> {
         Operand::Copy(out)
     }
 
+    /// `LooseEq(a, b)` (`a == b` on a type with a type parameter in it): `a === b` as
+    /// `Intrinsic::Same` lowers it where the instantiated type holds no nothing; else that or
+    /// both nothings (`null == undefined`).
+    pub(super) fn loose_eq_intrinsic(&mut self, a: &hir::Expr, b: &hir::Expr) -> Operand {
+        let t = self.sub(a.ty);
+        let (pa, pb) = self.two_places(a, b);
+        let same = self.same_values(&pa, &pb, t);
+        if !self.may_be_null(t, true) {
+            return same;
+        }
+        let (na, nb) = (self.temp(Ty::Bool), self.temp(Ty::Bool));
+        let (na, nb) = (Place::local(na), Place::local(nb));
+        self.null_into(&na, &pa, t, true);
+        self.null_into(&nb, &pb, t, true);
+        let both = Rvalue::Binary(BinOp::BitAnd, Operand::Copy(na), Operand::Copy(nb));
+        let both = self.rvalue_temp(Ty::Bool, both);
+        self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitOr, same, both))
+    }
+
     /// Assign whether the value at `p` (of the concrete type `t`) is `null` (`loose`: `null`
     /// or `undefined`) to `out`. A `X | null | undefined` is an option of a `X | null` here
     /// (`Cx::kind`), whose own nothing is `undefined`. A union holds a nothing through the

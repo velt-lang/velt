@@ -154,6 +154,7 @@ impl FnLower<'_, '_> {
             (I::Truthy, [a]) => self.truthy_intrinsic(a),
             (I::IsNull, [a]) => self.null_intrinsic(a, false),
             (I::IsNullish, [a]) => self.null_intrinsic(a, true),
+            (I::LooseEq, [a, b]) => self.loose_eq_intrinsic(a, b),
             (I::MayHoldPrimitive, [a]) => {
                 let t = self.sub(a.ty);
                 Operand::Const(crate::vir::Const::Bool(!self.cx.object_only(t)), Ty::Bool)

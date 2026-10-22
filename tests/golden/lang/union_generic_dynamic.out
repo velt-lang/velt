@@ -26,4 +26,13 @@ undefined undefined 7
 2 1
 out in none none
 some object {"a":1,"b":2} object {"default":1,"x":2}
+3 1 2
+2 2 undefined
+s 1
+dflt dflt 0
+1 true
+d d d
+d 2 true
+box 5 box
+obj x obj
 f
