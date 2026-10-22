@@ -21,7 +21,14 @@ pub(crate) fn order(cx: &mut Ctx) -> Vec<DefId> {
         .iter()
         .enumerate()
         .filter_map(|(i, d)| match d {
-            DefInfo::Global(g) if g.stored => Some((g.module, g.src.span.lo, DefId(i as u32))),
+            // `import.meta` exists before the module's code runs (at its first use's position).
+            DefInfo::Global(g) if g.stored => {
+                let start = match g.name == velt_syntax::ast::IMPORT_META {
+                    true => 0,
+                    false => g.src.span.lo,
+                };
+                Some((g.module, start, DefId(i as u32)))
+            }
             _ => None,
         })
         .collect();
@@ -248,8 +255,11 @@ fn defer_root(cx: &mut Ctx, entry: Option<DefId>, slots: &[DefId]) -> u32 {
     let Some(main) = entry.filter(|_| crate::module_scripts::is_root_script(cx, cx.root)) else {
         return none;
     };
-    let is_root =
-        |d: DefId| cx.global(d).is_some_and(|g| g.module == cx.root) && !cx.global_props.is_slot(d);
+    let is_root = |d: DefId| {
+        cx.global(d)
+            .is_some_and(|g| g.module == cx.root && g.name != velt_syntax::ast::IMPORT_META)
+            && !cx.global_props.is_slot(d)
+    };
     let Some(from) = slots.iter().position(|&d| is_root(d)) else {
         return none;
     };
