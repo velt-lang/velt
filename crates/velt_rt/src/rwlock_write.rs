@@ -51,7 +51,11 @@ fn write_slow(p: *mut u64, w: &Words) {
     let mut until = None;
     loop {
         match w.state.load(Ordering::Acquire) {
-            0 => until = Some(revoke(p, w)),
+            0 => match revoke(p, w) {
+                Some(u) => until = Some(u),
+                // Another writer started revoking first: wait for it.
+                None => continue,
+            },
             REVOKING => {
                 let mut spins = 0u32;
                 while w.state.load(Ordering::Acquire) == REVOKING {
@@ -92,13 +96,27 @@ fn write_in_read(p: *mut u64, r: &crate::hazard::Reader) -> ! {
 
 /// A writer about to take `lock` of a biased `RwLock`: readers take `lock` from now on; wait for
 /// the ones in slots. Returns until when the bias stays revoked, which the writer stores once
-/// it holds `lock`.
+/// it holds `lock`, or `None` when another writer started revoking first.
+///
+/// One writer at a time revokes, and each change of `state` has one owner: 0 to `REVOKING`
+/// (the revoker's compare-exchange), `REVOKING` to `MUTEX` (that revoker alone), `MUTEX` to 0
+/// (`rebias`, a compare-exchange by a reader holding `lock`). A revoker held up anywhere can
+/// therefore never take a later revocation for its own (ABA): while it revokes, `state` stays
+/// `REVOKING`, which no reader biases again.
 #[cold]
-fn revoke(p: *mut u64, w: &Words) -> u64 {
+fn revoke(p: *mut u64, w: &Words) -> Option<u64> {
+    pause(Point::Revoking);
+    // SeqCst: readers store their slot, then read `state`; this writer stores `state`, then
+    // reads the slots.
+    if w.state
+        .compare_exchange(0, REVOKING, Ordering::SeqCst, Ordering::Relaxed)
+        .is_err()
+    {
+        return None;
+    }
     // No reader biases the lock again until the writer holds `lock` (`rebias` waits for
-    // `until`); the writer stores the returned time then.
+    // `until`, and for `MUTEX`); the writer stores the returned time then.
     let until = w.until.swap(u64::MAX, Ordering::Relaxed);
-    w.state.store(REVOKING, Ordering::SeqCst);
     let t0 = now_ns();
     let mut spins = 0u32;
     while crate::hazard::named(p) {
@@ -108,13 +126,6 @@ fn revoke(p: *mut u64, w: &Words) -> u64 {
             false => std::thread::yield_now(),
         }
     }
-    // Writers holding `lock` may write from now on (Release: after the readers' reads). Not
-    // when a reader biased the lock again meanwhile (another writer revoking with this one
-    // wrote and stored `until`): this writer then finds `state` 0 holding `lock`, and revokes
-    // once more.
-    let _ = w
-        .state
-        .compare_exchange(REVOKING, MUTEX, Ordering::Release, Ordering::Relaxed);
     let t1 = now_ns();
     let biased_for = match until {
         u64::MAX => 0,
@@ -128,7 +139,38 @@ fn revoke(p: *mut u64, w: &Words) -> u64 {
     }
     .max(floor);
     w.inhibit.store(inhibit, Ordering::Relaxed);
-    t1 + inhibit
+    pause(Point::Scanned);
+    // Writers holding `lock` may write from now on (Release: after the readers' reads).
+    w.state.store(MUTEX, Ordering::Release);
+    Some(t1 + inhibit)
+}
+
+/// Where a revocation can be held up in tests, to force the interleavings of several writers
+/// and readers (`tests`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Point {
+    /// About to start revoking.
+    Revoking,
+    /// The readers' slots are clear, before the state says the bias is revoked.
+    Scanned,
+}
+
+#[cfg(test)]
+thread_local! {
+    /// This thread's test hook, called at each `Point`.
+    pub(crate) static PAUSE: std::cell::RefCell<Option<Box<dyn Fn(Point)>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[inline(always)]
+fn pause(at: Point) {
+    #[cfg(test)]
+    PAUSE.with(|h| {
+        if let Some(h) = &*h.borrow() {
+            h(at)
+        }
+    });
+    let _ = at;
 }
 
 /// Release the lock this thread took with `velt_rt_rwlock_write`.
@@ -138,3 +180,7 @@ pub unsafe extern "C" fn velt_rt_rwlock_write_unlock(p: *mut u64, reader: u64) {
     crate::task::local::mutex_unlocked();
     (*(p as *const Words)).lock.unlock_exclusive();
 }
+
+#[cfg(test)]
+#[path = "rwlock_write_tests.rs"]
+mod tests;

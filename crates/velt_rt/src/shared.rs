@@ -384,12 +384,14 @@ pub(crate) fn lock_slow(lock: &RawRwLock, take: Take) {
     }
 }
 
-/// A reader holding `lock` of a revoked `RwLock`: after `until`, bias it again (true).
-fn rebias(w: &Words) -> bool {
+/// A reader holding `lock` of a revoked `RwLock`: after `until`, bias it again (true). Only
+/// from `MUTEX`: never while a writer revokes (rwlock_write.rs `revoke`).
+pub(crate) fn rebias(w: &Words) -> bool {
     let now = now_ns();
     let until = w.until.load(Ordering::Relaxed);
-    // `u64::MAX`: a writer is revoking. A writer that starts revoking after this claims
-    // `until` finds the lock biased again once it holds `lock`, and revokes once more.
+    // `u64::MAX`: a writer revoked and does not hold `lock` yet. A writer that starts revoking
+    // after this claims `until` finds the lock biased again once it holds `lock`, and revokes
+    // once more.
     if now < until
         || w.until
             .compare_exchange(until, now, Ordering::Relaxed, Ordering::Relaxed)
@@ -397,8 +399,9 @@ fn rebias(w: &Words) -> bool {
     {
         return false;
     }
-    w.state.store(0, Ordering::Release);
-    true
+    w.state
+        .compare_exchange(MUTEX, 0, Ordering::Release, Ordering::Relaxed)
+        .is_ok()
 }
 
 /// A read nested in another.
