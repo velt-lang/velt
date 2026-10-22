@@ -139,9 +139,9 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// `l == r` (`negate`: `!=`) where either side is a `T | null | undefined`: the other side
-    /// converts to that type, then both nothings are equal (`null == undefined`), and present
-    /// values compare as `===` does. `Err` gives the operands back when neither side is one.
+    /// `l == r` (`negate`: `!=`) where either side is a `T | null | undefined` (or both are
+    /// of one type with a type parameter in it): the other side converts to that type, then
+    /// both nothings are equal (`null == undefined`), and present values compare as `===` does. `Err` gives the operands back when neither side is one.
     pub(crate) fn loose_three_state_eq(
         &mut self,
         l: hir::Expr,
@@ -149,8 +149,12 @@ impl FnCx<'_, '_> {
         negate: bool,
         span: Span,
     ) -> Result<hir::Expr, Box<(hir::Expr, hir::Expr)>> {
+        // Two values of one type with a type parameter in it (`T | string`): which nothings
+        // they hold depends on the instantiation (`T = unknown` holds both), so the test is
+        // made there (`Intrinsic::IsNullish`).
+        let param = l.ty == r.ty && self.param_shaped(l.ty);
         let (l, r) = match (self.is_three_state(l.ty), self.is_three_state(r.ty)) {
-            (false, false) => return Err(Box::new((l, r))),
+            (false, false) if !param => return Err(Box::new((l, r))),
             (true, false) if self.cx.ty.nothing_of(r.ty).is_some() => {
                 let to = l.ty;
                 match self.try_coerce(r, to) {
@@ -199,8 +203,19 @@ impl FnCx<'_, '_> {
             hir::UseMode::Borrow
         };
         let get = |s: &Self, t| s.mk(H::Local(t, mode), ty, span);
-        let a_nothing = self.null_test(get(self, a), true, span);
-        let b_nothing = self.null_test(get(self, b), true, span);
+        let nothing = |s: &mut Self, t| match param {
+            true => {
+                let b = s.cx.ty.bool_;
+                let v = get(s, t);
+                s.intrinsic(hir::Intrinsic::IsNullish, vec![v], b, span)
+            }
+            false => {
+                let v = get(s, t);
+                s.null_test(v, true, span)
+            }
+        };
+        let a_nothing = nothing(self, a);
+        let b_nothing = nothing(self, b);
         let same = self.binary_checked(
             velt_syntax::ast::BinaryOp::Eq,
             get(self, a),

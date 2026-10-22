@@ -537,8 +537,12 @@ one, `x == null` both, and `typeof`, printing and `JSON.stringify` see which one
 and an `undefined` arm (`i === 1 ? null : i === 2 ? undefined : i`) is a `T | null | undefined`.
 A generic union whose type argument brings a nothing (`T | string | undefined` at
 `T = number | null`) holds it like the union written out (`number | string | null | undefined`):
-`== null`, `===`, `??` and narrowing see it, inside the generic function too. An `any` or
-`unknown` converted to it (`const n: number | null | undefined = v`, `v as T | null |
+`== null`, `===`, `??` and narrowing see it, inside the generic function too. At `T = unknown`
+(or `any`) such a union (`T | string`, `T | Mod<T>`) holds any value: one that is no other
+member's is its `unknown` member's (`null`, `0`, an object literal of no member's shape), and
+null tests (also `a == b` of a `null` and an `undefined`), truthiness (`!x`, `if (x)`, `&&`,
+`||`), `??`, `??=`, `?.`, `typeof`, printing and `JSON.stringify` ask that value itself, as they
+do a plain `unknown`. An `any` or `unknown` converted to it (`const n: number | null | undefined = v`, `v as T | null |
 undefined`) gives `null` for a `null` and `undefined` for an `undefined`. Converted to a
 `T | null` or a `T | undefined`, it gives the nothing that type has, and stops with a
 `TypeError` for the other one (`const n: number | null = v` with a `v` holding `undefined`), as
@@ -1007,8 +1011,9 @@ for (const s of shapes) {
   getter, and a method every member has is called on the union: through an interface every
   member extends that declares it, else each member's own when they have the same type. Members
   may be classes too (`Circle | Sq` with `area()` on both, or a union of classes only): each
-  member's own method runs on the value itself, receiver first, then the arguments, which must
-  be names, literals or fields there for now (store a computed argument in a variable first).
+  member's own method runs on the value itself: the receiver first, then the arguments in order,
+  each evaluated once. The call's type is the union of the members' results (`number | string`
+  when `scale()` returns a `number` on `Circle` and a `string` on `Sq`), as in TypeScript.
 
 ```ts
 interface Base {

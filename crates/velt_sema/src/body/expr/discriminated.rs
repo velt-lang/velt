@@ -347,8 +347,21 @@ impl FnCx<'_, '_> {
             );
             return Err(());
         }
+        // A generic union at `T = any` / `unknown` (`T | Mod<T>`, which TypeScript reads as
+        // that `any`) takes a literal of no member's shape as that member's (`{ a: 1 }`).
+        let dynamic = self
+            .cx
+            .union_members(u)
+            .unwrap_or_default()
+            .into_iter()
+            .find(|m| {
+                matches!(
+                    self.cx.dynamic(*m),
+                    Some(crate::any::Dynamic::Any | crate::any::Dynamic::Unknown)
+                )
+            });
         // With a `Record` member as well, a struct member takes only a literal of its shape.
-        if cands.len() == 1 && self.only_record_member(u).is_none() {
+        if cands.len() == 1 && self.only_record_member(u).is_none() && dynamic.is_none() {
             return Ok(cands.pop());
         }
         let names: Vec<&str> = props
@@ -370,7 +383,7 @@ impl FnCx<'_, '_> {
         if exact.len() == 1 {
             return Ok(Some(exact[0]));
         }
-        Ok(self.only_record_member(u))
+        Ok(self.only_record_member(u).or(dynamic))
     }
 
     /// The `Record` member of union `u` when it has exactly one: an object literal no struct

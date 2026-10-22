@@ -30,7 +30,7 @@ use crate::vir::{
 };
 
 pub(super) const SLOT_TAG: i128 = 0;
-const SLOT_TRUTHY: i128 = 1;
+pub(super) const SLOT_TRUTHY: i128 = 1;
 pub(super) const SLOT_SAME: i128 = 2;
 pub(super) const SLOT_NUMBER: i128 = 3;
 pub(super) const SLOT_HASH: i128 = 4;

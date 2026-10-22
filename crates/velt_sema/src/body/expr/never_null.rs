@@ -217,7 +217,12 @@ impl FnCx<'_, '_> {
 
     /// `h` bound to a fresh temporary (a statement pushed to `stmts`), named in an identifier
     /// expression that refers to it.
-    fn temp_ident(&mut self, base: &str, h: hir::Expr, stmts: &mut Vec<hir::Stmt>) -> ast::Expr {
+    pub(super) fn temp_ident(
+        &mut self,
+        base: &str,
+        h: hir::Expr,
+        stmts: &mut Vec<hir::Stmt>,
+    ) -> ast::Expr {
         let name = format!("{base}{}", self.f.locals.len());
         let span = h.span;
         self.bind_temp(&name, h, stmts);

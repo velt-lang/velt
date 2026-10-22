@@ -117,13 +117,23 @@ impl FnCx<'_, '_> {
         exp: TyId,
         f: &mut dyn FnMut(&mut Self, hir::Expr) -> Option<hir::Expr>,
     ) -> Result<hir::Expr, hir::Expr> {
+        let live = self.narrowed_variants(&h);
+        self.map_members_in(h, exp, live, f)
+    }
+
+    /// [`map_members`](Self::map_members) over the variants `live` (`None`: all).
+    pub(super) fn map_members_in(
+        &mut self,
+        h: hir::Expr,
+        exp: TyId,
+        live: Option<Vec<u32>>,
+        f: &mut dyn FnMut(&mut Self, hir::Expr) -> Option<hir::Expr>,
+    ) -> Result<hir::Expr, hir::Expr> {
         let Some((sdef, _)) = self.cx.union_def(h.ty) else {
             return Err(h);
         };
         let src = self.cx.union_members(h.ty).unwrap_or_default();
-        let live = self
-            .narrowed_variants(&h)
-            .unwrap_or_else(|| (0..src.len() as u32).collect());
+        let live = live.unwrap_or_else(|| (0..src.len() as u32).collect());
         let span = h.span;
         let consume = !is_place(&h) || outer_mode(&h) == Some(UseMode::Move);
         let mut arms = vec![];

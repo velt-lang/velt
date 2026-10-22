@@ -80,6 +80,18 @@ class Sq {
     this.side *= k;
     return `sq ${this.side}`;
   }
+  tag(t: string): string {
+    return `s:${t}`;
+  }
+  scale(k: number): string {
+    return `sq${this.side * k}`;
+  }
+  each(f: (x: number) => number): number {
+    return f(this.side) + 100;
+  }
+  pair(a: string, b: number): string {
+    return `s ${a} ${b}`;
+  }
 }
 
 class Ring {
@@ -95,6 +107,71 @@ class Ring {
     this.r += k;
     return `ring ${this.r}`;
   }
+  tag(t: string): string {
+    return `r:${t}`;
+  }
+  scale(k: number): number {
+    return this.r * k;
+  }
+  each(f: (x: number) => number): number {
+    return f(this.r);
+  }
+  pair(a: string, b: number): string {
+    return `r ${a} ${b}`;
+  }
+}
+
+class Tri {
+  readonly kind: "tri" = "tri";
+  tag(t: string): string {
+    return `t:${t}`;
+  }
+  scale(k: number): number {
+    return k;
+  }
+  each(f: (x: number) => number): number {
+    return f(0);
+  }
+  pair(a: string, b: number): string {
+    return `t ${a} ${b}`;
+  }
+}
+
+const order: string[] = [];
+
+function note<T>(s: string, v: T): T {
+  order.push(s);
+  return v;
+}
+
+function pick(i: number, xs: (Ring | Sq | Tri)[]): Ring | Sq | Tri {
+  order.push("recv");
+  return xs[i];
+}
+
+// Computed arguments are evaluated once, after the receiver and in order; the call's type is
+// the union of the members' results (`number | string` for `scale`).
+function computed(): void {
+  const names = ["a", "b"];
+  const n = 3;
+  const k = 1;
+  const two: (Ring | Sq)[] = [new Ring(2), new Sq(2)];
+  for (const s of two) {
+    console.log(s.tag(names[0]), s.tag(`t${n}`), s.tag(String(n)), s.scale(k + 1));
+    const r = s.scale(2);
+    console.log(typeof r, r);
+    console.log(s.each((x) => x * 10), s.pair(names[1] + "!", n * 2));
+  }
+  const three: (Ring | Sq | Tri)[] = [new Ring(1), new Sq(1), new Tri()];
+  for (const s of three) {
+    console.log(s.tag(names[1]), s.scale(n - 1), s.pair(`${s.kind}`, k));
+  }
+  console.log(pick(1, three).pair(note("a1", "x"), note("a2", 5)), order.join(","));
+  let i = 0;
+  const t = three[0];
+  console.log(t.pair(String(i++), i++), i);
+  const m: Ring | Sq | undefined = two[1];
+  console.log(m?.tag(names[0] + "?"));
 }
 
 type Tile = Disc | Sq;
@@ -147,3 +224,4 @@ function demo(): void {
 }
 
 demo();
+computed();

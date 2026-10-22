@@ -14,3 +14,15 @@ sq 25 5
 3 ring 3 27
 9 sq 6 36
 25 ring
+r:a r:t3 r:3 4
+number 4
+20 r b! 6
+s:a s:t3 s:3 sq4
+string sq4
+120 s b! 6
+r:b 2 r ring 1
+s:b sq2 s sq 1
+t:b 2 t tri 1
+s x 5 recv,a1,a2
+r 0 1 2
+s:a?
