@@ -48,6 +48,7 @@ pub(crate) mod expr;
 mod field_narrow;
 mod for_any;
 mod for_await;
+pub(crate) mod for_in_proxy;
 mod for_iter;
 mod for_map;
 mod gated;

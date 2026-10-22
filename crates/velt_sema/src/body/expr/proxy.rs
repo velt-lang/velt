@@ -179,10 +179,11 @@ impl FnCx<'_, '_> {
             hir::TyKind::Adt(d, _) => {
                 let d = *d;
                 self.record_args(t).is_none()
-                    && self
-                        .cx
-                        .adt(d)
-                        .is_some_and(|a| matches!(a.kind, hir::AdtKind::Class | hir::AdtKind::Anon))
+                    && self.cx.adt(d).is_some_and(|a| match a.kind {
+                        hir::AdtKind::Class | hir::AdtKind::Anon => true,
+                        // A fields-only interface; not a Velt `struct`, a value type.
+                        hir::AdtKind::Struct => a.decl.is_none(),
+                    })
             }
             _ => false,
         };
@@ -195,6 +196,12 @@ impl FnCx<'_, '_> {
     pub(crate) fn proxy_keys(&mut self, call: ast::Expr, arg: &ast::Expr) -> Option<hir::Expr> {
         if self.proxy_keys_inner {
             return None;
+        }
+        if let ast::ExprKind::Ident(i) = &arg.kind {
+            if i.name.starts_with(crate::body::for_in_proxy::FOR_IN_OBJECT) {
+                // A `for...in` loop's plain value (for_in_proxy.rs).
+                return None;
+            }
         }
         let t = self.trial_type(arg)?;
         if !self.may_be_typed_proxy(t) {
@@ -217,6 +224,104 @@ impl FnCx<'_, '_> {
             els: Box::new(els),
         };
         Some(self.mk(kind, ty, span))
+    }
+
+    /// `"k" in x` of a class instance or an object `x` that may be a typed proxy:
+    /// `IsTypedProxy(x) ? __proxyHas(x, "k") : "k" in x`, so a proxy's `has` trap answers and a
+    /// plain value keeps its own test (and its type stays uncounted: only a proxy is converted
+    /// to `any`). `None` otherwise.
+    pub(crate) fn proxy_in(
+        &mut self,
+        lhs: &ast::Expr,
+        rhs: &ast::Expr,
+        span: Span,
+    ) -> Option<hir::Expr> {
+        if self.proxy_keys_inner || !super::object_keys::reevaluable(rhs) {
+            return None;
+        }
+        let t = self.trial_type(rhs)?;
+        if !self.may_be_typed_proxy(t) {
+            return None;
+        }
+        let plain = super::setters::synth(
+            ast::ExprKind::Binary {
+                op: ast::BinaryOp::In,
+                lhs: Box::new(lhs.clone()),
+                rhs: Box::new(rhs.clone()),
+            },
+            span,
+        );
+        let proxy = vec![rhs.clone(), lhs.clone()];
+        Some(self.proxy_split(rhs, "__proxyHas", proxy, &plain, span))
+    }
+
+    /// `Object.hasOwn(x, k)` of a class instance or an object `x` that may be a typed proxy:
+    /// `IsTypedProxy(x) ? __proxyHasOwnOf(x, k) : plain`, so a proxy's
+    /// `getOwnPropertyDescriptor` trap answers for `k` alone. `None` otherwise.
+    pub(crate) fn proxy_has_own(
+        &mut self,
+        o: &ast::Expr,
+        k: &ast::Expr,
+        plain: &ast::Expr,
+        span: Span,
+    ) -> Option<hir::Expr> {
+        if self.proxy_keys_inner || !super::object_keys::reevaluable(o) {
+            return None;
+        }
+        let t = self.trial_type(o)?;
+        if !self.may_be_typed_proxy(t) {
+            return None;
+        }
+        let proxy = vec![o.clone(), k.clone()];
+        Some(self.proxy_split(o, "__proxyHasOwnOf", proxy, plain, span))
+    }
+
+    /// `IsTypedProxy(x) ? f(args) : plain`, both checked without the typed proxy hooks.
+    fn proxy_split(
+        &mut self,
+        x: &ast::Expr,
+        f: &str,
+        args: Vec<ast::Expr>,
+        plain: &ast::Expr,
+        span: Span,
+    ) -> hir::Expr {
+        let xv = self.expr(x, None, crate::body::Want::Borrow);
+        let b = self.cx.ty.bool_;
+        let cond = self.intrinsic(hir::Intrinsic::IsTypedProxy, vec![xv], b, span);
+        self.proxy_keys_inner = true;
+        let then = self.prelude_fn_call(f, args, span);
+        let els = self.expr(plain, None, crate::body::Want::Move);
+        self.proxy_keys_inner = false;
+        let ty = els.ty;
+        let kind = H::If {
+            cond: Box::new(cond),
+            then: Box::new(then),
+            els: Box::new(els),
+        };
+        self.mk(kind, ty, span)
+    }
+
+    /// Is `e` a value that may be a typed proxy but is not safe to evaluate again (a call)? The
+    /// hooks above then bind it to a temporary first (`with_temp`).
+    pub(crate) fn typed_proxy_once(&mut self, e: &ast::Expr) -> bool {
+        if self.proxy_keys_inner || super::object_keys::reevaluable(e) {
+            return false;
+        }
+        match self.trial_type(e) {
+            Some(t) => self.may_be_typed_proxy(t),
+            None => false,
+        }
+    }
+
+    /// `{ const <operand> = e; f(<operand>) }`: `f` checked with `e` evaluated once.
+    pub(crate) fn operand_once(
+        &mut self,
+        e: &ast::Expr,
+        span: Span,
+        f: impl FnOnce(&mut Self, &ast::Expr) -> hir::Expr,
+    ) -> hir::Expr {
+        let h = self.expr(e, None, crate::body::Want::Move);
+        self.with_temp("<operand>", h, e.span, span, f)
     }
 
     /// A call of the prelude function `name` with the checked arguments `args`, of type `ret`.
