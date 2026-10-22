@@ -28,26 +28,7 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio_postgres::tls::{ChannelBinding, TlsConnect, TlsStream};
 use tokio_rustls::TlsConnector;
 
-/// The process-wide rustls `ring` crypto provider.
-fn provider() -> std::sync::Arc<rustls::crypto::CryptoProvider> {
-    static PROVIDER: std::sync::OnceLock<std::sync::Arc<rustls::crypto::CryptoProvider>> =
-        std::sync::OnceLock::new();
-    PROVIDER
-        .get_or_init(|| std::sync::Arc::new(rustls::crypto::ring::default_provider()))
-        .clone()
-}
-
-/// Every certificate in `pem` (at least one), or a message naming `what` was being read.
-fn certificates(pem: &[u8], what: &str) -> Result<Vec<CertificateDer<'static>>, String> {
-    use rustls::pki_types::pem::PemObject;
-    let certs = CertificateDer::pem_slice_iter(pem)
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| format!("invalid {what} PEM: {e}"))?;
-    if certs.is_empty() {
-        return Err(format!("no certificate found in the {what} PEM"));
-    }
-    Ok(certs)
-}
+use velt_tls::provider;
 
 /// Checks a server certificate per [`Verify`] (the `Full` case uses the WebPKI verifier
 /// directly).
@@ -105,49 +86,13 @@ impl ServerCertVerifier for LenientVerifier {
 }
 
 fn roots(extra_ca_pem: &[u8]) -> Result<Arc<RootCertStore>, String> {
-    let mut roots = RootCertStore::empty();
-    roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-    if !extra_ca_pem.is_empty() {
-        for cert in certificates(extra_ca_pem, "sslrootcert")? {
-            roots
-                .add(cert)
-                .map_err(|e| format!("invalid CA certificate in sslrootcert: {e}"))?;
-        }
-    }
-    Ok(Arc::new(roots))
-}
-
-/// rustls' standard verification against the built-in roots plus `extra_ca_pem`, cached per CA
-/// text (a standalone `connect()` builds its connector each time).
-fn full_config(extra_ca_pem: &[u8]) -> Result<Arc<ClientConfig>, String> {
-    type Cache = std::sync::Mutex<std::collections::HashMap<Vec<u8>, Arc<ClientConfig>>>;
-    static CACHE: std::sync::OnceLock<Cache> = std::sync::OnceLock::new();
-    let cache = CACHE.get_or_init(Cache::default);
-    if let Some(c) = cache
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .get(extra_ca_pem)
-    {
-        return Ok(c.clone());
-    }
-    let config = Arc::new(
-        ClientConfig::builder_with_provider(provider())
-            .with_safe_default_protocol_versions()
-            .map_err(|e| e.to_string())?
-            .with_root_certificates(roots(extra_ca_pem)?)
-            .with_no_client_auth(),
-    );
-    cache
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .insert(extra_ca_pem.to_vec(), config.clone());
-    Ok(config)
+    velt_tls::roots(extra_ca_pem, "sslrootcert").map(Arc::new)
 }
 
 /// The rustls client configuration for `verify` with extra roots `extra_ca_pem` (may be empty).
 pub fn client_config(verify: Verify, extra_ca_pem: &[u8]) -> Result<Arc<ClientConfig>, String> {
     if verify == Verify::Full {
-        return full_config(extra_ca_pem);
+        return velt_tls::client_config(extra_ca_pem, "sslrootcert");
     }
     let chain = match verify {
         Verify::Chain => Some(

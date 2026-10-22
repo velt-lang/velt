@@ -904,7 +904,7 @@ typedef struct VeltJsonReader VeltJsonReader;   // opaque
 | Symbol | Signature | Notes |
 |---|---|---|
 | `velt_rt_json_reader_new` | `(const VeltStr* src) -> VeltJsonReader*` | never null; `src` must stay alive, unchanged **and in place** (an inline string's bytes live in the `VeltStr` itself) until `free` |
-| `velt_rt_json_reader_new_with` | `(const VeltStr* src, u32 flags, u32 max_depth) -> VeltJsonReader*` | `JSON.parse` options: flag 1 = `skip_unknown` fails; flag 2 = a JSON `null` for an optional field without `null` is not an absent field (`velt_rt_json_reader_null_absent`); `max_depth` = most arrays/objects open at once, counted from the top-level value (0 = no limit), checked by `expect_*_start`, `skip_value` and `read_value`. When `src` is the marker string a database driver returned for parked binary rows (`velt_rt_sqlite_query`), the reader walks those rows instead of text, and owns them. Every reader call then answers as it would for the JSON the rows stand for; the only failures are a value of another kind and a rejected unknown key. `max_depth` does not apply to such rows (they nest three deep at most), and their keys borrow the reader's buffer rather than `src` |
+| `velt_rt_json_reader_new_with` | `(const VeltStr* src, u32 flags, u32 max_depth) -> VeltJsonReader*` (with flag 4, `src` is a `const VeltBytes*`) | `JSON.parse` options: flag 1 = `skip_unknown` fails; flag 2 = a JSON `null` for an optional field without `null` is not an absent field (`velt_rt_json_reader_null_absent`); `max_depth` = most arrays/objects open at once, counted from the top-level value (0 = no limit), checked by `expect_*_start`, `skip_value` and `read_value`. Flag 4 (`FLAG_ROWS`, set only by `__intrinsic_json_parse_rows`): `src` is a `const VeltBytes*`, a `u8[]` of a driver's binary rows (`velt_text::rows`, native_abi.md "Rows"), which the reader walks instead of text, borrowed like a source string. Every reader call then answers as it would for the JSON the rows stand for; the only failures are a value of another kind and a rejected unknown key. `max_depth` does not apply to such rows (they nest three deep at most) |
 | `velt_rt_json_reader_free` | `(VeltJsonReader* r)` | null ok |
 | `velt_rt_json_reader_null_absent` | `(VeltJsonReader* r) -> u8` | 1 when a JSON `null` may stand for an absent optional field whose type has no `null` (`JSON.parse<T>`), 0 when the reader was made with flag 2 (`JSON.parse(text) as T`): the decoder then reads the field's value, which fails |
 | `velt_rt_json_reader_peek` | `(VeltJsonReader* r) -> u32` | next token kind, skipping whitespace: 0 EOF, 1 `null`, 2 `true`, 3 `false`, 4 number, 5 string, 6 `[`, 7 `]`, 8 `{`, 9 `}`, 10 error (bad byte, or the reader already failed). Classifies by first byte only; the `read_*` call validates. |
@@ -1287,51 +1287,50 @@ Stable hash (`velt:hash`, additive):
 
 ### 14.11 SQLite (`velt:sqlite`; stream db, additive)
 
-`crates/velt_rt/src/sqlite/` over `rusqlite` (SQLite compiled in: `bundled`; also
-`column_decltype`). **Synchronous**: a typical statement takes microseconds, less than a
-blocking-pool round trip. `VeltSqliteDb` is an `Arc` of `Mutex<Option<Connection>>` plus a failure
-counter and the last error; `VeltSqliteStmt` is an `Arc` of `{ Arc<db>, sql }` that re-finds its
-compiled statement in the connection's cache (`prepare_cached`, 256 entries) on every call, so
-closing the database while statements exist is safe (they fail with `SQLITE_MISUSE`). The null
-handle (a closed `Database` / `Statement` in std) fails the same way instead of crashing.
+The crate `velt_std_sqlite` over `rusqlite` (SQLite compiled in: `bundled`; also
+`column_decltype`), built on the native-package SDK only and linked into the runtime
+(native_abi.md "Drivers in the runtime"): its functions are `velt_std_sqlite__*` exports with
+the signatures below. **Synchronous**: a typical statement takes microseconds, less than a
+blocking-pool round trip. A database is a registry key of `Mutex<Option<Connection>>` plus a
+failure counter and the last error; a statement is a key of `{ Arc<db>, sql }` that re-finds
+its compiled statement in the connection's cache (`prepare_cached`, 256 entries) on every call,
+so closing the database while statements exist is safe (they fail with `SQLITE_MISUSE`). A
+null or closed handle (a closed `Database` / `Statement` in std) fails the same way instead of
+crashing.
 
 Errors: `err.code` is SQLite's **extended result code** (never 0; e.g. 2067
 `SQLITE_CONSTRAINT_UNIQUE`), `message` SQLite's message. Parameter problems are `SQLITE_RANGE`
 (25), a closed handle or several statements in one `prepare` `SQLITE_MISUSE` (21).
 
-Parameters (`params`) are JSON text (`crates/velt_rt/src/db_json/params.rs`): `""` = none, an
-object binds `:name` / `@name` / `$name` by name (missing member ⇒ `SQLITE_RANGE`, extra members
-ignored), an array or a lone scalar binds by position (count must match). Integer literals in
-i64 range ⇒ INTEGER (exact), other numbers ⇒ REAL, strings ⇒ TEXT, `true`/`false` ⇒ 1/0,
-`null` ⇒ NULL, arrays of integers 0–255 (`u8[]`) ⇒ BLOB, nested objects ⇒ `SQLITE_RANGE`.
-Rows are JSON text (`db_json/rows.rs`): `[{"col":value,...}]` keyed by column name, INTEGER as
-exact digits, REAL in JS shortest form (non-finite ⇒ `null`), TEXT escaped like
-`JSON.stringify`, BLOB as a number array, NULL as `null`; a 0/1 value in a column declared
-`BOOL`/`BOOLEAN` is written as `false`/`true`.
-
-```c
-typedef struct { int64_t changes; int64_t last_insert_rowid; } VeltSqliteRun;   // 16 bytes
-```
+Parameters (`params`) are JSON text (`velt_text::db_json`): `""` = none, an object binds
+`:name` / `@name` / `$name` by name (missing member ⇒ `SQLITE_RANGE`, extra members ignored), an
+array or a lone scalar binds by position (count must match). Integer literals in i64 range ⇒
+INTEGER (exact), other numbers ⇒ REAL, strings ⇒ TEXT, `true`/`false` ⇒ 1/0, `null` ⇒ NULL,
+arrays of integers 0–255 (`u8[]`) ⇒ BLOB, nested objects ⇒ `SQLITE_RANGE`. Rows are binary rows
+(`velt_text::rows`, native_abi.md "Rows") in a `u8[]`, which std decodes with
+`__intrinsic_json_parse_rows<T>`: they read as the JSON `[{"col":value,...}]` keyed by column
+name, INTEGER exact, REAL a number (non-finite ⇒ `null`), TEXT a string, BLOB a number array,
+NULL `null`; a 0/1 value in a column declared `BOOL`/`BOOLEAN` is `false`/`true`.
 
 | Symbol | Signature | Notes |
 |---|---|---|
-| `velt_rt_sqlite_open` | `(const VeltStr* path, u8 readonly, u8 create, u32 timeout_ms, IoResult<VeltSqliteDb>* out)` | `":memory:"`, a file path or a `file:` URI; `timeout_ms` = busy timeout |
-| `velt_rt_sqlite_close` | `(VeltSqliteDb db, VeltErr* out)` | closes the connection (finalizing cached statements) and releases the handle; null ⇒ no-op |
-| `velt_rt_sqlite_exec` | `(VeltSqliteDb db, const VeltStr* sql, VeltErr* out)` | `;`-separated statements, no parameters |
-| `velt_rt_sqlite_pragma` | `(VeltSqliteDb db, const VeltStr* source, IoResult<VeltStr>* out)` | `PRAGMA <source>`: first column of the first row as text, `""` if none/NULL/blob |
-| `velt_rt_sqlite_in_transaction` | `(VeltSqliteDb db) -> u8` | not in autocommit mode; 0 when closed |
-| `velt_rt_sqlite_error_count` | `(VeltSqliteDb db) -> u64` | failed operations so far (incl. `note_error`) |
-| `velt_rt_sqlite_reset_error_count` | `(VeltSqliteDb db, u64 count)` | a nested `transaction` that rolled back hands its failure to its caller |
-| `velt_rt_sqlite_last_error` | `(VeltSqliteDb db, VeltErr* out)` | the most recent failure as a failed status (code 0 if none) |
-| `velt_rt_sqlite_prepare` | `(VeltSqliteDb db, const VeltStr* sql, IoResult<VeltSqliteStmt>* out)` | compiles exactly one statement into the cache |
-| `velt_rt_sqlite_run` | `(VeltSqliteStmt stmt, const VeltStr* params, IoResult<VeltSqliteRun>* out)` | steps to completion (rows discarded) |
-| `velt_rt_sqlite_query` | `(VeltSqliteStmt stmt, const VeltStr* params, u8 first_only, IoResult<VeltStr>* out)` | the rows for `JSON.parse<T[]>`; `first_only` ⇒ the first row for `JSON.parse<T>`, or `""`. The string is a marker, not JSON text: the rows are parked in binary form (`json/rows_bin.rs`) for the reader the calling thread makes from that string next (`velt_rt_json_reader_new_with`), which reads them as the JSON `[{"col":value,...}]` (#33) |
-| `velt_rt_sqlite_note_error` | `(VeltSqliteStmt stmt, i32 code, const VeltStr* message)` | counts a failure std found (a row that does not decode) against the connection |
-| `velt_rt_sqlite_stmt_free` | `(VeltSqliteStmt stmt)` | releases the handle; null ⇒ no-op |
-| `velt_rt_sqlite_error_name` | `(i32 code, VeltStr* out)` | static name: known extended names (`SQLITE_CONSTRAINT_UNIQUE`, `SQLITE_BUSY_SNAPSHOT` …), else the primary one |
+| `velt_std_sqlite__open` | `(string path, bool readonly, bool create, u32 timeout_ms) -> IoResult<u64>` | `":memory:"`, a file path or a `file:` URI; `timeout_ms` = busy timeout |
+| `velt_std_sqlite__close` | `(u64 db) -> IoStatus` | closes the connection (finalizing cached statements) and releases the handle; null or closed ⇒ no-op |
+| `velt_std_sqlite__exec` | `(u64 db, string sql) -> IoStatus` | `;`-separated statements, no parameters |
+| `velt_std_sqlite__pragma` | `(u64 db, string source) -> IoResult<string>` | `PRAGMA <source>`: first column of the first row as text, `""` if none/NULL/blob |
+| `velt_std_sqlite__in_transaction` | `(u64 db) -> bool` | not in autocommit mode; false when closed |
+| `velt_std_sqlite__error_count` | `(u64 db) -> u64` | failed operations so far (incl. `note_error`) |
+| `velt_std_sqlite__reset_error_count` | `(u64 db, u64 count)` | a nested `transaction` that rolled back hands its failure to its caller |
+| `velt_std_sqlite__last_error` | `(u64 db) -> IoStatus` | the most recent failure as a failed status (success if none) |
+| `velt_std_sqlite__prepare` | `(u64 db, string sql) -> IoResult<u64>` | compiles exactly one statement into the cache |
+| `velt_std_sqlite__run` | `(u64 stmt, string params) -> IoResult<{changes:i64,lastInsertRowid:i64}>` | steps to completion (rows discarded) |
+| `velt_std_sqlite__query` | `(u64 stmt, string params, bool first_only) -> IoResult<u8[]>` | the rows as binary rows for `__intrinsic_json_parse_rows<T[]>`; `first_only` ⇒ the first row (an object, `<T>`), or an empty array if there is none |
+| `velt_std_sqlite__note_error` | `(u64 stmt, i32 code, string message)` | counts a failure std found (a row that does not decode) against the connection |
+| `velt_std_sqlite__stmt_free` | `(u64 stmt)` | releases the handle; null ⇒ no-op |
+| `velt_std_sqlite__error_name` | `(i32 code) -> string` | known extended names (`SQLITE_CONSTRAINT_UNIQUE`, `SQLITE_BUSY_SNAPSHOT` …), else the primary one |
 
 Not available on WebAssembly (no symbols in `libvelt_rt_wasm.a`: linking fails with undefined
-`velt_rt_sqlite_*`).
+`velt_std_sqlite__*`).
 
 ### 14.12 Redis (std/redis; stream db, additive)
 

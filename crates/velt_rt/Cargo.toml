@@ -33,6 +33,7 @@ regex = "1.13.1"
 rustls = { version = "0.23.45", default-features = false, features = ["ring", "std", "tls12"] }
 ryu = "1.0.23"
 velt_text = { path = "../velt_text" }
+velt_tls = { path = "../velt_tls" }
 # std/postgres's driver (an SDK-only crate, linked in: its exports are std's externs).
 velt_std_postgres = { path = "../velt_std_postgres" }
 # std/sqlite's driver (the same: an SDK-only crate, linked in).

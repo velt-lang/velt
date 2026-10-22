@@ -2230,6 +2230,7 @@ dependencies = [
  "velt_std_postgres",
  "velt_std_sqlite",
  "velt_text",
+ "velt_tls",
  "webpki-roots",
  "windows-sys 0.61.2",
 ]
@@ -2270,6 +2271,7 @@ dependencies = [
  "velt_std_postgres",
  "velt_std_sqlite",
  "velt_text",
+ "velt_tls",
  "webpki-roots",
  "windows-sys 0.61.2",
 ]
@@ -2310,6 +2312,7 @@ dependencies = [
  "velt_std_postgres",
  "velt_std_sqlite",
  "velt_text",
+ "velt_tls",
  "webpki-roots",
  "windows-sys 0.61.2",
 ]
@@ -2350,7 +2353,7 @@ dependencies = [
  "tokio-rustls",
  "velt_native",
  "velt_text",
- "webpki-roots",
+ "velt_tls",
 ]
 
 [[package]]
@@ -2379,6 +2382,14 @@ dependencies = [
  "memchr",
  "ryu",
  "velt_native",
+]
+
+[[package]]
+name = "velt_tls"
+version = "0.3.0"
+dependencies = [
+ "rustls",
+ "webpki-roots",
 ]
 
 [[package]]

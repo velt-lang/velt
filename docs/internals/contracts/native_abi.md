@@ -227,9 +227,29 @@ into a string once (the runtime's own drivers before), from −11 % (short text)
 non-ASCII text), and 18–77 % faster than a `String` result (checked, then copied); a retained
 `Str` parameter costs 2–4 ns where a `String` copy costs 13 ns (16 bytes) to 17 µs (64 KB).
 
+## Rows
+
+A database driver hands result rows to std's `JSON.parse<T[]>` decoder without making them
+JSON text: as a `u8[]` in the binary rows format of `velt_text::rows` (`BinRows` writes it,
+into a `velt_native::Array<u8>`, the Velt array itself). std decodes them with the std-only
+intrinsic `__intrinsic_json_parse_rows<T>(rows, flags, max_depth)`: the same generated decoder
+as `JSON.parse<T>`, over a reader made from the array (`velt_rt_json_reader_new_with` flag 4,
+rt_abi_async.md), which answers every call as it would for the JSON the rows stand for
+(`[{"col":value,...},...]`, or with `single` one row's object). No number formatting or
+escaping on the way out, no scanning on the way in.
+
+Layout: a header `single: u8, columns: u16, (name_len: u32, name bytes)*`, then the rows, one
+cell per column: a tag byte and its payload, `NULL` 0, `FALSE` 1, `TRUE` 2, `INT` 3 + `i64`,
+`FLOAT` 4 + `f64`, `TEXT` 5 or `ASCII` 7 + `u32` length + UTF-8, `BLOB` 6 + `u32` length +
+bytes (integers little-endian); bit 31 of a name's length says the name is ASCII. The reader
+trusts what the tags say about text (UTF-8, ASCII; `BinRows` checks), and a buffer cut short
+reads as a type mismatch, never out of bounds. std/sqlite uses it; std/postgres still writes
+JSON text (its arrays and json/jsonb columns are nested values, which the format has no cell
+for yet).
+
 ## Drivers in the runtime
 
-std's drivers (`velt:postgres`: crate `velt_std_postgres`) are crates on this SDK only
+std's drivers (`velt:postgres`: crate `velt_std_postgres`; `velt:sqlite`: `velt_std_sqlite`) are crates on this SDK only
 (`velt_native`, `velt_text`), linked into the runtime library instead of a package's own: their
 `#[export]` functions are std's `declare`s (named `velt_std_<driver>__…`, checked against their
 signature records like any package's, `veltc/src/native/` `check_std_driver`), and an

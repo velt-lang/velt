@@ -7,6 +7,7 @@ description = "std/postgres's driver: a crate on the native SDK only (velt_nativ
 [dependencies]
 velt_native = { path = "../velt_native", features = ["tokio"] }
 velt_text = { path = "../velt_text", features = ["sdk"] }
+velt_tls = { path = "../velt_tls" }
 tokio-postgres = { version = "0.7.18", default-features = false }
 postgres-protocol = "0.6.12"
 bytes = "1.12.1"
@@ -15,7 +16,6 @@ futures-util = { version = "0.3.34", default-features = false, features = ["std"
 parking_lot = "0.12.5"
 rustls = { version = "0.23.45", default-features = false, features = ["ring", "std", "tls12"] }
 tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring", "tls12"] }
-webpki-roots = "1.0.9"
 socket2 = "0.6.5"
 
 [dev-dependencies]
