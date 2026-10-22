@@ -1,7 +1,8 @@
 // A `read` callback takes elements out of the caller's containers (`shift`, `pop`,
 // `length = 0`, `splice`, `Map.delete` and `clear`, `Set.delete`, a function replacing an
-// element and returning the old one), also keeping what it took or held before: each is freed
-// once (after the read when the reader still held it), and what it took is the same object.
+// element and returning the old one) and loops over the caller's `Set`, also keeping what it
+// took or held before: each is freed once (after the read when the reader still held it), and
+// what it took is the same object.
 class Item {
   v: i64 = 0;
   nums: i64[] = [1, 2];
@@ -100,6 +101,17 @@ function collections(rw: shared<RwLock<St>>) {
     return t.v;
   });
   console.log(f, firsts[0].v);
+  const pool = new Set<Item>();
+  pool.add(new Item(2));
+  pool.add(new Item(3));
+  const sum = rw.read((s) => {
+    let c: i64 = 0;
+    for (const o of pool) {
+      c += o.v;
+    }
+    return c;
+  });
+  console.log(sum, pool.size);
 }
 
 function main() {
