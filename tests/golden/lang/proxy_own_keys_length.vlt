@@ -1,0 +1,16 @@
+// An `ownKeys` trap must list the target's keys that are not configurable: an array target's
+// `length` (Node's invariant check, #823).
+function main(): void {
+  const p: any = new Proxy([1] as any, {
+    ownKeys(t) {
+      return ["0", "length"];
+    },
+  });
+  console.log(Reflect.ownKeys(p));
+  const q: any = new Proxy([1] as any, {
+    ownKeys(t) {
+      return ["0"];
+    },
+  });
+  console.log(Reflect.ownKeys(q));
+}

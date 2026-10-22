@@ -1,0 +1,4 @@
+{"a":1,"nested":{"c":true}}
+get toJSON, ownKeys, describe a, describe b, describe nested, get a, get nested
+{"list":[1,2]}
+get toJSON, get length, get 0, get 1

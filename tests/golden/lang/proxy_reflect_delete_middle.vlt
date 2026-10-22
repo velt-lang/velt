@@ -1,0 +1,6 @@
+// `Reflect.deleteProperty(a, i)` of an array element that is not the last (#823): Node leaves a
+// hole and keeps the length, which Velt's arrays cannot have yet.
+const a: number[] = [1, 2, 3];
+console.log(Reflect.deleteProperty(a, "7"), Reflect.deleteProperty(a, "length"), a.length);
+Reflect.deleteProperty(a, "1");
+console.log("not reached", a);

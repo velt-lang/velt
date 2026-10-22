@@ -11,7 +11,8 @@ Node's web globals need no import either: `fetch`, `Request`, `Response` and `He
 `TextDecoder`, `btoa` and `atob` ([velt:encoding](encoding.md)), `DOMException`
 ([Errors](#errors)), `ArrayBuffer`, `DataView`, `Uint8Array` and the other typed arrays
 ([typed arrays](typed_array.md)), and `ReadableStream` and its reader and controller
-([streams](streams.md)). They are loaded when a module names one and
+([streams](streams.md)), and `Proxy`, `Reflect`, `ProxyHandler` and `PropertyDescriptor`
+([Proxy and Reflect](../reference/types.md#proxy-and-reflect)). They are loaded when a module names one and
 doesn't bind that name itself. `structuredClone(x)` is a deep copy (`x.clone()`); a value that
 JS can't clone (a function, at any depth) or would copy as a plain object (an instance of a
 class of your own: write `x.clone()`) is a compile error. The builtin `process`
@@ -203,10 +204,12 @@ in JavaScript: when nothing else refers to a key, its entries go (their values a
 and a `WeakRef` to it returns `undefined` from then on. Keys, members and targets are objects: class
 instances, object types and arrays, compared by identity (a primitive is an error, as in
 TypeScript: ``type `string` does not satisfy the constraint `object` ``; unions, tuples,
-structs, function and interface values are not supported as keys yet). An `object` key
+structs and function values are not supported as keys yet). An `object` key
 (`WeakMap<object, V>`, as reactive libraries write their caches) is the object it holds
-([object and Function](../reference/types.md#object-and-function)); `deref()` of a
-`WeakRef<object>` returns `undefined` once the target was freed, as in JavaScript. Like
+([object and Function](../reference/types.md#object-and-function)), and so is an interface
+value (`WeakMap<Instance, V>`): the class instance behind it, whichever interface or type it is
+used through; `deref()` of a `WeakRef<object>` returns `undefined` once the target was freed, as
+in JavaScript. Like
 JavaScript's, the maps are not iterable and have no `size`.
 
 ```ts

@@ -1,0 +1,10 @@
+// check: no leaks
+// `Object.prototype.hasOwnProperty` read as a value (#823): `hasOwn.call(o, k)` tests the own
+// keys, as `Object.hasOwn(o, k)` does.
+function main(): void {
+  const hasOwn = Object.prototype.hasOwnProperty;
+  const slots: Record<string, number> = { header: 1 };
+  console.log(hasOwn.call(slots, "header"), hasOwn.call(slots, "toString"), hasOwn.call(slots, "footer"));
+  const o: any = { a: 1 };
+  console.log(hasOwn.call(o, "a"), hasOwn.call(o, "b"));
+}

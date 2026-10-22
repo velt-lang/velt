@@ -1,0 +1,28 @@
+// check: no leaks
+// `Object.keys` of a typed proxy (#823): its `ownKeys` and `getOwnPropertyDescriptor` traps
+// list the keys, as in Node, also for `for...in`; a plain value of the type lists its fields.
+type Props = { a: number; b: number };
+
+function accessor(v: Props, log: string[]): Props {
+  return new Proxy(v as Props, {
+    ownKeys(t) {
+      log.push("ownKeys");
+      return ["a"];
+    },
+    getOwnPropertyDescriptor(t, k) {
+      log.push(`describe ${String(k)}`);
+      return { value: 1, enumerable: true, configurable: true, writable: true };
+    },
+  }) as Props;
+}
+
+function main(): void {
+  const log: string[] = [];
+  const plain: Props = { a: 1, b: 2 };
+  const p = accessor(plain, log);
+  console.log(Object.keys(p), Object.keys(plain));
+  for (const k in p) {
+    console.log("key", k);
+  }
+  console.log(log.join(", "));
+}

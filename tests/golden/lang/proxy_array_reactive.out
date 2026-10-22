@@ -1,0 +1,69 @@
+pop: 3 -> [1,2] (2)
+  delete 2 had true ok true own false has false desc true get undefined length 3
+    keys 0,1,length
+  set length 3 -> 2
+pop one: 7 -> [] (0)
+  delete 0 had true ok true own false has false desc true get undefined length 1
+    keys length
+  set length 1 -> 0
+shift: 1 -> [2,3] (2)
+  set 0 1 -> 2
+  set 1 2 -> 3
+  delete 2 had true ok true own false has false desc true get undefined length 3
+    keys 0,1,length
+  set length 3 -> 2
+splice two: [1,2] -> [3,4] (2)
+  set 0 1 -> 3
+  set 1 2 -> 4
+  delete 3 had true ok true own false has false desc true get undefined length 4
+    keys 0,1,2,length
+  delete 2 had true ok true own false has false desc true get undefined length 4
+    keys 0,1,length
+  set length 4 -> 2
+splice middle: [2] -> [1,3,4] (3)
+  set 1 2 -> 3
+  set 2 3 -> 4
+  delete 3 had true ok true own false has false desc true get undefined length 4
+    keys 0,1,2,length
+  set length 4 -> 3
+splice replace: [2,3] -> [1,9] (2)
+  delete 2 had true ok true own false has false desc true get undefined length 3
+    keys 0,1,length
+  set 1 2 -> 9
+  set length 3 -> 2
+push: 3 -> [1,2,3] (3)
+  add 2
+  length 2 -> 3
+  same length
+unshift: 5 -> [8,9,1,2,3] (5)
+  add 4
+  length 3 -> 5
+  set 3 undefined -> 2
+  set 2 3 -> 1
+  set 0 1 -> 8
+  set 1 2 -> 9
+  same length
+unshift three: 6 -> [7,8,9,1,2,3] (6)
+  add 5
+  length 3 -> 6
+  set 4 undefined -> 2
+  set 3 undefined -> 1
+  set 0 1 -> 7
+  set 1 2 -> 8
+  set 2 3 -> 9
+  same length
+splice grow: [2] -> [1,5,6,7,3] (5)
+  add 4
+  length 3 -> 5
+  set 1 2 -> 5
+  set 2 3 -> 6
+  set 3 undefined -> 7
+  same length
+length: 1 -> [1] (1)
+  set length 3 -> 1
+[ 1, 2, 3 ] get list, get push, get length, set 2=3, set length=3
+3 [ 1, 2 ] get list, get pop, get length, get 2, set length=2
+[ 10, 20 ] function get list, get map, get length, get constructor, get 0, get 1, get list, get push
+function [Function: push] false
+function [Function: Array]
+{ m: [Function: map] }

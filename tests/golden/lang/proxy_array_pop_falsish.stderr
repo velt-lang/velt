@@ -1,0 +1,1 @@
+TypeError: 'deleteProperty' on proxy: trap returned falsish for property '3'

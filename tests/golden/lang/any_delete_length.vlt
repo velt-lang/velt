@@ -1,0 +1,6 @@
+// `delete a.length` through `any` (strict code): Node's `TypeError`, as `length` is not
+// configurable.
+const arr: any = [1, 2];
+console.log(Reflect.deleteProperty(arr, "length"));
+delete arr.length;
+console.log("not reached");

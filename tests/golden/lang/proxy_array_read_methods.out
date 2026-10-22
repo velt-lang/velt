@@ -1,0 +1,54 @@
+map: [2,4,6] -> [1,2,3]
+  get map, get length, get constructor, has 0, get 0, has 1, get 1, has 2, get 2
+map index: [0,1] -> [5,6]
+  get map, get length, get constructor, has 0, get 0, has 1, get 1
+filter: [2,4] -> [1,2,3,4]
+  get filter, get length, get constructor, has 0, get 0, has 1, get 1, has 2, get 2, has 3, get 3
+forEach: [10,21] -> [1,2]
+  get forEach, get length, has 0, get 0, has 1, get 1
+includes: true -> [1,2,3]
+  get includes, get length, get 0, get 1
+includes absent: false -> [1,2]
+  get includes, get length, get 0, get 1
+includes empty: false -> []
+  get includes, get length
+includes from: false -> [1,2,3]
+  get includes, get length, get 1, get 2
+indexOf: 1 -> [4,5,6]
+  get indexOf, get length, has 0, get 0, has 1, get 1
+indexOf absent: -1 -> [4,5]
+  get indexOf, get length, has 0, get 0, has 1, get 1
+indexOf from: 2 -> [4,5,4]
+  get indexOf, get length, has 2, get 2
+join: "1-2-3" -> [1,2,3]
+  get join, get length, get 0, get 1, get 2
+join default: "1,2" -> [1,2]
+  get join, get length, get 0, get 1
+slice: [2,3] -> [1,2,3,4]
+  get slice, get length, get constructor, has 1, get 1, has 2, get 2
+slice negative: [2,3] -> [1,2,3]
+  get slice, get length, get constructor, has 1, get 1, has 2, get 2
+slice all: [1,2] -> [1,2]
+  get slice, get length, get constructor, has 0, get 0, has 1, get 1
+find: 2 -> [1,2,3]
+  get find, get length, get 0, get 1
+find none: undefined -> [1,2]
+  get find, get length, get 0, get 1
+some: true -> [1,2,3]
+  get some, get length, has 0, get 0, has 1, get 1
+some none: false -> [1,2]
+  get some, get length, has 0, get 0, has 1, get 1
+every: true -> [1,2,3]
+  get every, get length, has 0, get 0, has 1, get 1, has 2, get 2
+every stops: false -> [1,2,3]
+  get every, get length, has 0, get 0, has 1, get 1
+reverse: true -> [3,2,1]
+  get reverse, get length, has 0, get 0, has 2, get 2, set 0=3, set 2=1
+reverse even: true -> [4,3,2,1]
+  get reverse, get length, has 0, get 0, has 3, get 3, set 0=4, set 3=1, has 1, get 1, has 2, get 2, set 1=3, set 2=2
+sort: true -> [1,2,3]
+  get sort, get length, has 0, get 0, has 1, get 1, has 2, get 2, set 0=1, set 1=2, set 2=3
+sort compare: true -> [3,2,1]
+  get sort, get length, has 0, get 0, has 1, get 1, has 2, get 2, set 0=3, set 1=2, set 2=1
+sort strings: true -> [1,10,9]
+  get sort, get length, has 0, get 0, has 1, get 1, has 2, get 2, set 0=1, set 1=10, set 2=9

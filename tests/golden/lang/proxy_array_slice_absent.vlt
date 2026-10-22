@@ -1,0 +1,9 @@
+// `slice` of a proxy of an array whose `has` trap hides an element (#823): Node keeps a hole in
+// the new array, which Velt's arrays cannot have yet.
+const p: any = new Proxy([1, 2, 3] as any, {
+  has(t: any, k: string | symbol): boolean {
+    return k !== "1" && Reflect.has(t, k);
+  },
+});
+console.log(JSON.stringify(p.slice(2)));
+console.log("not reached", JSON.stringify(p.slice(0)));

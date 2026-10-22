@@ -1,0 +1,3 @@
+[ 'a' ] [ 'a', 'b' ]
+key a
+ownKeys, describe a, ownKeys, describe a

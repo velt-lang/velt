@@ -65,6 +65,14 @@ pub(super) struct Why {
 }
 
 impl Why {
+    /// The order in which reasons are preferred: one in user code, the earliest, and between
+    /// two at one place the holder whose name sorts first, so that the choice never depends on
+    /// how types happen to be numbered.
+    pub(super) fn rank(&self, cx: &crate::ctx::Ctx) -> (bool, u32, u32, String) {
+        let via = self.via.map(|t| cx.display(t)).unwrap_or_default();
+        (self.std, self.span.file.0, self.span.lo, via)
+    }
+
     /// `self`, seen from an argument passed at `site` (`(span, in std)`): a boundary inside the
     /// standard library is reported at the user's call into it.
     pub(super) fn through(self, site: Option<(Span, bool)>) -> Why {

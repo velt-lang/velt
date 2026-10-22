@@ -1,0 +1,6 @@
+// A `length` written through `any` that is not a whole number from 0 up: Node's RangeError.
+const xs: any = [1, 2, 3];
+xs.length = 1;
+console.log(xs);
+xs.length = 1.5;
+console.log("not reached");

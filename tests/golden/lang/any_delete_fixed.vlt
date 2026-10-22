@@ -1,0 +1,7 @@
+// `delete o.a` through `any` of a field an object's type fixes (#823): Node removes it, which
+// Velt's fixed layouts cannot do yet.
+const o: any = { a: 1, b: 2 };
+delete o.c;
+console.log(o);
+delete o.a;
+console.log(o);

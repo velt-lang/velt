@@ -9,7 +9,6 @@ const target = { a: 1 };
 Object.assign(target, { b: 2 });
 const withProto = Object.create({ x: 1 });
 const untyped = Object.create(null);
-const has = Object.prototype.hasOwnProperty;
 console.log(Object.getPrototypeOf(new Date(0)));
 const maybe: { a: number } | null = null;
 console.log(Object.getPrototypeOf(maybe));

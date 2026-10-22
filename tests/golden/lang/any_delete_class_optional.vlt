@@ -1,0 +1,11 @@
+// `delete o.k` through `any` of a class's optional field (#823): Node removes the own property,
+// which Velt's classes keep (an optional field is still listed, as `undefined`).
+class Pt {
+  x = 1;
+  y?: number = 2;
+}
+
+const p: any = new Pt();
+console.log(delete p.z, Object.keys(p));
+delete p.y;
+console.log("not reached", Object.keys(p));

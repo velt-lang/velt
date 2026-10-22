@@ -959,6 +959,19 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   proxy's `has` trap): in `effects::runs_user_code` and `replaced_holders::implicit::glue_args`.
   The `any` tables get slot 11 `AnyHas (data, key) -> u8` (velt_vir `lower/any_has.rs`; 0 no,
   1 yes, 2 not supported yet) only when the program has such a test.
+- `Intrinsic::AnyDelete(x, key)` (std only, `__intrinsic_any_delete`) is `delete x[key]` with a
+  `string` key on an `any` `x` that is not a proxy (borrowed), of type `bool`: a record's entry
+  is removed (its `__delete`), an optional field made absent, a key the value does not have as
+  its own is `true`, an array's `length` `false`. It changes memory (`effects`,
+  `replaced_holders::implicit::glue_args`). The `any` tables get slot 15 `AnyDelete (data,
+  key) -> u8` (velt_vir `lower/any_delete.rs`; 0 false, 1 true, 2 not supported yet, a
+  `TypeError`) only when the program has such a call.
+- `Intrinsic::ProxyArrayCall(x, op)` (std only, `__intrinsic_proxy_array_call`) and
+  `Intrinsic::ProxyArrayHole(x, index, op)` (std only, `__intrinsic_proxy_array_hole`), with `x`
+  an `any` (borrowed, passed by its data pointer: the target of an array method running on a
+  proxy, which the proxy keeps alive, or the array a `Reflect` call reaches) and `index` / `op`
+  `i64`, of type `i64`, are calls of `velt_rt_proxy_array_call` and `velt_rt_proxy_array_hole`
+  (rt_abi.md "Array methods on a proxy"). They run no user code.
 - `Intrinsic::AnyKeys(x)` is `Object.keys(x)` on an `any`, `object` or `Function` `x` (borrowed),
   of type `string[]`: the own enumerable string keys of the value held, in JavaScript's order.
   It sets `Program::dyn_members` (a record's keys are its `__keyNames()`). The `any` tables get
@@ -971,17 +984,35 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   `lower/json/any.rs`; present only when the program writes one), after testing the tag for
   `undefined`, a function or a symbol (left out as a member, `null` as an element, a
   `TypeError` at the top).
-- Proxy and Reflect (#823): the prelude's `Proxy` class (std/prelude/zz_proxy.vlt; `#target:
-  any`, `#handler: ProxyHandler<any>`) and `Reflect` (static methods). Sema converts `new
+- Proxy and Reflect (#823): the `Proxy` class (std/proxy.vlt; `#target: any`, `#handler:
+  ProxyHandler<any>`) and `Reflect` (static methods), globals that a program loads when a module
+  names one of them (std/prelude/global/proxy.vlt); a program that doesn't has no proxies, and
+  sema calls the prelude's helpers below, which don't test for one. Sema converts `new
   Proxy(...)` (written outside the standard library; type arguments dropped) to `any` at once
   (`ToDyn`); `AnyTo` converts it to a typed value like any other `any`. The member slots of the
   `Proxy` class's `any` table call its `__get(key, receiver)`, `__set(key, value, receiver)`
   and `__has(key)` (velt_vir `lower/any_proxy.rs`), which run the handler's traps or forward
-  to the target. The prelude's own dynamic operations don't set `Program::dyn_members`; a `new
+  to the target; its keys slot (`AnyKeys`) calls `__keys()` (the `ownKeys` and
+  `getOwnPropertyDescriptor` traps). `delete o.k` / `delete o[k]` of an `any` or `object` is a
+  call of the prelude's `__anyDelete(o, k)` (`__anyDeleteProxy` once `Proxy` is loaded: a proxy's `deleteProperty` trap; another value's
+  `Intrinsic::AnyDelete`, std only, through slot 15 `AnyDelete (data, key: *string) -> u8` of
+  its table, velt_vir `lower/any_delete.rs`), and the
+  versions of the prelude's spread, `Object.hasOwn`, `Object.values` and `Object.entries`
+  helpers for `any` (std/prelude/zzz_adapt.vlt) in velt:proxy/ops (`__spreadAnyProxy`, …,
+  called instead once `Proxy` is loaded) run a proxy's traps in Node's order. With a symbol constant as
+  the key, `o[KEY]`, `o[KEY] = v`, `KEY in o`, `delete o[KEY]` and `Object.hasOwn(o, KEY)` of
+  an `any` in a program that has loaded `Proxy` are calls of `__anyGetSym` / `__anySetSym` / `__anyHasSym` /
+  `__anyDeleteSym` / `__anyHasOwnSym(o, name, KEY)` (std/proxy/ops.vlt), which
+  pass the symbol to a proxy and use the member name `name` on other values; `new Proxy(t, h)`
+  with an `h` typed `any` is `__proxyNewAny(t, h)`. In a program whose own code has a `new
+  Proxy`, `Object.keys(x)` of a class instance or object `x` is `IsTypedProxy(x) ?
+  __proxyKeysOf(x) : Object.keys(x)` (`Intrinsic::IsTypedProxy`, made by sema: a test of the
+  pointer's tag bit, `false` for a type that cannot hold a proxy) and a spread `{ ...x }` first calls `__proxySpreadCheck(x)`. The JSON slot of
+  the `Proxy` class writes what `__json(receiver)` gives. The prelude's own dynamic operations don't set `Program::dyn_members`; a `new
   Proxy` or a `Reflect.*` call in the program's own code does, and a `Reflect.set` call counts
   as a write of every field for `object_copies` (a `new Proxy` does not: every write reaching
   a target through a proxy starts at a noted write). Lowering recognizes the two classes by
-  their qualified names (`std/prelude/zz_proxy::Proxy`, `::Reflect`; a program's own class
+  their qualified names (`std/proxy::Proxy`, `::Reflect`; a program's own class
   named `Proxy` is its own) and numbers them last among class ids, so programs without them
   keep theirs.
 - Typed proxies (#823, velt_vir `lower/proxy_typed.rs`): in a program that lowers a `ToDyn` of
