@@ -104,7 +104,17 @@ impl FnLower<'_, '_> {
         let mut argv = pre;
         let outer = std::mem::replace(&mut self.frozen_args, frozen != 0);
         let to_caller = std::mem::replace(&mut self.args_to_caller, plain);
+        let kept = match plain {
+            true => self.kept_args_of(args, &modes),
+            false => 0,
+        };
+        let kept = std::mem::replace(&mut self.kept_args, kept);
+        let handed = std::mem::take(&mut self.kept_handed);
+        let drops = std::mem::take(&mut self.kept_drops);
         argv.extend(self.lower_args(args, &modes, true));
+        let handed = std::mem::replace(&mut self.kept_handed, handed);
+        let drops = std::mem::replace(&mut self.kept_drops, drops);
+        self.kept_args = kept;
         self.args_to_caller = to_caller;
         self.frozen_args = outer;
         let ret = self.cx.subst(ret, &targs);
@@ -113,6 +123,12 @@ impl FnLower<'_, '_> {
         let r = self.finish_call(vir::Callee::Func(fid), argv, ret, throws);
         if plain && self.needs_drop(ret) {
             self.hand_to_reader(&r, ret);
+        }
+        for (v, t) in handed {
+            self.hand_to_reader(&v, t);
+        }
+        for (p, t) in drops {
+            self.drop_glue(p, t);
         }
         r
     }
@@ -232,7 +248,17 @@ impl FnLower<'_, '_> {
         let later = self.later_each(args);
         let outer = self.start_borrows();
         let mut recv = self.proxy_recv.take();
+        let kept = std::mem::take(&mut self.kept_args);
         for (i, ((a, mode), later)) in args.iter().zip(modes).zip(later).enumerate() {
+            if *mode == PassMode::BorrowMut {
+                // Held inline in an object (caller_stores.rs).
+                self.owner_barrier(a);
+            }
+            if i < 64 && kept >> i & 1 == 1 {
+                let v = self.keep_mut_arg(a);
+                argv.push(v);
+                continue;
+            }
             if i == 1 {
                 if let (Some(r), Some(v)) = (recv.take(), argv.first()) {
                     self.proxy_recv_lowered(r, &v.clone());

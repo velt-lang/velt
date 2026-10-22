@@ -129,10 +129,11 @@ impl FnLower<'_, '_> {
         let Some(root) = place_root(e) else {
             return false;
         };
-        match self.cx.cur_def.map(|d| self.cx.hir.def(d)) {
+        let captured = match self.cx.cur_def.map(|d| self.cx.hir.def(d)) {
             Some(hir::Def::Fn(f)) => f.captures.iter().any(|c| c.inner == root),
             _ => false,
-        }
+        };
+        captured || self.caller_alias(root)
     }
 
     /// The frozen value `e` read in place: its own use borrowed whatever its HIR mode, since
@@ -445,7 +446,7 @@ struct Changed<'h> {
 }
 
 /// The local a place is rooted in.
-fn place_root(e: &hir::Expr) -> Option<LocalId> {
+pub(super) fn place_root(e: &hir::Expr) -> Option<LocalId> {
     match &e.kind {
         K::Local(l, _) => Some(*l),
         K::Field { base, .. }

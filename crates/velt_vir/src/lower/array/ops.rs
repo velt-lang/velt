@@ -44,6 +44,10 @@ impl FnLower<'_, '_> {
             false => self.projection_base(&args[0], BoxHold::No),
         };
         let arr = self.place_of(av, aty);
+        if i != I::ArrayLen && !self.cx.lock_counted(aty) {
+            // Held inline in an object (caller_stores.rs).
+            self.owner_barrier(&args[0]);
+        }
         if i != I::ArrayLen && self.cx.lock_counted(aty) && !self.captured_root(&args[0]) {
             // A mutating operation: stops a reader of an `RwLock` changing a shared array (not
             // the caller's, frozen.rs `captured_root`).

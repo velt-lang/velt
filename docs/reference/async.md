@@ -559,16 +559,25 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
   callback calls is checked as it runs (a write to the value through it stops the program).
   Inside the callback, an object of a type the value holds can be changed when the callback
   made it, or when it is the caller's: a place rooted in a variable the callback literal
-  captured from code outside any `read` callback, its fields and elements at any depth, and a
-  method or function called with one of them to change it (`out.push(x)`, `seen.add(x)`,
-  `m.set(k, x)`, `mine.v = x`, `out[0].tags.push("t")`, `sortItems(out)`). What the callback
-  stores there from the caller's own variables and containers is that same object, as in
-  JavaScript (`out.push(out[0])`, `out[0] = a`); anything else it did not make itself is a
-  copy (an element of the value, what a function returns). What it removes or replaces there
-  is freed once the outermost `read` returns, so a variable still holding it stays valid. Any other object of such a type cannot be told from the
-  value's own, so a write to it stops the program: one a method of the caller's variable
-  returns (`m.get(k)!.push(x)`), a loop over it gives (`for (const o of set) { o.v = 1; }`),
-  a function value the callback calls reaches, or a closure made inside the callback captures.
+  captured from code outside any `read` callback, its fields and elements at any depth, a
+  variable of the callback bound to one of them and never given another value (`const x =
+  out[0]`, `for (const o of set)`), and a method or function called with one of them to change
+  it (`out.push(x)`, `seen.add(x)`, `m.set(k, x)`, `mine.v = x`, `out[0].tags.push("t")`,
+  `sortItems(out)`). What the callback stores there from the caller's own variables and
+  containers is that same object, as in JavaScript (`out.push(out[0])`, `out[0] = a`,
+  `out2.push(out.pop()!)`, `a.splice(1, 0, a[0])`), also inside an array or object the callback
+  made (`g.push([out[0]])`) and as what a closure it made captures (`fs.push(() => out[0].v)`);
+  anything else it did not make itself is a copy (an element of the value, what a function
+  returns, a closure capturing a part of the value). An array or object the callback made that
+  holds objects of the value's types is the caller's once stored there: the callback can still
+  read it through its own variables, but a write through them stops the program, as for the
+  value's own (store it once it is complete). One whose type the value cannot hold, and a
+  function value, that the callback still uses after storing it is stored as a copy. What it
+  removes or replaces there is freed once the outermost `read` returns, so a variable still
+  holding it stays valid. Any other object of such a type cannot be told from the value's own,
+  so a write to it stops the program: one a method of the caller's variable returns
+  (`m.get(k)!.push(x)`), a function value the callback calls reaches, or a closure made inside
+  the callback captures (`s.items.forEach((it) => out.push(it))`).
   Reads of other `RwLock`s nest, in any order. A value that holds function
   or interface values, objects of a class hierarchy, weak references or promises is read under
   the exclusive lock instead.

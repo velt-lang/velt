@@ -566,6 +566,16 @@ struct FnLower<'c, 'h> {
     /// The owned arguments being lowered go into the caller's containers in a `read` callback
     /// (call.rs `call_def`, caller_stores.rs `keep_for_caller`).
     args_to_caller: bool,
+    /// The arguments being lowered (bit `i`: `args[i]`) that are the reader's containers a
+    /// call changing the caller's containers changes (caller_stores.rs `kept_args_of`).
+    kept_args: u64,
+    /// Those arguments as passed, handed back to the reader after the call.
+    kept_handed: Vec<(Operand, TyId)>,
+    /// Those of them the call's own values, dropped after that.
+    kept_drops: Vec<(Place, TyId)>,
+    /// A `read` callback's variables naming the caller's objects (caller_stores.rs
+    /// `caller_alias`), once asked.
+    caller_aliases: Option<FxHashSet<LocalId>>,
     /// With debug info: where the block declaring a local ends (debug_vars.rs).
     scope_ends: FxHashMap<LocalId, SrcLoc>,
     /// Set while lowering the body of an async function (a poll function).

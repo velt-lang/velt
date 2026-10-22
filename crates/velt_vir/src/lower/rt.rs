@@ -71,6 +71,8 @@ pub(super) enum Rt {
     XferFind,
     XferRecord,
     XferDefer,
+    XferKeepBegin,
+    XferKeeps,
     // Weak references (rt_abi.md "Weak references")
     WeakmapNew,
     WeakmapSet,
@@ -255,6 +257,8 @@ impl Rt {
             Rt::XferFind => f("velt_rt_xfer_find", vec![Ptr], Ptr),
             Rt::XferRecord => f("velt_rt_xfer_record", vec![Ptr, Ptr], Unit),
             Rt::XferDefer => f("velt_rt_xfer_defer", vec![Ptr, Ptr], U8),
+            Rt::XferKeepBegin => f("velt_rt_xfer_keep_begin", vec![], Unit),
+            Rt::XferKeeps => f("velt_rt_xfer_keeps", vec![], U8),
             Rt::WeakmapNew => f("velt_rt_weakmap_new", vec![Ptr, Ptr, Ptr, Ptr], U32),
             Rt::WeakmapSet => f("velt_rt_weakmap_set", vec![U32, Ptr, U64], Unit),
             Rt::WeakmapGet => f("velt_rt_weakmap_get", vec![U32, Ptr, Ptr], U64),

@@ -345,7 +345,7 @@ impl FnLower<'_, '_> {
 
     /// About to write into the counted object of type `ty` whose pointer `p` holds, as part of
     /// an assignment target (rc.rs `write_barrier`, the lock set).
-    fn target_barrier(&mut self, p: &Place, ty: TyId) {
+    pub(super) fn target_barrier(&mut self, p: &Place, ty: TyId) {
         if !self.read_target && self.cx.lock_counted(ty) && !self.dead() {
             self.write_barrier(Operand::Copy(p.clone()), ty);
         }

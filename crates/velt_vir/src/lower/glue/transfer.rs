@@ -162,6 +162,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             let one = self.unique_of(o.clone(), ty);
             self.branch(one, unique, shared);
             self.switch_to(shared);
+            self.keep_callers(o.clone(), ty, done, unique);
             self.find_copy(o.clone(), ty, |lw, copy| {
                 lw.defer_release(o.clone(), ty);
                 lw.assign(Place::local(out), Rvalue::Use(copy));
@@ -220,6 +221,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let one = self.unique_of(p.clone(), ty);
         self.branch(one, unique, shared);
         self.switch_to(shared);
+        self.keep_callers(p.clone(), ty, done, unique);
         self.find_copy(p.clone(), ty, |lw, copy| {
             lw.defer_release(p.clone(), ty);
             lw.assign(place.clone(), Rvalue::Use(copy));
@@ -297,6 +299,65 @@ impl<'c, 'h> FnLower<'c, 'h> {
         self.goto(done);
         self.switch_to(done);
         new
+    }
+
+    /// In a transfer `velt_rt_xfer_keep_begin` started (a `read` callback's value going into its
+    /// caller's containers, lower/caller_stores.rs), in read mode, the still-shared lock-set
+    /// object `o` of type `ty` stays itself: one the reader did not make (the caller's) gets
+    /// the reference the reader held uncounted (the transfer goes on at `done`); one it made
+    /// whose parts may hold another's objects uncounted is the caller's from then on, counted
+    /// once, for the reference the transfer keeps, and has its parts kept in turn (at `unique`):
+    /// the reader's other references borrow it uncounted, as a store object; one it made that
+    /// holds no lock-set object stays the reader's (counted, at `done`). Outside such a
+    /// transfer it is copied as in any.
+    fn keep_callers(&mut self, o: Operand, ty: TyId, done: vir::BlockId, unique: vir::BlockId) {
+        if !self.cx.lock_counted(ty) {
+            return;
+        }
+        let keep = self.temp(Ty::U8);
+        self.assign(Place::local(keep), Rvalue::Use(cint(0, Ty::U8)));
+        self.lk_split(
+            |_| {},
+            |lw| lw.call_rt(Rt::XferKeeps, vec![], Some(Place::local(keep))),
+        );
+        let k = self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(
+                BinOp::Ne,
+                Operand::Copy(Place::local(keep)),
+                cint(0, Ty::U8),
+            ),
+        );
+        let (keeping, go) = (self.new_block(), self.new_block());
+        self.branch(k, keeping, go);
+        self.switch_to(keeping);
+        let c = self.count_place(o.clone());
+        let mine = self.is_local(&c);
+        let (made, theirs) = (self.new_block(), self.new_block());
+        self.branch(mine, made, theirs);
+        self.switch_to(theirs);
+        self.retain(o.clone());
+        self.goto(done);
+        self.switch_to(made);
+        match self.holds_lock_set(ty) {
+            true => {
+                let c = self.count_place(o);
+                self.assign(c, Rvalue::Use(cint(1, Ty::U64)));
+                self.goto(unique);
+            }
+            false => self.goto(done),
+        }
+        self.switch_to(go);
+    }
+
+    /// Can a part of a `ty` object (counted) refer to a lock-set object?
+    pub(in crate::lower) fn holds_lock_set(&mut self, ty: TyId) -> bool {
+        let parts = match self.cx.kind(ty) {
+            TyKind::Array(e) => vec![e],
+            _ if self.cx.is_class(ty) => self.cx.adt_field_tys(ty),
+            _ => self.cx.part_types(ty),
+        };
+        parts.into_iter().any(|t| self.cx.reaches_lock_set(t))
     }
 
     /// Hand the reference to the counted `ty` object `v`, which the transfer under way replaced
