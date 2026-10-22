@@ -25,7 +25,6 @@ struct Leaf<R, F> {
     fut: Option<F>,
 }
 
-/// Box `fut` as a `VeltFut` whose result slot receives `fut`'s output (layout `R`, align <= 16).
 /// Box `fut`, which waits for a timer or I/O, as a `VeltFut` whose result slot receives `fut`'s
 /// output (layout `R`, align <= 16).
 pub fn new_leaf<R, F>(fut: F) -> *mut VeltFut

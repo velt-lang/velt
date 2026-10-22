@@ -76,7 +76,6 @@ nothing else is left, the process ends, as Node's does ([Async](../reference/asy
 Differences from Node:
 
 - The handle is a `Timer`, not Node's `Timeout`: no `refresh()` or conversion to a number.
-
 - Extra arguments after `ms` are not supported: capture them in the callback. A callback
   passed as a value other than an arrow, a function name or a local (`setTimeout(this.tick,
   10)`) must return a promise.

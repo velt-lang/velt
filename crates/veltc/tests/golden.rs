@@ -21,7 +21,9 @@
 //! - A golden whose first lines contain `// check: no leaks` must free every block it allocates
 //!   (`VELT_RC_STATS=1` with the debug runtime: `blocks=A/F` with A = F) in its debug run. Tasks
 //!   still running when `main` returns are waited for (up to a minute) while blocks are unfreed;
-//!   the count is taken at a moment when every block was freed, or once no task is left.
+//!   the count is taken at a moment when every block was freed, or once no task can run any
+//!   more (blocks held by tasks that wait forever, or by pending `unref()`'d timers, count as
+//!   unfreed).
 //! - A golden whose first lines contain `// check: heap strings at most N` allocates at most N
 //!   heap string buffers in its debug run (`alloc=` of the same report): a count that does not
 //!   depend on timing, for programs that must not copy a string per step (e.g. appends).
