@@ -1,0 +1,92 @@
+// check: no leaks
+// The `ownKeys`, `getOwnPropertyDescriptor` and `deleteProperty` traps (#823, #927): a proxy
+// whose keys exist only in its handler, as sigx's `mergeProps` builds one, and a reactive
+// record whose traps log each operation.
+const log: string[] = [];
+
+function virtualProps(keys: string[]): Record<string, any> {
+  return new Proxy({} as Record<string, any>, {
+    get(_target, key) {
+      if (typeof key === "symbol") return undefined;
+      log.push("get " + key);
+      return keys.includes(key) ? key.toUpperCase() : undefined;
+    },
+    has(_target, key) {
+      if (typeof key === "symbol") return false;
+      return keys.includes(key);
+    },
+    ownKeys() {
+      log.push("ownKeys");
+      return keys;
+    },
+    getOwnPropertyDescriptor(_target, key) {
+      if (typeof key === "symbol") return undefined;
+      log.push("describe " + key);
+      if (!keys.includes(key)) return undefined;
+      return { value: key.toUpperCase(), enumerable: key !== "hidden", configurable: true, writable: false };
+    },
+  });
+}
+
+function reactive(raw: Record<string, number>): any {
+  const target: any = raw;
+  return new Proxy(target, {
+    get(obj, prop, receiver) {
+      log.push("get " + String(prop));
+      return Reflect.get(obj, prop, receiver);
+    },
+    ownKeys(obj) {
+      log.push("ownKeys");
+      return Reflect.ownKeys(obj);
+    },
+    deleteProperty(obj, prop) {
+      const had = Object.prototype.hasOwnProperty.call(obj, prop);
+      log.push("delete " + String(prop) + " " + had);
+      if (typeof prop === "string") {
+        delete raw[prop];
+      }
+      return had;
+    },
+  });
+}
+
+function flush(): void {
+  console.log(log.join(", "));
+  log.length = 0;
+}
+
+function main(): void {
+  const p: any = virtualProps(["x", "hidden", "y"]);
+  console.log(Object.keys(p));
+  flush();
+  console.log("x" in p, "z" in p, Object.hasOwn(p, "hidden"), Object.hasOwn(p, "z"));
+  flush();
+  console.log({ ...p, z: 1 });
+  flush();
+  console.log(Object.values(p), Object.entries(p));
+  flush();
+  console.log(Reflect.ownKeys(p), Reflect.getOwnPropertyDescriptor(p, "y"));
+  flush();
+
+  const raw: Record<string, number> = { a: 1, b: 2 };
+  const r = reactive(raw);
+  console.log(Object.keys(r));
+  flush();
+  delete r.a;
+  console.log(Reflect.deleteProperty(r, "nope"), Object.keys(raw));
+  flush();
+  console.log(Reflect.ownKeys([1, 2]), Reflect.getOwnPropertyDescriptor(raw, "b"));
+  console.log(Reflect.getOwnPropertyDescriptor(raw, "a"));
+
+  // A `get` trap telling protocol keys apart from the names it answers for, as sigx's topic
+  // groups do.
+  const topics: any = new Proxy({}, {
+    get(target, key) {
+      if (typeof key !== "string" || key in Object.prototype || key === "then") {
+        return Reflect.get(target, key);
+      }
+      return "topic " + key;
+    },
+  });
+  console.log(topics.saved, topics.then, "toString" in topics);
+}

@@ -64,10 +64,18 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// Does type `t` have a setter `name` (and no field of that name)?
+    /// Does type `t` have a setter `name` (and no field of that name)? Not the throwing one a
+    /// getter-only override gets: TypeScript rejects that write (TS2540).
     pub(crate) fn has_setter(&mut self, t: TyId, name: &str) -> bool {
-        self.field_of(t, name).is_none()
-            && self.resolve_method(t, &member_key(name, true)).is_some()
+        if self.field_of(t, name).is_some() {
+            return false;
+        }
+        match self.resolve_method(t, &member_key(name, true)) {
+            Some(Resolved::Def { def, .. } | Resolved::Virtual { def, .. }) => {
+                !self.cx.getter_only_setters.contains(&def)
+            }
+            r => r.is_some(),
+        }
     }
 
     /// The parameter type of setter `name` of type `t` (`None` when it is not known here).

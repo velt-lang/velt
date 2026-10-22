@@ -88,15 +88,12 @@ impl FnCx<'_, '_> {
         self.mk(kind, str_, span)
     }
 
-    /// A value whose type is a type parameter as an `any` (a share of a variable), so `typeof`
+    /// A value whose type is a type parameter (or a deferred `T[K]`) as an `any` (a share of a variable), so `typeof`
     /// tells the instantiation's value at run time (#1036); also a `T | undefined` / `T | null`
     /// (its nothing, or the payload's tag); other values as they are.
     pub(super) fn param_as_any(&mut self, s: hir::Expr) -> hir::Expr {
         let core = self.cx.ty.opt_payload(s.ty).unwrap_or(s.ty);
-        let Some(any) = self
-            .any_ty()
-            .filter(|_| matches!(self.cx.ty.kind(core), TyKind::Param(_)))
-        else {
+        let Some(any) = self.any_ty().filter(|_| self.instance_valued(core)) else {
             return s;
         };
         let s = self.share_if_place(s);
@@ -316,8 +313,22 @@ impl FnCx<'_, '_> {
             return self.error_expr(span);
         };
         let sty = s.ty;
-        if self.cx.ty.is_bottom(sty) {
+        if sty == self.cx.ty.error {
             return self.error_expr(span);
+        }
+        // A value that can't exist (the reason of a promise that never rejects) is no
+        // instance. Error-set variables alone (the reason of a promise a function type written
+        // without `throws` returns) are nothing as written: assumed empty until their sets are
+        // known (`throws::vars`).
+        let never = sty == self.cx.ty.never
+            || self.cx.mentions_err_var(sty) && {
+                let plain = self.cx.plain_type(sty);
+                plain == self.cx.ty.never
+            };
+        if never {
+            self.cx.assume_empty_in(sty);
+            let b = self.cx.ty.bool_;
+            return self.mk(H::Lit(hir::Lit::Bool(false)), b, span);
         }
         let inner = self.cx.ty.core(sty).unwrap_or(sty);
         let candidates = self.cx.union_members(inner).unwrap_or_else(|| vec![inner]);

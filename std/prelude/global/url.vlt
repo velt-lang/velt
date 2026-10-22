@@ -1,3 +1,10 @@
-// Global (loaded when a module names one of these): Node's `URL` and `URLSearchParams`
-// (docs/std/url.md).
-export { URL, URLSearchParams } from "velt:url";
+// Global (loaded when a module names one of these): Node's `URL` and `URLSearchParams`, and the
+// URI functions (docs/std/url.md).
+export {
+  URL,
+  URLSearchParams,
+  encodeURIComponent,
+  encodeURI,
+  decodeURIComponent,
+  decodeURI,
+} from "velt:url";

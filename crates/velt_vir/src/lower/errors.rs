@@ -45,7 +45,9 @@ impl FnLower<'_, '_> {
         };
         let err = self.widen_error(err, from, to);
         self.write_err(err);
+        let saved = self.save_throw_loc(0);
         self.emit_drops_from(0);
+        self.restore_throw_loc(saved);
         if self.asyncx.is_some() && !self.dead() {
             self.finish_poll_err();
         } else {
@@ -124,6 +126,34 @@ impl FnLower<'_, '_> {
             Operand::Const(vir::Const::Static(id), Ty::Ptr)
         };
         self.call_rt(Rt::SetThrowLoc, vec![at], None);
+    }
+
+    /// Before the `finally` blocks of scopes `depth..` run on the way out of an error: the
+    /// location of that error, which a `throw` caught inside one of them would overwrite (the
+    /// per-thread slot holds only the last throw). `None` when no `finally` runs or without
+    /// source locations. The saved location is a local, so it survives an `await` in the
+    /// `finally`, after which the task may run on another thread.
+    fn save_throw_loc(&mut self, depth: usize) -> Option<vir::Local> {
+        if self.cx.locs.is_none() || self.dead() {
+            return None;
+        }
+        let runs_finally =
+            (self.scopes[depth..].iter()).any(|s| matches!(s.kind, ScopeKind::Finally(Some(_))));
+        if !runs_finally {
+            return None;
+        }
+        let p = self.temp(Ty::Ptr);
+        self.call_rt(Rt::ThrowLoc, vec![], Some(Place::local(p)));
+        Some(p)
+    }
+
+    /// After the `finally` blocks: put back the location [`FnLower::save_throw_loc`] saved.
+    fn restore_throw_loc(&mut self, saved: Option<vir::Local>) {
+        if let Some(p) = saved {
+            if !self.dead() {
+                self.call_rt(Rt::SetThrowLoc, vec![Operand::Copy(Place::local(p))], None);
+            }
+        }
     }
 
     /// On the error path of a call in user code: if the error came out of the standard library

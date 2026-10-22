@@ -1,0 +1,1 @@
+TypeError: `slice` of a proxy of an array whose element 1 is absent is not supported yet (#823): Velt's arrays have no holes

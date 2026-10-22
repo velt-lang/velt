@@ -32,7 +32,7 @@ declare function velt_rt_regex_split(re: u64, s: string, limit: u64): string[];
 declare function velt_rt_regex_escape(s: string): string;
 
 /** An invalid pattern or flags (JS throws `SyntaxError`). */
-export class RegExpError extends Error {
+export class RegExpError extends SyntaxError {
   constructor(message: string) {
     super(message);
   }

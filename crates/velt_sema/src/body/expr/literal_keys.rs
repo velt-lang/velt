@@ -33,6 +33,19 @@ fn keyed(object: &ast::Expr, key: &str, span: Span) -> ast::Expr {
     )
 }
 
+/// `object[key]`.
+fn indexed(object: &ast::Expr, key: &ast::Expr, span: Span) -> ast::Expr {
+    let (object, index) = (Box::new(object.clone()), Box::new(key.clone()));
+    synth(
+        ast::ExprKind::Index {
+            object,
+            index,
+            optional: false,
+        },
+        span,
+    )
+}
+
 /// `index === "key"`.
 fn is_key(index: &ast::Expr, key: &str) -> ast::Expr {
     let lit = synth(
@@ -98,7 +111,7 @@ impl FnCx<'_, '_> {
     }
 
     /// The values of `t` when it is a string literal type or a union of them.
-    fn string_literals(&mut self, t: TyId) -> Option<Vec<String>> {
+    pub(super) fn string_literals(&mut self, t: TyId) -> Option<Vec<String>> {
         let members = self.cx.union_members(t).unwrap_or_else(|| vec![t]);
         members
             .into_iter()
@@ -131,7 +144,8 @@ impl FnCx<'_, '_> {
         want: Want,
         span: Span,
     ) -> Option<hir::Expr> {
-        self.with_union_key(object, index, span, |s, keys, key| {
+        let redo = |s: &mut Self, key: &ast::Expr| s.expr(&indexed(object, key, span), None, want);
+        self.with_union_key(object, index, span, redo, |s, keys, key| {
             if want == Want::BorrowMut {
                 s.cx.error(
                     Diagnostic::error(
@@ -171,7 +185,15 @@ impl FnCx<'_, '_> {
         else {
             return None;
         };
-        self.with_union_key(object, index, span, |s, keys, key| {
+        if op.is_none() {
+            if let Some(h) = self.generic_key_write(object, index, value, span) {
+                return Some(h);
+            }
+        }
+        let redo = |s: &mut Self, key: &ast::Expr| {
+            s.assign(op, &indexed(object, key, target.span), value, span)
+        };
+        self.with_union_key(object, index, span, redo, |s, keys, key| {
             let Some(fty) = s.one_field_ty(object, index, keys) else {
                 s.expr(value, None, Want::Move);
                 return s.error_expr(span);
@@ -217,7 +239,16 @@ impl FnCx<'_, '_> {
         else {
             return None;
         };
-        self.with_union_key(object, index, span, |s, keys, key| {
+        let redo = |s: &mut Self, key: &ast::Expr| {
+            s.update(
+                op,
+                prefix,
+                &indexed(object, key, target.span),
+                as_value,
+                span,
+            )
+        };
+        self.with_union_key(object, index, span, redo, |s, keys, key| {
             if s.one_field_ty(object, index, keys).is_none() {
                 return s.error_expr(span);
             }
@@ -285,7 +316,7 @@ impl FnCx<'_, '_> {
     }
 
     /// `{ const <name> = init; body(<name>) }`.
-    fn with_temp(
+    pub(crate) fn with_temp(
         &mut self,
         name: &str,
         init: hir::Expr,
@@ -321,12 +352,16 @@ impl FnCx<'_, '_> {
     /// Runs `body` with the keys of `object[index]` and the expression holding the key, when
     /// the index has literal keys that are all fields of the object (`None` otherwise, for the
     /// ordinary indexing rules). The object must be a path (evaluated once per key); an index
-    /// that is not (`o[key()]`, `o[ks[1]]`) is evaluated once, into a temporary.
+    /// that is not (`o[key()]`, `o[ks[1]]`) is evaluated once, into a temporary. A key of a
+    /// type parameter's value known only per instantiation (`k: K`, `K extends keyof T`) is
+    /// evaluated once too, and `redo` checks the access again with the temporary as the index
+    /// (`key_index.rs`).
     fn with_union_key(
         &mut self,
         object: &ast::Expr,
         index: &ast::Expr,
         span: Span,
+        redo: impl FnOnce(&mut Self, &ast::Expr) -> hir::Expr,
         body: impl FnOnce(&mut Self, &[String], &ast::Expr) -> hir::Expr,
     ) -> Option<hir::Expr> {
         if literal_key(index).is_some() || !repeatable(object) {
@@ -362,7 +397,11 @@ impl FnCx<'_, '_> {
         let keys = self
             .string_literals(h.ty)
             .filter(|keys| keys.iter().all(|k| self.field_ty(t, k).is_some()));
+        let at = index.span;
         let Some(keys) = keys else {
+            if self.generic_keyed(t, h.ty) {
+                return Some(self.with_temp("<key>", h, at, span, redo));
+            }
             // As the ordinary rules report it (`o[s]` with `s: string`).
             let tn = self.cx.display(t);
             let mut d =
@@ -373,7 +412,6 @@ impl FnCx<'_, '_> {
             self.cx.error(d);
             return Some(self.error_expr(span));
         };
-        let at = index.span;
         Some(self.with_temp("<key>", h, at, span, |s, key| body(s, &keys, key)))
     }
 

@@ -153,6 +153,13 @@ impl super::Cx<'_> {
             let mut args: Vec<TyId> = iface_args.iter().map(|&a| self.subst(a, &targs)).collect();
             args.push(implementor);
             (method, args)
+        } else if targs.is_empty() && self.fn_def(method).generics > 0 {
+            // A method of a generic class in an implementation for one instance of it (sema's
+            // `synth_ifaces`): the class's arguments, as its own table has them.
+            match self.fn_def(method).self_ty.map(|t| self.kind(t)) {
+                Some(TyKind::Adt(..)) => (method, self.method_targs(method, implementor)),
+                _ => (method, targs),
+            }
         } else {
             (method, targs)
         }
@@ -190,6 +197,27 @@ impl FnLower<'_, '_> {
             Ty::Agg(a),
             Rvalue::Aggregate(a, vec![super::cfunc(thunk), cint(0, Ty::Ptr)]),
         )
+    }
+
+    /// Call `target(argv…)`, lowered already (`params`: their VIR types).
+    pub(super) fn call_code(
+        &mut self,
+        target: Operand,
+        argv: Vec<Operand>,
+        mut params: Vec<Ty>,
+        ret: TyId,
+        throws: Option<TyId>,
+    ) -> Operand {
+        let abi = self.cx.ret_abi(ret, throws);
+        if abi.out.is_some() {
+            params.push(Ty::Ptr);
+        }
+        let callee = vir::Callee::Ptr {
+            target,
+            params,
+            ret: abi.ret,
+        };
+        self.finish_call(callee, argv, ret, throws)
     }
 
     /// Call `target(first, args…)` with the borrow ABI; `modes` are the callee's param modes
@@ -245,6 +273,11 @@ impl FnLower<'_, '_> {
                 let env = Operand::Copy(Place::local(env));
                 let ret = self.sub(ty);
                 return self.call_ptr(cfunc(code), env, args, None, (ret, throws, false));
+            }
+        }
+        if !transfer {
+            if let Some(v) = self.call_known_fn(f, args, ty, throws) {
+                return v;
             }
         }
         let fv = match transfer {

@@ -22,12 +22,33 @@
   only; using one as a value is an error. Types are compile-time only either way, so this
   changes no code, as in TypeScript.
 - `import "…";` loads a module without binding names.
-- `import.meta` describes the module, as in Node: `import.meta.url` is its source file's
-  `file:` URL, `import.meta.filename` the file's absolute path and `import.meta.dirname` its
-  directory. They are fixed while compiling, so they name the source file, not the built
-  program, wherever it runs. `import.meta` used as a value of its own (`const m = import.meta`,
-  `return import.meta`) is a copy of the object. Its fields are read-only, also through a
-  copy (`m.url = "x"` is an error, as `import.meta.url = "x"` is).
+- `import.meta` describes the module, as in Node, with Node's keys in Node's order:
+  `import.meta.dirname` is the source file's directory, `import.meta.filename` its absolute
+  path, `import.meta.main` is `true` in the program's root module (the file `velt run` or
+  `velt build` is given) and `false` in the others, `import.meta.resolve(specifier)` resolves a
+  specifier against the module's URL, and `import.meta.url` is the file's `file:` URL. They are
+  fixed while compiling, so they name the source file, not the built program, wherever it runs.
+  `console.log(import.meta)` prints it as Node does (`[Object: null prototype] { dirname: …,
+  resolve: [Function: resolve], … }`), and `JSON.stringify` leaves `resolve` out.
+- `resolve` resolves as Node does, without checking that the file exists: an absolute URL as
+  the URL parser normalizes it (`HTTPS://Example.com/a` is `https://example.com/a`), a relative
+  or absolute path (`./data.json`, `../a?x=1#h`, `/etc/hosts`, which keeps a Windows drive
+  letter) against the module's URL, and one of Node's built-in modules as `node:<name>`
+  (`fs` is `node:fs`, `_http_agent` is `node:_http_agent`). A package name throws an `Error`
+  with Node's message (`Cannot find package 'x' imported from <file>`): packages are compiled
+  into the program rather than looked up while it runs, so `try` / `catch` around
+  `import.meta.resolve("optional-dep")` takes the `catch`. Its type is therefore
+  `(specifier: string) => string throws Error`. Stored as a function type written without
+  `throws` (`const r: (s: string) => string = import.meta.resolve`, or `import.meta` as a
+  `{ resolve: (s: string) => string }`), that type throws its errors, as every such type throws
+  what is stored into it ([Dynamic calls](errors.md#dynamic-calls)).
+- `import.meta` can be passed where an object type with some of its fields is expected
+  (`function f(p: { readonly url: string })`, `f(import.meta)`). That object is a copy of those
+  fields, as for any object type of another layout: assigning one of its fields is an error, and
+  it is not `===` to `import.meta`.
+- `import.meta` used as a value of its own (`const m = import.meta`, `return import.meta`) is
+  the same object. Its fields are read-only, also through such a value (`m.url = "x"` is an
+  error, as `import.meta.url = "x"` is).
 - A dynamic `import(…)` is an error: every module is loaded while compiling, so import it with
   a static `import` instead.
 

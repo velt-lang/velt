@@ -1,0 +1,87 @@
+// A sigx-like signal over an array: its `set` trap tells an added element (`undefined` before
+// and not an own property) from a changed one, so during `unshift` the gap before an element
+// written past the end must read as a hole, as in Node, or an effect on that index goes stale.
+const deps = new Map<string, (() => void)[]>();
+let running: (() => void) | null = null;
+let batching = false;
+const pending: (() => void)[] = [];
+
+function track(key: string): void {
+  const r = running;
+  if (r !== null) {
+    const list = deps.get(key) ?? [];
+    list.push(r);
+    deps.set(key, list);
+  }
+}
+
+function trigger(key: string): void {
+  for (const e of deps.get(key) ?? []) {
+    if (batching) {
+      if (!pending.includes(e)) {
+        pending.push(e);
+      }
+    } else {
+      e();
+    }
+  }
+}
+
+function effect(f: () => void): void {
+  const run = (): void => {
+    running = run;
+    f();
+    running = null;
+  };
+  run();
+}
+
+const list: boolean[] = [true, false, false];
+const p: any = new Proxy(list, {
+  get(obj: any, prop: string | symbol, r: any): any {
+    track(String(prop));
+    return Reflect.get(obj, prop, r);
+  },
+  set(obj: any, prop: string | symbol, v: any, r: any): boolean {
+    const oldValue = Reflect.get(obj, prop);
+    const added = oldValue === undefined && !Object.prototype.hasOwnProperty.call(obj, prop);
+    const ok = Reflect.set(obj, prop, v, r);
+    if (added) {
+      console.log("add", String(prop));
+      trigger(String(prop));
+    } else if (oldValue !== v) {
+      console.log("set", String(prop));
+      trigger(String(prop));
+    } else {
+      console.log("same", String(prop));
+    }
+    return ok;
+  },
+  deleteProperty(obj: any, prop: string | symbol): boolean {
+    const had = Object.prototype.hasOwnProperty.call(obj, prop);
+    const ok = Reflect.deleteProperty(obj, prop);
+    console.log("delete", String(prop), had, obj.length);
+    if (had) {
+      trigger(String(prop));
+    }
+    return ok;
+  },
+});
+
+effect(() => console.log("idx3 effect", p[3]));
+effect(() => console.log("length effect", p.length));
+batching = true;
+p.unshift(true, true);
+batching = false;
+for (const e of pending.splice(0)) {
+  e();
+}
+batching = true;
+p.pop();
+p.splice(0, 2);
+batching = false;
+for (const e of pending.splice(0)) {
+  e();
+}
+console.log(list);
+// check: no leaks

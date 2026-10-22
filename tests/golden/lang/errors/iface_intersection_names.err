@@ -1,0 +1,2 @@
+iface_intersection_names.vlt:9:18: error: no value has type `G<T> & M`: member `get` differs between `G<T>` and `M` (overloads are not supported)
+  = note: a value of an intersection has every part's members at once

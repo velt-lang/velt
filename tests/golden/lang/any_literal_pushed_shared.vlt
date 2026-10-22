@@ -1,0 +1,55 @@
+// check: no leaks
+// An object literal stored in an `any` and pushed into an array is the same object (#1307):
+// a write through one reference shows through the other, also when the literal holds the
+// array it is pushed into, through a function parameter and after the frame that made it is
+// gone.
+function deep(n: number): number {
+  const xs = [n, n + 1];
+  return n <= 0 ? 0 : xs[1] + deep(n - 1) - n;
+}
+
+function add(xs: any[], v: any): void {
+  xs.push(v);
+}
+
+function make(xs: any[]): any {
+  const o: any = { tag: "made".repeat(2), xs, n: 0 };
+  add(xs, o);
+  return o;
+}
+
+function run(): void {
+  const a: any[] = [1];
+  const o: any = { a };
+  a.push(o);
+  console.log(a[1].a.length, a[1] === o, a[1].a === a);
+
+  const b: any[] = [];
+  const p: any = { b, n: 1 };
+  b.push(p);
+  p.n = 5;
+  b[0].n = (b[0].n as number) + 1;
+  console.log(b[0].n, p.n, b[0].b.length);
+
+  const xs: any[] = [];
+  const q: any = { tag: "q", xs };
+  add(xs, q);
+  q.tag = "changed";
+  console.log(xs[0].tag, xs[0].xs === xs);
+
+  const ys: any[] = [];
+  const m = make(ys);
+  console.log(deep(2000), ys.length, ys[0] === m, ys[0].tag);
+  m.n = 7;
+  ys[0].tag = "set";
+  console.log(ys[0].n, m.tag, m.xs === ys);
+  // Each object and the array holding it reach each other: take the objects out again, so
+  // the counts show that nothing else keeps them.
+  a.pop();
+  b.pop();
+  xs.pop();
+  ys.pop();
+  console.log(a.length, b.length, xs.length, ys.length, o.a === a, m.n);
+}
+
+run();

@@ -1,0 +1,76 @@
+// `for...in`, `in` and `Object.hasOwn` of typed proxies and plain values of the same class or
+// interface through one function, nested loops, an optional and an `await` in the body.
+class Box {
+  x = 1;
+  y = 2;
+}
+
+interface P {
+  a: number;
+  b: number;
+}
+
+const log: string[] = [];
+
+function wrap<T>(t: T): T {
+  return new Proxy(t as any, {
+    has(o: any, k: string | symbol): boolean {
+      log.push("has " + String(k));
+      return Reflect.has(o, k);
+    },
+    ownKeys(o: any): any {
+      log.push("ownKeys");
+      return Reflect.ownKeys(o).filter((k: string | symbol) => k !== "b" && k !== "y");
+    },
+    getOwnPropertyDescriptor(o: any, k: string | symbol): PropertyDescriptor | undefined {
+      log.push("gopd " + String(k));
+      return Reflect.getOwnPropertyDescriptor(o, k);
+    },
+  }) as T;
+}
+
+function keysP(v: P): string {
+  const out: string[] = [];
+  for (const k in v) {
+    out.push(k);
+  }
+  return out.join("|") + " " + String("a" in v) + " " + String(Object.hasOwn(v, "x"));
+}
+
+function keysB(v: Box): string {
+  const out: string[] = [];
+  for (const k in v) {
+    out.push(k);
+  }
+  return out.join("|") + " " + String("a" in v) + " " + String(Object.hasOwn(v, "x"));
+}
+
+function flush(): void {
+  console.log(log.join(","));
+  log.length = 0;
+}
+
+const b = wrap(new Box());
+const p = wrap<P>({ a: 1, b: 2 });
+const opt: P | undefined = p;
+console.log(keysB(b), keysP(p), keysB(new Box()), keysP({ a: 3, b: 4 }));
+flush();
+if (opt !== undefined) {
+  for (const k in opt) {
+    for (const j in b) {
+      log.push(k + j);
+    }
+  }
+}
+console.log("x" in b, Object.hasOwn(b, "y"), "a" in opt!, Object.hasOwn(opt!, "a"));
+flush();
+
+async function run(): Promise<void> {
+  for (const k in p) {
+    await Promise.resolve();
+    log.push("async " + k);
+  }
+  flush();
+}
+
+await run();

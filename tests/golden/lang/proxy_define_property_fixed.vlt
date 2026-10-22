@@ -1,0 +1,11 @@
+// A `defineProperty` trap may not report a property that is not configurable when the target's
+// is (Node's invariant check, #823).
+function main(): void {
+  const p: any = new Proxy({ a: 1 } as any, {
+    defineProperty(t, k, d) {
+      return true;
+    },
+  });
+  console.log(Reflect.defineProperty(p, "a", { value: 2 }));
+  console.log(Reflect.defineProperty(p, "a", { value: 3, configurable: false }));
+}

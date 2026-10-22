@@ -18,6 +18,9 @@ enum WriteKey {
     Str(hir::Expr),
     /// A number key.
     Num(hir::Expr),
+    /// A symbol constant: the name of the member it keys and the symbol (`__anySetSym`, so a
+    /// proxy's `set` trap sees the symbol).
+    Sym(hir::Expr, hir::Expr),
 }
 
 impl FnCx<'_, '_> {
@@ -97,6 +100,7 @@ impl FnCx<'_, '_> {
             let key = match key {
                 WriteKey::Str(k) => WriteKey::Str(self.hoist_dynamic(k, &mut stmts)),
                 WriteKey::Num(k) => WriteKey::Num(self.hoist_dynamic(k, &mut stmts)),
+                WriteKey::Sym(n, k) => WriteKey::Sym(n, self.hoist_dynamic(k, &mut stmts)),
             };
             (obj, key)
         } else {
@@ -107,19 +111,14 @@ impl FnCx<'_, '_> {
             return (self.error_expr(span), false);
         }
         let v = self.coerce(v, any);
-        let unit = self.cx.ty.unit;
-        let (i, key) = match key {
-            WriteKey::Str(k) => (Intrinsic::AnySet, k),
-            WriteKey::Num(k) => (Intrinsic::AnySetIndex, k),
-        };
         if !as_value {
-            return (self.intrinsic(i, vec![obj, key, v], unit, span), false);
+            return (self.dynamic_set(obj, key, v, span), false);
         }
         // `{ const r = x; const k = key; const t = v; r[k] = share(t); t }`.
         let tmp = self.new_local("<assigned>", any, false, span, LocalKind::Temp);
         let read = self.mk(H::Local(tmp, UseMode::Borrow), any, span);
         let share = self.intrinsic(Intrinsic::Share, vec![read], any, span);
-        let set = self.intrinsic(i, vec![obj, key, share], unit, span);
+        let set = self.dynamic_set(obj, key, share, span);
         let result = self.mk(H::Local(tmp, UseMode::Move), any, span);
         stmts.push(hir::Stmt {
             kind: hir::StmtKind::Let {
@@ -138,6 +137,24 @@ impl FnCx<'_, '_> {
             span,
         };
         (self.mk(H::Block(block), any, span), true)
+    }
+
+    /// The write `obj[key] = v` (`v` boxed).
+    fn dynamic_set(
+        &mut self,
+        obj: hir::Expr,
+        key: WriteKey,
+        v: hir::Expr,
+        span: Span,
+    ) -> hir::Expr {
+        let unit = self.cx.ty.unit;
+        match key {
+            WriteKey::Str(k) => self.intrinsic(Intrinsic::AnySet, vec![obj, k, v], unit, span),
+            WriteKey::Num(k) => self.intrinsic(Intrinsic::AnySetIndex, vec![obj, k, v], unit, span),
+            WriteKey::Sym(n, k) => {
+                self.prelude_hir_call("__anySetSym", vec![obj, n, k, v], unit, span)
+            }
+        }
     }
 
     /// `e` (a receiver or key) bound to a temporary appended to `stmts`, read back by borrow: a
@@ -178,7 +195,11 @@ impl FnCx<'_, '_> {
             self.note_dynamic_write(&name, index.span);
             let str_ = self.cx.ty.str_;
             let k = self.mk(H::Lit(Lit::Str(name)), str_, index.span);
-            return Some(WriteKey::Str(k));
+            if !self.uses_proxy() {
+                return Some(WriteKey::Str(k));
+            }
+            let sym = self.expr(index, None, Want::Borrow);
+            return Some(WriteKey::Sym(k, sym));
         }
         let k = self.expr(index, None, Want::Borrow);
         if self.cx.ty.is_bottom(k.ty) {

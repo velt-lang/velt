@@ -215,6 +215,7 @@ pub(crate) fn iface_bound(cx: &mut Ctx, t: &ast::TypeExpr, env: &TyEnv) -> Optio
 
 fn field_info(cx: &mut Ctx, owner: DefId, f: &ast::Field, env: &TyEnv) -> FieldInfo {
     let mut ty = cx.resolve_type(&f.ty, env);
+    cx.note_written_type(f.name.span, f.ty.span);
     let declared = ty;
     // `a?: T` is `T | undefined` (`a?: T | null` is `T | null | undefined`); `q?: any`: an
     // `any` holds the `undefined` of a left-out field itself.
@@ -472,6 +473,7 @@ fn layout_fields(cx: &mut Ctx, d: DefId, stack: &mut Vec<DefId>) {
     let mut all = vec![];
     for mut f in inherited {
         f.ty = cx.subst(f.ty, &bargs);
+        f.declared = cx.subst(f.declared, &bargs);
         all.push(f);
     }
     let start = all.len();

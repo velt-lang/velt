@@ -49,6 +49,7 @@ pub mod panic;
 pub mod postgres;
 pub mod prng;
 pub mod process;
+pub mod proxy_array;
 pub mod random;
 pub mod redis;
 pub mod regex;

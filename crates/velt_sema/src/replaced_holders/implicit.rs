@@ -510,7 +510,9 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::AnySet
         | I::AnySetIndex
         // `key in p` runs a proxy's `has` trap (and a proxy's `get` / `set` slots its traps).
-        | I::AnyHas => true,
+        | I::AnyHas
+        // A record's `__delete` removes an entry.
+        | I::AnyDelete => true,
         // Run no user code (what they drop is counted as drops; the function values they call
         // as callbacks; generator resumes apart).
         I::StrConcat
@@ -542,6 +544,9 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::Share
         | I::FieldAbsent
         | I::FieldPresent
+        | I::SpreadObject
+        | I::KeyRead
+        | I::KeyWrite
         | I::NeedsTransfer
         | I::NeedsDrop
         | I::MayAlias
@@ -567,6 +572,9 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::SourceLocation
         | I::PromiseWiden
         | I::PerfNow
+        | I::ProxyArrayCall
+        | I::ProxyArrayHole
+        | I::IsTypedProxy
         | I::DateNow
         | I::SharedAdd
         | I::SharedGet

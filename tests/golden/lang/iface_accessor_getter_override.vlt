@@ -1,0 +1,19 @@
+// A subclass getter overriding a base class's `get`/`set` pair without a `set` (#350): in
+// JavaScript the getter-only accessor replaces the whole property, so writing it through a
+// declared interface or an intersection throws Node's `TypeError` for that subclass, while a
+// subclass that overrides nothing keeps the base's setter.
+interface Base { refresh(): number }
+interface HasN { n: number; refresh(): number }
+class P2 implements Base, HasN {
+  private _n = 3;
+  get n(): number { return this._n; }
+  set n(v: number) { this._n = v + 100; }
+  refresh() { return 7; }
+}
+class S2 extends P2 { override get n(): number { return 42; } }
+class S3 extends P2 { }
+const ys: HasN[] = [new S3(), new P2()];
+for (const y of ys) { y.n = 2; console.log(y.n); }
+const xs: (Base & { n: number })[] = [new S3(), new P2(), new S2()];
+for (const x of xs) { x.n = 1; console.log(x.n); }
+console.log("not reached");

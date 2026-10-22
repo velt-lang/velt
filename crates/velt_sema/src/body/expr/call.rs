@@ -251,6 +251,11 @@ impl FnCx<'_, '_> {
         for (i, t) in type_args.iter().enumerate() {
             slots[start + i] = Some(self.resolve(t));
         }
+        let spans = type_args
+            .iter()
+            .enumerate()
+            .map(|(i, t)| (start + i, t.span));
+        self.explicit_type_spans = Some((span, spans.collect()));
         for k in start + type_args.len()..slots.len() {
             let Some(Some(d)) = defaults.get(k) else {
                 break;
@@ -382,6 +387,12 @@ impl FnCx<'_, '_> {
         let ck = self.check_call(&c, vec![], args, None, span);
         if throws != self.cx.ty.never {
             self.throw_src(crate::defs::ThrowSrc::Direct(throws, span));
+        }
+        // Through a function type written without `throws` in a user module, it may throw what
+        // is stored into the type (`throws::fn_types`).
+        if !self.cx.scopes[self.module].is_std {
+            let site = self.site_of_value(&f);
+            self.throw_src(crate::defs::ThrowSrc::Indirect(f.ty, site, span));
         }
         let mut f = f;
         set_place_mode(&mut f, UseMode::Borrow);

@@ -21,6 +21,9 @@ impl FnCx<'_, '_> {
         if let Some(c) = self.proxy_class_name(class) {
             return self.new_expr(&c, args, exp, span);
         }
+        if let Some(h) = self.proxy_new_any(class, args, span) {
+            return h;
+        }
         if let Some(h) = self.mutex_new(class, args, exp, span) {
             return h;
         }
@@ -92,6 +95,11 @@ impl FnCx<'_, '_> {
         };
         self.collect_iterable_args = self.takes_iterable(d);
         self.weak_key_args = Some(d) == self.cx.prelude_adt("WeakRef");
+        // A type bound an explicit type argument breaks is reported there (`tsc` TS2344).
+        if let ast::TypeExprKind::Named { args: targs, .. } = &class.kind {
+            let spans = targs.iter().enumerate().map(|(i, t)| (i, t.span));
+            self.explicit_type_spans = Some((span, spans.collect()));
+        }
         let ck = self.check_call(&c, slots, args, self.hint(exp), span);
         if !self.cx.scopes[self.module].is_std {
             // Also for a subclass, whose base class names the key type (`class Cache extends
@@ -136,7 +144,8 @@ impl FnCx<'_, '_> {
 
     /// Can `k` be the key type of a `WeakMap` or `WeakSet`, or a `WeakRef`'s target type
     /// (`class`: which)? JavaScript requires an object (TS2344 / TS2345 for a primitive); Velt
-    /// takes class instances, object types and arrays. Reports the error if not.
+    /// takes class instances, object types, arrays, `object` and interface values. Reports the
+    /// error if not.
     fn weak_key_type(&mut self, k: TyId, class: &str, span: Span) -> bool {
         let what = match class {
             "WeakRef" => "the target of a `WeakRef`",
@@ -177,6 +186,8 @@ impl FnCx<'_, '_> {
                 );
                 return false;
             }
+            // An interface value: keyed by the object it holds (velt_vir weak_object.rs).
+            None if matches!(self.cx.ty.kind(k), TyKind::Dyn(..)) => return true,
             _ => {}
         }
         let d = match primitive {
@@ -192,7 +203,7 @@ impl FnCx<'_, '_> {
                 span,
             )
             .with_note(
-                "use a class instance, an object type or an array (unions, tuples, structs, function and interface values are not supported yet, #823)",
+                "use a class instance, an object type, an array or an interface (unions, tuples, structs and function values are not supported yet, #823)",
             ),
         };
         self.cx.error(d);

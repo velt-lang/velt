@@ -289,7 +289,11 @@ impl FnCx<'_, '_> {
         }
         let b = self.cx.ty.bool_;
         if self.cx.dynamic(s.ty).is_some() {
-            // An `any` / `unknown` of any expression shape: whether the value held is an array.
+            // An `any` / `unknown` of any expression shape: whether the value held is an array
+            // (or a proxy of one).
+            if self.uses_proxy() && !self.cx.scopes[self.module].is_std {
+                return self.prelude_hir_call("__anyIsArrayProxy", vec![s], b, span);
+            }
             return self.intrinsic(hir::Intrinsic::AnyIsArray, vec![s], b, span);
         }
         let core = self.cx.ty.opt_payload(s.ty).unwrap_or(s.ty);
@@ -454,7 +458,7 @@ impl FnCx<'_, '_> {
     }
 
     /// The type `e` checks to, without keeping anything of the check (`None`: it has errors).
-    pub(super) fn trial_type(&mut self, e: &ast::Expr) -> Option<TyId> {
+    pub(crate) fn trial_type(&mut self, e: &ast::Expr) -> Option<TyId> {
         let mark = crate::body::recheck::Mark::here(self.cx);
         let frames = self.trial_frames();
         let diags = self.cx.diags.len();

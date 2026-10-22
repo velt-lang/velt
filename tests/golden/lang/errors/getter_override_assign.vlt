@@ -1,0 +1,17 @@
+// A getter that overrides a base class's `get`/`set` pair without a `set` replaces the whole
+// property, as in JavaScript: writing it through the subclass is an error, as in TypeScript
+// (TS2540; through the base class it throws, `getter_override_write.vlt`).
+class P {
+  private _n = 3;
+  get n(): number { return this._n; }
+  set n(v: number) { this._n = v; }
+}
+class S extends P {
+  override get n(): number { return 42; }
+}
+
+function main() {
+  const s = new S();
+  s.n = 1;
+  console.log(s.n);
+}

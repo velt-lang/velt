@@ -1,0 +1,10 @@
+// `Reflect.deleteProperty` of another array's element in a callback of an array method on a
+// proxy (#823): only the method's own trap calls on its target may leave Node's holes, so this
+// is the TypeError it is outside the method (Node: a hole, `[1,2,null] 3 false false`).
+// Reflect.deleteProperty of a plain array's last element inside a callback of an array method on a proxy
+const raw: any = [1, 2, 3];
+const p: any = new Proxy([10] as any, {});
+p.forEach((v: any) => {
+  console.log("cb", Reflect.deleteProperty(raw, "2"), Reflect.has(raw, "2"), raw.length);
+});
+console.log(JSON.stringify(raw), raw.length, Reflect.has(raw, "2"), Object.hasOwn(raw, "2"));

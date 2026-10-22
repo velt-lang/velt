@@ -569,7 +569,7 @@ impl FnCx<'_, '_> {
             return None;
         }
         let t = if lt == self.cx.ty.never { rt } else { lt };
-        if !self.compatible(t, rt) {
+        if !self.compatible(t, rt) && !self.cx.same_ty(t, rt) {
             let (e, f) = (self.cx.display(t), self.cx.display(rt));
             let mut d = Diagnostic::error("mismatched types", r.span)
                 .with_note(format!("expected {e}, found {f}"));

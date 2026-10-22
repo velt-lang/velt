@@ -1,7 +1,7 @@
 //! The call sites of `Intrinsic::AnySet` / `AnySetIndex` (the slots are any_set.rs's) and
 //! `Intrinsic::AnyIsArray`.
 
-use velt_sema::hir::{self, TyId};
+use velt_sema::hir::{self, TyId, TyKind};
 
 use super::any::{TAG_NUMBER, TAG_STRING};
 use super::any_member::{NullKey, ST_OK};
@@ -148,6 +148,11 @@ impl FnLower<'_, '_> {
         }
         self.terminate(Terminator::Unreachable);
         self.switch_to(good);
+    }
+
+    /// Is `t` TypeScript's `object` (issue #926)?
+    pub(super) fn is_object_ty(&self, t: TyId) -> bool {
+        matches!(self.cx.kind(t), TyKind::Dyn(d, args) if args.is_empty() && Some(d) == self.cx.hir.object)
     }
 
     /// `Array.isArray(a)` on an `any`: its table's class id word is `ARRAY_ID`.

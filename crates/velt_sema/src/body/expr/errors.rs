@@ -93,6 +93,8 @@ impl FnCx<'_, '_> {
     /// The union of what `srcs` throw (`never` when nothing), re-checked after inference.
     fn catch_type(&mut self, srcs: Vec<ThrowSrc>, span: Span) -> TyId {
         let t = crate::throws::srcs_now(self.cx, &srcs);
+        // The error-set variables in it are assumed empty (`throws::vars`).
+        let t = self.cx.assume_vars_empty(t);
         self.cx.throw_checks.push(ThrowCheck {
             srcs,
             observed: t,

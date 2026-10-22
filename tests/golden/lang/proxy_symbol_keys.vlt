@@ -1,0 +1,53 @@
+// check: no leaks
+// Symbol keys through a proxy (#823): a trap sees the symbol itself, as in Node, whether the
+// key is read, written, tested with `in` or `Object.hasOwn`, or deleted; a proxy without traps
+// forwards them to a target whose member the symbol names.
+const TRACK = Symbol("track");
+const OTHER = Symbol("other");
+
+class Box {
+  [OTHER]: number = 7;
+  label = "box";
+}
+
+function main(): void {
+  const log: string[] = [];
+  const p: any = new Proxy({ a: 1 } as any, {
+    get(t, k, r) {
+      log.push(`get ${typeof k} ${k === TRACK}`);
+      if (k === TRACK) return "tracked";
+      return Reflect.get(t, k, r);
+    },
+    has(t, k) {
+      log.push(`has ${typeof k} ${k === TRACK}`);
+      return k === TRACK || Reflect.has(t, k);
+    },
+    set(t, k, v, r) {
+      log.push(`set ${typeof k} ${k === TRACK}`);
+      return true;
+    },
+    deleteProperty(t, k) {
+      log.push(`delete ${typeof k} ${k === TRACK}`);
+      return true;
+    },
+    getOwnPropertyDescriptor(t, k) {
+      log.push(`describe ${typeof k} ${k === TRACK}`);
+      return undefined;
+    },
+  });
+  console.log(p[TRACK], p.a);
+  console.log(TRACK in p, "a" in p);
+  p[TRACK] = 1;
+  delete p[TRACK];
+  console.log(Object.hasOwn(p, TRACK));
+  console.log(log.join("\n"));
+
+  // No traps: the operations reach the target's member.
+  const q: any = new Proxy(new Box() as any, {});
+  console.log(q[OTHER], OTHER in q, TRACK in q);
+  q[OTHER] = 8;
+  console.log(q[OTHER], Reflect.get(q, OTHER), Reflect.has(q, OTHER));
+  const box: any = new Box();
+  console.log(Reflect.get(box, OTHER), Reflect.has(box, OTHER), Reflect.has(box, TRACK));
+  console.log(Reflect.set(box, OTHER, 9), box[OTHER]);
+}

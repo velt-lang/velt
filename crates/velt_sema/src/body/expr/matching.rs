@@ -181,17 +181,24 @@ impl FnCx<'_, '_> {
             Some((_, members)) => members,
             None => vec![core],
         };
-        members
-            .iter()
-            .any(|m| matches!(self.cx.ty.kind(*m), hir::TyKind::Param(_)))
+        members.iter().any(|m| self.instance_valued(*m))
+    }
+
+    /// Is `t` a type parameter, or a deferred type standing for one instantiation's value type
+    /// (`T[K]`, a generic alias's body): its nothings and `typeof` tag are known only there.
+    pub(super) fn instance_valued(&self, t: TyId) -> bool {
+        use hir::{TyKind, TyOp};
+        matches!(
+            self.cx.ty.kind(t),
+            TyKind::Param(_) | TyKind::Op(TyOp::Inline(_) | TyOp::Alias(_), _)
+        )
     }
 
     /// Is `t` a union (or an option of one) with a type parameter among its members?
     pub(super) fn param_union(&mut self, t: TyId) -> bool {
         let core = self.cx.ty.core(t).unwrap_or(t);
         let members = self.cx.union_members(core).unwrap_or_default();
-        let is_param = |m: &TyId| matches!(self.cx.ty.kind(*m), hir::TyKind::Param(_));
-        members.iter().any(is_param)
+        members.iter().any(|m| self.instance_valued(*m))
     }
 
     /// Is `t` a type parameter, or a union (not an option) with one among its members?
@@ -199,7 +206,7 @@ impl FnCx<'_, '_> {
         if self.cx.ty.opt_payload(t).is_some() {
             return false;
         }
-        matches!(self.cx.ty.kind(t), hir::TyKind::Param(_)) || self.param_union(t)
+        self.instance_valued(t) || self.param_union(t)
     }
 
     /// `s === undefined` of a `T | string | undefined` (`param_union`), tested for the

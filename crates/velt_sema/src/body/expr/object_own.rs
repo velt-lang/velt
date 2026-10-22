@@ -78,8 +78,8 @@ impl FnCx<'_, '_> {
     }
 
     /// `Object.hasOwn(o, k)` / `Object.prototype.hasOwnProperty.call(o, k)` of an `any` or
-    /// `object` `o` with a `string` key: the prelude's `__anyHasOwn(o, k)`, which asks the value
-    /// held (`None`: `o` is not one of them).
+    /// `object` `o` with a `string`, `symbol` or `string | symbol` key: the prelude's
+    /// `__anyHasOwn(o, k)`, which asks the value held (`None`: `o` is not one of them).
     pub(super) fn any_has_own(&mut self, args: &[ast::Expr], span: Span) -> Option<hir::Expr> {
         let [o, k] = args else {
             return None;
@@ -90,12 +90,26 @@ impl FnCx<'_, '_> {
             return None;
         }
         let kt = self.trial_type(k)?;
-        if self.cx.widened(kt) != self.cx.ty.str_ {
+        // A `string | symbol` key (a proxy trap's) or an `any` one is checked when it arrives.
+        let wk = self.cx.widened(kt);
+        let keyed = wk == self.cx.ty.str_
+            || self.string_or_symbol(kt)
+            || matches!(self.cx.ty.kind(wk), TyKind::Symbol)
+            || self.cx.dynamic(kt) == Some(crate::any::Dynamic::Any);
+        if !keyed {
             return None;
         }
         // The keys are listed through the value's descriptor (a record's by its methods).
         self.note_dyn_members();
-        Some(self.prelude_fn_call("__anyHasOwn", vec![o.clone(), k.clone()], span))
+        // A symbol constant names the member it keys, as in `KEY in o`; a proxy's trap sees the
+        // symbol itself.
+        if let Some(name) = self.symbol_key_of(k).filter(|_| self.uses_proxy()) {
+            let name = synth(ast::ExprKind::Lit(ast::Lit::Str(name)), k.span);
+            let args = vec![o.clone(), name, k.clone()];
+            return Some(self.prelude_fn_call("__anyHasOwnSym", args, span));
+        }
+        let f = self.proxy_op("__anyHasOwn");
+        Some(self.prelude_fn_call(f, vec![o.clone(), k.clone()], span))
     }
 
     /// `Object.hasOwn(o, k)` / `Object.prototype.hasOwnProperty.call(o, k)` (`what`).
@@ -103,6 +117,12 @@ impl FnCx<'_, '_> {
         let [o, k] = args else {
             return self.arity_error(what, 2, args, span);
         };
+        if self.typed_proxy_once(o) {
+            // `Object.hasOwn(f(), k)` of a typed proxy: the operand once, then as below.
+            return self.operand_once(o, span, |cx, t| {
+                cx.has_own(&[t.clone(), k.clone()], what, span)
+            });
+        }
         let Some(ot) = self.trial_type(o) else {
             self.check_args_loose(args);
             return self.error_expr(span);
@@ -192,11 +212,14 @@ impl FnCx<'_, '_> {
             },
             span,
         );
+        if let Some(h) = self.proxy_has_own(o, k, &call, span) {
+            return h;
+        }
         self.expr(&call, None, Want::Move)
     }
 
     /// A call of the prelude function `f` with the expressions `args`, checked.
-    pub(super) fn prelude_fn_call(
+    pub(crate) fn prelude_fn_call(
         &mut self,
         f: &str,
         args: Vec<ast::Expr>,

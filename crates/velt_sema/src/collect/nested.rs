@@ -47,7 +47,7 @@ pub(super) fn declare_nested(cx: &mut Ctx, defs: &mut Vec<DefId>) {
                 }
                 _ => None,
             };
-            item_bodies(cx, m, item, &qual, &[], class, defs, &mut used);
+            item_bodies(cx, m, item, &qual, (&[], &[]), class, defs, &mut used);
         }
     }
 }
@@ -63,31 +63,46 @@ fn item_name(item: &ast::Item) -> Option<&str> {
 }
 
 /// Every function body of `item` (named `qual`), each checked for nested items. `class`: the
-/// class or struct whose body the bodies are in (`item` itself, or one enclosing it).
+/// class or struct whose body the bodies are in (`item` itself, or one enclosing it); `outer`:
+/// the locals and the type parameters of the functions enclosing `item`.
 #[allow(clippy::too_many_arguments)] // the item, where it sits, and the shared collections
 fn item_bodies<'m>(
     cx: &mut Ctx<'m>,
     m: usize,
     item: &'m ast::Item,
     qual: &str,
-    outer: &[String],
+    (outer, tparams): (&[String], &[String]),
     class: Option<DefId>,
     defs: &mut Vec<DefId>,
     used: &mut FxHashSet<String>,
 ) {
-    let mut bodies: Vec<(String, &'m [ast::Param], &'m ast::Block)> = vec![];
+    let mut bodies: Vec<(String, &'m [ast::Param], &'m ast::Block, Vec<String>)> = vec![];
+    let names = |gs: &[&'m [ast::GenericParam]]| -> Vec<String> {
+        let own = gs
+            .iter()
+            .flat_map(|g| g.iter())
+            .map(|g| g.name.name.clone());
+        tparams.iter().cloned().chain(own).collect()
+    };
     match &item.kind {
-        ast::ItemKind::Function(f) => bodies.push((qual.to_string(), &f.sig.params, &f.body)),
+        ast::ItemKind::Function(f) => bodies.push((
+            qual.to_string(),
+            &f.sig.params,
+            &f.body,
+            names(&[&f.sig.generics]),
+        )),
         ast::ItemKind::Struct(t) | ast::ItemKind::Class(t) => {
             for meth in &t.methods {
                 let q = format!(
                     "{qual}.{}",
                     cx.method_key(m, &meth.decl.sig.name, meth.is_setter)
                 );
-                bodies.push((q, &meth.decl.sig.params, &meth.decl.body));
+                let gs = names(&[&t.generics, &meth.decl.sig.generics]);
+                bodies.push((q, &meth.decl.sig.params, &meth.decl.body, gs));
             }
             if let Some(c) = &t.constructor {
-                bodies.push((format!("{qual}.constructor"), &c.sig.params, &c.body));
+                let gs = names(&[&t.generics]);
+                bodies.push((format!("{qual}.constructor"), &c.sig.params, &c.body, gs));
             }
         }
         ast::ItemKind::Extend(e) => {
@@ -96,7 +111,8 @@ fn item_bodies<'m>(
                     "{qual}.{}",
                     cx.method_key(m, &meth.decl.sig.name, meth.is_setter)
                 );
-                bodies.push((q, &meth.decl.sig.params, &meth.decl.body));
+                let gs = names(&[&meth.decl.sig.generics]);
+                bodies.push((q, &meth.decl.sig.params, &meth.decl.body, gs));
             }
         }
         ast::ItemKind::Interface(i) => {
@@ -109,14 +125,15 @@ fn item_bodies<'m>(
                         ),
                         &meth.sig.params,
                         b,
+                        names(&[&meth.sig.generics]),
                     ));
                 }
             }
         }
         _ => {}
     }
-    for (q, params, body) in bodies {
-        fn_body(cx, m, &q, params, body, outer, class, defs, used);
+    for (q, params, body, gs) in bodies {
+        fn_body(cx, m, &q, params, body, (outer, &gs), class, defs, used);
     }
 }
 
@@ -127,7 +144,7 @@ fn fn_body<'m>(
     qual: &str,
     params: &'m [ast::Param],
     body: &'m ast::Block,
-    outer: &[String],
+    (outer, tparams): (&[String], &[String]),
     class: Option<DefId>,
     defs: &mut Vec<DefId>,
     used: &mut FxHashSet<String>,
@@ -168,6 +185,10 @@ fn fn_body<'m>(
             continue;
         };
         let mut inner_class = class;
+        if let Item::Alias(a) = it {
+            // It may name the enclosing functions' type parameters (`type I = R & { … }`).
+            cx.aliases[a as usize].outer = tparams.to_vec();
+        }
         if let Item::Def(d) = it {
             defs.push(d);
             cx.nested_locals.insert(d, locals.clone());
@@ -188,7 +209,7 @@ fn fn_body<'m>(
             name: ident.name.clone(),
             item: it,
         });
-        item_bodies(cx, m, item, &q, &locals, inner_class, defs, used);
+        item_bodies(cx, m, item, &q, (&locals, tparams), inner_class, defs, used);
     }
 }
 

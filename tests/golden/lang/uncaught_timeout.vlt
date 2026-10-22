@@ -1,0 +1,11 @@
+// An error a `setTimeout` callback throws ends the process at the throw, as in Node: a microtask
+// it queued before the throw and later timers don't run (#1154).
+setTimeout(
+  () => {
+    console.log("t");
+    queueMicrotask(() => console.log("after-throw micro"));
+    throw new RangeError("t failed");
+  },
+  1,
+);
+setTimeout(() => console.log("t2"), 3);

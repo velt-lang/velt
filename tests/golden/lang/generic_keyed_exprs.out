@@ -1,0 +1,10 @@
+2
+7 2 obj key0 obj key1 val
+9 2
+undefined 3 s
+2 9
+b a true
+true undefined string true undefinedtrue
+false true false undefined
+false number false true true
+number stringfalse 5 3 s

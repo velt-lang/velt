@@ -283,10 +283,12 @@ unsafe extern "C" fn started_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
 }
 
 unsafe extern "C" fn started_drop(f: *mut VeltFut) {
+    // An error a timer or microtask callback threw (`velt_rt_uncaught_now`) is reported now.
+    let now = NOW.with(|c| c.get().is_some());
     let (done, delivered, result_drop) = {
         let mut s = shared(f).borrow_mut();
         s.detached = true;
-        if s.watched {
+        if s.watched && !(now && s.done) {
             return; // the checkpoint disposes of it (`flush_unhandled`)
         }
         (s.done, s.delivered, s.result_drop)
@@ -329,6 +331,8 @@ thread_local! {
     static STARTING: Cell<*const RefCell<Started>> = const { Cell::new(std::ptr::null()) };
     /// The started promise whose result is being dropped right now (null: none).
     static DROPPING: Cell<*mut VeltFut> = const { Cell::new(std::ptr::null_mut()) };
+    /// The next rejection reported ends the process at once (`velt_rt_uncaught_now`).
+    static NOW: Cell<Option<*const crate::str::VeltStr>> = const { Cell::new(None) };
     /// Rejected promises to report once the microtask queue is drained, with their drops.
     static DEFERRED: RefCell<VecDeque<(*mut VeltFut, ResultDropFn)>> =
         const { RefCell::new(VecDeque::new()) };
@@ -360,7 +364,20 @@ unsafe fn drop_unclaimed(f: *mut VeltFut, d: ResultDropFn) -> bool {
 /// reports it once the microtask queue is drained, 0 to report now.
 #[no_mangle]
 pub extern "C" fn velt_rt_unhandled_defer() -> u8 {
-    DROPPING.with(|c| !c.replace(std::ptr::null_mut()).is_null()) as u8
+    let kept = DROPPING.with(|c| !c.replace(std::ptr::null_mut()).is_null());
+    if let Some(loc) = NOW.with(|c| c.take()) {
+        crate::panic::velt_rt_set_throw_loc(loc);
+        return 0;
+    }
+    kept as u8
+}
+
+/// The next unhandled rejection is an error a timer or microtask callback threw: reported at
+/// once, as Node's uncaught exception (velt_rt's task/local/unhandled.rs).
+#[no_mangle]
+pub extern "C" fn velt_rt_uncaught_now() {
+    // Its report shows where the callback threw, not where the prelude throws it again.
+    NOW.with(|c| c.set(Some(crate::panic::velt_rt_throw_loc())));
 }
 
 /// The microtask queue is drained: report the rejections that waited for it (the first one

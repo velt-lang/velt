@@ -138,6 +138,7 @@ fn hoist_keys(module: &mut ast::Module, keys: &[&str]) {
         return;
     };
     let mut hoisted = vec![];
+    let mut described: Vec<String> = vec![];
     main.body.stmts.retain(|s| {
         let ast::StmtKind::Var(v) = &s.kind else {
             return true;
@@ -146,6 +147,11 @@ fn hoist_keys(module: &mut ast::Module, keys: &[&str]) {
             if matches!(&callee.kind, E::Ident(c) if c.name == "Symbol"));
         let named = matches!(&v.pattern.kind, ast::PatternKind::Ident(n) if keys.contains(&n.name.as_str()));
         if v.kind == ast::VarKind::Const && makes_symbol && named {
+            if let Some(E::Call { args, .. }) = v.init.as_ref().map(|i| &i.kind) {
+                if let [ast::Expr { kind: E::Ident(d), .. }] = args.as_slice() {
+                    described.push(d.name.clone());
+                }
+            }
             hoisted.push(ast::Item {
                 kind: ast::ItemKind::Var(v.clone()),
                 exported: false,
@@ -155,6 +161,33 @@ fn hoist_keys(module: &mut ast::Module, keys: &[&str]) {
         }
         true
     });
+    // A description held in a string constant (`Symbol(name)`) goes along, first: the
+    // compiler reads it while compiling (`symbols::known_symbol`).
+    let mut descriptions = vec![];
+    main.body.stmts.retain(|s| {
+        let ast::StmtKind::Var(v) = &s.kind else {
+            return true;
+        };
+        let string = matches!(
+            &v.init,
+            Some(ast::Expr {
+                kind: E::Lit(ast::Lit::Str(_)),
+                ..
+            })
+        );
+        let named =
+            matches!(&v.pattern.kind, ast::PatternKind::Ident(n) if described.contains(&n.name));
+        if v.kind == ast::VarKind::Const && string && named {
+            descriptions.push(ast::Item {
+                kind: ast::ItemKind::Var(v.clone()),
+                exported: false,
+                span: s.span,
+            });
+            return false;
+        }
+        true
+    });
+    module.items.extend(descriptions);
     module.items.extend(hoisted);
 }
 
@@ -223,7 +256,25 @@ struct Scan<'b> {
     adds: &'b mut Vec<(String, ast::Ident, ast::TypeExpr)>,
 }
 
+impl Scan<'_> {
+    /// Parameters declared with a named type, as variables are.
+    fn params<'p>(
+        &mut self,
+        params: impl Iterator<Item = (&'p ast::Ident, Option<&'p ast::TypeExpr>)>,
+    ) {
+        for (name, ty) in params {
+            if let Some(t) = ty.and_then(type_name) {
+                self.declared.push((name.name.clone(), t));
+            }
+        }
+    }
+}
+
 impl<'a> Visit<'a> for Scan<'_> {
+    fn function(&mut self, sig: &'a ast::FnSig, _body: &'a ast::Block) {
+        self.params(sig.params.iter().map(|p| (&p.name, Some(&p.ty))));
+    }
+
     fn var_decl(&mut self, v: &'a ast::VarDecl) {
         let ast::PatternKind::Ident(name) = &v.pattern.kind else {
             return;
@@ -256,6 +307,7 @@ impl<'a> Visit<'a> for Scan<'_> {
                 }
             }
             E::Cast { expr, ty } => self.cast(expr, ty),
+            E::Arrow { params, .. } => self.params(params.iter().map(|p| (&p.name, p.ty.as_ref()))),
             E::Object(props) => {
                 for p in props {
                     if let ast::ObjectProp::KeyValue(k, _) = p {

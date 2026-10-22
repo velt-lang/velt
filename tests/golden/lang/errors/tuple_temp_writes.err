@@ -1,0 +1,16 @@
+tuple_temp_writes.vlt:6:1: error: cannot write into an element of a tuple that is a temporary value: the write would change a copy
+tuples are values: read the tuple into a variable, change it there, and store it back where it came from
+tuple_temp_writes.vlt:8:1: error: cannot write into an element of a tuple that is a temporary value: the write would change a copy
+tuples are values: read the tuple into a variable, change it there, and store it back where it came from
+tuple_temp_writes.vlt:9:12: error: cannot write into an element of a tuple that is a temporary value: the write would change a copy
+tuples are values: read the tuple into a variable, change it there, and store it back where it came from
+tuple_temp_writes.vlt:11:1: error: cannot write into an element of a tuple that is a temporary value: the write would change a copy
+tuples are values: read the tuple into a variable, change it there, and store it back where it came from
+tuple_temp_writes.vlt:12:1: error: cannot write into an element of a tuple that is a temporary value: the write would change a copy
+tuples are values: read the tuple into a variable, change it there, and store it back where it came from
+tuple_temp_writes.vlt:13:12: error: cannot write into an element of a tuple that is a temporary value: the write would change a copy
+tuples are values: read the tuple into a variable, change it there, and store it back where it came from
+tuple_temp_writes.vlt:15:1: error: cannot write into an element of a tuple that is a temporary value: the write would change a copy
+tuples are values: read the tuple into a variable, change it there, and store it back where it came from
+tuple_temp_writes.vlt:18:1: error: cannot write into an element of a tuple that is a temporary value: the write would change a copy
+tuples are values: read the tuple into a variable, change it there, and store it back where it came from

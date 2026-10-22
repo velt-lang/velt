@@ -1,0 +1,13 @@
+// `Array.isArray` of a proxy of an array (and of a proxy of one) is `true`, and `JSON.stringify` of
+// them writes an array, as in Node.
+const o1: any = new Proxy([1, 2, 3] as any, {});
+const o2: any = new Proxy(new Proxy([1, 2, 3] as any, {}), {});
+console.log(
+  Array.isArray(o1),
+  Array.isArray(o2),
+  JSON.stringify(o1),
+  JSON.stringify(o2),
+  o2.length,
+);
+console.log(o2.join("+"), JSON.stringify(o2.map((x: any) => x)));
+// check: no leaks

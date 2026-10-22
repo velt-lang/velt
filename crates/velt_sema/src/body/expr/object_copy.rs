@@ -214,12 +214,24 @@ impl FnCx<'_, '_> {
         (copied, absent)
     }
 
+    /// Is `t` the class of `import.meta` (std's `ImportMeta`)? It converts to an object type
+    /// with some of its fields as an object type does (`f(import.meta)` for `p: { url: string
+    /// }`), since `import.meta` is an object in TypeScript.
+    pub(super) fn is_import_meta_class(&self, t: TyId) -> bool {
+        let TyKind::Adt(d, _) = self.cx.ty.kind(t) else {
+            return false;
+        };
+        self.cx.adt(*d).is_some_and(|a| {
+            a.kind == hir::AdtKind::Class && self.cx.modules[a.module].path == "std/import_meta"
+        })
+    }
+
     /// For each field of object type `to`, where it comes from in a `from` value; `None` when a
     /// `from` doesn't convert to a `to` this way (module docs).
     fn copy_plan(&mut self, from: TyId, to: TyId, depth: u32) -> Option<Vec<Slot>> {
         if depth > MAX_DEPTH
             || from == to
-            || !self.cx.is_object_type(from)
+            || !(self.cx.is_object_type(from) || self.is_import_meta_class(from))
             || !self.cx.is_object_type(to)
             || self.cx.canon(from) == self.cx.canon(to)
             || self.cx.same_layout(from, to)
@@ -287,6 +299,11 @@ impl FnCx<'_, '_> {
         from == to
             || self.cx.canon(from) == self.cx.canon(to)
             || self.cx.same_layout(from, to)
+            // Equal but for their error-set variables (`throws::vars`), which become one set.
+            || (self.cx.fn_sites.use_vars && self.cx.unify_err_vars(from, to))
+            // A function that throws into a function type written without `throws` (its sites
+            // take its errors), converted through a wrapper as a value is.
+            || self.cx.fn_throws_differ(from, to) == Some(true)
             || self.copy_plan(from, to, depth + 1).is_some()
     }
 }

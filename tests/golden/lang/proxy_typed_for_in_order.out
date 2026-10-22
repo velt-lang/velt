@@ -1,0 +1,15 @@
+ownKeys
+gopd a
+var a
+get()
+ownKeys
+gopd a
+call a
+ownKeys
+gopd a
+prop a
+hide gopd a
+hidden a
+hide gopd b
+plain a
+plain b
