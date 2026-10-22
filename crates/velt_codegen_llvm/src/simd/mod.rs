@@ -17,6 +17,10 @@ mod sha;
 
 pub(crate) use sha::has_ext;
 
+// Alias tags (tbaa.rs): the header word a helper reads, and the elements it loads or stores.
+const HEADER: crate::tbaa::Access = crate::tbaa::Access::Header;
+const ELEMENT: crate::tbaa::Access = crate::tbaa::Access::Element;
+
 /// The instruction sets a helper's body depends on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Arch {
@@ -181,8 +185,9 @@ fn vector(b: &mut Body, lanes: Lanes, op: Op) -> Option<String> {
             let x = b.arg(0, &ty);
             let p = element(b, lane, 1);
             let align = lanes.bits() / 8;
+            let tag = ELEMENT.suffix();
             b.lines
-                .push_str(&format!("  store {ty} {x}, ptr {p}, align {align}\n"));
+                .push_str(&format!("  store {ty} {x}, ptr {p}, align {align}{tag}\n"));
             return None;
         }
         Op::StorePartial => {
@@ -208,7 +213,11 @@ fn vector(b: &mut Body, lanes: Lanes, op: Op) -> Option<String> {
         Op::Index => index(b, lanes),
         Op::Load => {
             let p = element(b, lane, 0);
-            b.inst(format!("load {ty}, ptr {p}, align {}", lanes.bits() / 8))
+            let tag = ELEMENT.suffix();
+            b.inst(format!(
+                "load {ty}, ptr {p}, align {}{tag}",
+                lanes.bits() / 8
+            ))
         }
         Op::WithLane => {
             let x = b.arg(0, &ty);
@@ -338,7 +347,8 @@ fn not(b: &mut Body, ty: &str, n: u32, x: &str) -> String {
 /// the loads a loop on `fits(xs, i + 48)` makes at `i`, `i + 16` and `i + 32`.
 fn fits(b: &mut Body, n: u32) -> String {
     let at = b.inst("getelementptr inbounds i8, ptr %a0, i64 8".to_string());
-    let len = b.inst(format!("load i64, ptr {at}, align 8"));
+    let tag = HEADER.suffix();
+    let len = b.inst(format!("load i64, ptr {at}, align 8{tag}"));
     let room = b.inst(format!("icmp uge i64 {len}, {n}"));
     let last = b.inst(format!("sub i64 {len}, {n}"));
     let inside = b.inst(format!("icmp ule i64 %a1, {last}"));
@@ -349,7 +359,8 @@ fn fits(b: &mut Body, n: u32) -> String {
 /// Address of element `%a{array + 1}` of the array whose header `%a{array}` points to (the
 /// `{ data, len, cap }` header of docs/internals/design/semantics-stage2.md).
 fn element(b: &mut Body, lane: &str, array: usize) -> String {
-    let data = b.inst(format!("load ptr, ptr %a{array}, align 8"));
+    let tag = HEADER.suffix();
+    let data = b.inst(format!("load ptr, ptr %a{array}, align 8{tag}"));
     b.inst(format!(
         "getelementptr inbounds {lane}, ptr {data}, i64 %a{}",
         array + 1

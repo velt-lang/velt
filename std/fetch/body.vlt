@@ -70,7 +70,9 @@ export function bodyParts(body: BodyInit | null): BodyParts {
   if (body instanceof ArrayBuffer) {
     return { kind: 2, text: "", bytes: body.bytes.slice(), stream: null, implied: 0 };
   }
-  return { kind: 2, text: "", bytes: body, stream: null, implied: 0 };
+  // A copy: the body's bytes may become an `ArrayBuffer` (`arrayBuffer()`, `bytes()`), whose
+  // bytes nothing else may hold (a view reads them without a range check, typed_array/buffer).
+  return { kind: 2, text: "", bytes: body.slice(), stream: null, implied: 0 };
 }
 
 /** The bytes of a stream, in one array. */
@@ -140,7 +142,9 @@ async function* relay<E>(
 ): AsyncGenerator<u8[], IoError | AbortError> {
   try {
     for await (const chunk of chunks) {
-      yield chunk;
+      // A copy: the program may still hold `chunk`, and a chunk may become an `ArrayBuffer`'s
+      // bytes (see `bodyParts`).
+      yield chunk.slice();
     }
   } catch (e) {
     throw new IoError("EIO", `${e}`);

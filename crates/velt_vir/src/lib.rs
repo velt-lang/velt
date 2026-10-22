@@ -131,6 +131,11 @@ pub mod vir;
 /// count, below 2^53.
 pub const ARRAY_AGG_NAME: &str = "T[]";
 
+/// The end of the name of every class object's aggregate (`<class> object`), which no other
+/// aggregate's name has: the LLVM backend tags the scalar fields of such objects for alias
+/// analysis (velt_codegen_llvm `tbaa.rs`).
+pub const OBJECT_AGG_SUFFIX: &str = " object";
+
 mod lower;
 pub mod mangle;
 pub mod simd;

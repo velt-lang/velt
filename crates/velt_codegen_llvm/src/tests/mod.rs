@@ -337,5 +337,6 @@ fn param_attributes_become_llvm_attributes() {
 }
 
 mod placement;
+mod tbaa;
 mod units;
 mod wasm;

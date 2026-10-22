@@ -1,0 +1,14 @@
+// `u8[]` is counted here (`e` and `d` are one array), so a SIMD load's argument crosses as a
+// foreign view; it must be the array's own header, not a copy (velt_vir lower/call.rs).
+import { u8x16 } from "velt:simd";
+
+function first(d: u8[], at: usize): u8 {
+  return u8x16.load(d, at).lane(0);
+}
+
+function main() {
+  const d = Buffer.alloc(32);
+  const e = d;
+  d[3] = 7;
+  console.log(first(e, 3), first(d, 0));
+}
