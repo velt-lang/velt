@@ -561,6 +561,12 @@ impl Ctx<'_> {
             Some((module, gs)) => self.with_defaults(DefaultsOf::Def(d), module, gs, args),
             None => args,
         };
+        // `Uint8Array<ArrayBuffer>` (TypeScript 5.7's buffer type argument): a typed array's
+        // buffer is always an `ArrayBuffer`, so the argument says nothing more.
+        let args = match args.as_slice() {
+            [b] if arity == 0 && self.typed_array_buffer(d, *b) => vec![],
+            _ => args,
+        };
         if args.len() != arity {
             self.arity_error(name, arity, args.len(), t);
             return self.ty.error;
@@ -578,6 +584,18 @@ impl Ctx<'_> {
         } else {
             self.ty.intern(TyKind::Adt(d, args))
         }
+    }
+
+    /// Is `d` a standard typed array or `DataView`, and `buffer` the `ArrayBuffer` class (its
+    /// buffer type argument, `Uint8Array<ArrayBuffer>`)?
+    fn typed_array_buffer(&self, d: crate::hir::DefId, buffer: TyId) -> bool {
+        let std_class = |d: crate::hir::DefId, names: &[&str]| match &self.info[d.0 as usize] {
+            DefInfo::Adt(a) => self.scopes[a.module].is_std && names.contains(&a.name.as_str()),
+            _ => false,
+        };
+        let is_buffer = matches!(self.ty.kind(buffer), TyKind::Adt(b, args)
+            if args.is_empty() && std_class(*b, &["ArrayBuffer"]));
+        is_buffer && std_class(d, TYPED_ARRAYS)
     }
 
     /// Does `body` (an alias's type, in terms of its parameters) hold a `P | null` or
@@ -688,3 +706,17 @@ pub(crate) fn written_type(ty: &ast::TypeExpr) -> ast::TypeExpr {
         _ => ty.clone(),
     }
 }
+
+/// The standard typed arrays and `DataView`, which take TypeScript's buffer type argument.
+const TYPED_ARRAYS: &[&str] = &[
+    "Uint8Array",
+    "Int8Array",
+    "Uint8ClampedArray",
+    "Int16Array",
+    "Uint16Array",
+    "Int32Array",
+    "Uint32Array",
+    "Float32Array",
+    "Float64Array",
+    "DataView",
+];

@@ -255,11 +255,11 @@ fn is_place(e: &hir::Expr) -> bool {
         _ => matches!(
             e.kind,
             H::Global(_)
-            | H::Field { .. }
-            | H::Index { .. }
-            | H::UnwrapSome(..)
-            | H::UnwrapVariant { .. }
-            | H::Downcast(_)
+                | H::Field { .. }
+                | H::Index { .. }
+                | H::UnwrapSome(..)
+                | H::UnwrapVariant { .. }
+                | H::Downcast(_)
         ),
     }
 }

@@ -78,7 +78,13 @@ function main() {
 }
 ```
 
-Not supported yet: `BigInt64Array` and `BigUint64Array` (and `DataView`'s `getBigInt64` /
+A typed array or `DataView` type may carry TypeScript 5.7's buffer type argument,
+`Uint8Array<ArrayBuffer>`: the buffer is always an `ArrayBuffer`, so it is the same type as
+`Uint8Array`.
+
+Not supported yet: the typed array classes and `DataView` as values (a constructor passed as
+`new (buffer: ArrayBuffer) => ArrayBufferView`, #943), the `ArrayBufferView` type (#1152),
+`BigInt64Array` and `BigUint64Array` (and `DataView`'s `getBigInt64` /
 `setBigInt64`), which wait for `bigint` values (#1088); `SharedArrayBuffer`, resizable buffers,
 `Float16Array`; `ArrayBuffer.isView` of a value of any type (it takes an `ArrayBuffer`, a typed
 array, a `DataView` or `null` until `unknown` arrives, #924); constructing a typed array from an

@@ -24,6 +24,18 @@ function names(hs: Head[]): string {
   return hs.map((h) => h.name).join(",");
 }
 
+function sortedCopy<T>(xs: T[], cmp: (a: T, b: T) => number): T[] {
+  return xs.slice().sort(cmp);
+}
+
+class Scores {
+  items = [3, 1, 2];
+
+  ranked(): number[] {
+    return [...this.items].sort((a, b) => b - a);
+  }
+}
+
 function main() {
   console.log(canonical({ b: 1, a: 2, c: 3 }));
   const heads: Head[] = [{ priority: 2, name: "x" }, { name: "y" }, { priority: -1, name: "z" }];
@@ -39,4 +51,9 @@ function main() {
   let later = [3, 1, 2].sort((a, b) => a - b);
   later = later.concat([0]).sort();
   console.log(later);
+  const none = Math.random() > 2;
+  console.log(none ? [] : [2, 1].sort(), sortedCopy(["z", "y"], (a, b) => (a < b ? -1 : 1)));
+  const scores = new Scores();
+  console.log(scores.ranked(), scores.items);
+  console.log([[2, 1], [4, 3]].map((p) => p.slice().sort()));
 }
