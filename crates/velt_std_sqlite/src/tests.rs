@@ -1,113 +1,54 @@
-//! ABI-level tests of `velt_rt_sqlite_*`: binding, row encoding, errors and handle lifetimes.
+//! Tests of the driver's operations: binding, row encoding, errors and handle lifetimes.
 
 use super::connection::*;
-use super::error::code_name;
-use super::statement::*;
-use crate::result::{IoResult, VeltErr};
-use crate::str::VeltStr;
-use std::mem::MaybeUninit;
+use super::error::{code_name, DbError};
+use super::statement::{self, StmtHandle};
+use velt_native::handles::Key;
 
-fn s(text: &str) -> VeltStr {
-    VeltStr::from_bytes(text.as_bytes())
-}
-
-unsafe fn take(v: VeltStr) -> String {
-    let t = String::from_utf8_lossy(v.as_bytes()).into_owned();
-    let mut v = v;
-    crate::str::velt_rt_str_drop(&mut v);
-    t
-}
-
-/// `Ok(value)` or `Err("SQLITE_NAME: message")`.
-unsafe fn result<T>(r: IoResult<T>) -> Result<T, String> {
-    if r.err.code == 0 {
-        Ok(r.value.assume_init())
-    } else {
-        Err(err_text(r.err))
-    }
-}
-
-unsafe fn err_text(e: VeltErr) -> String {
-    format!("{}: {}", code_name(e.code), take(e.message))
-}
-
-unsafe fn status(e: VeltErr) -> Result<(), String> {
-    if e.code == 0 {
-        Ok(())
-    } else {
-        Err(err_text(e))
-    }
+fn text(e: DbError) -> String {
+    format!("{}: {}", code_name(e.code), e.message)
 }
 
 fn open_memory() -> DbHandle {
-    let mut out = MaybeUninit::uninit();
-    // SAFETY: valid arguments; the result is read according to its code.
-    unsafe {
-        velt_rt_sqlite_open(&s(":memory:"), 0, 1, 1000, out.as_mut_ptr());
-        result(out.assume_init()).expect("open :memory:")
-    }
+    open(":memory:", false, true, 1000).expect("open :memory:")
 }
 
 fn exec(db: DbHandle, sql: &str) -> Result<(), String> {
-    let mut out = MaybeUninit::uninit();
-    // SAFETY: valid handle (or null) and string.
-    unsafe {
-        velt_rt_sqlite_exec(db, &s(sql), out.as_mut_ptr());
-        status(out.assume_init())
-    }
+    super::connection::exec(db, sql).map_err(text)
 }
 
 fn prepare(db: DbHandle, sql: &str) -> Result<StmtHandle, String> {
-    let mut out = MaybeUninit::uninit();
-    // SAFETY: as above.
-    unsafe {
-        velt_rt_sqlite_prepare(db, &s(sql), out.as_mut_ptr());
-        result(out.assume_init())
-    }
+    statement::prepare(db, sql).map_err(text)
 }
 
 fn run(stmt: StmtHandle, params: &str) -> Result<(i64, i64), String> {
-    let mut out = MaybeUninit::uninit();
-    // SAFETY: as above.
-    unsafe {
-        velt_rt_sqlite_run(stmt, &s(params), out.as_mut_ptr());
-        result(out.assume_init()).map(|r| (r.changes, r.last_insert_rowid))
-    }
+    statement::run(stmt, params.as_bytes())
+        .map(|r| (r.changes, r.last_insert_rowid))
+        .map_err(text)
 }
 
+/// The rows as the JSON text they stand for (`""` for no row with `first_only`).
 fn query(stmt: StmtHandle, params: &str, first_only: bool) -> Result<String, String> {
-    let mut out = MaybeUninit::uninit();
-    // SAFETY: as above.
-    unsafe {
-        velt_rt_sqlite_query(stmt, &s(params), first_only as u8, out.as_mut_ptr());
-        result(out.assume_init()).map(|v| {
-            // The rows are parked for the JSON reader; here, read them as the text they stand for.
-            match crate::json::rows_bin::take_pending(v.as_bytes()) {
-                Some(rows) => {
-                    String::from_utf8(crate::json::rows_bin::to_json(&rows).unwrap()).unwrap()
-                }
-                None => take(v),
-            }
-        })
+    let rows = statement::query(stmt, params.as_bytes(), first_only, Vec::new()).map_err(text)?;
+    if rows.is_empty() {
+        return Ok(String::new());
     }
+    Ok(String::from_utf8(velt_text::rows::to_json(&rows).unwrap()).unwrap())
 }
 
 fn sql_query(db: DbHandle, sql: &str, params: &str) -> Result<String, String> {
     let stmt = prepare(db, sql)?;
     let r = query(stmt, params, false);
-    // SAFETY: a live statement handle, released once.
-    unsafe { velt_rt_sqlite_stmt_free(stmt) };
+    statement::free(stmt);
     r
 }
 
 fn close(db: DbHandle) {
-    let mut out = MaybeUninit::uninit();
-    // SAFETY: a live database handle, released once.
-    unsafe {
-        velt_rt_sqlite_close(db, out.as_mut_ptr());
-        status(out.assume_init()).expect("close");
-    }
+    super::connection::close(db).map_err(text).expect("close");
 }
+
+const NULL_DB: DbHandle = Key::NULL;
+const NULL_STMT: StmtHandle = Key::NULL;
 
 #[test]
 fn insert_and_select_with_named_and_positional_params() {
@@ -142,11 +83,8 @@ fn insert_and_select_with_named_and_positional_params() {
     assert_eq!(query(sel, r#"{"min":9}"#, false).unwrap(), "[]");
     let one = prepare(db, "SELECT count(*) AS n FROM t WHERE id > ?").unwrap();
     assert_eq!(query(one, "1", true).unwrap(), r#"{"n":2}"#);
-    // SAFETY: live handles, each released once.
-    unsafe {
-        for h in [ins, by_pos, sel, one] {
-            velt_rt_sqlite_stmt_free(h);
-        }
+    for h in [ins, by_pos, sel, one] {
+        statement::free(h);
     }
     close(db);
 }
@@ -181,8 +119,7 @@ fn values_round_trip_with_their_types() {
         .unwrap(),
         r#"[{"ok":true,"e":1,"inf":null}]"#
     );
-    // SAFETY: a live handle, released once.
-    unsafe { velt_rt_sqlite_stmt_free(ins) };
+    statement::free(ins);
     close(db);
 }
 
@@ -206,19 +143,15 @@ fn parameter_errors_are_sqlite_range() {
     assert!(query(pos, r#"[{"no":1}]"#, false)
         .unwrap_err()
         .contains("nested objects"));
-    // SAFETY: live handles, each released once.
-    unsafe {
-        velt_rt_sqlite_stmt_free(named);
-        velt_rt_sqlite_stmt_free(pos);
-    }
+    statement::free(named);
+    statement::free(pos);
     close(db);
 }
 
 #[test]
 fn sqlite_errors_carry_codes_and_are_counted() {
     let db = open_memory();
-    // SAFETY: a live handle.
-    let count = || unsafe { velt_rt_sqlite_error_count(db) };
+    let count = || error_count(db);
     exec(db, "CREATE TABLE u (email TEXT UNIQUE NOT NULL)").unwrap();
     assert_eq!(count(), 0);
     let ins = prepare(db, "INSERT INTO u VALUES (?)").unwrap();
@@ -232,13 +165,8 @@ fn sqlite_errors_carry_codes_and_are_counted() {
         .unwrap_err()
         .starts_with("SQLITE_CONSTRAINT_NOTNULL"));
     assert_eq!(count(), 2);
-    let mut last = MaybeUninit::uninit();
-    // SAFETY: a live handle.
-    unsafe {
-        velt_rt_sqlite_last_error(db, last.as_mut_ptr());
-        let e = status(last.assume_init()).unwrap_err();
-        assert!(e.starts_with("SQLITE_CONSTRAINT_NOTNULL"), "{e}");
-    }
+    let e = text(last_error(db).unwrap());
+    assert!(e.starts_with("SQLITE_CONSTRAINT_NOTNULL"), "{e}");
     assert!(prepare(db, "SELEC 1")
         .unwrap_err()
         .starts_with("SQLITE_ERROR: near \"SELEC\""));
@@ -248,11 +176,9 @@ fn sqlite_errors_carry_codes_and_are_counted() {
         "{e}"
     );
     assert_eq!(count(), 4);
-    // SAFETY: a live handle.
-    unsafe { velt_rt_sqlite_reset_error_count(db, 1) };
+    reset_error_count(db, 1);
     assert_eq!(count(), 1);
-    // SAFETY: a live handle, released once.
-    unsafe { velt_rt_sqlite_stmt_free(ins) };
+    statement::free(ins);
     close(db);
 }
 
@@ -264,20 +190,16 @@ fn statements_fail_cleanly_after_the_database_closes() {
     close(db);
     let e = query(stmt, "", true).unwrap_err();
     assert_eq!(e, "SQLITE_MISUSE: The database connection is not open");
-    // SAFETY: a live handle, released once; null handles are no-ops.
-    unsafe {
-        velt_rt_sqlite_stmt_free(stmt);
-        velt_rt_sqlite_stmt_free(StmtHandle::NULL);
-    }
-    close(DbHandle::NULL);
-    assert!(exec(DbHandle::NULL, "SELECT 1")
-        .unwrap_err()
-        .contains("not open"));
+    // Null handles are no-ops.
+    statement::free(stmt);
+    statement::free(NULL_STMT);
+    close(NULL_DB);
+    assert!(exec(NULL_DB, "SELECT 1").unwrap_err().contains("not open"));
     // `Database` is a Copy struct: another copy of a closed handle fails cleanly, and closing
     // it again is a no-op (it used to reach the freed connection).
     close(db);
     assert!(exec(db, "SELECT 1").unwrap_err().contains("not open"));
-    assert!(run(StmtHandle::NULL, "")
+    assert!(run(NULL_STMT, "")
         .unwrap_err()
         .contains("statement is not open"));
 }
@@ -285,36 +207,22 @@ fn statements_fail_cleanly_after_the_database_closes() {
 #[test]
 fn pragma_and_transaction_state() {
     let db = open_memory();
-    let pragma = |source: &str| {
-        let mut out = MaybeUninit::uninit();
-        // SAFETY: a live handle and a valid string.
-        unsafe {
-            velt_rt_sqlite_pragma(db, &s(source), out.as_mut_ptr());
-            result(out.assume_init()).map(|v| take(v))
-        }
-    };
+    let pragma = |source: &str| pragma(db, source).map_err(text);
     assert_eq!(pragma("journal_mode = WAL").unwrap(), "memory");
     assert_eq!(pragma("user_version = 7").unwrap(), "");
     assert_eq!(pragma("user_version").unwrap(), "7");
-    // SAFETY: a live handle.
-    let in_tx = || unsafe { velt_rt_sqlite_in_transaction(db) };
-    assert_eq!(in_tx(), 0);
+    let in_tx = || in_transaction(db);
+    assert!(!in_tx());
     exec(db, "BEGIN").unwrap();
-    assert_eq!(in_tx(), 1);
+    assert!(in_tx());
     exec(db, "COMMIT").unwrap();
-    assert_eq!(in_tx(), 0);
+    assert!(!in_tx());
     close(db);
 }
 
 #[test]
 fn open_reports_missing_files() {
-    let mut out = MaybeUninit::uninit();
     let path = std::env::temp_dir().join("velt-sqlite-missing-dir/none.db");
-    let path = path.to_string_lossy().into_owned();
-    // SAFETY: valid arguments.
-    unsafe {
-        velt_rt_sqlite_open(&s(&path), 0, 0, 0, out.as_mut_ptr());
-        let e = result(out.assume_init()).unwrap_err();
-        assert!(e.starts_with("SQLITE_CANTOPEN"), "{e}");
-    }
+    let e = text(open(&path.to_string_lossy(), false, false, 0).unwrap_err());
+    assert!(e.starts_with("SQLITE_CANTOPEN"), "{e}");
 }

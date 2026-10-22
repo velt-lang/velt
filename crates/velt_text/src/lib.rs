@@ -8,6 +8,7 @@ pub mod db_json;
 pub mod fmt;
 pub mod json_escape;
 pub mod json_scan;
+pub mod rows;
 pub mod wtf8;
 
 /// Where the encoders write: a `Vec<u8>`, or (feature `sdk`) a native library's
@@ -67,5 +68,22 @@ impl Out for velt_native::StrBuf {
     #[inline]
     fn reserve(&mut self, additional: usize) {
         velt_native::StrBuf::reserve(self, additional);
+    }
+}
+
+/// Bytes (binary rows, [`rows`]) written into a Velt `u8[]` itself.
+#[cfg(feature = "sdk")]
+impl Out for velt_native::Array<u8> {
+    #[inline]
+    fn extend(&mut self, bytes: &[u8]) {
+        self.extend_from_slice(bytes);
+    }
+    #[inline]
+    fn push(&mut self, b: u8) {
+        velt_native::Array::push(self, b);
+    }
+    #[inline]
+    fn reserve(&mut self, additional: usize) {
+        velt_native::Array::reserve(self, additional);
     }
 }

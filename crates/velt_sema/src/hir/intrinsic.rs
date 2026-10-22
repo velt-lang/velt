@@ -275,6 +275,11 @@ pub enum Intrinsic {
     /// reader options of `velt_rt_json_reader_new_with` (flag 1 = reject unknown keys;
     /// `max_depth` 0 = no limit); throws `JsonError { message }`.
     JsonParse,
+    /// std only: `__intrinsic_json_parse_rows<T>(rows: borrow u8[], flags: i64, max_depth: i64): T`
+    /// — `JsonParse` over a driver's binary result rows (`velt_text::rows`) instead of JSON
+    /// text: the same generated decoder, the reader made with flag `FLAG_ROWS`
+    /// (native_abi.md "Rows").
+    JsonParseRows,
     /// std only: `__intrinsic_http_handler(f: (raw: u64) => Promise<u64>)` → `[u64; 6]` =
     /// `{init, poll, drop, state_size, state_align, env}` for `velt_rt_http_serve` (the closure's
     /// state machine is the per-request state; `init(env, req, state)` sets `raw = req`; the env

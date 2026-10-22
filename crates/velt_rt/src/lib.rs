@@ -60,7 +60,6 @@ pub mod registry;
 pub mod result;
 pub mod rwlock_write;
 pub mod shared;
-pub mod sqlite;
 pub mod stdin;
 pub mod str;
 pub mod str_array;
@@ -105,3 +104,4 @@ mod abi_tests;
 // std's drivers: crates on the native SDK only, linked into the runtime (their `#[export]`
 // functions are std's externs; abi_symbols lists them for the JIT host).
 use velt_std_postgres as _;
+use velt_std_sqlite as _;

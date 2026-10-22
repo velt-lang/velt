@@ -12,9 +12,9 @@
 //! them), so binding allocates nothing.
 
 use super::error::DbError;
-use crate::db_json::{DbValue, Params};
 use rusqlite::types::{ToSqlOutput, ValueRef};
 use rusqlite::Statement;
+use velt_text::db_json::{DbValue, Params};
 
 /// Bind `params` to every parameter of `stmt` (see the module docs).
 pub fn bind(stmt: &mut Statement<'_>, params: &Params<'_>) -> Result<(), DbError> {

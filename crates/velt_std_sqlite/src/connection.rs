@@ -1,5 +1,5 @@
-//! `VeltSqliteDb`: one SQLite connection behind a mutex, and the connection-level ABI (open,
-//! close, exec, pragma, transaction state).
+//! A database: one SQLite connection behind a mutex, and the connection-level operations
+//! (open, close, exec, pragma, transaction state) that [`crate::abi`] exports.
 //!
 //! The connection lives in `Mutex<Option<Connection>>`: statements hold an `Arc` to the
 //! [`DbObj`] and lock it per call, so any task on any thread may use them; `close` takes the
@@ -12,13 +12,11 @@
 //! that rolled back resets the count, so its failure only undoes its own savepoint.
 
 use super::error::DbError;
-use crate::registry::{Key, Registry};
-use crate::result::{IoResult, VeltErr};
-use crate::str::VeltStr;
 use parking_lot::Mutex;
 use rusqlite::{Connection, OpenFlags};
 use std::sync::Arc;
 use std::time::Duration;
+use velt_native::handles::{Key, Registry};
 
 /// Prepared statements kept per connection: `Statement` handles re-find theirs by SQL text on
 /// every call, so this bounds how many distinct statements stay compiled.
@@ -79,7 +77,14 @@ impl ConnState {
     }
 }
 
-fn open(path: &str, readonly: bool, create: bool, timeout_ms: u32) -> Result<DbObj, DbError> {
+/// `open(path, opts)`: a new database handle. `path` may be `":memory:"` or a `file:` URI;
+/// `timeout_ms` is the busy timeout (how long to wait for another connection's lock).
+pub fn open(
+    path: &str,
+    readonly: bool,
+    create: bool,
+    timeout_ms: u32,
+) -> Result<DbHandle, DbError> {
     let mut flags = OpenFlags::SQLITE_OPEN_URI | OpenFlags::SQLITE_OPEN_NO_MUTEX;
     if readonly {
         flags |= OpenFlags::SQLITE_OPEN_READ_ONLY;
@@ -92,12 +97,7 @@ fn open(path: &str, readonly: bool, create: bool, timeout_ms: u32) -> Result<DbO
     let conn = Connection::open_with_flags(path, flags)?;
     conn.busy_timeout(Duration::from_millis(timeout_ms as u64))?;
     conn.set_prepared_statement_cache_capacity(STATEMENT_CACHE);
-    Ok(DbObj::new(conn))
-}
-
-/// A string argument as UTF-8 for SQLite (one U+FFFD per lone surrogate, #377).
-unsafe fn text<'a>(s: *const VeltStr) -> std::borrow::Cow<'a, str> {
-    (*s).text_lossy()
+    Ok(DATABASES.insert(DbObj::new(conn)))
 }
 
 /// The object behind a handle, or the "not open" error for a closed or null handle.
@@ -107,49 +107,31 @@ pub(super) fn obj(db: DbHandle) -> Result<Arc<DbObj>, DbError> {
         .ok_or_else(|| DbError::closed("database connection"))
 }
 
-/// `open(path, opts)` → `IoResult<VeltSqliteDb>`. `path` may be `":memory:"` or a `file:` URI;
-/// `timeout_ms` is the busy timeout (how long to wait for another connection's lock).
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_sqlite_open(
-    path: *const VeltStr,
-    readonly: u8,
-    create: u8,
-    timeout_ms: u32,
-    out: *mut IoResult<DbHandle>,
-) {
-    let r = match open(&text(path), readonly != 0, create != 0, timeout_ms) {
-        Ok(obj) => IoResult::ok(DATABASES.insert(obj)),
-        Err(e) => IoResult::err(e.to_velt()),
-    };
-    out.write(r);
-}
-
 /// Close the connection (its cached statements are finalized) and release the handle; the null
-/// handle is a no-op. Statements of this connection fail from now on.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_sqlite_close(db: DbHandle, out: *mut VeltErr) {
+/// or a closed handle is a no-op. Statements of this connection fail from now on.
+pub fn close(db: DbHandle) -> Result<(), DbError> {
     let Some(obj) = DATABASES.remove(db) else {
-        out.write(VeltErr::ok());
-        return;
+        return Ok(());
     };
     let conn = obj.state.lock().conn.take();
-    let status = match conn.map(Connection::close) {
-        Some(Err((_, e))) => DbError::from(e).to_velt(),
-        _ => VeltErr::ok(),
-    };
-    out.write(status);
+    match conn.map(Connection::close) {
+        Some(Err((_, e))) => Err(DbError::from(e)),
+        _ => Ok(()),
+    }
 }
 
 /// Run one or more `;`-separated statements without parameters (schema scripts).
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_sqlite_exec(db: DbHandle, sql: *const VeltStr, out: *mut VeltErr) {
-    let r = obj(db).and_then(|o| o.with(|c| Ok(c.execute_batch(&text(sql))?)));
-    out.write(r.map_or_else(|e| e.to_velt(), |_| VeltErr::ok()));
+pub fn exec(db: DbHandle, sql: &str) -> Result<(), DbError> {
+    obj(db).and_then(|o| o.with(|c| Ok(c.execute_batch(sql)?)))
 }
 
 /// First column of the first row of `PRAGMA <source>` as text (`""` if there is no row or the
 /// value is NULL or a blob): `"wal"` for `journal_mode = WAL`, `"0"` for `user_version`.
-fn pragma(conn: &Connection, source: &str) -> Result<String, DbError> {
+pub fn pragma(db: DbHandle, source: &str) -> Result<String, DbError> {
+    obj(db).and_then(|o| o.with(|c| pragma_on(c, source)))
+}
+
+fn pragma_on(conn: &Connection, source: &str) -> Result<String, DbError> {
     let mut stmt = conn.prepare(&format!("PRAGMA {source}"))?;
     let mut rows = stmt.raw_query();
     let Some(row) = rows.next()? else {
@@ -160,7 +142,7 @@ fn pragma(conn: &Connection, source: &str) -> Result<String, DbError> {
         ValueRef::Integer(i) => i.to_string(),
         ValueRef::Real(f) => {
             let mut v = Vec::new();
-            crate::fmt::push_f64(&mut v, f);
+            velt_text::fmt::push_f64(&mut v, f);
             String::from_utf8_lossy(&v).into_owned()
         }
         ValueRef::Text(t) => String::from_utf8_lossy(t).into_owned(),
@@ -168,51 +150,32 @@ fn pragma(conn: &Connection, source: &str) -> Result<String, DbError> {
     })
 }
 
-/// `db.pragma(source)` → `IoResult<string>` (see [`pragma`]).
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_sqlite_pragma(
-    db: DbHandle,
-    source: *const VeltStr,
-    out: *mut IoResult<VeltStr>,
-) {
-    let r = obj(db).and_then(|o| o.with(|c| pragma(c, &text(source))));
-    out.write(match r {
-        Ok(s) => IoResult::ok(VeltStr::from_vec(s.into_bytes())),
-        Err(e) => IoResult::err(e.to_velt()),
-    });
-}
-
-/// Whether a transaction is open (the connection is not in autocommit mode); 0 once closed.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_sqlite_in_transaction(db: DbHandle) -> u8 {
+/// Whether a transaction is open (the connection is not in autocommit mode); false once closed.
+pub fn in_transaction(db: DbHandle) -> bool {
     let Some(obj) = DATABASES.get(db) else {
-        return 0;
+        return false;
     };
     let state = obj.state.lock();
-    state.conn.as_ref().is_some_and(|c| !c.is_autocommit()) as u8
+    state.conn.as_ref().is_some_and(|c| !c.is_autocommit())
 }
 
 /// How many operations on this connection have failed so far.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_sqlite_error_count(db: DbHandle) -> u64 {
+pub fn error_count(db: DbHandle) -> u64 {
     DATABASES.get(db).map_or(0, |obj| obj.state.lock().errors)
 }
 
-/// Set the failure count back to `count` (a value `velt_rt_sqlite_error_count` returned): a
-/// nested `transaction` that rolled back and rethrew its failure hands it to the caller as a
-/// thrown error, so the enclosing transaction no longer counts it.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_sqlite_reset_error_count(db: DbHandle, count: u64) {
+/// Set the failure count back to `count` (a value [`error_count`] returned): a nested
+/// `transaction` that rolled back and rethrew its failure hands it to the caller as a thrown
+/// error, so the enclosing transaction no longer counts it.
+pub fn reset_error_count(db: DbHandle, count: u64) {
     if let Some(obj) = DATABASES.get(db) {
         obj.state.lock().errors = count;
     }
 }
 
-/// The most recent failure on this connection as a failed status (code 0 if there was none).
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_sqlite_last_error(db: DbHandle, out: *mut VeltErr) {
-    let last = DATABASES
+/// The most recent failure on this connection, if any.
+pub fn last_error(db: DbHandle) -> Option<DbError> {
+    DATABASES
         .get(db)
-        .and_then(|obj| obj.state.lock().last_error.clone());
-    out.write(last.map_or_else(VeltErr::ok, |e| e.to_velt()));
+        .and_then(|obj| obj.state.lock().last_error.clone())
 }

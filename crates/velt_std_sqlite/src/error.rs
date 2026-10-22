@@ -1,13 +1,11 @@
 //! SQLite errors at the ABI: a [`DbError`] is an SQLite (extended) result code plus a message,
-//! written into the `VeltErr` header of an `IoResult` (`code` != 0 is the failure). std turns the
-//! code into `SqliteError.code` ("SQLITE_CONSTRAINT_UNIQUE", …) with `velt_rt_sqlite_error_name`.
+//! the error of an `IoResult` (`code` != 0 is the failure). std turns the code into
+//! `SqliteError.code` ("SQLITE_CONSTRAINT_UNIQUE", …) with `velt_std_sqlite__error_name`.
 //!
 //! Failures that are not SQLite's own (bad parameters, a closed handle, several statements in
 //! one `prepare`) use the SQLite code that describes them best (`SQLITE_RANGE`,
 //! `SQLITE_MISUSE`, `SQLITE_MISMATCH`), as better-sqlite3 does.
 
-use crate::result::VeltErr;
-use crate::str::VeltStr;
 use rusqlite::ffi;
 
 /// A failed SQLite operation: extended result code (never 0) and message.
@@ -38,9 +36,9 @@ impl DbError {
         DbError::new(ffi::SQLITE_MISUSE, format!("The {what} is not open"))
     }
 
-    /// The `VeltErr` header for this error.
-    pub fn to_velt(&self) -> VeltErr {
-        VeltErr::new(self.code, &self.message)
+    /// This error as Velt receives it.
+    pub fn to_error(&self) -> velt_native::Error {
+        velt_native::Error::new(self.code, self.message.clone())
     }
 }
 
@@ -129,12 +127,6 @@ fn primary_name(code: i32) -> &'static str {
         .and_then(|i| NAMES.get(i))
         .copied()
         .unwrap_or("SQLITE_ERROR")
-}
-
-/// Write the name of SQLite result `code` (a static string: nothing to free) to `out`.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_sqlite_error_name(code: i32, out: *mut VeltStr) {
-    out.write(VeltStr::from_static(code_name(code).as_bytes()));
 }
 
 #[cfg(test)]

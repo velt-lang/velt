@@ -247,11 +247,17 @@ impl<T: Value> Array<T> {
     }
 
     /// Makes room for `more` elements.
+    #[inline]
     pub fn reserve(&mut self, more: usize) {
         let need = self.len as usize + more;
-        if need <= self.cap as usize {
-            return;
+        if need > self.cap as usize {
+            self.grow(need);
         }
+    }
+
+    /// Room for `need` elements: amortized doubling.
+    #[cold]
+    fn grow(&mut self, need: usize) {
         let cap = need.max(self.cap as usize * 2).max(4);
         let (size, align) = (size_of::<T>() as u64, align_of::<T>() as u64);
         // SAFETY: the runtime's allocator with this array's element layout; the old buffer (if
@@ -273,11 +279,26 @@ impl<T: Value> Array<T> {
     }
 
     /// Appends `v`.
+    #[inline]
     pub fn push(&mut self, v: T) {
         self.reserve(1);
         // SAFETY: room for one more.
         unsafe { self.ptr.add(self.len as usize).write(v) };
         self.len += 1;
+    }
+
+    /// Appends copies of `vs`.
+    #[inline]
+    pub fn extend_from_slice(&mut self, vs: &[T])
+    where
+        T: Copy,
+    {
+        self.reserve(vs.len());
+        // SAFETY: room for `vs.len()` more; `vs` cannot be in this array's spare room.
+        unsafe {
+            std::ptr::copy_nonoverlapping(vs.as_ptr(), self.ptr.add(self.len as usize), vs.len())
+        };
+        self.len += vs.len() as u64;
     }
 }
 

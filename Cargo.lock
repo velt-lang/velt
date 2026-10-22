@@ -2219,7 +2219,6 @@ dependencies = [
  "parking_lot",
  "parking_lot_core",
  "regex",
- "rusqlite",
  "rustls",
  "ryu",
  "socket2",
@@ -2229,6 +2228,7 @@ dependencies = [
  "url",
  "velt_native",
  "velt_std_postgres",
+ "velt_std_sqlite",
  "velt_text",
  "webpki-roots",
  "windows-sys 0.61.2",
@@ -2259,7 +2259,6 @@ dependencies = [
  "parking_lot",
  "parking_lot_core",
  "regex",
- "rusqlite",
  "rustls",
  "ryu",
  "socket2",
@@ -2269,6 +2268,7 @@ dependencies = [
  "url",
  "velt_native",
  "velt_std_postgres",
+ "velt_std_sqlite",
  "velt_text",
  "webpki-roots",
  "windows-sys 0.61.2",
@@ -2299,7 +2299,6 @@ dependencies = [
  "parking_lot",
  "parking_lot_core",
  "regex",
- "rusqlite",
  "rustls",
  "ryu",
  "socket2",
@@ -2309,6 +2308,7 @@ dependencies = [
  "url",
  "velt_native",
  "velt_std_postgres",
+ "velt_std_sqlite",
  "velt_text",
  "webpki-roots",
  "windows-sys 0.61.2",
@@ -2351,6 +2351,16 @@ dependencies = [
  "velt_native",
  "velt_text",
  "webpki-roots",
+]
+
+[[package]]
+name = "velt_std_sqlite"
+version = "0.3.0"
+dependencies = [
+ "parking_lot",
+ "rusqlite",
+ "velt_native",
+ "velt_text",
 ]
 
 [[package]]
