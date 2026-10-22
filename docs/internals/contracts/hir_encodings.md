@@ -1048,7 +1048,9 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   calls the field's setter slot on the wrapped value with the value converted as an argument
   is. Lowering sees only these ordinary forms, and finds the adapters by their struct (a name
   ending in ` adapter`, one interface field): their tables' class id word says so, and `===`,
-  `instanceof` and the downcast after it look through them at the wrapped value.
+  `Set`/`Map` key hashes, `instanceof` and the downcast after it look through them at the
+  wrapped value, and a conversion of one to `any`, `unknown` or `object` holds the wrapped
+  value instead.
 - `object` and `Function` (issue #926) are two more interfaces of `z_dynamic.vlt`:
   `TyKind::Dyn(object | Function, [])`, named by `Program::object` / `Program::function` (set
   with `any_impl`). They are dynamic types like `any`: the same representation, `ToDyn` with

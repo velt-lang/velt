@@ -1,0 +1,48 @@
+// check: no leaks
+// A program with an interface adapter (#1185): `instanceof` and `===` on `unknown` and `any`
+// arrays (their class id word is not an adapter's), `Set` and `Map` keys, `===` through `any`,
+// `unknown` and `object`, and members read and written through `any` all see the one object
+// the converted value and the original are in Node.
+interface Ctx<E = string, P = {}> {
+  el: E;
+  props: P;
+  name(): string;
+}
+
+function lit(el: string): Ctx<string, { n: number }> {
+  return {
+    el,
+    props: { n: 1 },
+    name(): string {
+      return "lit " + el;
+    },
+  };
+}
+
+class Foo {
+  k: number = 1;
+}
+
+const c = lit("c");
+const a: Ctx<any, any> = c;
+const a2: Ctx<any, any> = c;
+const u: unknown = [3, 4];
+const arr: any = [5];
+console.log(u instanceof Foo, arr instanceof Foo, u === arr, Array.isArray(u));
+
+const s = new Set<Ctx<any, any>>([a]);
+console.log(s.has(a2));
+s.add(a2);
+console.log(s.size);
+const m = new Map<Ctx<any, any>, number>([[a, 1]]);
+console.log(m.get(a2));
+
+const x: any = a;
+const y: any = c;
+console.log(x === y, [x].includes(y), new Set<any>([x]).has(y));
+const o: object = a;
+const p: object = c;
+console.log(o === p);
+
+(a as any).el = "viaany";
+console.log(c.el, (a as any).el, (a2 as any).props.n);

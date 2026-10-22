@@ -2634,9 +2634,11 @@ through the other, and every copy of the converted value (an array element read 
 through the converted value (`h.name = "x"` on a `Handler`) is assigned on the original, its
 value converted to the original's field type and checked as an argument is (a field of an
 interface type at `unknown` arguments does not convert back, a compile error naming #1185).
-The converted value and the original are one object to `===` and `instanceof`: a
-`Handler<Date, number>` read back from a `Handler[]` is `===` to it, and `instanceof` tests the
-original's class.
+The converted value and the original are one object to `===`, `instanceof`, `Set` and `Map`
+keys, and `includes`: a `Handler<Date, number>` read back from a `Handler[]` is `===` to it,
+`instanceof` tests the original's class, and a `Set<Handler>` holding one finds the other. The
+same holds once either is an `any`, `unknown` or `object` (which holds the original itself), and
+members read or written through such an `any` are the original's.
 
 A parameter of type `unknown[]`, `Map<unknown, unknown>` or `Set<unknown>` (a handler for
 arrays, maps or sets, as in a serializer's table) takes an array, map or set of any element

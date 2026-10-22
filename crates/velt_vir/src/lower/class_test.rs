@@ -17,7 +17,7 @@ use crate::vir::{BinOp, Operand, Place, Proj, Rvalue, Ty};
 
 /// Class id word of an interface table whose value is an object with a vtable pointer: read the
 /// id from the object's own table.
-const ASK_OBJECT: u64 = u64::MAX;
+pub(super) const ASK_OBJECT: u64 = u64::MAX;
 
 impl Cx<'_> {
     /// The id range of class `d` and its subclasses (`d` itself has the first id).

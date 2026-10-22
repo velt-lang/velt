@@ -1,7 +1,9 @@
 //! Interface adapters (hir_encodings.md "Interface adapters"): a value of `I<A>` converted to
 //! `I<B>` is a counted `<I> adapter` struct wrapping the original interface value. In Node the
 //! two are one object, so what tells objects apart looks through the adapter at the value it
-//! wraps: `===` (same.rs), `instanceof` and the downcast after it (class_test.rs).
+//! wraps: `===` (same.rs), the hash of a `Set` / `Map` key (glue/eq.rs), `instanceof` and the
+//! downcast after it (class_test.rs); and a conversion to `any`, `unknown` or `object` holds
+//! the wrapped value itself (any.rs `make_dyn_any`), so dynamic values never hold an adapter.
 //!
 //! An adapter's table says `ASK_INNER` in its class id word (glue/vtable.rs), and its data
 //! pointer points at the struct, whose one field is the wrapped interface value. A program
@@ -14,7 +16,14 @@ use super::{cint, Cx, FnLower};
 use crate::vir::{BinOp, Operand, Place, Proj, Rvalue, Ty};
 
 /// The class id word of an adapter's table: the value it wraps says what the object is.
-pub(super) const ASK_INNER: u64 = u64::MAX - 1;
+pub(super) const ASK_INNER: u64 = u64::MAX - 2;
+
+// The reserved class id words are distinct (class ids count up from 1).
+const _: () = assert!(
+    ASK_INNER != super::class_test::ASK_OBJECT
+        && ASK_INNER != super::any_set_site::ARRAY_ID
+        && super::any_set_site::ARRAY_ID != super::class_test::ASK_OBJECT
+);
 
 impl Cx<'_> {
     /// Is `ty` (an implementation's self type) an interface adapter: the hidden struct
@@ -64,7 +73,9 @@ impl FnLower<'_, '_> {
     /// The interface value of type `ty` at `place`, or the value its adapters wrap (a place of
     /// the same layout: every interface value is a data and a table pointer).
     pub(super) fn through_adapters(&mut self, place: &Place, ty: TyId) -> Place {
-        if !self.cx.has_adapters() {
+        // A dynamic value never holds an adapter: converting one to `any`, `unknown` or `object`
+        // takes the value it wraps (`owned_unwrapped`).
+        if !self.cx.has_adapters() || self.cx.is_dynamic(ty) || self.cx.is_narrow_dynamic(ty) {
             return place.clone();
         }
         self.cx.note_wrapped_identity();
@@ -88,30 +99,35 @@ impl FnLower<'_, '_> {
     }
 
     /// The object of the owned interface value at `p` (of type `ty`, the downcast of a narrowed
-    /// value): its data pointer, or, when adapters wrap it, a new reference to the object they
-    /// wrap, the adapters released.
+    /// value): its data pointer, or that of the object its adapters wrap
+    /// ([`owned_unwrapped`](Self::owned_unwrapped)).
     pub(super) fn owned_through_adapters(&mut self, p: Place, ty: TyId) -> Operand {
-        let data = Operand::Copy(proj(&p, Proj::Field(0)));
+        let p = self.owned_unwrapped(p, ty);
+        Operand::Copy(proj(&p, Proj::Field(0)))
+    }
+
+    /// The owned interface value at `p` (of type `ty`), or, when adapters wrap a value, a new
+    /// reference to that value, the adapters released: what a narrowed value passes on and
+    /// what a conversion to `any` holds (any.rs `make_dyn_any`), so either is the object itself.
+    pub(super) fn owned_unwrapped(&mut self, p: Place, ty: TyId) -> Place {
         if !self.cx.has_adapters() {
-            return data;
+            return p;
         }
         let inner = self.through_adapters(&p, ty);
-        let out = self.temp(Ty::Ptr);
-        self.assign(Place::local(out), Rvalue::Use(data.clone()));
+        let vt = self.cx.ty(ty);
+        let out = Place::local(self.temp(vt));
+        self.assign(out.clone(), Rvalue::Use(Operand::Copy(p.clone())));
+        let data = Operand::Copy(proj(&p, Proj::Field(0)));
         let found = Operand::Copy(proj(&inner, Proj::Field(0)));
         let wrapped = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ne, found, data));
         let (yes, done) = (self.new_block(), self.new_block());
         self.branch(wrapped, yes, done);
         self.switch_to(yes);
         let shared = self.share_value(Operand::Copy(inner), ty);
-        let shared = self.place_of(shared, ty);
-        self.assign(
-            Place::local(out),
-            Rvalue::Use(Operand::Copy(proj(&shared, Proj::Field(0)))),
-        );
+        self.assign(out.clone(), Rvalue::Use(shared));
         self.drop_glue(p, ty);
         self.goto(done);
         self.switch_to(done);
-        Operand::Copy(Place::local(out))
+        out
     }
 }
