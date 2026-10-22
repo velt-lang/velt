@@ -1,0 +1,12 @@
+index_signature_member_copies.vlt:11:23: error: a value of type `{ a: f64; b: f64 }` converts to `{ a: f64 }` by copying its fields, and this program prints a `P`: Node would show the original object's fields, in its order
+  --> index_signature_member_copies.vlt:16:34: here, or in the function this calls
+  = note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `{ a: f64 }` made from a `{ a: f64; b: f64 }` value is a new object with the same field values
+  = note: build the new object explicitly, `{ a: c.a }` (a new object in TypeScript too), or declare the parameter or variable as `{ a: f64; b: f64 }`
+index_signature_member_copies.vlt:13:11: error: a value of type `{ a: f64; b: f64 }` converts to `{ a: f64 }` by copying its fields, and this program prints a `P`: Node would show the original object's fields, in its order
+  --> index_signature_member_copies.vlt:16:34: here, or in the function this calls
+  = note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `{ a: f64 }` made from a `{ a: f64; b: f64 }` value is a new object with the same field values
+  = note: build the new object explicitly, `{ a: c.a }` (a new object in TypeScript too), or declare the parameter or variable as `{ a: f64; b: f64 }`
+index_signature_member_copies.vlt:15:14: error: a value of type `{ a: f64; b: f64 }` converts to `{ a: f64 }` by copying its fields, and this program prints a `P`: Node would show the original object's fields, in its order
+  --> index_signature_member_copies.vlt:16:34: here, or in the function this calls
+  = note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `{ a: f64 }` made from a `{ a: f64; b: f64 }` value is a new object with the same field values
+  = note: build the new object explicitly, `{ a: c.a }` (a new object in TypeScript too), or declare the parameter or variable as `{ a: f64; b: f64 }`

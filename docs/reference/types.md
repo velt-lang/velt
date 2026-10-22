@@ -1936,7 +1936,9 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   `unknown`) for now (#930). A literal's value for a required named member, and a value written
   to one (`props.items = []`, `props["items"] = []`), is checked against its declared type, so
   `{ items: [] }` holds a `number[]` for `items: number[]` and a callback's parameters get
-  their types (`{ onClick: (e) => ... }`). A key holding a function is called as a
+  their types (`{ onClick: (e) => ... }`). A value with more fields than the member's type is
+  converted by copying them, as anywhere an object type is expected, and printing or
+  serializing the record is then an error (Node would show the original's fields). A key holding a function is called as a
   method (`props.onClick()`, also on any `Record<string, any>`). A spread of a record that may be
   `null` or `undefined` (`{ ...props }` with `props: Props | null`) is a record too, and copies
   nothing when it is. Not supported yet (each is an error): named members next to an index
