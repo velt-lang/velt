@@ -24,7 +24,8 @@ impl FnLower<'_, '_> {
         depth: &Operand,
     ) {
         let shown = self.shown_fields(ty);
-        let anon = matches!(self.cx.kind(ty), TyKind::Adt(d, _) if self.cx.adt_def(d).kind == AdtKind::Anon);
+        let anon = matches!(self.cx.kind(ty),
+            TyKind::Adt(d, _) if self.cx.adt_def(d).kind == AdtKind::Anon);
         let void = shown
             .iter()
             .find(|(_, _, t)| anon && matches!(self.cx.kind(*t), TyKind::Unit));
@@ -53,13 +54,15 @@ impl FnLower<'_, '_> {
         });
     }
 
-    /// Panic: the object (of an object type) has a field that is `void` after substitution (velt_sema `void_fields`,
-    /// #1411), which keeps no value, so what the program wrote to it (`ref: null as any`) can't be
-    /// shown as Node shows it. Printing it through a generic or an `any`, or reading the field
-    /// through an `any`, stops here rather than showing `undefined`.
+    /// Panic: the object (of an object type) has a field that is `void` after substitution
+    /// (velt_sema `void_fields`, #1411), which keeps no value, so what the program wrote to it
+    /// (`ref: null as any`) can't be shown as Node shows it. Printing or JSON-writing it through
+    /// a generic or an `any`, or reading the field through an `any`, stops here rather than
+    /// showing `undefined`.
     pub(in crate::lower) fn void_field_panic(&mut self, name: &str) {
         self.panic_msg(&format!(
-            "TypeError: the field `{name}` is `void` here and keeps no value, so it can't be read or shown through a generic or an `any` yet (#1411)"
+            "TypeError: the field `{name}` is `void` here and keeps no value, so it can't be read \
+             or shown through a generic or an `any` yet (#1411)"
         ));
     }
 
