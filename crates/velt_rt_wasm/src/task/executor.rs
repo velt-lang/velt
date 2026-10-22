@@ -469,11 +469,12 @@ pub extern "C" fn velt_rt_keep_alive_release() {
     with_exec(|e| e.keep_alive -= 1);
 }
 
-/// `velt_rt_process_ending()`: never seen early here: one thread both runs the timers and decides
-/// the end ([`velt_rt_block_on`]), so no due timer runs after the end was seen.
+/// `velt_rt_timer_unref_due()`: never ending early here: one thread both runs the timers and
+/// decides the end ([`velt_rt_block_on`]), so no due timer runs after the end was seen. Ready at
+/// once with 0.
 #[no_mangle]
-pub extern "C" fn velt_rt_process_ending() -> bool {
-    false
+pub extern "C" fn velt_rt_timer_unref_due() -> *mut VeltFut {
+    super::leaf::ready_leaf(|| 0u8)
 }
 
 /// Start `fut` as a task (queued now); on completion its `result_size` result bytes move into

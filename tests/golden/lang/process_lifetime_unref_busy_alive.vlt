@@ -1,0 +1,25 @@
+// A due unref()'d timer still runs when what ran past its due time leaves something that keeps
+// the process alive: a new ref'd timer from the callback, or from the code its promise resumes,
+// as in Node (#1366).
+let wake: () => void = () => {};
+const p = new Promise<void>((r) => {
+  wake = r;
+});
+setTimeout(() => console.log("first unref'd runs"), 50).unref();
+setTimeout(() => {
+  const end = Date.now() + 150;
+  while (Date.now() < end) {}
+  console.log("ref");
+  setTimeout(() => {
+    console.log("later");
+    setTimeout(() => console.log("second unref'd runs"), 50).unref();
+    setTimeout(() => {
+      const end2 = Date.now() + 150;
+      while (Date.now() < end2) {}
+      wake();
+    }, 10);
+  }, 50);
+}, 10);
+await p;
+console.log("resumed");
+setTimeout(() => console.log("last"), 20);

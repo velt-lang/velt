@@ -71,12 +71,12 @@ pub extern "C" fn velt_rt_keep_alive_release() {
     keep_alive_release();
 }
 
-/// `velt_rt_process_ending()`: the process was seen with nothing left that can happen, and ends
-/// as soon as the thread waiting for the end runs (quiet.rs `ending`): a due `unref()`'d timer
-/// does not run its callback then, as Node exits without running it (std/prelude/timers.vlt).
+/// `velt_rt_timer_unref_due()`: a due `unref()`'d timer asks whether to drop its callback: the
+/// leaf completes with 1 once the process is ending (quiet.rs `UnrefDue`, which may wait for the
+/// last worker to park first), as Node exits without running it (std/prelude/timers.vlt).
 #[no_mangle]
-pub extern "C" fn velt_rt_process_ending() -> bool {
-    super::quiet::ending()
+pub extern "C" fn velt_rt_timer_unref_due() -> *mut super::VeltFut {
+    super::leaf::new_inner_leaf(super::quiet::UnrefDue::new(&QUIET))
 }
 
 /// Program exit (after `main` returns): like Node, block while something can still happen: a

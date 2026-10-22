@@ -1,0 +1,9 @@
+// A due unref()'d timer does not run once only it is left, also when the last ref'd callback
+// runs past its due time and the worker goes straight on to it, as in Node (#1366).
+const t = setTimeout(() => console.log("never"), 200);
+t.unref();
+setTimeout(() => {
+  const end = Date.now() + 300;
+  while (Date.now() < end) {}
+  console.log("ref");
+}, 20);

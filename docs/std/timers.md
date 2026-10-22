@@ -57,7 +57,8 @@ like in Node.
 A pending timer keeps the process alive after `main` returns, as in Node: a timeout until its
 callback starts, an interval until it is cleared. A timer that is `unref()`ed does not keep the
 process alive, and once nothing else is left its callback does not run, also when it falls due
-while the process is ending. `process.exit()` and an uncaught error end the process at once, pending timers or
+while the process is ending or while the last ref'd callback is still running past its due time.
+`process.exit()` and an uncaught error end the process at once, pending timers or
 not.
 
 ```ts

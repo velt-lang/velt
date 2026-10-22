@@ -345,6 +345,8 @@ struct Orphan {
 
 impl Orphan {
     fn spawn(set: SetPtr) {
+        // What the root printed comes first: the orphan may run on another worker at once.
+        crate::io::publish_before_handoff();
         super::runtime::spawn(Orphan { set });
     }
 }
