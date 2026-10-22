@@ -96,7 +96,7 @@ impl<'a> Parser<'a> {
 
     /// `readonly` as a type operator: before an array or tuple type (`readonly T[]`,
     /// `readonly [A, B]`), not a type named `readonly`.
-    fn at_readonly_type(&mut self) -> bool {
+    pub(super) fn at_readonly_type(&mut self) -> bool {
         self.at(Tok::Kw(Kw::Readonly))
             && (Self::is_ident_like(self.nth(1))
                 || matches!(self.nth(1), Tok::LBracket | Tok::LParen | Tok::LBrace)

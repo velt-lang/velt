@@ -521,6 +521,19 @@ impl FnLower<'_, '_> {
         els: &hir::Expr,
         ty: TyId,
     ) -> Operand {
+        // A condition known per instantiation (`const_cond`): only the branch it takes.
+        if let Some(c) = self.const_cond(cond) {
+            let t = self.vty(ty);
+            let res = (t != Ty::Unit).then(|| self.temp(t));
+            self.push_scope(ScopeKind::Temps);
+            let v = self.consume(if c { then } else { els });
+            if let Some(r) = res {
+                self.assign(Place::local(r), Rvalue::Use(v));
+            }
+            self.pop_scope();
+            let ty = self.sub(ty);
+            return self.owned_result(res, ty);
+        }
         let c = self.expr(cond);
         let t = self.vty(ty);
         let res = (t != Ty::Unit).then(|| self.temp(t));

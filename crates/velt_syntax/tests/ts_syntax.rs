@@ -475,6 +475,14 @@ fn a_cast_to_a_union_with_a_number_literal_is_an_error() {
 }
 
 #[test]
+fn a_cast_takes_readonly_array_types() {
+    let none: Vec<String> = vec![];
+    assert_eq!(errors("const y = x as readonly string[];"), none);
+    assert_eq!(errors("const y = x as readonly [A, B] | null;"), none);
+    assert_eq!(errors("const y = x as readonly string[] | undefined;"), none);
+}
+
+#[test]
 fn function_expressions_are_arrows() {
     let e = expr("x = async function name<T>(a: T, b) { return a; }");
     let ExprKind::Assign { value, .. } = &e.kind else {

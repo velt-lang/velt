@@ -1,0 +1,68 @@
+// `as` assertions tsc accepts (#893): a union as a union of some of its members (with or
+// without `| undefined`, sigx's `options as SSRContextOptions | undefined`), `T | undefined` as
+// `T` in generic code (every value passes where `T` itself has `undefined`), and the type
+// operators `readonly T[]` and literal unions after `as`.
+interface Opts {
+  streaming?: boolean;
+}
+
+interface Ctx {
+  _componentId: number;
+  _streaming: boolean;
+  nextId(): number;
+}
+
+function create(o: Opts = {}): Ctx {
+  let n = 0;
+  return { _componentId: 0, _streaming: o.streaming ?? true, nextId: () => ++n };
+}
+
+function make(options: Opts | Ctx | undefined): Ctx {
+  const ctx =
+    options && "_componentId" in options ? (options as Ctx) : create(options as (Opts | undefined));
+  return ctx;
+}
+
+type Token = "a" | "b" | "c" | number;
+
+function letters(t: Token): "a" | "b" | "c" {
+  return t as ("a" | "b" | "c");
+}
+
+function last<T>(xs: T[]): T {
+  const v: T | undefined = xs.length > 0 ? xs[xs.length - 1] : undefined;
+  return v as T;
+}
+
+function pending<T>(has: boolean, v: T | undefined): string {
+  if (!has) {
+    return "none";
+  }
+  const x = v as T;
+  return `got ${x}`;
+}
+
+function lookup<T>(m: Map<string, T>, k: string): T {
+  return m.get(k) as T;
+}
+
+function demo(): void {
+  const c = make({ streaming: false });
+  console.log(c._streaming, c.nextId(), c.nextId());
+  const d = make(c);
+  console.log(d === c, d.nextId());
+  console.log(make(undefined)._streaming);
+  console.log(letters("b"));
+  console.log(last([1, 2, 3]), last(["x"]));
+  console.log(last<string | undefined>(["a", undefined]));
+  console.log(pending<number>(true, 4), pending<number>(false, undefined));
+  console.log(pending<number | undefined>(true, undefined));
+  console.log(pending<string | null>(true, null));
+  const units = new Map<string, string | undefined>([["u", undefined]]);
+  console.log(lookup(new Map([["a", 1]]), "a"), lookup(units, "u"));
+  const k = "a" as ("a" | "b");
+  const ro = ["x", "y"] as readonly string[];
+  console.log(k, ro.length);
+}
+
+demo();

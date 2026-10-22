@@ -110,10 +110,12 @@ and memory where you want a fixed width; code shared with TypeScript never names
   To any other type, `as` is TypeScript's type assertion and converts nothing: the expression is
   typed as if annotated with that type, so a literal takes its shape
   (`[["a", 1]] as [string, u8][]`, `[] as string[]`), and it must be a value of that type.
-  An assertion that narrows, `x as T` with `x: T | null` (or `| undefined`) and `u as A` with
-  `A` a member of union `u`, is checked like `x!`: TypeScript trusts it, Velt panics with
-  `type assertion failed: …` when the value is not a `T` (not in generic code, where at
-  `T = U | null` a `null` is a `T`).
+  An assertion that narrows, `x as T` with `x: T | null` (or `| undefined`), `u as A` with
+  `A` a member of union `u`, and `u as A | B` (also `| undefined`) with some of `u`'s members,
+  is checked like `x!`: TypeScript trusts it, Velt panics with `type assertion failed: …` when
+  the value is not a `T`. In generic code, `x as T` of an `x: T | undefined` is checked only
+  where `T` has no `undefined` of its own: at `T = U | undefined` every value of `x` is a `T`
+  and passes as it is. Other narrowing assertions in generic code are errors.
   As in TypeScript, `as` and `satisfies` take a whole type: `x as A | B` is a union and
   `x as A & B` an intersection (a leading `|` may start the type on the next line), so a
   bitwise operator after a cast needs parentheses: `(x as i32) | y`. A number literal after
@@ -945,10 +947,10 @@ console.log(show("a"), show(41));
 
 ## Discriminated unions
 
-A union of object types (anonymous object types, structs or classes) whose members all have a
-field of a literal type is a **discriminated union**; that field (any name; `kind` below) is the
-*discriminant*. It is compiled like a Rust enum: the discriminant is the tag, not a stored
-string.
+A union of object types (anonymous object types, structs, classes or interfaces) whose members
+all have a field of a literal type is a **discriminated union**; that field (any name; `kind`
+below) is the *discriminant*. It is compiled like a Rust enum: the discriminant is the tag, not a
+stored string.
 
 ```ts
 type Shape =
@@ -984,6 +986,35 @@ for (const s of shapes) {
   narrowing (``no field `r` on type `Shape` ``), except `value` on an `IteratorResult<T>`, which
   reads as `T | null` ([Iterables](control-flow.md#iterables)). Fields cannot be assigned through
   the union.
+- Members may be interfaces with methods, and intersections of one with object types
+  (`Base<T> & { state: "errored" } & ({ value: T; hasValue: true } | { value: null; hasValue: false })`,
+  one member per part of the inner union). A field every member has reads through each one's
+  getter, and a method every member has is called on the union: through an interface every
+  member extends that declares it, else each member's own when they have the same type.
+
+```ts
+interface Base {
+  describe(): string;
+}
+interface Circle extends Base {
+  readonly kind: "circle";
+  readonly r: number;
+}
+interface Square extends Base {
+  readonly kind: "square";
+  readonly side: number;
+}
+type Shape = Circle | Square;
+
+const shapes: Shape[] = [
+  { kind: "circle", r: 1, describe: () => "round" },
+  { kind: "square", side: 2, describe: () => "four corners" },
+];
+for (const s of shapes) {
+  console.log(s.kind, s.describe()); // circle round, then square four corners
+  if (s.kind === "square") console.log(s.side); // 2
+}
+```
 - A discriminated union may name itself behind an indirection
   (`type Tree = { kind: "leaf"; v: number } | { kind: "node"; kids: Tree[] }`; see
   [Union types](#union-types)).

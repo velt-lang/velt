@@ -1,5 +1,6 @@
 //! Type assertions that narrow (docs/reference/types.md "Type assertions"): `x as T` with
-//! `x: T | null` (or `| undefined`), and `u as A` with `u` a union that has the member `A`.
+//! `x: T | null` (or `| undefined`), `u as A` with `u` a union that has the member `A`, and
+//! `u as A | B` (also with `| undefined`) with `u` a union that has those members and more.
 //! TypeScript trusts them; Velt checks them, as it checks `x!`: the value is `T`'s, or the
 //! program panics (`type assertion failed: …`). A value of the wrong type never reads as `T`.
 //!
@@ -29,9 +30,16 @@ impl FnCx<'_, '_> {
             collect_params(&s.cx.ty, t, &mut ps);
             !ps.is_empty()
         };
-        if generic(self, h.ty) || generic(self, target) || self.cx.ty.has_error(h.ty) {
+        if self.cx.ty.has_error(h.ty) {
             return Err(h);
         }
+        if generic(self, h.ty) || generic(self, target) {
+            return self.param_present_assertion(h, target, span);
+        }
+        let h = match self.subunion_assertion(h, target, span) {
+            Ok(h) => return Ok(h),
+            Err(h) => h,
+        };
         let t = &self.cx.ty;
         if t.nothing_of(target).is_some() {
             return Err(h);
@@ -180,5 +188,189 @@ impl FnCx<'_, '_> {
             arms,
         };
         Ok(self.mk(kind, target, span))
+    }
+
+    /// `u as V` where `V` (or `V | null`) is a union of some of union `u`'s members (or one of
+    /// them, with `null`): `match (u) { A(a) => V.A(a), ..., _ => panic }`, through the option
+    /// when `u` may be `null` or `undefined` and `V` may be that too.
+    fn subunion_assertion(
+        &mut self,
+        h: hir::Expr,
+        target: TyId,
+        span: Span,
+    ) -> Result<hir::Expr, hir::Expr> {
+        let t = &self.cx.ty;
+        let (from_n, to_n) = (t.nothing_of(h.ty), t.nothing_of(target));
+        let from = t.core(h.ty).unwrap_or(h.ty);
+        let to = t.core(target).unwrap_or(target);
+        match (from_n, to_n) {
+            (Some(a), Some(b)) if !a.within(b) => return Err(h),
+            (Some(_), None) => return Err(h),
+            _ => {}
+        }
+        // `T | null` as `T`, and a union as one member, are the cases above.
+        if to_n.is_none() && self.cx.union_def(to).is_none() {
+            return Err(h);
+        }
+        let Some(have) = self.cx.union_members(from) else {
+            return Err(h);
+        };
+        let want = self.cx.union_members(to).unwrap_or_else(|| vec![to]);
+        if want.len() >= have.len() || !want.iter().all(|w| have.contains(w)) {
+            return Err(h);
+        }
+        if from_n.is_none() {
+            let inner = self.members_or_panic(h, to, &want, target, span)?;
+            return Ok(match to_n {
+                Some(_) => self.mk(H::WrapSome(Box::new(inner)), target, span),
+                None => inner,
+            });
+        }
+        // `match (u) { null => null, v => <v as V> }`.
+        let consume = !is_place(&h) || outer_mode(&h) == Some(UseMode::Move);
+        let mode = match consume {
+            true => UseMode::Move,
+            false => UseMode::Borrow,
+        };
+        let b = self.new_local("<some>", from, false, span, LocalKind::Bind);
+        let value = self.mk(H::Local(b, mode), from, span);
+        let Ok(inner) = self.members_or_panic(value, to, &want, target, span) else {
+            return Err(h);
+        };
+        // (`to_n` is known here: a `null` value stays one.)
+        let some = self.mk(H::WrapSome(Box::new(inner)), target, span);
+        let none = self.mk(H::Lit(hir::Lit::Null), target, span);
+        let pat = |kind, ty| hir::Pat { kind, ty, span };
+        let bind = pat(P::Binding(b, mode), from);
+        let arms = vec![
+            hir::Arm {
+                pat: pat(P::Some(Box::new(bind)), h.ty),
+                guard: None,
+                body: some,
+            },
+            hir::Arm {
+                pat: pat(P::None, h.ty),
+                guard: None,
+                body: none,
+            },
+        ];
+        let kind = H::Match {
+            scrutinee: Box::new(h),
+            arms,
+        };
+        Ok(self.mk(kind, target, span))
+    }
+
+    /// Union value `h` as `to`, which has the members `want` of `h`'s: each of those converts,
+    /// any other member panics (`type assertion failed`, naming `shown`).
+    fn members_or_panic(
+        &mut self,
+        h: hir::Expr,
+        to: TyId,
+        want: &[TyId],
+        shown: TyId,
+        span: Span,
+    ) -> Result<hir::Expr, hir::Expr> {
+        let name = self.cx.display(shown);
+        let msg = format!("TypeError: type assertion failed: the value is not of type `{name}`");
+        let never = self.cx.ty.never;
+        self.map_members(h, to, &mut |s, value| match want.contains(&value.ty) {
+            true => s.try_coerce(value, to).ok(),
+            false => {
+                let m = s.str_lit(&msg, span);
+                Some(s.intrinsic(Intrinsic::Panic, vec![m], never, span))
+            }
+        })
+    }
+
+    /// `x as T` with `x: T | undefined` (or `| null`) in generic code: the value, checked to be
+    /// present where `T` has no such value (`type assertion failed`). Where `T` has one
+    /// (`T = U | undefined`), the two types are the same and every value passes, as in
+    /// TypeScript: `HoldsNull(T) ? (x ?? <T's null>) : (x ?? panic)`, a condition known per
+    /// instantiation, so lowering keeps one branch (hir_encodings.md).
+    fn param_present_assertion(
+        &mut self,
+        h: hir::Expr,
+        target: TyId,
+        span: Span,
+    ) -> Result<hir::Expr, hir::Expr> {
+        let t = &self.cx.ty;
+        let (Some(n), Some(core)) = (t.nothing_of(h.ty), t.core(h.ty)) else {
+            return Err(h);
+        };
+        if core != target || !matches!(t.kind(core), hir::TyKind::Param(_)) {
+            return Err(h);
+        }
+        // A value that is not a place (`m.get(k) as T`) is read once, from a temporary.
+        let (ty, mut lets) = (h.ty, vec![]);
+        let h = match is_place(&h) {
+            true => h,
+            false => {
+                let tmp = self.new_local("<asserted>", ty, false, span, LocalKind::Temp);
+                lets.push(hir::Stmt {
+                    kind: hir::StmtKind::Let {
+                        local: tmp,
+                        init: Some(h),
+                    },
+                    span,
+                });
+                self.mk(H::Local(tmp, UseMode::Move), ty, span)
+            }
+        };
+        let (b, never) = (self.cx.ty.bool_, self.cx.ty.never);
+        let probe = self.intrinsic(Intrinsic::NullAs, vec![], core, span);
+        let cond = self.intrinsic(Intrinsic::HoldsNull, vec![probe], b, span);
+        let null = self.intrinsic(Intrinsic::NullAs, vec![], core, span);
+        let then = self.present_or(h.clone(), core, null, span);
+        let msg = format!("TypeError: type assertion failed: the value is {}", n.word());
+        let m = self.str_lit(&msg, span);
+        let panic = self.intrinsic(Intrinsic::Panic, vec![m], never, span);
+        let els = self.present_or(h, core, panic, span);
+        let kind = H::If {
+            cond: Box::new(cond),
+            then: Box::new(then),
+            els: Box::new(els),
+        };
+        let checked = self.mk(kind, core, span);
+        if lets.is_empty() {
+            return Ok(checked);
+        }
+        let block = hir::Block {
+            stmts: lets,
+            value: Some(Box::new(checked)),
+            span,
+        };
+        Ok(self.mk(H::Block(block), core, span))
+    }
+
+    /// `match (h) { v => v, null => none }` for an `h` of type `core | null`.
+    fn present_or(&mut self, h: hir::Expr, core: TyId, none: hir::Expr, span: Span) -> hir::Expr {
+        let consume = outer_mode(&h) == Some(UseMode::Move);
+        let mode = match (self.cx.is_copy(core), consume) {
+            (true, _) => UseMode::Copy,
+            (false, true) => UseMode::Move,
+            (false, false) => UseMode::Borrow,
+        };
+        let b = self.new_local("<asserted>", core, false, span, LocalKind::Bind);
+        let value = self.mk(H::Local(b, mode), core, span);
+        let pat = |kind, ty| hir::Pat { kind, ty, span };
+        let bind = pat(P::Binding(b, mode), core);
+        let arms = vec![
+            hir::Arm {
+                pat: pat(P::Some(Box::new(bind)), h.ty),
+                guard: None,
+                body: value,
+            },
+            hir::Arm {
+                pat: pat(P::None, h.ty),
+                guard: None,
+                body: none,
+            },
+        ];
+        let kind = H::Match {
+            scrutinee: Box::new(h),
+            arms,
+        };
+        self.mk(kind, core, span)
     }
 }
