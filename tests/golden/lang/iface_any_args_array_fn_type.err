@@ -1,0 +1,4 @@
+iface_any_args_array_fn_type.vlt:42:22: error: mismatched types
+a function type taking or giving `Tree<f64>[]` as `Tree<any>[]`: converting an array of interface values there is not supported yet (#1185)
+iface_any_args_array_fn_type.vlt:50:24: error: mismatched types
+a function type taking or giving `Forest<f64>[]` as `Forest<any>[]`

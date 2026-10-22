@@ -179,13 +179,15 @@ fn dynamic_class(cx: &Ctx, t: TyId) -> bool {
 }
 
 /// How [`adaptable`] decides: the pairs being decided (an interface whose methods return it),
-/// the reason a supported shape is refused (for the diagnostic), and whether the source
-/// arguments are a generic adapter's type parameters (`iface_adapt_dynamic`).
+/// the reason a supported shape is refused (for the diagnostic), whether the source
+/// arguments are a generic adapter's type parameters (`iface_adapt_dynamic`), and whether the
+/// position is a parameter or result of a function type (`in_fn`).
 #[derive(Default)]
 pub(super) struct Mode {
     pub seen: Vec<AdapterKey>,
     pub why: Option<String>,
     pub generic: bool,
+    pub in_fn: bool,
 }
 
 impl Mode {
@@ -243,7 +245,9 @@ pub(super) fn adaptable(
     fa.push(unknown);
     ta.push(unknown);
     let own = from.len() as u32;
-    sigs.iter().all(|s| {
+    // The slots of this interface are positions of its own, not of a function type around it.
+    let in_fn = std::mem::replace(&mut m.in_fn, false);
+    let ok = sigs.iter().all(|s| {
         if unresolved_slot(cx, s, own, &fa, &ta) {
             return true;
         }
@@ -253,7 +257,9 @@ pub(super) fn adaptable(
                 let (pf, pt) = (cx.subst(p.ty, &fa), cx.subst(p.ty, &ta));
                 value_ok(cx, pt, pf, true, m)
             })
-    })
+    });
+    m.in_fn = in_fn;
+    ok
 }
 
 /// Is slot `s` one whose type could not be resolved, in the interface (a generic function type)
@@ -344,23 +350,36 @@ pub(super) fn value_ok(cx: &mut Ctx, from: TyId, to: TyId, param: bool, m: &mut 
                 rest: rest_b,
             },
         ) => {
-            p.len() == q.len()
+            let in_fn = std::mem::replace(&mut m.in_fn, true);
+            let ok = p.len() == q.len()
                 && rest_a == rest_b
                 && t == u
                 && q.iter()
                     .zip(&p)
                     .all(|(x, y)| value_ok(cx, *x, *y, false, m))
-                && value_ok(cx, r, s, false, m)
+                && value_ok(cx, r, s, false, m);
+            m.in_fn = in_fn;
+            ok
         }
         (TyKind::Dyn(i, xs), TyKind::Dyn(j, ys)) if i == j => adaptable(cx, i, &xs, &ys, m),
         // An array of interface values read through the adapter (a field `kids: Tree<T>[]`): a
         // new array of the elements, each adapted (`adapt_array`). Nothing is written back, so
-        // where a value goes the other way (a parameter, a setter) it is refused.
+        // where a value goes the other way (a parameter, a setter) it is refused, and so is one
+        // passed to or returned by a function value (`withKids(f: (k: Tree<T>[]) => void)`,
+        // `kidsFn: () => Tree<T>[]`), whose uses of the new array are not checked
+        // (`iface_field`).
         (TyKind::Array(a), TyKind::Array(b)) if !param => {
             let same = match (cx.ty.kind(a), cx.ty.kind(b)) {
                 (TyKind::Dyn(i, _), TyKind::Dyn(j, _)) => i == j,
                 _ => false,
             };
+            if same && m.in_fn {
+                let (f, t) = (cx.display(from), cx.display(to));
+                m.why = Some(format!(
+                    "a function type taking or giving `{f}` as `{t}`: converting an array of interface values there is not supported yet (#1185)"
+                ));
+                return false;
+            }
             same && value_ok(cx, a, b, false, m)
         }
         _ => false,

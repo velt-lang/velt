@@ -306,8 +306,9 @@ impl FnCx<'_, '_> {
     /// The checked source of a `for...of` or `for await`: a record is an error (it is not
     /// iterable in JS either; the message names `Object.keys`/`Object.entries`).
     pub(super) fn for_of_source(&mut self, iter: &ast::Expr) -> hir::Expr {
+        // Not an in-place use of an adapted array (`iface_field`): Node also visits an element
+        // the body adds to the original.
         let it = self.expr(iter, None, Want::Borrow);
-        self.array_used_in_place(&it);
         // `for (const x of s)` over a `shared<T>`: the value inside (#36), whatever it iterates
         // (an array, a string, a `Map`, a `Set`, a typed array).
         let it = match *self.cx.ty.kind(it.ty) {

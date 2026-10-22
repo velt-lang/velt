@@ -2698,15 +2698,21 @@ A field holding an array of the interface's own values (`kids: Tree<T>[]`), read
 `Tree` to other type arguments this way, the field read through a `Tree<any>` (or through a
 `Tree<T>` in generic code, which may be one) may only be used in place without changing it:
 an element (read, or written through: `t.kids[0].value = 7` changes the original's element),
-`.length`, `for…of` over its elements (those the field holds when the loop starts; Node also
-visits an element the loop body adds to the original), or a method that leaves the array
-unchanged (`map`, `filter`, `slice`, `indexOf`, `join`, …), also behind `!` or `?.`
-(`t.kids?.length`), and a condition or `null` test of it. The same holds for a method's result
-of such a type (`getKids(): Tree<T>[]`). Anything else is a compile error naming #1185, as
-Node's result would differ: changing the array (`push`, `splice`, `sort`, an element or
-`length` assigned, the field assigned), keeping it (`const k = t.kids`, destructuring,
-spreading), passing it on, or comparing it (`t.kids === t.kids` is `false` on a new array).
-Change or keep the array through the value's own type instead.
+`.length`, or a method that leaves the array unchanged (`map`, `filter`, `slice`, `indexOf`,
+`join`, …; a callback that replaces or removes an element of the original during the call may
+still be given the element the field held when the method started), also behind `!` or `?.` (`t.kids?.length`,
+`t.kids?.[0]`) or after a test of an optional field (`if (t.more) t.more[0]`), and a
+condition or `null` test of it (`if (!t.kids)`, `t.kids && t.kids.length`). The same holds for a
+method's result of such a type (`getKids(): Tree<T>[]`). Anything else is a compile error naming
+#1185, as Node's result would differ: changing the array (`push`, `splice`, `sort`, an element
+or `length` assigned, the field assigned), keeping it (`const k = t.kids`, destructuring,
+spreading), passing it on, comparing it (`t.kids === t.kids` is `false` on a new array), or
+iterating it with `for…of`, `entries()`, `keys()` or `values()` (Node also visits an element the
+loop body adds to the original; an index loop reading `t.kids.length` and `t.kids[i]` each step
+sees them). Change or keep the array through
+the value's own type instead. An interface whose function types take or give such an array
+(`withKids(f: (k: Tree<T>[]) => void)`, `kidsFn: () => Tree<T>[]`) does not convert to other
+type arguments: a compile error naming #1185.
 
 ```ts
 interface Tree<T> {

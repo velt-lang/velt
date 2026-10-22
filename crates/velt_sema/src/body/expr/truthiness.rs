@@ -344,6 +344,7 @@ impl FnCx<'_, '_> {
             self.report_condition(&inner);
             return self.error_expr(span);
         }
+        self.array_used_in_place(&inner);
         let inner = self.truthy(inner);
         let kind = H::Unary {
             op: hir::UnOp::Not,
@@ -375,6 +376,7 @@ impl FnCx<'_, '_> {
             return self.error_expr(span);
         }
         if exp == Some(b) {
+            self.array_used_in_place(&l);
             let l = self.truthy(l);
             let r = self.scoped(&facts, |s| s.cond(rhs));
             return self.logic_op(is_and, l, r, span);
@@ -384,6 +386,8 @@ impl FnCx<'_, '_> {
         if let Test::Option(p) = test {
             if self.test_of(p) == Test::Object {
                 return if is_and {
+                    // `a && b` is `b` or `a`'s nothing: `a` is only tested.
+                    self.array_used_in_place(&l);
                     self.and_value(l, rhs, &facts, span)
                 } else {
                     self.nullish_checked(l, rhs, exp, span)
@@ -410,7 +414,8 @@ impl FnCx<'_, '_> {
         }
         let r = self.scoped(&facts, |s| s.expr(rhs, rhint, Want::Move));
         if test == Test::Object {
-            // `a && b` on an object is `b`, after `a`.
+            // `a && b` on an object is `b`, after `a`, which is only tested.
+            self.array_used_in_place(&l);
             return self.after_effects(l, r);
         }
         let bool_left = test == Test::Bool || matches!(test, Test::Option(p) if p == b);

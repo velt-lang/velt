@@ -31,10 +31,11 @@ const u: unknown = t;
 const a = u as Tree<any>;
 console.log(a.value, a.label(), a.kids[0].label(), a.kids[0].kids[0].label());
 let sum = 0;
-for (const k of a.kids) {
+for (let i = 0; i < a.kids.length; i++) {
+  const k = a.kids[i];
   sum += k.value as number;
-  for (const g of k.kids) {
-    sum += g.value as number;
+  for (let j = 0; j < k.kids.length; j++) {
+    sum += k.kids[j].value as number;
   }
 }
 console.log(sum);

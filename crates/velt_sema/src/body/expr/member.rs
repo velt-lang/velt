@@ -350,7 +350,12 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         if optional {
-            return self.optional_chain(object, span, |s, v| s.index_of(v, index, want, span));
+            return self.optional_chain(object, span, |s, v| {
+                if want != Want::BorrowMut {
+                    s.array_used_in_place(&v);
+                }
+                s.index_of(v, index, want, span)
+            });
         }
         if let Some(h) = self.process_env_index(object, index, span) {
             return h;

@@ -6,8 +6,12 @@
 //! (`adapt_array`): a change made through that array, an alias of it or its identity would not
 //! be Node's. Once every body is checked and every adapter made, each such read of a slot an
 //! adapter reads that way is an error unless the array is used in place without changing it
-//! ([`FnCx::array_used_in_place`]: an element, `.length`, `for…of` over its elements, a method
-//! that does not change it, behind `!` or `?.`, a condition or a `null` test).
+//! ([`FnCx::array_used_in_place`]: an element, `.length`, a method that does not change it,
+//! behind `!` or `?.`, a condition or a `null` test). `for…of` is not one: Node visits an
+//! element the loop body adds to the original, which the new array lacks.
+//!
+//! A function type taking or giving such an array (`withKids(f: (k: Tree<T>[]) => void)`)
+//! refuses the adapter instead (`iface_adapt::value_ok`): its uses are not reads checked here.
 
 use rustc_hash::FxHashMap;
 use velt_common::{Diagnostic, Span};
@@ -129,19 +133,24 @@ impl FnCx<'_, '_> {
         reads.insert(span, read);
     }
 
-    /// `h` is used in place without being changed (an element read, `.length`, `for…of` over
-    /// its elements, a method that does not change it): allowed when it is a read of an
+    /// `h` is used in place without being changed (an element read, `.length`, a method that
+    /// does not change it, a truthiness or `null` test): allowed when it is a read of an
     /// adapted array field.
-    pub(crate) fn array_used_in_place(&mut self, h: &hir::Expr) {
+    pub(crate) fn array_used_in_place(&mut self, mut h: &hir::Expr) {
+        // An optional field narrowed to present (`if (t.more) t.more[0]`) is its payload.
+        while let H::UnwrapSome(base, _) = &h.kind {
+            h = base;
+        }
         let span = match h.kind {
             H::Call {
                 callee: Callee::Dyn { .. } | Callee::ParamMethod { .. },
                 ..
             } => h.span,
-            // The binding an optional chain makes of its object (`t.kids?.length`), declared
-            // at the object.
+            // The binding an optional chain makes of its object (`t.kids?.length`, and
+            // `<chain@…>` for a chain continued past the link, `t.kids?.[0].value`), declared at
+            // the object.
             H::Local(l, _) => match self.f.locals.get(l.0 as usize) {
-                Some(d) if d.name == "<chain>" => d.span,
+                Some(d) if d.name.starts_with("<chain") => d.span,
                 _ => return,
             },
             // `t.kids!.length` on an optional field.
@@ -190,11 +199,12 @@ impl FnCx<'_, '_> {
     }
 }
 
-/// The methods of `T[]` that leave the array unchanged.
-const IN_PLACE_METHODS: [&str; 29] = [
+/// The methods of `T[]` that leave the array unchanged and keep nothing of it. Not `entries`,
+/// `keys` or `values`: their iterator, like `for…of`, visits an element added to the original
+/// while it runs.
+const IN_PLACE_METHODS: [&str; 26] = [
     "at",
     "concat",
-    "entries",
     "every",
     "filter",
     "find",
@@ -207,7 +217,6 @@ const IN_PLACE_METHODS: [&str; 29] = [
     "includes",
     "indexOf",
     "join",
-    "keys",
     "lastIndexOf",
     "map",
     "reduce",
@@ -219,7 +228,6 @@ const IN_PLACE_METHODS: [&str; 29] = [
     "toSorted",
     "toSpliced",
     "toString",
-    "values",
     "with",
 ];
 
@@ -252,7 +260,7 @@ impl Ctx<'_> {
                     span,
                 )
                 .with_label(at, format!("a value implementing `{iname}` at other type arguments is converted here"))
-                .with_note(format!("through `{t}`, use the array only in place: an element, `.length`, `for…of` over its elements, or a method that does not change it (`map`, `slice`, `indexOf`, …)"))
+                .with_note(format!("through `{t}`, use the array only in place: an element, `.length`, or a method that does not change it (`map`, `slice`, `indexOf`, …); in place of `for…of`, an index loop reading `.length` and the element each step"))
                 .with_note("change, keep or compare it through the value's own type instead"),
             );
         }
