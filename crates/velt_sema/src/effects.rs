@@ -44,7 +44,14 @@ fn runs_user_code(i: hir::Intrinsic) -> bool {
     use hir::Intrinsic as I;
     matches!(
         i,
-        I::AnyGet | I::AnyIndex | I::AnyCall | I::AnyApply | I::AnySet | I::AnySetIndex | I::AnyHas
+        I::AnyGet
+            | I::AnyIndex
+            | I::AnyCall
+            | I::AnyApply
+            | I::AnySet
+            | I::AnySetIndex
+            | I::AnyHas
+            | I::AnyDelete
     )
 }
 

@@ -65,6 +65,8 @@ pub mod panic;
 pub mod platform;
 pub mod prng;
 pub mod process;
+#[path = "../../velt_rt/src/proxy_array.rs"]
+pub mod proxy_array;
 #[path = "../../velt_rt/src/result.rs"]
 pub mod result;
 pub mod server_request;

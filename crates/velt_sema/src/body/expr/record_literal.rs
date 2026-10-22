@@ -373,7 +373,7 @@ impl FnCx<'_, '_> {
         };
         let call = synth(
             ast::ExprKind::Call {
-                callee: Box::new(ident("__spreadAny")),
+                callee: Box::new(ident(self.proxy_op("__spreadAny"))),
                 type_args: vec![],
                 args: vec![ident(&name), e.clone()],
                 optional: false,

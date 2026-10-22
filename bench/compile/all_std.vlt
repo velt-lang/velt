@@ -1,5 +1,6 @@
 // Compile-time benchmark input: imports every std module (so sema checks all of std and the
-// prelude), with a small main that touches each one.
+// prelude), with a small main that touches each one, and names the globals loaded on demand
+// whose modules nothing imports (`Proxy` and `Reflect`, std/prelude/global/proxy.vlt).
 import { existsSync } from "velt:fs";
 import { ServeOptions } from "velt:http";
 import { ioError } from "velt:io";
@@ -18,4 +19,6 @@ function main() {
   const r = new Response("ok");
   r.headers.set("x-a", "1");
   console.log(`${opts.port} ${r.headers.get("x-a")}`);
+  const px: any = new Proxy({ a: 1 }, {});
+  console.log(Reflect.has(px, "a"));
 }

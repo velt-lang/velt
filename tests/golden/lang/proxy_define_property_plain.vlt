@@ -1,0 +1,7 @@
+// `Reflect.defineProperty` of a new property of a plain value: an attribute left out is
+// `false`, which Velt's values cannot have yet (#823).
+function main(): void {
+  const o: Record<string, number> = { a: 1 };
+  console.log(Reflect.defineProperty(o, "a", { value: 2 }), o);
+  console.log(Reflect.defineProperty(o, "z", { value: 5 }));
+}

@@ -114,6 +114,7 @@ pub(crate) enum Glue {
     AnySet,
     AnySetIndex,
     AnyHas,
+    AnyDelete,
     AnyKeys,
     AnyJson,
     ProxyGet,
@@ -178,6 +179,7 @@ impl Glue {
             Glue::AnySet => "anyset",
             Glue::AnySetIndex => "anysetindex",
             Glue::AnyHas => "anyhas",
+            Glue::AnyDelete => "anydelete",
             Glue::AnyKeys => "anykeys",
             Glue::AnyJson => "anyjson",
             Glue::ProxyGet => "proxyget",
@@ -223,7 +225,7 @@ impl Glue {
             Glue::AnyApply => (vec![Ptr, Ptr, U64, Ptr], U8),
             Glue::AnySet => (vec![Ptr, Ptr, Ptr], U8),
             Glue::AnySetIndex => (vec![Ptr, F64, Ptr], U8),
-            Glue::AnyHas | Glue::AnyKeys | Glue::AnyJson => (vec![Ptr, Ptr], U8),
+            Glue::AnyHas | Glue::AnyDelete | Glue::AnyKeys | Glue::AnyJson => (vec![Ptr, Ptr], U8),
             Glue::ProxyGet | Glue::ProxySet => (vec![Ptr, Ptr, Ptr], Unit),
         }
     }
@@ -280,6 +282,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             }
             Glue::AnySet | Glue::AnySetIndex => lw.any_set_glue(g, &args, ty),
             Glue::AnyHas => lw.any_has_glue(args[0], args[1], ty),
+            Glue::AnyDelete => lw.any_delete_glue(args[0], args[1], ty),
             Glue::AnyKeys => lw.any_keys_glue(args[0], args[1], ty),
             Glue::AnyJson => lw.any_json_glue(args[0], args[1], ty),
             Glue::ProxyGet => lw.proxy_get_glue(args[0], args[1], args[2], ty),

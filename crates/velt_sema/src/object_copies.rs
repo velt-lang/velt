@@ -100,6 +100,9 @@ pub(crate) struct Copies {
     pub proxies: bool,
     /// Where the value of each `Seen::Dynamic` conversion may come from.
     pub dyn_sources: Vec<Vec<Store>>,
+    /// Whether the program's own code has a `new Proxy(...)` (`FnCx::program_makes_proxies`),
+    /// once asked.
+    pub makes_proxies: Option<bool>,
 }
 
 impl Copies {

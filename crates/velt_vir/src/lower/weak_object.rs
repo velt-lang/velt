@@ -18,8 +18,14 @@
 //! raw → proxy cache) frees both once nothing else refers to either. A `WeakRef<object>` keeps
 //! the target's descriptor with its slot (`velt_rt_weakref_new_with`), from which `deref()`
 //! rebuilds the `object`. Programs that never make `object` weak compile as before.
+//!
+//! An interface value as a key (`WeakMap<Instance, V>`, sigx's component instances) is keyed the
+//! same way: its interface table keeps the `any` table of the concrete type in its name slot
+//! (`Cx::any_table_entry`, as for a conversion to `any`), whose weak word says what the data
+//! pointer is. A `WeakRef` of an interface keeps the interface table, from which `deref()`
+//! rebuilds the interface value.
 
-use velt_sema::hir::{self, Nothing, TyId, TyKind};
+use velt_sema::hir::{self, DefId, Nothing, TyId, TyKind};
 
 use super::glue::Glue;
 use super::operand::proj;
@@ -70,33 +76,77 @@ impl Cx<'_> {
     }
 }
 
-/// A dynamic weak key, evaluated: its data pointer and its weak word.
+/// A dynamic weak key, evaluated: its data pointer, the `any` table of what it holds and its
+/// weak word; for an interface value, `table` is its interface table.
 pub(super) struct DynKey {
     pub(super) data: Operand,
     pub(super) desc: Operand,
     pub(super) word: Operand,
+    pub(super) table: Option<Operand>,
 }
 
 impl FnLower<'_, '_> {
-    /// Is `kt` (substituted) `object`, a weak key that is a dynamic value?
+    /// Is `kt` (substituted) `object` or an interface, a weak key that is a dynamic value
+    /// (`{ data, table }`)?
     pub(super) fn dyn_weak_key(&self, kt: TyId) -> bool {
-        self.cx.is_dynamic(kt) && matches!(self.cx.kind(kt), TyKind::Dyn(..))
+        matches!(self.cx.kind(kt), TyKind::Dyn(..))
     }
 
-    /// The `object` key (borrowed): `None` in a pass whose `any` tables lack the weak slot
-    /// (the next pass has it).
+    /// The interface of the interface type `kt` (not a dynamic type).
+    fn weak_iface(&self, kt: TyId) -> Option<DefId> {
+        match self.cx.kind(kt) {
+            TyKind::Dyn(d, _) if !self.cx.is_dynamic(kt) => Some(d),
+            _ => None,
+        }
+    }
+
+    /// The `object` or interface key (borrowed): `None` in a pass whose tables lack the weak
+    /// slot (the next pass has it).
     pub(super) fn dyn_key(&mut self, key: &hir::Expr, kt: TyId) -> Option<DynKey> {
         self.cx.note_weak_object();
         self.cx.note_identity(kt);
         self.cx.note_weak_seed(kt);
+        let iface = self.weak_iface(kt);
+        if let Some(d) = iface {
+            // Its tables keep the `any` tables (as for a conversion to `object`).
+            self.cx.note_dyn_to_any(d);
+            self.cx.note_to_object(None);
+        }
         let k = self.expr(key);
-        if !self.cx.weak_object() {
+        let tables = iface.is_none_or(|d| self.cx.boxing.dyn_to_any.contains(&d));
+        if !self.cx.weak_object() || !tables {
             self.cx.facts.unmet = true;
             return None;
         }
         let (data, desc) = self.any_parts(k, kt);
+        let (desc, table) = match iface {
+            Some(_) => (self.iface_any_table(desc.clone()), Some(desc)),
+            None => (desc, None),
+        };
         let word = self.dispatch(desc.clone(), SLOT_WEAK);
-        Some(DynKey { data, desc, word })
+        Some(DynKey {
+            data,
+            desc,
+            word,
+            table,
+        })
+    }
+
+    /// The `any` table an interface table keeps in its name slot (every table of an interface
+    /// in `Boxing::dyn_to_any` has one).
+    fn iface_any_table(&mut self, table: Operand) -> Operand {
+        let at = self.dispatch(table, super::glue::SLOT_NAME);
+        let has = self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(BinOp::Ne, at.clone(), cint(0, Ty::Ptr)),
+        );
+        let (bad, good) = (self.new_block(), self.new_block());
+        self.branch(has, good, bad);
+        self.switch_to(bad);
+        self.panic_msg("ICE: an interface table without the `any` table of its type");
+        self.terminate(Terminator::Unreachable);
+        self.switch_to(good);
+        at
     }
 
     /// The address a probe (`get`, `has`, `delete`) looks up: the data pointer, or null for a
@@ -160,13 +210,15 @@ impl FnLower<'_, '_> {
         Operand::Copy(Place::local(out))
     }
 
-    /// `new WeakRef(target)` of an `object`: the slot keeps the descriptor.
+    /// `new WeakRef(target)` of an `object` or interface value: the slot keeps the descriptor
+    /// (the interface table).
     pub(super) fn weakref_new_dyn(&mut self, target: &hir::Expr, kt: TyId) -> Operand {
         let Some(k) = self.dyn_key(target, kt) else {
             return cint(0, Ty::U32);
         };
         self.dyn_key_check(&k, WeakUse::Ref);
-        let desc = self.cast_to(k.desc.clone(), Ty::Ptr, Ty::U64);
+        let kept = k.table.clone().unwrap_or_else(|| k.desc.clone());
+        let desc = self.cast_to(kept, Ty::Ptr, Ty::U64);
         let d = self.temp(Ty::U32);
         self.call_rt(
             Rt::WeakrefNewWith,
@@ -177,7 +229,8 @@ impl FnLower<'_, '_> {
     }
 
     /// `deref()` of a `WeakRef<object>` (`t`: `object` or `object | null`): the target with its
-    /// descriptor, or `undefined` once it was freed (as JavaScript's `deref()`).
+    /// descriptor, or `undefined` once it was freed (as JavaScript's `deref()`). An interface
+    /// target is rebuilt with its interface table.
     pub(super) fn weakref_deref_dyn(&mut self, r: Operand, t: TyId, obj: TyId) -> Operand {
         let ovt = self.cx.ty(obj);
         let out = Place::local(self.temp(ovt));
@@ -188,7 +241,7 @@ impl FnLower<'_, '_> {
             Rvalue::Binary(BinOp::Ne, Operand::Copy(Place::local(d)), cint(0, Ty::Ptr)),
         );
         let (yes, no, done) = (self.new_block(), self.new_block(), self.new_block());
-        self.branch(live, yes, no);
+        self.branch(live.clone(), yes, no);
         self.switch_to(yes);
         let w = self.temp(Ty::U64);
         self.call_rt(Rt::WeakrefWord, vec![r], Some(Place::local(w)));
@@ -200,24 +253,35 @@ impl FnLower<'_, '_> {
         self.assign(proj(&out, Proj::Field(1)), Rvalue::Use(desc));
         self.goto(done);
         self.switch_to(no);
-        self.any_nothing_into(Nothing::Undefined, &out);
+        // An option (`Inst | undefined`) is absent once the target is gone, with a payload of
+        // nothing to drop; an `object` holds JavaScript's `undefined`.
+        let option = t != obj && matches!(self.cx.ty(t), Ty::Agg(_));
+        if option {
+            let zero = self.zero_value(ovt);
+            self.assign(out.clone(), Rvalue::Use(zero));
+        } else {
+            self.any_nothing_into(Nothing::Undefined, &out);
+        }
         self.goto(done);
         self.switch_to(done);
         let v = Operand::Copy(out);
-        if t == obj {
+        if !option {
             return self.own_value(v, t);
         }
         // `build_agg` owns the option it builds.
-        match self.cx.ty(t) {
-            Ty::Agg(_) => self.build_agg(t, vec![Operand::Const(Const::Bool(true), Ty::Bool), v]),
-            _ => self.own_value(v, t),
-        }
+        self.build_agg(t, vec![live, v])
     }
 
     /// The trace glue's step into a dynamic value at `place`: visit its data pointer when its
-    /// weak word says it is a counted object.
-    pub(super) fn trace_dyn(&mut self, place: Place, tv: (crate::vir::Local, crate::vir::Local)) {
-        let desc = Operand::Copy(proj(&place, Proj::Field(1)));
+    /// weak word says it is a counted object. An interface value (`iface`) finds the word in
+    /// the `any` table its interface table keeps.
+    pub(super) fn trace_dyn(
+        &mut self,
+        place: Place,
+        tv: (crate::vir::Local, crate::vir::Local),
+        iface: bool,
+    ) {
+        let mut desc = Operand::Copy(proj(&place, Proj::Field(1)));
         let data = Operand::Copy(proj(&place, Proj::Field(0)));
         let done = self.new_block();
         let has_desc = self.rvalue_temp(
@@ -225,6 +289,14 @@ impl FnLower<'_, '_> {
             Rvalue::Binary(BinOp::Ne, desc.clone(), cint(0, Ty::Ptr)),
         );
         self.when(has_desc, done);
+        if iface {
+            desc = self.dispatch(desc, super::glue::SLOT_NAME);
+            let has = self.rvalue_temp(
+                Ty::Bool,
+                Rvalue::Binary(BinOp::Ne, desc.clone(), cint(0, Ty::Ptr)),
+            );
+            self.when(has, done);
+        }
         let word = self.dispatch(desc, SLOT_WEAK);
         let held = self.rvalue_temp(
             Ty::Bool,

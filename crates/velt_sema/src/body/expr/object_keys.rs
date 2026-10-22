@@ -163,6 +163,19 @@ impl FnCx<'_, '_> {
             if let Some(h) = self.any_values(&prop.name, arg, span) {
                 return Some(h);
             }
+        } else if reevaluable(arg) {
+            let call = super::setters::synth(
+                ast::ExprKind::Call {
+                    callee: Box::new(callee.clone()),
+                    type_args: vec![],
+                    args: args.to_vec(),
+                    optional: false,
+                },
+                span,
+            );
+            if let Some(h) = self.proxy_keys(call, arg) {
+                return Some(h);
+            }
         }
         let obj = self.expr(arg, None, Want::Borrow);
         let obj = self.read_shared(obj);
@@ -280,10 +293,10 @@ impl FnCx<'_, '_> {
             self.unknown_use_error(arg.span);
             return Some(self.error_expr(span));
         }
-        let f = match helper {
+        let f = self.proxy_op(match helper {
             "values" => "__anyValues",
             _ => "__anyEntries",
-        };
+        });
         let call = synth(
             ast::ExprKind::Call {
                 callee: Box::new(synth(
@@ -601,7 +614,7 @@ fn is_private_name(name: &str) -> bool {
 
 /// Can `e` be evaluated a second time to the same object without side effects (a name,
 /// `this`, or a property of one)?
-fn reevaluable(e: &ast::Expr) -> bool {
+pub(super) fn reevaluable(e: &ast::Expr) -> bool {
     match &e.kind {
         ast::ExprKind::Ident(_) | ast::ExprKind::This => true,
         ast::ExprKind::Paren(inner) => reevaluable(inner),

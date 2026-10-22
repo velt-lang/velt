@@ -1,0 +1,10 @@
+// `pop` on a proxy whose `deleteProperty` trap refuses: Node's TypeError (DeletePropertyOrThrow).
+const log: string[] = [];
+const p: any = new Proxy([1, 2, 3], {
+  deleteProperty(t: any, k: string | symbol): boolean {
+    log.push(`delete ${String(k)}`);
+    return false;
+  },
+});
+console.log(p.push(4));
+p.pop();

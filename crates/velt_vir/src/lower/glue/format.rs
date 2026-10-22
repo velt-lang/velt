@@ -225,6 +225,16 @@ impl FnLower<'_, '_> {
 
     pub(super) fn format_body(&mut self, buf: Operand, p: vir::Local, depth: Operand, ty: TyId) {
         let place = self.deref_param(p, ty);
+        if self.cx.is_array_method(ty) {
+            // An array method read through `Reflect.get`: the function it stands for, as Node
+            // prints it (`[Function: push]`).
+            self.push_text(&buf, "[Function: ");
+            let name = self.field_place(&place, ty, 0);
+            let a = self.addr(name);
+            self.call_rt(Rt::StrbufPushStr, vec![buf.clone(), a], None);
+            self.push_text(&buf, "]");
+            return self.terminate(Terminator::Return(unit()));
+        }
         let proxy = self.cx.proxiable(ty).then(|| {
             let done = self.new_block();
             self.proxy_format_split(&buf, &place, &depth, done);

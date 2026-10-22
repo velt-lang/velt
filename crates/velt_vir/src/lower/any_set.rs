@@ -17,7 +17,7 @@
 //! What each concrete type takes: fields of class instances and object types (not `readonly`
 //! ones, nor optional fields that keep a present `null` apart), setters, keys of a
 //! `Record<string, V>` (added when missing, as in Node), and elements of an array inside its
-//! length.
+//! length or just past it (the array grows by one), and an array's `length` made shorter.
 
 use velt_sema::hir::{DynMemberKind, TyId, TyKind};
 
@@ -66,7 +66,7 @@ impl FnLower<'_, '_> {
 
     /// Store the owned value `val` of type `t` at `p`, dropping the value it replaces (after
     /// the store, so whatever the drop runs sees the new value).
-    fn any_replace(&mut self, p: Place, val: Operand, t: TyId) {
+    pub(super) fn any_replace(&mut self, p: Place, val: Operand, t: TyId) {
         let vt = self.cx.ty(t);
         let old = Place::local(self.copy_to_temp(Operand::Copy(p.clone()), vt));
         self.store(p, val);
@@ -79,6 +79,12 @@ impl FnLower<'_, '_> {
         }
         if let Some((k, val)) = self.prelude_record(ty) {
             return self.any_set_record(data, key, v, ty, (k, val));
+        }
+        if let TyKind::Array(elem) = self.cx.kind(ty) {
+            let next = self.on_key(key, "length");
+            self.any_set_array_length(data, v, ty, elem);
+            self.switch_to(next);
+            return self.any_set_refuse(v, ST_UNSUPPORTED);
         }
         let Some((d, _)) = self.plain_adt(ty) else {
             return self.any_set_refuse(v, ST_UNSUPPORTED);
@@ -221,6 +227,34 @@ impl FnLower<'_, '_> {
         self.ret_status(ST_OK);
     }
 
+    /// `a.length = v` on an array: a shorter length drops the elements past it, as in Node; an
+    /// invalid length is Node's `RangeError`; a longer one (holes) is not supported yet.
+    fn any_set_array_length(&mut self, data: vir::Local, v: vir::Local, ty: TyId, elem: TyId) {
+        let f64_ = self.cx.intern(TyKind::Float(velt_sema::hir::FloatTy::F64));
+        let n = self.any_set_value(v, f64_);
+        let n = self.rvalue_temp(Ty::F64, Rvalue::Use(n));
+        let vp = self.any_value_place(data, ty);
+        let arr = self.content(&vp, ty);
+        let idx = self.rvalue_temp(Ty::U64, Rvalue::Cast(n.clone(), Ty::U64));
+        let back = self.rvalue_temp(Ty::F64, Rvalue::Cast(idx.clone(), Ty::F64));
+        let whole = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, back, n));
+        let (ok, bad) = (self.new_block(), self.new_block());
+        self.branch(whole, ok, bad);
+        self.switch_to(bad);
+        self.panic_msg("RangeError: Invalid array length");
+        self.terminate(Terminator::Unreachable);
+        self.switch_to(ok);
+        let len = Operand::Copy(proj(&arr, Proj::Field(1)));
+        let fits = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Le, idx.clone(), len));
+        let (cut, grow) = (self.new_block(), self.new_block());
+        self.branch(fits, cut, grow);
+        self.switch_to(cut);
+        self.truncate(&arr, elem, idx);
+        self.ret_status(ST_OK);
+        self.switch_to(grow);
+        self.ret_status(ST_UNSUPPORTED);
+    }
+
     fn any_set_index_body(&mut self, data: vir::Local, i: vir::Local, v: vir::Local, ty: TyId) {
         if self.is_proxy(ty) {
             return self.proxy_set_body(data, ProxyKey::Num(i), v, ty);
@@ -244,19 +278,33 @@ impl FnLower<'_, '_> {
         let back = self.rvalue_temp(Ty::F64, Rvalue::Cast(idx.clone(), Ty::F64));
         let whole = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, back, iv));
         let len = Operand::Copy(proj(&arr, Proj::Field(1)));
+        let len2 = len.clone();
         let inside = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Lt, idx.clone(), len));
         let (w, yes, no) = (self.new_block(), self.new_block(), self.new_block());
+        let w_end = self.new_block();
         self.branch(whole, w, no);
         self.switch_to(w);
-        self.branch(inside, yes, no);
+        self.branch(inside, yes, w_end);
         self.switch_to(yes);
         let val = self.any_set_value(v, elem);
-        let ep = self.elem_place(&arr, idx, elem);
+        let ep = self.elem_place(&arr, idx.clone(), elem);
         self.any_replace(ep, val, elem);
+        self.ret_status(ST_OK);
+        // At the end: the array grows by one, as in Node (`Array.prototype.push` through a
+        // proxy writes there).
+        self.switch_to(w_end);
+        let at_end = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, idx, len2));
+        let (push, no2) = (self.new_block(), self.new_block());
+        self.branch(at_end, push, no2);
+        self.switch_to(push);
+        let val = self.any_set_value(v, elem);
+        self.push_value(&arr, elem, val);
         self.ret_status(ST_OK);
         // Past the end (Node grows the array, with holes) or not an index (Node adds a
         // property): later.
         self.switch_to(no);
+        self.any_set_refuse(v, ST_UNSUPPORTED);
+        self.switch_to(no2);
         self.any_set_refuse(v, ST_UNSUPPORTED);
     }
 }
@@ -266,5 +314,71 @@ impl super::Cx<'_> {
     /// types (which sema converts member by member) and interface values are not reached yet.
     pub(super) fn any_unboxable(&self, t: TyId) -> bool {
         !matches!(self.types.kind(t), TyKind::Unit) && self.any_boxable(t)
+    }
+}
+
+impl FnLower<'_, '_> {
+    /// The value of the union type `ty` (`string | symbol`, boxable member by member,
+    /// `Cx::any_boxable`) the `any` at `p` (owned, consumed here) holds: the member whose type
+    /// the value has, else a `TypeError` naming the union.
+    pub(super) fn any_unbox_union(&mut self, p: &Place, from: TyId, ty: TyId) -> Operand {
+        let vt = self.cx.ty(ty);
+        let out = Place::local(self.temp(vt));
+        let desc = Operand::Copy(proj(p, Proj::Field(1)));
+        let done = self.new_block();
+        let n = match self.cx.kind(ty) {
+            TyKind::Adt(d, _) => self.cx.enum_def(d).variants.len() as u32,
+            _ => 0,
+        };
+        for v in 0..n {
+            let [pt] = self.cx.variant_tys(ty, v)[..] else {
+                continue;
+            };
+            let ok = match self.cx.kind(pt) {
+                TyKind::Adt(class, args) if self.cx.is_class(pt) && args.is_empty() => {
+                    let tag = self.any_tag_of(desc.clone());
+                    let obj = super::cint(super::any::TAG_OBJECT as i128, Ty::U64);
+                    let is_obj = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, tag, obj));
+                    let r = Place::local(self.temp(Ty::Bool));
+                    let (test, no, join) = (self.new_block(), self.new_block(), self.new_block());
+                    self.branch(is_obj, test, no);
+                    self.switch_to(test);
+                    let t = self.instance_test(p, from, class);
+                    self.assign(r.clone(), Rvalue::Use(t));
+                    self.goto(join);
+                    self.switch_to(no);
+                    self.assign(
+                        r.clone(),
+                        Rvalue::Use(Operand::Const(vir::Const::Bool(false), Ty::Bool)),
+                    );
+                    self.goto(join);
+                    self.switch_to(join);
+                    Operand::Copy(r)
+                }
+                _ => {
+                    let imp = self.cx.hir.any_impl.unwrap_or(0);
+                    let want = self.vtable_addr(super::glue::VtableKey::Impl(imp, pt));
+                    self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, desc.clone(), want))
+                }
+            };
+            let (yes, next) = (self.new_block(), self.new_block());
+            self.branch(ok, yes, next);
+            self.switch_to(yes);
+            let val = self.any_unbox(p, from, pt);
+            let view = self.cx.view(ty, v);
+            let vp = proj(&out, Proj::Cast(view));
+            self.assign(
+                proj(&vp, Proj::Field(0)),
+                Rvalue::Use(super::cint(v as i128, Ty::U32)),
+            );
+            if !self.cx.is_unit(pt) {
+                self.assign(proj(&vp, Proj::Field(1)), Rvalue::Use(val));
+            }
+            self.goto(done);
+            self.switch_to(next);
+        }
+        self.any_type_error(desc, ty);
+        self.switch_to(done);
+        Operand::Copy(out)
     }
 }

@@ -1,0 +1,34 @@
+// check: no leaks
+// `JSON.stringify` of a proxy (#823, #924): Node reads `toJSON` through the `get` trap, then
+// the keys (`ownKeys`), whether each is enumerable (`getOwnPropertyDescriptor`) and their
+// values; an array target's `length` and elements.
+function main(): void {
+  const log: string[] = [];
+  const state: any = new Proxy({ a: 1, b: "two", nested: { c: true } } as any, {
+    get(t, k, r) {
+      log.push(`get ${String(k)}`);
+      return Reflect.get(t, k, r);
+    },
+    ownKeys(t) {
+      log.push("ownKeys");
+      return Reflect.ownKeys(t);
+    },
+    getOwnPropertyDescriptor(t, k) {
+      log.push(`describe ${String(k)}`);
+      if (k === "b") return { value: "two", enumerable: false, configurable: true };
+      return Reflect.getOwnPropertyDescriptor(t, k);
+    },
+  });
+  console.log(JSON.stringify(state));
+  console.log(log.join(", "));
+  log.length = 0;
+  const list: any = new Proxy([1, 2] as any, {
+    get(t, k, r) {
+      log.push(`get ${String(k)}`);
+      return Reflect.get(t, k, r);
+    },
+  });
+  const wrapped: any = { list: list };
+  console.log(JSON.stringify(wrapped));
+  console.log(log.join(", "));
+}
