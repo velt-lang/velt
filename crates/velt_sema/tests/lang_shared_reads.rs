@@ -164,11 +164,12 @@ fn a_method_returning_the_this_it_modifies_is_an_error() {
          function main() { const s = shared(new C()); s.again(); }",
     );
     assert!(r.contains("read out of a `shared` value"), "{r}");
-    // A function taking it owned gets its own copy, as `keep` in `shared_reads.vlt` does.
-    ok_src(
+    // So is a function that changes it though it takes it owned: it would change a copy.
+    let r = err_src(
         "function g(a: Float64Array): Float64Array { return a.fill(1); }
          function main() { const s = shared(new Float64Array(3)); g(s); }",
     );
+    assert!(r.contains("read out of a `shared` value"), "{r}");
     // Reading through such a method's sibling that leaves `this` alone is fine.
     ok_src(
         "class C { n: number = 0; bump(): C { this.n += 1; return this; } get(): number { return this.n; } }
@@ -254,4 +255,284 @@ fn views_of_a_shared_typed_array_are_errors() {
         assert!(r.contains("would share its buffer"), "{src}: {r}");
     }
     ok_src("function main() { const u = shared(new Uint8Array(3)); const c = u.slice(0, 2); c[0] = 1; console.log(c[0], u[0]); }");
+}
+
+#[test]
+fn a_function_changing_map_entries_it_loops_over_is_an_error() {
+    // A map loop's bindings are not bound into the map, so this is the loop's own evidence
+    // (`Ctx::loop_roots`) and not the parameter's mode.
+    let defs = "class Item { v: number = 1; tags: string[] = []; }
+        class Store { m: Map<string, Item> = new Map<string, Item>();
+          walk(): number { let t = 0; for (const v of this.m.values()) { bump(v); t += v.v; } return t; } }
+        function bump(i: Item) { i.v += 1000; }
+        function walk(st: Store): number { let t = 0; for (const [k, v] of st.m) { bump(v); t += v.v; } return t; }
+        function tag(st: Store) { for (const [k, v] of st.m) { v.tags.push(\"x\"); } }
+        function sum(st: Store): number { let t = 0; for (const [k, v] of st.m) { t += v.v; } return t; }";
+    for call in ["walk(s)", "s.walk()", "tag(s)"] {
+        let r = err_src(&format!(
+            "{defs} function main() {{ const s = shared(new Store()); console.log({call}); }}"
+        ));
+        assert!(r.contains("read out of a `shared` value"), "{call}: {r}");
+    }
+    ok_src(&format!(
+        "{defs} function main() {{ const s = shared(new Store()); console.log(sum(s)); }}"
+    ));
+}
+
+#[test]
+fn json_of_a_shared_mutex_is_an_error() {
+    // Its value is read only under the lock, which writing it as JSON doesn't take.
+    let r = err_src(
+        "function main() { const m = shared(new Mutex<number[]>([1])); console.log(JSON.stringify(m)); }",
+    );
+    assert!(r.contains("has no JSON form"), "{r}");
+}
+
+#[test]
+fn changes_through_loops_aliases_closures_and_owned_params_are_errors() {
+    // Each would change a copy of a part of the shared value, where JavaScript changes the
+    // value itself.
+    let defs = "class Item { v: number = 3; tags: string[] = []; }
+        class Holder { st: Store = new Store(); }
+        class Store { m: Map<string, Item> = new Map<string, Item>();
+          mm: Map<string, Map<string, Item>> = new Map<string, Map<string, Item>>(); xs: Item[] = [new Item()]; }
+        function bump(i: Item) { i.v += 1000; }
+        let KEEP: Item[] = [];
+        let KEEPS: Store[] = [];
+        function keep(i: Item) { i.v += 1000; KEEP.push(i); }
+        function adopt(st: Store, h: Holder) { st.m.get(\"k1\")!.v = 77; h.st = st; }
+        function f(st: Store) { st.xs[0].v = 500; KEEPS.push(st); }
+        async function walk(st: Store): Promise<void> { await Promise.resolve(0); for (const [k, v] of st.m) bump(v); }
+        function* gen(st: Store): Generator<number> { for (const [k, v] of st.m) { bump(v); yield 1; } }
+        function walkMap(m: Map<string, Item>) { for (const v of m.values()) bump(v); }";
+    for body in [
+        "for (const [k, v] of s.m) { const g = () => { v.v = 50; }; g(); }",
+        "for (const [k, inner] of s.mm) { for (const [k2, v] of inner) bump(v); }",
+        "const m = s.m; for (const [k, v] of m) bump(v);",
+        "for (const [k, v] of s.m) { const w = v; w.v = 3; }",
+        "keep(s.m.get(\"k1\")!);",
+        "adopt(s, new Holder());",
+        "f(s);",
+        "walk(s);",
+        "for (const x of gen(s)) {}",
+        "walkMap(s.m);",
+    ] {
+        let r = err_src(&format!(
+            "{defs} async function main() {{ const s = shared(new Store()); {body} }}"
+        ));
+        assert!(r.contains("read out of a `shared` value"), "{body}: {r}");
+    }
+    ok_src(&format!(
+        "{defs} function sum(st: Store): number {{ let t = 0; for (const [k, v] of st.m) t += v.v; return t; }}
+         function main() {{ const s = shared(new Store()); console.log(sum(s)); }}"
+    ));
+}
+
+#[test]
+fn a_mutex_cannot_become_any() {
+    // `any` is read (printed, compared, written as JSON) without the lock.
+    for to in ["any", "unknown", "object"] {
+        let r = err_src(&format!(
+            "class C {{ xs: number[] = [1]; }} function main() {{ const m = shared(new Mutex<C>(new C())); const o: {to} = m; }}"
+        ));
+        assert!(r.contains("it holds a lock"), "{to}: {r}");
+    }
+    ok_src(
+        "class C { xs: number[] = [1]; } function main() { const m = shared(new Mutex<C>(new C())); const n: any = m.with((v) => v.xs.length); console.log(n); }",
+    );
+}
+
+#[test]
+fn values_derived_from_a_shared_read_cannot_be_changed() {
+    // Whatever way a part travels (an assignment, a rebinding, a nested closure, a conditional,
+    // an array literal, a method returning its own type, a constructor keeping it), a change
+    // to it is refused; copying out (`slice()`) is explicit.
+    let defs = "class Item { v: number = 3; }
+        class Node { kids: Node[] = []; n: number = 1; first(): Node { return this.kids[0]; } }
+        class H { i: Item; constructor(i: Item) { this.i = i; this.i.v = 99; } }
+        class Store { m: Map<string, Item> = new Map<string, Item>(); items: Item[] = [new Item()]; root: Node = new Node(); }
+        function bumpn(n: Node) { n.n += 100; }";
+    for body in [
+        "let w = new Item(); for (const [k, v] of s.m) { w = v; w.v = 50; }",
+        "let y = new Item(); y = s.items[0]; y.v = 50;",
+        "for (const [k, v] of s.m) { const g = () => { const h = () => { v.v = 7; }; h(); }; g(); }",
+        "for (const [k, v] of s.m) { const w = k == \"k1\" ? v : v; w.v = 50; }",
+        "for (const [k, v] of s.m) { const a = [v]; a[0].v = 50; }",
+        "bumpn(s.root.first());",
+        "const h = new H(s.items[0]);",
+    ] {
+        let r = err_src(&format!(
+            "{defs} function main() {{ const s = shared(new Store()); {body} }}"
+        ));
+        assert!(r.contains("read out of a `shared` value"), "{body}: {r}");
+    }
+    for f in [
+        "function f(st: Store) { let y = new Item(); y = st.items[0]; y.v = 50; }",
+        "function f(st: Store) { for (const [k, v] of st.m) { const x = v; x.v = 5; } }",
+        "function f(st: Store) { for (const [k, v] of st.m) { const g = () => { const h = () => { v.v = 7; }; h(); }; g(); } }",
+    ] {
+        let r = err_src(&format!(
+            "{defs} {f} function main() {{ const s = shared(new Store()); f(s); }}"
+        ));
+        assert!(r.contains("read out of a `shared` value"), "{f}: {r}");
+    }
+    // Reading, copying out, and storing parts in a map or array of one's own are fine.
+    ok_src(&format!(
+        "{defs} function f(st: Store) {{ st.items.slice()[0] = new Item(); }}
+         function g(st: Store): number {{ let t = 0; for (const x of st.items) {{ const y = x; t += y.v; }} return t; }}
+         function main() {{ const s = shared(new Store()); f(s); console.log(g(s));
+           const idx = new Map<string, Item>(); const list: Item[] = [];
+           for (const [k, v] of s.m) {{ idx.set(k, v); list.push(v); }} console.log(idx.size, list.length); }}"
+    ));
+}
+
+#[test]
+fn a_lock_behind_a_type_parameter_is_not_read_without_it() {
+    let r = err_src(
+        "class C { xs: number[] = [1]; }
+         function show<T>(x: T) { const o: any = x; console.log(o); }
+         function show2<T>(x: T) { console.log(x, `${x}`); }
+         function main() { const m = shared(new Mutex<C>(new C())); show(m); show2(m); }",
+    );
+    assert_eq!(r.matches("read here without its lock").count(), 2, "{r}");
+    ok_src(
+        "class C { xs: number[] = [1]; }
+         function show<T>(x: T) { console.log(x, `${x}`); const o: any = x; }
+         function main() { show(new C()); show(3); }",
+    );
+}
+
+#[test]
+fn new_containers_hold_parts_and_writes_through_results_are_refused() {
+    let defs = "class Item { v: number = 3; name: string = \"a\"; tags: string[] = []; }
+        class B { it: Item = new Item(); n: number = 0; }
+        class Store { m: Map<string, Item> = new Map<string, Item>(); nums: Map<string, number> = new Map<string, number>();
+          items: Item[] = [new Item()]; get head(): Item { return this.items[0]; } }";
+    // A new container or literal holds parts: its own slots may change.
+    ok_src(&format!(
+        "{defs} function f(st: Store): number {{ const m = new Map<string, Item>(st.m); m.set(\"z\", new Item()); m.delete(\"a\"); return m.size; }}
+         function top(m: Map<string, number>): number {{ const es = m.entries(); es.sort((a, b) => b[1] - a[1]); return es.length; }}
+         function main() {{ const s = shared(new Store()); console.log(f(s), top(s.nums));
+           const c = {{ ...s.items[0] }}; c.v = 50;
+           const x = s.items[0]; const o = {{ name: x.name, tags: x.tags, n: 0 }}; o.n = 5;
+           const pair: [Item, number] = [s.items[0], 1]; pair[1] = 2;
+           const b = new B(); b.it = s.items[0]; b.n = 1; }}"
+    ));
+    // A change through it, or through what a method or getter returns, is refused.
+    for body in [
+        "s.m.get(\"k0\")!.v = 50;",
+        "s.m.get(\"k0\")!.tags.push(\"x\");",
+        "s.head.v = 50;",
+        "s.head.tags.push(\"x\");",
+        "const c = s.items.slice(); c[0].v = 50;",
+        "const a: Item[] = [s.items[0]]; a[0].v = 50;",
+        "const b = new B(); b.it = s.items[0]; b.it.tags.push(\"x\");",
+    ] {
+        let r = err_src(&format!(
+            "{defs} function main() {{ const s = shared(new Store()); {body} }}"
+        ));
+        assert!(r.contains("read out of a `shared`"), "{body}: {r}");
+    }
+}
+
+#[test]
+fn parts_out_of_holders_and_inline_containers_cannot_be_changed() {
+    let defs = "class Item { v: number = 3; tags: string[] = []; }
+        class Bx { it: Item = new Item(); }
+        class H2 { xs: Item[] = []; }
+        class Store { m: Map<string, Item> = new Map<string, Item>(); items: Item[] = [new Item(), new Item()];
+          get head(): Item { return this.items[0]; } pick(i: number): Item { return this.items[i]; } }";
+    for body in [
+        "(s.items.length > 0 ? s.head : s.pick(0)).v = 50;",
+        "(s.items.length > 0 ? s.head : s.pick(0)).tags.push(\"x\");",
+        "(s.items.length > 0 ? s.items[0] : s.items[1]).v = 50;",
+        "s.items.slice()[0].v = 50;",
+        "const xs = s.items; xs.slice()[0].v = 50;",
+        "[s.items[0]][0].v = 50;",
+        "s.m.values()[0].v = 50;",
+        "const a = [s.items[0]]; const q = a[0]; q.v = 50;",
+        "const b = new Bx(); b.it = s.items[0]; const q = b.it; q.v = 50;",
+        "const b = new H2(); b.xs = s.items; const q = b.xs; q.push(new Item());",
+        "const c = s.items.slice(); for (const x of c) { x.v = 50; }",
+        "const c = s.items.slice(); c.forEach((x) => { x.v = 50; });",
+        "[s.items[0]].forEach((x) => { x.v = 50; });",
+        // Destructuring takes elements or fields out of the holder.
+        "const a = [s.items[0]]; const [q] = a; q.v = 50;",
+        "const b = { it: s.items[0] }; const { it } = b; it.v = 50;",
+        "const [q] = s.items.slice(); q.v = 50;",
+        // A loop over a literal, a conditional of a projection.
+        "for (const x of [s.items[0]]) { x.v = 50; }",
+        "const a = [s.items[0]]; const q = a.length > 0 ? a[0] : new Item(); q.v = 50;",
+        // A callback that is a closure variable, nested callbacks, doubly nested literals.
+        "const c = s.items.slice(); const g = (x: Item) => { x.v = 50; }; c.forEach(g);",
+        "const c = s.items.slice(); c.forEach((x) => { [x].forEach((y) => { y.v = 50; }); });",
+        "[[s.items[0]]][0][0].v = 50;",
+        // A closure local that changes what it is given through another function value, or one
+        // a nested closure assigns.
+        "const g = (x: Item) => { const k = (y: Item) => { y.v = 50; }; k(x); }; const q = s.items[0]; g(q);",
+        "const k = (y: Item) => { y.v = 50; }; const g = (x: Item) => { k(x); }; const q = s.items[0]; g(q);",
+        "const g = (x: Item) => { const k = (t: string[]) => { t.push(\"x\"); }; k(x.tags); }; const q = s.items[0]; g(q);",
+        "const k = (y: Item) => { y.v = 50; }; const g = (x: Item) => { k(x); }; const c = s.items.slice(); c.forEach(g);",
+        "let g = (x: Item) => { console.log(x.v); }; const h = () => { g = (x: Item) => { x.v = 50; }; }; h(); const q = s.items[0]; g(q);",
+    ] {
+        let r = err_src(&format!(
+            "{defs} function main() {{ const s = shared(new Store()); {body} }}"
+        ));
+        assert!(r.contains("read out of a `shared`"), "{body}: {r}");
+    }
+    // One error per write, also through `??` and `!` (hidden locals).
+    for body in [
+        "(s.m.get(\"k0\") ?? new Item()).v = 50;",
+        "(s.items.length == 1 ? s.m.get(\"k0\")! : s.m.get(\"k1\")!).v = 50;",
+        "const o: { it: Item | undefined } = { it: s.items[0] }; (o.it ?? new Item()).v = 50;",
+    ] {
+        let r = err_src(&format!(
+            "{defs} function main() {{ const s = shared(new Store()); {body} }}"
+        ));
+        assert_eq!(
+            r.matches("read out of a `shared`").count(),
+            1,
+            "{body}: {r}"
+        );
+    }
+    // A new container's own slots may change.
+    ok_src(&format!(
+        "{defs} function main() {{ const s = shared(new Store()); s.items.slice()[0] = new Item();
+           const c = s.items.slice(); c.sort((a, b) => a.v - b.v); c.forEach((x) => {{ console.log(x.v); }});
+           const a = [s.items[0]]; a[0] = new Item(); const q = a[0]; console.log(q.v); }}"
+    ));
+}
+
+#[test]
+fn fresh_objects_built_from_shared_numbers_or_by_map_may_change() {
+    let defs = "class Item { v: number = 3; tags: string[] = []; name: string = \"n\";
+          constructor(v: number) { this.v = v; } }
+        class Store { items: Item[] = [new Item(1), new Item(2)]; get head(): Item { return this.items[0]; } }
+        function mkc(x: Item): Item { const n = new Item(x.v); n.tags.push(\"z\"); return n; }";
+    for body in [
+        // `map` builds a new array of what its callback returns.
+        "const ys = s.items.map((x) => new Item(x.v)); for (const y of ys) { y.v = 9; }",
+        "const ys = s.items.map((x) => new Item(x.v)); ys.forEach((y) => { y.v = 9; });",
+        "s.items.map((x) => new Item(x.v)).forEach((y) => { y.v = 9; });",
+        "const ys = s.items.map((x) => new Item(x.v)).filter((y) => y.v > 0); ys.forEach((y) => { y.v = 9; });",
+        "const out = s.items.map((x) => new Item(x.v)); out[0].v = 9;",
+        // A reducer changes its accumulator, not the elements.
+        "const init: number[] = []; [s.items[0]].reduce((a: number[], x: Item) => { a.push(x.v); return a; }, init);",
+        // A number read out of the shared value holds no part of it.
+        "const n = new Item(s.head.v); n.tags.push(\"q\");",
+        "const o = { n: s.head.v, t: [] as string[] }; o.t.push(\"a\");",
+        "const t: [number, string[]] = [s.head.v, []]; t[1].push(\"a\");",
+        "s.items.map((x) => { const n = new Item(x.v); n.v += 10; n.tags.push(\"z\"); return n; });",
+        "console.log(mkc(s.head).tags.length);",
+        // `Array.from` with a mapper only reads.
+        "console.log(Array.from(s.items, (x) => x.v).length);",
+        "console.log(Array.from(s.items, (x) => x.name).length);",
+        "const xs = s.items; console.log(Array.from(xs, (x) => x.v).length);",
+        // A closure local that only reads what it is given.
+        "const g = (x: Item) => { console.log(x.v); }; const q = s.items[0]; g(q);",
+    ] {
+        ok_src(&format!(
+            "{defs} function main() {{ const s = shared(new Store()); {body} }}"
+        ));
+    }
 }

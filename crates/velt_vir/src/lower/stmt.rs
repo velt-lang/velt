@@ -116,6 +116,32 @@ impl FnLower<'_, '_> {
         if cell && !self.dead() {
             self.new_cell(local);
         }
+        if let (false, Some(e)) = (cell, init) {
+            let pat = hir::Pat {
+                kind: hir::PatKind::Binding(local, hir::UseMode::Move),
+                ty: e.ty,
+                span: e.span,
+            };
+            if self.frozen_map_entry(&pat, e) {
+                return;
+            }
+        }
+        let read = init
+            .filter(|_| !cell && self.map_hold(local))
+            .and_then(|e| self.frozen_share(e));
+        if let Some(read) = read {
+            // A map loop's hidden local holding a share of a frozen map only to keep it alive
+            // (sema for_map.rs): nothing changes a frozen value, so the local borrows it,
+            // frozen too, and has nothing to drop, where a share would be a copy. Its temps
+            // (the retained `shared` box, when the body may give the handle another box) belong
+            // to the loop's block, so the box lives as long as the loop reads it.
+            let v = self.frozen_read(read);
+            if let Some(l) = self.info[local.0 as usize].vir {
+                self.store(Place::local(l), v);
+            }
+            self.frozen.insert(local);
+            return;
+        }
         if let Some(e) = init {
             self.push_scope(ScopeKind::Temps);
             let v = self.consume(e);

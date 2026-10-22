@@ -7,7 +7,7 @@ use velt_common::{Diagnostic, Diagnostics, Span};
 use crate::defs::{
     AdtInfo, AliasInfo, DefInfo, EnumInfo, Extension, FnInfo, GlobalInfo, IfaceInfo,
 };
-use crate::hir::{AdtKind, Def, DefId, ImplDef, TyId, TyKind};
+use crate::hir::{AdtKind, Def, DefId, ImplDef, LocalId, TyId, TyKind};
 use crate::types::{display_key, int_name, Types};
 use crate::SourceModule;
 
@@ -139,6 +139,10 @@ pub(crate) struct Ctx<'m> {
     /// method of one returns): the ownership pass refuses changing them
     /// (`ownership::finish::frozen_bindings`).
     pub frozen_elems: FxHashSet<Span>,
+    /// Declarations of `for…of` bindings, with the local whose value the loop walks: a function
+    /// changing such an element changes that local's value (`FnInfo::modified_params`; a map
+    /// loop's bindings are not bound into its source, `ownership::evidence`).
+    pub loop_roots: FxHashMap<Span, LocalId>,
     /// Some body reads a `shared` like its `T` (`Intrinsic::SharedRead`): only then does the
     /// ownership pass track `FnInfo::modified_params`.
     pub frozen_reads: bool,
@@ -356,6 +360,7 @@ impl<'m> Ctx<'m> {
             fn_defs: vec![],
             fn_values: vec![],
             frozen_elems: FxHashSet::default(),
+            loop_roots: FxHashMap::default(),
             frozen_reads: false,
             cpu_targets: FxHashMap::default(),
             groups: None,

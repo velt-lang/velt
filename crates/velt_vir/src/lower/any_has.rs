@@ -3,9 +3,11 @@
 //! *string) -> u8`, present only when the program has such a test (`Boxing::any_has`). The
 //! slot answers `HAS_NO`, `HAS_YES` or `HAS_UNSUPPORTED` (a `TypeError`):
 //!
-//! - a proxy: its `has` trap (`Proxy.__has`, std/prelude/zz_proxy.vlt), or the target's answer;
+//! - a proxy: its `has` trap (`Proxy.__has`, std/proxy.vlt), or the target's answer;
 //! - class instances and object types: their fields, methods and accessors, and what every
-//!   object has from `Object.prototype` (an optional field, which may be absent, comes later);
+//!   object has from `Object.prototype` (an optional field with a presence flag, `a?: T |
+//!   null`, by its flag; another optional field, which cannot tell "absent" from a present
+//!   `undefined`, comes later);
 //! - a `Record<string, V>`: its keys, and what every object has from `Object.prototype` (unless
 //!   `Object.create(null)` made it);
 //! - arrays: `length` (indexes come later).
@@ -142,12 +144,26 @@ impl FnLower<'_, '_> {
                 .iter()
                 .map(|f| (f.name.clone(), f.optional))
                 .collect();
-            for (name, optional) in &fields {
+            for (i, (name, optional)) in fields.iter().enumerate() {
                 if name.starts_with('#') {
                     continue;
                 }
                 let next = self.on_key(key, name);
-                self.ret_status(if *optional { HAS_UNSUPPORTED } else { HAS_YES });
+                match self.cx.presence_slot(ty, i as u32) {
+                    // An optional field that keeps "absent" apart: its presence flag.
+                    Some(slot) if *optional => {
+                        let vp = self.any_value_place(data, ty);
+                        let mut flag = self.field_place(&vp, ty, i as u32);
+                        if let Some(Proj::Field(x)) = flag.proj.last_mut() {
+                            *x = slot;
+                        }
+                        let st =
+                            self.rvalue_temp(Ty::U8, Rvalue::Cast(Operand::Copy(flag), Ty::U8));
+                        self.terminate(Terminator::Return(st));
+                    }
+                    // Another optional field cannot tell "absent" from a present `undefined`.
+                    _ => self.ret_status(if *optional { HAS_UNSUPPORTED } else { HAS_YES }),
+                }
                 self.switch_to(next);
             }
             for m in self.dyn_members_of(d) {

@@ -207,6 +207,16 @@ impl FnLower<'_, '_> {
     /// can be freed by a later operand through another reference (`console.log(ps[0], clear())`
     /// where `clear` pops `ps` through a closure), so its type is counted and the hold shares it.
     pub(super) fn expr_held(&mut self, e: &hir::Expr, later: Later) -> Operand {
+        // A frozen value is changed by nothing (frozen.rs), and its counts must not change. A
+        // number read out of one is still read now (copied, which counts nothing): a later
+        // operand may free the box it is in.
+        if self.frozen_root(e) {
+            let v = self.expr(e);
+            return match super::place::number(self.vty(e.ty)) {
+                true => self.hold(v, e.ty, later),
+                false => v,
+            };
+        }
         if later.memory && !self.dead() {
             let ty = self.sub(e.ty);
             if self.cx.needs_drop(ty) && !self.through_counted(e, ty) {

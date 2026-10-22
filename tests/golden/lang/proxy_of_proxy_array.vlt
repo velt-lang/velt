@@ -1,0 +1,36 @@
+// A proxy of a proxy of an array: the methods record their holes in the array behind both,
+// so the inner trap's `Reflect.deleteProperty(raw, k)` during `outer.pop()` runs as in Node.
+function h(name: string): any {
+  return {
+    set(t: any, k: string | symbol, v: any, r: any): boolean {
+      console.log(name, "set", String(k));
+      return Reflect.set(t, k, v, r);
+    },
+    deleteProperty(t: any, k: string | symbol): boolean {
+      console.log(name, "del", String(k));
+      return Reflect.deleteProperty(t, k);
+    },
+  };
+}
+
+const raw: any = [1, 2, 3, 4, 5];
+const inner: any = new Proxy(raw, h("in"));
+const outer: any = new Proxy(inner, h("out"));
+console.log(outer.pop(), JSON.stringify(raw));
+console.log(outer.shift(), JSON.stringify(raw));
+console.log(JSON.stringify(outer.splice(0, 1)), JSON.stringify(raw));
+outer.unshift(8, 9);
+console.log(JSON.stringify(raw), raw.length);
+
+const raw2: any = [1, 2, 3, 4, 5];
+const inner2: any = new Proxy(raw2, {
+  deleteProperty(t: any, k: string | symbol): boolean {
+    console.log("in del", String(k));
+    return Reflect.deleteProperty(t, k);
+  },
+});
+const outer2: any = new Proxy(inner2, {});
+console.log(outer2.pop(), outer2.shift(), JSON.stringify(raw2));
+const o2: any = new Proxy(new Proxy([1, 2, 3] as any, {}), {});
+console.log(o2.pop(), JSON.stringify(o2));
+// check: no leaks

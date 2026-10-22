@@ -11,6 +11,14 @@ use velt_common::{SourceMap, Span};
 use super::FnLower;
 use crate::vir::{Operand, SrcLoc};
 
+/// The caller location of a caller-tracking instance called from glue, which has none: its
+/// panics report no location (`FnLower::panic_suffix`).
+pub(super) const UNKNOWN_LOC: SrcLoc = SrcLoc {
+    file: u32::MAX,
+    line: 0,
+    col: 0,
+};
+
 /// Line tables of every source file, plus the paths reported in `vir::Program::files`.
 pub(super) struct LocMap {
     /// Display path per `FileId` (forward slashes).
@@ -135,7 +143,7 @@ impl FnLower<'_, '_> {
     /// ` at <path>:<line>:<col>` for a panic raised here (empty without location info).
     pub(super) fn panic_suffix(&self) -> String {
         match (self.cx.locs.as_ref(), self.panic_loc()) {
-            (Some(m), Some(l)) => format!(" at {}", m.describe(l)),
+            (Some(m), Some(l)) if l != UNKNOWN_LOC => format!(" at {}", m.describe(l)),
             _ => String::new(),
         }
     }

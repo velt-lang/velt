@@ -120,7 +120,13 @@ impl FnLower<'_, '_> {
             TyKind::Adt(..) if self.cx.is_class(ty) => {}
             // A dynamic value when `object` is weakly held (issue #926): its descriptor says.
             TyKind::Dyn(..) if self.cx.is_dynamic(ty) && self.cx.weak_object() => {
-                self.trace_dyn(place, tv);
+                self.trace_dyn(place, tv, false);
+            }
+            // An interface value whose tables keep `any` tables (weak_object.rs).
+            TyKind::Dyn(d, _)
+                if self.cx.weak_object() && self.cx.boxing.dyn_to_any.contains(&d) =>
+            {
+                self.trace_dyn(place, tv, true);
             }
             TyKind::Adt(..) | TyKind::Result(..) if self.is_enum(ty) || self.is_result(ty) => {
                 if matches!(self.cx.ty(ty), Ty::Agg(_)) {

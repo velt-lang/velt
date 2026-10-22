@@ -1,0 +1,67 @@
+// check: no leaks
+// Property descriptors through a proxy (#823): accessor descriptors, an array target's
+// `length` (not configurable), `Reflect.set` with a proxy receiver (the receiver's
+// `getOwnPropertyDescriptor` and `defineProperty` traps run, as in Node's OrdinarySet), and a
+// proxy whose target is a proxy, whose traps Node's checks run too.
+function logged(target: any, log: string[], name: string): any {
+  return new Proxy(target, {
+    ownKeys(t) {
+      log.push(`${name} ownKeys`);
+      return Reflect.ownKeys(t);
+    },
+    getOwnPropertyDescriptor(t, k) {
+      log.push(`${name} describe ${String(k)}`);
+      return Reflect.getOwnPropertyDescriptor(t, k);
+    },
+    defineProperty(t, k, d) {
+      log.push(`${name} define ${String(k)} ${JSON.stringify(d)}`);
+      return Reflect.defineProperty(t, k, d);
+    },
+    deleteProperty(t, k) {
+      log.push(`${name} delete ${String(k)}`);
+      return Reflect.deleteProperty(t, k);
+    },
+  });
+}
+
+function main(): void {
+  // An accessor descriptor, completed.
+  const acc: any = new Proxy({} as any, {
+    ownKeys() {
+      return ["x"];
+    },
+    getOwnPropertyDescriptor(t, k) {
+      return { get: () => 42, enumerable: true, configurable: true };
+    },
+  });
+  const d = Reflect.getOwnPropertyDescriptor(acc, "x");
+  console.log(d !== undefined && d.get !== undefined ? d.get() : -1, d?.enumerable, d?.configurable);
+  console.log(Object.keys(acc));
+
+  // An array target: its `length` is not configurable.
+  const arr: any = new Proxy([1, 2] as any, {
+    getOwnPropertyDescriptor(t, k) {
+      return Reflect.getOwnPropertyDescriptor(t, k);
+    },
+  });
+  console.log(Reflect.getOwnPropertyDescriptor(arr, "length"));
+  console.log(Reflect.ownKeys(arr));
+
+  // `Reflect.set` with a proxy receiver.
+  const log: string[] = [];
+  const raw: Record<string, number> = { a: 1 };
+  const recv = logged(raw, log, "p");
+  const plain: any = { a: 1 };
+  console.log(Reflect.set(plain, "a", 5, recv), Reflect.set(plain, "b", 6, recv));
+  console.log(plain, raw);
+  console.log(log.join("\n"));
+
+  // A proxy whose target is a proxy: Node reads the target's keys and properties after the
+  // outer traps, observably.
+  const inner: string[] = [];
+  const deepRaw: Record<string, number> = { a: 1, b: 2 };
+  const deep = logged(logged(deepRaw, inner, "inner"), inner, "outer");
+  console.log(Object.keys(deep));
+  console.log(Reflect.defineProperty(deep, "c", { value: 3, writable: true, enumerable: true, configurable: true }));
+  console.log(inner.join("\n"));
+}

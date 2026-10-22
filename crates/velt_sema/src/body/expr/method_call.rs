@@ -36,7 +36,7 @@ impl FnCx<'_, '_> {
             true => self.frozen_view(recv, Some(&prop.name)),
             false => recv,
         };
-        if self.frozen_buffer_view(&recv, &prop.name, span) {
+        if self.cx.frozen_reads && self.frozen_buffer_view(&recv, &prop.name, span) {
             for a in args {
                 self.expr(a, None, Want::Borrow);
             }

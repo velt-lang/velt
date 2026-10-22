@@ -1,0 +1,14 @@
+tracked 1
+true true
+false
+get symbol true
+get string false
+has symbol true
+has string false
+set symbol true
+delete symbol true
+describe symbol true
+7 true false
+8 8 true
+7 true false
+true 9

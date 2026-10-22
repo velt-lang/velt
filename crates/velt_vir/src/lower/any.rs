@@ -15,6 +15,7 @@
 //! | 12 | the weak word (weak_object.rs), when `object` is a weak key |
 //! | 13 | `AnyKeys` (any_keys.rs), when the program lists the keys of an `any` |
 //! | 14 | `AnyJson` (json/any.rs), when the program writes a dynamic value as JSON |
+//! | 15 | `AnyDelete` (any_delete.rs), when the prelude deletes a property through `any` |
 //!
 //! Tables are built per concrete type and memoized, so two values of one type have the same
 //! table: a checked conversion compares one pointer.
@@ -110,6 +111,7 @@ impl Cx<'_> {
             TyKind::Str => TAG_STRING,
             TyKind::Symbol => TAG_SYMBOL,
             TyKind::FnPtr { .. } | TyKind::Closure(_) => TAG_FUNCTION,
+            TyKind::Adt(..) if self.is_array_method(t) => TAG_FUNCTION, // `Reflect.get(a, "map")`
             TyKind::Literal(hir::LitValue::Str(_)) => TAG_STRING,
             TyKind::Literal(hir::LitValue::Bool(_)) => TAG_BOOLEAN,
             TyKind::Literal(_) => TAG_NUMBER,
@@ -572,16 +574,14 @@ impl FnLower<'_, '_> {
         self.build_agg(ty, vec![data, table])
     }
 
-    /// Is `t` TypeScript's `object` (issue #926)?
-    pub(super) fn is_object_ty(&self, t: TyId) -> bool {
-        matches!(self.cx.kind(t), TyKind::Dyn(d, args) if args.is_empty() && Some(d) == self.cx.hir.object)
-    }
-
     /// The value of type `ty` the `any` at `p` (owned, consumed here) holds.
     pub(super) fn any_unbox(&mut self, p: &Place, from: TyId, ty: TyId) -> Operand {
         if self.cx.is_dynamic(ty) {
             // The payload of an `any | null`: the value itself.
             return Operand::Copy(p.clone());
+        }
+        if self.cx.is_union(ty) {
+            return self.any_unbox_union(p, from, ty);
         }
         let vt = self.cx.ty(ty);
         let out = Place::local(self.temp(vt));
@@ -708,6 +708,9 @@ impl FnLower<'_, '_> {
                 true => format!("({e})[]"),
                 false => format!("{e}[]"),
             };
+        }
+        if let Some(shown) = self.object_type_name(ty) {
+            return shown;
         }
         let name = self.cx.type_name(ty);
         match self.cx.kind(ty) {
