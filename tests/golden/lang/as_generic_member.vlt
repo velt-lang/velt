@@ -19,6 +19,26 @@ function second(detected: [any, string | symbol]): string {
   return t[1];
 }
 
+function either<T>(x: T | string, b: boolean): string {
+  return b ? (x as string) : String(x as T);
+}
+
+function first<T>(t: [T | undefined, number]): T {
+  const u = t as [T, number];
+  return u[0];
+}
+
+class Box<T> {
+  v: T;
+  constructor(v: T) {
+    this.v = v;
+  }
+}
+
+function open<T>(x: T | Box<T>): T {
+  return x instanceof Box ? (x as Box<T>).v : (x as T);
+}
+
 function parts(): [unknown, unknown] {
   return [1, "x"];
 }
@@ -36,6 +56,19 @@ function demo(): void {
   console.log(p2[0], p2[1].length, pair[1].length);
   const [n, s] = parts() as [number, string];
   console.log(n + 1, s.length);
+  // At `T = string` the union is `string`.
+  console.log(either<string>("s", true), either<number>(3, false), either<number>("q", true));
+  console.log(open<number>(new Box(9)), open<number>(8));
+  console.log(first<string>(["z", 1]), first<string | undefined>([undefined, 2]));
+  // The elements are the same values: a write through one tuple shows through the other.
+  p2[1].push(3);
+  console.log(pair[1].length, p2[1].length);
+  const nested: [[any, string | number], boolean] = [[{ a: 1 }, "n"], true];
+  const n2 = nested as [[object, string], boolean];
+  console.log(n2[0][1], n2[1]);
+  const ro: readonly [unknown, string] = [5, "r"];
+  const r2 = ro as readonly [number, string];
+  console.log(r2[0] + 1, r2[1]);
 }
 
 demo();
