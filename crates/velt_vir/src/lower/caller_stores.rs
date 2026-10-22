@@ -188,11 +188,12 @@ impl FnLower<'_, '_> {
             }
             let ty = self.sub(a.ty);
             // An object can be changed through a borrow; a value held inline only through a
-            // mutable one.
+            // mutable one (one only read is safe when it holds lock-set objects directly).
             let holds = match self.lock_ref(ty) {
                 Some(t) => self.holds_lock_set(t),
                 None => {
-                    *m == PassMode::BorrowMut && self.cx.reaches_lock_set(ty) && self.hand_ok(ty)
+                    self.cx.reaches_lock_set(ty)
+                        && !(*m == PassMode::Borrow && self.inline(ty) && self.hand_ok(ty))
                 }
             };
             if holds {
@@ -209,6 +210,9 @@ impl FnLower<'_, '_> {
     pub(super) fn keep_mut_arg(&mut self, a: &hir::Expr) -> Operand {
         let ty = self.sub(a.ty);
         let vt = self.cx.ty(ty);
+        if self.lock_ref(ty).is_none() && !self.hand_ok(ty) {
+            return self.copy_mut_arg(a, ty, vt);
+        }
         let p = match a.kind {
             K::Local(..) | K::Field { .. } | K::Index { .. } => {
                 let p = self.place_expr(a);
@@ -223,12 +227,30 @@ impl FnLower<'_, '_> {
                 // The call's own value: the reader drops it after handing it back (`Agg`; a
                 // counted object is the reader's to borrow from then on).
                 if matches!(vt, Ty::Agg(_)) {
-                    self.kept_drops.push((p.clone(), ty));
+                    self.kept_drops.push((p.clone(), ty, self.mode));
                 }
                 p
             }
         };
         self.kept_handed.push((Operand::Copy(p.clone()), ty));
+        match vt {
+            Ty::Agg(_) => self.addr(p),
+            _ => Operand::Copy(p),
+        }
+    }
+
+    /// The reader's container `a` of type `ty` (`vt`) that a call changing the caller's
+    /// containers may change, which `hand_to_reader` cannot walk after the call (`hand_ok`; an
+    /// object outside the lock set holding lock-set objects, as a class's own `Item[]`, or a
+    /// `Map`): the call gets a copy of what the reader did not make (`reader_copy`),
+    /// counted by the counts outside read mode and dropped by them after the call, so what it
+    /// moves from there into the caller's containers is counted there. The reader's own
+    /// container does not see the call's changes.
+    fn copy_mut_arg(&mut self, a: &hir::Expr, ty: TyId, vt: Ty) -> Operand {
+        let v = self.consume(a);
+        let v = self.reader_copy(v, ty);
+        let p = Place::local(self.copy_to_temp(v, vt));
+        self.kept_drops.push((p.clone(), ty, LkMode::Deferred));
         match vt {
             Ty::Agg(_) => self.addr(p),
             _ => Operand::Copy(p),

@@ -571,8 +571,8 @@ struct FnLower<'c, 'h> {
     kept_args: u64,
     /// Those arguments as passed, handed back to the reader after the call.
     kept_handed: Vec<(Operand, TyId)>,
-    /// Those of them the call's own values, dropped after that.
-    kept_drops: Vec<(Place, TyId)>,
+    /// Those of them the call's own values, dropped after that in the mode given.
+    kept_drops: Vec<(Place, TyId, LkMode)>,
     /// A `read` callback's variables naming the caller's objects (caller_stores.rs
     /// `caller_alias`), once asked.
     caller_aliases: Option<FxHashSet<LocalId>>,

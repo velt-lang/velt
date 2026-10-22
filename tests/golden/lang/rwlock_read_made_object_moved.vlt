@@ -1,0 +1,73 @@
+// A `read` callback passing a container it made, of a type the value can't hold (a class, a
+// `Map`), that holds the caller's objects to a method or function moving them into the
+// caller's containers: the call gets a copy (async.md), so what it moves there is a copy,
+// counted there, and the callback's container keeps what it held. Nothing is freed early.
+class Item {
+  v: i64 = 0;
+  constructor(v: i64) {
+    this.v = v;
+  }
+}
+class St {
+  items: Item[] = [new Item(1)];
+}
+class Bag {
+  items: Item[] = [];
+  moveTo(dst: Item[]) {
+    dst.push(this.items.pop()!);
+  }
+}
+class Holder {
+  bag: Bag = new Bag();
+}
+
+function mvBag(dst: Item[], b: Bag) {
+  dst.push(b.items.pop()!);
+}
+
+function mk(x: Item): Bag {
+  const b = new Bag();
+  b.items.push(x);
+  return b;
+}
+
+function firstOf(dst: Item[], m: Map<string, Item>) {
+  dst.push(m.get("k")!);
+  m.delete("k");
+}
+
+function main() {
+  const rw = shared(new RwLock<St>(new St()));
+  const out: Item[] = [new Item(1), new Item(2)];
+  const got: Item[] = [];
+  for (let i = 0; i < 2; i++) {
+    const n = rw.read((s) => {
+      const bag = new Bag();
+      bag.items.push(out[0]);
+      bag.items.push(out[1]);
+      mvBag(got, bag);
+      bag.items.push(new Item(8));
+      bag.moveTo(got);
+      const h = new Holder();
+      h.bag.items.push(out[0]);
+      mvBag(got, h.bag);
+      mvBag(got, mk(out[1]));
+      return bag.items.length * 10 + h.bag.items.length;
+    });
+    console.log("left", n);
+  }
+  out[0].v = 5;
+  out[1].v = 6;
+  console.log(got.length, got.map((x) => x.v).join(","));
+  console.log(got[0] === out[1], got[2] === out[0], got[3] === out[1], got[7] === out[1]);
+
+  const via: Item[] = [];
+  rw.read((s) => {
+    const m = new Map<string, Item>();
+    m.set("k", out[0]);
+    firstOf(via, m);
+    return 0;
+  });
+  out[0].v = 7;
+  console.log(via.length, via[0].v, via[0] === out[0]);
+}

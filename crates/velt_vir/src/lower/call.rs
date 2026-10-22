@@ -127,8 +127,10 @@ impl FnLower<'_, '_> {
         for (v, t) in handed {
             self.hand_to_reader(&v, t);
         }
-        for (p, t) in drops {
+        for (p, t, m) in drops {
+            let mode = std::mem::replace(&mut self.mode, m);
             self.drop_glue(p, t);
+            self.mode = mode;
         }
         r
     }

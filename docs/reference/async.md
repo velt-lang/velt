@@ -572,7 +572,11 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
   holds objects of the value's types is the caller's once stored there: the callback can still
   read it through its own variables, but a write through them stops the program, as for the
   value's own (store it once it is complete). One whose type the value cannot hold, and a
-  function value, that the callback still uses after storing it is stored as a copy. What it
+  function value, that the callback still uses after storing it is stored as a copy. So is a
+  container of the callback's own whose type the value cannot hold, or a `Map` or `Set` of its
+  own, holding objects of the value's types, given to a method or function that changes the
+  caller's containers (`mvBag(out, bag)`, `bag.moveTo(out)`): that call gets a copy, so what it
+  moves into `out` is a copy and `bag` keeps what it held. What it
   removes or replaces there is freed once the outermost `read` returns, so a variable still
   holding it stays valid. Any other object of such a type cannot be told from the value's own,
   so a write to it stops the program: one a method of the caller's variable returns

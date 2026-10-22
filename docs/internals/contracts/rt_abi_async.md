@@ -638,7 +638,13 @@ counts and writes lock-set objects by these rules, inline (velt_vir `rc.rs`):
   (velt_vir `LkMode::Deferred`) keeps there gets a reference by those counts when it is a
   place the caller holds already (also a reader's variable borrowing one; what comes from the
   store sema copies), so it stays the same object; anything else is a copy of what the reader
-  did not make. What leaves one (an element removed, the old value a store replaces, such a
+  did not make. A value the reader made that holds what the caller holds is kept by a
+  transfer `velt_rt_xfer_keep_begin` starts: the caller's objects get one more reference and
+  stay themselves, and what the reader made becomes the caller's. A container of the reader's
+  that such a method or function may change is counted by those counts for the call and handed
+  back after it, or, when its type is outside the lock set and holds lock-set objects (a
+  class's `Item[]`, a `Map`), passed as a copy of what the reader did not make, dropped by
+  those counts after the call. What leaves one (an element removed, the old value a store replaces, such a
   method's or function's result) loses its reference by those counts, and a lock-set object
   whose last reference goes is handed to `velt_rt_free_after_reads` with its drop glue: the
   reader may still point at it uncounted, so it is freed when the thread's outermost read ends
