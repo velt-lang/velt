@@ -1,0 +1,25 @@
+// A module constant evaluated at each use can't be taken over through `??` or `!` in a module
+// initializer or a function, as `const v = K` can't: TypeScript would alias it, so a change
+// through the copy would show in the constant (#1406, #1398).
+
+interface P {
+  x: number;
+}
+
+export const q: P | undefined = { x: 0 } as (P | undefined);
+let d: P = { x: -1 };
+let p = q ?? d;
+p.x = 1;
+export let r = q!;
+r.x = 2;
+export const s = q || d;
+
+function f(): void {
+  const z = q ?? d;
+  z.x = 5;
+  const w = q!;
+  w.x = 6;
+}
+
+f();
+console.log(q!.x, p.x, r.x, s.x);

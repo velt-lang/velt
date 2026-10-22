@@ -29,7 +29,7 @@ pub(crate) fn is_path(e: &hir::Expr) -> bool {
 }
 
 /// Does pattern `p` bind `l`?
-fn binds(p: &hir::Pat, l: LocalId) -> bool {
+pub(crate) fn binds(p: &hir::Pat, l: LocalId) -> bool {
     use hir::PatKind as P;
     match &p.kind {
         P::Binding(b, _) => *b == l,

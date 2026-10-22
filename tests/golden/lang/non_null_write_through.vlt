@@ -86,7 +86,20 @@ function run(): void {
   console.log(b.item!.v);
 }
 
+function boundThrough(): void {
+  // `!` on a value already known to be present: the binding is the object, as `let r = q` is.
+  let q: I | undefined = mk(0);
+  let r = q!;
+  r.v = 2;
+  const p: I = mk(0);
+  const s = p!;
+  s.v = 5;
+  s.tags.push("s");
+  console.log(q!.v, p.v, p.tags.length);
+}
+
 run();
+boundThrough();
 
 state.o!.v = 2;
 state.o!.v += 3;

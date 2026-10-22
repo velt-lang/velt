@@ -218,7 +218,13 @@ impl FnCx<'_, '_> {
                 self.error_expr(span)
             }
             A::Unary { op, expr } => self.unary(*op, expr, exp, span),
-            A::Binary { op, lhs, rhs } => self.binary(*op, lhs, rhs, exp, span),
+            A::Binary { op, lhs, rhs } => {
+                let h = self.binary(*op, lhs, rhs, exp, span);
+                if want == Want::Move {
+                    self.nullish_taken(&h);
+                }
+                h
+            }
             A::Assign {
                 op: Some(op),
                 target,

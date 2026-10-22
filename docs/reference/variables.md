@@ -174,8 +174,11 @@ function main() {
 - A `const` whose value is a constant (numbers, strings, and objects and tuples of them:
   `const K: P | null = { v: 1 }`) is not kept: it is evaluated at each use. Writing a field of
   it is an error (``cannot assign to a field of module-level constant `K` ``), also through `!`,
-  `as` or `??` (`K!.v = 2`, `(K as P).v++`, `(K ?? d).v = 2`), where Node changes the one
-  object; a `let` is module state, so its fields can be written.
+  `as`, `??`, `||` or `?:` (`K!.v = 2`, `(K as P).v++`, `(K as any).v = 2`, `(K ?? d).v = 2`,
+  `(c ? K! : d).v = 2`), where Node changes the one object, and so is taking it over by value
+  that way (``cannot move out of module constant `K` ``: `const v = K!`, `let v = K ?? d`), as
+  for `const v = K`. A `let` is module state, so its fields can be written, and `g!`, `g as T`
+  and `g ?? d` on a module `let` `g` are the object the module keeps.
 - An initializer that throws (`JSON.parse` of invalid text, `new RegExp` of an invalid
   pattern, a function that throws) stops the program with `Uncaught …` and exit code 1, as an
   error thrown while Node evaluates a module does: the rest of that module and the modules that

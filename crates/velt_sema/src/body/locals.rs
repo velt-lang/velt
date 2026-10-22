@@ -27,6 +27,14 @@ fn frame_lookup(f: &Frame, name: &str) -> Option<LocalId> {
         .find_map(|s| s.names.get(name).copied())
 }
 
+impl FnCx<'_, '_> {
+    /// Does `name` name a local here or in an enclosing function (without using it)?
+    pub(crate) fn names_local(&self, name: &str) -> bool {
+        frame_lookup(&self.f, name).is_some()
+            || self.outer.iter().any(|f| frame_lookup(f, name).is_some())
+    }
+}
+
 /// Narrowing of local `l` in frame `f`: (non-null, union members, subclass).
 fn frame_narrowing(f: &Frame, l: LocalId) -> Narrowing {
     let non_null = f.scopes.iter().any(|s| s.narrowed.contains(&l));

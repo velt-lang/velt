@@ -43,6 +43,71 @@ impl FnCx<'_, '_> {
         }
     }
 
+    /// A write into a part of `target` whose object reaches a module constant evaluated at
+    /// each use through `!`, `as`, `??`, `||`, `&&` or `?:` (`K!.v = 1`, `(K as any).v = 1`,
+    /// `(c ? K! : d).v = 1`): reported, as `K.v = 1` is, since the write would change a copy.
+    /// The source form is followed, whatever the checked target becomes (a conversion to
+    /// `any`, a narrowed read).
+    pub(super) fn per_use_const_write(&mut self, target: &ast::Expr) -> bool {
+        let (object, what) = match &strip_parens(target).kind {
+            ast::ExprKind::Member { object, .. } => (object, "assign to a field of"),
+            ast::ExprKind::Index { object, .. } => (object, "assign to an element of"),
+            _ => return false,
+        };
+        let Some((name, span)) = self.per_use_root(object, false) else {
+            return false;
+        };
+        self.cx.err(
+            format!("cannot {what} module-level constant `{name}`"),
+            span,
+        );
+        true
+    }
+
+    /// The module constant evaluated at each use that `e` gives (a part of), when it is
+    /// reached through a form that hides it from the place check (`through`).
+    fn per_use_root(&mut self, e: &ast::Expr, through: bool) -> Option<(String, Span)> {
+        match &strip_parens(e).kind {
+            ast::ExprKind::NonNull(x) | ast::ExprKind::Cast { expr: x, .. } => {
+                self.per_use_root(x, true)
+            }
+            ast::ExprKind::Member { object, .. } | ast::ExprKind::Index { object, .. } => {
+                self.per_use_root(object, through)
+            }
+            ast::ExprKind::Binary { op, lhs, rhs }
+                if matches!(
+                    op,
+                    ast::BinaryOp::Nullish | ast::BinaryOp::Or | ast::BinaryOp::And
+                ) =>
+            {
+                let l = match op {
+                    ast::BinaryOp::And => None,
+                    _ => self.per_use_root(lhs, true),
+                };
+                l.or_else(|| self.per_use_root(rhs, true))
+            }
+            ast::ExprKind::Cond { then, els, .. } => self
+                .per_use_root(then, true)
+                .or_else(|| self.per_use_root(els, true)),
+            ast::ExprKind::Ident(id) if through && !self.names_local(&id.name) => {
+                let Some(crate::ctx::Item::Def(d)) = self.cx.lookup_item(self.module, &id.name)
+                else {
+                    return None;
+                };
+                if !matches!(self.cx.info[d.0 as usize], crate::defs::DefInfo::Global(_)) {
+                    return None;
+                }
+                crate::body::driver::ensure_global(self.cx, d);
+                let (stored, ty, name) = self
+                    .cx
+                    .global(d)
+                    .map(|g| (g.stored, g.ty, g.name.clone()))?;
+                (!stored && !self.cx.is_copy(ty)).then_some((name, e.span))
+            }
+            _ => None,
+        }
+    }
+
     /// Is `ty` the type of this module's `import.meta` (`ast::IMPORT_META`)?
     fn is_import_meta_type(&mut self, ty: TyId) -> bool {
         let Some(crate::ctx::Item::Def(d)) = self.cx.lookup_item(self.module, ast::IMPORT_META)

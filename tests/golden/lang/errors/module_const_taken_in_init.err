@@ -1,0 +1,5 @@
+module_const_taken_in_init.vlt:13:16: error: cannot move out of module constant `q`
+module_const_taken_in_init.vlt:15:18: error: cannot move out of module constant `q`
+module_const_taken_in_init.vlt:18:13: error: cannot move out of module constant `q`
+module_const_taken_in_init.vlt:20:13: error: cannot move out of module constant `q`
+module_const_taken_in_init.vlt:11:9: error: cannot move out of module constant `q`

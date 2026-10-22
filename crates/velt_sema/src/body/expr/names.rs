@@ -372,7 +372,7 @@ impl FnCx<'_, '_> {
     pub(crate) fn global_read(&mut self, d: DefId, want: Want, span: Span) -> hir::Expr {
         crate::body::driver::ensure_global(self.cx, d);
         let g = self.cx.global(d).expect("ICE: global");
-        let (ty, name, mutable) = (g.ty, g.name.clone(), g.stored);
+        let (ty, mutable) = (g.ty, g.stored);
         if mutable {
             let read = self.mk(H::Global(d), ty, span);
             if want == Want::Move && !self.cx.is_copy(ty) {
@@ -386,17 +386,32 @@ impl FnCx<'_, '_> {
             let read = self.mk(H::Global(d), ty, span);
             return self.intrinsic(hir::Intrinsic::Share, vec![read], ty, span);
         }
-        if want == Want::Move && crate::body::pure_init::is_table(self.cx, d) {
+        if want == Want::Move {
+            self.moved_out_of_const(d, ty, span);
+        }
+        self.mk(H::Global(d), ty, span)
+    }
+
+    /// Module constant `d`, evaluated at each use, taken over by value (`const v = K`, and
+    /// through `!` or `??`: `const v = K!`, `let v = K ?? d`): an error unless its value is
+    /// copied, as a string or a number is (`ty`: the type of the value taken). TypeScript
+    /// would alias it, so a change through the copy would show in the constant.
+    pub(crate) fn moved_out_of_const(&mut self, d: DefId, ty: TyId, span: Span) {
+        let Some(g) = self.cx.global(d) else { return };
+        let name = g.name.clone();
+        if g.stored || crate::body::pure_init::shares_on_move(self.cx, d) {
+            return;
+        }
+        if crate::body::pure_init::is_table(self.cx, d) {
             let msg = format!("cannot move out of module constant `{name}`");
             self.cx
                 .error(crate::body::pure_init::table_escapes(&name, msg, span));
-        } else if want == Want::Move && !self.cx.is_copy(ty) && ty != self.cx.ty.str_ {
+        } else if !self.cx.is_copy(ty) && ty != self.cx.ty.str_ {
             self.cx.error(
                 Diagnostic::error(format!("cannot move out of module constant `{name}`"), span)
                     .with_note(format!("use `{name}.clone()` for an owned copy")),
             );
         }
-        self.mk(H::Global(d), ty, span)
     }
 
     /// A named function used as a value; generic ones take their type args from `exp`.

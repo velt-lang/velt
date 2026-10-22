@@ -1,5 +1,13 @@
-module_const_non_null_write.vlt:12:1: error: cannot assign to a field of module-level constant `K`
-module_const_non_null_write.vlt:13:1: error: cannot assign to a field of module-level constant `K`
-module_const_non_null_write.vlt:14:2: error: cannot assign to a field of module-level constant `K`
-module_const_non_null_write.vlt:15:1: error: cannot assign to a field of module-level constant `U`
-module_const_non_null_write.vlt:16:2: error: cannot assign to a field of module-level constant `U`
+module_const_non_null_write.vlt:15:1: error: cannot assign to a field of module-level constant `K`
+module_const_non_null_write.vlt:16:1: error: cannot assign to a field of module-level constant `K`
+module_const_non_null_write.vlt:17:2: error: cannot assign to a field of module-level constant `K`
+module_const_non_null_write.vlt:18:1: error: cannot assign to a field of module-level constant `U`
+module_const_non_null_write.vlt:19:2: error: cannot assign to a field of module-level constant `U`
+module_const_non_null_write.vlt:20:2: error: cannot assign to a field of module-level constant `K`
+module_const_non_null_write.vlt:21:2: error: cannot assign to a field of module-level constant `K`
+module_const_non_null_write.vlt:22:2: error: cannot assign to a field of module-level constant `N`
+module_const_non_null_write.vlt:23:2: error: cannot assign to a field of module-level constant `N`
+module_const_non_null_write.vlt:24:9: error: cannot assign to a field of module-level constant `K`
+module_const_non_null_write.vlt:25:16: error: cannot assign to a field of module-level constant `N`
+module_const_non_null_write.vlt:27:3: error: cannot assign to a field of module-level constant `K`
+module_const_non_null_write.vlt:29:10: error: cannot move out of module constant `K`
