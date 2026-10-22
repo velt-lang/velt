@@ -1,0 +1,12 @@
+// `import.meta.resolve` throws when a specifier can't be resolved. Stored as a function type
+// written without `throws` (#1154), directly or as a field of an object type, it is accepted, as
+// in TypeScript, and calls through the type throw its error. Output compared with Node.
+const r: (s: string) => string = import.meta.resolve;
+console.log(r("./x").endsWith("/x"));
+const m: { resolve: (s: string) => string } = import.meta;
+console.log(m.resolve("./y").endsWith("/y"));
+try {
+  m.resolve("no-such-package");
+} catch (e) {
+  console.log((e as Error).message.replace(import.meta.filename, "<file>"));
+}

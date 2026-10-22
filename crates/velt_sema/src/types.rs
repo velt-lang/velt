@@ -17,6 +17,9 @@ pub(crate) struct Types {
     pub f64: TyId,
     /// The program names the type `bigint` (`never` until `BigInt` values exist, #1088).
     pub bigint_named: bool,
+    /// The function types of sites resolved with an inferred error type, and the types made
+    /// from them by substitution: shown as written, without it (`throws::fn_types`).
+    pub inferred_fns: rustc_hash::FxHashSet<TyId>,
 }
 
 impl Types {
@@ -45,6 +48,7 @@ impl Types {
             usize,
             f64,
             bigint_named: false,
+            inferred_fns: Default::default(),
         }
     }
 
@@ -78,6 +82,15 @@ impl Types {
             }
         }
         self.table.intern(k)
+    }
+
+    /// `to`, a function type made from `from` by replacing its parts, is shown as written when
+    /// `from` is ([`Types::inferred_fns`]).
+    pub fn inferred_like(&mut self, from: TyId, to: TyId) -> TyId {
+        if from != to && !self.inferred_fns.is_empty() && self.inferred_fns.contains(&from) {
+            self.inferred_fns.insert(to);
+        }
+        to
     }
 
     pub fn kind(&self, t: TyId) -> &TyKind {
@@ -326,7 +339,8 @@ impl Types {
             },
             other => return self.intern(other),
         };
-        self.intern(nk)
+        let out = self.intern(nk);
+        self.inferred_like(t, out)
     }
 
     /// Resolve a primitive type name (`i64`, `number`, `string`, ...).
@@ -394,6 +408,40 @@ pub(crate) fn children(k: &TyKind) -> Vec<TyId> {
             v
         }
         _ => vec![],
+    }
+}
+
+/// `k` with each direct component type mapped by `f` (in [`children`]'s order).
+pub(crate) fn map_children(k: &TyKind, f: &mut dyn FnMut(TyId) -> TyId) -> TyKind {
+    fn m(ts: &[TyId], f: &mut dyn FnMut(TyId) -> TyId) -> Vec<TyId> {
+        ts.iter().map(|t| f(*t)).collect()
+    }
+    match k {
+        TyKind::Adt(d, a) => TyKind::Adt(*d, m(a, f)),
+        TyKind::Dyn(d, a) => TyKind::Dyn(*d, m(a, f)),
+        TyKind::Tuple(a) => TyKind::Tuple(m(a, f)),
+        TyKind::Op(o, a) => TyKind::Op(*o, m(a, f)),
+        TyKind::FnPtr {
+            params,
+            ret,
+            throws,
+            rest,
+        } => {
+            let params = m(params, f);
+            TyKind::FnPtr {
+                params,
+                ret: f(*ret),
+                throws: f(*throws),
+                rest: *rest,
+            }
+        }
+        TyKind::Array(e) => TyKind::Array(f(*e)),
+        TyKind::Option(e, n) => TyKind::Option(f(*e), *n),
+        TyKind::Shared(e) => TyKind::Shared(f(*e)),
+        TyKind::Map(a, b) => TyKind::Map(f(*a), f(*b)),
+        TyKind::Result(a, b) => TyKind::Result(f(*a), f(*b)),
+        TyKind::Promise(a, b) => TyKind::Promise(f(*a), f(*b)),
+        k => k.clone(),
     }
 }
 

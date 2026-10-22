@@ -464,7 +464,7 @@ fn check_override_sig(cx: &mut Ctx, m: MethodRef, base: &Found, name: &velt_synt
         false => mr,
     };
     let ret_ok = super::ret_infer::override_ret(cx, (m.def, base.def()), &args, (mr, br), at);
-    if mp != bp || !ret_ok || mg != bg {
+    if !cx.same_tys(&mp, &bp) || !ret_ok || mg != bg {
         cx.err(message, name.span);
     }
 }

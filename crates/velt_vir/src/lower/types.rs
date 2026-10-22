@@ -646,6 +646,27 @@ impl<'h> Cx<'h> {
         self.ty(t) == Ty::Unit
     }
 
+    /// The JS error class standard library class `d` stands for (`TypeError` for `UrlError`):
+    /// the prelude `error` class other than `Error` it extends, when declared outside the
+    /// prelude's `error` module.
+    pub(super) fn std_error_class(&self, d: DefId) -> Option<String> {
+        const ERRORS: &str = "std/prelude/error::";
+        let hir::Def::Adt(a) = self.hir.def(d) else {
+            return None;
+        };
+        if !a.name.starts_with("std/") || a.name.starts_with(ERRORS) {
+            return None;
+        }
+        let TyKind::Adt(p, _) = self.types.kind(a.base?) else {
+            return None;
+        };
+        let hir::Def::Adt(pa) = self.hir.def(*p) else {
+            return None;
+        };
+        let base = pa.name.strip_prefix(ERRORS)?;
+        (base != "Error").then(|| base.to_string())
+    }
+
     /// Short display name of a type (`Uncaught <Type>`, `Name { ... }` when printing).
     pub(super) fn type_name(&self, t: TyId) -> String {
         let full = match self.types.kind(t) {

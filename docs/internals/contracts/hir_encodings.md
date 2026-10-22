@@ -700,6 +700,13 @@ it replaces the `Op` by `Program::type_ops[op]` (looked up as substituted, else 
 arguments), the reduced type sema computed for every instantiation the program reaches. A missing
 entry is an `ICE:`.
 
+`TyOp::ErrSite(n)` (no arguments) exists only while sema checks bodies: the error type of the
+function type written without `throws` at site #n (issue #1154), an error-set variable that sema
+solves once after every body is checked. Sema replaces each one, and every type holding one, by
+its solved type before the program is built (with the readonly twins), so lowering never sees
+one; an error type that was only variables solved empty is no error type (`FnDef::throws` is
+`None`).
+
 ## Spreads and conversions in generic bodies (#350)
 - `{ ...t, tag: e }` with a spread source whose fields are known only per instantiation (a type
   parameter, or a deferred intersection or spread) is a `Call` of `Intrinsic::SpreadObject`

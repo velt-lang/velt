@@ -50,6 +50,8 @@ impl Cx<'_> {
             TyKind::Op(velt_sema::hir::TyOp::Intersect, args) => {
                 format!("op&<{}>", list(args, stack))
             }
+            // Sema replaces every error-set variable before lowering.
+            TyKind::Op(velt_sema::hir::TyOp::ErrSite(n), _) => format!("errsite{n}"),
             TyKind::Op(velt_sema::hir::TyOp::Spread, args) => {
                 format!("op...<{}>", list(args, stack))
             }

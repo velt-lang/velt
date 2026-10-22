@@ -1,0 +1,14 @@
+// An error leaving a function through a `finally` that throws and catches another error is
+// reported where it was thrown (#1404): the caught throw must not take over its location.
+function f(): void {
+  try {
+    throw new RangeError("outer");
+  } finally {
+    try {
+      throw new Error("in finally");
+    } catch (e) {
+      console.log("swallowed");
+    }
+  }
+}
+f();

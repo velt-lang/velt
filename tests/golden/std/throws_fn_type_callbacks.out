@@ -1,0 +1,9 @@
+caught x
+/a
+thrown true TypeError
+true URIError URI malformed
+true URIError URI malformed
+a b
+true URIError: URI malformed
+queued
+tick

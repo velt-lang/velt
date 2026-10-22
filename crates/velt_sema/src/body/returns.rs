@@ -133,7 +133,7 @@ pub(crate) fn check_deferred(cx: &mut Ctx) {
                 cx.subst(r, &args)
             }
         };
-        if have != want && !cx.ty.has_error(have) && !cx.ty.has_error(want) {
+        if !cx.same_ty(have, want) && !cx.ty.has_error(have) && !cx.ty.has_error(want) {
             cx.err(c.message, c.span);
         }
     }
@@ -158,7 +158,9 @@ impl FnCx<'_, '_> {
         if self.f.is_async && self.f.yield_ty.is_none() && self.adopts_promise(ret) {
             return self.async_returned(e, ret);
         }
-        self.expr_coerce(e, ret, Want::Move)
+        // Stored into the site of the written result type (`throws::fn_flows`).
+        let site = self.return_site(ret);
+        self.stored_into(site, |s| s.expr_coerce(e, ret, Want::Move))
     }
 
     /// Can an async function returning `ret` adopt a returned promise? Not when `ret` is itself

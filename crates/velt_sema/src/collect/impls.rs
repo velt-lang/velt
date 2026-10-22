@@ -106,7 +106,8 @@ fn field_getters(
             .adt(p.d)
             .and_then(|a| a.fields.iter().position(|g| g.name == f.name))
             .map(|i| (i, cx.adt(p.d).expect("ICE: adt").fields[i].ty));
-        if let Some((i, ty)) = have.filter(|(_, ty)| *ty == want) {
+        // The same type, or the same but for error-set variables (`throws::vars`).
+        if let Some((i, ty)) = have.filter(|(_, ty)| cx.same_ty(*ty, want)) {
             let g = match cache.get(&(p.d, i)) {
                 Some(&g) => g,
                 None => super::getters::field_getter(cx, p.d, p.self_ty, i, ty),
@@ -339,17 +340,20 @@ fn check_method_sig(
         let e = declared.and_then(|t| t.ty);
         let ret = cx.fn_info(def).ret;
         let ret = cx.with_generator_error(ret, e.unwrap_or(cx.ty.never));
-        cx.subst(ret, owner_args) == want_ret
+        {
+            let r = cx.subst(ret, owner_args);
+            cx.same_ty(r, want_ret)
+        }
     } else {
         super::ret_infer::impl_ret(cx, (def, owner_args), want_ret, (span, message.clone()))
     };
-    if ps != want_ps || !ret_ok {
+    let ps_ok = cx.same_tys(&ps, &want_ps);
+    if !ps_ok || !ret_ok {
         let mut d = Diagnostic::error(message, span);
-        if is_generator && ps == want_ps {
+        if is_generator && ps_ok {
             let want = cx.display(want_ret);
             d = d.with_note(format!("declare the generator's result as `{want}`: its error type is part of the result type"));
-        } else if name == "return" && ps == want_ps && matches!(iname, "Iterator" | "AsyncIterator")
-        {
+        } else if name == "return" && ps_ok && matches!(iname, "Iterator" | "AsyncIterator") {
             // `return(): void`: an iterator's early exit returns a finished result, as in TS.
             let t = iface_args.first().map_or("T".into(), |t| cx.display(*t));
             let want = match iname {

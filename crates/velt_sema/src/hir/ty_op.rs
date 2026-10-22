@@ -22,4 +22,6 @@ pub enum TyOp {
     /// definition, not in an alias, that needs its type parameters (`{ [K in keyof M]: V<M[K]> }`
     /// in a signature, #350): sema's form #n, its arguments the definition's type parameters.
     Inline(u32),
+    /// Sema's error-set variable of site #n (hir_encodings.md); never reaches lowering.
+    ErrSite(u32),
 }

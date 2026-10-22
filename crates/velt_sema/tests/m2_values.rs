@@ -327,11 +327,64 @@ fn closures_and_function_values_carry_error_types() {
     let p =
         ok_src("function f(x: i64): i64 { throw \"x\"; } function main() { const g = f; g(1); }");
     assert!(func(&p, "main").throws.is_some());
+    // A function type written without `throws` throws what is stored into it (#1154).
+    let p = ok_src(
+        "class A extends Error {} function run(f: () => void) { f(); }
+         function main() { run(() => { throw new A(\"x\"); }); }",
+    );
+    assert!(
+        func(&p, "run").throws.is_some(),
+        "a call through `f` throws"
+    );
+    assert!(func(&p, "main").throws.is_some());
+    let p = ok_src(
+        "function run(f: () => void) { f(); } function main() { run(() => { console.log(1); }); }",
+    );
+    assert!(func(&p, "run").throws.is_none(), "nothing stored throws");
+    // Per site: a function type of the same shape written elsewhere throws nothing more, and
+    // the errors follow the values stored from one site into another.
+    let p = ok_src(
+        "class A extends Error {}
+         class Box { cb: () => void; constructor(cb: () => void) { this.cb = cb; } }
+         function run(f: () => void) { const b = new Box(f); b.cb(); }
+         function other(g: () => void) { g(); }
+         function main() { run(() => { throw new A(\"x\"); }); other(() => {}); }",
+    );
+    assert!(func(&p, "run").throws.is_some(), "through the field");
+    assert!(func(&p, "other").throws.is_none(), "another site");
+    // Only `Error` classes are inferred: a thrown string is still reported.
     let r = err_src(
         "function run(f: () => void) { f(); } function main() { run(() => { throw \"x\"; }); }",
     );
     assert!(
         r.contains("but the function type it is used as does not allow throwing"),
+        "{r}"
+    );
+    // The errors come through other function types and through untyped `let`s.
+    let p = ok_src(
+        "class A extends Error {}
+         let s1: (n: i64) => i64 = (n) => n;
+         let s0: (s: string) => i64 = (s) => s1(1);
+         function main() {
+           let f = () => {};
+           f = () => { throw new A(\"x\"); };
+           s1 = (n) => { throw new A(\"y\"); };
+           try { f(); s0(\"a\"); } catch (e) {}
+         }",
+    );
+    assert!(func(&p, "main").throws.is_none(), "caught");
+    // Diagnostics show such a type as written, without what it may throw.
+    let r =
+        err_src("function main() { let g: (n: i64) => void = (n) => {}; const s: string = g; }");
+    assert!(r.contains("found (i64) => void"), "{r}");
+    assert!(!r.contains("throws"), "{r}");
+    // A written `throws` clause still bounds what may be stored.
+    let r = err_src(
+        "class A extends Error {} function run(f: () => void throws A) { f(); }
+         function main() { try { run(() => { throw \"x\"; }); } catch (e) {} }",
+    );
+    assert!(
+        r.contains("but the function type it is used as allows only `A`"),
         "{r}"
     );
 }
@@ -422,4 +475,28 @@ fn assignment_into_an_object_literal_its_right_hand_side_may_replace() {
     ok_src(&format!(
         "{decls} function main() {{ {replaced} const keep = p.inner; p.inner.v = h(); console.log(keep.v); }}"
     ));
+}
+
+#[test]
+fn typeof_of_a_function_generic_over_errors_only() {
+    // Its function type leaves the errors out, as TypeScript declares it (`typeof setTimeout`).
+    let p = ok_src(
+        "class A extends Error {}
+         function run<E>(f: () => void throws E): i64 { try { f(); } catch (e) {} return 1; }
+         function main() {
+           const n: ReturnType<typeof run> = run(() => { throw new A(\"x\"); });
+           let t: ReturnType<typeof setTimeout> | null = null;
+           t = setTimeout(() => { throw new A(\"y\"); }, 1);
+           console.log(n);
+         }",
+    );
+    assert!(
+        func(&p, "main").throws.is_none(),
+        "timer errors are uncaught"
+    );
+    let r = err_src("function id<T>(x: T): T { return x; } function main() { let f: typeof id; }");
+    assert!(
+        r.contains("of a generic function is not supported yet"),
+        "{r}"
+    );
 }

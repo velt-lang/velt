@@ -1,0 +1,14 @@
+// An error a `setTimeout` callback created in a microtask throws ends the process at the throw,
+// as in Node (#1154).
+queueMicrotask(() => {
+  console.log("m1");
+  setTimeout(
+    () => {
+      console.log("t-in");
+      queueMicrotask(() => console.log("after"));
+      throw new TypeError("nested");
+    },
+    1,
+  );
+});
+setTimeout(() => console.log("t-later"), 100);

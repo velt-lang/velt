@@ -155,8 +155,9 @@ impl Ctx<'_> {
         if let Some(&r) = self.type_level.reduced.get(&t) {
             return r;
         }
-        let TyKind::Op(o, args) = self.ty.kind(t).clone() else {
-            return t;
+        let (o, args) = match self.ty.kind(t).clone() {
+            TyKind::Op(o, args) if !matches!(o, TyOp::ErrSite(_)) => (o, args),
+            _ => return t,
         };
         if args.iter().any(|x| self.ty.has_error(*x)) {
             return self.ty.error;
