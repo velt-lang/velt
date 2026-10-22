@@ -361,9 +361,15 @@ impl FnCx<'_, '_> {
                 self.literal_at(h, span)
             }
             DefInfo::Global(_) => self.global_read(d, want, span),
-            DefInfo::Adt(_) if self.cx.adt(d).is_some_and(|a| a.kind == hir::AdtKind::Class) => self
-                .class_value(d, id, exp, want)
-                .unwrap_or_else(|| self.error_expr(span)),
+            DefInfo::Adt(_)
+                if self
+                    .cx
+                    .adt(d)
+                    .is_some_and(|a| a.kind == hir::AdtKind::Class) =>
+            {
+                self.class_value(d, id, exp, want)
+                    .unwrap_or_else(|| self.error_expr(span))
+            }
             _ => {
                 self.cx
                     .err(format!("`{}` is a type, not a value", id.name), span);

@@ -132,12 +132,19 @@ impl FnCx<'_, '_> {
         };
         if p.name != "SharedArrayBuffer"
             || self.is_local_name(&p.name)
-            || self.cx.lookup_item_at(self.module, &p.name, p.span).is_some()
+            || self
+                .cx
+                .lookup_item_at(self.module, &p.name, p.span)
+                .is_some()
         {
             return None;
         }
         let s = self.expr(e, None, crate::body::Want::Borrow);
-        let no = self.mk(hir::ExprKind::Lit(hir::Lit::Bool(false)), self.cx.ty.bool_, span);
+        let no = self.mk(
+            hir::ExprKind::Lit(hir::Lit::Bool(false)),
+            self.cx.ty.bool_,
+            span,
+        );
         let block = hir::Block {
             stmts: vec![hir::Stmt {
                 kind: hir::StmtKind::Expr(s),

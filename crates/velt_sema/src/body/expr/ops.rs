@@ -552,7 +552,12 @@ impl FnCx<'_, '_> {
     /// (#365): the object behind an interface value, and the function value itself (each
     /// evaluation of an arrow is a new one, as in JS).
     fn equatable(&self, t: TyId) -> bool {
-        !matches!(self.cx.ty.kind(t), TyKind::Unit | TyKind::Simd(_))
+        // Two reads of one class as a value are not one object yet (`expr::ctor_values`).
+        let ctor = self
+            .cx
+            .ctor_sig_own(self.cx.ty.core(t).unwrap_or(t))
+            .is_some();
+        !matches!(self.cx.ty.kind(t), TyKind::Unit | TyKind::Simd(_)) && !ctor
     }
 
     /// Validate `lhs op rhs`; returns the (common) operand type, or None after reporting an error.
@@ -605,6 +610,11 @@ impl FnCx<'_, '_> {
             let mut d = Diagnostic::error(message, span);
             if matches!(self.cx.ty.kind(t), TyKind::Simd(_)) {
                 d = d.with_note(simd_method_note(op));
+            } else if !matches!(self.cx.ty.kind(t), TyKind::Unit)
+                && !matches!(op, B::Lt | B::LtEq | B::Gt | B::GtEq)
+                && is_comparison(op)
+            {
+                d = d.with_note("comparing classes used as values is not supported yet (#943)");
             }
             self.cx.error(d);
             return None;

@@ -943,9 +943,34 @@ async function main() {
   (`[e: string, ...xs: number[]]`), which is not supported yet. A generic function whose rest
   parameter is typed by its type parameter (`wrap<A extends unknown[], R>(f: (...args: A) => R)`)
   is not supported yet.
+- **Construct signatures** (`new (buffer: ArrayBuffer) => ArrayBufferView`) type a class used
+  as a value. A class named where a value of that type is expected (a variable's or field's
+  type, an argument, an array or tuple element, a returned value) is one when its constructor
+  takes the signature's parameters and its instance converts to the signature's instance type,
+  as TypeScript checks it. Through a value `C` of that type, `new C(args)` constructs an
+  instance (what the constructor throws, the call throws), `v instanceof C` tests for an
+  instance of the class `C` holds (and narrows `v` to the signature's instance type when that
+  is a class), `C.name` is the class's name and `typeof C` is `"function"`. A class used as a
+  value without such a type (`const C = Point;`) is an error for now, as are generic construct
+  signatures (`new <T>(x: T) => Box<T>`), comparing two class values (`C === Point`), printing
+  or `JSON.stringify` of one, and `new` of an expression that is not a name
+  (`new (pick())(x)`).
+
+  ```ts
+  class Point {
+    constructor(public x: number) {}
+  }
+  class Point3 extends Point {}
+  type PointCtor = new (x: number) => Point;
+  const kinds: PointCtor[] = [Point, Point3];
+  for (const K of kinds) {
+    const p = new K(1);
+    console.log(K.name, p instanceof K, p instanceof Point3); // "Point true false", then "Point3 true true"
+  }
+  ```
 - **Planned** (#943): generic function types (`<T>(description: string) => Token<T>`, a value
-  each call instantiates) and construct signatures (`new (buffer: ArrayBuffer) => View`, a class
-  passed as a value). They parse, and using one is an error saying it is not supported yet.
+  each call instantiates). They parse, and using one is an error saying it is not supported
+  yet.
 - A function type's parameter may be named by a destructuring pattern
   (`([a, b]: [number, number]) => number`), which, like a name, is only for the reader.
 - A function type's parameter may be **optional** (`(app: App, options?: Options) => void`): its

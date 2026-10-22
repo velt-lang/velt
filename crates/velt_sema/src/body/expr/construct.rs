@@ -93,7 +93,7 @@ impl FnCx<'_, '_> {
             js_numbers: false,
             positions: false,
             js_api: false,
-            rest: false,
+            rest: ctor.is_some_and(|c| crate::body::defaults::has_rest(self.cx, c)),
             defaults: self.cx.adt_param_defaults(d),
         };
         self.collect_iterable_args = self.takes_iterable(d);

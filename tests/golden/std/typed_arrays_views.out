@@ -1,0 +1,9 @@
+Uint8Array Uint8Array true 8 0 true
+Int16Array Int16Array true 8 0 true
+Float64Array Float64Array true 8 0 true
+DataView DataView true 8 0 true
+true true false true
+false function
+[ 2, 4 ] false
+8 4
+RangeError

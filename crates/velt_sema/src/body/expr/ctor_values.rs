@@ -149,8 +149,59 @@ impl FnCx<'_, '_> {
     }
 
     /// `X` after `new` or `instanceof` naming a variable or module constant of a construct
-    /// signature type: that name as an expression.
+    /// signature type, or a member of a variable (`new reg.ctor(x)`: a variable can't name a
+    /// class): that value as an expression.
     fn ctor_value_named(&mut self, ty: &ast::TypeExpr) -> Option<ast::Expr> {
+        if let Some((e, _)) = self.ctor_value_sig(ty) {
+            return Some(e);
+        }
+        let ast::TypeExprKind::Named { path, args } = &ty.kind else {
+            return None;
+        };
+        let (true, [root, members @ ..]) = (args.is_empty(), path.as_slice()) else {
+            return None;
+        };
+        if members.is_empty() || self.peek_local_ty(&root.name).is_none() {
+            return None;
+        }
+        let mut e = name_expr(&root.name, root.span);
+        for m in members {
+            let span = e.span.to(m.span);
+            let kind = ast::ExprKind::Member {
+                object: Box::new(e),
+                prop: m.clone(),
+                optional: false,
+            };
+            e = synth(kind, span);
+        }
+        Some(e)
+    }
+
+    /// Facts of `e instanceof C` through a class value `C` (for flow narrowing): when true, `e`
+    /// is an instance of the class the signature constructs (`C` holds a subclass of it), as
+    /// TypeScript narrows; when false, nothing.
+    pub(crate) fn ctor_value_facts(
+        &mut self,
+        e: &ast::Expr,
+        ty: &ast::TypeExpr,
+    ) -> (
+        Vec<crate::body::narrow::Fact>,
+        Vec<crate::body::narrow::Fact>,
+    ) {
+        let class = self
+            .ctor_value_sig(ty)
+            .and_then(|(_, f)| match self.cx.ty.kind(f) {
+                TyKind::FnPtr { ret, .. } => self.cx.class_of(*ret).map(|(d, _)| d),
+                _ => None,
+            });
+        match class {
+            Some(c) => (self.class_facts(e, c).0, vec![]),
+            None => (vec![], vec![]),
+        }
+    }
+
+    /// [`Self::ctor_value_named`], with the signature's function type.
+    fn ctor_value_sig(&mut self, ty: &ast::TypeExpr) -> Option<(ast::Expr, TyId)> {
         let ast::TypeExprKind::Named { path, args } = &ty.kind else {
             return None;
         };
@@ -168,8 +219,8 @@ impl FnCx<'_, '_> {
             },
         };
         let core = self.cx.ty.core(t).unwrap_or(t);
-        self.cx.ctor_sig(core)?;
-        Some(name_expr(&name.name, name.span))
+        let f = self.cx.ctor_sig(core)?;
+        Some((name_expr(&name.name, name.span), f))
     }
 
     /// `new C(args)` through a class value `C` (module docs).
@@ -206,6 +257,21 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         if self.cx.ty.is_bottom(v.ty) {
+            self.check_args_loose(args);
+            return self.error_expr(span);
+        }
+        let core = self.cx.ty.core(v.ty).unwrap_or(v.ty);
+        if self.cx.ctor_sig(core).is_none() {
+            let tn = self.cx.display(v.ty);
+            let what = if field == NEW {
+                "`new`"
+            } else {
+                "`instanceof`"
+            };
+            self.cx.err(
+                format!("{what} needs a class, but this value's type `{tn}` is not a construct signature (`new (...) => T`)"),
+                v.span,
+            );
             self.check_args_loose(args);
             return self.error_expr(span);
         }
