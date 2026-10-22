@@ -256,6 +256,11 @@ mod tests {
         assert!(wait(&rt, &DONE), "done");
     }
 
+    /// `done` as [`wait`] stores it.
+    fn flag(done: &'static AtomicBool) -> *mut AtomicBool {
+        done as *const AtomicBool as *mut AtomicBool
+    }
+
     #[test]
     fn the_last_worker_to_park_records_the_end_for_a_timer_that_wakes_it() {
         let rt = Runtime {
@@ -269,12 +274,15 @@ mod tests {
         c.workers.store(2, SeqCst);
         assert!(!c.park(&rt), "no thread waits");
         c.unparked();
-        c.waiting.store(&DONE as *const AtomicBool as *mut AtomicBool, SeqCst);
+        c.waiting.store(flag(&DONE), SeqCst);
         assert!(!c.park(&rt) && c.park(&rt), "the last worker signals");
-        assert!(!c.ending.load(SeqCst), "what was waited for is done: not the end");
+        assert!(
+            !c.ending.load(SeqCst),
+            "what was waited for is done: not the end"
+        );
         c.unparked();
         c.unparked();
-        c.waiting.store(&NOT_DONE as *const AtomicBool as *mut AtomicBool, SeqCst);
+        c.waiting.store(flag(&NOT_DONE), SeqCst);
         c.external.store(1, SeqCst);
         assert!(!c.park(&rt) && c.park(&rt));
         assert!(!c.ending.load(SeqCst), "a timer is pending: not quiet");
@@ -302,7 +310,7 @@ mod tests {
         static NOT_DONE: AtomicBool = AtomicBool::new(false);
         let c = Counters::new();
         c.workers.store(WORKERS, SeqCst);
-        c.waiting.store(&NOT_DONE as *const AtomicBool as *mut AtomicBool, SeqCst);
+        c.waiting.store(flag(&NOT_DONE), SeqCst);
         let barrier = std::sync::Barrier::new(WORKERS);
         for round in 0..ROUNDS {
             // Every other round a keep-alive-like pending count holds the process.

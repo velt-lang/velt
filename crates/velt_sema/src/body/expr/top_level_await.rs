@@ -41,11 +41,7 @@ impl FnCx<'_, '_> {
         let mut stmts = vec![self.store_site(at, span)];
         let Some(&outer) = self.f.top_level_outer.last() else {
             let value = self.value_of(&mut stmts, awaited, span);
-            let block = hir::Block {
-                stmts,
-                value,
-                span,
-            };
+            let block = hir::Block { stmts, value, span };
             return self.mk(H::Block(block), ty, span);
         };
         let value = match ty == unit || self.cx.ty.is_bottom(ty) {
@@ -70,11 +66,7 @@ impl FnCx<'_, '_> {
         };
         stmts.push(self.store_site(at, outer));
         let value = value.map(|v| Box::new(self.mk(H::Local(v, UseMode::Move), ty, span)));
-        let block = hir::Block {
-            stmts,
-            value,
-            span,
-        };
+        let block = hir::Block { stmts, value, span };
         self.mk(H::Block(block), ty, span)
     }
 

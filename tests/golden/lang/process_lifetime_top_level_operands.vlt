@@ -1,0 +1,23 @@
+// The unsettled top-level `await` named is the one waiting: after an inner `await` threw, in
+// both arms of a conditional, and the last element of an array of `await`s (#1366).
+function never(): Promise<number> {
+  return new Promise<number>((resolve) => {});
+}
+async function rejects(): Promise<number> {
+  throw new Error("r");
+}
+async function id(n: number): Promise<number> {
+  return n;
+}
+try {
+  await id(await rejects());
+} catch (e) {
+  console.log("caught");
+}
+const c = Math.random() > 2;
+const v = c ? await id(1) : await id(
+  await id(2));
+console.log("v", v);
+const xs = [await id(3),
+  await never()];
+console.log(xs);
