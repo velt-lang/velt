@@ -254,14 +254,19 @@ Every backend sits behind `task/runtime/` (`spawn`, `spawn_with`, `spawn_blockin
 types. `VELT_SCHEDULER=velt` (experimental, env only: `velt_rt_set_scheduler` kinds are
 unchanged) selects the runtime's own executor (`task/runtime/velt/`): worker threads with their
 own queue and `mio` poll; a task wakes on its home worker, a spawn stays on the spawning worker
-(from outside the workers: worker 0). A worker that used 85 % of a 10 ms window in CPU time with
-tasks waiting gets a helper on trial (`velt/spread.rs`): the rate of work (socket bytes plus task
-polls) is measured for 20 ms without it and 20 ms with it, and the helper stays only if the rate
-rose by 30 % of what one more worker could add; otherwise its tasks go back on their next wake (a
-worker whose task polls average 20 µs of CPU or more takes a helper without a trial). A
-connection's socket moves its registration to the worker its task reads on (Unix). Tasks woken
-by I/O and timers run before queued work, and a worker with 256 or more queued tasks polls its
-reactor every 4 tasks.
+(from outside the workers: worker 0). Each worker's run queue (`velt/queue.rs`) runs input
+(tasks woken by I/O, timers or other threads) before the work tasks made (spawns, wakes from
+tasks of the same worker, budget yields), each in order; every 61st task comes from the second
+queue, and once it has waited 10 ms a fair pass runs all of it. A worker whose input has a
+delay of 200 µs or more over a 10 ms window (the mean input queue noted in the window times the
+mean wall time of a poll; the whole queue once polls average 20 µs) offers half of its
+queue to a sleeping worker, which becomes the tasks' home (`velt/spread.rs`). A worker that runs
+out of work, before it sleeps, runs half of the input waiting on another awake worker without
+taking it over (the tasks keep their home). The monitor does the duties of a worker that has
+started no poll for 2 ms while awake: a turn of its reactor and timers, and its inbox and half
+of its queue to another worker, each 1 ms tick while the stall lasts. A connection's socket
+moves its registration to its task's home worker when the task reads there (Unix). A worker
+with 256 or more queued tasks polls its reactor every 4 tasks.
 TCP sockets (`net/sys.rs`), the HTTP server and timers are native; tokio types elsewhere
 (files, processes, Postgres, Redis, the HTTP client, UDP, DNS, `spawn_blocking`) run on a
 one-thread tokio runtime whose context every worker stays inside.

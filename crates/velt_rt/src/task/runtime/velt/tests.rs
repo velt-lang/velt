@@ -134,6 +134,50 @@ fn a_worker_busy_with_waiting_tasks_shares_them() {
 }
 
 #[test]
+fn tasks_queued_behind_a_long_poll_run_on_another_worker() {
+    if super::super::worker_count() < 2 {
+        return;
+    }
+    // Tasks spawned by a task that then computes for 300 ms without returning: they are queued
+    // on its worker, which makes no progress, so the monitor moves them to another worker.
+    let ran_late = Arc::new(Mutex::new(Vec::new()));
+    let seen = ran_late.clone();
+    let done = spawn(
+        async move {
+            let computing = Arc::new(std::sync::atomic::AtomicBool::new(true));
+            let hs: Vec<_> = (0..8)
+                .map(|_| {
+                    let (seen, computing) = (seen.clone(), computing.clone());
+                    spawn(
+                        async move {
+                            let late = !computing.load(std::sync::atomic::Ordering::SeqCst);
+                            seen.lock().unwrap().push(late);
+                        },
+                        None,
+                    )
+                })
+                .collect();
+            let t = Instant::now();
+            while t.elapsed() < Duration::from_millis(300) {
+                std::hint::spin_loop();
+            }
+            computing.store(false, std::sync::atomic::Ordering::SeqCst);
+            for h in hs {
+                let _ = h.await;
+            }
+        },
+        None,
+    );
+    let _ = block_on(done);
+    let ran_late = ran_late.lock().unwrap();
+    assert_eq!(ran_late.len(), 8);
+    assert!(
+        ran_late.iter().all(|late| !late),
+        "tasks waited for the long poll: {ran_late:?}"
+    );
+}
+
+#[test]
 fn a_tcp_echo_runs_on_the_backends_own_sockets() {
     let std_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = std_listener.local_addr().unwrap();

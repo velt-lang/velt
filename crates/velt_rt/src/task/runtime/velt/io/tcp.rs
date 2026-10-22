@@ -35,14 +35,15 @@ impl TcpStream {
             .map(drop)
     }
 
-    /// Moves the socket's registration to this thread's worker when it reads from another one
-    /// (its task was taken over by a helper): its events then wake the task where it runs,
-    /// not across threads. Registering again reports the socket's current readiness (edge
-    /// triggers fire for what is already there), so nothing that arrived meanwhile is missed.
+    /// Moves the socket's registration to the home worker of the task reading it when that is
+    /// another one (a helper took the task over): its events then wake the task where it runs,
+    /// not across threads. A task run once by a worker that borrowed it keeps its home, and its
+    /// socket stays. Registering again reports the socket's current readiness (edge triggers
+    /// fire for what is already there), so nothing that arrived meanwhile is missed.
     #[cfg(unix)]
     fn follow(&self) {
         use std::os::fd::AsRawFd;
-        let Some(here) = super::super::worker::current() else {
+        let Some(here) = super::super::worker::running_home() else {
             return;
         };
         let r = &self.0.registered;

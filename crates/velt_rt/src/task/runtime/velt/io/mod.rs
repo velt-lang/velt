@@ -106,7 +106,7 @@ pub(super) fn dispatch(worker: usize, ev: &mio::event::Event) {
         waiting.into_iter().for_each(std::task::Waker::wake);
     }
     if bits & (WRITABLE | WRITE_CLOSED | ERROR) != 0 {
-        reg.writer.wake();
+        super::worker::as_output(|| reg.writer.wake());
     }
 }
 
