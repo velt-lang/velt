@@ -34,7 +34,7 @@ export function run(): u64 {
 }
 "#;
 
-const REAL: &str = r#"import { IoResult } from "velt:io";
+const REAL: &str = r#"import { IoResult, IoStatus } from "velt:io";
 
 declare function velt_demo__real(): IoResult<u64>;
 
@@ -52,6 +52,7 @@ declare function velt_demo__strs(xs: string[], r: Run): IoResult<Run[]>;
 declare function velt_demo__renamed(r: Run): void;
 declare function velt_demo__cls(h: Holder): void;
 declare function velt_demo__opt(m: Maybe): void;
+declare function velt_demo__status(): IoStatus;
 
 export function real(): u64 {
   return velt_demo__real().value;
@@ -97,6 +98,7 @@ fn diagnostics() -> String {
         ("velt_demo__renamed", "({changes:i64,last:i64})->void"),
         ("velt_demo__cls", "(i64)->void"),
         ("velt_demo__opt", "(i64)->void"),
+        ("velt_demo__status", "()->IoStatus"),
     ];
     let meta = NativeMeta {
         package: "demo".into(),
@@ -148,6 +150,8 @@ fn declares_must_match_their_library_exactly() {
     assert!(d.contains("`IoResult<T>` of a value (values: "), "{d}");
     // Arrays and structs cross by shape; a field with another name is another type.
     assert!(!d.contains("velt_demo__strs"), "{d}");
+    // std's `IoStatus` is a struct, but crosses as `IoStatus`, not by its shape.
+    assert!(!d.contains("velt_demo__status"), "{d}");
     has("this declares     `({changes:i64,lastId:i64})->void`");
     // Classes and optional fields do not cross.
     has("::Holder`");

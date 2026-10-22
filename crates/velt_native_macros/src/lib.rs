@@ -145,6 +145,10 @@ fn expand(mode: Mode, func: ItemFn) -> syn::Result<Tokens> {
     let mut inner_fn = func.clone();
     inner_fn.sig.ident = inner.clone();
     inner_fn.attrs.retain(|a| !a.path().is_ident("no_mangle"));
+    // Export names (`velt_pkg__name`) are not snake case; the inner function keeps them.
+    inner_fn
+        .attrs
+        .push(syn::parse_quote!(#[allow(non_snake_case)]));
 
     let mut raw_params = vec![];
     let mut args = vec![];

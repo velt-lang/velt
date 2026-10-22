@@ -1,15 +1,28 @@
 //! Runtime externs and boxed types (semantics stage 2, docs/design/semantics-stage2.md §3.5).
-//! `velt_rt` reads and writes values in their unboxed ("foreign") layout: an array is its
-//! `{ data, len, cap }` header, an object its fields. When a type in an extern signature
-//! contains a boxed array or object, arguments are passed as an unboxed *view* (a bitwise copy
-//! that owns nothing) and results are moved into fresh boxes.
+//! `velt_rt` and native libraries read and write values in their unboxed ("foreign") layout: an
+//! array is its `{ data, len, cap }` header with elements in their foreign layout, an object its
+//! fields. When a type in an extern signature contains a boxed array or object, arguments are
+//! passed as an unboxed *view* (a bitwise copy that owns nothing; an array whose elements differ
+//! gets a temporary buffer of element views, freed when the extern returns, [`ForeignBuf`]) and
+//! results are moved into fresh boxes (an array whose elements differ into a new native buffer,
+//! the foreign one freed).
 //! The `velt_simd_*` helpers get an array's header in place instead (`foreign_args`).
 
 use velt_sema::hir::{self, TyId, TyKind};
 
+use super::cint;
 use super::operand::proj;
-use super::{ice, Cx, FnLower};
-use crate::vir::{Operand, Place, Proj, Rvalue, Ty};
+use super::rt::Rt;
+use super::{Cx, FnLower};
+use crate::vir::{BinOp, Operand, Place, Proj, Rvalue, Ty};
+
+/// The buffer of an array view whose elements differ from their native layout: the extern call
+/// frees it once the extern returned ([`FnLower::free_foreign_bufs`]).
+pub(super) struct ForeignBuf {
+    hdr: Place,
+    stride: u32,
+    align: u32,
+}
 
 impl Cx<'_> {
     /// The layout runtime externs use for `t` (as if no type were boxed).
@@ -18,13 +31,10 @@ impl Cx<'_> {
             return f;
         }
         let native = self.ty(t);
+        // A recursive type sees itself as native while its layout is computed.
+        self.lay.foreign.insert(t, native);
         let f = match self.kind(t) {
-            TyKind::Array(e) => {
-                if self.foreign_differs(e) {
-                    ice("a runtime extern exchanges an array of boxed values");
-                }
-                Ty::Agg(self.array_agg())
-            }
+            TyKind::Array(_) => Ty::Agg(self.array_agg()),
             TyKind::Adt(d, _)
                 if matches!(self.hir.def(d), hir::Def::Adt(_)) && !self.is_class(t) =>
             {
@@ -45,10 +55,16 @@ impl Cx<'_> {
         f
     }
 
-    /// Does the runtime see `t` differently from compiled code?
+    /// Does a value of `t` need converting between compiled code and an extern: its foreign
+    /// layout differs, or it is an array whose header is the same but whose elements differ?
     pub(super) fn foreign_differs(&mut self, t: TyId) -> bool {
-        let f = self.foreign_ty(t);
-        f != self.ty(t)
+        match self.kind(t) {
+            TyKind::Array(e) => self.boxed(t) || self.foreign_differs(e),
+            _ => {
+                let f = self.foreign_ty(t);
+                f != self.ty(t)
+            }
+        }
     }
 
     /// The foreign layout of a struct / tuple with field types `fields`.
@@ -57,7 +73,9 @@ impl Cx<'_> {
         let mut tys = vec![];
         for f in fields {
             let ft = self.foreign_ty(f);
-            differs |= ft != self.ty(f);
+            // A field converted in place (an array of differing elements) makes this a foreign
+            // aggregate of its own too, so its fields are addressed by their foreign index.
+            differs |= ft != self.ty(f) || self.foreign_differs(f);
             if ft != Ty::Unit {
                 tys.push(ft);
             }
@@ -70,17 +88,27 @@ impl Cx<'_> {
 }
 
 impl FnLower<'_, '_> {
-    /// An unboxed view of the native value at `src` (owning nothing) for a runtime extern.
-    pub(super) fn foreign_view(&mut self, src: &Place, t: TyId) -> Place {
+    /// An unboxed view of the native value at `src` (owning nothing) for a runtime extern; the
+    /// buffers of array views go to `bufs`.
+    pub(super) fn foreign_view(
+        &mut self,
+        src: &Place,
+        t: TyId,
+        bufs: &mut Vec<ForeignBuf>,
+    ) -> Place {
         if !self.cx.foreign_differs(t) {
             return src.clone();
         }
         let ft = self.cx.foreign_ty(t);
         let out = Place::local(self.temp(ft));
         match self.cx.kind(t) {
-            TyKind::Array(_) => {
+            TyKind::Array(e) => {
                 let hdr = self.content(src, t);
-                self.assign(out.clone(), Rvalue::Use(Operand::Copy(hdr)));
+                if !self.cx.foreign_differs(e) {
+                    self.assign(out.clone(), Rvalue::Use(Operand::Copy(hdr)));
+                } else {
+                    self.array_view(&hdr, e, &out, bufs);
+                }
             }
             TyKind::Option(e, _) => {
                 let zero = self.zero_value(ft);
@@ -89,7 +117,7 @@ impl FnLower<'_, '_> {
                 let some = self.option_is_some(src, t);
                 self.when(some, done);
                 let payload = self.some_payload(src, t);
-                let v = self.foreign_view(&payload, e);
+                let v = self.foreign_view(&payload, e, bufs);
                 self.assign(proj(&out, Proj::Field(0)), Rvalue::Use(Self::ctrue()));
                 self.assign(proj(&out, Proj::Field(1)), Rvalue::Use(Operand::Copy(v)));
                 self.goto(done);
@@ -98,7 +126,7 @@ impl FnLower<'_, '_> {
             _ => {
                 for (k, (i, f)) in self.stored_parts(t).into_iter().enumerate() {
                     let fp = self.field_place(src, t, i);
-                    let v = self.foreign_view(&fp, f);
+                    let v = self.foreign_view(&fp, f, bufs);
                     self.assign(
                         proj(&out, Proj::Field(k as u32)),
                         Rvalue::Use(Operand::Copy(v)),
@@ -117,8 +145,12 @@ impl FnLower<'_, '_> {
             return;
         }
         match self.cx.kind(t) {
-            TyKind::Array(_) => {
-                let v = self.box_value(Operand::Copy(src.clone()), t);
+            TyKind::Array(e) => {
+                let hdr = match self.cx.foreign_differs(e) {
+                    true => Operand::Copy(Place::local(self.adopt_array(src, e))),
+                    false => Operand::Copy(src.clone()),
+                };
+                let v = self.box_value(hdr, t);
                 self.assign(dst.clone(), Rvalue::Use(v));
             }
             TyKind::Option(e, _) => {
@@ -170,5 +202,108 @@ impl FnLower<'_, '_> {
             }
         }
         out
+    }
+
+    /// (stride, align) of an element in its foreign layout.
+    fn foreign_stride(&mut self, e: TyId) -> (u32, u32) {
+        let fe = self.cx.foreign_ty(e);
+        self.cx.size_align(fe)
+    }
+
+    /// Element `k` of the foreign array at `hdr` (elements of type `e`).
+    fn foreign_elem(&mut self, hdr: &Place, k: Operand, e: TyId) -> Place {
+        let (stride, _) = self.foreign_stride(e);
+        let off = self.rvalue_temp(
+            Ty::U64,
+            Rvalue::Binary(BinOp::Mul, k, cint(stride as i128, Ty::U64)),
+        );
+        let data = Operand::Copy(proj(hdr, Proj::Field(0)));
+        let p = self.rvalue_temp(Ty::Ptr, Rvalue::Binary(BinOp::PtrAdd, data, off));
+        let fe = self.cx.foreign_ty(e);
+        let pp = self.operand_place(p, Ty::Ptr);
+        proj(&pp, Proj::Deref(fe))
+    }
+
+    /// Writes into `out` a foreign array header whose new buffer holds a view of each element of
+    /// the native array `hdr` (elements of type `e`); the buffer goes to `bufs`.
+    fn array_view(&mut self, hdr: &Place, e: TyId, out: &Place, bufs: &mut Vec<ForeignBuf>) {
+        let (stride, align) = self.foreign_stride(e);
+        let len = self.rvalue_temp(
+            Ty::U64,
+            Rvalue::Use(Operand::Copy(proj(hdr, Proj::Field(1)))),
+        );
+        let size = self.rvalue_temp(
+            Ty::U64,
+            Rvalue::Binary(BinOp::Mul, len.clone(), cint(stride as i128, Ty::U64)),
+        );
+        let data = self.temp(Ty::Ptr);
+        self.call_rt(
+            Rt::Alloc,
+            vec![size, cint(align as i128, Ty::U64)],
+            Some(Place::local(data)),
+        );
+        let a = self.cx.array_agg();
+        let data = Operand::Copy(Place::local(data));
+        self.assign(
+            out.clone(),
+            Rvalue::Aggregate(a, vec![data, len.clone(), len.clone()]),
+        );
+        let k = self.temp(Ty::U64);
+        self.assign(Place::local(k), Rvalue::Use(cint(0, Ty::U64)));
+        self.count_loop(k, len, |lw, k| {
+            let sp = lw.elem_place(hdr, k.clone(), e);
+            let mut inner = vec![];
+            let v = lw.foreign_view(&sp, e, &mut inner);
+            bufs.append(&mut inner);
+            let dp = lw.foreign_elem(out, k, e);
+            lw.assign(dp, Rvalue::Use(Operand::Copy(v)));
+        });
+        bufs.push(ForeignBuf {
+            hdr: out.clone(),
+            stride,
+            align,
+        });
+    }
+
+    /// A new native array header (temp) holding the elements of the foreign array at `src`
+    /// (elements of type `e`, written by an extern), each adopted; the foreign buffer is freed.
+    fn adopt_array(&mut self, src: &Place, e: TyId) -> crate::vir::Local {
+        let len = self.rvalue_temp(
+            Ty::U64,
+            Rvalue::Use(Operand::Copy(proj(src, Proj::Field(1)))),
+        );
+        let nat = self.inline_array_with_len(len.clone(), e);
+        let k = self.temp(Ty::U64);
+        self.assign(Place::local(k), Rvalue::Use(cint(0, Ty::U64)));
+        self.count_loop(k, len, |lw, k| {
+            let fsrc = lw.foreign_elem(src, k.clone(), e);
+            let dst = lw.elem_place(&Place::local(nat), k, e);
+            lw.adopt_foreign(&fsrc, e, &dst);
+        });
+        let (stride, align) = self.foreign_stride(e);
+        self.free_foreign(src, stride, align);
+        nat
+    }
+
+    /// Frees the buffer of the foreign array header at `hdr` (`cap` elements of `stride`).
+    fn free_foreign(&mut self, hdr: &Place, stride: u32, align: u32) {
+        let cap = Operand::Copy(proj(hdr, Proj::Field(2)));
+        let size = self.rvalue_temp(
+            Ty::U64,
+            Rvalue::Binary(BinOp::Mul, cap, cint(stride as i128, Ty::U64)),
+        );
+        let data = Operand::Copy(proj(hdr, Proj::Field(0)));
+        self.call_rt(
+            Rt::Free,
+            vec![data, size, cint(align as i128, Ty::U64)],
+            None,
+        );
+    }
+
+    /// Frees the buffers of the array views an extern call was given (it returned).
+    pub(super) fn free_foreign_bufs(&mut self, bufs: Vec<ForeignBuf>) {
+        for b in bufs {
+            self.free_foreign(&b.hdr, b.stride, b.align);
+        }
     }
 }

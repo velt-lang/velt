@@ -142,19 +142,22 @@ fn result(p: &hir::Program, io: IoTypes, t: TyId) -> Result<String, String> {
     if matches!(p.types.kind(t), TyKind::Unit) {
         return Ok("void".into());
     }
-    if let Some(v) = value(p, t) {
-        return Ok(v);
-    }
+    // std's `IoStatus` and `IoResult<T>` are structs too: named as themselves, first.
     if let TyKind::Adt(d, args) = p.types.kind(t) {
         let d = Some(*d);
         if d == io.io_status && args.is_empty() {
             return Ok("IoStatus".into());
         }
-        if let ([v], true) = (args.as_slice(), d == io.io_result) {
-            if let Some(v) = value(p, *v) {
-                return Ok(format!("IoResult<{v}>"));
+        if d == io.io_result {
+            if let [v] = args.as_slice() {
+                if let Some(v) = value(p, *v) {
+                    return Ok(format!("IoResult<{v}>"));
+                }
             }
         }
+    }
+    if let Some(v) = value(p, t) {
+        return Ok(v);
     }
     Err(format!(
         "a native function returns `void`, `IoStatus`, a value or `IoResult<T>` of a value \
