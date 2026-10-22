@@ -4,7 +4,8 @@
 # usage: GIT_DIR=<repo> WORK=<dir> bench/program_instr.sh <base-ref> <head-ref> <program.vlt>...
 # Each ref is exported into $WORK/<sha> and its compiler built there once; every program (a path
 # in the head ref, read from the head tree) is built by both. Needs valgrind. Prints
-# `<program> base=<n> head=<n> change=<%>` lines.
+# `<program> base=<n> head=<n> change=<%>` lines. RUNS=<n> (default 1) runs each program n times
+# and reports the median (programs that wait for timers vary from run to run).
 set -eu
 base=$1
 head=$2
@@ -27,13 +28,15 @@ build() {
   echo "$sha"
 }
 
-instr() { # <sha> <program>
+instr() { # <sha> <program>: the median count of ${RUNS:-1} runs
   local exe
   exe="$WORK/$1/$(basename "$2" .vlt)"
   (cd "$WORK/$1" && VELT_STD="$WORK/$1/std" target/release/velt build --release --backend llvm \
     "$WORK/$h/$2" -o "$exe" >/dev/null)
-  VELT_THREADS=1 valgrind --tool=cachegrind --cache-sim=no --cachegrind-out-file=/dev/null \
-    "$exe" 2>&1 >/dev/null | sed -n 's/.*I[[:space:]]*refs:[[:space:]]*\([0-9,]*\).*/\1/p' | tr -d ,
+  for _ in $(seq 1 "${RUNS:-1}"); do
+    VELT_THREADS=1 valgrind --tool=cachegrind --cache-sim=no --cachegrind-out-file=/dev/null \
+      "$exe" 2>&1 >/dev/null | sed -n 's/.*I[[:space:]]*refs:[[:space:]]*\([0-9,]*\).*/\1/p' | tr -d ,
+  done | sort -n | awk '{ a[NR] = $1 } END { print a[int((NR + 1) / 2)] }'
 }
 
 b=$(build "$base")
