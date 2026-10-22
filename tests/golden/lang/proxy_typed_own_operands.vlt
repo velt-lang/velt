@@ -1,0 +1,83 @@
+// `in` and `Object.hasOwn` of a value that may be a typed proxy (a variable the key's call
+// reassigns, a property, an element, a call) test for a proxy first: a proxy runs its trap, a
+// plain value keeps its own test, and every operand and key is evaluated in Node's order.
+interface P {
+  a: number;
+  b: number;
+}
+
+const log: string[] = [];
+
+function mk(): P {
+  return new Proxy({ a: 1, b: 2 } as any, {
+    has(t: any, k: string | symbol): boolean {
+      log.push("has " + String(k));
+      return Reflect.has(t, k);
+    },
+    ownKeys(t: any): any {
+      log.push("ownKeys");
+      return Reflect.ownKeys(t);
+    },
+    getOwnPropertyDescriptor(t: any, k: string | symbol): PropertyDescriptor | undefined {
+      log.push("gopd " + String(k));
+      return Reflect.getOwnPropertyDescriptor(t, k);
+    },
+  }) as P;
+}
+
+function plainP(): P {
+  return { a: 5, b: 6 };
+}
+
+let q: P = mk();
+
+function key(): string {
+  log.push("key");
+  q = plainP();
+  return "a";
+}
+
+function flush(): void {
+  console.log(log.join(","));
+  log.length = 0;
+}
+
+key();
+console.log("a" in q);
+flush();
+q = mk();
+console.log(Object.hasOwn(q, key()));
+flush();
+q = mk();
+const o = { inner: q };
+console.log("b" in o.inner, Object.hasOwn(o.inner, "zz"));
+for (const k in o.inner) {
+  log.push("k " + k);
+  o.inner = plainP();
+}
+flush();
+const arr: P[] = [mk(), plainP()];
+for (const k in arr[0]) {
+  log.push("k " + k);
+}
+console.log("a" in arr[1], Object.hasOwn(arr[1], "b"), "a" in arr[0], Object.hasOwn(arr[0], "c"));
+flush();
+let i = 0;
+console.log("a" in arr[i++], i, Object.hasOwn(arr[i--], "a"), i);
+flush();
+
+function pick(): P {
+  log.push("pick");
+  return arr[0];
+}
+
+console.log("a" in pick(), Object.hasOwn(pick(), "a"));
+for (const k in pick()) {
+  log.push("k " + k);
+}
+flush();
+const ks = ["a", "zz"];
+for (const k of ks) {
+  console.log(Object.hasOwn(q, k), Object.hasOwn(arr[0], k));
+}
+flush();

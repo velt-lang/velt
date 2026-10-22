@@ -1,0 +1,29 @@
+plain->proxy a
+plain->proxy b
+plain->proxy c
+ownKeys
+gopd a
+proxy->plain a
+gopd b
+gopd c
+proxy->plain c
+ownKeys
+gopd a
+prop a
+gopd b
+gopd c
+prop c
+ownKeys
+gopd a
+gopd b
+gopd c
+outer var c
+ownKeys
+gopd a
+nest a a
+gopd b
+gopd c
+nest c a
+any plain->proxy a
+any plain->proxy b
+any plain->proxy c

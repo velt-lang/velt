@@ -1,0 +1,15 @@
+ownKeys
+gopd a
+body a
+gopd b
+body b
+ownKeys
+gopd a
+body2 a
+gopd b
+gopd c
+body2 c
+body3 x
+body3 z
+index 0 string
+index 1 string

@@ -232,3 +232,62 @@ export function __anyIsArrayProxy(o: any): boolean {
   }
   return Array.isArray(o);
 }
+
+/** `"k" in x` of a typed proxy `x` (velt_sema tests `Intrinsic::IsTypedProxy` first): its `has` trap. */
+export function __proxyHas(o: any, k: string): boolean {
+  if (o instanceof Proxy) {
+    return o.__has(k);
+  }
+  panic("ICE: `__proxyHas` of a value that is not a proxy");
+}
+
+/**
+ * `Object.hasOwn(x, k)` of a typed proxy `x` (velt_sema tests `Intrinsic::IsTypedProxy` first):
+ * its `getOwnPropertyDescriptor` trap for `k`.
+ */
+export function __proxyHasOwnOf(o: any, k: string): boolean {
+  if (o instanceof Proxy) {
+    return o.__hasOwn(k);
+  }
+  panic("ICE: `__proxyHasOwnOf` of a value that is not a proxy");
+}
+
+/**
+ * A typed proxy `x` as the `any` it is (velt_sema tests `Intrinsic::IsTypedProxy` first). `x`
+ * is only borrowed (a returned parameter would be taken over, making its type counted).
+ */
+export function __proxyAny(o: any): any {
+  if (o instanceof Proxy) {
+    return o.__self();
+  }
+  panic("ICE: `__proxyAny` of a value that is not a proxy");
+}
+
+/**
+ * The keys `for (const k in o)` of an `any` `o` visits, each tested just before its turn
+ * (`__anyForInHasProxy`): a proxy's string keys from its `ownKeys` trap, else `Object.keys(o)`.
+ */
+export function __anyForInKeys(o: any): string[] {
+  if (o instanceof Proxy) {
+    const out: string[] = [];
+    for (const k of o.__ownKeys()) {
+      if (typeof k === "string") {
+        out.push(k as string);
+      }
+    }
+    return out;
+  }
+  return Object.keys(o);
+}
+
+/**
+ * Whether `for (const k in o)` visits `k` at its turn: a proxy's `getOwnPropertyDescriptor`
+ * trap finds it enumerable; a plain value's keys were listed when the loop began.
+ */
+export function __anyForInHas(o: any, k: string): boolean {
+  if (o instanceof Proxy) {
+    const d = o.__getOwnPropertyDescriptor(k);
+    return d !== undefined && d.enumerable === true;
+  }
+  return true;
+}
