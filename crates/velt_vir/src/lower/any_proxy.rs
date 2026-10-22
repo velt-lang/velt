@@ -1,12 +1,12 @@
 //! The descriptor slots of a proxy (issue #823; hir_encodings.md "Proxy and Reflect"). A
-//! proxy is an `any` holding the prelude's `Proxy` object (std/prelude/zz_proxy.vlt); the
+//! proxy is an `any` holding the prelude's `Proxy` object (std/proxy.vlt); the
 //! member slots of its table (any_member.rs, any_set.rs) call that class's methods, which run
 //! the handler's traps or forward to the target:
 //!
 //! | slot | calls |
 //! |---|---|
 //! | `AnyGet` / `AnyIndex` | `__get(key, receiver)` (a number key as its string) |
-//! | `AnyCall` | `__get(key, receiver)`, then the function value it returns (`AnyApply` slot) |
+//! | `AnyCall` | `__get(key, receiver)`, then the function value it returns (`AnyApply` slot); an array method (`__ArrayMethod`) is `__arrayCall(method, args, receiver)` |
 //! | `AnySet` / `AnySetIndex` | `__set(key, value, receiver)`; `false` is Node's `TypeError` |
 //! | `AnyApply` | not a function (a proxy of a function comes later) |
 //!
@@ -15,17 +15,25 @@
 use velt_sema::hir::{self, DynMemberKind, TyId, TyKind};
 
 use super::any_member::{SLOT_APPLY, SLOT_CALL, ST_OK, ST_UNSUPPORTED};
+use super::glue::VtableKey;
 use super::operand::proj;
 use super::rt::Rt;
-use super::FnLower;
-use crate::vir::{self, Operand, Place, Terminator, Ty, STR_AGG};
+use super::{cint, FnLower};
+use crate::vir::{self, BinOp, Operand, Place, Rvalue, Terminator, Ty, STR_AGG};
 
 /// The qualified names of the prelude's `Proxy` and `Reflect` classes: a program's own
 /// classes are named after their modules, which are never under `std/`.
-pub(super) const PRELUDE_PROXY: &str = "std/prelude/zz_proxy::Proxy";
-pub(super) const PRELUDE_REFLECT: &str = "std/prelude/zz_proxy::Reflect";
+pub(super) const PRELUDE_PROXY: &str = "std/proxy::Proxy";
+pub(super) const PRELUDE_REFLECT: &str = "std/proxy::Reflect";
 /// The start of the names of `Reflect`'s methods.
-pub(super) const PRELUDE_REFLECT_METHODS: &str = "std/prelude/zz_proxy::Reflect.";
+pub(super) const PRELUDE_REFLECT_METHODS: &str = "std/proxy::Reflect.";
+/// The prelude's array method read through a proxy (std/proxy/array.vlt).
+pub(super) const PRELUDE_ARRAY_METHOD: &str = "std/proxy/array::__ArrayMethod";
+
+/// The prelude's `Object.prototype.hasOwnProperty` read as a value (std/prelude/zzz_adapt.vlt)
+/// and its version that asks a proxy (std/proxy/ops.vlt).
+pub(super) const PRELUDE_HAS_OWN: &str = "std/prelude/zzz_adapt::__HasOwnProperty";
+pub(super) const PROXY_HAS_OWN: &str = "std/proxy/ops::__HasOwnPropertyProxy";
 
 /// How the key reaches a proxy slot.
 #[derive(Clone, Copy)]
@@ -107,6 +115,24 @@ impl FnLower<'_, '_> {
         true
     }
 
+    /// The method `name` of the `Proxy` class without arguments on the proxy `data`: its result,
+    /// owned and not boxed (`None`: the program has no such method).
+    pub(super) fn proxy_invoke_typed(
+        &mut self,
+        name: &str,
+        data: vir::Local,
+        ty: TyId,
+    ) -> Option<Operand> {
+        let (d, _) = self.plain_adt(ty)?;
+        let m = self
+            .dyn_members_of(d)
+            .into_iter()
+            .find(|m| m.name == name && m.kind == DynMemberKind::Method)?;
+        let r = self.ready(ty, &m)?;
+        let this = self.any_this(data, ty);
+        Some(self.invoke_ready(&r, this, vec![]))
+    }
+
     /// `AnyGet` / `AnyIndex` of a proxy: `__get(key, receiver)` into `*out`.
     pub(super) fn proxy_get_body(
         &mut self,
@@ -167,12 +193,74 @@ impl FnLower<'_, '_> {
             return self.ret_status(ST_UNSUPPORTED);
         }
         let (fd, fdesc) = self.any_parts(Operand::Copy(f.clone()), any);
+        self.proxy_array_call(&f, fdesc.clone(), (data, argv, argc, out), ty);
         let a = [argv, argc, out].map(|l| Operand::Copy(Place::local(l)));
         let a = vec![fd, a[0].clone(), a[1].clone(), a[2].clone()];
         let p = vec![Ty::Ptr, Ty::Ptr, Ty::U64, Ty::Ptr];
         let st = self.any_slot(fdesc, SLOT_APPLY, a, p);
         self.drop_glue(f, any);
         self.terminate(Terminator::Return(st));
+    }
+
+    /// The type of velt:proxy's `__ArrayMethod`, when the program has it.
+    fn array_method_ty(&mut self) -> Option<TyId> {
+        let d = self
+            .cx
+            .hir
+            .defs
+            .iter()
+            .position(|d| matches!(d, hir::Def::Adt(a) if a.name == PRELUDE_ARRAY_METHOD))?;
+        Some(self.cx.intern(TyKind::Adt(hir::DefId(d as u32), vec![])))
+    }
+
+    /// In `proxy_call_body`, after the `get` trap answered `f` (descriptor `fdesc`): when `f` is
+    /// an array method (`__ArrayMethod`), the arguments as an `any[]` and
+    /// `__arrayCall(f, args, receiver)`, which runs the method on the proxy. Continues in the
+    /// block for any other `f`.
+    fn proxy_array_call(
+        &mut self,
+        f: &Place,
+        fdesc: Operand,
+        (data, argv, argc, out): (vir::Local, vir::Local, vir::Local, vir::Local),
+        ty: TyId,
+    ) {
+        let Some(m) = self.array_method_ty() else {
+            return;
+        };
+        let any = self.cx.any_ty();
+        let imp = self.cx.hir.any_impl.unwrap_or(0);
+        let mdesc = self.vtable_addr(VtableKey::Impl(imp, m));
+        let is_m = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, fdesc, mdesc));
+        let (yes, no) = (self.new_block(), self.new_block());
+        self.branch(is_m, yes, no);
+        self.switch_to(yes);
+        // The arguments move into the array: `argc` values of `any`, one after the other.
+        let n = Operand::Copy(Place::local(argc));
+        let arr = Place::local(self.inline_array_with_len(n.clone(), any));
+        let (size, _) = self.stride(any);
+        let bytes = self.rvalue_temp(
+            Ty::U64,
+            Rvalue::Binary(BinOp::Mul, n, cint(size as i128, Ty::U64)),
+        );
+        let first = self.elem_place(&arr, cint(0, Ty::U64), any);
+        let dst = self.addr(first);
+        self.mem_copy_dyn(dst, Operand::Copy(Place::local(argv)), bytes, false);
+        let arr_ty = self.cx.intern(TyKind::Array(any));
+        let arr = if self.cx.boxed(arr_ty) {
+            let v = self.box_value(Operand::Copy(arr), arr_ty);
+            Place::local(self.copy_to_temp(v, Ty::Ptr))
+        } else {
+            arr
+        };
+        let r = self.proxy_receiver(data, ty);
+        let outp = self.any_out(out);
+        let args = vec![(f.clone(), any), (arr, arr_ty), (r, any)];
+        let st = match self.proxy_invoke("__arrayCall", data, ty, args, &outp) {
+            true => ST_OK,
+            false => ST_UNSUPPORTED,
+        };
+        self.ret_status(st);
+        self.switch_to(no);
     }
 
     /// `AnySet` / `AnySetIndex` of a proxy: `__set(key, *v, receiver)`; a trap returning
@@ -219,5 +307,43 @@ impl FnLower<'_, '_> {
     /// Drop every argument of `argv`.
     fn any_drop_args_all(&mut self, argv: vir::Local, argc: vir::Local) {
         self.any_drop_args(argv, 0, argc);
+    }
+
+    /// An object type as TypeScript writes it, for a `TypeError` (`object { x: number }`); its
+    /// own name spells its fields' internal types. `None` for other types.
+    pub(super) fn object_type_name(&self, ty: TyId) -> Option<String> {
+        let TyKind::Adt(d, args) = self.cx.kind(ty) else {
+            return None;
+        };
+        let hir::Def::Adt(a) = self.cx.hir.def(d) else {
+            return None;
+        };
+        if a.kind != hir::AdtKind::Anon || !args.is_empty() {
+            return None;
+        }
+        let fields: Vec<String> = a
+            .fields
+            .iter()
+            .map(|f| {
+                let (q, t) = match (f.optional, self.cx.kind(f.ty)) {
+                    (true, TyKind::Option(inner, _)) => ("?", inner),
+                    (true, _) => ("?", f.ty),
+                    _ => ("", f.ty),
+                };
+                format!("{}{q}: {}", f.name, self.any_target_name(t))
+            })
+            .collect();
+        Some(format!("object {{ {} }}", fields.join("; ")))
+    }
+}
+
+impl super::Cx<'_> {
+    /// Is `t` velt:proxy's `__ArrayMethod` (an array method read through `Reflect.get`), which
+    /// `typeof` and `console.log` show as the function it stands for?
+    pub(super) fn is_array_method(&self, t: TyId) -> bool {
+        let TyKind::Adt(d, _) = self.types.kind(t) else {
+            return false;
+        };
+        matches!(self.hir.def(*d), hir::Def::Adt(a) if a.name == PRELUDE_ARRAY_METHOD)
     }
 }

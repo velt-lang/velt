@@ -187,6 +187,7 @@ impl<'e> CursorLoop<'e> {
     fn new(span: velt_common::Span, map: &'e ast::Expr, iter: velt_common::Span) -> Self {
         CursorLoop {
             cursor: format!("<cursor@{}>", span.lo),
+            // velt_vir `FnLower::map_hold` recognizes the hidden map local by this name.
             hold: format!("<map@{}>", span.lo),
             held: true,
             map,

@@ -1,0 +1,80 @@
+// A store of counted objects (classes shared between variables, Maps), read by many tasks at
+// once through ordinary functions.
+class Product {
+  id: i64;
+  name: string;
+  price: i64;
+  tags: string[];
+  constructor(id: i64, name: string, price: i64) {
+    this.id = id;
+    this.name = name;
+    this.price = price;
+    this.tags = [name, "all"];
+  }
+}
+
+class Store {
+  products: Product[] = [];
+  byName: Map<string, Product> = new Map<string, Product>();
+
+  add(p: Product) {
+    this.products.push(p);
+    this.byName.set(p.name, p);
+  }
+
+  find(name: string): Product | null {
+    return this.byName.get(name) ?? null;
+  }
+}
+
+function priceOf(p: Product): i64 {
+  return p.price;
+}
+
+function cheapest(s: Store): Product | null {
+  let best: Product | null = null;
+  for (const p of s.products) {
+    if (best == null || p.price < best.price) {
+      best = p;
+    }
+  }
+  return best;
+}
+
+function total(s: Store): i64 {
+  let t: i64 = 0;
+  for (const p of s.products) {
+    t += priceOf(p) + (p.tags.length as i64);
+  }
+  const f = s.find("p7");
+  if (f != null) {
+    t += f.price;
+  }
+  return t;
+}
+
+async function work(s: shared<Store>, rounds: i64): Promise<i64> {
+  let t: i64 = 0;
+  for (let r: i64 = 0; r < rounds; r++) {
+    t += total(s);
+    const c = cheapest(s);
+    if (c != null) {
+      t += c.id;
+    }
+  }
+  return t;
+}
+
+async function main() {
+  const st = new Store();
+  for (let i: i64 = 0; i < 200; i++) {
+    st.add(new Product(i, `p${i}`, (i * 37) % 101));
+  }
+  const s = shared(st);
+  const tasks: Promise<i64>[] = [];
+  for (let k = 0; k < 8; k++) {
+    tasks.push(spawn(work(s, 300)));
+  }
+  const rs = await Promise.all(tasks);
+  console.log(rs[0], rs.every((r) => r == rs[0]), s.products.length);
+}

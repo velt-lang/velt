@@ -95,7 +95,7 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
                 .iter()
                 .filter(|(t, _)| matches(**t))
                 .map(|(_, w)| *w)
-                .min_by_key(|w| (w.std, w.span.file, w.span.lo));
+                .min_by_key(|w| w.rank(cx));
             if let Some(w) = why {
                 p.set(n, CROSSES, Some(w));
                 changed = true;

@@ -1,0 +1,10 @@
+// A spread of a typed proxy (#823): its keys are what its traps list, which an object of a
+// fixed shape cannot follow yet.
+type Props = { a: number; b: number };
+
+function main(): void {
+  const plain: Props = { a: 1, b: 2 };
+  console.log({ ...plain });
+  const p = new Proxy(plain as Props, {}) as Props;
+  console.log({ ...p });
+}

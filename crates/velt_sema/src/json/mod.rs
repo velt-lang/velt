@@ -43,6 +43,10 @@ use union::union_decode_problem;
 enum Need {
     Json(bool),
     Seen(Seen),
+    /// Read without a lock (printed, formatted, converted to `any`): no `Mutex` or `RwLock`
+    /// may be in it. Recorded only for a type parameter; concrete types are checked where
+    /// they are read (`Ctx::holds_lock`).
+    NoLock,
 }
 
 /// JSON-relevant facts of one function body.
@@ -122,6 +126,17 @@ pub(crate) fn check_json_types(cx: &mut Ctx) {
                 // arguments, nor whether the user's code runs them.
                 if !std_fns.contains(f) && checked.insert((t, span, parse)) {
                     cx.object_copies.observe(t, span, how);
+                }
+            } else if parse == Need::NoLock {
+                if checked.insert((t, span, parse)) && cx.holds_lock(t) {
+                    let tn = cx.display(t);
+                    cx.error(
+                        Diagnostic::error(
+                            format!("`{tn}` is read here without its lock (printed, formatted or converted to `any` through a type parameter)"),
+                            span,
+                        )
+                        .with_note("a value holding a lock is read only under it (`with`): pass what a callback returns instead"),
+                    );
                 }
             } else if let Need::Json(parse) = parse {
                 if !reported.contains(&(t, span))
@@ -214,7 +229,7 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Uses)> {
                     u.types.push((*t, e.span));
                 }
             }
-            uses_of(&mut u, e, looks);
+            uses_of(ids.tys, &mut u, e, looks);
             if u.calls.len() > calls {
                 let guard = guards.get(&(e as *const Expr)).copied().unwrap_or(0);
                 u.guards.push(guard);
@@ -232,7 +247,34 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Uses)> {
 
 /// The JSON intrinsic calls, generic calls and closures of one expression, and with `looks`
 /// its `console.log` and `===` calls.
-fn uses_of(u: &mut Uses, e: &Expr, looks: bool) {
+fn uses_of(tys: &crate::types::Types, u: &mut Uses, e: &Expr, looks: bool) {
+    // A type parameter read without a lock: whatever it is instantiated with may hold one.
+    let unlocked = match &e.kind {
+        E::ToDyn { expr, .. } => Some(expr.as_ref()),
+        E::Call {
+            callee:
+                Callee::Intrinsic(
+                    Intrinsic::Print
+                    | Intrinsic::PrintErr
+                    | Intrinsic::ToString
+                    | Intrinsic::TemplateToString,
+                ),
+            args,
+        } => args.first(),
+        _ => None,
+    };
+    if let E::Call {
+        callee: Callee::Intrinsic(Intrinsic::Print | Intrinsic::PrintErr),
+        args,
+    } = &e.kind
+    {
+        for a in args.iter().skip(1).filter(|a| param_in(tys, a.ty)) {
+            u.direct.push((a.ty, a.span, Need::NoLock));
+        }
+    }
+    if let Some(a) = unlocked.filter(|a| param_in(tys, a.ty)) {
+        u.direct.push((a.ty, a.span, Need::NoLock));
+    }
     match &e.kind {
         E::Call {
             callee: Callee::Intrinsic(Intrinsic::JsonStringify),
@@ -311,6 +353,14 @@ fn is_std_fn(cx: &Ctx, f: DefId) -> bool {
         return false;
     };
     cx.modules.get(info.module).is_some_and(|m| m.is_std)
+}
+
+/// [`has_param`] with the types at hand.
+fn param_in(tys: &crate::types::Types, t: TyId) -> bool {
+    match tys.kind(t) {
+        TyKind::Param(_) => true,
+        k => children(k).into_iter().any(|c| param_in(tys, c)),
+    }
 }
 
 fn has_param(cx: &Ctx, t: TyId) -> bool {
@@ -623,9 +673,12 @@ fn unserializable(cx: &mut Ctx, t: TyId, stack: &mut Vec<TyId>, parse: bool) -> 
         TyKind::Dyn(..) if !parse && cx.dynamic(t).is_some() => return None,
         TyKind::Array(e) | TyKind::Option(e, _) => vec![e],
         // A `shared<T>` is written as the `T` inside, read in its box (velt_vir `json/write.rs`),
-        // except a `shared<int>`, whose atomics another task may be running; decoding makes no
-        // `shared` value.
-        TyKind::Shared(e) if !parse && cx.atomic_int(t).is_none() => vec![e],
+        // when it is read like its `T` (`frozen_readable`): not a `shared<int>`, whose atomics
+        // another task may be running, nor one holding a `Mutex`, read only under its lock.
+        // Decoding makes no `shared` value.
+        TyKind::Shared(e) if !parse && cx.atomic_int(t).is_none() && cx.frozen_readable(e) => {
+            vec![e]
+        }
         // Tuples are fixed-length arrays.
         TyKind::Tuple(es) => es,
         TyKind::Adt(d, args) => {

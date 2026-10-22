@@ -1,0 +1,41 @@
+// check: no leaks
+// `deref()` of a `WeakRef` to an interface value is `undefined` once its target was freed
+// (Node: once a garbage collection ran), and the target while something holds it.
+interface Inst {
+  name: string;
+  render(): string;
+}
+class Comp implements Inst {
+  name: string;
+  constructor(n: string) {
+    this.name = n;
+  }
+  render(): string {
+    return "<" + this.name + ">";
+  }
+}
+
+function make(n: string): WeakRef<Inst> {
+  const i: Inst = new Comp(n);
+  return new WeakRef(i);
+}
+
+function main(): void {
+  const r = make("gone");
+  const d = r.deref();
+  console.log(d === undefined);
+  if (d !== undefined) console.log(d.render());
+  console.log(r.deref()?.render() ?? "freed");
+
+  const kept: Inst[] = [];
+  const refs: WeakRef<Inst>[] = [];
+  for (let k = 0; k < 5; k++) {
+    const c: Inst = new Comp("c" + k);
+    if (k % 2 === 0) kept.push(c);
+    refs.push(new WeakRef(c));
+  }
+  for (const w of refs) {
+    const t = w.deref();
+    console.log(t === undefined ? "freed" : t.render());
+  }
+}

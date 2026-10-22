@@ -47,6 +47,9 @@ pub(super) struct Boxing {
     /// The program tests `key in x` on an `any` (`AnyHas`): the `any` tables have the `has`
     /// slot (any_has.rs).
     pub(super) any_has: bool,
+    /// The prelude deletes a property of an `any` that is not a proxy (`AnyDelete`): the `any`
+    /// tables have the delete slot (any_delete.rs).
+    pub(super) any_delete: bool,
     /// The program lists the keys of an `any` (`AnyKeys`): the `any` tables have the keys slot
     /// (any_keys.rs).
     pub(super) any_keys: bool,
@@ -170,6 +173,8 @@ pub(super) struct Facts {
     any_set: bool,
     /// `key in x` is tested on an `any`.
     any_has: bool,
+    /// A property of an `any` is deleted.
+    any_delete: bool,
     /// `Object.keys` of an `any` is listed.
     any_keys: bool,
     /// A dynamic value is written as JSON.
@@ -248,6 +253,11 @@ impl Cx<'_> {
     /// Record that `key in x` is tested on an `any`.
     pub(super) fn note_any_has(&mut self) {
         self.facts.any_has = true;
+    }
+
+    /// Record that a property of an `any` is deleted.
+    pub(super) fn note_any_delete(&mut self) {
+        self.facts.any_delete = true;
     }
 
     /// Record that `Object.keys` of an `any` is listed.
@@ -329,6 +339,7 @@ impl Cx<'_> {
         next.any_identity |= self.facts.any_identity;
         next.any_writes |= self.facts.any_set;
         next.any_has |= self.facts.any_has;
+        next.any_delete |= self.facts.any_delete;
         next.any_keys |= self.facts.any_keys;
         next.any_json |= self.facts.any_json;
         next.dyn_to_any

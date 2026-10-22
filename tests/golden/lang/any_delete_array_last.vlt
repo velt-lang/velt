@@ -1,0 +1,6 @@
+// `delete a[i]` through `any` of an array's element (#823): Node leaves a hole and keeps the
+// length, which Velt's arrays cannot have yet; an element past the end is not there.
+const a: any = [1, 2, 3];
+console.log(delete a[5], a.length);
+delete a[2];
+console.log("not reached", a);

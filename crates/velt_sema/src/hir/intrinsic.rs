@@ -401,6 +401,26 @@ pub enum Intrinsic {
     /// property (a proxy: its `has` trap); a `TypeError` for a `null` / `undefined` value or one
     /// not supported yet. Sets `Program::dyn_members`.
     AnyHas,
+    /// std only: `(x: borrow any, key: borrow string) -> bool`, `delete x[key]` of a value that
+    /// is not a proxy (std/proxy.vlt, `Reflect.deleteProperty`): a record's entry is
+    /// removed and an optional field made absent (`true`), a key the value does not have is
+    /// `true`, an array's `length` is `false`; a `TypeError` for anything else (a fixed field).
+    AnyDelete,
+    /// std only: `(x: borrow any, op: i64) -> i64`, an array method running on a proxy of the
+    /// array `x` holds (velt:proxy/array; identified by its data pointer): `op` 1 starts it, -1
+    /// ends it and answers the first hole it leaves (or -1), 2 and -2 start and end a trap call
+    /// of it (`velt_rt_proxy_array_call`, rt_abi.md "Array methods on a proxy").
+    ProxyArrayCall,
+    /// std only: `(x: borrow any, index: i64, op: i64) -> i64`, the holes those methods made in
+    /// the array `x` holds (identified by its data pointer): `op` 0 tests element `index`, 1
+    /// records it (only in a trap call of a method on `x`, else -1), 2 forgets it, 3 forgets
+    /// those from `index` on, 4 gives the first below `index` (or -1)
+    /// (`velt_rt_proxy_array_hole`).
+    ProxyArrayHole,
+    /// `(x: borrow T) -> bool`, made by sema only: whether the value of the class or object type
+    /// `T` is a typed proxy (velt_vir's tagged pointer, proxy_typed.rs); `false` for a type that
+    /// cannot hold one. A test of a bit, so a plain value keeps its own code path.
+    IsTypedProxy,
     /// `(x: borrow any) -> bool`: `Array.isArray(x)` (the value held is an array or a tuple).
     AnyIsArray,
     /// `(x: borrow any) -> string[]`: `Object.keys(x)`, the own enumerable string keys of the

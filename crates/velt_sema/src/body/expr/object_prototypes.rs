@@ -409,6 +409,30 @@ impl FnCx<'_, '_> {
         if !known {
             return None;
         }
+        if prop.name == "hasOwnProperty" && self.is_prelude_object(id) {
+            // `const hasOwn = Object.prototype.hasOwnProperty; hasOwn.call(o, k)`: a prelude
+            // object whose `call(o, k)` is `Object.hasOwn(o, k)`.
+            let class = ast::TypeExpr {
+                kind: ast::TypeExprKind::Named {
+                    path: vec![ast::Ident {
+                        name: self.proxy_op("__HasOwnProperty").to_string(),
+                        span: id.span,
+                    }],
+                    args: vec![],
+                },
+                span: id.span,
+            };
+            // Its `call` lists the keys through the value's descriptor.
+            self.note_dyn_members();
+            let new = synth(
+                ast::ExprKind::New {
+                    class,
+                    args: vec![],
+                },
+                span,
+            );
+            return Some(self.expr(&new, None, crate::body::Want::Move));
+        }
         let what = format!("{}.prototype.{}", id.name, prop.name);
         let mut d = Diagnostic::error(format!("`{what}` as a value is not supported yet"), span);
         if id.name == "Object" && matches!(prop.name.as_str(), "hasOwnProperty" | "toString") {

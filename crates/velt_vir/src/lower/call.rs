@@ -62,11 +62,17 @@ impl FnLower<'_, '_> {
         let f = self.cx.fn_def(def);
         let modes: Vec<PassMode> = f.params[pre.len()..].iter().map(|p| p.mode).collect();
         let (ret, throws) = self.cx.call_sig(f);
-        let fid = match self.panic_loc() {
-            Some(at) if self.cx.tracks_caller(def) => {
-                self.cx.func(Work::Tracked(def, targs.clone(), at))
+        // Frozen counted arguments go to an instance that neither changes nor counts them.
+        let frozen = self.frozen_mask(&modes, args, pre.len());
+        let at = self.panic_loc().filter(|_| self.cx.tracks_caller(def));
+        let fid = match (frozen, at) {
+            (0, Some(at)) => self.cx.func(Work::Tracked(def, targs.clone(), at)),
+            (0, None) => self.cx.func_for(def, targs.clone()),
+            (mask, at) => {
+                let fns = self.known_fns_of(&modes, args, pre.len());
+                self.cx
+                    .func(Work::Frozen(def, targs.clone(), mask, at, fns))
             }
-            _ => self.cx.func_for(def, targs.clone()),
         };
         // Not `super.m()`: JavaScript calls the base method without reading it from `this`.
         let sup = std::mem::take(&mut self.super_call);
@@ -77,7 +83,9 @@ impl FnLower<'_, '_> {
             }
         }
         let mut argv = pre;
+        let outer = std::mem::replace(&mut self.frozen_args, frozen != 0);
         argv.extend(self.lower_args(args, &modes, true));
+        self.frozen_args = outer;
         let ret = self.cx.subst(ret, &targs);
         let throws = throws.map(|e| self.cx.subst(e, &targs));
         let throws = self.cx.error_ty(throws);
@@ -221,9 +229,10 @@ impl FnLower<'_, '_> {
                         true => self.stable_borrow(a, &args[i + 1..]),
                         false => self.borrowed_arg(a),
                     };
-                    // A value the callee modifies stays where it is (it may only be shared).
+                    // A value the callee modifies stays where it is (it may only be shared). A
+                    // frozen one changes for nobody, and is not counted (frozen.rs).
                     let v = match mode {
-                        PassMode::Borrow => self.hold(v, a.ty, later),
+                        PassMode::Borrow if !self.frozen_root(a) => self.hold(v, a.ty, later),
                         _ => v,
                     };
                     argv.push(self.operand_addr(v, t));
@@ -242,7 +251,14 @@ impl FnLower<'_, '_> {
                     let v = match m {
                         PassMode::Borrow | PassMode::BorrowMut if user_code => {
                             let v = self.stable_borrow(a, &args[i + 1..]);
-                            self.hold(v, a.ty, later)
+                            // A frozen one changes for nobody, and is not counted (frozen.rs);
+                            // a number read out of one is still read now, before a later
+                            // argument may free its box (a copy counts nothing).
+                            let number = super::place::number(self.vty(a.ty));
+                            match self.frozen_root(a) && !number {
+                                true => v,
+                                false => self.hold(v, a.ty, later),
+                            }
                         }
                         _ => self.expr_held(a, later),
                     };
@@ -299,8 +315,10 @@ impl FnLower<'_, '_> {
                     self.finish_borrows(Vec::new());
                 }
                 match mode {
-                    // A value the callee modifies stays where it is.
+                    // A value the callee modifies stays where it is; a frozen one changes for
+                    // nobody, and is not counted (frozen.rs).
                     Some(PassMode::BorrowMut) if !t.is_scalar() => v,
+                    _ if self.frozen_root(a) && !super::place::number(t) => v,
                     _ => self.hold(v, a.ty, later),
                 }
             };

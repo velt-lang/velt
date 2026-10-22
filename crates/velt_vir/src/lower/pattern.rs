@@ -192,7 +192,8 @@ impl FnLower<'_, '_> {
         // Parts of a counted value have other owners: moving bindings inside it take shares of
         // them (a binding of the whole value just takes it over).
         let outer = self.share_binds;
-        self.share_binds |= self.cx.counted(ty) && !matches!(pat.kind, PatKind::Binding(..));
+        self.share_binds |=
+            !self.frozen_binds && self.cx.counted(ty) && !matches!(pat.kind, PatKind::Binding(..));
         self.bind_parts(pat, place, ty, register);
         self.share_binds = outer;
     }
@@ -208,7 +209,7 @@ impl FnLower<'_, '_> {
                 if self.info[id.0 as usize].cell {
                     return self.bind_cell(*id, moving, register, place);
                 }
-                if *mode == UseMode::Borrow && self.stable_binds {
+                if *mode == UseMode::Borrow && self.stable_binds && !self.frozen_binds {
                     return self.bind_share(*id, place);
                 }
                 self.bind_local(*id, moving && register, moving, place)

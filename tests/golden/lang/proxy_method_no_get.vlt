@@ -1,0 +1,25 @@
+// check: no leaks
+// A method called through a proxy whose handler has no `get` trap (only key traps) runs on the
+// target, as in Node.
+class Counter {
+  n = 0;
+  inc(): number {
+    this.n++;
+    return this.n;
+  }
+}
+
+function main(): void {
+  const p: any = new Proxy(new Counter() as any, {
+    ownKeys(t) {
+      return Reflect.ownKeys(t);
+    },
+  });
+  console.log(p.inc(), p.inc(), Object.keys(p));
+  const q = new Proxy(new Counter() as any, {
+    deleteProperty(t, k) {
+      return false;
+    },
+  }) as Counter;
+  console.log(q.inc(), q.n);
+}

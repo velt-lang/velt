@@ -1,0 +1,101 @@
+// check: no leaks
+// A map loop over a `shared` held in a variable its body gives another handle (directly, also
+// after an `await`) keeps the box it started with alive: over `values()`, a map in a map,
+// `keys()` and entries.
+class Item {
+  v: number;
+  name: string;
+  tags: string[];
+  constructor(v: number) {
+    this.v = v;
+    this.name = `item${v}`;
+    this.tags = [`t${v}`];
+  }
+}
+
+class Store {
+  m: Map<string, Item> = new Map<string, Item>();
+  mm: Map<string, Map<string, Item>> = new Map<string, Map<string, Item>>();
+}
+
+function mk(n: number): Store {
+  const s = new Store();
+  for (let i = 0; i < n; i++) {
+    s.m.set(`k${i}`, new Item(i));
+    const inner = new Map<string, Item>();
+    inner.set(`j${i}`, new Item(i * 2));
+    s.mm.set(`k${i}`, inner);
+  }
+  return s;
+}
+
+function churn(): number {
+  let t = 0;
+  for (let i = 0; i < 50; i++) {
+    t += mk(20).m.size;
+  }
+  return t;
+}
+
+
+function direct(): string {
+  let s = shared(mk(50));
+  let t = 0;
+  for (const v of s.m.values()) {
+    t += v.v + v.name.length + v.tags[0].length;
+    if (v.v == 3) {
+      s = shared(mk(1));
+      churn();
+    }
+  }
+  return `${t} ${s.m.size}`;
+}
+
+function nestedDirect(): string {
+  let s = shared(mk(50));
+  let t = 0;
+  for (const [k, v] of s.mm) {
+    for (const [k2, w] of v) {
+      t += w.v + k2.length;
+    }
+    if (k == "k3") {
+      s = shared(mk(1));
+      churn();
+    }
+  }
+  return `${t} ${s.m.size}`;
+}
+
+function keysDirect(): string {
+  let s = shared(mk(50));
+  let t = 0;
+  for (const k of s.m.keys()) {
+    t += k.length;
+    if (k == "k3") {
+      s = shared(mk(1));
+      churn();
+    }
+  }
+  for (const [k, v] of s.m) {
+    t += v.v;
+  }
+  return `${t} ${s.m.size}`;
+}
+
+async function asyncDirect(): Promise<string> {
+  let s = shared(mk(50));
+  let t = 0;
+  for (const v of s.m.values()) {
+    t += v.v + v.name.length;
+    if (v.v == 3) {
+      await Promise.resolve(0);
+      s = shared(mk(1));
+      churn();
+    }
+  }
+  return `${t} ${s.m.size}`;
+}
+
+async function main() {
+  console.log(direct(), nestedDirect(), keysDirect(), await asyncDirect());
+}

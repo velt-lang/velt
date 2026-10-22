@@ -1,0 +1,9 @@
+true { b: 2 } true
+{} []
+true true true
+{ name: 'n' } false {"name":"n"}
+{ name: 'n', tag: 'back' }
+true true 1
+false
+trap c
+{}
