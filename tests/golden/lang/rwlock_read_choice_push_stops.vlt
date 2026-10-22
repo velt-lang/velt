@@ -1,0 +1,23 @@
+// A reader pushing into a plain array of a store object chosen by a conditional stops the program.
+class Item {
+  v: i64 = 0;
+  nums: i64[] = [0];
+  kids: Item[] = [];
+  constructor(v: i64) {
+    this.v = v;
+  }
+}
+class St {
+  items: Item[] = [new Item(1), new Item(2)];
+  m: Map<string, Item> = new Map<string, Item>();
+}
+function main() {
+  const st = new St();
+  st.m.set("a", st.items[1]);
+  const rw = shared(new RwLock<St>(st));
+  const n = rw.read((s) => {
+    (s.items.length > 0 ? s.items[1] : s.items[0]).nums.push(1);
+    return s.items[1].nums.length;
+  });
+  console.log(n);
+}
