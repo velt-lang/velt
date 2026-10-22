@@ -299,6 +299,11 @@ pub(crate) struct Ctx<'m> {
     /// Names bound by such an import that found nothing (file of the importing module, local
     /// name): a use of one reports nothing more, as its import didn't (`Ctx::not_found`).
     pub poisoned: FxHashSet<(velt_common::FileId, String)>,
+    /// What each module exports, computed once (`crate::collect::exports`).
+    pub export_memo: std::cell::RefCell<crate::collect::exports::Memo>,
+    /// For each module, the module each of its import specifiers resolved to
+    /// (`exports::import_target`).
+    pub import_targets: Vec<FxHashMap<&'m str, usize>>,
 }
 
 impl<'m> Ctx<'m> {
@@ -306,6 +311,8 @@ impl<'m> Ctx<'m> {
         Ctx {
             modules,
             root,
+            export_memo: Default::default(),
+            import_targets: crate::collect::exports::import_targets(modules),
             ty: Types::new(),
             defs: vec![],
             info: vec![],

@@ -93,6 +93,7 @@ mod suggest;
 mod symbols;
 mod synth_ifaces;
 mod throws;
+mod timings;
 mod ts_protocol;
 mod type_defaults;
 mod type_level;
@@ -235,6 +236,23 @@ fn check_on_current_thread(
     recovered: &[(usize, &str)],
     stack_budget: usize,
 ) -> (Option<hir::Program>, Diagnostics) {
+    timings::start();
+    let out = timings::pass("check", || {
+        check_timed(modules, root, opts, recovered, stack_budget)
+    });
+    timings::finish();
+    out
+}
+
+/// [`check_on_current_thread`], its passes timed (`timings`).
+fn check_timed(
+    modules: &[SourceModule],
+    root: usize,
+    opts: CheckOptions,
+    recovered: &[(usize, &str)],
+    stack_budget: usize,
+) -> (Option<hir::Program>, Diagnostics) {
+    let rewrite_start = std::time::Instant::now();
     let chunks = module_chunks::split(modules, root);
     let modules = chunks.modules.as_deref().unwrap_or(modules);
     let mut merge_diags = chunks.diags.clone();
@@ -268,61 +286,68 @@ fn check_on_current_thread(
         let d = Diagnostic::error("no root module to check", Span::DUMMY);
         return (None, vec![d]);
     };
+    timings::record("source rewrites", rewrite_start.elapsed());
     let null_proto = modules
         .iter()
         .any(|m| !m.is_std && calls_object_create_null(&m.ast));
-    let new_cx = |held_borrows: bool, seeds: &throws::FnTypeSeeds, last: bool| {
-        let mut cx = ctx::Ctx::new(modules, root);
-        cx.fn_sites = throws::FnSites::new(seeds.clone(), last);
-        cx.stack_budget = stack_budget;
-        cx.held_borrows = held_borrows;
-        cx.ns_private = ns_private.clone();
-        cx.gen_throw = ts_protocol::calls_throw(modules);
-        cx.alias_blocked = alias_blocked.clone();
-        if let Some(l) = &lifted {
-            cx.generic_arrow_fns = l.local_fns.clone();
-            cx.generic_arrow_all = l.all_fns.clone();
-        }
-        if let Some(o) = &overloaded {
-            cx.has_overloads = true;
-            cx.overloaded_methods = o.methods.clone();
-        }
-        cx.objects.null_proto_records = null_proto;
-        cx.objects.brands = brands.clone();
-        cx.global_props = global_props.clone();
-        cx.recovered = (recovered.iter())
-            .map(|&(m, src)| (m, collect::exports::words(src)))
-            .collect();
-        cx.diags.extend(merge_diags.iter().cloned());
-        cx.promoted_consts = chunks.promoted.clone();
-        if let Some(c) = &closures {
-            cx.diags.extend(c.diags.iter().cloned());
-            cx.kept_nested = c.kept.clone();
-            cx.set_closure_groups(&c.groups);
-        }
-        let entry = analyze(&mut cx, root, root_mod, opts);
-        if let Some(o) = &overloaded {
-            overloads::report_misfits(&mut cx.diags, &o.sig_spans);
-        }
-        (cx, entry)
-    };
+    let new_cx =
+        |round: &'static str, held_borrows: bool, seeds: &throws::FnTypeSeeds, last: bool| {
+            let mut cx = ctx::Ctx::new(modules, root);
+            cx.fn_sites = throws::FnSites::new(seeds.clone(), last);
+            cx.stack_budget = stack_budget;
+            cx.held_borrows = held_borrows;
+            cx.ns_private = ns_private.clone();
+            cx.gen_throw = ts_protocol::calls_throw(modules);
+            cx.alias_blocked = alias_blocked.clone();
+            if let Some(l) = &lifted {
+                cx.generic_arrow_fns = l.local_fns.clone();
+                cx.generic_arrow_all = l.all_fns.clone();
+            }
+            if let Some(o) = &overloaded {
+                cx.has_overloads = true;
+                cx.overloaded_methods = o.methods.clone();
+            }
+            cx.objects.null_proto_records = null_proto;
+            cx.objects.brands = brands.clone();
+            cx.global_props = global_props.clone();
+            cx.recovered = (recovered.iter())
+                .map(|&(m, src)| (m, collect::exports::words(src)))
+                .collect();
+            cx.diags.extend(merge_diags.iter().cloned());
+            cx.promoted_consts = chunks.promoted.clone();
+            if let Some(c) = &closures {
+                cx.diags.extend(c.diags.iter().cloned());
+                cx.kept_nested = c.kept.clone();
+                cx.set_closure_groups(&c.groups);
+            }
+            let entry = timings::pass(round, || analyze(&mut cx, root, root_mod, opts));
+            if let Some(o) = &overloaded {
+                overloads::report_misfits(&mut cx.diags, &o.sig_spans);
+            }
+            (cx, entry)
+        };
     // Function types written without `throws` throw what the closures stored into them throw
     // (`throws::fn_types`): check again while those sets grow.
     let mut seeds = throws::FnTypeSeeds::default();
-    let (mut cx, mut entry) = new_cx(true, &seeds, false);
+    let (mut cx, mut entry) = new_cx("round: first", true, &seeds, false);
     if let Some(s) = cx.fn_sites.doubted(error_count(&cx) > 0) {
         seeds = s;
-        (cx, entry) = new_cx(true, &seeds, false);
+        (cx, entry) = new_cx("round: doubted throws variables", true, &seeds, false);
     }
     for round in 1..=FN_SITE_ROUNDS {
         let Some(grown) = cx.fn_sites.grown() else {
             break;
         };
         seeds = grown;
-        (cx, entry) = new_cx(true, &seeds, round == FN_SITE_ROUNDS);
+        (cx, entry) = new_cx(
+            "round: grown throws sets",
+            true,
+            &seeds,
+            round == FN_SITE_ROUNDS,
+        );
     }
     if retry_sharing(&cx) {
-        (cx, entry) = new_cx(false, &seeds, true);
+        (cx, entry) = new_cx("round: sharing retry", false, &seeds, true);
     }
     if !recovered.is_empty() || cx.diags.iter().any(|d| d.is_error()) {
         return (None, cx.diags);
@@ -413,64 +438,94 @@ pub(crate) fn error_count(cx: &ctx::Ctx) -> usize {
 
 /// Steps 1–5: every definition and body checked, ownership and throws inferred, moves checked.
 fn analyze_bodies(cx: &mut ctx::Ctx) {
-    collect::collect(cx);
+    timings::pass("collect::collect", || collect::collect(cx));
     cx.collected_defs = cx.defs.len();
-    global_this::declare(cx);
-    body::check_bodies(cx);
-    global_this::check_sites(cx);
-    module_scripts::declare(cx);
-    absent_fields::check(cx);
-    fresh_returns::check(cx);
+    timings::pass("global_this::declare", || global_this::declare(cx));
+    timings::pass("body::check_bodies", || body::check_bodies(cx));
+    timings::pass("global_this::check_sites", || global_this::check_sites(cx));
+    timings::pass("module_scripts::declare", || module_scripts::declare(cx));
+    timings::pass("absent_fields::check", || absent_fields::check(cx));
+    timings::pass("fresh_returns::check", || fresh_returns::check(cx));
     // Growing generic recursion has infinitely many instantiations: the passes below propagate
     // requirements per instantiation and would never finish.
-    if instantiation_cycles::check(cx) {
+    if timings::pass("instantiation_cycles::check", || {
+        instantiation_cycles::check(cx)
+    }) {
         return;
     }
     // Before the passes that read instantiated types: deferred types reduced per instance.
-    type_level::instances::reach(cx);
-    hooks::check_shapes(cx);
+    timings::pass("type_level::instances::reach", || {
+        type_level::instances::reach(cx)
+    });
+    timings::pass("hooks::check_shapes", || hooks::check_shapes(cx));
     let before = error_count(cx);
-    ownership_passes(cx);
+    timings::pass("ownership_passes", || ownership_passes(cx));
     if cx.fn_sites.again() {
         return;
     }
     cx.borrow_pass_errors = error_count(cx) > before;
     kept_consts::keep_readers(cx);
     // After `ownership_passes`: the JSON pass records the types `JSON.stringify` writes.
-    object_copies::check(cx);
-    replaced_holders::check(cx);
+    timings::pass("object_copies::check", || object_copies::check(cx));
+    timings::pass("replaced_holders::check", || replaced_holders::check(cx));
     cx.module_slots = module_state::order(cx);
-    module_state::check_locked_access(cx);
+    timings::pass("module_state::check_locked_access", || {
+        module_state::check_locked_access(cx)
+    });
 }
 
 /// The passes from `demote_local_closures` on: the ones whose errors may come from a held
 /// closure or `const me = this` borrowing ([`retry_sharing`]).
 fn ownership_passes(cx: &mut ctx::Ctx) {
-    ownership::demote_local_closures(cx);
-    ownership::infer_local_async(cx);
-    ownership::infer_modes(cx);
-    body::expr::jsx::check_prop_copies(cx);
-    throws::infer_all(cx);
+    timings::pass("ownership::demote_local_closures", || {
+        ownership::demote_local_closures(cx)
+    });
+    timings::pass("ownership::infer_local_async", || {
+        ownership::infer_local_async(cx)
+    });
+    timings::pass("ownership::infer_modes", || ownership::infer_modes(cx));
+    timings::pass("body::expr::jsx::check_prop_copies", || {
+        body::expr::jsx::check_prop_copies(cx)
+    });
+    timings::pass("throws::infer_all", || throws::infer_all(cx));
     // The program is checked again with the error types of function types written without
     // `throws` that this check found (`throws::fn_types`): the rest would be redone.
     if cx.fn_sites.again() {
         return;
     }
-    hooks::check_throws(cx);
-    record_keys::check_instantiations(cx);
-    json::check_json_types(cx);
-    void_fields::check_instantiations(cx);
-    undefined_args::check_instantiations(cx);
-    ownership::soften_moves(cx);
-    ownership::validate_moves(cx);
-    let moved = moves::check_all(cx);
-    ownership::clone_reused(cx, &moved.reused);
-    ownership::box_cells(cx, &moved.boxed, &moved.per_iteration);
-    ownership::check_exclusive(cx);
-    ownership::check_boundaries(cx);
-    let weak = ownership::check_locked(cx);
-    ownership::check_many_threads(cx);
-    weak_threads::check(cx, weak);
+    timings::pass("hooks::check_throws", || hooks::check_throws(cx));
+    timings::pass("record_keys::check_instantiations", || {
+        record_keys::check_instantiations(cx)
+    });
+    timings::pass("json::check_json_types", || json::check_json_types(cx));
+    timings::pass("void_fields::check_instantiations", || {
+        void_fields::check_instantiations(cx)
+    });
+    timings::pass("undefined_args::check_instantiations", || {
+        undefined_args::check_instantiations(cx)
+    });
+    timings::pass("ownership::soften_moves", || ownership::soften_moves(cx));
+    timings::pass("ownership::validate_moves", || {
+        ownership::validate_moves(cx)
+    });
+    let moved = timings::pass("moves::check_all", || moves::check_all(cx));
+    timings::pass("ownership::clone_reused", || {
+        ownership::clone_reused(cx, &moved.reused)
+    });
+    timings::pass("ownership::box_cells", || {
+        ownership::box_cells(cx, &moved.boxed, &moved.per_iteration)
+    });
+    timings::pass("ownership::check_exclusive", || {
+        ownership::check_exclusive(cx)
+    });
+    timings::pass("ownership::check_boundaries", || {
+        ownership::check_boundaries(cx)
+    });
+    let weak = timings::pass("ownership::check_locked", || ownership::check_locked(cx));
+    timings::pass("ownership::check_many_threads", || {
+        ownership::check_many_threads(cx)
+    });
+    timings::pass("weak_threads::check", || weak_threads::check(cx, weak));
 }
 
 /// Validate the root module's `main`; a missing one is an error only when `require_main`.
