@@ -270,7 +270,8 @@ impl Cx<'_> {
         }
         let fields = self.adt_field_tys(t);
         tys.extend(self.stored_tys(fields));
-        let a = self.new_agg(format!("{} object", self.type_name(t)), &tys);
+        let name = format!("{}{}", self.type_name(t), crate::OBJECT_AGG_SUFFIX);
+        let a = self.new_agg(name, &tys);
         self.lay.objs.insert(t, a);
         a
     }

@@ -167,7 +167,10 @@ The runtime sees unboxed layouts. A top-level boxed argument is passed as its po
 an argument or result whose layout contains boxed parts crosses as an unboxed *view*
 (arguments, owning nothing) or is boxed after the call (results, `adopt_foreign`), also for the
 result slot of an awaited runtime leaf future. Arrays of boxed elements in extern signatures are
-not supported (none exist).
+not supported (none exist). The `velt_simd_*` helpers, which are inlined and only read an
+array's header, get a boxed array's header in place instead of a view: after inlining, a copy
+would be read again after every element store (the LLVM backend's alias tags describe headers
+and elements, not copies of them).
 
 ## 4. `.clone()`
 `x.clone()` is a deep copy of any value (structuredClone-like): fresh boxes all the way down

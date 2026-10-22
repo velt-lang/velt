@@ -1,0 +1,40 @@
+// A borrow through a counted object stays alive while the callee runs user code through an
+// intrinsic (a template calls `toString`, which replaces the borrowed object): such a callee
+// is not quiet (velt_vir lower/quiet.rs), so the borrow is shared for the call.
+class Box {
+  v: number = 1;
+}
+
+class Holder {
+  b: Box = new Box();
+}
+
+class Evil {
+  h: Holder;
+  kept: Box[] = [];
+  constructor(h: Holder) {
+    this.h = h;
+  }
+  toString(): string {
+    this.h.b = new Box();
+    this.h.b.v = 2;
+    // Boxes the size of the replaced one: freed, its memory would hold one of these.
+    for (let i = 0; i < 8; i++) {
+      const x = new Box();
+      x.v = 99;
+      this.kept.push(x);
+    }
+    return "evil";
+  }
+}
+
+function peek(b: Box, e: Evil): number {
+  return `${e}`.length - 4 + b.v;
+}
+
+function main() {
+  const h = new Holder();
+  const e = new Evil(h);
+  console.log(peek(h.b, e));
+  console.log(h.b.v);
+}

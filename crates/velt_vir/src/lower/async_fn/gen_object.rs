@@ -250,7 +250,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let f = self.cx.fn_def(def);
         let modes: Vec<PassMode> = f.params.iter().map(|p| p.mode).collect();
         let fid = self.cx.func(Work::GenNew(def, targs.clone()));
-        let argv = self.lower_args(args, &modes, true);
+        let argv = self.lower_args(args, &modes, crate::lower::call::Stabilize::Share);
         let gty = self.cx.gen_class_ty(def, &targs);
         self.finish_call(vir::Callee::Func(fid), argv, gty, None)
     }

@@ -209,6 +209,8 @@ const WASI_STD: &[&str] = &[
     "simd_shuffle",
     "simd_store_range",
     "simd_values",
+    "typed_arrays_basic",
+    "typed_arrays_edges",
     "utf8_valid",
 ];
 
