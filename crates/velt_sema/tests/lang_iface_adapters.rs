@@ -105,7 +105,10 @@ fn an_unwritable_adapter_field_is_reported_only_when_written() {
     assert!(r.contains("writing `kids` through `Tree<any>`"), "{r}");
     // A change through the array read is an error of its own, without a field write.
     let r = err_src(&src("a.kids.push(a);"));
-    assert!(r.contains("`kids` read through `Tree<any>` may be a new array"), "{r}");
+    assert!(
+        r.contains("`kids` read through `Tree<any>` may be a new array"),
+        "{r}"
+    );
 }
 
 fn adt(p: &velt_sema::hir::Program, t: velt_sema::hir::TyId) -> Option<velt_sema::hir::DefId> {
