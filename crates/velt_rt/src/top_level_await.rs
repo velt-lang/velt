@@ -3,53 +3,62 @@
 //! await at <file>:<line>` and exits with code 13.
 //!
 //! The generated `main` of a program whose top-level statements `await` (modules.md) calls
-//! [`velt_rt_tla_enter`] with the `await`'s location and depth (how many top-level `await`s'
-//! operands hold it) before it waits, and [`velt_rt_tla_leave`] after its value arrives. The
-//! entry left last is the `await` that waits now: an inner `await` leaves before the `await`
-//! holding it waits, and the entry an `await` that threw left behind is replaced by the next one
-//! entered at its depth or above. Shared with velt_rt_wasm (`#[path]`).
+//! [`velt_rt_tla_at`] with the `await`'s location before it evaluates its operand and suspends;
+//! an `await` inside another's operand stores the outer location again once it has its value
+//! (velt_sema `top_level_await.rs`). So the location stored last is the `await` that waits now.
+//! The store is two atomic writes of a literal's static bytes: no lock, no allocation, as a
+//! top-level loop over `await` runs it on every iteration. Shared with velt_rt_wasm (`#[path]`).
 
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 
 use crate::str::VeltStr;
 
-/// The locations (`path:line:col`) of the top-level `await`s waiting now, by depth.
-static WAITING: Mutex<Vec<String>> = Mutex::new(Vec::new());
+/// The static bytes of the location (`path:line:col`) of the top-level `await` that suspended
+/// last; null before any.
+static SITE: AtomicPtr<u8> = AtomicPtr::new(std::ptr::null_mut());
+static SITE_LEN: AtomicUsize = AtomicUsize::new(0);
 
-/// A top-level `await` at `site` (`path:line:col`), inside the operands of `depth` others, is
-/// about to wait.
+/// A top-level `await` at `site` (`path:line:col`, a string literal) is about to suspend (or,
+/// stored again, waits next).
 ///
 /// # Safety
-/// `site` must be a valid string.
+/// `site` must be a valid string. Only a static one (a literal) is kept: its bytes live for the
+/// whole process.
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_tla_enter(site: *const VeltStr, depth: i64) {
-    let site = String::from_utf8_lossy((*site).as_bytes()).into_owned();
-    if let Ok(mut w) = WAITING.lock() {
-        w.truncate(depth.max(0) as usize);
-        w.push(site);
+pub unsafe extern "C" fn velt_rt_tla_at(site: *const VeltStr) {
+    let site = &*site;
+    if !site.is_static() {
+        return;
     }
+    let bytes = site.as_bytes();
+    SITE_LEN.store(bytes.len(), Ordering::Relaxed);
+    SITE.store(bytes.as_ptr() as *mut u8, Ordering::Release);
 }
 
-/// The top-level `await` entered at `depth` has its value.
-#[no_mangle]
-pub extern "C" fn velt_rt_tla_leave(depth: i64) {
-    if let Ok(mut w) = WAITING.lock() {
-        w.truncate(depth.max(0) as usize);
+/// The location the top-level `await` that suspended last stored, if any.
+fn waiting_at() -> Option<&'static [u8]> {
+    let ptr = SITE.load(Ordering::Acquire);
+    if ptr.is_null() {
+        return None;
     }
+    let len = SITE_LEN.load(Ordering::Relaxed);
+    // SAFETY: `velt_rt_tla_at` stores only a static string's bytes, which live for the process;
+    // only the root task stores, and it is stuck when this runs.
+    Some(unsafe { std::slice::from_raw_parts(ptr, len) })
 }
 
 /// The program ends with `main` unfinished: if it waits at a top-level `await`, Node's warning
 /// (written to stderr in one write) and exit code 13; else 0, as Node exits with an `async
 /// main`'s promise pending.
 pub fn unfinished_exit_code() -> i32 {
-    let site = WAITING.lock().ok().and_then(|w| w.last().cloned());
-    let Some(site) = site else {
+    let Some(site) = waiting_at() else {
         return 0;
     };
+    let site = String::from_utf8_lossy(site);
     // `path:line:col`: Node names the line.
     let at = match site.rsplit_once(':') {
         Some((head, col)) if col.bytes().all(|b| b.is_ascii_digit()) => head,
-        _ => site.as_str(),
+        _ => &site,
     };
     crate::io::flush_stdout();
     let line = format!("Warning: Detected unsettled top-level await at {at}\n");
@@ -62,27 +71,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_await_waiting_now_is_the_entry_left_last() {
-        assert_eq!(unfinished_exit_code(), 0);
-        let last = || WAITING.lock().unwrap().last().cloned();
-        let (outer, inner, next) = (
+    fn the_await_waiting_now_is_the_one_stored_last() {
+        assert_eq!(waiting_at(), None);
+        let (outer, inner) = (
             VeltStr::from_static(b"main.vlt:3:1"),
-            VeltStr::from_static(b"main.vlt:4:3"),
-            VeltStr::from_static(b"main.vlt:6:1"),
+            VeltStr::from_static(b"main.vlt:3:20"),
         );
+        let heap = VeltStr::from_vec(b"main.vlt:9:1".to_vec());
         // SAFETY: valid strings.
         unsafe {
-            velt_rt_tla_enter(&outer, 0);
-            velt_rt_tla_enter(&inner, 1);
-            assert_eq!(last().as_deref(), Some("main.vlt:4:3"));
-            velt_rt_tla_leave(1);
-            assert_eq!(last().as_deref(), Some("main.vlt:3:1"));
-            // The inner one threw: its entry stays until the next `await` replaces it.
-            velt_rt_tla_enter(&inner, 1);
-            velt_rt_tla_enter(&next, 0);
-            assert_eq!(last().as_deref(), Some("main.vlt:6:1"));
+            // `await f(await g())`: the outer, the inner, then the outer again.
+            velt_rt_tla_at(&outer);
+            velt_rt_tla_at(&inner);
+            assert_eq!(waiting_at(), Some(&b"main.vlt:3:20"[..]));
+            velt_rt_tla_at(&outer);
+            assert_eq!(waiting_at(), Some(&b"main.vlt:3:1"[..]));
+            // Not a literal: not kept.
+            velt_rt_tla_at(&heap);
+            assert_eq!(waiting_at(), Some(&b"main.vlt:3:1"[..]));
         }
-        velt_rt_tla_leave(0);
-        assert_eq!(last(), None);
     }
 }

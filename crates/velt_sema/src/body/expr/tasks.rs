@@ -34,10 +34,11 @@ impl FnCx<'_, '_> {
             );
         }
         let hint = self.hint(exp).map(|t| self.cx.ty.promise(t));
-        let h = self.top_level_operand(|fx| fx.expr(inner, hint, Want::Move));
+        let h = self.top_level_operand(span, |fx| fx.expr(inner, hint, Want::Move));
         self.awaited_using_shares(&h);
-        let h = match self.await_union(h, span) {
-            Ok(done) => return self.top_level_awaited(done, span),
+        let awaited = self.await_union_with(h, span, &mut |s, read, p| s.awaiting(read, p, span));
+        let h = match awaited {
+            Ok(done) => return done,
             Err(h) => h,
         };
         self.await_throws(&h);
@@ -53,8 +54,7 @@ impl FnCx<'_, '_> {
                 self.cx.ty.error
             }
         };
-        let awaited = self.mk(H::Await(Box::new(h)), ty, span);
-        self.top_level_awaited(awaited, span)
+        self.awaiting(h, ty, span)
     }
 
     /// The value of `yield a` in an async generator yielding `t`: a promise is awaited, as in

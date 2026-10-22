@@ -254,8 +254,7 @@ impl FnCx<'_, '_> {
                     pt,
                     names.at,
                 );
-                let awaited = self.mk(H::Await(Box::new(r)), bool_, names.at);
-                self.top_level_awaited(awaited, names.at)
+                self.awaiting(r, bool_, names.at)
             }
             false => self.intrinsic_hir(
                 Intrinsic::GeneratorResume,
@@ -358,8 +357,7 @@ impl FnCx<'_, '_> {
             self.throw_src(ThrowSrc::Direct(err, e.span));
         }
         let span = e.span;
-        let awaited = self.mk(H::Await(Box::new(e)), t, span);
-        self.top_level_awaited(awaited, span)
+        self.awaiting(e, t, span)
     }
 
     /// `try { lp } finally { await AsyncGeneratorReturn(g) }`: leaving an embedded async

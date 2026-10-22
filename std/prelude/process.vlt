@@ -48,19 +48,12 @@ export function __processArgv(): string[] {
   return velt_rt_process_node_argv();
 }
 
-declare function velt_rt_tla_enter(site: string, depth: i64);
-declare function velt_rt_tla_leave(depth: i64);
+declare function velt_rt_tla_at(site: string);
 
 /**
- * Compiler-internal: a top-level `await` at `site` (`path:line:col`), inside the operands of
- * `depth` others, is about to wait. A program that ends there writes Node's warning and exits
- * with code 13.
+ * Compiler-internal: a top-level `await` at `site` (`path:line:col`, a string literal) is about
+ * to suspend. A program that ends there writes Node's warning and exits with code 13.
  */
-export function __topLevelAwaitEnter(site: string, depth: i64) {
-  velt_rt_tla_enter(site, depth);
-}
-
-/** Compiler-internal: the top-level `await` entered at `depth` has its value. */
-export function __topLevelAwaitLeave(depth: i64) {
-  velt_rt_tla_leave(depth);
+export function __topLevelAwaitAt(site: string) {
+  velt_rt_tla_at(site);
 }
