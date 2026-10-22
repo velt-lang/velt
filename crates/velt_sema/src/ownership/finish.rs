@@ -220,7 +220,7 @@ pub(super) fn frozen_bindings(cx: &mut Ctx, f: &mut FnDef) {
 /// `frozen_bindings` would not see them.
 fn direct_writes(cx: &mut Ctx, f: &mut FnDef) -> Vec<Diagnostic> {
     let mut found = vec![];
-    let closures = evidence::closure_locals(&mut f.body.block);
+    let closures = evidence::closure_locals(cx, &mut f.body.block);
     visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| {
         // A callback changing what it is given, passed with a part (`[s.items[0]].forEach(…)`).
         if let E::Call {

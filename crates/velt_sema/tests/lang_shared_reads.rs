@@ -467,6 +467,13 @@ fn parts_out_of_holders_and_inline_containers_cannot_be_changed() {
         "const c = s.items.slice(); const g = (x: Item) => { x.v = 50; }; c.forEach(g);",
         "const c = s.items.slice(); c.forEach((x) => { [x].forEach((y) => { y.v = 50; }); });",
         "[[s.items[0]]][0][0].v = 50;",
+        // A closure local that changes what it is given through another function value, or one
+        // a nested closure assigns.
+        "const g = (x: Item) => { const k = (y: Item) => { y.v = 50; }; k(x); }; const q = s.items[0]; g(q);",
+        "const k = (y: Item) => { y.v = 50; }; const g = (x: Item) => { k(x); }; const q = s.items[0]; g(q);",
+        "const g = (x: Item) => { const k = (t: string[]) => { t.push(\"x\"); }; k(x.tags); }; const q = s.items[0]; g(q);",
+        "const k = (y: Item) => { y.v = 50; }; const g = (x: Item) => { k(x); }; const c = s.items.slice(); c.forEach(g);",
+        "let g = (x: Item) => { console.log(x.v); }; const h = () => { g = (x: Item) => { x.v = 50; }; }; h(); const q = s.items[0]; g(q);",
     ] {
         let r = err_src(&format!(
             "{defs} function main() {{ const s = shared(new Store()); {body} }}"
@@ -521,6 +528,8 @@ fn fresh_objects_built_from_shared_numbers_or_by_map_may_change() {
         "console.log(Array.from(s.items, (x) => x.v).length);",
         "console.log(Array.from(s.items, (x) => x.name).length);",
         "const xs = s.items; console.log(Array.from(xs, (x) => x.v).length);",
+        // A closure local that only reads what it is given.
+        "const g = (x: Item) => { console.log(x.v); }; const q = s.items[0]; g(q);",
     ] {
         ok_src(&format!(
             "{defs} function main() {{ const s = shared(new Store()); {body} }}"

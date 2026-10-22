@@ -121,7 +121,7 @@ pub(super) fn collect(cx: &mut Ctx, b: &mut Block) -> Evidence {
 }
 
 fn collect_aliased(cx: &mut Ctx, b: &mut Block) -> (Evidence, Aliases) {
-    let closures = closure_locals(b);
+    let closures = closure_locals(cx, b);
     let mut v = Collector {
         cx,
         ev: Evidence::default(),
@@ -192,15 +192,11 @@ impl Collector<'_, '_> {
         }
     }
 
-    /// Arguments of a call through a function value (see the module docs).
-    /// A call through a function value `callee`: one of a closure literal changes what its
-    /// body changes, any other function anything it is given.
+    /// Arguments of a call through a function value `callee` (see the module docs): one held
+    /// in a closure local changes what that closure may change, any other anything it is given.
     fn indirect_args(&mut self, callee: &Expr, args: &[Expr]) {
         let bits = match &callee.kind {
-            E::Local(l, _) => self
-                .closures
-                .get(l)
-                .map(|&c| self.cx.fn_info(c).modified_params),
+            E::Local(l, _) => (self.closures.get(l)).map(|&c| closure_changes(self.cx, c)),
             _ => None,
         };
         for (i, a) in args.iter().enumerate() {
@@ -383,13 +379,20 @@ impl VisitMut for Collector<'_, '_> {
 /// The locals of a body that only ever hold one closure literal (`const g = (x) => …`).
 pub(super) type Closures = FxHashMap<LocalId, crate::hir::DefId>;
 
-/// The `Closures` of body `b`.
-pub(super) fn closure_locals(b: &mut Block) -> Closures {
-    struct V {
+/// The `Closures` of body `b` (none in a program that reads no `shared`: only its rules ask).
+/// A local assigned anywhere, also by a closure capturing it, holds other values too.
+pub(super) fn closure_locals(cx: &Ctx, b: &mut Block) -> Closures {
+    if !cx.frozen_reads {
+        return Closures::default();
+    }
+    struct V<'a, 'm> {
+        cx: &'a Ctx<'m>,
         found: Closures,
         assigned: FxHashSet<LocalId>,
+        /// A nested closure being inferred (its def taken out): what it assigns is unknown.
+        unknown: bool,
     }
-    impl VisitMut for V {
+    impl VisitMut for V<'_, '_> {
         fn stmt(&mut self, s: &mut Stmt) {
             if let S::Let {
                 local,
@@ -406,35 +409,85 @@ pub(super) fn closure_locals(b: &mut Block) -> Closures {
             }
         }
         fn expr(&mut self, e: &mut Expr) {
-            if let E::Assign { place, .. } = &e.kind {
-                if let E::Local(l, _) = place.kind {
-                    self.assigned.insert(l);
+            match &e.kind {
+                E::Assign { place, .. } => {
+                    if let E::Local(l, _) = place.kind {
+                        self.assigned.insert(l);
+                    }
                 }
+                E::Closure(d) => {
+                    // Any capture but a copy may become one by reference or in a shared cell
+                    // (capture modes are inferred with this): the closure may assign it.
+                    match &self.cx.defs[d.0 as usize] {
+                        Some(Def::Fn(c)) => {
+                            let assigns =
+                                c.captures.iter().filter(|cap| cap.mode != PassMode::Copy);
+                            self.assigned.extend(assigns.map(|cap| cap.outer));
+                        }
+                        _ => self.unknown = true,
+                    }
+                }
+                _ => {}
             }
         }
     }
     let mut v = V {
+        cx,
         found: FxHashMap::default(),
         assigned: FxHashSet::default(),
+        unknown: false,
     };
     visit::block(b, &mut v);
     let V {
         mut found,
         assigned,
+        unknown,
+        ..
     } = v;
-    found.retain(|l, _| !assigned.contains(l));
+    found.retain(|l, _| !unknown && !assigned.contains(l));
     found
+}
+
+/// What closure `c` may change of its params (bit `k`: param `k`): what its body changes
+/// (`FnInfo::modified_params`), and what it gives a function value to (weak evidence, which
+/// sets `LocalDef::mutable`).
+fn closure_changes(cx: &Ctx, c: crate::hir::DefId) -> u64 {
+    let mut bits = cx.fn_info(c).modified_params;
+    if let Some(Def::Fn(f)) = &cx.defs[c.0 as usize] {
+        let params = f.params.iter().skip(f.captures.len()).take(64);
+        for (k, p) in params.enumerate() {
+            if f.body.locals[p.local.0 as usize].mutable {
+                bits |= 1 << k;
+            }
+        }
+    }
+    bits
 }
 
 /// The closure argument `a` is (a literal, or a variable holding one).
 pub(super) fn callback(cx: &Ctx, closures: &Closures, a: &Expr) -> Option<crate::hir::DefId> {
+    callback_of(cx, closures, a).map(|(c, _)| c)
+}
+
+/// What a closure argument `a` may change of what it is given (`callback`): a literal what its
+/// body changes, as a direct call would, a variable also what it gives a function value.
+fn callback_changes(cx: &Ctx, closures: &Closures, a: &Expr) -> Option<u64> {
+    callback_of(cx, closures, a).map(|(c, literal)| match literal {
+        true => cx.fn_info(c).modified_params,
+        false => closure_changes(cx, c),
+    })
+}
+
+/// `callback`, and whether `a` is the closure literal itself.
+fn callback_of(cx: &Ctx, closures: &Closures, a: &Expr) -> Option<(crate::hir::DefId, bool)> {
     let mut a = a;
     while let E::Upcast(x) | E::Cast(x) = &a.kind {
         a = x;
     }
     match (&a.kind, cx.ty.kind(a.ty)) {
-        (E::Closure(c), _) | (_, crate::hir::TyKind::Closure(c)) => Some(*c),
-        (E::Local(l, _), _) => closures.get(l).copied(),
+        (E::Closure(c), _) => Some((*c, true)),
+        (_, crate::hir::TyKind::Closure(c)) => Some((*c, false)),
+        (E::Local(l, _), _) => closures.get(l).map(|&c| (c, false)),
         // An adapter to the parameters a std callback takes (`{ let f = g; (x, i) => f(x) }`):
         // the closure it calls, whose parameters come first in the same order.
         (E::Block(b), _) => match (&b.stmts[..], b.value.as_deref()) {
@@ -450,7 +503,7 @@ pub(super) fn callback(cx: &Ctx, closures: &Closures, a: &Expr) -> Option<crate:
                     kind: E::Closure(_),
                     ..
                 }),
-            ) => callback(cx, closures, init),
+            ) => callback_of(cx, closures, init),
             _ => None,
         },
         _ => None,
@@ -475,8 +528,8 @@ pub(super) fn changing_callback(
         false => u64::MAX,
     };
     args.iter()
-        .filter_map(|a| callback(cx, closures, a))
-        .any(|c| cx.fn_info(c).modified_params & elem != 0)
+        .filter_map(|a| callback_changes(cx, closures, a))
+        .any(|bits| bits & elem != 0)
 }
 
 /// Does closure `def` (or one nested in it, through captures by reference) assign its local

@@ -489,7 +489,8 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
   refused too: in JavaScript all of them reach the shared value itself. Not yet followed (a
   change lands on a copy, #1405): a part returned by a function or closure (other than a method
   or getter of the value: generic, static and interface functions, another object's method), a
-  spread or `Array.from` copy, a `map` whose callback returns its element (`xs.map((x) => x)`),
+  spread or `Array.from` copy, a `map` whose callback returns its element or a part of it (`xs.map((x) => x)`,
+  `xs.map((x) => x.tags)`),
   a generator, an `await`, `any` or `Reflect`, and a container filled with `push` / `set`. Change a copy (`.clone()`, `s.ports.slice()`) instead.
   `console.log(s)`, `[...s]`, `Object.keys(s)` and `JSON.stringify(s)` read the value inside
   as well. A value of
