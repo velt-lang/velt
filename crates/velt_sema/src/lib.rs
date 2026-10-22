@@ -449,6 +449,9 @@ fn analyze_bodies(cx: &mut ctx::Ctx) {
         body::expr::iface_adapt_dynamic::make_dynamic_iface_adapters(cx)
     });
     timings::pass("check_adapter_writes", || cx.check_adapter_writes());
+    timings::pass("check_adapted_array_reads", || {
+        cx.check_adapted_array_reads()
+    });
     timings::pass("absent_fields::check", || absent_fields::check(cx));
     timings::pass("fresh_returns::check", || fresh_returns::check(cx));
     // Growing generic recursion has infinitely many instantiations: the passes below propagate

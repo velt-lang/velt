@@ -42,6 +42,8 @@ pub(crate) struct IfaceWrites {
         Box<crate::body::expr::iface_adapt_slots::AdapterParts>,
         usize,
     )>,
+    /// Reads of array fields through interfaces at dynamic arguments (`iface_field`).
+    pub(crate) array_reads: crate::body::expr::iface_field::ArrayReads,
 }
 
 /// How an implementation stores one interface field.
@@ -372,7 +374,7 @@ impl Ctx<'_> {
         );
     }
 
-    fn iface_name(&self, iface: DefId) -> String {
+    pub(crate) fn iface_name(&self, iface: DefId) -> String {
         self.iface(iface).map_or(String::new(), |i| i.name.clone())
     }
 

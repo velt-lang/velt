@@ -2694,8 +2694,48 @@ object as the original. A context stored in a `Map<string, unknown>` and read ba
 
 A field holding an array of the interface's own values (`kids: Tree<T>[]`), read through a
 `Tree<number>` converted to a `Tree<any>`, is a new array of the same elements, each a
-`Tree<any>`: reads see the original's elements and their changes. Changing the field through
-the converted value (assigning it, or a `push` on it) is a compile error naming #1185.
+`Tree<any>`: reads see the original's elements and their changes. Once a program converts a
+`Tree` to other type arguments this way, the field read through a `Tree<any>` (or through a
+`Tree<T>` in generic code, which may be one) may only be used in place without changing it:
+an element (read, or written through: `t.kids[0].value = 7` changes the original's element),
+`.length`, `for…of` over its elements (those the field holds when the loop starts; Node also
+visits an element the loop body adds to the original), or a method that leaves the array
+unchanged (`map`, `filter`, `slice`, `indexOf`, `join`, …), also behind `!` or `?.`
+(`t.kids?.length`), and a condition or `null` test of it. The same holds for a method's result
+of such a type (`getKids(): Tree<T>[]`). Anything else is a compile error naming #1185, as
+Node's result would differ: changing the array (`push`, `splice`, `sort`, an element or
+`length` assigned, the field assigned), keeping it (`const k = t.kids`, destructuring,
+spreading), passing it on, or comparing it (`t.kids === t.kids` is `false` on a new array).
+Change or keep the array through the value's own type instead.
+
+```ts
+interface Tree<T> {
+  value: T;
+  kids: Tree<T>[];
+  size(): number;
+}
+
+class Node1<T> implements Tree<T> {
+  value: T;
+  kids: Tree<T>[] = [];
+  constructor(v: T) {
+    this.value = v;
+  }
+  size(): number {
+    return this.kids.length;
+  }
+}
+
+function main(): void {
+  const t = new Node1<number>(1);
+  t.kids.push(new Node1<number>(2));
+  const a = (t as unknown) as Tree<any>;
+  console.log(a.kids.length, a.kids[0].value); // 1 2
+  console.log(a.kids.map((k) => k.value).join(",")); // 2
+  t.kids.push(new Node1<number>(3)); // `a.kids.push(…)` is the compile error
+  console.log(a.kids.length); // 2
+}
+```
 
 A parameter of type `unknown[]`, `Map<unknown, unknown>` or `Set<unknown>` (a handler for
 arrays, maps or sets, as in a serializer's table) takes an array, map or set of any element

@@ -35,8 +35,10 @@ impl Cx<'_> {
     /// it is for, and the interface's arguments.
     fn iface_impl_of(&mut self, t: TyId, iface: DefId) -> Option<(u32, TyId, Vec<TyId>)> {
         let mut cur = t;
+        let impls = self.impls_of(iface);
         for _ in 0..64 {
-            for j in 0..self.hir.impls.len() {
+            for &j in impls.iter() {
+                let j = j as usize;
                 let imp = &self.hir.impls[j];
                 if imp.iface != iface || self.is_adapter(imp.ty) || self.is_dynamic(imp.ty) {
                     continue;

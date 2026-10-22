@@ -44,7 +44,6 @@ impl FnCx<'_, '_> {
         let H::Index { base, .. } = &e.kind else {
             return;
         };
-        self.iface_array_changed(base);
         if let Some(shown) = self.readonly_shown(base) {
             self.cx.error(Diagnostic::error(
                 format!(
@@ -55,40 +54,21 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// `h`, an array about to change in place, when it is a field read through an interface
-    /// value at a dynamic argument: that field counts as written through the interface (an adapter reads it as a
-    /// new array, which the change would not reach: `crate::iface_writes`).
-    fn iface_array_changed(&mut self, h: &hir::Expr) {
-        let H::Call {
-            callee: hir::Callee::Dyn { slot },
-            args,
-        } = &h.kind
-        else {
-            return;
-        };
-        let Some(TyKind::Dyn(iface, iargs)) = args.first().map(|r| self.cx.ty.kind(r.ty).clone())
-        else {
-            return;
-        };
-        // Only a value at a dynamic argument may be an adapter (`iface_adapt`).
-        if !iargs.iter().any(|a| self.cx.dynamic(*a).is_some()) {
-            return;
-        }
-        let n = self.cx.iface(iface).map_or(0, |i| i.methods.len());
-        if let Some(field) = (*slot as usize).checked_sub(n) {
-            if matches!(self.cx.ty.kind(h.ty), TyKind::Array(_)) {
-                self.cx.note_field_written(iface, field, h.span);
-            }
-        }
-    }
-
-    /// A call of method `name` on `recv`: an error when it is a mutating method of an array and
-    /// `recv` a read-only array variable.
-    pub(crate) fn readonly_method_call(&mut self, recv: &hir::Expr, name: &str, span: Span) {
+    /// A call of method `name` (with `args`) on `recv`: an error when it is a mutating method of
+    /// an array and `recv` a read-only array variable.
+    pub(crate) fn readonly_method_call(
+        &mut self,
+        recv: &hir::Expr,
+        name: &str,
+        args: &[ast::Expr],
+        span: Span,
+    ) {
         if !MUTATING.contains(&name) {
+            if matches!(self.cx.ty.kind(recv.ty), TyKind::Array(_)) {
+                self.array_method_in_place(recv, name, args);
+            }
             return;
         }
-        self.iface_array_changed(recv);
         if let Some(shown) = self.readonly_shown(recv) {
             self.cx.error(
                 Diagnostic::error(

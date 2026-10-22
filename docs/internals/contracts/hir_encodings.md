@@ -1098,8 +1098,11 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   implementation, then the adapter's instance at `A`'s arguments; a generic adapter's struct is
   counted (`counted_objects`) at every instance. A field read through an adapter whose type is
   an array of `I` values at other arguments (`kids: Tree<T>[]`) is a new array of the elements,
-  each adapted (`map`); such a field has a setter that is never called, and a write of it
-  through the interface is a compile error.
+  each adapted (`map`), and so is a method's result of such a type; such a field has a setter
+  that is never called. Once every body is checked, each read of such a field or method result
+  through `I` at a dynamic argument or one naming a type parameter is a compile error unless
+  the array is used in place without changing it (an element, `.length`, `for…of`, a method
+  that leaves it unchanged: `body/expr/iface_field.rs`), and so is a write of the field.
 - `Program::type_names` names structural types as messages do: a type alias's (`type P = …`)
   and a field-only interface's object type, after `readonly` erasure; a type two names reach
   has none. Lowering's `TypeError`s use it.

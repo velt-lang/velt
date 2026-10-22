@@ -57,6 +57,7 @@ impl FnCx<'_, '_> {
     pub(crate) fn cond(&mut self, e: &ast::Expr) -> hir::Expr {
         let b = self.cx.ty.bool_;
         let h = self.test_operand(e, Some(b), Want::Borrow);
+        self.array_used_in_place(&h);
         self.truthy(h)
     }
 

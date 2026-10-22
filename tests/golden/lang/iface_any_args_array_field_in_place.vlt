@@ -1,0 +1,58 @@
+// An array field of interface values read through the interface at `any` and used in place
+// without changing it: an element (read or written through), `.length`, `for…of` over its
+// elements and the methods that do not change the array read the array the object holds,
+// also in generic code, and so does a method's result read that way (#1185).
+interface Tree<T> {
+  value: T;
+  kids: Tree<T>[];
+  label(): string;
+  getKids(): Tree<T>[];
+}
+
+class Node1<T> implements Tree<T> {
+  value: T;
+  kids: Tree<T>[] = [];
+  constructor(v: T) {
+    this.value = v;
+  }
+  label(): string {
+    return "n" + this.kids.length;
+  }
+  getKids(): Tree<T>[] {
+    return this.kids;
+  }
+}
+
+function count<T>(x: Tree<T>): number {
+  let n = x.kids.length;
+  for (const k of x.kids) {
+    n += count(k);
+  }
+  return n;
+}
+
+function firstLabel<U extends Tree<number>>(x: U): string {
+  return x.kids.length > 0 ? x.kids[0].label() : "-";
+}
+
+const t = new Node1<number>(1);
+t.kids.push(new Node1<number>(2));
+t.kids.push(new Node1<number>(0));
+const a = (t as unknown) as Tree<any>;
+const b: Tree<any> = t;
+console.log(a.kids[0].value, a.kids.length, b.kids[1].value, b.kids.length);
+console.log(a.kids.map((k) => k.value).join(","), a.kids.slice(1).length);
+console.log(a.kids.filter((k) => k.value > 0).length, a.kids.some((k) => k.value === 2));
+console.log(a.kids.at(-1)!.value, a.kids.find((k) => k.value === 0)!.label());
+let sum = 0;
+for (const k of b.kids) {
+  sum += k.value as number;
+}
+console.log(sum);
+a.kids[0].value = 7;
+console.log(t.kids[0].value);
+t.kids.push(new Node1<number>(5));
+t.kids[2].kids.push(new Node1<number>(6));
+console.log(a.kids.length, a.kids[2].value, a.kids[2].kids[0].value);
+console.log(count(a), count(t), firstLabel(t));
+console.log(a.getKids().length, a.getKids()[1].value, a.getKids().map((k) => k.label()));

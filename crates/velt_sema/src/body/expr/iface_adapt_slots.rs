@@ -78,6 +78,12 @@ pub(super) fn adapter_method(
         .collect();
     let ret = cx.subst(s.ret, &targs);
     let ret_from = cx.subst(s.ret, &fargs);
+    // A field getter or method giving an array of interface values as a new array
+    // (`adapt_array`).
+    let array = cx.ty.opt_payload(ret).unwrap_or(ret);
+    if !setter && ret != ret_from && matches!(cx.ty.kind(array), TyKind::Array(_)) {
+        cx.note_adapted_array(p.iface, slot, span);
+    }
     let name = format!("{} adapter.{}", p.iname, s.name);
     let mut info =
         crate::collect::fn_placeholder(name.clone(), span, span, p.module, FnKind::Method, None);

@@ -55,6 +55,7 @@ pub(crate) mod iface_adapt;
 pub(crate) mod iface_adapt_dynamic;
 pub(crate) mod iface_adapt_slots;
 mod iface_call;
+pub(crate) mod iface_field;
 mod iface_nested;
 mod iface_object;
 mod iface_write;

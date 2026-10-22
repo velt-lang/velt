@@ -307,6 +307,7 @@ impl FnCx<'_, '_> {
     /// iterable in JS either; the message names `Object.keys`/`Object.entries`).
     pub(super) fn for_of_source(&mut self, iter: &ast::Expr) -> hir::Expr {
         let it = self.expr(iter, None, Want::Borrow);
+        self.array_used_in_place(&it);
         // `for (const x of s)` over a `shared<T>`: the value inside (#36), whatever it iterates
         // (an array, a string, a `Map`, a `Set`, a typed array).
         let it = match *self.cx.ty.kind(it.ty) {
