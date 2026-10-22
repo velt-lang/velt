@@ -9,7 +9,7 @@ use velt_syntax::ast;
 
 use super::for_iter::ForOfParts;
 use super::pattern::BindCtx;
-use super::places::frozen_source;
+use super::places::{frozen_source, source_root};
 use super::{FnCx, LoopCx, Want};
 use crate::hir::{self, ExprKind as H, StmtKind as S, TyId, TyKind};
 
@@ -164,11 +164,15 @@ impl FnCx<'_, '_> {
                     false => {
                         let it = self.for_of_source(iter);
                         let (frozen, first) = (frozen_source(self.cx, &it), self.f.locals.len());
+                        let root = source_root(self.cx, &it);
                         if !self.for_of_map(iter, &it, parts, out) {
                             self.for_of(it, parts, out)
                         }
                         if frozen {
                             self.frozen_elements(pattern.span, first);
+                        }
+                        if let Some(root) = root {
+                            self.loop_elements(pattern.span, first, root);
                         }
                     }
                 }
@@ -282,6 +286,14 @@ impl FnCx<'_, '_> {
     /// Record the locals from `first` on that the `for…of` pattern at `pattern` declares (also
     /// in a map's cursor loop and the iterator protocol's): elements of a value read out of a
     /// `shared`.
+    /// Record the locals from `first` on that the `for…of` pattern at `pattern` declares as
+    /// elements of local `root`'s value (`Ctx::loop_roots`).
+    fn loop_elements(&mut self, pattern: Span, first: usize, root: hir::LocalId) {
+        let elems = self.f.locals[first..].iter().map(|l| l.span);
+        let elems = elems.filter(|s| pattern.lo <= s.lo && s.hi <= pattern.hi);
+        self.cx.loop_roots.extend(elems.map(|s| (s, root)));
+    }
+
     fn frozen_elements(&mut self, pattern: Span, first: usize) {
         let elems = self.f.locals[first..].iter().map(|l| l.span);
         let elems = elems.filter(|s| pattern.lo <= s.lo && s.hi <= pattern.hi);
