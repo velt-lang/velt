@@ -7,5 +7,8 @@ undefined
 got 4 none
 got undefined
 got null
+got 3 got undefined
+null true 2 false
+b q a 1 c
 1 undefined
 a 2

@@ -1,7 +1,8 @@
 // `as` assertions tsc accepts (#893): a union as a union of some of its members (with or
 // without `| undefined`, sigx's `options as SSRContextOptions | undefined`), `T | undefined` as
 // `T` in generic code (every value passes where `T` itself has `undefined`), and the type
-// operators `readonly T[]` and literal unions after `as`.
+// operators `readonly T[]` and literal unions after `as`. A sub-union may drop the union's
+// `undefined` / `null` too (checked as `u!`), and `x as T` keeps a `null` that `T` holds.
 interface Opts {
   streaming?: boolean;
 }
@@ -42,6 +43,35 @@ function pending<T>(has: boolean, v: T | undefined): string {
   return `got ${x}`;
 }
 
+interface A {
+  kind: "a";
+  x: number;
+}
+
+interface B {
+  kind: "b";
+  y: string;
+}
+
+interface C {
+  kind: "c";
+  z: boolean;
+}
+
+function ab(u: A | B | C | undefined): string {
+  const v = u as A | B;
+  return v.kind === "a" ? `a ${v.x}` : `b ${v.y}`;
+}
+
+function bc(u: A | B | C | null | undefined): string {
+  return (u as B | C).kind;
+}
+
+function nul<T>(v: T | null): string {
+  const x = v as T;
+  return `${x} ${x === null}`;
+}
+
 function lookup<T>(m: Map<string, T>, k: string): T {
   return m.get(k) as T;
 }
@@ -58,6 +88,9 @@ function demo(): void {
   console.log(pending<number>(true, 4), pending<number>(false, undefined));
   console.log(pending<number | undefined>(true, undefined));
   console.log(pending<string | null>(true, null));
+  console.log(pending<number | null>(true, 3), pending<number | null | undefined>(true, undefined));
+  console.log(nul<string | null>(null), nul<number>(2));
+  console.log(ab({ kind: "b", y: "q" }), ab({ kind: "a", x: 1 }), bc({ kind: "c", z: true }));
   const units = new Map<string, string | undefined>([["u", undefined]]);
   console.log(lookup(new Map([["a", 1]]), "a"), lookup(units, "u"));
   const k = "a" as ("a" | "b");

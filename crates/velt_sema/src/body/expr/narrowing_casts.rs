@@ -5,8 +5,11 @@
 //! TypeScript trusts them; Velt checks them, as it checks `x!`: the value is `T`'s, or the
 //! program panics (`type assertion failed: …`). A value of the wrong type never reads as `T`.
 //!
-//! Not in generic code: at `T = U | null`, `T | null` is `U | null`, so a value that is `null`
-//! is a `T` there, and the check would reject it.
+//! In generic code, `x as T` of a `T | null` is checked only at instantiations where `T` has
+//! no `null` of its own (at `T = U | null`, `T | null` is `U | null`); a union that has a type
+//! parameter as a member converts the other members through `any` at run time (at
+//! `T = unknown`, every value is a `T`). A sub-union of members that are other types
+//! (`Ok<T> | Err` of an `Ok<T> | Err | Pend`) is checked as outside generic code.
 
 use velt_common::Span;
 
@@ -34,11 +37,18 @@ impl FnCx<'_, '_> {
         if self.cx.ty.has_error(h.ty) {
             return Err(h);
         }
-        let h = match self.tuple_assertion(h, target, span) {
+        let mut h = match self.tuple_assertion(h, target, span) {
             Ok(h) => return Ok(h),
             Err(h) => h,
         };
         if generic(self, h.ty) || generic(self, target) {
+            if !self.param_union(h.ty) {
+                // Members that are distinct types at every instantiation (`Ok<T> | Err`).
+                h = match self.subunion_assertion(h, target, span) {
+                    Ok(h) => return Ok(h),
+                    Err(h) => h,
+                };
+            }
             if self.cx.ty.nothing_of(h.ty).is_none() && self.has_member(h.ty, target) {
                 return self.member_assertion(h, target, span);
             }
@@ -167,35 +177,90 @@ impl FnCx<'_, '_> {
             span,
         );
         let never = self.cx.ty.never;
-        let arms = vec![
-            hir::Arm {
-                pat: hir::Pat {
-                    kind: P::Variant {
-                        def,
-                        variant: v as u32,
-                        args: vec![sub],
-                    },
-                    ty: h.ty,
-                    span,
+        let mut arms = vec![hir::Arm {
+            pat: hir::Pat {
+                kind: P::Variant {
+                    def,
+                    variant: v as u32,
+                    args: vec![sub],
                 },
-                guard: None,
-                body: value,
+                ty: h.ty,
+                span,
             },
-            hir::Arm {
-                pat: hir::Pat {
-                    kind: P::Wildcard,
-                    ty: h.ty,
-                    span,
-                },
-                guard: None,
-                body: self.intrinsic(Intrinsic::Panic, vec![msg], never, span),
+            guard: None,
+            body: value,
+        }];
+        for (i, &m) in members.iter().enumerate() {
+            if i != v && (self.instance_valued(m) || self.instance_valued(target)) {
+                arms.push(self.member_as_dynamic(def, i, m, h.ty, target, consume, span));
+            }
+        }
+        arms.push(hir::Arm {
+            pat: hir::Pat {
+                kind: P::Wildcard,
+                ty: h.ty,
+                span,
             },
-        ];
+            guard: None,
+            body: self.intrinsic(Intrinsic::Panic, vec![msg], never, span),
+        });
         let kind = H::Match {
             scrutinee: Box::new(h),
             arms,
         };
         Ok(self.mk(kind, target, span))
+    }
+
+    /// The arm of a [`member_assertion`](Self::member_assertion) in generic code for another
+    /// member `m` (variant `i` of union `u`), where `m` or `target` is a type parameter: the
+    /// value converted through `any`, checked at run time. At an instantiation where they
+    /// are the same type, or `target` is `unknown`, every value of `m` passes, as in
+    /// TypeScript (`T | string` as `T` at `T = unknown` of a string; `T | Mod<T>` as `Mod<T>`
+    /// at `T = unknown` of a `T` that holds one); at another a `TypeError`.
+    #[allow(clippy::too_many_arguments)]
+    fn member_as_dynamic(
+        &mut self,
+        def: hir::DefId,
+        i: usize,
+        m: TyId,
+        u: TyId,
+        target: TyId,
+        consume: bool,
+        span: Span,
+    ) -> hir::Arm {
+        let mode = match (self.cx.is_copy(m), consume) {
+            (true, _) => UseMode::Copy,
+            (false, true) => UseMode::Move,
+            (false, false) => UseMode::Borrow,
+        };
+        let b = self.new_local("<member>", m, false, span, LocalKind::Bind);
+        let value = self.mk(H::Local(b, mode), m, span);
+        let value = self.share_if_place(value);
+        let body = match self.any_ty() {
+            Some(any) => {
+                let boxed = self.coerce(value, any);
+                self.cast_dynamic(boxed, target)
+            }
+            None => self.error_expr(span),
+        };
+        let bind = hir::Pat {
+            kind: P::Binding(b, mode),
+            ty: m,
+            span,
+        };
+        hir::Arm {
+            pat: hir::Pat {
+                kind: P::Variant {
+                    def,
+                    variant: i as u32,
+                    args: vec![bind],
+                },
+                ty: u,
+                span,
+            },
+            guard: None,
+            body,
+        }
     }
 
     /// `u as V` where `V` (or `V | null`) is a union of some of union `u`'s members (or one of
@@ -211,10 +276,10 @@ impl FnCx<'_, '_> {
         let (from_n, to_n) = (t.nothing_of(h.ty), t.nothing_of(target));
         let from = t.core(h.ty).unwrap_or(h.ty);
         let to = t.core(target).unwrap_or(target);
-        match (from_n, to_n) {
-            (Some(a), Some(b)) if !a.within(b) => return Err(h),
-            (Some(_), None) => return Err(h),
-            _ => {}
+        if let (Some(a), Some(b)) = (from_n, to_n) {
+            if !a.within(b) {
+                return Err(h);
+            }
         }
         // `T | null` as `T`, and a union as one member, are the cases above.
         if to_n.is_none() && self.cx.union_def(to).is_none() {
@@ -226,6 +291,15 @@ impl FnCx<'_, '_> {
         let want = self.cx.union_members(to).unwrap_or_else(|| vec![to]);
         if want.len() >= have.len() || !want.iter().all(|w| have.contains(w)) {
             return Err(h);
+        }
+        if let (Some(n), None) = (from_n, to_n) {
+            // `u as A | B` of a `A | B | C | undefined`: a nothing stops as for `u!`.
+            let msg = format!(
+                "TypeError: type assertion failed: the value is {}",
+                n.word()
+            );
+            let present = self.checked_present(h, &msg, None, false, span);
+            return self.members_or_panic(present, to, &want, target, span);
         }
         if from_n.is_none() {
             let inner = self.members_or_panic(h, to, &want, target, span)?;
@@ -294,8 +368,9 @@ impl FnCx<'_, '_> {
     /// `x as T` with `x: T | undefined` (or `| null`) in generic code: the value, checked to be
     /// present where `T` has no such value (`type assertion failed`). Where `T` has one
     /// (`T = U | undefined`), the two types are the same and every value passes, as in
-    /// TypeScript: `HoldsNull(T) ? (x ?? <T's null>) : (x ?? panic)`, a condition known per
-    /// instantiation, so lowering keeps one branch (hir_encodings.md).
+    /// TypeScript: `HoldsNull(T) ? (x ?? <the nothing as T>) : (x ?? panic)`, a condition known
+    /// per instantiation, so lowering keeps one branch (hir_encodings.md). A `T` with only the
+    /// other nothing (`T = U | null` of an `undefined`) cannot hold it: a `TypeError`.
     fn param_present_assertion(
         &mut self,
         h: hir::Expr,
@@ -328,7 +403,16 @@ impl FnCx<'_, '_> {
         let (b, never) = (self.cx.ty.bool_, self.cx.ty.never);
         let probe = self.intrinsic(Intrinsic::NullAs, vec![], core, span);
         let cond = self.intrinsic(Intrinsic::HoldsNull, vec![probe], b, span);
-        let null = self.intrinsic(Intrinsic::NullAs, vec![], core, span);
+        // `T`'s own nothing where it has that one (`T = U | undefined`); where it has the other
+        // (`T = U | null` of an `undefined`), a `TypeError`, as `undefined as U | null` from
+        // an `any` is: the value never changes.
+        let null = match self.any_ty() {
+            Some(any) => {
+                let nothing = self.dynamic_nothing(n, any, span);
+                self.cast_dynamic(nothing, core)
+            }
+            None => self.intrinsic(Intrinsic::NullAs, vec![], core, span),
+        };
         let then = self.present_or(h.clone(), core, null, span);
         let msg = format!(
             "TypeError: type assertion failed: the value is {}",

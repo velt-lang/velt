@@ -6,6 +6,7 @@
 
 use velt_common::Span;
 
+use crate::any::Dynamic;
 use crate::body::FnCx;
 use crate::hir::{self, ExprKind as H, Nothing, PatKind as P, TyId};
 
@@ -398,10 +399,22 @@ impl FnCx<'_, '_> {
         };
         let (def, type_args) = self.cx.union_def(core)?;
         let members = self.cx.union_members(core)?;
-        let v = members
+        let held = members
             .iter()
-            .position(|m| self.cx.ty.nothing_of(*m).is_some_and(allows))?;
-        let inner = self.nothing_value(which, members[v], span);
+            .position(|m| self.cx.ty.nothing_of(*m).is_some_and(allows));
+        // Else an `any` / `unknown` member holds it (`T | Mod<T>` at `T = any`).
+        let dynamic = || {
+            members.iter().position(|m| {
+                matches!(self.cx.dynamic(*m), Some(Dynamic::Any | Dynamic::Unknown))
+            })
+        };
+        let (v, inner) = match held {
+            Some(v) => (v, self.nothing_value(which, members[v], span)),
+            None => {
+                let v = dynamic()?;
+                (v, self.dynamic_nothing(which, members[v], span))
+            }
+        };
         let kind = H::Variant {
             def,
             type_args,

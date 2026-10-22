@@ -113,12 +113,21 @@ and memory where you want a fixed width; code shared with TypeScript never names
   An assertion that narrows, `x as T` with `x: T | null` (or `| undefined`), `u as A` with
   `A` a member of union `u`, and `u as A | B` (also `| undefined`) with some of `u`'s members,
   is checked like `x!`: TypeScript trusts it, Velt panics with `type assertion failed: …` when
-  the value is not a `T`. In generic code, `x as T` of an `x: T | undefined` is checked only
-  where `T` has no `undefined` of its own: at `T = U | undefined` every value of `x` is a `T`
-  and passes as it is. `u as A` with `A` a member of `u` is checked in generic code too
-  (`mod as Mod<T>` with `mod: T | Mod<T>`); other narrowing assertions there are errors. A
-  tuple asserts element by element (`t as [object, string]` with `t: [any, string | symbol]`),
-  each element converted or checked as it would be alone.
+  the value is not a `T`; `u as A | B` of a `u: A | B | C | undefined` panics on a nothing
+  as `u!` does. In generic code, `x as T` of an `x: T | undefined` is checked only where `T`
+  has no `undefined` of its own: at `T = U | undefined` every value of `x` is a `T` and passes
+  as it is. At `T = U | null` an `undefined` is no `T` value (Velt's `U | null` cannot hold
+  one, #930), so it stops with a `TypeError` instead of reading as `null`: an assertion never
+  changes the value. `u as A` with `A` a member of `u` is checked in generic code too
+  (`mod as Mod<T>` with `mod: T | Mod<T>`), and so is a union of some of `u`'s members that are
+  not themselves type parameters (`r as Ok<T> | Err` with `r: Ok<T> | Err | Pend`). Where a
+  member is a type parameter, the check follows the instantiation: at `T = unknown` (or
+  `any`) every value is a `T`, so `x as T` of an `x: T | string` holding a string passes, and
+  `mod as Mod<T>` of a `T` holding a `Mod` object passes. A tuple asserts element by element
+  (`t as [object, string]` with `t: [any, string | symbol]`), each element converted or checked
+  as it would be alone; the result is a new tuple of those elements, so a write into one of the
+  two tuples does not show in the other, and `t2 === t` is `false` (an element that is an object
+  is the same object in both).
   As in TypeScript, `as` and `satisfies` take a whole type: `x as A | B` is a union and
   `x as A & B` an intersection (a leading `|` may start the type on the next line), so a
   bitwise operator after a cast needs parentheses: `(x as i32) | y`. A number literal after
@@ -668,7 +677,9 @@ nothings alike:
   (`m[key()] ??= v`): store the key in a variable first.
 - `x!` is `x` known to be neither `null` nor `undefined` (TS's non-null assertion). TypeScript
   trusts it; Velt checks it: a nothing panics with `non-null assertion failed`. A write into a
-  tuple behind `!` or `as` changes the tuple in place, wherever it is held: a variable, a field,
+  tuple behind `!` or `as` (one that keeps the tuple's type, or a union's tuple member; an
+  element-wise tuple assertion makes a new tuple, see [`as`](#numbers)) changes the tuple in
+  place, wherever it is held: a variable, a field,
   an element (`h.t![0] = v`, `xs[i++]![1] = "q"`, `g[r][c]![0] += 1`), a tuple inside such a
   tuple (`g[0]![0]![1] = 9`), a field read through an interface (`iface.opt![0] = 3`,
   `is[q++].t![0]++`), a union member (`(u as [number, string])[0] = 9`) or the
@@ -993,7 +1004,10 @@ for (const s of shapes) {
   (`Base<T> & { state: "errored" } & ({ value: T; hasValue: true } | { value: null; hasValue: false })`,
   one member per part of the inner union). A field every member has reads through each one's
   getter, and a method every member has is called on the union: through an interface every
-  member extends that declares it, else each member's own when they have the same type.
+  member extends that declares it, else each member's own when they have the same type. Members
+  may be classes too (`Circle | Sq` with `area()` on both, or a union of classes only): each
+  member's own method runs on the value itself, receiver first, then the arguments, which must
+  be names, literals or fields there for now (store a computed argument in a variable first).
 
 ```ts
 interface Base {

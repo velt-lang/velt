@@ -1,0 +1,9 @@
+number object string number
+o:number s:a o:number s:b
+o:number s:q o:boolean
+number 3
+z
+3 1
+{"default":4}
+none number object
+number,string,object object

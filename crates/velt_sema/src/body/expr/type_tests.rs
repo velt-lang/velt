@@ -68,13 +68,12 @@ impl FnCx<'_, '_> {
         }
         let mut arms = vec![];
         let mut nothings = self.nothing_arms(sty).into_iter();
-        for (pat, t) in self.member_patterns(sty, span) {
+        for (mut pat, t) in self.member_patterns(sty, span) {
             let none = match t.is_none().then(|| nothings.next()).flatten() {
                 Some(Nothing::Undefined) => "undefined",
                 _ => "object",
             };
-            let tag = t.map_or(none, |t| self.cx.typeof_tag(t));
-            let body = self.str_lit(tag, span);
+            let body = self.member_typeof(&mut pat, t, none, span);
             arms.push(hir::Arm {
                 pat,
                 guard: None,

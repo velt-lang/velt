@@ -108,7 +108,12 @@ impl FnCx<'_, '_> {
                     Ok(recv) => {
                         return self.method_call_at(recv, prop, type_args, args, exp, span, getter)
                     }
-                    Err(recv) => recv,
+                    Err(recv) => match self.union_member_call(
+                        recv, prop, type_args, args, exp, span, getter,
+                    ) {
+                        Ok(h) => return h,
+                        Err(recv) => recv,
+                    },
                 },
                 false => recv,
             };

@@ -1,0 +1,56 @@
+// A generic union at `T = unknown` or `any` (`T | Mod<T>`, `T | string`) stays a union of that
+// dynamic member and the others: callers and the generic function agree on it, a value goes to
+// the member whose test it passes (else to the dynamic one), and `typeof` of a member that is
+// a type parameter is the tag of the instantiation's value; `null` is the dynamic member's.
+interface Mod<T> {
+  default: T;
+}
+
+function kind<T>(mod: T | Mod<T>): string {
+  return typeof mod;
+}
+
+function tag<T>(x: T | string): string {
+  return typeof x === "string" ? "s:" + x : "o:" + typeof x;
+}
+
+function wrap<T>(x: T): T | Mod<T> {
+  return x;
+}
+
+function count<T>(xs: (T | string)[]): number {
+  return xs.length;
+}
+
+function id<T>(x: T | Mod<T>): T | Mod<T> {
+  return x;
+}
+
+function opt<T>(mod: T | Mod<T> | undefined): string {
+  if (mod === undefined) {
+    return "none";
+  }
+  return typeof mod;
+}
+
+function many<T>(xs: (T | Mod<T>)[]): string {
+  return xs.map((x) => typeof x).join(",");
+}
+
+function demo(): void {
+  console.log(kind<unknown>(7), kind<unknown>({ default: 1 }), kind<any>("a"), kind<number>(3));
+  console.log(tag<number>(1), tag<number>("a"), tag<unknown>(2), tag<unknown>("b"));
+  const a: any = 5;
+  const u: unknown = "q";
+  console.log(tag<any>(a), tag<unknown>(u), tag<any>(true));
+  const w = wrap<unknown>(3);
+  console.log(typeof w, String(w));
+  const r: unknown = wrap<any>("z");
+  console.log(r);
+  console.log(count<any>([1, "a", a]), count<unknown>([u]));
+  console.log(JSON.stringify(id<unknown>({ default: 4 })));
+  console.log(opt<unknown>(undefined), opt<unknown>(3), opt<any>({ default: 1 }));
+  console.log(many<unknown>([1, "a", { default: 2 }]), many<any>([null]));
+}
+
+demo();

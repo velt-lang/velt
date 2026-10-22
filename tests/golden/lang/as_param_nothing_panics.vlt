@@ -1,0 +1,13 @@
+// `x as T` of a `T | undefined` at `T = U | null` (#893): `null` passes, but an `undefined` is
+// no value of Velt's `U | null` (#930), so it stops with a `TypeError` where Node goes on with
+// it: the assertion never turns it into `null`.
+function pending<T>(v: T | undefined): string {
+  const x = v as T;
+  return `${x} ${x === null}`;
+}
+
+function main() {
+  console.log(pending<number | null>(null));
+  console.log(pending<number | null>(4));
+  console.log(pending<number | null>(undefined));
+}
