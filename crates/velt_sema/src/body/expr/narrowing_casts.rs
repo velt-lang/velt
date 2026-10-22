@@ -215,8 +215,9 @@ impl FnCx<'_, '_> {
     /// member `m` (variant `i` of union `u`), where `m` or `target` is a type parameter: the
     /// value converted through `any`, checked at run time. At an instantiation where they
     /// are the same type, or `target` is `unknown`, every value of `m` passes, as in
-    /// TypeScript (`T | string` as `T` at `T = unknown` of a string; `T | Mod<T>` as `Mod<T>`
-    /// at `T = unknown` of a `T` that holds one); at another a `TypeError`.
+    /// TypeScript (`T | string` as `T` at `T = unknown` of a string); `T | Mod<T>` as `Mod<T>`
+    /// at `T = unknown` converts the `unknown` as `u as Mod<unknown>` does; at another
+    /// instantiation a value of `m` is a `TypeError`.
     #[allow(clippy::too_many_arguments)]
     fn member_as_dynamic(
         &mut self,

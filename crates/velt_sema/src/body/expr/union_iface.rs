@@ -120,7 +120,10 @@ impl FnCx<'_, '_> {
             Some(_) => s.resolve_method(m, &prop.name).is_some(),
             None => s.declares_method(m, &prop.name),
         };
-        let classes = live.iter().filter(|&&m| self.cx.class_of(m).is_some()).count();
+        let classes = live
+            .iter()
+            .filter(|&&m| self.cx.class_of(m).is_some())
+            .count();
         if getter
             || classes == 0
             || !args.iter().all(reads_only)

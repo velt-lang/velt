@@ -209,7 +209,10 @@ impl Ctx<'_> {
         };
         // A dynamic member (`T | Mod<T>` at `T = unknown`) keeps the union: written, it would
         // be that `unknown`, but lowering maps each generic variant onto one of the instance.
-        if !members.iter().all(|m| plain(self, *m) && self.dynamic(*m).is_none()) {
+        if !members
+            .iter()
+            .all(|m| plain(self, *m) && self.dynamic(*m).is_none())
+        {
             return None;
         }
         let u = self.union_of(&members, false, velt_common::Span::DUMMY);

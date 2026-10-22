@@ -123,7 +123,8 @@ and memory where you want a fixed width; code shared with TypeScript never names
   not themselves type parameters (`r as Ok<T> | Err` with `r: Ok<T> | Err | Pend`). Where a
   member is a type parameter, the check follows the instantiation: at `T = unknown` (or
   `any`) every value is a `T`, so `x as T` of an `x: T | string` holding a string passes, and
-  `mod as Mod<T>` of a `T` holding a `Mod` object passes. A tuple asserts element by element
+  `mod as Mod<T>` of a `T` converts that `unknown` as `u as Mod<unknown>` would (#924). A
+  tuple asserts element by element
   (`t as [object, string]` with `t: [any, string | symbol]`), each element converted or checked
   as it would be alone; the result is a new tuple of those elements, so a write into one of the
   two tuples does not show in the other, and `t2 === t` is `false` (an element that is an object

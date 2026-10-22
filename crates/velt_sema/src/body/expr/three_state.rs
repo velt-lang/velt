@@ -404,9 +404,9 @@ impl FnCx<'_, '_> {
             .position(|m| self.cx.ty.nothing_of(*m).is_some_and(allows));
         // Else an `any` / `unknown` member holds it (`T | Mod<T>` at `T = any`).
         let dynamic = || {
-            members.iter().position(|m| {
-                matches!(self.cx.dynamic(*m), Some(Dynamic::Any | Dynamic::Unknown))
-            })
+            members
+                .iter()
+                .position(|m| matches!(self.cx.dynamic(*m), Some(Dynamic::Any | Dynamic::Unknown)))
         };
         let (v, inner) = match held {
             Some(v) => (v, self.nothing_value(which, members[v], span)),

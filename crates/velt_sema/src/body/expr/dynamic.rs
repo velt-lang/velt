@@ -61,7 +61,9 @@ impl FnCx<'_, '_> {
             (None, Some(_)) => self.box_dynamic(h, exp),
             (Some(f), Some(t)) if !dynamic_converts(f, t, checked_from_unknown) => Err(h),
             (Some(Dynamic::Any), _) | (Some(_), Some(_)) => Ok(self.unbox_dynamic(h, exp)),
-            (Some(_), None) if self.takes_dynamic_whole(exp, h.ty) => Ok(self.unbox_dynamic(h, exp)),
+            (Some(_), None) if self.takes_dynamic_whole(exp, h.ty) => {
+                Ok(self.unbox_dynamic(h, exp))
+            }
             (Some(_), None) if !checked_from_unknown => Err(h),
             (Some(_), None) => Ok(self.unbox_dynamic(h, exp)),
         }
