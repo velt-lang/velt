@@ -90,7 +90,7 @@ declaration has run stops with `Uncaught ReferenceError: Cannot access '…' bef
 initialization`, as in Node.
 
 ```ts
-let calls = 0;
+export let calls = 0;
 function count(): number {
   calls++;
   return calls;
