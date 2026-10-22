@@ -91,19 +91,48 @@ fn scalar(p: &hir::Program, t: TyId) -> Option<&'static str> {
     })
 }
 
-/// `string`, `u8[]` or a scalar.
-fn value(p: &hir::Program, t: TyId) -> Option<&'static str> {
+/// A value's name in a signature (the SDK's `Value::SIG`): a scalar, `string`, `T[]` of a value,
+/// or a `struct` of values written `{name:type,...}` in field order (Velt lays a struct out in
+/// that order, as the SDK's `#[repr(C)]` derive does). `None` when it cannot cross: classes,
+/// interfaces, unions, optional or private fields, generic or recursive structs.
+fn value(p: &hir::Program, t: TyId) -> Option<String> {
+    value_in(p, t, &mut Vec::new())
+}
+
+fn value_in(p: &hir::Program, t: TyId, open: &mut Vec<DefId>) -> Option<String> {
     match p.types.kind(t) {
-        TyKind::Str => Some("string"),
-        TyKind::Array(e) if matches!(p.types.kind(*e), TyKind::Int(IntTy::U8)) => Some("u8[]"),
-        _ => scalar(p, t),
+        TyKind::Str => Some("string".into()),
+        TyKind::Array(e) => Some(format!("{}[]", value_in(p, *e, open)?)),
+        TyKind::Adt(d, args) if args.is_empty() => {
+            let Def::Adt(a) = p.def(*d) else { return None };
+            if !a.declared_struct || a.fields.is_empty() || open.contains(d) {
+                return None;
+            }
+            open.push(*d);
+            let fields: Option<Vec<String>> = a
+                .fields
+                .iter()
+                .map(|f| {
+                    if f.optional || f.private {
+                        return None;
+                    }
+                    Some(format!("{}:{}", f.name, value_in(p, f.ty, open)?))
+                })
+                .collect();
+            open.pop();
+            Some(format!("{{{}}}", fields?.join(",")))
+        }
+        _ => scalar(p, t).map(str::to_string),
     }
 }
 
+/// What can cross, for messages.
+const VALUES: &str = "scalars, `string`, arrays of values and `struct`s whose fields are values";
+
 fn param(p: &hir::Program, t: TyId) -> Result<String, String> {
-    value(p, t).map(str::to_string).ok_or_else(|| {
+    value(p, t).ok_or_else(|| {
         format!(
-            "parameters of a native function must be scalars, `string` or `u8[]`, not `{}`",
+            "parameters of a native function must be {VALUES}, not `{}`",
             ty_name(p, t)
         )
     })
@@ -114,7 +143,7 @@ fn result(p: &hir::Program, io: IoTypes, t: TyId) -> Result<String, String> {
         return Ok("void".into());
     }
     if let Some(v) = value(p, t) {
-        return Ok(v.into());
+        return Ok(v);
     }
     if let TyKind::Adt(d, args) = p.types.kind(t) {
         let d = Some(*d);
@@ -128,8 +157,8 @@ fn result(p: &hir::Program, io: IoTypes, t: TyId) -> Result<String, String> {
         }
     }
     Err(format!(
-        "a native function returns `void`, a scalar, `string`, `u8[]`, `IoStatus` or \
-         `IoResult<T>` of one of those, not `{}`",
+        "a native function returns `void`, `IoStatus`, a value or `IoResult<T>` of a value \
+         (values: {VALUES}), not `{}`",
         ty_name(p, t)
     ))
 }

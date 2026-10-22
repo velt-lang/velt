@@ -126,6 +126,13 @@ pub struct VeltRtApi {
     pub sleep_drop: unsafe extern "C" fn(*mut c_void),
     /// `() -> i64`: this thread's worker (-1: none).
     pub worker_index: extern "C" fn() -> i64,
+    // Memory for values Velt frees (arrays a library returns).
+    /// `velt_rt_alloc(size, align)`.
+    pub alloc: extern "C" fn(u64, u64) -> *mut u8,
+    /// `velt_rt_realloc(p, old_size, align, new_size)`.
+    pub realloc: unsafe extern "C" fn(*mut u8, u64, u64, u64) -> *mut u8,
+    /// `velt_rt_free(p, size, align)`.
+    pub free: unsafe extern "C" fn(*mut u8, u64, u64),
 }
 
 /// The table every native library receives.
@@ -165,6 +172,9 @@ pub static VELT_RT_API: VeltRtApi = VeltRtApi {
     sleep_reset: aio::sleep_reset,
     sleep_drop: aio::sleep_drop,
     worker_index: aio::worker_index,
+    alloc: crate::mem::velt_rt_alloc,
+    realloc: crate::mem::velt_rt_realloc,
+    free: crate::mem::velt_rt_free,
 };
 
 /// `const VeltRtApi* velt_rt_native_api(void)`: the table, for generated code to pass to each
@@ -368,7 +378,10 @@ mod tests {
             sleep_poll,
             sleep_reset,
             sleep_drop,
-            worker_index
+            worker_index,
+            alloc,
+            realloc,
+            free
         );
         assert_eq!(NATIVE_ABI_VERSION, sdk::ABI_VERSION);
         assert_eq!(size_of::<VeltStr>(), size_of::<sdk::VeltStr>());

@@ -14,6 +14,8 @@
 //!   future runs on the runtime's scheduler, polled by the task awaiting it (parameters must be
 //!   owned).
 
+mod derive;
+
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as Tokens};
 use quote::{format_ident, quote};
@@ -33,6 +35,15 @@ const SCALARS: &[&str] = &[
 ];
 
 /// See the crate docs.
+/// `#[derive(velt_native::Value)]` on a `#[repr(C)]` struct: a Velt `struct` (see `derive.rs`).
+#[proc_macro_derive(Value, attributes(velt))]
+pub fn derive_value(item: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(item as syn::DeriveInput);
+    derive::expand(input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
 #[proc_macro_attribute]
 pub fn export(attr: TokenStream, item: TokenStream) -> TokenStream {
     let mode = match attr.to_string().trim() {
@@ -159,7 +170,7 @@ fn expand(mode: Mode, func: ItemFn) -> syn::Result<Tokens> {
         raw_params.push(quote! { #a: <#ty as ::velt_native::Param<'static>>::Raw });
         args.push(a);
         if i > 0 {
-            sig_parts.push(quote! { "," });
+            sig_parts.push(quote! { ::velt_native::sig::Buf::lit(",") });
         }
         sig_parts.push(quote! { <#ty as ::velt_native::Param<'static>>::SIG });
     }
@@ -295,7 +306,14 @@ fn expand(mode: Mode, func: ItemFn) -> syn::Result<Tokens> {
     let sig_static = format_ident!("__VELT_SIG_{}", name);
     let sig_symbol = format!("velt_sig_{name}");
     let open = format!("{prefix}(");
-    let parts = quote! { &[#open, #(#sig_parts,)* ")->", #ret_sig] };
+    let parts = quote! {
+        &[
+            ::velt_native::sig::Buf::lit(#open),
+            #(#sig_parts,)*
+            ::velt_native::sig::Buf::lit(")->"),
+            #ret_sig,
+        ]
+    };
     Ok(quote! {
         #wrapper
 

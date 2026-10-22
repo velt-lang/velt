@@ -38,6 +38,21 @@ const REAL: &str = r#"import { IoResult } from "velt:io";
 
 declare function velt_demo__real(): IoResult<u64>;
 
+struct Run {
+  changes: i64;
+  lastId: i64;
+}
+class Holder {
+  v: i64 = 0;
+}
+struct Maybe {
+  a?: i64;
+}
+declare function velt_demo__strs(xs: string[], r: Run): IoResult<Run[]>;
+declare function velt_demo__renamed(r: Run): void;
+declare function velt_demo__cls(h: Holder): void;
+declare function velt_demo__opt(m: Maybe): void;
+
 export function real(): u64 {
   return velt_demo__real().value;
 }
@@ -75,6 +90,13 @@ fn diagnostics() -> String {
         ("velt_demo__cb", "(i64)->u64"),
         ("velt_demo__fake", "()->IoResult<u64>"),
         ("velt_demo__real", "()->IoResult<u64>"),
+        (
+            "velt_demo__strs",
+            "(string[],{changes:i64,lastId:i64})->IoResult<{changes:i64,lastId:i64}[]>",
+        ),
+        ("velt_demo__renamed", "({changes:i64,last:i64})->void"),
+        ("velt_demo__cls", "(i64)->void"),
+        ("velt_demo__opt", "(i64)->void"),
     ];
     let meta = NativeMeta {
         package: "demo".into(),
@@ -123,7 +145,13 @@ fn declares_must_match_their_library_exactly() {
     has("not `function`");
     // A look-alike of std's IoResult is not IoResult (the only result error is `velt_demo__fake`'s).
     assert_eq!(d.matches("a native function returns").count(), 1, "{d}");
-    assert!(d.contains("IoResult<T>` of one of those, not `"), "{d}");
+    assert!(d.contains("`IoResult<T>` of a value (values: "), "{d}");
+    // Arrays and structs cross by shape; a field with another name is another type.
+    assert!(!d.contains("velt_demo__strs"), "{d}");
+    has("this declares     `({changes:i64,lastId:i64})->void`");
+    // Classes and optional fields do not cross.
+    has("::Holder`");
+    has("::Maybe`");
     // Another package's export, from a package without a library.
     has("`declare function velt_demo__ok` is not allowed: package `app` has no native library");
     has("`velt_demo__ok` is exported by the native library of package `demo`: import that package's API instead");

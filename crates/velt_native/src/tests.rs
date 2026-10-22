@@ -50,11 +50,15 @@ unsafe extern "C" fn bytes_data(b: *const VeltBytes, len: *mut usize) -> *const 
     len.write(v.len());
     v.as_ptr()
 }
-fn mock_bytes(b: &[u8]) -> VeltBytes {
-    new_bytes(b)
+fn mock_bytes(b: &[u8]) -> Array<u8> {
+    Array::from(b.to_vec())
 }
-fn rust_bytes(b: &VeltBytes) -> Vec<u8> {
-    unsafe { bytes_of(b) }.to_vec()
+fn rust_bytes(b: &Array<u8>) -> Vec<u8> {
+    b.as_slice().to_vec()
+}
+/// A `u8[]` argument (an `Array<u8>` has the argument's layout).
+fn arg(b: &Array<u8>) -> *const crate::value::RawArray<u8> {
+    b as *const Array<u8> as *const crate::value::RawArray<u8>
 }
 // Mock blocking futures run at once; the "future" is a leaked 16-aligned buffer whose result
 // slot is at +16, like the runtime's.
@@ -135,6 +139,27 @@ extern "C" fn sleep_new(_: u64) -> *mut c_void {
 extern "C" fn worker_index() -> i64 {
     -1
 }
+extern "C" fn alloc(size: u64, align: u64) -> *mut u8 {
+    // SAFETY: tests allocate non-zero sizes with valid alignments.
+    unsafe {
+        std::alloc::alloc(
+            std::alloc::Layout::from_size_align(size as usize, align as usize).unwrap(),
+        )
+    }
+}
+unsafe extern "C" fn realloc(p: *mut u8, old: u64, align: u64, new: u64) -> *mut u8 {
+    std::alloc::realloc(
+        p,
+        std::alloc::Layout::from_size_align(old as usize, align as usize).unwrap(),
+        new as usize,
+    )
+}
+unsafe extern "C" fn free(p: *mut u8, size: u64, align: u64) {
+    std::alloc::dealloc(
+        p,
+        std::alloc::Layout::from_size_align(size as usize, align as usize).unwrap(),
+    )
+}
 
 static MOCK: Api = Api {
     abi_version: 1,
@@ -172,6 +197,9 @@ static MOCK: Api = Api {
     sleep_reset,
     sleep_drop,
     worker_index,
+    alloc,
+    realloc,
+    free,
 };
 
 crate::package!(demo);
@@ -219,6 +247,40 @@ fn demo_boom(_x: &[u8]) -> Result<(), Error> {
 #[export]
 fn demo_nothing() {}
 
+#[derive(crate::Value)]
+#[repr(C)]
+struct RunSlot {
+    changes: i64,
+    last_insert_rowid: i64,
+}
+
+#[derive(crate::Value)]
+#[repr(C)]
+struct Reply {
+    tags: Array<u8>,
+    nums: Array<i64>,
+    #[velt(name = "strings")]
+    strs: Array<Str>,
+}
+
+/// Arrays and structs cross as Velt values (native_abi.md).
+#[export]
+fn demo_reply(names: &[Str], slot: &RunSlot) -> Result<Reply, Error> {
+    Ok(Reply {
+        tags: names.iter().map(|n| n.to_str().len() as u8).collect(),
+        nums: vec![slot.changes, slot.last_insert_rowid].into(),
+        strs: names.iter().rev().cloned().collect(),
+    })
+}
+
+#[export]
+fn demo_run(n: i64) -> RunSlot {
+    RunSlot {
+        changes: n,
+        last_insert_rowid: n * 10,
+    }
+}
+
 #[export(blocking)]
 fn demo_slow(data: Vec<u8>) -> Result<Vec<u8>, Error> {
     Ok(data.iter().rev().copied().collect())
@@ -236,6 +298,14 @@ fn signature_records() {
     assert_eq!(sig(&__VELT_SIG_demo_borrowed), "(string)->u64");
     assert_eq!(sig(&__VELT_SIG_demo_boom), "(u8[])->IoStatus");
     assert_eq!(sig(&__VELT_SIG_demo_nothing), "()->void");
+    assert_eq!(
+        sig(&__VELT_SIG_demo_reply),
+        "(string[],{changes:i64,lastInsertRowid:i64})->IoResult<{tags:u8[],nums:i64[],strings:string[]}>"
+    );
+    assert_eq!(
+        sig(&__VELT_SIG_demo_run),
+        "(i64)->{changes:i64,lastInsertRowid:i64}"
+    );
     assert_eq!(sig(&__VELT_SIG_demo_slow), "async (u8[])->IoResult<u8[]>");
 }
 
@@ -293,10 +363,10 @@ fn lone_surrogates_arrive_as_one_replacement_character() {
 #[test]
 fn panics_become_errors() {
     init();
-    let bytes = VeltBytes::empty();
+    let bytes = Array::<u8>::new();
     let mut out = MaybeUninit::<VeltErr>::uninit();
     unsafe {
-        demo_boom(&bytes, out.as_mut_ptr());
+        demo_boom(arg(&bytes), out.as_mut_ptr());
         let e = out.assume_init();
         assert_eq!(e.code, code::OTHER);
         assert_eq!(rust_str(&e.message), "native panic: kaboom");
@@ -308,8 +378,8 @@ fn blocking_exports_copy_their_arguments() {
     init();
     let bytes = mock_bytes(&[1, 2, 3]);
     unsafe {
-        let fut = demo_slow(&bytes) as *mut u8;
-        let r = &*(fut.add(16) as *const IoResultSlot<VeltBytes>);
+        let fut = demo_slow(arg(&bytes)) as *mut u8;
+        let r = &*(fut.add(16) as *const IoResultSlot<Array<u8>>);
         assert_eq!(r.err.code, 0);
         assert_eq!(rust_bytes(r.value.assume_init_ref()), [3, 2, 1]);
     }
@@ -329,4 +399,33 @@ fn a_dropped_completer_completes_with_an_error() {
     let (_, code, message) = COMPLETED.lock().unwrap().take().unwrap();
     assert_eq!((code, message.as_str()), (code::TIMED_OUT, "late"));
     assert!(COMPLETED.lock().unwrap().is_none());
+}
+
+#[test]
+fn arrays_and_structs_cross_as_velt_values() {
+    init();
+    let names: Array<Str> = vec!["ab".to_string(), "cde".to_string()].into();
+    let slot = RunSlot {
+        changes: 2,
+        last_insert_rowid: 7,
+    };
+    let mut out = MaybeUninit::<IoResultSlot<Reply>>::uninit();
+    unsafe {
+        demo_reply(
+            &names as *const Array<Str> as *const crate::value::RawArray<Str>,
+            &slot,
+            out.as_mut_ptr(),
+        );
+        let r = out.assume_init();
+        assert_eq!(r.err.code, 0);
+        let reply = r.value.assume_init();
+        assert_eq!(reply.tags.as_slice(), [2, 3]);
+        assert_eq!(reply.nums.as_slice(), [2, 7]);
+        let strs: Vec<String> = reply.strs.iter().map(|s| s.to_str().into_owned()).collect();
+        assert_eq!(strs, ["cde", "ab"]);
+        let mut run = MaybeUninit::<RunSlot>::uninit();
+        demo_run(4, run.as_mut_ptr());
+        let run = run.assume_init();
+        assert_eq!((run.changes, run.last_insert_rowid), (4, 40));
+    }
 }
