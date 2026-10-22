@@ -95,6 +95,14 @@ impl FnCx<'_, '_> {
         // A module constant bound by reference (`const v = ns.K`, `Cls.K`, `K!`): one that is a
         // table can't be taken over, like `const v = K`.
         if let H::Global(d) = e.kind {
+            // Module state taken by value (`g!`, `g ?? d` binding the payload of a module
+            // `let`): another reference to the value the slot keeps, as `global_read` makes
+            // for `const v = g`, not a move out of the slot.
+            if m == UseMode::Move && self.cx.global(d).is_some_and(|g| g.stored) {
+                let read = std::mem::replace(e, self.mk(H::Lit(hir::Lit::Null), e.ty, e.span));
+                *e = self.intrinsic(Intrinsic::Share, vec![read], e.ty, e.span);
+                return;
+            }
             if crate::body::pure_init::is_table(self.cx, d) {
                 let name = self
                     .cx
