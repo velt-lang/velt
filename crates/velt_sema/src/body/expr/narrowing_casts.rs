@@ -36,8 +36,11 @@ impl FnCx<'_, '_> {
         // (`crate::index_signatures`): the assertion to that member, as its record.
         let core = self.cx.ty.core(h.ty).unwrap_or(h.ty);
         let view = self.cx.union_members(core).and_then(|ms| {
-            ms.into_iter()
-                .find(|m| self.cx.record_view(*m).is_some_and(|(base, _)| base == target))
+            ms.into_iter().find(|m| {
+                self.cx
+                    .record_view(*m)
+                    .is_some_and(|(base, _)| base == target)
+            })
         });
         if let Some(view) = view {
             return self
