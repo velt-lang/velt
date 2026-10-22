@@ -607,31 +607,38 @@ it as a borrow of the place of `s` (`Collector::place_of`), so code that may giv
 another handle while the read is live (a `ForOf` body, a closure argument of the same call) is
 refused as it is for an array. Sema rejects every write through it (`require_mutable`,
 `use_mutably`) and every call that may modify it: a `BorrowMut` argument after inference, an
-`Owned` receiver the method modifies all the same (`FnInfo::modified_params`: a method
-returning the `this` it changes, such as `fill`, or calling one on `this`), a change to a
+`Owned` or `Borrow` argument the callee modifies all the same (`FnInfo::modified_params`: a
+method returning the `this` it changes, such as `fill`, a parameter it keeps and changes, an
+element a loop over it changes, `Ctx::loop_roots`, through aliases, elements of elements and
+closures, or a write through what a method of it returns, `st.m.get(k)!.v = 1`; the argument
+is a part of the read or an element a method of it returns, `s.m.get(k)!`), a change to a
 `for…of` element of it or of what a method of it returns (`Ctx::frozen_elems`) or of a
-variable bound to a part of it (`ownership/finish.rs`), `subarray()` and `buffer` of a typed array in it
+variable bound to a part of it, also through loops over those and bindings of them
+(`ownership/finish.rs`), `subarray()` and `buffer` of a typed array in it
 (`FnCx::frozen_buffer_view`), an
 argument of a call through a function value or next to one that may modify its arguments
 (`ownership/patch.rs`). Other threads read the same value at the same time, so lowering must
-not touch a reference count in it either: where `T` holds no counted part (`Cx::holds_counted`)
-the call is a borrow of the value in the box, read through a bitwise copy of its inline part
-that is never dropped; otherwise, and wherever the value is consumed (`FnLower::consume`), it is
-a deep copy (`clone_value`), dropped with the statement's temporaries or owned by the consumer.
-As the base of a projection (`Index`, `Field`, `ArrayLen`, `StrLen`, `StrCharCodeAt`, also of
-another projection of it) it is read in the box whatever `T` holds, since only lowering's own
-code reads it there (`FnLower::projection_base`); the projected part is then a copy where it
-holds counted parts and is used as a value. Stabilization (`stable_borrow`) never shares or
-retains through it. The box itself is retained for the statement (one atomic count change,
+not touch a reference count in it either (velt_vir `lower/frozen.rs`). The call is a borrow of
+the value in its box, a *frozen* value; where `T` holds no counted part (`Cx::holds_counted`)
+it is read through a bitwise copy of its inline part that is never dropped. A frozen value, or
+a part of one, is never counted: wherever it would be (consumed by `FnLower::consume`, kept by a
+parameter that keeps its argument, shared, captured by a closure that may outlive the call,
+passed through a function value, a vtable or an interface) it is a deep copy (`clone_value`)
+instead. A counted one passed to a borrowed parameter of a direct call goes to the callee's
+*frozen instance* (`Work::Frozen`, symbol suffix `_Z<mask>`), which treats that parameter as
+frozen too; a closure literal passed with it gives that instance the closure's code, so the
+callback is called directly through its own frozen instance (`frozen::KnownFn`,
+`xs.some((x) => …)`). Bindings by reference into a frozen value, `for…of` elements of one and a
+map loop's entries that the loop body leaves unchanged (`frozen_map_entry`) are frozen as well.
+The box itself is retained for the statement (one atomic count change,
 `FnLower::shared_value`, `BoxHold`) where code may run while the value or a part of it is read
 in place, and the place of `s` is one such code can give another handle (a variable in a shared
 cell, a module `let` some function reassigns, a field or element): the value as a call's
 argument or receiver or a loop's source, and a part of it (a field, an element) that is not a
 number, since such a part is passed on, looped over or a receiver where it is read. A number
-read out of it is copied at once and retains nothing. An index that may write (`may_write`)
-retains the box whatever the place: it may give the variable `s` reads another handle itself.
-A consumed `Field`, `Index`, `UnwrapSome` or `UnwrapVariant` of it is read with a borrow and
-deep-copied too: a move would leave the all-zero value in the box.
+read out of it is copied at once (also where a frozen operand is otherwise not held) and
+retains nothing. An index that may write (`may_write`) retains the box whatever the place: it
+may give the variable `s` reads another handle itself.
 
 ## Module state
 
@@ -959,6 +966,19 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   proxy's `has` trap): in `effects::runs_user_code` and `replaced_holders::implicit::glue_args`.
   The `any` tables get slot 11 `AnyHas (data, key) -> u8` (velt_vir `lower/any_has.rs`; 0 no,
   1 yes, 2 not supported yet) only when the program has such a test.
+- `Intrinsic::AnyDelete(x, key)` (std only, `__intrinsic_any_delete`) is `delete x[key]` with a
+  `string` key on an `any` `x` that is not a proxy (borrowed), of type `bool`: a record's entry
+  is removed (its `__delete`), an optional field made absent, a key the value does not have as
+  its own is `true`, an array's `length` `false`. It changes memory (`effects`,
+  `replaced_holders::implicit::glue_args`). The `any` tables get slot 15 `AnyDelete (data,
+  key) -> u8` (velt_vir `lower/any_delete.rs`; 0 false, 1 true, 2 not supported yet, a
+  `TypeError`) only when the program has such a call.
+- `Intrinsic::ProxyArrayCall(x, op)` (std only, `__intrinsic_proxy_array_call`) and
+  `Intrinsic::ProxyArrayHole(x, index, op)` (std only, `__intrinsic_proxy_array_hole`), with `x`
+  an `any` (borrowed, passed by its data pointer: the target of an array method running on a
+  proxy, which the proxy keeps alive, or the array a `Reflect` call reaches) and `index` / `op`
+  `i64`, of type `i64`, are calls of `velt_rt_proxy_array_call` and `velt_rt_proxy_array_hole`
+  (rt_abi.md "Array methods on a proxy"). They run no user code.
 - `Intrinsic::AnyKeys(x)` is `Object.keys(x)` on an `any`, `object` or `Function` `x` (borrowed),
   of type `string[]`: the own enumerable string keys of the value held, in JavaScript's order.
   It sets `Program::dyn_members` (a record's keys are its `__keyNames()`). The `any` tables get
@@ -971,17 +991,35 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   `lower/json/any.rs`; present only when the program writes one), after testing the tag for
   `undefined`, a function or a symbol (left out as a member, `null` as an element, a
   `TypeError` at the top).
-- Proxy and Reflect (#823): the prelude's `Proxy` class (std/prelude/zz_proxy.vlt; `#target:
-  any`, `#handler: ProxyHandler<any>`) and `Reflect` (static methods). Sema converts `new
+- Proxy and Reflect (#823): the `Proxy` class (std/proxy.vlt; `#target: any`, `#handler:
+  ProxyHandler<any>`) and `Reflect` (static methods), globals that a program loads when a module
+  names one of them (std/prelude/global/proxy.vlt); a program that doesn't has no proxies, and
+  sema calls the prelude's helpers below, which don't test for one. Sema converts `new
   Proxy(...)` (written outside the standard library; type arguments dropped) to `any` at once
   (`ToDyn`); `AnyTo` converts it to a typed value like any other `any`. The member slots of the
   `Proxy` class's `any` table call its `__get(key, receiver)`, `__set(key, value, receiver)`
   and `__has(key)` (velt_vir `lower/any_proxy.rs`), which run the handler's traps or forward
-  to the target. The prelude's own dynamic operations don't set `Program::dyn_members`; a `new
+  to the target; its keys slot (`AnyKeys`) calls `__keys()` (the `ownKeys` and
+  `getOwnPropertyDescriptor` traps). `delete o.k` / `delete o[k]` of an `any` or `object` is a
+  call of the prelude's `__anyDelete(o, k)` (`__anyDeleteProxy` once `Proxy` is loaded: a proxy's `deleteProperty` trap; another value's
+  `Intrinsic::AnyDelete`, std only, through slot 15 `AnyDelete (data, key: *string) -> u8` of
+  its table, velt_vir `lower/any_delete.rs`), and the
+  versions of the prelude's spread, `Object.hasOwn`, `Object.values` and `Object.entries`
+  helpers for `any` (std/prelude/zzz_adapt.vlt) in velt:proxy/ops (`__spreadAnyProxy`, …,
+  called instead once `Proxy` is loaded) run a proxy's traps in Node's order. With a symbol constant as
+  the key, `o[KEY]`, `o[KEY] = v`, `KEY in o`, `delete o[KEY]` and `Object.hasOwn(o, KEY)` of
+  an `any` in a program that has loaded `Proxy` are calls of `__anyGetSym` / `__anySetSym` / `__anyHasSym` /
+  `__anyDeleteSym` / `__anyHasOwnSym(o, name, KEY)` (std/proxy/ops.vlt), which
+  pass the symbol to a proxy and use the member name `name` on other values; `new Proxy(t, h)`
+  with an `h` typed `any` is `__proxyNewAny(t, h)`. In a program whose own code has a `new
+  Proxy`, `Object.keys(x)` of a class instance or object `x` is `IsTypedProxy(x) ?
+  __proxyKeysOf(x) : Object.keys(x)` (`Intrinsic::IsTypedProxy`, made by sema: a test of the
+  pointer's tag bit, `false` for a type that cannot hold a proxy) and a spread `{ ...x }` first calls `__proxySpreadCheck(x)`. The JSON slot of
+  the `Proxy` class writes what `__json(receiver)` gives. The prelude's own dynamic operations don't set `Program::dyn_members`; a `new
   Proxy` or a `Reflect.*` call in the program's own code does, and a `Reflect.set` call counts
   as a write of every field for `object_copies` (a `new Proxy` does not: every write reaching
   a target through a proxy starts at a noted write). Lowering recognizes the two classes by
-  their qualified names (`std/prelude/zz_proxy::Proxy`, `::Reflect`; a program's own class
+  their qualified names (`std/proxy::Proxy`, `::Reflect`; a program's own class
   named `Proxy` is its own) and numbers them last among class ids, so programs without them
   keep theirs.
 - Typed proxies (#823, velt_vir `lower/proxy_typed.rs`): in a program that lowers a `ToDyn` of

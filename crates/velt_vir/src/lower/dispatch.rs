@@ -95,7 +95,8 @@ impl FnLower<'_, '_> {
     /// call, as a class method's receiver does (`lower_args`). Arguments that run no code that
     /// can change memory or write a local leave the receiver as it was read.
     fn hold_receiver(&mut self, rv: Operand, args: &[hir::Expr], transfer: bool) -> Operand {
-        if transfer {
+        // A frozen receiver changes for nobody, and is not counted (frozen.rs).
+        if transfer || self.frozen_root(&args[0]) {
             return rv;
         }
         let later = self.later_each(args).first().copied().unwrap_or_default();

@@ -121,8 +121,11 @@ impl Cx<'_> {
         match self.kind(t) {
             TyKind::Option(e, _) | TyKind::Array(e) => self.refs_inline(b, e, out, seen),
             // A dynamic value may hold any counted type a dynamic value holds (issue #926);
-            // the trace glue asks its descriptor (weak_object.rs).
-            TyKind::Dyn(..) if self.is_dynamic(t) => {
+            // the trace glue asks its descriptor (weak_object.rs). So may an interface value
+            // whose tables keep `any` tables.
+            TyKind::Dyn(d, _)
+                if self.is_dynamic(t) || b.unwrap_or(&self.boxing).dyn_to_any.contains(&d) =>
+            {
                 let bx = b.unwrap_or(&self.boxing);
                 if bx.weak_object {
                     let mut tys: Vec<TyId> = bx.dyn_types.iter().copied().collect();

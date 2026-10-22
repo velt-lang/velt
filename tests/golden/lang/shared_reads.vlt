@@ -23,7 +23,8 @@ function total(xs: number[]): number {
   return t;
 }
 
-// An owned parameter gets its own copy: changing it leaves the shared value as it was.
+// Changes its argument: given a copy of a shared value (`slice()`; the value itself is refused,
+// as JavaScript would change the shared value).
 function keep(xs: number[]): number[] {
   xs.push(100);
   return xs;
@@ -68,7 +69,7 @@ async function main() {
 
   const nums = shared([1.5, 2.5, 3]);
   console.log(total(nums), nums.indexOf(2.5), nums.includes(4), nums.slice(1).length);
-  const mine = keep(nums);
+  const mine = keep(nums.slice());
   console.log(mine.length, nums.length, mine[3]);
   const copy: number[] = nums;
   console.log(copy.length, copy[0]);

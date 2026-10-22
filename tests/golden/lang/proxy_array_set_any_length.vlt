@@ -1,0 +1,27 @@
+// `pop` on a proxy whose `set` trap writes through `any` (`t[k] = v`): the shorter `length`
+// cuts off the hole the delete left, by default or through a `deleteProperty` trap that
+// forwards with `Reflect.deleteProperty`, as in Node.
+function mk(del: boolean): any {
+  const raw: any = [1, 2, 3, 4];
+  const h: ProxyHandler<any> = {
+    set(t: any, k: string | symbol, v: any): boolean {
+      console.log("set", String(k), JSON.stringify(v));
+      t[k] = v;
+      return true;
+    },
+  };
+  if (del) {
+    h.deleteProperty = (t: any, k: string | symbol): boolean => {
+      console.log("del", String(k));
+      return Reflect.deleteProperty(t, k);
+    };
+  }
+  return new Proxy(raw, h);
+}
+
+const a: any = mk(false);
+console.log(a.pop(), JSON.stringify(a), a.length);
+const b: any = mk(true);
+console.log(b.pop(), JSON.stringify(b), b.length);
+console.log(b.pop(), b.pop(), JSON.stringify(b), b.length);
+// check: no leaks

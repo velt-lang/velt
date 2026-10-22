@@ -369,7 +369,7 @@ impl FnCx<'_, '_> {
             }
             _ => obj,
         };
-        if self.frozen_buffer_view(&obj, &prop.name, span) {
+        if self.cx.frozen_reads && self.frozen_buffer_view(&obj, &prop.name, span) {
             return self.error_expr(span);
         }
         let obj = self.error_union_accessor(obj, &prop.name);
@@ -453,9 +453,12 @@ impl FnCx<'_, '_> {
             Ok(h) => return h,
             Err(obj) => obj,
         };
-        let obj = match self.shared_indexed(obj, index, want, span) {
-            Ok(obj) => obj,
-            Err(e) => return e,
+        let obj = match matches!(self.cx.ty.kind(obj.ty), TyKind::Shared(_)) {
+            true => match self.shared_indexed(obj, index, want, span) {
+                Ok(obj) => obj,
+                Err(e) => return e,
+            },
+            false => obj,
         };
         let t = obj.ty;
         // `o[KEY]` with a symbol constant: the member the symbol names.

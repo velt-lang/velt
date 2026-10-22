@@ -250,7 +250,8 @@ impl FnCx<'_, '_> {
 
     /// `k in o` where `k` is known only at run time: on a `Record<string, V>`,
     /// `__recordIn(k, o)` (std/prelude/record.vlt; a key that may be a number as `String(k)`,
-    /// as JavaScript converts it); elsewhere an error.
+    /// as JavaScript converts it); on a prototype (`k in Object.prototype`), `__prototypeIn(k, o)`;
+    /// elsewhere an error.
     pub(crate) fn dynamic_key_in(
         &mut self,
         lhs: &ast::Expr,
@@ -263,6 +264,13 @@ impl FnCx<'_, '_> {
         let open = self
             .record_args(target)
             .is_some_and(|(k, _)| k == self.cx.ty.str_);
+        let proto = self.cx.prelude_adt("ObjectPrototype");
+        if kind == KeyKind::Str
+            && matches!(self.cx.ty.kind(target), TyKind::Adt(d, _) if Some(*d) == proto)
+        {
+            // `k in Object.prototype` (a proxy's `get` trap telling protocol keys apart).
+            return self.prelude_fn_call("__prototypeIn", vec![lhs.clone(), rhs.clone()], span);
+        }
         if !open || !matches!(kind, KeyKind::Str | KeyKind::Converted) {
             let k = self.expr(lhs, None, Want::Borrow);
             self.expr(rhs, None, Want::Borrow);

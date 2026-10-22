@@ -1,0 +1,1 @@
+TypeError: the value is not an object { x: number; label?: string } (it is a number)

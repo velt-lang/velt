@@ -1,0 +1,10 @@
+// `Object.keys` of an `any` holding an object with optional `any` fields: a field left out is
+// not a key, one that is set is, in declaration order (an internal compiler error before).
+type Slot = { value?: any; label?: string; extra?: any };
+const empty: Slot = {};
+const some: Slot = { value: 1, extra: "x" };
+const all: Slot = { value: [1], label: "l", extra: { a: 1 } };
+for (const s of [empty, some, all]) {
+  const x: any = s;
+  console.log(Object.keys(x));
+}

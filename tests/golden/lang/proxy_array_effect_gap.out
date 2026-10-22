@@ -1,0 +1,19 @@
+idx3 effect undefined
+length effect 3
+add 4
+add 3
+set 2
+same 0
+set 1
+same length
+idx3 effect false
+delete 4 true 5
+set length
+same 0
+set 1
+delete 3 true 4
+delete 2 true 4
+set length
+length effect 2
+idx3 effect undefined
+[ true, false ]
