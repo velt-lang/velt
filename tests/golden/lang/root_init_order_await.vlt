@@ -1,28 +1,37 @@
 // Top-level `await` between declarations: each is evaluated when the statements reach it,
 // after the awaits before it (#1438).
 let c = 0;
+
 function bump(): number {
   c++;
   return c;
 }
+
 function tick(): Promise<number> {
   return new Promise((resolve) => setTimeout(() => resolve(10), 1));
 }
+
 const A = bump();
 const v = await tick();
 c = c + v;
+
 class C {
   static readonly S: number = bump();
 }
+
 export const E = bump();
+
 function show(): string {
   return `${A} ${C.S} ${E} ${c}`;
 }
+
 console.log(show());
 setTimeout(() => console.log("timer", show()), 0);
 await tick();
 const F = bump();
+
 function showF(): number {
   return F;
 }
+
 console.log(showF());

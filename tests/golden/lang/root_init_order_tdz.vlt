@@ -3,9 +3,11 @@
 function tick(): Promise<void> {
   return new Promise((resolve) => setTimeout(() => resolve(), 5));
 }
+
 function readLate(): number {
   return LATE + 1;
 }
+
 setTimeout(() => console.log(readLate()), 0);
 console.log("waiting");
 await tick();
