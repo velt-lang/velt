@@ -34,7 +34,7 @@ pub(crate) use module_state::{
 pub use module_state::{velt_rt_module_ready, velt_rt_module_state};
 pub use order::{velt_rt_timer_again, velt_rt_timer_free, velt_rt_timer_new, velt_rt_timer_turn};
 pub(crate) use timers::TimerLeaf;
-pub use unhandled::velt_rt_unhandled_defer;
+pub use unhandled::{velt_rt_uncaught_now, velt_rt_unhandled_defer};
 
 use std::cell::Cell;
 use std::future::Future;

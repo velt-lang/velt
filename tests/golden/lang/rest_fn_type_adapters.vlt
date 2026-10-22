@@ -1,0 +1,76 @@
+// Functions with and without rest parameters used where the other kind of function type is
+// expected (#943): the adapter passes every argument the caller gives, packing them into the
+// rest array or reading the expected rest arguments one by one (a parameter with a default
+// gets it when its argument is missing, as `Math.max` shows).
+function sum(...xs: number[]): number {
+  let s = 0;
+  for (const x of xs) {
+    s += x;
+  }
+  return s;
+}
+
+function cat(...xs: string[]): string {
+  return xs.join("+") + "#" + xs.length;
+}
+
+function first(a: number, ...more: number[]): number {
+  return a * 100 + more.length;
+}
+
+function add(a: number, b: number): number {
+  return a + b;
+}
+
+function on(cb: (...args: number[]) => void) {
+  cb(1, 2);
+  cb();
+}
+
+function log(...xs: number[]): number {
+  console.log("log", xs.length);
+  return xs.length;
+}
+
+async function alog(...xs: number[]): Promise<void> {
+  console.log("alog", xs.length);
+}
+
+function call(f: (...xs: number[]) => number): number {
+  return f(1, 2, 3);
+}
+
+function anyArgs(a: any, b?: number): string {
+  return `${a}/${b}`;
+}
+
+function wrap<F extends (...args: any[]) => any>(f: F): F {
+  return f;
+}
+
+type Rest = Parameters<(...xs: number[]) => void>;
+type Args<F> = F extends (...a: infer A) => any ? A : never;
+
+function main() {
+  const h: (a: number, b: number) => number = sum;
+  console.log(h(1, 2));
+  const c: (a: string, b: string) => string = cat;
+  console.log(c("x", "y"));
+  const one: (a: string) => string = cat;
+  console.log(one("z"));
+  const f2: (a: number, b: number) => number = first;
+  console.log(f2(7, 8));
+  on(log);
+  on(alog);
+  on(async (...args) => {
+    console.log("async", args.length);
+  });
+  console.log(call(Math.max), call(sum));
+  const loose: (...xs: number[]) => string = anyArgs;
+  console.log(loose(), loose(1), loose(1, 2, 3));
+  console.log(wrap(add)(1, 2), wrap(sum)(1, 2, 3));
+  const p: Rest = [1, 2, 3];
+  const a: Args<(...xs: string[]) => void> = ["x", "y"];
+  const b: Args<(n: number, s: string) => void> = [1, "z"];
+  console.log(p.length, a.join(""), b[1]);
+}

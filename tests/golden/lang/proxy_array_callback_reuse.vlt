@@ -1,0 +1,25 @@
+// Deleting an element of an array made and dropped in a callback of an array method on a proxy
+// (#823): it is not the method's target, so no hole is recorded for its address (which a later
+// array may get); the delete is the TypeError it is outside the method.
+function mk(): void {
+  const tmp: any = [7, 8, 9];
+  Reflect.deleteProperty(tmp, "2");
+}
+
+function check(i: number): void {
+  const b: any = [4, 5, 6];
+  const h = Reflect.has(b, "2");
+  if (!h) {
+    console.log("stale at", i, Reflect.get(b, "2"));
+  }
+}
+
+const p: any = new Proxy([0, 1, 2, 3, 4, 5, 6, 7, 8, 9] as any, {});
+let n = 0;
+p.forEach((v: any) => {
+  for (let i = 0; i < 50; i++) {
+    mk();
+    check(n++);
+  }
+});
+console.log("done", n);

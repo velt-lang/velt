@@ -1,8 +1,9 @@
 `Object.defineProperty` with the key `[CELL]`, which the program also writes directly, is not supported yet
-an accessor defined with `Object.defineProperty` is not supported yet
+`Object.defineProperty` of an accessor `n` on `counter`, whose object literal has no getter `n`, is not supported yet
 `Object.defineProperty` changing the attributes of `n` is not supported yet
 `Object.defineProperty` of `[MARK]` on a `{ a: f64 }`, which doesn't declare it, is not supported yet
 `Object.defineProperties` is not supported yet
 `Object.defineProperty` of `[MIX]` with different attributes at different calls is not supported yet
 `Object.defineProperty` of `[MIX]` with different attributes at different calls is not supported yet
 `Object.defineProperty` of `[MARK]` on a `Tile`, a class instance, is not supported yet
+`Object.assign` cannot add `[SHOWN]` to a `{ on: boolean }`: adding a field its type doesn't declare is not supported yet

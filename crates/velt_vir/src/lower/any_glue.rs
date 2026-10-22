@@ -195,10 +195,31 @@ impl FnLower<'_, '_> {
         args: Vec<(Place, TyId)>,
         out: &Place,
     ) {
+        let std_result = self.cx.fn_def(r.def).name.starts_with("std/");
+        let v = self.invoke_ready(r, this, args);
+        self.any_box_with(v, r.ret, out, std_result);
+    }
+
+    /// Call `r` with `this` and the owned argument values `args`: its result, owned (of type
+    /// `r.ret`).
+    pub(super) fn invoke_ready(
+        &mut self,
+        r: &Ready,
+        this: Operand,
+        args: Vec<(Place, TyId)>,
+    ) -> Operand {
         let f = self.cx.fn_def(r.def);
-        let std_result = f.name.starts_with("std/");
         let modes: Vec<PassMode> = f.params.iter().map(|p| p.mode).collect();
-        let fid = self.cx.func_for(r.def, r.targs.clone());
+        // Glue has no source location: a standard-library method it calls (a proxy's `__keys`)
+        // reports none either, rather than its own line in the prelude.
+        let fid = match self.panic_loc() {
+            None if self.cx.tracks_caller(r.def) => self.cx.func(super::Work::Tracked(
+                r.def,
+                r.targs.clone(),
+                super::srcloc::UNKNOWN_LOC,
+            )),
+            _ => self.cx.func_for(r.def, r.targs.clone()),
+        };
         let mut argv = vec![this];
         let mut after = vec![];
         for ((p, t), mode) in args.into_iter().zip(modes.into_iter().skip(1)) {
@@ -223,11 +244,11 @@ impl FnLower<'_, '_> {
         if let Operand::Copy(p) = &v {
             self.take_temp(&p.clone());
         }
-        self.any_box_with(v, r.ret, out, std_result);
+        v
     }
 
     /// The `any` argument `i` (a `u64` operand) of the buffer `argv`.
-    fn any_arg_place(&mut self, argv: vir::Local, i: Operand) -> Place {
+    pub(super) fn any_arg_place(&mut self, argv: vir::Local, i: Operand) -> Place {
         let any = self.cx.any_ty();
         let vt = self.cx.ty(any);
         let (size, _) = self.cx.size_align(vt);
@@ -276,6 +297,18 @@ impl FnLower<'_, '_> {
         argc: vir::Local,
         params: &[TyId],
     ) -> Vec<(Place, TyId)> {
+        let out = self.any_fixed_params(argv, argc, params);
+        self.any_drop_args(argv, params.len() as u64, argc);
+        out
+    }
+
+    /// [`Self::any_params`] without dropping the arguments past `params`.
+    pub(super) fn any_fixed_params(
+        &mut self,
+        argv: vir::Local,
+        argc: vir::Local,
+        params: &[TyId],
+    ) -> Vec<(Place, TyId)> {
         let any = self.cx.any_ty();
         let mut out = vec![];
         for (k, &p) in params.iter().enumerate() {
@@ -317,7 +350,6 @@ impl FnLower<'_, '_> {
             self.switch_to(done);
             out.push((slot, p));
         }
-        self.any_drop_args(argv, params.len() as u64, argc);
         out
     }
 
@@ -337,6 +369,7 @@ impl FnLower<'_, '_> {
             params,
             ret,
             throws,
+            rest,
         } = self.cx.kind(fty)
         else {
             self.any_drop_args(argv, 0, argc);
@@ -346,7 +379,15 @@ impl FnLower<'_, '_> {
             self.any_drop_args(argv, 0, argc);
             return self.ret_status(ST_UNSUPPORTED);
         }
-        let slots = self.any_params(argv, argc, &params);
+        let slots = match (rest, params.split_last()) {
+            // A rest parameter gets the arguments past the fixed ones, packed (`any_rest`).
+            (true, Some((&last, fixed))) => {
+                let mut slots = self.any_fixed_params(argv, argc, fixed);
+                slots.push(self.any_rest_arg(argv, argc, fixed.len() as u64, last));
+                slots
+            }
+            _ => self.any_params(argv, argc, &params),
+        };
         let held = field.then(|| {
             let v = self.share_value(Operand::Copy(fp.clone()), fty);
             let vt = self.cx.ty(fty);
@@ -732,6 +773,11 @@ impl FnLower<'_, '_> {
                 self.any_apply_value(&fp, ty, false, argv, argc, &outp);
             }
             TyKind::Closure(_) => {
+                self.any_drop_args(argv, 0, argc);
+                self.ret_status(ST_UNSUPPORTED);
+            }
+            // An array method (`Reflect.get(array, "push")`) runs only when called on a proxy.
+            TyKind::Adt(..) if self.cx.is_array_method(ty) => {
                 self.any_drop_args(argv, 0, argc);
                 self.ret_status(ST_UNSUPPORTED);
             }

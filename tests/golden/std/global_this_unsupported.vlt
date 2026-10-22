@@ -1,0 +1,20 @@
+// What Velt can't do with `globalThis` as Node does yet, or can't type: errors (tsc accepts all).
+(globalThis as any).__UNTYPED__ = 1;
+
+(globalThis as { __N__?: number }).__N__ = 1;
+console.log((globalThis as { __N__?: string }).__N__);
+
+console.log(globalThis);
+
+console.log((globalThis as { __RO__?: number }).__RO__);
+Object.defineProperty(globalThis, "__RO__", { value: 1 });
+
+(globalThis as { __W__?: number }).__W__ = 1;
+Object.defineProperty(globalThis, "__W__", { value: 2, configurable: true });
+
+const host = globalThis as { __R__?: number };
+const same = Object.defineProperty(host, "__R__", { value: 1, writable: true });
+
+console.log((globalThis as { __A__?: number }).__A__);
+Object.defineProperty(globalThis, "__A__", { value: 1, writable: true });
+Object.defineProperty(globalThis, "__A__", { value: 2, configurable: true });

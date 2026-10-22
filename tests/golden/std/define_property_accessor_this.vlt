@@ -1,0 +1,15 @@
+// `this` inside an accessor defined after construction is not supported yet (#941).
+interface Cell {
+  get value(): number;
+}
+const c: Cell = {
+  get value() {
+    return 1;
+  },
+};
+Object.defineProperty(c, "value", {
+  get() {
+    return this === c ? 2 : 3;
+  },
+});
+console.log(c.value);

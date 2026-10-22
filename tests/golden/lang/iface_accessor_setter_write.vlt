@@ -1,0 +1,10 @@
+// Assigning a whole interface field that a class provides with `get`/`set` accessors runs
+// the class's setter (#350), and a subclass that overrides only the getter throws Node's
+// `TypeError`.
+interface I { o: { v: number }; m(): number }
+class A implements I { m(): number { return 0; } _o: { v: number } = { v: 1 };
+  get o(): { v: number } { return this._o; } set o(x: { v: number }) { this._o = { v: x.v + 100 }; } }
+class B extends A { override get o(): { v: number } { return this._o; } }
+function setO(x: I, v: number): void { x.o = { v }; console.log("set", x.o.v); }
+setO(new A(), 5);
+setO(new B(), 6);

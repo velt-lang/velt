@@ -56,6 +56,10 @@ fn golden_m1_files_parse() {
                 | "function_expression_this_errors.vlt"
                 | "string_escape_octal.vlt"
                 | "asi_restricted.vlt"
+                | "computed_key_errors.vlt"
+                | "destructure_computed_path.vlt"
+                | "literal_method_names.vlt"
+                | "define_property_accessor_this.vlt"
         ) {
             continue;
         }

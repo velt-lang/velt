@@ -1,0 +1,9 @@
+iface_intersections.vlt:16:38: error: mismatched types
+  = note: expected { errors: f64 }, found Base & { errors: f64 }
+  = note: `{ errors: f64 }` is an object type: the interface value would be copied into another object; build one from its fields, or keep the interface type
+
+iface_intersections.vlt:10:16: error: `Pick` of `Base`: it has no member `nope`
+  = note: `Pick<T, K>` takes the names of members of `T`
+
+iface_intersections.vlt:11:14: error: no value has type `Base & Other`: member `refresh` differs between `Base` and `Other` (overloads are not supported)
+  = note: a value of an intersection has every part's members at once

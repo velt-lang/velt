@@ -18,15 +18,15 @@ pub(crate) fn assigned_objects(cx: &mut Ctx) -> FxHashSet<DefId> {
         };
         visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| {
             if let E::Assign { place, .. } | E::CompoundAssign { place, .. } = &e.kind {
-                if let E::Field { base, .. } = &place.kind {
-                    if let TyKind::Adt(d, _) = cx.ty.kind(base.ty) {
-                        out.insert(*d);
-                    }
+                if let Some(d) = written_object(cx, place) {
+                    out.insert(d);
                 }
             }
         });
         cx.defs[i] = Some(Def::Fn(f));
     }
+    // `x[k] = v` in a generic body, at each instantiation (`Intrinsic::KeyWrite`).
+    out.extend(cx.type_level.inline.written.iter().copied());
     // Anonymous object types are structural: `{ a: U }` at `U = string` and a written
     // `{ a: string }` are different defs holding the same values (`crate::anon`, and `velt_vir`
     // lays them out as one). Defs with the same field names must therefore agree, or the two
@@ -46,4 +46,24 @@ pub(crate) fn assigned_objects(cx: &mut Ctx) -> FxHashSet<DefId> {
         }
     }
     out
+}
+
+/// The object type whose field `place` writes: directly (`x.f = …`) or a part of it held inline,
+/// such as a tuple's element (`x.t[0] = …`, `x.t[1][0] = …`, also behind `!` or `as`:
+/// `x.t![0] = …`), which changes the field's value.
+fn written_object(cx: &Ctx, place: &Expr) -> Option<DefId> {
+    let place = match &place.kind {
+        E::UnwrapSome(x, _) | E::UnwrapVariant { expr: x, .. } | E::Downcast(x) => {
+            return written_object(cx, x)
+        }
+        _ => place,
+    };
+    let E::Field { base, .. } = &place.kind else {
+        return None;
+    };
+    match cx.ty.kind(base.ty) {
+        TyKind::Adt(d, _) => Some(*d),
+        TyKind::Tuple(_) => written_object(cx, base),
+        _ => None,
+    }
 }

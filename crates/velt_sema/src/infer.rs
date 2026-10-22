@@ -94,11 +94,13 @@ impl Ctx<'_> {
                     params: pp,
                     ret: pr,
                     throws: pt,
+                    ..
                 },
                 TyKind::FnPtr {
                     params: ap,
                     ret: ar,
                     throws: at,
+                    ..
                 },
             ) => {
                 let x = self.match_all(&pp, &ap, slots);
@@ -151,6 +153,9 @@ impl Ctx<'_> {
                 }
             }
         }
+        if let Some((ifaces, object)) = self.meet_parts(actual) {
+            return self.match_iface_intersection(&flat, ifaces, object, slots);
+        }
         if !self.is_object_type(actual) {
             return false;
         }
@@ -172,6 +177,60 @@ impl Ctx<'_> {
                 let i = *i as usize;
                 if i < slots.len() && slots[i].is_none() && !self.ty.has_error(actual) {
                     slots[i] = Some(self.unmatched_parts(parts, actual));
+                }
+            }
+        }
+        ok
+    }
+
+    /// A deferred intersection's `parts` against an interface made of an intersection
+    /// (`crate::synth_ifaces`) of the interface values `ifaces` and the object type `object`:
+    /// the object parts' fields match its object part's, and a type parameter part takes
+    /// the rest (`T = Named` for a `Named & { $set }` against `T & { $set }`).
+    fn match_iface_intersection(
+        &mut self,
+        parts: &[TyId],
+        ifaces: Vec<TyId>,
+        object: Option<TyId>,
+        slots: &mut [Option<TyId>],
+    ) -> bool {
+        let fields = object.map_or(vec![], |o| self.public_fields(o));
+        let mut ok = true;
+        let mut covered: Vec<String> = vec![];
+        for &p in parts {
+            if !self.is_object_type(p) {
+                continue;
+            }
+            for f in self.public_fields(p) {
+                if let Some(a) = fields.iter().find(|a| a.name == f.name) {
+                    ok &= self.match_ty(f.ty, a.ty, slots);
+                    covered.push(f.name);
+                }
+            }
+        }
+        let mut rest: Vec<TyId> = ifaces.into_iter().filter(|i| !parts.contains(i)).collect();
+        let left: Vec<_> = fields
+            .into_iter()
+            .filter(|f| !covered.contains(&f.name))
+            .collect();
+        if !left.is_empty() {
+            rest.push(self.anon_type_with(&left, 0));
+        }
+        let Some((&first, others)) = rest.split_first() else {
+            return ok;
+        };
+        let mut acc = first;
+        for &o in others {
+            match self.meet(acc, o, 0, 0) {
+                Ok(m) => acc = m,
+                Err(_) => return false,
+            }
+        }
+        for &p in parts {
+            if let TyKind::Param(i) = self.ty.kind(p) {
+                let i = *i as usize;
+                if i < slots.len() && slots[i].is_none() {
+                    slots[i] = Some(acc);
                 }
             }
         }
@@ -369,11 +428,11 @@ impl Ctx<'_> {
         if self.field_only.contains_key(&iface) {
             return self.field_only_impl(ty, iface);
         }
-        None
+        self.synth_impl(ty, iface)
     }
 
     /// `(impl index, interface args, t)` if impl `i` is for type `t`.
-    fn try_impl(&mut self, i: u32, t: TyId) -> Option<(u32, Vec<TyId>, TyId)> {
+    pub(crate) fn try_impl(&mut self, i: u32, t: TyId) -> Option<(u32, Vec<TyId>, TyId)> {
         let imp = &self.impls[i as usize];
         let (pat, n, iargs) = (imp.ty, imp.generics as usize, imp.iface_args.clone());
         let mut slots = vec![None; n];

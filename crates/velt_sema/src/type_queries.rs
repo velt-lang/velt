@@ -193,7 +193,16 @@ impl Ctx<'_> {
             crate::collect::sigs::fill_pending(self, d);
         }
         let f = self.fn_info(d);
-        if f.generics.len() > 0 {
+        // Generic only over what its callbacks throw (`setTimeout<E>(task: () => Promise<void,
+        // E>, ms)`): the function type with those errors left out, as TypeScript's
+        // declarations of such functions have no type parameters.
+        let n = f.generics.len();
+        let errors_only = n > 0
+            && f.params
+                .iter()
+                .all(|p| !self.mentions_beyond_errors(p.ty, 0));
+        let errors_only = errors_only && !self.mentions_beyond_errors(f.ret, 0);
+        if n > 0 && !errors_only {
             self.error(
                 Diagnostic::error(
                     format!("`typeof {name}` of a generic function is not supported yet (#936)"),
@@ -243,12 +252,35 @@ impl Ctx<'_> {
             _ => crate::body::returns::ret_of(self, d, span),
         };
         let never = self.ty.never;
-        let throws = crate::throws::throws_now(self, d, &[]).unwrap_or(never);
+        let targs = vec![never; self.fn_info(d).generics.len()];
+        let params = params.iter().map(|&p| self.subst(p, &targs)).collect();
+        let ret = self.subst(ret, &targs);
+        let throws = crate::throws::throws_now(self, d, &targs).unwrap_or(never);
+        let rest = crate::body::defaults::has_rest(self, d);
         self.ty.intern(TyKind::FnPtr {
             params,
             ret,
             throws,
+            rest,
         })
+    }
+
+    /// Does `t` mention a type parameter other than as an error type (a function type's
+    /// `throws`, a promise's rejection type)?
+    fn mentions_beyond_errors(&self, t: TyId, depth: u32) -> bool {
+        if depth > 32 {
+            return true;
+        }
+        let m = |x: TyId| self.mentions_beyond_errors(x, depth + 1);
+        match self.ty.kind(t) {
+            TyKind::Param(_) | TyKind::Op(..) => true,
+            TyKind::FnPtr { params, ret, .. } => params.iter().any(|p| m(*p)) || m(*ret),
+            TyKind::Promise(v, _) => m(*v),
+            TyKind::Adt(_, a) | TyKind::Dyn(_, a) | TyKind::Tuple(a) => a.iter().any(|x| m(*x)),
+            TyKind::Array(x) | TyKind::Option(x, _) | TyKind::Shared(x) => m(*x),
+            TyKind::Map(a, b) | TyKind::Result(a, b) => m(*a) || m(*b),
+            _ => false,
+        }
     }
 
     /// A query whose answer needs a body checked, before collection is finished: a free
@@ -430,10 +462,21 @@ impl Ctx<'_> {
             return f;
         }
         match self.ty.kind(f).clone() {
-            TyKind::FnPtr { params, ret, .. } => match name {
+            TyKind::FnPtr {
+                params, ret, rest, ..
+            } => match name {
                 "ReturnType" => ret,
                 // A parameter already reported (a cycle): no tuple with an error inside.
                 _ if params.contains(&self.ty.error) => self.ty.error,
+                // `(...xs: T[]) => R`: the rest parameter's array is the parameter list.
+                _ if rest && params.len() == 1 => params[0],
+                _ if rest => {
+                    self.err(
+                        "variadic tuple types (`[a: A, ...rest: T[]]`, the `Parameters` of a function type with a rest parameter after others) are not supported yet",
+                        t.span,
+                    );
+                    self.ty.error
+                }
                 _ => self.ty.intern(TyKind::Tuple(params)),
             },
             TyKind::Param(_) => {

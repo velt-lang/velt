@@ -1,0 +1,38 @@
+// check: no leaks
+// A kept closure whose captured variable is assigned after the closure was handed over (so it
+// lives in a cell) reaching a timer callback, directly or through a named function, sees the
+// variable's current value, as in JS (#1315). The stack is reused before the timers fire.
+const kept: Array<() => string> = [];
+
+function keep(g: () => string): void {
+  kept.push(g);
+}
+
+function setup(): void {
+  let n = 1;
+  let s = "a".repeat(2);
+  keep(() => "n=" + n + " s=" + s);
+  n = 2;
+  s = "changed".repeat(2);
+}
+
+function later(g: () => string, tag: string): void {
+  setTimeout(() => console.log(tag, g()), 2);
+}
+
+function deep(n: number): number {
+  const xs = [n, n + 1];
+  return n <= 0 ? 0 : xs[1] + deep(n - 1) - n;
+}
+
+function run(): void {
+  setup();
+  const g = kept[0];
+  setTimeout(() => {
+    console.log("direct", g());
+    later(g, "named");
+  }, 1);
+  console.log(deep(2000));
+}
+
+run();

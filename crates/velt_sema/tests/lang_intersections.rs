@@ -130,12 +130,12 @@ fn parts_that_are_not_object_types_are_errors_with_a_fix() {
         ),
         ("type A = f64[] & { y: f64 };", "is an array"),
         (
-            "type A = (() => void) & (() => void);",
+            "type A = ((x: string) => void) & ((x: f64) => void);",
             "function types (overloads)",
         ),
         (
-            "interface S { show(): string } type A = S & { y: f64 };",
-            "interface with methods",
+            "interface S { show(): string } interface R { show(): f64 } type A = S & R;",
+            "overloads are not supported",
         ),
         (
             "class K { x = 1 } type W<T> = T & { y: f64 }; type A = W<K>;",
@@ -145,6 +145,14 @@ fn parts_that_are_not_object_types_are_errors_with_a_fix() {
         let e = err_src(&format!("{src} function main() {{}}"));
         assert!(e.contains(needle), "{src}: {e}");
     }
+}
+
+#[test]
+fn an_interface_with_methods_and_an_object_type_make_an_interface() {
+    ok_src(
+        "interface S { show(): string } type A = S & { y: f64 };
+         function main() { const a: A = { show: () => \"s\", y: 1 }; const s: S = a; console.log(s.show(), a.y); }",
+    );
 }
 
 #[test]
@@ -333,11 +341,17 @@ fn an_alias_may_refer_to_itself_through_written_object_types() {
             .count(),
         1
     );
-    // Parts that are not written out, or that share a field, still can't.
-    let e = err_src("type A = { v: f64 }; type T = A & { kids: T[] }; function main() {}");
+    // A part may name an alias of an object type in the same module (#783).
+    let p = ok_src(
+        "type A = { v: f64 }; type T = A & { kids: T[] }; function f(x: T): f64 { return x.v; }
+         function main() { console.log(f({ v: 1, kids: [] })); }",
+    );
+    assert!(show(&p, func(&p, "f").params[0].ty).starts_with("{ v: f64; kids: "));
+    // Parts that are not object types, or that share a field, still can't.
+    let e = err_src("type A = string[]; type T = A & { kids: T[] }; function main() {}");
     assert!(e.contains("type alias `T` refers to itself"), "{e}");
-    let e = err_src("type T = { kids: T[] } & { kids: T[] }; function main() {}");
-    assert!(e.contains("an alias may refer to itself when"), "{e}");
+    let e = err_src("type T = { kids: T[] } & { kids: number }; function main() {}");
+    assert!(e.contains("field `kids` has another type"), "{e}");
 }
 
 #[test]

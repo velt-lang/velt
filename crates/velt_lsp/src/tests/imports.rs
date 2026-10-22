@@ -64,6 +64,7 @@ fn fixture() -> Fixture {
         ("std/url.vlt", "// std/url: URLs.\n\nexport function parseUrl(s: string): string {\n  return s;\n}\n"),
         ("std/url/encode.vlt", "// std/url/encode: helpers.\n\nexport function encodeAll(s: string): string {\n  return s;\n}\n"),
         ("std/prelude/array.vlt", "// arrays\n"),
+        ("std/import_meta.vlt", "// std/import_meta (std-internal): `import.meta`.\n\nexport class ImportMeta {\n  readonly url: string;\n  constructor(d: string, f: string, m: boolean, url: string) {\n    this.url = url;\n  }\n}\n"),
         ("app/util.vlt", UTIL),
         ("app/sub/deep.vlt", "export const DEPTH: i64 = 2;\n"),
         ("app/main.vlt", ""),
@@ -302,6 +303,29 @@ fn auto_import_adds_an_import_to_a_file_without_imports() {
     assert_eq!(
         item(&items, "freshly")["labelDetails"]["description"],
         json!("./util")
+    );
+    client.shutdown();
+}
+
+/// The import the parser adds for `import.meta` is not in the source: a new import goes where it
+/// would without it, and its local name is not offered.
+#[test]
+fn auto_import_ignores_the_import_of_import_meta() {
+    let fx = fixture();
+    let text =
+        "// The app.\n\nfunction main() {\n  console.log(import.meta.url);\n  readF\n  __Imp\n}\n";
+    let (mut client, doc, _) = open(&fx, text);
+    let items = complete(&mut client, &doc, text, "readF\n", 5, None);
+    let read = item(&items, "readFile");
+    assert_eq!(
+        with_import(text, read, &doc),
+        "// The app.\n\nimport { readFile } from \"velt:fs\";\n\nfunction main() {\n  console.log(import.meta.url);\n  readF\n  __Imp\n}\n"
+    );
+    let items = complete(&mut client, &doc, text, "__Imp\n", 5, None);
+    assert!(
+        !labels(&items).iter().any(|l| l.starts_with("__ImportMeta")),
+        "{:?}",
+        labels(&items)
     );
     client.shutdown();
 }

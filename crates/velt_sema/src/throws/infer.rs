@@ -50,11 +50,13 @@ pub(crate) fn infer_all(cx: &mut Ctx) {
                 changed |= set_throws(cx, m, acc);
             }
         }
+        changed |= super::checks::seed_stored(cx, &fns);
         if !changed {
             break;
         }
     }
     super::checks::check_all(cx, &fns, &groups);
+    cx.record_recursion_hints(&fns);
 }
 
 fn set_throws(cx: &mut Ctx, d: DefId, t: Option<TyId>) -> bool {
@@ -97,6 +99,7 @@ pub(super) fn src_final(cx: &mut Ctx, s: &ThrowSrc) -> Option<TyId> {
 fn src_final_in(cx: &mut Ctx, s: &ThrowSrc, visited: &mut InitsSeen) -> Option<TyId> {
     let (t, args) = match s {
         ThrowSrc::Direct(t, _) => return cx.canon_error(Some(*t)),
+        ThrowSrc::Indirect(t, site, _) => return cx.indirect_error(*t, *site),
         ThrowSrc::Defaults(d, args, span) => {
             if !visited.enter(&cx.ty, *d, args) {
                 return None;

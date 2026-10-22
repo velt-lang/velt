@@ -7,7 +7,7 @@ use velt_common::{Diagnostic, Diagnostics, Span};
 use crate::defs::{
     AdtInfo, AliasInfo, DefInfo, EnumInfo, Extension, FnInfo, GlobalInfo, IfaceInfo,
 };
-use crate::hir::{AdtKind, Def, DefId, ImplDef, TyId, TyKind};
+use crate::hir::{AdtKind, Def, DefId, ImplDef, LocalId, TyId, TyKind};
 use crate::types::{display_key, int_name, Types};
 use crate::SourceModule;
 
@@ -50,6 +50,8 @@ pub(crate) struct Ctx<'m> {
     /// Interfaces written through and their setter slots (`crate::iface_writes`).
     pub(crate) iface_writes: crate::iface_writes::IfaceWrites,
     pub(crate) part_ifaces: crate::intersection_members::PartIfaces,
+    /// Interfaces made for intersections and `Pick`s of interfaces with methods.
+    pub(crate) synth_ifaces: crate::synth_ifaces::SynthIfaces,
     pub(crate) any: Option<crate::any::AnyDefs>,
     /// `impls` by interface (`Ctx::find_impl`).
     pub impl_index: crate::infer::ImplIndex,
@@ -103,6 +105,8 @@ pub(crate) struct Ctx<'m> {
     pub module_slots: Vec<DefId>, // module state, in initialization order (module_state.rs)
     pub module_scripts: Vec<DefId>, // imported modules' top-level statements (module_scripts.rs)
     pub promoted_consts: FxHashSet<Span>, // `const`s kept in module state (module_chunks.rs)
+    /// The properties of `globalThis` the program uses (`crate::global_this`).
+    pub global_props: crate::global_this::GlobalProps,
     /// Module constants found to depend on themselves so far (`body::driver::ensure_global`).
     pub global_cycles: u32,
     /// Union enums by canonical member list (`crate::unions`).
@@ -112,6 +116,9 @@ pub(crate) struct Ctx<'m> {
     pub alias_names: FxHashMap<TyId, String>,
     /// (class, method key) of every `override` of a generic method (no vtable slot).
     pub generic_overrides: Vec<(DefId, String)>,
+    /// The throwing setters a getter-only override gets (`collect::classes`): a write through
+    /// the class itself is a type error, as in TypeScript, one through a base class throws.
+    pub getter_only_setters: FxHashSet<DefId>,
     /// Names of `Param(i)` in the definition being checked (for messages).
     pub display_params: Vec<String>,
     /// Functions whose parameter defaults are checked (or being checked): they are checked on
@@ -132,6 +139,10 @@ pub(crate) struct Ctx<'m> {
     /// method of one returns): the ownership pass refuses changing them
     /// (`ownership::finish::frozen_bindings`).
     pub frozen_elems: FxHashSet<Span>,
+    /// Declarations of `for…of` bindings, with the local whose value the loop walks: a function
+    /// changing such an element changes that local's value (`FnInfo::modified_params`; a map
+    /// loop's bindings are not bound into its source, `ownership::evidence`).
+    pub loop_roots: FxHashMap<Span, LocalId>,
     /// Some body reads a `shared` like its `T` (`Intrinsic::SharedRead`): only then does the
     /// ownership pass track `FnInfo::modified_params`.
     pub frozen_reads: bool,
@@ -152,9 +163,17 @@ pub(crate) struct Ctx<'m> {
     >,
     /// Error types committed to while checking bodies, re-checked after inference.
     pub throw_checks: Vec<crate::throws::ThrowCheck>,
+    /// Function types written without `throws` and what is stored into them (`throws::fn_types`).
+    pub fn_sites: crate::throws::FnSites,
+    /// The number of definitions collected from declarations, before any body was checked.
+    pub collected_defs: usize,
     /// Generator methods implementing an interface method (`Iterable.[Symbol.iterator]`) with an
     /// inferred error type, which must be `never` (the interface's is fixed; throws/checks.rs).
     pub iface_generators: Vec<(crate::hir::DefId, String)>,
+    /// Slot methods of object literals returning the promise of a function value that never
+    /// rejects, and that type: made async when their dispatch group's promises may reject
+    /// (`collect::forwarders::await_forwarded`).
+    pub promise_forwarders: Vec<(crate::hir::DefId, TyId)>,
     /// Items declared inside blocks, visible by name within their block.
     pub nested: Vec<crate::collect::NestedItem>,
     /// Names bound in each nested definition's enclosing functions ("cannot capture" error).
@@ -172,6 +191,8 @@ pub(crate) struct Ctx<'m> {
     pub generic_arrow_fns: FxHashSet<Span>,
     /// Name spans of every function made from a generic arrow (diagnostics show arrows).
     pub generic_arrow_all: FxHashSet<Span>,
+    /// Why recursive aliases were not rewritten (`recursive_aliases::Blocked`).
+    pub alias_blocked: crate::recursive_aliases::Blocked,
     /// Name spans of capturing nested functions reported by `crate::nested_closures`.
     pub kept_nested: FxHashSet<Span>,
     /// Name spans of the `const`s that closures in their own initializer use (`body::late_consts`):
@@ -302,6 +323,7 @@ impl<'m> Ctx<'m> {
             impls: vec![],
             iface_writes: Default::default(),
             part_ifaces: Default::default(),
+            synth_ifaces: Default::default(),
             any: None,
             impl_index: Default::default(),
             anon: FxHashMap::default(),
@@ -326,11 +348,13 @@ impl<'m> Ctx<'m> {
             module_slots: Vec::new(),
             module_scripts: Vec::new(),
             promoted_consts: FxHashSet::default(),
+            global_props: Default::default(),
             global_cycles: 0,
             unions: FxHashMap::default(),
             recursive_unions: FxHashMap::default(),
             alias_names: FxHashMap::default(),
             generic_overrides: vec![],
+            getter_only_setters: FxHashSet::default(),
             display_params: vec![],
             defaults_checked: FxHashSet::default(),
             hook_adapters: FxHashMap::default(),
@@ -339,6 +363,7 @@ impl<'m> Ctx<'m> {
             fn_defs: vec![],
             fn_values: vec![],
             frozen_elems: FxHashSet::default(),
+            loop_roots: FxHashMap::default(),
             frozen_reads: false,
             cpu_targets: FxHashMap::default(),
             groups: None,
@@ -346,7 +371,10 @@ impl<'m> Ctx<'m> {
             provisional_slots: vec![],
             iface_adapters: FxHashMap::default(),
             throw_checks: vec![],
+            fn_sites: Default::default(),
+            collected_defs: 0,
             iface_generators: vec![],
+            promise_forwarders: vec![],
             nested: vec![],
             nested_locals: FxHashMap::default(),
             enclosing_class: FxHashMap::default(),
@@ -361,6 +389,7 @@ impl<'m> Ctx<'m> {
             group_names: FxHashMap::default(),
             group_defs: FxHashSet::default(),
             generic_arrow_all: FxHashSet::default(),
+            alias_blocked: Default::default(),
             has_overloads: false,
             gen_throw: false,
             overloaded_methods: FxHashSet::default(),
@@ -632,17 +661,41 @@ impl<'m> Ctx<'m> {
             TyKind::Tuple(ts) => format!("[{}]", list(self, ts)),
             // `undefined` alone is an option of `never` (`Types::undefined`).
             TyKind::Option(t, n) if *t == self.ty.never => n.suffix()[3..].to_string(),
+            // `(() => T) | undefined`, not the function type `() => T | undefined`.
+            TyKind::Option(t, n) if matches!(self.ty.kind(*t), TyKind::FnPtr { .. }) => {
+                format!("({}){}", self.display_in(*t, names), n.suffix())
+            }
             TyKind::Option(t, n) => format!("{}{}", self.display_in(*t, names), n.suffix()),
             TyKind::Result(a, b) => with_args(self, "Result", &[*a, *b]),
-            TyKind::Promise(t, e) if *e == self.ty.never => with_args(self, "Promise", &[*t]),
+            // A variable is shown as written: nothing (`throws::vars`).
+            TyKind::Promise(t, e) if *e == self.ty.never || self.is_err_var(*e) => {
+                with_args(self, "Promise", &[*t])
+            }
             TyKind::Promise(t, e) => with_args(self, "Promise", &[*t, *e]),
             TyKind::Shared(t) => with_args(self, "shared", &[*t]),
             TyKind::FnPtr {
                 params,
                 ret,
                 throws,
+                rest,
             } => {
-                let ps: Vec<String> = params.iter().map(|p| self.display_in(*p, names)).collect();
+                let mut ps: Vec<String> =
+                    params.iter().map(|p| self.display_in(*p, names)).collect();
+                if let (true, Some(last)) = (*rest, ps.last_mut()) {
+                    last.insert_str(0, "...");
+                }
+                // A function type written without `throws`, as written (`throws::fn_types`).
+                let promise_var =
+                    matches!(self.ty.kind(*ret), TyKind::Promise(_, e) if self.is_err_var(*e));
+                if self.ty.inferred_fns.contains(&t) || self.is_err_var(*throws) || promise_var {
+                    let ret = match self.ty.kind(*ret) {
+                        TyKind::Promise(v, _) => {
+                            format!("Promise<{}>", self.display_in(*v, names))
+                        }
+                        _ => self.display_in(*ret, names),
+                    };
+                    return format!("({}) => {ret}", ps.join(", "));
+                }
                 let th = if *throws == self.ty.never {
                     String::new()
                 } else {
@@ -692,6 +745,9 @@ impl<'m> Ctx<'m> {
                 DefInfo::Enum(e) => with_args(self, &e.name, args),
                 _ => "unknown".into(),
             },
+            TyKind::Dyn(d, args) if self.synth_display(*d, args, names).is_some() => {
+                self.synth_display(*d, args, names).unwrap_or_default()
+            }
             TyKind::Dyn(d, args) => match self.iface(*d) {
                 Some(i) => with_args(self, &i.name, args),
                 None => "unknown".into(),

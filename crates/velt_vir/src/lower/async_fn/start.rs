@@ -115,6 +115,7 @@ impl FnLower<'_, '_> {
         lw.switch_to(ok_bb);
         lw.drop_glue(rp, slot);
         lw.terminate(Terminator::Return(unit()));
-        lw.finish(format!("_Gunclaimed_{}", t.0), vec![Ty::Ptr], Ty::Unit)
+        let sym = format!("_Gunclaimed_{}", lw.cx.type_symbol(t));
+        lw.finish(sym, vec![Ty::Ptr], Ty::Unit)
     }
 }

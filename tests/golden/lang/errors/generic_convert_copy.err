@@ -1,0 +1,3 @@
+generic_convert_copy.vlt:14:10: error: cannot spread a value of type `f64` into an object
+generic_convert_copy.vlt:11:10: error: this generic function uses a `{ a: f64; tag: string }` as a `{ tag: string }`, which are different object types at this instantiation
+generic_convert_copy.vlt:8:10: error: this generic function uses a `{ a: f64; tag: string }` as a `{ a: f64 }`, which are different object types at this instantiation

@@ -33,6 +33,7 @@ mod intrinsic;
 mod nothing;
 mod numeric;
 mod table;
+mod ty_op;
 
 use std::collections::{HashMap, HashSet};
 
@@ -43,6 +44,7 @@ pub use intrinsic::Intrinsic;
 pub use nothing::Nothing;
 pub use numeric::{CpuTarget, FloatTy, IntTy, SimdTy};
 pub use table::TyTable;
+pub use ty_op::TyOp;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct DefId(pub u32);
@@ -90,6 +92,8 @@ pub enum TyKind {
         params: Vec<TyId>,
         ret: TyId,
         throws: TyId,
+        /// The last parameter is a rest parameter (`(...xs: T[]) => R`; hir_encodings.md).
+        rest: bool,
     },
     /// Closure value: unique type per closure expression (`DefId` of its `Def::Fn`).
     Closure(DefId),
@@ -109,18 +113,6 @@ pub enum TyKind {
     /// definitions: once its arguments are concrete, sema reduces it, and lowering replaces it by
     /// its entry in `Program::type_ops`.
     Op(TyOp, Vec<TyId>),
-}
-
-/// The operator of a [`TyKind::Op`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum TyOp {
-    /// A generic type alias (sema's alias #n) whose body (a conditional, mapped, indexed access
-    /// or template literal type) needs its arguments, applied to the `Op`'s arguments.
-    Alias(u32),
-    /// `A & B & …` with a part that is a type parameter or another deferred type (`T & { $set:
-    /// (v: T) => void }`, #350): the `Op`'s arguments are the parts in written order, and it
-    /// reduces to the object type `crate::intersections` builds from them.
-    Intersect,
 }
 
 /// The value of a literal type.
@@ -187,6 +179,13 @@ pub struct Program {
     /// generator's resume function then also handles an error thrown in at each `yield`;
     /// otherwise it has no code for that.
     pub generator_throw: bool,
+    /// Interface upcasts (hir_encodings.md "Interface upcasts"): per interface whose values
+    /// convert to other interfaces (`Upcast` of a `Dyn(A)` to a `Dyn(B)`), the targets, in
+    /// table order. Additive.
+    pub upcasts: HashMap<DefId, Vec<DefId>>,
+    /// Per implementation (`impls` index) of an interface in `upcasts`: the implementation of
+    /// each target for the same type, in `upcasts` order. Additive.
+    pub upcast_impls: HashMap<u32, Vec<u32>>,
     /// Gated functions (`__intrinsic_target`) and the CPU extension each is compiled for
     /// (#1330): lowering gives the VIR function its target.
     pub cpu_targets: HashMap<DefId, CpuTarget>,

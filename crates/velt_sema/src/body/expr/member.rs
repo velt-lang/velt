@@ -369,7 +369,7 @@ impl FnCx<'_, '_> {
             }
             _ => obj,
         };
-        if self.frozen_buffer_view(&obj, &prop.name, span) {
+        if self.cx.frozen_reads && self.frozen_buffer_view(&obj, &prop.name, span) {
             return self.error_expr(span);
         }
         let obj = self.error_union_accessor(obj, &prop.name);
@@ -399,6 +399,9 @@ impl FnCx<'_, '_> {
             return h;
         }
         if let Some(h) = self.keyed_read(object, index, want, span) {
+            return h;
+        }
+        if let Some(h) = self.generic_key_index(object, index, want, span) {
             return h;
         }
         let obj = self.expr(object, None, Want::Borrow);
@@ -450,9 +453,12 @@ impl FnCx<'_, '_> {
             Ok(h) => return h,
             Err(obj) => obj,
         };
-        let obj = match self.shared_indexed(obj, index, want, span) {
-            Ok(obj) => obj,
-            Err(e) => return e,
+        let obj = match matches!(self.cx.ty.kind(obj.ty), TyKind::Shared(_)) {
+            true => match self.shared_indexed(obj, index, want, span) {
+                Ok(obj) => obj,
+                Err(e) => return e,
+            },
+            false => obj,
         };
         let t = obj.ty;
         // `o[KEY]` with a symbol constant: the member the symbol names.
@@ -525,14 +531,12 @@ impl FnCx<'_, '_> {
                 }
                 self.member_of(obj, &prop, want, span)
             }
+            // `obj(os)[key(ks, 0)]` in a generic body: a key known only per instantiation.
+            TyKind::Param(_) if want != Want::BorrowMut && literal_key(index).is_none() => {
+                self.param_key_read(obj, index, span)
+            }
             _ => {
-                let tn = self.cx.display(t);
-                let mut d =
-                    Diagnostic::error(format!("cannot index a value of type `{tn}`"), obj.span);
-                if self.cx.class_of(t).is_some() {
-                    d = d.with_note("use a method such as `m.get(key)`");
-                }
-                self.cx.error(d);
+                self.cannot_index(&obj);
                 self.expr(index, None, Want::Borrow);
                 self.error_expr(span)
             }

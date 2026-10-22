@@ -201,7 +201,11 @@ function parseAbsolute(scheme: string, s: string, from: i64): UrlRecord | null {
   } else if (twoSlashes) {
     at = from + 2;
   }
-  if (at > from || (special && !file)) {
+  if (file && twoSlashes && startsWithDrive(s, at)) {
+    // `file://C:/x`: a drive letter where the host would be starts the path (the URL spec's
+    // file host state), so the host is empty.
+    r.hasHost = true;
+  } else if (at > from || (special && !file)) {
     const end = componentEnd(s, at, special, true);
     if (!parseAuthority(r, s, at, end, special)) {
       return null;
@@ -392,11 +396,24 @@ function parseRelative(rest: string, base: UrlRecord): UrlRecord | null {
     return r;
   }
   if (isSep(rest, 0, special)) {
-    applyTail(r, rest, 0, [], special);
+    // A `file:` URL keeps its base's Windows drive letter (`/x` against `file:///C:/p` is
+    // `file:///C:/x`), unless the path names one itself.
+    const drive: string[] = [];
+    const first = base.path.length > 0 ? base.path.slice(1).split("/")[0] : "";
+    if (r.scheme == "file" && isDriveLetter(first) && !startsWithDrive(rest, 1)) {
+      drive.push(first);
+    }
+    applyTail(r, rest, 0, drive, special);
     return r;
   }
-  const segs = base.path.length > 0 ? base.path.slice(1).split("/") : [];
-  segs.pop();
+  // A relative path continues from the base's directory, unless a `file:` URL's path starts
+  // with a drive letter (`C|/x`), which takes none of the base's path (the URL spec's file
+  // state).
+  const drive = r.scheme == "file" && startsWithDrive(rest, 0);
+  const segs = base.path.length > 0 && !drive ? base.path.slice(1).split("/") : [];
+  if (!drive) {
+    segs.pop();
+  }
   applyTail(r, rest, 0, segs, special);
   return r;
 }
@@ -410,7 +427,7 @@ function applyTail(r: UrlRecord, s: string, from: i64, segs: string[], special: 
     return;
   }
   const end = componentEnd(s, from, special, false);
-  r.path = parsePath(s.slice(from, end), segs, special);
+  r.path = parsePath(s.slice(from, end), segs, special, r.scheme == "file");
   applyQueryFragment(r, s, end, special);
 }
 
@@ -429,13 +446,17 @@ function applyQueryFragment(r: UrlRecord, s: string, from: i64, special: bool) {
   }
 }
 
-/** Serializes path `p` (after `segs`), percent-encoding segments and resolving `.` and `..`. */
-export function parsePath(p: string, segs: string[], special: bool): string {
+/**
+ * Serializes path `p` (after `segs`), percent-encoding segments and resolving `.` and `..`. In
+ * a `file:` URL (`file`), a first segment `C|` is the drive letter `C:`, and `..` does not
+ * remove a drive letter.
+ */
+export function parsePath(p: string, segs: string[], special: bool, file: bool = false): string {
   const len = p.length as i64;
   if (len == 0 && segs.length == 0) {
     return special ? "/" : "";
   }
-  if (segs.length == 0 && isSerializedPath(p)) {
+  if (segs.length == 0 && !file && isSerializedPath(p)) {
     return p;
   }
   let i: i64 = isSep(p, 0, special) ? 1 : 0;
@@ -450,11 +471,19 @@ export function parsePath(p: string, segs: string[], special: bool): string {
     // `..` that had nothing to remove in a non-special URL: its path stays empty, as Node has
     // it (`foo://h/..` is `foo://h`, `foo://h/a/..` is `foo://h/`).
     const emptied = dots == 2 && segs.length == 0;
-    if (dots == 2) {
+    if (dots == 2 && !(file && segs.length == 1 && isDriveLetter(segs[0]))) {
       segs.pop();
     }
     if (dots == 0) {
-      segs.push(encodeSet(p.slice(i, j), PATH));
+      const seg = p.slice(i, j);
+      // A `file:` URL's first segment `C|` is the drive letter `C:`.
+      const drive =
+        file &&
+        segs.length == 0 &&
+        seg.length == 2 &&
+        seg.charCodeAt(1) == 124 &&
+        startsWithDrive(seg, 0);
+      segs.push(drive ? `${seg.slice(0, 1)}:` : encodeSet(seg, PATH));
     } else if (last && (special || !emptied)) {
       segs.push("");
     }
@@ -464,6 +493,35 @@ export function parsePath(p: string, segs: string[], special: bool): string {
     i = j + 1;
   }
   return segs.length == 0 ? "" : `/${segs.join("/")}`;
+}
+
+// Is `s` a normalized Windows drive letter (`C:`)?
+function isDriveLetter(s: string): bool {
+  if (s.length != 2 || s.charCodeAt(1) != 58) {
+    return false;
+  }
+  const c = s.charCodeAt(0);
+  return (c >= 65 && c <= 90) || (c >= 97 && c <= 122);
+}
+
+// Does `s[from..]` start with a Windows drive letter (`C:` or `C|`) followed by the end, `/`,
+// `\`, `?` or `#`?
+function startsWithDrive(s: string, from: i64): bool {
+  const len = s.length as i64;
+  if (from + 2 > len) {
+    return false;
+  }
+  const c = s.charCodeAt(from);
+  const second = s.charCodeAt(from + 1);
+  const letter = (c >= 65 && c <= 90) || (c >= 97 && c <= 122);
+  if (!letter || (second != 58 && second != 124)) {
+    return false;
+  }
+  if (from + 2 == len) {
+    return true;
+  }
+  const next = s.charCodeAt(from + 2);
+  return next == 47 || next == 92 || next == 63 || next == 35;
 }
 
 // Whether `parsePath` would give back `p` unchanged, found in one pass without building the

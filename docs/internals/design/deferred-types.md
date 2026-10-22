@@ -426,7 +426,20 @@ these answers:
    instantiation, in step 4; the spread is a `DeferredObject` like `update`'s. Landed first, ahead
    of step 4: `TyOp::Intersect`, its reduction at every instantiation (`type_level::instances`,
    `Program::type_ops`) and inference through it. Member access by name, conversion to a part
-   and the `DeferredObject` spread in generic bodies still wait for step 4.
+   and the `DeferredObject` spread in generic bodies still wait for step 4. Since then, member
+   access by name through per-part interfaces (#1317), and the spread and conversions: a spread
+   of a type parameter's value is `Intrinsic::SpreadObject` of type `TyOp::Spread`, expanded per
+   instantiation by lowering (the `DeferredObject` of this note, with every part a borrowed place
+   and fields shared); a conversion to a part (`T & U` as `T`) is the same value under the
+   requirement `TyOp::Convert`, an error at an instantiation where the two are different object
+   types, since a copy would lose the identity TypeScript keeps (hir_encodings.md "Spreads and
+   conversions in generic bodies"). Then forms over a type parameter written outside an alias
+   (`TyOp::Inline`: mapped types, `T[K]`, `keyof T`, `Partial<T>` and the other utility types in
+   signatures and bodies), reads and writes `x[k]` through one key per instantiation
+   (`Intrinsic::KeyRead`, `KeyWrite`), and an optional field spread over an earlier value of it,
+   with presence flags. Reads and writes through a union of keys, `FieldByName` on a stuck
+   `Partial<T>`, and conversions between different layouts (an error at the instantiation, by
+   decision) remain.
 7. **`{ a: F | null }` where `{ a?: F | null }` is expected**, which TypeScript accepts, stays an
    error with the `{ ...x }` fix-it, like the other storage-position conversions (#672 covers
    parameters); types.md lists it as a difference from TypeScript.

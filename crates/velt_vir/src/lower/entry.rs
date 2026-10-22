@@ -280,8 +280,15 @@ impl<'c, 'h> FnLower<'c, 'h> {
     /// `<name>: <message>` from the (possibly overridden) `name`, and the class in front when
     /// they differ (`E [TypeError]: m`).
     fn write_error_header(&mut self, stream: &Operand, ep: &Place, err: TyId, root: DefId) {
+        // A standard library class stands for the error Node throws (`UrlError` for a
+        // `TypeError`): named as that class, so the header is its `name` alone, as for
+        // `JsonError`.
+        let std_class = match self.cx.kind(err) {
+            TyKind::Adt(d, _) => self.cx.std_error_class(d),
+            _ => None,
+        };
         let dynamic = match self.cx.kind(err) {
-            TyKind::Adt(d, _) => self.cx.has_header(d),
+            TyKind::Adt(d, _) => std_class.is_none() && self.cx.has_header(d),
             _ => false,
         };
         let cls = if self.is_json_error(err) {
@@ -297,7 +304,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
                 proj: vec![Proj::Deref(Ty::Agg(crate::vir::STR_AGG))],
             }
         } else {
-            let name = self.cx.type_name(err);
+            let name = std_class.unwrap_or_else(|| self.cx.type_name(err));
             let s = self.str_lit(&name);
             Place::local(self.copy_to_temp(s, Ty::Agg(crate::vir::STR_AGG)))
         };

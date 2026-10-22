@@ -1,0 +1,34 @@
+// check: no leaks
+// A spread in a generic body of an optional field over a required one (#350): as TypeScript
+// types it, the field keeps the earlier part's type (`n: number`, not `number | undefined`), and
+// so does a field required in both parts; an absent field keeps the earlier value, a present
+// value overrides it. A concrete spread is typed the same way. A present `undefined` over a
+// required field is a `TypeError`, since `n: number` can't hold it (Node keeps `undefined`):
+// `generic_spread_undefined_error.vlt`.
+type U = { n: number; s: string; o?: number };
+type P = { n?: number; s: string };
+function merge<T extends object>(x: T, patch: Partial<T>) {
+  return { ...x, ...patch };
+}
+function update<T extends object>(x: T, patch: Partial<T>): T {
+  return { ...x, ...patch };
+}
+function both<A extends object, B extends object>(a: A, b: B) {
+  return { ...a, ...b };
+}
+const u: U = { n: 1, s: "a" };
+const m2 = merge(u, { s: "b" });
+console.log(JSON.stringify(m2), m2.n.toFixed(1), Object.keys(m2).join(","));
+const m3 = merge(u, { n: 4, o: 2 });
+console.log(JSON.stringify(m3), m3.n === 4);
+const r = update(u, { s: "z", o: 3 });
+console.log(JSON.stringify(r), r === u);
+const p: P = { s: "b" };
+const g = both(u, p);
+console.log(g.n.toFixed(1), g.s.length, JSON.stringify(both(u, { n: 5, s: "c" } as P)));
+const back: U = both(u, p);
+console.log(JSON.stringify(back));
+const c = { ...u, ...p };
+console.log(c.n.toFixed(2), c.s.length);
+const cb: U = { ...u, ...p };
+console.log(JSON.stringify(cb));

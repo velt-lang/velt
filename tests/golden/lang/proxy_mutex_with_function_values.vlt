@@ -1,0 +1,100 @@
+// check: no leaks
+// `mutex_with_function_values` in a program that also makes a proxy and runs array methods
+// through it: the standard library's `Proxy` and `Reflect` keep no module state, so `with`
+// callbacks that call function values still compile.
+// A `with` callback that passes the locked value to a function value changes the value itself
+// (#398): the closures the function value may be are found (a local, a captured variable, a
+// helper's parameter, a conditional, a function's result) and checked like the callback, so a
+// part of the value they store outside still comes out as a copy.
+class Item {
+  n: i64 = 0;
+}
+
+class State {
+  n: i64 = 0;
+  items: Item[] = [new Item(), new Item()];
+
+  each(f: (x: Item) => void) {
+    for (const x of this.items) {
+      f(x);
+    }
+  }
+}
+
+function apply(m: shared<Mutex<State>>, g: (s: State) => void) {
+  m.with((v) => {
+    g(v);
+  });
+}
+
+function applyLog(m: shared<Mutex<State>>, g: (s: State, log: string[]) => void, log: string[]) {
+  m.with((v) => {
+    g(v, log);
+  });
+}
+
+function pick(first: bool, f: (s: State) => void, g: (s: State) => void): (s: State) => void {
+  return first ? f : g;
+}
+
+function main() {
+  const raw: number[] = [1, 2, 3];
+  const pxy: any = new Proxy(raw, {
+    set(t: any, k: string | symbol, v: any, r: any): boolean {
+      return Reflect.set(t, k, v, r);
+    },
+  });
+  pxy.push(4);
+  console.log(pxy.pop(), pxy.shift(), Reflect.get(pxy, "map"), raw);
+  const m = shared(new Mutex<State>(new State()));
+  m.with((v) => {
+    const g = (s: State) => {
+      s.n += 1;
+    };
+    g(v);
+  });
+  const step = (s: State) => {
+    s.n += 1000;
+  };
+  m.with((v) => {
+    step(v);
+  });
+  m.with((v) => {
+    v.each((x) => {
+      x.n += 100;
+    });
+  });
+  apply(m, (s: State) => {
+    s.n += 10;
+    s.items.push(new Item());
+  });
+  const log: string[] = [];
+  applyLog(
+    m,
+    (s: State, l: string[]) => {
+      s.n += 10000;
+      l.push("did");
+    },
+    log,
+  );
+  // Stored outside through a function value: a copy.
+  const out: Item[] = [];
+  const keep = (s: State) => {
+    out.push(s.items[0]);
+  };
+  const nop = (s: State) => {};
+  m.with((v) => {
+    keep(v);
+  });
+  m.with(Math.random() > 2 ? nop : keep);
+  m.with(pick(false, nop, keep));
+  for (const x of out) {
+    x.n += 1;
+  }
+  console.log(
+    m.with((v) => v.n),
+    m.with((v) => v.items.map((x) => x.n).join(",")),
+    log.length,
+    out.length,
+  );
+}

@@ -313,6 +313,7 @@ impl FnCx<'_, '_> {
             params,
             ret,
             throws: error,
+            rest: false,
         });
         let arrow = bound_arrow(recv, prop, n, &defaults, discard, span);
         Some((arrow, fn_ty))

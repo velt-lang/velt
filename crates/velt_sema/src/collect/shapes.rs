@@ -215,6 +215,7 @@ pub(crate) fn iface_bound(cx: &mut Ctx, t: &ast::TypeExpr, env: &TyEnv) -> Optio
 
 fn field_info(cx: &mut Ctx, owner: DefId, f: &ast::Field, env: &TyEnv) -> FieldInfo {
     let mut ty = cx.resolve_type(&f.ty, env);
+    cx.note_written_type(f.name.span, f.ty.span);
     let declared = ty;
     // `a?: T` is `T | undefined` (`a?: T | null` is `T | null | undefined`); `q?: any`: an
     // `any` holds the `undefined` of a left-out field itself.
@@ -427,7 +428,7 @@ fn string_member(cx: &mut Ctx, v: &ast::Variant) -> Option<String> {
 }
 
 /// `"UP"`, `("UP")`.
-fn const_str(e: &ast::Expr) -> Option<String> {
+pub(crate) fn const_str(e: &ast::Expr) -> Option<String> {
     match &e.kind {
         ast::ExprKind::Lit(ast::Lit::Str(s)) => Some(s.clone()),
         ast::ExprKind::Paren(x) => const_str(x),
@@ -436,7 +437,7 @@ fn const_str(e: &ast::Expr) -> Option<String> {
 }
 
 /// `5`, `-3`, `(7)`.
-fn const_int(e: &ast::Expr) -> Option<i64> {
+pub(crate) fn const_int(e: &ast::Expr) -> Option<i64> {
     match &e.kind {
         ast::ExprKind::Lit(ast::Lit::Int { value, .. }) => i64::try_from(*value).ok(),
         ast::ExprKind::Unary {
@@ -472,6 +473,7 @@ fn layout_fields(cx: &mut Ctx, d: DefId, stack: &mut Vec<DefId>) {
     let mut all = vec![];
     for mut f in inherited {
         f.ty = cx.subst(f.ty, &bargs);
+        f.declared = cx.subst(f.declared, &bargs);
         all.push(f);
     }
     let start = all.len();

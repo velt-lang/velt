@@ -12,6 +12,19 @@ use crate::lower::FnLower;
 use crate::vir::{Const, Operand, Place, Rvalue, Terminator, Ty, STR_AGG};
 
 impl FnLower<'_, '_> {
+    /// A value boxed and converted back to its own type `ty` (`t as T & object` of a `t: T`
+    /// at an interface or class `T`): the value itself, which always has that type.
+    pub(super) fn unboxed_own(&mut self, a: &hir::Expr, ty: TyId) -> Option<Operand> {
+        let hir::ExprKind::ToDyn { expr, impl_index } = &a.kind else {
+            return None;
+        };
+        if !self.cx.is_any_impl(*impl_index) || self.sub(expr.ty) != ty || self.cx.is_dynamic(ty) {
+            return None;
+        }
+        let v = self.consume(expr);
+        Some(self.own_value(v, ty))
+    }
+
     /// Does a value of the concrete type `t` need unpacking on its way into `any`: one sema
     /// unpacks before boxing (options, `void`, unions, literal and enum types)?
     pub(super) fn any_unpacks(&self, t: TyId) -> bool {

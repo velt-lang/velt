@@ -36,6 +36,7 @@ fn parts(cx: &Ctx, t: TyId) -> Vec<TyId> {
             params,
             ret,
             throws,
+            ..
         } => params.iter().copied().chain([*ret, *throws]).collect(),
         _ => vec![],
     }

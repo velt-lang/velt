@@ -1,0 +1,45 @@
+// check: no leaks
+// Revivers whose closures throw the standard library's errors (#1154): `new URL` and
+// `new RegExp` throw a `TypeError` and a `SyntaxError` through a function type written without
+// `throws`, and an async callback's rejection goes through `() => Promise<T>`.
+interface Reviver<T> {
+  name: string;
+  revive: (s: string) => T;
+}
+
+type Loader = () => Promise<string>;
+
+async function load(ls: Loader[]): Promise<string[]> {
+  const out: string[] = [];
+  for (const l of ls) {
+    try {
+      out.push(await l());
+    } catch (e) {
+      out.push(`failed: ${(e as Error).message}`);
+    }
+  }
+  return out;
+}
+
+async function main() {
+  const urlReviver: Reviver<URL> = { name: "URL", revive: (s) => new URL(s) };
+  const reReviver: Reviver<RegExp> = { name: "RegExp", revive: (s) => new RegExp(s) };
+  console.log(urlReviver.revive("https://example.com/a").pathname, reReviver.revive("a+b").source);
+  try {
+    urlReviver.revive("not a url");
+  } catch (e) {
+    console.log((e as Error).name, e instanceof TypeError);
+  }
+  try {
+    reReviver.revive("(");
+  } catch (e) {
+    console.log((e as Error).name, e instanceof SyntaxError);
+  }
+  const loaders: Loader[] = [
+    async () => "one",
+    async () => {
+      throw new RangeError("two");
+    },
+  ];
+  console.log(await load(loaders));
+}

@@ -1,0 +1,6 @@
+{ a: 2, list: [ 1, 2 ], tag: 'x' } { a: 2, list: [ 1, 2 ] }
+5 2 [ 1, 2, 3 ] true
+{ a: 9, list: [ 1, 2, 3 ] } { a: 2, list: [ 1, 2, 3 ] }
+4 s [ '{"n":2,"name":"t"}' ]
+x!! x 5
+{ id: 7, opt: undefined } {"id":7}

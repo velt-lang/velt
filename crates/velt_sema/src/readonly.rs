@@ -18,15 +18,25 @@ use crate::visit;
 
 /// Replace every readonly object type in the finished program by its plain twin.
 pub(crate) fn erase(cx: &mut Ctx) {
-    if cx.readonly_twins.is_empty() && cx.brands.is_empty() {
+    if cx.readonly_twins.is_empty() && cx.brands.is_empty() && cx.fn_sites.vars.is_empty() {
         return;
     }
-    let twins = cx.readonly_twins.clone();
+    let mut twins = cx.readonly_twins.clone();
+    // An anonymous object type holding error-set variables is the one of its solved shape.
+    for (d, twin) in cx.solved_anon_twins() {
+        let twin = twins.get(&twin).map_or(twin, |t| t.0);
+        twins.entry(d).or_insert((twin, None));
+    }
     // A branded type is its primitive from here on (`crate::brands`).
     let mut cache: FxHashMap<TyId, TyId> = FxHashMap::default();
     for (&d, &base) in &cx.brands {
         let brand = cx.ty.intern(TyKind::Adt(d, vec![]));
         cache.insert(brand, base);
+    }
+    // A type with error-set variables is its solved type (`throws::vars`), erased.
+    for (t, s) in cx.solved_types() {
+        let r = erase_ty(&mut cx.ty, &twins, &mut cache, s);
+        cache.insert(t, r);
     }
     let Ctx {
         ty,
@@ -36,6 +46,7 @@ pub(crate) fn erase(cx: &mut Ctx) {
         type_level,
         ..
     } = cx;
+    let never = ty.never;
     let mut e = |t: TyId| erase_ty(ty, &twins, &mut cache, t);
     // A twin must know a field is assigned if its readonly view's is (it never is today).
     let assigned: Vec<(DefId, bool)> = twins
@@ -58,7 +69,8 @@ pub(crate) fn erase(cx: &mut Ctx) {
                 }
                 f.ret = e(f.ret);
                 f.self_ty = f.self_ty.map(&mut e);
-                f.throws = f.throws.map(&mut e);
+                // An error type that was only error-set variables solved empty: nothing.
+                f.throws = f.throws.map(&mut e).filter(|t| *t != never);
                 for l in &mut f.body.locals {
                     l.ty = e(l.ty);
                 }
@@ -93,6 +105,9 @@ pub(crate) fn erase(cx: &mut Ctx) {
             Def::Interface(i) => {
                 for f in &mut i.fields {
                     f.ty = e(f.ty);
+                }
+                for m in &mut i.methods {
+                    m.throws = m.throws.map(&mut e).filter(|t| *t != never);
                 }
             }
         }
@@ -156,10 +171,12 @@ pub(crate) fn erase_ty(
             params,
             ret,
             throws,
+            rest,
         } => TyKind::FnPtr {
             params: params.iter().map(|a| sub(ty, cache, *a)).collect(),
             ret: sub(ty, cache, ret),
             throws: sub(ty, cache, throws),
+            rest,
         },
         _ => {
             cache.insert(t, t);

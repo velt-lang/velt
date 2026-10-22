@@ -1,0 +1,8 @@
+// Two `queueMicrotask` callbacks that throw: the first ends the process, reported at its own
+// throw, as in Node (#1154).
+queueMicrotask(() => {
+  throw new TypeError("first");
+});
+queueMicrotask(() => {
+  throw new RangeError("second");
+});

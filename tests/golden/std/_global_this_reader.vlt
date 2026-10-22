@@ -1,0 +1,14 @@
+// Reads the hook (global_this); evaluated before the module that installs it.
+import { HOOK_KEY, type Hook } from "./_global_this_keys";
+
+console.log("reader sees", (globalThis as { __HOOK__?: Hook })[HOOK_KEY] === undefined);
+
+export function emit(e: string): void {
+  (globalThis as { __HOOK__?: Hook }).__HOOK__?.events.push(e);
+}
+
+// Asserted `any`: typed by the assertions elsewhere.
+export function count(): number {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return (globalThis as any)[HOOK_KEY]?.events.length ?? 0;
+}

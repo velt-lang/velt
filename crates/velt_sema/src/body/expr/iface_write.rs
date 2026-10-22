@@ -103,6 +103,20 @@ impl FnCx<'_, '_> {
         Some(self.cx.mark_iface_written(f.iface, prop.span))
     }
 
+    /// A part of interface field `f` (`prop`) is changed and written back through its setter
+    /// slot (`iface_nested.rs`), which a `readonly` field has for this only. False: reported.
+    pub(super) fn iface_part_target(&mut self, f: &IfaceField, prop: &ast::Ident) -> bool {
+        self.cx
+            .object_copies
+            .writes
+            .push(crate::object_copies::Write {
+                ty: None,
+                name: prop.name.clone(),
+                span: prop.span,
+            });
+        self.cx.mark_part_written(f.iface, f.index, prop.span)
+    }
+
     /// `recv.prop = arg` through the setter slot of interface field `f`.
     pub(super) fn iface_setter_call(
         &mut self,

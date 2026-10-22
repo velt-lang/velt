@@ -1,0 +1,40 @@
+out del 4
+in del 4
+out set length
+in set length
+5 [1,2,3,4]
+out set 0
+in set 0
+out set 1
+in set 1
+out set 2
+in set 2
+out del 3
+in del 3
+out set length
+in set length
+1 [2,3,4]
+out set 0
+in set 0
+out set 1
+in set 1
+out del 2
+in del 2
+out set length
+in set length
+[2] [3,4]
+out set 3
+in set 3
+out set 2
+in set 2
+out set 0
+in set 0
+out set 1
+in set 1
+out set length
+in set length
+[8,9,3,4] 4
+in del 4
+in del 3
+5 1 [2,3,4]
+3 [1,2]

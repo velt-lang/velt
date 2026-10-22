@@ -242,7 +242,12 @@ hidden classes and no runtime shape checks.
   on the new one. A getter may change its object (a signal recording who read it). As a value, `x.size = v` is `v` (converted to the setter's parameter type, but
   non-null when `v` is; the getter is not read again; an object is shared, not copied) and `x.size ??= v` is the old value where it decides, else `v` (so
   non-null when `v` is). Implementations and overrides of a
-  getter or setter must be accessors too. Getters cannot be `static` or `async`. A getter's
+  getter or setter must be accessors too. An override of only the getter of a base class's
+  `get`/`set` pair replaces the whole property, as in JS: writing it through the subclass is an
+  error (TypeScript's TS2540), and through the base class, an interface or an intersection it
+  stops with Node's `TypeError: Cannot set property n of #<S> which has only a getter`. Overriding only the setter is an error: the setter-only accessor would
+  hide the base getter (reads give `undefined` in JS), so override the getter too.
+  Getters cannot be `static` or `async`. A getter's
   type may be inferred from its `return` like a method's
   ([Return types](functions.md#return-types)); an interface getter writes it.
 - Instances are references, as in JS ([Memory model](memory.md#values-and-references)):
@@ -499,6 +504,14 @@ console.log(p.len(), q.len());  // 4 4
   interface's table and writes through a setter that only interfaces the program writes
   through get, so other programs pay nothing; through a `T extends I` both are direct calls. An
   object literal implementing such an interface with `get f()` must give `set f(v)` too.
+  Changing a part of a field (`x.t[0] = 5` on a tuple field, `x.pos.p[1] += 1`, `x.t[0]++`)
+  changes the field the object holds, as in JS: the field is read through its getter, the part
+  changed and the field written back through its setter. The receiver is evaluated once, and a
+  right-hand side with an effect (a call, an `await`) runs before the field is read, so a
+  change it (or another task) makes to the same field is kept. `readonly` is shallow, as in
+  TypeScript: `x.o.v = 5` and `x.t[0] = 5` on a `readonly` field work, written back through a
+  setter the interface keeps for this; an object literal that implements the field with only
+  `get o()` then needs `set o(v)` too.
 - An **optional method** `m?(x: T): R` is an optional field of function type
   (`m?: (x: T) => R`): an implementing class declares the field as `m?: (x: T) => R` or
   `m: ((x: T) => R) | undefined = undefined`, and a caller writes `o.m?.(x)`.

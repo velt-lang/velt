@@ -123,6 +123,7 @@ impl Ctx<'_> {
         let k = match self.ty.kind(t).clone() {
             TyKind::Adt(d, args) => TyKind::Adt(d, args.iter().map(|a| c(self, *a)).collect()),
             TyKind::Dyn(d, args) => TyKind::Dyn(d, args.iter().map(|a| c(self, *a)).collect()),
+            TyKind::Op(crate::hir::TyOp::ErrSite(_), _) => return t,
             TyKind::Op(o, args) => {
                 // A deferred type whose arguments are all known now is evaluated (#934).
                 let args: Vec<TyId> = args.iter().map(|a| c(self, *a)).collect();
@@ -159,10 +160,12 @@ impl Ctx<'_> {
                 params,
                 ret,
                 throws,
+                rest,
             } => TyKind::FnPtr {
                 params: params.iter().map(|a| c(self, *a)).collect(),
                 ret: c(self, ret),
                 throws: c(self, throws),
+                rest,
             },
             _ => {
                 self.canon_memo.insert(t, t);
@@ -170,6 +173,7 @@ impl Ctx<'_> {
             }
         };
         let mut out = self.ty.intern(k);
+        out = self.ty.inferred_like(t, out);
         if let TyKind::Adt(d, args) = self.ty.kind(out).clone() {
             if let Some(r) = self.canon_anon(d, &args, depth) {
                 out = r;

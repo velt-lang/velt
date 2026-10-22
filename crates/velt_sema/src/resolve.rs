@@ -6,7 +6,6 @@
 //! `TyKind::Dyn`; `T | null` is `TyKind::Option`; other unions are compiler-generated enums (`crate::unions`); literal types are `TyKind::Literal`
 //! (`crate::literals`) and object types `{ a: T }` anonymous object types (`crate::anon`).
 
-use velt_common::Span;
 use velt_syntax::ast;
 
 use crate::anon::ShapeField;
@@ -50,6 +49,18 @@ impl TyEnv {
 impl Ctx<'_> {
     /// Resolve a written type. Reports and returns `Error` for unknown / invalid types.
     pub fn resolve_type(&mut self, t: &ast::TypeExpr, env: &TyEnv) -> TyId {
+        use ast::TypeExprKind as K;
+        let form = matches!(
+            t.kind,
+            K::Indexed { .. } | K::KeyOf(_) | K::Conditional(_) | K::Mapped(_)
+        );
+        if form && self.inline_deferrable(env) {
+            return self.resolve_inline(t, env, |cx| cx.resolve_form(t, env));
+        }
+        self.resolve_form(t, env)
+    }
+
+    fn resolve_form(&mut self, t: &ast::TypeExpr, env: &TyEnv) -> TyId {
         match &t.kind {
             ast::TypeExprKind::Void => self.ty.unit,
             // `x is T` returns a `boolean`; `asserts x is T` returns nothing (it throws instead
@@ -76,8 +87,8 @@ impl Ctx<'_> {
                 params,
                 ret,
                 throws,
-                rest: false,
-            } => self.resolve_fn_type(params, ret, throws.as_deref(), env),
+                rest,
+            } => self.resolve_fn_type(params, *rest, ret, throws.as_deref(), env, t.span),
             ast::TypeExprKind::TupleRest(_) => {
                 self.error(
                     velt_common::Diagnostic::error(
@@ -98,10 +109,8 @@ impl Ctx<'_> {
                 );
                 self.ty.error
             }
-            ast::TypeExprKind::Function { rest: true, .. }
-            | ast::TypeExprKind::GenericFunction { .. }
-            | ast::TypeExprKind::Construct(_) => {
-                let (msg, note) = unsupported_fn_type(&t.kind);
+            ast::TypeExprKind::GenericFunction { .. } | ast::TypeExprKind::Construct(_) => {
+                let (msg, note) = crate::fn_types::unsupported_fn_type(&t.kind);
                 self.error(velt_common::Diagnostic::error(msg, t.span).with_note(note));
                 self.ty.error
             }
@@ -145,39 +154,6 @@ impl Ctx<'_> {
                 self.ty.undefined()
             }
         }
-    }
-
-    /// `(params) => ret [throws E]`. After a `Promise` result, `throws E` is the promise's
-    /// rejection type (calling an async function never throws; awaiting its promise does).
-    fn resolve_fn_type(
-        &mut self,
-        params: &[ast::TypeExpr],
-        ret: &ast::TypeExpr,
-        throws: Option<&ast::TypeExpr>,
-        env: &TyEnv,
-    ) -> TyId {
-        let params = params.iter().map(|t| self.resolve_type(t, env)).collect();
-        let mut ret = self.resolve_type(ret, env);
-        let never = self.ty.never;
-        let err = throws.map(|t| {
-            let e = self.resolve_type(t, env);
-            self.no_void_error(e, t.span);
-            e
-        });
-        let err = self.canon_error(err).unwrap_or(never);
-        let throws = match self.ty.kind(ret).clone() {
-            TyKind::Promise(v, e) if err != never => {
-                let e = self.join_errors(Some(e), Some(err)).unwrap_or(never);
-                ret = self.ty.promise_rejecting(v, e);
-                never
-            }
-            _ => err,
-        };
-        self.ty.intern(TyKind::FnPtr {
-            params,
-            ret,
-            throws,
-        })
     }
 
     /// `{ a: A; b: B }`: the anonymous object type of that shape.
@@ -438,6 +414,18 @@ impl Ctx<'_> {
             }
             _ => args,
         };
+        let args = match item {
+            Item::Alias(a) if !self.aliases[a as usize].outer.is_empty() => {
+                let Some(mut outer) = self.outer_alias_args(a, env) else {
+                    let n = &self.aliases[a as usize].outer[0];
+                    self.err(format!("cannot find type `{n}` in this scope"), t.span);
+                    return self.ty.error;
+                };
+                outer.extend(args);
+                outer
+            }
+            _ => args,
+        };
         self.item_type_args(item, name, args, t)
     }
 
@@ -472,6 +460,11 @@ impl Ctx<'_> {
             "Result" => return Some(self.removed_result(t)),
             "ReturnType" | "Parameters" => {
                 return Some(self.resolve_fn_operator(t, name, args, env))
+            }
+            n if crate::utility_types::OPERATORS.contains(&n) && self.inline_deferrable(env) => {
+                return Some(
+                    self.resolve_inline(t, env, |cx| cx.resolve_utility(t, name, args, env)),
+                )
             }
             n if crate::utility_types::OPERATORS.contains(&n) => {
                 return Some(self.resolve_utility(t, name, args, env))
@@ -521,7 +514,7 @@ impl Ctx<'_> {
         self.ty.error
     }
 
-    fn arity_error(&mut self, name: &str, want: usize, got: usize, t: &ast::TypeExpr) {
+    pub(crate) fn arity_error(&mut self, name: &str, want: usize, got: usize, t: &ast::TypeExpr) {
         self.err(
             format!("type `{name}` takes {want} type argument(s) but {got} were supplied"),
             t.span,
@@ -587,89 +580,10 @@ impl Ctx<'_> {
         }
     }
 
-    fn expand_alias(&mut self, a: u32, args: Vec<TyId>, t: &ast::TypeExpr) -> TyId {
-        let info = &self.aliases[a as usize];
-        let (module, decl) = (info.module, info.decl);
-        if info.expanding {
-            if let Some(own) = self.recursive_union_ref(a) {
-                return own;
-            }
-            let d = velt_common::Diagnostic::error(
-                format!("type alias `{}` refers to itself", decl.name.name),
-                t.span,
-            )
-            .with_note("an alias may refer to itself when it is an object type or an intersection of object types written out (`{ kids: T[] } & { v: number }`) with no field named twice, or a union that names itself behind an array, an index signature, a `Map` or a function type (`type Json = string | Json[]`); give any other recursive type a nominal member, such as an interface or a class");
-            self.error(d);
-            return self.ty.error;
-        }
-        let args = self.with_defaults(DefaultsOf::Alias(a), module, &decl.generics, args);
-        if args.len() != decl.generics.len() {
-            self.arity_error(&decl.name.name, decl.generics.len(), args.len(), t);
-            return self.ty.error;
-        }
-        if let Some(own) = self.recursive_union(a, t.span) {
-            return own;
-        }
-        self.alias_body(a, args, t.span)
-    }
-
-    /// The body of alias `a` (with as many `args` as it has parameters) at `args`, used at
-    /// `span`. A conditional, mapped, indexed access or template literal type in it that needs
-    /// an argument that is still a type parameter makes it the deferred `TyKind::Op` (#934).
-    pub(crate) fn alias_body(&mut self, a: u32, args: Vec<TyId>, span: Span) -> TyId {
-        let info = &self.aliases[a as usize];
-        let decl = info.decl;
-        let module = info.module;
-        let names: Vec<String> = decl.generics.iter().map(|g| g.name.name.clone()).collect();
-        self.aliases[a as usize].used = true;
-        self.aliases[a as usize].expanding = true;
-        let mut env = TyEnv::new(module, &names);
-        env.args = args.clone();
-        let outermost = self.type_level.alias_site.is_none();
-        if outermost {
-            self.type_level.alias_site = Some(span);
-        }
-        let defer = !self.checking_unused_aliases && args.iter().any(|x| self.has_type_params(*x));
-        if defer {
-            self.type_level.deferring += 1;
-        }
-        let outer_stuck = std::mem::replace(&mut self.type_level.stuck, false);
-        let reported = self.diags.len();
-        let body = self.resolve_type(&decl.ty, &env);
-        let stuck = std::mem::replace(&mut self.type_level.stuck, outer_stuck);
-        if defer {
-            self.type_level.deferring -= 1;
-        }
-        if outermost {
-            self.type_level.alias_site = None;
-        }
-        self.aliases[a as usize].expanding = false;
-        if stuck {
-            // Evaluated again, and reported, once the arguments are known.
-            self.diags.truncate(reported);
-            return self.deferred_alias(a, args, span);
-        }
-        if names.is_empty() && self.is_structural(body) {
-            // `type Shape = { ... } | { ... }`: messages call the union `Shape`.
-            self.alias_names
-                .entry(body)
-                .or_insert_with(|| decl.name.name.clone());
-        }
-        if self.mixes_nothings(body, &args) {
-            self.err(
-                "this alias keeps a `P | null` of a type argument that allows `undefined`, whose `undefined` it could not tell from its own `null` yet (#930)",
-                span,
-            );
-            return self.ty.error;
-        }
-        let t = self.subst(body, &args);
-        self.reduce_known_intersection(t)
-    }
-
     /// Does `body` (an alias's type, in terms of its parameters) hold a `P | null` or
     /// `P | undefined` of a parameter whose argument in `args` allows the other nothing? The
     /// substitution would make an option of an option, which keeps the inner one only.
-    fn mixes_nothings(&self, body: TyId, args: &[TyId]) -> bool {
+    pub(crate) fn mixes_nothings(&self, body: TyId, args: &[TyId]) -> bool {
         if !args.iter().any(|a| self.ty.nothing_of(*a).is_some()) {
             return false;
         }
@@ -723,7 +637,7 @@ impl Ctx<'_> {
     }
 
     /// A type without a name of its own (a union or an anonymous object type).
-    fn is_structural(&self, t: TyId) -> bool {
+    pub(crate) fn is_structural(&self, t: TyId) -> bool {
         self.union_def(t).is_some()
             || self.brand_base(t).is_some()
             || matches!(self.ty.kind(t), TyKind::Adt(d, _)
@@ -772,23 +686,5 @@ pub(crate) fn written_type(ty: &ast::TypeExpr) -> ast::TypeExpr {
             }
         }
         _ => ty.clone(),
-    }
-}
-
-/// The function type forms Velt parses but doesn't support yet (#943): its error and a note.
-fn unsupported_fn_type(kind: &ast::TypeExprKind) -> (&'static str, &'static str) {
-    match kind {
-        ast::TypeExprKind::Construct(_) => (
-            "construct signatures (`new (...) => T`) are not supported yet",
-            "a class can't be passed as a value yet; pass a function that constructs it (`(buf: ArrayBuffer) => new Uint8Array(buf)`)",
-        ),
-        ast::TypeExprKind::GenericFunction { .. } => (
-            "generic function types (`<T>(x: T) => R`) are not supported yet",
-            "a function value has one type; declare a generic `function` and call it, or give the type parameters values (`(x: string) => R`)",
-        ),
-        _ => (
-            "rest parameters in function types (`(...xs: T[]) => R`) are not supported yet",
-            "take the array as an ordinary parameter (`(xs: T[]) => R`) and pass an array",
-        ),
     }
 }

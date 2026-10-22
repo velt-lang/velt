@@ -1,0 +1,28 @@
+// A module that names a function `Object` anywhere (here a nested one) is not rewritten, so its
+// accessors defined after construction are not supported yet (tsc accepts it).
+interface Pair {
+  get k(): number;
+  set k(v: number);
+}
+
+function local(): string {
+  function Object(): string {
+    return "own";
+  }
+  return Object();
+}
+
+function make(): Pair {
+  let n = 1;
+  const o: Pair = {
+    get k() {
+      return n;
+    },
+    set k(v) {
+      n = v;
+    },
+  };
+  Object.defineProperty(o, "k", { get: () => 2 });
+  return o;
+}
+console.log(local(), make().k);

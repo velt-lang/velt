@@ -93,7 +93,7 @@ impl Ctx<'_> {
         match (&callee.kind, args.as_slice()) {
             (ast::ExprKind::Ident(f), []) if f.name == "Symbol" => Some(KnownSymbol::Own(d, None)),
             (ast::ExprKind::Ident(f), [a]) if f.name == "Symbol" => {
-                Some(KnownSymbol::Own(d, Some(literal_text(a)?)))
+                Some(KnownSymbol::Own(d, Some(self.description(g.module, a)?)))
             }
             (ast::ExprKind::Member { object, prop, .. }, [a]) if prop.name == "for" => {
                 match &object.kind {
@@ -105,6 +105,19 @@ impl Ctx<'_> {
             }
             _ => None,
         }
+    }
+
+    /// The text of a symbol's description `e` in `module`: a string literal, or a module
+    /// constant holding one (`Symbol(name)`).
+    fn description(&self, module: usize, e: &ast::Expr) -> Option<String> {
+        if let ast::ExprKind::Ident(x) = &e.kind {
+            let Some(Item::Def(c)) = self.lookup_item(module, &x.name) else {
+                return None;
+            };
+            let g = self.global(c).filter(|g| !g.mutable)?;
+            return literal_text(g.src.init?);
+        }
+        literal_text(e)
     }
 
     /// The initializer of module constant `d` when it is `Symbol()`, `Symbol("d")` or
@@ -213,6 +226,9 @@ impl Ctx<'_> {
                 .unwrap_or(module),
             _ => module,
         };
+        if let Some(key) = self.enum_key(module, inner) {
+            return Ok(key);
+        }
         let d = match self.lookup_item(module, inner) {
             Some(Item::Def(d)) if matches!(self.info[d.0 as usize], DefInfo::Global(_)) => d,
             _ => return Err(inner.to_string()),
@@ -240,10 +256,10 @@ impl Ctx<'_> {
     pub(crate) fn bad_key(&mut self, name: &str, inner: &str, span: Span) -> String {
         self.error(
             Diagnostic::error(
-                format!("`{name}` is not a member name the compiler knows: `{inner}` must be a module constant holding a symbol or a string"),
+                format!("`{name}` is not a member name the compiler knows: `{inner}` must be a module constant holding a symbol or a string, or an enum member"),
                 span,
             )
-            .with_note("Velt objects have fixed fields: a computed key names a well-known symbol (`[Symbol.iterator]`), or a module constant initialized with `Symbol(\"...\")`, `Symbol.for(\"...\")` or a string literal")
+            .with_note("Velt objects have fixed fields: a computed key names a well-known symbol (`[Symbol.iterator]`), a module constant initialized with `Symbol(\"...\")` (or a string constant as the description), `Symbol.for(\"...\")` or a string literal, or an enum member (`[Flags.SKIP]`)")
             .with_note("for keys only known at run time, use a `Map` or a `Record<string, V>`"),
         );
         name.to_string()

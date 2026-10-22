@@ -72,6 +72,13 @@ fn overridden_methods(cx: &mut Ctx, adts: &[DefId]) -> Overridden {
                     cx.generic_overrides.push((d, key));
                 }
                 Some(origin) => {
+                    // A getter-only override shadows the base's setter too (JS replaces the
+                    // whole property), so that setter becomes virtual.
+                    if let Some(set_key) = shadowed_setter(cx, d, m) {
+                        if let Some(o) = introducer(cx, d, &set_key) {
+                            out.insert((o, set_key));
+                        }
+                    }
                     out.insert((origin, key));
                 }
                 None => cx.err(
@@ -172,6 +179,7 @@ fn layout_vtable(cx: &mut Ctx, d: DefId, overridden: &Overridden) {
         },
     };
     own_methods(cx, d, overridden, &mut vt);
+    getter_only_overrides(cx, d, &mut vt);
     // Interface default methods this class introduces and a subclass overrides.
     let self_args: Vec<TyId> = (0..n as u32).map(|i| cx.ty.param(i)).collect();
     // A range, not a scan: every class would otherwise walk every overridden method.
@@ -241,6 +249,90 @@ fn own_methods(cx: &mut Ctx, d: DefId, overridden: &Overridden, vt: &mut Vtable)
             vt.push(key, mref.def);
         }
     }
+}
+
+/// The setter key `set:name` when method `m` of class `d` is a getter and `d` declares no
+/// setter of that name: overriding the getter then replaces the base's setter as well.
+fn shadowed_setter(cx: &Ctx, d: DefId, m: &ast::Method) -> Option<String> {
+    let a = cx.adt(d)?;
+    let decl = a.decl?;
+    let name = &m.decl.sig.name;
+    let own_setter = decl
+        .methods
+        .iter()
+        .any(|s| s.is_setter && !s.is_static && s.decl.sig.name.name == name.name);
+    (m.is_getter && !m.is_static && !own_setter).then(|| cx.method_key(a.module, name, true))
+}
+
+/// For every getter `d` overrides without declaring the setter its base has, a setter of `d`
+/// that throws Node's `TypeError` (in JS the getter-only accessor replaces the whole
+/// property), registered as `d`'s own method and in the base setter's vtable slot.
+fn getter_only_overrides(cx: &mut Ctx, d: DefId, vt: &mut Vtable) {
+    let a = cx.adt(d).expect("ICE: adt");
+    let (decl, base_ty, n) = (a.decl.expect("ICE: adt decl"), a.base, a.generics.len());
+    let Some((b, bargs)) = base_ty.and_then(|b| cx.class_of(b)) else {
+        return;
+    };
+    let self_args: Vec<TyId> = (0..n as u32).map(|i| cx.ty.param(i)).collect();
+    let self_ty = cx.ty.intern(crate::hir::TyKind::Adt(d, self_args));
+    for m in decl.methods.iter().filter(|m| m.is_override) {
+        hidden_getter(cx, d, (b, &bargs), m);
+        let Some(key) = shadowed_setter(cx, d, m) else {
+            continue;
+        };
+        let Some(f) = lookup_method(cx, b, &bargs, &key).filter(|f| !f.is_static()) else {
+            continue;
+        };
+        let Some(pty) = cx.fn_info(f.def()).params.first().map(|p| p.ty) else {
+            continue;
+        };
+        let ty = cx.subst(pty, &f.owner_args());
+        let name = &m.decl.sig.name.name;
+        let def = super::getters::getter_only_setter(cx, d, self_ty, name, ty);
+        cx.getter_only_setters.insert(def);
+        let r = MethodRef {
+            def,
+            is_static: false,
+        };
+        cx.adt_mut(d).methods.insert(key.clone(), r);
+        if let Some(&slot) = vt.slots.get(&key) {
+            vt.entries[slot as usize] = def;
+        }
+    }
+}
+
+/// An error when method `m` of class `d` overrides only the setter of a `get`/`set` pair of
+/// its base `b`: in JavaScript the setter-only accessor replaces the whole property, so reads
+/// give `undefined`, which the getter's type can't hold.
+fn hidden_getter(cx: &mut Ctx, d: DefId, (b, bargs): (DefId, &[TyId]), m: &ast::Method) {
+    let Some(a) = cx.adt(d) else { return };
+    let (Some(decl), module) = (a.decl, a.module) else {
+        return;
+    };
+    let name = &m.decl.sig.name;
+    let own_getter = decl
+        .methods
+        .iter()
+        .any(|g| g.is_getter && !g.is_static && g.decl.sig.name.name == name.name);
+    if !m.is_setter || m.is_static || own_getter {
+        return;
+    }
+    let key = cx.method_key(module, name, false);
+    let inherited = lookup_method(cx, b, bargs, &key)
+        .filter(|f| matches!(f, Found::Class { .. }) && !f.is_static())
+        .is_some_and(|f| cx.fn_info(f.def()).is_getter);
+    if !inherited {
+        return;
+    }
+    let n = &name.name;
+    cx.error(
+        Diagnostic::error(
+            format!("`set {n}` overrides only the setter of the base class's `get {n}`/`set {n}` pair"),
+            name.span,
+        )
+        .with_note("in JavaScript a setter-only accessor replaces the whole property, so reading it would give `undefined`")
+        .with_note(format!("override the getter too (`override get {n}()`)")),
+    );
 }
 
 /// Vtable methods have a fixed ABI (no ownership inference).
@@ -372,7 +464,7 @@ fn check_override_sig(cx: &mut Ctx, m: MethodRef, base: &Found, name: &velt_synt
         false => mr,
     };
     let ret_ok = super::ret_infer::override_ret(cx, (m.def, base.def()), &args, (mr, br), at);
-    if mp != bp || !ret_ok || mg != bg {
+    if !cx.same_tys(&mp, &bp) || !ret_ok || mg != bg {
         cx.err(message, name.span);
     }
 }

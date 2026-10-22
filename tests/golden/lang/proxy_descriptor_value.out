@@ -1,0 +1,13 @@
+{
+  value: undefined,
+  writable: false,
+  enumerable: true,
+  configurable: true
+}
+true
+{
+  value: undefined,
+  writable: false,
+  enumerable: false,
+  configurable: true
+}

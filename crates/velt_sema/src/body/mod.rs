@@ -457,12 +457,19 @@ pub(crate) struct FnCx<'a, 'm> {
     /// Hidden temporaries of the call being checked, evaluated before it (`spread_args`): the
     /// call's expression is a block with these first (`FnCx::expr`).
     pub call_temps: Vec<hir::Stmt>,
+    /// The tuple places of an assignment target `p![i]` / `(p as T)[i]` that writes in place
+    /// (`expr/assign_paths.rs`), outermost last: checked again, in order, after a right-hand
+    /// side with effects.
+    pub held_recheck: Vec<expr::assign_paths::HeldRecheck>,
     /// The span of the call being checked when its function or receiver has effects
     /// (`getf()(...t)`): a spread's hidden temporary would run before it (`spread_args`).
     pub callee_effects: Option<Span>,
     /// The span of the callback arrow of a timer call (`setTimeout(() => …, ms)`) that is not
     /// `async`: it is checked as an async arrow (`expr/timer_task.rs`).
     pub void_task: Option<Span>,
+    /// An arrow whose rest parameter is checked as an ordinary last parameter holding the
+    /// packed arguments (`expr/rest_shapes.rs`).
+    pub packed_rest: Option<Span>,
     /// A timer's callback that is a function value, not an arrow (`expr/callback.rs`).
     pub task_callback: Option<Span>,
     /// The handler arrow of a server call (`serve`) that is not `async`: checked as an async
@@ -493,6 +500,11 @@ pub(crate) struct FnCx<'a, 'm> {
     /// The call about to be checked is a weak operation of the prelude's `WeakMap`, `WeakSet`
     /// or `WeakRef`: its first argument is a weak key (`dynamic.rs` `weak_key_coerce`).
     pub weak_key_args: bool,
+    /// Checking the `Object.keys(x)` of a plain value inside the typed proxy hooks (`proxy.rs`).
+    pub proxy_keys_inner: bool,
+    /// The explicit type arguments of the call about to be checked (at the first span): the
+    /// slot each fills and its span, where a type bound it breaks is reported (`tsc` TS2344).
+    pub explicit_type_spans: Option<(Span, Vec<(usize, Span)>)>,
     /// Where a value is given for an optional parameter (or one with a default) or an optional
     /// field: an `undefined` there is a limit of this phase of #930, not a type error
     /// (`expr/lit.rs` `optional_slot_error`).
@@ -543,8 +555,10 @@ impl<'a, 'm> FnCx<'a, 'm> {
             std_callback: None,
             literal_slot: None,
             call_temps: vec![],
+            held_recheck: Vec::new(),
             callee_effects: None,
             void_task: None,
+            packed_rest: None,
             task_callback: None,
             thread_task: None,
             thread_callback: None,
@@ -556,6 +570,8 @@ impl<'a, 'm> FnCx<'a, 'm> {
             immediate_hint: None,
             collect_iterable_args: false,
             weak_key_args: false,
+            proxy_keys_inner: false,
+            explicit_type_spans: None,
             optional_slots: vec![],
             refused_reads: vec![],
             raw_read: None,

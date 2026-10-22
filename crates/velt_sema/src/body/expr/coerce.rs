@@ -50,12 +50,49 @@ impl FnCx<'_, '_> {
     }
 
     fn try_coerce_value(&mut self, h: hir::Expr, exp: TyId) -> Result<hir::Expr, hir::Expr> {
+        let h = match self.try_coerce_typed(h, exp) {
+            Ok(h) => return Ok(h),
+            Err(h) => h,
+        };
+        // Types that convert as written, but for the error-set variables in them
+        // (`throws::vars`): converted as written, assuming the variables empty; when one is
+        // not, the program is checked again with the solved sets.
+        if !self.cx.fn_sites.use_vars
+            || !(self.cx.mentions_err_var(h.ty) || self.cx.mentions_err_var(exp))
+        {
+            return Err(h);
+        }
+        let (from, to) = (self.cx.plain_type(h.ty), self.cx.plain_type(exp));
+        let ty = h.ty;
+        let mut p = h;
+        p.ty = from;
+        match self.try_coerce_typed(p, to) {
+            Ok(mut c) => {
+                self.cx.assume_empty_in(ty);
+                self.cx.assume_empty_in(exp);
+                c.ty = exp;
+                Ok(c)
+            }
+            Err(mut p) => {
+                p.ty = ty;
+                Err(p)
+            }
+        }
+    }
+
+    fn try_coerce_typed(&mut self, h: hir::Expr, exp: TyId) -> Result<hir::Expr, hir::Expr> {
         let t = &self.cx.ty;
         if h.ty == exp
             || t.is_bottom(h.ty)
             || exp == t.error
             || (t.has_error(exp) && self.loosely_equal(exp, h.ty))
         {
+            return Ok(h);
+        }
+        // Types equal but for their error-set variables (`throws::vars`).
+        if self.cx.fn_sites.use_vars && self.cx.unify_err_vars(h.ty, exp) {
+            let mut h = h;
+            h.ty = exp;
             return Ok(h);
         }
         if self.cx.unfreezes(h.ty, exp) {
@@ -105,6 +142,12 @@ impl FnCx<'_, '_> {
                 args: vec![h],
             };
             return Ok(self.mk(call, exp, span));
+        }
+        if let Some(widens) = self.cx.fn_throws_differ(h.ty, exp) {
+            return match widens {
+                true => self.adapt_fn(h, exp),
+                false => Err(h),
+            };
         }
         if self.converts_by_state(h.ty, exp) {
             return self.coerce_hidden_nothings(h, exp);
@@ -220,6 +263,10 @@ impl FnCx<'_, '_> {
             // parameter be left out, so a wrapper calls it without the argument.
             return self.adapt_fn(h, exp);
         }
+        let h = match self.deferred_convert(h, exp) {
+            Ok(h) => return Ok(h),
+            Err(h) => h,
+        };
         let h = match self.copy_object(h, exp) {
             Ok(h) => return Ok(h),
             Err(h) => h,
@@ -245,14 +292,17 @@ impl FnCx<'_, '_> {
                     params: p,
                     ret: r,
                     throws: t,
+                    rest: rest_a,
                 },
                 TyKind::FnPtr {
                     params: q,
                     ret: s,
                     throws: u,
+                    rest: rest_b,
                 },
             ) => {
                 p.len() == q.len()
+                    && rest_a == rest_b
                     && p.iter().zip(&q).all(|(x, y)| self.loosely_equal(*x, *y))
                     && self.loosely_equal(r, s)
                     && self.loosely_equal(t, u)
@@ -303,11 +353,24 @@ impl FnCx<'_, '_> {
             if have == iface && self.cx.dynamic(h.ty).is_none() {
                 return self.adapt_iface(h, exp, iface, &from, args);
             }
+            // An interface value where an interface whose members it has is expected (a part
+            // of an intersection, a `Pick` of it, an interface it extends): the same object
+            // (`crate::synth_ifaces`).
+            if self.cx.dynamic(h.ty).is_none()
+                && self.cx.dynamic(exp).is_none()
+                && self.cx.iface_upcast((have, &from), (iface, args))
+            {
+                let mut h = h;
+                self.force_move(&mut h);
+                let span = h.span;
+                return Ok(self.mk(H::Upcast(Box::new(h)), exp, span));
+            }
         }
         let Some((index, iargs, imp_ty)) = self.cx.find_impl(h.ty, iface) else {
             return Err(h);
         };
-        if iargs != args {
+        // Arguments that differ only in their error-set variables are one (`throws::vars`).
+        if iargs != args && !self.cx.unify_err_var_lists(&iargs, args) {
             // A value implementing `I<A>`: an `I<A>` first, then adapted.
             if !self.iface_adapts(iface, &iargs, args) {
                 return Err(h);
@@ -354,6 +417,11 @@ impl FnCx<'_, '_> {
     }
 
     pub fn report_mismatch(&mut self, expected: TyId, found: &hir::Expr) {
+        // The comparisons don't see variables in the fields of anonymous object types yet
+        // (`throws::vars`): such a mismatch may come from them.
+        if self.cx.anon_vars_may_mismatch(expected, found.ty) {
+            self.cx.fn_sites.set_doubt();
+        }
         if self.cx.dynamic(found.ty) == Some(crate::any::Dynamic::Unknown) {
             return self.unknown_use_error(found.span);
         }
@@ -367,6 +435,17 @@ impl FnCx<'_, '_> {
         }
         let e = self.cx.display(expected);
         let f = self.cx.display(found.ty);
+        if self.throws_where_none_may(expected, found, &e, &f) {
+            return;
+        }
+        if let Some(note) = self.field_throws_note(expected, found.ty) {
+            self.cx.error(
+                Diagnostic::error("mismatched types", found.span)
+                    .with_note(format!("expected {e}, found {f}"))
+                    .with_note(note),
+            );
+            return;
+        }
         if self.cx.unfreezes(found.ty, expected) {
             self.cx.error(
                 Diagnostic::error(
@@ -447,6 +526,9 @@ impl FnCx<'_, '_> {
         if let Some(note) = self.class_to_data_note(expected, found) {
             d = d.with_note(format!("`{e}` has only fields, so it is a data type, like `type {e} = {{ … }}`: a class instance is shared by reference and is not one"))
                 .with_note(note);
+        }
+        if let Some(note) = self.cx.object_part_note(expected, found.ty) {
+            d = d.with_note(note);
         }
         if self.only_optional_differs(expected, found.ty) {
             d = d.with_note(
@@ -573,11 +655,13 @@ impl FnCx<'_, '_> {
                 params: fp,
                 ret: fr,
                 throws: ft,
+                rest: false,
             },
             TyKind::FnPtr {
                 params: tp,
                 ret: tr,
                 throws: tt,
+                rest: false,
             },
         ) = (self.cx.ty.kind(from), self.cx.ty.kind(to))
         else {

@@ -6,4 +6,4 @@ object_function.vlt:13:19: error: mismatched types
 object_function.vlt:14:23: error: mismatched types
 object_function.vlt:16:15: error: property `foo` does not exist on type `Function`
 object_function.vlt:18:22: error: an `unknown` value must be narrowed before use
-object_function.vlt:23:1: error: the type `f64` does not implement `object`
+object_function.vlt:23:13: error: the type `f64` does not implement `object`

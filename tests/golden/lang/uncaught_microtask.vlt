@@ -1,0 +1,8 @@
+// An error a `queueMicrotask` callback throws ends the process at the throw, as in Node: the
+// microtasks, `then` callbacks and timers queued after it don't run (#1154).
+queueMicrotask(() => {
+  throw new TypeError("micro failed");
+});
+queueMicrotask(() => console.log("second micro"));
+setTimeout(() => console.log("timer"), 1);
+Promise.resolve().then(() => console.log("then"));

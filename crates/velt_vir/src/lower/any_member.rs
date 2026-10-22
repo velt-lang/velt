@@ -11,6 +11,7 @@
 //! | 8 | `AnyApply`: `(data, argv: *any, argc: u64, out: *any) -> u8` |
 //! | 9, 10 | `AnySet`, `AnySetIndex` (any_set.rs; only in a program that writes through `any`) |
 //! | 11 | `AnyHas` (any_has.rs; only in a program that tests `key in x` on an `any`) |
+//! | 15 | `AnyDelete` (any_delete.rs; only in a program that deletes through `any`) |
 //!
 //! The arguments `argv[0..argc]` are owned by the slot (converted to the parameter types or
 //! dropped). The status is `ST_OK` (`*out` written), `ST_UNSUPPORTED` (a member this phase
@@ -67,6 +68,9 @@ impl Cx<'_> {
         if self.boxing.any_has {
             slots.push((super::any_has::SLOT_HAS, Glue::AnyHas));
         }
+        if self.boxing.any_delete {
+            slots.push((super::any_delete::SLOT_DELETE, Glue::AnyDelete));
+        }
         slots
             .into_iter()
             .map(|(s, g)| (s, Const::Func(self.func(Work::Glue(g, ty)))))
@@ -96,7 +100,20 @@ impl Cx<'_> {
             | TyKind::Array(_)
             | TyKind::Tuple(_)
             | TyKind::FnPtr { .. } => true,
-            TyKind::Adt(d, _) => matches!(self.hir.def(*d), hir::Def::Adt(_)),
+            TyKind::Adt(d, args) => match self.hir.def(*d) {
+                hir::Def::Adt(_) => true,
+                // A union whose members are boxable (`string | symbol`, an element of the keys
+                // `Reflect.ownKeys` lists): boxed as the member it holds.
+                hir::Def::Enum(e) => {
+                    e.is_union
+                        && args.is_empty()
+                        && e.variants.iter().all(|v| match v.payload.as_slice() {
+                            [p] => !self.is_dynamic(*p) && self.any_boxable_plain(*p),
+                            _ => false,
+                        })
+                }
+                _ => false,
+            },
             _ => false,
         }
     }
@@ -145,6 +162,15 @@ impl FnLower<'_, '_> {
                 self.any_nothing_into(n, out);
                 self.goto(done);
                 self.switch_to(done);
+            }
+            TyKind::Adt(d, _) if matches!(self.cx.hir.def(d), hir::Def::Enum(e) if e.is_union) => {
+                // A union (`Cx::any_boxable`): the member it holds.
+                let vt = self.cx.ty(t);
+                let p = Place::local(self.copy_to_temp(v, vt));
+                self.for_each_variant(&p, t, |lw, _, parts| match parts.as_slice() {
+                    [(pp, pt)] => lw.any_box_into(Operand::Copy(pp.clone()), *pt, out),
+                    _ => ice(format_args!("a union member without one payload boxed")),
+                });
             }
             _ => self.any_box_raw(v, t, out),
         }

@@ -1,0 +1,11 @@
+// `pop` on a proxy whose `set` trap doesn't write the shorter `length` (#823): Node leaves the
+// deleted element as a hole, which Velt's arrays cannot have yet.
+const raw: number[] = [1, 2, 3];
+const p: any = new Proxy(raw, {
+  set(t: any, k: string | symbol, v: any): boolean {
+    console.log("set", String(k), v);
+    return true;
+  },
+});
+console.log(p.pop());
+console.log("not reached", raw);

@@ -1,0 +1,7 @@
+// `Reflect.set(a, i, v)` past the end of an array outside an array method on a proxy (#924):
+// Node leaves holes before the element, which Velt's arrays cannot have yet; the element right
+// after the last is appended.
+const a: number[] = [1, 2];
+console.log(Reflect.set(a, "2", 3), Reflect.set(a, 0, 9), a);
+Reflect.set(a, "5", 7);
+console.log("not reached", a);

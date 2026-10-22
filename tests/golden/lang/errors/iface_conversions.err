@@ -1,0 +1,6 @@
+iface_conversions.vlt:8:11: error: no value has type `F & M`: member `f` is a field in `F` and a method in `M`
+  = note: a value of an intersection has every part's members at once
+
+iface_conversions.vlt:19:14: error: mismatched types
+  = note: expected B, found A
+  = note: `B` has only fields, so it is an object type with a fixed layout, not an interface: the `A` value would be copied into a new object, where TypeScript keeps the same one; keep the type `A`, or give `B` a method

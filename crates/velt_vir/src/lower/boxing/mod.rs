@@ -47,6 +47,9 @@ pub(super) struct Boxing {
     /// The program tests `key in x` on an `any` (`AnyHas`): the `any` tables have the `has`
     /// slot (any_has.rs).
     pub(super) any_has: bool,
+    /// The prelude deletes a property of an `any` that is not a proxy (`AnyDelete`): the `any`
+    /// tables have the delete slot (any_delete.rs).
+    pub(super) any_delete: bool,
     /// The program lists the keys of an `any` (`AnyKeys`): the `any` tables have the keys slot
     /// (any_keys.rs).
     pub(super) any_keys: bool,
@@ -154,6 +157,9 @@ pub(super) struct Facts {
     identity: FxHashSet<TyId>,
     /// `any` values compared by identity (`Boxing::any_identity`).
     any_identity: bool,
+    /// Interface upcasts made, `(from, to)` (upcast.rs): `from` values are compared by
+    /// identity when `to` values are.
+    upcasts: FxHashSet<(TyId, TyId)>,
     /// Value types a callee may change in place while it borrows them out of an array other
     /// references reach (stabilize.rs): counted, so the borrow can share the value itself.
     identity_borrows: FxHashSet<TyId>,
@@ -165,6 +171,8 @@ pub(super) struct Facts {
     any_set: bool,
     /// `key in x` is tested on an `any`.
     any_has: bool,
+    /// A property of an `any` is deleted.
+    any_delete: bool,
     /// `Object.keys` of an `any` is listed.
     any_keys: bool,
     /// A dynamic value is written as JSON.
@@ -215,6 +223,11 @@ impl Cx<'_> {
         self.facts.identity_borrows.insert(t);
     }
 
+    /// Record an interface upcast of a `from` value to `to` (upcast.rs).
+    pub(super) fn note_upcast(&mut self, from: TyId, to: TyId) {
+        self.facts.upcasts.insert((from, to));
+    }
+
     /// Record that values of the interface `iface` are converted to `any` / `unknown`.
     pub(super) fn note_dyn_to_any(&mut self, iface: DefId) {
         self.facts.dyn_to_any.insert(iface);
@@ -238,6 +251,11 @@ impl Cx<'_> {
     /// Record that `key in x` is tested on an `any`.
     pub(super) fn note_any_has(&mut self) {
         self.facts.any_has = true;
+    }
+
+    /// Record that a property of an `any` is deleted.
+    pub(super) fn note_any_delete(&mut self) {
+        self.facts.any_delete = true;
     }
 
     /// Record that `Object.keys` of an `any` is listed.
@@ -319,6 +337,7 @@ impl Cx<'_> {
         next.any_identity |= self.facts.any_identity;
         next.any_writes |= self.facts.any_set;
         next.any_has |= self.facts.any_has;
+        next.any_delete |= self.facts.any_delete;
         next.any_keys |= self.facts.any_keys;
         next.any_json |= self.facts.any_json;
         next.dyn_to_any
@@ -328,6 +347,19 @@ impl Cx<'_> {
             .filter(|t| matches!(self.kind(*t), TyKind::Dyn(..)))
             .collect();
         next.identity_dyns.extend(dyns);
+        loop {
+            let more: Vec<TyId> = self
+                .facts
+                .upcasts
+                .iter()
+                .filter(|(f, t)| next.identity_dyns.contains(t) && !next.identity_dyns.contains(f))
+                .map(|&(f, _)| f)
+                .collect();
+            if more.is_empty() {
+                break;
+            }
+            next.identity_dyns.extend(more);
+        }
         next.boxes
             .extend(self.facts.identity_borrows.iter().copied());
         self.close_proxies(&mut next);

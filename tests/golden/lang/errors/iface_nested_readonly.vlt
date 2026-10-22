@@ -1,0 +1,27 @@
+// A readonly field stays readonly to user code: assigning it through an interface is an error.
+// A part of it changed through the interface is written back through the field, which an
+// object literal that only has a getter for it cannot take.
+interface Pair {
+  readonly p: [number, string];
+  name(): string;
+}
+
+function rename(x: Pair): void {
+  x.p[1] = "renamed";
+}
+
+function replace(x: Pair): void {
+  x.p = [2, "b"];
+}
+
+function main() {
+  const lit: Pair = {
+    get p(): [number, string] {
+      return [1, "a"];
+    },
+    name: () => "lit",
+  };
+  rename(lit);
+  replace(lit);
+  console.log(lit.p[1]);
+}

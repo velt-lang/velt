@@ -36,6 +36,27 @@ impl Ctx<'_> {
         parts: &[ast::TypeExpr],
         env: &TyEnv,
     ) -> TyId {
+        // An interface made from the parts names its type parameters as written here.
+        let names = match self.display_params.len() < env.params.len() {
+            true => Some(std::mem::replace(
+                &mut self.display_params,
+                env.params.clone(),
+            )),
+            false => None,
+        };
+        let r = self.resolve_intersection_in(t, parts, env);
+        if let Some(names) = names {
+            self.display_params = names;
+        }
+        r
+    }
+
+    fn resolve_intersection_in(
+        &mut self,
+        t: &ast::TypeExpr,
+        parts: &[ast::TypeExpr],
+        env: &TyEnv,
+    ) -> TyId {
         // In an alias expanded at known arguments, the parts are those arguments' types. At
         // arguments that are still type parameters (`Signal<{ value: V }>` in a generic
         // function) the parts stay in the alias's parameters, which the alias substitutes once:
@@ -131,7 +152,9 @@ impl Ctx<'_> {
     /// fields may mention type parameters): it can be reduced to an object type now.
     pub(crate) fn reducible_now(&self, t: TyId) -> bool {
         match self.ty.kind(t) {
-            TyKind::Op(TyOp::Intersect, parts) => !parts.iter().any(|&p| self.deferred_part(p)),
+            TyKind::Op(TyOp::Intersect | TyOp::Spread, parts) => {
+                !parts.iter().any(|&p| self.deferred_part(p))
+            }
             _ => false,
         }
     }
@@ -227,10 +250,12 @@ impl Ctx<'_> {
                 params,
                 ret,
                 throws,
+                rest,
             } => TyKind::FnPtr {
                 params: params.iter().map(|a| m(self, *a)).collect(),
                 ret: m(self, ret),
                 throws: m(self, throws),
+                rest,
             },
             _ => return t,
         };
@@ -332,6 +357,7 @@ impl Ctx<'_> {
                 return self.ty.error;
             }
         }
+        self.synth_ifaces.span = span;
         let mut acc = operands[0].0;
         for &(b, _) in &operands[1..] {
             match self.meet(acc, b, module, 0) {
@@ -339,12 +365,18 @@ impl Ctx<'_> {
                 Err(why) => {
                     let shown: Vec<String> =
                         operands.iter().map(|(o, _)| self.display(*o)).collect();
+                    let what = match operands.iter().any(|(o, _)| self.is_method_iface(*o)) {
+                        true => "members",
+                        false => "fields",
+                    };
                     self.error(
                         Diagnostic::error(
                             format!("no value has type `{}`: {why}", shown.join(" & ")),
                             span,
                         )
-                        .with_note("a value of an intersection has every part's fields at once"),
+                        .with_note(format!(
+                            "a value of an intersection has every part's {what} at once"
+                        )),
                     );
                     return self.ty.error;
                 }
@@ -391,6 +423,16 @@ impl Ctx<'_> {
         names: &mut Vec<Option<String>>,
     ) -> Option<TyId> {
         use crate::any::Dynamic;
+        // `X & X` is `X` (`T & object` at `T = object`).
+        let mut i = 0;
+        while i < operands.len() {
+            if operands[..i].iter().any(|&(o, _)| o == operands[i].0) {
+                operands.remove(i);
+                names.remove(i);
+            } else {
+                i += 1;
+            }
+        }
         if let Some(&(any, _)) = operands
             .iter()
             .find(|(o, _)| matches!(self.dynamic(*o), Some(Dynamic::Any)))
@@ -402,6 +444,16 @@ impl Ctx<'_> {
         // primitive `T`) has no value, `never`.
         let never = self.ty.never;
         if operands.iter().any(|&(o, _)| o == never) {
+            return Some(never);
+        }
+        // `undefined` or `null` alone (an option of `never`, as an optional field of a mapped
+        // type reads) with a part that is not one has no value either: `undefined & string`.
+        let nothing_alone = |cx: &Self, o: TyId| cx.ty.opt_payload(o) == Some(never);
+        if operands.iter().any(|&(o, _)| nothing_alone(self, o))
+            && operands
+                .iter()
+                .any(|&(o, _)| self.ty.opt_payload(o).is_none())
+        {
             return Some(never);
         }
         if operands
@@ -512,7 +564,9 @@ impl Ctx<'_> {
                 .into_iter()
                 .all(|m| self.intersectable(m, span, None));
         }
-        if self.is_object_type(t) {
+        // An interface with methods makes an interface with every part's members
+        // (`crate::synth_ifaces`).
+        if self.is_object_type(t) || self.is_method_iface(t) {
             return true;
         }
         let shown = written.map_or_else(|| self.display(t), str::to_string);
@@ -595,6 +649,9 @@ impl Ctx<'_> {
             if let Some(members) = self.union_members(u) {
                 return self.meet_union(&members, other, swap, module, depth);
             }
+        }
+        if let Some(r) = self.meet_iface(a, b, module, self.synth_ifaces.span) {
+            return r;
         }
         if self.is_object_type(a) && self.is_object_type(b) {
             return self.merge_objects(a, b, module, depth);

@@ -50,6 +50,17 @@ impl Cx<'_> {
             TyKind::Op(velt_sema::hir::TyOp::Intersect, args) => {
                 format!("op&<{}>", list(args, stack))
             }
+            // Sema replaces every error-set variable before lowering.
+            TyKind::Op(velt_sema::hir::TyOp::ErrSite(n), _) => format!("errsite{n}"),
+            TyKind::Op(velt_sema::hir::TyOp::Spread, args) => {
+                format!("op...<{}>", list(args, stack))
+            }
+            TyKind::Op(velt_sema::hir::TyOp::Convert(c), args) => {
+                format!("opas{c}<{}>", list(args, stack))
+            }
+            TyKind::Op(velt_sema::hir::TyOp::Inline(i), args) => {
+                format!("opi{i}<{}>", list(args, stack))
+            }
             // Anonymous object types are structural: one shape can be several defs (a generic
             // def's instance, sema's concrete def, Cx::canon), and its symbols must not depend
             // on which one a program happens to use.
@@ -135,8 +146,10 @@ impl Cx<'_> {
                 params,
                 ret,
                 throws,
+                rest,
             } => format!(
-                "fn({}) => {} throws {}",
+                "fn{}({}) => {} throws {}",
+                if *rest { "..." } else { "" },
                 list(params, stack),
                 self.type_key_in(*ret, env, stack),
                 self.type_key_in(*throws, env, stack)

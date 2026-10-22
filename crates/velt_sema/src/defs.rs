@@ -139,6 +139,11 @@ pub(crate) enum ThrowSrc {
     /// until resolved ([`crate::throws`]), so classes whose initializers construct each other
     /// in a cycle get the whole cycle's errors whatever order they are checked in.
     Defaults(DefId, Vec<TyId>, Span),
+    /// A call through a function value of this type: what is stored into the function types
+    /// written without `throws` it may come from (`throws::fn_types`), beyond what the type
+    /// says (that is a [`ThrowSrc::Direct`] of its own); with the site the value is read from,
+    /// when known, only what is stored into that one.
+    Indirect(TyId, Option<Span>, Span),
 }
 
 impl ThrowSrc {
@@ -147,6 +152,7 @@ impl ThrowSrc {
             ThrowSrc::Direct(_, s)
             | ThrowSrc::Call(_, _, s)
             | ThrowSrc::Defaults(_, _, s)
+            | ThrowSrc::Indirect(_, _, s)
             | ThrowSrc::Slot { span: s, .. } => *s,
         }
     }
@@ -156,6 +162,7 @@ impl ThrowSrc {
     pub fn used_at(&self, span: Span, mut f: impl FnMut(TyId) -> TyId) -> ThrowSrc {
         match self {
             ThrowSrc::Direct(t, _) => ThrowSrc::Direct(f(*t), span),
+            ThrowSrc::Indirect(t, site, _) => ThrowSrc::Indirect(f(*t), *site, span),
             ThrowSrc::Call(d, args, _) => {
                 ThrowSrc::Call(*d, args.iter().map(|&t| f(t)).collect(), span)
             }
@@ -458,6 +465,10 @@ pub(crate) struct AliasInfo<'m> {
     /// Expanded at least once; an alias never used is checked on its own at the end
     /// ([`crate::resolve::check_unused_aliases`]).
     pub used: bool,
+    /// Declared in a generic function's body: that function's type parameters (and those of
+    /// the functions and class around it), which the alias may name. They are its first
+    /// parameters, before its own, and every use passes them on (`Ctx::item_type`).
+    pub outer: Vec<String>,
 }
 
 /// An `extend<G> Target { methods }` block.

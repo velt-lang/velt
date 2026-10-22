@@ -23,12 +23,14 @@ mod abi;
 mod adt;
 mod any;
 mod any_checks;
+mod any_delete;
 mod any_eq;
 mod any_glue;
 mod any_has;
 mod any_keys;
 mod any_member;
 mod any_proxy;
+mod any_rest;
 mod any_set;
 mod any_set_site;
 mod append;
@@ -57,6 +59,7 @@ mod for_of;
 mod for_of_shared;
 mod foreign;
 mod frame_envs;
+mod frozen;
 mod glue;
 mod hooks;
 mod intrinsics;
@@ -85,6 +88,7 @@ mod same;
 mod sequence;
 mod share;
 mod simd;
+mod spread_object;
 mod srcloc;
 mod stabilize;
 mod stmt;
@@ -96,6 +100,7 @@ mod track_caller;
 mod transfer;
 mod truthy;
 mod types;
+mod upcast;
 mod weak;
 mod weak_object;
 mod widen;
@@ -237,6 +242,11 @@ enum Work {
     Oob(bool),
     /// A caller-tracking function instance (track_caller.rs) for one call site.
     Tracked(DefId, Vec<TyId>, SrcLoc),
+    /// A function instance whose params in the mask (bit `i`: `params[i]`, captures first)
+    /// borrow a value other threads read at the same time (frozen.rs), caller-tracking for
+    /// the call site when it is given, and given closure literals for some function params:
+    /// it calls their code directly (frozen.rs `KnownFn`).
+    Frozen(DefId, Vec<TyId>, u64, Option<SrcLoc>, Vec<frozen::KnownFn>),
     /// `(arr: ptr, stride: u64, align: u64)`: grow an array's buffer (amortized doubling).
     ArrayGrow,
     /// The exported `velt_main() -> i32` entry (entry.rs).
@@ -487,6 +497,22 @@ struct FnLower<'c, 'h> {
     div_zero_bbs: Vec<(Option<SrcLoc>, BlockId)>,
     /// Locals bound by reference in patterns (they hold a pointer to the matched part).
     ref_bindings: FxHashSet<LocalId>,
+    /// Locals that borrow a value other threads read at the same time: frozen params and the
+    /// bindings by reference into them (frozen.rs).
+    frozen: FxHashSet<LocalId>,
+    /// While lowering the arguments of a call to a `Work::Frozen` instance: frozen arguments
+    /// are borrowed as they are (frozen.rs).
+    frozen_args: bool,
+    /// The `BoxHold` the projection being lowered hands to the projection site lowered next
+    /// (async_fn/sync.rs `projection_base`), which takes it.
+    proj_hold: Option<async_fn::BoxHold>,
+    /// The locals this function's code may change (frozen.rs `changed_locals`), once asked.
+    changed: Option<FxHashSet<LocalId>>,
+    /// Function params of a `Work::Frozen` instance given closure literals: their code
+    /// (frozen.rs `KnownFn`).
+    known_fns: FxHashMap<LocalId, frozen::KnownFn>,
+    /// While binding a pattern into a frozen value: bindings take no shares (frozen.rs).
+    frozen_binds: bool,
     /// With debug info: where the block declaring a local ends (debug_vars.rs).
     scope_ends: FxHashMap<LocalId, SrcLoc>,
     /// Set while lowering the body of an async function (a poll function).

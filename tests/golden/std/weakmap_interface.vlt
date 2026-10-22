@@ -1,0 +1,129 @@
+// check: no leaks
+// An interface value as a `WeakMap` key, a `WeakSet` member and a `WeakRef` target (sigx's
+// component lifecycle keeps its hooks in a `WeakMap<ComponentInstance, Hooks>`): the key is
+// the object behind the interface value, whichever interface or type it is used through. The
+// hooks refer back to their instance, which the map still frees with it.
+interface ComponentInstance {
+  name: string;
+  render(): string;
+}
+
+interface Named {
+  label(): string;
+}
+
+class Button implements ComponentInstance, Named {
+  name: string;
+  constructor(name: string) {
+    this.name = name;
+  }
+  render(): string {
+    return `<button>${this.name}</button>`;
+  }
+  label(): string {
+    return this.name;
+  }
+}
+
+class Label implements ComponentInstance {
+  name = "label";
+  render(): string {
+    return "<span>label</span>";
+  }
+}
+
+type Hooks = { mounted: (() => string)[] };
+
+// A generic interface, as sigx's `ComponentSetupContext<P, ...>`.
+interface Ctx<P> {
+  props: P;
+  emit(e: string): string;
+}
+
+class SetupCtx<P> implements Ctx<P> {
+  props: P;
+  constructor(props: P) {
+    this.props = props;
+  }
+  emit(e: string): string {
+    return `emit ${e}`;
+  }
+}
+
+const hooks = new WeakMap<ComponentInstance, Hooks>();
+
+function onMounted(i: ComponentInstance, fn: () => string): void {
+  let h = hooks.get(i);
+  if (h === undefined) {
+    h = { mounted: [] };
+    hooks.set(i, h);
+  }
+  h.mounted.push(fn);
+}
+
+function mount(i: ComponentInstance): string[] {
+  const h = hooks.get(i);
+  const out: string[] = [];
+  if (h !== undefined) {
+    for (const f of h.mounted) {
+      out.push(f());
+    }
+  }
+  return out;
+}
+
+function churn(n: number): number {
+  let total = 0;
+  for (let k = 0; k < n; k++) {
+    const b: ComponentInstance = new Button(`b${k}`);
+    const render = () => b.render();
+    onMounted(b, render);
+    total += mount(b).length;
+  }
+  return total;
+}
+
+function main(): void {
+  const a: ComponentInstance = new Button("ok");
+  const l: ComponentInstance = new Label();
+  const first = () => `mounted ${a.name}`;
+  const second = () => a.render();
+  const third = () => l.render();
+  onMounted(a, first);
+  onMounted(a, second);
+  onMounted(l, third);
+  console.log(mount(a), mount(l));
+  console.log(hooks.has(a), hooks.has(new Button("ok")), hooks.has(l));
+
+  // The same object through another interface, `object` and its class is the same key.
+  const btn = new Button("same");
+  const asInst: ComponentInstance = btn;
+  const asNamed: Named = btn;
+  const seen = new WeakSet<Named>();
+  seen.add(asNamed);
+  const objects = new WeakMap<object, number>();
+  objects.set(btn, 1);
+  hooks.set(asInst, { mounted: [() => "via instance"] });
+  console.log(seen.has(btn), seen.has(asNamed), objects.get(asInst as object), asNamed.label());
+  console.log(mount(btn as ComponentInstance));
+
+  console.log(hooks.delete(a), hooks.has(a), hooks.get(a) === undefined, hooks.delete(a));
+
+  const r = new WeakRef<ComponentInstance>(l);
+  const back = r.deref();
+  console.log(back === l, back?.render());
+
+  console.log(churn(50));
+
+  const ids = new WeakMap<Ctx<any>, number>();
+  const c1: Ctx<any> = new SetupCtx<any>({ x: 1 });
+  const c2: Ctx<any> = new SetupCtx<any>("p");
+  ids.set(c1, 1);
+  ids.set(c2, 2);
+  console.log(ids.get(c1), ids.get(c2), ids.has(new SetupCtx<any>(1)), c1.emit("go"));
+
+  // An object literal behind the interface is a key too.
+  const lit: ComponentInstance = { name: "lit", render: () => "<lit>" };
+  hooks.set(lit, { mounted: [() => "literal"] });
+  console.log(mount(lit), hooks.has({ name: "lit", render: () => "<lit>" }));
+}

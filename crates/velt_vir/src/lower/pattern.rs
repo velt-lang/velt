@@ -192,7 +192,8 @@ impl FnLower<'_, '_> {
         // Parts of a counted value have other owners: moving bindings inside it take shares of
         // them (a binding of the whole value just takes it over).
         let outer = self.share_binds;
-        self.share_binds |= self.cx.counted(ty) && !matches!(pat.kind, PatKind::Binding(..));
+        self.share_binds |=
+            !self.frozen_binds && self.cx.counted(ty) && !matches!(pat.kind, PatKind::Binding(..));
         self.bind_parts(pat, place, ty, register);
         self.share_binds = outer;
     }
@@ -204,7 +205,7 @@ impl FnLower<'_, '_> {
                 if self.info[id.0 as usize].cell {
                     return self.bind_cell(*id, moving, register, place);
                 }
-                if *mode == UseMode::Borrow && self.stable_binds {
+                if *mode == UseMode::Borrow && self.stable_binds && !self.frozen_binds {
                     return self.bind_share(*id, place);
                 }
                 self.bind_local(*id, moving && register, moving, place)
@@ -404,8 +405,13 @@ impl FnLower<'_, '_> {
         }
     }
 
+    /// [`Self::drop_rest`] of an object pattern, or of a field moved out of a struct, class or
+    /// tuple (`moved_field_pat`: a tuple's elements are its fields).
     fn drop_rest_fields(&mut self, place: Place, ty: TyId, fields: &[(u32, Pat)]) {
-        let tys = self.cx.adt_field_tys(ty);
+        let tys = match self.cx.kind(ty) {
+            TyKind::Tuple(tys) => tys,
+            _ => self.cx.adt_field_tys(ty),
+        };
         for (i, fty) in tys.into_iter().enumerate() {
             let fp = self.field_place(&place, ty, i as u32);
             match fields.iter().find(|(j, _)| *j as usize == i) {

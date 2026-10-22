@@ -12,9 +12,34 @@ use crate::defs::{FnKind, ThrowSrc};
 use crate::hir::{DefId, TyId};
 
 pub(super) fn check_all(cx: &mut Ctx, fns: &[DefId], groups: &Groups) {
+    // The error-set variables (`vars`): closures created for a site's type throw into its
+    // variable; then the sets are solved, and the checks below see solved error types.
+    let vars = cx.fn_sites.use_vars && !cx.fn_sites.vars.is_empty();
+    let mut into_vars = rustc_hash::FxHashSet::default();
+    let mut solved_ok = true;
+    if vars {
+        for &d in fns {
+            if let Some(decl) = cx.fn_info(d).declared_throws {
+                let own = own_final(cx, d);
+                if cx.throw_into_vars(decl.ty, own) {
+                    into_vars.insert(d);
+                }
+            }
+        }
+        solved_ok = cx.solve_err_vars();
+        // The passes after inference see the solved error types.
+        for &d in fns {
+            let t = cx.fn_info(d).throws;
+            cx.fn_info_mut(d).throws = solved(cx, t);
+        }
+    }
     for &d in fns {
         if let Some(decl) = cx.fn_info(d).declared_throws {
+            if into_vars.contains(&d) {
+                continue;
+            }
             let own = own_final(cx, d);
+            let own = solved(cx, own);
             match cx.error_outside(decl.ty, own) {
                 Some(m) if decl.from_body => closure_too_early(cx, d, m),
                 Some(m) => clause_violation(cx, d, m, decl.ty, decl.span),
@@ -27,6 +52,7 @@ pub(super) fn check_all(cx: &mut Ctx, fns: &[DefId], groups: &Groups) {
             Some(b) => {
                 for &m in &g.members {
                     let own = member_final(cx, m);
+                    let own = solved(cx, own);
                     let allowed = super::groups::member_bound(cx, b, m);
                     if let Some(bad) = cx.error_outside(allowed, own) {
                         bound_violation(cx, m, bad, b);
@@ -44,6 +70,18 @@ pub(super) fn check_all(cx: &mut Ctx, fns: &[DefId], groups: &Groups) {
     for (d, what) in std::mem::take(&mut cx.iface_generators) {
         iface_generator(cx, d, &what);
     }
+    if vars && !(solved_ok && cx.assumptions_hold()) {
+        cx.var_seeds();
+    }
+}
+
+/// `t` with its error-set variables solved (`vars`), when the check has them.
+fn solved(cx: &mut Ctx, t: Option<TyId>) -> Option<TyId> {
+    if !cx.fn_sites.use_vars || cx.fn_sites.solved.is_empty() {
+        return t;
+    }
+    let t = t.map(|t| cx.solved_type(t));
+    cx.canon_error(t)
 }
 
 /// Generator method `d` implements interface method `what` with an inferred error type: the
@@ -93,23 +131,40 @@ fn clause_violation(cx: &mut Ctx, d: DefId, m: TyId, allowed: Option<TyId>, clau
     let mn = cx.display(m);
     let f = cx.fn_info(d);
     let d = if f.kind == FnKind::Closure {
-        let (what, fix) = match allowed {
-            Some(t) => (
-                format!("allows only `{}`", cx.display(t)),
-                format!("add `{mn}` to the function type's `throws`"),
-            ),
-            None => (
-                "does not allow throwing".to_string(),
-                format!("write the function type with `throws {mn}`"),
-            ),
-        };
         let used_as = closure_type(cx, d, allowed);
-        Diagnostic::error(
+        // A function type written without `throws` throws what is stored into it: the program
+        // is checked again with this one's errors (`fn_types`), which drops this report.
+        let site = cx.closure_site(d);
+        let matched = own_final(cx, d).is_some_and(|own| cx.seed_fn_sites(used_as, own, site));
+        let inferred = cx.ty.inferred_fns.contains(&used_as);
+        // As written: error-set variables (`vars`) allow nothing.
+        let never = cx.ty.never;
+        let allowed = allowed.map(|t| cx.plain_type(t)).filter(|t| *t != never);
+        let what = match allowed {
+            Some(t) if !inferred => format!("allows only `{}`", cx.display(t)),
+            _ => "does not allow throwing".to_string(),
+        };
+        let fix = match allowed {
+            Some(_) if !inferred => format!("add `{mn}` to the function type's `throws`"),
+            _ => format!("write the function type with `throws {mn}`"),
+        };
+        let used_as = cx.display(used_as);
+        let mut diag = Diagnostic::error(
             format!("this function throws `{mn}`, but the function type it is used as {what}"),
             at,
         )
-        .with_note(format!("it is used as `{used_as}`"))
-        .with_note(format!("catch the error inside the function, or {fix}"))
+        .with_note(format!("it is used as `{used_as}`"));
+        if matched && cx.fn_sites.is_last() {
+            diag = diag.with_note(format!(
+                "the error types of function types written without `throws` are inferred from what is stored into them; that inference hit its limit ({} checks of the program) here",
+                crate::FN_SITE_ROUNDS + 1
+            ));
+        } else if inferred || matched {
+            diag = diag.with_note(format!(
+                "the error types of function types written without `throws` are inferred from what is stored into them, which can't include `{mn}`"
+            ));
+        }
+        diag.with_note(format!("catch the error inside the function, or {fix}"))
     } else {
         let name = short_name(&f.name);
         Diagnostic::error(
@@ -122,8 +177,34 @@ fn clause_violation(cx: &mut Ctx, d: DefId, m: TyId, allowed: Option<TyId>, clau
     cx.error(d);
 }
 
-/// The function type closure `d` has (with the errors it may throw), for messages.
-fn closure_type(cx: &mut Ctx, d: DefId, allowed: Option<TyId>) -> String {
+/// Closures among `fns` used as values of a function type that does not allow what they throw
+/// now: add their errors to the sites the type may come from (`fn_types`), so calls through
+/// those sites throw them in this inference too. True when a site's set grew.
+pub(super) fn seed_stored(cx: &mut Ctx, fns: &[DefId]) -> bool {
+    if cx.fn_sites.use_vars {
+        return false;
+    }
+    let before = cx.fn_sites.added;
+    for &d in fns {
+        let f = cx.fn_info(d);
+        let Some(decl) = f.declared_throws.filter(|t| !t.from_body) else {
+            continue;
+        };
+        if f.kind != FnKind::Closure {
+            continue;
+        }
+        let own = own_final(cx, d);
+        if let (Some(own), Some(_)) = (own, cx.error_outside(decl.ty, own)) {
+            let used_as = closure_type(cx, d, decl.ty);
+            let site = cx.closure_site(d);
+            cx.seed_fn_sites(used_as, own, site);
+        }
+    }
+    cx.fn_sites.added > before
+}
+
+/// The function type closure `d` has (with the errors it may throw).
+fn closure_type(cx: &mut Ctx, d: DefId, allowed: Option<TyId>) -> TyId {
     let f = cx.fn_info(d);
     let (params, ret, is_async) = (
         f.params.iter().map(|p| p.ty).collect::<Vec<_>>(),
@@ -136,12 +217,13 @@ fn closure_type(cx: &mut Ctx, d: DefId, allowed: Option<TyId>) -> String {
         Some(v) => (cx.ty.promise_rejecting(v, err), never),
         None => (ret, err),
     };
-    let t = cx.ty.intern(crate::hir::TyKind::FnPtr {
+    let rest = crate::body::defaults::has_rest(cx, d) || cx.fn_sites.rest_closures.contains(&d);
+    cx.ty.intern(crate::hir::TyKind::FnPtr {
         params,
         ret,
         throws,
-    });
-    cx.display(t)
+        rest,
+    })
 }
 
 /// A closure created without an expected error type took what its body was known to throw;
@@ -211,8 +293,18 @@ fn generic_group(cx: &mut Ctx, members: &[DefId]) {
 
 /// A type sema built while checking bodies must agree with the final inference.
 fn observed(cx: &mut Ctx, c: &ThrowCheck) {
-    let fin = super::infer::srcs_final(cx, &c.srcs);
-    let obs = cx.canon_error(c.observed);
+    let mut fin = super::infer::srcs_final(cx, &c.srcs);
+    let mut obs = cx.canon_error(c.observed);
+    // A `catch` variable's type assumed the variables in it empty (`vars`): that is checked
+    // when the sets are solved; an exact type is compared solved.
+    if cx.fn_sites.use_vars {
+        if c.exact {
+            fin = solved(cx, fin);
+            obs = solved(cx, obs);
+        } else {
+            fin = cx.assume_vars_empty(fin);
+        }
+    }
     let ok = if c.exact {
         fin == obs
     } else {

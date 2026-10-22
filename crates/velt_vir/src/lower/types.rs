@@ -113,10 +113,12 @@ impl<'h> Cx<'h> {
                 params,
                 ret,
                 throws,
+                rest,
             } => TyKind::FnPtr {
                 params: params.iter().map(|&a| c(self, a)).collect(),
                 ret: c(self, ret),
                 throws: c(self, throws),
+                rest,
             },
             _ => {
                 self.anon.memo.insert(t, t);
@@ -276,6 +278,7 @@ impl<'h> Cx<'h> {
                     params,
                     ret,
                     throws,
+                    ..
                 } => {
                     stack.extend(params);
                     stack.extend([ret, throws]);
@@ -307,6 +310,7 @@ impl<'h> Cx<'h> {
                 params,
                 ret,
                 throws,
+                ..
             } => {
                 params.iter().any(|x| self.mentions_params(*x))
                     || self.mentions_params(*ret)
@@ -384,10 +388,12 @@ impl<'h> Cx<'h> {
                 params,
                 ret,
                 throws,
+                rest,
             } => TyKind::FnPtr {
                 params: params.iter().map(|&a| s(self, a)).collect(),
                 ret: s(self, ret),
                 throws: s(self, throws),
+                rest,
             },
             _ => return t,
         };
@@ -638,6 +644,27 @@ impl<'h> Cx<'h> {
 
     pub(super) fn is_unit(&mut self, t: TyId) -> bool {
         self.ty(t) == Ty::Unit
+    }
+
+    /// The JS error class standard library class `d` stands for (`TypeError` for `UrlError`):
+    /// the prelude `error` class other than `Error` it extends, when declared outside the
+    /// prelude's `error` module.
+    pub(super) fn std_error_class(&self, d: DefId) -> Option<String> {
+        const ERRORS: &str = "std/prelude/error::";
+        let hir::Def::Adt(a) = self.hir.def(d) else {
+            return None;
+        };
+        if !a.name.starts_with("std/") || a.name.starts_with(ERRORS) {
+            return None;
+        }
+        let TyKind::Adt(p, _) = self.types.kind(a.base?) else {
+            return None;
+        };
+        let hir::Def::Adt(pa) = self.hir.def(*p) else {
+            return None;
+        };
+        let base = pa.name.strip_prefix(ERRORS)?;
+        (base != "Error").then(|| base.to_string())
     }
 
     /// Short display name of a type (`Uncaught <Type>`, `Name { ... }` when printing).

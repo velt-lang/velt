@@ -329,6 +329,9 @@ impl FnCx<'_, '_> {
         }
         let ann = v.ty.as_ref().map(|t| self.resolve(t));
         if let ast::PatternKind::Ident(name) = &v.pattern.kind {
+            if let Some(t) = &v.ty {
+                self.cx.note_written_type(name.span, t.span);
+            }
             return self.simple_decl(v, name, ann, span, out);
         }
         let Some(e) = &v.init else {
@@ -454,7 +457,11 @@ impl FnCx<'_, '_> {
                     let h = self.expr(e, Some(t), Want::Move);
                     self.readonly_array_arg(h, t)
                 }
-                Some(t) => self.expr_coerce(e, t, Want::Move),
+                Some(t) => {
+                    // Stored into the variable's site (`throws::fn_flows`).
+                    let site = v.ty.as_ref().and_then(|w| self.cx.site_in(w.span, t));
+                    self.stored_into(site, |s| s.expr_coerce(e, t, Want::Move))
+                }
                 None => self.expr(e, None, Want::Move),
             }),
         };
@@ -487,6 +494,20 @@ impl FnCx<'_, '_> {
                 );
                 self.cx.ty.error
             }
+        };
+        // `let f = () => {}`: assigning `f` a closure that throws makes it throw
+        // (`throws::fn_types`).
+        let (ty, init) = match init {
+            Some(h) if ann.is_none() && v.kind == ast::VarKind::Let => {
+                let site = self.cx.untyped_let_site(ty, name.span, self.module);
+                let at = self.cx.site_in(name.span, site);
+                self.flow_into(&h, at);
+                let outer = self.set_target(at);
+                let h = if site == ty { h } else { self.coerce(h, site) };
+                self.set_target(outer);
+                (site, Some(h))
+            }
+            init => (ty, init),
         };
         if ty == self.cx.ty.unit {
             let mut d = Diagnostic::error(

@@ -32,7 +32,15 @@ impl FnLower<'_, '_> {
         self.push_scope(ScopeKind::Temps);
         // Through a counted object (or a shared cell) other owners may replace the scrutinee
         // while an arm runs: match on a share of it (semantics stage 2, stabilize.rs).
-        let v = match self.through_counted(scrutinee, sty) || self.in_shared_cell(scrutinee) {
+        // A frozen one is replaced by nothing, and must not be counted (frozen.rs): its arms'
+        // bindings by reference are frozen too.
+        let frozen = self.frozen_root(scrutinee);
+        if frozen {
+            arms.iter().for_each(|a| self.freeze_bindings(&a.pat));
+        }
+        let v = match !frozen
+            && (self.through_counted(scrutinee, sty) || self.in_shared_cell(scrutinee))
+        {
             true => {
                 let v = self.expr(scrutinee);
                 let s = self.share_value(v, sty);
@@ -74,7 +82,7 @@ impl FnLower<'_, '_> {
                 for (a, b) in arms.iter().zip(blocks) {
                     self.switch_to(b);
                     self.push_scope(ScopeKind::Block);
-                    self.bind_pat(&a.pat, &sp, sty, false);
+                    self.bind_frozen(frozen, &a.pat, &sp, sty);
                     self.arm_body(a, &arm);
                 }
                 self.switch_to(unreachable);
@@ -84,7 +92,7 @@ impl FnLower<'_, '_> {
                     let next = self.new_block();
                     self.push_scope(ScopeKind::Block);
                     self.test_pat(&a.pat, &sp, sty, next);
-                    self.bind_pat(&a.pat, &sp, sty, false);
+                    self.bind_frozen(frozen, &a.pat, &sp, sty);
                     if let Some(g) = &a.guard {
                         self.push_scope(ScopeKind::Temps);
                         let c = self.expr(g);
@@ -145,6 +153,9 @@ impl FnLower<'_, '_> {
 
     /// `let <pattern> = init;` (irrefutable): the value is owned by a hidden local.
     pub(super) fn let_pat(&mut self, pat: &Pat, init: &hir::Expr) {
+        if self.frozen_map_entry(pat, init) {
+            return;
+        }
         let ty = self.sub(init.ty);
         if matches!(pat.kind, hir::PatKind::Binding(_, UseMode::Borrow)) && local_place(init) {
             // `const x = node.left` bound by reference (sema `const_borrow`): no copy, and the
@@ -152,7 +163,12 @@ impl FnLower<'_, '_> {
             // Through a counted object, other owners may replace the place while `x` lives:
             // `x` refers to a share of its own instead (semantics stage 2). So may a closure
             // when the place is rooted in a variable held in a shared cell (stabilize.rs).
-            let shared = self.through_counted(init, ty) || self.in_shared_cell(init);
+            // A frozen place changes for nobody, and is not counted: `x` is frozen as well.
+            let frozen = self.frozen_root(init);
+            if frozen {
+                self.freeze_bindings(pat);
+            }
+            let shared = !frozen && (self.through_counted(init, ty) || self.in_shared_cell(init));
             let v = self.expr(init);
             if !self.dead() {
                 let p = match shared {
@@ -165,7 +181,7 @@ impl FnLower<'_, '_> {
                     }
                     false => self.place_of(v, ty),
                 };
-                self.bind_pat(pat, &p, ty, false);
+                self.bind_frozen(frozen, pat, &p, ty);
             }
             return;
         }
@@ -191,6 +207,17 @@ impl FnLower<'_, '_> {
         self.bind_pat(pat, &sp, ty, true);
         self.stable_binds = outer;
         self.own_rest(sp, ty, Rc::new(pat.clone()));
+    }
+}
+
+impl FnLower<'_, '_> {
+    /// Bind `pat` (not registering moved bindings) to the value at `place`; `frozen`: a frozen
+    /// value, whose bindings take no shares (frozen.rs).
+    pub(super) fn bind_frozen(&mut self, frozen: bool, pat: &Pat, place: &Place, ty: TyId) {
+        let outer = self.frozen_binds;
+        self.frozen_binds |= frozen;
+        self.bind_pat(pat, place, ty, false);
+        self.frozen_binds = outer;
     }
 }
 
