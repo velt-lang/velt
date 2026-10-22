@@ -51,7 +51,7 @@ pub fn keep_alive_release() {
     crate::io::publish_before_handoff();
     if KEEP_ALIVE.fetch_sub(1, Ordering::SeqCst) == 1 {
         // Released outside a worker (which signals when it goes idle): the end may be here.
-        if current_worker().is_none() {
+        if !super::quiet::on_worker() {
             super::quiet::signal();
         }
     }

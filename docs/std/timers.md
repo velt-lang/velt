@@ -58,6 +58,9 @@ A pending timer keeps the process alive after `main` returns, as in Node: a time
 callback starts, an interval until it is cleared. A timer that is `unref()`ed does not keep the
 process alive, and once nothing else is left its callback does not run, also when it falls due
 while the process is ending or while the last ref'd callback is still running past its due time.
+One that falls due while nothing but running code is left waits until that code stops: Velt
+cannot see at once whether it will (a task that keeps calling `yieldNow()` does not), so after
+a second it runs the callback, where Node runs it at once.
 `process.exit()` and an uncaught error end the process at once, pending timers or
 not.
 

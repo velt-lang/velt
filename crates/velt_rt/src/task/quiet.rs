@@ -66,7 +66,9 @@ impl Counters {
         }
         // SAFETY: [`wait`] stores a `'static` flag.
         let Some(done) = (unsafe { self.waiting.load(SeqCst).as_ref() }) else {
-            return Park::Busy;
+            // Between two waits (`main` returned, the exit path has not started waiting yet):
+            // that wait checks for itself.
+            return Park::NotLast;
         };
         if !rt.is_quiet(self) {
             return Park::Busy;
@@ -114,11 +116,23 @@ pub(crate) fn add_workers(n: usize) {
 /// records whether the process is quiet now and then signals [`wait`]; otherwise it wakes the
 /// due `unref()`'d timers waiting for that ([`UnrefDue`]).
 pub(crate) fn parked(rt: &Runtime<'_>) {
+    WORKER.with(|w| w.set(true));
     match COUNTERS.park(rt) {
         Park::Quiet => signal(),
         Park::Busy => UnrefDue::wake_all(),
         Park::NotLast => {}
     }
+}
+
+thread_local! {
+    /// This thread is a worker (it ran the park hook).
+    static WORKER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Whether this thread is a worker, which checks the end itself when it parks (so a change it
+/// makes needs no [`signal`]).
+pub(crate) fn on_worker() -> bool {
+    WORKER.with(std::cell::Cell::get)
 }
 
 /// Wakers of the due `unref()`'d timers waiting for the last worker to park ([`UnrefDue`]).
@@ -127,31 +141,34 @@ static UNREF_DUE: parking_lot::Mutex<Vec<std::task::Waker>> = parking_lot::Mutex
 static UNREF_DUE_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 /// A due `unref()`'d timer's question whether to drop its callback (`velt_rt_timer_unref_due`):
-/// true once the process is ending. While a thread waits for the end, no keep-alive reference is
-/// held, no timer or I/O is pending and nothing is queued, the only thing left may be the code
+/// true once the process is ending. While no keep-alive reference is held, no timer or I/O is
+/// pending and nothing is queued, the only thing left may be the code
 /// running now (on this worker or another), so it waits until the last worker parks: that one
 /// either records the end (the timer is never polled again: the process exits) or wakes it, and
-/// it asks again. Otherwise the callback runs at once (false).
+/// it asks again. Otherwise the callback runs at once (false). A worker that never parks (a task
+/// that keeps yielding) is something still happening: after [`UNREF_DUE_PATIENCE`] the callback
+/// runs.
 pub(crate) struct UnrefDue {
     rt: &'static Runtime<'static>,
+    /// Armed at the first wait: when the callback runs anyway. Not a timer that keeps the
+    /// process alive (not counted in [`external_begin`]).
+    patience: Option<std::pin::Pin<Box<tokio::time::Sleep>>>,
 }
+
+/// How long a due `unref()`'d timer waits for the last worker to park ([`UnrefDue`]): long enough
+/// for a loaded machine, where a worker can take tens of milliseconds to get to its park.
+const UNREF_DUE_PATIENCE: std::time::Duration = std::time::Duration::from_secs(1);
 
 impl UnrefDue {
     pub(crate) fn new(rt: &'static Runtime<'static>) -> UnrefDue {
-        UnrefDue { rt }
+        UnrefDue { rt, patience: None }
     }
 
-    /// Nothing but running code may be left (see the type's docs).
+    /// Nothing but running code may be left (see the type's docs). Also between `main`'s end and
+    /// the wait of the exit path, which then decides.
     fn may_be_quiet(&self) -> bool {
         let c = &COUNTERS;
-        // SAFETY: [`wait`] stores a `'static` flag.
-        let Some(done) = (unsafe { c.waiting.load(SeqCst).as_ref() }) else {
-            return false;
-        };
-        !done.load(SeqCst)
-            && (self.rt.keep_alive)() == 0
-            && c.external.load(SeqCst) == 0
-            && (self.rt.queued)() == 0
+        (self.rt.keep_alive)() == 0 && c.external.load(SeqCst) == 0 && (self.rt.queued)() == 0
     }
 
     fn wake_all() {
@@ -169,11 +186,17 @@ impl UnrefDue {
 impl std::future::Future for UnrefDue {
     type Output = u8;
 
-    fn poll(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<u8> {
+    fn poll(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<u8> {
         if ending() {
             return Poll::Ready(1);
         }
         if !self.may_be_quiet() {
+            return Poll::Ready(0);
+        }
+        let patience = self
+            .patience
+            .get_or_insert_with(|| Box::pin(tokio::time::sleep(UNREF_DUE_PATIENCE)));
+        if patience.as_mut().poll(cx).is_ready() {
             return Poll::Ready(0);
         }
         // Registered before the last park can look (it runs after this poll on this worker).
@@ -362,7 +385,11 @@ mod tests {
         let c = Counters::new();
         c.workers.store(2, SeqCst);
         assert_eq!(c.park(&rt), Park::NotLast);
-        assert_eq!(c.park(&rt), Park::Busy, "no thread waits");
+        assert_eq!(
+            c.park(&rt),
+            Park::NotLast,
+            "no thread waits: its wait checks itself"
+        );
         c.unparked();
         c.unparked();
         c.waiting.store(flag(&DONE), SeqCst);

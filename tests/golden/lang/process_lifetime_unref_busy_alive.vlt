@@ -2,6 +2,7 @@
 // the process alive: a new ref'd timer from the callback, or from the code its promise resumes,
 // as in Node (#1366).
 let wake: () => void = () => {};
+let second = false;
 const p = new Promise<void>((r) => {
   wake = r;
 });
@@ -12,7 +13,9 @@ setTimeout(() => {
   console.log("ref");
   setTimeout(() => {
     console.log("later");
-    setTimeout(() => console.log("second unref'd runs"), 50).unref();
+    setTimeout(() => {
+      second = true;
+    }, 50).unref();
     setTimeout(() => {
       const end2 = Date.now() + 150;
       while (Date.now() < end2) {}
@@ -22,4 +25,4 @@ setTimeout(() => {
 }, 10);
 await p;
 console.log("resumed");
-setTimeout(() => console.log("last"), 20);
+setTimeout(() => console.log("second unref'd ran:", second), 20);

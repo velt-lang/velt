@@ -55,7 +55,7 @@ for dir in ${NIGHTLY_EXTRA_DIRS:-}; do
   BENCHES+=("$ROOT/bench/$dir"/*.vlt)
 done
 for name in await_chain await_deep hot_loop fanout_all fanout_all_throwing all_small_stored \
-  spawn_many channel_pipeline timers_fire top_level_await; do
+  spawn_many channel_pipeline timers_fire top_level_await timer_await timer_await_top; do
   BENCHES+=("$ROOT/bench/async/$name.vlt")
 done
 
