@@ -189,7 +189,7 @@ pub(crate) fn ensure_global(cx: &mut Ctx, d: DefId) {
     // the value it had when Node evaluated the constant, once: evaluated at each use, it would
     // see later writes. Kept in the module state, it is evaluated in Node's order instead.
     if let (Some(i), false) = (&init, stored) {
-        let top_level = owner.is_none() && !cx.modules[module].is_std;
+        let top_level = !cx.modules[module].is_std;
         if top_level && ty != cx.ty.error && crate::module_state::reads_state(cx, i) {
             stored = true;
         }
@@ -203,7 +203,7 @@ pub(crate) fn ensure_global(cx: &mut Ctx, d: DefId) {
         // it once (#802): kept in the module state instead of being an error. So is a function
         // from a call, whose identity shows. Only `check_init`'s own diagnostics go then: those
         // of the functions it calls (checked on the way) stay.
-        let top_level = owner.is_none() && !cx.modules[module].is_std;
+        let top_level = !cx.modules[module].is_std;
         let function = super::pure_init::has_call(i)
             && matches!(
                 cx.ty.kind(ty),

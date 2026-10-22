@@ -151,10 +151,11 @@ what it holds (`K.n = 1`, `K.push(1)`, passing it to a function that modifies it
 it by identity (`K === x`). Every use then refers to that object, and a change through one name
 shows through the others. A constant that is only read is evaluated where it is used instead
 (a [table](#tables)'s elements are read from read-only data), which costs nothing at startup.
-A `static readonly` field is not kept this way: modifying it is an error, and so is taking
-over one that is a table. **Known difference:** taking over a `static readonly` object
-(`const v = Geo.ORIGIN`) gives a copy, so a change through `v` does not show in the field, and
-a `static readonly` field initialized from a kept constant is evaluated at each use.
+A `static readonly` field is kept the same way, as Node evaluates it once with its class
+(`const v = Geo.ORIGIN; v.x = 1` changes `Geo.ORIGIN.x`). So is a constant or a field whose
+initializer reads module state the program changes, directly or through the functions it calls
+(`const START = count`, `static readonly F = S.cur()`): it holds the value from when Node
+evaluated it.
 
 ```ts
 type Hit = { hit: boolean; value: number };
@@ -299,10 +300,8 @@ function main() {
   into, or comparing it by identity. It is then the one array Node evaluates once, every use
   refers to it, and its elements are read from it instead of from read-only data. `K.slice()`
   makes a copy.
-- A `static readonly` table can't be modified or taken over: `Cls.K.push(1)` is an error
-  (``cannot modify module-level constant `Cls.K` ``), and so are `const mine = Cls.K` (``cannot
-  move out of module constant `Cls.K` ``) and passing it to a function value (``cannot pass
-  module constant `Cls.K` to a function value``). `Cls.K.slice()` is the copy to use there.
+- A `static readonly` table is the same: `Cls.K.push(1)` and `const mine = Cls.K` make it
+  module state.
 
 ## Module constants initialized by a call
 
@@ -316,8 +315,9 @@ gives; any other initializer (a call with effects, a class instance, a `Map`) ma
 - each argument is a constant expression, another module constant, a function or a closure;
 - the callee and everything it calls have no loops, no recursion, no `throw`, no `await`, no
   calls through function values, and no effects (I/O, time, randomness, `console`, `shared`,
-  `spawn`, external functions), and read no constant kept as [module state](#module-state),
-  which the program may change after Node evaluated the initializer. It may allocate, construct
+  `spawn`, external functions), and read no [module state](#module-state) (a module-level
+  `let`, a constant kept there), which the program may change after Node evaluated the
+  initializer: such a constant is module state itself, evaluated once. It may allocate, construct
   objects and create closures, as `component` does below: the closures it returns run later as
   ordinary code;
 - a closure it creates keeps no mutable state: it captures no variable that is assigned, and no

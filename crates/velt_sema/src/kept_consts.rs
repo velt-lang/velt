@@ -14,9 +14,9 @@ use crate::hir::{self, DefId, ExprKind as E};
 /// Keep module constant `d` in the module state: a use takes its value over (binds, stores or
 /// returns it), modifies it or compares it by identity, where a value evaluated at each use
 /// would be a different object from the one Node evaluates once. Kept, it is evaluated once like
-/// a module-level `let`, and each such use refers to that one object (a move shares it). Not for
-/// a constant of the standard library, a `static readonly` field, `import.meta` (whose fields are
-/// read-only), one whose type is an error, or one holding a promise (`driver::promise_in_state`):
+/// a module-level `let`, and each such use refers to that one object (a move shares it). A
+/// `static readonly` field is kept the same way, as Node evaluates it once with its class. Not
+/// for a constant of the standard library, `import.meta` (whose fields are read-only), one whose type is an error, or one holding a promise (`driver::promise_in_state`):
 /// those keep their errors. Returns whether `d` is module state.
 pub(crate) fn keep(cx: &mut Ctx, d: DefId) -> bool {
     let Some(g) = cx.global(d) else { return false };
@@ -24,7 +24,6 @@ pub(crate) fn keep(cx: &mut Ctx, d: DefId) -> bool {
         return true;
     }
     let keepable = g.state == crate::defs::BodyState::Done
-        && g.src.owner.is_none()
         && g.name != velt_syntax::ast::IMPORT_META
         && !cx.modules[g.module].is_std
         && g.ty != cx.ty.error
@@ -49,10 +48,11 @@ fn set_stored(cx: &mut Ctx, d: DefId, stored: bool) {
     }
 }
 
-/// Is global `d` module state that the program may change: a module-level `let`, or a constant
-/// [`keep`] or [`keep_readers`] kept?
+/// Is global `d` module state that the program may change: a module-level `let`, a constant
+/// whose value is not a constant (`const seen = new Map()`), or one [`keep`] or
+/// [`keep_readers`] kept? Each is one object the program can modify.
 pub(crate) fn changes(cx: &Ctx, d: DefId) -> bool {
-    cx.global(d).is_some_and(|g| g.mutable) || cx.kept_consts.contains(&d)
+    cx.global(d).is_some_and(|g| g.stored)
 }
 
 /// Once every use is checked: a top-level constant whose initializer reads module state that
@@ -68,7 +68,6 @@ pub(crate) fn keep_readers(cx: &mut Ctx) {
             cx.global(d).is_some_and(|g| {
                 g.init.is_some()
                     && !g.mutable
-                    && g.src.owner.is_none()
                     && g.ty != cx.ty.error
                     && !cx.modules[g.module].is_std
             })
@@ -87,34 +86,43 @@ pub(crate) fn keep_readers(cx: &mut Ctx) {
         }
         inits.insert(d, facts);
     }
-    let mut fns: FxHashMap<DefId, Facts> = FxHashMap::default();
-    let mut refused = FxHashSet::default();
-    loop {
-        let reaching = reaching_fns(cx, &inits, &mut fns);
-        let mut changed = false;
-        for &d in &consts {
-            if cx.kept_consts.contains(&d) || refused.contains(&d) {
-                continue;
-            }
-            let facts = &inits[&d];
-            let reads = facts.globals.iter().any(|&g| changes(cx, g))
-                || facts.fns.iter().any(|f| reaching.contains(f));
-            if !reads {
-                continue;
-            }
-            if keep(cx, d) {
-                if !cx.kept_consts.contains(&d) {
-                    cx.kept_consts.push(d);
-                }
-                changed = true;
-            } else if let Some(g) = cx.global(d) {
-                refused.insert(d);
-                let (ty, span) = (g.ty, g.src.span);
-                crate::body::promise_in_state(cx, d, ty, span);
-            }
+    let fns = reachable_fns(cx, &inits);
+    // Who reads each global, and who calls or creates each function: a constant or a function
+    // that reads changing state makes its readers and callers read it too.
+    let mut readers: FxHashMap<DefId, Vec<DefId>> = FxHashMap::default();
+    let mut callers: FxHashMap<DefId, Vec<DefId>> = FxHashMap::default();
+    for (&n, facts) in inits.iter().chain(fns.iter()) {
+        for &g in &facts.globals {
+            readers.entry(g).or_default().push(n);
         }
-        if !changed {
-            return;
+        for &f in &facts.fns {
+            callers.entry(f).or_default().push(n);
+        }
+    }
+    // The constants and functions that read changing state, each handled once.
+    let mut reaching: FxHashSet<DefId> = FxHashSet::default();
+    let mut work: Vec<DefId> = (readers.iter())
+        .filter(|(&g, _)| changes(cx, g))
+        .flat_map(|(_, rs)| rs.iter().copied())
+        .collect();
+    while let Some(n) = work.pop() {
+        if !reaching.insert(n) {
+            continue;
+        }
+        if let Some(cs) = callers.get(&n) {
+            work.extend(cs.iter().copied());
+        }
+        if !inits.contains_key(&n) || changes(cx, n) {
+            continue;
+        }
+        // A constant that reads changing state: kept, it changes for its readers in turn.
+        if keep(cx, n) {
+            if let Some(rs) = readers.get(&n) {
+                work.extend(rs.iter().copied());
+            }
+        } else if let Some(g) = cx.global(n) {
+            let (ty, span) = (g.ty, g.src.span);
+            crate::body::promise_in_state(cx, n, ty, span);
         }
     }
 }
@@ -160,15 +168,10 @@ impl crate::visit::VisitMut for Facts {
     }
 }
 
-/// The functions reachable from the initializers `inits` that read changing module state,
-/// directly or through the functions they call or create. Each function's facts are collected
-/// once (`fns` carries them between rounds).
-fn reaching_fns(
-    cx: &Ctx,
-    inits: &FxHashMap<DefId, Facts>,
-    fns: &mut FxHashMap<DefId, Facts>,
-) -> FxHashSet<DefId> {
-    // Every function reachable from an initializer, with its facts.
+/// Every function reachable from the initializers `inits`, through the functions they call or
+/// create, with its facts (each collected once).
+fn reachable_fns(cx: &Ctx, inits: &FxHashMap<DefId, Facts>) -> FxHashMap<DefId, Facts> {
+    let mut fns: FxHashMap<DefId, Facts> = FxHashMap::default();
     let mut work: Vec<DefId> = inits.values().flat_map(|f| f.fns.iter().copied()).collect();
     while let Some(f) = work.pop() {
         if fns.contains_key(&f) {
@@ -185,21 +188,5 @@ fn reaching_fns(
         work.extend(facts.fns.iter().copied());
         fns.insert(f, facts);
     }
-    // Those that read changing state, then their callers, until none is added.
-    let mut reaching: FxHashSet<DefId> = (fns.iter())
-        .filter(|(_, facts)| facts.globals.iter().any(|&g| changes(cx, g)))
-        .map(|(&f, _)| f)
-        .collect();
-    loop {
-        let more: Vec<DefId> = (fns.iter())
-            .filter(|(f, facts)| {
-                !reaching.contains(*f) && facts.fns.iter().any(|g| reaching.contains(g))
-            })
-            .map(|(&f, _)| f)
-            .collect();
-        if more.is_empty() {
-            return reaching;
-        }
-        reaching.extend(more);
-    }
+    fns
 }

@@ -6,6 +6,8 @@
 //! by identity, a change through another name), the constant is kept in the module state
 //! instead (`crate::kept_consts::keep`).
 
+use std::sync::Arc;
+
 use rustc_hash::FxHashMap;
 
 use velt_common::{Diagnostic, Span};
@@ -23,11 +25,25 @@ use crate::visit::{self, VisitMut};
 pub(crate) struct Impure {
     what: String,
     span: Span,
-    via: Vec<String>,
+    via: Option<Arc<Via>>,
     /// It is async: the value can never be known before `main` runs, so the constant cannot
     /// be kept as module state either. (One that may throw is kept: an error thrown while the
     /// module state is initialized ends the process, as in Node.)
     fatal: bool,
+}
+
+/// The calls that lead to an [`Impure`] reason, outermost first: a shared list, so each caller
+/// adds its own name in constant time however deep the chain is.
+#[derive(Debug)]
+struct Via {
+    name: String,
+    rest: Option<Arc<Via>>,
+}
+
+impl Impure {
+    fn via(&self) -> impl Iterator<Item = &str> {
+        std::iter::successors(self.via.as_deref(), |v| v.rest.as_deref()).map(|v| v.name.as_str())
+    }
 }
 
 /// One of [`check_init`]'s own diagnostics: why an initializer is not a constant value. The
@@ -320,9 +336,9 @@ fn call_ok(
                 span,
             )
             .with_label(imp.span, imp.what.clone());
-            if !imp.via.is_empty() {
-                let chain = std::iter::once(fname.clone())
-                    .chain(imp.via.iter().cloned())
+            if imp.via.is_some() {
+                let chain = std::iter::once(fname.as_str())
+                    .chain(imp.via())
                     .map(|n| format!("`{n}`"))
                     .collect::<Vec<_>>()
                     .join(" -> ");
@@ -379,7 +395,7 @@ pub(crate) fn purity(cx: &mut Ctx, f: DefId) -> Result<(), Impure> {
             return Err(Impure {
                 what: "calls itself".into(),
                 span: cx.fn_info(f).name_span,
-                via: vec![],
+                via: None,
                 fatal: false,
             })
         }
@@ -397,7 +413,7 @@ fn decide(cx: &mut Ctx, f: DefId) -> Result<(), Impure> {
         Err(Impure {
             what: what.into(),
             span,
-            via: vec![],
+            via: None,
             fatal: false,
         })
     };
@@ -405,7 +421,7 @@ fn decide(cx: &mut Ctx, f: DefId) -> Result<(), Impure> {
         Err(Impure {
             what: what.into(),
             span,
-            via: vec![],
+            via: None,
             fatal: true,
         })
     };
@@ -475,11 +491,15 @@ fn decide(cx: &mut Ctx, f: DefId) -> Result<(), Impure> {
     for (g, span) in walk.calls {
         if let Err(mut imp) = purity(cx, g) {
             // A reason about the callee as a whole points at the call.
-            if imp.via.is_empty() && imp.span == cx.fn_info(g).name_span {
+            if imp.via.is_none() && imp.span == cx.fn_info(g).name_span {
                 imp.span = span;
             }
             if g != f && cx.fn_info(g).kind != FnKind::Extern {
-                imp.via.insert(0, short_name(cx, g));
+                let rest = imp.via.take();
+                imp.via = Some(Arc::new(Via {
+                    name: short_name(cx, g),
+                    rest,
+                }));
             }
             return Err(imp);
         }
@@ -530,7 +550,7 @@ impl Walk {
             self.found = Some(Impure {
                 what: what.into(),
                 span,
-                via: vec![],
+                via: None,
                 fatal,
             });
         }

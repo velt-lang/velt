@@ -1,0 +1,60 @@
+// A `static readonly` field is evaluated once with its class, as in Node (#1383): one the
+// program takes over, modifies or compares by identity is kept in the module state like a
+// module constant, and so is one whose initializer reads module state that the program changes
+// (`count`, or the map `S.M`), directly or through the functions it calls. A module constant
+// that reads a constant whose value is not a constant (`made`, from a call with a loop) holds
+// the value it read when Node evaluated it.
+
+let count = 0;
+
+class S {
+  static readonly X: number = count;
+  static readonly O: { c: number } = { c: count };
+  static readonly F: number = S.cur();
+  static readonly M: Map<string, number> = new Map();
+  static readonly SIZE: number = S.M.size;
+  static readonly STEPS: number[] = [1, 2, 4];
+  static readonly ORIGIN: { p: { x: number } } = { p: { x: 0 } };
+  static cur(): number {
+    return count;
+  }
+}
+
+class Limits {
+  static readonly A: number = 2;
+  static readonly B: number = Limits.A + count;
+}
+
+const Y = S.X;
+const Z = S.O;
+
+function make(): { n: number } {
+  const o = { n: 0 };
+  for (let i = 0; i < 2; i++) {
+    o.n += i;
+  }
+  return o;
+}
+
+const made = make();
+const FIRST = made.n;
+const COPY = { n: made.n };
+
+function main() {
+  count = 3;
+  S.M.set("a", 1);
+  made.n = 5;
+  console.log(S.X, S.O.c, Y, Z.c, S.F, S.SIZE, Limits.B);
+  console.log(FIRST, COPY.n, made.n);
+  const w = (xs: number[]) => {
+    xs.push(8);
+    return xs.length;
+  };
+  console.log(w(S.STEPS));
+  const c = S.STEPS;
+  c.push(16);
+  console.log(S.STEPS, c === S.STEPS);
+  const o = S.ORIGIN;
+  o.p.x = 7;
+  console.log(S.ORIGIN.p.x, o === S.ORIGIN, S.ORIGIN.p === S.ORIGIN.p, Object.is(S.ORIGIN, o));
+}

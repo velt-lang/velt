@@ -1,3 +1,0 @@
-module_const_static_table_taken.vlt:14:17: error: cannot pass module constant `Limits.STEPS` to a function value
-module_const_static_table_taken.vlt:15:13: error: cannot move out of module constant `Limits.STEPS`
-use a copy: `Limits.STEPS.slice()`

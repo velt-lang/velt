@@ -536,13 +536,10 @@ fn imports_exports_and_intrinsics() {
         slots("const X: u8[] = [1]; function main() { console.log(X[0], X.length); }"),
         0
     );
-    // A `static readonly` field is not kept: taking it over stays an error.
-    let r = err_src(
-        "class C { static readonly X: u8[] = [1]; } function main() { const v = C.X; v.push(2); }",
-    );
-    assert!(
-        r.contains("cannot move out of module constant `C.X`"),
-        "{r}"
+    // So is a `static readonly` field (Node evaluates it once, with its class).
+    assert_eq!(
+        slots("class C { static readonly X: u8[] = [1]; } function main() { const v = C.X; v.push(2); console.log(C.X); }"),
+        1
     );
 }
 
