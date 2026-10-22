@@ -389,6 +389,11 @@ impl Ctx<'_> {
                 None => self.ty.error,
             };
         }
+        if let (Item::Def(d), [buffer]) = (item, args) {
+            if self.is_typed_array(d) {
+                return self.typed_array_with_buffer(d, name, buffer, t, env);
+            }
+        }
         let protocol = match item {
             Item::Def(d) if args.len() >= 2 => self.protocol_type(d),
             _ => None,
@@ -580,6 +585,77 @@ impl Ctx<'_> {
         }
     }
 
+    /// Is `d` a standard typed array class or `DataView`?
+    fn is_typed_array(&self, d: crate::hir::DefId) -> bool {
+        self.std_class(d, TYPED_ARRAYS)
+    }
+
+    /// Is `d` a class of the standard library named one of `names`?
+    fn std_class(&self, d: crate::hir::DefId, names: &[&str]) -> bool {
+        match &self.info[d.0 as usize] {
+            DefInfo::Adt(a) => self.scopes[a.module].is_std && names.contains(&a.name.as_str()),
+            _ => false,
+        }
+    }
+
+    /// Typed array or `DataView` class `d` written with a buffer type argument (TypeScript
+    /// 5.7's `Uint8Array<ArrayBuffer>`). Its buffer is always an `ArrayBuffer`, so the argument
+    /// says nothing more: `ArrayBuffer`, or `ArrayBufferLike` (TypeScript's default, which
+    /// without `SharedArrayBuffer` can only be an `ArrayBuffer`). Any other argument is an
+    /// error; one that did not resolve was reported already.
+    fn typed_array_with_buffer(
+        &mut self,
+        d: crate::hir::DefId,
+        name: &str,
+        buffer: &ast::TypeExpr,
+        t: &ast::TypeExpr,
+        env: &TyEnv,
+    ) -> TyId {
+        // A global name the program does not declare itself (`ArrayBufferLike`, and
+        // `SharedArrayBuffer`, which Velt does not have).
+        let global = match &buffer.kind {
+            ast::TypeExprKind::Named { path, args } => match path.as_slice() {
+                [p] if args.is_empty()
+                    && self
+                        .lookup_item_at(env.module, &p.name, buffer.span)
+                        .is_none() =>
+                {
+                    Some(p.name.as_str())
+                }
+                _ => None,
+            },
+            _ => None,
+        };
+        if global != Some("ArrayBufferLike") {
+            let shown = match global {
+                Some(n @ "SharedArrayBuffer") => n.to_string(),
+                _ => {
+                    let b = self.resolve_type(buffer, env);
+                    if b == self.ty.error {
+                        return self.ty.error;
+                    }
+                    let is_buffer = matches!(self.ty.kind(b), TyKind::Adt(bd, bargs)
+                        if bargs.is_empty() && self.std_class(*bd, &["ArrayBuffer"]));
+                    if is_buffer {
+                        return self.def_type(d, name, vec![], t);
+                    }
+                    self.display(b)
+                }
+            };
+            self.error(
+                velt_common::Diagnostic::error(
+                    "a typed array's buffer type argument must be `ArrayBuffer`",
+                    buffer.span,
+                )
+                .with_note(format!(
+                    "found `{shown}`; `{name}<ArrayBuffer>` and `{name}<ArrayBufferLike>` are `{name}`, whose buffer is always an `ArrayBuffer` (`SharedArrayBuffer` is not supported)"
+                )),
+            );
+            return self.ty.error;
+        }
+        self.def_type(d, name, vec![], t)
+    }
+
     /// Does `body` (an alias's type, in terms of its parameters) hold a `P | null` or
     /// `P | undefined` of a parameter whose argument in `args` allows the other nothing? The
     /// substitution would make an option of an option, which keeps the inner one only.
@@ -688,3 +764,17 @@ pub(crate) fn written_type(ty: &ast::TypeExpr) -> ast::TypeExpr {
         _ => ty.clone(),
     }
 }
+
+/// The standard typed arrays and `DataView`, which take TypeScript's buffer type argument.
+const TYPED_ARRAYS: &[&str] = &[
+    "Uint8Array",
+    "Int8Array",
+    "Uint8ClampedArray",
+    "Int16Array",
+    "Uint16Array",
+    "Int32Array",
+    "Uint32Array",
+    "Float32Array",
+    "Float64Array",
+    "DataView",
+];

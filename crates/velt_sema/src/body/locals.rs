@@ -14,7 +14,7 @@ pub(crate) type NarrowState = Vec<(
 )>;
 
 /// What a local is narrowed to: non-null, union members, a subclass.
-type Narrowing = (bool, Option<Vec<u32>>, Option<TyId>);
+pub(crate) type Narrowing = (bool, Option<Vec<u32>>, Option<TyId>);
 use super::{CaptureCx, FnCx, Frame, LocalKind, Scope};
 use crate::ctx::Item;
 use crate::hir::{LocalDef, LocalId, TyId};
@@ -63,7 +63,7 @@ fn add_narrowed_capture(
     narrowing: Narrowing,
 ) -> LocalId {
     let inner = add_capture(f, name, outer, ty, span);
-    let (non_null, members, class) = narrowing;
+    let (non_null, members, class) = narrowing.clone();
     let root = &mut f.scopes[0];
     if non_null {
         root.narrowed.push(inner);
@@ -77,6 +77,7 @@ fn add_narrowed_capture(
     }
     if let Some(c) = f.captures.last_mut() {
         c.narrowed = narrowed;
+        c.start = narrowing;
     }
     inner
 }
@@ -97,6 +98,7 @@ fn add_capture(f: &mut Frame, name: &str, outer: LocalId, ty: TyId, span: Span) 
         mutated: false,
         mutated_at: None,
         narrowed: false,
+        start: (false, None, None),
     });
     f.scopes[0].names.insert(name.to_string(), inner);
     inner
@@ -560,6 +562,33 @@ impl FnCx<'_, '_> {
             s.classes = c.clone();
             s.excluded = x.clone();
         }
+        self.keep_capture_narrowing();
+    }
+
+    /// The narrowing each capture starts with, in the closure's outermost scope again: a state
+    /// saved before the capture was made (at the start of a branch the closure first names the
+    /// variable in) does not hold it, yet it holds in the whole body.
+    fn keep_capture_narrowing(&mut self) {
+        let f = &mut self.f;
+        let Some(root) = f.scopes.first_mut() else {
+            return;
+        };
+        for c in f.captures.iter().filter(|c| c.narrowed) {
+            let (non_null, members, class) = &c.start;
+            if *non_null && !root.narrowed.contains(&c.inner) {
+                root.narrowed.push(c.inner);
+            }
+            if let Some(vs) = members {
+                if !root.members.iter().any(|(l, _)| *l == c.inner) {
+                    root.members.push((c.inner, vs.clone()));
+                }
+            }
+            if let Some(t) = class {
+                if !root.classes.iter().any(|(l, _)| *l == c.inner) {
+                    root.classes.push((c.inner, *t));
+                }
+            }
+        }
     }
 
     /// After sibling branches that both continue: keep only the facts `other` (the state at the
@@ -584,6 +613,7 @@ impl FnCx<'_, '_> {
             s.members.retain(|f| m.contains(f));
             s.classes.retain(|f| c.contains(f));
         }
+        self.keep_capture_narrowing();
     }
 
     /// The local was reassigned: its narrowing no longer holds.

@@ -189,6 +189,9 @@ pub(crate) struct CaptureCx {
     /// The variable was narrowed where the closure was created, and the closure body starts
     /// from that narrowing (so the body must not assign it).
     pub narrowed: bool,
+    /// That narrowing: it holds in the whole body, also past branches that started before the
+    /// capture was made (`FnCx::restore_narrowing`).
+    pub start: locals::Narrowing,
 }
 
 /// A promise an async function returns (`expr::tasks`, `async_returned`): the `return` stores

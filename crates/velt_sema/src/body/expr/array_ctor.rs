@@ -137,6 +137,10 @@ fn index_only(f: &ast::Expr) -> Option<ast::Expr> {
     else {
         return None;
     };
+    // `() => 0`: a callback that takes neither argument (adapted to the index callback).
+    if params.is_empty() {
+        return Some(f.clone());
+    }
     let [elem, index] = params.as_slice() else {
         return None;
     };

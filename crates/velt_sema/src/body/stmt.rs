@@ -494,6 +494,16 @@ impl FnCx<'_, '_> {
             {
                 Some(self.nothing_value(hir::Nothing::Undefined, t, name.span))
             }
+            // `let x: any;` and `let x: unknown;` start as `undefined` too.
+            (None, Some(t))
+                if v.kind == ast::VarKind::Let
+                    && matches!(
+                        self.cx.dynamic(t),
+                        Some(crate::any::Dynamic::Any | crate::any::Dynamic::Unknown)
+                    ) =>
+            {
+                self.cx.dynamic_undefined(t, name.span)
+            }
             (init, _) => init,
         };
         let ty = match (ann, &init) {

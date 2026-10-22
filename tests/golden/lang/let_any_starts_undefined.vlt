@@ -1,0 +1,22 @@
+// `let x: any;` and `let x: unknown;` without an initializer start as `undefined`, as
+// `let x: T | undefined;` does. Same output as Node.
+function pick(k: number): string {
+  let value: any;
+  let w: unknown;
+  let u: string | undefined;
+  if (k > 1) {
+    value = "big";
+    w = k;
+    u = "u";
+  }
+  return `${value} ${w} ${u} ${typeof value} ${value === undefined} ${w === undefined}`;
+}
+
+function main() {
+  console.log(pick(0));
+  console.log(pick(2));
+  let later: any;
+  console.log(later);
+  later = { a: 1 };
+  console.log(later.a);
+}
