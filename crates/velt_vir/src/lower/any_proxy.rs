@@ -115,6 +115,24 @@ impl FnLower<'_, '_> {
         true
     }
 
+    /// The method `name` of the `Proxy` class without arguments on the proxy `data`: its result,
+    /// owned and not boxed (`None`: the program has no such method).
+    pub(super) fn proxy_invoke_typed(
+        &mut self,
+        name: &str,
+        data: vir::Local,
+        ty: TyId,
+    ) -> Option<Operand> {
+        let (d, _) = self.plain_adt(ty)?;
+        let m = self
+            .dyn_members_of(d)
+            .into_iter()
+            .find(|m| m.name == name && m.kind == DynMemberKind::Method)?;
+        let r = self.ready(ty, &m)?;
+        let this = self.any_this(data, ty);
+        Some(self.invoke_ready(&r, this, vec![]))
+    }
+
     /// `AnyGet` / `AnyIndex` of a proxy: `__get(key, receiver)` into `*out`.
     pub(super) fn proxy_get_body(
         &mut self,

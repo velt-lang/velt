@@ -195,8 +195,20 @@ impl FnLower<'_, '_> {
         args: Vec<(Place, TyId)>,
         out: &Place,
     ) {
+        let std_result = self.cx.fn_def(r.def).name.starts_with("std/");
+        let v = self.invoke_ready(r, this, args);
+        self.any_box_with(v, r.ret, out, std_result);
+    }
+
+    /// Call `r` with `this` and the owned argument values `args`: its result, owned (of type
+    /// `r.ret`).
+    pub(super) fn invoke_ready(
+        &mut self,
+        r: &Ready,
+        this: Operand,
+        args: Vec<(Place, TyId)>,
+    ) -> Operand {
         let f = self.cx.fn_def(r.def);
-        let std_result = f.name.starts_with("std/");
         let modes: Vec<PassMode> = f.params.iter().map(|p| p.mode).collect();
         // Glue has no source location: a standard-library method it calls (a proxy's `__keys`)
         // reports none either, rather than its own line in the prelude.
@@ -232,7 +244,7 @@ impl FnLower<'_, '_> {
         if let Operand::Copy(p) = &v {
             self.take_temp(&p.clone());
         }
-        self.any_box_with(v, r.ret, out, std_result);
+        v
     }
 
     /// The `any` argument `i` (a `u64` operand) of the buffer `argv`.

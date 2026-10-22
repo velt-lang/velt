@@ -82,14 +82,12 @@ impl FnLower<'_, '_> {
             proj: vec![Proj::Deref(self.cx.ty(sa))],
         };
         if self.is_proxy(ty) {
-            // Its `ownKeys` and `getOwnPropertyDescriptor` traps (`Proxy.__keys`).
-            let any = self.cx.any_ty();
-            let avt = self.cx.ty(any);
-            let res = Place::local(self.temp(avt));
-            if !self.proxy_invoke("__keys", data, ty, vec![], &res) {
+            // Its `ownKeys` and `getOwnPropertyDescriptor` traps (`Proxy.__keys`), whose
+            // `string[]` goes to `*out` as it is (never boxed: a `string[]` an `any` held
+            // would be a counted type in every program that loads `Proxy`).
+            let Some(v) = self.proxy_invoke_typed("__keys", data, ty) else {
                 return self.ret_status(ST_UNSUPPORTED);
-            }
-            let v = self.any_unbox(&res, any, sa);
+            };
             self.store(outp, v);
             return self.ret_status(ST_OK);
         }

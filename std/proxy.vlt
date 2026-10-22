@@ -113,25 +113,13 @@ function proxyKey(key: any): string | symbol {
  */
 export function __symbolKeyName(s: symbol): string {
   const d = String(s);
-  const known = [
-    "asyncDispose",
-    "asyncIterator",
-    "dispose",
-    "hasInstance",
-    "isConcatSpreadable",
-    "iterator",
-    "match",
-    "matchAll",
-    "replace",
-    "search",
-    "species",
-    "split",
-    "toPrimitive",
-    "toStringTag",
-    "unscopables",
-  ];
-  for (const k of known) {
-    if (d === `Symbol(Symbol.${k})`) {
+  // The well-known symbols, as a list in a string (an array here would be a counted value in
+  // every program that loads `Proxy`).
+  const known =
+    " asyncDispose asyncIterator dispose hasInstance isConcatSpreadable iterator match matchAll replace search species split toPrimitive toStringTag unscopables ";
+  if (d.startsWith("Symbol(Symbol.") && d.endsWith(")")) {
+    const k = d.slice(14, -1);
+    if (known.includes(` ${k} `)) {
       return `[Symbol.${k}]`;
     }
   }
