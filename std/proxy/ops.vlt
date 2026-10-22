@@ -233,27 +233,34 @@ export function __anyIsArrayProxy(o: any): boolean {
   return Array.isArray(o);
 }
 
-/**
- * `"k" in x` of a class instance or an object `x` in a program that makes proxies: a typed
- * proxy's `has` trap, else `plain` (the answer of `x`'s type).
- */
-export function __proxyIn(o: any, k: string, plain: boolean): boolean {
+/** `"k" in x` of a typed proxy `x` (velt_sema tests `Intrinsic::IsTypedProxy` first): its `has` trap. */
+export function __proxyHas(o: any, k: string): boolean {
   if (o instanceof Proxy) {
     return o.__has(k);
   }
-  return plain;
+  panic("ICE: `__proxyHas` of a value that is not a proxy");
 }
 
 /**
- * `Object.hasOwn(x, k)` of a class instance or an object `x` in a program that makes proxies:
- * a typed proxy's `getOwnPropertyDescriptor` trap for `k`, else whether `keys` (`x`'s own
- * keys) has `k`.
+ * `Object.hasOwn(x, k)` of a typed proxy `x` (velt_sema tests `Intrinsic::IsTypedProxy` first):
+ * its `getOwnPropertyDescriptor` trap for `k`.
  */
-export function __proxyHasOwn(o: any, k: string, keys: string[]): boolean {
+export function __proxyHasOwnOf(o: any, k: string): boolean {
   if (o instanceof Proxy) {
     return o.__hasOwn(k);
   }
-  return keys.includes(k);
+  panic("ICE: `__proxyHasOwnOf` of a value that is not a proxy");
+}
+
+/**
+ * A typed proxy `x` as the `any` it is (velt_sema tests `Intrinsic::IsTypedProxy` first). `x`
+ * is only borrowed (a returned parameter would be taken over, making its type counted).
+ */
+export function __proxyAny(o: any): any {
+  if (o instanceof Proxy) {
+    return o.__self();
+  }
+  panic("ICE: `__proxyAny` of a value that is not a proxy");
 }
 
 /**

@@ -193,9 +193,6 @@ impl FnCx<'_, '_> {
             },
             o.span,
         );
-        if let Some(h) = self.proxy_has_own(o, k, keys.clone(), span) {
-            return h;
-        }
         let call = synth(
             ast::ExprKind::Call {
                 callee: Box::new(synth(
@@ -215,11 +212,14 @@ impl FnCx<'_, '_> {
             },
             span,
         );
+        if let Some(h) = self.proxy_has_own(o, k, &call, span) {
+            return h;
+        }
         self.expr(&call, None, Want::Move)
     }
 
     /// A call of the prelude function `f` with the expressions `args`, checked.
-    pub(super) fn prelude_fn_call(
+    pub(crate) fn prelude_fn_call(
         &mut self,
         f: &str,
         args: Vec<ast::Expr>,

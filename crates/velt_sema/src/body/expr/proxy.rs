@@ -227,7 +227,9 @@ impl FnCx<'_, '_> {
     }
 
     /// `"k" in x` of a class instance or an object `x` that may be a typed proxy:
-    /// `__proxyIn(x, "k", "k" in x)`, so a proxy's `has` trap answers. `None` otherwise.
+    /// `IsTypedProxy(x) ? __proxyHas(x, "k") : "k" in x`, so a proxy's `has` trap answers and a
+    /// plain value keeps its own test (and its type stays uncounted: only a proxy is converted
+    /// to `any`). `None` otherwise.
     pub(crate) fn proxy_in(
         &mut self,
         lhs: &ast::Expr,
@@ -249,18 +251,18 @@ impl FnCx<'_, '_> {
             },
             span,
         );
-        let args = vec![rhs.clone(), lhs.clone(), plain];
-        Some(self.proxy_wrapped("__proxyIn", args, span))
+        let proxy = vec![rhs.clone(), lhs.clone()];
+        Some(self.proxy_split(rhs, "__proxyHas", proxy, &plain, span))
     }
 
     /// `Object.hasOwn(x, k)` of a class instance or an object `x` that may be a typed proxy:
-    /// `__proxyHasOwn(x, k, Object.keys(x))`, so a proxy's `getOwnPropertyDescriptor` trap
-    /// answers for `k` alone. `None` otherwise.
+    /// `IsTypedProxy(x) ? __proxyHasOwnOf(x, k) : plain`, so a proxy's
+    /// `getOwnPropertyDescriptor` trap answers for `k` alone. `None` otherwise.
     pub(crate) fn proxy_has_own(
         &mut self,
         o: &ast::Expr,
         k: &ast::Expr,
-        keys: ast::Expr,
+        plain: &ast::Expr,
         span: Span,
     ) -> Option<hir::Expr> {
         if self.proxy_keys_inner || !super::object_keys::reevaluable(o) {
@@ -270,7 +272,33 @@ impl FnCx<'_, '_> {
         if !self.may_be_typed_proxy(t) {
             return None;
         }
-        Some(self.proxy_wrapped("__proxyHasOwn", vec![o.clone(), k.clone(), keys], span))
+        let proxy = vec![o.clone(), k.clone()];
+        Some(self.proxy_split(o, "__proxyHasOwnOf", proxy, plain, span))
+    }
+
+    /// `IsTypedProxy(x) ? f(args) : plain`, both checked without the typed proxy hooks.
+    fn proxy_split(
+        &mut self,
+        x: &ast::Expr,
+        f: &str,
+        args: Vec<ast::Expr>,
+        plain: &ast::Expr,
+        span: Span,
+    ) -> hir::Expr {
+        let xv = self.expr(x, None, crate::body::Want::Borrow);
+        let b = self.cx.ty.bool_;
+        let cond = self.intrinsic(hir::Intrinsic::IsTypedProxy, vec![xv], b, span);
+        self.proxy_keys_inner = true;
+        let then = self.prelude_fn_call(f, args, span);
+        let els = self.expr(plain, None, crate::body::Want::Move);
+        self.proxy_keys_inner = false;
+        let ty = els.ty;
+        let kind = H::If {
+            cond: Box::new(cond),
+            then: Box::new(then),
+            els: Box::new(els),
+        };
+        self.mk(kind, ty, span)
     }
 
     /// Is `e` a value that may be a typed proxy but is not safe to evaluate again (a call)? The
@@ -294,14 +322,6 @@ impl FnCx<'_, '_> {
     ) -> hir::Expr {
         let h = self.expr(e, None, crate::body::Want::Move);
         self.with_temp("<operand>", h, e.span, span, f)
-    }
-
-    /// The call `f(args)` of velt:proxy/ops, checked without the typed proxy hooks inside it.
-    fn proxy_wrapped(&mut self, f: &str, args: Vec<ast::Expr>, span: Span) -> hir::Expr {
-        self.proxy_keys_inner = true;
-        let h = self.prelude_fn_call(f, args, span);
-        self.proxy_keys_inner = false;
-        h
     }
 
     /// A call of the prelude function `name` with the checked arguments `args`, of type `ret`.

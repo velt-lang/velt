@@ -18,7 +18,7 @@ use velt_syntax::ast::{self, ExprKind as E};
 
 use super::consume::Synth;
 use super::{FnCx, Want};
-use crate::hir::{self, ExprKind as H, Intrinsic, StmtKind as S, UseMode};
+use crate::hir::{self, Intrinsic, StmtKind as S};
 
 /// The prefix of the hidden constant holding the loop's object: `Object.keys` of it is the plain
 /// value's own (the typed proxy hook of `proxy.rs` skips it).
@@ -66,27 +66,75 @@ impl FnCx<'_, '_> {
         let bool_ = self.cx.ty.bool_;
         self.push_scope_until(span.hi);
         let mut stmts = vec![];
-        let h = self.expr(obj, None, Want::Borrow);
-        let init = self.share_if_place(h);
-        let oty = init.ty;
-        let o = self.hidden_local(syn.ident(&object), init, false, &mut stmts);
-        let test = if any {
+        let call = |f: &str, args: Vec<ast::Expr>| syn.call(syn.name(f), args);
+        let keys_name = format!("<forink#{n}>");
+        let decl = |name: &str, ty: Option<ast::TypeExpr>, init: ast::Expr| {
+            syn.stmt(ast::StmtKind::Var(ast::VarDecl {
+                kind: ast::VarKind::Const,
+                pattern: syn.ident_pat(name),
+                ty,
+                init: Some(init),
+                span: syn.at,
+            }))
+        };
+        let operand = if any {
+            // The `any` itself, held for the loop.
+            let h = self.expr(obj, None, Want::Borrow);
+            let init = self.share_if_place(h);
+            self.hidden_local(syn.ident(&object), init, false, &mut stmts);
             let e = syn.expr(E::InstanceOf {
                 expr: Box::new(syn.name(&object)),
                 ty: syn.named_type("Proxy"),
             });
-            self.expr(&e, None, Want::Move)
+            let test = self.expr(&e, None, Want::Move);
+            self.hidden_local(syn.ident(&is_proxy), test, false, &mut stmts);
+            syn.name(&object)
         } else {
-            let read = self.mk(H::Local(o, UseMode::Borrow), oty, obj.span);
-            self.intrinsic(Intrinsic::IsTypedProxy, vec![read], bool_, obj.span)
+            // A typed value is read where it is (a call's result is held once): only a proxy
+            // is taken as an `any` (`__proxyAny`), so the value's type stays uncounted.
+            let operand = match super::expr::object_keys::reevaluable(obj) {
+                true => obj.clone(),
+                false => {
+                    let held = format!("<forino#{n}>");
+                    let h = self.expr(obj, None, Want::Borrow);
+                    let init = self.share_if_place(h);
+                    self.hidden_local(syn.ident(&held), init, false, &mut stmts);
+                    syn.name(&held)
+                }
+            };
+            let read = self.expr(&operand, None, Want::Borrow);
+            let test = self.intrinsic(Intrinsic::IsTypedProxy, vec![read], bool_, obj.span);
+            self.hidden_local(syn.ident(&is_proxy), test, false, &mut stmts);
+            // `IsTypedProxy(o) ? __proxyAny(o) : undefined`, tested on `o` itself so that the
+            // conversion to `any` is left out where `o`'s type cannot hold a proxy.
+            let read = self.expr(&operand, None, Want::Borrow);
+            let cond = self.intrinsic(Intrinsic::IsTypedProxy, vec![read], bool_, obj.span);
+            let then = self.prelude_fn_call("__proxyAny", vec![operand.clone()], obj.span);
+            let any = then.ty;
+            let none = syn.expr(E::Lit(ast::Lit::Undefined));
+            let els = self.expr(&none, Some(any), Want::Move);
+            let init = self.mk(
+                hir::ExprKind::If {
+                    cond: Box::new(cond),
+                    then: Box::new(then),
+                    els: Box::new(els),
+                },
+                any,
+                obj.span,
+            );
+            self.hidden_local(syn.ident(&object), init, false, &mut stmts);
+            operand
         };
-        self.hidden_local(syn.ident(&is_proxy), test, false, &mut stmts);
-        let call = |f: &str, args: Vec<ast::Expr>| syn.call(syn.name(f), args);
+        // The keys, once, before the loop: a proxy's `ownKeys`, else the value's own.
         let keys = syn.expr(E::Cond {
             cond: Box::new(syn.name(&is_proxy)),
             then: Box::new(call("__anyForInKeys", vec![syn.name(&object)])),
-            els: Box::new(syn.method(syn.name("Object"), "keys", vec![syn.name(&object)])),
+            els: Box::new(syn.method(syn.name("Object"), "keys", vec![operand])),
         });
+        let inner_flag = std::mem::replace(&mut self.proxy_keys_inner, true);
+        self.stmt(&decl(&keys_name, None, keys), &mut stmts);
+        self.proxy_keys_inner = inner_flag;
+        let keys = syn.name(&keys_name);
         let has = call(
             "__anyForInHas",
             vec![syn.name(&object), syn.expr(E::Ident(k.clone()))],

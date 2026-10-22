@@ -629,7 +629,7 @@ fn is_private_name(name: &str) -> bool {
 
 /// Can `e` be evaluated a second time to the same object without side effects (a name,
 /// `this`, or a property of one)?
-pub(super) fn reevaluable(e: &ast::Expr) -> bool {
+pub(crate) fn reevaluable(e: &ast::Expr) -> bool {
     match &e.kind {
         ast::ExprKind::Ident(_) | ast::ExprKind::This => true,
         ast::ExprKind::Paren(inner) => reevaluable(inner),
