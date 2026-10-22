@@ -2648,6 +2648,13 @@ keys, and `includes`: a `Handler<Date, number>` read back from a `Handler[]` is 
 same holds once either is an `any`, `unknown` or `object` (which holds the original itself), and
 members read or written through such an `any` are the original's.
 
+A checked conversion from `any` or `unknown` back to the interface (`v as Handler<any, any>`,
+or at any other arguments, such as the original's own) takes the value the `any` holds through
+its own implementation of the interface: an object literal's, a class's (also for an instance
+of a subclass), or a generic class's at the instance's type arguments. At other arguments the
+result is wrapped as above, and it is the same object as the original. A context stored in a
+`Map<string, unknown>` and read back as a `Ctx<any, any>` works as in Node.
+
 A parameter of type `unknown[]`, `Map<unknown, unknown>` or `Set<unknown>` (a handler for
 arrays, maps or sets, as in a serializer's table) takes an array, map or set of any element
 types. The method receives a copy holding the elements boxed, and when it returns the copy is

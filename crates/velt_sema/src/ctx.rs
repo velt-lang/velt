@@ -161,6 +161,8 @@ pub(crate) struct Ctx<'m> {
         crate::body::expr::iface_adapt::AdapterKey,
         crate::body::expr::iface_adapt::Adapter,
     >,
+    /// Checked conversions of dynamic values to generic interfaces (`iface_adapt_dynamic`).
+    pub(crate) dyn_iface_targets: Vec<crate::body::expr::iface_adapt_dynamic::DynIfaceTarget>,
     /// Error types committed to while checking bodies, re-checked after inference.
     pub throw_checks: Vec<crate::throws::ThrowCheck>,
     /// Function types written without `throws` and what is stored into them (`throws::fn_types`).
@@ -367,6 +369,7 @@ impl<'m> Ctx<'m> {
             literal_hosts: Default::default(),
             provisional_slots: vec![],
             iface_adapters: FxHashMap::default(),
+            dyn_iface_targets: vec![],
             throw_checks: vec![],
             fn_sites: Default::default(),
             collected_defs: 0,

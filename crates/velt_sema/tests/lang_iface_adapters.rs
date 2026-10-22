@@ -49,3 +49,37 @@ fn a_field_that_does_not_convert_back_is_reported_where_it_is_written() {
     );
     assert!(r.contains("would not convert back"), "{r}");
 }
+
+#[test]
+fn a_conversion_out_of_unknown_gets_the_adapters_of_every_implementation() {
+    // Written before the implementations exist: made once every body is checked.
+    let p = ok_src(
+        "interface Ctx<P = {}> { props: P; name(): string; }
+         function read(u: unknown): Ctx<any> { return u as Ctx<any>; }
+         class G<T> implements Ctx<T> {
+           props: T;
+           constructor(p: T) { this.props = p; }
+           name(): string { return \"g\"; }
+         }
+         function main() {
+           const c: Ctx<{ n: number }> = { props: { n: 1 }, name(): string { return \"c\"; } };
+           console.log(read(c).name(), read(new G<string>(\"s\")).name());
+         }",
+    );
+    let wrapped: Vec<String> = (p.impls.iter())
+        .filter_map(|i| match p.def(adt(&p, i.ty)?) {
+            velt_sema::hir::Def::Adt(a) if a.name.ends_with(" adapter") => {
+                Some(format!("{:?}", p.types.kind(a.fields[0].ty)))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(wrapped.len(), 2, "{wrapped:?}");
+}
+
+fn adt(p: &velt_sema::hir::Program, t: velt_sema::hir::TyId) -> Option<velt_sema::hir::DefId> {
+    match p.types.kind(t) {
+        velt_sema::hir::TyKind::Adt(d, _) => Some(*d),
+        _ => None,
+    }
+}

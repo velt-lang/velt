@@ -406,7 +406,13 @@ impl FnCx<'_, '_> {
     }
 
     /// The adapter from `iface<from>` to `iface<to>`, made on first use.
-    fn iface_adapter(&mut self, iface: DefId, from: &[TyId], to: &[TyId], span: Span) -> Adapter {
+    pub(super) fn iface_adapter(
+        &mut self,
+        iface: DefId,
+        from: &[TyId],
+        to: &[TyId],
+        span: Span,
+    ) -> Adapter {
         let key = (iface, from.to_vec(), to.to_vec());
         if let Some(&a) = self.cx.iface_adapters.get(&key) {
             if intact(self.cx, a) {

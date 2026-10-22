@@ -29,6 +29,7 @@ mod any_eq;
 mod any_errors;
 mod any_glue;
 mod any_has;
+mod any_iface;
 mod any_keys;
 mod any_member;
 mod any_proxy;

@@ -52,6 +52,7 @@ mod generic_spread;
 mod hidden_nothings;
 mod hoist;
 pub(crate) mod iface_adapt;
+pub(crate) mod iface_adapt_dynamic;
 pub(crate) mod iface_adapt_slots;
 mod iface_call;
 mod iface_nested;
