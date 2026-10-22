@@ -71,6 +71,14 @@ pub extern "C" fn velt_rt_keep_alive_release() {
     keep_alive_release();
 }
 
+/// `velt_rt_process_ending()`: the process was seen with nothing left that can happen, and ends
+/// as soon as the thread waiting for the end runs (quiet.rs `ending`): a due `unref()`'d timer
+/// does not run its callback then, as Node exits without running it (std/prelude/timers.vlt).
+#[no_mangle]
+pub extern "C" fn velt_rt_process_ending() -> bool {
+    super::quiet::ending()
+}
+
 /// Program exit (after `main` returns): like Node, block while something can still happen: a
 /// server is listening, a ref'd timer is pending, or a task runs or waits for a timer or I/O
 /// (quiet.rs). Returns at once, and never starts the runtime, when nothing is held and no task is
@@ -80,7 +88,8 @@ pub fn wait_for_the_end() {
         return;
     }
     crate::io::flush_stdout();
-    super::quiet::wait(&QUIET, || false);
+    static NEVER: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    super::quiet::wait(&QUIET, &NEVER);
 }
 
 /// Whether a task may still run (for the leak counters, which wait for tasks that free blocks).
@@ -115,7 +124,7 @@ fn queued_tasks() -> usize {
 /// The park hook of every worker: publish its output, then count it idle (quiet.rs).
 fn parked() {
     crate::io::flush_idle();
-    super::quiet::parked();
+    super::quiet::parked(&QUIET);
 }
 
 /// Environment variable overriding the worker-thread count.
@@ -451,8 +460,10 @@ pub unsafe extern "C" fn velt_rt_block_on(poll: PollFn, state: *mut u8) {
     // Run the root on a worker (not this thread) so its spawns take the fast local-queue path.
     // The worker that finished it hands over where its error (if any) was thrown: the caller
     // reports it on this thread.
-    let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let finished = done.clone();
+    // One flag per call, for the park hook to read while this thread waits (quiet.rs).
+    let done: &'static std::sync::atomic::AtomicBool =
+        Box::leak(Box::new(std::sync::atomic::AtomicBool::new(false)));
+    let finished = done;
     let join = spawn(async move {
         root.await;
         finished.store(true, Ordering::SeqCst);
@@ -460,7 +471,7 @@ pub unsafe extern "C" fn velt_rt_block_on(poll: PollFn, state: *mut u8) {
         super::quiet::signal();
         ThrowLoc::current()
     });
-    if !super::quiet::wait(&QUIET, || done.load(Ordering::SeqCst)) {
+    if !super::quiet::wait(&QUIET, done) {
         crate::entry::exit_unfinished();
     }
     match rt.block_on(join) {

@@ -19,6 +19,7 @@
 
 declare function velt_rt_keep_alive_acquire();
 declare function velt_rt_keep_alive_release();
+declare function velt_rt_process_ending(): bool;
 declare function velt_rt_timer_new(ms: i64): u64;
 declare async function velt_rt_timer_turn(timer: u64, gate: u64): Promise<void>;
 declare function velt_rt_timer_again(timer: u64, ms: i64);
@@ -71,10 +72,12 @@ class TimerState {
     this.timer = 0;
   }
 
-  // The task is due to run: true if it should (it was not cleared). `last`: it runs no more
-  // after this (a timeout), so the timer no longer keeps the process alive, as in Node.
+  // The task is due to run: true if it should (it was not cleared, and it is ref'd or the
+  // process is not ending: Node exits without running an unref'd timer once nothing else is
+  // left, though it is due). `last`: it runs no more after this (a timeout), so the timer no
+  // longer keeps the process alive, as in Node.
   begin(last: bool): bool {
-    if (this.stopped) {
+    if (this.stopped || (!this.refd && velt_rt_process_ending())) {
       this.finished = true;
       this.update();
       return false;

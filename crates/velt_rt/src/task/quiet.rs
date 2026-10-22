@@ -12,8 +12,13 @@
 //! the wake count first, then that every worker is parked, then the rest, then the wake count
 //! again. While every worker stays parked nothing in a task changes the counters, and a worker
 //! woken in between changes the wake count.
+//!
+//! Once quiet, the process is ending, whenever the waiting thread gets to run: the last worker to
+//! park checks the condition itself and records it ([`ending`]), so an `unref()`'d timer that
+//! falls due before the waiting thread has seen the end does not run its callback (Node exits
+//! without running it: its loop is not alive any more).
 
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering::SeqCst};
+use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64, AtomicUsize, Ordering::SeqCst};
 
 /// The counters [`wait`] reads.
 struct Counters {
@@ -25,6 +30,12 @@ struct Counters {
     wakes: AtomicU64,
     /// Pending leaf futures that wait for a timer or I/O.
     external: AtomicUsize,
+    /// The `done` flag of the thread in [`wait`] (null: none waits): the last worker to go idle
+    /// signals it.
+    waiting: AtomicPtr<AtomicBool>,
+    /// The process was seen quiet with what [`wait`] waits for not done: it is ending (module
+    /// docs).
+    ending: AtomicBool,
 }
 
 impl Counters {
@@ -34,7 +45,26 @@ impl Counters {
             idle: AtomicUsize::new(0),
             wakes: AtomicU64::new(0),
             external: AtomicUsize::new(0),
+            waiting: AtomicPtr::new(std::ptr::null_mut()),
+            ending: AtomicBool::new(false),
         }
+    }
+
+    /// A worker parks (the park hook): true when it is the last one to go idle while a thread
+    /// waits, which must be signalled then. That worker records whether the process is quiet now
+    /// (module docs).
+    fn park(&self, rt: &Runtime<'_>) -> bool {
+        if !self.parked() {
+            return false;
+        }
+        // SAFETY: [`wait`] stores a `'static` flag.
+        let Some(done) = (unsafe { self.waiting.load(SeqCst).as_ref() }) else {
+            return false;
+        };
+        if rt.is_quiet(self) && !done.load(SeqCst) {
+            self.ending.store(true, SeqCst);
+        }
+        true
     }
 
     /// A worker parks; true when every worker is idle now.
@@ -50,8 +80,6 @@ impl Counters {
 }
 
 static COUNTERS: Counters = Counters::new();
-/// A thread is in [`wait`]: the last worker to go idle signals it.
-static WAITING: AtomicBool = AtomicBool::new(false);
 /// Signals for [`wait`]: a count, so a signal between a check and the wait is not lost.
 static SIGNALS: parking_lot::Mutex<u64> = parking_lot::Mutex::new(0);
 static SIGNALLED: parking_lot::Condvar = parking_lot::Condvar::new();
@@ -61,11 +89,19 @@ pub(crate) fn add_workers(n: usize) {
     COUNTERS.workers.fetch_add(n, SeqCst);
 }
 
-/// The park hook of every worker (after it published its output).
-pub(crate) fn parked() {
-    if COUNTERS.parked() && WAITING.load(SeqCst) {
+/// The park hook of every worker (after it published its output): the last one to go idle
+/// records whether the process is quiet now and signals [`wait`].
+pub(crate) fn parked(rt: &Runtime<'_>) {
+    if COUNTERS.park(rt) {
         signal();
     }
+}
+
+/// The process was seen quiet while a thread waited for the end (or for a `main` that can never
+/// finish now), so it ends as soon as that thread runs: an `unref()`'d timer due now drops its
+/// callback (std/prelude/timers.vlt).
+pub(crate) fn ending() -> bool {
+    COUNTERS.ending.load(SeqCst)
 }
 
 /// The unpark hook of every worker.
@@ -141,25 +177,30 @@ pub(crate) fn is_quiet(rt: &Runtime<'_>) -> bool {
     rt.is_quiet(&COUNTERS)
 }
 
-/// Block until `done()` holds (true) or nothing can happen any more (false). The thread that
-/// makes `done` true must [`signal`] afterwards, unless it is a worker that goes idle then.
-pub(crate) fn wait(rt: &Runtime<'_>, done: impl Fn() -> bool) -> bool {
-    WAITING.store(true, SeqCst);
+/// Block until `done` is set (true) or nothing can happen any more (false). The thread that
+/// sets `done` must [`signal`] afterwards, unless it is a worker that goes idle then.
+pub(crate) fn wait(rt: &Runtime<'_>, done: &'static AtomicBool) -> bool {
+    let flag = done as *const AtomicBool as *mut AtomicBool;
+    COUNTERS.waiting.store(flag, SeqCst);
     let finished = loop {
         let seen = *SIGNALS.lock();
-        if done() {
+        if done.load(SeqCst) {
             break true;
         }
         if rt.is_quiet(&COUNTERS) {
             // What made it quiet may have been the end of what was waited for.
-            break done();
+            let done = done.load(SeqCst);
+            if !done {
+                COUNTERS.ending.store(true, SeqCst);
+            }
+            break done;
         }
         let mut signals = SIGNALS.lock();
         while *signals == seen {
             SIGNALLED.wait(&mut signals);
         }
     };
-    WAITING.store(false, SeqCst);
+    COUNTERS.waiting.store(std::ptr::null_mut(), SeqCst);
     finished
 }
 
@@ -209,7 +250,81 @@ mod tests {
             alive_tasks: &|| 0,
             queued: &|| 0,
         };
-        assert!(!wait(&rt, || false), "nothing is left");
-        assert!(wait(&rt, || true), "done");
+        static NOT_DONE: AtomicBool = AtomicBool::new(false);
+        static DONE: AtomicBool = AtomicBool::new(true);
+        assert!(!wait(&rt, &NOT_DONE), "nothing is left");
+        assert!(wait(&rt, &DONE), "done");
+    }
+
+    #[test]
+    fn the_last_worker_to_park_records_the_end_for_a_timer_that_wakes_it() {
+        let rt = Runtime {
+            keep_alive: &|| 0,
+            alive_tasks: &|| 1,
+            queued: &|| 0,
+        };
+        static NOT_DONE: AtomicBool = AtomicBool::new(false);
+        static DONE: AtomicBool = AtomicBool::new(true);
+        let c = Counters::new();
+        c.workers.store(2, SeqCst);
+        assert!(!c.park(&rt), "no thread waits");
+        c.unparked();
+        c.waiting.store(&DONE as *const AtomicBool as *mut AtomicBool, SeqCst);
+        assert!(!c.park(&rt) && c.park(&rt), "the last worker signals");
+        assert!(!c.ending.load(SeqCst), "what was waited for is done: not the end");
+        c.unparked();
+        c.unparked();
+        c.waiting.store(&NOT_DONE as *const AtomicBool as *mut AtomicBool, SeqCst);
+        c.external.store(1, SeqCst);
+        assert!(!c.park(&rt) && c.park(&rt));
+        assert!(!c.ending.load(SeqCst), "a timer is pending: not quiet");
+        c.external.store(0, SeqCst);
+        // A worker wakes for an unref()'d timer before the waiting thread has run: no longer
+        // quiet, but the end was seen.
+        c.unparked();
+        assert!(c.park(&rt) && c.ending.load(SeqCst));
+        c.unparked();
+        assert!(!rt.is_quiet(&c) && c.ending.load(SeqCst));
+    }
+
+    #[test]
+    fn the_end_is_recorded_whichever_worker_parks_last() {
+        // Stress: workers park and wake on their own threads in every interleaving; whenever all
+        // of them are parked at the end of a round with nothing pending, the end is recorded
+        // before any of them wakes again.
+        const WORKERS: usize = 4;
+        const ROUNDS: usize = 500;
+        let rt = Runtime {
+            keep_alive: &|| 0,
+            alive_tasks: &|| 1,
+            queued: &|| 0,
+        };
+        static NOT_DONE: AtomicBool = AtomicBool::new(false);
+        let c = Counters::new();
+        c.workers.store(WORKERS, SeqCst);
+        c.waiting.store(&NOT_DONE as *const AtomicBool as *mut AtomicBool, SeqCst);
+        let barrier = std::sync::Barrier::new(WORKERS);
+        for round in 0..ROUNDS {
+            // Every other round a keep-alive-like pending count holds the process.
+            let held = round % 2 == 1;
+            c.external.store(usize::from(held), SeqCst);
+            c.ending.store(false, SeqCst);
+            let signals = AtomicUsize::new(0);
+            std::thread::scope(|s| {
+                for _ in 0..WORKERS {
+                    s.spawn(|| {
+                        barrier.wait();
+                        if c.park(&rt) {
+                            signals.fetch_add(1, SeqCst);
+                        }
+                    });
+                }
+            });
+            assert_eq!(signals.load(SeqCst), 1, "round {round}: one last worker");
+            assert_eq!(c.ending.load(SeqCst), !held, "round {round}");
+            for _ in 0..WORKERS {
+                c.unparked();
+            }
+        }
     }
 }

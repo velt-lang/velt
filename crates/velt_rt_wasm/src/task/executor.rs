@@ -469,6 +469,13 @@ pub extern "C" fn velt_rt_keep_alive_release() {
     with_exec(|e| e.keep_alive -= 1);
 }
 
+/// `velt_rt_process_ending()`: never seen early here: one thread both runs the timers and decides
+/// the end ([`velt_rt_block_on`]), so no due timer runs after the end was seen.
+#[no_mangle]
+pub extern "C" fn velt_rt_process_ending() -> bool {
+    false
+}
+
 /// Start `fut` as a task (queued now); on completion its `result_size` result bytes move into
 /// `join` (if any) and the future is freed. Returns the task id.
 pub fn spawn(fut: *mut VeltFut, result_size: usize, join: Option<Rc<RefCell<JoinState>>>) -> usize {
@@ -686,7 +693,8 @@ fn wait_for_timers() -> bool {
 /// `async main`: drive the compiled root state machine (and every task it spawns) until the
 /// root is ready, every started promise finished and no keep-alive reference (a ref'd timer) is
 /// held, or until nothing can wake any of them (the program ends then, with exit code 0 when the
-/// root never finished, or 13 when it waits at a top-level `await`). Spawned tasks still running afterwards are abandoned.
+/// root never finished, or 13 when it waits at a top-level `await`). Spawned tasks still running
+/// afterwards are abandoned.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_block_on(poll: PollFn, state: *mut u8) {
     with_exec(|e| e.running = true);
