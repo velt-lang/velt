@@ -441,8 +441,6 @@ pub(crate) struct FnCx<'a, 'm> {
     pub f: Frame,
     /// Enclosing frames of the closure being checked (innermost last).
     pub outer: Vec<Frame>,
-    /// The span of a `new Promise` that is the operand of the `await` being checked.
-    pub direct_await: Option<Span>,
     /// The arrow being checked is an argument of a JS API function called from user code
     /// (`numbers::is_js_api`): per parameter, whether the signature declares it an integer (an
     /// index), which makes it a number in the arrow's body when unannotated.
@@ -548,7 +546,6 @@ impl<'a, 'm> FnCx<'a, 'm> {
             generic_arrow: false,
             f: frame,
             outer: vec![],
-            direct_await: None,
             std_callback: None,
             literal_slot: None,
             call_temps: vec![],

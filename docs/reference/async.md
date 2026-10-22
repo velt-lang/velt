@@ -693,9 +693,8 @@ async function main() {
 - The executor must be an arrow-function literal (``the executor of `new Promise` must be an
   arrow function``); it runs at once and is released before the promise waits.
 - A promise whose `resolve` and `reject` are all dropped without settling never settles, like
-  in JS (it can lose a `Promise.race`). Awaiting it directly (`await new Promise(…)`) is
-  reported instead of waiting forever: ``panic: awaiting a promise whose resolve and reject were
-  dropped without settling (created at file:line:col)``, exit code 101.
+  in JS (it can lose a `Promise.race`). Awaiting it waits until nothing else can happen, when
+  the program ends, as Node's does ([Promises](#promises)).
 
 ```ts
 import { setTimeout } from "velt:timers";
