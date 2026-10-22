@@ -331,6 +331,8 @@ impl FnCx<'_, '_> {
         self.f.finally_loops = loops;
         self.f.finally_depth -= 1;
         let thrown = crate::throws::srcs_now(self.cx, &srcs);
+        // Error-set variables are assumed empty (`throws::vars`).
+        let thrown = self.cx.assume_vars_empty(thrown);
         if let Some(t) = thrown.filter(|t| *t != self.cx.ty.never) {
             let tn = self.cx.display(t);
             let at = srcs.first().map_or(b.span, ThrowSrc::span);

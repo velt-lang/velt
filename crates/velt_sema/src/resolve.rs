@@ -88,7 +88,7 @@ impl Ctx<'_> {
                 ret,
                 throws,
                 rest,
-            } => self.resolve_fn_type(params, *rest, ret, throws.as_deref(), env),
+            } => self.resolve_fn_type(params, *rest, ret, throws.as_deref(), env, t.span),
             ast::TypeExprKind::TupleRest(_) => {
                 self.error(
                     velt_common::Diagnostic::error(

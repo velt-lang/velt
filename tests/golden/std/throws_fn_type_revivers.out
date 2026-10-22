@@ -1,0 +1,4 @@
+/a a+b
+TypeError true
+SyntaxError true
+[ 'one', 'failed: two' ]

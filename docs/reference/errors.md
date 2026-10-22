@@ -92,17 +92,57 @@ compiler knows exactly what each function and each `try` block can throw.
 
 ## Dynamic calls
 
-Function types carry an error type: `(x: T) => U throws E`. Without `throws`, the function
-cannot throw.
+Function types carry an error type: `(x: T) => U throws E`. A written `throws` clause bounds
+what a function stored there may throw.
 
+- A function type written without `throws` (as TypeScript writes them) throws what the
+  closures stored into it throw, inferred over the whole program: a closure that throws may be
+  used as a value of such a type (a field, parameter, variable, interface member, array element
+  or `Map` value), and calls through the type throw its errors, so a `try` around them catches
+  them as in JavaScript. The error type belongs to the written type: every value of
+  `revive: (s: string) => T` in `interface Reviver<T>` throws what any closure stored into one
+  throws, whatever `T` is. Each written type is inferred on its own: a closure passed for a
+  parameter, stored into a field or a typed variable, or returned from a function with a
+  written function result throws into that type only, and a value read from one such type
+  and stored into another (a parameter passed on, stored into a field) takes its errors
+  along. Where the compiler can't tell which written type a value comes from (a callback
+  passed through a function value, an element of a `Map`), every function type of the same
+  shape gets the errors. When nothing stored into the type throws, it throws nothing
+  and calls through it need no error check. For a type whose result is a `Promise`, the
+  inferred errors are the promise's rejection type. Only `Error` classes are inferred: a closure
+  stored there that throws another value (`throw "x"`, `throw null`) is reported, since the
+  inferred errors can reach other function types of the same shape (a callback stored as a
+  `Map` value gives its errors to every such type). Throw an `Error` instead
+  (`throw new Error("x")`), or write the error type (`() => void throws string`). The errors also come through other such types (a closure calling through one) and through
+  recursion, and a `let` without a type initialized with a closure (`let f = () => {}`) is
+  such a type too. Function types of the standard library are not inferred this way: the
+  timers (`setTimeout`, `setInterval`, `setImmediate`) and `queueMicrotask` take a callback
+  that may throw (what it throws is uncaught, as in Node), and a proxy trap or a promise
+  executor that throws is reported.
+
+  ```ts
+  interface Reviver<T> {
+    name: string;
+    revive: (s: string) => T;
+  }
+
+  const url: Reviver<URL> = { name: "URL", revive: (s) => new URL(s) };
+  console.log(url.revive("https://example.com/a").pathname); // /a
+  try {
+    url.revive("not a url");
+  } catch (e) {
+    console.log((e as Error).name); // TypeError
+  }
+  ```
 - A closure gets the error type of the function type expected where it is written (and must
-  not throw more); otherwise, what its body throws. A named function used as a value may throw
-  less than its function type allows.
+  not throw more than a written `throws` allows); otherwise, what its body throws. A named
+  function used as a value may throw less than its function type allows.
 - Interface methods and overridden methods share one error type per method: the interface's (or
   base method's) `throws` clause bounds every implementation
   (``` `Db.get` throws `Forbidden`, but `Store.get` does not allow it ```); without one it is the
   union of what the implementations throw. For an interface method returning a promise it is
-  what the promise rejects with ([Async](async.md#errors)).
+  what the promise rejects with ([Async](async.md#errors)), also for the async methods of an
+  object literal implementing the interface (`const l: Loader = { async load(s) { … } }`).
 - **Higher-order functions** propagate their callback's errors by being generic over them:
   `function run<E>(f: () => i64 throws E): i64 throws E`. The prelude's array methods
   (`forEach`, `map`, `filter`, `reduce`, `find`, `findIndex`, `some`, `every`), `Map` methods
@@ -124,8 +164,8 @@ nothing; `null` means success).
   when its `name` ends in `Error` but is not the class's name (`class E extends TypeError {}`
   gives `E [TypeError]: boom`; `MyTypeError: boom` when the class's name contains the name).
   The class is the dynamic one (an `IoError` thrown through a function declared `throws Error`
-  reports `IoError`), and the location is where it was thrown;
-  for an error thrown inside the standard library, it is the line of your code that called
+  reports `IoError`), and the location is where it was thrown, also when a `finally` it leaves
+  through throws and catches another error; for an error thrown inside the standard library, it is the line of your code that called
   into it. This holds for `async function main()` too, and for an error a spawned task threw
   that `main` awaited. A thrown value that is not an `Error` is written as Node writes it, the
   way `console.log` prints it: `throw "too big"` reports `Uncaught too big`, `throw 42`

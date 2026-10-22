@@ -148,6 +148,16 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         escaping: bool,
     ) -> hir::Expr {
+        // Stored into a site, it throws into that one (`throws::fn_flows`); its body stores
+        // nothing there.
+        self.cx.note_closure_site(e.span, exp);
+        let target = self.set_target(None);
+        let h = self.closure_in(e, exp, escaping);
+        self.set_target(target);
+        h
+    }
+
+    fn closure_in(&mut self, e: &ast::Expr, exp: Option<TyId>, escaping: bool) -> hir::Expr {
         let ast::ExprKind::Arrow {
             type_params,
             params,
@@ -356,6 +366,9 @@ impl FnCx<'_, '_> {
             self.provisional_slot(span, &frame.uncaught);
         }
         let err = self.closure_error(def, declared_err, &frame, clause);
+        if rest {
+            self.cx.fn_sites.rest_closures.insert(def);
+        }
         let fn_ty = self.closure_type(ptys.clone(), rest, body_ret, err, is_async);
         let ret = if is_async {
             self.cx.ty.promise(body_ret)

@@ -1,0 +1,25 @@
+// Three nested `finally` blocks that each throw and catch keep the location of the error passing
+// through all of them (#1404).
+function swallow(tag: string): void {
+  try {
+    throw new Error(tag);
+  } catch (e) {
+    console.log("caught", (e as Error).message);
+  }
+}
+function f(): void {
+  try {
+    try {
+      try {
+        throw new RangeError("outer");
+      } finally {
+        swallow("one");
+      }
+    } finally {
+      try { throw new Error("two"); } catch (e) { console.log("caught two"); }
+    }
+  } finally {
+    swallow("three");
+  }
+}
+f();

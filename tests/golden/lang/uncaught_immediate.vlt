@@ -1,0 +1,9 @@
+// An error a `setImmediate` callback throws ends the process at the throw, as in Node: a
+// microtask it queued before the throw and later callbacks don't run (#1154).
+setImmediate(() => {
+  console.log("imm");
+  queueMicrotask(() => console.log("after"));
+  throw new Error("imm failed");
+});
+setImmediate(() => console.log("imm2"));
+setTimeout(() => console.log("t"), 5);

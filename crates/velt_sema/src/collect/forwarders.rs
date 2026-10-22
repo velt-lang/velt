@@ -247,3 +247,56 @@ fn forward_body(
         },
     }
 }
+
+/// Synthesized method `def` returning `ret`, a promise rejecting with `err` (`never`: it does
+/// not reject), what the function value it calls returns: made an async method returning what it awaits, so its promise rejects
+/// with what its dispatch group's members throw, as an async method's does (throws/groups.rs
+/// `Group::promise`), which may be more than `err`.
+pub(crate) fn await_forwarded(cx: &mut Ctx, def: DefId, ret: TyId, err: TyId, span: Span) {
+    let Some(v) = cx.ty.promise_payload(ret) else {
+        return;
+    };
+    let never = cx.ty.never;
+    let mut params = cx.fn_info(def).params.clone();
+    super::sigs::owned_async_params(cx, &mut params);
+    let info = cx.fn_info_mut(def);
+    info.is_async = true;
+    if let Some(this) = &mut info.this {
+        this.mode = PassMode::Owned;
+    }
+    info.params.clone_from(&params);
+    info.throw_srcs = match err == never {
+        true => vec![],
+        false => vec![ThrowSrc::Direct(err, span)],
+    };
+    let Some(Def::Fn(f)) = &mut cx.defs[def.0 as usize] else {
+        return;
+    };
+    f.is_async = true;
+    f.ret = v;
+    for (p, sig) in f
+        .params
+        .iter_mut()
+        .zip(std::iter::once(None).chain(params.iter().map(Some)))
+    {
+        p.mode = sig.map_or(PassMode::Owned, |s| s.mode);
+    }
+    for s in &mut f.body.block.stmts {
+        if let hir::StmtKind::Return(Some(e)) = &mut s.kind {
+            let call = std::mem::replace(
+                e,
+                hir::Expr {
+                    kind: H::Lit(hir::Lit::Null),
+                    ty: v,
+                    span,
+                },
+            );
+            let call = hir::Expr { ty: ret, ..call };
+            *e = hir::Expr {
+                kind: H::Await(Box::new(call)),
+                ty: v,
+                span,
+            };
+        }
+    }
+}
