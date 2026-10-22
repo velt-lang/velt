@@ -43,6 +43,8 @@ pub(super) fn patch_calls(
         let returns_promise = matches!(cx.ty.kind(e.ty), TyKind::Promise(..));
         let span = e.span;
         let mut modified = 0u64;
+        // The function called, and the index of its parameter the first argument fills.
+        let mut shared_from = None;
         let (modes, args, unknown) = match &mut e.kind {
             E::Call { callee, args } => {
                 // A closure literal passed to a parameter of a generic type may be kept as a
@@ -64,6 +66,9 @@ pub(super) fn patch_calls(
                     changed |= escape_literal_args(cx, args, &keeps, borrowed);
                 }
                 let modes = call_modes(cx, callee, args);
+                if let Some(Target::Fn(d)) = call_target(cx, callee, args) {
+                    shared_from = Some((d, 0));
+                }
                 let unknown = modes.is_none() && !matches!(callee, Callee::Intrinsic(_));
                 if let (true, Callee::Def(d, _)) = (frozen, &*callee) {
                     let info = cx.fn_info(*d);
@@ -77,6 +82,7 @@ pub(super) fn patch_calls(
                     if frozen {
                         modified = cx.fn_info(c).modified_params >> 1;
                     }
+                    shared_from = Some((c, 1));
                     (Some(modes_of(cx, c)[1..].to_vec()), args, false)
                 }
                 None => return,
@@ -104,6 +110,12 @@ pub(super) fn patch_calls(
                 match m {
                     PassMode::Owned => changed |= force_move(cx, a, &mut errors),
                     PassMode::BorrowMut => changed |= borrow_mut(cx, a, &mut errors),
+                    // A borrowed parameter the callee shares into what it keeps (`fill`).
+                    PassMode::Borrow => {
+                        if let Some((f, at)) = shared_from {
+                            super::infer::kept_by_share(cx, f, at + i, a, &mut errors);
+                        }
+                    }
                     _ => {}
                 }
             }

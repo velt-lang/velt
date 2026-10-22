@@ -1,0 +1,115 @@
+// Writes through a non-null assertion (`t.o!.v = 5`, `x!.v = 8`, `u.o!.v` on `I | null`)
+// reach the object the program holds, as in Node (#1406): locals, parameters, closures, nested
+// `!`, compound assignments, `++`, `as`, `??`, and module state.
+
+interface I {
+  v: number;
+  tags: string[];
+}
+
+class Box {
+  item: I | null = { v: 1, tags: [] };
+  bump(): void {
+    this.item!.v += 100;
+  }
+}
+
+function mk(v: number): I {
+  return { v: v, tags: [] };
+}
+
+let state: { o?: I } = { o: mk(1) };
+const kept: { o: I | null; n: { o: I | null } | null } = { o: mk(1), n: { o: mk(1) } };
+
+function setThrough(p: { o?: I }, v: number): void {
+  p.o!.v = v;
+}
+
+function run(): void {
+  const t: { o?: { v: number } } = { o: { v: 1 } };
+  t.o!.v = 5;
+  console.log(t.o!.v);
+  if (t.o) {
+    t.o.v = 7;
+  }
+  const x = t.o;
+  x!.v = 8;
+  console.log(t.o!.v, x!.v);
+
+  const u: { o: I | null } = { o: mk(1) };
+  u.o!.v = 6;
+  u.o!.v += 4;
+  u.o!.v++;
+  ++u.o!.v;
+  u.o!.v *= 2;
+  u.o!.tags.push("a");
+  (u.o as I).v -= 1;
+  console.log(u.o!.v, u.o!.tags.join(","));
+
+  const w: { o: { p: { v: number } | null } | null } = { o: { p: { v: 1 } } };
+  w.o!.p!.v = 9;
+  w.o!.p!.v += 1;
+  console.log(w.o!.p!.v);
+
+  let m: I | undefined = mk(3);
+  m!.v = 4;
+  (m ?? mk(0)).v += 1;
+  console.log(m!.v);
+
+  const set = (n: number) => {
+    u.o!.v = n;
+  };
+  set(50);
+  console.log(u.o!.v);
+
+  const xs: (I | null)[] = [mk(1), null, mk(2)];
+  xs[0]!.v = 10;
+  xs[2]!.v++;
+  xs.forEach((e) => {
+    if (e !== null) {
+      e.v += 1;
+    }
+  });
+  console.log(xs[0]!.v, xs[2]!.v);
+
+  const byKey = new Map<string, I>([["a", mk(1)]]);
+  byKey.get("a")!.v = 20;
+  byKey.get("a")!.tags.push("k");
+  console.log(byKey.get("a")!.v, byKey.get("a")!.tags.length);
+
+  const b = new Box();
+  b.bump();
+  b.item!.v++;
+  const maybe: { box: Box | null } = { box: b };
+  maybe.box!.bump();
+  maybe.box!.item!.v *= 2;
+  console.log(b.item!.v);
+}
+
+function boundThrough(): void {
+  // `!` on a value already known to be present: the binding is the object, as `let r = q` is.
+  let q: I | undefined = mk(0);
+  let r = q!;
+  r.v = 2;
+  const p: I = mk(0);
+  const s = p!;
+  s.v = 5;
+  s.tags.push("s");
+  console.log(q!.v, p.v, p.tags.length);
+}
+
+run();
+boundThrough();
+
+state.o!.v = 2;
+state.o!.v += 3;
+setThrough(state, state.o!.v * 2);
+console.log(state.o!.v);
+const alias = state.o;
+alias!.v = 11;
+console.log(state.o!.v);
+
+kept.o!.v = 6;
+kept.n!.o!.v = 3;
+kept.n!.o!.v *= 5;
+console.log(kept.o!.v, kept.n!.o!.v);

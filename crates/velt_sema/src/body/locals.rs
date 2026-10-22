@@ -182,6 +182,11 @@ impl FnCx<'_, '_> {
         frame_lookup(&self.f, name).is_some()
     }
 
+    /// The local `name` names in this function, without using it.
+    pub(crate) fn declared_local(&self, name: &str) -> Option<LocalId> {
+        frame_lookup(&self.f, name)
+    }
+
     pub fn lookup_local(&mut self, name: &str, span: Span) -> Option<LocalId> {
         if let Some(l) = frame_lookup(&self.f, name) {
             if !self.f.late.caps.is_empty() {

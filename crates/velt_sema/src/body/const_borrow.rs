@@ -52,6 +52,8 @@ impl FnCx<'_, '_> {
                 } => self.force_move(&mut args[0]),
                 _ => self.force_move(&mut h),
             }
+            // `const t = K!.a`: a part of a module constant evaluated at each use.
+            self.per_use_taken(e, ty);
             return Err(Some(h));
         }
         let local = self.declare_local_mut(name, ty, LocalKind::Bind, false);

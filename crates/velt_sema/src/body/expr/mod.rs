@@ -94,6 +94,7 @@ mod ops;
 mod optional_fn_call;
 mod ordering;
 mod overload_call;
+mod per_use;
 mod process;
 mod promise_new;
 mod promise_then;
@@ -182,6 +183,10 @@ impl FnCx<'_, '_> {
         let h = self.collapse_dynamic_option(h);
         // A generic union holding `null` / `undefined` through a member, in its written form.
         let h = self.flatten_hidden_nothings(h);
+        if want == Want::Move {
+            // `const t = (K ?? d)!`, `K!.a`, `N.a`: what a module constant gives taken over.
+            self.per_use_taken(e, h.ty);
+        }
         if self.cx.recording() {
             // Function values show their parameter names (`(x: i64) => string`).
             let shown = self.shown_ty(&h);
@@ -285,10 +290,13 @@ impl FnCx<'_, '_> {
             A::Arrow { .. } => self.closure(e, exp, true),
             A::Function(d) => self.function_expr(d, exp, span),
             A::Array(elems) => self.array_lit(elems, exp, span),
-            A::Object(props) => match self.reject_cover_inits(props) {
-                Some(props) => self.object_lit(&props, exp, span),
-                None => self.object_lit(props, exp, span),
-            },
+            A::Object(props) => {
+                self.per_use_spreads(props);
+                match self.reject_cover_inits(props) {
+                    Some(props) => self.object_lit(&props, exp, span),
+                    None => self.object_lit(props, exp, span),
+                }
+            }
             A::StructLit { name, props } => self.struct_lit(name, props, exp, span),
             A::Spread(_) => self.unsupported_expr("spread arguments (`f(...xs)`)", span),
             A::Await(inner) => self.await_expr(inner, exp, span),
