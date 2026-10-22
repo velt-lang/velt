@@ -660,6 +660,13 @@ type); it is `None` when no global has a slot, and then nothing below is emitted
   drop glue, `names` the slots' names. A slot is never read from its initializer's stored
   data (a module constant table's `table_read`). `velt_main` touches the state before calling `main` (sync or async), so
   every initializer runs first, as in Node.
+- The root file's slots when its top-level statements are the entry `main` (#1438): slots
+  `ModuleState::deferred..` (the root module is evaluated last, so they are the last ones).
+  `init` stops before them; `main` holds `Intrinsic::InitSlots(from, to)` statements (no args,
+  `void`) before the first statement after each run of them in the source, and lowering calls
+  the initializer of slots `from..to` there on the block (`velt_rt_module_block`). The
+  initializer that stores the last slot reports it with `u64::MAX`. The descriptor's `rest`
+  initializes slots `deferred..` for a block made for swapped-in code (rt_abi.md).
 
 ## Symbols
 

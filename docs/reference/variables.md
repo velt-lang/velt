@@ -235,7 +235,8 @@ function main() {
   `with`, and store what it returns after.
 - In a root file with top-level statements, a `let` that only those statements use is a local
   of the generated `main` ([Scripts](modules.md#scripts-top-level-statements)); one that a
-  function uses is module state, and its initializer runs before the first statement.
+  function uses is module state, and its initializer runs where it stands, after the statements
+  above it, as in Node.
 - <a id="module-state-cost"></a>Cost: a program without module state pays nothing, and so does a
   task that never uses it. Each read or write of a module-level `let`, or of a constant kept as
   module state, is a call into the runtime that returns the state (a constant only read is not: one

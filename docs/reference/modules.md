@@ -80,6 +80,28 @@ for (const n of names) {
 }
 ```
 
+The statements and the declarations between them run in source order, as in Node: a module
+constant, a module `let` or a class's static fields are evaluated where they stand, after the
+statements above them, also across a top-level `await`. Function declarations are hoisted. A
+statement that uses a class, an enum or a top-level `const`/`let` declared below it directly
+(not inside a function it makes) is an error, where Node throws a `ReferenceError` (TypeScript
+reports "used before its declaration"); a function that reads a module variable before its
+declaration has run stops with `Uncaught ReferenceError: Cannot access '…' before
+initialization`, as in Node.
+
+```ts
+let calls = 0;
+function count(): number {
+  calls++;
+  return calls;
+}
+count();
+class Counter {
+  static readonly first: number = count(); // 2: the statement above ran first
+}
+console.log(Counter.first);
+```
+
 A file with top-level statements cannot also declare `main`.
 
 An imported module's top-level statements run once, when the module is evaluated, as in Node:
