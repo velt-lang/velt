@@ -37,6 +37,7 @@ pub(crate) fn validate_moves(cx: &mut Ctx) {
         let keeps_fn_params = cx.fn_info(d).keeps_fn_params;
         let soft: FxHashSet<Span> = cx.fn_info(d).soft_moves.iter().copied().collect();
         let shared = shared_captures_in(cx, &mut f.body.block);
+        keep_moved_constants(cx, &mut f.body.block, &soft);
         let copy: Vec<bool> = f.body.locals.iter().map(|l| cx.is_copy(l.ty)).collect();
         let v = Validator {
             cx,
@@ -103,6 +104,47 @@ pub(crate) fn validate_moves(cx: &mut Ctx) {
         for (c, pinned) in copied_captures {
             super::shares::share_captures(cx, c, &pinned);
         }
+    }
+}
+
+/// A part moved out of a module constant (`return K.inner`, `const a = K.inner`): the constant is
+/// the one object the module state keeps (`crate::kept_consts::keep`), and lowering shares the
+/// part from it, as Node refers to it. A soft move shares a part of a new evaluation of the
+/// constant otherwise, which only shows for a part with identity (an object, an array).
+fn keep_moved_constants(cx: &mut Ctx, b: &mut crate::hir::Block, soft: &FxHashSet<Span>) {
+    let mut roots = vec![];
+    visit::exprs_mut(b, &mut |e: &mut Expr| {
+        if soft.contains(&e.span) && !crate::body::pure_init::mutable_identity(cx, e.ty) {
+            return;
+        }
+        let (E::Field {
+            base,
+            mode: UseMode::Move,
+            ..
+        }
+        | E::UnwrapSome(base, UseMode::Move)
+        | E::UnwrapVariant {
+            expr: base,
+            mode: UseMode::Move,
+            ..
+        }) = &e.kind
+        else {
+            return;
+        };
+        let mut cur: &Expr = base;
+        loop {
+            match &cur.kind {
+                E::Field { base, .. }
+                | E::UnwrapSome(base, _)
+                | E::UnwrapVariant { expr: base, .. }
+                | E::Downcast(base) => cur = base,
+                E::Global(d) => return roots.push(*d),
+                _ => return,
+            }
+        }
+    });
+    for d in roots {
+        crate::kept_consts::keep(cx, d);
     }
 }
 

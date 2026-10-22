@@ -68,6 +68,7 @@ mod intersection_members;
 mod intersections;
 mod js_api;
 mod json;
+mod kept_consts;
 mod key_groups;
 mod known;
 mod literals;
@@ -434,6 +435,7 @@ fn analyze_bodies(cx: &mut ctx::Ctx) {
         return;
     }
     cx.borrow_pass_errors = error_count(cx) > before;
+    kept_consts::keep_readers(cx);
     // After `ownership_passes`: the JSON pass records the types `JSON.stringify` writes.
     object_copies::check(cx);
     replaced_holders::check(cx);

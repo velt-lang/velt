@@ -2261,9 +2261,11 @@ Where an interface with methods is expected (an annotation, a parameter, a retur
   every other member must be given, and a member the interface doesn't declare is an error.
 - The value is an interface value: its members are read and called through the interface.
 - Such a literal may be a module constant, exported or not (`export const upper: Handler = {
-  … }`). Like every module constant it is evaluated at each use, so comparing it by identity
-  (`===`) is an error, and each use passed on is a new value, as for a function-valued constant
-  ([Variables](variables.md#module-constants-initialized-by-a-call)).
+  … }`). Like every module constant it is evaluated at each use, and each use passed on is a
+  new value, as for a function-valued constant
+  ([Variables](variables.md#module-constants-initialized-by-a-call)), unless the program compares
+  it by identity (`===`): it is then [module state](variables.md#module-state), one value as in
+  Node.
 
 ```ts
 interface Counter {

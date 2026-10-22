@@ -1,0 +1,22 @@
+// A struct `static readonly` field changed by a mutating method is kept in the module state
+// (#1383): each call changes the one value the field holds, as Node changes its one object.
+
+struct Pt {
+  x: i64;
+  bump() {
+    this.x += 1;
+  }
+}
+
+class Shapes {
+  static readonly ORIGIN: Pt = Pt { x: 0 };
+}
+
+const START = Pt { x: 10 };
+
+function main() {
+  Shapes.ORIGIN.bump();
+  Shapes.ORIGIN.bump();
+  START.bump();
+  console.log(Shapes.ORIGIN.x, START.x);
+}

@@ -1,0 +1,19 @@
+// Module state cannot hold a promise, so a constant or a `static readonly` field holding one
+// can't be kept there (#1383): comparing it by identity or modifying it stays an error, the
+// same for both.
+
+type Box = { p: Promise<number>; n: number };
+
+const B: Box = { p: Promise.resolve(1), n: 0 };
+
+class C {
+  static readonly Q: Box = { p: Promise.resolve(2), n: 0 };
+}
+
+async function main() {
+  console.log(B === B, C.Q === C.Q);
+  B.n = 1;
+  const t = C.Q;
+  t.n = 2;
+  console.log(await B.p, await C.Q.p, B.n, t.n);
+}

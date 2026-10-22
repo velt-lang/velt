@@ -140,7 +140,9 @@ hidden classes and no runtime shape checks.
   zero-sized ones such as std's `runtime` markers),
   `public` (the default), `readonly`
   fields (assignable only in the constructor), `static` methods, and
-  `static readonly NAME: T = const;` constants (`Account.LIMIT`, `Math.PI`). Mutable statics
+  `static readonly NAME: T = …;` constants (`Account.LIMIT`, `Math.PI`), evaluated like
+  [module constants](variables.md#module-state) (once, with the class, when the program
+  modifies, takes over or compares one, or its value is not a constant). Mutable statics
   and `protected` members don't exist (only a constructor can be `protected`). Static and
   instance members are separate namespaces, as in TypeScript: a subclass's `static m()` doesn't
   hide an inherited instance method `m()`, and a class below it can still `override` that method.

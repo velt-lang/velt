@@ -63,7 +63,8 @@ pub(super) fn access_of(m: UseMode) -> Option<Access> {
 }
 
 /// A place used by an argument; `text` names it in diagnostics, `captured` says the use is a
-/// closure's capture (`span` is then the closure's).
+/// closure's capture (`span` is then the closure's), and `capture` which: the closure and the
+/// enclosing variable.
 #[derive(Clone, Debug)]
 pub(super) struct Use {
     pub place: Place,
@@ -71,6 +72,7 @@ pub(super) struct Use {
     pub span: Span,
     pub text: String,
     pub captured: bool,
+    pub capture: Option<(DefId, LocalId)>,
 }
 
 /// Borrowing pattern bindings (`for...of` elements, `match` / destructuring bindings) point
@@ -146,6 +148,7 @@ impl Collector<'_, '_> {
                     span: e.span,
                     text,
                     captured: false,
+                    capture: None,
                 });
             }
             return self.index_operands(e, nested);
@@ -246,6 +249,7 @@ impl Collector<'_, '_> {
                 span,
                 text: self.locals[cap.outer.0 as usize].name.clone(),
                 captured: true,
+                capture: Some((def, cap.outer)),
             });
         }
     }
@@ -279,6 +283,7 @@ impl Nested<'_, '_, '_> {
             span: e.span,
             text,
             captured: false,
+            capture: None,
         });
     }
 }
