@@ -122,6 +122,64 @@ typedef struct VeltRtApi {
   `drop_ctx` and `drop_result`, which point into the library; libraries are never unloaded. A
   library never stores a Velt code pointer (no function types cross the boundary).
 
+## Async I/O
+
+The table's second part lets a library run async Rust on the program's scheduler, the way the
+runtime's own drivers do: its futures are polled inline by the task awaiting them, its sockets
+are the runtime's (on Velt's scheduler, registered with the worker's reactor; on tokio's, with
+tokio's), and a task it spawns runs on the worker that spawned it. Nothing Rust-specific
+crosses: a library carries its own std, possibly from another compiler.
+
+```c
+typedef uint32_t (*VeltPollFn)(void* state, void* cx, void* out);   // READY = 1, PENDING = 0
+typedef struct { const void* (*clone)(const void*); void (*wake)(const void*);
+                 void (*wake_by_ref)(const void*); void (*drop)(const void*); } VeltForeignWaker;
+typedef struct { const void* runtime; const void* data; const VeltForeignWaker* vtable; } VeltWakerArg;
+
+    VeltFut* (*fut_poll)(VeltPollFn poll, void* state, void (*drop_state)(void*), size_t result_size);
+    const void* (*cx_waker)(void* cx);                // the task's waker, borrowed for the poll
+    void* (*waker_clone)(const void* w);              // an owned (boxed) copy of a runtime waker
+    void (*waker_wake)(void* w);                      // wake and free
+    void (*waker_wake_by_ref)(const void* w);
+    void (*waker_drop)(void* w);
+    uint32_t (*fut_poll_ext)(VeltFut* f, const VeltWakerArg* w);  // await a runtime future
+    void (*fut_drop)(VeltFut* f);
+    void (*spawn)(VeltFut* f);                        // detached; result size 0
+    VeltFut* (*tcp_connect)(const uint8_t* addr, size_t len);     // "host:port" -> IoResult<u64>
+    int32_t (*stream_from_socket)(int64_t socket, uint64_t* out); // adopt a connected socket
+    uint32_t (*stream_poll_read)(uint64_t h, const VeltWakerArg* w, uint8_t* buf, size_t cap,
+                                 size_t* n, int32_t* err);        // n == 0: end of stream
+    uint32_t (*stream_poll_write)(uint64_t h, const VeltWakerArg* w, const uint8_t* buf,
+                                  size_t len, size_t* n, int32_t* err);
+    uint32_t (*stream_poll_flush)(uint64_t h, const VeltWakerArg* w, int32_t* err);
+    uint32_t (*stream_poll_shutdown)(uint64_t h, const VeltWakerArg* w, int32_t* err);
+    int64_t (*stream_socket)(uint64_t h);             // for socket options; the stream owns it
+    void (*stream_close)(uint64_t h);
+    uint64_t (*now_ns)(void);                         // monotonic
+    void* (*sleep_new)(uint64_t deadline_ns);
+    uint32_t (*sleep_poll)(void* s, const VeltWakerArg* w);
+    void (*sleep_reset)(void* s, uint64_t deadline_ns);
+    void (*sleep_drop)(void* s);
+    int64_t (*worker_index)(void);                    // -1 off the workers / on tokio's stealing
+```
+
+- `fut_poll` makes a `VeltFut` from a library future: the runtime calls `poll(state, cx, out)`
+  on the thread of the awaiting task; `READY` means `result_size` bytes are at `out`. `state`
+  is freed with `drop_state` when the future finishes or is dropped. A panic must not cross
+  `poll` (the SDK turns it into the result's error).
+- `cx` is the runtime's poll context, valid during the call; `cx_waker(cx)` is the task's
+  waker, borrowed for the call. Functions that wait take a `VeltWakerArg`: `runtime` set to a
+  runtime waker (borrowed or owned) when the library's waker is one, which costs nothing; else
+  `data` (borrowed for the call) and `vtable`, the library's own waker (a combinator's), which
+  the runtime clones through `clone` when it must keep it.
+- Error codes (`err`, `stream_from_socket`): 0 is success; a positive value is the OS error
+  number, a negative one the negated `IoError` code (rt_abi_async.md §3).
+- Handles (streams, sleeps, owned wakers) are pointers the library owns until it closes,
+  drops or wakes them; using one after that is undefined, as with any Rust value.
+- The SDK wraps all of it: `#[export(async)] async fn`, `velt_native::rt::spawn`,
+  `velt_native::net::TcpStream` (tokio's `AsyncRead`/`AsyncWrite` with the `tokio` feature),
+  `velt_native::time::{sleep, timeout}`, `velt_native::rt::worker_index`.
+
 ## Start-up
 
 `velt_main` (VIR lowering, `LowerOptions::native_inits`) begins, for each package with a library

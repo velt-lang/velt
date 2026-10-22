@@ -83,6 +83,36 @@ fn velt_greet__slow(n: u64) -> Result<u64, Error> {
 - A panic becomes an error result (`native panic: …`) where the result can carry one.
 - Objects (a connection, a decoder) stay on the Rust side behind a `u64` handle.
 
+### Async functions and network I/O
+
+An `#[export(async)] async fn` is a `declare async function` whose future runs on the program's
+scheduler, polled by the task that awaits it, with no thread in between. With
+`velt_native = { version = "0.1", features = ["tokio"] }`, its sockets are Velt's own and work
+with libraries written for tokio:
+
+```rust
+use velt_native::{export, net::TcpStream, time, Error};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+#[export(async)]
+async fn velt_greet__ping(addr: String) -> Result<String, Error> {
+    let mut s = TcpStream::connect(&addr).await?;
+    s.write_all(b"ping\n").await?;
+    let mut buf = vec![0; 64];
+    let n = time::timeout(std::time::Duration::from_secs(5), s.read(&mut buf))
+        .await
+        .map_err(|e| Error::new(velt_native::code::TIMED_OUT, e.to_string()))??;
+    Ok(String::from_utf8_lossy(&buf[..n]).into_owned())
+}
+```
+
+- Parameters are owned (`String`, `Vec<u8>`): the future outlives the call.
+- `velt_native::rt::spawn(fut)` runs a background task (a connection's protocol loop) on the
+  current worker.
+- Don't start another async runtime (a tokio runtime) in the library: its I/O would wake Velt's
+  tasks across threads. Libraries that only need tokio's I/O traits and `sync` types (most
+  drivers, with their connection future spawned through `rt::spawn`) run on Velt's directly.
+
 ## The Velt side
 
 The package declares each function with exactly the signature the Rust side exports, and wraps
