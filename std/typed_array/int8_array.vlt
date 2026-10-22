@@ -132,12 +132,12 @@ export class Int8Array extends TypedArray implements Iterable<number> {
     return this.count();
   }
 
-  /** Element `i`, counting from the end when negative; null out of range (JS: `undefined`). */
-  at(position: number): number | null {
+  /** Element `i`, counting from the end when negative; `undefined` out of range. */
+  at(position: number): number | undefined {
     const index = toInteger(position);
     const i = index < 0 ? index + (this.len as i64) : index;
     if (i < 0 || (i as usize) >= this.len) {
-      return null;
+      return undefined;
     }
     return this.get(i as usize);
   }
@@ -238,15 +238,15 @@ export class Int8Array extends TypedArray implements Iterable<number> {
     return Int8Array.ofArray(kept);
   }
 
-  /** The first element `pred` holds for, or null (JS: `undefined`). */
-  find<E>(pred: (x: number, i: number) => bool throws E): number | null throws E {
+  /** The first element `pred` holds for, or `undefined`. */
+  find<E>(pred: (x: number, i: number) => bool throws E): number | undefined throws E {
     for (let i: usize = 0; i < this.len; i++) {
       const x = this.get(i);
       if (pred(x, i as number)) {
         return x;
       }
     }
-    return null;
+    return undefined;
   }
 
   /** The index of the first element `pred` holds for, or -1. */
@@ -259,8 +259,8 @@ export class Int8Array extends TypedArray implements Iterable<number> {
     return -1;
   }
 
-  /** The last element `pred` holds for, or null (JS: `undefined`). */
-  findLast<E>(pred: (x: number, i: number) => bool throws E): number | null throws E {
+  /** The last element `pred` holds for, or `undefined`. */
+  findLast<E>(pred: (x: number, i: number) => bool throws E): number | undefined throws E {
     let i = this.len;
     while (i > 0) {
       i--;
@@ -269,7 +269,7 @@ export class Int8Array extends TypedArray implements Iterable<number> {
         return x;
       }
     }
-    return null;
+    return undefined;
   }
 
   /** The index of the last element `pred` holds for, or -1. */
