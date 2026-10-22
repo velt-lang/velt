@@ -106,6 +106,7 @@ impl Emitter<'_> {
                 base_align,
                 ty: field_ty,
                 root,
+                tbaa: None,
             };
             self.write(loc, val)?;
         }

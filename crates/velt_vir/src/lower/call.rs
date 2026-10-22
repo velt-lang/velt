@@ -83,8 +83,13 @@ impl FnLower<'_, '_> {
             }
         }
         let mut argv = pre;
+        // A quiet callee (quiet.rs) cannot reach what a borrow goes through: no shares.
+        let how = match self.cx.quiet(def) {
+            true => Stabilize::Facts,
+            false => Stabilize::Share,
+        };
         let outer = std::mem::replace(&mut self.frozen_args, frozen != 0);
-        argv.extend(self.lower_args(args, &modes, true));
+        argv.extend(self.lower_args(args, &modes, how));
         self.frozen_args = outer;
         let ret = self.cx.subst(ret, &targs);
         let throws = throws.map(|e| self.cx.subst(e, &targs));
@@ -132,8 +137,8 @@ impl FnLower<'_, '_> {
         let never = self.cx.is_never(x.ret);
         let id = self.cx.extern_sym(&x.symbol, params, ret, never);
         let argv = match foreign {
-            true => self.foreign_args(&x.params, args),
-            false => self.lower_args(args, &modes, false),
+            true => self.foreign_args(&x.params, args, false),
+            false => self.lower_args(args, &modes, Stabilize::No),
         };
         self.finish_call(vir::Callee::Extern(id), argv, x.ret, None)
     }
@@ -150,7 +155,11 @@ impl FnLower<'_, '_> {
                 s => Some(s),
             })
             .collect();
-        let mut argv = self.foreign_args(&x.params, args);
+        // The SIMD helpers are inlined, synchronous, and only read an array's header: they get
+        // the header where it is instead of a copy, so after inlining nothing reads the copy
+        // (which LLVM would redo after every element store, tbaa.rs in velt_codegen_llvm).
+        let in_place = x.symbol.starts_with("velt_simd_");
+        let mut argv = self.foreign_args(&x.params, args, in_place);
         let fret = self.cx.foreign_ty(x.ret);
         let ret = match fret {
             Ty::Agg(_) => Ty::Unit,
@@ -174,7 +183,13 @@ impl FnLower<'_, '_> {
     }
 
     /// Arguments of an extern as foreign views (borrowed: the caller keeps ownership).
-    fn foreign_args(&mut self, params: &[TyId], args: &[hir::Expr]) -> Vec<Operand> {
+    /// `in_place`: an array is passed as its own header rather than a copy of it.
+    fn foreign_args(
+        &mut self,
+        params: &[TyId],
+        args: &[hir::Expr],
+        in_place: bool,
+    ) -> Vec<Operand> {
         let mut argv = vec![];
         for (&p, a) in params.iter().zip(args) {
             let v = self.expr(a);
@@ -183,7 +198,10 @@ impl FnLower<'_, '_> {
                 Ty::Agg(_) => {
                     let vt = self.cx.ty(p);
                     let place = self.operand_place(v, vt);
-                    let view = self.foreign_view(&place, p);
+                    let view = match in_place && matches!(self.cx.kind(p), TyKind::Array(_)) {
+                        true => self.content(&place, p),
+                        false => self.foreign_view(&place, p),
+                    };
                     argv.push(self.addr(view));
                 }
                 _ => argv.push(v),
@@ -192,13 +210,13 @@ impl FnLower<'_, '_> {
         argv
     }
 
-    /// Arguments of a direct call per the callee's modes. `user_code`: the callee may run user
-    /// code (not a runtime extern), so borrows through counted objects are stabilized.
+    /// Arguments of a direct call per the callee's modes, borrows through counted objects
+    /// stabilized as `how` says.
     pub(super) fn lower_args(
         &mut self,
         args: &[hir::Expr],
         modes: &[PassMode],
-        user_code: bool,
+        how: Stabilize,
     ) -> Vec<Operand> {
         if args.len() != modes.len() {
             ice("argument count does not match parameter count");
@@ -225,9 +243,10 @@ impl FnLower<'_, '_> {
                     argv.push(self.addr(place));
                 }
                 (t @ Ty::Agg(_), PassMode::Borrow | PassMode::BorrowMut) => {
-                    let v = match user_code {
-                        true => self.stable_borrow(a, &args[i + 1..]),
-                        false => self.borrowed_arg(a),
+                    let v = match how {
+                        Stabilize::Share => self.stable_borrow(a, &args[i + 1..]),
+                        Stabilize::Facts => self.stable_borrow_as(a, &args[i + 1..], false),
+                        Stabilize::No => self.borrowed_arg(a),
                     };
                     // A value the callee modifies stays where it is (it may only be shared). A
                     // frozen one changes for nobody, and is not counted (frozen.rs).
@@ -249,8 +268,9 @@ impl FnLower<'_, '_> {
                 }
                 (_, m) => {
                     let v = match m {
-                        PassMode::Borrow | PassMode::BorrowMut if user_code => {
-                            let v = self.stable_borrow(a, &args[i + 1..]);
+                        PassMode::Borrow | PassMode::BorrowMut if how != Stabilize::No => {
+                            let share = how == Stabilize::Share;
+                            let v = self.stable_borrow_as(a, &args[i + 1..], share);
                             // A frozen one changes for nobody, and is not counted (frozen.rs);
                             // a number read out of one is still read now, before a later
                             // argument may free its box (a copy counts nothing).
@@ -454,4 +474,15 @@ fn is_copy_read(a: &hir::Expr) -> bool {
                 ..
             }
     )
+}
+
+/// How a direct call's borrowed arguments are kept alive (stabilize.rs).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Stabilize {
+    /// The callee may run user code: borrows through counted objects are shared or retained.
+    Share,
+    /// A quiet callee (quiet.rs): the same facts recorded, no shares.
+    Facts,
+    /// A runtime extern: plain borrows.
+    No,
 }

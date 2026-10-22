@@ -40,7 +40,7 @@ pub fn may_change_memory(e: &hir::Expr) -> bool {
 /// does: `o.grow()`, `o.g` with a getter, `xs[0]` (a future index hook), `f(x)`, `o.s = v`
 /// with a setter. A new
 /// intrinsic that can run user code belongs here.
-fn runs_user_code(i: hir::Intrinsic) -> bool {
+pub fn runs_user_code(i: hir::Intrinsic) -> bool {
     use hir::Intrinsic as I;
     matches!(
         i,
@@ -56,7 +56,7 @@ fn runs_user_code(i: hir::Intrinsic) -> bool {
 }
 
 /// Is `a` a place passed to modify or move it (an intrinsic argument like `pop`'s receiver)?
-fn writes_place(a: &hir::Expr) -> bool {
+pub fn writes_place(a: &hir::Expr) -> bool {
     let mode = match &a.kind {
         H::Local(_, m) | H::Field { mode: m, .. } | H::Index { mode: m, .. } => *m,
         H::UnwrapSome(_, m) | H::UnwrapVariant { mode: m, .. } => *m,

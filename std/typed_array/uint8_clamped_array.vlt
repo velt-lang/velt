@@ -91,9 +91,15 @@ export class Uint8ClampedArray extends TypedArray implements Iterable<number> {
     return 1;
   }
 
+  // The number of elements, below 2^53 (`layout` rejects longer views): the mask says so to
+  // the compiler, which then counts an index up to it in integers.
+  private count(): number {
+    return (this.len & 0x1fffffffffffff) as number;
+  }
+
   /** `xs[i]`: element `i`; panics out of range, like an array index (JS reads `undefined`). */
   __index(i: number): number {
-    if (!(i >= 0 && i < (this.len as number)) || i != Math.trunc(i)) {
+    if (!(i >= 0 && i < this.count()) || i != Math.trunc(i)) {
       panic(`index out of bounds: the len is ${this.len} but the index is ${i}`);
     }
     return this.get(i as usize);
@@ -101,7 +107,7 @@ export class Uint8ClampedArray extends TypedArray implements Iterable<number> {
 
   /** `xs[i] = v`: writes element `i`, converted; nothing out of range, as in JS. */
   __setIndex(i: number, v: number) {
-    if (i >= 0 && i < (this.len as number) && i == Math.trunc(i)) {
+    if (i >= 0 && i < this.count() && i == Math.trunc(i)) {
       this.put(i as usize, v);
     }
   }
@@ -123,7 +129,7 @@ export class Uint8ClampedArray extends TypedArray implements Iterable<number> {
 
   /** The number of elements. */
   get length(): number {
-    return this.len as number;
+    return this.count();
   }
 
   /** Element `i`, counting from the end when negative; `undefined` out of range. */

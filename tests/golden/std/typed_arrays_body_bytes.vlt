@@ -1,0 +1,27 @@
+// A body's bytes become an `ArrayBuffer`'s only as a copy of their own: neither the array the
+// body was made from, nor a clone, nor a stream chunk the program holds shares them, so typed
+// arrays over them always read inside their buffer (std/typed_array/buffer.vlt `element*`).
+async function main() {
+  const src = new Uint8Array([0, 0, 0, 0, 0, 0, 0xf8, 0x3f]);
+  const a = new Float64Array(await new Response(src).arrayBuffer());
+  src[7] = 0;
+  a[0] = 3;
+  const b = new Float64Array(await new Response(src.buffer).arrayBuffer());
+  console.log(a[0], b[0], src[6]);
+
+  const req = new Request("http://x.test/", { method: "POST", body: src });
+  const rc = req.clone();
+  const u = await req.bytes();
+  u[0] = 9;
+  const w = await rc.bytes();
+  console.log(u[0], w[0], src[0]);
+
+  const s = new Response("abcdefgh");
+  const reader = s.body!.getReader();
+  const first = await reader.read();
+  const chunk = first.value!;
+  const f = new Float32Array(chunk.buffer, 0, 2);
+  chunk[0] = 0;
+  console.log(f.length, chunk.length, chunk[1], (await reader.read()).done);
+
+}

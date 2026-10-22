@@ -1,0 +1,181 @@
+// Every kind's element reads and writes at the ends of a buffer: views ending exactly at the
+// buffer's last byte, at offsets 0 and one element in, with the bytes around them checked, so
+// a load or store that touched a byte past an element would show (std/typed_array/buffer.vlt
+// `element*`, one access of the element's bytes).
+function bytesOf(buf: ArrayBuffer): string {
+  return new Uint8Array(buf).join(",");
+}
+
+function checkInt8Array() {
+  for (const n of [1, 2, 3]) {
+    for (const lead of [0, 1]) {
+      const buf = new ArrayBuffer((lead + n) * 1);
+      new Uint8Array(buf).fill(0xee);
+      const v = new Int8Array(buf, lead * 1, n);
+      for (let i = 0; i < n; i++) {
+        v[i] = i + 1;
+      }
+      let sum = 0;
+      for (let i = 0; i < v.length; i++) {
+        sum += v[i];
+      }
+      console.log("Int8Array", n, lead, sum, bytesOf(buf));
+    }
+  }
+}
+
+function checkUint8Array() {
+  for (const n of [1, 2, 3]) {
+    for (const lead of [0, 1]) {
+      const buf = new ArrayBuffer((lead + n) * 1);
+      new Uint8Array(buf).fill(0xee);
+      const v = new Uint8Array(buf, lead * 1, n);
+      for (let i = 0; i < n; i++) {
+        v[i] = i + 1;
+      }
+      let sum = 0;
+      for (let i = 0; i < v.length; i++) {
+        sum += v[i];
+      }
+      console.log("Uint8Array", n, lead, sum, bytesOf(buf));
+    }
+  }
+}
+
+function checkUint8ClampedArray() {
+  for (const n of [1, 2, 3]) {
+    for (const lead of [0, 1]) {
+      const buf = new ArrayBuffer((lead + n) * 1);
+      new Uint8Array(buf).fill(0xee);
+      const v = new Uint8ClampedArray(buf, lead * 1, n);
+      for (let i = 0; i < n; i++) {
+        v[i] = i + 1;
+      }
+      let sum = 0;
+      for (let i = 0; i < v.length; i++) {
+        sum += v[i];
+      }
+      console.log("Uint8ClampedArray", n, lead, sum, bytesOf(buf));
+    }
+  }
+}
+
+function checkInt16Array() {
+  for (const n of [1, 2, 3]) {
+    for (const lead of [0, 1]) {
+      const buf = new ArrayBuffer((lead + n) * 2);
+      new Uint8Array(buf).fill(0xee);
+      const v = new Int16Array(buf, lead * 2, n);
+      for (let i = 0; i < n; i++) {
+        v[i] = i + 1;
+      }
+      let sum = 0;
+      for (let i = 0; i < v.length; i++) {
+        sum += v[i];
+      }
+      console.log("Int16Array", n, lead, sum, bytesOf(buf));
+    }
+  }
+}
+
+function checkUint16Array() {
+  for (const n of [1, 2, 3]) {
+    for (const lead of [0, 1]) {
+      const buf = new ArrayBuffer((lead + n) * 2);
+      new Uint8Array(buf).fill(0xee);
+      const v = new Uint16Array(buf, lead * 2, n);
+      for (let i = 0; i < n; i++) {
+        v[i] = i + 1;
+      }
+      let sum = 0;
+      for (let i = 0; i < v.length; i++) {
+        sum += v[i];
+      }
+      console.log("Uint16Array", n, lead, sum, bytesOf(buf));
+    }
+  }
+}
+
+function checkInt32Array() {
+  for (const n of [1, 2, 3]) {
+    for (const lead of [0, 1]) {
+      const buf = new ArrayBuffer((lead + n) * 4);
+      new Uint8Array(buf).fill(0xee);
+      const v = new Int32Array(buf, lead * 4, n);
+      for (let i = 0; i < n; i++) {
+        v[i] = i + 1;
+      }
+      let sum = 0;
+      for (let i = 0; i < v.length; i++) {
+        sum += v[i];
+      }
+      console.log("Int32Array", n, lead, sum, bytesOf(buf));
+    }
+  }
+}
+
+function checkUint32Array() {
+  for (const n of [1, 2, 3]) {
+    for (const lead of [0, 1]) {
+      const buf = new ArrayBuffer((lead + n) * 4);
+      new Uint8Array(buf).fill(0xee);
+      const v = new Uint32Array(buf, lead * 4, n);
+      for (let i = 0; i < n; i++) {
+        v[i] = i + 1;
+      }
+      let sum = 0;
+      for (let i = 0; i < v.length; i++) {
+        sum += v[i];
+      }
+      console.log("Uint32Array", n, lead, sum, bytesOf(buf));
+    }
+  }
+}
+
+function checkFloat32Array() {
+  for (const n of [1, 2, 3]) {
+    for (const lead of [0, 1]) {
+      const buf = new ArrayBuffer((lead + n) * 4);
+      new Uint8Array(buf).fill(0xee);
+      const v = new Float32Array(buf, lead * 4, n);
+      for (let i = 0; i < n; i++) {
+        v[i] = i + 1;
+      }
+      let sum = 0;
+      for (let i = 0; i < v.length; i++) {
+        sum += v[i];
+      }
+      console.log("Float32Array", n, lead, sum, bytesOf(buf));
+    }
+  }
+}
+
+function checkFloat64Array() {
+  for (const n of [1, 2, 3]) {
+    for (const lead of [0, 1]) {
+      const buf = new ArrayBuffer((lead + n) * 8);
+      new Uint8Array(buf).fill(0xee);
+      const v = new Float64Array(buf, lead * 8, n);
+      for (let i = 0; i < n; i++) {
+        v[i] = i + 1;
+      }
+      let sum = 0;
+      for (let i = 0; i < v.length; i++) {
+        sum += v[i];
+      }
+      console.log("Float64Array", n, lead, sum, bytesOf(buf));
+    }
+  }
+}
+
+function main() {
+  checkInt8Array();
+  checkUint8Array();
+  checkUint8ClampedArray();
+  checkInt16Array();
+  checkUint16Array();
+  checkInt32Array();
+  checkUint32Array();
+  checkFloat32Array();
+  checkFloat64Array();
+}

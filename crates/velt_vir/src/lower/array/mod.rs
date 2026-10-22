@@ -37,6 +37,9 @@ impl FnLower<'_, '_> {
     }
 
     /// Place of element `i` (a `u64` operand) of the array at `arr`; no bounds check.
+    /// The LLVM backend's alias tags rely on this shape (velt_codegen_llvm `tbaa.rs`): a
+    /// pointer from `ptradd` of a header's data field is only dereferenced as the element's own
+    /// type, so a scalar read through it never reaches an array header.
     pub(super) fn elem_place(&mut self, arr: &Place, i: Operand, elem: TyId) -> Place {
         let (stride, _) = self.stride(elem);
         let off = match i {

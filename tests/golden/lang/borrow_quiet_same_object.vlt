@@ -1,0 +1,22 @@
+// A quiet callee given one object under two names (`o.inner` and `o2.inner`, the same object
+// through a shared `Outer`) sees its own writes through both: borrowing for a quiet callee
+// still records what boxing and `noalias` rely on (velt_vir lower/quiet.rs).
+class Inner {
+  x: number = 0;
+}
+
+class Outer {
+  inner: Inner = new Inner();
+}
+
+function f(p: Inner, r: Inner): number {
+  p.x = 1;
+  r.x = 2;
+  return p.x;
+}
+
+function main() {
+  const o = new Outer();
+  const o2 = o;
+  console.log(f(o.inner, o2.inner));
+}
