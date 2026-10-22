@@ -6,10 +6,10 @@ use velt_common::Span;
 use velt_syntax::ast;
 
 use super::callback::synth;
-use super::iface_adapt::{container, value_ok, Container, SlotSig};
+use super::iface_adapt::{container, value_ok, Container, Mode, SlotSig};
 use crate::body::{FnCx, Frame, LocalKind, Want};
 use crate::ctx::Ctx;
-use crate::defs::{BodyState, DefInfo, FnKind, ParamSig, ThisSig, ThrowSrc};
+use crate::defs::{BodyState, DefInfo, FnKind, Generics, ParamSig, ThisSig, ThrowSrc};
 use crate::hir::{self, Callee, Def, DefId, ExprKind as H, PassMode, TyId, TyKind, UseMode};
 use crate::resolve::TyEnv;
 
@@ -23,8 +23,17 @@ pub(crate) struct AdapterParts {
     pub iname: String,
     pub from: Vec<TyId>,
     pub to: Vec<TyId>,
+    /// The adapter's type parameters (`T0..`), which `from` is over (`iface_adapt_dynamic`).
+    pub generics: u32,
     pub module: usize,
     pub span: Span,
+}
+
+impl AdapterParts {
+    /// The names of the adapter's type parameters.
+    fn param_names(&self) -> Vec<String> {
+        (0..self.generics).map(|i| format!("T{i}")).collect()
+    }
 }
 
 /// The method of the adapter for slot `slot` (signature `s`): calls the slot on the wrapped
@@ -72,6 +81,12 @@ pub(super) fn adapter_method(
     let name = format!("{} adapter.{}", p.iname, s.name);
     let mut info =
         crate::collect::fn_placeholder(name.clone(), span, span, p.module, FnKind::Method, None);
+    let names = p.param_names();
+    let mut generics = Generics::default();
+    for n in &names {
+        generics.push(n);
+    }
+    info.generics = generics;
     info.this = Some(ThisSig {
         ty: p.self_ty,
         mode: this_mode,
@@ -82,7 +97,7 @@ pub(super) fn adapter_method(
     info.state = BodyState::Done;
     info.owner = Some(p.def);
     let def = cx.alloc_def(span, DefInfo::Fn(Box::new(info)));
-    let env = TyEnv::new(p.module, &[]);
+    let env = TyEnv::new(p.module, &names);
     let mut g = FnCx::new(cx, p.module, env, Frame::new(FnKind::Method, Some(ret)));
     g.adapting = true;
     g.fn_name = name.clone();
@@ -239,7 +254,7 @@ pub(super) fn adapter_method(
     drop(g);
     let fndef = hir::FnDef {
         name,
-        generics: 0,
+        generics: p.generics,
         params: hir_params,
         ret,
         is_async: false,
@@ -287,7 +302,11 @@ pub(crate) fn adapter_setter(cx: &mut Ctx, p: &AdapterParts, field: usize) -> Op
     let mut fargs = p.from.clone();
     fargs.push(p.inner);
     let (to, from) = (cx.subst(f.ty, &targs), cx.subst(f.ty, &fargs));
-    if !cx.ty.has_error(to) && !value_ok(cx, to, from, false, &mut vec![], &mut None) {
+    let mut m = Mode {
+        generic: p.generics > 0,
+        ..Mode::default()
+    };
+    if !cx.ty.has_error(to) && !value_ok(cx, to, from, false, &mut m) {
         return None;
     }
     let sig = SlotSig {

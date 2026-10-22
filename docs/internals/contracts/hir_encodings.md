@@ -1089,10 +1089,17 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   `Set`/`Map` key hashes, `instanceof` and the downcast after it look through them at the
   wrapped value, and a conversion of one to `any`, `unknown` or `object` holds the wrapped
   value instead.
-  An `AnyTo` of `Dyn(I, B)` (or `Dyn(I, B) | null`) also gets the adapter from every other
-  `I<A>` an implementation of `I` has (a generic class's at each instance the program names),
-  made once every body is checked (`iface_adapt_dynamic`): lowering takes a dynamic value
-  holding such a type through its implementation, then that adapter.
+  An `AnyTo` of `Dyn(I, B)` (or `Dyn(I, B) | null`) with a dynamic argument also gets one
+  generic adapter, made once every body is checked (`iface_adapt_dynamic`): a struct over one
+  type parameter per dynamic argument of `B` (`T0..`), wrapping a `Dyn(I, A)` whose arguments
+  are those parameters there and `B`'s elsewhere, with a generic impl of `I<B>`; its slots
+  box and check `T0..` as generic code does. Lowering takes a dynamic value holding a type that
+  implements `I<A>` (itself or through its nearest implementing base class) through that
+  implementation, then the adapter's instance at `A`'s arguments; a generic adapter's struct is
+  counted (`counted_objects`) at every instance. A field read through an adapter whose type is
+  an array of `I` values at other arguments (`kids: Tree<T>[]`) is a new array of the elements,
+  each adapted (`map`); such a field has a setter that is never called, and a write of it
+  through the interface is a compile error.
 - `Program::type_names` names structural types as messages do: a type alias's (`type P = …`)
   and a field-only interface's object type, after `readonly` erasure; a type two names reach
   has none. Lowering's `TypeError`s use it.

@@ -2651,9 +2651,17 @@ members read or written through such an `any` are the original's.
 A checked conversion from `any` or `unknown` back to the interface (`v as Handler<any, any>`,
 or at any other arguments, such as the original's own) takes the value the `any` holds through
 its own implementation of the interface: an object literal's, a class's (also for an instance
-of a subclass), or a generic class's at the instance's type arguments. At other arguments the
-result is wrapped as above, and it is the same object as the original. A context stored in a
-`Map<string, unknown>` and read back as a `Ctx<any, any>` works as in Node.
+of a subclass, through the nearest base class implementing it), or a generic class's at the
+instance's type arguments, including instances only generic code makes (`new G<T>(x)` in a
+`function mk<T>(x: T)`). At other arguments the result is wrapped as above, and it is the same
+object as the original. A context stored in a `Map<string, unknown>` and read back as a
+`Ctx<any, any>` works as in Node. A value implementing the interface at a promise argument
+(`Ctx<Promise<number>>`) does not convert to `Ctx<any>`: a `TypeError`.
+
+A field holding an array of the interface's own values (`kids: Tree<T>[]`), read through a
+`Tree<number>` converted to a `Tree<any>`, is a new array of the same elements, each a
+`Tree<any>`: reads see the original's elements and their changes. Changing the field through
+the converted value (assigning it, or a `push` on it) is a compile error naming #1185.
 
 A parameter of type `unknown[]`, `Map<unknown, unknown>` or `Set<unknown>` (a handler for
 arrays, maps or sets, as in a serializer's table) takes an array, map or set of any element

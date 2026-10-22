@@ -44,6 +44,7 @@ impl<'h> Cx<'h> {
             funcs: vec![],
             work_map: FxHashMap::default(),
             queue: VecDeque::new(),
+            iface_glues: vec![],
             building: FxHashSet::default(),
             asyncs: FxHashMap::default(),
             by_ref_params: FxHashSet::default(),

@@ -51,8 +51,9 @@ fn a_field_that_does_not_convert_back_is_reported_where_it_is_written() {
 }
 
 #[test]
-fn a_conversion_out_of_unknown_gets_the_adapters_of_every_implementation() {
-    // Written before the implementations exist: made once every body is checked.
+fn a_conversion_out_of_unknown_gets_one_generic_adapter() {
+    // Written before the implementations exist: made once every body is checked, over the
+    // arguments it adapts from, so it serves every instance (lowering's too).
     let p = ok_src(
         "interface Ctx<P = {}> { props: P; name(): string; }
          function read(u: unknown): Ctx<any> { return u as Ctx<any>; }
@@ -66,15 +67,42 @@ fn a_conversion_out_of_unknown_gets_the_adapters_of_every_implementation() {
            console.log(read(c).name(), read(new G<string>(\"s\")).name());
          }",
     );
-    let wrapped: Vec<String> = (p.impls.iter())
+    let wrapped: Vec<(u32, String)> = (p.impls.iter())
         .filter_map(|i| match p.def(adt(&p, i.ty)?) {
             velt_sema::hir::Def::Adt(a) if a.name.ends_with(" adapter") => {
-                Some(format!("{:?}", p.types.kind(a.fields[0].ty)))
+                let velt_sema::hir::TyKind::Dyn(_, args) = p.types.kind(a.fields[0].ty) else {
+                    return None;
+                };
+                Some((i.generics, format!("{:?}", p.types.kind(args[0]))))
             }
             _ => None,
         })
         .collect();
-    assert_eq!(wrapped.len(), 2, "{wrapped:?}");
+    assert_eq!(wrapped, [(1, "Param(0)".to_string())]);
+}
+
+#[test]
+fn an_unwritable_adapter_field_is_reported_only_when_written() {
+    let src = |write: &str| {
+        format!(
+            "interface Tree<T> {{ value: T; kids: Tree<T>[]; label(): string; }}
+             class N<T> implements Tree<T> {{
+               value: T; kids: Tree<T>[] = [];
+               constructor(v: T) {{ this.value = v; }}
+               label(): string {{ return \"n\"; }}
+             }}
+             function main() {{
+               const t: Tree<number> = new N<number>(1);
+               const a: Tree<any> = t;
+               t.value = 2;
+               {write}
+               console.log(a.kids.length);
+             }}"
+        )
+    };
+    ok_src(&src(""));
+    let r = err_src(&src("a.kids.push(a);"));
+    assert!(r.contains("writing `kids` through `Tree<any>`"), "{r}");
 }
 
 fn adt(p: &velt_sema::hir::Program, t: velt_sema::hir::TyId) -> Option<velt_sema::hir::DefId> {

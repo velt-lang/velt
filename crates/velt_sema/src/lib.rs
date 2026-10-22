@@ -420,6 +420,7 @@ fn analyze_bodies(cx: &mut ctx::Ctx) {
     global_this::check_sites(cx);
     module_scripts::declare(cx);
     body::expr::iface_adapt_dynamic::make_dynamic_iface_adapters(cx);
+    cx.check_adapter_writes();
     absent_fields::check(cx);
     fresh_returns::check(cx);
     // Growing generic recursion has infinitely many instantiations: the passes below propagate

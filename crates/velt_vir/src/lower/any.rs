@@ -692,7 +692,7 @@ impl FnLower<'_, '_> {
         self.goto(done);
         self.switch_to(bad_bb);
         // An object implementing the interface, or the interface at other type arguments.
-        self.any_to_iface(p, from, ty, &out, done);
+        self.any_to_iface(p, ty, &out, done);
         if self.cx.proxiable(ty) {
             // A proxy converted to a type that may hold one: the tagged `Proxy` object.
             let err = self.new_block();

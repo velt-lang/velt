@@ -41,7 +41,7 @@ use super::callback::synth;
 use super::callback_wrap::{wrapper, Shape};
 use super::iface_adapt_slots::{adapter_method, AdapterParts};
 use crate::any::Dynamic;
-use crate::body::{FnCx, LocalKind};
+use crate::body::{FnCx, LocalKind, Want};
 use crate::ctx::Ctx;
 use crate::defs::ParamSig;
 use crate::hir::{self, Def, DefId, ExprKind as H, ImplDef, TyId, TyKind};
@@ -90,9 +90,16 @@ fn slot_sigs(cx: &Ctx, iface: DefId) -> Option<Vec<SlotSig>> {
     Some(out)
 }
 
-/// Does `t` mention a type parameter or an unknown type?
-fn open(cx: &Ctx, t: TyId) -> bool {
-    let mut found = cx.ty.has_error(t);
+/// Does `t` mention a type parameter or an unknown type? In a `generic` adapter (made for
+/// every instance of its source arguments, `iface_adapt_dynamic`) only an unknown type counts:
+/// the type parameters are the adapter's own.
+fn open(cx: &Ctx, t: TyId, generic: bool) -> bool {
+    cx.ty.has_error(t) || (!generic && has_params(cx, t))
+}
+
+/// Does `t` mention a type parameter?
+pub(super) fn has_params(cx: &Ctx, t: TyId) -> bool {
+    let mut found = false;
     cx.ty
         .visit(t, &mut |k| found |= matches!(k, TyKind::Param(_)));
     found
@@ -171,36 +178,62 @@ fn dynamic_class(cx: &Ctx, t: TyId) -> bool {
     found
 }
 
+/// How [`adaptable`] decides: the pairs being decided (an interface whose methods return it),
+/// the reason a supported shape is refused (for the diagnostic), and whether the source
+/// arguments are a generic adapter's type parameters (`iface_adapt_dynamic`).
+#[derive(Default)]
+pub(super) struct Mode {
+    pub seen: Vec<AdapterKey>,
+    pub why: Option<String>,
+    pub generic: bool,
+}
+
+impl Mode {
+    /// Deciding a generic adapter (`iface_adapt_dynamic`).
+    pub(super) fn generic() -> Mode {
+        Mode {
+            generic: true,
+            ..Mode::default()
+        }
+    }
+}
+
+/// Is `t` an expected argument that takes any value (`any`, `unknown`)?
+pub(super) fn is_dynamic_arg(cx: &Ctx, t: TyId) -> bool {
+    matches!(cx.dynamic(t), Some(Dynamic::Any | Dynamic::Unknown))
+}
+
 /// Can a value of `iface<from>` be adapted to `iface<to>`: each expected argument is the
 /// value's own or dynamic, and every slot's parameters and result convert ([`value_ok`]).
-/// `seen` holds the pairs being decided (an interface whose methods return it); `why` gets
-/// the reason a supported shape is refused, for the diagnostic.
-fn adaptable(
+/// In a generic adapter, an argument for a dynamic one is a type parameter of the adapter
+/// (an instance of the adapter to `to` stands for it) or names none.
+pub(super) fn adaptable(
     cx: &mut Ctx,
     iface: DefId,
     from: &[TyId],
     to: &[TyId],
-    seen: &mut Vec<AdapterKey>,
-    why: &mut Option<String>,
+    m: &mut Mode,
 ) -> bool {
+    let generic = m.generic;
+    let arg_ok = |cx: &Ctx, a: TyId, b: TyId| match is_dynamic_arg(cx, b) {
+        true => !generic || matches!(cx.ty.kind(a), TyKind::Param(_)) || !has_params(cx, a),
+        false => a == b,
+    };
     if from.len() != to.len()
         || from == to
         || cx.any.is_some_and(|a| a.any == iface || a.unknown == iface)
-        || from.iter().any(|t| open(cx, *t))
-        || !from
-            .iter()
-            .zip(to)
-            .all(|(a, b)| a == b || matches!(cx.dynamic(*b), Some(Dynamic::Any | Dynamic::Unknown)))
+        || from.iter().any(|t| open(cx, *t, generic))
+        || !from.iter().zip(to).all(|(a, b)| arg_ok(cx, *a, *b))
     {
         return false;
     }
     let key = (iface, from.to_vec(), to.to_vec());
-    if seen.contains(&key) {
+    if m.seen.contains(&key) {
         return true;
     }
-    seen.push(key);
+    m.seen.push(key);
     let Some(sigs) = slot_sigs(cx, iface) else {
-        *why = Some("an interface with a generic method is not supported yet (#1185)".into());
+        m.why = Some("an interface with a generic method is not supported yet (#1185)".into());
         return false;
     };
     // The implementor's type parameter stands for an unknown type: a slot mentioning it is
@@ -215,10 +248,10 @@ fn adaptable(
             return true;
         }
         let (rf, rt) = (cx.subst(s.ret, &fa), cx.subst(s.ret, &ta));
-        value_ok(cx, rf, rt, false, seen, why)
+        value_ok(cx, rf, rt, false, m)
             && s.params.iter().all(|p| {
                 let (pf, pt) = (cx.subst(p.ty, &fa), cx.subst(p.ty, &ta));
-                value_ok(cx, pt, pf, true, seen, why)
+                value_ok(cx, pt, pf, true, m)
             })
     })
 }
@@ -252,18 +285,11 @@ fn unresolved_slot(cx: &mut Ctx, s: &SlotSig, own: u32, fa: &[TyId], ta: &[TyId]
 
 /// Does a value of type `from` convert to `to` inside an adapter? `param` when it is a
 /// parameter of the slot itself, where a [`Container`] is passed as a copy.
-pub(super) fn value_ok(
-    cx: &mut Ctx,
-    from: TyId,
-    to: TyId,
-    param: bool,
-    seen: &mut Vec<AdapterKey>,
-    why: &mut Option<String>,
-) -> bool {
+pub(super) fn value_ok(cx: &mut Ctx, from: TyId, to: TyId, param: bool, m: &mut Mode) -> bool {
     if from == to {
         return !cx.ty.has_error(from);
     }
-    if open(cx, from) || open(cx, to) {
+    if open(cx, from, m.generic) || open(cx, to, m.generic) {
         return false;
     }
     if cx.dynamic(to).is_some() {
@@ -295,14 +321,13 @@ pub(super) fn value_ok(
             _ => None,
         };
         if let Some(r) = reason {
-            *why = Some(r);
+            m.why = Some(r);
             return false;
         }
         return true;
     }
     if let (Some(a), Some(b)) = (cx.ty.opt_payload(from), cx.ty.opt_payload(to)) {
-        return cx.ty.nothing_of(from) == cx.ty.nothing_of(to)
-            && value_ok(cx, a, b, false, seen, why);
+        return cx.ty.nothing_of(from) == cx.ty.nothing_of(to) && value_ok(cx, a, b, false, m);
     }
     match (cx.ty.kind(from).clone(), cx.ty.kind(to).clone()) {
         (
@@ -324,10 +349,20 @@ pub(super) fn value_ok(
                 && t == u
                 && q.iter()
                     .zip(&p)
-                    .all(|(x, y)| value_ok(cx, *x, *y, false, seen, why))
-                && value_ok(cx, r, s, false, seen, why)
+                    .all(|(x, y)| value_ok(cx, *x, *y, false, m))
+                && value_ok(cx, r, s, false, m)
         }
-        (TyKind::Dyn(i, xs), TyKind::Dyn(j, ys)) if i == j => adaptable(cx, i, &xs, &ys, seen, why),
+        (TyKind::Dyn(i, xs), TyKind::Dyn(j, ys)) if i == j => adaptable(cx, i, &xs, &ys, m),
+        // An array of interface values read through the adapter (a field `kids: Tree<T>[]`): a
+        // new array of the elements, each adapted (`adapt_array`). Nothing is written back, so
+        // where a value goes the other way (a parameter, a setter) it is refused.
+        (TyKind::Array(a), TyKind::Array(b)) if !param => {
+            let same = match (cx.ty.kind(a), cx.ty.kind(b)) {
+                (TyKind::Dyn(i, _), TyKind::Dyn(j, _)) => i == j,
+                _ => false,
+            };
+            same && value_ok(cx, a, b, false, m)
+        }
         _ => false,
     }
 }
@@ -355,17 +390,27 @@ impl FnCx<'_, '_> {
         from: &[TyId],
         to: &[TyId],
     ) -> Result<hir::Expr, hir::Expr> {
-        if !adaptable(self.cx, iface, from, to, &mut vec![], &mut None) {
-            return Err(h);
-        }
         let span = h.span;
-        let a = self.iface_adapter(iface, from, to, span);
+        // Inside a generic adapter, a value over its type parameters: an instance of the
+        // generic adapter to `to` (`iface_adapt_dynamic`).
+        let (a, type_args) = match from.iter().any(|t| has_params(self.cx, *t)) {
+            true => match self.dynamic_adapter_at(iface, from, to, span) {
+                Some(found) => found,
+                None => return Err(h),
+            },
+            false => {
+                if !adaptable(self.cx, iface, from, to, &mut Mode::default()) {
+                    return Err(h);
+                }
+                (self.iface_adapter(iface, from, to, 0, span), vec![])
+            }
+        };
         self.force_move(&mut h);
-        let ty = self.cx.ty.intern(TyKind::Adt(a.def, vec![]));
+        let ty = self.cx.ty.intern(TyKind::Adt(a.def, type_args.clone()));
         let lit = self.mk(
             H::AdtLit {
                 def: a.def,
-                type_args: vec![],
+                type_args,
                 fields: vec![h],
                 converted: hir::Conversion::No,
             },
@@ -384,7 +429,7 @@ impl FnCx<'_, '_> {
 
     /// Can a value implementing `iface<from>` be adapted to `iface<to>`?
     pub(super) fn iface_adapts(&mut self, iface: DefId, from: &[TyId], to: &[TyId]) -> bool {
-        adaptable(self.cx, iface, from, to, &mut vec![], &mut None)
+        adaptable(self.cx, iface, from, to, &mut Mode::default())
     }
 
     /// Why a value of type `found` does not convert to the interface type `expected` through
@@ -398,19 +443,21 @@ impl FnCx<'_, '_> {
             TyKind::Dyn(i, from) if i == iface => from,
             _ => self.cx.find_impl(found, iface)?.1,
         };
-        let mut why = None;
-        if adaptable(self.cx, iface, &from, &to, &mut vec![], &mut why) {
+        let mut m = Mode::default();
+        if adaptable(self.cx, iface, &from, &to, &mut m) {
             return None;
         }
-        why
+        m.why
     }
 
-    /// The adapter from `iface<from>` to `iface<to>`, made on first use.
+    /// The adapter from `iface<from>` to `iface<to>`, made on first use; with `generics`, `from`
+    /// is over that many type parameters, the adapter's own (`iface_adapt_dynamic`).
     pub(super) fn iface_adapter(
         &mut self,
         iface: DefId,
         from: &[TyId],
         to: &[TyId],
+        generics: u32,
         span: Span,
     ) -> Adapter {
         let key = (iface, from.to_vec(), to.to_vec());
@@ -427,10 +474,11 @@ impl FnCx<'_, '_> {
         let d = self.cx.hidden_struct_def(
             &format!("{iname} adapter"),
             &[("inner".to_string(), inner)],
-            0,
+            generics as usize,
             self.module,
         );
-        let self_ty = self.cx.ty.intern(TyKind::Adt(d, vec![]));
+        let params = (0..generics).map(|i| self.cx.ty.param(i)).collect();
+        let self_ty = self.cx.ty.intern(TyKind::Adt(d, params));
         // A counted box: a share of the converted value is another reference to the same
         // adapter, so every copy reaches the one wrapped value (a copy of the adapter would
         // clone it, and a class instance with it).
@@ -439,7 +487,7 @@ impl FnCx<'_, '_> {
         }
         self.cx.impls.push(ImplDef {
             ty: self_ty,
-            generics: 0,
+            generics,
             iface,
             iface_args: to.to_vec(),
             methods: vec![],
@@ -458,6 +506,7 @@ impl FnCx<'_, '_> {
             iname,
             from: from.to_vec(),
             to: to.to_vec(),
+            generics,
             module: self.module,
             span,
         };
@@ -502,6 +551,99 @@ impl FnCx<'_, '_> {
                 self.error_expr(h.span)
             }
         }
+    }
+
+    /// An array of interface values `h` as the array type `exp` of other instances of the
+    /// interface, inside an adapter (a field `kids: Tree<T>[]` read through `Tree<any>`):
+    /// `{ const src = h; const f = (e) => e; src.map(f) }`, the arrow checked against
+    /// `(e: A) => B`, which adapts each element. `Err` for other types.
+    pub(super) fn adapt_array(&mut self, h: hir::Expr, exp: TyId) -> Result<hir::Expr, hir::Expr> {
+        let (TyKind::Array(a), TyKind::Array(b)) =
+            (self.cx.ty.kind(h.ty).clone(), self.cx.ty.kind(exp).clone())
+        else {
+            return Err(h);
+        };
+        let (TyKind::Dyn(i, _), TyKind::Dyn(j, _)) = (self.cx.ty.kind(a), self.cx.ty.kind(b))
+        else {
+            return Err(h);
+        };
+        if i != j {
+            return Err(h);
+        }
+        let span = h.span;
+        let never = self.cx.ty.never;
+        let fn_ty = self.cx.ty.intern(TyKind::FnPtr {
+            params: vec![a],
+            ret: b,
+            throws: never,
+            rest: false,
+        });
+        let n = self.f.locals.len();
+        let ident = |name: String| ast::Ident { name, span };
+        let (src_name, f_name, e_name) = (
+            ident(format!("#adaptsrc{n}")),
+            ident(format!("#adaptf{n}")),
+            ident(format!("#adapte{n}")),
+        );
+        let var = |id: &ast::Ident| synth(ast::ExprKind::Ident(id.clone()), span);
+        self.push_scope();
+        let src = self.declare_local(&src_name, h.ty, LocalKind::Const);
+        let arrow = synth(
+            ast::ExprKind::Arrow {
+                type_params: vec![],
+                params: vec![ast::ArrowParam {
+                    name: e_name.clone(),
+                    pattern: None,
+                    ty: None,
+                    default: None,
+                    optional: false,
+                    rest: false,
+                }],
+                ret: None,
+                throws: None,
+                body: ast::ArrowBody::Expr(Box::new(var(&e_name))),
+                is_async: false,
+            },
+            span,
+        );
+        let w = self.closure(&arrow, Some(fn_ty), true);
+        let f = self.declare_local(&f_name, w.ty, LocalKind::Const);
+        let map = synth(
+            ast::ExprKind::Call {
+                callee: Box::new(synth(
+                    ast::ExprKind::Member {
+                        object: Box::new(var(&src_name)),
+                        prop: ident("map".into()),
+                        optional: false,
+                    },
+                    span,
+                )),
+                type_args: vec![],
+                args: vec![var(&f_name)],
+                optional: false,
+            },
+            span,
+        );
+        let call = self.expr(&map, Some(exp), Want::Move);
+        self.pop_scope();
+        if call.ty != exp {
+            return Err(self.error_expr(span));
+        }
+        let mut h = h;
+        self.force_move(&mut h);
+        let stmt = |local, init| hir::Stmt {
+            kind: hir::StmtKind::Let {
+                local,
+                init: Some(init),
+            },
+            span,
+        };
+        let block = hir::Block {
+            stmts: vec![stmt(src, h), stmt(f, w)],
+            value: Some(Box::new(call)),
+            span,
+        };
+        Ok(self.mk(H::Block(block), exp, span))
     }
 
     /// A function value `h` as function type `exp` inside an adapter: `{ const f = h; (p…) =>
