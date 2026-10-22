@@ -532,7 +532,7 @@ alone is a type too (its only value is `undefined`), and an
 `undefined` with no type to take has it (`const u = undefined`, `[1, undefined]` is a
 `(number | undefined)[]`), and a conditional of `null` and `undefined` with no type to take is
 a `null | undefined` (`const d = c ? null : undefined`). A `let x: T | undefined;` without an initializer starts as
-`undefined`. `null` alone is a type as well, as in TypeScript's discriminated unions where a
+`undefined`, and so do `let x: any;` and `let x: unknown;`. `null` alone is a type as well, as in TypeScript's discriminated unions where a
 field is always `null` in one member (`{ st: "idle"; value: null } | { st: "ready"; value:
 number }`).
 
@@ -749,7 +749,8 @@ console.log(update(v, { deletedAt: null })); // { name: 'bo', deletedAt: null }
   narrowed it (`if (o.onError) o.onError(e)`, `if (def?.transform) def.transform(v)`). Inside
   a closure, a variable narrowed where the closure is created stays narrowed when the function
   assigns it nowhere after that (nor in a loop around the closure), as in TypeScript: the
-  closure may run after such an assignment.
+  closure may run after such an assignment. It stays narrowed in the whole closure body, also
+  after a branch or loop where the closure first names it.
 - `x == null`, `x != null`, `x === undefined` and `x ?? d` are allowed on a value whose type has
   neither `null` nor `undefined`, as in TypeScript (a defensive check): the test is `false`
   (`!=`: `true`) and `d` is not evaluated. On an element read of an array, a string or
