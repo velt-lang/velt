@@ -38,6 +38,8 @@ velt_tls = { path = "../velt_tls" }
 velt_std_postgres = { path = "../velt_std_postgres" }
 # std/sqlite's driver (the same: an SDK-only crate, linked in).
 velt_std_sqlite = { path = "../velt_std_sqlite" }
+# std/redis's driver (the same).
+velt_std_redis = { path = "../velt_std_redis" }
 # The SDK the drivers are built on: the runtime hands it its function table at start-up.
 velt_native = { path = "../velt_native" }
 socket2 = "0.6.5"

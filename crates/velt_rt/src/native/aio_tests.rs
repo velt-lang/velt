@@ -14,7 +14,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use velt_native as sdk;
 
 /// Hands the SDK this runtime's table (as `velt_native_init_<pkg>` would), once.
-fn init() {
+pub(super) fn init() {
     static DONE: OnceLock<()> = OnceLock::new();
     DONE.get_or_init(|| {
         // The SDK silences std's panic hook (a library has its own std); this test process shares
@@ -54,7 +54,9 @@ async fn await_u64(f: SendPtr<VeltFut>) -> (i32, u64, String) {
     }
 }
 
-fn run<T: Send + 'static>(fut: impl std::future::Future<Output = T> + Send + 'static) -> T {
+pub(super) fn run<T: Send + 'static>(
+    fut: impl std::future::Future<Output = T> + Send + 'static,
+) -> T {
     init();
     match block_on(spawn(fut)) {
         Ok(v) => v,

@@ -39,7 +39,7 @@ fn query(stmt: StmtHandle, params: &str, first_only: bool) -> Result<String, Str
 fn sql_query(db: DbHandle, sql: &str, params: &str) -> Result<String, String> {
     let stmt = prepare(db, sql)?;
     let r = query(stmt, params, false);
-    statement::free(stmt);
+    unsafe { statement::free(stmt) };
     r
 }
 
@@ -48,7 +48,7 @@ fn close(db: DbHandle) {
 }
 
 const NULL_DB: DbHandle = Key::NULL;
-const NULL_STMT: StmtHandle = Key::NULL;
+const NULL_STMT: StmtHandle = velt_native::handles::Single::NULL;
 
 #[test]
 fn insert_and_select_with_named_and_positional_params() {
@@ -84,7 +84,7 @@ fn insert_and_select_with_named_and_positional_params() {
     let one = prepare(db, "SELECT count(*) AS n FROM t WHERE id > ?").unwrap();
     assert_eq!(query(one, "1", true).unwrap(), r#"{"n":2}"#);
     for h in [ins, by_pos, sel, one] {
-        statement::free(h);
+        unsafe { statement::free(h) };
     }
     close(db);
 }
@@ -119,7 +119,7 @@ fn values_round_trip_with_their_types() {
         .unwrap(),
         r#"[{"ok":true,"e":1,"inf":null}]"#
     );
-    statement::free(ins);
+    unsafe { statement::free(ins) };
     close(db);
 }
 
@@ -143,8 +143,8 @@ fn parameter_errors_are_sqlite_range() {
     assert!(query(pos, r#"[{"no":1}]"#, false)
         .unwrap_err()
         .contains("nested objects"));
-    statement::free(named);
-    statement::free(pos);
+    unsafe { statement::free(named) };
+    unsafe { statement::free(pos) };
     close(db);
 }
 
@@ -178,7 +178,7 @@ fn sqlite_errors_carry_codes_and_are_counted() {
     assert_eq!(count(), 4);
     reset_error_count(db, 1);
     assert_eq!(count(), 1);
-    statement::free(ins);
+    unsafe { statement::free(ins) };
     close(db);
 }
 
@@ -191,8 +191,8 @@ fn statements_fail_cleanly_after_the_database_closes() {
     let e = query(stmt, "", true).unwrap_err();
     assert_eq!(e, "SQLITE_MISUSE: The database connection is not open");
     // Null handles are no-ops.
-    statement::free(stmt);
-    statement::free(NULL_STMT);
+    unsafe { statement::free(stmt) };
+    unsafe { statement::free(NULL_STMT) };
     close(NULL_DB);
     assert!(exec(NULL_DB, "SELECT 1").unwrap_err().contains("not open"));
     // `Database` is a Copy struct: another copy of a closed handle fails cleanly, and closing

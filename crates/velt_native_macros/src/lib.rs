@@ -13,6 +13,9 @@
 //! - `#[export(async)] async fn f(a: String) -> Result<T, Error>`: `declare async function`; the
 //!   future runs on the runtime's scheduler, polled by the task awaiting it (parameters must be
 //!   owned).
+//! - `#[export(async)] fn f(a: &[Str]) -> impl Future<Output = Result<T, Error>> + Send + 'static`:
+//!   the same, but the parameters are borrowed for the call: the function does its synchronous
+//!   part (encoding a request from them) and returns the future, which cannot borrow them.
 
 mod derive;
 
@@ -63,6 +66,32 @@ pub fn export(attr: TokenStream, item: TokenStream) -> TokenStream {
         Ok(t) => t.into(),
         Err(e) => e.to_compile_error().into(),
     }
+}
+
+/// `R` of a return type `impl Future<Output = R> (+ ...)`.
+fn future_output(output: &ReturnType) -> Option<Type> {
+    let ReturnType::Type(_, t) = output else {
+        return None;
+    };
+    let Type::ImplTrait(it) = &**t else {
+        return None;
+    };
+    it.bounds.iter().find_map(|b| {
+        let syn::TypeParamBound::Trait(tb) = b else {
+            return None;
+        };
+        let last = tb.path.segments.last()?;
+        if last.ident != "Future" {
+            return None;
+        }
+        let syn::PathArguments::AngleBracketed(args) = &last.arguments else {
+            return None;
+        };
+        args.args.iter().find_map(|a| match a {
+            syn::GenericArgument::AssocType(at) if at.ident == "Output" => Some(at.ty.clone()),
+            _ => None,
+        })
+    })
 }
 
 fn error(span: Span, msg: &str) -> TokenStream {
@@ -128,8 +157,20 @@ fn is_direct(ret: &ReturnType) -> bool {
 fn expand(mode: Mode, func: ItemFn) -> syn::Result<Tokens> {
     let sig = &func.sig;
     let async_ok = matches!(mode, Mode::Async);
+    // `#[export(async)] fn f(..) -> impl Future<Output = R>`: borrowed parameters.
+    let prepared = if async_ok && sig.asyncness.is_none() {
+        Some(future_output(&sig.output).ok_or_else(|| {
+            syn::Error::new(
+                sig.span(),
+                "`#[export(async)]` takes an `async fn`, or a `fn` returning \
+                 `impl Future<Output = R> + Send + 'static`",
+            )
+        })?)
+    } else {
+        None
+    };
     if !sig.generics.params.is_empty()
-        || (sig.asyncness.is_some() != async_ok)
+        || (sig.asyncness.is_some() != async_ok && prepared.is_none())
         || sig.variadic.is_some()
     {
         let msg = if async_ok {
@@ -178,9 +219,10 @@ fn expand(mode: Mode, func: ItemFn) -> syn::Result<Tokens> {
         }
         sig_parts.push(quote! { <#ty as ::velt_native::Param<'static>>::SIG });
     }
-    let ret_ty: Type = match &sig.output {
-        ReturnType::Default => syn::parse_quote!(()),
-        ReturnType::Type(_, t) => (**t).clone(),
+    let ret_ty: Type = match (&prepared, &sig.output) {
+        (Some(r), _) => r.clone(),
+        (None, ReturnType::Default) => syn::parse_quote!(()),
+        (None, ReturnType::Type(_, t)) => (**t).clone(),
     };
 
     let catch = |call: Tokens, on_panic: Tokens| {
@@ -262,6 +304,29 @@ fn expand(mode: Mode, func: ItemFn) -> syn::Result<Tokens> {
                 },
             )
         }
+        Mode::Async if prepared.is_some() => (
+            "async ",
+            quote! { <#ret_ty as ::velt_native::OutRet>::SIG },
+            quote! {
+                #[no_mangle]
+                pub unsafe extern "C" fn #name(#(#raw_params),*) -> *mut ::std::ffi::c_void {
+                    #inner_fn
+                    let __scope = ::velt_native::__Scope::default();
+                    let __f = ::std::panic::catch_unwind(::std::panic::AssertUnwindSafe(|| {
+                        #inner(#from_raw)
+                    }));
+                    match __f {
+                        ::std::result::Result::Ok(f) => ::velt_native::rt::__async::<#ret_ty, _>(f),
+                        ::std::result::Result::Err(p) => {
+                            let m = ::velt_native::__panic_message(p);
+                            ::velt_native::rt::__async::<#ret_ty, _>(async move {
+                                <#ret_ty as ::velt_native::OutRet>::panicked(&m)
+                            })
+                        }
+                    }
+                }
+            },
+        ),
         Mode::Async => {
             let owned: Vec<Tokens> = sig
                 .inputs

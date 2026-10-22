@@ -7,6 +7,10 @@
 //! stale handle never reaches a newer object. The table is split into [`SHARDS`] shards, one
 //! per inserting thread, so the objects one worker creates and uses never wait for another
 //! worker's lock. (The runtime's own handles work the same way.)
+//!
+//! An object with exactly one owner on the Velt side (a class that releases it once, in its
+//! dispose or `close()`, and forgets it) can skip the table: a [`Single`] handle is the object's
+//! address, so using it costs nothing, and the class's ownership is what keeps it valid.
 
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -176,5 +180,70 @@ impl<T> Registry<T> {
         slot.generation = slot.generation.checked_add(1).unwrap_or(1);
         t.free.push(index);
         Some(obj)
+    }
+}
+
+/// A handle that is the address of an `Arc<T>` (0 = none), for an object exactly one Velt value
+/// owns: a class that never copies the handle, releases it once ([`Single::release`]) and
+/// clears its field. Unlike a [`Key`], nothing checks a stale handle, so it is for that
+/// ownership only; Copy structs and anything shared take a [`Registry`].
+#[repr(transparent)]
+pub struct Single<T>(u64, PhantomData<*const T>);
+
+// SAFETY: a handle is a number; the object behind it is reached through `unsafe` calls whose
+// callers follow the ownership above, and `T: Send + Sync` is required to share it.
+unsafe impl<T: Send + Sync> Send for Single<T> {}
+// SAFETY: as for `Send`.
+unsafe impl<T: Send + Sync> Sync for Single<T> {}
+
+impl<T> Clone for Single<T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T> Copy for Single<T> {}
+
+impl<T> std::fmt::Debug for Single<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Single({:#x})", self.0)
+    }
+}
+
+impl<T> Single<T> {
+    /// The null handle.
+    pub const NULL: Self = Single(0, PhantomData);
+
+    /// A new handle owning `obj`'s reference.
+    pub fn new(obj: Arc<T>) -> Self {
+        Single(Arc::into_raw(obj) as usize as u64, PhantomData)
+    }
+
+    /// The raw `u64`, as Velt code sees it.
+    pub fn bits(self) -> u64 {
+        self.0
+    }
+
+    /// The handle whose raw value is `bits`.
+    pub fn from_bits(bits: u64) -> Self {
+        Single(bits, PhantomData)
+    }
+
+    /// The object, or `None` for the null handle.
+    ///
+    /// # Safety
+    /// A non-null handle was made by [`Single::new`] and not released yet.
+    pub unsafe fn get<'a>(self) -> Option<&'a T> {
+        (self.0 as usize as *const T).as_ref()
+    }
+
+    /// Drops the handle's reference (the null handle: nothing).
+    ///
+    /// # Safety
+    /// As for [`Single::get`]; the handle is not used afterwards.
+    pub unsafe fn release(self) {
+        if self.0 != 0 {
+            drop(Arc::from_raw(self.0 as usize as *const T));
+        }
     }
 }

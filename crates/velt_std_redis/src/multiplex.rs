@@ -17,7 +17,7 @@
 use super::connect::{self, Endpoint, Stream};
 use super::error::RedisErr;
 use super::resp::{Parser, Value};
-use crate::task::runtime::AbortHandle;
+use futures_util::future::AbortHandle;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -84,8 +84,7 @@ impl Conn {
         let stream = connect::open(&endpoint).await?;
         let (requests, rx) = mpsc::unbounded_channel();
         let lost = Arc::new(AtomicU64::new(0));
-        let driver = crate::task::runtime::spawn(drive(endpoint.clone(), stream, rx, lost.clone()))
-            .abort_handle();
+        let driver = crate::spawn_abortable(drive(endpoint.clone(), stream, rx, lost.clone()));
         Ok(Conn {
             endpoint,
             requests,
@@ -95,7 +94,6 @@ impl Conn {
     }
 
     /// How many connections have ended so far: a request sent after that goes to a new one.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub fn connections_lost(&self) -> u64 {
         self.lost.load(Ordering::Acquire)
     }
@@ -172,7 +170,7 @@ async fn serve(
 ) -> Ended {
     let (rd, wr) = tokio::io::split(stream);
     let queue = SharedQueue::default();
-    let reader = crate::task::runtime::spawn(read_loop(rd, queue.clone(), lost.clone()));
+    let reader = crate::spawn_abortable(read_loop(rd, queue.clone(), lost.clone()));
     let ended = write_loop(wr, rx, &queue, first).await;
     reader.abort();
     ended
@@ -277,94 +275,5 @@ fn fail(queue: &SharedQueue, e: RedisErr) {
     let e = q.failed.get_or_insert(e).clone();
     for p in q.pending.drain(..) {
         let _ = p.done.send(Err(e.clone()));
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::super::url;
-    use super::*;
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
-    /// A fake server that answers each `PING` with `:n` (its count so far on that connection),
-    /// closes a connection after `limit` commands, and accepts `connections` connections (it
-    /// stops listening when it accepts the last one).
-    async fn fake_server(limit: usize, connections: usize) -> u16 {
-        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = l.local_addr().unwrap().port();
-        tokio::spawn(async move {
-            let mut l = Some(l);
-            for i in 0..connections {
-                let (mut s, _) = l.as_ref().unwrap().accept().await.unwrap();
-                if i + 1 == connections {
-                    l = None;
-                }
-                let (mut seen, mut buf) = (0, vec![0u8; 4096]);
-                while seen < limit {
-                    let n = s.read(&mut buf).await.unwrap();
-                    let pings = buf[..n].windows(4).filter(|w| w == b"PING").count();
-                    let mut out = String::new();
-                    for _ in 0..pings.min(limit - seen) {
-                        seen += 1;
-                        out.push_str(&format!(":{seen}\r\n"));
-                    }
-                    s.write_all(out.as_bytes()).await.unwrap();
-                }
-            }
-        });
-        port
-    }
-
-    fn ping(n: usize) -> Vec<u8> {
-        let mut p = vec![];
-        for _ in 0..n {
-            super::super::resp::encode_command(&["PING"], &mut p);
-        }
-        p
-    }
-
-    /// Wait until `conn` saw `n` connections end (a hang guard of a minute, not a time limit).
-    async fn lost(conn: &Conn, n: u64) {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
-        while conn.connections_lost() < n {
-            assert!(
-                std::time::Instant::now() < deadline,
-                "the connection never ended"
-            );
-            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
-        }
-    }
-
-    async fn open(port: u16) -> Conn {
-        let target = url::parse(&format!("redis://127.0.0.1:{port}")).unwrap();
-        Conn::open(Endpoint { target, ca: vec![] }).await.unwrap()
-    }
-
-    #[test]
-    fn replies_arrive_in_order_and_a_lost_connection_is_reopened() {
-        crate::task::runtime::runtime().block_on(async {
-            let port = fake_server(3, 2).await;
-            let conn = open(port).await;
-            assert_eq!(conn.send(ping(1), 1).await, Ok(vec![Value::Int(1)]));
-            assert_eq!(
-                conn.send(ping(2), 2).await,
-                Ok(vec![Value::Int(2), Value::Int(3)])
-            );
-            // The server closed the first connection; the next command gets a new one.
-            lost(&conn, 1).await;
-            assert_eq!(conn.send(ping(1), 1).await, Ok(vec![Value::Int(1)]));
-        });
-    }
-
-    #[test]
-    fn requests_fail_once_reconnecting_gives_up() {
-        crate::task::runtime::runtime().block_on(async {
-            let port = fake_server(1, 1).await;
-            let conn = open(port).await;
-            assert_eq!(conn.send(ping(1), 1).await, Ok(vec![Value::Int(1)]));
-            lost(&conn, 1).await;
-            let e = conn.send(ping(1), 1).await.unwrap_err();
-            assert_eq!(e.code, crate::result::code::CONNECTION_REFUSED);
-        });
     }
 }

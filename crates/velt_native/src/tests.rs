@@ -44,6 +44,19 @@ unsafe extern "C" fn strbuf_spare(s: *mut VeltStr, min: u64, avail: *mut u64) ->
 unsafe extern "C" fn strbuf_commit(s: *mut VeltStr, n: u64, _ascii: u8) {
     (*s).words[1] += n;
 }
+unsafe extern "C" fn str_utf8(s: *const VeltStr, len: *mut usize) -> *const u8 {
+    let p = str_bytes(s, len);
+    let bytes = if *len == 0 {
+        &[][..]
+    } else {
+        std::slice::from_raw_parts(p, *len)
+    };
+    if std::str::from_utf8(bytes).is_ok() {
+        p
+    } else {
+        std::ptr::null()
+    }
+}
 unsafe extern "C" fn str_drop(s: *mut VeltStr) {
     if (*s).words[2] != 0 {
         drop(Box::from_raw((*s).words[0] as *mut Vec<u8>));
@@ -226,6 +239,7 @@ static MOCK: Api = Api {
     str_retain,
     strbuf_spare,
     strbuf_commit,
+    str_utf8,
 };
 
 crate::package!(demo);
@@ -312,6 +326,15 @@ fn demo_slow(data: Vec<u8>) -> Result<Vec<u8>, Error> {
     Ok(data.iter().rev().copied().collect())
 }
 
+/// The synchronous part reads the borrowed arguments; the future owns what it needs.
+#[export(async)]
+fn demo_send(
+    args: &[Str],
+) -> impl std::future::Future<Output = Result<u64, Error>> + Send + 'static {
+    let n = args.iter().map(|a| a.as_bytes().len()).sum::<usize>() as u64;
+    async move { Ok(n) }
+}
+
 fn sig(record: &[u8]) -> &str {
     std::str::from_utf8(record.strip_suffix(&[0]).unwrap()).unwrap()
 }
@@ -333,6 +356,10 @@ fn signature_records() {
         "(i64)->{changes:i64,lastInsertRowid:i64}"
     );
     assert_eq!(sig(&__VELT_SIG_demo_slow), "async (u8[])->IoResult<u8[]>");
+    assert_eq!(
+        sig(&__VELT_SIG_demo_send),
+        "async (string[])->IoResult<u64>"
+    );
 }
 
 #[test]

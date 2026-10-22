@@ -12,7 +12,7 @@ use super::connection::{DbHandle, DbObj};
 use super::error::DbError;
 use super::rows;
 use std::sync::Arc;
-use velt_native::handles::{Key, Registry};
+use velt_native::handles::Single;
 use velt_text::db_json::parse_params;
 use velt_text::Out;
 
@@ -22,10 +22,9 @@ pub struct StmtObj {
     sql: String,
 }
 
-/// Opaque handle: a key into [`STATEMENTS`].
-pub type StmtHandle = Key<StmtObj>;
-
-static STATEMENTS: Registry<StmtObj> = Registry::new();
+/// A statement's handle: std's `Statement` class owns it (it never copies the handle, and
+/// `close()` or dropping releases it once and forgets it), so it is the object's address.
+pub type StmtHandle = Single<StmtObj>;
 
 /// `stmt.run()` result: rows changed and the rowid of the last insert (std's `RunSlot`).
 #[derive(velt_native::Value, Clone, Copy, Debug, PartialEq, Eq)]
@@ -37,10 +36,9 @@ pub struct RunInfo {
     pub last_insert_rowid: i64,
 }
 
-fn obj(stmt: StmtHandle) -> Result<Arc<StmtObj>, DbError> {
-    STATEMENTS
-        .get(stmt)
-        .ok_or_else(|| DbError::closed("statement"))
+fn obj<'a>(stmt: StmtHandle) -> Result<&'a StmtObj, DbError> {
+    // SAFETY: std's `Statement` passes a handle it has not released (or 0, after `close()`).
+    unsafe { stmt.get() }.ok_or_else(|| DbError::closed("statement"))
 }
 
 /// `db.prepare(sql)`: compiles `sql` (exactly one statement) into the connection's cache, so
@@ -49,10 +47,10 @@ pub fn prepare(db: DbHandle, sql: &str) -> Result<StmtHandle, DbError> {
     let sql = sql.trim();
     let o = super::connection::obj(db)?;
     o.with(|c| c.prepare_cached(sql).map(drop).map_err(DbError::from))?;
-    Ok(STATEMENTS.insert(StmtObj {
+    Ok(Single::new(Arc::new(StmtObj {
         db: o,
         sql: sql.to_string(),
-    }))
+    })))
 }
 
 /// `stmt.run()` / `runWith(params)`: execute to completion. `params` is the JSON of the
@@ -92,13 +90,16 @@ pub fn query<O: Out>(
 /// Count a failure std detected for this statement (a row that does not decode into the
 /// requested type) against its connection, so an enclosing `transaction` rolls back.
 pub fn note_error(stmt: StmtHandle, e: DbError) {
-    if let Some(s) = STATEMENTS.get(stmt) {
+    if let Ok(s) = obj(stmt) {
         s.db.note_error(e);
     }
 }
 
 /// Release a statement handle (null is a no-op). Its compiled form stays in the connection's
 /// cache until evicted or the connection closes.
-pub fn free(stmt: StmtHandle) {
-    STATEMENTS.remove(stmt);
+///
+/// # Safety
+/// `stmt` is not used afterwards (std's `Statement` zeroes its handle).
+pub unsafe fn free(stmt: StmtHandle) {
+    stmt.release();
 }

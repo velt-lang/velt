@@ -2228,6 +2228,7 @@ dependencies = [
  "url",
  "velt_native",
  "velt_std_postgres",
+ "velt_std_redis",
  "velt_std_sqlite",
  "velt_text",
  "velt_tls",
@@ -2269,6 +2270,7 @@ dependencies = [
  "url",
  "velt_native",
  "velt_std_postgres",
+ "velt_std_redis",
  "velt_std_sqlite",
  "velt_text",
  "velt_tls",
@@ -2310,6 +2312,7 @@ dependencies = [
  "url",
  "velt_native",
  "velt_std_postgres",
+ "velt_std_redis",
  "velt_std_sqlite",
  "velt_text",
  "velt_tls",
@@ -2353,6 +2356,18 @@ dependencies = [
  "tokio-rustls",
  "velt_native",
  "velt_text",
+ "velt_tls",
+]
+
+[[package]]
+name = "velt_std_redis"
+version = "0.3.0"
+dependencies = [
+ "futures-util",
+ "itoa",
+ "tokio",
+ "tokio-rustls",
+ "velt_native",
  "velt_tls",
 ]
 

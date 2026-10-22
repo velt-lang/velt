@@ -110,6 +110,17 @@ impl Clone for Str {
     }
 }
 
+/// A `string` argument borrowed for the call: the caller's string itself (nothing is read or
+/// checked until the library asks: [`Str::as_bytes`], [`Str::to_str`]).
+impl<'a> Param<'a> for &'a Str {
+    type Raw = *const VeltStr;
+    const SIG: Buf = Buf::lit("string");
+    unsafe fn from_raw(raw: *const VeltStr) -> &'a Str {
+        // SAFETY: `Str` is a transparent `VeltStr`; the argument lives for the call.
+        &*(raw as *const Str)
+    }
+}
+
 /// A `string` argument kept beyond the call (an async export's): another reference to the
 /// caller's string, no copy.
 impl<'a> Param<'a> for Str {

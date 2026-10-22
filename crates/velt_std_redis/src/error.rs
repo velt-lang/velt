@@ -1,11 +1,11 @@
-//! Errors of Redis operations and their mapping to the C `VeltErr` (rt_abi_async.md §3, §14.12).
+//! Errors of Redis operations and their mapping to Velt's `IoError` (rt_abi_async.md §3, §14.12).
 //!
 //! I/O failures keep the shared I/O codes (`ECONNREFUSED`, `ETIMEDOUT`…). An error *reply* from
 //! the server gets its own code, [`SERVER_ERROR`], with the reply text as the message
 //! (`WRONGTYPE Operation against a key…`): std/redis takes the first word as `RedisError.code`.
 
-use crate::result::{code, VeltErr};
 use std::io;
+use velt_native::code;
 
 /// `VeltErr::code` of an error reply from the server (`-ERR …`, `-WRONGTYPE …`).
 pub const SERVER_ERROR: i32 = 100;
@@ -22,11 +22,8 @@ pub struct RedisErr {
 impl RedisErr {
     /// An I/O failure.
     pub fn io(e: &io::Error) -> RedisErr {
-        let mut v = VeltErr::from_io(e);
-        // SAFETY: `from_io` made an owned message that nothing else references.
-        unsafe { crate::str::velt_rt_str_drop(&mut v.message) };
         RedisErr {
-            code: v.code,
+            code: code::of(e),
             message: format!("Redis connection failed: {e}"),
         }
     }
@@ -63,9 +60,9 @@ impl RedisErr {
         }
     }
 
-    /// The C error for a result slot.
-    pub fn to_velt(&self) -> VeltErr {
-        VeltErr::new(self.code, &self.message)
+    /// This error as Velt receives it.
+    pub fn to_error(&self) -> velt_native::Error {
+        velt_native::Error::new(self.code, self.message.clone())
     }
 }
 
@@ -78,9 +75,10 @@ mod tests {
         let e = RedisErr::io(&io::Error::from(io::ErrorKind::ConnectionRefused));
         assert_eq!(e.code, code::CONNECTION_REFUSED);
         assert!(e.message.starts_with("Redis connection failed"));
-        let mut v = RedisErr::server("WRONGTYPE bad".into()).to_velt();
-        assert_eq!(v.code, SERVER_ERROR);
-        assert_eq!(unsafe { v.message.as_bytes() }, b"WRONGTYPE bad");
-        unsafe { crate::str::velt_rt_str_drop(&mut v.message) };
+        let e = RedisErr::server("WRONGTYPE bad".into());
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            (SERVER_ERROR, "WRONGTYPE bad")
+        );
     }
 }

@@ -216,6 +216,8 @@ pub struct Api {
     pub strbuf_spare: unsafe extern "C" fn(*mut VeltStr, u64, *mut u64) -> *mut u8,
     /// `(buf, n, ascii)`: the bytes written become text (counted unless `ascii` is 1).
     pub strbuf_commit: unsafe extern "C" fn(*mut VeltStr, u64, u8),
+    /// `(s, len_out) -> ptr`: the bytes when they are UTF-8, else null.
+    pub str_utf8: unsafe extern "C" fn(*const VeltStr, *mut usize) -> *const u8,
 }
 
 static API: AtomicPtr<Api> = AtomicPtr::new(std::ptr::null_mut());
@@ -429,6 +431,17 @@ pub(crate) fn new_str(s: &str) -> VeltStr {
 /// `s` must point to a live Velt string; the result borrows it.
 pub(crate) unsafe fn str_of<'a>(s: *const VeltStr) -> Cow<'a, str> {
     let mut len = 0usize;
+    // The string knows whether it is UTF-8: borrowed without a check then.
+    let p = (api().str_utf8)(s, &mut len);
+    if !p.is_null() {
+        if len == 0 {
+            return Cow::Borrowed("");
+        }
+        // SAFETY: the runtime says these bytes are UTF-8; they live as long as `s`.
+        return Cow::Borrowed(std::str::from_utf8_unchecked(std::slice::from_raw_parts(
+            p, len,
+        )));
+    }
     let p = (api().str_bytes)(s, &mut len);
     let bytes = if len == 0 {
         &[][..]

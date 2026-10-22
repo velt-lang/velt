@@ -54,7 +54,6 @@ pub mod process;
 pub mod proxy_array;
 pub mod random;
 pub mod read_mode;
-pub mod redis;
 pub mod regex;
 pub mod registry;
 pub mod result;
@@ -104,4 +103,5 @@ mod abi_tests;
 // std's drivers: crates on the native SDK only, linked into the runtime (their `#[export]`
 // functions are std's externs; abi_symbols lists them for the JIT host).
 use velt_std_postgres as _;
+use velt_std_redis as _;
 use velt_std_sqlite as _;

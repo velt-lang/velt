@@ -55,6 +55,26 @@ pub trait Param<'a>: Sized {
 /// }
 /// ```
 ///
+/// An `#[export(async)]` `fn` returning a future borrows its arguments for the synchronous part
+/// only: a future that keeps one does not compile.
+///
+/// ```compile_fail
+/// use velt_native::Error;
+/// #[velt_native::export(async)]
+/// fn velt_p__later(s: &str) -> impl std::future::Future<Output = Result<u64, Error>> + Send + 'static {
+///     async move { Ok(s.len() as u64) }
+/// }
+/// ```
+///
+/// ```
+/// use velt_native::Error;
+/// #[velt_native::export(async)]
+/// fn velt_p__now(s: &str) -> impl std::future::Future<Output = Result<u64, Error>> + Send + 'static {
+///     let n = s.len() as u64;
+///     async move { Ok(n) }
+/// }
+/// ```
+///
 /// # Safety
 /// `raw` must be a valid argument per native_abi.md that lives at least as long as `scope`.
 #[doc(hidden)]

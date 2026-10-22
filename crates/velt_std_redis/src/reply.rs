@@ -6,9 +6,7 @@
 
 use super::error::RedisErr;
 use super::resp::Value;
-use crate::array::VeltArray;
-use crate::bytes::VeltBytes;
-use crate::str_array::VeltStrArray;
+use velt_native::{Array, Str};
 
 /// Node kinds (`tags[i]`).
 pub mod tag {
@@ -26,15 +24,17 @@ pub mod tag {
     pub const ARRAY: u8 = 5;
 }
 
-/// `{ u8[] tags; i64[] nums; string[] strs; }` (72 bytes): one entry per node, pre-order.
+/// std's `RawReply` `{ tags: u8[]; nums: i64[]; strs: string[] }`: one entry per node,
+/// pre-order.
+#[derive(velt_native::Value)]
 #[repr(C)]
-pub struct VeltRedisReply {
+pub struct RawReply {
     /// Node kinds ([`tag`]).
-    pub tags: VeltBytes,
+    pub tags: Array<u8>,
     /// Integer value (INT) or element count (ARRAY); 0 otherwise.
-    pub nums: VeltArray<i64>,
+    pub nums: Array<i64>,
     /// Text (STATUS, ERROR, STRING); `""` otherwise.
-    pub strs: VeltStrArray,
+    pub strs: Array<Str>,
 }
 
 /// The nodes of a reply before they become C arrays.
@@ -74,13 +74,17 @@ impl Flat {
         self.strs.push(text);
     }
 
-    /// Hand the arrays over to Velt.
-    pub fn into_velt(self) -> VeltRedisReply {
-        VeltRedisReply {
-            tags: VeltBytes::from_vec(self.tags),
-            nums: VeltArray::from_vec(self.nums),
-            strs: VeltStrArray::from_strings(self.strs),
+    /// The arrays as Velt's (each text copied once into a Velt string; empty ones are free).
+    pub fn into_velt(self) -> RawReply {
+        let mut tags = Array::with_capacity(self.tags.len());
+        tags.extend_from_slice(&self.tags);
+        let mut nums = Array::with_capacity(self.nums.len());
+        nums.extend_from_slice(&self.nums);
+        let mut strs = Array::with_capacity(self.strs.len());
+        for s in &self.strs {
+            strs.push(Str::new(s));
         }
+        RawReply { tags, nums, strs }
     }
 }
 
@@ -175,16 +179,5 @@ mod tests {
         .unwrap_err();
         assert!(aborted.message.starts_with("EXECABORT"));
         assert!(aborted.message.contains("NOPE"));
-    }
-
-    #[test]
-    fn hands_over_arrays() {
-        let mut r = pipeline(vec![bulk("hi")]).into_velt();
-        assert_eq!((r.tags.len, r.nums.len, r.strs.len), (2, 2, 2));
-        unsafe {
-            crate::bytes::velt_rt_bytes_drop(&mut r.tags);
-            crate::str_array::velt_rt_str_array_drop(&mut r.strs);
-            drop(Vec::from_raw_parts(r.nums.ptr, 2, r.nums.cap as usize));
-        }
     }
 }

@@ -11,31 +11,27 @@
 //! (through any copy) `next()` keeps returning "closed" and other calls fail with `EBADF`,
 //! instead of reaching a freed connection.
 
-use super::client::{ClientHandle, CLIENTS};
+use super::client::{bad_handle, ClientHandle, CLIENTS};
 use super::connect::{self, Endpoint, Stream};
 use super::error::RedisErr;
 use super::resp::{encode_command, Parser, Value};
-use super::{str_args, url};
-use crate::net::tcp::text_arg;
-use crate::registry::{Key, Registry};
-use crate::result::IoResult;
-use crate::str::VeltStr;
-use crate::str_array::VeltStrArray;
-use crate::task::leaf::new_leaf;
-use crate::task::runtime::AbortHandle;
-use crate::task::VeltFut;
-use futures_util::future::{select, Either};
-use std::borrow::Cow;
+use super::url;
+use futures_util::future::{select, AbortHandle, Either};
+use std::future::Future;
 use std::pin::pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::io::{ReadHalf, WriteHalf};
 use tokio::sync::{mpsc, Mutex, Notify};
+use velt_native::handles::{Key, Registry};
 
 /// A received message (`channel` / `message`, plus `pattern` for pattern subscriptions).
-struct Message {
-    channel: String,
-    message: String,
-    pattern: String,
+pub struct Message {
+    /// The channel it was published to.
+    pub channel: String,
+    /// The payload (invalid UTF-8 becomes U+FFFD).
+    pub message: String,
+    /// The matching pattern (a pattern subscription), else `""`.
+    pub pattern: String,
 }
 
 type Event = Result<Message, RedisErr>;
@@ -68,22 +64,6 @@ pub type SubHandle = Key<SubObj>;
 /// Open subscribers.
 static SUBSCRIBERS: Registry<SubObj> = Registry::new();
 
-/// `{ u32 kind; u32 pad; VeltStr channel; VeltStr message; VeltStr pattern; }` (80 bytes):
-/// kind 0 = closed (no more messages), 1 = message, 2 = pattern message (`pattern` set).
-#[repr(C)]
-pub struct VeltRedisMessage {
-    /// 0 closed, 1 message, 2 pattern message.
-    pub kind: u32,
-    /// Always 0.
-    pub pad: u32,
-    /// The channel it was published to.
-    pub channel: VeltStr,
-    /// The payload (invalid UTF-8 becomes U+FFFD).
-    pub message: VeltStr,
-    /// The matching pattern (kind 2), else `""`.
-    pub pattern: VeltStr,
-}
-
 fn command_name(patterns: bool, subscribe: bool) -> &'static str {
     match (patterns, subscribe) {
         (false, true) => "SUBSCRIBE",
@@ -97,7 +77,7 @@ async fn open(ep: Endpoint, command: &str, names: Vec<Vec<u8>>) -> Result<SubObj
     let (rd, wr) = tokio::io::split(connect::open(&ep).await?);
     let (event_tx, events) = mpsc::unbounded_channel();
     let (ack_tx, acks) = mpsc::unbounded_channel();
-    let reader = crate::task::runtime::spawn(read_loop(rd, event_tx, ack_tx)).abort_handle();
+    let reader = crate::spawn_abortable(read_loop(rd, event_tx, ack_tx));
     let obj = SubObj {
         control: Mutex::new(Control { wr, acks }),
         events: Mutex::new(events),
@@ -204,7 +184,7 @@ fn dispatch(v: Value, events: &mpsc::UnboundedSender<Event>, acks: &mpsc::Unboun
 }
 
 /// The next message; `None` once closed by `close()`.
-async fn next(obj: &SubObj) -> Result<Option<Message>, RedisErr> {
+async fn next_on(obj: &SubObj) -> Result<Option<Message>, RedisErr> {
     if obj.closed.load(Ordering::Acquire) {
         return Ok(None);
     }
@@ -226,112 +206,51 @@ async fn next(obj: &SubObj) -> Result<Option<Message>, RedisErr> {
     }
 }
 
-fn message_result(r: Result<Option<Message>, RedisErr>) -> IoResult<VeltRedisMessage> {
-    let text = |s: String| VeltStr::from_vec(s.into_bytes());
-    match r {
-        Err(e) => IoResult::err(e.to_velt()),
-        Ok(m) => {
-            let (kind, m) = match m {
-                None => (0, None),
-                Some(m) if m.pattern.is_empty() => (1, Some(m)),
-                Some(m) => (2, Some(m)),
-            };
-            let m = m.unwrap_or(Message {
-                channel: String::new(),
-                message: String::new(),
-                pattern: String::new(),
-            });
-            IoResult::ok(VeltRedisMessage {
-                kind,
-                pad: 0,
-                channel: text(m.channel),
-                message: text(m.message),
-                pattern: text(m.pattern),
-            })
-        }
+/// `subscribe(urlOrClient, names)`: a new connection (to the same place as client `c` when it
+/// is non-zero, else to `url` trusting `ca`) subscribed to channels, or to glob patterns when
+/// `patterns`; resolves once the server confirmed every name.
+pub fn subscribe(
+    c: ClientHandle,
+    url: &str,
+    ca: &[u8],
+    names: Vec<Vec<u8>>,
+    patterns: bool,
+) -> impl Future<Output = Result<SubHandle, RedisErr>> + Send + use<> {
+    let endpoint = match CLIENTS.get(c) {
+        Some(conn) => Ok(conn.endpoint.clone()),
+        None if c.bits() != 0 => Err(bad_handle()),
+        None => url::parse(url)
+            .map(|target| Endpoint::new(target, ca.to_vec()))
+            .map_err(RedisErr::invalid),
+    };
+    let command = command_name(patterns, true);
+    async move { Ok(SUBSCRIBERS.insert(open(endpoint?, command, names).await?)) }
+}
+
+/// `next()`: waits for the next message; `None` after `close()` (or for a closed handle). A
+/// connection lost to the server fails with `ECONNRESET`.
+pub async fn next(s: SubHandle) -> Result<Option<Message>, RedisErr> {
+    match SUBSCRIBERS.get(s) {
+        Some(obj) => next_on(&obj).await,
+        None => Ok(None),
     }
 }
 
-unsafe fn owned_names(names: *const VeltStrArray) -> Vec<Vec<u8>> {
-    str_args(names).into_iter().map(Cow::into_owned).collect()
-}
-
-/// `subscribe(urlOrClient, names)` → `IoResult<SubHandle>`: a new connection (to the same place
-/// as client `c` when it is non-zero, else to `url` trusting `ca`) subscribed to channels, or to
-/// glob patterns when `patterns`; resolves once the server confirmed every name.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_redis_subscribe(
-    c: ClientHandle,
-    url: *const VeltStr,
-    ca: *const VeltStr,
-    names: *const VeltStrArray,
-    patterns: u8,
-) -> *mut VeltFut {
-    let endpoint = match CLIENTS.get(c) {
-        Some(conn) => Ok(conn.endpoint.clone()),
-        None if c.bits() != 0 => Err(RedisErr {
-            code: crate::result::code::BAD_HANDLE,
-            message: "handle is closed".to_string(),
-        }),
-        None => url::parse(&text_arg(url))
-            .map(|target| Endpoint {
-                target,
-                ca: (*ca).text_lossy().as_bytes().to_vec(),
-            })
-            .map_err(RedisErr::invalid),
-    };
-    let names = owned_names(names);
-    let command = command_name(patterns != 0, true);
-    new_leaf(async move {
-        let r = match endpoint {
-            Ok(ep) => open(ep, command, names).await,
-            Err(e) => Err(e),
-        };
-        match r {
-            Ok(obj) => IoResult::ok(SUBSCRIBERS.insert(obj)),
-            Err(e) => IoResult::err(e.to_velt()),
-        }
-    })
-}
-
-/// `next()` → `IoResult<VeltRedisMessage>`: waits for the next message; kind 0 after `close()`.
-/// A connection lost to the server fails with `ECONNRESET`.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_redis_sub_next(s: SubHandle) -> *mut VeltFut {
-    let obj = SUBSCRIBERS.get(s);
-    new_leaf(async move {
-        match obj {
-            Some(obj) => message_result(next(&obj).await),
-            None => message_result(Ok(None)),
-        }
-    })
-}
-
-/// `subscribe(names)` / `unsubscribe(names)` on a subscriber → `IoResult<()>` once confirmed
-/// (`subscribe` 1 = add, 0 = remove; `patterns` 1 = glob patterns). No names = no-op.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_redis_sub_change(
+/// `subscribe(names)` / `unsubscribe(names)` on a subscriber, once confirmed (`patterns`: glob
+/// patterns). No names = no-op.
+pub async fn change_names(
     s: SubHandle,
-    names: *const VeltStrArray,
-    patterns: u8,
-    subscribe: u8,
-) -> *mut VeltFut {
-    let names = owned_names(names);
-    let command = command_name(patterns != 0, subscribe != 0);
-    SUBSCRIBERS.op::<()>(s, |obj| {
-        new_leaf(async move {
-            match change(&obj, command, names).await {
-                Ok(()) => IoResult::ok(()),
-                Err(e) => IoResult::err(e.to_velt()),
-            }
-        })
-    })
+    names: Vec<Vec<u8>>,
+    patterns: bool,
+    subscribe: bool,
+) -> Result<(), RedisErr> {
+    let obj = SUBSCRIBERS.get(s).ok_or_else(bad_handle)?;
+    change(&obj, command_name(patterns, subscribe), names).await
 }
 
-/// `close()`: pending and later `next()` calls return kind 0; releases the handle (the
+/// `close()`: pending and later `next()` calls return `None`; releases the handle (the
 /// connection closes once no operation is in flight).
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_redis_sub_close(s: SubHandle) {
+pub fn close(s: SubHandle) {
     if let Some(obj) = SUBSCRIBERS.remove(s) {
         obj.closed.store(true, Ordering::Release);
         obj.close_notify.notify_waiters();

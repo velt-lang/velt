@@ -1,15 +1,16 @@
-//! Opening a Redis connection: TCP (or TLS through rustls with the shared `ring` configuration of
-//! `crate::tls`), then the handshake (`AUTH`, `SELECT`) before the connection is handed to the
-//! multiplexer or a subscriber.
+//! Opening a Redis connection: TCP on the runtime's sockets (`velt_native::net`), or TLS over it
+//! through rustls with the shared configuration of `velt_tls`, then the handshake (`AUTH`,
+//! `SELECT`) before the connection is handed to the multiplexer or a subscriber.
 
 use super::error::RedisErr;
 use super::resp::{encode_command, Parser, Value};
 use super::url::Target;
-use rustls::pki_types::ServerName;
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
+use velt_native::net::TcpStream;
+use velt_native::time;
+use velt_tls::rustls::pki_types::ServerName;
 
 /// Any byte stream a connection runs on (TCP, or TLS over TCP).
 pub trait Transport: AsyncRead + AsyncWrite + Unpin + Send {}
@@ -22,11 +23,7 @@ pub type Stream = Box<dyn Transport>;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// How long `reconnect` keeps trying (like ioredis' default of about 20 retries).
-#[cfg(not(test))]
-const RECONNECT_WINDOW: Duration = Duration::from_secs(10);
-/// Unit tests exercise giving up without waiting the real window.
-#[cfg(test)]
-const RECONNECT_WINDOW: Duration = Duration::from_millis(300);
+pub const RECONNECT_WINDOW: Duration = Duration::from_secs(10);
 
 /// First retry delay of `reconnect`, doubled per attempt up to [`MAX_BACKOFF`].
 const FIRST_BACKOFF: Duration = Duration::from_millis(50);
@@ -40,14 +37,27 @@ pub struct Endpoint {
     pub target: Target,
     /// Extra trusted CA certificates (PEM; empty = built-in roots only).
     pub ca: Vec<u8>,
+    /// How long [`reconnect`] keeps trying ([`RECONNECT_WINDOW`]; tests give up sooner).
+    pub reconnect_window: Duration,
+}
+
+impl Endpoint {
+    /// `target` trusting `ca`, reconnecting for [`RECONNECT_WINDOW`].
+    pub fn new(target: Target, ca: Vec<u8>) -> Endpoint {
+        Endpoint {
+            target,
+            ca,
+            reconnect_window: RECONNECT_WINDOW,
+        }
+    }
 }
 
 /// Open a stream to `ep` and run the handshake.
 pub async fn open(ep: &Endpoint) -> Result<Stream, RedisErr> {
-    match tokio::time::timeout(CONNECT_TIMEOUT, open_now(ep)).await {
+    match time::timeout(CONNECT_TIMEOUT, open_now(ep)).await {
         Ok(r) => r,
         Err(_) => Err(RedisErr {
-            code: crate::result::code::TIMED_OUT,
+            code: velt_native::code::TIMED_OUT,
             message: format!(
                 "Redis connection to {}:{} timed out",
                 ep.target.host, ep.target.port
@@ -57,31 +67,37 @@ pub async fn open(ep: &Endpoint) -> Result<Stream, RedisErr> {
 }
 
 /// Open a replacement for a lost connection: retry with exponential backoff for up to
-/// [`RECONNECT_WINDOW`], then fail with the last error. An error reply to the handshake (bad
+/// `ep.reconnect_window`, then fail with the last error. An error reply to the handshake (bad
 /// password, unknown database) is final.
 pub async fn reconnect(ep: &Endpoint) -> Result<Stream, RedisErr> {
-    let start = tokio::time::Instant::now();
+    let start = time::Instant::now();
     let mut delay = FIRST_BACKOFF;
     loop {
         match open(ep).await {
             Ok(s) => return Ok(s),
             Err(e) if e.code == super::error::SERVER_ERROR => return Err(e),
-            Err(e) if start.elapsed() + delay >= RECONNECT_WINDOW => return Err(e),
+            Err(e) if start.elapsed() + delay >= ep.reconnect_window => return Err(e),
             Err(_) => {}
         }
-        tokio::time::sleep(delay).await;
+        time::sleep(delay).await;
         delay = (delay * 2).min(MAX_BACKOFF);
     }
 }
 
 async fn open_now(ep: &Endpoint) -> Result<Stream, RedisErr> {
     let t = &ep.target;
-    let tcp = TcpStream::connect((t.host.as_str(), t.port))
+    // An IPv6 literal is bracketed in `host:port`.
+    let addr = if t.host.contains(':') {
+        format!("[{}]:{}", t.host, t.port)
+    } else {
+        format!("{}:{}", t.host, t.port)
+    };
+    let tcp = TcpStream::connect(&addr)
         .await
         .map_err(|e| RedisErr::io(&e))?;
     let _ = tcp.set_nodelay(true);
     let mut stream: Stream = if t.tls {
-        let config = crate::tls::client_config(&ep.ca).map_err(RedisErr::invalid)?;
+        let config = velt_tls::client_config(&ep.ca, "CA").map_err(RedisErr::invalid)?;
         let name = ServerName::try_from(t.host.clone())
             .map_err(|_| RedisErr::invalid(format!("invalid host name {:?}", t.host)))?;
         let tls = TlsConnector::from(config)

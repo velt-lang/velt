@@ -23,6 +23,8 @@ mod aio;
 mod aio_tests;
 mod futures;
 #[cfg(test)]
+mod redis_tests;
+#[cfg(test)]
 use crate::task::{FUT_RESULT_OFFSET, PENDING, READY};
 pub use aio::{DropStateFn, ForeignVTable, NativePollFn, WakerArg};
 pub use futures::{complete, fut_blocking, fut_completer};
@@ -143,6 +145,9 @@ pub struct VeltRtApi {
     /// `velt_rt_strbuf_commit(buf, n, ascii)`: the bytes written become text (counted unless
     /// `ascii` is 1).
     pub strbuf_commit: unsafe extern "C" fn(*mut VeltStr, u64, u8),
+    /// `(s, len_out) -> ptr`: a string's bytes when they are UTF-8 (no lone surrogate; the
+    /// string knows), else null: a library borrows it as text without checking the bytes.
+    pub str_utf8: unsafe extern "C" fn(*const VeltStr, *mut usize) -> *const u8,
 }
 
 /// The table every native library receives.
@@ -189,6 +194,7 @@ pub static VELT_RT_API: VeltRtApi = VeltRtApi {
     str_retain,
     strbuf_spare: crate::strbuf::velt_rt_strbuf_spare,
     strbuf_commit: crate::strbuf::velt_rt_strbuf_commit,
+    str_utf8,
 };
 
 /// `const VeltRtApi* velt_rt_native_api(void)`: the table, for generated code to pass to each
@@ -232,6 +238,18 @@ unsafe extern "C" fn str_new(ptr: *const u8, len: usize, out: *mut VeltStr) {
     out.write(VeltStr::from_bytes(
         String::from_utf8_lossy(bytes).as_bytes(),
     ));
+}
+
+/// `str_utf8`: the bytes of `s` when it is well-formed (UTF-8), else null. Whether it is comes
+/// from the string's own counts (a scan only for a static string with non-ASCII text).
+unsafe extern "C" fn str_utf8(s: *const VeltStr, len: *mut usize) -> *const u8 {
+    if !(*s).is_well_formed() {
+        len.write(0);
+        return std::ptr::null();
+    }
+    let b = (*s).as_bytes();
+    len.write(b.len());
+    b.as_ptr()
 }
 
 /// `str_from_utf8`: a string of a library's UTF-8 text (a Rust `&str`): counted, not checked
@@ -427,7 +445,8 @@ mod tests {
             str_from_utf8,
             str_retain,
             strbuf_spare,
-            strbuf_commit
+            strbuf_commit,
+            str_utf8
         );
         assert_eq!(NATIVE_ABI_VERSION, sdk::ABI_VERSION);
         assert_eq!(size_of::<VeltStr>(), size_of::<sdk::VeltStr>());

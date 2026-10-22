@@ -6,7 +6,7 @@ use crate::connection::{self, DbHandle};
 use crate::error::{code_name, DbError};
 use crate::statement::{self, RunInfo, StmtHandle};
 use velt_native::handles::Key;
-use velt_native::{export, Array, Error};
+use velt_native::{export, Array, Error, Str};
 
 fn io<T>(r: Result<T, DbError>) -> Result<T, Error> {
     r.map_err(|e| e.to_error())
@@ -17,7 +17,7 @@ fn db(h: u64) -> DbHandle {
 }
 
 fn stmt(h: u64) -> StmtHandle {
-    Key::from_bits(h)
+    velt_native::handles::Single::from_bits(h)
 }
 
 /// `open(path, opts)` → `IoResult<u64>` (see [`connection::open`]).
@@ -76,19 +76,20 @@ fn velt_std_sqlite__last_error(db_h: u64) -> Result<(), Error> {
 /// `db.prepare(sql)` → `IoResult<u64>`.
 #[export]
 fn velt_std_sqlite__prepare(db_h: u64, sql: &str) -> Result<u64, Error> {
-    io(statement::prepare(db(db_h), sql).map(Key::bits))
+    io(statement::prepare(db(db_h), sql).map(|s| s.bits()))
 }
 
-/// `stmt.run()` → `IoResult<RunSlot>`; `params` is JSON (empty: none).
+/// `stmt.run()` → `IoResult<RunSlot>`; `params` is JSON (empty: none), read as stored: it comes
+/// from `JSON.stringify`, which escapes lone surrogates, so it is UTF-8 and needs no check.
 #[export]
-fn velt_std_sqlite__run(stmt_h: u64, params: &str) -> Result<RunInfo, Error> {
+fn velt_std_sqlite__run(stmt_h: u64, params: &Str) -> Result<RunInfo, Error> {
     io(statement::run(stmt(stmt_h), params.as_bytes()))
 }
 
 /// `stmt.all()` / `get()` → `IoResult<u8[]>`: binary rows ([`velt_text::rows`]) written into
 /// the Velt array itself, for `__intrinsic_json_parse_rows`; empty if `first_only` found no row.
 #[export]
-fn velt_std_sqlite__query(stmt_h: u64, params: &str, first_only: bool) -> Result<Array<u8>, Error> {
+fn velt_std_sqlite__query(stmt_h: u64, params: &Str, first_only: bool) -> Result<Array<u8>, Error> {
     io(statement::query(
         stmt(stmt_h),
         params.as_bytes(),
@@ -103,10 +104,11 @@ fn velt_std_sqlite__note_error(stmt_h: u64, code: i32, message: &str) {
     statement::note_error(stmt(stmt_h), DbError::new(code, message))
 }
 
-/// Release a statement handle (null is a no-op).
+/// Release a statement handle (null is a no-op); std's `Statement` releases it once.
 #[export]
 fn velt_std_sqlite__stmt_free(stmt_h: u64) {
-    statement::free(stmt(stmt_h))
+    // SAFETY: the owning `Statement` zeroes its handle after this.
+    unsafe { statement::free(stmt(stmt_h)) }
 }
 
 /// The name of SQLite result `code` ("SQLITE_CONSTRAINT_UNIQUE", …).
