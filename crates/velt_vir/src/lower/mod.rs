@@ -554,6 +554,9 @@ struct FnLower<'c, 'h> {
     frozen_binds: bool,
     /// While evaluating a place only to read it (`FieldPresent`): no write barrier.
     read_target: bool,
+    /// The field read lowered next is about to be changed in place, reached by running code
+    /// (caller_stores.rs `owner_barrier`): it puts the barrier on its owner.
+    owner_write: bool,
     /// This function's read mode, once asked (rc.rs `lk_mode`).
     lk_mode: Option<Local>,
     /// This thread's `RwLock` reader state, once a `read` returned it (async_fn/sync.rs).
@@ -572,8 +575,9 @@ struct FnLower<'c, 'h> {
     /// The arguments being lowered (bit `i`: `args[i]`) that are the reader's containers a
     /// call changing the caller's containers changes (caller_stores.rs `kept_args_of`).
     kept_args: u64,
-    /// Those arguments as passed, handed back to the reader after the call.
-    kept_handed: Vec<(Operand, TyId)>,
+    /// Those arguments as passed, handed back to the reader after the call (with whether each
+    /// was the reader's own, referenced once: caller_stores.rs `hand_back`).
+    kept_handed: Vec<(Operand, TyId, Option<Local>)>,
     /// Those of them the call's own values, dropped after that in the mode given.
     kept_drops: Vec<(Place, TyId, LkMode)>,
     /// A `read` callback's variables naming the caller's objects (caller_stores.rs

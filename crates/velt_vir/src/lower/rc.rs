@@ -17,7 +17,7 @@ const COUNT: i128 = 8;
 
 /// The `LOCAL` bit of a lock-set object's count word (velt_rt `read_mode`), and its count
 /// without it.
-const LOCAL: i128 = 1 << 62;
+pub(super) const LOCAL: i128 = 1 << 62;
 const COUNT_MASK: i128 = LOCAL - 1;
 
 impl FnLower<'_, '_> {

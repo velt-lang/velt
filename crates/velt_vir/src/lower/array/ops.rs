@@ -34,6 +34,10 @@ impl FnLower<'_, '_> {
         // An argument that may run code (`aa[0].push(g())`, where `g` grows or replaces `aa`)
         // runs after the array's address is taken: borrow the array as a call borrows its
         // receiver, so that address stays valid.
+        if i != I::ArrayLen && !self.cx.lock_counted(aty) {
+            // Held inline in an object (caller_stores.rs).
+            self.owner_barrier(&args[0]);
+        }
         let av = match args[1..].iter().any(|a| self.may_write(a)) {
             true => {
                 let outer = self.start_borrows();
@@ -43,18 +47,16 @@ impl FnLower<'_, '_> {
             }
             false => self.projection_base(&args[0], BoxHold::No),
         };
+        self.owner_write = false;
         let arr = self.place_of(av, aty);
-        if i != I::ArrayLen && !self.cx.lock_counted(aty) {
-            // Held inline in an object (caller_stores.rs).
-            self.owner_barrier(&args[0]);
-        }
-        if i != I::ArrayLen && self.cx.lock_counted(aty) && !self.captured_root(&args[0]) {
+        let caller = self.mode != LkMode::Plain && self.caller_object(&args[0]);
+        if i != I::ArrayLen && self.cx.lock_counted(aty) && !caller {
             // A mutating operation: stops a reader of an `RwLock` changing a shared array (not
-            // the caller's, frozen.rs `captured_root`).
+            // the caller's, caller_stores.rs `caller_object`).
             self.write_barrier(Operand::Copy(arr.clone()), aty);
         }
         let arr = self.content(&arr, aty);
-        if self.mode != LkMode::Plain && self.captured_root(&args[0]) {
+        if caller {
             return self.caller_array_op(i, &args[1..], &arr, aty, ty);
         }
         self.array_op(i, &args[1..], &arr, aty, ty)
@@ -241,7 +243,7 @@ impl FnLower<'_, '_> {
         self.assign(proj(arr, Proj::Field(1)), Rvalue::Use(n));
     }
 
-    fn with_capacity(&mut self, cap: Operand, ty: TyId) -> Operand {
+    pub(in crate::lower) fn with_capacity(&mut self, cap: Operand, ty: TyId) -> Operand {
         let ty = self.sub(ty);
         let elem = self.elem_ty(ty);
         let data = self.temp(Ty::Ptr);

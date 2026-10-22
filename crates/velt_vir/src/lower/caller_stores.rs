@@ -216,9 +216,14 @@ impl FnLower<'_, '_> {
         let p = match a.kind {
             K::Local(..) | K::Field { .. } | K::Index { .. } => {
                 let p = self.place_expr(a);
+                let was = self.own_once(&p, ty);
                 let v = self.reader_keep(Operand::Copy(p.clone()), ty);
                 self.assign(p.clone(), Rvalue::Use(v));
-                p
+                self.kept_handed.push((Operand::Copy(p.clone()), ty, was));
+                return match vt {
+                    Ty::Agg(_) => self.addr(p),
+                    _ => Operand::Copy(p),
+                };
             }
             _ => {
                 let v = self.consume(a);
@@ -232,11 +237,95 @@ impl FnLower<'_, '_> {
                 p
             }
         };
-        self.kept_handed.push((Operand::Copy(p.clone()), ty));
+        self.kept_handed.push((Operand::Copy(p.clone()), ty, None));
         match vt {
             Ty::Agg(_) => self.addr(p),
             _ => Operand::Copy(p),
         }
+    }
+
+    /// Is the array at `p` (of type `ty`, a lock-set object) the reader's own, referenced once
+    /// (`hand_back`)? Not asked for other types.
+    fn own_once(&mut self, p: &Place, ty: TyId) -> Option<vir::Local> {
+        if self.dead() || !matches!(self.cx.kind(ty), TyKind::Array(_)) || !self.cx.boxed(ty) {
+            return None;
+        }
+        self.lock_ref(ty)?;
+        let was = self.temp(Ty::Bool);
+        self.assign(Place::local(was), Rvalue::Use(super::cint(0, Ty::Bool)));
+        let o = self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(p.clone())));
+        let nn = self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(BinOp::Ne, o.clone(), super::cint(0, Ty::Ptr)),
+        );
+        let done = self.new_block();
+        self.when(nn, done);
+        let c = self.count_place(o);
+        let one = super::cint(super::rc::LOCAL | 1, Ty::U64);
+        let b = Rvalue::Binary(BinOp::Eq, Operand::Copy(c), one);
+        self.assign(Place::local(was), b);
+        self.goto(done);
+        self.switch_to(done);
+        Some(was)
+    }
+
+    /// After a call changing the caller's containers, the reader's container `v` of type `ty`
+    /// it was given (`keep_mut_arg`) goes back to the reader. One that was the reader's own and
+    /// referenced once (`was`, an array) and that the call did not keep anywhere (referenced
+    /// once still) is the reader's own again, as in JavaScript: its place gets a new array of the
+    /// reader's holding the same elements by read mode's counts, and the one the call saw is
+    /// handed to the reader (freed once the reads end, letting go of what the keep counted in
+    /// it). Anything else: `hand_to_reader`, the reader borrowing it uncounted.
+    pub(super) fn hand_back(&mut self, v: &Operand, ty: TyId, was: Option<vir::Local>) {
+        let (Some(was), Operand::Copy(p)) = (was, v) else {
+            return self.hand_to_reader(v, ty);
+        };
+        if self.dead() || self.mode == LkMode::Plain {
+            return;
+        }
+        let o = self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(p.clone())));
+        let (check, back, other, done) = (
+            self.new_block(),
+            self.new_block(),
+            self.new_block(),
+            self.new_block(),
+        );
+        self.branch(Operand::Copy(Place::local(was)), check, other);
+        self.switch_to(check);
+        let c = self.count_place(o.clone());
+        let one = self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(BinOp::Eq, Operand::Copy(c), super::cint(1, Ty::U64)),
+        );
+        self.branch(one, back, other);
+        self.switch_to(back);
+        let op = Place::local(self.copy_to_temp(o.clone(), Ty::Ptr));
+        let src = self.content(&op, ty);
+        let len = Operand::Copy(proj(&src, Proj::Field(1)));
+        let elem = self.elem_ty(ty);
+        // Not the statement's to drop: the reader's place holds it.
+        let new = self.with_capacity(len.clone(), ty);
+        if let Operand::Copy(q) = &new {
+            self.take_temp(q);
+        }
+        let np = Place::local(self.copy_to_temp(new, Ty::Ptr));
+        let dst = self.content(&np, ty);
+        let k = self.temp(Ty::U64);
+        self.assign(Place::local(k), Rvalue::Use(super::cint(0, Ty::U64)));
+        self.count_loop(k, len, |lw, k| {
+            let ep = lw.elem_place(&src, k, elem);
+            let s = lw.share_value(Operand::Copy(ep), elem);
+            lw.push_value(&dst, elem, s);
+        });
+        self.assign(p.clone(), Rvalue::Use(Operand::Copy(np)));
+        if let Some(t) = self.lock_ref(ty) {
+            self.hand_ref(o, t);
+        }
+        self.goto(done);
+        self.switch_to(other);
+        self.hand_to_reader(v, ty);
+        self.goto(done);
+        self.switch_to(done);
     }
 
     /// The reader's container `a` of type `ty` (`vt`) that a call changing the caller's
@@ -259,15 +348,21 @@ impl FnLower<'_, '_> {
 
     /// About to change `e`, a value held inline in an object (`o.items` in `o.items.push(x)`,
     /// or passed to be changed): stops a reader of an `RwLock` changing it in a lock-set object
-    /// it did not make (rc.rs `write_barrier` of the nearest object holding it). The parts
-    /// above are read again, so only for places read without running code.
+    /// it did not make (rc.rs `write_barrier` of the nearest object holding it). A place read
+    /// without running code has its parts above read again here; one reached by running code
+    /// (`m.get(k)!.items`, `f().items`, `(c ? a : b).items`) gets the barrier while it is
+    /// evaluated next, on the object it reaches (`owner_write`; the caller clears it after).
     pub(super) fn owner_barrier(&mut self, e: &hir::Expr) {
         if self.mode == LkMode::Plain || self.dead() {
             return;
         }
         let mut at = e;
         while let K::Field { base, .. } = &at.kind {
-            if self.captured_root(base) || !self.pure_place(base) {
+            if self.captured_root(base) {
+                return;
+            }
+            if !self.pure_place(base) {
+                self.owner_write = true;
                 return;
             }
             let bty = self.sub(base.ty);
@@ -279,6 +374,94 @@ impl FnLower<'_, '_> {
                 return;
             }
             at = base;
+        }
+    }
+
+    /// In a field read of `base` (of type `bty`) about to be changed in place (`write`,
+    /// `owner_barrier`): does the barrier go on `base`, the nearest lock-set object holding the
+    /// field? A value held inline passes the question to the field read it is part of.
+    pub(super) fn owner_write_down(&mut self, write: bool, base: &hir::Expr, bty: TyId) -> bool {
+        if !write || self.caller_object(base) {
+            return false;
+        }
+        if self.cx.lock_counted(bty) {
+            return true;
+        }
+        if self.lock_ref(bty).is_none() && !self.cx.counted(bty) {
+            self.owner_write = matches!(base.kind, K::Field { .. });
+        }
+        false
+    }
+
+    /// Is `e` one of the caller's objects or a part of one (module docs), as a place
+    /// (`captured_root`) or what a method or function takes out of or reads from the caller's
+    /// container given nothing that may reach the lock set (`out.at(0)!`, `out.find(f)`), or a
+    /// choice of two of them?
+    pub(super) fn caller_object(&mut self, e: &hir::Expr) -> bool {
+        if self.captured_root(e) {
+            return true;
+        }
+        match &e.kind {
+            K::Field { base, .. }
+            | K::Index { base, .. }
+            | K::UnwrapSome(base, _)
+            | K::Upcast(base) => self.caller_object(base),
+            K::Call {
+                callee: hir::Callee::Def(..) | hir::Callee::Intrinsic(_),
+                args,
+            } => match args.split_first() {
+                Some((c, rest)) => {
+                    self.caller_object(c) && rest.iter().all(|x| self.gives_none_of_value(x))
+                }
+                None => false,
+            },
+            // `out.at(0)!`: the payload, or a panic.
+            K::Match { scrutinee, arms } => {
+                self.caller_object(scrutinee)
+                    && arms.iter().all(|a| {
+                        let t = self.sub(a.body.ty);
+                        self.cx.is_never(t)
+                            || matches!(a.body.kind, K::Local(l, _) if binds(&a.pat, l))
+                    })
+            }
+            K::If { then, els, .. } => self.caller_object(then) && self.caller_object(els),
+            _ => false,
+        }
+    }
+
+    /// Can the argument `x` give a callee nothing of the value: a type that cannot hold its
+    /// objects, or a closure literal capturing only such variables and the caller's
+    /// (`out.find((x) => x.v == k)`)?
+    fn gives_none_of_value(&mut self, x: &hir::Expr) -> bool {
+        let t = self.sub(x.ty);
+        if !self.cx.reaches_lock_set(t) {
+            return true;
+        }
+        let K::Closure(def) = x.kind else {
+            return false;
+        };
+        let outer: Vec<LocalId> = self
+            .cx
+            .fn_def(def)
+            .captures
+            .iter()
+            .map(|c| c.outer)
+            .collect();
+        outer.into_iter().all(|l| {
+            let t = self.sub(self.info[l.0 as usize].ty);
+            let e = hir::Expr {
+                kind: K::Local(l, hir::UseMode::Borrow),
+                ty: t,
+                span: x.span,
+            };
+            !self.cx.reaches_lock_set(t) || self.captured_root(&e)
+        })
+    }
+
+    /// The barrier `owner_write_down` asked for (`at`) on the object `bp` holds.
+    pub(super) fn owner_write_barrier(&mut self, at: bool, bp: &Place, bty: TyId) {
+        if at {
+            self.target_barrier(bp, bty);
         }
     }
 
@@ -527,6 +710,19 @@ impl Bindings {
             K::Block(b) => self.block(b),
             _ => super::frame_envs::children(e, &mut |x| self.expr(x)),
         }
+    }
+}
+
+/// Does `p` bind `l`?
+fn binds(p: &hir::Pat, l: LocalId) -> bool {
+    use hir::PatKind as P;
+    match &p.kind {
+        P::Binding(b, _) => *b == l,
+        P::Some(p) => binds(p, l),
+        P::Variant { args: ps, .. } | P::Tuple(ps) | P::Or(ps) => ps.iter().any(|p| binds(p, l)),
+        P::Adt { fields } => fields.iter().any(|(_, p)| binds(p, l)),
+        P::Array { elems, rest } => *rest == Some(l) || elems.iter().any(|p| binds(p, l)),
+        _ => false,
     }
 }
 

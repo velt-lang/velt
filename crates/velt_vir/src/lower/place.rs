@@ -45,6 +45,7 @@ impl FnLower<'_, '_> {
 
     pub(super) fn field_expr(&mut self, base: &hir::Expr, index: u32, mode: UseMode) -> Operand {
         let bty = self.sub(base.ty);
+        let write = std::mem::take(&mut self.owner_write);
         if self.cx.proxiable(bty) && !self.is_unit_field(bty, index) {
             return self.proxy_field_read(base, bty, index, mode);
         }
@@ -93,8 +94,10 @@ impl FnLower<'_, '_> {
             }
             None => BoxHold::No,
         };
+        let at = self.owner_write_down(write, base, bty);
         let v = self.projection_base(base, hold);
         let bp = self.place_of(v, bty);
+        self.owner_write_barrier(at, &bp, bty);
         let p = self.field_place(&bp, bty, index);
         if mode == UseMode::Move && self.take_temp(&bp) {
             // Moving a field out of an owned temporary: the rest of it is dropped later.
@@ -383,8 +386,7 @@ impl FnLower<'_, '_> {
         }
     }
 
-    /// `place_expr` with the root and index operands `pre` already evaluated by
-    /// `place_indices`.
+    /// `place_expr` with the root and index operands `pre` evaluated by `place_indices`.
     pub(super) fn place_expr_with(&mut self, e: &hir::Expr, pre: &mut VecDeque<Operand>) -> Place {
         use hir::ExprKind as K;
         match &e.kind {

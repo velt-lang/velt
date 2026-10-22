@@ -68,6 +68,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             known_fns: FxHashMap::default(),
             frozen_binds: false,
             read_target: false,
+            owner_write: false,
             lk_mode: None,
             rw_reader: None,
             mode: LkMode::Plain,

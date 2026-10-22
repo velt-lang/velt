@@ -129,8 +129,8 @@ impl FnLower<'_, '_> {
         if plain && self.needs_drop(ret) {
             self.hand_to_reader(&r, ret);
         }
-        for (v, t) in handed {
-            self.hand_to_reader(&v, t);
+        for (v, t, was) in handed {
+            self.hand_back(&v, t, was);
         }
         for (p, t, m) in drops {
             let mode = std::mem::replace(&mut self.mode, m);
@@ -270,6 +270,7 @@ impl FnLower<'_, '_> {
         let mut recv = self.proxy_recv.take();
         let kept = std::mem::take(&mut self.kept_args);
         for (i, ((a, mode), later)) in args.iter().zip(modes).zip(later).enumerate() {
+            self.owner_write = false;
             if *mode == PassMode::BorrowMut {
                 // Held inline in an object (caller_stores.rs).
                 self.owner_barrier(a);
@@ -342,6 +343,7 @@ impl FnLower<'_, '_> {
                 }
             }
         }
+        self.owner_write = false;
         if let (Some(r), Some(v)) = (recv, argv.first()) {
             self.proxy_recv_lowered(r, &v.clone());
         }
