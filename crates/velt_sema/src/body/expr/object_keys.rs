@@ -176,6 +176,21 @@ impl FnCx<'_, '_> {
             if let Some(h) = self.proxy_keys(call, arg) {
                 return Some(h);
             }
+        } else if self.typed_proxy_once(arg) {
+            // `Object.keys(f())` of a typed proxy: the operand once, then as above.
+            let callee = callee.clone();
+            return Some(self.operand_once(arg, span, |cx, t| {
+                let call = super::setters::synth(
+                    ast::ExprKind::Call {
+                        callee: Box::new(callee),
+                        type_args: vec![],
+                        args: vec![t.clone()],
+                        optional: false,
+                    },
+                    span,
+                );
+                cx.expr(&call, None, Want::Move)
+            }));
         }
         let obj = self.expr(arg, None, Want::Borrow);
         let obj = self.read_shared(obj);
@@ -614,7 +629,7 @@ fn is_private_name(name: &str) -> bool {
 
 /// Can `e` be evaluated a second time to the same object without side effects (a name,
 /// `this`, or a property of one)?
-pub(super) fn reevaluable(e: &ast::Expr) -> bool {
+pub(crate) fn reevaluable(e: &ast::Expr) -> bool {
     match &e.kind {
         ast::ExprKind::Ident(_) | ast::ExprKind::This => true,
         ast::ExprKind::Paren(inner) => reevaluable(inner),

@@ -117,6 +117,12 @@ impl FnCx<'_, '_> {
         let [o, k] = args else {
             return self.arity_error(what, 2, args, span);
         };
+        if self.typed_proxy_once(o) {
+            // `Object.hasOwn(f(), k)` of a typed proxy: the operand once, then as below.
+            return self.operand_once(o, span, |cx, t| {
+                cx.has_own(&[t.clone(), k.clone()], what, span)
+            });
+        }
         let Some(ot) = self.trial_type(o) else {
             self.check_args_loose(args);
             return self.error_expr(span);
@@ -206,11 +212,14 @@ impl FnCx<'_, '_> {
             },
             span,
         );
+        if let Some(h) = self.proxy_has_own(o, k, &call, span) {
+            return h;
+        }
         self.expr(&call, None, Want::Move)
     }
 
     /// A call of the prelude function `f` with the expressions `args`, checked.
-    pub(super) fn prelude_fn_call(
+    pub(crate) fn prelude_fn_call(
         &mut self,
         f: &str,
         args: Vec<ast::Expr>,
