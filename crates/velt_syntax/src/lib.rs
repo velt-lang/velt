@@ -55,7 +55,7 @@ pub fn is_synthesized_import(import: &ast::Import) -> bool {
 /// Stack for the parser thread. The recursive-descent parser needs a few KB per nesting level
 /// (bounded by its depth limit); a dedicated thread keeps deeply nested input from overflowing the
 /// caller's stack (1 MB main thread on Windows). The memory is reserved, not committed, until used.
-const PARSER_STACK_BYTES: usize = 64 << 20;
+pub const PARSER_STACK_BYTES: usize = 64 << 20;
 
 /// CONTRACT: parse one source file. Always returns a (possibly partial) module; parse errors go
 /// into the diagnostics. The parser must recover and keep going where reasonable.
@@ -158,6 +158,26 @@ thread_local! {
 #[doc(hidden)]
 pub fn with_parser_stack<T: Send>(f: impl Fn() -> T + Sync) -> T {
     on_parser_thread(f)
+}
+
+/// Runs `f` on this thread, which was spawned with a stack of `stack_bytes`: when that is at
+/// least the parser's, the parses in `f` run directly instead of each spawning a thread of its
+/// own (the compiler's pipeline thread parses every module of a program). As with
+/// [`with_parser_stack`], `f` must not recurse deeply before parsing.
+pub fn with_stack_of<T>(stack_bytes: usize, f: impl FnOnce() -> T) -> T {
+    if stack_bytes < PARSER_STACK_BYTES || ON_PARSER_STACK.get() {
+        return f();
+    }
+    /// Clears the flag when `f` returns or unwinds.
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            ON_PARSER_STACK.set(false);
+        }
+    }
+    ON_PARSER_STACK.set(true);
+    let _reset = Reset;
+    f()
 }
 
 /// Runs `f` on a thread with the parser's stack (on this thread if it is one, or if none can be

@@ -318,6 +318,31 @@ fn garbage_never_panics() {
     }
 }
 
+/// On a thread spawned with the parser's stack, parses run in place (`with_stack_of`, as on the
+/// compiler's pipeline thread): the deepest input still ends in an error, not a stack overflow.
+#[test]
+fn deep_nesting_in_place_is_an_error_not_a_crash() {
+    let stack = velt_syntax::PARSER_STACK_BYTES;
+    let check = move || {
+        velt_syntax::with_stack_of(stack, || {
+            for (open, close) in [("(", ")"), ("{a: ", "}"), ("x => ", ""), ("<a>", "</a>")] {
+                let src = format!(
+                    "function f() {{ x = {}1{}; }}",
+                    open.repeat(5000),
+                    close.repeat(5000)
+                );
+                let errs = errors(&src);
+                assert!(
+                    errs.iter().any(|e| e.contains("nested too deeply")),
+                    "{open}: {errs:?}"
+                );
+            }
+        })
+    };
+    let thread = std::thread::Builder::new().stack_size(stack).spawn(check);
+    thread.unwrap().join().unwrap();
+}
+
 #[test]
 fn deep_nesting_is_an_error_not_a_crash() {
     for (open, close) in [
