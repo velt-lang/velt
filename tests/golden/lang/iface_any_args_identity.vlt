@@ -46,3 +46,26 @@ console.log(o === p);
 
 (a as any).el = "viaany";
 console.log(c.el, (a as any).el, (a2 as any).props.n);
+
+// Through an adapter of an adapter (`Ctx<any, any>` to `Ctx<unknown, unknown>`), and a class.
+class Impl implements Ctx<string, { n: number }> {
+  el: string = "i";
+  props: { n: number } = { n: 1 };
+  name(): string {
+    return "impl";
+  }
+}
+const i = new Impl();
+const ia: Ctx<any, any> = i;
+const b: Ctx<unknown, unknown> = ia;
+const ua: unknown = ia;
+const ub: unknown = b;
+console.log(ua instanceof Impl, ub instanceof Impl, ua === ub, ub === i);
+const m2 = new Map<unknown, string>();
+m2.set(ua, "x");
+console.log(m2.get(i), m2.get(ub), m2.size);
+(ub as any).el = "w";
+console.log(i.el, (ua as any).props.n);
+const ss = new Set<Ctx<unknown, unknown>>([b]);
+const b2: Ctx<unknown, unknown> = i;
+console.log(ss.has(b2), [ia].includes(i));
