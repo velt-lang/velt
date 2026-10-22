@@ -8,7 +8,7 @@
 
 use super::operand::proj;
 use super::rt::Rt;
-use super::{cint, ice, FnLower, LkMode};
+use super::{cfunc, cint, ice, FnLower, Glue, LkMode, Work};
 use crate::vir::{BinOp, Operand, Place, Proj, Rvalue, Ty};
 use velt_sema::hir::TyId;
 
@@ -72,11 +72,11 @@ impl FnLower<'_, '_> {
 
     /// `fast` when this function is not in read mode (the usual case), `slow` when it is: both
     /// inline code.
-    fn lk_split(&mut self, fast: impl FnOnce(&mut Self), slow: impl FnOnce(&mut Self)) {
+    pub(super) fn lk_split(&mut self, fast: impl FnOnce(&mut Self), slow: impl FnOnce(&mut Self)) {
         match self.mode {
             // Code that never runs in read mode counts inline; code that always does, by read
             // mode's rules (`Work::Checked`, `Work::Read`).
-            LkMode::Plain => return fast(self),
+            LkMode::Plain | LkMode::Deferred => return fast(self),
             LkMode::Read => return slow(self),
             LkMode::Checked => {}
         }
@@ -140,6 +140,8 @@ impl FnLower<'_, '_> {
         if !self.cx.lock_counted(ty) {
             return self.release_as(p, weak, last);
         }
+        let deferred = self.mode == LkMode::Deferred && !weak;
+        let freed = p.clone();
         let gone = self.temp(Ty::U8);
         self.assign(Place::local(gone), Rvalue::Use(cint(0, Ty::U8)));
         let (q, r) = (p.clone(), p.clone());
@@ -167,7 +169,14 @@ impl FnLower<'_, '_> {
         let (last_bb, join) = (self.new_block(), self.new_block());
         self.branch(g, last_bb, join);
         self.switch_to(last_bb);
-        last(self);
+        match deferred {
+            // Its count stays 1: the drop glue releases it after the reads.
+            true => {
+                let glue = self.cx.func(Work::Glue(Glue::Drop, ty));
+                self.call_rt(Rt::FreeAfterReads, vec![freed, cfunc(glue)], None);
+            }
+            false => last(self),
+        }
         self.goto(join);
         self.switch_to(join);
     }

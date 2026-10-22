@@ -85,6 +85,9 @@ pub unsafe extern "C" fn velt_rt_rwlock_read(p: *mut u64, _reader: u64) -> u64 {
 pub unsafe extern "C" fn velt_rt_rwlock_read_unlock(p: *mut u64, _how: u64) {
     READ_DEPTH -= 1;
     *p -= 1;
+    if READ_DEPTH == 0 && !(*std::ptr::addr_of!(WAITING)).is_empty() {
+        free_waiting();
+    }
 }
 
 /// Exclusive lock.
@@ -110,6 +113,32 @@ pub unsafe extern "C" fn velt_rt_rwlock_write_unlock(p: *mut u64, _how: u64) {
 // mode itself (one thread: a depth) and the checks.
 static mut READ_DEPTH: u32 = 0;
 const LOCAL: u64 = 1 << 62;
+
+/// A drop glue function: releases the reference at the pointer it is given.
+type DropGlue = unsafe extern "C" fn(*mut *mut u8);
+
+/// Objects whose last reference went in read mode, freed when the reads end (velt_rt
+/// `read_mode::velt_rt_free_after_reads`).
+static mut WAITING: Vec<(*mut u8, DropGlue)> = Vec::new();
+
+/// Free the lock-set object `p` (count 1) with its drop glue now, or once the reads end
+/// (velt_rt `read_mode::velt_rt_free_after_reads`).
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_free_after_reads(p: *mut u8, drop: DropGlue) {
+    if !in_read() {
+        let mut slot = p;
+        return drop(&mut slot);
+    }
+    (*std::ptr::addr_of_mut!(WAITING)).push((p, drop));
+}
+
+#[cold]
+unsafe fn free_waiting() {
+    while let Some((p, drop)) = (*std::ptr::addr_of_mut!(WAITING)).pop() {
+        let mut slot = p;
+        drop(&mut slot);
+    }
+}
 
 unsafe fn in_read() -> bool {
     READ_DEPTH != 0

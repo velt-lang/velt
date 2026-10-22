@@ -57,6 +57,7 @@ pub mod redis;
 pub mod regex;
 pub mod registry;
 pub mod result;
+pub mod rwlock_write;
 pub mod shared;
 pub mod sqlite;
 pub mod stdin;

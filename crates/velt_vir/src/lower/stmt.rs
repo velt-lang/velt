@@ -33,7 +33,15 @@ impl FnLower<'_, '_> {
                 self.spawn(&args[0], args.get(1), e.ty, true, false);
             }
             _ => {
+                self.discarded = matches!(
+                    e.kind,
+                    hir::ExprKind::Call {
+                        callee: hir::Callee::Def(..),
+                        ..
+                    }
+                );
                 self.expr(e);
+                self.discarded = false;
             }
         }
         self.pop_scope();

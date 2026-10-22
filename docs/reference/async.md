@@ -558,12 +558,15 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
   promise or task, which would outlive it (that stops the program too). A function value the
   callback calls is checked as it runs (a write to the value through it stops the program).
   Inside the callback, an object of a type the value holds can be changed when the callback
-  made it, or when it is the caller's: a variable the callback literal captured from code
-  outside any `read` callback, and what that variable holds (`out.push(x)`, `seen.set(k, x)`,
-  `mine.v = x`). What the callback stores there is a copy of what it shares with the value.
-  Any other object of such a type (one reached through a function value the callback calls,
-  or captured by a closure made inside the callback) cannot be told from the value's own, so
-  a write to it stops the program too.
+  made it, or when it is the caller's: a place rooted in a variable the callback literal
+  captured from code outside any `read` callback, its fields and elements at any depth, and a
+  method or function called with one of them to change it (`out.push(x)`, `seen.add(x)`,
+  `m.set(k, x)`, `mine.v = x`, `out[0].tags.push("t")`, `sortItems(out)`). What the callback
+  stores there is a copy of what it did not make itself, and what it replaces there is freed
+  once the outermost `read` returns. Any other object of such a type cannot be told from the
+  value's own, so a write to it stops the program: one a method of the caller's variable
+  returns (`m.get(k)!.push(x)`), a loop over it gives (`for (const o of set) { o.v = 1; }`),
+  a function value the callback calls reaches, or a closure made inside the callback captures.
   Reads of other `RwLock`s nest, in any order. A value that holds function
   or interface values, objects of a class hierarchy, weak references or promises is read under
   the exclusive lock instead.

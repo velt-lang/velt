@@ -59,6 +59,7 @@ impl FnLower<'_, '_> {
         pre: Vec<Operand>,
         args: &[hir::Expr],
     ) -> Operand {
+        let discarded = std::mem::take(&mut self.discarded);
         let f = self.cx.fn_def(def);
         let modes: Vec<PassMode> = f.params[pre.len()..].iter().map(|p| p.mode).collect();
         let (ret, throws) = self.cx.call_sig(f);
@@ -74,11 +75,22 @@ impl FnLower<'_, '_> {
                 Work::Frozen(def, targs.clone(), mask, at, fns)
             }
         };
-        // A method of what a closure captured (the caller's `push`, `set`, `add`) runs by the
-        // counts outside read mode: what a reader stores there is a copy, never the store's.
-        let mode = match f.self_ty.is_some() && pre.is_empty() {
-            true if args.first().is_some_and(|a| self.captured_root(a)) => LkMode::Plain,
-            _ => self.mode,
+        // A method of what a `read` callback captured (the caller's `push`, `set`, `add`), or a
+        // function changing it, runs by the counts outside read mode, freeing after the reads
+        // (`LkMode::Deferred`): what a reader passes it is a copy or frozen, never the store's
+        // counted object. Its result, when it needs dropping (`splice`'s removed elements, an
+        // iterator), counts the same way: a statement drops it at once by these rules; else
+        // the call runs in read mode, which would take that result for the store's.
+        let changes_captured = pre.is_empty()
+            && args.iter().zip(&modes).enumerate().any(|(i, (a, m))| {
+                (i == 0 && f.self_ty.is_some() || *m == PassMode::BorrowMut)
+                    && self.captured_root(a)
+            });
+        let drop_now = changes_captured && discarded && self.needs_drop(ret);
+        let plain = changes_captured && (drop_now || !self.needs_drop(ret));
+        let mode = match plain {
+            true => LkMode::Deferred,
+            false => self.mode,
         };
         let fid = self.cx.func_direct(work, mode);
         // Not `super.m()`: JavaScript calls the base method without reading it from `this`.
@@ -96,7 +108,15 @@ impl FnLower<'_, '_> {
         let ret = self.cx.subst(ret, &targs);
         let throws = throws.map(|e| self.cx.subst(e, &targs));
         let throws = self.cx.error_ty(throws);
-        self.finish_call(vir::Callee::Func(fid), argv, ret, throws)
+        let r = self.finish_call(vir::Callee::Func(fid), argv, ret, throws);
+        if let (true, Operand::Copy(p)) = (drop_now, &r) {
+            if self.take_temp(p) {
+                let mode = std::mem::replace(&mut self.mode, LkMode::Deferred);
+                self.drop_glue(p.clone(), ret);
+                self.mode = mode;
+            }
+        }
+        r
     }
 
     /// Externs use the same mapping as Velt functions: aggregates by pointer (read-only borrow),

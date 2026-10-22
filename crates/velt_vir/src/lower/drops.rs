@@ -301,9 +301,14 @@ impl FnLower<'_, '_> {
             // Borrowed param written in place (`Mutex.with` callback): the caller's value is
             // always initialized. In read mode (a variable a `read` callback captured): the
             // caller made that value, never the store (what a reader stores there is a copy),
-            // so it is released by the counts outside read mode, `LOCAL` or not.
+            // so it is released by the counts outside read mode, `LOCAL` or not, and freed after
+            // the reads (`LkMode::Deferred`).
             let p = self.local_place(id);
-            let mode = std::mem::replace(&mut self.mode, super::LkMode::Plain);
+            let mode = match self.mode {
+                super::LkMode::Plain => super::LkMode::Plain,
+                _ => super::LkMode::Deferred,
+            };
+            let mode = std::mem::replace(&mut self.mode, mode);
             self.drop_glue(p, ty);
             self.mode = mode;
         }

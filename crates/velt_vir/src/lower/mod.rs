@@ -230,6 +230,11 @@ pub(super) enum LkMode {
     Read,
     /// Either: asks the thread once (`velt_rt_lk_mode`).
     Checked,
+    /// Plain's counts, in code that changes the caller's containers inside a `read` callback
+    /// (`Work::Deferred`): an object of the lock set whose last reference goes is freed once the
+    /// thread's reads end (velt_rt `velt_rt_free_after_reads`), since a reader may still point
+    /// at it without counting it (read mode cannot tell it from the store's).
+    Deferred,
 }
 
 /// A function the lowering must build; each distinct `Work` becomes exactly one VIR function.
@@ -266,6 +271,8 @@ enum Work {
     /// A `read` callback literal that code outside read mode calls: `Read`, and what it
     /// captured is that code's, never a store's object (`FnLower::own_captures`).
     ReadOwn(Box<Work>),
+    /// `Work` changing the caller's containers inside a `read` callback (`LkMode::Deferred`).
+    Deferred(Box<Work>),
     /// A function instance whose params in the mask (bit `i`: `params[i]`, captures first)
     /// borrow a value other threads read at the same time (frozen.rs), caller-tracking for
     /// the call site when it is given, and given closure literals for some function params:
@@ -555,6 +562,9 @@ struct FnLower<'c, 'h> {
     /// The closure literal a `with`, `write` or `read` is about to call, and the read mode its
     /// code runs in.
     lock_callback: Option<(DefId, LkMode)>,
+    /// The direct call about to be lowered is a statement: its result is dropped at once
+    /// (call.rs `call_def`, which takes it).
+    discarded: bool,
     /// With debug info: where the block declaring a local ends (debug_vars.rs).
     scope_ends: FxHashMap<LocalId, SrcLoc>,
     /// Set while lowering the body of an async function (a poll function).

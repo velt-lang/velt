@@ -72,6 +72,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             rw_reader: None,
             mode: LkMode::Plain,
             own_captures: false,
+            discarded: false,
             lock_callback: None,
             scope_ends: FxHashMap::default(),
             asyncx: None,
@@ -105,7 +106,9 @@ impl<'c, 'h> FnLower<'c, 'h> {
     pub(super) fn build(cx: &'c mut Cx<'h>, work: &Work) -> Function {
         match work {
             // `Cx::build_now` builds the inner `Work` in checked mode.
-            Work::Checked(w) | Work::Read(w) | Work::ReadOwn(w) => Self::build(cx, w),
+            Work::Checked(w) | Work::Read(w) | Work::ReadOwn(w) | Work::Deferred(w) => {
+                Self::build(cx, w)
+            }
             Work::Fn(def, targs) => Self::lower_fn(cx, *def, targs, None, 0, &[]),
             Work::Tracked(def, targs, at) => Self::lower_fn(cx, *def, targs, Some(*at), 0, &[]),
             Work::Frozen(def, targs, mask, at, fns) => {

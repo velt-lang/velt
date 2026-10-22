@@ -47,7 +47,8 @@ pub(crate) struct Reader {
     /// This thread's block (null until it first reads).
     block: Cell<*mut Block>,
     /// The read callbacks this thread is in (`push`): it is in read mode when nonzero
-    /// (read_mode.rs).
+    /// (read_mode.rs). With [`FREES_WAIT`] set, objects wait to be freed until the outermost
+    /// one ends.
     pub(crate) read_depth: Cell<u32>,
     /// The `RwLock` whose mutex this thread's outermost read callback holds (shared.rs), or 0.
     pub(crate) holds: Cell<usize>,
@@ -57,6 +58,10 @@ pub(crate) struct Reader {
     /// Outermost reads this thread made holding a mutex (every `LOOK_EVERY`th looks at the bias, shared.rs).
     pub(crate) took: Cell<u32>,
 }
+
+/// In `Reader::read_depth`: objects wait to be freed until this thread's reads end
+/// (read_mode.rs `velt_rt_free_after_reads`). The outermost unlock then goes the slow way.
+pub(crate) const FREES_WAIT: u32 = 1 << 31;
 
 thread_local! {
     pub(crate) static READER: Reader = const {
@@ -113,7 +118,7 @@ impl Reader {
     pub(crate) fn push(&self) -> (usize, Option<&'static AtomicPtr<u64>>) {
         let v = self.read_depth.get();
         self.read_depth.set(v + 1);
-        let d = v as usize;
+        let d = (v & !FREES_WAIT) as usize;
         (d, (d < READ_SLOTS).then(|| self.slot(d)))
     }
 
@@ -146,7 +151,7 @@ impl Reader {
     /// Read callbacks this thread is in (that `push` counted).
     #[inline]
     pub(crate) fn depth(&self) -> usize {
-        self.read_depth.get() as usize
+        (self.read_depth.get() & !FREES_WAIT) as usize
     }
 
     /// Leaving the innermost read callback (and read mode, when it is the last): its slot, if
@@ -155,7 +160,7 @@ impl Reader {
     pub(crate) fn pop(&self) -> Option<&'static AtomicPtr<u64>> {
         let v = self.read_depth.get() - 1;
         self.read_depth.set(v);
-        let d = v as usize;
+        let d = (v & !FREES_WAIT) as usize;
         (d < READ_SLOTS).then(|| self.slot(d))
     }
 }

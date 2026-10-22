@@ -519,19 +519,23 @@ impl FnLower<'_, '_> {
         drops: bool,
     ) {
         let flag = self.presence_place(place, &p);
-        // In read mode, a container outside the lock set (the caller's object, array or map)
-        // holds no store object, what a reader stores there being a copy: its old value, which
-        // the caller made, is released by the counts outside read mode.
+        // In read mode, the caller's container (rooted in what the `read` callback captured,
+        // frozen.rs `captured_root`) holds no store object: what the reader stores there is a
+        // copy of what it did not make, and the old value, which the caller made, is released
+        // by the counts outside read mode and freed after the reads (`LkMode::Deferred`: the
+        // reader may still point at it uncounted). Another container outside the lock set may
+        // be the reader's own, holding what it shares uncounted, so read mode's rules apply.
         let mode = self.mode;
         let outside = match &place.kind {
-            hir::ExprKind::Field { base, .. } | hir::ExprKind::Index { base, .. } => {
-                let bty = self.sub(base.ty);
-                !self.cx.lock_counted(bty) || self.captured_root(place)
-            }
+            hir::ExprKind::Field { .. } | hir::ExprKind::Index { .. } => self.captured_root(place),
             _ => false,
         };
+        let v = match mode != super::LkMode::Plain && outside {
+            true => self.reader_copy(v, ty),
+            false => v,
+        };
         if mode != super::LkMode::Plain && outside {
-            self.mode = super::LkMode::Plain;
+            self.mode = super::LkMode::Deferred;
         }
         self.store_assigned_in(flag, p, v, ty, shared, drops);
         self.mode = mode;

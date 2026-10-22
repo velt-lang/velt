@@ -152,6 +152,7 @@ impl<'h> Cx<'h> {
             Work::Checked(_)
                 | Work::Read(_)
                 | Work::ReadOwn(_)
+                | Work::Deferred(_)
                 | Work::Main
                 | Work::ModuleInit
                 | Work::ArrayGrow
@@ -161,6 +162,7 @@ impl<'h> Cx<'h> {
             (true, _) | (false, M::Plain) => work,
             (false, M::Read) => Work::Read(Box::new(work)),
             (false, M::Checked) => Work::Checked(Box::new(work)),
+            (false, M::Deferred) => Work::Deferred(Box::new(work)),
         };
         if let Some(&id) = self.work_map.get(&work) {
             return id;
@@ -182,10 +184,11 @@ impl<'h> Cx<'h> {
         self.cur_def = work_def(work).or(outer);
         let outer_mode = std::mem::take(&mut self.cur_mode);
         let func = match work {
-            Work::Checked(w) | Work::Read(w) | Work::ReadOwn(w) => {
+            Work::Checked(w) | Work::Read(w) | Work::ReadOwn(w) | Work::Deferred(w) => {
                 let (mode, suffix) = match work {
                     Work::Read(_) => (super::LkMode::Read, "_R"),
                     Work::ReadOwn(_) => (super::LkMode::Read, "_O"),
+                    Work::Deferred(_) => (super::LkMode::Deferred, "_D"),
                     _ => (super::LkMode::Checked, "_K"),
                 };
                 self.cur_mode = mode;
@@ -307,7 +310,7 @@ impl<'h> Cx<'h> {
 /// The function `work` builds an instance (or a part) of.
 fn work_def(work: &Work) -> Option<DefId> {
     match work {
-        Work::Checked(w) | Work::Read(w) | Work::ReadOwn(w) => work_def(w),
+        Work::Checked(w) | Work::Read(w) | Work::ReadOwn(w) | Work::Deferred(w) => work_def(w),
         Work::Fn(d, _)
         | Work::Thunk(_, d, _)
         | Work::EnvDrop(d, _)

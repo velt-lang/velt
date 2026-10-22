@@ -17,9 +17,10 @@
 //! - a reader that writes a store object, through any reference, stops the program: other
 //!   readers read it at the same time (sema rejects the writes it can see).
 
+use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use crate::hazard::READER;
+use crate::hazard::{FREES_WAIT, READER};
 
 /// Set in the count word of a lock-set object made in read mode.
 pub const LOCAL: u64 = 1 << 62;
@@ -39,6 +40,44 @@ pub extern "C" fn velt_rt_lk_mode() -> u8 {
 #[inline]
 fn in_read() -> bool {
     READER.with(|r| r.read_depth.get()) != 0
+}
+
+/// A drop glue function: releases the reference at the pointer it is given.
+type DropGlue = unsafe extern "C" fn(*mut *mut u8);
+
+thread_local! {
+    /// Objects whose last reference went in read mode, with their drop glue: freed when this
+    /// thread's reads end (`velt_rt_free_after_reads`).
+    static WAITING: RefCell<Vec<(*mut u8, DropGlue)>> = const { RefCell::new(Vec::new()) };
+}
+
+/// The last reference to the lock-set object `p` goes, in code that changes the caller's
+/// containers inside a `read` callback (velt_vir `LkMode::Deferred`): free it with `drop` (its
+/// type's drop glue, given a pointer to `p`, whose count is still 1) now, or, in read mode,
+/// once this thread's outermost read ends. A reader may still point at it without counting it
+/// (a variable read out of the caller's array the callback changes).
+///
+/// # Safety
+/// `p` is a counted object whose count is 1 and `drop` its drop glue.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_free_after_reads(p: *mut u8, drop: DropGlue) {
+    if !in_read() {
+        let mut slot = p;
+        return drop(&mut slot);
+    }
+    WAITING.with(|w| w.borrow_mut().push((p, drop)));
+    READER.with(|r| r.read_depth.set(r.read_depth.get() | FREES_WAIT));
+}
+
+/// This thread's outermost read ended: free what waited (`velt_rt_free_after_reads`).
+#[cold]
+#[inline(never)]
+pub(crate) fn free_waiting() {
+    while let Some((p, drop)) = WAITING.with(|w| w.borrow_mut().pop()) {
+        let mut slot = p;
+        // SAFETY: `velt_rt_free_after_reads` took it with its count at 1 and its drop glue.
+        unsafe { drop(&mut slot) };
+    }
 }
 
 /// Set when the program makes its first `RwLock` (before that no thread is in read mode).

@@ -44,8 +44,9 @@ impl FnLower<'_, '_> {
             false => self.projection_base(&args[0], BoxHold::No),
         };
         let arr = self.place_of(av, aty);
-        if i != I::ArrayLen && self.cx.lock_counted(aty) {
-            // A mutating operation: stops a reader of an `RwLock` changing a shared array.
+        if i != I::ArrayLen && self.cx.lock_counted(aty) && !self.captured_root(&args[0]) {
+            // A mutating operation: stops a reader of an `RwLock` changing a shared array (not
+            // the caller's, frozen.rs `captured_root`).
             self.write_barrier(Operand::Copy(arr.clone()), aty);
         }
         let arr = self.content(&arr, aty);
@@ -104,7 +105,7 @@ impl FnLower<'_, '_> {
         let elem = self.elem_ty(dty);
         let dv = self.expr(dst);
         let darr = self.place_of(dv, dty);
-        if self.cx.lock_counted(dty) {
+        if self.cx.lock_counted(dty) && !self.captured_root(dst) {
             self.write_barrier(Operand::Copy(darr.clone()), dty);
         }
         let darr = self.content(&darr, dty);

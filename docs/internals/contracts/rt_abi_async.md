@@ -597,6 +597,7 @@ network access`), and the accessors of a fetched response are unreachable (fatal
 | `velt_rt_rwlock_write_unlock` | `(u64* lock, u64 reader)` | the end of the `write` that returned `reader` [additive, #708] |
 | `velt_rt_lk_mode` | `() -> u8` | 1 when this thread is in read mode (a thread-local read, §9.1) [additive, #708] |
 | `velt_rt_lk_write` | `(u64* count)` | a write of the lock-set object whose count word is at `count`: stops the program in read mode unless the reader made the object (§9.1) [additive, #708] |
+| `velt_rt_free_after_reads` | `(void* obj, void (*drop)(void** slot))` | the last reference to the lock-set object `obj` (count still 1) went in code changing the caller's containers inside a read: `drop` (its drop glue) frees it now, or in read mode once this thread's outermost read ends (§9.1) [additive, #708] |
 | `velt_rt_str_hash` | `(const VeltStr* s) -> u64` | string Map/Set keys; fixed seed (deterministic), not flood-resistant |
 | `velt_rt_math_sqrt` / `_floor` / `_ceil` / `_round` / `_trunc` / `_fabs` | `(f64) -> f64` | `round` = JS `Math.round` (ties toward +∞, keeps `-0`) |
 | `velt_rt_math_to_int32` | `(f64) -> i32` | JS ToInt32 (bitwise operators on numbers); backends emit the case of magnitude below 2^63 inline and call it only for the rest [additive, #521] |
@@ -628,7 +629,14 @@ counts and writes lock-set objects by these rules, inline (velt_vir `rc.rs`):
   without leaving through its result;
 - what the callback returns leaves by these rules too (velt_vir `async_fn/sync.rs`), before the
   unlock, whatever the calling code's mode: an object it shares with the store is copied, never
-  moved out.
+  moved out;
+- the caller's containers (places rooted in a variable a `read` callback literal captured from
+  code outside read mode, velt_vir `Work::ReadOwn`) hold no store object: a store into one
+  copies what the reader did not make, and a method or function changing one runs by the counts
+  outside read mode (velt_vir `LkMode::Deferred`). There, and for the old value a store
+  replaces, a lock-set object whose last reference goes is handed to `velt_rt_free_after_reads`
+  with its drop glue: the reader may still point at it uncounted, so it is freed when the
+  thread's outermost read ends (at once outside read mode).
 
 Code whose mode is fixed counts without asking: functions only called directly from outside read
 mode (and `with` / `write` callbacks, which never run in read mode) count as before; functions only called directly from a
@@ -642,7 +650,10 @@ until it is written: a reader names the lock in a slot of its own thread (a cach
 thread writes, velt_rt `hazard.rs`) and checks that no writer came, so readers on many threads
 write nothing they share. A writer *revokes* the bias: it sets the lock's state and waits for the
 slots naming the lock to clear, then takes the lock's underlying reader-writer lock (parking_lot's
-`RawRwLock`) exclusively. It never waits for the slots while holding the underlying lock: a
+`RawRwLock`) exclusively. While it waits the state says so (revoking): another writer, holding
+the underlying lock or not, writes only once the state says the bias is revoked, and waits for
+the revocation without holding the lock. It never waits for the slots while holding the
+underlying lock: a
 reader in a slot may be nested in a read of another lock whose writer waits for this writer's
 readers. A reader that biased the lock again before the writer took it (its revocation was old
 enough) makes the writer let the underlying lock go and revoke once more. From then on readers take the underlying lock shared, so they still
