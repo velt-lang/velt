@@ -2,7 +2,7 @@
 //!
 //! A semaphore with `max` permits bounds the connections in use; idle connections wait in a
 //! stack (the most recently used is reused first, so a quiet pool's extra connections are the
-//! ones left idle). An operation takes a permit, an idle connection (or opens one), runs, and
+//! ones left idle), and a task takes one whose protocol task runs on its own worker first. An operation takes a permit, an idle connection (or opens one), runs, and
 //! puts the connection back; if the operation is cancelled, its connection is dropped instead.
 //! Broken connections and ones left inside a transaction are never reused. `end` closes idle
 //! connections and fails every later acquire with `ECLOSED`.
@@ -50,8 +50,9 @@ impl PoolObj {
             .acquire_owned()
             .await
             .map_err(|_| closed())?;
+        let here = crate::task::runtime::current_worker();
         loop {
-            let Some(conn) = self.idle.lock().pop() else {
+            let Some(conn) = self.take_idle(here) else {
                 break;
             };
             if !conn.is_closed() {
@@ -60,6 +61,17 @@ impl PoolObj {
         }
         let conn = connect(&self.config, self.tls.clone()).await?;
         Ok((Arc::new(conn), permit))
+    }
+
+    /// An idle connection: the most recently used one driven on worker `here`, else the most
+    /// recently used.
+    fn take_idle(&self, here: Option<usize>) -> Option<Arc<Conn>> {
+        let mut idle = self.idle.lock();
+        let at = here.and_then(|w| idle.iter().rposition(|c| c.driven_on(w)));
+        match at {
+            Some(i) => Some(idle.remove(i)),
+            None => idle.pop(),
+        }
     }
 
     /// Return a connection after use (dropped if the pool ended or it is not reusable).

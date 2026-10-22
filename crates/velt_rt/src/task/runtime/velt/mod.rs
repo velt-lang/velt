@@ -35,7 +35,7 @@ where
     start();
     let home = pinned.or_else(worker::current).unwrap_or(0);
     let (task, handle) = task::make(fut, home, pinned.is_some());
-    worker::schedule(task);
+    worker::schedule_new(task);
     handle
 }
 

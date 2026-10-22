@@ -253,10 +253,12 @@ Every backend sits behind `task/runtime/` (`spawn`, `spawn_with`, `spawn_blockin
 `block_on`, and its own `JoinHandle`/`AbortHandle`); nothing else in the runtime names a backend's
 types. `VELT_SCHEDULER=velt` (experimental, env only: `velt_rt_set_scheduler` kinds are
 unchanged) selects the runtime's own executor (`task/runtime/velt/`): worker threads with their
-own queue and `mio` poll; a task wakes on its home worker, a spawn stays on the spawning worker
-(from outside the workers: worker 0). Each worker's run queue (`velt/queue.rs`) runs input
-(tasks woken by I/O, timers or other threads) before the work tasks made (spawns, wakes from
-tasks of the same worker, budget yields), each in order; every 61st task comes from the second
+own queue and `mio` poll; a task woken by I/O, a timer or another thread queues on its home
+worker, one woken by a running task runs next on the waker's worker (a one-task slot, at most 3
+in a row; it keeps its home), and a spawn stays on the spawning worker (from outside the
+workers: worker 0). Each worker's run queue (`velt/queue.rs`) runs input (data to read, timers,
+other threads) before output and the work tasks made (room to write, spawns, budget yields),
+each in order; every 61st task comes from the second
 queue, and once it has waited 10 ms a fair pass runs all of it. A worker whose input has a
 delay of 200 µs or more over a 10 ms window (the mean input queue noted in the window times the
 mean wall time of a poll; the whole queue once polls average 20 µs) offers half of its
@@ -265,11 +267,12 @@ out of work, before it sleeps, runs half of the input waiting on another awake w
 taking it over (the tasks keep their home). The monitor does the duties of a worker that has
 started no poll for 2 ms while awake: a turn of its reactor and timers, and its inbox and half
 of its queue to another worker, each 1 ms tick while the stall lasts. A connection's socket
-moves its registration to its task's home worker when the task reads there (Unix). A worker
+moves its registration to its task's home worker when the task reads there (Unix). A Postgres
+pool hands a task an idle connection whose protocol task last ran on the task's worker first. A worker
 with 256 or more queued tasks polls its reactor every 4 tasks.
-TCP sockets (`net/sys.rs`), the HTTP server and timers are native; tokio types elsewhere
-(files, processes, Postgres, Redis, the HTTP client, UDP, DNS, `spawn_blocking`) run on a
-one-thread tokio runtime whose context every worker stays inside.
+TCP sockets (`net/sys.rs`), the HTTP server, Postgres over TCP and timers are native; tokio
+types elsewhere (files, processes, Postgres over a Unix socket, Redis, the HTTP client, UDP, DNS,
+`spawn_blocking`) run on a one-thread tokio runtime whose context every worker stays inside.
 Allocation per task: states ≤ 1 KiB (align ≤ 16) live inline in tokio's task cell (size classes
 64/256/448/576/1024), so a detached spawn is 1 allocation and a joinable one 2 (task + join handle).
 Panics inside tasks print `panic: <msg>` and exit 101 (same hook as sync code).

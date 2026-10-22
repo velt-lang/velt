@@ -153,8 +153,17 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 /// Queues `task` on its home worker: this thread's queue when it is that worker, else the
 /// worker's inbox (waking it if it sleeps). Tasks woken by I/O or timers (during a reactor
 /// turn) collect in `woken` and run before the others ([`RunQueue`]); a writer woken by room
-/// to write is output, and waits with them.
+/// to write is output, and waits with them. A task woken by the task running runs next.
 pub(super) fn schedule(task: Arc<Task>) {
+    queue(task, false);
+}
+
+/// Queues a task just spawned: like a wake, but behind the input (it does not run next).
+pub(super) fn schedule_new(task: Arc<Task>) {
+    queue(task, true);
+}
+
+fn queue(task: Arc<Task>, made: bool) {
     let home = task.home.load(Ordering::Relaxed);
     let task = match with_local(|l| match l {
         Some(l) if l.index == home => {
@@ -162,9 +171,24 @@ pub(super) fn schedule(task: Arc<Task>) {
                 l.woken_output.borrow_mut().push(task);
             } else if l.dispatching.get() {
                 l.woken.borrow_mut().push(task);
-            } else {
+            } else if made {
                 lock(&l.me.queue).push(task, Instant::now);
+            } else {
+                lock(&l.me.queue).push_next(task);
             }
+            None
+        }
+        // Woken by a task this worker runs: it runs here, next, as with tokio (a reply to the
+        // request waiting for it, a pool's connection handed to the next waiter), instead of
+        // crossing to its home worker's queue. It keeps its home (its sockets stay there).
+        Some(l)
+            if !made
+                && !task.pinned
+                && l.running_home.get() != usize::MAX
+                && !l.dispatching.get()
+                && !l.waking_output.get() =>
+        {
+            lock(&l.me.queue).push_next(task);
             None
         }
         _ => Some(task),

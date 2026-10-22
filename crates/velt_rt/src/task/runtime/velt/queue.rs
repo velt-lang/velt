@@ -9,6 +9,13 @@
 //! version did, overtook the tasks woken before them, and under constant I/O those waited
 //! without bound (JSON on 512 connections: p99 1.8 s).
 //!
+//! A task woken by the task running (a query handed to a connection's driver, its reply to the
+//! request waiting for it) runs next, from a one-task slot ([`push_next`](RunQueue::push_next)),
+//! as with tokio's LIFO slot: a chain of request and reply between tasks does not wait behind
+//! the whole queue at each step (a connection pool's queries are its bottleneck: `/db` on 18
+//! connections ran at half of tokio's rate without it). At most [`NEXT_RUNS`] in a row, so two
+//! tasks waking each other cannot hold the worker.
+//!
 //! The second queue waits only while input never runs out, and not for long: every
 //! [`TRICKLE`]th task comes from it (a spawned task that a request awaits runs within a few
 //! dozen polls), and once it has waited [`FAIR`], a fair pass runs every task it holds.
@@ -24,12 +31,19 @@ const FAIR: Duration = Duration::from_millis(10);
 /// One task in this many comes from the second queue while both hold tasks (tokio takes from
 /// its global queue as often).
 const TRICKLE: u32 = 61;
+/// Tasks in a row from the slot for the next task, before the queue gets a turn (tokio's
+/// limit too).
+const NEXT_RUNS: u32 = 3;
 
 pub(super) struct RunQueue {
     /// Input: woken by I/O, timers or other threads.
     io: VecDeque<Arc<Task>>,
     /// Made by this worker's tasks: spawned, woken by a task, or woken while it ran.
     rest: VecDeque<Arc<Task>>,
+    /// Woken by the task running: runs next.
+    next: Option<Arc<Task>>,
+    /// Tasks run from `next` in a row.
+    next_runs: u32,
     /// Tasks taken from `io` since the last from `rest`.
     since_rest: u32,
     /// Tasks of `rest` left in the current fair pass (0: none running).
@@ -43,6 +57,8 @@ impl RunQueue {
         RunQueue {
             io: VecDeque::new(),
             rest: VecDeque::new(),
+            next: None,
+            next_runs: 0,
             since_rest: 0,
             fair_left: 0,
             fair_due: now + FAIR,
@@ -50,12 +66,20 @@ impl RunQueue {
     }
 
     pub(super) fn len(&self) -> usize {
-        self.io.len() + self.rest.len()
+        self.io.len() + self.rest.len() + usize::from(self.next.is_some())
     }
 
-    /// Input waiting (the first queue).
+    /// Input waiting (the first queue and the next task).
     pub(super) fn input(&self) -> usize {
-        self.io.len()
+        self.io.len() + usize::from(self.next.is_some())
+    }
+
+    /// Makes `task` (woken by the task running) the next to run; one there before it joins
+    /// the input.
+    pub(super) fn push_next(&mut self, task: Arc<Task>) {
+        if let Some(before) = self.next.replace(task) {
+            self.io.push_back(before);
+        }
     }
 
     /// Queues input (in the order it came).
@@ -104,6 +128,14 @@ impl RunQueue {
             }
             self.fair_left = 0;
         }
+        if let Some(t) = self.next.take() {
+            if self.next_runs < NEXT_RUNS {
+                self.next_runs += 1;
+                return Some(t);
+            }
+            self.io.push_back(t);
+        }
+        self.next_runs = 0;
         if self.since_rest >= TRICKLE || self.io.is_empty() {
             if let Some(t) = self.rest.pop_front() {
                 self.since_rest = 0;
@@ -115,7 +147,8 @@ impl RunQueue {
         Some(t)
     }
 
-    /// Takes the half of the input that has waited longest (for a worker to borrow).
+    /// Takes the half of the input that has waited longest (for a worker to borrow; the next
+    /// task stays).
     pub(super) fn take_half_input(&mut self) -> Vec<Arc<Task>> {
         let n = self.io.len() / 2;
         self.io.drain(..n).collect()
@@ -130,6 +163,9 @@ impl RunQueue {
     /// Takes the half that has waited longest from each queue, rounded up (from a stalled
     /// worker: a single task waiting must move too).
     pub(super) fn take_half_up(&mut self) -> Vec<Arc<Task>> {
+        if let Some(t) = self.next.take() {
+            self.io.push_front(t);
+        }
         self.take(self.io.len().div_ceil(2), self.rest.len().div_ceil(2))
     }
 
@@ -195,6 +231,25 @@ mod tests {
         assert_eq!(id(q.pop(|| t)), 11);
         assert_eq!(id(q.pop(|| t + FAIR)), 2);
         assert_eq!(id(q.pop(|| t)), 12);
+    }
+
+    #[test]
+    fn a_task_woken_by_the_running_one_runs_next_three_in_a_row_at_most() {
+        let t = Instant::now();
+        let mut q = RunQueue::new(t);
+        q.extend_io([task(1)]);
+        q.push_next(task(10));
+        // A newer wake takes the slot; the one before joins the input.
+        q.push_next(task(11));
+        assert_eq!(id(q.pop(|| t)), 11);
+        q.push_next(task(12));
+        assert_eq!(id(q.pop(|| t)), 12);
+        q.push_next(task(13));
+        assert_eq!(id(q.pop(|| t)), 13);
+        // A fourth in a row waits its turn behind the input.
+        q.push_next(task(14));
+        let order: Vec<_> = (0..3).map(|_| id(q.pop(|| t))).collect();
+        assert_eq!(order, [1, 10, 14]);
     }
 
     #[test]

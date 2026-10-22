@@ -36,12 +36,23 @@ impl TcpStream {
         };
         let mut last = io::Error::new(io::ErrorKind::InvalidInput, "no address to connect to");
         for a in addrs {
-            match velt_io::TcpStream::connect(a).await {
-                Ok(s) => return Ok(TcpStream::Velt(s)),
+            match TcpStream::connect_addr(a).await {
+                Ok(s) => return Ok(s),
                 Err(e) => last = e,
             }
         }
         Err(last)
+    }
+
+    /// Connects to one address.
+    pub async fn connect_addr(addr: SocketAddr) -> io::Result<TcpStream> {
+        if runtime::is_velt() {
+            velt_io::TcpStream::connect(addr).await.map(TcpStream::Velt)
+        } else {
+            tokio::net::TcpStream::connect(addr)
+                .await
+                .map(TcpStream::Tokio)
+        }
     }
 
     /// From a connected standard socket, registered with this thread's reactor.

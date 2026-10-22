@@ -178,6 +178,46 @@ fn tasks_queued_behind_a_long_poll_run_on_another_worker() {
 }
 
 #[test]
+fn a_task_woken_by_a_task_runs_on_the_wakers_worker() {
+    if super::super::worker_count() < 2 {
+        return;
+    }
+    // A waiter made on worker 1, woken by a task on worker 0: it runs on worker 0, next,
+    // instead of crossing to worker 1 (a reply reaching the request that waits for it).
+    let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+    let waiter = spawn(
+        async move {
+            let inner = spawn(
+                async move {
+                    let _ = rx.await;
+                    worker::current()
+                },
+                None,
+            );
+            inner.await.ok().flatten()
+        },
+        Some(1),
+    );
+    let woke = spawn(
+        async move {
+            // Let the waiter reach its await on worker 1 first.
+            Sleep::until(Instant::now() + Duration::from_millis(20)).await;
+            let _ = tx.send(());
+            worker::current()
+        },
+        Some(0),
+    );
+    let waker_ran_on = block_on(woke).ok().flatten();
+    let waiter_ran_on = block_on(waiter).ok().flatten();
+    assert_eq!(waker_ran_on, Some(0));
+    assert_eq!(
+        waiter_ran_on,
+        Some(0),
+        "the woken task crossed to its home worker"
+    );
+}
+
+#[test]
 fn a_tcp_echo_runs_on_the_backends_own_sockets() {
     let std_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = std_listener.local_addr().unwrap();

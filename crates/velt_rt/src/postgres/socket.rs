@@ -2,7 +2,11 @@
 //! connection's [`WireStream`], then tokio-postgres' startup over it (`Config::connect_raw`).
 //!
 //! The runtime opens the socket itself because tokio-postgres' own `connect` gives no way to
-//! wrap the stream. It follows tokio-postgres' rules: hosts (or `hostaddr`s) are tried in order,
+//! wrap the stream. A TCP socket is the runtime's own ([`crate::net::sys::TcpStream`]): on the
+//! Velt backend it is registered with the connecting worker's reactor, so queries do not pass
+//! through the tokio bridge (whose one thread, between every worker and the server, made each
+//! route on the database 0.56-0.72x as fast as on tokio's scheduler). Unix sockets stay on
+//! tokio. It follows tokio-postgres' rules: hosts (or `hostaddr`s) are tried in order,
 //! each with its port (or the single port, default 5432), every resolved address in turn;
 //! `connect_timeout` bounds each attempt; TCP gets `TCP_NODELAY` and the keepalive settings.
 //! `target_session_attrs` and `load_balance_hosts` are not supported (the first host that
@@ -11,14 +15,16 @@
 use super::error::PgError;
 use super::tls::{PgTls, PgTlsStream};
 use super::wire::{Wire, WireStream};
-use socket2::{SockRef, TcpKeepalive};
+use crate::net::sys::TcpStream;
+use crate::task::runtime;
+use socket2::TcpKeepalive;
 use std::future::Future;
 use std::io;
+use std::net::SocketAddr;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use tokio::net::TcpStream;
 #[cfg(unix)]
 use tokio::net::UnixStream;
 use tokio_postgres::config::Host;
@@ -97,12 +103,10 @@ async fn open(config: &Config, target: Target, port: u16) -> Result<RawSocket, P
     let timeout = config.get_connect_timeout().copied();
     match target {
         Target::Tcp(host) => {
-            let addrs: Vec<_> = within(timeout, tokio::net::lookup_host((host.as_str(), port)))
-                .await?
-                .collect();
+            let addrs = within(timeout, resolve(host.clone(), port)).await?;
             let mut last = None;
             for addr in addrs {
-                match within(timeout, TcpStream::connect(addr)).await {
+                match within(timeout, TcpStream::connect_addr(addr)).await {
                     Ok(stream) => {
                         tune(config, &stream).map_err(|e| PgError::io(&e))?;
                         return Ok(RawSocket::Tcp(stream));
@@ -121,6 +125,18 @@ async fn open(config: &Config, target: Target, port: u16) -> Result<RawSocket, P
     }
 }
 
+/// The addresses of `host` (a blocking lookup, off the workers).
+async fn resolve(host: String, port: u16) -> io::Result<Vec<SocketAddr>> {
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        return Ok(vec![SocketAddr::new(ip, port)]);
+    }
+    runtime::spawn_blocking(move || {
+        std::net::ToSocketAddrs::to_socket_addrs(&(host.as_str(), port)).map(Iterator::collect)
+    })
+    .await
+    .map_err(|e| io::Error::other(e.to_string()))?
+}
+
 /// `TCP_NODELAY` (requests are small and latency-bound) and the configured keepalive.
 fn tune(config: &Config, stream: &TcpStream) -> io::Result<()> {
     stream.set_nodelay(true)?;
@@ -130,7 +146,7 @@ fn tune(config: &Config, stream: &TcpStream) -> io::Result<()> {
         if let Some(interval) = config.get_keepalives_interval() {
             keepalive = keepalive.with_interval(interval);
         }
-        SockRef::from(stream).set_tcp_keepalive(&keepalive)?;
+        stream.sock_ref().set_tcp_keepalive(&keepalive)?;
     }
     Ok(())
 }
@@ -141,12 +157,17 @@ async fn within<T>(
     op: impl Future<Output = io::Result<T>>,
 ) -> Result<T, PgError> {
     let r = match timeout {
-        Some(t) => tokio::time::timeout(t, op).await.unwrap_or_else(|_| {
-            Err(io::Error::new(
-                io::ErrorKind::TimedOut,
-                "connection timed out",
-            ))
-        }),
+        Some(t) => {
+            let op = std::pin::pin!(op);
+            let sleep = std::pin::pin!(runtime::time::sleep(t));
+            match futures_util::future::select(op, sleep).await {
+                futures_util::future::Either::Left((r, _)) => r,
+                futures_util::future::Either::Right(_) => Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "connection timed out",
+                )),
+            }
+        }
         None => op.await,
     };
     r.map_err(|e| PgError::io(&e))

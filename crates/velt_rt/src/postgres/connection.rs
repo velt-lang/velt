@@ -15,7 +15,8 @@ use super::wire::Wire;
 use crate::db_json::{parse_params, Params};
 use bytes::Bytes;
 use parking_lot::Mutex;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::future::Future;
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio_postgres::types::ToSql;
 use tokio_postgres::{Client, CopyInSink, CopyOutStream};
@@ -38,15 +39,27 @@ pub struct Conn {
     /// batch written between the copy's request and the server's `CopyInResponse` would land
     /// inside the copy (later, the wire itself holds batches back until the copy ends).
     pub(super) copy_gate: tokio::sync::RwLock<()>,
+    /// The worker that last ran the connection's protocol task (`usize::MAX`: not yet, or off
+    /// the workers): the pool hands a connection to a task on the same worker first, so a
+    /// query and its reply do not cross threads.
+    driver: Arc<AtomicUsize>,
 }
 
 /// Connect with `config` (TLS per its `sslmode`).
 pub async fn connect(config: &PgConfig, tls: PgTls) -> Result<Conn, PgError> {
     let (client, connection, wire) = super::socket::connect(&config.inner, &tls).await?;
+    let driver = Arc::new(AtomicUsize::new(usize::MAX));
+    let at = driver.clone();
     crate::task::runtime::spawn(async move {
         // The task ends when the client is dropped or the server goes away; errors surface
         // on the client's next call ("connection closed").
-        let _ = connection.await;
+        let mut connection = std::pin::pin!(connection);
+        let _ = std::future::poll_fn(|cx| {
+            let here = crate::task::runtime::current_worker().unwrap_or(usize::MAX);
+            at.store(here, Ordering::Relaxed);
+            connection.as_mut().poll(cx)
+        })
+        .await;
     });
     Ok(Conn {
         client,
@@ -55,6 +68,7 @@ pub async fn connect(config: &PgConfig, tls: PgTls) -> Result<Conn, PgError> {
         wire,
         batches: BatchState::default(),
         copy_gate: tokio::sync::RwLock::new(()),
+        driver,
     })
 }
 
@@ -69,6 +83,11 @@ fn cache_key(sql: &str) -> &str {
 }
 
 impl Conn {
+    /// Whether the connection's protocol task last ran on worker `w`.
+    pub fn driven_on(&self, w: usize) -> bool {
+        self.driver.load(Ordering::Relaxed) == w
+    }
+
     /// Whether the connection is unusable (server gone, protocol error).
     pub fn is_closed(&self) -> bool {
         self.client.is_closed()
