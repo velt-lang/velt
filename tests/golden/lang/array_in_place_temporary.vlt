@@ -1,0 +1,42 @@
+// `sort`, `reverse` and `fill` on a temporary array (nothing else holds it) return that array,
+// as in JavaScript: `Object.keys(r).sort()` as a variable's value, `[...xs].sort(cmp)` as a
+// return value or an argument, chained calls on it. Same output as Node.
+interface Head {
+  priority?: number;
+  name: string;
+}
+
+function canonical(record: Record<string, number>): string {
+  const keys = Object.keys(record).sort();
+  let out = "{";
+  for (let i = 0; i < keys.length; i++) {
+    if (i > 0) out += ",";
+    out += JSON.stringify(keys[i]) + ":" + record[keys[i]];
+  }
+  return out + "}";
+}
+
+function byPriority(configs: Head[]): Head[] {
+  return [...configs].sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0));
+}
+
+function names(hs: Head[]): string {
+  return hs.map((h) => h.name).join(",");
+}
+
+function main() {
+  console.log(canonical({ b: 1, a: 2, c: 3 }));
+  const heads: Head[] = [{ priority: 2, name: "x" }, { name: "y" }, { priority: -1, name: "z" }];
+  const sorted = byPriority(heads);
+  console.log(names(sorted), names(heads));
+  console.log(names(byPriority(heads).reverse()));
+  const filled = [1, 2, 3, 4].fill(0, 1, 3);
+  console.log(filled);
+  const words = "c b a".split(" ").sort().reverse();
+  words.push("d");
+  console.log(words, words.length);
+  console.log("q,p".split(",").sort());
+  let later = [3, 1, 2].sort((a, b) => a - b);
+  later = later.concat([0]).sort();
+  console.log(later);
+}

@@ -1,0 +1,51 @@
+// A variable narrowed where a closure is created stays narrowed in the whole closure body,
+// also when the closure first names it inside a branch (`if (key !== "children") props[key]`):
+// the join after the branch keeps it. Same output as Node.
+function run(f: () => void): void {
+  f();
+}
+
+interface VNodeLike {
+  props: Record<string, any>;
+}
+
+function patch(props: Record<string, any> | undefined, v: VNodeLike): void {
+  if (props) {
+    const newProps = v.props;
+    run(() => {
+      for (const key in newProps) {
+        if (key !== "children") {
+          if (props[key] !== newProps[key]) {
+            props[key] = newProps[key];
+          }
+        }
+      }
+      for (const key in props) {
+        if (!(key in newProps)) {
+          delete props[key];
+        }
+      }
+      console.log(Object.keys(props).length);
+    });
+    console.log(props);
+  }
+}
+
+function label(name: string | null, flag: boolean): void {
+  if (name !== null) {
+    run(() => {
+      if (flag) {
+        console.log(name.length);
+      }
+      console.log(name.toUpperCase());
+    });
+  }
+}
+
+function main() {
+  patch({ a: 1, b: 2, z: 3 }, { props: { a: 1, b: 5, children: 1 } });
+  patch(undefined, { props: {} });
+  label("ab", true);
+  label("cd", false);
+  label(null, true);
+}

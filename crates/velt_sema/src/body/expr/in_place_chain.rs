@@ -76,6 +76,45 @@ impl FnCx<'_, '_> {
         }
     }
 
+    /// `h`, checked from `e`: when `e` calls `sort`, `reverse` or `fill` on a temporary array
+    /// (`Object.keys(r).sort()`, `[...xs].sort(cmp)`), the array it changed, as in
+    /// JavaScript. Nothing else holds the temporary, so returning it shares nothing. On a
+    /// place (`xs.sort()`) the result stays `void` (`in_place_note`).
+    pub(super) fn in_place_value(&mut self, e: &ast::Expr, h: hir::Expr) -> hir::Expr {
+        let unit = self.cx.ty.unit;
+        if h.ty != unit || in_place_call(e).is_none() {
+            return h;
+        }
+        let (mut stmts, mut call) = match h.kind {
+            H::Block(hir::Block {
+                stmts,
+                value: Some(value),
+                ..
+            }) if matches!(value.kind, H::Call { .. }) => (stmts, *value),
+            kind => (vec![], hir::Expr { kind, ..h }),
+        };
+        let array = match &mut call.kind {
+            H::Call { args, .. } => args
+                .first_mut()
+                .filter(|a| self.cx.ty.array_elem(a.ty).is_some() && !is_place(a)),
+            _ => None,
+        };
+        let Some(array) = array else {
+            return self.after_receiver(stmts, call);
+        };
+        let (ty, span) = (array.ty, call.span);
+        let tmp = self.new_local("<changed array>", ty, true, span, LocalKind::Temp);
+        let changed = self.mk(H::Local(tmp, UseMode::BorrowMut), ty, span);
+        let temporary = std::mem::replace(array, changed);
+        let keep = S::Let {
+            local: tmp,
+            init: Some(temporary),
+        };
+        stmts.extend([stmt(keep, span), stmt(S::Expr(call), span)]);
+        let value = self.mk(H::Local(tmp, UseMode::Move), ty, span);
+        self.after_receiver(stmts, value)
+    }
+
     /// `access`, run after `before` (a block expression when there are statements).
     pub(super) fn after_receiver(
         &mut self,
@@ -203,6 +242,25 @@ fn is_pure_place(e: &hir::Expr) -> bool {
             is_pure_place(base) && matches!(index.kind, H::Local(..) | H::Lit(_))
         }
         _ => false,
+    }
+}
+
+/// A place of any kind (a variable, a field or an element of one, a module variable), as
+/// opposed to a temporary value; a local moved out (the array an inner `sort()` changed) is
+/// a temporary.
+fn is_place(e: &hir::Expr) -> bool {
+    match &e.kind {
+        H::Local(_, mode) => *mode != UseMode::Move,
+        H::Block(hir::Block { value, .. }) => value.as_deref().is_none_or(is_place),
+        _ => matches!(
+            e.kind,
+            H::Global(_)
+            | H::Field { .. }
+            | H::Index { .. }
+            | H::UnwrapSome(..)
+            | H::UnwrapVariant { .. }
+            | H::Downcast(_)
+        ),
     }
 }
 
