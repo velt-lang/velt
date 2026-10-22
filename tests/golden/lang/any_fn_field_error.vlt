@@ -1,0 +1,7 @@
+// An `any` converted to an object type with a function-typed field: the `TypeError` writes the
+// field's type as TypeScript does.
+function main(): void {
+  const x: any = 5;
+  const o = x as { a: number; f: (n: number) => string };
+  console.log(o.a);
+}

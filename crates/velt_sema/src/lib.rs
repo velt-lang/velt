@@ -327,7 +327,7 @@ fn check_on_current_thread(
         return (None, cx.diags);
     }
     finalize::build_defs(&mut cx);
-    readonly::erase(&mut cx);
+    let type_names = readonly::erase(&mut cx);
     let module_state = module_state::build(&mut cx);
     let type_ops = type_level::lowered_ops(&mut cx);
     let anon_shapes = anon::concrete_shapes(&cx);
@@ -373,6 +373,7 @@ fn check_on_current_thread(
         upcasts,
         upcast_impls,
         cpu_targets: cpu_targets.into_iter().collect(),
+        type_names,
     };
     (Some(program), diags)
 }
