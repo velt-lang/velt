@@ -341,7 +341,8 @@ impl FnCx<'_, '_> {
                 if self.proto_key(props) {
                     return self.error_expr(span);
                 }
-                return self.record_literal(d, k, v, props, span);
+                let hint = self.hint(exp);
+                return self.record_view_literal(d, hint, (k, v), props, span);
             }
             if self.reserved_keys(props) {
                 return self.error_expr(span);

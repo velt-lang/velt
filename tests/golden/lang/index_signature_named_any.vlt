@@ -121,3 +121,136 @@ cnt["label"] += "c";
 console.log(cnt.label, cnt["label"].toUpperCase(), cnt.n, cnt["n"] + 1, bump(cnt, 3));
 const ev: EventBase = { type: "click", x: 1 };
 console.log(ev["type"].length, ev.type.toUpperCase());
+
+// A literal or a write gives a required member a value of its declared type: `[]` is a
+// `number[]`, a callback's parameters get their types, a nested literal gets its object type,
+// `new Map()` its type arguments.
+interface Items {
+  items: number[];
+  [key: string]: any;
+}
+
+interface Cfg {
+  cfg: { a: number[] };
+  [key: string]: any;
+}
+
+interface On {
+  on: (n: number) => number;
+  [key: string]: any;
+}
+
+interface WithMap {
+  m: Map<string, number>;
+  [key: string]: any;
+}
+
+interface Rows {
+  rows: { id: number; tags: string[] }[];
+  [key: string]: any;
+}
+
+interface Handler {
+  on: (e: { x: number }) => string;
+  [key: string]: any;
+}
+
+const it1: Items = { items: [] };
+it1.items.push(1);
+console.log(it1.items);
+const it2: Items = { items: [5] };
+it2.items = [];
+it2.items.push(2);
+it2["items"] = [];
+it2["items"].push(3);
+console.log(it2.items);
+const key: "items" = "items";
+it2[key] = [];
+it2[key].push(4);
+console.log(it2.items);
+
+const cf: Cfg = { cfg: { a: [] } };
+console.log(cf.cfg.a.length);
+cf.cfg = { a: [] };
+cf.cfg.a.push(4);
+console.log(cf.cfg);
+
+const on: On = { on: (n) => n + 1 };
+console.log(on.on(1));
+on.on = (n) => n * 10;
+console.log(on.on(2));
+
+const wm: WithMap = { m: new Map() };
+wm.m.set("a", 1);
+console.log(wm.m.get("a"), wm.m.size);
+wm.m = new Map();
+console.log(wm.m.size);
+
+const shared: number[] = [];
+const it3: Items = { items: shared, extra: [] };
+it3.items.push(7);
+console.log(it3.items, shared, it3.extra);
+const it4: Items = { items: [] };
+it4.items ||= [];
+it4.items ??= [];
+const it5: Items = { ...it4, items: [] };
+it5.items.push(9);
+it5.items[0] += 10;
+console.log(it4.items.length, it5.items);
+
+const rows: Rows = { rows: [{ id: 1, tags: [] }] };
+rows.rows[0].tags.push("t");
+rows.rows.push({ id: 2, tags: [] });
+console.log(rows.rows);
+const h1: Handler = { on: ({ x }) => "x" + x, other: (y: number) => y };
+const h2: Handler = {
+  on(e) {
+    return "m" + e.x;
+  },
+};
+console.log(h1.on({ x: 1 }), h1.other(2), h2.on({ x: 3 }));
+
+async function filled(): Promise<Items> {
+  const r: Items = { items: [] };
+  r.items.push(await Promise.resolve(8));
+  return r;
+}
+
+filled().then((r) => console.log(r.items));
+
+// The member's type reaches a literal wherever the view is expected.
+interface Tagged {
+  tags: string[];
+  readonly [key: string]: unknown;
+}
+
+class Holder {
+  p: Items = { items: [] };
+  add(): number[] {
+    this.p.items.push(5);
+    this.p.items = [...this.p.items, 6];
+    return this.p.items;
+  }
+}
+
+function makeItems(): Items {
+  return { items: [] };
+}
+
+function useItems(p: Items): number {
+  p.items.push(4);
+  return p.items.length;
+}
+
+const nested: { p: Items } = { p: { items: [] } };
+nested.p.items.push(1);
+const list: Items[] = [{ items: [] }];
+list[0].items.push(2);
+const made = makeItems();
+made.items.push(3);
+console.log(nested.p.items, list[0].items, made.items, useItems({ items: [] }));
+const tg: Tagged = { tags: [] };
+tg.tags.push("a");
+const either: Items = list.length > 5 ? { items: [1] } : { items: [] };
+either.items.push(0);
+console.log(tg.tags, tg, new Holder().add(), either.items);

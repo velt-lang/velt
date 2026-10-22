@@ -156,7 +156,7 @@ impl FnCx<'_, '_> {
 
     /// [`Self::record_literal`] with known `K` and `V`; `pre`: the values, already checked
     /// (by property; empty: none are).
-    fn record_literal_with(
+    pub(super) fn record_literal_with(
         &mut self,
         d: DefId,
         k: TyId,

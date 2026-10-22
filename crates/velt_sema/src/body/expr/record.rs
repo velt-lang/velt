@@ -164,6 +164,12 @@ impl FnCx<'_, '_> {
             self.check_args_loose(std::slice::from_ref(value));
             return self.error_expr(span);
         }
+        if let (None, Some(m)) = (op, self.record_view_key_ty(obj.ty, &key)) {
+            // A required named member takes a value of its declared type (`r.items = []`).
+            let h = self.expr(value, Some(m), Want::Move);
+            let h = self.coerce(h, m);
+            return self.record_set_checked(obj, key, h, span);
+        }
         let value = match op {
             None => value.clone(),
             Some(op) => {

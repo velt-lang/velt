@@ -1556,9 +1556,10 @@ Enums are not generic and have no payloads; use a discriminated union for tagged
   (`Box<void>`, or sigx's `__ref: TRef` brand with `TRef = void`) is accepted, as in
   TypeScript, but the field keeps no value: what is written to it (`ref: null as any`) is
   dropped, and a read of it is `void` (which can't be printed or tested). Printing the object
-  directly or writing it as JSON is a compile error, and printing it through a generic or an
-  `any`, or reading the field through an `any`, stops with a `TypeError` (#1411), where Node shows
-  the value written. A `void` field written in an object type, a struct or a class, or a class
+  directly or writing it as JSON (directly or through a generic) is a compile error, and
+  printing it through a generic or an `any`, writing it as JSON through an `any` or `unknown`,
+  or reading the field through an `any`, stops with a `TypeError` (#1411), where Node shows the
+  value written. A `void` field written in an object type, a struct or a class, or a class
   instance with one (`new Holder<void>()`), is an error.
 
 ```ts
@@ -1932,7 +1933,10 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   required named member reads as its declared type (`props.label.toUpperCase()`,
   `props["label"]`, `props.n += 1`), checked at run time since an index write may store another
   type; an optional one reads as `any` (or
-  `unknown`) for now (#930). A key holding a function is called as a
+  `unknown`) for now (#930). A literal's value for a required named member, and a value written
+  to one (`props.items = []`, `props["items"] = []`), is checked against its declared type, so
+  `{ items: [] }` holds a `number[]` for `items: number[]` and a callback's parameters get
+  their types (`{ onClick: (e) => ... }`). A key holding a function is called as a
   method (`props.onClick()`, also on any `Record<string, any>`). A spread of a record that may be
   `null` or `undefined` (`{ ...props }` with `props: Props | null`) is a record too, and copies
   nothing when it is. Not supported yet (each is an error): named members next to an index

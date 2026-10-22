@@ -1,0 +1,6 @@
+index_signature_member_types.vlt:9:27: error: mismatched types
+  = note: expected f64[], found string
+index_signature_member_types.vlt:11:14: error: mismatched types
+  = note: expected f64[], found string
+index_signature_member_types.vlt:12:17: error: mismatched types
+  = note: expected f64[], found boolean
