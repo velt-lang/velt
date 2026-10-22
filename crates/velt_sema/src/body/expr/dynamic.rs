@@ -45,6 +45,19 @@ impl FnCx<'_, '_> {
         match (from, to) {
             (None, None) => Err(h),
             (None, Some(d)) if !self.dynamic_takes_static(d, h.ty) => Err(h),
+            // A lock's value is read only under its lock, and what `any` holds is read (printed,
+            // compared, written as JSON) without it.
+            (None, Some(d)) if self.cx.holds_lock(h.ty) => {
+                let (tn, to) = (self.cx.display(h.ty), d.name());
+                self.cx.error(
+                    velt_common::Diagnostic::error(
+                        format!("cannot convert a `{tn}` to `{to}`: it holds a lock"),
+                        h.span,
+                    )
+                    .with_note("its value is read only under its lock (`with`), and an `any` value is read without it: convert what a callback returns instead"),
+                );
+                Ok(self.error_expr(h.span))
+            }
             (None, Some(_)) => self.box_dynamic(h, exp),
             (Some(f), Some(t)) if !dynamic_converts(f, t, checked_from_unknown) => Err(h),
             (Some(Dynamic::Any), _) | (Some(_), Some(_)) => Ok(self.unbox_dynamic(h, exp)),

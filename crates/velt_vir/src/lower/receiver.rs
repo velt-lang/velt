@@ -29,6 +29,12 @@ impl FnLower<'_, '_> {
     /// statement.
     pub(super) fn held_receiver(&mut self, recv: &hir::Expr) -> Operand {
         let ty = self.sub(recv.ty);
+        // A frozen one must not be counted: the call gets a copy (frozen.rs).
+        if self.frozen_root(recv) {
+            let v = self.expr(recv);
+            let v = self.clone_value(v, ty);
+            return self.own_value(v, ty);
+        }
         let v = self.expr(recv);
         let s = self.share_value(v, ty);
         self.own_value(s, ty)
