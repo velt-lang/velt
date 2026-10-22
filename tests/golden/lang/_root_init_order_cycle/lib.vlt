@@ -1,0 +1,8 @@
+import { count } from "../root_init_order_cycle";
+export function readCount(): number {
+  return count;
+}
+export function twice(): number {
+  return count * 2;
+}
+console.log("lib evaluated");

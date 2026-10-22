@@ -1,0 +1,18 @@
+// Timers and promise callbacks started by top-level statements and by a declaration's
+// initializer run after the statements, in Node's order (#1438).
+let log: string[] = [];
+setTimeout(() => console.log("timer", log.join(",")), 0);
+log.push("a");
+class Seen {
+  static readonly at: number[] = [log.length];
+  static readonly timer: number = setTimeout(() => log.push("static timer"), 0) ? 1 : 0;
+}
+Promise.resolve().then(() => {
+  log.push("micro");
+});
+log.push("b");
+function at(): number {
+  return Seen.at[0];
+}
+console.log(at(), log.join(","));
+setTimeout(() => console.log("last", log.join(","), Seen.timer), 0);

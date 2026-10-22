@@ -31,6 +31,7 @@ mod primary;
 mod recovery;
 mod script;
 mod script_names;
+mod script_tdz;
 mod stmt;
 mod switch;
 mod symbol_keys;

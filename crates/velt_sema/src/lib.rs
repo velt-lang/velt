@@ -354,7 +354,7 @@ fn check_timed(
     }
     finalize::build_defs(&mut cx);
     readonly::erase(&mut cx);
-    let module_state = module_state::build(&mut cx);
+    let module_state = module_state::build(&mut cx, entry);
     let type_ops = type_level::lowered_ops(&mut cx);
     let anon_shapes = anon::concrete_shapes(&cx);
     let union_shapes = anon::concrete_unions(&cx);

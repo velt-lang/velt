@@ -1,0 +1,103 @@
+// The root file's declarations are evaluated where they stand, in order with its top-level
+// statements, as in Node (#1438): a statement before a declaration changes what its
+// initializer sees, and one after it does not.
+interface P {
+  x: number;
+}
+
+// Code that runs later may name a declaration after it, and a block may declare the name.
+const later = (): number => Later.v;
+function viaFunction(): number {
+  return Later.v + 1;
+}
+{
+  const Later = { v: -1 };
+  console.log(Later.v);
+}
+class Later {
+  static readonly v: number = 40;
+}
+console.log(later(), viaFunction());
+
+// A static field reading module state changed by an earlier statement.
+let g: P = { x: 0 };
+g.x = 6;
+class C {
+  static readonly Y: number = g.x;
+}
+function readY(): number {
+  return C.Y;
+}
+console.log(C.Y, readY());
+
+// A kept constant whose initializer has an effect, after a statement with the same effect.
+let calls = 0;
+function inc(): number {
+  calls++;
+  return calls;
+}
+inc();
+const K = inc();
+function readK(): number {
+  return K;
+}
+console.log(K, readK());
+
+// A constant copying a `let` reassigned before it.
+let n = 0;
+n = 6;
+const N = n;
+function readN(): number {
+  return N;
+}
+console.log(N, readN());
+
+// Constants reading a field changed before them, and after them.
+let h: P = { x: 0 };
+h.x = 6;
+const HX = h.x;
+const HO = { v: h.x };
+h.x = 12;
+function readH(): number {
+  return HX + HO.v;
+}
+console.log(h.x, HX, HO.v, readH());
+
+// Static fields with effects, between statements with effects.
+let bumps = 0;
+function bump(): number {
+  bumps++;
+  return bumps;
+}
+bump();
+class D {
+  static readonly A: number = bump();
+  static readonly B: { v: number } = { v: bumps };
+}
+bump();
+console.log(D.A, D.B.v, bumps);
+
+// An exported binding, a class reading it, and a statement after both.
+export let total = 1;
+total = total * 10;
+class Totals {
+  static readonly at: number = total + 1;
+}
+total = 0;
+function totals(): string {
+  return `${Totals.at} ${total}`;
+}
+console.log(totals());
+
+// An enum between statements, read by a static initializer.
+enum Level {
+  Low = 1,
+  High = 2,
+}
+let scale = 1;
+scale = 7;
+class Scaled {
+  static readonly v: number = scale + (Level.High === Level.High ? 7 : 0);
+}
+scale = 100;
+console.log(Scaled.v, scale, Level.Low);

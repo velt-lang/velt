@@ -1,0 +1,11 @@
+// A module the root file imports imports the root file back: it is evaluated first, and its
+// functions see the root file's bindings as the root file's statements set them (#1438).
+import { readCount, twice } from "./_root_init_order_cycle/lib";
+export let count = 0;
+count = 5;
+export const seen = twice();
+class Holder {
+  static readonly at: number = readCount() + 1;
+}
+count = 9;
+console.log(seen, Holder.at, readCount());

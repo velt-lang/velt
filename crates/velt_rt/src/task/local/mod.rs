@@ -31,7 +31,7 @@ pub(crate) use module_state::{
     drop_at_exit as module_drop_at_exit, held as module_held, mutex_locked, mutex_unlocked,
     release_outside as module_release_outside,
 };
-pub use module_state::{velt_rt_module_ready, velt_rt_module_state};
+pub use module_state::{velt_rt_module_block, velt_rt_module_ready, velt_rt_module_state};
 pub use order::{velt_rt_timer_again, velt_rt_timer_free, velt_rt_timer_new, velt_rt_timer_turn};
 pub(crate) use timers::TimerLeaf;
 pub use unhandled::{velt_rt_uncaught_now, velt_rt_unhandled_defer};

@@ -447,13 +447,15 @@ pub struct ModuleDesc {
     pub drop: unsafe extern "C" fn(*mut u8),
     /// Each slot's name, NUL-terminated, in slot order.
     pub names: *const u8,
+    /// The root file's slots, for code swapped in (not on WebAssembly: unused here).
+    pub rest: Option<unsafe extern "C" fn(*mut u8)>,
 }
 
 thread_local! {
     /// The program's module state: one thread, and every task reports the same id
     /// (`velt_rt_task_id`), so the tasks share one block.
     static MODULE_STATE: Cell<*mut u8> = const { Cell::new(std::ptr::null_mut()) };
-    /// How many of its slots are initialized (`u64::MAX` once `init` returned).
+    /// How many of its slots are initialized (`u64::MAX` once the last one is).
     static MODULE_READY: Cell<u64> = const { Cell::new(0) };
 }
 
@@ -469,6 +471,20 @@ pub(crate) fn module_state_used() -> bool {
 /// `desc` must point to the program's module descriptor.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_module_state(desc: *const ModuleDesc, slot: u64) -> *mut u8 {
+    let p = velt_rt_module_block(desc);
+    if slot >= MODULE_READY.with(Cell::get) {
+        not_ready(desc, slot);
+    }
+    p
+}
+
+/// The module state (allocated and initialized as by [`velt_rt_module_state`]) without checking
+/// that a slot is initialized: for the root file's `main`, which initializes its file's slots.
+///
+/// # Safety
+/// `desc` must point to the program's module descriptor.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_module_block(desc: *const ModuleDesc) -> *mut u8 {
     let mut p = MODULE_STATE.with(Cell::get);
     if p.is_null() {
         let d = &*desc;
@@ -483,10 +499,6 @@ pub unsafe extern "C" fn velt_rt_module_state(desc: *const ModuleDesc, slot: u64
         }
         MODULE_STATE.with(|c| c.set(p));
         (d.init)(p);
-        MODULE_READY.with(|c| c.set(u64::MAX));
-    }
-    if slot >= MODULE_READY.with(Cell::get) {
-        not_ready(desc, slot);
     }
     p
 }

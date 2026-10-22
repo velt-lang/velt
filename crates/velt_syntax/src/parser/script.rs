@@ -52,6 +52,17 @@ impl Parser<'_> {
             );
             return;
         }
+        for (name, what, at) in super::script_tdz::early_uses(items, &stmts) {
+            let msg = match what {
+                "variable" => format!("`{name}` is used before its declaration"),
+                _ => format!("{what} `{name}` is used before its declaration"),
+            };
+            self.diags.push(
+                velt_common::Diagnostic::error(msg, at).with_note(
+                    "top-level statements and declarations run in order: this statement runs before the declaration is evaluated (JavaScript throws a `ReferenceError` here); move the declaration up, or the statement down",
+                ),
+            );
+        }
         let keep = self.kept_vars(items);
         let mut body = stmts;
         let mut rest = vec![];

@@ -1,0 +1,13 @@
+// A timer that fires during a top-level `await` reads a constant declared after the `await`:
+// not initialized yet, a `ReferenceError` as in Node (#1438).
+function tick(): Promise<void> {
+  return new Promise((resolve) => setTimeout(() => resolve(), 5));
+}
+function readLate(): number {
+  return LATE + 1;
+}
+setTimeout(() => console.log(readLate()), 0);
+console.log("waiting");
+await tick();
+const LATE = Date.now() > 0 ? 1 : 2;
+console.log("never", readLate());

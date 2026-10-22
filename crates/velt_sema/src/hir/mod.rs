@@ -198,6 +198,10 @@ pub struct ModuleState {
     pub ty: TyId,
     /// The global of each slot, in initialization order (Node's module evaluation order).
     pub slots: Vec<DefId>,
+    /// The slots from this one on are the root file's, initialized by the entry `main` (the
+    /// root file's top-level statements) where they are declared ([`Intrinsic::InitSlots`]),
+    /// not by the state's initializer; `slots.len()` when there are none. Additive (#1438).
+    pub deferred: u32,
 }
 
 /// `ty` implements `iface<iface_args>` using `methods` (one per interface method, in order).

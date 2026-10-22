@@ -37,6 +37,10 @@ impl FnLower<'_, '_> {
                 };
                 self.gen_embed_value(&e)
             }
+            (I::InitSlots(from, to), []) => {
+                self.init_slots(from, to);
+                unit()
+            }
             (I::Print, _) => self.print(1, args),
             (I::SymbolStatic, [_, _, _]) => self.symbol_static(args),
             (I::SymbolRegistry, []) => self.symbol_registry(),

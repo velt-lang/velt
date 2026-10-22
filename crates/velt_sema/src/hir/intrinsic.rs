@@ -156,6 +156,10 @@ pub enum Intrinsic {
     /// variables in the same order, so their environments have one layout. No args; the
     /// result is owned.
     ClosureSibling(super::DefId),
+    /// In the entry `main` only: evaluate the initializers of module state slots `from..to`
+    /// (`ModuleState::deferred` on) into their slots, in order, as the state's initializer does
+    /// for the slots before them. No args, `void`. Additive (#1438).
+    InitSlots(u32, u32),
     /// f64 math: `Math.sqrt/floor/ceil/round/trunc/abs` (round = JS: half toward +inf)
     Sqrt,
     Floor,
