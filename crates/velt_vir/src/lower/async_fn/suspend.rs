@@ -106,14 +106,11 @@ impl FnLower<'_, '_> {
     /// A call to the prelude's `__topLevelAwaitAt(site)` (or to the `velt_rt_tla_at` it forwards
     /// to, which a forwarder call becomes) from user code: the mark velt_sema puts before each
     /// top-level `await`, lowered to nothing but [`FnLower::tla_site`]. The prelude's own call
-    /// is the runtime's.
-    pub(in crate::lower) fn is_tla_marker(&self, d: DefId) -> bool {
-        let marks = match self.cx.hir.def(d) {
-            hir::Def::ExternFn(f) => f.symbol == "velt_rt_tla_at",
-            hir::Def::Fn(f) => f.name.ends_with("__topLevelAwaitAt"),
-            _ => false,
-        };
-        marks && !self.in_std()
+    /// is the runtime's. Matched by `DefId` ([`super::super::Cx::tla_marks`]), so a user
+    /// function of the same name is an ordinary call.
+    pub(in crate::lower) fn is_tla_marker(&mut self, d: DefId) -> bool {
+        let [mark, forward] = self.cx.tla_marks();
+        (mark == Some(d) || forward == Some(d)) && !self.in_std()
     }
 
     /// The top level suspends at the `await` marked last: `velt_rt_tla_at(site)`, on the
@@ -403,5 +400,36 @@ impl FnLower<'_, '_> {
             (Some(r), None) => self.owned_result(Some(r), ty),
             (None, _) => unit(),
         }
+    }
+}
+
+/// The fully qualified name of the prelude's top-level `await` mark (std/prelude/process.vlt).
+const TLA_MARK: &str = "std/prelude/process::__topLevelAwaitAt";
+
+impl super::super::Cx<'_> {
+    /// The prelude's `__topLevelAwaitAt` and the `velt_rt_tla_at` declaration its body calls,
+    /// once looked up (none when the program lacks them).
+    pub(in crate::lower) fn tla_marks(&mut self) -> [Option<DefId>; 2] {
+        let hir = self.hir;
+        *self.tla_marks.get_or_insert_with(|| {
+            let mark = (0..hir.defs.len() as u32)
+                .map(DefId)
+                .find(|&d| matches!(hir.def(d), hir::Def::Fn(f) if f.name == TLA_MARK));
+            let forward = mark.and_then(|m| match hir.def(m) {
+                hir::Def::Fn(f) => f.body.block.stmts.iter().find_map(|s| match &s.kind {
+                    hir::StmtKind::Expr(hir::Expr {
+                        kind:
+                            hir::ExprKind::Call {
+                                callee: hir::Callee::Def(d, _),
+                                ..
+                            },
+                        ..
+                    }) if matches!(hir.def(*d), hir::Def::ExternFn(_)) => Some(*d),
+                    _ => None,
+                }),
+                _ => None,
+            });
+            [mark, forward]
+        })
     }
 }

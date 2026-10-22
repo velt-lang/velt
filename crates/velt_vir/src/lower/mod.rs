@@ -322,6 +322,8 @@ struct Cx<'h> {
     reassigned_slots: Option<FxHashSet<hir::DefId>>,
     /// The prelude's `Error` class, once looked up (js_string.rs).
     prelude_error: Option<Option<hir::DefId>>,
+    /// The prelude's top-level `await` mark and what it forwards to (async_fn/suspend.rs).
+    tla_marks: Option<[Option<hir::DefId>; 2]>,
     static_map: FxHashMap<(Vec<u8>, u32), StaticId>,
     /// The stored elements of each module constant table read so far (`table_read`): the data
     /// and the length, or `None` for a constant that is not one.
