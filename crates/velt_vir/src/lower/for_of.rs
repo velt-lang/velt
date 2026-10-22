@@ -31,7 +31,13 @@ impl FnLower<'_, '_> {
             true => None,
             false => self.table_read(iter),
         };
-        if table.is_none() && self.iterates_shared(iter) {
+        // A frozen array changes for nobody, and is not counted: iterated in place, its
+        // elements bound by reference are frozen too (frozen.rs).
+        let frozen = !consume && self.frozen_root(iter);
+        if frozen {
+            self.freeze_bindings(binding);
+        }
+        if table.is_none() && !frozen && self.iterates_shared(iter) {
             return self.for_of_shared(label, binding, iter, body, consume);
         }
         self.push_scope(ScopeKind::Temps);
@@ -49,7 +55,12 @@ impl FnLower<'_, '_> {
                 Some(table) => table,
                 None => {
                     let v = self.expr(iter);
-                    self.place_of(v, aty)
+                    let p = self.place_of(v, aty);
+                    // A frozen array may be a counted box (the other loop's case otherwise).
+                    match frozen {
+                        true => self.content(&p, aty),
+                        false => p,
+                    }
                 }
             }
         };
@@ -94,6 +105,11 @@ impl FnLower<'_, '_> {
             // with the iteration's scope).
             self.bind_pat(binding, &ep, elem, true);
             self.own_rest(ep, elem, Rc::new(binding.clone()));
+        } else if frozen {
+            // Bindings into a counted element would take shares (pattern.rs): not here.
+            let outer = std::mem::replace(&mut self.frozen_binds, true);
+            self.bind_pat(binding, &ep, elem, false);
+            self.frozen_binds = outer;
         } else {
             self.bind_pat(binding, &ep, elem, false);
         }

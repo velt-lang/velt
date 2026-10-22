@@ -199,6 +199,27 @@ impl FnLower<'_, '_> {
         )
     }
 
+    /// Call `target(argv…)`, lowered already (`params`: their VIR types).
+    pub(super) fn call_code(
+        &mut self,
+        target: Operand,
+        argv: Vec<Operand>,
+        mut params: Vec<Ty>,
+        ret: TyId,
+        throws: Option<TyId>,
+    ) -> Operand {
+        let abi = self.cx.ret_abi(ret, throws);
+        if abi.out.is_some() {
+            params.push(Ty::Ptr);
+        }
+        let callee = vir::Callee::Ptr {
+            target,
+            params,
+            ret: abi.ret,
+        };
+        self.finish_call(callee, argv, ret, throws)
+    }
+
     /// Call `target(first, args…)` with the borrow ABI; `modes` are the callee's param modes
     /// (`this` first) when known; `transfer`: the call starts a spawned task (its arguments are
     /// copied for it, transfer.rs).
@@ -252,6 +273,11 @@ impl FnLower<'_, '_> {
                 let env = Operand::Copy(Place::local(env));
                 let ret = self.sub(ty);
                 return self.call_ptr(cfunc(code), env, args, None, (ret, throws, false));
+            }
+        }
+        if !transfer {
+            if let Some(v) = self.call_known_fn(f, args, ty, throws) {
+                return v;
             }
         }
         let fv = match transfer {

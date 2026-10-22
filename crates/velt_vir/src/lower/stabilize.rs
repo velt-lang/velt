@@ -22,11 +22,11 @@ impl FnLower<'_, '_> {
     /// A borrowed argument (or receiver) of a call that may run user code (see the module docs).
     /// `later`: the arguments evaluated after it, before the call.
     pub(super) fn stable_borrow(&mut self, a: &hir::Expr, later: &[hir::Expr]) -> Operand {
-        // A value inside a `shared` box, or a part of it: nothing replaces or frees it while
-        // it is shared, and its counts must not change (other threads read it). Its read is a
-        // borrow, or a copy of what holds counted parts (`FnLower::shared_read`).
-        if super::expr::frozen_part(a) || is_shared_read(a) {
-            return self.borrowed_arg(a);
+        // A frozen value (frozen.rs): nothing changes it, its box is retained where something
+        // could replace its handle (async_fn/sync.rs `shared_value`), and its counts must not
+        // change.
+        if self.frozen_root(a) {
+            return self.frozen_borrow(a);
         }
         let ty = self.sub(a.ty);
         let by_value = self.cx.ty(ty).is_scalar() && self.cx.share_kind(ty) == ShareKind::Plain;
@@ -311,16 +311,6 @@ pub(super) struct PendingBorrow {
     /// The pointer the call receives.
     ptr: crate::vir::Local,
     ty: TyId,
-}
-
-fn is_shared_read(e: &hir::Expr) -> bool {
-    matches!(
-        e.kind,
-        hir::ExprKind::Call {
-            callee: hir::Callee::Intrinsic(hir::Intrinsic::SharedRead),
-            ..
-        }
-    )
 }
 
 /// Does evaluating `e` run no code that could reach an array: a local, a literal, a closure

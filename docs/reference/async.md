@@ -470,20 +470,30 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
   Any other `shared<T>` (one that holds no `Mutex`) never changes, so every task reads it at
   once, without a lock, like the `T` it holds: `s[i]` and `s.length` on a string, array or
   typed array, `for (const x of s)` (also over a `Map`, `Set` or typed array), a field or getter (`s.name`, `s.size` of a `Map`), `T`'s methods
-  (`s.includes(x)`, `s.startsWith("a")`), and `s` passed where a `T` is expected (`count(s)`
-  for `count(xs: u8[])`). An index, a length or a field reads the value in place. Passed on as
-  a whole or in part, and as the receiver of a method, the value is borrowed too when nothing
-  in it is reference counted (numbers, strings, and arrays and objects of those, unless the
-  program shares such arrays or objects between variables elsewhere); otherwise what is passed
-  on is a copy (of `s[i]` alone for `f(s[i])`, of the whole value for a method of it, such as
-  `get` on a `shared<Map<string, Item>>`: `.clone()` such a value once per task for many
-  lookups). What keeps the value or a
-  part of it gets a copy too: a parameter that keeps its argument (an `async` function's, a
-  stored one), and a variable bound to a part (`const ps = s.ports`). Such a variable cannot
-  be changed, and neither can the elements of a `for…of` loop over the value (or over what a
-  method of it returns, such as `s.values()`); `subarray()` and `buffer` of a shared typed
-  array are refused: in JavaScript all of them reach the shared value itself. Change a copy
-  (`s.ports.slice()`) instead.
+  (`s.includes(x)`, `s.get(k)`), and `s` passed where a `T` is expected (`count(s)` for
+  `count(xs: u8[])`). An index, a length or a field reads the value in place, and so does a
+  method of it and a function the value or a part of it is passed to, also the callbacks it
+  passes them to (`s.items.some((x) => x.ok)`) and its loops over arrays and maps (the
+  compiler builds a copy of the function that reads them without counting them). What keeps
+  the value or a part of it gets a copy: a parameter that keeps its argument (an `async`
+  function's, a stored one), a variable bound to a part (`const ps = s.ports`), a method's
+  result that is a part of it (`s.get(k)` of a `shared<Map<string, Item>>`), and a call
+  through a function value. Such a copy is another object: `s.get("k") === s.items[2]` and
+  `s.items.find((x) => x.v == 2) === s.items[2]` are `false`, where JavaScript compares the
+  shared object with itself. A change to a part is refused where the compiler follows how it
+  got there: through a variable bound or assigned to it, a `for…of` loop over the value (or
+  over what a method of it returns, such as `s.values()`), a conditional, what a method or
+  getter of it returns (`s.m.get(k)!.v = 1`), a closure at any depth, a function changing it,
+  and through a container holding it (`[s.items[0]]`, `xs.slice()`, an object's field, also
+  destructured or nested; the container's own slots may change). A new object built from a
+  number or string read out of the value (`new Item(s.head.v)`), or a `map` result, holds no
+  part of it and may change. `subarray()` and `buffer` of a shared typed array are
+  refused too: in JavaScript all of them reach the shared value itself. Not yet followed (a
+  change lands on a copy, #1405): a part returned by a function or closure (other than a method
+  or getter of the value: generic, static and interface functions, another object's method), a
+  spread or `Array.from` copy, a `map` whose callback returns its element or a part of it (`xs.map((x) => x)`,
+  `xs.map((x) => x.tags)`),
+  a generator, an `await`, `any` or `Reflect`, and a container filled with `push` / `set`. Change a copy (`.clone()`, `s.ports.slice()`) instead.
   `console.log(s)`, `[...s]`, `Object.keys(s)` and `JSON.stringify(s)` read the value inside
   as well. A value of
   `T` that holds a class with subclasses or with a `clone()` of its own is not read like this
@@ -495,9 +505,11 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
   kept in a variable, a module `let` another function reassigns, a field or element holding
   the handle), the read keeps the box it started with alive, as JavaScript keeps the old array.
   Changing the value is an error (``cannot modify a `shared<number[]>`: a shared value is
-  read-only …``), and so is passing it to a function that may change it or to a function
-  value, and calling a method of it that changes it (also one returning the value it changes,
-  such as `fill` or a method ending in `return this`): share a `Mutex` instead.
+  read-only …``), and so is passing it or a part of it (`s.m.get(k)!`) to a function that may
+  change it, also one that keeps its argument (an `async` function, a generator, a parameter
+  it stores) or changes what it returns (`st.m.get(k)!.v = 1`), or to a function value, and
+  calling a method of it that changes it (also one returning the value it changes, such as
+  `fill` or a method ending in `return this`): share a `Mutex` instead.
 
   ```ts
   async function count(xs: shared<u8[]>, b: u8): Promise<i64> {
@@ -522,7 +534,11 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
   }
   ```
 - `shared(new Mutex<T>(x))` with `m.with((v) => …)`: a synchronous lock. The callback gets the
-  value itself (assigning `v` updates it), returns a result, and must not be async. Nothing
+  value itself (assigning `v` updates it), returns a result, and must not be async. Its value
+  is read only there: a value holding a `Mutex` cannot be printed, written as JSON or
+  converted to `any`, `unknown` or `object` (``cannot convert a `shared<Mutex<C>>` to `any`:
+  it holds a lock``), all of which would read it without the lock, also not through a type
+  parameter (a generic function printing its `T` is refused where it is called with one). Nothing
   crosses the lock by reference, since other threads use the value as soon as it is released:
   - The result leaves the lock like a value going to another task: an object the callback made
     moves out, a part of the protected value comes out as a copy (`m.with((v) => v.inner)` is

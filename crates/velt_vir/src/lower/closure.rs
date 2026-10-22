@@ -47,6 +47,23 @@ impl<'c, 'h> FnLower<'c, 'h> {
         }
     }
 
+    /// The borrowed captures of closure `def` that are frozen counted values here: its body
+    /// must not count them either (bit `k`: capture `k`).
+    pub(super) fn frozen_captures(&mut self, def: DefId) -> u64 {
+        let f = self.cx.fn_def(def);
+        let mut frozen = 0u64;
+        for (k, c) in f.captures.iter().enumerate() {
+            let borrowed = matches!(c.mode, PassMode::Borrow | PassMode::BorrowMut);
+            if k < 64 && borrowed && self.frozen.contains(&c.outer) {
+                let ty = self.info[c.outer.0 as usize].ty;
+                if self.cx.holds_counted(ty) {
+                    frozen |= 1 << k;
+                }
+            }
+        }
+        frozen
+    }
+
     /// `__intrinsic_fn_captures_nothing(f)`: `f.env == null` (module docs: only closures without
     /// captures and named functions have a null env).
     pub(super) fn fn_captures_nothing(&mut self, f: &hir::Expr) -> Operand {
@@ -112,7 +129,13 @@ impl<'c, 'h> FnLower<'c, 'h> {
                 Rvalue::Aggregate(ca, vec![cfunc(code), cint(0, Ty::Ptr)]),
             );
         }
-        let code = self.cx.func(Work::Fn(def, targs.clone()));
+        let frozen = self.frozen_captures(def);
+        let code = match frozen {
+            0 => self.cx.func(Work::Fn(def, targs.clone())),
+            mask => self
+                .cx
+                .func(Work::Frozen(def, targs.clone(), mask, None, vec![])),
+        };
         let ea = self.cx.env_agg(def, &targs);
         // A closure holding shared cells owns references too: a frame env of one would have a
         // drop entry, and sharing an env with a drop entry retains it as a heap env, so a kept
@@ -245,6 +268,12 @@ impl<'c, 'h> FnLower<'c, 'h> {
             }
             let v = match c.mode {
                 PassMode::Borrow | PassMode::BorrowMut => self.addr(outer),
+                // A frozen value is not counted or taken over: the env gets a copy (frozen.rs).
+                PassMode::Owned if self.frozen.contains(&c.outer) => {
+                    let ty = self.info[c.outer.0 as usize].ty;
+                    let v = self.clone_value(Operand::Copy(outer), ty);
+                    self.maybe_transfer(v, ty)
+                }
                 PassMode::Owned if c.share => {
                     let ty = self.info[c.outer.0 as usize].ty;
                     let v = self.share_value(Operand::Copy(outer), ty);
@@ -257,7 +286,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
                 _ => Operand::Copy(outer),
             };
             self.assign(slot, Rvalue::Use(v));
-            if c.mode == PassMode::Owned && !c.share {
+            if c.mode == PassMode::Owned && !c.share && !self.frozen.contains(&c.outer) {
                 self.mark_moved(c.outer);
             }
         }
