@@ -8,15 +8,18 @@ class Item {
     this.v = v;
   }
 }
+
 class St {
   items: Item[] = [new Item(1)];
 }
+
 class Bag {
   items: Item[] = [];
   moveTo(dst: Item[]) {
     dst.push(this.items.pop()!);
   }
 }
+
 class Holder {
   bag: Bag = new Bag();
 }
