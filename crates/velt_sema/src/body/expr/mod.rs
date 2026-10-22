@@ -127,6 +127,7 @@ mod throws_mismatch;
 mod truthiness;
 mod type_tests;
 mod union_coerce;
+mod union_iface;
 mod widen_fresh;
 
 use velt_common::Span;

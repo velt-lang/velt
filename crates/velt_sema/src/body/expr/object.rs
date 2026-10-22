@@ -305,6 +305,15 @@ impl FnCx<'_, '_> {
         {
             return self.method_object(props, span);
         }
+        // A union's member is chosen by the literal's discriminants (`kind: "circle"`).
+        let exp = match self.hint(exp).filter(|t| self.cx.union_def(*t).is_some()) {
+            Some(u) => match self.union_member_for(props, u) {
+                Ok(Some(m)) => Some(m),
+                Ok(None) => exp,
+                Err(()) => return self.error_expr(span),
+            },
+            None => exp,
+        };
         if let Some(target) = self.literal_iface(exp) {
             return self.iface_object(props, target, span);
         }
@@ -324,14 +333,6 @@ impl FnCx<'_, '_> {
         if let Some(props) = self.enum_computed_keys(props) {
             return self.object_lit(&props, exp, span);
         }
-        let exp = match self.hint(exp).filter(|t| self.cx.union_def(*t).is_some()) {
-            Some(u) => match self.union_member_for(props, u) {
-                Ok(Some(m)) => Some(m),
-                Ok(None) => exp,
-                Err(()) => return self.error_expr(span),
-            },
-            None => exp,
-        };
         let target = self.hint(exp).and_then(|t| self.adt_of(t));
         if let Some((d, args)) = target {
             if let Some((k, v)) = self.hint(exp).and_then(|t| self.record_args(t)) {

@@ -1,0 +1,90 @@
+// A union whose members are interfaces with methods (#1410): object literals pick the member by
+// their discriminant, the fields and methods every member has read and call on the union (a
+// method of a common base interface through it, else each member's own), and the
+// discriminant narrows. Object types and interfaces mix in one union.
+interface Base {
+  describe(): string;
+}
+
+interface Circle extends Base {
+  readonly kind: "circle";
+  readonly r: number;
+}
+
+interface Square extends Base {
+  readonly kind: "square";
+  readonly side: number;
+}
+
+type Shape = Circle | Square;
+
+interface Named {
+  readonly kind: "named";
+  readonly name: string;
+  greet(): string;
+}
+
+interface Other {
+  readonly kind: "other";
+  readonly name: string;
+  greet(): string;
+}
+
+type Anon = { readonly kind: "anon"; readonly name: string };
+
+function circle(r: number): Shape {
+  return {
+    kind: "circle",
+    r,
+    describe() {
+      return `circle ${r}`;
+    },
+  };
+}
+
+function square(side: number): Shape {
+  return { kind: "square", side, describe: () => `square ${side}` };
+}
+
+function corners(s: Shape | undefined): number {
+  if (s === undefined) {
+    return -1;
+  }
+  const { kind } = s;
+  switch (kind) {
+    case "circle":
+      return 0;
+    case "square":
+      return 4;
+  }
+}
+
+function demo(): void {
+  const shapes: Shape[] = [circle(1), square(2)];
+  for (const s of shapes) {
+    console.log(s.kind, s.describe(), corners(s));
+    if (s.kind === "square") {
+      console.log(s.side * 2);
+    } else {
+      console.log(s.r);
+    }
+  }
+  console.log(corners(undefined), shapes[0]?.kind);
+  console.log(shapes.map((s) => s.describe()).join("|"));
+  const people: (Named | Other)[] = [
+    { kind: "named", name: "ann", greet: () => "hi ann" },
+    { kind: "other", name: "bo", greet: () => "yo bo" },
+  ];
+  for (const p of people) {
+    console.log(p.name, p.greet());
+  }
+  const mixed: (Named | Anon)[] = [{ kind: "anon", name: "?" }, people[0] as Named];
+  for (const w of mixed) {
+    console.log(w.kind, w.name.length);
+    if (w.kind === "named") {
+      console.log(w.greet());
+    }
+  }
+}
+
+demo();

@@ -39,8 +39,12 @@ impl FnCx<'_, '_> {
         for &v in &live {
             let m = members[v as usize];
             match self.cx.field_seen_from(m, &prop.name, owner) {
-                Some((i, fty)) => fields.push((v, m, i, fty)),
-                None => without.push((v, m)),
+                Some((i, fty)) => fields.push((v, m, Some(i), fty)),
+                // An interface member reads the field through its getter slot.
+                None => match self.cx.iface_member(m).and_then(|_| self.cx.member_field_ty(m, &prop.name)) {
+                    Some(fty) => fields.push((v, m, None, fty)),
+                    None => without.push((v, m)),
+                },
             }
         }
         // `r.value` on an `IteratorResult<T>`: `T | undefined`, `undefined` when done.
@@ -56,6 +60,9 @@ impl FnCx<'_, '_> {
         // names the class that declares it.
         let mut private_reported = false;
         for &(_, m, i, _) in &fields {
+            let Some(i) = i else {
+                continue;
+            };
             if !prop.name.starts_with(ast::PRIVATE_NAME_PREFIX) {
                 let denied = self
                     .field_private_to(m, i)
@@ -110,8 +117,19 @@ impl FnCx<'_, '_> {
             });
         }
         for (v, m, i, fty) in fields {
-            let (sub, body) = self.member_field(m, i, fty, consume, span);
-            let body = self.coerce(body, ty);
+            let (sub, body) = match i {
+                Some(i) => self.member_field(m, i, fty, consume, span),
+                None => self.member_iface_field(m, prop, fty, consume, span),
+            };
+            // A member's `null` field read as part of an `unknown` (`value: null | T` at
+            // `T = unknown`) is the dynamic `null`.
+            let alone = self.cx.ty.opt_payload(fty) == Some(self.cx.ty.never);
+            let body = match self.cx.ty.nothing_of(fty) {
+                Some(n) if alone && self.cx.dynamic(ty).is_some() => {
+                    self.dynamic_nothing(n, ty, span)
+                }
+                _ => self.coerce(body, ty),
+            };
             arms.push(hir::Arm {
                 pat: self.pat(
                     P::Variant {
@@ -165,6 +183,32 @@ impl FnCx<'_, '_> {
         if !copy {
             value = self.intrinsic(hir::Intrinsic::Share, vec![value], fty, span);
         }
+        (self.pat(P::Binding(b, mode), m, span), value)
+    }
+
+    /// Pattern for interface member `m` and the read of its field `prop` of type `fty`, through
+    /// the field's getter slot (a literal field reads as its constant).
+    fn member_iface_field(
+        &mut self,
+        m: TyId,
+        prop: &ast::Ident,
+        fty: TyId,
+        consume: bool,
+        span: Span,
+    ) -> (hir::Pat, hir::Expr) {
+        if self.cx.lit_value(fty).is_some() {
+            return (self.pat(P::Wildcard, m, span), self.lit_const(fty, span));
+        }
+        let mode = match consume {
+            true => UseMode::Move,
+            false => UseMode::Borrow,
+        };
+        let b = self.new_local("<member>", m, false, span, LocalKind::Bind);
+        let base = self.mk(H::Local(b, UseMode::Borrow), m, span);
+        let value = match self.iface_field(base, prop, Want::Borrow, span) {
+            Ok(h) => h,
+            Err(_) => self.error_expr(span),
+        };
         (self.pat(P::Binding(b, mode), m, span), value)
     }
 
@@ -250,7 +294,10 @@ impl FnCx<'_, '_> {
             .union_members(u)
             .unwrap_or_default()
             .into_iter()
-            .filter(|m| self.adt_of(*m).is_some_and(|(d, _)| !self.is_class_def(d)))
+            .filter(|m| {
+                self.adt_of(*m).is_some_and(|(d, _)| !self.is_class_def(d))
+                    || self.cx.iface_member(*m).is_some()
+            })
             .collect();
         let mut cands = objects.clone();
         let mut wrong = None;
@@ -262,13 +309,13 @@ impl FnCx<'_, '_> {
                 continue;
             };
             let lit_field = |cx: &mut crate::ctx::Ctx, m: TyId| {
-                cx.field_of(m, &k.name).and_then(|(_, t)| cx.lit_value(t))
+                cx.member_field_ty(m, &k.name).and_then(|t| cx.lit_value(t))
             };
             if !objects.iter().any(|m| lit_field(self.cx, *m).is_some()) {
                 continue;
             }
-            cands.retain(|m| match self.cx.field_of(*m, &k.name) {
-                Some((_, t)) => self.cx.lit_value(t).is_none_or(|x| lit_matches(&x, &l)),
+            cands.retain(|m| match self.cx.member_field_ty(*m, &k.name) {
+                Some(t) => self.cx.lit_value(t).is_none_or(|x| lit_matches(&x, &l)),
                 None => false,
             });
             if cands.is_empty() && wrong.is_none() {
@@ -280,8 +327,8 @@ impl FnCx<'_, '_> {
             for m in &objects {
                 if let Some(v) = self
                     .cx
-                    .field_of(*m, &k.name)
-                    .and_then(|(_, t)| self.cx.lit_value(t))
+                    .member_field_ty(*m, &k.name)
+                    .and_then(|t| self.cx.lit_value(t))
                 {
                     shown.push(display_lit(&v));
                 }
@@ -335,7 +382,14 @@ impl FnCx<'_, '_> {
         (records.len() == 1).then(|| records[0])
     }
 
+    /// The members an object literal of type `t` names: its fields, and an interface's
+    /// methods too.
     fn field_names(&self, t: TyId) -> Option<Vec<String>> {
+        if let Some((d, _)) = self.cx.iface_member(t) {
+            let i = self.cx.iface(d)?;
+            let fields = i.fields.iter().map(|f| f.name.clone());
+            return Some(fields.chain(i.methods.iter().map(|m| m.name.clone())).collect());
+        }
         let (d, _) = self.adt_of(t)?;
         Some(
             self.cx

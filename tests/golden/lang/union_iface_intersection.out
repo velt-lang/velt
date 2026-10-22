@@ -1,0 +1,15 @@
+ready true 1
+ready 6
+errored false 2
+boom
+errored boom null
+errored true 3
+late
+errored late 7
+idle false 0
+idle null
+12
+false
+[ null, 'x', 3 ]
+idle,ready,errored
+e
