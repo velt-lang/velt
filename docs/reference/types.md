@@ -1929,8 +1929,9 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   `any` or `unknown` values (`interface Props { label: string; children?: string; [key: string]:
   any }`) make the type that record too, as every member's type is one the values have: a named
   member is a key like any other (written, deleted, listed and spread in insertion order). A
-  required named member reads as its declared type (`props.label.toUpperCase()`), checked at run
-  time since an index write may store another type; an optional one reads as `any` (or
+  required named member reads as its declared type (`props.label.toUpperCase()`,
+  `props["label"]`, `props.n += 1`), checked at run time since an index write may store another
+  type; an optional one reads as `any` (or
   `unknown`) for now (#930). A key holding a function is called as a
   method (`props.onClick()`, also on any `Record<string, any>`). A spread of a record that may be
   `null` or `undefined` (`{ ...props }` with `props: Props | null`) is a record too, and copies

@@ -335,12 +335,8 @@ impl FnCx<'_, '_> {
             Ok(h) => return h,
             Err(obj) => obj,
         };
-        let obj = match self.record_view_read(obj, prop, span) {
-            Ok(h) => return h,
-            Err(obj) => obj,
-        };
         if self.record_args(obj.ty).is_some() {
-            return self.record_read(obj, super::record::RecordKey::Name(prop), span);
+            return self.record_member_read(obj, prop, span);
         }
         let obj = self.unbrand(obj);
         let obj = self.widen_literal_receiver(obj, &prop.name);
@@ -473,7 +469,7 @@ impl FnCx<'_, '_> {
         }
         match self.cx.ty.kind(t).clone() {
             TyKind::Adt(..) if self.record_args(t).is_some() => {
-                self.record_read(obj, super::record::RecordKey::Index(index), span)
+                self.record_index_read(obj, index, span)
             }
             TyKind::Array(elem) => self.array_index(obj, elem, index, want, span),
             // `m[1]` on a match of `s.matchAll(re)`: its group (std/regex `__index`).

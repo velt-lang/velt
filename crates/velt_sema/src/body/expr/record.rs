@@ -147,7 +147,8 @@ impl FnCx<'_, '_> {
         let (k, v) = self
             .record_args(obj.ty)
             .expect("ICE: record write on a non-record");
-        if let (Some(bop), None) = (op, self.record_keys(k)) {
+        let named = self.record_view_key(obj.ty, &key);
+        if let (Some(bop), None, false) = (op, self.record_keys(k), named) {
             let sym = format!("{}=", super::ops::op_str(bop));
             self.open_record_compound(obj.ty, v, target, &sym, bop, Some(value));
             self.check_args_loose(std::slice::from_ref(value));
@@ -200,8 +201,10 @@ impl FnCx<'_, '_> {
         } else {
             ast::BinaryOp::Sub
         };
+        let (_, key) = record_parts(target);
+        let named = self.record_view_key(obj.ty, &key);
         if let Some((k, v)) = self.record_args(obj.ty) {
-            if self.record_keys(k).is_none() {
+            if self.record_keys(k).is_none() && !named {
                 self.open_record_compound(obj.ty, v, target, opname, bop, None);
                 return self.error_expr(span);
             }

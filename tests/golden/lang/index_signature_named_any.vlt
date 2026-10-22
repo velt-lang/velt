@@ -99,3 +99,25 @@ function pick(m: Load | Module): string {
 }
 
 console.log(pick(() => "f"), pick({ default: () => "d", x: 1 }));
+
+// A required member keeps its type in compound assignments and in `r["name"]` too.
+interface Counted {
+  label: string;
+  n: number;
+  [key: string]: any;
+}
+
+function bump(r: Counted, by: number): number {
+  r.n += by;
+  return r.n;
+}
+
+const cnt: Counted = { label: "a", n: 1 };
+cnt.label += "b";
+cnt.n++;
+++cnt.n;
+cnt.n *= 5;
+cnt["label"] += "c";
+console.log(cnt.label, cnt["label"].toUpperCase(), cnt.n, cnt["n"] + 1, bump(cnt, 3));
+const ev: EventBase = { type: "click", x: 1 };
+console.log(ev["type"].length, ev.type.toUpperCase());
