@@ -1,0 +1,42 @@
+// A table (a module constant that is an array of number literals) that the program modifies or
+// takes over is the one array Node evaluates once (#1383): module state, so every use sees the
+// changes, directly, through a function, through a runtime function that fills an array, or
+// through another name.
+
+const K: number[] = [1, 2, 3];
+const BYTES: number[] = [1, 2, 255];
+const READ: number[] = [4, 5, 6];
+
+function bump(xs: number[]) {
+  xs[0] = 9;
+}
+
+class Box {
+  items: number[] = [];
+}
+
+function keep(xs: number[]): Box {
+  const b = new Box();
+  b.items = xs;
+  return b;
+}
+
+function main() {
+  K[0] = 1;
+  K.push(4);
+  BYTES.pop();
+  BYTES.reverse();
+  BYTES.fill(0, 1);
+  bump(K);
+  const mine = K;
+  const box = keep(K);
+  mine.push(5);
+  box.items.push(6);
+  console.log(K, BYTES, mine === K, box.items === K);
+  // A table only read stays read-only data.
+  let sum = 0;
+  for (const x of READ) {
+    sum += x;
+  }
+  console.log(sum, READ[1], READ.length);
+}

@@ -68,6 +68,9 @@ pub(crate) struct Ctx<'m> {
     pub brands: FxHashMap<DefId, TyId>,
     /// (primitive, object part) → the brand's definition.
     pub brand_keys: FxHashMap<(TyId, TyId), DefId>,
+    /// Brands of a `Record<string, any>` (or `unknown`) by the named members written next to
+    /// its index signature → that object type of the named members (`crate::index_signatures`).
+    pub record_views: FxHashMap<DefId, TyId>,
     /// Field-only interface → its object type's def (`collect::field_only`).
     pub field_only: FxHashMap<DefId, DefId>,
     /// The reverse of `field_only`.
@@ -237,6 +240,9 @@ pub(crate) struct Ctx<'m> {
     pub kept_fns: crate::ownership::KeptFns,
     /// Memoized purity of functions that initialize module constants (`body::pure_init`).
     pub pure_fns: crate::body::pure_init::PurityMemo,
+    /// Module constants kept in the module state because of how the program uses them, in the
+    /// order `crate::kept_consts::keep` kept them (a rolled-back check undoes its own).
+    pub kept_consts: Vec<DefId>,
     /// The member names symbols give (`crate::symbols`).
     pub symbol_keys: crate::symbols::KeyNames,
     /// Set while [`Ctx::match_context`] runs (`crate::infer`).
@@ -296,6 +302,11 @@ pub(crate) struct Ctx<'m> {
     /// Names bound by such an import that found nothing (file of the importing module, local
     /// name): a use of one reports nothing more, as its import didn't (`Ctx::not_found`).
     pub poisoned: FxHashSet<(velt_common::FileId, String)>,
+    /// What each module exports, computed once (`crate::collect::exports`).
+    pub export_memo: std::cell::RefCell<crate::collect::exports::Memo>,
+    /// For each module, the module each of its import specifiers resolved to
+    /// (`exports::import_target`).
+    pub import_targets: Vec<FxHashMap<&'m str, usize>>,
 }
 
 impl<'m> Ctx<'m> {
@@ -303,6 +314,8 @@ impl<'m> Ctx<'m> {
         Ctx {
             modules,
             root,
+            export_memo: Default::default(),
+            import_targets: crate::collect::exports::import_targets(modules),
             ty: Types::new(),
             defs: vec![],
             info: vec![],
@@ -328,6 +341,7 @@ impl<'m> Ctx<'m> {
             objects: Default::default(),
             brands: FxHashMap::default(),
             brand_keys: FxHashMap::default(),
+            record_views: FxHashMap::default(),
             field_only: FxHashMap::default(),
             field_only_of: FxHashMap::default(),
             shapes_done: false,
@@ -402,6 +416,7 @@ impl<'m> Ctx<'m> {
             shared_memo: FxHashMap::default(),
             kept_fns: Default::default(),
             pure_fns: FxHashMap::default(),
+            kept_consts: vec![],
             symbol_keys: Default::default(),
             matching_context: false,
             checking: vec![],

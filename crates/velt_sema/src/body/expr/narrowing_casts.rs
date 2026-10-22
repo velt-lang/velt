@@ -54,6 +54,21 @@ impl FnCx<'_, '_> {
             }
             return self.param_present_assertion(h, target, span);
         }
+        // `x as Record<string, any>` of a union with a record viewed with named members
+        // (`crate::index_signatures`): the assertion to that member, as its record.
+        let core = self.cx.ty.core(h.ty).unwrap_or(h.ty);
+        let view = self.cx.union_members(core).and_then(|ms| {
+            ms.into_iter().find(|m| {
+                self.cx
+                    .record_view(*m)
+                    .is_some_and(|(base, _)| base == target)
+            })
+        });
+        if let Some(view) = view {
+            return self
+                .narrowing_assertion(h, view, span)
+                .map(|h| self.unview(h));
+        }
         let h = match self.subunion_assertion(h, target, span) {
             Ok(h) => return Ok(h),
             Err(h) => h,

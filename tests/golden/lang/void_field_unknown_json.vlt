@@ -1,0 +1,12 @@
+// `void_field_any_json` through an `unknown`, inside an array: Node writes
+// `[{"name":"d","ref":"y"}]`. (Expected output: up to the TypeError.)
+type Factory<R> = { name: string } & { ref: R };
+
+function component<R = void>(name: string, r: any): Factory<R> {
+  return { name, ref: r };
+}
+
+const u: unknown = component("d", "y");
+const all: unknown[] = [u];
+console.log(all.length);
+console.log(JSON.stringify(all));

@@ -144,6 +144,38 @@ function main() {
 }
 ```
 
+A module-level `const` whose value is not a constant is kept the same way (`seen` above), and
+so is one the program uses as the one object Node evaluates once: a use takes its value over
+(binds it to a name, stores it, returns it, passes it to a function that keeps it), modifies
+what it holds (`K.n = 1`, `K.push(1)`, passing it to a function that modifies it) or compares
+it by identity (`K === x`). Every use then refers to that object, and a change through one name
+shows through the others. A constant that is only read is evaluated where it is used instead
+(a [table](#tables)'s elements are read from read-only data), which costs nothing at startup.
+A `static readonly` field is kept the same way, as Node evaluates it once with its class
+(`const v = Geo.ORIGIN; v.x = 1` changes `Geo.ORIGIN.x`). So is a constant or a field whose
+initializer reads module state the program changes, directly or through the functions it calls
+(`const START = count`, `static readonly F = S.cur()`): it holds the value from when Node
+evaluated it.
+
+```ts
+type Hit = { hit: boolean; value: number };
+
+const MISS: Hit = { hit: false, value: 0 };
+const EMPTY: number[] = [];
+
+function peek(key: string): Hit {
+  return key === "x" ? { hit: true, value: 1 } : MISS;   // MISS itself, as in Node
+}
+
+function main() {
+  const a = peek("y");
+  a.value = 7;
+  const xs = EMPTY;
+  xs.push(1);
+  console.log(MISS.value, a === MISS, EMPTY.length);   // 7 true 1
+}
+```
+
 - **One per process**, as in Node: every task (a task started with `spawn`, an HTTP request
   handler, a task on any core) reads and updates the same module state, so a module counter
   that every request handler increments counts every request. Code that uses module state
@@ -191,28 +223,28 @@ function main() {
   another holder of the same promise ([shared promises](async.md#promises)), which runs on the
   task that started it, and every holder gets the same result (an object result is the same
   object, as everything reached through module state is shared by the tasks).
-- A `Mutex` `with` callback cannot use module state, directly or through a function it calls
-  (``the function passed to `with` may use module state``). Code that runs without a call
-  counts too: field initializers at `new`, and the `toString()`, `toJSON()` and
-  `[Symbol.dispose]()` methods of the values the callback handles, which `join`, a template,
-  `JSON.stringify`, `using` and the end of a scope call. So does a call of a function value
-  whose body the compiler cannot see, also one the callback hands to the standard library
-  (`a.sort(cmps[0])`; a closure or a function name written there is fine). `with` blocks the thread while it waits for the
-  lock, and a task holds the module lock for its code between `await`s, so two tasks could
-  wait for each other. Read what the callback needs before `with`, and store what it returns
-  after.
+- A `Mutex` `with` callback cannot use module state, including a constant kept there by a use
+  elsewhere in the program, directly or through a function it calls (``the function passed to `with`
+  may use module state``). Code that runs without a call counts too: field initializers at `new`,
+  and the `toString()`, `toJSON()` and `[Symbol.dispose]()` methods of the values the callback
+  handles, which `join`, a template, `JSON.stringify`, `using` and the end of a scope call. So does
+  a call of a function value whose body the compiler cannot see, also one the callback hands to the
+  standard library (`a.sort(cmps[0])`; a closure or a function name written there is fine). `with`
+  blocks the thread while it waits for the lock, and a task holds the module lock for its code
+  between `await`s, so two tasks could wait for each other. Read what the callback needs before
+  `with`, and store what it returns after.
 - In a root file with top-level statements, a `let` that only those statements use is a local
   of the generated `main` ([Scripts](modules.md#scripts-top-level-statements)); one that a
   function uses is module state, and its initializer runs before the first statement.
-- <a id="module-state-cost"></a>Cost: a program without module state pays nothing, and so
-  does a task that never uses it. Each read or write of a module-level `let` is a call into
-  the runtime that returns the state. A task takes the lock at its first use and at the start
-  of each later run between `await`s (one uncontended atomic operation when no other task
-  holds it). Tasks on other cores that use module state at the same moment wait for each
-  other, so keep long computations that many tasks run in parallel out of the code between
-  their `await`s that uses module state, or give them `shared(...)` state instead. A task that
-  blocks on a `Mutex` keeps the module lock while it waits (the `Mutex`'s holder never needs
-  it, see above).
+- <a id="module-state-cost"></a>Cost: a program without module state pays nothing, and so does a
+  task that never uses it. Each read or write of a module-level `let`, or of a constant kept as
+  module state, is a call into the runtime that returns the state (a constant only read is not: one
+  use that keeps it makes every use of it pay that). A task takes the lock at its first use and at
+  the start of each later run between `await`s (one uncontended atomic operation when no other task
+  holds it). Tasks on other cores that use module state at the same moment wait for each other, so
+  keep long computations that many tasks run in parallel out of the code between their `await`s that
+  uses module state, or give them `shared(...)` state instead. A task that blocks on a `Mutex` keeps
+  the module lock while it waits (the `Mutex`'s holder never needs it, see above).
 - `velt dev`: code swapped into a running program starts its module state over, as after a
   restart ([hot reload](../tooling/dev.md)).
 
@@ -261,22 +293,15 @@ function main() {
 - Passed to a function or method that only reads it (`f(K)` when `f` doesn't modify its parameter,
   `K.includes(x)`, `K.indexOf(x)`, `u32x4.load(K, i)`), a table is that read-only data too:
   nothing is built, so such calls are as cheap in a hot loop as indexing.
-- Used in any other way, a table is what every module constant is: evaluated at that use, here
-  to a new array with those elements. `K.slice()` is the one to use for a copy.
-- Nothing can modify a table or take it over, and a use that could is a compile error. That is
-  `K[0] = 1`, `K.push(1)`, `K.fill(0)`, and passing `K` to a function that modifies its
-  parameter (``cannot modify module-level constant `K` ``), as for any module constant. For a
-  table it is also:
-  - passing it to a function value (`const f = (xs: u8[]) => …; f(K)`, `fs[0](K)`, a callback
-    parameter), or to a function together with a function value that could modify it
-    (``cannot pass module constant `K` to a function value``): the compiler can't see what that
-    function does;
-  - binding it to a name or a field, however it is named: `const mine = K`, `K!`, `ns.K` for an
-    imported table, `Cls.K` for a `static readonly` one (``cannot move out of module constant
-    `K` ``); an `async` function, which takes over its arguments, is the same.
-
-  `K.slice()` is the copy to use there: an ordinary array to keep, modify or pass anywhere.
-- Comparing a table by identity (`K === K`) is an error, like for other module constants.
+- Used in any other way, a table is [module state](#module-state), like every module constant
+  used so: binding it to a name or a field (`const mine = K`, `K!`, `ns.K` for an imported
+  table), returning it, modifying it (`K[0] = 1`, `K.push(1)`, `K.fill(0)`, passing it to a
+  function that modifies its parameter), passing it to a function value the compiler can't see
+  into, or comparing it by identity. It is then the one array Node evaluates once, every use
+  refers to it, and its elements are read from it instead of from read-only data. `K.slice()`
+  makes a copy.
+- A `static readonly` table is the same: `Cls.K.push(1)` and `const mine = Cls.K` make it
+  module state.
 
 ## Module constants initialized by a call
 
@@ -290,8 +315,11 @@ gives; any other initializer (a call with effects, a class instance, a `Map`) ma
 - each argument is a constant expression, another module constant, a function or a closure;
 - the callee and everything it calls have no loops, no recursion, no `throw`, no `await`, no
   calls through function values, and no effects (I/O, time, randomness, `console`, `shared`,
-  `spawn`, external functions). It may allocate, construct objects and create closures, as
-  `component` does below: the closures it returns run later as ordinary code;
+  `spawn`, external functions), and read no [module state](#module-state) (a module-level
+  `let`, a constant kept there), which the program may change after Node evaluated the
+  initializer: such a constant is module state itself, evaluated once. It may allocate, construct
+  objects and create closures, as `component` does below: the closures it returns run later as
+  ordinary code;
 - a closure it creates keeps no mutable state: it captures no variable that is assigned, and no
   object, array or class instance. Otherwise the constant is module state, one closure whose
   state carries over from call to call, as in Node;
@@ -299,9 +327,9 @@ gives; any other initializer (a call with effects, a class instance, a `Map`) ma
   kept as module state, so that it is one value as in Node, and so are class instances, arrays
   and maps (a new array at each use would change what `X.push(1)` does; an array of number
   literals is a [table](#tables), which needs no call).
-  An object or struct constant can't be moved into a variable or a field (``cannot move out of
-  module constant `UNIT` ``; `UNIT.clone()` makes an owned copy): TypeScript would alias it,
-  so a change through the copy would show in the constant.
+  An object or struct constant that the program takes over, modifies or compares by identity
+  is [module state](#module-state), so a change through a variable or a field holding it shows
+  in the constant, as in Node.
 
 ```ts
 type Props = { start: number };

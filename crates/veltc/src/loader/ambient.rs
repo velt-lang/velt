@@ -45,6 +45,9 @@ pub(super) struct Ambients {
     declared: Vec<(Ambient, Option<FileId>)>,
     /// Package directories whose declaration files have been read.
     read: HashSet<PathBuf>,
+    /// The package directory of each directory a module was loaded from ([`package_dir`]): a
+    /// program's modules share a few, and finding one looks at every directory above.
+    package_dirs: HashMap<PathBuf, Option<PathBuf>>,
 }
 
 impl Ambients {
@@ -59,6 +62,7 @@ impl Ambients {
             written,
             declared: vec![],
             read: HashSet::new(),
+            package_dirs: HashMap::new(),
         }
     }
 
@@ -79,7 +83,16 @@ impl Ambients {
 
     /// Read the declaration files of the package containing module `path`, once per package.
     pub(super) fn read_declarations(&mut self, sm: &mut SourceMap, path: &Path) {
-        let Some(root) = package_dir(path) else {
+        let dir = path.parent().unwrap_or(Path::new(""));
+        let root = match self.package_dirs.get(dir) {
+            Some(root) => root.clone(),
+            None => {
+                let root = package_dir(path);
+                self.package_dirs.insert(dir.to_path_buf(), root.clone());
+                root
+            }
+        };
+        let Some(root) = root else {
             return;
         };
         if !self.read.insert(root.clone()) {

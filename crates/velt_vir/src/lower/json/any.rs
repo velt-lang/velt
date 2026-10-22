@@ -27,16 +27,23 @@ pub(in crate::lower) const SLOT_JSON: i128 = 14;
 
 impl FnLower<'_, '_> {
     /// Can the JSON writer (json/write.rs) write a value of the concrete type `t` that a dynamic
-    /// value holds? `seen`: the types being checked (a recursive type is fine).
-    fn json_dyn_ok(&mut self, t: TyId, seen: &mut FxHashSet<TyId>) -> bool {
+    /// value holds? `seen`: the types being checked (a recursive type is fine). `void`: set to
+    /// the name of a field of an object type that is `void` after substitution (#1411), which
+    /// keeps no value, so what was written to it can't be written.
+    fn json_dyn_ok(
+        &mut self,
+        t: TyId,
+        seen: &mut FxHashSet<TyId>,
+        void: &mut Option<String>,
+    ) -> bool {
         if self.cx.is_dynamic(t) || self.cx.is_json_value(t) || !seen.insert(t) {
             return true;
         }
         if let Some((_, v)) = self.prelude_record(t) {
-            return self.json_dyn_ok(v, seen);
+            return self.json_dyn_ok(v, seen, void);
         }
         if let Some((k, v)) = self.prelude_map(t) {
-            return matches!(self.cx.kind(k), TyKind::Str) && self.json_dyn_ok(v, seen);
+            return matches!(self.cx.kind(k), TyKind::Str) && self.json_dyn_ok(v, seen, void);
         }
         match self.cx.kind(t) {
             TyKind::Int(_)
@@ -47,27 +54,34 @@ impl FnLower<'_, '_> {
             | TyKind::Never
             | TyKind::Literal(_) => true,
             TyKind::Option(e, _) | TyKind::Array(e) | TyKind::Shared(e) => {
-                self.json_dyn_ok(e, seen)
+                self.json_dyn_ok(e, seen, void)
             }
-            TyKind::Tuple(es) => es.into_iter().all(|e| self.json_dyn_ok(e, seen)),
+            TyKind::Tuple(es) => es.into_iter().all(|e| self.json_dyn_ok(e, seen, void)),
             TyKind::Adt(d, _) => match self.cx.hir.def(d) {
                 hir::Def::Enum(_) => self.cx.is_c_like_enum(d),
                 hir::Def::Adt(a) => {
                     // A class with `toJSON()` (a `Date`) is written as what it returns.
                     if let (Some(m), true) = (a.to_json, a.kind == hir::AdtKind::Class) {
                         let r = self.hook_result(m, t);
-                        return self.json_dyn_ok(r, seen);
+                        return self.json_dyn_ok(r, seen, void);
                     }
                     if a.opaque {
                         return false;
                     }
                     let tys = self.cx.adt_field_tys(t);
                     let names: Vec<String> = a.fields.iter().map(|f| f.name.clone()).collect();
+                    let anon = a.kind == hir::AdtKind::Anon;
                     names
                         .iter()
                         .zip(tys)
                         .filter(|(n, _)| !velt_sema::property_order::is_hidden_key(n))
-                        .all(|(_, f)| self.json_dyn_ok(f, seen))
+                        .all(|(n, f)| {
+                            if anon && matches!(self.cx.kind(f), TyKind::Unit) {
+                                *void = Some(n.clone());
+                                return false;
+                            }
+                            self.json_dyn_ok(f, seen, void)
+                        })
                 }
                 _ => false,
             },
@@ -200,7 +214,11 @@ impl FnLower<'_, '_> {
             self.drop_glue(res, any);
             return self.ret_status(ST_OK);
         }
-        if !self.json_dyn_ok(ty, &mut FxHashSet::default()) {
+        let mut void = None;
+        if !self.json_dyn_ok(ty, &mut FxHashSet::default(), &mut void) {
+            if let Some(name) = void {
+                self.void_field_panic(&name);
+            }
             return self.ret_status(ST_UNSUPPORTED);
         }
         if matches!(self.cx.kind(ty), TyKind::Option(..) | TyKind::Unit) {

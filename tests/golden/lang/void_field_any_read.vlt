@@ -1,0 +1,13 @@
+// A field that is `void` after substitution keeps no value (#1411): reading it through an `any`
+// stops with a TypeError, where Node prints the `null` written to it. (Expected output: up to
+// the TypeError.)
+type Factory<R> = { name: string } & { ref: R };
+
+function component<R = void>(name: string): Factory<R> {
+  return { name, ref: null as any };
+}
+
+const card = component("card");
+const a: any = card;
+console.log(a.name);
+console.log(a.ref);

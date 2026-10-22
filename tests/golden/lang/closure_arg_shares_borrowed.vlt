@@ -1,0 +1,97 @@
+// A closure argument that captures a variable another argument of the same call borrows shares
+// it (#1383), as sigx's `mergeProps` does with `cachedDerive("ref", refs, () => … refs …)`:
+// JavaScript refers to one array from both, so a change through either shows in the other.
+
+function applyRef(ref: any, value: any): void {
+  if (typeof ref === "function") ref(value);
+  else if (ref && typeof ref === "object") ref.current = value;
+}
+
+type State = { refs: any[] };
+
+function mergeProps(sources: any[]): (key: string) => any {
+  const derived = new Map<string, { parts: any[]; value: any }>();
+
+  // A nested function: its parameters are borrowed.
+  function cachedDerive(key: string, parts: any[], build: () => any): any {
+    const hit = derived.get(key);
+    if (hit && hit.parts.length === parts.length && hit.parts.every((p, i) => p === parts[i])) {
+      return hit.value;
+    }
+    const value = build();
+    derived.set(key, { parts, value });
+    return value;
+  }
+
+  function collect(): State {
+    const refs: any[] = [];
+    for (const s of sources) refs.push(s);
+    return { refs };
+  }
+
+  function read(key: string, state: State): any {
+    if (key === "ref") {
+      const refs = state.refs;
+      if (!refs.length) return undefined;
+      if (refs.length === 1) return refs[0];
+      return cachedDerive("ref", refs, () => (value: any) => {
+        for (const ref of refs) applyRef(ref, value);
+      });
+    }
+    return undefined;
+  }
+
+  return (key: string) => read(key, collect());
+}
+
+// A callee that keeps both.
+class Keep {
+  xs: string[] = [];
+  f: () => number = () => 0;
+}
+
+function keepBoth(k: Keep, xs: string[], f: () => number) {
+  k.xs = xs;
+  k.f = f;
+}
+
+// A method that keeps the closure while it reads the array: the closure only reads it.
+class Registry {
+  fs: (() => number)[] = [];
+  names: string[] = [];
+
+  add(xs: string[], f: () => number) {
+    this.names.push(xs[0]);
+    this.fs.push(f);
+  }
+}
+
+function register(r: Registry) {
+  const xs = ["a", "b"];
+  r.add(xs, () => xs.length);
+  // Another name for it that only reads it.
+  const ys = ["c", "dd"];
+  r.add(ys, () => {
+    const other = ys;
+    let n = 0;
+    for (const s of other) n += s.length;
+    return n;
+  });
+}
+
+function main() {
+  const box: any = { current: 0 };
+  let seen = "";
+  const get = mergeProps([box, (v: any) => { seen = `fn ${v}`; }]);
+  const apply = get("ref");
+  apply(5);
+  console.log(box.current, seen, get("ref") === apply);
+  const k = new Keep();
+  const names = ["a"];
+  keepBoth(k, names, () => names.length);
+  k.xs.push("b");
+  console.log(k.f(), names.length, k.xs === names);
+  const r = new Registry();
+  register(r);
+  console.log(r.names, r.fs[0](), r.fs[1]());
+}
