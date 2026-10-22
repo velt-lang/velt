@@ -1,0 +1,7 @@
+// `Reflect.set` past the end of another array in a callback of an array method on a proxy
+// (#924): only the method's own trap calls on its target may leave Node's holes, so this is the
+// TypeError it is outside the method (Node: `[1,2,3,null,null,1] 6 false`).
+const raw: any = [1, 2, 3];
+const p: any = new Proxy([10] as any, {});
+p.map((v: any) => Reflect.set(raw, "5", 1));
+console.log(JSON.stringify(raw), raw.length, Reflect.has(raw, "3"));

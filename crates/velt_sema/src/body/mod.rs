@@ -498,6 +498,8 @@ pub(crate) struct FnCx<'a, 'm> {
     /// The call about to be checked is a weak operation of the prelude's `WeakMap`, `WeakSet`
     /// or `WeakRef`: its first argument is a weak key (`dynamic.rs` `weak_key_coerce`).
     pub weak_key_args: bool,
+    /// Checking the `Object.keys(x)` of a plain value inside the typed proxy hooks (`proxy.rs`).
+    pub proxy_keys_inner: bool,
     /// The explicit type arguments of the call about to be checked (at the first span): the
     /// slot each fills and its span, where a type bound it breaks is reported (`tsc` TS2344).
     pub explicit_type_spans: Option<(Span, Vec<(usize, Span)>)>,
@@ -566,6 +568,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             immediate_hint: None,
             collect_iterable_args: false,
             weak_key_args: false,
+            proxy_keys_inner: false,
             explicit_type_spans: None,
             optional_slots: vec![],
             refused_reads: vec![],

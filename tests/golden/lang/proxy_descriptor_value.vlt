@@ -1,0 +1,14 @@
+// A data descriptor a `getOwnPropertyDescriptor` trap answers without `value` is completed with
+// `value: undefined`, which Node lists first; an attribute left out is `false`.
+const q: any = new Proxy({ a: 1 } as Record<string, number>, {
+  getOwnPropertyDescriptor(t: any, k: string | symbol): PropertyDescriptor | undefined {
+    return k === "a"
+      ? { enumerable: true, configurable: true, writable: false }
+      : { configurable: true };
+  },
+});
+const d = Reflect.getOwnPropertyDescriptor(q, "a");
+console.log(d);
+console.log(d !== undefined && "value" in d);
+console.log(Reflect.getOwnPropertyDescriptor(q, "b"));
+// check: no leaks

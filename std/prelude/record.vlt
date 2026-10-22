@@ -304,6 +304,19 @@ export class ObjectPrototype {
     return this.tag == other.tag;
   }
 
+  /**
+   * `k in p` for a key known only at run time: `Object.prototype`'s members; the members of
+   * other prototypes are not listed yet.
+   */
+  __hasKey(key: string): bool {
+    if (this.tag != "Object") {
+      panic(
+        "TypeError: `in` with a key known only at run time on this prototype is not supported yet (#924)",
+      );
+    }
+    return __objectPrototypeKey(key);
+  }
+
   __inspect(): string {
     return this.shown;
   }
@@ -331,6 +344,11 @@ export function __prototypeSame(a: ObjectPrototype | null, b: ObjectPrototype | 
     return false;
   }
   return a.__sameAs(b);
+}
+
+/** `key in p` of a prototype `p` for a key known only at run time. */
+export function __prototypeIn(key: string, p: ObjectPrototype): bool {
+  return p.__hasKey(key);
 }
 
 /**
@@ -382,4 +400,9 @@ export function __computed_key<V>(key: string, value: V): Record<string, V> {
   const r: Record<string, V> = {};
   r[key] = value;
   return r;
+}
+
+/** The array index `s` names (canonical decimal, 0 to 2^32 - 2), or -1. */
+export function __arrayIndex(s: string): i64 {
+  return arrayIndex(s);
 }

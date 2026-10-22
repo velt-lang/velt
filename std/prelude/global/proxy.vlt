@@ -1,0 +1,22 @@
+// Global (loaded when a module names one of these): JavaScript's `Proxy` and `Reflect`
+// (docs/reference/types.md "Proxy and Reflect"). The `__` functions are the operations on `any`
+// that sema calls instead of the prelude's once a program has loaded `Proxy`, so a program that
+// never names it neither checks nor runs a test for a proxy.
+export { PropertyDescriptor, Proxy, ProxyHandler, Reflect } from "velt:proxy";
+export {
+  __anyDeleteProxy,
+  __anyDeleteSym,
+  __anyEntriesProxy,
+  __anyGetSym,
+  __anyHasOwnProxy,
+  __anyIsArrayProxy,
+  __anyHasOwnSym,
+  __anyHasSym,
+  __anySetSym,
+  __anyValuesProxy,
+  __HasOwnPropertyProxy,
+  __proxyKeysOf,
+  __proxyNewAny,
+  __proxySpreadCheck,
+  __spreadAnyProxy,
+} from "velt:proxy/ops";

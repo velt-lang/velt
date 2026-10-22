@@ -97,9 +97,14 @@ export function __spreadAny(r: Record<string, any>, o: any): void {
 
 /**
  * `Object.hasOwn(o, k)` of an `any` (or `object`) `o`: one of its own enumerable keys, or an
- * array's or string's `length`.
+ * array's or string's `length` (a proxy's `getOwnPropertyDescriptor` trap: velt:proxy/ops).
  */
-export function __anyHasOwn(o: any, k: string): boolean {
+export function __anyHasOwn(o: any, key: string | symbol): boolean {
+  if (typeof key !== "string") {
+    // Symbol-keyed members are not among the keys `Object.keys` lists.
+    return false;
+  }
+  const k = key as string;
   if ((Array.isArray(o) || typeof o === "string") && k === "length") {
     return true;
   }
@@ -208,4 +213,77 @@ export function __anyTagUnsupported(name: string): string {
   panic(
     `TypeError: \`Object.prototype.toString.call\` of a ${name} through \`any\` is not supported yet (#924)`,
   );
+}
+
+/**
+ * `delete o.k` / `delete o[k]` of an `any` (or `object`) `o` (strict code) that is not a proxy
+ * (a proxy's `deleteProperty` trap: velt:proxy/ops): `__anyDeletePlain`, and Node's `TypeError`
+ * when the property cannot go.
+ */
+export function __anyDelete(o: any, k: any): boolean {
+  if (o === null || o === undefined) {
+    panic("TypeError: Cannot convert undefined or null to object");
+  }
+  if (typeof o === "string") {
+    // A string's characters and `length` are fixed; it has no other own properties.
+    const key = typeof k === "string" ? (k as string) : `${k}`;
+    const i = __arrayIndex(key) as number;
+    if (key === "length" || (i >= 0 && i < (o.length as number))) {
+      panic(`TypeError: Cannot delete property '${key}' of [object String]`);
+    }
+    return true;
+  }
+  if (typeof o !== "object" && typeof o !== "function") {
+    // A number's or a boolean's properties are its prototype's.
+    return true;
+  }
+  if (!__anyDeletePlain(o, k)) {
+    // Strict code: only an array's `length` refuses.
+    panic(`TypeError: Cannot delete property '${String(k)}' of [object Array]`);
+  }
+  return true;
+}
+
+/**
+ * `delete o[key]` of a plain (not proxy) object `o` (`Reflect.deleteProperty`): a record's key
+ * is removed and an optional field made absent; a key `o` does not have is `true` and an array's
+ * `length` `false`. Other properties are fixed by their types, which Velt cannot remove yet.
+ */
+export function __anyDeletePlain(o: any, key: any): boolean {
+  if (typeof key === "symbol") {
+    panic(
+      "TypeError: deleting a symbol-keyed property of this value through `any` is not supported yet (#823)",
+    );
+  }
+  if (typeof key !== "string" && typeof key !== "number") {
+    panic("TypeError: this property key is not supported through a proxy yet (#823)");
+  }
+  const k = typeof key === "string" ? (key as string) : `${key as number}`;
+  // Velt's arrays have no holes: an element past the end is not there, and one inside would
+  // leave a hole (Node keeps the length). An array method on a proxy deletes the last ones
+  // before it writes the shorter length (velt:proxy/array).
+  if (Array.isArray(o)) {
+    const i = __arrayIndex(k) as number;
+    if (i >= 0) {
+      const n = o.length as number;
+      if (i >= n) {
+        return true;
+      }
+      panic(
+        `TypeError: deleting element ${i} of an array of ${n} through \`any\` is not supported yet (#823): Velt's arrays have no holes`,
+      );
+    }
+  }
+  return __intrinsic_any_delete(o, k);
+}
+
+/**
+ * `Object.prototype.hasOwnProperty` read as a value (`const hasOwn =
+ * Object.prototype.hasOwnProperty`): `hasOwn.call(o, k)` is `Object.hasOwn(o, k)`.
+ */
+export class __HasOwnProperty {
+  /** Whether `o` has the own property `key`. */
+  call(o: any, key: string | symbol): boolean {
+    return __anyHasOwn(o, key);
+  }
 }

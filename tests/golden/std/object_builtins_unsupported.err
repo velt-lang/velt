@@ -3,7 +3,6 @@ an `Object.freeze` result where a `{ a: f64 }` is expected is not supported yet:
 `Object.assign` cannot add `b` to a `{ a: f64 }`: adding a field its type doesn't declare is not supported yet
 `Object.create` with a prototype other than `null` is not supported yet
 `Object.create(null)` makes a `Record<string, V>`: it needs a variable or parameter of that type
-`Object.prototype.hasOwnProperty` as a value is not supported yet
 `Object.getPrototypeOf` of a `Date` is not supported yet
 `Object.getPrototypeOf` of a `{ a: f64 } | null` is not supported yet
 `Object.prototype.toString.call` of a `ObjectPrototype` is not supported yet

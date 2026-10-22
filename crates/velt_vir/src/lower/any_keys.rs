@@ -13,7 +13,9 @@
 //! - arrays, tuples and strings: their indexes as strings;
 //! - booleans, numbers, symbols, functions and the standard library's classes (a `Map`, a
 //!   `Set`, an `Error`): none;
-//! - a proxy (its `ownKeys` trap) and `JsonValue`: not yet.
+//! - a proxy: `Proxy.__keys()` (std/proxy.vlt), which runs its `ownKeys` and
+//!   `getOwnPropertyDescriptor` traps;
+//! - `JsonValue`: not yet.
 
 use velt_sema::hir::{self, DynMemberKind, TyId, TyKind};
 
@@ -79,7 +81,17 @@ impl FnLower<'_, '_> {
             local: out,
             proj: vec![Proj::Deref(self.cx.ty(sa))],
         };
-        if self.is_proxy(ty) || self.cx.is_json_value(ty) {
+        if self.is_proxy(ty) {
+            // Its `ownKeys` and `getOwnPropertyDescriptor` traps (`Proxy.__keys`), whose
+            // `string[]` goes to `*out` as it is (never boxed: a `string[]` an `any` held
+            // would be a counted type in every program that loads `Proxy`).
+            let Some(v) = self.proxy_invoke_typed("__keys", data, ty) else {
+                return self.ret_status(ST_UNSUPPORTED);
+            };
+            self.store(outp, v);
+            return self.ret_status(ST_OK);
+        }
+        if self.cx.is_json_value(ty) {
             return self.ret_status(ST_UNSUPPORTED);
         }
         if self.prelude_record(ty).is_some() {
@@ -180,7 +192,12 @@ impl FnLower<'_, '_> {
                     }
                     None => {
                         let fty = self.cx.member_ty(ty, index);
-                        self.option_is_some(&fp, fty)
+                        // An optional `any` field holds its own `undefined` when absent.
+                        if self.cx.is_dynamic(fty) {
+                            self.any_defined(&fp)
+                        } else {
+                            self.option_is_some(&fp, fty)
+                        }
                     }
                 };
                 let (yes, no) = (self.new_block(), self.new_block());

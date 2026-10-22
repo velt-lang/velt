@@ -167,6 +167,29 @@ impl FnLower<'_, '_> {
             (I::AnySet, [o, k, v]) => self.any_set(o, k, v, false),
             (I::AnySetIndex, [o, i, v]) => self.any_set(o, i, v, true),
             (I::AnyHas, [o, k]) => self.any_has(o, k),
+            (I::AnyDelete, [o, k]) => self.any_delete(o, k),
+            (I::ProxyArrayCall, [o, op]) => {
+                let t = self.sub(o.ty);
+                let v = self.expr(o);
+                let (data, _) = self.any_parts(v, t);
+                let op = self.expr(op);
+                self.rt_i64(Rt::ProxyArrayCall, vec![data, op])
+            }
+            (I::IsTypedProxy, [x]) => {
+                let t = self.sub(x.ty);
+                if !self.cx.proxiable(t) || self.cx.ty(t) != Ty::Ptr {
+                    return crate::vir::Operand::Const(crate::vir::Const::Bool(false), Ty::Bool);
+                }
+                let v = self.expr(x);
+                self.proxy_tagged(v)
+            }
+            (I::ProxyArrayHole, [o, i, op]) => {
+                let t = self.sub(o.ty);
+                let v = self.expr(o);
+                let (data, _) = self.any_parts(v, t);
+                let (i, op) = (self.expr(i), self.expr(op));
+                self.rt_i64(Rt::ProxyArrayHole, vec![data, i, op])
+            }
             (I::AnyIsArray, [a]) => self.any_is_array(a),
             (I::AnyKeys, [o]) => self.any_keys(o, ty),
             (I::AnyTruthy, [a]) => self.any_truthy(a),
@@ -303,5 +326,14 @@ impl FnLower<'_, '_> {
             span: velt_common::Span::default(),
         };
         self.make_dyn(&e, any, t)
+    }
+}
+
+impl FnLower<'_, '_> {
+    /// A call of the runtime function `r`, which returns an `i64`.
+    fn rt_i64(&mut self, r: Rt, args: Vec<Operand>) -> Operand {
+        let d = self.temp(Ty::I64);
+        self.call_rt(r, args, Some(Place::local(d)));
+        Operand::Copy(Place::local(d))
     }
 }
