@@ -88,7 +88,7 @@ mod object_assign;
 pub(crate) mod object_builtins;
 mod object_copy;
 mod object_define;
-mod object_keys;
+pub(crate) mod object_keys;
 mod object_method;
 mod object_own;
 mod object_prototypes;

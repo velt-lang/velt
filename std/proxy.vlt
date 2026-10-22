@@ -275,6 +275,11 @@ export class Proxy {
     return Array.isArray(t);
   }
 
+  /** This proxy, as an `any`. */
+  __self(): any {
+    return this;
+  }
+
   /** The target. */
   __target(): any {
     return this.#target;
