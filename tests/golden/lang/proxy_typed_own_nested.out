@@ -1,0 +1,5 @@
+x false true a true false x|y false true a|b true false
+ownKeys,gopd x,has a,gopd x,ownKeys,gopd a,has a,gopd x
+true true true true
+ownKeys,gopd a,ownKeys,gopd x,ax,has x,gopd y,has a,gopd a
+ownKeys,gopd a,async a

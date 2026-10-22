@@ -1,0 +1,15 @@
+true
+key
+true
+key,gopd a
+true false
+has b,gopd zz,ownKeys,gopd a,k a,gopd b,k b
+true true true false
+ownKeys,gopd a,k a,gopd b,k b,has a,gopd c
+true 1 true 0
+has a
+true true
+pick,has a,pick,gopd a,pick,ownKeys,gopd a,k a,gopd b,k b
+true true
+false false
+gopd a,gopd a,gopd zz,gopd zz

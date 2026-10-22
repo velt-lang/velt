@@ -1,0 +1,54 @@
+// `for (const k in s)` of a typed proxy (a variable, a call, a property): `ownKeys` runs once and
+// `getOwnPropertyDescriptor` just before each key's turn, so `break` stops it at that key and a
+// key the trap hides is skipped, as in Node.
+interface Props {
+  a: number;
+  b: number;
+}
+
+const raw: Props = { a: 1, b: 2 };
+const s: Props =
+  new Proxy(raw as any, {
+    ownKeys(t: any): any {
+      console.log("ownKeys");
+      return Reflect.ownKeys(t);
+    },
+    getOwnPropertyDescriptor(t: any, k: string | symbol): PropertyDescriptor | undefined {
+      console.log("gopd", String(k));
+      return Reflect.getOwnPropertyDescriptor(t, k);
+    },
+  }) as Props;
+
+function get(): Props {
+  console.log("get()");
+  return s;
+}
+
+for (const k in s) {
+  console.log("var", k);
+  break;
+}
+for (const k in get()) {
+  console.log("call", k);
+  break;
+}
+const h = { s: s };
+for (const k in h.s) {
+  console.log("prop", k);
+  break;
+}
+const hidden: Props =
+  new Proxy({ a: 1, b: 2 } as any, {
+    getOwnPropertyDescriptor(t: any, k: string | symbol): PropertyDescriptor | undefined {
+      console.log("hide gopd", String(k));
+      return k === "b" ? undefined : Reflect.getOwnPropertyDescriptor(t, k);
+    },
+  }) as Props;
+for (const k in hidden) {
+  console.log("hidden", k);
+}
+// A plain value of the type lists its fields.
+for (const k in raw) {
+  console.log("plain", k);
+}
+// check: no leaks
