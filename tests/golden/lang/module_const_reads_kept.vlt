@@ -1,0 +1,48 @@
+// A constant initialized by a call is evaluated at each use only when that gives what Node's
+// single evaluation gives (#1383): a call that changes, or reads, a constant the program keeps
+// as module state (`LOG`, which `main` changes) makes it module state too, evaluated once in
+// Node's order, and so does an initializer that reads one directly, or reads a constant kept
+// that way (`SAME` is `K` itself), or a module-level `let` the program changes (`ticks`).
+
+const LOG: number[] = [];
+let ticks = 0;
+
+function current(): number {
+  return ticks;
+}
+
+function note(): number {
+  LOG.push(1);
+  return LOG.length;
+}
+
+function count(): number {
+  return LOG.length;
+}
+
+type P = { n: number };
+
+const K: P = { n: 1 };
+
+function getK(): P {
+  return K;
+}
+
+const SAME = getK();
+const N = SAME.n + 0;
+const START = ticks;
+const AT = { c: ticks };
+const CURRENT = current();
+const NOTED = note();
+const COUNTED = count();
+const LENGTH = LOG.length + 0;
+
+function main() {
+  console.log(NOTED, NOTED, LOG.length);
+  LOG.push(2);
+  console.log(COUNTED, LENGTH, LOG.length, NOTED);
+  K.n = 5;
+  console.log(N, SAME.n, SAME === K);
+  ticks += 2;
+  console.log(START, AT.c, CURRENT, ticks);
+}

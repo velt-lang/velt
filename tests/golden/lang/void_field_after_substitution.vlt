@@ -1,0 +1,32 @@
+// A field whose type is `void` once a type argument is filled in (sigx's `ComponentFactory` brand
+// `__ref: TRef`, with `TRef = void` by default), as in TypeScript: the object type is accepted,
+// and a write through `any` to the field (`factory.__ref = null as any`) is too.
+type Factory<TProps, TRef> = ((props: TProps) => string) & { __name: string; __ref: TRef };
+
+function component<TProps, TRef = void>(
+  name: string,
+  render: (props: TProps) => string,
+): Factory<TProps, TRef> {
+  const factory = ((props: TProps) => render(props)) as Factory<TProps, TRef>;
+  factory.__name = name;
+  factory.__ref = null as any;
+  return factory;
+}
+
+type Box<T> = { name: string; v: T };
+
+function boxed<T = void>(name: string): Box<T> {
+  return { name, v: undefined as any };
+}
+
+function holding<T>(name: string, v: T): Box<T> {
+  return { name, v };
+}
+
+function nothing(): void {}
+
+const Row = component<{ title: string }>("Row", (p) => `<li>${p.title}</li>`);
+console.log(Row.__name, Row({ title: "a" }));
+const b = boxed("b");
+const c = holding("c", nothing());
+console.log(b.name, c.name);

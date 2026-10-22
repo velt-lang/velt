@@ -1,0 +1,68 @@
+// A table passed to a function value, taken over through another name (`K!`, an imported
+// `lib.T`, a conditional, a generic function) or by an interface method is the one array Node
+// evaluates once (#1383): module state, so the changes show in every use.
+import * as lib from "./_module_const_tables_taken_lib";
+
+const K: number[] = [10, 20, 30];
+const L: number[] = [1, 2];
+
+function apply(f: (xs: number[]) => void, xs: number[]) {
+  f(xs);
+}
+
+function each(fs: ((xs: number[]) => void)[]) {
+  for (const f of fs) {
+    f(K);
+  }
+}
+
+function pick(c: boolean): number[] {
+  return c ? K : L;
+}
+
+function identity<T>(x: T): T {
+  return x;
+}
+
+interface Sink {
+  put(xs: number[]): void;
+}
+
+class Appender implements Sink {
+  put(xs: number[]) {
+    xs.push(1);
+  }
+}
+
+function feed(s: Sink) {
+  s.put(K);
+}
+
+function main() {
+  const w = (xs: number[]) => {
+    xs.push(xs.length);
+    return xs.length;
+  };
+  console.log(w(K), w(K!), w(lib.T));
+  const fs = [
+    (xs: number[]) => {
+      xs.fill(0, 0, 1);
+    },
+    (xs: number[]) => {
+      xs.length = 4;
+    },
+  ];
+  fs[0](K);
+  apply((xs) => xs.push(7), K);
+  apply(fs[1], K);
+  each(fs);
+  const a = K!;
+  const b = lib.T;
+  a.push(4);
+  b.push(8);
+  console.log(K, lib.T, a === K, b === lib.T);
+  console.log(w(Math.random() > 2 ? K : L), w(K ?? L), w(K as number[]), w(identity(K)));
+  console.log(w(pick(false)), L);
+  feed(new Appender());
+  console.log(K);
+}

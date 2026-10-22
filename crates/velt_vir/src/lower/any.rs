@@ -415,6 +415,9 @@ impl FnLower<'_, '_> {
         if matches!(self.cx.kind(ty), TyKind::Never) {
             return self.any_to_never(v, from, ty);
         }
+        if matches!(self.cx.kind(ty), TyKind::Unit) {
+            return self.any_to_void(v, from);
+        }
         if self.cx.is_dynamic(ty) {
             if self.is_object_ty(ty) && !self.cx.is_narrow_dynamic(from) {
                 // `any` / `unknown` to `object` (issue #926): a primitive is a `TypeError`;

@@ -80,7 +80,7 @@ impl FnCx<'_, '_> {
         let spread_v = props.iter().find_map(|p| match p {
             ast::ObjectProp::Spread(e) if computed_entry(e).is_none() => self
                 .trial_type(e)
-                .and_then(|t| self.record_args(t))
+                .and_then(|t| self.record_args(self.cx.ty.core(t).unwrap_or(t)))
                 .map(|(_, v)| v),
             _ => None,
         });
@@ -156,7 +156,7 @@ impl FnCx<'_, '_> {
 
     /// [`Self::record_literal`] with known `K` and `V`; `pre`: the values, already checked
     /// (by property; empty: none are).
-    fn record_literal_with(
+    pub(super) fn record_literal_with(
         &mut self,
         d: DefId,
         k: TyId,
@@ -241,8 +241,18 @@ impl FnCx<'_, '_> {
                     }
                 }
                 ast::ObjectProp::Spread(e) => {
-                    complete = true;
-                    self.record_call(recv, "__extend", std::slice::from_ref(e), e.span)
+                    // `...r` of a `Record | null` (or `| undefined`) copies nothing when `r` is
+                    // nothing, as in JavaScript.
+                    let nullable = self
+                        .trial_type(e)
+                        .is_some_and(|t| self.cx.ty.core(t).is_some());
+                    complete = !nullable;
+                    let m = if nullable {
+                        "__extendMaybe"
+                    } else {
+                        "__extend"
+                    };
+                    self.record_call(recv, m, std::slice::from_ref(e), e.span)
                 }
                 ast::ObjectProp::KeyValue(name, _) | ast::ObjectProp::Shorthand(name) => {
                     let pre = pre.get_mut(i).and_then(Option::take);

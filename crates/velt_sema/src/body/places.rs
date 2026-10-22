@@ -92,18 +92,24 @@ impl FnCx<'_, '_> {
         if is_place(e) {
             set_place_mode(e, m);
         }
-        // A module constant bound by reference (`const v = ns.K`, `Cls.K`, `K!`): one that is a
-        // table can't be taken over, like `const v = K`.
+        // A module constant bound by reference (`const v = ns.K`, `Cls.K`, `K!`): taken over like
+        // `const v = K`, it is the one object the module state keeps; a table that can't be kept
+        // (`Cls.K`) can't be taken over.
         if let H::Global(d) = e.kind {
-            // Module state taken by value (`g!`, `g ?? d` binding the payload of a module
-            // `let`): another reference to the value the slot keeps, as `global_read` makes
-            // for `const v = g`, not a move out of the slot.
-            if m == UseMode::Move && self.cx.global(d).is_some_and(|g| g.stored) {
+            let stored = self.cx.global(d).is_some_and(|g| g.stored);
+            let table = crate::body::pure_init::is_table(self.cx, d);
+            let object = table || crate::body::pure_init::mutable_identity(self.cx, e.ty);
+            // Module state taken by value (`g!`, `g ?? d` binding the payload of a module `let`)
+            // is another reference to the value the slot keeps, as `global_read` makes for
+            // `const v = g`, not a move out of the slot. Without it the type may be stored
+            // inline, and the binding would be a copy.
+            let kept = object && crate::kept_consts::keep(self.cx, d);
+            if kept || (stored && m == UseMode::Move) {
                 let read = std::mem::replace(e, self.mk(H::Lit(hir::Lit::Null), e.ty, e.span));
                 *e = self.intrinsic(Intrinsic::Share, vec![read], e.ty, e.span);
                 return;
             }
-            if crate::body::pure_init::is_table(self.cx, d) {
+            if table && !kept {
                 let name = self
                     .cx
                     .global(d)
@@ -174,7 +180,10 @@ impl FnCx<'_, '_> {
                 .global(d)
                 .map(|g| (g.name.clone(), g.stored, g.mutable, g.module))
                 .unwrap_or_default();
-            if stored {
+            // Assigning a constant itself stays an error; what it holds may be modified, as in
+            // Node, once it is the one object the module state keeps.
+            let rebinds = matches!(e.kind, H::Global(_)) && what == "assign to";
+            if stored || (!rebinds && crate::kept_consts::keep(self.cx, d)) {
                 if matches!(e.kind, H::Global(_)) && !mutable && what == "assign to" {
                     self.cx.err(
                         format!("cannot assign to `{name}`, a module `const`"),

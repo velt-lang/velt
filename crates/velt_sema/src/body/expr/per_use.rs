@@ -2,8 +2,9 @@
 //! reached through a form that hides them from the place check: `K!`, `K as T`, `K ?? d`,
 //! `K || d`, `c ? K : d`, a namespace member (`ns.K`) and, when taken by value, a part of one
 //! (`K!.a`, `N.a`). Each use makes a new value, so a write through one of these forms, or a
-//! variable taking one over, would change a copy where TypeScript changes the one object:
-//! both are reported, as `K.v = 1` and `const v = K` are.
+//! variable taking one over, would change a copy where TypeScript changes the one object: the
+//! constant is kept in the module state (`crate::kept_consts::keep`), as for `K.v = 1` and
+//! `const v = K`, or, when it can't be (it holds a promise), reported as those are.
 
 use velt_common::Span;
 use velt_syntax::ast;
@@ -25,18 +26,23 @@ enum Parts {
 impl FnCx<'_, '_> {
     /// A write into a part of `target` whose object reaches a module constant evaluated at
     /// each use through `!`, `as`, `??`, `||`, `&&` or `?:` (`K!.v = 1`, `(K as any).v = 1`,
-    /// `(c ? K! : d).v = 1`, `(ns.K as any).v = 1`): reported, as `K.v = 1` is, since the
-    /// write would change a copy. The source form is followed, whatever the checked target
-    /// becomes (a conversion to `any`, a narrowed read).
+    /// `(c ? K! : d).v = 1`, `(ns.K as any).v = 1`): the constant is kept in the module state,
+    /// as for `K.v = 1`, or, when it can't be, the write is reported, since it would change a
+    /// copy. The source form is followed, whatever the checked target becomes (a conversion to
+    /// `any`, a narrowed read).
     pub(super) fn per_use_const_write(&mut self, target: &ast::Expr) -> bool {
         let (object, what) = match &strip_parens(target).kind {
             ast::ExprKind::Member { object, .. } => (object, "assign to a field of"),
             ast::ExprKind::Index { object, .. } => (object, "assign to an element of"),
             _ => return false,
         };
-        let Some((_, name, span)) = self.per_use_root(object, false, Parts::Write) else {
+        let Some((d, name, span)) = self.per_use_root(object, false, Parts::Write) else {
             return false;
         };
+        // Written, the constant is the one object the module state keeps, as in Node.
+        if crate::kept_consts::keep(self.cx, d) {
+            return false;
+        }
         self.cx.err(
             format!("cannot {what} module-level constant `{name}`"),
             span,
@@ -45,8 +51,9 @@ impl FnCx<'_, '_> {
     }
 
     /// `e`, of type `ty`, taken by value (`const t = (K ?? d)!`, `K!.a`, `N.a`, `K?.a ?? d`):
-    /// when it is (a part of) a module constant evaluated at each use, the error of
-    /// `const v = K` (`moved_out_of_const`). A bare `K` is `global_read`'s.
+    /// when it is (a part of) a module constant evaluated at each use, the constant is kept in
+    /// the module state, or it is the error of `const v = K` (`moved_out_of_const`). A bare `K`
+    /// is `global_read`'s.
     pub(crate) fn per_use_taken(&mut self, e: &ast::Expr, ty: TyId) {
         if self.copied_value(ty) {
             return;
@@ -59,7 +66,7 @@ impl FnCx<'_, '_> {
 
     /// `wm.set(K!.a, 1)`, `new WeakRef(N.a)` (`h`: the key): a weak key is an object's
     /// identity, which a module constant evaluated at each use (or a part of one) has anew at
-    /// each use, so the entry could never be found again: the error of `const v = K`.
+    /// each use, so the entry could never be found again: kept, or the error of `const v = K`.
     pub(super) fn per_use_weak_key(&mut self, h: &crate::hir::Expr) {
         use crate::body::moved_const as mc;
         if self.copied_value(h.ty) {
@@ -94,8 +101,9 @@ impl FnCx<'_, '_> {
     }
 
     /// `{ ...K!, v: 2 }` (`props`): a spread of a module constant evaluated at each use copies
-    /// the fields that hold objects, where TypeScript shares them: the error of `const v = K`
-    /// when one of the fields is not copied (or the fields are not known).
+    /// the fields that hold objects, where TypeScript shares them: when one of the fields is not
+    /// copied (or the fields are not known), the constant is kept, or it is the error of
+    /// `const v = K`.
     pub(super) fn per_use_spreads(&mut self, props: &[ast::ObjectProp]) {
         for p in props {
             let ast::ObjectProp::Spread(e) = p else {

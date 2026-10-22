@@ -157,7 +157,7 @@ impl Ctx<'_> {
     }
 
     /// `{ a: A; b: B }`: the anonymous object type of that shape.
-    fn resolve_object(&mut self, fields: &[ast::ObjectTypeField], env: &TyEnv) -> TyId {
+    pub(crate) fn resolve_object(&mut self, fields: &[ast::ObjectTypeField], env: &TyEnv) -> TyId {
         let mut out: Vec<ShapeField> = vec![];
         let mut spans = vec![];
         for f in fields {

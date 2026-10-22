@@ -373,7 +373,10 @@ impl FnCx<'_, '_> {
         crate::body::driver::ensure_global(self.cx, d);
         let g = self.cx.global(d).expect("ICE: global");
         let (ty, mutable) = (g.ty, g.stored);
-        if mutable {
+        // A constant whose value is taken over is the one object Node evaluates once.
+        let taken = want == Want::Move && !self.cx.is_copy(ty) && ty != self.cx.ty.str_;
+        let shared_fn = taken && crate::body::pure_init::shares_on_move(self.cx, d);
+        if mutable || (taken && !shared_fn && crate::kept_consts::keep(self.cx, d)) {
             let read = self.mk(H::Global(d), ty, span);
             if want == Want::Move && !self.cx.is_copy(ty) {
                 // Another reference to the value the module state keeps, as JS aliases it.
@@ -394,10 +397,10 @@ impl FnCx<'_, '_> {
     }
 
     /// Module constant `d`, evaluated at each use, taken over by value (`const v = K`, and
-    /// through `!` or `??`: `const v = K!`, `let v = K ?? d`, or a part: `const a = N.a`): an
-    /// error unless its value is copied, as a string or a number is (`ty`: the type of the value
-    /// taken; `part`: its source form, for the note). TypeScript would alias it, so a change
-    /// through the copy would show in the constant.
+    /// through `!` or `??`: `const v = K!`, `let v = K ?? d`, or a part: `const a = N.a`), when
+    /// its value is not copied, as a string or a number is (`ty`: the type of the value taken;
+    /// `part`: its source form, for the note): kept in the module state, as TypeScript aliases
+    /// the one object, or an error when it can't be kept.
     pub(crate) fn moved_out_of_const(
         &mut self,
         d: DefId,
@@ -411,11 +414,20 @@ impl FnCx<'_, '_> {
         if g.stored || crate::body::pure_init::shares_on_move(self.cx, d) {
             return;
         }
-        if crate::body::pure_init::is_table(self.cx, d) {
+        let table = crate::body::pure_init::is_table(self.cx, d);
+        if !table && self.copied_value(ty) {
+            return;
+        }
+        // Taken over, the constant is the one object the module state keeps, as in Node; the
+        // ones that can't be kept (`kept_consts::keep`) are errors.
+        if crate::kept_consts::keep(self.cx, d) {
+            return;
+        }
+        if table {
             let msg = format!("cannot move out of module constant `{name}`");
             let err = crate::body::pure_init::table_escapes(&name, msg, span);
             mc::report(self.cx, d, span, err);
-        } else if !self.copied_value(ty) {
+        } else {
             let err = mc::error(&name, part.as_deref(), span);
             mc::report(self.cx, d, span, err);
         }

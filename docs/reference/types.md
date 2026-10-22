@@ -1021,6 +1021,14 @@ console.log(show("ab"), show(41)); // AB 42
 - A literal predicate type (`x is "a"` on `string | number`) narrows to the member it is a
   value of (`string`) when the call is true and leaves the variable as it is when false; a
   type no member of the variable's type is (`x is Dog` on `string | number`) does not narrow.
+  An object type that is no member narrows, when the call is true, to the members whose values
+  have every required member of it: `v is { length: number }` on `string | number` to `string`
+  (strings, arrays and functions have `length`), and `v is Computed<unknown>` on a `JSXChild`
+  (primitives, arrays and object types without `value`) to nothing, as TypeScript's
+  intersection with them has no value Velt can hold: the code there type-checks (`v.value`) and
+  does not run, and a predicate that returns true anyway panics as above. A union with an
+  interface value or a class instance isn't narrowed. When false, the variable is left as it
+  is.
 - The function must be declared with `function` and not be generic for its calls to narrow; a
   predicate on an arrow or a function type (`(x: unknown) => x is T`) is just a `boolean`
   result. `this is T` is accepted and not used for narrowing yet.
@@ -1544,7 +1552,15 @@ Enums are not generic and have no payloads; use a discriminated union for tagged
   insertion order (`JSON.parse` too).
 - **Generic object types** are structural, as in TypeScript: an instance is the object type it
   spells out, so with `type Box<T> = { v: T }`, `Box<string>` *is* `{ v: string }`, and so is
-  the instance of a generic interface with only fields.
+  the instance of a generic interface with only fields. An instance whose field is `void`
+  (`Box<void>`, or sigx's `__ref: TRef` brand with `TRef = void`) is accepted, as in
+  TypeScript, but the field keeps no value: what is written to it (`ref: null as any`) is
+  dropped, and a read of it is `void` (which can't be printed or tested). Printing the object
+  directly or writing it as JSON (directly or through a generic) is a compile error, and
+  printing it through a generic or an `any`, writing it as JSON through an `any` or `unknown`,
+  or reading the field through an `any`, stops with a `TypeError` (#1411), where Node shows the
+  value written. A `void` field written in an object type, a struct or a class, or a class
+  instance with one (`new Holder<void>()`), is an error.
 
 ```ts
 type Box<T> = { v: T };
@@ -1910,9 +1926,24 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   `d[k] ?? 0`, `d[k] || 0` and `d[k]?.push(x)` work as in JavaScript. The value type may include
   `null` (`{ [k: string]: number | null }`): a key holding `null` is present (listed by
   `Object.keys`, written by `JSON.stringify`) and reads `null`, a missing key `undefined`. As for `readonly T[]`, a `readonly`
-  index signature is not checked for writes yet. Not supported yet (each is an error): named
-  members next to an index signature (`{ name?: string; [key: string]: string | undefined }`,
-  which needs `undefined`, #930), a `number` or `symbol` key, two index signatures in one type,
+  index signature is not checked for writes yet. Named members next to an index signature of
+  `any` or `unknown` values (`interface Props { label: string; children?: string; [key: string]:
+  any }`) make the type that record too, as every member's type is one the values have: a named
+  member is a key like any other (written, deleted, listed and spread in insertion order). A
+  required named member reads as its declared type (`props.label.toUpperCase()`,
+  `props["label"]`, `props.n += 1`), checked at run time since an index write may store another
+  type; an optional one reads as `any` (or
+  `unknown`) for now (#930). A literal's value for a required named member, and a value written
+  to one (`props.items = []`, `props["items"] = []`), is checked against its declared type, so
+  `{ items: [] }` holds a `number[]` for `items: number[]` and a callback's parameters get
+  their types (`{ onClick: (e) => ... }`). A value with more fields than the member's type is
+  converted by copying them, as anywhere an object type is expected, and printing or
+  serializing the record is then an error (Node would show the original's fields). A key holding a function is called as a
+  method (`props.onClick()`, also on any `Record<string, any>`). A spread of a record that may be
+  `null` or `undefined` (`{ ...props }` with `props: Props | null`) is a record too, and copies
+  nothing when it is. Not supported yet (each is an error): named members next to an index
+  signature of other values (`{ name?: string; [key: string]: string | undefined }`, which needs
+  `undefined`, #930), a `number` or `symbol` key, two index signatures in one type,
   and an interface with an index signature that also has methods or `extends`. An object of a
   named object type does not convert to an index-signature type (TypeScript allows it for type
   aliases but not interfaces): build a record (`{ ...o }` with values of one type) instead.
@@ -2261,9 +2292,11 @@ Where an interface with methods is expected (an annotation, a parameter, a retur
   every other member must be given, and a member the interface doesn't declare is an error.
 - The value is an interface value: its members are read and called through the interface.
 - Such a literal may be a module constant, exported or not (`export const upper: Handler = {
-  … }`). Like every module constant it is evaluated at each use, so comparing it by identity
-  (`===`) is an error, and each use passed on is a new value, as for a function-valued constant
-  ([Variables](variables.md#module-constants-initialized-by-a-call)).
+  … }`). Like every module constant it is evaluated at each use, and each use passed on is a
+  new value, as for a function-valued constant
+  ([Variables](variables.md#module-constants-initialized-by-a-call)), unless the program compares
+  it by identity (`===`): it is then [module state](variables.md#module-state), one value as in
+  Node.
 
 ```ts
 interface Counter {

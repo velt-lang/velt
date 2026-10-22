@@ -1,0 +1,63 @@
+// Module constants whose object is returned, bound or stored, as sigx's render path does
+// (#1383): each is the one object Node evaluates once, kept in the module state, so every use
+// refers to it and a change through one name shows through the others.
+
+const MISS = { hit: false, value: 0 } as const;
+const EMPTY_SEQUENCE: number[] = [];
+type Pending = { state: string; loading: boolean; refresh: () => number };
+
+const INERT: Readonly<Pending> = Object.freeze({
+  state: "pending",
+  loading: true,
+  refresh: (): number => 0,
+});
+
+interface Engine {
+  name: string;
+  run(n: number): number;
+}
+
+const defaultEngine: Engine = {
+  name: "default",
+  run(n: number): number {
+    return n * 2;
+  },
+};
+
+type Hit = { readonly hit: boolean; readonly value: number };
+
+function peek(key: string): Hit {
+  if (key === "x") return { hit: true, value: 1 };
+  return MISS;
+}
+
+function sequence(n: number): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < n; i++) out.push(i);
+  return out;
+}
+
+function stable(moved: boolean, n: number): number[] {
+  return moved ? sequence(n) : EMPTY_SEQUENCE;
+}
+
+function state(ready: boolean): Readonly<Pending> {
+  if (!ready) return INERT;
+  return { state: "pending", loading: false, refresh: (): number => 1 };
+}
+
+function lookup(provided: Engine | null): Engine {
+  return provided ?? defaultEngine;
+}
+
+function main() {
+  const a = peek("y");
+  const b = peek("y");
+  console.log(a.hit, peek("x").value, a === b, a === MISS);
+  console.log(stable(true, 3), stable(false, 3).length, stable(false, 1) === EMPTY_SEQUENCE);
+  const s = state(false);
+  console.log(s.loading, s.refresh(), s === INERT, state(true).refresh());
+  const e = lookup(null);
+  e.name = "changed";
+  console.log(e.run(4), defaultEngine.name, lookup(null) === defaultEngine);
+}

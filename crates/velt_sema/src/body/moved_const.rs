@@ -1,9 +1,10 @@
-//! The error for a module constant evaluated at each use (`export const N: J = { … }`) whose
-//! value, or a part of it, is taken over by value: by a variable, a field, a collection or a
-//! parameter the callee keeps (`const t = N.a`, `m.set("x", K!.a)`, `new Box(N.a)`). Each use
-//! makes a new object, so the taker would hold a copy where TypeScript shares the one object.
-//! Reported once per constant and span, whether the body check (`FnCx::moved_out_of_const`) or
-//! the ownership pass (`ownership::infer::force_move`) finds it.
+//! A module constant evaluated at each use (`export const N: J = { … }`) whose value, or a part
+//! of it, is taken over by value: by a variable, a field, a collection or a parameter the callee
+//! keeps (`const t = N.a`, `m.set("x", K!.a)`, `new Box(N.a)`, `arr.fill(N.a)`). Each use makes
+//! a new object, so the taker would hold a copy where TypeScript shares the one object: the
+//! constant is kept in the module state (`crate::kept_consts::keep`), or, when it can't be (it
+//! holds a promise), this error is reported, once per constant and span, whether the body check
+//! (`FnCx::moved_out_of_const`) or the ownership pass (`ownership::infer::force_move`) finds it.
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
@@ -150,8 +151,9 @@ pub(crate) fn hir_root(cx: &mut Ctx, e: &Expr) -> Option<(DefId, Option<String>)
         E::Block(b) => b.value.as_deref().and_then(|t| hir_root(cx, t)),
         E::Match { scrutinee, arms } => {
             for a in arms {
-                // `Some(x) => x`: the arm gives (a part of) the scrutinee.
-                let binds = matches!(&a.body.kind, E::Local(m, _) if pat_binds(&a.pat, *m));
+                // `Some(x) => x`, `Some(k) => Some(k.a)` (`K?.a`): the arm gives (a part of)
+                // the scrutinee.
+                let binds = local_root(&a.body).is_some_and(|m| pat_binds(&a.pat, m));
                 let found = match binds {
                     true => hir_root(cx, scrutinee),
                     false => hir_root(cx, &a.body),
@@ -162,6 +164,21 @@ pub(crate) fn hir_root(cx: &mut Ctx, e: &Expr) -> Option<(DefId, Option<String>)
             }
             None
         }
+        _ => None,
+    }
+}
+
+/// The local that `e` is (a part of), through fields, elements and wrappers (`Some(k.a)`).
+fn local_root(e: &Expr) -> Option<LocalId> {
+    match &e.kind {
+        E::Local(l, _) => Some(*l),
+        E::Field { base: x, .. }
+        | E::Index { base: x, .. }
+        | E::UnwrapSome(x, _)
+        | E::UnwrapVariant { expr: x, .. }
+        | E::Upcast(x)
+        | E::Downcast(x)
+        | E::WrapSome(x) => local_root(x),
         _ => None,
     }
 }

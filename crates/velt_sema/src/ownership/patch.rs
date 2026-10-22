@@ -43,6 +43,8 @@ pub(super) fn patch_calls(
         let returns_promise = matches!(cx.ty.kind(e.ty), TyKind::Promise(..));
         let span = e.span;
         let mut modified = 0u64;
+        // The function called, and the index of its parameter the first argument fills.
+        let mut shared_from = None;
         let (modes, args, unknown) = match &mut e.kind {
             E::Call { callee, args } => {
                 // A closure literal passed to a parameter of a generic type may be kept as a
@@ -64,6 +66,9 @@ pub(super) fn patch_calls(
                     changed |= escape_literal_args(cx, args, &keeps, borrowed);
                 }
                 let modes = call_modes(cx, callee, args);
+                if let Some(Target::Fn(d)) = call_target(cx, callee, args) {
+                    shared_from = Some((d, 0));
+                }
                 let unknown = modes.is_none() && !matches!(callee, Callee::Intrinsic(_));
                 if let (true, Callee::Def(d, _)) = (frozen, &*callee) {
                     let info = cx.fn_info(*d);
@@ -77,6 +82,7 @@ pub(super) fn patch_calls(
                     if frozen {
                         modified = cx.fn_info(c).modified_params >> 1;
                     }
+                    shared_from = Some((c, 1));
                     (Some(modes_of(cx, c)[1..].to_vec()), args, false)
                 }
                 None => return,
@@ -104,6 +110,12 @@ pub(super) fn patch_calls(
                 match m {
                     PassMode::Owned => changed |= force_move(cx, a, &mut errors),
                     PassMode::BorrowMut => changed |= borrow_mut(cx, a, &mut errors),
+                    // A borrowed parameter the callee shares into what it keeps (`fill`).
+                    PassMode::Borrow => {
+                        if let Some((f, at)) = shared_from {
+                            super::infer::kept_by_share(cx, f, at + i, a, &mut errors);
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -309,8 +321,17 @@ fn iface_modes(cx: &mut Ctx, iface: DefId, slot: u32) -> Option<Vec<PassMode>> {
 
 /// Tables passed to a callee whose parameter modes are not known (a function value): it may
 /// modify them, and they are read-only data.
-fn table_args(cx: &Ctx, args: &[Expr], errors: &mut Vec<Diagnostic>) {
-    for a in args.iter().filter(|a| table_arg(cx, a)) {
+/// A module constant passed to such a callee, which may modify it, is the one object the module
+/// state keeps (`crate::kept_consts::keep`); a table that can't be kept is an error.
+fn table_args(cx: &mut Ctx, args: &[Expr], errors: &mut Vec<Diagnostic>) {
+    for a in args {
+        let table = table_arg(cx, a);
+        if !table && !object_global_arg(cx, a) {
+            continue;
+        }
+        if keep_root(cx, a) || !table {
+            continue;
+        }
         let name = global_root(cx, a).unwrap_or_default();
         let msg = format!("cannot pass module constant `{name}` to a function value");
         errors.push(crate::body::pure_init::table_escapes(&name, msg, a.span));
@@ -328,6 +349,16 @@ fn table_args(cx: &Ctx, args: &[Expr], errors: &mut Vec<Diagnostic>) {
     }
 }
 
+/// Is argument `a` (through upcasts) a module constant, or a part of one, that a change could be
+/// seen through (`crate::body::pure_init::mutable_identity`)?
+fn object_global_arg(cx: &Ctx, a: &Expr) -> bool {
+    let mut x = a;
+    while let E::Upcast(inner) | E::Downcast(inner) = &x.kind {
+        x = inner;
+    }
+    global_root(cx, x).is_some() && crate::body::pure_init::mutable_identity(cx, x.ty)
+}
+
 /// Is argument `a` a table (through upcasts)?
 fn table_arg(cx: &Ctx, a: &Expr) -> bool {
     let mut x = a;
@@ -338,7 +369,7 @@ fn table_arg(cx: &Ctx, a: &Expr) -> bool {
 }
 
 /// Borrow argument place `e` mutably (through an upcast); returns whether a mode changed.
-fn borrow_mut(cx: &Ctx, e: &mut Expr, errors: &mut Vec<Diagnostic>) -> bool {
+fn borrow_mut(cx: &mut Ctx, e: &mut Expr, errors: &mut Vec<Diagnostic>) -> bool {
     let target = match &mut e.kind {
         E::Upcast(inner) | E::Downcast(inner) => &mut **inner,
         _ => e,
@@ -350,8 +381,10 @@ fn borrow_mut(cx: &Ctx, e: &mut Expr, errors: &mut Vec<Diagnostic>) -> bool {
     if !is_place(target) || outer_mode(target) != Some(UseMode::Borrow) {
         return false;
     }
-    if mutable_root(cx, target) {
-        // A module-level `let` may be modified in place: its slot is the place itself.
+    // Module state may be modified in place: a module-level `let`, or a module constant the call
+    // may modify, which is then the one object the module state keeps, as in Node.
+    if keep_root(cx, target) {
+        // The slot is the place itself.
         if matches!(target.kind, E::Global(_)) {
             return false;
         }
@@ -397,15 +430,17 @@ fn outer_mode(e: &Expr) -> Option<UseMode> {
     }
 }
 
-/// Is place `e` rooted at a module-level `let`?
-fn mutable_root(cx: &Ctx, e: &Expr) -> bool {
+/// Is place `e` rooted at module state: a module-level `let`, or a module constant kept there
+/// from now on (`crate::kept_consts::keep`)?
+fn keep_root(cx: &mut Ctx, e: &Expr) -> bool {
     match &e.kind {
-        E::Global(d) => cx.global(*d).is_some_and(|g| g.stored),
+        E::Global(d) => crate::kept_consts::keep(cx, *d),
         E::Field { base, .. }
         | E::Index { base, .. }
         | E::UnwrapSome(base, _)
         | E::UnwrapVariant { expr: base, .. }
-        | E::Downcast(base) => mutable_root(cx, base),
+        | E::Upcast(base)
+        | E::Downcast(base) => keep_root(cx, base),
         _ => false,
     }
 }
@@ -477,6 +512,7 @@ fn callbacks(cx: &mut Ctx, args: &mut [Expr], errors: &mut Vec<Diagnostic>) -> b
             Callback::Unknown => {
                 super::evidence::in_root_memory(arg)
                     || table_arg(cx, arg)
+                    || object_global_arg(cx, arg)
                     || cx.frozen_reads && frozen_root(arg)
             }
             Callback::None => false,
