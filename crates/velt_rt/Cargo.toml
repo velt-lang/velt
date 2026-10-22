@@ -56,5 +56,6 @@ mimalloc = ["dep:mimalloc", "dep:libmimalloc-sys"]
 
 [dev-dependencies]
 cc = "1.5.1"
-# The native-package SDK: its table and value layouts must match `native.rs`.
-velt_native = { path = "../velt_native" }
+# The native-package SDK: its table and value layouts must match `native/`, and its async I/O
+# runs against the runtime in `native/aio_tests.rs`.
+velt_native = { path = "../velt_native", features = ["tokio"] }

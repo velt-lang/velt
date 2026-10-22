@@ -87,6 +87,55 @@ unsafe extern "C" fn fatal(msg: *const u8, len: usize) -> ! {
     )
 }
 
+// The async entries are exercised against the real runtime (velt_rt's `native/aio_tests.rs`).
+macro_rules! unused {
+    ($name:ident ( $($a:ty),* $(,)? ) $(-> $r:ty)?) => {
+        unsafe extern "C" fn $name($(_: $a),*) $(-> $r)? {
+            panic!(concat!("the mock table has no ", stringify!($name)))
+        }
+    };
+}
+unused!(fut_poll(crate::rt::PollFn, *mut c_void, crate::DropCtxFn, usize) -> *mut c_void);
+unused!(cx_waker(*mut c_void) -> *const c_void);
+unused!(waker_clone(*const c_void) -> *mut c_void);
+unused!(waker_wake(*mut c_void));
+unused!(waker_wake_by_ref(*const c_void));
+unused!(waker_drop(*mut c_void));
+unused!(fut_poll_ext(*mut c_void, *const crate::rt::WakerArg) -> u32);
+unused!(fut_drop(*mut c_void));
+unused!(spawn(*mut c_void));
+unused!(tcp_connect(*const u8, usize) -> *mut c_void);
+unused!(stream_from_socket(i64, *mut u64) -> i32);
+unused!(
+    stream_poll_read(u64, *const crate::rt::WakerArg, *mut u8, usize, *mut usize, *mut i32) -> u32
+);
+unused!(
+    stream_poll_write(
+        u64,
+        *const crate::rt::WakerArg,
+        *const u8,
+        usize,
+        *mut usize,
+        *mut i32,
+    ) -> u32
+);
+unused!(stream_poll_flush(u64, *const crate::rt::WakerArg, *mut i32) -> u32);
+unused!(stream_poll_shutdown(u64, *const crate::rt::WakerArg, *mut i32) -> u32);
+unused!(stream_socket(u64) -> i64);
+unused!(stream_close(u64));
+unused!(sleep_poll(*mut c_void, *const crate::rt::WakerArg) -> u32);
+unused!(sleep_reset(*mut c_void, u64));
+unused!(sleep_drop(*mut c_void));
+extern "C" fn now_ns() -> u64 {
+    0
+}
+extern "C" fn sleep_new(_: u64) -> *mut c_void {
+    panic!("the mock table has no sleep_new")
+}
+extern "C" fn worker_index() -> i64 {
+    -1
+}
+
 static MOCK: Api = Api {
     abi_version: 1,
     size: std::mem::size_of::<Api>() as u32,
@@ -100,6 +149,29 @@ static MOCK: Api = Api {
     fut_completer,
     complete,
     fatal,
+    fut_poll,
+    cx_waker,
+    waker_clone,
+    waker_wake,
+    waker_wake_by_ref,
+    waker_drop,
+    fut_poll_ext,
+    fut_drop,
+    spawn,
+    tcp_connect,
+    stream_from_socket,
+    stream_poll_read,
+    stream_poll_write,
+    stream_poll_flush,
+    stream_poll_shutdown,
+    stream_socket,
+    stream_close,
+    now_ns,
+    sleep_new,
+    sleep_poll,
+    sleep_reset,
+    sleep_drop,
+    worker_index,
 };
 
 crate::package!(demo);

@@ -10,6 +10,9 @@
 //!   runs on the runtime's blocking pool (parameters must be owned).
 //! - `#[export(future)] fn f(...) -> Future<R>`: `declare async function`; the body returns a
 //!   runtime future (from a `Completer`).
+//! - `#[export(async)] async fn f(a: String) -> Result<T, Error>`: `declare async function`; the
+//!   future runs on the runtime's scheduler, polled by the task awaiting it (parameters must be
+//!   owned).
 
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as Tokens};
@@ -22,6 +25,7 @@ enum Mode {
     Sync,
     Blocking,
     Future,
+    Async,
 }
 
 const SCALARS: &[&str] = &[
@@ -35,10 +39,11 @@ pub fn export(attr: TokenStream, item: TokenStream) -> TokenStream {
         "" => Mode::Sync,
         "blocking" => Mode::Blocking,
         "future" => Mode::Future,
+        "async" => Mode::Async,
         other => {
             return error(
                 Span::call_site(),
-                &format!("unknown `export` option `{other}` (use `blocking` or `future`)"),
+                &format!("unknown `export` option `{other}` (use `blocking`, `future` or `async`)"),
             )
         }
     };
@@ -111,11 +116,18 @@ fn is_direct(ret: &ReturnType) -> bool {
 
 fn expand(mode: Mode, func: ItemFn) -> syn::Result<Tokens> {
     let sig = &func.sig;
-    if !sig.generics.params.is_empty() || sig.asyncness.is_some() || sig.variadic.is_some() {
-        return Err(syn::Error::new(
-            sig.span(),
-            "an exported function cannot be generic, `async` or variadic (use `#[export(blocking)]`)",
-        ));
+    let async_ok = matches!(mode, Mode::Async);
+    if !sig.generics.params.is_empty()
+        || (sig.asyncness.is_some() != async_ok)
+        || sig.variadic.is_some()
+    {
+        let msg = if async_ok {
+            "`#[export(async)]` takes an `async fn` (not generic or variadic)"
+        } else {
+            "an exported function cannot be generic, `async` or variadic (use `#[export(async)]` \
+             for an `async fn`, `#[export(blocking)]` for blocking work)"
+        };
+        return Err(syn::Error::new(sig.span(), msg));
     }
     let name = &sig.ident;
     let inner = format_ident!("__velt_inner_{}", name);
@@ -231,6 +243,30 @@ fn expand(mode: Mode, func: ItemFn) -> syn::Result<Tokens> {
                         #inner_fn
                         #(#owned)*
                         ::velt_native::__blocking::<#ret_ty, _>(move || #inner(#(#args),*))
+                    }
+                },
+            )
+        }
+        Mode::Async => {
+            let owned: Vec<Tokens> = sig
+                .inputs
+                .iter()
+                .zip(&args)
+                .map(|(arg, a)| {
+                    let FnArg::Typed(pt) = arg else { unreachable!() };
+                    let ty = &pt.ty;
+                    quote! { let #a: #ty = ::velt_native::__owned(::velt_native::Param::from_raw(#a)); }
+                })
+                .collect();
+            (
+                "async ",
+                quote! { <#ret_ty as ::velt_native::OutRet>::SIG },
+                quote! {
+                    #[no_mangle]
+                    pub unsafe extern "C" fn #name(#(#raw_params),*) -> *mut ::std::ffi::c_void {
+                        #inner_fn
+                        #(#owned)*
+                        ::velt_native::rt::__async::<#ret_ty, _>(#inner(#(#args),*))
                     }
                 },
             )

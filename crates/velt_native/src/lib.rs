@@ -37,6 +37,9 @@ use std::sync::atomic::{AtomicPtr, Ordering};
 pub use velt_native_macros::export;
 
 mod future;
+pub mod net;
+pub mod rt;
+pub mod time;
 #[doc(hidden)]
 pub use future::{__blocking, __owned};
 pub use future::{Completer, ErrorRet, Future, FutureRet};
@@ -134,6 +137,61 @@ pub struct Api {
     pub complete: unsafe extern "C" fn(u64, *const u8),
     /// `(msg, len)`: report like a Velt panic and exit.
     pub fatal: unsafe extern "C" fn(*const u8, usize) -> !,
+    // Async I/O (native_abi.md "Async I/O"); see [`rt`], [`net`], [`time`].
+    /// `(poll, state, drop_state, result_size) -> VeltFut*`.
+    pub fut_poll: unsafe extern "C" fn(rt::PollFn, *mut c_void, DropCtxFn, usize) -> *mut c_void,
+    /// `(cx) -> runtime waker` (borrowed for the poll).
+    pub cx_waker: unsafe extern "C" fn(*mut c_void) -> *const c_void,
+    /// `(runtime waker) -> owned runtime waker`.
+    pub waker_clone: unsafe extern "C" fn(*const c_void) -> *mut c_void,
+    /// `(owned waker)`: wake and free.
+    pub waker_wake: unsafe extern "C" fn(*mut c_void),
+    /// `(runtime waker)`: wake, keep.
+    pub waker_wake_by_ref: unsafe extern "C" fn(*const c_void),
+    /// `(owned waker)`: free.
+    pub waker_drop: unsafe extern "C" fn(*mut c_void),
+    /// `(VeltFut*, waker) -> READY/PENDING`.
+    pub fut_poll_ext: unsafe extern "C" fn(*mut c_void, *const rt::WakerArg) -> u32,
+    /// `(VeltFut*)`: free.
+    pub fut_drop: unsafe extern "C" fn(*mut c_void),
+    /// `(VeltFut*)`: run as a detached task.
+    pub spawn: unsafe extern "C" fn(*mut c_void),
+    /// `(addr, len) -> VeltFut*` of `IoResult<u64>`.
+    pub tcp_connect: unsafe extern "C" fn(*const u8, usize) -> *mut c_void,
+    /// `(socket, out) -> err`.
+    pub stream_from_socket: unsafe extern "C" fn(i64, *mut u64) -> i32,
+    /// `(h, waker, buf, cap, n, err) -> READY/PENDING`.
+    pub stream_poll_read:
+        unsafe extern "C" fn(u64, *const rt::WakerArg, *mut u8, usize, *mut usize, *mut i32) -> u32,
+    /// `(h, waker, buf, len, n, err) -> READY/PENDING`.
+    pub stream_poll_write: unsafe extern "C" fn(
+        u64,
+        *const rt::WakerArg,
+        *const u8,
+        usize,
+        *mut usize,
+        *mut i32,
+    ) -> u32,
+    /// `(h, waker, err) -> READY/PENDING`.
+    pub stream_poll_flush: unsafe extern "C" fn(u64, *const rt::WakerArg, *mut i32) -> u32,
+    /// `(h, waker, err) -> READY/PENDING`.
+    pub stream_poll_shutdown: unsafe extern "C" fn(u64, *const rt::WakerArg, *mut i32) -> u32,
+    /// `(h) -> socket`.
+    pub stream_socket: unsafe extern "C" fn(u64) -> i64,
+    /// `(h)`: close and free.
+    pub stream_close: unsafe extern "C" fn(u64),
+    /// `() -> ns`.
+    pub now_ns: extern "C" fn() -> u64,
+    /// `(deadline_ns) -> sleep`.
+    pub sleep_new: extern "C" fn(u64) -> *mut c_void,
+    /// `(sleep, waker) -> READY/PENDING`.
+    pub sleep_poll: unsafe extern "C" fn(*mut c_void, *const rt::WakerArg) -> u32,
+    /// `(sleep, deadline_ns)`.
+    pub sleep_reset: unsafe extern "C" fn(*mut c_void, u64),
+    /// `(sleep)`: free.
+    pub sleep_drop: unsafe extern "C" fn(*mut c_void),
+    /// `() -> worker` (-1: none).
+    pub worker_index: extern "C" fn() -> i64,
 }
 
 static API: AtomicPtr<Api> = AtomicPtr::new(std::ptr::null_mut());
@@ -203,6 +261,16 @@ pub mod code {
     pub const INVALID_DATA: i32 = 5;
     /// `ETIMEDOUT`
     pub const TIMED_OUT: i32 = 6;
+    /// `ECONNREFUSED`
+    pub const CONNECTION_REFUSED: i32 = 7;
+    /// `ECONNRESET`
+    pub const CONNECTION_RESET: i32 = 8;
+    /// `EADDRINUSE`
+    pub const ADDR_IN_USE: i32 = 9;
+    /// `EPIPE`
+    pub const BROKEN_PIPE: i32 = 10;
+    /// `UNEXPECTED_EOF`
+    pub const UNEXPECTED_EOF: i32 = 11;
     /// `ENOTSUP`
     pub const UNSUPPORTED: i32 = 12;
     /// `EBADF`: a closed handle.
@@ -249,6 +317,16 @@ impl From<std::io::Error> for Error {
             _ => code::OTHER,
         };
         Error::new(c, e.to_string())
+    }
+}
+
+/// The text of an owned runtime string, which is freed.
+pub(crate) fn take_str(mut s: VeltStr) -> String {
+    // SAFETY: an owned string, read then dropped once.
+    unsafe {
+        let text = str_of(&s).into_owned();
+        (api().str_drop)(&mut s);
+        text
     }
 }
 

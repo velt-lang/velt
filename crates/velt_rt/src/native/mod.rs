@@ -12,15 +12,24 @@
 //! `drop_result`) belong to native libraries, which are loaded once and never unloaded; no Velt
 //! code pointer is ever stored.
 
-use std::alloc::Layout;
-use std::collections::HashMap;
 use std::ffi::c_void;
-use std::sync::{Arc, Mutex, OnceLock};
-use std::task::Waker;
 
 use crate::bytes::VeltBytes;
 use crate::str::VeltStr;
-use crate::task::{context, VeltFut, FUT_RESULT_OFFSET, PENDING, READY};
+use crate::task::VeltFut;
+
+mod aio;
+#[cfg(test)]
+mod aio_tests;
+mod futures;
+#[cfg(test)]
+use crate::task::{FUT_RESULT_OFFSET, PENDING, READY};
+pub use aio::{DropStateFn, ForeignVTable, NativePollFn, WakerArg};
+pub use futures::{complete, fut_blocking, fut_completer};
+#[cfg(test)]
+use futures::{native_drop, native_poll, take_completer};
+#[cfg(test)]
+use std::task::Waker;
 
 /// The table version this runtime provides.
 pub const NATIVE_ABI_VERSION: u32 = 1;
@@ -67,6 +76,56 @@ pub struct VeltRtApi {
     pub complete: unsafe extern "C" fn(u64, *const u8),
     /// `(msg, len)`: report like a Velt panic (`panic: <msg>`, exit 101).
     pub fatal: unsafe extern "C" fn(*const u8, usize) -> !,
+    // Async I/O (native_abi.md "Async I/O", `aio`).
+    /// `(poll, state, drop_state, result_size) -> VeltFut*`: a future the library polls inline.
+    pub fut_poll:
+        unsafe extern "C" fn(NativePollFn, *mut c_void, DropStateFn, usize) -> *mut VeltFut,
+    /// `(cx) -> waker`: the task's runtime waker, borrowed for the poll.
+    pub cx_waker: unsafe extern "C" fn(*mut c_void) -> *const c_void,
+    /// `(waker) -> owned waker`: a boxed copy of a runtime waker.
+    pub waker_clone: unsafe extern "C" fn(*const c_void) -> *mut c_void,
+    /// `(waker)`: wake and free.
+    pub waker_wake: unsafe extern "C" fn(*mut c_void),
+    /// `(waker)`: wake, keep.
+    pub waker_wake_by_ref: unsafe extern "C" fn(*const c_void),
+    /// `(waker)`: free.
+    pub waker_drop: unsafe extern "C" fn(*mut c_void),
+    /// `(VeltFut*, waker) -> READY/PENDING`: poll a runtime future from library code.
+    pub fut_poll_ext: unsafe extern "C" fn(*mut VeltFut, *const WakerArg) -> u32,
+    /// `(VeltFut*)`: free a runtime future not handed to Velt.
+    pub fut_drop: unsafe extern "C" fn(*mut VeltFut),
+    /// `(VeltFut*)`: run a future (result size 0) as a detached task.
+    pub spawn: unsafe extern "C" fn(*mut VeltFut),
+    /// `(addr, len) -> VeltFut*` of `IoResult<u64>`: connect to `"host:port"`.
+    pub tcp_connect: unsafe extern "C" fn(*const u8, usize) -> *mut VeltFut,
+    /// `(socket, out) -> err`: a stream of a connected socket the library opened.
+    pub stream_from_socket: unsafe extern "C" fn(i64, *mut u64) -> i32,
+    /// `(h, cx, buf, cap, n, err) -> READY/PENDING`.
+    pub stream_poll_read:
+        unsafe extern "C" fn(u64, *const WakerArg, *mut u8, usize, *mut usize, *mut i32) -> u32,
+    /// `(h, cx, buf, len, n, err) -> READY/PENDING`.
+    pub stream_poll_write:
+        unsafe extern "C" fn(u64, *const WakerArg, *const u8, usize, *mut usize, *mut i32) -> u32,
+    /// `(h, cx, err) -> READY/PENDING`.
+    pub stream_poll_flush: unsafe extern "C" fn(u64, *const WakerArg, *mut i32) -> u32,
+    /// `(h, cx, err) -> READY/PENDING`: shut down the writing half.
+    pub stream_poll_shutdown: unsafe extern "C" fn(u64, *const WakerArg, *mut i32) -> u32,
+    /// `(h) -> socket`: the stream's socket, for socket options.
+    pub stream_socket: unsafe extern "C" fn(u64) -> i64,
+    /// `(h)`: close and free a stream.
+    pub stream_close: unsafe extern "C" fn(u64),
+    /// `() -> ns`: monotonic nanoseconds.
+    pub now_ns: extern "C" fn() -> u64,
+    /// `(deadline_ns) -> sleep`.
+    pub sleep_new: extern "C" fn(u64) -> *mut c_void,
+    /// `(sleep, cx) -> READY/PENDING`.
+    pub sleep_poll: unsafe extern "C" fn(*mut c_void, *const WakerArg) -> u32,
+    /// `(sleep, deadline_ns)`.
+    pub sleep_reset: unsafe extern "C" fn(*mut c_void, u64),
+    /// `(sleep)`: free.
+    pub sleep_drop: unsafe extern "C" fn(*mut c_void),
+    /// `() -> i64`: this thread's worker (-1: none).
+    pub worker_index: extern "C" fn() -> i64,
 }
 
 /// The table every native library receives.
@@ -83,6 +142,29 @@ pub static VELT_RT_API: VeltRtApi = VeltRtApi {
     fut_completer,
     complete,
     fatal,
+    fut_poll: aio::fut_poll,
+    cx_waker: aio::cx_waker,
+    waker_clone: aio::waker_clone,
+    waker_wake: aio::waker_wake,
+    waker_wake_by_ref: aio::waker_wake_by_ref,
+    waker_drop: aio::waker_drop,
+    fut_poll_ext: aio::fut_poll_ext,
+    fut_drop: aio::fut_drop,
+    spawn: aio::spawn,
+    tcp_connect: aio::tcp_connect,
+    stream_from_socket: aio::stream_from_socket,
+    stream_poll_read: aio::stream_poll_read,
+    stream_poll_write: aio::stream_poll_write,
+    stream_poll_flush: aio::stream_poll_flush,
+    stream_poll_shutdown: aio::stream_poll_shutdown,
+    stream_socket: aio::stream_socket,
+    stream_close: aio::stream_close,
+    now_ns: aio::now_ns,
+    sleep_new: aio::sleep_new,
+    sleep_poll: aio::sleep_poll,
+    sleep_reset: aio::sleep_reset,
+    sleep_drop: aio::sleep_drop,
+    worker_index: aio::worker_index,
 };
 
 /// `const VeltRtApi* velt_rt_native_api(void)`: the table, for generated code to pass to each
@@ -145,258 +227,6 @@ unsafe extern "C" fn bytes_data(b: *const VeltBytes, len: *mut usize) -> *const 
 unsafe extern "C" fn fatal(msg: *const u8, len: usize) -> ! {
     let msg = String::from_utf8_lossy(std::slice::from_raw_parts(msg, len)).into_owned();
     crate::panic::fatal(&msg)
-}
-
-/// Result bytes, 16-aligned (results have align <= 8; the slot itself is at a 16-byte offset).
-type Buf = Vec<u128>;
-
-fn buf(size: usize) -> Buf {
-    vec![0u128; size.div_ceil(16).max(1)]
-}
-
-enum Slot {
-    /// Not finished; the waker of the last poll.
-    Pending(Option<Waker>),
-    /// Finished, result not yet moved into the future's slot.
-    Ready(Buf),
-    /// The result was moved out (the future completed).
-    Taken,
-    /// The future was dropped before the result arrived.
-    Cancelled,
-}
-
-/// Shared between a native future and whoever completes it (the blocking task or a completion
-/// handle).
-struct Shared {
-    slot: Mutex<Slot>,
-    size: usize,
-    drop_result: Option<DropResultFn>,
-}
-
-// SAFETY: `drop_result` is a plain function pointer into a native library that is never unloaded;
-// result bytes are owned values the contract allows to move between threads.
-unsafe impl Send for Shared {}
-// SAFETY: as above; all mutable state is behind the mutex.
-unsafe impl Sync for Shared {}
-
-impl Shared {
-    /// Deliver the result (`size` bytes at `src`, moved). After cancellation it is dropped.
-    unsafe fn complete(&self, src: *const u8) {
-        let mut b = buf(self.size);
-        std::ptr::copy_nonoverlapping(src, b.as_mut_ptr() as *mut u8, self.size);
-        let mut slot = self.slot.lock().unwrap_or_else(|e| e.into_inner());
-        match std::mem::replace(&mut *slot, Slot::Taken) {
-            Slot::Pending(waker) => {
-                *slot = Slot::Ready(b);
-                drop(slot);
-                if let Some(w) = waker {
-                    w.wake();
-                }
-            }
-            Slot::Cancelled => {
-                *slot = Slot::Cancelled;
-                drop(slot);
-                if let Some(d) = self.drop_result {
-                    d(b.as_mut_ptr() as *mut u8);
-                }
-            }
-            Slot::Ready(_) | Slot::Taken => crate::panic::fatal("native future completed twice"),
-        }
-    }
-}
-
-/// The blocking work of a [`fut_blocking`] future, until its first poll hands it to the pool.
-struct Work {
-    work: WorkFn,
-    ctx: *mut c_void,
-    drop_ctx: DropCtxFn,
-}
-
-// SAFETY: the contract requires `ctx` to be movable to the blocking pool's threads.
-unsafe impl Send for Work {}
-
-impl Drop for Work {
-    fn drop(&mut self) {
-        if !self.ctx.is_null() {
-            // SAFETY: the work never ran, so the context is still owned here.
-            unsafe { (self.drop_ctx)(self.ctx) };
-        }
-    }
-}
-
-/// Lives in front of the `VeltFut` header: `[Meta][VeltFut][result: size bytes]`.
-#[repr(C, align(16))]
-struct Meta {
-    shared: Arc<Shared>,
-    start: Option<Work>,
-    layout: Layout,
-    /// While it waits: native work keeps the process alive, as I/O does (task/quiet.rs).
-    pending: Option<crate::task::quiet::Pending>,
-}
-
-const META: usize = std::mem::size_of::<Meta>();
-const _: () = assert!(META.is_multiple_of(16));
-
-unsafe fn meta<'a>(f: *mut VeltFut) -> &'a mut Meta {
-    &mut *((f as *mut u8).sub(META) as *mut Meta)
-}
-
-fn new_fut(shared: Arc<Shared>, start: Option<Work>) -> *mut VeltFut {
-    let size = META + FUT_RESULT_OFFSET + shared.size;
-    let layout = Layout::from_size_align(size, 16).expect("ICE: native future layout");
-    // SAFETY: non-zero size; every field is initialized below before use.
-    unsafe {
-        let base = std::alloc::alloc(layout);
-        if base.is_null() {
-            std::alloc::handle_alloc_error(layout);
-        }
-        (base as *mut Meta).write(Meta {
-            shared,
-            start,
-            layout,
-            pending: None,
-        });
-        let f = base.add(META) as *mut VeltFut;
-        f.write(VeltFut {
-            poll: native_poll,
-            drop: native_drop,
-        });
-        f
-    }
-}
-
-unsafe extern "C" fn native_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
-    let m = meta(f);
-    if let Some(mut work) = m.start.take() {
-        let shared = m.shared.clone();
-        let size = shared.size;
-        let ctx = std::mem::replace(&mut work.ctx, std::ptr::null_mut());
-        let (run, ctx) = (work.work, crate::task::SendPtr(ctx));
-        drop(work);
-        crate::task::runtime::spawn_blocking(move || {
-            let ctx = ctx;
-            let mut b = buf(size);
-            // SAFETY: the library's work function fills `size` bytes and consumes `ctx`.
-            unsafe {
-                run(ctx.0, b.as_mut_ptr() as *mut u8);
-                shared.complete(b.as_ptr() as *const u8);
-            }
-        });
-    }
-    let mut slot = m.shared.slot.lock().unwrap_or_else(|e| e.into_inner());
-    match &mut *slot {
-        Slot::Pending(waker) => {
-            let w = context(cx).waker();
-            if !waker.as_ref().is_some_and(|old| old.will_wake(w)) {
-                *waker = Some(w.clone());
-            }
-            if m.pending.is_none() {
-                m.pending = Some(crate::task::quiet::Pending::new());
-            }
-            PENDING
-        }
-        Slot::Ready(_) => {
-            let Slot::Ready(b) = std::mem::replace(&mut *slot, Slot::Taken) else {
-                unreachable!()
-            };
-            let dst = (f as *mut u8).add(FUT_RESULT_OFFSET);
-            std::ptr::copy_nonoverlapping(b.as_ptr() as *const u8, dst, m.shared.size);
-            m.pending = None;
-            READY
-        }
-        Slot::Taken => READY,
-        Slot::Cancelled => crate::panic::fatal("ICE: polled a dropped native future"),
-    }
-}
-
-unsafe extern "C" fn native_drop(f: *mut VeltFut) {
-    let base = (f as *mut u8).sub(META) as *mut Meta;
-    let m = base.read();
-    drop(m.start); // never polled: its context is freed by `Work::drop`
-    let mut slot = m.shared.slot.lock().unwrap_or_else(|e| e.into_inner());
-    match std::mem::replace(&mut *slot, Slot::Cancelled) {
-        Slot::Ready(mut b) => {
-            drop(slot);
-            if let Some(d) = m.shared.drop_result {
-                d(b.as_mut_ptr() as *mut u8);
-            }
-        }
-        Slot::Taken => *slot = Slot::Taken,
-        Slot::Pending(_) | Slot::Cancelled => {}
-    }
-    std::alloc::dealloc(base as *mut u8, m.layout);
-}
-
-fn shared(result_size: usize, drop_result: Option<DropResultFn>) -> Arc<Shared> {
-    Arc::new(Shared {
-        slot: Mutex::new(Slot::Pending(None)),
-        size: result_size,
-        drop_result,
-    })
-}
-
-/// `VeltFut* fut_blocking(work, ctx, drop_ctx, result_size, drop_result)`: a future whose first
-/// poll runs `work(ctx, out)` on the runtime's blocking pool; `work` writes `result_size` bytes to
-/// `out` (and owns `ctx` from then on). Dropped before its first poll, `drop_ctx(ctx)` runs
-/// instead; dropped while `work` runs, the finished result goes to `drop_result` (if any).
-pub unsafe extern "C" fn fut_blocking(
-    work: WorkFn,
-    ctx: *mut c_void,
-    drop_ctx: DropCtxFn,
-    result_size: usize,
-    drop_result: Option<DropResultFn>,
-) -> *mut VeltFut {
-    let start = Work {
-        work,
-        ctx,
-        drop_ctx,
-    };
-    new_fut(shared(result_size, drop_result), Some(start))
-}
-
-/// Completion handles: ids (never reused) of futures waiting for `complete`. A handle is removed
-/// by its first `complete`, so a second one, or an id that was never handed out, finds nothing
-/// instead of freed memory.
-type Completers = Mutex<(u64, HashMap<u64, Arc<Shared>>)>;
-
-fn completers() -> &'static Completers {
-    static C: OnceLock<Completers> = OnceLock::new();
-    C.get_or_init(|| Mutex::new((0, HashMap::new())))
-}
-
-fn take_completer(handle: u64) -> Option<Arc<Shared>> {
-    let mut c = completers().lock().unwrap_or_else(|e| e.into_inner());
-    c.1.remove(&handle)
-}
-
-/// `VeltFut* fut_completer(result_size, drop_result, u64* handle)`: a pending future completed by
-/// one later `complete(*handle, result)` from any thread (e.g. the library's own async runtime).
-pub unsafe extern "C" fn fut_completer(
-    result_size: usize,
-    drop_result: Option<DropResultFn>,
-    handle: *mut u64,
-) -> *mut VeltFut {
-    let s = shared(result_size, drop_result);
-    let mut c = completers().lock().unwrap_or_else(|e| e.into_inner());
-    c.0 += 1;
-    let id = c.0;
-    c.1.insert(id, s.clone());
-    drop(c);
-    handle.write(id);
-    new_fut(s, None)
-}
-
-/// `void complete(u64 handle, const void* result)`: moves `result_size` bytes into the future of
-/// `handle` (exactly once per handle); if that future was dropped, `drop_result` gets them.
-/// A handle that was already completed (or never handed out) is a fatal error of the library, not
-/// memory corruption.
-pub unsafe extern "C" fn complete(handle: u64, result: *const u8) {
-    match take_completer(handle) {
-        Some(s) => s.complete(result),
-        None => crate::panic::fatal(
-            "a native library completed a future twice, or with an unknown handle",
-        ),
-    }
 }
 
 #[cfg(test)]
@@ -515,7 +345,30 @@ mod tests {
             fut_blocking,
             fut_completer,
             complete,
-            fatal
+            fatal,
+            fut_poll,
+            cx_waker,
+            waker_clone,
+            waker_wake,
+            waker_wake_by_ref,
+            waker_drop,
+            fut_poll_ext,
+            fut_drop,
+            spawn,
+            tcp_connect,
+            stream_from_socket,
+            stream_poll_read,
+            stream_poll_write,
+            stream_poll_flush,
+            stream_poll_shutdown,
+            stream_socket,
+            stream_close,
+            now_ns,
+            sleep_new,
+            sleep_poll,
+            sleep_reset,
+            sleep_drop,
+            worker_index
         );
         assert_eq!(NATIVE_ABI_VERSION, sdk::ABI_VERSION);
         assert_eq!(size_of::<VeltStr>(), size_of::<sdk::VeltStr>());
