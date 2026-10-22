@@ -1,12 +1,15 @@
 //! The `typeof` of one member of a union value (`typeof m` with `m: T | Mod<T>`): a constant
 //! tag for a member of a known type, the dynamic tag of the instantiation's value for a member
 //! that is a type parameter (`T = number` gives `"number"`, `T = unknown` the value's own) or
-//! `any` / `unknown` itself (such a union at `T = unknown`, anon.rs `canon_union`).
+//! `any` / `unknown` itself (such a union at `T = unknown`, anon.rs `canon_union`); also
+//! `typeof m === tag`, which asks such a member's value the same way.
 
 use velt_common::Span;
+use velt_syntax::ast;
 
+use crate::body::narrow::Fact;
 use crate::body::{FnCx, LocalKind};
-use crate::hir::{self, ExprKind as H, LocalId, PatKind as P, TyId, UseMode};
+use crate::hir::{self, ExprKind as H, LocalId, Nothing, PatKind as P, TyId, UseMode};
 
 impl FnCx<'_, '_> {
     /// The arm body for member `t` (`None`: a nothing, whose tag is `none`) of the `match` that
@@ -21,20 +24,112 @@ impl FnCx<'_, '_> {
         let Some(t) = t else {
             return self.str_lit(none, span);
         };
+        match self.open_member_typeof(pat, t, span) {
+            Some(e) => e,
+            None => {
+                let tag = self.cx.typeof_tag(t);
+                self.str_lit(tag, span)
+            }
+        }
+    }
+
+    /// `typeof s === tag` (`negate`: `!==`) on a union with a member whose tag the
+    /// instantiation decides (`T | Mod<T>`): a `match` whose arms are constants, or the test
+    /// of the value's own tag for such a member. `Err` gives `s` back for other unions.
+    pub(super) fn open_typeof_test(
+        &mut self,
+        s: hir::Expr,
+        tag: &str,
+        negate: bool,
+        span: Span,
+    ) -> Result<hir::Expr, hir::Expr> {
+        let core = self.cx.ty.core(s.ty).unwrap_or(s.ty);
+        let members = self.cx.union_members(core).unwrap_or_default();
+        let open = members
+            .iter()
+            .any(|m| self.instance_valued(*m) || self.cx.dynamic(*m).is_some());
+        if !open || self.any_ty().is_none() {
+            return Err(s);
+        }
+        let b = self.cx.ty.bool_;
+        let mut arms = vec![];
+        let mut nothings = self.nothing_arms(s.ty).into_iter();
+        for (mut pat, t) in self.member_patterns(s.ty, span) {
+            let body = match t {
+                None => {
+                    let none = match nothings.next() {
+                        Some(Nothing::Undefined) => "undefined",
+                        _ => "object",
+                    };
+                    self.mk(H::Lit(hir::Lit::Bool(none == tag)), b, span)
+                }
+                Some(t) => match self.open_member_typeof(&mut pat, t, span) {
+                    Some(v) => {
+                        let want = self.str_lit(tag, span);
+                        let kind = H::Binary {
+                            op: hir::BinOp::Eq,
+                            lhs: Box::new(v),
+                            rhs: Box::new(want),
+                        };
+                        self.mk(kind, b, span)
+                    }
+                    None => {
+                        let same = self.cx.typeof_tag(t) == tag;
+                        self.mk(H::Lit(hir::Lit::Bool(same)), b, span)
+                    }
+                },
+            };
+            arms.push(hir::Arm {
+                pat,
+                guard: None,
+                body,
+            });
+        }
+        let kind = H::Match {
+            scrutinee: Box::new(s),
+            arms,
+        };
+        let m = self.mk(kind, b, span);
+        Ok(self.negated(m, negate, span))
+    }
+
+    /// The facts of `typeof e === tag`: those of `typeof_split`, where a member whose tag the
+    /// instantiation decides stays possible in both branches (`T | Mod<T>` at `T = unknown`).
+    pub(crate) fn typeof_facts(&mut self, e: &ast::Expr, tag: &str) -> (Vec<Fact>, Vec<Fact>) {
+        let (mut t, mut f) = self.typeof_split(e, tag);
+        for fact in t.iter_mut().chain(f.iter_mut()) {
+            let Fact::Members(l, vs) = fact else {
+                continue;
+            };
+            let ty = self.local_ty(*l);
+            let core = self.cx.ty.core(ty).unwrap_or(ty);
+            let members = self.cx.union_members(core).unwrap_or_default();
+            for (i, m) in members.iter().enumerate() {
+                let open = self.instance_valued(*m) || self.cx.dynamic(*m).is_some();
+                if open && !vs.contains(&(i as u32)) {
+                    vs.push(i as u32);
+                }
+            }
+            vs.sort_unstable();
+        }
+        (t, f)
+    }
+
+    /// The tag of member `t` read from its value (bound in `pat`) when the instantiation
+    /// decides it: a type parameter or `any` / `unknown`. `None`: a constant tag.
+    fn open_member_typeof(&mut self, pat: &mut hir::Pat, t: TyId, span: Span) -> Option<hir::Expr> {
         let dynamic = self.cx.dynamic(t).is_some();
         if !(self.instance_valued(t) || dynamic) || self.any_ty().is_none() {
-            let tag = self.cx.typeof_tag(t);
-            return self.str_lit(tag, span);
+            return None;
         }
         let b = self.new_local("<member>", t, false, span, LocalKind::Bind);
         if !bind_payload(pat, t, b) {
-            let tag = self.cx.typeof_tag(t);
-            return self.str_lit(tag, span);
+            return None;
         }
         let v = self.mk(H::Local(b, UseMode::Borrow), t, span);
         let v = self.param_as_any(v);
         let str_ = self.cx.ty.str_;
-        self.intrinsic(hir::Intrinsic::AnyTypeof, vec![v], str_, span)
+        Some(self.intrinsic(hir::Intrinsic::AnyTypeof, vec![v], str_, span))
     }
 }
 

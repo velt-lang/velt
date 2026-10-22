@@ -42,10 +42,19 @@ impl FnLower<'_, '_> {
 
     /// `LooseEq(a, b)` (`a == b` on a type with a type parameter in it): `a === b` as
     /// `Intrinsic::Same` lowers it where the instantiated type holds no nothing; else that or
-    /// both nothings (`null == undefined`).
+    /// both nothings (`null == undefined`); at an `any` / `unknown`, `==` of the values held.
     pub(super) fn loose_eq_intrinsic(&mut self, a: &hir::Expr, b: &hir::Expr) -> Operand {
         let t = self.sub(a.ty);
+        if self.cx.is_dynamic(t) {
+            // `T = unknown` / `any`: `==` of the values they hold, with JavaScript's coercions.
+            return self.any_eq(a, b, true);
+        }
         let (pa, pb) = self.two_places(a, b);
+        if let TyKind::Option(e, _) = self.cx.kind(t) {
+            if self.cx.is_dynamic(e) {
+                return self.loose_eq_opt_any(&pa, &pb, t);
+            }
+        }
         let same = self.same_values(&pa, &pb, t);
         if !self.may_be_null(t, true) {
             return same;
@@ -57,6 +66,31 @@ impl FnLower<'_, '_> {
         let both = Rvalue::Binary(BinOp::BitAnd, Operand::Copy(na), Operand::Copy(nb));
         let both = self.rvalue_temp(Ty::Bool, both);
         self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitOr, same, both))
+    }
+
+    /// `==` of two options `t` of an `any` / `unknown` (`T | undefined` at `T = unknown`):
+    /// of the values held when both are present, else whether both are nothings.
+    fn loose_eq_opt_any(&mut self, pa: &Place, pb: &Place, t: TyId) -> Operand {
+        let out = Place::local(self.temp(Ty::Bool));
+        let (sa, sb) = (self.option_is_some(pa, t), self.option_is_some(pb, t));
+        let both = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitAnd, sa, sb));
+        let (both_bb, other_bb, done) = (self.new_block(), self.new_block(), self.new_block());
+        self.branch(both, both_bb, other_bb);
+        self.switch_to(both_bb);
+        let (va, vb) = (self.some_payload(pa, t), self.some_payload(pb, t));
+        let eq = self.any_loose_places(&va, &vb);
+        self.assign(out.clone(), Rvalue::Use(eq));
+        self.goto(done);
+        self.switch_to(other_bb);
+        let (na, nb) = (self.temp(Ty::Bool), self.temp(Ty::Bool));
+        let (na, nb) = (Place::local(na), Place::local(nb));
+        self.null_into(&na, pa, t, true);
+        self.null_into(&nb, pb, t, true);
+        let nothings = Rvalue::Binary(BinOp::BitAnd, Operand::Copy(na), Operand::Copy(nb));
+        self.assign(out.clone(), nothings);
+        self.goto(done);
+        self.switch_to(done);
+        Operand::Copy(out)
     }
 
     /// Assign whether the value at `p` (of the concrete type `t`) is `null` (`loose`: `null`

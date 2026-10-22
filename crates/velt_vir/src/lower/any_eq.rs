@@ -80,6 +80,16 @@ impl FnLower<'_, '_> {
         self.any_compare(&da, &xa, &db, &xb, cmp)
     }
 
+    /// `==` of the `any`s at `a` and `b` (Bool operand).
+    pub(super) fn any_loose_places(&mut self, a: &Place, b: &Place) -> Operand {
+        self.cx.note_any_identity();
+        let da = Operand::Copy(proj(a, Proj::Field(0)));
+        let xa = Operand::Copy(proj(a, Proj::Field(1)));
+        let db = Operand::Copy(proj(b, Proj::Field(0)));
+        let xb = Operand::Copy(proj(b, Proj::Field(1)));
+        self.any_compare(&da, &xa, &db, &xb, AnyCmp::Loose)
+    }
+
     /// Hash of the `any` at `place`, agreeing with SameValueZero (U64 operand).
     pub(super) fn any_hash(&mut self, place: &Place) -> Operand {
         self.cx.note_any_identity();

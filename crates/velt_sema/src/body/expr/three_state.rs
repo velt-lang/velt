@@ -154,6 +154,14 @@ impl FnCx<'_, '_> {
         // Two values of one type with a type parameter in it (`T | string`): which nothings
         // they hold depends on the instantiation (`T = unknown` holds both), so the test is
         // made there.
+        let opt_param =
+            l.ty == r.ty && (self.cx.ty.opt_payload(l.ty)).is_some_and(|p| self.param_shaped(p));
+        if opt_param {
+            // `T | undefined` (`T = null` holds both nothings): tested where instantiated.
+            let b = self.cx.ty.bool_;
+            let e = self.intrinsic(hir::Intrinsic::LooseEq, vec![l, r], b, span);
+            return Ok(self.negated(e, negate, span));
+        }
         if l.ty == r.ty && self.param_shaped(l.ty) {
             // `binary_checked` gives `Intrinsic::Same` (or a `Binary`) for these operands.
             let e = self.binary_checked(velt_syntax::ast::BinaryOp::Eq, l, r, span);

@@ -454,7 +454,11 @@ impl FnCx<'_, '_> {
     }
 
     /// Facts of `typeof x === tag`.
-    fn typeof_facts(&mut self, operand: &ast::Expr, tag: &str) -> (Vec<Fact>, Vec<Fact>) {
+    pub(super) fn typeof_split(
+        &mut self,
+        operand: &ast::Expr,
+        tag: &str,
+    ) -> (Vec<Fact>, Vec<Fact>) {
         // `any` / `unknown`: read as the primitive type the tag names.
         if let Some(l) = self.own_dynamic_local(operand) {
             {

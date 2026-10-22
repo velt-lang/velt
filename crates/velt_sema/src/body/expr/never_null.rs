@@ -60,7 +60,10 @@ impl FnCx<'_, '_> {
     ) -> hir::Expr {
         let (ty, b) = (s.ty, self.cx.ty.bool_);
         let d = self.expr(rhs, Some(ty), Want::Move);
-        let (l, mode) = self.option_binding(&s, ty, "<nullish>", true);
+        // A field (`o.v ?? d`) is borrowed: moved out, it would be owned by no arm, and the
+        // default's branch, which does not use it, would leak it.
+        let field = is_place(&s) && !matches!(s.kind, hir::ExprKind::Local(..));
+        let (l, mode) = self.option_binding(&s, ty, "<nullish>", !field);
         if mode == hir::UseMode::Move {
             self.force_move(&mut s);
         }

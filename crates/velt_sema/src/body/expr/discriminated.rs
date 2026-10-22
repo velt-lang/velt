@@ -6,7 +6,7 @@
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
-use crate::body::narrow::literal_of;
+use crate::body::narrow::{literal_of, nothing_word};
 use crate::body::places::is_place;
 use crate::body::{FnCx, LocalKind, Want};
 use crate::hir::{self, ExprKind as H, PatKind as P, TyId, UseMode};
@@ -338,6 +338,23 @@ impl FnCx<'_, '_> {
                 wrong = Some((k.clone(), l, v.span));
             }
         }
+        // A generic union at `T = any` / `unknown` (`T | Mod<T>`, which TypeScript reads as
+        // that `any`) takes a literal of no member's shape as that member's (`{ a: 1 }`), also
+        // one whose discriminant no member has (`{ kind: "no" }` of an `Ok | unknown`).
+        let dynamic = self
+            .cx
+            .union_members(u)
+            .unwrap_or_default()
+            .into_iter()
+            .find(|m| {
+                matches!(
+                    self.cx.dynamic(*m),
+                    Some(crate::any::Dynamic::Any | crate::any::Dynamic::Unknown)
+                )
+            });
+        if wrong.is_some() && dynamic.is_some() {
+            return Ok(dynamic);
+        }
         if let Some((k, l, at)) = wrong {
             let mut shown = vec![];
             for m in &objects {
@@ -359,19 +376,6 @@ impl FnCx<'_, '_> {
             );
             return Err(());
         }
-        // A generic union at `T = any` / `unknown` (`T | Mod<T>`, which TypeScript reads as
-        // that `any`) takes a literal of no member's shape as that member's (`{ a: 1 }`).
-        let dynamic = self
-            .cx
-            .union_members(u)
-            .unwrap_or_default()
-            .into_iter()
-            .find(|m| {
-                matches!(
-                    self.cx.dynamic(*m),
-                    Some(crate::any::Dynamic::Any | crate::any::Dynamic::Unknown)
-                )
-            });
         // With a `Record` member as well, a struct member takes only a literal of its shape.
         if cands.len() == 1 && self.only_record_member(u).is_none() && dynamic.is_none() {
             return Ok(cands.pop());
@@ -403,35 +407,66 @@ impl FnCx<'_, '_> {
         Ok(self.only_record_member(u).or(dynamic))
     }
 
-    /// Do the fields of member `m` hold the literal values (`"s"`, `1`, `true`) of `props`?
+    /// Do the fields of member `m` hold the values of `props`: literals (`"s"`, `1`, `true`,
+    /// `null` only where the field holds it) and variables or field paths by their types?
+    /// Other values are not looked at.
     fn literal_fields_fit(&mut self, props: &[ast::ObjectProp], m: TyId) -> bool {
         for p in props {
-            let ast::ObjectProp::KeyValue(k, v) = p else {
-                continue;
+            let named;
+            let (k, v) = match p {
+                ast::ObjectProp::KeyValue(k, v) => (k, v),
+                ast::ObjectProp::Shorthand(k) => {
+                    named = ast::Expr {
+                        id: ast::NodeId(u32::MAX),
+                        kind: ast::ExprKind::Ident(k.clone()),
+                        span: k.span,
+                    };
+                    (k, &named)
+                }
+                _ => continue,
             };
-            let Some(l) = literal_of(v) else {
+            if let Some(word) = nothing_word(v) {
+                let Some(ft) = self.cx.member_field_ty(m, &k.name) else {
+                    return false;
+                };
+                let held = self.cx.ty.nothing_of(ft).is_some_and(|h| match word {
+                    "null" => h.has_null(),
+                    _ => h.has_undefined(),
+                });
+                if !held && !self.open_field(ft) {
+                    return false;
+                }
                 continue;
-            };
+            }
             let ty = &self.cx.ty;
-            let lt = match l.lit {
-                ast::Lit::Str(_) => ty.str_,
-                ast::Lit::Int { .. } | ast::Lit::Float { .. } => ty.f64,
-                ast::Lit::Bool(_) => ty.bool_,
-                ast::Lit::Null | ast::Lit::Undefined => continue,
+            let lt = match literal_of(v).map(|l| l.lit) {
+                Some(ast::Lit::Str(_)) => ty.str_,
+                Some(ast::Lit::Int { .. } | ast::Lit::Float { .. }) => ty.f64,
+                Some(ast::Lit::Bool(_)) => ty.bool_,
+                Some(ast::Lit::Null | ast::Lit::Undefined) => continue,
+                None => match self.peek_ty(v) {
+                    Some(t) => t,
+                    None => continue,
+                },
             };
             let Some(ft) = self.cx.member_field_ty(m, &k.name) else {
                 return false;
             };
             let ft = self.cx.widened(ft);
-            let mut params = vec![];
-            crate::types::collect_params(&self.cx.ty, ft, &mut params);
-            let open = self.cx.dynamic(ft).is_some() || !params.is_empty();
             let numeric = lt == self.cx.ty.f64 && self.cx.ty.is_numeric(ft);
-            if !open && !numeric && !self.converts_to(lt, ft) {
+            if !self.open_field(ft) && !numeric && !self.converts_to(lt, ft) {
                 return false;
             }
         }
         true
+    }
+
+    /// Does a field of type `ft` take any value at some instantiation (`any`, `unknown`, or a
+    /// type with a type parameter in it)?
+    fn open_field(&mut self, ft: TyId) -> bool {
+        let mut params = vec![];
+        crate::types::collect_params(&self.cx.ty, ft, &mut params);
+        self.cx.dynamic(ft).is_some() || !params.is_empty()
     }
 
     /// The `Record` member of union `u` when it has exactly one: an object literal no struct

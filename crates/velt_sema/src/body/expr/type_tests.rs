@@ -145,6 +145,14 @@ impl FnCx<'_, '_> {
             );
             return self.error_expr(span);
         }
+        let s = if TYPEOF_TAGS.contains(&tag) {
+            match self.open_typeof_test(s, tag, negate, span) {
+                Ok(h) => return h,
+                Err(s) => s,
+            }
+        } else {
+            s
+        };
         if tag == "undefined" {
             let undef = |n: Nothing| n == Nothing::Undefined;
             let test = self.type_test(s, &|_: &Ctx, _: TyId| false, &undef, span);

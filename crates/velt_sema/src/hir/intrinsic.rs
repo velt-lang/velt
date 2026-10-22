@@ -139,7 +139,7 @@ pub enum Intrinsic {
     /// Compiler-internal: `(a: borrow T, b: borrow T) -> bool`, `a == b` of two values of one
     /// type with a type parameter in it: lowered as `Same(a, b)` (`a === b`) where the
     /// instantiated type holds no nothing, else both nothings are equal too (`null == undefined`),
-    /// as in JavaScript.
+    /// as in JavaScript; `AnyLooseEq` at `T = any` / `unknown`.
     LooseEq,
     /// Compiler-internal (issue #1251): `(probe: borrow T) -> bool`, a constant: can a value of
     /// the type `T` is instantiated with be a primitive (`false` for a struct, class, object
