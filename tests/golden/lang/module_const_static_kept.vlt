@@ -57,4 +57,5 @@ function main() {
   const o = S.ORIGIN;
   o.p.x = 7;
   console.log(S.ORIGIN.p.x, o === S.ORIGIN, S.ORIGIN.p === S.ORIGIN.p, Object.is(S.ORIGIN, o));
+  console.log(S.ORIGIN !== S.ORIGIN, S.STEPS === S.STEPS);
 }

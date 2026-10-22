@@ -1,11 +1,7 @@
 // SIMD values have methods, not operators, and no printed or JSON form: each error says what
-// to write. `store` writes its array, so a `static readonly` table cannot be stored to.
+// to write.
 
 import { i8x16, u8x16 } from "velt:simd";
-
-class Tables {
-  static readonly TABLE: u8[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
-}
 
 function main() {
   const a = u8x16.splat(1);
@@ -23,5 +19,4 @@ function main() {
   const signed: i8x16 = a;
   const product = a.mul(b);
   const text = JSON.stringify(a);
-  a.store(Tables.TABLE);
 }

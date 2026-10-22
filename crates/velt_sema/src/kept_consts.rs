@@ -55,12 +55,13 @@ pub(crate) fn changes(cx: &Ctx, d: DefId) -> bool {
     cx.global(d).is_some_and(|g| g.stored)
 }
 
-/// Once every use is checked: a top-level constant whose initializer reads module state that
-/// changes (a module-level `let`, a kept constant), directly or through the functions it calls,
+/// Once every use is checked: a module constant or `static readonly` field whose initializer
+/// reads module state that changes (a module-level `let`, a constant kept there), directly or through the functions it calls,
 /// would see those changes if it were evaluated at each use, where Node evaluated it once before
 /// them. It is kept in the module state too (evaluated once, in Node's order), and counts as
 /// changing for the constants that read it in turn (`const C = getK()` may be `K` itself), until
-/// nothing changes. One that can't be kept (it holds a promise) is an error.
+/// nothing changes (a walk over who reads and calls what, so each is handled once). One that
+/// can't be kept (it holds a promise) is an error.
 pub(crate) fn keep_readers(cx: &mut Ctx) {
     let consts: Vec<DefId> = (0..cx.info.len())
         .map(|i| DefId(i as u32))

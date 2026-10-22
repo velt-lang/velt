@@ -24,18 +24,6 @@ function fill(to: i64[], from: i64[]) {
   }
 }
 
-struct Pt {
-  x: i64;
-  bump() {
-    this.x += 1;
-  }
-}
-
-// A `static readonly` field can't be modified (a module constant would be kept as module state).
-class Shapes {
-  static readonly ORIGIN: Pt = Pt { x: 0 };
-}
-
 function main() {
   const b = new Bag();
   b.addFrom(b.items);
@@ -50,5 +38,4 @@ function main() {
     v = [];
   };
   run(xs);
-  Shapes.ORIGIN.bump();
 }
