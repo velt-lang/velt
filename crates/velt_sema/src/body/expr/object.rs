@@ -332,7 +332,10 @@ impl FnCx<'_, '_> {
             },
             None => exp,
         };
-        let target = self.hint(exp).and_then(|t| self.adt_of(t));
+        let target = self
+            .hint(exp)
+            .map(|t| self.cx.record_view(t).map_or(t, |(base, _)| base))
+            .and_then(|t| self.adt_of(t));
         if let Some((d, args)) = target {
             if let Some((k, v)) = self.hint(exp).and_then(|t| self.record_args(t)) {
                 if self.proto_key(props) {

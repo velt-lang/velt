@@ -1,0 +1,17 @@
+// A field that is `void` after substitution keeps no value (#1411), so what was written to it
+// can't be shown: printing the object through a generic (or reading the field through an
+// `any`) stops with a TypeError, where Node prints `{ name: 'card', ref: null }`. Printing it
+// directly is a compile error. (Expected output: up to the TypeError.)
+type Factory<R> = { name: string } & { ref: R };
+
+function component<R = void>(name: string): Factory<R> {
+  return { name, ref: null as any };
+}
+
+function show<T>(x: T): void {
+  console.log(x);
+}
+
+const card = component("card");
+console.log(card.name);
+show(card);

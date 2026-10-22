@@ -98,6 +98,7 @@ impl FnCx<'_, '_> {
             name: method.to_string(),
             span,
         };
+        let obj = self.unview(obj);
         self.method_call_on(obj, &m, &[], args, None, span)
     }
 
@@ -135,6 +136,7 @@ impl FnCx<'_, '_> {
         checked: Option<hir::Expr>,
         span: Span,
     ) -> hir::Expr {
+        let obj = self.unview(obj);
         let (def, slots, recv_ty, vslot) = match self.resolve_method(obj.ty, method) {
             Some(Resolved::Def {
                 def,

@@ -356,7 +356,8 @@ impl FnCx<'_, '_> {
             if callable {
                 let f = self.record_read(recv, super::record::RecordKey::Name(prop), span);
                 // A missing entry of a `Record<string, any>` reads as an `any` holding
-                // `undefined`, whose call is the `TypeError` Node throws.
+                // `undefined`. Calling it panics with a `TypeError` for now, where Node throws
+                // one that `catch` can handle (a call of any `any` that holds no function).
                 let f = match self.cx.dynamic(v) {
                     Some(_) if f.ty != v => self.coerce(f, v),
                     _ => f,

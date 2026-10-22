@@ -7,3 +7,8 @@ key header
 {"_version":{"v":1},"n":1}
 2
 [ '_version', 'default' ]
+AB 4
+[ 'label', 'n', 'extra' ] { label: 'ab', n: 2, extra: true } true
+1
+obj ab str s y [ 1 ] m
+y { n: 1, extra: [ 1 ] } w { label: 'w', n: 1, extra: [ 1 ] }

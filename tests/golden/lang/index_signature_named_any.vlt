@@ -47,3 +47,38 @@ s.default = () => [1, 2];
 console.log(s.default().length);
 delete s.header;
 console.log(Object.keys(s));
+
+// A required named member keeps its declared type (checked at run time, since an index
+// write may store another type); an optional one reads as the values' type.
+interface Labeled {
+  label: string;
+  n: number;
+  [key: string]: any;
+}
+const l: Labeled = { label: "ab", n: 2 };
+console.log(l.label.toUpperCase(), l.n * 2);
+l.extra = true;
+console.log(Object.keys(l), { ...l }, "label" in l);
+const t: string = ({ type: "t" } as EventBase).type;
+console.log(t.length);
+
+// The view is an object: `typeof`, generics, `Map` values, rest patterns and spreads keep it.
+function describe(p: Labeled | string): string {
+  if (typeof p === "object") {
+    return "obj " + p.label;
+  }
+  return "str " + p;
+}
+
+function same<T>(x: T): T {
+  return x;
+}
+
+const g: Labeled = same<Labeled>({ label: "y", n: 1, extra: [1] });
+const byKey = new Map<string, Labeled>();
+byKey.set("k", { label: "m", n: 3 });
+const { label, ...others } = g;
+const moved: Labeled = { ...g, label: "z" };
+moved.label = "w";
+console.log(describe(l), describe("s"), g.label, g.extra, byKey.get("k")?.label);
+console.log(label, others, moved.label, moved);

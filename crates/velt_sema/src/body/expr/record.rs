@@ -33,6 +33,8 @@ impl FnCx<'_, '_> {
     /// `(K, V)` if `t` is the prelude's `Record<K, V>` and the record syntax applies here (not
     /// inside the class's own methods).
     pub(crate) fn record_args(&self, t: TyId) -> Option<(TyId, TyId)> {
+        // A record with named members next to its index signature is that record.
+        let t = self.cx.record_view(t).map_or(t, |(base, _)| base);
         let TyKind::Adt(d, args) = self.cx.ty.kind(t) else {
             return None;
         };

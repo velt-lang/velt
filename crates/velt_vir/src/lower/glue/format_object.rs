@@ -24,6 +24,13 @@ impl FnLower<'_, '_> {
         depth: &Operand,
     ) {
         let shown = self.shown_fields(ty);
+        let void = shown
+            .iter()
+            .find(|(_, _, t)| matches!(self.cx.kind(*t), TyKind::Unit));
+        if let Some((_, n, _)) = void {
+            let n = n.clone();
+            self.void_field_panic(&n);
+        }
         if shown.is_empty() {
             let text = match &name {
                 Some(n) => format!("{n} {{}}"),
@@ -43,6 +50,16 @@ impl FnLower<'_, '_> {
                 None => body(lw),
             }
         });
+    }
+
+    /// Panic: the object has a field that is `void` after substitution (velt_sema `void_fields`,
+    /// #1411), which keeps no value, so what the program wrote to it (`ref: null as any`) can't be
+    /// shown as Node shows it. Printing it through a generic or an `any`, or reading the field
+    /// through an `any`, stops here rather than showing `undefined`.
+    pub(in crate::lower) fn void_field_panic(&mut self, name: &str) {
+        self.panic_msg(&format!(
+            "TypeError: the field `{name}` is `void` here and keeps no value, so it can't be read or shown through a generic or an `any` yet (#1411)"
+        ));
     }
 
     /// For each of the `shown` fields: is it optional (`a?: T`), so that it shows only while
