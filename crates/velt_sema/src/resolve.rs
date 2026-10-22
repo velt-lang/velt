@@ -389,6 +389,11 @@ impl Ctx<'_> {
                 None => self.ty.error,
             };
         }
+        if let (Item::Def(d), [buffer]) = (item, args) {
+            if self.is_typed_array(d) {
+                return self.typed_array_with_buffer(d, name, buffer, t, env);
+            }
+        }
         let protocol = match item {
             Item::Def(d) if args.len() >= 2 => self.protocol_type(d),
             _ => None,
@@ -561,12 +566,6 @@ impl Ctx<'_> {
             Some((module, gs)) => self.with_defaults(DefaultsOf::Def(d), module, gs, args),
             None => args,
         };
-        // `Uint8Array<ArrayBuffer>` (TypeScript 5.7's buffer type argument): a typed array's
-        // buffer is always an `ArrayBuffer`, so the argument says nothing more.
-        let args = match args.as_slice() {
-            [b] if arity == 0 && self.typed_array_buffer(d, *b) => vec![],
-            _ => args,
-        };
         if args.len() != arity {
             self.arity_error(name, arity, args.len(), t);
             return self.ty.error;
@@ -586,16 +585,73 @@ impl Ctx<'_> {
         }
     }
 
-    /// Is `d` a standard typed array or `DataView`, and `buffer` the `ArrayBuffer` class (its
-    /// buffer type argument, `Uint8Array<ArrayBuffer>`)?
-    fn typed_array_buffer(&self, d: crate::hir::DefId, buffer: TyId) -> bool {
-        let std_class = |d: crate::hir::DefId, names: &[&str]| match &self.info[d.0 as usize] {
+    /// Is `d` a standard typed array class or `DataView`?
+    fn is_typed_array(&self, d: crate::hir::DefId) -> bool {
+        self.std_class(d, TYPED_ARRAYS)
+    }
+
+    /// Is `d` a class of the standard library named one of `names`?
+    fn std_class(&self, d: crate::hir::DefId, names: &[&str]) -> bool {
+        match &self.info[d.0 as usize] {
             DefInfo::Adt(a) => self.scopes[a.module].is_std && names.contains(&a.name.as_str()),
             _ => false,
+        }
+    }
+
+    /// Typed array or `DataView` class `d` written with a buffer type argument (TypeScript
+    /// 5.7's `Uint8Array<ArrayBuffer>`). Its buffer is always an `ArrayBuffer`, so the argument
+    /// says nothing more: `ArrayBuffer`, or `ArrayBufferLike` (TypeScript's default, which
+    /// without `SharedArrayBuffer` can only be an `ArrayBuffer`). Any other argument is an
+    /// error; one that did not resolve was reported already.
+    fn typed_array_with_buffer(
+        &mut self,
+        d: crate::hir::DefId,
+        name: &str,
+        buffer: &ast::TypeExpr,
+        t: &ast::TypeExpr,
+        env: &TyEnv,
+    ) -> TyId {
+        // A global name the program does not declare itself (`ArrayBufferLike`, and
+        // `SharedArrayBuffer`, which Velt does not have).
+        let global = match &buffer.kind {
+            ast::TypeExprKind::Named { path, args } => match path.as_slice() {
+                [p] if args.is_empty()
+                    && self.lookup_item_at(env.module, &p.name, buffer.span).is_none() =>
+                {
+                    Some(p.name.as_str())
+                }
+                _ => None,
+            },
+            _ => None,
         };
-        let is_buffer = matches!(self.ty.kind(buffer), TyKind::Adt(b, args)
-            if args.is_empty() && std_class(*b, &["ArrayBuffer"]));
-        is_buffer && std_class(d, TYPED_ARRAYS)
+        if global != Some("ArrayBufferLike") {
+            let shown = match global {
+                Some(n @ "SharedArrayBuffer") => n.to_string(),
+                _ => {
+                    let b = self.resolve_type(buffer, env);
+                    if b == self.ty.error {
+                        return self.ty.error;
+                    }
+                    let is_buffer = matches!(self.ty.kind(b), TyKind::Adt(bd, bargs)
+                        if bargs.is_empty() && self.std_class(*bd, &["ArrayBuffer"]));
+                    if is_buffer {
+                        return self.def_type(d, name, vec![], t);
+                    }
+                    self.display(b)
+                }
+            };
+            self.error(
+                velt_common::Diagnostic::error(
+                    "a typed array's buffer type argument must be `ArrayBuffer`",
+                    buffer.span,
+                )
+                .with_note(format!(
+                    "found `{shown}`; `{name}<ArrayBuffer>` and `{name}<ArrayBufferLike>` are `{name}`, whose buffer is always an `ArrayBuffer` (`SharedArrayBuffer` is not supported)"
+                )),
+            );
+            return self.ty.error;
+        }
+        self.def_type(d, name, vec![], t)
     }
 
     /// Does `body` (an alias's type, in terms of its parameters) hold a `P | null` or

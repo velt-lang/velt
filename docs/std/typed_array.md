@@ -79,8 +79,10 @@ function main() {
 ```
 
 A typed array or `DataView` type may carry TypeScript 5.7's buffer type argument,
-`Uint8Array<ArrayBuffer>`: the buffer is always an `ArrayBuffer`, so it is the same type as
-`Uint8Array`.
+`Uint8Array<ArrayBuffer>` or `Uint8Array<ArrayBufferLike>` (TypeScript's default): the buffer
+is always an `ArrayBuffer`, so both are the same type as `Uint8Array`. Any other argument
+(`Uint8Array<SharedArrayBuffer>`, `Float64Array<number>`) is an error: ``a typed array's buffer
+type argument must be `ArrayBuffer` ``.
 
 Not supported yet: the typed array classes and `DataView` as values (a constructor passed as
 `new (buffer: ArrayBuffer) => ArrayBufferView`, #943), the `ArrayBufferView` type (#1152),
