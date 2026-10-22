@@ -78,10 +78,18 @@ pub(crate) fn keep_readers(cx: &mut Ctx) {
     // `keep` did: an initializer that takes another constant over (`const B = { a: A }`).
     let mut inits = FxHashMap::default();
     for &d in &consts {
-        let Some(init) = cx.global(d).and_then(|g| g.init.clone()) else {
+        // Visited in place: taken out of the constant and put back.
+        let DefInfo::Global(g) = &mut cx.info[d.0 as usize] else {
             continue;
         };
-        let facts = Facts::of_expr(init);
+        let Some(mut init) = g.init.take() else {
+            continue;
+        };
+        let mut facts = Facts::default();
+        crate::visit::expr(&mut init, &mut facts);
+        if let DefInfo::Global(g) = &mut cx.info[d.0 as usize] {
+            g.init = Some(init);
+        }
         for &a in &facts.shared {
             keep(cx, a);
         }
@@ -138,14 +146,6 @@ struct Facts {
     shared: Vec<DefId>,
 }
 
-impl Facts {
-    fn of_expr(mut e: hir::Expr) -> Facts {
-        let mut facts = Facts::default();
-        crate::visit::expr(&mut e, &mut facts);
-        facts
-    }
-}
-
 impl crate::visit::VisitMut for Facts {
     fn expr(&mut self, e: &mut hir::Expr) {
         match &e.kind {
@@ -171,21 +171,17 @@ impl crate::visit::VisitMut for Facts {
 
 /// Every function reachable from the initializers `inits`, through the functions they call or
 /// create, with its facts (each collected once).
-fn reachable_fns(cx: &Ctx, inits: &FxHashMap<DefId, Facts>) -> FxHashMap<DefId, Facts> {
+fn reachable_fns(cx: &mut Ctx, inits: &FxHashMap<DefId, Facts>) -> FxHashMap<DefId, Facts> {
     let mut fns: FxHashMap<DefId, Facts> = FxHashMap::default();
     let mut work: Vec<DefId> = inits.values().flat_map(|f| f.fns.iter().copied()).collect();
     while let Some(f) = work.pop() {
         if fns.contains_key(&f) {
             continue;
         }
-        let facts = match cx.defs[f.0 as usize].as_ref() {
-            Some(hir::Def::Fn(def)) => {
-                let mut facts = Facts::default();
-                crate::visit::block(&mut def.body.block.clone(), &mut facts);
-                facts
-            }
-            _ => Facts::default(),
-        };
+        let mut facts = Facts::default();
+        if let Some(hir::Def::Fn(def)) = cx.defs[f.0 as usize].as_mut() {
+            crate::visit::block(&mut def.body.block, &mut facts);
+        }
         work.extend(facts.fns.iter().copied());
         fns.insert(f, facts);
     }
