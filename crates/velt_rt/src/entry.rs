@@ -59,9 +59,10 @@ pub fn run_main(velt_main: extern "C" fn() -> i32) -> i32 {
 
 /// `main` cannot finish (`async main` waits for a promise nothing can settle any more, and
 /// nothing else can happen, task/quiet.rs): end the program as if it had returned, as Node exits
-/// with `main`'s promise pending.
+/// with `main`'s promise pending; with Node's warning and exit code 13 when it waits at a
+/// top-level `await` (top_level_await.rs).
 pub(crate) fn exit_unfinished() -> ! {
-    std::process::exit(finish(0))
+    std::process::exit(finish(crate::top_level_await::unfinished_exit_code()))
 }
 
 /// What happens once `main` returned `code`: the program's end (returns its exit code).

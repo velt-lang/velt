@@ -226,6 +226,11 @@ pub(crate) struct Frame {
     pub discards_value: bool,
     /// Body of an `async` function / arrow: `await` is allowed.
     pub is_async: bool,
+    /// The program's top-level statements (the root file's generated `async main`): its
+    /// `await`s tell the runtime where they wait (`expr/top_level_await.rs`), at the depth given
+    /// (the top-level `await`s whose operand is being checked).
+    pub top_level: bool,
+    pub top_level_depth: u32,
     /// Body of a generator: the type of the values it yields (`yield` is allowed).
     pub yield_ty: Option<TyId>,
     /// Body of a `Generator<T, E, N>`: `N`, the type of a `yield`'s value (`None`: it has
@@ -361,6 +366,8 @@ impl Frame {
             escaping: false,
             discards_value: false,
             is_async: false,
+            top_level: false,
+            top_level_depth: 0,
             yield_ty: None,
             next_ty: None,
             catch_depth: 0,

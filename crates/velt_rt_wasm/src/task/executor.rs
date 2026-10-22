@@ -686,7 +686,7 @@ fn wait_for_timers() -> bool {
 /// `async main`: drive the compiled root state machine (and every task it spawns) until the
 /// root is ready, every started promise finished and no keep-alive reference (a ref'd timer) is
 /// held, or until nothing can wake any of them (the program ends then, with exit code 0 when the
-/// root never finished). Spawned tasks still running afterwards are abandoned.
+/// root never finished, or 13 when it waits at a top-level `await`). Spawned tasks still running afterwards are abandoned.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_block_on(poll: PollFn, state: *mut u8) {
     with_exec(|e| e.running = true);
@@ -712,9 +712,10 @@ pub unsafe extern "C" fn velt_rt_block_on(poll: PollFn, state: *mut u8) {
             next_ready()
         }) else {
             if !wait_for_timers() {
-                // Nothing can wake a task any more: the end, as in Node.
+                // Nothing can wake a task any more: the end, as in Node (exit code 13 at an
+                // unsettled top-level `await`).
                 if !root_done {
-                    crate::panic::velt_rt_exit(0);
+                    crate::panic::velt_rt_exit(crate::top_level_await::unfinished_exit_code());
                 }
                 with_exec(|e| e.running = false);
                 set_running_word(false);

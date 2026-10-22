@@ -113,8 +113,10 @@ Promises behave like JavaScript's, at Rust's cost:
   process). Spawned tasks are waited for like that too. What waits only for other promises or
   tasks that can never settle it (a `resolve` nobody calls any more, a channel nobody sends on)
   does not keep the process alive: once nothing else is left, the program ends with exit code
-  0, also when `async main` itself waits for such a promise. `process.exit()` and an uncaught
-  error end the process at once.
+  0, also when `async main` itself waits for such a promise. When the top level waits at such
+  an `await`, the program ends as Node's does: `Warning: Detected unsettled top-level await at
+  <file>:<line>` on stderr (without Node's copy of the source line) and exit code 13.
+  `process.exit()` and an uncaught error end the process at once.
 - An async call owns its arguments: an argument variable used again afterwards is shared with
   the promise (objects) or copied (numbers, strings), otherwise moved, because the promise may
   outlive the caller's frame.
