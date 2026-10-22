@@ -318,25 +318,6 @@ impl FnCx<'_, '_> {
         self.non_null_of(inner, exp, Want::Borrow, true, span)
     }
 
-    /// `h` (`K ?? d`, `K || d`) taken by value: a module constant evaluated at each use that it
-    /// gives when present is taken over, as by `const v = K` (`moved_out_of_const`).
-    pub(crate) fn nullish_taken(&mut self, h: &hir::Expr) {
-        let H::Match { scrutinee, arms } = &h.kind else {
-            return;
-        };
-        let Some(arm) = arms.first() else { return };
-        let mut body = &arm.body;
-        if let H::WrapSome(x) = &body.kind {
-            body = x;
-        }
-        // The present arm gives the payload itself (not a part of it, as `K?.a` does).
-        let payload =
-            matches!(body.kind, H::Local(l, _) if crate::body::places::binds(&arm.pat, l));
-        if let (H::Global(d), true) = (&scrutinee.kind, payload) {
-            self.moved_out_of_const(*d, body.ty, h.span);
-        }
-    }
-
     /// `inner!`; with `keep`, a place is not consumed (`non_null_arg`).
     fn non_null_of(
         &mut self,

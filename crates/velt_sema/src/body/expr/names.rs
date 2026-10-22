@@ -402,11 +402,20 @@ impl FnCx<'_, '_> {
         if g.stored || crate::body::pure_init::shares_on_move(self.cx, d) {
             return;
         }
+        // Reached twice (`K!` by value: the operand and the whole, `per_use_taken`): one error.
+        let msg = format!("cannot move out of module constant `{name}`");
+        let reported =
+            self.cx.diags.iter().rev().take(4).any(|e| {
+                e.message == msg && e.labels.first().is_some_and(|l| l.span.lo == span.lo)
+            });
+        if reported {
+            return;
+        }
         if crate::body::pure_init::is_table(self.cx, d) {
             let msg = format!("cannot move out of module constant `{name}`");
             self.cx
                 .error(crate::body::pure_init::table_escapes(&name, msg, span));
-        } else if !self.cx.is_copy(ty) && ty != self.cx.ty.str_ {
+        } else if !self.copied_value(ty) {
             self.cx.error(
                 Diagnostic::error(format!("cannot move out of module constant `{name}`"), span)
                     .with_note(format!("use `{name}.clone()` for an owned copy")),

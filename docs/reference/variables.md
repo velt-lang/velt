@@ -176,8 +176,11 @@ function main() {
   it is an error (``cannot assign to a field of module-level constant `K` ``), also through `!`,
   `as`, `??`, `||` or `?:` (`K!.v = 2`, `(K as P).v++`, `(K as any).v = 2`, `(K ?? d).v = 2`,
   `(c ? K! : d).v = 2`), where Node changes the one object, and so is taking it over by value
-  that way (``cannot move out of module constant `K` ``: `const v = K!`, `let v = K ?? d`), as
-  for `const v = K`. A `let` is module state, so its fields can be written, and `g!`, `g as T`
+  that way (``cannot move out of module constant `K` ``: `const v = K!`, `let v = K ?? d`,
+  `const v = (K ?? d)!`), as for `const v = K`. So is taking over an object it holds, which
+  Node would share too: `const a = K!.a`, `let a = N.a`, `const { a } = K ?? d`, `{ ...K! }`
+  (numbers and strings are copied, so `const n = K!.v` is fine). The same holds through a
+  namespace import (`(ns.K as any).v = 2`). A `let` is module state, so its fields can be written, and `g!`, `g as T`
   and `g ?? d` on a module `let` `g` are the object the module keeps.
 - An initializer that throws (`JSON.parse` of invalid text, `new RegExp` of an invalid
   pattern, a function that throws) stops the program with `Uncaught …` and exit code 1, as an

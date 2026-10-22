@@ -1,0 +1,5 @@
+static_const_through_cast.vlt:16:2: error: cannot assign to a field of module-level constant `C.K`
+static_const_through_cast.vlt:17:1: error: cannot assign to a field of module-level constant `C.K`
+static_const_through_cast.vlt:18:2: error: cannot assign to a field of module-level constant `C.N`
+static_const_through_cast.vlt:19:11: error: cannot move out of module constant `C.K`
+static_const_through_cast.vlt:21:11: error: cannot move out of module constant `C.N`

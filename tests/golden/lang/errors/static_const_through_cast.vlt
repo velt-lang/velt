@@ -1,0 +1,23 @@
+// A `static readonly` field evaluated at each use can't be written through `!`, `as` or `??`,
+// or taken over through them, either, as a module constant can't (#1406).
+
+interface J {
+  v: number;
+  a: { b: number };
+}
+
+let D: J = { v: 0, a: { b: 0 } };
+
+class C {
+  static readonly K: J | null = { v: 1, a: { b: 1 } };
+  static readonly N: J = { v: 1, a: { b: 1 } };
+}
+
+(C.K as any).v = 3;
+C.K!.v = 3;
+(C.N as any).v = 3;
+const t = C.K ?? D;
+t.v = 3;
+const u = C.N.a;
+u.b = 3;
+console.log(C.K!.v, C.N.v, C.N.a.b);

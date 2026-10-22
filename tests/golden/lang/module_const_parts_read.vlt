@@ -1,0 +1,41 @@
+// The parts of a module constant evaluated at each use that are copied (numbers, strings) can
+// be taken through `!`, `??`, `as`, a destructuring or a spread, and the objects it holds can
+// be read and passed to a function that reads them: only taking those objects over is an
+// error (`errors/module_const_taken_in_init`, #1406).
+
+interface J {
+  v: number;
+  a: { b: number };
+  s: string;
+}
+
+export const K: J | null = { v: 1, a: { b: 2 }, s: "k" };
+export const N: J = { v: 3, a: { b: 4 }, s: "n" };
+export const PT = { x: 1, y: 2 };
+let D: J = { v: 0, a: { b: 0 }, s: "d" };
+
+function show(x: { b: number }): number {
+  return x.b * 10;
+}
+
+const n = K!.a.b + N.a.b;
+const s = (K ?? D).s;
+const s2 = K?.s ?? "none";
+const s3 = K?.s;
+const b3 = K?.a.b;
+const v = (K as J).v;
+const { v: kv, s: ks } = K!;
+const { v: nv } = N;
+const moved = { ...PT, z: 3 };
+moved.x = 9;
+console.log(n, s, s2, s3, b3, v, kv, ks, nv, moved, PT);
+console.log(K!.a, N.a, JSON.stringify(K!.a), `${N.a.b}`, show(K!.a), show(N.a));
+
+function f(): number {
+  const K = { v: 5, a: { b: 5 }, s: "local" };
+  const t = K.a;
+  t.b = 6;
+  return K.a.b;
+}
+
+console.log(f(), K!.a.b > 1 ? "big" : "small", N.a.b === 4);

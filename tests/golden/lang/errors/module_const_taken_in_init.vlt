@@ -23,3 +23,46 @@ function f(): void {
 
 f();
 console.log(q!.x, p.x, r.x, s.x);
+
+// Through a `!` or `as` around `??`, and a part taken over through `!`, `??`, an optional
+// chain, a destructuring or a spread, or directly (`N.a`): TypeScript shares each one.
+interface J {
+  v: number;
+  a: { b: number };
+}
+
+export const K: J | null = { v: 1, a: { b: 1 } };
+export const N: J = { v: 1, a: { b: 1 } };
+let D: J = { v: 0, a: { b: 0 } };
+const t1 = (K ?? D)!;
+t1.v = 3;
+const t2 = (K ?? D) as J;
+t2.v = 3;
+const t3 = K!.a;
+t3.b = 3;
+const t4 = (K ?? D).a;
+t4.b = 3;
+const t5 = K?.a ?? D.a;
+t5.b = 3;
+const { a } = K!;
+a.b = 3;
+const { a: a2 } = K ?? D;
+a2.b = 3;
+let t6 = N.a;
+t6.b = 3;
+const [n1] = [N.a];
+n1.b = 3;
+const sp = { ...K! };
+sp.a.b = 3;
+const sp2: J = { ...N, v: 2 };
+sp2.a.b = 3;
+
+function g(): number {
+  const t = K!.a;
+  t.b = 3;
+  const { a: u } = N;
+  u.b = 3;
+  return t.b + u.b;
+}
+
+console.log(K!.v, K!.a.b, N.a.b, g());

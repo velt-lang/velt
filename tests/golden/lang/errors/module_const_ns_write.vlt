@@ -1,0 +1,18 @@
+// A module constant evaluated at each use, reached through a namespace import, can't be
+// written through `!`, `as` or `??`, or taken over through them, either: the write would change
+// a copy that the next use doesn't see, where Node changes the one object (#1406).
+import * as ns from "./_module_const_ns_write_lib";
+
+let D: ns.J = { v: 0, a: { b: 0 } };
+(ns.K as any).v = 3;
+(ns.N as any).v = 3;
+(ns.K as unknown as ns.J).v = 3;
+ns.K!.a.b = 3;
+(ns.K ?? D).v = 3;
+const t = ns.K!;
+t.v = 3;
+const u = ns.N.a;
+u.b = 3;
+const { a } = ns.K ?? D;
+a.b = 3;
+console.log(ns.K!.v, ns.N.v, ns.K!.a.b, ns.N.a.b);

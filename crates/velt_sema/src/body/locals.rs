@@ -27,14 +27,6 @@ fn frame_lookup(f: &Frame, name: &str) -> Option<LocalId> {
         .find_map(|s| s.names.get(name).copied())
 }
 
-impl FnCx<'_, '_> {
-    /// Does `name` name a local here or in an enclosing function (without using it)?
-    pub(crate) fn names_local(&self, name: &str) -> bool {
-        frame_lookup(&self.f, name).is_some()
-            || self.outer.iter().any(|f| frame_lookup(f, name).is_some())
-    }
-}
-
 /// Narrowing of local `l` in frame `f`: (non-null, union members, subclass).
 fn frame_narrowing(f: &Frame, l: LocalId) -> Narrowing {
     let non_null = f.scopes.iter().any(|s| s.narrowed.contains(&l));
@@ -186,6 +178,11 @@ impl FnCx<'_, '_> {
 
     pub(crate) fn declares_here(&self, name: &str) -> bool {
         frame_lookup(&self.f, name).is_some()
+    }
+
+    /// The local `name` names in this function, without using it.
+    pub(crate) fn declared_local(&self, name: &str) -> Option<LocalId> {
+        frame_lookup(&self.f, name)
     }
 
     pub fn lookup_local(&mut self, name: &str, span: Span) -> Option<LocalId> {

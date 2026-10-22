@@ -2,4 +2,17 @@ module_const_taken_in_init.vlt:13:16: error: cannot move out of module constant 
 module_const_taken_in_init.vlt:15:18: error: cannot move out of module constant `q`
 module_const_taken_in_init.vlt:18:13: error: cannot move out of module constant `q`
 module_const_taken_in_init.vlt:20:13: error: cannot move out of module constant `q`
+module_const_taken_in_init.vlt:61:13: error: cannot move out of module constant `K`
+module_const_taken_in_init.vlt:63:20: error: cannot move out of module constant `N`
 module_const_taken_in_init.vlt:11:9: error: cannot move out of module constant `q`
+module_const_taken_in_init.vlt:37:13: error: cannot move out of module constant `K`
+module_const_taken_in_init.vlt:39:13: error: cannot move out of module constant `K`
+module_const_taken_in_init.vlt:41:12: error: cannot move out of module constant `K`
+module_const_taken_in_init.vlt:43:13: error: cannot move out of module constant `K`
+module_const_taken_in_init.vlt:45:12: error: cannot move out of module constant `K`
+module_const_taken_in_init.vlt:47:15: error: cannot move out of module constant `K`
+module_const_taken_in_init.vlt:49:19: error: cannot move out of module constant `K`
+module_const_taken_in_init.vlt:51:10: error: cannot move out of module constant `N`
+module_const_taken_in_init.vlt:53:15: error: cannot move out of module constant `N`
+module_const_taken_in_init.vlt:55:17: error: cannot move out of module constant `K`
+module_const_taken_in_init.vlt:57:21: error: cannot move out of module constant `N`
