@@ -50,6 +50,9 @@ for r in "$@"; do
     rm -rf "$W/$n"
     mkdir -p "$W/$n" "$W/bin-$n"
     git archive "$ref" | tar -x -C "$W/$n"
+    # The archive's files carry the commit's time: newer ones make cargo rebuild in the shared
+    # target directory.
+    find "$W/$n" -type f -exec touch {} +
     (cd "$W/$n" && CARGO_TARGET_DIR="$W/target" cargo build --release -q -p veltc -p velt_rt) ||
       echo "build $n failed"
     cp "$W/target/release/velt" "$W/target/release/libvelt_rt.a" "$W/bin-$n/"
