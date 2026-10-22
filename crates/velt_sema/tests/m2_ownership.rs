@@ -6,7 +6,7 @@
 mod common;
 
 use common::hir_walk::{calls, exprs, func, uses_of};
-use common::programs::{err_src, ok_src};
+use common::programs::ok_src;
 use velt_sema::hir::{Callee, ExprKind as E, PassMode, UseMode};
 
 #[test]
@@ -301,13 +301,25 @@ fn try_catch_moves_are_joined() {
 }
 
 #[test]
-fn global_constants_are_not_movable() {
-    let r = err_src(
-        "struct P { s: string; } const K: P = P { s: \"k\" };
-         function main() { const p = K; console.log(p.s); }",
+fn global_constants_taken_over_are_module_state() {
+    // Node evaluates a module constant once: one whose value is taken over is kept in the
+    // module state (#1383), and the move shares it. Only reading it keeps it a constant.
+    let slots = |src: &str| ok_src(src).module_state.map_or(0, |m| m.slots.len());
+    let decl = "struct P { s: string; } const K: P = P { s: \"k\" };";
+    assert_eq!(
+        slots(&format!(
+            "{decl} function main() {{ const p = K; console.log(p.s); }}"
+        )),
+        1
     );
-    assert!(r.contains("cannot move out of module constant `K`"), "{r}");
-    ok_src("const S = \"k\"; function main() { const s = S; console.log(s, S); }");
+    assert_eq!(
+        slots(&format!("{decl} function main() {{ console.log(K.s); }}")),
+        0
+    );
+    assert_eq!(
+        slots("const S = \"k\"; function main() { const s = S; console.log(s, S); }"),
+        0
+    );
 }
 
 #[test]

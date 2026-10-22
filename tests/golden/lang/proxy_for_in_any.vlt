@@ -1,0 +1,44 @@
+// `for (const k in o)` of an `any` `o`: a proxy's `ownKeys` runs once and its
+// `getOwnPropertyDescriptor` just before each key's turn, so a key deleted during the loop is
+// skipped, as in Node; a plain value's keys are listed as before.
+const r: Record<string, number> = { a: 1, b: 2, c: 3 };
+const p: any = new Proxy(r, {
+  ownKeys(t: any): any {
+    console.log("ownKeys");
+    return Reflect.ownKeys(t);
+  },
+  getOwnPropertyDescriptor(t: any, k: string | symbol): PropertyDescriptor | undefined {
+    console.log("gopd", String(k));
+    return Reflect.getOwnPropertyDescriptor(t, k);
+  },
+});
+for (const k in p) {
+  console.log("body", k);
+  if (k === "b") {
+    break;
+  }
+}
+for (const k in p) {
+  if (k === "a") {
+    delete p.b;
+  }
+  console.log("body2", k);
+}
+const q: any = new Proxy({ x: 1, y: 2, z: 3 } as Record<string, number>, {
+  getOwnPropertyDescriptor(t: any, k: string | symbol): PropertyDescriptor | undefined {
+    // `y` is not enumerable: skipped.
+    const d = Reflect.getOwnPropertyDescriptor(t, k);
+    return k === "y" && d !== undefined
+      ? { value: d.value, writable: true, enumerable: false, configurable: true }
+      : d;
+  },
+});
+for (const k in q) {
+  console.log("body3", k);
+}
+
+const arr: any = [5, 6];
+for (const k in arr) {
+  console.log("index", k, typeof k);
+}
+// check: no leaks

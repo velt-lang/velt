@@ -347,6 +347,10 @@ fn holds_by(
     if is(cx, t) {
         return true;
     }
+    // A brand (a record view, `crate::index_signatures`) holds what its base holds.
+    if let Some(base) = cx.brand_base(t) {
+        return holds_by(cx, base, is, seen);
+    }
     let kind = cx.ty.kind(t).clone();
     let mut parts = crate::types::children(&kind);
     if let Some(members) = cx.union_members(t) {

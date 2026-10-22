@@ -1,0 +1,18 @@
+// A required named member of a record view whose type has fewer fields than the value given
+// to it converts the value by copying them (`object_copies`): printing or serializing the
+// record would show the copy, where Node shows the original's fields (`{ cfg: { a: 1, b: 2 } }`).
+interface P {
+  cfg: { a: number };
+  [key: string]: any;
+}
+
+function main() {
+  const c = { a: 1, b: 2 };
+  const p: P = { cfg: c };
+  const q: P = { cfg: { a: 0 } };
+  q.cfg = c;
+  const r: P = { cfg: { a: 0 } };
+  r["cfg"] = c;
+  console.log(JSON.stringify(p), q);
+  console.log(JSON.stringify(r));
+}

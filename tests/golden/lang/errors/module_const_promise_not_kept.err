@@ -1,0 +1,5 @@
+module_const_promise_not_kept.vlt:7:21: error: `promiseResolve` cannot initialize module constant `B`: it is async
+module_const_promise_not_kept.vlt:10:33: error: `promiseResolve` cannot initialize module constant `C.Q`: it is async
+module_const_promise_not_kept.vlt:14:15: error: `B` is evaluated at each use, so comparing it by identity is always false
+module_const_promise_not_kept.vlt:14:24: error: `C.Q` is evaluated at each use, so comparing it by identity is always false
+module_const_promise_not_kept.vlt:15:3: error: cannot assign to a field of module-level constant `B`

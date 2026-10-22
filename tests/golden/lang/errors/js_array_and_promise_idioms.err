@@ -1,11 +1,7 @@
 js_array_and_promise_idioms.vlt:18:9: error: variable `sorted` cannot have type `void`
   = note: `sort` changes the array in place and returns nothing in Velt (TypeScript returns the same array; sharing it would make every array of its type reference counted): call `xs.sort();` on its own line, then use `xs`; for a sorted copy that leaves the array unchanged, call `toSorted`; a chained call such as `.sort().join()` works as in TypeScript
-js_array_and_promise_idioms.vlt:19:9: error: variable `copy` cannot have type `void`
-  = note: `reverse` changes the array in place and returns nothing in Velt (TypeScript returns the same array; sharing it would make every array of its type reference counted): store the array in a variable first (`const a = …; a.reverse();`), then use `a`; for a reversed copy that leaves the array unchanged, call `toReversed`; a chained call such as `.reverse().join()` works as in TypeScript
 js_array_and_promise_idioms.vlt:20:9: error: variable `filled` cannot have type `void`
   = note: `fill` changes the array in place and returns nothing in Velt (TypeScript returns the same array; sharing it would make every array of its type reference counted): call `xs.fill(v);` on its own line, then use `xs`; a chained call such as `.fill(v).join()` works as in TypeScript
-js_array_and_promise_idioms.vlt:21:9: error: variable `zeros` cannot have type `void`
-  = note: `fill` changes the array in place and returns nothing in Velt (TypeScript returns the same array; sharing it would make every array of its type reference counted): store the array in a variable first (`const a = …; a.fill(v);`), then use `a`; a chained call such as `.fill(v).join()` works as in TypeScript
 js_array_and_promise_idioms.vlt:23:9: error: variable `shuffled` cannot have type `void`
 js_array_and_promise_idioms.vlt:24:23: error: the callback of `catch` must give the promise's value type `i64`, found `string`
 js_array_and_promise_idioms.vlt:25:15: error: `process.stdout` is not a value: use its members

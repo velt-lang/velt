@@ -150,6 +150,7 @@ fn import_name(cx: &mut Ctx, m: usize, t: usize, imp: &ast::Import, n: &ast::Imp
                 cx.scopes[m].type_only.insert(key);
             }
         }
+        super::exports::namespace_bound(cx, m, &local.name);
         if export_of(cx, t, &n.name.name).is_none() {
             return;
         }
@@ -206,9 +207,12 @@ fn bind_namespace(cx: &mut Ctx, m: usize, t: usize, ns: &ast::Ident) {
         return;
     }
     cx.scopes[m].namespaces.insert(ns.name.clone(), t);
-    for (name, it) in all_exports(cx, t) {
-        cx.scopes[m].items.insert(format!("{}.{name}", ns.name), it);
+    for (name, it) in all_exports(cx, t).iter() {
+        cx.scopes[m]
+            .items
+            .insert(format!("{}.{name}", ns.name), *it);
     }
+    super::exports::namespace_bound(cx, m, &ns.name);
 }
 
 /// A module containing JSX sees its runtime's exports as `JSX.x` (`JSX.Element`, …), as if it

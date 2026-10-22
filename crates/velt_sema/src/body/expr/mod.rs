@@ -86,7 +86,7 @@ mod object_assign;
 pub(crate) mod object_builtins;
 mod object_copy;
 mod object_define;
-mod object_keys;
+pub(crate) mod object_keys;
 mod object_method;
 mod object_own;
 mod object_prototypes;
@@ -104,6 +104,7 @@ mod record_call;
 mod record_compound;
 mod record_literal;
 mod record_logical;
+mod record_view;
 mod regex_args;
 mod rest_shapes;
 mod setters;
@@ -173,6 +174,8 @@ impl FnCx<'_, '_> {
         let h = self.expr_kind(e, exp, want);
         let temps = std::mem::replace(&mut self.call_temps, outer);
         let h = self.with_lets(temps, h);
+        // `Object.keys(r).sort()`: the temporary array it sorted (`in_place_chain`).
+        let h = self.in_place_value(e, h);
         // An integer from the standard library is a number in user code (`numbers`).
         let h = self.std_number(h);
         // An `any | null` (a generic `T | undefined` with `T = any`: `Map.get`, `find`, an

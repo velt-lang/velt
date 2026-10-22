@@ -1,0 +1,11 @@
+keys ["a"] ownKeys, gopd a
+hasOwn b true gopd b
+hasOwnProperty a true gopd a
+in a false has a
+in b true has b
+shape keys ["a"] ownKeys, gopd a
+shape hasOwn b true gopd b
+shape in a false has a
+plain keys ["a","b"] 
+plain hasOwn b true 
+plain in a true 

@@ -1,0 +1,22 @@
+// A `static readonly` field of an imported class reads the module's `let` once, with its class,
+// and is kept in the module state where the importer modifies it (#1383); so is one of a
+// generic class.
+import { Cfg, raise, level } from "./_module_const_static_lib";
+
+class G<T> {
+  static readonly ITEMS: number[] = [];
+  static add(n: number) {
+    G.ITEMS.push(n);
+  }
+}
+
+const keep = Cfg.SELF;
+
+function main() {
+  raise();
+  Cfg.L.push(level);
+  keep.v = 10;
+  G.add(1);
+  G.add(2);
+  console.log(Cfg.L, Cfg.N, Cfg.SELF.v, level, G.ITEMS.length);
+}

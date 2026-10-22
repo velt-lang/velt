@@ -1,0 +1,72 @@
+// A type predicate whose type no member of the tested union is or can hold (sigx's
+// `isComputed(children)` on a `JSXChild`): TypeScript narrows to the intersection, which none
+// of these members can be, so the guarded code type-checks (`c.value`) and never runs here.
+interface Computed<T> {
+  readonly value: T;
+}
+
+const computed: unknown[] = [];
+
+function isComputed(value: unknown): value is Computed<unknown> {
+  return computed.indexOf(value) >= 0;
+}
+
+type VNode = { type: string; children: VNode[] };
+type Child = VNode | string | number | boolean | null | undefined | Child[];
+
+function norm(c: Child): string {
+  if (c == null || c === false || c === true) {
+    return "-";
+  }
+  if (isComputed(c)) {
+    return "computed:" + norm(c.value as Child);
+  }
+  if (typeof c === "string" || typeof c === "number") {
+    return String(c);
+  }
+  if (Array.isArray(c)) {
+    return "[" + c.map(norm).join(",") + "]";
+  }
+  return "<" + (c as VNode).type + ">";
+}
+
+type Rendered = VNode | string | (() => string);
+
+function render(r: Rendered): string {
+  if (isComputed(r)) {
+    return "computed";
+  }
+  if (typeof r === "function") {
+    return r();
+  }
+  if (typeof r === "string") {
+    return r;
+  }
+  return "<" + r.type + ">";
+}
+
+console.log(norm(["a", 1, [true, null], { type: "div", children: [] }]));
+console.log(render(() => "lazy"), render("s"), render({ type: "p", children: [] }));
+console.log(norm(undefined), norm(7));
+
+// A string, an array and a function have `length`, so `v is { length: number }` holds for
+// them (it narrows `string | number` to `string`) and is never ruled out.
+function hasLength(v: unknown): v is { length: number } {
+  return typeof v === "string" || Array.isArray(v);
+}
+
+function len(c: string | number): string {
+  if (hasLength(c)) {
+    return "len " + c.length;
+  }
+  return "nolen";
+}
+
+function lenOf(c: string[] | (() => void) | boolean): string {
+  if (hasLength(c)) {
+    return "has";
+  }
+  return "none";
+}
+
+console.log(len("ab"), len(3), lenOf(["x"]), lenOf(true));

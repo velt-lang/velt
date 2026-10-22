@@ -316,7 +316,7 @@ impl FnCx<'_, '_> {
     }
 
     /// `{ const <name> = init; body(<name>) }`.
-    fn with_temp(
+    pub(crate) fn with_temp(
         &mut self,
         name: &str,
         init: hir::Expr,

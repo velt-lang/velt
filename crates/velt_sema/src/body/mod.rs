@@ -48,6 +48,7 @@ pub(crate) mod expr;
 mod field_narrow;
 mod for_any;
 mod for_await;
+pub(crate) mod for_in_proxy;
 mod for_iter;
 mod for_map;
 mod gated;
@@ -68,6 +69,7 @@ mod param_patterns;
 mod pattern;
 mod pattern_defaults;
 pub(crate) mod places;
+mod predicate_unrelated;
 mod predicates;
 mod property_pattern;
 pub(crate) mod pure_init;
@@ -92,7 +94,10 @@ use crate::hir::{self, DefId, LocalDef, LocalId, TyId, UseMode};
 use crate::resolve::TyEnv;
 
 pub(crate) use defaults::param_defaults;
-pub(crate) use driver::{check_bodies, ensure_body, ensure_global, field_defaults, printable};
+pub(crate) use driver::{
+    check_bodies, ensure_body, ensure_global, field_defaults, holds_promise_by_value, printable,
+    promise_in_state,
+};
 pub(crate) use expr::REPORTED;
 pub(crate) use pattern_defaults::UNDEFINED_OR;
 
@@ -183,6 +188,9 @@ pub(crate) struct CaptureCx {
     /// The variable was narrowed where the closure was created, and the closure body starts
     /// from that narrowing (so the body must not assign it).
     pub narrowed: bool,
+    /// That narrowing: it holds in the whole body, also past branches that started before the
+    /// capture was made (`FnCx::restore_narrowing`).
+    pub start: locals::Narrowing,
 }
 
 /// A promise an async function returns (`expr::tasks`, `async_returned`): the `return` stores

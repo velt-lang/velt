@@ -1,0 +1,95 @@
+// `for (const k in o)` over operands that the body reassigns or rebinds (an element, `this.s`,
+// a property of an `any`, a call, an `any` reassigned to a typed proxy, `n!`, an `await` and a
+// `yield` in the body): the loop keeps the object it began with, as in Node.
+interface Props {
+  a: number;
+  b: number;
+  c: number;
+}
+
+function mkPlain(): Props {
+  return { a: 1, b: 2, c: 3 };
+}
+
+function mkHide(): Props {
+  return new Proxy({ a: 1, b: 2, c: 3 } as any, {
+    getOwnPropertyDescriptor(t: any, k: string | symbol): PropertyDescriptor | undefined {
+      console.log("gopd", String(k));
+      return k === "b" ? undefined : Reflect.getOwnPropertyDescriptor(t, k);
+    },
+  }) as Props;
+}
+
+class C {
+  s: Props = mkPlain();
+  run(): void {
+    for (const k in this.s) {
+      console.log("this", k);
+      this.s = mkHide();
+    }
+  }
+}
+
+let calls = 0;
+
+function get(): Props {
+  calls++;
+  return mkHide();
+}
+
+async function am(): Promise<void> {
+  let o: Props = mkHide();
+  for (const k in o) {
+    await Promise.resolve();
+    console.log("async", k);
+    o = mkPlain();
+  }
+}
+
+function* gen(): Generator<string> {
+  let o: Props = mkHide();
+  for (const k in o) {
+    o = mkPlain();
+    yield k;
+  }
+}
+
+function run(): void {
+  const arr: Props[] = [mkPlain(), mkHide()];
+  let i = 0;
+  for (const k in arr[i]) {
+    console.log("elem", k);
+    i = 1;
+  }
+  i = 1;
+  for (const k in arr[i]) {
+    console.log("elem2", k);
+    i = 0;
+  }
+  new C().run();
+  const ha: any = { s: mkHide() };
+  for (const k in ha.s) {
+    console.log("anyprop", k);
+    ha.s = mkPlain();
+  }
+  for (const k in get()) {
+    console.log("call", k);
+  }
+  console.log("calls", calls);
+  let cur: any = { x: 1, y: 2 };
+  for (const k in cur) {
+    console.log("anyvar", k);
+    cur = mkHide();
+  }
+  let n: Props | undefined = mkHide();
+  for (const k in n!) {
+    console.log("bang", k);
+    n = mkPlain();
+  }
+  am().then(() => {
+    console.log([...gen()].join(","));
+  });
+}
+
+run();
+// check: no leaks

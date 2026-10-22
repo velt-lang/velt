@@ -14,10 +14,10 @@ use crate::backend::Backend;
 use crate::cli::Emit;
 use crate::loader::{self, LoadOptions};
 
+mod pipeline;
 mod recover;
 
-/// Stack for the pipeline thread (reserved, not committed, until used).
-const PIPELINE_STACK_BYTES: usize = 256 << 20;
+use pipeline::on_pipeline_thread;
 
 /// What to build and how.
 #[derive(Clone, Debug, Default)]
@@ -408,26 +408,6 @@ pub fn check_for_lint(
         let loaded = load_stage(sess, opts, scope)?;
         let checked = sema_stage(sess, opts, scope, &loaded).map(drop);
         Ok((loaded, checked))
-    })
-}
-
-/// Run a pipeline stage on the dedicated large-stack thread.
-fn on_pipeline_thread<T: Send>(
-    stage: impl FnOnce() -> Result<T, BuildError> + Send,
-) -> Result<T, BuildError> {
-    std::thread::scope(|s| {
-        let spawned = std::thread::Builder::new()
-            .name("velt-compile".into())
-            .stack_size(PIPELINE_STACK_BYTES)
-            .spawn_scoped(s, stage);
-        match spawned {
-            Ok(handle) => handle
-                .join()
-                .unwrap_or_else(|panic| std::panic::resume_unwind(panic)),
-            Err(e) => Err(BuildError::Failed(format!(
-                "cannot start the compiler thread: {e}"
-            ))),
-        }
     })
 }
 

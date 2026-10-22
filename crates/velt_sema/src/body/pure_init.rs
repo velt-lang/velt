@@ -1,9 +1,12 @@
 //! Module constants initialized by a call (`const Counter = component(...)`, #383). Such a
 //! constant is not stored: like every module constant, its initializer is evaluated at each use
 //! (VIR `global()`). That matches TypeScript's evaluate-once only when the call is pure (no
-//! effects, bounded, cannot throw) and its result is a value, so this module checks both, and
-//! rejects comparing such a constant by identity, the one place where "a new value at each use"
-//! would show.
+//! effects, bounded, cannot throw, reads no constant the program changes) and its result is a
+//! value, so this module checks both. Where "a new value at each use" would show (a comparison
+//! by identity, a change through another name), the constant is kept in the module state
+//! instead (`crate::kept_consts::keep`).
+
+use std::sync::Arc;
 
 use rustc_hash::FxHashMap;
 
@@ -22,11 +25,25 @@ use crate::visit::{self, VisitMut};
 pub(crate) struct Impure {
     what: String,
     span: Span,
-    via: Vec<String>,
+    via: Option<Arc<Via>>,
     /// It is async: the value can never be known before `main` runs, so the constant cannot
     /// be kept as module state either. (One that may throw is kept: an error thrown while the
     /// module state is initialized ends the process, as in Node.)
     fatal: bool,
+}
+
+/// The calls that lead to an [`Impure`] reason, outermost first: a shared list, so each caller
+/// adds its own name in constant time however deep the chain is.
+#[derive(Debug)]
+struct Via {
+    name: String,
+    rest: Option<Arc<Via>>,
+}
+
+impl Impure {
+    fn via(&self) -> impl Iterator<Item = &str> {
+        std::iter::successors(self.via.as_deref(), |v| v.rest.as_deref()).map(|v| v.name.as_str())
+    }
 }
 
 /// One of [`check_init`]'s own diagnostics: why an initializer is not a constant value. The
@@ -111,9 +128,11 @@ pub(crate) fn has_call(e: &Expr) -> bool {
     }
 }
 
-/// Is module constant `d` a table (an array literal stored once as read-only data)?
+/// Is module constant `d` a table (an array literal stored once as read-only data)? Not once it
+/// is module state (`crate::kept_consts::keep`).
 pub(crate) fn is_table(cx: &Ctx, d: DefId) -> bool {
     cx.global(d)
+        .filter(|g| !g.stored)
         .and_then(|g| g.init.as_ref())
         .is_some_and(|init| matches!(init.kind, H::ArrayLit(_)))
 }
@@ -130,7 +149,7 @@ pub(crate) fn table_escapes(name: &str, msg: String, span: velt_common::Span) ->
 /// functions, and interface values made from object literals (whose fields can't be written
 /// through the interface: [`value_ty`]): a struct or object constant moved into a variable
 /// would be a copy that the constant doesn't see changes to (TypeScript aliases it), so those
-/// keep the move error.
+/// are kept in the module state instead (`crate::kept_consts::keep`).
 pub(crate) fn shares_on_move(cx: &mut Ctx, d: DefId) -> bool {
     let Some(g) = cx.global(d) else { return false };
     let ty = g.ty;
@@ -317,9 +336,9 @@ fn call_ok(
                 span,
             )
             .with_label(imp.span, imp.what.clone());
-            if !imp.via.is_empty() {
-                let chain = std::iter::once(fname.clone())
-                    .chain(imp.via.iter().cloned())
+            if imp.via.is_some() {
+                let chain = std::iter::once(fname.as_str())
+                    .chain(imp.via())
                     .map(|n| format!("`{n}`"))
                     .collect::<Vec<_>>()
                     .join(" -> ");
@@ -376,7 +395,7 @@ pub(crate) fn purity(cx: &mut Ctx, f: DefId) -> Result<(), Impure> {
             return Err(Impure {
                 what: "calls itself".into(),
                 span: cx.fn_info(f).name_span,
-                via: vec![],
+                via: None,
                 fatal: false,
             })
         }
@@ -394,7 +413,7 @@ fn decide(cx: &mut Ctx, f: DefId) -> Result<(), Impure> {
         Err(Impure {
             what: what.into(),
             span,
-            via: vec![],
+            via: None,
             fatal: false,
         })
     };
@@ -402,7 +421,7 @@ fn decide(cx: &mut Ctx, f: DefId) -> Result<(), Impure> {
         Err(Impure {
             what: what.into(),
             span,
-            via: vec![],
+            via: None,
             fatal: true,
         })
     };
@@ -449,10 +468,20 @@ fn decide(cx: &mut Ctx, f: DefId) -> Result<(), Impure> {
         found: None,
         calls: vec![],
         closures: vec![],
+        globals: vec![],
     };
     visit::block(&mut body, &mut walk);
     if let Some(imp) = walk.found {
         return Err(imp);
+    }
+    // Module state (a module-level `let`, a kept constant) may change while the program runs;
+    // Node evaluated the initializer once, before it did.
+    let changing = walk
+        .globals
+        .iter()
+        .find(|(g, _)| crate::kept_consts::changes(cx, *g));
+    if let Some(&(_, span)) = changing {
+        return at("reads module state that the program changes", span);
     }
     for (c, span) in walk.closures {
         if let Some(what) = kept_state(cx, c, &locals) {
@@ -462,11 +491,15 @@ fn decide(cx: &mut Ctx, f: DefId) -> Result<(), Impure> {
     for (g, span) in walk.calls {
         if let Err(mut imp) = purity(cx, g) {
             // A reason about the callee as a whole points at the call.
-            if imp.via.is_empty() && imp.span == cx.fn_info(g).name_span {
+            if imp.via.is_none() && imp.span == cx.fn_info(g).name_span {
                 imp.span = span;
             }
             if g != f && cx.fn_info(g).kind != FnKind::Extern {
-                imp.via.insert(0, short_name(cx, g));
+                let rest = imp.via.take();
+                imp.via = Some(Arc::new(Via {
+                    name: short_name(cx, g),
+                    rest,
+                }));
             }
             return Err(imp);
         }
@@ -498,11 +531,13 @@ fn kept_state(cx: &Ctx, c: DefId, locals: &[hir::LocalDef]) -> Option<String> {
     None
 }
 
-/// The first effect found in a body, the named functions it calls and the closures it creates.
+/// The first effect found in a body, the named functions it calls, the closures it creates and
+/// the module constants and `let`s it reads.
 struct Walk {
     found: Option<Impure>,
     calls: Vec<(DefId, Span)>,
     closures: Vec<(DefId, Span)>,
+    globals: Vec<(DefId, Span)>,
 }
 
 impl Walk {
@@ -515,7 +550,7 @@ impl Walk {
             self.found = Some(Impure {
                 what: what.into(),
                 span,
-                via: vec![],
+                via: None,
                 fatal,
             });
         }
@@ -544,6 +579,7 @@ impl VisitMut for Walk {
                 }
             },
             H::Closure(c) => self.closures.push((*c, e.span)),
+            H::Global(g) => self.globals.push((*g, e.span)),
             H::Await(_) => self.set_as("awaits", e.span, true),
             H::Throw(_) => self.set("may throw", e.span),
             _ => {}
@@ -650,6 +686,18 @@ fn reference_part(cx: &Ctx, t: TyId, depth: u32) -> Option<&'static str> {
     }
 }
 
+/// Can a change through one reference to a value of `t` show through another (an array, a map,
+/// an object or class instance, in part)? A copy of such a value would be told from the
+/// original; a function, a string or a number would not.
+pub(crate) fn mutable_identity(cx: &Ctx, t: TyId) -> bool {
+    match cx.ty.kind(t) {
+        TyKind::FnPtr { .. } | TyKind::Closure(_) => false,
+        TyKind::Option(x, _) => mutable_identity(cx, *x),
+        TyKind::Tuple(xs) => xs.iter().any(|x| mutable_identity(cx, *x)),
+        _ => identity_compared(cx, t, 0),
+    }
+}
+
 /// Does `===` compare values of `t` by identity (in part)?
 fn identity_compared(cx: &Ctx, t: TyId, depth: u32) -> bool {
     if depth > 16 {
@@ -665,33 +713,43 @@ fn identity_compared(cx: &Ctx, t: TyId, depth: u32) -> bool {
     }
 }
 
-/// `===` / `!==` with an operand that is directly a module constant compared by identity: the
-/// constant is a new value at each use, so the comparison would always be false.
+/// `===`, `!==` or `Object.is` with an operand that is a module constant, or a part of one,
+/// compared by identity: the constant is kept in the module state (`crate::kept_consts::keep`),
+/// or, where it can't be, is a new value at each use, so the comparison would always be false.
 pub(crate) fn check_identity(cx: &mut Ctx, operands: [&Expr; 2]) {
     for e in operands {
         let mut x = e;
         while let H::Upcast(i) | H::WrapSome(i) | H::Cast(i) = &x.kind {
             x = i;
         }
-        let H::Global(d) = x.kind else { continue };
+        // A part of a constant (`K.inner === x`) is a part of the one object Node evaluates.
+        let part = matches!(x.kind, H::Field { .. });
+        let H::Global(d) = crate::body::places::root_expr(x).kind else {
+            continue;
+        };
         let Some(g) = cx.global(d) else { continue };
         let fresh = g
             .init
             .as_ref()
             .is_some_and(|i| !matches!(i.kind, H::Lit(_) | H::FnRef(..)));
-        if !fresh || g.stored || !identity_compared(cx, g.ty, 0) {
+        if !fresh || g.stored || !identity_compared(cx, x.ty, 0) {
             continue;
         }
         let name = g.name.clone();
+        // The one object Node evaluates once, kept in the module state.
+        if crate::kept_consts::keep(cx, d) {
+            continue;
+        }
         cx.error(
             Diagnostic::error(
                 format!("`{name}` is evaluated at each use, so comparing it by identity is always false"),
                 x.span,
             )
             .with_note("module constants are not stored: each use of one computes a new value")
-            .with_note(match cx.global(d).is_some_and(|g| matches!(cx.ty.kind(g.ty), TyKind::Array(_))) {
-                true => format!("compare the elements, or copy it once (`const c = {name}.slice();`) and compare that copy"),
-                false => format!("copy it into a local first (`const c = {name};`) and compare that, or compare a field that identifies it"),
+            .with_note(match (part, cx.global(d).is_some_and(|g| matches!(cx.ty.kind(g.ty), TyKind::Array(_)))) {
+                (true, _) => "compare a field that identifies it".to_string(),
+                (false, true) => format!("compare the elements, or copy it once (`const c = {name}.slice();`) and compare that copy"),
+                (false, false) => format!("copy it into a local first (`const c = {name};`) and compare that, or compare a field that identifies it"),
             }),
         );
         return;

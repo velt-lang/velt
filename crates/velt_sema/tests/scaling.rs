@@ -14,7 +14,7 @@ use std::sync::{Mutex, MutexGuard};
 
 use common::hir_walk::func;
 use common::process_work;
-use common::programs::{err_src, load_src, ok_src, repo_root, Loaded};
+use common::programs::{err_src, load_src, load_src_at, ok_src, repo_root, Loaded};
 use velt_sema::hir::PassMode;
 use velt_sema::{instantiation_work, InstantiationWork};
 
@@ -98,6 +98,43 @@ fn nested_trials(depth: usize) -> String {
         + &format!("  console.log({call});\n}}\n")
 }
 
+/// A package of `n` modules behind barrels, as sigx's packages are: `index` re-exports every
+/// module (`export *`), `left` and `right` re-export `index`, `pkg` re-exports both, and the root
+/// imports every name of `pkg` by name. Each import once walked the barrels again and rebuilt
+/// `pkg`'s whole export list.
+fn barrel_package(n: usize) -> Loaded {
+    let dir = std::env::temp_dir().join(format!("velt-barrels-{}-{n}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let write =
+        |name: &str, src: &str| std::fs::write(dir.join(format!("{name}.vlt")), src).unwrap();
+    let mut index = String::new();
+    for i in 0..n {
+        write(
+            &format!("m{i}"),
+            &format!("export function f{i}(): i64 {{\n  return {i};\n}}\n"),
+        );
+        index += &format!("export * from \"./m{i}\";\n");
+    }
+    write("index", &index);
+    write("left", "export * from \"./index\";\n");
+    write("right", "export * from \"./index\";\n");
+    write(
+        "pkg",
+        "export * from \"./left\";\nexport * from \"./right\";\n",
+    );
+    let names: Vec<String> = (0..n).map(|i| format!("f{i}")).collect();
+    let mut main = format!("import {{ {} }} from \"./pkg\";\n", names.join(", "));
+    main += "function main() {\n  let s: i64 = 0;\n";
+    for i in 0..n {
+        main += &format!("  s += f{i}();\n");
+    }
+    main += "  console.log(s);\n}\n";
+    // The loader reads every module now: the directory is not needed after.
+    let loaded = load_src_at(&dir.join("main.vlt"), &main);
+    let _ = std::fs::remove_dir_all(&dir);
+    loaded
+}
+
 /// The tests of this file run one at a time: `sema_cost` reads the process's CPU clock, which
 /// would count another test's work too.
 fn serial() -> MutexGuard<'static, ()> {
@@ -128,6 +165,11 @@ fn assert_linear(sizes: &[usize], chain: impl Fn(usize) -> usize, slack: f64) {
 
 /// [`assert_linear`] for the programs `program` generates.
 fn assert_slopes(sizes: &[usize], program: impl Fn(usize) -> String, slack: f64) {
+    assert_slopes_of(sizes, |n| load_src(&program(n)), slack);
+}
+
+/// [`assert_slopes`] for the programs `load` loads.
+fn assert_slopes_of(sizes: &[usize], load: impl Fn(usize) -> Loaded, slack: f64) {
     // A shared CI runner can slow one size's measurements enough to tilt a slope past the
     // slack. A pass that really grows faster than linearly fails every attempt, so the test
     // measures again, up to `ATTEMPTS` times, before it fails.
@@ -138,7 +180,7 @@ fn assert_slopes(sizes: &[usize], program: impl Fn(usize) -> String, slack: f64)
     );
     // Before loading: parsing the programs is work on the process's clock too.
     let _serial = serial();
-    let programs: Vec<Loaded> = sizes.iter().map(|&n| load_src(&program(n))).collect();
+    let programs: Vec<Loaded> = sizes.iter().map(|&n| load(n)).collect();
     let mut failure = String::new();
     for attempt in 1..=ATTEMPTS {
         match linear_slopes(sizes, &programs, slack) {
@@ -335,6 +377,13 @@ fn chains_through_generic_wrappers_are_walked_to_the_end() {
             "{e}"
         );
     }
+}
+
+/// Importing every name of a package through barrels of `export *` costs the same per name
+/// at every size: a module's exports are found once, not again for each import.
+#[test]
+fn imports_through_barrels_grow_linearly() {
+    assert_slopes_of(&[100, 400, 1600], barrel_package, 2.0);
 }
 
 /// Choosing the member of a union of function types for nested arrows that each use the

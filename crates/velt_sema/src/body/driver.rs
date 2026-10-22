@@ -189,7 +189,7 @@ pub(crate) fn ensure_global(cx: &mut Ctx, d: DefId) {
     // the value it had when Node evaluated the constant, once: evaluated at each use, it would
     // see later writes. Kept in the module state, it is evaluated in Node's order instead.
     if let (Some(i), false) = (&init, stored) {
-        let top_level = owner.is_none() && !cx.modules[module].is_std;
+        let top_level = !cx.modules[module].is_std;
         if top_level && ty != cx.ty.error && crate::module_state::reads_state(cx, i) {
             stored = true;
         }
@@ -203,7 +203,7 @@ pub(crate) fn ensure_global(cx: &mut Ctx, d: DefId) {
         // it once (#802): kept in the module state instead of being an error. So is a function
         // from a call, whose identity shows. Only `check_init`'s own diagnostics go then: those
         // of the functions it calls (checked on the way) stay.
-        let top_level = owner.is_none() && !cx.modules[module].is_std;
+        let top_level = !cx.modules[module].is_std;
         let function = super::pure_init::has_call(i)
             && matches!(
                 cx.ty.kind(ty),
@@ -242,7 +242,12 @@ pub(crate) fn ensure_global(cx: &mut Ctx, d: DefId) {
 /// once). A class, an array or a `Map` in module state may hold promises that tasks put there:
 /// each read is another holder of the shared promise (#212), and the tasks that use module
 /// state run one at a time.
-fn promise_in_state(cx: &mut Ctx, d: DefId, ty: crate::hir::TyId, span: velt_common::Span) {
+pub(crate) fn promise_in_state(
+    cx: &mut Ctx,
+    d: DefId,
+    ty: crate::hir::TyId,
+    span: velt_common::Span,
+) {
     if !holds_promise_by_value(cx, ty, 0) {
         return;
     }
@@ -260,7 +265,7 @@ fn promise_in_state(cx: &mut Ctx, d: DefId, ty: crate::hir::TyId, span: velt_com
 
 /// Does a value of `t` hold a promise itself (not behind a class, an array or a `Map`, which
 /// tasks fill as they run)?
-fn holds_promise_by_value(cx: &Ctx, t: crate::hir::TyId, depth: u32) -> bool {
+pub(crate) fn holds_promise_by_value(cx: &Ctx, t: crate::hir::TyId, depth: u32) -> bool {
     use crate::hir::{AdtKind, TyKind};
     if depth > 8 {
         return false;
