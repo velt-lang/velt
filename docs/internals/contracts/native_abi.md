@@ -124,7 +124,8 @@ typedef struct VeltRtApi {
   `Completer` (results that can fail only) completes with the error "completer dropped" when it
   is dropped without completing, so awaiting Velt code never hangs.
 - `VeltStr` and `VeltBytes` layouts are private to the runtime: libraries read them only through
-  `str_bytes` and `bytes_data`. velt_rt's unit tests check that the SDK's `Api`, `VeltStr`,
+  `str_bytes` and `bytes_data`. One value is fixed: all 24 bytes zero is the empty string (and
+  the empty `u8[]`), which a library may make and drop without a call. velt_rt's unit tests check that the SDK's `Api`, `VeltStr`,
   `VeltBytes`, `VeltErr` and `IoResultSlot` match the runtime's exactly.
 - Hot-reload rule (`rt_abi_async.md` §13.5): the only code pointers stored are `work`,
   `drop_ctx` and `drop_result`, which point into the library; libraries are never unloaded. A
@@ -151,6 +152,9 @@ typedef struct { const void* runtime; const void* data; const VeltForeignWaker* 
     void (*waker_wake_by_ref)(const void* w);
     void (*waker_drop)(void* w);
     uint32_t (*fut_poll_ext)(VeltFut* f, const VeltWakerArg* w);  // await a runtime future
+    // (appended later) fut_poll with the state inside the future's block:
+    VeltFut* (*fut_poll_in)(VeltPollFn poll, void (*drop_state)(void*), size_t result_size,
+                            size_t state_size, size_t state_align, void** state_out);
     void (*fut_drop)(VeltFut* f);
     void (*spawn)(VeltFut* f);                        // detached; result size 0
     VeltFut* (*tcp_connect)(const uint8_t* addr, size_t len);     // "host:port" -> IoResult<u64>
@@ -174,7 +178,11 @@ typedef struct { const void* runtime; const void* data; const VeltForeignWaker* 
 - `fut_poll` makes a `VeltFut` from a library future: the runtime calls `poll(state, cx, out)`
   on the thread of the awaiting task; `READY` means `result_size` bytes are at `out`. `state`
   is freed with `drop_state` when the future finishes or is dropped. A panic must not cross
-  `poll` (the SDK turns it into the result's error).
+  `poll` (the SDK turns it into the result's error). `fut_poll_in` is the same with one
+  allocation instead of two: the runtime's block has room for the state (`state_size`,
+  `state_align`) at `*state_out`, where the library moves it before the first poll; it never
+  moves, and `drop_state` drops it in place (the runtime frees the block). The SDK uses it for
+  every `#[export(async)]` call and `rt::spawn`.
 - `cx` is the runtime's poll context, valid during the call; `cx_waker(cx)` is the task's
   waker, borrowed for the call. Functions that wait take a `VeltWakerArg`: `runtime` set to a
   runtime waker (borrowed or owned) when the library's waker is one, which costs nothing; else
@@ -201,6 +209,7 @@ making one reads its text once. The table lets a library make strings without co
     void (*str_retain)(const VeltStr* s, VeltStr* out);               // another reference
     uint8_t* (*strbuf_spare)(VeltStr* buf, uint64_t min, uint64_t* avail);
     void (*strbuf_commit)(VeltStr* buf, uint64_t n, uint8_t ascii);
+    const uint8_t* (*str_utf8)(const VeltStr* s, size_t* len);       // bytes if UTF-8, else null
 ```
 
 - `alloc`/`realloc`/`free`: memory Velt frees (arrays a library returns).
@@ -208,6 +217,11 @@ making one reads its text once. The table lets a library make strings without co
   builds; debug runtimes check).
 - `str_retain`: another reference to the same immutable string (a count, no copy): a library
   keeps a string argument past the call this way (an async export's parameter).
+- `str_utf8`: a string's bytes when they are UTF-8 (no lone surrogate), else null. The string
+  knows (its lone-surrogate count), so a `&str` parameter borrows the text without scanning it;
+  only a string with a lone surrogate takes the lossy copy. A `&Str` parameter is the caller's
+  string itself and reads nothing until asked (`as_bytes`, `to_str`): JSON text from
+  `JSON.stringify` (always UTF-8) is read as stored this way.
 - `strbuf_spare(buf, min, avail)`: makes `buf` a unique heap buffer with room for at least `min`
   bytes after its text and returns where the room starts (`*avail` bytes). Bytes written there
   are not text yet; the runtime keeps them when a later `strbuf_spare` grows the buffer.
@@ -226,6 +240,18 @@ native_strings`, Apple M-series): a `StrBuf` is as fast as or faster than a `Vec
 into a string once (the runtime's own drivers before), from −11 % (short text) to +1 % (1 MB of
 non-ASCII text), and 18–77 % faster than a `String` result (checked, then copied); a retained
 `Str` parameter costs 2–4 ns where a `String` copy costs 13 ns (16 bytes) to 17 µs (64 KB).
+
+## Handles and borrowed async arguments
+
+- `velt_native::handles::Registry<T>` keys (generation-checked, sharded): for handles Velt may
+  copy (a Copy struct like std's `Database` or `RedisClient`): a closed handle fails cleanly
+  through every copy.
+- `velt_native::handles::Single<T>`: the object's address, for an object exactly one Velt value
+  owns (a class that never copies its handle and releases it once, like std's `Statement`).
+  Using it costs nothing; nothing checks a stale one, so it is for that ownership only.
+- `#[export(async)] fn f(a: &[Str], ..) -> impl Future<Output = R> + Send + 'static`: the
+  arguments are borrowed for the synchronous part (encode a request from them), and the
+  returned future cannot keep them (a compile error). `async fn` exports take owned arguments.
 
 ## Rows
 
@@ -249,13 +275,17 @@ for yet).
 
 ## Drivers in the runtime
 
-std's drivers (`velt:postgres`: crate `velt_std_postgres`; `velt:sqlite`: `velt_std_sqlite`) are crates on this SDK only
+std's drivers (`velt:postgres`: crate `velt_std_postgres`; `velt:sqlite`: `velt_std_sqlite`;
+`velt:redis`: `velt_std_redis`) are crates on this SDK only
 (`velt_native`, `velt_text`), linked into the runtime library instead of a package's own: their
 `#[export]` functions are std's `declare`s (named `velt_std_<driver>__…`, checked against their
 signature records like any package's, `veltc/src/native/` `check_std_driver`), and an
 executable stays self-contained. The runtime hands them its table at start-up
 (`velt_rt::native::embed`, from `entry::init`), as `velt_native_init_<pkg>` does for a
-package, without replacing the panic hook (they share the runtime's std).
+package, without replacing the panic hook (they share the runtime's std). They share two helper crates any
+native library can use: `velt_text` (string encoding, number formatting, JSON, database rows)
+and `velt_tls` (one rustls client setup per process: the `ring` provider, Mozilla's roots plus
+extra PEM CAs, cached per CA text; the runtime's `fetch` and WebSockets use it too).
 
 ## Start-up
 

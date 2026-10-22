@@ -148,6 +148,15 @@ pub struct VeltRtApi {
     /// `(s, len_out) -> ptr`: a string's bytes when they are UTF-8 (no lone surrogate; the
     /// string knows), else null: a library borrows it as text without checking the bytes.
     pub str_utf8: unsafe extern "C" fn(*const VeltStr, *mut usize) -> *const u8,
+    /// `aio::fut_poll_in`: `fut_poll` with the state in the future's block.
+    pub fut_poll_in: unsafe extern "C" fn(
+        aio::NativePollFn,
+        aio::DropStateFn,
+        usize,
+        usize,
+        usize,
+        *mut *mut c_void,
+    ) -> *mut VeltFut,
 }
 
 /// The table every native library receives.
@@ -195,6 +204,7 @@ pub static VELT_RT_API: VeltRtApi = VeltRtApi {
     strbuf_spare: crate::strbuf::velt_rt_strbuf_spare,
     strbuf_commit: crate::strbuf::velt_rt_strbuf_commit,
     str_utf8,
+    fut_poll_in: aio::fut_poll_in,
 };
 
 /// `const VeltRtApi* velt_rt_native_api(void)`: the table, for generated code to pass to each
@@ -446,7 +456,8 @@ mod tests {
             str_retain,
             strbuf_spare,
             strbuf_commit,
-            str_utf8
+            str_utf8,
+            fut_poll_in
         );
         assert_eq!(NATIVE_ABI_VERSION, sdk::ABI_VERSION);
         assert_eq!(size_of::<VeltStr>(), size_of::<sdk::VeltStr>());

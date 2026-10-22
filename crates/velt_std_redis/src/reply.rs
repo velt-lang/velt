@@ -1,7 +1,7 @@
 //! Reply conversion: a parsed reply tree becomes a `VeltRedisReply`, three parallel arrays in
 //! pre-order (a node, then its children), which std/redis reads directly for typed commands
 //! (`get` looks at node 0, `lrange` at nodes 1..) and rebuilds into a `RedisReply` tree for
-//! `call()` and pipelines. Flat Copy arrays cross the C ABI without any per-node allocation on
+//! `call()` and pipelines. Flat Copy arrays cross the boundary without any per-node allocation on
 //! the Velt side.
 
 use super::error::RedisErr;
@@ -37,7 +37,77 @@ pub struct RawReply {
     pub strs: Array<Str>,
 }
 
-/// The nodes of a reply before they become C arrays.
+/// Where a reply's nodes go, in pre-order: Velt's arrays ([`RawReply`]) or, in tests, [`Flat`].
+pub trait Nodes {
+    /// Room for `n` nodes.
+    fn reserve(&mut self, n: usize);
+    /// One node; `text` is UTF-8 (invalid bytes already replaced).
+    fn node(&mut self, tag: u8, num: i64, text: &str);
+
+    /// Append `v` and its children.
+    fn push(&mut self, v: &Value) {
+        match v {
+            Value::Nil => self.node(tag::NIL, 0, ""),
+            Value::Status(s) => self.node(tag::STATUS, 0, s),
+            Value::Error(s) => self.node(tag::ERROR, 0, s),
+            Value::Int(n) => self.node(tag::INT, *n, ""),
+            Value::Bulk(b) => self.node(tag::STRING, 0, &String::from_utf8_lossy(b)),
+            Value::Array(items) => {
+                self.node(tag::ARRAY, items.len() as i64, "");
+                for item in items {
+                    self.push(item);
+                }
+            }
+        }
+    }
+
+    /// `v` and its children, with the room reserved up front.
+    fn of(v: &Value) -> Self
+    where
+        Self: Default,
+    {
+        let mut out = Self::default();
+        out.reserve(count(v));
+        out.push(v);
+        out
+    }
+}
+
+/// Nodes in `v` (itself and every descendant).
+fn count(v: &Value) -> usize {
+    match v {
+        Value::Array(items) => 1 + items.iter().map(count).sum::<usize>(),
+        _ => 1,
+    }
+}
+
+impl Default for RawReply {
+    fn default() -> RawReply {
+        RawReply {
+            tags: Array::new(),
+            nums: Array::new(),
+            strs: Array::new(),
+        }
+    }
+}
+
+/// Written straight into Velt's arrays (each text copied once into a Velt string; an empty one
+/// is free).
+impl Nodes for RawReply {
+    fn reserve(&mut self, n: usize) {
+        self.tags.reserve(n);
+        self.nums.reserve(n);
+        self.strs.reserve(n);
+    }
+
+    fn node(&mut self, tag: u8, num: i64, text: &str) {
+        self.tags.push(tag);
+        self.nums.push(num);
+        self.strs.push(Str::new(text));
+    }
+}
+
+/// A reply's nodes as Rust vectors (tests).
 #[derive(Default, Debug, PartialEq)]
 pub struct Flat {
     /// Node kinds.
@@ -48,71 +118,37 @@ pub struct Flat {
     pub strs: Vec<String>,
 }
 
-impl Flat {
-    /// Append `v` and its children.
-    pub fn push(&mut self, v: Value) {
-        let (tag, num, text) = match v {
-            Value::Nil => (tag::NIL, 0, String::new()),
-            Value::Status(s) => (tag::STATUS, 0, s),
-            Value::Error(s) => (tag::ERROR, 0, s),
-            Value::Int(n) => (tag::INT, n, String::new()),
-            Value::Bulk(b) => (tag::STRING, 0, into_text(b)),
-            Value::Array(items) => {
-                self.node(tag::ARRAY, items.len() as i64, String::new());
-                for item in items {
-                    self.push(item);
-                }
-                return;
-            }
-        };
-        self.node(tag, num, text);
+impl Nodes for Flat {
+    fn reserve(&mut self, n: usize) {
+        self.tags.reserve(n);
+        self.nums.reserve(n);
+        self.strs.reserve(n);
     }
 
-    fn node(&mut self, tag: u8, num: i64, text: String) {
+    fn node(&mut self, tag: u8, num: i64, text: &str) {
         self.tags.push(tag);
         self.nums.push(num);
-        self.strs.push(text);
+        self.strs.push(text.to_string());
     }
-
-    /// The arrays as Velt's (each text copied once into a Velt string; empty ones are free).
-    pub fn into_velt(self) -> RawReply {
-        let mut tags = Array::with_capacity(self.tags.len());
-        tags.extend_from_slice(&self.tags);
-        let mut nums = Array::with_capacity(self.nums.len());
-        nums.extend_from_slice(&self.nums);
-        let mut strs = Array::with_capacity(self.strs.len());
-        for s in &self.strs {
-            strs.push(Str::new(s));
-        }
-        RawReply { tags, nums, strs }
-    }
-}
-
-fn into_text(b: Vec<u8>) -> String {
-    String::from_utf8(b).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned())
 }
 
 /// A single command's reply: a top-level error reply fails the command.
-pub fn single(v: Value) -> Result<Flat, RedisErr> {
+pub fn single(v: Value) -> Result<Value, RedisErr> {
     if let Value::Error(e) = v {
         return Err(RedisErr::server(e));
     }
-    let mut f = Flat::default();
-    f.push(v);
-    Ok(f)
+    Ok(v)
 }
 
 /// A pipeline's replies as one array node; failed commands are ERROR nodes, not failures.
-pub fn pipeline(replies: Vec<Value>) -> Flat {
-    let mut f = Flat::default();
-    f.push(Value::Array(replies));
-    f
+pub fn pipeline(replies: Vec<Value>) -> Value {
+    Value::Array(replies)
 }
 
 /// A `MULTI` … `EXEC` block: `replies` = `+OK`, one `+QUEUED` (or error) per command, then
 /// `EXEC`'s array. The result is `EXEC`'s array; an aborted transaction fails with its error,
 /// naming the first command that was rejected.
-pub fn transaction(mut replies: Vec<Value>) -> Result<Flat, RedisErr> {
+pub fn transaction(mut replies: Vec<Value>) -> Result<Value, RedisErr> {
     let exec = replies.pop().unwrap_or(Value::Nil);
     let rejected = replies.iter().find_map(|v| match v {
         Value::Error(e) => Some(e.clone()),
@@ -147,7 +183,7 @@ mod tests {
             Value::Status("OK".into()),
             Value::Bulk(vec![0xff, b'x']),
         ]);
-        let f = single(v).unwrap();
+        let f = Flat::of(&single(v).unwrap());
         assert_eq!(f.tags, vec![5, 4, 5, 3, 0, 1, 4]);
         assert_eq!(f.nums, vec![4, 0, 2, 7, 0, 0, 0]);
         assert_eq!(f.strs, vec!["", "a", "", "", "", "OK", "\u{fffd}x"]);
@@ -157,19 +193,21 @@ mod tests {
     fn errors_fail_single_commands_but_not_pipelines() {
         let e = single(Value::Error("WRONGTYPE nope".into())).unwrap_err();
         assert_eq!(e, RedisErr::server("WRONGTYPE nope".into()));
-        let f = pipeline(vec![Value::Error("ERR x".into()), Value::Int(1)]);
+        let f = Flat::of(&pipeline(vec![Value::Error("ERR x".into()), Value::Int(1)]));
         assert_eq!(f.tags, vec![tag::ARRAY, tag::ERROR, tag::INT]);
         assert_eq!(f.strs[1], "ERR x");
     }
 
     #[test]
     fn unwraps_transactions() {
-        let ok = transaction(vec![
-            Value::Status("OK".into()),
-            Value::Status("QUEUED".into()),
-            Value::Array(vec![Value::Int(3)]),
-        ])
-        .unwrap();
+        let ok = Flat::of(
+            &transaction(vec![
+                Value::Status("OK".into()),
+                Value::Status("QUEUED".into()),
+                Value::Array(vec![Value::Int(3)]),
+            ])
+            .unwrap(),
+        );
         assert_eq!((ok.tags, ok.nums), (vec![5, 3], vec![1, 3]));
         let aborted = transaction(vec![
             Value::Status("OK".into()),

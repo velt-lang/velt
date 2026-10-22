@@ -5,7 +5,8 @@
 use crate::client::{self, ClientHandle};
 use crate::error::RedisErr;
 use crate::pubsub::{self, Message, SubHandle};
-use crate::reply::{Flat, RawReply};
+use crate::reply::{Nodes, RawReply};
+use crate::resp::Value;
 use std::borrow::Cow;
 use std::future::Future;
 use velt_native::handles::Key;
@@ -15,8 +16,8 @@ fn io<T>(r: Result<T, RedisErr>) -> Result<T, Error> {
     r.map_err(|e| e.to_error())
 }
 
-fn reply(r: Result<Flat, RedisErr>) -> Result<RawReply, Error> {
-    io(r).map(Flat::into_velt)
+fn reply(r: Result<Value, RedisErr>) -> Result<RawReply, Error> {
+    io(r).map(|v| RawReply::of(&v))
 }
 
 /// The elements of a Velt `string[]` as UTF-8, borrowed while the call lasts (a string with

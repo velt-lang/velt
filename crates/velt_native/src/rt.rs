@@ -158,15 +158,28 @@ where
         }
     }
     unsafe extern "C" fn drop_state<F: Future>(state: *mut c_void) {
-        drop(Box::from_raw(state as *mut State<F>));
+        // In the future's own block: dropped in place, the runtime frees the block.
+        std::ptr::drop_in_place(state as *mut State<F>);
     }
-    let state = Box::into_raw(Box::new(State {
-        fut,
-        done,
-        panicked,
-    })) as *mut c_void;
-    // SAFETY: callbacks for this `State<F>`.
-    unsafe { (api().fut_poll)(poll::<F>, state, drop_state::<F>, result_size) }
+    let mut slot: *mut c_void = std::ptr::null_mut();
+    // SAFETY: callbacks for this `State<F>`; the runtime gives room for one at `slot`, which
+    // never moves, and calls `drop_state` once.
+    unsafe {
+        let f = (api().fut_poll_in)(
+            poll::<F>,
+            drop_state::<F>,
+            result_size,
+            std::mem::size_of::<State<F>>(),
+            std::mem::align_of::<State<F>>(),
+            &mut slot,
+        );
+        (slot as *mut State<F>).write(State {
+            fut,
+            done,
+            panicked,
+        });
+        f
+    }
 }
 
 /// The future behind an `#[export(async)]` function: `fut` runs on the awaiting task's worker,

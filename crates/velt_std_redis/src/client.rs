@@ -7,8 +7,9 @@
 use super::connect::Endpoint;
 use super::error::RedisErr;
 use super::multiplex::Conn;
-use super::reply::{self, Flat};
+use super::reply;
 use super::resp::encode_command;
+use super::resp::Value;
 use super::url;
 use std::future::Future;
 use std::sync::Arc;
@@ -65,7 +66,7 @@ pub fn encode<A: AsRef<[u8]>>(args: &[A]) -> Vec<u8> {
 pub fn command(
     c: ClientHandle,
     payload: Vec<u8>,
-) -> impl Future<Output = Result<Flat, RedisErr>> + Send + use<> {
+) -> impl Future<Output = Result<Value, RedisErr>> + Send + use<> {
     let conn = conn(c);
     async move {
         let conn = conn?;
@@ -125,7 +126,7 @@ pub fn pipeline(
     payload: Result<Vec<u8>, RedisErr>,
     commands: usize,
     atomic: bool,
-) -> impl Future<Output = Result<Flat, RedisErr>> + Send + use<> {
+) -> impl Future<Output = Result<Value, RedisErr>> + Send + use<> {
     let replies = commands + if atomic { 2 } else { 0 };
     let conn = conn(c);
     async move {

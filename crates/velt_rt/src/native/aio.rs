@@ -90,6 +90,44 @@ pub unsafe extern "C" fn fut_poll(
     f
 }
 
+/// `VeltFut* fut_poll_in(poll, drop_state, result_size, state_size, state_align, state_out)`:
+/// [`fut_poll`] with the library's state in the future's own block (one allocation per future
+/// instead of two): `*state_out` is where the library moves its state (`state_size` bytes,
+/// aligned to `state_align`) before the future is polled; `drop_state` drops it in place.
+pub unsafe extern "C" fn fut_poll_in(
+    poll: NativePollFn,
+    drop_state: DropStateFn,
+    result_size: usize,
+    state_size: usize,
+    state_align: usize,
+    state_out: *mut *mut c_void,
+) -> *mut VeltFut {
+    let head = META + FUT_RESULT_OFFSET + result_size;
+    let align = state_align.max(16);
+    let state_at = head.next_multiple_of(state_align.max(1));
+    let layout = Layout::from_size_align(state_at + state_size.max(1), align)
+        .expect("ICE: native future layout");
+    let base = std::alloc::alloc(layout);
+    if base.is_null() {
+        std::alloc::handle_alloc_error(layout);
+    }
+    let state = base.add(state_at) as *mut c_void;
+    (base as *mut PollMeta).write(PollMeta {
+        poll,
+        state,
+        drop_state,
+        layout,
+        pending: None,
+    });
+    let f = base.add(META) as *mut VeltFut;
+    f.write(VeltFut {
+        poll: poll_native,
+        drop: drop_native,
+    });
+    state_out.write(state);
+    f
+}
+
 unsafe extern "C" fn poll_native(f: *mut VeltFut, cx: *mut c_void) -> u32 {
     let m = meta(f);
     if m.state.is_null() {

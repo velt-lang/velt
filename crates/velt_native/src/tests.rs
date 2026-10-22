@@ -140,6 +140,16 @@ unused!(waker_clone(*const c_void) -> *mut c_void);
 unused!(waker_wake(*mut c_void));
 unused!(waker_wake_by_ref(*const c_void));
 unused!(waker_drop(*mut c_void));
+unused!(
+    fut_poll_in(
+        crate::rt::PollFn,
+        crate::DropCtxFn,
+        usize,
+        usize,
+        usize,
+        *mut *mut c_void,
+    ) -> *mut c_void
+);
 unused!(fut_poll_ext(*mut c_void, *const crate::rt::WakerArg) -> u32);
 unused!(fut_drop(*mut c_void));
 unused!(spawn(*mut c_void));
@@ -240,6 +250,7 @@ static MOCK: Api = Api {
     strbuf_spare,
     strbuf_commit,
     str_utf8,
+    fut_poll_in,
 };
 
 crate::package!(demo);

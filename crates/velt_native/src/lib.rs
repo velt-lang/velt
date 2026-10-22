@@ -71,6 +71,12 @@ impl VeltStr {
     pub const fn empty() -> VeltStr {
         VeltStr { words: [0; 3] }
     }
+
+    /// Whether this is the all-zero empty string (nothing to release).
+    #[inline]
+    pub(crate) fn is_empty_value(&self) -> bool {
+        self.words == [0; 3]
+    }
 }
 
 /// A Velt `u8[]` (24 bytes, layout owned by the runtime; read it through [`Api::bytes_data`]).
@@ -218,6 +224,16 @@ pub struct Api {
     pub strbuf_commit: unsafe extern "C" fn(*mut VeltStr, u64, u8),
     /// `(s, len_out) -> ptr`: the bytes when they are UTF-8, else null.
     pub str_utf8: unsafe extern "C" fn(*const VeltStr, *mut usize) -> *const u8,
+    /// `(poll, drop_state, result_size, state_size, state_align, state_out) -> fut`: `fut_poll`
+    /// with the state in the future's block (written to `*state_out`, dropped in place).
+    pub fut_poll_in: unsafe extern "C" fn(
+        rt::PollFn,
+        DropCtxFn,
+        usize,
+        usize,
+        usize,
+        *mut *mut c_void,
+    ) -> *mut c_void,
 }
 
 static API: AtomicPtr<Api> = AtomicPtr::new(std::ptr::null_mut());

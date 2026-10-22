@@ -110,7 +110,10 @@ async fn velt_greet__ping(addr: String) -> Result<String, Error> {
 }
 ```
 
-- Parameters are owned (`String`, `Vec<u8>`): the future outlives the call.
+- Parameters are owned (`String`, `Vec<u8>`, `Str`): the future outlives the call. To read
+  borrowed arguments first (encode a request from a `&[Str]` without keeping it), write a plain
+  `fn` that returns `impl Future<Output = R> + Send + 'static`; the future cannot hold the
+  borrowed arguments, which the compiler checks.
 - `velt_native::rt::spawn(fut)` runs a background task (a connection's protocol loop) on the
   current worker.
 - Don't start another async runtime (a tokio runtime) in the library: its I/O would wake Velt's

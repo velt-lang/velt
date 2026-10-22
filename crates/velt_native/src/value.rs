@@ -63,8 +63,12 @@ unsafe impl Value for Str {
 }
 
 impl Str {
-    /// A runtime string of `s` (a copy; [`crate::StrBuf`] builds one in place).
+    /// A runtime string of `s` (a copy; [`crate::StrBuf`] builds one in place). The empty
+    /// string is the all-zero value (native_abi.md), made without a call.
     pub fn new(s: &str) -> Str {
+        if s.is_empty() {
+            return Str(VeltStr::empty());
+        }
         Str(new_str(s))
     }
 
@@ -168,6 +172,9 @@ impl Str {
 
 impl Drop for Str {
     fn drop(&mut self) {
+        if self.0.is_empty_value() {
+            return;
+        }
         // SAFETY: owned, dropped once.
         unsafe { (api().str_drop)(&mut self.0) }
     }
