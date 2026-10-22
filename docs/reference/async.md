@@ -117,9 +117,12 @@ Promises behave like JavaScript's, at Rust's cost:
   an `await`, the program ends as Node's does: `Warning: Detected unsettled top-level await at
   <file>:<line>` on stderr (without Node's copy of the source line) and exit code 13. That
   includes the cleanup of an async generator a top-level `for await` left early, which is
-  awaited at the loop: the warning names the loop's line, as Node's does after a `break` or a
-  call that throws (Node names the statement for a `throw` or a labeled `break`/`continue`
-  leaving the loop). `process.exit()` and an uncaught error end the process at once.
+  awaited at the loop: Velt's warning always names the loop's line. Node's names the statement
+  that leaves the loop when that statement is not under an `if` (a `break`, `continue` or
+  `throw` directly in the body, also inside a plain block, with a label, or after an `if`
+  statement), and the loop when it is (`if (x) break;`, a `break` in an `else`,
+  `if (x) throw e;`) or when a call in the body throws; Velt differs in the first case
+  ([#1437](https://github.com/velt-lang/velt/issues/1437)). `process.exit()` and an uncaught error end the process at once.
 - An async call owns its arguments: an argument variable used again afterwards is shared with
   the promise (objects) or copied (numbers, strings), otherwise moved, because the promise may
   outlive the caller's frame.
