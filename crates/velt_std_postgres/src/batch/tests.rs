@@ -35,7 +35,7 @@ fn bound() -> Vec<u8> {
     msg(b'2', b"")
 }
 
-fn text(r: Result<Vec<u8>, crate::postgres::error::PgError>) -> String {
+fn text(r: Result<Vec<u8>, crate::error::PgError>) -> String {
     String::from_utf8(r.unwrap()).unwrap()
 }
 
@@ -54,9 +54,18 @@ fn every_mode_has_one_entry_per_execution() {
             complete("UPDATE 7"),
         ])
     };
-    assert_eq!(text(results(r(), &[], 3, Mode::Rows)), "[[{},{}],[],[]]");
-    assert_eq!(text(results(r(), &[], 3, Mode::FirstRow)), "[{},null,null]");
-    assert_eq!(text(results(r(), &[], 3, Mode::Count)), "[2,0,7]");
+    assert_eq!(
+        text(results(r(), &[], 3, Mode::Rows, Vec::new())),
+        "[[{},{}],[],[]]"
+    );
+    assert_eq!(
+        text(results(r(), &[], 3, Mode::FirstRow, Vec::new())),
+        "[{},null,null]"
+    );
+    assert_eq!(
+        text(results(r(), &[], 3, Mode::Count, Vec::new())),
+        "[2,0,7]"
+    );
 }
 
 #[test]
@@ -66,7 +75,7 @@ fn the_first_error_fails_the_batch() {
         b"SERROR\0C23505\0Mduplicate key\0Dthe detail\0nitems_pkey\0\0",
     );
     let r = replies(&[bound(), complete("INSERT 0 1"), bound(), error]);
-    let e = results(r, &[], 3, Mode::Count).unwrap_err();
+    let e = results(r, &[], 3, Mode::Count, Vec::new()).unwrap_err();
     assert_eq!(e.code, "23505");
     assert_eq!(e.message, "duplicate key");
     assert_eq!(e.detail.as_deref(), Some("the detail"));
@@ -76,6 +85,6 @@ fn the_first_error_fails_the_batch() {
 #[test]
 fn missing_results_are_reported() {
     let r = replies(&[bound(), complete("SELECT 0")]);
-    let e = results(r, &[], 2, Mode::Rows).unwrap_err();
+    let e = results(r, &[], 2, Mode::Rows, Vec::new()).unwrap_err();
     assert!(e.message.contains("1 results for 2"), "{}", e.message);
 }

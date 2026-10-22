@@ -5,7 +5,8 @@ use super::*;
 use std::borrow::Cow;
 use std::sync::Once;
 
-// Mock strings: words[0] = pointer to a leaked `Vec<u8>`, words[1] = length.
+// Mock strings: words[0] = pointer to a leaked `Vec<u8>` (a builder's spare room past the text),
+// words[1] = length of the text, words[2] = 1 when there is a vector.
 unsafe extern "C" fn str_new(p: *const u8, len: usize, out: *mut VeltStr) {
     let v = Box::new(std::slice::from_raw_parts(p, len).to_vec());
     out.write(VeltStr {
@@ -19,8 +20,29 @@ unsafe extern "C" fn str_bytes(s: *const VeltStr, len: *mut usize) -> *const u8 
         return std::ptr::null();
     }
     let v = &*(w[0] as *const Vec<u8>);
-    len.write(v.len());
+    len.write(w[1] as usize);
     v.as_ptr()
+}
+unsafe extern "C" fn str_retain(s: *const VeltStr, out: *mut VeltStr) {
+    let mut len = 0;
+    let p = str_bytes(s, &mut len);
+    str_new(if len == 0 { [].as_ptr() } else { p }, len, out);
+}
+unsafe extern "C" fn strbuf_spare(s: *mut VeltStr, min: u64, avail: *mut u64) -> *mut u8 {
+    if (*s).words[2] == 0 {
+        str_new([].as_ptr(), 0, s);
+    }
+    let w = (*s).words;
+    let v = &mut *(w[0] as *mut Vec<u8>);
+    let need = w[1] as usize + min as usize;
+    if v.len() < need {
+        v.resize(need, 0);
+    }
+    avail.write((v.len() - w[1] as usize) as u64);
+    v.as_mut_ptr().add(w[1] as usize)
+}
+unsafe extern "C" fn strbuf_commit(s: *mut VeltStr, n: u64, _ascii: u8) {
+    (*s).words[1] += n;
 }
 unsafe extern "C" fn str_drop(s: *mut VeltStr) {
     if (*s).words[2] != 0 {
@@ -200,6 +222,10 @@ static MOCK: Api = Api {
     alloc,
     realloc,
     free,
+    str_from_utf8: str_new,
+    str_retain,
+    strbuf_spare,
+    strbuf_commit,
 };
 
 crate::package!(demo);
@@ -428,4 +454,40 @@ fn arrays_and_structs_cross_as_velt_values() {
         let run = run.assume_init();
         assert_eq!((run.changes, run.last_insert_rowid), (4, 40));
     }
+}
+
+#[test]
+fn strbuf_builds_short_and_long_strings_in_place() {
+    init();
+    let mut b = StrBuf::new();
+    b.push_str("short");
+    assert_eq!(b.finish().to_str(), "short");
+    let mut b = StrBuf::new();
+    b.push_str("0123456789abcdefghij");
+    // Past the inline size: the small text moves into the runtime's buffer, then it grows.
+    for _ in 0..100 {
+        b.push_str("é-");
+    }
+    let s = b.finish();
+    assert_eq!(
+        s.to_str(),
+        format!("0123456789abcdefghij{}", "é-".repeat(100))
+    );
+    let mut b = StrBuf::with_capacity(4);
+    b.reserve(1000);
+    b.push('x');
+    assert_eq!(b.finish().to_str(), "x");
+    // Dropped unfinished: the buffer is released.
+    let mut b = StrBuf::new();
+    b.push_str(&"y".repeat(100));
+    drop(b);
+}
+
+#[test]
+fn a_cloned_str_keeps_its_text() {
+    init();
+    let s = Str::new("shared text, longer than inline");
+    let t = s.clone();
+    drop(s);
+    assert_eq!(t.as_ref(), b"shared text, longer than inline");
 }

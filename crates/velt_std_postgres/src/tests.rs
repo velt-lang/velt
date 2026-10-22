@@ -8,9 +8,9 @@ use super::network::{inet, macaddr};
 use super::placeholders::rewrite_named;
 use super::temporal::{date, interval, money, numeric, time, timestamp};
 use super::types::{decodable, push_value};
-use crate::db_json::{parse_params, DbValue};
 use tokio_postgres::config::SslMode;
 use tokio_postgres::types::Type;
+use velt_text::db_json::{parse_params, DbValue};
 
 fn rewrite(sql: &str) -> (String, Vec<String>) {
     let r = rewrite_named(sql).unwrap();

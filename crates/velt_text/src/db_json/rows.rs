@@ -8,14 +8,18 @@
 //! `JSON.stringify` (invalid UTF-8 becomes U+FFFD); blobs as arrays of byte values (a `u8[]`).
 
 use crate::json_escape::push_json_string;
+use crate::Out;
 
 /// 2^53: every integer below it in magnitude is exactly representable as an `f64`.
 const MAX_EXACT_INT: f64 = 9_007_199_254_740_992.0;
 
-/// Builds the JSON text of a result set, row by row. Call [`begin_row`](Self::begin_row), then
-/// one value method per column in column order, then [`end_row`](Self::end_row).
-pub struct RowWriter {
-    buf: Vec<u8>,
+/// Builds the JSON text of a result set, row by row, into `O` (a `Vec<u8>`, or the Velt string
+/// itself, a native library's `StrBuf`: no copy). Call [`begin_row`](Self::begin_row), then one
+/// value method per column in column order, then [`end_row`](Self::end_row).
+pub struct RowWriter<O: Out = Vec<u8>> {
+    buf: O,
+    /// Rows go in a JSON array (`[` written up front, `]` by [`finish`](Self::finish)).
+    array: bool,
     /// Every column's `"name":` prefix, concatenated.
     keys: Vec<u8>,
     /// End offset of each column's prefix in `keys`.
@@ -25,8 +29,40 @@ pub struct RowWriter {
 }
 
 impl RowWriter {
-    /// A writer for rows with these column names.
+    /// A writer for rows with these column names, into a `Vec<u8>` ([`into_array`]
+    /// (Self::into_array) or [`into_rows`](Self::into_rows) when done).
     pub fn new<'n>(columns: impl IntoIterator<Item = &'n str>) -> RowWriter {
+        RowWriter::with_out(Vec::with_capacity(64), columns, false)
+    }
+
+    /// Every row as a JSON array: `[{...},{...}]` (`[]` for none).
+    pub fn into_array(self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(self.buf.len() + 2);
+        out.push(b'[');
+        out.extend_from_slice(&self.buf);
+        out.push(b']');
+        out
+    }
+
+    /// The rows written, without the enclosing array: the object `{...}` of a single row, or
+    /// empty if no row was written.
+    pub fn into_rows(self) -> Vec<u8> {
+        self.buf
+    }
+}
+
+impl<O: Out> RowWriter<O> {
+    /// A writer for rows with these column names into `out`: as a JSON array (`[{...},...]`,
+    /// `[]` for none) when `array`, else the rows as they are (the object of a single row, or
+    /// nothing). [`finish`](Self::finish) gives `out` back.
+    pub fn with_out<'n>(
+        mut out: O,
+        columns: impl IntoIterator<Item = &'n str>,
+        array: bool,
+    ) -> Self {
+        if array {
+            out.push(b'[');
+        }
         let mut keys = Vec::new();
         let mut key_ends = Vec::new();
         for name in columns {
@@ -35,7 +71,8 @@ impl RowWriter {
             key_ends.push(keys.len());
         }
         RowWriter {
-            buf: Vec::with_capacity(64),
+            buf: out,
+            array,
             keys,
             key_ends,
             col: 0,
@@ -77,22 +114,20 @@ impl RowWriter {
                 self.key_ends[c - 1]
             }
         };
-        self.buf
-            .extend_from_slice(&self.keys[start..self.key_ends[self.col]]);
+        self.buf.extend(&self.keys[start..self.key_ends[self.col]]);
         self.col += 1;
     }
 
     /// `null`.
     pub fn null(&mut self) {
         self.key();
-        self.buf.extend_from_slice(b"null");
+        self.buf.extend(b"null");
     }
 
     /// `true` / `false`.
     pub fn bool(&mut self, v: bool) {
         self.key();
-        self.buf
-            .extend_from_slice(if v { b"true" } else { b"false" });
+        self.buf.extend(if v { b"true" } else { b"false" });
     }
 
     /// An exact integer.
@@ -108,12 +143,12 @@ impl RowWriter {
     pub fn float(&mut self, v: f64) {
         self.key();
         if !v.is_finite() {
-            self.buf.extend_from_slice(b"null");
+            self.buf.extend(b"null");
         } else if v.fract() == 0.0 && v.abs() < MAX_EXACT_INT {
             crate::fmt::push_i64(&mut self.buf, v as i64);
         } else {
             self.buf
-                .extend_from_slice(ryu::Buffer::new().format_finite(v).as_bytes());
+                .extend(ryu::Buffer::new().format_finite(v).as_bytes());
         }
     }
 
@@ -128,7 +163,7 @@ impl RowWriter {
 
     /// Write the next column's key and return the buffer, to which the caller appends exactly
     /// one JSON value (arrays and nested JSON that the typed methods cannot express).
-    pub fn raw_value(&mut self) -> &mut Vec<u8> {
+    pub fn raw_value(&mut self) -> &mut O {
         self.key();
         &mut self.buf
     }
@@ -139,24 +174,17 @@ impl RowWriter {
         push_byte_array(&mut self.buf, v);
     }
 
-    /// Every row as a JSON array: `[{...},{...}]` (`[]` for none).
-    pub fn into_array(self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(self.buf.len() + 2);
-        out.push(b'[');
-        out.extend_from_slice(&self.buf);
-        out.push(b']');
-        out
-    }
-
-    /// The rows written, without the enclosing array: the object `{...}` of a single row, or
-    /// empty if no row was written.
-    pub fn into_rows(self) -> Vec<u8> {
+    /// The text written (closed with `]` for an array).
+    pub fn finish(mut self) -> O {
+        if self.array {
+            self.buf.push(b']');
+        }
         self.buf
     }
 }
 
 /// Append `v` as a JSON array of byte values (`[0,255]`: how a `u8[]` decodes).
-pub fn push_byte_array(out: &mut Vec<u8>, v: &[u8]) {
+pub fn push_byte_array(out: &mut (impl Out + ?Sized), v: &[u8]) {
     out.reserve(v.len() * 4 + 2);
     out.push(b'[');
     for (i, &b) in v.iter().enumerate() {

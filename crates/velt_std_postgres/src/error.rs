@@ -8,10 +8,10 @@
 //! `VeltErr.code` is only the failure flag (the §3 I/O code when an I/O error caused it, else
 //! `OTHER`). std decodes the JSON with `JSON.parse`.
 
-use crate::json::escape::push_json_string;
-use crate::result::{code, code_name, VeltErr};
 use std::error::Error as StdError;
 use std::io;
+use velt_native::{code, Error};
+use velt_text::json_escape::push_json_string;
 
 /// Code of an operation on a closed `Client` or an ended `Pool`.
 pub const CLOSED: &str = "ECLOSED";
@@ -45,7 +45,7 @@ impl PgError {
             message: message.into(),
             detail: None,
             constraint: None,
-            io_code: crate::result::code::OTHER,
+            io_code: code::OTHER,
         }
     }
 
@@ -61,13 +61,13 @@ impl PgError {
 
     /// An I/O failure, coded with its Node-style name.
     pub fn io(e: &io::Error) -> PgError {
-        let velt = VeltErr::from_io(e);
-        let mut err = PgError::new(code_name(velt.code), e.to_string());
-        err.io_code = velt.code;
+        let c = code::of(e);
+        let mut err = PgError::new(code::name(c), e.to_string());
+        err.io_code = c;
         err
     }
 
-    /// The error as JSON text (the `VeltErr` message).
+    /// The error as JSON text (the message Velt receives).
     pub fn to_json(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(self.message.len() + 64);
         out.extend_from_slice(b"{\"code\":");
@@ -85,16 +85,17 @@ impl PgError {
         out
     }
 
-    /// The `VeltErr` header for this error.
-    pub fn to_velt(&self) -> VeltErr {
-        let flag = if self.io_code == code::OK {
+    /// The error Velt receives: the I/O code (`OTHER` for a server error) and this error as
+    /// JSON (std decodes it into a `PostgresError`).
+    pub fn to_error(&self) -> Error {
+        let flag = if self.io_code == 0 {
             code::OTHER
         } else {
             self.io_code
         };
         let json = self.to_json();
         // The JSON is built from UTF-8 strings, so it is UTF-8 itself.
-        VeltErr::new(flag, std::str::from_utf8(&json).unwrap_or("{}"))
+        Error::new(flag, std::str::from_utf8(&json).unwrap_or("{}"))
     }
 }
 
@@ -173,13 +174,13 @@ mod tests {
             String::from_utf8(e.to_json()).unwrap(),
             r#"{"code":"23505","message":"dup \"key\"","detail":null,"constraint":"t_pkey"}"#
         );
-        assert_eq!(e.to_velt().code, code::OTHER);
+        assert_eq!(e.to_error().code, code::OTHER);
     }
 
     #[test]
     fn io_errors_keep_their_code() {
         let e = PgError::io(&io::Error::from(io::ErrorKind::ConnectionRefused));
         assert_eq!(e.code, "ECONNREFUSED");
-        assert_eq!(e.to_velt().code, code::CONNECTION_REFUSED);
+        assert_eq!(e.to_error().code, code::CONNECTION_REFUSED);
     }
 }

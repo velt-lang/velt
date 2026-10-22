@@ -8,3 +8,8 @@ description = "Velt's string encoding, number formatting and database JSON, shar
 itoa = "1.0.18"
 memchr = "2.8.3"
 ryu = "1.0.23"
+velt_native = { path = "../velt_native", optional = true }
+
+[features]
+# `Out` for `velt_native::StrBuf`: std's drivers write rows into the Velt string itself.
+sdk = ["dep:velt_native"]

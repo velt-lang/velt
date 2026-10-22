@@ -80,6 +80,18 @@ impl TcpStream {
         }
     }
 
+    /// Takes over a connected Unix domain socket (the same stream operations; no TCP options).
+    #[cfg(unix)]
+    pub fn from_unix_stream(s: std::os::unix::net::UnixStream) -> io::Result<TcpStream> {
+        let socket = std::os::fd::IntoRawFd::into_raw_fd(s) as i64;
+        let mut h = 0u64;
+        // SAFETY: the stream now owns the socket.
+        match unsafe { (api().stream_from_socket)(socket, &mut h) } {
+            0 => Ok(TcpStream { h }),
+            e => Err(io_error(e)),
+        }
+    }
+
     /// Reads into `buf`: `Ready(Ok(0))` at the end of the stream.
     pub fn poll_read(&mut self, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<io::Result<usize>> {
         // SAFETY: initialized bytes are valid uninitialized ones.

@@ -9,7 +9,7 @@
 
 use std::borrow::Cow;
 use std::marker::PhantomData;
-use std::mem::{align_of, size_of};
+use std::mem::{align_of, size_of, ManuallyDrop};
 
 use crate::abi::{OutRet, OwnedParam, Param, ResultValue};
 use crate::sig::Buf;
@@ -63,9 +63,28 @@ unsafe impl Value for Str {
 }
 
 impl Str {
-    /// A runtime string of `s`.
+    /// A runtime string of `s` (a copy; [`crate::StrBuf`] builds one in place).
     pub fn new(s: &str) -> Str {
         Str(new_str(s))
+    }
+
+    /// Takes over an owned runtime string.
+    pub(crate) fn from_raw(s: VeltStr) -> Str {
+        Str(s)
+    }
+
+    /// The bytes as stored: UTF-8, or WTF-8 when the string holds a lone surrogate (borrowed).
+    pub fn as_bytes(&self) -> &[u8] {
+        let mut len = 0usize;
+        // SAFETY: a live string; its bytes live as long as `self`.
+        unsafe {
+            let p = (api().str_bytes)(&self.0, &mut len);
+            if len == 0 {
+                &[]
+            } else {
+                std::slice::from_raw_parts(p, len)
+            }
+        }
     }
 
     /// The text (borrowed when well-formed; a lone surrogate becomes U+FFFD).
@@ -75,9 +94,64 @@ impl Str {
     }
 }
 
+impl AsRef<[u8]> for Str {
+    fn as_ref(&self) -> &[u8] {
+        self.as_bytes()
+    }
+}
+
 impl Clone for Str {
+    /// Another reference to the same immutable string (a count, no copy).
     fn clone(&self) -> Str {
-        Str::new(&self.to_str())
+        let mut out = VeltStr::empty();
+        // SAFETY: a live string and an out-pointer.
+        unsafe { (api().str_retain)(&self.0, &mut out) };
+        Str(out)
+    }
+}
+
+/// A `string` argument kept beyond the call (an async export's): another reference to the
+/// caller's string, no copy.
+impl<'a> Param<'a> for Str {
+    type Raw = *const VeltStr;
+    const SIG: Buf = Buf::lit("string");
+    unsafe fn from_raw(raw: *const VeltStr) -> Str {
+        let mut out = VeltStr::empty();
+        (api().str_retain)(raw, &mut out);
+        Str(out)
+    }
+}
+impl OwnedParam for Str {}
+
+impl OutRet for Str {
+    type Slot = VeltStr;
+    const SIG: Buf = Buf::lit("string");
+    unsafe fn write(self, out: *mut VeltStr) {
+        out.write(ManuallyDrop::new(self).take());
+    }
+    fn panicked(msg: &str) -> Str {
+        fatal(msg)
+    }
+    unsafe fn drop_slot(slot: *mut VeltStr) {
+        (api().str_drop)(slot)
+    }
+}
+
+impl ResultValue for Str {
+    type Slot = VeltStr;
+    const SIG: Buf = Buf::lit("IoResult<string>");
+    fn into_slot(self) -> VeltStr {
+        ManuallyDrop::new(self).take()
+    }
+    unsafe fn drop_value(slot: *mut VeltStr) {
+        (api().str_drop)(slot)
+    }
+}
+
+impl Str {
+    /// The runtime value, leaving this one empty (for moving into a slot).
+    fn take(&mut self) -> VeltStr {
+        std::mem::replace(&mut self.0, VeltStr::empty())
     }
 }
 

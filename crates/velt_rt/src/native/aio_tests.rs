@@ -152,3 +152,33 @@ fn a_spawned_task_runs_and_a_wrapped_waker_wakes_it() {
     });
     assert_eq!(rx.recv_timeout(Duration::from_secs(5)).ok(), Some(7));
 }
+
+#[test]
+fn strbuf_strings_are_counted_and_moved_once() {
+    init();
+    let long = "an ASCII run longer than an inline string";
+    let cases: [&[&str]; 8] = [
+        &[],
+        &["short"],
+        &["é"],
+        &["héllo", " wörld", "!"],
+        &[long, long, "日本語", long],
+        &[long, "😀", long],
+        &["0123456789", "é", "0123456789", "0123456789", "x"],
+        &[&"x".repeat(5000), "ü", &"y".repeat(5000)],
+    ];
+    for pieces in cases {
+        let mut b = sdk::StrBuf::new();
+        for p in pieces {
+            b.push_str(p);
+        }
+        assert_eq!(b.len(), pieces.concat().len());
+        let s = b.finish();
+        let want = pieces.concat();
+        assert_eq!(s.as_bytes(), want.as_bytes());
+        // The runtime's own view: length in UTF-16 units and the form (recounted in tests).
+        let raw = unsafe { &*(&s as *const sdk::Str as *const crate::str::VeltStr) };
+        assert_eq!(raw.units(), want.encode_utf16().count(), "{pieces:?}");
+        assert_eq!(raw.is_ascii(), want.is_ascii());
+    }
+}

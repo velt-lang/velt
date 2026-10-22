@@ -1,6 +1,6 @@
 //! `VeltPgClient`: a connection as std's `Client` holds it, and the client ABI.
 //!
-//! The handle is a registry key (`crate::registry`: std's `Client` is a Copy struct, so after
+//! The handle is a registry key (`velt_native::handles`: std's `Client` is a Copy struct, so after
 //! `close()` through one copy every copy fails with `ECLOSED` instead of reaching freed
 //! memory); operations in flight keep a clone of the connection, so `close` is safe at any
 //! time. A client from `pool.connect()` gives its connection back to the
@@ -15,15 +15,12 @@
 use super::connection::Conn;
 use super::error::PgError;
 use super::pool::PoolObj;
-use crate::registry::{Key, Registry};
-use crate::result::{IoResult, VeltErr};
-use crate::str::VeltStr;
-use crate::task::leaf::new_leaf;
-use crate::task::VeltFut;
 use parking_lot::Mutex;
 use std::future::Future;
 use std::sync::Arc;
 use tokio::sync::OwnedSemaphorePermit;
+use velt_native::handles::{Key, Registry};
+use velt_native::{export, Error, Str, StrBuf};
 
 /// Failures remembered for `transaction` (older ones are dropped).
 const RECENT_ERRORS: usize = 32;
@@ -117,184 +114,142 @@ impl ClientObj {
     }
 }
 
-/// Owned text of a string argument (copied: the operation outlives the call).
-pub(super) unsafe fn text(s: *const VeltStr) -> String {
-    (*s).text_lossy().into_owned()
+/// A driver result as Velt receives it (the error as JSON, see `error`).
+pub(super) fn io_result<T>(r: Result<T, PgError>) -> Result<T, Error> {
+    r.map_err(|e| e.to_error())
 }
 
-/// Owned bytes of a string argument.
-pub(super) unsafe fn bytes(s: *const VeltStr) -> Vec<u8> {
-    (*s).as_bytes().to_vec()
-}
-
-/// `IoResult` of a result, with the error as JSON (see `error`).
-pub(super) fn io_result<T>(r: Result<T, PgError>) -> IoResult<T> {
-    match r {
-        Ok(v) => IoResult::ok(v),
-        Err(e) => IoResult::err(e.to_velt()),
-    }
-}
-
-/// Run `op` on the client's connection as a leaf future, counting a failure.
-pub(super) unsafe fn client_op<R, F, Fut>(client: ClientHandle, op: F) -> *mut VeltFut
+/// Run `op` on the client's connection, counting a failure.
+pub(super) async fn client_op<R, F, Fut>(client: u64, op: F) -> Result<R, Error>
 where
-    R: Send + 'static,
-    F: FnOnce(Arc<Conn>) -> Fut + Send + 'static,
-    Fut: Future<Output = Result<R, PgError>> + Send,
+    F: FnOnce(Arc<Conn>) -> Fut,
+    Fut: Future<Output = Result<R, PgError>>,
 {
-    let obj = CLIENTS.get(client);
-    new_leaf(async move {
-        let Some(obj) = obj else {
-            return io_result(Err(PgError::closed("client")));
-        };
-        let r = match obj.conn() {
-            Ok(conn) => op(conn).await,
-            Err(e) => Err(e),
-        };
-        if let Err(e) = &r {
-            obj.note(e.clone());
-        }
-        io_result(r)
-    })
+    let Some(obj) = CLIENTS.get(Key::from_bits(client)) else {
+        return io_result(Err(PgError::closed("client")));
+    };
+    let r = match obj.conn() {
+        Ok(conn) => op(conn).await,
+        Err(e) => Err(e),
+    };
+    if let Err(e) = &r {
+        obj.note(e.clone());
+    }
+    io_result(r)
 }
 
 /// `connect(url)` → `IoResult<VeltPgClient>`.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_pg_connect(url: *const VeltStr) -> *mut VeltFut {
-    let url = text(url);
-    new_leaf(async move {
-        let r = async {
-            let config = super::config::parse(&url)?;
-            let tls =
-                super::tls::connector(&config).map_err(|e| PgError::new(super::error::TLS, e))?;
-            let conn = super::connection::connect(&config, tls).await?;
-            Ok(CLIENTS.insert(ClientObj::new(conn, None)))
-        };
-        io_result(r.await)
-    })
+#[export(async)]
+async fn velt_std_postgres__connect(url: String) -> Result<u64, Error> {
+    let r = async {
+        let config = super::config::parse(&url)?;
+        let tls = super::tls::connector(&config).map_err(|e| PgError::new(super::error::TLS, e))?;
+        let conn = super::connection::connect(&config, tls).await?;
+        Ok(CLIENTS.insert(ClientObj::new(conn, None)).bits())
+    };
+    io_result(r.await)
 }
 
 /// `client.query(sql, params)` → `IoResult<string>`: rows as a JSON array, or with
 /// `first_only` the first row's object (`""` if none).
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_pg_query(
-    client: ClientHandle,
-    sql: *const VeltStr,
-    params: *const VeltStr,
-    first_only: u8,
-) -> *mut VeltFut {
-    let (sql, params) = (text(sql), bytes(params));
+#[export(async)]
+async fn velt_std_postgres__query(
+    client: u64,
+    sql: Str,
+    params: Str,
+    first_only: bool,
+) -> Result<Str, Error> {
     client_op(client, move |c| async move {
-        let json = c.query(&sql, &params, first_only != 0).await?;
-        Ok(VeltStr::from_vec(json))
+        let out = StrBuf::new();
+        let json = c
+            .query(&sql.to_str(), params.as_bytes(), first_only, out)
+            .await?;
+        Ok(json.finish())
     })
+    .await
 }
 
 /// `client.execute(sql, params)` → `IoResult<i64>`: rows affected.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_pg_execute(
-    client: ClientHandle,
-    sql: *const VeltStr,
-    params: *const VeltStr,
-) -> *mut VeltFut {
-    let (sql, params) = (text(sql), bytes(params));
+#[export(async)]
+async fn velt_std_postgres__execute(client: u64, sql: Str, params: Str) -> Result<i64, Error> {
     client_op(client, move |c| async move {
-        Ok(c.execute(&sql, &params).await? as i64)
+        Ok(c.execute(&sql.to_str(), params.as_bytes()).await? as i64)
     })
+    .await
 }
 
-/// `client.batch(sql)` → `VeltErr`: `;`-separated statements, no parameters.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_pg_batch(
-    client: ClientHandle,
-    sql: *const VeltStr,
-) -> *mut VeltFut {
-    let sql = text(sql);
-    status(client_op(
-        client,
-        move |c| async move { c.batch(&sql).await },
-    ))
+/// `client.batch(sql)` → `IoStatus`: `;`-separated statements, no parameters.
+#[export(async)]
+async fn velt_std_postgres__batch(client: u64, sql: Str) -> Result<(), Error> {
+    client_op(client, move |c| async move { c.batch(&sql.to_str()).await }).await
 }
 
 /// `client.begin()` → `IoResult<u32>`: the new transaction level (1 = `BEGIN`, deeper levels
 /// are savepoints).
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_pg_begin(client: ClientHandle) -> *mut VeltFut {
-    client_op(client, |c| async move { c.begin().await })
+#[export(async)]
+async fn velt_std_postgres__begin(client: u64) -> Result<u32, Error> {
+    client_op(client, |c| async move { c.begin().await }).await
 }
 
-/// Commit (`commit != 0`) or roll back transaction level `depth` → `VeltErr`.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_pg_end(
-    client: ClientHandle,
-    depth: u32,
-    commit: u8,
-) -> *mut VeltFut {
-    status(client_op(client, move |c| async move {
-        c.end(depth, commit != 0).await
-    }))
-}
-
-/// A `VeltErr`-result op: `IoResult<()>` has the same layout (a zero-sized value at +32).
-fn status(f: *mut VeltFut) -> *mut VeltFut {
-    const { assert!(std::mem::size_of::<IoResult<()>>() == std::mem::size_of::<VeltErr>()) };
-    f
+/// Commit (`commit`) or roll back transaction level `depth` → `IoStatus`.
+#[export(async)]
+async fn velt_std_postgres__end(client: u64, depth: u32, commit: bool) -> Result<(), Error> {
+    client_op(client, move |c| async move { c.end(depth, commit).await }).await
 }
 
 /// Open transaction levels on the client's connection (0 when none or closed).
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_pg_depth(client: ClientHandle) -> u32 {
+#[export]
+fn velt_std_postgres__depth(client: u64) -> u32 {
     CLIENTS
-        .get(client)
+        .get(Key::from_bits(client))
         .and_then(|o| o.conn().ok())
         .map_or(0, |c| c.depth())
 }
 
 /// How many operations on this client have failed so far.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_pg_error_count(client: ClientHandle) -> u64 {
-    CLIENTS.get(client).map_or(0, |o| o.state.lock().errors)
+#[export]
+fn velt_std_postgres__error_count(client: u64) -> u64 {
+    CLIENTS
+        .get(Key::from_bits(client))
+        .map_or(0, |o| o.state.lock().errors)
 }
 
 /// Set the failure count back to `count` (a nested transaction handed its failure to its
 /// caller as a thrown error).
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_pg_reset_error_count(client: ClientHandle, count: u64) {
-    if let Some(o) = CLIENTS.get(client) {
+#[export]
+fn velt_std_postgres__reset_error_count(client: u64, count: u64) {
+    if let Some(o) = CLIENTS.get(Key::from_bits(client)) {
         let mut s = o.state.lock();
         s.errors = count;
         s.recent.retain(|(seq, _)| *seq <= count);
     }
 }
 
-/// The first failure after `count` failures, as a failed status (code 0 if none).
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_pg_error_after(
-    client: ClientHandle,
-    count: u64,
-    out: *mut VeltErr,
-) {
-    let e = CLIENTS.get(client).and_then(|o| o.error_after(count));
-    out.write(e.map_or_else(VeltErr::ok, |e| e.to_velt()));
+/// The first failure after `count` failures, as a failed status (success if none).
+#[export]
+fn velt_std_postgres__error_after(client: u64, count: u64) -> Result<(), Error> {
+    match CLIENTS
+        .get(Key::from_bits(client))
+        .and_then(|o| o.error_after(count))
+    {
+        Some(e) => Err(e.to_error()),
+        None => Ok(()),
+    }
 }
 
 /// Count a failure std found (a row that does not decode) against the client.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_pg_note_error(
-    client: ClientHandle,
-    code: *const VeltStr,
-    message: *const VeltStr,
-) {
-    if let Some(o) = CLIENTS.get(client) {
-        o.note(PgError::new(&text(code), text(message)));
+#[export]
+fn velt_std_postgres__note_error(client: u64, code: &str, message: &str) {
+    if let Some(o) = CLIENTS.get(Key::from_bits(client)) {
+        o.note(PgError::new(code, message));
     }
 }
 
 /// Close the client and release the handle (a closed or null handle ⇒ no-op): a standalone
 /// connection is closed, a pooled one returns to its pool.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_pg_close(client: ClientHandle) {
-    if let Some(o) = CLIENTS.remove(client) {
+#[export]
+fn velt_std_postgres__close(client: u64) {
+    if let Some(o) = CLIENTS.remove(Key::from_bits(client)) {
         o.close();
     }
 }

@@ -1378,7 +1378,7 @@ Not available on wasm (no sockets): the symbols are not defined by `velt_rt_wasm
 
 ### 14.13 PostgreSQL (`velt:postgres`; stream db, additive)
 
-`crates/velt_rt/src/postgres/` over `tokio-postgres` (`default-features = false`, `runtime`), connected over the runtime's own socket and wire stream (§14.18).
+The crate `velt_std_postgres`, built on the native-package SDK only (`velt_native`, `velt_text`) and linked into the runtime (native_abi.md "Drivers in the runtime"); its functions are `velt_std_postgres__*` exports, with the signatures below. Over `tokio-postgres` (`default-features = false`), connected over the runtime's own sockets (`velt_native::net::TcpStream`) and wire stream (§14.18). Rows are written into the result string itself (`velt_native::StrBuf`); `sql` and `params` are kept by reference, not copied.
 TLS is a hand-written `TlsConnect` over tokio-rustls with the runtime's `ring` provider and
 roots (§14.8); `sslmode` = `disable`, `prefer` (default), `require` (no certificate check),
 `verify-ca`, `verify-full`, plus `sslrootcert=<PEM file>` (extra roots; turns `require` into
@@ -1412,29 +1412,29 @@ other column types ⇒ `ENOTSUP` (checked before any row).
 
 | Symbol | Signature | Notes |
 |---|---|---|
-| `velt_rt_pg_connect` | `(const VeltStr* url) -> VeltFut*` | `IoResult<VeltPgClient>`; URL or libpq `key=value` string |
-| `velt_rt_pg_query` | `(VeltPgClient c, const VeltStr* sql, const VeltStr* params, u8 first_only) -> VeltFut*` | `IoResult<VeltStr>`: rows as a JSON array; `first_only` ⇒ the first row's object or `""` |
-| `velt_rt_pg_execute` | `(VeltPgClient c, const VeltStr* sql, const VeltStr* params) -> VeltFut*` | `IoResult<i64>`: rows affected/returned |
-| `velt_rt_pg_batch` | `(VeltPgClient c, const VeltStr* sql) -> VeltFut*` | `VeltErr`: `;`-separated statements, simple protocol, not cached |
-| `velt_rt_pg_begin` | `(VeltPgClient c) -> VeltFut*` | `IoResult<u32>`: new level (1 = `BEGIN`, n > 1 = `SAVEPOINT velt_tx_n`) |
-| `velt_rt_pg_end` | `(VeltPgClient c, u32 depth, u8 commit) -> VeltFut*` | `VeltErr`: commit / roll back level `depth`, which must be the innermost (`EINVAL` otherwise); the level ends whatever the outcome |
-| `velt_rt_pg_depth` | `(VeltPgClient c) -> u32` | open levels; 0 when closed |
-| `velt_rt_pg_error_count` | `(VeltPgClient c) -> u64` | failed operations so far (incl. `note_error`) |
-| `velt_rt_pg_reset_error_count` | `(VeltPgClient c, u64 count)` | forget failures after `count` |
-| `velt_rt_pg_error_after` | `(VeltPgClient c, u64 count, VeltErr* out)` | the first failure after `count` failures (code 0 if none) |
-| `velt_rt_pg_note_error` | `(VeltPgClient c, const VeltStr* code, const VeltStr* message)` | counts a failure std found (`EMISMATCH` row decoding) |
-| `velt_rt_pg_close` | `(VeltPgClient c)` | closes (or returns a pooled connection to its pool unless broken or in a transaction) and releases the handle; null ⇒ no-op |
-| `velt_rt_pg_pool_new` | `(const VeltStr* url, u32 max, IoResult<VeltPgPool>* out)` | parses the URL and reads `sslrootcert` now; connections open on demand; `max == 0` ⇒ 10 |
-| `velt_rt_pg_pool_connect` | `(VeltPgPool p) -> VeltFut*` | `IoResult<VeltPgClient>`: a dedicated connection (holds a permit) until `velt_rt_pg_close` |
-| `velt_rt_pg_pool_query` | `(VeltPgPool p, const VeltStr* sql, const VeltStr* params, u8 first_only) -> VeltFut*` | as `velt_rt_pg_query` on a borrowed connection |
-| `velt_rt_pg_pool_execute` | `(VeltPgPool p, const VeltStr* sql, const VeltStr* params) -> VeltFut*` | as `velt_rt_pg_execute` |
-| `velt_rt_pg_pool_batch` | `(VeltPgPool p, const VeltStr* sql) -> VeltFut*` | as `velt_rt_pg_batch` |
-| `velt_rt_pg_pool_idle` | `(VeltPgPool p) -> u32` | idle connections |
-| `velt_rt_pg_pool_end` | `(VeltPgPool p)` | closes idle connections, fails later acquires with `ECLOSED`, releases the handle; null ⇒ no-op |
+| `velt_std_postgres__connect` | `(const VeltStr* url) -> VeltFut*` | `IoResult<VeltPgClient>`; URL or libpq `key=value` string |
+| `velt_std_postgres__query` | `(VeltPgClient c, const VeltStr* sql, const VeltStr* params, u8 first_only) -> VeltFut*` | `IoResult<VeltStr>`: rows as a JSON array; `first_only` ⇒ the first row's object or `""` |
+| `velt_std_postgres__execute` | `(VeltPgClient c, const VeltStr* sql, const VeltStr* params) -> VeltFut*` | `IoResult<i64>`: rows affected/returned |
+| `velt_std_postgres__batch` | `(VeltPgClient c, const VeltStr* sql) -> VeltFut*` | `VeltErr`: `;`-separated statements, simple protocol, not cached |
+| `velt_std_postgres__begin` | `(VeltPgClient c) -> VeltFut*` | `IoResult<u32>`: new level (1 = `BEGIN`, n > 1 = `SAVEPOINT velt_tx_n`) |
+| `velt_std_postgres__end` | `(VeltPgClient c, u32 depth, u8 commit) -> VeltFut*` | `VeltErr`: commit / roll back level `depth`, which must be the innermost (`EINVAL` otherwise); the level ends whatever the outcome |
+| `velt_std_postgres__depth` | `(VeltPgClient c) -> u32` | open levels; 0 when closed |
+| `velt_std_postgres__error_count` | `(VeltPgClient c) -> u64` | failed operations so far (incl. `note_error`) |
+| `velt_std_postgres__reset_error_count` | `(VeltPgClient c, u64 count)` | forget failures after `count` |
+| `velt_std_postgres__error_after` | `(VeltPgClient c, u64 count, VeltErr* out)` | the first failure after `count` failures (code 0 if none) |
+| `velt_std_postgres__note_error` | `(VeltPgClient c, const VeltStr* code, const VeltStr* message)` | counts a failure std found (`EMISMATCH` row decoding) |
+| `velt_std_postgres__close` | `(VeltPgClient c)` | closes (or returns a pooled connection to its pool unless broken or in a transaction) and releases the handle; null ⇒ no-op |
+| `velt_std_postgres__pool_new` | `(const VeltStr* url, u32 max, IoResult<VeltPgPool>* out)` | parses the URL and reads `sslrootcert` now; connections open on demand; `max == 0` ⇒ 10 |
+| `velt_std_postgres__pool_connect` | `(VeltPgPool p) -> VeltFut*` | `IoResult<VeltPgClient>`: a dedicated connection (holds a permit) until `velt_std_postgres__close` |
+| `velt_std_postgres__pool_query` | `(VeltPgPool p, const VeltStr* sql, const VeltStr* params, u8 first_only) -> VeltFut*` | as `velt_std_postgres__query` on a borrowed connection |
+| `velt_std_postgres__pool_execute` | `(VeltPgPool p, const VeltStr* sql, const VeltStr* params) -> VeltFut*` | as `velt_std_postgres__execute` |
+| `velt_std_postgres__pool_batch` | `(VeltPgPool p, const VeltStr* sql) -> VeltFut*` | as `velt_std_postgres__batch` |
+| `velt_std_postgres__pool_idle` | `(VeltPgPool p) -> u32` | idle connections |
+| `velt_std_postgres__pool_end` | `(VeltPgPool p)` | closes idle connections, fails later acquires with `ECLOSED`, releases the handle; null ⇒ no-op |
 
 Linking: tokio-postgres' `whoami` needs `-framework SystemConfiguration -framework
 CoreFoundation` on macOS and `secur32.lib` on Windows (added to `velt_link`'s native library
-lists). Not available on WebAssembly (no `velt_rt_pg_*` symbols in `libvelt_rt_wasm.a`).
+lists). Not available on WebAssembly (no `velt_std_postgres__*` symbols in `libvelt_rt_wasm.a`).
 
 ### 14.14 Releasing an HTTP handler (stream linux-servers, additive)
 `VeltHandler.env` is null or a closure environment box whose first word is its drop function
@@ -1457,13 +1457,13 @@ against the client.
 
 | Symbol | Signature | Notes |
 |---|---|---|
-| `velt_rt_pg_copy_from` | `(VeltPgClient c, const VeltStr* sql) -> VeltFut*` | `IoResult<VeltPgCopyIn>`: `COPY … FROM STDIN` started |
-| `velt_rt_pg_copy_write` / `_write_bytes` | `(VeltPgCopyIn w, const VeltStr*/VeltBytes* data) -> VeltFut*` | `IoResult<()>`; copied, batched into ~4 KiB messages |
-| `velt_rt_pg_copy_end` | `(VeltPgCopyIn w) -> VeltFut*` | `IoResult<i64>` rows copied; releases `w` |
-| `velt_rt_pg_copy_abort` | `(VeltPgCopyIn w)` | releases `w` unfinished: the server aborts the copy |
-| `velt_rt_pg_copy_to` | `(VeltPgClient c, const VeltStr* sql) -> VeltFut*` | `IoResult<VeltPgCopyOut>`: `COPY … TO STDOUT` started |
-| `velt_rt_pg_copy_read` / `_read_bytes` | `(VeltPgCopyOut r) -> VeltFut*` | `IoResult<VeltStr / VeltBytes>`: every chunk received so far (≥ 1, up to ~64 KiB), empty at the end |
-| `velt_rt_pg_copy_close` | `(VeltPgCopyOut r)` | releases `r` (unread data is discarded) |
+| `velt_std_postgres__copy_from` | `(VeltPgClient c, const VeltStr* sql) -> VeltFut*` | `IoResult<VeltPgCopyIn>`: `COPY … FROM STDIN` started |
+| `velt_std_postgres__copy_write` / `_write_bytes` | `(VeltPgCopyIn w, const VeltStr*/VeltBytes* data) -> VeltFut*` | `IoResult<()>`; copied, batched into ~4 KiB messages |
+| `velt_std_postgres__copy_end` | `(VeltPgCopyIn w) -> VeltFut*` | `IoResult<i64>` rows copied; releases `w` |
+| `velt_std_postgres__copy_abort` | `(VeltPgCopyIn w)` | releases `w` unfinished: the server aborts the copy |
+| `velt_std_postgres__copy_to` | `(VeltPgClient c, const VeltStr* sql) -> VeltFut*` | `IoResult<VeltPgCopyOut>`: `COPY … TO STDOUT` started |
+| `velt_std_postgres__copy_read` / `_read_bytes` | `(VeltPgCopyOut r) -> VeltFut*` | `IoResult<VeltStr / VeltBytes>`: every chunk received so far (≥ 1, up to ~64 KiB), empty at the end |
+| `velt_std_postgres__copy_close` | `(VeltPgCopyOut r)` | releases `r` (unread data is discarded) |
 
 ### 14.16 Fast random numbers (`velt:random`; stream linux-servers, additive)
 | Symbol | Signature | Notes |
@@ -1521,5 +1521,5 @@ earlier writes are rolled back with it (all or nothing). Failures count against 
 
 | Symbol | Signature | Notes |
 |---|---|---|
-| `velt_rt_pg_query_batch` | `(VeltPgClient c, const VeltStr* sql, const VeltStr* sets, u8 mode) -> VeltFut*` | `IoResult<VeltStr>`: a JSON array, per execution: `mode` 0 its rows (`[[{…},…],…]`), 1 its first row or `null` (`[{…},null]`), 2 its rows affected (`[1,0]`) |
-| `velt_rt_pg_pool_query_batch` | `(VeltPgPool p, const VeltStr* sql, const VeltStr* sets, u8 mode) -> VeltFut*` | as `velt_rt_pg_query_batch`, on one pooled connection |
+| `velt_std_postgres__query_batch` | `(VeltPgClient c, const VeltStr* sql, const VeltStr* sets, u8 mode) -> VeltFut*` | `IoResult<VeltStr>`: a JSON array, per execution: `mode` 0 its rows (`[[{…},…],…]`), 1 its first row or `null` (`[{…},null]`), 2 its rows affected (`[1,0]`) |
+| `velt_std_postgres__pool_query_batch` | `(VeltPgPool p, const VeltStr* sql, const VeltStr* sets, u8 mode) -> VeltFut*` | as `velt_std_postgres__query_batch`, on one pooled connection |

@@ -80,6 +80,10 @@ fn velt_greet__slow(n: u64) -> Result<u64, Error> {
   `Cow<str>` parameter tells which).
 - Results: the same scalars, `()`, `String`, `Vec<u8>`, or `Result<T, velt_native::Error>`
   (an `IoResult<T>` in Velt; `Result<(), Error>` is an `IoStatus`).
+- Arrays and structs cross too, as in std: `&[T]`/`Vec<T>`/`velt_native::Array<T>` for a
+  `T[]`, and a `#[repr(C)]` struct with `#[derive(velt_native::Value)]` for a Velt `struct`
+  with the same fields (`user_id` is `userId`; `#[velt(name = "…")]` names one). A field that
+  differs in name, order or type is a build error.
 - A panic becomes an error result (`native panic: …`) where the result can carry one.
 - Objects (a connection, a decoder) stay on the Rust side behind a `u64` handle.
 
@@ -112,6 +116,40 @@ async fn velt_greet__ping(addr: String) -> Result<String, Error> {
 - Don't start another async runtime (a tokio runtime) in the library: its I/O would wake Velt's
   tasks across threads. Libraries that only need tokio's I/O traits and `sync` types (most
   drivers, with their connection future spawned through `rt::spawn`) run on Velt's directly.
+
+### Strings without copies
+
+A `String` result is copied into Velt's memory and its UTF-16 length counted; a `String`
+parameter is a copy of Velt's. For text that is large or on a hot path, use Velt's own strings:
+
+```rust
+use std::fmt::Write;
+use velt_native::{export, Str, StrBuf};
+
+#[export]
+fn velt_greet__table(rows: u32) -> Str {
+    // Written straight into the Velt string: no copy when it is done.
+    let mut out = StrBuf::new();
+    for i in 0..rows {
+        let _ = write!(out, "{i}\t{}\n", i * i);
+    }
+    out.finish()
+}
+
+#[export(async)]
+async fn velt_greet__shout(text: Str) -> Str {
+    // `text` is Velt's string, kept by reference (no copy) for as long as the future runs.
+    Str::new(&text.to_str().to_uppercase())
+}
+```
+
+- `StrBuf` is a Velt `string` being built in Velt's memory (`push_str`, `push`, `write!`);
+  `finish()` makes it the string. Short text stays inline, as Velt keeps it.
+- `Str` is an owned Velt `string`: a parameter (`as_bytes()`, or `to_str()`, borrowed when
+  well-formed), a result, an array element or a struct field. Cloning one adds a reference.
+- std's drivers encode with the `velt_text` crate (JavaScript number formatting, JSON escaping,
+  database rows as JSON), whose writers take any `velt_text::Out`: a `Vec<u8>`, or with its
+  `sdk` feature a `StrBuf`.
 
 ## The Velt side
 

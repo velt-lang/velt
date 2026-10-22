@@ -1,6 +1,6 @@
-//! TLS for PostgreSQL connections: tokio-postgres' `TlsConnect` over tokio-rustls, with
-//! the runtime's rustls `ring` provider and roots (`crate::tls`), so no second TLS stack or
-//! crypto provider is linked.
+//! TLS for PostgreSQL connections: tokio-postgres' `TlsConnect` over tokio-rustls, with the
+//! `ring` provider and Mozilla's roots (the runtime's choices), so no second TLS stack or crypto
+//! provider is linked.
 //!
 //! The certificate check follows `sslmode` ([`Verify`]): `verify-full` uses rustls' standard
 //! WebPKI verifier; `verify-ca` the same but accepts a certificate issued for another name;
@@ -14,7 +14,6 @@
 use super::config::{PgConfig, Verify};
 use super::socket::RawSocket;
 use super::wire::WireStream;
-use crate::tls::{certificates, provider};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::client::WebPkiServerVerifier;
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
@@ -28,6 +27,27 @@ use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio_postgres::tls::{ChannelBinding, TlsConnect, TlsStream};
 use tokio_rustls::TlsConnector;
+
+/// The process-wide rustls `ring` crypto provider.
+fn provider() -> std::sync::Arc<rustls::crypto::CryptoProvider> {
+    static PROVIDER: std::sync::OnceLock<std::sync::Arc<rustls::crypto::CryptoProvider>> =
+        std::sync::OnceLock::new();
+    PROVIDER
+        .get_or_init(|| std::sync::Arc::new(rustls::crypto::ring::default_provider()))
+        .clone()
+}
+
+/// Every certificate in `pem` (at least one), or a message naming `what` was being read.
+fn certificates(pem: &[u8], what: &str) -> Result<Vec<CertificateDer<'static>>, String> {
+    use rustls::pki_types::pem::PemObject;
+    let certs = CertificateDer::pem_slice_iter(pem)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("invalid {what} PEM: {e}"))?;
+    if certs.is_empty() {
+        return Err(format!("no certificate found in the {what} PEM"));
+    }
+    Ok(certs)
+}
 
 /// Checks a server certificate per [`Verify`] (the `Full` case uses the WebPKI verifier
 /// directly).
@@ -97,10 +117,37 @@ fn roots(extra_ca_pem: &[u8]) -> Result<Arc<RootCertStore>, String> {
     Ok(Arc::new(roots))
 }
 
+/// rustls' standard verification against the built-in roots plus `extra_ca_pem`, cached per CA
+/// text (a standalone `connect()` builds its connector each time).
+fn full_config(extra_ca_pem: &[u8]) -> Result<Arc<ClientConfig>, String> {
+    type Cache = std::sync::Mutex<std::collections::HashMap<Vec<u8>, Arc<ClientConfig>>>;
+    static CACHE: std::sync::OnceLock<Cache> = std::sync::OnceLock::new();
+    let cache = CACHE.get_or_init(Cache::default);
+    if let Some(c) = cache
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(extra_ca_pem)
+    {
+        return Ok(c.clone());
+    }
+    let config = Arc::new(
+        ClientConfig::builder_with_provider(provider())
+            .with_safe_default_protocol_versions()
+            .map_err(|e| e.to_string())?
+            .with_root_certificates(roots(extra_ca_pem)?)
+            .with_no_client_auth(),
+    );
+    cache
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(extra_ca_pem.to_vec(), config.clone());
+    Ok(config)
+}
+
 /// The rustls client configuration for `verify` with extra roots `extra_ca_pem` (may be empty).
 pub fn client_config(verify: Verify, extra_ca_pem: &[u8]) -> Result<Arc<ClientConfig>, String> {
     if verify == Verify::Full {
-        return crate::tls::client_config(extra_ca_pem);
+        return full_config(extra_ca_pem);
     }
     let chain = match verify {
         Verify::Chain => Some(

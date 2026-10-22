@@ -1,13 +1,14 @@
-//! Result rows as JSON text (`[{"col":value,...}]`, `crate::db_json::RowWriter`), each value
+//! Result rows as JSON text (`[{"col":value,...}]`, `velt_text::db_json::RowWriter`), each value
 //! converted by [`super::types`]. Rows are read as raw bytes (a pass-through `FromSql`), so no
 //! intermediate Rust values are built.
 
 use super::error::{PgError, UNSUPPORTED};
 use super::types::{decodable, push_value};
-use crate::db_json::RowWriter;
 use std::error::Error as StdError;
 use tokio_postgres::types::{FromSql, Type};
 use tokio_postgres::{Column, Row};
+use velt_text::db_json::RowWriter;
+use velt_text::Out;
 
 /// A column's raw binary value (`None` = NULL).
 struct Raw<'a>(Option<&'a [u8]>);
@@ -45,9 +46,15 @@ pub fn check_columns(columns: &[Column]) -> Result<(), PgError> {
     }
 }
 
-/// `rows` as a JSON array, or with `first_only` the first row's object (empty if none).
-pub fn to_json(columns: &[Column], rows: &[Row], first_only: bool) -> Result<Vec<u8>, PgError> {
-    let mut w = RowWriter::new(columns.iter().map(Column::name));
+/// `rows` as a JSON array, or with `first_only` the first row's object (nothing if none),
+/// appended to `out`.
+pub fn to_json<O: Out>(
+    columns: &[Column],
+    rows: &[Row],
+    first_only: bool,
+    out: O,
+) -> Result<O, PgError> {
+    let mut w = RowWriter::with_out(out, columns.iter().map(Column::name), !first_only);
     let take = if first_only { 1 } else { rows.len() };
     for row in rows.iter().take(take) {
         let values = (0..columns.len()).map(|i| {
@@ -57,16 +64,12 @@ pub fn to_json(columns: &[Column], rows: &[Row], first_only: bool) -> Result<Vec
         });
         push_row(&mut w, columns, values)?;
     }
-    Ok(if first_only {
-        w.into_rows()
-    } else {
-        w.into_array()
-    })
+    Ok(w.finish())
 }
 
 /// One row: each column's raw binary value (`None` = NULL), in column order.
-pub fn push_row<'v>(
-    w: &mut RowWriter,
+pub fn push_row<'v, O: Out>(
+    w: &mut RowWriter<O>,
     columns: &[Column],
     values: impl Iterator<Item = Result<Option<&'v [u8]>, PgError>>,
 ) -> Result<(), PgError> {

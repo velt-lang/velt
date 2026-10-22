@@ -49,7 +49,6 @@ pub mod native;
 pub mod net;
 pub mod os;
 pub mod panic;
-pub mod postgres;
 pub mod prng;
 pub mod process;
 pub mod proxy_array;
@@ -102,3 +101,7 @@ static GLOBAL_QUARANTINE: debug_alloc::Quarantine = debug_alloc::Quarantine::new
 #[cfg(test)]
 #[path = "../tests/abi/mod.rs"]
 mod abi_tests;
+
+// std's drivers: crates on the native SDK only, linked into the runtime (their `#[export]`
+// functions are std's externs; abi_symbols lists them for the JIT host).
+use velt_std_postgres as _;

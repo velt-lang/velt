@@ -21,6 +21,7 @@ pub fn init() {
     crate::process::init_clock();
     crate::process::init_script();
     crate::io::init_stdout();
+    crate::native::embed();
     ignore_sigpipe();
     #[cfg(all(debug_assertions, not(velt_rt_host)))]
     crate::debug_alloc::claim_faults();

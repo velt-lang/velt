@@ -2,8 +2,8 @@
 //! `Execute` per parameter set (unnamed portal, every result column in binary, as
 //! tokio-postgres asks for them), then one `Sync`.
 
-use crate::postgres::bind::PgParam;
-use crate::postgres::error::PgError;
+use crate::bind::PgParam;
+use crate::error::PgError;
 use bytes::BytesMut;
 use postgres_protocol::message::frontend;
 use postgres_protocol::IsNull;

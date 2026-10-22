@@ -290,9 +290,9 @@ pub unsafe extern "C" fn tcp_connect(addr: *const u8, len: usize) -> *mut VeltFu
     })
 }
 
-/// `i32 stream_from_socket(i64 socket, u64* out)`: a stream of a connected socket the library
-/// opened (a file descriptor, or a `SOCKET` on Windows), which the stream owns from then on.
-/// 0, or an error code.
+/// `i32 stream_from_socket(i64 socket, u64* out)`: a stream of a connected stream socket the
+/// library opened, TCP or (Unix) a Unix domain socket (a file descriptor, or a `SOCKET` on
+/// Windows), which the stream owns from then on. 0, or an error code.
 pub unsafe extern "C" fn stream_from_socket(socket: i64, out: *mut u64) -> i32 {
     #[cfg(unix)]
     let s = {

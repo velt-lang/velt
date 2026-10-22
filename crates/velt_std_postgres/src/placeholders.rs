@@ -107,7 +107,7 @@ impl Scan<'_> {
             }
         };
         self.out.push(b'$');
-        crate::fmt::push_u64(&mut self.out, n as u64);
+        velt_text::fmt::push_u64(&mut self.out, n as u64);
         self.pos = end;
     }
 

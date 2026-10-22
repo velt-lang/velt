@@ -2,26 +2,24 @@
 //!
 //! A semaphore with `max` permits bounds the connections in use; idle connections wait in a
 //! stack (the most recently used is reused first, so a quiet pool's extra connections are the
-//! ones left idle), and a task takes one whose protocol task runs on its own worker first. An operation takes a permit, an idle connection (or opens one), runs, and
-//! puts the connection back; if the operation is cancelled, its connection is dropped instead.
+//! ones left idle), and a task takes one whose protocol task runs on its own worker first. An
+//! operation takes a permit, an idle connection (or opens one), runs, and puts the connection
+//! back; if the operation is cancelled, its connection is dropped instead.
 //! Broken connections and ones left inside a transaction are never reused. `end` closes idle
 //! connections and fails every later acquire with `ECLOSED`.
 
-use super::client::{bytes, io_result, text, ClientHandle, ClientObj, Lease, CLIENTS};
+use super::client::{io_result, ClientHandle, ClientObj, Lease, CLIENTS};
 use super::config::PgConfig;
 use super::connection::{connect, Conn};
 use super::error::{PgError, TLS};
 use super::tls::PgTls;
-use crate::registry::{Key, Registry};
-use crate::result::IoResult;
-use crate::str::VeltStr;
-use crate::task::leaf::new_leaf;
-use crate::task::VeltFut;
 use parking_lot::Mutex;
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use velt_native::handles::{Key, Registry};
+use velt_native::{export, Error, Str, StrBuf};
 
 /// A pool (see the module docs).
 pub struct PoolObj {
@@ -50,7 +48,7 @@ impl PoolObj {
             .acquire_owned()
             .await
             .map_err(|_| closed())?;
-        let here = crate::task::runtime::current_worker();
+        let here = velt_native::rt::worker_index();
         loop {
             let Some(conn) = self.take_idle(here) else {
                 break;
@@ -97,108 +95,98 @@ impl PoolObj {
 
 /// `createPool({ url, max })` → `IoResult<VeltPgPool>`. Parses the connection string (and
 /// reads `sslrootcert`) now; connections open on first use. `max == 0` means 10.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_pg_pool_new(
-    url: *const VeltStr,
-    max: u32,
-    out: *mut IoResult<PoolHandle>,
-) {
-    let r = super::config::parse(&text(url)).and_then(|config| {
+#[export]
+fn velt_std_postgres__pool_new(url: &str, max: u32) -> Result<u64, Error> {
+    let r = super::config::parse(url).and_then(|config| {
         let tls = super::tls::connector(&config).map_err(|e| PgError::new(TLS, e))?;
         let max = if max == 0 { 10 } else { max as usize };
-        Ok(POOLS.insert(PoolObj {
-            config,
-            tls,
-            permits: Arc::new(Semaphore::new(max)),
-            idle: Mutex::new(Vec::new()),
-            ended: AtomicBool::new(false),
-        }))
+        Ok(POOLS
+            .insert(PoolObj {
+                config,
+                tls,
+                permits: Arc::new(Semaphore::new(max)),
+                idle: Mutex::new(Vec::new()),
+                ended: AtomicBool::new(false),
+            })
+            .bits())
     });
-    out.write(io_result(r));
+    io_result(r)
 }
 
-/// A leaf future running `op` on one of `pool`'s connections.
-pub(super) unsafe fn pool_op<R, F, Fut>(pool: PoolHandle, op: F) -> *mut VeltFut
+/// Run `op` on one of `pool`'s connections.
+pub(super) async fn pool_op<R, F, Fut>(pool: u64, op: F) -> Result<R, Error>
 where
-    R: Send + 'static,
-    F: FnOnce(Arc<Conn>) -> Fut + Send + 'static,
-    Fut: Future<Output = Result<R, PgError>> + Send,
+    F: FnOnce(Arc<Conn>) -> Fut,
+    Fut: Future<Output = Result<R, PgError>>,
 {
-    let obj = POOLS.get(pool);
-    new_leaf(async move {
-        io_result(match obj {
-            Some(p) => p.run(op).await,
-            None => Err(PgError::closed("pool")),
-        })
+    io_result(match POOLS.get(Key::from_bits(pool)) {
+        Some(p) => p.run(op).await,
+        None => Err(PgError::closed("pool")),
     })
 }
 
 /// `pool.connect()` → `IoResult<VeltPgClient>`: a dedicated connection until its `close()`.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_pg_pool_connect(pool: PoolHandle) -> *mut VeltFut {
-    let obj = POOLS.get(pool);
-    new_leaf(async move {
-        let r = async {
-            let pool = obj.ok_or_else(|| PgError::closed("pool"))?;
-            let (conn, permit) = pool.acquire().await?;
-            let lease = Lease { pool, permit };
-            let client: ClientHandle = CLIENTS.insert(ClientObj::from_arc(conn, Some(lease)));
-            Ok(client)
-        };
-        io_result(r.await)
-    })
+#[export(async)]
+async fn velt_std_postgres__pool_connect(pool: u64) -> Result<u64, Error> {
+    let r = async {
+        let pool = POOLS
+            .get(Key::from_bits(pool))
+            .ok_or_else(|| PgError::closed("pool"))?;
+        let (conn, permit) = pool.acquire().await?;
+        let lease = Lease { pool, permit };
+        let client: ClientHandle = CLIENTS.insert(ClientObj::from_arc(conn, Some(lease)));
+        Ok(client.bits())
+    };
+    io_result(r.await)
 }
 
-/// `pool.query(sql, params)` → `IoResult<string>` (as `velt_rt_pg_query`).
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_pg_pool_query(
-    pool: PoolHandle,
-    sql: *const VeltStr,
-    params: *const VeltStr,
-    first_only: u8,
-) -> *mut VeltFut {
-    let (sql, params) = (text(sql), bytes(params));
+/// `pool.query(sql, params)` → `IoResult<string>` (as `velt_std_postgres__query`).
+#[export(async)]
+async fn velt_std_postgres__pool_query(
+    pool: u64,
+    sql: Str,
+    params: Str,
+    first_only: bool,
+) -> Result<Str, Error> {
     pool_op(pool, move |c| async move {
-        let json = c.query(&sql, &params, first_only != 0).await?;
-        Ok(VeltStr::from_vec(json))
+        let out = StrBuf::new();
+        let json = c
+            .query(&sql.to_str(), params.as_bytes(), first_only, out)
+            .await?;
+        Ok(json.finish())
     })
+    .await
 }
 
-/// `pool.execute(sql, params)` → `IoResult<i64>` (as `velt_rt_pg_execute`).
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_pg_pool_execute(
-    pool: PoolHandle,
-    sql: *const VeltStr,
-    params: *const VeltStr,
-) -> *mut VeltFut {
-    let (sql, params) = (text(sql), bytes(params));
+/// `pool.execute(sql, params)` → `IoResult<i64>` (as `velt_std_postgres__execute`).
+#[export(async)]
+async fn velt_std_postgres__pool_execute(pool: u64, sql: Str, params: Str) -> Result<i64, Error> {
     pool_op(pool, move |c| async move {
-        Ok(c.execute(&sql, &params).await? as i64)
+        Ok(c.execute(&sql.to_str(), params.as_bytes()).await? as i64)
     })
+    .await
 }
 
-/// `pool.batch(sql)` → `VeltErr` (as `velt_rt_pg_batch`).
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_pg_pool_batch(
-    pool: PoolHandle,
-    sql: *const VeltStr,
-) -> *mut VeltFut {
-    let sql = text(sql);
-    pool_op(pool, move |c| async move { c.batch(&sql).await })
+/// `pool.batch(sql)` → `IoStatus` (as `velt_std_postgres__batch`).
+#[export(async)]
+async fn velt_std_postgres__pool_batch(pool: u64, sql: Str) -> Result<(), Error> {
+    pool_op(pool, move |c| async move { c.batch(&sql.to_str()).await }).await
 }
 
 /// Connections waiting idle in the pool.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_pg_pool_idle(pool: PoolHandle) -> u32 {
-    POOLS.get(pool).map_or(0, |p| p.idle.lock().len() as u32)
+#[export]
+fn velt_std_postgres__pool_idle(pool: u64) -> u32 {
+    POOLS
+        .get(Key::from_bits(pool))
+        .map_or(0, |p| p.idle.lock().len() as u32)
 }
 
 /// End the pool and release the handle (a closed or null handle ⇒ no-op): idle connections
 /// close now, busy ones when their operation or client finishes; later operations fail with
 /// `ECLOSED`.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_pg_pool_end(pool: PoolHandle) {
-    if let Some(p) = POOLS.remove(pool) {
+#[export]
+fn velt_std_postgres__pool_end(pool: u64) {
+    if let Some(p) = POOLS.remove(Key::from_bits(pool)) {
         p.ended.store(true, Ordering::Release);
         p.permits.close();
         p.idle.lock().clear();

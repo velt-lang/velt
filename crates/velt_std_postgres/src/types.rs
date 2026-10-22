@@ -22,9 +22,10 @@
 //! column and suggests a `::text` cast.
 
 use super::{network, temporal};
-use crate::db_json::push_byte_array;
-use crate::json::escape::push_json_string;
 use tokio_postgres::types::{Kind, Type};
+use velt_text::db_json::push_byte_array;
+use velt_text::json_escape::push_json_string;
+use velt_text::Out;
 
 /// OID of `json`.
 pub const JSON: u32 = 114;
@@ -44,7 +45,7 @@ fn be<const N: usize>(raw: &[u8]) -> Result<[u8; N], String> {
     <[u8; N]>::try_from(raw).map_err(|_| format!("expected {N} bytes, got {}", raw.len()))
 }
 
-fn push_uuid(out: &mut Vec<u8>, raw: &[u8]) -> Result<(), String> {
+fn push_uuid<O: Out + ?Sized>(out: &mut O, raw: &[u8]) -> Result<(), String> {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let b: [u8; 16] = be(raw)?;
     out.push(b'"');
@@ -59,15 +60,15 @@ fn push_uuid(out: &mut Vec<u8>, raw: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
-fn push_float(out: &mut Vec<u8>, v: f64) {
+fn push_float<O: Out + ?Sized>(out: &mut O, v: f64) {
     if v.is_finite() {
-        crate::fmt::push_f64(out, v);
+        velt_text::fmt::push_f64(out, v);
     } else {
-        out.extend_from_slice(b"null");
+        out.extend(b"null");
     }
 }
 
-fn push_text(out: &mut Vec<u8>, raw: &[u8]) {
+fn push_text<O: Out + ?Sized>(out: &mut O, raw: &[u8]) {
     match std::str::from_utf8(raw) {
         Ok(s) => push_json_string(out, s.as_bytes()),
         Err(_) => push_json_string(out, String::from_utf8_lossy(raw).as_bytes()),
@@ -76,20 +77,19 @@ fn push_text(out: &mut Vec<u8>, raw: &[u8]) {
 
 /// Append the JSON of one non-NULL value of type `ty`. The error names what is unsupported
 /// (the caller adds the column).
-pub fn push_value(out: &mut Vec<u8>, ty: &Type, raw: &[u8]) -> Result<(), String> {
-    let text = |out: &mut Vec<u8>, s: Result<String, String>| {
-        s.map(|s| push_json_string(out, s.as_bytes()))
-    };
+pub fn push_value<O: Out + ?Sized>(out: &mut O, ty: &Type, raw: &[u8]) -> Result<(), String> {
+    let text =
+        |out: &mut O, s: Result<String, String>| s.map(|s| push_json_string(out, s.as_bytes()));
     match *ty {
-        Type::BOOL => out.extend_from_slice(if raw.first() == Some(&0) {
+        Type::BOOL => out.extend(if raw.first() == Some(&0) {
             b"false"
         } else {
             b"true"
         }),
-        Type::INT2 => crate::fmt::push_i64(out, i16::from_be_bytes(be(raw)?) as i64),
-        Type::INT4 => crate::fmt::push_i64(out, i32::from_be_bytes(be(raw)?) as i64),
-        Type::INT8 => crate::fmt::push_i64(out, i64::from_be_bytes(be(raw)?)),
-        Type::OID => crate::fmt::push_u64(out, u32::from_be_bytes(be(raw)?) as u64),
+        Type::INT2 => velt_text::fmt::push_i64(out, i16::from_be_bytes(be(raw)?) as i64),
+        Type::INT4 => velt_text::fmt::push_i64(out, i32::from_be_bytes(be(raw)?) as i64),
+        Type::INT8 => velt_text::fmt::push_i64(out, i64::from_be_bytes(be(raw)?)),
+        Type::OID => velt_text::fmt::push_u64(out, u32::from_be_bytes(be(raw)?) as u64),
         Type::FLOAT4 => push_float(out, f32::from_be_bytes(be(raw)?) as f64),
         Type::FLOAT8 => push_float(out, f64::from_be_bytes(be(raw)?)),
         Type::NUMERIC => text(out, temporal::numeric(raw))?,
@@ -103,9 +103,9 @@ pub fn push_value(out: &mut Vec<u8>, ty: &Type, raw: &[u8]) -> Result<(), String
         Type::INET | Type::CIDR => text(out, network::inet(raw))?,
         Type::MACADDR | Type::MACADDR8 => text(out, network::macaddr(raw))?,
         Type::BYTEA => push_byte_array(out, raw),
-        _ if ty.oid() == JSON => out.extend_from_slice(raw),
+        _ if ty.oid() == JSON => out.extend(raw),
         // jsonb's binary form is a version byte (1) and the text.
-        _ if ty.oid() == JSONB => out.extend_from_slice(raw.get(1..).unwrap_or_default()),
+        _ if ty.oid() == JSONB => out.extend(raw.get(1..).unwrap_or_default()),
         _ if is_texty(ty) => push_text(out, raw),
         _ => match ty.kind() {
             Kind::Array(elem) => push_array(out, elem, raw)?,
@@ -180,7 +180,7 @@ impl<'a> Reader<'a> {
 
 /// The binary array format: dimensions, then every element (length-prefixed, -1 = NULL) in
 /// row-major order, written as nested JSON arrays.
-fn push_array(out: &mut Vec<u8>, elem: &Type, raw: &[u8]) -> Result<(), String> {
+fn push_array<O: Out + ?Sized>(out: &mut O, elem: &Type, raw: &[u8]) -> Result<(), String> {
     let mut r = Reader { raw, pos: 0 };
     let ndim = r.i32()?;
     r.i32()?; // has-nulls flag
@@ -191,13 +191,18 @@ fn push_array(out: &mut Vec<u8>, elem: &Type, raw: &[u8]) -> Result<(), String> 
         r.i32()?; // lower bound
     }
     if dims.is_empty() {
-        out.extend_from_slice(b"[]");
+        out.extend(b"[]");
         return Ok(());
     }
     push_dim(out, elem, &dims, &mut r)
 }
 
-fn push_dim(out: &mut Vec<u8>, elem: &Type, dims: &[usize], r: &mut Reader) -> Result<(), String> {
+fn push_dim<O: Out + ?Sized>(
+    out: &mut O,
+    elem: &Type,
+    dims: &[usize],
+    r: &mut Reader,
+) -> Result<(), String> {
     out.push(b'[');
     for i in 0..dims[0] {
         if i > 0 {
@@ -208,7 +213,7 @@ fn push_dim(out: &mut Vec<u8>, elem: &Type, dims: &[usize], r: &mut Reader) -> R
         } else {
             match r.element()? {
                 Some(v) => push_value(out, elem, v)?,
-                None => out.extend_from_slice(b"null"),
+                None => out.extend(b"null"),
             }
         }
     }

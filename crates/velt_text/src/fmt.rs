@@ -4,30 +4,32 @@
 //! (from `ryu`), laid out with the JS rules (plain notation for exponents in `-7 < e < 21`,
 //! otherwise `d.ddde±x`), `NaN`, `Infinity`, `-Infinity`, and `-0` printed as `0`.
 
+use crate::Out;
+
 /// Append the decimal representation of `v`.
 #[inline]
-pub fn push_i64(out: &mut Vec<u8>, v: i64) {
+pub fn push_i64(out: &mut (impl Out + ?Sized), v: i64) {
     let mut b = itoa::Buffer::new();
-    out.extend_from_slice(b.format(v).as_bytes());
+    out.extend(b.format(v).as_bytes());
 }
 
 /// Append the decimal representation of `v`.
 #[inline]
-pub fn push_u64(out: &mut Vec<u8>, v: u64) {
+pub fn push_u64(out: &mut (impl Out + ?Sized), v: u64) {
     let mut b = itoa::Buffer::new();
-    out.extend_from_slice(b.format(v).as_bytes());
+    out.extend(b.format(v).as_bytes());
 }
 
 #[inline]
-pub fn push_bool(out: &mut Vec<u8>, v: u8) {
-    out.extend_from_slice(if v != 0 { b"true" } else { b"false" });
+pub fn push_bool(out: &mut (impl Out + ?Sized), v: u8) {
+    out.extend(if v != 0 { b"true" } else { b"false" });
 }
 
 /// Append `v` formatted like node's `util.inspect` (what `console.log` prints): as
 /// [`push_f64`], except that `-0` is `-0`.
-pub fn push_inspect_f64(out: &mut Vec<u8>, v: f64) {
+pub fn push_inspect_f64(out: &mut (impl Out + ?Sized), v: f64) {
     if v == 0.0 && v.is_sign_negative() {
-        out.extend_from_slice(b"-0");
+        out.extend(b"-0");
         return;
     }
     push_f64(out, v);
@@ -41,7 +43,7 @@ pub fn whole(v: f64) -> Option<i64> {
 }
 
 /// Append `v` formatted like JavaScript's `String(v)`.
-pub fn push_f64(out: &mut Vec<u8>, v: f64) {
+pub fn push_f64(out: &mut (impl Out + ?Sized), v: f64) {
     // A counter or an index (`${i}`): its integer digits, which is what the general path below
     // prints for it, without the shortest-digits search. `-0` prints `0` as JS does.
     if let Some(i) = whole(v) {
@@ -49,11 +51,11 @@ pub fn push_f64(out: &mut Vec<u8>, v: f64) {
         return;
     }
     if v.is_nan() {
-        out.extend_from_slice(b"NaN");
+        out.extend(b"NaN");
         return;
     }
     if v.is_infinite() {
-        out.extend_from_slice(if v < 0.0 { b"-Infinity" } else { b"Infinity" });
+        out.extend(if v < 0.0 { b"-Infinity" } else { b"Infinity" });
         return;
     }
     if v == 0.0 {
@@ -69,22 +71,22 @@ pub fn push_f64(out: &mut Vec<u8>, v: f64) {
     // Value = 0.d1d2..dk * 10^n  (i.e. digits * 10^(n-k)); JS spec names: k, n.
     if k as i32 <= n && n <= 21 {
         // Integer: digits followed by n-k zeros.
-        out.extend_from_slice(digits);
-        out.resize(out.len() + (n - k as i32) as usize, b'0');
+        out.extend(digits);
+        out.fill(b'0', (n - k as i32) as usize);
     } else if 0 < n && n <= 21 {
         let n = n as usize;
-        out.extend_from_slice(&digits[..n]);
+        out.extend(&digits[..n]);
         out.push(b'.');
-        out.extend_from_slice(&digits[n..]);
+        out.extend(&digits[n..]);
     } else if -6 < n && n <= 0 {
-        out.extend_from_slice(b"0.");
-        out.resize(out.len() + (-n) as usize, b'0');
-        out.extend_from_slice(digits);
+        out.extend(b"0.");
+        out.fill(b'0', (-n) as usize);
+        out.extend(digits);
     } else {
         out.push(digits[0]);
         if k > 1 {
             out.push(b'.');
-            out.extend_from_slice(&digits[1..]);
+            out.extend(&digits[1..]);
         }
         out.push(b'e');
         let e = n - 1;

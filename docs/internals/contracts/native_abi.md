@@ -10,21 +10,29 @@ rationale: [native-packages.md](../design/native-packages.md). Implemented by `c
 ## Calls from Velt into the library
 
 Velt declares the library's functions with `declare function` / `declare async function`, with
-the pass modes of `rt_abi_async.md` §3.1. Only these types cross the boundary (v1):
+the pass modes of `rt_abi_async.md` §3.1. A package passes the same values std's runtime
+functions do, under one rule for both (`veltc/src/native/`):
 
 | Velt | Parameter (C) | Result (C) | Signature name |
 |---|---|---|---|
 | `bool`, `i8`…`i64`, `u8`…`u64`, `f32`, `f64` (`number`) | by value | returned | `bool`, `i64`, `f64`, … |
 | `string` | `const VeltStr*` (borrowed for the call) | trailing `VeltStr*` out-pointer | `string` |
-| `u8[]` | `const VeltBytes*` (borrowed for the call) | trailing `VeltBytes*` out-pointer | `u8[]` |
-| `IoResult<T>`, `T` one of the above | — | trailing `IoResult<T>*` (§3) | `IoResult<T>` |
+| `T[]`, `T` a value | `const VeltArray*`: `{ T* ptr; u64 len; u64 cap; }` (borrowed) | trailing `VeltArray*` out-pointer (elements from `alloc`) | `u8[]`, `{id:i64,name:string}[]`, … |
+| a `struct` of values | `const S*` (borrowed) | trailing `S*` out-pointer | its shape: `{id:i64,name:string}` |
+| `IoResult<T>`, `T` a value | — | trailing `IoResult<T>*` (§3) | `IoResult<T>` |
 | `IoStatus` | — | trailing `VeltErr*` | `IoStatus` |
 | `void` | — | nothing | `void` |
 | `Promise<R>` (`declare async function`) | — | returns `VeltFut*`, result `R` at +16 | the `R` name, `async ` before the signature |
 
-`isize`/`usize`, structs, arrays other than `u8[]`, classes, closures and functions cannot cross:
-native objects are `u64` handles (§3.2) that the package wraps in a class with
-`[Symbol.dispose]()` (or a Copy struct for copies used by async calls).
+A value is a scalar, a `string`, an array of values or a `struct` of values, in Velt's own
+layout (rt_abi.md): a struct is named by its shape, its fields' names (as Velt spells them),
+order and types, so a field that differs is a build error. `isize`/`usize`, classes,
+interfaces, unions, optional or private fields, recursive structs, closures and functions
+cannot cross: native objects are `u64` handles (§3.2) that the package wraps in a class with
+`[Symbol.dispose]()` (or a Copy struct for copies used by async calls). The SDK's
+`#[derive(velt_native::Value)]` gives a `#[repr(C)]` Rust struct Velt's layout and its
+signature name (field names camelCased, or `#[velt(name)]`); `velt_native::Array<T>` is a
+Velt array in the runtime's memory.
 
 **Signatures** are written `(<param>,<param>)-><result>`, with `async ` in front for
 `declare async function`: `(string,u32)->IoResult<u64>`, `async (u64,string)->IoResult<string>`.
@@ -179,6 +187,55 @@ typedef struct { const void* runtime; const void* data; const VeltForeignWaker* 
 - The SDK wraps all of it: `#[export(async)] async fn`, `velt_native::rt::spawn`,
   `velt_native::net::TcpStream` (tokio's `AsyncRead`/`AsyncWrite` with the `tokio` feature),
   `velt_native::time::{sleep, timeout}`, `velt_native::rt::worker_index`.
+
+## Strings
+
+A Velt string knows its UTF-16 length and whether it is ASCII (rt_abi.md "Strings"), so
+making one reads its text once. The table lets a library make strings without copying them:
+
+```c
+    void* (*alloc)(uint64_t size, uint64_t align);                  // the runtime's allocator
+    void* (*realloc)(void* p, uint64_t old_size, uint64_t align, uint64_t new_size);
+    void (*free)(void* p, uint64_t size, uint64_t align);
+    void (*str_from_utf8)(const uint8_t* p, size_t len, VeltStr* out); // trusted UTF-8, counted
+    void (*str_retain)(const VeltStr* s, VeltStr* out);               // another reference
+    uint8_t* (*strbuf_spare)(VeltStr* buf, uint64_t min, uint64_t* avail);
+    void (*strbuf_commit)(VeltStr* buf, uint64_t n, uint8_t ascii);
+```
+
+- `alloc`/`realloc`/`free`: memory Velt frees (arrays a library returns).
+- `str_from_utf8`: like `str_new` for bytes the library knows are UTF-8 (no check in release
+  builds; debug runtimes check).
+- `str_retain`: another reference to the same immutable string (a count, no copy): a library
+  keeps a string argument past the call this way (an async export's parameter).
+- `strbuf_spare(buf, min, avail)`: makes `buf` a unique heap buffer with room for at least `min`
+  bytes after its text and returns where the room starts (`*avail` bytes). Bytes written there
+  are not text yet; the runtime keeps them when a later `strbuf_spare` grows the buffer.
+  `strbuf_commit(buf, n, ascii)` makes the next `n` written bytes text: UTF-8 of whole
+  characters, counted once (not at all when `ascii` is 1). The first non-ASCII text of an ASCII
+  buffer gives it a header (rt_abi.md "Strings"): the text moves once, into a fresh buffer.
+- The SDK's `velt_native::StrBuf` is built on them: it writes into the spare room directly (a
+  bounds check and a copy per write, no call into the runtime), grows by doubling, keeps up to 23
+  bytes to itself (an inline string), and `finish()` commits once. `velt_text`'s encoders
+  (numbers, JSON, database rows) write into any `velt_text::Out`, a `Vec<u8>` or a `StrBuf`.
+  `velt_native::Str` is an owned Velt string: a parameter (retained, not copied), a result
+  (moved), an array element or a field.
+
+What a string result costs, per path (`cargo run --release -p velt_rt --example
+native_strings`, Apple M-series): a `StrBuf` is as fast as or faster than a `Vec<u8>` copied
+into a string once (the runtime's own drivers before), from −11 % (short text) to +1 % (1 MB of
+non-ASCII text), and 18–77 % faster than a `String` result (checked, then copied); a retained
+`Str` parameter costs 2–4 ns where a `String` copy costs 13 ns (16 bytes) to 17 µs (64 KB).
+
+## Drivers in the runtime
+
+std's drivers (`velt:postgres`: crate `velt_std_postgres`) are crates on this SDK only
+(`velt_native`, `velt_text`), linked into the runtime library instead of a package's own: their
+`#[export]` functions are std's `declare`s (named `velt_std_<driver>__…`, checked against their
+signature records like any package's, `veltc/src/native/` `check_std_driver`), and an
+executable stays self-contained. The runtime hands them its table at start-up
+(`velt_rt::native::embed`, from `entry::init`), as `velt_native_init_<pkg>` does for a
+package, without replacing the panic hook (they share the runtime's std).
 
 ## Start-up
 

@@ -24,11 +24,12 @@ use super::bind::bind_all;
 use super::connection::Conn;
 use super::error::PgError;
 use super::rows;
-use crate::db_json::{parse_param_list, Params};
 use bytes::BytesMut;
 use parking_lot::Mutex;
 use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
+use velt_text::db_json::{parse_param_list, Params};
+use velt_text::Out;
 
 /// What a batch returns for each execution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -106,25 +107,33 @@ const STALE_PLAN: [&str; 2] = ["0A000", "26000"];
 
 impl Conn {
     /// Run `sql` once per parameter set in `sets` (a JSON array of sets) as one group; the
-    /// results as JSON per `mode`.
-    pub async fn run_batch(&self, sql: &str, sets: &[u8], mode: Mode) -> Result<Vec<u8>, PgError> {
+    /// results as JSON per `mode`, appended to `out`.
+    pub async fn run_batch<O: Out + Send>(
+        &self,
+        sql: &str,
+        sets: &[u8],
+        mode: Mode,
+        mut out: O,
+    ) -> Result<O, PgError> {
         let sets = parse_param_list(sets).map_err(PgError::invalid)?;
         let Some(first) = sets.first() else {
-            return Ok(b"[]".to_vec());
+            out.extend(b"[]");
+            return Ok(out);
         };
         let named = matches!(first, Params::Named(_));
-        let r = self.batch_of(sql, named, &sets, mode).await;
+        let r = self.batch_of(sql, named, &sets, mode, out).await;
         self.forget_if_stale(sql, named, &r);
         r
     }
 
-    async fn batch_of(
+    async fn batch_of<O: Out + Send>(
         &self,
         sql: &str,
         named: bool,
         sets: &[Params<'_>],
         mode: Mode,
-    ) -> Result<Vec<u8>, PgError> {
+        out: O,
+    ) -> Result<O, PgError> {
         let p = self.prepared(sql, named).await?;
         let (types, columns) = (p.statement.params(), p.statement.columns());
         if mode != Mode::Count {
@@ -156,7 +165,7 @@ impl Conn {
             (self.wire.send(group.freeze())?, parsing)
         };
         let replies = replies.await.map_err(|_| super::wire::closed())?;
-        let r = decode::results(replies, columns, sets.len(), mode);
+        let r = decode::results(replies, columns, sets.len(), mode, out);
         if let Err(e) = &r {
             if parsing || STALE_PLAN.contains(&e.code.as_str()) {
                 p.batch.state.store(DOUBTFUL, Ordering::Release);

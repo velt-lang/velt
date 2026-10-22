@@ -133,6 +133,16 @@ pub struct VeltRtApi {
     pub realloc: unsafe extern "C" fn(*mut u8, u64, u64, u64) -> *mut u8,
     /// `velt_rt_free(p, size, align)`.
     pub free: unsafe extern "C" fn(*mut u8, u64, u64),
+    // Strings without extra passes or copies (native_abi.md "Strings").
+    /// `(ptr, len, out)`: a string of UTF-8 bytes (trusted: no lossy check).
+    pub str_from_utf8: unsafe extern "C" fn(*const u8, usize, *mut VeltStr),
+    /// `(s, out)`: another reference to `s` (a count, no copy).
+    pub str_retain: unsafe extern "C" fn(*const VeltStr, *mut VeltStr),
+    /// `velt_rt_strbuf_spare(buf, min, avail) -> ptr`: room to write at the end of a builder.
+    pub strbuf_spare: unsafe extern "C" fn(*mut VeltStr, u64, *mut u64) -> *mut u8,
+    /// `velt_rt_strbuf_commit(buf, n, ascii)`: the bytes written become text (counted unless
+    /// `ascii` is 1).
+    pub strbuf_commit: unsafe extern "C" fn(*mut VeltStr, u64, u8),
 }
 
 /// The table every native library receives.
@@ -175,6 +185,10 @@ pub static VELT_RT_API: VeltRtApi = VeltRtApi {
     alloc: crate::mem::velt_rt_alloc,
     realloc: crate::mem::velt_rt_realloc,
     free: crate::mem::velt_rt_free,
+    str_from_utf8,
+    str_retain,
+    strbuf_spare: crate::strbuf::velt_rt_strbuf_spare,
+    strbuf_commit: crate::strbuf::velt_rt_strbuf_commit,
 };
 
 /// `const VeltRtApi* velt_rt_native_api(void)`: the table, for generated code to pass to each
@@ -182,6 +196,13 @@ pub static VELT_RT_API: VeltRtApi = VeltRtApi {
 #[no_mangle]
 pub extern "C" fn velt_rt_native_api() -> *const VeltRtApi {
     &VELT_RT_API
+}
+
+/// Hands the table to the SDK the drivers linked into the runtime are built on (std's
+/// `velt_std_*` crates): what a package's `velt_native_init_<pkg>` does, at start-up.
+pub fn embed() {
+    // SAFETY: the static table, whose layout the SDK's mirrors (`sdk_layouts_match_the_runtime`).
+    unsafe { velt_native::__embed(&VELT_RT_API as *const VeltRtApi as *const velt_native::Api) };
 }
 
 /// `void velt_rt_native_check(int32_t rc, const VeltStr* package)`: after a native package's init
@@ -211,6 +232,27 @@ unsafe extern "C" fn str_new(ptr: *const u8, len: usize, out: *mut VeltStr) {
     out.write(VeltStr::from_bytes(
         String::from_utf8_lossy(bytes).as_bytes(),
     ));
+}
+
+/// `str_from_utf8`: a string of a library's UTF-8 text (a Rust `&str`): counted, not checked
+/// (the debug runtime checks it).
+unsafe extern "C" fn str_from_utf8(ptr: *const u8, len: usize, out: *mut VeltStr) {
+    let bytes = if len == 0 {
+        &[][..]
+    } else {
+        std::slice::from_raw_parts(ptr, len)
+    };
+    debug_assert!(
+        std::str::from_utf8(bytes).is_ok(),
+        "ICE: str_from_utf8 of invalid UTF-8"
+    );
+    out.write(VeltStr::from_text(std::str::from_utf8_unchecked(bytes)));
+}
+
+/// `str_retain`: another reference to `s` (strings are immutable and counted atomically, so a
+/// library may keep it on any thread).
+unsafe extern "C" fn str_retain(s: *const VeltStr, out: *mut VeltStr) {
+    out.write((*s).share());
 }
 
 unsafe extern "C" fn str_bytes(s: *const VeltStr, len: *mut usize) -> *const u8 {
@@ -381,7 +423,11 @@ mod tests {
             worker_index,
             alloc,
             realloc,
-            free
+            free,
+            str_from_utf8,
+            str_retain,
+            strbuf_spare,
+            strbuf_commit
         );
         assert_eq!(NATIVE_ABI_VERSION, sdk::ABI_VERSION);
         assert_eq!(size_of::<VeltStr>(), size_of::<sdk::VeltStr>());

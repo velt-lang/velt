@@ -12,7 +12,6 @@ use super::rows;
 use super::statements::{Prepared, StatementCache};
 use super::tls::PgTls;
 use super::wire::Wire;
-use crate::db_json::{parse_params, Params};
 use bytes::Bytes;
 use parking_lot::Mutex;
 use std::future::Future;
@@ -20,6 +19,8 @@ use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio_postgres::types::ToSql;
 use tokio_postgres::{Client, CopyInSink, CopyOutStream};
+use velt_text::db_json::{parse_params, Params};
+use velt_text::Out;
 
 /// SQLSTATEs after which a cached statement is re-prepared: its plan no longer matches the
 /// schema (`0A000` "cached plan must not change result type"), or it is gone (`26000`).
@@ -50,12 +51,12 @@ pub async fn connect(config: &PgConfig, tls: PgTls) -> Result<Conn, PgError> {
     let (client, connection, wire) = super::socket::connect(&config.inner, &tls).await?;
     let driver = Arc::new(AtomicUsize::new(usize::MAX));
     let at = driver.clone();
-    crate::task::runtime::spawn(async move {
+    velt_native::rt::spawn(async move {
         // The task ends when the client is dropped or the server goes away; errors surface
         // on the client's next call ("connection closed").
         let mut connection = std::pin::pin!(connection);
         let _ = std::future::poll_fn(|cx| {
-            let here = crate::task::runtime::current_worker().unwrap_or(usize::MAX);
+            let here = velt_native::rt::worker_index().unwrap_or(usize::MAX);
             at.store(here, Ordering::Relaxed);
             connection.as_mut().poll(cx)
         })
@@ -140,19 +141,20 @@ impl Conn {
         }
     }
 
-    /// Run `sql` with `params`; the rows as JSON (see [`rows::to_json`]).
-    pub async fn query(
+    /// Run `sql` with `params`; the rows as JSON appended to `out` (see [`rows::to_json`]).
+    pub async fn query<O: Out + Send>(
         &self,
         sql: &str,
         params: &[u8],
         first_only: bool,
-    ) -> Result<Vec<u8>, PgError> {
+        out: O,
+    ) -> Result<O, PgError> {
         let r = async {
             let (p, values) = self.bound(sql, params).await?;
             rows::check_columns(p.statement.columns())?;
             let refs: Vec<&(dyn ToSql + Sync)> = values.iter().map(|v| v as _).collect();
             let rows = self.client.query(&p.statement, &refs).await?;
-            rows::to_json(p.statement.columns(), &rows, first_only)
+            rows::to_json(p.statement.columns(), &rows, first_only, out)
         }
         .await;
         self.forget_if_stale(sql, is_named(params), &r);

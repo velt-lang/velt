@@ -40,15 +40,17 @@ mio = { version = "1.2.3", features = ["os-poll", "net", "os-ext"] }
 mimalloc = { version = "0.1.52", default-features = false, optional = true }
 parking_lot = "0.12.5"
 parking_lot_core = "0.9.12"
-postgres-protocol = "0.6.12"
 regex = "1.13.1"
 rusqlite = { version = "0.40.2", features = ["bundled", "column_decltype"] }
 rustls = { version = "0.23.45", default-features = false, features = ["ring", "std", "tls12"] }
 ryu = "1.0.23"
 velt_text = { path = "../velt_text" }
+# std/postgres's driver (an SDK-only crate, linked in: its exports are std's externs).
+velt_std_postgres = { path = "../velt_std_postgres" }
+# The SDK the drivers are built on: the runtime hands it its function table at start-up.
+velt_native = { path = "../velt_native" }
 socket2 = "0.6.5"
 tokio = { version = "1.53.1", default-features = false, features = ["rt-multi-thread", "net", "fs", "time", "io-util", "sync", "signal", "process"] }
-tokio-postgres = { version = "0.7.18", default-features = false, features = ["runtime"] }
 tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring", "tls12"] }
 url = "2.5.8"
 webpki-roots = "1.0.9"

@@ -2,36 +2,47 @@
 //! an entry per execution (see [`Mode`]), or the first error the server reported.
 
 use super::Mode;
-use crate::db_json::RowWriter;
-use crate::postgres::error::PgError;
-use crate::postgres::rows::push_row;
+use crate::error::PgError;
+use crate::rows::push_row;
 use bytes::BytesMut;
 use postgres_protocol::message::backend::{
     CommandCompleteBody, DataRowBody, ErrorResponseBody, Message,
 };
 use tokio_postgres::fallible_iterator::FallibleIterator;
 use tokio_postgres::Column;
+use velt_text::db_json::RowWriter;
+use velt_text::Out;
 
 fn protocol(what: impl std::fmt::Display) -> PgError {
     PgError::new("UNKNOWN", format!("unexpected batch reply: {what}"))
 }
 
 /// The JSON of `executions` results from `replies` (see the module docs).
-pub fn results(
+pub fn results<O: Out>(
     mut replies: BytesMut,
     columns: &[Column],
     executions: usize,
     mode: Mode,
-) -> Result<Vec<u8>, PgError> {
-    let mut out = vec![b'['];
+    mut out: O,
+) -> Result<O, PgError> {
+    out.push(b'[');
+    // Each execution's writer owns the output while its rows come in.
+    let mut out = Some(out);
     let mut done = 0;
-    let mut set: Option<RowWriter> = None;
+    let mut set: Option<RowWriter<O>> = None;
     let mut error = None;
     while let Some(message) = Message::parse(&mut replies).map_err(protocol)? {
         match message {
             Message::ParseComplete | Message::CloseComplete => {}
             Message::BindComplete => {
-                set = Some(RowWriter::new(columns.iter().map(Column::name)));
+                let mut o = out
+                    .take()
+                    .ok_or_else(|| protocol("a BindComplete inside a result"))?;
+                if done > 0 {
+                    o.push(b',');
+                }
+                let names = columns.iter().map(Column::name);
+                set = Some(RowWriter::with_out(o, names, mode == Mode::Rows));
             }
             Message::DataRow(row) => {
                 let w = set
@@ -45,10 +56,7 @@ pub fn results(
                 let w = set
                     .take()
                     .ok_or_else(|| protocol("a result before BindComplete"))?;
-                if done > 0 {
-                    out.push(b',');
-                }
-                finish_set(&mut out, w, &message, mode)?;
+                out = Some(finish_set(w, &message, mode)?);
                 done += 1;
             }
             Message::ErrorResponse(body) => {
@@ -67,28 +75,35 @@ pub fn results(
             "{done} results for {executions} executions"
         )));
     }
+    let mut out = out.ok_or_else(|| protocol("a result without its end"))?;
     out.push(b']');
     Ok(out)
 }
 
-/// Append one execution's entry.
-fn finish_set(out: &mut Vec<u8>, w: RowWriter, end: &Message, mode: Mode) -> Result<(), PgError> {
+/// Close one execution's entry; the output back.
+fn finish_set<O: Out>(w: RowWriter<O>, end: &Message, mode: Mode) -> Result<O, PgError> {
+    let empty = w.rows() == 0;
+    let mut out = w.finish();
     match mode {
-        Mode::Rows => out.extend_from_slice(&w.into_array()),
-        Mode::FirstRow if w.rows() == 0 => out.extend_from_slice(b"null"),
-        Mode::FirstRow => out.extend_from_slice(&w.into_rows()),
+        Mode::Rows => {}
+        Mode::FirstRow if empty => out.extend(b"null"),
+        Mode::FirstRow => {}
         Mode::Count => {
             let n = match end {
                 Message::CommandComplete(body) => rows_affected(body)?,
                 _ => 0,
             };
-            out.extend_from_slice(n.to_string().as_bytes());
+            velt_text::fmt::push_u64(&mut out, n);
         }
     }
-    Ok(())
+    Ok(out)
 }
 
-fn push_data_row(w: &mut RowWriter, columns: &[Column], row: &DataRowBody) -> Result<(), PgError> {
+fn push_data_row<O: Out>(
+    w: &mut RowWriter<O>,
+    columns: &[Column],
+    row: &DataRowBody,
+) -> Result<(), PgError> {
     let buffer = row.buffer();
     let ranges: Vec<_> = row.ranges().collect().map_err(protocol)?;
     if ranges.len() != columns.len() {

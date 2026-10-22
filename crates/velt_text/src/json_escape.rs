@@ -5,6 +5,8 @@
 //! well-formed `JSON.stringify`), so the output is always well-formed. Everything else
 //! (including DEL, U+2028/U+2029 and other non-ASCII) is copied verbatim.
 
+use crate::Out;
+
 /// For each byte: 0 = copy as is, otherwise the character after the backslash (`u` = `\u00xx`),
 /// or [`MAYBE_LONE`] for the lead byte of a lone surrogate (also of U+D000–U+D7FF).
 static ESCAPE: [u8; 256] = {
@@ -32,13 +34,13 @@ const HEX: &[u8; 16] = b"0123456789abcdef";
 
 /// Append `s` (canonical WTF-8) as a quoted, escaped JSON string literal.
 #[inline]
-pub fn push_json_string(out: &mut Vec<u8>, s: &[u8]) {
+pub fn push_json_string(out: &mut (impl Out + ?Sized), s: &[u8]) {
     push_json_string_counted(out, s);
 }
 
 /// [`push_json_string`], returning the number of lone surrogates written as `\udxxx` (each 3
 /// bytes and 1 unit in, 6 ASCII bytes out).
-pub fn push_json_string_counted(out: &mut Vec<u8>, s: &[u8]) -> usize {
+pub fn push_json_string_counted(out: &mut (impl Out + ?Sized), s: &[u8]) -> usize {
     out.reserve(s.len() + 2);
     out.push(b'"');
     let mut run_start = 0;
@@ -54,9 +56,9 @@ pub fn push_json_string_counted(out: &mut Vec<u8>, s: &[u8]) -> usize {
         let esc = ESCAPE[byte as usize];
         if esc == MAYBE_LONE {
             if s.get(i + 1).is_some_and(|&b| b >= 0xA0) {
-                out.extend_from_slice(&s[run_start..i]);
+                out.extend(&s[run_start..i]);
                 let unit = 0xD000 | ((s[i + 1] as usize & 0x3F) << 6) | (s[i + 2] as usize & 0x3F);
-                out.extend_from_slice(b"\\u");
+                out.extend(b"\\u");
                 for shift in [12, 8, 4, 0] {
                     out.push(HEX[(unit >> shift) & 0xf]);
                 }
@@ -68,11 +70,11 @@ pub fn push_json_string_counted(out: &mut Vec<u8>, s: &[u8]) -> usize {
             }
             continue;
         }
-        out.extend_from_slice(&s[run_start..i]);
+        out.extend(&s[run_start..i]);
         i += 1;
         run_start = i;
         if esc == b'u' {
-            out.extend_from_slice(b"\\u00");
+            out.extend(b"\\u00");
             out.push(HEX[(byte >> 4) as usize]);
             out.push(HEX[(byte & 0xf) as usize]);
         } else {
@@ -80,7 +82,7 @@ pub fn push_json_string_counted(out: &mut Vec<u8>, s: &[u8]) -> usize {
             out.push(esc);
         }
     }
-    out.extend_from_slice(&s[run_start..]);
+    out.extend(&s[run_start..]);
     out.push(b'"');
     lone
 }

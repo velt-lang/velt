@@ -1,4 +1,4 @@
-//! Parameters: JSON values ([`DbValue`], from `crate::db_json`) converted for the parameter
+//! Parameters: JSON values ([`DbValue`], from `velt_text::db_json`) converted for the parameter
 //! types the server inferred when it prepared the statement.
 //!
 //! Common types are sent in binary: integers (range-checked: `70000` for an `int2` is an error
@@ -11,10 +11,10 @@
 
 use super::error::PgError;
 use super::types::{is_texty, JSON, JSONB};
-use crate::db_json::{DbValue, Params};
 use bytes::BytesMut;
 use std::error::Error as StdError;
 use tokio_postgres::types::{to_sql_checked, Format, IsNull, ToSql, Type};
+use velt_text::db_json::{DbValue, Params};
 
 /// One parameter, already encoded for its type.
 #[derive(Debug, Clone, PartialEq)]
@@ -70,7 +70,7 @@ fn kind_of(v: &DbValue) -> &'static str {
 /// A number in JavaScript's shortest form.
 fn float_text(f: f64) -> String {
     let mut v = Vec::new();
-    crate::fmt::push_f64(&mut v, f);
+    velt_text::fmt::push_f64(&mut v, f);
     String::from_utf8_lossy(&v).into_owned()
 }
 

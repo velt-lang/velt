@@ -2,7 +2,7 @@
 //! `ring` provider). ABI: rt_abi_async.md §14.13.
 //!
 //! Every server round trip is an async leaf future. Parameters arrive as JSON text
-//! (`JSON.stringify` of the user's object or array, parsed by [`crate::db_json`]) and are
+//! (`JSON.stringify` of the user's object or array, parsed by [`velt_text::db_json`]) and are
 //! converted for the parameter types the server inferred; rows leave as JSON text for std's
 //! `JSON.parse<T[]>`. Nothing here stores code pointers (§13.5): `transaction(fn)` is
 //! implemented in Velt over `begin` / `end` and the client's failure counter.

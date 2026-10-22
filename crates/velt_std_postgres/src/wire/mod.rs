@@ -28,7 +28,7 @@ mod tests;
 
 pub use stream::WireStream;
 
-use crate::postgres::error::PgError;
+use crate::error::PgError;
 use bytes::{Bytes, BytesMut};
 use futures_util::task::AtomicWaker;
 use parking_lot::Mutex;

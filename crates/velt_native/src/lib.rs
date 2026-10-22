@@ -38,16 +38,19 @@ pub use velt_native_macros::export;
 
 mod abi;
 mod future;
+pub mod handles;
 pub mod net;
 pub mod rt;
 #[doc(hidden)]
 pub mod sig;
+mod strbuf;
 pub mod time;
 pub mod value;
 pub use abi::{__from_raw_scoped, DirectRet, OutRet, OwnedParam, Param, ResultValue};
 #[doc(hidden)]
 pub use future::{__blocking, __owned};
 pub use future::{Completer, ErrorRet, Future, FutureRet};
+pub use strbuf::StrBuf;
 pub use value::{Array, Owned, Record, Str, Value};
 pub use velt_native_macros::Value;
 
@@ -205,11 +208,20 @@ pub struct Api {
     pub realloc: unsafe extern "C" fn(*mut u8, u64, u64, u64) -> *mut u8,
     /// `(p, size, align)`.
     pub free: unsafe extern "C" fn(*mut u8, u64, u64),
+    /// `(ptr, len, out)`: a string of UTF-8 bytes (trusted: valid UTF-8).
+    pub str_from_utf8: unsafe extern "C" fn(*const u8, usize, *mut VeltStr),
+    /// `(s, out)`: another reference to a string.
+    pub str_retain: unsafe extern "C" fn(*const VeltStr, *mut VeltStr),
+    /// `(buf, min, avail) -> ptr`: room to write at the end of a builder.
+    pub strbuf_spare: unsafe extern "C" fn(*mut VeltStr, u64, *mut u64) -> *mut u8,
+    /// `(buf, n, ascii)`: the bytes written become text (counted unless `ascii` is 1).
+    pub strbuf_commit: unsafe extern "C" fn(*mut VeltStr, u64, u8),
 }
 
 static API: AtomicPtr<Api> = AtomicPtr::new(std::ptr::null_mut());
 
-/// The table (after `velt_native_init_<package>` ran).
+/// The table (after `velt_native_init_<package>` ran, or for a library linked into the runtime
+/// itself, after the runtime's start-up handed it over: [`__embed`]).
 pub fn api() -> &'static Api {
     let p = API.load(Ordering::Acquire);
     if p.is_null() {
@@ -254,6 +266,17 @@ pub unsafe fn __init(api: *const Api, package: &str) -> i32 {
     0
 }
 
+/// The runtime's own start-up, for the libraries linked into it (std's drivers): they share its
+/// table, and its std (so the panic hook stays the runtime's).
+///
+/// # Safety
+/// `api` must point to the runtime's table, of this SDK's layout, which lives for the whole
+/// program.
+#[doc(hidden)]
+pub unsafe fn __embed(api: *const Api) {
+    API.store(api as *mut Api, Ordering::Release);
+}
+
 /// Report a fatal error like a Velt panic (`panic: <msg>`, exit 101).
 pub fn fatal(msg: &str) -> ! {
     // SAFETY: valid bytes for the call.
@@ -282,14 +305,67 @@ pub mod code {
     pub const ADDR_IN_USE: i32 = 9;
     /// `EPIPE`
     pub const BROKEN_PIPE: i32 = 10;
-    /// `UNEXPECTED_EOF`
+    /// `EOF`
     pub const UNEXPECTED_EOF: i32 = 11;
     /// `ENOTSUP`
     pub const UNSUPPORTED: i32 = 12;
+    /// `ENOTDIR`
+    pub const NOT_A_DIRECTORY: i32 = 13;
+    /// `ENOTEMPTY`
+    pub const DIRECTORY_NOT_EMPTY: i32 = 14;
+    /// `EISDIR`
+    pub const IS_A_DIRECTORY: i32 = 15;
     /// `EBADF`: a closed handle.
     pub const BAD_HANDLE: i32 = 16;
     /// `UNKNOWN`
     pub const OTHER: i32 = 99;
+
+    /// The Node-style name of a code (`IoError.code` in Velt: `"ENOENT"`, `"ECONNREFUSED"`...).
+    pub fn name(c: i32) -> &'static str {
+        match c {
+            0 => "",
+            NOT_FOUND => "ENOENT",
+            PERMISSION_DENIED => "EACCES",
+            ALREADY_EXISTS => "EEXIST",
+            INVALID_INPUT => "EINVAL",
+            INVALID_DATA => "EILSEQ",
+            TIMED_OUT => "ETIMEDOUT",
+            CONNECTION_REFUSED => "ECONNREFUSED",
+            CONNECTION_RESET => "ECONNRESET",
+            ADDR_IN_USE => "EADDRINUSE",
+            BROKEN_PIPE => "EPIPE",
+            UNEXPECTED_EOF => "EOF",
+            UNSUPPORTED => "ENOTSUP",
+            NOT_A_DIRECTORY => "ENOTDIR",
+            DIRECTORY_NOT_EMPTY => "ENOTEMPTY",
+            IS_A_DIRECTORY => "EISDIR",
+            BAD_HANDLE => "EBADF",
+            _ => "UNKNOWN",
+        }
+    }
+
+    /// The code of an I/O error (as the runtime codes it).
+    pub fn of(e: &std::io::Error) -> i32 {
+        use std::io::ErrorKind as K;
+        match e.kind() {
+            K::NotFound => NOT_FOUND,
+            K::PermissionDenied => PERMISSION_DENIED,
+            K::AlreadyExists => ALREADY_EXISTS,
+            K::InvalidInput => INVALID_INPUT,
+            K::InvalidData => INVALID_DATA,
+            K::TimedOut => TIMED_OUT,
+            K::ConnectionRefused => CONNECTION_REFUSED,
+            K::ConnectionReset | K::ConnectionAborted => CONNECTION_RESET,
+            K::AddrInUse => ADDR_IN_USE,
+            K::BrokenPipe => BROKEN_PIPE,
+            K::UnexpectedEof => UNEXPECTED_EOF,
+            K::Unsupported => UNSUPPORTED,
+            K::NotADirectory => NOT_A_DIRECTORY,
+            K::IsADirectory => IS_A_DIRECTORY,
+            K::DirectoryNotEmpty => DIRECTORY_NOT_EMPTY,
+            _ => OTHER,
+        }
+    }
 }
 
 /// The error half of `IoResult<T>` / `IoStatus`.
@@ -314,22 +390,16 @@ impl Error {
     pub fn other(message: impl Into<String>) -> Error {
         Error::new(code::OTHER, message)
     }
+
+    /// The error of an operation on a closed handle (`EBADF`, "handle is closed").
+    pub fn closed() -> Error {
+        Error::new(code::BAD_HANDLE, "handle is closed")
+    }
 }
 
 impl From<std::io::Error> for Error {
     fn from(e: std::io::Error) -> Error {
-        use std::io::ErrorKind as K;
-        let c = match e.kind() {
-            K::NotFound => code::NOT_FOUND,
-            K::PermissionDenied => code::PERMISSION_DENIED,
-            K::AlreadyExists => code::ALREADY_EXISTS,
-            K::InvalidInput => code::INVALID_INPUT,
-            K::InvalidData => code::INVALID_DATA,
-            K::TimedOut => code::TIMED_OUT,
-            K::Unsupported => code::UNSUPPORTED,
-            _ => code::OTHER,
-        };
-        Error::new(c, e.to_string())
+        Error::new(code::of(&e), e.to_string())
     }
 }
 
@@ -345,8 +415,8 @@ pub(crate) fn take_str(mut s: VeltStr) -> String {
 
 pub(crate) fn new_str(s: &str) -> VeltStr {
     let mut out = VeltStr::empty();
-    // SAFETY: valid bytes and out-pointer.
-    unsafe { (api().str_new)(s.as_ptr(), s.len(), &mut out) };
+    // SAFETY: valid bytes (UTF-8: a `&str`) and out-pointer.
+    unsafe { (api().str_from_utf8)(s.as_ptr(), s.len(), &mut out) };
     out
 }
 
