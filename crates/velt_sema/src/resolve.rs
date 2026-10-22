@@ -616,7 +616,9 @@ impl Ctx<'_> {
         let global = match &buffer.kind {
             ast::TypeExprKind::Named { path, args } => match path.as_slice() {
                 [p] if args.is_empty()
-                    && self.lookup_item_at(env.module, &p.name, buffer.span).is_none() =>
+                    && self
+                        .lookup_item_at(env.module, &p.name, buffer.span)
+                        .is_none() =>
                 {
                     Some(p.name.as_str())
                 }
