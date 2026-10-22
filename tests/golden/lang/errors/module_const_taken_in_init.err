@@ -16,3 +16,14 @@ module_const_taken_in_init.vlt:51:10: error: cannot move out of module constant 
 module_const_taken_in_init.vlt:53:15: error: cannot move out of module constant `N`
 module_const_taken_in_init.vlt:55:17: error: cannot move out of module constant `K`
 module_const_taken_in_init.vlt:57:21: error: cannot move out of module constant `N`
+module_const_taken_in_init.vlt:83:12: error: cannot move out of module constant `N`
+module_const_taken_in_init.vlt:84:12: error: cannot move out of module constant `K`
+module_const_taken_in_init.vlt:85:12: error: cannot move out of module constant `K`
+module_const_taken_in_init.vlt:86:31: error: cannot move out of module constant `K`
+module_const_taken_in_init.vlt:87:30: error: cannot move out of module constant `N`
+module_const_taken_in_init.vlt:88:20: error: cannot move out of module constant `N`
+module_const_taken_in_init.vlt:89:20: error: cannot move out of module constant `K`
+module_const_taken_in_init.vlt:90:8: error: cannot move out of module constant `N`
+= note: `N` is evaluated at each use: `N.a` taken here would be a copy, where TypeScript shares one object
+module_const_taken_in_init.vlt:93:8: error: cannot move out of module constant `K`
+module_const_taken_in_init.vlt:95:43: error: cannot move out of module constant `K`

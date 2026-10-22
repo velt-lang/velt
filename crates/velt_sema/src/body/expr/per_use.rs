@@ -9,7 +9,7 @@ use velt_common::Span;
 use velt_syntax::ast;
 
 use crate::body::FnCx;
-use crate::hir::{DefId, TyId, TyKind};
+use crate::hir::{DefId, TyId};
 
 use super::assign_paths::strip_parens;
 
@@ -52,7 +52,21 @@ impl FnCx<'_, '_> {
             return;
         }
         if let Some((d, _, span)) = self.per_use_root(e, false, Parts::Take) {
-            self.moved_out_of_const(d, ty, span);
+            let part = crate::body::moved_const::ast_part(e);
+            self.moved_out_of_const(d, ty, span, part);
+        }
+    }
+
+    /// `wm.set(K!.a, 1)`, `new WeakRef(N.a)` (`h`: the key): a weak key is an object's
+    /// identity, which a module constant evaluated at each use (or a part of one) has anew at
+    /// each use, so the entry could never be found again: the error of `const v = K`.
+    pub(super) fn per_use_weak_key(&mut self, h: &crate::hir::Expr) {
+        use crate::body::moved_const as mc;
+        if self.copied_value(h.ty) {
+            return;
+        }
+        if let Some((d, part)) = mc::hir_root(self.cx, h) {
+            self.moved_out_of_const(d, h.ty, h.span, part);
         }
     }
 
@@ -73,7 +87,7 @@ impl FnCx<'_, '_> {
             };
             let ty = self.f.locals[l.0 as usize].ty;
             if !self.copied_value(ty) {
-                self.moved_out_of_const(d, ty, span);
+                self.moved_out_of_const(d, ty, span, None);
                 return;
             }
         }
@@ -99,7 +113,7 @@ impl FnCx<'_, '_> {
                 None => vec![ty],
             };
             if let Some(t) = fields.into_iter().find(|&t| !self.copied_value(t)) {
-                self.moved_out_of_const(d, t, span);
+                self.moved_out_of_const(d, t, span, None);
             }
         }
     }
@@ -108,13 +122,7 @@ impl FnCx<'_, '_> {
     /// TypeScript would share: copied (a number, a string, either or `null`), or a function,
     /// which has nothing to write?
     pub(crate) fn copied_value(&mut self, ty: TyId) -> bool {
-        let t = self.cx.ty.opt_payload(ty).unwrap_or(ty);
-        self.cx.is_copy(t)
-            || self.cx.is_string_value(ty)
-            || matches!(
-                self.cx.ty.kind(t),
-                TyKind::FnPtr { .. } | TyKind::Closure(_)
-            )
+        crate::body::moved_const::copied_value(self.cx, ty)
     }
 
     /// The module constant (and its name and span) evaluated at each use that a destructuring
@@ -181,14 +189,18 @@ impl FnCx<'_, '_> {
         matches!(self.cx.info[d.0 as usize], crate::defs::DefInfo::Global(_)).then_some(d)
     }
 
-    /// The `static readonly` field `Cls.prop` (`object`: `Cls`) of a class or of a base class.
+    /// The `static readonly` field `Cls.prop` (`object`: `Cls`, or `ns.Cls` through a
+    /// namespace import) of a class or of a base class.
     fn static_global(&mut self, object: &ast::Expr, prop: &ast::Ident) -> Option<DefId> {
-        let ast::ExprKind::Ident(id) = &object.kind else {
-            return None;
+        let id = match &strip_parens(object).kind {
+            ast::ExprKind::Ident(id) if !self.is_local_name(&id.name) => id.clone(),
+            ast::ExprKind::Member {
+                object: ns,
+                prop: cls,
+                optional: false,
+            } => self.namespace_member(ns, cls)?,
+            _ => return None,
         };
-        if self.is_local_name(&id.name) {
-            return None;
-        }
         let item = self.cx.lookup_item_at(self.module, &id.name, id.span);
         let Some(crate::ctx::Item::Def(mut cur)) = item else {
             return None;

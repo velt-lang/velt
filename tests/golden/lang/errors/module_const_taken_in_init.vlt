@@ -66,3 +66,30 @@ function g(): number {
 }
 
 console.log(K!.v, K!.a.b, N.a.b, g());
+
+// Taken over by a call that keeps its argument: a `Map` or `Set`, a constructor or a method
+// storing it in a field, a weak key.
+class Box {
+  a: { b: number };
+  constructor(a: { b: number }) {
+    this.a = a;
+  }
+  put(a: { b: number }): void {
+    this.a = a;
+  }
+}
+
+const m = new Map<string, { b: number }>();
+m.set("x", N.a);
+m.set("y", K!.a);
+m.set("z", (K ?? D).a);
+new Map<string, J>().set("x", K!);
+new Set<{ b: number }>().add(N.a);
+const b1 = new Box(N.a);
+const b2 = new Box(K!.a);
+b2.put(N.a);
+// A weak key (set, or looked up): a new object at each use would never be found again.
+const wm = new WeakMap<{ b: number }, number>();
+wm.set(K!.a, 1);
+m.get("x")!.b = 3;
+console.log(N.a.b, K!.a.b, b1.a.b, wm.has(K!.a));

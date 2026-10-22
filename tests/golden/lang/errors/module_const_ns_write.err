@@ -6,3 +6,8 @@ module_const_ns_write.vlt:11:2: error: cannot assign to a field of module-level 
 module_const_ns_write.vlt:12:11: error: cannot move out of module constant `K`
 module_const_ns_write.vlt:14:11: error: cannot move out of module constant `N`
 module_const_ns_write.vlt:16:15: error: cannot move out of module constant `K`
+module_const_ns_write.vlt:19:2: error: cannot assign to a field of module-level constant `C.K`
+module_const_ns_write.vlt:20:1: error: cannot assign to a field of module-level constant `C.K`
+module_const_ns_write.vlt:21:2: error: cannot assign to a field of module-level constant `C.N`
+module_const_ns_write.vlt:22:2: error: cannot move out of module constant `C.N`
+module_const_ns_write.vlt:23:11: error: cannot move out of module constant `C.N`

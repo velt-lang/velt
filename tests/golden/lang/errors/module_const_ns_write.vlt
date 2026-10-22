@@ -15,4 +15,11 @@ const u = ns.N.a;
 u.b = 3;
 const { a } = ns.K ?? D;
 a.b = 3;
-console.log(ns.K!.v, ns.N.v, ns.K!.a.b, ns.N.a.b);
+// A `static readonly` field of a class reached through the namespace.
+(ns.C.K as any).v = 3;
+ns.C.K!.v = 3;
+(ns.C.N as any).v = 3;
+(ns.C.N as any).a.b = 3;
+const w = ns.C.N.a;
+w.b = 3;
+console.log(ns.K!.v, ns.N.v, ns.K!.a.b, ns.N.a.b, ns.C.K!.v, ns.C.N.a.b);

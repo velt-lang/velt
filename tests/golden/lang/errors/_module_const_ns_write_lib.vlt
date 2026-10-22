@@ -5,3 +5,8 @@ export interface J {
 
 export const K: J | null = { v: 1, a: { b: 1 } };
 export const N: J = { v: 1, a: { b: 1 } };
+
+export class C {
+  static readonly K: J | null = { v: 1, a: { b: 1 } };
+  static readonly N: J = { v: 1, a: { b: 1 } };
+}

@@ -387,39 +387,37 @@ impl FnCx<'_, '_> {
             return self.intrinsic(hir::Intrinsic::Share, vec![read], ty, span);
         }
         if want == Want::Move {
-            self.moved_out_of_const(d, ty, span);
+            let name = self.cx.global(d).map(|g| g.name.clone());
+            self.moved_out_of_const(d, ty, span, name);
         }
         self.mk(H::Global(d), ty, span)
     }
 
     /// Module constant `d`, evaluated at each use, taken over by value (`const v = K`, and
-    /// through `!` or `??`: `const v = K!`, `let v = K ?? d`): an error unless its value is
-    /// copied, as a string or a number is (`ty`: the type of the value taken). TypeScript
-    /// would alias it, so a change through the copy would show in the constant.
-    pub(crate) fn moved_out_of_const(&mut self, d: DefId, ty: TyId, span: Span) {
+    /// through `!` or `??`: `const v = K!`, `let v = K ?? d`, or a part: `const a = N.a`): an
+    /// error unless its value is copied, as a string or a number is (`ty`: the type of the value
+    /// taken; `part`: its source form, for the note). TypeScript would alias it, so a change
+    /// through the copy would show in the constant.
+    pub(crate) fn moved_out_of_const(
+        &mut self,
+        d: DefId,
+        ty: TyId,
+        span: Span,
+        part: Option<String>,
+    ) {
+        use crate::body::moved_const as mc;
         let Some(g) = self.cx.global(d) else { return };
         let name = g.name.clone();
         if g.stored || crate::body::pure_init::shares_on_move(self.cx, d) {
             return;
         }
-        // Reached twice (`K!` by value: the operand and the whole, `per_use_taken`): one error.
-        let msg = format!("cannot move out of module constant `{name}`");
-        let reported =
-            self.cx.diags.iter().rev().take(4).any(|e| {
-                e.message == msg && e.labels.first().is_some_and(|l| l.span.lo == span.lo)
-            });
-        if reported {
-            return;
-        }
         if crate::body::pure_init::is_table(self.cx, d) {
             let msg = format!("cannot move out of module constant `{name}`");
-            self.cx
-                .error(crate::body::pure_init::table_escapes(&name, msg, span));
+            let err = crate::body::pure_init::table_escapes(&name, msg, span);
+            mc::report(self.cx, d, span, err);
         } else if !self.copied_value(ty) {
-            self.cx.error(
-                Diagnostic::error(format!("cannot move out of module constant `{name}`"), span)
-                    .with_note(format!("use `{name}.clone()` for an owned copy")),
-            );
+            let err = mc::error(&name, part.as_deref(), span);
+            mc::report(self.cx, d, span, err);
         }
     }
 

@@ -333,7 +333,8 @@ impl FnCx<'_, '_> {
             // `const v = K!` takes over what `K` names, as `const v = K` does (a table is
             // reported by `force_move`).
             if !crate::body::pure_init::is_table(self.cx, *d) {
-                self.moved_out_of_const(*d, payload.unwrap_or(h.ty), span);
+                let name = self.cx.global(*d).map(|g| g.name.clone());
+                self.moved_out_of_const(*d, payload.unwrap_or(h.ty), span, name);
             }
         }
         if payload.is_none() {

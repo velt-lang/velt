@@ -364,21 +364,21 @@ pub(crate) fn force_move(cx: &mut Ctx, e: &mut Expr, errors: &mut Vec<Diagnostic
                 };
                 return true;
             }
+            if crate::body::moved_const::reported(cx, *d, e.span) {
+                return false;
+            }
             if crate::body::pure_init::is_table(cx, *d) {
                 let msg = format!("cannot move out of module constant `{name}`");
                 errors.push(crate::body::pure_init::table_escapes(&name, msg, e.span));
             } else if !cx.is_copy(ty) && ty != cx.ty.str_ {
-                errors.push(
-                    Diagnostic::error(
-                        format!("cannot move out of module constant `{name}`"),
-                        e.span,
-                    )
-                    .with_note(format!("use `{name}.clone()` for an owned copy")),
-                );
+                errors.push(crate::body::moved_const::error(&name, Some(&name), e.span));
             }
             false
         }
         _ => {
+            // A part of a module constant evaluated at each use, kept by the callee
+            // (`m.set("x", N.a)`, `new Box(K!.a)`): a copy where TypeScript shares it.
+            per_use_part(cx, e, errors);
             if !is_place(e) {
                 return false;
             }
@@ -394,6 +394,25 @@ pub(crate) fn force_move(cx: &mut Ctx, e: &mut Expr, errors: &mut Vec<Diagnostic
             true
         }
     }
+}
+
+/// `e`, taken over by value, is a part of a module constant evaluated at each use, whose value
+/// is not copied: the error of `const a = N.a`.
+fn per_use_part(cx: &mut Ctx, e: &Expr, errors: &mut Vec<Diagnostic>) {
+    use crate::body::moved_const as mc;
+    if mc::copied_value(cx, e.ty) {
+        return;
+    }
+    let Some((d, part)) = mc::hir_root(cx, e) else {
+        return;
+    };
+    if mc::reported(cx, d, e.span) {
+        return;
+    }
+    let Some(name) = cx.global(d).map(|g| g.name.clone()) else {
+        return;
+    };
+    errors.push(mc::error(&name, part.as_deref(), e.span));
 }
 
 fn current_mode(e: &Expr) -> Option<UseMode> {

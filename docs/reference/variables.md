@@ -178,10 +178,16 @@ function main() {
   `(c ? K! : d).v = 2`), where Node changes the one object, and so is taking it over by value
   that way (``cannot move out of module constant `K` ``: `const v = K!`, `let v = K ?? d`,
   `const v = (K ?? d)!`), as for `const v = K`. So is taking over an object it holds, which
-  Node would share too: `const a = K!.a`, `let a = N.a`, `const { a } = K ?? d`, `{ ...K! }`
-  (numbers and strings are copied, so `const n = K!.v` is fine). The same holds through a
-  namespace import (`(ns.K as any).v = 2`). A `let` is module state, so its fields can be written, and `g!`, `g as T`
-  and `g ?? d` on a module `let` `g` are the object the module keeps.
+  Node would share too: `const a = K!.a`, `let a = N.a`, `const { a } = K ?? d`, `{ ...K! }`,
+  and an argument the callee keeps (`m.set("x", N.a)`, `set.add(K!.a)`, `new Box(N.a)`, a
+  method storing it in a field, a weak key: `wm.set(K!.a, 1)`); numbers and strings are
+  copied, so `const n = K!.v` is fine.
+  The same holds through a namespace import (`(ns.K as any).v = 2`, `(ns.C.K as any).v = 2`
+  for a `static readonly` field). A binding that only reads such a part
+  (`const a = N.a; return a.b`) is reported too for now: read through the constant where the
+  value is used (`N.a.b`), or declare it with `let`. A `let` is module state, so its fields can
+  be written, its parts shared, and `g!`, `g as T` and `g ?? d` on a module `let` `g` are the
+  object the module keeps.
 - An initializer that throws (`JSON.parse` of invalid text, `new RegExp` of an invalid
   pattern, a function that throws) stops the program with `Uncaught …` and exit code 1, as an
   error thrown while Node evaluates a module does: the rest of that module and the modules that
@@ -311,8 +317,9 @@ gives; any other initializer (a call with effects, a class instance, a `Map`) ma
   and maps (a new array at each use would change what `X.push(1)` does; an array of number
   literals is a [table](#tables), which needs no call).
   An object or struct constant can't be moved into a variable or a field (``cannot move out of
-  module constant `UNIT` ``; `UNIT.clone()` makes an owned copy): TypeScript would alias it,
-  so a change through the copy would show in the constant.
+  module constant `UNIT` ``): TypeScript would alias it, so a change through the copy would
+  show in the constant. Read through `UNIT` where the value is used, or declare it with `let`
+  to keep one shared object.
 
 ```ts
 type Props = { start: number };

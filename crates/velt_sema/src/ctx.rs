@@ -262,6 +262,9 @@ pub(crate) struct Ctx<'m> {
     pub ns_private: Vec<crate::namespaces::Private>,
     /// Some closure or `const me = this` was made to borrow.
     pub held_borrows_used: bool,
+    /// Module constants taken over, reported: (constant, start of the value taken) → index in
+    /// `diags` (`body::moved_const`).
+    pub moved_consts: FxHashMap<(crate::hir::DefId, velt_common::Span), usize>,
     /// The passes from `demote_local_closures` on reported an error (`crate::retry_sharing`).
     pub borrow_pass_errors: bool,
     /// Widened call results whose callees must return fresh values (`crate::fresh_returns`).
@@ -413,6 +416,7 @@ impl<'m> Ctx<'m> {
             held_borrows: true,
             ns_private: vec![],
             held_borrows_used: false,
+            moved_consts: Default::default(),
             borrow_pass_errors: false,
             fresh_checks: vec![],
             object_copies: Default::default(),
