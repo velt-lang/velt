@@ -9,8 +9,7 @@ use velt_common::Span;
 use velt_syntax::ast;
 
 use crate::body::FnCx;
-use crate::hir::DefId;
-use crate::hir::TyId;
+use crate::hir::{DefId, TyId, TyKind};
 
 use super::assign_paths::strip_parens;
 
@@ -105,11 +104,17 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// Is a value of type `ty` copied when taken (a number, a string, either or `null`), so
-    /// that taking it from a module constant changes nothing TypeScript would share?
+    /// Is a value of type `ty` one that taking from a module constant changes nothing
+    /// TypeScript would share: copied (a number, a string, either or `null`), or a function,
+    /// which has nothing to write?
     pub(crate) fn copied_value(&mut self, ty: TyId) -> bool {
         let t = self.cx.ty.opt_payload(ty).unwrap_or(ty);
-        self.cx.is_copy(t) || self.cx.is_string_value(ty)
+        self.cx.is_copy(t)
+            || self.cx.is_string_value(ty)
+            || matches!(
+                self.cx.ty.kind(t),
+                TyKind::FnPtr { .. } | TyKind::Closure(_)
+            )
     }
 
     /// The module constant (and its name and span) evaluated at each use that a destructuring

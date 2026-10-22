@@ -12,6 +12,7 @@ interface J {
 export const K: J | null = { v: 1, a: { b: 2 }, s: "k" };
 export const N: J = { v: 3, a: { b: 4 }, s: "n" };
 export const PT = { x: 1, y: 2 };
+export const OPS = { twice: (x: number): number => x * 2 };
 let D: J = { v: 0, a: { b: 0 }, s: "d" };
 
 function show(x: { b: number }): number {
@@ -30,6 +31,10 @@ const moved = { ...PT, z: 3 };
 moved.x = 9;
 console.log(n, s, s2, s3, b3, v, kv, ks, nv, moved, PT);
 console.log(K!.a, N.a, JSON.stringify(K!.a), `${N.a.b}`, show(K!.a), show(N.a));
+
+const twice = OPS.twice;
+const { twice: t2 } = OPS;
+console.log(twice(4), t2(5));
 
 function f(): number {
   const K = { v: 5, a: { b: 5 }, s: "local" };
