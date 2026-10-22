@@ -1,0 +1,12 @@
+// An `any` holding a number, converted to a generic interface: the `TypeError` names the
+// interface with its type arguments, as TypeScript writes it.
+interface Ctx<P = {}> {
+  el: P;
+  name(): string;
+}
+
+function main(): void {
+  const u: any = 5;
+  const c = u as Ctx<any>;
+  console.log(c.el);
+}

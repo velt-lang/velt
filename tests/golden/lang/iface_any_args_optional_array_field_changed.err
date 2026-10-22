@@ -1,0 +1,3 @@
+iface_any_args_optional_array_field_changed.vlt:22:1: error: `kids` read through `Tree<any>`
+iface_any_args_optional_array_field_changed.vlt:23:1: error: `kids` read through `Tree<any>`
+iface_any_args_optional_array_field_changed.vlt:24:11: error: `kids` read through `Tree<any>`

@@ -100,7 +100,7 @@ impl FnCx<'_, '_> {
             },
             false => recv,
         };
-        self.readonly_method_call(&recv, &prop.name, prop.span);
+        self.readonly_method_call(&recv, &prop.name, args, prop.span);
         let Some(r) = self.resolve_method(recv.ty, &prop.name) else {
             // `e.toString()` on an error union: `Error`'s method, dispatched to each class's.
             if self.is_error_union(recv.ty) {

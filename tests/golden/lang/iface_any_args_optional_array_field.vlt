@@ -1,0 +1,25 @@
+// An optional array field of interface values (`kids?: Tree<T>[]`) read through the interface
+// at `any` and used in place, behind `!` or `?.` (#1185).
+interface Tree<T> {
+  value: T;
+  kids?: Tree<T>[];
+  label(): string;
+}
+
+class Node1<T> implements Tree<T> {
+  value: T;
+  kids?: Tree<T>[] = [];
+  constructor(v: T) {
+    this.value = v;
+  }
+  label(): string {
+    return "n";
+  }
+}
+
+const t = new Node1<number>(1);
+t.kids!.push(new Node1<number>(2));
+const a = (t as unknown) as Tree<any>;
+console.log(a.kids!.length, a.kids![0].value, a.kids?.length);
+t.kids = undefined;
+console.log(a.kids?.length, a.kids === undefined);
