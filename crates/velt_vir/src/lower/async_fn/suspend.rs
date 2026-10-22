@@ -103,12 +103,32 @@ impl FnLower<'_, '_> {
         self.cancel_cases(k, d);
     }
 
+    /// A call to the prelude's `__topLevelAwaitAt(site)`: the mark velt_sema puts before each
+    /// top-level `await` (lowered to nothing but [`FnLower::tla_site`]).
+    pub(in crate::lower) fn is_tla_marker(&self, d: DefId) -> bool {
+        let hir::Def::Fn(f) = self.cx.hir.def(d) else {
+            return false;
+        };
+        f.name == "__topLevelAwaitAt" && self.cx.locs.as_ref().is_none_or(|m| m.is_std(f.span))
+    }
+
+    /// The top level suspends at the `await` marked last: `velt_rt_tla_at(site)`, on the
+    /// suspending path only, so an `await` that goes straight on costs nothing.
+    fn tla_suspends(&mut self) {
+        if let Some(span) = self.tla_site {
+            let site = self.source_location(span);
+            let a = self.operand_addr(site, Ty::Agg(crate::vir::STR_AGG));
+            self.call_rt(Rt::TlaAt, vec![a], None);
+        }
+    }
+
     /// After polling the child (`r`: u32): suspend if pending, else continue when ready.
     pub(super) fn after_poll(&mut self, k: i128, r: Operand, drop_child: impl FnOnce(&mut Self)) {
         let (pend, ready) = (self.new_block(), self.new_block());
         let pending = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, r, cint(0, Ty::U32)));
         self.branch(pending, pend, ready);
         self.switch_to(pend);
+        self.tla_suspends();
         self.set_tag(k);
         self.terminate(Terminator::Return(cint(0, Ty::U32)));
         self.cancel_block(k, drop_child);
@@ -291,6 +311,7 @@ impl FnLower<'_, '_> {
         let cx = self.poll_cx();
         self.call_rt(Rt::YieldNow, vec![cx], None);
         let (k, resume) = self.suspension();
+        self.tla_suspends();
         self.set_tag(k);
         self.terminate(Terminator::Return(cint(0, Ty::U32)));
         self.cancel_block(k, |_| {});

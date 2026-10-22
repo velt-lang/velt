@@ -150,6 +150,13 @@ impl FnLower<'_, '_> {
                 callee: hir::Callee::Intrinsic(hir::Intrinsic::SourceLocation),
                 ..
             } => self.source_location(e.span),
+            K::Call {
+                callee: hir::Callee::Def(d, _),
+                args,
+            } if self.is_tla_marker(*d) => {
+                self.tla_site = args.first().map(|a| a.span);
+                unit()
+            }
             K::Call { callee, args } => {
                 // `super.m(args)` (`Program::super_calls`), taken by `call_def`.
                 let sup = self.cx.hir.super_calls.contains(&e.span);

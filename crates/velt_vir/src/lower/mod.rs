@@ -543,6 +543,10 @@ struct FnLower<'c, 'h> {
     /// The call being lowered is `super.m(args)` (`Program::super_calls`): its receiver is not
     /// read through a proxy (`call_def` takes it).
     super_call: bool,
+    /// The location of the top-level `await` lowered last (velt_sema's `top_level_await.rs`
+    /// marks each with `__topLevelAwaitAt(site)`): a suspension from here on tells the runtime it
+    /// waits there (`velt_rt_tla_at`, async_fn/suspend.rs), only when it really suspends.
+    tla_site: Option<velt_common::Span>,
     /// Building `Glue::Same`: objects inside the compared values compare by identity (same.rs).
     same_mode: bool,
     /// Comparing with `Object.is` (`Intrinsic::SameValue`, `Glue::SameValue`): floats compare

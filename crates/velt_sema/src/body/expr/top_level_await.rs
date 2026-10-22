@@ -2,10 +2,12 @@
 //! modules.md), not inside a function they define: it tells the runtime where it waits, so that
 //! a program ending there writes Node's `Warning: Detected unsettled top-level await at
 //! <file>:<line>` and exits with code 13 (velt_rt `top_level_await.rs`, docs/reference/async.md):
-//! `{ __topLevelAwaitAt(site); await <operand> }`, one store of a literal. An `await` in the
-//! operand of another one stores the outer location again once it has its value, since the outer
-//! one waits next: `{ __topLevelAwaitAt(inner); let v = await …; __topLevelAwaitAt(outer); v }`.
-//! The operand stays the `await`'s own (a direct async call or generator step is embedded).
+//! `{ __topLevelAwaitAt(site); await <operand> }`. The mark is no call: velt_vir lowers it to a
+//! `velt_rt_tla_at(site)` on the paths where the `await`s after it suspend, so an `await` that
+//! goes straight on costs nothing. An `await` in the operand of another one marks the outer
+//! location again once it has its value, since the outer one waits next:
+//! `{ __topLevelAwaitAt(inner); let v = await …; __topLevelAwaitAt(outer); v }`. The operand
+//! stays the `await`'s own (a direct async call or generator step is embedded).
 
 use velt_common::Span;
 
@@ -26,8 +28,8 @@ impl FnCx<'_, '_> {
         r
     }
 
-    /// `await operand` at `span`, settling with `ty`; at the top level it stores its location
-    /// first (module docs).
+    /// `await operand` at `span`, settling with `ty`; at the top level it is marked with its
+    /// location first (module docs).
     pub(crate) fn awaiting(&mut self, operand: hir::Expr, ty: TyId, span: Span) -> hir::Expr {
         let at = match self.f.top_level {
             true => self.cx.prelude.get("__topLevelAwaitAt").cloned(),
