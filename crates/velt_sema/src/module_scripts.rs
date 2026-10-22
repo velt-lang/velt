@@ -8,7 +8,8 @@
 //! the modules the module imports and before the modules that import it. A module that is only
 //! imported for its types (`import type`) is never evaluated: its statements don't run
 //! (`module_state::order`). The statements may not start asynchronous work yet: they run
-//! before the scheduler starts (#846).
+//! before the scheduler starts (#846). In the root file, a promise statement is started and
+//! waited for as in Node ([`is_root_script`]).
 
 use velt_common::Diagnostic;
 use velt_syntax::ast;
@@ -35,6 +36,17 @@ fn script_fns(m: &SourceModule) -> Vec<&ast::FnDecl> {
             _ => None,
         })
         .collect()
+}
+
+/// Does module `m` hold the root file's top-level statements, in its generated `main`? There a
+/// promise statement (`renderAll();`) runs as in Node: started at once and waited for before the
+/// program exits, as a dropped promise is (`body::expr::tasks::check_floating`).
+pub(crate) fn is_root_script(cx: &Ctx, m: usize) -> bool {
+    m == cx.root
+        && cx
+            .modules
+            .get(m)
+            .is_some_and(|module| script_fns(module).iter().any(|f| f.sig.name.name == "main"))
 }
 
 /// Give each imported module's top-level statements a module state slot (module docs); after

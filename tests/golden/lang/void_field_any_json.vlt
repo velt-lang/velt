@@ -1,0 +1,14 @@
+// A field that is `void` after substitution keeps no value (#1411): `JSON.stringify` of the
+// object through an `any` (or `unknown`, `void_field_unknown_json`) stops with a TypeError,
+// where Node writes what was stored in the field (`{"name":"b","ref":"x"}`; nothing for an
+// `undefined`). Writing it as its own type is a compile error. (Expected output: up to the
+// TypeError.)
+type Factory<R> = { name: string } & { ref: R };
+
+function component<R = void>(name: string, r: any): Factory<R> {
+  return { name, ref: r };
+}
+
+const b: any = component("b", "x");
+console.log(b.name);
+console.log(JSON.stringify(b));

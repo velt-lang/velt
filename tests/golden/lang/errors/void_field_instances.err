@@ -1,5 +1,0 @@
-void_field_instances.vlt:4:40: error: `{ name: string; ref: void }` would have a field `ref` of type `void`
-  = note: fields must be values; use a type without that field for the `void` case
-
-void_field_instances.vlt:10:34: error: `{ v: f64; ref: void }` would have a field `ref` of type `void`
-  = note: fields must be values; use a type without that field for the `void` case

@@ -266,6 +266,16 @@ impl FnCx<'_, '_> {
         self.mk(kind, ck.ret, span)
     }
 
+    /// In the root file's top-level statements, outside any function (`renderAll();` there is
+    /// Node's way to start the program's async work: it runs to the end before the program
+    /// exits, as a dropped promise does; `module_scripts::is_root_script`)?
+    fn at_root_top_level(&self) -> bool {
+        self.outer.is_empty()
+            && self.fn_name == "main"
+            && self.body_def.is_some()
+            && crate::module_scripts::is_root_script(self.cx, self.module)
+    }
+
     /// `f();` where `f()` is a promise: an error (a dropped promise's result and errors would be
     /// lost), with the fixes `await f()` and `spawn(f())`. `spawn(...)` itself may be dropped: the
     /// task keeps running.
@@ -282,7 +292,7 @@ impl FnCx<'_, '_> {
                 ..
             }
         );
-        if !promise || spawned || self.is_promise_callback_call(e, h) {
+        if !promise || spawned || self.is_promise_callback_call(e, h) || self.at_root_top_level() {
             return;
         }
         let mut d = Diagnostic::error(

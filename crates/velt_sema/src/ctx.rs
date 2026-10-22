@@ -68,6 +68,9 @@ pub(crate) struct Ctx<'m> {
     pub brands: FxHashMap<DefId, TyId>,
     /// (primitive, object part) → the brand's definition.
     pub brand_keys: FxHashMap<(TyId, TyId), DefId>,
+    /// Brands of a `Record<string, any>` (or `unknown`) by the named members written next to
+    /// its index signature → that object type of the named members (`crate::index_signatures`).
+    pub record_views: FxHashMap<DefId, TyId>,
     /// Field-only interface → its object type's def (`collect::field_only`).
     pub field_only: FxHashMap<DefId, DefId>,
     /// The reverse of `field_only`.
@@ -338,6 +341,7 @@ impl<'m> Ctx<'m> {
             objects: Default::default(),
             brands: FxHashMap::default(),
             brand_keys: FxHashMap::default(),
+            record_views: FxHashMap::default(),
             field_only: FxHashMap::default(),
             field_only_of: FxHashMap::default(),
             shapes_done: false,

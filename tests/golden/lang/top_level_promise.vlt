@@ -1,0 +1,23 @@
+// A promise statement among the top-level statements of the file a program starts from
+// (`renderAll();`, as sigx's server harness ends): as in Node, it runs up to its first `await`
+// at once, the statements after it run, and the program waits for it before exiting.
+async function work(name: string): Promise<number> {
+  console.log("start", name);
+  await Promise.resolve();
+  console.log("end", name);
+  return 1;
+}
+
+async function renderAll(): Promise<void> {
+  for (const scenario of ["small-page", "deep-tree"]) {
+    const n = await work(scenario);
+    console.log(scenario, n);
+  }
+}
+
+work("a");
+if (process.argv.length > 0) {
+  work("b");
+}
+renderAll();
+console.log("after");

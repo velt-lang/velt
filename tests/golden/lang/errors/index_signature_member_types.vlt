@@ -1,0 +1,13 @@
+// A required named member next to `[key: string]: any` takes values of its declared type, in a
+// literal and in a write (TypeScript's TS2322).
+interface P {
+  items: number[];
+  [key: string]: any;
+}
+
+function main() {
+  const bad: P = { items: "x" };
+  const ok: P = { items: [1] };
+  ok.items = "y";
+  ok["items"] = true;
+}

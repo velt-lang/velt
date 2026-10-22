@@ -33,6 +33,8 @@ impl FnCx<'_, '_> {
     /// `(K, V)` if `t` is the prelude's `Record<K, V>` and the record syntax applies here (not
     /// inside the class's own methods).
     pub(crate) fn record_args(&self, t: TyId) -> Option<(TyId, TyId)> {
+        // A record with named members next to its index signature is that record.
+        let t = self.cx.record_view(t).map_or(t, |(base, _)| base);
         let TyKind::Adt(d, args) = self.cx.ty.kind(t) else {
             return None;
         };
@@ -145,7 +147,8 @@ impl FnCx<'_, '_> {
         let (k, v) = self
             .record_args(obj.ty)
             .expect("ICE: record write on a non-record");
-        if let (Some(bop), None) = (op, self.record_keys(k)) {
+        let named = self.record_view_key(obj.ty, &key);
+        if let (Some(bop), None, false) = (op, self.record_keys(k), named) {
             let sym = format!("{}=", super::ops::op_str(bop));
             self.open_record_compound(obj.ty, v, target, &sym, bop, Some(value));
             self.check_args_loose(std::slice::from_ref(value));
@@ -160,6 +163,12 @@ impl FnCx<'_, '_> {
         if !self.require_mutable(&obj, "assign to a key of") {
             self.check_args_loose(std::slice::from_ref(value));
             return self.error_expr(span);
+        }
+        if let (None, Some(m)) = (op, self.record_view_key_ty(obj.ty, &key)) {
+            // A required named member takes a value of its declared type (`r.items = []`).
+            let h = self.expr(value, Some(m), Want::Move);
+            let h = self.coerce(h, m);
+            return self.record_set_checked(obj, key, h, span);
         }
         let value = match op {
             None => value.clone(),
@@ -198,8 +207,10 @@ impl FnCx<'_, '_> {
         } else {
             ast::BinaryOp::Sub
         };
+        let (_, key) = record_parts(target);
+        let named = self.record_view_key(obj.ty, &key);
         if let Some((k, v)) = self.record_args(obj.ty) {
-            if self.record_keys(k).is_none() {
+            if self.record_keys(k).is_none() && !named {
                 self.open_record_compound(obj.ty, v, target, opname, bop, None);
                 return self.error_expr(span);
             }

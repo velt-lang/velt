@@ -1,6 +1,5 @@
-// A field of an object type instantiated as `void` (sigx's `__ref: TRef` at `TRef = void`) is
-// reported at the field, also when an intersection merged the object type (#1262). TypeScript
-// accepts such a field; Velt fields must be values.
+// A field of an object type instantiated as `void` (sigx's `__ref: TRef` at `TRef = void`), also
+// when an intersection merged the object type (#1262): accepted, as TypeScript does (#1411).
 type Factory<R> = { name: string } & { ref: R };
 
 function component<R = void>(name: string): Factory<R> {
@@ -8,7 +7,7 @@ function component<R = void>(name: string): Factory<R> {
 }
 
 function make<R>(): { v: number; ref: R } {
-  throw new Error("unused");
+  return { v: 1, ref: undefined as any };
 }
 
 const card = component("card");

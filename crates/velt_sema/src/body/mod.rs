@@ -69,6 +69,7 @@ mod param_patterns;
 mod pattern;
 mod pattern_defaults;
 pub(crate) mod places;
+mod predicate_unrelated;
 mod predicates;
 mod property_pattern;
 pub(crate) mod pure_init;
