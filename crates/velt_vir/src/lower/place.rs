@@ -478,7 +478,7 @@ impl FnLower<'_, '_> {
         };
         // Into the caller's container in a `read` callback: counted as the caller counts.
         let v = match self.captured_root(place) {
-            true => self.into_caller(value),
+            true => self.keep_for_caller(value),
             false => self.consume(value),
         };
         if self.dead() {
@@ -524,7 +524,7 @@ impl FnLower<'_, '_> {
     ) {
         let flag = self.presence_place(place, &p);
         // In read mode, the caller's container (rooted in what the `read` callback captured,
-        // frozen.rs `captured_root`) holds no store object (`into_caller` counted or copied
+        // frozen.rs `captured_root`) holds no store object (`keep_for_caller` counted or copied
         // what is stored), and the old value, which the caller made, is released by the counts
         // outside read mode and freed after the reads (`LkMode::Deferred`: the reader may
         // still point at it uncounted).

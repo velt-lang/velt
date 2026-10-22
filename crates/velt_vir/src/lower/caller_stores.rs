@@ -22,7 +22,7 @@ use crate::vir::{BinOp, Operand, Place, Proj, Rvalue, Ty};
 impl FnLower<'_, '_> {
     /// The owned value of `value`, about to be stored into one of the caller's containers in a
     /// `read` callback (module docs).
-    pub(super) fn into_caller(&mut self, value: &hir::Expr) -> Operand {
+    pub(super) fn keep_for_caller(&mut self, value: &hir::Expr) -> Operand {
         if self.mode == LkMode::Plain {
             return self.consume(value);
         }
@@ -32,7 +32,7 @@ impl FnLower<'_, '_> {
             return self.reader_copy(v, ty);
         }
         match self.lock_ref(ty) {
-            Some(_) => self.from_reader(&v),
+            Some(_) => self.count_for_caller(&v),
             None if self.cx.reaches_lock_set(ty) => return self.reader_copy(v, ty),
             None => {}
         }
@@ -42,7 +42,7 @@ impl FnLower<'_, '_> {
     /// The owned value `v` (a lock-set object or none) the reader holds by read mode's rules,
     /// counted by the counts outside read mode: one the reader did not make, which it holds
     /// uncounted, gets a reference.
-    fn from_reader(&mut self, v: &Operand) {
+    fn count_for_caller(&mut self, v: &Operand) {
         if self.dead() {
             return;
         }
@@ -64,13 +64,13 @@ impl FnLower<'_, '_> {
         self.switch_to(done);
     }
 
-    /// An owned argument of a direct call (`into_caller` when the callee keeps it in the
+    /// An owned argument of a direct call (`keep_for_caller` when the callee keeps it in the
     /// caller's containers, `args_to_caller`).
     pub(super) fn owned_arg(&mut self, a: &hir::Expr) -> Operand {
         // Not for the arguments' own calls.
         match std::mem::take(&mut self.args_to_caller) {
             true => {
-                let v = self.into_caller(a);
+                let v = self.keep_for_caller(a);
                 self.args_to_caller = true;
                 v
             }

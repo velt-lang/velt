@@ -155,10 +155,14 @@ pub(crate) enum Point {
     Scanned,
 }
 
+/// A test hook, called at each `Point`.
+#[cfg(test)]
+pub(crate) type Hook = Box<dyn Fn(Point)>;
+
 #[cfg(test)]
 thread_local! {
-    /// This thread's test hook, called at each `Point`.
-    pub(crate) static PAUSE: std::cell::RefCell<Option<Box<dyn Fn(Point)>>> =
+    /// This thread's test hook.
+    pub(crate) static PAUSE: std::cell::RefCell<Option<Hook>> =
         const { std::cell::RefCell::new(None) };
 }
 

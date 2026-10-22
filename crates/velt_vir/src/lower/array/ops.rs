@@ -68,7 +68,7 @@ impl FnLower<'_, '_> {
     ) -> Operand {
         let outer = self.mode;
         if let (hir::Intrinsic::ArrayPush, [x]) = (i, rest) {
-            let v = self.into_caller(x);
+            let v = self.keep_for_caller(x);
             self.mode = LkMode::Deferred;
             let elem = self.elem_ty(aty);
             self.push_value(arr, elem, v);

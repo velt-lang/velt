@@ -77,7 +77,7 @@ impl FnLower<'_, '_> {
         // A method of what a `read` callback captured (the caller's `push`, `set`, `add`), or a
         // function changing it, runs by the counts outside read mode, freeing after the reads
         // (`LkMode::Deferred`): what it is given to keep is counted the same way, or a copy of
-        // what may be the store's (caller_stores.rs `into_caller`), and its result is handed
+        // what may be the store's (caller_stores.rs `keep_for_caller`), and its result is handed
         // to the reader (`hand_to_reader`). A result read mode could not take over (an object
         // outside the lock set holding lock-set objects, as an iterator) leaves the call in
         // read mode.

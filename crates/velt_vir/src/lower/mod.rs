@@ -564,7 +564,7 @@ struct FnLower<'c, 'h> {
     /// code runs in.
     lock_callback: Option<(DefId, LkMode)>,
     /// The owned arguments being lowered go into the caller's containers in a `read` callback
-    /// (call.rs `call_def`, caller_stores.rs `into_caller`).
+    /// (call.rs `call_def`, caller_stores.rs `keep_for_caller`).
     args_to_caller: bool,
     /// With debug info: where the block declaring a local ends (debug_vars.rs).
     scope_ends: FxHashMap<LocalId, SrcLoc>,
