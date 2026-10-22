@@ -1,0 +1,41 @@
+// `{ ...r }` of a `Record<string, V> | null` (or `| undefined`) is a `Record<string, V>`, as in
+// TypeScript, and spreading `null` or `undefined` copies nothing (sigx's `jsx()` clones its
+// props this way).
+function clone(props: Record<string, any> | null): void {
+  const p = props ? { ...props } : {};
+  const q = { ...props };
+  const r: Record<string, any> = { ...props, extra: true };
+  q.x = 1;
+  delete q.x;
+  q.children = "kids";
+  console.log(p, q, r, q["a"], r.children);
+}
+
+function merge(
+  a: Record<string, number> | undefined,
+  b: Record<string, number> | null | undefined,
+): Record<string, number> {
+  return { ...a, ...b, last: 9 };
+}
+
+let calls = 0;
+
+function get(none: boolean): Record<string, number> | null {
+  calls++;
+  return none ? null : { a: 1 };
+}
+
+function getU(): Record<string, number> | undefined {
+  calls++;
+  return undefined;
+}
+
+clone({ a: 1 });
+clone(null);
+console.log(merge({ x: 1, y: 2 }, { y: 3 }));
+console.log(merge(undefined, null));
+console.log(merge(undefined, undefined));
+console.log(Object.keys(merge({ z: 1 }, undefined)));
+// Any expression may be spread, and runs once.
+console.log({ ...get(false) }, { ...get(true) }, { ...get(false), b: 2 });
+console.log({ ...getU(), ...get(false) }, calls);

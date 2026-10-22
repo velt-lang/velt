@@ -1,0 +1,12 @@
+// Imported by module_const_static_imported.
+export let level = 1;
+
+export function raise() {
+  level++;
+}
+
+export class Cfg {
+  static readonly L: number[] = [level];
+  static readonly N: number = Cfg.L.length + level;
+  static readonly SELF: { v: number } = { v: Cfg.N };
+}

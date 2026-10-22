@@ -1,5 +1,6 @@
-// An object constant initialized by a call is not shared on a move: TypeScript would alias it,
-// so a change through the copy would show in the constant. The move is an error.
+// An object constant initialized by a call and taken over (bound to a name, stored in a
+// field) is the one object Node evaluates once (#1383): module state, so a change through any
+// name shows in the constant.
 
 type Point = { x: number; y: number };
 

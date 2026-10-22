@@ -1,0 +1,12 @@
+// Helper module for module_const_by_reference: exported module state.
+
+export const CONFIG = { retries: 1, tags: ["a"] };
+
+export let COUNTER = { n: 1 };
+
+function make(): { n: number } {
+  console.log("made");
+  return { n: 1 };
+}
+
+export const MADE = make();

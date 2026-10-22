@@ -145,7 +145,8 @@ impl Ctx<'_> {
                 if let Some((_, members)) = self.union_def(t) {
                     return members.iter().all(|m| self.is_object_ty(*m));
                 }
-                self.enum_info(*d).is_none() && self.brand_base(t).is_none()
+                self.enum_info(*d).is_none()
+                    && self.brand_base(t).is_none_or(|b| self.is_object_ty(b))
             }
             _ => false,
         }

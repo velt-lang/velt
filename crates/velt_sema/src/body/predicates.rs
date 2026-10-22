@@ -117,7 +117,7 @@ impl FnCx<'_, '_> {
                 .filter(|m| m == w || Some(*m) == base)
                 .collect();
             if found.is_empty() {
-                return None;
+                return self.unrelated_predicate_facts(l, nullable, u, target, &parts);
             }
             holds.extend(found);
         }
@@ -440,7 +440,8 @@ impl crate::ctx::Ctx<'_> {
             | TyKind::Literal(_)
             | TyKind::Symbol
             | TyKind::Never => true,
-            _ => self.brand_base(t).is_some(),
+            // A brand is its base (a primitive, or a record viewed with named members).
+            _ => self.brand_base(t).is_some_and(|b| self.primitive_only(b)),
         }
     }
 
@@ -454,7 +455,9 @@ impl crate::ctx::Ctx<'_> {
             | TyKind::Tuple(_)
             | TyKind::FnPtr { .. }
             | TyKind::Closure(_) => true,
-            TyKind::Adt(d, _) => self.adt(*d).is_some() && self.brand_base(t).is_none(),
+            TyKind::Adt(d, _) => {
+                self.adt(*d).is_some() && self.brand_base(t).is_none_or(|b| self.object_only(b))
+            }
             _ => false,
         }
     }

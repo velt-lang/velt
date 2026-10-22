@@ -1,0 +1,18 @@
+// A typed array's buffer type argument must be `ArrayBuffer` or `ArrayBufferLike`: a
+// `SharedArrayBuffer` (not supported) or any other type is an error that says so, and an
+// argument that does not resolve is reported once.
+function shared(b: Uint8Array<SharedArrayBuffer>): number {
+  return b.length;
+}
+
+function numbers(b: Float64Array<number>): number {
+  return b.length;
+}
+
+function unknownBuffer(b: DataView<NoSuchBuffer>): number {
+  return b.byteLength;
+}
+
+function main() {
+  console.log("unreachable");
+}

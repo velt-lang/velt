@@ -79,10 +79,22 @@ impl FnCx<'_, '_> {
         if is_place(e) {
             set_place_mode(e, m);
         }
-        // A module constant bound by reference (`const v = ns.K`, `Cls.K`, `K!`): one that is a
-        // table can't be taken over, like `const v = K`.
+        // A module constant bound by reference (`const v = ns.K`, `Cls.K`, `K!`): taken over like
+        // `const v = K`, it is the one object the module state keeps; a table that can't be kept
+        // (`Cls.K`) can't be taken over.
         if let H::Global(d) = e.kind {
-            if crate::body::pure_init::is_table(self.cx, d) {
+            let table = crate::body::pure_init::is_table(self.cx, d);
+            let object = table || crate::body::pure_init::mutable_identity(self.cx, e.ty);
+            let kept = object && crate::kept_consts::keep(self.cx, d);
+            if kept {
+                // Another reference to the object the module state keeps, as `global_read` makes
+                // for `const v = K`: without it the type may be stored inline, and the binding
+                // would be a copy.
+                let read = std::mem::replace(e, self.mk(H::Lit(hir::Lit::Null), e.ty, e.span));
+                *e = self.intrinsic(hir::Intrinsic::Share, vec![read], e.ty, e.span);
+                return;
+            }
+            if table && !kept {
                 let name = self
                     .cx
                     .global(d)
@@ -128,7 +140,10 @@ impl FnCx<'_, '_> {
                 .global(d)
                 .map(|g| (g.name.clone(), g.stored, g.mutable, g.module))
                 .unwrap_or_default();
-            if stored {
+            // Assigning a constant itself stays an error; what it holds may be modified, as in
+            // Node, once it is the one object the module state keeps.
+            let rebinds = matches!(e.kind, H::Global(_)) && what == "assign to";
+            if stored || (!rebinds && crate::kept_consts::keep(self.cx, d)) {
                 if matches!(e.kind, H::Global(_)) && !mutable && what == "assign to" {
                     self.cx.err(
                         format!("cannot assign to `{name}`, a module `const`"),

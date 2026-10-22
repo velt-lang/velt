@@ -1,0 +1,20 @@
+// A `static readonly` field initialized by a call with effects is module state, evaluated once
+// with its class, between the module constants around the class, in Node's order (#1383).
+
+function load(tag: string): number {
+  console.log("load", tag);
+  return tag.length;
+}
+
+const A = load("a");
+
+class K {
+  static readonly B: number = load("bb");
+  static readonly C: number = K.B + load("ccc");
+}
+
+const D = load("dddd") + K.C;
+
+function main() {
+  console.log(A, K.B, K.C, D);
+}

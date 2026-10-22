@@ -30,7 +30,16 @@ impl FnCx<'_, '_> {
     }
 
     /// Like [`coerce`](Self::coerce) without reporting; `Err` gives the expression back.
-    pub fn try_coerce(&mut self, h: hir::Expr, exp: TyId) -> Result<hir::Expr, hir::Expr> {
+    pub fn try_coerce(&mut self, mut h: hir::Expr, exp: TyId) -> Result<hir::Expr, hir::Expr> {
+        // A record is a view of itself with named members (`crate::index_signatures`).
+        if self
+            .cx
+            .record_view(exp)
+            .is_some_and(|(base, _)| base == h.ty)
+        {
+            h.ty = exp;
+            return Ok(h);
+        }
         if self.cx.brand_base(h.ty).is_none() {
             return self.try_coerce_value(h, exp);
         }
