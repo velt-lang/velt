@@ -115,8 +115,11 @@ Promises behave like JavaScript's, at Rust's cost:
   does not keep the process alive: once nothing else is left, the program ends with exit code
   0, also when `async main` itself waits for such a promise. When the top level waits at such
   an `await`, the program ends as Node's does: `Warning: Detected unsettled top-level await at
-  <file>:<line>` on stderr (without Node's copy of the source line) and exit code 13.
-  `process.exit()` and an uncaught error end the process at once.
+  <file>:<line>` on stderr (without Node's copy of the source line) and exit code 13. That
+  includes the cleanup of an async generator a top-level `for await` left early, which is
+  awaited at the loop: the warning names the loop's line, as Node's does after a `break` or a
+  call that throws (Node names the statement for a `throw` or a labeled `break`/`continue`
+  leaving the loop). `process.exit()` and an uncaught error end the process at once.
 - An async call owns its arguments: an argument variable used again afterwards is shared with
   the promise (objects) or copied (numbers, strings), otherwise moved, because the promise may
   outlive the caller's frame.
