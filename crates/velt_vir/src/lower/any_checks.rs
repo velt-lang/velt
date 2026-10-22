@@ -34,4 +34,13 @@ impl FnLower<'_, '_> {
         let vt = self.cx.ty(ty);
         self.zero_value(vt)
     }
+
+    /// `any` to `void` (a `T` at `T = void`: `f.__ref = null as any`) is accepted, as in
+    /// TypeScript; a `void` has no value to keep, so the `any` (`v`, owned) is dropped.
+    pub(super) fn any_to_void(&mut self, v: Operand, from: TyId) -> Operand {
+        let fvt = self.cx.ty(from);
+        let p = Place::local(self.copy_to_temp(v, fvt));
+        self.drop_glue(p, from);
+        self.zero_value(Ty::Unit)
+    }
 }

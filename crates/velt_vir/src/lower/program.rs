@@ -52,6 +52,7 @@ impl<'h> Cx<'h> {
             locs: None,
             debug: None,
             tracked: FxHashMap::default(),
+            quiet: FxHashMap::default(),
             str_objects: FxHashMap::default(),
             symbol_records: Default::default(),
             boxing,

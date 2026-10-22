@@ -1,0 +1,13 @@
+// A `u8[]` body is copied when the response is made: emptying the array afterwards changes
+// neither the body nor a typed array over its bytes (an `ArrayBuffer`'s bytes are its own;
+// std/fetch/body.vlt `bodyParts`).
+async function main() {
+  const raw: u8[] = [0, 0, 0, 0, 0, 0, 0xf8, 0x3f];
+  const buf = await new Response(raw).arrayBuffer();
+  const f = new Float64Array(buf);
+  raw.length = 0;
+  console.log(f.length, f[0]);
+  f[0] = 2;
+  raw.push(7);
+  console.log(raw[0], f[0], raw.length);
+}

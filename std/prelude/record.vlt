@@ -151,6 +151,13 @@ export class Record<K, V> {
     }
   }
 
+  /** `{ ...other }` of a record that may be `null` or `undefined`: nothing when it is. */
+  __extendMaybe(other: Record<K, V> | null | undefined) {
+    if (other != null) {
+      this.__extend(other);
+    }
+  }
+
   __size(): usize {
     return this.entries.size;
   }

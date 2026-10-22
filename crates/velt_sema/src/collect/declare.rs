@@ -279,7 +279,8 @@ fn collect_prelude(cx: &mut Ctx) {
             continue;
         }
         // Re-exports included: a global module (`std/prelude/global/`) only re-exports.
-        for (name, it) in super::exports::all_exports(cx, m) {
+        for (name, it) in super::exports::all_exports(cx, m).iter() {
+            let it = *it;
             if let Some(prev) = cx.prelude.insert(name.clone(), it) {
                 if prev != it {
                     let span = match it {

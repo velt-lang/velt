@@ -1,0 +1,24 @@
+// A typed array's buffer type argument (TypeScript 5.7's `Uint8Array<ArrayBuffer>`): its buffer
+// is always an `ArrayBuffer`, so `Uint8Array<ArrayBuffer>` and `Uint8Array<ArrayBufferLike>`
+// (TypeScript's default) are a `Uint8Array`. Same output as Node.
+function fromText(bin: string): Uint8Array<ArrayBuffer> {
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i) - 48;
+  return out;
+}
+
+function widen(bytes: Uint8Array<ArrayBuffer>): Float64Array<ArrayBuffer> {
+  return new Float64Array(bytes.buffer);
+}
+
+function main() {
+  const bytes = fromText("01234567");
+  console.log(bytes, bytes.byteLength);
+  const f: Float64Array = widen(bytes);
+  console.log(f.length, f.byteLength);
+  const view: DataView<ArrayBuffer> = new DataView(bytes.buffer, 2, 4);
+  console.log(view.getUint8(0), view.byteLength);
+  const like: Int32Array<ArrayBufferLike> = new Int32Array(bytes.buffer, 4, 1);
+  const views: Uint8Array<ArrayBufferLike>[] = [bytes, new Uint8Array(like.buffer, 6)];
+  console.log(like[0], views[1]);
+}

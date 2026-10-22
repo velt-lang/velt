@@ -1,0 +1,73 @@
+// A borrow through a counted object stays alive while the callee reads or writes a field of a
+// typed proxy: the `get` and `set` traps are user code, here replacing the borrowed object, so
+// such a callee is not quiet (velt_vir lower/quiet.rs) and the borrow is shared for the call.
+class Box {
+  v: number = 1;
+}
+
+class Holder {
+  b: Box = new Box();
+}
+
+const kept: Box[] = [];
+
+// Boxes the size of the replaced one: freed, its memory would hold one of these.
+function replace(h: Holder, v: number): void {
+  h.b = new Box();
+  h.b.v = v;
+  for (let i = 0; i < 8; i++) {
+    const x = new Box();
+    x.v = 99;
+    kept.push(x);
+  }
+}
+
+function peek(b: Box, p: Box): number {
+  const x = p.v;
+  return x + b.v;
+}
+
+function poke(b: Box, p: Box): number {
+  p.v = 5;
+  return b.v;
+}
+
+// Quiet itself, but it calls one that reads through the proxy.
+function outer(b: Box, p: Box): number {
+  return peek(b, p) + b.v;
+}
+
+type Pt = { x: number; y: number };
+
+function peekPt(b: Box, p: Pt): number {
+  return p.x + b.v;
+}
+
+function main() {
+  const h = new Holder();
+  const p = new Proxy(new Box(), {
+    get(t: any, k: string | symbol, r: any): any {
+      replace(h, 2);
+      return 10;
+    },
+    set(t: any, k: string | symbol, v: any, r: any): boolean {
+      replace(h, 3);
+      return true;
+    },
+  }) as Box;
+  console.log(peek(h.b, p));
+  console.log(h.b.v);
+  console.log(poke(h.b, p));
+  console.log(h.b.v);
+  console.log(outer(h.b, p));
+  console.log(h.b.v);
+  const q = new Proxy({ x: 1, y: 2 } as Pt, {
+    get(t: any, k: string | symbol, r: any): any {
+      replace(h, 4);
+      return 20;
+    },
+  }) as Pt;
+  console.log(peekPt(h.b, q));
+  console.log(h.b.v);
+  console.log(kept.length);
+}

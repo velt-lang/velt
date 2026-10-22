@@ -78,7 +78,7 @@ Promises behave like JavaScript's, at Rust's cost:
 |---|---|---|
 | `await f()` | `f` runs in place | nothing: no task, no allocation |
 | `const p = f()` … `await p` | `f` starts now, like JS: it runs until its first `await`, then concurrently with the caller | one small allocation |
-| `f();` | compile error (floating promise): write `await f()` or `spawn(f())` | — |
+| `f();` | compile error (floating promise): write `await f()` or `spawn(f())`; among the [top-level statements](modules.md) of the file a program starts from, it starts `f` as in Node, and the program waits for it before exiting | — |
 | `Promise.all` / `race` / `allSettled` / `any` | concurrent | one allocation per promise |
 
 - A started promise runs on its creator's task, never at the same time as the creator or the

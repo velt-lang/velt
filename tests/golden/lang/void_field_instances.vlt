@@ -1,0 +1,15 @@
+// A field of an object type instantiated as `void` (sigx's `__ref: TRef` at `TRef = void`), also
+// when an intersection merged the object type (#1262): accepted, as TypeScript does (#1411).
+type Factory<R> = { name: string } & { ref: R };
+
+function component<R = void>(name: string): Factory<R> {
+  return { name, ref: null as any };
+}
+
+function make<R>(): { v: number; ref: R } {
+  return { v: 1, ref: undefined as any };
+}
+
+const card = component("card");
+console.log(card.name);
+console.log(make<void>().v);

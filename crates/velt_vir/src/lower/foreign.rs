@@ -3,6 +3,7 @@
 //! `{ data, len, cap }` header, an object its fields. When a type in an extern signature
 //! contains a boxed array or object, arguments are passed as an unboxed *view* (a bitwise copy
 //! that owns nothing) and results are moved into fresh boxes.
+//! The `velt_simd_*` helpers get an array's header in place instead (`foreign_args`).
 
 use velt_sema::hir::{self, TyId, TyKind};
 

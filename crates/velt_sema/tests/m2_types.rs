@@ -520,26 +520,26 @@ fn imports_exports_and_intrinsics() {
     assert!(!r.contains("may throw"), "{r}");
     // A module-level `let` is module state; an imported one is read-only where imported.
     ok_src("let n = 0; function bump() { n += 1; } function main() { bump(); console.log(n); }");
-    let r = err_src("const X: i64[] = [1]; function main() { X.push(2); }");
-    assert!(r.contains("module-level constant `X`"), "{r}");
-    let r = err_src("const X: u8[] = [1]; function main() { X.fill(0); }");
-    assert!(r.contains("cannot modify module-level constant `X`"), "{r}");
-    // What the compiler can't follow could write to it: a function value, a binding through `!`.
-    let r = err_src(
-        "const X: u8[] = [1]; function main() { const f = (xs: u8[]) => xs.fill(0); f(X); }",
+    // A table the program modifies, takes over or passes to a function value is module state
+    // instead, the one array Node evaluates once (#1383).
+    let slots = |src: &str| ok_src(src).module_state.map_or(0, |m| m.slots.len());
+    for main in [
+        "X.push(2);",
+        "X.fill(0);",
+        "const f = (xs: u8[]) => xs.fill(0); f(X);",
+        "const v = X!; v.push(2);",
+    ] {
+        let src = format!("const X: u8[] = [1]; function main() {{ {main} console.log(X); }}");
+        assert_eq!(slots(&src), 1, "{main}");
+    }
+    assert_eq!(
+        slots("const X: u8[] = [1]; function main() { console.log(X[0], X.length); }"),
+        0
     );
-    assert!(
-        r.contains("cannot pass module constant `X` to a function value"),
-        "{r}"
-    );
-    let r = err_src("const X: u8[] = [1]; function main() { const v = X!; v.push(2); }");
-    assert!(r.contains("cannot move out of module constant `X`"), "{r}");
-    let r = err_src(
-        "class C { static readonly X: u8[] = [1]; } function main() { const v = C.X; v.push(2); }",
-    );
-    assert!(
-        r.contains("cannot move out of module constant `C.X`"),
-        "{r}"
+    // So is a `static readonly` field (Node evaluates it once, with its class).
+    assert_eq!(
+        slots("class C { static readonly X: u8[] = [1]; } function main() { const v = C.X; v.push(2); console.log(C.X); }"),
+        1
     );
 }
 

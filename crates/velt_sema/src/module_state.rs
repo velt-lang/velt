@@ -74,7 +74,7 @@ pub(crate) fn order(cx: &mut Ctx) -> Vec<DefId> {
                     span,
                 )
                 .with_note(format!(
-                    "module-level `let`s are initialized in order, and `{name}`'s initializer \
+                    "module state is initialized in order, and `{name}`'s initializer \
                      runs first (JavaScript throws a `ReferenceError` here)"
                 )),
             );

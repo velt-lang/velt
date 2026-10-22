@@ -257,8 +257,8 @@ impl FnLower<'_, '_> {
     /// code of those three reads, so nothing counts it.
     ///
     /// Only those three uses get it. Anywhere else (an argument, a receiver, a value that is
-    /// kept) the constant is evaluated like any other, to a new array. Sema rejects the uses
-    /// that could write to a table, those it can follow and those it can't (a function value),
+    /// kept) the constant is evaluated like any other, to a new array. Sema keeps a table that a
+    /// use could write to in the module state (a slot, never read from here) or rejects the use,
     /// but read-only data must never be reachable from code that writes, so this does not rely
     /// on it.
     ///

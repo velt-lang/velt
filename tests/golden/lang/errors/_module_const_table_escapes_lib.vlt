@@ -1,3 +1,0 @@
-// Helper module for module_const_table_escapes: an exported table.
-
-export const T: number[] = [1, 2, 3];

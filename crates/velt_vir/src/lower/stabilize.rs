@@ -22,6 +22,19 @@ impl FnLower<'_, '_> {
     /// A borrowed argument (or receiver) of a call that may run user code (see the module docs).
     /// `later`: the arguments evaluated after it, before the call.
     pub(super) fn stable_borrow(&mut self, a: &hir::Expr, later: &[hir::Expr]) -> Operand {
+        self.stable_borrow_as(a, later, true)
+    }
+
+    /// `stable_borrow`, or for a quiet callee (`share` false, quiet.rs) the same facts recorded
+    /// (`through_counted`, `in_shared_cell`, identity borrows: what boxing, `noalias` and `hold`
+    /// rely on) without the share or retained containers, since nothing the callee runs can
+    /// replace or free what the borrow goes through.
+    pub(super) fn stable_borrow_as(
+        &mut self,
+        a: &hir::Expr,
+        later: &[hir::Expr],
+        share: bool,
+    ) -> Operand {
         // A frozen value (frozen.rs): nothing changes it, its box is retained where something
         // could replace its handle (async_fn/sync.rs `shared_value`), and its counts must not
         // change.
@@ -36,6 +49,9 @@ impl FnLower<'_, '_> {
         // An `any` holds a counted box (or a plain value its share copies): the callee may
         // replace the place it is read from through a method it runs on it (`show(h.x)` where a
         // method of `h.x` sets `h.x = null`), so it gets a share, as a counted value does.
+        if !share && (self.cx.counted(ty) || self.cx.is_dynamic(ty)) {
+            return self.borrowed_arg(a);
+        }
         if self.cx.counted(ty) || self.cx.is_dynamic(ty) {
             let v = self.expr(a);
             let s = self.share_value(v, ty);
@@ -60,6 +76,9 @@ impl FnLower<'_, '_> {
                     self.cx.note_identity_borrow(t);
                 }
             } else {
+                if !share {
+                    return self.borrowed_arg(a);
+                }
                 if later.iter().all(runs_no_code) {
                     if let Some(v) = self.unique_array_elem(a, ty) {
                         return v;
@@ -70,7 +89,7 @@ impl FnLower<'_, '_> {
                 return self.own_value(s, ty);
             }
         }
-        let prev = std::mem::replace(&mut self.retain_hops, true);
+        let prev = std::mem::replace(&mut self.retain_hops, share);
         let v = self.borrowed_arg(a);
         self.retain_hops = prev;
         v

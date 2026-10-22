@@ -1,0 +1,5 @@
+typed_arrays_buffer_type_arg.vlt:4:31: error: a typed array's buffer type argument must be `ArrayBuffer`
+  = note: found `SharedArrayBuffer`; `Uint8Array<ArrayBuffer>` and `Uint8Array<ArrayBufferLike>` are `Uint8Array`, whose buffer is always an `ArrayBuffer` (`SharedArrayBuffer` is not supported)
+typed_arrays_buffer_type_arg.vlt:8:34: error: a typed array's buffer type argument must be `ArrayBuffer`
+  = note: found `f64`; `Float64Array<ArrayBuffer>` and `Float64Array<ArrayBufferLike>` are `Float64Array`, whose buffer is always an `ArrayBuffer` (`SharedArrayBuffer` is not supported)
+typed_arrays_buffer_type_arg.vlt:12:36: error: cannot find type `NoSuchBuffer` in this scope

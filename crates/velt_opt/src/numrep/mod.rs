@@ -97,6 +97,8 @@ pub(crate) struct Env<'p> {
     float_index: Vec<bool>,
     /// The arrays' aggregate: its field 1 is a length, below 2^53.
     array: Option<AggId>,
+    /// Per aggregate, its field types: the type of a value read from a field.
+    field_tys: std::rc::Rc<[Vec<Ty>]>,
     /// Facts about parameters that every call passes a constant (`params`).
     params: params::ParamFacts,
     /// Number formatters and their integer twins (`print`).
@@ -117,10 +119,15 @@ impl<'p> Env<'p> {
             .iter()
             .position(|a| a.name == velt_vir::ARRAY_AGG_NAME)
             .map(|i| AggId(i as u32));
+        let field_tys = aggs
+            .iter()
+            .map(|a| a.fields.iter().map(|f| f.0).collect())
+            .collect();
         Env {
             externs,
             float_index,
             array,
+            field_tys,
             params: params::of(funcs, statics),
             formatters: print::pairs(externs),
         }
