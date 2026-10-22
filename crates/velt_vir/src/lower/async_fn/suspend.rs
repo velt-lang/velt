@@ -103,13 +103,17 @@ impl FnLower<'_, '_> {
         self.cancel_cases(k, d);
     }
 
-    /// A call to the prelude's `__topLevelAwaitAt(site)`: the mark velt_sema puts before each
-    /// top-level `await` (lowered to nothing but [`FnLower::tla_site`]).
+    /// A call to the prelude's `__topLevelAwaitAt(site)` (or to the `velt_rt_tla_at` it forwards
+    /// to, which a forwarder call becomes) from user code: the mark velt_sema puts before each
+    /// top-level `await`, lowered to nothing but [`FnLower::tla_site`]. The prelude's own call
+    /// is the runtime's.
     pub(in crate::lower) fn is_tla_marker(&self, d: DefId) -> bool {
-        let hir::Def::Fn(f) = self.cx.hir.def(d) else {
-            return false;
+        let marks = match self.cx.hir.def(d) {
+            hir::Def::ExternFn(f) => f.symbol == "velt_rt_tla_at",
+            hir::Def::Fn(f) => f.name.ends_with("__topLevelAwaitAt"),
+            _ => false,
         };
-        f.name == "__topLevelAwaitAt" && self.cx.locs.as_ref().is_none_or(|m| m.is_std(f.span))
+        marks && !self.in_std()
     }
 
     /// The top level suspends at the `await` marked last: `velt_rt_tla_at(site)`, on the
