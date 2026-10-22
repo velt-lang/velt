@@ -57,7 +57,9 @@ impl PoolObj {
                 return Ok((conn, permit));
             }
         }
-        let conn = connect(&self.config, self.tls.clone()).await?;
+        // Opening one is boxed: inline, the connect future would make every pooled query's
+        // future larger, copied on every query.
+        let conn = Box::pin(connect(&self.config, self.tls.clone())).await?;
         Ok((Arc::new(conn), permit))
     }
 

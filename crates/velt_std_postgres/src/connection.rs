@@ -101,10 +101,17 @@ impl Conn {
 
     /// The cached statement for `sql`, prepared on a miss.
     pub(super) async fn prepared(&self, sql: &str, named: bool) -> Result<Prepared, PgError> {
-        let key = cache_key(sql);
-        if let Some(p) = self.cache.lock().get(key, named) {
+        if let Some(p) = self.cache.lock().get(cache_key(sql), named) {
             return Ok(p);
         }
+        // A miss (once per text and connection) is boxed: inline, preparing would make every
+        // future that awaits a statement a kilobyte larger, copied on every query.
+        Box::pin(self.prepare(sql, named)).await
+    }
+
+    /// Prepare `sql` and cache it.
+    async fn prepare(&self, sql: &str, named: bool) -> Result<Prepared, PgError> {
+        let key = cache_key(sql);
         let (text, names) = if named {
             let r = rewrite_named(key).map_err(PgError::invalid)?;
             (r.sql, Some(Arc::from(r.names)))
@@ -123,7 +130,11 @@ impl Conn {
     }
 
     /// Prepare `sql` and bind `params` (JSON) to it.
-    async fn bound(&self, sql: &str, params: &[u8]) -> Result<(Prepared, Vec<PgParam>), PgError> {
+    pub(crate) async fn bound(
+        &self,
+        sql: &str,
+        params: &[u8],
+    ) -> Result<(Prepared, Vec<PgParam>), PgError> {
         let parsed = parse_params(params).map_err(PgError::invalid)?;
         let named = matches!(parsed, Params::Named(_));
         let p = self.prepared(sql, named).await?;

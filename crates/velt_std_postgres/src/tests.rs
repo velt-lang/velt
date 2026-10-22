@@ -351,3 +351,30 @@ fn money_and_network_types_print_like_postgres() {
         r#""10.0.0.0/8""#
     );
 }
+
+/// Futures are moved (copied whole) into the future that awaits them, on every query: the cold
+/// paths (preparing a statement, opening a pooled connection) are boxed so the hot ones stay
+/// small. Without that, `prepared` was 1016 bytes, `bound` 1096 and `pool_op` 1912.
+#[test]
+fn hot_query_futures_stay_small() {
+    use crate::connection::Conn;
+    use std::sync::Arc;
+    fn ret<A, R>(_: impl Fn(A) -> R) -> usize {
+        std::mem::size_of::<R>()
+    }
+    let prepared = ret(|c: &Conn| async move { c.prepared("", false).await.map(|_| ()) });
+    let bound = ret(|c: &Conn| async move { c.bound("", b"").await.map(|_| ()) });
+    let query = ret(|c: &Conn| c.query("", b"", true, Vec::<u8>::new()));
+    let pooled = ret(|p: u64| {
+        crate::pool::pool_op(p, move |c: Arc<Conn>| async move {
+            c.query("", b"", true, Vec::<u8>::new()).await
+        })
+    });
+    assert!(prepared <= 128, "prepared: {prepared} bytes");
+    assert!(bound <= 256, "bound: {bound} bytes");
+    // Acquiring a connection adds little to the query itself (tokio-postgres's future).
+    assert!(
+        pooled <= query + 256,
+        "pool_op: {pooled} bytes, query {query}"
+    );
+}
