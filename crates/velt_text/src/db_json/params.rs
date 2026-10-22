@@ -12,8 +12,8 @@
 //!
 //! Strings without escapes borrow the source; only escaped strings allocate.
 
-use crate::json::scan::{number_f64, number_i64, Scanner, StrTok, SyntaxError};
-use crate::str::wtf8;
+use crate::json_scan::{number_f64, number_i64, Scanner, StrTok, SyntaxError};
+use crate::wtf8;
 use std::borrow::Cow;
 
 /// One parameter value.

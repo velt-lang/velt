@@ -7,7 +7,7 @@
 //! (ryu, integral values as integers), with NaN and ±Infinity as `null`; text escaped like
 //! `JSON.stringify` (invalid UTF-8 becomes U+FFFD); blobs as arrays of byte values (a `u8[]`).
 
-use crate::json::escape::push_json_string;
+use crate::json_escape::push_json_string;
 
 /// 2^53: every integer below it in magnitude is exactly representable as an `f64`.
 const MAX_EXACT_INT: f64 = 9_007_199_254_740_992.0;

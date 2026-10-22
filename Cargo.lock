@@ -2218,6 +2218,7 @@ dependencies = [
  "tower-service",
  "url",
  "velt_native",
+ "velt_text",
  "webpki-roots",
  "windows-sys 0.61.2",
 ]
@@ -2258,6 +2259,7 @@ dependencies = [
  "tower-service",
  "url",
  "velt_native",
+ "velt_text",
  "webpki-roots",
  "windows-sys 0.61.2",
 ]
@@ -2298,6 +2300,7 @@ dependencies = [
  "tower-service",
  "url",
  "velt_native",
+ "velt_text",
  "webpki-roots",
  "windows-sys 0.61.2",
 ]
@@ -2328,6 +2331,15 @@ version = "0.3.0"
 dependencies = [
  "rustc-hash",
  "velt_common",
+]
+
+[[package]]
+name = "velt_text"
+version = "0.3.0"
+dependencies = [
+ "itoa",
+ "memchr",
+ "ryu",
 ]
 
 [[package]]
