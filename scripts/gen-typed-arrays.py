@@ -319,17 +319,17 @@ export class @C@ extends TypedArray implements Iterable<number> {
   }
 
   /** The buffer the elements are in. */
-  get buffer(): ArrayBuffer {
+  override get buffer(): ArrayBuffer {
     return this.buf;
   }
 
   /** Where the first element is in `buffer`, in bytes. */
-  get byteOffset(): number {
+  override get byteOffset(): number {
     return this.off as number;
   }
 
   /** The size of the elements in bytes: `length * BYTES_PER_ELEMENT`. */
-  get byteLength(): number {
+  override get byteLength(): number {
     return (this.len * @N@) as number;
   }
 
@@ -820,7 +820,7 @@ def main():
           "// Global (loaded when a module names one of these): `ArrayBuffer`, `DataView` and `Uint8Array`,\n"
           "// as in Node (docs/std/typed_array.md); the other typed arrays are in typed_array_kinds.vlt.\n"
           + GENERATED
-          + "export { ArrayBuffer } from \"velt:typed_array/core\";\n"
+          + "export { ArrayBuffer, ArrayBufferView } from \"velt:typed_array/core\";\n"
           + "export { DataView } from \"velt:typed_array/data_view\";\n"
           + "export { Uint8Array } from \"velt:typed_array/uint8_array\";\n")
     write(os.path.join(GLOBAL, "typed_array_kinds.vlt"),

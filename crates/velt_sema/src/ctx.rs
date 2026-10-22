@@ -719,6 +719,13 @@ impl<'m> Ctx<'m> {
                 )
             }
             TyKind::Adt(d, args) => match &self.info[d.0 as usize] {
+                // A construct signature, as written (`crate::fn_types`).
+                DefInfo::Adt(_) if self.ctor_sig_own(t).is_some() => {
+                    let (f, _) = self.ctor_sig_own(t).expect("ICE: construct signature");
+                    let bound: Vec<String> =
+                        args.iter().map(|t| self.display_in(*t, names)).collect();
+                    format!("new {}", self.display_in(f, &bound))
+                }
                 DefInfo::Adt(a) if a.kind == AdtKind::Anon => {
                     // Field types are written over the anon def's own parameters, which
                     // `args` binds to the parameters in scope.

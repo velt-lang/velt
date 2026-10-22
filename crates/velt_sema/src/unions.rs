@@ -166,7 +166,7 @@ impl Ctx<'_> {
         if let Some(base) = self.brand_base(t) {
             return self.typeof_tag(base);
         }
-        if self.is_callable_object(t) {
+        if self.is_callable_object(t) || self.ctor_sig_own(t).is_some() {
             return "function";
         }
         match self.ty.kind(t) {

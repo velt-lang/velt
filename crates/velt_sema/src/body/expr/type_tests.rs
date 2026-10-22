@@ -305,6 +305,12 @@ impl FnCx<'_, '_> {
         ty: &ast::TypeExpr,
         span: Span,
     ) -> hir::Expr {
+        if let Some(h) = self
+            .instanceof_value(e, ty, span)
+            .or_else(|| self.shared_buffer_test(e, ty, span))
+        {
+            return h;
+        }
         let s = self.expr(e, None, Want::Borrow);
         if self.is_promise_ctor(ty) {
             return self.promise_test(s, span);

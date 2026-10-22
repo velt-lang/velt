@@ -59,11 +59,8 @@ export class ArrayBuffer {
     return ArrayBuffer.adopt(this.bytes.slice(toInteger(begin), toInteger(end)));
   }
 
-  /**
-   * Whether `v` is a view of a buffer: a typed array or a `DataView` (JS takes any value; Velt
-   * takes these until `unknown` arrives, #924).
-   */
-  static isView(v: ArrayBuffer | BufferView | null): bool {
+  /** Whether `v` is a view of a buffer: a typed array or a `DataView`. */
+  static isView(v: unknown): v is ArrayBufferView {
     return v instanceof BufferView;
   }
 
@@ -113,7 +110,28 @@ export class BufferView {
   __size(): usize {
     return 1;
   }
+
+  /** The buffer the view is of. */
+  get buffer(): ArrayBuffer {
+    return this.buf;
+  }
+
+  /** Where the view starts in `buffer`, in bytes. */
+  get byteOffset(): number {
+    return this.off as number;
+  }
+
+  /** The size of the view in bytes. */
+  get byteLength(): number {
+    return (this.len * this.__size()) as number;
+  }
 }
+
+/**
+ * TypeScript's `ArrayBufferView`: a typed array or a `DataView` (`buffer`, `byteOffset`,
+ * `byteLength`). A type only, as in JS.
+ */
+export type ArrayBufferView = BufferView;
 
 /**
  * Node's text for a buffer's bytes, `ArrayBuffer { [Uint8Contents]: <…>, [byteLength]: n }`,

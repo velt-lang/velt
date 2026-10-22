@@ -18,6 +18,9 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
+        if let Some(h) = self.new_through_value(class, args, span) {
+            return h;
+        }
         if let Some(c) = self.proxy_class_name(class) {
             return self.new_expr(&c, args, exp, span);
         }

@@ -87,12 +87,9 @@ impl FnCx<'_, '_> {
         want: Want,
         span: Span,
     ) -> Option<hir::Expr> {
-        if obj.ty == self.cx.ty.never {
-            // A value narrowed to `never` (a read that panics): its fields are unreachable too.
-            return Some(obj);
-        }
-        if self.cx.ty.is_bottom(obj.ty) {
-            return None;
+        // A value narrowed to `never` (a read that panics): its fields are unreachable too.
+        if obj.ty == self.cx.ty.never || self.cx.ty.is_bottom(obj.ty) {
+            return (obj.ty == self.cx.ty.never).then_some(obj);
         }
         if self.cx.ty.opt_payload(obj.ty).is_some() {
             let tn = self.cx.display(obj.ty);
@@ -119,6 +116,8 @@ impl FnCx<'_, '_> {
                 Err(o) => obj = o,
             }
         }
+        let renamed = self.ctor_member(obj.ty, prop); // `C.name` of a class value
+        let prop = renamed.as_ref().unwrap_or(prop);
         let Some((index, fty)) = self.field_of(obj.ty, &prop.name) else {
             self.no_field(obj.ty, obj.span, prop);
             return None;
