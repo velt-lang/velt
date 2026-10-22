@@ -1,6 +1,6 @@
 //! Quiet functions: a direct call to one needs no stabilized borrows (stabilize.rs), because
 //! the callee cannot reach the counted objects a borrow goes through, nor replace or free
-//! anything. That is what a runtime extern guarantees too (`lower_args`' `user_code`).
+//! anything. That is what a runtime extern guarantees too (`Stabilize::No` in call.rs).
 //!
 //! A function is quiet when its body runs no user code and drops nothing it did not make: it
 //! is not generic, a method, a closure, async or a generator; its statements are `let`s,
@@ -9,8 +9,10 @@
 //! and it only calls quiet functions, `velt_simd_*` externs and intrinsics that run no user
 //! code and are handed no place to modify or move. Anything else (`new`, closures, `await`,
 //! `try`, `throw`, `for…of`, patterns, indirect, virtual and interface calls, module state)
-//! makes it not quiet. Std's byte readers and writers (`loadF64(this.buf.bytes, o)` in a
-//! typed array's element access) are quiet, so the access counts no reference per element.
+//! makes it not quiet, and so does a field read or write on a type that may hold a typed proxy
+//! (proxy_typed.rs): it may run a `get` or `set` trap, which is user code. Std's byte readers
+//! and writers (`loadF64(this.buf.bytes, o)` in a typed array's element access) are quiet, so
+//! the access counts no reference per element.
 
 use velt_sema::hir::{self, DefId, ExprKind as H, StmtKind as S};
 
@@ -86,7 +88,10 @@ impl Cx<'_> {
             }
             H::Block(b) => self.quiet_block(b),
             H::Field { base, mode, .. } => {
-                *mode != hir::UseMode::Move && !self.needs_drop(e.ty) && self.quiet_expr(base)
+                *mode != hir::UseMode::Move
+                    && !self.needs_drop(e.ty)
+                    && !self.proxiable(base.ty)
+                    && self.quiet_expr(base)
             }
             H::Index { base, index, mode } => {
                 *mode != hir::UseMode::Move
@@ -116,7 +121,7 @@ impl Cx<'_> {
     fn quiet_place(&mut self, p: &hir::Expr) -> bool {
         match &p.kind {
             H::Local(..) => true,
-            H::Field { base, .. } => self.quiet_place(base),
+            H::Field { base, .. } => !self.proxiable(base.ty) && self.quiet_place(base),
             H::Index { base, index, .. } => self.quiet_place(base) && self.quiet_expr(index),
             _ => false,
         }
