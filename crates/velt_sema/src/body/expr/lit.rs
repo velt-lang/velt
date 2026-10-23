@@ -513,22 +513,19 @@ impl FnCx<'_, '_> {
     /// it in errors): a `string` itself, else an `Intrinsic::ToString` of it.
     pub(crate) fn js_text(&mut self, h: hir::Expr, what: &str) -> hir::Expr {
         let h = self.unbrand(h);
-        // An `any`, `unknown` or `object` is written by the value it holds: an array as JS's
-        // `Array.prototype.toString` writes it (`1,2`), not as `console.log` prints it.
+        // An `any`, `unknown` or `object` is written by the value it holds (`any_text.rs`):
+        // an array as JS's `Array.prototype.toString` writes it (`1,2`), an object by its
+        // `toString()`, not as `console.log` prints it. The prelude's `__anyText` writes the
+        // elements of an array this way too.
         if matches!(
             self.cx.dynamic(h.ty),
             Some(Dynamic::Any | Dynamic::Unknown | Dynamic::Object)
-        ) && !self.cx.scopes[self.module].is_std
+        ) && (!self.cx.scopes[self.module].is_std || self.fn_name.ends_with("__anyText"))
         {
             if let Some(any) = self.any_ty() {
                 let span = h.span;
                 let h = self.coerce(h, any);
-                let init = self.share_if_place(h);
-                // `__anyText` reads an array's elements through `any`.
-                self.cx.note_dyn_members();
-                return self.with_temp("<text>", init, span, span, |lw, v| {
-                    lw.prelude_fn_call("__anyText", vec![v.clone()], span)
-                });
+                return self.dynamic_text(h, span);
             }
         }
         let h = match self.nullable_text(h, what) {

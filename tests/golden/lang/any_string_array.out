@@ -4,3 +4,11 @@
 0 0 1
 0,1.5,NaN
 o,1
+[object Object] [object Object] <[object Object]>
+T! T! <T!>
+T! T! <T!>
+[object Object] [object Object] <[object Object]>
+Error: boom Error: boom <Error: boom>
+[object Map] [object Map] <[object Map]>
+T!,[object Object],[object Object]
+[object Object]

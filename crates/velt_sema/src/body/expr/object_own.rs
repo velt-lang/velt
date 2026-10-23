@@ -252,6 +252,19 @@ impl FnCx<'_, '_> {
         s: hir::Expr,
         ret: TyId,
         fallback: &str,
+        class: impl FnMut(&mut Self, DefId, ast::Expr) -> hir::Expr,
+        span: Span,
+    ) -> hir::Expr {
+        self.dynamic_class_match_where(s, ret, fallback, |_, _| true, class, span)
+    }
+
+    /// [`Self::dynamic_class_match`] over the classes `only` keeps; the others go to `fallback`.
+    pub(super) fn dynamic_class_match_where(
+        &mut self,
+        s: hir::Expr,
+        ret: TyId,
+        fallback: &str,
+        only: impl Fn(&mut Self, DefId) -> bool,
         mut class: impl FnMut(&mut Self, DefId, ast::Expr) -> hir::Expr,
         span: Span,
     ) -> hir::Expr {
@@ -265,6 +278,11 @@ impl FnCx<'_, '_> {
         let mut classes: Vec<(usize, DefId)> = (0..self.cx.info.len() as u32)
             .map(DefId)
             .filter(|&d| self.cx.adt(d).is_some_and(|a| a.kind == AdtKind::Class))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .filter(|&d| only(self, d))
+            .collect::<Vec<_>>()
+            .into_iter()
             .map(|d| (self.class_depth(d), d))
             .collect();
         classes.sort_by(|a, b| b.0.cmp(&a.0).then(a.1 .0.cmp(&b.1 .0)));

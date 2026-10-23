@@ -2553,9 +2553,13 @@ function main(): void {
 
 A template literal or a string `+` / `+=` writes an `any` as `String(x)` does, except that a
 symbol stops with Node's `TypeError: Cannot convert a Symbol value to a string` (only
-`String(s)` writes it, as `Symbol(desc)`). `String(x)` of an `any`, `unknown` or `object`
-holding an array writes it as JavaScript's `Array.prototype.toString` does (`[1, [2, 3]]` is
-`1,2,3`, `null` and `undefined` elements are empty).
+`String(s)` writes it, as `Symbol(desc)`). `String(x)` and the text of an `any`, `unknown` or
+`object` write the value held as JavaScript's `ToString` does, not as `console.log` prints it:
+an array as `Array.prototype.toString` does (`[1, [2, 3]]` is `1,2,3`, `null` and `undefined`
+elements are empty), a class instance with a `toString()` (its own or a base class's, an
+`Error`'s) as it returns, and another object as `Object.prototype.toString` does (`[object
+Object]`, `[object Map]`). A function stops with a `TypeError` naming #924 (Node writes its
+source text).
 
 `Object.is(a, b)` with an `any` or `unknown` operand is SameValue, as in JavaScript: `===`,
 except that `NaN` is itself and `0` is not `-0`.

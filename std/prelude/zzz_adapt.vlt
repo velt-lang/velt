@@ -216,17 +216,40 @@ export function __anyTagUnsupported(name: string): string {
 }
 
 /**
- * `String(v)` of an `any` (or `unknown`, `object`) `v`, and its text in a template literal or a
- * string `+`: an array as JavaScript's `Array.prototype.toString` writes it (the elements joined
- * with `,`, `null` and `undefined` as empty text, nested arrays the same way), a number with
- * `ToString` (`-0` is `0`), anything else as before.
+ * `String(v)` of an `any` (or `unknown`, `object`) `v` that holds no class instance with a
+ * `toString()` (sema calls that one), and its text in a template literal or a string `+`: an
+ * array as JavaScript's `Array.prototype.toString` writes it (the elements joined with `,`, each
+ * written as `String(x)` writes it, `null` and `undefined` as empty text), another object as
+ * `Object.prototype.toString` does (`[object Object]`), a number with `ToString` (`-0` is `0`).
+ * (Sema writes `String(x)` of an `any` here as it does in user code; `String(v)` is not used on
+ * `v` itself, which would come back here.)
  */
 export function __anyText(v: any): string {
-  if (typeof v === "number") {
+  const t = typeof v;
+  if (t === "number") {
     return String(v as number);
   }
+  if (t === "string") {
+    return v as string;
+  }
+  if (t === "boolean") {
+    return (v as boolean) ? "true" : "false";
+  }
+  if (t === "symbol") {
+    return String(v as symbol);
+  }
+  if (v === null) {
+    return "null";
+  }
+  if (v === undefined) {
+    return "undefined";
+  }
+  if (t === "function") {
+    // JavaScript writes the function's source text, which a compiled function doesn't keep.
+    panic("TypeError: `String` of a function through `any` is not supported yet (#924)");
+  }
   if (!Array.isArray(v)) {
-    return String(v);
+    return Object.prototype.toString.call(v);
   }
   let out = "";
   let first = true;
@@ -240,7 +263,7 @@ export function __anyText(v: any): string {
       panic("TypeError: Cannot convert a Symbol value to a string");
     }
     if (x !== null && x !== undefined) {
-      out += __anyText(x);
+      out += String(x);
     }
   }
   return out;
