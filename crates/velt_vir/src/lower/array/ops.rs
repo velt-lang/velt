@@ -55,7 +55,14 @@ impl FnLower<'_, '_> {
             // the caller's, caller_stores.rs `caller_object`).
             self.write_barrier(Operand::Copy(arr.clone()), aty);
         }
+        let ptr = Operand::Copy(arr.clone());
         let arr = self.content(&arr, aty);
+        if caller && i != I::ArrayLen && self.cx.lock_counted(aty) && !self.captured_root(&args[0])
+        {
+            // Reached through a call (`mk(out).kids`, `rw.read((s2) => s2.items)`): it may be
+            // an array the reader made, not the caller's.
+            return self.caller_or_own_op(i, &args[1..], ptr, &arr, aty, ty);
+        }
         if caller {
             return self.caller_array_op(i, &args[1..], &arr, aty, ty);
         }
@@ -89,6 +96,71 @@ impl FnLower<'_, '_> {
             self.hand_to_reader(&r, rty);
         }
         r
+    }
+
+    /// An array intrinsic on the array `ptr` (content `arr`) that a call on the caller's
+    /// container returned, in a `read` callback: `caller_array_op` when it is the caller's,
+    /// `array_op` by read mode's counts when the reader made it (`LOCAL`: a new object the
+    /// call built, a nested `read`'s copy). Arguments other than a pushed value are integers,
+    /// lowered in each branch.
+    fn caller_or_own_op(
+        &mut self,
+        i: hir::Intrinsic,
+        rest: &[hir::Expr],
+        ptr: Operand,
+        arr: &Place,
+        aty: TyId,
+        ty: TyId,
+    ) -> Operand {
+        let c = self.count_place(ptr);
+        let mine = self.is_local(&c);
+        let (own, theirs, join) = (self.new_block(), self.new_block(), self.new_block());
+        if let (hir::Intrinsic::ArrayPush, [x]) = (i, rest) {
+            let held = self.held_by_caller(x);
+            let xty = self.sub(x.ty);
+            let v = self.consume(x);
+            let elem = self.elem_ty(aty);
+            let vt = self.cx.ty(elem);
+            let v = match vt {
+                Ty::Unit => v,
+                _ => Operand::Copy(Place::local(self.copy_to_temp(v, vt))),
+            };
+            self.branch(mine, own, theirs);
+            self.switch_to(own);
+            self.push_value(arr, elem, v.clone());
+            self.goto(join);
+            self.switch_to(theirs);
+            let k = self.keep_value(v, held, xty);
+            let outer = std::mem::replace(&mut self.mode, LkMode::Deferred);
+            self.push_value(arr, elem, k);
+            self.mode = outer;
+            self.goto(join);
+            self.switch_to(join);
+            return unit();
+        }
+        let rty = self.sub(ty);
+        let rt = self.cx.ty(rty);
+        let res = (rt != Ty::Unit).then(|| self.temp(rt));
+        self.branch(mine, own, theirs);
+        for (bb, reader) in [(own, true), (theirs, false)] {
+            self.switch_to(bb);
+            let r = match reader {
+                true => self.array_op(i, rest, arr, aty, ty),
+                false => self.caller_array_op(i, rest, arr, aty, ty),
+            };
+            if let Some(res) = res {
+                if let Operand::Copy(q) = &r {
+                    self.take_temp(q);
+                }
+                self.assign(Place::local(res), Rvalue::Use(r));
+            }
+            self.goto(join);
+        }
+        self.switch_to(join);
+        match res {
+            Some(res) => self.owned_result(Some(res), rty),
+            None => unit(),
+        }
     }
 
     fn array_op(

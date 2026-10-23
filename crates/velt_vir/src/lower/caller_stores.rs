@@ -32,6 +32,12 @@ impl FnLower<'_, '_> {
         let ty = self.sub(value.ty);
         let held = self.held_by_caller(value);
         let v = self.consume(value);
+        self.keep_value(v, held, ty)
+    }
+
+    /// `keep_for_caller` of the owned value `v` of type `ty`, already evaluated (`held`: its
+    /// expression was `held_by_caller`).
+    pub(super) fn keep_value(&mut self, v: Operand, held: bool, ty: TyId) -> Operand {
         if !held {
             return self.reader_copy(v, ty);
         }
@@ -110,7 +116,7 @@ impl FnLower<'_, '_> {
     /// `Intrinsic::Transfer`), fields and elements of one at literal or variable indices, what a
     /// method or function takes out of or reads from the caller's container (`out.pop()`,
     /// `m.get(k)`), literals, objects and closures made of these.
-    fn held_by_caller(&mut self, e: &hir::Expr) -> bool {
+    pub(super) fn held_by_caller(&mut self, e: &hir::Expr) -> bool {
         match &e.kind {
             K::Local(..) | K::Lit(_) | K::Closure(_) => true,
             K::Field { base, .. }

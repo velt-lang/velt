@@ -1,0 +1,62 @@
+// check: no leaks
+// Arrays a call on the caller's container returns inside a `read` callback that the reader made
+// itself (a new object a function builds, a nested `read`'s copy) are the reader's: what is
+// pushed into them or taken out of them is counted by read mode's rules, and nothing leaks.
+// The caller's arrays reached the same way still keep what is pushed.
+class Item {
+  v: number = 0;
+  kids: Item[] = [];
+  nums: number[] = [0];
+  names: string[] = [];
+  constructor(v: number) {
+    this.v = v;
+  }
+}
+class St {
+  items: Item[] = [new Item(1), new Item(2)];
+}
+function mk(out: Item[]): Item {
+  const it = new Item(out.length);
+  it.kids.push(new Item(2));
+  return it;
+}
+function firstOf(out: Item[]): Item {
+  return out[0];
+}
+function main() {
+  const rw = shared(new RwLock<St>(new St()));
+  const out: Item[] = [new Item(9), new Item(8)];
+  const r = rw.read((s) => {
+    let n = 0;
+    // a nested read's copy
+    rw.read((s2) => s2.items[0]).kids.push(new Item(4));
+    rw.read((s2) => s2.items).push(new Item(3));
+    n += rw.read((s2) => s2.items).pop()!.v;
+    // a new object a function builds
+    mk(out).kids.push(new Item(2));
+    mk(out).kids.push(out[0]);
+    n += mk(out).kids.pop()!.v;
+    n += mk(out).kids.splice(0, 1).length;
+    for (let i = 0; i < 10; i++) {
+      mk(out).kids.push(new Item(i));
+      mk(out).kids.push(out[1]);
+      const k = mk(out).kids;
+      k.push(s.items[0]);
+      n += k.length;
+      rw.read((s2) => s2.items[1]).kids.push(new Item(i));
+    }
+    for (let i = 0; i < 4; i++) {
+      (i % 2 == 0 ? mk(out) : firstOf(out)).kids.push(new Item(i));
+      mk(out).nums.push(i);
+      mk(out).names.push("y" + i);
+      n += mk(out).kids.shift()!.v;
+    }
+    // the caller's array, reached through a call
+    firstOf(out).kids.push(new Item(5));
+    firstOf(out).kids.push(out[1]);
+    n += firstOf(out).kids.pop()!.v;
+    return n;
+  });
+  console.log(r, out.length, out[0].kids.length, out[0].kids[0].v);
+  console.log(rw.read((s) => s.items.length), rw.read((s) => s.items[0].kids.length));
+}
