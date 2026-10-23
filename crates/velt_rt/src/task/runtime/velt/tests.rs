@@ -35,6 +35,41 @@ fn a_panic_reaches_the_join_handle() {
 }
 
 #[test]
+fn aborts_racing_a_worker_taking_the_task_are_not_lost() {
+    // Tasks aborted right after their spawn, while queued: an abort can land as a worker takes
+    // the task, and each must still be dropped (the task's state is written by both sides; see
+    // the module docs of `task`).
+    struct Live(Arc<std::sync::atomic::AtomicUsize>);
+    impl Drop for Live {
+        fn drop(&mut self) {
+            self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+    const N: usize = 100_000;
+    let live = Arc::new(std::sync::atomic::AtomicUsize::new(N));
+    for _ in 0..N {
+        let guard = Live(live.clone());
+        let h = spawn(
+            async move {
+                let _guard = guard;
+                std::future::pending::<()>().await;
+            },
+            None,
+        );
+        h.abort_handle().abort();
+    }
+    let until = Instant::now() + Duration::from_secs(30);
+    while live.load(std::sync::atomic::Ordering::SeqCst) > 0 && Instant::now() < until {
+        std::thread::yield_now();
+    }
+    assert_eq!(
+        live.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "aborted tasks were never dropped"
+    );
+}
+
+#[test]
 fn an_aborted_task_is_dropped_and_reports_cancelled() {
     struct Flag(Arc<Mutex<bool>>);
     impl Drop for Flag {

@@ -5,6 +5,13 @@
 //! `NOTIFIED` (woken while running: queued again once the poll returns), `DONE`. A wake moves
 //! `IDLE` to `SCHEDULED` and queues the task on its home worker; only the worker that took it
 //! from a queue touches the future, so the future needs no lock.
+//!
+//! A wake that finds the task already queued (or already notified) changes nothing, but still
+//! writes the state (read-modify-write), and the worker moves the task to `RUNNING` with one
+//! too: all of them are then ordered on the state, so either the poll sees what the waker did
+//! before waking, or the waker sees `RUNNING` and the task is polled again. With plain loads
+//! and stores on both sides each could miss the other (a store followed by a load of another
+//! location may be reordered, on x86 too), and the task would wait for a wake that came.
 
 use super::super::handle::JoinError;
 use futures_util::task::{ArcWake, AtomicWaker};
@@ -65,7 +72,8 @@ impl Task {
 
     /// Polls the task once (it was taken from a queue: state SCHEDULED).
     pub(super) fn run(self: &Arc<Self>) -> Ran {
-        self.state.store(RUNNING, Ordering::Release);
+        // A read-modify-write, ordered with every wake's (module docs).
+        self.state.swap(RUNNING, Ordering::AcqRel);
         // SAFETY: this worker holds the task (RUNNING); nobody else touches `fut`.
         let slot = unsafe { &mut *self.fut.get() };
         let finished = match slot.as_mut() {
@@ -115,6 +123,8 @@ impl ArcWake for Task {
             let next = match s {
                 IDLE => SCHEDULED,
                 RUNNING => NOTIFIED,
+                // Nothing to change, but written all the same (module docs).
+                SCHEDULED | NOTIFIED => s,
                 _ => return,
             };
             match arc_self
