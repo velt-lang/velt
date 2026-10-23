@@ -174,3 +174,23 @@ fn a_call_that_only_changes_bytes_of_an_argument_stores_nothing_in_it() {
     );
     let _ = p;
 }
+
+#[test]
+fn an_rwlock_callback_keeps_its_captures() {
+    // Only a `Mutex`'s `with` takes variables along: what an `RwLock`'s `read` or `write`
+    // callback stores of a captured variable is that variable's own object (golden
+    // lang/rwlock_read_caller_taken under wasm copied it when `m` moved).
+    for call in ["read", "write"] {
+        let p = program(&format!(
+            "function run(rw: shared<RwLock<Db>>) {{
+               const m = new Map<string, Item>();
+               m.set(\"k\", new Item());
+               const out: Item[] = [];
+               rw.{call}((d) => {{ out.push(m.get(\"k\")!); return 0; }});
+               console.log(out.length);
+             }}
+             function main() {{ run(shared(new RwLock(new Db()))); }}"
+        ));
+        assert!(!moves(&p, "run", "m"), "{call}");
+    }
+}

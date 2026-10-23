@@ -71,6 +71,7 @@ pub(crate) fn check_locked(cx: &mut Ctx) -> WeakCrossings {
         opaque::check(cx, &mut cands, &mut res, &found.opaque);
     }
     let callbacks = found.callbacks;
+    let mutex_literals = found.mutex_literals;
     let mut seen_named = FxHashSet::default();
     for &(g, span) in &found.named {
         if seen_named.insert((g, span)) {
@@ -96,6 +97,7 @@ pub(crate) fn check_locked(cx: &mut Ctx) -> WeakCrossings {
             &summaries,
             &mut res,
             (c, direct),
+            mutex_literals.contains(&c),
             &mut reported,
             &mut weak,
         );
@@ -286,11 +288,12 @@ fn check_callback(
     s: &summary::Summaries,
     res: &mut values::Resolver,
     (c, direct): (DefId, bool),
+    at_mutex: bool,
     reported: &mut FxHashSet<Span>,
     weak: &mut WeakCrossings,
 ) {
-    // A callback written at the call takes along what only it uses (`moves`).
-    let moved = match direct {
+    // A callback written at a `Mutex`'s `with` takes along what only it uses (`moves`).
+    let moved = match direct && at_mutex {
         true => moves::into_lock(cx, res, c),
         false => FxHashSet::default(),
     };
