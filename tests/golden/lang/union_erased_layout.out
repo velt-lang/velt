@@ -1,0 +1,40 @@
+{"a":3} {"a":3}
+{"a":42} {"a":2} {"a":42} {"a":42}
+{"a":"init"} {"a":"const"}
+{"a":"s3"}
+-2
+oconst n-2
+{"a":"s4"} os4 {"a":"kr"} os4
+{"a":"nw"} onw onw
+[1,{"a":"x"},{"a":"s9"}] back
+{"a":"s2"}
+olast
+a:a0 a:A0 b:b1 b:B1 n2 n20 [{"a":"a0"},{"a":"A0"},{"b":"b1"},{"b":"B1"},2,20]
+la lr lr {"a":"lr"}
+{"v":{"a":"set"},"w":{"b":"B1"}} b:B1
+{"a":"cap"}4
+a:A0
+{"a":"A0"}
+[["k",{"a":"e1"}],["j",2]]
+number5 number3 string"s"
+string"q" string"r" number4
+[1,2,7,1] 4
+Sa,Sb N3 Sz
+a b
+b! {"v":"b!"}
+moved6 moved6
+gen
+gen
+c#
+number string 3 s 3 s true true
+3 s [ 3, 's' ]
+{ bn: 3, bs: 's' }
+num 4 str S other
+x-y 1 true
+1 t [ 1, 't' ]
+{"v":2,"tag":"number"} {"v":2,"tag":"number"} {"v":4,"tag":"lit"} true
+{"a":"c"} {"val":{"a":"c"}}
+5
+2+4
+ap
+{"a":"async"}

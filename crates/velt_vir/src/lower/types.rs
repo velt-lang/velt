@@ -206,7 +206,9 @@ impl<'h> Cx<'h> {
 
     /// Where variant `variant` of the HIR union type `hir_ty` (of the current instance) lives in
     /// its canonical type `ty` (`canon_union`): another variant index, or the whole value when
-    /// the union collapsed to that member. Unchanged for every other enum.
+    /// the union collapsed to that member. Unchanged for every other enum. A variant of a value
+    /// that is no enum is the whole value: a union whose members erase to one type is that type
+    /// (velt_sema `union_layouts`), its variants still written as variants.
     pub(super) fn union_variant(
         &mut self,
         hir_ty: TyId,
@@ -214,6 +216,14 @@ impl<'h> Cx<'h> {
         variant: u32,
         ty: TyId,
     ) -> VariantAt {
+        let is_enum = match self.kind(ty) {
+            TyKind::Adt(d, _) => matches!(self.hir.def(d), hir::Def::Enum(_)),
+            TyKind::Result(..) => true,
+            _ => false,
+        };
+        if !is_enum {
+            return VariantAt::Whole;
+        }
         let raw = self.subst_raw(hir_ty, targs);
         if raw == ty {
             return VariantAt::Index(variant);

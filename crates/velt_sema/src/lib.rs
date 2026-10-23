@@ -104,6 +104,7 @@ mod type_queries;
 mod type_reach;
 mod types;
 mod undefined_args;
+mod union_layouts;
 mod union_views;
 mod unions;
 mod utility_types;
