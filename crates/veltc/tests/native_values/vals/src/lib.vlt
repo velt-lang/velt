@@ -13,6 +13,7 @@ export struct Stats {
 
 declare function velt_vals__reverse(rows: Row[]): Row[];
 declare function velt_vals__stats(xs: f64[]): Stats;
+declare function velt_vals__count(groups: Row[][]): i64;
 declare async function velt_vals__later(n: i64, names: string[]): Promise<IoResult<Row[]>>;
 
 export function reverse(rows: Row[]): Row[] {
@@ -21,6 +22,11 @@ export function reverse(rows: Row[]): Row[] {
 
 export function stats(xs: f64[]): Stats {
   return velt_vals__stats(xs);
+}
+
+/** How many rows the groups hold (arrays of arrays of a counted type cross as views). */
+export function count(groups: Row[][]): i64 {
+  return velt_vals__count(groups);
 }
 
 /** Awaited right away. */

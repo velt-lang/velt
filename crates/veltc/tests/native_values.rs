@@ -1,7 +1,7 @@
 //! Arrays and structs across the native boundary, end to end (docs/internals/contracts/native_abi.md):
 //! the test package `native_values/vals` (a path dependency, its library built from source with
 //! cargo) passes `Row[]` and `f64[]` in, returns `Row[]`, a struct and, from an async export,
-//! `IoResult<Row[]>`. The program shares `Row` and `string[]` values, so both are counted
+//! `IoResult<Row[]>`, and takes `Row[][]` (nested views, each freed after the call). The program shares `Row` and `string[]` values, so both are counted
 //! (boxed) types and every value crosses through the compiler's foreign-layout conversion; the
 //! async results are awaited directly, kept and awaited later, and combined with `Promise.all`.
 //! It runs on both schedulers with the debug runtime's allocator checks and leak count.
@@ -19,7 +19,7 @@ fn package() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/native_values/vals")
 }
 
-const PROGRAM: &str = r#"import { Row, later, laterRaw, reverse, stats } from "vals";
+const PROGRAM: &str = r#"import { Row, count, later, laterRaw, reverse, stats } from "vals";
 
 function show(rows: Row[]) {
   for (const r of rows) {
@@ -52,10 +52,12 @@ async function main() {
   const failed = await laterRaw(1, []);
   console.log(failed.code != 0, failed.message);
   console.log(keep.length, tags2.length, keep[0].name, first.id, again.name);
+  // Arrays of arrays of a counted type: each inner array crosses as a view of its own.
+  console.log(count([rows, rows, [rows[1]]]), count([]));
 }
 "#;
 
-const EXPECTED: &str = "2 b \n1 a x+y\n3 7\n0 p \n1 q t0\n2 p t0+t1\n0 k \n1 k t0\n0 m \n1 m t0\n0 n \ntrue no names\n1 2 a 1 a\n";
+const EXPECTED: &str = "2 b \n1 a x+y\n3 7\n0 p \n1 q t0\n2 p t0+t1\n0 k \n1 k t0\n0 m \n1 m t0\n0 n \ntrue no names\n1 2 a 1 a\n5 0\n";
 
 fn run(app: &Path, scheduler: &str) -> Output {
     no_window::command(env!("CARGO_BIN_EXE_velt"))

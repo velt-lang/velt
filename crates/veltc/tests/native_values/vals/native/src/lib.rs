@@ -34,6 +34,11 @@ fn velt_vals__stats(xs: &[f64]) -> Stats {
     }
 }
 
+#[export]
+fn velt_vals__count(groups: &[Array<Row>]) -> i64 {
+    groups.iter().map(|g| g.len() as i64).sum()
+}
+
 /// `n` rows named after `names` in turn, after a short sleep on the runtime's timer.
 #[export(async)]
 async fn velt_vals__later(n: i64, names: Vec<Str>) -> Result<Vec<Row>, Error> {
