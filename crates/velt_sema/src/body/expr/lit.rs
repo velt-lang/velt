@@ -376,6 +376,24 @@ impl FnCx<'_, '_> {
         let h = self.unbrand(h);
         let h = self.widen_value(h);
         let t = self.cx.ty.core(h.ty).unwrap_or(h.ty);
+        // An array or tuple is written as `join()` writes it (`"" + [1, 2]` is `"1,2"`), a
+        // type parameter's value as its instantiation's text, with `+`'s hint for an `any`
+        // (`valueOf()` first); a symbol there throws, as in JS.
+        if matches!(self.cx.ty.kind(h.ty), TyKind::Param(_)) {
+            let what = "a string concatenation";
+            let text = match self.param_text(h, what, Hint::Default) {
+                Ok(text) => text,
+                Err(h) => self.js_text_static(h, what),
+            };
+            return self.implicit_text(text);
+        }
+        if matches!(self.cx.ty.kind(t), TyKind::Array(_) | TyKind::Tuple(_)) && h.ty == t {
+            return self.js_text(h, "a string concatenation");
+        }
+        let h = match self.concat_value_of(h) {
+            Ok(text) => return text,
+            Err(h) => h,
+        };
         // An object with a `toString()` (an error, an error union): what it returns, as in JS.
         if self.writes_by_to_string(t) {
             return self.js_text(h, "a string concatenation");
@@ -499,6 +517,15 @@ impl FnCx<'_, '_> {
     /// mentions a type parameter becomes a `TemplateToString`, which throws for a symbol as
     /// JavaScript does (the type may be `symbol` once substituted).
     fn implicit_text(&mut self, mut h: hir::Expr) -> hir::Expr {
+        // The text of a type parameter's value (`param_text`): its `ToString` branch.
+        let span = h.span;
+        if let H::If { cond, els, .. } = &mut h.kind {
+            if is_holds_dynamic(cond) {
+                let e = std::mem::replace(&mut **els, self.unit_expr(span));
+                **els = self.implicit_text(e);
+                return h;
+            }
+        }
         if let H::Call {
             callee: callee @ Callee::Intrinsic(Intrinsic::ToString),
             args,
@@ -515,6 +542,15 @@ impl FnCx<'_, '_> {
     /// it in errors): a `string` itself, else an `Intrinsic::ToString` of it.
     pub(crate) fn js_text(&mut self, h: hir::Expr, what: &str) -> hir::Expr {
         let h = self.unbrand(h);
+        match self.param_text(h, what, Hint::String) {
+            Ok(text) => text,
+            Err(h) => self.js_text_static(h, what),
+        }
+    }
+
+    /// [`Self::js_text`] of a value whose type is known here (or a type parameter written as
+    /// its instantiation's `ToString`).
+    pub(crate) fn js_text_static(&mut self, h: hir::Expr, what: &str) -> hir::Expr {
         // An `any`, `unknown` or `object` is written by the value it holds (`any_text.rs`):
         // an array as JS's `Array.prototype.toString` writes it (`1,2`), an object by its
         // `toString()`, not as `console.log` prints it. So is a list of them (`any[]`), each
@@ -621,7 +657,8 @@ impl FnCx<'_, '_> {
                     callee: Callee::Intrinsic(Intrinsic::ToString | Intrinsic::TemplateToString),
                     ..
                 }
-        ) || self.fresh_dynamic_text(&first);
+        ) || self.fresh_dynamic_text(&first)
+            || matches!(&first.kind, H::If { cond, .. } if is_holds_dynamic(cond));
         let mut acc = first;
         let mut n = 1;
         for p in it {
@@ -651,4 +688,15 @@ fn dynamic_hinted(e: &ast::Expr) -> bool {
         }),
         _ => false,
     }
+}
+
+/// Is `e` a `HoldsDynamic` test ([`FnCx::param_text`])?
+fn is_holds_dynamic(e: &hir::Expr) -> bool {
+    matches!(
+        e.kind,
+        H::Call {
+            callee: Callee::Intrinsic(Intrinsic::HoldsDynamic),
+            ..
+        }
+    )
 }

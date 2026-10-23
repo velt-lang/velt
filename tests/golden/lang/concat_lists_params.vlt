@@ -1,0 +1,39 @@
+// A string `+` with an array, a tuple or a type parameter's value writes it as JavaScript's
+// `String(x)` does (issue #1462): an array as `join()` writes it, a type parameter's value as
+// its instantiation's text (`valueOf()` first for an `any`, as `+` asks).
+const nums: number[] = [1, 2.5, -0];
+const mixed: any[] = [1, "x", null, [2, 3]];
+const pair: [number, string] = [7, "seven"];
+console.log("" + nums, nums + "!", "[" + mixed + "]", "pair " + pair);
+
+let s = "acc:";
+s += nums;
+s += pair;
+console.log(s);
+
+function cat<T>(label: string, v: T): string {
+  return label + v;
+}
+
+class Celsius {
+  valueOf(): number {
+    return 21;
+  }
+  toString(): string {
+    return "21 C";
+  }
+}
+
+console.log(cat("n=", 3), cat("s=", "x"), cat("b=", true), cat("a=", [1, 2]));
+console.log(cat<any>("o=", { a: 1 }), cat<any>("c=", new Celsius()), cat<unknown>("u=", [4]));
+console.log(`${new Celsius()}`, "" + new Celsius());
+
+class Meters {
+  valueOf(): number {
+    return 3;
+  }
+}
+class Warm extends Celsius {}
+let t = "t=";
+t += new Warm();
+console.log("" + new Meters(), "m" + new Warm(), t);

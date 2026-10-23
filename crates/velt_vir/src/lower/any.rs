@@ -84,6 +84,13 @@ impl Cx<'_> {
         }
     }
 
+    /// Is `t` `any`, `unknown` or `object` (`Intrinsic::HoldsDynamic`; a `Function` is not
+    /// written as a dynamic value's text)?
+    pub(super) fn holds_dynamic(&self, t: TyId) -> bool {
+        self.is_dynamic(t)
+            && !matches!(self.types.kind(t), TyKind::Dyn(d, _) if self.hir.function == Some(*d))
+    }
+
     /// Is `t` `object` or `Function` (issue #926)?
     pub(super) fn is_narrow_dynamic(&self, t: TyId) -> bool {
         match self.types.kind(t) {

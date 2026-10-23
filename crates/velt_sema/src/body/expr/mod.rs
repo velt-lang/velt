@@ -141,6 +141,7 @@ mod three_state;
 mod throws_mismatch;
 mod top_level_await;
 mod truthiness;
+mod tuple_text;
 mod type_tests;
 mod typeof_member;
 mod union_coerce;

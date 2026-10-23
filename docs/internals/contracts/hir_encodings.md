@@ -146,6 +146,15 @@ Maintainer-owned, like `hir/mod.rs`, `hir/intrinsic.rs` and `hir/module_state.rs
   `g(x)`, stops with a `TypeError` if that returned `true` (the predicate was wrong), and runs
   only `B`; `A` is not lowered for that instantiation (a generic function that calls itself as
   `signal({ value: x })` in `A` has finitely many instantiations).
+- Text of a type parameter (issue #1462): `String(x)`, a template part `${x}` and a string
+  `+` operand `x` of the type of a type parameter `T` are `If { cond: Call {
+  Intrinsic(HoldsDynamic), [Call { Intrinsic(NullAs), [] }: T] }, then: <x converted to any,
+  written by the prelude's `__anyString` (`__anyConcatText` for `+`)>, els: Call {
+  Intrinsic(ToString | TemplateToString), [x] } }`, each branch with its own copy of `x`.
+  `HoldsDynamic` is a constant per instantiation: `true` when `T` is `any`, `unknown` or
+  `object`; its probe is never evaluated. Lowering evaluates it like `HoldsNull`
+  (`const_cond`), so each instantiation lowers one branch, and the others the code they had
+  without the test.
 
 ## M3/M4 encodings (lowering assumptions, confirmed at merge of ir-3)
 - An async fn's `FnDef::ret` is the body's return type `T` (the call's type is `Promise<T>`).

@@ -153,7 +153,12 @@ impl FnCx<'_, '_> {
 
     /// `f(args, <site>)` of the text helper `f`: `args` and the call site its stops report
     /// ([`Self::text_site`]), checked as a call with an empty string in its place.
-    fn text_helper_call(&mut self, f: &str, mut args: Vec<ast::Expr>, span: Span) -> hir::Expr {
+    pub(crate) fn text_helper_call(
+        &mut self,
+        f: &str,
+        mut args: Vec<ast::Expr>,
+        span: Span,
+    ) -> hir::Expr {
         if self.in_text_helper() {
             args.push(site_param(span));
             return self.prelude_fn_call(f, args, span);
@@ -362,6 +367,71 @@ impl FnCx<'_, '_> {
             false => f.params.len(),
         };
         Some((f.ret, arity))
+    }
+
+    /// `String(x)` of an `x` whose type is a type parameter `T` (issue #1462):
+    /// `HoldsDynamic(<T>) ? <x's text as an any's> : ToString(x)`, a condition fixed per
+    /// instantiation, so `T = any` (`unknown`, `object`) writes the value held as `String(x)`
+    /// of an `any` does (`[object Object]`, its own `toString()`), and the other instantiations
+    /// lower only `ToString(x)`, the code they had without the test. Each branch evaluates `x`
+    /// (one runs); the test's probe is `NullAs` (never evaluated). `Err` gives `h` back for
+    /// other types.
+    pub(crate) fn param_text(
+        &mut self,
+        h: hir::Expr,
+        what: &str,
+        hint: Hint,
+    ) -> Result<hir::Expr, hir::Expr> {
+        if !matches!(self.cx.ty.kind(h.ty), TyKind::Param(_)) || !self.writes_dynamic_text() {
+            return Err(h);
+        }
+        let Some(any) = self.any_ty() else {
+            return Err(h);
+        };
+        let (span, bool_, str_) = (h.span, self.cx.ty.bool_, self.cx.ty.str_);
+        let probe = self.intrinsic(Intrinsic::NullAs, vec![], h.ty, span);
+        let cond = self.intrinsic(Intrinsic::HoldsDynamic, vec![probe], bool_, span);
+        let value = self.share_if_place(h.clone());
+        let value = self.coerce(value, any);
+        let then = self.dynamic_text_as(value, span, hint);
+        let els = self.js_text_static(h, what);
+        let kind = H::If {
+            cond: Box::new(cond),
+            then: Box::new(then),
+            els: Box::new(els),
+        };
+        Ok(self.mk(kind, str_, span))
+    }
+
+    /// A class instance `h` as the operand of a string `+`, whose hint (`"default"`) asks for
+    /// its `valueOf()` before its `toString()`: the text of what its own (or a base class's)
+    /// `valueOf()` returns when that is a primitive (`"" + celsius` is `"21"`), as in JS. A
+    /// `Date` is written by its `toString()` (its `[Symbol.toPrimitive]` takes `"default"` as
+    /// `"string"`). `Err` gives `h` back otherwise.
+    pub(crate) fn concat_value_of(&mut self, h: hir::Expr) -> Result<hir::Expr, hir::Expr> {
+        let Some((c, _)) = self.adt_of(h.ty) else {
+            return Err(h);
+        };
+        let date = self.cx.prelude_adt("Date");
+        if self.cx.class_of(h.ty).is_none() || date.is_some_and(|d| self.cx.class_extends(c, d)) {
+            return Err(h);
+        }
+        let n = self.cx.adt(c).map_or(0, |a| a.generics.len());
+        let params: Vec<_> = (0..n as u32).map(|i| self.cx.ty.param(i)).collect();
+        let to_primitive = self.callable_method(c, &params, "[Symbol.toPrimitive]");
+        match self.callable_method(c, &params, "valueOf") {
+            Some((ret, 0)) if to_primitive.is_none() && self.primitive_ty(ret) => {}
+            _ => return Err(h),
+        }
+        let span = h.span;
+        let Some(call) = self.method_call_hir(h.clone(), "valueOf", span) else {
+            return Err(h);
+        };
+        if call.ty == self.cx.ty.str_ {
+            return Ok(call);
+        }
+        let str_ = self.cx.ty.str_;
+        Ok(self.intrinsic(Intrinsic::ToString, vec![call], str_, span))
     }
 
     /// Is `t` a `string`, number or boolean (a `valueOf()` result `ToPrimitive` keeps)?

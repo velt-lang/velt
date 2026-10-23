@@ -153,6 +153,11 @@ pub enum Intrinsic {
     /// condition of an `if` whose test `g(x)` is a type predicate with only primitive members
     /// (hir_encodings.md "Type predicates on a type parameter").
     MayHoldPrimitive,
+    /// Compiler-internal (issue #1462): `(probe: borrow T) -> bool`, a constant: is the type
+    /// `T` is instantiated with `any`, `unknown` or `object`? The probe is not evaluated. The
+    /// condition of the `if` that writes a `T` value's text (hir_encodings.md "Text of a type
+    /// parameter").
+    HoldsDynamic,
     /// std only (std/sort/stable.vlt): `__intrinsic_fn_captures_nothing<F>(f: borrow F) ->
     /// bool` for a function value: true when its environment is null, which only closures
     /// without captures and named functions have (a program that compares function values

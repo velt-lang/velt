@@ -46,16 +46,39 @@ fn is_call(e: &hir::Expr) -> bool {
     matches!(e.kind, hir::ExprKind::Call { .. })
 }
 
-/// Append the parts of `e` (a `StrConcat` tree or a leaf) in evaluation order.
-pub(super) fn flatten<'e>(e: &'e hir::Expr, out: &mut Vec<Part<'e>>) {
+/// Is `e` an `Intrinsic::HoldsDynamic` test: the condition of the text of a type parameter's
+/// value (hir_encodings.md "Text of a type parameter"), a constant per instantiation?
+pub(super) fn is_holds_dynamic(e: &hir::Expr) -> bool {
+    matches!(
+        e.kind,
+        hir::ExprKind::Call {
+            callee: hir::Callee::Intrinsic(Intrinsic::HoldsDynamic),
+            ..
+        }
+    )
+}
+
+/// Append the parts of `e` (a `StrConcat` tree or a leaf) in evaluation order. `pick` decides
+/// a `HoldsDynamic` test, whose branch is the part (each instantiation has the parts it would
+/// have without the test).
+pub(super) fn flatten<'e>(
+    e: &'e hir::Expr,
+    out: &mut Vec<Part<'e>>,
+    pick: &mut dyn FnMut(&hir::Expr) -> Option<bool>,
+) {
     match &e.kind {
         hir::ExprKind::Call {
             callee: hir::Callee::Intrinsic(Intrinsic::StrConcat),
             args,
         } if args.len() == 2 => {
-            flatten(&args[0], out);
-            flatten(&args[1], out);
+            flatten(&args[0], out, pick);
+            flatten(&args[1], out, pick);
         }
+        hir::ExprKind::If { cond, then, els } if is_holds_dynamic(cond) => match pick(cond) {
+            Some(true) => flatten(then, out, pick),
+            Some(false) => flatten(els, out, pick),
+            None => out.push(Part::Str(e)),
+        },
         hir::ExprKind::Call {
             callee: hir::Callee::Intrinsic(i @ (Intrinsic::ToString | Intrinsic::TemplateToString)),
             args,
@@ -73,8 +96,8 @@ impl FnLower<'_, '_> {
     /// `StrConcat(a, b)`, flattened with any nested concatenations and `ToString`s.
     pub(super) fn str_concat(&mut self, a: &hir::Expr, b: &hir::Expr, ty: TyId) -> Operand {
         let mut parts = vec![];
-        flatten(a, &mut parts);
-        flatten(b, &mut parts);
+        flatten(a, &mut parts, &mut |c| self.const_cond(c));
+        flatten(b, &mut parts, &mut |c| self.const_cond(c));
         let ty = self.sub(ty);
         let fresh = parts
             .iter()
