@@ -26,7 +26,9 @@ async function main() {
       spawn(flush(stream, tx.clone()));
     }
   }
-  console.log("flushers started:", started);
+  // One at least: where the socket takes the first frames at once, the flusher can drain the
+  // queue and end before the next push starts another.
+  console.log("a flusher started:", started >= 1);
   await sleep(50);
   console.log("still writing:", tx.with((q) => q.flushing && q.stopped == ""));
 

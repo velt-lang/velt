@@ -1,4 +1,4 @@
-flushers started: 1
+a flusher started: true
 still writing: true
 close queued: true
 bounded: true
