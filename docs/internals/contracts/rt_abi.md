@@ -388,20 +388,26 @@ struct ModuleDesc {
   void (*init)(void *state);
   void (*drop)(void *state);
   const char *names;   /* each slot's name, NUL-terminated, in slot order */
+  void (*rest)(void *state); /* the root file's slots, or NULL (additive, #1438) */
 };
 void *velt_rt_module_state(const struct ModuleDesc *desc, uint64_t slot);
+void *velt_rt_module_block(const struct ModuleDesc *desc);
 void velt_rt_module_ready(void *state, uint64_t n);
 ```
 
 `velt_rt_module_state` returns the process's module state block, for an access to slot `slot`:
 allocated zeroed with `size`/`align` and filled by `init` on the first call (the block is current
-while `init` runs). `init` calls `velt_rt_module_ready(state, i + 1)` after it stored slot `i`;
-an access to a slot whose initializer has not run yet (through a function an earlier
-initializer calls) prints `Uncaught ReferenceError: Cannot access '<name>' before
-initialization` and exits with code 1. The block is not dropped while the program runs (only at
-exit under the debug runtime's `VELT_RC_STATS=1`, for the leak counters). A call with a
-different descriptor than the block was made with (code swapped in by `velt dev`) gets a block
-of its own.
+while `init` runs). `init` calls `velt_rt_module_ready(state, i + 1)` after it stored slot `i`
+(`u64::MAX` after the last slot); it stops before the root file's slots, which the root file's
+`main` initializes where its statements reach them, on the block `velt_rt_module_block` returns
+(the same block, allocated and initialized the same way, without the slot check). An access to a
+slot whose initializer has not run yet (through a function an earlier initializer or statement
+calls) prints `Uncaught ReferenceError: Cannot access '<name>' before initialization` and exits
+with code 1. The block is not dropped while the program runs (only at exit under the debug
+runtime's `VELT_RC_STATS=1`, for the leak counters, and only once every slot is initialized). A
+call with a different descriptor than the block was made with (code swapped in by `velt dev`)
+gets a block of its own, which `rest` (when not null) completes after `init`, as that code's
+`main` does not run again.
 
 The call takes the process-wide *module lock* unless the thread holds it: inside a task until
 the end of the poll, and every later poll of that task takes it at its start; outside a task (a

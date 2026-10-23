@@ -21,7 +21,7 @@ use crate::SourceModule;
 
 /// The functions holding module `m`'s top-level statements: the generated `main`, or the
 /// chunks `module_chunks` split it into (names with an empty span).
-fn script_fns(m: &SourceModule) -> Vec<&ast::FnDecl> {
+pub(crate) fn script_fns(m: &SourceModule) -> Vec<&ast::FnDecl> {
     m.ast
         .items
         .iter()
