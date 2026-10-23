@@ -28,7 +28,13 @@ impl FnCx<'_, '_> {
                     .is_some_and(|p| self.cx.mentions_op(p.ty) && !pattern[i])
             })
             .collect();
-        let round = |i: usize| match (deferred(&args[i]) || late[i], as_arrow(&args[i]).is_some()) {
+        // A generic class as a value (`reg(Box, 1)` for `C: new (v: T) => Box<T>`) takes its
+        // type arguments from the signature: the other arguments fix them first.
+        let class: Vec<bool> = args.iter().map(|a| self.names_generic_class(a)).collect();
+        let round = |i: usize| match (
+            deferred(&args[i]) || late[i] || class[i],
+            as_arrow(&args[i]).is_some() || class[i],
+        ) {
             (false, _) => 0,
             (true, false) => 1,
             (true, true) => 2,

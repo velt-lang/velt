@@ -955,7 +955,17 @@ async function main() {
   or a class's static field (`new Registry.DEFAULT(x)`), and an optional parameter of the
   signature may be left out (`new (x?: number) => Point`). A class has one value per signature
   type, as JavaScript has one class object: `C === Point`, `kinds.includes(Point)`,
-  `Object.is` and `Map` and `Set` keys see the same object. A class used as a value without
+  `Object.is` and `Map` and `Set` keys see the same object, also where a generic function
+  takes the class (`register<T>(C: new (x: number) => T)` called as `register(Point)`). A class
+  declared in a function gets a new value each time its declaration runs (each call, each loop
+  iteration), as JavaScript makes a new class object there. Two cases differ from JavaScript,
+  which has one object per class (#1444): one class at two signature types is two objects
+  (`new () => Point` and `new (x?: number) => Point`, or `Box` at `new (v: number) =>
+  Box<number>` and at `new (v: string) => Box<string>`), so comparing values of two signature
+  types directly is an error, and compared as `unknown` or as `Map` and `Set` keys they are not
+  equal; and a class read at a signature type over a generic function's type parameters in
+  its body (`const k: new (v: T) => Box<T> = Box;`) is one object per call of that function.
+  A class used as a value without
   such a type (`const C = Point;`) is an error for now, as are generic construct signatures
   (`new <T>(x: T) => Box<T>`), printing or `JSON.stringify` of one, converting one to another
   construct signature type (`new (x: number) => Point3` to `new (x: number) => Point`; name

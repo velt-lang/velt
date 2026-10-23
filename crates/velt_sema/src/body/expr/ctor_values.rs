@@ -12,8 +12,10 @@
 //! of the module state, made when the class is first named as a value of that type (types that
 //! differ only in their inferred error sets, `throws::vars`, share it) and initialized before
 //! any module runs (it reads nothing), so `===`, `includes`, `Map` and `Set` keys see one
-//! object. Only a signature type over type parameters (in a generic function) makes the
-//! object at each use.
+//! object. A class passed to a generic function's parameter is checked at the parameter's type
+//! with the call's type arguments (`class_arg_slots`), so it is that constant too. A class
+//! declared in a function, and one read at a signature type over type parameters (in a
+//! generic function's body), is a `const` at the start of a block instead (`ctor_locals`).
 //!
 //! - `new C(args)` with a variable, a module constant, a member of one or a class's static
 //!   field `C` of that type calls `C.#new(args)`;
@@ -30,6 +32,9 @@ use crate::ctx::Item;
 use crate::defs::{BodyState, DefInfo, GlobalInfo, GlobalSrc};
 use crate::fn_types::{IS, NAME, NEW};
 use crate::hir::{self, AdtKind, DefId, TyId, TyKind};
+
+/// Why class values of two signature types don't compare.
+pub(super) const TWO_SIGNATURES_NOTE: &str = "a class has one value per construct signature type: values of two signature types are different objects even for one class, so they don't compare (#1444)";
 
 fn ident(name: &str, span: Span) -> ast::Ident {
     ast::Ident {
@@ -132,8 +137,80 @@ impl FnCx<'_, '_> {
             let read = self.global_read(g, want, span);
             return Some(self.coerce(read, target));
         }
+        let key = self.class_value_key(target);
+        let lit = |s: &mut Self| s.class_value_lit(&id.name, &class, f, span);
+        if let Some(h) = self.class_value_local(d, (target, key), lit, want, span) {
+            return Some(h);
+        }
         let lit = self.class_value_lit(&id.name, &class, f, span)?;
         Some(self.expr(&lit, Some(target), want))
+    }
+
+    /// The class named by `e`, when `e` names one (not a variable).
+    fn named_class(&mut self, e: &ast::Expr) -> Option<DefId> {
+        let ast::ExprKind::Ident(id) = &e.kind else {
+            return None;
+        };
+        if self.peek_local_ty(&id.name).is_some() {
+            return None;
+        }
+        let Some(Item::Def(d)) = self.cx.lookup_item_at(self.module, &id.name, id.span) else {
+            return None;
+        };
+        self.cx
+            .adt(d)
+            .is_some_and(|a| a.kind == AdtKind::Class)
+            .then_some(d)
+    }
+
+    /// Does `e` name a generic class (`Box` of `class Box<T>`)?
+    pub(super) fn names_generic_class(&mut self, e: &ast::Expr) -> bool {
+        self.named_class(e)
+            .is_some_and(|d| self.cx.adt(d).is_some_and(|a| a.generics.len() > 0))
+    }
+
+    /// A class named as argument `arg` for parameter type `pty`, a construct signature over the
+    /// callee's type parameters (`reg<T>(C: new (n: number) => T)` called as `reg(A)`): its
+    /// instance type fixes the slots of the signature's result first, as TypeScript infers
+    /// them, so the class is checked at the signature type the call instantiates and is the
+    /// one constant of that type (`class_value_global`), not a new object per call.
+    pub(super) fn class_arg_slots(
+        &mut self,
+        arg: &ast::Expr,
+        pty: TyId,
+        slots: &mut [Option<TyId>],
+    ) {
+        if slots.iter().all(Option::is_some) {
+            return;
+        }
+        // A generic class's instance type is known only with its type arguments.
+        let Some(d) = self.named_class(arg) else {
+            return;
+        };
+        if self.cx.adt(d).is_some_and(|a| a.generics.len() > 0) {
+            return;
+        }
+        let core = self.cx.ty.core(pty).unwrap_or(pty);
+        let Some(f) = self.cx.ctor_sig(core) else {
+            return;
+        };
+        let TyKind::FnPtr { ret, .. } = self.cx.ty.kind(f).clone() else {
+            return;
+        };
+        let instance = self.cx.ty.intern(TyKind::Adt(d, vec![]));
+        let mut tried = slots.to_vec();
+        if self.cx.match_ty(ret, instance, &mut tried) {
+            slots.copy_from_slice(&tried);
+        }
+    }
+
+    /// What tells class values of type `target` apart: types that differ only in their
+    /// inferred error sets (`throws::vars`) share one (module docs).
+    fn class_value_key(&mut self, target: TyId) -> TyId {
+        match self.cx.fn_sites.use_vars {
+            true => self.cx.plain_type(target),
+            false => target,
+        }
     }
 
     /// The constant holding class `d`'s value of type `target` (module docs), made on first
@@ -148,10 +225,7 @@ impl FnCx<'_, '_> {
         if !matches!(self.cx.lookup_item(module, &name), Some(Item::Def(x)) if x == d) {
             return None;
         }
-        let key = match self.cx.fn_sites.use_vars {
-            true => (d, self.cx.plain_type(target)),
-            false => (d, target),
-        };
+        let key = (d, self.class_value_key(target));
         let values = &self.cx.objects.class_values;
         if let Some((_, g)) = values.iter().find(|(k, _)| *k == key) {
             return Some(*g);

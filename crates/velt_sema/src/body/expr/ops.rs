@@ -576,6 +576,9 @@ impl FnCx<'_, '_> {
             if let Some(note) = self.number_note(t, rt) {
                 d = d.with_note(note);
             }
+            if is_comparison(op) && self.cx.is_ctor_type(t) && self.cx.is_ctor_type(rt) {
+                d = d.with_note(super::ctor_values::TWO_SIGNATURES_NOTE);
+            }
             if op == B::Add && (t == self.cx.ty.str_ || rt == self.cx.ty.str_) {
                 d = d.with_note(
                     "use a template literal to combine strings with other values: `${a}${b}`",

@@ -1142,6 +1142,9 @@ object type of three hidden fields: `#new` (the signature's function type: a clo
 constructs an instance), `#is` (`(v: unknown) => boolean`, the `instanceof` test) and `#name`
 (the class's name) (`velt_sema` `fn_types.rs`). A class used as a value of such a type is a
 `Global` of the module state, one per class and signature type, whose initializer is the
-`AdtLit` of the three closures (`body/expr/ctor_values.rs`); `new C(x)` calls `#new`
+`AdtLit` of the three closures (`body/expr/ctor_values.rs`); for a class declared in a function,
+and one used at a signature type over type parameters, it is a local instead, bound by a `Let`
+at the start of the class's block or of the function's body (`body/expr/ctor_locals.rs`) and
+captured by closures like any local. `new C(x)` calls `#new`
 (`Callee::Indirect` through a `Field` read) and `v instanceof C` calls `#is`. Held as `any` or
 `unknown`, its `typeof` tag is `function` (lowering tells by the first field, `#new`).

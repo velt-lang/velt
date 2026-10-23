@@ -104,6 +104,14 @@ impl Ctx<'_> {
         matches!(self.ty.kind(ty), TyKind::FnPtr { .. }).then_some(ty)
     }
 
+    /// Construct signature type `t` as written (`new (n: number) => C`), with `names` the type
+    /// parameters in scope.
+    pub(crate) fn display_ctor(&self, t: TyId, names: &[String]) -> String {
+        let (f, args) = self.ctor_sig_own(t).expect("ICE: construct signature");
+        let bound: Vec<String> = args.iter().map(|t| self.display_in(*t, names)).collect();
+        format!("new {}", self.display_in(f, &bound))
+    }
+
     /// The function type of construct signature type `t` over its def's own type parameters,
     /// and `t`'s type arguments.
     pub(crate) fn ctor_sig_own(&self, t: TyId) -> Option<(TyId, Vec<TyId>)> {
@@ -119,6 +127,26 @@ impl Ctx<'_> {
             return None;
         }
         Some((a.fields[0].ty, args.clone()))
+    }
+
+    /// Are construct signature types `a` and `b` one type but for the error-set variables of
+    /// their functions (`throws::vars`)? Then those are unified, and a value of one is the
+    /// value of the other: the class's one object. Two written over type parameters
+    /// (`new (n: number) => T` in two places) are generic anonymous types of their own, whose
+    /// fields the variables' comparisons don't look into.
+    pub(crate) fn unify_ctor_vars(&mut self, a: TyId, b: TyId) -> bool {
+        if a == b {
+            return false;
+        }
+        match (self.ctor_sig(a), self.ctor_sig(b)) {
+            (Some(fa), Some(fb)) => self.unify_err_vars(fa, fb),
+            _ => false,
+        }
+    }
+
+    /// Is `t` a construct signature type (a class value's)?
+    pub(crate) fn is_ctor_type(&self, t: TyId) -> bool {
+        self.ctor_sig_own(self.ty.core(t).unwrap_or(t)).is_some()
     }
 
     /// Is `d` the constant holding a class's value (`body::expr::ctor_values`)?
