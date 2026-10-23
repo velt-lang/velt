@@ -5,10 +5,12 @@ use velt_sema::hir::{self, TyId, TyKind};
 
 use super::any::{TAG_NUMBER, TAG_STRING};
 use super::any_member::{NullKey, ST_OK};
+use super::any_proxy::ProxyKey;
 use super::any_set::{SLOT_SET, SLOT_SET_INDEX, ST_MISSING};
 use super::operand::proj;
+use super::rt::Rt;
 use super::{cint, FnLower};
-use crate::vir::{BinOp, Operand, Place, Proj, Rvalue, Terminator, Ty};
+use crate::vir::{BinOp, Operand, Place, Proj, Rvalue, Terminator, Ty, STR_AGG};
 
 /// The class id word of the `any` table of an array or tuple type (glue/vtable.rs): no class
 /// has it, so `instanceof` is false, and `Array.isArray` compares one word.
@@ -101,6 +103,26 @@ impl FnLower<'_, '_> {
 
     /// The null check, the slot call and the status check of a write with key `key`.
     fn any_set_at(&mut self, data: &Operand, desc: &Operand, key: SetKey, v: Operand) {
+        let done = self.proxy_branch("__set", data, desc, |lw, obj, pty, r| {
+            let (pk, shown): (ProxyKey, Box<dyn Fn(&mut Self) -> Operand>) = match &key {
+                SetKey::Str(k) => {
+                    let k2 = k.clone();
+                    (ProxyKey::Str(lw.copy_to_temp(k.clone(), Ty::Ptr)), Box::new(move |_| k2.clone()))
+                }
+                SetKey::Num(i) => {
+                    let n = lw.copy_to_temp(i.clone(), Ty::F64);
+                    let shown = move |lw: &mut Self| {
+                        let s = lw.temp(Ty::Agg(STR_AGG));
+                        let sa = lw.addr(Place::local(s));
+                        let iv = Operand::Copy(Place::local(n));
+                        lw.call_rt(Rt::StrFromF64, vec![iv, sa.clone()], None);
+                        sa
+                    };
+                    (ProxyKey::Num(n), Box::new(shown))
+                }
+            };
+            lw.proxy_set_direct((obj, pty, r), pk, v.clone(), &*shown);
+        });
         let (st, k) = match &key {
             SetKey::Str(k) => {
                 self.any_nullish_check_as(desc, NullKey::Str(k), true);
@@ -148,6 +170,7 @@ impl FnLower<'_, '_> {
         }
         self.terminate(Terminator::Unreachable);
         self.switch_to(good);
+        self.proxy_join(done);
     }
 
     /// Is `t` TypeScript's `object` (issue #926)?

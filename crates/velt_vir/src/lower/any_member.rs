@@ -20,6 +20,7 @@
 
 use velt_sema::hir::{self, Nothing, TyId, TyKind};
 
+use super::any_proxy::ProxyKey;
 use super::any::{SLOT_NUMBER, TAG_NULL, TAG_NUMBER, TAG_STRING, TAG_UNDEFINED};
 use super::glue::{Glue, VtableKey};
 use super::operand::proj;
@@ -415,6 +416,10 @@ impl FnLower<'_, '_> {
 
     fn any_get_str(&mut self, data: &Operand, desc: &Operand, key: Operand, out: Operand) {
         self.any_nullish_check(desc, NullKey::Str(&key));
+        let done = self.proxy_branch("__get", data, desc, |lw, obj, pty, r| {
+            let k = lw.copy_to_temp(key.clone(), Ty::Ptr);
+            lw.proxy_get_direct((obj, pty, r), ProxyKey::Str(k), out.clone());
+        });
         let args = vec![data.clone(), key.clone(), out];
         let st = self.any_slot(desc.clone(), SLOT_GET, args, vec![Ty::Ptr; 3]);
         // In `Reflect.get`, the read a proxy forwards to its target: a method of a class
@@ -425,10 +430,15 @@ impl FnLower<'_, '_> {
             "' through `any` is not supported for this value yet (#924)"
         };
         self.any_status_check(st, ("TypeError: reading '", Some(&key), tail), None);
+        self.proxy_join(done);
     }
 
     fn any_index_at(&mut self, data: &Operand, desc: &Operand, i: Operand, out: Operand) {
         self.any_nullish_check(desc, NullKey::Num(&i));
+        let done = self.proxy_branch("__get", data, desc, |lw, obj, pty, r| {
+            let n = lw.copy_to_temp(i.clone(), Ty::F64);
+            lw.proxy_get_direct((obj, pty, r), ProxyKey::Num(n), out.clone());
+        });
         let args = vec![data.clone(), i, out];
         let st = self.any_slot(
             desc.clone(),
@@ -445,6 +455,7 @@ impl FnLower<'_, '_> {
             ),
             None,
         );
+        self.proxy_join(done);
     }
 
     /// `AnyIndex`: `o[i]` with a number key.

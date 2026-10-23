@@ -1,0 +1,20 @@
+// check: no leaks
+// A proxy trap's error reaching a typed read (`s.n` of a proxy converted to `{ n: number }`)
+// nothing catches: the process ends with Node's `Uncaught` report and exit code 1, after the
+// output before it (#1174; a `try` around a typed read catching it comes with stage 2).
+class TrapError extends Error {}
+
+function main(): void {
+  const s = new Proxy({ n: 1 }, {
+    get(t, k, r) {
+      if (k === "n" && Reflect.get(t, "n", r) === 2) {
+        throw new TrapError("n is 2");
+      }
+      return Reflect.get(t, k, r);
+    },
+  }) as { n: number };
+  console.log(s.n);
+  s.n = 2;
+  console.log("written");
+  console.log(s.n);
+}

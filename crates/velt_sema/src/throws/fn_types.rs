@@ -1,7 +1,8 @@
 //! Inferred error types of function types written without `throws` (docs/reference/errors.md
 //! "Dynamic calls").
 //!
-//! Every function type written without a `throws` clause in a user module is a *site*. When a
+//! Every function type written without a `throws` clause in a user module is a *site*, and so
+//! is each trap of std/proxy's `ProxyHandler` (a trap may throw, as in JavaScript). When a
 //! closure that throws is used as a value of a function type that does not allow its errors,
 //! the sites that type may come from (matched structurally, a site's type parameters matching
 //! anything, error parts ignored) get the closure's errors ([`Ctx::seed_fn_sites`]). When some
@@ -271,7 +272,7 @@ impl Ctx<'_> {
     /// The error-set variable of the site at `span` in module `module` (`None` outside user
     /// modules).
     fn site_var(&mut self, span: Span, module: usize) -> Option<TyId> {
-        if self.scopes.get(module).is_none_or(|s| s.is_std) || span == Span::DUMMY {
+        if !self.site_module(module) || span == Span::DUMMY {
             return None;
         }
         if let Some(&v) = self.fn_sites.var_of.get(&span) {
@@ -290,7 +291,7 @@ impl Ctx<'_> {
     /// `params => ret`: what it throws (`never` when nothing was stored into it that throws),
     /// recording the site.
     fn site_error(&mut self, span: Span, module: usize) -> Option<TyId> {
-        if self.scopes.get(module).is_none_or(|s| s.is_std) {
+        if !self.site_module(module) {
             return None;
         }
         let members = self.fn_sites.seeds.sites.get(&span)?.clone();
@@ -298,10 +299,22 @@ impl Ctx<'_> {
         self.error_union(&ms)
     }
 
+    /// Are the function types written without `throws` in module `module` sites: those of a
+    /// user module, and the traps of std/proxy's `ProxyHandler` (the only function types that
+    /// module writes), so a trap may throw: a proxy operation throws what its trap throws
+    /// (hir_encodings.md "Proxy and Reflect").
+    fn site_module(&self, module: usize) -> bool {
+        match self.scopes.get(module) {
+            None => false,
+            Some(s) if s.is_std => self.modules.get(module).is_some_and(|m| m.path == "std/proxy"),
+            Some(_) => true,
+        }
+    }
+
     /// Record `t` as the type of the site at `span` (a user module's function type written
     /// without `throws`).
     fn record_fn_site(&mut self, span: Span, module: usize, t: TyId) {
-        if self.scopes.get(module).is_none_or(|s| s.is_std) || span == Span::DUMMY {
+        if !self.site_module(module) || span == Span::DUMMY {
             return;
         }
         if self.fn_sites.seen.insert((span, t)) {

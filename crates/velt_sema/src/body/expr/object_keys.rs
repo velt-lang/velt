@@ -293,7 +293,7 @@ impl FnCx<'_, '_> {
         // A record's keys are its `__keyNames()`, called through the member slots.
         self.note_dyn_members();
         let str_array = self.cx.ty.array(self.cx.ty.str_);
-        self.intrinsic(hir::Intrinsic::AnyKeys, vec![obj], str_array, span)
+        self.any_op(hir::Intrinsic::AnyKeys, vec![obj], str_array, span)
     }
 
     /// `Object.values(x)` / `Object.entries(x)` (`helper`) of an `any`, `object` or `Function`
