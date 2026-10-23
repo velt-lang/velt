@@ -70,12 +70,28 @@ impl FnLower<'_, '_> {
         let Some(e) = init else {
             super::ice("a `let` without an initializer in a global's initializer")
         };
+        self.declare_init_binding(local, e.ty, false);
+    }
+
+    /// A local a pattern binds in a global's initializer (`init_locals`: the `??`, `!` and
+    /// optional chains there bind the payload), declared as [`Self::declare_init_local`]
+    /// declares a `let`'s, when the pattern binds it: a binding by reference of an aggregate
+    /// holds a pointer to the matched part, as in a function body (`declare_body_locals`).
+    pub(super) fn declare_init_binding(
+        &mut self,
+        local: hir::LocalId,
+        ty: hir::TyId,
+        by_ref: bool,
+    ) {
         let i = local.0 as usize;
-        let ty = self.sub(e.ty);
-        let t = self.cx.ty(ty);
+        let ty = self.sub(ty);
+        let (t, indirect) = match self.cx.ty(ty) {
+            Ty::Agg(_) if by_ref => (Ty::Ptr, true),
+            t => (t, false),
+        };
         let vir = (t != Ty::Unit).then(|| self.new_local(t, Some(format!("init.{i}"))));
-        let droppable = vir.is_some() && self.cx.needs_drop(ty);
-        let li = super::LInfo::new(vir, ty, false, droppable, super::LState::Uninit);
+        let droppable = vir.is_some() && !by_ref && self.cx.needs_drop(ty);
+        let li = super::LInfo::new(vir, ty, indirect, droppable, super::LState::Uninit);
         if self.info.len() <= i {
             self.info.resize_with(i + 1, || {
                 super::LInfo::new(None, ty, false, false, super::LState::Uninit)

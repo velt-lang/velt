@@ -1,0 +1,87 @@
+// An `unknown` holding an instance of a generic class, converted to the interface at `any`
+// arguments: each instance converts through its own arguments (#1185).
+interface Ctx<P = {}> {
+  props: P;
+  name(): string;
+}
+
+class G<T> implements Ctx<T> {
+  props: T;
+  constructor(p: T) {
+    this.props = p;
+  }
+  name(): string {
+    return "g";
+  }
+}
+
+const s = new G<string>("str");
+const su: unknown = s;
+console.log((su as Ctx<any>).props);
+const nu: unknown = new G<number>(42);
+const nc = nu as Ctx<any>;
+console.log(nc.props, typeof nc.props);
+
+// The interface's argument is not the class's own.
+class H<T> implements Ctx<T[]> {
+  props: T[];
+  constructor(p: T[]) {
+    this.props = p;
+  }
+  name(): string {
+    return "h";
+  }
+}
+const hs: unknown[] = [new H<string>(["x"]), new H<number>([1, 2])];
+for (const h of hs) {
+  const c = h as Ctx<any>;
+  console.log(c.name(), c.props, c.props.length);
+}
+
+// Subclasses of different instances of a generic base class.
+class Base<T> implements Ctx<T> {
+  props: T;
+  constructor(p: T) {
+    this.props = p;
+  }
+  name(): string {
+    return "base";
+  }
+}
+class Sub extends Base<number> {
+  override name(): string {
+    return "sub";
+  }
+}
+class Sub2 extends Base<string> {
+  override name(): string {
+    return "sub2";
+  }
+}
+class Deep<U> extends Base<U[]> {
+  override name(): string {
+    return "deep";
+  }
+}
+const bs: unknown[] = [
+  new Sub(5),
+  new Sub2("five"),
+  new Base<boolean>(true),
+  new Deep<string>(["a", "b"]),
+];
+for (const b of bs) {
+  const c = b as Ctx<any>;
+  console.log(c.name(), c.props, typeof c.props);
+}
+
+// A subclass object held as its base class.
+const held: Base<number> = new Sub(7);
+const hu: unknown = held;
+const hc = hu as Ctx<any>;
+console.log(hc.name(), hc.props);
+
+// Writes through the converted value reach the object.
+hc.props = 8;
+console.log(held.props);
+nc.props = 43;
+console.log(nc.props);

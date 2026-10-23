@@ -62,6 +62,7 @@ mod chain_facts;
 mod literal_patterns;
 mod locals;
 mod loops;
+pub(crate) mod moved_const;
 pub(crate) mod narrow;
 mod nested_pattern;
 mod object_rest;

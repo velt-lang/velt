@@ -203,6 +203,16 @@ function main() {
   module-level `let` or a property of `globalThis` (`const first = count;`): it keeps the
   value from when the module was evaluated, not the variable's current one. Through a function
   it calls (`const first = getCount();`) it is not kept yet.
+- A `const` used as the one object through `!`, `as`, `??`, `||` or `?:`, a namespace import
+  or a part of it is kept the same way as one used directly: `K!.v = 2`, `(K as any).v = 2`,
+  `(K ?? d).v = 2`, `(c ? K! : d).v = 2`, `const v = K!`, `let v = K ?? d`, `const a = K!.a`,
+  `const { a } = K ?? d`, `{ ...K! }` (the spread shares the objects it holds),
+  `(ns.K as any).v = 2`, an argument a callee keeps (`m.set("x", N.a)`, `set.add(K?.a ?? d)`,
+  `new Box(N.a)`, `xs.fill(N.a)`) and a weak key (`wm.set(K!.a, 1)`, `wm.get(K!.a)`). A
+  constant holding a promise can't be module state, so those uses of one are errors
+  (``cannot move out of module constant `K` ``, ``cannot assign to a field of module-level
+  constant `K` ``). On a module `let` `g`, `g!`, `g as T` and `g ?? d` are the object the
+  module keeps.
 - An initializer that throws (`JSON.parse` of invalid text, `new RegExp` of an invalid
   pattern, a function that throws) stops the program with `Uncaught …` and exit code 1, as an
   error thrown while Node evaluates a module does: the rest of that module and the modules that

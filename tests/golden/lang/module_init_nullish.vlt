@@ -1,0 +1,66 @@
+// `??`, `!` and optional chains in module-level initializers (#1398): the payload they bind is
+// a local of the module state's initializer, for `let`, `const` and exported ones alike.
+
+interface Hook {
+  events: string[];
+}
+
+interface P {
+  x: number;
+  name: string;
+  tag?: string;
+  next?: P;
+}
+
+function none(): Hook | undefined {
+  return undefined;
+}
+
+function mk(n: number): P | null {
+  return n > 0 ? { x: n, name: "p" + n } : null;
+}
+
+function maybe(n: number): number | null {
+  return n > 0 ? n : null;
+}
+
+let h: Hook | undefined = none();
+let h2: Hook | undefined = { events: ["a", "b"] };
+const early = h?.events.length ?? -1;
+const late = h2?.events.length ?? -1;
+const N = maybe(3) ?? 5;
+const M = maybe(-1) ?? 5;
+let c: number | null = maybe(0);
+let L = (c as number | null) ?? 7;
+export const E = maybe(2) ?? 9;
+export let X = mk(6)?.x ?? -1;
+let first = h2!.events[0];
+let pt: P | null = { x: 1, name: "pt", tag: "t" };
+let tagLen = pt?.tag?.length ?? 0;
+let label: string = pt?.tag ?? "none";
+let pcopy: P = pt ?? { x: 0, name: "zero" };
+let arr: number[] | null = [1, 2, 3];
+let total = (arr ?? []).length + (arr?.[1] ?? 0);
+
+const m = new Map<string, string>([["a", "alpha"]]);
+let s1 = m.get("a") ?? "none";
+let s2 = m.get("b") ?? "none";
+const o1 = mk(2) ?? { x: 0, name: "zero" };
+const o2 = mk(0) ?? { x: 0, name: "zero" };
+let chain = mk(3)?.next?.name ?? "no next";
+let deep: P = { x: 1, name: "a", next: { x: 2, name: "b" } };
+let upper = deep.next?.name.toUpperCase() ?? "";
+let sliced = mk(4)?.name.slice(1) ?? "";
+let o3 = mk(5)!;
+let len = (m.get("a") ?? "").length + (m.get("z")?.length ?? 100);
+let words = [mk(1), mk(0), mk(2)].map((p) => p?.name ?? "-").join(",");
+
+export function f(): number {
+  return early;
+}
+
+console.log(f(), late, N, M, L, E, X, first, tagLen, label, pcopy.x, total);
+console.log(s1, s2, o1.x, o2.name, chain, upper, sliced, o3.name, len, words);
+pcopy.x = 42;
+o1.x = 9;
+console.log(pt!.x, pcopy.x, o1.x);

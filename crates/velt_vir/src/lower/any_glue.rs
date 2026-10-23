@@ -339,8 +339,9 @@ impl FnLower<'_, '_> {
                 self.store(slot.clone(), none);
             } else {
                 let want = self.any_target_name(p);
+                let an = super::any_errors::article_of(&want);
                 self.panic_msg(&format!(
-                    "TypeError: the value is not a {want} (it is undefined)"
+                    "TypeError: the value is not {an} {want} (it is undefined)"
                 ));
                 self.terminate(Terminator::Unreachable);
                 let dead = self.new_block();

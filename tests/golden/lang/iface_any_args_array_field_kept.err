@@ -1,0 +1,9 @@
+iface_any_args_array_field_kept.vlt:30:11: error: `kids` read through `Tree<any>`
+iface_any_args_array_field_kept.vlt:33:6: error: `kids` read through `Tree<any>`
+iface_any_args_array_field_kept.vlt:34:9: error: `kids` read through `Tree<any>`
+iface_any_args_array_field_kept.vlt:36:13: error: `kids` read through `Tree<any>`
+iface_any_args_array_field_kept.vlt:36:24: error: `kids` read through `Tree<any>`
+iface_any_args_array_field_kept.vlt:36:38: error: `kids` read through `Tree<any>`
+iface_any_args_array_field_kept.vlt:36:55: error: `kids` read through `Tree<any>`
+iface_any_args_array_field_kept.vlt:36:68: error: `kids` read through `Tree<any>`
+iface_any_args_array_field_kept.vlt:37:17: error: `kids` read through `Tree<any>`

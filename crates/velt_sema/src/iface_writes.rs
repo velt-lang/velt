@@ -33,6 +33,17 @@ pub(crate) struct IfaceWrites {
     parts: FxHashMap<(DefId, usize), Span>,
     /// The names of interface fields whose values a read copies ([`Ctx::copied_part`]).
     copied_names: Option<FxHashSet<String>>,
+    /// `(interface, field)`: the field, or a part of it, is written through the interface
+    /// (first at the span).
+    fields: FxHashMap<(DefId, usize), Span>,
+    /// Adapter fields whose value does not convert back (their setter slot does nothing):
+    /// an error once the field is written through the interface ([`Ctx::check_adapter_writes`]).
+    unwritable: Vec<(
+        Box<crate::body::expr::iface_adapt_slots::AdapterParts>,
+        usize,
+    )>,
+    /// Reads of array fields through interfaces at dynamic arguments (`iface_field`).
+    pub(crate) array_reads: crate::body::expr::iface_field::ArrayReads,
 }
 
 /// How an implementation stores one interface field.
@@ -66,6 +77,12 @@ pub(crate) enum SetterSrc {
         self_ty: TyId,
         name: String,
         ty: TyId,
+    },
+    /// Field `field` of an interface adapter (`body/expr/iface_adapt.rs`): written through the
+    /// wrapped value's own setter, the value converted to its field type.
+    Adapter {
+        parts: Box<crate::body::expr::iface_adapt_slots::AdapterParts>,
+        field: usize,
     },
     /// An object literal (at `span`) with a getter and no setter for field `name`.
     Missing { span: Span, name: String },
@@ -152,6 +169,7 @@ impl Ctx<'_> {
     /// (an object literal's getter without a setter for a `readonly` field, a class's `get`
     /// accessor) and returns false then.
     pub(crate) fn mark_part_written(&mut self, iface: DefId, field: usize, span: Span) -> bool {
+        self.note_field_written(iface, field, span);
         if !self.mark_iface_written(iface, span) {
             return false;
         }
@@ -300,7 +318,63 @@ impl Ctx<'_> {
         );
     }
 
-    fn iface_name(&self, iface: DefId) -> String {
+    /// Field `field` of `iface` (or a part of it) is written through the interface.
+    pub(crate) fn note_field_written(&mut self, iface: DefId, field: usize, span: Span) {
+        self.iface_writes
+            .fields
+            .entry((iface, field))
+            .or_insert(span);
+    }
+
+    /// Once every body is checked: report the adapter fields written through their interface
+    /// that do not convert back ([`IfaceWrites::unwritable`]).
+    pub(crate) fn check_adapter_writes(&mut self) {
+        let list = std::mem::take(&mut self.iface_writes.unwritable);
+        let mut reported = FxHashSet::default();
+        for (parts, field) in list {
+            let key = (parts.iface, field);
+            if let Some(&at) = self.iface_writes.fields.get(&key) {
+                if reported.insert(key) {
+                    self.adapter_unwritable(at, &parts, field);
+                }
+            }
+        }
+    }
+
+    /// A field written through `iface` that an adapter from another instance of it cannot write
+    /// back (its value does not convert to the wrapped value's field type).
+    fn adapter_unwritable(
+        &mut self,
+        span: Span,
+        parts: &crate::body::expr::iface_adapt_slots::AdapterParts,
+        field: usize,
+    ) {
+        let iface = parts.iface;
+        let fname = self
+            .iface(iface)
+            .and_then(|i| i.fields.get(field))
+            .map_or(String::new(), |f| f.name.clone());
+        let to = self.ty.intern(TyKind::Dyn(iface, parts.to.clone()));
+        let from = self.ty.intern(TyKind::Dyn(iface, parts.from.clone()));
+        let t = self.display(to);
+        // A generic adapter's source arguments are its own type parameters.
+        let f = match parts.generics {
+            0 => format!("a `{}`", self.display(from)),
+            _ => format!(
+                "a value implementing `{}` at other type arguments",
+                parts.iname
+            ),
+        };
+        self.error(
+            Diagnostic::error(
+                format!("writing `{fname}` through `{t}` is not supported yet: {f} is converted to it here, and the value would not convert back to its field (#1185)"),
+                parts.span,
+            )
+            .with_label(span, format!("`{fname}` is written through `{t}` here")),
+        );
+    }
+
+    pub(crate) fn iface_name(&self, iface: DefId) -> String {
         self.iface(iface).map_or(String::new(), |i| i.name.clone())
     }
 
@@ -341,6 +415,31 @@ impl Ctx<'_> {
                     return;
                 }
                 SetterSrc::Method { def, .. } => defs.push(def),
+                SetterSrc::Adapter { parts, field } => {
+                    match crate::body::expr::iface_adapt_slots::adapter_setter(self, &parts, field)
+                    {
+                        Some(def) => defs.push(def),
+                        None => {
+                            // A setter that is never called unless the field is written
+                            // through the interface, which is then an error.
+                            let f = self.iface(iface).and_then(|i| i.fields.get(field).cloned());
+                            let Some(f) = f else {
+                                return;
+                            };
+                            let mut targs = parts.to.clone();
+                            targs.push(parts.self_ty);
+                            let ty = self.subst(f.ty, &targs);
+                            defs.push(crate::collect::getters::unused_setter(
+                                self,
+                                parts.def,
+                                parts.self_ty,
+                                &f.name,
+                                ty,
+                            ));
+                            self.iface_writes.unwritable.push((parts, field));
+                        }
+                    }
+                }
                 SetterSrc::GetterOnly {
                     d,
                     self_ty,

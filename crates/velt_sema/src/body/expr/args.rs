@@ -196,6 +196,7 @@ impl FnCx<'_, '_> {
             self.flow_into(&h, site);
             let outer_target = self.set_target(site);
             let mut h = if weak_key && hargs.is_empty() {
+                self.per_use_weak_key(&h);
                 self.weak_key_coerce(h, target)
             } else if self.cx.sigq.readonly_params.contains(&p.span)
                 || ((collect || self.cx.iterable_elem(target).is_some())

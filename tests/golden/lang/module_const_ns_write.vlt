@@ -1,0 +1,31 @@
+// A module constant or `static readonly` field reached through a namespace import, written or
+// taken over through `!`, `as` or `??`, is the one object Node changes: the change shows at
+// every later use, in this module and in the one declaring it (#1406).
+import * as ns from "./_module_const_ns_write_lib";
+
+let D: ns.J = { v: 0, a: { b: 0 } };
+(ns.K as any).v = 3;
+(ns.N as any).v = 3;
+console.log(ns.K!.v, ns.N.v, ns.readK());
+(ns.K as unknown as ns.J).v = 4;
+ns.K!.a.b = 4;
+console.log(ns.K!.v, ns.K!.a.b);
+(ns.K ?? D).v = 5;
+console.log(ns.K!.v, D.v);
+const t = ns.K!;
+t.v = 6;
+const u = ns.N.a;
+u.b = 6;
+console.log(ns.K!.v, ns.N.a.b, ns.readK());
+const { a } = ns.K ?? D;
+a.b = 7;
+console.log(ns.K!.a.b);
+// A `static readonly` field of a class reached through the namespace.
+(ns.C.K as any).v = 3;
+ns.C.K!.v += 1;
+(ns.C.N as any).v = 3;
+(ns.C.N as any).a.b = 3;
+console.log(ns.C.K!.v, ns.C.N.v, ns.C.N.a.b);
+const w = ns.C.N.a;
+w.b = 8;
+console.log(ns.C.N.a.b, w === ns.C.N.a);

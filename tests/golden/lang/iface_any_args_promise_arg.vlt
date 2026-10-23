@@ -1,0 +1,22 @@
+// An `unknown` holding a value implementing the interface at an argument a converted value's
+// slots cannot box (a promise): no conversion, a `TypeError` (#1185).
+interface Ctx<P = {}> {
+  props: P;
+  name(): string;
+}
+
+class G<T> implements Ctx<T> {
+  props: T;
+  constructor(p: T) {
+    this.props = p;
+  }
+  name(): string {
+    return "g";
+  }
+}
+
+const ok: unknown = new G<number>(1);
+console.log((ok as Ctx<any>).props);
+const u: unknown = new G<Promise<number>>(Promise.resolve(1));
+const c = u as Ctx<any>;
+console.log(c.name());
