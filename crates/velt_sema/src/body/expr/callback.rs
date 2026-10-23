@@ -163,6 +163,9 @@ impl FnCx<'_, '_> {
                 Some(exp),
             ));
         }
+        if let Some(h) = self.frameless_named_widened(arg, exp) {
+            return Some(h);
+        }
         let task = mode == CallbackMode::Task;
         let to_void = want_ret == self.cx.ty.unit;
         // The result matters only for `void` (dropped), union results (widened) and tasks.

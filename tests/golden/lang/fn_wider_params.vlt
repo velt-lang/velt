@@ -46,3 +46,29 @@ async function main2(): Promise<void> {
   }
 }
 await main2();
+
+// A module-level function or constant holding one, and rest parameters, where no frame is.
+function base(v: unknown): void {
+  console.log("base", v);
+}
+const logIt = (v: any) => console.log("logIt", v);
+export const ex: (x: number) => void = base;
+export const ex2: (s: string) => void = logIt;
+class F {
+  h: (x: number) => void = base;
+  r: (...xs: number[]) => void = (...ys: any[]) => console.log("field rest", ys);
+}
+export const rr: (...xs: number[]) => void = (...ys: any[]) => console.log("rest", ys.length, ys);
+export const rr2: (a: string, ...xs: number[]) => void = (a: unknown, ...ys: unknown[]) => console.log("rest2", a, ys);
+ex(1);
+ex2("two");
+const f = new F();
+f.h(3);
+f.r(4, 5);
+rr(6, 7, 8);
+rr2("a", 9);
+// Optional and defaulted extra parameters of a `then` callback.
+Promise.resolve(1).then((v: number, extra?: string) => console.log(v, extra));
+Promise.resolve(2).then((v: number, extra = "d") => console.log(v, extra));
+function two(v: number, extra?: string) { console.log("two", v, extra); }
+Promise.resolve(3).then(two);

@@ -12,3 +12,12 @@ method 1
 method 2
 method 7
 caught bad 8
+base 1
+logIt two
+base 3
+field rest [ 4, 5 ]
+rest 3 [ 6, 7, 8 ]
+rest2 a [ 9 ]
+1 undefined
+2 d
+two 3 undefined

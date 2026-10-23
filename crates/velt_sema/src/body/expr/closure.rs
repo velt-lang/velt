@@ -294,9 +294,16 @@ impl FnCx<'_, '_> {
         }
         let mut declared = vec![];
         let mut locals = vec![];
+        let wide = self.entry_widened(params, &ptys, exp_params.as_deref(), n_params);
         for (k, (p, ty)) in params.iter().zip(&ptys).enumerate() {
             if k >= n_params {
                 locals.push(self.defaulted_local(p, *ty));
+                continue;
+            }
+            if let Some(passed) = wide[k] {
+                let (l, shadow) = self.widened_param(p, passed, *ty);
+                declared.push(l);
+                locals.push(shadow);
                 continue;
             }
             let l = self.declare_local_mut(&p.name, *ty, LocalKind::Param, false);
@@ -334,6 +341,9 @@ impl FnCx<'_, '_> {
                 .map(|p| (&p.name, p.pattern.as_ref(), p.optional)),
             &mut locals,
         );
+        for (t, w) in ptys.iter_mut().zip(&wide) {
+            *t = w.unwrap_or(*t);
+        }
         let mut block = match body {
             ast::ArrowBody::Expr(x) if void_task => self.void_task_body(x),
             ast::ArrowBody::Expr(x) if await_body => self.awaited_body(x),

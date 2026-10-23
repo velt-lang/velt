@@ -51,7 +51,7 @@ impl FnCx<'_, '_> {
     /// The callback `h` as a function taking `params` (what the promise passes it): one whose
     /// parameters are wider (`(v: any) => …` for a `Promise<number>`) is wrapped so each
     /// argument converts (`fn_widen`). `None` after reporting a parameter the value doesn't
-    /// convert to. A callback taking fewer parameters is passed as it is.
+    /// convert to, or more parameters than are passed. One taking fewer is passed as it is.
     fn callback_takes(&mut self, h: hir::Expr, params: &[TyId]) -> Option<hir::Expr> {
         let TyKind::FnPtr {
             params: own,
@@ -62,7 +62,9 @@ impl FnCx<'_, '_> {
         else {
             return Some(h);
         };
-        if rest || own.len() != params.len() || own == params {
+        // Fewer parameters are fine (the value is not read); more that must be passed, or a
+        // rest parameter, are a mismatch (no argument would be there), as for any callback.
+        if (!rest && own.len() < params.len()) || (!rest && own == params) {
             return Some(h);
         }
         let exp = self.cx.ty.intern(TyKind::FnPtr {
@@ -154,7 +156,12 @@ impl FnCx<'_, '_> {
                 throws: error,
                 rest: false,
             });
-            let h = self.expr(a, Some(hint), Want::Move);
+            // A named function taking more parameters than are passed, optional ones (or one
+            // returning a value where none is expected): adapted as any callback is.
+            let h = match self.callback_adapter(a, hint, super::callback::CallbackMode::Plain) {
+                Some(h) => h,
+                None => self.expr(a, Some(hint), Want::Move),
+            };
             if self.cx.ty.has_error(h.ty) {
                 self.check_args_loose(&args[i + 1..]);
                 return self.error_expr(span);
