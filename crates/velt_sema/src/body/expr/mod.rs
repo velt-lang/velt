@@ -50,6 +50,7 @@ pub(crate) use env_globals::NODE_GLOBALS;
 mod error_slots;
 mod error_view;
 mod errors;
+mod eval_effects;
 mod fn_union_call;
 mod fn_widen;
 mod frozen;
@@ -145,6 +146,7 @@ mod typeof_member;
 mod union_coerce;
 mod union_iface;
 mod widen_fresh;
+mod written_order;
 
 use velt_common::Span;
 use velt_syntax::ast;

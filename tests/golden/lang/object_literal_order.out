@@ -1,0 +1,91 @@
+-- typed, out of declaration order
+eval z
+eval x
+eval y
+1 2 3
+eval z
+3 2 3
+-- typed, in declaration order
+eval x
+eval y
+eval z
+1 2 3
+-- a property before a spread with effects
+eval x
+eval spread
+1 20 30
+eval x
+eval spread
+eval w
+1 n 4
+-- a property a later spread overrides
+eval y (overridden)
+1 2 3
+-- after a spread, out of declaration order
+eval z
+eval y
+0 8 7
+eval y
+eval z
+2 5
+-- between two spreads
+eval s1
+eval m
+eval s2
+1 20 30
+-- before an optional field's spread
+eval y
+eval z
+5 99
+-- a class instance spread before a call that changes it
+1 2 2
+-- records
+eval k
+eval spread
+eval j
+{"k":1,"a":1,"j":2}
+-- before optional fields, generic and maybe-missing sources
+eval a
+eval spread
+null
+eval a
+eval b
+eval spread
+1 2
+eval a
+eval b
+eval spread
+1 5
+eval n
+3 1
+eval a
+7
+-- a spread copies its source before a later property changes it
+7 1 2
+7 1 2
+9 1 100
+A s changed
+5 2
+{"a":5}
+1 4
+-- a variable read before a property that changes it
+11 1
+21 11
+0 5
+2 1 2
+3 0 2
+eval x
+1 2 3
+-- a spread whose source changes what is spread before it
+1 3
+1 99 3
+9 2
+eval y
+2 1 4
+5 2
+-- generic sources
+1 2
+100 2
+-- records and await
+{"k":1,"j":3}
+5 2

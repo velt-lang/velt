@@ -462,6 +462,8 @@ Maintainer-owned, like `hir/mod.rs`, `hir/intrinsic.rs` and `hir/module_state.rs
   ownership: the std code keeps every element owned by exactly one array, cuts stale copies off
   before an array is dropped, and keeps the elements out of any array a callback could reach
   through an alias while it runs.
+  `Intrinsic::ArrayReserve(xs, extra)` (sema's array spreads): room for `extra` more elements,
+  the buffer reallocated to exactly `len + extra` when the capacity is smaller (no doubling).
   `Intrinsic::NeedsDrop(value)` (std only, value borrowed and not evaluated): a constant `bool`,
   whether a value of that type owns anything dropping it releases (lowering's drop glue). A bit
   copy of a type that needs no drop is an independent value, so the stable sort copies such

@@ -395,6 +395,43 @@ fn nested_arrow_trials_grow_polynomially() {
     assert_slopes(&[15, 30, 60], nested_trials, 3.0);
 }
 
+/// An array literal, an object literal and a call of a rest parameter, each holding one chain
+/// of `n` additions (`[x + x + ..., ...ys]`), with spreads or (`spread` false) without.
+fn spread_chains(n: usize, spread: bool) -> String {
+    let chain = vec!["x"; n].join(" + ");
+    let (array, object, call) = match spread {
+        true => ("...ys", "...o", "...[1]"),
+        false => ("1", "a: 1", "1"),
+    };
+    format!(
+        "function g(...xs: number[]): number {{\n  return xs.length;\n}}\n\
+         function main() {{\n  let x = 1;\n  const ys = [1];\n  const o = {{ a: 1, b: 2 }};\n  \
+         console.log([{chain}, {array}]);\n  console.log({{ {object}, b: {chain} }}.b);\n  \
+         console.log(g({chain}, {call}));\n  x = 2;\n  console.log(o.a, ys.length);\n}}\n"
+    )
+}
+
+/// Whether an operand of a spread literal or call has effects, which decides what is evaluated
+/// first, is told by one walk over it, so a long operand costs about what it costs without the
+/// spread: telling it once checked the operand again per operator (800 terms took 19 s, 3000
+/// over 300 s; `bench/spread_order/chains.sh`). Checking such a chain is not linear in its
+/// length by itself, so the test compares with the same program without spreads.
+#[test]
+fn spread_operand_chains_cost_what_they_cost_without_spreads() {
+    let _serial = serial();
+    for n in [800, 3000] {
+        let with = load_src(&spread_chains(n, true));
+        let without = load_src(&spread_chains(n, false));
+        let best = |p: &Loaded| (0..3).map(|_| sema_cost(p)).min().unwrap_or(u64::MAX);
+        let (w, wo) = (best(&with), best(&without));
+        eprintln!("n = {n}: cost {w} with spreads, {wo} without");
+        assert!(
+            (w as f64) < 1.5 * wo as f64,
+            "n = {n}: sema cost {w} with spreads against {wo} without"
+        );
+    }
+}
+
 #[test]
 #[ignore = "slow: generates programs of up to 5000 units (run with --release)"]
 fn sema_time_grows_linearly_large() {

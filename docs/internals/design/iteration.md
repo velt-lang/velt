@@ -605,9 +605,15 @@ and narrowing are checked as usual:
   <array#N> }
 ```
 
-- **Spread** (`expr/spread.rs`): an array literal whose spread sources are all arrays is built
-  exactly as before (one allocation of the summed lengths, element loops). An iterable source
-  pushes from such a loop at its position (array sources are still evaluated first). A rest
+- **Spread** (`expr/spread_array.rs`): an array literal whose spread sources are all arrays is
+  built exactly as before (one allocation of the summed lengths, element loops). An iterable
+  source pushes from such a loop at its position. An array source that is not a place is
+  evaluated before the allocation unless that moves it past an element with effects, or moves
+  its effects past an element that reads a variable or a field (`[n, ...bump()]`): those
+  elements are then evaluated before it, in order. After an iterable, or after a spread of a
+  place that it could change (`[...xs, ...f()]`), it is evaluated at its position and left out
+  of the allocation's size, so everything runs in written order (`expr/eval_effects.rs` tells
+  what can move). A rest
   parameter's arguments are packed into an array literal (`pack_rest`), so `f(...gen())` and
   `Math.max(...values())` need nothing else. Mistyped values (`[...numbers()]` as `string[]`)
   are reported once, without the loop.

@@ -5,7 +5,9 @@
 //! arity error of the same call written out, so a missing element never becomes `undefined`.
 //!
 //! A tuple that is not stored (`f(0, ...g.pair)` through a getter, `f(...pair())`) is held in
-//! a hidden temporary evaluated before the call, once, as JS reads it. A function or receiver
+//! a hidden temporary evaluated before the call, once, as JS reads it; an argument before it
+//! that reads a variable or a field (`f(n, ...pair())`) is held in one before it, so it is read
+//! before the tuple's call could change it. A function or receiver
 //! that is a call (`getf()(...pair())`, `mk().m(...pair())`) is held in one before it, as JS
 //! evaluates it first; so is a receiver or a leading argument read through a getter
 //! (`h.g.m(...pair())`, `f(h.g, ...pair())`), and a function a getter returns
@@ -20,6 +22,7 @@ use velt_common::Span;
 use velt_syntax::ast;
 
 use super::args::Callable;
+use super::eval_effects::Effects;
 use crate::body::places::{is_path, is_place};
 use crate::body::{FnCx, LocalKind, Want};
 use crate::hir::{self, TyId, TyKind};
@@ -95,6 +98,8 @@ impl FnCx<'_, '_> {
         let mut left = vec![];
         let mut failed = false;
         let mut earlier_pure = true;
+        // The arguments from `free` on are evaluated in the call, after its hidden temporaries.
+        let mut free = 0;
         for (k, a) in args.iter().enumerate() {
             if k > 0 && earlier_pure {
                 earlier_pure = self.evaluated_anywhere(&args[k - 1]);
@@ -110,8 +115,15 @@ impl FnCx<'_, '_> {
             } else {
                 None
             };
+            let mark = self.call_temps.len();
             match self.spread_elems(inner, after) {
-                Ok(Some(elems)) => out.extend(elems),
+                Ok(Some(elems)) => {
+                    if self.call_temps.len() > mark {
+                        self.hold_reads_before(&mut out[free..], mark);
+                        free = out.len() + elems.len();
+                    }
+                    out.extend(elems)
+                }
                 Ok(None) => {
                     left.push(inner.as_ref());
                     out.push(a.clone());
@@ -208,6 +220,25 @@ impl FnCx<'_, '_> {
         });
         let kind = ast::ExprKind::Ident(ast::Ident { name, span });
         (super::setters::synth(kind, span), ty)
+    }
+
+    /// `args`, evaluated in the call, before a tuple spread held in the hidden temporaries from
+    /// `mark` on (`f(n, ...pair())`): each that reads what that could change (a `let`, a
+    /// field; of a Copy type) is held in one before them, so it is read first, as in JS.
+    fn hold_reads_before(&mut self, args: &mut [ast::Expr], mark: usize) {
+        let held = self.call_temps.len();
+        for a in args {
+            if matches!(&a.kind, ast::ExprKind::Ident(i) if i.name.starts_with('#')) {
+                continue;
+            }
+            let h = self.trial_expr(a);
+            let value = self.cx.is_copy(h.ty) || h.ty == self.cx.ty.str_;
+            if self.hir_effects(&h) == Effects::Reads && value {
+                *a = self.hidden_temp(a, false).0;
+            }
+        }
+        let added = self.call_temps.len() - held;
+        self.call_temps[mark..].rotate_right(added);
     }
 
     /// A spread of a tuple that is not a variable or a field (a call, a getter) after an

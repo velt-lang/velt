@@ -46,6 +46,11 @@ pub enum Intrinsic {
     /// length must be written (`ArrayMove`) before they are read, and slots that are not owned
     /// any more must be cut off with it before the array is dropped.
     ArraySetLen,
+    /// `(xs (modified), extra: usize)` make room for `extra` more elements: when the capacity
+    /// is under `len + extra`, the buffer is reallocated to exactly that (no doubling); the
+    /// length and the elements stay. Emitted for an array spread whose length is known only
+    /// where it is pushed (`[...xs, ...f()]`, spread_array.rs); not for a constant table.
+    ArrayReserve,
     /// `(x: borrow T) -> u64` compiler-generated hash agreeing with `KeyEq` (`Map` and `Set`
     /// keys): numbers, bool and strings by value, objects by identity, unions, options and
     /// tuples part by part
