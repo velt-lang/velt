@@ -97,16 +97,20 @@ pub struct StreamObj {
     pub(crate) writing: AtomicUsize,
     /// Taken by a raw socket's write for as long as it goes on: writes go out one after another,
     /// in the order they started (a `write` first polls at its call; the lock is FIFO).
-    turn: AsyncMutex<()>,
+    turn: std::sync::Arc<AsyncMutex<()>>,
 }
+
+/// A raw socket's turn to write ([`StreamObj::turn`]), held across the write.
+pub(crate) type Turn = tokio::sync::OwnedMutexGuard<()>;
 
 /// A write counted in [`StreamObj::writing`] from its call until it is done or dropped.
 pub(crate) struct Writing(pub(crate) std::sync::Arc<StreamObj>);
 
 impl Writing {
-    pub(crate) fn new(obj: std::sync::Arc<StreamObj>) -> Writing {
-        obj.writing.fetch_add(1, Ordering::AcqRel);
-        Writing(obj)
+    /// Counts a write from its call; also whether no other write was going on then.
+    pub(crate) fn begin(obj: std::sync::Arc<StreamObj>) -> (Writing, bool) {
+        let earlier = obj.writing.fetch_add(1, Ordering::AcqRel) != 0;
+        (Writing(obj), !earlier)
     }
 }
 
@@ -152,7 +156,7 @@ impl StreamObj {
             aborted: AtomicBool::new(false),
             abort: Notify::new(),
             writing: AtomicUsize::new(0),
-            turn: AsyncMutex::new(()),
+            turn: std::sync::Arc::new(AsyncMutex::new(())),
         }
     }
 
@@ -224,11 +228,17 @@ impl StreamObj {
         }
     }
 
-    /// Writes all of `data`.
-    pub(crate) async fn write(&self, data: &[u8]) -> io::Result<()> {
+    /// The raw socket's turn now, if no write has it (for a write made at the call).
+    pub(crate) fn try_turn(&self) -> Option<Turn> {
+        self.turn.clone().try_lock_owned().ok()
+    }
+
+    /// Writes all of `data`, in `turn` if the caller already has it (it wrote the first bytes at
+    /// the call).
+    pub(crate) async fn write_in_turn(&self, data: &[u8], turn: Option<Turn>) -> io::Result<()> {
         match &self.io {
-            Io::Tcp(stream) => self.write_tcp(stream, data).await,
-            Io::Lazy(lazy) => self.write_lazy(lazy, data).await,
+            Io::Tcp(stream) => self.write_tcp(stream, data, turn).await,
+            Io::Lazy(lazy) => self.write_lazy(lazy, data, turn).await,
         }
     }
 
@@ -273,8 +283,16 @@ impl StreamObj {
     }
 
     /// Writes all of `data` to a raw socket.
-    async fn write_tcp(&self, stream: &TcpStream, mut data: &[u8]) -> io::Result<()> {
-        let _turn = self.turn.lock().await;
+    async fn write_tcp(
+        &self,
+        stream: &TcpStream,
+        mut data: &[u8],
+        turn: Option<Turn>,
+    ) -> io::Result<()> {
+        let _turn = match turn {
+            Some(t) => t,
+            None => self.turn.clone().lock_owned().await,
+        };
         while !data.is_empty() {
             // Not what the socket says after `abort` shut it down (a broken pipe, as if the
             // peer had closed): the stream was aborted.
@@ -294,9 +312,9 @@ impl StreamObj {
     }
 
     /// `write` on a lazy stream.
-    async fn write_lazy(&self, lazy: &Lazy, data: &[u8]) -> io::Result<()> {
+    async fn write_lazy(&self, lazy: &Lazy, data: &[u8], turn: Option<Turn>) -> io::Result<()> {
         match self.until_abort(self.set_up(lazy)).await? {
-            Ready::Tcp { stream, .. } => self.write_tcp(stream, data).await,
+            Ready::Tcp { stream, .. } => self.write_tcp(stream, data, turn).await,
             Ready::Split(split) => {
                 self.until_abort(async {
                     let mut w = split.w.lock().await;

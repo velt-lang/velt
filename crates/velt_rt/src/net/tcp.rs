@@ -15,7 +15,6 @@ use crate::str::VeltStr;
 use crate::task::leaf::new_leaf;
 use crate::task::VeltFut;
 use std::io;
-use std::sync::atomic::Ordering;
 use std::time::Duration;
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls::{TlsAcceptor, TlsConnector};
@@ -265,10 +264,6 @@ async fn read_any(obj: &StreamObj, max: u64) -> io::Result<Vec<u8>> {
     obj.read(max).await
 }
 
-async fn write_any(obj: &StreamObj, data: &[u8]) -> io::Result<()> {
-    obj.write(data).await
-}
-
 async fn read_text(obj: &StreamObj, max: u64) -> io::Result<String> {
     loop {
         let chunk = read_any(obj, max).await?;
@@ -314,12 +309,15 @@ pub unsafe extern "C" fn velt_rt_tcp_write_bytes(
 
 fn write_copy(s: StreamHandle, data: &[u8]) -> *mut VeltFut {
     STREAMS.op::<()>(s, |obj| {
+        // Counted from the call, so a write made after this one waits for it.
+        let (w, first) = Writing::begin(obj);
         // A raw socket usually takes everything at once: written here, from the caller's
         // buffer, there is nothing to copy and nothing to wait for. Not while an earlier write
-        // is still going on: these bytes go after its.
+        // is still going on: these bytes go after its. In the socket's turn, which the rest
+        // keeps, so no other thread's write gets between the two parts.
         let mut rest = data;
-        let earlier = obj.writing.load(Ordering::Acquire) != 0;
-        if let Some(stream) = obj.plain().filter(|_| !earlier) {
+        let mut turn = None;
+        if let Some((stream, t)) = w.0.plain().filter(|_| first).zip(w.0.try_turn()) {
             while !rest.is_empty() {
                 match stream.try_write(rest) {
                     Ok(n) => rest = &rest[n..],
@@ -335,11 +333,10 @@ fn write_copy(s: StreamHandle, data: &[u8]) -> *mut VeltFut {
             if rest.is_empty() {
                 return new_leaf(std::future::ready(IoResult::ok(())));
             }
+            turn = Some(t);
         }
         let data = rest.to_vec();
-        // Counted from the call, so a write made after this one waits for it.
-        let w = Writing::new(obj);
-        new_leaf(async move { IoResult::from_io(write_any(&w.0, &data).await, |()| ()) })
+        new_leaf(async move { IoResult::from_io(w.0.write_in_turn(&data, turn).await, |()| ()) })
     })
 }
 
@@ -350,10 +347,11 @@ fn write_copy(s: StreamHandle, data: &[u8]) -> *mut VeltFut {
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_tcp_try_write(s: StreamHandle, data: *const VeltBytes) -> u64 {
     let Some(obj) = STREAMS.get(s) else { return 0 };
-    if obj.writing.load(Ordering::Acquire) != 0 {
+    // Nothing while another write goes on (these bytes go after its), in the socket's turn.
+    let (w, first) = Writing::begin(obj);
+    let Some((stream, _turn)) = w.0.plain().filter(|_| first).zip(w.0.try_turn()) else {
         return 0;
-    }
-    let Some(stream) = obj.plain() else { return 0 };
+    };
     let data = (*data).as_bytes();
     let mut done = 0;
     while done < data.len() {
