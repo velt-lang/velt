@@ -230,8 +230,9 @@ impl FnCx<'_, '_> {
             return self.error_expr(span);
         }
         // `a = b = null`: the value of `b = null` is the `null` assigned, not `b` read back (of
-        // `b`'s type, which `a`'s may not take), as in TypeScript; a literal is evaluated again.
-        let v = match assigned_literal(op, value) {
+        // `b`'s type, which `a`'s may not take), as in TypeScript; a literal is evaluated again,
+        // typed by what the outer position expects (without one, `b` is read back).
+        let v = match assigned_literal(op, value).filter(|_| exp.is_some()) {
             Some(lit) => self.expr(lit, exp, Want::Move),
             None => {
                 let v = self.expr(target, None, Want::Borrow);

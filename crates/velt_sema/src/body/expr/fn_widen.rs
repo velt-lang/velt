@@ -1,7 +1,8 @@
 //! A function whose parameters are wider than those of the function type it is used as
 //! (`(v: any) => …` where `(x: number) => void` is expected: a `then` callback, an array
-//! callback, a function stored in a typed variable or passed to a generic function), as
-//! TypeScript allows (it compares parameters bivariantly; Velt takes the half where each
+//! callback, a function stored in a typed variable or passed to a generic function), or whose
+//! result type is narrower (`() => void` where `() => any` is expected, an async
+//! `() => Promise<R>` where `() => R | Promise<R>` is, #943), as TypeScript allows (it compares parameters bivariantly; Velt takes the half where each
 //! expected parameter type converts to the function's own as an argument would, an `any` to a
 //! `number` too, checked at run time). The function is wrapped,
 //! `{ const f = value; (p…) => f(p…) }` (`adapt_fn`), the arrow typed by the expected type, so
@@ -19,15 +20,15 @@ use crate::body::{FnCx, LocalKind};
 use crate::hir::{self, ExprKind as H, LocalId, TyId, TyKind, UseMode};
 
 impl FnCx<'_, '_> {
-    /// `h`, a function, as the function type `exp` whose parameters convert to its own (module
-    /// docs); `Err` gives `h` back when they don't.
+    /// `h`, a function, as the function type `exp` whose parameters convert to its own and
+    /// whose result its result converts to (module docs); `Err` gives `h` back when they don't.
     pub(super) fn widened_params(
         &mut self,
         h: hir::Expr,
         exp: TyId,
     ) -> Result<hir::Expr, hir::Expr> {
         // A module-level constant or a field initializer has no frame for the hidden local.
-        if self.frameless() || !self.params_widen(h.ty, exp) {
+        if self.frameless() || !self.fn_widens(h.ty, exp) {
             return Err(h);
         }
         // Checked as a trial: what doesn't convert is reported by the wrapper's check, rolled
@@ -294,11 +295,12 @@ impl FnCx<'_, '_> {
         None
     }
 
-    /// Are `from` and `to` function types of the same shape whose parameter types differ?
+    /// Are `from` and `to` function types of the same shape whose parameter or result types
+    /// differ?
     /// Whether each of `to`'s converts to `from`'s, and `from`'s result and errors to `to`'s,
     /// is what the wrapper's check finds (the conversions of arguments and results, object
     /// copies included).
-    fn params_widen(&self, from: TyId, to: TyId) -> bool {
+    fn fn_widens(&self, from: TyId, to: TyId) -> bool {
         let t = &self.cx.ty;
         match (t.kind(from), t.kind(to)) {
             (

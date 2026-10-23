@@ -89,3 +89,27 @@ fn a_record_spread_converts_its_values() {
     );
     assert!(r.contains("expected string, found f64"), "{r}");
 }
+
+#[test]
+fn an_assignment_of_a_literal_as_a_value_without_an_expected_type_reads_the_target() {
+    ok_src(
+        "function main() {
+           let s1: string | null = \"a\";
+           const z = (s1 = null);
+           let line: string | null;
+           if ((line = null) === null) console.log(z, s1, line);
+         }",
+    );
+}
+
+#[test]
+fn a_record_keyed_by_string_literals_spreads_into_one_keyed_by_string() {
+    ok_src(
+        "function main() {
+           const keyed: Record<\"a\" | \"b\", string> = { a: \"1\", b: \"2\" };
+           const wide: Record<string, any> = { ...keyed };
+           const same: Record<string, string> = { ...keyed };
+           console.log(wide, same);
+         }",
+    );
+}

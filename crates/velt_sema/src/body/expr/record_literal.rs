@@ -247,8 +247,7 @@ impl FnCx<'_, '_> {
                     let nullable = spread.is_some_and(|t| self.cx.ty.core(t).is_some());
                     complete = !nullable;
                     if spread.is_some_and(|t| self.spreads_other_values(t, ty)) {
-                        let convert = identity_arrow(e.span);
-                        let args = [e.clone(), convert];
+                        let args = [e.clone(), identity_arrow(e.span), identity_arrow(e.span)];
                         self.record_call(recv, "__extendFrom", &args, e.span)
                     } else {
                         let m = if nullable {
@@ -342,19 +341,32 @@ impl FnCx<'_, '_> {
         Some(self.record_call_keyed(recv, "__set", key, std::slice::from_ref(&value), span))
     }
 
-    /// Is `t` a dynamic type an object spread takes (`any`, `object`; also `| null`)? An
-    /// `unknown` is not one (TypeScript's TS2698).
     /// Is `t` (or it or nothing) a record of `to`'s key type with another value type (`...r` of
-    /// a `Record<string, string>` into a `Record<string, any>`)? Its values are converted one
-    /// by one into the new record (`__extendFrom`), which is a new object, as in JavaScript.
-    fn spreads_other_values(&self, t: TyId, to: TyId) -> bool {
+    /// a `Record<string, string>` into a `Record<string, any>`), or one keyed by string literals
+    /// into a record keyed by `string` (`Record<"a" | "b", string>`)? Its keys and values are
+    /// converted one by one into the new record (`__extendFrom`), which is a new object, as in
+    /// JavaScript.
+    fn spreads_other_values(&mut self, t: TyId, to: TyId) -> bool {
         let t = self.cx.ty.core(t).unwrap_or(t);
         match (self.record_args(t), self.record_args(to)) {
-            (Some((k, v)), Some((l, w))) => k == l && v != w && !self.cx.ty.has_error(v),
+            (Some((k, v)), Some((l, w))) => {
+                let keys = k == l || (l == self.cx.ty.str_ && self.string_literal_keys(k));
+                keys && (v != w || k != l) && !self.cx.ty.has_error(v)
+            }
             _ => false,
         }
     }
 
+    /// Is `k` a string literal type or a union of them (a closed record's keys)?
+    fn string_literal_keys(&mut self, k: TyId) -> bool {
+        let members = self.cx.union_members(k).unwrap_or_else(|| vec![k]);
+        members
+            .iter()
+            .all(|m| matches!(self.cx.lit_value(*m), Some(hir::LitValue::Str(_))))
+    }
+
+    /// Is `t` a dynamic type an object spread takes (`any`, `object`; also `| null`)? An
+    /// `unknown` is not one (TypeScript's TS2698).
     pub(super) fn spreads_dynamic(&self, t: TyId) -> bool {
         let t = self.cx.ty.core(t).unwrap_or(t);
         self.cx
@@ -412,7 +424,8 @@ impl FnCx<'_, '_> {
     }
 }
 
-/// `(#value) => #value`: converts a spread record's value where the new record's is expected.
+/// `(#value) => #value`: converts a spread record's key or value where the new record's is
+/// expected.
 fn identity_arrow(span: Span) -> ast::Expr {
     let name = ast::Ident {
         name: "#value".into(),

@@ -27,3 +27,9 @@ console.log(box.count, box.items);
 let flag: boolean | string = "no";
 const seen: boolean = (flag = true);
 console.log(seen, flag);
+// An assignment of a literal used as a value with no expected type: the target read back.
+let s1: string | null = "a";
+const z = (s1 = null);
+console.log(z, s1);
+let line: string | null;
+if ((line = null) === null) console.log("null line");

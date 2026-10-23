@@ -28,3 +28,10 @@ console.log(JSON.stringify(mixed({ a: 1, z: 9 }, { b: "s" })));
 console.log(JSON.stringify(mixed(null, undefined)));
 const wide: Record<string, number | string> = { ...parse("a: 1"), ...{ n: 2 } };
 console.log(JSON.stringify(wide), Object.keys(wide).length);
+// A record keyed by string literals spread into one keyed by `string`.
+const keyed: Record<"a" | "b", string> = { a: "1", b: "2" };
+const wideKeys: Record<string, any> = { ...keyed };
+wideKeys.c = 3;
+console.log(JSON.stringify(wideKeys), JSON.stringify(keyed));
+const sameValues: Record<string, string> = { ...keyed, d: "4" };
+console.log(JSON.stringify(sameValues));

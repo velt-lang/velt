@@ -2096,8 +2096,9 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   method (`props.onClick()`, also on any `Record<string, any>`). A spread of a record that may be
   `null` or `undefined` (`{ ...props }` with `props: Props | null`) is a record too, and copies
   nothing when it is. A spread of a record of another value type into a record literal
-  (`{ ...a, ...b }` of a `Record<string, string>` where a `Record<string, any>` is expected)
-  converts each value into the new record, in the spread record's key order; a value that
+  (`{ ...a, ...b }` of a `Record<string, string>` where a `Record<string, any>` is expected),
+  or of a record keyed by string literals into one keyed by `string` (`Record<"a" | "b", V>`),
+  converts each key and value into the new record, in the spread record's key order; a value that
   doesn't convert is an error. Not supported yet (each is an error): named members next to an index
   signature of other values (`{ name?: string; [key: string]: string | undefined }`, which needs
   `undefined`, #930), a `number` or `symbol` key, two index signatures in one type,
@@ -2532,9 +2533,11 @@ keep the wrong value). An `unknown` must be narrowed first (`typeof`, `instanceo
 converted with `as T`, which is checked the same way. Both are the same value at run time, so
 a container of one is a container of the other: a `Record<string, any>` is a
 `Record<string, unknown>` (and back), and so are `any[]` and `unknown[]`, `Map<string, any>` and
-`Map<string, unknown>`, tuples, `Set`s, nullables and function types that differ only there. It
-is the same object seen through the other type, as in TypeScript: a write through one is seen
-through the other, and `===` compares them as one value.
+`Map<string, unknown>`, `Set`s, nullables and function types that differ only there. It is the
+same object seen through the other type, as in TypeScript: a write through one is seen through
+the other, and `===` compares them as one value. A tuple (`[any, number]` as
+`[unknown, number]`) converts too, but is copied, as every tuple is when assigned
+([Values and references](memory.md#values-and-references)).
 
 ```ts
 class Point {
