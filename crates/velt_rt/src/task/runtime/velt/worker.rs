@@ -213,33 +213,35 @@ fn wake(w: &Shared) {
     }
 }
 
+/// A worker's shared state, with its own poll and waker.
+fn new_shared() -> Shared {
+    let poll = mio::Poll::new().unwrap_or_else(|e| fatal(e));
+    let waker = mio::Waker::new(poll.registry(), WAKE).unwrap_or_else(|e| fatal(e));
+    let registry = poll.registry().try_clone().unwrap_or_else(|e| fatal(e));
+    Shared {
+        queue: Mutex::new(RunQueue::new(Instant::now())),
+        inbox: Mutex::new(VecDeque::new()),
+        inbox_len: AtomicUsize::new(0),
+        offered: Mutex::new(VecDeque::new()),
+        offered_len: AtomicUsize::new(0),
+        parked: AtomicBool::new(false),
+        waker,
+        registry,
+        work: AtomicU64::new(0),
+        reactor: Mutex::new(Reactor {
+            poll,
+            events: mio::Events::with_capacity(256),
+        }),
+        timers: Mutex::new(Timers::default()),
+        progress: AtomicU64::new(0),
+        queued: AtomicUsize::new(0),
+    }
+}
+
 /// Starts `n` workers, each entering the compat bridge's tokio context for its whole life,
 /// and the monitor.
 pub(super) fn start(n: usize) {
-    let mut shared = Vec::with_capacity(n);
-    for _ in 0..n {
-        let poll = mio::Poll::new().unwrap_or_else(|e| fatal(e));
-        let waker = mio::Waker::new(poll.registry(), WAKE).unwrap_or_else(|e| fatal(e));
-        let registry = poll.registry().try_clone().unwrap_or_else(|e| fatal(e));
-        shared.push(Shared {
-            queue: Mutex::new(RunQueue::new(Instant::now())),
-            inbox: Mutex::new(VecDeque::new()),
-            inbox_len: AtomicUsize::new(0),
-            offered: Mutex::new(VecDeque::new()),
-            offered_len: AtomicUsize::new(0),
-            parked: AtomicBool::new(false),
-            waker,
-            registry,
-            work: AtomicU64::new(0),
-            reactor: Mutex::new(Reactor {
-                poll,
-                events: mio::Events::with_capacity(256),
-            }),
-            timers: Mutex::new(Timers::default()),
-            progress: AtomicU64::new(0),
-            queued: AtomicUsize::new(0),
-        });
-    }
+    let shared: Vec<Shared> = (0..n).map(|_| new_shared()).collect();
     if WORKERS.set(shared).is_err() {
         return;
     }
@@ -331,14 +333,7 @@ fn run(index: usize) {
         // Idle until the turn returns: the last worker to go idle checks whether the process is
         // done (quiet.rs), as tokio's park hooks do on its schedulers.
         super::super::quiet_parked();
-        // The park hook can wake tasks of this worker (due `unref()`'d timers), which go to its
-        // own queue: then the turn only looks for I/O, without sleeping.
-        let timeout = match lock(&me.queue).len() {
-            0 => lock(&me.timers)
-                .next_deadline()
-                .map(|d| d.saturating_duration_since(Instant::now())),
-            _ => Some(Duration::ZERO),
-        };
+        let timeout = park_timeout(me);
         let asleep = Instant::now();
         turn(me, &local, timeout);
         crate::task::quiet::unparked();
@@ -348,6 +343,18 @@ fn run(index: usize) {
             .store(TICKS.load(Ordering::Relaxed), Ordering::Relaxed);
         me.parked.store(false, Ordering::SeqCst);
         kick_monitor();
+    }
+}
+
+/// How long a parking worker's turn may sleep: until its next timer. Not at all when its own
+/// queue has tasks: the park hook can wake tasks of this worker (due `unref()`'d timers), which
+/// go there.
+fn park_timeout(me: &Shared) -> Option<Duration> {
+    match lock(&me.queue).len() {
+        0 => lock(&me.timers)
+            .next_deadline()
+            .map(|d| d.saturating_duration_since(Instant::now())),
+        _ => Some(Duration::ZERO),
     }
 }
 
@@ -625,4 +632,36 @@ pub(super) fn queued_from_outside() -> usize {
         .iter()
         .map(|w| w.inbox_len.load(Ordering::SeqCst) + w.offered_len.load(Ordering::SeqCst))
         .sum()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn idle_task() -> Arc<Task> {
+        super::super::task::make(async {}, 0, true).0
+    }
+
+    #[test]
+    fn tasks_handed_back_go_through_the_inbox_and_wake_the_worker() {
+        // The monitor's rescue hands tasks back to a worker that may have parked meanwhile: they
+        // must be where its park check looks, and it must be woken.
+        let w = new_shared();
+        w.parked.store(true, Ordering::SeqCst);
+        send_back(&w, vec![idle_task(), idle_task()]);
+        assert_eq!(w.inbox_len.load(Ordering::SeqCst), 2);
+        assert!(!w.parked.load(Ordering::SeqCst), "the worker was not woken");
+        let mut r = lock(&w.reactor);
+        let Reactor { poll, events } = &mut *r;
+        poll.poll(events, Some(Duration::ZERO)).expect("poll");
+        assert!(events.iter().any(|e| e.token() == WAKE), "no wake event");
+    }
+
+    #[test]
+    fn a_worker_with_queued_tasks_does_not_sleep_in_its_turn() {
+        let w = new_shared();
+        assert_eq!(park_timeout(&w), None);
+        lock(&w.queue).push_next(idle_task());
+        assert_eq!(park_timeout(&w), Some(Duration::ZERO));
+    }
 }
