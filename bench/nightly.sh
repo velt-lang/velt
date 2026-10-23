@@ -17,6 +17,9 @@
 # non-blank, non-comment lines of std/**/*.vlt): the standard library grows with almost every
 # feature, and checking more of it is not a slowdown, while checking each line more slowly is. A
 # baseline row without the lines is compared in total.
+# Benchmarks with a Node version (bench/node/<name>.js, bench/json/node/<name>.js) also run under
+# `node`, best of 3 interleaved, and a second table marks each one where Velt takes longer than
+# Node (wall time, so it is reported, not failed; the times go to <out>.node.tsv).
 # Needs: cargo, clang, valgrind, python3.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -78,7 +81,25 @@ print(f"{name}\t{m.group(1).replace(',', '')}\t{ms:.0f}", flush=True)
 EOF
 }
 
+# against_node <name> <velt exe> <node script>: one line "<name>\t<velt ms>\t<node ms>", the best
+# of 3 interleaved runs of each (wall time, so only a guide: the job doesn't fail on it).
+against_node() {
+  "$PYTHON" - "$@" <<'EOF'
+import subprocess, sys, time
+name, exe, script = sys.argv[1:]
+best = {}
+for _ in range(3):
+    for k, cmd in (("velt", [exe]), ("node", ["node", script])):
+        t = time.perf_counter()
+        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL)
+        best[k] = min(best.get(k, float("inf")), time.perf_counter() - t)
+print(f"{name}\t{best['velt'] * 1000:.0f}\t{best['node'] * 1000:.0f}", flush=True)
+EOF
+}
+
+NODE_FILE="${OUT_FILE%.tsv}.node.tsv"
 : > "$OUT_FILE"
+: > "$NODE_FILE"
 for src in "${BENCHES[@]}"; do
   rel=${src#"$ROOT/bench/"}
   name=${rel%.vlt}
@@ -86,6 +107,11 @@ for src in "${BENCHES[@]}"; do
   echo "$name" >&2
   "$VELT" build --release --backend llvm "$src" -o "$exe" >&2
   count "$name" "$exe" >> "$OUT_FILE"
+  # The Node version of the same program, when there is one (bench/node/, bench/json/node/).
+  js="$(dirname "$src")/node/$(basename "$name").js"
+  if [ -f "$js" ] && command -v node > /dev/null; then
+    against_node "$name" "$exe" "$js" >> "$NODE_FILE"
+  fi
 done
 echo "compile/check_all_std" >&2
 # Code lines only: documentation added to std/ would otherwise lower the cost per line and hide a
@@ -100,7 +126,7 @@ std_lines=$(find "$ROOT/std" -name '*.vlt' -exec cat {} + | awk '
 row=$(count "compile/check_all_std" "$VELT" check "$ROOT/bench/compile/all_std.vlt")
 printf '%s\t%s\n' "$row" "$std_lines" >> "$OUT_FILE"
 
-"$PYTHON" - "$OUT_FILE" "$BASELINE" "$THRESHOLD" <<'EOF'
+"$PYTHON" - "$OUT_FILE" "$BASELINE" "$THRESHOLD" "$NODE_FILE" <<'EOF'
 import sys
 def load(path):
     rows = {}
@@ -131,6 +157,27 @@ for name, (instr, ms, lines) in new.items():
     else:
         print(f"| {name} | {instr / 1e6:.1f} | - | new | {ms} |")
 print()
+# Against Node: wall time of the benchmarks that have a Node version. A row where Velt takes
+# longer is marked; it doesn't fail the job (a shared runner's times vary by tens of percent).
+against = [l.rstrip("\n").split("\t") for l in open(sys.argv[4]) if l.strip()]
+if against:
+    print("| benchmark (wall ms, best of 3) | Velt | Node | Velt / Node |")
+    print("|---|---:|---:|---:|")
+    slower = []
+    for name, v, n in against:
+        v, n = int(v), int(n)
+        ratio = v / n if n else float("inf")
+        mark = ""
+        if ratio > 1:
+            slower.append(name)
+            mark = " **slower than Node**"
+        print(f"| {name} | {v} | {n} | {ratio:.2f}{mark} |")
+    print()
+    if slower:
+        print(f"Velt takes longer than Node on {len(slower)} benchmark(s): {', '.join(slower)}.")
+    else:
+        print("Velt is faster than Node on every benchmark with a Node version.")
+    print()
 if not base:
     print("No baseline: these counts become the next run's baseline.")
 elif worse:

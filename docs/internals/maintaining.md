@@ -148,7 +148,9 @@ not a reason for another round.
   (`bench/nightly.sh`: the instructions each benchmark executes, counted with valgrind, against
   the last run that passed, `compile/check_all_std` per code line of `std/`; more than 3% more
   fails and opens, or comments on, the issue "nightly benchmarks regressed" with the benchmarks
-  over the limit and the commits since the baseline); fix failures first ("A red nightly" below).
+  over the limit and the commits since the baseline; a second table in the job summary marks the
+  benchmarks that take longer than their Node version, by wall time, which doesn't fail the
+  job); fix failures first ("A red nightly" below).
   An intended slowdown is accepted with `gh workflow run nightly -f only=bench -f
   bench_baseline=accept`. Run one part alone with `gh workflow run nightly -f only=stress` (or
   `gate`, `oracle`, `bench`, `wasm`).
