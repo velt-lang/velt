@@ -82,7 +82,8 @@ EOF
 }
 
 # against_node <name> <velt exe> <node script>: one line "<name>\t<velt ms>\t<node ms>", the best
-# of 3 interleaved runs of each (wall time, so only a guide: the job doesn't fail on it).
+# of 3 interleaved runs of each (wall time, so only a guide: the job doesn't fail on it). When
+# either program fails, it prints a note on stderr and no line.
 against_node() {
   "$PYTHON" - "$@" <<'EOF'
 import subprocess, sys, time
@@ -91,7 +92,14 @@ best = {}
 for _ in range(3):
     for k, cmd in (("velt", [exe]), ("node", ["node", script])):
         t = time.perf_counter()
-        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL)
+        try:
+            r = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+            failed = f"exited {r.returncode}:\n{r.stderr[-500:]}" if r.returncode != 0 else None
+        except OSError as e:
+            failed = f"did not start: {e}"
+        if failed:
+            print(f"{name}: {k} {failed}\n(not compared with Node)", file=sys.stderr)
+            sys.exit(0)
         best[k] = min(best.get(k, float("inf")), time.perf_counter() - t)
 print(f"{name}\t{best['velt'] * 1000:.0f}\t{best['node'] * 1000:.0f}", flush=True)
 EOF
@@ -159,7 +167,8 @@ for name, (instr, ms, lines) in new.items():
 print()
 # Against Node: wall time of the benchmarks that have a Node version. A row where Velt takes
 # longer is marked; it doesn't fail the job (a shared runner's times vary by tens of percent).
-against = [l.rstrip("\n").split("\t") for l in open(sys.argv[4]) if l.strip()]
+# (A benchmark whose Velt or Node run failed has no row and is left out.)
+against = [r for r in (l.rstrip("\n").split("\t") for l in open(sys.argv[4])) if len(r) == 3]
 if against:
     print("| benchmark (wall ms, best of 3) | Velt | Node | Velt / Node |")
     print("|---|---:|---:|---:|")
