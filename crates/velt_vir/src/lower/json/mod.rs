@@ -147,6 +147,16 @@ impl FnLower<'_, '_> {
         let place = self.place_of(v, t);
         if self.cx.is_dynamic(t) {
             self.json_any_top_check(&place);
+        } else if self.cx.is_union(t) {
+            // The `any` / `unknown` member of a generic union at such an instantiation
+            // (`T | Mod<T>` at `T = unknown`) is checked as a plain one is.
+            self.for_each_variant(&place, t, |lw, _, parts| {
+                if let [(pp, pt)] = parts.as_slice() {
+                    if lw.cx.is_dynamic(*pt) {
+                        lw.json_any_top_check(pp);
+                    }
+                }
+            });
         }
         let buf = self.temp(STR);
         let bp = self.addr(Place::local(buf));

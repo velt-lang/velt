@@ -290,12 +290,12 @@ extend<T> Array<T> {
   }
 
   /**
-   * Position of the first element `==` `x`, or -1. `==` compares objects by identity and numbers
-   * by value, like JS's `===`, so `NaN` is never found (JS `indexOf` semantics).
+   * Position of the first element `===` `x`, or -1: objects by identity, numbers by value, so
+   * `NaN` is never found and `null` does not find `undefined` (JS `indexOf` semantics).
    */
   indexOf(x: T): i64 {
     for (let i: usize = 0; i < this.length; i++) {
-      if (this[i] == x) {
+      if (this[i] === x) {
         return i as i64;
       }
     }
@@ -311,7 +311,7 @@ extend<T> Array<T> {
     let i = this.length;
     while (i > 0) {
       i--;
-      if (this[i] == x) {
+      if (this[i] === x) {
         return i as i64;
       }
     }
@@ -328,8 +328,8 @@ extend<T> Array<T> {
     if (this.indexOf(x) >= 0) {
       return true;
     }
-    // Only a value that is not `==` itself can compare otherwise: the number `NaN`.
-    if (x == x) {
+    // Only a value that is not `===` itself can compare otherwise: the number `NaN`.
+    if (x === x) {
       return false;
     }
     for (let i: usize = 0; i < this.length; i++) {

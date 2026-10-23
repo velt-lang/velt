@@ -1,0 +1,227 @@
+// A union whose members are interfaces with methods (#1410): object literals pick the member by
+// their discriminant, the fields and methods every member has read and call on the union (a
+// method of a common base interface through it, else each member's own), and the
+// discriminant narrows. Object types and interfaces mix in one union, and so do classes: a
+// method an interface member declares is called on a class member that has it too, and a
+// method every class of a union of classes has is called on each one's own.
+interface Base {
+  describe(): string;
+}
+
+interface Circle extends Base {
+  readonly kind: "circle";
+  readonly r: number;
+}
+
+interface Square extends Base {
+  readonly kind: "square";
+  readonly side: number;
+}
+
+type Shape = Circle | Square;
+
+interface Named {
+  readonly kind: "named";
+  readonly name: string;
+  greet(): string;
+}
+
+interface Other {
+  readonly kind: "other";
+  readonly name: string;
+  greet(): string;
+}
+
+type Anon = { readonly kind: "anon"; readonly name: string };
+
+function circle(r: number): Shape {
+  return {
+    kind: "circle",
+    r,
+    describe() {
+      return `circle ${r}`;
+    },
+  };
+}
+
+function square(side: number): Shape {
+  return { kind: "square", side, describe: () => `square ${side}` };
+}
+
+function corners(s: Shape | undefined): number {
+  if (s === undefined) {
+    return -1;
+  }
+  const { kind } = s;
+  switch (kind) {
+    case "circle":
+      return 0;
+    case "square":
+      return 4;
+  }
+}
+
+interface Disc {
+  readonly kind: "disc";
+  r: number;
+  area(): number;
+}
+
+class Sq {
+  readonly kind: "sq" = "sq";
+  side: number;
+  constructor(side: number) {
+    this.side = side;
+  }
+  area(): number {
+    return this.side * this.side;
+  }
+  grow(k: number): string {
+    this.side *= k;
+    return `sq ${this.side}`;
+  }
+  tag(t: string): string {
+    return `s:${t}`;
+  }
+  scale(k: number): string {
+    return `sq${this.side * k}`;
+  }
+  each(f: (x: number) => number): number {
+    return f(this.side) + 100;
+  }
+  pair(a: string, b: number): string {
+    return `s ${a} ${b}`;
+  }
+}
+
+class Ring {
+  readonly kind: "ring" = "ring";
+  r: number;
+  constructor(r: number) {
+    this.r = r;
+  }
+  area(): number {
+    return 3 * this.r * this.r;
+  }
+  grow(k: number): string {
+    this.r += k;
+    return `ring ${this.r}`;
+  }
+  tag(t: string): string {
+    return `r:${t}`;
+  }
+  scale(k: number): number {
+    return this.r * k;
+  }
+  each(f: (x: number) => number): number {
+    return f(this.r);
+  }
+  pair(a: string, b: number): string {
+    return `r ${a} ${b}`;
+  }
+}
+
+class Tri {
+  readonly kind: "tri" = "tri";
+  tag(t: string): string {
+    return `t:${t}`;
+  }
+  scale(k: number): number {
+    return k;
+  }
+  each(f: (x: number) => number): number {
+    return f(0);
+  }
+  pair(a: string, b: number): string {
+    return `t ${a} ${b}`;
+  }
+}
+
+const order: string[] = [];
+
+function note<T>(s: string, v: T): T {
+  order.push(s);
+  return v;
+}
+
+function pick(i: number, xs: (Ring | Sq | Tri)[]): Ring | Sq | Tri {
+  order.push("recv");
+  return xs[i];
+}
+
+// Computed arguments are evaluated once, after the receiver and in order; the call's type is
+// the union of the members' results (`number | string` for `scale`).
+function computed(): void {
+  const names = ["a", "b"];
+  const n = 3;
+  const k = 1;
+  const two: (Ring | Sq)[] = [new Ring(2), new Sq(2)];
+  for (const s of two) {
+    console.log(s.tag(names[0]), s.tag(`t${n}`), s.tag(String(n)), s.scale(k + 1));
+    const r = s.scale(2);
+    console.log(typeof r, r);
+    console.log(s.each((x) => x * 10), s.pair(names[1] + "!", n * 2));
+  }
+  const three: (Ring | Sq | Tri)[] = [new Ring(1), new Sq(1), new Tri()];
+  for (const s of three) {
+    console.log(s.tag(names[1]), s.scale(n - 1), s.pair(`${s.kind}`, k));
+  }
+  console.log(pick(1, three).pair(note("a1", "x"), note("a2", 5)), order.join(","));
+  let i = 0;
+  const t = three[0];
+  console.log(t.pair(String(i++), i++), i);
+  const m: Ring | Sq | undefined = two[1];
+  console.log(m?.tag(names[0] + "?"));
+}
+
+type Tile = Disc | Sq;
+
+function describeTile(t: Tile): string {
+  return `${t.kind} ${t.area()}`;
+}
+
+function demo(): void {
+  const shapes: Shape[] = [circle(1), square(2)];
+  for (const s of shapes) {
+    console.log(s.kind, s.describe(), corners(s));
+    if (s.kind === "square") {
+      console.log(s.side * 2);
+    } else {
+      console.log(s.r);
+    }
+  }
+  console.log(corners(undefined), shapes[0]?.kind);
+  console.log(shapes.map((s) => s.describe()).join("|"));
+  const people: (Named | Other)[] = [
+    { kind: "named", name: "ann", greet: () => "hi ann" },
+    { kind: "other", name: "bo", greet: () => "yo bo" },
+  ];
+  for (const p of people) {
+    console.log(p.name, p.greet());
+  }
+  const mixed: (Named | Anon)[] = [{ kind: "anon", name: "?" }, people[0] as Named];
+  for (const w of mixed) {
+    console.log(w.kind, w.name.length);
+    if (w.kind === "named") {
+      console.log(w.greet());
+    }
+  }
+  const tiles: Tile[] = [{ kind: "disc", r: 1, area: () => 3 }, new Sq(2)];
+  console.log(tiles.map(describeTile).join(", "));
+  const sq = tiles[1];
+  if (sq.kind === "sq") {
+    sq.side = 5;
+  }
+  console.log(describeTile(sq), (tiles[1] as Sq).side);
+  // Classes only: each member's own method, the receiver shared.
+  const k = 2;
+  const solids: (Ring | Sq)[] = [new Ring(1), new Sq(3)];
+  for (const s of solids) {
+    console.log(s.area(), s.grow(k), s.area());
+  }
+  const maybe: Tile | undefined = tiles[1];
+  console.log(maybe?.area(), solids[0].kind);
+}
+
+demo();
+computed();

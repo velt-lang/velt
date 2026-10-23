@@ -6,6 +6,7 @@
 
 use velt_common::Span;
 
+use crate::any::Dynamic;
 use crate::body::FnCx;
 use crate::hir::{self, ExprKind as H, Nothing, PatKind as P, TyId};
 
@@ -140,7 +141,9 @@ impl FnCx<'_, '_> {
 
     /// `l == r` (`negate`: `!=`) where either side is a `T | null | undefined`: the other side
     /// converts to that type, then both nothings are equal (`null == undefined`), and present
-    /// values compare as `===` does. `Err` gives the operands back when neither side is one.
+    /// values compare as `===` does. Two values of one type with a type parameter in it
+    /// (`T | string`) compare as `Intrinsic::LooseEq`, which lowering makes `===` where the
+    /// instantiated type holds no nothing. `Err` gives the operands back otherwise.
     pub(crate) fn loose_three_state_eq(
         &mut self,
         l: hir::Expr,
@@ -148,6 +151,41 @@ impl FnCx<'_, '_> {
         negate: bool,
         span: Span,
     ) -> Result<hir::Expr, Box<(hir::Expr, hir::Expr)>> {
+        // Two values of one type with a type parameter in it (`T | string`): which nothings
+        // they hold depends on the instantiation (`T = unknown` holds both), so the test is
+        // made there.
+        let opt_param =
+            l.ty == r.ty && (self.cx.ty.core(l.ty)).is_some_and(|p| self.param_shaped(p));
+        if opt_param {
+            // `T | undefined` (`T = null` holds both nothings) and `T | null | undefined`
+            // (`T = unknown` compares the values held loosely): tested where instantiated.
+            let b = self.cx.ty.bool_;
+            let e = self.intrinsic(hir::Intrinsic::LooseEq, vec![l, r], b, span);
+            return Ok(self.negated(e, negate, span));
+        }
+        if l.ty == r.ty && self.param_shaped(l.ty) {
+            // `binary_checked` gives `Intrinsic::Same` (or a `Binary`) for these operands.
+            let e = self.binary_checked(velt_syntax::ast::BinaryOp::Eq, l, r, span);
+            let e = match e.kind {
+                H::Binary {
+                    op: hir::BinOp::Eq,
+                    lhs,
+                    rhs,
+                } => {
+                    let b = self.cx.ty.bool_;
+                    self.intrinsic(hir::Intrinsic::LooseEq, vec![*lhs, *rhs], b, span)
+                }
+                H::Call {
+                    callee: hir::Callee::Intrinsic(hir::Intrinsic::Same),
+                    args,
+                } => {
+                    let b = self.cx.ty.bool_;
+                    self.intrinsic(hir::Intrinsic::LooseEq, args, b, span)
+                }
+                kind => hir::Expr { kind, ..e },
+            };
+            return Ok(self.negated(e, negate, span));
+        }
         let (l, r) = match (self.is_three_state(l.ty), self.is_three_state(r.ty)) {
             (false, false) => return Err(Box::new((l, r))),
             (true, false) if self.cx.ty.nothing_of(r.ty).is_some() => {
@@ -398,10 +436,22 @@ impl FnCx<'_, '_> {
         };
         let (def, type_args) = self.cx.union_def(core)?;
         let members = self.cx.union_members(core)?;
-        let v = members
+        let held = members
             .iter()
-            .position(|m| self.cx.ty.nothing_of(*m).is_some_and(allows))?;
-        let inner = self.nothing_value(which, members[v], span);
+            .position(|m| self.cx.ty.nothing_of(*m).is_some_and(allows));
+        // Else an `any` / `unknown` member holds it (`T | Mod<T>` at `T = any`).
+        let dynamic = || {
+            members
+                .iter()
+                .position(|m| matches!(self.cx.dynamic(*m), Some(Dynamic::Any | Dynamic::Unknown)))
+        };
+        let (v, inner) = match held {
+            Some(v) => (v, self.nothing_value(which, members[v], span)),
+            None => {
+                let v = dynamic()?;
+                (v, self.dynamic_nothing(which, members[v], span))
+            }
+        };
         let kind = H::Variant {
             def,
             type_args,

@@ -476,6 +476,12 @@ Maintainer-owned, like `hir/mod.rs` and `hir/intrinsic.rs`.
   instantiation to the test sema writes for that type (truthiness.rs): numbers falsy at `0`,
   `-0` and `NaN`, strings at `""`, nullables at `null` or a falsy payload, unions by their
   member, enums at a `0` / `""` member, other values always truthy.
+  `Intrinsic::LooseEq(a, b)` (additive, compiler-internal, both operands of one type with a
+  type parameter in it, borrowed: `T`, `T | string`, `T | undefined`): a `bool`, `a == b` in
+  generic code, lowered per instantiation: `Intrinsic::Same` (`a === b`) where the instantiated
+  type holds no nothing, else that or both operands nothings (`null == undefined`); at
+  `T = any` / `unknown`, `AnyLooseEq` (JavaScript's coercions: `1 == "1"`). Sema emits it for
+  `==` / `!=` (negated) on such operands.
   `Intrinsic::FnCapturesNothing(f)` (std only, `f` a function value, borrowed): a `bool`, lowered
   to `f.env == null`. Only closures without captures and named functions have a null env (a
   program that compares function values gives every closure one), so true means `f` reaches no

@@ -178,7 +178,7 @@ impl FnCx<'_, '_> {
                 true,
             ),
             I::Hash => (vec![(t, B)], ty.u64, true),
-            I::Eq | I::KeyEq | I::IncludesEq | I::Same | I::SameValue => {
+            I::Eq | I::KeyEq | I::IncludesEq | I::Same | I::SameValue | I::LooseEq => {
                 (vec![(t, B), (t, B)], bool_, true)
             }
             I::Clone | I::Share => (vec![(t, B)], t, true),

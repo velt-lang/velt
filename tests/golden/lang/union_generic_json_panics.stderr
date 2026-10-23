@@ -1,0 +1,1 @@
+panic: TypeError: `JSON.stringify` of `undefined`, a function or a symbol returns `undefined`, which is not supported through `any` yet (#924)

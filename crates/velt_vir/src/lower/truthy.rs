@@ -7,11 +7,17 @@
 //! `Intrinsic::IsNull` / `IsNullish`: `x === null` / `x == null` on an option of a type
 //! parameter (`x?: T`), lowered per instantiation: a `T = X | null` makes `x` a
 //! `X | null | undefined`, whose `null` is the inner nothing.
+//!
+//! An `any` / `unknown` (also the member of a generic union at such an instantiation,
+//! `T | Mod<T>` at `T = unknown`) is tested by the value it holds: its descriptor's truthiness
+//! entry and `typeof` tag.
 
 use velt_sema::hir::{self, LitValue, TyId, TyKind};
 
+use super::any::{SLOT_TRUTHY, TAG_NULL};
+use super::operand::proj;
 use super::{cint, FnLower};
-use crate::vir::{self, BinOp, Const, Operand, Place, Rvalue, Terminator, Ty};
+use crate::vir::{self, BinOp, Const, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
 impl FnLower<'_, '_> {
     /// `Truthy(a)`: a `Bool` operand.
@@ -34,6 +40,72 @@ impl FnLower<'_, '_> {
         Operand::Copy(out)
     }
 
+    /// `LooseEq(a, b)` (`a == b` on a type with a type parameter in it): `a === b` as
+    /// `Intrinsic::Same` lowers it where the instantiated type holds no nothing; else that or
+    /// both nothings (`null == undefined`); at an `any` / `unknown`, `==` of the values held.
+    pub(super) fn loose_eq_intrinsic(&mut self, a: &hir::Expr, b: &hir::Expr) -> Operand {
+        let t = self.sub(a.ty);
+        if self.cx.is_dynamic(t) {
+            // `T = unknown` / `any`: `==` of the values they hold, with JavaScript's coercions.
+            return self.any_eq(a, b, true);
+        }
+        let (pa, pb) = self.two_places(a, b);
+        if let TyKind::Option(e, _) = self.cx.kind(t) {
+            if self.dynamic_core(e) {
+                return self.loose_eq_opt_any(&pa, &pb, t);
+            }
+        }
+        let same = self.same_values(&pa, &pb, t);
+        if !self.may_be_null(t, true) {
+            return same;
+        }
+        let (na, nb) = (self.temp(Ty::Bool), self.temp(Ty::Bool));
+        let (na, nb) = (Place::local(na), Place::local(nb));
+        self.null_into(&na, &pa, t, true);
+        self.null_into(&nb, &pb, t, true);
+        let both = Rvalue::Binary(BinOp::BitAnd, Operand::Copy(na), Operand::Copy(nb));
+        let both = self.rvalue_temp(Ty::Bool, both);
+        self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitOr, same, both))
+    }
+
+    /// Is `t` an `any` / `unknown`, or an option of one (the `X | null` inside a
+    /// `X | null | undefined`, `Cx::kind`)?
+    fn dynamic_core(&self, t: TyId) -> bool {
+        match self.cx.kind(t) {
+            TyKind::Option(e, _) => self.dynamic_core(e),
+            _ => self.cx.is_dynamic(t),
+        }
+    }
+
+    /// `==` of two options `t` of an `any` / `unknown` (`T | undefined` at `T = unknown`, and
+    /// the options nested in a `T | null | undefined`): of the values held when both are
+    /// present, else whether both are nothings.
+    fn loose_eq_opt_any(&mut self, pa: &Place, pb: &Place, t: TyId) -> Operand {
+        let out = Place::local(self.temp(Ty::Bool));
+        let (sa, sb) = (self.option_is_some(pa, t), self.option_is_some(pb, t));
+        let both = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitAnd, sa, sb));
+        let (both_bb, other_bb, done) = (self.new_block(), self.new_block(), self.new_block());
+        self.branch(both, both_bb, other_bb);
+        self.switch_to(both_bb);
+        let (va, vb) = (self.some_payload(pa, t), self.some_payload(pb, t));
+        let eq = match self.cx.kind(t) {
+            TyKind::Option(e, _) if !self.cx.is_dynamic(e) => self.loose_eq_opt_any(&va, &vb, e),
+            _ => self.any_loose_places(&va, &vb),
+        };
+        self.assign(out.clone(), Rvalue::Use(eq));
+        self.goto(done);
+        self.switch_to(other_bb);
+        let (na, nb) = (self.temp(Ty::Bool), self.temp(Ty::Bool));
+        let (na, nb) = (Place::local(na), Place::local(nb));
+        self.null_into(&na, pa, t, true);
+        self.null_into(&nb, pb, t, true);
+        let nothings = Rvalue::Binary(BinOp::BitAnd, Operand::Copy(na), Operand::Copy(nb));
+        self.assign(out.clone(), nothings);
+        self.goto(done);
+        self.switch_to(done);
+        Operand::Copy(out)
+    }
+
     /// Assign whether the value at `p` (of the concrete type `t`) is `null` (`loose`: `null`
     /// or `undefined`) to `out`. A `X | null | undefined` is an option of a `X | null` here
     /// (`Cx::kind`), whose own nothing is `undefined`. A union holds a nothing through the
@@ -42,6 +114,11 @@ impl FnLower<'_, '_> {
     fn null_into(&mut self, out: &Place, p: &Place, t: TyId, loose: bool) {
         if !self.may_be_null(t, loose) {
             self.assign(out.clone(), Rvalue::Use(bool_const(false)));
+            return;
+        }
+        if self.cx.is_dynamic(t) {
+            let v = self.any_null(p, loose);
+            self.assign(out.clone(), Rvalue::Use(v));
             return;
         }
         let TyKind::Option(e, n) = self.cx.kind(t) else {
@@ -76,9 +153,26 @@ impl FnLower<'_, '_> {
         self.switch_to(done);
     }
 
+    /// Does the `any` at `p` hold `null` (`loose`: or `undefined`)?
+    fn any_null(&mut self, p: &Place, loose: bool) -> Operand {
+        let desc = Operand::Copy(proj(p, Proj::Field(1)));
+        let tag = self.any_tag_of(desc);
+        let null = cint(TAG_NULL as i128, Ty::U64);
+        if !loose {
+            return self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, tag, null));
+        }
+        // `undefined` (0) or `null` (1).
+        let two = cint(2, Ty::U64);
+        self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Lt, tag, two))
+    }
+
     /// Can a value of the concrete type `t` be `null` (`loose`: or `undefined`), itself or
     /// through a nested option or the member of a union it holds?
     fn may_be_null(&mut self, t: TyId, loose: bool) -> bool {
+        if self.cx.is_dynamic(t) {
+            // An `any` / `unknown` (the member of `T | Mod<T>` at `T = unknown`): its value's.
+            return !self.cx.is_narrow_dynamic(t);
+        }
         match self.cx.kind(t) {
             TyKind::Option(e, n) => loose || n.has_null() || self.may_be_null(e, loose),
             TyKind::Adt(d, _) if self.cx.is_union(t) => {
@@ -94,6 +188,13 @@ impl FnLower<'_, '_> {
 
     /// Assign whether the value at `p` (of the concrete type `t`) is truthy to `out`.
     pub(super) fn truthy_into(&mut self, out: &Place, p: &Place, t: TyId) {
+        if self.cx.is_dynamic(t) {
+            // The test of the type the `any` / `unknown` holds (its descriptor's).
+            let (data, desc) = self.any_parts(Operand::Copy(p.clone()), t);
+            let v = self.any_slot_call(desc, SLOT_TRUTHY, vec![data], Ty::Bool);
+            self.assign(out.clone(), Rvalue::Use(v));
+            return;
+        }
         let v = match self.cx.kind(t) {
             TyKind::Bool => Operand::Copy(p.clone()),
             TyKind::Int(_) => {
