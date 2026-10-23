@@ -397,8 +397,9 @@ impl FnCx<'_, '_> {
         let ps = self.props(props);
         let mut fields = vec![];
         let mut hs = vec![];
+        let dynamic = self.hint(exp).is_some_and(|t| self.cx.dynamic(t).is_some());
         for (name, value) in &ps {
-            let h = self.prop_value(name, *value, None);
+            let h = self.anon_prop_value(name, *value, dynamic);
             fields.push((name.name.clone(), h.ty));
             hs.push(h);
         }

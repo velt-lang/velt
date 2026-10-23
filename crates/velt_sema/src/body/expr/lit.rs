@@ -3,6 +3,7 @@
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
+use crate::any::Dynamic;
 use crate::body::{FnCx, Want};
 use crate::hir::{self, Callee, ExprKind as H, Intrinsic, Nothing, TyId, TyKind};
 use crate::types::{int_max, int_name, int_range};
@@ -125,6 +126,22 @@ impl FnCx<'_, '_> {
                 .unwrap_or(self.cx.ty.f64),
         };
         self.mk(H::Lit(hir::Lit::Float(value)), ty, span)
+    }
+
+    /// The value of field `name` of an object literal of its own type. Converted to an `any`
+    /// or `unknown` (`dynamic`: `const u: unknown = { a: null }`), a `null` field (TypeScript's
+    /// type `null`) is an `any` holding `null`.
+    pub(super) fn anon_prop_value(
+        &mut self,
+        name: &ast::Ident,
+        value: Option<&ast::Expr>,
+        dynamic: bool,
+    ) -> hir::Expr {
+        let any = match value.is_some_and(|v| dynamic && is_null_lit(v)) {
+            true => self.any_ty(),
+            false => None,
+        };
+        self.prop_value(name, value, any)
     }
 
     /// `null` takes its `T | null` type from context.
@@ -496,6 +513,24 @@ impl FnCx<'_, '_> {
     /// it in errors): a `string` itself, else an `Intrinsic::ToString` of it.
     pub(crate) fn js_text(&mut self, h: hir::Expr, what: &str) -> hir::Expr {
         let h = self.unbrand(h);
+        // An `any`, `unknown` or `object` is written by the value it holds: an array as JS's
+        // `Array.prototype.toString` writes it (`1,2`), not as `console.log` prints it.
+        if matches!(
+            self.cx.dynamic(h.ty),
+            Some(Dynamic::Any | Dynamic::Unknown | Dynamic::Object)
+        ) && !self.cx.scopes[self.module].is_std
+        {
+            if let Some(any) = self.any_ty() {
+                let span = h.span;
+                let h = self.coerce(h, any);
+                let init = self.share_if_place(h);
+                // `__anyText` reads an array's elements through `any`.
+                self.cx.note_dyn_members();
+                return self.with_temp("<text>", init, span, span, |lw, v| {
+                    lw.prelude_fn_call("__anyText", vec![v.clone()], span)
+                });
+            }
+        }
         let h = match self.nullable_text(h, what) {
             Ok(text) => return text,
             Err(h) => h,
@@ -585,5 +620,14 @@ impl FnCx<'_, '_> {
         }
         acc.span = span;
         acc
+    }
+}
+
+/// Is `e` the literal `null` (in parentheses or not)?
+fn is_null_lit(e: &ast::Expr) -> bool {
+    match &e.kind {
+        ast::ExprKind::Paren(inner) => is_null_lit(inner),
+        ast::ExprKind::Lit(ast::Lit::Null) => true,
+        _ => false,
     }
 }

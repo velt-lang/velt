@@ -103,6 +103,18 @@ impl FnLower<'_, '_> {
         }
     }
 
+    /// A literal type, a union, an interface value or an option of one (`"ok"`,
+    /// `string | number | null`), which [`any_into`](Self::any_into) boxes as the value, member
+    /// or nothing it holds.
+    pub(super) fn union_like(&self, t: TyId) -> bool {
+        match self.cx.kind(t) {
+            TyKind::Option(inner, _) => self.union_like(inner),
+            TyKind::Literal(_) => true,
+            TyKind::Dyn(..) => !self.cx.is_dynamic(t),
+            _ => self.cx.is_union(t),
+        }
+    }
+
     /// The value of literal type `l` boxed into `out`.
     fn any_literal_into(&mut self, l: &LitValue, out: &Place) {
         let (v, k) = match l {

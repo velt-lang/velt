@@ -935,7 +935,9 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   `any` key is `AnyGet(x, key)`, `x[i]` with a number key `AnyIndex(x, i as f64)`, `x.m(a...)`
   `AnyCall(x, "m", text, a...)` and `x(a...)` `AnyApply(x, text, a...)`, where `x` is borrowed,
   each argument is boxed and moved in, `text` is a string literal naming the callee for a
-  `TypeError` (`x.m is not a function`), and the result is an `any`. An `unknown` receiver is
+  `TypeError` (`x.m is not a function`), and the result is an `any`. A call with a spread
+  argument passes one argument instead, an `any[]` (the array literal `[a..., ...xs]`, never a
+  boxed `any`), whose elements move into the call. An `unknown` receiver is
   an error until narrowed. When a program has any of these, `Program::dyn_members` lists the
   methods and accessors (`DynMember`: name, kind, def, declaring type) of every struct, class and
   object type by name, and every `any` table gets four more slots (velt_vir `lower/any_member.rs`):

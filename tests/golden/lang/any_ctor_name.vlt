@@ -1,0 +1,27 @@
+// `x.constructor.name` and `x.constructor?.name` of an `object`, `any` or `Function` (#926, #924):
+// the name of the constructor of the value held, as sigx names a value in its messages.
+class Point {
+  x = 1;
+}
+class Point3 extends Point {
+  z = 3;
+}
+function nameOf(el: unknown): string {
+  return (el as object).constructor?.name ?? "object";
+}
+function main(): void {
+  console.log(nameOf(new Point()), nameOf(new Point3()), nameOf({ a: 1 }), nameOf([1, 2]));
+  console.log(nameOf(new Map<string, number>()), nameOf(new Set<number>()), nameOf(new Date(0)));
+  console.log(nameOf(new Error("e")), nameOf(new TypeError("t")), nameOf(new Uint8Array(2)));
+  const r: Record<string, number> = { k: 1 };
+  console.log(nameOf(r));
+  const base: Point = new Point3();
+  const o: object = base;
+  console.log(o.constructor.name);
+  const a: any = 5;
+  const s: any = "s";
+  const b: any = true;
+  console.log(a.constructor.name, s.constructor.name, b.constructor.name);
+  const p: any = { nested: new Point() };
+  console.log(p.nested.constructor.name, `${(p as object).constructor.name}!`);
+}

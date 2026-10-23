@@ -53,6 +53,8 @@ impl FnLower<'_, '_> {
             | TyKind::Unit
             | TyKind::Never
             | TyKind::Literal(_) => true,
+            // An interface value: the object it holds, asked when it is written.
+            TyKind::Dyn(..) => true,
             TyKind::Option(e, _) | TyKind::Array(e) | TyKind::Shared(e) => {
                 self.json_dyn_ok(e, seen, void)
             }

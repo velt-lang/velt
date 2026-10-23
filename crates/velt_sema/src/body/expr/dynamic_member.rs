@@ -263,18 +263,25 @@ impl FnCx<'_, '_> {
         Ok(self.intrinsic(Intrinsic::AnyApply, all, any, span))
     }
 
-    /// The arguments of a dynamic call, each boxed as an `any` (moved into the call).
+    /// The arguments of a dynamic call, each boxed as an `any` (moved into the call). With a
+    /// spread (`f(a, ...xs)`), the arguments are one `any[]` built as the array literal
+    /// `[a, ...xs]`, whose elements the call takes (hir_encodings.md "any and unknown").
     fn dynamic_args(&mut self, args: &[ast::Expr], any: TyId) -> Option<Vec<hir::Expr>> {
-        let mut out = vec![];
-        for a in args {
-            if let ast::ExprKind::Spread(_) = &a.kind {
-                self.cx.err(
-                    "a spread argument in a call through `any` is not supported yet (#924)",
-                    a.span,
-                );
-                self.check_args_loose(args);
+        if args
+            .iter()
+            .any(|a| matches!(a.kind, ast::ExprKind::Spread(_)))
+        {
+            let span = args[0].span.to(args[args.len() - 1].span);
+            let list = super::setters::synth(ast::ExprKind::Array(args.to_vec()), span);
+            let arr = self.cx.ty.array(any);
+            let h = self.expr(&list, Some(arr), Want::Move);
+            if self.cx.ty.is_bottom(h.ty) {
                 return None;
             }
+            return Some(vec![self.coerce(h, arr)]);
+        }
+        let mut out = vec![];
+        for a in args {
             let h = self.expr(a, Some(any), Want::Move);
             out.push(self.coerce(h, any));
         }

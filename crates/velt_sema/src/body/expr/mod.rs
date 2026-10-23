@@ -27,6 +27,7 @@ mod coerce;
 mod constraints;
 mod construct;
 mod conversions;
+mod ctor_name;
 mod default_args;
 mod discriminated;
 mod dispose_call;
@@ -283,7 +284,10 @@ impl FnCx<'_, '_> {
                 optional,
             } => match self.prototype_read(object, prop, *optional, span) {
                 Some(h) => h,
-                None => self.member(object, prop, *optional, exp, want, span),
+                None => match self.ctor_name_read(object, prop, span) {
+                    Some(h) => h,
+                    None => self.member(object, prop, *optional, exp, want, span),
+                },
             },
             A::Index {
                 object,

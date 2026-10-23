@@ -199,7 +199,8 @@ impl FnLower<'_, '_> {
                 continue;
             }
             self.switch_to(bb);
-            self.loc = at;
+            // A caller-tracking instance called from glue has no caller location to point at.
+            self.loc = at.filter(|l| *l != super::srcloc::UNKNOWN_LOC);
             let msg = format!("division by zero{}", self.panic_suffix());
             let msg = self.str_lit(&msg);
             let a = self.operand_addr(msg, Ty::Agg(STR_AGG));

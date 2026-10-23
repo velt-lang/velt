@@ -216,6 +216,78 @@ export function __anyTagUnsupported(name: string): string {
 }
 
 /**
+ * `String(v)` of an `any` (or `unknown`, `object`) `v`, and its text in a template literal or a
+ * string `+`: an array as JavaScript's `Array.prototype.toString` writes it (the elements joined
+ * with `,`, `null` and `undefined` as empty text, nested arrays the same way), a number with
+ * `ToString` (`-0` is `0`), anything else as before.
+ */
+export function __anyText(v: any): string {
+  if (typeof v === "number") {
+    return String(v as number);
+  }
+  if (!Array.isArray(v)) {
+    return String(v);
+  }
+  let out = "";
+  let first = true;
+  for (const x of v) {
+    if (!first) {
+      out += ",";
+    }
+    first = false;
+    if (typeof x === "symbol") {
+      // `join` converts each element with `ToString`, which throws for a symbol.
+      panic("TypeError: Cannot convert a Symbol value to a string");
+    }
+    if (x !== null && x !== undefined) {
+      out += __anyText(x);
+    }
+  }
+  return out;
+}
+
+/**
+ * `v.constructor.name` of an `any` (or `object`) `v` that holds no class instance: the name of
+ * its constructor in JavaScript.
+ */
+export function __anyCtorName(v: any): string {
+  if (v === undefined || v === null) {
+    panic(`TypeError: Cannot read properties of ${v === null ? "null" : "undefined"} (reading 'constructor')`);
+  }
+  if (Array.isArray(v)) {
+    return "Array";
+  }
+  const t = typeof v;
+  if (t === "number") {
+    return "Number";
+  }
+  if (t === "string") {
+    return "String";
+  }
+  if (t === "boolean") {
+    return "Boolean";
+  }
+  if (t === "symbol") {
+    return "Symbol";
+  }
+  if (t === "bigint") {
+    return "BigInt";
+  }
+  if (t === "function") {
+    // `Function`, `AsyncFunction` or `GeneratorFunction`: a function value doesn't say which.
+    panic("TypeError: `constructor` of a function through `any` is not supported yet (#926)");
+  }
+  return "Object";
+}
+
+/** `v.constructor.name` of an `any` holding an instance of class `name`, whose constructor Velt doesn't name. */
+export function __anyCtorNameUnsupported(name: string): string {
+  panic(
+    `TypeError: \`constructor\` of a ${name} through \`any\` is not supported yet (#926)`,
+  );
+}
+
+/**
  * `delete o.k` / `delete o[k]` of an `any` (or `object`) `o` (strict code) that is not a proxy
  * (a proxy's `deleteProperty` trap: velt:proxy/ops): `__anyDeletePlain`, and Node's `TypeError`
  * when the property cannot go.

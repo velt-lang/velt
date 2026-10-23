@@ -1,0 +1,16 @@
+// `String(x)`, template literals and string `+` of an `any` or `unknown` holding an array write
+// it as JavaScript's `Array.prototype.toString` does (#1435).
+function main(): void {
+  const a: any = [1, 2];
+  console.log(String(a), "" + String([3, 4]));
+  const u: unknown = [5];
+  console.log(String(u), `${a}`, "x" + a, a + "y");
+  const n: any = [[1, 2], [3, [4, 5]], [], null, undefined, "s", true];
+  console.log(String(n));
+  const z: any = -0;
+  console.log(String(z), `${z}`, [z].length);
+  const m: any = [-0, 1.5, NaN];
+  console.log(`${m}`);
+  const o: object = ["o", 1];
+  console.log(String(o));
+}
