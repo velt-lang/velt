@@ -154,10 +154,13 @@ impl FnCx<'_, '_> {
         ok
     }
 
-    /// Do two parameter types differ as values (not two forms of one object type, or the same
-    /// but for `readonly`)?
+    /// Do two parameter types differ as values (not two forms of one object type, the same but
+    /// for `readonly`, or function types the same but for their error-set variables)?
     fn param_differs(&mut self, a: TyId, b: TyId) -> bool {
-        a != b && self.cx.canon(a) != self.cx.canon(b) && !self.cx.same_layout(a, b)
+        a != b
+            && self.cx.canon(a) != self.cx.canon(b)
+            && !self.cx.same_layout(a, b)
+            && self.cx.plain_type(a) != self.cx.plain_type(b)
     }
 
     /// Where no frame holds the hidden local `widened_params` keeps a function value in (a
