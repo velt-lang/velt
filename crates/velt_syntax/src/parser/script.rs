@@ -3,9 +3,11 @@
 //! awaits). A top-level `const`/`let` moves into `main` with them, unless a declaration (a
 //! function, class, struct, `extend` block or a module constant that stays) refers to it
 //! (`script_names`) or a computed key names it (`[KEY]`, a symbol or string constant): then it
-//! stays a module constant, which those declarations can see. Sema initializes the ones that
-//! are module state where they stand among the statements (#1438); a statement that uses a
-//! declaration below it directly is an error here (`script_tdz`).
+//! stays a module constant, which those declarations can see. So does one that code above it
+//! names (a statement, or another variable's initializer): a function that code makes may run
+//! after the declaration (`const get = () => K; const K = 1; get();`). Sema initializes the
+//! ones that are module state where they stand among the statements (#1438) and reports a
+//! statement that uses a declaration below it directly (`velt_sema` `script_tdz`).
 //!
 //! The generated function's name has an empty span at the first statement; sema uses that to
 //! reject statements in an imported module (only the root file runs them).
@@ -54,18 +56,7 @@ impl Parser<'_> {
             );
             return;
         }
-        for (name, what, at) in super::script_tdz::early_uses(items, &stmts) {
-            let msg = match what {
-                "variable" => format!("`{name}` is used before its declaration"),
-                _ => format!("{what} `{name}` is used before its declaration"),
-            };
-            self.diags.push(
-                velt_common::Diagnostic::error(msg, at).with_note(
-                    "top-level statements and declarations run in order: this statement runs before the declaration is evaluated (JavaScript throws a `ReferenceError` here); move the declaration up, or the statement down",
-                ),
-            );
-        }
-        let keep = self.kept_vars(items);
+        let keep = self.kept_vars(items, &stmts);
         let mut body = stmts;
         let mut rest = vec![];
         for (item, keep) in std::mem::take(items).into_iter().zip(keep) {
@@ -110,8 +101,9 @@ impl Parser<'_> {
     /// Per item: is it a top-level variable that stays at module level? Exported ones do, a
     /// [`rest_arrow`] constant, a `const` a computed key `[NAME]` names anywhere in the file (sema resolves the key to the
     /// symbol or string the module constant holds), and those a staying declaration refers to
-    /// (to a fixed point).
-    fn kept_vars(&self, items: &[Item]) -> Vec<bool> {
+    /// (to a fixed point), and those code above them names (a statement in `stmts` or another
+    /// variable's initializer; module docs).
+    fn kept_vars(&self, items: &[Item], stmts: &[Stmt]) -> Vec<bool> {
         let mut keep: Vec<bool> = items
             .iter()
             .map(|i| match &i.kind {
@@ -127,6 +119,34 @@ impl Parser<'_> {
             })
             .collect();
         let free: Vec<_> = items.iter().map(super::script_names::free_names).collect();
+        let stmt_free: Vec<_> = stmts
+            .iter()
+            .map(|s| (s.span.lo, super::script_names::stmt_free_names(s)))
+            .collect();
+        for (i, item) in items.iter().enumerate() {
+            let ItemKind::Var(v) = &item.kind else {
+                continue;
+            };
+            // A destructuring pattern, a `let` without an initializer and an awaiting initializer
+            // cannot stay at module level (yet): such a variable stays in `main`.
+            let simple = matches!(v.pattern.kind, PatternKind::Ident(_))
+                && v.init
+                    .as_ref()
+                    .is_some_and(|e| !self.mentions(e.span, "await"));
+            if !simple {
+                continue;
+            }
+            let names = bound_names(&v.pattern);
+            let named =
+                |free: &rustc_hash::FxHashSet<String>| names.iter().any(|n| free.contains(n));
+            let above = stmt_free
+                .iter()
+                .any(|(lo, free)| *lo < item.span.lo && named(free))
+                || items.iter().zip(&free).any(|(j, free)| {
+                    matches!(j.kind, ItemKind::Var(_)) && j.span.lo < item.span.lo && named(free)
+                });
+            keep[i] |= above;
+        }
         loop {
             let mut changed = false;
             for (i, item) in items.iter().enumerate() {

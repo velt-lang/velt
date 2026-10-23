@@ -89,6 +89,7 @@ mod recursive_aliases;
 mod recursive_unions;
 mod replaced_holders;
 mod resolve;
+mod script_tdz;
 mod suggest;
 mod symbols;
 mod synth_ifaces;
@@ -439,6 +440,7 @@ pub(crate) fn error_count(cx: &ctx::Ctx) -> usize {
 
 /// Steps 1–5: every definition and body checked, ownership and throws inferred, moves checked.
 fn analyze_bodies(cx: &mut ctx::Ctx) {
+    timings::pass("script_tdz::check", || script_tdz::check(cx));
     timings::pass("collect::collect", || collect::collect(cx));
     cx.collected_defs = cx.defs.len();
     timings::pass("global_this::declare", || global_this::declare(cx));

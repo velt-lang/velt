@@ -48,6 +48,16 @@ pub(super) fn free_names(item: &Item) -> FxHashSet<String> {
     out
 }
 
+/// The free names of the top-level statement `s` (the names it declares anywhere, in a block or
+/// a function it makes, are its own).
+pub(super) fn stmt_free_names(s: &Stmt) -> FxHashSet<String> {
+    let mut out = FxHashSet::default();
+    let mut n = Names::default();
+    n.stmt(s);
+    n.finish(&mut out);
+    out
+}
+
 /// The first names of the type queries (`typeof x.y`) written anywhere in `item`.
 fn query_heads(item: &Item) -> Vec<String> {
     struct Heads(Vec<String>);

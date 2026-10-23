@@ -60,7 +60,6 @@ fn golden_m1_files_parse() {
                 | "destructure_computed_path.vlt"
                 | "literal_method_names.vlt"
                 | "define_property_accessor_this.vlt"
-                | "root_init_order_early.vlt"
         ) {
             continue;
         }
