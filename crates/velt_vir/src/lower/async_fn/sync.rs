@@ -373,11 +373,12 @@ impl FnLower<'_, '_> {
             ret: abi.ret,
         };
         let r = self.finish_call(callee, vec![env, arg], ret, None);
+        // The callback's environment, holding what it took along, is released under the lock;
+        // released after it, it would race the next holder.
         if !moved.is_empty() {
-            if let Operand::Copy(p) = &fv {
-                if self.take_temp(p) {
-                    self.drop_glue(p.clone(), fty);
-                }
+            match &fv {
+                Operand::Copy(p) if self.take_temp(p) => self.drop_glue(p.clone(), fty),
+                _ => panic!("ICE: a `with` callback that takes variables along is not a temporary"),
             }
         }
         // A shared read's result leaves by read mode's rules whatever this code's mode: the
