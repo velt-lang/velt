@@ -785,6 +785,31 @@ async function main() {
   `xs.reduce(acc.add, 0)` with a two-parameter `plus` and `add`, where `reduce` passes
   `(acc, x, i)`). A function may also take more, when the extra ones are optional or have defaults
   (`setTimeout(tick, 10)` with `function tick(n?: number)`): they are left out.
+- As in TS, a function whose **parameter types are wider** than the function type's is accepted
+  where the function type is expected: `p.then((v: any) => …)` for a `Promise<number>`,
+  `xs.forEach((x: unknown) => …)`, `const f: (x: number) => void = (v: number | string) => …`,
+  a function value or named function taking an `any`, `object`, union or interface. Each
+  argument converts to the function's parameter type when it is called, as any argument does
+  (an `any` boxes the number). An argument that doesn't convert (`(x: string) => …` where
+  `(x: number) => void` is expected) is an error, as it is in TS.
+
+  An arrow written there takes the expected parameter types and converts each one where it
+  starts, so it is one function, as fast as one written with those types. A function value
+  (a variable, a named function, a method value) is wrapped instead: each such use makes a
+  **new function value** that calls it, so `g === f` is `false` after `const g: (x: number)
+  => void = f`, a `Set` holds both, and an emitter whose `off(f)` looks for the function
+  `on(f)` stored doesn't find it (each call passes its own wrapper). To register and remove the same handler,
+  declare it with the parameter types the registry expects (`const h = (x: number) => …`), or
+  convert it once and pass that value to both.
+
+  ```ts
+  function main() {
+    const show = (v: unknown) => console.log(typeof v, v);
+    [1, 2].forEach(show); // number 1, number 2
+    const both: (x: number) => void = (v: number | string) => console.log(v);
+    both(3); // 3
+  }
+  ```
 - As in TS, a function that returns a value is accepted where a **`void`-returning** function
   type is expected; the value is evaluated and dropped. This holds for an arrow without a
   return type (its expression body, or a `return value;` in it) and for a named function or a

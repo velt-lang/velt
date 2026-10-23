@@ -210,6 +210,9 @@ impl FnCx<'_, '_> {
         if let Some(h) = self.rest_shape_callback(e, exp) {
             return h;
         }
+        if let Some(h) = self.frameless_widened_params(e, exp) {
+            return h;
+        }
         let await_body = self.await_body == Some(e.span) && *is_async;
         if await_body {
             self.await_body = None;
@@ -291,18 +294,32 @@ impl FnCx<'_, '_> {
         }
         let mut declared = vec![];
         let mut locals = vec![];
+        let std_ints: Vec<bool> = (0..params.len())
+            .map(|k| {
+                std_callback
+                    .as_ref()
+                    .is_some_and(|m| m.get(k) == Some(&true))
+            })
+            .collect();
+        let wide = self.entry_widened(params, &ptys, exp_params.as_deref(), &std_ints, n_params);
         for (k, (p, ty)) in params.iter().zip(&ptys).enumerate() {
             if k >= n_params {
                 locals.push(self.defaulted_local(p, *ty));
                 continue;
             }
-            let l = self.declare_local_mut(&p.name, *ty, LocalKind::Param, false);
-            self.note_readonly_array(l, p.ty.as_ref());
             // An index from a std callback is a number in the body.
             let std_int = std_callback
                 .as_ref()
                 .and_then(|m| m.get(k).copied())
                 .unwrap_or(false);
+            if let Some(passed) = wide[k] {
+                let (l, shadow) = self.widened_param(p, passed, *ty, std_int);
+                declared.push(l);
+                locals.push(shadow);
+                continue;
+            }
+            let l = self.declare_local_mut(&p.name, *ty, LocalKind::Param, false);
+            self.note_readonly_array(l, p.ty.as_ref());
             if std_int && p.ty.is_none() && self.cx.ty.is_int(*ty) {
                 locals.push(self.number_shadow(l));
             }
@@ -331,6 +348,9 @@ impl FnCx<'_, '_> {
                 .map(|p| (&p.name, p.pattern.as_ref(), p.optional)),
             &mut locals,
         );
+        for (t, w) in ptys.iter_mut().zip(&wide) {
+            *t = w.unwrap_or(*t);
+        }
         let mut block = match body {
             ast::ArrowBody::Expr(x) if void_task => self.void_task_body(x),
             ast::ArrowBody::Expr(x) if await_body => self.awaited_body(x),

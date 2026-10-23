@@ -1,0 +1,7 @@
+// `join` of an `any[]` holding a symbol: `ToString` of the symbol is Node's `TypeError`,
+// reported at the line of the `join`.
+function main(): void {
+  const xs: any[] = [1, Symbol("x")];
+  console.log("before");
+  console.log(xs.join("-"));
+}

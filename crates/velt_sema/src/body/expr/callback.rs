@@ -163,6 +163,9 @@ impl FnCx<'_, '_> {
                 Some(exp),
             ));
         }
+        if let Some(h) = self.frameless_named_widened(arg, exp) {
+            return Some(h);
+        }
         let task = mode == CallbackMode::Task;
         let to_void = want_ret == self.cx.ty.unit;
         // The result matters only for `void` (dropped), union results (widened) and tasks.
@@ -526,7 +529,7 @@ impl FnCx<'_, '_> {
 
     /// The type `t` names, without diagnostics or IDE records (the arrow's own check reports
     /// what is wrong with it).
-    fn resolve_quiet(&mut self, t: &ast::TypeExpr) -> Option<TyId> {
+    pub(super) fn resolve_quiet(&mut self, t: &ast::TypeExpr) -> Option<TyId> {
         let mark = crate::body::recheck::Mark::here(self.cx);
         let r = self.resolve(t);
         mark.rollback(self.cx);

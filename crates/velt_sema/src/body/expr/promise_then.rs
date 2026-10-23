@@ -48,6 +48,40 @@ impl FnCx<'_, '_> {
         }
     }
 
+    /// The callback `h` as a function taking `params` (what the promise passes it): one whose
+    /// parameters are wider (`(v: any) => …` for a `Promise<number>`) is wrapped so each
+    /// argument converts (`fn_widen`). `None` after reporting a parameter the value doesn't
+    /// convert to, or more parameters than are passed. One taking fewer is passed as it is.
+    fn callback_takes(&mut self, h: hir::Expr, params: &[TyId]) -> Option<hir::Expr> {
+        let TyKind::FnPtr {
+            params: own,
+            ret,
+            throws,
+            rest,
+        } = self.cx.ty.kind(h.ty).clone()
+        else {
+            return Some(h);
+        };
+        // Fewer parameters are fine (the value is not read); more that must be passed, or a
+        // rest parameter, are a mismatch (no argument would be there), as for any callback.
+        if (!rest && own.len() < params.len()) || (!rest && own == params) {
+            return Some(h);
+        }
+        let exp = self.cx.ty.intern(TyKind::FnPtr {
+            params: params.to_vec(),
+            ret,
+            throws,
+            rest,
+        });
+        match self.try_coerce(h, exp) {
+            Ok(h) => Some(h),
+            Err(h) => {
+                self.report_mismatch(exp, &h);
+                None
+            }
+        }
+    }
+
     /// Is `h` a `p.then(…)` / `catch` / `finally` call? Its promise may be dropped (`p.then(f);`
     /// as a statement): like JS, it runs to completion, and a rejection nobody handles is
     /// reported as uncaught.
@@ -110,23 +144,32 @@ impl FnCx<'_, '_> {
         for (i, a) in args.iter().enumerate() {
             // What the callback gets: the value (`then`'s first), the reason (`then`'s second,
             // `catch`), or nothing (`finally`).
-            let params = match (method, i) {
+            let params: Vec<TyId> = match (method, i) {
                 ("then", 0) => vec![t],
                 ("finally", _) => vec![],
                 _ => vec![e],
             };
             let error = self.cx.ty.error;
             let hint = self.cx.ty.intern(TyKind::FnPtr {
-                params,
+                params: params.clone(),
                 ret: error,
                 throws: error,
                 rest: false,
             });
-            let h = self.expr(a, Some(hint), Want::Move);
+            // A named function taking more parameters than are passed, optional ones (or one
+            // returning a value where none is expected): adapted as any callback is.
+            let h = match self.callback_adapter(a, hint, super::callback::CallbackMode::Plain) {
+                Some(h) => h,
+                None => self.expr(a, Some(hint), Want::Move),
+            };
             if self.cx.ty.has_error(h.ty) {
                 self.check_args_loose(&args[i + 1..]);
                 return self.error_expr(span);
             }
+            let Some(h) = self.callback_takes(h, &params) else {
+                self.check_args_loose(&args[i + 1..]);
+                return self.error_expr(span);
+            };
             let ret = match self.cx.ty.kind(h.ty) {
                 TyKind::FnPtr { ret, .. } => *ret,
                 _ => {

@@ -1,0 +1,29 @@
+// `JSON.stringify` of interface values held in or reached through an `any` or `unknown` (#924).
+// check: no leaks
+interface Shape {
+  name: string;
+  area(): number;
+}
+
+class Sq implements Shape {
+  name = "sq";
+  side = 2;
+  area(): number {
+    return this.side * this.side;
+  }
+}
+
+function main(): void {
+  const s: Shape = new Sq();
+  const t: Shape = { name: "lit", area: () => 3 };
+  const a: any = s;
+  console.log(JSON.stringify(a), JSON.stringify([a]), a.name, a.area());
+  const holder = { inner: s };
+  const u: unknown = holder;
+  console.log(JSON.stringify(u));
+  const b: any = t;
+  console.log(b.name, JSON.stringify({ n: b.name }));
+  const box: { sh: Shape } = { sh: s };
+  const c: any = box;
+  console.log(c.sh.name, c.sh.area(), JSON.stringify(c));
+}

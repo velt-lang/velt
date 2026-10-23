@@ -1,0 +1,4 @@
+{"name":"sq","side":2} [{"name":"sq","side":2}] sq 4
+{"inner":{"name":"sq","side":2}}
+lit {"n":"lit"}
+sq 4 {"sh":{"name":"sq","side":2}}

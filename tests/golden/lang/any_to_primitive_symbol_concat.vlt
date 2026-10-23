@@ -1,0 +1,7 @@
+// An object literal whose `valueOf` returns a symbol: `"" + o` through `any` is Node's
+// `TypeError`.
+function main(): void {
+  const o: any = { valueOf: () => Symbol("v") };
+  console.log("before");
+  console.log("" + o);
+}

@@ -1,0 +1,19 @@
+// `Number.isFinite`, `isNaN`, `isInteger` and `isSafeInteger` take an `unknown` or `any`, as in
+// TypeScript: `false` unless the value is a number.
+// check: no leaks
+function show(value: unknown): string {
+  const type = typeof value;
+  if (type === "number") {
+    return Number.isFinite(value) ? String(value) : "null";
+  }
+  return `${Number.isFinite(value)} ${Number.isNaN(value)} ${Number.isInteger(value)}`;
+}
+
+function main(): void {
+  const vals: unknown[] = [1.5, NaN, Infinity, "3", null, undefined, true, [1]];
+  for (const v of vals) {
+    console.log(show(v));
+  }
+  const a: any = 2 ** 53;
+  console.log(Number.isSafeInteger(a), Number.isInteger(a), Number.isNaN(a));
+}
