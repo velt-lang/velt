@@ -82,12 +82,32 @@ fn a_sleep_never_completes_before_its_deadline() {
     }
 }
 
+/// Awaits `rx`, telling `waiting` once it waits (so a test wakes a task that really waits).
+async fn await_after_signal<T>(
+    rx: tokio::sync::oneshot::Receiver<T>,
+    waiting: tokio::sync::oneshot::Sender<()>,
+) -> Option<T> {
+    let mut rx = std::pin::pin!(rx);
+    let mut waiting = Some(waiting);
+    std::future::poll_fn(|cx| match std::future::Future::poll(rx.as_mut(), cx) {
+        std::task::Poll::Ready(v) => std::task::Poll::Ready(v.ok()),
+        std::task::Poll::Pending => {
+            if let Some(w) = waiting.take() {
+                let _ = w.send(());
+            }
+            std::task::Poll::Pending
+        }
+    })
+    .await
+}
+
 #[test]
 fn a_wake_from_another_thread_reaches_a_waiting_task() {
     let (tx, rx) = tokio::sync::oneshot::channel::<u32>();
-    let h = spawn(async move { rx.await.ok() }, None);
+    let (waiting_tx, waiting) = tokio::sync::oneshot::channel();
+    let h = spawn(await_after_signal(rx, waiting_tx), None);
     std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(20));
+        let _ = waiting.blocking_recv();
         let _ = tx.send(7);
     });
     assert_eq!(block_on(h).ok().flatten(), Some(7));
@@ -185,11 +205,12 @@ fn a_task_woken_by_a_task_runs_on_the_wakers_worker() {
     // A waiter made on worker 1, woken by a task on worker 0: it runs on worker 0, next,
     // instead of crossing to worker 1 (a reply reaching the request that waits for it).
     let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+    let (waiting_tx, waiting) = tokio::sync::oneshot::channel();
     let waiter = spawn(
         async move {
             let inner = spawn(
                 async move {
-                    let _ = rx.await;
+                    await_after_signal(rx, waiting_tx).await;
                     worker::current()
                 },
                 None,
@@ -200,8 +221,8 @@ fn a_task_woken_by_a_task_runs_on_the_wakers_worker() {
     );
     let woke = spawn(
         async move {
-            // Let the waiter reach its await on worker 1 first.
-            Sleep::until(Instant::now() + Duration::from_millis(20)).await;
+            // The waiter reaches its await on worker 1 first.
+            let _ = waiting.await;
             let _ = tx.send(());
             worker::current()
         },
