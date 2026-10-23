@@ -180,8 +180,9 @@ async function main() {
 
 #[test]
 fn converts_string_concatenation_to_a_template_literal() {
-    // A number next to a string concatenates as in JS (#740); an array is still an error.
-    let text = "function main() {\n  const n = 3;\n  const xs = [1];\n  const s = 1 + n + \"a`\" + xs + \"!\";\n  console.log(s);\n}\n";
+    // A number or an array next to a string concatenates as in JS (#740, #1462); an object
+    // is still an error.
+    let text = "function main() {\n  const n = 3;\n  const xs = { a: 1 };\n  const s = 1 + n + \"a`\" + xs + \"!\";\n  console.log(s);\n}\n";
     let (mut client, doc, diags) = open("fix_concat.vlt", text);
     let offered = actions(&mut client, &doc, text, "xs +", &diags);
     let fixed = apply(text, find(&offered, "Convert to a template literal"), &doc);

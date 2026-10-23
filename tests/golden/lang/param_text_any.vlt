@@ -49,3 +49,22 @@ function next(): any {
   return { n: calls };
 }
 console.log(tpl<any>(next()), calls);
+
+// Appends (`+=`) of a type parameter's text, and a field's text twice in one template.
+function add<T>(acc: string, v: T): string {
+  let s = acc;
+  s += `[${v}]`;
+  s += v;
+  return s;
+}
+class Box<T> {
+  v: T;
+  constructor(v: T) {
+    this.v = v;
+  }
+  text(): string {
+    return `${this.v}|${this.v}`;
+  }
+}
+console.log(add<any>("x", { k: 1 }), add<number>("y", 2), add<any>("z", [1, [2]]));
+console.log(new Box<any>({ q: 1 }).text(), new Box<unknown>(null).text(), new Box<string>("s").text());
