@@ -13,7 +13,9 @@
 //! elements are bound before it, in order. After an iterable (`[...gen(), ...f()]`), which runs
 //! where it is written, and after a spread of a place that a later effect could change
 //! (`[...xs, ...f()]`), it is bound where it is pushed (unless it is a constant,
-//! `[...gen(), ...[1, 2]]`), and so is everything after it.
+//! `[...gen(), ...[1, 2]]`), and so is everything after it; the first allocation holds the
+//! rest, and such a source makes room for exactly its length before its pushes (one exact
+//! reallocation, `Intrinsic::ArrayReserve`).
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
@@ -224,6 +226,10 @@ impl FnCx<'_, '_> {
                 (Some(Src::Late(h, et) | Src::Unbound(h, et)), _) => {
                     let mut src = self.temp("<spread>", h, &mut lets);
                     set_place_mode(&mut src, UseMode::Borrow);
+                    // Its length is known now: room for exactly it (the first allocation
+                    // holds the rest).
+                    let reserve = self.reserve_for(out_l, arr_ty, &src, e.span);
+                    lets.push(reserve);
                     self.push_all(out_l, arr_ty, src, (et, elem), e.span)
                 }
                 (Some(Src::Iter(c)), _) => {
@@ -301,6 +307,24 @@ impl FnCx<'_, '_> {
             cap = self.mk(kind, usize_, span);
         }
         cap
+    }
+
+    /// `out.reserve(src.length);` (`Intrinsic::ArrayReserve`: one exact reallocation).
+    fn reserve_for(
+        &mut self,
+        out: hir::LocalId,
+        arr_ty: TyId,
+        src: &hir::Expr,
+        span: Span,
+    ) -> hir::Stmt {
+        let (usize_, unit) = (self.cx.ty.usize, self.cx.ty.unit);
+        let len = self.intrinsic(Intrinsic::ArrayLen, vec![src.clone()], usize_, span);
+        let target = self.mk(H::Local(out, UseMode::BorrowMut), arr_ty, span);
+        let call = self.intrinsic(Intrinsic::ArrayReserve, vec![target, len], unit, span);
+        hir::Stmt {
+            kind: S::Expr(call),
+            span,
+        }
     }
 
     fn push_stmt(&mut self, out: hir::LocalId, arr_ty: TyId, v: hir::Expr) -> hir::Stmt {

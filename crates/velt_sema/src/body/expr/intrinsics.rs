@@ -30,6 +30,7 @@ pub(super) fn intrinsic_named(name: &str) -> Option<Intrinsic> {
         "array_truncate" => I::ArrayTruncate,
         "array_move" => I::ArrayMove,
         "array_set_len" => I::ArraySetLen,
+        "array_reserve" => I::ArrayReserve,
         "hash" => I::Hash,
         "eq" => I::Eq,
         "key_eq" => I::KeyEq,
@@ -171,7 +172,9 @@ impl FnCx<'_, '_> {
             ),
             I::ArraySwap => (vec![(arr, M), (usize_, C), (usize_, C)], unit, true),
             I::ArrayRemove => (vec![(arr, M), (usize_, C)], t, true),
-            I::ArrayTruncate | I::ArraySetLen => (vec![(arr, M), (usize_, C)], unit, true),
+            I::ArrayTruncate | I::ArraySetLen | I::ArrayReserve => {
+                (vec![(arr, M), (usize_, C)], unit, true)
+            }
             I::ArrayMove => (
                 vec![(arr, M), (usize_, C), (arr, B), (usize_, C), (usize_, C)],
                 unit,

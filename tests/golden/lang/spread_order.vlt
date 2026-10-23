@@ -206,6 +206,23 @@ function setSv(): [string, string] {
   return [sv, sv];
 }
 console.log(cat3(sv, ...setSv()), sv);
+console.log("-- room for a later spread");
+let ss = ["p", "q"];
+function moreS(): string[] {
+  ss.push("r");
+  return ["s", "t", "u"];
+}
+const joined = [...ss, ...moreS(), ...ss];
+console.log(joined.join(","), joined.length);
+const none: string[] = [];
+console.log([...none, ...none.map((s) => s + "!")].length, [...none, ...moreS()].join(","));
+const objs = [{ k: 1 }];
+function moreO(): { k: number }[] {
+  objs[0].k = 5;
+  return [{ k: 2 }];
+}
+const os = [...objs, ...moreO()];
+console.log(os.map((o) => o.k).join(","), os[0] === objs[0]);
 console.log("-- async");
 async function am(): Promise<number[]> {
   return [tr("a", 0), ...(await Promise.resolve(tn("b", [1]))), tr("c", 2)];
