@@ -1,0 +1,36 @@
+// A class declared in a function read as a value from a method or a field initializer of a
+// class, or from a parameter default: not supported yet (#1444). Node prints
+// `[ true, true, true ] true true` (the class's one object per run of its declaration).
+function selfRef(): boolean[] {
+  class C {
+    static me(): new () => C {
+      return C;
+    }
+    inst(): new () => C {
+      return C;
+    }
+  }
+  const a: new () => C = C;
+  return [a === C.me(), C.me() === C.me(), new C().inst() === a];
+}
+
+function fieldInit(): boolean {
+  class C {
+    v = 1;
+  }
+  class H {
+    k: new () => C = C;
+  }
+  const a: new () => C = C;
+  return new H().k === a;
+}
+
+function paramDefault(): boolean {
+  class C {
+    v = 1;
+  }
+  const f = (K: new () => C = C): boolean => K === C;
+  return f();
+}
+
+console.log(selfRef(), fieldInit(), paramDefault());

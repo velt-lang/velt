@@ -46,6 +46,7 @@ mod defined_props;
 mod defs;
 mod discriminants;
 mod dispatch;
+mod display;
 pub mod effects;
 mod enum_keys;
 mod finalize;
@@ -335,20 +336,21 @@ fn check_timed(
         seeds = s;
         (cx, entry) = new_cx("round: doubted throws variables", true, &seeds, false);
     }
-    for round in 1..=FN_SITE_ROUNDS {
-        let Some(grown) = cx.fn_sites.grown() else {
+    // A check with sharing may grow the sets too: the checks after it share as well.
+    let (mut rounds, mut held) = (0, true);
+    loop {
+        if let Some(grown) = cx.fn_sites.grown() {
+            rounds += 1;
+            seeds = grown;
+            let last = rounds == FN_SITE_ROUNDS;
+            (cx, entry) = new_cx("round: grown throws sets", held, &seeds, last);
+        } else if held && retry_sharing(&cx) {
+            held = false;
+            let last = rounds == FN_SITE_ROUNDS;
+            (cx, entry) = new_cx("round: sharing retry", false, &seeds, last);
+        } else {
             break;
-        };
-        seeds = grown;
-        (cx, entry) = new_cx(
-            "round: grown throws sets",
-            true,
-            &seeds,
-            round == FN_SITE_ROUNDS,
-        );
-    }
-    if retry_sharing(&cx) {
-        (cx, entry) = new_cx("round: sharing retry", false, &seeds, true);
+        }
     }
     if !recovered.is_empty() || cx.diags.iter().any(|d| d.is_error()) {
         return (None, cx.diags);
@@ -407,8 +409,11 @@ fn check_timed(
 
 /// How many times at most a program is checked again for the error types of function types
 /// written without `throws`. The sets are propagated within one check's inference, so one more
-/// check is usually enough; another one is needed when the sets change what a check infers
-/// from them before inference (a `catch` that rethrows, an async function's rejection type).
+/// check is usually enough (a `catch` that rethrows its variable throws what its `try` body's
+/// sources throw in that inference, `body::expr::errors`, so a chain of such closures needs no
+/// check per closure); another one is needed when the sets change what a check infers from them
+/// before inference (an async function's rejection type, a `catch` variable narrowed by its
+/// type).
 pub(crate) const FN_SITE_ROUNDS: usize = 8;
 
 /// Steps 1–5 and the checks of the whole program: the entry point, if there is one.

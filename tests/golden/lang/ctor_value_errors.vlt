@@ -1,0 +1,30 @@
+// Classes as values: a constructor that doesn't take the signature's parameters, a class
+// without a construct signature type to be a value of, and an instance type the class doesn't
+// convert to, and comparing one class's values of two signature types. tsc --strict reports
+// lines 14, 16 and 17 too (TS2322); it accepts `const C = A` (Velt needs the type) and the
+// comparison on line 30 (`true` in Node: Velt makes one object per class and signature type).
+class A {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+
+type Ctor = new (n: number) => A;
+const bad: new (s: string) => A = A;
+const C = A;
+const n: number = bad;
+const wrongRet: new (n: number) => string = A;
+
+class L {
+  n = 0;
+  constructor(n?: number) {
+    if (n !== undefined) {
+      this.n = n;
+    }
+  }
+}
+
+const noArg: new () => L = L;
+const optArg: new (n?: number) => L = L;
+console.log(noArg === optArg);

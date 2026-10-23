@@ -3,6 +3,7 @@
 
 use rustc_hash::FxHashSet;
 
+use velt_common::Span;
 use velt_syntax::ast::{self, ExprKind as E, ItemKind as I, StmtKind as S};
 
 /// What a piece of code refers to and binds, at any depth.
@@ -10,6 +11,13 @@ use velt_syntax::ast::{self, ExprKind as E, ItemKind as I, StmtKind as S};
 pub(crate) struct Scan {
     /// Names used as values.
     pub refs: FxHashSet<String>,
+    /// Names of `refs` read as a whole value: not only as the object of a member (`C` of
+    /// `C.f`), so a class named here is read as a value (`ctor_values`).
+    pub values: FxHashSet<String>,
+    /// Names of the classes declared.
+    pub classes: FxHashSet<String>,
+    /// The spans of identifiers read as the object of a member.
+    member_roots: FxHashSet<Span>,
     /// Names bound by variables and parameters (not nested function names).
     pub binds: FxHashSet<String>,
     /// `this` appears.
@@ -137,8 +145,12 @@ impl Scan {
                 finally.iter().for_each(|b| self.block(b));
             }
             S::Item(item) => {
-                if matches!(item.kind, I::Function(_)) {
-                    self.nested_fn = true;
+                match &item.kind {
+                    I::Function(_) => self.nested_fn = true,
+                    I::Class(t) => {
+                        self.classes.insert(t.name.name.clone());
+                    }
+                    _ => {}
                 }
                 self.item_bodies(item);
             }
@@ -182,6 +194,12 @@ impl Scan {
         match &e.kind {
             E::Ident(id) => {
                 self.refs.insert(id.name.clone());
+                if !self.member_roots.contains(&e.span) {
+                    self.values.insert(id.name.clone());
+                }
+            }
+            E::Member { object, .. } if matches!(object.kind, E::Ident(_)) => {
+                self.member_roots.insert(object.span);
             }
             E::This => self.this = true,
             E::Cast { ty, .. } => self.ty(ty),
@@ -209,6 +227,7 @@ impl Scan {
                     match p {
                         ast::ObjectProp::Shorthand(id) => {
                             self.refs.insert(id.name.clone());
+                            self.values.insert(id.name.clone());
                         }
                         ast::ObjectProp::Method(d) => self.func(d),
                         // `{ [k]: v }` reads `k`, also as an assignment target.

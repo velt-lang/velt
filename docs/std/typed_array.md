@@ -43,8 +43,18 @@ function main() {
   in JS. As for Velt's arrays, `entries`, `keys` and `values` return arrays rather than
   iterators, `reduce` takes its initial value, and callbacks get the element and its index.
 - **`ArrayBuffer`**: `new ArrayBuffer(byteLength)` (zeros), `byteLength`, `slice(begin, end)`
-  (a copy) and `ArrayBuffer.isView(v)`. It is not resizable (`resizable` is `false`) and has no
-  `transfer`.
+  (a copy) and `ArrayBuffer.isView(v)`, which takes a value of any type and, being TypeScript's
+  type predicate `v is ArrayBufferView`, narrows it. It is not resizable (`resizable` is
+  `false`) and has no `transfer`.
+- **`ArrayBufferView`**: TypeScript's type of any typed array or `DataView`, with `buffer`,
+  `byteOffset` and `byteLength` (a type only, as in JavaScript).
+- **As values**: the typed array classes and `DataView` are values of a
+  [construct signature](../reference/functions.md#arrow-functions-and-function-types) type,
+  `new (buffer: ArrayBuffer) => ArrayBufferView`: `new C(buffer)` and `v instanceof C` through
+  such a value work as in JS.
+- **`SharedArrayBuffer`** is a global as in Node (`typeof SharedArrayBuffer` is
+  `"function"`), but Velt has no shared buffers: `x instanceof SharedArrayBuffer` is `false`,
+  and constructing one or naming the type is not supported.
 - **`DataView`**: `new DataView(buffer, byteOffset, byteLength)` and `getInt8` …
   `getFloat64` / `setInt8` … `setFloat64` at any byte offset, big-endian unless the
   `littleEndian` argument is `true`. An access outside the view throws `RangeError`
@@ -84,12 +94,9 @@ is always an `ArrayBuffer`, so both are the same type as `Uint8Array`. Any other
 (`Uint8Array<SharedArrayBuffer>`, `Float64Array<number>`) is an error: ``a typed array's buffer
 type argument must be `ArrayBuffer` ``.
 
-Not supported yet: the typed array classes and `DataView` as values (a constructor passed as
-`new (buffer: ArrayBuffer) => ArrayBufferView`, #943), the `ArrayBufferView` type (#1152),
-`BigInt64Array` and `BigUint64Array` (and `DataView`'s `getBigInt64` /
-`setBigInt64`), which wait for `bigint` values (#1088); `SharedArrayBuffer`, resizable buffers,
-`Float16Array`; `ArrayBuffer.isView` of a value of any type (it takes an `ArrayBuffer`, a typed
-array, a `DataView` or `null` until `unknown` arrives, #924); constructing a typed array from an
+Not supported yet: `BigInt64Array` and `BigUint64Array` (and `DataView`'s `getBigInt64` /
+`setBigInt64`), which wait for `bigint` values (#1088); shared and resizable buffers,
+`Float16Array`; constructing a typed array from an
 iterable that is not an array or a typed array (use `Uint8Array.from(set)`). A `Float64Array`
 holding Velt's `NaN` has the platform's NaN bytes (`0x7ff8…` on arm64, `0xfff8…` on x86-64),
 where V8's are `0x7ff8…`.

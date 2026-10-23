@@ -235,6 +235,11 @@ pub(crate) struct Frame {
     pub discards_value: bool,
     /// Body of an `async` function / arrow: `await` is allowed.
     pub is_async: bool,
+    /// The program's top-level statements (the root file's generated `async main`): its
+    /// `await`s tell the runtime where they wait (`expr/top_level_await.rs`); the top-level
+    /// `await`s whose operand is being checked (innermost last).
+    pub top_level: bool,
+    pub top_level_outer: Vec<Span>,
     /// Body of a generator: the type of the values it yields (`yield` is allowed).
     pub yield_ty: Option<TyId>,
     /// Body of a `Generator<T, E, N>`: `N`, the type of a `yield`'s value (`None`: it has
@@ -250,6 +255,10 @@ pub(crate) struct Frame {
     /// The promises this async function returns (`expr::tasks`, `async_returned`), awaited
     /// once the body's scopes are left (`wrap_adopted`; issue #1148).
     pub adopted: Vec<Adopted>,
+    /// Class values pending as `const`s at the start of their blocks (`expr::ctor_locals`).
+    pub class_lets: Vec<expr::ctor_locals::ClassLet>,
+    /// The scopes of the statement lists being checked (`stmts_into`), outermost first.
+    pub stmt_lists: Vec<usize>,
     /// Which of `adopted` was stored last (`i + 1`; `0` for none): every store writes it, so a
     /// `return p` cancelled by a `finally` (`continue`, `break`, another `return`) is not
     /// adopted, as in JS.
@@ -289,6 +298,9 @@ pub(crate) struct Frame {
     pub method_values: rustc_hash::FxHashSet<LocalId>,
     /// Throw sources of the enclosing `try` bodies (innermost last).
     pub tries: Vec<Vec<ThrowSrc>>,
+    /// Each `catch` variable used only as `throw e`, with the throw sources of its `try` body:
+    /// rethrowing it throws what they throw (`expr::errors`).
+    pub caught: Vec<(LocalId, Vec<ThrowSrc>)>,
     pub uncaught: Vec<ThrowSrc>,
     /// `super(...)` is allowed here: a root-level statement of a constructor that is the call
     /// itself, before any other `super(...)` (`stmt` sets it; the call takes it).
@@ -370,12 +382,16 @@ impl Frame {
             escaping: false,
             discards_value: false,
             is_async: false,
+            top_level: false,
+            top_level_outer: vec![],
             yield_ty: None,
             next_ty: None,
             catch_depth: 0,
             fn_expr_name: None,
             finally_depth: 0,
             adopted: vec![],
+            class_lets: vec![],
+            stmt_lists: vec![],
             adopt_which: None,
             adopt_stmt: false,
             finally_loops: None,
@@ -390,6 +406,7 @@ impl Frame {
             assign_targets: vec![],
             method_values: Default::default(),
             tries: vec![],
+            caught: vec![],
             uncaught: vec![],
             super_ok: false,
             super_called: false,
@@ -450,8 +467,6 @@ pub(crate) struct FnCx<'a, 'm> {
     pub f: Frame,
     /// Enclosing frames of the closure being checked (innermost last).
     pub outer: Vec<Frame>,
-    /// The span of a `new Promise` that is the operand of the `await` being checked.
-    pub direct_await: Option<Span>,
     /// The arrow being checked is an argument of a JS API function called from user code
     /// (`numbers::is_js_api`): per parameter, whether the signature declares it an integer (an
     /// index), which makes it a number in the arrow's body when unannotated.
@@ -557,7 +572,6 @@ impl<'a, 'm> FnCx<'a, 'm> {
             generic_arrow: false,
             f: frame,
             outer: vec![],
-            direct_await: None,
             std_callback: None,
             literal_slot: None,
             call_temps: vec![],

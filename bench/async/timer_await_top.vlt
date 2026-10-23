@@ -1,0 +1,7 @@
+// timer_await.vlt at the top level, where each `await` that suspends also tells the runtime
+// where the program waits (modules.md).
+let s = 0;
+for (let i = 0; i < 20000; i++) {
+  s += await new Promise<number>((r) => setTimeout(() => r(i % 7), 0));
+}
+console.log(s);

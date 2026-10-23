@@ -54,10 +54,12 @@ pub(crate) fn order(cx: &mut Ctx) -> Vec<DefId> {
         .into_iter()
         .filter(|(_, _, d)| !skipped.contains(d))
         .collect();
-    // The properties of `globalThis` exist before any module runs (`crate::global_this`).
+    // The properties of `globalThis` exist before any module runs (`crate::global_this`), and
+    // so do the classes' values, which read nothing (`body::expr::ctor_values`).
     sorted.sort_by_key(|(m, start, d)| {
         let rank = rank.get(m).copied().unwrap_or(usize::MAX);
-        (!cx.global_props.is_slot(*d), rank, *start)
+        let first = cx.global_props.is_slot(*d) || cx.is_class_value(*d);
+        (!first, rank, *start)
     });
     let order: Vec<DefId> = sorted.into_iter().map(|(_, _, d)| d).collect();
     let pos: FxHashMap<DefId, usize> = order.iter().enumerate().map(|(i, d)| (*d, i)).collect();

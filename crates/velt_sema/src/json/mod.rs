@@ -550,7 +550,7 @@ fn undefined_problem(cx: &mut Ctx, t: TyId, parse: bool) -> Option<&'static str>
             if undef(cx, t) && !three {
                 return Some("`JSON.parse` into a type that may hold `undefined`");
             }
-            if cx.is_callable_object(t) {
+            if cx.is_callable_object(t) || cx.ctor_sig_own(t).is_some() {
                 return Some("`JSON.parse` into a function with properties (#921)");
             }
             stack.extend(children(cx.ty.kind(t)));
@@ -573,6 +573,9 @@ fn undefined_problem(cx: &mut Ctx, t: TyId, parse: bool) -> Option<&'static str>
     while let Some(t) = stack.pop() {
         if !seen.insert(t) {
             continue;
+        }
+        if cx.ctor_sig_own(t).is_some() {
+            return Some("`JSON.stringify` of a class used as a value (#943)");
         }
         if let TyKind::Adt(d, args) = cx.ty.kind(t).clone() {
             // A class with `toJSON()` is written as what the method returns, its own or a

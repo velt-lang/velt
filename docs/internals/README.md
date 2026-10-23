@@ -23,8 +23,8 @@ and the test tiers, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
    checks, thread-safety checks, typed `throws` inference, and JSON code generation checks. The
    output is a typed HIR. The same passes answer editor queries (`velt_sema::ide`). A program
    is checked again, whole, while the error sets of function types written without `throws`
-   grow, and once more with sharing when a held borrow caused an error (`check_on_current_thread`
-   in `lib.rs`). `VELT_SEMA_TIMINGS=1` prints each pass's time in each of these rounds to stderr.
+   grow, and once more with sharing when a held borrow caused an error (the checks after that
+   one share too; `check_on_current_thread` in `lib.rs`). `VELT_SEMA_TIMINGS=1` prints each pass's time in each of these rounds to stderr.
 4. **Lower** (`velt_vir`): monomorphization, data layouts, vtables, drop and clone glue (a
    self-referential class drops its chain in a loop, `lower/glue/drop_chain.rs`; other drops
    that can nest are bounded by the runtime, `lower/glue/drop_depth.rs`), async

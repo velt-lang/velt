@@ -1599,9 +1599,10 @@ console.log(b.v); // hi
   type is one, and `typeof f` is `"function"`. With members, an object type or interface with
   one call signature is a [function with properties](functions.md#functions-with-properties)
   (TypeScript's `((x: T) => R) & { stop(): void }`); several call signatures (an overloaded
-  function) are not supported yet; a generic call signature (`<T>(x: T): T`) is a generic function type and a
-  construct signature (`new (x: T): C`; as in TypeScript, `new(…)` in an object type is never
-  a method, while in a class it is) a construct type, both planned
+  function) are not supported yet; a generic call signature (`<T>(x: T): T`) is a generic
+  function type, planned, and a construct signature (`new (x: T): C`; as in TypeScript,
+  `new(…)` in an object type is never a method, while in a class it is) the type of a class
+  used as a value, `new (x: T) => C`
   ([Functions](functions.md#arrow-functions-and-function-types)). Optional parameters in a
   call signature (`(x?: number): void`) are not supported yet, and a parameter initializer
   there (`(x = 1): void`) is an error, as in TypeScript. An interface with call signatures
