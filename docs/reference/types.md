@@ -1742,7 +1742,10 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   ([Consuming an iterable](control-flow.md#consuming-an-iterable)). Elements, arguments and
   properties run in written order, as in JS: `[f(), ...g()]` calls `f` first, an iterable is
   consumed where it is written, and `{ y: f(), x: g() }` calls `f` first whatever the order of
-  its type's fields; a property a later spread overrides (`{ a: f(), ...o }`) still runs.
+  its type's fields; a property a later spread overrides (`{ a: f(), ...o }`) still runs. A
+  spread copies its source's elements or properties where it is written, before later ones
+  run: `{ ...o, a: f(o) }` and `[...xs, ...f(xs)]` copy `o` and `xs` before `f` changes them,
+  and `[n, ...bump()]` reads `n` before `bump` does.
 - **Wider element types**: an array, object type or generic class converts to the same type
   with wider elements (`C[]` to `Named[]` for a class `C implements Named`, `i64[]` to
   `(i64 | null)[]`, `Box<C>` to `Box<Named>`) only when the value is **fresh**: a literal, a

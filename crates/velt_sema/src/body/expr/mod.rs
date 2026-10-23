@@ -47,6 +47,7 @@ pub(crate) use env_globals::NODE_GLOBALS;
 mod error_slots;
 mod error_view;
 mod errors;
+mod eval_effects;
 mod fn_union_call;
 mod frozen;
 mod gen_closure;

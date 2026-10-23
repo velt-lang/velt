@@ -109,6 +109,22 @@ caught boom
 eval a
 eval b
 [ 'x1', 'p', 'y' ]
+-- a variable or a field read before a spread that changes it
+1,11,11
+a,ab
+11,12,21
+31
+1,1
+31,1031,1031
+-- a spread of an array that a later spread changes
+1,0
+1,9,1031,1041
+1,1141
+1,2,1151
+[[1151],1161]
+1,2,9
+1161,1,0
+abb b
 -- async
 eval a
 eval b

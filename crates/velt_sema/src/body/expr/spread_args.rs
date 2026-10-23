@@ -5,7 +5,9 @@
 //! arity error of the same call written out, so a missing element never becomes `undefined`.
 //!
 //! A tuple that is not stored (`f(0, ...g.pair)` through a getter, `f(...pair())`) is held in
-//! a hidden temporary evaluated before the call, once, as JS reads it. A function or receiver
+//! a hidden temporary evaluated before the call, once, as JS reads it; an argument before it
+//! that reads a variable or a field (`f(n, ...pair())`) is held in one before it, so it is read
+//! before the tuple's call could change it. A function or receiver
 //! that is a call (`getf()(...pair())`, `mk().m(...pair())`) is held in one before it, as JS
 //! evaluates it first; so is a receiver or a leading argument read through a getter
 //! (`h.g.m(...pair())`, `f(h.g, ...pair())`), and a function a getter returns
@@ -20,6 +22,7 @@ use velt_common::Span;
 use velt_syntax::ast;
 
 use super::args::Callable;
+use super::eval_effects::Effects;
 use crate::body::places::{is_path, is_place};
 use crate::body::{FnCx, LocalKind, Want};
 use crate::hir::{self, TyId, TyKind};
@@ -95,6 +98,8 @@ impl FnCx<'_, '_> {
         let mut left = vec![];
         let mut failed = false;
         let mut earlier_pure = true;
+        // The arguments from `free` on are evaluated in the call, after its hidden temporaries.
+        let mut free = 0;
         for (k, a) in args.iter().enumerate() {
             if k > 0 && earlier_pure {
                 earlier_pure = self.evaluated_anywhere(&args[k - 1]);
@@ -110,8 +115,15 @@ impl FnCx<'_, '_> {
             } else {
                 None
             };
+            let mark = self.call_temps.len();
             match self.spread_elems(inner, after) {
-                Ok(Some(elems)) => out.extend(elems),
+                Ok(Some(elems)) => {
+                    if self.call_temps.len() > mark {
+                        self.hold_reads_before(&mut out[free..], mark);
+                        free = out.len() + elems.len();
+                    }
+                    out.extend(elems)
+                }
                 Ok(None) => {
                     left.push(inner.as_ref());
                     out.push(a.clone());
@@ -210,6 +222,25 @@ impl FnCx<'_, '_> {
         (super::setters::synth(kind, span), ty)
     }
 
+    /// `args`, evaluated in the call, before a tuple spread held in the hidden temporaries from
+    /// `mark` on (`f(n, ...pair())`): each that reads what that could change (a `let`, a
+    /// field; of a Copy type) is held in one before them, so it is read first, as in JS.
+    fn hold_reads_before(&mut self, args: &mut [ast::Expr], mark: usize) {
+        let held = self.call_temps.len();
+        for a in args {
+            if matches!(&a.kind, ast::ExprKind::Ident(i) if i.name.starts_with('#')) {
+                continue;
+            }
+            let h = self.trial_expr(a);
+            let value = self.cx.is_copy(h.ty) || h.ty == self.cx.ty.str_;
+            if self.hir_effects(&h) == Effects::Reads && value {
+                *a = self.hidden_temp(a, false).0;
+            }
+        }
+        let added = self.call_temps.len() - held;
+        self.call_temps[mark..].rotate_right(added);
+    }
+
     /// A spread of a tuple that is not a variable or a field (a call, a getter) after an
     /// argument (or a function or receiver) with effects (`after`): reported.
     fn tuple_not_stored(&mut self, e: &ast::Expr, after: &str) {
@@ -287,47 +318,6 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// [`evaluated_anywhere`](Self::evaluated_anywhere), or arithmetic, a comparison, a logical
-    /// operator or `?:` over such operands of primitive types (numbers, booleans, strings),
-    /// which can call no user code (an integer division or remainder may throw, a `BigInt`'s),
-    /// or an array literal of such elements.
-    pub(super) fn no_effects(&mut self, e: &ast::Expr) -> bool {
-        let e = unparen(e);
-        match &e.kind {
-            ast::ExprKind::Unary { op, expr } if *op != ast::UnaryOp::Delete => {
-                self.primitive_operand(expr, true)
-            }
-            ast::ExprKind::Binary { op, lhs, rhs } => {
-                let int_ok = !matches!(
-                    op,
-                    ast::BinaryOp::Div | ast::BinaryOp::Rem | ast::BinaryOp::Pow
-                );
-                *op != ast::BinaryOp::In
-                    && self.primitive_operand(lhs, int_ok)
-                    && self.primitive_operand(rhs, int_ok)
-            }
-            ast::ExprKind::Cond { cond, then, els } => {
-                self.no_effects(cond) && self.no_effects(then) && self.no_effects(els)
-            }
-            // A new array of such elements (`[1, x]`): making it has no effect.
-            ast::ExprKind::Array(xs) => xs
-                .iter()
-                .all(|x| !matches!(x.kind, ast::ExprKind::Spread(_)) && self.no_effects(x)),
-            _ => self.evaluated_anywhere(e),
-        }
-    }
-
-    /// [`no_effects`](Self::no_effects) operand `e` of a primitive type (an integer only when
-    /// `int_ok`).
-    fn primitive_operand(&mut self, e: &ast::Expr, int_ok: bool) -> bool {
-        if !self.no_effects(e) {
-            return false;
-        }
-        let t = self.trial_expr(e).ty;
-        let ty = &self.cx.ty;
-        ty.is_float(t) || t == ty.bool_ || t == ty.str_ || (int_ok && ty.is_int(t))
-    }
-
     /// Is `e` a member chain read through a getter (`h.g`), whose value is not a place, so it
     /// can be held in a temporary?
     fn is_getter_value(&mut self, e: &ast::Expr) -> bool {
@@ -381,7 +371,7 @@ impl FnCx<'_, '_> {
 
 /// A checked read with no effects: a variable, a constant, a field path of one, or a literal
 /// index into one (narrowing projections included); not a call (a getter).
-pub(super) fn read_without_effects(h: &hir::Expr) -> bool {
+fn read_without_effects(h: &hir::Expr) -> bool {
     match &h.kind {
         hir::ExprKind::Local(..) | hir::ExprKind::Global(_) | hir::ExprKind::Lit(_) => true,
         hir::ExprKind::Field { base, .. }

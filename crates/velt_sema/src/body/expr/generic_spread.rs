@@ -4,6 +4,7 @@
 
 use velt_syntax::ast;
 
+use super::eval_effects::Effects;
 use crate::body::places::{is_place, set_place_mode};
 use crate::body::{FnCx, Want};
 use crate::hir::{self, ExprKind as H, Intrinsic, TyId, TyKind, TyOp, UseMode};
@@ -28,7 +29,8 @@ impl FnCx<'_, '_> {
 
     /// `{ ...t, $set }` with `t: T`: an `Intrinsic::SpreadObject` over its parts, of the
     /// deferred type `TyOp::Spread`. Every part is bound to a temporary in written order, as
-    /// JavaScript evaluates them: a spread source (a place is borrowed as it is) and each run of
+    /// JavaScript evaluates them: a spread source (a place is borrowed as it is, or copied there
+    /// when a later part may change it: `{ ...t, y: f(t) }`) and each run of
     /// explicit properties as a one-field-per-property object literal. `exp` gives explicit
     /// properties their expected types (`$set: (v) => …` against `T & { $set(v: T): void }`).
     pub(super) fn deferred_spread(
@@ -41,6 +43,9 @@ impl FnCx<'_, '_> {
         let mut parts: Vec<hir::Expr> = vec![];
         let mut run: Vec<(String, hir::Expr)> = vec![];
         let expected = exp.map(|t| self.object_parts(t)).unwrap_or_default();
+        // The places spread (their parts, and the statements bound before them), and whether a
+        // later part may change them.
+        let mut places: Vec<(usize, usize, bool)> = vec![];
         for p in props {
             let (key, value) = match p {
                 ast::ObjectProp::Spread(e) => {
@@ -58,8 +63,16 @@ impl FnCx<'_, '_> {
                         },
                     };
                     let mut base = match is_place(&h) {
-                        true => h,
-                        false => self.temp("<spread>", h, &mut lets),
+                        true => {
+                            places.push((parts.len(), lets.len(), false));
+                            h
+                        }
+                        false => {
+                            if self.hir_effects(&h) == Effects::Writes {
+                                places.iter_mut().for_each(|p| p.2 = true);
+                            }
+                            self.temp("<spread>", h, &mut lets)
+                        }
                     };
                     set_place_mode(&mut base, UseMode::Borrow);
                     parts.push(base);
@@ -86,9 +99,32 @@ impl FnCx<'_, '_> {
                 Some(t) => self.coerce(h, t),
                 None => h,
             };
+            if self.hir_effects(&h) == Effects::Writes {
+                places.iter_mut().for_each(|p| p.2 = true);
+            }
             run.push((key.name.clone(), h));
         }
         self.flush_props(&mut run, &mut parts, &mut lets, span);
+        // A place a later part may change is copied where it is spread (`{ ...t, y: f(t) }`).
+        let mut copies = vec![];
+        for (k, at, _) in places.into_iter().filter(|p| p.2) {
+            let span = parts[k].span;
+            let place = std::mem::replace(&mut parts[k], self.error_expr(span));
+            let copy = self.spread_parts(vec![place], span);
+            let mut stmts = vec![];
+            let mut read = self.temp("<spread>", copy, &mut stmts);
+            set_place_mode(&mut read, UseMode::Borrow);
+            parts[k] = read;
+            copies.push((at, stmts));
+        }
+        super::written_order::insert_at(&mut lets, copies);
+        let value = self.spread_parts(parts, span);
+        self.with_lets(lets, value)
+    }
+
+    /// The object of `parts`' fields: an `Intrinsic::SpreadObject` of the deferred type
+    /// `TyOp::Spread`.
+    fn spread_parts(&mut self, parts: Vec<hir::Expr>, span: velt_common::Span) -> hir::Expr {
         let tys: Vec<TyId> = parts.iter().map(|p| p.ty).collect();
         let op = self.cx.ty.intern(TyKind::Op(TyOp::Spread, tys));
         self.cx.type_level.op_sites.entry(op).or_insert(span);
@@ -97,8 +133,7 @@ impl FnCx<'_, '_> {
             .op_modules
             .entry(op)
             .or_insert(self.module);
-        let value = self.intrinsic(Intrinsic::SpreadObject, parts, op, span);
-        self.with_lets(lets, value)
+        self.intrinsic(Intrinsic::SpreadObject, parts, op, span)
     }
 
     /// The explicit properties of `run` (taken) as a part: an object literal bound to a

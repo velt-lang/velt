@@ -6,15 +6,19 @@
 //! array of its characters or entries (bound to a temporary first). A source that is an iterable
 //! (`[...gen()]`) is a `for...of` pushing its values at its position (`body/consume.rs`).
 //!
-//! Everything is evaluated in written order, as in JS. A spread array that is not a place is
-//! bound before the array is made (its length sizes it); an element with effects before it
-//! (`[g(), ...f()]`, not one without, `no_effects`) is bound before it then. After an iterable
-//! (`[...gen(), ...f()]`), which runs where it is written, it is bound where it is pushed
-//! (unless it has no effects, `[...gen(), ...[1, 2]]`).
+//! Everything is evaluated in written order, as in JS (`eval_effects.rs` tells what can be
+//! moved). A spread array that is not a place is bound before the array is made (its length
+//! sizes it). When that would move it past an element with effects (`[g(), ...f()]`), or move
+//! its effects past an element that reads what they may change (`[n, ...bump()]`), those
+//! elements are bound before it, in order. After an iterable (`[...gen(), ...f()]`), which runs
+//! where it is written, and after a spread of a place that a later effect could change
+//! (`[...xs, ...f()]`), it is bound where it is pushed (unless it is a constant,
+//! `[...gen(), ...[1, 2]]`), and so is everything after it.
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
+use super::eval_effects::Effects;
 use crate::body::consume::{Consumable, Synth};
 use crate::body::places::{is_place, set_place_mode};
 use crate::body::{FnCx, LocalKind, Want};
@@ -47,15 +51,22 @@ impl FnCx<'_, '_> {
         let mut lets = vec![];
         let mut sources: Vec<Option<Src>> = vec![];
         let mut elem = exp_elem;
-        // An earlier element is an iterable: a later one is evaluated in place.
+        // An earlier element is an iterable (or see the module docs): a later one is evaluated
+        // in place.
         let mut in_place = false;
-        // Elements with effects not bound yet, and those bound before a spread (`Unbound`).
-        let mut pending = vec![];
+        // An earlier spread of a place, read where it is pushed.
+        let mut place_read = false;
+        // Elements that are not constants not bound yet, and those bound before a spread
+        // (`Unbound`).
+        let mut pending: Vec<(usize, Effects)> = vec![];
         let mut bind = vec![false; elems.len()];
         for (i, e) in elems.iter().enumerate() {
             let ast::ExprKind::Spread(inner) = &e.kind else {
-                if !in_place && !self.no_effects(e) {
-                    pending.push(i);
+                if !in_place {
+                    let fx = self.effects(e);
+                    if fx != Effects::Constant {
+                        pending.push((i, fx));
+                    }
                 }
                 sources.push(None);
                 continue;
@@ -80,13 +91,28 @@ impl FnCx<'_, '_> {
             }
             let et = self.cx.ty.array_elem(h.ty).expect("ICE: spread array");
             elem.get_or_insert(et);
+            if is_place(&h) {
+                place_read = true;
+            }
+            let fx = match is_place(&h) {
+                true => Effects::Constant,
+                false => self.hir_effects(&h),
+            };
+            let writes_before = pending.iter().any(|p| p.1 == Effects::Writes);
+            let writes = fx == Effects::Writes || writes_before;
             let mut src = if is_place(&h) {
                 h
-            } else if in_place && !self.no_effects(inner) {
+            } else if fx == Effects::Constant {
+                self.temp("<spread>", h, &mut lets)
+            } else if in_place || (place_read && writes) {
+                in_place = true;
                 sources.push(Some(Src::Late(h, et)));
                 continue;
-            } else if !pending.is_empty() || bind.contains(&true) {
-                pending.drain(..).for_each(|k| bind[k] = true);
+            } else if writes_before
+                || bind.contains(&true)
+                || (fx == Effects::Writes && !pending.is_empty())
+            {
+                pending.drain(..).for_each(|(k, _)| bind[k] = true);
                 bind[i] = true;
                 sources.push(Some(Src::Unbound(h, et)));
                 continue;
