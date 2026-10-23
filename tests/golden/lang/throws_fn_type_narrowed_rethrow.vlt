@@ -1,0 +1,165 @@
+// check: no leaks
+// A closure stored into a function type written without `throws` (#1154) that catches what a
+// call through another one throws and rethrows only some of it (the `catch` variable narrowed
+// by `instanceof`) throws only those errors (#1442): the function catching them can take them
+// as that class. Narrowed before the `throw`, after an early return, negated, after two
+// closures rethrowing everything, inside a generator, and in a nested `try`.
+class A extends Error {
+  constructor(m: string) {
+    super(m);
+    this.name = "A";
+  }
+}
+
+class B extends Error {
+  constructor(m: string) {
+    super(m);
+    this.name = "B";
+  }
+}
+
+let n = 0;
+
+function src(): number {
+  n++;
+  if (n % 2 == 1) {
+    throw new A("a");
+  }
+  throw new B("b");
+}
+
+function onlyA(tag: string, g: (k: string) => number): number {
+  try {
+    return g(tag);
+  } catch (e) {
+    const a: A = e;
+    console.log(tag, "caught", a.message);
+    return 1;
+  }
+}
+
+function onlyB(tag: string, g: (k: string) => number): number {
+  try {
+    return g(tag);
+  } catch (e) {
+    const b: B = e;
+    console.log(tag, "caught", b.message);
+    return 1;
+  }
+}
+
+function before(g: () => number): number {
+  return onlyA("before", (_k) => {
+    try {
+      return g();
+    } catch (e) {
+      if (e instanceof A) {
+        throw e;
+      }
+      return 0;
+    }
+  });
+}
+
+function afterReturn(g: () => number): number {
+  return onlyA("afterReturn", (_k) => {
+    try {
+      return g();
+    } catch (e) {
+      if (e instanceof B) {
+        return 0;
+      }
+      throw e;
+    }
+  });
+}
+
+function negated(g: () => number): number {
+  return onlyA("negated", (_k) => {
+    try {
+      return g();
+    } catch (e) {
+      if (!(e instanceof A)) {
+        return 0;
+      }
+      throw e;
+    }
+  });
+}
+
+function link0(g: () => number): number {
+  return link1(() => {
+    try {
+      return g();
+    } catch (e) {
+      throw e;
+    }
+  });
+}
+
+function link1(g: () => number): number {
+  return chained(() => {
+    try {
+      return g();
+    } catch (e) {
+      throw e;
+    }
+  });
+}
+
+function chained(g: () => number): number {
+  return onlyB("chained", (_k) => {
+    try {
+      return g();
+    } catch (e) {
+      if (e instanceof B) {
+        throw e;
+      }
+      return 0;
+    }
+  });
+}
+
+function nested(g: () => number): number {
+  return onlyB("nested", (_k) => {
+    try {
+      return g();
+    } catch (e) {
+      try {
+        throw e;
+      } catch (e2) {
+        if (e2 instanceof A) {
+          return 0;
+        }
+        throw e2;
+      }
+    }
+  });
+}
+
+function generator(g: () => number): number {
+  return onlyA("generator", (_k) => {
+    function* values(): Generator<number> {
+      try {
+        yield g();
+      } catch (e) {
+        if (e instanceof A) {
+          throw e;
+        }
+        yield 0;
+      }
+    }
+    let total = 0;
+    for (const v of values()) {
+      total += v;
+    }
+    return total;
+  });
+}
+
+console.log(before(src), before(src));
+console.log(afterReturn(src), afterReturn(src));
+console.log(negated(src), negated(src));
+console.log(link0(src), link0(src));
+console.log(nested(src), nested(src));
+console.log(generator(src), generator(src));

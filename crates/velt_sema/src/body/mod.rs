@@ -289,9 +289,9 @@ pub(crate) struct Frame {
     pub method_values: rustc_hash::FxHashSet<LocalId>,
     /// Throw sources of the enclosing `try` bodies (innermost last).
     pub tries: Vec<Vec<ThrowSrc>>,
-    /// Each `catch` variable with its type and the throw sources of its `try` body: rethrowing
-    /// it throws what they throw (`expr::errors`).
-    pub caught: Vec<(LocalId, TyId, Vec<ThrowSrc>)>,
+    /// Each `catch` variable used only as `throw e`, with the throw sources of its `try` body:
+    /// rethrowing it throws what they throw (`expr::errors`).
+    pub caught: Vec<(LocalId, Vec<ThrowSrc>)>,
     pub uncaught: Vec<ThrowSrc>,
     /// `super(...)` is allowed here: a root-level statement of a constructor that is the call
     /// itself, before any other `super(...)` (`stmt` sets it; the call takes it).
