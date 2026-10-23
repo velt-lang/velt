@@ -7,9 +7,9 @@
 //! (`[...gen()]`) is a `for...of` pushing its values at its position (`body/consume.rs`).
 //!
 //! Everything is evaluated in written order, as in JS. A spread array that is not a place is
-//! bound before the array is made (its length sizes it) while only elements without effects
-//! come before it (`[a, ...f()]`, `no_effects`); after one with effects or an iterable
-//! (`[g(), ...f()]`, `[...gen(), ...f()]`) it is bound where it is pushed.
+//! bound before the array is made (its length sizes it); an element with effects before it
+//! (`[g(), ...f()]`, not one without, `no_effects`) is bound before it then. After an iterable
+//! (`[...gen(), ...f()]`), which runs where it is written, it is bound where it is pushed.
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
@@ -25,8 +25,11 @@ use crate::hir::{
 enum Src {
     /// An array (a place, or a temporary bound first) and its element type.
     Array(hir::Expr, TyId),
-    /// An array value bound to a temporary where it is pushed, after the elements before it
-    /// (see the module docs), and its element type.
+    /// An array value bound to a temporary after the elements with effects before it, before
+    /// the array is made, and its element type.
+    Unbound(hir::Expr, TyId),
+    /// An array value bound to a temporary where it is pushed, after an iterable (see the
+    /// module docs), and its element type.
     Late(hir::Expr, TyId),
     /// An iterable, consumed by a `for...of` at its position.
     Iter(Consumable),
@@ -43,11 +46,16 @@ impl FnCx<'_, '_> {
         let mut lets = vec![];
         let mut sources: Vec<Option<Src>> = vec![];
         let mut elem = exp_elem;
-        // An earlier element has effects, or is an iterable: a later one is evaluated in place.
+        // An earlier element is an iterable: a later one is evaluated in place.
         let mut in_place = false;
-        for e in elems {
+        // Elements with effects not bound yet, and those bound before a spread (`Unbound`).
+        let mut pending = vec![];
+        let mut bind = vec![false; elems.len()];
+        for (i, e) in elems.iter().enumerate() {
             let ast::ExprKind::Spread(inner) = &e.kind else {
-                in_place = in_place || !self.no_effects(e);
+                if !in_place && !self.no_effects(e) {
+                    pending.push(i);
+                }
                 sources.push(None);
                 continue;
             };
@@ -76,6 +84,11 @@ impl FnCx<'_, '_> {
             } else if in_place {
                 sources.push(Some(Src::Late(h, et)));
                 continue;
+            } else if !pending.is_empty() || bind.contains(&true) {
+                pending.drain(..).for_each(|k| bind[k] = true);
+                bind[i] = true;
+                sources.push(Some(Src::Unbound(h, et)));
+                continue;
             } else {
                 self.temp("<spread>", h, &mut lets)
             };
@@ -92,7 +105,7 @@ impl FnCx<'_, '_> {
         };
         for (e, src) in elems.iter().zip(&mut sources) {
             let (et, is_array) = match src {
-                Some(Src::Array(_, et) | Src::Late(_, et)) => (*et, true),
+                Some(Src::Array(_, et) | Src::Unbound(_, et) | Src::Late(_, et)) => (*et, true),
                 Some(Src::Iter(c)) => (c.elem, false),
                 None => continue,
             };
@@ -122,6 +135,28 @@ impl FnCx<'_, '_> {
                 );
                 // Reported: its loop is not built (nor its conversion reported again).
                 *src = None;
+            }
+        }
+        // In written order: the elements with effects before a spread, and its value.
+        for (i, e) in elems.iter().enumerate().filter(|&(i, _)| bind[i]) {
+            match sources[i].take() {
+                Some(Src::Unbound(h, et)) => {
+                    let mut src = self.temp("<spread>", h, &mut lets);
+                    set_place_mode(&mut src, UseMode::Borrow);
+                    sources[i] = Some(Src::Array(src, et));
+                }
+                Some(other) => sources[i] = Some(other),
+                None if matches!(e.kind, ast::ExprKind::Spread(_)) => {}
+                None => {
+                    let v = match plain[i].take() {
+                        Some(h) => self.coerce(h, elem),
+                        None => self.expr_coerce(e, elem, Want::Move),
+                    };
+                    let mode = self.use_mode(v.ty, Want::Move);
+                    let mut t = self.temp("<elem>", v, &mut lets);
+                    set_place_mode(&mut t, mode);
+                    plain[i] = Some(t);
+                }
             }
         }
         let arr_ty = self.cx.ty.array(elem);
@@ -159,7 +194,7 @@ impl FnCx<'_, '_> {
                 (Some(Src::Array(src, et)), _) => {
                     self.push_all(out_l, arr_ty, src, (et, elem), e.span)
                 }
-                (Some(Src::Late(h, et)), _) => {
+                (Some(Src::Late(h, et) | Src::Unbound(h, et)), _) => {
                     let mut src = self.temp("<spread>", h, &mut lets);
                     set_place_mode(&mut src, UseMode::Borrow);
                     self.push_all(out_l, arr_ty, src, (et, elem), e.span)
