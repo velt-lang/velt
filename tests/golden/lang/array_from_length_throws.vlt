@@ -1,0 +1,30 @@
+// `Array.from({ length: n }, (_, i) => ...)` with a callback that throws: the error ends the
+// loop and reaches the caller's `catch`, as in JavaScript.
+class TooDeep extends Error {}
+
+function label(i: number): string {
+  if (i > 2) {
+    throw new TooDeep(`index ${i}`);
+  }
+  return `item ${i}`;
+}
+
+console.log(Array.from({ length: 3 }, (_, i): string => label(i)));
+try {
+  const xs = Array.from({ length: 5 }, (_, i) => label(i));
+  console.log("not reached", xs);
+} catch (e) {
+  console.log("caught", e instanceof TooDeep, (e as Error).message);
+}
+
+// The same through a function value the callback calls.
+const make = (depth: number, start: number): string[] =>
+  Array.from({ length: 2 }, (_, i) =>
+    depth > 1 ? make(depth - 1, start).join("+") : label(i + start),
+  );
+console.log(make(2, 0));
+try {
+  make(3, 2);
+} catch (e) {
+  console.log("caught", (e as Error).message);
+}

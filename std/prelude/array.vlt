@@ -774,8 +774,8 @@ export function __arrayFilled<T>(n: i64, v: T): T[] {
   return out;
 }
 
-/** `Array.from({ length: n }, (_, i) => f(i))` (rewritten to this): `f(i)` for each index. */
-export function __arrayFromLength<U>(n: i64, f: (i: i64) => U): U[] {
+/** `Array.from({ length: n }, (_, i) => f(i))`: `f(i)` for each index, throwing what `f` throws. */
+export function __arrayFromLength<U, E>(n: i64, f: (i: i64) => U throws E): U[] throws E {
   const out: U[] = __intrinsic_array_with_capacity(n > 0 ? n as usize : 0);
   for (let i = 0; i < n; i++) {
     out.push(f(i));

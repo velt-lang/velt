@@ -146,7 +146,8 @@ what a function stored there may throw.
 - **Higher-order functions** propagate their callback's errors by being generic over them:
   `function run<E>(f: () => i64 throws E): i64 throws E`. The prelude's array methods
   (`forEach`, `map`, `filter`, `reduce`, `find`, `findIndex`, `some`, `every`), `Map` methods
-  (`forEach`, `upsert`, `update`, `getOrInsert`) and `(T | null).map` do this, so
+  (`forEach`, `upsert`, `update`, `getOrInsert`), `Array.from`'s callback and `(T | null).map`
+  do this, so
   `xs.map((x) => parse(x))` throws what `parse` throws, and nothing when the callback cannot
   throw. Sort comparators and `Mutex.with` callbacks cannot throw.
 
