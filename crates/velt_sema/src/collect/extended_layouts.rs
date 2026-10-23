@@ -43,6 +43,9 @@ pub(crate) struct Layouts {
     /// The program is checked: from here on only families already in use answer
     /// [`Ctx::family_layout`] (a check must not widen a layout that no conversion needs).
     pub sealed: bool,
+    /// The concrete types `JSON.parse` builds (`json::check_json_types`): objects of a widened
+    /// layout made from text may have any of its fields.
+    pub parsed: Vec<TyId>,
 }
 
 /// One base layout and the fields its extensions add.

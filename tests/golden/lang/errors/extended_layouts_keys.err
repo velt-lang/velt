@@ -1,12 +1,12 @@
-extended_layouts_keys.vlt:9:15: error: this lists the keys of a value of type `VNode`, which has its own fields only, but the program writes `_ns` on such objects through `InternalVNode`, and Node would show it here
+extended_layouts_keys.vlt:9:15: error: this lists the keys of a value of type `VNode`, which has its own fields only, but such objects can have `_ns` (given through `InternalVNode`), and Node would show it here
 = note: a `VNode` converts to `InternalVNode` as the same object, which has room for `_ns`
 = note: look at the value as `InternalVNode` (`v as InternalVNode`)
-extended_layouts_keys.vlt:10:15: error: this tests a key of a value of type `VNode`, which has its own fields only, but the program writes `_ns` on such objects through `InternalVNode`, and Node would show it here
+extended_layouts_keys.vlt:10:15: error: this tests a key of a value of type `VNode`, which has its own fields only, but such objects can have `_ns` (given through `InternalVNode`), and Node would show it here
 = note: a `VNode` converts to `InternalVNode` as the same object, which has room for `_ns`
 = note: look at the value as `InternalVNode` (`v as InternalVNode`)
-extended_layouts_keys.vlt:11:18: error: this spreads a value of type `VNode`, which has its own fields only, but the program writes `_ns` on such objects through `InternalVNode`, and Node would show it here
+extended_layouts_keys.vlt:11:18: error: this spreads a value of type `VNode`, which has its own fields only, but such objects can have `_ns` (given through `InternalVNode`), and Node would show it here
 = note: a `VNode` converts to `InternalVNode` as the same object, which has room for `_ns`
 = note: look at the value as `InternalVNode` (`v as InternalVNode`)
-extended_layouts_keys.vlt:13:21: error: this lists the keys of a value of type `VNode`, which has its own fields only, but the program writes `_ns` on such objects through `InternalVNode`, and Node would show it here
+extended_layouts_keys.vlt:13:21: error: this lists the keys of a value of type `VNode`, which has its own fields only, but such objects can have `_ns` (given through `InternalVNode`), and Node would show it here
 = note: a `VNode` converts to `InternalVNode` as the same object, which has room for `_ns`
 = note: look at the value as `InternalVNode` (`v as InternalVNode`)

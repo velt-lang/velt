@@ -280,8 +280,8 @@ impl VisitMut for Renumber<'_> {
 
 /// Before the layouts are widened (the program checked, `Layouts::sealed`): report each
 /// `Object.keys`, `for…in`, spread and `"k" in x` of a type of a widened layout that lacks a
-/// field an extension adds and the program writes. Those list the type's own fields; Node's
-/// object would have the written one too.
+/// field an extension adds and that the program may give a value ([`given_fields`]). Those list
+/// the type's own fields; Node's object would have the given one too.
 pub(crate) fn check_looks(cx: &mut Ctx) {
     if !cx.objects.layouts.families.values().any(|f| f.used) {
         return;
@@ -291,6 +291,7 @@ pub(crate) fn check_looks(cx: &mut Ctx) {
         .cloned()
         .collect();
     let mut reported = vec![];
+    let mut given: FxHashMap<DefId, Vec<String>> = FxHashMap::default();
     for (t, span, how) in looks {
         let t = cx.ty.opt_payload(t).unwrap_or(t);
         let TyKind::Adt(d, _) = *cx.ty.kind(t) else {
@@ -305,7 +306,11 @@ pub(crate) fn check_looks(cx: &mut Ctx) {
         let own: Vec<String> = cx.adt(d).map_or(vec![], |a| {
             a.fields.iter().map(|f| f.name.clone()).collect()
         });
-        let written = written_fields(cx, base);
+        if !given.contains_key(&base) {
+            let g = given_fields(cx, base);
+            given.insert(base, g);
+        }
+        let written = &given[&base];
         let missing = match how {
             Seen::In(k) => (cx.object_copies.in_keys.get(k as usize))
                 .filter(|k| written.contains(k))
@@ -327,7 +332,7 @@ pub(crate) fn check_looks(cx: &mut Ctx) {
         cx.error(
             velt_common::Diagnostic::error(
                 format!(
-                    "this {what} a value of type `{tn}`, which has its own fields only, but the program writes `{shown}` on such objects through `{ext}`, and Node would show it here"
+                    "this {what} a value of type `{tn}`, which has its own fields only, but such objects can have `{shown}` (given through `{ext}`), and Node would show it here"
                 ),
                 span,
             )
@@ -350,20 +355,126 @@ fn used_family(cx: &Ctx, d: DefId) -> Option<DefId> {
         .then_some(base)
 }
 
-/// The fields the extensions in family `base` add that the program writes (on a type of the
-/// family, or through `any`).
-fn written_fields(cx: &Ctx, base: DefId) -> Vec<String> {
-    let added = &cx.objects.layouts.families[&base].added;
+/// The fields the extensions in family `base` add that objects of the family may have: those
+/// the program assigns (on a type of the family, or through `any`), those an object literal of
+/// a type of the family gives a value (`{ ...v, _ns: true }` too), and all of them where the
+/// family's objects may come from text or a dynamic value (`JSON.parse`, `x as VNode` of an
+/// `any`), whose keys are not known.
+fn given_fields(cx: &mut Ctx, base: DefId) -> Vec<String> {
+    let added: Vec<String> = (cx.objects.layouts.families[&base].added.iter())
+        .map(|f| f.name.clone())
+        .collect();
+    let mut scan = GivenScan::default();
+    for def in cx.defs.iter_mut().flatten() {
+        match def {
+            Def::Fn(f) => visit::block(&mut f.body.block, &mut scan),
+            Def::Global(g) => visit::expr(&mut g.init, &mut scan),
+            _ => {}
+        }
+    }
+    for info in cx.info.iter_mut() {
+        match info {
+            crate::defs::DefInfo::Global(g) => {
+                if let Some(e) = &mut g.init {
+                    visit::expr(e, &mut scan);
+                }
+            }
+            crate::defs::DefInfo::Adt(a) => {
+                for d in a.fields.iter_mut().filter_map(|f| f.default.as_mut()) {
+                    visit::expr(d, &mut scan);
+                }
+            }
+            _ => {}
+        }
+    }
+    let unknown = (cx.objects.layouts.parsed.iter().chain(&scan.dynamic))
+        .any(|&t| mentions_family(cx, t, base));
+    if unknown {
+        return added;
+    }
+    let mut given = written_fields(cx, base, &added);
+    for (d, present) in &scan.literals {
+        if used_family(cx, *d) != Some(base) {
+            continue;
+        }
+        let names: Vec<String> = cx.adt(*d).map_or(vec![], |a| {
+            a.fields.iter().map(|f| f.name.clone()).collect()
+        });
+        for (n, p) in names.iter().zip(present) {
+            if *p && added.contains(n) && !given.contains(n) {
+                given.push(n.clone());
+            }
+        }
+    }
+    given
+}
+
+/// What [`given_fields`] looks for in the program's bodies.
+#[derive(Default)]
+struct GivenScan {
+    /// Each object literal's type and which of its fields it gives a value.
+    literals: Vec<(DefId, Vec<bool>)>,
+    /// The types dynamic values are converted to (`Intrinsic::AnyTo`).
+    dynamic: Vec<TyId>,
+}
+
+impl VisitMut for GivenScan {
+    fn expr(&mut self, e: &mut Expr) {
+        match &e.kind {
+            E::AdtLit { def, fields, .. } => {
+                let present = fields.iter().map(|f| !is_absent(f)).collect();
+                self.literals.push((*def, present));
+            }
+            E::Call {
+                callee: Callee::Intrinsic(Intrinsic::AnyTo),
+                ..
+            } => self.dynamic.push(e.ty),
+            _ => {}
+        }
+    }
+}
+
+/// An object literal's value for a field it leaves out (`FieldAbsent`, `null`, the dynamic
+/// `undefined`).
+fn is_absent(e: &Expr) -> bool {
+    match &e.kind {
+        E::Lit(crate::hir::Lit::Null) => true,
+        E::Call {
+            callee: Callee::Intrinsic(Intrinsic::FieldAbsent),
+            ..
+        } => true,
+        E::Call {
+            callee: Callee::Intrinsic(_),
+            args,
+        } => matches!(args.as_slice(), [x] if is_absent(x)),
+        E::ToDyn { expr, .. } | E::WrapSome(expr) => is_absent(expr),
+        _ => false,
+    }
+}
+
+/// Does type `t` mention an object type of family `base`?
+fn mentions_family(cx: &Ctx, t: TyId, base: DefId) -> bool {
+    let mut hit = false;
+    cx.ty.visit(t, &mut |k| {
+        if let TyKind::Adt(d, _) = k {
+            hit |= used_family(cx, *d) == Some(base);
+        }
+    });
+    hit
+}
+
+/// The fields of `added` the program assigns on a type of family `base` (or through `any`).
+fn written_fields(cx: &Ctx, base: DefId, added: &[String]) -> Vec<String> {
     (added.iter())
         .filter(|f| {
             cx.object_copies.writes.iter().any(|w| {
-                w.name == f.name && w.ty.is_none_or(|t| {
+                w.name == **f && w.ty.is_none_or(|t| {
                     let t = cx.ty.opt_payload(t).unwrap_or(t);
                     matches!(cx.ty.kind(t), TyKind::Adt(d, _) if used_family(cx, *d) == Some(base))
                 })
             })
         })
-        .map(|f| f.name.clone())
+        .cloned()
         .collect()
 }
 

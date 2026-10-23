@@ -1197,8 +1197,10 @@ console.log(e.id, grace.age, w.meta); // e1 45 m
   fields only. Printing and `JSON.stringify` show the whole object, an added field once it is
   written (one holding a function is printed, and left out of JSON, as in Node); `Object.keys`,
   `for...in`, spreads and `in` list the fields of the type the program looks through, so one of
-  those on a `VNode` is an error once the program writes an added field (look through
-  `v as InternalVNode`). Several such extensions of one base share it while they give a field
+  those on a `VNode` is an error once the program may give its objects an added field: assigns
+  it, writes it in an object literal of an extension (`{ ...v, _ns: true }` too), or makes
+  such objects from text or a dynamic value (`JSON.parse`, `x as VNode` of an `any`), whose
+  keys are not known (look through `v as InternalVNode`). Several such extensions of one base share it while they give a field
   of one name the same type; one that gives another type (`_subTree?: VNode` next to
   `_subTree?: VNode | null`) keeps its own layout and converts by copying, as above, the
   extension nearest to the base (by module path) sharing it. Neither the base nor the extension
