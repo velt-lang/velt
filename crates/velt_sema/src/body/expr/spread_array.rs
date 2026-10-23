@@ -14,8 +14,8 @@
 //! where it is written, and after a spread of a place that a later effect could change
 //! (`[...xs, ...f()]`), it is bound where it is pushed (unless it is a constant,
 //! `[...gen(), ...[1, 2]]`), and so is everything after it; the first allocation holds the
-//! rest, and such a source makes room for exactly its length before its pushes (one exact
-//! reallocation, `Intrinsic::ArrayReserve`).
+//! rest and some spare room, and such a source makes room for exactly its length before its
+//! pushes when that is too small (one exact reallocation, `Intrinsic::ArrayReserve`).
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
@@ -196,7 +196,8 @@ impl FnCx<'_, '_> {
                 _ => None,
             })
             .collect();
-        let cap = self.spread_capacity(elems, &srcs, span);
+        let late = sources.iter().any(|s| matches!(s, Some(Src::Late(..))));
+        let cap = self.spread_capacity(elems, &srcs, late, span);
         let init = self.intrinsic(Intrinsic::ArrayWithCapacity, vec![cap], arr_ty, span);
         let iterables = sources.iter().any(|s| matches!(s, Some(Src::Iter(_))));
         // A spread iterable pushes from synthesized source, which names the array.
@@ -226,8 +227,8 @@ impl FnCx<'_, '_> {
                 (Some(Src::Late(h, et) | Src::Unbound(h, et)), _) => {
                     let mut src = self.temp("<spread>", h, &mut lets);
                     set_place_mode(&mut src, UseMode::Borrow);
-                    // Its length is known now: room for exactly it (the first allocation
-                    // holds the rest).
+                    // Its length is known now: room for exactly it when the first
+                    // allocation's spare room (`spread_capacity`) is too small.
                     let reserve = self.reserve_for(out_l, arr_ty, &src, e.span);
                     lets.push(reserve);
                     self.push_all(out_l, arr_ty, src, (et, elem), e.span)
@@ -284,11 +285,14 @@ impl FnCx<'_, '_> {
         None
     }
 
-    /// `n_plain + xs.length + ...` as a `usize`.
+    /// `n_plain + xs.length + ...` as a `usize`. With a source whose length is known only where
+    /// it is pushed (`late`, `[...xs, ...f()]`), half as much again and 4 more: room for a few
+    /// elements of it without moving the first ones (it reserves exactly what does not fit).
     fn spread_capacity(
         &mut self,
         elems: &[ast::Expr],
         sources: &[Option<hir::Expr>],
+        late: bool,
         span: Span,
     ) -> hir::Expr {
         let usize_ = self.cx.ty.usize;
@@ -305,6 +309,25 @@ impl FnCx<'_, '_> {
                 rhs: Box::new(len),
             };
             cap = self.mk(kind, usize_, span);
+        }
+        if late {
+            let lit = |cx: &mut Self, n| cx.mk(H::Lit(hir::Lit::Int(n)), usize_, span);
+            let one = lit(self, 1);
+            let half = H::Binary {
+                op: BinOp::Shr,
+                lhs: Box::new(cap.clone()),
+                rhs: Box::new(one),
+            };
+            let half = self.mk(half, usize_, span);
+            let four = lit(self, 4);
+            for rhs in [half, four] {
+                let kind = H::Binary {
+                    op: BinOp::Add,
+                    lhs: Box::new(cap),
+                    rhs: Box::new(rhs),
+                };
+                cap = self.mk(kind, usize_, span);
+            }
         }
         cap
     }
