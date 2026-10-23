@@ -1,0 +1,332 @@
+// check: no leaks
+// Function types written without `throws` throw what is stored into them (#1154), also when a
+// closure stored into one catches what a call through another throws and rethrows it (#1442):
+// twelve functions each pass on a closure that calls the callback it was given inside a `try`
+// and rethrows the error, more than the checks of the program the inference once took per
+// closure in such a chain. The same through variables, and an async chain.
+class End extends Error {
+  constructor(m: string) {
+    super(m);
+    this.name = "End";
+  }
+}
+
+function f0(g: () => number): number {
+  return f1(() => {
+    try {
+      return g() + 1;
+    } catch (e) {
+      throw e;
+    }
+  });
+}
+
+function f1(g: () => number): number {
+  return f2(() => {
+    try {
+      return g() + 1;
+    } catch (e) {
+      throw e;
+    }
+  });
+}
+
+function f2(g: () => number): number {
+  return f3(() => {
+    try {
+      return g() + 1;
+    } catch (e) {
+      throw e;
+    }
+  });
+}
+
+function f3(g: () => number): number {
+  return f4(() => {
+    try {
+      return g() + 1;
+    } catch (e) {
+      throw e;
+    }
+  });
+}
+
+function f4(g: () => number): number {
+  return f5(() => {
+    try {
+      return g() + 1;
+    } catch (e) {
+      throw e;
+    }
+  });
+}
+
+function f5(g: () => number): number {
+  return f6(() => {
+    try {
+      return g() + 1;
+    } catch (e) {
+      throw e;
+    }
+  });
+}
+
+function f6(g: () => number): number {
+  return f7(() => {
+    try {
+      return g() + 1;
+    } catch (e) {
+      throw e;
+    }
+  });
+}
+
+function f7(g: () => number): number {
+  return f8(() => {
+    try {
+      return g() + 1;
+    } catch (e) {
+      throw e;
+    }
+  });
+}
+
+function f8(g: () => number): number {
+  return f9(() => {
+    try {
+      return g() + 1;
+    } catch (e) {
+      throw e;
+    }
+  });
+}
+
+function f9(g: () => number): number {
+  return f10(() => {
+    try {
+      return g() + 1;
+    } catch (e) {
+      throw e;
+    }
+  });
+}
+
+function f10(g: () => number): number {
+  return f11(() => {
+    try {
+      return g() + 1;
+    } catch (e) {
+      throw e;
+    }
+  });
+}
+
+function f11(g: () => number): number {
+  return g();
+}
+
+function params() {
+  console.log(f0(() => 1));
+  try {
+    console.log(
+      f0(() => {
+        throw new End("through twelve parameters");
+      }),
+    );
+  } catch (e) {
+    console.log("caught", e instanceof End, (e as Error).message);
+  }
+}
+
+let v0: () => string = () => "v0";
+let v1: () => string = () => "v1";
+let v2: () => string = () => "v2";
+let v3: () => string = () => "v3";
+let v4: () => string = () => "v4";
+let v5: () => string = () => "v5";
+let v6: () => string = () => "v6";
+let v7: () => string = () => "v7";
+let v8: () => string = () => "v8";
+let v9: () => string = () => "v9";
+let v10: () => string = () => "v10";
+
+function variables() {
+  console.log(v0());
+  v10 = () => {
+    throw new RangeError("through eleven variables");
+  };
+  v0 = () => {
+    try {
+      return v1();
+    } catch (e) {
+      console.log("v0 saw", (e as Error).message);
+      throw e;
+    }
+  };
+  v1 = () => {
+    try {
+      return v2();
+    } catch (e) {
+      throw e;
+    }
+  };
+  v2 = () => {
+    try {
+      return v3();
+    } catch (e) {
+      throw e;
+    }
+  };
+  v3 = () => {
+    try {
+      return v4();
+    } catch (e) {
+      throw e;
+    }
+  };
+  v4 = () => {
+    try {
+      return v5();
+    } catch (e) {
+      throw e;
+    }
+  };
+  v5 = () => {
+    try {
+      return v6();
+    } catch (e) {
+      throw e;
+    }
+  };
+  v6 = () => {
+    try {
+      return v7();
+    } catch (e) {
+      throw e;
+    }
+  };
+  v7 = () => {
+    try {
+      return v8();
+    } catch (e) {
+      throw e;
+    }
+  };
+  v8 = () => {
+    try {
+      return v9();
+    } catch (e) {
+      throw e;
+    }
+  };
+  v9 = () => {
+    try {
+      return v10();
+    } catch (e) {
+      throw e;
+    }
+  };
+  try {
+    console.log(v0());
+  } catch (e) {
+    console.log("caught", e instanceof RangeError, (e as Error).message);
+  }
+}
+
+let a0: () => Promise<number> = async () => 0;
+let a1: () => Promise<number> = async () => 1;
+let a2: () => Promise<number> = async () => 2;
+let a3: () => Promise<number> = async () => 3;
+let a4: () => Promise<number> = async () => 4;
+let a5: () => Promise<number> = async () => 5;
+let a6: () => Promise<number> = async () => 6;
+let a7: () => Promise<number> = async () => 7;
+let a8: () => Promise<number> = async () => 8;
+let a9: () => Promise<number> = async () => 9;
+let a10: () => Promise<number> = async () => 10;
+
+async function chainAsync() {
+  console.log(await a0());
+  a10 = async () => {
+    throw new End("through eleven promises");
+  };
+  a0 = async () => {
+    try {
+      return (await a1()) + 1;
+    } catch (e) {
+      throw e;
+    }
+  };
+  a1 = async () => {
+    try {
+      return (await a2()) + 1;
+    } catch (e) {
+      throw e;
+    }
+  };
+  a2 = async () => {
+    try {
+      return (await a3()) + 1;
+    } catch (e) {
+      throw e;
+    }
+  };
+  a3 = async () => {
+    try {
+      return (await a4()) + 1;
+    } catch (e) {
+      throw e;
+    }
+  };
+  a4 = async () => {
+    try {
+      return (await a5()) + 1;
+    } catch (e) {
+      throw e;
+    }
+  };
+  a5 = async () => {
+    try {
+      return (await a6()) + 1;
+    } catch (e) {
+      throw e;
+    }
+  };
+  a6 = async () => {
+    try {
+      return (await a7()) + 1;
+    } catch (e) {
+      throw e;
+    }
+  };
+  a7 = async () => {
+    try {
+      return (await a8()) + 1;
+    } catch (e) {
+      throw e;
+    }
+  };
+  a8 = async () => {
+    try {
+      return (await a9()) + 1;
+    } catch (e) {
+      throw e;
+    }
+  };
+  a9 = async () => {
+    try {
+      return (await a10()) + 1;
+    } catch (e) {
+      throw e;
+    }
+  };
+  try {
+    console.log(await a0());
+  } catch (e) {
+    console.log("caught", e instanceof End, (e as Error).message);
+  }
+}
+
+params();
+variables();
+chainAsync();

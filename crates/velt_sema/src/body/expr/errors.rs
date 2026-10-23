@@ -23,6 +23,7 @@ impl FnCx<'_, '_> {
         if h.ty != self.cx.ty.never {
             self.throw_src(ThrowSrc::Direct(h.ty, span));
         }
+        self.rethrown_srcs(&h);
         self.mk(H::Throw(Box::new(h)), self.cx.ty.never, span)
     }
 
@@ -65,11 +66,13 @@ impl FnCx<'_, '_> {
         blk: &ast::Block,
         span: Span,
     ) -> (Option<LocalId>, hir::Block) {
-        let ety = self.catch_type(srcs, span);
+        let ety = self.catch_type(srcs.clone(), span);
         self.push_scope_until(blk.span.hi);
         let local = match pat.map(|p| (&p.kind, p.span)) {
             Some((ast::PatternKind::Ident(n), _)) => {
-                Some(self.declare_local(n, ety, LocalKind::Const))
+                let l = self.declare_local(n, ety, LocalKind::Const);
+                self.f.caught.push((l, ety, srcs));
+                Some(l)
             }
             Some((_, pspan)) => {
                 self.cx
@@ -88,6 +91,24 @@ impl FnCx<'_, '_> {
         let hb = self.block(blk);
         self.pop_scope();
         (local, hb)
+    }
+
+    /// `throw e` of a `catch` variable `e` that is not narrowed: besides the type of `e` (what
+    /// the `try` body was known to throw when it was checked), it throws what the body's
+    /// sources throw in the final inference. The two agree once inference is done (the `catch`
+    /// type is checked against it); while the error types of function types written without
+    /// `throws` grow, this carries what a call through one throws on to the function types the
+    /// rethrowing closure is stored into within one check, instead of one more check of the
+    /// program per closure in a chain of them (`throws::fn_types`).
+    fn rethrown_srcs(&mut self, h: &hir::Expr) {
+        let H::Local(l, _) = &h.kind else {
+            return;
+        };
+        let found = (self.f.caught.iter()).find(|(c, t, _)| c == l && *t == h.ty);
+        let Some((_, _, srcs)) = found.cloned() else {
+            return;
+        };
+        srcs.into_iter().for_each(|s| self.throw_src(s));
     }
 
     /// The union of what `srcs` throw (`never` when nothing), re-checked after inference.

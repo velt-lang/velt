@@ -135,7 +135,11 @@ fn clause_violation(cx: &mut Ctx, d: DefId, m: TyId, allowed: Option<TyId>, clau
         // A function type written without `throws` throws what is stored into it: the program
         // is checked again with this one's errors (`fn_types`), which drops this report.
         let site = cx.closure_site(d);
+        let before = cx.fn_sites.added;
         let matched = own_final(cx, d).is_some_and(|own| cx.seed_fn_sites(used_as, own, site));
+        // The error grew a set, so the program would be checked again, but this is the last
+        // check allowed (a set that already has it is no limit: the error is reported anyway).
+        let grew = cx.fn_sites.added > before;
         let inferred = cx.ty.inferred_fns.contains(&used_as);
         // As written: error-set variables (`vars`) allow nothing.
         let never = cx.ty.never;
@@ -154,7 +158,7 @@ fn clause_violation(cx: &mut Ctx, d: DefId, m: TyId, allowed: Option<TyId>, clau
             at,
         )
         .with_note(format!("it is used as `{used_as}`"));
-        if matched && cx.fn_sites.is_last() {
+        if grew && cx.fn_sites.is_last() {
             diag = diag.with_note(format!(
                 "the error types of function types written without `throws` are inferred from what is stored into them; that inference hit its limit ({} checks of the program) here",
                 crate::FN_SITE_ROUNDS + 1
