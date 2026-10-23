@@ -255,6 +255,10 @@ pub(crate) struct Frame {
     /// The promises this async function returns (`expr::tasks`, `async_returned`), awaited
     /// once the body's scopes are left (`wrap_adopted`; issue #1148).
     pub adopted: Vec<Adopted>,
+    /// Class values pending as `const`s at the start of their blocks (`expr::ctor_locals`).
+    pub class_lets: Vec<expr::ctor_locals::ClassLet>,
+    /// The scopes of the statement lists being checked (`stmts_into`), outermost first.
+    pub stmt_lists: Vec<usize>,
     /// Which of `adopted` was stored last (`i + 1`; `0` for none): every store writes it, so a
     /// `return p` cancelled by a `finally` (`continue`, `break`, another `return`) is not
     /// adopted, as in JS.
@@ -383,6 +387,8 @@ impl Frame {
             fn_expr_name: None,
             finally_depth: 0,
             adopted: vec![],
+            class_lets: vec![],
+            stmt_lists: vec![],
             adopt_which: None,
             adopt_stmt: false,
             finally_loops: None,

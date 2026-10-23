@@ -58,6 +58,9 @@ pub(crate) struct ObjectState {
     pub brands: crate::defined_props::Brands,
     /// The key names of the brands' hidden fields, once resolved (`Ctx::hidden_keys`).
     pub hidden: Option<FxHashSet<String>>,
+    /// Each class's value per construct signature type, a module-state constant
+    /// (`body::expr::ctor_values`), in the order they were made.
+    pub class_values: Vec<((DefId, TyId), DefId)>,
 }
 
 impl Ctx<'_> {

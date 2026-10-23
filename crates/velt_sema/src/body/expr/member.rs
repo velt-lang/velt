@@ -75,6 +75,8 @@ impl FnCx<'_, '_> {
                 Err(o) => obj = o,
             }
         }
+        let renamed = self.ctor_member(obj.ty, prop); // `C.name` of a class value
+        let prop = renamed.as_ref().unwrap_or(prop);
         let Some((index, fty)) = self.field_of(obj.ty, &prop.name) else {
             self.no_field(obj.ty, obj.span, prop);
             return None;
@@ -99,61 +101,6 @@ impl FnCx<'_, '_> {
     /// Is `length` of a `t` the intrinsic length of a string or array?
     pub(super) fn has_length(&self, t: TyId) -> bool {
         t == self.cx.ty.str_ || self.cx.ty.array_elem(t).is_some()
-    }
-
-    fn no_field(&mut self, t: TyId, obj: Span, prop: &ast::Ident) {
-        if self.private_accessor_outside(t, prop, false) || self.shadowed_private_name(t, prop) {
-            return;
-        }
-        if crate::collect::exports::member_maybe_dropped(self.cx, t, &prop.name) {
-            return; // the parser may have dropped its declaration (`Ctx::recovered`)
-        }
-        if self.has_setter(t, &prop.name) {
-            return self.cx.err(
-                format!("cannot read `{}`: it has a setter but no getter", prop.name),
-                prop.span,
-            );
-        }
-        let tn = self.cx.display(t);
-        let mut d = Diagnostic::error(
-            format!(
-                "no field `{}` on type `{tn}`",
-                self.cx.shown_name(&prop.name)
-            ),
-            prop.span,
-        );
-        if self.adt_of(t).is_some() {
-            d = d.with_note(
-                "objects have a fixed shape: fields cannot be added at runtime; use a `Map<string, V>` for dynamic keys",
-            );
-        }
-        if matches!(
-            self.cx.ty.kind(t),
-            TyKind::FnPtr { .. } | TyKind::Closure(_)
-        ) {
-            d = d.with_note(super::callables::FN_PROPERTY_NOTE);
-        }
-        if let Some(note) = self.narrowing_note(t) {
-            d = d.with_note(note);
-        }
-        if matches!(self.cx.ty.kind(t), hir::TyKind::Op(hir::TyOp::Intersect, _)) {
-            d = d.with_note(
-                "in generic code, an intersection with a type parameter part has only the members of its object parts; callers see the type parameter's once the type arguments are known (#350)",
-            );
-        }
-        if let Some(note) = self.unnarrowed_note(obj) {
-            d = d.with_note(note);
-        }
-        if self.method_exists(t, &prop.name) {
-            d = d.with_note(match self.cx.key_spelling(&prop.name) {
-                Some(key) => format!("`{key}` is a method: call it with `o{key}()`"),
-                None => format!(
-                    "`{}` is a method: call it with `.{}()`",
-                    prop.name, prop.name
-                ),
-            });
-        }
-        self.cx.error(d);
     }
 
     pub(crate) fn member(
@@ -238,6 +185,9 @@ impl FnCx<'_, '_> {
                         return h;
                     }
                     if let Some(h) = self.static_method_value(d, d, prop, exp, span) {
+                        return h;
+                    }
+                    if let Some(h) = self.class_name_read(d, prop, span) {
                         return h;
                     }
                     if self.cx.adt(d).is_some() {

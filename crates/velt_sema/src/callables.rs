@@ -18,6 +18,12 @@ use crate::hir::{AdtKind, TyId, TyKind};
 /// The hidden field of a callable object type that holds its function.
 pub(crate) const CALL_FIELD: &str = "#call";
 
+/// Is `name` a field only sema writes: a callable object's function or a construct signature's
+/// fields (`crate::fn_types`)?
+pub(crate) fn is_hidden_field(name: &str) -> bool {
+    name == CALL_FIELD || crate::fn_types::is_ctor_field(name)
+}
+
 impl Ctx<'_> {
     /// The function type of callable object type `t` (its [`CALL_FIELD`]'s type, type
     /// arguments substituted), or `None` when `t` is not one.

@@ -54,17 +54,17 @@ export class DataView extends BufferView {
   }
 
   /** The buffer the view is of. */
-  get buffer(): ArrayBuffer {
+  override get buffer(): ArrayBuffer {
     return this.buf;
   }
 
   /** Where the view starts in `buffer`, in bytes. */
-  get byteOffset(): number {
+  override get byteOffset(): number {
     return this.off as number;
   }
 
   /** The size of the view in bytes. */
-  get byteLength(): number {
+  override get byteLength(): number {
     return this.len as number;
   }
 
