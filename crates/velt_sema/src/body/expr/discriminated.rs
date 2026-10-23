@@ -19,7 +19,7 @@ impl FnCx<'_, '_> {
     /// borrow it instead). `Err(obj)` when a member has no such field, except for `value` on an
     /// `IteratorResult<T>`, which reads as `T | undefined` (`undefined` when done), as in
     /// TypeScript (`g().next().value`).
-    pub(super) fn union_field(
+    pub(crate) fn union_field(
         &mut self,
         obj: hir::Expr,
         prop: &ast::Ident,
@@ -148,6 +148,11 @@ impl FnCx<'_, '_> {
                 body,
             });
         }
+        let what = "reading a field";
+        let view = self.view_arm(obj.ty, consume, span, what, &mut |s, v| {
+            s.view_field(v, prop, ty, span)
+        });
+        arms.extend(view);
         if live.len() < members.len() {
             arms.push(self.unreachable_arm(obj.ty, span));
         }
@@ -280,7 +285,16 @@ impl FnCx<'_, '_> {
             1 => pats.pop().expect("ICE: one pattern"),
             _ => self.pat(P::Or(pats), u, span),
         };
-        let test = self.bool_match(obj, Some(pat), span);
+        let (uty, consume) = (obj.ty, !is_place(&obj));
+        let mut test = self.bool_match(obj, Some(pat), span);
+        let what = "testing a discriminant";
+        let view = self.view_arm(uty, consume, span, what, &mut |s, v| {
+            let f = s.iface_field(v, prop, Want::Borrow, span).ok()?;
+            s.view_lit_test(f, lit, span)
+        });
+        if let H::Match { arms, .. } = &mut test.kind {
+            Self::push_view_arm(arms, view);
+        }
         Ok(self.negated(test, negate, span))
     }
 

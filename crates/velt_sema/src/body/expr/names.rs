@@ -68,7 +68,16 @@ impl FnCx<'_, '_> {
             let base = self.mk(H::Local(l, mode), ty, span);
             return self.three_state_without_null(base, want == Want::Move);
         }
-        let member = self.narrowed_member(l, payload.unwrap_or(ty), payload.is_some());
+        let mut member = self.narrowed_member(l, payload.unwrap_or(ty), payload.is_some());
+        // The object of a member read: a union that may hold a view stays the union (narrowed),
+        // whose reads give the view an arm of its own (`union_view`).
+        if std::mem::take(&mut self.view_receiver)
+            && member.is_some()
+            && payload.is_none()
+            && self.cx.union_view(ty).is_some()
+        {
+            member = None;
+        }
         if member.is_none() {
             if let Some(e) = self.union_narrowed_to_class(l, ty, payload, want, span) {
                 return e;
@@ -93,6 +102,9 @@ impl FnCx<'_, '_> {
             e = self.unwrap_present(e, mode, span);
         }
         if let Some((variant, m)) = member {
+            if self.holds_assigned_member(l) {
+                self.cx.union_view_safe(span);
+            }
             let mode = self.use_mode(m, want);
             let kind = H::UnwrapVariant {
                 expr: Box::new(e),

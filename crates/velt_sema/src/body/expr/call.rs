@@ -443,7 +443,13 @@ impl FnCx<'_, '_> {
         }
         let recv = match &object.kind {
             ast::ExprKind::Super => return self.super_method_call(prop, args, exp, span),
-            _ => self.expr(object, None, Want::Borrow),
+            _ => {
+                // A narrowed union that may hold a view stays the union (`union_view`).
+                self.view_receiver = super::member::is_name(object);
+                let recv = self.expr(object, None, Want::Borrow);
+                self.view_receiver = false;
+                recv
+            }
         };
         if self.record_internal_call(&recv, prop) {
             self.check_args_loose(args);

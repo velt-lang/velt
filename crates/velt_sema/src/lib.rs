@@ -102,6 +102,7 @@ mod type_queries;
 mod type_reach;
 mod types;
 mod undefined_args;
+mod union_views;
 mod unions;
 mod utility_types;
 mod visit;
@@ -351,6 +352,7 @@ fn check_timed(
             break;
         }
     }
+    union_views::finish(&mut cx);
     if !recovered.is_empty() || cx.diags.iter().any(|d| d.is_error()) {
         return (None, cx.diags);
     }

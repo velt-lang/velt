@@ -171,6 +171,9 @@ pub(crate) struct Scope {
     pub members: Vec<(LocalId, Vec<u32>)>,
     /// Class (or interface) locals known by `instanceof` to hold this subclass inside this scope.
     pub classes: Vec<(LocalId, TyId)>,
+    /// Union locals that hold the member they are narrowed to because it was assigned to them
+    /// (never a view, `crate::union_views`).
+    pub held: Vec<LocalId>,
     /// Facts not assumed inside this scope: their locals are assigned by closures
     /// (`closure_assigned`).
     pub refused: Vec<(LocalId, closure_assigned::Refused)>,
@@ -535,6 +538,8 @@ pub(crate) struct FnCx<'a, 'm> {
     /// A variable read that a null or truthiness test makes (`if (x)`, `x == null`): it reads
     /// the variable as it is, without the check `checked_narrowed_read` adds.
     pub raw_read: Option<Span>,
+    /// The expression being checked is the object of a member read (`body::expr::union_view`).
+    pub view_receiver: bool,
     /// Locals declared from integer literals and their uses (`literal_locals`).
     pub literal: literal_locals::LiteralLocals,
     /// The span of the JSX element whose template may be its string (`expr/jsx/list_fold.rs`),
@@ -595,6 +600,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             optional_slots: vec![],
             refused_reads: vec![],
             raw_read: None,
+            view_receiver: false,
             literal: Default::default(),
             jsx_list_fold: None,
             jsx_list_folded: false,
