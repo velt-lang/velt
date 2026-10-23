@@ -4,15 +4,19 @@
 interface Base {
   refresh(): number;
 }
+
 interface Ready extends Base {
   readonly state: "ready";
   readonly value: number;
 }
+
 interface Idle extends Base {
   readonly state: "idle";
   readonly value: null;
 }
+
 type State = Ready | Idle;
+
 interface Wide {
   readonly state: "ready" | "idle";
   readonly value: number | null;
@@ -35,7 +39,9 @@ const view = wide as State;
 function count(s: State, n: number): number {
   let ready = 0;
   for (let i = 0; i < n; i++) {
-    if (s.state === "ready") ready += s.value;
+    if (s.state === "ready") {
+      ready += s.value;
+    }
   }
   return ready;
 }

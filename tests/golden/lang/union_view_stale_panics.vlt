@@ -4,20 +4,25 @@
 interface Base {
   refresh(): number;
 }
+
 interface Ready extends Base {
   readonly state: "ready";
   readonly value: number;
 }
+
 interface Idle extends Base {
   readonly state: "idle";
   readonly value: null;
 }
+
 type State = Ready | Idle;
+
 interface Wide {
   readonly state: "ready" | "idle";
   readonly value: number | null;
   refresh(): number;
 }
+
 let st: "ready" | "idle" = "ready";
 const wide: Wide = {
   get state() {

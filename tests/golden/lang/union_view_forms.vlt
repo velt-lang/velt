@@ -2,21 +2,61 @@
 // Union views (#1410) in other forms: a `U | null` narrowed by a null test and a discriminant,
 // a call of the shared interface's method on a narrowed view, views made in a callback and kept
 // in an array, a `switch` that returns in every case, and `typeof`. Expected output: Node's.
-interface Base { refresh(): number; }
-interface A extends Base { readonly kind: "a"; readonly n: number; }
-interface B extends Base { readonly kind: "b"; readonly s: string; }
+interface Base {
+  refresh(): number;
+}
+
+interface A extends Base {
+  readonly kind: "a";
+  readonly n: number;
+}
+
+interface B extends Base {
+  readonly kind: "b";
+  readonly s: string;
+}
+
 type U = A | B;
-interface W { readonly kind: "a" | "b"; readonly n: number; readonly s: string; refresh(): number; }
+
+interface W {
+  readonly kind: "a" | "b";
+  readonly n: number;
+  readonly s: string;
+  refresh(): number;
+}
+
 let k: "a" | "b" = "a";
-const w: W = { get kind() { return k; }, n: 1, s: "x", refresh: () => 3 };
+const w: W = {
+  get kind() {
+    return k;
+  },
+  n: 1,
+  s: "x",
+  refresh: () => 3,
+};
 const u = w as U;
 let maybe: U | null = u;
-if (maybe !== null && maybe.kind === "a") console.log("maybe a", maybe.n);
+if (maybe !== null && maybe.kind === "a") {
+  console.log("maybe a", maybe.n);
+}
 k = "b";
-if (u.kind === "b") { console.log(u.s, u.refresh()); }
+if (u.kind === "b") {
+  console.log(u.s, u.refresh());
+}
 const us: U[] = [w, w].map((x) => x as U);
-for (const x of us) console.log(x.kind);
-function pick(x: U): string { switch (x.kind) { case "a": return "A" + x.n; case "b": return "B" + x.s; } }
+for (const x of us) {
+  console.log(x.kind);
+}
+
+function pick(x: U): string {
+  switch (x.kind) {
+    case "a":
+      return "A" + x.n;
+    case "b":
+      return "B" + x.s;
+  }
+}
+
 console.log(pick(u));
 k = "a";
 console.log(pick(u));
