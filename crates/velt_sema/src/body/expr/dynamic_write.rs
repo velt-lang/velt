@@ -64,7 +64,11 @@ impl FnCx<'_, '_> {
         let Some(any) = self.any_ty() else {
             return (self.error_expr(span), false);
         };
-        if op.is_some() {
+        let logical = matches!(
+            op,
+            Some(ast::BinaryOp::And | ast::BinaryOp::Or | ast::BinaryOp::Nullish)
+        );
+        if op.is_some() && !logical {
             self.cx.error(
                 Diagnostic::error(
                     "a compound assignment to a member of an `any` is not supported yet (#924)",
@@ -95,7 +99,7 @@ impl FnCx<'_, '_> {
         // Used as a value, the receiver and key are bound first: JavaScript evaluates them
         // before the right-hand side, which may replace the object the receiver names.
         let mut stmts = vec![];
-        let (obj, key) = if as_value {
+        let (obj, key) = if as_value || logical {
             let obj = self.hoist_dynamic(obj, &mut stmts);
             let key = match key {
                 WriteKey::Str(k) => WriteKey::Str(self.hoist_dynamic(k, &mut stmts)),
@@ -106,6 +110,12 @@ impl FnCx<'_, '_> {
         } else {
             (obj, key)
         };
+        if let Some(op) = op {
+            return (
+                self.dynamic_logical_assign(obj, key, op, value, stmts, span),
+                as_value,
+            );
+        }
         let v = self.expr(value, Some(any), Want::Move);
         if self.cx.ty.is_bottom(v.ty) {
             return (self.error_expr(span), false);
@@ -139,6 +149,105 @@ impl FnCx<'_, '_> {
         (self.mk(H::Block(block), any, span), true)
     }
 
+    /// `obj[key] ??= v`, `||=` and `&&=` on an `any` (`obj` and `key` bound in `stmts`): the
+    /// member is read once, and `v` is evaluated and written only when the operator calls for
+    /// it, as in JavaScript. The value is the member read or the value written.
+    fn dynamic_logical_assign(
+        &mut self,
+        obj: hir::Expr,
+        key: WriteKey,
+        op: ast::BinaryOp,
+        value: &ast::Expr,
+        mut stmts: Vec<hir::Stmt>,
+        span: Span,
+    ) -> hir::Expr {
+        let Some(any) = self.any_ty() else {
+            return self.error_expr(span);
+        };
+        let read = match &key {
+            WriteKey::Str(k) => {
+                self.intrinsic(Intrinsic::AnyGet, vec![obj.clone(), k.clone()], any, span)
+            }
+            WriteKey::Num(k) => {
+                self.intrinsic(Intrinsic::AnyIndex, vec![obj.clone(), k.clone()], any, span)
+            }
+            WriteKey::Sym(n, _) if !self.uses_proxy() => {
+                self.intrinsic(Intrinsic::AnyGet, vec![obj.clone(), n.clone()], any, span)
+            }
+            WriteKey::Sym(n, k) => {
+                let args = vec![obj.clone(), n.clone(), k.clone()];
+                self.prelude_hir_call("__anyGetSym", args, any, span)
+            }
+        };
+        let cur = self.new_local("<current>", any, false, span, LocalKind::Temp);
+        stmts.push(hir::Stmt {
+            kind: hir::StmtKind::Let {
+                local: cur,
+                init: Some(read),
+            },
+            span,
+        });
+        let b = self.cx.ty.bool_;
+        let held = self.mk(H::Local(cur, UseMode::Borrow), any, span);
+        let cond = match op {
+            ast::BinaryOp::Nullish => {
+                let null = self.dynamic_nothing(hir::Nothing::Null, any, span);
+                self.intrinsic(Intrinsic::AnyLooseEq, vec![held, null], b, span)
+            }
+            _ => self.intrinsic(Intrinsic::AnyTruthy, vec![held], b, span),
+        };
+        // The write: `{ const t = v; obj[key] = share(t); t }`.
+        let v = self.expr(value, Some(any), Want::Move);
+        if self.cx.ty.is_bottom(v.ty) {
+            return self.error_expr(span);
+        }
+        let v = self.coerce(v, any);
+        let tmp = self.new_local("<assigned>", any, false, span, LocalKind::Temp);
+        let t = self.mk(H::Local(tmp, UseMode::Borrow), any, span);
+        let share = self.intrinsic(Intrinsic::Share, vec![t], any, span);
+        let set = self.dynamic_set(obj, key, share, span);
+        let written = hir::Block {
+            stmts: vec![
+                hir::Stmt {
+                    kind: hir::StmtKind::Let {
+                        local: tmp,
+                        init: Some(v),
+                    },
+                    span,
+                },
+                hir::Stmt {
+                    kind: hir::StmtKind::Expr(set),
+                    span,
+                },
+            ],
+            value: Some(Box::new(self.mk(H::Local(tmp, UseMode::Move), any, span))),
+            span,
+        };
+        let written = self.mk(H::Block(written), any, span);
+        let kept = self.mk(H::Local(cur, UseMode::Move), any, span);
+        // `&&=` writes when the member is truthy; `||=` and `??=` when it is not (or nullish).
+        let (then, els) = match op {
+            ast::BinaryOp::And => (written, kept),
+            ast::BinaryOp::Or => (kept, written),
+            _ => (written, kept),
+        };
+        let pick = self.mk(
+            H::If {
+                cond: Box::new(cond),
+                then: Box::new(then),
+                els: Box::new(els),
+            },
+            any,
+            span,
+        );
+        let block = hir::Block {
+            stmts,
+            value: Some(Box::new(pick)),
+            span,
+        };
+        self.mk(H::Block(block), any, span)
+    }
+
     /// The write `obj[key] = v` (`v` boxed).
     fn dynamic_set(
         &mut self,
@@ -159,7 +268,11 @@ impl FnCx<'_, '_> {
 
     /// `e` (a receiver or key) bound to a temporary appended to `stmts`, read back by borrow: a
     /// share of it when it is a place, else the value itself. A literal stays as it is.
-    fn hoist_dynamic(&mut self, mut e: hir::Expr, stmts: &mut Vec<hir::Stmt>) -> hir::Expr {
+    pub(super) fn hoist_dynamic(
+        &mut self,
+        mut e: hir::Expr,
+        stmts: &mut Vec<hir::Stmt>,
+    ) -> hir::Expr {
         if matches!(e.kind, H::Lit(_)) {
             return e;
         }
@@ -252,6 +365,7 @@ impl FnCx<'_, '_> {
                 ty: None,
                 name: name.to_string(),
                 span,
+                dynamic: true,
             });
     }
 

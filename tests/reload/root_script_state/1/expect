@@ -1,0 +1,4 @@
+action: start
+get /count: counted
+get /count: counted
+get /hits: hits 2 label v1

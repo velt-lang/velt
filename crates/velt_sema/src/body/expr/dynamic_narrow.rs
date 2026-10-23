@@ -9,6 +9,7 @@
 use velt_common::Span;
 use velt_syntax::ast;
 
+use super::setters::synth;
 use crate::any::Dynamic;
 use crate::body::narrow::Fact;
 use crate::body::{FnCx, Want};
@@ -138,5 +139,75 @@ impl FnCx<'_, '_> {
         let t = self.local_ty(l);
         self.cx.dynamic(t)?;
         self.any_ty()
+    }
+
+    /// `Number.isFinite(x)`, `Number.isNaN(x)`, `Number.isInteger(x)` and
+    /// `Number.isSafeInteger(x)` of a dynamic `x` (TypeScript's parameter is `unknown`): `false`
+    /// unless `x` holds a number, as in JavaScript (`typeof x === "number" && Number.isNaN(x)`).
+    pub(crate) fn dynamic_number_test(
+        &mut self,
+        callee: &ast::Expr,
+        args: &[ast::Expr],
+        span: Span,
+    ) -> Option<hir::Expr> {
+        let ast::ExprKind::Member {
+            object,
+            prop,
+            optional: false,
+        } = &callee.kind
+        else {
+            return None;
+        };
+        let ast::ExprKind::Ident(ns) = &object.kind else {
+            return None;
+        };
+        let tests = ["isFinite", "isNaN", "isInteger", "isSafeInteger"];
+        if ns.name != "Number"
+            || self.is_local_name("Number")
+            || !tests.contains(&prop.name.as_str())
+        {
+            return None;
+        }
+        let [arg] = args else {
+            return None;
+        };
+        let t = self.trial_type(arg)?;
+        self.cx.dynamic(t)?;
+        Some(self.operand_once(arg, span, |lw, v| {
+            let of = synth(
+                ast::ExprKind::Unary {
+                    op: ast::UnaryOp::TypeOf,
+                    expr: Box::new(v.clone()),
+                },
+                span,
+            );
+            let number = synth(ast::ExprKind::Lit(ast::Lit::Str("number".into())), span);
+            let is_number = synth(
+                ast::ExprKind::Binary {
+                    op: ast::BinaryOp::StrictEq,
+                    lhs: Box::new(of),
+                    rhs: Box::new(number),
+                },
+                span,
+            );
+            let test = synth(
+                ast::ExprKind::Call {
+                    callee: Box::new(callee.clone()),
+                    type_args: vec![],
+                    args: vec![v.clone()],
+                    optional: false,
+                },
+                span,
+            );
+            let both = synth(
+                ast::ExprKind::Binary {
+                    op: ast::BinaryOp::And,
+                    lhs: Box::new(is_number),
+                    rhs: Box::new(test),
+                },
+                span,
+            );
+            lw.expr(&both, None, Want::Move)
+        }))
     }
 }

@@ -1,0 +1,2 @@
+object_copies_dynamic_writes.vlt:16:17: error: a value of type `Full` converts to `Part` by copying its fields, and this program assigns field `a`, which the other object would not see
+object_copies_dynamic_writes.vlt:23:17: error: a value of type `Full` converts to `Part` by copying its fields, and this program assigns field `a`, which the other object would not see

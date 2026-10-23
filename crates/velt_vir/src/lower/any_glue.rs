@@ -491,6 +491,13 @@ impl FnLower<'_, '_> {
                     let v = self.share_value(Operand::Copy(fp), fty);
                     self.any_box_with(v, fty, &outp, optional);
                     self.ret_status(ST_OK);
+                } else if self.union_like(fty) {
+                    // A literal, union or interface field (`kind: "ok"`): the value it holds.
+                    let fp = self.field_place(&vp, ty, i as u32);
+                    let v = self.share_value(Operand::Copy(fp), fty);
+                    let any = self.cx.any_ty();
+                    self.any_into(v, fty, any, &outp);
+                    self.ret_status(ST_OK);
                 } else {
                     self.ret_status(ST_UNSUPPORTED);
                 }
@@ -519,6 +526,7 @@ impl FnLower<'_, '_> {
             return self.any_get_fallback(key, &outp);
         }
         match self.cx.kind(ty) {
+            TyKind::Tuple(es) => self.any_tuple_get(key, &outp, es.len()),
             TyKind::Array(_) | TyKind::Str => {
                 let next = self.on_key(key, "length");
                 let vp = self.any_value_place(data, ty);
@@ -548,7 +556,7 @@ impl FnLower<'_, '_> {
     /// without fields (a string, number, boolean, array, function, ...): no such property, so
     /// `undefined`, as Node reads a brand from a primitive. Continues in the block for another
     /// key.
-    fn program_symbol_undefined(&mut self, key: vir::Local, out: &Place) {
+    pub(super) fn program_symbol_undefined(&mut self, key: vir::Local, out: &Place) {
         let k = Operand::Copy(Place::local(key));
         let unit = Place::local(self.temp(Ty::I64));
         self.call_rt(
@@ -608,15 +616,6 @@ impl FnLower<'_, '_> {
         self.ret_status(ST_OK);
     }
 
-    /// A union, or an option of one (`string | number | null`), which `any_into` boxes as the
-    /// member or nothing it holds.
-    fn union_like(&self, t: TyId) -> bool {
-        match self.cx.kind(t) {
-            TyKind::Option(inner, _) => self.union_like(inner),
-            _ => self.cx.is_union(t),
-        }
-    }
-
     fn any_index_body(&mut self, data: vir::Local, i: vir::Local, out: vir::Local, ty: TyId) {
         let outp = self.any_out(out);
         if self.is_proxy(ty) {
@@ -657,6 +656,7 @@ impl FnLower<'_, '_> {
                 self.any_nothing_into(Nothing::Undefined, &outp);
                 self.ret_status(ST_OK);
             }
+            TyKind::Tuple(es) => self.any_tuple_index(data, i, &outp, ty, &es),
             // A record's key "0" (later).
             TyKind::Adt(..) if self.prelude_record(ty).is_some() => self.ret_status(ST_UNSUPPORTED),
             TyKind::Adt(..) if self.plain_adt(ty).is_some() => {

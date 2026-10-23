@@ -1,0 +1,14 @@
+// An object literal of the extension gives the added field a value (#1383): keys, `in` and
+// spreads of the base would miss it, as Node would not.
+interface VNode {
+  type: string;
+  dom: string | null;
+}
+interface IV extends VNode {
+  _ns?: boolean;
+}
+function show(v: VNode): string {
+  return Object.keys(v).join(",") + " " + ("_ns" in v) + " " + JSON.stringify({ ...v });
+}
+const iv: IV = { type: "a", dom: null, _ns: true };
+console.log(show(iv));

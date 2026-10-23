@@ -1,7 +1,7 @@
 # HIR encodings (contract detail for `crates/velt_sema/src/hir/`)
 
 How sema encodes language features in HIR; lowering relies on every point here.
-Maintainer-owned, like `hir/mod.rs` and `hir/intrinsic.rs`.
+Maintainer-owned, like `hir/mod.rs`, `hir/intrinsic.rs` and `hir/module_state.rs`.
 
 ## M2 additions
 (see docs/reference/classes.md and docs/reference/memory.md):
@@ -676,6 +676,13 @@ type); it is `None` when no global has a slot, and then nothing below is emitted
   drop glue, `names` the slots' names. A slot is never read from its initializer's stored
   data (a module constant table's `table_read`). `velt_main` touches the state before calling `main` (sync or async), so
   every initializer runs first, as in Node.
+- The root file's slots when its top-level statements are the entry `main` (#1438): slots
+  `ModuleState::deferred..` (the root module is evaluated last, so they are the last ones).
+  `init` stops before them; `main` holds `Intrinsic::InitSlots(from, to)` statements (no args,
+  `void`) before the first statement after each run of them in the source, and lowering calls
+  the initializer of slots `from..to` there on the block (`velt_rt_module_block`). The
+  initializer that stores the last slot reports it with `u64::MAX`. The descriptor's `rest`
+  initializes slots `deferred..` for a block made for swapped-in code (rt_abi.md).
 
 ## Symbols
 
@@ -951,7 +958,9 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   `any` key is `AnyGet(x, key)`, `x[i]` with a number key `AnyIndex(x, i as f64)`, `x.m(a...)`
   `AnyCall(x, "m", text, a...)` and `x(a...)` `AnyApply(x, text, a...)`, where `x` is borrowed,
   each argument is boxed and moved in, `text` is a string literal naming the callee for a
-  `TypeError` (`x.m is not a function`), and the result is an `any`. An `unknown` receiver is
+  `TypeError` (`x.m is not a function`), and the result is an `any`. A call with a spread
+  argument passes one argument instead, an `any[]` (the array literal `[a..., ...xs]`, never a
+  boxed `any`), whose elements move into the call. An `unknown` receiver is
   an error until narrowed. When a program has any of these, `Program::dyn_members` lists the
   methods and accessors (`DynMember`: name, kind, def, declaring type) of every struct, class and
   object type by name, and every `any` table gets four more slots (velt_vir `lower/any_member.rs`):

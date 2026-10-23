@@ -137,7 +137,7 @@ pub(super) fn fill(cx: &mut Ctx) {
         a.generics.bounds = bounds;
     }
     // The anonymous object type of the same fields replaces it before lowering.
-    for (_, adt) in pairs {
+    for &(_, adt) in &pairs {
         let a = cx.adt(adt).expect("ICE: adt");
         let module = a.module;
         let fields: Vec<crate::anon::ShapeField> =
@@ -149,6 +149,7 @@ pub(super) fn fill(cx: &mut Ctx) {
         };
         cx.readonly_twins.insert(adt, (twin, Some(template)));
     }
+    super::extended_layouts::families(cx, &pairs);
 }
 
 impl Ctx<'_> {

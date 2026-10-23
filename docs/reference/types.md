@@ -1163,7 +1163,10 @@ console.log(e.id, grace.age, w.meta); // e1 45 m
   where the program could tell the difference, the conversion is an error with the fix (build
   the object from its fields, `{ a: ab.a }`, or take the wider type): when the program assigns
   a copied field of either type (`a.a += 1` on an `A` anywhere), or an optional field the
-  value lacks (`x.c = "s"` on an `{ a: number; c?: string }`), compares values of the
+  value lacks (`x.c = "s"` on an `{ a: number; c?: string }`; a write through `any`, `x.a = 1`
+  or `x[k] = v` with `x: any`, counts only when the program converts the copy, its original or
+  a value that may hold one to `any`, `unknown` or `object`, since only such objects are reached
+  through one), compares values of the
   expected type with `===` (also as `A | null` or another union holding it), prints, serializes or lists the keys of a value holding the
   expected type, spreads a value of the expected type (`{ ...x, c: 3 }`; Node would show
   or copy the original's fields, in its order), or tests a value of the expected type with `in`
@@ -1178,6 +1181,32 @@ console.log(e.id, grace.age, w.meta); // e1 45 m
   types](#objects-arrays-tuples-and-maps): `const ns: Named[] = roster();` for a `roster()`
   that returns a new `(Named & Scored)[]`; copy another one with
   `xs.map((p) => ({ name: p.name }))`.
+- **Extensions with optional fields can share the layout**: for an interface that extends one
+  object type (an interface with only fields, or an object alias that refers to itself) and
+  adds only optional fields the base lacks, as in `interface InternalVNode extends VNode {
+  _ns?: boolean }`, a program that converts between the two (`vnode as InternalVNode`, passing
+  a `VNode` where an `InternalVNode` is expected or the reverse, also as `VNode[]` and
+  `InternalVNode[]` or as the values of a `Map`) converts the same object, as in TypeScript: a
+  field written through either type is there through the other, and `===` holds. For that,
+  every object of the base's layout gets room for the extensions' fields, absent until
+  written: in a tree of 1,048,575 four-field `VNode`s with an extension adding five optional
+  fields (`bench/extended_layouts_mem.sh`), an object grows from 88 to 144 bytes and the peak
+  memory from 198.7 MB to 214.8 MB. An extension the program only declares (often one in a
+  dependency) costs nothing. Each type keeps its own fields: `VNode` has no member `_ns`, and
+  `keyof VNode`, mapped types (`Required<VNode>`) and structural conversions see `VNode`'s
+  fields only. Printing and `JSON.stringify` show the whole object, an added field once it is
+  written (one holding a function is printed, and left out of JSON, as in Node); `Object.keys`,
+  `for...in`, spreads and `in` list the fields of the type the program looks through, so one of
+  those on a `VNode` is an error once the program may give its objects an added field: assigns
+  it, writes it in an object literal of an extension (`{ ...v, _ns: true }` too), or makes
+  such objects from text or a dynamic value (`JSON.parse`, `x as VNode` of an `any`), whose
+  keys are not known (look through `v as InternalVNode`). Several such extensions of one base share it while they give a field
+  of one name the same type; one that gives another type (`_subTree?: VNode` next to
+  `_subTree?: VNode | null`) keeps its own layout and converts by copying, as above, the
+  extension nearest to the base (by module path) sharing it. Neither the base nor the extension
+  may be generic. As for other optional fields written after construction, printing lists them
+  in declared order (the base's fields, then each extension's), not in the order they were
+  written (#1319).
 - An alias may refer to itself through `&` when its parts are object types written out:
   `type Tree = { kids: Tree[] } & { v: number }` is the interface with the fields `kids` and
   `v`. A part may also name a non-generic alias of such a type, or an interface with only
@@ -2504,7 +2533,8 @@ instance (a subclass's too when it was converted through its base class), an obj
 field, `length` and elements of an array, `length` of a string, and the members of the standard
 library's classes (`size`, `get`, `set` and `has` of a `Map`). The result is an `any`; each
 argument is converted to the parameter's type with the same check as above, a left-out one is
-`undefined`, and extra ones are ignored.
+`undefined`, and extra ones are ignored. A spread argument (`f(...args)`, `o.m(a, ...rest)`)
+passes the elements of an array, each converted the same way.
 
 ```ts
 class Counter {
@@ -2540,7 +2570,8 @@ A member the value's fixed shape does not have reads as `undefined`, as in Node.
 (`x?.a.b`) is not evaluated. What this phase cannot reach yet
 stops with a `TypeError` naming #924 rather than giving a wrong value: a method read without a
 call, methods of arrays and strings, string indexing, methods that throw or are generic, and
-members whose type is a union, enum or interface.
+members whose type is an enum. A member of a literal type (`kind: "ok"`), a union or an
+interface reads as the value it holds.
 
 Members of an `any` are written as in JavaScript too: `x.f = v`, `x["f"] = v` and `x[k] = v`
 with a `string`, `number` or `any` key. The value is converted to the member's type with the
@@ -2558,8 +2589,10 @@ gets; in sloppy code Node ignores the write), and a `null` or `undefined` receiv
 `TypeError: Cannot set properties of undefined (setting 'k')`, after the value is evaluated.
 Writing a `readonly` field, a method, an element further past the end of an array or a longer
 `length` (Node leaves holes, which Velt's arrays don't have), or a member of a
-string, number or function stops with a `TypeError` naming #924. Compound assignments
-(`x.n += 1`, `x.n ??= v`) and `x.n++` are compile errors until the operators of `any` come.
+string, number or function stops with a `TypeError` naming #924. `x.f ??= v`, `x.f ||= v` and
+`x.f &&= v` read the member once and evaluate and write `v` only when the operator calls for it,
+as in JavaScript; the expression is the member read or the value written. The other compound
+assignments (`x.n += 1`) and `x.n++` are compile errors until the operators of `any` come.
 
 `Array.isArray(x)`, `x instanceof C` for a generic class `C` (TypeScript's `C<any>`, including
 `Map` and `Set`) and `typeof x === "function"` narrow an `unknown` to an `any` (and leave an
@@ -2614,12 +2647,48 @@ function main(): void {
 }
 ```
 
-A template literal or a string `+` / `+=` writes an `any` as `String(x)` does, except that a
-symbol stops with Node's `TypeError: Cannot convert a Symbol value to a string` (only
-`String(s)` writes it, as `Symbol(desc)`).
+`String(x)`, a template literal and a string `+` / `+=` write an `any`, `unknown` or `object`
+by the value held, as JavaScript's `ToString(ToPrimitive(x))` does, not as `console.log` prints
+it. `String(x)` and templates ask a class instance for its `[Symbol.toPrimitive]("string")`,
+else its `toString()` (its own or a base class's, an `Error`'s), then its `valueOf()` when that
+returns an object; `+` asks for `[Symbol.toPrimitive]("default")`, else its `valueOf()`, then
+its `toString()` when that returns an object (each result tested when the program runs,
+whatever its declared type). An object literal is written by its own `toString` and `valueOf`
+members in the same order; another object as `Object.prototype.toString` does
+(`[object Object]`, `[object Map]`). When every method returns an object, the program stops
+with Node's `TypeError: Cannot convert object to primitive value`, and when one returns a
+symbol with `TypeError: Cannot convert a Symbol value to a string`, reporting the line of the
+`String`, template, `+` or `join`. An array (also one held in a typed `any[]`, `unknown[]`, `object[]` or a tuple
+of them, and its `join()` and `toString()`) is written as `Array.prototype.join` does: each
+element as `String(x)` writes it, `null` and `undefined` elements and an array holding itself
+as empty text (`[1, [2, 3], null]` is `1,2,3,`). In a template or a `+`, a symbol stops with
+Node's `TypeError: Cannot convert a Symbol value to a string` (only `String(s)` writes it, as
+`Symbol(desc)`); a function stops with a `TypeError` naming #924 (Node writes its source text),
+and so does a proxy (Node reads its `toString` through the `get` trap).
+
+```ts
+class Celsius {
+  valueOf(): number {
+    return 21;
+  }
+
+  toString(): string {
+    return "21 °C";
+  }
+}
+
+function main(): void {
+  const t: any = new Celsius();
+  console.log(`${t}`, "" + t); // 21 °C 21
+  const xs: any[] = [[1, 2], { a: 1 }, null];
+  console.log(String(xs), xs.join(" | ")); // 1,2,[object Object], 1,2 | [object Object] |
+}
+```
 
 `Object.is(a, b)` with an `any` or `unknown` operand is SameValue, as in JavaScript: `===`,
-except that `NaN` is itself and `0` is not `-0`.
+except that `NaN` is itself and `0` is not `-0`. `Number.isFinite(x)`, `Number.isNaN(x)`,
+`Number.isInteger(x)` and `Number.isSafeInteger(x)` take an `any` or `unknown` as TypeScript's do,
+and are `false` unless `x` holds a number.
 
 `for (const x of v)` over an `any` holding an array visits its elements as `any`s, reading
 the length before each step as JavaScript's array iterator does. Another value (a string, a
@@ -2657,15 +2726,20 @@ object inherits (`toString`, `constructor`, ...).
 
 `JSON.stringify(x)` of an `any`, `unknown` or `object` (also inside a typed value, such as an
 `unknown[]` or a `Record<string, any>`) writes the value held as Node does, with a class's
-`toJSON()`: `undefined`, functions and symbols are left out as object members and written as
+`toJSON()` and an interface value written as the object it holds: `undefined`, functions and symbols are left out as object members and written as
 `null` in arrays, and an object that holds itself stops with `TypeError: Converting circular
 structure to JSON`. Node returns `undefined` for such a value at the top; a Velt `string` cannot
 hold it, so `JSON.stringify` of an `any` holding `undefined`, a function or a symbol stops with a
 `TypeError` naming #924. A value with no JSON form here (an object with a function field, a
 proxy) also stops with a `TypeError`.
 
-**Planned** (#924): compound assignments and `++` on members, arithmetic operators,
-`String(x)`, `JSON.parse` into an `any`, `any` converted to interface types and the warning on a
+An object literal converted to `any` or `unknown` (`const u: unknown = { a: null }`, also
+`{ b: { c: null } }` and `{ a: [null, 1] }`) gives a `null` field TypeScript's type `null`: it
+holds an `any` that is `null`. A `void` value or one of type `undefined` (a call of a function
+returning it) converts to an `any` holding `undefined`.
+
+**Planned** (#924): the other compound assignments and `++` on members, arithmetic operators,
+`JSON.parse` into an `any`, `any` converted to interface types and the warning on a
 written `any`; until then each is a compile error.
 
 `key in x` on an `any` asks the value held: a class instance or object type has its fields,
@@ -3052,7 +3126,11 @@ with TypeScript's rules:
   something else). Its members are TypeScript errors until it is narrowed or converted.
 - Calling a `Function` is a call through `any`: the arguments are converted to the parameters'
   types when the function runs, and the result is an `any`. A field of type `Function` is
-  called the same way (`plugin.setup(app)`).
+  called the same way (`plugin.setup(app)`). `f.call(thisArg, a, b)` and
+  `f.apply(thisArg, [a, b])` are the call `f(a, b)` when `thisArg` is `null` or `undefined` (or
+  left out: `f.call()`); `f` and `thisArg` are evaluated once, before the arguments. A Velt
+  function value has no `this` to set, so another `thisArg` stops with a `TypeError` naming
+  #926 (Node would call the function with it).
 - `Set<object>` and `Map<object, V>` (and `Map<Function, V>`) key their entries by identity, as
   in JavaScript.
 - An `any` or `unknown` converts to `object` with `as object` (an `any` also without it),
@@ -3074,6 +3152,13 @@ with TypeScript's rules:
   `undefined` included, and `unknown` otherwise (`string | Function`). `f?.(x)` on a
   `Function | undefined` (an optional `onClick?: Function` field) skips the call when it holds
   `null` or `undefined`, as in JavaScript.
+- `x.constructor.name` and `x.constructor?.name` of an `object`, `any` or `Function` give the
+  name of the constructor of the value held, as in JavaScript: its class's (a subclass's when
+  converted through its base), `"Object"` for an object literal or a record, `"Array"`,
+  `"Map"`, `"Uint8Array"`, `"Number"` for a number. A function, or an instance of a standard
+  library class that JavaScript has no constructor of the same name for, stops with a
+  `TypeError` naming #926; `null` and `undefined` with Node's `TypeError: Cannot read
+  properties of null (reading 'constructor')`.
 
 ```ts
 class Point {
@@ -3102,6 +3187,6 @@ function main(): void {
 ```
 
 **Not yet** (#926): `object` as a `WeakMap` key, a `WeakSet` member or a `WeakRef` target, the
-members every object has (`constructor`, `toString`, `hasOwnProperty`) and a function has
-(`call`, `apply`, `bind`, `name`, `length`), and a type parameter without the `object` bound
+members every object has (`constructor` as a value, `toString`, `hasOwnProperty`) and a function has
+(`call` and `apply` with another `thisArg`, `bind`, `name`, `length`), and a type parameter without the `object` bound
 converted with `as object`. Each is a compile error.

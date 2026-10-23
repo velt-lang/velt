@@ -252,6 +252,21 @@ impl FnCx<'_, '_> {
         s: hir::Expr,
         ret: TyId,
         fallback: &str,
+        class: impl FnMut(&mut Self, DefId, ast::Expr) -> hir::Expr,
+        span: Span,
+    ) -> hir::Expr {
+        let fallback = (fallback, vec![]);
+        self.dynamic_class_match_where(s, ret, fallback, |_, _| true, class, span)
+    }
+
+    /// [`Self::dynamic_class_match`] over the classes `only` keeps; the others go to `fallback`
+    /// (the prelude function, called with the value and the arguments given with it).
+    pub(super) fn dynamic_class_match_where(
+        &mut self,
+        s: hir::Expr,
+        ret: TyId,
+        fallback: (&str, Vec<ast::Expr>),
+        only: impl Fn(&mut Self, DefId) -> bool,
         mut class: impl FnMut(&mut Self, DefId, ast::Expr) -> hir::Expr,
         span: Span,
     ) -> hir::Expr {
@@ -265,6 +280,11 @@ impl FnCx<'_, '_> {
         let mut classes: Vec<(usize, DefId)> = (0..self.cx.info.len() as u32)
             .map(DefId)
             .filter(|&d| self.cx.adt(d).is_some_and(|a| a.kind == AdtKind::Class))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .filter(|&d| only(self, d))
+            .collect::<Vec<_>>()
+            .into_iter()
             .map(|d| (self.class_depth(d), d))
             .collect();
         classes.sort_by(|a, b| b.0.cmp(&a.0).then(a.1 .0.cmp(&b.1 .0)));
@@ -279,7 +299,9 @@ impl FnCx<'_, '_> {
         }
         // The value's members are read through its descriptor.
         self.note_dyn_members();
-        let body = self.prelude_fn_call(fallback, vec![read], span);
+        let (fallback, more) = fallback;
+        let args = std::iter::once(read).chain(more).collect();
+        let body = self.prelude_fn_call(fallback, args, span);
         arms.push(hir::Arm {
             pat: self.pat(hir::PatKind::Wildcard, sty, span),
             guard: None,

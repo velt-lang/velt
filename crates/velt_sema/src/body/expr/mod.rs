@@ -3,6 +3,7 @@
 
 mod access;
 mod accessor_rmw;
+mod any_text;
 mod arg_order;
 mod args;
 mod array_ctor;
@@ -28,6 +29,7 @@ mod constraints;
 mod construct;
 mod conversions;
 pub(crate) mod ctor_locals;
+mod ctor_name;
 mod ctor_values;
 mod default_args;
 mod discriminated;
@@ -36,6 +38,7 @@ mod division;
 pub(crate) mod downcast;
 mod dynamic;
 mod dynamic_concat;
+mod dynamic_enum;
 mod dynamic_member;
 mod dynamic_narrow;
 mod dynamic_optional;
@@ -293,7 +296,10 @@ impl FnCx<'_, '_> {
                 optional,
             } => match self.prototype_read(object, prop, *optional, span) {
                 Some(h) => h,
-                None => self.member(object, prop, *optional, exp, want, span),
+                None => match self.ctor_name_read(object, prop, span) {
+                    Some(h) => h,
+                    None => self.member(object, prop, *optional, exp, want, span),
+                },
             },
             A::Index {
                 object,

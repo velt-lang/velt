@@ -1,0 +1,19 @@
+// check: no leaks
+// A type with a field of an extension's name, of another type, converts to the base as before
+// (#1383): the base's own type has no such field, whether or not the program casts to the
+// extension.
+interface VNode {
+  type: string;
+  dom: string | null;
+}
+interface IV extends VNode {
+  _ns?: boolean;
+}
+type Other = { type: string; dom: string | null; _ns: string };
+function mount(v: VNode): void {
+  (v as IV)._ns = v.type === "svg";
+}
+const o: Other = { type: "o", dom: "d", _ns: "x" };
+const v: VNode = o;
+mount({ type: "svg", dom: null });
+console.log(v.type, v.dom, o._ns);

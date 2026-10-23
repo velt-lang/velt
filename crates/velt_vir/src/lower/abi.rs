@@ -147,7 +147,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Work::Init(t, e) => Self::build_init(cx, *t, *e),
             Work::GenNew(def, targs) => Self::build_gen_new(cx, *def, targs),
             Work::GenFree(def, targs) => Self::build_gen_free(cx, *def, targs),
-            Work::ModuleInit => Self::build_module_init(cx),
+            Work::ModuleInit(from, to) => Self::build_module_init(cx, *from, *to),
         }
     }
 
@@ -202,7 +202,12 @@ impl<'c, 'h> FnLower<'c, 'h> {
         // no source location: a debugger stopping at a function's first located code finds its
         // params and captures bound. `lower_body` locates the code from there on.
         lw.loc = None;
-        lw.caller_loc = caller;
+        // A text helper writes its caller's site into its stops itself (track_caller.rs).
+        lw.caller_loc = caller.or_else(|| {
+            lw.cx
+                .reports_own_site(def)
+                .then_some(super::srcloc::UNKNOWN_LOC)
+        });
         let ret = lw.sub(f.ret);
         lw.ret_ty = Some(ret);
         lw.throws = lw.cx.fn_throws(f, targs);

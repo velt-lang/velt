@@ -1,0 +1,9 @@
+extended_layouts_keys_parse_base.vlt:10:10: error: this lists the keys of a value of type `VNode`, which has its own fields only, but such objects can have `_ns` (given through `IV`), and Node would show it here
+= note: a `VNode` converts to `IV` as the same object, which has room for `_ns`
+= note: look at the value as `IV` (`v as IV`)
+extended_layouts_keys_parse_base.vlt:10:44: error: this tests a key of a value of type `VNode`, which has its own fields only, but such objects can have `_ns` (given through `IV`), and Node would show it here
+= note: a `VNode` converts to `IV` as the same object, which has room for `_ns`
+= note: look at the value as `IV` (`v as IV`)
+extended_layouts_keys_parse_base.vlt:10:84: error: this spreads a value of type `VNode`, which has its own fields only, but such objects can have `_ns` (given through `IV`), and Node would show it here
+= note: a `VNode` converts to `IV` as the same object, which has room for `_ns`
+= note: look at the value as `IV` (`v as IV`)

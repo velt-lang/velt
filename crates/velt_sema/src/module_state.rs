@@ -21,7 +21,14 @@ pub(crate) fn order(cx: &mut Ctx) -> Vec<DefId> {
         .iter()
         .enumerate()
         .filter_map(|(i, d)| match d {
-            DefInfo::Global(g) if g.stored => Some((g.module, g.src.span.lo, DefId(i as u32))),
+            // `import.meta` exists before the module's code runs (at its first use's position).
+            DefInfo::Global(g) if g.stored => {
+                let start = match g.name == velt_syntax::ast::IMPORT_META {
+                    true => 0,
+                    false => g.src.span.lo,
+                };
+                Some((g.module, start, DefId(i as u32)))
+            }
             _ => None,
         })
         .collect();
@@ -214,8 +221,9 @@ fn reads(e: &hir::Expr, f: &mut dyn FnMut(DefId, velt_common::Span)) {
     crate::visit::expr(&mut e, &mut V(f));
 }
 
-/// The program's module state, with each slot's global numbered (`GlobalDef::slot`).
-pub(crate) fn build(cx: &mut Ctx) -> Option<hir::ModuleState> {
+/// The program's module state, with each slot's global numbered (`GlobalDef::slot`); the root
+/// file's slots are initialized by its top-level statements (`entry`, [`defer_root`]).
+pub(crate) fn build(cx: &mut Ctx, entry: Option<DefId>) -> Option<hir::ModuleState> {
     if cx.module_slots.is_empty() {
         return None;
     }
@@ -229,7 +237,80 @@ pub(crate) fn build(cx: &mut Ctx) -> Option<hir::ModuleState> {
         tys.push(g.ty);
     }
     let ty = cx.ty.intern(TyKind::Tuple(tys));
-    Some(hir::ModuleState { ty, slots })
+    let deferred = defer_root(cx, entry, &slots);
+    Some(hir::ModuleState {
+        ty,
+        slots,
+        deferred,
+    })
+}
+
+/// In Node the root file's declarations are evaluated in source order with its top-level
+/// statements (#1438): `g.x = 6; class C { static readonly Y = g.x }` gives `C.Y` 6. So when the
+/// entry `main` holds the root file's statements, its slots (the last ones: the root module is
+/// evaluated last) are initialized there, each run of them before the first statement that
+/// follows it ([`hir::Intrinsic::InitSlots`]); a statement reaching a slot that is not
+/// initialized yet stops with Node's `ReferenceError`, as any read before initialization does.
+/// The first deferred slot (`slots.len()` when none is).
+fn defer_root(cx: &mut Ctx, entry: Option<DefId>, slots: &[DefId]) -> u32 {
+    let none = slots.len() as u32;
+    let Some(main) = entry.filter(|_| crate::module_scripts::is_root_script(cx, cx.root)) else {
+        return none;
+    };
+    let is_root = |d: DefId| {
+        cx.global(d)
+            .is_some_and(|g| g.module == cx.root && g.name != velt_syntax::ast::IMPORT_META)
+            && !cx.global_props.is_slot(d)
+    };
+    let Some(from) = slots.iter().position(|&d| is_root(d)) else {
+        return none;
+    };
+    if !slots[from..].iter().all(|&d| is_root(d)) {
+        return none;
+    }
+    let starts: Vec<u32> = slots[from..]
+        .iter()
+        .map(|&d| cx.global(d).map_or(0, |g| g.src.span.lo))
+        .collect();
+    let unit = cx.ty.unit;
+    let Some(Some(hir::Def::Fn(f))) = cx.defs.get_mut(main.0 as usize) else {
+        return none;
+    };
+    let stmts = std::mem::take(&mut f.body.block.stmts);
+    let mut out = Vec::with_capacity(stmts.len() + 2);
+    let mut next = 0;
+    let init_to = |out: &mut Vec<hir::Stmt>, next: &mut usize, upto: Option<u32>| {
+        let start = *next;
+        while *next < starts.len() && upto.is_none_or(|lo| starts[*next] < lo) {
+            *next += 1;
+        }
+        if *next > start {
+            let (a, b) = ((from + start) as u32, (from + *next) as u32);
+            let span = velt_common::Span::DUMMY;
+            let call = hir::Expr {
+                kind: E::Call {
+                    callee: hir::Callee::Intrinsic(hir::Intrinsic::InitSlots(a, b)),
+                    args: vec![],
+                },
+                ty: unit,
+                span,
+            };
+            out.push(hir::Stmt {
+                kind: hir::StmtKind::Expr(call),
+                span,
+            });
+        }
+    };
+    for s in stmts {
+        // Statements the checker adds have no position of their own.
+        if s.span.lo != s.span.hi || s.span.lo != 0 {
+            init_to(&mut out, &mut next, Some(s.span.lo));
+        }
+        out.push(s);
+    }
+    init_to(&mut out, &mut next, None);
+    f.body.block.stmts = out;
+    from as u32
 }
 
 impl crate::body::FnCx<'_, '_> {

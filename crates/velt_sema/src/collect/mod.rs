@@ -25,6 +25,7 @@ mod constants;
 mod declare;
 pub(crate) mod exports;
 mod extend_shadow;
+pub(crate) mod extended_layouts;
 mod field_only;
 pub(crate) mod forwarders;
 mod generator_sig;

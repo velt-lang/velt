@@ -1,0 +1,13 @@
+// A class whose `toString()` returns an object and which has no `valueOf()`: `+` of it through
+// `any` is Node's `TypeError`, reported at the line of the `+`.
+class T {
+  toString(): any {
+    return {};
+  }
+}
+
+function main(): void {
+  const t: any = new T();
+  console.log("before");
+  console.log("t: " + t);
+}
