@@ -1,0 +1,42 @@
+// A peer that sends pings and never reads the pongs: once more than the high-water mark is
+// queued, the server stops reading from it until it takes them, so the pongs cannot pile up in
+// the server's memory. The client's 64 MB of pings then never all get written.
+import { serve } from "velt:http";
+import { TimeoutError, timeout } from "velt:task";
+import { OP_PING } from "velt:websocket/frame";
+import { WebSocket, isWebSocketRequest, upgradeWebSocket } from "velt:websocket";
+import { rawConnect } from "./_ws_raw.vlt";
+
+async function session(ws: WebSocket): Promise<void> {
+  try {
+    while ((await ws.receive()) != null) {}
+  } catch (e) {}
+}
+
+async function main() {
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    if (!isWebSocketRequest(req)) {
+      return new Response("not a websocket");
+    }
+    const up = upgradeWebSocket(req);
+    spawn(session(up.socket));
+    return up.response;
+  });
+  const client = await rawConnect(server.port, "/ws");
+  const ping: u8[] = Buffer.alloc(125);
+  const flood = spawn(async () => {
+    for (let i = 0; i < 64 * 1048576 / 131; i++) {
+      await client.send(OP_PING, ping);
+    }
+  });
+  try {
+    await timeout(flood, 3000);
+    console.log("the server read every ping");
+  } catch (e) {
+    console.log("the server stopped reading:", e instanceof TimeoutError);
+  }
+  // Closed, not only aborted: the server's pending pongs then fail, which ends its session.
+  client.conn.abort();
+  client.close();
+  server.close();
+}

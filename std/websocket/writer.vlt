@@ -119,8 +119,24 @@ function refused(tx: Tx, status: i64): IoError {
   return new IoError(tx.with((q) => q.stopped), "the WebSocket connection failed");
 }
 
-// Waits until at most `HIGH_WATER` bytes are queued.
+// Waits until at most `HIGH_WATER` bytes are queued; throws if the connection stopped first.
 async function room(tx: Tx): Promise<void> {
+  const status = await untilRoom(tx);
+  if (status != 0) {
+    throw refused(tx, status);
+  }
+}
+
+/**
+ * `room` for the frames the connection sends by itself (pongs): a peer that sends pings and
+ * reads nothing is not read from either until it takes the answers. Never throws.
+ */
+export async function roomQuietly(tx: Tx): Promise<void> {
+  await untilRoom(tx);
+}
+
+// Waits until at most `HIGH_WATER` bytes are queued (0), or the connection stopped (its status).
+async function untilRoom(tx: Tx): Promise<i64> {
   while (true) {
     const status = tx.with((q) => {
       if (q.released) {
@@ -131,11 +147,8 @@ async function room(tx: Tx): Promise<void> {
       }
       return (q.out.length as i64) > HIGH_WATER ? OVER : 0;
     });
-    if (status == 0) {
-      return;
-    }
     if (status != OVER) {
-      throw refused(tx, status);
+      return status;
     }
     const drained = tx.with((q) => (q.out.length as i64) > HIGH_WATER ? q.wait() : null);
     if (drained != null) {
