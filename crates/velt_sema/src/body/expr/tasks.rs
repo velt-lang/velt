@@ -34,11 +34,10 @@ impl FnCx<'_, '_> {
             );
         }
         let hint = self.hint(exp).map(|t| self.cx.ty.promise(t));
-        self.direct_await = super::promise_new::awaited_new_promise(inner);
-        let h = self.expr(inner, hint, Want::Move);
-        self.direct_await = None;
+        let h = self.top_level_operand(span, |fx| fx.expr(inner, hint, Want::Move));
         self.awaited_using_shares(&h);
-        let h = match self.await_union(h, span) {
+        let awaited = self.await_union_with(h, span, &mut |s, read, p| s.awaiting(read, p, span));
+        let h = match awaited {
             Ok(done) => return done,
             Err(h) => h,
         };
@@ -55,16 +54,14 @@ impl FnCx<'_, '_> {
                 self.cx.ty.error
             }
         };
-        self.mk(H::Await(Box::new(h)), ty, span)
+        self.awaiting(h, ty, span)
     }
 
     /// The value of `yield a` in an async generator yielding `t`: a promise is awaited, as in
     /// JS (its rejection is thrown at the `yield`; docs/reference/functions.md "Async
     /// generators").
     pub(crate) fn yielded_awaiting(&mut self, a: &ast::Expr, t: TyId) -> hir::Expr {
-        self.direct_await = super::promise_new::awaited_new_promise(a);
         let h = self.expr(a, Some(t), Want::Move);
-        self.direct_await = None;
         let h = match self.cx.ty.kind(h.ty).clone() {
             TyKind::Promise(v, _) if !matches!(self.cx.ty.kind(t), TyKind::Promise(..)) => {
                 self.awaited_using_shares(&h);

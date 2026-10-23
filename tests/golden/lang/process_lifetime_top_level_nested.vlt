@@ -1,0 +1,23 @@
+// The unsettled top-level `await` reported is the one waiting now: the outer `await` once the
+// one in its operand has its value, also after an `await` that threw, and inside blocks; the
+// `await`s of functions the top level defines are not top-level ones (#1366).
+async function never(n: number): Promise<void> {
+  console.log("waiting with", n);
+  await new Promise<void>((resolve) => {});
+}
+
+async function fails(): Promise<number> {
+  throw new Error("no");
+}
+
+try {
+  await fails();
+} catch (e) {
+  console.log("caught", (e as Error).message);
+}
+const p = Promise.resolve(1);
+if (p !== null) {
+  const x = 1 + (await p);
+  await never(
+    await Promise.resolve(x));
+}

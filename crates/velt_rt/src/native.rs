@@ -230,6 +230,8 @@ struct Meta {
     shared: Arc<Shared>,
     start: Option<Work>,
     layout: Layout,
+    /// While it waits: native work keeps the process alive, as I/O does (task/quiet.rs).
+    pending: Option<crate::task::quiet::Pending>,
 }
 
 const META: usize = std::mem::size_of::<Meta>();
@@ -252,6 +254,7 @@ fn new_fut(shared: Arc<Shared>, start: Option<Work>) -> *mut VeltFut {
             shared,
             start,
             layout,
+            pending: None,
         });
         let f = base.add(META) as *mut VeltFut;
         f.write(VeltFut {
@@ -287,6 +290,9 @@ unsafe extern "C" fn native_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
             if !waker.as_ref().is_some_and(|old| old.will_wake(w)) {
                 *waker = Some(w.clone());
             }
+            if m.pending.is_none() {
+                m.pending = Some(crate::task::quiet::Pending::new());
+            }
             PENDING
         }
         Slot::Ready(_) => {
@@ -295,6 +301,7 @@ unsafe extern "C" fn native_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
             };
             let dst = (f as *mut u8).add(FUT_RESULT_OFFSET);
             std::ptr::copy_nonoverlapping(b.as_ptr() as *const u8, dst, m.shared.size);
+            m.pending = None;
             READY
         }
         Slot::Taken => READY,

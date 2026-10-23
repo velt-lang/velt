@@ -1,0 +1,10 @@
+// An `Error` passed to a generator's `throw()` that the generator does not catch is reported
+// with Node's header (#1414).
+function* gen(): Generator<number> {
+  yield 1;
+  yield 2;
+}
+
+const it = gen();
+console.log(it.next().value);
+it.throw(new RangeError("outer"));

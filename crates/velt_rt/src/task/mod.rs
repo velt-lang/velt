@@ -19,6 +19,7 @@ pub mod group;
 pub mod latch;
 pub mod leaf;
 pub mod local;
+pub(crate) mod quiet;
 pub mod race;
 pub mod runtime;
 pub mod shared;
@@ -132,7 +133,7 @@ pub unsafe extern "C" fn velt_rt_yield_now(cx: *mut c_void) {
 /// instead of awaited directly). Result: none.
 #[no_mangle]
 pub extern "C" fn velt_rt_yield_now_fut() -> *mut VeltFut {
-    leaf::new_leaf(async {
+    leaf::new_inner_leaf(async {
         local::note_yield();
         tokio::task::yield_now().await
     })

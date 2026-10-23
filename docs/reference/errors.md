@@ -171,7 +171,12 @@ nothing; `null` means success).
   way `console.log` prints it: `throw "too big"` reports `Uncaught too big`, `throw 42`
   `Uncaught 42` (a number as `String(x)` writes it: `throw -0` reports `Uncaught 0`), and an
   object `Uncaught { code: 503 }`. `JSON.parse`'s `JsonError` reports
-  `Uncaught SyntaxError: <message>`, as Node reports the error `JSON.parse` throws.
+  `Uncaught SyntaxError: <message>`, as Node reports the error `JSON.parse` throws. An `Error`
+  held in an `any` or `unknown` (`const e: any = new RangeError("x"); throw e;`, or passed to a
+  generator's `throw()`) gets the `Error` header too (`Uncaught RangeError: x`).
+- Node's report shows where an `Error` was **created** (the top of its stack); Velt's location
+  is where it was last thrown. They differ for a rethrow (`catch (e) { throw e; }`) and for an
+  error made earlier than it is thrown (#356).
 - **Panics** are bugs, not errors: an index out of bounds, integer division by zero,
   `panic(msg)`, a failed `assert`. They print `panic: … at file:line:col` and exit with code
   101. They cannot be caught.
