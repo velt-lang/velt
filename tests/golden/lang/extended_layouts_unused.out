@@ -1,0 +1,3 @@
+{ type: 'a', children: [ { type: 'b', children: [] } ] }
+{"type":"a","children":[{"type":"b","children":[]}]}
+type,children { type: 1, children: 2 } { type: 'r', children: [] }

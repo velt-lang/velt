@@ -41,21 +41,28 @@ impl Cx<'_> {
             Ty::Agg(a) => (self.aggs[a.0 as usize].size, self.aggs[a.0 as usize].align),
             _ => super::ice("module state is not an aggregate"),
         };
-        let init = self.func(Work::ModuleInit);
+        let (deferred, len) = (ms.deferred, ms.slots.len() as u32);
+        let init = self.func(Work::ModuleInit(0, deferred));
         let drop = self.func(Work::Glue(Glue::Drop, ty));
         let names = self.static_bytes(names, 1);
-        let mut bytes = vec![0u8; 40];
+        let mut bytes = vec![0u8; 48];
         bytes[0..8].copy_from_slice(&(size as u64).to_le_bytes());
         bytes[8..16].copy_from_slice(&(align as u64).to_le_bytes());
+        let mut relocs = vec![
+            (16, Const::Func(init)),
+            (24, Const::Func(drop)),
+            (32, Const::Static(names)),
+        ];
+        // The root file's slots, for a block made for code swapped in (`velt dev`), whose
+        // `main` does not run again: null when `init` does them all.
+        if deferred < len {
+            relocs.push((40, Const::Func(self.func(Work::ModuleInit(deferred, len)))));
+        }
         let id = StaticId(self.statics.len() as u32);
         self.statics.push(StaticData {
             bytes,
             align: 8,
-            relocs: vec![
-                (16, Const::Func(init)),
-                (24, Const::Func(drop)),
-                (32, Const::Static(names)),
-            ],
+            relocs,
         });
         self.module_desc = Some(id);
         id
@@ -172,20 +179,26 @@ impl FnLower<'_, '_> {
             .contains(&d)
     }
 
-    /// `(state: ptr)`: evaluate every initializer in order into its slot (the block is zeroed:
-    /// nothing old to drop). An error an initializer throws ends the process (`Uncaught`).
-    pub(super) fn build_module_init(cx: &mut Cx<'_>) -> Function {
-        let slots = cx
+    /// `(state: ptr)`: evaluate the initializers of slots `from..to` in order into their slots
+    /// (the block is zeroed: nothing old to drop). An error an initializer throws ends the
+    /// process (`Uncaught`). After the last slot every slot may be read (`u64::MAX`).
+    pub(super) fn build_module_init(cx: &mut Cx<'_>, from: u32, to: u32) -> Function {
+        let (all, deferred) = cx
             .hir
             .module_state
             .as_ref()
-            .map(|m| m.slots.clone())
+            .map(|m| (m.slots.clone(), m.deferred))
             .unwrap_or_default();
+        let len = all.len();
+        let slots = all
+            .get(from as usize..to as usize)
+            .unwrap_or_default()
+            .to_vec();
         let mut lw = FnLower::bare(cx, vec![]);
         lw.init_locals = true;
         let state = lw.new_local(Ty::Ptr, Some("state".into()));
         lw.push_scope(ScopeKind::Block);
-        for (i, d) in slots.into_iter().enumerate() {
+        for (i, d) in (from as usize..).zip(slots) {
             let hir::Def::Global(g) = lw.cx.hir.def(d) else {
                 super::ice("module state slot is not a global")
             };
@@ -209,7 +222,7 @@ impl FnLower<'_, '_> {
                     vir::Callee::Extern(ready),
                     vec![
                         Operand::Copy(Place::local(state)),
-                        cint(i as i128 + 1, Ty::U64),
+                        cint(ready_count(i + 1, len), Ty::U64),
                     ],
                     None,
                     false,
@@ -220,14 +233,50 @@ impl FnLower<'_, '_> {
         }
         lw.pop_scope();
         lw.terminate(Terminator::Return(super::unit()));
-        lw.finish("_Gmodule_init".to_string(), vec![Ty::Ptr], Ty::Unit)
+        // The state's own initializer, or a part of the root file's slots.
+        let name = match (from, to) {
+            (0, t) if t == deferred => "_Gmodule_init".to_string(),
+            _ => format!("_Gmodule_init_{from}_{to}"),
+        };
+        lw.finish(name, vec![Ty::Ptr], Ty::Unit)
     }
 
-    /// Initialize the module state before `main` runs, as Node evaluates the modules first.
+    /// The module state block, allocated and initialized on the first access, without the
+    /// check that a slot is initialized (rt_abi.md "Module state").
+    fn whole_block(&mut self) -> Operand {
+        let desc = self.cx.module_desc();
+        let f = self
+            .cx
+            .extern_sym("velt_rt_module_block", vec![Ty::Ptr], Ty::Ptr, false);
+        let p = self.temp(Ty::Ptr);
+        let args = vec![Operand::Const(Const::Static(desc), Ty::Ptr)];
+        self.call(vir::Callee::Extern(f), args, Some(Place::local(p)), false);
+        Operand::Copy(Place::local(p))
+    }
+
+    /// Initialize the module state before `main` runs, as Node evaluates the modules first
+    /// (the root file's slots excepted: its `main` initializes them, `init_slots`).
     pub(super) fn init_module_state(&mut self) {
         if self.cx.hir.module_state.is_some() {
-            self.module_block(0);
+            self.whole_block();
         }
+    }
+
+    /// `Intrinsic::InitSlots(from, to)`: the root file's slots `from..to`, where the root
+    /// file's statements reach their declarations.
+    pub(super) fn init_slots(&mut self, from: u32, to: u32) {
+        let block = self.whole_block();
+        let f = self.cx.func(Work::ModuleInit(from, to));
+        self.call(vir::Callee::Func(f), vec![block], None, false);
+    }
+}
+
+/// The `ready` count after slot `n - 1` of `len` is stored: `u64::MAX` after the last one (the
+/// whole block may be dropped at exit).
+fn ready_count(n: usize, len: usize) -> i128 {
+    match n == len {
+        true => u64::MAX as i128,
+        false => n as i128,
     }
 }
 

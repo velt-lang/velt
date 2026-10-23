@@ -394,3 +394,15 @@ two";
     assert_eq!(out, src.replace(r"'it\'s \d'", r#""it's \d""#));
     holds(src);
 }
+
+/// A root file whose statement uses a declaration below it is valid syntax (the checker reports
+/// the early use, #1438): it formats like any other file.
+#[test]
+fn early_use_of_a_later_declaration_formats() {
+    let src = "console.log(  K );\nconst K = 1;\nnew  Box();\nclass Box {}\n";
+    let out = velt_fmt::format_source(src).unwrap();
+    assert_eq!(
+        out,
+        "console.log(K);\nconst K = 1;\nnew Box();\n\nclass Box {}\n"
+    );
+}

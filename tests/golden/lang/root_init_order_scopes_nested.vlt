@@ -1,0 +1,42 @@
+// Functions above a top-level `const` whose nested scopes bind its name: a block's function
+// declaration, a destructuring loop binding, a `catch` clause, a class's static arrow and methods,
+// a local function named like it (#1438).
+// An imported module's functions too.
+import { v, w } from "./_root_init_order_scopes/lib";
+
+const hoist = (): number => {
+  return g();
+  function g(): number {
+    return K;
+  }
+};
+const pairs = (): number => {
+  let s = 0;
+  for (const [K, v] of [[1, 2]]) {
+    s += K + v;
+  }
+  return s + K;
+};
+const des = (): string => {
+  try {
+    throw new Error("m");
+  } catch (e) {
+    return (e as Error).message + K;
+  }
+};
+class Box {
+  static readonly make: () => number = (): number => K * 10;
+  get(): number {
+    return K;
+  }
+}
+const local = (): number => {
+  function K(): number {
+    return 1;
+  }
+  return K();
+};
+const K = 2;
+const mk = Box.make;
+console.log(hoist(), pairs(), des(), mk(), new Box().get(), local(), K);
+console.log(v, w());

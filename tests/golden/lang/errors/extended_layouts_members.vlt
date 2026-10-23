@@ -1,0 +1,15 @@
+// An extension's fields are not the base's (#1383): a `VNode` has no member `_ns`, and a
+// `VNode` literal may not give one, also when the program casts between the two.
+interface VNode {
+  type: string;
+  dom: string | null;
+}
+interface IV extends VNode {
+  _ns?: boolean;
+}
+function mount(a: VNode): boolean | undefined {
+  (a as IV)._ns = true;
+  return a._ns;
+}
+const b: VNode = { type: "a", dom: null, _ns: true };
+console.log(mount(b));

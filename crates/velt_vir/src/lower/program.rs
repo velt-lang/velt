@@ -157,7 +157,7 @@ impl<'h> Cx<'h> {
                 | Work::ReadOwn(_)
                 | Work::Deferred(_)
                 | Work::Main
-                | Work::ModuleInit
+                | Work::ModuleInit(..)
                 | Work::ArrayGrow
                 | Work::Oob(_)
         ) || !self.has_lock_set();

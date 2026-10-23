@@ -290,6 +290,14 @@ impl FnLower<'_, '_> {
             if self.json_callable(payload) {
                 continue;
             }
+            // So is one holding a function: a field an extension adds to a shared layout
+            // (velt_sema `collect::extended_layouts`), which the type written has no field for.
+            if matches!(
+                self.cx.kind(payload),
+                TyKind::FnPtr { .. } | TyKind::Closure(_)
+            ) {
+                continue;
+            }
             let fp = self.field_place(place, ty, i as u32);
             let key = json_key(&name);
             // `a?: T | null`: written when present, `null` included (`hir::FieldDef::presence`).

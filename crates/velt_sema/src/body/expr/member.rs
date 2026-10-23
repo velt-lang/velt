@@ -637,7 +637,8 @@ impl FnCx<'_, '_> {
                 }
                 if !self.cx.ty.has_error(h.ty) {
                     let (s, d) = (self.cx.display(h.ty), self.cx.display(target));
-                    let mut diag = Diagnostic::error(format!("cannot cast `{s}` as `{d}`"), span);
+                    let diag = Diagnostic::error(format!("cannot cast `{s}` as `{d}`"), span);
+                    let mut diag = self.cx.with_layout_note(diag, target);
                     if self.cx.has_literal_member(target) {
                         diag = diag.with_note(
                             "a value takes a literal type after a test that narrows it (`if (k === \"a\")`)",

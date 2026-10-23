@@ -1,0 +1,28 @@
+// A root file with top-level statements and module state (#1438): its `main` initializes the
+// file's slots where they stand. A swapped-in version's `main` does not run again, so its slots
+// are initialized when its code first reaches them (`ModuleDesc.rest`): the handler works after
+// the swap, with no `ReferenceError`, and reads the new static initializer's value.
+import { serve } from "velt:http";
+
+let hits = 0;
+
+function handle(path: string): string {
+  if (path == "/count") {
+    hits++;
+    return "counted";
+  }
+  if (path != "/hits") {
+    return "ok";
+  }
+  return `hits ${hits} label ${Stats.label}`;
+}
+
+class Stats {
+  static readonly label: string = ["v", "1"].join("");
+}
+
+const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+  return new Response(handle(new URL(req.url).pathname));
+});
+console.log(`listening on ${server.port}`);
+await sleep(1000000000);
