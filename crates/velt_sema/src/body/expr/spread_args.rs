@@ -289,7 +289,8 @@ impl FnCx<'_, '_> {
 
     /// [`evaluated_anywhere`](Self::evaluated_anywhere), or arithmetic, a comparison, a logical
     /// operator or `?:` over such operands of primitive types (numbers, booleans, strings),
-    /// which can call no user code (an integer division or remainder may throw, a `BigInt`'s).
+    /// which can call no user code (an integer division or remainder may throw, a `BigInt`'s),
+    /// or an array literal of such elements.
     pub(super) fn no_effects(&mut self, e: &ast::Expr) -> bool {
         let e = unparen(e);
         match &e.kind {
@@ -308,6 +309,10 @@ impl FnCx<'_, '_> {
             ast::ExprKind::Cond { cond, then, els } => {
                 self.no_effects(cond) && self.no_effects(then) && self.no_effects(els)
             }
+            // A new array of such elements (`[1, x]`): making it has no effect.
+            ast::ExprKind::Array(xs) => xs
+                .iter()
+                .all(|x| !matches!(x.kind, ast::ExprKind::Spread(_)) && self.no_effects(x)),
             _ => self.evaluated_anywhere(e),
         }
     }

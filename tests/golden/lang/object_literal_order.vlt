@@ -73,3 +73,30 @@ function rec(s: string): Record<string, number> {
 }
 const r2: Record<string, number> = { k: tr("k", 1), ...rec("spread"), j: tr("j", 2) };
 console.log(JSON.stringify(r2));
+console.log("-- before optional fields, generic and maybe-missing sources");
+interface Opt {
+  a?: number | null;
+  b?: number;
+}
+function op(s: string, o: Opt): Opt {
+  console.log("eval " + s);
+  return o;
+}
+const x1 = { a: tr("a", 1), ...op("spread", { a: null }) };
+console.log(x1.a);
+const x2 = { a: tr("a", 1), b: tr("b", 2), ...op("spread", {}) };
+console.log(x2.a, x2.b);
+interface T2 {
+  a: number | null;
+  b: number;
+}
+const x3: T2 = { a: tr("a", 1), b: tr("b", 2), ...op("spread", { b: 5 }) };
+console.log(x3.a, x3.b);
+function withN<T extends object>(t: T, f: () => number) {
+  return { n: f(), ...t };
+}
+const x4 = withN({ k: 1 }, () => tr("n", 3));
+console.log(x4.n, x4.k);
+const maybe: { a: number } | undefined = Math.random() > 2 ? { a: 1 } : undefined;
+const x5 = { a: tr("a", 7), ...maybe };
+console.log(x5.a);

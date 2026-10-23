@@ -44,3 +44,19 @@ eval k
 eval spread
 eval j
 {"k":1,"a":1,"j":2}
+-- before optional fields, generic and maybe-missing sources
+eval a
+eval spread
+null
+eval a
+eval b
+eval spread
+1 2
+eval a
+eval b
+eval spread
+1 5
+eval n
+3 1
+eval a
+7

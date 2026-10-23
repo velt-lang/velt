@@ -9,7 +9,8 @@
 //! Everything is evaluated in written order, as in JS. A spread array that is not a place is
 //! bound before the array is made (its length sizes it); an element with effects before it
 //! (`[g(), ...f()]`, not one without, `no_effects`) is bound before it then. After an iterable
-//! (`[...gen(), ...f()]`), which runs where it is written, it is bound where it is pushed.
+//! (`[...gen(), ...f()]`), which runs where it is written, it is bound where it is pushed
+//! (unless it has no effects, `[...gen(), ...[1, 2]]`).
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
@@ -81,7 +82,7 @@ impl FnCx<'_, '_> {
             elem.get_or_insert(et);
             let mut src = if is_place(&h) {
                 h
-            } else if in_place {
+            } else if in_place && !self.no_effects(inner) {
                 sources.push(Some(Src::Late(h, et)));
                 continue;
             } else if !pending.is_empty() || bind.contains(&true) {
