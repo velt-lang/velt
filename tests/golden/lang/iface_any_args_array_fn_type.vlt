@@ -1,0 +1,52 @@
+// An array field of interface values reaches code through a function type of the interface
+// (a callback's parameter, a function field's result): through an adapter it would be a new
+// array of the converted elements, and a change made to it would not reach the original (Node
+// changes the original), so converting such a value to the interface at `any` is an error
+// (#1185); through `unknown` it is a `TypeError` (iface_any_args_array_fn_type_dynamic).
+interface Tree<T> {
+  value: T;
+  kids: Tree<T>[];
+  withKids(f: (k: Tree<T>[]) => void): void;
+}
+
+interface Forest<T> {
+  kids: Forest<T>[];
+  kidsFn: () => Forest<T>[];
+  label(): string;
+}
+
+class Node1<T> implements Tree<T> {
+  value: T;
+  kids: Tree<T>[] = [];
+  constructor(v: T) {
+    this.value = v;
+  }
+  withKids(f: (k: Tree<T>[]) => void): void {
+    f(this.kids);
+  }
+}
+
+class Wood<T> implements Forest<T> {
+  kids: Forest<T>[] = [];
+  kidsFn: () => Forest<T>[];
+  constructor() {
+    this.kidsFn = () => this.kids;
+  }
+  label(): string {
+    return "w" + this.kids.length;
+  }
+}
+
+const t = new Node1<number>(1);
+t.kids = [new Node1<number>(2)];
+const a: Tree<any> = t;
+a.withKids((k) => {
+  k.push(new Node1<number>(7));
+});
+console.log(t.kids.length);
+
+const w = new Wood<number>();
+w.kids = [new Wood<number>()];
+const b: Forest<any> = w;
+b.kidsFn().push(new Wood<number>());
+console.log(w.kids.length, b.label());

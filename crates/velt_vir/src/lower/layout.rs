@@ -33,6 +33,8 @@ pub(super) struct Layouts {
     extended: Option<FxHashSet<DefId>>,
     /// Class id ranges for `instanceof` (class_test.rs, built once).
     pub(super) class_ids: Option<FxHashMap<DefId, (u64, u64)>>,
+    /// Whether the program has interface adapters (adapters.rs, found once).
+    pub(super) adapters: Option<bool>,
     boxes: FxHashMap<TyId, AggId>,
     envs: FxHashMap<(DefId, Vec<TyId>), AggId>,
     in_progress: FxHashSet<TyId>,
@@ -268,7 +270,8 @@ impl Cx<'_> {
         }
         let fields = self.adt_field_tys(t);
         tys.extend(self.stored_tys(fields));
-        let a = self.new_agg(format!("{} object", self.type_name(t)), &tys);
+        let name = format!("{}{}", self.type_name(t), crate::OBJECT_AGG_SUFFIX);
+        let a = self.new_agg(name, &tys);
         self.lay.objs.insert(t, a);
         a
     }

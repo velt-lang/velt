@@ -1,0 +1,54 @@
+// An interface with a field holding an array of its own values, at `any` arguments: each
+// element read through the field is the element as the interface at `any` (#1185).
+interface Tree<T> {
+  value: T;
+  kids: Tree<T>[];
+  label(): string;
+}
+
+class Node1<T> implements Tree<T> {
+  value: T;
+  kids: Tree<T>[] = [];
+  constructor(v: T) {
+    this.value = v;
+  }
+  label(): string {
+    return "n" + this.kids.length;
+  }
+}
+
+const t = new Node1<number>(1);
+t.kids.push(new Node1<number>(2));
+t.kids[0].kids.push(new Node1<number>(3));
+
+// Assigned directly.
+const b: Tree<any> = t;
+console.log(b.value, b.kids.length, b.kids[0].value, typeof b.kids[0].value);
+console.log(b.kids[0].kids[0].value, b.kids[0].label());
+
+// Through `unknown`.
+const u: unknown = t;
+const a = u as Tree<any>;
+console.log(a.value, a.label(), a.kids[0].label(), a.kids[0].kids[0].label());
+let sum = 0;
+for (let i = 0; i < a.kids.length; i++) {
+  const k = a.kids[i];
+  sum += k.value as number;
+  for (let j = 0; j < k.kids.length; j++) {
+    sum += k.kids[j].value as number;
+  }
+}
+console.log(sum);
+
+// An element written through the original is seen on the next read.
+t.kids[0].value = 20;
+console.log(a.kids[0].value);
+
+// Instances made in generic code.
+function leaf<T>(v: T): unknown {
+  const n = new Node1<T>(v);
+  n.kids.push(new Node1<T>(v));
+  return n;
+}
+const s = leaf("s") as Tree<any>;
+console.log(s.value, s.kids[0].value, s.kids.map((k) => k.label()));

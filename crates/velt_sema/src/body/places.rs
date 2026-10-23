@@ -28,6 +28,19 @@ pub(crate) fn is_path(e: &hir::Expr) -> bool {
     }
 }
 
+/// Does pattern `p` bind `l`?
+pub(crate) fn binds(p: &hir::Pat, l: LocalId) -> bool {
+    use hir::PatKind as P;
+    match &p.kind {
+        P::Binding(b, _) => *b == l,
+        P::Array { elems: ps, rest } => *rest == Some(l) || ps.iter().any(|q| binds(q, l)),
+        P::Variant { args: ps, .. } | P::Tuple(ps) | P::Or(ps) => ps.iter().any(|q| binds(q, l)),
+        P::Adt { fields } => fields.iter().any(|(_, q)| binds(q, l)),
+        P::Some(q) => binds(q, l),
+        P::Wildcard | P::Lit(_) | P::None | P::InstanceOf(_) => false,
+    }
+}
+
 /// The local a place is rooted at (through projections), if any.
 pub(crate) fn place_root(e: &hir::Expr) -> Option<LocalId> {
     match &e.kind {
@@ -83,15 +96,17 @@ impl FnCx<'_, '_> {
         // `const v = K`, it is the one object the module state keeps; a table that can't be kept
         // (`Cls.K`) can't be taken over.
         if let H::Global(d) = e.kind {
+            let stored = self.cx.global(d).is_some_and(|g| g.stored);
             let table = crate::body::pure_init::is_table(self.cx, d);
             let object = table || crate::body::pure_init::mutable_identity(self.cx, e.ty);
+            // Module state taken by value (`g!`, `g ?? d` binding the payload of a module `let`)
+            // is another reference to the value the slot keeps, as `global_read` makes for
+            // `const v = g`, not a move out of the slot. Without it the type may be stored
+            // inline, and the binding would be a copy.
             let kept = object && crate::kept_consts::keep(self.cx, d);
-            if kept {
-                // Another reference to the object the module state keeps, as `global_read` makes
-                // for `const v = K`: without it the type may be stored inline, and the binding
-                // would be a copy.
+            if kept || (stored && m == UseMode::Move) {
                 let read = std::mem::replace(e, self.mk(H::Lit(hir::Lit::Null), e.ty, e.span));
-                *e = self.intrinsic(hir::Intrinsic::Share, vec![read], e.ty, e.span);
+                *e = self.intrinsic(Intrinsic::Share, vec![read], e.ty, e.span);
                 return;
             }
             if table && !kept {
@@ -127,6 +142,31 @@ impl FnCx<'_, '_> {
     /// Can the value behind place `e` be modified? Reports an error if not.
     pub fn require_mutable(&mut self, e: &hir::Expr, what: &str) -> bool {
         self.readonly_element_write(e);
+        self.require_root_mutable(e, what)
+    }
+
+    /// [`Self::require_mutable`] without the check of a read-only element: may the root of
+    /// place `e` be modified? A part of what a match gives (`p!.v = 1`, `(p ?? q).v = 1`) is a
+    /// part of `p`'s payload, or of the other arm's place: those roots are checked and marked
+    /// (a module constant evaluated at each use can't be written that way either).
+    fn require_root_mutable(&mut self, e: &hir::Expr, what: &str) -> bool {
+        if let H::Match { scrutinee, arms } = &root_expr(e).kind {
+            // The write is to a part of the source, not to the source itself.
+            let what = match what {
+                "assign to" => "assign to a field of",
+                w => w,
+            };
+            let mut ok = true;
+            for arm in arms {
+                let source = match &arm.body.kind {
+                    H::Local(l, _) if binds(&arm.pat, *l) => &**scrutinee,
+                    _ if is_place(&arm.body) => &arm.body,
+                    _ => continue,
+                };
+                ok &= self.require_root_mutable(source, what);
+            }
+            return ok;
+        }
         if let H::Call { args, .. } = &root_expr(e).kind {
             if Self::is_frozen_view(root_expr(e)) {
                 let shared = args[0].clone();

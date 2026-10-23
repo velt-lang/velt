@@ -1,0 +1,100 @@
+// Values made in generic code, of instances the program never names, converted from
+// `unknown` to an interface at `any` arguments (#1185): each converts through its own
+// arguments.
+interface Ctx<P = {}, S = {}> {
+  props: P;
+  state: S;
+  name(): string;
+  child(): Ctx<P, S> | null;
+  set(p: P): void;
+}
+
+class G<T> implements Ctx<T, number> {
+  props: T;
+  state = 0;
+  constructor(p: T) {
+    this.props = p;
+  }
+  name(): string {
+    return "g";
+  }
+  child(): Ctx<T, number> | null {
+    return this.state > 0 ? null : new G<T>(this.props);
+  }
+  set(p: T): void {
+    this.props = p;
+    this.state++;
+  }
+}
+
+function mk<T>(x: T): unknown {
+  return new G<T>(x);
+}
+function twice<T>(x: T): unknown {
+  return mk<T[]>([x, x]);
+}
+
+// An object literal made in a generic function.
+function lit<T>(x: T): unknown {
+  let calls = 0;
+  const c: Ctx<T, string> = {
+    props: x,
+    state: "s",
+    name(): string {
+      calls++;
+      return "lit" + calls;
+    },
+    child(): Ctx<T, string> | null {
+      return null;
+    },
+    set(p: T): void {
+      calls = 100;
+    },
+  };
+  return c;
+}
+
+const c = mk(5) as Ctx<any, any>;
+console.log(c.name(), c.props, c.state);
+c.set(6);
+console.log(c.props, c.state);
+const k = c.child();
+console.log(k === null);
+
+const d = mk("five") as Ctx<any, number>;
+console.log(d.props, d.state, typeof d.props);
+const kid = d.child();
+if (kid !== null) {
+  console.log(kid.name(), kid.props);
+}
+
+const e = twice(true) as Ctx<any, any>;
+console.log(e.props, Array.isArray(e.props));
+
+const l = lit({ n: 1 }) as Ctx<any, any>;
+console.log(l.name(), l.name(), l.props.n, l.state);
+l.set({ n: 2 });
+console.log(l.name());
+
+// The same values through `any`.
+const a: any = mk(7);
+const ac = a as Ctx<any, any>;
+console.log((ac.props as number) + 1);
+
+// An object literal over one of its function's type parameters only.
+function second<A, B>(a: A, b: B): unknown {
+  const c: Ctx<B, A> = {
+    props: b,
+    state: a,
+    name(): string {
+      return "second";
+    },
+    child(): Ctx<B, A> | null {
+      return null;
+    },
+    set(p: B): void {},
+  };
+  return c;
+}
+const sc = second(1, "two") as Ctx<any, any>;
+console.log(sc.name(), sc.props, sc.state);

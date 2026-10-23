@@ -1,0 +1,35 @@
+// check: no leaks
+// `g!`, `g as T` and `g ?? d` on a module `let` give another reference to the object the
+// module state keeps, not a move out of its slot: writes through them reach that object, and
+// it is freed once (#1406).
+
+interface P {
+  x: number;
+}
+
+let q: P | undefined = { x: 0 };
+let d: P = { x: -1 };
+export const s = q ?? d;
+s.x = 3;
+export let t = q;
+t!.x = 4;
+(t as P).x += 1;
+let u = q;
+u!.x++;
+console.log(q!.x, s.x, t!.x, u!.x, d.x);
+
+function touch(): void {
+  const r = q;
+  r!.x = 10;
+  q!.x += 1;
+  (q as P).x *= 2;
+  const n = q ?? d;
+  n.x -= 2;
+  console.log(q!.x, s.x, t!.x, r!.x, n.x);
+}
+
+touch();
+let e: P | undefined = undefined;
+export let f = e ?? d;
+f.x = 7;
+console.log(d.x, f.x, e === undefined);

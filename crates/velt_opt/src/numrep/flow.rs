@@ -56,6 +56,8 @@ pub(super) struct Flow {
     entry: Vec<Option<State>>,
     /// The arrays' aggregate (`Env::array`).
     array: Option<AggId>,
+    /// Per aggregate, its field types (`Env::field_tys`).
+    field_tys: std::rc::Rc<[Vec<Ty>]>,
     /// Per tracked local: facts that hold for every value it takes (`counter`), met with its
     /// facts wherever it changes.
     caps: Vec<Option<Fact>>,
@@ -82,6 +84,7 @@ impl Flow {
             tys,
             entry: vec![None; func.blocks.len()],
             array: env.array,
+            field_tys: env.field_tys.clone(),
             caps: vec![None; tracked.len()],
             preds: crate::map_probe::region::predecessors(func),
         };
@@ -153,6 +156,22 @@ impl Flow {
         }
     }
 
+    /// The type of the value at place `p`, if its projections are well-formed.
+    fn place_ty(&self, func: &Function, p: &Place) -> Option<Ty> {
+        let mut ty = func.locals.get(p.local.0 as usize)?.ty;
+        for proj in &p.proj {
+            ty = match (proj, ty) {
+                (Proj::Deref(t), Ty::Ptr) => *t,
+                (Proj::Cast(id), _) => Ty::Agg(*id),
+                (Proj::Field(n), Ty::Agg(id)) => {
+                    *self.field_tys.get(id.0 as usize)?.get(*n as usize)?
+                }
+                _ => return None,
+            };
+        }
+        Some(ty)
+    }
+
     /// Is `p` the length of an array (field 1 of the arrays' aggregate)?
     fn is_array_len(&self, func: &Function, p: &Place) -> bool {
         let Some(array) = self.array else {
@@ -172,8 +191,19 @@ impl Flow {
 
     /// Facts about the value of `rv`, assigned to a local of type `ty`.
     pub fn rvalue(&self, st: &State, func: &Function, rv: &Rvalue, ty: Ty) -> Fact {
-        let arg = |op: &Operand| self.operand(st, func, op);
-        let optype = |op: &Operand| operand_ty(func, op);
+        // A field read (`len & mask`) is any value of the field's type: its fact and type
+        // together, here only (other users of `operand` and `operand_ty` see no fact for it).
+        let field = |op: &Operand| match op {
+            Operand::Copy(p) if !p.proj.is_empty() && operand_ty(func, op) == Ty::Unit => {
+                self.place_ty(func, p).filter(|t| t.is_int())
+            }
+            _ => None,
+        };
+        let arg = |op: &Operand| {
+            self.operand(st, func, op)
+                .or_else(|| field(op).map(Fact::top))
+        };
+        let optype = |op: &Operand| field(op).unwrap_or_else(|| operand_ty(func, op));
         let f = match rv {
             Rvalue::Use(op) => arg(op),
             Rvalue::Cast(op, to) => arg(op).map(|a| fact::cast(optype(op), *to, a)),

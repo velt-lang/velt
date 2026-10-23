@@ -53,6 +53,7 @@ impl FnCx<'_, '_> {
         while let H::UnwrapSome(base, _) = s.kind {
             s = *base;
         }
+        self.array_used_in_place(&s);
         if self.cx.dynamic(s.ty).is_some() {
             return self.dynamic_null_compare(s, word, strict, is_eq, span);
         }
@@ -328,15 +329,29 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let mut h = self.expr(inner, None, Want::Borrow);
-        if self.cx.ty.opt_payload(h.ty).is_none() {
-            // `const v = K!` takes over what `K` names, as `const v = K` does.
-            if want == Want::Move && matches!(h.kind, H::Global(_)) {
+        let payload = self.cx.ty.opt_payload(h.ty);
+        if let (Want::Move, H::Global(d)) = (want, &h.kind) {
+            // `const v = K!` takes over what `K` names, as `const v = K` does (a table is
+            // reported by `force_move`).
+            if !crate::body::pure_init::is_table(self.cx, *d) {
+                let name = self.cx.global(*d).map(|g| g.name.clone());
+                self.moved_out_of_const(*d, payload.unwrap_or(h.ty), span, name);
+            }
+        }
+        if payload.is_none() {
+            // `const v = q!` (a `q` known to be present) takes over what `q` names, as
+            // `const v = q` does: a place used by value is moved (or shared, when used
+            // again), not copied.
+            if want == Want::Move && is_place(&h) {
                 self.force_move(&mut h);
             }
             return h;
         }
         let msg = "non-null assertion failed: the value is null";
-        self.checked_present(h, msg, exp, keep, span)
+        let read = h.span;
+        let h = self.checked_present(h, msg, exp, keep, span);
+        self.same_array_read(h.span, read);
+        h
     }
 
     /// The payload of the nullable value `h`, or a panic with `msg` when it is nullish; with

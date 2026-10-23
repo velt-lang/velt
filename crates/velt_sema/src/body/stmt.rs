@@ -341,6 +341,21 @@ impl FnCx<'_, '_> {
             );
             return;
         };
+        // `const { a } = K!`: a part of a module constant evaluated at each use, taken over.
+        let root = self.per_use_init_root(e);
+        self.pattern_decl(v, e, ann, span, out);
+        self.per_use_destructured(root, &v.pattern);
+    }
+
+    /// `const <pattern> = e` (`v`, `ann`: its annotation).
+    fn pattern_decl(
+        &mut self,
+        v: &ast::VarDecl,
+        e: &ast::Expr,
+        ann: Option<hir::TyId>,
+        span: Span,
+        out: &mut Vec<hir::Stmt>,
+    ) {
         if self.literal_pattern_decl(v, out) || self.computed_key_decl(v, out) {
             return;
         }

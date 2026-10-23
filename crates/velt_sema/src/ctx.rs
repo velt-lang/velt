@@ -164,6 +164,8 @@ pub(crate) struct Ctx<'m> {
         crate::body::expr::iface_adapt::AdapterKey,
         crate::body::expr::iface_adapt::Adapter,
     >,
+    /// Checked conversions of dynamic values to generic interfaces (`iface_adapt_dynamic`).
+    pub(crate) dyn_iface_targets: Vec<crate::body::expr::iface_adapt_dynamic::DynIfaceTarget>,
     /// Error types committed to while checking bodies, re-checked after inference.
     pub throw_checks: Vec<crate::throws::ThrowCheck>,
     /// Function types written without `throws` and what is stored into them (`throws::fn_types`).
@@ -268,6 +270,9 @@ pub(crate) struct Ctx<'m> {
     pub ns_private: Vec<crate::namespaces::Private>,
     /// Some closure or `const me = this` was made to borrow.
     pub held_borrows_used: bool,
+    /// Module constants taken over, reported: (constant, start of the value taken) → index in
+    /// `diags` (`body::moved_const`).
+    pub moved_consts: FxHashMap<(crate::hir::DefId, velt_common::Span), usize>,
     /// The passes from `demote_local_closures` on reported an error (`crate::retry_sharing`).
     pub borrow_pass_errors: bool,
     /// Widened call results whose callees must return fresh values (`crate::fresh_returns`).
@@ -381,6 +386,7 @@ impl<'m> Ctx<'m> {
             literal_hosts: Default::default(),
             provisional_slots: vec![],
             iface_adapters: FxHashMap::default(),
+            dyn_iface_targets: vec![],
             throw_checks: vec![],
             fn_sites: Default::default(),
             collected_defs: 0,
@@ -428,6 +434,7 @@ impl<'m> Ctx<'m> {
             held_borrows: true,
             ns_private: vec![],
             held_borrows_used: false,
+            moved_consts: Default::default(),
             borrow_pass_errors: false,
             fresh_checks: vec![],
             object_copies: Default::default(),
