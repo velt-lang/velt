@@ -60,7 +60,7 @@ impl FnCx<'_, '_> {
     }
 
     /// The text of the `any` (or, in `+`, `object`) `h` in a template literal or a string `+` /
-    /// `+=` (`what`; `hint`: `Hint::Template` or `Hint::Default`), as JavaScript's
+    /// `+=` (`what`; `hint`: `Hint::String` or `Hint::Default`), as JavaScript's
     /// `ToString(ToPrimitive(h, hint))` writes it: a symbol stops with Node's `TypeError:
     /// Cannot convert a Symbol value to a string` (only `String(s)` writes a symbol, as
     /// `Symbol(desc)`).

@@ -16,7 +16,7 @@ use velt_common::Span;
 use velt_syntax::ast;
 
 use super::setters::synth;
-use crate::body::places::{is_place, set_place_mode};
+use crate::body::places::set_place_mode;
 use crate::body::{FnCx, Want};
 use crate::hir::{self, Callee, DefId, ExprKind as H, TyId, TyKind, UseMode};
 
@@ -96,13 +96,15 @@ impl FnCx<'_, '_> {
         // The helpers read an array's elements and an object's keys through `any` (their own
         // uses don't count: they run only where a program's code calls them).
         self.note_dyn_members();
-        if is_place(&h) {
-            // Borrowed by the call, as a variable passed for a parameter is.
+        if let H::Local(..) = h.kind {
+            // A variable is borrowed by the call (an element or a field is shared first: what
+            // the call runs may replace it).
             let mut h = h;
             set_place_mode(&mut h, UseMode::Borrow);
             let str_ = self.cx.ty.str_;
             return self.prelude_hir_call(hint.helper(), vec![h], str_, span);
         }
+        let h = self.share_if_place(h);
         self.with_temp("<text>", h, span, span, |lw, v| {
             lw.prelude_fn_call(hint.helper(), vec![v.clone()], span)
         })
@@ -282,8 +284,9 @@ impl FnCx<'_, '_> {
     }
 
     /// Does `t` hold `any`, `unknown` or `object` values in its arrays or tuples (`any[]`,
-    /// `object[][]`, `[any, number]`, also `any[] | null`)? Such a list is written as JavaScript's `join` writes it
-    /// (`__anyJoin`), each element as `String(x)` writes it, not as `console.log` prints it.
+    /// `object[][]`, `[any, number]`, also `any[] | null`)? Such a list is written as
+    /// JavaScript's `join` writes it (`__anyJoin`), each element as `String(x)` writes it, not
+    /// as `console.log` prints it.
     pub(crate) fn holds_dynamic_elems(&mut self, t: TyId) -> bool {
         self.holds_dynamic_depth(t, 0)
     }
