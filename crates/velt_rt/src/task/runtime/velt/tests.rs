@@ -204,7 +204,24 @@ fn a_task_woken_by_a_task_runs_on_the_wakers_worker() {
         return;
     }
     // A waiter made on worker 1, woken by a task on worker 0: it runs on worker 0, next,
-    // instead of crossing to worker 1 (a reply reaching the request that waits for it).
+    // instead of crossing to worker 1 (a reply reaching the request that waits for it). Another
+    // worker with nothing to do may borrow it from worker 0's queue first, as designed, which
+    // other tests running at the same time make possible: one of a few tries must show it.
+    let mut ran_on = vec![];
+    for _ in 0..5 {
+        let (waker_ran_on, waiter_ran_on) = woken_by_a_task();
+        assert_eq!(waker_ran_on, Some(0));
+        ran_on.push(waiter_ran_on);
+        if waiter_ran_on == Some(0) {
+            return;
+        }
+    }
+    panic!("the woken task never ran on the waker's worker: {ran_on:?}");
+}
+
+/// One try of [`a_task_woken_by_a_task_runs_on_the_wakers_worker`]: where the waker and the
+/// woken task ran.
+fn woken_by_a_task() -> (Option<usize>, Option<usize>) {
     let (tx, rx) = tokio::sync::oneshot::channel::<()>();
     let (waiting_tx, waiting) = tokio::sync::oneshot::channel();
     let waiter = spawn(
@@ -230,13 +247,7 @@ fn a_task_woken_by_a_task_runs_on_the_wakers_worker() {
         Some(0),
     );
     let waker_ran_on = block_on(woke).ok().flatten();
-    let waiter_ran_on = block_on(waiter).ok().flatten();
-    assert_eq!(waker_ran_on, Some(0));
-    assert_eq!(
-        waiter_ran_on,
-        Some(0),
-        "the woken task crossed to its home worker"
-    );
+    (waker_ran_on, block_on(waiter).ok().flatten())
 }
 
 #[test]
