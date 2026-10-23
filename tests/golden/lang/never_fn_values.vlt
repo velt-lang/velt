@@ -65,3 +65,26 @@ async function run() {
   }
 }
 run();
+
+// Callbacks that only throw, inferred for a type argument (`map`) or passed as values.
+const xs = [1, 2];
+try {
+  xs.forEach(boom);
+} catch (e) {
+  console.log("forEach", (e as Error).message);
+}
+try {
+  const ys = xs.map((x) => {
+    throw new Error("m" + x);
+  });
+  console.log(ys.length);
+} catch (e) {
+  console.log("map", (e as Error).message);
+}
+const fns: (() => void)[] = [boom, () => {}];
+try {
+  fns[1]();
+  fns[0]();
+} catch (e) {
+  console.log("array", (e as Error).message);
+}

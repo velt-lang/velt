@@ -241,7 +241,12 @@ impl FnCx<'_, '_> {
             // returning a value where none is expected): adapted as any callback is.
             let h = match self.callback_adapter(a, hint, super::callback::CallbackMode::Plain) {
                 Some(h) => h,
-                None => self.expr(a, Some(hint), Want::Move),
+                None => {
+                    self.promise_callback = true;
+                    let h = self.expr(a, Some(hint), Want::Move);
+                    self.promise_callback = false;
+                    h
+                }
             };
             if self.cx.ty.has_error(h.ty) {
                 self.check_args_loose(&args[i + 1..]);

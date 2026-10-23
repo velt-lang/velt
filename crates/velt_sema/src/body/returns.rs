@@ -415,6 +415,7 @@ impl FnCx<'_, '_> {
             // nothing (`(e) => { throw e; }`) gives `never`, as in TypeScript (a declared
             // function's is `void`).
             let closure = self.f.kind == crate::defs::FnKind::Closure
+                && self.f.never_end
                 && !self.f.is_async
                 && self.f.yield_ty.is_none();
             let never_only = r.bare.is_empty() && diverges && (!r.values.is_empty() || closure);
