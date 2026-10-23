@@ -46,9 +46,9 @@ pub(crate) fn erase(cx: &mut Ctx) -> HashMap<TyId, String> {
     // A type with error-set variables is its solved type (`throws::vars`), erased; unions of
     // one erased member list are one def, of one erased member that member.
     let solved = cx.solved_types();
-    let plan = crate::union_layouts::plan(&mut cx.ty, &twins, &mut cache, &cx.defs, &solved);
-    let merged = plan.merged;
-    cx.replaced_unions = plan.replaced;
+    let mut plan = crate::union_layouts::plan(&mut cx.ty, &twins, &mut cache, &cx.defs, &solved);
+    let merged = std::mem::take(&mut plan.merged);
+    cx.replaced_unions = std::mem::take(&mut plan.replaced);
     // A field-only interface's object type is called by the interface's name.
     for d in twins.keys() {
         if let Some(Def::Adt(a)) = &cx.defs[d.0 as usize] {
@@ -88,6 +88,12 @@ pub(crate) fn erase(cx: &mut Ctx) -> HashMap<TyId, String> {
             (plain.0, a)
         })
         .collect();
+    // An object type merged into another (`crate::union_layouts`) shares its values.
+    let assigned = assigned.into_iter().chain(plan.objects.iter().map(|&(d, rep)| {
+        let a = matches!(&defs[d.0 as usize], Some(Def::Adt(a)) if a.assigned);
+        (rep, a)
+    }));
+    let assigned: Vec<(DefId, bool)> = assigned.collect();
     for (plain, a) in assigned {
         if let Some(Def::Adt(d)) = &mut defs[plain.0 as usize] {
             d.assigned |= a;

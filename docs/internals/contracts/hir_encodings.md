@@ -855,7 +855,11 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   VIR type. Concrete unions that erasure makes one member list (`number | A` and `number | {
   readonly a: number }`, `A` a field-only interface) are the first def of that list in the
   program lowering gets: every type, `Variant`, `UnwrapVariant` and `PatKind::Variant` of the
-  others is that def, with its variant numbers. A concrete union whose members erase to one type
+  others is that def, with its variant numbers. Variants of one union whose payloads erase to
+  one type (`(R | number)[] | (number | A)[] | string`) are the first of them: no `Variant`,
+  `UnwrapVariant` or `PatKind::Variant` names the others. Concrete anonymous object types whose
+  fields erase alike (`{ v: number | A }` and `{ v: number | R }`, once those unions are one) are
+  the first def of those fields. A concrete union whose members erase to one type
   (`USD | number`, `USD` a brand of `number`) is that type, its variants still written as
   `Variant`s: a variant of a value whose type is no enum is the whole value. Sema treats
   members that erase to one type as one member when it re-interns an instance (`T | A` at

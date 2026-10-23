@@ -1,0 +1,145 @@
+// check: no leaks
+// A union whose members erase to the same type (`(R | number)[]` and `(number | A)[]` once
+// `readonly` is erased, `A` an interface with fields only) holds one tag for both: a value
+// built as either member is the other too, for casts, narrowing, switches, JSON and printing.
+interface A {
+  a: number;
+}
+
+type R = { readonly a: number };
+type AR = (R | number)[] | (number | A)[] | string;
+
+function w2(x: AR): string {
+  if (typeof x === "string") {
+    return x;
+  }
+  const y = x as (R | number)[];
+  return `${y.length}`;
+}
+
+function w3(x: AR): string {
+  if (typeof x === "string") {
+    return "s:" + x;
+  }
+  const y = x as (number | A)[];
+  return y.map((e) => (typeof e === "number" ? `${e}` : `{a:${e.a}}`)).join(",");
+}
+
+const p1: (number | A)[] = [1];
+const p2: (R | number)[] = [2, { a: 3 }];
+console.log(w2(p1), w2(p2), w2("str"));
+console.log(w3(p1), w3(p2), w3("str"));
+
+function kind(x: AR): string {
+  switch (typeof x) {
+    case "string":
+      return "string " + x;
+    default:
+      return `array ${(x as (number | A)[]).length}`;
+  }
+}
+
+console.log(kind(p1), kind(p2), kind("z"));
+
+// Object members alike once erased.
+type OA = { v: number | A };
+type OR = { v: number | R };
+type O = OA | OR | string;
+
+function ov(x: O): string {
+  if (typeof x === "string") {
+    return x;
+  }
+  const o = x as OR;
+  const v = o.v;
+  return typeof v === "number" ? `n${v}` : `a${v.a}`;
+}
+
+const oa: OA = { v: { a: 7 } };
+const or: OR = { v: 8 };
+console.log(ov(oa), ov(or), ov("plain"));
+
+// Stored in arrays, module state, fields with defaults, closures and generics.
+const p3: (number | A)[] = [{ a: 9 }];
+const all: AR[] = [p1, p2, "s", p3];
+let last: AR = p2;
+
+class Box {
+  item: AR = p1;
+  other: O = or;
+}
+
+const b = new Box();
+for (const x of all) {
+  last = x;
+  console.log(w2(x), w3(x), JSON.stringify(x));
+}
+console.log(JSON.stringify(last), w3(b.item), ov(b.other), JSON.stringify(b));
+const pick = (i: number): AR => all[i];
+console.log(w3(pick(0)), w3(pick(3)));
+
+function first<T>(xs: T[]): T {
+  return xs[0];
+}
+
+console.log(w2(first(all)), ov(first<O>([oa, or])));
+
+// Printing and JSON round trips.
+console.log(p1, p2, oa, or);
+console.log(all);
+const back = JSON.parse(JSON.stringify(p2)) as (number | A)[];
+console.log(w3(back), w2(back), JSON.stringify(back));
+const oa1: OA = { v: { a: 1 } };
+const objs: O[] = [oa, or, "t", oa1];
+console.log(objs.map(ov).join(" "), JSON.stringify(objs));
+
+// Objects holding such objects, a union of two alike objects (one type), and generics.
+type WA = { w: OA; k: string };
+type WR = { w: OR; k: string };
+
+function wf(x: WA | WR | number): string {
+  if (typeof x === "number") {
+    return `n${x}`;
+  }
+  const y = x as WR;
+  const v = y.w.v;
+  return y.k + (typeof v === "number" ? v : v.a);
+}
+
+const wa: WA = { w: { v: { a: 1 } }, k: "a" };
+const wr: WR = { w: { v: 2 }, k: "r" };
+console.log(wf(wa), wf(wr), wf(3));
+
+function g(x: OA | OR): string {
+  return JSON.stringify(x);
+}
+
+console.log(g({ v: 5 } as OA), g(wr.w));
+
+function h<T>(x: T | OR | string): string {
+  return typeof x === "string" ? x : JSON.stringify(x);
+}
+
+console.log(h<OA>(wa.w), h<OA>(wr.w), h<OA>("s"));
+const m = new Map<string, OA | OR | null>();
+m.set("a", wa.w);
+m.set("b", wr.w);
+m.set("c", null);
+for (const [k, v] of m) {
+  console.log(k, v === null ? "null" : (v as OA).v);
+}
+
+// The same members in another order (one def), and a generic instance holding them.
+type U2 = string | (number | A)[] | (R | number)[];
+function f2(x: U2): string {
+  return typeof x === "string" ? x : `${(x as (R | number)[]).length}`;
+}
+const u1: AR = p2;
+const u2: U2 = p1;
+console.log(f2(u1), w3(u2), f2("q"));
+function k<T>(x: T[] | (number | A)[] | string): string {
+  return typeof x === "string" ? x : `${(x as T[]).length}`;
+}
+console.log(k<R | number>(p1), k<R | number>(p2), k<R | number>("z"));
+const both: U2[] = [u1, u2, p3, "q"];
+console.log(both.map(f2).join(","), JSON.stringify(both), both);

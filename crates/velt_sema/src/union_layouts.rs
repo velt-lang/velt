@@ -4,16 +4,19 @@
 //! of its erased member list from then on, its variants renumbered to that def's, so lowering
 //! lays out one type wherever a value of either is stored, passed or read (#1447). A union whose
 //! erased members are all one type (`USD | number` with `USD = number & { __brand: "USD" }`) is
-//! that type: its variants are the whole value in lowering (velt_vir `Cx::union_variant`).
+//! that type: its variants are the whole value in lowering (velt_vir `Cx::union_variant`). Variants
+//! of one union whose payloads erase alike are the first of them, and anonymous object types
+//! whose fields erase alike (they hold unions merged here) are the first def of those fields.
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use crate::hir::{Def, DefId, Expr, ExprKind as E, Pat, PatKind, TyId, TyKind};
+use crate::hir::{AdtKind, Def, DefId, Expr, ExprKind as E, Pat, PatKind, TyId, TyKind};
 use crate::readonly::erase_ty;
 use crate::types::Types;
 use crate::visit::{self, VisitMut};
 
-/// The concrete union defs that are another def from here on, with each variant's index in it.
+/// The concrete union defs that are another def from here on, with each variant's index in it;
+/// a def whose variants erase to duplicates maps to itself, each variant to the first alike.
 pub(crate) type Merged = FxHashMap<DefId, (DefId, Vec<u32>)>;
 
 /// What `plan` found: the merged defs, and every concrete union def no type is from here on
@@ -22,6 +25,9 @@ pub(crate) type Merged = FxHashMap<DefId, (DefId, Vec<u32>)>;
 pub(crate) struct Plan {
     pub merged: Merged,
     pub replaced: FxHashSet<DefId>,
+    /// Anonymous object types alike once their fields are erased (`{ v: number | A }` and
+    /// `{ v: number | R }`), each with the def it is from here on.
+    pub objects: Vec<(DefId, DefId)>,
 }
 
 /// Bound on the rounds that merge unions holding merged unions (`string | (number | A)[]`).
@@ -44,17 +50,58 @@ pub(crate) fn plan(
         .filter(|(_, d)| matches!(d, Some(Def::Enum(e)) if e.is_union && e.generics == 0))
         .map(|(i, _)| DefId(i as u32))
         .collect();
+    let anons: Vec<DefId> = (defs.iter().enumerate())
+        .filter(|(i, d)| {
+            matches!(d, Some(Def::Adt(a)) if a.kind == AdtKind::Anon && a.generics == 0)
+                && !twins.contains_key(&DefId(*i as u32))
+        })
+        .map(|(i, _)| DefId(i as u32))
+        .collect();
+    let mut objects = vec![];
     // Each round erases the members with the mappings found so far: merging two unions can
     // make two unions holding them alike.
     let mut mapped: FxHashMap<TyId, TyId> = FxHashMap::default();
     let mut merged = Merged::default();
     for _ in 0..ROUNDS {
-        if unions.is_empty() {
+        if unions.is_empty() && anons.len() < 2 {
             break;
         }
         *cache = seeded(ty, twins, &base, &mapped, solved);
         let mut first: FxHashMap<Vec<TyId>, (DefId, Vec<TyId>)> = FxHashMap::default();
         let mut grew = false;
+        // Object types whose fields hold unions merged so far are the first def of their
+        // erased fields (`crate::anon::concrete_shapes` keeps the first too).
+        let mut shapes: FxHashMap<Vec<(&str, TyId, bool, bool)>, DefId> = FxHashMap::default();
+        for &d in &anons {
+            let t = ty.intern(TyKind::Adt(d, vec![]));
+            if mapped.contains_key(&t) {
+                continue;
+            }
+            let Some(Def::Adt(a)) = &defs[d.0 as usize] else {
+                continue;
+            };
+            let key = (a.fields.iter())
+                .map(|f| {
+                    let ft = erase_ty(ty, twins, cache, f.ty);
+                    (f.name.as_str(), ft, f.optional, f.presence)
+                })
+                .collect();
+            match shapes.get(&key) {
+                None => {
+                    shapes.insert(key, d);
+                }
+                Some(&rep) => {
+                    let r = ty.intern(TyKind::Adt(rep, vec![]));
+                    mapped.insert(t, r);
+                    objects.push((d, rep));
+                    grew = true;
+                }
+            }
+        }
+        if grew {
+            // The unions below see these objects as one type.
+            *cache = seeded(ty, twins, &base, &mapped, solved);
+        }
         for &d in &unions {
             let t = ty.intern(TyKind::Adt(d, vec![]));
             if mapped.contains_key(&t) || replaced.contains(&t) {
@@ -81,6 +128,16 @@ pub(crate) fn plan(
             }
             match first.get(&key) {
                 None => {
+                    // Variants of one erased payload are the first of them (`(R | number)[] |
+                    // (number | A)[] | string` is `[X, X, string]`): one tag per payload.
+                    let perm: Vec<u32> = (erased.iter())
+                        .map(|p| erased.iter().position(|q| q == p).unwrap_or(0) as u32)
+                        .collect();
+                    if perm.iter().enumerate().all(|(i, &v)| i as u32 == v) {
+                        merged.remove(&d);
+                    } else {
+                        merged.insert(d, (d, perm));
+                    }
                     first.insert(key, (d, erased));
                 }
                 Some((rep, rep_erased)) => {
@@ -102,10 +159,30 @@ pub(crate) fn plan(
     // def an earlier one was merged into: each is the last def of its chain (a lower def at
     // each step).
     let ds: Vec<DefId> = merged.keys().copied().collect();
+    // A def that is its own representative (its duplicate variants mapped) ends a chain; its
+    // perm maps to first occurrences, so applying it again changes nothing.
     for d in ds {
-        while let Some((r2, p2)) = merged.get(&merged[&d].0).cloned() {
-            let perm = merged[&d].1.iter().map(|&i| p2[i as usize]).collect();
+        loop {
+            let r = merged[&d].0;
+            if r == d {
+                break;
+            }
+            let Some((r2, p2)) = merged.get(&r).cloned() else {
+                break;
+            };
+            let perm: Vec<u32> = merged[&d].1.iter().map(|&i| p2[i as usize]).collect();
+            let done = r2 == r;
             merged.insert(d, (r2, perm));
+            if done {
+                break;
+            }
+        }
+    }
+    // An object type a later round merged may be the one an earlier one was merged into.
+    let to: FxHashMap<DefId, DefId> = objects.iter().copied().collect();
+    for (_, rep) in &mut objects {
+        while let Some(&r) = to.get(rep) {
+            *rep = r;
         }
     }
     *cache = seeded(ty, twins, &base, &mapped, solved);
@@ -115,7 +192,11 @@ pub(crate) fn plan(
             mapped.contains_key(&t) || replaced.contains(&t)
         })
         .collect();
-    Plan { merged, replaced }
+    Plan {
+        merged,
+        replaced,
+        objects,
+    }
 }
 
 /// The erasure's type map `base` with the unions in `mapped` replaced, each by the end of its
