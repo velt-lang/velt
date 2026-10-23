@@ -51,6 +51,16 @@ function main() {
       mk(out).names.push("y" + i);
       n += mk(out).kids.shift()!.v;
     }
+    // stores into them
+    for (let i = 0; i < 3; i++) {
+      mk(out).kids = [new Item(i)];
+      mk(out).kids[0] = new Item(3);
+      const m = mk(out);
+      m.kids[0] = new Item(4);
+      n += m.kids[0].v;
+      rw.read((s2) => s2.items[0]).kids = [new Item(5)];
+      mk(out).v = 8;
+    }
     // the caller's array, reached through a call
     firstOf(out).kids.push(new Item(5));
     firstOf(out).kids.push(out[1]);
