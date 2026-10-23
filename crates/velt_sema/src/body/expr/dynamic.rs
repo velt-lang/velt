@@ -354,6 +354,20 @@ impl FnCx<'_, '_> {
         nothing: Nothing,
     ) -> Result<hir::Expr, hir::Expr> {
         let span = h.span;
+        // `undefined` (or `null`) alone as a type, an option of `never`: always its nothing
+        // (a value typed `undefined` passed to an `any` parameter).
+        if payload == self.cx.ty.never {
+            let none = self.dynamic_nothing(nothing, exp, span);
+            let block = hir::Block {
+                stmts: vec![hir::Stmt {
+                    kind: hir::StmtKind::Expr(h),
+                    span,
+                }],
+                value: Some(Box::new(none)),
+                span,
+            };
+            return Ok(self.mk(H::Block(block), exp, span));
+        }
         let consume = !is_place(&h) || outer_mode(&h) == Some(UseMode::Move);
         let mode = if self.cx.is_copy(payload) {
             UseMode::Copy

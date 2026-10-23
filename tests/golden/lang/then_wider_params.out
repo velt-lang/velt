@@ -1,0 +1,26 @@
+any number 5 number
+any string s!
+any object { a: 8 } 8
+any array [ 1, 2, 3 ] 3
+any class 1 2
+any null null
+any undefined undefined
+unknown number 7
+unknown string 1
+object { a: 2 }
+object array [ 4 ]
+union 3
+union u
+nullable 9
+interface n
+result 42
+result 4
+async any 6
+got 1
+catch any boom
+catch unknown bang
+finally
+then2 2
+value 10
+value ten
+named 11
