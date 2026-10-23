@@ -216,7 +216,18 @@ impl Ctx<'_> {
         {
             return self.ty.bool_;
         }
-        self.union_of(tys, false, Span::DUMMY)
+        let u = self.union_of(tys, false, Span::DUMMY);
+        // `null | unknown` as a `T | null` at `T = unknown` spells it (`unknown | null`), so the
+        // wide object's `value: T | null` has the same type.
+        let never = self.ty.never;
+        let null = tys.iter().find_map(|&t| match *self.ty.kind(t) {
+            TyKind::Option(p, n) if p == never => Some(n),
+            _ => None,
+        });
+        match (self.dynamic(u), null) {
+            (Some(_), Some(n)) => self.ty.option_of(u, n),
+            _ => u,
+        }
     }
 
     /// The nearest interface every member extends (or is, by interface) that declares

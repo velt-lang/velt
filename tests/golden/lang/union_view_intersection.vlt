@@ -1,0 +1,47 @@
+// check: no leaks
+// A union view (#1410) of a union of intersections (sigx's `AllState<T, E>`: `AsyncState<T> & { errors: E }`
+// at `unknown`): the wide object with the extra field converts to the view. Expected output: Node's.
+type StateName = "idle" | "ready";
+
+interface Base<T> {
+  refresh(): number;
+}
+
+interface Idle<T> extends Base<T> {
+  readonly state: "idle";
+  readonly hasValue: false;
+}
+
+interface Ready<T> extends Base<T> {
+  readonly state: "ready";
+  readonly hasValue: true;
+}
+
+type State<T> = Idle<T> | Ready<T>;
+type All<T, E> = State<T> & { readonly errors: E };
+
+interface Impl<T> {
+  readonly state: StateName;
+  readonly hasValue: boolean;
+  refresh(): number;
+}
+
+let st: StateName = "idle";
+const impl: Impl<unknown> & { readonly errors: unknown } = {
+  get state() {
+    return st;
+  },
+  get hasValue() {
+    return false;
+  },
+  get errors() {
+    return 5;
+  },
+  refresh: () => 1,
+};
+const a = impl as All<unknown, unknown>;
+console.log(a.state, a.hasValue, a.errors);
+st = "ready";
+console.log(a.state);
+const b = (impl as Impl<unknown>) as State<unknown>;
+console.log(b.state);
