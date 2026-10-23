@@ -1,10 +1,9 @@
 //! TCP streams and listeners of the Velt backend, on [`super::Io`].
 
-use super::{alloc, place, release, unplace, Io, INTEREST, READABLE, WRITABLE};
+use super::{Io, READABLE, WRITABLE};
 use std::io::{self, Read, Write};
 use std::net::SocketAddr;
 use std::pin::Pin;
-use std::sync::atomic::Ordering;
 use std::task::{Context, Poll};
 
 /// A TCP connection on the Velt backend.
@@ -42,7 +41,9 @@ impl TcpStream {
     /// fire for what is already there), so nothing that arrived meanwhile is missed.
     #[cfg(unix)]
     fn follow(&self) {
+        use super::{alloc, place, release, unplace, INTEREST};
         use std::os::fd::AsRawFd;
+        use std::sync::atomic::Ordering;
         let Some(here) = super::super::worker::running_home() else {
             return;
         };

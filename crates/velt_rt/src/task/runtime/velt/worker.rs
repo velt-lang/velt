@@ -133,7 +133,9 @@ pub(super) fn as_output(f: impl FnOnce()) {
 }
 
 /// The home worker of the task this worker is polling (`None` off the workers or between
-/// polls): the worker itself, unless it borrowed the task ([`borrow`]).
+/// polls): the worker itself, unless it borrowed the task ([`borrow`]). Sockets follow their
+/// task on Unix only.
+#[cfg(unix)]
 pub(super) fn running_home() -> Option<usize> {
     with_local(|l| l.map(|l| l.running_home.get()).filter(|&h| h != usize::MAX))
 }
