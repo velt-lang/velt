@@ -647,8 +647,8 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
     stores into the value (`v.items.push(item)` stores a copy; `item` stays outside, so using
     it after the `with` is an error, "`item` is still used after `with` stored it in the
     locked value": store `item.clone()` to keep using `item`; a struct whose fields are plain
-    values, strings and `shared` values, such as a `TcpStream` or a `WebSocket`, may still be
-    used, since its copy reaches the same shared objects) — also when a function or
+    values, strings and `shared` values and are never assigned, such as a `TcpStream` or a
+    `WebSocket`, may still be used, since its copy reaches the same shared objects) — also when a function or
     method the callback calls does the storing (`v.giveTo(out)` gives the method a copy of the
     value). A resource without `clone()` cannot be copied, so the value gets the object itself:
     using the variable afterwards is an error ("`conn` is still used after `with` stored it in
