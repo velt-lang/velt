@@ -2562,7 +2562,9 @@ Object]`, `[object Map]`). A function stops with a `TypeError` naming #924 (Node
 source text).
 
 `Object.is(a, b)` with an `any` or `unknown` operand is SameValue, as in JavaScript: `===`,
-except that `NaN` is itself and `0` is not `-0`.
+except that `NaN` is itself and `0` is not `-0`. `Number.isFinite(x)`, `Number.isNaN(x)`,
+`Number.isInteger(x)` and `Number.isSafeInteger(x)` take an `any` or `unknown` as TypeScript's do,
+and are `false` unless `x` holds a number.
 
 `for (const x of v)` over an `any` holding an array visits its elements as `any`s, reading
 the length before each step as JavaScript's array iterator does. Another value (a string, a
@@ -2998,7 +3000,11 @@ with TypeScript's rules:
   something else). Its members are TypeScript errors until it is narrowed or converted.
 - Calling a `Function` is a call through `any`: the arguments are converted to the parameters'
   types when the function runs, and the result is an `any`. A field of type `Function` is
-  called the same way (`plugin.setup(app)`).
+  called the same way (`plugin.setup(app)`). `f.call(thisArg, a, b)` and
+  `f.apply(thisArg, [a, b])` with a variable, `this` or a literal as `thisArg` are the call
+  `f(a, b)` when `thisArg` is `null` or `undefined`. A Velt function value has no `this` to
+  set, so another `thisArg` stops with a `TypeError` naming #926 (Node would call the function
+  with it).
 - `Set<object>` and `Map<object, V>` (and `Map<Function, V>`) key their entries by identity, as
   in JavaScript.
 - An `any` or `unknown` converts to `object` with `as object` (an `any` also without it),
@@ -3056,5 +3062,5 @@ function main(): void {
 
 **Not yet** (#926): `object` as a `WeakMap` key, a `WeakSet` member or a `WeakRef` target, the
 members every object has (`constructor` as a value, `toString`, `hasOwnProperty`) and a function has
-(`call`, `apply`, `bind`, `name`, `length`), and a type parameter without the `object` bound
+(`call` and `apply` with another `thisArg`, `bind`, `name`, `length`), and a type parameter without the `object` bound
 converted with `as object`. Each is a compile error.

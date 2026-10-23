@@ -1,4 +1,5 @@
 // Spread arguments in calls through `any` (#924): `f(...args)`, `o.m(a, ...xs)`.
+// check: no leaks
 function main(): void {
   const fns: any[] = [
     (a: number, b: number) => console.log("f", a + b),

@@ -1,4 +1,5 @@
 // `??=`, `||=` and `&&=` on members of an `any` (#924): the member is read once, and the
+// check: no leaks
 // right-hand side is evaluated and written only when the operator calls for it. (Velt's
 // objects have a fixed shape, so the members are declared.)
 function log(tag: string, v: number): number {

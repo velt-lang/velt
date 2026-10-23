@@ -37,6 +37,9 @@ impl FnCx<'_, '_> {
         if let Some(h) = self.dynamic_is_array_call(callee, args, span) {
             return h;
         }
+        if let Some(h) = self.dynamic_number_test(callee, args, span) {
+            return h;
+        }
         if let Some(h) = self.object_helper_call(callee, type_args, args, span) {
             return h;
         }

@@ -1,4 +1,5 @@
 // `x.constructor.name` and `x.constructor?.name` of an `object`, `any` or `Function` (#926, #924):
+// check: no leaks
 // the name of the constructor of the value held, as sigx names a value in its messages.
 class Point {
   x = 1;

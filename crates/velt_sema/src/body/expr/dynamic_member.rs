@@ -225,6 +225,11 @@ impl FnCx<'_, '_> {
         args: &[ast::Expr],
         span: Span,
     ) -> Result<hir::Expr, hir::Expr> {
+        if self.cx.dynamic(recv.ty) == Some(Dynamic::Function) {
+            if let Some(h) = self.function_call_apply(&recv, prop, args, span) {
+                return Ok(h);
+            }
+        }
         let (recv, any) = self.dynamic_receiver(recv, Some(Some(&prop.name)))?;
         let Some(any) = any else {
             self.check_args_loose(args);
@@ -239,6 +244,58 @@ impl FnCx<'_, '_> {
         };
         all.extend(boxed);
         Ok(self.intrinsic(Intrinsic::AnyCall, all, any, span))
+    }
+
+    /// `f.call(thisArg, ...args)` and `f.apply(thisArg, list)` of a `Function` `f` whose
+    /// `thisArg` is a variable, `this` or a literal: the call `f(...args)` when `thisArg` is
+    /// `null` or `undefined`. A Velt function value has no `this` of its own to set (an arrow
+    /// ignores it in JavaScript too), so another `thisArg` stops with a `TypeError` naming #926
+    /// rather than calling the function without it. `None` for other members and `thisArg`s.
+    fn function_call_apply(
+        &mut self,
+        f: &hir::Expr,
+        prop: &ast::Ident,
+        args: &[ast::Expr],
+        span: Span,
+    ) -> Option<hir::Expr> {
+        let (this, rest) = args.split_first()?;
+        let pure = matches!(
+            this.kind,
+            ast::ExprKind::Ident(_) | ast::ExprKind::This | ast::ExprKind::Lit(_)
+        );
+        if !pure || !matches!(prop.name.as_str(), "call" | "apply") {
+            return None;
+        }
+        let t = self.expr(this, None, Want::Borrow);
+        let any = self.any_ty()?;
+        let t = self.share_if_place(t);
+        let t = self.coerce(t, any);
+        let rest = match (prop.name.as_str(), rest) {
+            ("call", _) => rest.to_vec(),
+            ("apply", []) => vec![],
+            ("apply", [list]) => {
+                let spread = ast::ExprKind::Spread(Box::new(list.clone()));
+                vec![super::setters::synth(spread, list.span)]
+            }
+            _ => return None,
+        };
+        let call = self.dynamic_apply(f.clone(), &rest, span).ok()?;
+        let null = self.dynamic_nothing(Nothing::Null, any, span);
+        let b = self.cx.ty.bool_;
+        let nullish = self.intrinsic(Intrinsic::AnyLooseEq, vec![t, null], b, span);
+        let msg = format!(
+            "TypeError: `{}` with a `this` other than `null` or `undefined` is not supported yet (#926): a function value has no `this`",
+            prop.name
+        );
+        let msg = self.key_lit(&msg, span);
+        let never = self.cx.ty.never;
+        let stop = self.intrinsic(Intrinsic::Panic, vec![msg], never, span);
+        let kind = H::If {
+            cond: Box::new(nullish),
+            then: Box::new(call),
+            els: Box::new(stop),
+        };
+        Some(self.mk(kind, any, span))
     }
 
     /// `f(args)` where `f` is an `any`: `Err(f)` when it is not dynamic.
