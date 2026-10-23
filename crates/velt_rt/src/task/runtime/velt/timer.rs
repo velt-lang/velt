@@ -23,7 +23,13 @@ struct Entry {
 pub(super) struct Timers {
     heap: BinaryHeap<Reverse<(Instant, u64, Key)>>,
     seq: u64,
+    /// The size at which [`add`](Timers::add) drops cancelled entries: twice what was left the
+    /// last time, so a server that sets and clears a long timeout per request stays bounded.
+    compact_at: usize,
 }
+
+/// The smallest heap that is compacted.
+const COMPACT_MIN: usize = 64;
 
 /// An entry ordered by address only (the heap orders by deadline and sequence first).
 struct Key(Arc<Entry>);
@@ -47,6 +53,11 @@ impl Ord for Key {
 
 impl Timers {
     fn add(&mut self, deadline: Instant, entry: Arc<Entry>) {
+        if self.heap.len() >= self.compact_at.max(COMPACT_MIN) {
+            self.heap
+                .retain(|Reverse((_, _, Key(e)))| !e.cancelled.load(Ordering::Acquire));
+            self.compact_at = self.heap.len() * 2;
+        }
         self.seq += 1;
         self.heap.push(Reverse((deadline, self.seq, Key(entry))));
     }
@@ -103,6 +114,8 @@ impl Sleep {
     fn cancel(&mut self) {
         if let Some(e) = self.entry.take() {
             e.cancelled.store(true, Ordering::Release);
+            // The task is not kept alive until the deadline by an entry nobody waits on.
+            drop(e.waker.take());
         }
     }
 }
@@ -202,5 +215,25 @@ mod tests {
         assert_eq!(timers.next_deadline(), Some(ms(30)));
         timers.fire(ms(40));
         assert_eq!(*log.lock().unwrap(), vec![10, 21, 22, 30]);
+    }
+
+    #[test]
+    fn cancelled_timers_do_not_pile_up_until_their_deadline() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let later = Instant::now() + Duration::from_secs(3600);
+        let mut timers = Timers::default();
+        timers.add(later, entry(1, &log));
+        for _ in 0..100_000 {
+            let e = entry(2, &log);
+            timers.add(later, e.clone());
+            e.cancelled.store(true, Ordering::Release);
+        }
+        assert!(
+            timers.heap.len() <= 2 * COMPACT_MIN,
+            "{}",
+            timers.heap.len()
+        );
+        timers.fire(later);
+        assert_eq!(*log.lock().unwrap(), vec![1]);
     }
 }
