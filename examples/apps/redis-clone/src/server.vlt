@@ -9,19 +9,15 @@ import { Db } from "./db";
 import { protocolErrorReply, RespParser, Writer } from "./resp";
 import { across, Merge, mergeOf, shardOf } from "./shards";
 
-type Batch = { reply: u8[]; open: bool };
-
-function runBatch(db: Db, commands: u8[][][], now: i64): Batch {
+/// Runs `commands` on `db`, their replies into `out`; false when the client quit.
+function runBatch(db: Db, commands: u8[][][], now: i64, out: Writer): bool {
   db.now = now;
-  const out = new Writer(256);
-  let open = true;
   for (const args of commands) {
     if (!execute(db, args, out)) {
-      open = false;
-      break;
+      return false;
     }
   }
-  return { reply: out.take(), open };
+  return true;
 }
 
 /// How command `args` spreads over `n` shards (`mergeOf`). Only names starting with one of
@@ -59,9 +55,7 @@ function answer(shards: shared<Mutex<Db>>[], commands: u8[][][], out: Writer): b
       }
       batch.push(commands.pop()!);
     }
-    const ran = shards[s].with((d) => runBatch(d, batch, now));
-    out.bytes(ran.reply);
-    if (!ran.open) {
+    if (!shards[s].with((d) => runBatch(d, batch, now, out))) {
       return false;
     }
   }
@@ -70,16 +64,22 @@ function answer(shards: shared<Mutex<Db>>[], commands: u8[][][], out: Writer): b
 
 async function serveClient(conn: TcpStream, shards: shared<Mutex<Db>>[]): Promise<void> {
   const parser = new RespParser();
+  // One reply buffer for the connection's lifetime.
+  const out = new Writer();
   try {
     while (true) {
-      const data = await conn.read();
-      if (data.length === 0) {
-        break;
-      }
+      let n: number | null = 0;
       try {
-        parser.feed(data);
+        n = parser.readFrom(conn);
       } catch (e) {
         break; // past the query-buffer limit: Redis closes such a client without a reply
+      }
+      if (n == null) {
+        break;
+      }
+      if (n === 0) {
+        await conn.readable();
+        continue;
       }
       const commands: u8[][][] = [];
       let protocolError: u8[] | null = null;
@@ -94,9 +94,9 @@ async function serveClient(conn: TcpStream, shards: shared<Mutex<Db>>[]): Promis
       }
       let open = true;
       if (commands.length > 0) {
-        const out = new Writer();
         open = answer(shards, commands, out);
-        await conn.writeBytes(out.take());
+        await conn.writeBytes(out.buf, 0, out.length as number);
+        out.clear();
       }
       if (protocolError != null) {
         await conn.writeBytes(protocolErrorReply(protocolError));

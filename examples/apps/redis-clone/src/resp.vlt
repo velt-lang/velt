@@ -1,6 +1,7 @@
 // RESP2, the Redis protocol: requests are arrays of bulk strings (`*2\r\n$3\r\nGET\r\n$1\r\nk\r\n`)
 // or inline lines (`PING\r\n`); replies are written into a growable byte buffer.
 import { utf8Encode } from "velt:encoding";
+import { TcpStream } from "velt:net";
 
 const CR: u8 = 13;
 const LF: u8 = 10;
@@ -39,6 +40,8 @@ const MAX_BULK: i64 = 536870912;
 /// is disconnected.
 const MAX_QUERY: i64 = 1073741824;
 const INITIAL: i64 = 16384;
+/// Room `readFrom` makes in the buffer before a read.
+const MIN_READ: i64 = 4096;
 /// A buffer this large is given back once it has been consumed.
 const SHRINK_ABOVE: i64 = 1048576;
 
@@ -65,6 +68,51 @@ export class RespParser {
 
   constructor(limit: i64 = MAX_QUERY) {
     this.limit = limit;
+  }
+
+  /// Reads what `conn` has straight into the buffer (nothing allocated or copied): the bytes
+  /// read, 0 when nothing has arrived yet (await `conn.readable()`), or null at the end of the
+  /// stream. Throws `QueryBufferFull` once the unparsed input passes the limit.
+  readFrom(conn: TcpStream): number | null {
+    if (this.pos === this.end) {
+      this.pos = 0;
+      this.end = 0;
+      if (this.buf.length > SHRINK_ABOVE) {
+        this.buf = Buffer.alloc(INITIAL as usize);
+      }
+    }
+    if (this.end + MIN_READ + 2 > this.buf.length) {
+      this.room(MIN_READ);
+    }
+    const n = conn.tryRead(this.buf, this.end as number, (this.buf.length - 2) as number);
+    if (n != null && n > 0) {
+      this.end += n as i64;
+      this.buf[this.end] = CR;
+      this.buf[this.end + 1] = LF;
+      if (this.end - this.pos > this.limit) {
+        throw new QueryBufferFull("query buffer limit");
+      }
+    }
+    return n;
+  }
+
+  /// Makes room for `n` more bytes after the data (and the CR LF sentinel): drops the parsed
+  /// prefix, then grows by doubling if that isn't enough.
+  private room(n: i64) {
+    if (this.pos > 0) {
+      this.buf.copyWithin(0, this.pos, this.end);
+      this.end -= this.pos;
+      this.pos = 0;
+    }
+    if (this.end + n + 2 > this.buf.length) {
+      let size = this.buf.length * 2;
+      while (size < this.end + n + 2) {
+        size *= 2;
+      }
+      const grown = Buffer.alloc(size);
+      grown.set(this.buf.slice(0, this.end), 0);
+      this.buf = grown;
+    }
   }
 
   feed(data: u8[]) {
@@ -361,6 +409,11 @@ export class Writer {
   }
 
   /// The reply bytes so far; the writer starts over.
+  /// Forgets what was written (the buffer is kept).
+  clear() {
+    this.length = 0;
+  }
+
   take(): u8[] {
     const out = this.buf.slice(0, this.length);
     this.length = 0;
