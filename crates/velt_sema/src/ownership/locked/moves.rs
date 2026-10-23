@@ -113,12 +113,13 @@ fn movable_in(cx: &Ctx, f: &mut FnDef, c: DefId, l: LocalId, at: Span) -> bool {
     };
     visit::block(&mut f.body.block, &mut scan);
     let inside = |s: Span, o: Span| o.lo <= s.lo && s.hi <= o.hi;
-    // A loop around the callback must declare the variable: each iteration has its own.
+    // A loop around the callback must declare the variable in its body: each iteration has its
+    // own (one declared in a `for` header is the same variable for every iteration).
     let per_iteration = scan
         .loops
         .iter()
-        .filter(|lp| inside(at, **lp))
-        .all(|lp| scan.declared.is_some_and(|d| inside(d, *lp)));
+        .filter(|(lp, _)| inside(at, *lp))
+        .all(|(_, body)| scan.declared.is_some_and(|d| inside(d, *body)));
     (scan.declared.is_some() || own_param) && !scan.captured_elsewhere && per_iteration
 }
 
@@ -131,14 +132,15 @@ struct Scan<'a, 'm> {
     /// The `let` / `const` statement declaring it.
     declared: Option<Span>,
     captured_elsewhere: bool,
-    loops: Vec<Span>,
+    /// Each loop's span and its body's.
+    loops: Vec<(Span, Span)>,
 }
 
 impl VisitMut for Scan<'_, '_> {
     fn stmt(&mut self, s: &mut Stmt) {
         match &s.kind {
             S::Let { local, .. } if *local == self.local => self.declared = Some(s.span),
-            S::While { .. } | S::ForOf { .. } => self.loops.push(s.span),
+            S::While { body, .. } | S::ForOf { body, .. } => self.loops.push((s.span, body.span)),
             _ => {}
         }
     }

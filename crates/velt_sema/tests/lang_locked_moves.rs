@@ -4,7 +4,7 @@
 
 mod common;
 
-use common::programs::ok_src;
+use common::programs::{err_src, ok_src};
 use velt_sema::hir::{Def, PassMode, Program};
 
 /// The mode and `share` flag of variable `var`'s capture by a closure made in function `f`.
@@ -93,6 +93,19 @@ fn a_loop_around_the_call_must_declare_the_variable() {
          function main() { run(shared(new Mutex(new Db()))); }",
     );
     assert!(moves(&p, "run", "batch"));
+    // Declared in a `for` header: one variable for every iteration. This moved, and the next
+    // iteration wrote to the locked value without the lock.
+    let e = err_src(&format!(
+        "{PRELUDE}
+         function main() {{
+           const m = shared(new Mutex(new Db()));
+           for (let it = new Item(), i = 0; i < 3; i++) {{
+             it.n = i;
+             m.with((d) => {{ d.items.push(it); }});
+           }}
+         }}"
+    ));
+    assert!(e.contains("still used after `with` stored it"), "{e}");
 }
 
 #[test]

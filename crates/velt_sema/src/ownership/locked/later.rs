@@ -44,7 +44,8 @@ pub(super) fn later_use(cx: &mut Ctx, f: DefId, l: LocalId, at: Span) -> Option<
     let inside = |s: Span, o: Span| o.lo <= s.lo && s.hi <= o.hi;
     let around: Vec<Span> = loops
         .into_iter()
-        .filter(|lp| inside(at, *lp) && !decl.is_some_and(|d| inside(d, *lp)))
+        .filter(|(lp, body)| inside(at, *lp) && !decl.is_some_and(|d| inside(d, *body)))
+        .map(|(lp, _)| lp)
         .collect();
     all.into_iter()
         .filter(|u| !inside(*u, at))
@@ -56,8 +57,9 @@ struct Uses {
     local: LocalId,
     /// Closures made in the body, with their spans.
     captures: Vec<(DefId, Span)>,
-    /// Spans of the loops in the body.
-    loops: Vec<Span>,
+    /// Spans of the loops in the body, with their bodies' (a variable declared in a `for`
+    /// header is one for all iterations).
+    loops: Vec<(Span, Span)>,
     uses: Vec<Span>,
     /// The `let` / `const` statement declaring the local.
     decl: Option<Span>,
@@ -65,8 +67,8 @@ struct Uses {
 
 impl VisitMut for Uses {
     fn stmt(&mut self, s: &mut Stmt) {
-        if matches!(s.kind, S::While { .. } | S::ForOf { .. }) {
-            self.loops.push(s.span);
+        if let S::While { body, .. } | S::ForOf { body, .. } = &s.kind {
+            self.loops.push((s.span, body.span));
         }
         if matches!(s.kind, S::Let { local, .. } if local == self.local) {
             self.decl = Some(s.span);
