@@ -460,7 +460,7 @@ impl crate::body::FnCx<'_, '_> {
     }
 }
 
-fn strip_parens(e: &ast::Expr) -> &ast::Expr {
+pub(super) fn strip_parens(e: &ast::Expr) -> &ast::Expr {
     match &e.kind {
         ast::ExprKind::Paren(x) => strip_parens(x),
         _ => e,

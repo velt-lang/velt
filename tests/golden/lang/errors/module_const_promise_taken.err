@@ -1,0 +1,11 @@
+module_const_promise_taken.vlt:5:35: error: `promiseResolve` cannot initialize module constant `B`: it is async
+module_const_promise_taken.vlt:9:3: error: cannot assign to a field of module-level constant `B`
+module_const_promise_taken.vlt:10:4: error: cannot assign to a field of module-level constant `B`
+module_const_promise_taken.vlt:11:4: error: cannot assign to a field of module-level constant `B`
+module_const_promise_taken.vlt:12:13: error: cannot move out of module constant `B`
+module_const_promise_taken.vlt:13:13: error: cannot move out of module constant `B`
+module_const_promise_taken.vlt:14:14: error: cannot move out of module constant `B`
+module_const_promise_taken.vlt:19:17: error: cannot move out of module constant `B`
+module_const_promise_taken.vlt:20:19: error: cannot move out of module constant `B`
+module_const_promise_taken.vlt:16:14: error: cannot move out of module constant `B`
+module_const_promise_taken.vlt:18:12: error: cannot move out of module constant `B`

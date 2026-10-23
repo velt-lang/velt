@@ -381,7 +381,7 @@ impl FnCx<'_, '_> {
     pub(crate) fn global_read(&mut self, d: DefId, want: Want, span: Span) -> hir::Expr {
         crate::body::driver::ensure_global(self.cx, d);
         let g = self.cx.global(d).expect("ICE: global");
-        let (ty, name, mutable) = (g.ty, g.name.clone(), g.stored);
+        let (ty, mutable) = (g.ty, g.stored);
         // A constant whose value is taken over is the one object Node evaluates once.
         let taken = want == Want::Move && !self.cx.is_copy(ty) && ty != self.cx.ty.str_;
         let shared_fn = taken && crate::body::pure_init::shares_on_move(self.cx, d);
@@ -398,17 +398,48 @@ impl FnCx<'_, '_> {
             let read = self.mk(H::Global(d), ty, span);
             return self.intrinsic(hir::Intrinsic::Share, vec![read], ty, span);
         }
-        if want == Want::Move && crate::body::pure_init::is_table(self.cx, d) {
-            let msg = format!("cannot move out of module constant `{name}`");
-            self.cx
-                .error(crate::body::pure_init::table_escapes(&name, msg, span));
-        } else if want == Want::Move && !self.cx.is_copy(ty) && ty != self.cx.ty.str_ {
-            self.cx.error(
-                Diagnostic::error(format!("cannot move out of module constant `{name}`"), span)
-                    .with_note(format!("use `{name}.clone()` for an owned copy")),
-            );
+        if want == Want::Move {
+            let name = self.cx.global(d).map(|g| g.name.clone());
+            self.moved_out_of_const(d, ty, span, name);
         }
         self.mk(H::Global(d), ty, span)
+    }
+
+    /// Module constant `d`, evaluated at each use, taken over by value (`const v = K`, and
+    /// through `!` or `??`: `const v = K!`, `let v = K ?? d`, or a part: `const a = N.a`), when
+    /// its value is not copied, as a string or a number is (`ty`: the type of the value taken;
+    /// `part`: its source form, for the note): kept in the module state, as TypeScript aliases
+    /// the one object, or an error when it can't be kept.
+    pub(crate) fn moved_out_of_const(
+        &mut self,
+        d: DefId,
+        ty: TyId,
+        span: Span,
+        part: Option<String>,
+    ) {
+        use crate::body::moved_const as mc;
+        let Some(g) = self.cx.global(d) else { return };
+        let name = g.name.clone();
+        if g.stored || crate::body::pure_init::shares_on_move(self.cx, d) {
+            return;
+        }
+        let table = crate::body::pure_init::is_table(self.cx, d);
+        if !table && self.copied_value(ty) {
+            return;
+        }
+        // Taken over, the constant is the one object the module state keeps, as in Node; the
+        // ones that can't be kept (`kept_consts::keep`) are errors.
+        if crate::kept_consts::keep(self.cx, d) {
+            return;
+        }
+        if table {
+            let msg = format!("cannot move out of module constant `{name}`");
+            let err = crate::body::pure_init::table_escapes(&name, msg, span);
+            mc::report(self.cx, d, span, err);
+        } else {
+            let err = mc::error(&name, part.as_deref(), span);
+            mc::report(self.cx, d, span, err);
+        }
     }
 
     /// A named function used as a value; generic ones take their type args from `exp`.
