@@ -43,11 +43,12 @@ pub(crate) fn erase(cx: &mut Ctx) -> HashMap<TyId, String> {
         let brand = cx.ty.intern(TyKind::Adt(d, vec![]));
         cache.insert(brand, base);
     }
-    // A type with error-set variables is its solved type (`throws::vars`), erased.
-    for (t, s) in cx.solved_types() {
-        let r = erase_ty(&mut cx.ty, &twins, &mut cache, s);
-        cache.insert(t, r);
-    }
+    // A type with error-set variables is its solved type (`throws::vars`), erased; unions of
+    // one erased member list are one def, of one erased member that member.
+    let solved = cx.solved_types();
+    let plan = crate::union_layouts::plan(&mut cx.ty, &twins, &mut cache, &cx.defs, &solved);
+    let merged = plan.merged;
+    cx.replaced_unions = plan.replaced;
     // A field-only interface's object type is called by the interface's name.
     for d in twins.keys() {
         if let Some(Def::Adt(a)) = &cx.defs[d.0 as usize] {
@@ -68,6 +69,15 @@ pub(crate) fn erase(cx: &mut Ctx) -> HashMap<TyId, String> {
         type_level,
         ..
     } = cx;
+    for def in defs.iter_mut().flatten() {
+        match def {
+            Def::Fn(f) => crate::union_layouts::renumber_block(&mut f.body.block, ty, &merged),
+            Def::Global(g) => crate::union_layouts::renumber_expr(&mut g.init, ty, &merged),
+            Def::Adt(a) => (a.fields.iter_mut().filter_map(|f| f.default.as_mut()))
+                .for_each(|d| crate::union_layouts::renumber_expr(d, ty, &merged)),
+            _ => {}
+        }
+    }
     let never = ty.never;
     let mut e = |t: TyId| erase_ty(ty, &twins, &mut cache, t);
     // A twin must know a field is assigned if its readonly view's is (it never is today).

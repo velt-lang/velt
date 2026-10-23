@@ -826,9 +826,13 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   `Program::union_shapes` (the concrete union def of each member list as lowering sees it: the
   payloads after readonly erasure, deduplicated and sorted by type id), so one shape is one
   VIR type. Concrete unions that erasure makes one member list (`number | A` and `number | {
-  readonly a: number }`, `A` a field-only interface) are the first of them in lowering, their
-  variants mapped by payload. Sema treats members that erase to one type as one member when it
-  re-interns an instance (`T | A` at `T = { a: number }` is `A`), as lowering deduplicates them.
+  readonly a: number }`, `A` a field-only interface) are the first def of that list in the
+  program lowering gets: every type, `Variant`, `UnwrapVariant` and `PatKind::Variant` of the
+  others is that def, with its variant numbers. A concrete union whose members erase to one type
+  (`USD | number`, `USD` a brand of `number`) is that type, its variants still written as
+  `Variant`s: a variant of a value whose type is no enum is the whole value. Sema treats
+  members that erase to one type as one member when it re-interns an instance (`T | A` at
+  `T = { a: number }` is `A`), as lowering deduplicates them.
   A generic union whose members are not all plain types (a union or nullable member) keeps its
   own variants. An optional field `v?: T` of a generic object type at a dynamic `T` (`unknown`,
   `any`) keeps its option (`{ v?: unknown | undefined }`), as the generic def lays it out,

@@ -624,14 +624,15 @@ pub(crate) fn concrete_shapes(cx: &Ctx) -> FxHashMap<Vec<(String, TyId, bool, bo
 /// anonymous object type of its fields by then), deduplicated and sorted by type id, as
 /// velt_vir `Cx::canon_union` looks a substituted generic union up. Keyed by the members
 /// sema interned the union with instead, a generic `T | A` at `T = number` missed the
-/// caller's `number | A` and was laid out as a second type of its own (#1447).
+/// caller's `number | A` and was laid out as a second type of its own (#1447). The unions
+/// erasure replaced (`crate::union_layouts`) are left out: no type is one of them any more.
 pub(crate) fn concrete_unions(cx: &Ctx) -> FxHashMap<Vec<TyId>, DefId> {
     let mut out = FxHashMap::default();
     for (i, d) in cx.defs.iter().enumerate() {
         let Some(crate::hir::Def::Enum(e)) = d else {
             continue;
         };
-        if !e.is_union || e.generics != 0 {
+        if !e.is_union || e.generics != 0 || cx.replaced_unions.contains(&DefId(i as u32)) {
             continue;
         }
         let mut key: Vec<TyId> = vec![];
@@ -641,9 +642,6 @@ pub(crate) fn concrete_unions(cx: &Ctx) -> FxHashMap<Vec<TyId>, DefId> {
             }
         }
         key.sort_by_key(|t| t.0);
-        // Of two unions that erasure made one member list (`A | K` and `{ readonly a: number }
-        // | K`, `A` a field-only interface), the first is the type of both for lowering (velt_vir
-        // `Cx::concrete_union_rep`).
         out.entry(key).or_insert(DefId(i as u32));
     }
     out

@@ -163,14 +163,14 @@ impl<'h> Cx<'h> {
     /// `canon_union`): with plain members only, the deduplicated members' union (sema's def of
     /// that member list, else the first type seen with it), or the single member itself.
     fn canon_union(&mut self, d: DefId, args: &[TyId]) -> Option<TyId> {
+        if args.is_empty() {
+            return None;
+        }
         let hir::Def::Enum(e) = self.hir.def(d) else {
             return None;
         };
         if !e.is_union {
             return None;
-        }
-        if args.is_empty() {
-            return self.concrete_union_rep(d);
         }
         let payloads: Vec<TyId> = e.variants.iter().map(|v| v.payload[0]).collect();
         let mut members: Vec<TyId> = vec![];
@@ -199,29 +199,11 @@ impl<'h> Cx<'h> {
         })
     }
 
-    /// The one type of concrete union `d`'s erased members: sema's first union def of that
-    /// member list (`hir::Program::union_shapes`), when that is another def. Erasure makes
-    /// unions sema keeps apart one member list (`number | A` and `number | { readonly a:
-    /// number }`, `A` a field-only interface); a generic instance resolves to one of them, so
-    /// the others are that type too, their variants mapped by payload (`union_variant`).
-    fn concrete_union_rep(&mut self, d: DefId) -> Option<TyId> {
-        let hir::Def::Enum(e) = self.hir.def(d) else {
-            return None;
-        };
-        let mut members: Vec<TyId> = vec![];
-        for p in e.variants.iter().filter_map(|v| v.payload.first().copied()) {
-            if !members.contains(&p) {
-                members.push(p);
-            }
-        }
-        members.sort_by_key(|t| t.0);
-        let u = *self.hir.union_shapes.get(&members)?;
-        (u != d).then(|| self.intern(TyKind::Adt(u, vec![])))
-    }
-
     /// Where variant `variant` of the HIR union type `hir_ty` (of the current instance) lives in
     /// its canonical type `ty` (`canon_union`): another variant index, or the whole value when
-    /// the union collapsed to that member. Unchanged for every other enum.
+    /// the union collapsed to that member. Unchanged for every other enum. A variant of a value
+    /// that is no enum is the whole value: a union whose members erase to one type is that type
+    /// (velt_sema `union_layouts`), its variants still written as variants.
     pub(super) fn union_variant(
         &mut self,
         hir_ty: TyId,
@@ -229,6 +211,14 @@ impl<'h> Cx<'h> {
         variant: u32,
         ty: TyId,
     ) -> VariantAt {
+        let is_enum = match self.kind(ty) {
+            TyKind::Adt(d, _) => matches!(self.hir.def(d), hir::Def::Enum(_)),
+            TyKind::Result(..) => true,
+            _ => false,
+        };
+        if !is_enum {
+            return VariantAt::Whole;
+        }
         let raw = self.subst_raw(hir_ty, targs);
         if raw == ty {
             return VariantAt::Index(variant);
