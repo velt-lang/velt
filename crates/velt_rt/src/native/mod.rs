@@ -34,7 +34,7 @@ use futures::{native_drop, native_poll, take_completer};
 use std::task::Waker;
 
 /// The table version this runtime provides.
-pub const NATIVE_ABI_VERSION: u32 = 1;
+pub const NATIVE_ABI_VERSION: u32 = 2;
 
 /// The work of a [`fut_blocking`] future: runs on the blocking pool with its context and the result
 /// slot to fill.

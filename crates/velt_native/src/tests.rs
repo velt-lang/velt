@@ -207,7 +207,7 @@ unsafe extern "C" fn free(p: *mut u8, size: u64, align: u64) {
 }
 
 static MOCK: Api = Api {
-    abi_version: 1,
+    abi_version: crate::ABI_VERSION,
     size: std::mem::size_of::<Api>() as u32,
     str_new,
     str_bytes,

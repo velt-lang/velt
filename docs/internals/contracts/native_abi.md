@@ -108,7 +108,8 @@ typedef struct VeltRtApi {
 - The library never links a `velt_rt_*` symbol: it gets this table (every entry is the runtime
   function or helper named in its comment). A library is `dlopen`ed into `velt dev`'s host,
   whose runtime symbols are not exported, and a DLL cannot import from an executable.
-- **Versioning**: the table is append-only; `abi_version` grows by one with each addition. A
+- **Versioning**: the table is append-only; `abi_version` grows by one with each addition
+  (version 2 adds the async I/O part below and the values beyond `u8[]`). A
   library records the version it needs (`abi` in `native.json`, `native_abi` in the index);
   vpm refuses a library needing more than the running `velt` provides
   (`vpm::native::NATIVE_ABI` = velt_rt's `NATIVE_ABI_VERSION`), and the SDK's init checks

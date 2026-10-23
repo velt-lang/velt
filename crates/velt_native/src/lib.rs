@@ -58,7 +58,7 @@ pub use velt_native_macros::Value;
 extern crate self as velt_native;
 
 /// The table version this crate needs (the runtime's must be at least this).
-pub const ABI_VERSION: u32 = 1;
+pub const ABI_VERSION: u32 = 2;
 
 /// A Velt `string` (24 bytes, layout owned by the runtime; read it through [`Api`]).
 #[repr(C)]
