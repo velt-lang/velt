@@ -1,6 +1,7 @@
 // check: no leaks
 // Raw TCP streams: `abort` fails a waiting read (it does not read as the end of the stream),
 // and bytes go out in call order when a large write cannot finish at the call.
+import { channel } from "velt:channel";
 import { connect, listen } from "velt:net";
 
 async function main() {
@@ -35,12 +36,15 @@ async function main() {
   c.close();
   console.log("server read:", await quiet);
 
-  // 16 MiB does not fit in the socket's buffers: the write goes on after the call. The small
-  // writes started after it come after it on the wire, and tryWrite takes nothing meanwhile.
+  // A write the socket cannot take at the call goes on after it: the small writes started
+  // after it come after it on the wire, and tryWrite takes nothing meanwhile. The socket is
+  // filled first, while the peer does not read yet (a Windows socket takes a whole 16 MiB write
+  // at once while it has any room).
   const size = 16 << 20;
+  const full = channel<i64>();
   const sink = spawn(async () => {
     const conn = await server.accept();
-    await sleep(50);
+    const filled = (await full.receive()) ?? 0;
     let total = 0;
     let tail: u8[] = [];
     while (true) {
@@ -55,17 +59,25 @@ async function main() {
       }
     }
     conn.close();
-    return total == size + 3 && tail[13] == 1 && tail[14] == 2 && tail[15] == 3;
+    return total == (filled as number) + size + 3 && tail[13] == 1 && tail[14] == 2 && tail[15] == 3;
   });
   const w = await connect(`127.0.0.1:${server.port}`);
   const big = Buffer.alloc(size);
+  let filled: i64 = 0;
+  let n = 0;
+  while ((n = w.tryWrite(big)) > 0) {
+    filled += n;
+  }
   const first = w.writeBytes(big);
   console.log("tryWrite while writing:", w.tryWrite([9]));
   const second = w.writeBytes([1, 2, 3]);
+  // Now the peer reads.
+  full.trySend(filled);
   await first;
   await second;
   w.shutdown();
   console.log("all bytes, the small write last:", await sink);
   w.close();
+  full.close();
   server.close();
 }
