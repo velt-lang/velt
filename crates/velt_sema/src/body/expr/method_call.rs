@@ -398,6 +398,11 @@ impl FnCx<'_, '_> {
                 };
             }
         }
+        // `t.join(sep)` / `t.toString()` on a tuple, as on an array.
+        let recv = match self.tuple_text_call(recv, prop, args, span) {
+            Ok(text) => return text,
+            Err(recv) => recv,
+        };
         if crate::collect::exports::member_maybe_dropped(self.cx, recv.ty, &prop.name) {
             // The parser may have dropped its declaration (`Ctx::recovered`).
             for a in args {

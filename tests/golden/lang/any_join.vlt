@@ -1,0 +1,32 @@
+// `xs.join(sep)` on an `any` holding an array writes it as `Array.prototype.join` does
+// (issue #1462): each element as `String(x)` writes it, `null` and `undefined` as empty text,
+// `","` without a separator; another value's own `join` method is called.
+const xs: any = [1, 2, 3];
+console.log(xs.join(";"), xs.join(), xs.join(undefined));
+const nested: any = [[1, 2], null, { a: 1 }, "s", undefined, true];
+console.log(nested.join(" | "));
+const sep: any = 0;
+console.log(xs.join(sep));
+
+class Chain {
+  parts: string[];
+  constructor(parts: string[]) {
+    this.parts = parts;
+  }
+  join(s: string): string {
+    return this.parts.join(s) + "!";
+  }
+}
+const c: any = new Chain(["a", "b"]);
+console.log(c.join("-"));
+
+let order = "";
+function list(): any {
+  order += "l";
+  return ["x", "y"];
+}
+function glue(): string {
+  order += "g";
+  return "+";
+}
+console.log(list().join(glue()), order);

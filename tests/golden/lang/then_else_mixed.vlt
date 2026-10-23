@@ -1,0 +1,112 @@
+// `then(onFulfilled, onRejected)` whose callbacks give different types or throw different
+// errors: the promise gives their union and rejects with either callback's error, as in
+// TypeScript (`Promise<TResult1 | TResult2>`).
+class LoadError extends Error {}
+class Parse extends Error {}
+
+async function load(ok: boolean): Promise<{ default: string } | string> {
+  if (!ok) {
+    throw new LoadError("offline");
+  }
+  return { default: "mod" };
+}
+
+let state = "pending";
+
+// The lazy-module pattern: the rejection handler records the error and rethrows it, so the
+// promise still gives only the module.
+async function ensure(ok: boolean): Promise<string> {
+  return load(ok).then(
+    (m) => {
+      state = "resolved";
+      return typeof m === "string" ? m : m.default;
+    },
+    (err) => {
+      state = "rejected";
+      throw err instanceof Error ? err : new Error(String(err));
+    },
+  );
+}
+
+async function run() {
+  console.log(await ensure(true), state);
+  try {
+    await ensure(false);
+  } catch (e) {
+    console.log("caught", (e as Error).message, e instanceof LoadError, state);
+  }
+
+  // A handler returning nothing: the value or `undefined`.
+  const a = await load(false).then(
+    (m) => (typeof m === "string" ? m : m.default),
+    (e) => {
+      console.log("handled", (e as Error).message);
+    },
+  );
+  console.log(a, a === undefined);
+  const b = await load(true).then(
+    (m) => (typeof m === "string" ? m : m.default),
+    (e) => {
+      console.log("not reached", e);
+    },
+  );
+  console.log(b);
+
+  // A fallback of another type.
+  const c = await load(false).then(
+    (m) => (typeof m === "string" ? m.length : m.default.length),
+    (e) => {
+      return null;
+    },
+  );
+  console.log(c);
+  const d = await load(true).then(
+    (m) => (typeof m === "string" ? m.length : m.default.length),
+    (e) => "fallback",
+  );
+  console.log(d, typeof d);
+
+  // Each callback throws its own error; the promise rejects with either.
+  for (const ok of [true, false]) {
+    try {
+      await load(ok).then(
+        (m) => {
+          if (m) {
+            throw new Parse("bad module");
+          }
+          return 1;
+        },
+        (e) => {
+          throw new LoadError("still offline");
+        },
+      );
+    } catch (e) {
+      console.log("caught", e instanceof Parse, e instanceof LoadError, (e as Error).message);
+    }
+  }
+
+  // Async callbacks giving the same type and throwing different errors.
+  for (const ok of [true, false]) {
+    try {
+      const f = await load(ok).then(
+        async (m) => {
+          if (m) {
+            throw new Parse("late parse");
+          }
+          return "never";
+        },
+        async (e) => {
+          if (e instanceof LoadError) {
+            throw new LoadError("late load");
+          }
+          return "recovered";
+        },
+      );
+      console.log(f);
+    } catch (e) {
+      console.log("caught", e instanceof Parse, (e as Error).message);
+    }
+  }
+}
+
+run();

@@ -26,6 +26,8 @@ pub(crate) fn is_promise_callback_fn(name: &str) -> bool {
             | "promiseThenElseAsync"
             | "promiseCatch"
             | "promiseCatchAsync"
+            | "promiseCatchNever"
+            | "promiseCatchNeverAsync"
             | "promiseCatchVoid"
             | "promiseCatchVoidAsync"
             | "promiseFinally"
@@ -46,6 +48,87 @@ impl FnCx<'_, '_> {
             TyKind::Promise(v, e) => (v, self.cx.error_union(&[e, throws])),
             _ => (ret, self.cx.error_union(&[throws])),
         }
+    }
+
+    /// `then(f, g)`: what the new promise gives and rejects with. Callbacks that give different
+    /// types or throw different errors are converted to one function type giving their union
+    /// and throwing both callbacks' errors, as TypeScript types the call
+    /// (`Promise<TResult1 | TResult2>`); a callback that never returns (`(e) => { throw e; }`)
+    /// adds nothing to the value type. `None` after reporting a callback that doesn't convert.
+    fn then_else_types(
+        &mut self,
+        callbacks: &mut [(hir::Expr, bool)],
+        (u, xf): (TyId, Option<TyId>),
+        (ug, xg): (TyId, Option<TyId>),
+        all_async: bool,
+        span: Span,
+    ) -> Option<(TyId, TyId)> {
+        let never = self.cx.ty.never;
+        if all_async && u != ug {
+            // Not yet: the callbacks' promises would convert to a promise of the union.
+            let (a, b) = (
+                self.cx.display(callbacks[0].0.ty),
+                self.cx.display(callbacks[1].0.ty),
+            );
+            self.cx.err(
+                format!("the async callbacks of `then(onFulfilled, onRejected)` must give the same type; found `{a}` and `{b}`"),
+                span,
+            );
+            return None;
+        }
+        let v = if u == ug || self.cx.ty.is_bottom(ug) {
+            u
+        } else if self.cx.ty.is_bottom(u) {
+            ug
+        } else {
+            let (wu, wg) = (self.cx.widened(u), self.cx.widened(ug));
+            self.cx.union_of(&[wu, wg], false, span)
+        };
+        let errs: Vec<TyId> = [xf, xg].into_iter().flatten().collect();
+        let f = self.cx.error_union(&errs).unwrap_or(never);
+        let unit = self.cx.ty.unit;
+        for (h, _) in callbacks.iter_mut() {
+            let TyKind::FnPtr {
+                params,
+                rest,
+                ret: own,
+                ..
+            } = self.cx.ty.kind(h.ty).clone()
+            else {
+                continue;
+            };
+            // A callback returning nothing gives `undefined` in the union (`T | void`).
+            let undefined = !all_async && own == unit && v != unit;
+            let (ret, throws) = match all_async {
+                true => (self.cx.ty.promise_rejecting(v, f), never),
+                false => (v, f),
+            };
+            let exp = self.cx.ty.intern(TyKind::FnPtr {
+                params,
+                ret,
+                throws,
+                rest,
+            });
+            if exp == h.ty {
+                continue;
+            }
+            let placeholder = self.error_expr(h.span);
+            let taken = std::mem::replace(h, placeholder);
+            let converted = match undefined {
+                true => self.adapt_fn_as(taken, exp, true),
+                false => self
+                    .try_coerce(taken, exp)
+                    .or_else(|w| self.adapt_fn(w, exp)),
+            };
+            match converted {
+                Ok(w) => *h = w,
+                Err(w) => {
+                    self.report_mismatch(exp, &w);
+                    return None;
+                }
+            }
+        }
+        Some((v, f))
     }
 
     /// The callback `h` as a function taking `params` (what the promise passes it): one whose
@@ -160,7 +243,13 @@ impl FnCx<'_, '_> {
             // returning a value where none is expected): adapted as any callback is.
             let h = match self.callback_adapter(a, hint, super::callback::CallbackMode::Plain) {
                 Some(h) => h,
-                None => self.expr(a, Some(hint), Want::Move),
+                None => {
+                    // Only the callback itself (an arrow), not one nested in another callee.
+                    self.promise_callback = super::args::as_arrow(a).is_some();
+                    let h = self.expr(a, Some(hint), Want::Move);
+                    self.promise_callback = false;
+                    h
+                }
             };
             if self.cx.ty.has_error(h.ty) {
                 self.check_args_loose(&args[i + 1..]);
@@ -232,25 +321,17 @@ impl FnCx<'_, '_> {
                 let recv_ty = self.cx.ty.promise_rejecting(t, j);
                 (name, vec![t, j, *u], recv_ty, *u, j)
             }
-            ("then", [(u, xf), (ug, xg)]) => {
-                if u != ug || xf != xg {
-                    let (a, b) = (
-                        self.cx.display(callbacks[0].0.ty),
-                        self.cx.display(callbacks[1].0.ty),
-                    );
-                    self.cx.err(
-                        format!("the callbacks of `then(onFulfilled, onRejected)` must give the same type and throw the same errors; found `{a}` and `{b}`"),
-                        span,
-                    );
+            ("then", [a, b]) => {
+                let Some((u, f)) = self.then_else_types(&mut callbacks, *a, *b, all_async, span)
+                else {
                     return self.error_expr(span);
-                }
-                let f = xf.unwrap_or(never);
+                };
                 let name = if all_async {
                     "promiseThenElseAsync"
                 } else {
                     "promiseThenElse"
                 };
-                (name, vec![t, e, *u, f], recv.ty, *u, f)
+                (name, vec![t, e, u, f], recv.ty, u, f)
             }
             ("catch", [(u, xg)]) if *u == self.cx.ty.unit && t != self.cx.ty.unit => {
                 // A handler that returns nothing (`p.catch(() => {})`): TypeScript's
@@ -263,6 +344,52 @@ impl FnCx<'_, '_> {
                 };
                 // Set from the prelude function's result type below (`T | undefined`, also when
                 // `T` holds a nothing).
+                (name, vec![t, e, g], recv.ty, t, g)
+            }
+            ("catch", [(u, xg)]) if self.cx.ty.is_bottom(t) && !self.cx.ty.is_bottom(*u) => {
+                // A promise that never fulfills (`Promise.reject(e)`, a `then` whose callback
+                // only throws): the new promise gives what the handler gives.
+                let g = xg.unwrap_or(never);
+                let name = if all_async {
+                    "promiseCatchNeverAsync"
+                } else {
+                    "promiseCatchNever"
+                };
+                (name, vec![e, *u, g], recv.ty, *u, g)
+            }
+            ("catch", [(u, xg)]) if self.cx.ty.is_bottom(*u) && t != *u => {
+                // A handler that only throws (`p.catch((e) => { throw e; })`): the promise's value
+                // type, as TypeScript types it; the handler converts to a function giving it.
+                let g = xg.unwrap_or(never);
+                let (ret, throws) = match all_async {
+                    true => (self.cx.ty.promise_rejecting(t, g), never),
+                    false => (t, g),
+                };
+                if let Some((h, _)) = callbacks.first_mut() {
+                    let TyKind::FnPtr { params, rest, .. } = self.cx.ty.kind(h.ty).clone() else {
+                        return self.error_expr(span);
+                    };
+                    let exp = self.cx.ty.intern(TyKind::FnPtr {
+                        params,
+                        ret,
+                        throws,
+                        rest,
+                    });
+                    let placeholder = self.error_expr(h.span);
+                    let taken = std::mem::replace(h, placeholder);
+                    match self.try_coerce(taken, exp) {
+                        Ok(w) => *h = w,
+                        Err(w) => {
+                            self.report_mismatch(exp, &w);
+                            return self.error_expr(span);
+                        }
+                    }
+                }
+                let name = if all_async {
+                    "promiseCatchAsync"
+                } else {
+                    "promiseCatch"
+                };
                 (name, vec![t, e, g], recv.ty, t, g)
             }
             ("catch", [(u, xg)]) => {

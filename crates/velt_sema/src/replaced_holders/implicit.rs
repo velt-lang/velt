@@ -560,6 +560,8 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::IsNullish
         | I::LooseEq
         | I::MayHoldPrimitive
+        | I::HoldsDynamic
+        | I::HoldsDynamicOrClass
         | I::FnCapturesNothing
         | I::ClosureSibling(_)
         | I::InitSlots(..)

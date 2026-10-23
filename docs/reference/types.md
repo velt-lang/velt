@@ -208,8 +208,14 @@ usable and no copy method is needed.
 - `+` with a string on one side and a number or boolean (or one of those or `null`) on the
   other concatenates, as in JS: `"Total: " + 5` is `"Total: 5"`, `"a" + true` is `"atrue"` and
   `s += n` appends. The number is written as `String(n)` and `console.log` write it (`1.5`,
-  `1e+21`, `NaN`, `Infinity`, `0` for `-0`). Any other value next to a string is a compile
-  error; build that text with a template literal (`` `Total: ${xs}` ``).
+  `1e+21`, `NaN`, `Infinity`, `0` for `-0`). An array or a tuple is written as `join()` writes
+  it (`"" + [1, 2]` is `"1,2"`), a class instance by its `valueOf()` when that returns a
+  primitive (`+` asks for it before `toString()`, as in JS; a `Date` by its `toString()`), else
+  by its `toString()`, and a value whose type is a type parameter as `String(x)` writes the
+  type it is instantiated with (an `any` and a class instance with `+`'s order: `valueOf()`
+  first). Any other value
+  next to a string is a compile error; build that text with a template literal
+  (`` `Total: ${m}` ``).
 - `String(x)` converts any value that can be printed to its text, exactly as `` `${x}` ``
   writes it (`String(1.5)` is `"1.5"`, `String(null)` is `"null"`, `String([1, 2])` is
   `"1,2"`). `Number(x)` converts a string (as JS: the whole trimmed string, `""` is `0`, else
@@ -2718,12 +2724,17 @@ members in the same order; another object as `Object.prototype.toString` does
 with Node's `TypeError: Cannot convert object to primitive value`, and when one returns a
 symbol with `TypeError: Cannot convert a Symbol value to a string`, reporting the line of the
 `String`, template, `+` or `join`. An array (also one held in a typed `any[]`, `unknown[]`, `object[]` or a tuple
-of them, and its `join()` and `toString()`) is written as `Array.prototype.join` does: each
+of them, and its `join()` and `toString()`, also `xs.join(sep)` of an `any` `xs` holding one) is
+written as `Array.prototype.join` does: each
 element as `String(x)` writes it, `null` and `undefined` elements and an array holding itself
 as empty text (`[1, [2, 3], null]` is `1,2,3,`). In a template or a `+`, a symbol stops with
 Node's `TypeError: Cannot convert a Symbol value to a string` (only `String(s)` writes it, as
 `Symbol(desc)`); a function stops with a `TypeError` naming #924 (Node writes its source text),
-and so does a proxy (Node reads its `toString` through the `get` trap).
+and so does a proxy (Node reads its `toString` through the `get` trap). So is a value whose
+type is a type parameter instantiated with `any`, `unknown` or `object`, or an array or tuple
+of them (`String(v)` or `` `${v}` `` in `function show<T>(v: T)` called as `show<any>({ a: 1 })`
+is `[object Object]`, as `show<unknown[]>([{ a: 1 }])`; a symbol in a template or a `+` stops
+with the `TypeError`); the function's other instantiations write their own types' text.
 
 ```ts
 class Celsius {
