@@ -209,6 +209,10 @@ fn queue(task: Arc<Task>, made: bool) {
 
 fn wake(w: &Shared) {
     if w.parked.swap(false, Ordering::SeqCst) {
+        // Woken is not stalled: the monitor counts from now, so a worker the OS has not run
+        // yet keeps its tasks.
+        w.progress
+            .store(TICKS.load(Ordering::Relaxed), Ordering::Relaxed);
         let _ = w.waker.wake();
     }
 }
@@ -574,6 +578,9 @@ fn rescue(i: usize) {
         }
     }
     lock(&w.timers).fire(Instant::now());
+    // The tasks taken below are in no queue until they reach one again: counted meanwhile, as
+    // the worker may count as idle (woken, not yet running).
+    let _moving = crate::task::quiet::Moving::new();
     let mut moved: Vec<Arc<Task>> = Vec::new();
     if w.inbox_len.load(Ordering::Acquire) > 0 {
         let mut inbox = lock(&w.inbox);
@@ -655,6 +662,20 @@ mod tests {
         let Reactor { poll, events } = &mut *r;
         poll.poll(events, Some(Duration::ZERO)).expect("poll");
         assert!(events.iter().any(|e| e.token() == WAKE), "no wake event");
+    }
+
+    #[test]
+    fn a_woken_worker_is_not_stalled() {
+        // Woken from its park, a worker the OS has not run yet still has its old progress tick:
+        // the wake restarts it, so the monitor does not take its tasks.
+        let w = new_shared();
+        w.parked.store(true, Ordering::SeqCst);
+        let old = u64::MAX;
+        w.progress.store(old, Ordering::Relaxed);
+        let before = TICKS.load(Ordering::Relaxed);
+        wake(&w);
+        let progress = w.progress.load(Ordering::Relaxed);
+        assert!(progress >= before && progress <= TICKS.load(Ordering::Relaxed));
     }
 
     #[test]
