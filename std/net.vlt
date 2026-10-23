@@ -126,21 +126,23 @@ export struct TcpStream {
   tryRead(buf: u8[] | Uint8Array, start: number = 0, end?: number): number | null {
     let bytes: u8[];
     let base: u64 = 0;
-    let len: u64;
+    let len: number;
     if (buf instanceof Uint8Array) {
       bytes = buf.buf.bytes;
       base = buf.off as u64;
-      len = buf.len as u64;
+      len = buf.len as number;
     } else {
       bytes = buf;
-      len = buf.length as u64;
+      len = buf.length as number;
     }
-    const to = end ?? (len as number);
-    if (!(start >= 0 && start < to && to <= (len as number))) {
-      throw new RangeError(`tryRead: the range ${start}..${to} is empty or outside 0..${len}`);
+    // Indices as JS takes them (truncated, NaN as 0); then the range must be inside `buf`.
+    const from = toIndex(start);
+    const to = end === undefined ? len : toIndex(end);
+    if (!(from >= 0 && from < to && to <= len)) {
+      throw new RangeError(`tryRead: the range ${from}..${to} is empty or outside 0..${len}`);
     }
     const n = unwrapIo(
-      velt_rt_tcp_try_read_into(this.handle, bytes, base + (start as u64), base + (to as u64)),
+      velt_rt_tcp_try_read_into(this.handle, bytes, base + (from as u64), base + (to as u64)),
     );
     if (n > 0) {
       return n as number;
@@ -234,9 +236,16 @@ export struct TcpStream {
   }
 }
 
-/** `i` as an offset into `len` bytes: clamped to `0..len`, as `subarray` clamps. */
+/** `i` as an offset into `len` bytes, as `subarray` takes it: from the end when negative. */
 function clampTo(i: number, len: number): u64 {
-  return i <= 0 ? 0 : i >= len ? len as u64 : i as u64;
+  const t = toIndex(i);
+  const at = t < 0 ? len + t : t;
+  return at <= 0 ? 0 : at >= len ? len as u64 : at as u64;
+}
+
+/** An index argument as JS takes it: truncated toward zero, NaN as 0. */
+function toIndex(i: number): number {
+  return Number.isNaN(i) ? 0 : Math.trunc(i);
 }
 
 /** Listens on "host:port" (port 0 picks a free port; read it back from `.port`). */

@@ -26,8 +26,8 @@
   - `write(data: string)`, `writeBytes(data: u8[] | Uint8Array, start = 0, end = data.length)`: bytes go out in the order of
     the calls, also when a write is started and not awaited yet. What the socket takes at the
     call is written from `data` itself; only the rest is copied. A `Uint8Array` writes its own
-    range (a `subarray` writes just that part); `start` and `end` write part of either (clamped
-    to it, as `subarray` clamps), so a reply buffer kept per connection goes out without a copy.
+    range (a `subarray` writes just that part); `start` and `end` write part of either (taken
+    as `subarray` takes them: a negative one counts from the end, and both are clamped to it), so a reply buffer kept per connection goes out without a copy.
   - `tryWrite(data: u8[] | Uint8Array, start = 0, end = data.length): i64`: writes what the socket takes right now, without waiting, and
     returns the number of bytes written (0 when it takes nothing now, while an earlier write is
     still going on, for a TLS stream, and after an error, which the next `write` reports). When
