@@ -136,6 +136,7 @@ pub(super) fn fill(cx: &mut Ctx) {
         a.fields = fields;
         a.generics.bounds = bounds;
     }
+    super::extended_layouts::widen(cx, &pairs);
     // The anonymous object type of the same fields replaces it before lowering.
     for (_, adt) in pairs {
         let a = cx.adt(adt).expect("ICE: adt");

@@ -99,6 +99,7 @@ impl FnCx<'_, '_> {
                 ty: None,
                 name: prop.name.clone(),
                 span: prop.span,
+                dynamic: false,
             });
         Some(self.cx.mark_iface_written(f.iface, prop.span))
     }
@@ -113,6 +114,7 @@ impl FnCx<'_, '_> {
                 ty: None,
                 name: prop.name.clone(),
                 span: prop.span,
+                dynamic: false,
             });
         self.cx.mark_part_written(f.iface, f.index, prop.span)
     }

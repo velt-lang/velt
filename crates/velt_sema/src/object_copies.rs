@@ -55,6 +55,9 @@ pub(crate) struct Write {
     pub ty: Option<TyId>,
     pub name: String,
     pub span: Span,
+    /// Written through `any` (`x.f = v`, `x[k] = v`, `Reflect.set` with `x: any`): it reaches
+    /// only objects the program converts to a dynamic type (`Seen::Dynamic`), or holds in one.
+    pub dynamic: bool,
 }
 
 /// How a program looks at a value (other than reading its fields).
@@ -172,7 +175,7 @@ pub(crate) fn check(cx: &mut Ctx) {
     let mut strict = vec![];
     for (ci, c) in copies.iter().enumerate() {
         let proxy_only = proxies && !built.iter().any(|&t| related(cx, t, c.from));
-        if let Some(w) = assigned(cx, c, &writes) {
+        if let Some(w) = assigned(cx, (c, ci), &writes, &looks) {
             match proxy_only {
                 true => strict.push((c.span, c.to)),
                 false => report_write(cx, c, w),
@@ -219,17 +222,27 @@ fn mark_proxy_only(cx: &mut Ctx, strict: &[(Span, TyId)]) {
     }
 }
 
-/// An assignment to a copied or absent field of either type of `c`: one through `any` if there
-/// is one (the order of the writes depends on the order the modules are checked in).
-fn assigned<'w>(cx: &mut Ctx, c: &Copy, writes: &'w [Write]) -> Option<&'w Write> {
+/// An assignment to a copied or absent field of either type of `c` (number `ci`): one through
+/// `any` if there is one (the order of the writes depends on the order the modules are checked
+/// in).
+fn assigned<'w>(
+    cx: &mut Ctx,
+    (c, ci): (&Copy, usize),
+    writes: &'w [Write],
+    looks: &Dynamic,
+) -> Option<&'w Write> {
     if c.fresh {
         return None;
     }
+    // A write through `any` reaches an object only once the program has made it (or a value
+    // holding it) an `any`: the copy, or the original, which the copy would not follow.
+    let mut reached: Option<bool> = None;
     let mut found = None;
     for w in writes {
         let hit = (w.name.is_empty() || c.fields.contains(&w.name) || c.absent.contains(&w.name))
             && w.ty
-                .is_none_or(|t| related(cx, t, c.from) || related(cx, t, c.to));
+                .is_none_or(|t| related(cx, t, c.from) || related(cx, t, c.to))
+            && (!w.dynamic || *reached.get_or_insert_with(|| dynamic_reaches(cx, (c, ci), looks)));
         if hit && w.name.is_empty() {
             return Some(w);
         }
@@ -303,6 +316,15 @@ fn dynamic_holds(cx: &mut Ctx, c: &Copy, ci: usize, looks: &Dynamic) -> bool {
         }
         _ => false,
     })
+}
+
+/// Does the program convert the copy `c` (number `ci`), or a value that may hold its source, to
+/// a dynamic type? Only then can a write through `any` reach either object.
+fn dynamic_reaches(cx: &mut Ctx, (c, ci): (&Copy, usize), looks: &Dynamic) -> bool {
+    dynamic_holds(cx, c, ci, looks)
+        || looks.seen.iter().any(|&(t, _, how)| {
+            matches!(how, Seen::Dynamic(_)) && holds(cx, t, c.from, &mut FxHashSet::default())
+        })
 }
 
 /// Are `a` and `b` one object type, as conversions see it?

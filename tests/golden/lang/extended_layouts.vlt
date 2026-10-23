@@ -1,0 +1,67 @@
+// check: no leaks
+// An object type extended with optional fields shares one layout with the extension (#1383):
+// `vnode as InternalVNode` is the same object, as in TypeScript, so a field written through the
+// extension's type is there through every view (sigx's renderer keeps its internal state so).
+type VNode = {
+  type: string;
+  children: VNode[];
+  dom: string | null;
+  text?: string;
+};
+interface InternalVNode extends VNode {
+  _ns?: boolean;
+  _subTree?: VNode | null;
+}
+// A second extension of the same base, with a field of the first one of the same type.
+interface KeyedVNode extends VNode {
+  _key?: number;
+  _ns?: boolean;
+}
+
+function mount(vnode: VNode): void {
+  (vnode as InternalVNode)._ns = vnode.type === "svg";
+  const internal = vnode as InternalVNode;
+  internal._subTree = vnode.children.length > 0 ? vnode.children[0] : null;
+  vnode.dom = "<" + vnode.type + ">";
+}
+
+function nsOf(vnode: VNode): boolean {
+  return (vnode as InternalVNode)._ns ?? false;
+}
+
+const leaf: VNode = { type: "svg", children: [], dom: null };
+const root: VNode = { type: "div", children: [leaf], dom: null, text: "t" };
+const fresh: VNode = { type: "p", children: [], dom: null };
+mount(leaf);
+mount(root);
+console.log(nsOf(leaf), nsOf(root), nsOf(fresh));
+const inner = root as InternalVNode;
+console.log(inner._subTree === leaf, inner === (root as InternalVNode), leaf.dom);
+console.log(leaf);
+console.log(root);
+console.log(fresh);
+console.log(JSON.stringify(leaf));
+console.log(Object.keys(root).join(","), Object.keys(fresh).join(","));
+console.log("_ns" in leaf, "_ns" in fresh, "_key" in leaf);
+const k = leaf as KeyedVNode;
+k._key = 7;
+console.log(k._ns, (leaf as InternalVNode)._ns, k === (leaf as KeyedVNode));
+const copy = { ...leaf };
+console.log(copy);
+
+// A field-only interface as the base, through a function taking the extension.
+interface Point {
+  x: number;
+  y: number;
+}
+interface TaggedPoint extends Point {
+  tag?: string;
+}
+function tag(p: TaggedPoint, t: string): void {
+  p.tag = t;
+}
+const pts: Point[] = [{ x: 1, y: 2 }, { x: 3, y: 4 }];
+tag(pts[0] as TaggedPoint, "first");
+for (const p of pts) {
+  console.log(p, (p as TaggedPoint).tag ?? "-");
+}

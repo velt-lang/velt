@@ -1103,7 +1103,10 @@ console.log(e.id, grace.age, w.meta); // e1 45 m
   where the program could tell the difference, the conversion is an error with the fix (build
   the object from its fields, `{ a: ab.a }`, or take the wider type): when the program assigns
   a copied field of either type (`a.a += 1` on an `A` anywhere), or an optional field the
-  value lacks (`x.c = "s"` on an `{ a: number; c?: string }`), compares values of the
+  value lacks (`x.c = "s"` on an `{ a: number; c?: string }`; a write through `any`, `x.a = 1`
+  or `x[k] = v` with `x: any`, counts only when the program converts the copy, its original or
+  a value that may hold one to `any`, `unknown` or `object`, since only such objects are reached
+  through one), compares values of the
   expected type with `===` (also as `A | null` or another union holding it), prints, serializes or lists the keys of a value holding the
   expected type, spreads a value of the expected type (`{ ...x, c: 3 }`; Node would show
   or copy the original's fields, in its order), or tests a value of the expected type with `in`
@@ -1118,6 +1121,20 @@ console.log(e.id, grace.age, w.meta); // e1 45 m
   types](#objects-arrays-tuples-and-maps): `const ns: Named[] = roster();` for a `roster()`
   that returns a new `(Named & Scored)[]`; copy another one with
   `xs.map((p) => ({ name: p.name }))`.
+- **Extensions with optional fields share the layout**: for an interface that extends one
+  object type (an interface with only fields, or an object alias that refers to itself) and
+  adds only optional fields the base lacks, as in `interface InternalVNode extends VNode {
+  _ns?: boolean }`, the base's objects also have room for those fields. `vnode as InternalVNode`
+  (or passing a `VNode` where an `InternalVNode` is expected) is then the same object, as in
+  TypeScript: a field written through either type is there through the other, and `===` holds.
+  A `VNode` made anywhere has the added fields absent, so printing, `JSON.stringify`, spreads,
+  `Object.keys` and `in` show them only once written, as in Node. Several such extensions of one
+  base share it while they give a field of one name the same type; one that gives another type
+  (`_subTree?: VNode` next to `_subTree?: VNode | null`) keeps its own layout, the extension
+  nearest to the base (by module path) winning. Neither the base nor the extension may be
+  generic. As for other optional fields written after construction, printing lists them in
+  declared order (the base's fields, then each extension's), not in the order they were
+  written (#1319).
 - An alias may refer to itself through `&` when its parts are object types written out:
   `type Tree = { kids: Tree[] } & { v: number }` is the interface with the fields `kids` and
   `v`. A part may also name a non-generic alias of such a type, or an interface with only

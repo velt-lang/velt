@@ -1,0 +1,40 @@
+true false false
+true true <svg>
+{ type: 'svg', children: [], dom: '<svg>', _ns: true, _subTree: null }
+{
+  type: 'div',
+  children: [
+    {
+      type: 'svg',
+      children: [],
+      dom: '<svg>',
+      _ns: true,
+      _subTree: null
+    }
+  ],
+  dom: '<div>',
+  text: 't',
+  _ns: false,
+  _subTree: {
+    type: 'svg',
+    children: [],
+    dom: '<svg>',
+    _ns: true,
+    _subTree: null
+  }
+}
+{ type: 'p', children: [], dom: null }
+{"type":"svg","children":[],"dom":"<svg>","_ns":true,"_subTree":null}
+type,children,dom,text,_ns,_subTree type,children,dom
+true false false
+true true true
+{
+  type: 'svg',
+  children: [],
+  dom: '<svg>',
+  _ns: true,
+  _subTree: null,
+  _key: 7
+}
+{ x: 1, y: 2, tag: 'first' } first
+{ x: 3, y: 4 } -

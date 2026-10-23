@@ -252,6 +252,7 @@ impl FnCx<'_, '_> {
                 ty: None,
                 name: name.to_string(),
                 span,
+                dynamic: true,
             });
     }
 
