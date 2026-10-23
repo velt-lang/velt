@@ -45,6 +45,7 @@ mod error_slots;
 mod error_view;
 mod errors;
 mod fn_union_call;
+mod fn_widen;
 mod frozen;
 mod gen_closure;
 mod gen_value;

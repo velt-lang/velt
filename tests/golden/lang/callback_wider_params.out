@@ -1,0 +1,41 @@
+forEach any 1
+forEach any 2
+forEach any 3
+forEach any index 1 0
+forEach any index 2 1
+forEach any index 3 2
+forEach unknown number
+forEach unknown number
+forEach unknown number
+[ '1', '2', '3' ]
+[ 1, 3 ]
+true true
+2
+6
+union a
+union b
+interface x
+object Box { label: 'b1' }
+object Box { label: 'b2' }
+array any [ 1 ] 1
+array any [ 2, 3 ] 2
+class any c
+typed var 4
+two 5 five
+back six
+each 7
+each 8
+each p
+each q
+apply 9
+ten
+log 1
+log 2
+log 3
+log r
+log s
+plain 11
+plain 12
+log undefined
+nullable null
+nullable 1

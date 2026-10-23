@@ -210,6 +210,9 @@ impl FnCx<'_, '_> {
         if let Some(h) = self.rest_shape_callback(e, exp) {
             return h;
         }
+        if let Some(h) = self.frameless_widened_params(e, exp) {
+            return h;
+        }
         let await_body = self.await_body == Some(e.span) && *is_async;
         if await_body {
             self.await_body = None;

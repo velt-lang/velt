@@ -526,7 +526,7 @@ impl FnCx<'_, '_> {
 
     /// The type `t` names, without diagnostics or IDE records (the arrow's own check reports
     /// what is wrong with it).
-    fn resolve_quiet(&mut self, t: &ast::TypeExpr) -> Option<TyId> {
+    pub(super) fn resolve_quiet(&mut self, t: &ast::TypeExpr) -> Option<TyId> {
         let mark = crate::body::recheck::Mark::here(self.cx);
         let r = self.resolve(t);
         mark.rollback(self.cx);

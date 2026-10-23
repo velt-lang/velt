@@ -1,0 +1,70 @@
+// check: no leaks
+// A function whose parameter types are wider than those of the function type it is used as
+// (`any`, `unknown`, `object`, a union, an interface): array callbacks, a typed variable, a
+// generic function's callback, a function value passed on. Each argument converts when the
+// function is called (#1454). Expected output: Node's.
+interface Named {
+  name: string;
+}
+
+class Box {
+  label: string;
+  constructor(label: string) {
+    this.label = label;
+  }
+}
+
+function each<T>(xs: T[], f: (x: T) => void): void {
+  for (const x of xs) f(x);
+}
+
+function apply<T, R>(x: T, f: (x: T) => R): R {
+  return f(x);
+}
+
+const nums = [1, 2, 3];
+nums.forEach((v: any) => console.log("forEach any", v));
+nums.forEach((v: any, i) => console.log("forEach any index", v, i));
+nums.forEach((v: unknown) => console.log("forEach unknown", typeof v));
+console.log(nums.map((v: number | string) => `${v}`));
+console.log(nums.filter((v: any) => v !== 2));
+console.log(nums.some((v: unknown) => v === 3), nums.every((v: any) => typeof v === "number"));
+console.log(nums.find((v: number | null) => v === 2));
+console.log(nums.reduce((acc: number, v: any) => acc + (v as number), 0));
+["a", "b"].forEach((s: string | number) => console.log("union", s));
+[{ name: "x", n: 1 }].forEach((o: Named) => console.log("interface", o.name));
+[new Box("b1"), new Box("b2")].forEach((b: object) => console.log("object", b));
+[[1], [2, 3]].forEach((a: any) => console.log("array any", a, a.length));
+[new Box("c")].forEach((b: any) => console.log("class any", b.label));
+
+// A typed variable holding a function with wider parameters.
+const show: (x: number) => void = (v: any) => console.log("typed var", v);
+show(4);
+const both: (x: number, y: string) => void = (a: unknown, b: any) => console.log("two", a, b);
+both(5, "five");
+const back: (x: string) => string = (v: string | number) => `back ${v}`;
+console.log(back("six"));
+
+// Generic functions taking callbacks.
+each([7, 8], (v: any) => console.log("each", v));
+each(["p", "q"], (v: unknown) => console.log("each", v));
+console.log(apply(9, (v: number | string) => `apply ${v}`));
+console.log(apply(new Box("ten"), (b: any) => b.label));
+
+// A function value with a wider parameter, passed on and stored.
+const log = (v: any) => console.log("log", v);
+nums.forEach(log);
+each(["r"], log);
+const stored: (s: string) => void = log;
+stored("s");
+function plain(v: unknown): void {
+  console.log("plain", v);
+}
+each([11], plain);
+const viaVar: (n: number) => void = plain;
+viaVar(12);
+
+// Values typed `null` / `undefined`.
+const u = undefined;
+log(u);
+each([null, 1], (v: any) => console.log("nullable", v));

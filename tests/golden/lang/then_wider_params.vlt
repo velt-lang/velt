@@ -1,0 +1,78 @@
+// check: no leaks
+// A `then` / `catch` / `finally` callback whose parameter type is wider than the promise's
+// value (`any`, `unknown`, `object`, a union, an interface): each value converts when the
+// callback is called (#1454). Expected output: Node's.
+interface Named {
+  name: string;
+}
+
+class Point {
+  x: number;
+  y: number;
+  constructor(x: number, y: number) {
+    this.x = x;
+    this.y = y;
+  }
+  toString(): string {
+    return `(${this.x}, ${this.y})`;
+  }
+}
+
+async function run(): Promise<void> {
+  await Promise.resolve(5).then((v: any) => console.log("any number", v, typeof v));
+  await Promise.resolve("s").then((v: any) => console.log("any string", v + "!"));
+  await Promise.resolve({ a: 1 }).then((v: any) => {
+    v.a = 8;
+    console.log("any object", v, v.a);
+  });
+  await Promise.resolve([1, 2, 3]).then((v: any) => console.log("any array", v, v.length));
+  await Promise.resolve(new Point(1, 2)).then((v: any) => console.log("any class", v.x, v.y));
+  await Promise.resolve<string | null>(null).then((v: any) => console.log("any null", v));
+  await Promise.resolve(undefined).then((v: any) => console.log("any undefined", v));
+
+  await Promise.resolve(7).then((v: unknown) => console.log("unknown", typeof v, v));
+  await Promise.resolve("t").then((v: unknown) => {
+    if (typeof v === "string") console.log("unknown string", v.length);
+  });
+  await Promise.resolve({ a: 2 }).then((v: object) => console.log("object", v));
+  await Promise.resolve([4]).then((v: object) => console.log("object array", v));
+  await Promise.resolve(3).then((v: number | string) => console.log("union", v));
+  await Promise.resolve("u").then((v: number | string) => console.log("union", v));
+  await Promise.resolve(9).then((v: number | null) => console.log("nullable", v));
+  await Promise.resolve({ name: "n", size: 3 }).then((v: Named) => console.log("interface", v.name));
+
+  // The value it gives on.
+  const doubled = await Promise.resolve(21).then((v: any) => (v as number) * 2);
+  console.log("result", doubled);
+  const len = await Promise.resolve("four").then((v: unknown): number =>
+    typeof v === "string" ? v.length : 0,
+  );
+  console.log("result", len);
+
+  // Async callbacks.
+  await Promise.resolve(6).then(async (v: any) => console.log("async any", v));
+  const s = await Promise.resolve(1).then(async (v: unknown) => `got ${v}`);
+  console.log(s);
+
+  // `catch` and `finally`.
+  await Promise.reject(new Error("boom")).catch((e: any) => console.log("catch any", e.message));
+  await Promise.reject(new Error("bang")).catch((e: unknown) =>
+    console.log("catch unknown", e instanceof Error ? e.message : "?"),
+  );
+  await Promise.resolve(1).finally(() => console.log("finally"));
+  await Promise.resolve(2).then(
+    (v: any) => console.log("then2", v),
+    (e: any) => console.log("never", e),
+  );
+
+  // A function value with a wider parameter.
+  const show = (v: any) => console.log("value", v);
+  await Promise.resolve(10).then(show);
+  await Promise.resolve("ten").then(show);
+  function named(v: unknown): void {
+    console.log("named", v);
+  }
+  await Promise.resolve(11).then(named);
+}
+
+await run();
