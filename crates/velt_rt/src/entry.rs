@@ -131,6 +131,8 @@ pub unsafe extern "C" fn velt_rt_start(
     argv: *const *const std::ffi::c_char,
     entry: extern "C" fn() -> i32,
 ) -> std::ffi::c_int {
+    #[cfg(feature = "mimalloc")]
+    crate::mem::configure();
     #[cfg(unix)]
     // SAFETY: the caller passes `argc` valid NUL-terminated strings in `argv`.
     crate::process::set_args(args_from_c(argc, argv));
