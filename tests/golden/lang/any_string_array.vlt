@@ -1,7 +1,7 @@
 // `String(x)`, template literals and string `+` of an `any`, `unknown` or `object`: an array as
-// check: no leaks
 // JavaScript's `Array.prototype.toString` writes it (#1435), an object as its `toString()` or
 // `Object.prototype.toString` (`[object Object]`), never as `console.log` prints it.
+// check: no leaks
 class T {
   toString(): string {
     return "T!";

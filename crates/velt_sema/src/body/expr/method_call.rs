@@ -77,7 +77,16 @@ impl FnCx<'_, '_> {
         }
         // Methods of a literal type are its base type's (`kind.toUpperCase()`).
         let recv = self.widen_literal_receiver(recv, &prop.name);
-        // `xs.join()` / `xs.toString()` write each element as JS's `String(x)` (js_list.rs).
+        // `xs.join()` / `xs.toString()` write each element as JS's `String(x)` (js_list.rs; a
+        // list of `any`, `unknown` or `object` values: any_text.rs).
+        let list_text = match prop.name.as_str() {
+            "join" => args.len() <= 1,
+            "toString" => args.is_empty(),
+            _ => false,
+        };
+        if list_text && !getter && self.joins_dynamic(recv.ty) {
+            return self.dynamic_list_join(recv, args, span);
+        }
         let writes_list = matches!(prop.name.as_str(), "join" | "toString")
             && matches!(self.cx.ty.kind(recv.ty), TyKind::Array(_));
         if writes_list && self.reject_js_list(recv.ty, &format!("`{}`", prop.name), prop.span) {

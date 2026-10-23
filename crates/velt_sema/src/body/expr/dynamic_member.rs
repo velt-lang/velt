@@ -246,11 +246,12 @@ impl FnCx<'_, '_> {
         Ok(self.intrinsic(Intrinsic::AnyCall, all, any, span))
     }
 
-    /// `f.call(thisArg, ...args)` and `f.apply(thisArg, list)` of a `Function` `f` whose
-    /// `thisArg` is a variable, `this` or a literal: the call `f(...args)` when `thisArg` is
-    /// `null` or `undefined`. A Velt function value has no `this` of its own to set (an arrow
-    /// ignores it in JavaScript too), so another `thisArg` stops with a `TypeError` naming #926
-    /// rather than calling the function without it. `None` for other members and `thisArg`s.
+    /// `f.call(thisArg, ...args)` and `f.apply(thisArg, list)` of a `Function` `f`: the call
+    /// `f(...args)` when `thisArg` is `null` or `undefined` (or left out). A Velt function value
+    /// has no `this` of its own to set (an arrow ignores it in JavaScript too), so another
+    /// `thisArg` stops with a `TypeError` naming #926 rather than calling the function without
+    /// it. `f` and `thisArg` are evaluated once, in order, before the arguments. `None` for
+    /// other members.
     fn function_call_apply(
         &mut self,
         f: &hir::Expr,
@@ -258,18 +259,14 @@ impl FnCx<'_, '_> {
         args: &[ast::Expr],
         span: Span,
     ) -> Option<hir::Expr> {
-        let (this, rest) = args.split_first()?;
-        let pure = matches!(
-            this.kind,
-            ast::ExprKind::Ident(_) | ast::ExprKind::This | ast::ExprKind::Lit(_)
-        );
-        if !pure || !matches!(prop.name.as_str(), "call" | "apply") {
+        if !matches!(prop.name.as_str(), "call" | "apply") {
             return None;
         }
-        let any = self.any_ty()?;
-        let t = self.expr(this, Some(any), Want::Borrow);
-        let t = self.share_if_place(t);
-        let t = self.coerce(t, any);
+        let (this, rest) = match args.split_first() {
+            Some((this, _)) if matches!(this.kind, ast::ExprKind::Spread(_)) => return None,
+            Some((this, rest)) => (Some(this), rest),
+            None => (None, args),
+        };
         let rest = match (prop.name.as_str(), rest) {
             ("call", _) => rest.to_vec(),
             ("apply", []) => vec![],
@@ -279,7 +276,21 @@ impl FnCx<'_, '_> {
             }
             _ => return None,
         };
-        let call = self.dynamic_apply(f.clone(), &rest, span).ok()?;
+        let Some(this) = this else {
+            // `f.call()` / `f.apply()`: `this` is `undefined`.
+            return self.dynamic_apply(f.clone(), &rest, span).ok();
+        };
+        let any = self.any_ty()?;
+        let mut stmts = vec![];
+        let f = self.hoist_dynamic(f.clone(), &mut stmts);
+        let t = self.expr(this, Some(any), Want::Borrow);
+        if self.cx.ty.is_bottom(t.ty) && t.ty != self.cx.ty.never {
+            return Some(t);
+        }
+        let t = self.share_if_place(t);
+        let t = self.coerce(t, any);
+        let t = self.hoist_dynamic(t, &mut stmts);
+        let call = self.dynamic_apply(f, &rest, span).ok()?;
         let null = self.dynamic_nothing(Nothing::Null, any, span);
         let b = self.cx.ty.bool_;
         let nullish = self.intrinsic(Intrinsic::AnyLooseEq, vec![t, null], b, span);
@@ -295,7 +306,8 @@ impl FnCx<'_, '_> {
             then: Box::new(call),
             els: Box::new(stop),
         };
-        Some(self.mk(kind, any, span))
+        let pick = self.mk(kind, any, span);
+        Some(self.with_temps_value(stmts, pick))
     }
 
     /// `f(args)` where `f` is an `any`: `Err(f)` when it is not dynamic.

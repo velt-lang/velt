@@ -2,3 +2,5 @@
 [ null, { x: null } ]
 { v: null, w: 'w' } {"v":null,"w":"w"}
 true null object
+{"b":{"c":null}} true
+{"a":[null,1],"b":{"c":{"d":null}}} { a: [ null, 1 ], b: { c: { d: null } } }

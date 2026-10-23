@@ -1,0 +1,40 @@
+// `String(xs)`, `${xs}`, `xs.join()` and `xs.toString()` of a typed `any[]`, `unknown[]`,
+// `object[]` or a tuple holding them (#1435): each element as `String(x)` writes it, never as
+// `console.log` prints it; an array holding itself is written as empty text there.
+// check: no leaks
+class T {
+  toString(): string {
+    return "T";
+  }
+}
+
+function main(): void {
+  const xs: any[] = [[1, 2], { a: 1 }, null, -0];
+  console.log(String(xs));
+  console.log(xs.join("|"), `${xs}`, xs.toString());
+  const os: object[] = [{ c: 1 }, [4, 5], new T()];
+  console.log(`${os}`, os.join());
+  const us: unknown[] = [1, "a", undefined, true];
+  console.log(String(us), us.join("-"), `[${us}]`);
+  const m: any = new Map<string, number>([["a", 1]]);
+  const st: any = new Set<number>([1]);
+  console.log(String([m]), [m, st].join(" "));
+  const arr: any[] = [1, 2];
+  arr.push(arr);
+  console.log(String(arr), arr.join(";"));
+  arr.pop();
+  const inner: any[] = ["in"];
+  const outer: any[] = [inner, 1];
+  inner.push(outer);
+  console.log(String(outer), String(inner));
+  inner.pop();
+  const deep: any[][] = [[1, [2, [3, null]]], []];
+  console.log(`${deep}`, deep.join(";"));
+  const tu: [unknown, string] = [new T(), "b"];
+  console.log(`${tu}`, String(tu));
+  const t: any = [1, "a"] as [number, string];
+  console.log(String(t), `${t}`, t.length, t[0], t[1], t[2]);
+  for (const x of t) {
+    console.log(x);
+  }
+}

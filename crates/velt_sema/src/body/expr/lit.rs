@@ -3,6 +3,7 @@
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
+use super::any_text::Hint;
 use crate::any::Dynamic;
 use crate::body::{FnCx, Want};
 use crate::hir::{self, Callee, ExprKind as H, Intrinsic, Nothing, TyId, TyKind};
@@ -130,14 +131,15 @@ impl FnCx<'_, '_> {
 
     /// The value of field `name` of an object literal of its own type. Converted to an `any`
     /// or `unknown` (`dynamic`: `const u: unknown = { a: null }`), a `null` field (TypeScript's
-    /// type `null`) is an `any` holding `null`.
+    /// type `null`) is an `any` holding `null`, and so is one in a nested object or array
+    /// literal (`{ b: { c: null } }`, `{ a: [null, 1] }`).
     pub(super) fn anon_prop_value(
         &mut self,
         name: &ast::Ident,
         value: Option<&ast::Expr>,
         dynamic: bool,
     ) -> hir::Expr {
-        let any = match value.is_some_and(|v| dynamic && is_null_lit(v)) {
+        let any = match value.is_some_and(|v| dynamic && dynamic_hinted(v)) {
             true => self.any_ty(),
             false => None,
         };
@@ -486,7 +488,7 @@ impl FnCx<'_, '_> {
                     parts.push(self.error_expr(h.span));
                     continue;
                 }
-                let part = self.implicit_any_text(h, "a template literal");
+                let part = self.implicit_any_text(h, "a template literal", Hint::String);
                 parts.push(self.implicit_text(part));
             }
         }
@@ -515,15 +517,19 @@ impl FnCx<'_, '_> {
         let h = self.unbrand(h);
         // An `any`, `unknown` or `object` is written by the value it holds (`any_text.rs`):
         // an array as JS's `Array.prototype.toString` writes it (`1,2`), an object by its
-        // `toString()`, not as `console.log` prints it. The prelude's `__anyText` writes the
-        // elements of an array this way too.
-        if matches!(
+        // `toString()`, not as `console.log` prints it. So is a list of them (`any[]`), each
+        // element as `String(x)` writes it (`[[1, 2], {}]` is `1,2,[object Object]`).
+        let dynamic = matches!(
             self.cx.dynamic(h.ty),
             Some(Dynamic::Any | Dynamic::Unknown | Dynamic::Object)
-        ) && (!self.cx.scopes[self.module].is_std || self.fn_name.ends_with("__anyText"))
-        {
+        );
+        if (dynamic || self.holds_dynamic_elems(h.ty)) && self.writes_dynamic_text() {
             if let Some(any) = self.any_ty() {
                 let span = h.span;
+                if h.ty == any {
+                    return self.dynamic_text(h, span);
+                }
+                let h = self.share_if_place(h);
                 let h = self.coerce(h, any);
                 return self.dynamic_text(h, span);
             }
@@ -604,7 +610,7 @@ impl FnCx<'_, '_> {
                     callee: Callee::Intrinsic(Intrinsic::ToString | Intrinsic::TemplateToString),
                     ..
                 }
-        );
+        ) || self.fresh_dynamic_text(&first);
         let mut acc = first;
         let mut n = 1;
         for p in it {
@@ -620,11 +626,18 @@ impl FnCx<'_, '_> {
     }
 }
 
-/// Is `e` the literal `null` (in parentheses or not)?
-fn is_null_lit(e: &ast::Expr) -> bool {
+/// Does the field value `e` of an object literal converted to an `any` take the `any` as its
+/// expected type: the literal `null` (in parentheses or not), or an object or array literal
+/// holding one?
+fn dynamic_hinted(e: &ast::Expr) -> bool {
     match &e.kind {
-        ast::ExprKind::Paren(inner) => is_null_lit(inner),
+        ast::ExprKind::Paren(inner) => dynamic_hinted(inner),
         ast::ExprKind::Lit(ast::Lit::Null) => true,
+        ast::ExprKind::Array(xs) => xs.iter().any(dynamic_hinted),
+        ast::ExprKind::Object(props) => props.iter().any(|p| match p {
+            ast::ObjectProp::KeyValue(_, v) => dynamic_hinted(v),
+            _ => false,
+        }),
         _ => false,
     }
 }

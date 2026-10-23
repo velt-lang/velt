@@ -268,7 +268,11 @@ impl FnCx<'_, '_> {
 
     /// `e` (a receiver or key) bound to a temporary appended to `stmts`, read back by borrow: a
     /// share of it when it is a place, else the value itself. A literal stays as it is.
-    fn hoist_dynamic(&mut self, mut e: hir::Expr, stmts: &mut Vec<hir::Stmt>) -> hir::Expr {
+    pub(super) fn hoist_dynamic(
+        &mut self,
+        mut e: hir::Expr,
+        stmts: &mut Vec<hir::Stmt>,
+    ) -> hir::Expr {
         if matches!(e.kind, H::Lit(_)) {
             return e;
         }

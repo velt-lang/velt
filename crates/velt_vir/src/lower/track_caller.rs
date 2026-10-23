@@ -20,7 +20,11 @@ impl Cx<'_> {
         let hir_prog = self.hir;
         let tracked = match (hir_prog.def(def), self.locs.as_ref()) {
             (hir::Def::Fn(f), Some(m))
-                if m.is_std(f.span) && !f.is_async && !f.is_generator && f.captures.is_empty() =>
+                if m.is_std(f.span)
+                    && !f.is_async
+                    && !f.is_generator
+                    && f.captures.is_empty()
+                    && !untracked(&f.name) =>
             {
                 let mut callees = vec![];
                 let direct = block_panics(&f.body.block, &mut callees);
@@ -31,6 +35,26 @@ impl Cx<'_> {
         self.tracked.insert(def, tracked);
         tracked
     }
+}
+
+/// The prelude's text of an `any` (velt_sema `any_text.rs`): `__anyString` and
+/// `__anyConcatText` hold a dispatch over every class of the program, and the others are what
+/// they call. Too large to copy per call site, each keeps one instance, whose stops report the
+/// helper's own line.
+const UNTRACKED: [&str; 7] = [
+    "__anyString",
+    "__anyConcatText",
+    "__anyConcatPlain",
+    "__anyText",
+    "__anyPrimText",
+    "__anyJoin",
+    "__anyJoinSeen",
+];
+
+/// Is the function named `name` (its last path segment) one of [`UNTRACKED`]?
+fn untracked(name: &str) -> bool {
+    let last = name.rsplit(['.', ':', '/']).next().unwrap_or(name);
+    UNTRACKED.contains(&last)
 }
 
 /// Whether `b` calls `panic` directly; collects the direct callees for the transitive check.

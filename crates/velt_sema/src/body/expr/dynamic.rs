@@ -223,16 +223,22 @@ impl FnCx<'_, '_> {
                     Some(Nothing::Both) => Nothing::Undefined,
                     n => n.unwrap_or(Nothing::Null),
                 };
+                if payload == self.cx.ty.never {
+                    // Of type `undefined` or `null` (`getU()` returning `undefined`).
+                    return Ok(self.then_nothing(h, nothing, exp));
+                }
                 return self.option_to_dynamic(h, payload, exp, nothing);
             }
         }
         match self.cx.ty.kind(h.ty) {
+            // A `void` value (a call of a function returning nothing) is `undefined`.
+            TyKind::Unit => return Ok(self.then_nothing(h, Nothing::Undefined, exp)),
             // A type parameter bound by `object` / `Function` holds no `null` and no primitive
             // to unpack (issue #926); lowering boxes the instantiation's value. Into `any` or
             // `unknown`, lowering unpacks an instantiation that is an option, a union or a
             // literal type (issue #1241).
             TyKind::Param(_) => {}
-            TyKind::Unit | TyKind::Never | TyKind::Error => return Err(h),
+            TyKind::Never | TyKind::Error => return Err(h),
             TyKind::Promise(..) => return Err(h),
             _ => {}
         }
@@ -249,6 +255,21 @@ impl FnCx<'_, '_> {
             exp,
             span,
         ))
+    }
+
+    /// `{ h; <the dynamic nothing n> }`: `h` evaluated, then `n` as an `exp`.
+    fn then_nothing(&mut self, h: hir::Expr, n: Nothing, exp: TyId) -> hir::Expr {
+        let span = h.span;
+        let none = self.dynamic_nothing(n, exp, span);
+        let block = hir::Block {
+            stmts: vec![hir::Stmt {
+                kind: hir::StmtKind::Expr(h),
+                span,
+            }],
+            value: Some(Box::new(none)),
+            span,
+        };
+        self.mk(H::Block(block), exp, span)
     }
 
     /// `h` as an `any` (`unknown`) when it is an `any | null` (`unknown | null`): the value,

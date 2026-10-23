@@ -216,13 +216,66 @@ export function __anyTagUnsupported(name: string): string {
 }
 
 /**
+ * `String(v)` of an `any` (or `unknown`, `object`) `v`, and its text in a template literal:
+ * JavaScript's `ToString(ToPrimitive(v, "string"))`. Sema writes the dispatch over the program's
+ * classes into this body (once per program, any_text.rs): an instance of a class with a
+ * `[Symbol.toPrimitive]` method is written as that returns for `"string"`, one with a
+ * `toString()` as that returns; any other value goes to `__anyText`.
+ */
+export function __anyString(v: any): string {
+  return String(v);
+}
+
+/**
+ * The text of an `any` (or `object`) `v` in a string `+` or `+=`: JavaScript's
+ * `ToString(ToPrimitive(v, "default"))`. Sema writes the dispatch over the program's classes
+ * into this body (once per program, any_text.rs): `[Symbol.toPrimitive]("default")`, else a
+ * `valueOf()` returning a primitive, else `toString()`; any other value goes to
+ * `__anyConcatPlain`.
+ */
+export function __anyConcatText(v: any): string {
+  return String(v);
+}
+
+/**
+ * `__anyConcatText` of a value that is no class instance with a `[Symbol.toPrimitive]`,
+ * `valueOf()` or `toString()`: an object literal's own `valueOf` when it returns a primitive,
+ * else `__anyText`.
+ */
+export function __anyConcatPlain(v: any): string {
+  if (typeof v === "object" && v !== null && !Array.isArray(v) && __anyOwnFn(v, "valueOf")) {
+    const p: any = v.valueOf();
+    const t = typeof p;
+    if ((t !== "object" || p === null) && t !== "function") {
+      return __anyText(p);
+    }
+  }
+  return __anyText(v);
+}
+
+/**
+ * The text of what a `toString()`, `valueOf()` or `[Symbol.toPrimitive]` returned: an object
+ * there is Node's `TypeError`.
+ */
+export function __anyPrimText(r: any): string {
+  const t = typeof r;
+  if ((t === "object" && r !== null) || t === "function") {
+    panic("TypeError: Cannot convert object to primitive value");
+  }
+  return __anyText(r);
+}
+
+/** Is `k` one of the own keys of the object `v`, holding a function? */
+function __anyOwnFn(v: any, k: string): boolean {
+  return Object.keys(v).includes(k) && typeof v[k] === "function";
+}
+
+/**
  * `String(v)` of an `any` (or `unknown`, `object`) `v` that holds no class instance with a
- * `toString()` (sema calls that one), and its text in a template literal or a string `+`: an
- * array as JavaScript's `Array.prototype.toString` writes it (the elements joined with `,`, each
- * written as `String(x)` writes it, `null` and `undefined` as empty text), another object as
- * `Object.prototype.toString` does (`[object Object]`), a number with `ToString` (`-0` is `0`).
- * (Sema writes `String(x)` of an `any` here as it does in user code; `String(v)` is not used on
- * `v` itself, which would come back here.)
+ * `[Symbol.toPrimitive]` or `toString()` (`__anyString` calls those): an array as JavaScript's
+ * `Array.prototype.toString` writes it (`__anyJoin`), an object literal by its own `toString`,
+ * another object as `Object.prototype.toString` does (`[object Object]`), a number with
+ * `ToString` (`-0` is `0`).
  */
 export function __anyText(v: any): string {
   const t = typeof v;
@@ -249,24 +302,51 @@ export function __anyText(v: any): string {
     // JavaScript writes the function's source text, which a compiled function doesn't keep.
     panic("TypeError: `String` of a function through `any` is not supported yet (#924)");
   }
-  if (!Array.isArray(v)) {
-    return Object.prototype.toString.call(v);
+  if (Array.isArray(v)) {
+    return __anyJoin(v, ",");
   }
+  if (__anyOwnFn(v, "toString")) {
+    return __anyPrimText(v.toString());
+  }
+  return Object.prototype.toString.call(v);
+}
+
+/**
+ * `xs.join(sep)` of an array (or tuple) of `any`, `unknown` or `object` values, and
+ * `String(xs)`: each element as `String(x)` writes it, `null` and `undefined` as empty text, and
+ * an array being joined already (one holding itself) as empty text, as in JavaScript.
+ */
+export function __anyJoin(v: any, sep: string): string {
+  const seen: any[] = [];
+  return __anyJoinSeen(v, sep, seen);
+}
+
+/** `__anyJoin` with the arrays being joined around it in `seen`. */
+function __anyJoinSeen(v: any, sep: string, seen: any[]): string {
+  seen.push(v);
   let out = "";
   let first = true;
   for (const x of v) {
     if (!first) {
-      out += ",";
+      out += sep;
     }
     first = false;
+    if (x === null || x === undefined) {
+      continue;
+    }
+    if (Array.isArray(x)) {
+      if (!seen.includes(x)) {
+        out += __anyJoinSeen(x, ",", seen);
+      }
+      continue;
+    }
     if (typeof x === "symbol") {
       // `join` converts each element with `ToString`, which throws for a symbol.
       panic("TypeError: Cannot convert a Symbol value to a string");
     }
-    if (x !== null && x !== undefined) {
-      out += String(x);
-    }
+    out += String(x);
   }
+  seen.pop();
   return out;
 }
 
