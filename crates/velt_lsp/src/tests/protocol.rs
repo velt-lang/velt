@@ -169,6 +169,36 @@ fn formatting_replaces_the_document() {
     client.shutdown();
 }
 
+/// A statement using a declaration below it is a semantic error (#1438): the file still formats
+/// and the editor shows the module's other errors with it.
+#[test]
+fn early_uses_are_semantic_errors() {
+    let mut client = Client::start();
+    let doc = uri("early.vlt");
+    client.open(
+        &doc,
+        "console.log(  K );\nconst K = 1;\nconst s: number = \"no\";\n",
+    );
+    let params = client.diagnostics(&doc);
+    let mut msgs: Vec<&str> = (params["diagnostics"].as_array().unwrap().iter())
+        .map(|d| d["message"].as_str().unwrap())
+        .collect();
+    msgs.sort();
+    assert_eq!(msgs.len(), 2, "{msgs:?}");
+    assert!(
+        msgs[0].contains("`K` is used before its declaration"),
+        "{msgs:?}"
+    );
+    assert!(msgs[1].contains("mismatched types"), "{msgs:?}");
+    let params = json!({ "textDocument": { "uri": doc }, "options": { "tabSize": 2, "insertSpaces": true } });
+    let edits = client.request("textDocument/formatting", params);
+    assert_eq!(
+        edits[0]["newText"],
+        json!("console.log(K);\nconst K = 1;\nconst s: number = \"no\";\n")
+    );
+    client.shutdown();
+}
+
 #[test]
 fn bad_requests_get_errors_not_crashes() {
     let mut client = Client::start();

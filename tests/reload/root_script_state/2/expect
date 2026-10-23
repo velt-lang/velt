@@ -1,0 +1,3 @@
+action: swap
+get /count: counted
+get /hits: hits=1 label=v2

@@ -330,8 +330,9 @@ enum Work {
     /// function freeing such an object (async_fn/gen_object.rs).
     GenNew(DefId, Vec<TyId>),
     GenFree(DefId, Vec<TyId>),
-    /// `(state: ptr)`: the module state's initializer (module_state.rs).
-    ModuleInit,
+    /// `(state: ptr)`: the initializer of module state slots `from..to` (module_state.rs):
+    /// the state's own (`0..deferred`), or the root file's slots its `main` initializes.
+    ModuleInit(u32, u32),
 }
 
 /// Program-level lowering state.

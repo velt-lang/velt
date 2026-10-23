@@ -1,0 +1,5 @@
+// A callback that runs at once reads a top-level `const` declared below the statement: the
+// declaration has not run yet, a `ReferenceError` as in Node (#1438).
+const out = [1].map((x) => x + K.length);
+const K = [1, 2];
+console.log(out);

@@ -1,0 +1,5 @@
+// A function made above a top-level `const` holding a number literal, called before the
+// declaration runs: the constant is not evaluated yet, a `ReferenceError` as in Node (#1438).
+const get = (): number => K;
+console.log(get());
+const K = 1;
