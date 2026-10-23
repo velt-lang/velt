@@ -44,6 +44,7 @@ pub mod localtime;
 pub mod math;
 pub mod mem;
 pub mod memory_usage;
+pub mod mutex;
 pub mod native;
 pub mod net;
 pub mod os;
