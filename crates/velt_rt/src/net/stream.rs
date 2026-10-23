@@ -17,6 +17,7 @@
 
 use super::sys::TcpStream;
 use super::utf8::Utf8Decoder;
+use std::collections::VecDeque;
 use std::future::Future;
 use std::io;
 use std::net::SocketAddr;
@@ -101,7 +102,7 @@ pub struct StreamObj {
     /// What [`readable`](Self::readable) read from a transport that cannot say whether it has
     /// data without reading it (TLS, an upgraded connection), for the next
     /// [`try_read_into`](Self::try_read_into); `held_end` once that read found the end.
-    held: Mutex<Vec<u8>>,
+    held: Mutex<VecDeque<u8>>,
     held_end: AtomicBool,
 }
 
@@ -189,7 +190,7 @@ impl StreamObj {
             abort: Notify::new(),
             writing: AtomicUsize::new(0),
             turn: std::sync::Arc::new(AsyncMutex::new(())),
-            held: Mutex::new(Vec::new()),
+            held: Mutex::new(VecDeque::new()),
             held_end: AtomicBool::new(false),
         }
     }
@@ -307,8 +308,12 @@ impl StreamObj {
                         Err(io::ErrorKind::WouldBlock.into())
                     };
                 }
+                // From the front of a deque: a small buffer reads a large chunk in linear time.
                 let n = held.len().min(dst.len());
-                dst[..n].copy_from_slice(&held[..n]);
+                let (a, b) = held.as_slices();
+                let k = a.len().min(n);
+                dst[..k].copy_from_slice(&a[..k]);
+                dst[k..n].copy_from_slice(&b[..n - k]);
                 held.drain(..n);
                 Ok(n)
             }
@@ -347,10 +352,11 @@ impl StreamObj {
                 if chunk.is_empty() {
                     self.held_end.store(true, Ordering::Release);
                 } else {
-                    self.held
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .extend_from_slice(&chunk);
+                    let mut held = self.held.lock().unwrap_or_else(|e| e.into_inner());
+                    match held.is_empty() {
+                        true => *held = chunk.into(),
+                        false => held.extend(&chunk),
+                    }
                 }
                 Ok(())
             }
