@@ -37,6 +37,24 @@ const READ_CLOSED: usize = 4;
 const WRITE_CLOSED: usize = 8;
 const ERROR: usize = 16;
 const BITS: usize = 0xff;
+/// Whether a short read or write clears the readiness. Under epoll and kqueue the next data (or
+/// room) brings a new event; mio's Windows backend re-arms an interest only after an operation
+/// returns `WouldBlock`, so there a cleared readiness would wait forever (tokio does the same).
+const SHORT_CLEARS: bool = cfg!(any(
+    target_os = "android",
+    target_os = "illumos",
+    target_os = "linux",
+    target_os = "redox",
+    target_os = "dragonfly",
+    target_os = "freebsd",
+    target_os = "ios",
+    target_os = "macos",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "tvos",
+    target_os = "visionos",
+    target_os = "watchos",
+));
 
 /// Readiness of one socket and the tasks waiting for it: one reader and one writer (a stream),
 /// or any number of readers (a listener several tasks accept on).
@@ -257,7 +275,7 @@ impl<S: mio::event::Source> Io<S> {
             };
             match op(&self.sock) {
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => self.clear(interest, tick),
-                Ok(n) if n > 0 && n < want => {
+                Ok(n) if SHORT_CLEARS && n > 0 && n < want => {
                     self.clear(interest, tick);
                     return Poll::Ready(Ok(n));
                 }
@@ -267,7 +285,7 @@ impl<S: mio::event::Source> Io<S> {
     }
 
     /// Like `try_io` for a read or write of up to `want` bytes; a short one also clears the
-    /// readiness: the socket had no more data (or room) then, so the next operation waits for an
+    /// readiness (where [`SHORT_CLEARS`]): the socket had no more data (or room) then, so the next operation waits for an
     /// event instead of making a system call that can only say `WouldBlock` (on a request/reply
     /// connection that was every other read: one system call in three per message). Data that
     /// arrives meanwhile brings an event, which bumps the tick and keeps the readiness.
@@ -281,7 +299,7 @@ impl<S: mio::event::Source> Io<S> {
         let r = op(&self.sock);
         match &r {
             Err(e) if e.kind() == io::ErrorKind::WouldBlock => self.clear(interest, tick),
-            Ok(n) if *n > 0 && *n < want => self.clear(interest, tick),
+            Ok(n) if SHORT_CLEARS && *n > 0 && *n < want => self.clear(interest, tick),
             _ => {}
         }
         r
