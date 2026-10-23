@@ -235,6 +235,7 @@ pub(crate) fn ensure_global(cx: &mut Ctx, d: DefId) {
         g.stored = stored;
         g.state = BodyState::Done;
     }
+    cx.rec.globals_done.push(d);
 }
 
 /// Module state cannot hold a promise itself: it is initialized before `main` runs, outside
