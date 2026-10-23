@@ -138,7 +138,8 @@ impl FnCx<'_, '_> {
             return e;
         };
         if !self.downcast_applies(e.ty, target) {
-            return e;
+            // `typeof x === "string"` on a `T | string` (`typeof_facts`).
+            return self.open_view(l, e, target).unwrap_or_else(|e| e);
         }
         let span = e.span;
         if e.ty == target {

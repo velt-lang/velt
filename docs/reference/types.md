@@ -543,9 +543,12 @@ member's is its `unknown` member's (`null`, `0`, an object literal of no member'
 fields, values its fields cannot hold, judged for literals and for variables and field paths by
 their types, or a discriminant no member has), and null tests (also `a == b` of a `null` and an
 `undefined`), truthiness (`!x`, `if (x)`, `&&`, `||`), `??`, `??=`, `?.`, `typeof` (also
-`typeof x === "number"`), printing and `JSON.stringify` ask that value itself, as they do a
-plain `unknown`. `a == b` of two values of a type parameter's type compares with JavaScript's
-coercions at `T = unknown` or `any` (`1 == "1"`), as `==` on `any` does. An `any` or `unknown` converted to it (`const n: number | null | undefined = v`, `v as T | null |
+`typeof x === "number"` and `switch (typeof x)`), printing and `JSON.stringify` ask that value
+itself, as they do a plain `unknown`. Where `typeof x === "string"` holds, `x` reads as a
+`string` also when generic code put the string in the `T` member (`s<T>(v)` with `v: T` passed
+to `s<T>(x: T | string)`). `a == b` of two values of a type parameter's type (also
+`T | null | undefined`) compares with JavaScript's coercions at `T = unknown` or `any`
+(`1 == "1"`), as `==` on `any` does. An `any` or `unknown` converted to it (`const n: number | null | undefined = v`, `v as T | null |
 undefined`) gives `null` for a `null` and `undefined` for an `undefined`. Converted to a
 `T | null` or a `T | undefined`, it gives the nothing that type has, and stops with a
 `TypeError` for the other one (`const n: number | null = v` with a `v` holding `undefined`), as

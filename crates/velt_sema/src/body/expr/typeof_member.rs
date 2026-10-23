@@ -36,7 +36,7 @@ impl FnCx<'_, '_> {
     /// `typeof s === tag` (`negate`: `!==`) on a union with a member whose tag the
     /// instantiation decides (`T | Mod<T>`): a `match` whose arms are constants, or the test
     /// of the value's own tag for such a member. `Err` gives `s` back for other unions.
-    pub(super) fn open_typeof_test(
+    pub(crate) fn open_typeof_test(
         &mut self,
         s: hir::Expr,
         tag: &str,
@@ -94,49 +94,146 @@ impl FnCx<'_, '_> {
     }
 
     /// The facts of `typeof e === tag`: those of `typeof_split`, where a member whose tag the
-    /// instantiation decides stays possible where the test fails, and where it passes unless
-    /// another member takes every value with that tag (`T | string` at `T = unknown` holds a
-    /// string in its `string`; `T | Mod<T>` may hold an object in its `T`).
+    /// instantiation decides stays possible in both branches (`T | Mod<T>` at `T = unknown`;
+    /// a `T | string` made from a `T` in generic code holds a string in its `T`). Where the
+    /// test passes, a `Class` fact for the tag's type then reads such a member as that type,
+    /// converted from `any` and checked (`open_view`).
     pub(crate) fn typeof_facts(&mut self, e: &ast::Expr, tag: &str) -> (Vec<Fact>, Vec<Fact>) {
         let (mut t, mut f) = self.typeof_split(e, tag);
-        self.add_open_members(&mut t, Some(tag));
-        self.add_open_members(&mut f, None);
+        // The union the facts are about: of a local, or of a field path's token.
+        let u = match self.local_with_members(e) {
+            Some((_, _, u)) => u,
+            None => match self.field_with_members(e) {
+                Some((_, _, u, _)) => u,
+                None => return (t, f),
+            },
+        };
+        let views = self.add_open_members(&mut t, u, Some(tag));
+        t.extend(views);
+        self.add_open_members(&mut f, u, None);
         (t, f)
     }
 
-    /// Adds the members whose `typeof` the instantiation decides to each `Members` fact; with
-    /// `covered`, not when a fixed member takes every value of that tag.
-    fn add_open_members(&mut self, facts: &mut [Fact], covered: Option<&str>) {
+    /// Adds the members of union `u` whose `typeof` the instantiation decides to each `Members`
+    /// fact; with `tag` (the branch where the test passes), gives the `Class` facts that read
+    /// the local as the tag's type.
+    fn add_open_members(&mut self, facts: &mut [Fact], u: TyId, tag: Option<&str>) -> Vec<Fact> {
+        let mut views = vec![];
+        let members = self.cx.union_members(u).unwrap_or_default();
         for fact in facts {
             let Fact::Members(l, vs) = fact else {
                 continue;
             };
-            let ty = self.local_ty(*l);
-            let core = self.cx.ty.core(ty).unwrap_or(ty);
-            let members = self.cx.union_members(core).unwrap_or_default();
-            let taken = covered.is_some_and(|tag| {
-                members.iter().any(|m| {
-                    let whole = match self.cx.ty.kind(*m) {
-                        TyKind::Str => tag == "string",
-                        TyKind::Int(_) | TyKind::Float(_) => tag == "number",
-                        TyKind::Bool => tag == "boolean",
-                        TyKind::Symbol => tag == "symbol",
-                        _ => false,
-                    };
-                    whole && self.cx.brand_base(*m).is_none()
-                })
-            });
-            if taken {
-                continue;
-            }
+            let mut open = false;
             for (i, m) in members.iter().enumerate() {
-                let open = self.instance_valued(*m) || self.cx.dynamic(*m).is_some();
-                if open && !vs.contains(&(i as u32)) {
-                    vs.push(i as u32);
+                if self.open_member(*m) {
+                    open = true;
+                    if !vs.contains(&(i as u32)) {
+                        vs.push(i as u32);
+                    }
                 }
             }
             vs.sort_unstable();
+            let view = tag
+                .filter(|_| open)
+                .and_then(|t| self.typeof_view(*l, u, vs, t));
+            if let Some(view) = view {
+                views.push(view);
+            }
         }
+        views
+    }
+
+    /// Where `typeof l === tag` holds and `l` (a local or field token of union `u`) is narrowed
+    /// to members `vs`, some of them open: the `Class` fact reading it as the tag's type, when
+    /// that is a primitive the other members of `vs` are.
+    pub(crate) fn typeof_view(
+        &mut self,
+        l: LocalId,
+        u: TyId,
+        vs: &[u32],
+        tag: &str,
+    ) -> Option<Fact> {
+        let members = self.cx.union_members(u)?;
+        let live: Vec<TyId> = vs
+            .iter()
+            .filter_map(|v| members.get(*v as usize))
+            .copied()
+            .collect();
+        if !live.iter().any(|m| self.open_member(*m)) {
+            return None;
+        }
+        let fixed: Vec<TyId> = live.into_iter().filter(|m| !self.open_member(*m)).collect();
+        let target = match fixed.as_slice() {
+            [] => match tag {
+                "number" => self.cx.ty.f64,
+                "string" => self.cx.ty.str_,
+                "boolean" => self.cx.ty.bool_,
+                _ => return None,
+            },
+            [m] if self.cx.typeof_tag(*m) == tag => *m,
+            _ => return None,
+        };
+        self.view_target(target).then_some(Fact::Class(l, target))
+    }
+
+    /// Is `m` a union member whose `typeof` the instantiation decides (a type parameter, `any`
+    /// or `unknown`)?
+    pub(crate) fn open_member(&self, m: TyId) -> bool {
+        self.instance_valued(m) || self.cx.dynamic(m).is_some()
+    }
+
+    /// Can a `typeof` test read an open member as `t` (a primitive, not branded)?
+    fn view_target(&self, t: TyId) -> bool {
+        let prim = matches!(
+            self.cx.ty.kind(t),
+            TyKind::Str | TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool
+        );
+        prim && self.cx.brand_base(t).is_none()
+    }
+
+    /// `e`, a read of local or field token `l`, as the primitive type `target` a `typeof` test
+    /// narrowed it to (`typeof_facts`), when `e` is an open member or a union of those and
+    /// `target` (the members `l` is narrowed to): each open member's value converted from
+    /// `any`, checked. `Err` gives `e` back otherwise.
+    pub(crate) fn open_view(
+        &mut self,
+        l: LocalId,
+        e: hir::Expr,
+        target: TyId,
+    ) -> Result<hir::Expr, hir::Expr> {
+        if !self.view_target(target) || self.any_ty().is_none() {
+            return Err(e);
+        }
+        if self.instance_valued(e.ty) {
+            let span = e.span;
+            let v = self.param_as_any(e);
+            return Ok(self.intrinsic(hir::Intrinsic::AnyTo, vec![v], target, span));
+        }
+        let Some(members) = self.cx.union_members(e.ty) else {
+            return Err(e);
+        };
+        let live = self
+            .allowed_members(l)
+            .unwrap_or_else(|| (0..members.len() as u32).collect());
+        let fits = live.iter().all(|v| {
+            let m = members[*v as usize];
+            m == target || self.open_member(m)
+        });
+        if !fits {
+            return Err(e);
+        }
+        self.map_members_in(e, target, Some(live), &mut |s, value| {
+            if value.ty == target {
+                return Some(value);
+            }
+            let span = value.span;
+            let v = match s.cx.dynamic(value.ty) {
+                Some(_) => s.share_if_place(value),
+                None => s.param_as_any(value),
+            };
+            Some(s.intrinsic(hir::Intrinsic::AnyTo, vec![v], target, span))
+        })
     }
 
     /// The tag of member `t` read from its value (bound in `pat`) when the instantiation
