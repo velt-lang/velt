@@ -84,9 +84,10 @@ impl FnCx<'_, '_> {
                 && !self.cx.ty.has_error(e)
                 && self.param_differs(o, e)
             {
-                let index =
-                    std_ints.get(k) == Some(&true) && o == self.cx.ty.f64 && self.cx.ty.is_int(e);
-                if index || self.passed_converts(e, o, p.name.span) {
+                // A standard callback's index is a number first (`widened_param`).
+                let index = std_ints.get(k) == Some(&true) && self.cx.ty.is_int(e);
+                let from = if index { self.cx.ty.f64 } else { e };
+                if from == o || self.passed_converts(from, o, p.name.span) {
                     out[k] = Some(e);
                 }
             }
@@ -113,10 +114,14 @@ impl FnCx<'_, '_> {
         } else {
             UseMode::Move
         };
-        let read = self.mk(H::Local(l, mode), passed, span);
-        let index = std_int && own == self.cx.ty.f64 && self.cx.ty.is_int(passed);
+        let mut read = self.mk(H::Local(l, mode), passed, span);
+        // A standard callback's index (an integer) is a number, then converts (to an `any`, a
+        // union with `number`, …): an `any` holds a number, as in JS.
+        if std_int && self.cx.ty.is_int(passed) {
+            let f64_ = self.cx.ty.f64;
+            read = self.mk(H::Cast(Box::new(read)), f64_, span);
+        }
         let init = match self.try_coerce(read, own) {
-            Err(h) if index => self.mk(H::Cast(Box::new(h)), own, span),
             // `entry_widened` tried it: reached only for what it couldn't see (none known).
             Ok(h) => h,
             Err(h) => {

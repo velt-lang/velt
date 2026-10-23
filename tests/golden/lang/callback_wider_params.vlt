@@ -75,3 +75,17 @@ xs.forEach((v: number, i: number) => console.log(v, i, i / 2));
 console.log(xs.map((v: number, i: number) => v * i));
 console.log(xs.filter((_: any, i: number) => i !== 1));
 console.log(xs.reduce((acc: number, v: number, i: number) => acc + v * i, 0));
+
+// An index annotated `any`, `unknown` or a union with `number` holds a number.
+const ys = [10, 20];
+ys.forEach((x: number, i: any) => console.log(typeof i === "number" ? i / 2 : -1));
+ys.forEach((x: number, i: any) => console.log((i as number) + 1));
+console.log(ys.map((x, i: unknown) => (typeof i === "number" ? i * 2 : -1)));
+console.log(ys.reduce((acc, x, i: any) => acc + (i as number), 0));
+console.log(ys.findIndex((x, i: object | number) => typeof i === "number" && i > 0));
+const f = (x: number, i: any) => console.log("f", typeof i, i);
+ys.forEach(f);
+function g(x: unknown, i: unknown) {
+  console.log("g", typeof x, typeof i, i);
+}
+ys.forEach(g);
