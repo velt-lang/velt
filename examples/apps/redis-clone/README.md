@@ -64,7 +64,7 @@ velt run demo.vlt              # a client session against an in-process server (
 ## Performance
 
 **Linux, every core (2026-10-23).** A Linux arm64 container on an Apple M4 (10 cores), redis-server
-7.0 against this server on Velt's scheduler (`VELT_SCHEDULER=velt`), `redis-benchmark` with 4
+7.0 against this server on Velt's scheduler (the default), `redis-benchmark` with 4
 client threads, 50 connections, random keys among 100k. Requests/s, and the server's CPU time
 per request:
 
