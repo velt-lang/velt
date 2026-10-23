@@ -21,7 +21,10 @@ fn a_trap_that_throws_is_accepted_and_the_reads_throw_its_error() {
          function read(p: any): number {{ return p.a as number; }}
          function main() {{ const p = make(); try {{ console.log(read(p)); }} catch (e) {{ console.log(e instanceof TrapError); }} }}"
     ));
-    assert!(func(&p, "read").throws.is_some(), "a read runs the `get` trap");
+    assert!(
+        func(&p, "read").throws.is_some(),
+        "a read runs the `get` trap"
+    );
     // The `try` catches it: `main` throws nothing.
     assert!(func(&p, "main").throws.is_none());
 }
@@ -39,8 +42,14 @@ fn each_operation_throws_what_its_own_trap_throws() {
          function read(p: any): number { return p.a as number; }
          function main() { const p = make(); try { console.log(test(p), read(p)); } catch (e) {} }",
     );
-    assert!(func(&p, "test").throws.is_some(), "`in` runs the `has` trap");
-    assert!(func(&p, "read").throws.is_none(), "a read runs no `has` trap");
+    assert!(
+        func(&p, "test").throws.is_some(),
+        "`in` runs the `has` trap"
+    );
+    assert!(
+        func(&p, "read").throws.is_none(),
+        "a read runs no `has` trap"
+    );
 }
 
 #[test]

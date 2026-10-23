@@ -308,7 +308,10 @@ impl Ctx<'_> {
     fn site_module(&self, module: usize) -> bool {
         match self.scopes.get(module) {
             None => false,
-            Some(s) if s.is_std => self.modules.get(module).is_some_and(|m| m.path == "std/proxy"),
+            Some(s) if s.is_std => self
+                .modules
+                .get(module)
+                .is_some_and(|m| m.path == "std/proxy"),
             Some(_) => true,
         }
     }

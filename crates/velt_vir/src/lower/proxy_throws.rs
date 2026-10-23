@@ -27,8 +27,9 @@ use super::any_glue::Ready;
 use super::any_proxy::{ProxyKey, PRELUDE_PROXY};
 use super::glue::VtableKey;
 use super::operand::proj;
+use super::rt::Rt;
 use super::{ice, FnLower, ScopeKind};
-use crate::vir::{self, BinOp, Callee, Operand, Place, Proj, Rvalue, Terminator, Ty};
+use crate::vir::{self, BinOp, Callee, Operand, Place, Proj, Rvalue, Terminator, Ty, STR_AGG};
 
 impl super::Cx<'_> {
     /// The prelude's `Proxy` class type, when the program has loaded it.
@@ -165,14 +166,12 @@ impl FnLower<'_, '_> {
     }
 
     /// `__set(key, *value, receiver)` on the proxy `obj` (`value`: the address of an owned
-    /// `any`); a trap answering `false` is Node's `TypeError` (module code is strict). `shown`:
-    /// the key's string, for that message.
+    /// `any`); a trap answering `false` is Node's `TypeError` (module code is strict).
     pub(super) fn proxy_set_direct(
         &mut self,
         (obj, pty, r): (vir::Local, TyId, &Ready),
         key: ProxyKey,
         value: Operand,
-        shown: &dyn Fn(&mut Self) -> Operand,
     ) {
         let any = self.cx.any_ty();
         let avt = self.cx.ty(any);
@@ -185,7 +184,17 @@ impl FnLower<'_, '_> {
         let (good, bad) = (self.new_block(), self.new_block());
         self.branch(ok, good, bad);
         self.switch_to(bad);
-        let ka = shown(self);
+        // The key's string for the message (a number key formatted only on this path).
+        let ka = match key {
+            ProxyKey::Str(k) => Operand::Copy(Place::local(k)),
+            ProxyKey::Num(n) => {
+                let s = self.temp(Ty::Agg(STR_AGG));
+                let sa = self.addr(Place::local(s));
+                let iv = Operand::Copy(Place::local(n));
+                self.call_rt(Rt::StrFromF64, vec![iv, sa.clone()], None);
+                sa
+            }
+        };
         self.panic_with_key(
             "TypeError: 'set' on proxy: trap returned falsish for property '",
             &ka,
@@ -209,7 +218,10 @@ impl FnLower<'_, '_> {
     }
 
     /// `__keys()` on the proxy `obj`: its `string[]`, owned.
-    pub(super) fn proxy_keys_direct(&mut self, (obj, pty, r): (vir::Local, TyId, &Ready)) -> Operand {
+    pub(super) fn proxy_keys_direct(
+        &mut self,
+        (obj, pty, r): (vir::Local, TyId, &Ready),
+    ) -> Operand {
         self.proxy_direct_call(r, obj, pty, vec![])
     }
 

@@ -31,8 +31,7 @@ pub(super) const OBJECT_PROTO: [&str; 12] = [
     "__lookupSetter__",
 ];
 
-/// A method or getter ready to call: its def, type arguments, result type and error type
-/// (only a `Proxy` method throws: proxy_throws.rs).
+/// A method or getter ready to call (only a `Proxy` method throws: proxy_throws.rs).
 pub(super) struct Ready {
     pub(super) def: DefId,
     pub(super) targs: Vec<TyId>,
@@ -165,7 +164,7 @@ impl FnLower<'_, '_> {
         if f.params.first().is_none_or(|p| p.mode == PassMode::Owned) {
             return None;
         }
-        let throws = (!f.is_async).then(|| self.cx.fn_throws(f, &targs)).flatten();
+        let throws = self.cx.fn_throws(f, &targs).filter(|_| !f.is_async);
         if throws.is_some() && !self.is_proxy(owner) {
             return None;
         }

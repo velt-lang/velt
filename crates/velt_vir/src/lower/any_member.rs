@@ -20,8 +20,8 @@
 
 use velt_sema::hir::{self, Nothing, TyId, TyKind};
 
-use super::any_proxy::ProxyKey;
 use super::any::{SLOT_NUMBER, TAG_NULL, TAG_NUMBER, TAG_STRING, TAG_UNDEFINED};
+use super::any_proxy::ProxyKey;
 use super::glue::{Glue, VtableKey};
 use super::operand::proj;
 use super::rt::Rt;
