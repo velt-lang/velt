@@ -155,7 +155,7 @@ pub extern "C" fn velt_rt_task_gate() -> u64 {
 /// `gate` is 0 or a live handle from [`velt_rt_task_gate`].
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_task_gate_wait(gate: u64) -> *mut VeltFut {
-    leaf::new_leaf(Wait::new(borrow(gate)))
+    leaf::new_inner_leaf(Wait::new(borrow(gate)))
 }
 
 /// Releases a gate handle.

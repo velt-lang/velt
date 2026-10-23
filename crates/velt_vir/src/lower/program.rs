@@ -39,6 +39,7 @@ impl<'h> Cx<'h> {
             module_desc: None,
             reassigned_slots: None,
             prelude_error: None,
+            tla_marks: None,
             static_map: FxHashMap::default(),
             tables: FxHashMap::default(),
             funcs: vec![],

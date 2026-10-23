@@ -16,7 +16,7 @@ use std::time::Duration;
 
 use tokio::sync::Notify;
 
-use super::leaf::new_leaf;
+use super::leaf::{new_inner_leaf, new_leaf};
 use super::VeltFut;
 use crate::array::VeltArray;
 use crate::handle::Handle;
@@ -77,6 +77,12 @@ impl Signal {
 
     fn is_aborted(&self) -> bool {
         self.aborted.load(Ordering::Acquire)
+    }
+
+    /// Will a timer abort it (an `AbortSignal.timeout`, or `AbortSignal.any` of one)?
+    fn timed(&self) -> bool {
+        !self.is_aborted()
+            && (self.timer.get().is_some() || lock(&self.sources).iter().any(|s| s.timed()))
     }
 
     fn reason(&self) -> Reason {
@@ -194,13 +200,17 @@ pub unsafe extern "C" fn velt_rt_signal_timeout_ms(h: Handle<Signal>) -> i64 {
 }
 
 /// A future (unit result) that completes once the signal is aborted (never, if it never is).
+/// Waiting for a signal a timer aborts keeps the process alive, like waiting for a timer
+/// (task/quiet.rs; Node unrefs that timer, but then nothing awaiting the signal would run); a
+/// signal only `abort()` can abort leaves that to whoever may call it.
 ///
 /// # Safety
 /// `h` must be a live signal handle.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_signal_wait(h: Handle<Signal>) -> *mut VeltFut {
     let s = h.clone_arc();
-    new_leaf(async move {
+    let timed = s.timed();
+    let wait = async move {
         loop {
             let aborted = s.notify.notified();
             if s.is_aborted() {
@@ -208,7 +218,12 @@ pub unsafe extern "C" fn velt_rt_signal_wait(h: Handle<Signal>) -> *mut VeltFut 
             }
             aborted.await;
         }
-    })
+    };
+    if timed {
+        new_leaf(wait)
+    } else {
+        new_inner_leaf(wait)
+    }
 }
 
 /// `AbortSignal.timeout(ms)`: a new signal that a runtime timer aborts after `ms` milliseconds

@@ -1,0 +1,8 @@
+// The top level waiting at an `await` nothing can settle any more: Node's warning naming the
+// line of that `await`, and exit code 13 (#1366).
+console.log("before");
+await new Promise<void>((r) => setTimeout(() => r(), 10));
+console.log("after");
+const { promise } = Promise.withResolvers<void>();
+await promise;
+console.log("never");

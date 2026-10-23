@@ -1,0 +1,4 @@
+// The top level awaiting a promise whose `resolve` was dropped: Node's warning and exit code 13
+// (#1366).
+console.log("before");
+await new Promise<void>((resolve) => {});

@@ -536,9 +536,7 @@ impl FnCx<'_, '_> {
     /// The body of an expression-bodied arrow checked as `async` by [`FnCx::thread_arrow`]: its
     /// value, awaited when it is a promise or may be one.
     pub(super) fn awaited_body(&mut self, e: &ast::Expr) -> hir::Block {
-        self.direct_await = super::promise_new::awaited_new_promise(e);
         let h = self.expr(e, self.f.ret, Want::Move);
-        self.direct_await = None;
         let h = match self.cx.ty.kind(h.ty).clone() {
             TyKind::Promise(v, _) => {
                 self.awaited_using_shares(&h);
@@ -695,9 +693,7 @@ impl FnCx<'_, '_> {
     /// The body of an expression-bodied callback checked as `async`: the expression as a
     /// statement, awaited when it is a promise.
     pub(super) fn void_task_body(&mut self, e: &ast::Expr) -> hir::Block {
-        self.direct_await = super::promise_new::awaited_new_promise(e);
         let h = self.expr(e, None, Want::Move);
-        self.direct_await = None;
         let h = match self.cx.ty.kind(h.ty).clone() {
             TyKind::Promise(v, _) => {
                 self.awaited_using_shares(&h);

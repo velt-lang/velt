@@ -4,9 +4,7 @@
 //! `E` is `never` and `reject` cannot be called.
 //!
 //! The executor must be an arrow-function literal: its `resolve` and `reject` are heap closures
-//! the prelude makes, so the literal may keep them (`FnInfo::keeps_fn_params`). The call also
-//! gets the source location of the `new Promise` and whether it is awaited directly, for the
-//! report when an abandoned promise is awaited (std/prelude/promise.vlt).
+//! the prelude makes, so the literal may keep them (`FnInfo::keeps_fn_params`).
 //!
 //! `Promise.withResolvers<T, E>()` (ES2024) is the same slot without an executor: a call of the
 //! prelude's `promiseWithResolvers`, whose `resolve` and `reject` are fields of the result.
@@ -17,7 +15,7 @@ use velt_syntax::ast;
 
 use crate::body::{FnCx, Want};
 use crate::ctx::Item;
-use crate::hir::{self, ExprKind as H, Intrinsic, TyId, TyKind};
+use crate::hir::{self, ExprKind as H, TyId, TyKind};
 
 impl FnCx<'_, '_> {
     pub(super) fn promise_new(
@@ -31,7 +29,6 @@ impl FnCx<'_, '_> {
         if self.lookup_item("Promise", class.span).is_some() {
             return None;
         }
-        let direct = self.direct_await.take() == Some(span);
         let Some(params) = executor_params(args) else {
             self.cx.error(
                 Diagnostic::error(
@@ -53,7 +50,7 @@ impl FnCx<'_, '_> {
             _ => ("promiseNew", &type_args[..]),
         };
         let mut call = self.prelude_call(name, "new Promise", type_args, &args[..1], hint, span);
-        self.finish_promise_new(&mut call, span, direct);
+        self.finish_promise_new(&mut call);
         Some(call)
     }
 
@@ -210,9 +207,8 @@ impl FnCx<'_, '_> {
         type_args
     }
 
-    /// The executor literal may keep its parameters; the trailing (defaulted) parameters of the
-    /// prelude function get the site and whether the promise is awaited directly.
-    fn finish_promise_new(&mut self, call: &mut hir::Expr, span: Span, direct: bool) {
+    /// The executor literal may keep its parameters.
+    fn finish_promise_new(&mut self, call: &mut hir::Expr) {
         let H::Call { args, .. } = &mut call.kind else {
             return;
         };
@@ -222,14 +218,6 @@ impl FnCx<'_, '_> {
         }) = args.first()
         {
             self.cx.fn_info_mut(*def).keeps_fn_params = true;
-        }
-        if let [_, site, awaited] = args.as_mut_slice() {
-            let call = H::Call {
-                callee: hir::Callee::Intrinsic(Intrinsic::SourceLocation),
-                args: vec![],
-            };
-            *site = self.mk(call, self.cx.ty.str_, span);
-            *awaited = self.mk(H::Lit(hir::Lit::Bool(direct)), self.cx.ty.bool_, span);
         }
     }
 }
@@ -282,18 +270,6 @@ fn executor_params(args: &[ast::Expr]) -> Option<usize> {
         ast::ExprKind::Arrow { params, .. } if (1..=2).contains(&params.len()) => {
             Some(params.len())
         }
-        _ => None,
-    }
-}
-
-/// The `new Promise` operand of an `await`, if it is one (parentheses allowed): its span.
-pub(super) fn awaited_new_promise(inner: &ast::Expr) -> Option<Span> {
-    let mut e = inner;
-    while let ast::ExprKind::Paren(x) = &e.kind {
-        e = x;
-    }
-    match &e.kind {
-        ast::ExprKind::New { class, .. } if promise_class(class).is_some() => Some(e.span),
         _ => None,
     }
 }

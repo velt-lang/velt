@@ -131,6 +131,7 @@ mod this_param;
 mod this_type;
 mod three_state;
 mod throws_mismatch;
+mod top_level_await;
 mod truthiness;
 mod type_tests;
 mod typeof_member;

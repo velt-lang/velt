@@ -1,0 +1,17 @@
+// Spawned tasks keep the process alive after a synchronous `main` returns, as in Node, where
+// the same promises run to the end (#1366). Each task computes without waiting for anything.
+async function step(n: number): Promise<void> {
+  let s = 0;
+  for (let k = 0; k < 200000; k++) {
+    s += k % 7;
+  }
+  console.log("step", n, s);
+  if (n < 3) {
+    spawn(step(n + 1));
+  }
+}
+
+function main() {
+  console.log("main start");
+  spawn(step(1));
+}
