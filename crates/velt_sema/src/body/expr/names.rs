@@ -73,8 +73,7 @@ impl FnCx<'_, '_> {
         // whose reads give the view an arm of its own (`union_view`).
         if std::mem::take(&mut self.view_receiver)
             && member.is_some()
-            && payload.is_none()
-            && self.cx.union_view(ty).is_some()
+            && self.cx.union_view(payload.unwrap_or(ty)).is_some()
         {
             member = None;
         }
@@ -100,6 +99,9 @@ impl FnCx<'_, '_> {
                 None => self.use_mode(p, want),
             };
             e = self.unwrap_present(e, mode, span);
+            if member.is_none() {
+                return self.downcast_narrowed(l, e);
+            }
         }
         if let Some((variant, m)) = member {
             if self.holds_assigned_member(l) {
