@@ -6,7 +6,7 @@ import { connect, listen } from "velt:net";
 import { OP_BINARY, OP_CLOSE, closePayload } from "velt:websocket/frame";
 import { SendQueue, CLOSED, FAILED, START, STATUS } from "velt:websocket/queue";
 import { Reader } from "velt:websocket/reader";
-import { finish, flush } from "velt:websocket/writer";
+import { finish, flush, settleQuietly } from "velt:websocket/writer";
 
 async function main() {
   // A peer that accepts and then never reads.
@@ -15,25 +15,36 @@ async function main() {
   const stream = await connect(`127.0.0.1:${listener.port}`);
   const silent = await peer;
 
-  // 64 MB: far more than the socket buffers take.
-  const tx = shared(new Mutex<SendQueue>(new SendQueue(false, new Reader(true, []))));
+  // Fill the socket first: once it takes nothing more, it never will (the peer reads nothing),
+  // so the flusher's write is stuck however large the socket buffers are. (A Windows socket
+  // takes a whole 64 MB write while it has any room, so queueing a lot is not enough.)
   const chunk = Buffer.alloc(1048576);
-  let started = 0;
-  for (let i = 0; i < 64; i++) {
-    const r = tx.with((q) => q.pushBytes(OP_BINARY, chunk));
-    if ((r & START) != 0) {
-      started++;
-      spawn(flush(stream, tx.clone()));
+  while (stream.tryWrite(chunk) > 0) {}
+
+  // 4 MB queued at once (past the high-water mark), for one flusher to take in one batch.
+  const tx = shared(new Mutex<SendQueue>(new SendQueue(false, new Reader(true, []))));
+  const r0 = tx.with((q) => {
+    let r: i64 = 0;
+    for (let i = 0; i < 4; i++) {
+      r |= q.pushBytes(OP_BINARY, chunk);
     }
+    return r;
+  });
+  console.log("a flusher started:", (r0 & START) != 0);
+  // Waits until the flusher has taken the batch.
+  const taken = tx.with((q) => q.out.length > 0 ? q.wait() : null);
+  if ((r0 & START) != 0) {
+    spawn(flush(stream, tx.clone()));
   }
-  // One at least: where the socket takes the first frames at once, the flusher can drain the
-  // queue and end before the next push starts another.
-  console.log("a flusher started:", started >= 1);
-  await sleep(50);
-  console.log("still writing:", tx.with((q) => q.flushing && q.stopped == ""));
+  if (taken != null) {
+    await taken.receive();
+  }
+  console.log("still writing:", tx.with((q) => q.flushing && q.stopped == "" && q.out.length == 0));
 
   const bye = closePayload(1000);
   const r = tx.with((q) => q.pushBytes(OP_CLOSE, bye));
+  // As `closeDown`: whoever queues into an idle connection starts its flusher (this one is busy).
+  settleQuietly(stream, tx, r);
   console.log("close queued:", (r & STATUS) != CLOSED && (r & STATUS) != FAILED);
   const t0 = performance.now();
   await finish(stream, tx, 300);
