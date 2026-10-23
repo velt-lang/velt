@@ -12,31 +12,26 @@ use velt_common::Span;
 use velt_syntax::ast;
 
 use crate::body::{FnCx, LocalKind};
-use crate::hir::{self, ExprKind as H, LitValue, PatKind as P, TyId, UseMode};
+use crate::hir::{self, ExprKind as H, LitValue, PatKind as P, TyId, TyKind, UseMode};
 use crate::literals::lit_matches;
 
 impl FnCx<'_, '_> {
     /// `w as U` for a union `U` with a view, of an interface value `w` that is no member of `U`
     /// and converts to `U`'s view interface (it has every field all members have, with the
     /// union of their types, and the members' shared methods): the view, holding the same
-    /// object. `Err(w)` otherwise.
+    /// object. A class instance converts through an interface its class implements
+    /// (`new W() as State<T>` with `class W implements Impl<T>`). `Err(w)` otherwise.
     pub(super) fn union_view_cast(
         &mut self,
         h: hir::Expr,
         target: TyId,
         span: Span,
     ) -> Result<hir::Expr, hir::Expr> {
-        let Some((def, variant, view)) = self.cx.union_view(target) else {
+        let Some((def, variant, view)) = self.cx.union_view_new(target) else {
             return Err(h);
         };
-        if !self.cx.is_method_iface(h.ty) {
-            return Err(h);
-        }
         let members = self.cx.union_members(target).unwrap_or_default();
-        if members.contains(&h.ty) {
-            return Err(h);
-        }
-        let h = self.try_coerce(h, view)?;
+        let h = self.view_source(h, view, &members)?;
         self.cx.union_view_made(def);
         let (_, type_args) = self.cx.union_def(target).expect("ICE: union");
         let kind = H::Variant {
@@ -46,6 +41,60 @@ impl FnCx<'_, '_> {
             args: vec![h],
         };
         Ok(self.mk(kind, target, span))
+    }
+
+    /// `h` (no member of the union) as view interface value `view`.
+    fn view_source(
+        &mut self,
+        h: hir::Expr,
+        view: TyId,
+        members: &[TyId],
+    ) -> Result<hir::Expr, hir::Expr> {
+        if self.cx.is_method_iface(h.ty) {
+            if members.contains(&h.ty) {
+                return Err(h);
+            }
+            return self.try_coerce(h, view);
+        }
+        if self.cx.class_of(h.ty).is_none() {
+            return Err(h);
+        }
+        for i in self.implemented_ifaces(h.ty) {
+            if members.contains(&i) || !self.cx.is_method_iface(i) {
+                continue;
+            }
+            let Ok(as_i) = self.try_coerce(h.clone(), i) else {
+                continue;
+            };
+            if let Ok(v) = self.try_coerce(as_i, view) {
+                return Ok(v);
+            }
+        }
+        Err(h)
+    }
+
+    /// The interfaces class type `t` and its base classes implement, at their arguments.
+    fn implemented_ifaces(&mut self, t: TyId) -> Vec<TyId> {
+        let mut out = vec![];
+        let mut cur = Some(t);
+        while let Some((d, args)) = cur.and_then(|t| self.cx.class_of(t)) {
+            if out.len() > 64 {
+                break;
+            }
+            let Some(a) = self.cx.adt(d) else {
+                break;
+            };
+            let (bounds, base) = (a.implements.clone(), a.base);
+            for b in bounds {
+                let bargs: Vec<TyId> = b.args.iter().map(|&x| self.cx.subst(x, &args)).collect();
+                let i = self.cx.ty.intern(TyKind::Dyn(b.iface, bargs));
+                if !out.contains(&i) {
+                    out.push(i);
+                }
+            }
+            cur = base.map(|b| self.cx.subst(b, &args));
+        }
+        out
     }
 
     /// The `<view>` arm of a match on a value of union type `u`: `<view>(v) => body(v)`, `v`
@@ -95,7 +144,7 @@ impl FnCx<'_, '_> {
     /// View value `v` as a value of union `exp` (re-tagging into a union of the same family):
     /// `exp`'s `<view>` holding it.
     pub(super) fn view_retag(&mut self, v: hir::Expr, exp: TyId, span: Span) -> Option<hir::Expr> {
-        let (def, variant, view) = self.cx.union_view(exp)?;
+        let (def, variant, view) = self.cx.union_view_new(exp)?;
         let v = self.try_coerce(v, view).ok()?;
         self.cx.union_view_made(def);
         let (_, type_args) = self.cx.union_def(exp)?;

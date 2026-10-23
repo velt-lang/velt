@@ -1,0 +1,98 @@
+// check: no leaks
+// A class instance cast to a union of interfaces (#1410): `new W() as State<number>` with
+// `class W implements Impl<number>` converts through the interface the class implements (also
+// from a subclass and a generic class), and reads its getters. Expected output: Node's.
+type StateName = "idle" | "ready";
+interface Base<T> {
+  refresh(): number;
+}
+interface Idle<T> extends Base<T> {
+  readonly state: "idle";
+  readonly value: null;
+  readonly hasValue: false;
+}
+interface Ready<T> extends Base<T> {
+  readonly state: "ready";
+  readonly value: T;
+  readonly hasValue: true;
+}
+type State<T> = Idle<T> | Ready<T>;
+interface Impl<T> {
+  readonly state: StateName;
+  readonly value: T | null;
+  readonly hasValue: boolean;
+  refresh(): number;
+}
+class Machine<T> {
+  st: StateName = "idle";
+  data: T | null = null;
+  set(v: T): void {
+    this.st = "ready";
+    this.data = v;
+  }
+}
+function make<T>(m: Machine<T>): Impl<T> {
+  return {
+    get state() {
+      return m.st;
+    },
+    get value() {
+      return m.data;
+    },
+    get hasValue() {
+      return m.st === "ready";
+    },
+    refresh: () => 1,
+  };
+}
+class W implements Impl<number> {
+  n = 0;
+  get state(): StateName {
+    return this.n > 0 ? "ready" : "idle";
+  }
+  get value(): number | null {
+    return this.n > 0 ? this.n : null;
+  }
+  get hasValue(): boolean {
+    return this.n > 0;
+  }
+  refresh(): number {
+    this.n++;
+    return this.n;
+  }
+}
+class Sub extends W {
+  label = "sub";
+}
+class G<T> implements Impl<T> {
+  data: T | null = null;
+  get state(): StateName {
+    return this.data === null ? "idle" : "ready";
+  }
+  get value(): T | null {
+    return this.data;
+  }
+  get hasValue(): boolean {
+    return this.data !== null;
+  }
+  refresh(): number {
+    return 0;
+  }
+}
+const w = new W();
+const s = w as State<number>;
+console.log(s.state, s.value);
+w.refresh();
+if (s.state === "ready") console.log(s.value + 1);
+s.refresh();
+console.log(s.value, w.n);
+const t = new W() as State<number>;
+console.log(t.state);
+const u = new Sub() as State<number>;
+u.refresh();
+console.log(u.state, u.hasValue);
+const g = new G<string>();
+const gs = g as State<string>;
+console.log(gs.state);
+g.data = "x";
+if (gs.hasValue) console.log(gs.value.length);

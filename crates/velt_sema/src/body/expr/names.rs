@@ -118,6 +118,15 @@ impl FnCx<'_, '_> {
         self.downcast_narrowed(l, e)
     }
 
+    /// Is `exp` (or its payload, for `U | null`) a union of the family of union local `l`'s
+    /// (or its payload's), which may hold a view (`crate::union_views`)?
+    fn view_union_expected(&mut self, l: LocalId, exp: TyId) -> bool {
+        let ty = self.local_ty(l);
+        let u = self.cx.ty.core(ty).unwrap_or(ty);
+        let x = self.cx.ty.core(exp).unwrap_or(exp);
+        self.cx.union_view(u).is_some() && self.cx.same_view_family(u, x)
+    }
+
     /// A union local `l` (of type `ty`, `T | null` narrowed to `payload`) that `instanceof`
     /// narrowed to a class every member it can still hold is, or is a base of: read as that
     /// class (`catch (e)` on `Error | MyErr`, then `e instanceof MyErr`).
@@ -251,7 +260,13 @@ impl FnCx<'_, '_> {
         let checks = self.f.late.checks.len();
         if let Some(l) = self.lookup_local(&id.name, id.span) {
             self.rec_local(id.span, l);
+            // A narrowed union that may hold a view, where a union of its family is expected:
+            // the union itself, as for the object of a member read (no member view).
+            if exp.is_some_and(|x| self.view_union_expected(l, x)) {
+                self.view_receiver = true;
+            }
             let e = self.local_expr(l, want, id.span);
+            self.view_receiver = false;
             return self.late_checked_read(e, checks);
         }
         match self.lookup_item(&id.name, id.span) {

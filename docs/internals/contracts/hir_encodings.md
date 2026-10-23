@@ -369,13 +369,15 @@ Maintainer-owned, like `hir/mod.rs`, `hir/intrinsic.rs` and `hir/module_state.rs
   a `TypeError` panic on a mismatch; a discriminant test compares the live value); a `switch` on
   the discriminant matches the discriminant's value (read through the view for a view), its
   slots still narrowing the union local. A union local narrowed to one member that is the object
-  of a member read or call stays the union (narrowed) instead of an `UnwrapVariant`, unless it
-  holds that member because it was assigned to it.
+  of a member read or call, or read where a union of its family is expected, stays the union
+  (narrowed) instead of an `UnwrapVariant`, unless it holds that member because it was assigned
+  to it.
 - Lowering: `canon_union` leaves the `<view>` variant out of a union's member list (the family's
   unions all have it), and a match on such a union that has no arm for the variant panics there
   (`TypeError`) instead of being unreachable. Sema reports a match without a `<view>` arm and a
-  narrowed `UnwrapVariant` read of such a union as not supported; in programs that make no view
-  the `<view>` arms are removed, and the union lowers as before.
+  narrowed `UnwrapVariant` read of such a union as not supported. Only the families an earlier
+  round of checking made views of get `<view>` arms: a round that makes a view of another family
+  is checked again with it, so a program that makes no view gets the HIR it got before views.
 
 ## switch
 - No HIR statement: sema desugars `switch` (`hir/mod.rs`, sema `body/switch`) into

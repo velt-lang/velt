@@ -1,0 +1,88 @@
+// check: no leaks
+// A narrowed union view (#1410) used where the union itself is expected (an argument, an array
+// element, a return, an annotated variable, a nullable union): it stays the union, still read
+// through its getters later, no member view needed. Expected output: Node's.
+type StateName = "idle" | "ready";
+interface Base<T> {
+  refresh(): number;
+}
+interface Idle<T> extends Base<T> {
+  readonly state: "idle";
+  readonly value: null;
+  readonly hasValue: false;
+}
+interface Ready<T> extends Base<T> {
+  readonly state: "ready";
+  readonly value: T;
+  readonly hasValue: true;
+}
+type State<T> = Idle<T> | Ready<T>;
+interface Impl<T> {
+  readonly state: StateName;
+  readonly value: T | null;
+  readonly hasValue: boolean;
+  refresh(): number;
+}
+class Machine<T> {
+  st: StateName = "idle";
+  data: T | null = null;
+  set(v: T): void {
+    this.st = "ready";
+    this.data = v;
+  }
+}
+function make<T>(m: Machine<T>): Impl<T> {
+  return {
+    get state() {
+      return m.st;
+    },
+    get value() {
+      return m.data;
+    },
+    get hasValue() {
+      return m.st === "ready";
+    },
+    refresh: () => 1,
+  };
+}
+function desc(s: State<number>): string {
+  return s.state;
+}
+function maybe(s: State<number> | null): string {
+  return s === null ? "none" : s.state;
+}
+function back(s: State<number>): State<number> {
+  if (s.state === "ready") {
+    return s;
+  }
+  return s;
+}
+const m = new Machine<number>();
+const v = make(m) as State<number>;
+const lit: State<number> = { state: "ready", value: 9, hasValue: true, refresh: () => 2 };
+const keep: State<number>[] = [];
+m.set(3);
+if (v.state === "ready") {
+  console.log(desc(v), maybe(v));
+  keep.push(v);
+  const again: State<number> = v;
+  const opt: State<number> | null = v;
+  console.log(again.state, keep.length, opt === null);
+  const pick: State<number> = keep.length > 5 ? lit : v;
+  console.log(pick.state, back(v).value);
+}
+switch (v.state) {
+  case "ready":
+    console.log(desc(v));
+    keep.push(v);
+    break;
+  default:
+    console.log("other");
+}
+if (lit.state === "ready") {
+  keep.push(lit);
+  console.log(desc(lit), lit.value);
+}
+m.st = "idle";
+for (const k of keep) console.log(k.state, k.value);
+console.log(back(v).state);

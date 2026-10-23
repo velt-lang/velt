@@ -1052,13 +1052,14 @@ for (const s of shapes) {
   test, `switch` and field read on the union calls its getters again, so the union sees the
   object change, as in Node. The cast needs the object's type to have every member's fields,
   each typed as the union of the members' types (`kind: "circle" | "square"`), and the methods
-  of the shared interface; else it is an error. A read after a test is checked against the
-  member the test selected: an object whose state no longer fits it (`kind` is `"circle"` but
-  `r` is `null`) gives a `TypeError`, never a value of the wrong type. Values built from
+  of the shared interface (a class instance converts through an interface its class
+  implements: `new Wide() as Shape`); else it is an error. A read after a test is checked
+  against the member the test selected: an object whose state no longer fits it (`kind` is
+  `"circle"` but `r` is `null`) gives a `TypeError`, never a value of the wrong type. Values built from
   literals keep their member and its tag, and can sit next to the live object in one variable
   or array. Using a narrowed union that may hold such an object as a value of its member type
   (passing it where a `Circle` is expected) is not supported yet (an error); read its fields
-  instead.
+  instead, or pass it where the union is expected.
 
 ```ts
 interface Base {
