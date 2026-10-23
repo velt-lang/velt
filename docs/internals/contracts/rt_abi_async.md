@@ -249,8 +249,8 @@ much slower than stealing (no batch steal-before-start yet, #997).
 
 Every backend sits behind `task/runtime/` (`spawn`, `spawn_with`, `spawn_blocking`, `enter`,
 `block_on`, and its own `JoinHandle`/`AbortHandle`); nothing else in the runtime names a backend's
-types. The default (`VELT_SCHEDULER` unset or `velt`; `stealing` and `per-core` select tokio's,
-and `velt_rt_set_scheduler` kinds are unchanged) is the runtime's own executor
+types. The default (`VELT_SCHEDULER` unset or `velt`; `stealing` and `per-core` select tokio's;
+`velt_rt_set_scheduler` selects nothing any more) is the runtime's own executor
 (`task/runtime/velt/`): worker threads with their
 own queue and `mio` poll; a task woken by I/O, a timer or another thread queues on its home
 worker, one woken by a running task runs next on the waker's worker (a one-task slot, at most 3
@@ -273,8 +273,10 @@ with 256 or more queued tasks polls its reactor every 4 tasks.
 TCP sockets (`net/sys.rs`), the HTTP server, Postgres over TCP and timers are native; tokio
 types elsewhere (files, processes, Postgres over a Unix socket, Redis, the HTTP client, UDP, DNS,
 `spawn_blocking`) run on a one-thread tokio runtime whose context every worker stays inside.
-Allocation per task: states ≤ 1 KiB (align ≤ 16) live inline in tokio's task cell (size classes
-64/256/448/576/1024), so a detached spawn is 1 allocation and a joinable one 2 (task + join handle).
+Allocation per task: on the Velt executor, 3 (the boxed future with its state, the task and the
+join state shared with the handle). On tokio's schedulers, states ≤ 1 KiB (align ≤ 16) live
+inline in tokio's task cell (size classes 64/256/448/576/1024), so a detached spawn is 1
+allocation and a joinable one 2 (task + join handle).
 Panics inside tasks print `panic: <msg>` and exit 101 (same hook as sync code).
 
 ### 2.1 Latches (`new Promise`)

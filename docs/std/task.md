@@ -142,7 +142,8 @@ never wakes another thread.
   worker takes on part of a worker's tasks only while that one stays busy and the help raises
   how much gets done. A pinned task never moves. A task that computes without pausing for more
   than a few milliseconds doesn't hold up the rest of its worker: its timers, sockets and woken
-  tasks go to another worker meanwhile. `VELT_SCHEDULER=stealing` or `per-core` selects one of
+  tasks go to another worker meanwhile, except tasks pinned to that worker, and with one worker
+  (`VELT_THREADS=1`) there is no other to take them. `VELT_SCHEDULER=stealing` or `per-core` selects one of
   tokio's schedulers instead (for comparison; [`VELT_SCHEDULER`](../tooling/cli.md)); with
   `stealing`, `{ worker }` is checked but the task may run on any worker, and
   `currentWorker()` can change at any `await`.
