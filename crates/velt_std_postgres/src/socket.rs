@@ -97,12 +97,30 @@ async fn open(config: &Config, target: Target, port: u16) -> Result<RawSocket, P
             tune(config, &stream).map_err(|e| PgError::io(&e))?;
             Ok(stream)
         }
-        // A local socket: the connect does not wait on the network.
         #[cfg(unix)]
-        Target::Unix(path) => std::os::unix::net::UnixStream::connect(path)
+        Target::Unix(path) => connect_unix(&path)
             .and_then(TcpStream::from_unix_stream)
             .map_err(|e| PgError::io(&e)),
     }
+}
+
+/// Connects to a Unix socket without waiting: a local socket connects at once or fails (a full
+/// listen backlog is `EAGAIN` on Linux, which libpq reports as well), where a blocking connect
+/// would hold the worker until the server accepts. A connect still in progress completes
+/// before the stream's first write does.
+#[cfg(unix)]
+pub(crate) fn connect_unix(path: &std::path::Path) -> io::Result<std::os::unix::net::UnixStream> {
+    use socket2::{Domain, SockAddr, Socket, Type};
+    let socket = Socket::new(Domain::UNIX, Type::STREAM, None)?;
+    socket.set_nonblocking(true)?;
+    match socket.connect(&SockAddr::unix(path)?) {
+        Ok(()) => {}
+        Err(e) if e.raw_os_error() == Some(libc::EINPROGRESS) => {}
+        Err(e) => return Err(e),
+    }
+    Ok(std::os::unix::net::UnixStream::from(
+        std::os::fd::OwnedFd::from(socket),
+    ))
 }
 
 /// `TCP_NODELAY` (requests are small and latency-bound) and the configured keepalive.

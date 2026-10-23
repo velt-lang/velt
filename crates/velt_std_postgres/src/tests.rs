@@ -378,3 +378,38 @@ fn hot_query_futures_stay_small() {
         "pool_op: {pooled} bytes, query {query}"
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn a_unix_socket_connect_never_waits_for_the_server() {
+    // A server that accepts nothing, with a backlog of 1: once it is full, a blocking connect
+    // waits for an accept (on Linux); each of these returns at once, connected or not.
+    let dir = std::env::temp_dir().join(format!("velt-pg-unix-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(".s.PGSQL.5432");
+    let _ = std::fs::remove_file(&path);
+    let listener =
+        socket2::Socket::new(socket2::Domain::UNIX, socket2::Type::STREAM, None).unwrap();
+    listener
+        .bind(&socket2::SockAddr::unix(&path).unwrap())
+        .unwrap();
+    listener.listen(1).unwrap();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let target = path.clone();
+    std::thread::spawn(move || {
+        let (mut kept, mut failed) = (vec![], 0);
+        for _ in 0..20 {
+            match super::socket::connect_unix(&target) {
+                Ok(s) => kept.push(s),
+                Err(_) => failed += 1,
+            }
+        }
+        let _ = tx.send((kept.len(), failed));
+    });
+    let done = rx.recv_timeout(std::time::Duration::from_secs(30));
+    drop(listener);
+    let _ = std::fs::remove_dir_all(&dir);
+    let (connected, failed) = done.expect("a connect waited for the server to accept");
+    assert!(connected > 0);
+    assert_eq!(connected + failed, 20);
+}

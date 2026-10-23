@@ -18,6 +18,9 @@ rustls = { version = "0.23.45", default-features = false, features = ["ring", "s
 tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring", "tls12"] }
 socket2 = "0.6.5"
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2.189"
+
 [dev-dependencies]
 # The wire tests drive futures on a current-thread runtime.
 tokio = { version = "1.53.1", default-features = false, features = ["rt", "io-util", "sync", "macros"] }
