@@ -6,8 +6,16 @@ function log(tag: string, v: number): number {
   console.log("eval", tag);
   return v;
 }
+
 function main(): void {
-  const ctx: any = { n: 0, s: "", t: 2, z: null, w: undefined as number | undefined, _keys: undefined as Set<string> | undefined };
+  const ctx: any = {
+    n: 0,
+    s: "",
+    t: 2,
+    z: null,
+    w: undefined as (number | undefined),
+    _keys: undefined as (Set<string> | undefined),
+  };
   const seen: Set<string> = (ctx._keys ??= new Set<string>());
   seen.add("k");
   console.log((ctx._keys ??= new Set<string>()) === seen, ctx._keys.size);

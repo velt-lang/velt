@@ -3,6 +3,7 @@
 function show(u: unknown): void {
   console.log(u, JSON.stringify(u));
 }
+
 function main(): void {
   const u: unknown = { a: null, b: undefined, c: 1 };
   console.log(u);

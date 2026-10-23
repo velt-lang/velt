@@ -4,12 +4,15 @@
 class Point {
   x = 1;
 }
+
 class Point3 extends Point {
   z = 3;
 }
+
 function nameOf(el: unknown): string {
   return (el as object).constructor?.name ?? "object";
 }
+
 function main(): void {
   console.log(nameOf(new Point()), nameOf(new Point3()), nameOf({ a: 1 }), nameOf([1, 2]));
   console.log(nameOf(new Map<string, number>()), nameOf(new Set<number>()), nameOf(new Date(0)));

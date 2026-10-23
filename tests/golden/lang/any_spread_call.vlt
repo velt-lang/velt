@@ -6,13 +6,17 @@ function main(): void {
     (...xs: any[]) => console.log("g", xs.length, xs),
   ];
   const all = (...args: any[]) => {
-    for (const fn of fns) fn(...args);
+    for (const fn of fns) {
+      fn(...args);
+    }
   };
   all(1, 2);
   const props: any = { onClick: (e: string, n: number) => console.log("click", e, n) };
   const args: any[] = ["x", 3];
   const h = props["onClick"];
-  if (h && typeof h === "function") h(...args);
+  if (h && typeof h === "function") {
+    h(...args);
+  }
   props.onClick(...args);
   props.onClick("y", ...[4]);
   const words: string[] = ["a", "b"];

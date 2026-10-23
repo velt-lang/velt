@@ -1,7 +1,18 @@
 // `JSON.stringify` of interface values held in or reached through an `any` or `unknown` (#924).
 // check: no leaks
-interface Shape { name: string; area(): number }
-class Sq implements Shape { name = "sq"; side = 2; area(): number { return this.side * this.side; } }
+interface Shape {
+  name: string;
+  area(): number;
+}
+
+class Sq implements Shape {
+  name = "sq";
+  side = 2;
+  area(): number {
+    return this.side * this.side;
+  }
+}
+
 function main(): void {
   const s: Shape = new Sq();
   const t: Shape = { name: "lit", area: () => 3 };

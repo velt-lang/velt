@@ -281,7 +281,9 @@ function __anyNumberText(v: any): string {
  */
 export function __anyCtorName(v: any): string {
   if (v === undefined || v === null) {
-    panic(`TypeError: Cannot read properties of ${v === null ? "null" : "undefined"} (reading 'constructor')`);
+    panic(
+      `TypeError: Cannot read properties of ${v === null ? "null" : "undefined"} (reading 'constructor')`,
+    );
   }
   if (Array.isArray(v)) {
     return "Array";
@@ -311,9 +313,7 @@ export function __anyCtorName(v: any): string {
 
 /** `v.constructor.name` of an `any` holding an instance of class `name`, whose constructor Velt doesn't name. */
 export function __anyCtorNameUnsupported(name: string): string {
-  panic(
-    `TypeError: \`constructor\` of a ${name} through \`any\` is not supported yet (#926)`,
-  );
+  panic(`TypeError: \`constructor\` of a ${name} through \`any\` is not supported yet (#926)`);
 }
 
 /**

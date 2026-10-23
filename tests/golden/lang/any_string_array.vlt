@@ -7,10 +7,13 @@ class T {
     return "T!";
   }
 }
+
 class Sub extends T {}
+
 class N {
   x = 1;
 }
+
 function main(): void {
   const a: any = [1, 2];
   console.log(String(a), "" + String([3, 4]));
@@ -24,8 +27,17 @@ function main(): void {
   console.log(`${m}`);
   const o: object = ["o", 1];
   console.log(String(o));
-  const vals: any[] = [{ a: 1 }, new T(), new Sub(), new N(), new Error("boom"), new Map<string, number>()];
-  for (const v of vals) console.log(String(v), `${v}`, "<" + v + ">");
+  const vals: any[] = [
+    { a: 1 },
+    new T(),
+    new Sub(),
+    new N(),
+    new Error("boom"),
+    new Map<string, number>(),
+  ];
+  for (const v of vals) {
+    console.log(String(v), `${v}`, "<" + v + ">");
+  }
   const ts: any[] = [new T(), new N(), { b: 2 }];
   const ta: any = ts;
   console.log(String(ta));

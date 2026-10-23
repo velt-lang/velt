@@ -6,6 +6,7 @@ function each(cb: Function, thisArg: unknown, items: string[]): void {
     cb.call(thisArg, items[i], i);
   }
 }
+
 function main(): void {
   const seen: string[] = [];
   each((v: string, i: number) => seen.push(`${i}:${v}`), undefined, ["a", "b"]);
