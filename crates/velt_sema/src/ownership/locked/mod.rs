@@ -27,6 +27,7 @@ mod callbacks;
 mod candidates;
 mod kept;
 mod later;
+mod moves;
 mod opaque;
 mod promises;
 mod read_only;
@@ -233,8 +234,9 @@ fn crossings(
     bodies: &mut [(DefId, FnDef)],
     resolved: FxHashSet<Span>,
     named: FxHashMap<Span, Vec<DefId>>,
+    moved: &FxHashSet<crate::hir::LocalId>,
 ) -> Crossings {
-    let mut r = regions::Regions::new(c, bodies);
+    let mut r = regions::Regions::new(c, bodies, moved);
     r.resolved = resolved;
     r.named = named;
     loop {
@@ -287,9 +289,14 @@ fn check_callback(
     reported: &mut FxHashSet<Span>,
     weak: &mut WeakCrossings,
 ) {
+    // A callback written at the call takes along what only it uses (`moves`).
+    let moved = match direct {
+        true => moves::into_lock(cx, res, c),
+        false => FxHashSet::default(),
+    };
     let (mut bodies, resolved, named) = take_bodies(cx, res, c);
     weak_across(cx, (c, direct), &bodies, reported, weak);
-    let found = crossings(cx, s, c, &mut bodies, resolved, named);
+    let found = crossings(cx, s, c, &mut bodies, resolved, named, &moved);
     for (d, f) in bodies {
         cx.defs[d.0 as usize] = Some(Def::Fn(f));
     }

@@ -19,6 +19,9 @@ use crate::visit;
 pub(super) const IN: u8 = 1;
 /// May reach the callback's captured state.
 pub(super) const OUT: u8 = 2;
+/// May reach a variable the callback took along into the lock (`super::moves`): released under
+/// the lock, so a part of it may go into the value as it is, but not into the outside state.
+pub(super) const MOVED: u8 = 4;
 
 type Key = (DefId, LocalId);
 
@@ -50,7 +53,8 @@ pub(super) struct Regions {
 
 impl Regions {
     /// The starting regions of callback `c` and the closures in `bodies` (`c`'s included).
-    pub(super) fn new(c: DefId, bodies: &mut [(DefId, FnDef)]) -> Self {
+    /// `moved`: the callback's captures that moved into the lock (`super::moves`).
+    pub(super) fn new(c: DefId, bodies: &mut [(DefId, FnDef)], moved: &FxHashSet<LocalId>) -> Self {
         let mut r = Regions {
             bits: FxHashMap::default(),
             alias: FxHashMap::default(),
@@ -75,7 +79,11 @@ impl Regions {
                     // The callback's, or those of a closure made outside it that it calls
                     // (`super::values`): outside state.
                     _ => {
-                        r.bits.insert((*d, k.inner), OUT);
+                        let region = match *d == c && moved.contains(&k.inner) {
+                            true => MOVED,
+                            false => OUT,
+                        };
+                        r.bits.insert((*d, k.inner), region);
                         r.homes.insert((*d, k.inner));
                     }
                 }
@@ -208,9 +216,11 @@ fn holds_shared_in(cx: &mut Ctx, t: TyId, depth: u32) -> bool {
     })
 }
 
-/// A store of a value reaching `b` into a place reaching `dest` crosses the boundary.
+/// A store of a value reaching `b` into a place reaching `dest` crosses the boundary. A moved
+/// variable is released under the lock, so it shares with the value freely; with the outside
+/// state it shares nothing, either way: a part of it stored outside could also be in the value.
 pub(super) fn crosses(dest: u8, b: u8) -> bool {
-    (dest & IN != 0 && b & OUT != 0) || (dest & OUT != 0 && b & IN != 0)
+    (dest & (IN | MOVED) != 0 && b & OUT != 0) || (dest & OUT != 0 && b & (IN | MOVED) != 0)
 }
 
 /// Where the closures of the bodies are made: the creating body, and whether one is passed

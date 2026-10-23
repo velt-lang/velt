@@ -379,6 +379,19 @@ impl FnLower<'_, '_> {
         Operand::Copy(t)
     }
 
+    /// Transfer the owned value at `p` (concrete type `ty`) in place as one transfer (the
+    /// `TransferRoot` glue: an object it reaches twice is copied once).
+    pub(super) fn transfer_root_in_place(&mut self, p: Place, ty: TyId) {
+        if self.dead() || !self.cx.transfers(ty) {
+            return;
+        }
+        let a = self.addr(p);
+        let f = self
+            .cx
+            .func_direct(Work::Glue(Glue::TransferRoot, ty), self.mode);
+        self.call(vir::Callee::Func(f), vec![a], None, false);
+    }
+
     /// Transfer the owned value at `p` (concrete type `ty`) in place (glue/transfer.rs).
     pub(super) fn transfer_in_place(&mut self, p: Place, ty: TyId) {
         if !self.cx.transfers(ty) {
