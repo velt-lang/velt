@@ -65,6 +65,11 @@ impl FnCx<'_, '_> {
     /// Cannot convert a Symbol value to a string` (only `String(s)` writes a symbol, as
     /// `Symbol(desc)`).
     pub(crate) fn implicit_any_text(&mut self, h: hir::Expr, what: &str, hint: Hint) -> hir::Expr {
+        // A type parameter's value: per instantiation (`param_text`).
+        let h = match self.param_text(h, what, hint, true) {
+            Ok(text) => return text,
+            Err(h) => h,
+        };
         let d = self.cx.dynamic(h.ty);
         if d == Some(Dynamic::Object) && hint == Hint::Default && self.writes_dynamic_text() {
             if let Some(any) = self.any_ty() {

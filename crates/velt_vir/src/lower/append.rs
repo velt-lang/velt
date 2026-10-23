@@ -44,7 +44,7 @@ impl FnLower<'_, '_> {
             return None;
         };
         let mut parts = vec![];
-        flatten(value, &mut parts);
+        flatten(value, &mut parts, &mut |c| self.const_cond(c));
         let (Part::Str(read), rest) = parts.split_first()? else {
             return None;
         };
@@ -62,7 +62,7 @@ impl FnLower<'_, '_> {
         value: &hir::Expr,
     ) -> Option<Operand> {
         let mut parts = vec![];
-        flatten(value, &mut parts);
+        flatten(value, &mut parts, &mut |c| self.const_cond(c));
         self.append_parts(place, &parts)
     }
 

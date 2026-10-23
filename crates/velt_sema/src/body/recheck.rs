@@ -29,6 +29,7 @@ pub(crate) struct Lens {
     closures: usize,
     reported: usize,
     completed: usize,
+    globals_done: usize,
     kept: usize,
     class_values: usize,
     ide: Option<[usize; 4]>,
@@ -47,6 +48,7 @@ impl Lens {
             closures: cx.closure_defs.len(),
             reported: cx.rec.reported.len(),
             completed: cx.rec.completed.len(),
+            globals_done: cx.rec.globals_done.len(),
             kept: cx.kept_consts.len(),
             class_values: cx.objects.class_values.len(),
             ide: cx
@@ -172,6 +174,14 @@ impl Mark {
             f.state = BodyState::Unchecked;
             if inferred && error {
                 f.ret_source = RetSource::Body;
+            }
+        }
+        // So are the module constants checked since the mark (a first read inside a trial,
+        // #1475): the closures their initializers created are gone with the trial.
+        for g in cx.rec.globals_done.split_off(m.globals_done) {
+            if let crate::defs::DefInfo::Global(g) = &mut cx.info[g.0 as usize] {
+                g.state = BodyState::Unchecked;
+                g.init = None;
             }
         }
         // Bodies checked since the mark are unchecked again; those checked before it keep
@@ -326,6 +336,7 @@ mod tests {
             closures: 0,
             reported: 0,
             completed,
+            globals_done: 0,
             kept: 0,
             class_values: 0,
             ide: None,

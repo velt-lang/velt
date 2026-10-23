@@ -1,0 +1,39 @@
+// A field initialized with a function value held by a module constant (#1475): the field
+// holds that function, so calling it runs its body and throws what it throws.
+const fine = () => {
+  console.log("fine ran");
+};
+const boom = () => {
+  throw new Error("boom");
+};
+function named() {
+  console.log("named ran");
+}
+function runVoid(f: () => void): string {
+  try {
+    f();
+    return "ok";
+  } catch (e) {
+    return `threw ${(e as Error).message}`;
+  }
+}
+class K {
+  a: () => void = fine;
+  b: () => void = boom;
+  c: () => void = named;
+  d: () => number = boom;
+}
+const k = new K();
+k.a();
+k.c();
+console.log(runVoid(k.a), runVoid(k.b), runVoid(new K().b));
+try {
+  k.d();
+} catch (e) {
+  console.log("d", (e as Error).message);
+}
+try {
+  new K().b();
+} catch (e) {
+  console.log("caught", (e as Error).message);
+}

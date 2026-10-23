@@ -411,7 +411,14 @@ impl FnCx<'_, '_> {
         }
         if tys.is_empty() && r.nulls.is_empty() {
             let diverges = crate::flow::block_diverges(block, &self.cx.ty);
-            let never_only = !r.values.is_empty() && r.bare.is_empty() && diverges;
+            // An arrow or function expression whose end is never reached and that returns
+            // nothing (`(e) => { throw e; }`) gives `never`, as in TypeScript (a declared
+            // function's is `void`).
+            let closure = self.f.kind == crate::defs::FnKind::Closure
+                && self.f.never_end
+                && !self.f.is_async
+                && self.f.yield_ty.is_none();
+            let never_only = r.bare.is_empty() && diverges && (!r.values.is_empty() || closure);
             return if never_only { never } else { unit };
         }
         if tys.contains(&unit) {

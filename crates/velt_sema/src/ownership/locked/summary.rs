@@ -244,6 +244,8 @@ impl Walk<'_, '_, '_> {
                     | Intrinsic::MayAlias
                     | Intrinsic::HoldsNull
                     | Intrinsic::MayHoldPrimitive
+                    | Intrinsic::HoldsDynamic
+                    | Intrinsic::HoldsDynamicOrClass
             )
         );
         if let Callee::Intrinsic(Intrinsic::Spawn) = callee {
