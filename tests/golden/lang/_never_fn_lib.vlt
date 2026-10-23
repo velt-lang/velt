@@ -1,0 +1,6 @@
+// Module state of a function type initialized with a function that never returns.
+const boom = () => {
+  throw new Error("lib");
+};
+export const libVoid: () => void = boom;
+export const libCast = boom as () => void;

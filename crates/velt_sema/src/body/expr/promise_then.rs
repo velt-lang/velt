@@ -338,6 +338,41 @@ impl FnCx<'_, '_> {
                 // `T` holds a nothing).
                 (name, vec![t, e, g], recv.ty, t, g)
             }
+            ("catch", [(u, xg)]) if self.cx.ty.is_bottom(*u) && t != *u => {
+                // A handler that only throws (`p.catch((e) => { throw e; })`): the promise's value
+                // type, as TypeScript types it; the handler converts to a function giving it.
+                let g = xg.unwrap_or(never);
+                let (ret, throws) = match all_async {
+                    true => (self.cx.ty.promise_rejecting(t, g), never),
+                    false => (t, g),
+                };
+                if let Some((h, _)) = callbacks.first_mut() {
+                    let TyKind::FnPtr { params, rest, .. } = self.cx.ty.kind(h.ty).clone() else {
+                        return self.error_expr(span);
+                    };
+                    let exp = self.cx.ty.intern(TyKind::FnPtr {
+                        params,
+                        ret,
+                        throws,
+                        rest,
+                    });
+                    let placeholder = self.error_expr(h.span);
+                    let taken = std::mem::replace(h, placeholder);
+                    match self.try_coerce(taken, exp) {
+                        Ok(w) => *h = w,
+                        Err(w) => {
+                            self.report_mismatch(exp, &w);
+                            return self.error_expr(span);
+                        }
+                    }
+                }
+                let name = if all_async {
+                    "promiseCatchAsync"
+                } else {
+                    "promiseCatch"
+                };
+                (name, vec![t, e, g], recv.ty, t, g)
+            }
             ("catch", [(u, xg)]) => {
                 if *u != t {
                     let (a, b) = (self.cx.display(t), self.cx.display(*u));

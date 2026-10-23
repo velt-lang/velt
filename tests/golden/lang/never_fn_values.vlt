@@ -1,0 +1,67 @@
+// A function that never returns (`() => { throw e; }`, `never` as in TypeScript) converts to
+// function types with another result (`() => void`, `() => number`), and a `catch` handler that
+// only rethrows keeps the promise's value type.
+import { libCast, libVoid } from "./_never_fn_lib";
+
+function runVoid(f: () => void): string {
+  try {
+    f();
+    return "returned";
+  } catch (e) {
+    return `caught ${(e as Error).message}`;
+  }
+}
+function runNumber(f: () => number): number {
+  try {
+    return f();
+  } catch (e) {
+    return -1;
+  }
+}
+
+const boom = () => {
+  throw new Error("b");
+};
+console.log(runVoid(boom), runNumber(boom));
+
+function make2() {
+  return () => {
+    throw new Error("m");
+  };
+}
+console.log(runVoid(make2()));
+let h: () => void = () => {};
+console.log(runVoid(h));
+h = make2();
+console.log(runVoid(h));
+
+const o = {
+  m() {
+    throw new Error("o.m");
+  },
+};
+const v: () => void = o.m;
+console.log(runVoid(v));
+const n: () => number = boom;
+console.log(runNumber(n), runVoid(libVoid), runVoid(libCast));
+
+async function load(ok: boolean): Promise<number> {
+  if (!ok) {
+    throw new RangeError("offline");
+  }
+  return 7;
+}
+
+async function run() {
+  console.log(await load(true).catch((e) => {
+    throw e;
+  }));
+  try {
+    await load(false).catch((e) => {
+      throw e;
+    });
+  } catch (e) {
+    console.log("rethrown", e instanceof RangeError, (e as Error).message);
+  }
+}
+run();

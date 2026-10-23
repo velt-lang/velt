@@ -160,6 +160,25 @@ impl FnCx<'_, '_> {
                 false => Err(h),
             };
         }
+        // A function that never returns (`() => { throw e; }`, typed `() => never`) as a
+        // function of another result type (`() => void`, `() => number`), as `never` converts
+        // to any type: wrapped, the wrapper typed by `exp` (its errors go where `exp`'s do).
+        if let Some(void) = self.never_result_converts(h.ty, exp) {
+            // As a function returning nothing it is the same function (it never returns): its
+            // type changes, and its errors convert as any function value's do.
+            if let Some(void) = void {
+                let mut h = h;
+                h.ty = void;
+                return if void == exp {
+                    Ok(h)
+                } else {
+                    self.try_coerce(h, exp)
+                };
+            }
+            if !self.frameless() {
+                return self.adapt_fn(h, exp);
+            }
+        }
         if self.converts_by_state(h.ty, exp) {
             return self.coerce_hidden_nothings(h, exp);
         }
@@ -668,6 +687,46 @@ impl FnCx<'_, '_> {
 }
 
 impl FnCx<'_, '_> {
+    /// Is `from` a function type returning `never` with the parameters of function type `to`,
+    /// which returns something else? `Some(Some(f))` when `to` returns nothing: `f` is `from`
+    /// returning nothing (with the errors of `from`).
+    fn never_result_converts(&mut self, from: TyId, to: TyId) -> Option<Option<TyId>> {
+        let (
+            TyKind::FnPtr {
+                params: fp,
+                ret: fr,
+                rest: fx,
+                ..
+            },
+            TyKind::FnPtr {
+                params: tp,
+                ret: tr,
+                rest: tx,
+                ..
+            },
+        ) = (self.cx.ty.kind(from), self.cx.ty.kind(to))
+        else {
+            return None;
+        };
+        if fp != tp || fx != tx || *fr != self.cx.ty.never || tr == fr {
+            return None;
+        }
+        let (params, rest, ret) = (fp.clone(), *fx, *tr);
+        let TyKind::FnPtr { throws, .. } = *self.cx.ty.kind(from) else {
+            return None;
+        };
+        if ret != self.cx.ty.unit {
+            return Some(None);
+        }
+        let void = self.cx.ty.intern(TyKind::FnPtr {
+            params,
+            ret,
+            throws,
+            rest,
+        });
+        Some(Some(void))
+    }
+
     /// Is function type `from` function type `to` with trailing `void` parameters added?
     fn drops_void_params(&self, from: TyId, to: TyId) -> bool {
         let (
