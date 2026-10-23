@@ -84,11 +84,22 @@ impl Cx<'_> {
         }
     }
 
-    /// Is `t` `any`, `unknown` or `object` (`Intrinsic::HoldsDynamic`; a `Function` is not
-    /// written as a dynamic value's text)?
+    /// Is `t` `any`, `unknown` or `object`, or an array or tuple holding one
+    /// (`Intrinsic::HoldsDynamic`): a type whose JavaScript text is the value's, not its static
+    /// `ToString` (a `Function` is not written as a dynamic value's text)?
     pub(super) fn holds_dynamic(&self, t: TyId) -> bool {
-        self.is_dynamic(t)
-            && !matches!(self.types.kind(t), TyKind::Dyn(d, _) if self.hir.function == Some(*d))
+        match self.types.kind(t) {
+            TyKind::Dyn(d, _) if self.hir.function == Some(*d) => false,
+            TyKind::Array(e) => self.holds_dynamic(*e),
+            TyKind::Tuple(es) => es.iter().any(|e| self.holds_dynamic(*e)),
+            _ => self.is_dynamic(t),
+        }
+    }
+
+    /// [`Self::holds_dynamic`], or a class instance (`Intrinsic::HoldsDynamicOrClass`).
+    pub(super) fn holds_dynamic_or_class(&self, t: TyId) -> bool {
+        self.holds_dynamic(t)
+            || matches!(self.types.kind(t), TyKind::Adt(d, _) if self.adt_def(*d).kind == hir::AdtKind::Class)
     }
 
     /// Is `t` `object` or `Function` (issue #926)?

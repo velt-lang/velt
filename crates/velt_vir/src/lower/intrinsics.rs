@@ -171,6 +171,11 @@ impl FnLower<'_, '_> {
                 let t = self.sub(a.ty);
                 Operand::Const(crate::vir::Const::Bool(self.cx.holds_dynamic(t)), Ty::Bool)
             }
+            (I::HoldsDynamicOrClass, [a]) => {
+                let t = self.sub(a.ty);
+                let b = self.cx.holds_dynamic_or_class(t);
+                Operand::Const(crate::vir::Const::Bool(b), Ty::Bool)
+            }
             (I::AnyTo, [a]) => self.any_to(a, ty),
             (I::AnyTypeof, [a]) => self.any_typeof(a),
             (I::AnyGet, [o, k]) => self.any_get(o, k, ty),

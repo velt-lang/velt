@@ -381,7 +381,7 @@ impl FnCx<'_, '_> {
         // (`valueOf()` first); a symbol there throws, as in JS.
         if matches!(self.cx.ty.kind(h.ty), TyKind::Param(_)) {
             let what = "a string concatenation";
-            let text = match self.param_text(h, what, Hint::Default) {
+            let text = match self.param_text(h, what, Hint::Default, true) {
                 Ok(text) => text,
                 Err(h) => self.js_text_static(h, what),
             };
@@ -542,7 +542,7 @@ impl FnCx<'_, '_> {
     /// it in errors): a `string` itself, else an `Intrinsic::ToString` of it.
     pub(crate) fn js_text(&mut self, h: hir::Expr, what: &str) -> hir::Expr {
         let h = self.unbrand(h);
-        match self.param_text(h, what, Hint::String) {
+        match self.param_text(h, what, Hint::String, false) {
             Ok(text) => text,
             Err(h) => self.js_text_static(h, what),
         }
@@ -695,7 +695,7 @@ fn is_holds_dynamic(e: &hir::Expr) -> bool {
     matches!(
         e.kind,
         H::Call {
-            callee: Callee::Intrinsic(Intrinsic::HoldsDynamic),
+            callee: Callee::Intrinsic(Intrinsic::HoldsDynamic | Intrinsic::HoldsDynamicOrClass),
             ..
         }
     )

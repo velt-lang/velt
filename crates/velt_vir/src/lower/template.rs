@@ -52,7 +52,9 @@ pub(super) fn is_holds_dynamic(e: &hir::Expr) -> bool {
     matches!(
         e.kind,
         hir::ExprKind::Call {
-            callee: hir::Callee::Intrinsic(Intrinsic::HoldsDynamic),
+            callee: hir::Callee::Intrinsic(
+                Intrinsic::HoldsDynamic | Intrinsic::HoldsDynamicOrClass
+            ),
             ..
         }
     )

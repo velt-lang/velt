@@ -79,8 +79,17 @@ impl FnCx<'_, '_> {
         Ok(self.with_temp("<tuple>", recv, span, span, |lw, t| {
             let str_ = lw.cx.ty.str_;
             let sep = match args.first() {
+                // `undefined` (a `string | undefined` separator) joins with `","`, as for an
+                // array.
                 Some(a) => {
-                    let h = lw.expr(a, Some(str_), Want::Move);
+                    let optional = lw
+                        .trial_type(a)
+                        .is_some_and(|t| lw.cx.ty.opt_payload(t).is_some());
+                    let a = match optional {
+                        true => binary(ast::BinaryOp::Nullish, a.clone(), str_lit(",", span), span),
+                        false => a.clone(),
+                    };
+                    let h = lw.expr(&a, Some(str_), Want::Move);
                     lw.coerce(h, str_)
                 }
                 None => lw.str_lit(",", span),

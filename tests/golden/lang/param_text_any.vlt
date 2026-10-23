@@ -68,3 +68,7 @@ class Box<T> {
 }
 console.log(add<any>("x", { k: 1 }), add<number>("y", 2), add<any>("z", [1, [2]]));
 console.log(new Box<any>({ q: 1 }).text(), new Box<unknown>(null).text(), new Box<string>("s").text());
+
+// Lists of dynamic values as `T`: written as `join()` writes them.
+console.log(tpl<unknown[]>([{ c: 1 }]), tpl<any[]>([1, { d: 2 }]), tpl<[any, number]>([{}, 3]));
+console.log(show<object[]>([{}, {}]), tpl<number[]>([1, 2]));

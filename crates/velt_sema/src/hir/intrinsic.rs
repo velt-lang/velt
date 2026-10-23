@@ -158,6 +158,10 @@ pub enum Intrinsic {
     /// condition of the `if` that writes a `T` value's text (hir_encodings.md "Text of a type
     /// parameter").
     HoldsDynamic,
+    /// Compiler-internal (issue #1462): `(probe: borrow T) -> bool`, `HoldsDynamic` or `T` a
+    /// class: the condition of the text of a `T` value in a string `+`, which asks a class
+    /// instance for its `valueOf()` first. The probe is not evaluated.
+    HoldsDynamicOrClass,
     /// std only (std/sort/stable.vlt): `__intrinsic_fn_captures_nothing<F>(f: borrow F) ->
     /// bool` for a function value: true when its environment is null, which only closures
     /// without captures and named functions have (a program that compares function values

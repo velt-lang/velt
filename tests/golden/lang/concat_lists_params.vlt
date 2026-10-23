@@ -37,3 +37,11 @@ class Warm extends Celsius {}
 let t = "t=";
 t += new Warm();
 console.log("" + new Meters(), "m" + new Warm(), t);
+
+// A type parameter instantiated with a class: `+` asks for its `valueOf()` first, a template
+// for its `toString()`, and a class without either is `[object Object]`.
+class Plain {
+  x = 1;
+}
+console.log(cat("c=", new Celsius()), cat<Celsius>("d=", new Celsius()), cat("p=", new Plain()));
+console.log(cat<any>("a=", new Celsius()), `${new Celsius()}`, "w" + new Warm());

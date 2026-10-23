@@ -11,3 +11,7 @@ let order = "";
 function tup(): [number, number] { order += "t"; return [1, 2]; }
 function sep(): string { order += "s"; return "+"; }
 console.log(tup().join(sep()), order);
+function sepOf(k: number): string | undefined {
+  return k > 0 ? "-" : undefined;
+}
+console.log(t.join(sepOf(1)), t.join(sepOf(0)), [1, 2].join(sepOf(0)));

@@ -376,11 +376,16 @@ impl FnCx<'_, '_> {
     /// lower only `ToString(x)`, the code they had without the test. Each branch evaluates `x`
     /// (one runs); the test's probe is `NullAs` (never evaluated). `Err` gives `h` back for
     /// other types.
+    ///
+    /// `implicit`: a template part or a `+` operand, where the dynamic branch writes the value
+    /// as such a part of an `any` (a symbol throws); with `Hint::Default` (`+`), a class
+    /// instance takes that branch too, which asks for its `valueOf()` first.
     pub(crate) fn param_text(
         &mut self,
         h: hir::Expr,
         what: &str,
         hint: Hint,
+        implicit: bool,
     ) -> Result<hir::Expr, hir::Expr> {
         if !matches!(self.cx.ty.kind(h.ty), TyKind::Param(_)) || !self.writes_dynamic_text() {
             return Err(h);
@@ -390,10 +395,17 @@ impl FnCx<'_, '_> {
         };
         let (span, bool_, str_) = (h.span, self.cx.ty.bool_, self.cx.ty.str_);
         let probe = self.intrinsic(Intrinsic::NullAs, vec![], h.ty, span);
-        let cond = self.intrinsic(Intrinsic::HoldsDynamic, vec![probe], bool_, span);
+        let test = match hint {
+            Hint::Default => Intrinsic::HoldsDynamicOrClass,
+            Hint::String => Intrinsic::HoldsDynamic,
+        };
+        let cond = self.intrinsic(test, vec![probe], bool_, span);
         let value = self.share_if_place(h.clone());
         let value = self.coerce(value, any);
-        let then = self.dynamic_text_as(value, span, hint);
+        let then = match implicit {
+            true => self.implicit_any_text(value, what, hint),
+            false => self.dynamic_text_as(value, span, hint),
+        };
         let els = self.js_text_static(h, what);
         let kind = H::If {
             cond: Box::new(cond),
