@@ -84,6 +84,8 @@ typedef struct VeltFut {                             // every runtime-owned futu
 | `velt_rt_xfer_record` | `(const void* obj, const void* copy)` | `copy` is the copy of `obj` in this transfer, and of itself (a graph just copied and transferred next is not copied again); no-op outside one (additive) |
 | `velt_rt_xfer_suspend` / `velt_rt_xfer_resume` | `() -> u32` / `(u32 depth)` | set the transfer under way aside while user code runs (a class's own `clone()`), and continue it: in between nothing is looked up or recorded in it, and a transfer the user code starts gets a map of its own (additive) |
 | `velt_rt_xfer_defer` | `(void* obj, void (*drop)(void* slot)) -> u8` | the transfer gave up its reference to `obj` (replaced by a copy): `1`, and `drop` (the type's drop glue) runs on it at the outermost `end`, so every object in the map stays alive with its count until then; `0` outside a transfer (the caller releases it) (additive) |
+| `velt_rt_xfer_keep_begin` | `()` | `velt_rt_xfer_begin` of a value a `read` callback keeps in its caller's containers (§9.1): when it is the outermost one, the transfer glue keeps the lock-set objects the reader did not make (the caller's) with one more reference instead of copying them [additive, #708] |
+| `velt_rt_xfer_keeps` | `() -> u8` | 1 inside a transfer `velt_rt_xfer_keep_begin` started, else 0 [additive, #708] |
 | `velt_rt_drop_state` | `() -> u32*` | this thread's drop state word, which generated code updates in place around a drop that can nest (glue whose type leads back to itself, #543): bits 0..30 count the drops under way, bit 30 says something was queued, bit 31 that the queue is being drained. Per drop: `n = *w; if (n & 0x3fffffff) >= 128 { drop_queue(...) } else { *w = n + 1; <drop>; m = *w - 1; *w = m; if m == 1 << 30 { drop_drain() } }` (additive) |
 | `velt_rt_drop_queue` | `(void* value, void (*drop)(void* value))` | drop `value` with `drop` (glue that takes it over: a closure env's drop, a field or struct value moved to a heap box, or a box with its last reference) when the outermost drop on this thread ends, and set the queued bit; at once while the thread is torn down (additive) |
 | `velt_rt_drop_drain` | `()` | called by the outermost drop when it ends with the queued bit set: drops the queued values (which may queue more) in the order they were queued, then clears the word (additive) |
@@ -591,12 +593,103 @@ network access`), and the accessors of a fetched response are unreachable (fatal
 | `velt_rt_atomic_store_i64` | `(i64* p, i64 v)` | |
 | `velt_rt_mutex_init` | `(u64* lock)` | the `Mutex<T>` lock word: 8 bytes, align 8, inside the shared object; no destroy needed |
 | `velt_rt_mutex_lock` / `velt_rt_mutex_unlock` | `(u64* lock)` | `m.with(f)` = lock; call f; unlock. Blocks the thread; bodies must not await. |
+| `velt_rt_mutex_lock_checked` | `(u64* lock)` | `velt_rt_mutex_lock` from code that may run in read mode (§9.1): there it stops the program before locking [additive, #708] |
+| `velt_rt_rwlock_init` | `(u64* lock)` | the `RwLock<T>` lock words: 19 words (152 bytes), align 8, at the start of the `RwLock<T>`, then the value (std `prelude/sync.vlt`; §9.2) [additive, #708] |
+| `velt_rt_rwlock_read` | `(u64* lock, u64 reader) -> u64 how` | `rw.read(f)`: the lock shared with other readers; the thread is in read mode (§9.1) until the unlock, which takes `how` back. `reader` is `how & ~7` of an earlier `read` or `write` in the same call of the calling function (never across an `await`: the task may continue on another thread), else 0 [additive, #708] |
+| `velt_rt_rwlock_read_unlock` | `(u64* lock, u64 how)` | the end of the read that returned `how`, on the same thread (callbacks never await) [additive, #708] |
+| `velt_rt_rwlock_write` | `(u64* lock, u64 reader) -> u64` | `rw.write(f)`: the lock exclusively; in read mode it stops the program before locking (§9.1). `reader` as for `read`; the result is this thread's reader state, for the unlock and later calls [additive, #708] |
+| `velt_rt_rwlock_write_unlock` | `(u64* lock, u64 reader)` | the end of the `write` that returned `reader` [additive, #708] |
+| `velt_rt_lk_mode` | `() -> u8` | 1 when this thread is in read mode (a thread-local read, §9.1) [additive, #708] |
+| `velt_rt_lk_write` | `(u64* count)` | a write of the lock-set object whose count word is at `count`: stops the program in read mode unless the reader made the object (§9.1) [additive, #708] |
+| `velt_rt_free_after_reads` | `(void* obj, void (*drop)(void** slot))` | the last reference to the lock-set object `obj` (count still 1) went in code changing the caller's containers inside a read: `drop` (its drop glue) frees it now, or in read mode once this thread's outermost read ends (§9.1) [additive, #708] |
 | `velt_rt_str_hash` | `(const VeltStr* s) -> u64` | string Map/Set keys; fixed seed (deterministic), not flood-resistant |
 | `velt_rt_math_sqrt` / `_floor` / `_ceil` / `_round` / `_trunc` / `_fabs` | `(f64) -> f64` | `round` = JS `Math.round` (ties toward +∞, keeps `-0`) |
 | `velt_rt_math_to_int32` | `(f64) -> i32` | JS ToInt32 (bitwise operators on numbers); backends emit the case of magnitude below 2^63 inline and call it only for the rest [additive, #521] |
 | `velt_rt_math_mul_int32` | `(i32 a, i32 b) -> i32` | JS `(a * b) \| 0`: the exact product rounded like the double multiply, low 32 bits; emitted inline [additive, #521] |
 | `velt_rt_math_add_int32` | `(i32 a, f64 x) -> i32` | JS `(a + x) \| 0`; emitted inline, integer add when `x` is a whole number of at most 2^52 [additive, #521] |
 | `velt_rt_math_clz32` | `(i32) -> i32` | `Math.clz32` of the 32-bit pattern (32 for 0); emitted as one instruction [additive, #521] |
+
+### 9.1 Read mode (`RwLock.read`)
+
+Readers of an `RwLock<T>` run on many threads at once without copies or atomic counts. The
+*lock set* is the counted types a `T` of some `RwLock` can reach (velt_vir `boxing/locks.rs`;
+an `RwLock` whose `T` reaches a function or interface value, a class in a hierarchy, a weak-capable
+or proxiable type, or a promise has no such readers: its `read` takes the lock exclusively).
+Between `velt_rt_rwlock_read` and its unlock the thread is in *read mode*, and the code it runs
+counts and writes lock-set objects by these rules, inline (velt_vir `rc.rs`):
+- bit 62 of a lock-set object's count word, `LOCAL`, marks an object made in read mode: only this
+  reader reaches it. A count compares and decrements without the bit. A transfer that moves one
+  out of the callback (its result) clears it;
+- a reader counts (retains, releases, tests for uniqueness) only `LOCAL` objects; the others (the
+  store) it borrows, so their counts stay what the last writer left. No writer runs meanwhile;
+- a reader writes only `LOCAL` objects: anything else calls `velt_rt_lk_write`, which stops the
+  program (sema rejects the writes it can see);
+- a reader takes no lock exclusively: `velt_rt_rwlock_write` and `velt_rt_mutex_lock_checked`
+  (which code not known to run outside read mode calls instead of `velt_rt_mutex_lock`) stop the
+  program in read mode, since the inner callback could not tell the store's uncounted objects
+  from what it changes (sema rejects the ones written in a `read` callback's body);
+- a reader starts no promise or task (`velt_rt_fut_start*`, `velt_rt_spawn*` stop the program in
+  read mode once the program has made an `RwLock`): what it holds would outlive the callback
+  without leaving through its result;
+- what the callback returns leaves by these rules too (velt_vir `async_fn/sync.rs`), before the
+  unlock, whatever the calling code's mode: an object it shares with the store is copied, never
+  moved out;
+- the caller's containers (places rooted in a variable a `read` callback literal captured from
+  code outside read mode, velt_vir `Work::ReadOwn`) hold no store object and are counted by the
+  counts outside read mode. What a store, a `push` or a method or function changing one
+  (velt_vir `LkMode::Deferred`) keeps there gets a reference by those counts when it is a
+  place the caller holds already (also a reader's variable borrowing one; what comes from the
+  store sema copies), so it stays the same object; anything else is a copy of what the reader
+  did not make. A value the reader made that holds what the caller holds is kept by a
+  transfer `velt_rt_xfer_keep_begin` starts: the caller's objects get one more reference and
+  stay themselves, and what the reader made becomes the caller's. A container of the reader's
+  that such a method or function may change is counted by those counts for the call and handed
+  back after it, or, when its type is outside the lock set and holds lock-set objects (a
+  class's `Item[]`, a `Map`), passed as a copy of what the reader did not make, dropped by
+  those counts after the call. What leaves one (an element removed, the old value a store replaces, such a
+  method's or function's result) loses its reference by those counts, and a lock-set object
+  whose last reference goes is handed to `velt_rt_free_after_reads` with its drop glue: the
+  reader may still point at it uncounted, so it is freed when the thread's outermost read ends
+  (at once outside read mode; the glue releases a reference, so one stored again meanwhile
+  lives on). A result the reader keeps is borrowed uncounted from then on, as the store's
+  objects are, unless the reader made it (`LOCAL`).
+
+Code whose mode is fixed counts without asking: functions only called directly from outside read
+mode (and `with` / `write` callbacks, which never run in read mode) count as before; functions only called directly from a
+`read` callback literal use read mode's rules. Everything else (callbacks given as values,
+closures that may outlive the call, polls, glue in tables) asks `velt_rt_lk_mode` once per call.
+
+### 9.2 How `RwLock` readers go in
+
+The lock is *biased* (Dice and Kogan, "BRAVO: Biased Locking for Reader-Writer Locks", 2019)
+until it is written: a reader names the lock in a slot of its own thread (a cache line no other
+thread writes, velt_rt `hazard.rs`) and checks that no writer came, so readers on many threads
+write nothing they share. A writer *revokes* the bias: it sets the lock's state and waits for the
+slots naming the lock to clear, then takes the lock's underlying reader-writer lock (parking_lot's
+`RawRwLock`) exclusively. While it waits the state says so (revoking): one writer revokes at a
+time, and another writer, holding the underlying lock or not, writes only once the state says
+the bias is revoked, and waits for the revocation without holding the lock. Each change of the
+state has one owner (biased to revoking: the revoker's compare-exchange; revoking to revoked:
+that revoker; revoked to biased: a reader's compare-exchange), so a revoker held up for any
+time never takes a later revocation for its own. It never waits for the slots while holding the
+underlying lock: a
+reader in a slot may be nested in a read of another lock whose writer waits for this writer's
+readers. A reader that biased the lock again before the writer took it (its revocation was old
+enough) makes the writer let the underlying lock go and revoke once more. From then on readers take the underlying lock shared, so they still
+run at once and a lock written often costs about what a `Mutex` does, until a reader holding it
+finds the revocation old enough and biases the lock again. A writer blocked on the underlying
+lock holds new outermost readers back, so writers don't starve, while a read nested in another
+goes past it (a recursive shared lock), so readers nesting reads of two locks in opposite orders
+never wait for each other's writers. How long a revocation lasts adapts to how long the
+bias before it lasted (at most 10 ms). The lock words are the underlying lock, then (on the next
+128-byte line, which only revocations write) the state.
+
+A thread waiting for the underlying lock backs off exponentially between tries (about 0.5 µs
+doubling to 35 µs, yielding each time, blocking after about 0.7 ms): a waiter that tries takes
+the line from the holder, so short callbacks taking turns run several in a row on one core.
+Generated code passes each lock call the reader state an earlier one in the same call of the
+function returned, so the common reads and writes run without a
+thread-local lookup or a call.
 
 ## 10. Output with many tasks
 

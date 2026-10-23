@@ -476,6 +476,12 @@ Maintainer-owned, like `hir/mod.rs` and `hir/intrinsic.rs`.
   instantiation to the test sema writes for that type (truthiness.rs): numbers falsy at `0`,
   `-0` and `NaN`, strings at `""`, nullables at `null` or a falsy payload, unions by their
   member, enums at a `0` / `""` member, other values always truthy.
+  `Intrinsic::LooseEq(a, b)` (additive, compiler-internal, both operands of one type with a
+  type parameter in it, borrowed: `T`, `T | string`, `T | undefined`): a `bool`, `a == b` in
+  generic code, lowered per instantiation: `Intrinsic::Same` (`a === b`) where the instantiated
+  type holds no nothing, else that or both operands nothings (`null == undefined`); at
+  `T = any` / `unknown`, `AnyLooseEq` (JavaScript's coercions: `1 == "1"`). Sema emits it for
+  `==` / `!=` (negated) on such operands.
   `Intrinsic::FnCapturesNothing(f)` (std only, `f` a function value, borrowed): a `bool`, lowered
   to `f.env == null`. Only closures without captures and named functions have a null env (a
   program that compares function values gives every closure one), so true means `f` reaches no
@@ -639,6 +645,16 @@ number, since such a part is passed on, looped over or a receiver where it is re
 read out of it is copied at once (also where a frozen operand is otherwise not held) and
 retains nothing. An index that may write (`may_write`) retains the box whatever the place: it
 may give the variable `s` reads another handle itself.
+
+## `RwLock<T>` (issue #708)
+
+`new RwLock<T>(x)` is `Call { Intrinsic(RwLockNew), [x] }` (`x` owned), typed as the prelude's
+`RwLock<T>` (`{ lock: u64; value: T }`, like `Mutex<T>`). `rw.write(f)` is `MutexWith` on an
+`RwLock` or `shared<RwLock<T>>` receiver, with every rule `with` has. `rw.read(f)` is
+`Call { Intrinsic(LockRead), [rw, f] }` with the same shape and rules, and sema reports a closure
+literal or named function `f` that modifies its parameter once modes are inferred
+(`ownership/locked/read_only.rs`). Lowering takes the lock shared and runs `f` in velt_rt's read
+mode (rt_abi_async.md §9.1).
 
 ## Module state
 

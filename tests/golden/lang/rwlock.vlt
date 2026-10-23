@@ -1,0 +1,97 @@
+// check: no leaks
+// `RwLock<T>`: `read` callbacks run on many threads at once while `write` runs alone (#708).
+// Readers count nothing they share (velt_rt read mode): what they keep (a sorted listing, a
+// value they return) reaches the store's objects without copies, and a result leaves the lock
+// as a copy of what it shares.
+class Item {
+  id: i64;
+  name: string;
+  tags: string[];
+  constructor(id: i64, name: string) {
+    this.id = id;
+    this.name = name;
+    this.tags = [name, "all"];
+  }
+}
+
+class Store {
+  items: Item[] = [];
+  byName: Map<string, Item> = new Map<string, Item>();
+
+  add(i: Item) {
+    this.items.push(i);
+    this.byName.set(i.name, i);
+  }
+}
+
+function sorted(s: Store): Item[] {
+  const hits: Item[] = [];
+  for (const i of s.items) {
+    if (i.id % 2 == 0) {
+      hits.push(i);
+    }
+  }
+  hits.sort((a, b) => b.id - a.id);
+  return hits;
+}
+
+function names(xs: Item[]): string {
+  return xs.map((i) => i.name).join(",");
+}
+
+async function reader(st: shared<RwLock<Store>>, rounds: i64): Promise<i64> {
+  let t: i64 = 0;
+  for (let r: i64 = 0; r < rounds; r++) {
+    t += st.read((s) => {
+      const top = sorted(s);
+      const found = s.byName.get("n2");
+      return (top.length as i64) + ((found?.tags.length ?? 0) as i64);
+    });
+  }
+  return t;
+}
+
+async function writer(st: shared<RwLock<Store>>, from: i64): Promise<void> {
+  for (let i = from; i < from + 20; i++) {
+    st.write((s) => s.add(new Item(i, `n${i}`)));
+  }
+}
+
+function count(s: Store): number {
+  return s.items.length;
+}
+
+async function main() {
+  const s = new Store();
+  for (let i: i64 = 0; i < 20; i++) {
+    s.add(new Item(i, `n${i}`));
+  }
+  const st = shared(new RwLock<Store>(s));
+  const tasks: Promise<i64>[] = [];
+  for (let k = 0; k < 6; k++) {
+    tasks.push(spawn(reader(st, 50)));
+  }
+  await spawn(writer(st, 20));
+  const totals = await Promise.all(tasks);
+  console.log(totals.length, st.read((s) => s.items.length));
+
+  // A result that shares the store's objects leaves the lock as a copy.
+  const top = st.read((s) => sorted(s).slice(0, 3));
+  st.write((s) => {
+    s.items[38].name = "renamed";
+  });
+  console.log(names(top), st.read((s) => s.items[38].name));
+
+  // A named function as the callback, and a counter a `read` adds to (a `with` there is
+  // refused: `rwlock_nested_refused.vlt`).
+  const counter = shared<i64>(0);
+  console.log(st.read(count));
+  st.read((s) => {
+    counter.add(s.items.length as i64);
+  });
+  console.log(counter.get());
+
+  // A value that holds a function value: `read` takes the lock exclusively, still correct.
+  const fns = shared(new RwLock<{ f: (x: number) => number }>({ f: (x) => x * 2 }));
+  console.log(fns.read((v) => v.f(21)));
+}

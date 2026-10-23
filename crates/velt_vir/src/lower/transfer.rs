@@ -350,8 +350,32 @@ impl FnLower<'_, '_> {
         let vt = self.cx.ty(ty);
         let t = Place::local(self.copy_to_temp(v, vt));
         let a = self.addr(t.clone());
-        let f = self.cx.func(Work::Glue(Glue::TransferRoot, ty));
+        let f = self
+            .cx
+            .func_direct(Work::Glue(Glue::TransferRoot, ty), self.mode);
         self.call(vir::Callee::Func(f), vec![a], None, false);
+        Operand::Copy(t)
+    }
+
+    /// The value `v` of type `ty` a reader stores into the caller's container: in read mode,
+    /// what the reader did not make itself (another's object, which read mode cannot tell from
+    /// the store's and holds uncounted) becomes a copy, as a `read`'s result does, and what it
+    /// made and alone holds moves (the transfer glue's rules in read mode). Outside read mode
+    /// (checked code) it stays as it is.
+    pub(super) fn reader_copy(&mut self, v: Operand, ty: TyId) -> Operand {
+        if self.dead() || !self.cx.transfers(ty) || !self.cx.holds_counted(ty) {
+            return v;
+        }
+        let vt = self.cx.ty(ty);
+        let t = Place::local(self.copy_to_temp(v, vt));
+        let a = self.addr(t.clone());
+        let f = self
+            .cx
+            .func_direct(Work::Glue(Glue::TransferRoot, ty), super::LkMode::Read);
+        self.lk_split(
+            |_| {},
+            |lw| lw.call(vir::Callee::Func(f), vec![a], None, false),
+        );
         Operand::Copy(t)
     }
 
@@ -361,7 +385,9 @@ impl FnLower<'_, '_> {
             return;
         }
         let a = self.addr(p);
-        let f = self.cx.func(Work::Glue(Glue::Transfer, ty));
+        let f = self
+            .cx
+            .func_direct(Work::Glue(Glue::Transfer, ty), self.mode);
         self.call(vir::Callee::Func(f), vec![a], None, false);
     }
 }

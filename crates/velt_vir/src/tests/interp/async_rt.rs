@@ -131,6 +131,7 @@ impl Interp<'_> {
             // Transfers copy as if each object were reached once (velt_rt's transfer_map is not
             // emulated): `find` answers "no transfer under way", `defer` "release it now".
             "velt_rt_xfer_begin" | "velt_rt_xfer_end" | "velt_rt_xfer_record" => 0,
+            "velt_rt_xfer_keep_begin" | "velt_rt_xfer_keeps" => 0,
             "velt_rt_xfer_suspend" | "velt_rt_xfer_resume" => 0,
             "velt_rt_xfer_find" => 1,
             "velt_rt_xfer_defer" => 0,
@@ -194,7 +195,7 @@ impl Interp<'_> {
                 self.write_bytes(a[0], &0u64.to_le_bytes());
                 0
             }
-            "velt_rt_mutex_lock" => {
+            "velt_rt_mutex_lock" | "velt_rt_mutex_lock_checked" => {
                 assert_eq!(self.read_u64(a[0]), 0, "interp: mutex already locked");
                 self.write_bytes(a[0], &1u64.to_le_bytes());
                 0

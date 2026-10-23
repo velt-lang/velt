@@ -1,0 +1,15 @@
+// `x as A` between object types that differ in fields or order (#781): an intersection as one
+// of its parts, and an object type as the same fields in another order.
+type A = { a: number };
+type AB = A & { b: number };
+const ab: AB = { a: 1, b: 2 };
+const arr = [ab as A];
+console.log(arr[0].a, arr.length);
+type B2 = { b: string; a: number };
+const ba = { a: 1, b: "x" } as B2;
+console.log(ba.b, ba.a);
+type P = { x: number; y: number };
+type Q = { y: number; x: number };
+const p: P = { x: 1, y: 2 };
+const q = p as Q;
+console.log(q.x, q.y);

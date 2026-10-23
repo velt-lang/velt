@@ -358,7 +358,7 @@ impl FnLower<'_, '_> {
                 }
             }
         }
-        let fid = self.cx.func_for(set, targs.clone());
+        let fid = self.cx.func_for_direct(set, targs.clone(), self.mode);
         let ret = self.cx.subst(ret, &targs);
         let throws = throws.map(|e| self.cx.subst(e, &targs));
         let throws = self.cx.error_ty(throws);
@@ -407,7 +407,7 @@ impl FnLower<'_, '_> {
             hir::Def::Fn(f) => f.ret,
             _ => ice("Record.__positions is not a function"),
         };
-        let f = self.cx.func_for(def, targs.clone());
+        let f = self.cx.func_for_direct(def, targs.clone(), self.mode);
         let arr_ty = self.cx.subst(ret, &targs);
         let TyKind::Array(elem) = self.cx.kind(arr_ty) else {
             ice("Record.__positions does not return an array")
@@ -510,7 +510,7 @@ impl FnLower<'_, '_> {
             ice("Record decoded into a non-ADT type")
         };
         let def = self.class_method(d, "__decoded");
-        let f = self.cx.func_for(def, targs);
+        let f = self.cx.func_for_direct(def, targs, self.mode);
         let recv = vec![Operand::Copy(place.clone())];
         self.call(vir::Callee::Func(f), recv, None, false);
     }

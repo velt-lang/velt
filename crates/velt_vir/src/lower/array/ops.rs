@@ -5,7 +5,7 @@ use crate::lower::async_fn::BoxHold;
 use velt_sema::hir::{self, TyId};
 
 use crate::lower::operand::proj;
-use crate::lower::{cint, ice, unit, FnLower, Work};
+use crate::lower::{cint, ice, unit, FnLower, LkMode, Work};
 use crate::vir::{self, BinOp, Operand, Place, Proj, Rvalue, Ty};
 
 impl FnLower<'_, '_> {
@@ -34,6 +34,10 @@ impl FnLower<'_, '_> {
         // An argument that may run code (`aa[0].push(g())`, where `g` grows or replaces `aa`)
         // runs after the array's address is taken: borrow the array as a call borrows its
         // receiver, so that address stays valid.
+        if i != I::ArrayLen && !self.cx.lock_counted(aty) {
+            // Held inline in an object (caller_stores.rs).
+            self.owner_barrier(&args[0]);
+        }
         let av = match args[1..].iter().any(|a| self.may_write(a)) {
             true => {
                 let outer = self.start_borrows();
@@ -43,10 +47,134 @@ impl FnLower<'_, '_> {
             }
             false => self.projection_base(&args[0], BoxHold::No),
         };
+        self.owner_write = false;
         let arr = self.place_of(av, aty);
+        let caller = self.mode != LkMode::Plain && self.caller_object(&args[0]);
+        if i != I::ArrayLen && self.cx.lock_counted(aty) && !caller {
+            // A mutating operation: stops a reader of an `RwLock` changing a shared array (not
+            // the caller's, caller_stores.rs `caller_object`).
+            self.write_barrier(Operand::Copy(arr.clone()), aty);
+        }
+        let ptr = Operand::Copy(arr.clone());
         let arr = self.content(&arr, aty);
+        if caller && i != I::ArrayLen && self.cx.lock_counted(aty) && !self.captured_root(&args[0])
+        {
+            // Reached through a call (`mk(out).kids`, `rw.read((s2) => s2.items)`): it may be
+            // an array the reader made, not the caller's.
+            return self.caller_or_own_op(i, &args[1..], ptr, &arr, aty, ty);
+        }
+        if caller {
+            return self.caller_array_op(i, &args[1..], &arr, aty, ty);
+        }
+        self.array_op(i, &args[1..], &arr, aty, ty)
+    }
+
+    /// An array intrinsic on the caller's array in a `read` callback (caller_stores.rs): it
+    /// counts by the counts outside read mode, what it takes out handed to the reader.
+    fn caller_array_op(
+        &mut self,
+        i: hir::Intrinsic,
+        rest: &[hir::Expr],
+        arr: &Place,
+        aty: TyId,
+        ty: TyId,
+    ) -> Operand {
+        let outer = self.mode;
+        if let (hir::Intrinsic::ArrayPush, [x]) = (i, rest) {
+            let v = self.keep_for_caller(x);
+            self.mode = LkMode::Deferred;
+            let elem = self.elem_ty(aty);
+            self.push_value(arr, elem, v);
+            self.mode = outer;
+            return unit();
+        }
+        self.mode = LkMode::Deferred;
+        let r = self.array_op(i, rest, arr, aty, ty);
+        self.mode = outer;
+        let rty = self.sub(ty);
+        if self.needs_drop(rty) {
+            self.hand_to_reader(&r, rty);
+        }
+        r
+    }
+
+    /// An array intrinsic on the array `ptr` (content `arr`) that a call on the caller's
+    /// container returned, in a `read` callback: `caller_array_op` when it is the caller's,
+    /// `array_op` by read mode's counts when the reader made it (`LOCAL`: a new object the
+    /// call built, a nested `read`'s copy). Arguments other than a pushed value are integers,
+    /// lowered in each branch.
+    fn caller_or_own_op(
+        &mut self,
+        i: hir::Intrinsic,
+        rest: &[hir::Expr],
+        ptr: Operand,
+        arr: &Place,
+        aty: TyId,
+        ty: TyId,
+    ) -> Operand {
+        let c = self.count_place(ptr);
+        let mine = self.is_local(&c);
+        let (own, theirs, join) = (self.new_block(), self.new_block(), self.new_block());
+        if let (hir::Intrinsic::ArrayPush, [x]) = (i, rest) {
+            let held = self.held_by_caller(x);
+            let xty = self.sub(x.ty);
+            let v = self.consume(x);
+            let elem = self.elem_ty(aty);
+            let vt = self.cx.ty(elem);
+            let v = match vt {
+                Ty::Unit => v,
+                _ => Operand::Copy(Place::local(self.copy_to_temp(v, vt))),
+            };
+            self.branch(mine, own, theirs);
+            self.switch_to(own);
+            self.push_value(arr, elem, v.clone());
+            self.goto(join);
+            self.switch_to(theirs);
+            let k = self.keep_value(v, held, xty);
+            let outer = std::mem::replace(&mut self.mode, LkMode::Deferred);
+            self.push_value(arr, elem, k);
+            self.mode = outer;
+            self.goto(join);
+            self.switch_to(join);
+            return unit();
+        }
+        let rty = self.sub(ty);
+        let rt = self.cx.ty(rty);
+        let res = (rt != Ty::Unit).then(|| self.temp(rt));
+        self.branch(mine, own, theirs);
+        for (bb, reader) in [(own, true), (theirs, false)] {
+            self.switch_to(bb);
+            let r = match reader {
+                true => self.array_op(i, rest, arr, aty, ty),
+                false => self.caller_array_op(i, rest, arr, aty, ty),
+            };
+            if let Some(res) = res {
+                if let Operand::Copy(q) = &r {
+                    self.take_temp(q);
+                }
+                self.assign(Place::local(res), Rvalue::Use(r));
+            }
+            self.goto(join);
+        }
+        self.switch_to(join);
+        match res {
+            Some(res) => self.owned_result(Some(res), rty),
+            None => unit(),
+        }
+    }
+
+    fn array_op(
+        &mut self,
+        i: hir::Intrinsic,
+        rest: &[hir::Expr],
+        arr: &Place,
+        aty: TyId,
+        ty: TyId,
+    ) -> Operand {
+        use hir::Intrinsic as I;
+        let arr = arr.clone();
         let elem = self.elem_ty(aty);
-        match (i, &args[1..]) {
+        match (i, rest) {
             (I::ArrayLen, []) => self.rvalue_temp(Ty::U64, Rvalue::Use(Self::arr_field(&arr, 1))),
             (I::ArrayPush, [x]) => self.push(&arr, elem, x),
             (I::ArrayPop, []) => self.pop(&arr, elem, ty),
@@ -81,7 +209,7 @@ impl FnLower<'_, '_> {
             }
             _ => ice(format_args!(
                 "intrinsic {i:?} called with {} arguments",
-                args.len()
+                rest.len() + 1
             )),
         }
     }
@@ -100,11 +228,17 @@ impl FnLower<'_, '_> {
         let elem = self.elem_ty(dty);
         let dv = self.expr(dst);
         let darr = self.place_of(dv, dty);
+        if self.cx.lock_counted(dty) && !self.captured_root(dst) {
+            self.write_barrier(Operand::Copy(darr.clone()), dty);
+        }
         let darr = self.content(&darr, dty);
         let (id, td) = (self.expr(d), self.vty(d.ty));
         let id = self.freeze(id, d.ty);
         let sv = self.expr(src);
         let sarr = self.place_of(sv, sty);
+        if self.cx.lock_counted(sty) {
+            self.write_barrier(Operand::Copy(sarr.clone()), sty);
+        }
         let sarr = self.content(&sarr, sty);
         let (is, ts) = (self.expr(s), self.vty(s.ty));
         let is = self.freeze(is, s.ty);
@@ -181,7 +315,7 @@ impl FnLower<'_, '_> {
         self.assign(proj(arr, Proj::Field(1)), Rvalue::Use(n));
     }
 
-    fn with_capacity(&mut self, cap: Operand, ty: TyId) -> Operand {
+    pub(in crate::lower) fn with_capacity(&mut self, cap: Operand, ty: TyId) -> Operand {
         let ty = self.sub(ty);
         let elem = self.elem_ty(ty);
         let data = self.temp(Ty::Ptr);

@@ -545,7 +545,7 @@ impl Walk<'_, '_> {
             }
             Intrinsic::HttpHandler => Some(Boundary::Handler),
             Intrinsic::SharedNew => Some(Boundary::Shared),
-            Intrinsic::MutexNew => Some(Boundary::Mutex),
+            Intrinsic::MutexNew | Intrinsic::RwLockNew => Some(Boundary::Mutex),
             Intrinsic::ChanSend | Intrinsic::ChanTrySend => Some(Boundary::Channel),
             Intrinsic::Transfer => Some(Boundary::Settle),
             _ => None,

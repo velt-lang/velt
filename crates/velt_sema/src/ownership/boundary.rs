@@ -357,7 +357,7 @@ fn shared_kept(cx: &Ctx, x: &Expr, locals: &[LocalDef], out: &mut Vec<(Span, Str
             return;
         }
         E::Call {
-            callee: Callee::Intrinsic(Intrinsic::MutexNew),
+            callee: Callee::Intrinsic(Intrinsic::MutexNew | Intrinsic::RwLockNew),
             args,
         }
         | E::AdtLit { fields: args, .. }

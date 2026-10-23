@@ -1,0 +1,1 @@
+panic: a promise or task cannot start inside a `read` callback: what it holds would outlive the callback, which shares the `RwLock`'s value without counting it (start it after `read`, with what `read` returns)

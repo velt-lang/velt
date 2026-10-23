@@ -1,0 +1,61 @@
+// Readers nesting reads of two `RwLock`s in opposite orders while one writer writes one, then
+// the other, and one writer per lock writes it: after a write the bias is revoked and readers
+// take the lock shared. A writer waiting holds new outermost readers back, but a read nested in
+// another goes past it, so a reader holding one lock never waits for a writer of the other
+// that waits for it.
+class Cell {
+  n: i64 = 1;
+}
+
+async function cross(a: shared<RwLock<Cell>>, b: shared<RwLock<Cell>>, flip: bool, rounds: i64): Promise<i64> {
+  let t: i64 = 0;
+  for (let i: i64 = 0; i < rounds; i++) {
+    t += flip ? b.read((y) => a.read((x) => x.n + y.n)) : a.read((x) => b.read((y) => x.n + y.n));
+    if (i % 64 == 0) {
+      await Promise.resolve(0);
+    }
+  }
+  return t;
+}
+
+async function writer(a: shared<RwLock<Cell>>, b: shared<RwLock<Cell>>, rounds: i64): Promise<void> {
+  for (let i: i64 = 0; i < rounds; i++) {
+    a.write((x) => {
+      x.n = 1;
+    });
+    b.write((y) => {
+      y.n = 1;
+    });
+    if (i % 16 == 0) {
+      await Promise.resolve(0);
+    }
+  }
+}
+
+async function writeOne(a: shared<RwLock<Cell>>, rounds: i64): Promise<void> {
+  for (let i: i64 = 0; i < rounds; i++) {
+    a.write((x) => {
+      x.n = 1;
+    });
+    if (i % 16 == 0) {
+      await Promise.resolve(0);
+    }
+  }
+}
+
+async function main() {
+  const a = shared(new RwLock<Cell>(new Cell()));
+  const b = shared(new RwLock<Cell>(new Cell()));
+  const readers: Promise<i64>[] = [];
+  for (let i = 0; i < 8; i++) {
+    readers.push(spawn(cross(a, b, i % 2 == 1, 4000)));
+  }
+  const w = spawn(writer(a, b, 2000));
+  const wa = spawn(writeOne(a, 2000));
+  const wb = spawn(writeOne(b, 2000));
+  const totals = await Promise.all(readers);
+  await w;
+  await wa;
+  await wb;
+  console.log(totals.every((t) => t == 8000), totals.length);
+}

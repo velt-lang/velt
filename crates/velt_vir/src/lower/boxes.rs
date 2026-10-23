@@ -29,7 +29,7 @@ impl FnLower<'_, '_> {
             return v;
         }
         let payload = self.cx.payload_ty(t);
-        let p = self.counted_alloc(payload);
+        let p = self.counted_alloc_of(payload, t);
         let pp = self.operand_place(p.clone(), Ty::Ptr);
         self.assign(proj(&pp, Proj::Deref(payload)), Rvalue::Use(v));
         p
@@ -52,7 +52,7 @@ impl FnLower<'_, '_> {
         let value = proj(&pp, Proj::Deref(payload));
         let q = p.clone();
         let weak = self.cx.weak_capable(t);
-        self.release_as(p, weak, |lw| {
+        self.release_of(p, t, weak, |lw| {
             inner(lw, &value);
             lw.counted_free(q, payload);
         });
@@ -77,12 +77,12 @@ impl FnLower<'_, '_> {
         self.when(nn, done);
         // During a transfer, a box referenced more than once is copied once.
         let found = self.cx.copied_across(t).then(|| {
-            self.find_copy(p.clone(), |lw, copy| {
+            self.find_copy(p.clone(), t, |lw, copy| {
                 lw.assign(dst.clone(), Rvalue::Use(copy));
                 lw.goto(done);
             })
         });
-        let new = self.counted_alloc(payload);
+        let new = self.counted_alloc_of(payload, t);
         if let Some(found) = found {
             self.record_copy(found, p.clone(), new.clone());
         }

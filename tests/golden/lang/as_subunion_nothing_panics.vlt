@@ -1,0 +1,22 @@
+// `u as A | B` of an `A | B | C | undefined` (#893): an `undefined` stops the program at the
+// assertion, as it does for `u!` (Node stops at the `.kind` read after it).
+interface A {
+  kind: "a";
+}
+
+interface B {
+  kind: "b";
+}
+
+interface C {
+  kind: "c";
+}
+
+function pick(u: A | B | C | undefined): string {
+  return (u as A | B).kind;
+}
+
+function main() {
+  console.log(pick({ kind: "b" }));
+  console.log(pick(undefined));
+}
