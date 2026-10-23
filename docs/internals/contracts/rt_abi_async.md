@@ -449,6 +449,8 @@ their own forms); functions taking one never accept the other.
 | `velt_rt_bytes_drop` | `(VeltBytes* b)` — frees if `cap > 0`, zeroes |
 | `velt_rt_bytes_from_str` | `(const VeltStr* s, VeltBytes* out)` — copy |
 | `velt_rt_bytes_to_str` | `(const VeltBytes* b, IoResult<VeltStr>* out)` — copy, `EILSEQ` if invalid |
+| `velt_rt_bytes_to_str_lossy` | `(const VeltBytes* b, VeltStr* out)` — copy, an invalid sequence as U+FFFD (WHATWG, as `utf8DecodeLossy`); additive |
+| `velt_rt_bytes_is_utf8` | `(const VeltBytes* b) -> u8` — whether `b` is valid UTF-8; additive |
 | `velt_rt_str_array_drop` | `(VeltStrArray* a)` — drops elements + buffer, zeroes |
 
 ## 5. std/fs
@@ -654,6 +656,8 @@ network access`), and the accessors of a fetched response are unreachable (fatal
 | `velt_rt_lk_write` | `(u64* count)` | a write of the lock-set object whose count word is at `count`: stops the program in read mode unless the reader made the object (§9.1) [additive, #708] |
 | `velt_rt_free_after_reads` | `(void* obj, void (*drop)(void** slot))` | the last reference to the lock-set object `obj` (count still 1) went in code changing the caller's containers inside a read: `drop` (its drop glue) frees it now, or in read mode once this thread's outermost read ends (§9.1) [additive, #708] |
 | `velt_rt_str_hash` | `(const VeltStr* s) -> u64` | string Map/Set keys; fixed seed (deterministic), not flood-resistant |
+| `velt_rt_bytes_hash` | `(const VeltBytes* b) -> u64` | `velt_rt_str_hash` of the string whose bytes are `b` (`Map.getUtf8`: a key looked up by its UTF-8 bytes); additive |
+| `velt_rt_str_eq_bytes` | `(const VeltStr* s, const VeltBytes* b) -> u8` | whether `s`'s bytes are `b`; additive |
 | `velt_rt_math_sqrt` / `_floor` / `_ceil` / `_round` / `_trunc` / `_fabs` | `(f64) -> f64` | `round` = JS `Math.round` (ties toward +∞, keeps `-0`) |
 | `velt_rt_math_to_int32` | `(f64) -> i32` | JS ToInt32 (bitwise operators on numbers); backends emit the case of magnitude below 2^63 inline and call it only for the rest [additive, #521] |
 | `velt_rt_math_mul_int32` | `(i32 a, i32 b) -> i32` | JS `(a * b) \| 0`: the exact product rounded like the double multiply, low 32 bits; emitted inline [additive, #521] |
