@@ -340,9 +340,14 @@ fn check_timed(
     // Unions of interfaces made views of (`union_views`): their uses are checked again with
     // arms for the view.
     let mut views = union_views::Families::default();
+    let mut view_rounds = 0;
     let (mut cx, mut entry) = new_cx("round: first", true, &seeds, false, &views);
     if let Some(s) = cx.fn_sites.doubted(error_count(&cx) > 0) {
         seeds = s;
+        if let Some(g) = cx.union_views_grown() {
+            view_rounds += 1;
+            views = g;
+        }
         (cx, entry) = new_cx(
             "round: doubted throws variables",
             true,
@@ -352,17 +357,21 @@ fn check_timed(
         );
     }
     // A check with sharing may grow the sets too: the checks after it share as well.
-    let (mut rounds, mut held, mut view_rounds) = (0, true, 0);
+    let (mut rounds, mut held) = (0, true);
     loop {
+        // Views of new families (`union_views`) are checked again together with the growth of
+        // the throws sets, in one round.
         let grown_views = cx.union_views_grown().filter(|_| view_rounds < VIEW_ROUNDS);
-        if let Some(grown) = grown_views {
-            view_rounds += 1;
-            views = grown;
-            let last = rounds == FN_SITE_ROUNDS;
-            (cx, entry) = new_cx("round: union views", held, &seeds, last, &views);
-        } else if let Some(grown) = cx.fn_sites.grown() {
-            rounds += 1;
-            seeds = grown;
+        let grown_seeds = cx.fn_sites.grown();
+        if grown_views.is_some() || grown_seeds.is_some() {
+            if let Some(g) = grown_views {
+                view_rounds += 1;
+                views = g;
+            }
+            if let Some(g) = grown_seeds {
+                rounds += 1;
+                seeds = g;
+            }
             let last = rounds == FN_SITE_ROUNDS;
             (cx, entry) = new_cx("round: grown throws sets", held, &seeds, last, &views);
         } else if held && retry_sharing(&cx) {
