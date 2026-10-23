@@ -23,3 +23,12 @@ function inc<T>(xs: T[], x: T): boolean { return xs.some((y) => y == x); }
 console.log(inc<unknown>([1, 2], "2"), inc<any>([null], undefined), inc<number>([1], 1));
 function eqO<T>(a?: T, b?: T): boolean { return a == b; }
 console.log(eqO<null>(null), eqO<number>(1, 1), eqO<number>(), eqO<unknown>(0, false));
+function e5<T>(a: T | null | undefined, b: T | null | undefined) { return a == b; }
+console.log(e5<unknown>(null, undefined), e5<number>(null, undefined), e5<unknown>("1", 1), e5<string>(undefined, "x"), e5<unknown>(0, false), e5<any>(1, "1"));
+console.log(e5<any>(null, 0), e5<unknown>(undefined, undefined), e5<unknown>("a", null), e5<number>(2, 2), e5<any>(NaN, NaN));
+function e6<T>(a: T | null | undefined, b: T | null | undefined) { return a != b; }
+console.log(e6<unknown>("1", 1), e6<any>(null, undefined), e6<unknown>(1, 2), e6<string>(undefined, "x"));
+function e8<T>(a: T | null, b: T | null) { return a == b; }
+console.log(e8<number>(null, null), e8<number>(1, 1), e8<string>("a", null), e8<unknown>(1, "1"));
+function e9<T>(v: T, w: T) { return e5<T>(v, w); }
+console.log(e9<unknown>(null, undefined), e9<unknown>("2", 2), e9<any>(0, null));

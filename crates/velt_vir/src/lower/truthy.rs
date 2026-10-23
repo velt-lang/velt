@@ -51,7 +51,7 @@ impl FnLower<'_, '_> {
         }
         let (pa, pb) = self.two_places(a, b);
         if let TyKind::Option(e, _) = self.cx.kind(t) {
-            if self.cx.is_dynamic(e) {
+            if self.dynamic_core(e) {
                 return self.loose_eq_opt_any(&pa, &pb, t);
             }
         }
@@ -68,8 +68,18 @@ impl FnLower<'_, '_> {
         self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitOr, same, both))
     }
 
-    /// `==` of two options `t` of an `any` / `unknown` (`T | undefined` at `T = unknown`):
-    /// of the values held when both are present, else whether both are nothings.
+    /// Is `t` an `any` / `unknown`, or an option of one (the `X | null` inside a
+    /// `X | null | undefined`, `Cx::kind`)?
+    fn dynamic_core(&self, t: TyId) -> bool {
+        match self.cx.kind(t) {
+            TyKind::Option(e, _) => self.dynamic_core(e),
+            _ => self.cx.is_dynamic(t),
+        }
+    }
+
+    /// `==` of two options `t` of an `any` / `unknown` (`T | undefined` at `T = unknown`, and
+    /// the options nested in a `T | null | undefined`): of the values held when both are
+    /// present, else whether both are nothings.
     fn loose_eq_opt_any(&mut self, pa: &Place, pb: &Place, t: TyId) -> Operand {
         let out = Place::local(self.temp(Ty::Bool));
         let (sa, sb) = (self.option_is_some(pa, t), self.option_is_some(pb, t));
@@ -78,7 +88,10 @@ impl FnLower<'_, '_> {
         self.branch(both, both_bb, other_bb);
         self.switch_to(both_bb);
         let (va, vb) = (self.some_payload(pa, t), self.some_payload(pb, t));
-        let eq = self.any_loose_places(&va, &vb);
+        let eq = match self.cx.kind(t) {
+            TyKind::Option(e, _) if !self.cx.is_dynamic(e) => self.loose_eq_opt_any(&va, &vb, e),
+            _ => self.any_loose_places(&va, &vb),
+        };
         self.assign(out.clone(), Rvalue::Use(eq));
         self.goto(done);
         self.switch_to(other_bb);

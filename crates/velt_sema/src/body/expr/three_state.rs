@@ -155,9 +155,10 @@ impl FnCx<'_, '_> {
         // they hold depends on the instantiation (`T = unknown` holds both), so the test is
         // made there.
         let opt_param =
-            l.ty == r.ty && (self.cx.ty.opt_payload(l.ty)).is_some_and(|p| self.param_shaped(p));
+            l.ty == r.ty && (self.cx.ty.core(l.ty)).is_some_and(|p| self.param_shaped(p));
         if opt_param {
-            // `T | undefined` (`T = null` holds both nothings): tested where instantiated.
+            // `T | undefined` (`T = null` holds both nothings) and `T | null | undefined`
+            // (`T = unknown` compares the values held loosely): tested where instantiated.
             let b = self.cx.ty.bool_;
             let e = self.intrinsic(hir::Intrinsic::LooseEq, vec![l, r], b, span);
             return Ok(self.negated(e, negate, span));
