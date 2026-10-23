@@ -9,7 +9,7 @@ use velt_syntax::ast;
 
 use crate::body::narrow::Fact;
 use crate::body::{FnCx, LocalKind};
-use crate::hir::{self, ExprKind as H, LocalId, Nothing, PatKind as P, TyId, UseMode};
+use crate::hir::{self, ExprKind as H, LocalId, Nothing, PatKind as P, TyId, TyKind, UseMode};
 
 impl FnCx<'_, '_> {
     /// The arm body for member `t` (`None`: a nothing, whose tag is `none`) of the `match` that
@@ -94,16 +94,41 @@ impl FnCx<'_, '_> {
     }
 
     /// The facts of `typeof e === tag`: those of `typeof_split`, where a member whose tag the
-    /// instantiation decides stays possible in both branches (`T | Mod<T>` at `T = unknown`).
+    /// instantiation decides stays possible where the test fails, and where it passes unless
+    /// another member takes every value with that tag (`T | string` at `T = unknown` holds a
+    /// string in its `string`; `T | Mod<T>` may hold an object in its `T`).
     pub(crate) fn typeof_facts(&mut self, e: &ast::Expr, tag: &str) -> (Vec<Fact>, Vec<Fact>) {
         let (mut t, mut f) = self.typeof_split(e, tag);
-        for fact in t.iter_mut().chain(f.iter_mut()) {
+        self.add_open_members(&mut t, Some(tag));
+        self.add_open_members(&mut f, None);
+        (t, f)
+    }
+
+    /// Adds the members whose `typeof` the instantiation decides to each `Members` fact; with
+    /// `covered`, not when a fixed member takes every value of that tag.
+    fn add_open_members(&mut self, facts: &mut [Fact], covered: Option<&str>) {
+        for fact in facts {
             let Fact::Members(l, vs) = fact else {
                 continue;
             };
             let ty = self.local_ty(*l);
             let core = self.cx.ty.core(ty).unwrap_or(ty);
             let members = self.cx.union_members(core).unwrap_or_default();
+            let taken = covered.is_some_and(|tag| {
+                members.iter().any(|m| {
+                    let whole = match self.cx.ty.kind(*m) {
+                        TyKind::Str => tag == "string",
+                        TyKind::Int(_) | TyKind::Float(_) => tag == "number",
+                        TyKind::Bool => tag == "boolean",
+                        TyKind::Symbol => tag == "symbol",
+                        _ => false,
+                    };
+                    whole && self.cx.brand_base(*m).is_none()
+                })
+            });
+            if taken {
+                continue;
+            }
             for (i, m) in members.iter().enumerate() {
                 let open = self.instance_valued(*m) || self.cx.dynamic(*m).is_some();
                 if open && !vs.contains(&(i as u32)) {
@@ -112,7 +137,6 @@ impl FnCx<'_, '_> {
             }
             vs.sort_unstable();
         }
-        (t, f)
     }
 
     /// The tag of member `t` read from its value (bound in `pat`) when the instantiation
