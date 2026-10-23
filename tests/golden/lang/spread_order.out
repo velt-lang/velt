@@ -1,0 +1,116 @@
+-- call
+eval a
+eval b
+eval c
+3
+-- call after a fixed parameter
+eval a
+eval a2
+eval b
+eval c
+3
+-- array
+eval a
+eval b
+eval c
+[ 0, 5, 6 ]
+-- array, two spreads
+eval x
+eval y
+eval z
+[ 1, 2, 3 ]
+-- array, pure elements first
+eval b
+eval c
+[ 1, 2, 3, 7, 8, 4 ]
+-- new
+eval a
+eval b
+2
+-- method
+eval a
+eval b
+eval c
+3
+-- super
+eval s1
+eval s2
+eval s3
+3
+-- arrow with a rest parameter, optional call
+eval a
+eval b
+eval c
+3
+eval a
+eval b
+2
+-- generator
+eval a
+gen start g
+gen mid g
+gen end g
+eval c
+eval d
+[ 0, 1, 2, 9, 4 ]
+eval a
+gen start g2
+gen mid g2
+gen end g2
+eval d
+eval e
+5
+-- Set, Map, string
+eval a
+eval b
+eval c
+[ 0, 7, 8, 1, 2 ]
+eval a
+eval b
+eval c
+[ 'x', 'h', 'i', 'y' ]
+eval a
+eval b
+[ 'x', 'k', 'y' ]
+eval a
+eval b
+[ [ 'a', 0 ], [ 'k', 1 ], [ 'b', 1 ] ]
+-- nested arrays
+eval a
+eval b
+eval c
+[ [ 0 ], [ 1 ], [ 2 ] ]
+-- Math.max, push
+eval a
+eval b
+eval c
+5
+eval a
+eval b
+eval c
+[ 0, 5, 1 ]
+-- generic
+eval x
+eval ys
+eval z
+[ 1, 2, 3 ]
+-- values that are not Copy
+eval a
+eval b
+eval c
+a,b,c
+-- an element that changes the array spread after it, or before it
+[ 0, 1, 2, 3 ]
+[ 1, 2, 3, 3 ] [ 1, 2 ]
+-- a spread that throws
+eval a
+caught boom
+-- template and conditional elements
+eval a
+eval b
+[ 'x1', 'p', 'y' ]
+-- async
+eval a
+eval b
+eval c
+[ 0, 1, 2 ]

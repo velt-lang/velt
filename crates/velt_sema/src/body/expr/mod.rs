@@ -137,6 +137,7 @@ mod truthiness;
 mod type_tests;
 mod union_coerce;
 mod widen_fresh;
+mod written_order;
 
 use velt_common::Span;
 use velt_syntax::ast;

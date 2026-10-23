@@ -1,0 +1,46 @@
+-- typed, out of declaration order
+eval z
+eval x
+eval y
+1 2 3
+eval z
+3 2 3
+-- typed, in declaration order
+eval x
+eval y
+eval z
+1 2 3
+-- a property before a spread with effects
+eval x
+eval spread
+1 20 30
+eval x
+eval spread
+eval w
+1 n 4
+-- a property a later spread overrides
+eval y (overridden)
+1 2 3
+-- after a spread, out of declaration order
+eval z
+eval y
+0 8 7
+eval y
+eval z
+2 5
+-- between two spreads
+eval s1
+eval m
+eval s2
+1 20 30
+-- before an optional field's spread
+eval y
+eval z
+5 99
+-- a class instance spread before a call that changes it
+1 2 2
+-- records
+eval k
+eval spread
+eval j
+{"k":1,"a":1,"j":2}

@@ -1,0 +1,75 @@
+// check: no leaks
+// Object literals evaluate their properties in written order, as in JavaScript (#1458): a
+// literal of an object type written out of declaration order, a property before a spread whose
+// source has effects, one a later spread overrides (still evaluated), and properties after a
+// spread that land in an earlier field's place.
+function tr(s: string, v: number = 0): number {
+  console.log("eval " + s);
+  return v;
+}
+interface P {
+  x: number;
+  y: number;
+  z: number;
+}
+interface YZ {
+  y: number;
+  z: number;
+}
+function yz(s: string): YZ {
+  console.log("eval " + s);
+  return { y: 20, z: 30 };
+}
+function named(s: string): { name: string } {
+  console.log("eval " + s);
+  return { name: "n" };
+}
+class K {
+  n = 1;
+  bump(): number {
+    this.n++;
+    return this.n;
+  }
+}
+const base: YZ = { y: 2, z: 3 };
+
+console.log("-- typed, out of declaration order");
+const p: P = { z: tr("z", 3), x: tr("x", 1), y: tr("y", 2) };
+console.log(p.x, p.y, p.z);
+const q: P = { y: base.y, z: tr("z", 3), x: base.z };
+console.log(q.x, q.y, q.z);
+console.log("-- typed, in declaration order");
+const p2: P = { x: tr("x", 1), y: tr("y", 2), z: tr("z", 3) };
+console.log(p2.x, p2.y, p2.z);
+console.log("-- a property before a spread with effects");
+const a: P = { x: tr("x", 1), ...yz("spread") };
+console.log(a.x, a.y, a.z);
+const a2 = { x: tr("x", 1), ...named("spread"), w: tr("w", 4) };
+console.log(a2.x, a2.name, a2.w);
+console.log("-- a property a later spread overrides");
+const b: P = { x: 1, y: tr("y (overridden)", 9), ...base };
+console.log(b.x, b.y, b.z);
+console.log("-- after a spread, out of declaration order");
+const c: P = { x: 0, ...base, z: tr("z", 7), y: tr("y", 8) };
+console.log(c.x, c.y, c.z);
+const e = { y: tr("y", 1), ...base, z: tr("z", 5) };
+console.log(e.y, e.z);
+console.log("-- between two spreads");
+const f = { ...yz("s1"), m: tr("m", 1), ...yz("s2") };
+console.log(f.m, f.y, f.z);
+console.log("-- before an optional field's spread");
+const part: Partial<YZ> = { z: 99 };
+const g: YZ = { y: tr("y", 5), z: tr("z", 6), ...part };
+console.log(g.y, g.z);
+console.log("-- a class instance spread before a call that changes it");
+const k = new K();
+const h = { ...k, m: k.bump() };
+console.log(h.n, h.m, k.n);
+console.log("-- records");
+const r: Record<string, number> = { a: 1 };
+function rec(s: string): Record<string, number> {
+  console.log("eval " + s);
+  return r;
+}
+const r2: Record<string, number> = { k: tr("k", 1), ...rec("spread"), j: tr("j", 2) };
+console.log(JSON.stringify(r2));

@@ -1679,7 +1679,10 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   arguments, `f(...xs)`, fill a rest parameter ([Functions](functions.md)). Whatever `for...of`
   takes can be spread into an array or a rest parameter too: `[..."héllo"]` (characters),
   `[...map]` (entries), `[...gen()]`, `Math.max(...set)`
-  ([Consuming an iterable](control-flow.md#consuming-an-iterable)).
+  ([Consuming an iterable](control-flow.md#consuming-an-iterable)). Elements, arguments and
+  properties run in written order, as in JS: `[f(), ...g()]` calls `f` first, an iterable is
+  consumed where it is written, and `{ y: f(), x: g() }` calls `f` first whatever the order of
+  its type's fields; a property a later spread overrides (`{ a: f(), ...o }`) still runs.
 - **Wider element types**: an array, object type or generic class converts to the same type
   with wider elements (`C[]` to `Named[]` for a class `C implements Named`, `i64[]` to
   `(i64 | null)[]`, `Box<C>` to `Box<Named>`) only when the value is **fresh**: a literal, a

@@ -287,6 +287,42 @@ impl FnCx<'_, '_> {
         }
     }
 
+    /// [`evaluated_anywhere`](Self::evaluated_anywhere), or arithmetic, a comparison, a logical
+    /// operator or `?:` over such operands of primitive types (numbers, booleans, strings),
+    /// which can call no user code (an integer division or remainder may throw, a `BigInt`'s).
+    pub(super) fn no_effects(&mut self, e: &ast::Expr) -> bool {
+        let e = unparen(e);
+        match &e.kind {
+            ast::ExprKind::Unary { op, expr } if *op != ast::UnaryOp::Delete => {
+                self.primitive_operand(expr, true)
+            }
+            ast::ExprKind::Binary { op, lhs, rhs } => {
+                let int_ok = !matches!(
+                    op,
+                    ast::BinaryOp::Div | ast::BinaryOp::Rem | ast::BinaryOp::Pow
+                );
+                *op != ast::BinaryOp::In
+                    && self.primitive_operand(lhs, int_ok)
+                    && self.primitive_operand(rhs, int_ok)
+            }
+            ast::ExprKind::Cond { cond, then, els } => {
+                self.no_effects(cond) && self.no_effects(then) && self.no_effects(els)
+            }
+            _ => self.evaluated_anywhere(e),
+        }
+    }
+
+    /// [`no_effects`](Self::no_effects) operand `e` of a primitive type (an integer only when
+    /// `int_ok`).
+    fn primitive_operand(&mut self, e: &ast::Expr, int_ok: bool) -> bool {
+        if !self.no_effects(e) {
+            return false;
+        }
+        let t = self.trial_expr(e).ty;
+        let ty = &self.cx.ty;
+        ty.is_float(t) || t == ty.bool_ || t == ty.str_ || (int_ok && ty.is_int(t))
+    }
+
     /// Is `e` a member chain read through a getter (`h.g`), whose value is not a place, so it
     /// can be held in a temporary?
     fn is_getter_value(&mut self, e: &ast::Expr) -> bool {
@@ -340,7 +376,7 @@ impl FnCx<'_, '_> {
 
 /// A checked read with no effects: a variable, a constant, a field path of one, or a literal
 /// index into one (narrowing projections included); not a call (a getter).
-fn read_without_effects(h: &hir::Expr) -> bool {
+pub(super) fn read_without_effects(h: &hir::Expr) -> bool {
     match &h.kind {
         hir::ExprKind::Local(..) | hir::ExprKind::Global(_) | hir::ExprKind::Lit(_) => true,
         hir::ExprKind::Field { base, .. }

@@ -4,8 +4,12 @@
 //! (Copy elements are copied), each element converted to the literal's element type
 //! (`const ns: Named[] = [...cs]` makes interface values of the `C`s). A string or a `Map` is the
 //! array of its characters or entries (bound to a temporary first). A source that is an iterable
-//! (`[...gen()]`) is a `for...of` pushing its values at its position (`body/consume.rs`). Spread
-//! sources are evaluated before the other elements of the literal.
+//! (`[...gen()]`) is a `for...of` pushing its values at its position (`body/consume.rs`).
+//!
+//! Everything is evaluated in written order, as in JS. A spread array that is not a place is
+//! bound before the array is made (its length sizes it) while only elements without effects
+//! come before it (`[a, ...f()]`, `no_effects`); after one with effects or an iterable
+//! (`[g(), ...f()]`, `[...gen(), ...f()]`) it is bound where it is pushed.
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
@@ -21,6 +25,9 @@ use crate::hir::{
 enum Src {
     /// An array (a place, or a temporary bound first) and its element type.
     Array(hir::Expr, TyId),
+    /// An array value bound to a temporary where it is pushed, after the elements before it
+    /// (see the module docs), and its element type.
+    Late(hir::Expr, TyId),
     /// An iterable, consumed by a `for...of` at its position.
     Iter(Consumable),
 }
@@ -36,8 +43,11 @@ impl FnCx<'_, '_> {
         let mut lets = vec![];
         let mut sources: Vec<Option<Src>> = vec![];
         let mut elem = exp_elem;
+        // An earlier element has effects, or is an iterable: a later one is evaluated in place.
+        let mut in_place = false;
         for e in elems {
             let ast::ExprKind::Spread(inner) = &e.kind else {
+                in_place = in_place || !self.no_effects(e);
                 sources.push(None);
                 continue;
             };
@@ -50,6 +60,7 @@ impl FnCx<'_, '_> {
                     Some(c) => {
                         elem.get_or_insert(c.elem);
                         sources.push(Some(Src::Iter(c)));
+                        in_place = true;
                         continue;
                     }
                     None => {
@@ -62,6 +73,9 @@ impl FnCx<'_, '_> {
             elem.get_or_insert(et);
             let mut src = if is_place(&h) {
                 h
+            } else if in_place {
+                sources.push(Some(Src::Late(h, et)));
+                continue;
             } else {
                 self.temp("<spread>", h, &mut lets)
             };
@@ -78,7 +92,7 @@ impl FnCx<'_, '_> {
         };
         for (e, src) in elems.iter().zip(&mut sources) {
             let (et, is_array) = match src {
-                Some(Src::Array(_, et)) => (*et, true),
+                Some(Src::Array(_, et) | Src::Late(_, et)) => (*et, true),
                 Some(Src::Iter(c)) => (c.elem, false),
                 None => continue,
             };
@@ -143,6 +157,11 @@ impl FnCx<'_, '_> {
         for ((e, src), checked) in elems.iter().zip(sources).zip(plain) {
             let stmt = match (src, &e.kind) {
                 (Some(Src::Array(src, et)), _) => {
+                    self.push_all(out_l, arr_ty, src, (et, elem), e.span)
+                }
+                (Some(Src::Late(h, et)), _) => {
+                    let mut src = self.temp("<spread>", h, &mut lets);
+                    set_place_mode(&mut src, UseMode::Borrow);
                     self.push_all(out_l, arr_ty, src, (et, elem), e.span)
                 }
                 (Some(Src::Iter(c)), _) => {
