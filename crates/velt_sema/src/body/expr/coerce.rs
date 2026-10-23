@@ -126,6 +126,13 @@ impl FnCx<'_, '_> {
         if self.cx.dynamic(h.ty).is_some() || self.cx.dynamic(exp).is_some() {
             return self.coerce_dynamic(h, exp, self.adapting);
         }
+        // `Record<string, any>` as a `Record<string, unknown>` (or back), also in arrays,
+        // nullables, maps and function types: the same value (`Ctx::same_but_any_unknown`).
+        if self.cx.same_but_any_unknown(h.ty, exp) {
+            self.cx.any_unknown_views = true;
+            let span = h.span;
+            return Ok(self.mk(H::Upcast(Box::new(h)), exp, span));
+        }
         // Two forms of one anonymous object type (a generic shape at concrete arguments and the
         // written shape, crate::anon): the same values, so only the type changes.
         if self.cx.canon(h.ty) == self.cx.canon(exp) {

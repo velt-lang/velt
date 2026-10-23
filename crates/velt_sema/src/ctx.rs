@@ -64,6 +64,9 @@ pub(crate) struct Ctx<'m> {
     /// anonymous object type of their fields. With a template, the twin's type arguments are
     /// the template's types with the original arguments substituted (a param order change).
     pub readonly_twins: FxHashMap<DefId, (DefId, Option<Vec<TyId>>)>,
+    /// A container of `any` was used as one of `unknown` or back (`same_but_any_unknown`):
+    /// `unknown` is erased to `any` before lowering (`crate::readonly`), so both are one type.
+    pub any_unknown_views: bool,
     /// What the `Object` built-ins make: frozen types, prototype-less records.
     pub objects: crate::anon::ObjectState,
     /// Branded type definitions → their primitive (`crate::brands`).
@@ -348,6 +351,7 @@ impl<'m> Ctx<'m> {
             impl_index: Default::default(),
             anon: FxHashMap::default(),
             readonly_twins: FxHashMap::default(),
+            any_unknown_views: false,
             objects: Default::default(),
             brands: FxHashMap::default(),
             brand_keys: FxHashMap::default(),

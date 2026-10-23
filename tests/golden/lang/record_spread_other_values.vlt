@@ -1,0 +1,30 @@
+// check: no leaks
+// A record spread into an object literal of a record type with another value type
+// (`{ ...a, ...b }` of a `Record<string, string>` where a `Record<string, any>` is expected):
+// each value converts into the new record, in the spread's key order, as Node copies them
+// (#1185). Expected output: Node's.
+function parse(css: string): Record<string, string> {
+  const r: Record<string, string> = {};
+  for (const part of css.split(";")) {
+    const [k, v] = part.split(":");
+    if (k && v) r[k.trim()] = v.trim();
+  }
+  return r;
+}
+function merge(a: Record<string, string>, b: Record<string, any>): Record<string, any> {
+  return { ...a, ...b };
+}
+const base = parse("color: red; width: 10px");
+const merged = merge(base, { width: 20, extra: true });
+merged.color = 5;
+console.log(JSON.stringify(merged), JSON.stringify(base));
+function mixed(
+  a: Record<string, number> | null,
+  b: Record<string, string> | undefined,
+): Record<string, unknown> {
+  return { z: 0, ...a, ...b, y: true };
+}
+console.log(JSON.stringify(mixed({ a: 1, z: 9 }, { b: "s" })));
+console.log(JSON.stringify(mixed(null, undefined)));
+const wide: Record<string, number | string> = { ...parse("a: 1"), ...{ n: 2 } };
+console.log(JSON.stringify(wide), Object.keys(wide).length);

@@ -1,9 +1,41 @@
-//! Conversions TypeScript allows between types that differ only in a wider part: function results
-//! (`body/expr/fn_widen.rs`, #943) and chained assignments of a literal (`body/expr/assign.rs`).
+//! Conversions TypeScript allows between types that differ only in a wider part: containers of
+//! `any` and `unknown` (`Ctx::same_but_any_unknown`, #1185), function results
+//! (`body/expr/fn_widen.rs`, #943), record spreads of another value type
+//! (`body/expr/record_literal.rs`) and chained assignments of a literal (`body/expr/assign.rs`).
 
 mod common;
 
 use common::programs::{err_src, ok_src};
+
+#[test]
+fn containers_of_any_and_unknown_are_one_type() {
+    ok_src(
+        "function main() {
+           const r: Record<string, any> = { a: 1 };
+           const u: Record<string, unknown> = r;
+           const back: Record<string, any> = u;
+           const xs: unknown[] = [1];
+           const ys: any[] = xs;
+           const m: Map<string, unknown> = new Map<string, any>();
+           const t: [unknown, string] = [1, \"s\"] as [any, string];
+           console.log(xs === ys, back === r, m.size, t[1]);
+         }",
+    );
+}
+
+#[test]
+fn a_class_at_any_is_not_one_at_unknown() {
+    // Its members may depend on the argument: only containers are the same value.
+    let r = err_src(
+        "class Box<T> { v: T; constructor(v: T) { this.v = v; } }
+         function main() {
+           const b: Box<any> = new Box<any>(1);
+           const c: Box<unknown> = b;
+           console.log(c);
+         }",
+    );
+    assert!(r.contains("Box<unknown>"), "{r}");
+}
 
 #[test]
 fn a_function_converts_to_a_function_type_with_a_wider_result() {
@@ -45,3 +77,15 @@ fn a_chained_assignment_of_null_gives_each_target_the_null() {
     );
 }
 
+#[test]
+fn a_record_spread_converts_its_values() {
+    ok_src(
+        "function merge(a: Record<string, string>): Record<string, any> { return { ...a, x: 1 }; }
+         function main() { console.log(merge({ k: \"v\" })); }",
+    );
+    let r = err_src(
+        "function bad(a: Record<string, number>): Record<string, string> { return { ...a }; }
+         function main() { console.log(bad({})); }",
+    );
+    assert!(r.contains("expected string, found f64"), "{r}");
+}

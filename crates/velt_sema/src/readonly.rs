@@ -25,7 +25,11 @@ pub(crate) fn erase(cx: &mut Ctx) -> HashMap<TyId, String> {
     let mut named: Vec<(TyId, String)> = (cx.alias_names.iter())
         .map(|(t, n)| (*t, crate::namespaces::written(n).into_owned()))
         .collect();
-    if cx.readonly_twins.is_empty() && cx.brands.is_empty() && cx.fn_sites.vars.is_empty() {
+    if cx.readonly_twins.is_empty()
+        && cx.brands.is_empty()
+        && cx.fn_sites.vars.is_empty()
+        && !cx.any_unknown_views
+    {
         return unique_names(named);
     }
     let mut twins = cx.readonly_twins.clone();
@@ -42,6 +46,13 @@ pub(crate) fn erase(cx: &mut Ctx) -> HashMap<TyId, String> {
     for (&d, &base) in &cx.brands {
         let brand = cx.ty.intern(TyKind::Adt(d, vec![]));
         cache.insert(brand, base);
+    }
+    // `unknown` is `any` for lowering (the same values, the same layout) where a container of
+    // one is used as one of the other (`Ctx::same_but_any_unknown`).
+    if let (true, Some(defs)) = (cx.any_unknown_views, cx.any) {
+        let unknown = cx.ty.intern(TyKind::Dyn(defs.unknown, vec![]));
+        let any = cx.ty.intern(TyKind::Dyn(defs.any, vec![]));
+        cache.insert(unknown, any);
     }
     // A type with error-set variables is its solved type (`throws::vars`), erased; unions of
     // one erased member list are one def, of one erased member that member.

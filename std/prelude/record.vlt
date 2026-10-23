@@ -158,6 +158,16 @@ export class Record<K, V> {
     }
   }
 
+  /** `{ ...other }` of a record of another value type (`Record<string, string>` into a
+   *  `Record<string, any>`): each value converted by `convert`; nothing when it is nothing. */
+  __extendFrom<W>(other: Record<K, W> | null | undefined, convert: (value: W) => V) {
+    if (other != null) {
+      for (const [k, v] of other.__entries()) {
+        this.__set(k, convert(v));
+      }
+    }
+  }
+
   __size(): usize {
     return this.entries.size;
   }

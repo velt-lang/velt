@@ -2089,7 +2089,10 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   serializing the record is then an error (Node would show the original's fields). A key holding a function is called as a
   method (`props.onClick()`, also on any `Record<string, any>`). A spread of a record that may be
   `null` or `undefined` (`{ ...props }` with `props: Props | null`) is a record too, and copies
-  nothing when it is. Not supported yet (each is an error): named members next to an index
+  nothing when it is. A spread of a record of another value type into a record literal
+  (`{ ...a, ...b }` of a `Record<string, string>` where a `Record<string, any>` is expected)
+  converts each value into the new record, in the spread record's key order; a value that
+  doesn't convert is an error. Not supported yet (each is an error): named members next to an index
   signature of other values (`{ name?: string; [key: string]: string | undefined }`, which needs
   `undefined`, #930), a `number` or `symbol` key, two index signatures in one type,
   and an interface with an index signature that also has methods or `extends`. An object of a
@@ -2520,7 +2523,12 @@ is a `bigint`.
 value converts to either. An `any` converts back to every type, and the value is checked where it
 enters typed code: a value of another type stops the program with a `TypeError` (Node would
 keep the wrong value). An `unknown` must be narrowed first (`typeof`, `instanceof`), or
-converted with `as T`, which is checked the same way. Both are the same value at run time.
+converted with `as T`, which is checked the same way. Both are the same value at run time, so
+a container of one is a container of the other: a `Record<string, any>` is a
+`Record<string, unknown>` (and back), and so are `any[]` and `unknown[]`, `Map<string, any>` and
+`Map<string, unknown>`, tuples, `Set`s, nullables and function types that differ only there. It
+is the same object seen through the other type, as in TypeScript: a write through one is seen
+through the other, and `===` compares them as one value.
 
 ```ts
 class Point {
