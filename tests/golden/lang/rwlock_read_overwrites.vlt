@@ -1,0 +1,33 @@
+// check: no leaks
+// Inside a `read`, overwriting a field or a map entry of the caller's own object releases the
+// old value, which the caller made: what a reader stores there is a copy. (An object of a type
+// the `RwLock`'s value holds, such as an `Item[]` here, cannot be changed there unless the
+// callback made it: read mode cannot tell it from the store's.)
+class Item {
+  v: i64 = 1;
+  constructor(v: i64) {
+    this.v = v;
+  }
+}
+class Box2 {
+  it: Item = new Item(7);
+}
+class St {
+  items: Item[] = [new Item(2)];
+}
+function main() {
+  const rw = shared(new RwLock<St>(new St()));
+  const bx = new Box2();
+  const m = new Map<string, Item>();
+  m.set("k", new Item(4));
+  for (let i = 0; i < 100; i++) {
+    rw.read((s) => {
+      bx.it = s.items[0];
+      m.set("k", s.items[0]);
+    });
+  }
+  rw.write((s) => {
+    s.items = [];
+  });
+  console.log(bx.it.v, m.get("k")!.v);
+}

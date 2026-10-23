@@ -1,0 +1,21 @@
+// A `read` callback that writes a value other readers read, through a reference sema cannot
+// follow (here an array it made), stops the program: other readers read the value at the same
+// time (velt_rt read mode). Sema rejects the writes it can see (`v.items[0].name = …`).
+class Item {
+  name: string = "a";
+}
+
+class Store {
+  items: Item[] = [new Item()];
+}
+
+function main() {
+  const rw = shared(new RwLock<Store>(new Store()));
+  console.log("before");
+  rw.read((v) => {
+    const mine: Item[] = [];
+    mine.push(v.items[0]);
+    mine[0].name = "x";
+  });
+  console.log("not reached");
+}

@@ -1,0 +1,66 @@
+// A container a `read` callback made, holding the caller's objects, stored into the caller's
+// containers: the objects in it stay the caller's (the same objects, counted again), also when
+// the callback still holds the container, stores it twice or takes it out of another one.
+class Item {
+  v: i64 = 0;
+  constructor(v: i64) {
+    this.v = v;
+  }
+}
+class Pair {
+  a: Item;
+  constructor(a: Item) {
+    this.a = a;
+  }
+}
+class Bag {
+  items: Item[] = [];
+}
+class St {
+  items: Item[] = [new Item(1)];
+}
+
+function main() {
+  const rw = shared(new RwLock<St>(new St()));
+  const out: Item[] = [new Item(1)];
+  const g: Item[][] = [];
+  const m = new Map<string, Item[]>();
+  const ps: Pair[] = [];
+  for (let i = 0; i < 2; i++) {
+    rw.read((s) => {
+      const l: Item[] = [out[0]];
+      g.push(l);
+      m.set("k", [out[0]]);
+      g.push([out[0]]);
+      ps.push(new Pair(out[0]));
+      return 0;
+    });
+  }
+  out[0].v = 5;
+  console.log(g.length, g.map((l) => l[0].v).join(","), m.get("k")![0].v, ps[1].a.v, g[3][0] === out[0]);
+
+  const h: Item[][] = [];
+  const n = rw.read((s) => {
+    const l: Item[] = [out[0]];
+    h.push(l);
+    h.push(l);
+    const ll: Item[][] = [[out[0]], [new Item(9)]];
+    h.push(ll[0]);
+    return l.length + ll.length;
+  });
+  out[0].v = 6;
+  console.log(n, h.length, h.map((l) => l[0].v).join(","), h[0] === h[1]);
+
+  const bags: Bag[] = [];
+  rw.read((s) => {
+    bags.push(new Bag());
+    return 0;
+  });
+  rw.read((s) => {
+    const x = bags[0];
+    x.items.push(out[0]);
+    return 0;
+  });
+  out[0].v = 7;
+  console.log(bags[0].items.length, bags[0].items[0].v);
+}

@@ -308,6 +308,7 @@ pub unsafe extern "C" fn velt_rt_spawn_transfer(
     result_drop: Option<ResultDropFn>,
     result_transfer: Option<ResultDropFn>,
 ) -> *mut VeltFut {
+    crate::read_mode::refuse_tasks_in_read();
     let (size, align) = (state_size as usize, state_align as usize);
     with_state_store!(size, align, |S| {
         let body =
@@ -324,6 +325,7 @@ pub unsafe extern "C" fn velt_rt_spawn_fut(
     result_size: u64,
     result_drop: Option<ResultDropFn>,
 ) -> *mut VeltFut {
+    crate::read_mode::refuse_tasks_in_read();
     spawn_sized(
         FutBody {
             fut: SendPtr(f),
@@ -343,6 +345,7 @@ pub unsafe extern "C" fn velt_rt_spawn_detached(
     state_size: u64,
     state_align: u64,
 ) {
+    crate::read_mode::refuse_tasks_in_read();
     let (size, align) = (state_size as usize, state_align as usize);
     with_state_store!(size, align, |S| {
         spawn_body::<_, 0>(

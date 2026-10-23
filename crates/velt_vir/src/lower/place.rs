@@ -45,6 +45,7 @@ impl FnLower<'_, '_> {
 
     pub(super) fn field_expr(&mut self, base: &hir::Expr, index: u32, mode: UseMode) -> Operand {
         let bty = self.sub(base.ty);
+        let write = std::mem::take(&mut self.owner_write);
         if self.cx.proxiable(bty) && !self.is_unit_field(bty, index) {
             return self.proxy_field_read(base, bty, index, mode);
         }
@@ -93,8 +94,10 @@ impl FnLower<'_, '_> {
             }
             None => BoxHold::No,
         };
+        let at = self.owner_write_down(write, base, bty);
         let v = self.projection_base(base, hold);
         let bp = self.place_of(v, bty);
+        self.owner_write_barrier(at, &bp, bty);
         let p = self.field_place(&bp, bty, index);
         if mode == UseMode::Move && self.take_temp(&bp) {
             // Moving a field out of an owned temporary: the rest of it is dropped later.
@@ -343,6 +346,14 @@ impl FnLower<'_, '_> {
         None
     }
 
+    /// About to write into the counted object of type `ty` whose pointer `p` holds, as part of
+    /// an assignment target (rc.rs `write_barrier`, the lock set).
+    pub(super) fn target_barrier(&mut self, p: &Place, ty: TyId) {
+        if !self.read_target && self.cx.lock_counted(ty) && !self.dead() {
+            self.write_barrier(Operand::Copy(p.clone()), ty);
+        }
+    }
+
     /// Evaluate a place expression (assignment target).
     pub(super) fn place_expr(&mut self, e: &hir::Expr) -> Place {
         self.place_expr_with(e, &mut VecDeque::new())
@@ -375,8 +386,7 @@ impl FnLower<'_, '_> {
         }
     }
 
-    /// `place_expr` with the root and index operands `pre` already evaluated by
-    /// `place_indices`.
+    /// `place_expr` with the root and index operands `pre` evaluated by `place_indices`.
     pub(super) fn place_expr_with(&mut self, e: &hir::Expr, pre: &mut VecDeque<Operand>) -> Place {
         use hir::ExprKind as K;
         match &e.kind {
@@ -390,11 +400,17 @@ impl FnLower<'_, '_> {
             K::Field { base, index, .. } => {
                 let bty = self.sub(base.ty);
                 let bp = self.place_expr_with(base, pre);
+                if !self.captured_root(base) {
+                    self.target_barrier(&bp, bty);
+                }
                 self.field_place(&bp, bty, *index)
             }
             K::Index { base, index, .. } => {
                 let bty = self.sub(base.ty);
                 let arr = self.place_expr_with(base, pre);
+                if !self.captured_root(base) {
+                    self.target_barrier(&arr, bty);
+                }
                 let arr = self.content(&arr, bty);
                 let i = match pre.pop_front() {
                     Some(i) => i,
@@ -462,7 +478,11 @@ impl FnLower<'_, '_> {
                 self.pin_target(place, &pre, later)
             }
         };
-        let v = self.consume(value);
+        // Into the caller's container in a `read` callback: counted as the caller counts.
+        let v = match self.captured_root(place) {
+            true => self.keep_for_caller(value),
+            false => self.consume(value),
+        };
         if self.dead() {
             return unit();
         }
@@ -505,6 +525,32 @@ impl FnLower<'_, '_> {
         drops: bool,
     ) {
         let flag = self.presence_place(place, &p);
+        // In read mode, the caller's container (rooted in what the `read` callback captured,
+        // frozen.rs `captured_root`) holds no store object (`keep_for_caller` counted or copied
+        // what is stored), and the old value, which the caller made, is released by the counts
+        // outside read mode and freed after the reads (`LkMode::Deferred`: the reader may
+        // still point at it uncounted).
+        let mode = self.mode;
+        let outside = match &place.kind {
+            hir::ExprKind::Field { .. } | hir::ExprKind::Index { .. } => self.captured_root(place),
+            _ => false,
+        };
+        if mode != super::LkMode::Plain && outside {
+            self.mode = super::LkMode::Deferred;
+        }
+        self.store_assigned_in(flag, p, v, ty, shared, drops);
+        self.mode = mode;
+    }
+
+    fn store_assigned_in(
+        &mut self,
+        flag: Option<Place>,
+        p: Place,
+        v: Operand,
+        ty: TyId,
+        shared: bool,
+        drops: bool,
+    ) {
         if shared && drops {
             // Other owners see the place: store first, then drop the old value (its `dispose`
             // may reach the place's container and must find it consistent).

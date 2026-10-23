@@ -25,8 +25,10 @@ pub(crate) enum BuiltinMethod {
     SharedAdd,
     SharedGet,
     SharedSet,
-    /// `with(f)` on `Mutex<T>` / `shared<Mutex<T>>`.
+    /// `with(f)` on `Mutex<T>` / `shared<Mutex<T>>`, `write(f)` on an `RwLock`.
     MutexWith,
+    /// `read(f)` on `RwLock<T>` / `shared<RwLock<T>>`.
+    LockRead,
 }
 
 pub(crate) enum Resolved {
@@ -336,7 +338,11 @@ impl FnCx<'_, '_> {
             "add" if atomic => Some(BuiltinMethod::SharedAdd),
             "get" if atomic => Some(BuiltinMethod::SharedGet),
             "set" if atomic => Some(BuiltinMethod::SharedSet),
-            "with" if self.cx.mutex_value(recv).is_some() => Some(BuiltinMethod::MutexWith),
+            "with" if self.cx.mutex_value(recv).is_some() && !self.cx.is_rwlock(recv) => {
+                Some(BuiltinMethod::MutexWith)
+            }
+            "write" if self.cx.is_rwlock(recv) => Some(BuiltinMethod::MutexWith),
+            "read" if self.cx.is_rwlock(recv) => Some(BuiltinMethod::LockRead),
             "clone" => Some(BuiltinMethod::Clone),
             "toString" if self.cx.ty.is_numeric(recv) || recv == self.cx.ty.bool_ => {
                 Some(BuiltinMethod::ToString)

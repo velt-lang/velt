@@ -1,0 +1,7 @@
+splice insert 3 5,5,2
+splice replace 2 5,5
+splice other 1,6,7,2 true
+moveLast 0 11,2,23 23
+copyFirstThenClear 0 11,2,23 23
+moveBack 2 11 23
+moveAll 1 11,2,23,11 23

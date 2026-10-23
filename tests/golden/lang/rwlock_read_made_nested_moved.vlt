@@ -1,0 +1,57 @@
+// Containers a `read` callback made holding the caller's objects, given to functions that move
+// them into the caller's containers: a lock-set object (`St`) keeps them the same objects; one
+// outside the lock set (also as an option or in an array) goes as a copy (async.md).
+class Item {
+  v: i64 = 0;
+  constructor(v: i64) {
+    this.v = v;
+  }
+}
+
+class St {
+  items: Item[] = [new Item(1)];
+}
+
+class Box2 {
+  st: St = new St();
+  extra: Item[][] = [];
+}
+
+function mvSt(dst: Item[], l: St) {
+  dst.push(l.items.pop()!);
+}
+
+function mvBox(dst: Item[], b: Box2 | null) {
+  if (b !== null) {
+    dst.push(b.st.items.pop()!);
+    dst.push(b.extra[0].pop()!);
+  }
+}
+
+function mvArr(dst: Item[], bs: Box2[]) {
+  dst.push(bs[0].st.items.pop()!);
+}
+
+function main() {
+  const rw = shared(new RwLock<St>(new St()));
+  const out: Item[] = [new Item(1), new Item(2)];
+  const got: Item[] = [];
+  for (let i = 0; i < 2; i++) {
+    rw.read((s) => {
+      const l = new St();
+      l.items.push(out[0]);
+      mvSt(got, l);
+      const b = new Box2();
+      b.st.items.push(out[1]);
+      b.extra.push([out[0]]);
+      mvBox(got, b);
+      const bs: Box2[] = [new Box2()];
+      bs[0].st.items.push(out[1]);
+      mvArr(got, bs);
+      return l.items.length;
+    });
+  }
+  out[0].v = 5;
+  out[1].v = 6;
+  console.log(got.length, got.map((x) => x.v).join(","));
+}

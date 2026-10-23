@@ -99,7 +99,7 @@ impl FnLower<'_, '_> {
         match self.cx.kind(ty) {
             hir::TyKind::Str => self.call_rt(Rt::StrClone, vec![src, dst], None),
             _ => {
-                let f = self.cx.func(Work::Glue(Glue::Clone, ty));
+                let f = self.cx.func_direct(Work::Glue(Glue::Clone, ty), self.mode);
                 self.call(vir::Callee::Func(f), vec![src, dst], None, false);
             }
         }

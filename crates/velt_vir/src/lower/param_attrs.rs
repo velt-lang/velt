@@ -118,7 +118,9 @@ impl Cx<'_> {
         }
         if let TyKind::Adt(d, _) = self.kind(ty) {
             if let hir::Def::Adt(a) = self.hir.def(d) {
-                if a.kind != AdtKind::Class && self.type_name(ty) == "Mutex" {
+                if a.kind != AdtKind::Class
+                    && matches!(self.type_name(ty).as_str(), "Mutex" | "RwLock")
+                {
                     return true;
                 }
                 if a.kind == AdtKind::Class && depth > 0 {

@@ -276,7 +276,11 @@ impl Ctx<'_> {
             TyKind::Dyn(..) | TyKind::FnPtr { .. } | TyKind::Promise(..) | TyKind::Param(_) => {
                 return false
             }
-            TyKind::Adt(d, _) if Some(d) == self.mutex_ty() || self.is_weak_class(d) => {
+            TyKind::Adt(d, _)
+                if Some(d) == self.mutex_ty()
+                    || Some(d) == self.rwlock_ty()
+                    || self.is_weak_class(d) =>
+            {
                 return false
             }
             TyKind::Adt(d, _) if self.has_subclass(d) || self.own_clone(d).is_some() => {
@@ -299,7 +303,7 @@ impl Ctx<'_> {
         parts.into_iter().all(|p| self.frozen_readable_in(p, seen))
     }
 
-    /// Does a value of type `t` reach a `Mutex`, whose value is read only under
+    /// Does a value of type `t` reach a `Mutex` or `RwLock`, whose value is read only under
     /// its lock (through a `shared`, a field, an element or a payload)? Interface and `any`
     /// values are not looked into: what they hold was checked when it went in.
     pub fn holds_lock(&mut self, t: TyId) -> bool {
@@ -314,7 +318,9 @@ impl Ctx<'_> {
             TyKind::Dyn(..) | TyKind::FnPtr { .. } | TyKind::Closure(_) | TyKind::Param(_) => {
                 return false
             }
-            TyKind::Adt(d, _) if Some(d) == self.mutex_ty() => return true,
+            TyKind::Adt(d, _) if Some(d) == self.mutex_ty() || Some(d) == self.rwlock_ty() => {
+                return true
+            }
             TyKind::Adt(d, args) => {
                 let tys: Vec<TyId> = match &self.info[d.0 as usize] {
                     DefInfo::Adt(a) => a.fields.iter().map(|f| f.ty).collect(),
@@ -470,16 +476,33 @@ impl Ctx<'_> {
         self.prelude_adt("Mutex")
     }
 
-    /// `T` of a `Mutex<T>` or `shared<Mutex<T>>` receiver.
+    /// `struct RwLock<T> { lock: u64; value: T }` from the prelude.
+    pub fn rwlock_ty(&self) -> Option<DefId> {
+        self.prelude_adt("RwLock")
+    }
+
+    /// `T` of a `Mutex<T>` or `RwLock<T>` receiver, or a `shared` one: a lock word and a value,
+    /// reached only through the lock.
     pub fn mutex_value(&self, t: TyId) -> Option<TyId> {
         let m = match self.ty.kind(t) {
             TyKind::Shared(inner) => *inner,
             _ => t,
         };
         match self.ty.kind(m) {
-            TyKind::Adt(d, args) if Some(*d) == self.mutex_ty() => args.first().copied(),
+            TyKind::Adt(d, args) if Some(*d) == self.mutex_ty() || Some(*d) == self.rwlock_ty() => {
+                args.first().copied()
+            }
             _ => None,
         }
+    }
+
+    /// Is `t` an `RwLock<T>` or `shared<RwLock<T>>`?
+    pub fn is_rwlock(&self, t: TyId) -> bool {
+        let m = match self.ty.kind(t) {
+            TyKind::Shared(inner) => *inner,
+            _ => t,
+        };
+        matches!(self.ty.kind(m), TyKind::Adt(d, _) if Some(*d) == self.rwlock_ty())
     }
 
     /// The integer type of a `shared<int>` receiver whose atomics the runtime provides (64-bit).

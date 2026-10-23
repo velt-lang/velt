@@ -236,6 +236,7 @@ impl FnCx<'_, '_> {
         use Intrinsic as I;
         use PassMode::{Borrow as B, Copy as C, Owned as O};
         let mutex = self.cx.mutex_ty();
+        let rwlock = self.cx.rwlock_ty();
         let (t0, e0, n0) = (
             self.cx.ty.param(0),
             self.cx.ty.param(1),
@@ -284,7 +285,11 @@ impl FnCx<'_, '_> {
                 let m = mutex.map_or(ty.error, |d| ty.intern(TyKind::Adt(d, vec![t])));
                 (vec![(t, O)], m, true)
             }
-            I::MutexWith => (vec![(t, B)], ty.error, true),
+            I::MutexWith | I::LockRead => (vec![(t, B)], ty.error, true),
+            I::RwLockNew => {
+                let r = rwlock.map_or(ty.error, |d| ty.intern(TyKind::Adt(d, vec![t])));
+                (vec![(t, O)], r, true)
+            }
             I::JsonStringify => (vec![(t, B)], str_, true),
             // `(text, flags, max_depth)`: the options as std's `JSON.parse` encodes them.
             I::JsonParse => (vec![(str_, B), (ty.i64, C), (ty.i64, C)], t, true),

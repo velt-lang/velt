@@ -184,11 +184,16 @@ extend<T> Array<T> {
 
   /** Last element matching `pred` (see header), or `undefined`. */
   findLast<E>(pred: (x: T, i: i64) => bool throws E): T | undefined throws E {
-    const i = this.findLastIndex(pred);
-    if (i < 0 || i as usize >= this.length) {
-      return undefined;
+    // Calls `pred` itself, as `find` does: handing it to another method beside `this` would
+    // count as a call that may change `this` (an `RwLock.read` callback could not use it).
+    let i = this.length;
+    while (i > 0) {
+      i--;
+      if ((!__intrinsic_may_alias(this) || i < this.length) && pred(this[i], i as i64)) {
+        return __intrinsic_share(this[i]);
+      }
     }
-    return __intrinsic_share(this[i as usize]);
+    return undefined;
   }
 
   /** Index of the last element matching `pred`, or -1. */

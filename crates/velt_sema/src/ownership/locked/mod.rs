@@ -29,6 +29,7 @@ mod kept;
 mod later;
 mod opaque;
 mod promises;
+mod read_only;
 mod regions;
 mod stores;
 mod summary;
@@ -49,6 +50,7 @@ pub(crate) type WeakCrossings = Vec<(DefId, crate::hir::TyId, crate::body::GenCo
 /// Check and rewrite every `with` callback (module docs). Returns the crossings for
 /// `crate::weak_threads`.
 pub(crate) fn check_locked(cx: &mut Ctx) -> WeakCrossings {
+    read_only::check(cx);
     let mut res = values::Resolver::default();
     let found = callbacks::find(cx, &mut res);
     if found.callbacks.is_empty() && found.named.is_empty() && found.opaque.is_empty() {

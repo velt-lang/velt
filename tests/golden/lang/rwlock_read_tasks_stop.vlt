@@ -1,0 +1,22 @@
+// A task or promise started inside a `read` callback stops the program: what it holds would
+// outlive the callback, which shares the store without counting it (velt_rt read_mode.rs). One
+// started outside runs as usual.
+class Item {
+  v: number = 1;
+}
+class St {
+  items: Item[] = [new Item()];
+}
+async function hold(i: Item): Promise<number> {
+  await Promise.resolve(0);
+  return i.v;
+}
+async function main() {
+  const rw = shared(new RwLock<St>(new St()));
+  const p = await hold(new Item());
+  console.log("outside", p);
+  rw.read((s) => {
+    spawn(hold(s.items[0]));
+  });
+  console.log("not reached");
+}

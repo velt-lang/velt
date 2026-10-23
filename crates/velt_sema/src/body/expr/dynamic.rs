@@ -54,7 +54,7 @@ impl FnCx<'_, '_> {
                         format!("cannot convert a `{tn}` to `{to}`: it holds a lock"),
                         h.span,
                     )
-                    .with_note("its value is read only under its lock (`with`), and an `any` value is read without it: convert what a callback returns instead"),
+                    .with_note("its value is read only under its lock (`with`, `read`), and an `any` value is read without it: convert what a callback returns instead"),
                 );
                 Ok(self.error_expr(h.span))
             }

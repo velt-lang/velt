@@ -640,6 +640,16 @@ read out of it is copied at once (also where a frozen operand is otherwise not h
 retains nothing. An index that may write (`may_write`) retains the box whatever the place: it
 may give the variable `s` reads another handle itself.
 
+## `RwLock<T>` (issue #708)
+
+`new RwLock<T>(x)` is `Call { Intrinsic(RwLockNew), [x] }` (`x` owned), typed as the prelude's
+`RwLock<T>` (`{ lock: u64; value: T }`, like `Mutex<T>`). `rw.write(f)` is `MutexWith` on an
+`RwLock` or `shared<RwLock<T>>` receiver, with every rule `with` has. `rw.read(f)` is
+`Call { Intrinsic(LockRead), [rw, f] }` with the same shape and rules, and sema reports a closure
+literal or named function `f` that modifies its parameter once modes are inferred
+(`ownership/locked/read_only.rs`). Lowering takes the lock shared and runs `f` in velt_rt's read
+mode (rt_abi_async.md §9.1).
+
 ## Module state
 
 A module-level `let`, and a module `const` sema keeps instead of evaluating at each use (an

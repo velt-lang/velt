@@ -1,0 +1,1 @@
+panic: cannot modify a value an `RwLock` holds inside its `read` callback (other readers read it at the same time): change it in `write`

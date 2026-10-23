@@ -1,0 +1,21 @@
+// A `with` or `write` in a `read` callback is refused: the callback shares the locked value with
+// other readers without counting it, which a lock taken inside could not tell from what it
+// changes (one reached through a called function stops the program,
+// `rwlock_nested_stops.vlt`).
+class Box {
+  n: number = 0;
+}
+
+function main() {
+  const a = shared(new RwLock<Box>(new Box()));
+  const b = shared(new RwLock<Box>(new Box()));
+  const m = shared(new Mutex<Box>(new Box()));
+  a.read((x) => {
+    m.with((z) => {
+      z.n += x.n;
+    });
+    b.write((y) => {
+      y.n = x.n;
+    });
+  });
+}

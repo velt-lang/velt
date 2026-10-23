@@ -1,0 +1,85 @@
+// A `read` callback inserting the caller's own objects into the caller's array with `splice`,
+// and functions moving objects between a container the callback made and the caller's: each
+// stays the same object, counted once per place that holds it.
+class Item {
+  v: i64 = 0;
+  constructor(v: i64) {
+    this.v = v;
+  }
+}
+class St {
+  items: Item[] = [new Item(1)];
+}
+
+function moveLast(dst: Item[], src: Item[]) {
+  dst.push(src.pop()!);
+}
+
+function copyFirstThenClear(dst: Item[], src: Item[]) {
+  dst.push(src[0]);
+  src.length = 0;
+}
+
+function moveBack(dst: Item[], src: Item[]) {
+  src.push(dst.pop()!);
+}
+
+function moveAll(dst: Item[], ...src: Item[]) {
+  while (src.length > 0) {
+    dst.push(src.pop()!);
+  }
+}
+
+function show(a: Item[]): string {
+  return a.map((x) => x.v).join(",");
+}
+
+function main() {
+  const rw = shared(new RwLock<St>(new St()));
+  const a: Item[] = [new Item(1), new Item(2)];
+  rw.read((s) => {
+    a.splice(1, 0, a[0]);
+    return 0;
+  });
+  a[0].v = 5;
+  console.log("splice insert", a.length, show(a));
+
+  const c: Item[] = [new Item(1), new Item(2)];
+  rw.read((s) => {
+    c.splice(0, 1, c[1]);
+    return 0;
+  });
+  c[0].v = 5;
+  console.log("splice replace", c.length, show(c));
+
+  const d: Item[] = [new Item(1), new Item(2)];
+  const e: Item[] = [new Item(3)];
+  rw.read((s) => {
+    d.splice(1, 0, e[0], new Item(7));
+    return 0;
+  });
+  e[0].v = 6;
+  console.log("splice other", show(d), d[1] === e[0]);
+
+  const shapes = ["moveLast", "copyFirstThenClear", "moveBack", "moveAll"];
+  for (const shape of shapes) {
+    const x: Item[] = [new Item(1), new Item(2)];
+    const y: Item[] = [new Item(3)];
+    const n = rw.read((s) => {
+      const l: Item[] = [y[0]];
+      if (shape == "moveLast") {
+        moveLast(x, l);
+      } else if (shape == "copyFirstThenClear") {
+        copyFirstThenClear(x, l);
+      } else if (shape == "moveBack") {
+        moveBack(x, l);
+      } else {
+        moveAll(x, x[0], y[0]);
+      }
+      return l.length;
+    });
+    x[0].v += 10;
+    y[0].v += 20;
+    console.log(shape, n, show(x), show(y));
+  }
+}
