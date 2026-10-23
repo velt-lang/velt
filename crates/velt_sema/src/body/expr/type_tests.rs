@@ -80,6 +80,7 @@ impl FnCx<'_, '_> {
                 body,
             });
         }
+        arms.extend(self.typeof_view_arm(&s, inner == sty, span));
         let kind = H::Match {
             scrutinee: Box::new(s),
             arms,

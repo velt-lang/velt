@@ -145,6 +145,7 @@ mod type_tests;
 mod typeof_member;
 mod union_coerce;
 mod union_iface;
+mod union_view;
 mod widen_fresh;
 mod written_order;
 
