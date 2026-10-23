@@ -272,7 +272,7 @@ impl FnCx<'_, '_> {
     }
 
     /// Does `t` hold `any`, `unknown` or `object` values in its arrays or tuples (`any[]`,
-    /// `object[][]`, `[any, number]`)? Such a list is written as JavaScript's `join` writes it
+    /// `object[][]`, `[any, number]`, also `any[] | null`)? Such a list is written as JavaScript's `join` writes it
     /// (`__anyJoin`), each element as `String(x)` writes it, not as `console.log` prints it.
     pub(crate) fn holds_dynamic_elems(&mut self, t: TyId) -> bool {
         self.holds_dynamic_depth(t, 0)
@@ -283,6 +283,8 @@ impl FnCx<'_, '_> {
             return false;
         }
         let elems = match self.cx.ty.kind(t) {
+            // `any[] | null`: written as the array or `null`.
+            TyKind::Option(inner, _) => return self.holds_dynamic_depth(*inner, depth + 1),
             TyKind::Array(e) => vec![*e],
             TyKind::Tuple(es) => es.clone(),
             _ => return false,

@@ -16,6 +16,7 @@ G(3) G(3) G(3) G(3)!
 Error: boom Error: boom Error: boom Error: boom!
 base base
 lit! arrow! lit! arrow!
+field! field! field!
 3 [object Object] [object Object]
 4 four
 o=[object Object] [object Object]!

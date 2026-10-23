@@ -8,6 +8,10 @@ class T {
   }
 }
 
+function maybe(b: boolean): any[] | null {
+  return b ? [1, { a: 1 }] : null;
+}
+
 function main(): void {
   const xs: any[] = [[1, 2], { a: 1 }, null, -0];
   console.log(String(xs));
@@ -37,4 +41,5 @@ function main(): void {
   for (const x of t) {
     console.log(x);
   }
+  console.log(String(maybe(true)), `${maybe(false)}`);
 }

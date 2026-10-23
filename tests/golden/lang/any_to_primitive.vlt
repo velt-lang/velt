@@ -66,6 +66,11 @@ class G<T> {
   }
 }
 
+class F {
+  name = "f";
+  toString: () => string = () => "field!";
+}
+
 async function later(a: any): Promise<string> {
   return `${a}|` + a;
 }
@@ -101,6 +106,8 @@ function main(): void {
   };
   const b: any = { toString: () => "arrow!" };
   console.log(String(a), `${b}`, "" + a, b + "");
+  const f: any = new F();
+  console.log(String(f), `${f}`, "" + f);
   const lit: any = { valueOf: () => 3 };
   console.log("" + lit, String(lit), `${lit}`);
   const both: any = { valueOf: () => 4, toString: () => "four" };
