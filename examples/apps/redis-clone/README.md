@@ -43,8 +43,12 @@ velt run demo.vlt              # a client session against an in-process server (
 - **Sorted-set commands:** `ZADD` takes no options (`NX XX GT LT CH INCR`), and `ZRANGE` only
   ranks with `WITHSCORES` (no `BYSCORE`, `BYLEX`, `REV` or `LIMIT`); there is no `ZREVRANGE`.
 - **Floats:** scores accept what Redis's `strtod` does except hexadecimal floats (`0x1p3`).
-- **Atomicity:** each batch of pipelined commands runs under one lock, so other clients never
-  see it half done, which is stronger than Redis guarantees.
+- **Atomicity:** as in Redis, each command is atomic. The keyspace is split into one shard per
+  worker thread, each behind its own lock, and a command runs on its key's shard (consecutive
+  pipelined commands on one shard share a lock). A command over several keys or the whole
+  keyspace (`DEL`, `EXISTS`, `MGET` and `MSET` of several keys, `KEYS`, `DBSIZE`, `FLUSHDB`,
+  `FLUSHALL`, `INFO`) holds every shard it touches at once (taken in ascending order), so no
+  client sees it half done.
 
 | File | What |
 |---|---|
@@ -52,11 +56,32 @@ velt run demo.vlt              # a client session against an in-process server (
 | `src/db.vlt` | `Db`: one map per value type plus an expiry index; lazy and active expiry |
 | `src/structs.vlt` | a skip list with spans for sorted sets (O(log n) insert, remove and rank), `MemberSet` (O(1) random member for SPOP), `Expires` (an expiry index the sweep walks in place) |
 | `src/commands.vlt` | `execute(db, args, out)`: each command with Redis's argument rules and error messages |
-| `src/server.vlt` | a task per connection; each read's commands run as one batch under the keyspace lock |
+| `src/server.vlt` | a task per connection; each read's commands run in batches, one per run of commands on the same shard |
+| `src/shards.vlt` | which shard a command runs on, and commands over several shards: their locks in order, their replies merged |
 | `parity.vlt` | 269 cases against this server and a real Redis, replies compared byte for byte: commands, then raw protocol input on fresh connections |
 | `bench.sh` | parity, then `redis-benchmark` (median of 3, interleaved), CPU per request, memory |
 
 ## Performance
+
+**Linux, every core (2026-10-23).** A Linux arm64 container on an Apple M4 (10 cores), redis-server
+7.0 against this server on Velt's scheduler (`VELT_SCHEDULER=velt`), `redis-benchmark` with 4
+client threads, 50 connections, random keys among 100k. Requests/s, and the server's CPU time
+per request:
+
+| | Redis | Velt, 1 thread | Velt, every core |
+|---|---|---|---|
+| GET | 470k, 2.1 µs | 363k, 2.6 µs | 533k, 3.8 µs |
+| SET | 396k, 2.3 µs | 333k, 2.9 µs | 470k, 2.9 µs |
+| GET, 16 pipelined | 2.28M, 0.43 µs | 2.46M, 0.37 µs | 4.00M, 0.54 µs |
+| SET, 16 pipelined | 2.06M, 0.47 µs | 1.68M, 0.52 µs | 3.55M, 0.65 µs |
+
+Redis runs commands on one thread; this server runs one shard per core. What got it there
+(each in the Velt pull request #1461): `Mutex.with` no longer copies a batch of commands the
+callback only reads (it was 9% of the CPU), keys are looked up by their bytes
+(`Map.getUtf8`), and the shards. With the keyspace behind one lock, every core was slower than
+one (pipelined GET 1.5M): the threads waited for each other.
+
+**macOS, earlier.** The measurements below were made before the shards and the changes above.
 
 **Basis.** redis-server runs commands on one thread. "Velt, default" uses every core, so rows
 where it leads (pipelining) compare many cores with one. "Velt, 1 thread" is the like-for-like
@@ -102,7 +127,8 @@ Without pipelining, around 250k requests/s is the limit of `redis-benchmark`'s s
 thread, so all three are level there. The CPU and memory rows show the real differences:
 - **On one thread,** Velt needs 14% more CPU per request than Redis and 27% more memory.
 - **On the default runtime,** the same requests cost more than twice the CPU, with the work spread
-  over threads that wake each other through one keyspace lock, and 30 MB more memory.
+  over threads that wake each other through one keyspace lock, and 30 MB more memory (the
+  keyspace has since been split into shards: see above).
 
 **What made it fast.** The first `Writer` built each `$<length>\r\n` header with a template
 string and `utf8Encode`: three small allocations per bulk reply. That made LRANGE (100 bulk

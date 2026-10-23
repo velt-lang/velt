@@ -232,8 +232,13 @@ export class RespParser {
 
 /// A growable byte buffer for replies.
 export class Writer {
-  buf: u8[] = Buffer.alloc(4096);
+  buf: u8[];
   length: i64 = 0;
+
+  /// Room for `size` bytes to start with.
+  constructor(size: i64 = 4096) {
+    this.buf = Buffer.alloc(size as usize);
+  }
 
   private reserve(n: i64) {
     if (this.length + n <= this.buf.length) {

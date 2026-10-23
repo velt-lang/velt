@@ -1,16 +1,19 @@
-// The network side: one task per connection. Each read is parsed into as many complete commands
-// as it holds (clients pipeline), the batch runs under one lock of the keyspace, and the replies
-// go back in one write.
+// The network side: one task per connection, and the keyspace in shards (src/shards.vlt). Each
+// read is parsed into as many complete commands as it holds (clients pipeline); consecutive
+// commands on one shard run as one batch under its lock, and the replies go back in one write.
 import { listen, TcpListener, TcpStream } from "velt:net";
+import { workerCount } from "velt:task";
+import { utf8DecodeLossy } from "velt:encoding";
 import { execute } from "./commands";
 import { Db } from "./db";
 import { protocolErrorReply, RespParser, Writer } from "./resp";
+import { across, Merge, mergeOf, shardOf } from "./shards";
 
 type Batch = { reply: u8[]; open: bool };
 
 function runBatch(db: Db, commands: u8[][][], now: i64): Batch {
   db.now = now;
-  const out = new Writer();
+  const out = new Writer(256);
   let open = true;
   for (const args of commands) {
     if (!execute(db, args, out)) {
@@ -21,17 +24,51 @@ function runBatch(db: Db, commands: u8[][][], now: i64): Batch {
   return { reply: out.take(), open };
 }
 
-/// Runs `commands` under the lock and writes their replies; false when the client quit.
-// A helper rather than inline in the read loop: inline, `commands` is reported as "still used
-// after `with` stored it" although each iteration declares a new one (#716).
-async function answer(conn: TcpStream, db: shared<Mutex<Db>>, commands: u8[][][]): Promise<bool> {
-  const now = Date.now() as i64;
-  const batch = db.with((d) => runBatch(d, commands, now));
-  await conn.writeBytes(batch.reply);
-  return batch.open;
+/// How command `args` spreads over `n` shards (`mergeOf`). Only names starting with one of
+/// d e f i k m u can spread: the others (GET, SET, ...) need no name string.
+function spreadOf(args: u8[][], n: i64): Merge {
+  if (n === 1 || args.length === 0 || args[0].length === 0) {
+    return "none";
+  }
+  const c = args[0][0] | 32;
+  if (c !== 100 && c !== 101 && c !== 102 && c !== 105 && c !== 107 && c !== 109 && c !== 117) {
+    return "none";
+  }
+  return mergeOf(utf8DecodeLossy(args[0]).toLowerCase(), args);
 }
 
-async function serveClient(conn: TcpStream, db: shared<Mutex<Db>>): Promise<void> {
+/// Answers `commands` (consumed) into `out`; false when the client quit.
+function answer(shards: shared<Mutex<Db>>[], commands: u8[][][], out: Writer): bool {
+  const n = shards.length as i64;
+  const now = Date.now() as i64;
+  // Taken from the end: each command moves out of the list into its batch.
+  commands.reverse();
+  while (commands.length > 0) {
+    const first = commands.pop()!;
+    const merge = spreadOf(first, n);
+    if (merge !== "none") {
+      out.bytes(across(shards, utf8DecodeLossy(first[0]).toLowerCase(), merge, first, now));
+      continue;
+    }
+    const s = shardOf(first, n);
+    const batch: u8[][][] = [first];
+    while (commands.length > 0) {
+      const next = commands[commands.length - 1];
+      if (shardOf(next, n) !== s || spreadOf(next, n) !== "none") {
+        break;
+      }
+      batch.push(commands.pop()!);
+    }
+    const ran = shards[s].with((d) => runBatch(d, batch, now));
+    out.bytes(ran.reply);
+    if (!ran.open) {
+      return false;
+    }
+  }
+  return true;
+}
+
+async function serveClient(conn: TcpStream, shards: shared<Mutex<Db>>[]): Promise<void> {
   const parser = new RespParser();
   try {
     while (true) {
@@ -57,7 +94,9 @@ async function serveClient(conn: TcpStream, db: shared<Mutex<Db>>): Promise<void
       }
       let open = true;
       if (commands.length > 0) {
-        open = await answer(conn, db, commands);
+        const out = new Writer();
+        open = answer(shards, commands, out);
+        await conn.writeBytes(out.take());
       }
       if (protocolError != null) {
         await conn.writeBytes(protocolErrorReply(protocolError));
@@ -73,8 +112,8 @@ async function serveClient(conn: TcpStream, db: shared<Mutex<Db>>): Promise<void
   conn.close();
 }
 
-/// Active expiry: every 100 ms, removes due keys among a sample of those with a time to live,
-/// until `stopped` is set.
+/// Active expiry on one shard: every 100 ms, removes due keys among a sample of those with a
+/// time to live, until `stopped` is set.
 async function sweeper(db: shared<Mutex<Db>>, stopped: shared<i64>): Promise<void> {
   while (stopped.get() === 0) {
     await sleep(100);
@@ -86,19 +125,31 @@ async function sweeper(db: shared<Mutex<Db>>, stopped: shared<i64>): Promise<voi
   }
 }
 
-/// Accepts connections on `listener` until it is closed; then stops the expiry sweeper.
-export async function serve(listener: TcpListener, db: shared<Mutex<Db>>): Promise<void> {
+/// Accepts connections on `listener` until it is closed; then stops the expiry sweepers.
+export async function serve(listener: TcpListener, shards: shared<Mutex<Db>>[]): Promise<void> {
   const stopped = shared(0);
-  spawn(sweeper(db, stopped));
+  for (const db of shards) {
+    spawn(sweeper(db, stopped));
+  }
   try {
     while (true) {
       const conn = await listener.accept();
-      spawn(serveClient(conn, db));
+      spawn(serveClient(conn, shards));
     }
   } catch (e) {
     // `listener.close()`: stop serving.
   }
   stopped.set(1);
+}
+
+/// The keyspace: one shard per worker thread.
+export function keyspace(): shared<Mutex<Db>>[] {
+  const shards: shared<Mutex<Db>>[] = [];
+  const n = workerCount();
+  for (let i = 0; i < n; i++) {
+    shards.push(shared(new Mutex<Db>(new Db())));
+  }
+  return shards;
 }
 
 export async function start(addr: string): Promise<TcpListener> {
