@@ -46,6 +46,7 @@ mod defined_props;
 mod defs;
 mod discriminants;
 mod dispatch;
+mod display;
 pub mod effects;
 mod enum_keys;
 mod finalize;
