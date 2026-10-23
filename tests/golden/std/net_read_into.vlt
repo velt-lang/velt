@@ -60,13 +60,39 @@ async function exercise(label: string, a: TcpStream) {
 
 async function main() {
   const plain = await listen("127.0.0.1:0");
-  const plainServing = spawn(serve(plain, 2));
+  const plainServing = spawn(serve(plain, 3));
   await exercise("plain", await connect(`127.0.0.1:${plain.port}`));
 
   const tls = await listenTls("127.0.0.1:0", { cert: TEST_CERT, key: TEST_KEY });
   const tlsServing = spawn(serve(tls, 1));
   await exercise("tls", await connectTls(`localhost:${tls.port}`, { ca: TEST_CA }));
   await tlsServing;
+
+  // `tryRead` into a range of a `u8[]` without waiting, `readable()` to wait; writes of a range.
+  const t = await connect(`127.0.0.1:${plain.port}`);
+  const msg = new TextEncoder().encode("..ranges..");
+  await t.writeBytes(msg, 2, 8);
+  t.shutdown();
+  const into: u8[] = Buffer.alloc(16);
+  let at = 0;
+  while (true) {
+    const n = t.tryRead(into, at, at + 4);
+    if (n == null) {
+      break;
+    }
+    if (n === 0) {
+      await t.readable();
+      continue;
+    }
+    at += n;
+  }
+  console.log("tryRead:", new TextDecoder().decode(into.slice(0, at as i64)));
+  try {
+    t.tryRead(into, 4, 4);
+  } catch (e) {
+    console.log("empty range:", e instanceof RangeError);
+  }
+  t.close();
 
   // `read()` after `readInto` on the same stream continues where it stopped.
   const b = await connect(`127.0.0.1:${plain.port}`);

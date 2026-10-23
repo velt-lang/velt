@@ -18,11 +18,17 @@
     straight into `buf`: nothing is allocated or copied on the way. Reuse one buffer per
     connection and parse with `subarray` views of what was read. An empty `buf` returns 0.
     `read` and `readInto` may be mixed on one stream.
-  - `write(data: string)`, `writeBytes(data: u8[] | Uint8Array)`: bytes go out in the order of
+  - `tryRead(buf: u8[] | Uint8Array, start = 0, end = buf.length): number | null`: reads what
+    has arrived into `buf[start..end]` without waiting: the bytes read, `0` when nothing has
+    arrived yet, `null` at the end of the stream (`RangeError` for an empty or out-of-range
+    range). With `readable(): Promise<void>`, which waits until a `tryRead` may find something,
+    a parser reads straight into its own `u8[]` buffer.
+  - `write(data: string)`, `writeBytes(data: u8[] | Uint8Array, start = 0, end = data.length)`: bytes go out in the order of
     the calls, also when a write is started and not awaited yet. What the socket takes at the
     call is written from `data` itself; only the rest is copied. A `Uint8Array` writes its own
-    range (a `subarray` writes just that part).
-  - `tryWrite(data: u8[] | Uint8Array): i64`: writes what the socket takes right now, without waiting, and
+    range (a `subarray` writes just that part); `start` and `end` write part of either (clamped
+    to it, as `subarray` clamps), so a reply buffer kept per connection goes out without a copy.
+  - `tryWrite(data: u8[] | Uint8Array, start = 0, end = data.length): i64`: writes what the socket takes right now, without waiting, and
     returns the number of bytes written (0 when it takes nothing now, while an earlier write is
     still going on, for a TLS stream, and after an error, which the next `write` reports). When
     everything was written there is nothing to await.

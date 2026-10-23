@@ -319,8 +319,10 @@ impl StreamObj {
     /// the stream or an error; a raw socket may also wake without data). A transport other than
     /// a raw socket reads its next chunk here, which the next `try_read_into` hands over.
     pub(crate) async fn readable(&self) -> io::Result<()> {
+        // A raw socket needs no abort watch: `abort` shuts it down, which makes it readable, and
+        // the next `try_read_into` reports the abort.
         let ready = match &self.io {
-            Io::Tcp(stream) => return self.until_abort(stream.readable()).await,
+            Io::Tcp(stream) => return stream.readable().await,
             Io::Lazy(lazy) => self.until_abort(self.set_up(lazy)).await?,
         };
         match ready {
@@ -330,7 +332,7 @@ impl StreamObj {
                 if has_prefix.load(Ordering::Acquire) {
                     return Ok(());
                 }
-                self.until_abort(stream.readable()).await
+                stream.readable().await
             }
             Ready::Split(_) => {
                 let has = !self
