@@ -4,9 +4,15 @@
 //! templates: hint `"string"`) or `__anyConcatText` (`+`: hint `"default"`), which keep one
 //! instance each (velt_vir `track_caller.rs`); sema writes the dispatch over the program's
 //! classes into their bodies, once per program:
-//! - hint `"string"`: a class's `[Symbol.toPrimitive]("string")`, else its `toString()`;
-//! - hint `"default"`: `[Symbol.toPrimitive]("default")`, else a `valueOf()` returning a
-//!   primitive, else `toString()`.
+//! - hint `"string"`: a class's `[Symbol.toPrimitive]("string")`, else its `toString()`, else
+//!   (that returned an object) its `valueOf()`;
+//! - hint `"default"`: `[Symbol.toPrimitive]("default")`, else its `valueOf()`, else (none, or
+//!   it returned an object) its `toString()` (`Object.prototype.toString` without one).
+//!
+//! A result that is an object goes on to the next method, tested at run time unless its type is
+//! a primitive; the last one's is Node's `TypeError`, and so is a symbol (`ToString` of it).
+//! The helpers take the user's call site as their last argument (`at`, `"path:line:col"`), which
+//! their stops report (velt_vir `track_caller.rs`).
 //!
 //! Every other value goes to the prelude's `__anyText` (`__anyConcatPlain` for `+`), which
 //! writes an array as `Array.prototype.join` does, an object literal by its own `toString` /
@@ -18,7 +24,41 @@ use velt_syntax::ast;
 use super::setters::synth;
 use crate::body::places::set_place_mode;
 use crate::body::{FnCx, Want};
-use crate::hir::{self, Callee, DefId, ExprKind as H, TyId, TyKind, UseMode};
+use crate::hir::{self, Callee, DefId, ExprKind as H, Intrinsic, TyId, TyKind, UseMode};
+
+/// `at`: a text helper's own parameter, the user's call site its stops report.
+fn site_param(span: Span) -> ast::Expr {
+    let at = ast::Ident {
+        name: "at".into(),
+        span,
+    };
+    synth(ast::ExprKind::Ident(at), span)
+}
+
+/// `callee(args)`.
+fn call_expr(callee: ast::Expr, args: Vec<ast::Expr>, span: Span) -> ast::Expr {
+    let kind = ast::ExprKind::Call {
+        callee: Box::new(callee),
+        type_args: vec![],
+        args,
+        optional: false,
+    };
+    synth(kind, span)
+}
+
+/// `recv.<name>(args)` (`name` may be a symbol member's, `[Symbol.toPrimitive]`).
+fn method_call(recv: ast::Expr, name: &str, args: Vec<ast::Expr>, span: Span) -> ast::Expr {
+    let prop = ast::Ident {
+        name: name.into(),
+        span,
+    };
+    let member = ast::ExprKind::Member {
+        object: Box::new(recv),
+        prop,
+        optional: false,
+    };
+    call_expr(synth(member, span), args, span)
+}
 
 /// The hint of a `ToPrimitive` (JavaScript's `OrdinaryToPrimitive` order).
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -65,11 +105,19 @@ const TEXT_FNS: [&str; 6] = [
     "__anyJoinSeen",
 ];
 
-/// The method a class instance is written by: its name and the hint passed
-/// (`[Symbol.toPrimitive]`). No name: a `Proxy`, whose traps the text would run (not yet).
-struct TextMethod {
-    name: Option<&'static str>,
-    hint: Option<&'static str>,
+/// How a class instance is written.
+enum TextMethod {
+    /// A `Proxy`, whose traps the text would run (not yet).
+    Proxy,
+    /// Its `[Symbol.toPrimitive]`, with the hint when it takes one.
+    ToPrimitive(Option<&'static str>),
+    /// `OrdinaryToPrimitive`: the methods tried in order, each with whether its result type is
+    /// a primitive (the methods after it are never reached); `inherited`: when they all return
+    /// objects, `Object.prototype.toString` writes the value (it has no `toString` of its own).
+    Ordinary {
+        methods: Vec<(&'static str, bool)>,
+        inherited: bool,
+    },
 }
 
 impl FnCx<'_, '_> {
@@ -81,6 +129,48 @@ impl FnCx<'_, '_> {
     /// The text of the dynamic value `h` (an `any`) as `String(h)` writes it.
     pub(crate) fn dynamic_text(&mut self, h: hir::Expr, span: Span) -> hir::Expr {
         self.dynamic_text_as(h, span, Hint::String)
+    }
+
+    /// Is this function one of the text helpers, which pass on their own `at` (the user's call
+    /// site) to the helpers they call?
+    fn in_text_helper(&self) -> bool {
+        self.cx.scopes[self.module].is_std && TEXT_FNS.iter().any(|f| self.fn_name.ends_with(f))
+    }
+
+    /// The call site a text helper's stops report: the helper's own `at` inside one, else the
+    /// location of `span` (`Intrinsic::SourceLocation`, a string constant).
+    fn text_site(&mut self, span: Span) -> hir::Expr {
+        if self.in_text_helper() {
+            return self.expr(&site_param(span), None, Want::Borrow);
+        }
+        let site = H::Call {
+            callee: Callee::Intrinsic(Intrinsic::SourceLocation),
+            args: vec![],
+        };
+        let str_ = self.cx.ty.str_;
+        self.mk(site, str_, span)
+    }
+
+    /// `f(args, <site>)` of the text helper `f`: `args` and the call site its stops report
+    /// ([`Self::text_site`]), checked as a call with an empty string in its place.
+    fn text_helper_call(&mut self, f: &str, mut args: Vec<ast::Expr>, span: Span) -> hir::Expr {
+        if self.in_text_helper() {
+            args.push(site_param(span));
+            return self.prelude_fn_call(f, args, span);
+        }
+        args.push(synth(
+            ast::ExprKind::Lit(ast::Lit::Str(String::new())),
+            span,
+        ));
+        let mut call = self.prelude_fn_call(f, args, span);
+        if let H::Call { args, .. } = &mut call.kind {
+            if let Some(last) = args.last_mut() {
+                if matches!(last.kind, H::Lit(_)) {
+                    *last = self.text_site(span);
+                }
+            }
+        }
+        call
     }
 
     /// The text of the dynamic value `h` (an `any`) with `hint`: a call of the hint's prelude
@@ -102,11 +192,12 @@ impl FnCx<'_, '_> {
             let mut h = h;
             set_place_mode(&mut h, UseMode::Borrow);
             let str_ = self.cx.ty.str_;
-            return self.prelude_hir_call(hint.helper(), vec![h], str_, span);
+            let site = self.text_site(span);
+            return self.prelude_hir_call(hint.helper(), vec![h, site], str_, span);
         }
         let h = self.share_if_place(h);
         self.with_temp("<text>", h, span, span, |lw, v| {
-            lw.prelude_fn_call(hint.helper(), vec![v.clone()], span)
+            lw.text_helper_call(hint.helper(), vec![v.clone()], span)
         })
     }
 
@@ -137,7 +228,7 @@ impl FnCx<'_, '_> {
             lw.dynamic_class_match_where(
                 s,
                 str_,
-                hint.fallback(),
+                (hint.fallback(), vec![site_param(span)]),
                 |lw, c| lw.text_method(c, hint).is_some(),
                 |lw, c, read| match lw.text_method(c, hint) {
                     Some(m) => lw.text_method_call(&m, read, span),
@@ -148,81 +239,106 @@ impl FnCx<'_, '_> {
         })
     }
 
-    /// `read.<m>()` (`read[Symbol.toPrimitive](hint)`) through the `any` `read` (a generic
-    /// class's instance has no type arguments here), its result written with `ToString`.
+    /// The text of the class instance `read` (inside a text helper, whose `at` its stops
+    /// report) as `m` says: `read[Symbol.toPrimitive](hint)`, or its `OrdinaryToPrimitive`
+    /// methods in turn (`__anyPrimTry(read.valueOf(), at) ?? __anyPrimText(read.toString(), at)`),
+    /// the result written with `ToString`.
     fn text_method_call(&mut self, m: &TextMethod, read: ast::Expr, span: Span) -> hir::Expr {
-        let Some(name) = m.name else {
-            let lit = synth(ast::ExprKind::Lit(ast::Lit::Str("Proxy".into())), span);
-            return self.prelude_fn_call("__anyTextUnsupported", vec![lit], span);
+        let at = || site_param(span);
+        let call_fn = |f: &str, args: Vec<ast::Expr>| {
+            let callee = synth(
+                ast::ExprKind::Ident(ast::Ident {
+                    name: f.into(),
+                    span,
+                }),
+                span,
+            );
+            call_expr(callee, args, span)
         };
-        let prop = ast::Ident {
-            name: name.into(),
-            span,
+        let text = match m {
+            TextMethod::Proxy => {
+                let lit = synth(ast::ExprKind::Lit(ast::Lit::Str("Proxy".into())), span);
+                call_fn("__anyTextUnsupported", vec![lit, at()])
+            }
+            TextMethod::ToPrimitive(hint) => {
+                let args = hint
+                    .map(|h| synth(ast::ExprKind::Lit(ast::Lit::Str(h.into())), span))
+                    .into_iter()
+                    .collect();
+                let call = method_call(read, "[Symbol.toPrimitive]", args, span);
+                call_fn("__anyPrimText", vec![call, at()])
+            }
+            TextMethod::Ordinary { methods, inherited } => {
+                let mut parts = vec![];
+                let mut ended = false;
+                for (i, &(name, primitive)) in methods.iter().enumerate() {
+                    let call = method_call(read.clone(), name, vec![], span);
+                    if primitive || (i + 1 == methods.len() && !inherited) {
+                        parts.push(call_fn("__anyPrimText", vec![call, at()]));
+                        ended = true;
+                        break;
+                    }
+                    parts.push(call_fn("__anyPrimTry", vec![call, at()]));
+                }
+                if !ended {
+                    parts.push(call_fn("__anyText", vec![read, at()]));
+                }
+                let mut parts = parts.into_iter().rev();
+                let Some(mut text) = parts.next() else {
+                    return self.error_expr(span);
+                };
+                for p in parts {
+                    let kind = ast::ExprKind::Binary {
+                        op: ast::BinaryOp::Nullish,
+                        lhs: Box::new(p),
+                        rhs: Box::new(text),
+                    };
+                    text = synth(kind, span);
+                }
+                text
+            }
         };
-        let member = synth(
-            ast::ExprKind::Member {
-                object: Box::new(read),
-                prop,
-                optional: false,
-            },
-            span,
-        );
-        let args = m
-            .hint
-            .map(|h| synth(ast::ExprKind::Lit(ast::Lit::Str(h.into())), span))
-            .into_iter()
-            .collect();
-        let call = synth(
-            ast::ExprKind::Call {
-                callee: Box::new(member),
-                type_args: vec![],
-                args,
-                optional: false,
-            },
-            span,
-        );
-        self.prelude_fn_call("__anyPrimText", vec![call], span)
+        self.expr(&text, None, Want::Move)
     }
 
     /// The method an instance of class `c` (its own or a base class's) is written by with
     /// `hint`, if any.
     fn text_method(&mut self, c: DefId, hint: Hint) -> Option<TextMethod> {
         if self.cx.prelude_adt("Proxy") == Some(c) {
-            return Some(TextMethod {
-                name: None,
-                hint: None,
-            });
+            return Some(TextMethod::Proxy);
         }
         let n = self.cx.adt(c).map_or(0, |a| a.generics.len());
         let params: Vec<_> = (0..n as u32).map(|i| self.cx.ty.param(i)).collect();
         let to_primitive = self.callable_method(c, &params, "[Symbol.toPrimitive]");
         if let Some((_, arity)) = to_primitive.filter(|&(_, arity)| arity <= 1) {
-            return Some(TextMethod {
-                name: Some("[Symbol.toPrimitive]"),
-                hint: (arity == 1).then(|| hint.name()),
-            });
+            return Some(TextMethod::ToPrimitive((arity == 1).then(|| hint.name())));
         }
+        let method = |lw: &mut Self, name: &'static str| {
+            let (ret, arity) = lw.callable_method(c, &params, name)?;
+            (arity == 0).then(|| (name, lw.primitive_ty(ret)))
+        };
+        let to_string = method(self, "toString");
         // A `Date`'s `[Symbol.toPrimitive]` writes it as a string for the `"default"` hint too.
         let date = self
             .cx
             .prelude_adt("Date")
             .is_some_and(|d| self.cx.class_extends(c, d));
-        if hint == Hint::Default && !date {
-            if let Some((ret, 0)) = self.callable_method(c, &params, "valueOf") {
-                if self.primitive_ty(ret) {
-                    return Some(TextMethod {
-                        name: Some("valueOf"),
-                        hint: None,
-                    });
+        let value_of = match date {
+            true => None,
+            false => method(self, "valueOf"),
+        };
+        let (methods, inherited) = match hint {
+            // Without a `toString` of its own, `Object.prototype.toString` writes it.
+            Hint::String => (std::iter::once(to_string?).chain(value_of).collect(), false),
+            Hint::Default => {
+                let methods: Vec<_> = value_of.into_iter().chain(to_string).collect();
+                if methods.is_empty() {
+                    return None;
                 }
+                (methods, to_string.is_none())
             }
-        }
-        self.callable_method(c, &params, "toString")
-            .filter(|&(_, arity)| arity == 0)?;
-        Some(TextMethod {
-            name: Some("toString"),
-            hint: None,
-        })
+        };
+        Some(TextMethod::Ordinary { methods, inherited })
     }
 
     /// The result type of class `c`'s instance method `name` (its own or inherited) and how
@@ -279,7 +395,7 @@ impl FnCx<'_, '_> {
         self.with_temp("<list>", init, span, span, |lw, v| {
             let comma = || synth(ast::ExprKind::Lit(ast::Lit::Str(",".into())), span);
             let sep = args.first().cloned().unwrap_or_else(comma);
-            lw.prelude_fn_call("__anyJoin", vec![v.clone(), sep], span)
+            lw.text_helper_call("__anyJoin", vec![v.clone(), sep], span)
         })
     }
 

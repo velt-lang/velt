@@ -1,0 +1,13 @@
+// A `[Symbol.toPrimitive]` returning a symbol: `String(p)` of it through `any` is Node's
+// `TypeError` (only a symbol itself is written by `String`, as `Symbol(desc)`).
+class P {
+  [Symbol.toPrimitive](hint: string): any {
+    return Symbol(hint);
+  }
+}
+
+function main(): void {
+  const p: any = new P();
+  console.log(String(Symbol("own") as any));
+  console.log(String(p));
+}

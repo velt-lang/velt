@@ -2615,12 +2615,15 @@ function main(): void {
 `String(x)`, a template literal and a string `+` / `+=` write an `any`, `unknown` or `object`
 by the value held, as JavaScript's `ToString(ToPrimitive(x))` does, not as `console.log` prints
 it. `String(x)` and templates ask a class instance for its `[Symbol.toPrimitive]("string")`,
-else its `toString()` (its own or a base class's, an `Error`'s); `+` asks for
-`[Symbol.toPrimitive]("default")`, else a `valueOf()` returning a primitive, else `toString()`.
-An object literal is written by its own `toString` (and, in `+`, `valueOf`) member; another
-object as `Object.prototype.toString` does (`[object Object]`, `[object Map]`), and a
-`toString()` returning an object stops with Node's `TypeError: Cannot convert object to
-primitive value`. An array (also one held in a typed `any[]`, `unknown[]`, `object[]` or a tuple
+else its `toString()` (its own or a base class's, an `Error`'s), then its `valueOf()` when that
+returns an object; `+` asks for `[Symbol.toPrimitive]("default")`, else its `valueOf()`, then
+its `toString()` when that returns an object (each result tested when the program runs,
+whatever its declared type). An object literal is written by its own `toString` and `valueOf`
+members in the same order; another object as `Object.prototype.toString` does
+(`[object Object]`, `[object Map]`). When every method returns an object, the program stops
+with Node's `TypeError: Cannot convert object to primitive value`, and when one returns a
+symbol with `TypeError: Cannot convert a Symbol value to a string`, reporting the line of the
+`String`, template, `+` or `join`. An array (also one held in a typed `any[]`, `unknown[]`, `object[]` or a tuple
 of them, and its `join()` and `toString()`) is written as `Array.prototype.join` does: each
 element as `String(x)` writes it, `null` and `undefined` elements and an array holding itself
 as empty text (`[1, [2, 3], null]` is `1,2,3,`). In a template or a `+`, a symbol stops with

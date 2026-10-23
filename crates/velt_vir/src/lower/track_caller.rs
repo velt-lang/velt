@@ -39,14 +39,18 @@ impl Cx<'_> {
 
 /// The prelude's text of an `any` (velt_sema `any_text.rs`): `__anyString` and
 /// `__anyConcatText` hold a dispatch over every class of the program, and the others are what
-/// they call. Too large to copy per call site, each keeps one instance, whose stops report the
-/// helper's own line.
-const UNTRACKED: [&str; 7] = [
+/// they call. Too large to copy per call site, each keeps one instance and takes the user's call
+/// site as its last argument (`at`, a `"path:line:col"` constant per site, like the hidden
+/// location argument of Rust's `#[track_caller]`), which its stops write into their messages:
+/// their panics get no suffix of their own ([`Cx::reports_own_site`]).
+const UNTRACKED: [&str; 9] = [
     "__anyString",
     "__anyConcatText",
     "__anyConcatPlain",
     "__anyText",
     "__anyPrimText",
+    "__anyPrimTry",
+    "__anyTextUnsupported",
     "__anyJoin",
     "__anyJoinSeen",
 ];
@@ -55,6 +59,17 @@ const UNTRACKED: [&str; 7] = [
 fn untracked(name: &str) -> bool {
     let last = name.rsplit(['.', ':', '/']).next().unwrap_or(name);
     UNTRACKED.contains(&last)
+}
+
+impl Cx<'_> {
+    /// Whether `def` is a standard-library function of [`UNTRACKED`], whose stops report the
+    /// call site passed to it (its panics get no ` at …` suffix).
+    pub(super) fn reports_own_site(&self, def: DefId) -> bool {
+        match (self.hir.def(def), self.locs.as_ref()) {
+            (hir::Def::Fn(f), Some(m)) => m.is_std(f.span) && untracked(&f.name),
+            _ => false,
+        }
+    }
 }
 
 /// Whether `b` calls `panic` directly; collects the direct callees for the transitive check.

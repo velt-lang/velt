@@ -38,6 +38,7 @@ mod division;
 pub(crate) mod downcast;
 mod dynamic;
 mod dynamic_concat;
+mod dynamic_enum;
 mod dynamic_member;
 mod dynamic_narrow;
 mod dynamic_optional;

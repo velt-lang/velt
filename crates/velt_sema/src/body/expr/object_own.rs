@@ -255,15 +255,17 @@ impl FnCx<'_, '_> {
         class: impl FnMut(&mut Self, DefId, ast::Expr) -> hir::Expr,
         span: Span,
     ) -> hir::Expr {
+        let fallback = (fallback, vec![]);
         self.dynamic_class_match_where(s, ret, fallback, |_, _| true, class, span)
     }
 
-    /// [`Self::dynamic_class_match`] over the classes `only` keeps; the others go to `fallback`.
+    /// [`Self::dynamic_class_match`] over the classes `only` keeps; the others go to `fallback`
+    /// (the prelude function, called with the value and the arguments given with it).
     pub(super) fn dynamic_class_match_where(
         &mut self,
         s: hir::Expr,
         ret: TyId,
-        fallback: &str,
+        fallback: (&str, Vec<ast::Expr>),
         only: impl Fn(&mut Self, DefId) -> bool,
         mut class: impl FnMut(&mut Self, DefId, ast::Expr) -> hir::Expr,
         span: Span,
@@ -297,7 +299,9 @@ impl FnCx<'_, '_> {
         }
         // The value's members are read through its descriptor.
         self.note_dyn_members();
-        let body = self.prelude_fn_call(fallback, vec![read], span);
+        let (fallback, more) = fallback;
+        let args = std::iter::once(read).chain(more).collect();
+        let body = self.prelude_fn_call(fallback, args, span);
         arms.push(hir::Arm {
             pat: self.pat(hir::PatKind::Wildcard, sty, span),
             guard: None,

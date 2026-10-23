@@ -585,7 +585,18 @@ impl FnCx<'_, '_> {
         {
             return h;
         }
+        let ret = f.ret;
         let span = h.span;
+        // A `toString()` declared to return an `any`, `unknown` or `object`: the result is tested
+        // when the program runs, as `String(x)` of the instance through `any` does (an object
+        // goes on to `valueOf()`, any_text.rs).
+        if to_string && self.cx.dynamic(ret).is_some() && self.writes_dynamic_text() {
+            if let Some(any) = self.any_ty() {
+                let h = self.share_if_place(h);
+                let h = self.coerce(h, any);
+                return self.dynamic_text(h, span);
+            }
+        }
         let Some(call) = self.method_call_hir(h.clone(), method, span) else {
             return h;
         };
