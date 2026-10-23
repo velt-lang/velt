@@ -1,0 +1,11 @@
+// `x as T` of a `T | undefined` in generic code is checked (#893) where `T` has no `undefined`:
+// an `undefined` stops the program, where Node goes on with it.
+function value<T>(v: T | undefined): T {
+  return v as T;
+}
+
+function main() {
+  console.log(value<number | undefined>(undefined));
+  console.log(value<number>(1));
+  console.log(value<number>(undefined));
+}

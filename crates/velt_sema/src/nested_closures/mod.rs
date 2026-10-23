@@ -18,6 +18,10 @@
 //! supported yet; those declarations stay nested functions, and `kept` keeps sema from
 //! reporting each capture again.
 //!
+//! A nested function reading a class declared in an enclosing function as a value (`return C;`)
+//! becomes a closure constant too, though it captures nothing: the class's value is a `const`
+//! of the block declaring it (`body::expr::ctor_locals`), which only a closure there reads.
+//!
 //! Declarations that capture nothing, generic ones, overloaded ones and ones using `this` stay
 //! nested functions (`collect::nested`).
 
@@ -119,6 +123,14 @@ struct Cand {
     name: ast::Ident,
     /// The names it uses that it does not bind itself.
     free: FxHashSet<String>,
+    /// Does it read a class of an enclosing function as a value (module docs)?
+    reads_class: bool,
+}
+
+/// The entry of `locals` standing for class `name` declared in an enclosing function (no
+/// variable is named so), which a nested function reading it as a value captures.
+fn class_key(name: &str) -> String {
+    format!("#class {name}")
 }
 
 impl Rw {
@@ -177,6 +189,7 @@ impl Rw {
         }
         let mut locals = outer.clone();
         locals.extend(s.binds);
+        locals.extend(s.classes.iter().map(|c| class_key(c)));
         self.block(&mut b.stmts, &locals);
     }
 
@@ -231,6 +244,11 @@ impl Rw {
             if sc.this {
                 continue;
             }
+            let reads_class = sc
+                .values
+                .iter()
+                .filter(|n| !sc.binds.contains(*n) && !sc.classes.contains(*n))
+                .any(|n| locals.contains(&class_key(n)));
             let free = sc
                 .refs
                 .into_iter()
@@ -240,12 +258,13 @@ impl Rw {
                 at,
                 name: f.sig.name.clone(),
                 free,
+                reads_class,
             });
         }
         // Those capturing a local, then those using one of those (a closure constant).
         let mut conv: Vec<bool> = cands
             .iter()
-            .map(|c| c.free.iter().any(|n| locals.contains(n)))
+            .map(|c| c.reads_class || c.free.iter().any(|n| locals.contains(n)))
             .collect();
         loop {
             let names: FxHashSet<&str> = cands
@@ -589,6 +608,7 @@ impl Rw {
                 if s.nested_fn {
                     let mut inner = locals.clone();
                     inner.extend(s.binds);
+                    inner.extend(s.classes.iter().map(|c| class_key(c)));
                     self.block(&mut b.stmts, &inner);
                 }
             }

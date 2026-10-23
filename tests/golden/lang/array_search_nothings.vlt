@@ -1,0 +1,29 @@
+// `indexOf`, `lastIndexOf` and `includes` compare as `===` (SameValueZero for `includes`):
+// `null` and `undefined` are different elements, on arrays of `unknown`, `any` and nullables.
+// `==` of two values of a type parameter's type is still JavaScript's loose `==`.
+const a: unknown[] = [null, 1];
+const b: any[] = [undefined, 2];
+const c: (number | null | undefined)[] = [null];
+const d: (string | null)[] = ["x", null];
+console.log(a.indexOf(undefined), a.includes(undefined), b.indexOf(null), b.includes(null));
+console.log(a.lastIndexOf(undefined), a.indexOf(null), b.lastIndexOf(undefined), a.includes(1));
+console.log(c.indexOf(undefined), c.includes(undefined), c.indexOf(null), c.includes(null));
+console.log(d.indexOf(null), d.includes("x"), [NaN].includes(NaN), [NaN].indexOf(NaN));
+const s = ["k0", "k1", "k2"];
+console.log(s.indexOf("k2"), s.lastIndexOf("k0"), s.includes("zz"));
+
+function eqp<T>(x: T, y: T): string {
+  return `${x == y} ${x != y} ${x === y} ${x !== y}`;
+}
+function find<T>(xs: T[], x: T): number {
+  for (let i = 0; i < xs.length; i++) {
+    if (xs[i] == x) {
+      return i;
+    }
+  }
+  return -1;
+}
+console.log(eqp<unknown>(null, undefined), eqp<unknown>(1, 1), eqp<any>(undefined, null));
+console.log(eqp<number | null | undefined>(null, undefined), eqp<string>("a", "a"));
+console.log(eqp<string | undefined>(undefined, undefined), eqp<unknown>(0, null), eqp<number>(1, 2));
+console.log(find<unknown>([1, null], undefined), find<string>(["a", "b"], "b"), find<any>([0], null));

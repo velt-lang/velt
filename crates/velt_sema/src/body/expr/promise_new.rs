@@ -149,6 +149,11 @@ impl FnCx<'_, '_> {
         if self.cx.ty.has_error(h.ty) {
             return self.error_expr(span);
         }
+        // `R | Promise<R>`: each promise member itself, each other member resolved.
+        let h = match self.resolve_promise_union(h, value, span) {
+            Ok(p) => return p,
+            Err(h) => h,
+        };
         let target = match (self.cx.ty.kind(h.ty), value) {
             (_, None) => None,
             (&TyKind::Promise(_, e), Some(t)) => Some(self.cx.ty.promise_rejecting(t, e)),

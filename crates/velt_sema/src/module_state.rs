@@ -47,10 +47,12 @@ pub(crate) fn order(cx: &mut Ctx) -> Vec<DefId> {
         .into_iter()
         .filter(|(_, _, d)| !skipped.contains(d))
         .collect();
-    // The properties of `globalThis` exist before any module runs (`crate::global_this`).
+    // The properties of `globalThis` exist before any module runs (`crate::global_this`), and
+    // so do the classes' values, which read nothing (`body::expr::ctor_values`).
     sorted.sort_by_key(|(m, start, d)| {
         let rank = rank.get(m).copied().unwrap_or(usize::MAX);
-        (!cx.global_props.is_slot(*d), rank, *start)
+        let first = cx.global_props.is_slot(*d) || cx.is_class_value(*d);
+        (!first, rank, *start)
     });
     let order: Vec<DefId> = sorted.into_iter().map(|(_, _, d)| d).collect();
     let pos: FxHashMap<DefId, usize> = order.iter().enumerate().map(|(i, d)| (*d, i)).collect();
@@ -288,7 +290,7 @@ pub(crate) fn check_locked_access(cx: &mut Ctx) {
         .copied()
         .filter(|d| cx.fn_info(*d).state == crate::defs::BodyState::Done)
         .collect();
-    let mut withs: Vec<(hir::Expr, velt_common::Span)> = vec![];
+    let mut withs: Vec<(hir::Expr, velt_common::Span, &'static str)> = vec![];
     let mut facts: FxHashMap<DefId, Facts> = FxHashMap::default();
     for &d in &fns {
         let std = cx.modules[cx.fn_info(d).module].is_std;
@@ -357,7 +359,7 @@ pub(crate) fn check_locked_access(cx: &mut Ctx) {
         f.edges.extend(hooks);
     }
     let reach = propagate(&facts);
-    for (cb, span) in withs {
+    for (cb, span, method) in withs {
         let found = match &cb.kind {
             E::Closure(c) => reach.get(c).cloned(),
             E::FnRef(c, _) => reach.get(c).cloned().map(|mut r| {
@@ -379,11 +381,11 @@ pub(crate) fn check_locked_access(cx: &mut Ctx) {
         };
         cx.error(
             Diagnostic::error(
-                format!("the function passed to `with` may use module state: it {what}"),
+                format!("the function passed to `{method}` may use module state: it {what}"),
                 span,
             )
-            .with_note("`with` blocks the thread while it waits for the lock, so module-level `let`s and kept constants cannot be used under it: two tasks could wait for each other")
-            .with_note("read what you need before `with` and pass it in, and store what it returns after"),
+            .with_note(format!("`{method}` blocks the thread while it waits for the lock, so module-level `let`s and kept constants cannot be used under it: two tasks could wait for each other"))
+            .with_note(format!("read what you need before `{method}` and pass it in, and store what it returns after")),
         );
     }
 }
@@ -455,7 +457,7 @@ struct FactsOf<'a, 'm> {
     cx: &'a Ctx<'m>,
     std: bool,
     facts: Facts,
-    withs: Vec<(hir::Expr, velt_common::Span)>,
+    withs: Vec<(hir::Expr, velt_common::Span, &'static str)>,
 }
 
 impl<'a, 'm> FactsOf<'a, 'm> {
@@ -619,10 +621,17 @@ impl crate::visit::VisitMut for FactsOf<'_, '_> {
                     self.passed(args);
                     self.iface_methods(*iface, *slot)
                 }
-                hir::Callee::Intrinsic(hir::Intrinsic::MutexWith) => {
+                hir::Callee::Intrinsic(
+                    i @ (hir::Intrinsic::MutexWith | hir::Intrinsic::LockRead),
+                ) => {
                     if let [m, cb] = args.as_slice() {
                         self.passed(std::slice::from_ref(m));
-                        self.withs.push((cb.clone(), cb.span));
+                        let method = match (i, self.cx.is_rwlock(m.ty)) {
+                            (hir::Intrinsic::LockRead, _) => "read",
+                            (_, true) => "write",
+                            _ => "with",
+                        };
+                        self.withs.push((cb.clone(), cb.span, method));
                     }
                 }
                 hir::Callee::Intrinsic(i) => {

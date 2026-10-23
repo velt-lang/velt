@@ -138,7 +138,8 @@ impl FnCx<'_, '_> {
             return e;
         };
         if !self.downcast_applies(e.ty, target) {
-            return e;
+            // `typeof x === "string"` on a `T | string` (`typeof_facts`).
+            return self.open_view(l, e, target).unwrap_or_else(|e| e);
         }
         let span = e.span;
         if e.ty == target {
@@ -361,6 +362,15 @@ impl FnCx<'_, '_> {
                 self.literal_at(h, span)
             }
             DefInfo::Global(_) => self.global_read(d, want, span),
+            DefInfo::Adt(_)
+                if self
+                    .cx
+                    .adt(d)
+                    .is_some_and(|a| a.kind == hir::AdtKind::Class) =>
+            {
+                self.class_value(d, id, exp, want)
+                    .unwrap_or_else(|| self.error_expr(span))
+            }
             _ => {
                 self.cx
                     .err(format!("`{}` is a type, not a value", id.name), span);

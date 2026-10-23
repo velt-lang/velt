@@ -1,0 +1,63 @@
+// What a reader changes through call results, method returns, getters and choices: its own
+// objects change (plain arrays, sort, reverse), and so do the caller's reached through a call on
+// the caller's container (`out.at(0)!`).
+class Item {
+  v: i64 = 0;
+  nums: i64[] = [0];
+  kids: Item[] = [];
+  constructor(v: i64) {
+    this.v = v;
+  }
+  get first(): Item {
+    return this.kids[0];
+  }
+  self(): Item {
+    return this;
+  }
+}
+class Box2 {
+  it: Item = new Item(7);
+  pair: [i64[], i64] = [[1], 2];
+}
+class St {
+  items: Item[] = [new Item(1), new Item(2)];
+  m: Map<string, Item> = new Map<string, Item>();
+}
+function mk(): Item {
+  return new Item(3);
+}
+function main() {
+  const st = new St();
+  st.m.set("a", st.items[1]);
+  const rw = shared(new RwLock<St>(st));
+  const out: Item[] = [new Item(1)];
+  const n = rw.read((s) => {
+    const m = new Map<string, Item>();
+    m.set("a", new Item(1));
+    m.get("a")!.nums.push(1);
+    m.get("a")?.nums.push(2);
+    const xs: Item[] = [new Item(4), new Item(5)];
+    xs.at(1)!.nums.push(3);
+    xs.at(1)!.nums.sort();
+    xs.find((x) => x.v == 5)!.nums.pop();
+    (xs.length > 1 ? xs[0] : xs[1]).nums.push(9);
+    mk().nums.push(1);
+    const it = new Item(8);
+    it.kids.push(new Item(9));
+    it.first.nums.push(4);
+    it.self().nums.push(5);
+    it.self().kids.at(0)!.nums.push(6);
+    const b = new Box2();
+    b.it.self().nums.push(1);
+    const bs: Box2[] = [b];
+    bs.at(0)!.pair[0].push(5);
+    bs.at(0)!.it.nums.reverse();
+    out.at(0)!.nums.push(1);
+    out.at(0)!.nums.sort();
+    out.at(0)!.kids.push(new Item(2));
+    (out.length > 0 ? out[0] : out.at(0)!).nums.push(7);
+    out.find((x) => x.v == 1)!.kids.at(0)!.nums.push(8);
+    return [m.get("a")!.nums.length, xs[1].nums.length, xs[0].nums.length, it.nums.length, it.kids[0].nums.length, b.pair[0].length, b.it.nums.length, s.items[1].nums.length];
+  });
+  console.log(n.join(","), out[0].nums.join(","), out[0].kids.length, out[0].kids[0].v, out[0].kids[0].nums.join(","));
+}

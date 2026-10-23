@@ -209,7 +209,10 @@ Promises behave like JavaScript's, at Rust's cost:
   ([below](#promisewithresolvers)).
 - `Promise.resolve(value): Promise<T>`: a promise fulfilled with `value` (`Promise.resolve()`
   is a `Promise<void>`; a promise passed in is returned as it is, as in JS). `T` comes from the
-  argument, the type argument (`Promise.resolve<number>(p)`) or the expected type.
+  argument, the type argument (`Promise.resolve<number>(p)`) or the expected type. A union with
+  promise members (`R | Promise<R>`, a sync-or-async callback's result) gives its promise
+  itself or a promise of its value; promises of another payload type than the others' are not
+  supported yet.
 - `Promise.reject(reason: E): Promise<T, E>`: a promise rejected with `reason`. `T` comes from
   the type argument (`Promise.reject<string>(e)`) or the expected type, else it is `never`.
 
@@ -543,6 +546,89 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
     const ones = spawn(count(data, 1));
     const threes = spawn(count(data, 3));
     console.log(await ones, await threes, data.length, data[0]);
+  }
+  ```
+- `shared(new RwLock<T>(x))` for state read far more often than written: `rw.read((v) => …)`
+  runs the callback while other tasks run theirs on other threads, and `rw.write((v) => …)`
+  runs it alone, exactly as `with` does (a writer that has waited a while holds new readers
+  back, so writers don't starve). While nobody writes, readers on different threads touch no
+  memory they share, so reads scale with the cores; while writes come often, readers still run
+  at once between writes. With several tasks reading it is usually faster than a `Mutex`; on
+  one task, or with tiny callbacks and rare writes on many, a `Mutex` can be faster (#1395).
+  Both follow `with`'s rules below (synchronous, results leave the lock as copies of what the
+  value holds). A `read` callback cannot change the value: one that may (it assigns to it, or
+  passes it to a function that changes it) is an error ("the function passed to `read` modifies
+  the locked value"), so `read` takes a function literal or a named function, whose body the
+  compiler checks, not a function value. Readers share the value without copying or counting
+  it, also what they keep while the callback runs (a sorted listing of its objects, a value a method returns); a
+  write to it through such a reference stops the program (``panic: cannot modify a value an
+  `RwLock` holds inside its `read` callback …``). What a `read` returns is a copy of what it
+  shares with the value (an element, a `slice()`, a `Map.get`), never the value's object
+  itself. A `read` callback cannot lock anything else exclusively: a `with` or `write` in it is
+  an error (for every `RwLock`, also one whose `read` takes the lock exclusively), and one it
+  reaches through a function it calls, a function value or what locks inside std (a promise's
+  resolver, clearing a timer) stops the program: the callback shares the value without
+  counting it, which the inner callback could not tell from what it changes. Return what you
+  need and lock after `read`, or count with a `shared<i64>` (`.add(n)`). Nor can it start a
+  promise or task, which would outlive it (that stops the program too). A function value the
+  callback calls is checked as it runs (a write to the value through it stops the program).
+  Inside the callback, an object of a type the value holds can be changed when the callback
+  made it, or when it is the caller's: a place rooted in a variable the callback literal
+  captured from code outside any `read` callback, its fields and elements at any depth, a
+  variable of the callback bound to one of them and never given another value (`const x =
+  out[0]`, `for (const o of set)`), what a method or function called on one of them returns
+  when given nothing of the value (`out.at(0)!.tags.push("t")`), and a method or function
+  called with one of them to change it (`out.push(x)`, `seen.add(x)`, `m.set(k, x)`, `mine.v =
+  x`, `out[0].tags.push("t")`, `sortItems(out)`). What the callback stores there from the caller's own variables and
+  containers is that same object, as in JavaScript (`out.push(out[0])`, `out[0] = a`,
+  `out2.push(out.pop()!)`, `a.splice(1, 0, a[0])`), also inside an array or object the callback
+  made (`g.push([out[0]])`) and as what a closure it made captures (`fs.push(() => out[0].v)`);
+  anything else it did not make itself is a copy (an element of the value, what a function
+  returns, a closure capturing a part of the value). An array or object the callback made that
+  holds objects of the value's types is the caller's once stored there: the callback can still
+  read it through its own variables, but a write through them stops the program, as for the
+  value's own (store it once it is complete). One whose type the value cannot hold, and a
+  function value, that the callback still uses after storing it is stored as a copy. So is a
+  container of the callback's own whose type the value cannot hold, or a `Map` or `Set` of its
+  own, holding objects of the value's types, given to a method or function that changes the
+  caller's containers (`mvBag(out, bag)`, `bag.moveTo(out)`): that call gets a copy, so what it
+  moves into `out` is a copy and `bag` keeps what it held. An array of its own given to such a
+  function (`mv(out, list)`, moving `list`'s elements into `out`) loses what the function
+  moved, as in JavaScript, and stays the callback's own when the function did not keep it. What it
+  removes or replaces there is freed once the outermost `read` returns, so a variable still
+  holding it stays valid. Any other object of such a type cannot be told from the value's own,
+  so a write to it stops the program: one a function given the value's objects returns
+  (`pick(s).tags.push("t")`), a function value the callback calls reaches, or a closure made
+  inside the callback captures (`s.items.forEach((it) => out.push(it))`).
+  Reads of other `RwLock`s nest, in any order. A value that holds function
+  or interface values, objects of a class hierarchy, weak references or promises is read under
+  the exclusive lock instead.
+
+  ```ts
+  class Catalog {
+    prices: number[] = [];
+  }
+
+  function total(c: Catalog): number {
+    let t = 0;
+    for (const p of c.prices) {
+      t += p;
+    }
+    return t;
+  }
+
+  async function report(cat: shared<RwLock<Catalog>>): Promise<number> {
+    return cat.read((c) => total(c));
+  }
+
+  async function main() {
+    const cat = shared(new RwLock<Catalog>(new Catalog()));
+    cat.write((c) => {
+      c.prices.push(2, 3);
+    });
+    const a = spawn(report(cat));
+    const b = spawn(report(cat));
+    console.log(await a, await b);
   }
   ```
 - `shared(new Mutex<T>(x))` with `m.with((v) => …)`: a synchronous lock. The callback gets the

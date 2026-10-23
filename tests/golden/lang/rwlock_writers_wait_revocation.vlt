@@ -1,0 +1,88 @@
+// Three writers released at the same moment onto a biased `RwLock` whose readers read it
+// through their slots: one revokes the bias and waits for those readers; the others, holding
+// the lock or not, write only once the revocation is done. Each reader sees every write whole.
+class St {
+  a: i64 = 0;
+  b: i64 = 0;
+  xs: i64[] = [];
+}
+
+async function reader(rw: shared<RwLock<St>>, bad: shared<i64>, stop: shared<i64>): Promise<i64> {
+  let t: i64 = 0;
+  while (stop.get() == 0) {
+    const ok = rw.read((s) => {
+      const a0 = s.a;
+      let sum: i64 = 0;
+      for (const x of s.xs) {
+        sum += x;
+      }
+      return a0 == s.a && s.a == s.b && sum == s.xs.length;
+    });
+    if (!ok) {
+      bad.add(1);
+    }
+    t += 1;
+    // A timer, not a microtask: on one thread the release below runs in between.
+    if (t % 256 == 0) {
+      await sleep(0);
+    }
+  }
+  return t;
+}
+
+async function writer(rw: shared<RwLock<St>>, gen: shared<i64>, stop: shared<i64>): Promise<i64> {
+  let last: i64 = 0;
+  let n: i64 = 0;
+  let idle: i64 = 0;
+  while (stop.get() == 0) {
+    const g = gen.get();
+    if (g != last) {
+      last = g;
+      rw.write((s) => {
+        s.a += 1;
+        const ys: i64[] = [];
+        for (let k = 0; k < 2000; k++) {
+          ys.push(1);
+        }
+        s.xs = ys;
+        s.b += 1;
+      });
+      n += 1;
+    } else {
+      // Spin for the next release, letting other tasks run now and then.
+      idle += 1;
+      if (idle % 100000 == 0) {
+        await sleep(0);
+      }
+    }
+  }
+  return n;
+}
+
+async function main() {
+  const st = new St();
+  for (let k = 0; k < 2000; k++) {
+    st.xs.push(1);
+  }
+  const rw = shared(new RwLock<St>(st));
+  const bad = shared(0 as i64);
+  const gen = shared(0 as i64);
+  const stop = shared(0 as i64);
+  const ps: Promise<i64>[] = [];
+  for (let k = 0; k < 5; k++) {
+    ps.push(spawn(reader(rw, bad.clone(), stop.clone())));
+  }
+  const ws: Promise<i64>[] = [];
+  for (let k = 0; k < 3; k++) {
+    ws.push(spawn(writer(rw, gen.clone(), stop.clone())));
+  }
+  for (let i = 0; i < 40; i++) {
+    await sleep(10);
+    gen.add(1);
+  }
+  await sleep(10);
+  stop.add(1);
+  const reads = await Promise.all(ps);
+  const writes = await Promise.all(ws);
+  console.log("bad", bad.get(), "reads", reads.every((r) => r > 0), "writes", writes.every((w) => w > 0));
+}

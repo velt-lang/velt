@@ -30,7 +30,7 @@ use crate::vir::{
 };
 
 pub(super) const SLOT_TAG: i128 = 0;
-const SLOT_TRUTHY: i128 = 1;
+pub(super) const SLOT_TRUTHY: i128 = 1;
 pub(super) const SLOT_SAME: i128 = 2;
 pub(super) const SLOT_NUMBER: i128 = 3;
 pub(super) const SLOT_HASH: i128 = 4;
@@ -111,7 +111,7 @@ impl Cx<'_> {
             TyKind::Str => TAG_STRING,
             TyKind::Symbol => TAG_SYMBOL,
             TyKind::FnPtr { .. } | TyKind::Closure(_) => TAG_FUNCTION,
-            TyKind::Adt(..) if self.is_array_method(t) => TAG_FUNCTION, // `Reflect.get(a, "map")`
+            TyKind::Adt(..) if self.is_function_object(t) => TAG_FUNCTION,
             TyKind::Literal(hir::LitValue::Str(_)) => TAG_STRING,
             TyKind::Literal(hir::LitValue::Bool(_)) => TAG_BOOLEAN,
             TyKind::Literal(_) => TAG_NUMBER,

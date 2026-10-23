@@ -1,0 +1,142 @@
+// A class declared in a function, read as a value from a function declared there: the
+// function becomes a closure in the declaring block, so it reads the block's one object, as
+// Node does (also before the class's statement, nested twice, recursive, in a loop body, in an
+// arrow, async, as a shorthand property and next to a captured variable); a function that
+// only reads a static field stays a declaration.
+function nestedFn(): boolean[] {
+  class C {
+    v = 1;
+  }
+  function g(): new () => C {
+    return C;
+  }
+  const a: new () => C = C;
+  return [a === g(), g() === g()];
+}
+
+function early(): boolean {
+  const r = (): new () => C => g();
+  function g(): new () => C {
+    return C;
+  }
+  class C {
+    v = 2;
+  }
+  return r() === C;
+}
+
+function rec(n: number): boolean {
+  class C {
+    v = 3;
+  }
+  function g(k: number): new () => C {
+    return k > 0 ? g(k - 1) : C;
+  }
+  function h(): new () => C {
+    return g(2);
+  }
+  return g(n) === C && h() === C;
+}
+
+function loops(): boolean[] {
+  const res: boolean[] = [];
+  for (let i = 0; i < 3; i++) {
+    class C {
+      v = 0;
+    }
+    function g(): new () => C {
+      return C;
+    }
+    res.push(g() === C);
+  }
+  return res;
+}
+
+function deep(): boolean {
+  class C {
+    v = 4;
+  }
+  function g(): new () => C {
+    function h(): new () => C {
+      return C;
+    }
+    return h();
+  }
+  return g() === C;
+}
+
+function withLocal(): boolean {
+  let x = 1;
+  class C {
+    v = 5;
+  }
+  function g(): [number, new () => C] {
+    return [x, C];
+  }
+  x = 2;
+  const [n, k] = g();
+  return n === 2 && k === C;
+}
+
+function statics(): number {
+  class C {
+    static readonly s = 7;
+  }
+  function g(): number {
+    return C.s;
+  }
+  return g();
+}
+
+function inArrow(): boolean {
+  const f = (): boolean => {
+    class C {
+      v = 1;
+    }
+    function g(): new () => C {
+      return C;
+    }
+    return g() === C;
+  };
+  return f();
+}
+
+function objShort(): boolean {
+  class C {
+    v = 1;
+  }
+  function g(): { C: new () => C } {
+    return { C };
+  }
+  return g().C === C;
+}
+
+function many(): number {
+  class C {
+    v = 1;
+  }
+  function g(): new () => C {
+    return C;
+  }
+  let n = 0;
+  for (let i = 0; i < 1000; i++) {
+    if (g() === C) {
+      n++;
+    }
+  }
+  return n;
+}
+
+async function asyncNested(): Promise<boolean> {
+  class C {
+    v = 1;
+  }
+  async function g(): Promise<new () => C> {
+    return C;
+  }
+  return (await g()) === C;
+}
+
+console.log(nestedFn(), early(), rec(2), loops(), deep(), withLocal(), statics(), inArrow());
+console.log(objShort(), many());
+asyncNested().then((r) => console.log(r));

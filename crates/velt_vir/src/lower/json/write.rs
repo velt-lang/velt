@@ -310,7 +310,8 @@ impl FnLower<'_, '_> {
             });
             // A field that holds `undefined` is left out, as JavaScript does (issue #930), and
             // so is a dynamic one holding `undefined`, a function or a symbol.
-            let dynamic = self.cx.is_dynamic(fty);
+            // A union with such a member (`T | string` at `T = unknown`) too.
+            let dynamic = self.cx.is_dynamic(fty) || self.has_dynamic_member(fty);
             match (optional, self.cx.kind(fty)) {
                 _ if dynamic => {
                     if !pending.is_empty() {
@@ -318,14 +319,14 @@ impl FnLower<'_, '_> {
                         pending.clear();
                     }
                     let flag = self.json_sep_flag(sep);
-                    let present = self.any_json_present(&fp);
+                    let present = self.json_present(&fp, fty);
                     let (yes, done) = (self.new_block(), self.new_block());
                     self.branch(present, yes, done);
                     self.switch_to(yes);
                     self.json_member_sep(buf, sep);
                     self.assign(Place::local(flag), Rvalue::Use(Self::ctrue()));
                     self.push_text(buf, &key);
-                    self.json_write_any(buf, &fp);
+                    self.json_write_at(buf, &fp, fty, JsonKey::Text(&name));
                     self.goto(done);
                     self.switch_to(done);
                     sep = Sep::Maybe(flag);

@@ -1,0 +1,74 @@
+// check: no leaks
+// `typeof x === tag` on a union with a type parameter member (`T | string`) where a value
+// made in generic code sits in the `T` member: at `T = unknown` / `any` the test asks that
+// member's value, and where it passes the value reads as the tag's type (converted and
+// checked), never as another member's payload.
+function s1<T>(x: T | string): number { return typeof x === "string" ? x.length : -1; }
+function go<T>(v: T): number { return s1<T>(v); }
+console.log(go<unknown>("abcd"), go<any>("abcd"), go<unknown>(3), go<any>(3), s1<number>(1), s1<number>("ab"), s1<unknown>("xyz"));
+function wrap<T>(v: T): T | string { return v; }
+function go1<T>(v: T): number { return s1<T>(wrap<T>(v)); }
+console.log(go1<unknown>("abcd"), go1<any>("ab"), go1<unknown>(1));
+function go2<T>(v: T): number { const u: T | string = v; return typeof u === "string" ? u.length : -2; }
+console.log(go2<unknown>("abcde"), go2<unknown>(1), go2<any>("ab"), go2<any>(null));
+function s2<T>(x: T | number): string { return typeof x === "number" ? x.toFixed(2) : "no"; }
+function go3<T>(v: T): string { return s2<T>(v); }
+console.log(go3<unknown>(1.5), go3<unknown>("z"), go3<any>(2.25), go3<any>("z"));
+function s3<T>(x: T | boolean): string { if (typeof x === "boolean") { return x ? "T" : "F"; } return "o"; }
+function go4<T>(v: T): string { return s3<T>(v); }
+console.log(go4<unknown>(false), go4<unknown>(true), go4<unknown>(0), go4<any>(true), go4<any>(false));
+function b<T>(x: T | string, y: T | string): string { return typeof x === "string" && typeof y === "string" ? x + y : "n"; }
+function gb<T>(v: T, w: T): string { return b<T>(v, w); }
+console.log(gb<unknown>("p", "q"), gb<unknown>(1, "q"), gb<any>("r", "s"), gb<any>("r", 2));
+function c<T>(xs: (T | string)[]): number { let n = 0; for (const x of xs) { if (typeof x === "string") { n += x.length; } } return n; }
+function gc<T>(v: T): number { return c<T>([v, "zz"]); }
+console.log(gc<unknown>("abc"), gc<unknown>(4), gc<any>("abc"), gc<any>(4));
+function s4<T>(x: T | string | null): number { return typeof x === "string" ? x.length : -1; }
+function go5<T>(v: T): number { return s4<T>(v); }
+console.log(go5<unknown>("abcd"), go5<any>(null), s4<number>(null), s4<number>("q"));
+function s5<T>(x: T | string | undefined): number { if (typeof x !== "string") { return -1; } return x.length; }
+function go6<T>(v: T): number { return s5<T>(v); }
+console.log(go6<unknown>("abcd"), go6<any>(undefined), s5<string>(undefined), s5<number>("qq"));
+function s6<T>(x: T | string): string { return typeof x === "string" && x.length > 1 ? x.toUpperCase() : "-"; }
+function go7<T>(v: T): string { return s6<T>(v); }
+console.log(go7<unknown>("ab"), go7<unknown>("a"), go7<any>(5));
+interface Mod<T> { default: T; }
+function s7<T>(x: T | Mod<T>): number { return typeof x === "string" ? x.length : -1; }
+console.log(s7<unknown>("abc"), s7<any>({ default: 1 }), s7<string>("ab"));
+// Field paths.
+class Bx<T> {
+  v: T | string;
+  constructor(v: T) { this.v = v; }
+  len(): number { return typeof this.v === "string" ? this.v.length : -1; }
+}
+console.log(new Bx<unknown>("abc").len(), new Bx<any>(4).len(), new Bx<number>(4).len());
+interface H<T> { v: T | string }
+function f1<T>(h: H<T>): number { return typeof h.v === "string" ? h.v.length : -3; }
+function mk<T>(v: T): H<T> { const h: H<T> = { v: "" }; h.v = v; return h; }
+console.log(f1<unknown>(mk<unknown>("abcdef")), f1<any>(mk<any>(1)), f1<number>({ v: "z" }));
+// `switch (typeof x)`.
+function sw<T>(x: T | string): string { switch (typeof x) { case "string": return "s" + x.length; case "number": return "n"; default: return "o"; } }
+function gsw<T>(v: T): string { return sw<T>(v); }
+console.log(gsw<unknown>("abc"), gsw<unknown>(1), gsw<unknown>({}), gsw<any>("ab"), sw<number>(2), sw<number>("ab"));
+function sw2<T>(x: T | string | null): string { switch (typeof x) { case "number": case "string": return "ns"; case "object": return "obj"; default: return "o"; } }
+function gsw2<T>(v: T): string { return sw2<T>(v); }
+console.log(gsw2<unknown>("abc"), gsw2<unknown>(1), gsw2<unknown>(null), gsw2<unknown>(true), sw2<number>(null));
+function sw3<T>(x: T | number): string { switch (typeof x) { case "number": return x.toFixed(1); } return "x"; }
+function gsw3<T>(v: T): string { return sw3<T>(v); }
+console.log(gsw3<unknown>(1), gsw3<unknown>("q"), gsw3<any>(2), sw3<string>(2), sw3<string>("a"));
+// Closures, `await`, copies and reassignment in the narrowed branch.
+function k1<T>(x: T | string): () => number { if (typeof x === "string") { return () => x.length; } return () => -1; }
+function gk1<T>(v: T): number { return k1<T>(v)(); }
+console.log(gk1<unknown>("abcd"), gk1<any>(1));
+function k2<T>(x: T | string): string { let r = "-"; if (typeof x === "string") { const y = x; r = y + "!"; } return r; }
+function gk2<T>(v: T): string { return k2<T>(v); }
+console.log(gk2<unknown>("hi"), gk2<any>(3));
+function k3<T>(x: T | string): string[] { const out: string[] = []; if (typeof x === "string") { out.push(x); out.push(x); } return out; }
+function gk3<T>(v: T): string[] { return k3<T>(v); }
+console.log(gk3<unknown>("q").join(","), gk3<any>(1).length);
+function k4<T>(x: T | string): number { let y = x; if (typeof y === "string") { y = "zz"; return y.length; } return -1; }
+function gk4<T>(v: T): number { return k4<T>(v); }
+console.log(gk4<unknown>("a"), gk4<any>(1));
+async function k5<T>(x: T | string): Promise<number> { if (typeof x === "string") { await Promise.resolve(0); return x.length; } return -1; }
+async function gk5<T>(v: T): Promise<number> { return await k5<T>(v); }
+gk5<unknown>("xyz").then((n) => console.log(n));

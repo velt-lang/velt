@@ -60,6 +60,9 @@ pub(crate) struct ObjectState {
     pub hidden: Option<FxHashSet<String>>,
     /// The layouts extended object types may share (`collect::extended_layouts`).
     pub layouts: crate::collect::extended_layouts::Layouts,
+    /// Each class's value per construct signature type, a module-state constant
+    /// (`body::expr::ctor_values`), in the order they were made.
+    pub class_values: Vec<((DefId, TyId), DefId)>,
 }
 
 impl Ctx<'_> {
@@ -209,7 +212,12 @@ impl Ctx<'_> {
                 TyKind::Option(..) | TyKind::Unit | TyKind::Never | TyKind::Error
             ) && cx.union_def(m).is_none()
         };
-        if !members.iter().all(|m| plain(self, *m)) {
+        // A dynamic member (`T | Mod<T>` at `T = unknown`) keeps the union: written, it would
+        // be that `unknown`, but lowering maps each generic variant onto one of the instance.
+        if !members
+            .iter()
+            .all(|m| plain(self, *m) && self.dynamic(*m).is_none())
+        {
             return None;
         }
         let u = self.union_of(&members, false, velt_common::Span::DUMMY);

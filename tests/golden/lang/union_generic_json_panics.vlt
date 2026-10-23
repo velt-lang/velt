@@ -1,0 +1,14 @@
+// `JSON.stringify` of a generic union whose `unknown` member holds `undefined` stops the
+// program, as it does for a plain `unknown` holding it (Node returns `undefined`, #924).
+interface Mod<T> {
+  default: T;
+}
+
+function toJ<T>(x: T | Mod<T>): string | undefined {
+  return JSON.stringify(x);
+}
+
+function main() {
+  console.log(toJ<unknown>(null));
+  console.log(toJ<unknown>(undefined));
+}

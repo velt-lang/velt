@@ -1,0 +1,42 @@
+// Readers nesting reads of two `RwLock`s in opposite orders while one writer per lock writes
+// it now and then, so that most writes revoke a biased lock: a writer waits for the readers'
+// slots before it takes the lock, so a reader whose nested read reaches the other lock never
+// waits for a writer that waits for it in turn.
+class Cell {
+  n: i64 = 1;
+}
+
+async function cross(a: shared<RwLock<Cell>>, b: shared<RwLock<Cell>>, flip: bool, rounds: i64): Promise<i64> {
+  let t: i64 = 0;
+  for (let i: i64 = 0; i < rounds; i++) {
+    t += flip ? b.read((y) => a.read((x) => x.n + y.n)) : a.read((x) => b.read((y) => x.n + y.n));
+    if (i % 256 == 0) {
+      await Promise.resolve(0);
+    }
+  }
+  return t;
+}
+
+async function writeNowAndThen(a: shared<RwLock<Cell>>, rounds: i64): Promise<void> {
+  for (let i: i64 = 0; i < rounds; i++) {
+    a.write((x) => {
+      x.n = 1;
+    });
+    await new Promise<void>((done) => setTimeout(() => done(), 1));
+  }
+}
+
+async function main() {
+  const a = shared(new RwLock<Cell>(new Cell()));
+  const b = shared(new RwLock<Cell>(new Cell()));
+  const readers: Promise<i64>[] = [];
+  for (let i = 0; i < 8; i++) {
+    readers.push(spawn(cross(a, b, i % 2 == 1, 100000)));
+  }
+  const wa = spawn(writeNowAndThen(a, 100));
+  const wb = spawn(writeNowAndThen(b, 100));
+  const totals = await Promise.all(readers);
+  await wa;
+  await wb;
+  console.log(totals.every((t) => t == 200000), totals.length);
+}

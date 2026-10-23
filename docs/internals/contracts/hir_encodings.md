@@ -476,6 +476,12 @@ Maintainer-owned, like `hir/mod.rs` and `hir/intrinsic.rs`.
   instantiation to the test sema writes for that type (truthiness.rs): numbers falsy at `0`,
   `-0` and `NaN`, strings at `""`, nullables at `null` or a falsy payload, unions by their
   member, enums at a `0` / `""` member, other values always truthy.
+  `Intrinsic::LooseEq(a, b)` (additive, compiler-internal, both operands of one type with a
+  type parameter in it, borrowed: `T`, `T | string`, `T | undefined`): a `bool`, `a == b` in
+  generic code, lowered per instantiation: `Intrinsic::Same` (`a === b`) where the instantiated
+  type holds no nothing, else that or both operands nothings (`null == undefined`); at
+  `T = any` / `unknown`, `AnyLooseEq` (JavaScript's coercions: `1 == "1"`). Sema emits it for
+  `==` / `!=` (negated) on such operands.
   `Intrinsic::FnCapturesNothing(f)` (std only, `f` a function value, borrowed): a `bool`, lowered
   to `f.env == null`. Only closures without captures and named functions have a null env (a
   program that compares function values gives every closure one), so true means `f` reaches no
@@ -639,6 +645,16 @@ number, since such a part is passed on, looped over or a receiver where it is re
 read out of it is copied at once (also where a frozen operand is otherwise not held) and
 retains nothing. An index that may write (`may_write`) retains the box whatever the place: it
 may give the variable `s` reads another handle itself.
+
+## `RwLock<T>` (issue #708)
+
+`new RwLock<T>(x)` is `Call { Intrinsic(RwLockNew), [x] }` (`x` owned), typed as the prelude's
+`RwLock<T>` (`{ lock: u64; value: T }`, like `Mutex<T>`). `rw.write(f)` is `MutexWith` on an
+`RwLock` or `shared<RwLock<T>>` receiver, with every rule `with` has. `rw.read(f)` is
+`Call { Intrinsic(LockRead), [rw, f] }` with the same shape and rules, and sema reports a closure
+literal or named function `f` that modifies its parameter once modes are inferred
+(`ownership/locked/read_only.rs`). Lowering takes the lock shared and runs `f` in velt_rt's read
+mode (rt_abi_async.md §9.1).
 
 ## Module state
 
@@ -1158,4 +1174,19 @@ whose first field is named `#call` and holds the function value (`TyKind::FnPtr`
 by the members (`velt_sema` `callables.rs`). Values are built as ordinary `AdtLit`s; a call
 `f()` is `Callee::Indirect` through a `Field` read of `#call`, and a conversion to the plain
 function type is that field read (shared). As for an ES private name, the `#` keeps the field
-out of `Object.keys`, `JSON.stringify` and printing; lowering needs nothing else.
+out of `Object.keys`, `JSON.stringify` and printing. Held as `any` or `unknown`, its `typeof` tag
+is `function`.
+
+## Classes as values (issue #943)
+
+No new HIR form. A construct signature type (`new (n: number) => A`) is an `AdtKind::Anon`
+object type of three hidden fields: `#new` (the signature's function type: a closure that
+constructs an instance), `#is` (`(v: unknown) => boolean`, the `instanceof` test) and `#name`
+(the class's name) (`velt_sema` `fn_types.rs`). A class used as a value of such a type is a
+`Global` of the module state, one per class and signature type, whose initializer is the
+`AdtLit` of the three closures (`body/expr/ctor_values.rs`); for a class declared in a function,
+and one used at a signature type over type parameters, it is a local instead, bound by a `Let`
+at the start of the class's block or of the function's body (`body/expr/ctor_locals.rs`) and
+captured by closures like any local. `new C(x)` calls `#new`
+(`Callee::Indirect` through a `Field` read) and `v instanceof C` calls `#is`. Held as `any` or
+`unknown`, its `typeof` tag is `function` (lowering tells by the first field, `#new`).

@@ -1,0 +1,48 @@
+// `Promise.resolve(x)` of a union with promise members (a sync-or-async callback's result):
+// a promise member is the result itself, any other value is resolved, as in JavaScript.
+type Call<R> = (n: number) => R | Promise<R>;
+
+function pick(n: number): number | Promise<number> {
+  return n > 0 ? n : Promise.resolve(-n);
+}
+
+function viaCall<R>(c: () => R | Promise<R>): Promise<R> {
+  return Promise.resolve(c());
+}
+
+function three(): number | Promise<number> {
+  return 3;
+}
+
+function four(): number | Promise<number> {
+  return Promise.resolve(4);
+}
+
+function viaRef(call: Call<unknown>, n: number): Promise<unknown> {
+  return Promise.resolve(call(n));
+}
+
+function typed(x: string | Promise<string>): Promise<string> {
+  return Promise.resolve<string>(x);
+}
+
+function mixed(b: boolean): number | Promise<number> {
+  return b ? 1 : Promise.resolve(8);
+}
+
+async function run(): Promise<void> {
+  const x = pick(1);
+  const y = pick(-2);
+  console.log(await Promise.resolve(x), await Promise.resolve(y));
+  console.log(await viaCall(three), await viaCall(four));
+  const sync: Call<unknown> = (n: number) => n + 4;
+  const later: Call<unknown> = (n: number) => Promise.resolve<unknown>(n + 5);
+  console.log(await viaRef(sync, 1), await viaRef(later, 1));
+  const p: Promise<number> = Promise.resolve(pick(7));
+  console.log(await p, await typed("t"), await typed(Promise.resolve("u")));
+  const m = Promise.resolve(mixed(true));
+  const n = Promise.resolve(mixed(false));
+  console.log(await m, await n);
+}
+
+run();

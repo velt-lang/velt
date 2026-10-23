@@ -23,6 +23,7 @@ impl FnCx<'_, '_> {
         if h.ty != self.cx.ty.never {
             self.throw_src(ThrowSrc::Direct(h.ty, span));
         }
+        self.rethrown_srcs(&h);
         self.mk(H::Throw(Box::new(h)), self.cx.ty.never, span)
     }
 
@@ -65,11 +66,15 @@ impl FnCx<'_, '_> {
         blk: &ast::Block,
         span: Span,
     ) -> (Option<LocalId>, hir::Block) {
-        let ety = self.catch_type(srcs, span);
+        let ety = self.catch_type(srcs.clone(), span);
         self.push_scope_until(blk.span.hi);
         let local = match pat.map(|p| (&p.kind, p.span)) {
             Some((ast::PatternKind::Ident(n), _)) => {
-                Some(self.declare_local(n, ety, LocalKind::Const))
+                let l = self.declare_local(n, ety, LocalKind::Const);
+                if only_rethrown(blk, &n.name) {
+                    self.f.caught.push((l, srcs));
+                }
+                Some(l)
             }
             Some((_, pspan)) => {
                 self.cx
@@ -90,6 +95,25 @@ impl FnCx<'_, '_> {
         (local, hb)
     }
 
+    /// `throw e` of a `catch` variable `e` used only that way (so never narrowed: its type is
+    /// what the `try` body throws, whatever the sets are in this check): besides the type of
+    /// `e` (what the body was known to throw when it was checked), it throws what the body's
+    /// sources throw in the final inference. The two agree once inference is done (the `catch`
+    /// type is checked against it); while the error types of function types written without
+    /// `throws` grow, this carries what a call through one throws on to the function types the
+    /// rethrowing closure is stored into within one check, instead of one more check of the
+    /// program per closure in a chain of them (`throws::fn_types`).
+    fn rethrown_srcs(&mut self, h: &hir::Expr) {
+        let H::Local(l, _) = &h.kind else {
+            return;
+        };
+        let found = (self.f.caught.iter()).find(|(c, _)| c == l);
+        let Some((_, srcs)) = found.cloned() else {
+            return;
+        };
+        srcs.into_iter().for_each(|s| self.throw_src(s));
+    }
+
     /// The union of what `srcs` throw (`never` when nothing), re-checked after inference.
     fn catch_type(&mut self, srcs: Vec<ThrowSrc>, span: Span) -> TyId {
         let t = crate::throws::srcs_now(self.cx, &srcs);
@@ -103,4 +127,48 @@ impl FnCx<'_, '_> {
         });
         t.unwrap_or(self.cx.ty.never)
     }
+}
+
+/// Is every use of the name `name` in `blk` the operand of a `throw` statement (`throw e;`)? A
+/// variable used only so is never narrowed or read. Uses of another variable of that name
+/// count too (they only make the answer `false`), and nested functions are searched as well.
+fn only_rethrown(blk: &ast::Block, name: &str) -> bool {
+    struct Uses<'n> {
+        name: &'n str,
+        uses: usize,
+        thrown: usize,
+    }
+    impl<'a> velt_syntax::visit::Visit<'a> for Uses<'_> {
+        fn stmt(&mut self, s: &'a ast::Stmt) {
+            if let ast::StmtKind::Throw(e) = &s.kind {
+                if matches!(&e.kind, ast::ExprKind::Ident(i) if i.name == self.name) {
+                    self.thrown += 1;
+                }
+            }
+        }
+        fn expr(&mut self, e: &'a ast::Expr) {
+            if matches!(&e.kind, ast::ExprKind::Ident(i) if i.name == self.name) {
+                self.uses += 1;
+            }
+        }
+    }
+    let wrapped = ast::Expr {
+        id: ast::NodeId(u32::MAX),
+        kind: ast::ExprKind::Arrow {
+            type_params: vec![],
+            params: vec![],
+            ret: None,
+            throws: None,
+            body: ast::ArrowBody::Block(blk.clone()),
+            is_async: false,
+        },
+        span: blk.span,
+    };
+    let mut u = Uses {
+        name,
+        uses: 0,
+        thrown: 0,
+    };
+    velt_syntax::visit::walk_expr(&wrapped, &mut u);
+    u.uses == u.thrown
 }

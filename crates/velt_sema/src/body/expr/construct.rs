@@ -18,6 +18,9 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
+        if let Some(h) = self.new_through_value(class, args, span) {
+            return h;
+        }
         if let Some(c) = self.proxy_class_name(class) {
             return self.new_expr(&c, args, exp, span);
         }
@@ -90,7 +93,7 @@ impl FnCx<'_, '_> {
             js_numbers: false,
             positions: false,
             js_api: false,
-            rest: false,
+            rest: ctor.is_some_and(|c| crate::body::defaults::has_rest(self.cx, c)),
             defaults: self.cx.adt_param_defaults(d),
         };
         self.collect_iterable_args = self.takes_iterable(d);

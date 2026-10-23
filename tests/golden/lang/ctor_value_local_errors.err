@@ -1,0 +1,4 @@
+ctor_value_local_errors.vlt:7:14: error: class `C` declared in a function can't be read as a value here yet
+ctor_value_local_errors.vlt:10:14: error: class `C` declared in a function can't be read as a value here yet
+ctor_value_local_errors.vlt:22:22: error: class `C` declared in a function can't be read as a value here yet
+ctor_value_local_errors.vlt:32:31: error: class `C` declared in a function can't be read as a value here yet

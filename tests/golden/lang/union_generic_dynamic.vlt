@@ -1,0 +1,229 @@
+// A generic union at `T = unknown` or `any` (`T | Mod<T>`, `T | string`) stays a union of that
+// dynamic member and the others: callers and the generic function agree on it, a value goes to
+// the member whose test it passes (else to the dynamic one), and `typeof` of a member that is
+// a type parameter is the tag of the instantiation's value; `null` is the dynamic member's.
+// Null tests, truthiness, `??`, `?.` and JSON ask that member's value itself, as they do a
+// plain `any` / `unknown`; an object literal of no other member's shape (other fields, or
+// values its fields cannot hold) is that member's. `??` on a `T | Mod<T>` or a plain `T` tests
+// the value at every instantiation.
+interface Mod<T> {
+  default: T;
+}
+
+function kind<T>(mod: T | Mod<T>): string {
+  return typeof mod;
+}
+
+function tag<T>(x: T | string): string {
+  return typeof x === "string" ? "s:" + x : "o:" + typeof x;
+}
+
+function wrap<T>(x: T): T | Mod<T> {
+  return x;
+}
+
+function count<T>(xs: (T | string)[]): number {
+  return xs.length;
+}
+
+function id<T>(x: T | Mod<T>): T | Mod<T> {
+  return x;
+}
+
+function opt<T>(mod: T | Mod<T> | undefined): string {
+  if (mod === undefined) {
+    return "none";
+  }
+  return typeof mod;
+}
+
+function many<T>(xs: (T | Mod<T>)[]): string {
+  return xs.map((x) => typeof x).join(",");
+}
+
+function demo(): void {
+  console.log(kind<unknown>(7), kind<unknown>({ default: 1 }), kind<any>("a"), kind<number>(3));
+  console.log(tag<number>(1), tag<number>("a"), tag<unknown>(2), tag<unknown>("b"));
+  const a: any = 5;
+  const u: unknown = "q";
+  console.log(tag<any>(a), tag<unknown>(u), tag<any>(true));
+  const w = wrap<unknown>(3);
+  console.log(typeof w, String(w));
+  const r: unknown = wrap<any>("z");
+  console.log(r);
+  console.log(count<any>([1, "a", a]), count<unknown>([u]));
+  console.log(JSON.stringify(id<unknown>({ default: 4 })));
+  console.log(opt<unknown>(undefined), opt<unknown>(3), opt<any>({ default: 1 }));
+  console.log(many<unknown>([1, "a", { default: 2 }]), many<any>([null]));
+}
+
+function isNull<T>(x: T | string): string {
+  return `${x === null} ${x === undefined} ${x == null} ${x != null}`;
+}
+
+function isNullM<T>(x: T | Mod<T>): string {
+  return `${x === null} ${x == undefined}`;
+}
+
+function fb<T>(x: T | string | undefined): string {
+  return String(x ?? "dflt");
+}
+
+function fb2<T>(x: T | string): string {
+  return String(x ?? "dflt");
+}
+
+function truthy<T>(x: T | string): boolean {
+  return !!x;
+}
+
+function cond<T>(x: T | Mod<T>): string {
+  return x ? "yes" : "no";
+}
+
+function toJ<T>(x: T | Mod<T>): string | undefined {
+  return JSON.stringify(x);
+}
+
+function texts<T>(x: T | string): string {
+  return String(x) + "|" + `${x}`;
+}
+
+function eq2<T>(a: T | string, b: T | string): string {
+  return `${a === b} ${a == b} ${a !== b} ${a != b}`;
+}
+
+function andOr<T>(x: T | string): string {
+  return String(x && "t") + " " + String(x || "f");
+}
+
+function iff<T>(x: T | string): string {
+  if (x) {
+    return "y";
+  }
+  return "n";
+}
+
+function plain<T>(x: T): string {
+  return `${x === null} ${x == null} ${!x}`;
+}
+
+function orAssign<T>(x: T | string): string {
+  let y = x;
+  y ??= "d";
+  return String(y);
+}
+
+function chained<T>(x: T | Mod<T> | undefined): string {
+  return String(x?.toString());
+}
+
+function fields<T>(x: T | string): string {
+  return JSON.stringify({ v: x, w: [x] });
+}
+
+function count2<T>(xs: (T | string)[]): number {
+  return xs.filter((x) => !!x).length;
+}
+
+function loop<T>(x: T | string): string {
+  while (x) {
+    return "in";
+  }
+  return "out";
+}
+
+function present<T>(x: T | Mod<T>): string {
+  if (x !== null && x !== undefined) {
+    return "some";
+  }
+  return "none";
+}
+
+async function later<T>(x: T | string): Promise<string> {
+  return x ? "t" : "f";
+}
+
+function shape<T>(x: T | Mod<T>): string {
+  return typeof x + " " + JSON.stringify(x);
+}
+
+function nothings(): void {
+  console.log(isNull<unknown>(null), isNull<unknown>(undefined), isNull<any>(null));
+  console.log(isNull<number>(1), isNull<unknown>(0), isNull<unknown>("x"));
+  console.log(isNullM<unknown>(null), isNullM<any>(undefined), isNullM<unknown>({ default: 1 }));
+  console.log(fb<unknown>(null), fb2<unknown>(null), fb2<any>(undefined), fb2<unknown>(0));
+  console.log(truthy<unknown>(0), truthy<any>(null), truthy<unknown>(NaN), truthy<unknown>(3));
+  console.log(cond<unknown>(0), cond<any>(""), cond<unknown>(null), cond<unknown>({ default: 0 }));
+  console.log(toJ<unknown>(null), toJ<any>(3), toJ<unknown>({ default: 2 }));
+  console.log(texts<unknown>(null), texts<unknown>(undefined), texts<any>(0), texts<unknown>("a"));
+  console.log(eq2<unknown>(null, null), eq2<unknown>(null, undefined), eq2<any>(1, 1));
+  console.log(eq2<unknown>("a", "a"), eq2<unknown>(0, null), eq2<number | null>(null, null));
+  console.log(andOr<unknown>(0), andOr<any>(null), andOr<unknown>(5), andOr<unknown>(""));
+  console.log(iff<unknown>(0), iff<unknown>(1), iff<any>(""), iff<any>(NaN));
+  console.log(plain<unknown>(null), plain<unknown>(undefined), plain<any>(0), plain<unknown>(1));
+  console.log(orAssign<unknown>(null), orAssign<any>(undefined), orAssign<unknown>(0));
+  console.log(chained<unknown>(null), chained<unknown>(undefined), chained<any>(7));
+  console.log(fields<unknown>(undefined), fields<any>(null), fields<unknown>(2));
+  console.log(count2<unknown>([0, 1, "", "a", null, undefined, NaN]), count2<any>([false, true]));
+  console.log(loop<unknown>(0), loop<any>(1), present<unknown>(null), present<any>(undefined));
+  console.log(present<unknown>(0), shape<any>({ a: 1, b: 2 }), shape<unknown>({ default: 1, x: 2 }));
+}
+
+interface A {
+  a: number;
+}
+
+function keys<T>(x: T | A): string {
+  const u: unknown = x;
+  return String(Object.keys(u as object).length);
+}
+
+function readB<T>(x: T | A): string {
+  const u: any = x;
+  return String(u.b);
+}
+
+function readDefault<T>(x: T | Mod<number>): string {
+  const u: any = x;
+  return String(u.default);
+}
+
+function orDefault<T>(x: T | Mod<T>): string {
+  return String(x ?? "dflt");
+}
+
+function plainOr<T>(x: T): string {
+  return String(x ?? "d");
+}
+
+class Holder<T> {
+  v: T | Mod<T>;
+  constructor(v: T | Mod<T>) {
+    this.v = v;
+  }
+  get(): string {
+    return String(this.v ?? "box");
+  }
+}
+
+function inField<T>(o: { v: T | Mod<T> }): string {
+  return String(o.v ?? "obj");
+}
+
+function literals(): void {
+  console.log(keys<unknown>({ a: 1, b: 2, c: 3 }), keys<unknown>({ a: 1 }), keys<any>({ a: 1, z: 0 }));
+  console.log(readB<unknown>({ a: 1, b: 2 }), readB<any>({ a: 1, b: 2 }), readB<unknown>({ a: 1 }));
+  console.log(readDefault<unknown>({ default: "s" }), readDefault<unknown>({ default: 1 }));
+  console.log(orDefault<unknown>(null), orDefault<any>(undefined), orDefault<unknown>(0));
+  console.log(orDefault<number>(1), orDefault<unknown>({ default: 2 }) === "[object Object]");
+  console.log(plainOr<unknown>(null), plainOr<any>(undefined), plainOr<null>(null));
+  console.log(plainOr<number | null>(null), plainOr<number>(2), plainOr<string>("") === "");
+  console.log(new Holder<unknown>(null).get(), new Holder<unknown>(5).get(), new Holder<any>(undefined).get());
+  console.log(inField<unknown>({ v: undefined }), inField<unknown>({ v: "x" }), inField<any>({ v: null }));
+}
+
+demo();
+nothings();
+literals();
+later<unknown>(0).then((v) => console.log(v));

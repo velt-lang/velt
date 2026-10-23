@@ -319,6 +319,16 @@ impl FnCx<'_, '_> {
         Some((arrow, fn_ty))
     }
 
+    /// [`method_sig`](Self::method_sig)'s parameter types and result.
+    pub(super) fn method_param_tys(
+        &mut self,
+        t: TyId,
+        prop: &ast::Ident,
+        span: Span,
+    ) -> Option<(Vec<TyId>, TyId)> {
+        self.method_sig(t, prop, span).map(|s| (s.params, s.ret))
+    }
+
     /// The parameter types and result of method `prop` on values of type `t`, when it has one
     /// function type (not generic, no rest parameter).
     fn method_sig(&mut self, t: TyId, prop: &ast::Ident, span: Span) -> Option<Sig> {

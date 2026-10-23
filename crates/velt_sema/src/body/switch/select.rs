@@ -211,6 +211,9 @@ impl FnCx<'_, '_> {
         if self.cx.dynamic(s.expr.ty).is_some() {
             return self.dynamic_typeof_sel(s, &tag, span);
         }
+        if let Some(sel) = self.open_typeof_sel(s, &tag, span) {
+            return sel;
+        }
         let none = nothing_tag(self.cx, s.expr.ty);
         let found = self.slot_sel(s, span, &|cx, slot| match slot.member {
             Some(m) => cx.cx.typeof_tag(m) == tag,
@@ -365,6 +368,48 @@ impl FnCx<'_, '_> {
             touched: (0..s.slots.len()).collect(),
             covered: vec![],
         }
+    }
+
+    /// `case "string":` on `typeof x` with `x` a union with a member whose tag the
+    /// instantiation decides (`T | string`): the value is bound and the guard asks that
+    /// member's value (`open_typeof_test`), which may hold any tag; the members of the tag are
+    /// covered.
+    fn open_typeof_sel(&mut self, s: &Scrut, tag: &str, span: Span) -> Option<Sel> {
+        let ty = s.expr.ty;
+        let core = self.cx.ty.core(ty).unwrap_or(ty);
+        let members = self.cx.union_members(core)?;
+        if !members.iter().any(|m| self.open_member(*m)) {
+            return None;
+        }
+        let none = nothing_tag(self.cx, ty);
+        let (mut touched, mut covered) = (vec![], vec![]);
+        for (k, slot) in s.slots.iter().enumerate() {
+            let open = slot.member.is_some_and(|m| self.open_member(m));
+            let takes = match slot.member {
+                Some(m) => !open && self.cx.typeof_tag(m) == tag,
+                None => tag == none,
+            };
+            if open || takes {
+                touched.push(k);
+            }
+            if takes {
+                covered.push(k);
+            }
+        }
+        let mode = if self.cx.is_copy(ty) {
+            UseMode::Copy
+        } else {
+            UseMode::Borrow
+        };
+        let l = self.new_local("<case>", ty, false, span, LocalKind::Bind);
+        let cur = self.mk(hir::ExprKind::Local(l, mode), ty, span);
+        let guard = self.open_typeof_test(cur, tag, false, span).ok()?;
+        Some(Sel {
+            pat: self.pat(P::Binding(l, mode), ty, span),
+            guard: Some(guard),
+            touched,
+            covered,
+        })
     }
 
     /// `case v:` with a value that is not a literal on a discriminant (`switch (s.kind)`) or on

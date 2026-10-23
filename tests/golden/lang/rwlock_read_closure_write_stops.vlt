@@ -1,0 +1,30 @@
+// A closure literal a function passes on and calls inside a `read` runs by read mode's rules even
+// when the code that made it is plain (sync `main`): its write to the store stops the program,
+// also when nothing aliases the store's objects (they are counted all the same).
+class Item {
+  v: i64 = 0;
+  constructor(v: i64) {
+    this.v = v;
+  }
+}
+class St {
+  items: Item[] = [];
+}
+function setup(): shared<RwLock<St>> {
+  const rw = shared(new RwLock<St>(new St()));
+  rw.write((s) => {
+    s.items.push(new Item(1));
+  });
+  return rw;
+}
+function g(rw: shared<RwLock<St>>, cb: (it: Item) => i64): i64 {
+  return rw.read((s) => cb(s.items[0]));
+}
+function main() {
+  const rw = setup();
+  const n = g(rw, (it) => {
+    it.v = 9;
+    return it.v;
+  });
+  console.log(n, rw.read((s) => s.items[0].v));
+}

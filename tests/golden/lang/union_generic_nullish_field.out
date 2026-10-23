@@ -1,0 +1,8 @@
+o 1 s o
+m 2 s
+d 2 s
+"deep" [1,2] "x"
+"empty" {"k":1} "z"
+"none" "y" "none" [3]
+"m" {"default":1} "q"
+012 kkk

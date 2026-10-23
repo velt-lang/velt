@@ -258,6 +258,51 @@ fn views_of_a_shared_typed_array_are_errors() {
 }
 
 #[test]
+fn rwlock_read_callbacks_cannot_modify_the_value() {
+    ok_src(
+        "function main() { const rw = shared(new RwLock<number[]>([1])); rw.write((v) => { v.push(2); }); console.log(rw.read((v) => v.length)); }",
+    );
+    let r = err_src(
+        "function main() { const rw = shared(new RwLock<number[]>([1])); rw.read((v) => { v.push(2); }); }",
+    );
+    assert!(
+        r.contains("the function passed to `read` modifies the locked value"),
+        "{r}"
+    );
+    let r = err_src(
+        "function bump(xs: number[]) { xs[0] += 1; } function main() { const rw = shared(new RwLock<number[]>([1])); rw.read((v) => bump(v)); }",
+    );
+    assert!(r.contains("modifies the locked value"), "{r}");
+    // A named function is checked like a literal: an object nothing aliases has no count, so
+    // read mode could not stop the write when it runs.
+    let r = err_src(
+        "class C { n: i64 = 0; } function bump(c: C) { c.n += 1; } function main() { const rw = shared(new RwLock<C>(new C())); rw.read(bump); }",
+    );
+    assert!(r.contains("modifies the locked value"), "{r}");
+    ok_src(
+        "class C { n: i64 = 0; } function get(c: C): i64 { return c.n; } function main() { const rw = shared(new RwLock<C>(new C())); console.log(rw.read(get)); }",
+    );
+    let r = err_src(
+        "class C { n: i64 = 0; } function f(rw: shared<RwLock<C>>, cb: (c: C) => void) { rw.read(cb); } function main() { f(shared(new RwLock<C>(new C())), (c) => { c.n += 1; }); }",
+    );
+    assert!(
+        r.contains("`read` needs a function literal or a named function"),
+        "{r}"
+    );
+    let r = err_src("function main() { const rw = shared(new RwLock<number[]>([1])); rw.with((v) => v.length); }");
+    assert!(r.contains("no method named `with`"), "{r}");
+    let r = err_src(
+        "function main() { const m = shared(new Mutex<number[]>([1])); m.read((v) => v.length); }",
+    );
+    assert!(r.contains("no method named `read`"), "{r}");
+    let r = err_src("function main() { const rw = shared(new RwLock<number[]>([1])); rw.read(async (v) => v.length); }");
+    assert!(
+        r.contains("the function passed to `read` cannot be async"),
+        "{r}"
+    );
+}
+
+#[test]
 fn a_function_changing_map_entries_it_loops_over_is_an_error() {
     // A map loop's bindings are not bound into the map, so this is the loop's own evidence
     // (`Ctx::loop_roots`) and not the parameter's mode.

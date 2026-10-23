@@ -223,7 +223,9 @@ impl FnLower<'_, '_> {
             return;
         }
         let a = self.addr(p);
-        let f = self.cx.func(Work::Glue(Glue::ManyCheck, ty));
+        let f = self
+            .cx
+            .func_direct(Work::Glue(Glue::ManyCheck, ty), self.mode);
         self.call(vir::Callee::Func(f), vec![a], None, false);
     }
 }

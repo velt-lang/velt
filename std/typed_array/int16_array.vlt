@@ -121,17 +121,17 @@ export class Int16Array extends TypedArray implements Iterable<number> {
   }
 
   /** The buffer the elements are in. */
-  get buffer(): ArrayBuffer {
+  override get buffer(): ArrayBuffer {
     return this.buf;
   }
 
   /** Where the first element is in `buffer`, in bytes. */
-  get byteOffset(): number {
+  override get byteOffset(): number {
     return this.off as number;
   }
 
   /** The size of the elements in bytes: `length * BYTES_PER_ELEMENT`. */
-  get byteLength(): number {
+  override get byteLength(): number {
     return (this.len * 2) as number;
   }
 
