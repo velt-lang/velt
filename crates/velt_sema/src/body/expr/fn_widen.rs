@@ -304,18 +304,20 @@ impl FnCx<'_, '_> {
             (
                 TyKind::FnPtr {
                     params: fp,
+                    ret: fr,
                     rest: frest,
                     ..
                 },
                 TyKind::FnPtr {
                     params: tp,
+                    ret: tr,
                     rest: trest,
                     ..
                 },
             ) => {
                 fp.len() == tp.len()
                     && frest == trest
-                    && fp != tp
+                    && (fp != tp || fr != tr)
                     && !t.has_error(from)
                     && !t.has_error(to)
             }

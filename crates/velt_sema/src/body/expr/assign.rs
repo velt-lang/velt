@@ -229,8 +229,15 @@ impl FnCx<'_, '_> {
                 .err(super::assign_pattern::value_use_message(target), span);
             return self.error_expr(span);
         }
-        let v = self.expr(target, None, Want::Borrow);
-        let v = self.nullish_assigned_read(op, &a, v, span);
+        // `a = b = null`: the value of `b = null` is the `null` assigned, not `b` read back (of
+        // `b`'s type, which `a`'s may not take), as in TypeScript; a literal is evaluated again.
+        let v = match assigned_literal(op, value) {
+            Some(lit) => self.expr(lit, exp, Want::Move),
+            None => {
+                let v = self.expr(target, None, Want::Borrow);
+                self.nullish_assigned_read(op, &a, v, span)
+            }
+        };
         let ty = v.ty;
         let block = hir::Block {
             stmts: vec![hir::Stmt {
@@ -757,5 +764,19 @@ fn written_nothings(e: &ast::Expr) -> Option<Nothing> {
             "null" => Nothing::Null,
             _ => Nothing::Undefined,
         }),
+    }
+}
+
+/// The literal a plain assignment's value `value` is (`b = null`, `b = c = 0`, through
+/// parentheses), which the assignment's own value then is.
+fn assigned_literal(op: Option<ast::BinaryOp>, value: &ast::Expr) -> Option<&ast::Expr> {
+    if op.is_some() {
+        return None;
+    }
+    match &value.kind {
+        ast::ExprKind::Paren(inner) => assigned_literal(None, inner),
+        ast::ExprKind::Assign { op, value, .. } => assigned_literal(*op, value),
+        ast::ExprKind::Lit(_) => Some(value),
+        _ => nothing_word(value).map(|_| value),
     }
 }
