@@ -18,7 +18,7 @@ use std::collections::BTreeSet;
 
 use velt_common::Span;
 
-use super::regions::{pat_locals, reach};
+use super::regions::{holds_shared, pat_locals, reach};
 use crate::body::places::{is_place, place_root};
 use crate::ctx::Ctx;
 use crate::defs::{BodyState, FnKind};
@@ -267,6 +267,10 @@ impl Walk<'_, '_, '_> {
         }
         for (a, b) in call_flows(self.s, callee, args) {
             match b {
+                // A call changes what is inside an argument; one whose type holds no shared
+                // value (`u8[]`, `i64[]`, a struct of numbers) keeps nothing of another (as
+                // `super::stores` checks a call's stores).
+                Some(b) if !holds_shared(self.cx, args[b].ty) => {}
                 Some(b) => self.store(&args[b], bits[a]),
                 None => self.store_into_fn(fn_bits, bits[a]),
             }

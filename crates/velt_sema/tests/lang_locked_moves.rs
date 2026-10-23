@@ -156,3 +156,21 @@ fn a_variable_declared_in_the_loop_is_not_used_by_the_next_iteration() {
     );
     assert!(moves(&p, "run", "batch"));
 }
+
+#[test]
+fn a_call_that_only_changes_bytes_of_an_argument_stores_nothing_in_it() {
+    // `serve` changes the locked value and copies bytes of it into an outside buffer: a `u8[]`
+    // holds no reference, so the call keeps nothing of the value. This was reported as "this
+    // call may store a part of the locked value outside it, and also changes that argument".
+    let p = program(
+        "class Out { buf: u8[] = Buffer.alloc(64); length: i64 = 0;
+           put(data: u8[]) { this.buf.set(data, this.length as usize); this.length += data.length as i64; } }
+         class Store { values: u8[][] = [[1, 2, 3]]; reads: i64 = 0; }
+         function serve(s: Store, out: Out) { s.reads += 1; out.put(s.values[0]); }
+         function run(m: shared<Mutex<Store>>, out: Out) {
+           m.with((s) => serve(s, out));
+         }
+         function main() { const out = new Out(); run(shared(new Mutex(new Store())), out); console.log(out.length); }",
+    );
+    let _ = p;
+}
