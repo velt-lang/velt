@@ -7,5 +7,9 @@ caught o.m
 forEach b
 map m1
 array b
+caught field -1 -1
 7
+w 8
 rethrown true offline
+z
+wrapped

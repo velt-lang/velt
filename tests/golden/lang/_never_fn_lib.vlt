@@ -4,3 +4,4 @@ const boom = () => {
 };
 export const libVoid: () => void = boom;
 export const libCast = boom as () => void;
+export const libNumber: () => number = boom;

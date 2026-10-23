@@ -10,3 +10,4 @@ x[[object Object]][object Object] y[2]2 z[1,2]1,2
 [object Object]|[object Object] null|null s|s
 <[object Object]> <1,[object Object]> <[object Object],3>
 [object Object],[object Object] <1,2>
+<[object Object]> <null> <[object Object]>

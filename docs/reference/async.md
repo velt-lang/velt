@@ -258,7 +258,9 @@ like any stored promise:
   `p.then(null, g)` and `p.then(undefined, g)` are `p.catch(g)`, and `p.then(f, null)` is
   `p.then(f)`, as in JS.
 - `p.catch(g)`: `g(reason)` when `p` rejects; a value passes through, so `g` gives the
-  promise's value type, or nothing: `p.catch(() => {})` (or an `async` handler) is a
+  promise's value type (a handler that only throws, `(e) => { throw e; }`, keeps it; on a
+  promise that never fulfills, `Promise.reject(e)`, the new promise gives what `g` gives), or
+  nothing: `p.catch(() => {})` (or an `async` handler) is a
   `Promise<T | undefined>`, TypeScript's `Promise<T | void>`, which gives `p`'s value or
   `undefined` once `g` handled a rejection (**Planned**: a `catch` that changes the value
   type otherwise, `T | U`).

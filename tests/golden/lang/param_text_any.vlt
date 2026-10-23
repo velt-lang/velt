@@ -72,3 +72,4 @@ console.log(new Box<any>({ q: 1 }).text(), new Box<unknown>(null).text(), new Bo
 // Lists of dynamic values as `T`: written as `join()` writes them.
 console.log(tpl<unknown[]>([{ c: 1 }]), tpl<any[]>([1, { d: 2 }]), tpl<[any, number]>([{}, 3]));
 console.log(show<object[]>([{}, {}]), tpl<number[]>([1, 2]));
+console.log(tpl<unknown[] | null>([{ h: 1 }]), tpl<unknown[] | null>(null), tpl<string | unknown[]>([{}]));

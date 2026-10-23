@@ -479,6 +479,8 @@ pub(crate) struct FnCx<'a, 'm> {
     /// The arrow checked next is a `then` / `catch` / `finally` callback: its result type is
     /// its own (`FnState::never_end`).
     pub promise_callback: bool,
+    /// `frameless_named_fn` is reading the value it may wrap (not again inside that read).
+    pub named_fn_probe: bool,
     /// The value being checked fills slot `.1` of interface `.0` in an object literal implementing
     /// it, and is written at `.2` (`expr/iface_object.rs`): a closure written there records
     /// what it throws for the slot before its error type is computed.
@@ -582,6 +584,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             outer: vec![],
             std_callback: None,
             promise_callback: false,
+            named_fn_probe: false,
             literal_slot: None,
             call_temps: vec![],
             held_recheck: Vec::new(),

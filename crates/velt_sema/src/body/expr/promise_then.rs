@@ -26,6 +26,8 @@ pub(crate) fn is_promise_callback_fn(name: &str) -> bool {
             | "promiseThenElseAsync"
             | "promiseCatch"
             | "promiseCatchAsync"
+            | "promiseCatchNever"
+            | "promiseCatchNeverAsync"
             | "promiseCatchVoid"
             | "promiseCatchVoidAsync"
             | "promiseFinally"
@@ -242,7 +244,8 @@ impl FnCx<'_, '_> {
             let h = match self.callback_adapter(a, hint, super::callback::CallbackMode::Plain) {
                 Some(h) => h,
                 None => {
-                    self.promise_callback = true;
+                    // Only the callback itself (an arrow), not one nested in another callee.
+                    self.promise_callback = super::args::as_arrow(a).is_some();
                     let h = self.expr(a, Some(hint), Want::Move);
                     self.promise_callback = false;
                     h
@@ -342,6 +345,17 @@ impl FnCx<'_, '_> {
                 // Set from the prelude function's result type below (`T | undefined`, also when
                 // `T` holds a nothing).
                 (name, vec![t, e, g], recv.ty, t, g)
+            }
+            ("catch", [(u, xg)]) if self.cx.ty.is_bottom(t) && !self.cx.ty.is_bottom(*u) => {
+                // A promise that never fulfills (`Promise.reject(e)`, a `then` whose callback
+                // only throws): the new promise gives what the handler gives.
+                let g = xg.unwrap_or(never);
+                let name = if all_async {
+                    "promiseCatchNeverAsync"
+                } else {
+                    "promiseCatchNever"
+                };
+                (name, vec![e, *u, g], recv.ty, *u, g)
             }
             ("catch", [(u, xg)]) if self.cx.ty.is_bottom(*u) && t != *u => {
                 // A handler that only throws (`p.catch((e) => { throw e; })`): the promise's value

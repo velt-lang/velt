@@ -203,6 +203,71 @@ impl FnCx<'_, '_> {
         Some(self.wrap(callee, want, &args, wrap, Some(exp)))
     }
 
+    /// Where no frame holds a hidden local (`frameless`: module state, a field initializer): a
+    /// named function value `e` (a module-level function or constant) whose type differs from
+    /// the function type `exp` only in its result (`never` for another one) or in what it
+    /// throws, wrapped as `(p…) => e(p…)` calling it by name and typed by `exp`, so what it
+    /// throws reaches `exp`'s callers (a throwing function stored into a `() => void` field).
+    /// A field initializer wraps a named function value of `exp`'s shape always: the value
+    /// read there is called through the wrapper, as an arrow written there is (#1475). `None`
+    /// for anything else.
+    pub(crate) fn frameless_named_fn(
+        &mut self,
+        e: &ast::Expr,
+        exp: Option<TyId>,
+    ) -> Option<hir::Expr> {
+        if !self.frameless() || self.named_fn_probe {
+            return None;
+        }
+        let ast::ExprKind::Ident(id) = &e.kind else {
+            return None;
+        };
+        if self.is_local_name(&id.name) {
+            return None;
+        }
+        let exp = exp?;
+        let TyKind::FnPtr {
+            params,
+            ret,
+            throws,
+            rest,
+        } = self.cx.ty.kind(exp).clone()
+        else {
+            return None;
+        };
+        // Read, not tried: a trial would roll back the body of the closure a constant holds,
+        // which its first read checks.
+        self.named_fn_probe = true;
+        let found = self.expr(e, Some(exp), Want::Borrow).ty;
+        self.named_fn_probe = false;
+        let TyKind::FnPtr {
+            params: fp,
+            ret: fr,
+            throws: ft,
+            rest: fx,
+        } = self.cx.ty.kind(found).clone()
+        else {
+            return None;
+        };
+        let never = self.cx.ty.never;
+        let ret_differs = fr != ret && fr == never;
+        if fp != params || fx != rest || (fr != ret && fr != never) {
+            return None;
+        }
+        let field = self.owner.is_some();
+        if !field && (found == exp || (!ret_differs && ft == throws)) {
+            return None;
+        }
+        let shape = Shape::of(params.len(), rest);
+        Some(self.wrap(
+            Callee::Named(e.clone()),
+            shape,
+            &shape.same(),
+            Wrap::Call,
+            Some(exp),
+        ))
+    }
+
     /// What a wrapper of the function `arg` names calls: a module-level function by its name
     /// (it can't be reassigned, and a call by name fills in defaults), a local's value read
     /// once (a closure `const` keeps filling in its parameters' defaults).

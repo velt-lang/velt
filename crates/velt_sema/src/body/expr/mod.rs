@@ -163,6 +163,9 @@ impl FnCx<'_, '_> {
     pub fn expr_coerce(&mut self, e: &ast::Expr, exp: TyId, want: Want) -> hir::Expr {
         // `const f: (s: string) => void = count`: a named function adapted to the type.
         let fn_ty = self.cx.ty.core(exp).unwrap_or(exp);
+        if let Some(h) = self.frameless_named_fn(e, Some(exp)) {
+            return self.coerce(h, exp);
+        }
         let adapted = match self.cx.ty.kind(fn_ty) {
             TyKind::FnPtr { .. } => self.callback_adapter(e, exp, callback::CallbackMode::Plain),
             _ => None,
