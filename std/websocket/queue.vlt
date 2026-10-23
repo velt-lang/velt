@@ -188,16 +188,18 @@ export class SendQueue {
     return this.queued(first);
   }
 
-  /** Queues a frame carrying `payload`; a close frame is the last one. */
-  /** Queues the answer to a ping (`pushBytes`), counted in `pongs`. */
+  /** Queues the answer to a ping (`pushBytes`); counted in `pongs` if it was queued. */
   pushPong(payload: u8[]): i64 {
     const r = this.pushBytes(OP_PONG, payload);
-    if (r >= 0) {
+    const status = r & STATUS;
+    if (status == QUEUED || status == OVER) {
       const len = payload.length as i64;
       this.pongs += headSize(len, this.client) + len;
     }
     return r;
   }
+
+  /** Queues a frame carrying `payload`; a close frame is the last one. */
 
   pushBytes(op: i64, payload: u8[]): i64 {
     const no = this.refusal();
