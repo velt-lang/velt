@@ -26,6 +26,7 @@
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
+use super::args::Callable;
 use super::callback::synth;
 use crate::body::{FnCx, Want};
 use crate::ctx::Item;
@@ -142,8 +143,26 @@ impl FnCx<'_, '_> {
         if let Some(h) = self.class_value_local(d, (target, key), lit, want, span) {
             return Some(h);
         }
+        if self.cx.nested.iter().any(|n| n.item == Item::Def(d)) {
+            self.local_class_out_of_reach(&id.name, span);
+            return Some(self.error_expr(span));
+        }
         let lit = self.class_value_lit(&id.name, &class, f, span)?;
         Some(self.expr(&lit, Some(target), want))
+    }
+
+    /// Class `name`, declared in a function, read as a value where its block's `const`
+    /// (`ctor_locals`) is out of reach: in a member of a class, or a parameter default of a
+    /// function declared in that function.
+    fn local_class_out_of_reach(&mut self, name: &str, span: Span) {
+        self.cx.error(
+            Diagnostic::error(
+                format!("class `{name}` declared in a function can't be read as a value here yet"),
+                span,
+            )
+            .with_note("a class declared in a function is one object per run of its declaration; a method or field initializer of a class, or a parameter default, doesn't reach it yet (#1444)")
+            .with_note(format!("read `{name}` in the function declaring it, or in a closure there: `const get = (): new () => {name} => {name};`")),
+        );
     }
 
     /// The class named by `e`, when `e` names one (not a variable).
@@ -163,44 +182,82 @@ impl FnCx<'_, '_> {
             .then_some(d)
     }
 
-    /// Does `e` name a generic class (`Box` of `class Box<T>`)?
-    pub(super) fn names_generic_class(&mut self, e: &ast::Expr) -> bool {
-        self.named_class(e)
-            .is_some_and(|d| self.cx.adt(d).is_some_and(|a| a.generics.len() > 0))
+    /// Does `e` name a class?
+    pub(super) fn names_class(&mut self, e: &ast::Expr) -> bool {
+        self.named_class(e).is_some()
     }
 
-    /// A class named as argument `arg` for parameter type `pty`, a construct signature over the
+    /// A class named as argument `i` of `args` for parameter type `pty`, a construct signature over the
     /// callee's type parameters (`reg<T>(C: new (n: number) => T)` called as `reg(A)`): its
-    /// instance type fixes the slots of the signature's result first, as TypeScript infers
-    /// them, so the class is checked at the signature type the call instantiates and is the
-    /// one constant of that type (`class_value_global`), not a new object per call.
+    /// instance type fixes the slots of the signature's result the other arguments left (they
+    /// are checked first, `arg_order`), as TypeScript infers them, so the class is checked at
+    /// the signature type the call instantiates and is the one constant of that type
+    /// (`class_value_global`), not a new object per call. A slot an argument fixed to a
+    /// subclass's instance (`mk(A, new B())`) becomes the class's, and classes passed for one
+    /// slot (`same(B, A)`) fix it to the one the others extend: the common supertype
+    /// TypeScript infers. `given` are the slots fixed before any argument.
     pub(super) fn class_arg_slots(
         &mut self,
-        arg: &ast::Expr,
-        pty: TyId,
+        (i, args): (usize, &[ast::Expr]),
+        c: &Callable,
         slots: &mut [Option<TyId>],
+        given: &[bool],
     ) {
+        let Some((d, ret)) = self.class_arg_result(&args[i], c.params[i].ty) else {
+            return;
+        };
+        let mut d = d;
+        if matches!(self.cx.ty.kind(ret), TyKind::Param(_)) {
+            let others: Vec<DefId> = (args.iter().zip(&c.params))
+                .filter_map(|(a, p)| self.class_arg_result(a, p.ty))
+                .filter(|&(_, r)| r == ret)
+                .map(|(o, _)| o)
+                .collect();
+            let top = others
+                .iter()
+                .copied()
+                .find(|&t| others.iter().all(|&o| self.cx.class_extends(o, t)));
+            if let Some(t) = top.filter(|&t| self.cx.class_extends(d, t)) {
+                d = t;
+            }
+        }
+        let instance = self.cx.ty.intern(TyKind::Adt(d, vec![]));
+        if let TyKind::Param(k) = *self.cx.ty.kind(ret) {
+            let k = k as usize;
+            let sub = slots
+                .get(k)
+                .copied()
+                .flatten()
+                .and_then(|t| self.cx.class_of(t));
+            if let (Some((sub, _)), false) = (sub, given.get(k).copied().unwrap_or(true)) {
+                if sub != d && self.cx.class_extends(sub, d) {
+                    slots[k] = Some(instance);
+                }
+                return;
+            }
+        }
         if slots.iter().all(Option::is_some) {
             return;
         }
-        // A generic class's instance type is known only with its type arguments.
-        let Some(d) = self.named_class(arg) else {
-            return;
-        };
-        if self.cx.adt(d).is_some_and(|a| a.generics.len() > 0) {
-            return;
-        }
-        let core = self.cx.ty.core(pty).unwrap_or(pty);
-        let Some(f) = self.cx.ctor_sig(core) else {
-            return;
-        };
-        let TyKind::FnPtr { ret, .. } = self.cx.ty.kind(f).clone() else {
-            return;
-        };
-        let instance = self.cx.ty.intern(TyKind::Adt(d, vec![]));
         let mut tried = slots.to_vec();
         if self.cx.match_ty(ret, instance, &mut tried) {
             slots.copy_from_slice(&tried);
+        }
+    }
+
+    /// The class `arg` names, not generic (a generic class's instance type is known only with
+    /// its type arguments), and the result type of the construct signature `pty` it is passed
+    /// for.
+    fn class_arg_result(&mut self, arg: &ast::Expr, pty: TyId) -> Option<(DefId, TyId)> {
+        let d = self.named_class(arg)?;
+        if self.cx.adt(d).is_some_and(|a| a.generics.len() > 0) {
+            return None;
+        }
+        let core = self.cx.ty.core(pty).unwrap_or(pty);
+        let f = self.cx.ctor_sig(core)?;
+        match self.cx.ty.kind(f) {
+            TyKind::FnPtr { ret, .. } => Some((d, *ret)),
+            _ => None,
         }
     }
 

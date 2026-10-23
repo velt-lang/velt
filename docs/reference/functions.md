@@ -956,9 +956,15 @@ async function main() {
   signature may be left out (`new (x?: number) => Point`). A class has one value per signature
   type, as JavaScript has one class object: `C === Point`, `kinds.includes(Point)`,
   `Object.is` and `Map` and `Set` keys see the same object, also where a generic function
-  takes the class (`register<T>(C: new (x: number) => T)` called as `register(Point)`). A class
+  takes the class (`register<T>(C: new (x: number) => T)` called as `register(Point)`; as in
+  TypeScript, the call's other arguments take part in inferring `T`, which is the common
+  supertype: `mk(Point3, new Point(1))` for `mk<T>(C: new (x: number) => T, v: T)` is
+  `T = Point`, in either argument order). A class
   declared in a function gets a new value each time its declaration runs (each call, each loop
-  iteration), as JavaScript makes a new class object there. Two cases differ from JavaScript,
+  iteration), as JavaScript makes a new class object there; a function declared there that
+  reads the class as a value reads that value too (it becomes a closure, as one using the
+  enclosing function's variables does). Reading such a class as a value from a method or field
+  initializer of a class, or from a parameter default, is an error for now (#1444). Two cases differ from JavaScript,
   which has one object per class (#1444): one class at two signature types is two objects
   (`new () => Point` and `new (x?: number) => Point`, or `Box` at `new (v: number) =>
   Box<number>` and at `new (v: string) => Box<string>`), so comparing values of two signature

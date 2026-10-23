@@ -431,7 +431,7 @@ impl FnCx<'_, '_> {
                 self.number_slot_from_callback(c, p.ty, slots, has_float_lit(&args[i]));
                 self.number_slot_from_context(p.ty, slots, context);
             }
-            self.class_arg_slots(&args[i], p.ty, slots);
+            self.class_arg_slots((i, args), c, slots, &given);
             let mut known: Vec<Option<TyId>> =
                 slots.iter().zip(context).map(|(s, c)| s.or(*c)).collect();
             // A parameter of a type parameter that keeps literal keys (`K extends keyof T`)
