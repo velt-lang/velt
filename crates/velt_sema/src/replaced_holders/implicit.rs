@@ -561,6 +561,7 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::MayHoldPrimitive
         | I::FnCapturesNothing
         | I::ClosureSibling(_)
+        | I::InitSlots(..)
         | I::SimdShuffle(..)
         | I::Sqrt
         | I::Floor

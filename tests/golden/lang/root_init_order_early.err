@@ -1,0 +1,6 @@
+error: class `Box` is used before its declaration
+error: `BASE` is used before its declaration
+error: class `B` is used before its declaration
+error: class `Base` is used before its declaration
+error: enum `Mode` is used before its declaration
+top-level statements and declarations run in order

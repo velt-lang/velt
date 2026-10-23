@@ -1,0 +1,13 @@
+// A function made by a statement above a top-level `const` reads the constant when it is
+// called, after the declaration ran: as in Node, no error (#1438).
+const get = (): number => K;
+const K = 1;
+console.log(get());
+
+setTimeout(() => console.log(LIST.length), 0);
+const LIST = [1, 2, 3];
+console.log("sync");
+
+const ops = { total: (): number => LATER.reduce((a, b) => a + b, 0) };
+const LATER = [4, 5];
+console.log([1, 2].map((x) => x * 2 + ops.total()));

@@ -1,0 +1,18 @@
+// check: no leaks
+// Two extensions of one object type that give a field of one name different types (#1383): the
+// base's objects have room for the first one's fields, and a cast to the other one copies, which
+// is fine while the program writes no field through it.
+type VNode = { type: string; children: VNode[] };
+interface InternalVNode extends VNode {
+  _sub?: VNode | null;
+  _ns?: boolean;
+}
+interface HydrateVNode extends VNode {
+  _sub?: VNode;
+}
+function mark(v: VNode): void {
+  (v as InternalVNode)._ns = true;
+  const h = v as HydrateVNode;
+  console.log((v as InternalVNode)._ns, h.type);
+}
+mark({ type: "x", children: [] });
