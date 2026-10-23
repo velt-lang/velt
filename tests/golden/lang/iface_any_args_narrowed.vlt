@@ -1,0 +1,34 @@
+// check: no leaks
+// A value narrowed with `instanceof` after a conversion to other type arguments (#1185) and
+// kept after the call: the object itself, released by the converted value it came from.
+interface Ctx<P = {}> {
+  props: P;
+  name(): string;
+}
+
+class Impl implements Ctx<number> {
+  props: number = 1;
+  name(): string {
+    return "impl";
+  }
+}
+
+const kept: Impl[] = [];
+function keep(c: Ctx<any>): void {
+  if (c instanceof Impl) {
+    kept.push(c);
+  }
+}
+
+keep(new Impl());
+const second = new Impl();
+second.props = 2;
+keep(second);
+const other: Ctx<string> = {
+  props: "s",
+  name(): string {
+    return "literal";
+  },
+};
+keep(other);
+console.log(kept.length, kept[1] === second, kept[1].props, kept[0].name());

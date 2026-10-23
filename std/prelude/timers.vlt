@@ -10,14 +10,16 @@
 // around it, as in Node; it runs once the code that created it and the callbacks that code
 // queued are done. An error it throws is uncaught: it ends the process at the throw, as in Node,
 // so catch inside it.
-// A pending timer keeps the process alive after `main` returns, like a Node `Timeout` (a handle);
-// `unref()` lets the process exit without it. Spawned tasks and promises are not handles: what
-// keeps them going is what they wait for.
+// A pending timer keeps the process alive after `main` returns, like a Node `Timeout` (a handle):
+// a timeout until its callback starts, an interval until it is cleared. `unref()` lets the
+// process exit without it. Spawned tasks and promises are not handles: what keeps them going is
+// what they wait for (a callback's promise too, once it started).
 // Timers are ordinary compiled Velt promises: no code pointer is cached anywhere, so `velt dev`
 // hot reload needs no special handling.
 
 declare function velt_rt_keep_alive_acquire();
 declare function velt_rt_keep_alive_release();
+declare async function velt_rt_timer_unref_due(): Promise<bool>;
 declare function velt_rt_timer_new(ms: i64): u64;
 declare async function velt_rt_timer_turn(timer: u64, gate: u64): Promise<void>;
 declare function velt_rt_timer_again(timer: u64, ms: i64);
@@ -25,18 +27,16 @@ declare function velt_rt_timer_clear(timer: u64);
 declare function velt_rt_timer_free(timer: u64);
 
 // A timer's state, behind one lock shared by the handle and the task. While the timer is ref'd
-// and has work left (a timeout until its callback's promise settles, an interval until it is
-// cleared and its runs in progress settled), it holds one of the runtime's keep-alive
-// references, so the process outlives `main`, like a ref'd Node `Timeout`. Every change goes
-// through `update`, which takes or releases that reference exactly when the condition changes.
+// and pending (a timeout until its callback starts, an interval until it is cleared), it holds
+// one of the runtime's keep-alive references, so the process outlives `main`, like a ref'd Node
+// `Timeout`. Every change goes through `update`, which takes or releases that reference exactly
+// when the condition changes.
 class TimerState {
   // The task has started a run (a timeout: its only one).
   started: bool;
-  // Runs whose promise has not settled yet (an interval's runs may overlap).
-  running: i64;
   // `clear()` stopped the timer.
   stopped: bool;
-  // The task has ended.
+  // The timer will not run again (a timeout whose callback started, or a task that ended).
   finished: bool;
   // `ref()` (the default) or `unref()`.
   refd: bool;
@@ -47,7 +47,6 @@ class TimerState {
 
   constructor(timer: u64) {
     this.started = false;
-    this.running = 0;
     this.stopped = false;
     this.finished = false;
     this.refd = true;
@@ -57,8 +56,7 @@ class TimerState {
 
   // Takes or releases the keep-alive reference to match the state.
   update() {
-    const busy = this.running > 0 || (!this.finished && !this.stopped);
-    const want = this.refd && busy;
+    const want = this.refd && !this.finished && !this.stopped;
     if (want && !this.held) {
       velt_rt_keep_alive_acquire();
     } else if (!want && this.held) {
@@ -74,28 +72,33 @@ class TimerState {
     this.timer = 0;
   }
 
-  // The task is due to run: true if it should (it was not cleared), and a run is now in
-  // progress.
-  begin(): bool {
-    if (this.stopped) {
+  // The task is due to run: TIMER_RUN if it should, TIMER_SKIP if not (it was cleared, or it
+  // is unref'd and `ending`: Node exits without running an unref'd timer once nothing else is
+  // left, though it is due), TIMER_ASK when it is unref'd and the runtime must be asked first
+  // (`asked` false: velt_rt_timer_unref_due, then again with its answer). `last`: it runs no
+  // more after this (a timeout), so the timer no longer keeps the process alive, as in Node.
+  begin(last: bool, asked: bool, ending: bool): i32 {
+    if (this.stopped || (!this.refd && asked && ending)) {
       this.finished = true;
       this.update();
-      return false;
+      return TIMER_SKIP;
+    }
+    if (!this.refd && !asked) {
+      return TIMER_ASK;
     }
     this.started = true;
-    this.running += 1;
-    return true;
-  }
-
-  // A run's promise settled; `last`: the task ends with it (a timeout).
-  end(last: bool) {
-    this.running -= 1;
     if (last) {
       this.finished = true;
+      this.update();
     }
-    this.update();
+    return TIMER_RUN;
   }
 }
+
+// What `TimerState.begin` returns.
+const TIMER_RUN: i32 = 0;
+const TIMER_SKIP: i32 = 1;
+const TIMER_ASK: i32 = 2;
 
 /** Handle of a pending `setTimeout` / `setImmediate` task or of a `setInterval` schedule. */
 export class Timer {
@@ -111,8 +114,7 @@ export class Timer {
   /**
    * Cancels the task if it has not started yet, and an interval's future runs at any time (a
    * no-op on a timeout that started, like JS `clearTimeout`). A cleared timer no longer keeps
-   * the process alive (an interval's run in progress still does, until its promise settles).
-   * Dropping the handle does not cancel.
+   * the process alive. Dropping the handle does not cancel.
    */
   clear() {
     const repeats = this.repeats;
@@ -244,11 +246,15 @@ async function fireOnce<E>(
   state: shared<Mutex<TimerState>>,
 ): Promise<void> {
   await velt_rt_timer_turn(timer, 0);
-  const go = state.with((s) => {
+  let go = state.with((s) => {
     s.release();
-    return s.begin();
+    return s.begin(true, false, false);
   });
-  if (!go) {
+  if (go == TIMER_ASK) {
+    const ending = await velt_rt_timer_unref_due();
+    go = state.with((s) => s.begin(true, true, ending));
+  }
+  if (go != TIMER_RUN) {
     return;
   }
   try {
@@ -256,7 +262,6 @@ async function fireOnce<E>(
   } catch (e) {
     uncaught(e);
   }
-  state.with((s) => s.end(true));
 }
 
 async function fireEvery<E>(
@@ -267,20 +272,19 @@ async function fireEvery<E>(
 ): Promise<void> {
   while (true) {
     await velt_rt_timer_turn(timer, 0);
-    const go = state.with((s) => {
-      const go = s.begin();
-      if (!go) {
-        s.release();
-      }
-      return go;
-    });
-    if (!go) {
+    let go = state.with((s) => s.begin(false, false, false));
+    if (go == TIMER_ASK) {
+      const ending = await velt_rt_timer_unref_due();
+      go = state.with((s) => s.begin(false, true, ending));
+    }
+    if (go != TIMER_RUN) {
+      state.with((s) => s.release());
       return;
     }
     // Not awaited: the next run is due `ms` after this one started, whether or not it has
     // settled. Queued after the callback's synchronous part, like Node, so a timer it creates
     // with the same delay runs first.
-    const run = runOnce(task, state.clone());
+    const run = runOnce(task);
     // Not again once the callback cleared it (checked under the lock `clear()` takes), like
     // Node, which does not re-insert a timer whose `_idleTimeout` is -1.
     const again = state.with((s) => {
@@ -297,18 +301,13 @@ async function fireEvery<E>(
   }
 }
 
-// One run of an interval: ends it in the state when its promise settles. An error is uncaught,
-// as in Node: it ends the process.
-async function runOnce<E>(
-  task: () => Promise<void, E>,
-  state: shared<Mutex<TimerState>>,
-): Promise<void> {
+// One run of an interval. An error is uncaught, as in Node: it ends the process.
+async function runOnce<E>(task: () => Promise<void, E>): Promise<void> {
   try {
     await task();
   } catch (e) {
     uncaught(e);
   }
-  state.with((s) => s.end(false));
 }
 
 declare function velt_rt_uncaught_now();

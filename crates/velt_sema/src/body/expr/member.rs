@@ -8,7 +8,7 @@ pub(crate) use super::member_keys::{literal_key, member_view};
 use crate::body::places::set_place_mode;
 use crate::body::{FnCx, Want};
 use crate::ctx::Item;
-use crate::hir::{self, AdtKind, Callee, DefId, ExprKind as H, Intrinsic, TyId, TyKind, UseMode};
+use crate::hir::{self, AdtKind, DefId, ExprKind as H, Intrinsic, TyId, TyKind, UseMode};
 use crate::ide::record::Target;
 
 fn base_mode(want: Want) -> UseMode {
@@ -33,50 +33,6 @@ impl FnCx<'_, '_> {
         // A class and its subclass may each have a field `#x` (`Ctx::field_seen_from`).
         let owner = self.name_owner(name);
         self.cx.field_seen_from(t, name, owner)
-    }
-
-    /// `x.field` on an interface value or bounded generic: a call of the field's getter slot
-    /// (see `collect::getters`); the result is an owned copy / clone. Writes go through the
-    /// setter slot (`iface_write`), never through this place.
-    pub(super) fn iface_field(
-        &mut self,
-        mut obj: hir::Expr,
-        prop: &ast::Ident,
-        want: Want,
-        span: Span,
-    ) -> Result<hir::Expr, hir::Expr> {
-        let Some(f) = self.iface_field_of(obj.ty, &prop.name) else {
-            return Err(obj);
-        };
-        let slot = self.cx.iface(f.iface).map_or(0, |i| i.methods.len()) + f.index;
-        self.cx
-            .rec_ref(prop.span, Target::Field(f.iface, f.index as u32));
-        if want == Want::BorrowMut {
-            self.cx.err(
-                format!(
-                    "cannot modify `{}` through an interface or generic value",
-                    prop.name
-                ),
-                prop.span,
-            );
-            return Ok(self.error_expr(span));
-        }
-        set_place_mode(&mut obj, UseMode::Borrow);
-        let callee = if f.on_param {
-            Callee::ParamMethod {
-                iface: f.iface,
-                iface_args: f.args,
-                slot: slot as u32,
-                method_type_args: vec![],
-            }
-        } else {
-            Callee::Dyn { slot: slot as u32 }
-        };
-        let kind = H::Call {
-            callee,
-            args: vec![obj],
-        };
-        Ok(self.mk(kind, f.ty, span))
     }
 
     /// `obj.prop` as a field place used per `want`.
@@ -353,6 +309,7 @@ impl FnCx<'_, '_> {
                 return self.intrinsic(Intrinsic::StrLen, vec![obj], self.cx.ty.usize, span);
             }
             if self.cx.ty.array_elem(t).is_some() {
+                self.array_used_in_place(&obj);
                 return self.intrinsic(Intrinsic::ArrayLen, vec![obj], self.cx.ty.usize, span);
             }
         }
@@ -393,7 +350,12 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         if optional {
-            return self.optional_chain(object, span, |s, v| s.index_of(v, index, want, span));
+            return self.optional_chain(object, span, |s, v| {
+                if want != Want::BorrowMut {
+                    s.array_used_in_place(&v);
+                }
+                s.index_of(v, index, want, span)
+            });
         }
         if let Some(h) = self.process_env_index(object, index, span) {
             return h;
@@ -405,6 +367,9 @@ impl FnCx<'_, '_> {
             return h;
         }
         let obj = self.expr(object, None, Want::Borrow);
+        if want != Want::BorrowMut {
+            self.array_used_in_place(&obj);
+        }
         let r = self.in_place_receiver(object, obj);
         let h = match self.checked_array_read(r.recv, index, exp, want, span) {
             Ok(h) => h,

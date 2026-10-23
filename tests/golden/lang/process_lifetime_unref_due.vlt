@@ -1,0 +1,7 @@
+// An unref()'d timer that falls due after everything else is done does not run, as in Node: the
+// process ends once only it is left, even when the end is noticed late (#1366).
+function main(): void {
+  setTimeout(() => console.log("never"), 200).unref();
+  setTimeout(() => console.log("ref'd"), 20);
+  console.log("main end");
+}

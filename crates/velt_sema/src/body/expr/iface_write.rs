@@ -101,6 +101,10 @@ impl FnCx<'_, '_> {
                 span: prop.span,
                 dynamic: false,
             });
+        if f.args.iter().any(|a| self.cx.dynamic(*a).is_some()) {
+            // Only a value at a dynamic argument may be an adapter (`iface_adapt`).
+            self.cx.note_field_written(f.iface, f.index, prop.span);
+        }
         Some(self.cx.mark_iface_written(f.iface, prop.span))
     }
 

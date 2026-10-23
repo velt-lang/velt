@@ -213,21 +213,19 @@ function runExecutor<T, E>(
 
 /**
  * `new Promise<T, E>((resolve, reject) => ...)`: the compiler compiles the constructor to a call
- * of `promiseNew`, with `site` (where the `new Promise` is) and `direct` (whether it is the
- * operand of an `await`). The executor runs at once and is released before anything waits, so
+ * of `promiseNew`. The executor runs at once and is released before anything waits, so
  * it can't keep the promise pending through a cycle; `resolve` and `reject` may be stored and
  * called later, from any task, and the first settlement wins. An error the executor throws
  * rejects the promise. A promise whose `resolve` and `reject` are all dropped without settling
- * never settles, like in JS; awaiting it directly is reported instead of waiting forever.
+ * never settles, like in JS: what awaits it waits until nothing else can happen, and the program
+ * ends then.
  */
 export function promiseNew<T, E>(
   executor: (resolve: (value: T) => void, reject: (reason: E) => void) => void throws E,
-  site: string = "",
-  direct: bool = false,
 ): Promise<T, E> {
   const slot = shared(new Mutex<PromiseSlot<T, E>>(new PromiseSlot<T, E>()));
   runExecutor<T, E>(executor, slot.clone());
-  return settlement<T, E>(slot, site, direct);
+  return settlement<T, E>(slot);
 }
 
 // The slot's settlement, moved out. A plain value comes out as `with`'s result. One that
@@ -248,11 +246,7 @@ function takeSettlement<T, E>(slot: shared<Mutex<PromiseSlot<T, E>>>): Settlemen
 }
 
 // Waits for the slot to be settled (holding only the slot, not the executor).
-async function settlement<T, E>(
-  slot: shared<Mutex<PromiseSlot<T, E>>>,
-  site: string,
-  direct: bool,
-): Promise<T> throws E {
+async function settlement<T, E>(slot: shared<Mutex<PromiseSlot<T, E>>>): Promise<T> throws E {
   await velt_rt_latch_wait(slot.with((s) => s.latch));
   const outcome = takeSettlement<T, E>(slot);
   switch (outcome.status) {
@@ -261,12 +255,6 @@ async function settlement<T, E>(
     case "rejected":
       throw outcome.reason;
     case "abandoned":
-      if (direct) {
-        console.error(
-          `panic: awaiting a promise whose resolve and reject were dropped without settling (created at ${site})`,
-        );
-        process.exit(101);
-      }
       // Never settles, like a JS promise nobody resolves.
       const never: Promise<T, E>[] = [];
       return await Promise.race(never);
@@ -278,10 +266,8 @@ async function settlement<T, E>(
 /** `new Promise<T>((resolve) => ...)`: an executor that only resolves. */
 export function promiseNewResolveOnly<T>(
   executor: (resolve: (value: T) => void) => void,
-  site: string = "",
-  direct: bool = false,
 ): Promise<T> {
-  return promiseNew<T, never>((resolve, reject) => executor(resolve), site, direct);
+  return promiseNew<T, never>((resolve, reject) => executor(resolve));
 }
 
 /**
@@ -303,7 +289,7 @@ export type PromiseWithResolvers<T, E> = {
 export function promiseWithResolvers<T, E>(): PromiseWithResolvers<T, E> {
   const slot = shared(new Mutex<PromiseSlot<T, E>>(new PromiseSlot<T, E>()));
   const s = settlers<T, E>(slot.clone());
-  return { promise: settlement<T, E>(slot, "", false), resolve: s.resolve, reject: s.reject };
+  return { promise: settlement<T, E>(slot), resolve: s.resolve, reject: s.reject };
 }
 
 /**

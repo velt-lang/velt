@@ -1,5 +1,5 @@
 // An `any` holding a value of another type, converted to an object type: the `TypeError` names
-// the object type as TypeScript writes it.
+// the object type by its alias name, as TypeScript writes it.
 type Point = { x: number; label?: string };
 
 function main(): void {

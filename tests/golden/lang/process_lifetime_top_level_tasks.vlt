@@ -1,0 +1,14 @@
+// Spawned tasks keep the process alive after the top level is done, as in Node (#1366).
+async function count(n: number): Promise<void> {
+  let s = 0;
+  for (let k = 0; k < 200000; k++) {
+    s += k % 5;
+  }
+  console.log("count", n, s);
+  if (n < 3) {
+    spawn(count(n + 1));
+  }
+}
+
+console.log("top start");
+spawn(count(1));

@@ -1,6 +1,6 @@
 // A promise whose `resolve` and `reject` are all dropped without settling never settles, like
-// in JS: it can lose a `Promise.race`. Awaiting it directly is reported, naming where it was
-// created, instead of waiting forever.
+// in JS: it can lose a `Promise.race`, and awaiting it waits until nothing else can happen,
+// when the program ends with exit code 0, as Node does.
 async function fast(): Promise<i64> {
   await sleep(5);
   return 1;

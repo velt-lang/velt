@@ -1,0 +1,11 @@
+// A task spawned at the top level whose error leaves through a `finally` is reported, with exit
+// code 1, also when nothing else keeps the process alive (#1366, #1404).
+async function g(): Promise<void> {
+  try {
+    throw new RangeError("outer");
+  } finally {
+    console.log("fin");
+  }
+}
+
+spawn(g());

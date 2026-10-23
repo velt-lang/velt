@@ -1,0 +1,67 @@
+// check: no leaks
+// A checked conversion from `any` or `unknown` to an interface type through the value's own
+// implementation: an object literal of a plain interface, a class, and a generic class at the
+// instance's type arguments, also where other arguments are expected (#1185).
+interface Named {
+  name(): string;
+}
+
+class K implements Named {
+  name(): string {
+    return "k";
+  }
+}
+
+interface Ctx<P = {}> {
+  props: P;
+  set(p: P): void;
+  name(): string;
+}
+
+class G<T> implements Ctx<T> {
+  props: T;
+  constructor(p: T) {
+    this.props = p;
+  }
+  set(p: T): void {
+    this.props = p;
+  }
+  name(): string {
+    return "g";
+  }
+}
+
+class L implements Ctx<{ n: number }> {
+  props: { n: number } = { n: 1 };
+  set(p: { n: number }): void {
+    this.props = p;
+  }
+  name(): string {
+    return "l";
+  }
+}
+
+const lit: Named = {
+  name() {
+    return "lit";
+  },
+};
+const x1: any = lit;
+console.log((x1 as Named).name());
+const x2: any = new K();
+console.log((x2 as Named).name());
+const x3: unknown = lit;
+console.log((x3 as Named).name());
+
+const l = new L();
+const u: unknown = l;
+const c = u as Ctx<any>;
+c.set({ n: 5 });
+console.log(c.name(), l.props.n);
+const gu: unknown = new G<number>(3);
+const gc = gu as Ctx<any>;
+console.log(gc.name(), gc.props);
+const gs: any = new G<string>("s");
+const gt = gs as Ctx<string>;
+gt.set("t");
+console.log(gt.name(), gt.props);

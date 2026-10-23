@@ -1,0 +1,26 @@
+// An `unknown` holding a value whose interface has a function type taking an array of its own
+// values (`withKids(f: (k: Tree<T>[]) => void)`) does not convert to the interface at `any`
+// arguments: the array the function would be given is a new one, so the conversion is a
+// `TypeError` (#1185), at the interface's own arguments it is the value itself.
+interface Tree<T> {
+  value: T;
+  kids: Tree<T>[];
+  withKids(f: (k: Tree<T>[]) => void): void;
+}
+
+class Node1<T> implements Tree<T> {
+  value: T;
+  kids: Tree<T>[] = [];
+  constructor(v: T) {
+    this.value = v;
+  }
+  withKids(f: (k: Tree<T>[]) => void): void {
+    f(this.kids);
+  }
+}
+
+const u: unknown = new Node1<number>(1);
+const own = u as Tree<number>;
+own.withKids((k) => console.log(k.length));
+const a = u as Tree<any>;
+console.log(a.value);

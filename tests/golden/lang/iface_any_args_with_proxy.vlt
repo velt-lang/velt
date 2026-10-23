@@ -1,0 +1,51 @@
+// In a program that makes a `Proxy`, an `unknown` holding a subclass instance converts to an
+// interface its base class implements (#1185).
+interface Ctx<P = {}> {
+  props: P;
+  name(): string;
+}
+
+class Base implements Ctx<{ n: number }> {
+  props: { n: number } = { n: 1 };
+  name(): string {
+    return "base";
+  }
+}
+class Sub extends Base {
+  override name(): string {
+    return "sub";
+  }
+}
+class Gen<T> implements Ctx<T> {
+  props: T;
+  constructor(p: T) {
+    this.props = p;
+  }
+  name(): string {
+    return "gen";
+  }
+}
+class GenSub extends Gen<string> {
+  override name(): string {
+    return "gensub";
+  }
+}
+
+const target = { a: 1 };
+const p = new Proxy(target, {
+  get(t, key, recv) {
+    return key === "a" ? 10 : Reflect.get(t, key, recv);
+  },
+});
+console.log(p.a);
+
+const u: unknown = new Sub();
+const c = u as Ctx<any>;
+console.log(c.name(), c.props.n);
+const b: unknown = new Base();
+console.log((b as Ctx<any>).name());
+const g: unknown = new GenSub("s");
+const gc = g as Ctx<any>;
+console.log(gc.name(), gc.props);
+const exact = u as Ctx<{ n: number }>;
+console.log(exact.name(), exact.props.n);
