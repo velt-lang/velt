@@ -52,12 +52,15 @@ impl FnCx<'_, '_> {
     /// declared one where the arrow starts (`widened_param`), as `(n: number) => { let v: any =
     /// n; … }` would: the closure is of the expected type, so no wrapper calls it. `None` for a
     /// parameter taken as it is (no annotation, the same type, a rest parameter, a pattern, an
-    /// optional one or one with a default: those keep their own rules).
+    /// optional one or one with a default: those keep their own rules, and one the passed type
+    /// doesn't convert to, which the arrow's type then reports as the mismatch it is).
+    /// `std_ints`: which parameters take an index of a standard callback, a number in the body.
     pub(super) fn entry_widened(
         &mut self,
         params: &[ast::ArrowParam],
         own: &[TyId],
         exp: Option<&[TyId]>,
+        std_ints: &[bool],
         n_params: usize,
     ) -> Vec<Option<TyId>> {
         let mut out = vec![None; params.len()];
@@ -81,19 +84,26 @@ impl FnCx<'_, '_> {
                 && !self.cx.ty.has_error(e)
                 && self.param_differs(o, e)
             {
-                out[k] = Some(e);
+                let index =
+                    std_ints.get(k) == Some(&true) && o == self.cx.ty.f64 && self.cx.ty.is_int(e);
+                if index || self.passed_converts(e, o, p.name.span) {
+                    out[k] = Some(e);
+                }
             }
         }
         out
     }
 
     /// The hidden parameter of type `passed` for the arrow parameter `p` declared `own`, and the
-    /// statement binding `p` to it converted (`entry_widened`).
+    /// statement binding `p` to it converted (`entry_widened`). `std_int`: `p` takes an index
+    /// of a standard callback (`xs.map((x, i: number) => …)`), an integer that is a number in
+    /// the body, as when `i` is not annotated.
     pub(super) fn widened_param(
         &mut self,
         p: &ast::ArrowParam,
         passed: TyId,
         own: TyId,
+        std_int: bool,
     ) -> (LocalId, hir::Stmt) {
         let span = p.name.span;
         let hidden = format!("#passed{}", self.f.locals.len());
@@ -104,7 +114,10 @@ impl FnCx<'_, '_> {
             UseMode::Move
         };
         let read = self.mk(H::Local(l, mode), passed, span);
+        let index = std_int && own == self.cx.ty.f64 && self.cx.ty.is_int(passed);
         let init = match self.try_coerce(read, own) {
+            Err(h) if index => self.mk(H::Cast(Box::new(h)), own, span),
+            // `entry_widened` tried it: reached only for what it couldn't see (none known).
             Ok(h) => h,
             Err(h) => {
                 self.report_mismatch(own, &h);
@@ -121,6 +134,24 @@ impl FnCx<'_, '_> {
             span,
         };
         (l, stmt)
+    }
+
+    /// Does a value of type `from` convert to `to` (tried on a hidden local, rolled back)?
+    fn passed_converts(&mut self, from: TyId, to: TyId, span: velt_common::Span) -> bool {
+        let mark = Mark::here(self.cx);
+        let frames = self.trial_frames();
+        let diags = self.cx.diags.len();
+        let l = self.new_local("#trial", from, false, span, LocalKind::Let);
+        let mode = if self.cx.is_copy(from) {
+            UseMode::Copy
+        } else {
+            UseMode::Move
+        };
+        let read = self.mk(H::Local(l, mode), from, span);
+        let ok = self.try_coerce(read, to).is_ok() && self.cx.diags.len() == diags;
+        mark.rollback(self.cx);
+        self.restore_trial_frames(frames);
+        ok
     }
 
     /// Do two parameter types differ as values (not two forms of one object type, or the same

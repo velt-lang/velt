@@ -294,25 +294,32 @@ impl FnCx<'_, '_> {
         }
         let mut declared = vec![];
         let mut locals = vec![];
-        let wide = self.entry_widened(params, &ptys, exp_params.as_deref(), n_params);
+        let std_ints: Vec<bool> = (0..params.len())
+            .map(|k| {
+                std_callback
+                    .as_ref()
+                    .is_some_and(|m| m.get(k) == Some(&true))
+            })
+            .collect();
+        let wide = self.entry_widened(params, &ptys, exp_params.as_deref(), &std_ints, n_params);
         for (k, (p, ty)) in params.iter().zip(&ptys).enumerate() {
             if k >= n_params {
                 locals.push(self.defaulted_local(p, *ty));
                 continue;
             }
+            // An index from a std callback is a number in the body.
+            let std_int = std_callback
+                .as_ref()
+                .and_then(|m| m.get(k).copied())
+                .unwrap_or(false);
             if let Some(passed) = wide[k] {
-                let (l, shadow) = self.widened_param(p, passed, *ty);
+                let (l, shadow) = self.widened_param(p, passed, *ty, std_int);
                 declared.push(l);
                 locals.push(shadow);
                 continue;
             }
             let l = self.declare_local_mut(&p.name, *ty, LocalKind::Param, false);
             self.note_readonly_array(l, p.ty.as_ref());
-            // An index from a std callback is a number in the body.
-            let std_int = std_callback
-                .as_ref()
-                .and_then(|m| m.get(k).copied())
-                .unwrap_or(false);
             if std_int && p.ty.is_none() && self.cx.ty.is_int(*ty) {
                 locals.push(self.number_shadow(l));
             }

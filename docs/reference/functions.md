@@ -793,6 +793,15 @@ async function main() {
   (an `any` boxes the number). An argument that doesn't convert (`(x: string) => …` where
   `(x: number) => void` is expected) is an error, as it is in TS.
 
+  An arrow written there takes the expected parameter types and converts each one where it
+  starts, so it is one function, as fast as one written with those types. A function value
+  (a variable, a named function, a method value) is wrapped instead: each such use makes a
+  **new function value** that calls it, so `g === f` is `false` after `const g: (x: number)
+  => void = f`, a `Set` holds both, and an emitter whose `off(f)` looks for the function
+  `on(f)` stored doesn't find it (each call passes its own wrapper). To register and remove the same handler,
+  declare it with the parameter types the registry expects (`const h = (x: number) => …`), or
+  convert it once and pass that value to both.
+
   ```ts
   function main() {
     const show = (v: unknown) => console.log(typeof v, v);

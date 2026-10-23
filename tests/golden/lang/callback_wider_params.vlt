@@ -68,3 +68,10 @@ viaVar(12);
 const u = undefined;
 log(u);
 each([null, 1], (v: any) => console.log("nullable", v));
+
+// An index annotated `number` (#1457).
+const xs = [10, 20, 30];
+xs.forEach((v: number, i: number) => console.log(v, i, i / 2));
+console.log(xs.map((v: number, i: number) => v * i));
+console.log(xs.filter((_: any, i: number) => i !== 1));
+console.log(xs.reduce((acc: number, v: number, i: number) => acc + v * i, 0));
