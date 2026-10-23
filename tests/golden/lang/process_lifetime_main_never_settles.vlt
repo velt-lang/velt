@@ -1,0 +1,17 @@
+// An `async main` that waits for a promise nobody can settle any more ends the program once
+// nothing else is left, with exit code 0, as Node exits with `main`'s promise pending (#1366).
+let keep: ((v: number) => void) | null = null;
+
+async function tick(n: number): Promise<void> {
+  await new Promise<void>((resolve) => setTimeout(async () => resolve(), 5));
+  console.log("tick", n);
+}
+
+async function main() {
+  console.log("before");
+  spawn(tick(1));
+  const v = await new Promise<number>((resolve) => {
+    keep = resolve;
+  });
+  console.log("never", v);
+}

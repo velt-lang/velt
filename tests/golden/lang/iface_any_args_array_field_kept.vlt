@@ -1,0 +1,37 @@
+// An array field of interface values read through the interface at `any` and kept, passed on,
+// destructured or compared: it may be a new array of the elements converted (an adapter's
+// read), so an alias would not follow the array the object holds and its identity is not the
+// array's (#1185). Node prints `3 3`, `true true true` and `3`.
+interface Tree<T> {
+  value: T;
+  kids: Tree<T>[];
+  label(): string;
+}
+
+class Node1<T> implements Tree<T> {
+  value: T;
+  kids: Tree<T>[] = [];
+  constructor(v: T) {
+    this.value = v;
+  }
+  label(): string {
+    return "n" + this.kids.length;
+  }
+}
+
+function grow(xs: Tree<any>[]): void {
+  xs.push(new Node1<number>(9));
+}
+
+const t = new Node1<number>(1);
+t.kids.push(new Node1<number>(2));
+t.kids.push(new Node1<number>(0));
+const a = (t as unknown) as Tree<any>;
+const k = a.kids;
+k.push(new Node1<number>(4));
+console.log(k.length, t.kids.length);
+grow(a.kids);
+const { kids } = a;
+kids.pop();
+console.log(a.kids === a.kids, k === a.kids, new Set([a.kids]).has(a.kids));
+console.log([...a.kids].length);

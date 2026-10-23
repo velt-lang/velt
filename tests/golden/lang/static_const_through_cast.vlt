@@ -1,0 +1,31 @@
+// A `static readonly` field written or taken over through `as`, `!` or `??` is the one object
+// Node evaluates with its class: the change shows at every later use (#1406).
+
+interface J {
+  v: number;
+  a: { b: number };
+}
+
+let D: J = { v: 0, a: { b: 0 } };
+
+class C {
+  static readonly K: J | null = { v: 1, a: { b: 1 } };
+  static readonly N: J = { v: 1, a: { b: 1 } };
+  static readonly M: J = { v: 1, a: { b: 1 } };
+}
+
+(C.K as any).v = 3;
+console.log(C.K!.v);
+C.K!.v = 4;
+console.log(C.K!.v);
+(C.N as any).v = 3;
+console.log(C.N.v);
+const t = C.K ?? D;
+t.v = 5;
+console.log(C.K!.v, D.v);
+const u = C.N.a;
+u.b = 3;
+console.log(C.N.a.b);
+const w = C.M as J;
+w.a.b = 6;
+console.log(C.M.a.b, w === C.M);

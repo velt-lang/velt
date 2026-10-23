@@ -54,10 +54,19 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// A call of method `name` on `recv`: an error when it is a mutating method of an array and
-    /// `recv` a read-only array variable.
-    pub(crate) fn readonly_method_call(&mut self, recv: &hir::Expr, name: &str, span: Span) {
+    /// A call of method `name` (with `args`) on `recv`: an error when it is a mutating method of
+    /// an array and `recv` a read-only array variable.
+    pub(crate) fn readonly_method_call(
+        &mut self,
+        recv: &hir::Expr,
+        name: &str,
+        args: &[ast::Expr],
+        span: Span,
+    ) {
         if !MUTATING.contains(&name) {
+            if matches!(self.cx.ty.kind(recv.ty), TyKind::Array(_)) {
+                self.array_method_in_place(recv, name, args);
+            }
             return;
         }
         if let Some(shown) = self.readonly_shown(recv) {

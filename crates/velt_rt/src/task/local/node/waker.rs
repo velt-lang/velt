@@ -24,18 +24,6 @@ pub(in crate::task::local) unsafe fn local_awaiter(
     (std::ptr::eq(h.set, Arc::as_ptr(shared)) && running && member).then_some(g)
 }
 
-/// `w` is the waker of a started node in its first run (not a member of its set yet): mark it as
-/// a timer's (`mark_timer`; `velt_rt_timer_turn` first polled there).
-pub(in crate::task::local) unsafe fn mark_timer_starting(w: &Waker) {
-    if !std::ptr::eq(w.vtable(), &NODE_WAKER) {
-        return;
-    }
-    let f = w.data() as *mut VeltFut;
-    if head(f).member.load(Ordering::Relaxed) == NO_MEMBER {
-        super::mark_timer(f);
-    }
-}
-
 /// Queue started node `f` in its set's ready list, as its waker does.
 pub(in crate::task::local) unsafe fn queue(f: *mut VeltFut) {
     waker_wake_by_ref(f as *const ());

@@ -1,0 +1,49 @@
+// An array field of interface values (`kids: Tree<T>[]`) read through the interface at `any`
+// may be read through an adapter, as a new array of the elements converted: a change made
+// through it would not reach the array the object holds (Node changes that array), so each such
+// use is an error, as is one of a method's result read that way (#1185).
+interface Tree<T> {
+  value: T;
+  kids: Tree<T>[];
+  label(): string;
+  getKids(): Tree<T>[];
+}
+
+class Node1<T> implements Tree<T> {
+  value: T;
+  kids: Tree<T>[] = [];
+  constructor(v: T) {
+    this.value = v;
+  }
+  label(): string {
+    return "n" + this.kids.length;
+  }
+  getKids(): Tree<T>[] {
+    return this.kids;
+  }
+}
+
+function pushIt<T>(x: Tree<T>, v: Tree<T>): void {
+  x.kids.push(v);
+}
+
+const t = new Node1<number>(1);
+t.kids.push(new Node1<number>(2));
+t.kids.push(new Node1<number>(0));
+const a = (t as unknown) as Tree<any>;
+const b: Tree<any> = t;
+a.kids.splice(0, 1);
+a.kids.sort((x, y) => (x.value as number) - (y.value as number));
+a.kids.reverse();
+a.kids.shift();
+a.kids.unshift(t);
+a.kids.fill(t);
+a.kids[0] = new Node1<number>(42);
+a.kids.length = 0;
+b.kids.push(new Node1<number>(3));
+for (const k of b.kids) {
+  k.kids.push(t);
+}
+pushIt(a, new Node1<number>(5));
+a.getKids().push(t);
+console.log(t.kids.length);

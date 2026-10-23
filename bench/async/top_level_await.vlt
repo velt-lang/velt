@@ -1,0 +1,7 @@
+// 1M sequential top-level awaits of a resolved promise: the per-await cost at the top level,
+// where each `await` also tells the runtime where the program waits (modules.md).
+let s = 0;
+for (let i = 0; i < 1000000; i++) {
+  s += await Promise.resolve(i % 7);
+}
+console.log(s);

@@ -34,6 +34,10 @@ const UNSUPPORTED: &[&str] = &[
     "promise_shared_orphan_task",
     "promise_shared_sync_main",
     "promise_shared_sync_main_module",
+    "process_lifetime_sync_main_tasks",
+    "process_lifetime_sync_main_rejection",
+    "process_lifetime_top_level_tasks",
+    "process_lifetime_spawned_finally",
 ];
 /// Goldens that need a file system (not available to browser modules).
 const NEEDS_FS: &[&str] = &["fs"];

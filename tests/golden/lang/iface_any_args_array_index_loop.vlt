@@ -1,0 +1,40 @@
+// An index loop over an array field of interface values read through the interface at `any`,
+// reading `.length` and the element each step, sees the elements the loop body adds to the
+// original, as Node's `for…of` does (#1185).
+interface Tree<T> {
+  value: T;
+  kids: Tree<T>[];
+  label(): string;
+}
+
+class Node1<T> implements Tree<T> {
+  value: T;
+  kids: Tree<T>[] = [];
+  constructor(v: T) {
+    this.value = v;
+  }
+  label(): string {
+    return "n" + this.kids.length;
+  }
+}
+
+function count<T>(x: Tree<T>): number {
+  let n = 0;
+  for (let i = 0; i < x.kids.length; i++) {
+    n += 1 + count(x.kids[i]);
+  }
+  return n;
+}
+
+const t = new Node1<number>(1);
+t.kids.push(new Node1<number>(2));
+const a = (t as unknown) as Tree<any>;
+let n = 0;
+for (let i = 0; i < a.kids.length; i++) {
+  n++;
+  if (n < 3) {
+    t.kids.push(new Node1<number>((a.kids[i].value as number) + 1));
+  }
+}
+console.log(n, t.kids.length, count(a), count(t));
+console.log(a.kids.map((k) => k.value).join(","));

@@ -100,8 +100,20 @@ impl Boxing {
     /// The counted types before any share is observed: the recursive object types, and the
     /// object types sema relies on being counted (`hir::Program::counted_objects`).
     pub(super) fn initial(hir: &hir::Program) -> Boxing {
+        let mut recursive = recursive_objects(hir);
+        // A generic counted type (a generic interface adapter): every instance of it.
+        for &t in &hir.counted_objects {
+            if let TyKind::Adt(d, args) = hir.types.kind(t) {
+                if args
+                    .iter()
+                    .any(|a| matches!(hir.types.kind(*a), TyKind::Param(_)))
+                {
+                    recursive.insert(*d);
+                }
+            }
+        }
         Boxing {
-            recursive: recursive_objects(hir),
+            recursive,
             boxes: hir.counted_objects.iter().copied().collect(),
             ..Boxing::default()
         }
@@ -142,9 +154,11 @@ fn reaches(hir: &hir::Program, t: TyId, target: DefId, seen: &mut FxHashSet<TyId
     }
     match hir.types.kind(t) {
         TyKind::Adt(d, args) => {
+            // A class's type arguments are behind its pointer (`Map<string, G>`): not walked,
+            // so `seen` holds only types reached inline.
             *d == target
-                || args.iter().any(|a| reaches(hir, *a, target, seen))
-                    && matches!(hir.def(*d), hir::Def::Adt(a) if a.kind != AdtKind::Class)
+                || matches!(hir.def(*d), hir::Def::Adt(a) if a.kind != AdtKind::Class)
+                    && args.iter().any(|a| reaches(hir, *a, target, seen))
                 || fields_of(hir, *d)
                     .into_iter()
                     .any(|f| reaches(hir, f, target, seen))

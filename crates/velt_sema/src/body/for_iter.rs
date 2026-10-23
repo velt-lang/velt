@@ -254,7 +254,7 @@ impl FnCx<'_, '_> {
                     pt,
                     names.at,
                 );
-                self.mk(H::Await(Box::new(r)), bool_, names.at)
+                self.awaiting(r, bool_, names.at)
             }
             false => self.intrinsic_hir(
                 Intrinsic::GeneratorResume,
@@ -357,16 +357,18 @@ impl FnCx<'_, '_> {
             self.throw_src(ThrowSrc::Direct(err, e.span));
         }
         let span = e.span;
-        self.mk(H::Await(Box::new(e)), t, span)
+        self.awaiting(e, t, span)
     }
 
     /// `try { lp } finally { await AsyncGeneratorReturn(g) }`: leaving an embedded async
-    /// generator loop closes the generator, awaiting its cleanup (a no-op once it is done).
+    /// generator loop closes the generator, awaiting its cleanup (a no-op once it is done). At
+    /// the top level that `await` is at the loop (`at`), the line Node names when the cleanup
+    /// never settles after a `break`.
     fn closing(&mut self, lp: hir::Stmt, g: hir::Expr, at: Span) -> hir::Stmt {
         let unit = self.cx.ty.unit;
         let pt = self.cx.ty.promise(unit);
         let close = self.intrinsic_hir(Intrinsic::AsyncGeneratorReturn, vec![g], pt, at);
-        let close = self.mk(H::Await(Box::new(close)), unit, at);
+        let close = self.awaiting(close, unit, at);
         let block = |stmts| hir::Block {
             stmts,
             value: None,

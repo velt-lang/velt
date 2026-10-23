@@ -54,11 +54,15 @@ instead of being overtaken; one whose task is busy (a spawned task running code 
 pause) does not hold back the timers of other tasks. Callbacks that `await` go on concurrently,
 like in Node.
 
-A pending timer keeps the process alive after `main` returns, as in Node: the program ends once
-every timer has fired and its callback's promise has settled, or was cleared. An interval keeps
-it alive until it is cleared (and its runs in progress have settled). A timer that is `unref()`ed
-does not keep the process alive. `process.exit()` and an uncaught error end the process at once,
-pending timers or not.
+A pending timer keeps the process alive after `main` returns, as in Node: a timeout until its
+callback starts, an interval until it is cleared. A timer that is `unref()`ed does not keep the
+process alive, and once nothing else is left its callback does not run, also when it falls due
+while the process is ending or while the last ref'd callback is still running past its due time.
+One that falls due while nothing but running code is left waits until that code stops: Velt
+cannot see at once whether it will (a task that keeps calling `yieldNow()` does not), so after
+a second it runs the callback, where Node runs it at once.
+`process.exit()` and an uncaught error end the process at once, pending timers or
+not.
 
 ```ts
 async function main() {
@@ -68,20 +72,15 @@ async function main() {
 }
 ```
 
-What keeps a process alive is a *handle*, as in Node: a pending ref'd timer, a listening
-[server](http.md). A spawned task (`spawn(p)`) is not a handle: the process does not wait for
-it. A started promise that is not awaited runs to completion when its task finishes first (and
-the process waits for it), see [Async](../reference/async.md#promises); in Node it would keep
-the process alive only through the handles it waits on, so a promise waiting for something that
-never comes (a `resolve` that is never called) ends a Node process but keeps a Velt one waiting.
+What keeps a process alive is what can still happen, as in Node: a pending ref'd timer, a
+listening [server](http.md), and code that runs or waits for a timer or I/O (a spawned task, a
+started promise, a timer's callback once it started, `await sleep(ms)`, a read). A promise that
+waits only for something that never comes (a `resolve` nobody calls) does not keep it alive: once
+nothing else is left, the process ends, as Node's does ([Async](../reference/async.md#promises)).
 
 Differences from Node:
 
 - The handle is a `Timer`, not Node's `Timeout`: no `refresh()` or conversion to a number.
-- The process waits for a timer's callback promise to settle. In Node only what the callback
-  waits for (timers, sockets) keeps the process alive: the same for ordinary code (an
-  `await sleep(ms)` in the callback keeps both alive), but a callback waiting for something
-  that never comes keeps a Velt process waiting.
 - Extra arguments after `ms` are not supported: capture them in the callback. A callback
   passed as a value other than an arrow, a function name or a local (`setTimeout(this.tick,
   10)`) must return a promise.

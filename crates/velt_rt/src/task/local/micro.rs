@@ -298,7 +298,7 @@ impl Future for Microtask {
 /// reached it, after the microtasks queued before it. Outside a task it completes at once.
 #[no_mangle]
 pub extern "C" fn velt_rt_microtask() -> *mut VeltFut {
-    leaf::new_leaf(Microtask { ticket: 0 })
+    leaf::new_inner_leaf(Microtask { ticket: 0 })
 }
 
 #[cfg(test)]

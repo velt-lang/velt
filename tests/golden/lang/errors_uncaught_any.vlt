@@ -1,0 +1,4 @@
+// An `Error` held in `any` that nothing catches is reported with Node's header, not in its
+// `console.log` form (#1414).
+const e: any = new RangeError("outer");
+throw e;

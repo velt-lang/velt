@@ -119,6 +119,8 @@ pub(crate) enum Glue {
     AnyJson,
     ProxyGet,
     ProxySet,
+    /// `(data, desc, out) -> bool`: an `any` as the interface type (any_iface.rs).
+    AnyIface,
 }
 
 /// Vtable slots below 0 (interface/virtual methods use slots 0..n).
@@ -184,6 +186,7 @@ impl Glue {
             Glue::AnyJson => "anyjson",
             Glue::ProxyGet => "proxyget",
             Glue::ProxySet => "proxyset",
+            Glue::AnyIface => "anyiface",
         }
     }
 
@@ -227,6 +230,7 @@ impl Glue {
             Glue::AnySetIndex => (vec![Ptr, F64, Ptr], U8),
             Glue::AnyHas | Glue::AnyDelete | Glue::AnyKeys | Glue::AnyJson => (vec![Ptr, Ptr], U8),
             Glue::ProxyGet | Glue::ProxySet => (vec![Ptr, Ptr, Ptr], Unit),
+            Glue::AnyIface => (vec![Ptr, Ptr, Ptr], Bool),
         }
     }
 }
@@ -287,6 +291,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Glue::AnyJson => lw.any_json_glue(args[0], args[1], ty),
             Glue::ProxyGet => lw.proxy_get_glue(args[0], args[1], args[2], ty),
             Glue::ProxySet => lw.proxy_set_glue(args[0], args[1], args[2], ty),
+            Glue::AnyIface => lw.any_iface_body(args[0], args[1], args[2], ty),
         }
         let sym = format!("_G{}_{}", g.name(), lw.cx.type_symbol(ty));
         lw.finish(sym, params, ret)

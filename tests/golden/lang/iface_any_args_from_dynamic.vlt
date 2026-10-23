@@ -1,0 +1,81 @@
+// check: no leaks
+// A checked conversion from `any` or `unknown` to a generic interface at other type arguments
+// (#1185): the value an interface value or a class instance became when converted to `any` is
+// that object again, wrapped for the expected arguments, as Node keeps the one object. Contexts
+// stored as `unknown` and read back as `Ctx<any, any>`, as sigx does.
+interface Ctx<P = {}, S = {}> {
+  props: P;
+  state: S;
+  name(): string;
+}
+
+class Base implements Ctx<{ n: number }, {}> {
+  props: { n: number } = { n: 7 };
+  state: {} = {};
+  name(): string {
+    return "base";
+  }
+}
+
+class Sub extends Base {
+  override name(): string {
+    return "sub";
+  }
+}
+
+const a: Ctx<{ n: number }, { s: string }> = {
+  props: { n: 1 },
+  state: { s: "x" },
+  name() {
+    return "c";
+  },
+};
+const store = new Map<string, unknown>();
+store.set("a", a);
+store.set("b", new Base());
+store.set("s", new Sub());
+
+function read(k: string): Ctx<any, any> | null {
+  const v = store.get(k);
+  if (v === undefined) return null;
+  return v as Ctx<any, any>;
+}
+
+const ra = read("a");
+console.log(ra !== null ? ra.name() : "none", ra === (a as any));
+const rb = read("b");
+console.log(rb !== null ? rb.name() : "none", rb !== null ? rb.props.n : 0);
+const rs = read("s");
+console.log(rs !== null ? rs.name() : "none");
+console.log(read("zz") === null);
+
+// One object to `Set` keys and `===`; a write through the converted value is the original's.
+const set = new Set<unknown>();
+set.add(a);
+const back = store.get("a") as Ctx<any, any>;
+console.log(set.has(back), back === store.get("a"));
+back.props = { n: 9 };
+console.log(a.props.n);
+
+// `null` to an optional interface; back to the original arguments; through a generic function.
+const opt: any = null;
+const on = opt as Ctx<any, any> | null;
+console.log(on === null);
+const again: any = back;
+const twice = again as Ctx<{ n: number }, { s: string }>;
+console.log(twice.name(), twice.props.n, twice.state.s);
+function viaGeneric<T>(v: T): unknown {
+  return v;
+}
+const g = viaGeneric(a) as Ctx<any, any>;
+console.log(g.name(), g === back);
+const x: any = a;
+const b1 = x as Ctx<any, any>;
+console.log(b1.name(), b1 === x);
+const b2 = (a as any) as Ctx<any, any>;
+console.log(b2.name(), b2.state.s);
+const k: unknown = new Base();
+const b3 = k as Ctx<any, any>;
+console.log(b3.name(), b3.props.n);
+const b4 = (new Base() as any) as Ctx<{ n: number }, {}>;
+console.log(b4.name(), b4.props.n);

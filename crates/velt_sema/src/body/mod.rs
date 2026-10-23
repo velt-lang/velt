@@ -62,6 +62,7 @@ mod chain_facts;
 mod literal_patterns;
 mod locals;
 mod loops;
+pub(crate) mod moved_const;
 pub(crate) mod narrow;
 mod nested_pattern;
 mod object_rest;
@@ -234,6 +235,11 @@ pub(crate) struct Frame {
     pub discards_value: bool,
     /// Body of an `async` function / arrow: `await` is allowed.
     pub is_async: bool,
+    /// The program's top-level statements (the root file's generated `async main`): its
+    /// `await`s tell the runtime where they wait (`expr/top_level_await.rs`); the top-level
+    /// `await`s whose operand is being checked (innermost last).
+    pub top_level: bool,
+    pub top_level_outer: Vec<Span>,
     /// Body of a generator: the type of the values it yields (`yield` is allowed).
     pub yield_ty: Option<TyId>,
     /// Body of a `Generator<T, E, N>`: `N`, the type of a `yield`'s value (`None`: it has
@@ -369,6 +375,8 @@ impl Frame {
             escaping: false,
             discards_value: false,
             is_async: false,
+            top_level: false,
+            top_level_outer: vec![],
             yield_ty: None,
             next_ty: None,
             catch_depth: 0,
@@ -449,8 +457,6 @@ pub(crate) struct FnCx<'a, 'm> {
     pub f: Frame,
     /// Enclosing frames of the closure being checked (innermost last).
     pub outer: Vec<Frame>,
-    /// The span of a `new Promise` that is the operand of the `await` being checked.
-    pub direct_await: Option<Span>,
     /// The arrow being checked is an argument of a JS API function called from user code
     /// (`numbers::is_js_api`): per parameter, whether the signature declares it an integer (an
     /// index), which makes it a number in the arrow's body when unannotated.
@@ -556,7 +562,6 @@ impl<'a, 'm> FnCx<'a, 'm> {
             generic_arrow: false,
             f: frame,
             outer: vec![],
-            direct_await: None,
             std_callback: None,
             literal_slot: None,
             call_temps: vec![],

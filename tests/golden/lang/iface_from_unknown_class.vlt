@@ -1,0 +1,17 @@
+// A class value cast through `unknown` to a non-generic interface it implements: the class's
+// own implementation, the same object (#1358).
+interface I {
+  t: [number, string];
+  m(): number;
+}
+class C implements I {
+  t: [number, string] = [1, "c"];
+  m(): number {
+    return this.t[0];
+  }
+}
+const c = new C();
+(c as unknown as I).t[1] = "cu";
+console.log(c.t[1]);
+const q = c as unknown as I;
+console.log(q.m(), q.t);

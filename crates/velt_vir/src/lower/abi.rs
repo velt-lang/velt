@@ -90,6 +90,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             transfer_call: false,
             proxy_recv: None,
             super_call: false,
+            tla_site: None,
             same_mode: false,
             value_mode: false,
             key_mode: false,

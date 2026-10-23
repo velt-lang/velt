@@ -151,7 +151,9 @@ impl FnLower<'_, '_> {
             }
             TyKind::Dyn(..) => {
                 self.cx.note_identity(ty);
-                let p = Operand::Copy(proj(place, Proj::Field(0)));
+                // Agreeing with `ref_identity`: the object an adapter wraps (adapters.rs).
+                let place = self.through_adapters(place, ty);
+                let p = Operand::Copy(proj(&place, Proj::Field(0)));
                 let x = self.cast_to(p, Ty::Ptr, Ty::U64);
                 self.fx_combine(cint(0, Ty::U64), x)
             }

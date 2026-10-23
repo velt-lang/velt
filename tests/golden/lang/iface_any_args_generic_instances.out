@@ -1,0 +1,11 @@
+str
+42 number
+h [ 'x' ] 1
+h [ 1, 2 ] 2
+sub 5 number
+sub2 five string
+base true boolean
+deep [ 'a', 'b' ] object
+sub 7
+8
+43

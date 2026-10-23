@@ -236,28 +236,50 @@ impl<'c, 'h> FnLower<'c, 'h> {
             self.switch_to(done);
             return;
         }
-        let stream = cint(2, Ty::U32);
-        self.write_text(&stream, "Uncaught ");
+        // Built whole and written in one write, so no other thread's output lands inside it.
+        let (_, buf) = self.new_strbuf(0);
+        self.push_text(&buf, "Uncaught ");
         if let Some(root) = self.error_root(err) {
-            self.write_error_header(&stream, ep, err, root);
+            self.push_error_header(&buf, ep, err, root);
+        } else if self.cx.is_dynamic(err) {
+            self.push_dynamic_thrown(&buf, ep, err);
         } else {
-            self.write_thrown_value(&stream, ep, err);
+            self.push_thrown_value(&buf, ep, err);
         }
-        self.write_throw_loc(&stream);
-        self.call_rt(
-            Rt::WriteByte,
-            vec![stream, cint(b'\n' as i128, Ty::U8)],
-            None,
-        );
+        self.push_throw_loc(&buf);
+        self.push_text(&buf, "\n");
+        const STR: Ty = Ty::Agg(crate::vir::STR_AGG);
+        let text = self.temp(STR);
+        let tp = self.addr(Place::local(text));
+        self.call_rt(Rt::StrbufFinish, vec![buf, tp.clone()], None);
+        self.call_rt(Rt::WriteStr, vec![cint(2, Ty::U32), tp.clone()], None);
+        self.call_rt(Rt::StrDrop, vec![tp], None);
+    }
+
+    /// A thrown `any` (or `unknown`) value at `ep`: Node's header for an `Error` it holds
+    /// (`RangeError: outer`), else the value as [`push_thrown_value`](Self::push_thrown_value)
+    /// writes it, appended to the builder at `buf`.
+    fn push_dynamic_thrown(&mut self, buf: &Operand, ep: &Place, err: TyId) {
+        let Some(root) = self.cx.prelude_error() else {
+            return self.push_thrown_value(buf, ep, err);
+        };
+        let is_error = self.instance_test(ep, err, root);
+        let (error_bb, value_bb, done) = (self.new_block(), self.new_block(), self.new_block());
+        self.branch(is_error, error_bb, value_bb);
+        self.switch_to(error_bb);
+        let obj = self.downcast_place(ep.clone(), err);
+        let error = self.cx.intern(TyKind::Adt(root, vec![]));
+        self.push_error_header(buf, &obj, error, root);
+        self.goto(done);
+        self.switch_to(value_bb);
+        self.push_thrown_value(buf, ep, err);
+        self.goto(done);
+        self.switch_to(done);
     }
 
     /// A thrown value that is not an `Error` as Node reports it: as `console.log` prints it
     /// (`throw "a string"` reports `a string`, an object `{ code: 1 }`), a number as `String(x)`.
-    fn write_thrown_value(&mut self, stream: &Operand, ep: &Place, err: TyId) {
-        const STR: Ty = Ty::Agg(crate::vir::STR_AGG);
-        let buf = self.temp(STR);
-        let bp = self.addr(Place::local(buf));
-        self.call_rt(Rt::StrbufNew, vec![cint(0, Ty::U64), bp.clone()], None);
+    fn push_thrown_value(&mut self, buf: &Operand, ep: &Place, err: TyId) {
         // A thrown number is written as `String(x)` writes it (Node prints `0` for `throw -0`).
         let number = match self.cx.kind(err) {
             TyKind::Float(_) => true,
@@ -265,22 +287,17 @@ impl<'c, 'h> FnLower<'c, 'h> {
             _ => false,
         };
         if number {
-            self.format_top(&bp, ep, err);
+            self.format_top(buf, ep, err);
         } else {
-            self.log_top(&bp, ep, err);
+            self.log_top(buf, ep, err);
         }
-        let text = self.temp(STR);
-        let tp = self.addr(Place::local(text));
-        self.call_rt(Rt::StrbufFinish, vec![bp, tp.clone()], None);
-        self.call_rt(Rt::WriteStr, vec![stream.clone(), tp.clone()], None);
-        self.call_rt(Rt::StrDrop, vec![tp], None);
     }
 
     /// The first line Node prints for an uncaught error of class `err` (extending the prelude
     /// `Error` class `root`): `Error.__uncaughtHeader(<dynamic class name>)`, which writes
     /// `<name>: <message>` from the (possibly overridden) `name`, and the class in front when
     /// they differ (`E [TypeError]: m`).
-    fn write_error_header(&mut self, stream: &Operand, ep: &Place, err: TyId, root: DefId) {
+    fn push_error_header(&mut self, buf: &Operand, ep: &Place, err: TyId, root: DefId) {
         // A standard library class stands for the error Node throws (`UrlError` for a
         // `TypeError`): named as that class, so the header is its `name` alone, as for
         // `JsonError`.
@@ -313,7 +330,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let root_ty = self.cx.intern(TyKind::Adt(root, vec![]));
         let (text, ty) = self.call_hook(m, Operand::Copy(ep.clone()), root_ty, Some(&cls));
         let a = self.addr(text.clone());
-        self.call_rt(Rt::WriteStr, vec![stream.clone(), a], None);
+        self.push_str(buf, a);
         self.drop_glue(text, ty);
     }
 
@@ -326,7 +343,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
     }
 
     /// ` at <path>:<line>:<col>` of the last `throw` on this thread, if recorded.
-    fn write_throw_loc(&mut self, stream: &Operand) {
+    fn push_throw_loc(&mut self, buf: &Operand) {
         if self.cx.locs.is_none() {
             return;
         }
@@ -339,8 +356,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let (write_bb, done) = (self.new_block(), self.new_block());
         self.branch(known, write_bb, done);
         self.switch_to(write_bb);
-        let args = vec![stream.clone(), Operand::Copy(Place::local(p))];
-        self.call_rt(Rt::WriteStr, args, None);
+        self.push_str(buf, Operand::Copy(Place::local(p)));
         self.goto(done);
         self.switch_to(done);
     }
