@@ -454,31 +454,27 @@ impl FnCx<'_, '_> {
     }
 
     /// Facts of `typeof x === tag`.
-    pub(super) fn typeof_split(
-        &mut self,
-        operand: &ast::Expr,
-        tag: &str,
-    ) -> (Vec<Fact>, Vec<Fact>) {
+    pub(super) fn typeof_split(&mut self, e: &ast::Expr, tag: &str) -> (Vec<Fact>, Vec<Fact>) {
         // `any` / `unknown`: read as the primitive type the tag names.
-        if let Some(l) = self.own_dynamic_local(operand) {
+        if let Some(l) = self.own_dynamic_local(e) {
             {
                 let t = match tag {
                     "number" => self.cx.ty.f64,
                     "string" => self.cx.ty.str_,
                     "boolean" => self.cx.ty.bool_,
                     // TypeScript's `Function` (issue #926): called through the descriptor.
-                    "function" => return (self.dynamic_to_function_fact(operand), vec![]),
+                    "function" => return (self.dynamic_to_function_fact(e), vec![]),
                     // TypeScript's `object | null` (issue #926), which is `object` here.
-                    "object" => return (self.dynamic_to_object_fact(operand), vec![]),
+                    "object" => return (self.dynamic_to_object_fact(e), vec![]),
                     _ => return (vec![], vec![]),
                 };
                 return (vec![Fact::Class(l, t)], vec![]);
             }
         }
-        let (l, nullable, u, nothing) = match self.local_with_members(operand) {
+        let (l, nullable, u, nothing) = match self.local_with_members(e) {
             Some((l, nullable, u)) => (l, nullable, u, self.cx.ty.nothing_of(self.local_ty(l))),
             // A field path of a local (`typeof node.text === "string"`).
-            None => match self.field_with_members(operand) {
+            None => match self.field_with_members(e) {
                 Some(found) => found,
                 None => return (vec![], vec![]),
             },
