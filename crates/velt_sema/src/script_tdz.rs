@@ -11,11 +11,9 @@
 //! A semantic error, not a parse error: the file is valid syntax, so `velt fmt` formats it and
 //! the editor still shows the module's other diagnostics.
 
-use rustc_hash::FxHashSet;
-
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast::*;
-use velt_syntax::visit::{walk_expr, walk_stmt, Visit};
+use velt_syntax::{expr_free_uses, stmt_free_uses, FreeUse};
 
 use crate::ctx::Ctx;
 
@@ -85,39 +83,39 @@ fn early_uses(items: &[Item], stmts: &[&Stmt]) -> Early {
             decls.extend(names.into_iter().map(|n| (n, LOCAL, s.span.lo, None)));
         }
     }
+    // The declarations the parser adds (`import.meta`) and the checker declares
+    // (`globalThis.<name>`) exist before the module's code runs.
+    decls.retain(|(n, ..)| {
+        n != velt_syntax::ast::IMPORT_META && !n.starts_with(crate::global_this::PREFIX)
+    });
     let mut out = Early::default();
     let Some(last) = decls.iter().map(|(_, _, lo, _)| *lo).max() else {
         return out;
     };
-    let mut check = |lo: u32, walk: &dyn Fn(&mut Uses)| {
+    let mut check = |lo: u32, uses: &dyn Fn() -> Vec<FreeUse>| {
         if lo >= last {
             return;
         }
-        let mut uses = Uses::default();
-        walk(&mut uses);
-        for (name, at) in &uses.uses {
-            if uses.binds.contains(name) {
-                continue;
-            }
-            let Some((_, what, _, c)) = decls.iter().find(|(n, _, at, _)| n == name && *at > lo)
+        for u in uses() {
+            let Some((_, what, _, c)) = decls.iter().find(|(n, _, at, _)| *n == u.name && *at > lo)
             else {
                 continue;
             };
-            match uses.deferred.iter().any(|d| d.lo <= at.lo && at.hi <= d.hi) {
-                true if *what == LOCAL => out.local_later.push((name.clone(), *at)),
+            match u.deferred {
+                true if *what == LOCAL => out.local_later.push((u.name, u.span)),
                 true => out.promoted.extend(*c),
-                false => out.direct.push((name.clone(), *what, *at)),
+                false => out.direct.push((u.name, *what, u.span)),
             }
         }
     };
     for s in stmts {
-        check(s.span.lo, &|u| walk_stmt(s, u));
+        check(s.span.lo, &|| stmt_free_uses(s));
     }
     for item in items {
         match &item.kind {
             ItemKind::Var(v) => {
                 if let Some(init) = &v.init {
-                    check(item.span.lo, &|u| walk_expr(init, u));
+                    check(item.span.lo, &|| expr_free_uses(init));
                 }
             }
             ItemKind::Class(d) => {
@@ -127,14 +125,18 @@ fn early_uses(items: &[Item], stmts: &[&Stmt]) -> Early {
                 }) = &d.extends
                 {
                     if let [head] = path.as_slice() {
-                        check(item.span.lo, &|u| {
-                            u.uses.push((head.name.clone(), head.span))
+                        check(item.span.lo, &|| {
+                            vec![FreeUse {
+                                name: head.name.clone(),
+                                span: head.span,
+                                deferred: false,
+                            }]
                         });
                     }
                 }
                 for f in d.fields.iter().filter(|f| f.is_static) {
                     if let Some(e) = &f.default {
-                        check(item.span.lo, &|u| walk_expr(e, u));
+                        check(item.span.lo, &|| expr_free_uses(e));
                     }
                 }
             }
@@ -162,109 +164,6 @@ struct Early {
 
 /// What a variable the parser left among the statements is, in [`early_uses`].
 const LOCAL: &str = "local";
-
-/// What one statement uses directly, binds, and runs later (function bodies).
-#[derive(Default)]
-struct Uses {
-    uses: Vec<(String, Span)>,
-    /// Any name the statement binds anywhere (a block's local may shadow the declaration).
-    binds: FxHashSet<String>,
-    /// Code that runs only when called: the bodies of functions and arrows, nested
-    /// declarations.
-    deferred: Vec<Span>,
-}
-
-impl<'a> Visit<'a> for Uses {
-    fn item(&mut self, item: &'a Item) {
-        self.deferred.push(item.span);
-        match &item.kind {
-            ItemKind::Class(d) | ItemKind::Struct(d) => {
-                self.binds.insert(d.name.name.clone());
-            }
-            ItemKind::Function(f) => {
-                self.binds.insert(f.sig.name.name.clone());
-            }
-            ItemKind::Enum(e) => {
-                self.binds.insert(e.name.name.clone());
-            }
-            _ => {}
-        }
-    }
-
-    fn function(&mut self, sig: &'a FnSig, body: &'a Block) {
-        self.params(&sig.params);
-        self.deferred.push(body.span);
-    }
-
-    fn stmt(&mut self, s: &'a Stmt) {
-        match &s.kind {
-            StmtKind::ForOf { pattern, .. } => self.bind(pattern),
-            StmtKind::Try {
-                catch: Some((Some(p), _)),
-                ..
-            } => self.bind(p),
-            _ => {}
-        }
-    }
-
-    fn var_decl(&mut self, v: &'a VarDecl) {
-        self.bind(&v.pattern);
-    }
-
-    fn expr(&mut self, e: &'a Expr) {
-        match &e.kind {
-            ExprKind::Ident(id) => self.uses.push((id.name.clone(), id.span)),
-            ExprKind::New { class, .. } => {
-                if let TypeExprKind::Named { path, .. } = &class.kind {
-                    if let [head] = path.as_slice() {
-                        self.uses.push((head.name.clone(), head.span));
-                    }
-                }
-            }
-            ExprKind::Object(props) => {
-                for p in props {
-                    match p {
-                        ObjectProp::Shorthand(id) => self.uses.push((id.name.clone(), id.span)),
-                        ObjectProp::Method(f) => self.params(&f.sig.params),
-                        _ => {}
-                    }
-                }
-            }
-            ExprKind::Arrow { params, .. } => {
-                params
-                    .iter()
-                    .for_each(|p| self.param(&p.name, p.pattern.as_ref()));
-                self.deferred.push(e.span);
-            }
-            ExprKind::Function(f) => {
-                self.params(&f.sig.params);
-                self.deferred.push(e.span);
-            }
-            _ => {}
-        }
-    }
-}
-
-impl Uses {
-    fn params(&mut self, params: &[Param]) {
-        params
-            .iter()
-            .for_each(|p| self.param(&p.name, p.pattern.as_ref()));
-    }
-
-    fn param(&mut self, name: &Ident, pattern: Option<&Pattern>) {
-        self.binds.insert(name.name.clone());
-        if let Some(q) = pattern {
-            self.bind(q);
-        }
-    }
-
-    fn bind(&mut self, p: &Pattern) {
-        let mut names = vec![];
-        pattern_names(p, &mut names);
-        self.binds.extend(names);
-    }
-}
 
 fn pattern_names(p: &Pattern, out: &mut Vec<String>) {
     match &p.kind {

@@ -163,7 +163,7 @@ fn walk_block<'a>(b: &'a ast::Block, v: &mut dyn Visit<'a>) {
     }
 }
 
-pub fn walk_stmt<'a>(s: &'a ast::Stmt, v: &mut dyn Visit<'a>) {
+pub(crate) fn walk_stmt<'a>(s: &'a ast::Stmt, v: &mut dyn Visit<'a>) {
     use ast::StmtKind as S;
     v.stmt(s);
     match &s.kind {

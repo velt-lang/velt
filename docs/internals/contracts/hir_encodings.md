@@ -1,7 +1,7 @@
 # HIR encodings (contract detail for `crates/velt_sema/src/hir/`)
 
 How sema encodes language features in HIR; lowering relies on every point here.
-Maintainer-owned, like `hir/mod.rs` and `hir/intrinsic.rs`.
+Maintainer-owned, like `hir/mod.rs`, `hir/intrinsic.rs` and `hir/module_state.rs`.
 
 ## M2 additions
 (see docs/reference/classes.md and docs/reference/memory.md):

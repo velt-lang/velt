@@ -30,6 +30,7 @@
 
 mod fields;
 mod intrinsic;
+mod module_state;
 mod nothing;
 mod numeric;
 mod table;
@@ -41,6 +42,7 @@ use velt_common::Span;
 
 pub use fields::{DynMember, DynMemberKind, FieldDef, FieldInit};
 pub use intrinsic::Intrinsic;
+pub use module_state::{GlobalDef, ModuleState};
 pub use nothing::Nothing;
 pub use numeric::{CpuTarget, FloatTy, IntTy, SimdTy};
 pub use table::TyTable;
@@ -191,16 +193,6 @@ pub struct Program {
     pub cpu_targets: HashMap<DefId, CpuTarget>,
     /// Names of structural types for messages: aliases' and field-only interfaces'. Additive.
     pub type_names: HashMap<TyId, String>,
-}
-
-/// Module-level `let`s: one slot each in a process-wide tuple (hir_encodings.md "Module state").
-#[derive(Clone, Debug)]
-pub struct ModuleState {
-    /// The state tuple: element `i` is the type of slot `i`.
-    pub ty: TyId,
-    /// The global of each slot, in initialization order (Node's module evaluation order).
-    pub slots: Vec<DefId>,
-    pub deferred: u32, // first root-file slot (`main` initializes it: `InitSlots`), or `slots.len()`
 }
 
 /// `ty` implements `iface<iface_args>` using `methods` (one per interface method, in order).
@@ -427,20 +419,6 @@ pub struct EnumDef {
     /// `JSON.stringify` show the active member's value.
     pub is_union: bool,
     pub span: Span,
-}
-
-#[derive(Clone, Debug)]
-pub struct GlobalDef {
-    pub name: String,
-    pub ty: TyId,
-    /// Evaluated at each use (a constant expression, or pure calls and closures, sema
-    /// `body::pure_init`), except a table: an array literal that lowering stores once as data,
-    /// and a module-level `let` (`slot`), which the module state's initializer evaluates once.
-    pub init: Expr,
-    pub span: Span,
-    /// The slot of a module-level `let` in `Program::module_state`: `Global(d)` is then a place
-    /// that is read, written and borrowed like a field.
-    pub slot: Option<u32>,
 }
 
 #[derive(Clone, Copy, Debug)]
