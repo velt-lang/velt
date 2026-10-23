@@ -306,11 +306,7 @@ pub(crate) fn check_looks(cx: &mut Ctx) {
         let own: Vec<String> = cx.adt(d).map_or(vec![], |a| {
             a.fields.iter().map(|f| f.name.clone()).collect()
         });
-        if !given.contains_key(&base) {
-            let g = given_fields(cx, base);
-            given.insert(base, g);
-        }
-        let written = &given[&base];
+        let written = &*given.entry(base).or_insert_with(|| given_fields(cx, base));
         let missing = match how {
             Seen::In(k) => (cx.object_copies.in_keys.get(k as usize))
                 .filter(|k| written.contains(k))
