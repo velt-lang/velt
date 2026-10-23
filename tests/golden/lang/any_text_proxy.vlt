@@ -1,0 +1,13 @@
+// `String(p)` of a proxy through `any`: JavaScript reads `p[Symbol.toPrimitive]` and
+// `p.toString` through the `get` trap, which Velt does not run yet: a `TypeError` naming #924,
+// before any trap runs (Node prints `[object Object]` after its `get` traps).
+function main(): void {
+  const p: any = new Proxy({ a: 1 } as any, {
+    ownKeys(t: any): any {
+      console.log("ownKeys");
+      return Reflect.ownKeys(t);
+    },
+  });
+  console.log("before");
+  console.log(String(p));
+}

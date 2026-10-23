@@ -32,13 +32,16 @@ use parking_lot::RawMutex;
 pub struct ModuleDesc {
     pub size: u64,
     pub align: u64,
-    /// Evaluates the initializers in module order and writes every slot, calling
-    /// `velt_rt_module_ready` after each.
+    /// Evaluates the initializers in module order and writes every slot but the root file's,
+    /// which its `main` initializes, calling `velt_rt_module_ready` after each.
     pub init: unsafe extern "C" fn(*mut u8),
     /// Drops every slot (the state tuple's drop glue).
     pub drop: unsafe extern "C" fn(*mut u8),
     /// Each slot's name, NUL-terminated, in slot order.
     pub names: *const u8,
+    /// Initializes the root file's slots, for a block of code swapped in (`velt dev`), whose
+    /// `main` does not run again; `None` when `init` writes every slot.
+    pub rest: Option<unsafe extern "C" fn(*mut u8)>,
 }
 
 /// The module lock.
@@ -55,7 +58,7 @@ pub(crate) fn used() -> bool {
 }
 
 /// One block: its descriptor, its memory, and how many of its slots are initialized (`u64::MAX`
-/// once `init` returned).
+/// once the last one is).
 struct Block {
     desc: *const ModuleDesc,
     p: *mut u8,
@@ -198,6 +201,11 @@ pub(crate) fn drop_at_exit() {
     // SAFETY: the lock is held.
     let blocks = std::mem::take(unsafe { &mut *BLOCKS.0.get() });
     for b in blocks {
+        // A program that stops before its root file's statements reached each declaration
+        // leaves slots that hold nothing to drop.
+        if b.ready != u64::MAX {
+            continue;
+        }
         // SAFETY: allocated in `block` with this descriptor's layout and initialized by `init`.
         unsafe {
             let d = &*b.desc;
@@ -212,19 +220,27 @@ pub(crate) fn drop_at_exit() {
 #[inline]
 unsafe fn block(desc: *const ModuleDesc, slot: u64) -> *mut u8 {
     // Short borrows only: `init` reaches here again.
-    let found = (*BLOCKS.0.get())
-        .iter()
-        .rev()
-        .find(|b| b.desc == desc)
-        .map(|b| (b.p, b.ready));
-    let (p, ready) = match found {
+    let (p, ready) = match find(desc) {
         Some(f) => f,
-        None => (new_block(desc), u64::MAX),
+        None => {
+            new_block(desc);
+            find(desc).unwrap_or_else(|| crate::panic::fatal("ICE: module state block lost"))
+        }
     };
     if slot >= ready {
         not_ready(desc, slot);
     }
     p
+}
+
+/// The block of `desc` and its `ready` count, if it exists. The lock must be held.
+#[inline]
+unsafe fn find(desc: *const ModuleDesc) -> Option<(*mut u8, u64)> {
+    (*BLOCKS.0.get())
+        .iter()
+        .rev()
+        .find(|b| b.desc == desc)
+        .map(|b| (b.p, b.ready))
 }
 
 /// Allocate and initialize the block of `desc`.
@@ -237,10 +253,11 @@ unsafe fn new_block(desc: *const ModuleDesc) -> *mut u8 {
         std::alloc::handle_alloc_error(layout);
     }
     // Recorded before `init` runs: the initializers read the slots written before them.
+    let swapped = !(*BLOCKS.0.get()).is_empty();
     (*BLOCKS.0.get()).push(Block { desc, p, ready: 0 });
     (d.init)(p);
-    if let Some(b) = (*BLOCKS.0.get()).iter_mut().find(|b| b.p == p) {
-        b.ready = u64::MAX;
+    if let Some(rest) = d.rest.filter(|_| swapped) {
+        rest(p);
     }
     p
 }
@@ -281,6 +298,13 @@ fn layout(d: &ModuleDesc) -> Layout {
 /// `desc` must point to the program's module descriptor.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_module_state(desc: *const ModuleDesc, slot: u64) -> *mut u8 {
+    lock_for_access();
+    block(desc, slot)
+}
+
+/// Take the module lock for an access unless this thread holds it ([`velt_rt_module_state`]).
+#[inline]
+unsafe fn lock_for_access() {
     let tcx = super::CURRENT.with(Cell::get);
     match tcx.as_ref() {
         Some(t) => {
@@ -303,7 +327,21 @@ pub unsafe extern "C" fn velt_rt_module_state(desc: *const ModuleDesc, slot: u64
             }
         }),
     }
-    block(desc, slot)
+}
+
+/// The block of `desc` (allocated and initialized as by [`velt_rt_module_state`]) without
+/// checking that a slot is initialized: for the root file's `main`, which initializes its
+/// file's slots in it.
+///
+/// # Safety
+/// `desc` must point to the program's module descriptor.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_module_block(desc: *const ModuleDesc) -> *mut u8 {
+    lock_for_access();
+    if let Some((p, _)) = find(desc) {
+        return p;
+    }
+    new_block(desc)
 }
 
 /// The initializers of `state`'s slots below `n` have run: those slots may be read.

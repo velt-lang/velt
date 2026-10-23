@@ -19,6 +19,9 @@ mod work;
 use rustc_hash::FxHashMap;
 
 pub use js_number::js_number;
+/// The names code reads without declaring them, scope-aware (sema checks the root file's early
+/// uses with these).
+pub use parser::script_names::{expr_free_uses, stmt_free_uses, FreeUse};
 
 /// The name of the identifier a hole of an array literal parses as (`[a, , b]`): empty, so it
 /// prints as nothing and no source can name it. Only a destructuring assignment target takes

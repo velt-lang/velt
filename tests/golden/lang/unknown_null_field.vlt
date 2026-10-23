@@ -1,0 +1,20 @@
+// `null` in an object literal converted to `unknown` or `any`, also in a nested object or array
+// literal: a field of type `null`.
+// check: no leaks
+function show(u: unknown): void {
+  console.log(u, JSON.stringify(u));
+}
+
+function main(): void {
+  const u: unknown = { a: null, b: undefined, c: 1 };
+  console.log(u);
+  const xs: unknown[] = [null, { x: null }];
+  console.log(xs);
+  show({ v: null, w: "w" });
+  const a: any = { p: null };
+  console.log(a.p === null, a.p, typeof a.p);
+  const w: any = { b: { c: null } };
+  console.log(JSON.stringify(w), w.b.c === null);
+  const n: unknown = { a: [null, 1], b: { c: { d: null } } };
+  console.log(JSON.stringify(n), n);
+}

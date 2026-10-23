@@ -357,9 +357,14 @@ impl FnCx<'_, '_> {
                     && g.src.ann.is_none()
                     && g.src.init.is_some_and(super::member::untyped_int) =>
             {
+                let stored = g.stored;
                 let init = g.src.init.expect("ICE: checked above");
                 let h = self.expr(init, exp, want);
-                self.literal_at(h, span)
+                let lit = self.literal_at(h, span);
+                match stored {
+                    true => self.after_slot_check(d, lit, span),
+                    false => lit,
+                }
             }
             DefInfo::Global(_) => self.global_read(d, want, span),
             DefInfo::Adt(_)
@@ -377,6 +382,25 @@ impl FnCx<'_, '_> {
                 self.error_expr(span)
             }
         }
+    }
+
+    /// `lit`, the value of module constant `d` that a function made above its declaration reads
+    /// (a module state slot, #1438), after a read of the slot: before the declaration ran, that
+    /// read throws Node's `ReferenceError`.
+    fn after_slot_check(&mut self, d: DefId, lit: hir::Expr, span: Span) -> hir::Expr {
+        crate::body::driver::ensure_global(self.cx, d);
+        let ty = self.cx.global(d).map_or(self.cx.ty.error, |g| g.ty);
+        let read = self.mk(H::Global(d), ty, span);
+        let ty = lit.ty;
+        let block = hir::Block {
+            stmts: vec![hir::Stmt {
+                kind: hir::StmtKind::Expr(read),
+                span,
+            }],
+            value: Some(Box::new(lit)),
+            span,
+        };
+        self.mk(H::Block(block), ty, span)
     }
 
     pub(crate) fn global_read(&mut self, d: DefId, want: Want, span: Span) -> hir::Expr {

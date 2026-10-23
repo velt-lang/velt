@@ -1,0 +1,30 @@
+// check: no leaks
+// Arrays and Maps of an object type cast to those of an extension with optional fields share
+// their elements (#1383): the same array or Map, the same objects, as in TypeScript.
+type VNode = { type: string; children: VNode[] };
+interface InternalVNode extends VNode {
+  _ns?: boolean;
+}
+
+const vnodes: VNode[] = [{ type: "a", children: [] }, { type: "b", children: [] }];
+const internal = vnodes as InternalVNode[];
+internal[0]._ns = true;
+console.log(internal === (vnodes as InternalVNode[]), (vnodes[0] as InternalVNode)._ns);
+internal.push({ type: "c", children: [], _ns: false });
+console.log(vnodes.length, vnodes[2].type);
+
+const m = new Map<string, VNode>();
+m.set("root", vnodes[1]);
+const im = m as Map<string, VNode> as Map<string, InternalVNode>;
+const root = im.get("root");
+if (root) {
+  root._ns = false;
+}
+console.log(im === (m as Map<string, InternalVNode>), (vnodes[1] as InternalVNode)._ns);
+console.log(vnodes);
+
+// The other way: an extension's array passed where the base's is expected.
+function count(xs: VNode[]): number {
+  return xs.length;
+}
+console.log(count(internal));

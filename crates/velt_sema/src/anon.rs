@@ -58,6 +58,8 @@ pub(crate) struct ObjectState {
     pub brands: crate::defined_props::Brands,
     /// The key names of the brands' hidden fields, once resolved (`Ctx::hidden_keys`).
     pub hidden: Option<FxHashSet<String>>,
+    /// The layouts extended object types may share (`collect::extended_layouts`).
+    pub layouts: crate::collect::extended_layouts::Layouts,
     /// Each class's value per construct signature type, a module-state constant
     /// (`body::expr::ctor_values`), in the order they were made.
     pub class_values: Vec<((DefId, TyId), DefId)>,
@@ -330,8 +332,11 @@ impl Ctx<'_> {
                 .is_some_and(|x| x.kind == AdtKind::Anon || cx.field_only_of.contains_key(d)),
             _ => false,
         };
-        if a == b || !object(self, a) || !object(self, b) || self.readonly_twins.is_empty() {
+        if a == b {
             return false;
+        }
+        if !object(self, a) || !object(self, b) || self.readonly_twins.is_empty() {
+            return self.family_layout(a, b);
         }
         let twins = self.readonly_twins.clone();
         let mut cache = FxHashMap::default();
@@ -340,7 +345,7 @@ impl Ctx<'_> {
         // it spells out.
         let ea = crate::readonly::erase_ty(&mut self.ty, &twins, &mut cache, a);
         let eb = crate::readonly::erase_ty(&mut self.ty, &twins, &mut cache, b);
-        self.canon(ea) == self.canon(eb)
+        self.canon(ea) == self.canon(eb) || self.family_layout(a, b)
     }
 
     /// Are `a` and `b` anonymous defs with the same field names, in order?

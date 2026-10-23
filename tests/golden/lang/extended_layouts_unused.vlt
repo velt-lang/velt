@@ -1,0 +1,17 @@
+// check: no leaks
+// An extension the program only declares changes nothing about its base (#1383): a `VNode`
+// keeps its own layout, prints and serializes, though the extension adds a function field.
+interface VNode {
+  type: string;
+  children: VNode[];
+}
+interface IV extends VNode {
+  _ns?: boolean;
+  _cb?: () => number;
+}
+const v: VNode = { type: "a", children: [{ type: "b", children: [] }] };
+console.log(v);
+console.log(JSON.stringify(v));
+const ks: Record<keyof VNode, number> = { type: 1, children: 2 };
+const r: Required<VNode> = { type: "r", children: [] };
+console.log(Object.keys(v).join(","), ks, r);

@@ -99,6 +99,7 @@ impl FnCx<'_, '_> {
                 ty: None,
                 name: prop.name.clone(),
                 span: prop.span,
+                dynamic: false,
             });
         if f.args.iter().any(|a| self.cx.dynamic(*a).is_some()) {
             // Only a value at a dynamic argument may be an adapter (`iface_adapt`).
@@ -117,6 +118,7 @@ impl FnCx<'_, '_> {
                 ty: None,
                 name: prop.name.clone(),
                 span: prop.span,
+                dynamic: false,
             });
         self.cx.mark_part_written(f.iface, f.index, prop.span)
     }

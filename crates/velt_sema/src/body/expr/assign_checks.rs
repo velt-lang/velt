@@ -54,6 +54,7 @@ impl FnCx<'_, '_> {
                 ty,
                 name: prop.name.clone(),
                 span: prop.span,
+                dynamic: false,
             });
     }
 
