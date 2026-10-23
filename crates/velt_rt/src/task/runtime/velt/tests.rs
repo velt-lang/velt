@@ -118,11 +118,12 @@ fn a_worker_busy_with_waiting_tasks_shares_them() {
     if super::super::worker_count() < 2 {
         return;
     }
-    // 200 tasks of ~1 ms of work each, all made on one worker: it is busy long past the limit
-    // with tasks waiting, so a helper takes some (checked every few tasks, so a moment when the
-    // other workers are busy with other tests does not decide it).
+    // 200 tasks made on one worker, each computing until a task has run on another worker
+    // (10 s at most in all): the worker stays busy with tasks waiting until a helper takes some,
+    // however long other tests keep the workers busy first.
     let ran_on = Arc::new(Mutex::new(HashSet::new()));
     let seen = ran_on.clone();
+    let until = Instant::now() + Duration::from_secs(10);
     let done = spawn(
         async move {
             let hs: Vec<_> = (0..200)
@@ -130,11 +131,10 @@ fn a_worker_busy_with_waiting_tasks_shares_them() {
                     let seen = seen.clone();
                     spawn(
                         async move {
-                            let t = Instant::now();
-                            while t.elapsed() < Duration::from_millis(1) {
+                            seen.lock().unwrap().insert(worker::current());
+                            while seen.lock().unwrap().len() < 2 && Instant::now() < until {
                                 std::hint::spin_loop();
                             }
-                            seen.lock().unwrap().insert(worker::current());
                         },
                         None,
                     )
@@ -158,8 +158,9 @@ fn tasks_queued_behind_a_long_poll_run_on_another_worker() {
     if super::super::worker_count() < 2 {
         return;
     }
-    // Tasks spawned by a task that then computes for 300 ms without returning: they are queued
-    // on its worker, which makes no progress, so the monitor moves them to another worker.
+    // Tasks spawned by a task that then computes without returning until they all ran (10 s at
+    // most): they are queued on its worker, which makes no progress, so the monitor moves them
+    // to another worker.
     let ran_late = Arc::new(Mutex::new(Vec::new()));
     let seen = ran_late.clone();
     let done = spawn(
@@ -178,7 +179,7 @@ fn tasks_queued_behind_a_long_poll_run_on_another_worker() {
                 })
                 .collect();
             let t = Instant::now();
-            while t.elapsed() < Duration::from_millis(300) {
+            while seen.lock().unwrap().len() < 8 && t.elapsed() < Duration::from_secs(10) {
                 std::hint::spin_loop();
             }
             computing.store(false, std::sync::atomic::Ordering::SeqCst);
