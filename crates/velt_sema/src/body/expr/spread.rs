@@ -9,11 +9,13 @@
 //! skipped. An optional source field (`a?: T`) is copied only while present, as JavaScript copies
 //! only the keys an object has. Array spread is in `spread_array.rs`.
 //!
-//! Spread sources are evaluated before the other elements of the literal.
+//! Everything is evaluated in written order, as in JS: an explicit property with effects that
+//! would otherwise run out of order is held in a temporary first (`written_order.rs`).
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
+use super::written_order::Part;
 use crate::body::places::{is_place, set_place_mode};
 use crate::body::{FnCx, LocalKind, Want};
 use crate::hir::{self, DefId, ExprKind as H, Intrinsic, StmtKind as S, TyId, TyKind, UseMode};
@@ -42,7 +44,7 @@ pub(super) struct Src {
 }
 
 /// A field value of a spread object literal.
-enum Value<'e> {
+pub(super) enum Value<'e> {
     /// Read out of a spread source.
     Read(hir::Expr, Src),
     /// An optional source field over an earlier value: the earlier value stays when the field
@@ -50,6 +52,9 @@ enum Value<'e> {
     Over(hir::Expr, Src, Box<Value<'e>>),
     /// An explicit property (`key: value` or shorthand `key`).
     Prop(ast::Ident, Option<&'e ast::Expr>),
+    /// An explicit property evaluated into a temporary where it is written: its value as
+    /// written, and the read of the temporary.
+    Held(ast::Ident, Option<&'e ast::Expr>, hir::Expr),
 }
 
 impl FnCx<'_, '_> {
@@ -67,17 +72,25 @@ impl FnCx<'_, '_> {
         let mut lets = vec![];
         let mut entries: Vec<(String, Value)> = vec![];
         let mut explicit: Vec<String> = vec![];
+        let mut parts = vec![];
         for p in props {
             let new: Vec<(String, Value)> = match p {
-                ast::ObjectProp::Spread(e) => self
-                    .spread_fields(e, &mut lets, false)
-                    .into_iter()
-                    .map(|(n, h, src)| (n, Value::Read(h, src)))
-                    .collect(),
+                ast::ObjectProp::Spread(e) => {
+                    let before = lets.len();
+                    let fields = self.spread_fields(e, &mut lets, false);
+                    parts.push(self.spread_part(e.span, &lets[before..], lets.len()));
+                    (fields.into_iter())
+                        .map(|(n, h, src)| (n, Value::Read(h, src)))
+                        .collect()
+                }
                 ast::ObjectProp::KeyValue(k, v) => {
+                    let effects = self.effects(v);
+                    parts.push(Part::prop(k, Some(v), effects, lets.len()));
                     vec![(k.name.clone(), Value::Prop(k.clone(), Some(v)))]
                 }
                 ast::ObjectProp::Shorthand(k) => {
+                    let effects = self.name_effects(k);
+                    parts.push(Part::prop(k, None, effects, lets.len()));
                     vec![(k.name.clone(), Value::Prop(k.clone(), None))]
                 }
                 ast::ObjectProp::Method(_) => vec![],
@@ -117,6 +130,7 @@ impl FnCx<'_, '_> {
                 }
             }
         }
+        self.order_written(parts, &mut entries, target.as_ref(), &mut lets);
         let lit = match target {
             Some((d, slots)) => self.spread_struct(d, slots, entries, exp, span, &mut lets),
             None => self.spread_anon(entries, span, &mut lets),
@@ -445,12 +459,26 @@ impl FnCx<'_, '_> {
                     let watched = crate::anon::absent_is_null(&self.cx.ty, kind, &fields[i]);
                     self.field_value(&k, value, Some(expected), watched)
                 }
-                (Value::Prop(k, value), None) => {
-                    if !crate::collect::exports::def_member_maybe_dropped(self.cx, d, &k.name) {
-                        self.cx
-                            .err(format!("no field `{}` on type `{sname}`", k.name), k.span);
+                (Value::Held(k, value, h), Some(i)) => {
+                    self.check_private(fields[i].private_to, &k.name, k.span);
+                    self.cx
+                        .rec_ref(k.span, crate::ide::record::Target::Field(d, i as u32));
+                    if fields[i].optional {
+                        let slot = crate::body::OptionalSlot::Field;
+                        match value {
+                            Some(v) => self.optional_slot(v, slot),
+                            None => self.optional_slots.push((k.span, slot)),
+                        }
                     }
+                    h
+                }
+                (Value::Prop(k, value), None) => {
+                    self.no_such_field(d, &k, &sname);
                     self.prop_value(&k, value, None);
+                    continue;
+                }
+                (Value::Held(k, ..), None) => {
+                    self.no_such_field(d, &k, &sname);
                     continue;
                 }
             };
@@ -518,6 +546,7 @@ impl FnCx<'_, '_> {
     ) -> hir::Stmt {
         let (value, guard) = match part {
             Value::Prop(k, value) => (self.prop_value(&k, value, Some(fty)), None),
+            Value::Held(.., h) => (self.coerce(h, fty), None),
             Value::Read(h, src) | Value::Over(h, src, _) => {
                 let guard = match src.place {
                     _ if src.guard.is_some() => src.guard,
@@ -580,7 +609,7 @@ impl FnCx<'_, '_> {
         lets: &mut Vec<hir::Stmt>,
     ) -> hir::Expr {
         match v {
-            Value::Read(h, _) => h,
+            Value::Read(h, _) | Value::Held(.., h) => h,
             Value::Prop(k, value) => self.field_value(&k, value, expected, watched),
             Value::Over(h, src, prev) => {
                 let prev = match *prev {
@@ -685,50 +714,6 @@ impl FnCx<'_, '_> {
             }
         }
     }
-
-    /// The `TypeError` of a present `undefined` spread into a field of type `target`.
-    fn spread_undefined_error(&mut self, target: TyId, span: Span) -> hir::Expr {
-        let shown = self.cx.display(target);
-        let msg = format!("TypeError: a spread copies `undefined` into a field of type `{shown}`");
-        let msg = self.str_lit(&msg, span);
-        let never = self.cx.ty.never;
-        self.intrinsic(hir::Intrinsic::Panic, vec![msg], never, span)
-    }
-
-    /// `h` (a `T | undefined`, or a `T | null | undefined`) as its payload (`T`, or the
-    /// `T | null`), or `prev` where it is `undefined`.
-    fn undefined_keeps(&mut self, mut h: hir::Expr, prev: hir::Expr, span: Span) -> hir::Expr {
-        let mid = self
-            .cx
-            .ty
-            .opt_payload(h.ty)
-            .expect("ICE: an option without a payload");
-        let (l, mode) = self.option_binding(&h, mid, "<spread>", true);
-        if mode == UseMode::Move {
-            self.force_move(&mut h);
-        }
-        let v = self.mk(H::Local(l, mode), mid, span);
-        let prev = self.coerce(prev, mid);
-        let hty = h.ty;
-        let bind = self.pat(hir::PatKind::Binding(l, mode), mid, span);
-        let arms = vec![
-            hir::Arm {
-                pat: self.pat(hir::PatKind::Some(Box::new(bind)), hty, span),
-                guard: None,
-                body: v,
-            },
-            hir::Arm {
-                pat: self.pat(hir::PatKind::None, hty, span),
-                guard: None,
-                body: prev,
-            },
-        ];
-        let kind = H::Match {
-            scrutinee: Box::new(h),
-            arms,
-        };
-        self.mk(kind, mid, span)
-    }
 }
 
 /// The parts of a field's spread value, earliest first (an `Over` unfolds into what it is
@@ -745,20 +730,20 @@ fn chain(v: Value) -> Vec<Value> {
 }
 
 /// Every part of `v` is an optional source field, so the field may be absent.
-fn may_be_absent(v: &Value) -> bool {
+pub(super) fn may_be_absent(v: &Value) -> bool {
     match v {
         Value::Read(_, src) => src.optional,
         Value::Over(_, src, prev) => src.optional && may_be_absent(prev),
-        Value::Prop(..) => false,
+        Value::Prop(..) | Value::Held(..) => false,
     }
 }
 
 /// Some part of `v` keeps "absent" apart from `null` (`a?: T | null`).
-fn any_presence(v: &Value) -> bool {
+pub(super) fn any_presence(v: &Value) -> bool {
     match v {
         Value::Read(_, src) => src.presence,
         Value::Over(_, src, prev) => src.presence || any_presence(prev),
-        Value::Prop(..) => false,
+        Value::Prop(..) | Value::Held(..) => false,
     }
 }
 
@@ -766,6 +751,6 @@ fn any_presence(v: &Value) -> bool {
 fn last_read_ty(v: &Value) -> Option<TyId> {
     match v {
         Value::Read(h, _) | Value::Over(h, _, _) => Some(h.ty),
-        Value::Prop(..) => None,
+        Value::Prop(..) | Value::Held(..) => None,
     }
 }

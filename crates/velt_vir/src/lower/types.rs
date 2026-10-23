@@ -172,7 +172,12 @@ impl<'h> Cx<'h> {
         if !e.is_union {
             return None;
         }
-        let payloads: Vec<TyId> = e.variants.iter().map(|v| v.payload[0]).collect();
+        // A union view's variant (velt_sema `union_views.rs`) is no member: the unions of one
+        // family each have it, with the same payload.
+        let payloads: Vec<TyId> = (e.variants.iter())
+            .filter(|v| v.name != UNION_VIEW_VARIANT)
+            .map(|v| v.payload[0])
+            .collect();
         let mut members: Vec<TyId> = vec![];
         for p in payloads {
             let m = self.subst_raw(p, args);
@@ -740,3 +745,6 @@ pub(super) enum VariantAt {
     /// The union collapsed to this member: the value itself.
     Whole,
 }
+
+/// The name of a union view's variant (velt_sema `union_views.rs`).
+pub(super) const UNION_VIEW_VARIANT: &str = "<view>";

@@ -1045,6 +1045,56 @@ for (const s of shapes) {
   if (s.kind === "square") console.log(s.side); // 2
 }
 ```
+- **A live object as a union of interfaces (a union view).** When every member is an interface
+  with methods and the members share an interface (`Base` above), one object whose getters
+  change can be cast to the union, as libraries build such state machines
+  (`impl as AsyncState<T>`): `wide as Shape` keeps the same object, and every discriminant
+  test, `switch` and field read on the union calls its getters again, so the union sees the
+  object change, as in Node. The cast needs the object's type to have every member's fields,
+  each typed as the union of the members' types (`kind: "circle" | "square"`), and the methods
+  of the shared interface (a class instance converts through an interface its class
+  implements: `new Wide() as Shape`); else it is an error. A read after a test is checked
+  against the member the test selected: an object whose state no longer fits it (`kind` is
+  `"circle"` but `r` is `null`) gives a `TypeError`, never a value of the wrong type. Values built from
+  literals keep their member and its tag, and can sit next to the live object in one variable
+  or array. Using a narrowed union that may hold such an object as a value of its member type
+  (passing it where a `Circle` is expected) is not supported yet (an error); read its fields
+  instead, or pass it where the union is expected.
+
+```ts
+interface Base {
+  describe(): string;
+}
+interface Circle extends Base {
+  readonly kind: "circle";
+  readonly r: number;
+}
+interface Square extends Base {
+  readonly kind: "square";
+  readonly side: number;
+}
+type Shape = Circle | Square;
+
+interface Wide {
+  readonly kind: "circle" | "square";
+  readonly r: number;
+  readonly side: number;
+  describe(): string;
+}
+let kind: "circle" | "square" = "circle";
+const wide: Wide = {
+  get kind() {
+    return kind;
+  },
+  r: 1,
+  side: 2,
+  describe: () => "changes",
+};
+const live = wide as Shape;
+console.log(live.kind, live.describe()); // circle changes
+kind = "square";
+if (live.kind === "square") console.log(live.side); // 2
+```
 - A discriminated union may name itself behind an indirection
   (`type Tree = { kind: "leaf"; v: number } | { kind: "node"; kids: Tree[] }`; see
   [Union types](#union-types)).
@@ -1768,7 +1818,13 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   arguments, `f(...xs)`, fill a rest parameter ([Functions](functions.md)). Whatever `for...of`
   takes can be spread into an array or a rest parameter too: `[..."héllo"]` (characters),
   `[...map]` (entries), `[...gen()]`, `Math.max(...set)`
-  ([Consuming an iterable](control-flow.md#consuming-an-iterable)).
+  ([Consuming an iterable](control-flow.md#consuming-an-iterable)). Elements, arguments and
+  properties run in written order, as in JS: `[f(), ...g()]` calls `f` first, an iterable is
+  consumed where it is written, and `{ y: f(), x: g() }` calls `f` first whatever the order of
+  its type's fields; a property a later spread overrides (`{ a: f(), ...o }`) still runs. A
+  spread copies its source's elements or properties where it is written, before later ones
+  run: `{ ...o, a: f(o) }` and `[...xs, ...f(xs)]` copy `o` and `xs` before `f` changes them,
+  and `[n, ...bump()]` reads `n` before `bump` does.
 - **Wider element types**: an array, object type or generic class converts to the same type
   with wider elements (`C[]` to `Named[]` for a class `C implements Named`, `i64[]` to
   `(i64 | null)[]`, `Box<C>` to `Box<Named>`) only when the value is **fresh**: a literal, a
@@ -1916,7 +1972,8 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   `${xs}` writes them), `sort()` on
   numbers, strings and `Comparable` elements, and `sort(cmp)` (stable, any element type, like
   JS's `Array.prototype.sort(compareFn)`). Callbacks get the element and its index, like JS
-  (`xs.map((x, i) => …)`), and may take fewer parameters. A predicate (`filter`, `find`,
+  (`xs.map((x, i) => …)`, the index a `number`, also when written `(x: number, i: number)`),
+  and may take fewer parameters. A predicate (`filter`, `find`,
   `findIndex`, `some`, `every`) may return any value, tested for
   [truthiness](variables.md#conditions-truthiness) as in JS:
   `[0, 3, 0, 4].filter((n) => n)` is `[3, 4]`. The full list is in the

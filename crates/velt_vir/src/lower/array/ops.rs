@@ -1,10 +1,11 @@
-//! Array intrinsics: `length`, `push` (amortized growth), `pop`, and the `std/` helpers
+//! Array intrinsics: `length`, `push` (amortized growth), `pop`, `reserve` (exact growth), and the `std/` helpers
 //! `__intrinsic_array_with_capacity/swap/remove/truncate/move/set_len`.
 
 use crate::lower::async_fn::BoxHold;
 use velt_sema::hir::{self, TyId};
 
 use crate::lower::operand::proj;
+use crate::lower::rt::Rt;
 use crate::lower::{cint, ice, unit, FnLower, LkMode, Work};
 use crate::vir::{self, BinOp, Operand, Place, Proj, Rvalue, Ty};
 
@@ -207,6 +208,12 @@ impl FnLower<'_, '_> {
                 self.set_len(&arr, elem, nv);
                 unit()
             }
+            (I::ArrayReserve, [n]) => {
+                let (nv, nt) = (self.expr(n), self.vty(n.ty));
+                let nv = self.cast_to(nv, nt, Ty::U64);
+                self.reserve(&arr, elem, nv);
+                unit()
+            }
             _ => ice(format_args!(
                 "intrinsic {i:?} called with {} arguments",
                 rest.len() + 1
@@ -313,6 +320,54 @@ impl FnLower<'_, '_> {
         self.goto(check);
         self.switch_to(ok);
         self.assign(proj(arr, Proj::Field(1)), Rvalue::Use(n));
+    }
+
+    /// Room for `n` more elements: when `len + n` exceeds the capacity, the buffer is
+    /// allocated or reallocated to exactly `len + n` (one move of the elements, no doubling).
+    fn reserve(&mut self, arr: &Place, elem: TyId, n: Operand) {
+        let len = Self::arr_field(arr, 1);
+        let need = self.rvalue_temp(Ty::U64, Rvalue::Binary(BinOp::Add, len, n));
+        let cap = self.rvalue_temp(Ty::U64, Rvalue::Use(Self::arr_field(arr, 2)));
+        let fits = self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(BinOp::Le, need.clone(), cap.clone()),
+        );
+        let (grow, new_bb, re_bb, set, ok) = (
+            self.new_block(),
+            self.new_block(),
+            self.new_block(),
+            self.new_block(),
+            self.new_block(),
+        );
+        self.branch(fits, ok, grow);
+        self.switch_to(grow);
+        let (stride, align) = self.stride(elem);
+        let (stride, align) = (cint(stride as i128, Ty::U64), cint(align as i128, Ty::U64));
+        let data = self.temp(Ty::Ptr);
+        let size = self.rvalue_temp(
+            Ty::U64,
+            Rvalue::Binary(BinOp::Mul, need.clone(), stride.clone()),
+        );
+        let empty = self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(BinOp::Eq, cap.clone(), cint(0, Ty::U64)),
+        );
+        self.branch(empty, new_bb, re_bb);
+        self.switch_to(new_bb);
+        let args = vec![size.clone(), align.clone()];
+        self.call_rt(Rt::Alloc, args, Some(Place::local(data)));
+        self.goto(set);
+        self.switch_to(re_bb);
+        let old = self.rvalue_temp(Ty::U64, Rvalue::Binary(BinOp::Mul, cap, stride));
+        let args = vec![Self::arr_field(arr, 0), old, align, size];
+        self.call_rt(Rt::Realloc, args, Some(Place::local(data)));
+        self.goto(set);
+        self.switch_to(set);
+        let d = Rvalue::Use(Operand::Copy(Place::local(data)));
+        self.assign(proj(arr, Proj::Field(0)), d);
+        self.assign(proj(arr, Proj::Field(2)), Rvalue::Use(need));
+        self.goto(ok);
+        self.switch_to(ok);
     }
 
     pub(in crate::lower) fn with_capacity(&mut self, cap: Operand, ty: TyId) -> Operand {

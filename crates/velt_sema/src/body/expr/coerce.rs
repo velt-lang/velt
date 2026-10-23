@@ -289,7 +289,9 @@ impl FnCx<'_, '_> {
             Ok(h) => return Ok(h),
             Err(h) => h,
         };
+        // `(v: any) => …` as a `(x: number) => void`: wrapped, converting each argument.
         self.widen_fresh(h, exp)
+            .or_else(|h| self.widened_params(h, exp))
     }
 
     /// Types equal up to `Error` components (an expected type with unknown parts).

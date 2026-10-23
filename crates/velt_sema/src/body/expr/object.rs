@@ -228,7 +228,7 @@ impl FnCx<'_, '_> {
     }
 
     /// `(name, value)` pairs of an object literal.
-    fn props<'e>(
+    pub(super) fn props<'e>(
         &mut self,
         props: &'e [ast::ObjectProp],
     ) -> Vec<(ast::Ident, Option<&'e ast::Expr>)> {
@@ -396,8 +396,7 @@ impl FnCx<'_, '_> {
             return self.spread_object(props, None, self.hint(exp), span);
         }
         let ps = self.props(props);
-        let mut fields = vec![];
-        let mut hs = vec![];
+        let (mut fields, mut hs) = (vec![], vec![]);
         let dynamic = self.hint(exp).is_some_and(|t| self.cx.dynamic(t).is_some());
         for (name, value) in &ps {
             let h = self.anon_prop_value(name, *value, dynamic);
@@ -596,11 +595,12 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
-        let a = self.cx.adt(d).expect("ICE: struct");
-        let fields = a.fields.clone();
+        let fields = self.cx.adt(d).expect("ICE: struct").fields.clone();
         let sname = self.literal_name(d);
-        let values = self.struct_values(d, &sname, &fields, (&mut slots, hints), props);
-        self.finish_struct(d, slots, values, exp, span)
+        let mut values = self.struct_values(d, &sname, &fields, (&mut slots, hints), props);
+        let lets = self.bind_in_written_order(&mut values, &fields, props);
+        let lit = self.finish_struct(d, slots, values, exp, span);
+        self.with_lets(lets, lit)
     }
 
     /// The name of `d` for messages about a literal of it: the alias an anonymous object type is

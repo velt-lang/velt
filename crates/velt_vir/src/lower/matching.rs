@@ -106,7 +106,11 @@ impl FnLower<'_, '_> {
                 }
             }
         }
-        // Sema guarantees exhaustiveness.
+        // Sema guarantees exhaustiveness, except for a union view's variant (velt_sema
+        // `union_views.rs`), which a match without an arm for it must never read as a member.
+        if self.holds_union_view(sty) {
+            self.view_panic();
+        }
         self.terminate(Terminator::Unreachable);
         self.switch_to(arm.join);
         self.pop_scope();
@@ -245,5 +249,36 @@ fn local_place(e: &hir::Expr) -> bool {
         | K::UnwrapVariant { expr: base, .. }
         | K::Downcast(base) => local_place(base),
         _ => false,
+    }
+}
+
+impl FnLower<'_, '_> {
+    /// Is `t` (or its payload) a union with a view variant?
+    fn holds_union_view(&mut self, t: TyId) -> bool {
+        let t = match self.kind(t) {
+            hir::TyKind::Option(p, _) => p,
+            _ => t,
+        };
+        let hir::TyKind::Adt(d, _) = self.kind(t) else {
+            return false;
+        };
+        match self.cx.hir.def(d) {
+            hir::Def::Enum(e) => {
+                e.is_union
+                    && (e.variants.iter()).any(|v| v.name == super::types::UNION_VIEW_VARIANT)
+            }
+            _ => false,
+        }
+    }
+
+    /// A panic for a union view that reached a match with no arm for it.
+    fn view_panic(&mut self) {
+        let msg = format!(
+            "TypeError: a union view reached a use that needs its member{}",
+            self.panic_suffix()
+        );
+        let msg = self.str_lit(&msg);
+        let a = self.operand_addr(msg, Ty::Agg(crate::vir::STR_AGG));
+        self.call_rt(super::rt::Rt::Panic, vec![a], None);
     }
 }

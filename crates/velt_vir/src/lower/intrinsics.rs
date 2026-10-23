@@ -114,7 +114,8 @@ impl FnLower<'_, '_> {
                 | I::ArrayRemove
                 | I::ArrayTruncate
                 | I::ArrayMove
-                | I::ArraySetLen,
+                | I::ArraySetLen
+                | I::ArrayReserve,
                 [_, ..],
             ) => self.array_intrinsic(i, args, ty),
             (I::Clone, [a]) => {

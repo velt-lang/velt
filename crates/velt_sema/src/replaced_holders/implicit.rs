@@ -537,6 +537,7 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::ArrayTruncate
         | I::ArrayMove
         | I::ArraySetLen
+        | I::ArrayReserve
         | I::Hash
         | I::Eq
         | I::KeyEq

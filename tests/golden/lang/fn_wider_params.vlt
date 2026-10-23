@@ -1,0 +1,74 @@
+// check: no leaks
+// Functions with wider parameter types (`(v: any) => …` as a `(x: number) => void`) where no
+// frame holds a wrapper's hidden local (a field initializer, a module-level constant), with
+// optional parameters, as a nullable function type, a narrower `any` parameter, async arrows,
+// a value typed `undefined`, and a `then` callback that throws (#1454). Expected output: Node's.
+class Holder {
+  handler: (x: number) => void = (v: any) => console.log("field", v);
+  run(): void {
+    this.handler(1);
+  }
+}
+new Holder().run();
+export const top: (s: string) => void = (v: unknown) => console.log("top", v);
+top("t");
+const nums = [1, 2];
+nums.forEach(async (v: any) => console.log("async forEach", v));
+function apply2<T>(f: (x: T) => void, x: T): void {
+  f(x);
+}
+apply2((v: any) => console.log("apply2", v), 3);
+const narrow: (x: any) => void = (v: number) => console.log("narrow", v);
+narrow(4);
+const undef: (x: undefined) => void = (v: any) => console.log("undefined", v);
+undef(undefined);
+const opt: (x: number, y?: string) => void = (a: any, b?: unknown) => console.log("opt", a, b);
+opt(5, undefined);
+opt(5, "y");
+const u: ((x: number) => void) | null = (v: any) => console.log("nullable fn", v);
+if (u) u(6);
+class C {
+  m(v: unknown): void {
+    console.log("method", v);
+  }
+}
+const c = new C();
+nums.forEach((v) => c.m(v));
+const mv: (x: number) => void = c.m.bind(c);
+mv(7);
+async function main2(): Promise<void> {
+  try {
+    await Promise.resolve(8).then((v: any) => {
+      throw new Error(`bad ${v}`);
+    });
+  } catch (e) {
+    console.log("caught", (e as Error).message);
+  }
+}
+await main2();
+
+// A module-level function or constant holding one, and rest parameters, where no frame is.
+function base(v: unknown): void {
+  console.log("base", v);
+}
+const logIt = (v: any) => console.log("logIt", v);
+export const ex: (x: number) => void = base;
+export const ex2: (s: string) => void = logIt;
+class F {
+  h: (x: number) => void = base;
+  r: (...xs: number[]) => void = (...ys: any[]) => console.log("field rest", ys);
+}
+export const rr: (...xs: number[]) => void = (...ys: any[]) => console.log("rest", ys.length, ys);
+export const rr2: (a: string, ...xs: number[]) => void = (a: unknown, ...ys: unknown[]) => console.log("rest2", a, ys);
+ex(1);
+ex2("two");
+const f = new F();
+f.h(3);
+f.r(4, 5);
+rr(6, 7, 8);
+rr2("a", 9);
+// Optional and defaulted extra parameters of a `then` callback.
+Promise.resolve(1).then((v: number, extra?: string) => console.log(v, extra));
+Promise.resolve(2).then((v: number, extra = "d") => console.log(v, extra));
+function two(v: number, extra?: string) { console.log("two", v, extra); }
+Promise.resolve(3).then(two);

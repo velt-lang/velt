@@ -354,6 +354,31 @@ Maintainer-owned, like `hir/mod.rs`, `hir/intrinsic.rs` and `hir/module_state.rs
   field as its constant, a non-Copy field as `Intrinsic::Share` of it), typed as the union of the
   field types.
 
+## Union views
+- A union whose members are all interfaces with methods sharing an interface (velt_sema
+  `union_views.rs`, #1410) can hold a *view*: an interface value of the union's view interface
+  (an interface sema makes: the members' nearest shared interface plus every field all members
+  have, readonly, typed as the union of their types; one per family of unions, the members'
+  interfaces at any arguments, so a generic union's instance and sema's union of the same
+  members hold the same payload type). When the program makes a view of a family
+  (`w as U`: `Variant { variant: <view>, args: [Upcast(w)] }`), each union def of the family
+  has one more variant, named `<view>`, after the members' (its index is the member count).
+- Every match sema makes on such a union has an arm for `<view>` that does the same through the
+  view interface (a field read calls the getter, converted to the type the members flow
+  narrowing left give it with a checked conversion: `match` on the value or `checked_present`,
+  a `TypeError` panic on a mismatch; a discriminant test compares the live value); a `switch` on
+  the discriminant matches the discriminant's value (read through the view for a view), its
+  slots still narrowing the union local. A union local narrowed to one member that is the object
+  of a member read or call, or read where a union of its family is expected, stays the union
+  (narrowed) instead of an `UnwrapVariant`, unless it holds that member because it was assigned
+  to it.
+- Lowering: `canon_union` leaves the `<view>` variant out of a union's member list (the family's
+  unions all have it), and a match on such a union that has no arm for the variant panics there
+  (`TypeError`) instead of being unreachable. Sema reports a match without a `<view>` arm and a
+  narrowed `UnwrapVariant` read of such a union as not supported. Only the families an earlier
+  round of checking made views of get `<view>` arms: a round that makes a view of another family
+  is checked again with it, so a program that makes no view gets the HIR it got before views.
+
 ## switch
 - No HIR statement: sema desugars `switch` (`hir/mod.rs`, sema `body/switch`) into
   - a `Match` in statement position on the scrutinee (a place; a temporary is first stored in a
@@ -462,6 +487,8 @@ Maintainer-owned, like `hir/mod.rs`, `hir/intrinsic.rs` and `hir/module_state.rs
   ownership: the std code keeps every element owned by exactly one array, cuts stale copies off
   before an array is dropped, and keeps the elements out of any array a callback could reach
   through an alias while it runs.
+  `Intrinsic::ArrayReserve(xs, extra)` (sema's array spreads): room for `extra` more elements,
+  the buffer reallocated to exactly `len + extra` when the capacity is smaller (no doubling).
   `Intrinsic::NeedsDrop(value)` (std only, value borrowed and not evaluated): a constant `bool`,
   whether a value of that type owns anything dropping it releases (lowering's drop glue). A bit
   copy of a type that needs no drop is an independent value, so the stable sort copies such

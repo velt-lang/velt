@@ -1,0 +1,51 @@
+// Discriminant reads on a union of interfaces (#1410): `mode` "literal" reads a member built from
+// an object literal (a tag test), "view" reads a wide object cast to the union (a call of its
+// getter through the view's table). Run: velt run discriminant_reads.vlt -- <literal|view> <n>
+interface Base {
+  refresh(): number;
+}
+
+interface Ready extends Base {
+  readonly state: "ready";
+  readonly value: number;
+}
+
+interface Idle extends Base {
+  readonly state: "idle";
+  readonly value: null;
+}
+
+type State = Ready | Idle;
+
+interface Wide {
+  readonly state: "ready" | "idle";
+  readonly value: number | null;
+  refresh(): number;
+}
+
+let st: "ready" | "idle" = "ready";
+const wide: Wide = {
+  get state() {
+    return st;
+  },
+  get value() {
+    return st === "ready" ? 1 : null;
+  },
+  refresh: () => 0,
+};
+const literal: State = { state: "ready", value: 1, refresh: () => 0 };
+const view = wide as State;
+
+function count(s: State, n: number): number {
+  let ready = 0;
+  for (let i = 0; i < n; i++) {
+    if (s.state === "ready") {
+      ready += s.value;
+    }
+  }
+  return ready;
+}
+
+const mode = process.argv[2] ?? "literal";
+const n = Number(process.argv[3] ?? "1000000");
+console.log(count(mode === "view" ? view : literal, n));

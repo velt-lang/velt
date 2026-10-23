@@ -1,0 +1,41 @@
+// check: no leaks
+// A union view (#1410) is the same object as the value cast: writes through the wide variable and
+// a method that changes the object are seen through the view, and the other way round, as in
+// Node.
+interface Base {
+  bump(): number;
+}
+
+interface A extends Base {
+  readonly kind: "a";
+  readonly n: number;
+}
+
+interface B extends Base {
+  readonly kind: "b";
+  readonly n: number;
+}
+
+type U = A | B;
+
+interface W {
+  kind: "a" | "b";
+  n: number;
+  bump(): number;
+}
+
+class Impl implements W {
+  kind: "a" | "b" = "a";
+  n = 1;
+  bump(): number {
+    this.n++;
+    return this.n;
+  }
+}
+
+const w: W = new Impl();
+const u = w as U;
+console.log(u.bump(), w.n, u.n);
+w.n = 10;
+w.kind = "b";
+console.log(u.n, u.kind, u.bump(), w.n);

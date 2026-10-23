@@ -1,0 +1,7 @@
+// A `then` / `catch` callback that takes more parameters than the promise passes is refused (TS
+// rejects it too, TS2345); it was called without them and read whatever was there (#1454).
+Promise.resolve(1).then((v: any, extra: any) => console.log(v, extra));
+Promise.reject(new Error("e")).catch((e: Error, extra: any) => console.log(e, extra));
+Promise.resolve(1).then((v: number, extra: number) => console.log(v, extra));
+const both = (v: number, extra: number) => console.log(v, extra);
+Promise.resolve(1).then(both);

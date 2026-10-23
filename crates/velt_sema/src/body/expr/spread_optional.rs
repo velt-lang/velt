@@ -6,7 +6,7 @@ use velt_syntax::ast;
 
 use super::spread::Src;
 use crate::body::FnCx;
-use crate::hir::{self, ExprKind as H, UseMode};
+use crate::hir::{self, ExprKind as H, TyId, UseMode};
 
 impl FnCx<'_, '_> {
     /// `...h` with `h` an object that may be `undefined` or `null` (`T | undefined`, `T | null`;
@@ -85,5 +85,54 @@ impl FnCx<'_, '_> {
             out.push((f.name.clone(), value, src));
         }
         Ok(out)
+    }
+
+    /// The `TypeError` of a present `undefined` spread into a field of type `target`.
+    pub(super) fn spread_undefined_error(&mut self, target: TyId, span: Span) -> hir::Expr {
+        let shown = self.cx.display(target);
+        let msg = format!("TypeError: a spread copies `undefined` into a field of type `{shown}`");
+        let msg = self.str_lit(&msg, span);
+        let never = self.cx.ty.never;
+        self.intrinsic(hir::Intrinsic::Panic, vec![msg], never, span)
+    }
+
+    /// `h` (a `T | undefined`, or a `T | null | undefined`) as its payload (`T`, or the
+    /// `T | null`), or `prev` where it is `undefined`.
+    pub(super) fn undefined_keeps(
+        &mut self,
+        mut h: hir::Expr,
+        prev: hir::Expr,
+        span: Span,
+    ) -> hir::Expr {
+        let mid = self
+            .cx
+            .ty
+            .opt_payload(h.ty)
+            .expect("ICE: an option without a payload");
+        let (l, mode) = self.option_binding(&h, mid, "<spread>", true);
+        if mode == UseMode::Move {
+            self.force_move(&mut h);
+        }
+        let v = self.mk(H::Local(l, mode), mid, span);
+        let prev = self.coerce(prev, mid);
+        let hty = h.ty;
+        let bind = self.pat(hir::PatKind::Binding(l, mode), mid, span);
+        let arms = vec![
+            hir::Arm {
+                pat: self.pat(hir::PatKind::Some(Box::new(bind)), hty, span),
+                guard: None,
+                body: v,
+            },
+            hir::Arm {
+                pat: self.pat(hir::PatKind::None, hty, span),
+                guard: None,
+                body: prev,
+            },
+        ];
+        let kind = H::Match {
+            scrutinee: Box::new(h),
+            arms,
+        };
+        self.mk(kind, mid, span)
     }
 }

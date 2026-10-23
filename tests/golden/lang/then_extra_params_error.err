@@ -1,0 +1,7 @@
+:3:25: error: mismatched types
+expected (f64) => void, found (f64, any) => void
+:4:38: error: mismatched types
+expected (Error) => void, found (Error, any) => void
+:5:25: error: mismatched types
+expected (f64) => void, found (f64, f64) => void
+:7:25: error: mismatched types

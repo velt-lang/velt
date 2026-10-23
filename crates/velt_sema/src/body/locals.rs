@@ -453,6 +453,11 @@ impl FnCx<'_, '_> {
         self.innermost_scope().members.push((l, vs));
     }
 
+    /// Does union local `l` hold the member it is narrowed to because it was assigned to it?
+    pub(crate) fn holds_assigned_member(&self, l: LocalId) -> bool {
+        self.f.scopes.iter().any(|s| s.held.contains(&l))
+    }
+
     fn innermost_scope(&mut self) -> &mut super::Scope {
         self.f.scopes.last_mut().expect("ICE: no scope")
     }
@@ -624,6 +629,7 @@ impl FnCx<'_, '_> {
             s.narrowed.retain(|x| *x != l && !fields.contains(x));
             s.members.retain(|(x, _)| *x != l && !fields.contains(x));
             s.classes.retain(|(x, _)| *x != l && !fields.contains(x));
+            s.held.retain(|x| *x != l);
             s.excluded.retain(|(x, _)| *x != l && !fields.contains(x));
         }
     }

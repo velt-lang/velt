@@ -1,0 +1,29 @@
+// A comparison with a value no member has: the note lists each possible value once, also when an
+// intersection with a union splits one member in two (`Errored` with and without a value; tsc
+// rejects both comparisons too).
+interface Base {
+  refresh(): number;
+}
+
+interface Idle extends Base {
+  readonly state: "idle";
+}
+
+type Presence =
+  | { readonly value: number; readonly hasValue: true }
+  | { readonly value: null; readonly hasValue: false };
+type Errored = Base & { readonly state: "errored" } & Presence;
+type State = Errored | Idle;
+
+function f(s: State): string {
+  if (s.state === "ready") {
+    return "never";
+  }
+  switch (s.state) {
+    case "done":
+      return "never";
+  }
+  return s.state;
+}
+
+console.log(f({ state: "idle", refresh: () => 1 }));

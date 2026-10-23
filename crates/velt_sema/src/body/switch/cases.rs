@@ -69,7 +69,8 @@ impl FnCx<'_, '_> {
                 if let Some(values) = self.cx.discriminant_values(obj.ty, &prop.name) {
                     self.rec_discriminant(prop, obj.ty);
                     let local = self.named_local(object);
-                    return self.scrut(obj, ScrutKind::Discriminant(values), local, what, pre);
+                    let s = self.scrut(obj, ScrutKind::Discriminant(values), local, what, pre);
+                    return self.view_keyed(s, prop, pre);
                 }
                 let h = self.member_of(obj, prop, Want::Borrow, disc.span);
                 self.value_scrut(h, None, what, pre)
@@ -99,6 +100,32 @@ impl FnCx<'_, '_> {
             self.cx
                 .rec_ref(prop.span, crate::ide::record::Target::Field(d, i));
         }
+    }
+
+    /// `switch (s.kind)` on a union that may hold a view (`crate::union_views`): the value
+    /// matched is the discriminant read (through the view's getter for a view), each slot's
+    /// pattern the one on that value; the slots still narrow `s` in the case bodies.
+    fn view_keyed(&mut self, mut s: Scrut, prop: &ast::Ident, pre: &mut Vec<hir::Stmt>) -> Scrut {
+        let ScrutKind::Discriminant(values) = &s.kind else {
+            return s;
+        };
+        if self.cx.union_view(s.expr.ty).is_none() {
+            return s;
+        }
+        let values = values.clone();
+        let span = s.expr.span;
+        let key = match self.union_field(s.expr.clone(), prop, Want::Borrow, span) {
+            Ok(k) => k,
+            Err(_) => return s,
+        };
+        let ty = key.ty;
+        for slot in &mut s.slots {
+            if let Some(v) = slot.variant {
+                slot.pat = self.view_key_pat(ty, &values[v as usize], span);
+            }
+        }
+        s.expr = self.place_scrutinee(key, pre);
+        s
     }
 
     /// A value scrutinee: a union, an enum or a plain value.

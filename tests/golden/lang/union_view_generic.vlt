@@ -1,0 +1,79 @@
+// check: no leaks
+// Union views (#1410) made in generic code: `i as State<T>` in one generic function, read in
+// another, at two type arguments, next to a literal-built member. Every union of the family
+// holds the view variant, whichever lowering picks for an instance. Expected output: Node's.
+type StateName = "idle" | "ready";
+
+interface Base<T> {
+  refresh(): number;
+}
+
+interface Idle<T> extends Base<T> {
+  readonly state: "idle";
+  readonly value: null;
+  readonly hasValue: false;
+}
+
+interface Ready<T> extends Base<T> {
+  readonly state: "ready";
+  readonly value: T;
+  readonly hasValue: true;
+}
+
+type State<T> = Idle<T> | Ready<T>;
+
+interface Impl<T> {
+  readonly state: StateName;
+  readonly value: T | null;
+  readonly hasValue: boolean;
+  refresh(): number;
+}
+
+class Machine<T> {
+  st: StateName = "idle";
+  data: T | null = null;
+  set(v: T): void {
+    this.st = "ready";
+    this.data = v;
+  }
+}
+
+function make<T>(m: Machine<T>): Impl<T> {
+  return {
+    get state() {
+      return m.st;
+    },
+    get value() {
+      return m.data;
+    },
+    get hasValue() {
+      return m.st === "ready";
+    },
+    refresh: () => 1,
+  };
+}
+
+function wrap<T>(i: Impl<T>): State<T> {
+  return i as State<T>;
+}
+
+function val<T>(s: State<T>): T | null {
+  return s.hasValue ? s.value : null;
+}
+
+function name<T>(s: State<T>): string {
+  return s.state === "ready" ? `ready ${s.value}` : s.state;
+}
+
+const m = new Machine<number>();
+const v = wrap<number>(make(m));
+console.log(val<number>(v), name<number>(v));
+m.set(5);
+console.log(val<number>(v), name<number>(v));
+const ms = new Machine<string>();
+const vs = wrap<string>(make(ms));
+console.log(val<string>(vs), name<string>(vs));
+ms.set("five");
+console.log(val<string>(vs), name<string>(vs));
+const lit: State<number> = { state: "idle", value: null, hasValue: false, refresh: () => 0 };
+console.log(val<number>(lit), name<number>(lit));

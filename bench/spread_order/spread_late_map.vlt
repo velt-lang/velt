@@ -1,0 +1,16 @@
+// An array spread of a place, then of a mapped array (`[...xs, ...ys.map(g)]`), as in
+// `[...state.items, ...added.map(toItem)]`: the place is copied before the callback runs.
+function main() {
+  const xs: number[] = [];
+  for (let k = 0; k < 16; k++) {
+    xs.push(k);
+  }
+  const ys = [1, 2, 3, 4];
+  let total = 0;
+  for (let i = 0; i < 300000; i++) {
+    const r = i % 7;
+    const a = [...xs, ...ys.map((y) => y + r)];
+    total += a.length + a[a.length - 1];
+  }
+  console.log(total);
+}
