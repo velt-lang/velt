@@ -248,7 +248,11 @@ impl Ctx<'_> {
         let name = self.display(target);
         // Two extensions of one name in different modules: say which.
         let other = match o.name == name {
-            true => format!("the `{}` of `{}`", o.name, self.modules[o.module].path),
+            true => format!(
+                "the `{}` of `{}`",
+                o.name,
+                short_path(&self.modules[o.module].path)
+            ),
             false => format!("`{}`", o.name),
         };
         let base = self
@@ -319,6 +323,14 @@ fn plain_extension(
 fn module_path(cx: &Ctx, iface: DefId) -> String {
     cx.iface(iface)
         .map_or_else(String::new, |i| cx.modules[i.module].path.clone())
+}
+
+/// A module path as a note names it: its last three parts (`runtime-core/src/renderer-types`).
+fn short_path(path: &str) -> String {
+    let parts: Vec<&str> = (path.split('/'))
+        .filter(|p| !p.is_empty() && *p != "..")
+        .collect();
+    parts[parts.len().saturating_sub(3)..].join("/")
 }
 
 /// Two extensions' fields of one name: the same field of the shared layout?
