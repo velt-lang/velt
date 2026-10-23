@@ -264,6 +264,7 @@ fn fatal(e: impl std::fmt::Display) -> ! {
 fn run(index: usize) {
     let _bridge = super::bridge::handle().enter();
     crate::task::runtime::set_worker(index);
+    super::coop::drive();
     let me = &workers()[index];
     let local = Local {
         index,

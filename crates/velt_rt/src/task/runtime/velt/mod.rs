@@ -73,6 +73,10 @@ impl Wake for Unpark {
 /// Runs `f` on this thread (not a worker), inside the bridge's context.
 pub(super) fn block_on<F: Future>(f: F) -> F::Output {
     start();
+    coop::driving(|| drive(f))
+}
+
+fn drive<F: Future>(f: F) -> F::Output {
     let _bridge = bridge::handle().enter();
     let unpark = Arc::new(Unpark {
         woken: Mutex::new(false),

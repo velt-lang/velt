@@ -11,9 +11,14 @@ use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
+/// Whether the Velt backend drives this thread (its budget, not tokio's).
+fn velt_here() -> bool {
+    runtime::is_velt() && velt_coop::driven()
+}
+
 /// Whether the current task may keep polling children this turn.
 pub fn has_budget_remaining() -> bool {
-    if runtime::is_velt() {
+    if velt_here() {
         velt_coop::has_budget_remaining()
     } else {
         tokio::task::coop::has_budget_remaining()
@@ -22,7 +27,7 @@ pub fn has_budget_remaining() -> bool {
 
 /// Spends one unit of the current task's budget; yields first when it is spent.
 pub async fn consume_budget() {
-    if !runtime::is_velt() {
+    if !velt_here() {
         return tokio::task::coop::consume_budget().await;
     }
     if !velt_coop::spend() {
@@ -50,7 +55,7 @@ impl<F: Future> Future for Unconstrained<F> {
 
 /// Yields to the scheduler: the task runs again after the other ready tasks had a turn.
 pub async fn yield_now() {
-    if runtime::is_velt() {
+    if velt_here() {
         YieldNow(false).await
     } else {
         tokio::task::yield_now().await
