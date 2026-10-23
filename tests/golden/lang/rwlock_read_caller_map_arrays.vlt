@@ -1,0 +1,25 @@
+// The caller's array reached through a method of the caller's `Map` (`m.get(k)!`) is the
+// caller's: a reader pushes into it and pops from it, as in JavaScript.
+class Item {
+  v: i64 = 0;
+  constructor(v: i64) {
+    this.v = v;
+  }
+}
+class St {
+  items: Item[] = [new Item(1), new Item(2)];
+}
+function main() {
+  const rw = shared(new RwLock<St>(new St()));
+  const m = new Map<string, Item[]>();
+  m.set("a", [new Item(5)]);
+  const keep = new Item(9);
+  const n = rw.read((s) => {
+    m.get("a")!.push(new Item(6));
+    m.get("a")!.push(keep);
+    m.get("a")!.push(s.items[0]);
+    const x = m.get("a")!.pop()!;
+    return x.v + (m.get("a")!.length as i64);
+  });
+  console.log(n, m.get("a")!.length, m.get("a")![2] === keep, m.get("a")![1].v, m.get("a")![0].v);
+}

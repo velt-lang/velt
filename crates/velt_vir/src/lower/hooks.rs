@@ -75,7 +75,7 @@ impl FnLower<'_, '_> {
             };
             args.push(a);
         }
-        let f = self.cx.func_for(m, targs);
+        let f = self.cx.func_for_direct(m, targs, self.mode);
         let abi = self.cx.ret_abi(ret, None);
         if let Some(out) = abi.out {
             let tmp = self.temp(out);

@@ -136,6 +136,11 @@ pub enum Intrinsic {
     /// Compiler-internal: `(x: borrow T) -> bool`, `x == null` on such a value: whether it holds
     /// either nothing once instantiated.
     IsNullish,
+    /// Compiler-internal: `(a: borrow T, b: borrow T) -> bool`, `a == b` of two values of one
+    /// type with a type parameter in it: lowered as `Same(a, b)` (`a === b`) where the
+    /// instantiated type holds no nothing, else both nothings are equal too (`null == undefined`),
+    /// as in JavaScript; `AnyLooseEq` at `T = any` / `unknown`.
+    LooseEq,
     /// Compiler-internal (issue #1251): `(probe: borrow T) -> bool`, a constant: can a value of
     /// the type `T` is instantiated with be a primitive (`false` for a struct, class, object
     /// type, array, tuple, map or function type; `true` for anything else, unions and `any`
@@ -247,8 +252,15 @@ pub enum Intrinsic {
     SharedRead,
     /// `new Mutex<T>(x)` → `Mutex<T>` (an ADT-like builtin: lock word + value)
     MutexNew,
-    /// `m.with(f)` on `Mutex<T>` or `shared<Mutex<T>>`: lock, call `f(value)` (by reference), unlock, return f's result
+    /// `m.with(f)` on `Mutex<T>` or `shared<Mutex<T>>`: lock, call `f(value)` (by reference), unlock, return f's result.
+    /// Also `rw.write(f)` on an `RwLock<T>` (its exclusive lock).
     MutexWith,
+    /// `new RwLock<T>(x)` → `RwLock<T>` (lock word + value, like `Mutex<T>`)
+    RwLockNew,
+    /// `rw.read(f)` on `RwLock<T>` or `shared<RwLock<T>>`: `MutexWith` with the lock taken shared,
+    /// so readers run at once (in velt_rt's read mode); sema rejects a callback that modifies
+    /// the value.
+    LockRead,
 
     // M4 JSON (compile-time generated glue over the rt JSON reader / string builder)
     /// `JSON.stringify(x: borrow T): string`

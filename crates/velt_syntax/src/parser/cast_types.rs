@@ -67,7 +67,8 @@ impl<'a> Parser<'a> {
     /// and its `[]` suffixes, or any other type without a top-level union.
     fn parse_cast_member(&mut self) -> PResult<TypeExpr> {
         let lo = self.cur_lo();
-        if self.at_ident_like() && !self.at_keyof() && !self.at_word("undefined") {
+        let readonly = self.at_readonly_type();
+        if self.at_ident_like() && !readonly && !self.at_keyof() && !self.at_word("undefined") {
             let named = self.parse_named_type_with(true)?;
             let ty = self.parse_array_suffixes(lo, named);
             return self.parse_indexed_suffixes(lo, ty);

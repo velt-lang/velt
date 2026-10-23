@@ -244,7 +244,7 @@ impl FnLower<'_, '_> {
                 _ => this,
             };
             let targs = self.cx.method_targs(m, ty);
-            let f = self.cx.func_for(m, targs);
+            let f = self.cx.func_for_direct(m, targs, self.mode);
             let out = self.temp(Ty::Ptr);
             // User code runs outside a transfer under way (velt_rt `transfer_map`): its own
             // copies are not looked up in the transfer's map.
@@ -266,7 +266,7 @@ impl FnLower<'_, '_> {
         // During a transfer, an object referenced more than once is copied once.
         let src = Operand::Copy(Place::local(obj));
         let found = (self.cx.counted(ty) && self.cx.copied_across(ty)).then(|| {
-            self.find_copy(src.clone(), |lw, copy| {
+            self.find_copy(src.clone(), ty, |lw, copy| {
                 lw.terminate(Terminator::Return(copy));
             })
         });

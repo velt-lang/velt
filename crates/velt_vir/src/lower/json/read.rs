@@ -267,7 +267,7 @@ impl FnLower<'_, '_> {
         if self.cx.boxed(ty) {
             // A boxed array / object is read into a fresh box of its own.
             let payload = self.cx.payload_ty(ty);
-            let p = self.counted_alloc(payload);
+            let p = self.counted_alloc_of(payload, ty);
             let pp = self.operand_place(p.clone(), Ty::Ptr);
             let zero = self.zero_value(payload);
             self.assign(

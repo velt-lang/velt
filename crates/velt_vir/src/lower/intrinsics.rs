@@ -57,7 +57,10 @@ impl FnLower<'_, '_> {
                 }
             }
             (I::FieldPresent, [f]) => {
+                // Only read: no write barrier.
+                let outer = std::mem::replace(&mut self.read_target, true);
                 let p = self.place_expr(f);
+                self.read_target = outer;
                 match self.presence_place(f, &p) {
                     Some(fp) => Operand::Copy(fp),
                     None => ice("`FieldPresent` of a field without a presence flag"),
@@ -158,6 +161,7 @@ impl FnLower<'_, '_> {
             (I::Truthy, [a]) => self.truthy_intrinsic(a),
             (I::IsNull, [a]) => self.null_intrinsic(a, false),
             (I::IsNullish, [a]) => self.null_intrinsic(a, true),
+            (I::LooseEq, [a, b]) => self.loose_eq_intrinsic(a, b),
             (I::MayHoldPrimitive, [a]) => {
                 let t = self.sub(a.ty);
                 Operand::Const(crate::vir::Const::Bool(!self.cx.object_only(t)), Ty::Bool)
@@ -258,6 +262,8 @@ impl FnLower<'_, '_> {
                 | I::SharedSet
                 | I::MutexNew
                 | I::MutexWith
+                | I::RwLockNew
+                | I::LockRead
                 | I::PromiseWiden
                 | I::ChanSend
                 | I::ChanReceive

@@ -63,7 +63,7 @@ impl VisitMut for Found<'_, '_> {
     fn expr(&mut self, e: &mut Expr) {
         match &e.kind {
             E::Call {
-                callee: Callee::Intrinsic(Intrinsic::MutexWith),
+                callee: Callee::Intrinsic(Intrinsic::MutexWith | Intrinsic::LockRead),
                 args,
             } => {
                 let at = args.get(1).map_or(e.span, |f| f.span);

@@ -222,7 +222,7 @@ impl FnLower<'_, '_> {
             crate::lower::ice("Map method on a non-ADT type")
         };
         let def = self.class_method(map, name);
-        let f = self.cx.func_for(def, targs);
+        let f = self.cx.func_for_direct(def, targs, self.mode);
         let d = self.temp(ret);
         self.call(vir::Callee::Func(f), args, Some(Place::local(d)), false);
         Operand::Copy(Place::local(d))

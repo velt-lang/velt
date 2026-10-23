@@ -1,0 +1,59 @@
+// Readers nesting reads of two `RwLock`s in opposite orders, each read held a while, against one
+// writer per lock that pauses between writes so the readers' bias comes back in between. A
+// writer revokes the bias before it takes the lock and never while holding it, so no reader
+// waits on a writer that waits on that reader: every task finishes.
+class Cell {
+  n: i64 = 1;
+}
+
+function spin(k: i64): i64 {
+  let t: i64 = 0;
+  for (let i: i64 = 0; i < k; i++) {
+    t += i & 3;
+  }
+  return t;
+}
+
+async function cross(a: shared<RwLock<Cell>>, b: shared<RwLock<Cell>>, stop: shared<i64>): Promise<bool> {
+  let ok = true;
+  let i: i64 = 0;
+  // Bounded too: on one thread (wasm) the readers' yields never let a writer's timer run.
+  while (stop.get() < 2 && i < 20000) {
+    const t = a.read((x) => {
+      const w = spin(500);
+      return b.read((y) => x.n + y.n) + w * 0;
+    });
+    ok = ok && t == 2;
+    i++;
+    if (i % 64 == 0) {
+      await Promise.resolve(0);
+    }
+  }
+  return ok;
+}
+
+async function writer(a: shared<RwLock<Cell>>, rounds: i64, stop: shared<i64>): Promise<bool> {
+  for (let i: i64 = 0; i < rounds; i++) {
+    a.write((x) => {
+      x.n = 1;
+    });
+    await sleep(1);
+  }
+  stop.add(1);
+  return true;
+}
+
+async function main() {
+  const a = shared(new RwLock<Cell>(new Cell()));
+  const b = shared(new RwLock<Cell>(new Cell()));
+  const stop = shared(0 as i64);
+  const ps: Promise<bool>[] = [];
+  for (let k = 0; k < 3; k++) {
+    ps.push(spawn(cross(a, b, stop.clone())));
+    ps.push(spawn(cross(b, a, stop.clone())));
+  }
+  ps.push(spawn(writer(a, 100, stop.clone())));
+  ps.push(spawn(writer(b, 100, stop.clone())));
+  const done = await Promise.all(ps);
+  console.log(done.every((d) => d), done.length);
+}

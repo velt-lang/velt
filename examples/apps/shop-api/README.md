@@ -40,7 +40,7 @@ Errors are `{"error":{"code","message"}}`: 400 `invalid` / `bad_json`, 404 `not_
 | `src/seed.vlt` | the deterministic generator (a 32-bit LCG that node mirrors with `Math.imul`), order pricing |
 | `src/store.vlt` | `Store`: products with id and SKU indexes, orders, listing, validation, stock, stats |
 | `src/api.vlt` | `route(store, method, path, query, body)` → `{ status, body }` (no sockets) |
-| `src/server.vlt` | `std/http`: the store behind one `shared(new Mutex(…))`, each request routed while holding it |
+| `src/server.vlt` | `std/http`: the store behind one `shared(new RwLock(…))`: GETs that only read it run at once (`read`), other requests one at a time (`write`) |
 | `node/server.mjs` | the same service on `node:http`, with decoders as strict as `JSON.parse<T>` |
 | `parity.vlt` | 61 requests against both servers (via `fetch`), compared byte for byte |
 | `bench.sh` | parity, then each scenario against each server with `oha` (raw results: `bench-results/`) |
@@ -96,17 +96,30 @@ differences.
 servers therefore bound the integers they echo back (price amounts, customer ids), and
 `parity.vlt` covers those cases.
 
-## What limits it (#705)
+## What limits it (#705, #708)
 
-Every request takes the store's one `Mutex`, so work that touches the store runs on one core at
-a time. Inside the lock that includes routing, decoding the request body and `JSON.stringify`
-of the response (`src/server.vlt`). Only HTTP parsing and writing run on every core.
+The store is behind one `RwLock`. GETs that only read it (`readRoute` in `src/api.vlt`) run under
+its read lock, on every core at once; their callbacks count and copy nothing the readers share
+(velt_rt's read mode). Requests that change the store run under the write lock, one at a time,
+as they did under the `Mutex` this used before. Measured against that `Mutex` version (same
+compiler; 5 s per scenario, 64 connections, M-series Mac, 3 interleaved rounds):
 
-A sort or an aggregation can't spread out, and Node is single-threaded anyway, so this is where
-the two are closest: `search + filter` (level) and `stats`. In `stats`, Velt's p50 is higher than
-Node's because 64 connections queue for the lock.
+| scenario | `Mutex` req/s | `RwLock` req/s |
+|---|---:|---:|
+| product by id | 201.7k–206.9k | 208.8k–216.7k |
+| list 100, sorted by price | 3,472–3,522 | 15,504–15,923 |
+| search + filter, 20 | 9,822–9,865 | 49,706–53,740 |
+| orders page of 50 | 9,374–9,457 | 45,211–46,365 |
+| stats over 20k orders | 290–292 | 1,290–1,303 |
+| create order | 185.5k–187.9k | 172.0k–183.5k |
+| bulk 200: decode + reject | 5,864–5,892 | 5,925–5,954 |
 
-A read-mostly service wants readers that don't block each other: a read-write lock, or reading
-a `shared` value without a `Mutex` (#36, designed in #708). With neither available today, the
-idiomatic fix is to do less inside the lock. `listProducts` does that by computing each
-product's lowest price once before sorting, rather than on every comparison.
+Creating orders, the lock is busy about 8% of the time (0.4 µs of 5 µs per request), so it
+does not set the pace and the two tie within this laptop's noise: 8 more interleaved rounds
+gave medians of 164.7k (`Mutex`) and 165.7k (`RwLock`). Where the lock sets the pace, as with
+4 or 10 tasks creating orders in one process without HTTP, `RwLock` gets through ×1.6–1.8 as
+many.
+
+On one core (instructions retired in-process, the same routes) the two are within −5% and +1%.
+`listProducts` still computes each product's lowest price once before sorting, rather than on
+every comparison.

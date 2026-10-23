@@ -45,6 +45,7 @@ unsafe fn shared<'a>(f: *mut VeltFut) -> &'a RefCell<Started> {
 /// Start the boxed promise `f` (anything else, or outside `block_on`, is left as it is).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_fut_start(f: *mut VeltFut, result_drop: Option<ResultDropFn>) {
+    crate::shared::refuse_tasks_in_read();
     start(f, result_drop, false);
 }
 
@@ -55,6 +56,7 @@ pub unsafe extern "C" fn velt_rt_fut_start_rejecting(
     f: *mut VeltFut,
     result_drop: Option<ResultDropFn>,
 ) {
+    crate::shared::refuse_tasks_in_read();
     start(f, result_drop, true);
 }
 

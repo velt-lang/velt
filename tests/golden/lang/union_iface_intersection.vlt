@@ -1,0 +1,98 @@
+// A union of interfaces and intersections of an interface with a union part (#1410, sigx's
+// `AsyncState<T>`): object literals pick the member by their literal discriminants, fields and
+// the base interface's method read on the union, and discriminant tests narrow it.
+interface Base<T> {
+  refresh(): number;
+}
+
+interface Idle<T> extends Base<T> {
+  readonly state: "idle";
+  readonly value: null;
+  readonly hasValue: false;
+  readonly error: null;
+}
+
+interface Ready<T> extends Base<T> {
+  readonly state: "ready";
+  readonly value: T;
+  readonly hasValue: true;
+  readonly error: null;
+}
+
+type Presence<T> =
+  | { readonly value: null; readonly hasValue: false }
+  | { readonly value: T; readonly hasValue: true };
+type Errored<T> = Base<T> & { readonly state: "errored"; readonly error: Error } & Presence<T>;
+type State<T> = Idle<T> | Ready<T> | Errored<T>;
+
+function idle<T>(): State<T> {
+  return { state: "idle", value: null, hasValue: false, error: null, refresh: () => 0 };
+}
+
+function ready<T>(v: T): State<T> {
+  return { state: "ready", value: v, hasValue: true, error: null, refresh: () => 1 };
+}
+
+function failed<T>(e: Error): State<T> {
+  return { state: "errored", error: e, value: null, hasValue: false, refresh: () => 2 };
+}
+
+function stale<T>(e: Error, last: T): State<T> {
+  return { state: "errored", error: e, value: last, hasValue: true, refresh: () => 3 };
+}
+
+function firstError(members: State<unknown>[]): Error | null {
+  for (const m of members) {
+    if (m.error) {
+      return m.error;
+    }
+  }
+  return null;
+}
+
+function demo(): void {
+  const members: State<number>[] = [
+    ready(5),
+    failed<number>(new Error("boom")),
+    stale(new Error("late"), 7),
+    idle<number>(),
+  ];
+  let sum = 0;
+  for (const m of members) {
+    const s = m.state;
+    console.log(s, m.hasValue, m.refresh());
+    if (m.state === "errored") {
+      console.log(m.error.message);
+    }
+    if (m.hasValue) {
+      sum += m.value;
+    }
+    switch (m.state) {
+      case "idle":
+        console.log("idle", m.value);
+        break;
+      case "ready":
+        console.log("ready", m.value + 1);
+        break;
+      case "errored":
+        console.log("errored", m.error.message, m.value);
+        break;
+    }
+  }
+  console.log(sum);
+  const any: State<unknown>[] = [
+    idle<unknown>(),
+    ready<unknown>("x"),
+    stale<unknown>(new Error("e"), 3),
+  ];
+  let has = true;
+  for (const m of any) {
+    has = m.hasValue && has;
+  }
+  console.log(has);
+  console.log(any.map((m) => m.value));
+  console.log(any.map((m) => m.state).join(","));
+  console.log(firstError(any)?.message);
+}
+
+demo();

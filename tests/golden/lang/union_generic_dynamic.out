@@ -1,0 +1,38 @@
+number object string number
+o:number s:a o:number s:b
+o:number s:q o:boolean
+number 3
+z
+3 1
+{"default":4}
+none number object
+number,string,object object
+true false true false false true true false true false true false
+false false false true false false false true false false false true
+true true false true false false
+dflt dflt dflt 0
+false false false true
+no no no yes
+null 3 {"default":2}
+null|null undefined|undefined 0|0 a|a
+true true false false false true true false true true false false
+true true false false false false true true true true false false
+0 f null f t 5  f
+n y n n
+true true true false true true false false true false false false
+d d 0
+undefined undefined 7
+{"w":[null]} {"v":null,"w":[null]} {"v":2,"w":[2]}
+2 1
+out in none none
+some object {"a":1,"b":2} object {"default":1,"x":2}
+3 1 2
+2 2 undefined
+s 1
+dflt dflt 0
+1 true
+d d d
+d 2 true
+box 5 box
+obj x obj
+f

@@ -1,0 +1,26 @@
+// A `with` that a `read` callback reaches through a function it calls stops the program before
+// it locks (velt_rt `velt_rt_mutex_lock_checked`): the callback shares the locked value without
+// counting it, which the `with` callback could not tell from what it changes. A `with` called
+// outside a `read` is not checked at all.
+class Item {
+  n: number = 1;
+}
+
+class Store {
+  items: Item[] = [new Item()];
+}
+
+function tally(s: Store, m: shared<Mutex<Item[]>>) {
+  m.with((xs) => {
+    xs.push(s.items[0]);
+  });
+}
+
+function main() {
+  const rw = shared(new RwLock<Store>(new Store()));
+  const m = shared(new Mutex<Item[]>([]));
+  tally(new Store(), m);
+  console.log("outside a read", m.with((xs) => xs.length));
+  rw.read((s) => tally(s, m));
+  console.log("not reached");
+}

@@ -99,7 +99,7 @@ impl FnLower<'_, '_> {
         match self.cx.kind(ty) {
             hir::TyKind::Str => self.call_rt(Rt::StrClone, vec![src, dst], None),
             _ => {
-                let f = self.cx.func(Work::Glue(Glue::Clone, ty));
+                let f = self.cx.func_direct(Work::Glue(Glue::Clone, ty), self.mode);
                 self.call(vir::Callee::Func(f), vec![src, dst], None, false);
             }
         }
@@ -513,6 +513,19 @@ impl FnLower<'_, '_> {
         els: &hir::Expr,
         ty: TyId,
     ) -> Operand {
+        // A condition known per instantiation (`const_cond`): only the branch it takes.
+        if let Some(c) = self.const_cond(cond) {
+            let t = self.vty(ty);
+            let res = (t != Ty::Unit).then(|| self.temp(t));
+            self.push_scope(ScopeKind::Temps);
+            let v = self.consume(if c { then } else { els });
+            if let Some(r) = res {
+                self.assign(Place::local(r), Rvalue::Use(v));
+            }
+            self.pop_scope();
+            let ty = self.sub(ty);
+            return self.owned_result(res, ty);
+        }
         let c = self.expr(cond);
         let t = self.vty(ty);
         let res = (t != Ty::Unit).then(|| self.temp(t));
