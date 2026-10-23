@@ -266,8 +266,8 @@ impl FnCx<'_, '_> {
         if !pure || !matches!(prop.name.as_str(), "call" | "apply") {
             return None;
         }
-        let t = self.expr(this, None, Want::Borrow);
         let any = self.any_ty()?;
+        let t = self.expr(this, Some(any), Want::Borrow);
         let t = self.share_if_place(t);
         let t = self.coerce(t, any);
         let rest = match (prop.name.as_str(), rest) {

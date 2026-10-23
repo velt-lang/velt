@@ -227,7 +227,8 @@ export function __anyTagUnsupported(name: string): string {
 export function __anyText(v: any): string {
   const t = typeof v;
   if (t === "number") {
-    return String(v as number);
+    // `-0` is `0`; the number may be held at any width (a `size` read through `any`).
+    return v === 0 ? "0" : __anyNumberText(v);
   }
   if (t === "string") {
     return v as string;
@@ -267,6 +268,11 @@ export function __anyText(v: any): string {
     }
   }
   return out;
+}
+
+/** `String(v)` of an `any` holding a number other than zero, written as it is held. */
+function __anyNumberText(v: any): string {
+  return String(v);
 }
 
 /**
