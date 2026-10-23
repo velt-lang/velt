@@ -108,6 +108,23 @@ impl FnCx<'_, '_> {
         Some(self.mk(kind, exp, span))
     }
 
+    /// The `<view>` arm of `typeof s` on a union (`bare`: not `U | null`): a view holds an
+    /// object.
+    pub(super) fn typeof_view_arm(
+        &mut self,
+        s: &hir::Expr,
+        bare: bool,
+        span: Span,
+    ) -> Option<hir::Arm> {
+        if !bare {
+            return None;
+        }
+        let consume = !crate::body::places::is_place(s);
+        self.view_arm(s.ty, consume, span, "`typeof`", &mut |c, _| {
+            Some(c.str_lit("object", span))
+        })
+    }
+
     /// Inserts `arm` before the trailing wildcard of `arms` (or last).
     pub(super) fn push_view_arm(arms: &mut Vec<hir::Arm>, arm: Option<hir::Arm>) {
         let Some(arm) = arm else {

@@ -80,14 +80,7 @@ impl FnCx<'_, '_> {
                 body,
             });
         }
-        if inner == sty {
-            // A union view (`union_view`) holds an object.
-            let consume = !is_place(&s);
-            let view = self.view_arm(sty, consume, span, "`typeof`", &mut |c, _| {
-                Some(c.str_lit("object", span))
-            });
-            arms.extend(view);
-        }
+        arms.extend(self.typeof_view_arm(&s, inner == sty, span));
         let kind = H::Match {
             scrutinee: Box::new(s),
             arms,
