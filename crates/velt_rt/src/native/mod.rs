@@ -44,7 +44,7 @@ pub type DropCtxFn = unsafe extern "C" fn(ctx: *mut c_void);
 /// Drops a finished result nobody claimed (the future was dropped first).
 pub type DropResultFn = unsafe extern "C" fn(result: *mut u8);
 
-/// `VeltRtApi`, ABI version 1 (native_abi.md "The function table").
+/// `VeltRtApi`, ABI version 2 (native_abi.md "The function table").
 #[repr(C)]
 pub struct VeltRtApi {
     /// [`NATIVE_ABI_VERSION`].

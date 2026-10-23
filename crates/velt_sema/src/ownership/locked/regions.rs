@@ -216,18 +216,51 @@ fn holds_shared_in(cx: &mut Ctx, t: TyId, depth: u32) -> bool {
         // Type parameters, interface and function values may hold anything.
         _ => return true,
     };
-    let held = parts.into_iter().any(|p| {
-        (cx.is_shared_value(p) && !cx.is_string_value(p)) || holds_shared_in(cx, p, depth + 1)
-    });
-    // A value of a class may be one of its subclasses, whose fields may hold anything.
-    held || class.is_some_and(|d| has_subclass(cx, d))
+    let held = parts.into_iter().any(|p| part_holds_shared(cx, p, depth));
+    // A value of a class may be one of its subclasses: the fields they add count too.
+    held || class.is_some_and(|d| {
+        subclasses(cx, d).into_iter().any(|s| {
+            let own: Vec<TyId> = cx.adt(s).map_or(vec![], |a| {
+                a.fields[a.own_fields_start..]
+                    .iter()
+                    .map(|f| f.ty)
+                    .collect()
+            });
+            own.into_iter().any(|p| part_holds_shared(cx, p, depth))
+        })
+    })
 }
 
-/// Does some class extend class `d`?
-fn has_subclass(cx: &Ctx, d: DefId) -> bool {
-    (0..cx.info.len() as u32)
-        .map(DefId)
-        .any(|s| s != d && cx.adt(s).is_some() && cx.class_extends(s, d))
+fn part_holds_shared(cx: &mut Ctx, p: TyId, depth: u32) -> bool {
+    (cx.is_shared_value(p) && !cx.is_string_value(p)) || holds_shared_in(cx, p, depth + 1)
+}
+
+/// The classes extending class `d`, directly or not.
+fn subclasses(cx: &mut Ctx, d: DefId) -> Vec<DefId> {
+    if cx.subclasses.is_none() {
+        let mut map: FxHashMap<DefId, Vec<DefId>> = FxHashMap::default();
+        let base_of = |cx: &Ctx, c: DefId| {
+            cx.adt(c)
+                .and_then(|a| a.base)
+                .and_then(|b| cx.class_of(b))
+                .map(|(b, _)| b)
+        };
+        for s in (0..cx.info.len() as u32).map(DefId) {
+            let mut base = base_of(cx, s);
+            // Bounded like `Ctx::class_extends`.
+            for _ in 0..64 {
+                let Some(b) = base else { break };
+                map.entry(b).or_default().push(s);
+                base = base_of(cx, b);
+            }
+        }
+        cx.subclasses = Some(map);
+    }
+    cx.subclasses
+        .as_ref()
+        .and_then(|m| m.get(&d))
+        .cloned()
+        .unwrap_or_default()
 }
 
 /// A store of a value reaching `b` into a place reaching `dest` crosses the boundary. A moved

@@ -97,7 +97,7 @@ impl FnLower<'_, '_> {
         bufs: &mut Vec<ForeignBuf>,
     ) -> Place {
         let view = self.view_of(src, t);
-        if self.cx.foreign_differs(t) {
+        if self.holds_bufs(t) {
             bufs.push(ForeignBuf {
                 view: view.clone(),
                 ty: t,
@@ -273,24 +273,23 @@ impl FnLower<'_, '_> {
     /// each element's own first, then the array's; only what the view holds (an absent option
     /// holds nothing).
     fn free_view(&mut self, view: &Place, t: TyId) {
-        if !self.cx.foreign_differs(t) {
+        if !self.holds_bufs(t) {
             return;
         }
         match self.cx.kind(t) {
             TyKind::Array(e) => {
-                if !self.cx.foreign_differs(e) {
-                    return;
+                if self.holds_bufs(e) {
+                    let len = self.rvalue_temp(
+                        Ty::U64,
+                        Rvalue::Use(Operand::Copy(proj(view, Proj::Field(1)))),
+                    );
+                    let k = self.temp(Ty::U64);
+                    self.assign(Place::local(k), Rvalue::Use(cint(0, Ty::U64)));
+                    self.count_loop(k, len, |lw, k| {
+                        let ep = lw.foreign_elem(view, k, e);
+                        lw.free_view(&ep, e);
+                    });
                 }
-                let len = self.rvalue_temp(
-                    Ty::U64,
-                    Rvalue::Use(Operand::Copy(proj(view, Proj::Field(1)))),
-                );
-                let k = self.temp(Ty::U64);
-                self.assign(Place::local(k), Rvalue::Use(cint(0, Ty::U64)));
-                self.count_loop(k, len, |lw, k| {
-                    let ep = lw.foreign_elem(view, k, e);
-                    lw.free_view(&ep, e);
-                });
                 let (stride, align) = self.foreign_stride(e);
                 self.free_foreign(view, stride, align);
             }
@@ -343,6 +342,22 @@ impl FnLower<'_, '_> {
             vec![data, size, cint(align as i128, Ty::U64)],
             None,
         );
+    }
+
+    /// Does a view of `t` hold a buffer of its own: an array of differing elements, at any
+    /// depth?
+    fn holds_bufs(&mut self, t: TyId) -> bool {
+        if !self.cx.foreign_differs(t) {
+            return false;
+        }
+        match self.cx.kind(t) {
+            TyKind::Array(e) => self.cx.foreign_differs(e),
+            TyKind::Option(e, _) => self.holds_bufs(e),
+            _ => self
+                .stored_parts(t)
+                .into_iter()
+                .any(|(_, f)| self.holds_bufs(f)),
+        }
     }
 
     /// Frees the buffers of the views an extern call was given (it returned).

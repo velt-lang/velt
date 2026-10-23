@@ -119,7 +119,7 @@ pub type DropCtxFn = unsafe extern "C" fn(ctx: *mut c_void);
 /// Drops a result nobody claimed.
 pub type DropResultFn = unsafe extern "C" fn(result: *mut u8);
 
-/// The runtime's function table, version 1 (native_abi.md "The function table"). Append-only:
+/// The runtime's function table, version 2 (native_abi.md "The function table"). Append-only:
 /// fields after these exist when `abi_version` is higher.
 #[repr(C)]
 pub struct Api {

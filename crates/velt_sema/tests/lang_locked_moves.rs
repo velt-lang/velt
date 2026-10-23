@@ -238,4 +238,18 @@ fn a_store_through_a_union_or_a_base_class_counts() {
         ));
         assert!(e.contains("still used after `with` stored it"), "{s}: {e}");
     }
+    // A subclass that adds no reference does not make its base hold one: an overridden method
+    // changing only numbers stores nothing.
+    let _ = program(
+        "class V { x: i64 = 1; }
+         class Shape { x: i64 = 0; move(v: V) { this.x += v.x; } }
+         class Circle extends Shape { r: i64 = 1; override move(v: V) { this.x += v.x * 2; } }
+         class Holder { shape: Shape = new Circle(); }
+         function main() {
+           const m = shared(new Mutex(new Holder()));
+           const v = new V();
+           m.with((d) => { d.shape.move(v); });
+           console.log(v.x, m.with((d) => d.shape.x));
+         }",
+    );
 }
