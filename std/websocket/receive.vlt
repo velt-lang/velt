@@ -6,9 +6,9 @@
 
 import { IoError } from "velt:io";
 import { TcpStream } from "velt:net";
-import { OP_CLOSE, OP_PONG, closePayload } from "velt:websocket/frame";
+import { OP_CLOSE, closePayload } from "velt:websocket/frame";
 import { CLOSE, CLOSED, FAIL, PING, Step, WAIT } from "velt:websocket/reader";
-import { Tx, closedHandle, roomQuietly, settleQuietly } from "velt:websocket/writer";
+import { Tx, closedHandle, pongRoom, settleQuietly } from "velt:websocket/writer";
 
 /** Bytes read at a time. */
 export const READ_CHUNK: u64 = 16384;
@@ -43,7 +43,7 @@ function answer(stream: TcpStream, tx: Tx, step: Step): bool {
   if (step.kind == PING) {
     // A pong for a connection that is closing is not needed.
     const payload = step.data;
-    settleQuietly(stream, tx, tx.with((q) => q.pushBytes(OP_PONG, payload)));
+    settleQuietly(stream, tx, tx.with((q) => q.pushPong(payload)));
     return false;
   }
   if (step.kind != CLOSE && step.kind != FAIL) {
@@ -72,8 +72,8 @@ export async function other(stream: TcpStream, tx: Tx, step: Step): Promise<Step
   } else if (answer(stream, tx, step)) {
     return new Step(CLOSED);
   } else {
-    // A pong was queued: past the high-water mark, read on once the peer takes them.
-    await roomQuietly(tx);
+    // A pong was queued: past the high-water mark of pongs, read on once the peer takes them.
+    await pongRoom(tx);
   }
   return tx.with((q) => q.next(false));
 }

@@ -121,22 +121,24 @@ function refused(tx: Tx, status: i64): IoError {
 
 // Waits until at most `HIGH_WATER` bytes are queued; throws if the connection stopped first.
 async function room(tx: Tx): Promise<void> {
-  const status = await untilRoom(tx);
+  const status = await untilRoom(tx, false);
   if (status != 0) {
     throw refused(tx, status);
   }
 }
 
 /**
- * `room` for the frames the connection sends by itself (pongs): a peer that sends pings and
- * reads nothing is not read from either until it takes the answers. Never throws.
+ * Waits until at most `HIGH_WATER` bytes of pongs are queued (never throws): a peer that sends
+ * pings and reads nothing is not read from either until it takes the answers. The application's
+ * own frames do not count, so a ping never stops reading from a peer that is just slow.
  */
-export async function roomQuietly(tx: Tx): Promise<void> {
-  await untilRoom(tx);
+export async function pongRoom(tx: Tx): Promise<void> {
+  await untilRoom(tx, true);
 }
 
-// Waits until at most `HIGH_WATER` bytes are queued (0), or the connection stopped (its status).
-async function untilRoom(tx: Tx): Promise<i64> {
+// Waits until at most `HIGH_WATER` bytes are queued (of pongs only, with `pongs`): 0, or the
+// connection stopped (its status).
+async function untilRoom(tx: Tx, pongs: bool): Promise<i64> {
   while (true) {
     const status = tx.with((q) => {
       if (q.released) {
@@ -145,12 +147,14 @@ async function untilRoom(tx: Tx): Promise<i64> {
       if (q.stopped != "") {
         return q.stopped == "EPIPE" ? CLOSED : FAILED;
       }
-      return (q.out.length as i64) > HIGH_WATER ? OVER : 0;
+      return (pongs ? q.pongs : q.out.length as i64) > HIGH_WATER ? OVER : 0;
     });
     if (status != OVER) {
       return status;
     }
-    const drained = tx.with((q) => (q.out.length as i64) > HIGH_WATER ? q.wait() : null);
+    const drained = tx.with(
+      (q) => (pongs ? q.pongs : q.out.length as i64) > HIGH_WATER ? q.wait() : null,
+    );
     if (drained != null) {
       await drained.receive();
     }

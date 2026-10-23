@@ -8,7 +8,7 @@
 
 import { Channel, channel } from "velt:channel";
 import { maskKey, setText } from "velt:websocket/bytes";
-import { OP_CLOSE, headSize, writeHead } from "velt:websocket/frame";
+import { OP_CLOSE, OP_PONG, headSize, writeHead } from "velt:websocket/frame";
 import { BINARY, Reader, Step, TEXT } from "velt:websocket/reader";
 
 /** Queued bytes past which a `send` completes only once the flusher has caught up. */
@@ -58,6 +58,11 @@ export class SendQueue {
   flushing: bool = false;
   /** Tasks waiting on `drained`, which exists once one did. */
   waiters: i64 = 0;
+  /**
+   * Bytes of pongs in `out` (none once the flusher takes it): past `HIGH_WATER` of them, a peer
+   * that sends pings and reads nothing is not read from until it takes them.
+   */
+  pongs: i64 = 0;
   drained: Channel<bool> | null = null;
   /** The topics this connection is subscribed to (std/websocket/topics). */
   topics: string[] = [];
@@ -156,6 +161,7 @@ export class SendQueue {
     const out = this.out;
     this.out = [];
     this.cap = 0;
+    this.pongs = 0;
     return out;
   }
 
@@ -183,6 +189,16 @@ export class SendQueue {
   }
 
   /** Queues a frame carrying `payload`; a close frame is the last one. */
+  /** Queues the answer to a ping (`pushBytes`), counted in `pongs`. */
+  pushPong(payload: u8[]): i64 {
+    const r = this.pushBytes(OP_PONG, payload);
+    if (r >= 0) {
+      const len = payload.length as i64;
+      this.pongs += headSize(len, this.client) + len;
+    }
+    return r;
+  }
+
   pushBytes(op: i64, payload: u8[]): i64 {
     const no = this.refusal();
     if (no >= 0) {
