@@ -126,6 +126,8 @@ impl FnCx<'_, '_> {
             span,
         };
         let ret = self.slot_call_throws(&s, src, ck.ret, span);
+        let what = format!("`{}()` called", s.method.name);
+        self.note_iface_array_read(s.iface, &s.iface_args, (s.slot, what), ret, span);
         let callee = if s.on_param {
             Callee::ParamMethod {
                 iface: s.iface,

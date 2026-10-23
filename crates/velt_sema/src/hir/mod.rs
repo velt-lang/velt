@@ -189,6 +189,8 @@ pub struct Program {
     /// Gated functions (`__intrinsic_target`) and the CPU extension each is compiled for
     /// (#1330): lowering gives the VIR function its target.
     pub cpu_targets: HashMap<DefId, CpuTarget>,
+    /// Names of structural types for messages: aliases' and field-only interfaces'. Additive.
+    pub type_names: HashMap<TyId, String>,
 }
 
 /// Module-level `let`s: one slot each in a process-wide tuple (hir_encodings.md "Module state").

@@ -2673,7 +2673,76 @@ function main(): void {
 Calling `serialize("x")` through the `Handler[]` stops with `TypeError: the value is not a Date
 (it is a string)`. The wrapped value is the original object: a write through one is seen
 through the other, and every copy of the converted value (an array element read into a
-`const`, a second conversion to `Handler<any, any>`) wraps that same object.
+`const`, a second conversion to `Handler<any, any>`) wraps that same object. A field assigned
+through the converted value (`h.name = "x"` on a `Handler`) is assigned on the original, its
+value converted to the original's field type and checked as an argument is (a field of an
+interface type at `unknown` arguments does not convert back, a compile error naming #1185).
+The converted value and the original are one object to `===`, `instanceof`, `Set` and `Map`
+keys, and `includes`: a `Handler<Date, number>` read back from a `Handler[]` is `===` to it,
+`instanceof` tests the original's class, and a `Set<Handler>` holding one finds the other. The
+same holds once either is an `any`, `unknown` or `object` (which holds the original itself), and
+members read or written through such an `any` are the original's.
+
+A checked conversion from `any` or `unknown` back to the interface (`v as Handler<any, any>`,
+or at any other arguments, such as the original's own) takes the value the `any` holds through
+its own implementation of the interface: an object literal's, a class's (also for an instance
+of a subclass, through the nearest base class implementing it), or a generic class's at the
+instance's type arguments, including instances only generic code makes (`new G<T>(x)` in a
+`function mk<T>(x: T)`). At other arguments the result is wrapped as above, and it is the same
+object as the original. A context stored in a `Map<string, unknown>` and read back as a
+`Ctx<any, any>` works as in Node. A value implementing the interface at a promise argument
+(`Ctx<Promise<number>>`) does not convert to `Ctx<any>`: a `TypeError`.
+
+A field holding an array of the interface's own values (`kids: Tree<T>[]`), read through a
+`Tree<number>` converted to a `Tree<any>`, is a new array of the same elements, each a
+`Tree<any>`: reads see the original's elements and their changes. Once a program converts a
+`Tree` to other type arguments this way, the field read through a `Tree<any>` (or through a
+`Tree<T>` in generic code, which may be one) may only be used in place without changing it:
+an element (read, or written through: `t.kids[0].value = 7` changes the original's element),
+`.length`, or a method that leaves the array unchanged (`map`, `filter`, `slice`, `indexOf`,
+`join`, …; a callback that replaces or removes an element of the original during the call may
+still be given the element the field held when the method started), also behind `!` or `?.` (`t.kids?.length`,
+`t.kids?.[0]`) or after a test of an optional field (`if (t.more) t.more[0]`), and a
+condition or `null` test of it (`if (!t.kids)`, `t.kids && t.kids.length`). The same holds for a
+method's result of such a type (`getKids(): Tree<T>[]`). Anything else is a compile error naming
+#1185, as Node's result would differ: changing the array (`push`, `splice`, `sort`, an element
+or `length` assigned, the field assigned), keeping it (`const k = t.kids`, destructuring,
+spreading), passing it on, comparing it (`t.kids === t.kids` is `false` on a new array), or
+iterating it with `for…of`, `entries()`, `keys()` or `values()` (Node also visits an element the
+loop body adds to the original; an index loop reading `t.kids.length` and `t.kids[i]` each step
+sees them). Change or keep the array through
+the value's own type instead. An interface whose function types take or give such an array
+(`withKids(f: (k: Tree<T>[]) => void)`, `kidsFn: () => Tree<T>[]`) does not convert to other
+type arguments: a compile error naming #1185.
+
+```ts
+interface Tree<T> {
+  value: T;
+  kids: Tree<T>[];
+  size(): number;
+}
+
+class Node1<T> implements Tree<T> {
+  value: T;
+  kids: Tree<T>[] = [];
+  constructor(v: T) {
+    this.value = v;
+  }
+  size(): number {
+    return this.kids.length;
+  }
+}
+
+function main(): void {
+  const t = new Node1<number>(1);
+  t.kids.push(new Node1<number>(2));
+  const a = (t as unknown) as Tree<any>;
+  console.log(a.kids.length, a.kids[0].value); // 1 2
+  console.log(a.kids.map((k) => k.value).join(",")); // 2
+  t.kids.push(new Node1<number>(3)); // `a.kids.push(…)` is the compile error
+  console.log(a.kids.length); // 2
+}
+```
 
 A parameter of type `unknown[]`, `Map<unknown, unknown>` or `Set<unknown>` (a handler for
 arrays, maps or sets, as in a serializer's table) takes an array, map or set of any element

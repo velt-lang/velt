@@ -1,0 +1,1 @@
+iface_any_args_field_written.vlt:22:11: error: writing `kids` through `Tree<any>` is not supported yet

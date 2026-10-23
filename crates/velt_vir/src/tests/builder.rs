@@ -98,6 +98,7 @@ impl PB {
             upcasts: Default::default(),
             upcast_impls: Default::default(),
             cpu_targets: Default::default(),
+            type_names: Default::default(),
         }
     }
 }

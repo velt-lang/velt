@@ -1,0 +1,46 @@
+// `for…of` over an array field of interface values read through the interface at `any` (or at
+// a type parameter, in generic code) may iterate a new array of the converted elements: an
+// element the loop body adds to the original would not be visited (Node visits it), so the loop
+// is an error (#1185), and so is iterating its `entries()`. An index loop sees the original's
+// elements, as in iface_any_args_array_index_loop.
+interface Tree<T> {
+  value: T;
+  kids: Tree<T>[];
+  label(): string;
+}
+
+class Node1<T> implements Tree<T> {
+  value: T;
+  kids: Tree<T>[] = [];
+  constructor(v: T) {
+    this.value = v;
+  }
+  label(): string {
+    return "n" + this.kids.length;
+  }
+}
+
+function count<T>(x: Tree<T>): number {
+  let n = 0;
+  for (const k of x.kids) {
+    n += 1 + count(k);
+  }
+  return n;
+}
+
+const t = new Node1<number>(1);
+t.kids.push(new Node1<number>(2));
+const a = (t as unknown) as Tree<any>;
+let n = 0;
+for (const k of a.kids) {
+  n++;
+  if (n < 3) {
+    t.kids.push(new Node1<number>((k.value as number) + 1));
+  }
+}
+console.log(n, t.kids.length, count(t));
+let m = 0;
+for (const [i, k] of a.kids.entries()) {
+  m += i + (k.value as number);
+}
+console.log(m);

@@ -1,0 +1,56 @@
+// An array field of interface values read through the interface at `any` and only tested
+// (`!t.kids`) or indexed behind `?.` (`t.kids?.[0]`, `t.more?.[0]?.value`) is used in place,
+// which reads the array the object holds (#1185).
+interface Tree<T> {
+  value: T;
+  kids: Tree<T>[];
+  label(): string;
+  more?: Tree<T>[];
+}
+
+class Node1<T> implements Tree<T> {
+  value: T;
+  kids: Tree<T>[] = [];
+  more?: Tree<T>[];
+  constructor(v: T) {
+    this.value = v;
+  }
+  label(): string {
+    return "n" + this.kids.length;
+  }
+}
+
+const t = new Node1<number>(1);
+t.kids.push(new Node1<number>(2));
+const a = (t as unknown) as Tree<any>;
+const k: Tree<any> = t;
+if (!k.kids) {
+  console.log("none");
+} else {
+  console.log("some");
+}
+if (!k.more) {
+  console.log("no more");
+}
+console.log(a.kids?.[0].value, a.more?.[0]?.value);
+t.more = [new Node1<number>(3)];
+console.log(a.more?.[0].value, !a.more, !!a.kids);
+if (a.kids && a.kids.length > 0) {
+  console.log("has kids");
+}
+if (a.more || a.kids) {
+  console.log("either");
+}
+const label = a.kids && "kids";
+const first = a.more && a.more[0].value;
+console.log(first, a.kids && a.kids.length);
+console.log(label, a.kids ? 1 : 2, a.more ? 1 : 2);
+while (!a.kids) {
+  break;
+}
+if (a.more) {
+  console.log(a.more[0].value, a.more.length);
+}
+if (a.more !== undefined) {
+  console.log(a.more[0].value, a.more?.length);
+}

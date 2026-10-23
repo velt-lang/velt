@@ -105,7 +105,8 @@ impl FnLower<'_, '_> {
     pub(super) fn ref_identity(&mut self, a: &Place, b: &Place, ty: TyId) -> Operand {
         if matches!(self.cx.kind(ty), TyKind::Dyn(..)) {
             self.cx.note_identity(ty);
-            return self.word_eq(a, b, 0);
+            let (a, b) = (self.through_adapters(a, ty), self.through_adapters(b, ty));
+            return self.word_eq(&a, &b, 0);
         }
         self.cx.note_fn_identity();
         let code = self.word_eq(a, b, 0);

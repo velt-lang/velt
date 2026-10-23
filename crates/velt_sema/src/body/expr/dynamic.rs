@@ -405,6 +405,7 @@ impl FnCx<'_, '_> {
                 return self.dynamic_to_optional(h, exp, payload);
             }
         }
+        self.note_dynamic_iface(exp, span);
         let h = self.share_if_place(h);
         self.intrinsic(Intrinsic::AnyTo, vec![h], exp, span)
     }

@@ -1,0 +1,11 @@
+// An `any` holding a value of another type, converted to an object type that reaches itself
+// through its fields: the `TypeError` names an alias by its name, as TypeScript does, and cuts
+// an anonymous object type where it reaches itself (`...`).
+type L = { v: number; next: L | null };
+type Chain<T> = { v: T; next: Chain<T> | null };
+
+function main(): void {
+  const x: any = "str";
+  const l = x as { head: L; chain: Chain<number> };
+  console.log(l.head.v);
+}

@@ -9,17 +9,24 @@
 //! ([`Ctx::readonly_twins`]), so lowering sees one type per layout: the conversion is a no-op
 //! and both views share one object.
 
+use std::collections::HashMap;
+
 use rustc_hash::FxHashMap;
 
 use crate::ctx::Ctx;
-use crate::hir::{Def, DefId, TyId, TyKind};
+use crate::hir::{AdtKind, Def, DefId, TyId, TyKind};
 use crate::types::Types;
 use crate::visit;
 
-/// Replace every readonly object type in the finished program by its plain twin.
-pub(crate) fn erase(cx: &mut Ctx) {
+/// Replace every readonly object type in the finished program by its plain twin. The result
+/// names the erased types messages call by a name (`Program::type_names`): type aliases'
+/// structural types and field-only interfaces' object types, left out where two names meet.
+pub(crate) fn erase(cx: &mut Ctx) -> HashMap<TyId, String> {
+    let mut named: Vec<(TyId, String)> = (cx.alias_names.iter())
+        .map(|(t, n)| (*t, crate::namespaces::written(n).into_owned()))
+        .collect();
     if cx.readonly_twins.is_empty() && cx.brands.is_empty() && cx.fn_sites.vars.is_empty() {
-        return;
+        return unique_names(named);
     }
     let mut twins = cx.readonly_twins.clone();
     // An anonymous object type holding error-set variables is the one of its solved shape.
@@ -40,6 +47,18 @@ pub(crate) fn erase(cx: &mut Ctx) {
     for (t, s) in cx.solved_types() {
         let r = erase_ty(&mut cx.ty, &twins, &mut cache, s);
         cache.insert(t, r);
+    }
+    // A field-only interface's object type is called by the interface's name.
+    for d in twins.keys() {
+        if let Some(Def::Adt(a)) = &cx.defs[d.0 as usize] {
+            if a.kind == AdtKind::Struct && a.generics == 0 {
+                let t = cx.ty.intern(TyKind::Adt(*d, vec![]));
+                named.push((t, crate::namespaces::written(&a.name).into_owned()));
+            }
+        }
+    }
+    for (t, _) in named.iter_mut() {
+        *t = erase_ty(&mut cx.ty, &twins, &mut cache, *t);
     }
     let Ctx {
         ty,
@@ -128,6 +147,23 @@ pub(crate) fn erase(cx: &mut Ctx) {
             *a = e(*a);
         }
     }
+    unique_names(named)
+}
+
+/// Each type's name, when only one name calls it.
+fn unique_names(named: Vec<(TyId, String)>) -> HashMap<TyId, String> {
+    let mut out: HashMap<TyId, Option<String>> = HashMap::new();
+    for (t, n) in named {
+        let short = n.rsplit([':', '.', '/']).next().unwrap_or(&n).to_string();
+        out.entry(t)
+            .and_modify(|e| {
+                if e.as_deref() != Some(short.as_str()) {
+                    *e = None;
+                }
+            })
+            .or_insert(Some(short));
+    }
+    out.into_iter().filter_map(|(t, n)| Some((t, n?))).collect()
 }
 
 /// `t` with every readonly object type replaced by its twin, at any depth.
