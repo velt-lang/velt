@@ -198,22 +198,36 @@ fn holds_shared_in(cx: &mut Ctx, t: TyId, depth: u32) -> bool {
     if depth > 8 || cx.is_copy(t) || cx.is_string_value(t) {
         return false;
     }
-    let parts: Vec<TyId> = match cx.ty.kind(t).clone() {
-        TyKind::Array(e) | TyKind::Option(e, _) => vec![e],
-        TyKind::Tuple(ts) => ts,
+    let (parts, class): (Vec<TyId>, Option<DefId>) = match cx.ty.kind(t).clone() {
+        TyKind::Array(e) | TyKind::Option(e, _) => (vec![e], None),
+        TyKind::Tuple(ts) => (ts, None),
         TyKind::Adt(d, args) => {
-            let fields: Vec<TyId> = cx
-                .adt(d)
-                .map_or(vec![], |a| a.fields.iter().map(|f| f.ty).collect());
-            fields.into_iter().map(|f| cx.subst(f, &args)).collect()
+            // A union (or another enum) may hold any of its members.
+            let Some(a) = cx.adt(d) else {
+                return true;
+            };
+            let fields: Vec<TyId> = a.fields.iter().map(|f| f.ty).collect();
+            (
+                fields.into_iter().map(|f| cx.subst(f, &args)).collect(),
+                Some(d),
+            )
         }
         TyKind::Promise(..) => return false,
         // Type parameters, interface and function values may hold anything.
         _ => return true,
     };
-    parts.into_iter().any(|p| {
+    let held = parts.into_iter().any(|p| {
         (cx.is_shared_value(p) && !cx.is_string_value(p)) || holds_shared_in(cx, p, depth + 1)
-    })
+    });
+    // A value of a class may be one of its subclasses, whose fields may hold anything.
+    held || class.is_some_and(|d| has_subclass(cx, d))
+}
+
+/// Does some class extend class `d`?
+fn has_subclass(cx: &Ctx, d: DefId) -> bool {
+    (0..cx.info.len() as u32)
+        .map(DefId)
+        .any(|s| s != d && cx.adt(s).is_some() && cx.class_extends(s, d))
 }
 
 /// A store of a value reaching `b` into a place reaching `dest` crosses the boundary. A moved

@@ -207,3 +207,35 @@ fn an_rwlock_callback_keeps_its_captures() {
         assert!(!moves(&p, "run", "m"), "{call}");
     }
 }
+
+#[test]
+fn a_store_through_a_union_or_a_base_class_counts() {
+    // `put` stores `x` into a union / base-class argument whose own fields hold no reference;
+    // the member or subclass can. Called through `wrap`, it stored `outside` into the locked
+    // value with no copy.
+    for (types, s) in [
+        (
+            "class A { item: Item = new Item(); } class B { k: i64 = 0; }",
+            "A | B",
+        ),
+        (
+            "class Base { k: i64 = 0; } class A extends Base { item: Item = new Item(); }",
+            "Base",
+        ),
+    ] {
+        let e = err_src(&format!(
+            "{PRELUDE}
+             {types}
+             class Store {{ u: {s} = new A(); }}
+             function put(s: {s}, x: Item) {{ if (s instanceof A) {{ s.item = x; }} }}
+             function wrap(d: Store, x: Item) {{ put(d.u, x); }}
+             function main() {{
+               const m = shared(new Mutex(new Store()));
+               const outside = new Item();
+               m.with((d) => wrap(d, outside));
+               outside.n = 42;
+             }}"
+        ));
+        assert!(e.contains("still used after `with` stored it"), "{s}: {e}");
+    }
+}
