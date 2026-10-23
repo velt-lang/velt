@@ -2565,7 +2565,8 @@ of them, and its `join()` and `toString()`) is written as `Array.prototype.join`
 element as `String(x)` writes it, `null` and `undefined` elements and an array holding itself
 as empty text (`[1, [2, 3], null]` is `1,2,3,`). In a template or a `+`, a symbol stops with
 Node's `TypeError: Cannot convert a Symbol value to a string` (only `String(s)` writes it, as
-`Symbol(desc)`); a function stops with a `TypeError` naming #924 (Node writes its source text).
+`Symbol(desc)`); a function stops with a `TypeError` naming #924 (Node writes its source text),
+and so does a proxy (Node reads its `toString` through the `get` trap).
 
 ```ts
 class Celsius {

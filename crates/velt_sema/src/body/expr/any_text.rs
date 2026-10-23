@@ -66,9 +66,9 @@ const TEXT_FNS: [&str; 6] = [
 ];
 
 /// The method a class instance is written by: its name and the hint passed
-/// (`[Symbol.toPrimitive]`).
+/// (`[Symbol.toPrimitive]`). No name: a `Proxy`, whose traps the text would run (not yet).
 struct TextMethod {
-    name: &'static str,
+    name: Option<&'static str>,
     hint: Option<&'static str>,
 }
 
@@ -149,8 +149,12 @@ impl FnCx<'_, '_> {
     /// `read.<m>()` (`read[Symbol.toPrimitive](hint)`) through the `any` `read` (a generic
     /// class's instance has no type arguments here), its result written with `ToString`.
     fn text_method_call(&mut self, m: &TextMethod, read: ast::Expr, span: Span) -> hir::Expr {
+        let Some(name) = m.name else {
+            let lit = synth(ast::ExprKind::Lit(ast::Lit::Str("Proxy".into())), span);
+            return self.prelude_fn_call("__anyTextUnsupported", vec![lit], span);
+        };
         let prop = ast::Ident {
-            name: m.name.into(),
+            name: name.into(),
             span,
         };
         let member = synth(
@@ -181,12 +185,18 @@ impl FnCx<'_, '_> {
     /// The method an instance of class `c` (its own or a base class's) is written by with
     /// `hint`, if any.
     fn text_method(&mut self, c: DefId, hint: Hint) -> Option<TextMethod> {
+        if self.cx.prelude_adt("Proxy") == Some(c) {
+            return Some(TextMethod {
+                name: None,
+                hint: None,
+            });
+        }
         let n = self.cx.adt(c).map_or(0, |a| a.generics.len());
         let params: Vec<_> = (0..n as u32).map(|i| self.cx.ty.param(i)).collect();
         let to_primitive = self.callable_method(c, &params, "[Symbol.toPrimitive]");
         if let Some((_, arity)) = to_primitive.filter(|&(_, arity)| arity <= 1) {
             return Some(TextMethod {
-                name: "[Symbol.toPrimitive]",
+                name: Some("[Symbol.toPrimitive]"),
                 hint: (arity == 1).then(|| hint.name()),
             });
         }
@@ -199,7 +209,7 @@ impl FnCx<'_, '_> {
             if let Some((ret, 0)) = self.callable_method(c, &params, "valueOf") {
                 if self.primitive_ty(ret) {
                     return Some(TextMethod {
-                        name: "valueOf",
+                        name: Some("valueOf"),
                         hint: None,
                     });
                 }
@@ -208,7 +218,7 @@ impl FnCx<'_, '_> {
         self.callable_method(c, &params, "toString")
             .filter(|&(_, arity)| arity == 0)?;
         Some(TextMethod {
-            name: "toString",
+            name: Some("toString"),
             hint: None,
         })
     }

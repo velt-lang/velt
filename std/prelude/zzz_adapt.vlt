@@ -265,6 +265,14 @@ export function __anyPrimText(r: any): string {
   return __anyText(r);
 }
 
+/**
+ * `String(p)` of a proxy `p` through `any`: JavaScript reads `p[Symbol.toPrimitive]` and
+ * `p.toString` through its `get` trap, which this does not run yet.
+ */
+export function __anyTextUnsupported(name: string): string {
+  panic(`TypeError: the text of a ${name} through \`any\` is not supported yet (#924)`);
+}
+
 /** Is `k` one of the own keys of the object `v`, holding a function? */
 function __anyOwnFn(v: any, k: string): boolean {
   return Object.keys(v).includes(k) && typeof v[k] === "function";
