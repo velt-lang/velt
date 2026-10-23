@@ -303,7 +303,7 @@ fn data_after_a_short_read_still_wakes_the_reader() {
             while got.len() < 6 {
                 c.readable().await.expect("readable");
                 let mut buf = Vec::with_capacity(64);
-                match c.try_read_buf(&mut buf) {
+                match c.try_read_buf(&mut buf, 64) {
                     Ok(_) => got.extend_from_slice(&buf),
                     Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
                     Err(e) => panic!("read: {e}"),

@@ -137,13 +137,14 @@ fn buffer(max: u64) -> Vec<u8> {
 
 /// Read what is available (at least 1 byte, at most `max`; empty only at end of stream).
 pub(crate) async fn read_chunk(stream: &TcpStream, max: u64) -> io::Result<Vec<u8>> {
+    let limit = usize::try_from(max).unwrap_or(usize::MAX);
     loop {
         // The buffer is allocated once there is something to read, so a connection waiting
         // for data holds none (a server's idle connections would otherwise each keep `max`).
         stream.readable().await?;
         if max > SCRATCH as u64 {
             let mut buf = buffer(max);
-            match stream.try_read_buf(&mut buf) {
+            match stream.try_read_buf(&mut buf, limit) {
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
                 Err(e) => return Err(e),
                 Ok(_) => return Ok(buf),
@@ -155,7 +156,9 @@ pub(crate) async fn read_chunk(stream: &TcpStream, max: u64) -> io::Result<Vec<u
             let mut scratch = scratch.borrow_mut();
             scratch.clear();
             scratch.reserve(max as usize);
-            stream.try_read_buf(&mut scratch).map(|_| scratch.to_vec())
+            stream
+                .try_read_buf(&mut scratch, limit)
+                .map(|_| scratch.to_vec())
         });
         match r {
             Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,

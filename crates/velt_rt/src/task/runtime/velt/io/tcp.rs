@@ -86,12 +86,12 @@ impl TcpStream {
             .map(drop)
     }
 
-    /// Reads what is there into `buf`'s spare capacity, without waiting.
-    pub fn try_read_buf(&self, buf: &mut Vec<u8>) -> io::Result<usize> {
+    /// Reads what is there into `buf`'s spare capacity (at most `max` bytes), without waiting.
+    pub fn try_read_buf(&self, buf: &mut Vec<u8>, max: usize) -> io::Result<usize> {
         self.follow();
-        let want = buf.capacity() - buf.len();
+        let want = (buf.capacity() - buf.len()).min(max);
         self.0.try_transfer(READABLE, want, |s| {
-            let spare = buf.spare_capacity_mut();
+            let spare = &mut buf.spare_capacity_mut()[..want];
             // SAFETY: `read` only writes into the slice (a socket read never reads it), and
             // the length is advanced by what it reports written.
             let dst = unsafe { &mut *(spare as *mut [std::mem::MaybeUninit<u8>] as *mut [u8]) };

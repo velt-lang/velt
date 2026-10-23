@@ -86,10 +86,11 @@ impl TcpStream {
         }
     }
 
-    pub fn try_read_buf(&self, buf: &mut Vec<u8>) -> io::Result<usize> {
+    /// Reads what is there into `buf`'s spare capacity (at most `max` bytes), without waiting.
+    pub fn try_read_buf(&self, buf: &mut Vec<u8>, max: usize) -> io::Result<usize> {
         match self {
-            TcpStream::Tokio(s) => s.try_read_buf(buf),
-            TcpStream::Velt(s) => s.try_read_buf(buf),
+            TcpStream::Tokio(s) => s.try_read_buf(&mut bytes::BufMut::limit(buf, max)),
+            TcpStream::Velt(s) => s.try_read_buf(buf, max),
         }
     }
 
