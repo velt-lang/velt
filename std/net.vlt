@@ -30,7 +30,12 @@ declare async function velt_rt_tcp_write(s: u64, data: string): Promise<IoStatus
 // Reads into and writes from a range of the program's own bytes (a `Uint8Array`'s buffer).
 declare function velt_rt_tcp_try_read_into(s: u64, data: u8[], start: u64, end: u64): IoResult<i64>;
 declare async function velt_rt_tcp_readable(s: u64): Promise<IoStatus>;
-declare async function velt_rt_tcp_write_range(s: u64, data: u8[], start: u64, end: u64): Promise<IoStatus>;
+declare async function velt_rt_tcp_write_range(
+  s: u64,
+  data: u8[],
+  start: u64,
+  end: u64,
+): Promise<IoStatus>;
 declare function velt_rt_tcp_try_write_range(s: u64, data: u8[], start: u64, end: u64): u64;
 declare function velt_rt_tcp_shutdown(s: u64): IoStatus;
 declare function velt_rt_tcp_peer_addr(s: u64): string;
