@@ -53,6 +53,7 @@ mod errors;
 mod eval_effects;
 mod fn_union_call;
 mod fn_widen;
+mod frameless_fn;
 mod frozen;
 mod gen_closure;
 mod gen_value;
