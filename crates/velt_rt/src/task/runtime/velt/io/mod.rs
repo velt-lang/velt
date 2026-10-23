@@ -240,6 +240,32 @@ impl<S: mio::event::Source> Io<S> {
         }
     }
 
+    /// Like `poll_io` for a read or write of up to `want` bytes: a short one also clears the
+    /// readiness (see [`try_transfer`](Self::try_transfer)).
+    pub(super) fn poll_transfer(
+        &self,
+        cx: &mut Context<'_>,
+        interest: usize,
+        want: usize,
+        mut op: impl FnMut(&S) -> io::Result<usize>,
+    ) -> Poll<io::Result<usize>> {
+        loop {
+            let tick = match self.poll_ready(cx, interest) {
+                Poll::Ready(Ok(t)) => t,
+                Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                Poll::Pending => return Poll::Pending,
+            };
+            match op(&self.sock) {
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => self.clear(interest, tick),
+                Ok(n) if n > 0 && n < want => {
+                    self.clear(interest, tick);
+                    return Poll::Ready(Ok(n));
+                }
+                r => return Poll::Ready(r),
+            }
+        }
+    }
+
     /// Like `try_io` for a read or write of up to `want` bytes; a short one also clears the
     /// readiness: the socket had no more data (or room) then, so the next operation waits for an
     /// event instead of making a system call that can only say `WouldBlock` (on a request/reply

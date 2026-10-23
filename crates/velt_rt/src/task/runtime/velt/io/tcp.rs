@@ -134,7 +134,8 @@ impl tokio::io::AsyncRead for TcpStream {
         buf: &mut tokio::io::ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
         self.follow();
-        let r = self.0.poll_io(cx, READABLE, |s| {
+        let want = buf.remaining();
+        let r = self.0.poll_transfer(cx, READABLE, want, |s| {
             // SAFETY: as in `try_read_buf`; `assume_init` + `advance` below cover what was read.
             let dst = unsafe { &mut *(buf.unfilled_mut() as *mut [_] as *mut [u8]) };
             (&*s).read(dst).inspect(|&n| super::moved(n))
@@ -158,7 +159,7 @@ impl tokio::io::AsyncWrite for TcpStream {
         cx: &mut Context<'_>,
         data: &[u8],
     ) -> Poll<io::Result<usize>> {
-        self.0.poll_io(cx, WRITABLE, |s| {
+        self.0.poll_transfer(cx, WRITABLE, data.len(), |s| {
             (&*s).write(data).inspect(|&n| super::moved(n))
         })
     }
@@ -168,7 +169,8 @@ impl tokio::io::AsyncWrite for TcpStream {
         cx: &mut Context<'_>,
         bufs: &[io::IoSlice<'_>],
     ) -> Poll<io::Result<usize>> {
-        self.0.poll_io(cx, WRITABLE, |s| {
+        let want = bufs.iter().map(|b| b.len()).sum();
+        self.0.poll_transfer(cx, WRITABLE, want, |s| {
             (&*s).write_vectored(bufs).inspect(|&n| super::moved(n))
         })
     }

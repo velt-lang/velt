@@ -22,6 +22,16 @@
 //! deliveries at twice the CPU). The whole queue counts once polls are long ([`HEAVY`]): tasks
 //! that compute gain from every core.
 //!
+//! A worker awake for nearly all of a window ([`SATURATED`]) with input waiting takes on a
+//! helper too, however short its queue: when the requests in flight are bounded (a connection
+//! pool's 20 connections, each held from its query until the request that holds it finishes),
+//! the queue cannot grow long, and the delay stays under the target while every request waits
+//! on the saturated worker at each step. `/db` on 64 connections after one request had opened
+//! the pool's first connection: two workers awake 98% of the time held every socket, at a
+//! queue delay of 65 µs, and served 76k requests/s; spread over every core, 175k (tokio:
+//! 147k). A worker that keeps up sleeps between bursts, and a broadcast's backlog is output,
+//! not input, so neither spreads for it.
+//!
 //! An earlier policy kept a helper only if it raised the rate of work on a 20 ms trial. On a
 //! loaded machine the trials failed at random and left a saturated worker alone with all its
 //! connections (JSON on 512 connections: p99 1.8 s; spread by delay: 1.1 ms, tokio's work
@@ -34,6 +44,9 @@ use std::time::{Duration, Instant};
 const WINDOW: Duration = Duration::from_millis(10);
 /// The delay from which a worker takes on a helper.
 const TARGET: Duration = Duration::from_micros(200);
+/// The share of a window (in percent) a worker must be awake for, with input waiting, to be
+/// saturated.
+const SATURATED: u128 = 95;
 /// Mean time per task poll from which all waiting tasks count, not only input.
 const HEAVY: Duration = Duration::from_micros(20);
 
@@ -90,13 +103,15 @@ impl Window {
             self.input.get()
         };
         let waiting = sum / self.noted.get().max(1);
+        let queued = per_poll.saturating_mul(u32::try_from(waiting).unwrap_or(u32::MAX));
         self.started.set(now);
         self.polls.set(polls);
         self.input.set(0);
         self.all.set(0);
         self.noted.set(0);
         self.slept.set(Duration::ZERO);
-        Some(per_poll.saturating_mul(u32::try_from(waiting).unwrap_or(u32::MAX)) >= TARGET)
+        let saturated = awake.as_nanos() * 100 >= wall.as_nanos() * SATURATED && waiting >= 1;
+        Some(queued >= TARGET || saturated)
     }
 }
 
@@ -108,7 +123,9 @@ mod tests {
     fn a_queue_that_is_mostly_empty_is_not_overloaded() {
         let t = Instant::now();
         let w = Window::new(t);
-        // 10 ms over 10 000 polls: 1 µs a poll; 300 waiting once, then nothing: 100 µs.
+        // 8 ms awake over 10 000 polls: 0.8 µs a poll; 300 waiting once, then nothing (the
+        // worker slept between the bursts): 80 µs.
+        w.slept(WINDOW / 5);
         w.saw(300, 300);
         w.saw(0, 0);
         w.saw(0, 0);
@@ -146,6 +163,31 @@ mod tests {
         w.slept(WINDOW - Duration::from_millis(1));
         w.saw(0, 5000);
         assert_eq!(w.end(t + WINDOW, 100), Some(false));
+    }
+
+    #[test]
+    fn a_worker_never_out_of_work_with_input_waiting_is_overloaded() {
+        let t = Instant::now();
+        let w = Window::new(t);
+        // 5 µs a poll, 2 input waiting on average (10 µs), awake 99% of the window.
+        w.slept(WINDOW / 100);
+        w.saw(2, 2);
+        w.saw(2, 3);
+        assert_eq!(w.end(t + WINDOW, 1980), Some(true));
+    }
+
+    #[test]
+    fn a_busy_worker_without_input_waiting_is_not_overloaded() {
+        let t = Instant::now();
+        let w = Window::new(t);
+        // Awake all the window: one input at a time (none waiting), flushers behind it.
+        w.saw(0, 900);
+        w.saw(1, 800);
+        assert_eq!(w.end(t + WINDOW, 10_000), Some(false));
+        // Awake 90%: it keeps up, with input waiting.
+        w.slept(WINDOW / 10);
+        w.saw(3, 3);
+        assert_eq!(w.end(t + 2 * WINDOW, 20_000), Some(false));
     }
 
     #[test]

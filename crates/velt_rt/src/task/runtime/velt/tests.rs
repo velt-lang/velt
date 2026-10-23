@@ -246,6 +246,40 @@ fn a_tcp_echo_runs_on_the_backends_own_sockets() {
 }
 
 #[test]
+fn data_after_a_short_poll_read_still_wakes_the_reader() {
+    // `AsyncRead` (a driver's framed reads) clears the readiness after a short read too.
+    let std_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = std_listener.local_addr().unwrap();
+    let got = block_on(spawn(
+        async move {
+            let listener = io::TcpListener::from_std(std_listener).expect("listener");
+            let writer = spawn(
+                async move {
+                    let (mut s, _) = listener.accept().await.expect("accept");
+                    for part in [&b"one"[..], b"two", b"three"] {
+                        s.write_all(part).await.expect("write");
+                        Sleep::until(Instant::now() + Duration::from_millis(30)).await;
+                    }
+                },
+                None,
+            );
+            let mut c = io::TcpStream::connect(addr).await.expect("connect");
+            let mut got = Vec::new();
+            let mut buf = [0u8; 64];
+            while got.len() < 11 {
+                let n = c.read(&mut buf).await.expect("read");
+                assert!(n > 0, "end of stream after {got:?}");
+                got.extend_from_slice(&buf[..n]);
+            }
+            let _ = writer.await;
+            got
+        },
+        None,
+    ));
+    assert_eq!(got.ok().expect("joined"), b"onetwothree");
+}
+
+#[test]
 fn data_after_a_short_read_still_wakes_the_reader() {
     // A short read clears the readiness without a `WouldBlock`: what arrives later must bring
     // an event that wakes the next wait.
