@@ -1,0 +1,47 @@
+// check: no leaks
+// A base and an extension with optional fields share objects through module constants, class
+// field initializers, async functions, unions with null, destructuring, closures, arrays and
+// JSON (#1383).
+interface VNode {
+  type: string;
+  children: VNode[];
+}
+interface IV extends VNode {
+  _ns?: boolean;
+  _sub?: VNode | null;
+  _cb?: () => string;
+}
+const ROOT: VNode = { type: "root", children: [] };
+class Holder {
+  v: VNode = { type: "held", children: [] };
+}
+async function mountAsync(v: VNode): Promise<void> {
+  await Promise.resolve();
+  (v as IV)._ns = true;
+}
+function maybe(v: VNode | null): IV | null {
+  return v as IV | null;
+}
+async function run(): Promise<void> {
+  await mountAsync(ROOT);
+  const h = new Holder();
+  const iv = h.v as IV;
+  iv._sub = ROOT;
+  iv._cb = () => ROOT.type;
+  const { type, _ns } = ROOT as IV;
+  console.log(type, _ns, maybe(ROOT)?._ns, maybe(null) === null);
+  const mk = (): VNode => ({ type: "lit", children: [h.v] });
+  const lit = mk();
+  console.log(lit, (lit.children[0] as IV)._cb?.());
+  const fromIV: IV = { type: "iv", children: [], _ns: false };
+  const asV: VNode = fromIV;
+  console.log(asV, asV === fromIV);
+  const ro: Readonly<VNode> = ROOT;
+  console.log((ro as IV)._ns);
+  const list: VNode[] = [ROOT, h.v];
+  for (const n of list as IV[]) {
+    console.log(n.type, n._ns ?? "-", n._sub?.type ?? "-");
+  }
+  console.log(JSON.stringify(list));
+}
+run();

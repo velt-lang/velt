@@ -1121,19 +1121,29 @@ console.log(e.id, grace.age, w.meta); // e1 45 m
   types](#objects-arrays-tuples-and-maps): `const ns: Named[] = roster();` for a `roster()`
   that returns a new `(Named & Scored)[]`; copy another one with
   `xs.map((p) => ({ name: p.name }))`.
-- **Extensions with optional fields share the layout**: for an interface that extends one
+- **Extensions with optional fields can share the layout**: for an interface that extends one
   object type (an interface with only fields, or an object alias that refers to itself) and
   adds only optional fields the base lacks, as in `interface InternalVNode extends VNode {
-  _ns?: boolean }`, the base's objects also have room for those fields. `vnode as InternalVNode`
-  (or passing a `VNode` where an `InternalVNode` is expected) is then the same object, as in
-  TypeScript: a field written through either type is there through the other, and `===` holds.
-  A `VNode` made anywhere has the added fields absent, so printing, `JSON.stringify`, spreads,
-  `Object.keys` and `in` show them only once written, as in Node. Several such extensions of one
-  base share it while they give a field of one name the same type; one that gives another type
-  (`_subTree?: VNode` next to `_subTree?: VNode | null`) keeps its own layout, the extension
-  nearest to the base (by module path) winning. Neither the base nor the extension may be
-  generic. As for other optional fields written after construction, printing lists them in
-  declared order (the base's fields, then each extension's), not in the order they were
+  _ns?: boolean }`, a program that converts between the two (`vnode as InternalVNode`, passing
+  a `VNode` where an `InternalVNode` is expected or the reverse, also as `VNode[]` and
+  `InternalVNode[]` or as the values of a `Map`) converts the same object, as in TypeScript: a
+  field written through either type is there through the other, and `===` holds. For that,
+  every object of the base's layout gets room for the extensions' fields, absent until
+  written: in a tree of 1,048,575 four-field `VNode`s with an extension adding five optional
+  fields (`bench/extended_layouts_mem.sh`), an object grows from 88 to 144 bytes and the peak
+  memory from 198.7 MB to 214.8 MB. An extension the program only declares (often one in a
+  dependency) costs nothing. Each type keeps its own fields: `VNode` has no member `_ns`, and
+  `keyof VNode`, mapped types (`Required<VNode>`) and structural conversions see `VNode`'s
+  fields only. Printing and `JSON.stringify` show the whole object, an added field once it is
+  written (one holding a function is printed, and left out of JSON, as in Node); `Object.keys`,
+  `for...in`, spreads and `in` list the fields of the type the program looks through, so one of
+  those on a `VNode` is an error once the program writes an added field (look through
+  `v as InternalVNode`). Several such extensions of one base share it while they give a field
+  of one name the same type; one that gives another type (`_subTree?: VNode` next to
+  `_subTree?: VNode | null`) keeps its own layout and converts by copying, as above, the
+  extension nearest to the base (by module path) sharing it. Neither the base nor the extension
+  may be generic. As for other optional fields written after construction, printing lists them
+  in declared order (the base's fields, then each extension's), not in the order they were
   written (#1319).
 - An alias may refer to itself through `&` when its parts are object types written out:
   `type Tree = { kids: Tree[] } & { v: number }` is the interface with the fields `kids` and

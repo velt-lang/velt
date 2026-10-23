@@ -1,0 +1,26 @@
+// check: no leaks
+// A generic function building an object of the base's shape (#1383): at concrete arguments it is
+// the base's type, so it has room for the extension's fields too.
+interface VNode {
+  type: string;
+  dom: string | null;
+}
+interface IV extends VNode {
+  _ns?: boolean;
+  _key?: number;
+}
+function make<A, B>(type: A, dom: B): { type: A; dom: B } {
+  return { type, dom };
+}
+function makeIV<A>(type: A, ns: boolean): { type: A; dom: string | null; _ns?: boolean; _key?: number } {
+  return { type, dom: null, _ns: ns };
+}
+const v: VNode = make("g", null as string | null);
+(v as IV)._ns = true;
+(v as IV)._key = 3;
+console.log(v, (v as IV)._ns);
+const w: IV = makeIV("h", false);
+const back: VNode = w;
+console.log(back, w === (back as IV));
+const pair = make(1, "x");
+console.log(pair.type + 1, pair.dom);

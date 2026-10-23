@@ -1,83 +1,113 @@
-//! Object types extended with optional fields share one layout (#1383): for
+//! Object types extended with optional fields can share one layout (#1383): for
 //! `interface InternalVNode extends VNode { _ns?: boolean }` where both are object types
-//! (field-only interfaces, or recursive aliases checked as one), `VNode`'s layout also holds the
-//! extension's optional fields, so `vnode as InternalVNode` is the same object, as in
-//! TypeScript, instead of a copy that a later `._ns = …` would not reach.
+//! (field-only interfaces, or recursive aliases checked as one), `vnode as InternalVNode` is the
+//! same object, as in TypeScript, instead of a copy that a later `._ns = …` would not reach.
 //!
-//! A `VNode` made anywhere has the extra fields absent (an absent optional field is not
-//! printed, serialized, spread or listed, as Node's object would not have the property), and a
-//! write through the extension's type reaches every view of the object. The extension's type
-//! gets the same fields (also those another extension of the same base adds), so the two
-//! types have one layout ([`Ctx::same_layout`]) and convert to each other as an `Upcast`.
+//! Each type keeps its declared fields: `VNode` has no member `_ns`, `keyof VNode`, mapped types,
+//! structural checks, printing and JSON see `VNode`'s own fields. Only the layout is shared, and
+//! only when the program converts between the base and an extension (a cast, an argument, an
+//! assignment, also inside an array, a `Map` or another container; [`Ctx::family_layout`]): then
+//! [`crate::layout_merge`] gives the base's object type (its anonymous twin) room for the
+//! extensions' fields and makes the extensions' twins that type. An extension the program only
+//! declares costs nothing.
 //!
-//! Only plain extensions qualify: the base and the extension are not generic, the extension
-//! names one base and declares only optional fields that the base doesn't have. Extensions of one
-//! base are taken in definition order while they give a field of one name the same type; one
-//! that disagrees with those taken keeps its own layout. Anything else keeps its own layout
-//! too (and the conversion copies, checked by `crate::object_copies`).
+//! A `VNode` made anywhere then has the added fields absent (an absent optional field is not
+//! printed, serialized or listed, as Node's object would not have the property), and a write
+//! through the extension's type reaches every view of the object.
+//!
+//! Only plain extensions qualify: the base and the extension are not generic and not in the
+//! standard library, the extension names one base and declares only optional fields that the
+//! base doesn't have, and it is not extended itself. Extensions of one base are taken nearest to
+//! the base first (by module path: one in the base's own directory before one in another
+//! package), then by module path and definition order, while they give a field of one name the
+//! same type; one that disagrees with those taken keeps its own layout. Anything else keeps its
+//! own layout too (and the conversion copies, checked by `crate::object_copies`).
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::ctx::Ctx;
 use crate::defs::FieldInfo;
-use crate::hir::DefId;
+use crate::hir::{DefId, TyId, TyKind};
 
-/// The interface and object type pairs of `Ctx::field_only` (interface, object type): give
-/// each base that plain extensions extend their optional fields, and each extension the
-/// base's resulting fields. Runs after the object types' own fields are filled, before their
-/// layouts (anonymous twins) are made.
-pub(super) fn widen(cx: &mut Ctx, pairs: &[(DefId, DefId)]) {
+/// The layouts extensions may share (`Ctx::objects`).
+#[derive(Default)]
+pub(crate) struct Layouts {
+    /// Base layout (the base's anonymous twin) -> its family.
+    pub families: FxHashMap<DefId, Family>,
+    /// An extension's anonymous twin -> the base layout it shares.
+    pub redirect: FxHashMap<DefId, DefId>,
+    /// Extensions that keep their own layout because they give a field of their base another
+    /// type than an extension sharing the base's layout: object type -> (the field, the
+    /// interface whose type it has there).
+    pub conflicts: FxHashMap<DefId, (String, DefId)>,
+    /// The program is checked: from here on only families already in use answer
+    /// [`Ctx::family_layout`] (a check must not widen a layout that no conversion needs).
+    pub sealed: bool,
+}
+
+/// One base layout and the fields its extensions add.
+pub(crate) struct Family {
+    /// The extensions' own fields, in order (each extension's twin's `FieldInfo`).
+    pub added: Vec<FieldInfo>,
+    /// The program converts between the base and an extension: the layout is widened.
+    pub used: bool,
+}
+
+/// The interface and object type pairs of `Ctx::field_only` (interface, object type), their
+/// anonymous twins made: find the families of plain extensions that may share their base's
+/// layout. Nothing is widened here ([`crate::layout_merge`]).
+pub(super) fn families(cx: &mut Ctx, pairs: &[(DefId, DefId)]) {
     let adt_of: FxHashMap<DefId, DefId> = pairs.iter().copied().collect();
     // Base interface -> its plain extensions (object type, own fields).
-    let mut families: FxHashMap<DefId, Vec<(DefId, Vec<FieldInfo>)>> = FxHashMap::default();
+    let mut by_base: FxHashMap<DefId, Vec<(DefId, Vec<FieldInfo>)>> = FxHashMap::default();
     let mut order: Vec<DefId> = vec![];
     for &(iface, adt) in pairs {
         let Some((base, own)) = plain_extension(cx, iface, &adt_of) else {
             continue;
         };
-        if !families.contains_key(&base) {
+        if !by_base.contains_key(&base) {
             order.push(base);
         }
-        families.entry(base).or_default().push((adt, own));
+        by_base.entry(base).or_default().push((adt, own));
     }
-    // A type that is both an extension and an extended base keeps its layout (chains are not
-    // merged), and so do its family's members.
-    let extensions: Vec<DefId> = families
-        .values()
-        .flatten()
-        .filter_map(|(adt, _)| cx.field_only_of.get(adt).copied())
-        .collect();
+    order.sort_by_key(|d| d.0);
+    let twin = |cx: &Ctx, adt: DefId| cx.readonly_twins.get(&adt).map(|t| t.0);
+    let mut layouts = Layouts::default();
     for base in order {
-        if extensions.contains(&base) {
-            continue;
-        }
-        let members = &families[&base];
-        if members
-            .iter()
-            .any(|(adt, _)| families.contains_key(&cx.field_only_of[adt]))
+        let members = &by_base[&base];
+        // A type that is both an extension and an extended base keeps its layout (chains are
+        // not merged), and so do its family's members.
+        if by_base
+            .values()
+            .flatten()
+            .any(|(adt, _)| cx.field_only_of[adt] == base)
+            || (members.iter()).any(|(adt, _)| by_base.contains_key(&cx.field_only_of[adt]))
         {
             continue;
         }
-        let base_adt = adt_of[&base];
-        let Some(mut fields) = cx.adt(base_adt).map(|a| a.fields.clone()) else {
+        let Some(base_twin) = twin(cx, adt_of[&base]) else {
             continue;
         };
-        // Each extension whose fields agree with those taken so far, nearest to the base first
-        // (one in the base's own directory before one in another package), so the choice does
-        // not depend on the order the modules load in; then in definition order. The fields
-        // come in that order too, after the base's.
+        let Some(mut fields) = cx.adt(adt_of[&base]).map(|a| a.fields.clone()) else {
+            continue;
+        };
+        // Two bases of one shape are one layout: their extensions are one family.
+        let family = layouts.families.entry(base_twin).or_insert(Family {
+            added: vec![],
+            used: false,
+        });
+        fields.extend(family.added.iter().cloned());
+        // Nearest to the base first, so that the choice does not depend on the order the
+        // modules load in (module docs).
         let base_path = module_path(cx, base);
         let mut members: Vec<&(DefId, Vec<FieldInfo>)> = members.iter().collect();
         members.sort_by_cached_key(|(adt, _)| {
             let path = module_path(cx, cx.field_only_of[adt]);
-            let near = path
-                .split('/')
-                .zip(base_path.split('/'))
+            let near = (path.split('/').zip(base_path.split('/')))
                 .take_while(|(a, b)| a == b)
                 .count();
             (std::cmp::Reverse(near), path, cx.field_only_of[adt].0)
         });
-        let mut taken: Vec<DefId> = vec![];
         // The extension each added field comes from.
         let mut from: Vec<(String, DefId)> = vec![];
         for (adt, own) in members {
@@ -87,39 +117,126 @@ pub(super) fn widen(cx: &mut Ctx, pairs: &[(DefId, DefId)]) {
             if let Some(f) = clash {
                 let owner = from.iter().find(|(n, _)| *n == f.name).map(|x| x.1);
                 if let Some(owner) = owner {
-                    (cx.objects.layout_conflicts).insert(*adt, (f.name.clone(), owner));
+                    (layouts.conflicts).insert(*adt, (f.name.clone(), owner));
                 }
                 continue;
             }
+            let Some(ext_twin) = twin(cx, *adt) else {
+                continue;
+            };
             let iface = cx.field_only_of[adt];
             from.extend(own.iter().map(|f| (f.name.clone(), iface)));
+            // The twin's fields: optional ones read as `T | undefined` there, with defaults.
+            let twin_fields = cx.adt(ext_twin).map_or(vec![], |a| a.fields.clone());
             for f in own {
-                if !fields.iter().any(|g| g.name == f.name) {
-                    fields.push(f.clone());
+                if fields.iter().any(|g| g.name == f.name) {
+                    continue;
+                }
+                fields.push(f.clone());
+                if let Some(t) = twin_fields.iter().find(|g| g.name == f.name) {
+                    family.added.push(t.clone());
                 }
             }
-            taken.push(*adt);
-        }
-        let members = taken;
-        cx.adt_mut(base_adt).fields = fields.clone();
-        for adt in members {
-            cx.adt_mut(adt).fields = fields.clone();
+            layouts.redirect.insert(ext_twin, base_twin);
         }
     }
+    // A layout that is a base's in one family and an extension's in another (or an extension's
+    // of two bases) is in no family.
+    let shared: FxHashSet<DefId> = (layouts.redirect.keys())
+        .filter(|d| layouts.families.contains_key(d))
+        .copied()
+        .collect();
+    if !shared.is_empty() {
+        let dropped: FxHashSet<DefId> = (layouts.redirect.iter())
+            .filter(|(k, _)| shared.contains(k))
+            .map(|(_, v)| *v)
+            .chain(shared.iter().copied())
+            .collect();
+        layouts
+            .redirect
+            .retain(|k, v| !dropped.contains(k) && !dropped.contains(v));
+        layouts.families.retain(|k, _| !dropped.contains(k));
+    }
+    layouts
+        .families
+        .retain(|k, f| !f.added.is_empty() && layouts.redirect.values().any(|v| v == k));
+    cx.objects.layouts = layouts;
 }
 
 impl Ctx<'_> {
+    /// Are `a` and `b` one layout once the families of [`families`] that they mention share
+    /// their base's layout (`VNode` and `InternalVNode`, `VNode[]` and `InternalVNode[]`)? If
+    /// so, those families are in use: lowering sees the widened layout ([`crate::layout_merge`]).
+    pub(crate) fn family_layout(&mut self, a: TyId, b: TyId) -> bool {
+        if a == b || self.objects.layouts.families.is_empty() {
+            return false;
+        }
+        if !self.in_family(a) || !self.in_family(b) {
+            return false;
+        }
+        let mut twins = self.readonly_twins.clone();
+        redirect_twins(&mut twins, &self.objects.layouts.redirect);
+        let mut cache = FxHashMap::default();
+        let ea = crate::readonly::erase_ty(&mut self.ty, &twins, &mut cache, a);
+        let eb = crate::readonly::erase_ty(&mut self.ty, &twins, &mut cache, b);
+        if self.canon(ea) != self.canon(eb) {
+            return false;
+        }
+        let mut found = vec![];
+        self.family_defs(ea, &mut found);
+        let sealed = self.objects.layouts.sealed;
+        let families = &mut self.objects.layouts.families;
+        if sealed
+            && found
+                .iter()
+                .any(|d| families.get(d).is_some_and(|f| !f.used))
+        {
+            return false;
+        }
+        for d in found {
+            if let Some(f) = families.get_mut(&d) {
+                f.used = true;
+            }
+        }
+        true
+    }
+
+    /// Does type `t` mention an object type of a family (a base, an extension, or a type of
+    /// either's layout)?
+    fn in_family(&self, t: TyId) -> bool {
+        let l = &self.objects.layouts;
+        let mut hit = false;
+        self.ty.visit(t, &mut |k| {
+            if let TyKind::Adt(d, _) = k {
+                let twin = self.readonly_twins.get(d).map_or(*d, |t| t.0);
+                hit |= l.families.contains_key(&twin) || l.redirect.contains_key(&twin);
+            }
+        });
+        hit
+    }
+
+    /// The base layouts erased type `t` mentions.
+    fn family_defs(&self, t: TyId, out: &mut Vec<DefId>) {
+        self.ty.visit(t, &mut |k| {
+            if let TyKind::Adt(d, _) = k {
+                if self.objects.layouts.families.contains_key(d) && !out.contains(d) {
+                    out.push(*d);
+                }
+            }
+        });
+    }
+
     /// `d` with a note when `target` is an extension that keeps its own layout because another
     /// extension of its base gives one of its fields another type.
     pub(crate) fn with_layout_note(
         &mut self,
         d: velt_common::Diagnostic,
-        target: crate::hir::TyId,
+        target: TyId,
     ) -> velt_common::Diagnostic {
-        let crate::hir::TyKind::Adt(adt, _) = *self.ty.kind(target) else {
+        let TyKind::Adt(adt, _) = *self.ty.kind(target) else {
             return d;
         };
-        let Some((field, other)) = self.objects.layout_conflicts.get(&adt).cloned() else {
+        let Some((field, other)) = self.objects.layouts.conflicts.get(&adt).cloned() else {
             return d;
         };
         let (Some(me), Some(o)) = (self.field_only_of.get(&adt), self.iface(other)) else {
@@ -138,11 +255,26 @@ impl Ctx<'_> {
             .iface(base.iface)
             .map_or(String::new(), |b| b.name.clone());
         d.with_note(format!(
-            "`{name}` extends `{base}` with a field `{field}` of another type than {other} gives it; `{base}`'s objects have room for that one's fields, so `{name}` is a separate object type"
+            "`{name}` extends `{base}` with a field `{field}` of another type than {other} gives it; `{base}`'s objects can have room for that one's fields only, so `{name}` is a separate object type"
         ))
         .with_note(format!(
             "give `{field}` the same type in both extensions, and a `{base}` converts to either as the same object"
         ))
+    }
+}
+
+/// `twins` with each extension's layout replaced by its base's ([`Layouts::redirect`]).
+pub(crate) fn redirect_twins(
+    twins: &mut FxHashMap<DefId, (DefId, Option<Vec<TyId>>)>,
+    redirect: &FxHashMap<DefId, DefId>,
+) {
+    for t in twins.values_mut() {
+        if let Some(&d) = redirect.get(&t.0) {
+            t.0 = d;
+        }
+    }
+    for (&ext, &base) in redirect {
+        twins.insert(ext, (base, None));
     }
 }
 

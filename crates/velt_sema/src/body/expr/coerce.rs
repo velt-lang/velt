@@ -244,14 +244,15 @@ impl FnCx<'_, '_> {
         if exp == self.cx.ty.str_ && self.is_string_enum(h.ty) {
             return Ok(self.string_enum_to_str(h));
         }
-        if self.cx.class_of(exp).is_some() && self.cx.class_of(h.ty).is_some() {
-            return self.upcast(h, exp).or_else(|h| self.widen_fresh(h, exp));
-        }
         if self.cx.same_layout(h.ty, exp) {
-            // Object types that differ only in `readonly`: the same object, seen through the
-            // other type (`crate::readonly` makes them one type before lowering).
+            // Object types that differ only in `readonly`, or containers of a base and its
+            // extension (`collect::extended_layouts`, also `Map`s): the same object, seen through
+            // the other type (`crate::readonly` makes them one type before lowering).
             let span = h.span;
             return Ok(self.mk(H::Upcast(Box::new(h)), exp, span));
+        }
+        if self.cx.class_of(exp).is_some() && self.cx.class_of(h.ty).is_some() {
+            return self.upcast(h, exp).or_else(|h| self.widen_fresh(h, exp));
         }
         if let TyKind::Dyn(iface, args) = self.cx.ty.kind(exp).clone() {
             return self.dyn_value(h, exp, iface, &args);

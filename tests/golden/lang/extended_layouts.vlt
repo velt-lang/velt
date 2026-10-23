@@ -41,12 +41,14 @@ console.log(leaf);
 console.log(root);
 console.log(fresh);
 console.log(JSON.stringify(leaf));
-console.log(Object.keys(root).join(","), Object.keys(fresh).join(","));
-console.log("_ns" in leaf, "_ns" in fresh, "_key" in leaf);
+// Keys, `in` and spreads list the fields of the type looked through, so through the extension.
+const ir = root as InternalVNode;
+console.log(Object.keys(ir).join(","), Object.keys(fresh as InternalVNode).join(","));
+console.log("_ns" in (leaf as InternalVNode), "_ns" in (fresh as InternalVNode));
 const k = leaf as KeyedVNode;
-k._key = 7;
-console.log(k._ns, (leaf as InternalVNode)._ns, k === (leaf as KeyedVNode));
-const copy = { ...leaf };
+k._ns = false;
+console.log(k._ns, (leaf as InternalVNode)._ns, k === (leaf as KeyedVNode), "_key" in k);
+const copy = { ...(leaf as InternalVNode) };
 console.log(copy);
 
 // A field-only interface as the base, through a function taking the extension.

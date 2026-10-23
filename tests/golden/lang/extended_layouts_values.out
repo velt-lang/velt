@@ -1,0 +1,17 @@
+root true true true
+{
+  type: 'lit',
+  children: [
+    {
+      type: 'held',
+      children: [],
+      _sub: [Object],
+      _cb: [Function (anonymous)]
+    }
+  ]
+} root
+{ type: 'iv', children: [], _ns: false } true
+true
+root true -
+held - root
+[{"type":"root","children":[],"_ns":true},{"type":"held","children":[],"_sub":{"type":"root","children":[],"_ns":true}}]

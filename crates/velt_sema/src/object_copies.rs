@@ -410,6 +410,7 @@ fn report_write(cx: &mut Ctx, c: &Copy, w: &Write) {
     )
     .with_label(w.span, label);
     let d = with_notes(cx, d, c);
+    let d = cx.with_layout_note(d, c.to);
     cx.error(d);
 }
 
@@ -449,6 +450,7 @@ fn report_seen(cx: &mut Ctx, c: &Copy, t: TyId, span: Span, how: Seen, in_keys: 
     )
     .with_label(span, "here, or in the function this calls");
     let d = with_notes(cx, d, c);
+    let d = cx.with_layout_note(d, c.to);
     cx.error(d);
 }
 

@@ -58,10 +58,8 @@ pub(crate) struct ObjectState {
     pub brands: crate::defined_props::Brands,
     /// The key names of the brands' hidden fields, once resolved (`Ctx::hidden_keys`).
     pub hidden: Option<FxHashSet<String>>,
-    /// Extensions that keep their own layout because they give a field of their base another
-    /// type than an extension sharing the base's layout (`collect::extended_layouts`): object
-    /// type -> (the field, the interface whose type it has there).
-    pub layout_conflicts: FxHashMap<DefId, (String, DefId)>,
+    /// The layouts extended object types may share (`collect::extended_layouts`).
+    pub layouts: crate::collect::extended_layouts::Layouts,
 }
 
 impl Ctx<'_> {
@@ -304,8 +302,11 @@ impl Ctx<'_> {
                 .is_some_and(|x| x.kind == AdtKind::Anon || cx.field_only_of.contains_key(d)),
             _ => false,
         };
-        if a == b || !object(self, a) || !object(self, b) || self.readonly_twins.is_empty() {
+        if a == b {
             return false;
+        }
+        if !object(self, a) || !object(self, b) || self.readonly_twins.is_empty() {
+            return self.family_layout(a, b);
         }
         let twins = self.readonly_twins.clone();
         let mut cache = FxHashMap::default();
@@ -314,7 +315,7 @@ impl Ctx<'_> {
         // it spells out.
         let ea = crate::readonly::erase_ty(&mut self.ty, &twins, &mut cache, a);
         let eb = crate::readonly::erase_ty(&mut self.ty, &twins, &mut cache, b);
-        self.canon(ea) == self.canon(eb)
+        self.canon(ea) == self.canon(eb) || self.family_layout(a, b)
     }
 
     /// Are `a` and `b` anonymous defs with the same field names, in order?

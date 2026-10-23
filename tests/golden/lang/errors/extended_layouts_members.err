@@ -1,0 +1,4 @@
+extended_layouts_members.vlt:12:12: error: no field `_ns` on type `VNode`
+= note: objects have a fixed shape: fields cannot be added at runtime; use a `Map<string, V>` for dynamic keys
+extended_layouts_members.vlt:14:42: error: no field `_ns` on type `VNode`
+= note: objects have a fixed shape; use a `Map<string, V>` for dynamic keys
