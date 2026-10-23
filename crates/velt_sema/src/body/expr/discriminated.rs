@@ -260,10 +260,14 @@ impl FnCx<'_, '_> {
             .filter(|v| lit_matches(&values[*v as usize], lit))
             .collect();
         if hits.is_empty() {
-            let possible: Vec<String> = live
-                .iter()
-                .map(|v| display_lit(&values[*v as usize]))
-                .collect();
+            // Members with one value (an intersection split over a union) show it once.
+            let mut possible: Vec<String> = vec![];
+            for v in &live {
+                let shown = display_lit(&values[*v as usize]);
+                if !possible.contains(&shown) {
+                    possible.push(shown);
+                }
+            }
             self.cx.error(
                 Diagnostic::error(
                     format!(

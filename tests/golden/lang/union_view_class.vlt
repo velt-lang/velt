@@ -3,26 +3,32 @@
 // `class W implements Impl<number>` converts through the interface the class implements (also
 // from a subclass and a generic class), and reads its getters. Expected output: Node's.
 type StateName = "idle" | "ready";
+
 interface Base<T> {
   refresh(): number;
 }
+
 interface Idle<T> extends Base<T> {
   readonly state: "idle";
   readonly value: null;
   readonly hasValue: false;
 }
+
 interface Ready<T> extends Base<T> {
   readonly state: "ready";
   readonly value: T;
   readonly hasValue: true;
 }
+
 type State<T> = Idle<T> | Ready<T>;
+
 interface Impl<T> {
   readonly state: StateName;
   readonly value: T | null;
   readonly hasValue: boolean;
   refresh(): number;
 }
+
 class Machine<T> {
   st: StateName = "idle";
   data: T | null = null;
@@ -31,6 +37,7 @@ class Machine<T> {
     this.data = v;
   }
 }
+
 function make<T>(m: Machine<T>): Impl<T> {
   return {
     get state() {
@@ -45,6 +52,7 @@ function make<T>(m: Machine<T>): Impl<T> {
     refresh: () => 1,
   };
 }
+
 class W implements Impl<number> {
   n = 0;
   get state(): StateName {
@@ -61,9 +69,11 @@ class W implements Impl<number> {
     return this.n;
   }
 }
+
 class Sub extends W {
   label = "sub";
 }
+
 class G<T> implements Impl<T> {
   data: T | null = null;
   get state(): StateName {
@@ -79,11 +89,14 @@ class G<T> implements Impl<T> {
     return 0;
   }
 }
+
 const w = new W();
 const s = w as State<number>;
 console.log(s.state, s.value);
 w.refresh();
-if (s.state === "ready") console.log(s.value + 1);
+if (s.state === "ready") {
+  console.log(s.value + 1);
+}
 s.refresh();
 console.log(s.value, w.n);
 const t = new W() as State<number>;
@@ -95,4 +108,6 @@ const g = new G<string>();
 const gs = g as State<string>;
 console.log(gs.state);
 g.data = "x";
-if (gs.hasValue) console.log(gs.value.length);
+if (gs.hasValue) {
+  console.log(gs.value.length);
+}

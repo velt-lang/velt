@@ -524,7 +524,12 @@ impl FnCx<'_, '_> {
     }
 
     fn never_matches(&mut self, s: &Scrut, msg: String, span: Span) -> Sel {
-        let possible: Vec<String> = s.slots.iter().map(|x| x.name.clone()).collect();
+        let mut possible: Vec<String> = vec![];
+        for x in &s.slots {
+            if !possible.contains(&x.name) {
+                possible.push(x.name.clone());
+            }
+        }
         let mut d = Diagnostic::error(msg, span);
         if !possible.is_empty() {
             d = d.with_note(format!("possible values: {}", possible.join(", ")));

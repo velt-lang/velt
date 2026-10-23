@@ -6,6 +6,7 @@ set -euo pipefail
 velt=$1
 dir=$(cd "$(dirname "$0")" && pwd)
 tmp=$(mktemp -d)
+trap rm -rf  EXIT
 "$velt" build --release "$dir/discriminant_reads.vlt" -o "$tmp/reads" >/dev/null
 count() {
   valgrind --tool=cachegrind --cache-sim=no --cachegrind-out-file=/dev/null "$tmp/reads" "$1" "$2" 2>&1 |
