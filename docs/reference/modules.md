@@ -82,6 +82,10 @@ for (const n of names) {
 
 A file with top-level statements cannot also declare `main`.
 
+When the top-level statements wait at an `await` that nothing can settle any more, and nothing
+else can happen, the program ends as Node's does: `Warning: Detected unsettled top-level await
+at <file>:<line>` on stderr and exit code 13 ([Async](async.md#promises)).
+
 An imported module's top-level statements run once, when the module is evaluated, as in Node:
 the modules are evaluated before the root file's statements run, each after the modules it
 imports (in the order of its `import`s, depth first) and before the module that imports it. A

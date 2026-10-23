@@ -1,0 +1,7 @@
+throws_fn_type_limit.vlt:90:7: error: this function throws `End`, but the function type it is used as does not allow throwing
+  = note: it is used as `() => f64`
+  = note: the error types of function types written without `throws` are inferred from what is stored into them; that inference hit its limit (9 checks of the program) here
+  = note: catch the error inside the function, or write the function type with `throws End`
+
+throws_fn_type_limit.vlt:97:5: error: the error type here is not known yet: it is `End`, found through a recursive call
+  = note: add a `throws` clause to the functions in the recursion (`function f(): T throws E`)

@@ -1,0 +1,58 @@
+// A class passed to a generic function's construct signature parameter fixes its type
+// parameter after the other arguments, as tsc infers it: `T` is the common supertype of the
+// class's instance and the other arguments (`mk(B, new A())` and `mk(A, new B())` are both
+// `T = A`), in either argument order and with two classes for one parameter.
+class A {
+  n: number = 1;
+}
+class B extends A {
+  m: number = 2;
+}
+
+function mk<T>(C: new () => T, x: T): T {
+  return x;
+}
+function mk2<T>(x: T, C: new () => T): T {
+  return x;
+}
+function make<T>(C: new () => T, x: T): T {
+  return new C();
+}
+function reg<T>(C: new () => T): T {
+  return new C();
+}
+function same<T>(C: new () => T, D: new () => T): boolean {
+  return C === D;
+}
+function idOf<T>(C: new () => T, x: T): new () => T {
+  return C;
+}
+function mkArrow<T>(C: new () => T, f: (x: T) => number): number {
+  return f(new C());
+}
+
+console.log(mk(B, new A()).n, mk2(new A(), B).n);
+console.log(mk(A, new B()).n, mk2(new B(), A).n);
+console.log(mk(A, new A()).n, mk2(new B(), B).n);
+console.log(make(B, new A()) instanceof B, make(A, new B()) instanceof B);
+console.log(reg(A).n, reg(B).m);
+const kA: new () => A = A;
+console.log(same(A, A), same(B, A), same(A, B));
+console.log(idOf(A, new B()) === kA, idOf(A, new A()) === kA);
+console.log(mk<A>(B, new A()).n, mk<B>(B, new B()).m);
+console.log(mkArrow(B, (b) => b.m));
+
+// An arrow before the class is typed by it.
+class Box<T> {
+  v: T;
+  constructor(v: T) {
+    this.v = v;
+  }
+}
+function arrowFirst<T>(f: (x: T) => number, C: new () => T): number {
+  return f(new C());
+}
+function boxed<T>(f: (b: Box<T>) => T, C: new (v: T) => Box<T>, v: T): T {
+  return f(new C(v));
+}
+console.log(arrowFirst((b) => b.m, B), boxed((b) => b.v, Box, 5));

@@ -362,9 +362,14 @@ impl FnCx<'_, '_> {
             let mut default = closure
                 .and_then(|d| self.cx.fn_info(d).params.get(i))
                 .and_then(|p| p.default.clone());
-            // A rest parameter without arguments is the empty array.
+            // A rest parameter without arguments is the empty array; an optional one
+            // (`(a?: number) => R`) is `undefined`.
             if rest && i + 1 == params.len() {
                 default = Some(self.mk(H::ArrayLit(vec![]), *ty, span));
+            } else if default.is_none()
+                && matches!(self.cx.ty.kind(*ty), TyKind::Option(_, n) if n.has_undefined())
+            {
+                default = Some(self.mk(H::Lit(hir::Lit::Null), *ty, span));
             }
             ps.push(ParamSig {
                 name: format!("arg{i}"),

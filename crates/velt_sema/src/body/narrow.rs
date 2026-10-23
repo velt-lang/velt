@@ -512,7 +512,7 @@ impl FnCx<'_, '_> {
         }
         match self.instanceof_class_quiet(ty) {
             Some(class) => self.class_facts(e, class),
-            None => (vec![], vec![]),
+            None => self.ctor_value_facts(e, ty),
         }
     }
 

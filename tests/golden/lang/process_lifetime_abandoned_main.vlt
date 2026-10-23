@@ -1,0 +1,7 @@
+// `async main` awaiting a promise whose `resolve` was dropped ends the program with exit code 0
+// once nothing else can happen, as Node exits with `main`'s promise pending (#1366).
+async function main() {
+  console.log("before");
+  await new Promise<void>((resolve) => {});
+  console.log("never");
+}

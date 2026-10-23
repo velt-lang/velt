@@ -1,0 +1,77 @@
+// check: no leaks
+// A class has one value per construct signature type, as JavaScript has one class object:
+// `===`, `Object.is`, `includes`, `indexOf`, `Map`, `Set` and `WeakMap` keys see the same object
+// wherever the class is named as a value (in this module and in another, in a closure, an
+// async function, a generic function, a static field or a module constant's field), and
+// `new` / `instanceof` work through a static field and a module constant's field. Node prints
+// the same.
+import { A, type Ctor, libCtors, isA } from "./_ctor_value_lib";
+class B extends A {}
+class Reg {
+  static readonly DEF: Ctor = B;
+}
+const M: { k: Ctor } = { k: B };
+
+function same(x: Ctor, y: Ctor): boolean {
+  return x === y;
+}
+function mk<T>(C: new (n: number) => T, n: number): T {
+  return new C(n);
+}
+function fact(n: number, c: Ctor): number {
+  if (n <= 1) return new c(1).n;
+  const k: Ctor = A;
+  return n * fact(n - 1, k);
+}
+const pick = (b: boolean): Ctor => (b ? A : B);
+async function later(): Promise<Ctor> {
+  return B;
+}
+
+const ks: Ctor[] = [A, B];
+console.log(ks.includes(B), ks.indexOf(B), ks.lastIndexOf(A));
+const m = new Map<Ctor, string>();
+m.set(A, "a");
+console.log(m.get(A), m.has(A), m.has(B));
+const s = new Set<Ctor>([A, A, B]);
+console.log(s.size, s.has(A));
+const k: Ctor = A;
+console.log(ks[0] === k, ks[1] === k, Object.is(k, A), k !== B);
+console.log(same(A, A), same(A, B), same(k, ks[0]));
+const a2: new (n: number) => A = A;
+console.log(a2 === k);
+
+// Another module's values, a module-level `let`, generic code, recursion, closures.
+let reg = new Map<Ctor, string>([
+  [A, "a"],
+  [B, "b"],
+]);
+console.log(libCtors.includes(A), isA(A), isA(B), reg.get(A), reg.get(B));
+console.log(mk(A, 1).n, mk(B, 2) instanceof B);
+console.log(fact(4, B));
+console.log(pick(true) === A, pick(false) === B, [true, false].map((b) => pick(b).name).join());
+
+// Through a static field and a module constant's field.
+const x = new Reg.DEF(1);
+console.log(x.n, x instanceof Reg.DEF, new M.k(2).n, x instanceof M.k);
+const y: unknown = x;
+if (y instanceof Reg.DEF) {
+  console.log(y.n);
+}
+console.log(Reg.DEF === M.k, Reg.DEF.name, `${A.name}`, B.name);
+
+// Arrays, a `WeakMap`, a variable written again, a field.
+const kb: new (n: number) => B = B;
+const ka: new (n: number) => A = B;
+console.log(ka === A, new ka(1) instanceof B, kb.name);
+const arr: (new (n: number) => A)[] = [A, B, A];
+console.log(arr.filter((c) => c === A).length, arr.findIndex((c) => c === B));
+const ws = new WeakMap<new (n: number) => A, number>();
+ws.set(A, 1);
+console.log(ws.get(A), ws.has(B));
+let cur: new (n: number) => A = A;
+cur = B;
+console.log(cur === B, cur !== A);
+const ob = { c: A as new (n: number) => A };
+console.log(ob.c === A);
+later().then((c) => console.log(c === B, new c(5).n));

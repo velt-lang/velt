@@ -340,15 +340,7 @@ impl FnCx<'_, '_> {
     /// The type predicate's type (`None` for `asserts v`) and parameter index of the function
     /// `callee` names: of a predicate `v is T`, or with `asserts` of an assertion.
     fn predicate_of(&mut self, callee: &ast::Expr, asserts: bool) -> Option<(Option<TyId>, usize)> {
-        let ast::ExprKind::Ident(id) = &callee.kind else {
-            return None;
-        };
-        if self.is_local_name(&id.name) {
-            return None;
-        }
-        let Item::Def(d) = self.cx.lookup_item_at(self.module, &id.name, id.span)? else {
-            return None;
-        };
+        let d = self.predicate_fn(callee)?;
         let (decl, module) = match &self.cx.info[d.0 as usize] {
             DefInfo::Fn(f) => match f.source {
                 Some(FnSource::Decl(decl)) => (decl, f.module),
@@ -460,6 +452,36 @@ impl crate::ctx::Ctx<'_> {
             }
             _ => false,
         }
+    }
+}
+
+impl FnCx<'_, '_> {
+    /// The function `callee` names: a module-level function `f`, or a static method `C.m` of a
+    /// class (`ArrayBuffer.isView`).
+    fn predicate_fn(&mut self, callee: &ast::Expr) -> Option<DefId> {
+        let (id, method) = match &callee.kind {
+            ast::ExprKind::Ident(id) => (id, None),
+            ast::ExprKind::Member {
+                object,
+                prop,
+                optional: false,
+            } => match &object.kind {
+                ast::ExprKind::Ident(id) => (id, Some(prop)),
+                _ => return None,
+            },
+            _ => return None,
+        };
+        if self.is_local_name(&id.name) {
+            return None;
+        }
+        let Item::Def(d) = self.cx.lookup_item_at(self.module, &id.name, id.span)? else {
+            return None;
+        };
+        let Some(m) = method else {
+            return Some(d);
+        };
+        let r = self.cx.adt(d)?.methods.get(&m.name)?;
+        r.is_static.then_some(r.def)
     }
 }
 

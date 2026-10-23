@@ -1,0 +1,25 @@
+// A promise that never settles does not keep the process alive, as in Node (#1366, #1107): the
+// program ends once nothing else (a timer, I/O, running code) is left, with exit code 0.
+let keep: ((v: number) => void) | null = null;
+let keepTimer: (() => void) | null = null;
+
+async function wait(): Promise<void> {
+  const v = await new Promise<number>((resolve) => {
+    keep = resolve;
+  });
+  console.log("never", v);
+}
+
+async function main() {
+  const { promise } = Promise.withResolvers<number>();
+  promise.then((v) => console.log("never", v));
+  spawn(wait());
+  setTimeout(async () => {
+    console.log("timer");
+    await new Promise<void>((resolve) => {
+      keepTimer = resolve;
+    });
+    console.log("never after the timer");
+  }, 5);
+  console.log("main done");
+}

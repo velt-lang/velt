@@ -59,7 +59,7 @@ const ABSENT: [&str; 30] = [
 
 /// Node 22's own globals and what `typeof` gives for them, for names Velt may not have as values
 /// (`typeof process`, `typeof navigator`).
-pub(crate) const NODE_GLOBALS: [(&str, &str); 52] = [
+pub(crate) const NODE_GLOBALS: [(&str, &str); 53] = [
     ("globalThis", "object"),
     ("global", "object"),
     ("process", "object"),
@@ -112,9 +112,50 @@ pub(crate) const NODE_GLOBALS: [(&str, &str); 52] = [
     ("setInterval", "function"),
     ("clearTimeout", "function"),
     ("setImmediate", "function"),
+    ("SharedArrayBuffer", "function"),
 ];
 
 impl FnCx<'_, '_> {
+    /// `e instanceof SharedArrayBuffer` where the program declares no `SharedArrayBuffer`:
+    /// Node has the class, but no Velt value is a shared buffer, so `false` (after `e`).
+    pub(crate) fn shared_buffer_test(
+        &mut self,
+        e: &ast::Expr,
+        ty: &ast::TypeExpr,
+        span: Span,
+    ) -> Option<hir::Expr> {
+        let ast::TypeExprKind::Named { path, args } = &ty.kind else {
+            return None;
+        };
+        let ([p], true) = (path.as_slice(), args.is_empty()) else {
+            return None;
+        };
+        if p.name != "SharedArrayBuffer"
+            || self.is_local_name(&p.name)
+            || self
+                .cx
+                .lookup_item_at(self.module, &p.name, p.span)
+                .is_some()
+        {
+            return None;
+        }
+        let s = self.expr(e, None, crate::body::Want::Borrow);
+        let no = self.mk(
+            hir::ExprKind::Lit(hir::Lit::Bool(false)),
+            self.cx.ty.bool_,
+            span,
+        );
+        let block = hir::Block {
+            stmts: vec![hir::Stmt {
+                kind: hir::StmtKind::Expr(s),
+                span,
+            }],
+            value: Some(Box::new(no)),
+            span,
+        };
+        Some(self.mk(hir::ExprKind::Block(block), self.cx.ty.bool_, span))
+    }
+
     /// What `typeof name` is while compiling, for a name the program doesn't declare as a
     /// variable (`None`: an ordinary `typeof`, or an unknown name).
     pub(crate) fn global_typeof(&mut self, operand: &ast::Expr) -> Option<&'static str> {

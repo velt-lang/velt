@@ -943,15 +943,63 @@ async function main() {
   (`[e: string, ...xs: number[]]`), which is not supported yet. A generic function whose rest
   parameter is typed by its type parameter (`wrap<A extends unknown[], R>(f: (...args: A) => R)`)
   is not supported yet.
+- **Construct signatures** (`new (buffer: ArrayBuffer) => ArrayBufferView`) type a class used
+  as a value. A class named where a value of that type is expected (a variable's or field's
+  type, an argument, an array or tuple element, a returned value) is one when its constructor
+  takes the signature's parameters and its instance converts to the signature's instance type,
+  as TypeScript checks it. Through a value `C` of that type, `new C(args)` constructs an
+  instance (what the constructor throws, the call throws), `v instanceof C` tests for an
+  instance of the class `C` holds (and narrows `v` to the signature's instance type when that
+  is a class), `C.name` is the class's name and `typeof C` is `"function"` (also held as
+  `unknown`). `C` may be a variable, a module constant, a member of one (`new reg.Default(x)`)
+  or a class's static field (`new Registry.DEFAULT(x)`), and an optional parameter of the
+  signature may be left out (`new (x?: number) => Point`). A class has one value per signature
+  type, as JavaScript has one class object: `C === Point`, `kinds.includes(Point)`,
+  `Object.is` and `Map` and `Set` keys see the same object, also where a generic function
+  takes the class (`register<T>(C: new (x: number) => T)` called as `register(Point)`; as in
+  TypeScript, the call's other arguments take part in inferring `T`, which is the common
+  supertype: `mk(Point3, new Point(1))` for `mk<T>(C: new (x: number) => T, v: T)` is
+  `T = Point`, in either argument order). A class
+  declared in a function gets a new value each time its declaration runs (each call, each loop
+  iteration), as JavaScript makes a new class object there; a function declared there that
+  reads the class as a value reads that value too (it becomes a closure, as one using the
+  enclosing function's variables does). Reading such a class as a value from a method or field
+  initializer of a class, or from a parameter default, is an error for now (#1444). Two cases differ from JavaScript,
+  which has one object per class (#1444): one class at two signature types is two objects
+  (`new () => Point` and `new (x?: number) => Point`, or `Box` at `new (v: number) =>
+  Box<number>` and at `new (v: string) => Box<string>`), so comparing values of two signature
+  types directly is an error, and compared as `unknown` or as `Map` and `Set` keys they are not
+  equal; and a class read at a signature type over a generic function's type parameters in
+  its body (`const k: new (v: T) => Box<T> = Box;`) is one object per call of that function.
+  A class used as a value without
+  such a type (`const C = Point;`) is an error for now, as are generic construct signatures
+  (`new <T>(x: T) => Box<T>`), printing or `JSON.stringify` of one, converting one to another
+  construct signature type (`new (x: number) => Point3` to `new (x: number) => Point`; name
+  the class instead), and `new` of an expression that is not a name (`new (pick())(x)`).
+
+  ```ts
+  class Point {
+    constructor(public x: number) {}
+  }
+  class Point3 extends Point {}
+  type PointCtor = new (x: number) => Point;
+  const kinds: PointCtor[] = [Point, Point3];
+  for (const K of kinds) {
+    const p = new K(1);
+    console.log(K.name, p instanceof K, p instanceof Point3); // "Point true false", then "Point3 true true"
+  }
+  console.log(kinds.indexOf(Point3), kinds[0] === Point); // 1 true
+  ```
 - **Planned** (#943): generic function types (`<T>(description: string) => Token<T>`, a value
-  each call instantiates) and construct signatures (`new (buffer: ArrayBuffer) => View`, a class
-  passed as a value). They parse, and using one is an error saying it is not supported yet.
+  each call instantiates). They parse, and using one is an error saying it is not supported
+  yet.
 - A function type's parameter may be named by a destructuring pattern
   (`([a, b]: [number, number]) => number`), which, like a name, is only for the reader.
 - A function type's parameter may be **optional** (`(app: App, options?: Options) => void`): its
   type is `Options | undefined`, as for a function's optional parameter, and a required parameter
-  cannot follow it (TypeScript's TS1016). A call through such a value passes every argument for
-  now; leaving the optional one out (`install(app)`) is not supported yet.
+  cannot follow it (TypeScript's TS1016). A call through such a value may leave it out
+  (`install(app)`), which passes `undefined`; so may a call of a parameter typed
+  `T | undefined`, which TypeScript requires to be passed.
 
 ### `this` parameters
 
