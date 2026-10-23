@@ -241,6 +241,7 @@ pub(super) fn start(n: usize) {
     if WORKERS.set(shared).is_err() {
         return;
     }
+    crate::task::quiet::add_workers(n);
     for index in 0..n {
         let started = std::thread::Builder::new()
             .name("velt-worker".into())
@@ -325,11 +326,15 @@ fn run(index: usize) {
             me.parked.store(false, Ordering::SeqCst);
             continue;
         }
+        // Idle until the turn returns: the last worker to go idle checks whether the process is
+        // done (quiet.rs), as tokio's park hooks do on its schedulers.
+        super::super::quiet_parked();
         let timeout = lock(&me.timers)
             .next_deadline()
             .map(|d| d.saturating_duration_since(Instant::now()));
         let asleep = Instant::now();
         turn(me, &local, timeout);
+        crate::task::quiet::unparked();
         local.window.slept(asleep.elapsed());
         // Asleep is not stalled: the monitor counts from now.
         me.progress
@@ -592,4 +597,12 @@ fn rescue(i: usize) {
         h.inbox_len.store(inbox.len(), Ordering::SeqCst);
     }
     wake(h);
+}
+
+/// Tasks other threads queued for the workers that none has taken yet (in an inbox or offered).
+pub(super) fn queued_from_outside() -> usize {
+    workers()
+        .iter()
+        .map(|w| w.inbox_len.load(Ordering::SeqCst) + w.offered_len.load(Ordering::SeqCst))
+        .sum()
 }

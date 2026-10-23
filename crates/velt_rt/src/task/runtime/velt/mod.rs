@@ -44,6 +44,11 @@ pub(super) fn worker_count() -> usize {
     worker::workers().len()
 }
 
+/// Tasks queued for a worker by other threads and not taken yet (quiet.rs).
+pub(super) fn queued_tasks() -> usize {
+    worker::queued_from_outside()
+}
+
 pub(super) fn alive_tasks() -> usize {
     task::ALIVE.load(Ordering::Relaxed)
 }

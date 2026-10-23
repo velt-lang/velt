@@ -120,6 +120,7 @@ static QUIET: super::quiet::Runtime<'static> = super::quiet::Runtime {
 fn queued_tasks() -> usize {
     match BACKEND.get() {
         None => 0,
+        Some(Backend::Velt) => velt::queued_tasks(),
         Some(_) => tokio_backend::queued_tasks(),
     }
 }
@@ -127,6 +128,11 @@ fn queued_tasks() -> usize {
 /// The park hook of every worker: publish its output, then count it idle (quiet.rs).
 pub(super) fn parked() {
     crate::io::flush_idle();
+    quiet_parked();
+}
+
+/// A worker goes idle (quiet.rs): the last one checks whether the process is done.
+fn quiet_parked() {
     super::quiet::parked(&QUIET);
 }
 
