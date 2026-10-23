@@ -33,12 +33,10 @@ function main() {
   // setText and ByteBuf.
   const buf = new ByteBuf();
   console.log(buf.data.length, buf.cap);
-  let at = buf.grow(3);
-  buf.data[at] = 1u8;
-  buf.data[at + 1] = 2u8;
-  buf.data[at + 2] = 3u8;
-  at = buf.grow(Buffer.byteLength("héj") as i64);
-  setText(buf.data, "héj", at);
+  buf.append([1u8, 2u8, 3u8]);
+  const hej: u8[] = Buffer.alloc(Buffer.byteLength("héj"));
+  setText(hej, "héj", 0);
+  buf.append(hej);
   buf.append([9u8, 9u8]);
   console.log(buf.data, buf.cap);
   buf.dropFront(3);

@@ -41,8 +41,11 @@ export class ByteBuf {
   data: u8[] = [];
   cap: i64 = 0;
 
-  /** Makes the buffer `extra` bytes longer and returns where those bytes start. */
-  grow(extra: i64): i64 {
+  /**
+   * Makes the buffer `extra` bytes longer and returns where those bytes start. Private: the new
+   * bytes hold whatever the memory held until the caller writes them.
+   */
+  private grow(extra: i64): i64 {
     const at = this.data.length as i64;
     const need = at + extra;
     if (need > this.cap) {
@@ -70,9 +73,12 @@ export class ByteBuf {
     this.data.set(src, at as usize);
   }
 
-  /** Drops the first `n` bytes. */
+  /** Drops the first `n` bytes (0 <= n <= length). */
   dropFront(n: i64) {
     const rest = (this.data.length as i64) - n;
+    if (n < 0 || rest < 0) {
+      panic(`ByteBuf.dropFront(${n}) on ${this.data.length} bytes`);
+    }
     this.data.copyWithin(0, n);
     __intrinsic_array_set_len(this.data, rest as usize);
   }
