@@ -408,12 +408,12 @@ export class Writer {
     this.header(42, n);
   }
 
-  /// The reply bytes so far; the writer starts over.
   /// Forgets what was written (the buffer is kept).
   clear() {
     this.length = 0;
   }
 
+  /// The reply bytes so far; the writer starts over.
   take(): u8[] {
     const out = this.buf.slice(0, this.length);
     this.length = 0;
