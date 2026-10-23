@@ -425,7 +425,9 @@ impl VisitMut for Arms<'_> {
                 });
                 // A match on `U | null` tests `null` first, its payload inside `Some`.
                 let nested = self.ty.core(scrutinee.ty).is_some();
-                if !covered && !nested {
+                // A conversion to a type with an error in it follows an error reported already.
+                let failed = self.ty.has_error(e.ty) || self.ty.has_error(scrutinee.ty);
+                if !covered && !nested && !failed {
                     self.bad.push((d, e.span, "this use of the union value"));
                 }
             }
