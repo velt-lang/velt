@@ -139,3 +139,20 @@ fn a_borrowed_parameter_and_a_string_keep_their_references() {
     );
     assert!(!moves(&p, "run", "name"));
 }
+
+#[test]
+fn a_variable_declared_in_the_loop_is_not_used_by_the_next_iteration() {
+    // Used before the `with` in its iteration: the next iteration has a new `batch`. This was
+    // reported as "still used after `with` stored it".
+    let p = program(
+        "function run(m: shared<Mutex<Db>>, xs: Item[][]) {
+           for (const x of xs) {
+             const batch: Item[] = [];
+             batch.push(new Item());
+             m.with((d) => keep(d, batch));
+           }
+         }
+         function main() { run(shared(new Mutex(new Db())), [[new Item()]]); }",
+    );
+    assert!(moves(&p, "run", "batch"));
+}

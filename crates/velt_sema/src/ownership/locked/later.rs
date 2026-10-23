@@ -10,7 +10,8 @@ use crate::hir::{Def, DefId, Expr, ExprKind as E, LocalId, Stmt, StmtKind as S};
 use crate::visit::{self, VisitMut};
 
 /// A use of local `l` of function `f` after `at` (the callback storing it): later in the
-/// source, or anywhere in a loop around `at` (the next iteration).
+/// source, or anywhere in a loop around `at` that does not declare `l` (the next iteration;
+/// one declaring it has a new `l` each time).
 pub(super) fn later_use(cx: &mut Ctx, f: DefId, l: LocalId, at: Span) -> Option<Span> {
     let Some(Def::Fn(mut body)) = cx.defs[f.0 as usize].take() else {
         return None;
@@ -20,6 +21,7 @@ pub(super) fn later_use(cx: &mut Ctx, f: DefId, l: LocalId, at: Span) -> Option<
         captures: vec![],
         loops: vec![],
         uses: vec![],
+        decl: None,
     };
     // Closures capturing `l` use it where they are made.
     visit::block(&mut body.body.block, &mut uses);
@@ -28,6 +30,7 @@ pub(super) fn later_use(cx: &mut Ctx, f: DefId, l: LocalId, at: Span) -> Option<
         captures,
         loops,
         uses,
+        decl,
         ..
     } = uses;
     let mut all = uses;
@@ -39,7 +42,10 @@ pub(super) fn later_use(cx: &mut Ctx, f: DefId, l: LocalId, at: Span) -> Option<
         }
     }
     let inside = |s: Span, o: Span| o.lo <= s.lo && s.hi <= o.hi;
-    let around: Vec<Span> = loops.into_iter().filter(|lp| inside(at, *lp)).collect();
+    let around: Vec<Span> = loops
+        .into_iter()
+        .filter(|lp| inside(at, *lp) && !decl.is_some_and(|d| inside(d, *lp)))
+        .collect();
     all.into_iter()
         .filter(|u| !inside(*u, at))
         .filter(|u| u.lo >= at.hi || around.iter().any(|lp| inside(*u, *lp)))
@@ -53,12 +59,17 @@ struct Uses {
     /// Spans of the loops in the body.
     loops: Vec<Span>,
     uses: Vec<Span>,
+    /// The `let` / `const` statement declaring the local.
+    decl: Option<Span>,
 }
 
 impl VisitMut for Uses {
     fn stmt(&mut self, s: &mut Stmt) {
         if matches!(s.kind, S::While { .. } | S::ForOf { .. }) {
             self.loops.push(s.span);
+        }
+        if matches!(s.kind, S::Let { local, .. } if local == self.local) {
+            self.decl = Some(s.span);
         }
     }
 
