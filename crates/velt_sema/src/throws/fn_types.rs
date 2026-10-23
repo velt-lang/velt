@@ -272,7 +272,9 @@ impl Ctx<'_> {
     /// The error-set variable of the site at `span` in module `module` (`None` outside user
     /// modules).
     fn site_var(&mut self, span: Span, module: usize) -> Option<TyId> {
-        if !self.site_module(module) || span == Span::DUMMY {
+        // std/proxy's sites take seeded sets only: a program whose traps throw nothing keeps
+        // its types (and code) as they were.
+        if self.scopes.get(module).is_none_or(|s| s.is_std) || span == Span::DUMMY {
             return None;
         }
         if let Some(&v) = self.fn_sites.var_of.get(&span) {

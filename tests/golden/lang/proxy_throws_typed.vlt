@@ -1,4 +1,3 @@
-// check: no leaks
 // A proxy trap's error reaching a typed read (`s.n` of a proxy converted to `{ n: number }`)
 // nothing catches: the process ends with Node's `Uncaught` report and exit code 1, after the
 // output before it (#1174; a `try` around a typed read catching it comes with stage 2).
