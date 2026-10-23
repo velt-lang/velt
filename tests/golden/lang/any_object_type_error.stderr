@@ -1,1 +1,1 @@
-TypeError: the value is not an object { x: number; label?: string } (it is a number)
+TypeError: the value is not a Point (it is a number)

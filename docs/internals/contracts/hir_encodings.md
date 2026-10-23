@@ -1087,7 +1087,33 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   `__unknownSetIn` (std/collections/set.vlt) on the `unknown` argument, and after the slot call
   (its result kept in a temporary) the matching `…Out` writes the copy back; the helpers use
   `AnyCall` / `AnyIndex` / `AnySetIndex`, and such an adapter sets `Program::dyn_members`.
-  Lowering sees only these ordinary forms.
+  Once a field of `I` is written through an interface value (`iface_writes`), the impl gets a
+  setter (`<I> adapter.<set f>`, `this` borrowed mutably, the value owned) per field, which
+  calls the field's setter slot on the wrapped value with the value converted as an argument
+  is. Lowering sees only these ordinary forms, and finds the adapters by their struct (a name
+  ending in ` adapter`, one interface field): their tables' class id word says so, and `===`,
+  `Set`/`Map` key hashes, `instanceof` and the downcast after it look through them at the
+  wrapped value, and a conversion of one to `any`, `unknown` or `object` holds the wrapped
+  value instead.
+  An `AnyTo` of `Dyn(I, B)` (or `Dyn(I, B) | null`) with a dynamic argument also gets one
+  generic adapter, made once every body is checked (`iface_adapt_dynamic`): a struct over one
+  type parameter per dynamic argument of `B` (`T0..`), wrapping a `Dyn(I, A)` whose arguments
+  are those parameters there and `B`'s elsewhere, with a generic impl of `I<B>`; its slots
+  box and check `T0..` as generic code does. Lowering takes a dynamic value holding a type that
+  implements `I<A>` (itself or through its nearest implementing base class) through that
+  implementation, then the adapter's instance at `A`'s arguments; a generic adapter's struct is
+  counted (`counted_objects`) at every instance. A field read through an adapter whose type is
+  an array of `I` values at other arguments (`kids: Tree<T>[]`) is a new array of the elements,
+  each adapted (`map`), and so is a method's result of such a type; such a field has a setter
+  that is never called. Once every body is checked, each read of such a field or method result
+  through `I` at a dynamic argument or one naming a type parameter is a compile error unless
+  the array is used in place without changing it (an element, `.length`, a test, a method
+  that leaves it unchanged and keeps no iterator: `body/expr/iface_field.rs`; not `for…of`),
+  and so is a write of the field. An interface whose function types take or give such an
+  array has no adapter to other arguments.
+- `Program::type_names` names structural types as messages do: a type alias's (`type P = …`)
+  and a field-only interface's object type, after `readonly` erasure; a type two names reach
+  has none. Lowering's `TypeError`s use it.
 - `object` and `Function` (issue #926) are two more interfaces of `z_dynamic.vlt`:
   `TyKind::Dyn(object | Function, [])`, named by `Program::object` / `Program::function` (set
   with `any_impl`). They are dynamic types like `any`: the same representation, `ToDyn` with

@@ -1,0 +1,4 @@
+iface_any_args_array_for_of.vlt:25:19: error: `kids` read through `Tree<T>` may be a new array of converted values
+iface_any_args_array_for_of.vlt:35:17: error: `kids` read through `Tree<any>` may be a new array of converted values
+in place of `for…of`, an index loop reading `.length` and the element each step
+iface_any_args_array_for_of.vlt:43:22: error: `kids` read through `Tree<any>` may be a new array of converted values

@@ -1,0 +1,20 @@
+// A field written through a generic interface value converted to `any` arguments (#1185) is
+// converted to the original's field type, checked as an argument is: a value of another shape
+// stops the program with a `TypeError` naming the type as TypeScript writes it. (Node stores
+// the value and prints `5`; Velt's object types have a fixed shape.)
+interface Ctx<P = {}> {
+  props: P;
+  name(): string;
+}
+
+const c: Ctx<{ n: number }> = {
+  props: { n: 1 },
+  name(): string {
+    return "c";
+  },
+};
+const a: Ctx<any> = c;
+a.props = { n: 4 };
+console.log(c.props.n);
+a.props = { n: 5, extra: true };
+console.log(c.props.n);

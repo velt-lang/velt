@@ -1,0 +1,24 @@
+// A field the adapter to `Tree<any>` cannot write back (an array of other `Tree` values),
+// written through the interface: an error at the conversion (#1185).
+interface Tree<T> {
+  value: T;
+  kids: Tree<T>[];
+  label(): string;
+}
+
+class Node1<T> implements Tree<T> {
+  value: T;
+  kids: Tree<T>[] = [];
+  constructor(v: T) {
+    this.value = v;
+  }
+  label(): string {
+    return "n";
+  }
+}
+
+const t: Tree<number> = new Node1<number>(1);
+const u: unknown = t;
+const a = u as Tree<any>;
+a.kids = [];
+console.log(a.kids.length);

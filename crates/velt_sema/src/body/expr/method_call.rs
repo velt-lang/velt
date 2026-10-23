@@ -100,7 +100,7 @@ impl FnCx<'_, '_> {
             },
             false => recv,
         };
-        self.readonly_method_call(&recv, &prop.name, prop.span);
+        self.readonly_method_call(&recv, &prop.name, args, prop.span);
         let Some(r) = self.resolve_method(recv.ty, &prop.name) else {
             // A method of an interface every member of a union extends.
             let recv = match self.cx.union_def(recv.ty).is_some() {

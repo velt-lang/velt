@@ -53,6 +53,7 @@ impl FnCx<'_, '_> {
         while let H::UnwrapSome(base, _) = s.kind {
             s = *base;
         }
+        self.array_used_in_place(&s);
         if self.cx.dynamic(s.ty).is_some() {
             return self.dynamic_null_compare(s, word, strict, is_eq, span);
         }
@@ -347,7 +348,10 @@ impl FnCx<'_, '_> {
             return h;
         }
         let msg = "non-null assertion failed: the value is null";
-        self.checked_present(h, msg, exp, keep, span)
+        let read = h.span;
+        let h = self.checked_present(h, msg, exp, keep, span);
+        self.same_array_read(h.span, read);
+        h
     }
 
     /// The payload of the nullable value `h`, or a panic with `msg` when it is nullish; with

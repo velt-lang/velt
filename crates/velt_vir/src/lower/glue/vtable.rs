@@ -75,6 +75,9 @@ impl Cx<'_> {
                     }
                 }
                 let mut id = self.class_id_word(ty, true);
+                if self.is_adapter(ty) {
+                    id = crate::lower::adapters::ASK_INNER;
+                }
                 if self.is_any_impl(index) {
                     self.note_dyn_type(ty);
                     entries.extend(self.any_entries(ty));

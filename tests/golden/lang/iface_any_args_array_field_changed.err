@@ -1,0 +1,14 @@
+iface_any_args_array_field_changed.vlt:27:3: error: `kids` read through `Tree<T>` may be a new array of converted values
+iface_any_args_array_field_changed.vlt:35:1: error: `kids` read through `Tree<any>`
+iface_any_args_array_field_changed.vlt:36:1: error: `kids` read through `Tree<any>`
+iface_any_args_array_field_changed.vlt:37:1: error: `kids` read through `Tree<any>`
+iface_any_args_array_field_changed.vlt:38:1: error: `kids` read through `Tree<any>`
+iface_any_args_array_field_changed.vlt:39:1: error: `kids` read through `Tree<any>`
+iface_any_args_array_field_changed.vlt:40:1: error: `kids` read through `Tree<any>`
+iface_any_args_array_field_changed.vlt:41:1: error: `kids` read through `Tree<any>`
+iface_any_args_array_field_changed.vlt:42:1: error: `kids` read through `Tree<any>`
+iface_any_args_array_field_changed.vlt:43:1: error: `kids` read through `Tree<any>`
+iface_any_args_array_field_changed.vlt:44:17: error: `kids` read through `Tree<any>`
+iface_any_args_array_field_changed.vlt:45:3: error: `kids` read through `Tree<any>`
+iface_any_args_array_field_changed.vlt:48:1: error: `getKids()` called through `Tree<any>`
+a value implementing `Tree` at other type arguments is converted here

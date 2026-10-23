@@ -20,13 +20,16 @@
 //!   (track_caller.rs for standard-library helpers such as `unwrap`).
 
 mod abi;
+mod adapters;
 mod adt;
 mod any;
 mod any_checks;
 mod any_delete;
 mod any_eq;
+mod any_errors;
 mod any_glue;
 mod any_has;
+mod any_iface;
 mod any_keys;
 mod any_member;
 mod any_proxy;
@@ -154,11 +157,13 @@ pub(crate) fn lower_program(
         while let Some((fid, work)) = cx.queue.pop_front() {
             cx.build_now(fid, &work);
         }
+        cx.build_iface_glues();
         // `velt_main` last: whether it selects the per-core scheduler depends on everything else.
         cx.func(Work::Main);
         while let Some((fid, work)) = cx.queue.pop_front() {
             cx.build_now(fid, &work);
         }
+        cx.build_iface_glues();
         let next = cx.close_boxing();
         if next == counted {
             if cx.facts.unmet {
@@ -331,6 +336,9 @@ struct Cx<'h> {
     funcs: Vec<Option<Function>>,
     work_map: FxHashMap<Work, FuncId>,
     queue: VecDeque<(FuncId, Work)>,
+    /// The `AnyIface` glues, built last (any_iface.rs): each with the number of types `any`
+    /// values held when it was built.
+    iface_glues: Vec<(FuncId, TyId, Option<usize>)>,
     /// Functions currently being built (eager builds of poll functions detect recursion).
     building: FxHashSet<FuncId>,
     /// Layout facts of every async function instance whose poll function has been built.
