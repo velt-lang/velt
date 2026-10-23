@@ -223,20 +223,54 @@ pub fn flush_idle() {
     }
 }
 
-/// Best-effort flush for panic/abort paths: never blocks (the panicking thread may hold a lock).
+/// How long a panic or fatal error waits for another thread to finish writing out the shared
+/// buffer before it writes this thread's output without it.
+const EXIT_LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// The shared buffer for a flush on the way out, waiting at most [`EXIT_LOCK_WAIT`] for it: the
+/// thread that holds the lock is usually writing it to the OS and lets go soon, but it may also
+/// be the panicking thread itself (a panic under the lock), which must not wait forever.
+fn lock_shared_for_exit() -> Option<MutexGuard<'static, Vec<u8>>> {
+    let start = std::time::Instant::now();
+    loop {
+        match SHARED.try_lock() {
+            Ok(g) => return Some(g),
+            Err(TryLockError::Poisoned(e)) => return Some(e.into_inner()),
+            Err(TryLockError::WouldBlock) if start.elapsed() < EXIT_LOCK_WAIT => {
+                #[cfg(test)]
+                EXIT_WAITED.store(true, Ordering::SeqCst);
+                std::thread::yield_now();
+            }
+            Err(TryLockError::WouldBlock) => return None,
+        }
+    }
+}
+
+/// Set once a flush on the way out waited for the shared buffer's lock (for tests).
+#[cfg(test)]
+pub(crate) static EXIT_WAITED: AtomicBool = AtomicBool::new(false);
+
+/// The shared buffer's lock (for tests that hold it while another thread flushes).
+#[cfg(test)]
+pub(crate) fn lock_for_test() -> MutexGuard<'static, Vec<u8>> {
+    lock_shared()
+}
+
+/// Flush for panic and fatal-error paths, which end the process right after: everything
+/// published so far, then this thread's buffer. Never waits forever (the panicking thread may
+/// hold a lock): once [`lock_shared_for_exit`] gives up, this thread's output is written alone,
+/// and a buffer that is being appended to (a panic while formatting a write) stays behind.
 pub fn try_flush() {
+    let mut shared = lock_shared_for_exit();
+    if let Some(shared) = shared.as_mut() {
+        write_shared(shared);
+    }
+    // Written while the shared lock is still held, so no other thread's output slips in.
     let _ = LOCAL.try_with(|l| {
         if let Ok(mut buf) = l.0.try_borrow_mut() {
-            let shared = match SHARED.try_lock() {
-                Ok(g) => Some(g),
-                Err(TryLockError::Poisoned(e)) => Some(e.into_inner()),
-                Err(TryLockError::WouldBlock) => None,
-            };
-            if let Some(mut shared) = shared {
-                write_shared(&mut shared);
-                os_write(&buf);
-                buf.clear();
-            }
+            os_write(&buf);
+            buf.clear();
         }
     });
+    drop(shared);
 }
