@@ -16,6 +16,7 @@
 
 import { IoResult, IoStatus, unwrapIo, checkIo } from "velt:io";
 import { tryWriteTo, writeBytesTo } from "velt:net_bytes";
+import { Uint8Array } from "velt:typed_array/uint8_array";
 
 declare async function velt_rt_tcp_listen(addr: string): Promise<IoResult<u64>>;
 declare function velt_rt_tcp_listener_port(l: u64): u32;
@@ -26,6 +27,11 @@ declare async function velt_rt_tcp_read(s: u64, max: u64): Promise<IoResult<u8[]
 declare async function velt_rt_tcp_read_string(s: u64, max: u64): Promise<IoResult<string>>;
 // The `u8[]` variant, `velt_rt_tcp_write_bytes`, is declared in std/net_bytes.
 declare async function velt_rt_tcp_write(s: u64, data: string): Promise<IoStatus>;
+// Reads into and writes from a range of the program's own bytes (a `Uint8Array`'s buffer).
+declare function velt_rt_tcp_try_read_into(s: u64, data: u8[], start: u64, end: u64): IoResult<i64>;
+declare async function velt_rt_tcp_readable(s: u64): Promise<IoStatus>;
+declare async function velt_rt_tcp_write_range(s: u64, data: u8[], start: u64, end: u64): Promise<IoStatus>;
+declare function velt_rt_tcp_try_write_range(s: u64, data: u8[], start: u64, end: u64): u64;
 declare function velt_rt_tcp_shutdown(s: u64): IoStatus;
 declare function velt_rt_tcp_peer_addr(s: u64): string;
 declare function velt_rt_tcp_abort(s: u64);
@@ -83,12 +89,43 @@ export struct TcpStream {
     return unwrapIo(await velt_rt_tcp_read_string(this.handle, max));
   }
 
+  /**
+   * Reads what has arrived into `buf`, at most `buf.length` bytes, straight from the socket
+   * (nothing is allocated or copied on the way for a plain TCP stream): the number of bytes
+   * read, or `null` at the end of the stream (as Deno's `conn.read`). Waits only when nothing
+   * has arrived yet. An empty `buf` reads nothing and returns 0. Reusing one buffer per
+   * connection, and `subarray` views of what was read, keeps a server from copying its input.
+   */
+  async readInto(buf: Uint8Array): Promise<number | null> {
+    const start = buf.off as u64;
+    const end = (buf.off + buf.len) as u64;
+    if (start === end) {
+      return 0;
+    }
+    while (true) {
+      const n = unwrapIo(velt_rt_tcp_try_read_into(this.handle, buf.buf.bytes, start, end));
+      if (n >= 0) {
+        return n === 0 ? null : n as number;
+      }
+      checkIo(await velt_rt_tcp_readable(this.handle));
+    }
+  }
+
   /** Resolves once every byte is written; `data` is copied at the call. */
   async write(data: string): Promise<void> {
     checkIo(await velt_rt_tcp_write(this.handle, data));
   }
 
-  async writeBytes(data: u8[]): Promise<void> {
+  /**
+   * Resolves once every byte is written. What the socket takes at the call is written from
+   * `data` itself; only what it cannot take yet is copied.
+   */
+  async writeBytes(data: u8[] | Uint8Array): Promise<void> {
+    if (data instanceof Uint8Array) {
+      const end = (data.off + data.len) as u64;
+      checkIo(await velt_rt_tcp_write_range(this.handle, data.buf.bytes, data.off as u64, end));
+      return;
+    }
     checkIo(await writeBytesTo(this.handle, data));
   }
 
@@ -98,7 +135,11 @@ export struct TcpStream {
    * for a TLS stream, and after an error, which the next `write` reports). For protocols that send small messages: when everything was
    * written there is nothing to await.
    */
-  tryWrite(data: u8[]): i64 {
+  tryWrite(data: u8[] | Uint8Array): i64 {
+    if (data instanceof Uint8Array) {
+      const end = (data.off + data.len) as u64;
+      return velt_rt_tcp_try_write_range(this.handle, data.buf.bytes, data.off as u64, end) as i64;
+    }
     return tryWriteTo(this.handle, data);
   }
 

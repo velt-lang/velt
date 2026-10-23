@@ -307,7 +307,7 @@ pub unsafe extern "C" fn velt_rt_tcp_write_bytes(
     write_copy(s, (*data).as_bytes())
 }
 
-fn write_copy(s: StreamHandle, data: &[u8]) -> *mut VeltFut {
+pub(super) fn write_copy(s: StreamHandle, data: &[u8]) -> *mut VeltFut {
     STREAMS.op::<()>(s, |obj| {
         // Counted from the call, so a write made after this one waits for it.
         let (w, first) = Writing::begin(obj);
@@ -346,13 +346,17 @@ fn write_copy(s: StreamHandle, data: &[u8]) -> *mut VeltFut {
 /// `write` reports it).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_tcp_try_write(s: StreamHandle, data: *const VeltBytes) -> u64 {
+    try_write_now(s, (*data).as_bytes())
+}
+
+/// What `velt_rt_tcp_try_write` writes of `data`.
+pub(super) fn try_write_now(s: StreamHandle, data: &[u8]) -> u64 {
     let Some(obj) = STREAMS.get(s) else { return 0 };
     // Nothing while another write goes on (these bytes go after its), in the socket's turn.
     let (w, first) = Writing::begin(obj);
     let Some((stream, _turn)) = w.0.plain().filter(|_| first).zip(w.0.try_turn()) else {
         return 0;
     };
-    let data = (*data).as_bytes();
     let mut done = 0;
     while done < data.len() {
         match stream.try_write(&data[done..]) {

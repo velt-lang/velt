@@ -12,9 +12,17 @@
   - `read(max = 0): Promise<u8[]>`: empty means end of stream.
   - `readString(max = 0): Promise<string>`: UTF-8; a character split across reads is completed
     by the next read.
-  - `write(data: string)`, `writeBytes(data: u8[])`: bytes go out in the order of the calls,
-    also when a write is started and not awaited yet.
-  - `tryWrite(data: u8[]): i64`: writes what the socket takes right now, without waiting, and
+  - `readInto(buf: Uint8Array): Promise<number | null>`: reads what has arrived into `buf` (at
+    most `buf.length` bytes) and returns how many, or `null` at the end of the stream, as
+    Deno's `conn.read`. It waits only when nothing has arrived yet, and a plain TCP stream reads
+    straight into `buf`: nothing is allocated or copied on the way. Reuse one buffer per
+    connection and parse with `subarray` views of what was read. An empty `buf` returns 0.
+    `read` and `readInto` may be mixed on one stream.
+  - `write(data: string)`, `writeBytes(data: u8[] | Uint8Array)`: bytes go out in the order of
+    the calls, also when a write is started and not awaited yet. What the socket takes at the
+    call is written from `data` itself; only the rest is copied. A `Uint8Array` writes its own
+    range (a `subarray` writes just that part).
+  - `tryWrite(data: u8[] | Uint8Array): i64`: writes what the socket takes right now, without waiting, and
     returns the number of bytes written (0 when it takes nothing now, while an earlier write is
     still going on, for a TLS stream, and after an error, which the next `write` reports). When
     everything was written there is nothing to await.

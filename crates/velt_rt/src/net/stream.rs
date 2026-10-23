@@ -98,6 +98,11 @@ pub struct StreamObj {
     /// Taken by a raw socket's write for as long as it goes on: writes go out one after another,
     /// in the order they started (a `write` first polls at its call; the lock is FIFO).
     turn: std::sync::Arc<AsyncMutex<()>>,
+    /// What [`readable`](Self::readable) read from a transport that cannot say whether it has
+    /// data without reading it (TLS, an upgraded connection), for the next
+    /// [`try_read_into`](Self::try_read_into); `held_end` once that read found the end.
+    held: Mutex<Vec<u8>>,
+    held_end: AtomicBool,
 }
 
 /// A raw socket's turn to write ([`StreamObj::turn`]), held across the write.
@@ -123,6 +128,9 @@ impl Drop for Writing {
 fn aborted_error() -> io::Error {
     io::Error::new(io::ErrorKind::ConnectionAborted, "the stream was aborted")
 }
+
+/// The most a TLS or upgraded stream's [`StreamObj::readable`] reads ahead.
+const DEFAULT_HELD: u64 = 64 << 10;
 
 /// Reads up to this size go through [`READ_SCRATCH`].
 const SCRATCH: usize = 256 << 10;
@@ -181,6 +189,8 @@ impl StreamObj {
             abort: Notify::new(),
             writing: AtomicUsize::new(0),
             turn: std::sync::Arc::new(AsyncMutex::new(())),
+            held: Mutex::new(Vec::new()),
+            held_end: AtomicBool::new(false),
         }
     }
 
@@ -252,6 +262,99 @@ impl StreamObj {
         }
     }
 
+    /// Reads what is there into `dst` without waiting (`dst` not empty): the bytes read, 0 at the
+    /// end of the stream, `WouldBlock` when there is nothing yet ([`readable`](Self::readable)
+    /// waits for more). A raw socket reads straight into `dst`.
+    pub(crate) fn try_read_into(&self, dst: &mut [u8]) -> io::Result<usize> {
+        if self.aborted.load(Ordering::Acquire) {
+            return Err(aborted_error());
+        }
+        let ready = match &self.io {
+            Io::Tcp(stream) => return stream.try_read(dst),
+            Io::Lazy(lazy) => match lazy.ready.get() {
+                None => return Err(io::ErrorKind::WouldBlock.into()),
+                Some(Err((kind, message))) => return Err(io::Error::new(*kind, message.clone())),
+                Some(Ok(ready)) => ready,
+            },
+        };
+        match ready {
+            Ready::Tcp {
+                stream,
+                prefix,
+                has_prefix,
+            } => {
+                if has_prefix.load(Ordering::Acquire) {
+                    let mut p = prefix.lock().unwrap_or_else(|e| e.into_inner());
+                    let n = p.len().min(dst.len());
+                    dst[..n].copy_from_slice(&p[..n]);
+                    p.drain(..n);
+                    if p.is_empty() {
+                        *p = Vec::new();
+                        has_prefix.store(false, Ordering::Release);
+                    }
+                    if n > 0 {
+                        return Ok(n);
+                    }
+                }
+                stream.try_read(dst)
+            }
+            Ready::Split(_) => {
+                let mut held = self.held.lock().unwrap_or_else(|e| e.into_inner());
+                if held.is_empty() {
+                    return if self.held_end.load(Ordering::Acquire) {
+                        Ok(0)
+                    } else {
+                        Err(io::ErrorKind::WouldBlock.into())
+                    };
+                }
+                let n = held.len().min(dst.len());
+                dst[..n].copy_from_slice(&held[..n]);
+                held.drain(..n);
+                Ok(n)
+            }
+        }
+    }
+
+    /// Waits until [`try_read_into`](Self::try_read_into) may find something (data, the end of
+    /// the stream or an error; a raw socket may also wake without data). A transport other than
+    /// a raw socket reads its next chunk here, which the next `try_read_into` hands over.
+    pub(crate) async fn readable(&self) -> io::Result<()> {
+        let ready = match &self.io {
+            Io::Tcp(stream) => return self.until_abort(stream.readable()).await,
+            Io::Lazy(lazy) => self.until_abort(self.set_up(lazy)).await?,
+        };
+        match ready {
+            Ready::Tcp {
+                stream, has_prefix, ..
+            } => {
+                if has_prefix.load(Ordering::Acquire) {
+                    return Ok(());
+                }
+                self.until_abort(stream.readable()).await
+            }
+            Ready::Split(_) => {
+                let has = !self
+                    .held
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .is_empty();
+                if has || self.held_end.load(Ordering::Acquire) {
+                    return Ok(());
+                }
+                let chunk = self.read(DEFAULT_HELD).await?;
+                if chunk.is_empty() {
+                    self.held_end.store(true, Ordering::Release);
+                } else {
+                    self.held
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .extend_from_slice(&chunk);
+                }
+                Ok(())
+            }
+        }
+    }
+
     /// The raw socket's turn now, if no write has it (for a write made at the call).
     pub(crate) fn try_turn(&self) -> Option<Turn> {
         self.turn.clone().try_lock_owned().ok()
@@ -295,6 +398,17 @@ impl StreamObj {
                 self.read_raw(stream, max).await
             }
             Ready::Split(split) => {
+                {
+                    // What `readable` read ahead comes first.
+                    let mut held = self.held.lock().unwrap_or_else(|e| e.into_inner());
+                    if !held.is_empty() {
+                        let n = held.len().min(max.clamp(1, 16 << 20) as usize);
+                        return Ok(held.drain(..n).collect());
+                    }
+                    if self.held_end.load(Ordering::Acquire) {
+                        return Ok(Vec::new());
+                    }
+                }
                 self.until_abort(async {
                     let mut r = split.r.lock().await;
                     let mut buf = buffer(max);
