@@ -785,6 +785,22 @@ async function main() {
   `xs.reduce(acc.add, 0)` with a two-parameter `plus` and `add`, where `reduce` passes
   `(acc, x, i)`). A function may also take more, when the extra ones are optional or have defaults
   (`setTimeout(tick, 10)` with `function tick(n?: number)`): they are left out.
+- As in TS, a function whose **parameter types are wider** than the function type's is accepted
+  where the function type is expected: `p.then((v: any) => …)` for a `Promise<number>`,
+  `xs.forEach((x: unknown) => …)`, `const f: (x: number) => void = (v: number | string) => …`,
+  a function value or named function taking an `any`, `object`, union or interface. Each
+  argument converts to the function's parameter type when it is called, as any argument does
+  (an `any` boxes the number). An argument that doesn't convert (`(x: string) => …` where
+  `(x: number) => void` is expected) is an error, as it is in TS.
+
+  ```ts
+  function main() {
+    const show = (v: unknown) => console.log(typeof v, v);
+    [1, 2].forEach(show); // number 1, number 2
+    const both: (x: number) => void = (v: number | string) => console.log(v);
+    both(3); // 3
+  }
+  ```
 - As in TS, a function that returns a value is accepted where a **`void`-returning** function
   type is expected; the value is evaluated and dropped. This holds for an arrow without a
   return type (its expression body, or a `return value;` in it) and for a named function or a

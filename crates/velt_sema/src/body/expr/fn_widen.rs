@@ -1,8 +1,9 @@
 //! A function whose parameters are wider than those of the function type it is used as
 //! (`(v: any) => …` where `(x: number) => void` is expected: a `then` callback, an array
 //! callback, a function stored in a typed variable or passed to a generic function), as
-//! TypeScript allows (parameters are compared bivariantly there; Velt takes the sound half,
-//! an expected parameter type that converts to the function's own). The function is wrapped,
+//! TypeScript allows (it compares parameters bivariantly; Velt takes the half where each
+//! expected parameter type converts to the function's own as an argument would, an `any` to a
+//! `number` too, checked at run time). The function is wrapped,
 //! `{ const f = value; (p…) => f(p…) }` (`adapt_fn`), the arrow typed by the expected type, so
 //! each argument is converted where the wrapper calls the function (`ToDyn` for an `any`, to
 //! the union, the interface, …) and its result converts to the expected one. A function value
@@ -81,7 +82,12 @@ impl FnCx<'_, '_> {
                 None => w,
             });
         }
-        if own == want {
+        // Types that are one as they are (two forms of one object type, `readonly`) need no
+        // wrapper: the arrow converts as it is.
+        let differs = |s: &mut Self, o: TyId, w: TyId| {
+            o != w && s.cx.canon(o) != s.cx.canon(w) && !s.cx.same_layout(o, w)
+        };
+        if !own.iter().zip(&want).any(|(&o, &w)| differs(self, o, w)) {
             return None;
         }
         let inner = self.cx.ty.intern(TyKind::FnPtr {
