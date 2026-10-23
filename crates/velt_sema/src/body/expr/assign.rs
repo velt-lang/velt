@@ -4,6 +4,7 @@
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
+use super::any_text::Hint;
 use super::ops::{hir_binop, untyped};
 use crate::body::narrow::{nothing_word, only_nothings};
 use crate::body::places::set_place_mode;
@@ -415,7 +416,10 @@ impl FnCx<'_, '_> {
             // `s += a` with an `any` `a` appends `String(a)`, as `s + a` does (not a checked
             // conversion to `string`).
             let v = match self.any_to_source(v) {
-                Ok(a) => self.implicit_any_text(a, "a string concatenation"),
+                Ok(a) => self.implicit_any_text(a, "a string concatenation", Hint::Default),
+                Err(v) if self.cx.dynamic(v.ty) == Some(crate::any::Dynamic::Object) => {
+                    self.implicit_any_text(v, "a string concatenation", Hint::Default)
+                }
                 Err(v) => self.concat_operand(v),
             };
             let v = self.coerce(v, lty);

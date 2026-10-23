@@ -41,7 +41,9 @@ impl FnLower<'_, '_> {
         match self.cx.kind(ty) {
             TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Str => true,
             TyKind::Unit | TyKind::Never | TyKind::Literal(_) => true,
-            TyKind::Dyn(..) => self.cx.is_dynamic(ty),
+            // An interface value is reached only through a dynamic value (sema rejects one
+            // elsewhere): written as the object it holds.
+            TyKind::Dyn(..) => true,
             TyKind::Adt(d, _) => {
                 matches!(self.cx.hir.def(d), hir::Def::Enum(_)) && self.cx.is_c_like_enum(d)
             }
@@ -92,6 +94,18 @@ impl FnLower<'_, '_> {
             TyKind::Unit | TyKind::Never => self.push_text(buf, "null"),
             TyKind::Literal(l) => self.push_literal_json(buf, &l),
             TyKind::Dyn(..) if self.cx.is_dynamic(ty) => self.json_write_any(buf, place),
+            TyKind::Dyn(..) => {
+                // Glue has no scope of its own: the share is dropped here.
+                self.push_scope(crate::lower::ScopeKind::Block);
+                let any = self.cx.any_ty();
+                let v = self.share_value(v, ty);
+                let a = self.make_dyn_any(v, ty, any);
+                let avt = self.cx.ty(any);
+                let held = Place::local(self.copy_to_temp(a, avt));
+                self.json_write_any(buf, &held);
+                self.drop_glue(held, any);
+                self.scopes.pop();
+            }
             TyKind::Option(e, _) => self.json_write_option(buf, place, ty, e, key),
             TyKind::Array(e) => {
                 let arr = self.content(place, ty);

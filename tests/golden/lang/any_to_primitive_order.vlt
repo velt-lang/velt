@@ -1,0 +1,97 @@
+// `ToPrimitive` through `any` and `object` tries the methods in JavaScript's order and tests
+// each result at run time, whatever its declared type: `String(x)` and templates call
+// `toString()` and go on to `valueOf()` when it returns an object; `+` calls `valueOf()` first
+// and goes on to `toString()` (`Object.prototype.toString` without one). A class's
+// `toString()` declared to return `any` is tested the same way when the instance is typed.
+class TO {
+  toString(): any {
+    return {};
+  }
+  valueOf(): number {
+    return 7;
+  }
+}
+
+class VA {
+  valueOf(): any {
+    return 5;
+  }
+}
+
+class VU {
+  valueOf(): string | number {
+    return 6;
+  }
+}
+
+class VObj {
+  valueOf(): any {
+    return {};
+  }
+  toString(): string {
+    return "vobj";
+  }
+}
+
+class VOnly {
+  valueOf(): any {
+    return [];
+  }
+}
+
+class Both {
+  toString(): any {
+    console.log("toString");
+    return "t";
+  }
+  valueOf(): any {
+    console.log("valueOf");
+    return "v";
+  }
+}
+
+class Gen<T> {
+  v: T;
+  constructor(v: T) {
+    this.v = v;
+  }
+  valueOf(): T {
+    return this.v;
+  }
+}
+
+class TA {
+  toString(): any {
+    return 12;
+  }
+}
+
+function main(): void {
+  const to: any = new TO();
+  console.log(String(to));
+  console.log(`${to}`);
+  console.log("" + to);
+  const lit: any = { toString: () => ({}), valueOf: () => 3 };
+  console.log(String(lit));
+  console.log(`[${lit}]`);
+  console.log("" + (new VA() as any));
+  console.log("" + (new VU() as any));
+  const o: object = new VA();
+  console.log("" + o);
+  let s = "s:";
+  s += o;
+  console.log(s);
+  console.log("" + (new VObj() as any), String(new VObj() as any));
+  console.log("" + (new VOnly() as any), String(new VOnly() as any));
+  const b: any = new Both();
+  console.log("" + b);
+  console.log(String(b));
+  console.log("" + (new Gen(1.5) as any), "" + (new Gen("g") as any));
+  console.log("" + (new Gen({}) as any));
+  const xs: any[] = [new TO(), new VA(), lit];
+  console.log(xs.join("|"));
+  console.log(String(xs));
+  // A typed instance whose `toString()` is declared to return `any`: its result is tested too.
+  const typed = new TO();
+  console.log(String(typed), `${typed}`, String(new TA()), `<${new TA()}>`);
+}

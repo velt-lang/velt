@@ -1,0 +1,6 @@
+// `x.constructor.name` of an `any` holding `null`: Node's `TypeError`.
+function main(): void {
+  const n: any = null;
+  console.log("before");
+  console.log(n.constructor.name);
+}

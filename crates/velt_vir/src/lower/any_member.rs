@@ -486,6 +486,15 @@ impl FnLower<'_, '_> {
         if let (Some(ka), false) = (&ka, self.dead()) {
             self.any_nullish_check(&desc, NullKey::Str(ka));
         }
+        // A spread call (`f(...xs)`, `o.m(a, ...xs)`): sema built the arguments as one `any[]`,
+        // whose elements move into the call; its buffer is freed after it.
+        let spread = match args {
+            [a] => {
+                let at = self.sub(a.ty);
+                matches!(self.cx.kind(at), TyKind::Array(_)).then_some(at)
+            }
+            _ => None,
+        };
         let vals = self.consume_each(args);
         if self.dead() {
             let vt = self.cx.ty(ty);
@@ -496,18 +505,32 @@ impl FnLower<'_, '_> {
             _ => "the value".to_string(),
         };
         let avt = self.cx.ty(ty);
-        let argv = if vals.is_empty() {
-            cint(0, Ty::Ptr)
-        } else {
-            let tup = self.cx.intern(TyKind::Tuple(vec![ty; vals.len()]));
-            let tvt = self.cx.ty(tup);
-            let buf = Place::local(self.temp(tvt));
-            for (k, v) in vals.into_iter().enumerate() {
-                self.assign(proj(&buf, Proj::Field(k as u32)), Rvalue::Use(v));
+        let mut list = None;
+        let (argv, argc) = match spread {
+            Some(at) => {
+                let v = vals
+                    .into_iter()
+                    .next()
+                    .expect("ICE: spread call without its array");
+                let vt = self.cx.ty(at);
+                let held = Place::local(self.copy_to_temp(v, vt));
+                let arr = self.content(&held, at);
+                let argv = Operand::Copy(proj(&arr, Proj::Field(0)));
+                let argc = Operand::Copy(proj(&arr, Proj::Field(1)));
+                list = Some((held, arr, at));
+                (argv, argc)
             }
-            self.addr(buf)
+            None if vals.is_empty() => (cint(0, Ty::Ptr), cint(0, Ty::U64)),
+            None => {
+                let tup = self.cx.intern(TyKind::Tuple(vec![ty; vals.len()]));
+                let tvt = self.cx.ty(tup);
+                let buf = Place::local(self.temp(tvt));
+                for (k, v) in vals.into_iter().enumerate() {
+                    self.assign(proj(&buf, Proj::Field(k as u32)), Rvalue::Use(v));
+                }
+                (self.addr(buf), cint(args.len() as i128, Ty::U64))
+            }
         };
-        let argc = cint(args.len() as i128, Ty::U64);
         let out = self.temp(avt);
         let oa = self.addr(Place::local(out));
         let st = match &ka {
@@ -522,6 +545,11 @@ impl FnLower<'_, '_> {
                 self.any_slot(desc, SLOT_APPLY, a, p)
             }
         };
+        if let Some((held, arr, at)) = list {
+            // The call owns the elements now: the array keeps none of them.
+            self.assign(proj(&arr, Proj::Field(1)), Rvalue::Use(cint(0, Ty::U64)));
+            self.drop_glue(held, at);
+        }
         let what = "TypeError: calling '";
         let tail = "' through `any` is not supported for this value yet (#924)";
         match &ka {

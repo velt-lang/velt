@@ -226,16 +226,22 @@ impl FnCx<'_, '_> {
                     Some(Nothing::Both) => Nothing::Undefined,
                     n => n.unwrap_or(Nothing::Null),
                 };
+                if payload == self.cx.ty.never {
+                    // Of type `undefined` or `null` (`getU()` returning `undefined`).
+                    return Ok(self.then_nothing(h, nothing, exp));
+                }
                 return self.option_to_dynamic(h, payload, exp, nothing);
             }
         }
         match self.cx.ty.kind(h.ty) {
+            // A `void` value (a call of a function returning nothing) is `undefined`.
+            TyKind::Unit => return Ok(self.then_nothing(h, Nothing::Undefined, exp)),
             // A type parameter bound by `object` / `Function` holds no `null` and no primitive
             // to unpack (issue #926); lowering boxes the instantiation's value. Into `any` or
             // `unknown`, lowering unpacks an instantiation that is an option, a union or a
             // literal type (issue #1241).
             TyKind::Param(_) => {}
-            TyKind::Unit | TyKind::Never | TyKind::Error => return Err(h),
+            TyKind::Never | TyKind::Error => return Err(h),
             TyKind::Promise(..) => return Err(h),
             _ => {}
         }
@@ -252,6 +258,21 @@ impl FnCx<'_, '_> {
             exp,
             span,
         ))
+    }
+
+    /// `{ h; <the dynamic nothing n> }`: `h` evaluated, then `n` as an `exp`.
+    fn then_nothing(&mut self, h: hir::Expr, n: Nothing, exp: TyId) -> hir::Expr {
+        let span = h.span;
+        let none = self.dynamic_nothing(n, exp, span);
+        let block = hir::Block {
+            stmts: vec![hir::Stmt {
+                kind: hir::StmtKind::Expr(h),
+                span,
+            }],
+            value: Some(Box::new(none)),
+            span,
+        };
+        self.mk(H::Block(block), exp, span)
     }
 
     /// `h` as an `any` (`unknown`) when it is an `any | null` (`unknown | null`): the value,
@@ -661,121 +682,5 @@ impl FnCx<'_, '_> {
             );
         }
         self.error_expr(span)
-    }
-
-    /// The enum of `t` when it is a declared enum without payloads (`enum Color { Red }`), whose
-    /// values are numbers or strings in JavaScript.
-    fn plain_enum(&self, t: TyId) -> Option<hir::DefId> {
-        if self.cx.union_def(t).is_some() || !self.is_c_like_enum(t) {
-            return None;
-        }
-        match self.cx.ty.kind(t) {
-            TyKind::Adt(d, _) => Some(*d),
-            _ => None,
-        }
-    }
-
-    /// The JavaScript value of each member of the enum `def`: its number or its string.
-    fn enum_member_values(&mut self, def: hir::DefId, span: Span) -> Vec<hir::Expr> {
-        let values: Vec<Result<String, i64>> = self
-            .cx
-            .enum_info(def)
-            .map(|e| {
-                e.variants
-                    .iter()
-                    .map(|v| v.str_value.clone().ok_or(v.discriminant))
-                    .collect()
-            })
-            .unwrap_or_default();
-        values
-            .into_iter()
-            .map(|v| match v {
-                Ok(s) => self.str_lit(&s, span),
-                Err(n) => self.mk(H::Lit(hir::Lit::Float(n as f64)), self.cx.ty.f64, span),
-            })
-            .collect()
-    }
-
-    /// An enum value boxed as its number or string, as JavaScript holds it.
-    fn enum_to_dynamic(&mut self, h: hir::Expr, def: hir::DefId, exp: TyId) -> hir::Expr {
-        let (span, ety) = (h.span, h.ty);
-        let values = self.enum_member_values(def, span);
-        let arms = values
-            .into_iter()
-            .enumerate()
-            .map(|(i, v)| hir::Arm {
-                pat: self.pat(
-                    P::Variant {
-                        def,
-                        variant: i as u32,
-                        args: vec![],
-                    },
-                    ety,
-                    span,
-                ),
-                guard: None,
-                body: self.coerce(v, exp),
-            })
-            .collect();
-        let kind = H::Match {
-            scrutinee: Box::new(h),
-            arms,
-        };
-        self.mk(kind, exp, span)
-    }
-
-    /// A dynamic value as the enum `exp`: the member whose number or string it is (`===`), or a
-    /// `TypeError`.
-    fn dynamic_to_enum(&mut self, h: hir::Expr, def: hir::DefId, exp: TyId) -> hir::Expr {
-        let span = h.span;
-        let dty = h.ty;
-        let Some(any) = self.any_ty() else {
-            return self.error_expr(span);
-        };
-        let type_args = match self.cx.ty.kind(exp) {
-            TyKind::Adt(_, a) => a.clone(),
-            _ => vec![],
-        };
-        let init = self.share_if_place(h);
-        let tmp = self.new_local("<any>", dty, false, span, LocalKind::Temp);
-        let name = self.cx.display(exp);
-        let msg = self.str_lit(&format!("TypeError: the value is not a {name}"), span);
-        let never = self.cx.ty.never;
-        let b = self.cx.ty.bool_;
-        let mut result = self.intrinsic(Intrinsic::Panic, vec![msg], never, span);
-        let values = self.enum_member_values(def, span);
-        for (i, v) in values.into_iter().enumerate().rev() {
-            let boxed = self.coerce(v, any);
-            let x = self.mk(H::Local(tmp, UseMode::Borrow), dty, span);
-            let test = self.intrinsic(Intrinsic::AnyStrictEq, vec![x, boxed], b, span);
-            let member = self.mk(
-                H::Variant {
-                    def,
-                    type_args: type_args.clone(),
-                    variant: i as u32,
-                    args: vec![],
-                },
-                exp,
-                span,
-            );
-            let kind = H::If {
-                cond: Box::new(test),
-                then: Box::new(member),
-                els: Box::new(result),
-            };
-            result = self.mk(kind, exp, span);
-        }
-        let block = hir::Block {
-            stmts: vec![hir::Stmt {
-                kind: hir::StmtKind::Let {
-                    local: tmp,
-                    init: Some(init),
-                },
-                span,
-            }],
-            value: Some(Box::new(result)),
-            span,
-        };
-        self.mk(H::Block(block), exp, span)
     }
 }

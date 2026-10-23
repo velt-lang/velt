@@ -1,0 +1,6 @@
+// A `toString()` returning an object: `String(x)` of it is Node's `TypeError`.
+function main(): void {
+  const bad: any = { toString: () => ({}) };
+  console.log("before");
+  console.log(String(bad));
+}
