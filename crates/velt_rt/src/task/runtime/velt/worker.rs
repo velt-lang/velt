@@ -329,9 +329,14 @@ fn run(index: usize) {
         // Idle until the turn returns: the last worker to go idle checks whether the process is
         // done (quiet.rs), as tokio's park hooks do on its schedulers.
         super::super::quiet_parked();
-        let timeout = lock(&me.timers)
-            .next_deadline()
-            .map(|d| d.saturating_duration_since(Instant::now()));
+        // The park hook can wake tasks of this worker (due `unref()`'d timers), which go to its
+        // own queue: then the turn only looks for I/O, without sleeping.
+        let timeout = match lock(&me.queue).len() {
+            0 => lock(&me.timers)
+                .next_deadline()
+                .map(|d| d.saturating_duration_since(Instant::now())),
+            _ => Some(Duration::ZERO),
+        };
         let asleep = Instant::now();
         turn(me, &local, timeout);
         crate::task::quiet::unparked();
@@ -504,7 +509,9 @@ static MONITOR_ASLEEP: AtomicBool = AtomicBool::new(false);
 
 /// Wakes the monitor if it sleeps (a worker woke up: its polls need watching).
 fn kick_monitor() {
-    if MONITOR_ASLEEP.load(Ordering::Relaxed) {
+    // SeqCst: ordered after the caller's store to `parked`, which the monitor checks after its
+    // own store here (on ARM a relaxed load could come first and both would miss the other).
+    if MONITOR_ASLEEP.load(Ordering::SeqCst) {
         let (woken, cv) = &MONITOR;
         *lock(woken) = true;
         cv.notify_one();
@@ -572,8 +579,9 @@ fn rescue(i: usize) {
         return;
     }
     let (pinned, moved): (Vec<_>, Vec<_>) = moved.into_iter().partition(|t| t.pinned);
+    // Back through the inbox with a wake: the worker may have parked since the drain above.
     if !pinned.is_empty() {
-        lock(&w.queue).extend(pinned, Instant::now());
+        send_back(w, pinned);
     }
     let helper = sleeping_helper(i).or_else(|| {
         (0..ws.len())
@@ -581,7 +589,7 @@ fn rescue(i: usize) {
             .min_by_key(|&j| ws[j].queued.load(Ordering::Relaxed))
     });
     let Some(helper) = helper else {
-        lock(&w.queue).extend(moved, Instant::now());
+        send_back(w, moved);
         return;
     };
     if moved.is_empty() {
@@ -597,6 +605,16 @@ fn rescue(i: usize) {
         h.inbox_len.store(inbox.len(), Ordering::SeqCst);
     }
     wake(h);
+}
+
+/// Returns tasks the monitor took from `w` to its inbox and wakes it.
+fn send_back(w: &Shared, tasks: Vec<Arc<Task>>) {
+    {
+        let mut inbox = lock(&w.inbox);
+        inbox.extend(tasks);
+        w.inbox_len.store(inbox.len(), Ordering::SeqCst);
+    }
+    wake(w);
 }
 
 /// Tasks other threads queued for the workers that none has taken yet (in an inbox or offered).
