@@ -816,9 +816,16 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   types, `optional` and `presence` flags, in order; never a def replaced by readonly erasure,
   and `{ d?: string }` and `{ d: string | undefined }`, whose field types are the same, are two
   shapes) and
-  `Program::union_shapes` (the concrete union def of each sorted member list), so one shape is one
-  VIR type. A generic union whose members are not all plain types (a union or nullable member)
-  keeps its own variants.
+  `Program::union_shapes` (the concrete union def of each member list as lowering sees it: the
+  payloads after readonly erasure, deduplicated and sorted by type id), so one shape is one
+  VIR type. Concrete unions that erasure makes one member list (`number | A` and `number | {
+  readonly a: number }`, `A` a field-only interface) are the first of them in lowering, their
+  variants mapped by payload. Sema treats members that erase to one type as one member when it
+  re-interns an instance (`T | A` at `T = { a: number }` is `A`), as lowering deduplicates them.
+  A generic union whose members are not all plain types (a union or nullable member) keeps its
+  own variants. An optional field `v?: T` of a generic object type at a dynamic `T` (`unknown`,
+  `any`) keeps its option (`{ v?: unknown | undefined }`), as the generic def lays it out,
+  while a written `v?: unknown` holds the dynamic `undefined` itself.
 - `TyTable::intern` never makes `Option(Option(T))`: an option of an option is the inner option
   (`T | null | null` is `T | null`), whatever the outer option's `Nothing` (see "Undefined"). `WrapSome` and `UnwrapSome` of a value whose type is already
   that option, and a `PatKind::Some` on it, are the identity in lowering.

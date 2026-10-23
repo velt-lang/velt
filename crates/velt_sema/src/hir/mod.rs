@@ -143,7 +143,8 @@ pub struct Program {
     /// twin before lowering (readonly erasure). Lowering maps every instance of a generic
     /// anonymous def onto these, so one shape is one type (velt_vir `Cx::canon`).
     pub anon_shapes: HashMap<Vec<(String, TyId, bool, bool)>, DefId>,
-    /// The concrete union def of each sorted member list, for generic unions (`Cx::canon`).
+    /// The concrete union def of each member list after readonly erasure (deduplicated, sorted
+    /// by type id), for generic unions and unions erasure made alike (velt_vir `Cx::canon`).
     pub union_shapes: HashMap<Vec<TyId>, DefId>,
     /// Object types lowering counts from its first pass (hir_encodings.md "Sharing").
     pub counted_objects: Vec<TyId>,

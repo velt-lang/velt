@@ -218,7 +218,22 @@ impl Ctx<'_> {
         {
             return None;
         }
-        let u = self.union_of(&members, false, velt_common::Span::DUMMY);
+        // Members that are one type for lowering (`crate::readonly`: a field-only interface `A`
+        // and `{ a: number }`, `{ readonly a: number }` and `{ a: number }`) are one member, as
+        // lowering deduplicates the erased members of the instance (velt_vir `Cx::canon_union`):
+        // `T | A` at `T = { a: number }` is that object type, not a union of two variants
+        // lowering reads as one (#1447).
+        let mut cache = FxHashMap::default();
+        let mut erased: Vec<TyId> = vec![];
+        let mut kept: Vec<TyId> = vec![];
+        for m in members {
+            let e = crate::readonly::erase_ty(&mut self.ty, &self.readonly_twins, &mut cache, m);
+            if !erased.contains(&e) {
+                erased.push(e);
+                kept.push(m);
+            }
+        }
+        let u = self.union_of(&kept, false, velt_common::Span::DUMMY);
         (u != t).then_some(u)
     }
 
@@ -242,7 +257,14 @@ impl Ctx<'_> {
             .into_iter()
             .map(|f| {
                 let ty = self.ty.subst(f.ty, args);
-                let ty = self.canon_depth(ty, depth + 1);
+                let mut ty = self.canon_depth(ty, depth + 1);
+                // `v?: T` at `T = unknown` (or `any`) keeps the `T | undefined` the generic def
+                // reads its field as (an option of the dynamic value), as lowering lays the
+                // instance out: the written `v?: unknown` holds the dynamic `undefined` itself,
+                // a different layout (#1447).
+                if f.optional && self.dynamic(ty).is_some() && self.dynamic(f.ty).is_none() {
+                    ty = self.ty.option_of(ty, crate::hir::Nothing::Undefined);
+                }
                 ShapeField { ty, ..f }
             })
             .collect();
@@ -592,16 +614,32 @@ pub(crate) fn concrete_shapes(cx: &Ctx) -> FxHashMap<Vec<(String, TyId, bool, bo
     out
 }
 
-/// `hir::Program::union_shapes`: every concrete union def by its member list (sorted by type id,
-/// as `Ctx::union_of` orders concrete members).
+/// `hir::Program::union_shapes`: every concrete union def by its member list as lowering sees
+/// it: the payloads after erasure (`crate::readonly`: a field-only interface member is the
+/// anonymous object type of its fields by then), deduplicated and sorted by type id, as
+/// velt_vir `Cx::canon_union` looks a substituted generic union up. Keyed by the members
+/// sema interned the union with instead, a generic `T | A` at `T = number` missed the
+/// caller's `number | A` and was laid out as a second type of its own (#1447).
 pub(crate) fn concrete_unions(cx: &Ctx) -> FxHashMap<Vec<TyId>, DefId> {
     let mut out = FxHashMap::default();
-    for (key, d) in &cx.unions {
-        if let Some(crate::hir::Def::Enum(e)) = &cx.defs[d.0 as usize] {
-            if e.generics == 0 {
-                out.entry(key.clone()).or_insert(*d);
+    for (i, d) in cx.defs.iter().enumerate() {
+        let Some(crate::hir::Def::Enum(e)) = d else {
+            continue;
+        };
+        if !e.is_union || e.generics != 0 {
+            continue;
+        }
+        let mut key: Vec<TyId> = vec![];
+        for p in e.variants.iter().filter_map(|v| v.payload.first()) {
+            if !key.contains(p) {
+                key.push(*p);
             }
         }
+        key.sort_by_key(|t| t.0);
+        // Of two unions that erasure made one member list (`A | K` and `{ readonly a: number }
+        // | K`, `A` a field-only interface), the first is the type of both for lowering (velt_vir
+        // `Cx::concrete_union_rep`).
+        out.entry(key).or_insert(DefId(i as u32));
     }
     out
 }
