@@ -1,0 +1,31 @@
+// check: no leaks
+// An extension with optional fields leaves its base's own type as declared (#1383): `keyof`,
+// mapped types, printing and JSON see the base's fields only, whether
+// or not the program converts between the two.
+interface VNode {
+  type: string;
+  dom: string | null;
+}
+interface IV extends VNode {
+  _ns?: boolean;
+  _cb?: () => number;
+}
+
+type R = Required<VNode>;
+const r: R = { type: "a", dom: null };
+const ks: Record<keyof VNode, number> = { type: 1, dom: 2 };
+console.log(r, ks);
+
+// A function-typed extension field does not make the base unprintable.
+const plain: VNode = { type: "a", dom: null };
+console.log(plain);
+console.log(JSON.stringify(plain));
+
+// Written through the extension: printing shows the closure, JSON leaves it out, as in Node.
+const cast: VNode = { type: "b", dom: "x" };
+const iv = cast as IV;
+iv._ns = true;
+iv._cb = () => 42;
+console.log(cast);
+console.log(JSON.stringify(cast));
+console.log(iv._cb?.() ?? 0, (plain as IV)._cb === undefined);

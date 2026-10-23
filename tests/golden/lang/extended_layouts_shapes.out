@@ -1,0 +1,4 @@
+{ id: 'a', n: 1, _a: true } { id: 'b', n: 2, _b: 'bee' } true
+true 3
+{ id: 'anon', n: 4, _a: true } true
+{ id: 'a', n: 1, _a: false }

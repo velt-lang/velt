@@ -1,0 +1,5 @@
+extended_layouts_conflict.vlt:14:13: error: a value of type `VNode` converts to `HydrateVNode` by copying its fields, and this program assigns field `_sub`, which the other object would not see
+= note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `HydrateVNode` made from a `VNode` value is a new object with the same field values
+= note: build the new object explicitly, `{ type: v.type, children: v.children }` (a new object in TypeScript too), or declare the parameter or variable as `VNode`
+= note: `HydrateVNode` extends `VNode` with a field `_sub` of another type than `InternalVNode` gives it; `VNode`'s objects can have room for that one's fields only, so `HydrateVNode` is a separate object type
+= note: give `_sub` the same type in both extensions, and a `VNode` converts to either as the same object

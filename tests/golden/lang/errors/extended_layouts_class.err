@@ -1,0 +1,4 @@
+extended_layouts_class.vlt:18:18: error: mismatched types
+= note: expected VNode, found K
+= note: `VNode` has only fields, so it is a data type, like `type VNode = { … }`: a class instance is shared by reference and is not one
+= note: build one from it: `{ type: k.type, dom: k.dom }`, or give `VNode` a method to make it an interface classes implement

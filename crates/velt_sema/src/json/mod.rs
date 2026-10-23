@@ -139,6 +139,9 @@ pub(crate) fn check_json_types(cx: &mut Ctx) {
                     );
                 }
             } else if let Need::Json(parse) = parse {
+                if parse && !cx.objects.layouts.families.is_empty() {
+                    cx.objects.layouts.parsed.push(t);
+                }
                 if !reported.contains(&(t, span))
                     && checked.insert((t, span, Need::Json(parse)))
                     && check(cx, t, span, parse)

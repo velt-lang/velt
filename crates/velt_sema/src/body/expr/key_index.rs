@@ -116,6 +116,7 @@ impl FnCx<'_, '_> {
             ty: None,
             name: String::new(),
             span,
+            dynamic: false,
         };
         self.cx.object_copies.writes.push(write);
         let t = obj.ty;

@@ -72,6 +72,7 @@ mod json;
 mod kept_consts;
 mod key_groups;
 mod known;
+mod layout_merge;
 mod literals;
 mod module_chunks;
 mod module_scripts;
@@ -356,6 +357,7 @@ fn check_timed(
         return (None, cx.diags);
     }
     finalize::build_defs(&mut cx);
+    layout_merge::merge(&mut cx);
     let type_names = readonly::erase(&mut cx);
     let module_state = module_state::build(&mut cx, entry);
     let type_ops = type_level::lowered_ops(&mut cx);
@@ -481,6 +483,9 @@ fn analyze_bodies(cx: &mut ctx::Ctx) {
     cx.borrow_pass_errors = error_count(cx) > before;
     kept_consts::keep_readers(cx);
     // After `ownership_passes`: the JSON pass records the types `JSON.stringify` writes.
+    // Conversions are all made: a check below widens no layout (`collect::extended_layouts`).
+    cx.objects.layouts.sealed = true;
+    layout_merge::check_looks(cx);
     timings::pass("object_copies::check", || object_copies::check(cx));
     timings::pass("replaced_holders::check", || replaced_holders::check(cx));
     cx.module_slots = module_state::order(cx);
