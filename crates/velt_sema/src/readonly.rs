@@ -89,10 +89,12 @@ pub(crate) fn erase(cx: &mut Ctx) -> HashMap<TyId, String> {
         })
         .collect();
     // An object type merged into another (`crate::union_layouts`) shares its values.
-    let assigned = assigned.into_iter().chain(plan.objects.iter().map(|&(d, rep)| {
-        let a = matches!(&defs[d.0 as usize], Some(Def::Adt(a)) if a.assigned);
-        (rep, a)
-    }));
+    let assigned = assigned
+        .into_iter()
+        .chain(plan.objects.iter().map(|&(d, rep)| {
+            let a = matches!(&defs[d.0 as usize], Some(Def::Adt(a)) if a.assigned);
+            (rep, a)
+        }));
     let assigned: Vec<(DefId, bool)> = assigned.collect();
     for (plain, a) in assigned {
         if let Some(Def::Adt(d)) = &mut defs[plain.0 as usize] {
@@ -239,6 +241,11 @@ pub(crate) fn erase_ty(
         }
     };
     let r = ty.intern(nk);
+    // A twin, or a type holding erased parts, may itself be replaced (`crate::union_layouts`).
+    let r = match cache.get(&r) {
+        Some(&s) if r != t => s,
+        _ => r,
+    };
     cache.insert(t, r);
     r
 }

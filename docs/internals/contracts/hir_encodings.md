@@ -851,7 +851,8 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   and `{ d?: string }` and `{ d: string | undefined }`, whose field types are the same, are two
   shapes) and
   `Program::union_shapes` (the concrete union def of each member list as lowering sees it: the
-  payloads after readonly erasure, deduplicated and sorted by type id), so one shape is one
+  payloads after readonly erasure but a union view's `<view>`, deduplicated and sorted by type
+  id), so one shape is one
   VIR type. Concrete unions that erasure makes one member list (`number | A` and `number | {
   readonly a: number }`, `A` a field-only interface) are the first def of that list in the
   program lowering gets: every type, `Variant`, `UnwrapVariant` and `PatKind::Variant` of the

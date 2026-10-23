@@ -622,7 +622,8 @@ pub(crate) fn concrete_shapes(cx: &Ctx) -> FxHashMap<Vec<(String, TyId, bool, bo
 /// `hir::Program::union_shapes`: every concrete union def by its member list as lowering sees
 /// it: the payloads after erasure (`crate::readonly`: a field-only interface member is the
 /// anonymous object type of its fields by then), deduplicated and sorted by type id, as
-/// velt_vir `Cx::canon_union` looks a substituted generic union up. Keyed by the members
+/// velt_vir `Cx::canon_union` looks a substituted generic union up (without a union view's
+/// variant, `crate::union_views`). Keyed by the members
 /// sema interned the union with instead, a generic `T | A` at `T = number` missed the
 /// caller's `number | A` and was laid out as a second type of its own (#1447). The unions
 /// erasure replaced (`crate::union_layouts`) are left out: no type is one of them any more.
@@ -636,7 +637,11 @@ pub(crate) fn concrete_unions(cx: &Ctx) -> FxHashMap<Vec<TyId>, DefId> {
             continue;
         }
         let mut key: Vec<TyId> = vec![];
-        for p in e.variants.iter().filter_map(|v| v.payload.first()) {
+        // A union view's variant is no member (velt_vir `Cx::canon_union` leaves it out too).
+        let members = (e.variants.iter())
+            .filter(|v| v.name != crate::union_views::VIEW_VARIANT)
+            .filter_map(|v| v.payload.first());
+        for p in members {
             if !key.contains(p) {
                 key.push(*p);
             }

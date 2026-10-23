@@ -15,8 +15,9 @@ use crate::readonly::erase_ty;
 use crate::types::Types;
 use crate::visit::{self, VisitMut};
 
-/// The concrete union defs that are another def from here on, with each variant's index in it;
-/// a def whose variants erase to duplicates maps to itself, each variant to the first alike.
+/// The concrete union defs whose variants are renumbered: each with the def its type is from
+/// here on (itself when only its variants of one erased payload become the first of them) and
+/// each variant's index in that def.
 pub(crate) type Merged = FxHashMap<DefId, (DefId, Vec<u32>)>;
 
 /// What `plan` found: the merged defs, and every concrete union def no type is from here on
@@ -52,7 +53,11 @@ pub(crate) fn plan(
         .collect();
     let anons: Vec<DefId> = (defs.iter().enumerate())
         .filter(|(i, d)| {
-            matches!(d, Some(Def::Adt(a)) if a.kind == AdtKind::Anon && a.generics == 0)
+            // Only plain shapes: nothing but their fields tells two of them apart.
+            matches!(d, Some(Def::Adt(a)) if a.kind == AdtKind::Anon && a.generics == 0
+                && a.base.is_none() && a.vtable.is_empty() && a.ctor.is_none()
+                && a.dispose.is_none() && a.to_string.is_none() && a.to_json.is_none()
+                && a.inspect.is_none())
                 && !twins.contains_key(&DefId(*i as u32))
         })
         .map(|(i, _)| DefId(i as u32))
@@ -61,13 +66,12 @@ pub(crate) fn plan(
     // Each round erases the members with the mappings found so far: merging two unions can
     // make two unions holding them alike.
     let mut mapped: FxHashMap<TyId, TyId> = FxHashMap::default();
-    let mut merged = Merged::default();
     for _ in 0..ROUNDS {
         if unions.is_empty() && anons.len() < 2 {
             break;
         }
         *cache = seeded(ty, twins, &base, &mapped, solved);
-        let mut first: FxHashMap<Vec<TyId>, (DefId, Vec<TyId>)> = FxHashMap::default();
+        let mut first: FxHashMap<Vec<TyId>, DefId> = FxHashMap::default();
         let mut grew = false;
         // Object types whose fields hold unions merged so far are the first def of their
         // erased fields (`crate::anon::concrete_shapes` keeps the first too).
@@ -128,24 +132,10 @@ pub(crate) fn plan(
             }
             match first.get(&key) {
                 None => {
-                    // Variants of one erased payload are the first of them (`(R | number)[] |
-                    // (number | A)[] | string` is `[X, X, string]`): one tag per payload.
-                    let perm: Vec<u32> = (erased.iter())
-                        .map(|p| erased.iter().position(|q| q == p).unwrap_or(0) as u32)
-                        .collect();
-                    if perm.iter().enumerate().all(|(i, &v)| i as u32 == v) {
-                        merged.remove(&d);
-                    } else {
-                        merged.insert(d, (d, perm));
-                    }
-                    first.insert(key, (d, erased));
+                    first.insert(key, d);
                 }
-                Some((rep, rep_erased)) => {
-                    let perm = (erased.iter())
-                        .map(|p| rep_erased.iter().position(|q| q == p).unwrap_or(0) as u32)
-                        .collect();
-                    merged.insert(d, (*rep, perm));
-                    let r = ty.intern(TyKind::Adt(*rep, vec![]));
+                Some(&rep) => {
+                    let r = ty.intern(TyKind::Adt(rep, vec![]));
                     mapped.insert(t, r);
                     grew = true;
                 }
@@ -153,29 +143,6 @@ pub(crate) fn plan(
         }
         if !grew {
             break;
-        }
-    }
-    // A def a later round merged (its members held a union merged in that round) may be the
-    // def an earlier one was merged into: each is the last def of its chain (a lower def at
-    // each step).
-    let ds: Vec<DefId> = merged.keys().copied().collect();
-    // A def that is its own representative (its duplicate variants mapped) ends a chain; its
-    // perm maps to first occurrences, so applying it again changes nothing.
-    for d in ds {
-        loop {
-            let r = merged[&d].0;
-            if r == d {
-                break;
-            }
-            let Some((r2, p2)) = merged.get(&r).cloned() else {
-                break;
-            };
-            let perm: Vec<u32> = merged[&d].1.iter().map(|&i| p2[i as usize]).collect();
-            let done = r2 == r;
-            merged.insert(d, (r2, perm));
-            if done {
-                break;
-            }
         }
     }
     // An object type a later round merged may be the one an earlier one was merged into.
@@ -192,11 +159,57 @@ pub(crate) fn plan(
             mapped.contains_key(&t) || replaced.contains(&t)
         })
         .collect();
+    let merged = renumbering(ty, twins, cache, defs, &unions);
     Plan {
         merged,
         replaced,
         objects,
     }
+}
+
+/// Where each variant of the concrete unions goes once the program is erased with `cache`: to
+/// the variant of the union def its type is from then on (itself, a def it was merged into, or
+/// the solved type of one holding error-set variables) whose payload is the first with its
+/// erased type. Defs whose variants all stay put are left out, and so are unions that are one
+/// member from then on (their variants are the whole value).
+fn renumbering(
+    ty: &mut Types,
+    twins: &FxHashMap<DefId, (DefId, Option<Vec<TyId>>)>,
+    cache: &mut FxHashMap<TyId, TyId>,
+    defs: &[Option<Def>],
+    unions: &[DefId],
+) -> Merged {
+    let mut merged = Merged::default();
+    for &d in unions {
+        let t = ty.intern(TyKind::Adt(d, vec![]));
+        let f = erase_ty(ty, twins, cache, t);
+        let TyKind::Adt(r, args) = ty.kind(f).clone() else {
+            continue;
+        };
+        let (Some(Def::Enum(e)), Some(Def::Enum(re))) = (&defs[d.0 as usize], &defs[r.0 as usize])
+        else {
+            continue;
+        };
+        if !args.is_empty() || !re.is_union {
+            continue;
+        }
+        let payloads = |e: &crate::hir::EnumDef, ty: &mut Types, cache: &mut FxHashMap<_, _>| {
+            (e.variants.iter())
+                .map(|v| v.payload.first().map(|p| erase_ty(ty, twins, cache, *p)))
+                .collect::<Vec<_>>()
+        };
+        let (mine, theirs) = (payloads(e, ty, cache), payloads(re, ty, cache));
+        let perm: Option<Vec<u32>> = (mine.iter())
+            .map(|p| theirs.iter().position(|q| q == p).map(|i| i as u32))
+            .collect();
+        let Some(perm) = perm else {
+            continue;
+        };
+        if r != d || perm.iter().enumerate().any(|(i, &v)| i as u32 != v) {
+            merged.insert(d, (r, perm));
+        }
+    }
+    merged
 }
 
 /// The erasure's type map `base` with the unions in `mapped` replaced, each by the end of its

@@ -131,15 +131,39 @@ for (const [k, v] of m) {
 
 // The same members in another order (one def), and a generic instance holding them.
 type U2 = string | (number | A)[] | (R | number)[];
+
 function f2(x: U2): string {
   return typeof x === "string" ? x : `${(x as (R | number)[]).length}`;
 }
+
 const u1: AR = p2;
 const u2: U2 = p1;
 console.log(f2(u1), w3(u2), f2("q"));
+
 function k<T>(x: T[] | (number | A)[] | string): string {
   return typeof x === "string" ? x : `${(x as T[]).length}`;
 }
+
 console.log(k<R | number>(p1), k<R | number>(p2), k<R | number>("z"));
 const both: U2[] = [u1, u2, p3, "q"];
 console.log(both.map(f2).join(","), JSON.stringify(both), both);
+
+// Alike object types holding functions (their error types solved from the closures stored).
+type FA = { v: number | A; tag: () => string };
+type FR = { v: number | R; tag: () => string };
+
+const fa: FA = { v: { a: 1 }, tag: () => "fa" };
+const fr: FR = { v: 2, tag: () => "fr" };
+const fs: (FA | FR | number)[] = [fa, fr, 3];
+for (const x of fs) {
+  console.log(typeof x === "number" ? x : (x as FR).tag());
+}
+
+class FK {
+  o: FA = fa;
+  r: FR = fr;
+}
+
+const fk = new FK();
+fk.r.v = { a: 5 };
+console.log(fk.o.tag(), JSON.stringify(fk.r.v), JSON.stringify(fr.v));

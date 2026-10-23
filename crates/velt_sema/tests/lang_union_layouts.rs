@@ -36,17 +36,20 @@ fn variants_used(p: &Program, f: &str, def: DefId) -> Vec<u32> {
     let mut out = vec![];
     for e in exprs(fd) {
         match &e.kind {
-            E::Variant { def: d, variant, .. } if *d == def => out.push(*variant),
-            E::UnwrapVariant { expr, variant, .. }
-                if matches!(p.types.kind(expr.ty), TyKind::Adt(d, _) if *d == def) =>
-            {
+            E::Variant {
+                def: d, variant, ..
+            } if *d == def => out.push(*variant),
+            E::UnwrapVariant { expr, variant, .. } if matches!(p.types.kind(expr.ty), TyKind::Adt(d, _) if *d == def) => {
                 out.push(*variant)
             }
             _ => {}
         }
     }
     for q in pats(fd) {
-        if let PatKind::Variant { def: d, variant, .. } = &q.kind {
+        if let PatKind::Variant {
+            def: d, variant, ..
+        } = &q.kind
+        {
             if *d == def {
                 out.push(*variant);
             }
@@ -80,7 +83,9 @@ fn variants_of_one_erased_payload_are_the_first_of_them() {
     let first = |t: TyId| payloads.iter().position(|q| *q == t).unwrap() as u32;
     let firsts: Vec<u32> = payloads.iter().map(|t| first(*t)).collect();
     assert_eq!(
-        (firsts.iter().enumerate()).filter(|(i, f)| *i as u32 != **f).count(),
+        (firsts.iter().enumerate())
+            .filter(|(i, f)| *i as u32 != **f)
+            .count(),
         1,
         "the two array members erase alike: {payloads:?}"
     );
@@ -136,5 +141,38 @@ fn a_union_of_alike_objects_and_another_member_has_one_object_variant() {
         let used = variants_used(&p, f, u);
         let obj: Vec<u32> = used.into_iter().filter(|v| objects.contains(v)).collect();
         assert_eq!(obj, vec![objects[0]], "{f}: one tag for the object members");
+    }
+}
+
+#[test]
+fn object_types_holding_functions_whose_fields_erase_alike_are_one_type() {
+    let p = program(
+        "type FA = { v: number | A; tag: () => string };\n\
+         type FR = { v: number | R; tag: () => string };\n\
+         function fa(x: FA): string { return x.tag(); }\n\
+         function fr(x: FR): string { return x.tag(); }\n\
+         function both(x: FA | FR | number): string {\n\
+           if (typeof x === \"number\") return \"n\";\n\
+           return (x as FR).tag();\n\
+         }\n\
+         function build(): (FA | FR | number)[] {\n\
+           const a: FA = { v: 1, tag: () => \"a\" };\n\
+           const r: FR = { v: 2, tag: () => \"r\" };\n\
+           return [a, r, 3];\n\
+         }",
+    );
+    let obj = param(&p, "fa");
+    assert_eq!(obj, param(&p, "fr"));
+    let u = union_def(&p, param(&p, "both"));
+    let Def::Enum(e) = p.def(u) else {
+        unreachable!()
+    };
+    let first = e.variants.iter().position(|v| v.payload[0] == obj).unwrap() as u32;
+    for f in ["both", "build"] {
+        let used = variants_used(&p, f, u);
+        let objs: Vec<u32> = (used.into_iter())
+            .filter(|&v| e.variants[v as usize].payload[0] == obj)
+            .collect();
+        assert_eq!(objs, vec![first], "{f}: one tag for the object members");
     }
 }
