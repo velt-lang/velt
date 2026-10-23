@@ -28,8 +28,7 @@ use crate::hir::DefId;
 /// layouts (anonymous twins) are made.
 pub(super) fn widen(cx: &mut Ctx, pairs: &[(DefId, DefId)]) {
     let adt_of: FxHashMap<DefId, DefId> = pairs.iter().copied().collect();
-    // Base interface -> its plain extensions (interface, object type, own fields), in
-    // definition order.
+    // Base interface -> its plain extensions (object type, own fields).
     let mut families: FxHashMap<DefId, Vec<(DefId, Vec<FieldInfo>)>> = FxHashMap::default();
     let mut order: Vec<DefId> = vec![];
     for &(iface, adt) in pairs {
@@ -79,13 +78,21 @@ pub(super) fn widen(cx: &mut Ctx, pairs: &[(DefId, DefId)]) {
             (std::cmp::Reverse(near), path, cx.field_only_of[adt].0)
         });
         let mut taken: Vec<DefId> = vec![];
+        // The extension each added field comes from.
+        let mut from: Vec<(String, DefId)> = vec![];
         for (adt, own) in members {
-            let agrees = own.iter().all(|f| {
-                (fields.iter().find(|g| g.name == f.name)).is_none_or(|g| same_field(g, f))
+            let clash = own.iter().find(|f| {
+                (fields.iter().find(|g| g.name == f.name)).is_some_and(|g| !same_field(g, f))
             });
-            if !agrees {
+            if let Some(f) = clash {
+                let owner = from.iter().find(|(n, _)| *n == f.name).map(|x| x.1);
+                if let Some(owner) = owner {
+                    (cx.objects.layout_conflicts).insert(*adt, (f.name.clone(), owner));
+                }
                 continue;
             }
+            let iface = cx.field_only_of[adt];
+            from.extend(own.iter().map(|f| (f.name.clone(), iface)));
             for f in own {
                 if !fields.iter().any(|g| g.name == f.name) {
                     fields.push(f.clone());
@@ -98,6 +105,44 @@ pub(super) fn widen(cx: &mut Ctx, pairs: &[(DefId, DefId)]) {
         for adt in members {
             cx.adt_mut(adt).fields = fields.clone();
         }
+    }
+}
+
+impl Ctx<'_> {
+    /// `d` with a note when `target` is an extension that keeps its own layout because another
+    /// extension of its base gives one of its fields another type.
+    pub(crate) fn with_layout_note(
+        &mut self,
+        d: velt_common::Diagnostic,
+        target: crate::hir::TyId,
+    ) -> velt_common::Diagnostic {
+        let crate::hir::TyKind::Adt(adt, _) = *self.ty.kind(target) else {
+            return d;
+        };
+        let Some((field, other)) = self.objects.layout_conflicts.get(&adt).cloned() else {
+            return d;
+        };
+        let (Some(me), Some(o)) = (self.field_only_of.get(&adt), self.iface(other)) else {
+            return d;
+        };
+        let Some(base) = self.iface(*me).and_then(|i| i.parents.first()) else {
+            return d;
+        };
+        let name = self.display(target);
+        // Two extensions of one name in different modules: say which.
+        let other = match o.name == name {
+            true => format!("the `{}` of `{}`", o.name, self.modules[o.module].path),
+            false => format!("`{}`", o.name),
+        };
+        let base = self
+            .iface(base.iface)
+            .map_or(String::new(), |b| b.name.clone());
+        d.with_note(format!(
+            "`{name}` extends `{base}` with a field `{field}` of another type than {other} gives it; `{base}`'s objects have room for that one's fields, so `{name}` is a separate object type"
+        ))
+        .with_note(format!(
+            "give `{field}` the same type in both extensions, and a `{base}` converts to either as the same object"
+        ))
     }
 }
 
@@ -116,7 +161,11 @@ fn plain_extension(
         return None;
     };
     let base = cx.iface(parent.iface)?;
-    if !parent.args.is_empty() || base.generics.len() != 0 || !adt_of.contains_key(&parent.iface) {
+    if !parent.args.is_empty()
+        || base.generics.len() != 0
+        || cx.scopes[base.module].is_std
+        || !adt_of.contains_key(&parent.iface)
+    {
         return None;
     }
     let own_n = decl.fields.len().min(i.fields.len());

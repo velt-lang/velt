@@ -58,6 +58,10 @@ pub(crate) struct ObjectState {
     pub brands: crate::defined_props::Brands,
     /// The key names of the brands' hidden fields, once resolved (`Ctx::hidden_keys`).
     pub hidden: Option<FxHashSet<String>>,
+    /// Extensions that keep their own layout because they give a field of their base another
+    /// type than an extension sharing the base's layout (`collect::extended_layouts`): object
+    /// type -> (the field, the interface whose type it has there).
+    pub layout_conflicts: FxHashMap<DefId, (String, DefId)>,
 }
 
 impl Ctx<'_> {

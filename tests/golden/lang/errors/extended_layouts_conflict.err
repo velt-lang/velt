@@ -1,0 +1,3 @@
+extended_layouts_conflict.vlt:14:13: error: cannot cast `VNode` as `HydrateVNode`
+= note: `HydrateVNode` extends `VNode` with a field `_sub` of another type than `InternalVNode` gives it; `VNode`'s objects have room for that one's fields, so `HydrateVNode` is a separate object type
+= note: give `_sub` the same type in both extensions, and a `VNode` converts to either as the same object
