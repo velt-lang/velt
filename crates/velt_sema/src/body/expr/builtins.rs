@@ -319,7 +319,8 @@ impl FnCx<'_, '_> {
             BuiltinMethod::SharedAdd => (Intrinsic::SharedAdd, "add"),
             BuiltinMethod::SharedGet => (Intrinsic::SharedGet, "get"),
             BuiltinMethod::SharedSet => (Intrinsic::SharedSet, "set"),
-            BuiltinMethod::MutexWith => return self.mutex_with(recv, args, span),
+            BuiltinMethod::MutexWith => return self.mutex_with(recv, args, span, false),
+            BuiltinMethod::LockRead => return self.mutex_with(recv, args, span, true),
         };
         let mut c = self.intrinsic_sig(i, span);
         c.what = format!("method `{name}`");

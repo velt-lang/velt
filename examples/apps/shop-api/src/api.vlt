@@ -218,3 +218,39 @@ export function route(
     return failure(e.status, e.code, e.message);
   }
 }
+
+/// Answers a GET that only reads the store (a listing, one product or order, the stats), so it
+/// may run while other requests read the store too (`RwLock.read`, src/server.vlt); `null` for
+/// any other request, which `route` answers.
+export function readRoute(store: Store, path: string, query: string): ApiResponse | null {
+  try {
+    const parts = path.split("/").filter((s) => s !== "");
+    if (parts.length === 0 || parts[0] === "health") {
+      return { status: 200, body: "{\"ok\":true}" };
+    }
+    const rest = parts.slice(1);
+    switch (parts[0]) {
+      case "products":
+        if (rest.length === 0) {
+          return json<Page<Product>>(200, store.listProducts(productQuery(query)));
+        }
+        if (rest.length === 1 && rest[0] !== "bulk") {
+          return json<Product>(200, store.product(positiveInt(rest[0], "product id")));
+        }
+        return null;
+      case "orders":
+        if (rest.length === 0) {
+          return json<Page<Order>>(200, store.listOrders(orderQuery(query)));
+        }
+        if (rest.length === 1) {
+          return json<Order>(200, store.order(positiveInt(rest[0], "order id")));
+        }
+        return null;
+      case "stats":
+        return json(200, store.stats());
+    }
+    return null;
+  } catch (e) {
+    return failure(e.status, e.code, e.message);
+  }
+}

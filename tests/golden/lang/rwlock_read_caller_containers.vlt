@@ -1,0 +1,42 @@
+// A `read` callback stores what it reads into the caller's own containers: an array it pushes
+// to, an array slot, a field of the caller's object, a `Map` and a `Set`. Those belong to the
+// caller, not to the lock, so the program runs, and a later `write` that empties the store
+// leaves them as they were.
+class Item {
+  v: i64 = 0;
+  nums: i64[] = [1, 2];
+  constructor(v: i64) {
+    this.v = v;
+  }
+}
+
+class St {
+  items: Item[] = [new Item(1), new Item(2), new Item(3)];
+}
+
+function main() {
+  const rw = shared(new RwLock<St>(new St()));
+  const pts: i64[] = [];
+  const xs: i64[] = [0];
+  const mine = new Item(5);
+  const out: Item[] = [];
+  const made: Item[] = [];
+  const byV = new Map<i64, Item>();
+  const seen = new Set<i64>();
+  rw.read((s) => {
+    pts.push(s.items[0].v);
+    xs[0] = s.items[1].v;
+    mine.v = s.items[2].v;
+    for (const it of s.items) {
+      out.push(it);
+      made.push(new Item(it.v * 10));
+      byV.set(it.v, it);
+      seen.add(it.v);
+    }
+  });
+  rw.write((s) => {
+    s.items = [];
+  });
+  console.log(pts[0], xs[0], mine.v, out.length, out[0].v, made[2].v, byV.get(2)?.v, seen.has(3));
+  rw.read((s) => console.log(s.items.length));
+}

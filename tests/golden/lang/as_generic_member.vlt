@@ -1,0 +1,107 @@
+// `as` assertions tsc accepts (#893): a union with a type parameter as one of its members in
+// generic code (sigx's lazy `mod as ModuleWithDefault<T>` of a `T | { default: T }`), at
+// instantiations that are themselves unions, nullable or arrays, and a tuple as a tuple whose
+// elements each assert (sigx's `detected as [object, string]` of an `[any, string | symbol]`).
+// At `T = unknown` (or `any`) every value is a `T`; a union of members that are not type
+// parameters asserts to some of them (`Ok<T> | Err`).
+interface Mod<T> {
+  default: T;
+}
+
+function pick<T>(mod: T | Mod<T>, isMod: boolean): T {
+  return isMod ? (mod as Mod<T>).default : (mod as T);
+}
+
+function unwrap<T>(mod: T | { default: T }): T {
+  return (mod as { default: T }).default;
+}
+
+function second(detected: [any, string | symbol]): string {
+  const t = detected as [object, string];
+  return t[1];
+}
+
+function either<T>(x: T | string, b: boolean): string {
+  return b ? (x as string) : String(x as T);
+}
+
+function first<T>(t: [T | undefined, number]): T {
+  const u = t as [T, number];
+  return u[0];
+}
+
+class Box<T> {
+  v: T;
+  constructor(v: T) {
+    this.v = v;
+  }
+}
+
+function open<T>(x: T | Box<T>): T {
+  return x instanceof Box ? (x as Box<T>).v : (x as T);
+}
+
+interface Ok<T> {
+  tag: "ok";
+  value: T;
+}
+
+interface Err {
+  tag: "err";
+  msg: string;
+}
+
+interface Pend {
+  tag: "pend";
+}
+
+function settled<T>(r: Ok<T> | Err | Pend): string {
+  const s = r as Ok<T> | Err;
+  return s.tag === "ok" ? `${s.value}` : s.msg;
+}
+
+function kind<T>(mod: T | Mod<T>): string {
+  return typeof mod;
+}
+
+function parts(): [unknown, unknown] {
+  return [1, "x"];
+}
+
+function demo(): void {
+  console.log(pick<number>({ default: 4 }, true), pick<number>(5, false));
+  console.log(pick<string | number>({ default: "a" }, true), pick<string | number>(7, false));
+  console.log(pick<number | null>({ default: null }, true), pick<number | null>(null, false));
+  console.log(pick<boolean | undefined>(undefined, false));
+  console.log(pick<unknown>(7, false), pick<unknown>({ default: 1 }, true));
+  console.log(pick<any>({ default: 2 }, true), pick<any>("t", false));
+  const u: unknown = { default: 3 };
+  const a: any = 6;
+  console.log(pick<unknown>(u, false), pick<any>(a, false));
+  console.log(either<unknown>("w", false), either<any>(a, false), either<unknown>("v", true));
+  console.log(settled<number>({ tag: "ok", value: 3 }), settled<number>({ tag: "err", msg: "x" }));
+  console.log(kind<number>(3), kind<number>({ default: 3 }), kind<unknown>(7), kind<string>("s"));
+  console.log(unwrap<string>({ default: "s" }));
+  console.log(unwrap<string[]>({ default: ["x", "y"] }).length);
+  console.log(second([{}, "k"]));
+  const pair: [string | number, number[]] = ["a", [1, 2]];
+  const p2 = pair as [string, number[]];
+  console.log(p2[0], p2[1].length, pair[1].length);
+  const [n, s] = parts() as [number, string];
+  console.log(n + 1, s.length);
+  // At `T = string` the union is `string`.
+  console.log(either<string>("s", true), either<number>(3, false), either<number>("q", true));
+  console.log(open<number>(new Box(9)), open<number>(8));
+  console.log(first<string>(["z", 1]), first<string | undefined>([undefined, 2]));
+  // The elements are the same values: a write through one tuple shows through the other.
+  p2[1].push(3);
+  console.log(pair[1].length, p2[1].length);
+  const nested: [[any, string | number], boolean] = [[{ a: 1 }, "n"], true];
+  const n2 = nested as [[object, string], boolean];
+  console.log(n2[0][1], n2[1]);
+  const ro: readonly [unknown, string] = [5, "r"];
+  const r2 = ro as readonly [number, string];
+  console.log(r2[0] + 1, r2[1]);
+}
+
+demo();

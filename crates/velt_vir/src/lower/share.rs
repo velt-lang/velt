@@ -44,7 +44,7 @@ impl FnLower<'_, '_> {
             ShareKind::Object => self.share_object(src, dst, ty),
             ShareKind::Value => {
                 let (s, d) = (self.addr(src), self.addr(dst));
-                let f = self.cx.func(Work::Glue(Glue::Share, ty));
+                let f = self.cx.func_direct(Work::Glue(Glue::Share, ty), self.mode);
                 self.call(vir::Callee::Func(f), vec![s, d], None, false);
             }
             ShareKind::Closure => self.share_closure(&src, &dst),
@@ -62,7 +62,7 @@ impl FnLower<'_, '_> {
             let p = self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(src)));
             self.assign(dst, Rvalue::Use(p.clone()));
             let c = self.count_ptr(p, ty);
-            self.retain(c);
+            self.retain_of(c, ty);
         } else if self.cx.is_class(ty) {
             // Placeholder for this pass: the class is counted in the next one.
             self.cx.facts.unmet = true;
@@ -136,7 +136,7 @@ impl FnLower<'_, '_> {
         let d = Operand::Copy(Place::local(data));
         let out = if self.cx.counted(ty) {
             let c = self.count_ptr(d.clone(), ty);
-            self.retain(c);
+            self.retain_of(c, ty);
             d
         } else if matches!(
             self.cx.share_kind(ty),

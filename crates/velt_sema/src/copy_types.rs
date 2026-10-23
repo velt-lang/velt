@@ -40,8 +40,8 @@ impl Ctx<'_> {
             TyKind::Tuple(ts) => self.parts_copy(t, depth, &ts, None, seen),
             TyKind::Option(x, _) => self.parts_copy(t, depth, &[x], None, seen),
             TyKind::Result(a, b) => self.parts_copy(t, depth, &[a, b], None, seen),
-            // Copying a mutex would duplicate its lock word.
-            TyKind::Adt(d, _) if Some(d) == self.mutex_ty() => false,
+            // Copying a lock would duplicate its lock word.
+            TyKind::Adt(d, _) if Some(d) == self.mutex_ty() || Some(d) == self.rwlock_ty() => false,
             TyKind::Adt(d, args) => {
                 // Objects (structs included, semantics stage 2) are references: never Copy.
                 let tys: Vec<TyId> = match &self.info[d.0 as usize] {

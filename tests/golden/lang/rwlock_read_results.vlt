@@ -1,0 +1,79 @@
+// check: no leaks
+// What a `read` returns leaves the lock as a copy of what it shares with the store, never the
+// store's object itself (read mode leaves those uncounted, so one would look unique to a later
+// writer and be freed under the result): an element, `slice`, `filter`, `map`, a spread,
+// `concat`, `Map.get` and `Array.from`, kept while writers replace the store, on one thread and
+// on many.
+class Item {
+  v: i64 = 0;
+  constructor(v: i64) {
+    this.v = v;
+  }
+}
+class St {
+  items: Item[] = [];
+  m: Map<string, Item> = new Map<string, Item>();
+}
+function single() {
+  const rw = shared(new RwLock<St>(new St()));
+  rw.write((s) => {
+    s.items.push(new Item(1));
+    s.items.push(new Item(2));
+    s.m.set("a", new Item(3));
+  });
+  const kept = rw.read((s) => s.items[0]);
+  const sl = rw.read((s) => s.items.slice(0, 1));
+  const all = rw.read((s) => s.items.slice());
+  const fl = rw.read((s) => s.items.filter((i) => i.v > 0));
+  const mp = rw.read((s) => s.items.map((i) => i));
+  const sp = rw.read((s) => [...s.items]);
+  const cc = rw.read((s) => s.items.concat([]));
+  const g = rw.read((s) => s.m.get("a"));
+  const af = rw.read((s) => Array.from(s.m.values()));
+  rw.write((s) => {
+    s.items = [];
+    s.m = new Map<string, Item>();
+  });
+  console.log(kept.v, sl[0].v, all.length, fl[1].v, mp[0].v, sp[1].v, cc.length, g!.v, af[0].v);
+  console.log(JSON.stringify(kept), JSON.stringify(sl));
+}
+
+async function reader(rw: shared<RwLock<St>>, rounds: i64): Promise<i64> {
+  let t: i64 = 0;
+  for (let i: i64 = 0; i < rounds; i++) {
+    const kept = rw.read((s) => s.items.slice(0, 3));
+    await Promise.resolve(0);
+    for (const k of kept) {
+      t += k.v;
+    }
+  }
+  return t;
+}
+
+async function writer(rw: shared<RwLock<St>>, rounds: i64): Promise<void> {
+  for (let i: i64 = 0; i < rounds; i++) {
+    rw.write((s) => {
+      s.items = [new Item(1), new Item(1), new Item(1)];
+    });
+    await Promise.resolve(0);
+  }
+}
+
+async function main() {
+  single();
+  const rw = shared(new RwLock<St>(new St()));
+  rw.write((s) => {
+    s.items = [new Item(1), new Item(1), new Item(1)];
+  });
+  const tasks: Promise<i64>[] = [];
+  for (let i = 0; i < 12; i++) {
+    tasks.push(spawn(reader(rw, 300)));
+  }
+  const ws: Promise<void>[] = [];
+  for (let i = 0; i < 4; i++) {
+    ws.push(spawn(writer(rw, 300)));
+  }
+  const totals = await Promise.all(tasks);
+  await Promise.all(ws);
+  console.log(totals.every((t) => t == 900), totals.length);
+}

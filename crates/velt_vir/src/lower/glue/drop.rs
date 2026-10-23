@@ -71,7 +71,7 @@ impl FnLower<'_, '_> {
                 if self.cx.counted(ty) {
                     let o = obj.clone();
                     let weak = self.cx.weak_capable(ty);
-                    self.release_as(obj, weak, |lw| lw.drop_object(o, ty, d));
+                    self.release_of(obj, ty, weak, |lw| lw.drop_object(o, ty, d));
                 } else {
                     self.drop_object(obj, ty, d);
                 }
@@ -258,7 +258,7 @@ impl FnLower<'_, '_> {
             return;
         };
         let targs = self.cx.method_targs(m, ty);
-        let f = self.cx.func_for(m, targs);
+        let f = self.cx.func_for_direct(m, targs, self.mode);
         self.call(vir::Callee::Func(f), vec![this], None, false);
     }
 

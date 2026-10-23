@@ -18,7 +18,7 @@ use velt_sema::hir::{self, DefId, FnDef, PassMode, TyId};
 
 use super::operand::proj;
 use super::rt::Rt;
-use super::{cfunc, cint, FnLower, LInfo, LState, ThunkKind, Work};
+use super::{cfunc, cint, FnLower, LInfo, LState, LkMode, ThunkKind, Work};
 use crate::vir::{BinOp, Function, Local, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
 /// Header fields of a closure environment in front of its captures: drop, clone and transfer
@@ -119,8 +119,27 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let targs = self.targs.clone();
         let ca = self.cx.closure_agg();
         let in_frame = self.frame_closures.contains(&def);
+        // The read mode its code runs in: the literal a `with` / `write` (outside read mode) or
+        // `read` (in it) is about to call runs only there; one only called here runs in this
+        // function's mode; one a call borrows runs during the call, but the callee may call it
+        // in a `read` callback, so plain code's asks (in a program with a lock set); any other
+        // closure may run anywhere.
+        let callback = std::mem::take(&mut self.lock_callback);
+        // A `read` callback plain code calls captures that code's variables only.
+        let own =
+            matches!(callback, Some((d, LkMode::Read)) if d == def) && self.mode == LkMode::Plain;
+        let mode = match callback {
+            Some((d, m)) if d == def => m,
+            _ if in_frame && !borrowed => self.mode,
+            _ if borrowed || in_frame => match self.mode {
+                LkMode::Plain if self.cx.has_lock_set() => LkMode::Checked,
+                m => m,
+            },
+            _ => LkMode::Checked,
+        };
         if f.captures.is_empty() {
-            let code = self.cx.func(Work::Thunk(ThunkKind::Env(None), def, targs));
+            let thunk = Work::Thunk(ThunkKind::Env(None), def, targs);
+            let code = self.cx.func_direct(thunk, mode);
             if self.cx.fn_identity() {
                 return self.identity_closure(def, ty, cfunc(code), borrowed || in_frame);
             }
@@ -131,7 +150,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
         }
         let frozen = self.frozen_captures(def);
         let code = match frozen {
-            0 => self.cx.func(Work::Fn(def, targs.clone())),
+            0 if own => self.cx.func_read_own(Work::Fn(def, targs.clone())),
+            0 => self.cx.func_direct(Work::Fn(def, targs.clone()), mode),
             mask => self
                 .cx
                 .func(Work::Frozen(def, targs.clone(), mask, None, vec![])),

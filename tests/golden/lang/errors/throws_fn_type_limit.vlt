@@ -1,0 +1,140 @@
+// The error types of function types written without `throws` (#1154) are inferred over at
+// most 9 checks of the program. A chain of closures that catch what a call through such a type
+// throws and rethrow it through another variable moves the errors one closure per check, so
+// twelve of them reach the limit, and the closure where it stops says so (#1442).
+class End extends Error {}
+
+function f0(g: () => number): number {
+  return f1(() => {
+    try {
+      return g() + 1;
+    } catch (e) {
+      const x = e;
+      throw x;
+    }
+  });
+}
+
+function f1(g: () => number): number {
+  return f2(() => {
+    try {
+      return g() + 1;
+    } catch (e) {
+      const x = e;
+      throw x;
+    }
+  });
+}
+
+function f2(g: () => number): number {
+  return f3(() => {
+    try {
+      return g() + 1;
+    } catch (e) {
+      const x = e;
+      throw x;
+    }
+  });
+}
+
+function f3(g: () => number): number {
+  return f4(() => {
+    try {
+      return g() + 1;
+    } catch (e) {
+      const x = e;
+      throw x;
+    }
+  });
+}
+
+function f4(g: () => number): number {
+  return f5(() => {
+    try {
+      return g() + 1;
+    } catch (e) {
+      const x = e;
+      throw x;
+    }
+  });
+}
+
+function f5(g: () => number): number {
+  return f6(() => {
+    try {
+      return g() + 1;
+    } catch (e) {
+      const x = e;
+      throw x;
+    }
+  });
+}
+
+function f6(g: () => number): number {
+  return f7(() => {
+    try {
+      return g() + 1;
+    } catch (e) {
+      const x = e;
+      throw x;
+    }
+  });
+}
+
+function f7(g: () => number): number {
+  return f8(() => {
+    try {
+      return g() + 1;
+    } catch (e) {
+      const x = e;
+      throw x;
+    }
+  });
+}
+
+function f8(g: () => number): number {
+  return f9(() => {
+    try {
+      return g() + 1;
+    } catch (e) {
+      const x = e;
+      throw x;
+    }
+  });
+}
+
+function f9(g: () => number): number {
+  return f10(() => {
+    try {
+      return g() + 1;
+    } catch (e) {
+      const x = e;
+      throw x;
+    }
+  });
+}
+
+function f10(g: () => number): number {
+  return f11(() => {
+    try {
+      return g() + 1;
+    } catch (e) {
+      const x = e;
+      throw x;
+    }
+  });
+}
+
+function f11(g: () => number): number {
+  return g();
+}
+
+try {
+  console.log(
+    f0(() => {
+      throw new End("e");
+    }),
+  );
+} catch (e) {
+  console.log("caught", e instanceof End);
+}

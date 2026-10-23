@@ -110,10 +110,25 @@ and memory where you want a fixed width; code shared with TypeScript never names
   To any other type, `as` is TypeScript's type assertion and converts nothing: the expression is
   typed as if annotated with that type, so a literal takes its shape
   (`[["a", 1]] as [string, u8][]`, `[] as string[]`), and it must be a value of that type.
-  An assertion that narrows, `x as T` with `x: T | null` (or `| undefined`) and `u as A` with
-  `A` a member of union `u`, is checked like `x!`: TypeScript trusts it, Velt panics with
-  `type assertion failed: …` when the value is not a `T` (not in generic code, where at
-  `T = U | null` a `null` is a `T`).
+  An assertion that narrows, `x as T` with `x: T | null` (or `| undefined`), `u as A` with
+  `A` a member of union `u`, and `u as A | B` (also `| undefined`) with some of `u`'s members,
+  is checked like `x!`: TypeScript trusts it, Velt panics with `type assertion failed: …` when
+  the value is not a `T`; `u as A | B` of a `u: A | B | C | undefined` panics on a nothing
+  as `u!` does. In generic code, `x as T` of an `x: T | undefined` is checked only where `T`
+  has no `undefined` of its own: at `T = U | undefined` every value of `x` is a `T` and passes
+  as it is. At `T = U | null` an `undefined` is no `T` value (Velt's `U | null` cannot hold
+  one, #930), so it stops with a `TypeError` instead of reading as `null`: an assertion never
+  changes the value. `u as A` with `A` a member of `u` is checked in generic code too
+  (`mod as Mod<T>` with `mod: T | Mod<T>`), and so is a union of some of `u`'s members that are
+  not themselves type parameters (`r as Ok<T> | Err` with `r: Ok<T> | Err | Pend`). Where a
+  member is a type parameter, the check follows the instantiation: at `T = unknown` (or
+  `any`) every value is a `T`, so `x as T` of an `x: T | string` holding a string passes, and
+  `mod as Mod<T>` of a `T` converts that `unknown` as `u as Mod<unknown>` would (#924). A
+  tuple asserts element by element
+  (`t as [object, string]` with `t: [any, string | symbol]`), each element converted or checked
+  as it would be alone; the result is a new tuple of those elements, so a write into one of the
+  two tuples does not show in the other, and `t2 === t` is `false` (an element that is an object
+  is the same object in both).
   As in TypeScript, `as` and `satisfies` take a whole type: `x as A | B` is a union and
   `x as A & B` an intersection (a leading `|` may start the type on the next line), so a
   bitwise operator after a cast needs parentheses: `(x as i32) | y`. A number literal after
@@ -522,8 +537,18 @@ one, `x == null` both, and `typeof`, printing and `JSON.stringify` see which one
 and an `undefined` arm (`i === 1 ? null : i === 2 ? undefined : i`) is a `T | null | undefined`.
 A generic union whose type argument brings a nothing (`T | string | undefined` at
 `T = number | null`) holds it like the union written out (`number | string | null | undefined`):
-`== null`, `===`, `??` and narrowing see it, inside the generic function too. An `any` or
-`unknown` converted to it (`const n: number | null | undefined = v`, `v as T | null |
+`== null`, `===`, `??` and narrowing see it, inside the generic function too. At `T = unknown`
+(or `any`) such a union (`T | string`, `T | Mod<T>`) holds any value: one that is no other
+member's is its `unknown` member's (`null`, `0`, an object literal of no member's shape: other
+fields, values its fields cannot hold, judged for literals and for variables and field paths by
+their types, or a discriminant no member has), and null tests (also `a == b` of a `null` and an
+`undefined`), truthiness (`!x`, `if (x)`, `&&`, `||`), `??`, `??=`, `?.`, `typeof` (also
+`typeof x === "number"` and `switch (typeof x)`), printing and `JSON.stringify` ask that value
+itself, as they do a plain `unknown`. Where `typeof x === "string"` holds, `x` reads as a
+`string` also when generic code put the string in the `T` member (`s<T>(v)` with `v: T` passed
+to `s<T>(x: T | string)`). `a == b` of two values of a type parameter's type (also
+`T | null | undefined`) compares with JavaScript's coercions at `T = unknown` or `any`
+(`1 == "1"`), as `==` on `any` does. An `any` or `unknown` converted to it (`const n: number | null | undefined = v`, `v as T | null |
 undefined`) gives `null` for a `null` and `undefined` for an `undefined`. Converted to a
 `T | null` or a `T | undefined`, it gives the nothing that type has, and stops with a
 `TypeError` for the other one (`const n: number | null = v` with a `v` holding `undefined`), as
@@ -663,7 +688,9 @@ nothings alike:
   (`m[key()] ??= v`): store the key in a variable first.
 - `x!` is `x` known to be neither `null` nor `undefined` (TS's non-null assertion). TypeScript
   trusts it; Velt checks it: a nothing panics with `non-null assertion failed`. A write into a
-  tuple behind `!` or `as` changes the tuple in place, wherever it is held: a variable, a field,
+  tuple behind `!` or `as` (one that keeps the tuple's type, or a union's tuple member; an
+  element-wise tuple assertion makes a new tuple, see [`as`](#numbers)) changes the tuple in
+  place, wherever it is held: a variable, a field,
   an element (`h.t![0] = v`, `xs[i++]![1] = "q"`, `g[r][c]![0] += 1`), a tuple inside such a
   tuple (`g[0]![0]![1] = 9`), a field read through an interface (`iface.opt![0] = 3`,
   `is[q++].t![0]++`), a union member (`(u as [number, string])[0] = 9`) or the
@@ -946,10 +973,10 @@ console.log(show("a"), show(41));
 
 ## Discriminated unions
 
-A union of object types (anonymous object types, structs or classes) whose members all have a
-field of a literal type is a **discriminated union**; that field (any name; `kind` below) is the
-*discriminant*. It is compiled like a Rust enum: the discriminant is the tag, not a stored
-string.
+A union of object types (anonymous object types, structs, classes or interfaces) whose members
+all have a field of a literal type is a **discriminated union**; that field (any name; `kind`
+below) is the *discriminant*. It is compiled like a Rust enum: the discriminant is the tag, not a
+stored string.
 
 ```ts
 type Shape =
@@ -985,6 +1012,39 @@ for (const s of shapes) {
   narrowing (``no field `r` on type `Shape` ``), except `value` on an `IteratorResult<T>`, which
   reads as `T | null` ([Iterables](control-flow.md#iterables)). Fields cannot be assigned through
   the union.
+- Members may be interfaces with methods, and intersections of one with object types
+  (`Base<T> & { state: "errored" } & ({ value: T; hasValue: true } | { value: null; hasValue: false })`,
+  one member per part of the inner union). A field every member has reads through each one's
+  getter, and a method every member has is called on the union: through an interface every
+  member extends that declares it, else each member's own when they have the same type. Members
+  may be classes too (`Circle | Sq` with `area()` on both, or a union of classes only): each
+  member's own method runs on the value itself: the receiver first, then the arguments in order,
+  each evaluated once. The call's type is the union of the members' results (`number | string`
+  when `scale()` returns a `number` on `Circle` and a `string` on `Sq`), as in TypeScript.
+
+```ts
+interface Base {
+  describe(): string;
+}
+interface Circle extends Base {
+  readonly kind: "circle";
+  readonly r: number;
+}
+interface Square extends Base {
+  readonly kind: "square";
+  readonly side: number;
+}
+type Shape = Circle | Square;
+
+const shapes: Shape[] = [
+  { kind: "circle", r: 1, describe: () => "round" },
+  { kind: "square", side: 2, describe: () => "four corners" },
+];
+for (const s of shapes) {
+  console.log(s.kind, s.describe()); // circle round, then square four corners
+  if (s.kind === "square") console.log(s.side); // 2
+}
+```
 - A discriminated union may name itself behind an indirection
   (`type Tree = { kind: "leaf"; v: number } | { kind: "node"; kids: Tree[] }`; see
   [Union types](#union-types)).
@@ -1599,9 +1659,10 @@ console.log(b.v); // hi
   type is one, and `typeof f` is `"function"`. With members, an object type or interface with
   one call signature is a [function with properties](functions.md#functions-with-properties)
   (TypeScript's `((x: T) => R) & { stop(): void }`); several call signatures (an overloaded
-  function) are not supported yet; a generic call signature (`<T>(x: T): T`) is a generic function type and a
-  construct signature (`new (x: T): C`; as in TypeScript, `new(…)` in an object type is never
-  a method, while in a class it is) a construct type, both planned
+  function) are not supported yet; a generic call signature (`<T>(x: T): T`) is a generic
+  function type, planned, and a construct signature (`new (x: T): C`; as in TypeScript,
+  `new(…)` in an object type is never a method, while in a class it is) the type of a class
+  used as a value, `new (x: T) => C`
   ([Functions](functions.md#arrow-functions-and-function-types)). Optional parameters in a
   call signature (`(x?: number): void`) are not supported yet, and a parameter initializer
   there (`(x = 1): void`) is an error, as in TypeScript. An interface with call signatures

@@ -28,10 +28,17 @@ impl FnCx<'_, '_> {
                     .is_some_and(|p| self.cx.mentions_op(p.ty) && !pattern[i])
             })
             .collect();
+        // A class as a value: the other arguments fix the type parameters first, as TypeScript
+        // infers from them (`mk(B, new A())` for `mk<T>(C: new () => T, x: T)` is `T = A`), and
+        // the class fixes only those left (`class_arg_slots`); a generic class (`reg(Box, 1)`
+        // for `C: new (v: T) => Box<T>`) takes its type arguments from the signature. It goes
+        // before the arrows, whose parameters it may type (`run((b) => b.m, B)`).
+        let class: Vec<bool> = args.iter().map(|a| self.names_class(a)).collect();
         let round = |i: usize| match (deferred(&args[i]) || late[i], as_arrow(&args[i]).is_some()) {
+            _ if class[i] => 2,
             (false, _) => 0,
             (true, false) => 1,
-            (true, true) => 2,
+            (true, true) => 3,
         };
         let mut order: Vec<usize> = (0..args.len()).collect();
         order.sort_by_key(|&i| (round(i), !pattern[i]));

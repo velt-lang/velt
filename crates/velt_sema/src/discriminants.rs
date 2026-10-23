@@ -1,6 +1,6 @@
 //! Discriminated unions (docs/reference/types.md "Discriminated unions"): a union whose members are
-//! object types (anonymous object types, structs, classes) that all have a field of a literal
-//! type — the *discriminant*, `kind` in `{ kind: "circle"; r: f64 } | { kind: "rect"; ... }`.
+//! object types (anonymous object types, structs, classes, interfaces) that all have a field of
+//! a literal type — the *discriminant*, `kind` in `{ kind: "circle"; r: f64 } | { kind: "rect"; ... }`.
 //! No extra encoding: the union is an ordinary union enum and the member's variant index is the
 //! tag, so the discriminant field is zero-sized and `s.kind` is a function of the tag.
 //! `switch (s.kind)`, `s.kind === "circle"` and object literals typed by the union select
@@ -81,9 +81,31 @@ impl Ctx<'_> {
         let members = self.union_members(u)?;
         let mut out = vec![];
         for m in members {
-            let (_, fty) = self.field_of(m, prop)?;
+            let fty = self.member_field_ty(m, prop)?;
             out.push(self.lit_value(fty)?);
         }
         Some(out)
+    }
+
+    /// The type of field `name` of a union member of type `t`: a struct / class / object
+    /// type's field, or an interface's, which its values read through a getter slot.
+    pub fn member_field_ty(&mut self, t: TyId, name: &str) -> Option<TyId> {
+        if let Some((_, fty)) = self.field_of(t, name) {
+            return Some(fty);
+        }
+        let (d, args) = self.iface_member(t)?;
+        let fty = self.iface(d)?.fields.iter().find(|f| f.name == name)?.ty;
+        Some(self.subst(fty, &args))
+    }
+
+    /// The interface and its arguments when `t` is an interface type that can be a union
+    /// member (not `any`, `unknown`, `object` or `Function`).
+    pub fn iface_member(&self, t: TyId) -> Option<(DefId, Vec<TyId>)> {
+        match self.ty.kind(t) {
+            TyKind::Dyn(d, args) if self.dynamic(t).is_none() && self.iface(*d).is_some() => {
+                Some((*d, args.clone()))
+            }
+            _ => None,
+        }
     }
 }

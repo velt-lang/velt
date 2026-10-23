@@ -1,0 +1,31 @@
+// A closure that throws, used as a standard library function type (a `Proxy` trap, #1174), is
+// reported with the inference's note, not as the inference hitting its limit: a function type
+// of the same shape written in the program got the error, and the program is checked again
+// with sharing (a closure held over an array that is changed), which is no limit (#1442).
+class Boom extends Error {}
+
+let keys: (t: any) => any = (t) => t;
+
+function install() {
+  keys = (t) => {
+    throw new Boom("user");
+  };
+}
+
+const p = new Proxy({} as any, {
+  ownKeys(t) {
+    throw new Boom("trap");
+  },
+});
+
+function held() {
+  const xs = [1, 2, 3];
+  const count = () => xs.length;
+  const ys = xs;
+  ys.push(4);
+  console.log(count(), xs.length);
+}
+
+install();
+held();
+console.log(Object.keys(p));

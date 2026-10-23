@@ -114,10 +114,15 @@ impl FnCx<'_, '_> {
                     .filter(|k| !covered.contains(k))
                     .collect(),
             };
-            reach.extend(incoming.take().unwrap_or_default());
+            let fell_in = incoming.take().filter(|v| !v.is_empty());
+            let entered = fell_in.is_none();
+            reach.extend(fell_in.unwrap_or_default());
             self.push_scope_until(c.span.hi);
             for f in self.slot_facts(s, &reach) {
                 self.narrow(&f);
+            }
+            if entered {
+                self.typeof_case_view(s, c.test.as_ref());
             }
             let mut stmts = vec![];
             self.stmts_into(&c.body, &mut stmts);
@@ -179,6 +184,25 @@ impl FnCx<'_, '_> {
             self.meet_narrowing(&st);
         }
         out
+    }
+
+    /// `case "string":` on `typeof x` with `x` a `T | string`, entered only from the `switch`:
+    /// `x` reads as a `string` (`typeof_view`).
+    fn typeof_case_view(&mut self, s: &Scrut, test: Option<&ast::Expr>) {
+        let (ScrutKind::TypeOf, Some(l)) = (&s.kind, s.local) else {
+            return;
+        };
+        let Some(ast::ExprKind::Lit(ast::Lit::Str(tag))) = test.map(|t| &t.kind) else {
+            return;
+        };
+        let Some(vs) = self.allowed_members(l) else {
+            return;
+        };
+        let ty = self.local_ty(l);
+        let u = self.cx.ty.core(ty).unwrap_or(ty);
+        if let Some(f) = self.typeof_view(l, u, &vs, tag) {
+            self.narrow(&f);
+        }
     }
 
     /// Narrowing of the scrutinee local in a body reached by the values of `reach` (slots).

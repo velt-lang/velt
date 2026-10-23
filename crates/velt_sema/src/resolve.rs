@@ -109,7 +109,8 @@ impl Ctx<'_> {
                 );
                 self.ty.error
             }
-            ast::TypeExprKind::GenericFunction { .. } | ast::TypeExprKind::Construct(_) => {
+            ast::TypeExprKind::Construct(inner) => self.resolve_construct(inner, t, env),
+            ast::TypeExprKind::GenericFunction { .. } => {
                 let (msg, note) = crate::fn_types::unsupported_fn_type(&t.kind);
                 self.error(velt_common::Diagnostic::error(msg, t.span).with_note(note));
                 self.ty.error

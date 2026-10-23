@@ -1,0 +1,12 @@
+before caught a
+1 0
+afterReturn caught a
+1 0
+negated caught a
+1 0
+chained caught b
+0 1
+nested caught b
+0 1
+generator caught a
+1 0

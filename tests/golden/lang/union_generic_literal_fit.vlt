@@ -1,0 +1,20 @@
+// check: no leaks
+// An object literal for a generic union with a dynamic member (`T | A` at `T = unknown`): a
+// member takes it only when its fields hold the values (`null` only where the field holds it,
+// variables and field paths by their types), and a discriminant no member has makes it the
+// dynamic member's.
+interface A { a: number; }
+interface N { a: number | null; }
+interface Ok { kind: "ok"; v: number; }
+interface Err { kind: "err"; msg: string; }
+function kj<T>(x: T | A): string { return JSON.stringify(x); }
+function kn<T>(x: T | N): string { return JSON.stringify(x); }
+function kok<T>(x: T | Ok | Err): string { return JSON.stringify(x); }
+const s: string = "s";
+const n: number = 7;
+const a = "sh";
+console.log(kj<unknown>({ a: s }), kj<unknown>({ a: n }), kj<unknown>({ a }), kj<any>({ a: s }));
+console.log(kn<unknown>({ a: null }), kn<unknown>({ a: 2 }));
+console.log(kok<unknown>({ kind: "no", v: 1 }), kok<unknown>({ kind: "ok", v: 1 }), kok<unknown>({ kind: "err", msg: "m" }), kok<any>({ kind: "x", v: 1 }));
+function inner(): string { const loc = { t: "t" }; return kj<unknown>({ a: loc.t }); }
+console.log(inner());

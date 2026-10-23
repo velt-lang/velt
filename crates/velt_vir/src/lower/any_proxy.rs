@@ -319,4 +319,20 @@ impl super::Cx<'_> {
         };
         matches!(self.hir.def(*d), hir::Def::Adt(a) if a.name == PRELUDE_ARRAY_METHOD)
     }
+
+    /// Is a value of object type `t` a function in JavaScript: an array method read as a value
+    /// (`Reflect.get(a, "map")`), a function with properties (its first field is the hidden
+    /// `#call`) or a class (`#new`; hir_encodings.md "Functions with properties", "Classes as
+    /// values")?
+    pub(super) fn is_function_object(&self, t: TyId) -> bool {
+        let TyKind::Adt(d, _) = self.types.kind(t) else {
+            return false;
+        };
+        let hidden = |a: &hir::AdtDef| {
+            a.fields
+                .first()
+                .is_some_and(|f| f.name == "#call" || f.name == "#new")
+        };
+        self.is_array_method(t) || matches!(self.hir.def(*d), hir::Def::Adt(a) if hidden(a))
+    }
 }

@@ -530,28 +530,7 @@ impl FnCx<'_, '_> {
         };
         let sty = s.ty;
         let some = self.pat(P::Binding(l, mode), payload, span);
-        // An option of a type parameter that allows `undefined` (`x?: T`): at `T = X | null`
-        // the present value may be `null`, which `??` replaces too, as in JavaScript. The
-        // payload is tested at run time for the instantiated type (`Intrinsic::IsNullish`).
-        let (guard, rest) = match self.param_payload(sty)
-            && (self.param_union(sty)
-                || self
-                    .cx
-                    .ty
-                    .nothing_of(sty)
-                    .is_some_and(|n| n.has_undefined()))
-        {
-            true => {
-                let b = self.cx.ty.bool_;
-                let bound = self.mk(H::Local(l, UseMode::Borrow), payload, span);
-                let test = self.intrinsic(hir::Intrinsic::IsNullish, vec![bound], b, span);
-                (
-                    Some(self.negated(test, true, span)),
-                    self.pat(P::Wildcard, sty, span),
-                )
-            }
-            false => (None, self.nothing_pat(sty, span)),
-        };
+        let (guard, rest) = self.present_guard(sty, l, payload, span);
         let arms = vec![
             hir::Arm {
                 pat: self.present_pat(some, sty, span),
@@ -597,6 +576,31 @@ impl FnCx<'_, '_> {
         let v = self.coerce(v, union);
         let d = self.coerce(d, union);
         (v, d, union)
+    }
+
+    /// The guard on the present arm of a match on `sty` (payload `payload` bound to `l`), and
+    /// the pattern of the other arm. An option of a type parameter that allows `undefined`
+    /// (`x?: T`), or a union with one (`T | Mod<T> | undefined`): at `T = X | null` or
+    /// `T = unknown` the present value may be a nothing, which `??` and `?.` take as one, as
+    /// in JavaScript. The payload is tested at run time (`Intrinsic::IsNullish`).
+    fn present_guard(
+        &mut self,
+        sty: TyId,
+        l: hir::LocalId,
+        payload: TyId,
+        span: Span,
+    ) -> (Option<hir::Expr>, hir::Pat) {
+        let generic = self.param_payload(sty)
+            && (self.param_union(sty)
+                || (self.cx.ty.nothing_of(sty)).is_some_and(|n| n.has_undefined()));
+        if !generic {
+            return (None, self.nothing_pat(sty, span));
+        }
+        let b = self.cx.ty.bool_;
+        let bound = self.mk(H::Local(l, UseMode::Borrow), payload, span);
+        let test = self.intrinsic(hir::Intrinsic::IsNullish, vec![bound], b, span);
+        let guard = self.negated(test, true, span);
+        (Some(guard), self.pat(P::Wildcard, sty, span))
     }
 
     /// `object?.<rest>`: apply `f` to the present payload; `null` or `undefined` short-circuits
@@ -681,14 +685,15 @@ impl FnCx<'_, '_> {
         };
         let sty = s.ty;
         let some = self.pat(P::Binding(l, mode), payload, span);
+        let (guard, rest) = self.present_guard(sty, l, payload, span);
         let arms = vec![
             hir::Arm {
                 pat: self.present_pat(some, sty, span),
-                guard: None,
+                guard,
                 body,
             },
             hir::Arm {
-                pat: self.nothing_pat(sty, span),
+                pat: rest,
                 guard: None,
                 body: none_body,
             },

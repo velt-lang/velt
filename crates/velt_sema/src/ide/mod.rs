@@ -130,17 +130,19 @@ fn analyze(modules: &[SourceModule], root: usize, stack_budget: usize) -> (Analy
         seeds = s;
         cx = new_cx(true, &seeds, false);
     }
-    for round in 1..=crate::FN_SITE_ROUNDS {
-        let Some(grown) = cx.fn_sites.grown() else {
-            break;
-        };
-        seeds = grown;
-        cx = new_cx(true, &seeds, round == crate::FN_SITE_ROUNDS);
-    }
     // As in `crate::check_with`: borrowing in held closures never rejects a program.
-    let retried = crate::retry_sharing(&cx);
-    if retried {
-        cx = new_cx(false, &seeds, true);
+    let (mut rounds, mut retried) = (0, false);
+    loop {
+        if let Some(grown) = cx.fn_sites.grown() {
+            rounds += 1;
+            seeds = grown;
+            cx = new_cx(!retried, &seeds, rounds == crate::FN_SITE_ROUNDS);
+        } else if !retried && crate::retry_sharing(&cx) {
+            retried = true;
+            cx = new_cx(false, &seeds, rounds == crate::FN_SITE_ROUNDS);
+        } else {
+            break;
+        }
     }
     (snapshot::build(cx), retried)
 }
