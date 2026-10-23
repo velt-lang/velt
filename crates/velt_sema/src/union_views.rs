@@ -160,22 +160,21 @@ impl Ctx<'_> {
         }
         let common = self.common_iface(&generic)?;
         let module = self.iface(heads[0].0).map_or(0, |i| i.module);
-        let names: Vec<String> = self
-            .iface(heads[0].0)
-            .map(|i| i.fields.iter().map(|f| f.name.clone()).collect())
-            .unwrap_or_default();
-        let mut fields = vec![];
-        for name in names {
-            let mut tys = vec![];
-            for &m in &generic {
-                match self.member_field_ty(m, &name) {
-                    Some(t) => tys.push(t),
-                    None => break,
+        // Every member's fields, in order of first appearance, each typed as the union of the
+        // members' types that have it (a member-only field is read after a test selected it).
+        let mut names: Vec<String> = vec![];
+        for (i, _) in &heads {
+            for f in self.iface(*i).map(|i| i.fields.clone()).unwrap_or_default() {
+                if !names.contains(&f.name) {
+                    names.push(f.name);
                 }
             }
-            if tys.len() < generic.len() {
-                continue;
-            }
+        }
+        let mut fields = vec![];
+        for name in names {
+            let tys: Vec<TyId> = (generic.iter())
+                .filter_map(|&m| self.member_field_ty(m, &name))
+                .collect();
             let ty = self.view_field_ty(&tys);
             if ty == self.ty.error {
                 continue;

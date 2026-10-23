@@ -1,0 +1,36 @@
+// A union view (#1410) whose object no longer fits the member a test selected: the narrowed read
+// is checked, a TypeError, never another member's value (`state` is "ready" but `value` is null,
+// which `Ready<T>` cannot hold; Node would print `null + 1`, 1).
+interface Base {
+  refresh(): number;
+}
+interface Ready extends Base {
+  readonly state: "ready";
+  readonly value: number;
+}
+interface Idle extends Base {
+  readonly state: "idle";
+  readonly value: null;
+}
+type State = Ready | Idle;
+interface Wide {
+  readonly state: "ready" | "idle";
+  readonly value: number | null;
+  refresh(): number;
+}
+let st: "ready" | "idle" = "ready";
+const wide: Wide = {
+  get state() {
+    return st;
+  },
+  get value() {
+    return null;
+  },
+  refresh: () => 1,
+};
+const s = wide as State;
+console.log(s.state);
+if (s.state === "ready") {
+  console.log("narrowed");
+  console.log(s.value + 1);
+}

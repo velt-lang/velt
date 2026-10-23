@@ -1,0 +1,1 @@
+panic: TypeError: a value read through a union view does not fit the narrowed member: it is null at union_view_stale_panics.vlt:35:15
