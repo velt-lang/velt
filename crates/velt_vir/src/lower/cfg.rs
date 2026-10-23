@@ -133,6 +133,10 @@ impl FnLower<'_, '_> {
         if self.dead() {
             return;
         }
+        // A function value called in read mode may write what sema cannot see (boxing/locks.rs).
+        if self.mode == super::LkMode::Read && matches!(callee, vir::Callee::Ptr { .. }) {
+            self.cx.facts.read_indirect = true;
+        }
         let next = self.new_block();
         self.terminate(Terminator::Call {
             callee,

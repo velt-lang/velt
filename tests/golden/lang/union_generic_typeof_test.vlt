@@ -1,0 +1,31 @@
+// check: no leaks
+// `typeof x === tag` on a union with a type parameter member (`T | Mod<T>`) asks that member's
+// value at every instantiation, as `typeof x` does: `T = unknown` holding a number is not an
+// "object", and `"number"` on a `T | Mod<T>` is not always false. Narrowing keeps that member
+// possible in both branches.
+interface Mod<T> { default: T; }
+function b7<T>(x: T | Mod<T>): string { return typeof x === "object" ? "obj" : "prim"; }
+function n7<T>(x: T | Mod<T>): string { return typeof x === "number" ? "num" : "other"; }
+function s7<T>(x: T | Mod<T>): string { return typeof x !== "string" ? "notstr" : "str"; }
+console.log(b7<unknown>(1), b7<unknown>({ default: 1 }), b7<string>("s"), b7<number>(1), b7<number>({ default: 2 }));
+console.log(n7<unknown>(1), n7<unknown>("x"), n7<unknown>({ default: 1 }), n7<number>(3), n7<string>("a"), n7<number>({ default: 2 }));
+console.log(s7<unknown>("a"), s7<unknown>(1), s7<string>("q"), s7<string>({ default: "z" }), s7<number>(1));
+function t1<T>(x: T | Mod<T> | null): string { return typeof x === "object" ? "obj" : "prim"; }
+console.log(t1<unknown>(null), t1<unknown>(3), t1<number>(null), t1<number>(4), t1<string>({ default: "a" }));
+function t2<T>(x: T | Mod<T>): string { return typeof x === "object" ? "o" : String(x); }
+console.log(t2<unknown>(5), t2<number>(6), t2<unknown>({ default: 1 }), t2<string>("s"));
+function t3<T>(x: T | Mod<T>): string { return typeof x !== "undefined" ? "def" : "undef"; }
+console.log(t3<unknown>(undefined), t3<unknown>(1), t3<number>(2));
+function t4<T>(x: T | Mod<T>): string { return typeof x === "function" ? "fn" : "nofn"; }
+console.log(t4<unknown>(() => 1), t4<unknown>(1), t4<() => number>(() => 2), t4<number>({ default: 1 }));
+function t5<T>(x: T | Mod<T>): number { if (typeof x === "boolean") { return 1; } return 0; }
+console.log(t5<unknown>(true), t5<boolean>(false), t5<string>("x"), t5<unknown>({ default: true }));
+class Box<T> {
+  v: T | Mod<T>;
+  constructor(v: T | Mod<T>) { this.v = v; }
+  kind(): string { return typeof this.v === "string" ? "str" : "other"; }
+}
+console.log(new Box<unknown>("a").kind(), new Box<string>("b").kind(), new Box<string>({ default: "c" }).kind(), new Box<number>(1).kind());
+async function t6<T>(x: T | Mod<T>): Promise<string> { await Promise.resolve(0); return typeof x === "number" ? "n" : "x"; }
+t6<unknown>(1).then((r) => console.log(r));
+t6<string>("1").then((r) => console.log(r));

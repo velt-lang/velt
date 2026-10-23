@@ -1,0 +1,36 @@
+// Eight readers pushing into a plain array of a store object reached through `Map.get`: the
+// first push stops the program instead of corrupting the array other readers read.
+class Item {
+  v: i64 = 0;
+  nums: i64[] = [];
+  constructor(v: i64) {
+    this.v = v;
+  }
+}
+class St {
+  m: Map<string, Item> = new Map<string, Item>();
+}
+async function reader(rw: shared<RwLock<St>>): Promise<i64> {
+  let t: i64 = 0;
+  for (let i = 0; i < 2000; i++) {
+    t += rw.read((s) => {
+      s.m.get("a")!.nums.push(i);
+      return s.m.get("a")!.nums.length as i64;
+    });
+  }
+  return t;
+}
+async function main() {
+  const st = new St();
+  st.m.set("a", new Item(1));
+  const rw = shared(new RwLock<St>(st));
+  const ps: Promise<i64>[] = [];
+  for (let k = 0; k < 8; k++) {
+    ps.push(spawn(reader(rw)));
+  }
+  for (const p of ps) {
+    await p;
+  }
+  const n = rw.read((s) => s.m.get("a")!.nums.length as i64);
+  console.log(n);
+}

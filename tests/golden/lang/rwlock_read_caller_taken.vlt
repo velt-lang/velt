@@ -1,0 +1,50 @@
+// The caller's object a `read` callback takes out of one of the caller's containers (`pop`,
+// `shift`, `splice`, a `Map` read) and stores into another stays the same object.
+class Item {
+  v: i64 = 0;
+  constructor(v: i64) {
+    this.v = v;
+  }
+}
+class St {
+  items: Item[] = [new Item(1)];
+}
+
+function main() {
+  const rw = shared(new RwLock<St>(new St()));
+  const a = new Item(1);
+  const out: Item[] = [a, new Item(2)];
+  const out2: Item[] = [];
+  const mk = new Map<Item, i64>();
+  const seen = new Set<Item>();
+  const x = out[1];
+  rw.read((s) => {
+    mk.set(out[0], 1);
+    mk.set(a, 2);
+    seen.add(out[1]);
+    out2.push(out.pop()!);
+    return 0;
+  });
+  console.log(mk.size, mk.get(a), seen.has(x), x === out2[0], out.length);
+  rw.read((s) => {
+    mk.delete(a);
+    seen.delete(x);
+    out.push(out2.shift()!);
+    return 0;
+  });
+  console.log(mk.size, seen.size, out[1] === x, out2.length);
+  rw.read((s) => {
+    out2.push(out.splice(0, 1)[0]);
+    return 0;
+  });
+  console.log(out2[0] === a, out.length);
+  const m = new Map<string, Item>();
+  m.set("k", x);
+  rw.read((s) => {
+    out2.push(m.get("k")!);
+    out2.push(out.pop() ?? new Item(0));
+    return 0;
+  });
+  x.v = 8;
+  console.log(out2.map((i) => i.v).join(","), out2[1] === x, out2[2] === x, out.length);
+}

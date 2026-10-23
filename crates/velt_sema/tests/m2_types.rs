@@ -368,11 +368,20 @@ fn generic_functions_infer_and_check_bounds() {
 
 #[test]
 fn generic_equality_uses_the_same_intrinsic() {
-    // `==` is JS `===` (objects by identity, semantics stage 2): `Intrinsic::Same`.
-    let p = ok_src("function same<T>(a: T, b: T): bool { return a == b; } function main() { console.log(same(1, 2)); }");
+    // `===` is identity for objects (semantics stage 2): `Intrinsic::Same`. `==` is the same
+    // test where the instantiation holds no nothing, else also `null == undefined`:
+    // `Intrinsic::LooseEq`, lowered per instantiation.
+    let p = ok_src(
+        "function same<T>(a: T, b: T): bool { return a === b; }
+         function loose<T>(a: T, b: T): bool { return a == b; }
+         function main() { console.log(same(1, 2), loose(1, 2)); }",
+    );
     assert!(calls(func(&p, "same"))
         .iter()
         .any(|(c, _)| matches!(c, Callee::Intrinsic(Intrinsic::Same))));
+    assert!(calls(func(&p, "loose"))
+        .iter()
+        .any(|(c, _)| matches!(c, Callee::Intrinsic(Intrinsic::LooseEq))));
 }
 
 #[test]

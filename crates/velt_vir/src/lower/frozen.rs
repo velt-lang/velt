@@ -119,6 +119,23 @@ impl FnLower<'_, '_> {
         self.changed.as_ref().is_some_and(|c| c.contains(&l))
     }
 
+    /// Is the place `e` part of what this `read` callback captured from code outside read mode
+    /// (`Work::ReadOwn`: the caller's variable, never a store's object, since what a reader
+    /// stores there is a copy)?
+    pub(super) fn captured_root(&mut self, e: &hir::Expr) -> bool {
+        if !self.own_captures {
+            return false;
+        }
+        let Some(root) = place_root(e) else {
+            return false;
+        };
+        let captured = match self.cx.cur_def.map(|d| self.cx.hir.def(d)) {
+            Some(hir::Def::Fn(f)) => f.captures.iter().any(|c| c.inner == root),
+            _ => false,
+        };
+        captured || self.caller_alias(root)
+    }
+
     /// The frozen value `e` read in place: its own use borrowed whatever its HIR mode, since
     /// moving out of one would leave the all-zero value where other threads read it, and moving
     /// out of a counted part shares it.
@@ -221,7 +238,8 @@ impl FnLower<'_, '_> {
             return None;
         }
         let work = Work::Frozen(k.def, k.targs, k.captures | mask, None, vec![]);
-        let code = self.cx.func(work);
+        // Called directly: in this function's read mode, as a direct call (`Work::Checked`).
+        let code = self.cx.func_direct(work, self.mode);
         let ret = self.sub(ty);
         let outer = std::mem::replace(&mut self.frozen_args, true);
         let v = match n {
@@ -428,7 +446,7 @@ struct Changed<'h> {
 }
 
 /// The local a place is rooted in.
-fn place_root(e: &hir::Expr) -> Option<LocalId> {
+pub(super) fn place_root(e: &hir::Expr) -> Option<LocalId> {
     match &e.kind {
         K::Local(l, _) => Some(*l),
         K::Field { base, .. }

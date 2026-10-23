@@ -1,0 +1,31 @@
+// An object a `read` callback made holding the caller's objects is the caller's once stored
+// into the caller's array: changing it afterwards through the callback's own variable (here
+// the array held inline in it) stops the program, as a write to the value's own objects does.
+class Item {
+  v: i64 = 0;
+  constructor(v: i64) {
+    this.v = v;
+  }
+}
+class Bag {
+  items: Item[] = [];
+}
+class St {
+  items: Item[] = [new Item(1)];
+  bag: Bag = new Bag();
+}
+
+function main() {
+  const rw = shared(new RwLock<St>(new St()));
+  const out: Item[] = [new Item(5)];
+  const bags: Bag[] = [];
+  rw.read((s) => {
+    const b = new Bag();
+    b.items.push(out[0]);
+    bags.push(b);
+    console.log("stored", bags.length);
+    b.items.push(out[0]);
+    return 0;
+  });
+  console.log("not reached", bags[0].items.length);
+}

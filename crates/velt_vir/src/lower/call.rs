@@ -6,7 +6,7 @@
 use velt_sema::hir::{self, DefId, PassMode, TyId, TyKind, UseMode};
 
 use super::operand::proj;
-use super::{ice, unit, FnLower, Work};
+use super::{ice, unit, FnLower, LkMode, Work};
 use crate::vir::{self, Operand, Place, Proj, Rvalue, Ty};
 
 impl FnLower<'_, '_> {
@@ -65,15 +65,34 @@ impl FnLower<'_, '_> {
         // Frozen counted arguments go to an instance that neither changes nor counts them.
         let frozen = self.frozen_mask(&modes, args, pre.len());
         let at = self.panic_loc().filter(|_| self.cx.tracks_caller(def));
-        let fid = match (frozen, at) {
-            (0, Some(at)) => self.cx.func(Work::Tracked(def, targs.clone(), at)),
-            (0, None) => self.cx.func_for(def, targs.clone()),
+        // A direct call: the callee runs in this function's mode (`Work::Checked`).
+        let work = match (frozen, at) {
+            (0, Some(at)) => Work::Tracked(def, targs.clone(), at),
+            (0, None) => Work::Fn(def, targs.clone()),
             (mask, at) => {
                 let fns = self.known_fns_of(&modes, args, pre.len());
-                self.cx
-                    .func(Work::Frozen(def, targs.clone(), mask, at, fns))
+                Work::Frozen(def, targs.clone(), mask, at, fns)
             }
         };
+        // A method of what a `read` callback captured (the caller's `push`, `set`, `add`), or a
+        // function changing it, runs by the counts outside read mode, freeing after the reads
+        // (`LkMode::Deferred`): what it is given to keep is counted the same way, or a copy of
+        // what may be the store's (caller_stores.rs `keep_for_caller`), and its result is handed
+        // to the reader (`hand_to_reader`). A result read mode could not take over (an object
+        // outside the lock set holding lock-set objects, as an iterator) leaves the call in
+        // read mode.
+        let changes_captured = pre.is_empty()
+            && args.iter().zip(&modes).enumerate().any(|(i, (a, m))| {
+                (i == 0 && f.self_ty.is_some() || *m == PassMode::BorrowMut)
+                    && self.captured_root(a)
+            });
+        let rty = self.cx.subst(ret, &targs);
+        let plain = changes_captured && (!self.needs_drop(rty) || self.hand_ok(rty));
+        let mode = match plain {
+            true => LkMode::Deferred,
+            false => self.mode,
+        };
+        let fid = self.cx.func_direct(work, mode);
         // Not `super.m()`: JavaScript calls the base method without reading it from `this`.
         let sup = std::mem::take(&mut self.super_call);
         if f.self_ty.is_some() && !args.is_empty() && pre.is_empty() && !sup {
@@ -89,12 +108,36 @@ impl FnLower<'_, '_> {
             false => Stabilize::Share,
         };
         let outer = std::mem::replace(&mut self.frozen_args, frozen != 0);
+        let to_caller = std::mem::replace(&mut self.args_to_caller, plain);
+        let kept = match plain {
+            true => self.kept_args_of(args, &modes),
+            false => 0,
+        };
+        let kept = std::mem::replace(&mut self.kept_args, kept);
+        let handed = std::mem::take(&mut self.kept_handed);
+        let drops = std::mem::take(&mut self.kept_drops);
         argv.extend(self.lower_args(args, &modes, how));
+        let handed = std::mem::replace(&mut self.kept_handed, handed);
+        let drops = std::mem::replace(&mut self.kept_drops, drops);
+        self.kept_args = kept;
+        self.args_to_caller = to_caller;
         self.frozen_args = outer;
         let ret = self.cx.subst(ret, &targs);
         let throws = throws.map(|e| self.cx.subst(e, &targs));
         let throws = self.cx.error_ty(throws);
-        self.finish_call(vir::Callee::Func(fid), argv, ret, throws)
+        let r = self.finish_call(vir::Callee::Func(fid), argv, ret, throws);
+        if plain && self.needs_drop(ret) {
+            self.hand_to_reader(&r, ret);
+        }
+        for (v, t, was) in handed {
+            self.hand_back(&v, t, was);
+        }
+        for (p, t, m) in drops {
+            let mode = std::mem::replace(&mut self.mode, m);
+            self.drop_glue(p, t);
+            self.mode = mode;
+        }
+        r
     }
 
     /// Externs use the same mapping as Velt functions: aggregates by pointer (read-only borrow),
@@ -225,7 +268,18 @@ impl FnLower<'_, '_> {
         let later = self.later_each(args);
         let outer = self.start_borrows();
         let mut recv = self.proxy_recv.take();
+        let kept = std::mem::take(&mut self.kept_args);
         for (i, ((a, mode), later)) in args.iter().zip(modes).zip(later).enumerate() {
+            self.owner_write = false;
+            if *mode == PassMode::BorrowMut {
+                // Held inline in an object (caller_stores.rs).
+                self.owner_barrier(a);
+            }
+            if i < 64 && kept >> i & 1 == 1 {
+                let v = self.keep_mut_arg(a);
+                argv.push(v);
+                continue;
+            }
             if i == 1 {
                 if let (Some(r), Some(v)) = (recv.take(), argv.first()) {
                     self.proxy_recv_lowered(r, &v.clone());
@@ -258,12 +312,15 @@ impl FnLower<'_, '_> {
                 }
                 (t @ Ty::Agg(_), PassMode::Owned | PassMode::Copy) => {
                     // A fresh copy the callee now owns (Owned) or only reads (Copy structs).
-                    let v = self.consume(a);
+                    let v = match mode {
+                        PassMode::Owned => self.owned_arg(a),
+                        _ => self.consume(a),
+                    };
                     let tmp = self.copy_to_temp(v, t);
                     argv.push(self.addr(Place::local(tmp)));
                 }
                 (_, PassMode::Owned) => {
-                    let v = self.consume(a);
+                    let v = self.owned_arg(a);
                     argv.push(self.hold_owned(v, a.ty, later));
                 }
                 (_, m) => {
@@ -286,6 +343,7 @@ impl FnLower<'_, '_> {
                 }
             }
         }
+        self.owner_write = false;
         if let (Some(r), Some(v)) = (recv, argv.first()) {
             self.proxy_recv_lowered(r, &v.clone());
         }

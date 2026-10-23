@@ -111,6 +111,21 @@ impl FnCx<'_, '_> {
         };
         self.readonly_method_call(&recv, &prop.name, args, prop.span);
         let Some(r) = self.resolve_method(recv.ty, &prop.name) else {
+            // A method of an interface every member of a union extends.
+            let recv = match self.cx.union_def(recv.ty).is_some() {
+                true => match self.union_iface_receiver(recv, &prop.name) {
+                    Ok(recv) => {
+                        return self.method_call_at(recv, prop, type_args, args, exp, span, getter)
+                    }
+                    Err(recv) => match self
+                        .union_member_call(recv, prop, type_args, args, exp, span, getter)
+                    {
+                        Ok(h) => return h,
+                        Err(recv) => recv,
+                    },
+                },
+                false => recv,
+            };
             // `e.toString()` on an error union: `Error`'s method, dispatched to each class's.
             if self.is_error_union(recv.ty) {
                 let recv = self.error_union_accessor(recv, &prop.name);

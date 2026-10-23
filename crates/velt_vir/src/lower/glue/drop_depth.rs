@@ -227,10 +227,14 @@ impl FnLower<'_, '_> {
         self.when(nn, done);
         let pp = self.operand_place(p.clone(), Ty::Ptr);
         let value = proj(&pp, Proj::Deref(payload));
-        let glue = cfunc(self.cx.func(Work::Glue(Glue::QueuedDrop, ty)));
+        // Run by the runtime inside this bracket, on this thread: in this function's mode.
+        let glue = cfunc(
+            self.cx
+                .func_direct(Work::Glue(Glue::QueuedDrop, ty), self.mode),
+        );
         let q = p.clone();
         let weak = self.cx.weak_capable(ty);
-        self.release_as(p, weak, |lw| {
+        self.release_of(p, ty, weak, |lw| {
             let boxed = q.clone();
             lw.bracket(
                 |lw| lw.call_rt(Rt::DropQueue, vec![boxed, glue], None),
@@ -247,7 +251,11 @@ impl FnLower<'_, '_> {
     /// Queue the `ty` value at `place`: a boxed value is its box pointer (its reference moves
     /// to the queue); any other value moves to a heap box of its own.
     fn queue_value(&mut self, place: Place, ty: TyId) {
-        let glue = cfunc(self.cx.func(Work::Glue(Glue::QueuedDrop, ty)));
+        // Run by the runtime inside this bracket, on this thread: in this function's mode.
+        let glue = cfunc(
+            self.cx
+                .func_direct(Work::Glue(Glue::QueuedDrop, ty), self.mode),
+        );
         if self.cx.boxed(ty) {
             let b = Operand::Copy(place);
             return self.call_rt(Rt::DropQueue, vec![b, glue], None);

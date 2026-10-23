@@ -65,6 +65,7 @@ pub unsafe extern "C" fn velt_rt_spawn_fut(
     result_size: u64,
     result_drop: Option<ResultDropFn>,
 ) -> *mut VeltFut {
+    crate::shared::refuse_tasks_in_read();
     let size = checked_size(result_size);
     let mut state = JoinState::default();
     state.result_drop = result_drop;
@@ -90,6 +91,7 @@ pub unsafe extern "C" fn velt_rt_spawn(
     result_size: u64,
     result_drop: Option<ResultDropFn>,
 ) -> *mut VeltFut {
+    crate::shared::refuse_tasks_in_read();
     let f = velt_rt_fut_box(poll, drop, state, state_size, state_align);
     velt_rt_spawn_fut(f, result_size, result_drop)
 }
@@ -108,6 +110,7 @@ pub unsafe extern "C" fn velt_rt_spawn_transfer(
     result_drop: Option<ResultDropFn>,
     result_transfer: Option<ResultDropFn>,
 ) -> *mut VeltFut {
+    crate::shared::refuse_tasks_in_read();
     let f = velt_rt_fut_box(poll, drop, state, state_size, state_align);
     if let Some(t) = result_transfer {
         super::local::velt_rt_fut_transfer(f, Some(t));
@@ -124,6 +127,7 @@ pub unsafe extern "C" fn velt_rt_spawn_detached(
     state_size: u64,
     state_align: u64,
 ) {
+    crate::shared::refuse_tasks_in_read();
     let f = velt_rt_fut_box(poll, drop, state, state_size, state_align);
     executor::spawn(f, 0, None);
 }

@@ -35,7 +35,10 @@ pub(super) fn find(cx: &mut Ctx, res: &mut Resolver) -> Found {
     let mut found = Found::default();
     for &d in &fns {
         let calls = calls_in(cx, d, |c, _| {
-            matches!(c, Callee::Intrinsic(Intrinsic::MutexWith))
+            matches!(
+                c,
+                Callee::Intrinsic(Intrinsic::MutexWith | Intrinsic::LockRead)
+            )
         });
         for (args, params) in calls {
             if let [_, cb] = args.as_slice() {
@@ -110,7 +113,11 @@ fn calls_in(cx: &mut Ctx, d: DefId, pick: impl Fn(&Callee, usize) -> bool) -> Ca
                 .filter(|i| pick(callee, *i))
                 .map(|i| args[i].clone())
                 .collect();
-            if matches!(callee, Callee::Intrinsic(Intrinsic::MutexWith)) && !picked.is_empty() {
+            if matches!(
+                callee,
+                Callee::Intrinsic(Intrinsic::MutexWith | Intrinsic::LockRead)
+            ) && !picked.is_empty()
+            {
                 args_found.push(args.clone());
             } else if !picked.is_empty() {
                 args_found.push(picked);

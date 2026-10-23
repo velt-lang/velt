@@ -46,6 +46,7 @@ mod boxes;
 mod boxing;
 mod call;
 mod callee;
+mod caller_stores;
 mod cells;
 mod cfg;
 mod class_test;
@@ -226,6 +227,24 @@ enum ThunkKind {
     Unbound,
 }
 
+/// When a function runs in velt_rt's read mode (boxing/locks.rs), which decides how it counts
+/// and writes lock-set objects (rc.rs).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub(super) enum LkMode {
+    /// Never: inline counts.
+    #[default]
+    Plain,
+    /// Always (code only a `read` callback calls directly): read mode's inline rules.
+    Read,
+    /// Either: asks the thread once (`velt_rt_lk_mode`).
+    Checked,
+    /// Plain's counts, in code that changes the caller's containers inside a `read` callback
+    /// (`Work::Deferred`): an object of the lock set whose last reference goes is freed once the
+    /// thread's reads end (velt_rt `velt_rt_free_after_reads`), since a reader may still point
+    /// at it without counting it (read mode cannot tell it from the store's).
+    Deferred,
+}
+
 /// A function the lowering must build; each distinct `Work` becomes exactly one VIR function.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum Work {
@@ -249,6 +268,19 @@ enum Work {
     Oob(bool),
     /// A caller-tracking function instance (track_caller.rs) for one call site.
     Tracked(DefId, Vec<TyId>, SrcLoc),
+    /// `Work` compiled to run in velt_rt's read mode as well (boxing/locks.rs): its counts and
+    /// writes of lock-set objects ask the thread's mode (rc.rs). Every function whose address is
+    /// taken, every callback and every poll is one; a plain `Work` is code only ever called
+    /// directly from code outside read mode, which counts lock-set objects inline.
+    Checked(Box<Work>),
+    /// `Work` reached only by direct calls from a `read` callback literal: it always runs in read
+    /// mode, so it counts lock-set objects by read mode's rules without asking.
+    Read(Box<Work>),
+    /// A `read` callback literal that code outside read mode calls: `Read`, and what it
+    /// captured is that code's, never a store's object (`FnLower::own_captures`).
+    ReadOwn(Box<Work>),
+    /// `Work` changing the caller's containers inside a `read` callback (`LkMode::Deferred`).
+    Deferred(Box<Work>),
     /// A function instance whose params in the mask (bit `i`: `params[i]`, captures first)
     /// borrow a value other threads read at the same time (frozen.rs), caller-tracking for
     /// the call site when it is given, and given closure literals for some function params:
@@ -385,6 +417,10 @@ struct Cx<'h> {
     anon: types::AnonShapes,
     /// The function whose instance is being built (for `nothing_clashes`).
     cur_def: Option<DefId>,
+    /// The read mode of the function being built (`Work::Checked`, `Work::Read`).
+    cur_mode: LkMode,
+    /// Whether the function being built is a `Work::ReadOwn`.
+    cur_own: bool,
     /// Functions whose instances made an option of an option with another nothing (`T | null`
     /// at `T = U | undefined`, or the reverse; types.rs `intern`), which this phase cannot
     /// represent (issue #930): reported, not lowered silently.
@@ -527,6 +563,37 @@ struct FnLower<'c, 'h> {
     known_fns: FxHashMap<LocalId, frozen::KnownFn>,
     /// While binding a pattern into a frozen value: bindings take no shares (frozen.rs).
     frozen_binds: bool,
+    /// While evaluating a place only to read it (`FieldPresent`): no write barrier.
+    read_target: bool,
+    /// The field read lowered next is about to be changed in place, reached by running code
+    /// (caller_stores.rs `owner_barrier`): it puts the barrier on its owner.
+    owner_write: bool,
+    /// This function's read mode, once asked (rc.rs `lk_mode`).
+    lk_mode: Option<Local>,
+    /// This thread's `RwLock` reader state, once a `read` returned it (async_fn/sync.rs).
+    rw_reader: Option<Local>,
+    /// Whether this function runs in read mode (`Work::Checked`, `Work::Read`).
+    mode: LkMode,
+    /// A `read` callback that code outside read mode calls (`Work::ReadOwn`): the caller's
+    /// variables it captured hold none of a store's objects.
+    own_captures: bool,
+    /// The closure literal a `with`, `write` or `read` is about to call, and the read mode its
+    /// code runs in.
+    lock_callback: Option<(DefId, LkMode)>,
+    /// The owned arguments being lowered go into the caller's containers in a `read` callback
+    /// (call.rs `call_def`, caller_stores.rs `keep_for_caller`).
+    args_to_caller: bool,
+    /// The arguments being lowered (bit `i`: `args[i]`) that are the reader's containers a
+    /// call changing the caller's containers changes (caller_stores.rs `kept_args_of`).
+    kept_args: u64,
+    /// Those arguments as passed, handed back to the reader after the call (with whether each
+    /// was the reader's own, referenced once: caller_stores.rs `hand_back`).
+    kept_handed: Vec<(Operand, TyId, Option<Local>)>,
+    /// Those of them the call's own values, dropped after that in the mode given.
+    kept_drops: Vec<(Place, TyId, LkMode)>,
+    /// A `read` callback's variables naming the caller's objects (caller_stores.rs
+    /// `caller_alias`), once asked.
+    caller_aliases: Option<FxHashSet<LocalId>>,
     /// With debug info: where the block declaring a local ends (debug_vars.rs).
     scope_ends: FxHashMap<LocalId, SrcLoc>,
     /// Set while lowering the body of an async function (a poll function).

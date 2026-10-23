@@ -54,13 +54,16 @@ impl FnCx<'_, '_> {
                         format!("cannot convert a `{tn}` to `{to}`: it holds a lock"),
                         h.span,
                     )
-                    .with_note("its value is read only under its lock (`with`), and an `any` value is read without it: convert what a callback returns instead"),
+                    .with_note("its value is read only under its lock (`with`, `read`), and an `any` value is read without it: convert what a callback returns instead"),
                 );
                 Ok(self.error_expr(h.span))
             }
             (None, Some(_)) => self.box_dynamic(h, exp),
             (Some(f), Some(t)) if !dynamic_converts(f, t, checked_from_unknown) => Err(h),
             (Some(Dynamic::Any), _) | (Some(_), Some(_)) => Ok(self.unbox_dynamic(h, exp)),
+            (Some(_), None) if self.takes_dynamic_whole(exp, h.ty) => {
+                Ok(self.unbox_dynamic(h, exp))
+            }
             (Some(_), None) if !checked_from_unknown => Err(h),
             (Some(_), None) => Ok(self.unbox_dynamic(h, exp)),
         }
@@ -444,7 +447,8 @@ impl FnCx<'_, '_> {
 
     /// A dynamic value as the union or literal type `exp` (`members`: its members, or `exp`
     /// itself): the first member whose test the value passes (`typeof` for a primitive,
-    /// `instanceof` for a class, `===` for a literal), converted; else a `TypeError`.
+    /// `instanceof` for a class, `===` for a literal), converted; else a `TypeError`, or the
+    /// member that is `any` / `unknown` itself (dynamic_whole.rs).
     fn dynamic_to_members(&mut self, h: hir::Expr, exp: TyId, members: Vec<TyId>) -> hir::Expr {
         let span = h.span;
         let dty = h.ty;
@@ -454,8 +458,15 @@ impl FnCx<'_, '_> {
         let msg = self.str_lit(&format!("TypeError: the value is not a {name}"), span);
         let never = self.cx.ty.never;
         let mut result = self.intrinsic(Intrinsic::Panic, vec![msg], never, span);
-        for &m in members.iter().rev() {
+        let catch_all = self.dynamic_member(&members, dty);
+        if let Some(c) = catch_all {
+            result = self.whole_as_member(tmp, dty, c, exp, span);
+        }
+        for &m in members.iter().rev().filter(|m| Some(**m) != catch_all) {
             let Some((test, value)) = self.member_test(tmp, dty, m, span) else {
+                if catch_all.is_some() {
+                    continue;
+                }
                 let d = Diagnostic::error(
                     format!(
                         "converting an `any` to `{name}` is not supported yet (#924): no run-time test for `{}`",
@@ -490,7 +501,7 @@ impl FnCx<'_, '_> {
     }
 
     /// The test that the dynamic value in `tmp` (type `dty`) holds a `m`, and the value as `m`.
-    fn member_test(
+    pub(super) fn member_test(
         &mut self,
         tmp: LocalId,
         dty: TyId,

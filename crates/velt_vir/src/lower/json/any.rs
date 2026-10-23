@@ -91,6 +91,39 @@ impl FnLower<'_, '_> {
         }
     }
 
+    /// Is `ty` a union with an `any` / `unknown` member (`T | string` at `T = unknown`)?
+    pub(super) fn has_dynamic_member(&mut self, ty: TyId) -> bool {
+        if !self.cx.is_union(ty) {
+            return false;
+        }
+        let TyKind::Adt(d, _) = self.cx.kind(ty) else {
+            return false;
+        };
+        let n = self.cx.enum_def(d).variants.len() as u32;
+        (0..n).any(|v| {
+            let tys = self.cx.variant_tys(ty, v);
+            tys.into_iter().any(|m| self.cx.is_dynamic(m))
+        })
+    }
+
+    /// Has the value at `place` (an `any`, or a union with an `any` member) a JSON form?
+    pub(super) fn json_present(&mut self, place: &Place, ty: TyId) -> Operand {
+        if self.cx.is_dynamic(ty) {
+            return self.any_json_present(place);
+        }
+        let out = Place::local(self.temp(Ty::Bool));
+        self.assign(out.clone(), Rvalue::Use(Self::ctrue()));
+        self.for_each_variant(place, ty, |lw, _, parts| {
+            if let [(pp, pt)] = parts.as_slice() {
+                if lw.cx.is_dynamic(*pt) {
+                    let v = lw.any_json_present(pp);
+                    lw.assign(out.clone(), Rvalue::Use(v));
+                }
+            }
+        });
+        Operand::Copy(out)
+    }
+
     /// Does the dynamic value at `place` have a JSON form (not `undefined`, a function or a
     /// symbol)?
     pub(super) fn any_json_present(&mut self, place: &Place) -> Operand {

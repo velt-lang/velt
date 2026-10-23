@@ -80,7 +80,7 @@ impl FnLower<'_, '_> {
             crate::lower::ice("Map of a non-ADT type")
         };
         let def = self.class_method(d, "__liveAt");
-        let f = self.cx.func_for(def, targs);
+        let f = self.cx.func_for_direct(def, targs, self.mode);
         let live = self.temp(Ty::Bool);
         let args = vec![Operand::Copy(map.clone()), i];
         self.call(vir::Callee::Func(f), args, Some(Place::local(live)), false);

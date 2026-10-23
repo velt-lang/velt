@@ -1,0 +1,45 @@
+// check: no leaks
+// What runs inside a `read` without leaking or freeing what it should not: a closure literal a
+// function passes on and calls there (also returning the store's object, which leaves as a
+// copy), a captured variable overwritten there (its old value is the caller's), `findLast`, and
+// in a `write`, a function value changing the store.
+class Item {
+  v: i64 = 0;
+  constructor(v: i64) {
+    this.v = v;
+  }
+}
+
+class St {
+  items: Item[] = [];
+}
+
+function g(rw: shared<RwLock<St>>, cb: (it: Item) => Item): Item {
+  return rw.read((s) => cb(s.items[0]));
+}
+
+function apply(s: St, f: (s: St) => void) {
+  f(s);
+}
+
+function main() {
+  const rw = shared(new RwLock<St>(new St()));
+  rw.write((s) => {
+    const it0 = new Item(1);
+    s.items.push(it0);
+    s.items.push(it0);
+  });
+  const k = g(rw, (it) => it);
+  let outer: Item = new Item(5);
+  for (let i = 0; i < 100; i++) {
+    rw.read((s) => {
+      outer = s.items[0];
+    });
+  }
+  const last = rw.read((s) => s.items.findLast((i) => i.v == 1));
+  rw.write((s) => apply(s, (x) => x.items.push(x.items[0])));
+  rw.write((s) => {
+    s.items = [];
+  });
+  console.log(k.v, outer.v, last!.v, rw.read((s) => s.items.length));
+}

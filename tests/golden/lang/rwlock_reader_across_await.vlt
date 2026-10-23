@@ -1,0 +1,40 @@
+// check: no leaks
+// A function that uses an `RwLock` hands this thread's reader state from one lock call to the
+// next (velt_rt `velt_rt_rwlock_read`) and starts over after an `await`, since the task may
+// continue on another thread. 8 tasks read, write and await in turns, so they move between
+// threads between their reads; a stale state would corrupt another thread's reads.
+class Counts {
+  n: i64 = 0;
+  items: string[] = [];
+}
+
+async function worker(rw: shared<RwLock<Counts>>, k: i64): Promise<i64> {
+  let seen: i64 = 0;
+  for (let i: i64 = 0; i < 200; i++) {
+    seen += rw.read((c) => c.n);
+    await sleep(0);
+    seen += rw.read((c) => c.items.length as i64);
+    rw.write((c) => {
+      c.n += 1;
+      c.items.push(`t${k}`);
+    });
+    await sleep(0);
+    seen += rw.read((c) => c.n);
+  }
+  return seen;
+}
+
+async function main() {
+  const rw = shared(new RwLock<Counts>(new Counts()));
+  const ps: Promise<i64>[] = [];
+  for (let k: i64 = 0; k < 8; k++) {
+    ps.push(spawn(worker(rw, k)));
+  }
+  let done: i64 = 0;
+  for (const seen of await Promise.all(ps)) {
+    if (seen > 0) {
+      done++;
+    }
+  }
+  console.log(done, rw.read((c) => c.n), rw.read((c) => c.items.length as i64));
+}
