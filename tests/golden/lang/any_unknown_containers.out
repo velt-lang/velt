@@ -1,0 +1,10 @@
+{"q":1,"w":"two"} {"q":1,"w":"two"} true
+{"a":true}
+3 3 true
+1 [1,2]
+1 s
+2
+take 9
+result undefined
+true q,w
+{"q":1,"w":"two","z":null}

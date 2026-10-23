@@ -1,0 +1,35 @@
+// check: no leaks
+// A chained assignment of a literal (`a = b = null`) where the variables have different types:
+// the value of `b = null` is the `null` assigned, as in TypeScript, not `b` read back.
+// Expected output: Node's.
+let created: (() => void)[] | null = [() => console.log("created")];
+let mounted: ((n: number) => void)[] | null = [(n: number) => console.log("mounted", n)];
+let label: string | null = "label";
+if (created) for (const f of created) f();
+if (mounted) for (const f of mounted) f(1);
+label = created = mounted = null;
+console.log(created === null, mounted === null, label);
+let n: number | string = "s";
+let m: number = 1;
+m = n = 5;
+console.log(m, n);
+let u: string | undefined = "q";
+let w: number[] | undefined = [1];
+w = (u = undefined);
+console.log(u, w);
+class Box {
+  items: string[] | null = ["x"];
+  count: number | null = 3;
+}
+const box = new Box();
+box.count = box.items = null;
+console.log(box.count, box.items);
+let flag: boolean | string = "no";
+const seen: boolean = (flag = true);
+console.log(seen, flag);
+// An assignment of a literal used as a value with no expected type: the target read back.
+let s1: string | null = "a";
+const z = (s1 = null);
+console.log(z, s1);
+let line: string | null;
+if ((line = null) === null) console.log("null line");

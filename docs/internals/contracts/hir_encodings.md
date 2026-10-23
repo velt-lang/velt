@@ -756,6 +756,10 @@ an intersection of object types to one ordinary anonymous object type (`intersec
 an indexed access to the type of the field it names (a union for several keys,
 `utility_types.rs`). Branded types (`string & { __brand: "UserId" }`) are replaced by their
 primitive before HIR leaves sema (`brands.rs`, `readonly::erase`).
+In a program that uses a container of `any` as one of `unknown` or back (`Record<string, any>`
+as a `Record<string, unknown>`, an `Upcast` between them; `Ctx::same_but_any_unknown`), `unknown`
+is replaced by `any` everywhere in the same pass, so the two views are one type for lowering;
+other programs keep their `unknown`s (lowering treats both alike).
 
 ## Deferred types (issue #934, phase 2)
 `TyKind::Op(TyOp, args)` appears only in generic definitions (signatures, fields, bodies): a type

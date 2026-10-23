@@ -111,6 +111,66 @@ impl Ctx<'_> {
         Some(i)
     }
 
+    /// Are `a` and `b` one type but for `any` in one where the other has `unknown`, inside
+    /// arrays, tuples, nullables, `Map`s, `Record`s, promises and function types
+    /// (`Record<string, any>` and `Record<string, unknown>`)? The two hold the same value, laid
+    /// out the same way, and each takes every value the other does, so a container of one is
+    /// the container of the other, read and written in place. A type with other parts (a
+    /// class or an interface at such arguments) is not: its members may depend on the argument.
+    pub(crate) fn same_but_any_unknown(&self, a: TyId, b: TyId) -> bool {
+        a != b && self.any_unknown_equal(a, b)
+    }
+
+    fn any_unknown_equal(&self, a: TyId, b: TyId) -> bool {
+        if a == b {
+            return true;
+        }
+        let top = |t: TyId| matches!(self.dynamic(t), Some(Dynamic::Any) | Some(Dynamic::Unknown));
+        if top(a) && top(b) {
+            return true;
+        }
+        let all = |xs: &[TyId], ys: &[TyId]| {
+            xs.len() == ys.len()
+                && xs
+                    .iter()
+                    .zip(ys)
+                    .all(|(x, y)| self.any_unknown_equal(*x, *y))
+        };
+        match (self.ty.kind(a), self.ty.kind(b)) {
+            (TyKind::Array(x), TyKind::Array(y)) => self.any_unknown_equal(*x, *y),
+            (TyKind::Option(x, n), TyKind::Option(y, m)) => {
+                n == m && self.any_unknown_equal(*x, *y)
+            }
+            (TyKind::Map(k, v), TyKind::Map(l, w))
+            | (TyKind::Promise(k, v), TyKind::Promise(l, w)) => {
+                self.any_unknown_equal(*k, *l) && self.any_unknown_equal(*v, *w)
+            }
+            (TyKind::Tuple(xs), TyKind::Tuple(ys)) => all(xs, ys),
+            (TyKind::Adt(d, xs), TyKind::Adt(e, ys)) => {
+                d == e
+                    && ["Record", "Map", "Set"]
+                        .iter()
+                        .any(|n| self.prelude_adt(n) == Some(*d))
+                    && all(xs, ys)
+            }
+            (
+                TyKind::FnPtr {
+                    params: p,
+                    ret: r,
+                    throws: t,
+                    rest: x,
+                },
+                TyKind::FnPtr {
+                    params: q,
+                    ret: s,
+                    throws: u,
+                    rest: y,
+                },
+            ) => x == y && t == u && all(p, q) && self.any_unknown_equal(*r, *s),
+            _ => false,
+        }
+    }
+
     /// Is `t` `any` or `unknown`?
     pub(crate) fn dynamic(&self, t: TyId) -> Option<Dynamic> {
         let defs = self.any?;

@@ -796,6 +796,11 @@ async function main() {
   (an `any` boxes the number). An argument that doesn't convert (`(x: string) => …` where
   `(x: number) => void` is expected) is an error, as it is in TS.
 
+  So is a function whose **result type is narrower** than the function type's: a `() => void`
+  where a `() => any` is expected (its result is `undefined`), a `() => string` for a
+  `() => unknown`, an async function's `() => Promise<R>` for a `() => R | Promise<R>`. Its
+  result converts to the expected result type when it returns, through the same wrapper.
+
   An arrow written there takes the expected parameter types and converts each one where it
   starts, so it is one function, as fast as one written with those types. A function value
   (a variable, a named function, a method value) is wrapped instead: each such use makes a
