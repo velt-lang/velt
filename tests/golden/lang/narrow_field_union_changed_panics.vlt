@@ -1,0 +1,27 @@
+// A field narrowed by `typeof` to some of its members, then set to another member through an
+// alias before it is read: the read checks the member again and stops the program, as a read
+// narrowed to one member does. Node reads the new value (`function`).
+interface Opt {
+  f?: string | number | (() => string);
+}
+
+let saved: Opt | null = null;
+
+function mut(): void {
+  const s = saved;
+  if (s !== null) s.f = () => "changed";
+}
+
+function opt1(p: Opt): string {
+  if (typeof p.f === "function") return "fn";
+  mut();
+  const r: string | number | undefined = p.f;
+  return typeof r;
+}
+
+function main() {
+  const o: Opt = { f: "s" };
+  console.log(opt1(o));
+  saved = o;
+  console.log(opt1(o));
+}

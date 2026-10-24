@@ -126,6 +126,52 @@ impl FnCx<'_, '_> {
         declared
     }
 
+    /// Facts of `KEY in x` / `"k" in x` on a union local: the members that may have the member
+    /// when true (an optional one or a record's entry may), the members that may lack it when
+    /// false.
+    pub(in crate::body) fn key_in_facts(
+        &mut self,
+        lhs: &ast::Expr,
+        rhs: &ast::Expr,
+    ) -> (
+        Vec<crate::body::narrow::Fact>,
+        Vec<crate::body::narrow::Fact>,
+    ) {
+        use crate::symbols::Presence;
+        let Some(key) = self.in_key_of(lhs) else {
+            return (vec![], vec![]);
+        };
+        // A `U | null` local too, once a test proved it not null (`if (x === null) return;`).
+        let Some((l, nullable, u)) = self.local_with_members(rhs) else {
+            return (vec![], vec![]);
+        };
+        let Some(members) = self
+            .cx
+            .union_members(u)
+            .filter(|_| !nullable || self.is_narrowed(l))
+        else {
+            return (vec![], vec![]);
+        };
+        let (mut yes, mut no) = (vec![], vec![]);
+        for (i, m) in members.into_iter().enumerate() {
+            // A value whose class is known only at run time may have it (`in_test`).
+            let (p, held) = match self.in_test(m, &key, lhs.span, false) {
+                Some((p, held)) => (Some(p), !held.is_empty()),
+                None => (None, false),
+            };
+            if p != Some(Presence::No) || held {
+                yes.push(i as u32);
+            }
+            if p != Some(Presence::Yes) {
+                no.push(i as u32);
+            }
+        }
+        (
+            vec![crate::body::narrow::Fact::Members(l, yes)],
+            vec![crate::body::narrow::Fact::Members(l, no)],
+        )
+    }
+
     /// [`Self::key_presence`] for a symbol key, reported at `at` when unknown (if `report`).
     fn symbol_presence(&mut self, t: TyId, key: &str, at: Span, report: bool) -> Option<Presence> {
         if self.record_args(t).is_some() {

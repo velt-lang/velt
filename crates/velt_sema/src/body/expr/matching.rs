@@ -450,9 +450,10 @@ impl FnCx<'_, '_> {
         }
         // An untyped default (`n ?? 0`) takes the payload's type; `x ?? null` and
         // `x ?? undefined` give the payload's option with that nothing (`string | undefined`
-        // `?? null` is a `string | null`, as in TypeScript).
+        // `?? null` is a `string | null`, as in TypeScript, and so is a `string | null |
+        // undefined` `?? null`).
         let hint = match (nothing_lit(rhs), exp) {
-            (Some(n), _) if !self.is_three_state(s.ty) => self.cx.ty.option_of(payload, n),
+            (Some(n), _) => self.cx.ty.option_of(payload, n),
             (_, Some(e)) if !super::ops::untyped(rhs) => e,
             _ => payload,
         };

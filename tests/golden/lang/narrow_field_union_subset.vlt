@@ -1,0 +1,98 @@
+// check: no leaks
+// A field of a union type narrowed by `typeof` (sigx's `fallback?: JSXElement | (() =>
+// JSXElement)`): narrowed to its function member it can be called (`p.f()`), narrowed to some of
+// its members (or past them but not past its nothing) it reads as the union of those members,
+// in a ternary too. `"k" in x` only asks about the members a test left. Expected output: Node's.
+interface VNode {
+  type: string;
+  n: number;
+}
+
+type JSXElement = VNode | string | number | boolean | null;
+
+interface DeferProps {
+  fallback?: JSXElement | (() => JSXElement);
+}
+
+interface Ctx<P> {
+  readonly props: P;
+  name: string;
+}
+
+function show(e: JSXElement | undefined): string {
+  if (e === undefined) return "undefined";
+  if (e === null) return "null";
+  if (typeof e === "object") return `<${e.type}>`;
+  return `${typeof e} ${e}`;
+}
+
+// sigx's `Defer` render function.
+function fallbackOf(ctx: Ctx<DeferProps>, pending: number): JSXElement {
+  const fb =
+    pending > 0
+      ? (typeof ctx.props.fallback === "function"
+          ? (ctx.props.fallback as () => JSXElement)()
+          : ctx.props.fallback) ?? null
+      : null;
+  return fb;
+}
+
+function called(p: DeferProps): JSXElement {
+  const r = typeof p.fallback === "function" ? p.fallback() : p.fallback;
+  return r ?? null;
+}
+
+interface Opt {
+  f?: string | (() => string);
+}
+
+interface Req {
+  f: string | number | (() => string);
+}
+
+function optional(p: Opt): string {
+  if (typeof p.f === "function") return p.f();
+  const r: string | undefined = p.f;
+  return r ?? "none";
+}
+
+function required(p: Req): string {
+  if (typeof p.f === "function") return p.f();
+  const r: string | number = p.f;
+  return `${typeof r}:${r}`;
+}
+
+interface Holder {
+  v: string | number | boolean | null;
+}
+
+function noBool(h: Holder): string | number | null {
+  if (typeof h.v === "boolean") return h.v ? 1 : 0;
+  return h.v;
+}
+
+interface App {
+  root: string;
+}
+
+function isApp(x: VNode | App | string | null): boolean {
+  return x !== null && typeof x === "object" && "root" in x;
+}
+
+function main() {
+  const div: VNode = { type: "div", n: 1 };
+  const ctxs: Ctx<DeferProps>[] = [
+    { props: { fallback: () => "loading" }, name: "a" },
+    { props: { fallback: div }, name: "b" },
+    { props: { fallback: 3 }, name: "c" },
+    { props: {}, name: "d" },
+    { props: { fallback: null }, name: "e" },
+  ];
+  for (const c of ctxs) {
+    console.log(c.name, show(fallbackOf(c, 1)), show(fallbackOf(c, 0)), show(called(c.props)));
+  }
+  console.log(optional({ f: () => "fn" }), optional({ f: "s" }), optional({}));
+  console.log(required({ f: () => "fn" }), required({ f: "s" }), required({ f: 2 }));
+  console.log(noBool({ v: true }), noBool({ v: "x" }), noBool({ v: 4 }), noBool({ v: null }));
+  console.log(isApp({ root: "r" }), isApp(div), isApp("s"), isApp(null));
+}

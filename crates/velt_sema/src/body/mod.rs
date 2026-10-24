@@ -546,6 +546,13 @@ pub(crate) struct FnCx<'a, 'm> {
     /// A variable read that a null or truthiness test makes (`if (x)`, `x == null`): it reads
     /// the variable as it is, without the check `checked_narrowed_read` adds.
     pub raw_read: Option<Span>,
+    /// A field read that is the operand of a type test (`typeof o.f`, `o.f instanceof C`,
+    /// `o.f === lit`): it reads the field as narrowed, without converting it to the union of the
+    /// members left (`field_narrow`).
+    pub field_test: Option<Span>,
+    /// A narrowed field read is being converted to the union of the members left
+    /// (`field_narrow`): a member ruled out means the field changed since the test.
+    pub field_retag: bool,
     /// The expression being checked is the object of a member read (`body::expr::union_view`).
     pub view_receiver: bool,
     /// Locals declared from integer literals and their uses (`literal_locals`).
@@ -609,6 +616,8 @@ impl<'a, 'm> FnCx<'a, 'm> {
             optional_slots: vec![],
             refused_reads: vec![],
             raw_read: None,
+            field_test: None,
+            field_retag: false,
             view_receiver: false,
             literal: Default::default(),
             jsx_list_fold: None,

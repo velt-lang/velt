@@ -422,37 +422,6 @@ impl FnCx<'_, '_> {
             })
     }
 
-    /// Facts of `KEY in x` / `"k" in x` on a union local: the members that may have the member
-    /// when true (an optional one or a record's entry may), the members that may lack it when
-    /// false.
-    fn key_in_facts(&mut self, lhs: &ast::Expr, rhs: &ast::Expr) -> (Vec<Fact>, Vec<Fact>) {
-        use crate::symbols::Presence;
-        let Some(key) = self.in_key_of(lhs) else {
-            return (vec![], vec![]);
-        };
-        let Some((l, false, u)) = self.local_with_members(rhs) else {
-            return (vec![], vec![]);
-        };
-        let Some(members) = self.cx.union_members(u) else {
-            return (vec![], vec![]);
-        };
-        let (mut yes, mut no) = (vec![], vec![]);
-        for (i, m) in members.into_iter().enumerate() {
-            // A value whose class is known only at run time may have it (`in_test`).
-            let (p, held) = match self.in_test(m, &key, lhs.span, false) {
-                Some((p, held)) => (Some(p), !held.is_empty()),
-                None => (None, false),
-            };
-            if p != Some(Presence::No) || held {
-                yes.push(i as u32);
-            }
-            if p != Some(Presence::Yes) {
-                no.push(i as u32);
-            }
-        }
-        (vec![Fact::Members(l, yes)], vec![Fact::Members(l, no)])
-    }
-
     /// Facts of `typeof x === tag`.
     pub(super) fn typeof_split(&mut self, e: &ast::Expr, tag: &str) -> (Vec<Fact>, Vec<Fact>) {
         // `any` / `unknown`: read as the primitive type the tag names.
