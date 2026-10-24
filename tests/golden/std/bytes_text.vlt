@@ -1,0 +1,22 @@
+// Text in byte arrays without copies (u8[] write, utf8Slice, utf8Equals): what a server written
+// in Velt uses on its read and write buffers.
+const buf: u8[] = Buffer.alloc(16);
+console.log(buf.write("GET /a"), buf.write("é", 6), buf.write("x", 8));
+console.log(buf.utf8Slice(0, 3), buf.utf8Slice(4, 6), buf.utf8Slice(6, 9), buf.utf8Slice(-16, 1));
+console.log(buf.utf8Equals("GET", 0, 3), buf.utf8Equals("GE", 0, 3), buf.utf8Equals("/a", 4, 6));
+console.log(buf.utf8Equals("GET", 0, 99), buf.utf8EqualsIgnoreCase("get", 0, 3));
+console.log(buf.utf8EqualsIgnoreCase("gex", 0, 3), buf.utf8Equals("", 3, 3));
+
+// Only whole characters that fit are written, as Node's buf.write.
+const small: u8[] = Buffer.alloc(4);
+console.log(small.write("abé€"), small.utf8Slice(), small[3]);
+console.log(small.write("€", 2), small.write("", 4));
+
+// Invalid UTF-8 reads as U+FFFD, one per maximal invalid subpart.
+const bad: u8[] = [0x61, 0xff, 0xe2, 0x82, 0x62];
+console.log(bad.utf8Slice(), bad.utf8Slice(1, 2).length, bad.utf8Slice(4));
+
+// TextEncoder.encodeInto with room for all of it writes in place (into a view at an offset too).
+const whole = new Uint8Array(12);
+const r = new TextEncoder().encodeInto("é😀a", whole.subarray(2));
+console.log(r.read, r.written, whole);

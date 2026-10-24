@@ -17,8 +17,6 @@ import { TcpStream } from "velt:net";
 import { AbortController, AbortSignal } from "velt:task";
 import { Uint8Array } from "velt:typed_array/uint8_array";
 
-declare function velt_rt_bytes_set_str(dst: u8[], s: string, offset: u64): bool;
-
 const CR: u8 = 13;
 const LF: u8 = 10;
 const SP: u8 = 32;
@@ -104,13 +102,11 @@ export class HttpResponse {
       this.extra = grown;
     }
     let at = this.extraLength;
-    velt_rt_bytes_set_str(this.extra, name, at as u64);
-    at += Buffer.byteLength(name) as i64;
+    at += this.extra.write(name, at as usize) as i64;
     this.extra[at] = 58;
     this.extra[at + 1] = SP;
     at += 2;
-    velt_rt_bytes_set_str(this.extra, value, at as u64);
-    at += Buffer.byteLength(value) as i64;
+    at += this.extra.write(value, at as usize) as i64;
     this.extra[at] = CR;
     this.extra[at + 1] = LF;
     this.extraLength = at + 2;
@@ -419,7 +415,7 @@ export class HttpResponse {
   /// The UTF-8 bytes of `s`, `n` of them (`Buffer.byteLength(s)`).
   private textOf(s: string, n: i64) {
     this.reserve(n);
-    velt_rt_bytes_set_str(this.buf, s, this.length as u64);
+    this.buf.write(s, this.length as usize);
     this.length += n;
   }
 

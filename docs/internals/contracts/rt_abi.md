@@ -546,11 +546,16 @@ Declared in std (Velt signatures; `u8[]`/`string` are passed as in rt_abi_async.
   `velt_rt_bytes_concat(a: u8[], b: u8[]): u8[]`,
   `velt_rt_bytes_xor_mask(b: u8[], mask: u32, start: i64, end: i64)` (relative indices).
 - UTF-8 (`std/encoding.vlt`): `velt_rt_bytes_utf8_valid(b: u8[]): bool`.
-- For protocols written in Velt (`std/websocket/bytes.vlt`), on a range `[start, end)` (relative
+- For protocols written in Velt (the `u8[]` methods `write`, `utf8Slice`, `utf8Equals` and
+  `utf8EqualsIgnoreCase` in `std/prelude/bytes.vlt`; `std/websocket/bytes.vlt`), on a range `[start, end)` (relative
   indices) so no slice is made: `velt_rt_bytes_set_str(dst: u8[], s: string, offset: u64): bool`
   (the UTF-8 bytes of `s`, a lone surrogate as U+FFFD; false and nothing copied if they do not
   fit), `velt_rt_bytes_range_to_str(b: u8[], start: i64, end: i64): IoResult<string>`
-  (`INVALID_DATA` if not UTF-8) and `velt_rt_bytes_utf8_prefix(b: u8[], start: i64, end: i64):
+  (`INVALID_DATA` if not UTF-8), `velt_rt_bytes_range_to_str_lossy(b: u8[], start: i64, end: i64):
+  string` (an invalid sequence as U+FFFD, one per maximal invalid subpart),
+  `velt_rt_str_eq_range(s: string, b: u8[], start: u64, end: u64): bool` and
+  `velt_rt_str_eq_range_ci` (whether the range holds the UTF-8 bytes of `s`, ASCII letters in any
+  case for `_ci`; false for a range outside `b`) and `velt_rt_bytes_utf8_prefix(b: u8[], start: i64, end: i64):
   i64` (how many bytes are well-formed: all, fewer when the range ends inside a character, -1
   when no continuation can make it valid).
 - BigInt (`std/bigint.vlt`, handle `u64`, freed by `velt_rt_bigint_free`): `from_i64`, `from_f64`,

@@ -193,6 +193,20 @@ pub unsafe extern "C" fn velt_rt_bytes_range_to_str(
     r.write_to(out);
 }
 
+/// The bytes in `[start, end)` (relative indices) as a new string, an invalid sequence as
+/// U+FFFD (one per maximal invalid subpart, as `TextDecoder`): Node's `buf.utf8Slice`.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_bytes_range_to_str_lossy(
+    b: *const VeltBytes,
+    start: i64,
+    end: i64,
+    out: *mut VeltStr,
+) {
+    out.write(VeltStr::from_bytes(
+        String::from_utf8_lossy(range(b, start, end)).as_bytes(),
+    ));
+}
+
 /// How far `[start, end)` (relative indices) is well-formed UTF-8, as an offset from `start`:
 /// the whole length when all of it is, less when it ends inside a character (the rest may be
 /// completed by more bytes), and -1 when it holds a sequence no continuation can make valid.

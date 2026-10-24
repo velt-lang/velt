@@ -4,7 +4,6 @@
 
 import { IoResult } from "velt:io";
 
-declare function velt_rt_bytes_set_str(dst: u8[], s: string, offset: u64): bool;
 declare function velt_rt_bytes_range_to_str(b: u8[], start: i64, end: i64): IoResult<string>;
 declare function velt_rt_bytes_utf8_prefix(b: u8[], start: i64, end: i64): i64;
 declare function velt_rt_random_mask(): u32;
@@ -31,7 +30,7 @@ export function textOf(b: u8[], start: i64, end: i64): string | null {
 
 /** Copies the UTF-8 bytes of `s` to `dst[offset..]` (they must fit). */
 export function setText(dst: u8[], s: string, offset: i64) {
-  if (!velt_rt_bytes_set_str(dst, s, offset as u64)) {
+  if (dst.write(s, offset as usize) != Buffer.byteLength(s)) {
     panic("internal error: a WebSocket frame was sized wrong");
   }
 }

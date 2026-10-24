@@ -9,7 +9,12 @@ streamed, with backpressure and cancellation, for uploads, large downloads, prox
 Server-Sent Events. On the TechEmpower plaintext and JSON tests it is ahead of
 [velt:http](http.md) (hyper) and of Rust's axum (`bench/web`, `velt-native`).
 
-[velt:http](http.md) remains the server with HTTP/2, TLS and the fetch-style `Request` and
+It uses only public APIs: [std/net](net.md)'s `TcpStream` (`tryRead` into its own buffer,
+`writeBytesLater`), SIMD vectors from [velt:simd](simd.md) to find line ends, and the byte-array
+text methods of the [prelude](prelude.md) (`write`, `utf8Slice`, `utf8Equals`). A package written
+in Velt can build a server, or another protocol, as fast in the same way.
+
+[velt:http](http.md) remains the server with HTTP/2 and the fetch-style `Request` and
 `Response`; this module is the lower-level one: a handler reads the request through
 `HttpRequest` and writes the response through `HttpResponse`.
 

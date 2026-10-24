@@ -20,10 +20,6 @@ import {
   Parser,
 } from "velt:http/server/parse";
 
-declare function velt_rt_str_eq_range(s: string, b: u8[], start: u64, end: u64): bool;
-declare function velt_rt_str_eq_range_ci(s: string, b: u8[], start: u64, end: u64): bool;
-declare function velt_rt_bytes_range_to_str(b: u8[], start: i64, end: i64): IoResult<string>;
-
 const CR: u8 = 13;
 const LF: u8 = 10;
 
@@ -91,7 +87,7 @@ export class HttpRequest {
   /// Whether the method is `m` (`"GET"`), without making a string.
   isMethod(m: string): bool {
     const h = this.head;
-    return velt_rt_str_eq_range(m, h.buf, h.methodStart as u64, h.methodEnd as u64);
+    return h.buf.utf8Equals(m, h.methodStart, h.methodEnd);
   }
 
   /// The method (`"GET"`, `"POST"`, ...).
@@ -102,7 +98,7 @@ export class HttpRequest {
   /// Whether the path (the target up to `?`) is `p`, without making a string.
   pathIs(p: string): bool {
     const h = this.head;
-    return velt_rt_str_eq_range(p, h.buf, h.targetStart as u64, h.pathEnd as u64);
+    return h.buf.utf8Equals(p, h.targetStart, h.pathEnd);
   }
 
   /// The path: the request target up to `?` (`/users/1`).
@@ -371,7 +367,7 @@ export class HttpRequest {
     for (let i: i64 = 0; i < (h.heads.length as i64); i += 4) {
       if (
         h.heads[i + 1] - h.heads[i] == n &&
-        velt_rt_str_eq_range_ci(name, h.buf, h.heads[i] as u64, h.heads[i + 1] as u64)
+        h.buf.utf8EqualsIgnoreCase(name, h.heads[i], h.heads[i + 1])
       ) {
         return i;
       }
@@ -380,9 +376,7 @@ export class HttpRequest {
   }
 
   private text(start: i64, end: i64): string {
-    const buf = this.head.buf;
-    const r = velt_rt_bytes_range_to_str(buf, start, end);
-    return r.code == 0 ? r.value : utf8DecodeLossy(buf.slice(start, end));
+    return this.head.buf.utf8Slice(start, end);
   }
 }
 

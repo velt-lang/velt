@@ -19,6 +19,11 @@ declare function velt_rt_bytes_fill(b: u8[], byte: u8, start: i64, end: i64);
 declare function velt_rt_bytes_slice(b: u8[], start: i64, end: i64): u8[];
 declare function velt_rt_bytes_concat(a: u8[], b: u8[]): u8[];
 declare function velt_rt_bytes_xor_mask(b: u8[], mask: u32, start: i64, end: i64);
+declare function velt_rt_bytes_set_str(dst: u8[], s: string, offset: u64): bool;
+declare function velt_rt_bytes_from_str(s: string): u8[];
+declare function velt_rt_bytes_range_to_str_lossy(b: u8[], start: i64, end: i64): string;
+declare function velt_rt_str_eq_range(s: string, b: u8[], start: u64, end: u64): bool;
+declare function velt_rt_str_eq_range_ci(s: string, b: u8[], start: u64, end: u64): bool;
 // The SIMD operations used below (`velt:simd`, std/simd/*.vlt, is the API; declared again
 // here so that the prelude does not load it). `load` does not check its range.
 declare function velt_simd_u8x16_splat(x: u8): u8x16;
@@ -233,6 +238,59 @@ extend Array<u8> {
    */
   xorMask(mask: u32, start: i64 = 0, end: i64 = 9223372036854775807) {
     velt_rt_bytes_xor_mask(this, mask, start, end);
+  }
+
+  /**
+   * Writes the UTF-8 bytes of `s` at `offset` and returns how many were written, as Node's
+   * `buf.write(s, offset)`: the array does not grow, so only the whole characters that fit are
+   * written (a lone surrogate as U+FFFD). Panics with a RangeError when `offset` is past the
+   * end, as Node throws. With room for all of `s` (`Buffer.byteLength(s)`), one copy.
+   */
+  write(s: string, offset: usize = 0): usize {
+    if (offset > this.length) {
+      panic("RangeError: offset is out of bounds");
+    }
+    const n = velt_rt_str_byte_length(s) as usize;
+    if (n <= this.length - offset) {
+      velt_rt_bytes_set_str(this, s, offset as u64);
+      return n;
+    }
+    const bytes = velt_rt_bytes_from_str(s);
+    const room = this.length - offset;
+    let written: usize = 0;
+    while (written < room) {
+      const b = bytes[written];
+      const size: usize = b < 0x80 ? 1 : b < 0xe0 ? 2 : b < 0xf0 ? 3 : 4;
+      if (written + size > room) {
+        break;
+      }
+      written += size;
+    }
+    velt_rt_bytes_set(this, bytes.slice(0, written as i64), offset as u64);
+    return written;
+  }
+
+  /**
+   * The bytes in [start, end) decoded as UTF-8, an invalid sequence as U+FFFD: Node's
+   * `buf.utf8Slice(start, end)` (`buf.toString("utf8", start, end)`), without slicing first.
+   */
+  utf8Slice(start: i64 = 0, end: i64 = 9223372036854775807): string {
+    return velt_rt_bytes_range_to_str_lossy(this, start, end);
+  }
+
+  /**
+   * Whether the bytes in [start, end) are the UTF-8 bytes of `s` (Velt): a server comparing a
+   * method, a path or a key in its read buffer without making a string.
+   */
+  utf8Equals(s: string, start: i64 = 0, end: i64 = 9223372036854775807): bool {
+    const n = this.length;
+    return velt_rt_str_eq_range(s, this, relative(start, n) as u64, relative(end, n) as u64);
+  }
+
+  /** `utf8Equals` with ASCII letters compared regardless of case (header names; Velt). */
+  utf8EqualsIgnoreCase(s: string, start: i64 = 0, end: i64 = 9223372036854775807): bool {
+    const n = this.length;
+    return velt_rt_str_eq_range_ci(s, this, relative(start, n) as u64, relative(end, n) as u64);
   }
 
   /** Sets the bytes in [start, end) to `byte` (memset). */

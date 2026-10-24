@@ -133,6 +133,20 @@ Byte arrays are plain `u8[]` with faster versions of `indexOf`, `lastIndexOf`, `
 `fill`, `slice` and `concat`, plus `set(src, offset)` and `copyWithin(target, start, end)` like
 Node's `Buffer`, and `xorMask(mask: u32, start?, end?)`, which XORs the bytes with the four bytes
 of `mask` (most significant first) repeating from `start`: WebSocket masking (RFC 6455 §5.3).
+Text goes in and out of byte arrays without intermediate copies, as a server written in Velt
+needs on its read and write buffers: `write(s, offset = 0)` writes the UTF-8 bytes of `s` and
+returns how many it wrote (Node's `buf.write`: only whole characters that fit, the array does
+not grow), `utf8Slice(start?, end?)` decodes a range (Node's `buf.utf8Slice`, an invalid sequence
+as U+FFFD), and `utf8Equals(s, start?, end?)` / `utf8EqualsIgnoreCase(s, start?, end?)` (Velt)
+tell whether a range holds the UTF-8 bytes of `s`, the second with ASCII letters in any case
+(a method, a path, a header name), without making a string.
+
+```ts
+const buf: u8[] = Buffer.alloc(16);
+const n = buf.write("GET /");
+console.log(buf.utf8Equals("GET", 0, 3), buf.utf8Slice(0, n)); // true GET /
+```
+
 `Buffer.alloc(n)` creates `n` zero bytes. `Buffer.byteLength(s, encoding = "utf8")` is the
 number of bytes `s` takes, as in Node: UTF-8 by default (O(1); a lone surrogate counts the 3
 bytes of U+FFFD), two per code unit for `utf16le`/`ucs2`, one for `latin1`/`binary`/`ascii`,
