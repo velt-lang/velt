@@ -29,7 +29,7 @@ use super::timer::Timers;
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 /// The token of each worker's wake-up event (I/O registrations use the others).
@@ -374,9 +374,7 @@ fn run(index: usize) {
         local.window.saw(0, 0);
         crate::io::flush_idle();
         publish(me, &local);
-        me.parked.store(true, Ordering::SeqCst);
-        if me.inbox_len.load(Ordering::SeqCst) > 0 {
-            me.parked.store(false, Ordering::SeqCst);
+        if !may_park(me, &MONITOR) {
             continue;
         }
         // Idle until the turn returns: the last worker to go idle checks whether the process is
@@ -391,8 +389,22 @@ fn run(index: usize) {
         me.progress
             .store(TICKS.load(Ordering::Relaxed), Ordering::Relaxed);
         me.parked.store(false, Ordering::SeqCst);
-        kick_monitor();
+        MONITOR.kick();
     }
+}
+
+/// Marks this worker parked (from now on a push wakes it), unless tasks came to its inbox before
+/// that: whether it may sleep. Not parking after all, it wakes the monitor, which may have seen
+/// every worker parked meanwhile and gone to sleep: this worker's polls need watching again (a
+/// task that runs on would otherwise hold back the tasks behind it until the next park).
+fn may_park(me: &Shared, monitor: &MonitorSleep) -> bool {
+    me.parked.store(true, Ordering::SeqCst);
+    if me.inbox_len.load(Ordering::SeqCst) == 0 {
+        return true;
+    }
+    me.parked.store(false, Ordering::SeqCst);
+    monitor.kick();
+    false
 }
 
 /// Polls `task`, taken from this worker's queue, as the task running (the wakes it makes run
@@ -575,18 +587,48 @@ const TICK: Duration = Duration::from_millis(1);
 /// docs): one full tick at least, which ordinary polls never take.
 const STALL_TICKS: u64 = 2;
 
-/// The monitor sleeps (all workers asleep) until a worker wakes it.
-static MONITOR: (Mutex<bool>, std::sync::Condvar) = (Mutex::new(false), std::sync::Condvar::new());
-static MONITOR_ASLEEP: AtomicBool = AtomicBool::new(false);
+/// The monitor's sleep while every worker sleeps, until a worker wakes it ([`MonitorSleep::kick`]).
+struct MonitorSleep {
+    asleep: AtomicBool,
+    woken: Mutex<bool>,
+    cv: Condvar,
+}
 
-/// Wakes the monitor if it sleeps (a worker woke up: its polls need watching).
-fn kick_monitor() {
-    // SeqCst: ordered after the caller's store to `parked`, which the monitor checks after its
-    // own store here (on ARM a relaxed load could come first and both would miss the other).
-    if MONITOR_ASLEEP.load(Ordering::SeqCst) {
-        let (woken, cv) = &MONITOR;
-        *lock(woken) = true;
-        cv.notify_one();
+static MONITOR: MonitorSleep = MonitorSleep::new();
+
+impl MonitorSleep {
+    const fn new() -> MonitorSleep {
+        MonitorSleep {
+            asleep: AtomicBool::new(false),
+            woken: Mutex::new(false),
+            cv: Condvar::new(),
+        }
+    }
+
+    /// Wakes the monitor if it sleeps (a worker woke up: its polls need watching).
+    fn kick(&self) {
+        // SeqCst: ordered after the caller's store to `parked`, which the monitor checks after
+        // its own store here (on ARM a relaxed load could come first and both would miss the
+        // other).
+        if self.asleep.load(Ordering::SeqCst) {
+            *lock(&self.woken) = true;
+            self.cv.notify_one();
+        }
+    }
+
+    /// Sleeps while every worker of `ws` is parked, until a worker kicks.
+    fn sleep_while_parked(&self, ws: &[Shared]) {
+        let all_parked = || ws.iter().all(|w| w.parked.load(Ordering::SeqCst));
+        let mut woken = lock(&self.woken);
+        self.asleep.store(true, Ordering::SeqCst);
+        // A worker that woke between the caller's check and here kicks after this store.
+        if all_parked() {
+            while !*woken {
+                woken = self.cv.wait(woken).unwrap_or_else(|e| e.into_inner());
+            }
+        }
+        *woken = false;
+        self.asleep.store(false, Ordering::SeqCst);
     }
 }
 
@@ -594,17 +636,7 @@ fn monitor() {
     loop {
         let ws = workers();
         if ws.iter().all(|w| w.parked.load(Ordering::SeqCst)) {
-            let (woken, cv) = &MONITOR;
-            let mut w = lock(woken);
-            MONITOR_ASLEEP.store(true, Ordering::SeqCst);
-            // A worker that woke between the check and here kicks after this store.
-            if ws.iter().all(|w| w.parked.load(Ordering::SeqCst)) {
-                while !*w {
-                    w = cv.wait(w).unwrap_or_else(|e| e.into_inner());
-                }
-            }
-            *w = false;
-            MONITOR_ASLEEP.store(false, Ordering::SeqCst);
+            MONITOR.sleep_while_parked(ws);
             continue;
         }
         std::thread::sleep(TICK);
@@ -629,17 +661,7 @@ fn stalled(w: &Shared, now: u64) -> bool {
 fn rescue(i: usize, now: u64) {
     let ws = workers();
     let w = &ws[i];
-    if let Ok(mut r) = w.reactor.try_lock() {
-        let Reactor { poll, events } = &mut *r;
-        if poll.poll(events, Some(Duration::ZERO)).is_err() {
-            events.clear();
-        }
-        for ev in events.iter() {
-            if ev.token() != WAKE {
-                super::io::dispatch(i, ev);
-            }
-        }
-    }
+    turn_for(w, i);
     lock(&w.timers).fire(Instant::now());
     // The tasks taken below are in no queue until they reach one again: counted meanwhile, as
     // the worker may count as idle (woken, not yet running).
@@ -689,6 +711,33 @@ fn rescue(i: usize, now: u64) {
         h.inbox_len.store(inbox.len(), Ordering::SeqCst);
     }
     wake(h);
+}
+
+/// A non-blocking turn of the reactor of worker `i` (`w`), stalled, for it: the events of its
+/// sockets. Its own wake-up event is posted again for it: a worker woken as it parks and then
+/// taken off its core before its own poll counts as stalled, and with the event taken here its
+/// poll would sleep on with tasks in its inbox, the wake spent (`parked` already cleared, so
+/// later pushes and the monitor's hand-back post none).
+fn turn_for(w: &Shared, i: usize) {
+    let Ok(mut r) = w.reactor.try_lock() else {
+        return;
+    };
+    let Reactor { poll, events } = &mut *r;
+    if poll.poll(events, Some(Duration::ZERO)).is_err() {
+        events.clear();
+    }
+    let mut woken = false;
+    for ev in events.iter() {
+        if ev.token() == WAKE {
+            woken = true;
+        } else {
+            super::io::dispatch(i, ev);
+        }
+    }
+    drop(r);
+    if woken {
+        let _ = w.waker.wake();
+    }
 }
 
 /// Returns tasks the monitor took from `w` to its inbox and wakes it.

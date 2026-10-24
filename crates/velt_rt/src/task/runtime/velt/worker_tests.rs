@@ -99,3 +99,46 @@ fn a_task_woken_by_a_task_runs_next_on_the_wakers_worker() {
     });
     assert_eq!(waiter.home.load(Ordering::Relaxed), 1, "its home moved");
 }
+
+#[test]
+fn the_monitors_turn_for_a_stalled_worker_leaves_it_its_wake_up() {
+    // Woken as it parks, then taken off its core before its own poll, a worker counts as
+    // stalled, and the monitor turns its reactor for it. The wake-up event must still reach the
+    // worker's own poll: `parked` is cleared already, so the next push (here the monitor handing
+    // back a pinned task) posts no other, and the worker would sleep on with tasks in its inbox.
+    let w = new_shared();
+    w.parked.store(true, Ordering::SeqCst);
+    send_back(&w, vec![idle_task()]);
+    turn_for(&w, 0);
+    send_back(&w, vec![idle_task()]);
+    assert_eq!(w.inbox_len.load(Ordering::SeqCst), 2);
+    let mut r = lock(&w.reactor);
+    let Reactor { poll, events } = &mut *r;
+    poll.poll(events, Some(Duration::ZERO)).expect("poll");
+    assert!(
+        events.iter().any(|e| e.token() == WAKE),
+        "the monitor took the worker's wake-up"
+    );
+}
+
+#[test]
+fn a_worker_that_does_not_park_after_all_wakes_the_monitor() {
+    // The monitor sleeps once it sees every worker parked. A worker that marked itself parked
+    // and then found tasks in its inbox runs them: the monitor must watch it again (a task
+    // that runs on would hold back the ones behind it with no rescue).
+    let monitor = MonitorSleep::new();
+    monitor.asleep.store(true, Ordering::SeqCst);
+    let w = new_shared();
+    lock(&w.inbox).push_back(idle_task());
+    w.inbox_len.store(1, Ordering::SeqCst);
+    assert!(!may_park(&w, &monitor));
+    assert!(!w.parked.load(Ordering::SeqCst));
+    assert!(*lock(&monitor.woken), "the monitor sleeps on");
+    // With nothing in its inbox, the worker parks and the monitor sleeps on.
+    let monitor = MonitorSleep::new();
+    monitor.asleep.store(true, Ordering::SeqCst);
+    let w = new_shared();
+    assert!(may_park(&w, &monitor));
+    assert!(w.parked.load(Ordering::SeqCst));
+    assert!(!*lock(&monitor.woken));
+}
