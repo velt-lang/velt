@@ -218,7 +218,8 @@ usable and no copy method is needed.
   (`` `Total: ${m}` ``).
 - `String(x)` converts any value that can be printed to its text, exactly as `` `${x}` ``
   writes it (`String(1.5)` is `"1.5"`, `String(null)` is `"null"`, `String([1, 2])` is
-  `"1,2"`). `Number(x)` converts a string (as JS: the whole trimmed string, `""` is `0`, else
+  `"1,2"`, also when the array is held by a union: `String(x)` of a `string | number[]` or a
+  `T | string`). `Number(x)` converts a string (as JS: the whole trimmed string, `""` is `0`, else
   `NaN`), a number or a boolean (`1` / `0`); `Boolean(x)` is `x`'s
   [truthiness](variables.md#conditions-truthiness). They are called as functions, not as values
   (`xs.map(String)` is not supported yet: write `xs.map((x) => String(x))`).

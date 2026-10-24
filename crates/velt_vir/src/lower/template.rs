@@ -598,7 +598,7 @@ impl FnLower<'_, '_> {
     /// Append `String(x)` of the value at `place` (#757): JS's `Array.prototype.toString` for
     /// arrays and tuples (the elements joined with ",", nested arrays the same way, `null` as
     /// empty text), the `console.log` text for everything else.
-    fn push_js_string(&mut self, buf: &Operand, place: &Place, ty: TyId) {
+    pub(super) fn push_js_string(&mut self, buf: &Operand, place: &Place, ty: TyId) {
         match self.cx.kind(ty) {
             TyKind::Array(e) => {
                 let arr = self.content(place, ty);
