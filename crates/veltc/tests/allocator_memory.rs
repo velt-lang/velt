@@ -8,7 +8,7 @@
 mod no_window;
 mod test_dir;
 
-/// A program allocating a little on each of 8 workers, then printing its resident set size.
+/// A program allocating a little on each worker, then printing its resident set size.
 const PROGRAM: &str = "import { workerCount } from \"velt:task\";
 
 async function fill(i: i64): Promise<i64> {
@@ -32,10 +32,10 @@ async function main() {
 }
 ";
 
-/// The resident set size the program reports, with `env` set.
-fn rss(dir: &std::path::Path, env: &[(&str, &str)]) -> u64 {
+/// The resident set size the program reports on `threads` workers, with `env` set.
+fn rss(dir: &std::path::Path, threads: u32, env: &[(&str, &str)]) -> u64 {
     let mut cmd = crate::no_window::command(dir.join("main"));
-    cmd.env("VELT_THREADS", "8");
+    cmd.env("VELT_THREADS", threads.to_string());
     for (k, v) in env {
         cmd.env(k, v);
     }
@@ -47,7 +47,8 @@ fn rss(dir: &std::path::Path, env: &[(&str, &str)]) -> u64 {
     );
     let text = String::from_utf8_lossy(&out.stdout);
     let mut words = text.split_whitespace();
-    assert_eq!(words.next(), Some("16000"), "{text}");
+    let want = (threads * 2000).to_string();
+    assert_eq!(words.next(), Some(want.as_str()), "{text}");
     words.next().and_then(|w| w.parse().ok()).expect("rss")
 }
 
@@ -65,15 +66,22 @@ fn workers_allocating_a_little_keep_the_process_small() {
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    let lazy = rss(dir.path(), &[]);
+    let lazy = rss(dir.path(), 8, &[]);
     // Huge pages only where the kernel hands them out on request.
     let thp = std::fs::read_to_string("/sys/kernel/mm/transparent_hugepage/enabled")
         .is_ok_and(|s| s.contains("[madvise]") || s.contains("[always]"));
     if thp {
-        let eager = rss(dir.path(), &[("MIMALLOC_ARENA_EAGER_COMMIT", "1")]);
+        // What 7 more workers add, so the process's fixed part (the runtime, the binary, the
+        // main thread) doesn't count: committed eagerly each worker's first allocations make
+        // 2 MiB resident, as they use it a few KiB. Comparing whole processes failed when the
+        // fixed part grew to half of the eager total.
+        let grown =
+            |env: &[(&str, &str)]| rss(dir.path(), 8, env).saturating_sub(rss(dir.path(), 1, env));
+        let (lazy_grown, eager_grown) =
+            (grown(&[]), grown(&[("MIMALLOC_ARENA_EAGER_COMMIT", "1")]));
         assert!(
-            lazy * 2 < eager,
-            "committing as used: {lazy} bytes resident; eagerly: {eager}"
+            lazy_grown * 2 < eager_grown,
+            "7 more workers committing as used: {lazy_grown} more bytes resident; eagerly: {eager_grown}"
         );
     }
     assert!(lazy < 24 << 20, "{lazy} bytes resident");
