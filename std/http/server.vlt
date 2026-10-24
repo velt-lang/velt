@@ -126,7 +126,7 @@ async function connection<E>(
       try {
         while (open && parser.next(req.head)) {
           req.begin();
-          res.begin(req.head.keepAlive, req.head.http11);
+          res.begin(req.head.keepAlive, req.head.http11, req.isMethod("HEAD"));
           let failed = false;
           try {
             await handler(req, res);

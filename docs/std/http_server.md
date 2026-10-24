@@ -109,6 +109,10 @@ first reads it.
   closes; pass it to the work done for the request (`fetch(url, { signal })`).
 - `sent(): bool`.
 
+A `HEAD` request gets the head a `GET` would (with its `Content-Length`) and no body: what the
+handler writes, streamed or not, is not sent. Responses with status 1xx, 204 or 304 have no body
+either (and 204 no `Content-Length` or default `Content-Type`).
+
 A proxy streams a body through without collecting it:
 
 ```ts

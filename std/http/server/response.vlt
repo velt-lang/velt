@@ -54,6 +54,11 @@ export class HttpResponse {
   /** A streamed body is being written, chunked (HTTP/1.1) or until the connection closes. */
   private streaming: bool = false;
   private chunked: bool = false;
+  /// The request was `HEAD`: the response has the head a `GET` would get, and no body.
+  private headOnly: bool = false;
+  /// The response has no body (a `HEAD` request, or status 1xx, 204 or 304): what the handler
+  /// writes as one is not sent.
+  private noBody: bool = false;
   // `Date` header bytes for `dateSecond`.
   private date: u8[] = [];
   private dateSecond: i64 = -1;
@@ -116,27 +121,35 @@ export class HttpResponse {
   send(body: string) {
     const n = Buffer.byteLength(body) as i64;
     this.head(TYPE_TEXT, null, n);
-    this.textOf(body, n);
+    if (!this.noBody) {
+      this.textOf(body, n);
+    }
   }
 
   /** Writes the response with body `body` (default type `application/octet-stream`). */
   sendBytes(body: u8[]) {
     this.head(TYPE_BYTES, null, body.length as i64);
-    this.bytes(body);
+    if (!this.noBody) {
+      this.bytes(body);
+    }
   }
 
   /** Writes the response with JSON text `json` (type `application/json`). */
   json(json: string) {
     const n = Buffer.byteLength(json) as i64;
     this.head(TYPE_JSON, null, n);
-    this.textOf(json, n);
+    if (!this.noBody) {
+      this.textOf(json, n);
+    }
   }
 
   /** Writes the response with HTML `html` (type `text/html; charset=utf-8`). */
   html(html: string) {
     const n = Buffer.byteLength(html) as i64;
     this.head(TYPE_HTML, null, n);
-    this.textOf(html, n);
+    if (!this.noBody) {
+      this.textOf(html, n);
+    }
   }
 
   /**
@@ -205,7 +218,9 @@ export class HttpResponse {
   }
 
   /** A new request: status 200, no headers (internal). */
-  begin(keepAlive: bool, http11: bool) {
+  begin(keepAlive: bool, http11: bool, headOnly: bool = false) {
+    this.headOnly = headOnly;
+    this.noBody = false;
     this.statusCode = 200;
     this.extraLength = 0;
     this.hasType = false;
@@ -284,6 +299,9 @@ export class HttpResponse {
     if (!this.streaming) {
       throw new Error("the streamed response has ended");
     }
+    if (this.noBody) {
+      return;
+    }
     if (data instanceof Uint8Array) {
       this.chunk(data.length as i64);
       this.reserve(data.length as i64 + 2);
@@ -316,7 +334,7 @@ export class HttpResponse {
       return;
     }
     this.streaming = false;
-    if (this.chunked) {
+    if (this.chunked && !this.noBody) {
       this.text("0\r\n\r\n");
     }
     // Otherwise (HTTP/1.0) the body ends with the connection: the head set `keepAlive` false.
@@ -407,6 +425,11 @@ export class HttpResponse {
       throw new Error("the response was already sent");
     }
     this.done = true;
+    const code = this.statusCode as i64;
+    // No body (RFC 9110 §6.4.1): for HEAD the head says what GET's body would be, for 1xx, 204
+    // and 304 there is none to describe.
+    const noContent = (code >= 100 && code < 200) || code == 204 || code == 304;
+    this.noBody = this.headOnly || noContent;
     if (this.statusCode == 200) {
       const ok = this.ok;
       this.bytes(ok);
@@ -423,7 +446,7 @@ export class HttpResponse {
     }
     const date = this.date;
     this.bytes(date);
-    if (!this.hasType) {
+    if (!this.hasType && !noContent) {
       const typeHead = this.typeHead;
       this.bytes(typeHead);
       if (custom != null) {
@@ -433,7 +456,11 @@ export class HttpResponse {
         this.bytes(t);
       }
     }
-    if (length >= 0) {
+    if (noContent) {
+      // Neither a length nor chunks: a streamed body is dropped.
+      this.streaming = length < 0;
+      this.chunked = false;
+    } else if (length >= 0) {
       const lengthHead = this.lengthHead;
       this.bytes(lengthHead);
       this.number(length);
