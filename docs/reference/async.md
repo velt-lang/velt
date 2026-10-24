@@ -442,7 +442,9 @@ anything that task prints in response. Hand-offs are:
 - a channel `send`, a `close`, or a `receive` that frees room in a bounded channel;
 - settling a `new Promise` or `Promise.withResolvers` promise;
 - `abort()`;
-- a child leaving a task scope.
+- a child leaving a task scope;
+- sending on a socket: `fetch`, a server's response or body chunk, a TCP connect, write or
+  close, a UDP datagram (the peer is often a task of the same program).
 
 Hand-offs through shared state (`shared`, a `Mutex`) and through timers are not covered: to keep
 such lines in order, print them from one task. Writing to stderr flushes stdout first.
