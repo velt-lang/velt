@@ -643,7 +643,10 @@ console.log(p.x + p.y); // 3
 Classes, structs, interfaces and functions take type parameters (`class Stack<T>`,
 `interface Box<T>`, `function f<T extends Comparable<T>>`). Every instantiation is compiled
 separately (monomorphization): no boxing, and bounds resolve to direct calls. Bounds are
-interfaces (an interface with only fields is satisfied by any type with its fields) or, as in
+interfaces (an interface with only fields is satisfied by any type with its fields; an
+interface value by its own interface and the ones it extends, so `f<Person>` fits
+`function f<T extends Named>` with `interface Person extends Named`, and its methods are
+called through the value's table) or, as in
 TypeScript, other types a type argument must be assignable to (`T extends Record<string, V>`,
 `T extends string | number`; [Generic functions](functions.md#generic-functions)). Type
 parameters may have **defaults** (`interface Iterator<T, E = never>`), used when a type leaves

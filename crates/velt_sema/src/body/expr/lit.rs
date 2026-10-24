@@ -407,9 +407,11 @@ impl FnCx<'_, '_> {
         if self.writes_by_to_string(t) {
             return self.js_text(h, "a string concatenation");
         }
-        // A union of primitives (`string | number`) or with an array member: written as a
-        // template literal writes it.
-        if h.ty != self.cx.ty.str_ && (self.primitive_union(t) || self.union_text_differs(t)) {
+        // A union of primitives (`string | number`) or with an array member, or a type built
+        // from type parameters (`T[K]`, `T | string`): written as a template literal writes it.
+        if h.ty != self.cx.ty.str_
+            && (self.primitive_union(t) || self.cx.mentions_params(t) || self.union_text_differs(t))
+        {
             let text = self.implicit_any_text(h, "a string concatenation", Hint::Default);
             return self.implicit_text(text);
         }

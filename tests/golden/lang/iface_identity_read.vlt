@@ -1,0 +1,25 @@
+// A read of an object's field next to an identity comparison with an interface value holding
+// the same object (#1368).
+interface G {
+  v: number;
+}
+
+interface M {
+  v: number;
+  m(): number;
+}
+
+const bs = { v: 1 };
+const g: G = bs;
+console.log(bs.v, g === bs);
+
+class C implements M {
+  v = 2;
+  m(): number {
+    return this.v;
+  }
+}
+
+const c = new C();
+const cm: M = c;
+console.log(c.v, cm === c, c.m());

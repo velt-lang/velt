@@ -213,9 +213,9 @@ usable and no copy method is needed.
   primitive (`+` asks for it before `toString()`, as in JS; a `Date` by its `toString()`), else
   by its `toString()`, and a value whose type is a type parameter as `String(x)` writes the
   type it is instantiated with (an `any` and a class instance with `+`'s order: `valueOf()`
-  first). A union of
-  strings, numbers and booleans (`"k:" + x` with `x: string | number`), or one with an array
-  among its members, is written by the member it holds, as `String(x)` writes
+  first), also inside another type (`"v=" + t[k]` with `k: K extends keyof T`). A union of
+  strings, numbers and booleans (`"k:" + x` with `x: string | number`), or one with an array or
+  a type parameter among its members, is written by the member it holds, as `String(x)` writes
   it. Any other value
   next to a string is a compile error; build that text with a template literal
   (`` `Total: ${m}` ``).

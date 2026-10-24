@@ -512,8 +512,31 @@ impl Ctx<'_> {
                 .iter()
                 .any(|x| x == b || self.iface_ancestors(x).contains(b));
         }
+        if let TyKind::Dyn(d, args) = self.ty.kind(ty).clone() {
+            // An interface value satisfies the interfaces its interface extends (#1368).
+            if self.extends_iface(&Bound { iface: d, args }, b) {
+                return true;
+            }
+        }
         self.impl_args(ty, b.iface)
             .is_some_and(|args| args == b.args)
+    }
+
+    /// Does the interface `from` extend `to`, directly or through its parents (or is it `to`)?
+    fn extends_iface(&mut self, from: &Bound, to: &Bound) -> bool {
+        let mut todo = vec![from.clone()];
+        let mut seen = 0;
+        while let Some(x) = todo.pop() {
+            if &x == to {
+                return true;
+            }
+            seen += 1;
+            if seen > 64 {
+                return false;
+            }
+            todo.extend(self.iface_ancestors(&x));
+        }
+        false
     }
 }
 
