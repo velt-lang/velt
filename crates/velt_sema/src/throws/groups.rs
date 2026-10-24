@@ -358,9 +358,14 @@ fn iface_args_of(cx: &mut Ctx, d: DefId, iface: DefId, depth: u32) -> Option<Vec
 }
 
 /// The interface arguments of an implementation of `iface` that uses `m` (`extend` blocks).
-fn impl_args(cx: &Ctx, iface: DefId, m: DefId) -> Option<Vec<TyId>> {
-    cx.impls
-        .iter()
-        .find(|imp| imp.iface == iface && imp.methods.contains(&m))
-        .map(|imp| imp.iface_args.clone())
+fn impl_args(cx: &mut Ctx, iface: DefId, m: DefId) -> Option<Vec<TyId>> {
+    let imp = cx.impls.iter().find(|imp| imp.methods.contains(&m))?;
+    let (own, own_args) = (imp.iface, imp.iface_args.clone());
+    if own == iface {
+        return Some(own_args);
+    }
+    // A slot `iface` declares, implemented through an interface extending it (an adapter of
+    // `IterableIterator` implements `Iterator`'s `next`).
+    let args = iface_args_of(cx, own, iface, 0)?;
+    Some(args.iter().map(|a| cx.subst(*a, &own_args)).collect())
 }

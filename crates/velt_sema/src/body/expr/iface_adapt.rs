@@ -39,7 +39,7 @@ use velt_syntax::ast;
 
 use super::callback::synth;
 use super::callback_wrap::{wrapper, Arg, Plan, Shape};
-use super::iface_adapt_slots::{adapter_method, AdapterParts};
+use super::iface_adapt_slots::{adapter_method, fields_ok, unresolved_slot, AdapterParts};
 use crate::any::Dynamic;
 use crate::body::{FnCx, LocalKind, Want};
 use crate::ctx::Ctx;
@@ -274,33 +274,6 @@ pub(super) fn adaptable(
     ok
 }
 
-/// Is slot `s` one whose type could not be resolved, in the interface (a generic function type)
-/// or at these type arguments (`keyof any` in a mapped type)? Its error was reported where the
-/// type is written: refusing the conversion too would add an error at every conversion site
-/// for the same cause. A slot mentioning the implementor's own type parameter (`own`) is
-/// decided as usual.
-fn unresolved_slot(cx: &mut Ctx, s: &SlotSig, own: u32, fa: &[TyId], ta: &[TyId]) -> bool {
-    let tys: Vec<TyId> = s
-        .params
-        .iter()
-        .map(|p| p.ty)
-        .chain(std::iter::once(s.ret))
-        .collect();
-    let mut mentions_own = false;
-    for &t in &tys {
-        cx.ty.visit(t, &mut |k| {
-            mentions_own |= matches!(k, TyKind::Param(p) if *p == own)
-        });
-    }
-    if mentions_own {
-        return false;
-    }
-    tys.iter().any(|&t| {
-        let (f, g) = (cx.subst(t, fa), cx.subst(t, ta));
-        cx.ty.has_error(f) || cx.ty.has_error(g)
-    })
-}
-
 /// Does a value of type `from` convert to `to` inside an adapter? `param` when it is a
 /// parameter of the slot itself, where a [`Container`] is passed as a copy.
 pub(super) fn value_ok(cx: &mut Ctx, from: TyId, to: TyId, param: bool, m: &mut Mode) -> bool {
@@ -377,6 +350,18 @@ pub(super) fn value_ok(cx: &mut Ctx, from: TyId, to: TyId, param: bool, m: &mut 
             ok
         }
         (TyKind::Dyn(i, xs), TyKind::Dyn(j, ys)) if i == j => adaptable(cx, i, &xs, &ys, m),
+        // A result that is an object type, or a union of them, whose fields convert
+        // (`IteratorResult<[any, any]>` as `IteratorResult<any>`): a copy (`object_copy`).
+        _ if !param && cx.union_members(from).is_some() => {
+            let (Some(xs), Some(ys)) = (cx.union_members(from), cx.union_members(to)) else {
+                return false;
+            };
+            xs.len() == ys.len()
+                && xs.iter().zip(&ys).all(|(a, b)| {
+                    a == b || value_ok(cx, *a, *b, false, m) || fields_ok(cx, *a, *b, m)
+                })
+        }
+        _ if !param && fields_ok(cx, from, to, m) => true,
         // An array of interface values read through the adapter (a field `kids: Tree<T>[]`): a
         // new array of the elements, each adapted (`adapt_array`). Nothing is written back, so
         // where a value goes the other way (a parameter, a setter) it is refused, and so is one

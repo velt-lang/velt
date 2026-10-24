@@ -412,3 +412,51 @@ pub(crate) fn adapter_setter(cx: &mut Ctx, p: &AdapterParts, field: usize) -> Op
     };
     Some(adapter_method(cx, p, slot, &sig, true))
 }
+
+/// Are `from` and `to` object types with the same fields in order, each of the same type or
+/// converting inside an adapter ([`value_ok`])?
+pub(super) fn fields_ok(cx: &mut Ctx, from: TyId, to: TyId, m: &mut Mode) -> bool {
+    if !(cx.is_object_type(from) && cx.is_object_type(to)) {
+        return false;
+    }
+    let (fa, fb) = (cx.public_fields(from), cx.public_fields(to));
+    fa.len() == fb.len()
+        && fa.iter().zip(&fb).all(|(a, b)| {
+            a.name == b.name
+                && a.optional == b.optional
+                && (a.ty == b.ty || value_ok(cx, a.ty, b.ty, false, m))
+        })
+}
+
+/// Is slot `s` one whose type could not be resolved, in the interface (a generic function type)
+/// or at these type arguments (`keyof any` in a mapped type)? Its error was reported where the
+/// type is written: refusing the conversion too would add an error at every conversion site
+/// for the same cause. A slot mentioning the implementor's own type parameter (`own`) is
+/// decided as usual.
+pub(super) fn unresolved_slot(
+    cx: &mut Ctx,
+    s: &SlotSig,
+    own: u32,
+    fa: &[TyId],
+    ta: &[TyId],
+) -> bool {
+    let tys: Vec<TyId> = s
+        .params
+        .iter()
+        .map(|p| p.ty)
+        .chain(std::iter::once(s.ret))
+        .collect();
+    let mut mentions_own = false;
+    for &t in &tys {
+        cx.ty.visit(t, &mut |k| {
+            mentions_own |= matches!(k, TyKind::Param(p) if *p == own)
+        });
+    }
+    if mentions_own {
+        return false;
+    }
+    tys.iter().any(|&t| {
+        let (f, g) = (cx.subst(t, fa), cx.subst(t, ta));
+        cx.ty.has_error(f) || cx.ty.has_error(g)
+    })
+}

@@ -3187,8 +3187,10 @@ The conversion applies where each type argument is the original's or `unknown` /
 each parameter and result converts as described. It is a compile error, with a note naming the
 case, when a method's parameter has another type holding `unknown` or `any` (a generic class
 such as `Box<unknown>`, or `Map<string, unknown>`; #1185) or is an interface (#924), and when a
-result is a promise of another type, a parameter is an array of the type parameter, or a method
-has type parameters of its own. A parameter of a function value (an optional method
+result is a promise of another type, or a parameter is an array of the type parameter. A method
+with type parameters of its own converts too. A result that is an object type, or a union of
+them, whose fields convert (an iterator's `IteratorResult<[any, any]>` as `IteratorResult<any>`)
+is a new object of the target type holding the same field values. A parameter of a function value (an optional method
 `revive?(e: E): T` with `E` an `unknown[]`) is checked against its own type as it is (#1185),
 except a generic class with `unknown` arguments, which is a compile error. A program without
 such a conversion is unchanged.
