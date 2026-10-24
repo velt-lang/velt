@@ -20,7 +20,6 @@ use std::sync::Arc;
 use tokio_postgres::types::ToSql;
 use tokio_postgres::{Client, CopyInSink, CopyOutStream};
 use velt_text::db_json::{parse_params, Params};
-use velt_text::Out;
 
 /// SQLSTATEs after which a cached statement is re-prepared: its plan no longer matches the
 /// schema (`0A000` "cached plan must not change result type"), or it is gone (`26000`).
@@ -152,23 +151,38 @@ impl Conn {
         }
     }
 
-    /// Run `sql` with `params`; the rows as JSON appended to `out` (see [`rows::to_json`]).
-    pub async fn query<O: Out + Send>(
+    /// Run `sql` with parameters already parsed (from JSON text or a sink, `super::sink`);
+    /// its statement (the columns) and rows, for a row cursor (`super::cursor`).
+    pub async fn query_params(
         &self,
         sql: &str,
-        params: &[u8],
-        first_only: bool,
-        out: O,
-    ) -> Result<O, PgError> {
+        parsed: Params<'_>,
+    ) -> Result<(tokio_postgres::Statement, Vec<tokio_postgres::Row>), PgError> {
+        let named = matches!(parsed, Params::Named(_));
         let r = async {
-            let (p, values) = self.bound(sql, params).await?;
+            let p = self.prepared(sql, named).await?;
+            let values = bind_all(&parsed, p.names.as_deref(), p.statement.params())?;
             rows::check_columns(p.statement.columns())?;
             let refs: Vec<&(dyn ToSql + Sync)> = values.iter().map(|v| v as _).collect();
             let rows = self.client.query(&p.statement, &refs).await?;
-            rows::to_json(p.statement.columns(), &rows, first_only, out)
+            Ok((p.statement.clone(), rows))
         }
         .await;
-        self.forget_if_stale(sql, is_named(params), &r);
+        self.forget_if_stale(sql, named, &r);
+        r
+    }
+
+    /// [`Conn::execute`] with parameters already parsed.
+    pub async fn execute_params(&self, sql: &str, parsed: Params<'_>) -> Result<u64, PgError> {
+        let named = matches!(parsed, Params::Named(_));
+        let r = async {
+            let p = self.prepared(sql, named).await?;
+            let values = bind_all(&parsed, p.names.as_deref(), p.statement.params())?;
+            let refs: Vec<&(dyn ToSql + Sync)> = values.iter().map(|v| v as _).collect();
+            Ok(self.client.execute(&p.statement, &refs).await?)
+        }
+        .await;
+        self.forget_if_stale(sql, named, &r);
         r
     }
 
