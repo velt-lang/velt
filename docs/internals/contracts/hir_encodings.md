@@ -847,11 +847,14 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   `Intrinsic::KeyWrite(x, k, v)` (type `void`; `v: T[K]`, owned), `x` and `k` borrowed places
   (`x` mutably for a write; any expressions, bound to temporaries in order when they are no
   places). An object type written through `KeyWrite` at some instantiation is
-  `AdtDef::assigned`. Sema records the requirement that `K` is one key, or keys whose
-  fields have one type (an `Inline` form that is never a value's type, reduced like
+  `AdtDef::assigned`. Sema records the requirement that `K` is one key, or keys naming
+  required fields (an `Inline` form that is never a value's type, reduced like
   `TyOp::Convert`'s); any other instantiation is an error. Lowering reads (shared) or assigns the
   field the key's string literal type names, as `x.name` does, switching on the key's tag for a
-  union of keys.
+  union of keys. When those fields have different types, `T[K]` is their union: a read wraps
+  the field in its member's variant, and a write evaluates the value once and stores the
+  value's member into the field when it is the field's type, else stops the program with a
+  `TypeError` (deferred-types.md, decision 4).
 
 ## Interface intersections and upcasts (#350)
 

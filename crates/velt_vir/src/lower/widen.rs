@@ -56,7 +56,7 @@ impl FnLower<'_, '_> {
 
     /// The variant of union `u` that can hold an error of type `m`: `m` itself, a union member
     /// containing it, or a base class of it.
-    fn member_variant(&mut self, u: TyId, m: TyId) -> Option<u32> {
+    pub(super) fn member_variant(&mut self, u: TyId, m: TyId) -> Option<u32> {
         let n = self.union_len(u);
         let members: Vec<TyId> = (0..n).map(|k| self.cx.variant_tys(u, k)[0]).collect();
         if let Some(k) = members.iter().position(|&p| p == m) {

@@ -437,9 +437,10 @@ these answers:
    (`TyOp::Inline`: mapped types, `T[K]`, `keyof T`, `Partial<T>` and the other utility types in
    signatures and bodies), reads and writes `x[k]` through one key per instantiation
    (`Intrinsic::KeyRead`, `KeyWrite`), and an optional field spread over an earlier value of it,
-   with presence flags. Reads and writes through a union of keys, `FieldByName` on a stuck
-   `Partial<T>`, and conversions between different layouts (an error at the instantiation, by
-   decision) remain.
+   with presence flags. Since #1517: reads and writes through a union of keys (a write checks
+   the value's member, decision 4), and fields of a stuck `Partial<T>`, `Pick<T, K>` and the
+   other forms read through `T`'s object bound (P3). Conversions between different layouts (an
+   error at the instantiation, by decision) and decision 5's `{} as D` remain.
 7. **`{ a: F | null }` where `{ a?: F | null }` is expected**, which TypeScript accepts, stays an
    error with the `{ ...x }` fix-it, like the other storage-position conversions (#672 covers
    parameters); types.md lists it as a difference from TypeScript.

@@ -1346,9 +1346,13 @@ too: `first(os)[key()] = v`). The object and the key may be any expressions, eac
 once, in order. An optional field reads as `F | undefined`, and `typeof`, `=== undefined` and
 `== null` on a `T[K]` value test the instantiation's value (`typeof o[k]` is `"undefined"` for an
 absent optional field, `"number"` for a present one). A key type of several keys reads or
-writes the field the key holds when those fields have one type (`k: "x" | "y"` on
-`{ x: number; y: number }`); keys whose fields have different types are not supported yet, an
-error at that instantiation. An error at an instantiation is reported in the generic function,
+writes the field the key holds (`k: "x" | "y"` on `{ x: number; y: number }`). When those
+fields have different types, `T[K]` is the union of them (`number | string` for `"id" | "name"`
+on `{ id: number; name: string }`): a read gives the field the key names as that union, and a
+write takes the value's member when it is the field's type, and otherwise stops the program
+with a `TypeError` where TypeScript would store a value of the wrong type (`setField(u, k, 5)`
+with `k` holding `"name"`). Keys that name an optional field are not supported yet, an error at
+that instantiation. An error at an instantiation is reported in the generic function,
 where the failing form is, with the call that instantiates it and the type arguments (and each
 call on the way, when another generic function's body makes the call). A call whose argument
 breaks a type parameter's constraint (`get(p, "w")`, a key `p` lacks) is one error, at that

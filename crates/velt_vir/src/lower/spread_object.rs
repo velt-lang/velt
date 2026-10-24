@@ -9,8 +9,9 @@
 
 use velt_sema::hir::{self, LitValue, TyId, TyKind};
 
+use super::operand::proj;
 use super::{ice, unit, FnLower};
-use crate::vir::{BlockId, Operand, Place, Rvalue, Ty};
+use crate::vir::{BlockId, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
 impl FnLower<'_, '_> {
     pub(super) fn spread_object(&mut self, parts: &[hir::Expr], ty: TyId) -> Operand {
@@ -252,11 +253,47 @@ impl FnLower<'_, '_> {
         let vt = self.vty(fty);
         let out = self.temp(vt);
         let join = self.new_block();
+        let ftys = self.cx.adt_field_tys(oty);
         let blocks = self.key_switch(key, &fields);
         for ((_, k), b) in fields.iter().zip(blocks) {
             self.switch_to(b);
-            let fp = self.field_place(&place, oty, *k);
-            let v = self.share_value(Operand::Copy(fp), fty);
+            let fi = ftys[*k as usize];
+            let variant = match fi != fty && self.cx.is_union(fty) {
+                true => self.member_variant(fty, fi),
+                false => None,
+            };
+            let v = match variant {
+                // Keys whose fields have different types: the field as the union `T[K]`.
+                Some(variant) => {
+                    let TyKind::Adt(d, args) = self.cx.kind(fty) else {
+                        ice("a key read's union type")
+                    };
+                    let field = hir::Expr {
+                        kind: hir::ExprKind::Field {
+                            base: Box::new(object.clone()),
+                            index: *k,
+                            mode: hir::UseMode::Borrow,
+                        },
+                        ty: fi,
+                        span: object.span,
+                    };
+                    let wrap = hir::Expr {
+                        kind: hir::ExprKind::Variant {
+                            def: d,
+                            type_args: args,
+                            variant,
+                            args: vec![field],
+                        },
+                        ty: fty,
+                        span: object.span,
+                    };
+                    self.expr(&wrap)
+                }
+                _ => {
+                    let fp = self.field_place(&place, oty, *k);
+                    self.share_value(Operand::Copy(fp), fty)
+                }
+            };
             self.assign(Place::local(out), Rvalue::Use(v));
             self.goto(join);
         }
@@ -273,7 +310,12 @@ impl FnLower<'_, '_> {
         key: &hir::Expr,
         value: &hir::Expr,
     ) -> Operand {
-        let (_, fields) = self.key_fields(object, key);
+        let (oty, fields) = self.key_fields(object, key);
+        let vty = self.sub(value.ty);
+        let ftys = self.cx.adt_field_tys(oty);
+        if fields.iter().any(|(_, k)| ftys[*k as usize] != vty) {
+            return self.key_write_checked(object, key, value, (oty, vty), &fields);
+        }
         self.expr(key);
         let join = self.new_block();
         let blocks = self.key_switch(key, &fields);
@@ -289,6 +331,80 @@ impl FnLower<'_, '_> {
                 span: value.span,
             };
             self.assign_expr(&field, value);
+            self.goto(join);
+        }
+        self.switch_to(join);
+        unit()
+    }
+
+    /// `object[key] = value` where the keys' fields have different types and `value` is their
+    /// union (`T[K]`): the value is evaluated once, and the field the key names takes the
+    /// value's member, checked: a member of another type stops the program with a `TypeError`,
+    /// where TypeScript would store a value of the wrong type
+    /// (docs/internals/design/deferred-types.md, decision 4).
+    fn key_write_checked(
+        &mut self,
+        object: &hir::Expr,
+        key: &hir::Expr,
+        value: &hir::Expr,
+        (oty, vty): (TyId, TyId),
+        fields: &[(i128, u32)],
+    ) -> Operand {
+        let v = self.expr(value);
+        let vt = self.vty(vty);
+        let tmp = self.temp(vt);
+        self.assign(Place::local(tmp), Rvalue::Use(v));
+        self.expr(key);
+        let place = self.place_expr(object);
+        let ftys = self.cx.adt_field_tys(oty);
+        let names: Vec<String> = match self.cx.kind(oty) {
+            TyKind::Adt(d, _) => (self.cx.adt_def(d).fields.iter())
+                .map(|f| f.name.clone())
+                .collect(),
+            _ => vec![],
+        };
+        let join = self.new_block();
+        let blocks = self.key_switch(key, fields);
+        for ((_, k), b) in fields.iter().zip(blocks) {
+            self.switch_to(b);
+            let fi = ftys[*k as usize];
+            let fp = self.field_place(&place, oty, *k);
+            let variant = match fi != vty && self.cx.is_union(vty) {
+                true => self.member_variant(vty, fi),
+                false => None,
+            };
+            let stored = match variant {
+                Some(variant) => {
+                    let tag = Operand::Copy(proj(&Place::local(tmp), Proj::Field(0)));
+                    let ok = self.new_block();
+                    let bad = self.new_block();
+                    self.terminate(Terminator::Switch {
+                        value: tag,
+                        cases: vec![(variant as i128, ok)],
+                        default: bad,
+                    });
+                    self.switch_to(bad);
+                    let name = names.get(*k as usize).cloned().unwrap_or_default();
+                    let fname = self.cx.type_name(fi);
+                    self.panic_msg(&format!(
+                        "TypeError: `x[k] = v` stores a value of another type in the field `{name}` ({fname})"
+                    ));
+                    self.terminate(Terminator::Unreachable);
+                    self.switch_to(ok);
+                    let view = self.cx.view(vty, variant);
+                    let vp = proj(&Place::local(tmp), Proj::Cast(view));
+                    if self.cx.is_unit(fi) {
+                        None
+                    } else {
+                        Some(Operand::Copy(proj(&vp, Proj::Field(1))))
+                    }
+                }
+                _ => Some(Operand::Copy(Place::local(tmp))),
+            };
+            if let Some(stored) = stored {
+                self.drop_glue(fp.clone(), fi);
+                self.assign(fp, Rvalue::Use(stored));
+            }
             self.goto(join);
         }
         self.switch_to(join);
