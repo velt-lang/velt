@@ -3149,6 +3149,9 @@ the handler (`Error` classes, as for other function types written without `throw
 program whose traps throw, an operation on `any` throws what the trap it runs throws (a read
 what `get` throws, a write what `set` throws), so a `throws` clause around one must allow it and a
 `catch` variable's type includes it. A program whose traps throw nothing compiles as before.
+Where Node lets a trap throw any value, Velt rejects a trap that throws something other than an
+`Error` (`throw "a string"`) at compile time, with a note saying to throw an `Error` instead
+(`throw new Error(String(value))`).
 
 ```ts
 class ReadOnly extends Error {}
