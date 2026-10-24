@@ -1,0 +1,132 @@
+// Parameter defaults that use earlier parameters, `this` or closures over the function's
+// surroundings (#1501): the function applies them itself when the call starts, with every
+// later default that is not a constant, in JavaScript's order. Calls through interfaces, base
+// classes and function values, and a passed `undefined`, take them too.
+function f(a: number, b: number | undefined = a * 2): number {
+  return a + b;
+}
+
+console.log(f(1), f(1, 5), f(2, undefined));
+
+function log(tag: string, v: number): number {
+  console.log("default", tag, v);
+  return v;
+}
+
+function order(
+  a: number,
+  b: number | undefined = log("b", a + 1),
+  c: number | undefined = log("c", 3),
+  d: string = "d",
+): string {
+  return `${a} ${b} ${c} ${d}`;
+}
+
+console.log(order(1));
+console.log(order(1, 7));
+
+function names(
+  first: string,
+  last: string | undefined = first.toUpperCase(),
+  full: string | undefined = `${first} ${last}`,
+): string {
+  return full;
+}
+
+console.log(names("ada"), names("ada", "L"), names("a", "b", "c"));
+
+class P {
+  x: number;
+  y: number;
+  constructor(x: number, y: number | undefined = x + 1) {
+    this.x = x;
+    this.y = y;
+  }
+  scale(k: number, by: number | undefined = k * this.x): number {
+    return by;
+  }
+}
+
+const p = new P(2);
+console.log(p.x, p.y, new P(2, 9).y, p.scale(3), p.scale(3, 1));
+
+const arrow = (a: number, b: number | undefined = a * 10): number => a + b;
+console.log(arrow(1), arrow(1, 1));
+
+function arr(n: number, list: number[] | undefined = [n, n + 1]): number[] {
+  list.push(0);
+  return list;
+}
+
+console.log(arr(1), arr(2, [5]));
+
+async function af(a: number, b: number | undefined = a + 1): Promise<number> {
+  return b;
+}
+
+af(4).then((v) => console.log("async", v));
+
+function anyp(a: number, b: any = a): any {
+  return b;
+}
+
+console.log(anyp(5), anyp(5, "s"));
+
+interface Shape {
+  area(k: number, m?: number): number;
+}
+
+class Sq implements Shape {
+  area(k: number, m: number | undefined = k): number {
+    return k * m;
+  }
+}
+
+const s: Shape = new Sq();
+console.log(s.area(3), s.area(3, 2));
+
+class Base {
+  m(a: number, b: number | undefined = a + 100): number {
+    return b;
+  }
+}
+
+class Derived extends Base {
+  override m(a: number, b: number | undefined = a + 200): number {
+    return b;
+  }
+}
+
+const bs: Base = new Derived();
+console.log(bs.m(1), new Base().m(1));
+const fv: (a: number, b?: number) => number = f;
+console.log(fv(3), fv(3, 3));
+
+class Counter {
+  step = 2;
+  next(from: number, by: number | undefined = this.step): number {
+    return from + by;
+  }
+  twice(by: number | undefined = this.step * 2): number {
+    return by;
+  }
+}
+
+const c = new Counter();
+console.log(c.next(1), c.next(1, 5), c.twice(), c.twice(1));
+
+function outer(): number {
+  const local = 5;
+  let count = 0;
+  function inner(cb: (() => number) | undefined = () => local + count): number {
+    count += 1;
+    return cb();
+  }
+  const viaArrow = (
+    k: number,
+    f: ((x: number) => number) | undefined = (x) => x * local + k,
+  ): number => f(k);
+  return inner() + inner(() => 100) + inner() + viaArrow(2);
+}
+
+console.log(outer());

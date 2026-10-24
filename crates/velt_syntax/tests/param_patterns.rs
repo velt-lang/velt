@@ -96,7 +96,6 @@ fn defaults_that_would_run_out_of_order_are_errors() {
         "function h({ p }: { p: number }, q: number = p + 1) {}",
         earlier,
     );
-    has("function k(p: number, q: number = f({ p })) {}", earlier);
     has("const k = (p: number, q = [p]) => q;", earlier);
     has(
         "class C { constructor([p]: number[], q: number = p) {} }",
@@ -107,9 +106,30 @@ fn defaults_that_would_run_out_of_order_are_errors() {
     parse_ok("function f({ x = g() }: P, y: number = -1, z = \"z\", w: number[] = [1, 2]) {}");
     parse_ok("function f({ x }: P, { y }: Q = mk(), z: number = g()) {}");
     parse_ok("function f(a: number, b: number = g(), c?: string, ...xs: number[]) {}");
+    // A typed default that uses an earlier parameter is applied in the function (`T | undefined`
+    // at calls); an untyped or nullable one still can't be.
+    parse_ok("function k(p: number, q: number = f({ p })) {}");
+    has("function k(p: string, q: string | null = p) {}", earlier);
 }
 
 #[test]
 fn an_object_literal_method_may_have_a_rest_parameter() {
     parse_ok("const o = { sum(...xs: number[]): number { return 0; } };");
+}
+
+#[test]
+fn defaults_that_run_in_the_function_take_undefined_at_calls() {
+    let m = parse_ok(
+        "function f(a: number, b: number = a * 2, c: string = g(), d = 1, e: any = a, h: () => number = () => 1) {}",
+    );
+    let ps = &func(&m, 0).sig.params;
+    let tys: Vec<String> = ps.iter().map(|p| ty(&p.ty)).collect();
+    // `b` uses `a`; `c` runs after it, as in JavaScript; `d` is a constant; `any` already holds
+    // `undefined`; `h` makes a closure.
+    let undefined = [false, true, true, false, false, true];
+    for (t, u) in tys.iter().zip(undefined) {
+        assert_eq!(t.contains("undefined"), u, "{tys:?}");
+    }
+    let m = parse_ok("function f(a: number, c: string = g()) {}");
+    assert_eq!(ty(&func(&m, 0).sig.params[1].ty), "string");
 }

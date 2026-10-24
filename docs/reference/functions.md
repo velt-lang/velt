@@ -15,9 +15,15 @@ function scale(xs: f64[], k: f64 = 2.0): f64[] {
   [class fields](classes.md) without annotations). A missing return type is inferred from the
   body ([Return types](#return-types)).
 - Default values work on functions, methods, constructors and interface methods; calls through
-  an interface use the interface's defaults. A default is evaluated where the function is
-  called, so it cannot use an earlier parameter yet (`q: number = p + 1` is an error saying so;
-  take `q?: number` and write `const r = q ?? p + 1;` in the body).
+  an interface use the interface's defaults. A default may use earlier parameters, `this` and
+  closures over the function's surroundings (`q: number = p * 2`, `by: number = this.step`,
+  `cb: () => number = () => local`), as in JavaScript: the function applies such a default
+  itself when the call starts (also to a passed `undefined`), and so every later default that
+  is not a constant, which keeps JavaScript's order. Its parameter is a `T | undefined` to
+  callers (`q?: number`, as TypeScript shows it) and a `T` in the body. Such a parameter needs
+  a written type (`q = p * 2` says so) without `null` in it, and may not use a name a
+  destructured parameter binds, nor be a generator's yet; for those, take `q?: number` and
+  write `const r = q ?? p * 2;` in the body.
 - The default of a parameter of a dynamic type (`x: any = "d"`, `x: unknown = 0`) also applies to
   a passed `undefined`, as in JavaScript. The function applies it itself when the call starts,
   so it is the function's own default whichever way it is called: through an interface whose

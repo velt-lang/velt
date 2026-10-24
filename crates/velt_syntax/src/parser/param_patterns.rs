@@ -73,12 +73,14 @@ impl Parser<'_> {
     }
 }
 
-/// One parameter as [`Parser::check_param_defaults`] sees it: its name, its pattern, and the
-/// default written for it (not the `null` / `[]` an optional or rest parameter gets).
+/// One parameter as [`Parser::check_param_defaults`] sees it: its name, its pattern, the
+/// default written for it (not the `null` / `[]` an optional or rest parameter gets), and
+/// its written type (an arrow's may be left to the default).
 pub(super) struct ParamDefault<'p> {
     pub name: &'p Ident,
     pub pattern: Option<&'p Pattern>,
     pub default: Option<&'p Expr>,
+    pub ty: Option<&'p TypeExpr>,
 }
 
 impl<'p> ParamDefault<'p> {
@@ -87,6 +89,7 @@ impl<'p> ParamDefault<'p> {
             name: &p.name,
             pattern: p.pattern.as_ref(),
             default: p.default.as_ref().filter(|_| !p.optional && !p.rest),
+            ty: Some(&p.ty),
         }
     }
 
@@ -95,22 +98,52 @@ impl<'p> ParamDefault<'p> {
             name: &p.name,
             pattern: p.pattern.as_ref(),
             default: p.default.as_ref().filter(|_| !p.optional && !p.rest),
+            ty: p.ty.as_ref(),
         }
     }
 }
 
+/// The written type of a parameter whose default the function applies itself (see
+/// [`Parser::check_param_defaults`]): `ty | undefined`, so that a call leaving the argument out
+/// passes `undefined`, as for `p?: T`. Sema applies such a default in the function's body, to a
+/// passed `undefined` too, where the parameter is a `T` again (`default_prologue`). `any` and
+/// `unknown` already hold `undefined`.
+pub(super) fn applied_in_callee(ty: TypeExpr) -> TypeExpr {
+    let dynamic = matches!(&ty.kind, TypeExprKind::Named { path, args }
+        if args.is_empty() && path.len() == 1 && matches!(path[0].name.as_str(), "any" | "unknown"));
+    if dynamic {
+        return ty;
+    }
+    super::optional_types::or_undefined(ty)
+}
+
 impl Parser<'_> {
-    /// What parameter defaults can't do yet. A default is evaluated where the function is
-    /// called, before the call, so it can't use an earlier parameter (`b = a + 1`, also a name
-    /// a destructured parameter binds), and it would run before the defaults inside an earlier
-    /// destructured parameter (`({ x = f() }: P, y = g())`, which run in the body), where JS runs
-    /// `f()` first. So after such a pattern a default must be a constant.
-    pub(super) fn check_param_defaults(&mut self, params: &[ParamDefault<'_>]) {
-        let mut earlier: Vec<&str> = vec![];
+    /// Where parameter defaults run, and what they can't do yet. A default is evaluated where
+    /// the function is called, before the call. One that uses an earlier parameter
+    /// (`b: number = a * 2`), `this` or a closure (`cb: () => number = () => local`, which may
+    /// capture the function's surroundings) runs in the function instead, at the start of its
+    /// body, as in JavaScript, and so does
+    /// every later default that is not a constant (JavaScript runs them in order): the indices
+    /// returned, whose types the caller makes `T | undefined` ([`applied_in_callee`]). The body
+    /// applies them before it destructures parameters, so a default can't use a name a
+    /// destructured parameter binds yet, nor one whose type is left to it (an arrow's
+    /// `(a: number, b = a)`). A call-site default would also run before the defaults inside an
+    /// earlier destructured parameter (`({ x = f() }: P, y = g())`, which run in the body), where
+    /// JS runs `f()` first, so after such a pattern a default must be a constant.
+    pub(super) fn check_param_defaults(&mut self, params: &[ParamDefault<'_>]) -> Vec<usize> {
+        let mut bound: Vec<&str> = vec![];
+        let mut plain: Vec<&str> = vec![];
         let mut pattern_defaults = false;
-        for p in params {
+        let mut in_callee: Vec<usize> = vec![];
+        for (i, p) in params.iter().enumerate() {
             if let Some(d) = p.default {
-                if let Some(used) = first_use_of(d, &earlier) {
+                let uses_plain = first_use_of(d, &plain);
+                let in_order = !in_callee.is_empty() && !is_constant(d);
+                // A `T | null` parameter stays one after the body applies its default, which
+                // `p!` would not keep.
+                let typed = p.ty.is_some_and(|t| !has_null(t));
+                let unsupported = first_use_of(d, &bound).or(uses_plain.filter(|_| !typed));
+                if let Some(used) = unsupported {
                     self.diags.push(
                         Diagnostic::error(
                             format!(
@@ -119,7 +152,7 @@ impl Parser<'_> {
                             ),
                             used.span,
                         )
-                        .with_note("Velt evaluates a parameter default where the function is called; compute the value in the body instead (`q?: number`, then `const r = q ?? p + 1;`)"),
+                        .with_note("Velt can't apply it before destructured parameters, or infer a type from it; compute the value in the body instead (`q?: number`, then `const r = q ?? p + 1;`), or write the parameter's type"),
                     );
                 } else if pattern_defaults && !is_constant(d) {
                     self.diags.push(
@@ -129,16 +162,19 @@ impl Parser<'_> {
                         )
                         .with_note("JavaScript runs the defaults inside the earlier pattern first, but Velt evaluates this default where the function is called, before them; compute the value in the body instead (`q?: number`, then `const r = q ?? f();`)"),
                     );
+                } else if (uses_plain.is_some() || in_order || runs_in_body(d)) && typed {
+                    in_callee.push(i);
                 }
             }
             match p.pattern {
                 Some(q) => {
-                    pattern_names(q, &mut earlier);
+                    pattern_names(q, &mut bound);
                     pattern_defaults |= has_defaults(q);
                 }
-                None => earlier.push(&p.name.name),
+                None => plain.push(&p.name.name),
             }
         }
+        in_callee
     }
 }
 
@@ -214,4 +250,30 @@ fn first_use_of<'e>(e: &'e Expr, names: &[&str]) -> Option<&'e Ident> {
     let mut v = Uses { names, found: None };
     walk_expr(e, &mut v);
     v.found
+}
+
+/// Does the written type `ty` include `null` (`T | null`)?
+fn has_null(ty: &TypeExpr) -> bool {
+    match &ty.kind {
+        TypeExprKind::Null => true,
+        TypeExprKind::Union(ms) => ms.iter().any(has_null),
+        _ => false,
+    }
+}
+
+/// Does `e` use `this` (`by = this.x`) or make a closure (`cb = () => local`, which may capture
+/// the function's surroundings)? A default has those only where the function runs it.
+fn runs_in_body(e: &Expr) -> bool {
+    struct This(bool);
+    impl<'e> Visit<'e> for This {
+        fn expr(&mut self, e: &'e Expr) {
+            self.0 |= matches!(
+                e.kind,
+                ExprKind::This | ExprKind::Arrow { .. } | ExprKind::Function(_)
+            );
+        }
+    }
+    let mut v = This(false);
+    walk_expr(e, &mut v);
+    v.0
 }
