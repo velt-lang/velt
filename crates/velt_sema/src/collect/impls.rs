@@ -6,7 +6,7 @@
 //! once the program writes through the interface, a setter per writable field
 //! (`crate::iface_writes`).
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::Diagnostic;
 
@@ -30,6 +30,56 @@ pub(super) fn build_impls(cx: &mut Ctx) {
             if let Some((imp, setters)) = check_impl(cx, d, &b, &mut getters) {
                 cx.impls.push(imp);
                 // A field with a getter and no setter leaves the implementation without setters.
+                if let Some(setters) = setters {
+                    cx.note_setters(cx.impls.len() as u32 - 1, setters);
+                }
+            }
+        }
+    }
+    override_impls(cx, &mut getters);
+}
+
+/// A class overriding a generic method of an interface that a base class implements gets an
+/// implementation of its own: a call through a type-parameter bound (`s.area<U>(…)` with
+/// `S extends Sh`) runs the method of the receiver's nearest implementation, statically, so
+/// that must be the override (issue #1132). Generic methods have no vtable slot to dispatch
+/// through instead.
+fn override_impls(cx: &mut Ctx, getters: &mut Getters) {
+    let built = cx.impls.len() as u32;
+    let mut done: FxHashSet<(DefId, DefId)> = FxHashSet::default();
+    for (d, key) in cx.generic_overrides.clone() {
+        let n = cx.adt(d).map_or(0, |a| a.generics.len());
+        let self_ty = self_type(cx, d, n);
+        for b in cx.adt(d).map(|a| a.implements.clone()).unwrap_or_default() {
+            done.insert((d, b.iface));
+        }
+        let mut bounds = vec![];
+        let mut cur = cx.base_of(self_ty);
+        for _ in 0..64 {
+            let Some(t) = cur else { break };
+            let class = cx.class_of(t).map(|(c, _)| c);
+            for i in 0..built {
+                let imp = &cx.impls[i as usize];
+                let (ty, iface) = (imp.ty, imp.iface);
+                let own =
+                    matches!(cx.ty.kind(ty), crate::hir::TyKind::Adt(c, _) if Some(*c) == class);
+                let declares = cx.iface(iface).is_some_and(|f| {
+                    f.methods
+                        .iter()
+                        .any(|m| m.name == key && m.generics.len() > 0)
+                });
+                if !own || !declares || !done.insert((d, iface)) {
+                    continue;
+                }
+                if let Some((_, args, _)) = cx.try_impl(i, t) {
+                    bounds.push(Bound { iface, args });
+                }
+            }
+            cur = cx.base_of(t);
+        }
+        for b in bounds {
+            if let Some((imp, setters)) = check_impl(cx, d, &b, getters) {
+                cx.impls.push(imp);
                 if let Some(setters) = setters {
                     cx.note_setters(cx.impls.len() as u32 - 1, setters);
                 }
