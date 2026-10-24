@@ -3,6 +3,7 @@
 
 #[cfg(test)]
 mod handoff_tests;
+pub(crate) mod later;
 pub mod stream;
 pub mod sys;
 pub mod tcp;

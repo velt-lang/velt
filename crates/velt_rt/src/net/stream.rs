@@ -107,6 +107,8 @@ pub struct StreamObj {
     /// [`try_read_into`](Self::try_read_into); `held_end` once that read found the end.
     held: Mutex<VecDeque<u8>>,
     held_end: AtomicBool,
+    /// Bytes written with `writeLater`, sent when the poll ends (net/later.rs).
+    pub(crate) later: super::later::Later,
 }
 
 /// A raw socket's turn to write ([`StreamObj::turn`]), held across the write.
@@ -196,6 +198,7 @@ impl StreamObj {
             turn: std::sync::Arc::new(AsyncMutex::new(())),
             held: Mutex::new(VecDeque::new()),
             held_end: AtomicBool::new(false),
+            later: Default::default(),
         }
     }
 
@@ -406,6 +409,14 @@ impl StreamObj {
                 }
                 Ok(())
             }
+        }
+    }
+
+    /// An error once the stream was aborted.
+    pub(crate) fn check_open(&self) -> io::Result<()> {
+        match self.aborted.load(Ordering::Acquire) {
+            true => Err(aborted_error()),
+            false => Ok(()),
         }
     }
 

@@ -33,6 +33,17 @@
     returns the number of bytes written (0 when it takes nothing now, while an earlier write is
     still going on, for a TLS stream, and after an error, which the next `write` reports). When
     everything was written there is nothing to await.
+  - `writeLater(data: string): i64`, `writeBytesLater(data: u8[] | Uint8Array, start = 0, end =
+    data.length): i64`: queue bytes (copied at the call) that are sent when the task next waits
+    or finishes, together with everything else it queued until then: one system call for a
+    response head and the body pieces a render produced without waiting, and nothing held back
+    past a wait. They return the number of bytes still to be sent on the stream. A `write` goes
+    after what was queued before it. They throw `IoError` once sending failed (the error a
+    `write` would report), after `abort()` and on a closed handle.
+  - `drained(max = 0): Promise<void>`: resolves once at most `max` bytes queued by `writeLater`
+    (or written after them) are still to be sent, at once when there are no more: keeps a
+    producer that queues faster than the peer reads bounded. Throws `IoError` when sending
+    failed.
   - `shutdown()`: half-close.
   - `abort()`: fails the operations in flight (a `write` to a peer that stopped reading would
     otherwise never finish) and every later one. The handle stays open until `close()`.
@@ -42,7 +53,8 @@
     and a timer leaves the losing wait running): a server waiting for each idle connection's next
     request.
   - `peerAddr(): string`, `close()`: releases the handle; a read or `readable()` still waiting
-    then fails with `EBADF` (no code can read what it would bring), a write in flight goes on.
+    then fails with `EBADF` (no code can read what it would bring), a write in flight goes on,
+    and so do bytes queued with `writeLater` (`await drained()` first to know they were sent).
 - `connectTls(addr, opts?: TlsConnectOptions { serverName?; ca?; alpn?: string[] }):
   Promise<TcpStream>`: a TLS connection (rustls), resolved once the handshake is done. The
   certificate is checked for the host in `addr` (or `serverName`) against the built-in roots

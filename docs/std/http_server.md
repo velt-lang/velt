@@ -89,10 +89,12 @@ first reads it.
 - `send(text)` (`text/plain; charset=utf-8`), `sendBytes(bytes)` (`application/octet-stream`),
   `json(text)` (`application/json`), `html(text)` (`text/html; charset=utf-8`): write the
   response, with `Server`, `Date` and `Content-Length`; one per request.
-- `stream(type = "text/plain; charset=utf-8"): Promise<HttpStream>`: writes the head now and
+- `stream(type = "text/plain; charset=utf-8"): Promise<HttpStream>`: writes the head and
   the body piece by piece: `await s.write(data)` (a `string`, `u8[]` or `Uint8Array`) sends one
-  chunk (`Transfer-Encoding: chunked`; to an HTTP/1.0 client the body ends with the connection)
-  and resolves once the connection took it, so a fast producer waits for a slow client;
+  chunk (`Transfer-Encoding: chunked`; to an HTTP/1.0 client the body ends with the connection).
+  What the handler writes before it next waits leaves in one write (the head with the first
+  pieces; [`writeLater`](net.md)), and `write` resolves at once unless more than 64 KiB are
+  still to be sent, so a fast producer waits for a slow client;
   `await s.end()` ends the body (the server ends one the handler leaves open). A write to a
   client that went away throws `IoError` and aborts `signal()`.
 - `sendStream(body: BodyStream, type = "text/html; charset=utf-8")`: streams a

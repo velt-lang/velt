@@ -127,3 +127,54 @@ pub unsafe extern "C" fn velt_rt_tcp_try_write_range(
 ) -> u64 {
     try_write_now(s, range(data, start, end))
 }
+
+/// `velt_rt_tcp_write_later(s, data, out)` → `IoResult<u64>`: appends `data` (a string; one
+/// U+FFFD per lone surrogate) to the bytes sent when this task's poll ends (net/later.rs); the
+/// bytes still to be sent. Fails once an earlier deferred write failed, the stream was aborted
+/// or the handle is closed.
+///
+/// # Safety
+/// `data` is a valid string; `out` is writable.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_tcp_write_later(
+    s: StreamHandle,
+    data: *const crate::str::VeltStr,
+    out: *mut IoResult<u64>,
+) {
+    out.write(write_later(s, (*data).text_lossy().as_bytes()));
+}
+
+/// `velt_rt_tcp_write_later_range(s, data, start, end, out)`: `velt_rt_tcp_write_later` of
+/// `data[start..end]` (clamped to the array).
+///
+/// # Safety
+/// `data` is a valid `u8[]` the caller lends for the call; `out` is writable.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_tcp_write_later_range(
+    s: StreamHandle,
+    data: *const VeltBytes,
+    start: u64,
+    end: u64,
+    out: *mut IoResult<u64>,
+) {
+    out.write(write_later(s, range(data, start, end)));
+}
+
+fn write_later(s: StreamHandle, data: &[u8]) -> IoResult<u64> {
+    let Some(obj) = STREAMS.get(s) else {
+        return IoResult::err(crate::registry::closed_error());
+    };
+    match obj.write_later(data) {
+        Ok(n) => IoResult::ok(n),
+        Err(e) => IoResult::err(crate::result::VeltErr::from_io(&e)),
+    }
+}
+
+/// `velt_rt_tcp_drained(s, max)` → `IoResult<()>` once at most `max` bytes of what was written
+/// (deferred or not) are still to be sent, or with the error that stopped sending.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_tcp_drained(s: StreamHandle, max: u64) -> *mut VeltFut {
+    STREAMS.op::<()>(s, |obj| {
+        new_leaf(async move { IoResult::from_io(obj.drained(max).await, |()| ()) })
+    })
+}

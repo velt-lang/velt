@@ -347,6 +347,13 @@ pub(super) fn write_copy(s: StreamHandle, data: &[u8]) -> *mut VeltFut {
     // worker before this task's poll ends, so what it printed before the write goes first.
     crate::io::publish_before_handoff();
     STREAMS.op::<()>(s, |obj| {
+        // Bytes deferred with `writeLater` go first: these join their queue.
+        if obj.later.active() {
+            let data = data.to_vec();
+            return new_leaf(
+                async move { IoResult::from_io(obj.write_queued(&data).await, |()| ()) },
+            );
+        }
         // Counted from the call, so a write made after this one waits for it.
         let (w, first) = Writing::begin(obj);
         // A raw socket usually takes everything at once: written here, from the caller's
@@ -391,6 +398,9 @@ pub unsafe extern "C" fn velt_rt_tcp_try_write(s: StreamHandle, data: *const Vel
 pub(super) fn try_write_now(s: StreamHandle, data: &[u8]) -> u64 {
     crate::io::publish_before_handoff();
     let Some(obj) = STREAMS.get(s) else { return 0 };
+    if obj.later.active() {
+        return 0;
+    }
     // Nothing while another write goes on (these bytes go after its), in the socket's turn.
     let (w, first) = Writing::begin(obj);
     let Some((stream, _turn)) = w.0.plain().filter(|_| first).zip(w.0.try_turn()) else {

@@ -5,9 +5,11 @@
 // responses to the requests one read brought leave in one write; the fixed parts of a head are
 // encoded per response and the `Date` value once a second. A streamed response (`stream`, `sse`)
 // writes its head at once and each piece as one chunk (`Transfer-Encoding: chunked`; to an
-// HTTP/1.0 client, the body ends with the connection): `write` resolves once the connection took
-// the piece, so a fast producer waits for a slow client (backpressure), and a client that went
-// away makes it throw and aborts the request's signal (cancellation).
+// HTTP/1.0 client, the body ends with the connection). Its pieces are queued on the connection
+// (`writeBytesLater`): what the handler writes before it next waits leaves in one write, and
+// `write` waits while more than `QUEUED` bytes are still to be sent, so a fast producer waits for
+// a slow client (backpressure); a client that went away makes it throw and aborts the request's
+// signal (cancellation).
 
 import { utf8Encode } from "velt:encoding";
 import { BodyStream } from "velt:fetch/body";
@@ -20,6 +22,8 @@ declare function velt_rt_bytes_set_str(dst: u8[], s: string, offset: u64): bool;
 const CR: u8 = 13;
 const LF: u8 = 10;
 const SP: u8 = 32;
+/// How many bytes of a streamed body may wait to be sent before `write` waits.
+const QUEUED: number = 65536;
 /// The response buffer a connection starts with.
 const INITIAL_OUT: i64 = 16384;
 // Indexes of `HttpResponse.types`.
@@ -143,7 +147,7 @@ export class HttpResponse {
    */
   async stream(type: string = "text/plain; charset=utf-8"): Promise<HttpStream> {
     this.head(-1, type, -1);
-    await this.flush();
+    await this.queue();
     return new HttpStream(this);
   }
 
@@ -177,7 +181,7 @@ export class HttpResponse {
   async sse(): Promise<EventStream> {
     this.header("Cache-Control", "no-cache");
     this.head(TYPE_SSE, null, -1);
-    await this.flush();
+    await this.queue();
     return new EventStream(new HttpStream(this));
   }
 
@@ -256,6 +260,25 @@ export class HttpResponse {
     }
   }
 
+  /**
+   * Queues what is buffered, sent with everything else this task writes before it next waits
+   * (one write for a head and the chunks a render produces without waiting); waits only while
+   * more than `QUEUED` bytes are still to be sent (internal).
+   */
+  async queue() {
+    if (this.length > 0) {
+      try {
+        this.conn.writeBytesLater(this.buf, 0, this.length as number);
+        this.length = 0;
+        await this.conn.drained(QUEUED);
+      } catch (e) {
+        this.length = 0;
+        this.failed.abort();
+        throw e;
+      }
+    }
+  }
+
   /** One piece of a streamed body (internal: `HttpStream.write`). */
   async piece(data: string | u8[] | Uint8Array) {
     if (!this.streaming) {
@@ -284,7 +307,7 @@ export class HttpResponse {
       this.buf[this.length + 1] = LF;
       this.length += 2;
     }
-    await this.flush();
+    await this.queue();
   }
 
   /** Ends a streamed body (internal: `HttpStream.end`). */
@@ -297,7 +320,7 @@ export class HttpResponse {
       this.text("0\r\n\r\n");
     }
     // Otherwise (HTTP/1.0) the body ends with the connection: the head set `keepAlive` false.
-    await this.flush();
+    await this.queue();
   }
 
   /// A chunk's size line (HTTP/1.1), before `n` bytes of data.
@@ -453,8 +476,9 @@ export class HttpStream {
   }
 
   /**
-   * Writes `data` as the next piece of the body (an empty one writes nothing). Resolves once
-   * the connection took it; throws if the client went away (and aborts the request's signal).
+   * Writes `data` as the next piece of the body (an empty one writes nothing): sent with what
+   * else is written before the handler next waits. Resolves once at most 64 KiB are still to
+   * be sent; throws if the client went away (and aborts the request's signal).
    */
   async write(data: string | u8[] | Uint8Array) {
     let empty = false;

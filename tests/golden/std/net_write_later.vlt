@@ -1,0 +1,101 @@
+// `writeLater` queues bytes that go out when the task next waits: in order with `write`s,
+// bounded with `drained`, and with the error a write would report once sending failed.
+import { connect, listen, TcpStream } from "velt:net";
+import { utf8DecodeLossy, utf8Encode } from "velt:encoding";
+import { Uint8Array } from "velt:typed_array/uint8_array";
+
+const BIG = 1048576;
+
+async function readAll(s: TcpStream): Promise<u8[]> {
+  let all: u8[] = [];
+  while (true) {
+    const b = await s.read(65536);
+    if (b.length == 0) {
+      return all;
+    }
+    all = all.concat(b);
+  }
+}
+
+async function main() {
+  const server = await listen("127.0.0.1:0");
+  const port = server.port;
+
+  // Order: pieces queued in one poll, a write after them, more pieces after the write.
+  const writer = spawn(async () => {
+    const c = await server.accept();
+    c.writeLater("a");
+    c.writeBytesLater(utf8Encode("xbx"), 1, 2);
+    const u = new Uint8Array(4);
+    u[0] = 99;
+    u[1] = 100;
+    console.log("still to send:", c.writeBytesLater(u.subarray(0, 2)));
+    await c.write("|w|");
+    c.writeLater("e");
+    await c.drained();
+    c.close();
+  });
+  const r = await connect(`127.0.0.1:${port}`);
+  console.log(utf8DecodeLossy(await readAll(r)));
+  r.close();
+  await writer;
+
+  // Backpressure: what waits to be sent stays below the bound given to `drained`.
+  const big = spawn(async () => {
+    const c = await server.accept();
+    const data: u8[] = Buffer.alloc(BIG);
+    let peak: i64 = 0;
+    for (let i = 0; i < 16; i++) {
+      const left = c.writeBytesLater(data);
+      peak = left > peak ? left : peak;
+      await c.drained(BIG);
+    }
+    await c.drained();
+    console.log("bounded:", peak <= 2 * BIG);
+    c.close();
+  });
+  const r2 = await connect(`127.0.0.1:${port}`);
+  console.log("received:", (await readAll(r2)).length);
+  r2.close();
+  await big;
+
+  // A peer that went away: sending fails, and the next call reports it.
+  const gone = spawn(async () => {
+    const c = await server.accept();
+    const data: u8[] = Buffer.alloc(BIG);
+    try {
+      for (let i = 0; i < 1000; i++) {
+        c.writeBytesLater(data);
+        await c.drained(BIG);
+      }
+      console.log("no error");
+    } catch (e) {
+      console.log("sending failed");
+    }
+    c.close();
+    try {
+      c.writeLater("x");
+    } catch (e) {
+      console.log("closed:", e.code);
+    }
+  });
+  const r3 = await connect(`127.0.0.1:${port}`);
+  r3.close();
+  await gone;
+
+  // After abort.
+  const aborted = spawn(async () => {
+    const c = await server.accept();
+    c.abort();
+    try {
+      c.writeLater("x");
+    } catch (e) {
+      console.log("aborted:", e.code);
+    }
+    c.close();
+  });
+  const r4 = await connect(`127.0.0.1:${port}`);
+  await aborted;
+  r4.close();
+  server.close();
+}

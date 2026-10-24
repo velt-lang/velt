@@ -31,6 +31,14 @@ declare async function velt_rt_tcp_write(s: u64, data: string): Promise<IoStatus
 // Reads into and writes from a range of the program's own bytes (a `Uint8Array`'s buffer).
 declare function velt_rt_tcp_try_read_into(s: u64, data: u8[], start: u64, end: u64): IoResult<i64>;
 declare async function velt_rt_tcp_readable(s: u64): Promise<IoStatus>;
+declare function velt_rt_tcp_write_later(s: u64, data: string): IoResult<u64>;
+declare function velt_rt_tcp_write_later_range(
+  s: u64,
+  data: u8[],
+  start: u64,
+  end: u64,
+): IoResult<u64>;
+declare async function velt_rt_tcp_drained(s: u64, max: u64): Promise<IoStatus>;
 declare async function velt_rt_tcp_readable_within(
   s: u64,
   ms: i64,
@@ -224,6 +232,42 @@ export struct TcpStream {
     const len = data.length as number;
     const from = clampTo(start, len);
     return velt_rt_tcp_try_write_range(this.handle, data, from, clampTo(end ?? len, len)) as i64;
+  }
+
+  /**
+   * Queues `data` to be sent when the current task next waits (or finishes), together with
+   * everything else it queued until then: one system call where a write each would make
+   * several, and nothing held back past a wait. Returns the number of bytes still to be sent on
+   * this stream; `await drained(max)` keeps that bounded. A `write` goes after what was queued
+   * before it. Throws `IoError` once sending failed (the error a `write` would have reported),
+   * the stream was aborted or the handle closed.
+   */
+  writeLater(data: string): i64 {
+    return unwrapIo(velt_rt_tcp_write_later(this.handle, data)) as i64;
+  }
+
+  /** `writeLater` of bytes `start..end` of `data` (copied at the call). */
+  writeBytesLater(data: u8[] | Uint8Array, start: number = 0, end?: number): i64 {
+    if (data instanceof Uint8Array) {
+      const len = data.len as number;
+      const at = data.off as u64;
+      const from = at + clampTo(start, len);
+      const to = at + clampTo(end ?? len, len);
+      return unwrapIo(velt_rt_tcp_write_later_range(this.handle, data.buf.bytes, from, to)) as i64;
+    }
+    const len = data.length as number;
+    const from = clampTo(start, len);
+    const to = clampTo(end ?? len, len);
+    return unwrapIo(velt_rt_tcp_write_later_range(this.handle, data, from, to)) as i64;
+  }
+
+  /**
+   * Resolves once at most `max` bytes queued by `writeLater` (or a `write` after them) are still
+   * to be sent: right away when there are no more, otherwise once the peer has read enough.
+   * Throws `IoError` when sending failed.
+   */
+  async drained(max: number = 0): Promise<void> {
+    checkIo(await velt_rt_tcp_drained(this.handle, (max < 0 ? 0 : max) as u64));
   }
 
   /** Half-close: the peer reads end of stream; this side can still read. */
