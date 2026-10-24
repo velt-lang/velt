@@ -145,14 +145,18 @@ fn a_fatal_error_flushes_while_another_thread_holds_the_lock() {
 }
 
 #[test]
-fn a_fatal_error_under_the_lock_does_not_hang() {
+fn a_fatal_error_under_the_lock_does_not_wait_for_itself() {
     if case().as_deref() == Some("fatal-own-lock") {
         stdout::append(|b| b.extend_from_slice(b"line 00000 mine\n"));
         let _held = stdout::lock_for_test();
+        // The flush `fatal` starts with, made here first to see whether it waited.
+        stdout::try_flush();
+        let waited = stdout::EXIT_WAITED.load(Ordering::SeqCst);
+        eprintln!("waited for the lock: {waited}");
         crate::panic::fatal("boom");
     }
     let o = run_child(
-        "io::exit_tests::a_fatal_error_under_the_lock_does_not_hang",
+        "io::exit_tests::a_fatal_error_under_the_lock_does_not_wait_for_itself",
         "fatal-own-lock",
     );
     assert_eq!(
@@ -161,8 +165,7 @@ fn a_fatal_error_under_the_lock_does_not_hang() {
         "{o:?}"
     );
     assert_eq!(program_output(&o), "line 00000 mine\n");
-    assert!(
-        String::from_utf8_lossy(&o.stderr).contains("panic: boom"),
-        "{o:?}"
-    );
+    let stderr = String::from_utf8_lossy(&o.stderr);
+    assert!(stderr.contains("waited for the lock: false"), "{o:?}");
+    assert!(stderr.contains("panic: boom"), "{o:?}");
 }

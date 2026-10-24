@@ -38,9 +38,23 @@ struct Local(RefCell<Vec<u8>>);
 impl Drop for Local {
     fn drop(&mut self) {
         let buf = self.0.get_mut();
-        if !buf.is_empty() {
-            publish(buf);
+        if buf.is_empty() {
+            return;
         }
+        if EXITING.load(Ordering::Relaxed) {
+            // The process is ending (a panic or fatal error flushed already): the lock's holder
+            // may be gone, so this must not wait for it forever.
+            match lock_shared_for_exit() {
+                Some(mut shared) => {
+                    shared.extend_from_slice(buf);
+                    write_shared(&mut shared);
+                }
+                None => os_write(buf),
+            }
+            buf.clear();
+            return;
+        }
+        publish(buf);
     }
 }
 
@@ -49,6 +63,41 @@ thread_local! {
     /// Whether this thread's buffer may hold bytes: a cheap check (no destructor) for the
     /// hand-off points, which mostly find the buffer empty.
     static BUFFERED: Cell<bool> = const { Cell::new(false) };
+    /// Whether this thread holds the shared buffer's lock (a [`SharedGuard`] is alive): a flush
+    /// on the way out from under it must not wait for itself.
+    static HOLDS_SHARED: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Set by a flush on the way out ([`try_flush`]): the process ends now.
+static EXITING: AtomicBool = AtomicBool::new(false);
+
+/// The shared buffer's lock, marking this thread as its holder while it lives.
+struct SharedGuard(MutexGuard<'static, Vec<u8>>);
+
+impl SharedGuard {
+    fn new(g: MutexGuard<'static, Vec<u8>>) -> SharedGuard {
+        let _ = HOLDS_SHARED.try_with(|h| h.set(true));
+        SharedGuard(g)
+    }
+}
+
+impl Drop for SharedGuard {
+    fn drop(&mut self) {
+        let _ = HOLDS_SHARED.try_with(|h| h.set(false));
+    }
+}
+
+impl std::ops::Deref for SharedGuard {
+    type Target = Vec<u8>;
+    fn deref(&self) -> &Vec<u8> {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for SharedGuard {
+    fn deref_mut(&mut self) -> &mut Vec<u8> {
+        &mut self.0
+    }
 }
 
 fn line_buffered() -> bool {
@@ -62,9 +111,9 @@ fn line_buffered() -> bool {
     }
 }
 
-fn lock_shared() -> MutexGuard<'static, Vec<u8>> {
+fn lock_shared() -> SharedGuard {
     // A poisoned lock only means some thread panicked mid-write; the bytes are still valid.
-    SHARED.lock().unwrap_or_else(|e| e.into_inner())
+    SharedGuard::new(SHARED.lock().unwrap_or_else(|e| e.into_inner()))
 }
 
 fn os_write(bytes: &[u8]) {
@@ -229,13 +278,16 @@ const EXIT_LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// The shared buffer for a flush on the way out, waiting at most [`EXIT_LOCK_WAIT`] for it: the
 /// thread that holds the lock is usually writing it to the OS and lets go soon, but it may also
-/// be the panicking thread itself (a panic under the lock), which must not wait forever.
-fn lock_shared_for_exit() -> Option<MutexGuard<'static, Vec<u8>>> {
+/// be the panicking thread itself (a panic under the lock): then it gives up at once.
+fn lock_shared_for_exit() -> Option<SharedGuard> {
+    if HOLDS_SHARED.try_with(Cell::get).unwrap_or(false) {
+        return None;
+    }
     let start = std::time::Instant::now();
     loop {
         match SHARED.try_lock() {
-            Ok(g) => return Some(g),
-            Err(TryLockError::Poisoned(e)) => return Some(e.into_inner()),
+            Ok(g) => return Some(SharedGuard::new(g)),
+            Err(TryLockError::Poisoned(e)) => return Some(SharedGuard::new(e.into_inner())),
             Err(TryLockError::WouldBlock) if start.elapsed() < EXIT_LOCK_WAIT => {
                 #[cfg(test)]
                 EXIT_WAITED.store(true, Ordering::SeqCst);
@@ -252,20 +304,24 @@ pub(crate) static EXIT_WAITED: AtomicBool = AtomicBool::new(false);
 
 /// The shared buffer's lock (for tests that hold it while another thread flushes).
 #[cfg(test)]
-pub(crate) fn lock_for_test() -> MutexGuard<'static, Vec<u8>> {
+pub(crate) fn lock_for_test() -> impl std::ops::DerefMut<Target = Vec<u8>> {
     lock_shared()
 }
 
 /// Flush for panic and fatal-error paths, which end the process right after: everything
 /// published so far, then this thread's buffer. Never waits forever (the panicking thread may
-/// hold a lock): once [`lock_shared_for_exit`] gives up, this thread's output is written alone,
-/// and a buffer that is being appended to (a panic while formatting a write) stays behind.
+/// hold a lock): once [`lock_shared_for_exit`] gives up, this thread's output is written alone.
+/// A buffer that is being appended to (a panic while formatting a write) is left to the thread
+/// buffer's destructor at exit, which then does not wait forever either ([`EXITING`]).
 pub fn try_flush() {
+    EXITING.store(true, Ordering::Relaxed);
     let mut shared = lock_shared_for_exit();
     if let Some(shared) = shared.as_mut() {
         write_shared(shared);
     }
-    // Written while the shared lock is still held, so no other thread's output slips in.
+    // With the shared lock, written while it is still held, so no other thread's output slips
+    // in. Without it, written alone, after whatever write another thread has under way (std's
+    // stdout lock), ahead of what that thread has not written yet.
     let _ = LOCAL.try_with(|l| {
         if let Ok(mut buf) = l.0.try_borrow_mut() {
             os_write(&buf);
