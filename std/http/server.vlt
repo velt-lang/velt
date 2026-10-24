@@ -36,6 +36,16 @@ export struct HttpServeOptions {
   idleTimeout?: number;
   /** Serve HTTPS: the certificate chain and key (PEM text), as `listenTls` takes them. */
   tls?: TlsListenOptions;
+  /**
+   * Milliseconds a request's head may take to arrive in full, from its first byte (408 after,
+   * however steadily it trickles in). Default 60000, as Node's `headersTimeout`.
+   */
+  headersTimeout?: number;
+  /**
+   * Milliseconds a request's body may take to arrive, from its head (408 after). Default
+   * 300000, as Node's `requestTimeout`.
+   */
+  requestTimeout?: number;
 }
 
 /** A running server. */
@@ -76,6 +86,10 @@ export async function serve<E>(
   const maxHead = (opts.maxHeadSize ?? MAX_HEAD) as i64;
   const maxBody = (opts.maxBodySize ?? MAX_BODY) as i64;
   const idle = (opts.idleTimeout ?? IDLE_MS) as i64;
+  const limits = Limits {
+    headMs: (opts.headersTimeout ?? HEADERS_MS) as i64,
+    requestMs: (opts.requestTimeout ?? REQUEST_MS) as i64,
+  };
   const stop = new AbortController();
   const stopped = stop.signal;
   const accepting = listener;
@@ -83,7 +97,7 @@ export async function serve<E>(
     try {
       while (true) {
         const conn = await accepting.accept();
-        spawn(connection(conn, handler, maxHead, maxBody, idle, stopped));
+        spawn(connection(conn, handler, maxHead, maxBody, idle, limits, stopped));
       }
     } catch (e) {
       // `close()`: stop accepting.
@@ -94,6 +108,16 @@ export async function serve<E>(
 
 /// How long a connection waits for its next request by default (Node's `keepAliveTimeout`).
 const IDLE_MS: number = 5000;
+/// How long a request's head and body may take by default (Node's `headersTimeout`,
+/// `requestTimeout`).
+const HEADERS_MS: number = 60000;
+const REQUEST_MS: number = 300000;
+
+/// The time limits of a request.
+struct Limits {
+  headMs: i64;
+  requestMs: i64;
+}
 
 /// Waits until `conn` may have input: true, or false once `stopped` is aborted or `idle`
 /// milliseconds passed (the connection then closes).
@@ -107,13 +131,16 @@ async function connection<E>(
   maxHead: i64,
   maxBody: i64,
   idle: i64,
+  limits: Limits,
   stopped: AbortSignal,
 ): Promise<void> {
   const parser = new Parser(maxHead, maxBody);
-  const req = new HttpRequest(parser, conn, idle);
+  const req = new HttpRequest(parser, conn, idle, limits.requestMs);
   const res = new HttpResponse(conn, stopped);
   let open = true;
   let rejected = false;
+  // When the head being read began to arrive (`Date.now()`), or -1 between requests.
+  let headStart: i64 = -1;
   try {
     while (open) {
       const n = parser.readFrom(conn);
@@ -121,14 +148,32 @@ async function connection<E>(
         break;
       }
       if (n == 0) {
-        if (!(await more(conn, stopped, idle))) {
+        // The idle timeout, but no later than the head's deadline.
+        let wait = idle;
+        if (headStart >= 0) {
+          const left = headStart + limits.headMs - Date.now();
+          wait = left < wait ? left : wait;
+        }
+        if (wait <= 0 || !(await more(conn, stopped, wait))) {
+          if (headStart >= 0 && Date.now() >= headStart + limits.headMs && !stopped.aborted) {
+            res.begin(false, true);
+            res.status(408);
+            res.send(reason(408));
+            await res.flush();
+            rejected = true;
+          }
           break;
         }
         continue;
       }
+      if (headStart < 0) {
+        headStart = Date.now();
+      }
       res.tick();
       try {
         while (open && parser.next(req.head)) {
+          // The next head, if any, starts arriving now.
+          headStart = -1;
           req.begin();
           res.begin(req.head.keepAlive, req.head.http11, req.isMethod("HEAD"));
           let failed = false;
@@ -136,10 +181,11 @@ async function connection<E>(
             await handler(req, res);
           } catch (e) {
             failed = true;
-            if (req.bodyTooLarge()) {
+            if (req.bodyTooLarge() || req.timedOut()) {
               if (!res.sent()) {
-                res.status(413);
-                res.send(reason(413));
+                const code = req.bodyTooLarge() ? 413 : 408;
+                res.status(code);
+                res.send(reason(code));
               }
             } else {
               if (!res.sent()) {
@@ -170,6 +216,10 @@ async function connection<E>(
           // A body too large to skip: the client may still be sending it.
           rejected = rejected || !finished;
           open = finished && res.reusable() && !stopped.aborted;
+        }
+        // Part of the next head is here already: its time runs from now.
+        if (headStart < 0 && parser.available() > 0) {
+          headStart = Date.now();
         }
       } catch (e) {
         if (e instanceof BadRequest) {

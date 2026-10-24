@@ -59,11 +59,16 @@ export class HttpRequest {
   private ended: bool = true;
   private continued: bool = false;
   private overLimit: bool = false;
+  // The body must have arrived by `deadline` (`Date.now()` ms): `requestTimeout` from its head.
+  private requestMs: i64;
+  private deadline: i64 = 0;
+  private late: bool = false;
 
-  constructor(parser: Parser, conn: TcpStream, idle: i64) {
+  constructor(parser: Parser, conn: TcpStream, idle: i64, requestMs: i64 = 300000) {
     this.parser = parser;
     this.conn = conn;
     this.idle = idle;
+    this.requestMs = requestMs;
   }
 
   /// A new request's head was parsed into `head` (internal).
@@ -71,6 +76,8 @@ export class HttpRequest {
     const h = this.head;
     this.continued = false;
     this.overLimit = false;
+    this.late = false;
+    this.deadline = Date.now() + this.requestMs;
     this.ended = h.bodyMode == BODY_NONE;
     this.left = h.bodyMode == BODY_LENGTH ? h.bodyLength : 0;
     this.chunk = h.bodyMode == BODY_CHUNKED ? CHUNK_SIZE : CHUNK_DONE;
@@ -201,6 +208,11 @@ export class HttpRequest {
   /// Whether the body was read to its end, or there is none (internal).
   bodyRead(): bool {
     return this.ended;
+  }
+
+  /// Whether the body did not arrive in time (internal: answered 408).
+  timedOut(): bool {
+    return this.late;
   }
 
   /// Whether `body()` found the body larger than the server's limit (internal: answered 413).
@@ -343,7 +355,11 @@ export class HttpRequest {
       if (n > 0) {
         return;
       }
-      if (!(await this.conn.readableWithin(this.idle as number))) {
+      // The idle timeout, but no later than the request's deadline.
+      const left = this.deadline - Date.now();
+      const wait = left < this.idle ? left : this.idle;
+      if (wait <= 0 || !(await this.conn.readableWithin(wait as number))) {
+        this.late = true;
         throw new IoError("ETIMEDOUT", "the request body did not arrive in time");
       }
     }

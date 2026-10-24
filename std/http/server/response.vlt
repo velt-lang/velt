@@ -606,6 +606,8 @@ export function reason(status: number): string {
   switch (status) {
     case 100:
       return "Continue";
+    case 101:
+      return "Switching Protocols";
     case 200:
       return "OK";
     case 201:
@@ -628,6 +630,10 @@ export function reason(status: number): string {
       return "Not Found";
     case 405:
       return "Method Not Allowed";
+    case 408:
+      return "Request Timeout";
+    case 426:
+      return "Upgrade Required";
     case 413:
       return "Content Too Large";
     case 431:

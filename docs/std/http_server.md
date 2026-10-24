@@ -45,8 +45,12 @@ async function main() {
 
 `serve<E>(opts: HttpServeOptions, handler: (req: HttpRequest, res: HttpResponse) =>
 Promise<void, E> throws E): Promise<HttpServer>`. `HttpServeOptions { port: number; host?;
-maxHeadSize?; maxBodySize?; idleTimeout?; tls? }`: the default host is 127.0.0.1 and port 0 picks a
-free port. With `tls: { cert, key }` (PEM text, as [`listenTls`](net.md) takes them) the server
+maxHeadSize?; maxBodySize?; idleTimeout?; tls?; headersTimeout?; requestTimeout? }`: the default
+host is 127.0.0.1 and port 0 picks a free port. `idleTimeout` (5 s) is how long a connection
+waits for its next request or more of one; `headersTimeout` (60 s) the most a head may take
+from its first byte, and `requestTimeout` (300 s) the most a body may take from its head, however
+steadily they trickle in: past either, the request gets 408 and the connection closes (Node's
+limits of the same names). With `tls: { cert, key }` (PEM text, as [`listenTls`](net.md) takes them) the server
 speaks HTTPS. One task serves each connection; requests on one connection are answered in order.
 
 - A head (request line and headers) larger than `maxHeadSize` (64 KiB) gets 431 and input that
