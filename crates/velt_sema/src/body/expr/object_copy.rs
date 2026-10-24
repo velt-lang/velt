@@ -192,7 +192,11 @@ impl FnCx<'_, '_> {
         };
         a.fields.len() == copied.len()
             && a.fields.iter().zip(copied).all(|(f, c)| f.name == *c)
-            && (slots.iter()).all(|s| !matches!(s, Slot::Field { from, to, .. } if from != to))
+            && (slots.iter()).all(|s| match s {
+                // A value boxed as an `any` shows as itself.
+                Slot::Field { from, to, .. } => from == to || self.cx.dynamic(*to).is_some(),
+                _ => true,
+            })
     }
 
     /// The names of the fields of `exp` that `slots` copy from the source, and of the optional
@@ -304,6 +308,14 @@ impl FnCx<'_, '_> {
             // A function that throws into a function type written without `throws` (its sites
             // take its errors), converted through a wrapper as a value is.
             || self.cx.fn_throws_differ(from, to) == Some(true)
+            // A value boxed into a field of a dynamic type (`{ value: [any, any] }` as
+            // `{ value: any }`, an `IteratorResult<any>`; #1185).
+            || (self.cx.dynamic(from).is_none()
+                && matches!(
+                    self.cx.dynamic(to),
+                    Some(crate::any::Dynamic::Any | crate::any::Dynamic::Unknown)
+                )
+                && !matches!(self.cx.ty.kind(from), TyKind::Promise(..) | TyKind::Unit | TyKind::Never))
             || self.copy_plan(from, to, depth + 1).is_some()
     }
 }

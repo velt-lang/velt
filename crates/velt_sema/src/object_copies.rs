@@ -281,7 +281,11 @@ fn sees(
             members.into_iter().any(|m| related(cx, m, c.to))
         }
         Seen::Dynamic(_) => false,
-        Seen::Spread | Seen::Printed | Seen::Serialized | Seen::Keys if c.fresh && c.in_order => {
+        // A copy of an object type's value (which has exactly its type's fields) with every
+        // field in order shows what the original would, as one of a fresh source does.
+        Seen::Spread | Seen::Printed | Seen::Serialized | Seen::Keys
+            if c.in_order && (c.fresh || anon(cx, c.from)) =>
+        {
             false
         }
         Seen::Spread => {
@@ -501,4 +505,9 @@ fn built_types(cx: &mut Ctx) -> Vec<TyId> {
         }
     }
     v.0.into_iter().collect()
+}
+
+/// Is `t` an anonymous object type?
+fn anon(cx: &Ctx, t: TyId) -> bool {
+    matches!(cx.ty.kind(t), TyKind::Adt(d, _) if cx.adt(*d).is_some_and(|a| a.kind == crate::hir::AdtKind::Anon))
 }

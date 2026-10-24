@@ -307,6 +307,9 @@ pub(super) fn value_ok(cx: &mut Ctx, from: TyId, to: TyId, param: bool, m: &mut 
     if cx.dynamic(from).is_some() {
         let t = cx.display(to);
         let reason = match cx.ty.kind(to) {
+            // A `never` parameter (`serialize(v: T)` at `T = never`) takes no value: a call
+            // reaching it through the adapter throws, as converting any value to `never` does.
+            TyKind::Never if param => None,
             TyKind::Promise(..) | TyKind::Unit | TyKind::Never => return false,
             // `any` converted to an interface type is not supported yet (#924).
             TyKind::Dyn(..) => Some(format!(
@@ -555,6 +558,16 @@ impl FnCx<'_, '_> {
     pub(super) fn adapt_value(&mut self, h: hir::Expr, to: TyId) -> hir::Expr {
         if h.ty == to {
             return h;
+        }
+        // An argument for a `never` parameter: no value is one, so the call stops with a
+        // `TypeError`, as a failed conversion of an `any` does.
+        if to == self.cx.ty.never && self.cx.dynamic(h.ty).is_some() {
+            let span = h.span;
+            let msg = self.str_lit(
+                "TypeError: a value was passed where the interface takes `never`",
+                span,
+            );
+            return self.intrinsic(hir::Intrinsic::Panic, vec![msg], to, span);
         }
         match self.try_coerce(h, to) {
             Ok(h) => h,
