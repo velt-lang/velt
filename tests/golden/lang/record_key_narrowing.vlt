@@ -1,0 +1,48 @@
+// check: no leaks
+// A `Record` read with a key nothing reassigns (a `const`, a parameter, a `for...in` key) narrows
+// like a field: `if (!r[k]) r[k] = []; r[k].push(x)`, and `r[k]` inside `for (const k in r)`.
+// Expected output: Node's.
+function group(items: string[]): Record<string, string[]> {
+  const named: Record<string, string[]> = {};
+  for (const it of items) {
+    const slot = it.slice(0, 1);
+    if (!named[slot]) {
+      named[slot] = [];
+    }
+    named[slot].push(it);
+  }
+  return named;
+}
+console.log(group(["ab", "ac", "bd"]));
+
+function add(r: Record<string, number[]>, k: string, v: number): number {
+  if (!r[k]) r[k] = [];
+  r[k].push(v);
+  return r[k].length;
+}
+const counts: Record<string, number[]> = {};
+const sizes = [add(counts, "a", 1), add(counts, "a", 2), add(counts, "b", 3)];
+console.log(sizes, counts);
+
+function copies(named: Record<string, number[]>): Record<string, () => number[]> {
+  const out: Record<string, () => number[]> = {};
+  for (const name in named) {
+    const list = named[name];
+    out[name] = () => list.slice();
+  }
+  return out;
+}
+const cs = copies({ a: [1, 2], b: [3] });
+for (const k in cs) {
+  console.log(k, cs[k]());
+}
+
+function total(r: Record<string, number>): number {
+  let sum = 0;
+  for (const k in r) {
+    if (k === "a") delete r["b"];
+    sum += r[k];
+  }
+  return sum;
+}
+console.log(total({ a: 1, b: 2, c: 3 }));

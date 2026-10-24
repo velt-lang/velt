@@ -305,7 +305,7 @@ impl FnCx<'_, '_> {
         if let Some(l) = self.nullable_local(e) {
             return vec![Fact::NonNull(l)];
         }
-        if super::expr::member::member_view(e).is_some() {
+        if super::expr::member::member_view(e).is_some() || self.fixed_index(e) {
             return self.field_token(e).map(Fact::NonNull).into_iter().collect();
         }
         self.chain_facts(e)

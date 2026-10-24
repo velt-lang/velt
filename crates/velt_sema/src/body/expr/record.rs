@@ -189,7 +189,16 @@ impl FnCx<'_, '_> {
                 synth(kind, span)
             }
         };
-        self.record_call_keyed(obj, "__set", key, std::slice::from_ref(&value), span)
+        let set = self.record_call_keyed(obj, "__set", key, std::slice::from_ref(&value), span);
+        // `r[k] = v` holds `v` until the key is assigned again (`field_narrow`): its reads give a
+        // `V` (read checked again, as after `if (r[k])`).
+        self.unnarrow_fields(target);
+        if op.is_none() && self.cx.ty.nothing_of(v).is_none() && !self.cx.ty.has_error(set.ty) {
+            if let Some(t) = self.field_token(target) {
+                self.narrow(&crate::body::narrow::Fact::NonNull(t));
+            }
+        }
+        set
     }
 
     /// `r[k]++` / `--r.name` (not used as a value): `r.__set(k, r[k] + 1)`.

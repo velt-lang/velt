@@ -72,11 +72,14 @@ impl FnCx<'_, '_> {
         self.cx.diags.truncate(diags);
         self.call_temps.truncate(temps);
         self.restore_trial_frames(frames);
-        let (key, _) = self.record_args(ty)?;
+        let (key, value) = self.record_args(ty)?;
         if key != self.cx.ty.str_ {
             return None;
         }
         let empty = velt_common::Span::new(iter.span.file, iter.span.lo, iter.span.lo);
+        if self.cx.ty.nothing_of(value).is_none() {
+            self.present_key_tests.push(empty);
+        }
         let e = |kind| ast::Expr {
             id: ast::NodeId(u32::MAX),
             kind,

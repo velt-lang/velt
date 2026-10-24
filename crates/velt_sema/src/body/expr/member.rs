@@ -340,7 +340,11 @@ impl FnCx<'_, '_> {
                 let h = self.narrowed_field(object, &prop, h, want);
                 self.downcast_field(object, &prop, h)
             }
-            None => h,
+            // `r[k]` with a `const k`, after `if (!r[k]) r[k] = []` (`field_narrow`).
+            None => match self.fixed_key(index) {
+                Some(prop) => self.narrowed_field(object, &prop, h, want),
+                None => h,
+            },
         }
     }
 

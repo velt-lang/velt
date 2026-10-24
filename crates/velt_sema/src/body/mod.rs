@@ -546,6 +546,9 @@ pub(crate) struct FnCx<'a, 'm> {
     /// A variable read that a null or truthiness test makes (`if (x)`, `x == null`): it reads
     /// the variable as it is, without the check `checked_narrowed_read` adds.
     pub raw_read: Option<Span>,
+    /// The `r.__has(k)` tests `for (const k in r)` starts its body with, over a record whose
+    /// values are not nullable: when true, `r[k]` is present (`chain_facts`).
+    pub present_key_tests: Vec<Span>,
     /// The expression being checked is the object of a member read (`body::expr::union_view`).
     pub view_receiver: bool,
     /// Locals declared from integer literals and their uses (`literal_locals`).
@@ -609,6 +612,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             optional_slots: vec![],
             refused_reads: vec![],
             raw_read: None,
+            present_key_tests: vec![],
             view_receiver: false,
             literal: Default::default(),
             jsx_list_fold: None,

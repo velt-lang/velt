@@ -23,7 +23,34 @@ impl FnCx<'_, '_> {
             },
         };
         t.extend(self.chain_facts(cond));
+        t.extend(self.present_key_fact(cond.span, callee, args));
         (t, f)
+    }
+
+    /// `r.__has(k)` that `for (const k in r)` tests (`object_keys`): when true, `r[k]` is
+    /// present, so it reads as a `V` (checked again where it is read, as after `if (r[k])`).
+    fn present_key_fact(
+        &mut self,
+        span: velt_common::Span,
+        callee: &ast::Expr,
+        args: &[ast::Expr],
+    ) -> Option<Fact> {
+        let (ast::ExprKind::Member { object, prop, .. }, [key]) = (&callee.kind, args) else {
+            return None;
+        };
+        if prop.name != "__has" || !self.present_key_tests.contains(&span) {
+            return None;
+        }
+        let read = ast::Expr {
+            id: ast::NodeId(u32::MAX),
+            kind: ast::ExprKind::Index {
+                object: object.clone(),
+                index: Box::new(key.clone()),
+                optional: false,
+            },
+            span,
+        };
+        self.field_token(&read).map(Fact::NonNull)
     }
 
     /// Facts of a truthy optional chain that goes on after its `?.` (`if (c?.m.has(k))`,

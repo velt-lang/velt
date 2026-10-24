@@ -268,10 +268,14 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// The tokens of the field paths rooted at local `l`.
+    /// The tokens of the field paths rooted at local `l`, or indexed by it (`r[l]`).
     pub(crate) fn field_tokens_of(&self, l: LocalId) -> Vec<LocalId> {
+        let key = key_name(l);
         let tokens = self.f.field_tokens.iter();
-        tokens.filter(|t| t.root == l).map(|t| t.token).collect()
+        tokens
+            .filter(|t| t.root == l || t.path.contains(&key))
+            .map(|t| t.token)
+            .collect()
     }
 
     /// The root local and field names of field token `token`.
@@ -296,8 +300,56 @@ impl FnCx<'_, '_> {
             return self.field_path(inner);
         }
         // `x["a"]` (a constant key) is the same path as `x.a`.
-        let (object, prop) = super::expr::member::member_view(e)?;
+        if let Some((object, prop)) = super::expr::member::member_view(e) {
+            return self.member_path(object, &prop);
+        }
+        // `r[k]` with a key that cannot change (`const k`): a path of its own.
+        let ast::ExprKind::Index {
+            object,
+            index,
+            optional: false,
+        } = &e.kind
+        else {
+            return None;
+        };
+        let prop = self.fixed_key(index)?;
         self.member_path(object, &prop)
+    }
+
+    /// Is `e` an index read `r[k]` with a key nothing can reassign ([`Self::fixed_key`])?
+    pub(crate) fn fixed_index(&mut self, e: &ast::Expr) -> bool {
+        match &e.kind {
+            ast::ExprKind::Paren(inner) => self.fixed_index(inner),
+            ast::ExprKind::Index {
+                index,
+                optional: false,
+                ..
+            } => self.fixed_key(index).is_some(),
+            _ => false,
+        }
+    }
+
+    /// Key `index` of `r[index]` when it is a variable nothing can reassign (a `const`, a
+    /// `for (const k in r)` key): as a path name no property has, so `if (!r[k]) r[k] = [];
+    /// r[k].push(x)` narrows `r[k]` like a field.
+    pub(crate) fn fixed_key(&mut self, index: &ast::Expr) -> Option<ast::Ident> {
+        let ast::ExprKind::Ident(id) = &index.kind else {
+            return None;
+        };
+        let l = self.named_local(index)?;
+        // A parameter may be reassigned: that drops the narrowing (`field_tokens_of`). Reads
+        // are checked again anyway, so a key changed where this cannot see it (a loop's next
+        // iteration) still finds the value missing rather than reading past it.
+        let fixed = match self.local_kind(l) {
+            LocalKind::Const => true,
+            LocalKind::Param => self.closure_assignment(l).is_none(),
+            LocalKind::Elem | LocalKind::Bind => !self.f.locals[l.0 as usize].mutable,
+            _ => false,
+        };
+        fixed.then(|| ast::Ident {
+            name: key_name(l),
+            span: id.span,
+        })
     }
 
     fn member_path(
@@ -327,4 +379,9 @@ impl FnCx<'_, '_> {
         let mode = self.use_mode(payload, want);
         self.mk(H::UnwrapSome(Box::new(h), mode), payload, span)
     }
+}
+
+/// The path name of index key local `l` (`r[k]`): a name no property has.
+fn key_name(l: LocalId) -> String {
+    format!("\0{}", l.0)
 }
