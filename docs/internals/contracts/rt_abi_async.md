@@ -863,6 +863,8 @@ buffer grows. An adopted string's head must not lie in its buffer.
 | `velt_rt_strbuf_finish` | `(VeltStrBuf* b, VeltStr* out)` | moves the text to `*out`; `*b` becomes empty (reusable, nothing to free) |
 | `velt_rt_strbuf_drop` | `(VeltStrBuf* b)` | abandon an unfinished builder (exception path); zeroes it |
 | `velt_rt_json_enter` | `(const void* p) -> u8` | `JSON.stringify` glue starts writing the object at `p`: 1, or 0 if it is already being written (a cycle; the caller panics with `JSON.stringify: converting circular structure to JSON`). Per thread |
+| `velt_rt_param_object` / `velt_rt_param_name` | `(const RawSink* s)` / `(const RawSink* s, const VeltStr* name)` | `Glue::DbBind` (`__intrinsic_db_bind<P>`, std only) hands a driver's parameter sink (native_abi.md "Parameter sinks") an object's members: `object` first, then each member's name before its value. Additive |
+| `velt_rt_param_i64` / `_u64` / `_f64` / `_bool` / `_null` / `_str` / `_bytes` | `(const RawSink* s, v)` (`_str`: `const VeltStr*`, `_bytes`: `const VeltBytes*`, `_null`: no value) | one value, as its JSON text would bind: a `u64` beyond `i64` and a non-integral `f64` (or one of 1e21 or more) a REAL, an integral `f64` an INTEGER, NaN/±Infinity NULL, a string UTF-8 (lone surrogates U+FFFD), a `u8[]` a BLOB. Additive |
 | `velt_rt_json_leave` | `()` | done with the innermost object entered |
 
 ### 12.2 String methods
@@ -918,7 +920,7 @@ typedef struct VeltJsonReader VeltJsonReader;   // opaque
 | Symbol | Signature | Notes |
 |---|---|---|
 | `velt_rt_json_reader_new` | `(const VeltStr* src) -> VeltJsonReader*` | never null; `src` must stay alive, unchanged **and in place** (an inline string's bytes live in the `VeltStr` itself) until `free` |
-| `velt_rt_json_reader_new_with` | `(const VeltStr* src, u32 flags, u32 max_depth) -> VeltJsonReader*` (with flag 4, `src` is a `const VeltBytes*`) | `JSON.parse` options: flag 1 = `skip_unknown` fails; flag 2 = a JSON `null` for an optional field without `null` is not an absent field (`velt_rt_json_reader_null_absent`); `max_depth` = most arrays/objects open at once, counted from the top-level value (0 = no limit), checked by `expect_*_start`, `skip_value` and `read_value`. Flag 4 (`FLAG_ROWS`, set only by `__intrinsic_json_parse_rows`): `src` is a `const VeltBytes*`, a `u8[]` of a driver's binary rows (`velt_text::rows`, native_abi.md "Rows"), which the reader walks instead of text, borrowed like a source string. Every reader call then answers as it would for the JSON the rows stand for; the only failures are a value of another kind and a rejected unknown key. `max_depth` does not apply to such rows (they nest three deep at most) |
+| `velt_rt_json_reader_new_with` | `(const VeltStr* src, u32 flags, u32 max_depth) -> VeltJsonReader*` (with flag 4, `src` is a `const VeltBytes*`) | `JSON.parse` options: flag 1 = `skip_unknown` fails; flag 2 = a JSON `null` for an optional field without `null` is not an absent field (`velt_rt_json_reader_null_absent`); `max_depth` = most arrays/objects open at once, counted from the top-level value (0 = no limit), checked by `expect_*_start`, `skip_value` and `read_value`. Flag 4 (`FLAG_ROWS`, set only by `__intrinsic_json_parse_rows`): `src` is a `const VeltBytes*`, a `u8[]` of a driver's binary rows (`velt_text::rows`, native_abi.md "Rows"), which the reader walks instead of text, borrowed like a source string. Every reader call then answers as it would for the JSON the rows stand for; the only failures are a value of another kind and a rejected unknown key. `max_depth` does not apply to such rows (they nest three deep at most). Flag 8 (`FLAG_CURSOR`, set only by `__intrinsic_json_parse_cursor`, additive): `src` is a driver's row cursor (`const RawCursor*`, native_abi.md "Row cursors"), read as binary rows are, which the reader uses but does not free; a decoder that marks a position outside a row (a union of whole results) gets the rows left copied into binary form |
 | `velt_rt_json_reader_free` | `(VeltJsonReader* r)` | null ok |
 | `velt_rt_json_reader_null_absent` | `(VeltJsonReader* r) -> u8` | 1 when a JSON `null` may stand for an absent optional field whose type has no `null` (`JSON.parse<T>`), 0 when the reader was made with flag 2 (`JSON.parse(text) as T`): the decoder then reads the field's value, which fails |
 | `velt_rt_json_reader_peek` | `(VeltJsonReader* r) -> u32` | next token kind, skipping whitespace: 0 EOF, 1 `null`, 2 `true`, 3 `false`, 4 number, 5 string, 6 `[`, 7 `]`, 8 `{`, 9 `}`, 10 error (bad byte, or the reader already failed). Classifies by first byte only; the `read_*` call validates. |
@@ -1320,11 +1322,14 @@ Parameters (`params`) are JSON text (`velt_text::db_json`): `""` = none, an obje
 `:name` / `@name` / `$name` by name (missing member ⇒ `SQLITE_RANGE`, extra members ignored), an
 array or a lone scalar binds by position (count must match). Integer literals in i64 range ⇒
 INTEGER (exact), other numbers ⇒ REAL, strings ⇒ TEXT, `true`/`false` ⇒ 1/0, `null` ⇒ NULL,
-arrays of integers 0–255 (`u8[]`) ⇒ BLOB, nested objects ⇒ `SQLITE_RANGE`. Rows are binary rows
-(`velt_text::rows`, native_abi.md "Rows") in a `u8[]`, which std decodes with
-`__intrinsic_json_parse_rows<T>`: they read as the JSON `[{"col":value,...}]` keyed by column
-name, INTEGER exact, REAL a number (non-finite ⇒ `null`), TEXT a string, BLOB a number array,
-NULL `null`; a 0/1 value in a column declared `BOOL`/`BOOLEAN` is `false`/`true`.
+arrays of integers 0–255 (`u8[]`) ⇒ BLOB, nested objects ⇒ `SQLITE_RANGE`. For the parameter
+types it can, std hands the parameters to a sink instead (`bind_begin`, native_abi.md "Parameter
+sinks"), which binds them as their JSON text would. Rows come through a row cursor
+(native_abi.md "Row cursors"), which std decodes with `__intrinsic_json_parse_cursor<T>`: they
+read as the JSON `[{"col":value,...}]` keyed by column name, INTEGER exact, REAL a number
+(non-finite ⇒ `null`), TEXT a string, BLOB a number array, NULL `null`; a 0/1 value in a column
+declared `BOOL`/`BOOLEAN` is `false`/`true`. The cursor holds the connection's lock until std
+gives it back with `close_rows`, as a sink does until it is handed on or given up.
 
 | Symbol | Signature | Notes |
 |---|---|---|
@@ -1336,9 +1341,14 @@ NULL `null`; a 0/1 value in a column declared `BOOL`/`BOOLEAN` is `false`/`true`
 | `velt_std_sqlite__error_count` | `(u64 db) -> u64` | failed operations so far (incl. `note_error`) |
 | `velt_std_sqlite__reset_error_count` | `(u64 db, u64 count)` | a nested `transaction` that rolled back hands its failure to its caller |
 | `velt_std_sqlite__last_error` | `(u64 db) -> IoStatus` | the most recent failure as a failed status (success if none) |
-| `velt_std_sqlite__prepare` | `(u64 db, string sql) -> IoResult<u64>` | compiles exactly one statement into the cache |
+| `velt_std_sqlite__prepare` | `(u64 db, string sql) -> IoResult<u64>` | compiles exactly one statement; the connection keeps it per SQL text (preparing the same text again compiles nothing) |
 | `velt_std_sqlite__run` | `(u64 stmt, string params) -> IoResult<{changes:i64,lastInsertRowid:i64}>` | steps to completion (rows discarded) |
-| `velt_std_sqlite__query` | `(u64 stmt, string params, bool first_only) -> IoResult<u8[]>` | the rows as binary rows for `__intrinsic_json_parse_rows<T[]>`; `first_only` ⇒ the first row (an object, `<T>`), or an empty array if there is none |
+| `velt_std_sqlite__open_rows` | `(u64 stmt, string params, bool first_only) -> IoResult<u64>` | binds, steps to the first row: a row cursor (`RawCursor*`) for `__intrinsic_json_parse_cursor<T[]>`; `first_only` ⇒ the first row alone (`<T>`), or 0 if there is none |
+| `velt_std_sqlite__close_rows` | `(u64 cursor) -> IoStatus` | releases a cursor (and the connection's lock); fails with what SQLite met while stepping; 0 ⇒ no-op |
+| `velt_std_sqlite__bind_begin` | `(u64 stmt) -> IoResult<u64>` | a parameter sink (`RawSink*`) for `__intrinsic_db_bind<P>` |
+| `velt_std_sqlite__open_rows_bound` | `(u64 sink, bool first_only) -> IoResult<u64>` | `open_rows` with the parameters the sink bound (missing or extra ones fail as with JSON text) |
+| `velt_std_sqlite__run_bound` | `(u64 sink) -> IoResult<{changes:i64,lastInsertRowid:i64}>` | `run` with the parameters the sink bound |
+| `velt_std_sqlite__bind_abort` | `(u64 sink)` | gives up a sink std did not use (it then binds JSON text) |
 | `velt_std_sqlite__note_error` | `(u64 stmt, i32 code, string message)` | counts a failure std found (a row that does not decode) against the connection |
 | `velt_std_sqlite__stmt_free` | `(u64 stmt)` | releases the handle; null ⇒ no-op |
 | `velt_std_sqlite__error_name` | `(i32 code) -> string` | known extended names (`SQLITE_CONSTRAINT_UNIQUE`, `SQLITE_BUSY_SNAPSHOT` …), else the primary one |
