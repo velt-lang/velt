@@ -13,7 +13,7 @@ async function main() {
         res.send("upgrade required");
         return;
       }
-      const ws = acceptWebSocket(res, req.header("sec-websocket-key"));
+      const ws = acceptWebSocket(req, res);
       spawn(async () => {
         for await (const m of ws) {
           await ws.send(`echo ${m.text}`);

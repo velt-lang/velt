@@ -84,10 +84,8 @@ first reads it.
 - `read(): Promise<u8[] | null>`: the next piece of the body as it arrives, null at its end.
   Nothing is kept: for uploads of any size, and proxies.
 - `body(): Promise<u8[]>`, `bodyText(): Promise<string>` (UTF-8, invalid bytes as U+FFFD): the
-  whole body (what `read()` has not taken), up to `maxBodySize` (`BodyTooLarge` beyond it).
-  Read it into a variable first: `res.send(await req.bodyText())` is not accepted yet (the
-  checker sees `req` and `res` as possibly sharing data); `const t = await req.bodyText();
-  res.send(t);` is.
+  whole body (what `read()` has not taken), up to `maxBodySize` (`BodyTooLarge` beyond it):
+  `res.send(await req.bodyText())`.
 - `keepAlive: bool`: the connection stays open after the response.
 
 ## `HttpResponse`
@@ -118,8 +116,8 @@ first reads it.
 - `upgrade(protocol, headers: [string, string][] = []): TcpStream`: answers `101 Switching
   Protocols` (after the responses to earlier requests) and hands the connection over: the
   stream is the caller's, the server no longer reads, writes or closes it. The client waits for
-  the 101 before it speaks the new protocol. For WebSockets, `acceptWebSocket(res,
-  req.header("sec-websocket-key"))` of [velt:websocket](websocket.md) does the handshake.
+  the 101 before it speaks the new protocol. For WebSockets, `acceptWebSocket(req, res)` of
+  [velt:websocket](websocket.md) does the handshake.
 
 A `HEAD` request gets the head a `GET` would (with its `Content-Length`) and no body: what the
 handler writes, streamed or not, is not sent. Responses with status 1xx, 204 or 304 have no body
