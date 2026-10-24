@@ -226,8 +226,19 @@ pub(super) fn adaptable(
         || from == to
         || cx.any.is_some_and(|a| a.any == iface || a.unknown == iface)
         || from.iter().any(|t| open(cx, *t, generic))
-        || !from.iter().zip(to).all(|(a, b)| arg_ok(cx, *a, *b))
     {
+        return false;
+    }
+    if let Some((_, b)) = from.iter().zip(to).find(|(a, b)| !arg_ok(cx, **a, **b)) {
+        // A type argument that holds `unknown` or `any` without being one (`Box<unknown>`,
+        // `Map<any, any>`, `Map<string, unknown>`): only whole `unknown` / `any` arguments
+        // and the containers of `Container` are adapted.
+        if holds_dynamic(cx, *b) {
+            let t = cx.display(*b);
+            m.why = Some(format!(
+                "the type argument `{t}`, which holds `unknown` or `any`: converting a generic class or container to other type arguments is not supported yet (#1185); `unknown` / `any` themselves are"
+            ));
+        }
         return false;
     }
     let key = (iface, from.to_vec(), to.to_vec());
