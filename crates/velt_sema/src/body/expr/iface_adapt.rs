@@ -38,7 +38,7 @@ use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
 use super::callback::synth;
-use super::callback_wrap::{wrapper, Shape};
+use super::callback_wrap::{wrapper, Arg, Plan, Shape};
 use super::iface_adapt_slots::{adapter_method, AdapterParts};
 use crate::any::Dynamic;
 use crate::body::{FnCx, LocalKind, Want};
@@ -697,6 +697,15 @@ impl FnCx<'_, '_> {
             return Err(h);
         };
         let shape = Shape::of(params.len(), *rest);
+        // A function taking fewer parameters than `exp` gets the first ones (#943).
+        let plan = match self.cx.ty.kind(h.ty) {
+            TyKind::FnPtr {
+                params: own,
+                rest: false,
+                ..
+            } if own.len() < shape.fixed => Plan::one((0..own.len()).map(Arg::Param).collect()),
+            _ => shape.same(),
+        };
         let span = h.span;
         let name = ast::Ident {
             name: format!("#adapted{}", self.f.locals.len()),
@@ -714,7 +723,7 @@ impl FnCx<'_, '_> {
                 let arrow = wrapper(
                     synth(ast::ExprKind::Ident(name), span),
                     shape,
-                    &shape.same(),
+                    &plan,
                     false,
                     span,
                 );
@@ -728,7 +737,7 @@ impl FnCx<'_, '_> {
         let arrow = wrapper(
             synth(ast::ExprKind::Ident(name), span),
             shape,
-            &shape.same(),
+            &plan,
             false,
             span,
         );

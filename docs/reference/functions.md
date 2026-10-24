@@ -1035,9 +1035,38 @@ async function main() {
   }
   console.log(kinds.indexOf(Point3), kinds[0] === Point); // 1 true
   ```
-- **Planned** (#943): generic function types (`<T>(description: string) => Token<T>`, a value
-  each call instantiates). They parse, and using one is an error saying it is not supported
-  yet.
+- **Generic function types** (`<T>(x: T) => T`, a value each call instantiates, #943): a
+  `const` of such a type is a generic function, as a generic arrow constant is, so each call
+  instantiates it and nothing is boxed. The type may be written at the constant, named by a type
+  alias (also a generic one at its arguments, `const pair: Pair<string> = …`, or one imported
+  from another module), or by an interface with one generic call signature (`interface Mapper {
+  <A, B>(xs: A[], f: (a: A) => B): B[] }`). Its value is an arrow function, whose parameters
+  take their types from the function type where it writes none (it may take fewer parameters
+  than the type, as in TypeScript), or a name, which each call reads and calls at the
+  instantiated type: also a name asserted to the type,
+  `const createToken = Symbol as unknown as <T>(description: string) => Token<T>`, whose
+  function converts to the instantiated type directly, a branded result such as
+  `symbol & { __t?: T }` taking the value as it is. Like a local generic arrow, a local constant
+  of such a type cannot use the local variables around it. A generic function type anywhere
+  else (a parameter, a field, a `let`, a constant with another initializer) is a value that
+  stays generic, which is not supported yet: using one is an error saying so, as are generic
+  construct signatures (`new <T>(x: T) => Box<T>`).
+
+  ```ts
+  type Id = <T>(x: T) => T;
+  const id: Id = (x) => x;
+  type Pair<K> = <V>(key: K, value: V) => [K, V];
+  const pair: Pair<string> = (k, v) => [k, v];
+  type Token<T> = symbol & { readonly __type?: T };
+  const createToken = Symbol as unknown as <T>(description: string) => Token<T>;
+
+  function main() {
+    console.log(id(3), id("s")); // 3 s
+    console.log(pair("a", true)); // [ 'a', true ]
+    const t = createToken<number>("port");
+    console.log(typeof t, t.description); // symbol port
+  }
+  ```
 - A function type's parameter may be named by a destructuring pattern
   (`([a, b]: [number, number]) => number`), which, like a name, is only for the reader.
 - A function type's parameter may be **optional** (`(app: App, options?: Options) => void`): its

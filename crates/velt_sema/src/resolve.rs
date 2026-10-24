@@ -732,10 +732,20 @@ pub(crate) fn check_unused_aliases(cx: &mut Ctx) {
             continue;
         }
         let (module, decl) = (cx.aliases[a].module, cx.aliases[a].decl);
-        let names: Vec<String> = decl.generics.iter().map(|g| g.name.name.clone()).collect();
+        let mut names: Vec<String> = decl.generics.iter().map(|g| g.name.name.clone()).collect();
         cx.aliases[a].used = true;
         cx.aliases[a].expanding = true;
-        cx.resolve_type(&decl.ty, &TyEnv::new(module, &names));
+        // An alias of a generic function type that nothing uses as a type is fine: constants
+        // of it are generic functions (`generic_arrows::typed`). Its function type is checked
+        // with the type parameters in scope; a use elsewhere reports the form.
+        let ty = match &decl.ty.kind {
+            ast::TypeExprKind::GenericFunction { type_params, ty } => {
+                names.extend(type_params.iter().map(|g| g.name.name.clone()));
+                &**ty
+            }
+            _ => &decl.ty,
+        };
+        cx.resolve_type(ty, &TyEnv::new(module, &names));
         cx.aliases[a].expanding = false;
     }
     cx.checking_unused_aliases = false;

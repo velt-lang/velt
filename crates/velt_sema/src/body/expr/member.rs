@@ -669,6 +669,9 @@ impl FnCx<'_, '_> {
         want: Want,
         span: Span,
     ) -> hir::Expr {
+        if let Some(h) = self.fn_through_top(expr, target, want) {
+            return h;
+        }
         let inner = self.expr(expr, Some(target), want);
         if self.cx.dynamic(inner.ty).is_some() {
             if let Ok(h) = self.coerce_dynamic(inner.clone(), target, true) {

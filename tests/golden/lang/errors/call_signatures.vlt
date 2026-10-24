@@ -1,6 +1,7 @@
-// Call signatures: overloaded and generic call signatures are not supported yet; a construct
-// signature (`new (x: number): Runner`) is; a function must match the signature (`Runner`, a
-// function with properties, is).
+// Call signatures: overloaded call signatures are not supported yet; a construct signature
+// (`new (x: number): Runner`) is, and so is a generic one (`Identity`, which only a constant of
+// it may use as a value, #943); a function must match the signature (`Runner`, a function with
+// properties, is).
 interface Runner {
   (): number
   stop(): void

@@ -51,6 +51,7 @@ mod error_slots;
 mod error_view;
 mod errors;
 mod eval_effects;
+mod fn_casts;
 mod fn_union_call;
 mod fn_widen;
 mod frameless_fn;
