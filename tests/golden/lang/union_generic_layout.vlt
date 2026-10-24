@@ -1,0 +1,169 @@
+// check: no leaks
+// A generic union of a type parameter and an object type (`T | A`, `A` an interface with fields
+// only) has one layout at each instantiation, the one callers build: `T | A` at `T = number` is
+// the written `number | A`, whatever order its members sort in, and members that are one object
+// type (`A` and `{ a: number }`, `{ readonly a: number }`) are one member. Also nested in other
+// generic types, through classes, async functions and across modules.
+import { type Shape, described, same } from "./_union_generic_layout_lib";
+
+interface A {
+  a: number;
+}
+type B = { a: number };
+type R = { readonly a: number };
+
+function b3<T>(x: T | A): string {
+  return JSON.stringify(x);
+}
+function b9<T>(x: T | A): T | A {
+  return x;
+}
+function isObject<T>(x: T | A): boolean {
+  return typeof x === "object";
+}
+
+console.log(b3<number>(1), b3<number>({ a: 2 }));
+console.log(b3<string>("s"), b3<string>({ a: 3 }));
+console.log(b3<boolean>(true), b3<boolean>({ a: 4 }));
+console.log(b3<A>({ a: 5 }), b3<B>({ a: 6 }), b3<{ a: number }>({ a: 7 }));
+console.log(b3<A | null>(null), b3<A | null>({ a: 8 }));
+console.log(b3<never>({ a: 9 }));
+const u: unknown = "hi";
+console.log(b3<unknown>(u), b3<unknown>({ a: 10 }), b3<unknown>(11));
+const an: any = 12;
+console.log(b3<any>(an), b3<any>({ a: 13 }));
+console.log(JSON.stringify(b9<number>(14)), JSON.stringify(b9<number>({ a: 15 })));
+console.log(JSON.stringify(b9<string>("t")), JSON.stringify(b9<B>({ a: 16 })));
+console.log(b9<number>({ a: 17 }), b9<number>(18));
+console.log(isObject<number>(1), isObject<number>({ a: 1 }), isObject<string>("s"));
+const ab: A | B = { a: 19 };
+console.log(b3<B>(ab));
+
+// A member with a string field, and the generic function in another module.
+console.log(described<number>(1), described<number>({ s: "q", n: 2 }));
+console.log(described<string>("x"), described<boolean>(false), described<Shape>({ s: "w", n: 3 }));
+console.log(JSON.stringify(same<number>(4)), JSON.stringify(same<number>({ s: "r", n: 5 })));
+
+// Unions that are one member list for lowering: `number | A` and `number | R`.
+function r1<T>(x: T | R): string {
+  return JSON.stringify(x);
+}
+console.log(r1<B>({ a: 1 }), r1<A>({ a: 2 }), r1<number>(3), r1<number>({ a: 4 }));
+function n1<T>(x: T | A | null): string {
+  return x === null ? "null" : JSON.stringify(x);
+}
+console.log(n1<number>(1), n1<number>({ a: 2 }), n1<number>(null), n1<string>("s"));
+function two<T, U>(x: T | U | A): string {
+  return JSON.stringify(x);
+}
+console.log(two<number, string>(1), two<number, string>("s"), two<number, string>({ a: 3 }));
+console.log(two<number, number>(4));
+// At a union (the instance keeps the generic union's variants) and as an optional parameter.
+console.log(b3<string | number>(1), b3<string | number>("s"), b3<string | number>({ a: 2 }));
+console.log(b3<A | string>("q"), b3<A | string>({ a: 3 }));
+console.log(JSON.stringify(b9<string | number>({ a: 4 })), JSON.stringify(b9<string | number>(5)));
+function optional<T>(x?: T | A): string {
+  return x === undefined ? "u" : JSON.stringify(x);
+}
+console.log(optional<number>(), optional<number>(1), optional<number>({ a: 6 }));
+
+// Nested: fields, arrays, map values, optional fields, a generic member, classes.
+interface Box<T> {
+  v: T | A;
+}
+function boxed<T>(b: Box<T>): string {
+  return JSON.stringify(b.v);
+}
+console.log(boxed<number>({ v: 1 }), boxed<number>({ v: { a: 2 } }), boxed<string>({ v: "b" }));
+function arr<T>(xs: (T | A)[]): string {
+  return xs.map((x) => JSON.stringify(x)).join(",");
+}
+console.log(arr<number>([1, { a: 2 }, 3]), arr<string>(["a", { a: 4 }]));
+function mapValues<T>(m: Map<string, T | A>): string {
+  const out: string[] = [];
+  m.forEach((v, k) => {
+    out.push(k + "=" + JSON.stringify(v));
+  });
+  return out.join(",");
+}
+const mm = new Map<string, number | A>();
+mm.set("x", 1);
+mm.set("y", { a: 2 });
+console.log(mapValues<number>(mm));
+function opt<T>(o: { m?: T | A }): string {
+  return o.m === undefined ? "none" : JSON.stringify(o.m);
+}
+console.log(opt<number>({ m: 1 }), opt<number>({ m: { a: 2 } }), opt<number>({}));
+console.log(opt<string>({ m: "z" }), opt<string>({}));
+interface Mod<T> {
+  default: T;
+}
+interface Inner<T> {
+  m: T | Mod<T>;
+}
+function jd<T>(o: Inner<T>): string {
+  return JSON.stringify(o.m);
+}
+console.log(jd<number>({ m: { default: 1 } }), jd<number>({ m: 5 }));
+console.log(jd<string>({ m: { default: "d" } }));
+class Holder<T> {
+  v: T | A;
+  constructor(v: T | A) {
+    this.v = v;
+  }
+  get(): T | A {
+    return this.v;
+  }
+  show(): string {
+    return JSON.stringify(this.v);
+  }
+}
+const h1 = new Holder<number>(1);
+const h2 = new Holder<number>({ a: 2 });
+console.log(h1.show(), h2.show(), JSON.stringify([h1.get(), h2.get()]));
+console.log(new Holder<string>("x").show());
+
+// Through other generic functions and function values.
+function outer<U>(x: U | A): string {
+  return b3<U>(x) + "/" + b3<U | A>(x);
+}
+console.log(outer<number>(1), outer<number>({ a: 2 }), outer<string>("s"));
+function wrap<U>(v: U): string {
+  return b3<U>(v) + "|" + b3<U>({ a: 3 });
+}
+console.log(wrap<number>(4), wrap<boolean>(true), wrap<A>({ a: 5 }));
+const fn: (x: number | A) => string = b3;
+console.log(fn(6), fn({ a: 7 }));
+function pass<T>(f: (x: T | A) => string, v: T): string {
+  return f(v) + f({ a: 8 });
+}
+console.log(pass<number>((x) => JSON.stringify(x), 9));
+function f2<T>(x: T | A[]): string {
+  return JSON.stringify(x);
+}
+console.log(f2<number>(1), f2<number>([{ a: 2 }]), f2<A>({ a: 3 }), f2<string[]>(["s"]));
+const rec: Record<string, number | A> = { p: 1, q: { a: 2 } };
+function f6<T>(r: Record<string, T | A>): string {
+  return JSON.stringify(r);
+}
+console.log(f6<number>(rec));
+
+// An optional field of type `T` at `T = unknown` / `any`.
+function fz<T>(o: { v?: T }): string {
+  return String(o.v ?? "z");
+}
+console.log(fz<unknown>({ v: 1 }), fz<unknown>({}), fz<any>({ v: "s" }), fz<string>({}));
+function mk<T>(v: T): { v?: T } {
+  return { v };
+}
+const m = mk<unknown>(3);
+console.log(m.v, JSON.stringify(m), m);
+
+async function later<T>(x: T | A): Promise<T | A> {
+  return x;
+}
+async function run() {
+  console.log(JSON.stringify(await later<number>(1)), JSON.stringify(await later<number>({ a: 2 })));
+  console.log(JSON.stringify(await later<string>("s")));
+}
+run();

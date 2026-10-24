@@ -84,6 +84,31 @@ impl Cx<'_> {
         }
     }
 
+    /// Is `t` `any`, `unknown` or `object`, or an array, tuple, union or nullable type holding
+    /// one (`Intrinsic::HoldsDynamic`): a type whose JavaScript text is the value's, not its
+    /// static `ToString` (a `Function` is not written as a dynamic value's text)?
+    pub(super) fn holds_dynamic(&mut self, t: TyId) -> bool {
+        match self.types.kind(t).clone() {
+            TyKind::Dyn(d, _) if self.hir.function == Some(d) => false,
+            TyKind::Array(e) | TyKind::Option(e, _) => self.holds_dynamic(e),
+            TyKind::Tuple(es) => es.iter().any(|e| self.holds_dynamic(*e)),
+            TyKind::Adt(d, _) if matches!(self.hir.def(d), hir::Def::Enum(e) if e.is_union) => {
+                let n = self.enum_def(d).variants.len() as u32;
+                (0..n).any(|v| {
+                    let member = self.variant_tys(t, v);
+                    member.iter().any(|m| self.holds_dynamic(*m))
+                })
+            }
+            _ => self.is_dynamic(t),
+        }
+    }
+
+    /// [`Self::holds_dynamic`], or a class instance (`Intrinsic::HoldsDynamicOrClass`).
+    pub(super) fn holds_dynamic_or_class(&mut self, t: TyId) -> bool {
+        self.holds_dynamic(t)
+            || matches!(self.types.kind(t), TyKind::Adt(d, _) if self.adt_def(*d).kind == hir::AdtKind::Class)
+    }
+
     /// Is `t` `object` or `Function` (issue #926)?
     pub(super) fn is_narrow_dynamic(&self, t: TyId) -> bool {
         match self.types.kind(t) {

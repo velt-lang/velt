@@ -21,6 +21,11 @@
   }
   console.log(parse("42")); // 42
   ```
+- An assignment is an expression whose value is the value assigned, as in TypeScript: in
+  `a = b = null` the value of `b = null` is that `null`, so `a` and `b` may have different
+  types that each take it (`let a: string | null`, `let b: number[] | null`). A chained
+  assignment of a literal evaluates the literal for each target; of another value, the outer
+  target gets the inner target's value read back, of the inner target's type.
 - One declaration may declare several variables, as in TypeScript: `let i: number, j = 0;` is
   `let i: number; let j = 0;` (at the top level, in a block and in a `for` initializer).
 - `let x!: T` (TypeScript's definite assignment assertion) declares `x` as `let x: T;` does.

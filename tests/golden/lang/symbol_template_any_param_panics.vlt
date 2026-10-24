@@ -1,0 +1,11 @@
+// A template part whose type is a type parameter instantiated with `any` holding a symbol
+// throws JavaScript's `TypeError`, as `${s}` of an `any` does (`String(v)` writes the symbol).
+// Velt panics (exit code 101); the lines before are printed.
+function tpl<T>(v: T): string {
+  return `<${v}>`;
+}
+function text<T>(v: T): string {
+  return String(v);
+}
+console.log(tpl<any>("ok"), text<any>(Symbol("s")));
+console.log(tpl<any>(Symbol("s")));

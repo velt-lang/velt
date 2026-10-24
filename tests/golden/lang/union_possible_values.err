@@ -1,0 +1,3 @@
+this comparison is always false: `"ready"` is not a possible value of `s.state`
+possible values: "errored", "idle"
+`"done"` is not a possible value of `s.state`

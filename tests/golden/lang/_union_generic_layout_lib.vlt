@@ -1,0 +1,12 @@
+export interface Shape {
+  s: string;
+  n: number;
+}
+
+export function described<T>(x: T | Shape): string {
+  return JSON.stringify(x);
+}
+
+export function same<T>(x: T | Shape): T | Shape {
+  return x;
+}

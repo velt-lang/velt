@@ -300,7 +300,7 @@ fn enum_def(cx: &mut Ctx, d: DefId) -> EnumDef {
     let n = e.generics.len();
     let (name, span) = (e.qual_name.clone(), e.span);
     let e_union = e.is_union;
-    let variants = e
+    let mut variants: Vec<VariantDef> = e
         .variants
         .iter()
         .map(|v| VariantDef {
@@ -310,6 +310,15 @@ fn enum_def(cx: &mut Ctx, d: DefId) -> EnumDef {
             str_value: v.str_value.clone(),
         })
         .collect();
+    // A union a view is made of holds it in one more variant (`crate::union_views`).
+    if let Some((v, iface)) = cx.union_view_variant(d) {
+        variants.push(VariantDef {
+            name: crate::union_views::VIEW_VARIANT.to_string(),
+            payload: vec![iface],
+            discriminant: v as i64,
+            str_value: None,
+        });
+    }
     let st = self_type(cx, d, n);
     EnumDef {
         name,

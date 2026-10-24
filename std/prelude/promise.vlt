@@ -480,6 +480,35 @@ export async function promiseCatch<T, E, G>(
   return r.value;
 }
 
+/**
+ * `p.catch(g)` where `p` never fulfills (`Promise<never, E>`: `Promise.reject(e)`, a `then`
+ * whose callback only throws): the new promise gives what `g` gives.
+ */
+export async function promiseCatchNever<E, U, G>(
+  p: Promise<never, E>,
+  g: (reason: E) => U throws G,
+): Promise<U> throws G {
+  const r = await settledOf<never, E>(p);
+  await velt_rt_microtask();
+  if (r.status == "rejected") {
+    return g(r.reason);
+  }
+  panic("ICE: a promise of `never` fulfilled");
+}
+
+/** `promiseCatchNever` where `g` returns a promise. */
+export async function promiseCatchNeverAsync<E, U, G>(
+  p: Promise<never, E>,
+  g: (reason: E) => Promise<U, G>,
+): Promise<U> throws G {
+  const r = await settledOf<never, E>(p);
+  await velt_rt_microtask();
+  if (r.status == "rejected") {
+    return await adopted<U, G>(g(r.reason));
+  }
+  panic("ICE: a promise of `never` fulfilled");
+}
+
 /** `p.catch(g)` where `g` returns a promise. */
 export async function promiseCatchAsync<T, E, G>(
   p: Promise<T, E>,

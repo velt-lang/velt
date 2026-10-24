@@ -52,6 +52,8 @@ pub(crate) struct Ctx<'m> {
     pub(crate) part_ifaces: crate::intersection_members::PartIfaces,
     /// Interfaces made for intersections and `Pick`s of interfaces with methods.
     pub(crate) synth_ifaces: crate::synth_ifaces::SynthIfaces,
+    /// Views of unions of interfaces (`crate::union_views`).
+    pub(crate) union_views: crate::union_views::UnionViews,
     pub(crate) any: Option<crate::any::AnyDefs>,
     /// `impls` by interface (`Ctx::find_impl`).
     pub impl_index: crate::infer::ImplIndex,
@@ -62,6 +64,9 @@ pub(crate) struct Ctx<'m> {
     /// anonymous object type of their fields. With a template, the twin's type arguments are
     /// the template's types with the original arguments substituted (a param order change).
     pub readonly_twins: FxHashMap<DefId, (DefId, Option<Vec<TyId>>)>,
+    /// A container of `any` was used as one of `unknown` or back (`same_but_any_unknown`):
+    /// `unknown` is erased to `any` before lowering (`crate::readonly`), so both are one type.
+    pub any_unknown_views: bool,
     /// What the `Object` built-ins make: frozen types, prototype-less records.
     pub objects: crate::anon::ObjectState,
     /// Branded type definitions → their primitive (`crate::brands`).
@@ -105,6 +110,8 @@ pub(crate) struct Ctx<'m> {
     /// Object types `crate::replaced_holders` accepted assignments for because they are shared:
     /// lowering counts them from its first pass (`hir::Program::counted_objects`).
     pub counted_objects: Vec<TyId>,
+    /// Concrete union defs readonly erasure replaced (`crate::union_layouts::Plan::replaced`).
+    pub replaced_unions: FxHashSet<DefId>,
     pub module_slots: Vec<DefId>, // module state, in initialization order (module_state.rs)
     pub module_scripts: Vec<DefId>, // imported modules' top-level statements (module_scripts.rs)
     pub promoted_consts: FxHashSet<Span>, // `const`s kept in module state (module_chunks.rs)
@@ -339,10 +346,12 @@ impl<'m> Ctx<'m> {
             iface_writes: Default::default(),
             part_ifaces: Default::default(),
             synth_ifaces: Default::default(),
+            union_views: Default::default(),
             any: None,
             impl_index: Default::default(),
             anon: FxHashMap::default(),
             readonly_twins: FxHashMap::default(),
+            any_unknown_views: false,
             objects: Default::default(),
             brands: FxHashMap::default(),
             brand_keys: FxHashMap::default(),
@@ -361,6 +370,7 @@ impl<'m> Ctx<'m> {
             laid_out: FxHashSet::default(),
             canon_memo: FxHashMap::default(),
             counted_objects: Vec::new(),
+            replaced_unions: FxHashSet::default(),
             module_slots: Vec::new(),
             module_scripts: Vec::new(),
             promoted_consts: FxHashSet::default(),

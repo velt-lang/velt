@@ -117,7 +117,9 @@ fn programs(root: &Path, dirs: &[&str], skip: &[&str]) -> Vec<PathBuf> {
                 && p.with_extension("out").exists()
                 && !skip.contains(&stem.as_ref())
                 && {
-                    let name = p.to_string_lossy().replace('\\', "/");
+                    // The path in the checkout, as in tests/golden.rs.
+                    let rel = p.strip_prefix(root).unwrap_or(p);
+                    let name = rel.to_string_lossy().replace('\\', "/");
                     filters.iter().any(|f| name.contains(f))
                 }
         }));

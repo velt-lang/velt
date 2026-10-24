@@ -206,7 +206,10 @@ expressions (exported ones too):
 - otherwise their union (`return "positive"` and `return n` give `string | i64`), made
   nullable by a `return null`;
 - `void` when no `return` has a value, `never` when every returned value never completes
-  (`return fail()`);
+  (`return fail()`), and `never` for an arrow or function expression without `return` whose
+  end is never reached (`() => { throw e; }`), as in TypeScript (one whose result a type
+  argument is inferred from, `xs.map((x) => { throw e; })`, gives `void`); such a function
+  converts to any function type with its parameters (`() => void`, `() => number`);
 - `Promise<T>` for an `async` function, `T` from its returns.
 
 Integers inferred this way are JavaScript numbers, as in TypeScript: `(await half())/2` and
@@ -792,6 +795,11 @@ async function main() {
   argument converts to the function's parameter type when it is called, as any argument does
   (an `any` boxes the number). An argument that doesn't convert (`(x: string) => …` where
   `(x: number) => void` is expected) is an error, as it is in TS.
+
+  So is a function whose **result type is narrower** than the function type's: a `() => void`
+  where a `() => any` is expected (its result is `undefined`), a `() => string` for a
+  `() => unknown`, an async function's `() => Promise<R>` for a `() => R | Promise<R>`. Its
+  result converts to the expected result type when it returns, through the same wrapper.
 
   An arrow written there takes the expected parameter types and converts each one where it
   starts, so it is one function, as fast as one written with those types. A function value

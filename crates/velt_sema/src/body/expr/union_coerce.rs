@@ -158,6 +158,11 @@ impl FnCx<'_, '_> {
                 body,
             });
         }
+        let what = "converting the union value";
+        arms.extend(self.view_arm(h.ty, consume, span, what, &mut |s, v| {
+            let again = v.clone();
+            f(s, v).or_else(|| s.view_retag(again, exp, span))
+        }));
         if live.len() < src.len() {
             arms.push(self.unreachable_arm(h.ty, span));
         }

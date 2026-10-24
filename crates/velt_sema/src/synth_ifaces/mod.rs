@@ -388,6 +388,11 @@ impl Ctx<'_> {
         }
     }
 
+    /// Have interfaces been flattened (their members are complete)?
+    pub(crate) fn synth_ifaces_flattened(&self) -> bool {
+        self.synth_ifaces.flattened
+    }
+
     /// Interfaces are flattened: fill the interfaces made before.
     pub(crate) fn fill_synth_ifaces(&mut self) {
         self.synth_ifaces.flattened = true;

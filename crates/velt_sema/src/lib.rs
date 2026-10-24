@@ -104,6 +104,8 @@ mod type_queries;
 mod type_reach;
 mod types;
 mod undefined_args;
+mod union_layouts;
+mod union_views;
 mod unions;
 mod utility_types;
 mod visit;
@@ -293,66 +295,95 @@ fn check_timed(
     let null_proto = modules
         .iter()
         .any(|m| !m.is_std && calls_object_create_null(&m.ast));
-    let new_cx =
-        |round: &'static str, held_borrows: bool, seeds: &throws::FnTypeSeeds, last: bool| {
-            let mut cx = ctx::Ctx::new(modules, root);
-            cx.fn_sites = throws::FnSites::new(seeds.clone(), last);
-            cx.stack_budget = stack_budget;
-            cx.held_borrows = held_borrows;
-            cx.ns_private = ns_private.clone();
-            cx.gen_throw = ts_protocol::calls_throw(modules);
-            cx.alias_blocked = alias_blocked.clone();
-            if let Some(l) = &lifted {
-                cx.generic_arrow_fns = l.local_fns.clone();
-                cx.generic_arrow_all = l.all_fns.clone();
-            }
-            if let Some(o) = &overloaded {
-                cx.has_overloads = true;
-                cx.overloaded_methods = o.methods.clone();
-            }
-            cx.objects.null_proto_records = null_proto;
-            cx.objects.brands = brands.clone();
-            cx.global_props = global_props.clone();
-            cx.recovered = (recovered.iter())
-                .map(|&(m, src)| (m, collect::exports::words(src)))
-                .collect();
-            cx.diags.extend(merge_diags.iter().cloned());
-            cx.promoted_consts = chunks.promoted.clone();
-            if let Some(c) = &closures {
-                cx.diags.extend(c.diags.iter().cloned());
-                cx.kept_nested = c.kept.clone();
-                cx.set_closure_groups(&c.groups);
-            }
-            let entry = timings::pass(round, || analyze(&mut cx, root, root_mod, opts));
-            if let Some(o) = &overloaded {
-                overloads::report_misfits(&mut cx.diags, &o.sig_spans);
-            }
-            (cx, entry)
-        };
+    let new_cx = |round: &'static str,
+                  held_borrows: bool,
+                  seeds: &throws::FnTypeSeeds,
+                  last: bool,
+                  views: &union_views::Families| {
+        let mut cx = ctx::Ctx::new(modules, root);
+        cx.union_views.assumed = views.clone();
+        cx.fn_sites = throws::FnSites::new(seeds.clone(), last);
+        cx.stack_budget = stack_budget;
+        cx.held_borrows = held_borrows;
+        cx.ns_private = ns_private.clone();
+        cx.gen_throw = ts_protocol::calls_throw(modules);
+        cx.alias_blocked = alias_blocked.clone();
+        if let Some(l) = &lifted {
+            cx.generic_arrow_fns = l.local_fns.clone();
+            cx.generic_arrow_all = l.all_fns.clone();
+        }
+        if let Some(o) = &overloaded {
+            cx.has_overloads = true;
+            cx.overloaded_methods = o.methods.clone();
+        }
+        cx.objects.null_proto_records = null_proto;
+        cx.objects.brands = brands.clone();
+        cx.global_props = global_props.clone();
+        cx.recovered = (recovered.iter())
+            .map(|&(m, src)| (m, collect::exports::words(src)))
+            .collect();
+        cx.diags.extend(merge_diags.iter().cloned());
+        cx.promoted_consts = chunks.promoted.clone();
+        if let Some(c) = &closures {
+            cx.diags.extend(c.diags.iter().cloned());
+            cx.kept_nested = c.kept.clone();
+            cx.set_closure_groups(&c.groups);
+        }
+        let entry = timings::pass(round, || analyze(&mut cx, root, root_mod, opts));
+        if let Some(o) = &overloaded {
+            overloads::report_misfits(&mut cx.diags, &o.sig_spans);
+        }
+        (cx, entry)
+    };
     // Function types written without `throws` throw what the closures stored into them throw
     // (`throws::fn_types`): check again while those sets grow.
     let mut seeds = throws::FnTypeSeeds::default();
-    let (mut cx, mut entry) = new_cx("round: first", true, &seeds, false);
+    // Unions of interfaces made views of (`union_views`): their uses are checked again with
+    // arms for the view.
+    let mut views = union_views::Families::default();
+    let mut view_rounds = 0;
+    let (mut cx, mut entry) = new_cx("round: first", true, &seeds, false, &views);
     if let Some(s) = cx.fn_sites.doubted(error_count(&cx) > 0) {
         seeds = s;
-        (cx, entry) = new_cx("round: doubted throws variables", true, &seeds, false);
+        if let Some(g) = cx.union_views_grown() {
+            view_rounds += 1;
+            views = g;
+        }
+        (cx, entry) = new_cx(
+            "round: doubted throws variables",
+            true,
+            &seeds,
+            false,
+            &views,
+        );
     }
     // A check with sharing may grow the sets too: the checks after it share as well.
     let (mut rounds, mut held) = (0, true);
     loop {
-        if let Some(grown) = cx.fn_sites.grown() {
-            rounds += 1;
-            seeds = grown;
+        // Views of new families (`union_views`) are checked again together with the growth of
+        // the throws sets, in one round.
+        let grown_views = cx.union_views_grown().filter(|_| view_rounds < VIEW_ROUNDS);
+        let grown_seeds = cx.fn_sites.grown();
+        if grown_views.is_some() || grown_seeds.is_some() {
+            if let Some(g) = grown_views {
+                view_rounds += 1;
+                views = g;
+            }
+            if let Some(g) = grown_seeds {
+                rounds += 1;
+                seeds = g;
+            }
             let last = rounds == FN_SITE_ROUNDS;
-            (cx, entry) = new_cx("round: grown throws sets", held, &seeds, last);
+            (cx, entry) = new_cx("round: grown throws sets", held, &seeds, last, &views);
         } else if held && retry_sharing(&cx) {
             held = false;
             let last = rounds == FN_SITE_ROUNDS;
-            (cx, entry) = new_cx("round: sharing retry", false, &seeds, last);
+            (cx, entry) = new_cx("round: sharing retry", false, &seeds, last, &views);
         } else {
             break;
         }
     }
+    union_views::finish(&mut cx);
     if !recovered.is_empty() || cx.diags.iter().any(|d| d.is_error()) {
         return (None, cx.diags);
     }
@@ -417,6 +448,11 @@ fn check_timed(
 /// before inference (an async function's rejection type, a `catch` variable narrowed by its
 /// type).
 pub(crate) const FN_SITE_ROUNDS: usize = 8;
+
+/// Rounds of checking that add families of union views (`union_views`): one per family a
+/// view is first made of in a `<view>` arm (converting a view to a wider union) at most; after
+/// the last, a use without an arm is an error.
+const VIEW_ROUNDS: usize = 4;
 
 /// Steps 1–5 and the checks of the whole program: the entry point, if there is one.
 fn analyze(

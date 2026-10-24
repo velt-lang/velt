@@ -171,6 +171,9 @@ pub(crate) struct Scope {
     pub members: Vec<(LocalId, Vec<u32>)>,
     /// Class (or interface) locals known by `instanceof` to hold this subclass inside this scope.
     pub classes: Vec<(LocalId, TyId)>,
+    /// Union locals that hold the member they are narrowed to because it was assigned to them
+    /// (never a view, `crate::union_views`).
+    pub held: Vec<LocalId>,
     /// Facts not assumed inside this scope: their locals are assigned by closures
     /// (`closure_assigned`).
     pub refused: Vec<(LocalId, closure_assigned::Refused)>,
@@ -233,6 +236,10 @@ pub(crate) struct Frame {
     /// annotation: as in TypeScript, the value its body or a `return` gives is evaluated and
     /// dropped (`(s: string) => void` takes `(s) => out.push(s)` whatever `push` returns).
     pub discards_value: bool,
+    /// An arrow whose result type nothing expected fills (no function type is expected, or it
+    /// is a promise callback): an end never reached and no `return` give `never`, as in
+    /// TypeScript. Inferred for a type argument (`xs.map((x) => { throw e; })`) it stays `void`.
+    pub never_end: bool,
     /// Body of an `async` function / arrow: `await` is allowed.
     pub is_async: bool,
     /// The program's top-level statements (the root file's generated `async main`): its
@@ -381,6 +388,7 @@ impl Frame {
             captures: vec![],
             escaping: false,
             discards_value: false,
+            never_end: false,
             is_async: false,
             top_level: false,
             top_level_outer: vec![],
@@ -471,6 +479,9 @@ pub(crate) struct FnCx<'a, 'm> {
     /// (`numbers::is_js_api`): per parameter, whether the signature declares it an integer (an
     /// index), which makes it a number in the arrow's body when unannotated.
     pub std_callback: Option<Vec<bool>>,
+    /// The arrow checked next is a `then` / `catch` / `finally` callback: its result type is
+    /// its own (`FnState::never_end`).
+    pub promise_callback: bool,
     /// The value being checked fills slot `.1` of interface `.0` in an object literal implementing
     /// it, and is written at `.2` (`expr/iface_object.rs`): a closure written there records
     /// what it throws for the slot before its error type is computed.
@@ -535,6 +546,8 @@ pub(crate) struct FnCx<'a, 'm> {
     /// A variable read that a null or truthiness test makes (`if (x)`, `x == null`): it reads
     /// the variable as it is, without the check `checked_narrowed_read` adds.
     pub raw_read: Option<Span>,
+    /// The expression being checked is the object of a member read (`body::expr::union_view`).
+    pub view_receiver: bool,
     /// Locals declared from integer literals and their uses (`literal_locals`).
     pub literal: literal_locals::LiteralLocals,
     /// The span of the JSX element whose template may be its string (`expr/jsx/list_fold.rs`),
@@ -573,6 +586,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             f: frame,
             outer: vec![],
             std_callback: None,
+            promise_callback: false,
             literal_slot: None,
             call_temps: vec![],
             held_recheck: Vec::new(),
@@ -595,6 +609,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             optional_slots: vec![],
             refused_reads: vec![],
             raw_read: None,
+            view_receiver: false,
             literal: Default::default(),
             jsx_list_fold: None,
             jsx_list_folded: false,

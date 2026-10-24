@@ -500,3 +500,16 @@ fn typeof_of_a_function_generic_over_errors_only() {
         "{r}"
     );
 }
+
+#[test]
+fn unknown_names_in_initializers_are_reported_once() {
+    // An initializer of a function type outside a function body (a field, a module constant)
+    // naming an unknown value: one report each, not one per check of the name.
+    let r = err_src(
+        "class K { h: () => void = nope; }
+const m: () => number = nope2;
+function main() {}",
+    );
+    assert_eq!(r.matches("cannot find `nope`").count(), 1, "{r}");
+    assert_eq!(r.matches("cannot find `nope2`").count(), 1, "{r}");
+}

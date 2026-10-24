@@ -359,6 +359,18 @@ export function __anyJoin(v: any, sep: string, at: string): string {
   return __anyJoinSeen(v, sep, seen, at);
 }
 
+/**
+ * `xs.join(sep)` of an `any` `xs` (issue #1462): an array held is written as `__anyJoin`
+ * writes it, with `sep` as `String(sep)` writes it (`","` when it is `undefined`, as in
+ * JavaScript); another value's own `join` is called.
+ */
+export function __anyJoinMethod(v: any, sep: any, at: string): any {
+  if (Array.isArray(v)) {
+    return __anyJoin(v, sep === undefined ? "," : __anyString(sep, at), at);
+  }
+  return v.join(sep);
+}
+
 /** `__anyJoin` with the arrays being joined around it in `seen`. */
 function __anyJoinSeen(v: any, sep: string, seen: any[], at: string): string {
   seen.push(v);

@@ -68,7 +68,15 @@ impl FnCx<'_, '_> {
             let base = self.mk(H::Local(l, mode), ty, span);
             return self.three_state_without_null(base, want == Want::Move);
         }
-        let member = self.narrowed_member(l, payload.unwrap_or(ty), payload.is_some());
+        let mut member = self.narrowed_member(l, payload.unwrap_or(ty), payload.is_some());
+        // The object of a member read: a union that may hold a view stays the union (narrowed),
+        // whose reads give the view an arm of its own (`union_view`).
+        if std::mem::take(&mut self.view_receiver)
+            && member.is_some()
+            && self.cx.union_view(payload.unwrap_or(ty)).is_some()
+        {
+            member = None;
+        }
         if member.is_none() {
             if let Some(e) = self.union_narrowed_to_class(l, ty, payload, want, span) {
                 return e;
@@ -91,8 +99,14 @@ impl FnCx<'_, '_> {
                 None => self.use_mode(p, want),
             };
             e = self.unwrap_present(e, mode, span);
+            if member.is_none() {
+                return self.downcast_narrowed(l, e);
+            }
         }
         if let Some((variant, m)) = member {
+            if self.holds_assigned_member(l) {
+                self.cx.union_view_safe(span);
+            }
             let mode = self.use_mode(m, want);
             let kind = H::UnwrapVariant {
                 expr: Box::new(e),
@@ -102,6 +116,15 @@ impl FnCx<'_, '_> {
             e = self.mk(kind, m, span);
         }
         self.downcast_narrowed(l, e)
+    }
+
+    /// Is `exp` (or its payload, for `U | null`) a union of the family of union local `l`'s
+    /// (or its payload's), which may hold a view (`crate::union_views`)?
+    fn view_union_expected(&mut self, l: LocalId, exp: TyId) -> bool {
+        let ty = self.local_ty(l);
+        let u = self.cx.ty.core(ty).unwrap_or(ty);
+        let x = self.cx.ty.core(exp).unwrap_or(exp);
+        self.cx.union_view(u).is_some() && self.cx.same_view_family(u, x)
     }
 
     /// A union local `l` (of type `ty`, `T | null` narrowed to `payload`) that `instanceof`
@@ -237,7 +260,13 @@ impl FnCx<'_, '_> {
         let checks = self.f.late.checks.len();
         if let Some(l) = self.lookup_local(&id.name, id.span) {
             self.rec_local(id.span, l);
+            // A narrowed union that may hold a view, where a union of its family is expected:
+            // the union itself, as for the object of a member read (no member view).
+            if exp.is_some_and(|x| self.view_union_expected(l, x)) {
+                self.view_receiver = true;
+            }
             let e = self.local_expr(l, want, id.span);
+            self.view_receiver = false;
             return self.late_checked_read(e, checks);
         }
         match self.lookup_item(&id.name, id.span) {

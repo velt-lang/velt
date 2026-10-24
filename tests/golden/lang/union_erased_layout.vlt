@@ -1,0 +1,239 @@
+// check: no leaks
+// Unions that are one layout once `readonly` and brands are erased: `number | A` and
+// `number | { readonly a: string }` (`A` an interface with fields only) are one type wherever
+// a value is stored (module `let`s, exported `const`s, statics, fields, captures, async and
+// generator frames), whatever order their members sort in, and a union whose members are all
+// one type (`USD | number`, `USD = number & { __brand: "USD" }`) is that type.
+import { cval, held, ids, lmk, lmk2, lval, setL, usd } from "./_union_erased_layout_lib";
+import type { Id, LA, LR, USD } from "./_union_erased_layout_lib";
+
+// Module state and constants, in one module and across modules, both directions.
+interface MA {
+  a: number;
+}
+type MR = { readonly a: number };
+let mval: number | MA = 1;
+export const mconst: number | MA = { a: 42 };
+function mmk(n: number): number | MR {
+  return n > 0 ? { a: n } : n;
+}
+function mf() {
+  mval = mmk(3);
+  return mval;
+}
+console.log(JSON.stringify(mf()), JSON.stringify(mval));
+const mr: number | MR = mconst;
+mval = mr;
+console.log(JSON.stringify(mconst), JSON.stringify(mmk(2)), JSON.stringify(mr), JSON.stringify(mval));
+
+class K {
+  static readonly s: number | LA = lmk(4);
+  static readonly r: LR | number = { a: "kr" };
+  static readonly q: LR | number = K.s;
+}
+const NS: { v: string | LA; w: LR | string } = { v: "ns", w: { a: "nw" } };
+function show(x: number | LR | string): string {
+  if (typeof x === "number") return `n${x}`;
+  if (typeof x === "string") return `s${x}`;
+  return `o${x.a}`;
+}
+console.log(JSON.stringify(lval), JSON.stringify(cval));
+setL(lmk(3));
+console.log(JSON.stringify(lval));
+setL(lmk2(-2));
+console.log(JSON.stringify(lval));
+const y: number | LR = cval;
+console.log(show(y), show(lval));
+console.log(JSON.stringify(K.s), show(K.s), JSON.stringify(K.r), show(K.q));
+NS.v = NS.w;
+console.log(JSON.stringify(NS.v), show(NS.v), show(NS.w));
+NS.v = "back";
+const arr: (number | LA)[] = [1, { a: "x" }];
+const z: number | LR = lmk(9);
+arr.push(z);
+console.log(JSON.stringify(arr), String(NS.v));
+let m: number | LR = 1;
+for (let i = 0; i < 3; i++) {
+  m = i % 2 ? lval : lmk(i);
+}
+console.log(JSON.stringify(m));
+setL({ a: "last" });
+const w: LR | number = lval;
+console.log(show(w));
+
+// Members in another order in each union: `LA | LBR | number` and `number | LB | LR` are one
+// union with one variant order.
+interface LB {
+  b: string;
+}
+type LBR = { readonly b: string };
+function u1(k: number): LA | LBR | number {
+  if (k === 0) return { a: `a${k}` };
+  if (k === 1) return { b: `b${k}` };
+  return k;
+}
+function u2(k: number): number | LB | LR {
+  if (k === 0) return { a: `A${k}` };
+  if (k === 1) return { b: `B${k}` };
+  return k * 10;
+}
+function obj(x: LA | LBR): string {
+  if ("a" in x) return `a:${x.a}`;
+  return `b:${x.b}`;
+}
+function name(x: LA | LBR | number): string {
+  if (typeof x === "number") return `n${x}`;
+  return obj(x);
+}
+const all: (LA | LBR | number)[] = [];
+for (let k = 0; k < 3; k++) {
+  all.push(u1(k));
+  all.push(u2(k));
+}
+console.log(all.map(name).join(" "), JSON.stringify(all));
+function both(x: LA | LR): string {
+  return x.a;
+}
+const lr: LR = { a: "lr" };
+const la: LA = { a: "la" };
+const one: LA | LR = all.length > 100 ? la : lr;
+console.log(both(la), both(lr), both(one), JSON.stringify(one));
+class Holder {
+  v: number | LR = 1;
+  w: LA | LBR | number = { a: "w" };
+  set(x: number | LA) {
+    this.v = x;
+  }
+}
+const h = new Holder();
+h.set({ a: "set" });
+h.w = u2(1);
+console.log(JSON.stringify(h), name(h.w));
+function mk(): () => string {
+  const cap: number | LA = { a: "cap" };
+  const cap2: USD | number = 4 as USD;
+  return () => `${JSON.stringify(cap)}${cap2}`;
+}
+console.log(mk()());
+async function af(x: number | LR): Promise<string> {
+  await Promise.resolve(1);
+  const y2: number | LA = x;
+  await Promise.resolve(2);
+  return JSON.stringify(y2);
+}
+function* gen(x: LA | LBR | number): Generator<string> {
+  yield name(x);
+  const z2: number | LB | LR = x;
+  yield JSON.stringify(z2);
+}
+for (const s of gen(u2(0))) console.log(s);
+const entries = new Map<string, number | LA>();
+const e1: number | LR = { a: "e1" };
+entries.set("k", e1);
+entries.set("j", 2);
+console.log(JSON.stringify([...entries.entries()]));
+
+// Brands: `T | number` at `T = USD` is `number`, also for a written `USD | number`.
+function tb<T>(x: T | number): string {
+  return typeof x + JSON.stringify(x);
+}
+function ts<T>(x: T | string): string {
+  return typeof x + JSON.stringify(x);
+}
+console.log(tb<USD>(5 as USD), tb<USD>(3), tb<string>("s"));
+console.log(ts<Id>("q" as Id), ts<Id>("r"), ts<number>(4));
+let local: USD | number = usd(2);
+local = 7;
+const amounts: (USD | number)[] = [usd(1), 2, local, held];
+console.log(JSON.stringify(amounts), amounts.length);
+function sw(x: Id | string | number): string {
+  switch (typeof x) {
+    case "string":
+      return `S${x}`;
+    default:
+      return `N${x}`;
+  }
+}
+console.log(ids.map(sw).join(","), sw(3), sw("z" as Id));
+function pick<T>(xs: (T | string)[], i: number): T | string {
+  return xs[i];
+}
+console.log(pick<Id>(ids, 0), pick<Id>(ids, 1));
+const o: { v: Id | string } = { v: "x" as Id };
+o.v = `${ids[1]}!`;
+console.log(o.v, JSON.stringify(o));
+function idt<T>(x: T | string): T | string {
+  const k: T | string = x;
+  return k;
+}
+const moved = `moved${all.length}`;
+console.log(idt<string>(moved), moved);
+function* bgen<T>(x: T | string): Generator<T | string> {
+  yield x;
+  yield x;
+}
+for (const g of bgen<Id>("gen")) console.log(g);
+const cl = (k: Id | string) => () => `${k}#`;
+console.log(cl("c" as Id)());
+const bn: USD | number = 3 as USD;
+const bs: Id | string = "s" as Id;
+const bu: unknown = bn;
+const bv: unknown = bs;
+console.log(typeof bu, typeof bv, bu, bv, String(bn), `${bs}`, bn === 3, bs === "s");
+console.log(bn, bs, [bn, bs]);
+console.log({ bn, bs });
+function back(x: unknown): string {
+  if (typeof x === "number") {
+    const q: USD | number = x;
+    return `num ${q + 1}`;
+  }
+  if (typeof x === "string") {
+    const q: Id | string = x;
+    return `str ${q.toUpperCase()}`;
+  }
+  return "other";
+}
+console.log(back(bu), back(bv), back(null));
+const parts: (Id | string)[] = ["x", "y" as Id];
+console.log(parts.join("-"), parts.indexOf("y"), parts.includes("x" as Id));
+const pair: [USD | number, Id | string] = [1, "t"];
+const [p0, p1] = pair;
+console.log(p0, p1, pair);
+async function bf<T>(x: T | string): Promise<string> {
+  await Promise.resolve(0);
+  return `a${x}`;
+}
+bf<Id>("p" as Id).then((r) => console.log(r));
+af({ a: "async" }).then((r) => console.log(r));
+
+// Generic object types and classes holding such unions.
+interface GBox<T> {
+  v: T | number;
+  tag: string;
+}
+function mkBox<T>(v: T | number): GBox<T> {
+  return { v, tag: typeof v };
+}
+const gb1: GBox<USD> = mkBox<USD>(2 as USD);
+const gb2: { v: USD | number; tag: string } = gb1;
+const gb3: GBox<USD> = { v: 4, tag: "lit" };
+console.log(JSON.stringify(gb1), JSON.stringify(gb2), JSON.stringify(gb3), gb2.v === 2);
+class Cell<T> {
+  val: T | LA;
+  constructor(val: T | LA) {
+    this.val = val;
+  }
+  get(): T | LA {
+    return this.val;
+  }
+}
+const gc = new Cell<LR>({ a: "c" });
+const gcv: LR | LA = gc.get();
+console.log(JSON.stringify(gcv), JSON.stringify(gc));
+const gc2 = new Cell<number>(5);
+const gc2v: number | LR = gc2.get();
+console.log(JSON.stringify(gc2v));
+function joined<T>(xs: GBox<T>[]): string {
+  return xs.map((x) => `${x.v}`).join("+");
+}
+console.log(joined<USD>([gb1, gb3]));

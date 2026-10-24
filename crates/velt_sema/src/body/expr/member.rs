@@ -206,7 +206,11 @@ impl FnCx<'_, '_> {
         if optional {
             return self.optional_chain(object, span, |s, v| s.member_of(v, prop, want, span));
         }
+        // A union local narrowed to one member is read as the union here, so that a view it may
+        // hold is read through its getters (`union_view`).
+        self.view_receiver = want != Want::BorrowMut && is_name(object);
         let obj = self.expr(object, None, Want::Borrow);
+        self.view_receiver = false;
         if want != Want::BorrowMut && self.is_method_value(obj.ty, &prop.name) {
             return self.method_value(obj, object, prop, exp, span);
         }
@@ -606,7 +610,8 @@ impl FnCx<'_, '_> {
             .try_coerce(inner, target)
             .or_else(|h| self.param_as_object(h, target))
             .or_else(|h| self.param_as_object_part(h, target))
-            .or_else(|h| self.narrowing_assertion(h, target, span));
+            .or_else(|h| self.narrowing_assertion(h, target, span))
+            .or_else(|h| self.union_view_cast(h, target, span));
         match coerced {
             Ok(h) => h,
             Err(h) => {
@@ -710,6 +715,15 @@ pub(super) fn untyped_int(e: &ast::Expr) -> bool {
             expr,
         }
         | ast::ExprKind::Paren(expr) => untyped_int(expr),
+        _ => false,
+    }
+}
+
+/// Is `e` a name (in parentheses or not)?
+pub(crate) fn is_name(e: &ast::Expr) -> bool {
+    match &e.kind {
+        ast::ExprKind::Ident(_) => true,
+        ast::ExprKind::Paren(inner) => is_name(inner),
         _ => false,
     }
 }

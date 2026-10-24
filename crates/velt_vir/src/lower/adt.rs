@@ -138,7 +138,18 @@ impl FnLower<'_, '_> {
         let variant = match self.variant_at(hir_ty, variant, ty) {
             super::types::VariantAt::Index(v) => v,
             // The union collapsed to this member (`A | B` at `A = B`): the value itself.
-            super::types::VariantAt::Whole => return self.consume(&args[0]),
+            // Owned by a temporary, as a built union is: consumed, the consumer takes it; read
+            // in place, it is dropped after the statement.
+            super::types::VariantAt::Whole => {
+                let v = self.consume(&args[0]);
+                if self.dead() || !self.cx.needs_drop(ty) {
+                    return v;
+                }
+                let vt = self.cx.ty(ty);
+                let t = self.copy_to_temp(v, vt);
+                self.own_temp(t, ty);
+                return Operand::Copy(Place::local(t));
+            }
         };
         let tag_ty = match self.cx.kind(ty) {
             TyKind::Adt(d, _) if self.cx.is_c_like_enum(d) => {

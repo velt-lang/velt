@@ -38,9 +38,14 @@ impl FnCx<'_, '_> {
                 lines.push(self.iface_ancestors(m));
             }
         }
+        // A union that may hold a view (`union_view`) calls through an interface its view
+        // interface extends.
+        let view = self.cx.union_view(recv.ty).map(|(_, _, v)| v);
         if lines.len() == live.len() {
             let common = lines[0].iter().copied().find(|&a| {
-                self.declares_method(a, name) && lines[1..].iter().all(|l| l.contains(&a))
+                self.declares_method(a, name)
+                    && lines[1..].iter().all(|l| l.contains(&a))
+                    && view.is_none_or(|v| self.iface_ancestors(v).contains(&a))
             });
             if let Some(t) = common {
                 return self.union_to_common(recv, t);

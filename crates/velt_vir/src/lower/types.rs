@@ -172,7 +172,12 @@ impl<'h> Cx<'h> {
         if !e.is_union {
             return None;
         }
-        let payloads: Vec<TyId> = e.variants.iter().map(|v| v.payload[0]).collect();
+        // A union view's variant (velt_sema `union_views.rs`) is no member: the unions of one
+        // family each have it, with the same payload.
+        let payloads: Vec<TyId> = (e.variants.iter())
+            .filter(|v| v.name != UNION_VIEW_VARIANT)
+            .map(|v| v.payload[0])
+            .collect();
         let mut members: Vec<TyId> = vec![];
         for p in payloads {
             let m = self.subst_raw(p, args);
@@ -201,7 +206,9 @@ impl<'h> Cx<'h> {
 
     /// Where variant `variant` of the HIR union type `hir_ty` (of the current instance) lives in
     /// its canonical type `ty` (`canon_union`): another variant index, or the whole value when
-    /// the union collapsed to that member. Unchanged for every other enum.
+    /// the union collapsed to that member. Unchanged for every other enum. A variant of a value
+    /// that is no enum is the whole value: a union whose members erase to one type is that type
+    /// (velt_sema `union_layouts`), its variants still written as variants.
     pub(super) fn union_variant(
         &mut self,
         hir_ty: TyId,
@@ -209,6 +216,14 @@ impl<'h> Cx<'h> {
         variant: u32,
         ty: TyId,
     ) -> VariantAt {
+        let is_enum = match self.kind(ty) {
+            TyKind::Adt(d, _) => matches!(self.hir.def(d), hir::Def::Enum(_)),
+            TyKind::Result(..) => true,
+            _ => false,
+        };
+        if !is_enum {
+            return VariantAt::Whole;
+        }
         let raw = self.subst_raw(hir_ty, targs);
         if raw == ty {
             return VariantAt::Index(variant);
@@ -730,3 +745,6 @@ pub(super) enum VariantAt {
     /// The union collapsed to this member: the value itself.
     Whole,
 }
+
+/// The name of a union view's variant (velt_sema `union_views.rs`).
+pub(super) const UNION_VIEW_VARIANT: &str = "<view>";
