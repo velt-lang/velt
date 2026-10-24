@@ -1,0 +1,43 @@
+// check: no leaks
+// A `let` that a closure assigns, narrowed by its initializer, an assignment or a check: a call
+// may have run the closure, so where the declared type (or `any`) is expected, and when it is
+// printed, the variable is read as it is now, as in Node (#1481). Expected output: Node's.
+let n: number | null = 1;
+const f = () => (n = null);
+f();
+console.log(n);
+
+function show(v: number | null): string {
+  return v === null ? "none" : `n=${v}`;
+}
+let m: number | null = 2;
+const clearM = () => {
+  m = null;
+};
+console.log(show(m));
+clearM();
+console.log(show(m), m, `${m}`, String(m));
+
+let s: string | null = "a";
+const clearS = () => {
+  s = null;
+};
+if (s !== null) {
+  console.log(s.length);
+  clearS();
+  console.log(s, `[${s}]`, String(s));
+}
+
+function run() {
+  let cur: string | null = "start";
+  const reset = (): void => {
+    cur = null;
+  };
+  const report = (v: unknown) => console.log("report", v);
+  report(cur);
+  reset();
+  report(cur);
+  cur = "again";
+  console.log(cur.toUpperCase());
+}
+run();

@@ -104,6 +104,30 @@ impl FnCx<'_, '_> {
         self.checked_present(h, &msg, None, want != super::Want::Move, span)
     }
 
+    /// Is a read of local `l` where `exp` is expected one that takes `l` as it is declared: `l`
+    /// is narrowed to its payload, a closure assigns it, and `exp` is its declared type, or
+    /// `any` / `unknown`? A call since the narrowing (its initializer, an assignment or a check)
+    /// may have run the closure, so the value read is the variable's current one, nothing
+    /// included, as in JavaScript (#1481).
+    pub(crate) fn reads_as_declared(
+        &self,
+        l: LocalId,
+        exp: crate::hir::TyId,
+        want: super::Want,
+    ) -> bool {
+        if want == super::Want::BorrowMut || !self.is_narrowed(l) {
+            return false;
+        }
+        let ty = self.local_ty(l);
+        self.cx.ty.nothing_of(ty).is_some()
+            && self.closure_assignment(l).is_some()
+            && (exp == ty
+                || matches!(
+                    self.cx.dynamic(exp),
+                    Some(crate::any::Dynamic::Any | crate::any::Dynamic::Unknown)
+                ))
+    }
+
     /// `e` checked as the operand of a null or truthiness test: a variable that a closure
     /// assigns is read as it is (the test is what checks it).
     pub(crate) fn test_operand(

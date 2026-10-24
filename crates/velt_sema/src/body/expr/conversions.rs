@@ -20,7 +20,8 @@ impl FnCx<'_, '_> {
         if is_null_lit(a) {
             return self.str_lit("null", span);
         }
-        let h = self.expr(a, None, Want::Borrow);
+        // A variable that a closure assigns is written as it is now (`closure_assigned`).
+        let h = self.test_operand(a, None, Want::Borrow);
         let part = self.js_text(h, "`String(x)`");
         self.concat_parts(vec![part], span)
     }

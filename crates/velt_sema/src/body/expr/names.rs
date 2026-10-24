@@ -265,7 +265,17 @@ impl FnCx<'_, '_> {
             if exp.is_some_and(|x| self.view_union_expected(l, x)) {
                 self.view_receiver = true;
             }
+            // A narrowed variable that a closure assigns, where its declared type (or `any`) is
+            // expected: read as it is, not checked again, since a call may have run the closure
+            // and set it to `null` (`console.log(n)` prints `null`, as in Node; #1481).
+            let raw = exp.is_some_and(|x| self.reads_as_declared(l, x, want));
+            if raw {
+                self.raw_read = Some(id.span);
+            }
             let e = self.local_expr(l, want, id.span);
+            if raw {
+                self.raw_read = None;
+            }
             self.view_receiver = false;
             return self.late_checked_read(e, checks);
         }
