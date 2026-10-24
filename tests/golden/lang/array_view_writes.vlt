@@ -1,0 +1,39 @@
+// check: no leaks
+// Writes through views (#1485): from a closure, through a second conversion while a callback
+// method iterates, compound assignments of elements, `length` set, and the original changed
+// while a `for...of` runs over the view.
+type Child = string | number | null;
+
+function main() {
+  const orig: (number | string)[] = [1, 2, 3, 4];
+  const raw: any = orig;
+  const v = raw as Child[];
+  const set = (i: number, x: Child) => {
+    v[i] = x;
+  };
+  set(0, 10);
+  console.log(raw[0]);
+  const v2 = raw as Child[];
+  v.forEach((c, i) => {
+    if (typeof c === "number") v2[i] = c + 100;
+  });
+  console.log(raw);
+  let k = 1;
+  const w = raw as number[];
+  w[k] += 5;
+  w[k++] *= 2;
+  console.log(raw, k);
+  w.length = 2;
+  console.log(raw, v.length, w.length);
+  orig.push(7, 8);
+  console.log(v[3], w.indexOf(8), v.slice(1));
+  const [a, ...rest] = w;
+  console.log(a, rest);
+  orig[0] = "s";
+  console.log(v[0], v.length);
+  for (const x of v) {
+    if (x === 8) orig.push(9);
+    console.log(x);
+  }
+  console.log(JSON.stringify(v), String(v), `${w.length}`);
+}

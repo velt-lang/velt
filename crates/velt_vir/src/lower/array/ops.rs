@@ -59,6 +59,10 @@ impl FnLower<'_, '_> {
         if i == I::ArraySetLen {
             self.view_unsupported(&arr, aty, "sorting with a comparison function");
         }
+        if !caller && self.cx.array_view(aty) {
+            // Each operation on a view syncs and writes back what it needs (array_view_ops.rs).
+            return self.view_array_op(i, &args[1..], &arr, aty, ty);
+        }
         let ptr = Operand::Copy(arr.clone());
         let arr = self.content(&arr, aty);
         if caller && i != I::ArrayLen && self.cx.lock_counted(aty) && !self.captured_root(&args[0])
@@ -70,12 +74,7 @@ impl FnLower<'_, '_> {
         if caller {
             return self.caller_array_op(i, &args[1..], &arr, aty, ty);
         }
-        let r = self.array_op(i, &args[1..], &arr, aty, ty);
-        if i != I::ArrayLen && self.cx.array_view(aty) {
-            // A change through a view goes back to the original (array_view.rs).
-            self.view_flush(ptr, aty);
-        }
-        r
+        self.array_op(i, &args[1..], &arr, aty, ty)
     }
 
     /// An array intrinsic on the caller's array in a `read` callback (caller_stores.rs): it
@@ -172,7 +171,7 @@ impl FnLower<'_, '_> {
         }
     }
 
-    fn array_op(
+    pub(in crate::lower) fn array_op(
         &mut self,
         i: hir::Intrinsic,
         rest: &[hir::Expr],
@@ -191,17 +190,7 @@ impl FnLower<'_, '_> {
                 let (ia, ta) = (self.expr(a), self.vty(a.ty));
                 let ia = self.freeze(ia, a.ty);
                 let (ib, tb) = (self.expr(b), self.vty(b.ty));
-                let pa = self.elem_place_checked(&arr, aty, ia, ta);
-                let pb = self.elem_place_checked(&arr, aty, ib, tb);
-                let vt = self.cx.ty(elem);
-                if vt == Ty::Unit {
-                    // Zero-sized elements (a single literal type): nothing to exchange.
-                    return unit();
-                }
-                let t = self.copy_to_temp(Operand::Copy(pa.clone()), vt);
-                self.assign(pa, Rvalue::Use(Operand::Copy(pb.clone())));
-                self.assign(pb, Rvalue::Use(Operand::Copy(Place::local(t))));
-                unit()
+                self.swap_elems(&arr, aty, (ia, ta), (ib, tb))
             }
             (I::ArrayRemove, [idx]) => self.remove(&arr, aty, idx),
             (I::ArrayTruncate, [n]) => {
@@ -227,6 +216,28 @@ impl FnLower<'_, '_> {
                 rest.len() + 1
             )),
         }
+    }
+
+    /// `__intrinsic_array_swap` of the elements at the (evaluated) indices `a` and `b`.
+    pub(in crate::lower) fn swap_elems(
+        &mut self,
+        arr: &Place,
+        aty: TyId,
+        (ia, ta): (Operand, Ty),
+        (ib, tb): (Operand, Ty),
+    ) -> Operand {
+        let elem = self.elem_ty(aty);
+        let pa = self.elem_place_checked(arr, aty, ia, ta);
+        let pb = self.elem_place_checked(arr, aty, ib, tb);
+        let vt = self.cx.ty(elem);
+        if vt == Ty::Unit {
+            // Zero-sized elements (a single literal type): nothing to exchange.
+            return unit();
+        }
+        let t = self.copy_to_temp(Operand::Copy(pa.clone()), vt);
+        self.assign(pa, Rvalue::Use(Operand::Copy(pb.clone())));
+        self.assign(pb, Rvalue::Use(Operand::Copy(Place::local(t))));
+        unit()
     }
 
     /// `__intrinsic_array_move(dst, d, src, s, n)`: `dst[d..d + n)` = the bits of

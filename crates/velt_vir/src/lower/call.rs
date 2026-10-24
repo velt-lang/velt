@@ -125,7 +125,12 @@ impl FnLower<'_, '_> {
         let ret = self.cx.subst(ret, &targs);
         let throws = throws.map(|e| self.cx.subst(e, &targs));
         let throws = self.cx.error_ty(throws);
+        let view_sort = self.view_sort_branch(def, &targs, &argv);
         let r = self.finish_call(vir::Callee::Func(fid), argv, ret, throws);
+        if let Some(join) = view_sort {
+            self.goto(join);
+            self.switch_to(join);
+        }
         if plain && self.needs_drop(ret) {
             self.hand_to_reader(&r, ret);
         }

@@ -149,7 +149,7 @@ impl FnLower<'_, '_> {
         let s = &match self.cx.array_view_of(e) {
             true => {
                 let t = self.cx.intern(velt_sema::hir::TyKind::Array(e));
-                self.view_inline(s.clone(), t)
+                self.view_inline(s.clone(), t, super::super::array_view::ViewSync::All)
             }
             false => s.clone(),
         };

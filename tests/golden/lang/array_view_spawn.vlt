@@ -2,8 +2,9 @@
 // A view (#1485) passed to `spawn` while the original array is still used here goes to the
 // task as a copy of its elements, like any other array: the task's `push` lands on its copy.
 // `clone()` of a view is a plain array of its elements. A view's `reverse` and `sort` reach
-// the original.
+// the original; `sort(cmp)` of a view of objects sorts them stably, as Node does.
 type Item = string | number | null;
+type Person = { id: number; name: string };
 
 async function count(xs: Item[]): Promise<number> {
   xs.push("task");
@@ -24,4 +25,15 @@ async function main() {
   const yv = ys as number[];
   yv.sort((a, b) => a - b);
   console.log(ys);
+  const people: any = [
+    { id: 2, name: "b" },
+    { id: 1, name: "a" },
+    { id: 2, name: "c" },
+    { id: 0, name: "z" },
+  ];
+  const pv = people as Person[];
+  pv.sort((a, b) => a.id - b.id);
+  console.log(people[0].name, people[3].name, pv[0].name, pv.length);
+  pv.sort((a, b) => b.id - a.id);
+  console.log(pv.map((p) => p.name).join(","));
 }

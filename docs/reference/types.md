@@ -2665,14 +2665,20 @@ program with views of objects), and a change through the view (an index assignme
 `pop`, `reverse`, `splice`, ...) is written back to the original at once, converted to the
 original's element type, so a value the original's element type cannot hold (a `string` written
 into a view of a `VNode[]`) stops with a `TypeError` where Node stores it. Back in an `any` the
-view is the original array (`===`, `Array.isArray`, `WeakMap` keys). Two conversions of one
-array are two views, so `===` between them as `T[]` values is `false` (Node: `true`); compare
-them through `any`. A view sent to another thread or `clone()`d is a plain array of its elements
-(a copy, as any array sent while it is still used here). A view brings its elements up to date
-on each access, so a loop over a large view costs a pass over it per access; the stable sort
-(`sort` with a comparison function on elements that are not numbers or strings) of a view stops
-with a `TypeError` for now. Array types that no conversion makes a view keep their layout and
-code.
+view is the original array (`===`, `Array.isArray`, `WeakMap` keys). An array has one view of
+each element type at a time, so two conversions of one array to `T[]` are one value, as in
+Node: `===`, `indexOf`, `includes`, and `Set` and `Map` keys see one array. A view sent to
+another thread or `clone()`d is a plain array of its elements (a copy, as any array sent while
+it is still used here). An access brings only what it touches up to date: `length` is the
+original's, an index, a `for...of` step or a callback method's step (`forEach`, `map`, ...)
+converts that element (and, the first time, the ones before it), and a write of an element, a
+`push`, `pop` or swap writes back only what changed; operations on the whole array (`slice`,
+spread, `sort`, `JSON.stringify`, `clone()`) bring every element up to date. So a loop over a
+view costs a plain loop plus a conversion of each element it reaches, and an element no read
+reaches is never checked, as Node never checks it. `sort(cmp)` sorts a copy of the elements
+stably and writes them back. An object view whose field is an array of another element type
+(`(raw as any) as View` with `raw.items: string[]` and `View.items: Child[]`) shares that
+array as an array view. Array types that no conversion makes a view keep their layout and code.
 
 ```ts
 type VNode = { type: string };

@@ -12,11 +12,25 @@
 //!
 //! | operation | `data & 1` clear | `data & 1` set (a view) |
 //! |---|---|---|
-//! | any access to the contents (`content`) | the header | the mirror, synced with the original first (`__arrayViewSync`) |
-//! | a change (array intrinsics, an assignment through an element) | the change | the change on the mirror, then written back (`__arrayViewFlush`) |
+//! | `length` | the header's | the original's (`__arrayViewLen`) |
+//! | a read or write of element `i` (an index, a `for...of` step) | the header | the mirror, element `i` synced with the original first (`__arrayViewSyncAt`); a write goes back for element `i` only (`__arrayViewFlushAt`) |
+//! | `push`, `pop`, `truncate`, swaps | the change | the change on the mirror, synced for its length (and the elements swapped or popped), then the changed elements written back |
+//! | any other access to the contents (`content`) | the header | the mirror, synced with the original first (`__arrayViewSync`) |
+//! | any other change | the change | the change on the mirror, then written back (`__arrayViewFlush`) |
+//! | the stable sort (`sort(cmp)`) | the sort | a sorted copy of the mirror as the mirror, written back (`__arrayViewSort`) |
 //! | to `any` | the array | the original (`__target`) |
-//! | drop | the elements and buffer | the view object |
-//! | deep copy, transfer | the elements | a plain array of the mirror's elements |
+//! | drop | the elements and buffer | the view object, and the view's entry in the table |
+//! | deep copy, transfer | the elements | a plain array of the mirror's elements (no longer in the table) |
+//!
+//! So a loop over a view costs a plain loop plus a conversion of each element it reaches,
+//! and a view converts only the elements a read reaches (and those before them).
+//!
+//! **Identity.** An array has at most one live view of each view type: the runtime keeps a
+//! table from (the original's data pointer, the view type) to the view's box (rt_abi.md
+//! "Views"), which a conversion asks first, as #1491's object views do. So two conversions of
+//! one array to `U[]` are one value (`===`, `indexOf`, `Set` and `Map` keys), sharing one
+//! mirror. The view's drop removes its entry; a view that stops being one (a transfer to
+//! another thread makes it a plain array) leaves the table first.
 //!
 //! A program without such a conversion has no view types and compiles as before.
 
@@ -26,13 +40,47 @@ use velt_sema::hir::{self, DefId, TyId, TyKind};
 use super::any_set_site::ARRAY_ID;
 use super::boxing::Boxing;
 use super::operand::proj;
+use super::rt::Rt;
 use super::{cint, ice, Cx, FnLower};
-use crate::vir::{self, BinOp, Callee, Operand, Place, Proj, Rvalue, Ty};
+use crate::vir::{self, BinOp, Callee, Const, Operand, Place, Proj, Rvalue, Ty};
 
 pub(super) const VIEW_CLASS: &str = "std/prelude/zzz_adapt::__ArrayView";
 const VIEW_NEW: &str = "std/prelude/zzz_adapt::__arrayViewNew";
 const VIEW_SYNC: &str = "std/prelude/zzz_adapt::__arrayViewSync";
+const VIEW_SYNC_AT: &str = "std/prelude/zzz_adapt::__arrayViewSyncAt";
+const VIEW_SYNC_LEN: &str = "std/prelude/zzz_adapt::__arrayViewSyncLen";
 const VIEW_FLUSH: &str = "std/prelude/zzz_adapt::__arrayViewFlush";
+const VIEW_FLUSH_AT: &str = "std/prelude/zzz_adapt::__arrayViewFlushAt";
+const VIEW_FLUSH_FROM: &str = "std/prelude/zzz_adapt::__arrayViewFlushFrom";
+pub(super) const VIEW_LEN: &str = "std/prelude/zzz_adapt::__arrayViewLen";
+pub(super) const VIEW_SORT: &str = "std/prelude/zzz_adapt::__arrayViewSort";
+
+/// What an access to a view's contents needs of the mirror (`content_with`).
+pub(super) enum ViewSync {
+    /// Every element (`__arrayViewSync`).
+    All,
+    /// The original's length, the new elements converted (`__arrayViewSyncLen`).
+    Len,
+    /// That, and the last element up to date (a `pop`).
+    Last,
+    /// The elements at these indices (`u64` operands) up to date (`__arrayViewSyncAt`).
+    Slots(Vec<Operand>),
+}
+
+/// What a change through a view writes back to the original (`view_flush`).
+pub(super) enum ViewFlush {
+    /// Every element, and the length (`__arrayViewFlush`).
+    All,
+    /// The elements from this index (`u64`) on, and the length (`__arrayViewFlushFrom`).
+    From(Operand),
+    /// The elements at these indices (`u64` operands) (`__arrayViewFlushAt`).
+    Slots(Vec<Operand>),
+}
+
+/// The number the runtime's table of array views keys the view type `t` by.
+fn view_key(t: TyId) -> Operand {
+    cint(t.0 as i128, Ty::U64)
+}
 
 impl Cx<'_> {
     /// May a value of the array type `t` be a view?
@@ -55,9 +103,13 @@ impl Cx<'_> {
             hir::Def::Fn(f) => f.name.starts_with("std/"),
             _ => false,
         });
-        if !std && matches!(self.types.kind(t), TyKind::Array(_)) {
-            self.facts.array_view_targets.insert(t);
+        let TyKind::Array(_) = self.types.kind(t) else {
+            return;
+        };
+        if std {
+            return;
         }
+        self.facts.array_view_targets.insert(t);
     }
 
     /// The view types implied by this pass's facts: the targets and the arrays their elements
@@ -112,11 +164,22 @@ impl Cx<'_> {
 
 impl FnLower<'_, '_> {
     fn view_call(&mut self, name: &str, e: TyId, args: Vec<Operand>, out: Option<Place>) {
+        self.view_call_with(name, vec![e], args, out);
+    }
+
+    /// A call of the prelude function `name` instantiated with `targs`.
+    pub(super) fn view_call_with(
+        &mut self,
+        name: &str,
+        targs: Vec<TyId>,
+        args: Vec<Operand>,
+        out: Option<Place>,
+    ) {
         let d = self
             .cx
             .view_def(name)
             .unwrap_or_else(|| ice(format_args!("no prelude `{name}`")));
-        let f = self.cx.func_for_direct(d, vec![e], self.mode);
+        let f = self.cx.func_for_direct(d, targs, self.mode);
         self.call(Callee::Func(f), args, out, false);
     }
 
@@ -143,7 +206,7 @@ impl FnLower<'_, '_> {
     }
 
     /// The view object of the header at `hdr` when it is a view: `(is_view, untagged)`.
-    fn array_view_of_hdr(&mut self, hdr: &Place) -> (Operand, Operand) {
+    pub(super) fn array_view_of_hdr(&mut self, hdr: &Place) -> (Operand, Operand) {
         let d = self.rvalue_temp(
             Ty::Ptr,
             Rvalue::Use(Operand::Copy(proj(hdr, Proj::Field(0)))),
@@ -175,9 +238,30 @@ impl FnLower<'_, '_> {
         self.switch_to(no);
     }
 
-    /// A new view of type `ty` of the array the `any` at `p` holds (moved in).
+    /// The view of type `ty` of the array the `any` at `p` holds (moved in): the array's live
+    /// view of that type (a new reference to it; the `any` is released), or a new one, which
+    /// becomes its live view.
     pub(super) fn array_view_new(&mut self, p: &Place, ty: TyId) -> Operand {
         let e = self.elem_ty(ty);
+        let data = self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(proj(p, Proj::Field(0)))));
+        let out = Place::local(self.temp(Ty::Ptr));
+        let live = Place::local(self.temp(Ty::Ptr));
+        let key = view_key(ty);
+        self.call_rt(
+            Rt::ArrayViewGet,
+            vec![data.clone(), key.clone()],
+            Some(live.clone()),
+        );
+        let has = self.non_null(Operand::Copy(live.clone()));
+        let (hit, miss, join) = (self.new_block(), self.new_block(), self.new_block());
+        self.branch(has, hit, miss);
+        self.switch_to(hit);
+        let kept = self.share_value(Operand::Copy(live), ty);
+        let any = self.cx.any_ty();
+        self.drop_glue(p.clone(), any);
+        self.assign(out.clone(), Rvalue::Use(kept));
+        self.goto(join);
+        self.switch_to(miss);
         let arg = self.addr(p.clone());
         let r = self.temp(Ty::Ptr);
         self.view_call(VIEW_NEW, e, vec![arg], Some(Place::local(r)));
@@ -185,12 +269,28 @@ impl FnLower<'_, '_> {
         let a = self.cx.array_agg();
         let parts = vec![tagged, cint(0, Ty::U64), cint(0, Ty::U64)];
         let hdr = self.rvalue_temp(Ty::Agg(a), Rvalue::Aggregate(a, parts));
-        self.box_value(hdr, ty)
+        let bx = self.box_value(hdr, ty);
+        let bx = self.rvalue_temp(Ty::Ptr, Rvalue::Use(bx));
+        self.call_rt(Rt::ArrayViewPut, vec![data, key, bx.clone()], None);
+        self.assign(out.clone(), Rvalue::Use(bx));
+        self.goto(join);
+        self.switch_to(join);
+        Operand::Copy(out)
+    }
+
+    /// The view at `arr` (the inline value, in its box) of an array of `e`, whose view object
+    /// is `v`, leaves the runtime's table (it is dropped, or stops being a view).
+    fn view_unlist(&mut self, arr: &Place, e: TyId, v: &Operand) {
+        let t = self.cx.intern(TyKind::Array(e));
+        let target = self.view_field(v, e, "__target");
+        let data = Operand::Copy(proj(&target, Proj::Field(0)));
+        let me = self.addr(arr.clone());
+        self.call_rt(Rt::ArrayViewRemove, vec![data, view_key(t), me], None);
     }
 
     /// The header to operate on for the inline value `hdr` of the view type `t`: the header
-    /// itself, or for a view its mirror, brought up to date with the original.
-    pub(super) fn view_inline(&mut self, hdr: Place, t: TyId) -> Place {
+    /// itself, or for a view its mirror, brought up to date with the original as `sync` needs.
+    pub(super) fn view_inline(&mut self, hdr: Place, t: TyId, sync: ViewSync) -> Place {
         let e = self.elem_ty(t);
         let (is, v) = self.array_view_of_hdr(&hdr);
         let at = Place::local(self.temp(Ty::Ptr));
@@ -199,7 +299,17 @@ impl FnLower<'_, '_> {
         let (yes, join) = (self.new_block(), self.new_block());
         self.branch(is, yes, join);
         self.switch_to(yes);
-        self.view_call(VIEW_SYNC, e, vec![v.clone()], None);
+        let flag = |b| Operand::Const(Const::Bool(b), Ty::Bool);
+        match sync {
+            ViewSync::All => self.view_call(VIEW_SYNC, e, vec![v.clone()], None),
+            ViewSync::Len => self.view_call(VIEW_SYNC_LEN, e, vec![v.clone(), flag(false)], None),
+            ViewSync::Last => self.view_call(VIEW_SYNC_LEN, e, vec![v.clone(), flag(true)], None),
+            ViewSync::Slots(at) => {
+                for i in at {
+                    self.view_call(VIEW_SYNC_AT, e, vec![v.clone(), i], None);
+                }
+            }
+        }
         let seen = self.view_field(&v, e, "__seen");
         self.assign(at.clone(), Rvalue::Use(Operand::Copy(seen)));
         self.goto(join);
@@ -209,8 +319,8 @@ impl FnLower<'_, '_> {
     }
 
     /// After a change through the array of the view type `t` whose box pointer is `bx`: a
-    /// view writes its mirror back to the original.
-    pub(super) fn view_flush(&mut self, bx: Operand, t: TyId) {
+    /// view writes its mirror back to the original, as much of it as `what` says changed.
+    pub(super) fn view_flush(&mut self, bx: Operand, t: TyId, what: ViewFlush) {
         if self.dead() {
             return;
         }
@@ -221,7 +331,15 @@ impl FnLower<'_, '_> {
         let (yes, join) = (self.new_block(), self.new_block());
         self.branch(is, yes, join);
         self.switch_to(yes);
-        self.view_call(VIEW_FLUSH, e, vec![v], None);
+        match what {
+            ViewFlush::All => self.view_call(VIEW_FLUSH, e, vec![v], None),
+            ViewFlush::From(i) => self.view_call(VIEW_FLUSH_FROM, e, vec![v, i], None),
+            ViewFlush::Slots(at) => {
+                for i in at {
+                    self.view_call(VIEW_FLUSH_AT, e, vec![v.clone(), i], None);
+                }
+            }
+        }
         self.goto(join);
         self.switch_to(join);
     }
@@ -232,7 +350,7 @@ impl FnLower<'_, '_> {
         if self.cx.array_view(ty) && !self.read_target && !self.dead() {
             let bx = self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(p.clone())));
             if let Some(w) = &mut self.view_writes {
-                w.push((bx, ty));
+                w.push((bx, ty, None));
             }
         }
         if !self.read_target && self.cx.lock_counted(ty) && !self.dead() {
@@ -248,10 +366,80 @@ impl FnLower<'_, '_> {
         let outer = self.view_writes.replace(vec![]);
         let r = f(self);
         let ws = std::mem::replace(&mut self.view_writes, outer).unwrap_or_default();
-        for (bx, t) in ws {
-            self.view_flush(bx, t);
+        for (bx, t, at) in ws {
+            let what = match at {
+                Some(i) => ViewFlush::Slots(vec![i]),
+                None => ViewFlush::All,
+            };
+            self.view_flush(bx, t, what);
         }
         r
+    }
+
+    /// The index operand `i` (of VIR type `ity`) as the `u64` the view helpers take.
+    pub(super) fn view_index(&mut self, i: Operand, ity: Ty) -> Operand {
+        let iu = self.cast_to(i, ity, Ty::U64);
+        self.rvalue_temp(Ty::U64, Rvalue::Use(iu))
+    }
+
+    /// The target of the assignment being lowered is element `iu` of the view type `t`'s
+    /// array, whose box pointer the last entry of `view_writes` since `mark` holds (when the
+    /// barrier made one): only that element is written back.
+    pub(super) fn view_write_at(&mut self, mark: usize, t: TyId, iu: Operand) {
+        if let Some(w) = &mut self.view_writes {
+            if w.len() == mark + 1 && w[mark].1 == t {
+                w[mark].2 = Some(iu);
+            }
+        }
+    }
+
+    /// The contents of the array at `arr` of type `t` for a read (or, with `mark`, an
+    /// assignment target) of element `index`, whose value `given` may hold already: a view
+    /// brings only that element up to date, the index evaluated first unless that may run code
+    /// that writes (then every element). Answers the index's value when it is evaluated here.
+    pub(super) fn index_content(
+        &mut self,
+        arr: &Place,
+        t: TyId,
+        index: &hir::Expr,
+        given: Option<Operand>,
+        mark: Option<usize>,
+    ) -> (Place, Option<Operand>) {
+        if !self.cx.array_view(t) || (given.is_none() && self.index_may_write(index)) {
+            return (self.content(arr, t), given);
+        }
+        let i = match given {
+            Some(i) => i,
+            None => self.expr(index),
+        };
+        let ity = self.vty(index.ty);
+        let iu = self.view_index(i.clone(), ity);
+        if let Some(mark) = mark {
+            self.view_write_at(mark, t, iu.clone());
+        }
+        let c = self.content_with(arr, t, ViewSync::Slots(vec![iu]));
+        (c, Some(i))
+    }
+
+    /// [`Self::may_write`] of an index, where a `number` index's conversion
+    /// (`__floatIndex(i)`, sema `float_index`) changes nothing.
+    fn index_may_write(&mut self, index: &hir::Expr) -> bool {
+        if let hir::ExprKind::Call {
+            callee: hir::Callee::Def(d, _),
+            args,
+        } = &index.kind
+        {
+            let float_index = matches!(self.cx.hir.def(*d), hir::Def::Fn(f) if f.name.ends_with("::__floatIndex"));
+            if let (true, [i]) = (float_index, &args[..]) {
+                return self.may_write(i);
+            }
+        }
+        self.may_write(index)
+    }
+
+    /// The number of entries in `view_writes` (for [`Self::view_write_at`]).
+    pub(super) fn view_writes_mark(&self) -> usize {
+        self.view_writes.as_ref().map_or(0, Vec::len)
     }
 
     /// The `(data, table)` of the `any` for the box `data` (owned) of the view type `t`, whose
@@ -307,6 +495,7 @@ impl FnLower<'_, '_> {
         let (yes, no, join) = (self.new_block(), self.new_block(), self.new_block());
         self.branch(is, yes, no);
         self.switch_to(yes);
+        self.view_unlist(arr, e, &v);
         let cls = self.view_class(e);
         let vp = Place::local(self.copy_to_temp(v, Ty::Ptr));
         self.drop_glue(vp, cls);
@@ -328,10 +517,11 @@ impl FnLower<'_, '_> {
         let (yes, join) = (self.new_block(), self.new_block());
         self.branch(is, yes, join);
         self.switch_to(yes);
-        let m = self.view_inline(arr.clone(), t);
+        let m = self.view_inline(arr.clone(), t, ViewSync::All);
         let a = self.cx.array_agg();
         let fresh = Place::local(self.temp(Ty::Agg(a)));
         self.clone_array(&m, &fresh, e);
+        self.view_unlist(arr, e, &v);
         let cls = self.view_class(e);
         let vp = Place::local(self.copy_to_temp(v, Ty::Ptr));
         self.drop_glue(vp, cls);

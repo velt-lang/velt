@@ -6,6 +6,7 @@
 
 use velt_sema::hir::TyId;
 
+use super::array_view::ViewSync;
 use super::operand::proj;
 use super::FnLower;
 use crate::vir::{Operand, Place, Proj, Rvalue, Ty};
@@ -14,6 +15,11 @@ impl FnLower<'_, '_> {
     /// The inline value of the value at `place` of concrete type `t`: the place itself, or for
     /// a boxed type what its pointer points to (retained while a stabilized borrow is lowered).
     pub(super) fn content(&mut self, place: &Place, t: TyId) -> Place {
+        self.content_with(place, t, ViewSync::All)
+    }
+
+    /// [`Self::content`], where a view (array_view.rs) needs only `sync` of its mirror.
+    pub(super) fn content_with(&mut self, place: &Place, t: TyId, sync: ViewSync) -> Place {
         if !self.cx.boxed(t) {
             return place.clone();
         }
@@ -21,7 +27,7 @@ impl FnLower<'_, '_> {
         let base = self.retained_hop(place, t);
         let hdr = proj(&base, Proj::Deref(payload));
         match self.cx.array_view(t) {
-            true => self.view_inline(hdr, t),
+            true => self.view_inline(hdr, t, sync),
             false => hdr,
         }
     }

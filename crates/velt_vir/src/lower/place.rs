@@ -157,6 +157,7 @@ impl FnLower<'_, '_> {
 
     pub(super) fn index_expr(&mut self, base: &hir::Expr, index: &hir::Expr) -> Operand {
         let bty = self.sub(base.ty);
+        let mut pre_i = None;
         // A table's header is the inline value, also where arrays of its type are boxes.
         let arr = match self.table_read(base) {
             Some(table) => table,
@@ -180,10 +181,12 @@ impl FnLower<'_, '_> {
                 };
                 let v = self.projection_base(base, hold);
                 let arr = self.place_of(v, bty);
-                self.content(&arr, bty)
+                let (arr, i) = self.index_content(&arr, bty, index, None, None);
+                pre_i = i;
+                arr
             }
         };
-        let i = self.expr(index);
+        let i = pre_i.unwrap_or_else(|| self.expr(index));
         let ity = self.vty(index.ty);
         Operand::Copy(self.elem_place_checked(&arr, bty, i, ity))
     }
@@ -400,11 +403,12 @@ impl FnLower<'_, '_> {
             K::Index { base, index, .. } => {
                 let bty = self.sub(base.ty);
                 let arr = self.place_expr_with(base, pre);
+                let mark = self.view_writes_mark();
                 if !self.captured_root(base) {
                     self.target_barrier(&arr, bty);
                 }
-                let arr = self.content(&arr, bty);
-                let i = match pre.pop_front() {
+                let (arr, i) = self.index_content(&arr, bty, index, pre.pop_front(), Some(mark));
+                let i = match i {
                     Some(i) => i,
                     None => self.expr(index),
                 };

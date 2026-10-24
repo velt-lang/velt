@@ -10,6 +10,7 @@ use std::rc::Rc;
 
 use velt_sema::hir::{self, Pat};
 
+use super::array_view::ViewSync;
 use super::operand::proj;
 use super::{cint, FnLower, ScopeKind};
 use crate::vir::{BinOp, Operand, Place, Proj, Rvalue, Ty};
@@ -47,7 +48,14 @@ impl FnLower<'_, '_> {
         let (cond_bb, body_bb, exit) = (self.new_block(), self.new_block(), self.new_block());
         self.goto(cond_bb);
         self.switch_to(cond_bb);
-        let hdr = self.content(&arr, aty);
+        // A view brings only the element this step reads up to date (array_view.rs).
+        let hdr = match self.cx.array_view(aty) {
+            true => {
+                let at = ViewSync::Slots(vec![Operand::Copy(Place::local(k))]);
+                self.content_with(&arr, aty, at)
+            }
+            false => self.content(&arr, aty),
+        };
         let len = Operand::Copy(proj(&hdr, Proj::Field(1)));
         let kv = Operand::Copy(Place::local(k));
         let more = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Lt, kv.clone(), len));
