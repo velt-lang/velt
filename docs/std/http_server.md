@@ -95,6 +95,11 @@ first reads it.
   and resolves once the connection took it, so a fast producer waits for a slow client;
   `await s.end()` ends the body (the server ends one the handler leaves open). A write to a
   client that went away throws `IoError` and aborts `signal()`.
+- `sendStream(body: BodyStream, type = "text/html; charset=utf-8")`: streams a
+  [`BodyStream`](fetch.md#bodystream) as the response, each chunk as it comes, for
+  `renderToStream` of [velt:jsx](jsx.md): the markup above a pending async component reaches
+  the client while it loads. A client that goes away ends it quietly: the source is closed, so
+  rendering stops.
 - `sse(): Promise<EventStream>`: Server-Sent Events (`text/event-stream`, `Cache-Control:
   no-cache`): `send(data, event?, id?)` writes an event (each line of `data` a `data:` line),
   `comment(text?)` a line clients ignore (a keep-alive), `end()`.
@@ -122,7 +127,12 @@ async function main() {
 
 ## Writing fast handlers
 
-A module-level constant whose value is not a literal (`const PATH = utf8Encode("/json")`) is
-module state, which one process-wide lock guards while a task uses it: every connection's task
-would then wait for the others (#1487). Compare with string literals (`req.pathIs("/json")`) or
-make such values inside the handler's setup instead.
+Keep module state off the request path. Module state (a module-level `let`, and a module
+constant whose value is not a literal or that is bound to a variable, `const rows = ROWS`) is
+guarded by one process-wide lock, and a task that touched it once takes that lock at the start
+of every later poll. Here one task serves a connection for its whole life, so a handler that
+touches module state once makes its connection take the lock for every request after that: the
+connections then run one at a time (a TSX page reading a module-level array did 110k requests
+a second; built per request, 665k). Compare paths with string literals (`req.pathIs("/json")`),
+build data per request, and keep shared mutable state in a `shared(new Mutex(...))` passed to
+the handler (#1487 makes constants free to read).

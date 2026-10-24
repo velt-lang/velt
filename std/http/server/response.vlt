@@ -10,6 +10,7 @@
 // away makes it throw and aborts the request's signal (cancellation).
 
 import { utf8Encode } from "velt:encoding";
+import { BodyStream } from "velt:fetch/body";
 import { TcpStream } from "velt:net";
 import { AbortController, AbortSignal } from "velt:task";
 import { Uint8Array } from "velt:typed_array/uint8_array";
@@ -144,6 +145,29 @@ export class HttpResponse {
     this.head(-1, type, -1);
     await this.flush();
     return new HttpStream(this);
+  }
+
+  /**
+   * Streams `body` as the response (default type `text/html; charset=utf-8`): each chunk is
+   * written as it comes, once the client took the one before. For `renderToStream` of
+   * [velt:jsx](jsx.md): the markup above a pending async component reaches the client while it
+   * loads. A client that goes away ends it quietly (the source is closed, so rendering stops;
+   * `signal()` is aborted).
+   */
+  async sendStream(body: BodyStream, type: string = "text/html; charset=utf-8") {
+    // The head goes out with the first chunk: one write less per response.
+    this.head(-1, type, -1);
+    try {
+      for await (const chunk of body) {
+        await this.piece(chunk);
+      }
+    } catch (e) {
+      // The client went away (or the source failed): nothing more can be sent.
+      this.streaming = false;
+      this.keepAlive = false;
+      return;
+    }
+    await this.finishStream();
   }
 
   /**

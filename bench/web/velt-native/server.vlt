@@ -4,6 +4,8 @@
 
 import { HttpRequest, HttpResponse, serve } from "velt:http/server";
 import { args } from "velt:process";
+import { renderToString, renderToStringSync, renderToStream } from "velt:jsx";
+import { asyncPage, page } from "./page";
 
 class Message {
   message: string;
@@ -23,6 +25,13 @@ async function main() {
     } else if (req.pathIs("/json")) {
       // Serialized per request, as the rules ask.
       res.json(JSON.stringify(new Message("Hello, World!")));
+    } else if (req.pathIs("/tsx")) {
+      res.html(renderToStringSync(page()));
+    } else if (req.pathIs("/tsx-async")) {
+      const html = await renderToString(asyncPage());
+      res.html(html);
+    } else if (req.pathIs("/tsx-stream")) {
+      await res.sendStream(renderToStream(asyncPage()));
     } else {
       res.status(404);
       res.send("Not Found");
