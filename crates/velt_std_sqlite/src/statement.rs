@@ -1,42 +1,40 @@
 //! Prepared statements and the statement-level operations (prepare, run, query) that
 //! [`crate::abi`] exports.
 //!
-//! rusqlite's `Statement` borrows its `Connection`, so a handle cannot own one. A statement
-//! handle instead keeps an `Arc` of the connection object and of its [`Prepared`] (the SQL text
-//! and the shape of its rows), and every call takes the compiled statement out of the
-//! connection's prepared-statement cache (`prepare_cached`: a hash lookup; SQLite compiles it
-//! once) under the connection lock. This keeps `close()` of the database safe while statements
-//! exist.
-//!
-//! The connection keeps one [`Prepared`] per SQL text ([`DbObj::prepared`]): preparing the same
-//! SQL again (a statement prepared per request) finds it without asking SQLite, and every
-//! handle of that SQL shares the shape its first query read.
+//! The connection keeps one [`Prepared`] per SQL text ([`DbObj::prepared`]): the compiled
+//! statement (owned, [`RawStmt`]) and the shape of its rows. Preparing the same SQL again (a
+//! statement prepared per request) finds it without asking SQLite; a statement handle keeps an
+//! `Arc` of it and of the connection object, and uses the statement under the connection's
+//! lock. Closing the database finalizes every statement first, so `close()` is safe while
+//! handles exist (they then fail with "not open").
 
 use super::bind::bind;
 use super::connection::{DbHandle, DbObj};
 use super::error::DbError;
+use super::raw::RawStmt;
 use super::rows::{self, ShapeCell};
 use std::sync::Arc;
 use velt_native::handles::Single;
 use velt_text::db_json::parse_params;
 
-/// A statement: its connection and what it runs.
+/// A statement: what it runs and its connection.
 pub struct StmtObj {
-    db: Arc<DbObj>,
+    // Dropped first: the connection object may go with `db`, and it finalizes its statements
+    // before it closes, which needs this one to be its own alone by then.
     prepared: Arc<Prepared>,
+    db: Arc<DbObj>,
 }
 
-/// SQL a connection compiled: the text (trimmed, the key of rusqlite's cache) and the shape of
-/// its rows once a query read them.
+/// SQL a connection compiled: the statement, and the shape of its rows once a query read them.
 pub struct Prepared {
-    pub(crate) sql: String,
-    shape: ShapeCell,
+    pub(crate) stmt: RawStmt,
+    pub(crate) shape: ShapeCell,
 }
 
 impl Prepared {
-    pub(crate) fn new(sql: String) -> Prepared {
+    pub(crate) fn new(stmt: RawStmt) -> Prepared {
         Prepared {
-            sql,
+            stmt,
             shape: ShapeCell::default(),
         }
     }
@@ -66,7 +64,7 @@ fn obj<'a>(stmt: StmtHandle) -> Result<&'a StmtObj, DbError> {
 pub fn prepare(db: DbHandle, sql: &[u8]) -> Result<StmtHandle, DbError> {
     let o = super::connection::obj(db)?;
     let prepared = o.prepared(sql.trim_ascii())?;
-    Ok(Single::new(Arc::new(StmtObj { db: o, prepared })))
+    Ok(Single::new(Arc::new(StmtObj { prepared, db: o })))
 }
 
 /// `stmt.run()` / `runWith(params)`: execute to completion. `params` is the JSON of the
@@ -75,9 +73,12 @@ pub fn run(stmt: StmtHandle, params: &[u8]) -> Result<RunInfo, DbError> {
     let stmt = obj(stmt)?;
     stmt.db.with(|conn| {
         let params = parse_params(params).map_err(DbError::range)?;
-        let mut st = conn.prepare_cached(&stmt.prepared.sql)?;
-        bind(&mut st, &params)?;
-        rows::drain(&mut st, &stmt.prepared.shape)?;
+        let st = &stmt.prepared.stmt;
+        if let Err(e) = bind(st, &params) {
+            st.finish();
+            return Err(e);
+        }
+        rows::drain(st)?;
         Ok(RunInfo {
             changes: conn.changes() as i64,
             last_insert_rowid: conn.last_insert_rowid(),
@@ -90,8 +91,7 @@ pub fn run(stmt: StmtHandle, params: &[u8]) -> Result<RunInfo, DbError> {
 /// [`super::cursor::close`]; with `first_only` the first row alone, and 0 when there is none.
 pub fn open_rows(stmt: StmtHandle, params: &[u8], first_only: bool) -> Result<u64, DbError> {
     let stmt = obj(stmt)?;
-    let p = &stmt.prepared;
-    super::cursor::open(stmt.db.lock_owned(), &p.sql, &p.shape, first_only, |st| {
+    super::cursor::open(stmt.db.lock_owned(), &stmt.prepared, first_only, |st| {
         let params = parse_params(params).map_err(DbError::range)?;
         bind(st, &params)
     })
@@ -105,8 +105,8 @@ pub fn note_error(stmt: StmtHandle, e: DbError) {
     }
 }
 
-/// Release a statement handle (null is a no-op). Its compiled form stays in the connection's
-/// cache until evicted or the connection closes.
+/// Release a statement handle (null is a no-op). Its compiled form stays with the connection
+/// until it is forgotten or the connection closes.
 ///
 /// # Safety
 /// `stmt` is not used afterwards (std's `Statement` zeroes its handle).

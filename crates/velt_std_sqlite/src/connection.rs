@@ -12,6 +12,7 @@
 //! that rolled back resets the count, so its failure only undoes its own savepoint.
 
 use super::error::DbError;
+use super::raw::RawStmt;
 use super::statement::Prepared;
 use parking_lot::Mutex;
 use rusqlite::{Connection, OpenFlags};
@@ -19,9 +20,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use velt_native::handles::{Key, Registry};
 
-/// Prepared statements kept per connection: `Statement` handles re-find theirs by SQL text on
-/// every call, so this bounds how many distinct statements stay compiled. The SQL texts the
-/// connection knows ([`DbObj::prepared`]) are bounded the same way, beyond those a handle uses.
+/// The SQL texts a connection keeps compiled ([`DbObj::prepared`]) beyond those a statement
+/// handle uses.
 const STATEMENT_CACHE: usize = 256;
 
 /// A connection and its error bookkeeping (see the module docs).
@@ -30,11 +30,12 @@ pub struct DbObj {
 }
 
 struct ConnState {
+    /// The SQL compiled on this connection, by its text as given (trimmed). Dropped before the
+    /// connection: their statements are finalized first.
+    prepared: rustc_hash::FxHashMap<Box<[u8]>, Arc<Prepared>>,
     conn: Option<Connection>,
     errors: u64,
     last_error: Option<DbError>,
-    /// The SQL compiled on this connection, by its text as given (trimmed).
-    prepared: rustc_hash::FxHashMap<Box<[u8]>, Arc<Prepared>>,
 }
 
 /// Opaque handle: a key into [`DATABASES`] (std's `Database` is a Copy struct, so after
@@ -83,17 +84,27 @@ impl DbObj {
         if let Some(p) = state.prepared.get(sql) {
             return Ok(p.clone());
         }
-        let text = String::from_utf8_lossy(sql).trim().to_string();
-        let compiled = conn.prepare_cached(&text).map(drop).map_err(DbError::from);
-        if let Err(e) = compiled {
-            state.note(e.clone());
-            return Err(e);
-        }
+        let text = String::from_utf8_lossy(sql);
+        let text = text.trim();
+        // rusqlite checks the SQL and words its errors (more than one statement, a syntax
+        // error's offset); the statement kept is compiled after.
+        let compiled = conn
+            .prepare(text)
+            .map(drop)
+            .map_err(DbError::from)
+            .and_then(|()| RawStmt::prepare(conn, text));
+        let stmt = match compiled {
+            Ok(stmt) => stmt,
+            Err(e) => {
+                state.note(e.clone());
+                return Err(e);
+            }
+        };
         if state.prepared.len() >= STATEMENT_CACHE {
             // Forget the SQL no handle uses (a handle keeps its own).
             state.prepared.retain(|_, p| Arc::strong_count(p) > 1);
         }
-        let p = Arc::new(Prepared::new(text));
+        let p = Arc::new(Prepared::new(stmt));
         state.prepared.insert(sql.into(), p.clone());
         Ok(p)
     }
@@ -176,7 +187,6 @@ pub fn open(
     }
     let conn = Connection::open_with_flags(path, flags)?;
     conn.busy_timeout(Duration::from_millis(timeout_ms as u64))?;
-    conn.set_prepared_statement_cache_capacity(STATEMENT_CACHE);
     Ok(DATABASES.insert(DbObj::new(conn)))
 }
 
@@ -195,6 +205,11 @@ pub fn close(db: DbHandle) -> Result<(), DbError> {
     };
     let conn = {
         let mut state = obj.state.lock();
+        // Handles may still hold some: their statements are finalized all the same, and they
+        // fail with "not open" from now on.
+        for p in state.prepared.values() {
+            p.stmt.finalize();
+        }
         state.prepared.clear();
         state.conn.take()
     };

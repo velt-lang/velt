@@ -2,33 +2,29 @@
 //! std's decoder reads each value from the stepped statement into the Velt value it builds,
 //! instead of from a buffer the rows were written into first.
 //!
-//! The cursor holds the connection's lock and the compiled statement while std decodes (a
-//! synchronous call: nothing else of std's runs meanwhile), and releases both when std gives it
-//! back ([`close`]), which reports a failure SQLite met while stepping.
+//! The cursor holds the connection's lock while std decodes (a synchronous call: nothing else
+//! of std's runs meanwhile), and releases it when std gives the cursor back ([`close`]), which
+//! reports a failure SQLite met while stepping.
 
 use super::connection::Locked;
 use super::error::DbError;
+use super::raw::RawStmt;
 use super::rows::{self, Shape};
-use rusqlite::fallible_streaming_iterator::FallibleStreamingIterator;
-use rusqlite::{CachedStatement, Rows};
-use std::mem::ManuallyDrop;
+use super::statement::Prepared;
 use std::sync::Arc;
 use velt_text::rows_cursor::{Cell, RawCursor, RowCursor};
 
 /// The rows of a stepped statement.
 struct SqliteCursor {
-    /// Borrows `*stmt`; dropped first (it resets the statement).
-    rows: ManuallyDrop<Rows<'static>>,
-    /// Borrows the connection `locked` holds; dropped next (back into the statement cache).
-    stmt: *mut CachedStatement<'static>,
+    prepared: Arc<Prepared>,
     shape: Arc<Shape>,
     single: bool,
     /// The first row was stepped when the cursor was made and not handed out yet.
     pending: bool,
     done: bool,
     failure: Option<DbError>,
-    /// Dropped last: the lock that keeps the connection in place.
-    locked: ManuallyDrop<Locked>,
+    /// Dropped last: the lock under which the statement is used.
+    locked: Locked,
 }
 
 /// What std holds: the cursor's ABI form first (its address is the handle), then the cursor.
@@ -36,6 +32,12 @@ struct SqliteCursor {
 struct Owned {
     raw: RawCursor,
     cursor: SqliteCursor,
+}
+
+impl SqliteCursor {
+    fn stmt(&self) -> &RawStmt {
+        &self.prepared.stmt
+    }
 }
 
 impl RowCursor for SqliteCursor {
@@ -50,14 +52,14 @@ impl RowCursor for SqliteCursor {
         if self.done {
             return false;
         }
-        match self.rows.next() {
-            Ok(Some(_)) => true,
-            Ok(None) => {
+        match self.stmt().step() {
+            Ok(true) => true,
+            Ok(false) => {
                 self.done = true;
                 false
             }
             Err(e) => {
-                self.failure = Some(DbError::from(e));
+                self.failure = Some(e);
                 self.done = true;
                 false
             }
@@ -65,92 +67,62 @@ impl RowCursor for SqliteCursor {
     }
 
     fn cell(&self, col: usize) -> Cell<'_> {
-        match self.rows.get() {
-            Some(row) if col < self.shape.columns() => self.shape.cell(row, col),
-            _ => Cell::Null,
+        if self.done {
+            return Cell::Null;
         }
+        // SAFETY: on a row (not done); `Shape::cell` checks `col`.
+        unsafe { self.shape.cell(self.stmt(), col) }
     }
 }
 
 impl Drop for SqliteCursor {
     fn drop(&mut self) {
-        // SAFETY: in the order the fields borrow each other, each once.
-        unsafe {
-            ManuallyDrop::drop(&mut self.rows);
-            drop(Box::from_raw(self.stmt));
-            if let Some(e) = &self.failure {
-                self.locked.note(e.clone());
-            }
-            ManuallyDrop::drop(&mut self.locked);
+        // Still under the lock (dropped after this).
+        self.stmt().finish();
+        if let Some(e) = &self.failure {
+            self.locked.note(e.clone());
         }
     }
 }
 
-/// Binds `params` to `sql`'s statement on the locked connection, steps it to its first row and
-/// makes a cursor over its rows (with `single`, the first row alone): the cursor's handle for
-/// std, or 0 when `single` found no row. `bind` binds the parameters.
+/// Binds the parameters to `prepared`'s statement on the locked connection (`bind`), steps it
+/// to its first row and makes a cursor over its rows (with `single`, the first row alone): the
+/// cursor's handle for std, or 0 when `single` found no row.
 pub(crate) fn open(
     mut locked: Locked,
-    sql: &str,
-    cell: &rows::ShapeCell,
+    prepared: &Arc<Prepared>,
     single: bool,
-    bind: impl FnOnce(&mut rusqlite::Statement<'_>) -> Result<(), DbError>,
+    bind: impl FnOnce(&RawStmt) -> Result<(), DbError>,
 ) -> Result<u64, DbError> {
-    let conn = locked.conn()?;
-    let mut st = match conn.prepare_cached(sql).map_err(DbError::from) {
-        Ok(st) => st,
+    let first = locked
+        .conn()
+        .and_then(|_| bind(&prepared.stmt))
+        .and_then(|()| prepared.stmt.step());
+    let pending = match first {
+        Ok(on) => on,
         Err(e) => {
+            prepared.stmt.finish();
             locked.note(e.clone());
             return Err(e);
         }
     };
-    if let Err(e) = bind(&mut st) {
-        locked.note(e.clone());
-        return Err(e);
+    if single && !pending {
+        prepared.stmt.finish();
+        return Ok(0);
     }
-    let fresh = rows::fresh(&st);
-    let stmt = Box::into_raw(Box::new(st));
-    // SAFETY: `*stmt` stays at its address until the cursor drops it, after the rows.
-    let mut rows: Rows<'static> = unsafe { (*stmt).raw_query() };
-    let first = match rows.next() {
-        Ok(Some(row)) => Ok(Some(rows::shape(row.as_ref(), fresh, cell))),
-        Ok(None) => Ok(None),
-        Err(e) => Err(DbError::from(e)),
-    };
-    let (shape, pending) = match first {
-        Ok(Some(shape)) => (shape, true),
-        Ok(None) if !single => {
-            drop(rows);
-            // SAFETY: the rows that borrowed it are gone; new ones borrow it from here on.
-            let shape = rows::shape(unsafe { &*stmt }, fresh, cell);
-            rows = unsafe { (*stmt).raw_query() };
-            (shape, false)
-        }
-        r => {
-            drop(rows);
-            // SAFETY: as above; dropped once.
-            drop(unsafe { Box::from_raw(stmt) });
-            return match r {
-                Err(e) => {
-                    locked.note(e.clone());
-                    Err(e)
-                }
-                _ => Ok(0),
-            };
-        }
-    };
+    // After the first step: SQLite recompiled the statement if the schema changed.
+    let shape = rows::shape(&prepared.stmt, &prepared.shape);
     let owned = Box::into_raw(Box::new(Owned {
         // Set below, once the cursor has its address.
         raw: RawCursor::new(std::ptr::null_mut::<SqliteCursor>()),
         cursor: SqliteCursor {
-            rows: ManuallyDrop::new(rows),
-            stmt,
+            prepared: prepared.clone(),
             shape,
             single,
             pending,
             done: !pending,
             failure: None,
-            locked: ManuallyDrop::new(locked),
+            locked,
         },
     }));
     // SAFETY: just made; the cursor stays in the box until `close`.
@@ -158,8 +130,8 @@ pub(crate) fn open(
     Ok(owned as u64)
 }
 
-/// Releases a cursor [`open`] made (0 is a no-op): the statement and the connection's lock;
-/// the failure SQLite met while stepping, if any (counted against the connection).
+/// Releases a cursor [`open`] made (0 is a no-op), and with it the connection's lock; the
+/// failure SQLite met while stepping, if any (counted against the connection).
 ///
 /// # Safety
 /// `handle` came from [`open`] and is not used afterwards.
