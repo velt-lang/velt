@@ -213,7 +213,7 @@ impl FnLower<'_, '_> {
     fn bind_parts(&mut self, pat: &Pat, place: &Place, ty: TyId, register: bool) {
         match &pat.kind {
             PatKind::Binding(id, mode) => {
-                if self.init_locals {
+                if self.init_local(*id) {
                     let by_ref = matches!(mode, UseMode::Borrow | UseMode::BorrowMut);
                     self.declare_init_binding(*id, pat.ty, by_ref);
                 }
@@ -357,7 +357,7 @@ impl FnLower<'_, '_> {
 
     /// `[a, b, ...rest]`: `rest` gets a new array of the remaining elements (shared, like JS).
     fn bind_rest(&mut self, r: hir::LocalId, place: &Place, ty: TyId, skip: usize) {
-        if self.init_locals {
+        if self.init_local(r) {
             self.declare_init_binding(r, ty, false);
         }
         let Some(l) = self.info[r.0 as usize].vir else {

@@ -204,7 +204,10 @@ impl<'a> Parser<'a> {
         }
         self.expect(Tok::RParen)?;
         let checked: Vec<_> = params.iter().map(ParamDefault::of_arrow_param).collect();
-        self.check_param_defaults(&checked);
+        for i in self.check_param_defaults(&checked, false) {
+            let ty = params[i].ty.take();
+            params[i].ty = ty.map(super::param_patterns::applied_in_callee);
+        }
         Ok(params)
     }
 

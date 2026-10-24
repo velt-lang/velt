@@ -520,6 +520,10 @@ impl FnCx<'_, '_> {
             let ty = f.ty;
             return (t, f, ty);
         }
+        let (t, f, joined) = self.any_join(t, f, exp);
+        if let Some(ty) = joined {
+            return (t, f, ty);
+        }
         let tt = t.ty;
         let f = match self.try_coerce(f, tt) {
             Ok(f) => return (t, f, tt),
@@ -536,6 +540,47 @@ impl FnCx<'_, '_> {
             return (t, f, e);
         }
         self.union_join(t, f, span)
+    }
+
+    /// Two values of different types where one is an `any`, where an `any` (or `unknown`) is
+    /// expected (a `: any` result such as a proxy `get` trap, annotation, variable or parameter):
+    /// values of that `any`, as TypeScript types `c ? 99 : t[k]` and `n || t[k]` (`number | any`
+    /// is `any`). Converted to the other value's type instead, the `any` would stop where it holds
+    /// something else. The type is `None` when no `any` is expected, neither value is one, or the
+    /// other value does not convert to it. Elsewhere the `any` still converts to the other
+    /// value's type: operators and built-in methods through an `any` are not supported yet
+    /// (#924), so `(c ? 1 : a) + 1` and `(s ?? a).trim()` need the typed value.
+    pub(crate) fn any_join(
+        &mut self,
+        t: hir::Expr,
+        f: hir::Expr,
+        exp: Option<TyId>,
+    ) -> (hir::Expr, hir::Expr, Option<TyId>) {
+        if !exp.is_some_and(|e| self.cx.dynamic(e).is_some()) {
+            return (t, f, None);
+        }
+        match (self.is_any(t.ty), self.is_any(f.ty)) {
+            (false, true) => {
+                let ft = f.ty;
+                match self.try_coerce(t, ft) {
+                    Ok(t) => (t, f, Some(ft)),
+                    Err(t) => (t, f, None),
+                }
+            }
+            (true, false) => {
+                let tt = t.ty;
+                match self.try_coerce(f, tt) {
+                    Ok(f) => (t, f, Some(tt)),
+                    Err(f) => (t, f, None),
+                }
+            }
+            _ => (t, f, None),
+        }
+    }
+
+    /// Is `ty` an `any` (not an `unknown`)?
+    pub(crate) fn is_any(&self, ty: TyId) -> bool {
+        self.cx.dynamic(ty) == Some(crate::any::Dynamic::Any)
     }
 
     /// Two values of different types (neither converts to the other) as values of their union,

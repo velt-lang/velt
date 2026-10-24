@@ -48,6 +48,7 @@ fn golden_m1_files_parse() {
                 | "type_operators_unsupported.vlt"
                 | "param_property_pattern.vlt"
                 | "param_defaults_unsupported.vlt"
+                | "param_defaults_in_body_order.vlt"
                 | "dynamic_import.vlt"
                 | "namespace_values.vlt"
                 | "overload_signature_asi_no_body.vlt"

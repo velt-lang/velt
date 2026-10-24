@@ -35,8 +35,7 @@ impl<'a> Parser<'a> {
             },
         };
         if is_generator {
-            let mut sig = self.parse_sig_rest(lo, name, is_async)?;
-            sig.is_generator = true;
+            let mut sig = self.parse_sig_rest(lo, name, is_async, true)?;
             sig.this_param = None;
             let this_param = self.this_param.take();
             let body = self.parse_fn_body()?;

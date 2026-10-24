@@ -1,0 +1,38 @@
+// Parameter defaults the function would have to apply itself but can't yet, each with an error
+// saying why. A default that uses an earlier parameter runs when the call starts, and so must
+// every later default that is not a constant (JavaScript runs them in order: Node prints `2 2
+// b,c` for `f(1)`). Without a written type, or on a type that includes `null`, a later default
+// can't run there, and evaluated at the call it would run first: Velt reports it.
+const log: string[] = [];
+
+function t(tag: string): number {
+  log.push(tag);
+  return log.length;
+}
+
+const f = (a: number, b: number = a + t("b"), c = t("c")): string => `${b} ${c}`;
+
+function g(a: number, b: number = a + t("b"), c: number | null = t("c")): string {
+  return `${b} ${c}`;
+}
+
+// A default of a `T | null` parameter that uses an earlier parameter.
+function h(a: number, b: number | null = a): string {
+  return `${b}`;
+}
+
+// A generator's defaults are evaluated where it is called.
+function* gen(a: number, b: number = a + 1): Generator<number> {
+  yield a;
+  yield b;
+}
+
+async function* agen(a: number, b: number = a + 1): AsyncGenerator<number> {
+  yield a;
+  yield b;
+}
+
+function main() {
+  console.log(f(1), g(1), h(1), [...gen(1)], log.join(","));
+  agen(1);
+}

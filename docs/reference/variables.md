@@ -94,6 +94,16 @@ test values of any type as JavaScript does.
 - `x ||= v` and `x &&= v` assign when `||` or `&&` would take the right side.
 - `c ? a : b` is typed the same way: when one branch converts to the other's type, that type,
   else their union (`qty ? qty : "none"` is a `number | string`).
+- When one value of `c ? a : b`, `||`, `&&` or `??` is an `any` and the other is not, the
+  result has the other value's type (`c ? 1 : data.n` is a `number`, so `(c ? 1 : data.n) + 1`
+  and `(name ?? data.name).trim()` work; the conversion stops with a `TypeError` when the `any`
+  holds a value of another type), except where an `any` or `unknown` is expected: a `: any`
+  result (a proxy's `get` trap returning `k === "price" ? 99 : t[k]`), variable, parameter or
+  element, a field of an object literal or an element of an array literal held there, and a
+  literal spread there (`[...[c ? 1 : data.n]]`, `{ ...{ q: c ? 1 : data.q } }`) keeps the
+  `any` as it is, whatever it holds. TypeScript types all of these as `any`
+  (`number | any` is `any`); operators and built-in methods called through an `any` are not
+  supported yet (#924), which is why the other places take the typed value's type.
 
 ```ts
 function label(count: number, name: string | null): string {

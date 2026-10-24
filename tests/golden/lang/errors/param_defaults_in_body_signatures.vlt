@@ -1,0 +1,30 @@
+// A default that uses an earlier parameter makes its parameter a `T | undefined` to callers
+// (the function applies it itself). Implementing an interface method or overriding a base
+// method whose parameter is a `T` is not supported yet, and the error says so (Node prints
+// `6 7`).
+interface I {
+  m(a: number, b: number): number;
+}
+
+class X implements I {
+  m(a: number, b: number = a + 5): number {
+    return a + b;
+  }
+}
+
+class B1 {
+  m(a: number, b: number = 1): number {
+    return a + b;
+  }
+}
+
+class D1 extends B1 {
+  override m(a: number, b: number = a - 3): number {
+    return a + b;
+  }
+}
+
+function main() {
+  const i: I = new X();
+  console.log(i.m(1, 5), new D1().m(5));
+}

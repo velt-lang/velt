@@ -465,7 +465,14 @@ fn check_override_sig(cx: &mut Ctx, m: MethodRef, base: &Found, name: &velt_synt
     };
     let ret_ok = super::ret_infer::override_ret(cx, (m.def, base.def()), &args, (mr, br), at);
     if !cx.same_tys(&mp, &bp) || !ret_ok || mg != bg {
-        cx.err(message, name.span);
+        let mut d = Diagnostic::error(message, name.span);
+        if let Some(note) = crate::body::defaults::applied_default_note(
+            cx,
+            [(m.def, &mp, &bp), (base.def(), &bp, &mp)],
+        ) {
+            d = d.with_note(note);
+        }
+        cx.error(d);
     }
 }
 

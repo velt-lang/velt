@@ -70,7 +70,7 @@ impl FnCx<'_, '_> {
         let bound = self.mk(hir::ExprKind::Local(l, hir::UseMode::Borrow), ty, span);
         let test = self.intrinsic(hir::Intrinsic::IsNullish, vec![bound], b, span);
         let v = self.mk(hir::ExprKind::Local(l, mode), ty, span);
-        let (v, d, rty) = self.nullish_join(v, d, ty);
+        let (v, d, rty) = self.nullish_join(v, d, ty, None);
         if rty == self.cx.ty.error {
             return self.error_expr(span);
         }
