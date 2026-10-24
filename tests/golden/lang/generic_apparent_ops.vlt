@@ -58,3 +58,15 @@ console.log(hasU<{ kind: string }>({ kind: "a" }), hasU<{ z: number }>({ z: 1 })
 console.log(len([1, 2, 3]), len("ab"), firstOf([9]), firstOf({ a: 1 }), isList([1]), isList("s"));
 console.log(first([3, 4]), get({ a: 1, b: 2 }, "b"), prop({ q: 5 }, "q"));
 console.log(call((x) => x + 1), call((x: number) => x * 10), twice((x) => x * 3, 2), keep((s) => s + "!")("a"));
+function createPropsProxy<T extends Record<string, any>>(target: T, onAccess?: (key: string) => void): T {
+  return new Proxy(target, {
+    get(obj, p) {
+      if (typeof p === "string" && onAccess) {
+        onAccess(p);
+      }
+      return obj[p as keyof T];
+    },
+  });
+}
+const proxied = createPropsProxy({ a: 1, b: "x" }, (k) => console.log("read", k));
+console.log(proxied.a, proxied.b);

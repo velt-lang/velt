@@ -159,6 +159,17 @@ impl FnCx<'_, '_> {
         want: Want,
         span: Span,
     ) -> Result<hir::Expr, hir::Expr> {
+        // `o[p as keyof T]` reads the key `p` holds: the assertion converts nothing, and an
+        // `any` takes any key.
+        let index = match &index.kind {
+            ast::ExprKind::Cast { expr, ty }
+                if matches!(ty.kind, ast::TypeExprKind::KeyOf(_))
+                    && self.cx.dynamic(obj.ty).is_some() =>
+            {
+                &**expr
+            }
+            _ => index,
+        };
         let key = match &index.kind {
             ast::ExprKind::Lit(ast::Lit::Str(k)) => Some(k.as_str()),
             _ => None,

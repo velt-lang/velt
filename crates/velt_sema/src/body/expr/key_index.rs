@@ -45,6 +45,19 @@ impl FnCx<'_, '_> {
         if matches!(want, Want::BorrowMut) {
             return None;
         }
+        // `o[p as keyof T]` with an ordinary `p` reads the key `p` holds (`generic_index`).
+        if let ast::ExprKind::Cast { expr, ty } = &index.kind {
+            if matches!(ty.kind, ast::TypeExprKind::KeyOf(_))
+                && self.peek_ty(expr).is_some_and(|k| {
+                    !matches!(
+                        self.cx.ty.kind(k),
+                        TyKind::Param(_) | TyKind::Op(TyOp::Inline(_), _)
+                    )
+                })
+            {
+                return None;
+            }
+        }
         let (t, k) = (self.peek_ty(object)?, self.peek_ty(index)?);
         if !self.generic_keyed(t, k) {
             return None;
