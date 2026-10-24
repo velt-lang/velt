@@ -563,7 +563,10 @@ alone is a type too (its only value is `undefined`), and an
 `undefined` with no type to take has it (`const u = undefined`, `[1, undefined]` is a
 `(number | undefined)[]`), and a conditional of `null` and `undefined` with no type to take is
 a `null | undefined` (`const d = c ? null : undefined`). A `let x: T | undefined;` without an initializer starts as
-`undefined`, and so do `let x: any;` and `let x: unknown;`. `null` alone is a type as well, as in TypeScript's discriminated unions where a
+`undefined`, and so do `let x: any;` and `let x: unknown;`. `null` alone is a type as well,
+and a `null` with no type to take has it (`const none = null`, the field of `{ value: null }`),
+as in TypeScript; `let x = null` asks for a type instead (`let x: T | null = null`), since a
+variable of type `null` could hold nothing else. It is also the type in TypeScript's discriminated unions where a
 field is always `null` in one member (`{ st: "idle"; value: null } | { st: "ready"; value:
 number }`).
 
@@ -693,7 +696,10 @@ nothings alike:
   module-level variable (`(handlers ??= []).push(h)`). The target may not call a function yet
   (`m[key()] ??= v`): store the key in a variable first.
 - `x!` is `x` known to be neither `null` nor `undefined` (TS's non-null assertion). TypeScript
-  trusts it; Velt checks it: a nothing panics with `non-null assertion failed`. A write into a
+  trusts it; Velt checks it: a nothing panics with `non-null assertion failed`. `null!` and
+  `undefined!` (TypeScript's placeholder for a value set later, `{ app: null! }`) are errors,
+  since the check would always fail: give the place a type that holds the nothing (`T | null`)
+  or a real first value. A write into a
   tuple behind `!` or `as` (one that keeps the tuple's type, or a union's tuple member; an
   element-wise tuple assertion makes a new tuple, see [`as`](#numbers)) changes the tuple in
   place, wherever it is held: a variable, a field,
@@ -793,7 +799,12 @@ console.log(update(v, { deletedAt: null })); // { name: 'bo', deletedAt: null }
   narrows it in the function that makes the check until the next assignment there, as in
   TypeScript (`if (cleanupFn) cleanupFn();`). A call in between may run the closure, so each
   such read checks the value again and stops with a `TypeError` if the closure set it to `null`
-  (JavaScript throws one where it calls or reads through the `null`). The closures that capture
+  (JavaScript throws one where it calls or reads through the `null`). Where the variable's
+  declared type or `any` is expected (`show(n)` with `show(v: number | null)`), and where it is
+  printed or written as text (`console.log(n)`, `` `${n}` ``, `String(n)`), it is read as it is
+  instead, so a `let n: number | null = 1` that a called closure set to `null` gives `null`, as
+  in Node; the same holds for the narrowing that an initializer or an assignment gives
+  (`let n: number | null = 1; f(); console.log(n)` prints `null`). The closures that capture
   the variable do not see the narrowing. Other tests (`typeof`, `instanceof`, union members)
   do not narrow such a variable, where TypeScript keeps the narrowing: the variable may no
   longer hold what was checked. Test a `const` copy instead, which nothing can reassign; the
@@ -2030,7 +2041,12 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   `K` is `string`, a union of string literal types, or a string enum; any other key type is
   an error (use a `Map`), also when a generic function or class gets it as a type argument.
   With `string` keys a record is *open*: `r[k]` and `r.name` are `V | undefined`, `r[k] = v`
-  inserts or replaces, `r[k] ??= v` sets a missing key, and `delete r[k]` removes. Because a
+  inserts or replaces, `r[k] ??= v` sets a missing key, and `delete r[k]` removes. A read
+  with a key nothing reassigns (a `const`, a parameter, a `for (const k in r)` key, or a
+  literal) narrows like a field: after `if (!r[k]) r[k] = [];`, after `r[k] = v` and inside
+  `for (const k in r)` (over a `V` that holds no nothing), `r[k]` is a `V`, checked again
+  where it is read in case a call deleted the key (it then panics, where JavaScript reads
+  `undefined`). Because a
   key may be missing, `r[k] += 1`, `r[k]++` and the other compound assignments are errors on an
   open record: say what a missing key starts from with `r[k] = (r[k] ?? 0) + 1` (JS would give
   `NaN`). With literal or enum keys it is *closed*: it always holds every key, so `r.cpu` is
