@@ -295,6 +295,19 @@ fn adt_def(
     }
 }
 
+/// The definitions of union enums made after [`build_defs`]: `readonly::erase` solves the types
+/// of the program, and a union first written with an unsolved member (a field read narrowed to
+/// `number | (() => number)`, whose function type's errors were a variable) is interned there,
+/// before it erases the definitions.
+pub(crate) fn build_late_enums(cx: &mut Ctx) {
+    for i in 0..cx.info.len() {
+        if cx.defs[i].is_none() && matches!(cx.info[i], DefInfo::Enum(_)) {
+            let d = DefId(i as u32);
+            cx.defs[i] = Some(Def::Enum(enum_def(cx, d)));
+        }
+    }
+}
+
 fn enum_def(cx: &mut Ctx, d: DefId) -> EnumDef {
     let e = cx.enum_info(d).expect("ICE: enum");
     let n = e.generics.len();

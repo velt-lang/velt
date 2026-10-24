@@ -213,3 +213,17 @@ fn any_converts_to_a_union_with_one_interface_member() {
     );
     assert!(r.contains("no run-time test for"), "{r}");
 }
+
+#[test]
+fn a_field_narrowed_to_a_function_and_another_member_reads_without_an_expected_type() {
+    // The union `f64 | () => f64` is complete once the function type's errors are solved.
+    ok_src(
+        "interface I { v: string | number | (() => number) }
+         function g(b: I): string {
+           if (typeof b.v === \"string\") { return \"str\"; }
+           const r = b.v;
+           return `${typeof r}`;
+         }
+         function main() { console.log(g({ v: 3 })); }",
+    );
+}

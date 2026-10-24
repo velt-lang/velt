@@ -430,9 +430,13 @@ impl FnCx<'_, '_> {
         let Some(key) = self.in_key_of(lhs) else {
             return (vec![], vec![]);
         };
-        let Some((l, false, u)) = self.local_with_members(rhs) else {
+        // A `U | null` local a test proved not null (`if (x === null) return;`) too.
+        let Some((l, nullable, u)) = self.local_with_members(rhs) else {
             return (vec![], vec![]);
         };
+        if nullable && !self.is_narrowed(l) {
+            return (vec![], vec![]);
+        }
         let Some(members) = self.cx.union_members(u) else {
             return (vec![], vec![]);
         };

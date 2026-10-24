@@ -166,8 +166,10 @@ impl FnCx<'_, '_> {
             _ => self.cx.union_of(&sub, false, span),
         };
         let target = self.cx.ty.option_of(core, n);
-        self.option_to_option_narrowed(h, target, Some(vs))
-            .unwrap_or_else(|h| h)
+        let outer = std::mem::replace(&mut self.field_retag, true);
+        let r = self.option_to_option_narrowed(h, target, Some(vs));
+        self.field_retag = outer;
+        r.unwrap_or_else(|h| h)
     }
 
     /// The union field read `h` that a test narrowed to its members `vs` (of `ms`, two or
@@ -187,7 +189,10 @@ impl FnCx<'_, '_> {
         if self.cx.union_def(target).is_none() {
             return h;
         }
-        self.retag_live(h, target, Some(vs)).unwrap_or_else(|h| h)
+        let outer = std::mem::replace(&mut self.field_retag, true);
+        let r = self.retag_live(h, target, Some(vs));
+        self.field_retag = outer;
+        r.unwrap_or_else(|h| h)
     }
 
     /// `h`, the value of `object.prop`, as the subclass an `instanceof` test narrowed it to.
