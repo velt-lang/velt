@@ -1582,7 +1582,11 @@ down, even in the signature of another function, declared before or after it. A 
 needs its own type (`function f(x: ReturnType<typeof f>)`, also through other functions) is an
 error, as in TypeScript (TS2502). `ReturnType<F>` is the result type of function type `F`, and
 `Parameters<F>` its parameter types as a tuple. `typeof f` of a function with a rest, optional or
-default parameter is not supported yet (#936).
+default parameter is not supported yet (#936). In a field of an interface, object type or class
+(`signal: typeof signal`), `typeof f` is the type the function's declaration writes: its
+parameter types and its written result, and no error (a function there needs a written result,
+and one that throws needs its `throws` written in a function type instead). `typeof` of a
+symbol constant (`const K = Symbol("k")`) is `symbol` there too.
 
 `keyof T` is the union of an object type's keys as string literal types (`keyof { a: number; b:
 string }` is `"a" | "b"`; a key a mapped type made from a number literal stays that number:

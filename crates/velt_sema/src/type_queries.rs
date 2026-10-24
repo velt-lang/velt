@@ -248,6 +248,17 @@ impl Ctx<'_> {
             return self.ty.error;
         }
         if !self.bodies_ok {
+            // Outside a signature being resolved (an interface or class field), from the
+            // declaration alone; a signature has its own order and cycle errors (`sig_fill`).
+            let resolving = self.sigq.filling_sigs.iter().any(|f| f.0 == d);
+            if !self.sigq.sig_fill && !resolving {
+                self.sigq.filling_sigs.push((d, name.to_string()));
+                let t = self.declared_fn_type(d);
+                self.sigq.filling_sigs.pop();
+                if let Some(t) = t {
+                    return t;
+                }
+            }
             return self.query_needs_body(name, "function", span);
         }
         let f = self.fn_info(d);
@@ -268,6 +279,46 @@ impl Ctx<'_> {
             throws,
             rest,
         })
+    }
+
+    /// The type of function `d` from its declaration alone, before signatures are resolved
+    /// (`typeof f` in an interface field): a function with a written result and plain
+    /// parameters, not generic, async or a generator, with no `throws` written (its function
+    /// type allows no error, as one written out would). `None` for any other.
+    fn declared_fn_type(&mut self, d: DefId) -> Option<TyId> {
+        let f = self.fn_info(d);
+        let (module, Some(FnSource::Decl(decl))) = (f.module, f.source) else {
+            return None;
+        };
+        let sig = &decl.sig;
+        let plain = sig
+            .params
+            .iter()
+            .all(|p| !p.rest && !p.optional && p.default.is_none());
+        if !sig.generics.is_empty() || sig.is_async || sig.is_generator || !plain {
+            return None;
+        }
+        if sig.throws.is_some() || sig.this_param.is_some() {
+            return None;
+        }
+        let ret = sig.ret.as_ref()?;
+        let env = TyEnv::new(module, &[]);
+        let params: Vec<TyId> = sig
+            .params
+            .iter()
+            .map(|p| self.resolve_type(&p.ty, &env))
+            .collect();
+        let ret = self.resolve_type(ret, &env);
+        if params.contains(&self.ty.error) || ret == self.ty.error {
+            return None;
+        }
+        let throws = self.ty.never;
+        Some(self.ty.intern(TyKind::FnPtr {
+            params,
+            ret,
+            throws,
+            rest: false,
+        }))
     }
 
     /// Does `t` mention a type parameter other than as an error type (a function type's

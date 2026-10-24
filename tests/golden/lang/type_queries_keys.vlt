@@ -25,3 +25,14 @@ const r: { [P in string | number]: number } = { a: 1 };
 const rec: Record<string, number> = { z: 26 };
 console.log(n.type === Fragment, n.type === Txt, m.type, k1, k2, k3);
 console.log(acc({ x: 1 }).x, acc(rec).z, o, ia, r.a);
+function double(n: number): number {
+  return n * 2;
+}
+interface Helpers {
+  double: typeof double;
+}
+const helpers: Helpers = { double };
+let timer: ReturnType<typeof setTimeout> | undefined;
+timer = setTimeout(() => {}, 0);
+clearTimeout(timer);
+console.log(helpers.double(21), timer === undefined);
