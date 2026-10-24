@@ -627,17 +627,19 @@ fn type_arguments_are_inferred_from_children() {
 }
 
 #[test]
-fn props_that_cannot_be_copied_are_an_error() {
-    let r = err(&format!(
+fn props_holding_elements_and_promises_are_shared_into_the_component() {
+    // A component that takes its props over (moves a field out) gets another reference to them:
+    // nothing is copied, so props holding a promise or a pending async element are fine (#74).
+    ok(&format!(
         "{GENERIC}function W(props: {{ p: Promise<i64> }}): JSX.Element {{ const p = props.p; return <p></p>; }}
         async function v(): Promise<i64> {{ return 1; }}
         function main() {{ const e = <W p={{v()}} />; }}"
     ));
-    assert!(
-        r.contains("the props of <W> cannot be copied into the component"),
-        "{r}"
-    );
-    assert!(!r.contains("ICE"), "{r}");
+    ok(&format!(
+        "{GENERIC}function Card(props: {{ title: string; children: JSX.Element[] }}): JSX.Element {{ return <div>{{props.children}}</div>; }}
+        async function Posts(): Promise<JSX.Element> {{ return <ul></ul>; }}
+        async function main() {{ const e = <Card title=\"x\"><Posts /><p>after</p></Card>; }}"
+    ));
 }
 
 #[test]

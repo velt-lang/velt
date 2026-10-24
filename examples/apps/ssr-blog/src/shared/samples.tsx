@@ -3,7 +3,7 @@
 // them with `velt run` and with Node. The data has what escaping must handle.
 
 import type { Post } from "./model";
-import { CommentList, NotFound, PostBody, PostCard, Tags, page } from "./components";
+import { CommentList, NotFound, Page, PostBody, PostCard, Tags } from "./components";
 
 function samplePost(): Post {
   return {
@@ -24,6 +24,8 @@ export function samples(): JSX.Element[] {
     CommentList({ comments: [{ author: "M", text: `<img src=x onerror="alert('1')">` }] }),
     CommentList({ comments: [] }),
     NotFound({ path: "/x?<y>&z" }),
-    page("Title & <more>", <Tags tags={["a", "b c"]} />),
+    <Page title="Title & <more>">
+      <Tags tags={["a", "b c"]} />
+    </Page>,
   ];
 }

@@ -390,8 +390,6 @@ definition. `tests/golden/lang/_jsx_events/jsx-runtime.vlt` is a complete provid
 `lang/jsx_extend_intrinsic`).
 
 ## Known compatibility gaps (each is a compile error, never a behavior difference)
-- Props are copied into a component until semantics stage 2; props holding a pending async
-  element are rejected until then.
 - Class components, `ref`, and TS's `JSX.LibraryManagedAttributes` are not supported.
   `JSX.IntrinsicAttributes` is supported (above).
 

@@ -59,20 +59,20 @@ function table(rows: Fortune[]): Element {
   );
 }
 
-function shell(content: Element): Element {
+function Shell(props: { children: Element }): Element {
   return (
     <html>
       <head>
         <title>Fortunes</title>
       </head>
-      <body>{content}</body>
+      <body>{props.children}</body>
     </html>
   );
 }
 
 /// The whole page as one tree (no async component).
 export function page(): Element {
-  return shell(table(fortunes()));
+  return <Shell>{table(fortunes())}</Shell>;
 }
 
 async function Rows(props: { rows: Fortune[] }): Promise<Element> {
@@ -81,5 +81,9 @@ async function Rows(props: { rows: Fortune[] }): Promise<Element> {
 
 /// The page with its rows in an async component (the shell is sent first when streamed).
 export function asyncPage(): Element {
-  return shell(<Rows rows={fortunes()} />);
+  return (
+    <Shell>
+      <Rows rows={fortunes()} />
+    </Shell>
+  );
 }

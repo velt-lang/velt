@@ -47,10 +47,8 @@ The nightly oracle job also renders `src/shared/samples.tsx` with `velt run` and
 `tsc`, with Node, and checks that the HTML is the same
 (`crates/veltc/tests/ts_compat_node`, `VELT_TSC_ORACLE=1`).
 
-The layout is a function the pages call, `page(title, content)`, rather than a component that
-takes children: the content holds async components, and std/jsx can't pass a pending async
-element through component props yet
-([known gap](../../../docs/internals/contracts/jsx.md#known-compatibility-gaps-each-is-a-compile-error-never-a-behavior-difference)).
+The layout is a component, `<Page title=...>`, whose children hold the async components: they
+start loading as the page is created, and streaming sends the layout's top before they finish.
 
 `demo.vlt` runs a scripted session against the real server (golden: `demo.out`), and reads one
 page chunk by chunk from a server whose comments wait until it has read the post
