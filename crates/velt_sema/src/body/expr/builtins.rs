@@ -220,6 +220,26 @@ impl FnCx<'_, '_> {
             // A `Date` prints as its ISO string, like Node.
             let h = self.own_to_string(h, "__inspect");
             let h = self.narrowed_for_print(h);
+            // A `void` value (`then((v) => console.log(v))` on a `Promise<void>`) is `undefined`.
+            let h = match h.ty == self.cx.ty.unit {
+                true => {
+                    let at = h.span;
+                    let undefined =
+                        super::setters::synth(ast::ExprKind::Lit(ast::Lit::Undefined), at);
+                    let u = self.expr(&undefined, None, Want::Move);
+                    let ty = u.ty;
+                    let block = hir::Block {
+                        stmts: vec![hir::Stmt {
+                            kind: hir::StmtKind::Expr(h),
+                            span: at,
+                        }],
+                        value: Some(Box::new(u)),
+                        span: at,
+                    };
+                    self.mk(hir::ExprKind::Block(block), ty, at)
+                }
+                false => h,
+            };
             if !self.printable(h.ty) {
                 let tn = self.cx.display(h.ty);
                 let mut d =

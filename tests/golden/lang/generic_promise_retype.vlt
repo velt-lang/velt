@@ -1,0 +1,22 @@
+// A promise where a promise of `unknown` / `any` is expected, and a `Promise<undefined>` where a
+// `Promise<void>` is (#1185); a `void` value prints as `undefined`.
+async function f<T>(x: T): Promise<T> {
+  return x;
+}
+async function g<T>(x: T): Promise<unknown> {
+  let p: Promise<unknown>;
+  p = f(x);
+  return p;
+}
+function refresh(): Promise<void> {
+  return Promise.all([Promise.resolve(1)]).then(() => undefined);
+}
+async function run() {
+  const v: Promise<void> = Promise.resolve();
+  const u: Promise<unknown> = v;
+  const w: Promise<unknown> = Promise.all([Promise.resolve(1)]);
+  const a: Promise<any> = f("s");
+  console.log(await g(3), await u, await w, await a);
+  await refresh().then((r) => console.log("done", r));
+}
+run();
