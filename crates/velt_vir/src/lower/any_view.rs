@@ -17,8 +17,8 @@ use velt_sema::hir::{self, DefId, TyId, TyKind};
 
 use super::any::{TAG_FUNCTION, TAG_OBJECT};
 use super::operand::proj;
-use super::{cint, FnLower};
-use crate::vir::{self, BinOp, Callee, Operand, Place, Proj, Rvalue, Ty};
+use super::{cint, FnLower, Glue};
+use crate::vir::{self, BinOp, Callee, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
 /// The qualified name of the prelude function that makes a view.
 const PROXY_VIEW: &str = "std/proxy::Proxy.__view";
@@ -55,34 +55,84 @@ impl FnLower<'_, '_> {
         self.switch_to(no);
     }
 
-    /// The identity of the value of a proxiable type at `p` for `===`: its pointer, or for a
-    /// view the data pointer of the object it views.
+    /// The identity of the value of a proxiable type at `p` for `===` and key hashes: its
+    /// pointer, or for a view the data pointer of the object it views. The hot path is the bit
+    /// test; a tagged pointer goes through the one outlined `Glue::ViewIdentity`.
     pub(super) fn view_identity(&mut self, p: &Place) -> Operand {
         let w = Place::local(self.temp(Ty::Ptr));
         let v = self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(p.clone())));
         self.assign(w.clone(), Rvalue::Use(v.clone()));
-        self.proxy_split(
-            &v,
-            |lw, u| {
-                let (pd, _) = lw.proxy_def();
-                let obj = Place::local(lw.temp(Ty::Ptr));
-                lw.assign(obj.clone(), Rvalue::Use(u));
-                let b = lw.proxy_is_view(pd, &obj);
-                let (yes, join) = (lw.new_block(), lw.new_block());
-                lw.branch(b, yes, join);
-                lw.switch_to(yes);
-                let held = lw.proxy_view_target(pd, &obj);
-                let d = Operand::Copy(proj(&held, Proj::Field(0)));
-                lw.assign(w.clone(), Rvalue::Use(d));
-                // The view keeps the object alive: the reference `__target` gave is released.
-                let any = lw.cx.any_ty();
-                lw.drop_glue(held, any);
-                lw.goto(join);
-                lw.switch_to(join);
-            },
-            |_| {},
-        );
+        let t = self.proxy_tagged(v.clone());
+        let (cold, join) = (self.new_block(), self.new_block());
+        self.branch(t, cold, join);
+        self.switch_to(cold);
+        let pty = self.cx.proxy_class_ty();
+        let id = self.call_glue(Glue::ViewIdentity, pty, vec![v]);
+        self.assign(w.clone(), Rvalue::Use(id));
+        self.goto(join);
+        self.switch_to(join);
         Operand::Copy(w)
+    }
+
+    /// `a === b` of two values of a proxiable type at `a` and `b` (Bool operand): equal
+    /// pointers, or two tagged pointers of one identity (`view_identity`). A tagged pointer and
+    /// an untagged one never have one identity: a typed proxy is its own object, and a view
+    /// views an object of another type than the untagged one's. So the hot path is the pointer
+    /// comparison and a test of one tag, which does not change inside a search loop.
+    pub(super) fn view_same(&mut self, a: &Place, b: &Place) -> Operand {
+        let r = Place::local(self.temp(Ty::Bool));
+        let (x, y) = (Operand::Copy(a.clone()), Operand::Copy(b.clone()));
+        let x = self.rvalue_temp(Ty::Ptr, Rvalue::Use(x));
+        let y = self.rvalue_temp(Ty::Ptr, Rvalue::Use(y));
+        let eq = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, x.clone(), y.clone()));
+        self.assign(r.clone(), Rvalue::Use(eq.clone()));
+        let (ne, join) = (self.new_block(), self.new_block());
+        self.branch(eq, join, ne);
+        self.switch_to(ne);
+        let ty = self.proxy_tagged(y.clone());
+        self.when(ty, join);
+        let tx = self.proxy_tagged(x.clone());
+        self.when(tx, join);
+        let pty = self.cx.proxy_class_ty();
+        let ix = self.call_glue(Glue::ViewIdentity, pty, vec![x]);
+        let iy = self.call_glue(Glue::ViewIdentity, pty, vec![y]);
+        let same = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, ix, iy));
+        self.assign(r.clone(), Rvalue::Use(same));
+        self.goto(join);
+        self.switch_to(join);
+        Operand::Copy(r)
+    }
+
+    /// `Glue::ViewIdentity` (`(p: ptr) -> ptr`, for the `Proxy` class): the identity of the
+    /// tagged pointer `p` (a typed proxy or a view), the pointer itself, or for a view the data
+    /// pointer of the object it views.
+    pub(super) fn view_identity_body(&mut self, p: vir::Local) {
+        let v = Operand::Copy(Place::local(p));
+        let w = Place::local(self.temp(Ty::Ptr));
+        self.assign(w.clone(), Rvalue::Use(v.clone()));
+        let (pd, pty) = self.proxy_def();
+        let u = self.proxy_untag(v);
+        // The fields themselves (`#view`, `#target`), borrowed: no call and no count, so the
+        // glue stays small.
+        let view = self.proxy_hot_place(&u, pty, self.proxy_field_index(pd, "#view"));
+        let (yes, join) = (self.new_block(), self.new_block());
+        self.branch(Operand::Copy(view), yes, join);
+        self.switch_to(yes);
+        let target = self.proxy_hot_place(&u, pty, self.proxy_field_index(pd, "#target"));
+        let d = Operand::Copy(proj(&target, Proj::Field(0)));
+        self.assign(w.clone(), Rvalue::Use(d));
+        self.goto(join);
+        self.switch_to(join);
+        self.terminate(Terminator::Return(Operand::Copy(w)));
+    }
+
+    /// The index of the `Proxy` class's field `name`.
+    fn proxy_field_index(&self, pd: DefId, name: &str) -> u32 {
+        let fields = &self.cx.adt_def(pd).fields;
+        match fields.iter().position(|f| f.name == name) {
+            Some(i) => i as u32,
+            None => super::ice(format_args!("the `Proxy` class without `{name}`")),
+        }
     }
 
     /// The `Proxy` class and its type.
