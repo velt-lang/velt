@@ -530,7 +530,7 @@ export class __HasOwnProperty {
 // original's, a read of element `i` (an index, a `for...of` step, a callback method's step)
 // brings only that element up to date (`__arrayViewSyncAt`), and a write of element `i` writes
 // back only that element (`__arrayViewFlushAt`). The mirror converts the original's elements
-// in order as they are first reached, so an element no read reaches is never converted.
+// in order, up to the last one a read reaches, so the elements after it are never converted.
 // Nothing here is called in a program without views.
 
 /** The state of one view: the original array and the mirror of its elements as `T`. */
