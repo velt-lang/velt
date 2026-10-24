@@ -93,12 +93,19 @@ pub extern "C" fn velt_rt_array_view_put(arr: *const u8, ty: u64, view: *const u
     });
 }
 
-/// `view`, a view of type `ty` of the array at `arr`, is dropped or stops being a view: its
-/// entry goes (if it is still the entry).
+/// The view of type `ty` of the array at `arr` whose view object (untagged) is `object` is
+/// dropped or stops being a view: its entry goes, if it is still the entry, which is when the
+/// entry's header (`{ data, len, cap }`) holds `object | 1`. Every entry is a live view's box.
 #[no_mangle]
-pub extern "C" fn velt_rt_array_view_remove(arr: *const u8, ty: u64, view: *const u8) {
+pub extern "C" fn velt_rt_array_view_remove(arr: *const u8, ty: u64, object: *const u8) {
     with_arrays(|t| {
-        if t.get(&(arr as usize, ty)) == Some(&(view as usize)) {
+        let Some(&bx) = t.get(&(arr as usize, ty)) else {
+            return;
+        };
+        // SAFETY: an entry is the box of a live view (its drop removes it first), whose header
+        // starts with the tagged view object.
+        let data = unsafe { (bx as *const usize).read() };
+        if data == object as usize | 1 {
             t.remove(&(arr as usize, ty));
         }
     });
@@ -173,24 +180,25 @@ mod tests {
 
     #[test]
     fn array_views_are_kept_per_view_type() {
-        let (arr, a, b) = (
-            0x7000 as *const u8,
-            0x7100 as *const u8,
-            0x7200 as *const u8,
-        );
+        // Two view boxes, whose headers hold their view objects (0x7100 and 0x7200) tagged.
+        let ha: [usize; 3] = [0x7101, 0, 0];
+        let hb: [usize; 3] = [0x7201, 0, 0];
+        let arr = 0x7000 as *const u8;
+        let (a, b) = (ha.as_ptr() as *const u8, hb.as_ptr() as *const u8);
+        let (oa, ob) = (0x7100 as *const u8, 0x7200 as *const u8);
         assert!(velt_rt_array_view_get(arr, 1).is_null());
         velt_rt_array_view_put(arr, 1, a);
         velt_rt_array_view_put(arr, 2, b);
         // A second view of one type is no second entry.
         velt_rt_array_view_put(arr, 1, b);
-        assert_eq!(velt_rt_array_view_get(arr, 1) as usize, 0x7100);
-        assert_eq!(velt_rt_array_view_get(arr, 2) as usize, 0x7200);
+        assert_eq!(velt_rt_array_view_get(arr, 1) as usize, a as usize);
+        assert_eq!(velt_rt_array_view_get(arr, 2) as usize, b as usize);
         // Another view's removal leaves the entry; object views are another table.
-        velt_rt_array_view_remove(arr, 1, b);
-        assert_eq!(velt_rt_array_view_get(arr, 1) as usize, 0x7100);
+        velt_rt_array_view_remove(arr, 1, ob);
+        assert_eq!(velt_rt_array_view_get(arr, 1) as usize, a as usize);
         assert!(velt_rt_view_get(arr).is_null());
-        velt_rt_array_view_remove(arr, 1, a);
-        velt_rt_array_view_remove(arr, 2, b);
+        velt_rt_array_view_remove(arr, 1, oa);
+        velt_rt_array_view_remove(arr, 2, ob);
         assert!(velt_rt_array_view_get(arr, 1).is_null());
         assert!(velt_rt_array_view_get(arr, 2).is_null());
     }

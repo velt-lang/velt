@@ -302,14 +302,19 @@ impl FnLower<'_, '_> {
         Operand::Copy(out)
     }
 
-    /// The view at `arr` (the inline value, in its box) of an array of `e`, whose view object
-    /// is `v`, leaves the runtime's table (it is dropped, or stops being a view).
-    fn view_unlist(&mut self, arr: &Place, e: TyId, v: &Operand) {
+    /// The view of an array of `e` whose view object is `v` (untagged) leaves the runtime's
+    /// table (it is dropped, or stops being a view). The runtime is given the view object, not
+    /// the view's box: a box address passed to it would make the backend assume that any call
+    /// may change a box of this type in the function, a plain array's in its loops too.
+    fn view_unlist(&mut self, e: TyId, v: &Operand) {
         let t = self.cx.intern(TyKind::Array(e));
         let target = self.view_field(v, e, "__target");
         let data = Operand::Copy(proj(&target, Proj::Field(0)));
-        let me = self.addr(arr.clone());
-        self.call_rt(Rt::ArrayViewRemove, vec![data, view_key(t), me], None);
+        self.call_rt(
+            Rt::ArrayViewRemove,
+            vec![data, view_key(t), v.clone()],
+            None,
+        );
     }
 
     /// The header to operate on for the inline value `hdr` of the view type `t`: the header
@@ -488,7 +493,7 @@ impl FnLower<'_, '_> {
             proj: vec![Proj::Deref(payload)],
         };
         let (_, v) = self.array_view_of_hdr(&arr);
-        self.view_unlist(&arr, e, &v);
+        self.view_unlist(e, &v);
         let cls = self.view_class(e);
         let vp = Place::local(self.copy_to_temp(v, Ty::Ptr));
         self.drop_glue(vp, cls);
@@ -526,7 +531,7 @@ impl FnLower<'_, '_> {
         let a = self.cx.array_agg();
         let fresh = Place::local(self.temp(Ty::Agg(a)));
         self.clone_array(&m, &fresh, e);
-        self.view_unlist(arr, e, &v);
+        self.view_unlist(e, &v);
         let cls = self.view_class(e);
         let vp = Place::local(self.copy_to_temp(v, Ty::Ptr));
         self.drop_glue(vp, cls);
