@@ -175,6 +175,8 @@ impl FnCx<'_, '_> {
                 throws: None,
             });
         }
+        // Named with what is known for the diagnostics of the trials, again once it is all known.
+        self.name_own_iface(d);
         // Rounds of trials until no result type is learned.
         loop {
             let mut learned = false;
@@ -425,36 +427,14 @@ impl FnCx<'_, '_> {
         self.error_expr(span)
     }
 
-    /// Names interface `d` as TypeScript shows the literal's type: `{ x: number; m(): string }`.
+    /// Names interface `d` (over the generic parameters in scope) as TypeScript shows the
+    /// literal's type, with the members known so far (`Ctx::display_literal_iface`).
     fn name_own_iface(&mut self, d: DefId) {
-        let Some(i) = self.cx.iface(d) else {
-            return;
-        };
-        let mut parts: Vec<(Span, String)> = vec![];
-        for f in &i.fields {
-            parts.push((f.span, format!("{}: {}", f.name, self.cx.display(f.ty))));
-        }
-        for m in &i.methods {
-            let params: Vec<String> = m
-                .params
-                .iter()
-                .map(|p| format!("{}: {}", p.name, self.cx.display(p.ty)))
-                .collect();
-            let s = match (m.is_getter, m.name.strip_prefix("set ")) {
-                (true, _) => format!("get {}(): {}", m.name, self.cx.display(m.ret)),
-                (_, Some(n)) => format!("set {n}({})", params.join(", ")),
-                _ => format!(
-                    "{}({}): {}",
-                    m.name,
-                    params.join(", "),
-                    self.cx.display(m.ret)
-                ),
-            };
-            parts.push((m.span, s));
-        }
-        parts.sort_by_key(|(s, _)| s.lo);
-        let parts: Vec<String> = parts.into_iter().map(|(_, s)| s).collect();
-        let name = format!("{{ {} }}", parts.join("; "));
+        let args: Vec<TyId> = (0..self.bounds.len() as u32)
+            .map(|i| self.cx.ty.param(i))
+            .collect();
+        let t = self.cx.ty.intern(TyKind::Dyn(d, args));
+        let name = self.cx.display(t);
         let i = iface_mut(self.cx, d);
         i.name.clone_from(&name);
         i.qual_name = name;

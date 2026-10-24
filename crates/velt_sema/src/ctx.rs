@@ -168,6 +168,12 @@ pub(crate) struct Ctx<'m> {
     /// The interfaces made from object literals with no expected type
     /// (`body/expr/literal_iface.rs`), whose methods all use `this`.
     pub literal_ifaces: FxHashSet<DefId>,
+    /// The structs (or classes) of object literals implementing interfaces
+    /// (`body/expr/iface_object.rs`), whose `set k` fields hold the setters.
+    pub literal_structs: FxHashSet<DefId>,
+    /// The literal interfaces being displayed (`display.rs`): one inside its own members
+    /// (`add(): this`) shows as `this`.
+    pub literal_display: std::cell::RefCell<Vec<DefId>>,
     /// The adapters converting generic interface values to `unknown` type arguments
     /// (`body/expr/iface_adapt.rs`), made on first use.
     pub iface_adapters: FxHashMap<
@@ -402,6 +408,8 @@ impl<'m> Ctx<'m> {
             literal_hosts: Default::default(),
             provisional_slots: vec![],
             literal_ifaces: Default::default(),
+            literal_structs: Default::default(),
+            literal_display: Default::default(),
             iface_adapters: FxHashMap::default(),
             dyn_iface_targets: vec![],
             throw_checks: vec![],
