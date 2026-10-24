@@ -94,6 +94,9 @@ pub(crate) struct Ctx<'m> {
     /// Checking type aliases nothing uses (`resolve::check_unused_aliases`): a utility type on
     /// one of the alias's own type parameters is fine there (it is resolved at each use).
     pub checking_unused_aliases: bool,
+    /// Some body has a type predicate on a type parameter's value (`MayHoldPrimitive`, #1251):
+    /// error inference then drops what a guarded branch throws in object instances.
+    pub primitive_guards: bool,
     /// The state of type-level evaluation (`crate::type_level`).
     pub(crate) type_level: crate::type_level::State,
     /// The program (not std) writes `undefined`: else the checks only it needs (`undefined_args`,
@@ -375,6 +378,7 @@ impl<'m> Ctx<'m> {
             bodies_ok: false,
             sigq: Default::default(),
             checking_unused_aliases: false,
+            primitive_guards: false,
             type_level: Default::default(),
             writes_undefined: false,
             shaped: FxHashSet::default(),

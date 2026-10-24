@@ -437,7 +437,12 @@ the parameter that grows, when the grown argument is an object type (a struct, c
 type, array, tuple, map or function type). An instantiation whose argument is such an object type
 does not compile that branch (`g(x)` still runs; if it returns `true`, which its type rules
 out, the program stops with a `TypeError`), so the recursion ends there. An argument that may
-hold a primitive (a union with a primitive member, `any`, `unknown`) keeps the branch.
+hold a primitive (a union with a primitive member, `any`, `unknown`) keeps the branch. What
+the branch throws is part of the function's error type only for the instantiations that have
+it (`throw new Fail(x)` there makes `depth<number>` throw `Fail<number>`, and
+`depth<{ value: number }>` nothing). The recursion is still rejected when only a value
+bounds it (`if (n > 0) return depth({ value: x }, n - 1)`): the type predicate is what tells
+the instantiations apart.
 
 ```ts
 type Primitive = string | number | boolean | null | undefined;
