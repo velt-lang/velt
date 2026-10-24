@@ -60,6 +60,8 @@ pub(crate) fn erase(cx: &mut Ctx) -> HashMap<TyId, String> {
     let mut plan = crate::union_layouts::plan(&mut cx.ty, &twins, &mut cache, &cx.defs, &solved);
     let merged = std::mem::take(&mut plan.merged);
     cx.replaced_unions = std::mem::take(&mut plan.replaced);
+    // Unions solving made (first written with an unsolved member) get their defs, erased below.
+    crate::finalize::build_late_enums(cx);
     // A field-only interface's object type is called by the interface's name.
     for d in twins.keys() {
         if let Some(Def::Adt(a)) = &cx.defs[d.0 as usize] {

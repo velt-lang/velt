@@ -461,8 +461,10 @@ impl FnCx<'_, '_> {
 
     /// A dynamic value as the union or literal type `exp` (`members`: its members, or `exp`
     /// itself): the first member whose test the value passes (`typeof` for a primitive,
-    /// `instanceof` for a class, `===` for a literal), converted; else a `TypeError`, or the
-    /// member that is `any` / `unknown` itself (dynamic_whole.rs).
+    /// `instanceof` for a class, `===` for a literal, `Array.isArray` for the one array
+    /// member), converted; else a `TypeError`, the member that is `any` / `unknown` itself
+    /// (dynamic_whole.rs), or the one interface or object type member, converted with its own
+    /// run-time check.
     fn dynamic_to_members(&mut self, h: hir::Expr, exp: TyId, members: Vec<TyId>) -> hir::Expr {
         let span = h.span;
         let dty = h.ty;
@@ -476,8 +478,29 @@ impl FnCx<'_, '_> {
         if let Some(c) = catch_all {
             result = self.whole_as_member(tmp, dty, c, exp, span);
         }
-        for &m in members.iter().rev().filter(|m| Some(**m) != catch_all) {
-            let Some((test, value)) = self.member_test(tmp, dty, m, span) else {
+        // One member with no test of its own (an interface or object type: `VNode` in
+        // `VNode | string | number`): a value that passes no other member's test converts to
+        // it, checked at run time as `x as VNode` is.
+        let rest = match catch_all {
+            None => self.untested_member(&members),
+            Some(_) => None,
+        };
+        if let Some(r) = rest {
+            let x = self.mk(H::Local(tmp, UseMode::Borrow), dty, span);
+            let share = self.intrinsic(Intrinsic::Share, vec![x], dty, span);
+            self.note_dynamic_iface(r, span);
+            let value = self.intrinsic(Intrinsic::AnyTo, vec![share], r, span);
+            result = self.coerce(value, exp);
+        }
+        let skip = |m: &TyId| Some(*m) != catch_all && Some(*m) != rest;
+        let arrays = self.array_members(&members);
+        for &m in members.iter().rev().filter(|m| skip(m)) {
+            // `Array.isArray` tells one array member from the others, not two arrays apart.
+            let tested = match self.cx.ty.kind(m) {
+                TyKind::Array(_) if arrays > 1 => None,
+                _ => self.member_test(tmp, dty, m, span),
+            };
+            let Some((test, value)) = tested else {
                 if catch_all.is_some() {
                     continue;
                 }
@@ -514,6 +537,34 @@ impl FnCx<'_, '_> {
         self.mk(H::Block(block), exp, span)
     }
 
+    /// The one member of `members` that [`Self::member_test`] has no test for, when every other
+    /// member has one and it is an interface or object type (which `AnyTo` checks).
+    fn untested_member(&self, members: &[TyId]) -> Option<TyId> {
+        let arrays = self.array_members(members);
+        let mut untested = members.iter().copied().filter(|&m| {
+            let tested = match self.cx.ty.kind(m) {
+                TyKind::Int(_) | TyKind::Float(_) | TyKind::Str | TyKind::Bool | TyKind::Symbol => {
+                    true
+                }
+                TyKind::Array(_) => arrays == 1,
+                _ => self.cx.lit_value(m).is_some() || self.cx.class_of(m).is_some(),
+            };
+            !tested
+        });
+        let m = untested.next()?;
+        if untested.next().is_some() {
+            return None;
+        }
+        let checked = matches!(self.cx.ty.kind(m), TyKind::Dyn(..)) || self.cx.is_object_type(m);
+        (checked && self.cx.dynamic(m).is_none()).then_some(m)
+    }
+
+    /// How many of `members` are arrays.
+    fn array_members(&self, members: &[TyId]) -> usize {
+        let is_array = |m: &&TyId| matches!(self.cx.ty.kind(**m), TyKind::Array(_));
+        members.iter().filter(is_array).count()
+    }
+
     /// The test that the dynamic value in `tmp` (type `dty`) holds a `m`, and the value as `m`.
     pub(super) fn member_test(
         &mut self,
@@ -545,6 +596,16 @@ impl FnCx<'_, '_> {
                     rhs: Box::new(want),
                 };
                 self.mk(kind, b, span)
+            }
+            // The one array member (`JSXChild[]` in `VNode | string | JSXChild[]`, see
+            // `dynamic_to_members`): `Array.isArray`.
+            TyKind::Array(_) => {
+                let x = read(self);
+                if self.uses_proxy() && !self.cx.scopes[self.module].is_std {
+                    self.prelude_hir_call("__anyIsArrayProxy", vec![x], b, span)
+                } else {
+                    self.intrinsic(Intrinsic::AnyIsArray, vec![x], b, span)
+                }
             }
             _ => {
                 let (class, _) = self.cx.class_of(m)?;

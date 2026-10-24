@@ -243,7 +243,10 @@ impl FnCx<'_, '_> {
             if self.cx.ty.opt_payload(h.ty).is_some()
                 && (self.cx.union_def(inner).is_some() || !self.cx.same_layout(h.ty, exp))
             {
-                return self.option_to_option(h, exp);
+                // A `U | null` local narrowed to some members of `U` (`typeof x !== "number"`)
+                // converts as the narrowed union: the other variants are unreachable.
+                let members = self.narrowed_variants(&h);
+                return self.option_to_option_narrowed(h, exp, members);
             }
             if self.cx.ty.opt_payload(h.ty).is_none() {
                 let span = h.span;

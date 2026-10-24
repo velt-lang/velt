@@ -681,7 +681,8 @@ Optional fields and parameters (`a?: T`) hold `undefined` when left out, as in T
 so do the standard library's lookups (see above). `??`, `?.`, `!` and `x != null` treat both
 nothings alike:
 
-- `x ?? d` (default), `x?.f` / `x?.m()` (optional access; the result may be `undefined`),
+- `x ?? d` (default; `x ?? null` of a `T | null | undefined` is a `T | null`), `x?.f` /
+  `x?.m()` (optional access; the result may be `undefined`),
   `if (x != null) { … }` and early exits narrow `x` to `T` (a local or a field path of one,
   see below), and so does a truthy chain that goes on after `x?.` (`if (x?.m.has(k))
   x.m.get(k)`, `if (x?.ok())`); `switch` supports `case null` and `case undefined`. The type of `x ?? d` is `x`'s
@@ -901,12 +902,19 @@ the nullable type; `void` cannot be a member.
     promise member (`View | Promise<View>`), when no class named `Promise` is in scope.
   - `x == literal` / `x != literal` selects the literal's member.
   - `"key" in x` keeps the members that may have the key (declare it, optionally or not) and
-    `!("key" in x)` those that may lack it ([the `in` operator](#the-in-operator)).
+    `!("key" in x)` those that may lack it ([the `in` operator](#the-in-operator)). On a
+    narrowed `x` only the members left count (`typeof x === "object" && "root" in x` on a
+    union with `string` and `boolean` members).
   - `typeof` tests narrow a field path of a local too (`typeof node.text === "string"`,
     `this.label`, `h.node.text`), as in TypeScript, until the path or a part of it is
     assigned. A call between the test and a read may change the field, so each read checks
     the member again and stops the program if the field now holds another member (Node would
-    go on with the new value).
+    go on with the new value). A field narrowed to its function member can be called
+    (`typeof p.f === "function" ? p.f() : p.f`), and one narrowed to some of its members reads
+    as the union of them (with its `null` or `undefined` when no test ruled that out).
+  - A `U | null` variable narrowed to some of `U`'s members (`typeof x !== "number"`, the
+    `false` branch of a type predicate) is a value of the union of those members with its
+    `null`: `return x` where the return type is `VNode | string | null`.
   - Conditions of `if`, `while`, `&&`, `||`, `!`, ternaries and early exits narrow a local
     until it is reassigned; `a || b` narrows to the members either side allows
     (`typeof c === "string" || typeof c === "number"` leaves `c` a `string | number`);
@@ -2568,7 +2576,10 @@ instance of a generic class against that very instantiation (`Box<number>`, so a
 stops with a `TypeError` for now, #1219; Node reads any object as a record); into a
 union or a literal type such as `"red" | "green"` the value takes the first member it is: a
 `typeof` test for `number`, `string`, `boolean` and `symbol` (`k as string | symbol`),
-`instanceof` for a class, `===` for a literal), `typeof` (narrowing to `number`, `string` and `boolean`), `instanceof`, truthiness,
+`instanceof` for a class, `===` for a literal, `Array.isArray` for the union's one array member;
+a value that passes none of them converts to the union's one interface or object type member
+when it has one, checked as `x as VNode` is: `VNode | string | number` from an `any`),
+`typeof` (narrowing to `number`, `string` and `boolean`), `instanceof`, truthiness,
 `===`, `!==`, `==` and `!=` (JavaScript's loose equality: `null == undefined`, `"1" == 1`) on any
 operand whose type is `any` or `unknown` (a variable, a field, an element, a call), and
 `console.log`. An object is itself in an `any` whatever its static type was when it was

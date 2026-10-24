@@ -32,7 +32,7 @@ impl FnCx<'_, '_> {
         if let Some(h) = self.global_typeof_value(operand, span) {
             return h;
         }
-        let s = self.expr(operand, None, Want::Borrow);
+        let s = self.type_test_operand(operand);
         let s = self.param_as_any(s);
         let str_ = self.cx.ty.str_;
         let sty = s.ty;
@@ -111,7 +111,7 @@ impl FnCx<'_, '_> {
         if let Some(h) = self.global_typeof_test(operand, tag, negate, span) {
             return h;
         }
-        let s = self.expr(operand, None, Want::Borrow);
+        let s = self.type_test_operand(operand);
         let s = self.param_as_any(s);
         if self.cx.dynamic(s.ty).is_some() {
             let str_ = self.cx.ty.str_;
@@ -319,7 +319,7 @@ impl FnCx<'_, '_> {
         {
             return h;
         }
-        let s = self.expr(e, None, Want::Borrow);
+        let s = self.type_test_operand(e);
         if self.is_promise_ctor(ty) {
             return self.promise_test(s, span);
         }
@@ -474,7 +474,7 @@ impl FnCx<'_, '_> {
         let other = match self.discriminant_test(other_e, &lit, negate, span) {
             Ok(done) => return Some(LitEq::Done(done)),
             Err(Some(other)) => other,
-            Err(None) => self.expr(other_e, None, Want::Borrow),
+            Err(None) => self.type_test_operand(other_e),
         };
         let inner = self.cx.ty.core(other.ty).unwrap_or(other.ty);
         if let Some(done) = self.impossible_literal(other_e, inner, &lit, span) {
