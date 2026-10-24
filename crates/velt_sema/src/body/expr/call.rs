@@ -396,6 +396,11 @@ impl FnCx<'_, '_> {
                 && matches!(self.cx.ty.kind(*ty), TyKind::Option(_, n) if n.has_undefined())
             {
                 default = Some(self.mk(H::Lit(hir::Lit::Null), *ty, span));
+            } else if default.is_none() && i >= args.len() && self.cx.dynamic(*ty).is_some() {
+                // A left-out argument of a dynamic type is `undefined`, as for a function whose
+                // value the context typed without its `?` (`const g = d` for `d(x?: any)`).
+                let undefined = hir::Nothing::Undefined;
+                default = Some(self.dynamic_nothing(undefined, *ty, span));
             }
             ps.push(ParamSig {
                 name: format!("arg{i}"),

@@ -239,9 +239,7 @@ hidden classes and no runtime shape checks.
   `x.size++` and `x.size ??= v` (also `||=`, `&&=`) use both, as in JS: `x` is evaluated once,
   then the getter runs, then the right-hand side, then the setter (which `??=`, `||=` and `&&=`
   skip when the old value decides). The setter runs on the object `x` named before the
-  right-hand side, even when the right-hand side assigns another one to `x`. **Known gap:**
-  a getter that assigns another object to `x` itself (also in `x.size++`) makes the setter run
-  on the new one. A getter may change its object (a signal recording who read it). As a value, `x.size = v` is `v` (converted to the setter's parameter type, but
+  getter and the right-hand side ran, even when one of them assigns another one to `x`. A getter may change its object (a signal recording who read it). As a value, `x.size = v` is `v` (converted to the setter's parameter type, but
   non-null when `v` is; the getter is not read again; an object is shared, not copied) and `x.size ??= v` is the old value where it decides, else `v` (so
   non-null when `v` is). Implementations and overrides of a
   getter or setter must be accessors too. An override of only the getter of a base class's

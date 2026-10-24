@@ -33,7 +33,9 @@ function scale(xs: f64[], k: f64 = 2.0): f64[] {
   a passed `undefined`, as in JavaScript. The function applies it itself when the call starts,
   so it is the function's own default whichever way it is called: through an interface whose
   method takes `x?: any`, through a base class whose method the class overrides, through a
-  function value (`const g = d; g(undefined)`), or as a callback (`xs.map((v: any = 0) => …)`).
+  function value (`const g = d; g(undefined)`, and `g()`: a left-out argument of a dynamic
+  type is `undefined` through a function value too), or as a callback
+  (`xs.map((v: any = 0) => …)`).
   So does the default of a parameter whose type allows `undefined` (`x: number | undefined =
   5`, or `status = 302` where an interface declares `status?: number`), which is a `number` in
   the body. Any other default also applies to a passed `undefined`, tested where it is passed:
