@@ -1,0 +1,5 @@
+null object true { value: null, count: 1, name: 'a' }
+null true {"value":null,"count":1,"name":"a"}
+pending null null false
+{ name: 'root', renderFn: null, children: [ 'x' ], dom: null } null null
+[ null, null ] 2

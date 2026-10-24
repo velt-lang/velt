@@ -453,6 +453,18 @@ impl FnCx<'_, '_> {
         let ann = ann.or(decided);
         if let Some(e) = v.init.as_ref().filter(|_| ann.is_none()) {
             self.reject_untyped_init(e);
+            // `let x = null`: a variable of type `null` alone could never hold anything else
+            // (TypeScript widens it from later assignments instead).
+            if v.kind == ast::VarKind::Let && crate::body::narrow::nothing_word(e) == Some("null") {
+                self.cx.error(
+                    Diagnostic::error("cannot infer the type of `null`", e.span)
+                        .with_note("add a type annotation like `let x: T | null = null`"),
+                );
+                let init = Some(self.error_expr(e.span));
+                let local = self.declare_local(name, self.cx.ty.error, LocalKind::Let);
+                Self::push(out, S::Let { local, init }, span);
+                return;
+            }
         }
         if self.late_const_decl(v, name, ann, span, out) {
             return;

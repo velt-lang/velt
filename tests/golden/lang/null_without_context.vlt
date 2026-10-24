@@ -1,0 +1,18 @@
+// check: no leaks
+// `null` with no type to take has type `null` alone, as in TypeScript: a `const`, an object
+// literal's field, a frozen literal's field. `let x = null` still asks for a type. Expected
+// output: Node's.
+const none = null;
+const o = { value: null, count: 1, name: "a" };
+console.log(none, typeof none, none === null, o);
+console.log(o.value, o.value === null, JSON.stringify(o));
+const INERT = Object.freeze({ state: "pending" as const, value: null, hasValue: false, error: null });
+console.log(INERT.state, INERT.value, INERT.error, INERT.hasValue);
+function ctx(name: string) {
+  return { name, renderFn: null, children: [] as string[], dom: null };
+}
+const c = ctx("root");
+c.children.push("x");
+console.log(c, `${c.renderFn}`, String(c.dom));
+const pair = [null, null];
+console.log(pair, pair.length);

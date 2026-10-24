@@ -173,7 +173,10 @@ impl FnCx<'_, '_> {
                 let t = self.cx.ty.null_alone();
                 self.mk(H::Lit(hir::Lit::Null), t, span)
             }
-            Some(t) if !self.cx.ty.has_error(t) => {
+            // The context's type is broken by an error reported already (the other arm of
+            // `c ? broken : null`): nothing more to say.
+            Some(t) if self.cx.ty.has_error(t) => self.error_expr(span),
+            Some(t) => {
                 let tn = self.cx.display(t);
                 self.cx.error(
                     Diagnostic::error("mismatched types", span)
@@ -182,12 +185,11 @@ impl FnCx<'_, '_> {
                 );
                 self.error_expr(span)
             }
-            _ => {
-                self.cx.error(
-                    Diagnostic::error("cannot infer the type of `null`", span)
-                        .with_note("add a type annotation like `let x: T | null = null`"),
-                );
-                self.error_expr(span)
+            // With no type to take, its type is `null` alone, as in TypeScript (`const n = null`,
+            // `{ value: null }`), like `undefined`'s.
+            None => {
+                let t = self.cx.ty.null_alone();
+                self.mk(H::Lit(hir::Lit::Null), t, span)
             }
         }
     }

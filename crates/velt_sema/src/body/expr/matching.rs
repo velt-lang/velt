@@ -328,6 +328,22 @@ impl FnCx<'_, '_> {
         keep: bool,
         span: Span,
     ) -> hir::Expr {
+        if let Some(w) = crate::body::narrow::nothing_word(inner) {
+            // TypeScript types `null!` as `never`, a placeholder for a value set later; the
+            // check would always fail here, so it is an error, not a panic at run time.
+            let target = exp.map(|t| format!(" `{}`", self.cx.display(t)));
+            self.cx.error(
+                Diagnostic::error(format!("`{w}!` is never a value"), span)
+                    .with_note(format!(
+                        "`{w}!` stands for a value set later, but the place holds `{w}` until then; the assertion would always fail here"
+                    ))
+                    .with_note(format!(
+                        "make the type{} hold `{w}` (`T | {w}`) and check it where it is read, or start with a real value",
+                        target.unwrap_or_default()
+                    )),
+            );
+            return self.error_expr(span);
+        }
         let mut h = self.expr(inner, None, Want::Borrow);
         let payload = self.cx.ty.opt_payload(h.ty);
         if let (Want::Move, H::Global(d)) = (want, &h.kind) {
