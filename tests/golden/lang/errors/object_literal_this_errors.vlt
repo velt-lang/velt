@@ -1,0 +1,48 @@
+// `this` in object-literal methods where Velt doesn't know the object it is (#941), and the
+// methods of a literal with no expected type that it can't type.
+
+type Point = { x: number; norm(): number };
+
+function main(): void {
+  // A plain object type with a method signature: its fields hold plain functions.
+  const p: Point = {
+    x: 3,
+    norm() {
+      return this.x;
+    },
+  };
+
+  // `any` (TypeScript types `this` as `any` here too).
+  const a: any = {
+    x: 1,
+    m() {
+      return this.x;
+    },
+  };
+
+  // A method with no written result whose result depends on itself through `this`.
+  const r = {
+    n: 1,
+    loop() {
+      return this.loop();
+    },
+  };
+
+  // A parameter without a type, where nothing gives it one.
+  const q = {
+    n: 1,
+    add(k) {
+      return this.n + k;
+    },
+  };
+
+  // A method using `this` read as a value: Node calls it without the object.
+  const o = {
+    x: 1,
+    get() {
+      return this.x;
+    },
+  };
+  const detached = o.get;
+  const mapped = [1, 2].map(o.get);
+}

@@ -1,0 +1,16 @@
+object_literal_this_errors.vlt:11:14: error: `this` in an object-literal method is supported only where the literal implements an interface or has no expected type
+  = note: TypeScript allows this (`this` is the object the method is called on); here the method is stored as a plain function, which has no object to use as `this`
+  = note: declare the expected type as an interface (`interface T { m(): R }`), or use the object's variable instead of `this`
+object_literal_this_errors.vlt:19:14: error: `this` in an object-literal method is supported only where the literal implements an interface or has no expected type
+  = note: TypeScript allows this (`this` is the object the method is called on); here the method is stored as a plain function, which has no object to use as `this`
+  = note: declare the expected type as an interface (`interface T { m(): R }`), or use the object's variable instead of `this`
+object_literal_this_errors.vlt:26:5: error: the result type of method `loop` cannot be inferred: it depends on its own result through `this`
+  = note: write it: `loop(): T`
+object_literal_this_errors.vlt:34:9: error: parameter `k` of method `add` needs a type: the object literal has no expected type
+  = note: write its type, or annotate the literal with an interface that declares the method
+object_literal_this_errors.vlt:46:20: error: the method `get` uses `this`, so it cannot be read as a value
+  = note: TypeScript allows this, but `this` is then the object the function is called on, if any (`undefined` for a plain call, which throws a TypeError in strict mode)
+  = note: call the method on its object, or wrap the call in an arrow function: `(...) => o.get(...)`
+object_literal_this_errors.vlt:47:29: error: the method `get` uses `this`, so it cannot be read as a value
+  = note: TypeScript allows this, but `this` is then the object the function is called on, if any (`undefined` for a plain call, which throws a TypeError in strict mode)
+  = note: call the method on its object, or wrap the call in an arrow function: `(...) => o.get(...)`

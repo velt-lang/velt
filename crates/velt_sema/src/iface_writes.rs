@@ -57,13 +57,15 @@ pub(crate) enum SetterSrc {
         ty: TyId,
     },
     /// An object literal's `set f(v)`: the function value in field `index` of the literal's
-    /// struct `d` (of function type `fn_ty`, taking a `param`).
+    /// struct `d` (of function type `fn_ty`, taking a `param`, after the object as interface
+    /// value `this.0` through implementation `this.1` when it uses `this`).
     Call {
         d: DefId,
         self_ty: TyId,
         index: u32,
         fn_ty: TyId,
         param: TyId,
+        this: Option<(TyId, u32)>,
     },
     /// Class `d`'s `set name(v)` (or the trampoline dispatching to it): the setter slot itself.
     /// Only for writes of the whole field: a part write through a class's accessor is an error
@@ -406,7 +408,8 @@ impl Ctx<'_> {
                     index,
                     fn_ty,
                     param,
-                } => defs.push(self.literal_setter(d, self_ty, (index, fn_ty), param)),
+                    this,
+                } => defs.push(self.literal_setter(d, self_ty, (index, fn_ty), param, this)),
                 SetterSrc::Method { d, name, .. } | SetterSrc::GetterOnly { d, name, .. }
                     if self.iface_writes.parts.contains_key(&(iface, k)) =>
                 {
@@ -486,6 +489,7 @@ impl Ctx<'_> {
         self_ty: TyId,
         (index, fn_ty): (u32, TyId),
         param: TyId,
+        this: Option<(TyId, u32)>,
     ) -> DefId {
         let host = Host::adt(self, d);
         let name = format!("{}.<set>", self.adt(d).map_or("", |a| &a.qual_name));
@@ -502,7 +506,7 @@ impl Ctx<'_> {
             default: None,
         }];
         let unit = self.ty.unit;
-        let target = Target::Field { index, fn_ty };
+        let target = Target::Field { index, fn_ty, this };
         synth_method(self, &host, self_ty, name, params, unit, false, target)
     }
 }

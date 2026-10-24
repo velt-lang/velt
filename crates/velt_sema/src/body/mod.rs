@@ -486,6 +486,9 @@ pub(crate) struct FnCx<'a, 'm> {
     /// it, and is written at `.2` (`expr/iface_object.rs`): a closure written there records
     /// what it throws for the slot before its error type is computed.
     pub literal_slot: Option<(DefId, u32, Span)>,
+    /// The object-literal method written at `.0` takes the object it is called on, of type
+    /// `.1`, as its `this` parameter (`expr/literal_this.rs`).
+    pub method_this: Option<(Span, TyId)>,
     /// Hidden temporaries of the call being checked, evaluated before it (`spread_args`): the
     /// call's expression is a block with these first (`FnCx::expr`).
     pub call_temps: Vec<hir::Stmt>,
@@ -595,6 +598,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             std_callback: None,
             promise_callback: false,
             literal_slot: None,
+            method_this: None,
             call_temps: vec![],
             held_recheck: Vec::new(),
             callee_effects: None,

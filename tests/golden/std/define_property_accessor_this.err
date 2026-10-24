@@ -1,1 +1,1 @@
-`this` in the object-literal method `get` is not supported yet
+`this` in an accessor `Object.defineProperty` gives `value` on `c` is not supported yet
