@@ -305,12 +305,26 @@ impl FnCx<'_, '_> {
     /// Is `obj` a `const` of this function? Nothing evaluated later can make it name another
     /// object, so it needs no temporary (one would count a reference per statement).
     fn const_local(&self, obj: &hir::Expr) -> bool {
-        match obj.kind {
-            H::Local(l, _) => matches!(
-                self.f.kinds.get(l.0 as usize),
-                Some(LocalKind::Const | LocalKind::Using)
-            ),
-            _ => false,
+        let H::Local(l, _) = obj.kind else {
+            return false;
+        };
+        // A capture of an enclosing function's `const` is one too.
+        let (mut frame, mut l) = (&self.f, l);
+        let mut outer = self.outer.iter().rev();
+        loop {
+            match frame.kinds.get(l.0 as usize) {
+                Some(LocalKind::Const | LocalKind::Using) => return true,
+                Some(LocalKind::Capture) => {
+                    let Some(c) = frame.captures.iter().find(|c| c.inner == l) else {
+                        return false;
+                    };
+                    let Some(up) = outer.next() else {
+                        return false;
+                    };
+                    (frame, l) = (up, c.outer);
+                }
+                _ => return false,
+            }
         }
     }
 
