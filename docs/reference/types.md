@@ -2617,7 +2617,15 @@ a time, whatever object type it is converted to), so `===`, `Map`, `Set` and `in
 value. Back in an `any` (and for `WeakMap`, `WeakSet` and `WeakRef`, `in`, `Object.keys`,
 `for...in` and `JSON.stringify`) the view is the object itself: a `WeakMap` entry lives as long
 as the object, and `deref()` gives its view again. Destructuring (`const { type, props } = vnode`, also in parameters and `for...of`),
-spreads (`{ ...item }`) and keyed reads read the object's fields at that moment. A union with
+spreads (`{ ...item }`) and keyed reads read the object's fields at that moment. A spread or an
+object rest pattern (`const { name, ...rest } = item`) copies the fields of the view's type only
+(`{ ...item }` of a `Product` viewed as `Item` has `name` and `price`, not `stock`; Node keeps
+every own property), since an object type has a fixed shape; `JSON.stringify(item)` shows all
+of the object's members. A view is copied like the object it views: `item.clone()` is a view of
+a copy of the object, and a view sent to another thread (`spawn`, a channel, `shared(...)`, a
+`Mutex`'s value, a task's result) while the object is still used here is a view of the copy
+there ([Async](async.md)), so a write there does not reach the object here, and converting the
+object here again gives a view of its own. A union with
 one object type member (`VNode | string | null`) converts an object that is no `VNode` the same
 way. In a program without proxies, and into a class or an interface with methods, an object of
 another type stays a `TypeError`.
