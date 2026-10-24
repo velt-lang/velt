@@ -423,6 +423,7 @@ impl FnCx<'_, '_> {
         let d =
             self.cx
                 .hidden_struct_def(&format!("{iname} literal"), &field_tys, ps.len(), module);
+        self.cx.literal_structs.insert(d);
         // Methods using `this` get the object itself, so the interface value must hold it
         // rather than a copy: the literal is then an object (a class instance).
         if values.iter().any(|v| v.2) {
