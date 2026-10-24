@@ -58,13 +58,33 @@ pub unsafe extern "C" fn velt_rt_str_eq_bytes(
     u8::from((*s).as_bytes() == (*b).as_bytes())
 }
 
-/// `b[start..end]` with JS relative positions (negative ones count from the end, both clamped
-/// to the bytes; an inverted range is empty), as `slice` takes them.
-unsafe fn range(b: &crate::bytes::VeltBytes, start: i64, end: i64) -> &[u8] {
-    let bytes = b.as_bytes();
-    let start = crate::bytes_ops::relative(start, bytes.len());
-    let end = crate::bytes_ops::relative(end, bytes.len());
-    &bytes[start..end.max(start)]
+/// Whether `s` holds the bytes `b[start..end]` (JS relative positions: negative ones count
+/// from the end, both clamped to the bytes, an inverted range is empty), compared with `eq`.
+/// The length is tested before either side is read (most comparisons a server makes differ in
+/// length), and no other call is made on the way, so that test needs no stack frame.
+#[inline(always)]
+unsafe fn eq_range(
+    s: &crate::str::VeltStr,
+    b: &crate::bytes::VeltBytes,
+    start: i64,
+    end: i64,
+    eq: fn(&[u8], &[u8]) -> bool,
+) -> u8 {
+    let len = b.len as usize;
+    // A negative position is above any length as a `u64`: two comparisons find the positions
+    // a server passes, inside its buffer.
+    let (start, end) = if (start as u64) <= (end as u64) && (end as u64) <= b.len {
+        (start as usize, end as usize)
+    } else {
+        // Rare: kept a branch, not computed on every call.
+        std::hint::cold_path();
+        let start = crate::bytes_ops::relative(start, len);
+        (start, crate::bytes_ops::relative(end, len).max(start))
+    };
+    if s.len() != end - start {
+        return 0;
+    }
+    u8::from(eq(s.as_bytes(), b.as_bytes().get_unchecked(start..end)))
 }
 
 /// Whether string `s`'s UTF-8 bytes are `b[start..end]` (relative positions): `u8[]`'s
@@ -77,7 +97,7 @@ pub unsafe extern "C" fn velt_rt_str_eq_range(
     start: i64,
     end: i64,
 ) -> u8 {
-    u8::from((*s).as_bytes() == range(&*b, start, end))
+    eq_range(&*s, &*b, start, end, |x, y| x == y)
 }
 
 /// [`velt_rt_str_eq_range`] with ASCII letters compared regardless of case (header names).
@@ -88,7 +108,7 @@ pub unsafe extern "C" fn velt_rt_str_eq_range_ci(
     start: i64,
     end: i64,
 ) -> u8 {
-    u8::from((*s).as_bytes().eq_ignore_ascii_case(range(&*b, start, end)))
+    eq_range(&*s, &*b, start, end, |x, y| x.eq_ignore_ascii_case(y))
 }
 
 #[cfg(test)]

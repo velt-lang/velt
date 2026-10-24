@@ -526,6 +526,7 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::AnyStrictEq
         | I::AnyLooseEq
         | I::StrLen
+        | I::StrByteLen
         | I::Exit
         | I::Panic
         | I::ArrayWithCapacity

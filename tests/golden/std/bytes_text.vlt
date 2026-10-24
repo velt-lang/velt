@@ -42,3 +42,8 @@ function fillK() {
 }
 fillK();
 console.log(K);
+
+// Buffer.byteLength is read from the string (inline strings hold up to 23 bytes).
+const longer = "x".repeat(40) + "é";
+console.log(Buffer.byteLength(""), Buffer.byteLength("é😀"), Buffer.byteLength(longer));
+console.log(Buffer.byteLength(high), Buffer.byteLength("a".repeat(23)), Buffer.byteLength("a".repeat(24)));

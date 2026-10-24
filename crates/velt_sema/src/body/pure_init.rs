@@ -604,6 +604,7 @@ fn effect_of(i: Intrinsic) -> Option<String> {
         I::ToString
         | I::StrConcat
         | I::StrLen
+        | I::StrByteLen
         | I::StrCharCodeAt
         | I::Panic
         | I::ArrayWithCapacity

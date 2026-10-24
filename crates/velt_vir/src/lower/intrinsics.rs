@@ -81,6 +81,11 @@ impl FnLower<'_, '_> {
                 let v = self.projection_base(a, BoxHold::No);
                 self.str_len(v)
             }
+            (I::StrByteLen, [a]) => {
+                let v = self.projection_base(a, BoxHold::No);
+                let p = self.operand_place(v, Ty::Agg(STR_AGG));
+                self.str_bytes(&p)
+            }
             (I::StrCharCodeAt, [s, i]) => {
                 let hold = match self.may_write(i) {
                     true => BoxHold::Yes,

@@ -135,8 +135,9 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
   lets LLVM vectorize index loops badly). `charCodeAt(i)` tests the form: an inline string with
   bit 0x40 of byte 23 clear, or a static/heap string whose halves of `w1` are equal, is ASCII,
   and the byte at `i` is loaded inline (bounds-checked against the length); any other string
-  calls `velt_rt_str_char_code_at`. Strings are passed to the runtime by pointer for everything
-  else. Test a form through byte 23: inline appends write single bytes
+  calls `velt_rt_str_char_code_at`. The byte length (`Buffer.byteLength(s)`, intrinsic
+  `StrByteLen`) is read inline too: `byte23 ≥ 0x80 ? byte23 & 0x1f : w1 & 0xffffffff`. Strings
+  are passed to the runtime by pointer for everything else. Test a form through byte 23: inline appends write single bytes
   into `w2`, and reading `w2` as a word right after would stall on store forwarding.
 - Invariants, checked by a **debug** runtime on every append (each appended piece is canonical
   WTF-8 with the unit and lone counts it is given, and the seam is canonical: O(piece), never a
@@ -209,7 +210,7 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
 | `velt_rt_str_drop` | `(VeltStr* s)` | count −1 for heap strings (frees at 0), then zeroes `*s` |
 | `velt_rt_str_cmp` | `(const VeltStr* a, const VeltStr* b) -> int32_t` | -1 / 0 / 1 in UTF-16 code-unit order (`<`, `sort()`; #377 phase 2b): `memcmp` for two ASCII strings, else byte order corrected where it differs from code-unit order (design/strings.md "The ordering rule") |
 | `velt_rt_str_char_code_at` | `(const VeltStr* s, int64_t i) -> int64_t` | the UTF-16 code unit at `i` (a supplementary character gives its high or low surrogate), -1 out of range; generated code calls it for non-ASCII strings only |
-| `velt_rt_str_byte_length` | `(const VeltStr* s) -> uint64_t` | the UTF-8 length (`Buffer.byteLength(s)`): the stored byte length, O(1) |
+| `velt_rt_str_byte_length` | `(const VeltStr* s) -> uint64_t` | the UTF-8 length: the stored byte length, O(1) (generated code reads it inline, above) |
 | `velt_rt_str_hash` | `(const VeltStr* s) -> uint64_t` | hash of the bytes (`Map`/`Set` keys; fixed seed) |
 
 ## Counted objects [semantics stage 2]

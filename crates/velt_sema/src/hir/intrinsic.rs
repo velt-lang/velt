@@ -16,6 +16,8 @@ pub enum Intrinsic {
     StrConcat,
     /// `s.length` → usize (byte length in POC).
     StrLen,
+    /// `Buffer.byteLength(s)` → usize: the UTF-8 length, which a string stores (no call).
+    StrByteLen,
     /// `process.exit(code: i32)` → Never.
     Exit,
     /// `panic(msg: string)` → Never.

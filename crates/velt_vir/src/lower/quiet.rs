@@ -136,6 +136,7 @@ fn pure_intrinsic(i: hir::Intrinsic) -> bool {
         i,
         I::ArrayLen
             | I::StrLen
+            | I::StrByteLen
             | I::StrCharCodeAt
             | I::Sqrt
             | I::Floor

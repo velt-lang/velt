@@ -18,6 +18,7 @@ pub(super) fn intrinsic_named(name: &str) -> Option<Intrinsic> {
         "to_string" => I::ToString,
         "str_concat" => I::StrConcat,
         "str_len" => I::StrLen,
+        "str_byte_len" => I::StrByteLen,
         "str_char_code_at" => I::StrCharCodeAt,
         "exit" => I::Exit,
         "panic" => I::Panic,
@@ -215,7 +216,7 @@ impl FnCx<'_, '_> {
                 (vec![(f64_, C)], f64_, false)
             }
             I::StrConcat => (vec![(str_, B), (str_, B)], str_, false),
-            I::StrLen => (vec![(str_, B)], usize_, false),
+            I::StrLen | I::StrByteLen => (vec![(str_, B)], usize_, false),
             I::StrCharCodeAt => (vec![(str_, B), (ty.i64, C)], ty.i64, false),
             I::Exit => (vec![(ty.i32, C)], ty.never, false),
             I::Panic => (vec![(str_, B)], ty.never, false),
