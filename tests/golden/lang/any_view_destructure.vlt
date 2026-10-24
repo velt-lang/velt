@@ -12,12 +12,16 @@ class Element {
 }
 
 // A program with proxies: an `any` holding another type converts to `VNode` as a view.
-const traced = new Proxy({ type: "span", props: { title: "traced", count: 7 } }, {
-  get(t: any, k: any, r: any): any {
-    console.log("get", k);
-    return Reflect.get(t, k, r);
-  },
-}) as VNode;
+const traced =
+  new Proxy(
+    { type: "span", props: { title: "traced", count: 7 } },
+    {
+      get(t: any, k: any, r: any): any {
+        console.log("get", k);
+        return Reflect.get(t, k, r);
+      },
+    },
+  ) as VNode;
 
 function node(x: any): VNode {
   return x as VNode;
@@ -38,6 +42,7 @@ console.log(t2, title, count, key === undefined);
 function render({ type, props }: VNode): string {
   return `<${type} title=${props.title}>${props.count}`;
 }
+
 for (const n of arr) {
   console.log(render(n));
 }
@@ -68,4 +73,5 @@ async function later(v: VNode): Promise<string> {
   const { type, props } = v;
   return type + ":" + props.title;
 }
+
 later(arr[2]).then((s) => console.log(s));

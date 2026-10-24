@@ -9,14 +9,18 @@ class Product {
   stock = 4;
 }
 
-const traced = new Proxy({ name: "proxy", price: 1 }, {
-  get(t: any, k: any, r: any): any {
-    if (typeof k === "string") {
-      console.log("get", k);
-    }
-    return Reflect.get(t, k, r);
-  },
-}) as Item;
+const traced =
+  new Proxy(
+    { name: "proxy", price: 1 },
+    {
+      get(t: any, k: any, r: any): any {
+        if (typeof k === "string") {
+          console.log("get", k);
+        }
+        return Reflect.get(t, k, r);
+      },
+    },
+  ) as Item;
 
 function view(x: any): Item {
   return x as Item;
@@ -39,9 +43,11 @@ console.log(price, others.name, others.tags?.length);
 function read(k: "name" | "price", x: Item): string | number {
   return x[k];
 }
+
 function write(k: "price", x: Item, n: number): void {
   x[k] = n;
 }
+
 console.log(read("name", v), read("price", lit));
 write("price", v, 31);
 console.log(v.price, (p as Product).price);
