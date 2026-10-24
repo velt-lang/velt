@@ -222,10 +222,11 @@ impl Found {
         {
             return Err(Some(
                 Diagnostic::error(
-                    format!("`this` in an accessor `Object.defineProperty` gives `{k}` on `{o}` is not supported yet"),
+                    format!("`this` in an accessor that `Object.defineProperty` defines for `{k}` on `{o}` is not supported yet"),
                     f.span,
                 )
-                .with_note(format!("the accessor replaces one of the literal's, as a function held in a variable, which has no object: use `{o}` instead of `this`")),
+                .with_note("TypeScript allows this (`this` is the object the accessor is called on); here the accessor replaces one of the literal's as a plain function, which has no object to use as `this`")
+                .with_note(format!("use the object's variable instead of `this`: `{o}`")),
             ));
         }
         if d.data {

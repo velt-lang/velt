@@ -96,22 +96,6 @@ pub(crate) fn undefined_only(cx: &Ctx, ty: TyId) -> Option<TyId> {
 /// type (`any`, `unknown`) holds its own `undefined` instead, so that
 /// `p === undefined`, `typeof p` and printing see `undefined`. A parameter whose function
 /// applies its default itself (`in_callee`) is passed `undefined` too.
-/// Default `e` of parameter `optional` (written `x?: T`) or not, of type `ty`, of a method
-/// of the interface an object literal with no expected type implements
-/// (`expr/literal_iface.rs`): checked as an interface method's.
-pub(crate) fn literal_method_default(
-    cx: &mut Ctx,
-    module: usize,
-    (e, optional): (&ast::Expr, bool),
-    ty: TyId,
-    fn_name: &str,
-) -> crate::hir::Expr {
-    match optional {
-        true => optional_default(cx, module, &[], e, ty),
-        false => check_default(cx, module, &[], fn_name, None, e, ty),
-    }
-}
-
 fn optional_default(
     cx: &mut Ctx,
     module: usize,
@@ -135,6 +119,22 @@ fn optional_default(
     };
     cx.display_params = saved;
     h
+}
+
+/// Default `e` of parameter `optional` (written `x?: T`) or not, of type `ty`, of a method
+/// of the interface an object literal with no expected type implements
+/// (`expr/literal_iface.rs`): checked as an interface method's.
+pub(crate) fn literal_method_default(
+    cx: &mut Ctx,
+    module: usize,
+    (e, optional): (&ast::Expr, bool),
+    ty: TyId,
+    fn_name: &str,
+) -> crate::hir::Expr {
+    match optional {
+        true => optional_default(cx, module, &[], e, ty),
+        false => check_default(cx, module, &[], fn_name, None, e, ty),
+    }
 }
 
 /// A default of a parameter whose type allows `undefined`: JavaScript applies it to a passed
