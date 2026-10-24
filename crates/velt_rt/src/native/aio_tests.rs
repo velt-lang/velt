@@ -114,17 +114,26 @@ fn a_tcp_stream_echoes_through_tokios_traits() {
 
 #[test]
 fn a_refused_connection_is_an_io_error_of_its_kind() {
-    // A port nobody listens on: bind, then close.
-    let addr = {
-        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        l.local_addr().unwrap().to_string()
-    };
+    // A port bound but never listening, kept for the whole test: Linux, macOS and Windows refuse
+    // connections to it (a closed port could be taken by another process meanwhile).
+    use socket2::{Domain, Socket, Type};
+    let socket = Socket::new(Domain::IPV4, Type::STREAM, None).unwrap();
+    socket
+        .bind(&std::net::SocketAddr::from(([127, 0, 0, 1], 0)).into())
+        .unwrap();
+    let addr = socket
+        .local_addr()
+        .unwrap()
+        .as_socket()
+        .unwrap()
+        .to_string();
     let kind = run(async move {
         match sdk::net::TcpStream::connect(&addr).await {
             Ok(_) => None,
             Err(e) => Some(e.kind()),
         }
     });
+    drop(socket);
     assert_eq!(kind, Some(std::io::ErrorKind::ConnectionRefused));
 }
 
@@ -152,7 +161,7 @@ fn a_spawned_task_runs_and_a_wrapped_waker_wakes_it() {
             let _ = tx.send(7);
         });
     });
-    assert_eq!(rx.recv_timeout(Duration::from_secs(5)).ok(), Some(7));
+    assert_eq!(rx.recv_timeout(Duration::from_secs(60)).ok(), Some(7));
 }
 
 #[test]

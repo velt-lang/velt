@@ -6,6 +6,7 @@
 
 use super::fake::block_on_fut;
 use crate::task::compiled::{Compiled, Inline};
+use crate::task::leaf::new_leaf;
 use crate::task::local::{
     velt_rt_fut_box, velt_rt_fut_detach, velt_rt_fut_start, velt_rt_futs_handled,
 };
@@ -20,6 +21,7 @@ use std::ptr::null_mut;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::task::{Context, Poll, Waker};
+use std::thread;
 use std::time::{Duration, Instant};
 
 /// Events of one test, in order (each test uses its own ids).
@@ -37,7 +39,59 @@ fn events(ids: std::ops::Range<i64>) -> Vec<(i64, &'static str)> {
         .collect()
 }
 
+/// A gate per id: an external event the test sends (`open`), so the order of events comes from
+/// what the test observed, not from timers outlasting each other under load.
+struct Gate(Mutex<(bool, Option<Waker>)>);
+
+static GATES: [Gate; 64] = [const { Gate(Mutex::new((false, None))) }; 64];
+
+fn open(id: i64) {
+    let waker = {
+        let mut g = GATES[id as usize].0.lock().unwrap();
+        g.0 = true;
+        g.1.take()
+    };
+    if let Some(w) = waker {
+        w.wake();
+    }
+}
+
+/// `await gate(id)`: pending (counted as external I/O, so the process stays alive) until `open(id)`.
+fn gate(id: i64) -> *mut VeltFut {
+    new_leaf(std::future::poll_fn(move |cx| {
+        let mut g = GATES[id as usize].0.lock().unwrap();
+        if g.0 {
+            Poll::Ready(())
+        } else {
+            g.1 = Some(cx.waker().clone());
+            Poll::Pending
+        }
+    }))
+}
+
+/// Hang guard: if what the test waits for never happens (the behaviour broke), open its gates
+/// after a minute so the test fails on its next check instead of hanging.
+fn open_after_a_minute(ids: &'static [i64]) {
+    thread::spawn(move || {
+        thread::sleep(Duration::from_secs(60));
+        ids.iter().copied().for_each(open);
+    });
+}
+
+/// Waits (a minute at most, a hang guard) until `id`'s events include `what`.
+fn wait_for(ids: std::ops::Range<i64>, what: (i64, &'static str)) {
+    let t = Instant::now();
+    while !events(ids.clone()).contains(&what) {
+        assert!(t.elapsed() < Duration::from_secs(60), "no {what:?}");
+        thread::sleep(Duration::from_millis(1));
+    }
+}
+
+/// `job`'s `ms` for a job that waits for its gate instead of a timer.
+const GATED: i64 = -1;
+
 // async function job(id: i64, ms: i64): i64 { log(id, "start"); await sleep(ms); log(id, "end"); return id; }
+// (with ms == GATED: `await gate(id)` instead of the sleep)
 #[repr(C)]
 struct Job {
     result: i64,
@@ -51,7 +105,11 @@ unsafe extern "C" fn job_poll(s: *mut u8, cx: *mut c_void) -> u32 {
     let st = &mut *(s as *mut Job);
     if st.tag == 0 {
         log(st.id, "start");
-        st.sleep = velt_rt_sleep(st.ms);
+        st.sleep = if st.ms == GATED {
+            gate(st.id)
+        } else {
+            velt_rt_sleep(st.ms)
+        };
         st.tag = 1;
     }
     if velt_rt_fut_poll(st.sleep, cx) == PENDING {
@@ -64,12 +122,14 @@ unsafe extern "C" fn job_poll(s: *mut u8, cx: *mut c_void) -> u32 {
     READY
 }
 
-static JOB_DROPS: AtomicUsize = AtomicUsize::new(0);
+/// Jobs dropped while still running (cancelled), per id: tests run in parallel, so each counts
+/// only its own ids.
+static JOB_CANCELS: [AtomicUsize; 64] = [const { AtomicUsize::new(0) }; 64];
 
 unsafe extern "C" fn job_drop(s: *mut u8) {
     let st = &mut *(s as *mut Job);
-    JOB_DROPS.fetch_add(1, Ordering::SeqCst);
     if st.tag == 1 {
+        JOB_CANCELS[st.id as usize].fetch_add(1, Ordering::SeqCst);
         velt_rt_fut_drop(st.sleep);
     }
 }
@@ -103,8 +163,8 @@ fn started_job(id: i64, ms: i64) -> *mut VeltFut {
     f
 }
 
-// async function main() { const a = job(1, 40); log(0, "a"); const b = job(2, 10); log(0, "b");
-//   await sleep(70); log(0, "slept"); return (await a) * 10 + (await b); }
+// async function main() { const a = job(1, GATED); log(0, "a"); const b = job(2, GATED);
+//   log(0, "b"); await gate(0); log(0, "slept"); return (await a) * 10 + (await b); }
 #[repr(C)]
 struct Main {
     result: i64,
@@ -126,11 +186,11 @@ unsafe fn take(f: *mut VeltFut, cx: *mut c_void) -> Option<i64> {
 unsafe extern "C" fn main_poll(s: *mut u8, cx: *mut c_void) -> u32 {
     let st = &mut *(s as *mut Main);
     if st.tag == 0 {
-        st.a = started_job(1, 40);
+        st.a = started_job(1, GATED);
         log(0, "a");
-        st.b = started_job(2, 10);
+        st.b = started_job(2, GATED);
         log(0, "b");
-        st.sleep = velt_rt_sleep(70);
+        st.sleep = gate(0);
         st.tag = 1;
     }
     if st.tag == 1 {
@@ -142,7 +202,7 @@ unsafe extern "C" fn main_poll(s: *mut u8, cx: *mut c_void) -> u32 {
         st.tag = 2;
     }
     let (Some(a), Some(b)) = (take(st.a, cx), take(st.b, cx)) else {
-        unreachable!("both jobs finished during the sleep");
+        unreachable!("both jobs finished before the gate opened");
     };
     st.result = a * 10 + b;
     READY
@@ -157,7 +217,19 @@ fn started_promises_run_now_and_progress_while_the_creator_waits() {
         b: null_mut(),
         sleep: null_mut(),
     };
+    // While main waits for its gate, the jobs it started progress: each ends as soon as its own
+    // gate opens, in the order the test opens them (job 2 first).
+    open_after_a_minute(&[0, 1, 2]);
+    let driver = thread::spawn(|| {
+        wait_for(0..3, (0, "b"));
+        open(2);
+        wait_for(0..3, (2, "end"));
+        open(1);
+        wait_for(0..3, (1, "end"));
+        open(0);
+    });
     unsafe { velt_rt_block_on(main_poll, &mut st as *mut Main as *mut u8) };
+    driver.join().unwrap();
     assert_eq!(st.result, 12);
     let expected = [
         (1, "start"),
@@ -171,9 +243,9 @@ fn started_promises_run_now_and_progress_while_the_creator_waits() {
     assert_eq!(events(0..3), expected);
 }
 
-// async function fire() { job(10, 20) is started and dropped at once; return 0; }
+// async function fire() { job(10, GATED) is started and dropped at once; return 0; }
 unsafe extern "C" fn fire_poll(s: *mut u8, _: *mut c_void) -> u32 {
-    velt_rt_fut_drop(started_job(10, 20));
+    velt_rt_fut_drop(started_job(10, GATED));
     *(s as *mut i64) = 0;
     READY
 }
@@ -181,8 +253,11 @@ unsafe extern "C" fn fire_poll(s: *mut u8, _: *mut c_void) -> u32 {
 #[test]
 fn a_dropped_started_promise_runs_to_completion() {
     let mut st = [0i64; 2];
+    // The job waits for its gate: main returns without waiting for it.
+    open_after_a_minute(&[10]);
     unsafe { velt_rt_block_on(fire_poll, st.as_mut_ptr() as *mut u8) };
     assert_eq!(events(10..11), [(10, "start")]);
+    open(10);
     let t = Instant::now();
     while ORPHAN_RESULT_DROPS.load(Ordering::SeqCst) == 0 {
         assert!(
@@ -276,11 +351,11 @@ fn outside_a_task_a_promise_stays_lazy() {
     assert_eq!(events(20..21), [(20, "start"), (20, "end")]);
 }
 
-// async function hold() { const p = job(30, 10_000); await never; }
+// async function hold() { const p = job(30, GATED); await never; } (its gate never opens)
 unsafe extern "C" fn hold_poll(s: *mut u8, _: *mut c_void) -> u32 {
     let st = &mut *(s as *mut [*mut VeltFut; 2]);
     if st[1].is_null() {
-        st[1] = started_job(30, 10_000);
+        st[1] = started_job(30, GATED);
     }
     PENDING
 }
@@ -291,7 +366,6 @@ unsafe extern "C" fn hold_drop(s: *mut u8) {
 
 #[test]
 fn cancelling_a_task_cancels_its_unfinished_promises() {
-    let drops = JOB_DROPS.load(Ordering::SeqCst);
     let init = [null_mut::<VeltFut>(); 2];
     let _rt = runtime().enter();
     {
@@ -310,17 +384,17 @@ fn cancelling_a_task_cancels_its_unfinished_promises() {
         assert_eq!(events(30..31), [(30, "start")]);
     }
     // Dropping the task dropped the handle (detach), then cancelled the running promise.
-    assert_eq!(JOB_DROPS.load(Ordering::SeqCst), drops + 1);
+    assert_eq!(JOB_CANCELS[30].load(Ordering::SeqCst), 1);
 }
 
-// async function first() { return await Promise.race([job(41, 500), job(42, 5), job(43, 30)]); }
+// async function first() { return await Promise.race([job(41, GATED), job(42, 5), job(43, GATED)]); }
 unsafe extern "C" fn race_poll(s: *mut u8, cx: *mut c_void) -> u32 {
     let st = &mut *(s as *mut [i64; 2]);
     if st[1] == 0 {
         let futs = [
-            started_job(41, 500),
+            started_job(41, GATED),
             started_job(42, 5),
-            started_job(43, 30),
+            started_job(43, GATED),
         ];
         st[1] = velt_rt_race(futs.as_ptr(), 3, 8) as i64;
     }
@@ -336,15 +410,17 @@ unsafe extern "C" fn race_poll(s: *mut u8, cx: *mut c_void) -> u32 {
 #[test]
 fn race_takes_the_first_result_and_the_losers_keep_running() {
     let mut st = [0i64; 2];
-    let t = Instant::now();
+    // The losers wait for their gates, which open only after the race settled.
+    open_after_a_minute(&[41, 43]);
     unsafe { velt_rt_block_on(race_poll, st.as_mut_ptr() as *mut u8) };
     assert_eq!(st[0], 42);
-    // The race settled with the first result, before the slowest loser ended (no wall-clock
-    // bound: timers are coarse on Windows and tests run in parallel).
     assert!(
-        !events(41..44).contains(&(41, "end")),
+        !events(41..44).contains(&(41, "end")) && !events(41..44).contains(&(43, "end")),
         "the race waited for a loser"
     );
+    open(41);
+    open(43);
+    let t = Instant::now();
     while events(41..44).len() < 6 {
         assert!(
             t.elapsed() < Duration::from_secs(60),
