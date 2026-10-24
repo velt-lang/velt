@@ -423,6 +423,10 @@ impl Ctx<'_> {
                 let Some(xt) = self.known_type(xt, env, "a mapped type", x.span) else {
                     return self.ty.error;
                 };
+                // Over `any`, `any`, as the utility types are (`PropsAccessor<any>`).
+                if self.dynamic(xt) == Some(crate::any::Dynamic::Any) {
+                    return xt;
+                }
                 // Over a type parameter, a homomorphic mapped type distributes over a union
                 // (`null` and `undefined` stay) and gives a primitive as it is.
                 if let Some(name) = naked_param(x, env) {
