@@ -136,6 +136,8 @@ mod supers;
 mod symbol_keys;
 mod sync;
 pub(crate) mod tasks;
+mod literal_iface;
+mod literal_this;
 mod this_param;
 mod this_type;
 mod three_state;
