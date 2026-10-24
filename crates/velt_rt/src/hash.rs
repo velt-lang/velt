@@ -58,23 +58,26 @@ pub unsafe extern "C" fn velt_rt_str_eq_bytes(
     u8::from((*s).as_bytes() == (*b).as_bytes())
 }
 
-/// `b[start..end]`, or `None` when the range is not inside `b`.
-unsafe fn range(b: &crate::bytes::VeltBytes, start: u64, end: u64) -> Option<&[u8]> {
+/// `b[start..end]` with JS relative positions (negative ones count from the end, both clamped
+/// to the bytes; an inverted range is empty), as `slice` takes them.
+unsafe fn range(b: &crate::bytes::VeltBytes, start: i64, end: i64) -> &[u8] {
     let bytes = b.as_bytes();
-    let (start, end) = (usize::try_from(start).ok()?, usize::try_from(end).ok()?);
-    bytes.get(start..end)
+    let start = crate::bytes_ops::relative(start, bytes.len());
+    let end = crate::bytes_ops::relative(end, bytes.len());
+    &bytes[start..end.max(start)]
 }
 
-/// Whether string `s`'s UTF-8 bytes are `b[start..end]` (an HTTP server comparing a path or a
-/// method in its read buffer, without making a string); false for a range outside `b`.
+/// Whether string `s`'s UTF-8 bytes are `b[start..end]` (relative positions): `u8[]`'s
+/// `utf8Equals`, a server comparing a path or a method in its read buffer without making a
+/// string.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_str_eq_range(
     s: *const crate::str::VeltStr,
     b: *const crate::bytes::VeltBytes,
-    start: u64,
-    end: u64,
+    start: i64,
+    end: i64,
 ) -> u8 {
-    u8::from(range(&*b, start, end).is_some_and(|r| (*s).as_bytes() == r))
+    u8::from((*s).as_bytes() == range(&*b, start, end))
 }
 
 /// [`velt_rt_str_eq_range`] with ASCII letters compared regardless of case (header names).
@@ -82,10 +85,10 @@ pub unsafe extern "C" fn velt_rt_str_eq_range(
 pub unsafe extern "C" fn velt_rt_str_eq_range_ci(
     s: *const crate::str::VeltStr,
     b: *const crate::bytes::VeltBytes,
-    start: u64,
-    end: u64,
+    start: i64,
+    end: i64,
 ) -> u8 {
-    u8::from(range(&*b, start, end).is_some_and(|r| (*s).as_bytes().eq_ignore_ascii_case(r)))
+    u8::from((*s).as_bytes().eq_ignore_ascii_case(range(&*b, start, end)))
 }
 
 #[cfg(test)]
@@ -120,10 +123,16 @@ mod tests {
         unsafe {
             assert_eq!(velt_rt_str_eq_range(&json, &buf, 4, 9), 1);
             assert_eq!(velt_rt_str_eq_range(&json, &buf, 4, 8), 0);
+            let tail = crate::str::VeltStr::from_bytes(b"Length");
             assert_eq!(
-                velt_rt_str_eq_range(&json, &buf, 30, 99),
-                0,
-                "outside the bytes"
+                velt_rt_str_eq_range(&tail, &buf, 28, 99),
+                1,
+                "an end past the bytes is clamped"
+            );
+            assert_eq!(
+                velt_rt_str_eq_range(&tail, &buf, -6, i64::MAX),
+                1,
+                "from the end"
             );
             assert_eq!(velt_rt_str_eq_range(&name, &buf, 20, 34), 0, "case matters");
             assert_eq!(velt_rt_str_eq_range_ci(&name, &buf, 20, 34), 1);

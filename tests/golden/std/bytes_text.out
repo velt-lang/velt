@@ -3,6 +3,7 @@ GET /a éx G
 true false true
 false true
 false true
+true true
 4 abé 169
 0 0
 a��b 1 b
@@ -11,3 +12,5 @@ a��b 1 b
   159, 152, 128,  97,   0,
     0,   0
 ]
+4 [ 239, 191, 189, 120 ] 0
+[ 0, 97, 98, 0 ]

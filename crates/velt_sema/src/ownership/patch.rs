@@ -284,6 +284,7 @@ pub(super) fn modes_of(cx: &Ctx, d: DefId) -> Vec<PassMode> {
 fn extern_written_param(symbol: &str) -> Option<usize> {
     Some(match symbol {
         "velt_rt_bytes_set"
+        | "velt_rt_bytes_write_str"
         | "velt_rt_bytes_copy_within"
         | "velt_rt_bytes_fill"
         | "velt_rt_bytes_xor_mask" => 0,
