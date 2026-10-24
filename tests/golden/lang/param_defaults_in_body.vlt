@@ -130,3 +130,42 @@ function outer(): number {
 }
 
 console.log(outer());
+
+// super calls, generics, function values and recursion.
+class A2 {
+  m(a: number, b: number | undefined = a + 1): number {
+    return b;
+  }
+}
+
+class B2 extends A2 {
+  override m(a: number, b: number | undefined = a + 2): number {
+    return super.m(a) + b;
+  }
+}
+
+console.log(new B2().m(1));
+
+function gen<T>(x: T, y: T[] | undefined = [x, x]): number {
+  return y.length;
+}
+
+console.log(gen("s"), gen(1, [1]));
+
+function str(
+  s: string,
+  n: number | undefined = s.length,
+  t: string | undefined = s.repeat(n),
+): string {
+  return t;
+}
+
+console.log(str("ab"));
+const fns = [str];
+console.log(fns[0]("x", 3));
+
+function rec(n: number, acc: number | undefined = n): number {
+  return n <= 0 ? acc : rec(n - 1, acc + n);
+}
+
+console.log(rec(3));
