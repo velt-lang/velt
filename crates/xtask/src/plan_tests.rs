@@ -592,6 +592,10 @@ fn the_webassembly_goldens_run_only_for_webassembly_code() {
         &["crates/velt_sema/src/check.rs"][..],
         &["crates/velt_rt/src/http.rs"],
         &["std/json.vlt"],
+        // Changes that select everything else leave them to the nightly too.
+        &["Cargo.lock"],
+        &[".github/workflows/ci.yml"],
+        &["scripts/check.sh"],
     ] {
         let p = plan(paths);
         assert!(!p.wasm, "{paths:?}");
@@ -606,7 +610,9 @@ fn the_webassembly_goldens_run_only_for_webassembly_code() {
         &["crates/velt_link/src/wasm.rs"],
         &["crates/veltc/tests/wasm_goldens.rs"],
         &["crates/velt_codegen_llvm/src/target.rs"],
-        &["Cargo.lock"],
+        &["rust-toolchain.toml"],
+        &[".cargo/config.toml"],
+        &["Cargo.lock", "crates/velt_rt_wasm/Cargo.toml"],
     ] {
         let p = plan(paths);
         assert!(p.wasm, "{paths:?}");
