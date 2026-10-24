@@ -16,3 +16,14 @@ const y: string & {} = "q";
 console.log(pick("a"), pick("zzz"), y);
 console.log(un("x" as Brand<string>));
 console.log(serverUse(), serverUse({ server: false }), serverUse({ server: true, extra: 1 }));
+type InjectionToken<T> = symbol & { readonly __tokenType?: T };
+function tokenOf<T>(description: string): InjectionToken<T> {
+  return Symbol(description) as InjectionToken<T>;
+}
+function getProvided<T>(provides: Map<symbol, unknown>, token: InjectionToken<T>): T | undefined {
+  return provides.get(token) as T | undefined;
+}
+const NUM = tokenOf<number>("num");
+const provided = new Map<symbol, unknown>([[NUM, 42]]);
+const got = getProvided(provided, NUM);
+console.log(got, typeof NUM);

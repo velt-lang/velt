@@ -73,6 +73,9 @@ pub(crate) struct Ctx<'m> {
     pub brands: FxHashMap<DefId, TyId>,
     /// (primitive, object part) → the brand's definition.
     pub brand_keys: FxHashMap<(TyId, TyId), DefId>,
+    /// Brands whose object part mentions type parameters (`symbol & { __t?: T }`): substitution
+    /// brands the substituted object part (`Ctx::subst`). Empty in most programs.
+    pub generic_brands: FxHashSet<DefId>,
     /// Brands of a `Record<string, any>` (or `unknown`) by the named members written next to
     /// its index signature → that object type of the named members (`crate::index_signatures`).
     pub record_views: FxHashMap<DefId, TyId>,
@@ -371,6 +374,7 @@ impl<'m> Ctx<'m> {
             objects: Default::default(),
             brands: FxHashMap::default(),
             brand_keys: FxHashMap::default(),
+            generic_brands: FxHashSet::default(),
             record_views: FxHashMap::default(),
             field_only: FxHashMap::default(),
             field_only_of: FxHashMap::default(),

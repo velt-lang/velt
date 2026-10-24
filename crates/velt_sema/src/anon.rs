@@ -72,6 +72,13 @@ impl Ctx<'_> {
         if s != t && !self.type_level.op_sites.is_empty() {
             self.carry_op_sites(t, &mut |cx, o| cx.ty.subst(o, args));
         }
+        let s = match self.generic_brands.is_empty() {
+            true => s,
+            false => {
+                let known: Vec<Option<TyId>> = args.iter().map(|&a| Some(a)).collect();
+                self.subst_brands(s, &known)
+            }
+        };
         self.canon(s)
     }
 
@@ -82,6 +89,10 @@ impl Ctx<'_> {
         if s != t && !self.type_level.op_sites.is_empty() {
             self.carry_op_sites(t, &mut |cx, o| cx.ty.subst_known(o, slots));
         }
+        let s = match self.generic_brands.is_empty() {
+            true => s,
+            false => self.subst_brands(s, slots),
+        };
         self.canon(s)
     }
 
