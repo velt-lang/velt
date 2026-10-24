@@ -666,8 +666,7 @@ impl FnCx<'_, '_> {
                     self.intrinsic(hir::Intrinsic::FieldAbsent, vec![], fty, span)
                 }
                 (None, Some(dflt)) => {
-                    let mut h = dflt.clone();
-                    crate::visit::map_expr_types(&mut h, &mut |t| self.cx.subst(t, &type_args));
+                    let h = self.placed_default(dflt, &type_args, dflt.span);
                     for s in &f.default_throws {
                         let s = s.used_at(span, |t| self.cx.subst(t, &type_args));
                         self.throw_src(s);
