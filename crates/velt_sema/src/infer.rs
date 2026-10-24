@@ -156,6 +156,29 @@ impl Ctx<'_> {
         if let Some((ifaces, object)) = self.meet_parts(actual) {
             return self.match_iface_intersection(&flat, ifaces, object, slots);
         }
+        // A brand (`Brand<string>` against `T & { __b?: true }`) gives `T` its primitive, and a
+        // class instance (`new C()` against `T & { id?: string }`) the class, as TypeScript
+        // infers them.
+        let whole = match self.brand_base(actual) {
+            Some(base) => Some(base),
+            None if self.class_of(actual).is_some() && !self.ty.has_error(actual) => Some(actual),
+            None => None,
+        };
+        if let Some(w) = whole {
+            let params: Vec<usize> = flat
+                .iter()
+                .filter_map(|&p| match self.ty.kind(p) {
+                    TyKind::Param(i) => Some(*i as usize),
+                    _ => None,
+                })
+                .collect();
+            if let [i] = params[..] {
+                if i < slots.len() && slots[i].is_none() {
+                    slots[i] = Some(w);
+                }
+                return i >= slots.len() || slots[i] == Some(w);
+            }
+        }
         if !self.is_object_type(actual) {
             return false;
         }

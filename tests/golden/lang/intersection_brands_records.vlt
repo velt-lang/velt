@@ -1,0 +1,18 @@
+// `string & {}` holds every string (the literal-union idiom), inference through a brand against
+// `T & { … }`, and object types intersected with a record of `unknown`
+// values (#1225, #1304).
+type LU<T extends string> = T | (string & {});
+function pick(x: LU<"a" | "b">): string {
+  return x;
+}
+type Brand<T> = T & { __b?: true };
+function un<T>(b: Brand<T>): T {
+  return b;
+}
+function serverUse(options: { server?: boolean } & Record<string, unknown> = {}): string {
+  return options.server === false ? "client" : `server ${Object.keys(options).length}`;
+}
+const y: string & {} = "q";
+console.log(pick("a"), pick("zzz"), y);
+console.log(un("x" as Brand<string>));
+console.log(serverUse(), serverUse({ server: false }), serverUse({ server: true, extra: 1 }));

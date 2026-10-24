@@ -73,7 +73,14 @@ impl Ctx<'_> {
             if ty == self.ty.error {
                 return ty;
             }
-            operands.push((ty, p.span));
+            // A part that is the alias's own parameter (`T` of `type Tagged<T> = T & { … }`)
+            // is the argument written where the alias is used: its errors are reported there.
+            let own_param = written_name(p).is_some_and(|n| env.params.iter().any(|q| q == n));
+            let at = match (own_param, self.type_level.alias_site) {
+                (true, Some(site)) => site,
+                _ => p.span,
+            };
+            operands.push((ty, at));
         }
         // A part written as an alias's type parameter (`T` in `type Tagged<T> = T & { … }`)
         // is shown as its argument.
@@ -85,7 +92,52 @@ impl Ctx<'_> {
         if operands.iter().any(|&(o, _)| self.deferred_part(o)) {
             return self.deferred_intersection(operands, &names, env.module, t.span);
         }
+        if let Some(view) = self.record_intersection(&operands, env.module, t.span) {
+            return view;
+        }
         self.intersect(operands, names, env.module, t.span)
+    }
+
+    /// `{ server?: boolean } & Record<string, unknown>`: object types and one record of `any`
+    /// or `unknown` values are the record viewed with the object types' members, as
+    /// `{ server?: boolean; [k: string]: unknown }` is (`crate::index_signatures`). `None` for
+    /// other operands.
+    fn record_intersection(
+        &mut self,
+        operands: &[(TyId, Span)],
+        module: usize,
+        span: Span,
+    ) -> Option<TyId> {
+        let record = self.prelude_adt("Record")?;
+        let is_record = |cx: &Self, t: TyId| {
+            matches!(cx.ty.kind(t), TyKind::Adt(d, a) if *d == record
+            && a.first() == Some(&cx.ty.str_)
+            && a.get(1).is_some_and(|v| matches!(
+                cx.dynamic(*v),
+                Some(crate::any::Dynamic::Any | crate::any::Dynamic::Unknown)
+            )))
+        };
+        let records: Vec<TyId> = operands
+            .iter()
+            .map(|&(o, _)| o)
+            .filter(|&o| is_record(self, o))
+            .collect();
+        let [base] = records[..] else {
+            return None;
+        };
+        let objects: Vec<TyId> = operands
+            .iter()
+            .map(|&(o, _)| o)
+            .filter(|&o| o != base)
+            .collect();
+        if objects.is_empty() || !objects.iter().all(|&o| self.is_object_type(o)) {
+            return None;
+        }
+        let mut tag = objects[0];
+        for &o in &objects[1..] {
+            tag = self.meet(tag, o, module, 1).ok()?;
+        }
+        Some(self.record_view_type(base, tag, module, span))
     }
 
     /// The function type operands of an intersection with object types made callable object
@@ -408,6 +460,9 @@ impl Ctx<'_> {
                 .or_insert(parts);
         }
         match brand {
+            // `string & {}` (the literal-union idiom `T | (string & {})`) holds every string, as
+            // in TypeScript: only a part with fields brands a primitive.
+            Some(base) if self.is_object_type(acc) && self.public_fields(acc).is_empty() => base,
             Some(base) => self.brand_type(base, acc, module, span),
             None => acc,
         }
@@ -573,6 +628,10 @@ impl Ctx<'_> {
         let object = "write the fields as an object type `{ … }`";
         let (msg, note) = match self.ty.kind(t).clone() {
             TyKind::Adt(d, _) => match self.adt(d).map(|a| a.kind) {
+                Some(AdtKind::Class) if Some(d) == self.prelude_adt("Record") => (
+                    format!("`&` combines object types; `{shown}` is a map of keys to values"),
+                    "a `Record` is a dictionary, not an object type with fields: write the fields as an object type (`{ a: V; b: V }`), or keep the record in a field (`{ data: Record<string, V> } & { … }`)".to_string(),
+                ),
                 Some(AdtKind::Class) => (
                     format!("`&` combines object types; `{shown}` is a class"),
                     format!("Velt classes are nominal: use `Pick<{shown}, …>` for its fields, or a field-only interface"),

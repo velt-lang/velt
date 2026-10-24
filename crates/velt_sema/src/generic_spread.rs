@@ -160,7 +160,9 @@ impl Ctx<'_> {
             return self.ty.error;
         };
         let (a, b) = (self.canon(from), self.canon(to));
-        if a == b || self.same_layout(a, b) {
+        // A brand is its primitive once brands are erased (`Brand<T>` as `T` at `T = string`).
+        let unbranded = |cx: &Self, t: TyId| cx.brand_base(t).unwrap_or(t);
+        if a == b || self.same_layout(a, b) || unbranded(self, a) == unbranded(self, b) {
             return to;
         }
         if self.type_level.spread_into.contains(&c) && self.spread_fits(a, b) {
