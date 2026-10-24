@@ -50,6 +50,7 @@ impl RawStmt {
         Ok(RawStmt(AtomicPtr::new(stmt)))
     }
 
+    #[inline]
     fn ptr(&self) -> *mut ffi::sqlite3_stmt {
         self.0.load(Ordering::Relaxed)
     }
@@ -192,6 +193,7 @@ impl RawStmt {
     ///
     /// # Safety
     /// The statement is on a row and `col` is below its column count.
+    #[inline]
     pub unsafe fn cell(&self, col: usize) -> Cell<'_> {
         let (p, i) = (self.ptr(), col as c_int);
         match ffi::sqlite3_column_type(p, i) {

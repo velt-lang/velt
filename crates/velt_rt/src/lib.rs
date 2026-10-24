@@ -21,6 +21,7 @@ pub mod child;
 pub mod cpu;
 pub mod db_json;
 pub mod db_params;
+pub mod db_rows;
 #[cfg(all(debug_assertions, not(velt_rt_host)))]
 pub mod debug_alloc;
 pub mod dev;

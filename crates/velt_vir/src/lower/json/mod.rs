@@ -23,6 +23,7 @@ mod literal;
 mod map;
 mod object;
 mod read;
+mod rows_read;
 mod union;
 mod union_object;
 
@@ -242,7 +243,12 @@ impl FnLower<'_, '_> {
         let err = self.temp(STR);
         let oa = self.addr(Place::local(out));
         let ea = self.addr(Place::local(err));
-        let ok = self.call_glue(Glue::JsonParse, t, vec![src, flags, depth, oa, ea]);
+        // Rows of plain objects from a cursor: read by column (rows_read.rs).
+        let ok = if source == JsonSource::Cursor && self.rows_read_supported(t) {
+            self.call_glue(Glue::RowsRead, t, vec![src, oa, ea])
+        } else {
+            self.call_glue(Glue::JsonParse, t, vec![src, flags, depth, oa, ea])
+        };
         let (err_bb, ok_bb) = (self.new_block(), self.new_block());
         self.branch(ok, ok_bb, err_bb);
         self.switch_to(err_bb);

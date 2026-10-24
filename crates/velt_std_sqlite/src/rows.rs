@@ -58,6 +58,7 @@ impl Shape {
     ///
     /// # Safety
     /// `stmt` is on a row; the cell is valid until it steps.
+    #[inline]
     pub unsafe fn cell<'s>(&self, stmt: &'s RawStmt, col: usize) -> Cell<'s> {
         if col >= self.count {
             return Cell::Null;

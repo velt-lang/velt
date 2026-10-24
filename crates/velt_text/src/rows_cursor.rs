@@ -102,6 +102,7 @@ impl RawCursor {
     ///
     /// # Safety
     /// As [`RawCursor::header`]; `col` is below the header's column count.
+    #[inline]
     pub unsafe fn cell<'a>(&self, col: usize) -> Cell<'a> {
         let mut c = raw_cell(Cell::Null);
         (self.vtable.cell)(self.data, col, &mut c);
@@ -110,6 +111,7 @@ impl RawCursor {
 }
 
 /// `c` across the C ABI.
+#[inline]
 fn raw_cell(c: Cell<'_>) -> RawCell {
     use crate::rows::*;
     let (tag, int, float, bytes): (u8, i64, f64, &[u8]) = match c {
@@ -134,6 +136,7 @@ fn raw_cell(c: Cell<'_>) -> RawCell {
 ///
 /// # Safety
 /// `c`'s bytes are valid for `'a`.
+#[inline]
 unsafe fn cell_of<'a>(c: &RawCell) -> Cell<'a> {
     use crate::rows::*;
     let bytes = || match c.len {

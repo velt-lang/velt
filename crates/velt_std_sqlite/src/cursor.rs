@@ -35,6 +35,7 @@ struct Owned {
 }
 
 impl SqliteCursor {
+    #[inline]
     fn stmt(&self) -> &RawStmt {
         &self.prepared.stmt
     }
@@ -66,6 +67,7 @@ impl RowCursor for SqliteCursor {
         }
     }
 
+    #[inline]
     fn cell(&self, col: usize) -> Cell<'_> {
         if self.done {
             return Cell::Null;

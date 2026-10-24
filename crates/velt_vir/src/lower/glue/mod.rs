@@ -99,6 +99,7 @@ pub(crate) enum Glue {
     JsonRead,
     JsonParse,
     DbBind,
+    RowsRead,
     Trace,
     TraceIn,
     WeakRetain,
@@ -167,6 +168,7 @@ impl Glue {
             Glue::JsonRead => "jsonread",
             Glue::JsonParse => "jsonparse",
             Glue::DbBind => "dbbind",
+            Glue::RowsRead => "rowsread",
             Glue::Trace => "trace",
             Glue::TraceIn => "tracein",
             Glue::WeakRetain => "weakretain",
@@ -219,6 +221,7 @@ impl Glue {
             Glue::JsonRead => (vec![Ptr, Ptr, Ptr], Bool),
             Glue::JsonParse => (vec![Ptr, U32, U32, Ptr, Ptr], Bool),
             Glue::DbBind => (vec![Ptr, Ptr], Unit),
+            Glue::RowsRead => (vec![Ptr, Ptr, Ptr], Bool),
             Glue::Trace | Glue::TraceIn | Glue::WeakBoxTrace => (vec![Ptr, Ptr, Ptr], Unit),
             Glue::WeakRetain | Glue::WeakRelease => (vec![U64], Unit),
             Glue::AnyTruthy => (vec![Ptr], Bool),
@@ -276,6 +279,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
                 lw.json_parse_body(args[0], (args[1], args[2]), args[3], args[4], ty)
             }
             Glue::DbBind => lw.db_bind_body(a(0), args[1], ty),
+            Glue::RowsRead => lw.rows_read_body(a(0), args[1], args[2], ty),
             Glue::Trace => lw.trace_body(args[0], args[1], args[2], ty),
             Glue::TraceIn => lw.trace_in_body(args[0], args[1], args[2], ty),
             Glue::WeakBoxTrace => lw.weak_box_trace_body(args[0], args[1], args[2], ty),
