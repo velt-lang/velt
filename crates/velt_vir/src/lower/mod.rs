@@ -33,6 +33,7 @@ mod any_iface;
 mod any_keys;
 mod any_member;
 mod any_proxy;
+mod any_record;
 mod any_rest;
 mod any_set;
 mod any_set_site;

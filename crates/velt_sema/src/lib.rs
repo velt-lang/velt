@@ -69,6 +69,7 @@ mod inst_sites;
 mod instantiation_cycles;
 mod interface_merge;
 mod intersection_members;
+mod intersection_records;
 mod intersections;
 mod js_api;
 mod json;
