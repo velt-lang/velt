@@ -1,0 +1,38 @@
+// Writes through an interface value whose field an object literal's getter gives (#941):
+// without a setter Node throws a `TypeError`; a part of it changed in place is not supported
+// yet.
+
+interface Named {
+  name: string;
+  hi(): string;
+}
+
+interface Placed {
+  pos: { x: number };
+  hi(): string;
+}
+
+function main(): void {
+  const o = {
+    get name() {
+      return "x";
+    },
+    hi() {
+      return "hi " + this.name;
+    },
+  };
+  const s: Named = o;
+  s.name = "y";
+
+  const p = {
+    get pos() {
+      return { x: 1 };
+    },
+    set pos(v: { x: number }) {},
+    hi() {
+      return "hi " + this.pos.x;
+    },
+  };
+  const q: Placed = p;
+  q.pos.x = 3;
+}

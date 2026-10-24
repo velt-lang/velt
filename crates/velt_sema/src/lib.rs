@@ -386,6 +386,7 @@ fn check_timed(
         }
     }
     union_views::finish(&mut cx);
+    cx.upcast_writes();
     if !recovered.is_empty() || cx.diags.iter().any(|d| d.is_error()) {
         return (None, cx.diags);
     }

@@ -29,6 +29,11 @@ impl Ctx<'_> {
                 o == n
                     && match (x, m) {
                         (Member::Field(a, ra), Member::Field(b, rb)) => a == b && (*rb || !ra),
+                        // A getter fills a field's slot, as TypeScript allows; writing the
+                        // field takes a setter `set k` (`upcast_setter`).
+                        (Member::Method(ps, a, true, 0), Member::Field(b, _)) => {
+                            ps.is_empty() && a == b
+                        }
                         (a, b) => a == b,
                     }
             })
@@ -237,6 +242,13 @@ impl Ctx<'_> {
         None
     }
 
+    /// After every body is checked, before errors are reported: a value converted to an
+    /// interface written through is written through its own (`Ctx::writes_through_upcasts`).
+    pub(crate) fn upcast_writes(&mut self) {
+        let pairs = self.synth_ifaces.upcasts.clone();
+        self.writes_through_upcasts(&pairs);
+    }
+
     /// After every body is checked: per interface `A` converted to others, the targets in
     /// table order, and per implementation of `A` the implementation of each target for the
     /// same type, made from `A`'s (each target slot is the slot of the same member in `A`).
@@ -281,37 +293,35 @@ impl Ctx<'_> {
         let slot_of = |name: &str, field: bool| -> usize {
             let s = match field {
                 false => ai.methods.iter().position(|m| m.name == name),
+                // A field's slot is filled by our field's getter, or by a getter of that name.
                 true => ai
                     .fields
                     .iter()
                     .position(|f| f.name == name)
-                    .map(|k| ai.methods.len() + k),
+                    .map(|k| ai.methods.len() + k)
+                    .or_else(|| {
+                        ai.methods
+                            .iter()
+                            .position(|m| m.is_getter && m.name == name)
+                    }),
             };
             s.expect("ICE: an upcast target member the source lacks")
         };
         let mut slots: Vec<usize> = bi.methods.iter().map(|m| slot_of(&m.name, false)).collect();
         slots.extend(bi.fields.iter().map(|f| slot_of(&f.name, true)));
-        if self.iface_written(b) {
-            let n = ai.methods.len() + ai.fields.len();
-            for k in self.setter_fields(b) {
-                let name = &self.iface(b).expect("ICE: iface").fields[k].name;
-                let f = self
-                    .iface(a)
-                    .expect("ICE: iface")
-                    .fields
-                    .iter()
-                    .position(|f| &f.name == name);
-                slots.push(n + f.expect("ICE: an upcast target setter the source lacks"));
-            }
-        }
         // `b`'s arguments: from the interface types the conversion was checked with, the
         // members agree, so `a`'s implementation arguments give `b`'s by matching its fields
         // and methods; interfaces made here and parents name them directly.
         let iface_args = self.upcast_args(a, &imp.iface_args, b);
-        let methods = slots
+        let mut methods: Vec<DefId> = slots
             .into_iter()
             .map(|s| *imp.methods.get(s).expect("ICE: upcast slot out of range"))
             .collect();
+        if self.iface_written(b) {
+            for k in self.setter_fields(b) {
+                methods.push(self.upcast_setter(&imp, b, k, &iface_args));
+            }
+        }
         self.impls.push(ImplDef {
             ty: imp.ty,
             generics: imp.generics,
@@ -320,6 +330,33 @@ impl Ctx<'_> {
             methods,
         });
         (self.impls.len() - 1) as u32
+    }
+
+    /// The setter slot of field `k` of interface `b<args>` (written through) for the type of
+    /// implementation `imp` of an interface converting to it: our field's setter slot, else
+    /// the setter `set k` our getter `k` has. A getter without one gives a slot that is never
+    /// called: a `readonly` field, or one whose write was reported (`Ctx::writes_through_upcasts`).
+    fn upcast_setter(&mut self, imp: &ImplDef, b: DefId, k: usize, args: &[TyId]) -> DefId {
+        let ai = self.iface(imp.iface).expect("ICE: iface");
+        let f = self.iface(b).expect("ICE: iface").fields[k].clone();
+        let n = ai.methods.len() + ai.fields.len();
+        let slot = match ai.fields.iter().position(|g| g.name == f.name) {
+            Some(g) => Some(n + g),
+            None => {
+                let set = format!("set {}", f.name);
+                ai.methods.iter().position(|m| m.name == set)
+            }
+        };
+        if let Some(def) = slot.and_then(|s| imp.methods.get(s)) {
+            return *def;
+        }
+        let TyKind::Adt(d, _) = *self.ty.kind(imp.ty) else {
+            panic!("ICE: an upcast setter for a value that is not an object");
+        };
+        let mut targs = args.to_vec();
+        targs.push(imp.ty);
+        let ty = self.subst(f.ty, &targs);
+        crate::collect::getters::unused_setter(self, d, imp.ty, &f.name, ty)
     }
 
     /// The arguments of `b` for a value of `a<args>`: through `a`'s parents, else by matching
@@ -339,7 +376,7 @@ impl Ctx<'_> {
                 continue;
             };
             match (m, x) {
-                (Member::Field(p, _), Member::Field(t, _)) => {
+                (Member::Field(p, _), Member::Field(t, _) | Member::Method(_, t, true, 0)) => {
                     self.match_ty(*p, *t, &mut slots);
                 }
                 (Member::Method(ps, r, ..), Member::Method(ts, s, ..)) => {

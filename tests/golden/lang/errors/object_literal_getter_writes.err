@@ -1,0 +1,4 @@
+object_literal_getter_writes.vlt:25:5: error: `name` is written through `Named`, whose value gives `name` with a getter and no setter
+  = note: Node throws a `TypeError` here; add `set name(v)` to the object literal
+object_literal_getter_writes.vlt:37:5: error: a part of `pos` is changed through `Placed`, whose value gives `pos` with a getter, which is not supported yet (#350)
+  = note: Node changes the object the getter returns in place and never calls a setter; Velt reads a copy here and would have to write it back through a setter

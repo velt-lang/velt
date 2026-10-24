@@ -2568,6 +2568,18 @@ console.log(app, router.installs); // [ 'router' ] 1
   `undefined`, a `TypeError` once it reads a member); call it on its object, or wrap it in an
   arrow (`(x) => o.m(x)`). A method of an interface value read as a value stays bound to the
   object it was read from ([methods as values](functions.md#arrow-functions-and-function-types)).
+- A method read off another object as a property's value (`{ n: 2, m: c.m }`) is an error when
+  its body may use `this`: Node calls it with the literal as `this` (`o.m()`), while the value
+  read keeps the object it was read from. Write a method that calls it (`m() { return c.m(); }`).
+  A method that doesn't use `this` may be such a value.
+- `Object.keys` and `for…in` list a getter and setter pair once, under its name, as Node does:
+  `Object.keys({ n: 1, get d() { … }, set d(v) { … } })` is `[ 'n', 'd' ]`.
+- A getter fills the slot of an interface field when the literal's value is converted to an
+  interface with methods (`o as V`, `const v: V = o` with
+  `interface V { readonly value: number; show(): string }`), as in TypeScript; the getter runs
+  on each read. Writing the field through the interface calls the literal's setter; without one
+  it is an error (Node throws a `TypeError`). An interface with only fields is an object type,
+  which such a value does not convert to yet.
 - Not supported yet: `this` in a method of a literal whose expected type is an object type
   (`{ x: number; norm(): number }`, whose fields hold plain functions) or `any`; declare an
   interface instead. Calling such a method with another `this` (`.call`, `.apply`, `.bind`) is
