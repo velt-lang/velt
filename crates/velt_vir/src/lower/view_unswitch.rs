@@ -6,13 +6,20 @@
 //! they write memory: it reloads the header's length and data on every step and checks the
 //! bounds again.
 //!
-//! So a loop whose view tests read the header of a box held in a local the loop does not assign
-//! is *versioned* when the function is finished: the loop is lowered once more as a copy in
-//! which those tests are false, and a test before the loop picks the copy when the box is not a
-//! view. That is sound because the bit of a box never gets set once the box exists: a view is
-//! made only as a new box (`array_view_new`), and a plain array stays plain whatever is done to
-//! it (a push reallocates its buffer, which is never at an odd address), while a view may become
-//! plain (`view_materialize`), which the original loop, kept for views, handles as before.
+//! So every loop with view tests is *versioned* when the function is finished: the loop is
+//! lowered once more as a copy without the view side, which the original loop, kept for views,
+//! still has.
+//! - A test of a box held in a local the loop does not change (by assignment, or through the
+//!   local's address, which must not escape: `addresses`) is false in the copy, and a
+//!   test before the loop picks the copy when the box is not a view. That is sound because the
+//!   bit of a box never gets set once the box exists: a view is made only as a new box
+//!   (`array_view_new`), and a plain array stays plain whatever is done to it (a push
+//!   reallocates its buffer, which is never at an odd address), while a view may become plain
+//!   (`view_materialize`).
+//! - Any other test (a box in an object field, an element, a variable the loop or a closure may
+//!   assign) stays in the copy, but when it finds a view the copy goes on in the original loop
+//!   at the same point, its locals handed over. The copy then has no call on the view side, so
+//!   the backend keeps a plain array's header in registers there.
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -226,7 +233,9 @@ impl FnLower<'_, '_> {
     /// Follow the whole-local copies of the addresses in `v` (adding the copies to it), and
     /// tell whether any holder is used in another way than [`Self::addresses`] allows.
     fn address_escapes(&self, v: &mut Vec<Local>) -> bool {
-        let whole = |o: &Operand, v: &[Local]| matches!(o, Operand::Copy(p) if p.proj.is_empty() && v.contains(&p.local));
+        let whole = |o: &Operand, v: &[Local]| {
+            matches!(o, Operand::Copy(p) if p.proj.is_empty() && v.contains(&p.local))
+        };
         let mut i = 0;
         while i < v.len() {
             i = v.len();
