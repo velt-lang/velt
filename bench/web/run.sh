@@ -8,7 +8,8 @@
 # Knobs (environment):
 #   SERVERS         velt velt-tsx node node-cluster bun go rust (also: velt-stealing and
 #                   velt-per-core, the Velt server under VELT_SCHEDULER=stealing or per-core:
-#                   tokio's schedulers, for comparison with the default)
+#                   tokio's schedulers, for comparison with the default; velt-native, an HTTP/1.1
+#                   server written in Velt on std/net, json and plaintext only)
 #   TESTS           json plaintext db queries fortunes updates
 #   QUICK=1         5 s runs, 2 s warm-up and fewer levels (a smoke run; numbers mean little)
 #   DURATION        seconds per measurement (15; QUICK 5)      WARMUP  seconds (5; QUICK 2)
@@ -93,6 +94,7 @@ build() {
   case "$1" in
     velt | velt-stealing | velt-per-core) "$(find_velt)" build --release "$HERE/velt/server.vlt" -o "$WORK/velt-server" ;;
     velt-tsx) "$(find_velt)" build --release "$HERE/velt-tsx/server.vlt" -o "$WORK/velt-tsx-server" ;;
+    velt-native) "$(find_velt)" build --release "$HERE/velt-native/server.vlt" -o "$WORK/velt-native-server" ;;
     node | node-cluster)
       [ -d "$HERE/node/node_modules" ] || (cd "$HERE/node" && npm ci --no-audit --no-fund) ;;
     bun) ;;
@@ -110,6 +112,7 @@ start() {
     velt-stealing) VELT_SCHEDULER=stealing ${SERVER_PIN[@]+"${SERVER_PIN[@]}"} "$WORK/velt-server" "$2" >"$log" 2>&1 & ;;
     velt-per-core) VELT_SCHEDULER=per-core ${SERVER_PIN[@]+"${SERVER_PIN[@]}"} "$WORK/velt-server" "$2" >"$log" 2>&1 & ;;
     velt-tsx) ${SERVER_PIN[@]+"${SERVER_PIN[@]}"} "$WORK/velt-tsx-server" "$2" >"$log" 2>&1 & ;;
+    velt-native) ${SERVER_PIN[@]+"${SERVER_PIN[@]}"} "$WORK/velt-native-server" "$2" >"$log" 2>&1 & ;;
     node) ${SERVER_PIN[@]+"${SERVER_PIN[@]}"} node "$HERE/node/server.mjs" "$2" >"$log" 2>&1 & ;;
     node-cluster) CLUSTER=1 ${SERVER_PIN[@]+"${SERVER_PIN[@]}"} node "$HERE/node/server.mjs" "$2" >"$log" 2>&1 & ;;
     bun) ${SERVER_PIN[@]+"${SERVER_PIN[@]}"} bun "$HERE/bun/server.ts" "$2" >"$log" 2>&1 & ;;

@@ -1,0 +1,39 @@
+// The TechEmpower plaintext and JSON tests on an HTTP/1.1 server written in Velt
+// (./http.vlt), not std/http: bench/web/README.md, `velt-native`.
+// Usage: server [port]; env PORT, HOST (127.0.0.1).
+
+import { args } from "velt:process";
+import { utf8Encode } from "velt:encoding";
+import { Handler, JSON_TYPE, Request, Response, TEXT, serve } from "./http";
+
+class Message {
+  message: string;
+
+  constructor(message: string) {
+    this.message = message;
+  }
+}
+
+/// A connection's handler: its byte strings are its own (no module state, see ./http.vlt).
+function setup(): Handler {
+  const plaintext = utf8Encode("/plaintext");
+  const json = utf8Encode("/json");
+  const hello = utf8Encode("Hello, World!");
+  return (req: Request, res: Response) => {
+    if (req.pathIs(plaintext)) {
+      res.send(200, TEXT, hello);
+    } else if (req.pathIs(json)) {
+      // Serialized per request, as the rules ask.
+      res.sendText(200, JSON_TYPE, JSON.stringify(new Message("Hello, World!")));
+    } else {
+      res.sendText(404, TEXT, "Not Found");
+    }
+  };
+}
+
+async function main() {
+  const argv = args();
+  const port = argv.length > 0 ? argv[0] : process.env.PORT ?? "8080";
+  const host = process.env.HOST ?? "127.0.0.1";
+  await serve(`${host}:${port}`, setup);
+}
