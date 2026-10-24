@@ -299,6 +299,8 @@ impl FnLower<'_, '_> {
                 self.json_parse(a, flags, depth, JsonSource::Cursor, ty)
             }
             (I::DbBind, [sink, a]) => self.db_bind(sink, a),
+            (I::ReadRows, [a]) => self.read_rows(a, true, ty),
+            (I::ReadRow, [a]) => self.read_rows(a, false, ty),
             (I::HttpHandler, [f]) => self.http_handler(f, ty),
             (I::Attempt, [f]) => self.attempt(f, ty),
             (

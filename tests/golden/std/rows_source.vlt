@@ -1,0 +1,122 @@
+// A driver written in Velt offers its rows as a `RowSource`, and `readRows<T>` fills typed
+// objects from them as JSON.parse fills fields from keys: by column name, with JSON's
+// conversions and its messages for a row that does not fit.
+import { CellKind, readRow, readRows, RowSource } from "velt:rows";
+
+// Rows held as cells: what a parser of some wire format would hand over.
+class Table implements RowSource {
+  names: string[];
+  cells: string[][];
+  row: i64 = -1;
+
+  constructor(names: string[], cells: string[][]) {
+    this.names = names;
+    this.cells = cells;
+  }
+
+  columnCount(): i64 {
+    return this.names.length as i64;
+  }
+  columnName(i: i64): string {
+    return this.names[i];
+  }
+  next(): bool {
+    this.row++;
+    return this.row < (this.cells.length as i64);
+  }
+  // A cell's text says its kind: "" null, "t"/"f" a bool, digits an integer, with a dot a
+  // float, "[...]" JSON, "#..." bytes, anything else text.
+  kind(i: i64): CellKind {
+    const c = this.cells[this.row][i];
+    if (c == "") {
+      return CellKind.Null;
+    }
+    if (c == "t" || c == "f") {
+      return CellKind.Bool;
+    }
+    if (c.startsWith("[")) {
+      return CellKind.Json;
+    }
+    if (c.startsWith("#")) {
+      return CellKind.Blob;
+    }
+    if (c.startsWith("'")) {
+      return CellKind.Text;
+    }
+    return c.includes(".") ? CellKind.Float : CellKind.Int;
+  }
+  bool(i: i64): bool {
+    return this.cells[this.row][i] == "t";
+  }
+  int(i: i64): i64 {
+    return parseInt(this.cells[this.row][i], 10) as i64;
+  }
+  float(i: i64): f64 {
+    return parseFloat(this.cells[this.row][i]);
+  }
+  text(i: i64): string {
+    return this.cells[this.row][i].slice(1);
+  }
+  blob(i: i64): u8[] {
+    const out: u8[] = [];
+    for (const ch of this.cells[this.row][i].slice(1)) {
+      out.push(ch.charCodeAt(0) as u8);
+    }
+    return out;
+  }
+  json(i: i64): string {
+    return this.cells[this.row][i];
+  }
+}
+
+struct User {
+  id: i64;
+  name: string;
+  score: f64;
+  admin: bool;
+  note: string | null;
+  data: u8[];
+}
+
+// Not plain fields (a nested array): read through JSON, with the same results.
+struct Tagged {
+  id: i64;
+  tags: i64[];
+}
+
+function main() {
+  const names = ["id", "name", "score", "admin", "note", "data", "extra"];
+  const users = readRows<User, Table>(
+    new Table(names, [
+      ["1", "'ada", "2.5", "t", "", "#AB", "9"],
+      ["2", "'bob", "3", "f", "'hi", "#", "9"],
+    ]),
+  );
+  for (const u of users) {
+    console.log(u.id, u.name, u.score, u.admin, u.note, u.data);
+  }
+  const one = readRow<User, Table>(new Table(names, [["3", "'cy", "1.0", "t", "", "#", "0"]]));
+  console.log(one?.id, one?.name, one?.score);
+  console.log(readRow<User, Table>(new Table(names, [])));
+
+  const tagged = readRows<Tagged, Table>(new Table(["id", "tags"], [["7", "[1, 2, 3]"]]));
+  console.log(tagged[0].id, tagged[0].tags);
+
+  const failing: string[][][] = [
+    [["x.5", "'n", "1", "t", "", "#", "0"]],
+    [["1", "2", "1", "t", "", "#", "0"]],
+    [["1", "'n", "1", "1", "", "#", "0"]],
+  ];
+  for (const rows of failing) {
+    try {
+      readRows<User, Table>(new Table(names, rows));
+    } catch (e) {
+      console.log(e.message);
+    }
+  }
+  try {
+    readRows<User, Table>(new Table(["id"], [["1"]]));
+  } catch (e) {
+    console.log(e.message);
+  }
+}

@@ -21,9 +21,10 @@ const MISMATCH: u8 = 0;
 const OK: u8 = 1;
 const NULL: u8 = 2;
 
-/// A result being read: the driver's cursor and each column's field.
+/// A result being read: the driver's cursor (none for a `RowSource` written in Velt, which the
+/// compiled code reads itself) and each column's field.
 pub struct RowsState {
-    cursor: RawCursor,
+    cursor: Option<RawCursor>,
     /// The field each column fills (-1: none).
     fields: Vec<i32>,
     /// What `fields` was made for: the field table's address and the rows header. The next
@@ -56,11 +57,11 @@ pub unsafe extern "C" fn velt_rt_rows_begin(
     let header = cursor.header();
     let mut state = match SPARE.with(|s| s.take()) {
         Some(mut s) => {
-            s.cursor = cursor;
+            s.cursor = Some(cursor);
             s
         }
         None => Box::new(RowsState {
-            cursor,
+            cursor: Some(cursor),
             fields: Vec::new(),
             table: 0,
             header: Vec::new(),
@@ -115,7 +116,7 @@ pub unsafe extern "C" fn velt_rt_rows_end(state: *mut RowsState) {
 /// Steps to the next row: 1, or 0 when there is none.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_rows_next(state: *mut RowsState) -> u8 {
-    (*state).cursor.step() as u8
+    (*state).cursor.as_ref().is_some_and(|c| c.step()) as u8
 }
 
 #[no_mangle]
@@ -130,7 +131,64 @@ pub unsafe extern "C" fn velt_rt_rows_field(state: *const RowsState, col: u64) -
 }
 
 unsafe fn cell<'a>(state: *const RowsState, col: u64) -> Cell<'a> {
-    (*state).cursor.cell(col as usize)
+    match &(*state).cursor {
+        Some(c) => c.cell(col as usize),
+        None => Cell::Null,
+    }
+}
+
+/// Starts reading a `RowSource` written in Velt (std/rows): a state without a cursor, whose
+/// column map [`velt_rt_rows_map_column`] fills from the source's column names.
+///
+/// # Safety
+/// `fields` is a field table (see [`velt_rt_rows_begin`]).
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_rows_map(fields: *const u8) -> *mut RowsState {
+    let mut state = SPARE.with(|s| s.take()).unwrap_or_else(|| {
+        Box::new(RowsState {
+            cursor: None,
+            fields: Vec::new(),
+            table: 0,
+            header: Vec::new(),
+        })
+    });
+    state.cursor = None;
+    state.fields.clear();
+    // The map is the source's, not a header's: not kept for the next result.
+    state.table = fields as usize;
+    state.header.clear();
+    state.header.push(0xFF);
+    Box::into_raw(state)
+}
+
+/// The next column of a [`velt_rt_rows_map`] state is named `name`.
+///
+/// # Safety
+/// As the module says; `name` is a valid string.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_rows_map_column(state: *mut RowsState, name: *const VeltStr) {
+    let state = &mut *state;
+    let name = (*name).text_lossy();
+    let field = field_names(state.table as *const u8)
+        .iter()
+        .position(|n| *n == name.as_bytes())
+        .map_or(-1, |i| i as i32);
+    state.fields.push(field);
+}
+
+/// A float that is an integer exactly (as the JSON reader takes `3.0` for an integer): 1 and
+/// the integer, else 0.
+///
+/// # Safety
+/// `out` is writable.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_rows_exact_i64(v: f64, out: *mut i64) -> u8 {
+    if v.fract() == 0.0 && (-I64_LIMIT..I64_LIMIT).contains(&v) {
+        out.write(v as i64);
+        OK
+    } else {
+        MISMATCH
+    }
 }
 
 /// An integer, or a float that is one exactly (as the JSON reader takes `3.0`).

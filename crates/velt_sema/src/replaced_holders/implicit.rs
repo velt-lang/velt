@@ -590,6 +590,11 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::JsonParseRows
         | I::JsonParseCursor
         | I::DbBind
+        // The `RowSource` methods these call are not hooks; std/rows calls the same methods
+        // itself on the path that reads rows as JSON, in the same function, so the analysis of
+        // `readRows` / `readRow` sees them.
+        | I::ReadRows
+        | I::ReadRow
         | I::HttpHandler
         | I::StrCharCodeAt
         | I::ArrayDataPtr

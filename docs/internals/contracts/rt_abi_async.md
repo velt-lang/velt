@@ -866,6 +866,8 @@ buffer grows. An adopted string's head must not lie in its buffer.
 | `velt_rt_rows_begin` / `_end` | `(const RawCursor* c, const u8* fields) -> RowsState*` / `(RowsState* st)` | `Glue::RowsRead` (std's `__intrinsic_json_parse_cursor<T>` when the row type is an object of plain fields) reads a driver's row cursor by column: `fields` is static data (`u32` count, then per field `u32` byte length and the name); each column is matched to its field once (the map is kept per thread for the next result with the same header and table). Additive |
 | `velt_rt_rows_next` / `_columns` / `_field` | `(st) -> u8` / `(st) -> u64` / `(st, u64 col) -> i64` | step to the next row (1, or 0 at the end); the column count; the field column `col` fills (-1: none). Additive |
 | `velt_rt_rows_i64` / `_f64` / `_bool` / `_str` / `_bytes` | `(st, u64 col, T* out) -> u8` | column `col` of the current row typed: 1 = written, 2 = NULL, 0 = another kind (an integer accepts an exact float, a float an integer, a string's invalid UTF-8 becomes U+FFFD). Additive |
+| `velt_rt_rows_map` / `_map_column` | `(const u8* fields) -> RowsState*` / `(RowsState* st, const VeltStr* name)` | the column map of std/rows' `RowSource` written in Velt (`__intrinsic_read_rows<T, S>`), whose rows the compiled code reads through the source's own methods: a state without a cursor, then each column's name in order. Additive |
+| `velt_rt_rows_exact_i64` | `(f64 v, i64* out) -> u8` | 1 and the integer when `v` is one exactly (an integer field from a float cell), else 0. Additive |
 | `velt_rt_rows_fail` | `(const VeltStr* expected, i64 row, const VeltStr* field, VeltStr* out)` | the JSON decoder's message for a row that does not fit: `expected <expected> at $[row].field` (`row` -1: the single row; `field` empty: the row itself). Additive |
 | `velt_rt_param_object` / `velt_rt_param_name` | `(const RawSink* s)` / `(const RawSink* s, const VeltStr* name)` | `Glue::DbBind` (`__intrinsic_db_bind<P>`, std only) hands a driver's parameter sink (native_abi.md "Parameter sinks") an object's members: `object` first, then each member's name before its value. Additive |
 | `velt_rt_param_i64` / `_u64` / `_f64` / `_bool` / `_null` / `_str` / `_bytes` | `(const RawSink* s, v)` (`_str`: `const VeltStr*`, `_bytes`: `const VeltBytes*`, `_null`: no value) | one value, as its JSON text would bind: a `u64` beyond `i64` and a non-integral `f64` (or one of 1e21 or more) a REAL, an integral `f64` an INTEGER, NaN/±Infinity NULL, a string UTF-8 (lone surrogates U+FFFD), a `u8[]` a BLOB. Additive |
@@ -1435,8 +1437,12 @@ quotes and comments are skipped; mixing with `$1` ⇒ `EINVAL`; missing member �
 are converted for the prepared parameter types: Int ⇒ int2/int4/int8/oid (range-checked),
 float4/float8, numeric, text types; Float ⇒ float4/float8, numeric, text types; Bool ⇒ bool,
 text types; Bytes ⇒ bytea; Text ⇒ text types and json/jsonb in binary, any other type in text
-format (parsed by the server); Null ⇒ NULL; anything else ⇒ `EINVAL`.
-Rows are JSON text (`db_json::RowWriter`): int2/int4/int8/oid exact, float4/float8 (non-finite
+format (parsed by the server); Null ⇒ NULL; anything else ⇒ `EINVAL`. For the parameter
+types it can, std hands them to a sink instead (`bind_begin`, native_abi.md "Parameter sinks"),
+which keeps them as the JSON text would have parsed.
+Rows come through a row cursor (native_abi.md "Row cursors", decoded by
+`__intrinsic_json_parse_cursor`), the values as JSON text would give them (batches still return
+JSON text, `db_json::RowWriter`): int2/int4/int8/oid exact, float4/float8 (non-finite
 ⇒ `null`), numeric ⇒ string of its digits, bool, text types/enums ⇒ string, uuid ⇒ string,
 date/time/timestamp ⇒ ISO 8601 string, timestamptz ⇒ ISO 8601 UTC with `Z`, json/jsonb ⇒ the
 document, bytea ⇒ number array, arrays ⇒ nested arrays, domains ⇒ base type, NULL ⇒ `null`;
@@ -1445,7 +1451,12 @@ other column types ⇒ `ENOTSUP` (checked before any row).
 | Symbol | Signature | Notes |
 |---|---|---|
 | `velt_std_postgres__connect` | `(const VeltStr* url) -> VeltFut*` | `IoResult<VeltPgClient>`; URL or libpq `key=value` string |
-| `velt_std_postgres__query` | `(VeltPgClient c, const VeltStr* sql, const VeltStr* params, u8 first_only) -> VeltFut*` | `IoResult<VeltStr>`: rows as a JSON array; `first_only` ⇒ the first row's object or `""` |
+| `velt_std_postgres__query_rows` | `(VeltPgClient c, const VeltStr* sql, const VeltStr* params, u8 first_only) -> VeltFut*` | `IoResult<u64>`: a row cursor (`RawCursor*`) over the rows, given back to `close_rows`; `first_only` ⇒ the first row alone, or 0 if there is none |
+| `velt_std_postgres__query_bound` | `(VeltPgClient c, const VeltStr* sql, u64 sink, u8 first_only) -> VeltFut*` | `query_rows` with the parameters a sink took |
+| `velt_std_postgres__execute_bound` | `(VeltPgClient c, const VeltStr* sql, u64 sink) -> VeltFut*` | `execute` with the parameters a sink took |
+| `velt_std_postgres__bind_begin` | `() -> u64` | a parameter sink (`RawSink*`) for `__intrinsic_db_bind<P>`, handed on to a `…_bound` call |
+| `velt_std_postgres__bind_abort` | `(u64 sink)` | gives up a sink std did not use |
+| `velt_std_postgres__close_rows` | `(u64 cursor, VeltErr* out)` | releases a row cursor; fails if a value could not be read; 0 ⇒ no-op |
 | `velt_std_postgres__execute` | `(VeltPgClient c, const VeltStr* sql, const VeltStr* params) -> VeltFut*` | `IoResult<i64>`: rows affected/returned |
 | `velt_std_postgres__batch` | `(VeltPgClient c, const VeltStr* sql) -> VeltFut*` | `VeltErr`: `;`-separated statements, simple protocol, not cached |
 | `velt_std_postgres__begin` | `(VeltPgClient c) -> VeltFut*` | `IoResult<u32>`: new level (1 = `BEGIN`, n > 1 = `SAVEPOINT velt_tx_n`) |
@@ -1458,7 +1469,7 @@ other column types ⇒ `ENOTSUP` (checked before any row).
 | `velt_std_postgres__close` | `(VeltPgClient c)` | closes (or returns a pooled connection to its pool unless broken or in a transaction) and releases the handle; null ⇒ no-op |
 | `velt_std_postgres__pool_new` | `(const VeltStr* url, u32 max, IoResult<VeltPgPool>* out)` | parses the URL and reads `sslrootcert` now; connections open on demand; `max == 0` ⇒ 10 |
 | `velt_std_postgres__pool_connect` | `(VeltPgPool p) -> VeltFut*` | `IoResult<VeltPgClient>`: a dedicated connection (holds a permit) until `velt_std_postgres__close` |
-| `velt_std_postgres__pool_query` | `(VeltPgPool p, const VeltStr* sql, const VeltStr* params, u8 first_only) -> VeltFut*` | as `velt_std_postgres__query` on a borrowed connection |
+| `velt_std_postgres__pool_query_rows` / `_pool_query_bound` / `_pool_execute_bound` | as the client's, with `VeltPgPool p` | on a borrowed connection |
 | `velt_std_postgres__pool_execute` | `(VeltPgPool p, const VeltStr* sql, const VeltStr* params) -> VeltFut*` | as `velt_std_postgres__execute` |
 | `velt_std_postgres__pool_batch` | `(VeltPgPool p, const VeltStr* sql) -> VeltFut*` | as `velt_std_postgres__batch` |
 | `velt_std_postgres__pool_idle` | `(VeltPgPool p) -> u32` | idle connections |

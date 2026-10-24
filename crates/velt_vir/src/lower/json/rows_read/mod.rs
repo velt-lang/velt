@@ -8,12 +8,14 @@
 //! `(cursor, out, err) -> bool`: `out` all-zero before; on failure it is all-zero again and
 //! `err` holds the message.
 
-use velt_sema::hir::{self, IntTy, Nothing, TyId, TyKind};
+use velt_sema::hir::{self, DefId, IntTy, Nothing, TyId, TyKind};
 
 use super::STR;
 use crate::lower::rt::Rt;
 use crate::lower::{cint, ice, FnLower};
 use crate::vir::{BinOp, BlockId, Const, Local, Operand, Place, Proj, Rvalue, Terminator, Ty};
+
+mod source;
 
 /// Where a row that does not fit failed: what was expected, the row (-1: the single row) and
 /// the field (`""`: the row itself).
@@ -22,6 +24,58 @@ struct Failure {
     expected: Local,
     row: Local,
     field: Local,
+}
+
+/// Where the rows come from.
+pub(super) enum RowSrc {
+    /// A driver's row cursor, through the runtime's rows state `st` (`velt_rt_rows_*`).
+    Native { st: Local },
+    /// A `RowSource` class of std/rows (`cls`), its methods called directly; `st` keeps the
+    /// column map, `ncols` the column count.
+    Velt {
+        st: Local,
+        obj: Operand,
+        cls: TyId,
+        methods: Vec<DefId>,
+        ncols: Local,
+    },
+}
+
+impl RowSrc {
+    fn st(&self) -> Local {
+        match self {
+            RowSrc::Native { st } | RowSrc::Velt { st, .. } => *st,
+        }
+    }
+}
+
+/// `RowSource` methods, in the interface's order (std/rows.vlt).
+const COLUMN_COUNT: usize = 0;
+const COLUMN_NAME: usize = 1;
+const NEXT: usize = 2;
+const KIND: usize = 3;
+const GET_BOOL: usize = 4;
+const GET_INT: usize = 5;
+const GET_FLOAT: usize = 6;
+const GET_TEXT: usize = 7;
+const GET_BLOB: usize = 8;
+/// `CellKind` values (std/rows.vlt).
+const KIND_NULL: i128 = 0;
+const KIND_BOOL: i128 = 1;
+const KIND_INT: i128 = 2;
+const KIND_FLOAT: i128 = 3;
+const KIND_TEXT: i128 = 4;
+const KIND_BLOB: i128 = 5;
+/// The qualified name of std/rows' `RowSource`.
+const ROW_SOURCE: &str = "std/rows::RowSource";
+
+/// A value a column is read into before it is stored: a temp, or the field itself.
+enum Fetch {
+    I64(Local),
+    F64(Local),
+    Bool(Local),
+    Str,
+    Bytes,
 }
 
 impl FnLower<'_, '_> {
@@ -103,49 +157,22 @@ impl FnLower<'_, '_> {
         let table = self.rows_field_table(row_ty);
         let st = self.temp(Ty::Ptr);
         self.call_rt(Rt::RowsBegin, vec![cursor, table], Some(Place::local(st)));
-        let f = Failure {
-            expected: self.temp(STR),
-            row: self.temp(Ty::I64),
-            field: self.temp(STR),
-        };
-        let fail = self.new_block();
-        let done = self.new_block();
-        let s = Operand::Copy(Place::local(st));
+        let src = RowSrc::Native { st };
+        let f = self.rows_failure();
+        let (fail, done) = (self.new_block(), self.new_block());
         if many {
-            let i = self.temp(Ty::I64);
-            self.assign(Place::local(i), Rvalue::Use(cint(0, Ty::I64)));
-            let (head, body) = (self.new_block(), self.new_block());
-            self.goto(head);
-            self.switch_to(head);
-            let more = self.rt_u8(Rt::RowsNext, vec![s.clone()]);
-            self.branch(more, body, done);
-            self.switch_to(body);
-            let et = self.cx.ty(row_ty);
-            let elem = self.temp(et);
-            self.json_init(elem, row_ty);
-            let elem_fail = self.new_block();
-            let row = Operand::Copy(Place::local(i));
-            self.rows_read_row(st, &Place::local(elem), row_ty, row, f, elem_fail);
-            self.push_value(&place, row_ty, Operand::Copy(Place::local(elem)));
-            let n = self.rvalue_temp(
-                Ty::I64,
-                Rvalue::Binary(BinOp::Add, Operand::Copy(Place::local(i)), cint(1, Ty::I64)),
-            );
-            self.assign(Place::local(i), Rvalue::Use(n));
-            self.goto(head);
-            self.switch_to(elem_fail);
-            self.drop_glue(Place::local(elem), row_ty);
-            self.goto(fail);
+            self.rows_read_all(&src, &place, row_ty, f, fail, done);
         } else {
-            let some = self.rt_u8(Rt::RowsNext, vec![s.clone()]);
+            let some = self.rows_next(&src);
             let (row_bb, none_bb) = (self.new_block(), self.new_block());
             self.branch(some, row_bb, none_bb);
             self.switch_to(none_bb);
             self.rows_fail(f, "object", cint(-1, Ty::I64), "", fail);
             self.switch_to(row_bb);
-            self.rows_read_row(st, &place, row_ty, cint(-1, Ty::I64), f, fail);
+            self.rows_read_row(&src, &place, row_ty, cint(-1, Ty::I64), f, fail);
             self.goto(done);
         }
+        let s = Operand::Copy(Place::local(st));
         self.switch_to(done);
         self.call_rt(Rt::RowsEnd, vec![s.clone()], None);
         self.terminate(Terminator::Return(Operand::Const(
@@ -156,21 +183,78 @@ impl FnLower<'_, '_> {
         self.call_rt(Rt::RowsEnd, vec![s], None);
         self.drop_glue(place.clone(), ty);
         self.json_zero(&place, ty);
-        let (ea, fa) = (
-            self.addr(Place::local(f.expected)),
-            self.addr(Place::local(f.field)),
-        );
-        let args = vec![
-            ea,
-            Operand::Copy(Place::local(f.row)),
-            fa,
-            Operand::Copy(Place::local(err)),
-        ];
-        self.call_rt(Rt::RowsFail, args, None);
+        self.rows_message(f, Operand::Copy(Place::local(err)));
         self.terminate(Terminator::Return(Operand::Const(
             Const::Bool(false),
             Ty::Bool,
         )));
+    }
+
+    fn rows_failure(&mut self) -> Failure {
+        Failure {
+            expected: self.temp(STR),
+            row: self.temp(Ty::I64),
+            field: self.temp(STR),
+        }
+    }
+
+    /// `*err` (a pointer to a string) = the message of the row failure `f`.
+    fn rows_message(&mut self, f: Failure, err: Operand) {
+        let (ea, fa) = (
+            self.addr(Place::local(f.expected)),
+            self.addr(Place::local(f.field)),
+        );
+        let args = vec![ea, Operand::Copy(Place::local(f.row)), fa, err];
+        self.call_rt(Rt::RowsFail, args, None);
+    }
+
+    /// Every remaining row appended to the array at `place`; `done` after the last.
+    fn rows_read_all(
+        &mut self,
+        src: &RowSrc,
+        place: &Place,
+        row_ty: TyId,
+        f: Failure,
+        fail: BlockId,
+        done: BlockId,
+    ) {
+        let i = self.temp(Ty::I64);
+        self.assign(Place::local(i), Rvalue::Use(cint(0, Ty::I64)));
+        let (head, body) = (self.new_block(), self.new_block());
+        self.goto(head);
+        self.switch_to(head);
+        let more = self.rows_next(src);
+        self.branch(more, body, done);
+        self.switch_to(body);
+        let et = self.cx.ty(row_ty);
+        let elem = self.temp(et);
+        self.json_init(elem, row_ty);
+        let elem_fail = self.new_block();
+        let row = Operand::Copy(Place::local(i));
+        self.rows_read_row(src, &Place::local(elem), row_ty, row, f, elem_fail);
+        self.push_value(place, row_ty, Operand::Copy(Place::local(elem)));
+        let n = self.rvalue_temp(
+            Ty::I64,
+            Rvalue::Binary(BinOp::Add, Operand::Copy(Place::local(i)), cint(1, Ty::I64)),
+        );
+        self.assign(Place::local(i), Rvalue::Use(n));
+        self.goto(head);
+        self.switch_to(elem_fail);
+        self.drop_glue(Place::local(elem), row_ty);
+        self.goto(fail);
+    }
+
+    /// Steps the source to its next row: a bool.
+    fn rows_next(&mut self, src: &RowSrc) -> Operand {
+        match src {
+            RowSrc::Native { st } => {
+                self.rt_u8(Rt::RowsNext, vec![Operand::Copy(Place::local(*st))])
+            }
+            RowSrc::Velt { .. } => {
+                let (p, _) = self.rows_call(src, NEXT, None);
+                Operand::Copy(p)
+            }
+        }
     }
 
     /// The row type's field names for `velt_rt_rows_begin`: static data, a `u32` count, then per
@@ -209,7 +293,7 @@ impl FnLower<'_, '_> {
     /// for the caller to drop.
     fn rows_read_row(
         &mut self,
-        st: Local,
+        src: &RowSrc,
         place: &Place,
         ty: TyId,
         row: Operand,
@@ -231,11 +315,17 @@ impl FnLower<'_, '_> {
             .map(|f| f.name.clone())
             .collect();
         let tys = self.cx.adt_field_tys(ty);
-        let s = Operand::Copy(Place::local(st));
+        let s = Operand::Copy(Place::local(src.st()));
         let seen = self.temp(Ty::U64);
         self.assign(Place::local(seen), Rvalue::Use(cint(0, Ty::U64)));
-        let n = self.temp(Ty::U64);
-        self.call_rt(Rt::RowsColumns, vec![s.clone()], Some(Place::local(n)));
+        let n = match src {
+            RowSrc::Native { .. } => {
+                let n = self.temp(Ty::U64);
+                self.call_rt(Rt::RowsColumns, vec![s.clone()], Some(Place::local(n)));
+                n
+            }
+            RowSrc::Velt { ncols, .. } => *ncols,
+        };
         let c = self.temp(Ty::U64);
         self.assign(Place::local(c), Rvalue::Use(cint(0, Ty::U64)));
         let (head, body, next, after) = (
@@ -280,7 +370,7 @@ impl FnLower<'_, '_> {
             // A repeated column: the later value wins, as a repeated key does.
             self.drop_glue(fp.clone(), fty);
             self.json_zero(&fp, fty);
-            self.rows_read_value(st, col.clone(), &fp, fty, (name, row.clone()), f, fail);
+            self.rows_read_value(src, col.clone(), &fp, fty, (name, row.clone()), f, fail);
             let bit = cint(1i128 << i, Ty::U64);
             let sv = Operand::Copy(Place::local(seen));
             self.assign(Place::local(seen), Rvalue::Binary(BinOp::BitOr, sv, bit));
@@ -317,7 +407,7 @@ impl FnLower<'_, '_> {
     #[allow(clippy::too_many_arguments)] // the column, the field and where a failure goes
     fn rows_read_value(
         &mut self,
-        st: Local,
+        src: &RowSrc,
         col: Operand,
         fp: &Place,
         ty: TyId,
@@ -329,7 +419,7 @@ impl FnLower<'_, '_> {
             TyKind::Option(e, _) => (self.some_payload(fp, ty), e, true),
             _ => (fp.clone(), ty, false),
         };
-        let code = self.rows_read_typed(st, col, &target, payload_ty);
+        let code = self.rows_read_typed(src, col, &target, payload_ty);
         let (ok_bb, null_bb, bad_bb, done) = (
             self.new_block(),
             self.new_block(),
@@ -377,15 +467,13 @@ impl FnLower<'_, '_> {
 
     /// Reads column `col` as a `ty` into `target`: 1 (read), 2 (null), 0 (another kind, or an
     /// integer out of `ty`'s range).
-    fn rows_read_typed(&mut self, st: Local, col: Operand, target: &Place, ty: TyId) -> Operand {
-        let s = Operand::Copy(Place::local(st));
-        let code = self.temp(Ty::U8);
+    fn rows_read_typed(&mut self, src: &RowSrc, col: Operand, target: &Place, ty: TyId) -> Operand {
         let vt = self.cx.ty(ty);
         match self.cx.kind(ty) {
             TyKind::Int(it) => {
                 let t = self.temp(Ty::I64);
-                let a = self.addr(Place::local(t));
-                self.call_rt(Rt::RowsI64, vec![s, col, a], Some(Place::local(code)));
+                self.assign(Place::local(t), Rvalue::Use(cint(0, Ty::I64)));
+                let code = self.rows_fetch(src, col, Fetch::I64(t), target);
                 let tv = Operand::Copy(Place::local(t));
                 let c = self.cast_to(tv.clone(), Ty::I64, vt);
                 if vt != Ty::I64 {
@@ -425,32 +513,66 @@ impl FnLower<'_, '_> {
                     self.switch_to(go);
                 }
                 self.assign(target.clone(), Rvalue::Use(c));
+                Operand::Copy(Place::local(code))
             }
             TyKind::Float(_) => {
                 let t = self.temp(Ty::F64);
-                let a = self.addr(Place::local(t));
-                self.call_rt(Rt::RowsF64, vec![s, col, a], Some(Place::local(code)));
+                self.assign(
+                    Place::local(t),
+                    Rvalue::Use(Operand::Const(Const::Float(0.0), Ty::F64)),
+                );
+                let code = self.rows_fetch(src, col, Fetch::F64(t), target);
                 let v = self.cast_to(Operand::Copy(Place::local(t)), Ty::F64, vt);
                 self.assign(target.clone(), Rvalue::Use(v));
+                Operand::Copy(Place::local(code))
             }
             TyKind::Bool => {
                 let t = self.temp(Ty::U8);
                 self.assign(Place::local(t), Rvalue::Use(cint(0, Ty::U8)));
-                let a = self.addr(Place::local(t));
-                self.call_rt(Rt::RowsBool, vec![s, col, a], Some(Place::local(code)));
+                let code = self.rows_fetch(src, col, Fetch::Bool(t), target);
                 let b = Rvalue::Binary(BinOp::Ne, Operand::Copy(Place::local(t)), cint(0, Ty::U8));
                 self.assign(target.clone(), b);
+                Operand::Copy(Place::local(code))
             }
             TyKind::Str => {
-                let a = self.addr(target.clone());
-                self.call_rt(Rt::RowsStr, vec![s, col, a], Some(Place::local(code)));
+                let code = self.rows_fetch(src, col, Fetch::Str, target);
+                Operand::Copy(Place::local(code))
             }
             _ => {
-                let arr = self.content(target, ty);
-                let a = self.addr(arr);
-                self.call_rt(Rt::RowsBytes, vec![s, col, a], Some(Place::local(code)));
+                let code = self.rows_fetch(src, col, Fetch::Bytes, target);
+                Operand::Copy(Place::local(code))
             }
         }
-        Operand::Copy(Place::local(code))
+    }
+
+    /// Column `col` of the current row as `fetch` says: the read's result code (1, 2 null, 0
+    /// another kind), the value in the fetch's temp or (strings, bytes) in `target`.
+    fn rows_fetch(&mut self, src: &RowSrc, col: Operand, fetch: Fetch, target: &Place) -> Local {
+        let code = self.temp(Ty::U8);
+        match src {
+            RowSrc::Native { st } => {
+                let s = Operand::Copy(Place::local(*st));
+                let (rt, a) = match fetch {
+                    Fetch::I64(t) => (Rt::RowsI64, self.addr(Place::local(t))),
+                    Fetch::F64(t) => (Rt::RowsF64, self.addr(Place::local(t))),
+                    Fetch::Bool(t) => (Rt::RowsBool, self.addr(Place::local(t))),
+                    Fetch::Str => (Rt::RowsStr, self.addr(target.clone())),
+                    Fetch::Bytes => {
+                        let bytes = self.rows_bytes_ty();
+                        let arr = self.content(target, bytes);
+                        (Rt::RowsBytes, self.addr(arr))
+                    }
+                };
+                self.call_rt(rt, vec![s, col, a], Some(Place::local(code)));
+            }
+            RowSrc::Velt { .. } => self.rows_fetch_velt(src, col, fetch, target, code),
+        }
+        code
+    }
+
+    /// The `u8[]` type.
+    fn rows_bytes_ty(&mut self) -> TyId {
+        let u8_ = self.cx.intern(TyKind::Int(IntTy::U8));
+        self.cx.intern(TyKind::Array(u8_))
     }
 }

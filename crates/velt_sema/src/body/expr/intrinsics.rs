@@ -59,6 +59,8 @@ pub(super) fn intrinsic_named(name: &str) -> Option<Intrinsic> {
         "json_parse_rows" => I::JsonParseRows,
         "json_parse_cursor" => I::JsonParseCursor,
         "db_bind" => I::DbBind,
+        "read_rows" => I::ReadRows,
+        "read_row" => I::ReadRow,
         "http_handler" => I::HttpHandler,
         "promise_any" => I::PromiseAny,
         "chan_send" => I::ChanSend,
@@ -136,6 +138,9 @@ impl FnCx<'_, '_> {
                 | Intrinsic::GeneratorValue
                 | Intrinsic::GeneratorReturn,
             ) => vec!["T".into(), "E".into(), "N".into()],
+            (true, Intrinsic::ReadRows | Intrinsic::ReadRow) => {
+                vec!["T".into(), "S".into()]
+            }
             (true, _) => vec!["T".into()],
         };
         Callable {
@@ -308,6 +313,12 @@ impl FnCx<'_, '_> {
             }
             I::JsonParseCursor => (vec![(u64_, C), (ty.i64, C), (ty.i64, C)], t, true),
             I::DbBind => (vec![(u64_, C), (t, B)], ty.bool_, true),
+            // `<T, S>`: the row type and the source's type.
+            I::ReadRows => {
+                let rows = ty.array(t);
+                (vec![(e, B)], ty.option(rows), true)
+            }
+            I::ReadRow => (vec![(e, B)], ty.option(t), true),
             I::HttpHandler => {
                 let f = http_handler_fn(ty);
                 (vec![(f, O)], ty.intern(TyKind::Tuple(vec![u64_; 6])), false)

@@ -299,6 +299,15 @@ pub enum Intrinsic {
     /// by value, as their JSON text would bind; false (nothing done) for a type std binds as
     /// JSON text (native_abi.md "Parameter sinks").
     DbBind,
+    /// std only: `__intrinsic_read_rows<T, S>(src: borrow S): T[] | null` — every remaining row
+    /// of the std/rows `RowSource` `src`, read by column when `T` is an object of plain fields
+    /// and `S` a class whose row methods do not throw; throws `JsonError { message }` for a row
+    /// that does not fit. `null` (nothing read) for any other `T` or `S`: std/rows then reads
+    /// the rows as JSON.
+    ReadRows,
+    /// std only: `__intrinsic_read_row<T, S>(src: borrow S): T | null` — the current row of
+    /// `src` (`next()` returned true), as `ReadRows` reads each; `null` as for `ReadRows`.
+    ReadRow,
     /// std only: `__intrinsic_http_handler(f: (raw: u64) => Promise<u64>)` → `[u64; 6]` =
     /// `{init, poll, drop, state_size, state_align, env}` for `velt_rt_http_serve` (the closure's
     /// state machine is the per-request state; `init(env, req, state)` sets `raw = req`; the env
