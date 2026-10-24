@@ -40,6 +40,8 @@ use std::task::{Context, Wake, Waker};
 
 use parking_lot::Mutex;
 
+use crate::panic::ThrowLoc;
+
 use super::all::ResultDropFn;
 use super::{context, raw_cx, VeltFut, FUT_RESULT_OFFSET, PENDING, READY};
 
@@ -80,6 +82,8 @@ struct HubState {
     seq: u64,
     /// The settled result (16-byte aligned words), once `done`.
     result: Vec<u128>,
+    /// Where its error was thrown, for every holder that takes it (panic.rs).
+    loc: ThrowLoc,
     /// The waiting holders (by address) in the order they started waiting, with their wakers
     /// and the microtask ticket each was queued as when the promise settled (0: not queued).
     waiters: Vec<(usize, Waker, u64)>,
@@ -184,6 +188,7 @@ pub unsafe extern "C" fn velt_rt_fut_share(
                 armed: false,
                 seq: 0,
                 result: Vec::new(),
+                loc: ThrowLoc::NONE,
                 waiters: Vec::new(),
             }),
         });
@@ -506,7 +511,9 @@ unsafe fn poll_holder(h: &Arc<Hub>, f: *mut VeltFut, cx: *mut c_void) -> u32 {
         st.waiters.remove(i);
     }
     let result = st.result.as_ptr() as *const u8;
+    let loc = st.loc;
     drop(st);
+    loc.restore_if_known();
     match h.share {
         Some(share) => share(result, slot(f)),
         None => std::ptr::copy_nonoverlapping(result, slot(f), h.size),
@@ -519,9 +526,13 @@ unsafe fn poll_holder(h: &Arc<Hub>, f: *mut VeltFut, cx: *mut c_void) -> u32 {
 /// waker on the promise's task and a holder polled on another (module state) never claim it
 /// both.
 unsafe fn keep_result(h: &Hub, st: &mut HubState) {
-    if h.node {
+    // A started original keeps where it threw; one its first waiter drove threw on this thread.
+    st.loc = if h.node {
         super::local::deliver_unadopted(h.orig);
-    }
+        super::local::node_loc(h.orig)
+    } else {
+        ThrowLoc::current()
+    };
     let mut result = vec![0u128; h.size.div_ceil(16)];
     std::ptr::copy_nonoverlapping(slot(h.orig), result.as_mut_ptr() as *mut u8, h.size);
     st.result = result;
@@ -590,13 +601,21 @@ unsafe fn release(h: Arc<Hub>, f: *mut VeltFut) {
     }
     let done = st.done;
     let mut result = std::mem::take(&mut st.result);
+    let loc = st.loc;
     drop(st);
     if let Some(m) = HUBS.lock().as_mut() {
         m.remove(&(h.orig as usize));
     }
     if done {
         if let Some(d) = h.result_drop {
+            // An unhandled rejection is reported with where it was thrown.
+            let own = if loc.is_known() {
+                loc.replace()
+            } else {
+                ThrowLoc::current()
+            };
             d(result.as_mut_ptr() as *mut u8);
+            own.restore();
         }
     }
     // An original future handed to another task stays allocated for the holder there, which
