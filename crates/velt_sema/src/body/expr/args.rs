@@ -160,6 +160,7 @@ impl FnCx<'_, '_> {
         if let Some(e) = exp {
             self.prefer_context(c, &mut slots, &context, &checked, e);
             self.cx.match_ty(c.ret, e, &mut slots);
+            self.cx.match_through_impl(c.ret, e, &mut slots);
         }
         // An argument that is already an error (reported) leaves its slots unknown: no second
         // error about inferring them. So does one holding an error type when checking the

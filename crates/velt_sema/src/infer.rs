@@ -16,7 +16,27 @@ impl Ctx<'_> {
     pub fn match_context(&mut self, pat: TyId, actual: TyId, slots: &mut [Option<TyId>]) {
         self.matching_context = true;
         self.match_ty(pat, actual, slots);
+        self.match_through_impl(pat, actual, slots);
         self.matching_context = false;
+    }
+
+    /// A class instance where an interface it implements is expected (`new Set()` as an
+    /// `Iterable<number>`): the implementation's interface arguments, in the class's, match
+    /// the expected ones.
+    pub fn match_through_impl(&mut self, pat: TyId, actual: TyId, slots: &mut [Option<TyId>]) {
+        let (TyKind::Adt(..), TyKind::Dyn(iface, want)) =
+            (self.ty.kind(pat).clone(), self.ty.kind(actual).clone())
+        else {
+            return;
+        };
+        if self.class_of(pat).is_none() || self.dynamic(actual).is_some() {
+            return;
+        }
+        if let Some((_, have, _)) = self.find_impl(pat, iface) {
+            for (h, w) in have.iter().zip(&want) {
+                self.match_ty(*h, *w, slots);
+            }
+        }
     }
 
     fn context_slot_ok(&self, actual: TyId) -> bool {
