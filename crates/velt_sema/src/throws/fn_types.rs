@@ -13,7 +13,7 @@
 //! [`Portable`] type, classes by `DefId` and declaration span (collected before any body is
 //! checked, so the same in every check of one program).
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::Span;
 use velt_syntax::ast;
@@ -35,11 +35,11 @@ pub(crate) enum Portable {
 /// What each site throws, by the span of its written function type.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct FnTypeSeeds {
-    pub(super) sites: HashMap<Span, Vec<Portable>>,
+    pub(super) sites: FxHashMap<Span, Vec<Portable>>,
     /// The error types the previous check inferred for the functions declared before any body
     /// is checked, by `DefId` and declaration span: what a recursive call counts while the
     /// callee is still being checked ([`Ctx::recursion_hint`]).
-    hints: HashMap<DefId, (Span, Vec<Portable>)>,
+    hints: FxHashMap<DefId, (Span, Vec<Portable>)>,
     /// Check with the sets written in, without variables (`throws::vars`).
     no_vars: bool,
 }
@@ -51,39 +51,39 @@ pub(crate) struct FnSites {
     pub seeds: FnTypeSeeds,
     /// Every site resolved, with its type (in its own generic context).
     pub(super) sites: Vec<(Span, TyId)>,
-    seen: HashSet<(Span, TyId)>,
+    seen: FxHashSet<(Span, TyId)>,
     /// `sites` by file, as indices into it.
-    pub(super) by_file: HashMap<velt_common::FileId, Vec<usize>>,
+    pub(super) by_file: FxHashMap<velt_common::FileId, Vec<usize>>,
     /// `seeds` with what this check found added.
     pub(super) found: FnTypeSeeds,
     pub(super) grew: bool,
     /// What a call through a function type may throw beyond its type ([`Ctx::indirect_error`]),
     /// for the current `found`.
-    pub(super) indirect: HashMap<TyId, Option<TyId>>,
+    pub(super) indirect: FxHashMap<TyId, Option<TyId>>,
     /// The same for a call through a value read from a known site.
-    pub(super) indirect_sites: HashMap<Span, Option<TyId>>,
+    pub(super) indirect_sites: FxHashMap<Span, Option<TyId>>,
     /// The written type of each parameter and field, by the span of its name.
-    pub(super) written: HashMap<Span, Span>,
+    pub(super) written: FxHashMap<Span, Span>,
     /// The site the value being checked is stored into (an argument's parameter, a variable's
     /// or a field's type): what a closure created there throws goes into that site only.
     pub target: Option<Span>,
     /// The site each closure (by its span) was created for.
-    pub(super) closure_sites: HashMap<Span, Span>,
+    pub(super) closure_sites: FxHashMap<Span, Span>,
     /// The closures that end in a rest parameter (`(...args) => …`): their function types do.
-    pub rest_closures: HashSet<DefId>,
+    pub rest_closures: FxHashSet<DefId>,
     /// Where the values of each site are stored (an argument read from a parameter), so what
     /// is stored into a site is stored into those too.
-    pub(super) flows: HashMap<Span, Vec<Span>>,
+    pub(super) flows: FxHashMap<Span, Vec<Span>>,
     /// How many errors were added to `found`.
     pub added: usize,
     last: bool,
     /// Sites get an error-set variable (`TyOp::ErrSite`) instead of a seeded set.
     pub use_vars: bool,
     /// The variable of each site, by its span, and the site of each variable.
-    pub(super) var_of: HashMap<Span, TyId>,
+    pub(super) var_of: FxHashMap<Span, TyId>,
     pub vars: Vec<Span>,
     /// Each variable's solved error type, once solved (`never` for an empty set).
-    pub solved: HashMap<TyId, TyId>,
+    pub solved: FxHashMap<TyId, TyId>,
     /// The constraints on the variables (`throws::vars`).
     pub(crate) var_sets: super::vars::VarSets,
     /// A type with a variable failed a comparison or a bound: when the check reports errors,
