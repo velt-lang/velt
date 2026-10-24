@@ -166,15 +166,16 @@ async function connection<E>(
         }
         continue;
       }
+      // One clock read per batch: the Date header and the time limits.
+      const now = res.tick();
       if (headStart < 0) {
-        headStart = Date.now();
+        headStart = now;
       }
-      res.tick();
       try {
         while (open && parser.next(req.head)) {
           // The next head, if any, starts arriving now.
           headStart = -1;
-          req.begin();
+          req.begin(now);
           res.begin(req.head.keepAlive, req.head.http11, req.isMethod("HEAD"));
           let failed = false;
           try {
@@ -219,7 +220,7 @@ async function connection<E>(
         }
         // Part of the next head is here already: its time runs from now.
         if (headStart < 0 && parser.available() > 0) {
-          headStart = Date.now();
+          headStart = now;
         }
       } catch (e) {
         if (e instanceof BadRequest) {

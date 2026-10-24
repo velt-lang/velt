@@ -72,12 +72,12 @@ export class HttpRequest {
   }
 
   /// A new request's head was parsed into `head` (internal).
-  begin() {
+  begin(now: i64) {
     const h = this.head;
     this.continued = false;
     this.overLimit = false;
     this.late = false;
-    this.deadline = Date.now() + this.requestMs;
+    this.deadline = now + this.requestMs;
     this.ended = h.bodyMode == BODY_NONE;
     this.left = h.bodyMode == BODY_LENGTH ? h.bodyLength : 0;
     this.chunk = h.bodyMode == BODY_CHUNKED ? CHUNK_SIZE : CHUNK_DONE;
