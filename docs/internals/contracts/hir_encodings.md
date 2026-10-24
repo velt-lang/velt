@@ -169,6 +169,15 @@ Maintainer-owned, like `hir/mod.rs`, `hir/intrinsic.rs` and `hir/module_state.rs
   operand tests `HoldsDynamicOrClass` instead, also `true` for a class (its `valueOf()` comes
   first). The probe is never evaluated. Lowering evaluates it like `HoldsNull` (`const_cond`),
   so each instantiation lowers one branch, and the others the code they had without the test.
+- A value of a type parameter passed for a union parameter with that type parameter as a member
+  (issue #1456; sema `param_member.rs`): the argument `Variant { [x] }` (or `WrapSome(x)`,
+  `WrapSome(Variant { [x] })` for an option), `x` a variable or field path, is `If { cond:
+  HoldsDynamic(NullAs: T), then: <x converted to any and routed to the member whose test it
+  passes, as an `any` converted to the union is>, els: <the wrap> }`. The routing reads `x`
+  once per test and converts it once in each arm (no temporary); where the wrap moves `x`,
+  every arm moves it. Lowering's drop-flag scan (`FlagScan`) looks only at the branch the
+  instantiation takes, and `velt_sema::effects::routed_wrap` gives the effects of such an
+  argument as the wrap's.
 
 ## M3/M4 encodings (lowering assumptions, confirmed at merge of ir-3)
 - An async fn's `FnDef::ret` is the body's return type `T` (the call's type is `Promise<T>`).

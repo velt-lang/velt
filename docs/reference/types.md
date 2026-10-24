@@ -552,7 +552,13 @@ their types, or a discriminant no member has), and null tests (also `a == b` of 
 `typeof x === "number"` and `switch (typeof x)`), printing and `JSON.stringify` ask that value
 itself, as they do a plain `unknown`. Where `typeof x === "string"` holds, `x` reads as a
 `string` also when generic code put the string in the `T` member (`s<T>(v)` with `v: T` passed
-to `s<T>(x: T | string)`). `a == b` of two values of a type parameter's type (also
+to `s<T>(x: T | string)`). A variable or field of a type parameter passed for such a
+parameter (`i<T>(v)` with `i<T>(x: T | Foo)`, also `T | null`, `T | undefined` and
+`T | Foo | null`) goes to the member its value belongs to at `T = unknown` (or `any`), as an
+`unknown` passed where the type is written out does, so `x instanceof Foo`, `x === null`,
+`x === undefined`, `x === true` and `x === "a"` see a `Foo`, a nothing, a boolean or a string
+that generic code passed (#1456); the other instantiations pass the value as they did. A value
+passed another way (a call's result passed as it is: `i<T>(f(v))`) stays in the `T` member. `a == b` of two values of a type parameter's type (also
 `T | null | undefined`) compares with JavaScript's coercions at `T = unknown` or `any`
 (`1 == "1"`), as `==` on `any` does. An `any` or `unknown` converted to it (`const n: number | null | undefined = v`, `v as T | null |
 undefined`) gives `null` for a `null` and `undefined` for an `undefined`. Converted to a

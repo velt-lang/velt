@@ -217,7 +217,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
         lw.in_reflect = f
             .name
             .starts_with(super::any_proxy::PRELUDE_REFLECT_METHODS);
-        let scan = FlagScan::run(hir_prog, &f.body);
+        let mut pick = |c: &hir::Expr| lw.const_cond(c) == Some(true);
+        let scan = FlagScan::run_picking(hir_prog, &f.body, Some(&mut pick));
         lw.ref_bindings = scan.ref_bindings.iter().copied().collect();
         (lw.frame_closures, lw.direct_siblings) = super::frame_envs::scan(hir_prog, f);
         let (params, attrs) = lw.declare_locals(def, f);

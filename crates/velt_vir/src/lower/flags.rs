@@ -9,8 +9,12 @@
 
 use velt_sema::hir::{self, LocalId, PassMode, UseMode};
 
-pub(super) struct FlagScan<'h> {
+pub(super) struct FlagScan<'h, 'p> {
     hir: &'h hir::Program,
+    /// Which branch lowering takes of an `if` on a condition fixed per instantiation
+    /// (`HoldsDynamic`, expr.rs `const_cond`): `true` for the `then`. Without it both count as
+    /// conditional regions.
+    pick: Option<&'p mut dyn FnMut(&hir::Expr) -> bool>,
     depth: u32,
     decl: Vec<u32>,
     moved: Vec<bool>,
@@ -37,11 +41,22 @@ pub(super) struct Scan {
     pub zero_parts: Vec<bool>,
 }
 
-impl<'h> FlagScan<'h> {
+impl<'h, 'p> FlagScan<'h, 'p> {
     pub(super) fn run(hir: &'h hir::Program, body: &hir::Body) -> Scan {
+        Self::run_picking(hir, body, None)
+    }
+
+    /// `run`, scanning only the branch lowering takes of an `if` on a condition fixed per
+    /// instantiation (`pick`): the code of that branch is straight-line code of its block.
+    pub(super) fn run_picking(
+        hir: &'h hir::Program,
+        body: &hir::Body,
+        pick: Option<&'p mut dyn FnMut(&hir::Expr) -> bool>,
+    ) -> Scan {
         let n = body.locals.len();
         let mut s = FlagScan {
             hir,
+            pick,
             depth: 0,
             decl: vec![0; n],
             moved: vec![false; n],
@@ -261,6 +276,14 @@ impl<'h> FlagScan<'h> {
                     self.expr(c);
                 }
                 self.exprs(args);
+            }
+            // A condition fixed per instantiation (`HoldsDynamic`): lowering takes one branch,
+            // as straight-line code (expr.rs), so a move in it is not conditional.
+            K::If { cond, then, els }
+                if self.pick.is_some() && super::template::is_holds_dynamic(cond) =>
+            {
+                let taken = self.pick.as_mut().is_some_and(|pick| pick(cond));
+                self.expr(if taken { then } else { els });
             }
             K::If { cond, then, els } => {
                 self.expr(cond);

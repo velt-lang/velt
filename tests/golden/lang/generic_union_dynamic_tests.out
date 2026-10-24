@@ -1,0 +1,10 @@
+3 null u yes A
+-1 v v no str
+3 null u yes A
+3 -1 v
+-1 v v no - A
+3 3 -1
+ON OFF mid
+null foo3 num7 other:s other:undefined
+3 -1 3
+3vvno- -1nullvno- -1vvnoA -1vvyes- -1vuno- -1vvno-

@@ -226,6 +226,7 @@ impl FnCx<'_, '_> {
                 }
             };
             self.set_target(outer_target);
+            h = self.routed_param_arg(h);
             if let Some(d) = &p.default {
                 h = self.default_on_undefined(h, arg_ty, d, &type_args);
             }

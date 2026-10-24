@@ -110,6 +110,7 @@ mod ops;
 mod optional_fn_call;
 mod ordering;
 mod overload_call;
+mod param_member;
 mod per_use;
 mod process;
 mod promise_new;
