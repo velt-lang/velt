@@ -57,6 +57,11 @@ pub unsafe extern "C" fn velt_rt_panic(msg: *const VeltStr) -> ! {
     die((*msg).text_lossy().as_bytes())
 }
 
+/// An uncaught error is about to be reported: one thread, so nothing can report at the same
+/// time (velt_rt `velt_rt_uncaught_report`).
+#[no_mangle]
+pub extern "C" fn velt_rt_uncaught_report() {}
+
 /// `process.exit(code)`: flush stdout and stop.
 #[no_mangle]
 pub extern "C" fn velt_rt_exit(code: i32) -> ! {

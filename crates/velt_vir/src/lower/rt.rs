@@ -28,6 +28,8 @@ pub(super) enum Rt {
     WriteByte,
     Panic,
     Exit,
+    /// An uncaught error is reported next: only the first thread to report goes on.
+    UncaughtReport,
     /// Source location bookkeeping for uncaught-error reports (`lower_with` only).
     SetThrowLoc,
     ThrowLoc,
@@ -211,6 +213,7 @@ impl Rt {
             Rt::WriteByte => ("velt_rt_write_byte", vec![U32, U8], Unit, false),
             Rt::Panic => ("velt_rt_panic", vec![Ptr], Unit, true),
             Rt::Exit => ("velt_rt_exit", vec![I32], Unit, true),
+            Rt::UncaughtReport => ("velt_rt_uncaught_report", vec![], Unit, false),
             Rt::SetThrowLoc => ("velt_rt_set_throw_loc", vec![Ptr], Unit, false),
             Rt::ThrowLoc => ("velt_rt_throw_loc", vec![], Ptr, false),
             Rt::PowF64 => ("velt_rt_pow_f64", vec![F64, F64], F64, false),

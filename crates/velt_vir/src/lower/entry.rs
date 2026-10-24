@@ -236,6 +236,9 @@ impl<'c, 'h> FnLower<'c, 'h> {
             self.switch_to(done);
             return;
         }
+        // Only the first uncaught error is reported: another thread failing at the same time
+        // waits for the process to end.
+        self.call_rt(Rt::UncaughtReport, vec![], None);
         // Built whole and written in one write, so no other thread's output lands inside it.
         let (_, buf) = self.new_strbuf(0);
         self.push_text(&buf, "Uncaught ");
