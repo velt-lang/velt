@@ -1,3 +1,3 @@
-generic_instantiation_site.vlt:5:10: error: this generic function reads or writes `x[k]` with the key type `"x" | "name"` at this instantiation, whose fields have different types; that is not supported yet (#350)
-  = note: the keys' fields must have one type (or pass one key, a string literal)
+generic_instantiation_site.vlt:5:10: error: this generic function reads or writes `x[k]` with the key type `"x" | "name"` at this instantiation, which names an optional field; that is not supported yet (#350)
+  = note: the keys must name required fields (or pass one key, a string literal)
   = note: in `getA` at this instantiation: `T = Pt`, `K = "x" | "name"`

@@ -7,7 +7,7 @@ function getA<T extends object, K extends keyof T>(o: T, k: K): T[K] {
 function outer<T extends object, K extends keyof T>(o: T, k: K): T[K] {
   return getA(o, k);
 }
-type Pt = { x: number; name: string };
+type Pt = { x: number; name?: string };
 const p: Pt = { x: 1, name: "n" };
 const k: keyof Pt = p.x > 2 ? "x" : "name";
 console.log(outer(p, k));
