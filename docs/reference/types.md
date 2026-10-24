@@ -2604,6 +2604,40 @@ with `ToPrimitive`: `[] == 0` is `true`); an instance of a subclass of a generic
 convert to that class (`Sub extends Box<number>` to `Box<number>`: a `TypeError`); and a
 function prints as `[Function (anonymous)]` (Node prints its name, `[Function: f]`).
 
+An object of another type converted to an object type (`a as Item` where `a` holds a class
+instance with `Item`'s fields, or an object literal with more fields than `Item`) is, in a program
+that makes proxies (`new Proxy` anywhere in its own code, as a reactive framework does), a *view*
+of that object (#1485). Nothing is copied: each field is read from the object when it is read,
+and checked then as the field's type, so a field the object lacks stops with a `TypeError` at
+that read (Node reads `undefined`); a write goes to the object, and back in an `any` (and for
+`===`, `WeakMap` keys, `in`, `Object.keys` and `for...in`) the view is the object itself. A
+union with one object type member (`VNode | string | null`) converts an object that is no
+`VNode` the same way. The view is a proxy without traps (Proxy and Reflect, below), so
+`JSON.stringify` of it stops with a `TypeError` for now, as of every typed proxy (#823). In a
+program without proxies, and into a class or an interface with methods, an object of another
+type stays a `TypeError`.
+
+```ts
+type Item = { name: string; price: number };
+
+class Product {
+  name = "pen";
+  price = 2;
+  stock = 10;
+}
+
+function main(): void {
+  const tracked = new Proxy({ hits: 0 }, {}); // the program makes proxies
+  const p = new Product();
+  const a: any = p;
+  const item = a as Item; // a view of `p`
+  item.price = 3;
+  console.log(p.price, item.name, tracked.hits); // 3 pen 0
+  const back: any = item;
+  console.log(back === a); // true
+}
+```
+
 Members of an `any` are read and called as in JavaScript: `x.f`, `x["f"]`, `x[k]` with a
 `string`, `number` or `any` key (any expression: `x[key()]`, `x[i + 1]`), `x.m(a, b)` (a method,
 or a field holding a function, typed or `any`) and `x(a, b)` when `x` holds a function. The member

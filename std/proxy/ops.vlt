@@ -204,13 +204,14 @@ export class __HasOwnPropertyProxy {
 
 /**
  * `Object.keys(x)` of a typed proxy `x` (velt_sema tests `Intrinsic::IsTypedProxy` first): the
- * keys its traps list (`ownKeys`, `getOwnPropertyDescriptor`).
+ * keys its traps list (`ownKeys`, `getOwnPropertyDescriptor`). A view (`Proxy.__view`) is the
+ * object it views once in an `any`: its own keys.
  */
 export function __proxyKeysOf(o: any): string[] {
   if (o instanceof Proxy) {
     return o.__keys();
   }
-  panic("ICE: `__proxyKeysOf` of a value that is not a proxy");
+  return Object.keys(o);
 }
 
 /**
@@ -233,12 +234,15 @@ export function __anyIsArrayProxy(o: any): boolean {
   return Array.isArray(o);
 }
 
-/** `"k" in x` of a typed proxy `x` (velt_sema tests `Intrinsic::IsTypedProxy` first): its `has` trap. */
+/**
+ * `"k" in x` of a typed proxy `x` (velt_sema tests `Intrinsic::IsTypedProxy` first): its `has`
+ * trap; of a view, the object it views.
+ */
 export function __proxyHas(o: any, k: string): boolean {
   if (o instanceof Proxy) {
     return o.__has(k);
   }
-  panic("ICE: `__proxyHas` of a value that is not a proxy");
+  return k in o;
 }
 
 /**
@@ -249,7 +253,8 @@ export function __proxyHasOwnOf(o: any, k: string): boolean {
   if (o instanceof Proxy) {
     return o.__hasOwn(k);
   }
-  panic("ICE: `__proxyHasOwnOf` of a value that is not a proxy");
+  // A view: the object it views.
+  return __anyHasOwnProxy(o, k);
 }
 
 /**
@@ -260,7 +265,8 @@ export function __proxyAny(o: any): any {
   if (o instanceof Proxy) {
     return o.__self();
   }
-  panic("ICE: `__proxyAny` of a value that is not a proxy");
+  // A view: the object it views.
+  return o;
 }
 
 /**

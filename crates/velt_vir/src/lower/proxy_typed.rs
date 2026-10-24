@@ -240,7 +240,7 @@ impl FnLower<'_, '_> {
     }
 
     /// The `any` table of the `Proxy` class.
-    fn proxy_table(&mut self) -> Operand {
+    pub(super) fn proxy_table(&mut self) -> Operand {
         let pty = self.cx.proxy_class_ty();
         let imp = self.cx.hir.any_impl.unwrap_or(0);
         self.vtable_addr(super::glue::VtableKey::Impl(imp, pty))
@@ -254,9 +254,11 @@ impl FnLower<'_, '_> {
         self.proxy_split(
             &v,
             |lw, u| {
-                lw.assign(Place::local(d), Rvalue::Use(u));
+                // A view gives the object it views (any_view.rs).
                 let pt = lw.proxy_table();
-                lw.assign(Place::local(t), Rvalue::Use(pt));
+                let (vd, vt) = lw.proxy_or_view_parts(u, pt);
+                lw.assign(Place::local(d), Rvalue::Use(vd));
+                lw.assign(Place::local(t), Rvalue::Use(vt));
             },
             |lw| {
                 lw.assign(Place::local(d), Rvalue::Use(v.clone()));

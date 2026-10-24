@@ -37,6 +37,7 @@ mod any_rest;
 mod any_set;
 mod any_set_site;
 mod any_tuple;
+mod any_view;
 mod append;
 mod array;
 mod assign_target;
@@ -340,6 +341,8 @@ struct Cx<'h> {
     hir: &'h hir::Program,
     /// Native library inits `velt_main` runs first (entry.rs).
     native_inits: Vec<crate::NativeInit>,
+    /// The prelude's `Proxy.__view` (any_view.rs), once looked up.
+    view_fn: Option<Option<DefId>>,
     /// The program pins a task (`spawn(…, { worker })`): `velt_main` selects the per-core
     /// scheduler. Known once every function
     /// but `velt_main` is lowered, which is why it is built last (`lower_program`).

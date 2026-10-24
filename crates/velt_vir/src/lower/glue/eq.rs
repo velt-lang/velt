@@ -196,6 +196,10 @@ impl FnLower<'_, '_> {
             self.cx.note_share(ty);
         }
         let x = match self.cx.ty(ty) {
+            // A view hashes as the object it views, agreeing with `same_values` (any_view.rs).
+            Ty::Ptr if self.cx.proxiable(ty) && self.cx.view_fn().is_some() => {
+                self.view_identity(place)
+            }
             Ty::Ptr => Operand::Copy(place.clone()),
             _ => self.addr(place.clone()),
         };

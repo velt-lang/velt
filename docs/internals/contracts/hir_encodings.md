@@ -1136,6 +1136,15 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   `lower/proxy_call.rs`). Object conversions keep a proxy's identity: `AdtLit` has
   `converted` ("Object conversions" below), and a converted literal whose source has a proxiable type gives the
   source's proxy when it holds one (and makes the target type proxiable, as `Upcast` does).
+- Views (#1485, velt_vir `lower/any_view.rs`): in a program with typed proxies, `AnyTo` to a
+  proxiable object type (not a class) of an `any` holding an object or function of another type
+  (and not a proxy) is the tagged result of the prelude's `Proxy.__view(x)`, a `Proxy` without traps whose
+  `#view` is set: field reads and writes run its forwarding `__get` / `__set` and check the value
+  as the field's type. A tagged value whose `Proxy` is a view converts to `any` as the `any` it
+  holds (`__target()`, the view released), and `===` on a proxiable type compares a view as
+  that `any`'s data pointer, so the view is the object to every dynamic operation. The prelude's
+  `__proxyKeysOf`, `__proxyHas`, `__proxyHasOwnOf` and `__proxyAny`, which sema calls behind
+  `IsTypedProxy`, take such a value (no longer a proxy once in an `any`) as a plain one.
 - Object conversions (#650, #651; sema `body/expr/object_copy.rs`): an object type converted to
   another object type whose fields it has (in another order, or only some of them) is an
   `AdtLit` of the expected type with `converted: Conversion::Copy`, whose fields each read the

@@ -87,6 +87,10 @@ impl FnLower<'_, '_> {
     /// Identity of two objects of type `ty`.
     fn identity(&mut self, a: &Place, b: &Place, ty: TyId) -> Operand {
         let (x, y) = match self.cx.ty(ty) {
+            // A view is the object it views (any_view.rs).
+            Ty::Ptr if self.cx.proxiable(ty) && self.cx.view_fn().is_some() => {
+                (self.view_identity(a), self.view_identity(b))
+            }
             // Class objects and counted boxes: the pointer is the object.
             Ty::Ptr => (Operand::Copy(a.clone()), Operand::Copy(b.clone())),
             // Interface and function values: compared here, not through `eq_values`: inside

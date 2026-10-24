@@ -23,6 +23,7 @@ impl<'h> Cx<'h> {
         Cx {
             hir,
             native_inits: vec![],
+            view_fn: None,
             uses_placement: false,
             cell_checks: false,
             no_await_steps: false,

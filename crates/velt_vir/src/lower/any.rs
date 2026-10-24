@@ -727,6 +727,8 @@ impl FnLower<'_, '_> {
             let data = Operand::Copy(proj(p, Proj::Field(0)));
             self.proxy_unbox(data, desc.clone(), &out, done, err);
             self.switch_to(err);
+            // An object of another type: a view of it (any_view.rs).
+            self.any_view(p, ty, &out, done);
         }
         self.any_type_error(desc, ty);
         self.switch_to(done);

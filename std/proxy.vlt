@@ -240,11 +240,30 @@ function proxyCompatible(d: PropertyDescriptor, t: PropertyDescriptor | undefine
 export class Proxy {
   #target: any;
   #handler: ProxyHandler<any>;
+  #view: boolean;
 
   /** A proxy of `target` whose operations run the traps of `handler`. */
   constructor(target: any, handler: ProxyHandler<any>) {
     this.#target = target;
     this.#handler = handler;
+    this.#view = false;
+  }
+
+  /**
+   * A view of `target` as an object type (velt_vir `lower/any_view.rs`): an `any` holding an
+   * object of another type converted to an object type. It has no traps, so every read and
+   * write reaches the target, and converting the view back to `any` gives the target itself:
+   * to the program the view is the target, as in Node.
+   */
+  static __view(target: any): Proxy {
+    const p = new Proxy(target, {});
+    p.#view = true;
+    return p;
+  }
+
+  /** Whether this proxy is a view (`__view`). */
+  __isView(): boolean {
+    return this.#view;
   }
 
   /**
