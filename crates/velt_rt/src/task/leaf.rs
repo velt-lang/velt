@@ -95,14 +95,14 @@ where
     new_leaf(run_blocking(f))
 }
 
-/// Runs `f` on tokio's blocking pool and yields its return value (for leaves that only
+/// Runs `f` on the runtime's blocking threads and yields its return value (for leaves that only
 /// sometimes need to block).
 pub async fn run_blocking<R, F>(f: F) -> R
 where
     R: Send + 'static,
     F: FnOnce() -> R + Send + 'static,
 {
-    match super::runtime::handle().spawn_blocking(f).await {
+    match super::runtime::spawn_blocking(f).await {
         Ok(v) => v,
         Err(e) => crate::panic::fatal(&format!("blocking runtime operation failed: {e}")),
     }

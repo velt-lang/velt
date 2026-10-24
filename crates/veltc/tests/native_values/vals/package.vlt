@@ -1,0 +1,17 @@
+import type { Package } from "velt:package";
+
+// A test package (crates/veltc/tests/native_values.rs): arrays and structs across the native
+// boundary, sync and async.
+export const pkg: Package = {
+  name: "vals",
+  version: "0.1.0",
+  native: {
+    targets: [
+      "x86_64-unknown-linux-gnu",
+      "aarch64-unknown-linux-gnu",
+      "x86_64-apple-darwin",
+      "aarch64-apple-darwin",
+      "x86_64-pc-windows-msvc",
+    ],
+  },
+};

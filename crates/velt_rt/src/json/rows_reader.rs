@@ -55,7 +55,10 @@ struct Cursor {
 }
 
 pub struct RowReader {
-    buf: Vec<u8>,
+    /// The rows: a `u8[]` the decoder borrows for the whole parse (as the text reader borrows
+    /// its source string), or `_owned`'s bytes.
+    buf: &'static [u8],
+    _owned: Vec<u8>,
     columns: usize,
     single: bool,
     c: Cursor,
@@ -74,10 +77,30 @@ const I64_LIMIT: f64 = 9_223_372_036_854_775_808.0;
 impl RowReader {
     /// A reader over `buf` (from `rows_bin::BinRows`) with `velt_rt_json_reader_new_with` flags.
     pub fn new(buf: Vec<u8>, flags: u32) -> RowReader {
+        // SAFETY: the bytes live in `_owned`'s heap buffer, which moves with the reader but
+        // never changes.
+        let bytes = unsafe { std::mem::transmute::<&[u8], &'static [u8]>(buf.as_slice()) };
+        RowReader::with(bytes, buf, flags)
+    }
+
+    /// A reader over rows the caller keeps alive and unchanged until the reader is dropped.
+    ///
+    /// # Safety
+    /// As said: `buf` outlives the reader.
+    pub unsafe fn borrowed(buf: &[u8], flags: u32) -> RowReader {
+        RowReader::with(
+            std::mem::transmute::<&[u8], &'static [u8]>(buf),
+            Vec::new(),
+            flags,
+        )
+    }
+
+    fn with(buf: &'static [u8], owned: Vec<u8>, flags: u32) -> RowReader {
         // A buffer without a readable header has no rows.
-        let (single, columns, start) = bin::header_end(&buf).unwrap_or((false, 0, buf.len()));
+        let (single, columns, start) = bin::header_end(buf).unwrap_or((false, 0, buf.len()));
         RowReader {
             buf,
+            _owned: owned,
             columns,
             single,
             c: Cursor {
@@ -109,7 +132,7 @@ impl RowReader {
             self.mismatch();
             return None;
         }
-        let cell = bin::cell_at(&self.buf, self.c.pos);
+        let cell = bin::cell_at(self.buf, self.c.pos);
         if cell.is_none() {
             self.mismatch();
         }
@@ -144,7 +167,7 @@ impl RowReader {
             At::Row => TOKEN_OBJECT_START,
             At::Keys if self.c.col < self.columns => TOKEN_STRING,
             At::Keys => TOKEN_OBJECT_END,
-            At::Val => match bin::cell_at(&self.buf, self.c.pos) {
+            At::Val => match bin::cell_at(self.buf, self.c.pos) {
                 Some((BinCell::Null, _)) => TOKEN_NULL,
                 Some((BinCell::Bool(true), _)) => TOKEN_TRUE,
                 Some((BinCell::Bool(false), _)) => TOKEN_FALSE,
@@ -172,7 +195,7 @@ impl RowReader {
             }
             (At::Top, b'{') if self.single => self.open_row(),
             (At::Row, b'{') => self.open_row(),
-            (At::Val, b'[') => match bin::cell_at(&self.buf, self.c.pos) {
+            (At::Val, b'[') => match bin::cell_at(self.buf, self.c.pos) {
                 Some((BinCell::Blob(start, end), _)) => {
                     self.c.at = At::Bytes;
                     self.c.pos = start;
@@ -236,7 +259,7 @@ impl RowReader {
             return Ok(None);
         }
         // In bounds: `header_end` walked every name.
-        let (start, end, ascii) = bin::name_at(&self.buf, self.c.name);
+        let (start, end, ascii) = bin::name_at(self.buf, self.c.name);
         self.c.name = end;
         self.c.at = At::Val;
         let name = &self.buf[start..end];
@@ -336,7 +359,7 @@ impl RowReader {
     /// Where the row starting at `pos` ends.
     fn row_end(&self, mut pos: usize) -> Option<usize> {
         for _ in 0..self.columns {
-            pos = bin::cell_at(&self.buf, pos)?.1;
+            pos = bin::cell_at(self.buf, pos)?.1;
         }
         Some(pos)
     }
@@ -355,7 +378,7 @@ impl RowReader {
                 }
                 None => return self.mismatch(),
             },
-            At::Val => match bin::cell_at(&self.buf, self.c.pos) {
+            At::Val => match bin::cell_at(self.buf, self.c.pos) {
                 Some((_, next)) => self.advance(next),
                 None => return self.mismatch(),
             },
@@ -398,17 +421,17 @@ impl RowReader {
         }
         let mut text = Vec::new();
         let ok = match self.c.at {
-            At::Top => match bin::to_json(&self.buf) {
+            At::Top => match bin::to_json(self.buf) {
                 Some(json) => {
                     text = json;
                     true
                 }
                 None => false,
             },
-            At::Row => bin::push_row_json(&mut text, &self.buf, self.c.pos).is_some(),
-            At::Val => match bin::cell_at(&self.buf, self.c.pos) {
+            At::Row => bin::push_row_json(&mut text, self.buf, self.c.pos).is_some(),
+            At::Val => match bin::cell_at(self.buf, self.c.pos) {
                 Some((cell, _)) => {
-                    bin::push_cell_json(&mut text, &self.buf, cell);
+                    bin::push_cell_json(&mut text, self.buf, cell);
                     true
                 }
                 None => false,

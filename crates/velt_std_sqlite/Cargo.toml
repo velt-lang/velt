@@ -1,0 +1,11 @@
+[package]
+name = "velt_std_sqlite"
+version.workspace = true
+edition.workspace = true
+description = "std/sqlite's driver: a crate on the native SDK only (velt_native), linked into the runtime"
+
+[dependencies]
+velt_native = { path = "../velt_native" }
+velt_text = { path = "../velt_text", features = ["sdk"] }
+rusqlite = { version = "0.40.2", features = ["bundled", "column_decltype"] }
+parking_lot = "0.12.5"

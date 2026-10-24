@@ -12,7 +12,7 @@ import { args, exit } from "velt:process";
 function latin1(b: u8[]): string {
   let s = "";
   for (let i = 0; i < b.length; i++) {
-    s += String.fromCharCode(b[i] as i64);
+    s += String.fromCharCode(b[i] as number);
   }
   return s;
 }

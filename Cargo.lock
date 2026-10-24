@@ -1849,7 +1849,19 @@ dependencies = [
  "pin-project-lite",
  "signal-hook-registry",
  "socket2",
+ "tokio-macros",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "tokio-macros"
+version = "2.7.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "78773a2a397f451582ce068015985c33193cf6dea8b74d2a639fe457b2f07b0e"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
@@ -2144,6 +2156,7 @@ dependencies = [
 name = "velt_native"
 version = "0.1.0"
 dependencies = [
+ "tokio",
  "velt_native_macros",
 ]
 
@@ -2202,20 +2215,23 @@ dependencies = [
  "lock_api",
  "memchr",
  "mimalloc",
+ "mio",
  "parking_lot",
  "parking_lot_core",
- "postgres-protocol",
  "regex",
- "rusqlite",
  "rustls",
  "ryu",
  "socket2",
  "tokio",
- "tokio-postgres",
  "tokio-rustls",
  "tower-service",
  "url",
  "velt_native",
+ "velt_std_postgres",
+ "velt_std_redis",
+ "velt_std_sqlite",
+ "velt_text",
+ "velt_tls",
  "webpki-roots",
  "windows-sys 0.61.2",
 ]
@@ -2241,20 +2257,23 @@ dependencies = [
  "lock_api",
  "memchr",
  "mimalloc",
+ "mio",
  "parking_lot",
  "parking_lot_core",
- "postgres-protocol",
  "regex",
- "rusqlite",
  "rustls",
  "ryu",
  "socket2",
  "tokio",
- "tokio-postgres",
  "tokio-rustls",
  "tower-service",
  "url",
  "velt_native",
+ "velt_std_postgres",
+ "velt_std_redis",
+ "velt_std_sqlite",
+ "velt_text",
+ "velt_tls",
  "webpki-roots",
  "windows-sys 0.61.2",
 ]
@@ -2280,20 +2299,23 @@ dependencies = [
  "lock_api",
  "memchr",
  "mimalloc",
+ "mio",
  "parking_lot",
  "parking_lot_core",
- "postgres-protocol",
  "regex",
- "rusqlite",
  "rustls",
  "ryu",
  "socket2",
  "tokio",
- "tokio-postgres",
  "tokio-rustls",
  "tower-service",
  "url",
  "velt_native",
+ "velt_std_postgres",
+ "velt_std_redis",
+ "velt_std_sqlite",
+ "velt_text",
+ "velt_tls",
  "webpki-roots",
  "windows-sys 0.61.2",
 ]
@@ -2307,6 +2329,7 @@ dependencies = [
  "libm",
  "memchr",
  "ryu",
+ "velt_text",
 ]
 
 [[package]]
@@ -2319,11 +2342,70 @@ dependencies = [
 ]
 
 [[package]]
+name = "velt_std_postgres"
+version = "0.3.0"
+dependencies = [
+ "bytes",
+ "futures-util",
+ "libc",
+ "parking_lot",
+ "postgres-protocol",
+ "rustls",
+ "socket2",
+ "tokio",
+ "tokio-postgres",
+ "tokio-rustls",
+ "velt_native",
+ "velt_text",
+ "velt_tls",
+]
+
+[[package]]
+name = "velt_std_redis"
+version = "0.3.0"
+dependencies = [
+ "futures-util",
+ "itoa",
+ "tokio",
+ "tokio-rustls",
+ "velt_native",
+ "velt_tls",
+]
+
+[[package]]
+name = "velt_std_sqlite"
+version = "0.3.0"
+dependencies = [
+ "parking_lot",
+ "rusqlite",
+ "velt_native",
+ "velt_text",
+]
+
+[[package]]
 name = "velt_syntax"
 version = "0.3.0"
 dependencies = [
  "rustc-hash",
  "velt_common",
+]
+
+[[package]]
+name = "velt_text"
+version = "0.3.0"
+dependencies = [
+ "itoa",
+ "memchr",
+ "ryu",
+ "velt_native",
+]
+
+[[package]]
+name = "velt_tls"
+version = "0.3.0"
+dependencies = [
+ "rustls",
+ "webpki-roots",
 ]
 
 [[package]]

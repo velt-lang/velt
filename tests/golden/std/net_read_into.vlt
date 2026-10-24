@@ -1,0 +1,124 @@
+// check: no leaks
+// `readInto(buf)` reads into the program's own buffer; `writeBytes` and `tryWrite` take a
+// `Uint8Array` (a view: only its range is written). Plain and TLS streams behave the same.
+import { connect, connectTls, listen, listenTls, TcpListener, TcpStream } from "velt:net";
+import { TEST_CA, TEST_CERT, TEST_KEY } from "./_tls";
+
+// Echoes through one 7-byte buffer (so messages arrive split), writing views of what came,
+// until the end of the stream; then says how much it saw.
+async function echo(conn: TcpStream) {
+  const buf = new Uint8Array(7);
+  let total = 0;
+  while (true) {
+    const n = await conn.readInto(buf);
+    if (n == null) {
+      break;
+    }
+    total += n;
+    await conn.writeBytes(buf.subarray(0, n));
+  }
+  await conn.write(`|${total}`);
+  conn.shutdown();
+  conn.close();
+}
+
+// Reads everything with `readInto` into a buffer that is a view of a larger one.
+async function readAll(conn: TcpStream): Promise<string> {
+  const backing = new Uint8Array(32);
+  const buf = backing.subarray(8, 24);
+  let out = "";
+  while (true) {
+    const n = await conn.readInto(buf);
+    if (n == null) {
+      return out;
+    }
+    out += new TextDecoder().decode(buf.subarray(0, n));
+  }
+}
+
+async function serve(server: TcpListener, conns: number) {
+  for (let i = 0; i < conns; i++) {
+    const conn = await server.accept();
+    spawn(echo(conn));
+  }
+}
+
+async function exercise(label: string, a: TcpStream) {
+  const reader = spawn(readAll(a));
+  const message = new TextEncoder().encode("[hello, readInto]");
+  await a.writeBytes(message.subarray(1, 16));
+  const written = a.tryWrite(new Uint8Array([33, 33]));
+  if (written < 2) {
+    await a.writeBytes(new Uint8Array([33, 33]).subarray(written as number));
+  }
+  a.shutdown();
+  console.log(label, await reader);
+  // An empty buffer reads nothing.
+  console.log(label, "empty:", await a.readInto(new Uint8Array(0)));
+  a.close();
+}
+
+async function main() {
+  const plain = await listen("127.0.0.1:0");
+  const plainServing = spawn(serve(plain, 3));
+  await exercise("plain", await connect(`127.0.0.1:${plain.port}`));
+
+  const tls = await listenTls("127.0.0.1:0", { cert: TEST_CERT, key: TEST_KEY });
+  const tlsServing = spawn(serve(tls, 1));
+  await exercise("tls", await connectTls(`localhost:${tls.port}`, { ca: TEST_CA }));
+  await tlsServing;
+
+  // `tryRead` into a range of a `u8[]` without waiting, `readable()` to wait; writes of a range.
+  const t = await connect(`127.0.0.1:${plain.port}`);
+  const msg = new TextEncoder().encode("..ranges..");
+  await t.writeBytes(msg, 2, 8);
+  t.shutdown();
+  const into: u8[] = Buffer.alloc(16);
+  let at = 0;
+  while (true) {
+    const n = t.tryRead(into, at, at + 4);
+    if (n == null) {
+      break;
+    }
+    if (n === 0) {
+      await t.readable();
+      continue;
+    }
+    at += n;
+  }
+  console.log("tryRead:", new TextDecoder().decode(into.slice(0, at as i64)));
+  try {
+    t.tryRead(into, 4, 4);
+  } catch (e) {
+    console.log("empty range:", e instanceof RangeError);
+  }
+  t.close();
+
+  // `read()` after `readInto` on the same stream continues where it stopped.
+  const b = await connect(`127.0.0.1:${plain.port}`);
+  await b.write("abcdef");
+  b.shutdown();
+  const first = new Uint8Array(2);
+  await b.readInto(first);
+  let rest = "";
+  while (true) {
+    const chunk = await b.readString();
+    if (chunk == "") {
+      break;
+    }
+    rest += chunk;
+  }
+  console.log("mixed:", new TextDecoder().decode(first), rest);
+  b.close();
+  await plainServing;
+
+  // A closed handle.
+  const after = new Uint8Array(4);
+  try {
+    await b.readInto(after);
+  } catch (e) {
+    console.log("closed:", e.code);
+  }
+  plain.close();
+  tls.close();
+}

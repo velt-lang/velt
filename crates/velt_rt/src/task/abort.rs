@@ -41,7 +41,7 @@ pub struct Signal {
     /// The signals this one was derived from (`AbortSignal.any`), until it is aborted.
     sources: Mutex<Vec<Arc<Signal>>>,
     /// The timer task of an `AbortSignal.timeout` signal, aborted when the signal is dropped.
-    timer: std::sync::OnceLock<tokio::task::AbortHandle>,
+    timer: std::sync::OnceLock<super::runtime::AbortHandle>,
 }
 
 impl Drop for Signal {
@@ -244,7 +244,7 @@ pub unsafe extern "C" fn velt_rt_signal_timeout(ms: i64, reason: *const VeltStr)
     let live = live_timers::Live::new();
     let task = super::runtime::spawn(async move {
         let _live = live;
-        tokio::time::sleep(delay).await;
+        super::runtime::time::sleep(delay).await;
         if let Some(s) = weak.upgrade() {
             s.abort(&reason);
         }

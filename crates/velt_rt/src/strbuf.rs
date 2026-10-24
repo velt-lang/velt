@@ -52,6 +52,27 @@ pub unsafe extern "C" fn velt_rt_strbuf_adopt(
     1
 }
 
+/// Room for writing `min` or more bytes in place at the end of the builder (it becomes a unique
+/// heap buffer): returns where they start and writes how many there are to `*avail`. Native
+/// libraries write their results into Velt's memory this way (native_abi.md "Strings").
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_strbuf_spare(
+    buf: *mut VeltStrBuf,
+    min: u64,
+    avail: *mut u64,
+) -> *mut u8 {
+    let (p, n) = (*buf).spare(usize::try_from(min).unwrap_or(usize::MAX));
+    avail.write(n as u64);
+    p
+}
+
+/// The `n` bytes written after the builder's text (`velt_rt_strbuf_spare`) become part of it:
+/// UTF-8, ASCII when `ascii` is 1 (not counted then).
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_strbuf_commit(buf: *mut VeltStrBuf, n: u64, ascii: u8) {
+    (*buf).commit(n as usize, ascii != 0);
+}
+
 /// Append the bytes of `s` (the caller keeps ownership of `s`; `s` may be the builder itself or
 /// lie in its buffer: `push_wtf8` copies such text out before the buffer can move).
 #[no_mangle]

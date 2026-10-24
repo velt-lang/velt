@@ -1,0 +1,28 @@
+// A read returns at most the bytes asked for, also after a larger read on the same thread.
+import { listen, connect } from "velt:net";
+
+async function main() {
+  const l = await listen("127.0.0.1:0");
+  const c = await connect(`127.0.0.1:${l.port}`);
+  const s = await l.accept();
+
+  await s.write("x".repeat(100));
+  let first = 0;
+  while (first < 100) {
+    first += (await c.read(4096)).length;
+  }
+  console.log(`first: ${first}`);
+
+  await s.write("y".repeat(1000));
+  let total = 0;
+  let largest = 0;
+  while (total < 1000) {
+    const n = (await c.read(10)).length;
+    total += n;
+    largest = Math.max(largest, n);
+  }
+  console.log(`second: ${total}, every read at most 10: ${largest <= 10}`);
+  c.close();
+  s.close();
+  l.close();
+}

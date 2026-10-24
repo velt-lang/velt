@@ -132,24 +132,39 @@ jobs:
 
   # The WebAssembly goldens (crates/veltc/tests/wasm_goldens.rs) on Windows and macOS: the queue
   # skips them unless a change touches WebAssembly code, and the push to main runs these OSes only
-  # after a Linux-only queue run, so this is where every change meets them there. The plan of a
-  # change to the WebAssembly runtime selects exactly them (and that runtime's tests).
-  wasm-goldens:
+  # after a Linux-only queue run, so this is where every change meets them there. As in the
+  # queue, one job per OS builds them and shards run them (queue-goldens.yml, `WASM_SHARDS` in
+  # crates/xtask/src/os.rs, which `wasm-plan` reads); a failed shard leaves the other jobs of this
+  # run alone (`fail-fast: false`).
+  wasm-plan:
     if: github.event.schedule != '7 5 * * *' && ((inputs.only || 'all') == 'all' || inputs.only == 'wasm')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      wasm_shards: ${{ steps.plan.outputs.wasm_shards }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: plan
+        env:
+          RUSTUP_TOOLCHAIN: stable
+        run: cargo xtask affected --full --github
+
+  wasm-goldens:
+    needs: wasm-plan
     name: wasm-goldens (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
         os: [windows-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 90
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup
-      - name: cargo xtask check --part test (WebAssembly)
-        shell: bash
-        working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
-        run: cargo xtask check --part test --paths crates/velt_rt_wasm/src/lib.rs
+    permissions:
+      contents: read
+      actions: write
+    uses: ./.github/workflows/queue-goldens.yml
+    with:
+      os: ${{ matrix.os }}
+      goldens: false
+      wasm_shards: ${{ toJSON(fromJSON(needs.wasm-plan.outputs.wasm_shards)[matrix.os]) }}
+      fail-fast: false
 
   # The lint's claims against a pinned TypeScript (crates/velt_tscompat/tests/oracle.rs): the
   # rule fixtures compile with `tsc` where the lint passes them, and each rule's sample is

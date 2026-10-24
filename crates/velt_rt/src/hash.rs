@@ -42,6 +42,22 @@ pub unsafe extern "C" fn velt_rt_str_hash(s: *const crate::str::VeltStr) -> u64 
     hash((*s).as_bytes())
 }
 
+/// The hash of the string whose UTF-8 bytes are `b` (`velt_rt_str_hash` of it), for looking up a
+/// string key by its bytes without making the string (`Map.getUtf8`).
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_bytes_hash(b: *const crate::bytes::VeltBytes) -> u64 {
+    hash((*b).as_bytes())
+}
+
+/// Whether string `s` is the text whose UTF-8 bytes are `b` (string keys compare by bytes).
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_str_eq_bytes(
+    s: *const crate::str::VeltStr,
+    b: *const crate::bytes::VeltBytes,
+) -> u8 {
+    u8::from((*s).as_bytes() == (*b).as_bytes())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

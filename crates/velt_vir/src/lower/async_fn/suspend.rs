@@ -67,16 +67,9 @@ impl FnLower<'_, '_> {
                 _ => {}
             }
         }
-        let foreign = match &inner.kind {
-            hir::ExprKind::Call {
-                callee: hir::Callee::Def(d, _),
-                ..
-            } => matches!(self.cx.hir.def(*d), hir::Def::ExternFn(_)),
-            _ => false,
-        };
         let fut = self.take_promise(inner);
         let pty = self.sub(inner.ty);
-        self.await_heap(fut, pty, foreign)
+        self.await_heap(fut, pty)
     }
 
     /// A fresh suspension: its tag and (reachable) resume block.
@@ -355,9 +348,9 @@ impl FnLower<'_, '_> {
     }
 
     /// `await` of a heap future `fut` (owned) of promise type `pty`: its result moves out of
-    /// the slot (`+16`) before the future is freed; a rejection is rethrown. `foreign`: a
-    /// runtime leaf future, whose slot holds the foreign layout (foreign.rs).
-    fn await_heap(&mut self, fut: Operand, pty: TyId, foreign: bool) -> Operand {
+    /// the slot (`+16`) before the future is freed; a rejection is rethrown. (An async extern's
+    /// foreign slot was adopted by its wrapper already, async_fn/foreign_promise.rs.)
+    fn await_heap(&mut self, fut: Operand, pty: TyId) -> Operand {
         let ty = self.cx.promise_result(pty);
         let err = self.cx.promise_error(pty);
         let f = self.copy_to_temp(fut, Ty::Ptr);
@@ -380,12 +373,6 @@ impl FnLower<'_, '_> {
                 Rvalue::Binary(BinOp::PtrAdd, fp.clone(), cint(16, Ty::U64)),
             );
             let sp = self.operand_place(slot, Ty::Ptr);
-            if foreign && self.cx.foreign_differs(slot_ty) {
-                let ft = self.cx.foreign_ty(slot_ty);
-                let out = self.temp(vt);
-                self.adopt_foreign(&proj(&sp, Proj::Deref(ft)), slot_ty, &Place::local(out));
-                return out;
-            }
             self.copy_to_temp(Operand::Copy(proj(&sp, Proj::Deref(vt))), vt)
         });
         self.call_rt(Rt::FutDrop, vec![fp], None);

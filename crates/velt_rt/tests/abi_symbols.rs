@@ -63,3 +63,28 @@ fn other_items_after_the_attribute_are_not_functions() {
     let src = "#[no_mangle]\npub static VELT_RT_X: u8 = 0;\nfn helper() {}\n#[no_mangle]\npub extern \"C\" fn main() {}\n";
     assert!(exported_functions(src).is_empty());
 }
+
+/// std's drivers export with the SDK's `#[export]` (crates/velt_std_*), sync and async.
+#[test]
+fn sdk_exports_are_listed() {
+    let src = r#"
+#[export]
+fn velt_std_pg__close(c: u64) {}
+
+#[export(async)]
+async fn velt_std_pg__query(c: u64, sql: String) -> Result<String, Error> { todo!() }
+
+#[export(blocking)]
+pub fn velt_std_pg__slow() -> Result<u64, Error> { Ok(1) }
+
+fn helper() {}
+"#;
+    assert_eq!(
+        exported_functions(src),
+        [
+            "velt_std_pg__close",
+            "velt_std_pg__query",
+            "velt_std_pg__slow"
+        ]
+    );
+}

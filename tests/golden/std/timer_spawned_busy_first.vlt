@@ -1,0 +1,37 @@
+// A spawned task that runs on without a pause and created its timer first holds back no timer
+// of `main` created later: `main` computes until the spawned task has started its spin (it runs
+// on another worker meanwhile), and its timer still ends the spin.
+class Flag {
+  set: boolean;
+  constructor() {
+    this.set = false;
+  }
+}
+
+async function main() {
+  const flag = shared(new Mutex<Flag>(new Flag()));
+  const f2 = flag.clone();
+  const h = spawn(async () => {
+    setTimeout(() => console.log("spawned timer"), 1);
+    const s = Date.now();
+    while (!f2.with((v) => v.set)) {
+      if (Date.now() - s > 10000) {
+        console.log("spin gave up");
+        return 0;
+      }
+    }
+    // Paused: its timer runs now.
+    await sleep(5);
+    return 0;
+  });
+  const t0 = Date.now();
+  while (Date.now() - t0 < 30) {}
+  setTimeout(() => {
+    console.log("main timer sets the flag");
+    flag.with((v) => {
+      v.set = true;
+    });
+  }, 20);
+  await h;
+  console.log("spawned task done");
+}

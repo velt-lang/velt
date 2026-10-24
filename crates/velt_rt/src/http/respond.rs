@@ -105,6 +105,8 @@ pub unsafe extern "C" fn velt_rt_http_req_respond_list(
 
 /// What a handler that built `resp` for request `req` returns (`velt_rt_http_req_respond`).
 fn hand_over(req: u64, resp: Option<RespObj>) -> u64 {
+    // A hand-off: the client (often a task of this program) may get the response at once.
+    crate::io::publish_before_handoff();
     let Some(r) = resp else {
         return 0;
     };

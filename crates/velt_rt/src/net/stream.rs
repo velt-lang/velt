@@ -15,7 +15,9 @@
 //! would cost every read); `abort` shuts the socket down, which ends the read, and the read then
 //! reports the abort instead of the end of the stream.
 
+use super::sys::TcpStream;
 use super::utf8::Utf8Decoder;
+use std::collections::VecDeque;
 use std::future::Future;
 use std::io;
 use std::net::SocketAddr;
@@ -23,7 +25,6 @@ use std::pin::Pin;
 use std::sync::atomic::{fence, AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf};
-use tokio::net::TcpStream;
 use tokio::sync::{Mutex as AsyncMutex, Notify};
 
 /// Any byte stream besides a raw TCP socket (TLS over TCP, an upgraded HTTP connection).
@@ -98,6 +99,11 @@ pub struct StreamObj {
     /// Taken by a raw socket's write for as long as it goes on: writes go out one after another,
     /// in the order they started (a `write` first polls at its call; the lock is FIFO).
     turn: std::sync::Arc<AsyncMutex<()>>,
+    /// What [`readable`](Self::readable) read from a transport that cannot say whether it has
+    /// data without reading it (TLS, an upgraded connection), for the next
+    /// [`try_read_into`](Self::try_read_into); `held_end` once that read found the end.
+    held: Mutex<VecDeque<u8>>,
+    held_end: AtomicBool,
 }
 
 /// A raw socket's turn to write ([`StreamObj::turn`]), held across the write.
@@ -124,28 +130,55 @@ fn aborted_error() -> io::Error {
     io::Error::new(io::ErrorKind::ConnectionAborted, "the stream was aborted")
 }
 
+/// The most a TLS or upgraded stream's [`StreamObj::readable`] reads ahead.
+const DEFAULT_HELD: u64 = 64 << 10;
+
+/// Reads up to this size go through [`READ_SCRATCH`].
+const SCRATCH: usize = 256 << 10;
+
+thread_local! {
+    static READ_SCRATCH: std::cell::RefCell<Vec<u8>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
 fn buffer(max: u64) -> Vec<u8> {
     Vec::with_capacity(max.clamp(1, 16 << 20) as usize)
 }
 
 /// Read what is available (at least 1 byte, at most `max`; empty only at end of stream).
 pub(crate) async fn read_chunk(stream: &TcpStream, max: u64) -> io::Result<Vec<u8>> {
+    let limit = usize::try_from(max).unwrap_or(usize::MAX);
     loop {
         // The buffer is allocated once there is something to read, so a connection waiting
         // for data holds none (a server's idle connections would otherwise each keep `max`).
         stream.readable().await?;
-        let mut buf = buffer(max);
-        match stream.try_read_buf(&mut buf) {
+        if max > SCRATCH as u64 {
+            let mut buf = buffer(max);
+            match stream.try_read_buf(&mut buf, limit) {
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
+                Err(e) => return Err(e),
+                Ok(_) => return Ok(buf),
+            }
+        }
+        // Read into this thread's scratch buffer and keep only what came: a message is usually
+        // far smaller than `max`, and a buffer of `max` for each read costs more than the copy.
+        let r = READ_SCRATCH.with(|scratch| {
+            let mut scratch = scratch.borrow_mut();
+            scratch.clear();
+            scratch.reserve(max as usize);
+            stream
+                .try_read_buf(&mut scratch, limit)
+                .map(|_| scratch.to_vec())
+        });
+        match r {
             Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
-            Err(e) => return Err(e),
-            Ok(_) => return Ok(buf),
+            r => return r,
         }
     }
 }
 
 fn shutdown_socket(stream: &TcpStream, how: std::net::Shutdown) -> io::Result<()> {
     // tokio only offers shutdown through `AsyncWrite` (needs `&mut`); go to the socket directly.
-    socket2::SockRef::from(stream).shutdown(how)
+    stream.sock_ref().shutdown(how)
 }
 
 impl StreamObj {
@@ -157,6 +190,8 @@ impl StreamObj {
             abort: Notify::new(),
             writing: AtomicUsize::new(0),
             turn: std::sync::Arc::new(AsyncMutex::new(())),
+            held: Mutex::new(VecDeque::new()),
+            held_end: AtomicBool::new(false),
         }
     }
 
@@ -228,6 +263,106 @@ impl StreamObj {
         }
     }
 
+    /// Reads what is there into `dst` without waiting (`dst` not empty): the bytes read, 0 at the
+    /// end of the stream, `WouldBlock` when there is nothing yet ([`readable`](Self::readable)
+    /// waits for more). A raw socket reads straight into `dst`.
+    pub(crate) fn try_read_into(&self, dst: &mut [u8]) -> io::Result<usize> {
+        if self.aborted.load(Ordering::Acquire) {
+            return Err(aborted_error());
+        }
+        let ready = match &self.io {
+            Io::Tcp(stream) => return stream.try_read(dst),
+            Io::Lazy(lazy) => match lazy.ready.get() {
+                None => return Err(io::ErrorKind::WouldBlock.into()),
+                Some(Err((kind, message))) => return Err(io::Error::new(*kind, message.clone())),
+                Some(Ok(ready)) => ready,
+            },
+        };
+        match ready {
+            Ready::Tcp {
+                stream,
+                prefix,
+                has_prefix,
+            } => {
+                if has_prefix.load(Ordering::Acquire) {
+                    let mut p = prefix.lock().unwrap_or_else(|e| e.into_inner());
+                    let n = p.len().min(dst.len());
+                    dst[..n].copy_from_slice(&p[..n]);
+                    p.drain(..n);
+                    if p.is_empty() {
+                        *p = Vec::new();
+                        has_prefix.store(false, Ordering::Release);
+                    }
+                    if n > 0 {
+                        return Ok(n);
+                    }
+                }
+                stream.try_read(dst)
+            }
+            Ready::Split(_) => {
+                let mut held = self.held.lock().unwrap_or_else(|e| e.into_inner());
+                if held.is_empty() {
+                    return if self.held_end.load(Ordering::Acquire) {
+                        Ok(0)
+                    } else {
+                        Err(io::ErrorKind::WouldBlock.into())
+                    };
+                }
+                // From the front of a deque: a small buffer reads a large chunk in linear time.
+                let n = held.len().min(dst.len());
+                let (a, b) = held.as_slices();
+                let k = a.len().min(n);
+                dst[..k].copy_from_slice(&a[..k]);
+                dst[k..n].copy_from_slice(&b[..n - k]);
+                held.drain(..n);
+                Ok(n)
+            }
+        }
+    }
+
+    /// Waits until [`try_read_into`](Self::try_read_into) may find something (data, the end of
+    /// the stream or an error; a raw socket may also wake without data). A transport other than
+    /// a raw socket reads its next chunk here, which the next `try_read_into` hands over.
+    pub(crate) async fn readable(&self) -> io::Result<()> {
+        // A raw socket needs no abort watch: `abort` shuts it down, which makes it readable, and
+        // the next `try_read_into` reports the abort.
+        let ready = match &self.io {
+            Io::Tcp(stream) => return stream.readable().await,
+            Io::Lazy(lazy) => self.until_abort(self.set_up(lazy)).await?,
+        };
+        match ready {
+            Ready::Tcp {
+                stream, has_prefix, ..
+            } => {
+                if has_prefix.load(Ordering::Acquire) {
+                    return Ok(());
+                }
+                stream.readable().await
+            }
+            Ready::Split(_) => {
+                let has = !self
+                    .held
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .is_empty();
+                if has || self.held_end.load(Ordering::Acquire) {
+                    return Ok(());
+                }
+                let chunk = self.read(DEFAULT_HELD).await?;
+                if chunk.is_empty() {
+                    self.held_end.store(true, Ordering::Release);
+                } else {
+                    let mut held = self.held.lock().unwrap_or_else(|e| e.into_inner());
+                    match held.is_empty() {
+                        true => *held = chunk.into(),
+                        false => held.extend(&chunk),
+                    }
+                }
+                Ok(())
+            }
+        }
+    }
+
     /// The raw socket's turn now, if no write has it (for a write made at the call).
     pub(crate) fn try_turn(&self) -> Option<Turn> {
         self.turn.clone().try_lock_owned().ok()
@@ -271,6 +406,17 @@ impl StreamObj {
                 self.read_raw(stream, max).await
             }
             Ready::Split(split) => {
+                {
+                    // What `readable` read ahead comes first.
+                    let mut held = self.held.lock().unwrap_or_else(|e| e.into_inner());
+                    if !held.is_empty() {
+                        let n = held.len().min(max.clamp(1, 16 << 20) as usize);
+                        return Ok(held.drain(..n).collect());
+                    }
+                    if self.held_end.load(Ordering::Acquire) {
+                        return Ok(Vec::new());
+                    }
+                }
                 self.until_abort(async {
                     let mut r = split.r.lock().await;
                     let mut buf = buffer(max);
@@ -377,7 +523,7 @@ impl StreamObj {
             return shutdown_socket(s, std::net::Shutdown::Write);
         }
         let obj = self.clone();
-        crate::task::runtime::handle().spawn(async move {
+        crate::task::runtime::spawn(async move {
             let Io::Lazy(lazy) = &obj.io else { return };
             let _ = tokio::time::timeout(SHUTDOWN, async {
                 match obj.until_abort(obj.set_up(lazy)).await {

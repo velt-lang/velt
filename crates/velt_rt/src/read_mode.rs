@@ -93,9 +93,19 @@ pub(crate) fn rwlock_made() {
 /// A promise or task starts: in read mode it stops the program. What it holds would outlive
 /// the callback without leaving through its result, so objects the callback made (counted by
 /// read mode's rules) or shares with the store could reach other threads and writers.
+/// Inline it is one load and a branch: a program without an `RwLock` starts each promise without
+/// reading this thread's reader state (which the compiler would otherwise read ahead of the test).
 #[inline(always)]
 pub(crate) fn refuse_tasks_in_read() {
-    if RWLOCKS.load(Ordering::Relaxed) && in_read() {
+    if RWLOCKS.load(Ordering::Relaxed) {
+        refuse_tasks_with_rwlocks();
+    }
+}
+
+/// [`refuse_tasks_in_read`] once the program has made an `RwLock`.
+#[inline(never)]
+fn refuse_tasks_with_rwlocks() {
+    if in_read() {
         tasks_in_read();
     }
 }

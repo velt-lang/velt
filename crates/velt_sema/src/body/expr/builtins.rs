@@ -136,7 +136,7 @@ impl FnCx<'_, '_> {
             }
         }
         let ck = self.check_call(&c, slots, args, exp, span);
-        if i == Intrinsic::JsonParse {
+        if matches!(i, Intrinsic::JsonParse | Intrinsic::JsonParseRows) {
             self.json_parse_throws(span);
         }
         if matches!(

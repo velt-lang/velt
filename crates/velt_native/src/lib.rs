@@ -36,16 +36,29 @@ use std::sync::atomic::{AtomicPtr, Ordering};
 
 pub use velt_native_macros::export;
 
+mod abi;
 mod future;
+pub mod handles;
+pub mod net;
+pub mod rt;
+#[doc(hidden)]
+pub mod sig;
+mod strbuf;
+pub mod time;
+pub mod value;
+pub use abi::{__from_raw_scoped, DirectRet, OutRet, OwnedParam, Param, ResultValue};
 #[doc(hidden)]
 pub use future::{__blocking, __owned};
 pub use future::{Completer, ErrorRet, Future, FutureRet};
+pub use strbuf::StrBuf;
+pub use value::{Array, Owned, Record, Str, Value};
+pub use velt_native_macros::Value;
 
 // `export` expands to `::velt_native::...` paths, also in this crate's own tests.
 extern crate self as velt_native;
 
 /// The table version this crate needs (the runtime's must be at least this).
-pub const ABI_VERSION: u32 = 1;
+pub const ABI_VERSION: u32 = 2;
 
 /// A Velt `string` (24 bytes, layout owned by the runtime; read it through [`Api`]).
 #[repr(C)]
@@ -57,6 +70,12 @@ impl VeltStr {
     /// The empty string.
     pub const fn empty() -> VeltStr {
         VeltStr { words: [0; 3] }
+    }
+
+    /// Whether this is the all-zero empty string (nothing to release).
+    #[inline]
+    pub(crate) fn is_empty_value(&self) -> bool {
+        self.words == [0; 3]
     }
 }
 
@@ -100,7 +119,7 @@ pub type DropCtxFn = unsafe extern "C" fn(ctx: *mut c_void);
 /// Drops a result nobody claimed.
 pub type DropResultFn = unsafe extern "C" fn(result: *mut u8);
 
-/// The runtime's function table, version 1 (native_abi.md "The function table"). Append-only:
+/// The runtime's function table, version 2 (native_abi.md "The function table"). Append-only:
 /// fields after these exist when `abi_version` is higher.
 #[repr(C)]
 pub struct Api {
@@ -134,11 +153,93 @@ pub struct Api {
     pub complete: unsafe extern "C" fn(u64, *const u8),
     /// `(msg, len)`: report like a Velt panic and exit.
     pub fatal: unsafe extern "C" fn(*const u8, usize) -> !,
+    // Async I/O (native_abi.md "Async I/O"); see [`rt`], [`net`], [`time`].
+    /// `(poll, state, drop_state, result_size) -> VeltFut*`.
+    pub fut_poll: unsafe extern "C" fn(rt::PollFn, *mut c_void, DropCtxFn, usize) -> *mut c_void,
+    /// `(cx) -> runtime waker` (borrowed for the poll).
+    pub cx_waker: unsafe extern "C" fn(*mut c_void) -> *const c_void,
+    /// `(runtime waker) -> owned runtime waker`.
+    pub waker_clone: unsafe extern "C" fn(*const c_void) -> *mut c_void,
+    /// `(owned waker)`: wake and free.
+    pub waker_wake: unsafe extern "C" fn(*mut c_void),
+    /// `(runtime waker)`: wake, keep.
+    pub waker_wake_by_ref: unsafe extern "C" fn(*const c_void),
+    /// `(owned waker)`: free.
+    pub waker_drop: unsafe extern "C" fn(*mut c_void),
+    /// `(VeltFut*, waker) -> READY/PENDING`.
+    pub fut_poll_ext: unsafe extern "C" fn(*mut c_void, *const rt::WakerArg) -> u32,
+    /// `(VeltFut*)`: free.
+    pub fut_drop: unsafe extern "C" fn(*mut c_void),
+    /// `(VeltFut*)`: run as a detached task.
+    pub spawn: unsafe extern "C" fn(*mut c_void),
+    /// `(addr, len) -> VeltFut*` of `IoResult<u64>`.
+    pub tcp_connect: unsafe extern "C" fn(*const u8, usize) -> *mut c_void,
+    /// `(socket, out) -> err`.
+    pub stream_from_socket: unsafe extern "C" fn(i64, *mut u64) -> i32,
+    /// `(h, waker, buf, cap, n, err) -> READY/PENDING`.
+    pub stream_poll_read:
+        unsafe extern "C" fn(u64, *const rt::WakerArg, *mut u8, usize, *mut usize, *mut i32) -> u32,
+    /// `(h, waker, buf, len, n, err) -> READY/PENDING`.
+    pub stream_poll_write: unsafe extern "C" fn(
+        u64,
+        *const rt::WakerArg,
+        *const u8,
+        usize,
+        *mut usize,
+        *mut i32,
+    ) -> u32,
+    /// `(h, waker, err) -> READY/PENDING`.
+    pub stream_poll_flush: unsafe extern "C" fn(u64, *const rt::WakerArg, *mut i32) -> u32,
+    /// `(h, waker, err) -> READY/PENDING`.
+    pub stream_poll_shutdown: unsafe extern "C" fn(u64, *const rt::WakerArg, *mut i32) -> u32,
+    /// `(h) -> socket`.
+    pub stream_socket: unsafe extern "C" fn(u64) -> i64,
+    /// `(h)`: close and free.
+    pub stream_close: unsafe extern "C" fn(u64),
+    /// `() -> ns`.
+    pub now_ns: extern "C" fn() -> u64,
+    /// `(deadline_ns) -> sleep`.
+    pub sleep_new: extern "C" fn(u64) -> *mut c_void,
+    /// `(sleep, waker) -> READY/PENDING`.
+    pub sleep_poll: unsafe extern "C" fn(*mut c_void, *const rt::WakerArg) -> u32,
+    /// `(sleep, deadline_ns)`.
+    pub sleep_reset: unsafe extern "C" fn(*mut c_void, u64),
+    /// `(sleep)`: free.
+    pub sleep_drop: unsafe extern "C" fn(*mut c_void),
+    /// `() -> worker` (-1: none).
+    pub worker_index: extern "C" fn() -> i64,
+    /// `(size, align) -> ptr`: the runtime's allocator (for values Velt frees).
+    pub alloc: extern "C" fn(u64, u64) -> *mut u8,
+    /// `(p, old_size, align, new_size) -> ptr`.
+    pub realloc: unsafe extern "C" fn(*mut u8, u64, u64, u64) -> *mut u8,
+    /// `(p, size, align)`.
+    pub free: unsafe extern "C" fn(*mut u8, u64, u64),
+    /// `(ptr, len, out)`: a string of UTF-8 bytes (trusted: valid UTF-8).
+    pub str_from_utf8: unsafe extern "C" fn(*const u8, usize, *mut VeltStr),
+    /// `(s, out)`: another reference to a string.
+    pub str_retain: unsafe extern "C" fn(*const VeltStr, *mut VeltStr),
+    /// `(buf, min, avail) -> ptr`: room to write at the end of a builder.
+    pub strbuf_spare: unsafe extern "C" fn(*mut VeltStr, u64, *mut u64) -> *mut u8,
+    /// `(buf, n, ascii)`: the bytes written become text (counted unless `ascii` is 1).
+    pub strbuf_commit: unsafe extern "C" fn(*mut VeltStr, u64, u8),
+    /// `(s, len_out) -> ptr`: the bytes when they are UTF-8, else null.
+    pub str_utf8: unsafe extern "C" fn(*const VeltStr, *mut usize) -> *const u8,
+    /// `(poll, drop_state, result_size, state_size, state_align, state_out) -> fut`: `fut_poll`
+    /// with the state in the future's block (written to `*state_out`, dropped in place).
+    pub fut_poll_in: unsafe extern "C" fn(
+        rt::PollFn,
+        DropCtxFn,
+        usize,
+        usize,
+        usize,
+        *mut *mut c_void,
+    ) -> *mut c_void,
 }
 
 static API: AtomicPtr<Api> = AtomicPtr::new(std::ptr::null_mut());
 
-/// The table (after `velt_native_init_<package>` ran).
+/// The table (after `velt_native_init_<package>` ran, or for a library linked into the runtime
+/// itself, after the runtime's start-up handed it over: [`__embed`]).
 pub fn api() -> &'static Api {
     let p = API.load(Ordering::Acquire);
     if p.is_null() {
@@ -183,6 +284,17 @@ pub unsafe fn __init(api: *const Api, package: &str) -> i32 {
     0
 }
 
+/// The runtime's own start-up, for the libraries linked into it (std's drivers): they share its
+/// table, and its std (so the panic hook stays the runtime's).
+///
+/// # Safety
+/// `api` must point to the runtime's table, of this SDK's layout, which lives for the whole
+/// program.
+#[doc(hidden)]
+pub unsafe fn __embed(api: *const Api) {
+    API.store(api as *mut Api, Ordering::Release);
+}
+
 /// Report a fatal error like a Velt panic (`panic: <msg>`, exit 101).
 pub fn fatal(msg: &str) -> ! {
     // SAFETY: valid bytes for the call.
@@ -203,12 +315,75 @@ pub mod code {
     pub const INVALID_DATA: i32 = 5;
     /// `ETIMEDOUT`
     pub const TIMED_OUT: i32 = 6;
+    /// `ECONNREFUSED`
+    pub const CONNECTION_REFUSED: i32 = 7;
+    /// `ECONNRESET`
+    pub const CONNECTION_RESET: i32 = 8;
+    /// `EADDRINUSE`
+    pub const ADDR_IN_USE: i32 = 9;
+    /// `EPIPE`
+    pub const BROKEN_PIPE: i32 = 10;
+    /// `EOF`
+    pub const UNEXPECTED_EOF: i32 = 11;
     /// `ENOTSUP`
     pub const UNSUPPORTED: i32 = 12;
+    /// `ENOTDIR`
+    pub const NOT_A_DIRECTORY: i32 = 13;
+    /// `ENOTEMPTY`
+    pub const DIRECTORY_NOT_EMPTY: i32 = 14;
+    /// `EISDIR`
+    pub const IS_A_DIRECTORY: i32 = 15;
     /// `EBADF`: a closed handle.
     pub const BAD_HANDLE: i32 = 16;
     /// `UNKNOWN`
     pub const OTHER: i32 = 99;
+
+    /// The Node-style name of a code (`IoError.code` in Velt: `"ENOENT"`, `"ECONNREFUSED"`...).
+    pub fn name(c: i32) -> &'static str {
+        match c {
+            0 => "",
+            NOT_FOUND => "ENOENT",
+            PERMISSION_DENIED => "EACCES",
+            ALREADY_EXISTS => "EEXIST",
+            INVALID_INPUT => "EINVAL",
+            INVALID_DATA => "EILSEQ",
+            TIMED_OUT => "ETIMEDOUT",
+            CONNECTION_REFUSED => "ECONNREFUSED",
+            CONNECTION_RESET => "ECONNRESET",
+            ADDR_IN_USE => "EADDRINUSE",
+            BROKEN_PIPE => "EPIPE",
+            UNEXPECTED_EOF => "EOF",
+            UNSUPPORTED => "ENOTSUP",
+            NOT_A_DIRECTORY => "ENOTDIR",
+            DIRECTORY_NOT_EMPTY => "ENOTEMPTY",
+            IS_A_DIRECTORY => "EISDIR",
+            BAD_HANDLE => "EBADF",
+            _ => "UNKNOWN",
+        }
+    }
+
+    /// The code of an I/O error (as the runtime codes it).
+    pub fn of(e: &std::io::Error) -> i32 {
+        use std::io::ErrorKind as K;
+        match e.kind() {
+            K::NotFound => NOT_FOUND,
+            K::PermissionDenied => PERMISSION_DENIED,
+            K::AlreadyExists => ALREADY_EXISTS,
+            K::InvalidInput => INVALID_INPUT,
+            K::InvalidData => INVALID_DATA,
+            K::TimedOut => TIMED_OUT,
+            K::ConnectionRefused => CONNECTION_REFUSED,
+            K::ConnectionReset | K::ConnectionAborted => CONNECTION_RESET,
+            K::AddrInUse => ADDR_IN_USE,
+            K::BrokenPipe => BROKEN_PIPE,
+            K::UnexpectedEof => UNEXPECTED_EOF,
+            K::Unsupported => UNSUPPORTED,
+            K::NotADirectory => NOT_A_DIRECTORY,
+            K::IsADirectory => IS_A_DIRECTORY,
+            K::DirectoryNotEmpty => DIRECTORY_NOT_EMPTY,
+            _ => OTHER,
+        }
+    }
 }
 
 /// The error half of `IoResult<T>` / `IoStatus`.
@@ -233,36 +408,33 @@ impl Error {
     pub fn other(message: impl Into<String>) -> Error {
         Error::new(code::OTHER, message)
     }
+
+    /// The error of an operation on a closed handle (`EBADF`, "handle is closed").
+    pub fn closed() -> Error {
+        Error::new(code::BAD_HANDLE, "handle is closed")
+    }
 }
 
 impl From<std::io::Error> for Error {
     fn from(e: std::io::Error) -> Error {
-        use std::io::ErrorKind as K;
-        let c = match e.kind() {
-            K::NotFound => code::NOT_FOUND,
-            K::PermissionDenied => code::PERMISSION_DENIED,
-            K::AlreadyExists => code::ALREADY_EXISTS,
-            K::InvalidInput => code::INVALID_INPUT,
-            K::InvalidData => code::INVALID_DATA,
-            K::TimedOut => code::TIMED_OUT,
-            K::Unsupported => code::UNSUPPORTED,
-            _ => code::OTHER,
-        };
-        Error::new(c, e.to_string())
+        Error::new(code::of(&e), e.to_string())
     }
 }
 
-fn new_str(s: &str) -> VeltStr {
-    let mut out = VeltStr::empty();
-    // SAFETY: valid bytes and out-pointer.
-    unsafe { (api().str_new)(s.as_ptr(), s.len(), &mut out) };
-    out
+/// The text of an owned runtime string, which is freed.
+pub(crate) fn take_str(mut s: VeltStr) -> String {
+    // SAFETY: an owned string, read then dropped once.
+    unsafe {
+        let text = str_of(&s).into_owned();
+        (api().str_drop)(&mut s);
+        text
+    }
 }
 
-fn new_bytes(b: &[u8]) -> VeltBytes {
-    let mut out = VeltBytes::empty();
-    // SAFETY: valid bytes and out-pointer.
-    unsafe { (api().bytes_new)(b.as_ptr(), b.len(), &mut out) };
+pub(crate) fn new_str(s: &str) -> VeltStr {
+    let mut out = VeltStr::empty();
+    // SAFETY: valid bytes (UTF-8: a `&str`) and out-pointer.
+    unsafe { (api().str_from_utf8)(s.as_ptr(), s.len(), &mut out) };
     out
 }
 
@@ -273,8 +445,19 @@ fn new_bytes(b: &[u8]) -> VeltBytes {
 ///
 /// # Safety
 /// `s` must point to a live Velt string; the result borrows it.
-unsafe fn str_of<'a>(s: *const VeltStr) -> Cow<'a, str> {
+pub(crate) unsafe fn str_of<'a>(s: *const VeltStr) -> Cow<'a, str> {
     let mut len = 0usize;
+    // The string knows whether it is UTF-8: borrowed without a check then.
+    let p = (api().str_utf8)(s, &mut len);
+    if !p.is_null() {
+        if len == 0 {
+            return Cow::Borrowed("");
+        }
+        // SAFETY: the runtime says these bytes are UTF-8; they live as long as `s`.
+        return Cow::Borrowed(std::str::from_utf8_unchecked(std::slice::from_raw_parts(
+            p, len,
+        )));
+    }
     let p = (api().str_bytes)(s, &mut len);
     let bytes = if len == 0 {
         &[][..]
@@ -327,331 +510,6 @@ impl __Scope {
     }
 }
 
-/// # Safety
-/// `b` must point to a live `u8[]`; the result borrows it.
-unsafe fn bytes_of<'a>(b: *const VeltBytes) -> &'a [u8] {
-    let mut len = 0usize;
-    let p = (api().bytes_data)(b, &mut len);
-    if len == 0 {
-        &[]
-    } else {
-        std::slice::from_raw_parts(p, len)
-    }
-}
-
-/// A parameter type of an exported function: how it crosses the C ABI and its signature name.
-pub trait Param<'a>: Sized {
-    /// The C type of the argument.
-    type Raw: Copy;
-    /// Its name in a signature (`u64`, `string`, `u8[]`).
-    const SIG: &'static str;
-    /// Converts the argument (borrowed for the duration of the call).
-    ///
-    /// # Safety
-    /// `raw` must be a valid argument per native_abi.md.
-    unsafe fn from_raw(raw: Self::Raw) -> Self;
-
-    /// [`Self::from_raw`] in an exported function's wrapper, where `scope` can own a converted
-    /// copy for the duration of the call (a `&str` of a string with a lone surrogate).
-    ///
-    /// # Safety
-    /// As for [`Self::from_raw`].
-    #[doc(hidden)]
-    unsafe fn from_raw_in(raw: Self::Raw, scope: &'a __Scope) -> Self {
-        let _ = scope;
-        Self::from_raw(raw)
-    }
-}
-
-/// Converts an argument of an exported function, borrowed no longer than `scope` (a local of the
-/// generated wrapper): a parameter type that demands a longer borrow is a compile error, however
-/// it is spelled.
-///
-/// ```compile_fail
-/// type S = &'static str;
-/// static mut KEPT: Option<S> = None;
-///
-/// #[velt_native::export]
-/// fn velt_p__keep(s: S) -> u64 {
-///     unsafe { KEPT = Some(s) };
-///     0
-/// }
-/// ```
-///
-/// The same function without the `'static` alias compiles:
-///
-/// ```
-/// #[velt_native::export]
-/// fn velt_p__len(s: &str) -> u64 {
-///     s.len() as u64
-/// }
-/// ```
-///
-/// # Safety
-/// `raw` must be a valid argument per native_abi.md that lives at least as long as `scope`.
-#[doc(hidden)]
-pub unsafe fn __from_raw_scoped<'a, T: Param<'a>>(scope: &'a __Scope, raw: T::Raw) -> T {
-    T::from_raw_in(raw, scope)
-}
-
-/// A parameter type of a `blocking` export: owned, so it can move to the blocking pool.
-pub trait OwnedParam: for<'a> Param<'a> + Send + 'static {}
-
-macro_rules! scalar_params {
-    ($($t:ty => $sig:literal),*) => {$(
-        impl<'a> Param<'a> for $t {
-            type Raw = $t;
-            const SIG: &'static str = $sig;
-            unsafe fn from_raw(raw: $t) -> $t { raw }
-        }
-        impl OwnedParam for $t {}
-        impl DirectRet for $t {
-            const SIG: &'static str = $sig;
-            fn panicked(msg: &str) -> $t { fatal(msg) }
-        }
-    )*};
-}
-
-scalar_params!(
-    bool => "bool", u8 => "u8", u16 => "u16", u32 => "u32", u64 => "u64",
-    i8 => "i8", i16 => "i16", i32 => "i32", i64 => "i64", f32 => "f32", f64 => "f64"
-);
-
-/// A string argument as `&str`: borrowed when well-formed. In an exported function a string
-/// with a lone surrogate arrives converted (one U+FFFD each); outside one ([`Param::from_raw`]
-/// called directly) there is nowhere to keep the copy, so that is a fatal error, as it was for
-/// every ill-formed string before the SDK converted them.
-impl<'a> Param<'a> for &'a str {
-    type Raw = *const VeltStr;
-    const SIG: &'static str = "string";
-    unsafe fn from_raw(raw: *const VeltStr) -> &'a str {
-        match str_of(raw) {
-            Cow::Borrowed(s) => s,
-            Cow::Owned(_) => fatal("a Velt string with a lone surrogate needs a `Cow<str>` here"),
-        }
-    }
-    unsafe fn from_raw_in(raw: *const VeltStr, scope: &'a __Scope) -> &'a str {
-        match str_of(raw) {
-            Cow::Borrowed(s) => s,
-            Cow::Owned(s) => scope.keep(s),
-        }
-    }
-}
-
-/// A string argument as `Cow<str>`: borrowed when well-formed, else converted (one U+FFFD per
-/// lone surrogate).
-impl<'a> Param<'a> for Cow<'a, str> {
-    type Raw = *const VeltStr;
-    const SIG: &'static str = "string";
-    unsafe fn from_raw(raw: *const VeltStr) -> Cow<'a, str> {
-        str_of(raw)
-    }
-}
-
-impl<'a> Param<'a> for String {
-    type Raw = *const VeltStr;
-    const SIG: &'static str = "string";
-    unsafe fn from_raw(raw: *const VeltStr) -> String {
-        str_of(raw).into_owned()
-    }
-}
-impl OwnedParam for String {}
-
-impl<'a> Param<'a> for &'a [u8] {
-    type Raw = *const VeltBytes;
-    const SIG: &'static str = "u8[]";
-    unsafe fn from_raw(raw: *const VeltBytes) -> &'a [u8] {
-        bytes_of(raw)
-    }
-}
-
-impl<'a> Param<'a> for Vec<u8> {
-    type Raw = *const VeltBytes;
-    const SIG: &'static str = "u8[]";
-    unsafe fn from_raw(raw: *const VeltBytes) -> Vec<u8> {
-        bytes_of(raw).to_vec()
-    }
-}
-impl OwnedParam for Vec<u8> {}
-
-/// A result returned directly (scalars and `()`).
-pub trait DirectRet {
-    /// Its name in a signature.
-    const SIG: &'static str;
-    /// What a panicking export returns (scalars: a fatal error).
-    fn panicked(msg: &str) -> Self;
-}
-
-impl DirectRet for () {
-    const SIG: &'static str = "void";
-    fn panicked(msg: &str) {
-        fatal(msg)
-    }
-}
-
-/// A result written through a trailing out-pointer (`string`, `u8[]`, `IoResult<T>`, `IoStatus`).
-pub trait OutRet: Sized {
-    /// The C type of the result slot.
-    type Slot;
-    /// Its name in a signature.
-    const SIG: &'static str;
-    /// Writes the result.
-    ///
-    /// # Safety
-    /// `out` must be valid for writes of `Slot`.
-    unsafe fn write(self, out: *mut Self::Slot);
-    /// What a panicking export returns (results: an error; others: a fatal error).
-    fn panicked(msg: &str) -> Self;
-    /// Drops a written slot nobody claimed (a cancelled blocking future).
-    ///
-    /// # Safety
-    /// `slot` must hold a value written by [`OutRet::write`].
-    unsafe fn drop_slot(slot: *mut Self::Slot);
-}
-
-impl OutRet for String {
-    type Slot = VeltStr;
-    const SIG: &'static str = "string";
-    unsafe fn write(self, out: *mut VeltStr) {
-        out.write(new_str(&self));
-    }
-    fn panicked(msg: &str) -> String {
-        fatal(msg)
-    }
-    unsafe fn drop_slot(slot: *mut VeltStr) {
-        (api().str_drop)(slot)
-    }
-}
-
-impl OutRet for Vec<u8> {
-    type Slot = VeltBytes;
-    const SIG: &'static str = "u8[]";
-    unsafe fn write(self, out: *mut VeltBytes) {
-        out.write(new_bytes(&self));
-    }
-    fn panicked(msg: &str) -> Vec<u8> {
-        fatal(msg)
-    }
-    unsafe fn drop_slot(slot: *mut VeltBytes) {
-        (api().bytes_drop)(slot)
-    }
-}
-
-fn err_header(e: Error) -> VeltErr {
-    VeltErr {
-        code: e.code,
-        pad: 0,
-        message: new_str(&e.message),
-    }
-}
-
-impl OutRet for Result<(), Error> {
-    type Slot = VeltErr;
-    const SIG: &'static str = "IoStatus";
-    unsafe fn write(self, out: *mut VeltErr) {
-        out.write(match self {
-            Ok(()) => VeltErr {
-                code: 0,
-                pad: 0,
-                message: VeltStr::empty(),
-            },
-            Err(e) => err_header(e),
-        });
-    }
-    fn panicked(msg: &str) -> Self {
-        Err(Error::other(format!("native panic: {msg}")))
-    }
-    unsafe fn drop_slot(slot: *mut VeltErr) {
-        (api().str_drop)(&mut (*slot).message)
-    }
-}
-
-/// A success value of `IoResult<T>`.
-pub trait ResultValue: Sized {
-    /// The C type of the value.
-    type Slot;
-    /// The whole result's name in a signature (`IoResult<u64>`).
-    const SIG: &'static str;
-    /// The value as stored.
-    fn into_slot(self) -> Self::Slot;
-    /// Drops a stored value.
-    ///
-    /// # Safety
-    /// `slot` must hold a value from [`ResultValue::into_slot`].
-    unsafe fn drop_value(slot: *mut Self::Slot);
-}
-
-macro_rules! scalar_results {
-    ($($t:ty => $sig:literal),*) => {$(
-        impl ResultValue for $t {
-            type Slot = $t;
-            const SIG: &'static str = $sig;
-            fn into_slot(self) -> $t { self }
-            unsafe fn drop_value(_: *mut $t) {}
-        }
-    )*};
-}
-
-scalar_results!(
-    bool => "IoResult<bool>", u8 => "IoResult<u8>", u16 => "IoResult<u16>",
-    u32 => "IoResult<u32>", u64 => "IoResult<u64>", i8 => "IoResult<i8>",
-    i16 => "IoResult<i16>", i32 => "IoResult<i32>", i64 => "IoResult<i64>",
-    f32 => "IoResult<f32>", f64 => "IoResult<f64>"
-);
-
-impl ResultValue for String {
-    type Slot = VeltStr;
-    const SIG: &'static str = "IoResult<string>";
-    fn into_slot(self) -> VeltStr {
-        new_str(&self)
-    }
-    unsafe fn drop_value(slot: *mut VeltStr) {
-        (api().str_drop)(slot)
-    }
-}
-
-impl ResultValue for Vec<u8> {
-    type Slot = VeltBytes;
-    const SIG: &'static str = "IoResult<u8[]>";
-    fn into_slot(self) -> VeltBytes {
-        new_bytes(&self)
-    }
-    unsafe fn drop_value(slot: *mut VeltBytes) {
-        (api().bytes_drop)(slot)
-    }
-}
-
-impl<T: ResultValue> OutRet for Result<T, Error> {
-    type Slot = IoResultSlot<T::Slot>;
-    const SIG: &'static str = T::SIG;
-    unsafe fn write(self, out: *mut Self::Slot) {
-        out.write(match self {
-            Ok(v) => IoResultSlot {
-                err: VeltErr {
-                    code: 0,
-                    pad: 0,
-                    message: VeltStr::empty(),
-                },
-                value: MaybeUninit::new(v.into_slot()),
-            },
-            Err(e) => IoResultSlot {
-                err: err_header(e),
-                value: MaybeUninit::zeroed(),
-            },
-        });
-    }
-    fn panicked(msg: &str) -> Self {
-        Err(Error::other(format!("native panic: {msg}")))
-    }
-    unsafe fn drop_slot(slot: *mut Self::Slot) {
-        if (*slot).err.code == 0 {
-            T::drop_value((*slot).value.as_mut_ptr());
-        } else {
-            (api().str_drop)(&mut (*slot).err.message);
-        }
-    }
-}
-
 /// The message of a caught panic.
 #[doc(hidden)]
 pub fn __panic_message(p: Box<dyn std::any::Any + Send>) -> String {
@@ -661,38 +519,6 @@ pub fn __panic_message(p: Box<dyn std::any::Any + Send>) -> String {
         s.clone()
     } else {
         "unknown panic".into()
-    }
-}
-
-/// Signature-record helpers used by [`export`].
-#[doc(hidden)]
-pub mod sig {
-    /// Total length of the NUL-terminated concatenation of `parts`.
-    pub const fn len(parts: &[&str]) -> usize {
-        let mut n = 1;
-        let mut i = 0;
-        while i < parts.len() {
-            n += parts[i].len();
-            i += 1;
-        }
-        n
-    }
-
-    /// The NUL-terminated concatenation of `parts` (`N` = [`len`]).
-    pub const fn build<const N: usize>(parts: &[&str]) -> [u8; N] {
-        let mut out = [0u8; N];
-        let (mut i, mut k) = (0, 0);
-        while i < parts.len() {
-            let b = parts[i].as_bytes();
-            let mut j = 0;
-            while j < b.len() {
-                out[k] = b[j];
-                k += 1;
-                j += 1;
-            }
-            i += 1;
-        }
-        out
     }
 }
 
