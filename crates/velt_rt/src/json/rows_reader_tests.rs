@@ -61,6 +61,7 @@ impl RowCursor for BufCursor {
             BinCell::Float(v) => Cell::Float(v),
             BinCell::Text(a, b, _) => Cell::Text(&self.buf[a..b]),
             BinCell::Blob(a, b) => Cell::Blob(&self.buf[a..b]),
+            BinCell::Json(a, b) => Cell::Json(&self.buf[a..b]),
         }
     }
 }
@@ -77,6 +78,7 @@ fn a_live_cursor_reads_as_the_rows_it_serves() {
     negative_zero_reads_as_zero();
     a_column_name_of_any_length_is_kept();
     marks_made_in_a_row_are_forgotten_at_the_next();
+    nested_values_read_as_their_json();
     LIVE.with(|l| l.set(false));
 }
 
@@ -343,4 +345,66 @@ fn a_damaged_buffer_is_a_mismatch_not_a_crash() {
             }
         }
     }
+}
+
+fn json_of(v: &Value) -> String {
+    let mut out = Vec::new();
+    crate::json::text::stringify_into(&mut out, v);
+    String::from_utf8(out).unwrap()
+}
+
+/// A column holding an array or object (a Postgres array, `jsonb`) reads as the JSON it is.
+#[test]
+fn nested_values_read_as_their_json() {
+    let mut w = BinRows::new(["tags", "meta", "n"], true);
+    w.json(br#"[1, "two", [3]]"#);
+    w.json(br#"{"a": {"b": true}, "c": null}"#);
+    w.int(9);
+    w.end_row();
+    let buf = w.finish();
+
+    let mut r = make(buf.clone(), 0);
+    assert_eq!(r.open(b'{'), 1);
+    assert_eq!(key(&mut r).as_deref(), Some("tags"));
+    assert_eq!(r.peek(), TOKEN_ARRAY_START);
+    assert_eq!(r.open(b'['), 1);
+    assert_eq!(r.array_next(), STEP_MORE);
+    // A look-ahead inside the nested value, read again.
+    let m = r.mark();
+    assert_eq!(r.i64(), Some(1));
+    r.reset(m);
+    assert_eq!(r.i64(), Some(1));
+    assert_eq!(r.array_next(), STEP_MORE);
+    assert_eq!(text(&mut r), "two");
+    assert_eq!(r.array_next(), STEP_MORE);
+    assert_eq!(r.skip(), 1);
+    assert_eq!(r.array_next(), STEP_END);
+    // The value read, the next column follows.
+    assert_eq!(key(&mut r).as_deref(), Some("meta"));
+    assert_eq!(r.open(b'{'), 1);
+    assert_eq!(key(&mut r).as_deref(), Some("a"));
+    let v = r.value().unwrap();
+    assert_eq!(json_of(&v), r#"{"b":true}"#);
+    assert_eq!(key(&mut r).as_deref(), Some("c"));
+    assert_eq!(r.null(), 1);
+    assert_eq!(key(&mut r), None);
+    assert_eq!(key(&mut r).as_deref(), Some("n"));
+    assert_eq!(r.i64(), Some(9));
+    assert_eq!(key(&mut r), None);
+    assert_eq!(r.end(), 1);
+
+    // Skipped whole, read whole as a value, or not the kind asked for.
+    let mut r = make(buf.clone(), 0);
+    r.open(b'{');
+    key(&mut r);
+    assert_eq!(r.skip(), 1);
+    key(&mut r);
+    assert_eq!(json_of(&r.value().unwrap()), r#"{"a":{"b":true},"c":null}"#);
+    key(&mut r);
+    assert_eq!(r.i64(), Some(9));
+    let mut r = make(buf, 0);
+    r.open(b'{');
+    key(&mut r);
+    assert!(r.string().is_none());
+    assert!(r.message("string", "$.tags").contains("expected string"));
 }

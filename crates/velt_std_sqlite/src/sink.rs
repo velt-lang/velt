@@ -48,7 +48,8 @@ impl SqliteSink {
             Cell::Bool(b) => Bind::Int(b as i64),
             Cell::Int(v) => Bind::Int(v),
             Cell::Float(v) => Bind::Float(v),
-            Cell::Text(t) | Cell::Ascii(t) => Bind::Text(t),
+            // A nested value binds as its JSON text, as SQLite stores JSON.
+            Cell::Text(t) | Cell::Ascii(t) | Cell::Json(t) => Bind::Text(t),
             Cell::Blob(b) => Bind::Blob(b),
         };
         if let Err(e) = self.stmt().bind(i, v) {

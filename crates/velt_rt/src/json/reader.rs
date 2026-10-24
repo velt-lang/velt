@@ -153,6 +153,11 @@ impl Reader {
         self.error
     }
 
+    /// The arrays and objects open now (0 once the top-level value is read).
+    pub(crate) fn depth(&self) -> usize {
+        self.depth
+    }
+
     fn fail(&mut self, e: ReadError) -> u8 {
         self.error.get_or_insert(e);
         0

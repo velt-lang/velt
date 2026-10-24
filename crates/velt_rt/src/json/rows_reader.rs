@@ -11,7 +11,7 @@
 
 use super::error::{mismatch_message, unknown_message};
 use super::reader::{
-    ReadError, FLAG_REJECT_UNKNOWN, STEP_END, STEP_ERROR, STEP_MORE, TOKEN_ARRAY_END,
+    ReadError, Reader, FLAG_REJECT_UNKNOWN, STEP_END, STEP_ERROR, STEP_MORE, TOKEN_ARRAY_END,
     TOKEN_ARRAY_START, TOKEN_EOF, TOKEN_ERROR, TOKEN_FALSE, TOKEN_NULL, TOKEN_NUMBER,
     TOKEN_OBJECT_END, TOKEN_OBJECT_START, TOKEN_STRING, TOKEN_TRUE,
 };
@@ -74,8 +74,13 @@ pub struct RowReader {
     c: Cursor,
     error: Option<ReadError>,
     reject_unknown: bool,
-    /// Positions `mark` saved (none until a decoder looks ahead).
-    marks: Vec<Cursor>,
+    /// Positions `mark` saved (none until a decoder looks ahead), with the nested reader's own
+    /// mark when one was reading.
+    marks: Vec<(Cursor, Option<u64>)>,
+    /// Reads the column value that is a nested value's JSON text (`Cell::Json`), while it does:
+    /// every call goes to it until the value is read.
+    nested: Option<Box<Reader>>,
+    flags: u32,
     /// How many marks there were when the array of rows was opened: a decoder looks ahead
     /// within one value, so the next row forgets the marks made in the last one.
     row_marks: usize,
@@ -139,12 +144,55 @@ impl RowReader {
             reject_unknown: flags & FLAG_REJECT_UNKNOWN != 0,
             marks: Vec::new(),
             row_marks: 0,
+            nested: None,
+            flags,
         }
     }
 
     fn mismatch(&mut self) -> u8 {
         self.error.get_or_insert(ReadError::Mismatch);
         0
+    }
+
+    /// The reader of the pending value when it is a nested value's JSON text (made on first
+    /// use), else None.
+    fn nest(&mut self) -> Option<&mut Reader> {
+        if self.nested.is_none() {
+            if self.error.is_some() || self.c.at != At::Val {
+                return None;
+            }
+            let Some((Cell::Json(text), _)) = self.cell() else {
+                return None;
+            };
+            self.nested = Some(Box::new(self.json_reader(text)));
+        }
+        self.nested.as_deref_mut()
+    }
+
+    /// A reader of a nested value's text (a driver's well-formed, UTF-8 JSON).
+    fn json_reader(&self, text: &'static [u8]) -> Reader {
+        Reader::with_source(text, true, self.flags & FLAG_REJECT_UNKNOWN, 0)
+    }
+
+    /// After a call the nested reader took: its failure is this reader's; once its value is read,
+    /// the column is.
+    fn nested_done(&mut self) {
+        let Some(r) = &self.nested else { return };
+        match r.error() {
+            Some(ReadError::Unknown) => {
+                self.error.get_or_insert(ReadError::Unknown);
+            }
+            Some(_) => {
+                self.error.get_or_insert(ReadError::Mismatch);
+            }
+            None if r.depth() == 0 => {
+                self.nested = None;
+                if let Some((_, next)) = self.cell() {
+                    self.advance(next);
+                }
+            }
+            None => {}
+        }
     }
 
     /// The cell of column `col` and where the next one starts.
@@ -162,6 +210,7 @@ impl RowReader {
                     BinCell::Text(start, end, true) => Cell::Ascii(&self.buf[start..end]),
                     BinCell::Text(start, end, false) => Cell::Text(&self.buf[start..end]),
                     BinCell::Blob(start, end) => Cell::Blob(&self.buf[start..end]),
+                    BinCell::Json(start, end) => Cell::Json(&self.buf[start..end]),
                 };
                 (cell, next)
             }),
@@ -227,6 +276,9 @@ impl RowReader {
     }
 
     pub fn peek(&mut self) -> u32 {
+        if let Some(r) = self.nest() {
+            return r.peek();
+        }
         if self.error.is_some() {
             return TOKEN_ERROR;
         }
@@ -246,7 +298,8 @@ impl RowReader {
                 Some((Cell::Int(_) | Cell::Float(_), _)) => TOKEN_NUMBER,
                 Some((Cell::Text(_) | Cell::Ascii(_), _)) => TOKEN_STRING,
                 Some((Cell::Blob(_), _)) => TOKEN_ARRAY_START,
-                None => TOKEN_ERROR,
+                // Read by the nested reader (`nest`), before this.
+                Some((Cell::Json(_), _)) | None => TOKEN_ERROR,
             },
             At::Bytes if self.c.blob_at < self.c.blob_len => TOKEN_NUMBER,
             At::Bytes => TOKEN_ARRAY_END,
@@ -257,6 +310,11 @@ impl RowReader {
 
     /// Consume `{` or `[`.
     pub fn open(&mut self, bracket: u8) -> u8 {
+        if let Some(r) = self.nest() {
+            let v = r.open(bracket);
+            self.nested_done();
+            return v;
+        }
         if self.error.is_some() {
             return 0;
         }
@@ -292,6 +350,11 @@ impl RowReader {
     }
 
     pub fn array_next(&mut self) -> u8 {
+        if let Some(r) = self.nest() {
+            let v = r.array_next();
+            self.nested_done();
+            return v;
+        }
         if self.error.is_some() {
             return STEP_ERROR;
         }
@@ -325,6 +388,11 @@ impl RowReader {
     /// The next column's name (borrowed from the buffer when ASCII, which the reader owns until
     /// it is freed, as the text reader's keys borrow its source); `Ok(None)` after the last.
     pub(crate) fn next_key(&mut self) -> Result<Option<VeltStr>, ()> {
+        if let Some(r) = self.nest() {
+            let k = r.next_key().map(|k| k.map(|k| r.borrowed_str(k)));
+            self.nested_done();
+            return k;
+        }
         if self.error.is_some() {
             return Err(());
         }
@@ -352,6 +420,11 @@ impl RowReader {
     }
 
     pub fn string(&mut self) -> Option<VeltStr> {
+        if let Some(r) = self.nest() {
+            let v = r.string().map(|t| r.owned_str(t));
+            self.nested_done();
+            return v;
+        }
         let (s, next) = match self.val()? {
             (Cell::Ascii(t), next) => (ascii_str(t), next),
             (Cell::Text(t), next) if t.is_ascii() => (ascii_str(t), next),
@@ -369,6 +442,11 @@ impl RowReader {
     }
 
     pub fn f64(&mut self) -> Option<f64> {
+        if let Some(r) = self.nest() {
+            let v = r.f64();
+            self.nested_done();
+            return v;
+        }
         if self.c.at == At::Byte && self.error.is_none() {
             return self.byte().map(f64::from);
         }
@@ -386,6 +464,11 @@ impl RowReader {
 
     /// An integer, or a float that is one exactly (the text reader accepts `3.0` too).
     pub fn i64(&mut self) -> Option<i64> {
+        if let Some(r) = self.nest() {
+            let v = r.i64();
+            self.nested_done();
+            return v;
+        }
         if self.c.at == At::Byte && self.error.is_none() {
             return self.byte().map(i64::from);
         }
@@ -404,6 +487,11 @@ impl RowReader {
     }
 
     pub fn bool(&mut self) -> Option<bool> {
+        if let Some(r) = self.nest() {
+            let v = r.bool();
+            self.nested_done();
+            return v;
+        }
         match self.val()? {
             (Cell::Bool(v), next) => {
                 self.advance(next);
@@ -417,6 +505,11 @@ impl RowReader {
     }
 
     pub fn null(&mut self) -> u8 {
+        if let Some(r) = self.nest() {
+            let v = r.null();
+            self.nested_done();
+            return v;
+        }
         match self.val() {
             Some((Cell::Null, next)) => {
                 self.advance(next);
@@ -437,6 +530,11 @@ impl RowReader {
 
     /// Skip one complete value of any kind.
     pub fn skip(&mut self) -> u8 {
+        if let Some(r) = self.nest() {
+            let v = r.skip();
+            self.nested_done();
+            return v;
+        }
         if self.error.is_some() {
             return 0;
         }
@@ -481,15 +579,24 @@ impl RowReader {
         if self.live.is_some() && matches!(self.c.at, At::Top | At::Rows) {
             self.buffer_live();
         }
-        self.marks.push(self.c);
+        let inner = self.nested.as_deref().map(Reader::mark);
+        self.marks.push((self.c, inner));
         (self.marks.len() - 1) as u64
     }
 
     /// Go back to `mark` and forget any error since.
     pub fn reset(&mut self, mark: u64) {
-        if let Some(&c) = self.marks.get(mark as usize) {
+        if let Some(&(c, inner)) = self.marks.get(mark as usize) {
             self.c = c;
             self.error = None;
+            // Inside a nested value: its reader again, at its own mark (a fresh one over the
+            // same text when it had finished since); before one: none.
+            self.nested = None;
+            if let Some(m) = inner {
+                if let Some(r) = self.nest() {
+                    r.reset(m);
+                }
+            }
         }
     }
 
@@ -514,6 +621,7 @@ impl RowReader {
                         Cell::Float(v) => w.float(v),
                         Cell::Text(t) | Cell::Ascii(t) => w.text(t),
                         Cell::Blob(b) => w.bytes(b),
+                        Cell::Json(j) => w.json(j),
                     }
                 }
                 w.end_row();
@@ -550,6 +658,11 @@ impl RowReader {
     /// One complete value of any kind as a `json.Value` tree: built from the JSON text the
     /// value stands for (a decoder asking for a dynamic value is the rare case).
     pub fn value(&mut self) -> Option<Arc<Value>> {
+        if let Some(r) = self.nested.as_deref_mut() {
+            let v = r.value();
+            self.nested_done();
+            return v;
+        }
         if self.error.is_some() {
             return None;
         }

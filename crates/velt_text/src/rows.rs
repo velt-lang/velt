@@ -29,6 +29,9 @@ pub const TEXT: u8 = 5;
 pub const BLOB: u8 = 6;
 /// [`TEXT`] that is all ASCII.
 pub const ASCII: u8 = 7;
+/// A nested value (an array or object a database column holds, such as a Postgres array or
+/// `jsonb`) as its JSON text, which the decoder reads as JSON.
+pub const JSON: u8 = 8;
 /// Set in a column name's length when the name is all ASCII.
 pub const ASCII_NAME: u32 = 0x8000_0000;
 
@@ -159,6 +162,11 @@ impl<O: Out> BinRows<O> {
     }
 
     /// A byte array (a `u8[]`).
+    /// A nested value as JSON text (well-formed: the reader trusts it to be one value).
+    pub fn json(&mut self, v: &[u8]) {
+        self.sized(JSON, v);
+    }
+
     pub fn bytes(&mut self, v: &[u8]) {
         self.sized(BLOB, v);
     }
@@ -187,6 +195,8 @@ pub enum BinCell {
     /// The range and whether the text is all ASCII.
     Text(usize, usize, bool),
     Blob(usize, usize),
+    /// A nested value's JSON text.
+    Json(usize, usize),
 }
 
 /// The cell at `pos` and where the next one starts; `None` if the buffer ends early or the
@@ -209,7 +219,7 @@ pub fn cell_at(buf: &[u8], pos: usize) -> Option<(BinCell, usize)> {
                 at + 8,
             )
         }
-        tag @ (TEXT | ASCII | BLOB) => {
+        tag @ (TEXT | ASCII | BLOB | JSON) => {
             let b = buf.get(at..at + 4)?;
             let start = at + 4;
             let end = start.checked_add(u32::from_le_bytes(b.try_into().ok()?) as usize)?;
@@ -218,6 +228,8 @@ pub fn cell_at(buf: &[u8], pos: usize) -> Option<(BinCell, usize)> {
             }
             if tag == BLOB {
                 (BinCell::Blob(start, end), end)
+            } else if tag == JSON {
+                (BinCell::Json(start, end), end)
             } else {
                 (BinCell::Text(start, end, tag == ASCII), end)
             }
@@ -267,6 +279,7 @@ pub fn push_cell_json(out: &mut Vec<u8>, buf: &[u8], cell: BinCell) {
             BinCell::Float(v) => Cell::Float(v),
             BinCell::Text(start, end, _) => Cell::Text(&buf[start..end]),
             BinCell::Blob(start, end) => Cell::Blob(&buf[start..end]),
+            BinCell::Json(start, end) => Cell::Json(&buf[start..end]),
         },
     );
 }
@@ -283,6 +296,7 @@ pub fn push_cell(out: &mut Vec<u8>, cell: Cell<'_>) {
         }
         Cell::Float(v) => crate::fmt::push_f64(out, v),
         Cell::Ascii(t) => push_json_string(out, t),
+        Cell::Json(j) => out.extend_from_slice(j),
         Cell::Text(t) => match std::str::from_utf8(t) {
             Ok(_) => push_json_string(out, t),
             Err(_) => push_json_string(out, String::from_utf8_lossy(t).as_bytes()),

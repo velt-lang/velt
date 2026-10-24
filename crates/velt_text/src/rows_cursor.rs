@@ -28,6 +28,9 @@ pub enum Cell<'a> {
     /// Text the driver knows is all ASCII.
     Ascii(&'a [u8]),
     Blob(&'a [u8]),
+    /// A nested value (an array or object the column holds) as its JSON text, one well-formed
+    /// value: the decoder reads it as JSON.
+    Json(&'a [u8]),
 }
 
 /// What a driver implements to offer its rows as a cursor.
@@ -47,7 +50,8 @@ pub trait RowCursor {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct RawCell {
-    /// [`crate::rows`]' tags: `NULL`, `FALSE`, `TRUE`, `INT`, `FLOAT`, `TEXT`, `BLOB`, `ASCII`.
+    /// [`crate::rows`]' tags: `NULL`, `FALSE`, `TRUE`, `INT`, `FLOAT`, `TEXT`, `BLOB`, `ASCII`,
+    /// `JSON`.
     pub tag: u8,
     pub int: i64,
     pub float: f64,
@@ -122,6 +126,7 @@ fn raw_cell(c: Cell<'_>) -> RawCell {
         Cell::Text(t) => (TEXT, 0, 0.0, t),
         Cell::Ascii(t) => (ASCII, 0, 0.0, t),
         Cell::Blob(b) => (BLOB, 0, 0.0, b),
+        Cell::Json(j) => (JSON, 0, 0.0, j),
     };
     RawCell {
         tag,
@@ -151,6 +156,7 @@ unsafe fn cell_of<'a>(c: &RawCell) -> Cell<'a> {
         TEXT => Cell::Text(bytes()),
         ASCII => Cell::Ascii(bytes()),
         BLOB => Cell::Blob(bytes()),
+        JSON => Cell::Json(bytes()),
         _ => Cell::Null,
     }
 }
