@@ -342,6 +342,10 @@ impl Plan {
                     return Plan {
                         sweep: plan.sweep,
                         after_merge: os::after_merge_reason(paths, &everything.other_os),
+                        // The WebAssembly goldens stay with the nightly unless the change builds
+                        // WebAssembly or changes the toolchain: a lockfile, CI or script change
+                        // alone doesn't need them in the queue (about half the test time).
+                        wasm: plan.wasm || paths.iter().any(|p| changes_toolchain(p)),
                         ..everything
                     };
                 }
@@ -676,6 +680,12 @@ fn classify(graph: &Graph, path: &str) -> Effect {
         return Effect::Nothing;
     }
     Effect::Everything
+}
+
+/// Whether `path` changes the Rust toolchain or its configuration, which can break the
+/// WebAssembly build on its own.
+fn changes_toolchain(path: &str) -> bool {
+    path == "rust-toolchain.toml" || path.starts_with(".cargo/")
 }
 
 /// Whether `path` builds WebAssembly: `wasm` in its path, or [`WASM_TOO`].
