@@ -607,6 +607,30 @@ impl FnLower<'_, '_> {
     }
 
     /// The value of type `ty` the `any` at `p` (owned, consumed here) holds.
+    /// The string literal type `ty` (`"a"`, a key known per instantiation) the `any` at `p`
+    /// (owned, consumed here) holds: a string with that content (the box is released; the
+    /// value is zero-sized), else a `TypeError` naming it.
+    fn any_unbox_str_literal(&mut self, p: &Place, from: TyId, ty: TyId, lit: &str) -> Operand {
+        let desc = Operand::Copy(proj(p, Proj::Field(1)));
+        let imp = self.cx.hir.any_impl.unwrap_or(0);
+        let str_ty = self.cx.str_ty();
+        let want = self.vtable_addr(VtableKey::Impl(imp, str_ty));
+        let is_str = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, desc.clone(), want));
+        let (test, ok, bad) = (self.new_block(), self.new_block(), self.new_block());
+        self.branch(is_str, test, bad);
+        self.switch_to(test);
+        let s = self.str_lit(lit);
+        let sa = self.operand_addr(s, Ty::Agg(crate::vir::STR_AGG));
+        let data = Operand::Copy(proj(p, Proj::Field(0)));
+        let eq = self.str_eq(data, sa);
+        self.branch(eq, ok, bad);
+        self.switch_to(bad);
+        self.any_type_error(desc, ty);
+        self.switch_to(ok);
+        self.drop_glue(p.clone(), from);
+        super::unit()
+    }
+
     pub(super) fn any_unbox(&mut self, p: &Place, from: TyId, ty: TyId) -> Operand {
         if self.cx.is_dynamic(ty) {
             // The payload of an `any | null`: the value itself.
@@ -614,6 +638,9 @@ impl FnLower<'_, '_> {
         }
         if self.cx.is_union(ty) {
             return self.any_unbox_union(p, from, ty);
+        }
+        if let TyKind::Literal(hir::LitValue::Str(lit)) = self.cx.kind(ty) {
+            return self.any_unbox_str_literal(p, from, ty, &lit);
         }
         let vt = self.cx.ty(ty);
         let out = Place::local(self.temp(vt));

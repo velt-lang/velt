@@ -70,3 +70,15 @@ function createPropsProxy<T extends Record<string, any>>(target: T, onAccess?: (
 }
 const proxied = createPropsProxy({ a: 1, b: "x" }, (k) => console.log("read", k));
 console.log(proxied.a, proxied.b);
+type SignalKey<T> = Exclude<Extract<keyof T, string>, "$set">;
+function toKey<T extends object, K extends SignalKey<T>>(source: T, key: K): K {
+  return key;
+}
+function allKeys<T extends object>(source: T): string[] {
+  const out: string[] = [];
+  for (const key of Object.keys(source)) {
+    out.push(toKey(source, key as SignalKey<T>));
+  }
+  return out;
+}
+console.log(allKeys({ a: 1, b: "x" }), allKeys({ q: 1 }));

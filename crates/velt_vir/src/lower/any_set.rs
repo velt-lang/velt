@@ -19,7 +19,7 @@
 //! `Record<string, V>` (added when missing, as in Node), and elements of an array inside its
 //! length or just past it (the array grows by one), and an array's `length` made shorter.
 
-use velt_sema::hir::{DynMemberKind, TyId, TyKind};
+use velt_sema::hir::{DynMemberKind, LitValue, TyId, TyKind};
 
 use super::any_glue::OBJECT_PROTO;
 use super::any_member::{ST_OK, ST_UNSUPPORTED};
@@ -355,6 +355,33 @@ impl FnLower<'_, '_> {
                     self.switch_to(join);
                     Operand::Copy(r)
                 }
+                // A string literal member (`"a" | "b"`, a key type known per instantiation):
+                // the value held is a string with that content.
+                TyKind::Literal(LitValue::Str(lit)) => {
+                    let imp = self.cx.hir.any_impl.unwrap_or(0);
+                    let str_ty = self.cx.str_ty();
+                    let want = self.vtable_addr(super::glue::VtableKey::Impl(imp, str_ty));
+                    let is_str =
+                        self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, desc.clone(), want));
+                    let r = Place::local(self.temp(Ty::Bool));
+                    let (test, no, join) = (self.new_block(), self.new_block(), self.new_block());
+                    self.branch(is_str, test, no);
+                    self.switch_to(test);
+                    let s = self.str_lit(&lit);
+                    let sa = self.operand_addr(s, Ty::Agg(vir::STR_AGG));
+                    let data = Operand::Copy(proj(p, Proj::Field(0)));
+                    let eq = self.str_eq(data, sa);
+                    self.assign(r.clone(), Rvalue::Use(eq));
+                    self.goto(join);
+                    self.switch_to(no);
+                    self.assign(
+                        r.clone(),
+                        Rvalue::Use(Operand::Const(vir::Const::Bool(false), Ty::Bool)),
+                    );
+                    self.goto(join);
+                    self.switch_to(join);
+                    Operand::Copy(r)
+                }
                 _ => {
                     let imp = self.cx.hir.any_impl.unwrap_or(0);
                     let want = self.vtable_addr(super::glue::VtableKey::Impl(imp, pt));
@@ -364,7 +391,14 @@ impl FnLower<'_, '_> {
             let (yes, next) = (self.new_block(), self.new_block());
             self.branch(ok, yes, next);
             self.switch_to(yes);
-            let val = self.any_unbox(p, from, pt);
+            // A zero-sized member (a literal type) holds nothing: the box is released.
+            let val = match self.cx.is_unit(pt) {
+                true => {
+                    self.drop_glue(p.clone(), from);
+                    super::unit()
+                }
+                false => self.any_unbox(p, from, pt),
+            };
             let view = self.cx.view(ty, v);
             let vp = proj(&out, Proj::Cast(view));
             self.assign(

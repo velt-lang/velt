@@ -70,6 +70,10 @@ impl FnCx<'_, '_> {
             },
             Err(h) => h,
         };
+        let h = match self.generic_key_string(h, exp) {
+            Ok(k) => return Ok(k),
+            Err(h) => h,
+        };
         // `T extends readonly number[]` where an array of the bound's elements is expected.
         let h = match self.array_bound_target(&h, exp) {
             true => match self.array_bound_value(h) {
