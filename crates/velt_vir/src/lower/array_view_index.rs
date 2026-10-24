@@ -56,6 +56,37 @@ impl FnLower<'_, '_> {
         (c, Some(i))
     }
 
+    /// The element `index` (whose value `given` may hold already) of the array at `arr` of type
+    /// `t`, bounds-checked at `span`, as an assignment target (`mark`: `view_writes_mark`).
+    pub(super) fn index_target(
+        &mut self,
+        arr: &Place,
+        t: TyId,
+        index: &hir::Expr,
+        given: Option<Operand>,
+        mark: usize,
+        span: velt_common::Span,
+    ) -> Place {
+        let given = match self.cx.array_view(t) {
+            true => Some(given.unwrap_or_else(|| self.expr(index))),
+            false => given,
+        };
+        let prev = self.enter_span(span);
+        let p = match self.view_index_elem(arr, t, index, given.clone(), Some(mark)) {
+            Some(p) => p,
+            None => {
+                self.restore_loc(prev);
+                let (arr, i) = self.index_content(arr, t, index, given, Some(mark));
+                let i = i.unwrap_or_else(|| self.expr(index));
+                let ity = self.vty(index.ty);
+                self.enter_span(span);
+                self.elem_place_checked(&arr, t, i, ity)
+            }
+        };
+        self.restore_loc(prev);
+        p
+    }
+
     /// The element `index` (whose value `given` may hold already) of the array at `arr` of the
     /// view type `t`, bounds-checked, for a read (or, with `mark`, an assignment target); `None`
     /// for any other array type.

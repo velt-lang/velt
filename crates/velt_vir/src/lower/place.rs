@@ -410,23 +410,7 @@ impl FnLower<'_, '_> {
                 if !self.captured_root(base) {
                     self.target_barrier(&arr, bty);
                 }
-                let given = pre.pop_front();
-                let prev = self.enter_span(e.span);
-                if let Some(p) = self.view_index_elem(&arr, bty, index, given.clone(), Some(mark)) {
-                    self.restore_loc(prev);
-                    return p;
-                }
-                self.restore_loc(prev);
-                let (arr, i) = self.index_content(&arr, bty, index, given, Some(mark));
-                let i = match i {
-                    Some(i) => i,
-                    None => self.expr(index),
-                };
-                let ity = self.vty(index.ty);
-                let prev = self.enter_span(e.span);
-                let p = self.elem_place_checked(&arr, bty, i, ity);
-                self.restore_loc(prev);
-                p
+                self.index_target(&arr, bty, index, pre.pop_front(), mark, e.span)
             }
             K::UnwrapSome(inner, _) => {
                 let oty = self.sub(inner.ty);
