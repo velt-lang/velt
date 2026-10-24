@@ -148,8 +148,13 @@ hidden classes and no runtime shape checks.
   fields (assignable only in the constructor), `static` methods, and
   `static readonly NAME: T = …;` constants (`Account.LIMIT`, `Math.PI`), evaluated like
   [module constants](variables.md#module-state) (once, with the class, when the program
-  modifies, takes over or compares one, or its value is not a constant). Mutable statics
-  and `protected` members don't exist (only a constructor can be `protected`). Static and
+  modifies, takes over or compares one, or its value is not a constant), and `static` fields
+  (`static count: number = 0;`), which are [module state](variables.md#module-state) like a
+  module-level `let`: initialized once, where the class is declared, in source order, and
+  assigned through their class (`Counter.count++`, also
+  read through a subclass, `Sub.count`; `this.count = v` in a static method is not supported
+  yet).
+  `protected` members don't exist (only a constructor can be `protected`). Static and
   instance members are separate namespaces, as in TypeScript: a subclass's `static m()` doesn't
   hide an inherited instance method `m()`, and a class below it can still `override` that method.
   Static methods are inherited, as in TypeScript: with `class B extends A {}`, `B.f()` calls

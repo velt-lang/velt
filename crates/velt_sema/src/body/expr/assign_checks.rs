@@ -1,4 +1,4 @@
-//! Checks of assignment targets split out of `assign.rs`: writes to `static readonly` fields,
+//! Checks of assignment targets split out of `assign.rs`: writes to static fields,
 //! the field writes `crate::object_copies` needs to know about, and `a ??= b` on a place.
 
 use velt_syntax::ast;
@@ -11,32 +11,36 @@ use crate::body::{FnCx, Want};
 use crate::hir::{self, TyId, TyKind};
 
 impl FnCx<'_, '_> {
-    /// `Type.NAME = v` on a `static readonly` field (reported; statics are constants).
-    pub(super) fn static_field_target(&mut self, object: &ast::Expr, prop: &ast::Ident) -> bool {
+    /// `Type.NAME = v` on a static field: its slot when it is a `static` (module state, as a
+    /// module-level `let`), `Some(None)` after reporting a write to a `static readonly` one;
+    /// `None` when `Type.NAME` is no static field of `Type`.
+    pub(super) fn static_field_target(
+        &mut self,
+        object: &ast::Expr,
+        prop: &ast::Ident,
+    ) -> Option<Option<hir::Expr>> {
         let ast::ExprKind::Ident(id) = &object.kind else {
-            return false;
+            return None;
         };
         if self.is_local_name(&id.name) {
-            return false;
+            return None;
         }
         let Some(crate::ctx::Item::Def(d)) = self.lookup_item(&id.name, id.span) else {
-            return false;
+            return None;
         };
-        if !self
-            .cx
-            .adt(d)
-            .is_some_and(|a| a.statics.contains_key(&prop.name))
-        {
-            return false;
+        let g = *self.cx.adt(d)?.statics.get(&prop.name)?;
+        if self.cx.global(g).is_some_and(|g| g.mutable) {
+            let place = self.static_field(d, prop, Want::BorrowMut, object.span.to(prop.span))?;
+            return Some(Some(place));
         }
         self.cx.err(
             format!(
-                "cannot assign to `{}.{}`: static fields are readonly",
+                "cannot assign to `{}.{}`: it is a `static readonly` field",
                 id.name, prop.name
             ),
             prop.span,
         );
-        true
+        Some(None)
     }
 
     /// Remember an assignment to field `prop` of an object type (or of a type parameter, which

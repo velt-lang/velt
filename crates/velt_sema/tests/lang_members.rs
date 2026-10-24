@@ -119,10 +119,8 @@ fn static_readonly_fields_are_globals() {
         "class K { private static readonly M: i64 = 4; } function main() { console.log(K.M); }",
     );
     assert!(r.contains("`M` is private"), "{r}");
-    let r = err_src("class K { static N: i64 = 1; } function main() {}");
-    assert!(r.contains("static fields must be `readonly`"), "{r}");
     let r = err_src("class K { static readonly N: i64 = 1; } function main() { K.N = 2; }");
-    assert!(r.contains("static fields are readonly"), "{r}");
+    assert!(r.contains("it is a `static readonly` field"), "{r}");
 }
 
 #[test]
