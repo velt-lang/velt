@@ -98,6 +98,23 @@ const add = box.adder();
 box.items.push(4);
 console.log(add(1));
 
+// Defaults and optional parameters, and `this` stored and compared.
+const bag = {
+  items: [1],
+  add(x: number) {
+    this.items.push(x);
+    return this.items.length;
+  },
+  sum(from: number = 0, extra?: number) {
+    return this.items.slice(from).reduce((a, b) => a + b, 0) + (extra ?? 0);
+  },
+  me() {
+    return this;
+  },
+};
+console.log(bag.add(2), bag.add(3), bag.sum(), bag.sum(1), bag.sum(1, 100));
+console.log(bag.me() === bag, bag.me().me().items.length);
+
 // A `function` expression as a property's value takes `this` as a method does.
 const fn = {
   k: 41,

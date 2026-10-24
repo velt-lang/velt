@@ -598,7 +598,12 @@ impl FnCx<'_, '_> {
     }
 
     /// The value `e` written for slot `slot` of `iface` (expected type `exp`).
-    pub(super) fn slot_value(&mut self, e: &ast::Expr, exp: TyId, (iface, slot): (DefId, usize)) -> hir::Expr {
+    pub(super) fn slot_value(
+        &mut self,
+        e: &ast::Expr,
+        exp: TyId,
+        (iface, slot): (DefId, usize),
+    ) -> hir::Expr {
         let slot = Some((iface, slot as u32, e.span));
         let saved = std::mem::replace(&mut self.literal_slot, slot);
         let h = self.expr(e, Some(exp), Want::Move);
@@ -682,7 +687,10 @@ impl FnCx<'_, '_> {
             .throws
             .or_else(|| self.fn_throws(h.ty))
             .unwrap_or(self.cx.ty.never);
-        let params = this.into_iter().chain(m.params.iter().map(|p| p.ty)).collect();
+        let params = this
+            .into_iter()
+            .chain(m.params.iter().map(|p| p.ty))
+            .collect();
         // An async method without a clause: its promise rejects with what the value's does.
         let ret = match (m.throws, self.cx.ty.kind(m.ret).clone(), self.fn_ret(h.ty)) {
             (None, TyKind::Promise(v, e), Some(r)) if e == self.cx.ty.never => {

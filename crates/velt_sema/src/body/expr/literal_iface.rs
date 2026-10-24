@@ -35,7 +35,7 @@ struct Member<'e> {
 impl FnCx<'_, '_> {
     /// Should an object literal with `props` and no expected type implement its own interface
     /// (module docs)?
-    pub(super) fn wants_own_iface(&self, props: &[ast::ObjectProp]) -> bool {
+    fn wants_own_iface(&self, props: &[ast::ObjectProp]) -> bool {
         props.iter().any(|p| match p {
             ast::ObjectProp::KeyValue(_, v) => {
                 super::literal_this::prop_takes_this(v)
@@ -47,15 +47,38 @@ impl FnCx<'_, '_> {
 
     /// Is nothing known about the type expected where `exp` is (none, or one still being
     /// inferred)?
-    pub(super) fn no_expected_type(&self, exp: Option<TyId>) -> bool {
+    fn no_expected_type(&self, exp: Option<TyId>) -> bool {
         match self.hint(exp) {
             None => true,
             Some(t) => t == self.cx.ty.error,
         }
     }
 
+    /// A literal with `props` where `exp` is expected (no interface) that has getters, setters
+    /// or methods using `this`: with no expected type, the value of its own interface; else
+    /// accessors are reported (`this` is, where the methods are checked). `None` otherwise.
+    pub(super) fn accessor_literal(
+        &mut self,
+        props: &[ast::ObjectProp],
+        exp: Option<TyId>,
+        span: Span,
+    ) -> Option<hir::Expr> {
+        if self.no_expected_type(exp) && self.wants_own_iface(props) {
+            return Some(self.own_iface_object(props, span));
+        }
+        let at = props.iter().find_map(super::iface_object::is_accessor)?;
+        self.cx.error(
+            Diagnostic::error(
+                "getters and setters in object literals are not supported yet where no interface with methods is expected",
+                at,
+            )
+            .with_note("an object literal of an object type is plain data: its fields hold values; store the value in a field, annotate the literal with an interface that declares the member, or declare a class with the accessor"),
+        );
+        Some(self.error_expr(span))
+    }
+
     /// The literal with `props` (no expected type) as the value of its own interface.
-    pub(super) fn own_iface_object(&mut self, props: &[ast::ObjectProp], span: Span) -> hir::Expr {
+    fn own_iface_object(&mut self, props: &[ast::ObjectProp], span: Span) -> hir::Expr {
         match self.own_iface(props, span) {
             Some(target) => self.iface_object(props, target, span),
             None => self.error_expr(span),
@@ -102,7 +125,8 @@ impl FnCx<'_, '_> {
                     let h = match v {
                         Some(v) => self.trial_type(v),
                         None => {
-                            let e = super::setters::synth(ast::ExprKind::Ident(key.clone()), key.span);
+                            let e =
+                                super::setters::synth(ast::ExprKind::Ident(key.clone()), key.span);
                             self.trial_type(&e)
                         }
                     };
@@ -178,7 +202,11 @@ impl FnCx<'_, '_> {
             self.expr(e, Some(exp), Want::Move);
             self.method_this = saved;
             if self.cx.diags.len() == diags {
-                let what = if members[k].is_getter { "getter" } else { "method" };
+                let what = if members[k].is_getter {
+                    "getter"
+                } else {
+                    "method"
+                };
                 self.cx.error(
                     Diagnostic::error(
                         format!("the result type of {what} `{}` cannot be inferred: it depends on its own result through `this`", members[k].name),
@@ -197,7 +225,10 @@ impl FnCx<'_, '_> {
             let getter = members.iter().position(|g| g.is_getter && g.name == m.name);
             let Some(g) = getter else {
                 self.cx.err(
-                    format!("the parameter of setter `{}` needs a type: the literal has no getter `{}`", m.name, m.name),
+                    format!(
+                        "the parameter of setter `{}` needs a type: the literal has no getter `{}`",
+                        m.name, m.name
+                    ),
                     m.span,
                 );
                 return None;
@@ -217,25 +248,49 @@ impl FnCx<'_, '_> {
     fn written_sig(&mut self, e: &ast::Expr, m: &Member) -> Option<(Vec<ParamSig>, Option<TyId>)> {
         let mut params = vec![];
         let error = self.cx.ty.error;
-        let (ps, ret, is_async): (Vec<(&ast::Ident, Option<&ast::TypeExpr>)>, _, _) = match &e.kind {
+        type Written<'p> = (
+            &'p ast::Ident,
+            Option<&'p ast::TypeExpr>,
+            Option<(&'p ast::Expr, bool)>,
+        );
+        let (ps, ret, is_async): (Vec<Written>, _, _) = match &e.kind {
             ast::ExprKind::Arrow {
                 params,
                 ret,
                 is_async,
                 ..
             } => (
-                params.iter().map(|p| (&p.name, p.ty.as_ref())).collect(),
+                params
+                    .iter()
+                    .map(|p| {
+                        (
+                            &p.name,
+                            p.ty.as_ref(),
+                            p.default.as_ref().map(|d| (d, p.optional)),
+                        )
+                    })
+                    .collect(),
                 ret.as_ref(),
                 *is_async,
             ),
             ast::ExprKind::Function(f) => (
-                f.sig.params.iter().map(|p| (&p.name, Some(&p.ty))).collect(),
+                f.sig
+                    .params
+                    .iter()
+                    .map(|p| {
+                        (
+                            &p.name,
+                            Some(&p.ty),
+                            p.default.as_ref().map(|d| (d, p.optional)),
+                        )
+                    })
+                    .collect(),
                 f.sig.ret.as_ref(),
                 false,
             ),
             _ => (vec![], None, false),
         };
-        for (name, ty) in ps {
+        for (name, ty, default) in ps {
             if ast::is_method_this(name) {
                 continue;
             }
@@ -255,12 +310,17 @@ impl FnCx<'_, '_> {
                 }
             };
             let mode = self.param_mode(t);
+            // Calls through the interface pass every argument, so they take the defaults.
+            let default = default.map(|d| {
+                let fname = format!("{{}}.{}", m.name);
+                crate::body::defaults::literal_method_default(self.cx, self.module, d, t, &fname)
+            });
             params.push(ParamSig {
                 name: name.name.clone(),
                 span: name.span,
                 ty: t,
                 mode,
-                default: None,
+                default,
             });
         }
         let ret = ret.map(|t| {
@@ -383,7 +443,12 @@ impl FnCx<'_, '_> {
             let s = match (m.is_getter, m.name.strip_prefix("set ")) {
                 (true, _) => format!("get {}(): {}", m.name, self.cx.display(m.ret)),
                 (_, Some(n)) => format!("set {n}({})", params.join(", ")),
-                _ => format!("{}({}): {}", m.name, params.join(", "), self.cx.display(m.ret)),
+                _ => format!(
+                    "{}({}): {}",
+                    m.name,
+                    params.join(", "),
+                    self.cx.display(m.ret)
+                ),
             };
             parts.push((m.span, s));
         }

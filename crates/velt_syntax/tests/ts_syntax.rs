@@ -691,10 +691,13 @@ fn object_literal_methods_take_this() {
     let src = "x = { n: 1, a() { return this.n; }, b() { return 1; }, get c() { return this.n; }, \
                set c(v: number) { this.n = v; }, *d() { yield this.n; }, e: function () { return this.n; }, \
                f: () => this, g() { return () => this.n; }, h() { return { k() { return this; } }; } }";
-    let names: Vec<String> = method_this_params(src).into_iter().map(|(n, empty)| {
-        assert!(empty, "{n}");
-        n
-    }).collect();
+    let names: Vec<String> = method_this_params(src)
+        .into_iter()
+        .map(|(n, empty)| {
+            assert!(empty, "{n}");
+            n
+        })
+        .collect();
     // `b` doesn't use `this`, `f` is an arrow (its `this` is the enclosing one), and `h`'s
     // `this` belongs to the nested literal's method.
     assert_eq!(names, ["a", "c", "c", "d", "e", "g"]);

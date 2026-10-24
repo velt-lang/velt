@@ -215,7 +215,11 @@ impl Found {
                 .with_note("in Node, the property then reads `undefined` (a getter) or throws on a write (a setter), which the interface's type doesn't allow: give a function"),
             ));
         }
-        if let Some(f) = [&d.get, &d.set].into_iter().flatten().find(|f| takes_this(f)) {
+        if let Some(f) = [&d.get, &d.set]
+            .into_iter()
+            .flatten()
+            .find(|f| takes_this(f))
+        {
             return Err(Some(
                 Diagnostic::error(
                     format!("`this` in an accessor `Object.defineProperty` gives `{k}` on `{o}` is not supported yet"),
@@ -558,7 +562,11 @@ fn cell(o: &str, k: &str, which: &str) -> String {
 fn takes_this(f: &ast::Expr) -> bool {
     match &f.kind {
         E::Arrow { params, .. } => params.first().is_some_and(|p| ast::is_method_this(&p.name)),
-        E::Function(d) => d.sig.params.first().is_some_and(|p| ast::is_method_this(&p.name)),
+        E::Function(d) => d
+            .sig
+            .params
+            .first()
+            .is_some_and(|p| ast::is_method_this(&p.name)),
         _ => false,
     }
 }
