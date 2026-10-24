@@ -220,8 +220,10 @@ impl FnCx<'_, '_> {
             // A `Date` prints as its ISO string, like Node.
             let h = self.own_to_string(h, "__inspect");
             let h = self.narrowed_for_print(h);
-            // A `void` value (`then((v) => console.log(v))` on a `Promise<void>`) is `undefined`.
-            let h = match h.ty == self.cx.ty.unit {
+            // A `void` variable (`then((v) => console.log(v))` on a `Promise<void>`) holds
+            // `undefined`. A call returning nothing stays an error: Velt's `reverse()` returns
+            // nothing where TypeScript's returns the array.
+            let h = match h.ty == self.cx.ty.unit && matches!(h.kind, hir::ExprKind::Local(..)) {
                 true => {
                     let at = h.span;
                     let undefined =
