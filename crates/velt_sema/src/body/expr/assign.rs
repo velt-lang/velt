@@ -725,6 +725,10 @@ impl FnCx<'_, '_> {
         if t.ty == error || f.ty == error {
             return (t, f, error);
         }
+        let (t, f, joined) = self.any_join(t, f, exp);
+        if let Some(ty) = joined {
+            return (t, f, ty);
+        }
         let tt = t.ty;
         let f = match self.try_coerce(f, tt) {
             Ok(f) => return (t, f, tt),

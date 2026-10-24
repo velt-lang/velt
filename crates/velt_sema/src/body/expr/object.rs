@@ -32,7 +32,7 @@ impl FnCx<'_, '_> {
         if let Some(TyKind::Tuple(ts)) = exp.map(|t| self.cx.ty.kind(t).clone()) {
             return self.tuple_lit(elems, &ts, exp.expect("ICE: tuple"), span);
         }
-        let raw_elem = exp.and_then(|t| self.cx.ty.array_elem(t).or(self.cx.iterable_elem(t)));
+        let raw_elem = exp.and_then(|t| self.literal_elem(t, elems));
         let exp_elem = raw_elem.filter(|t| !self.cx.ty.has_error(*t));
         // A tuple element type that is only partly known (`[K, V][]` while inferring `K` and
         // `V`) still says the elements are tuples: the first one is checked against it.
@@ -660,8 +660,7 @@ impl FnCx<'_, '_> {
                     self.intrinsic(hir::Intrinsic::FieldAbsent, vec![], fty, span)
                 }
                 (None, Some(dflt)) => {
-                    let mut h = dflt.clone();
-                    crate::visit::map_expr_types(&mut h, &mut |t| self.cx.subst(t, &type_args));
+                    let h = self.placed_default(dflt, &type_args, dflt.span);
                     for s in &f.default_throws {
                         let s = s.used_at(span, |t| self.cx.subst(t, &type_args));
                         self.throw_src(s);

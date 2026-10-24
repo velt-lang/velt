@@ -1,0 +1,16 @@
+{} {} { a: 1, b: 2 }
+[] [ {}, { x: 1 } ] { m: { k: 'v' }, n: 2 } { inner: { x: 1 }, tags: [ 'a', 'b' ] } 0 { s: 1 }
+{"x":"local"}{"n":3}1,2,3
+w! { one: 1, w: 2 }
+p { base: 1 } { d: 'x' }
+n { base: 1 } {}
+{ a: 1 } { b: 's' }
+{ i: 1 } { o: 2 }
+{ i: 0 }
+{ i: 1 }
+caught boom
+fin
+{ a: 1 } hi [ 3 ] 0
+{ retries: 3 } 1 2 true 2 6
+{ a: 1 } [ 1, 2 ] { a: 1 } 1
+later 5 true

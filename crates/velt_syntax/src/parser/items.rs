@@ -321,21 +321,20 @@ impl<'a> Parser<'a> {
         self.expect_kw(Kw::Function, "function")?;
         let is_generator = self.eat(Tok::Star);
         let name = self.parse_binding_ident()?;
-        let mut sig = self.parse_sig_rest(lo, name, is_async)?;
-        sig.is_generator = is_generator;
-        Ok(sig)
+        self.parse_sig_rest(lo, name, is_async, is_generator)
     }
 
     /// After the function/method name: generics, parameters, optional return type and
-    /// `throws` clause.
+    /// `throws` clause, of a generator (`is_generator`) or not.
     pub(super) fn parse_sig_rest(
         &mut self,
         lo: u32,
         name: Ident,
         is_async: bool,
+        is_generator: bool,
     ) -> PResult<FnSig> {
         let generics = self.parse_generic_params()?;
-        let params = self.parse_params()?;
+        let params = self.parse_params(is_generator)?;
         let this_param = self.this_type();
         let ret = if self.eat(Tok::Colon) {
             Some(self.parse_ret_type()?)
@@ -350,7 +349,7 @@ impl<'a> Parser<'a> {
             ret,
             throws,
             is_async,
-            is_generator: false,
+            is_generator,
             this_param,
             span: self.span_from(lo),
         })
@@ -460,8 +459,9 @@ impl<'a> Parser<'a> {
         Ok(None)
     }
 
-    /// `( name: Type [= default], ... )`
-    pub(super) fn parse_params(&mut self) -> PResult<Vec<Param>> {
+    /// `( name: Type [= default], ... )`, of a `generator` or not (whose defaults run at the
+    /// call: [`Parser::check_param_defaults`]).
+    pub(super) fn parse_params(&mut self, generator: bool) -> PResult<Vec<Param>> {
         self.expect(Tok::LParen)?;
         let mut params = Vec::new();
         self.parse_this_param()?;
@@ -477,7 +477,9 @@ impl<'a> Parser<'a> {
         }
         self.expect(Tok::RParen)?;
         let checked: Vec<_> = params.iter().map(ParamDefault::of_param).collect();
-        self.check_param_defaults(&checked);
+        for i in self.check_param_defaults(&checked, generator) {
+            params[i].ty = super::param_patterns::applied_in_callee(params[i].ty.clone());
+        }
         Ok(params)
     }
 

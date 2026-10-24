@@ -84,13 +84,15 @@ The quality gate is `cargo xtask check` (crates/xtask), with two ways to run it:
   checks them all on Linux, Windows and macOS. Changes to the build, the toolchain, CI or the
   scripts select everything. `cargo xtask affected` prints the plan and why; the rules are in
   `crates/xtask/src/plan.rs`. Goldens run in debug mode (`--golden-modes release` for the other);
-  `--part` runs some parts (`lint`, `test`, `golden`, comma-separated).
+  `--part` runs some parts (`lint`, `test`, `golden`, comma-separated; `wasm` runs only the
+  WebAssembly goldens, which `test` includes).
 - **Everything**: `scripts/check-all.sh` or `pwsh scripts/check-all.ps1` (`--fast` / `-Fast`:
   goldens in debug mode only). The merge queue runs it on Linux (and on Windows and macOS for
   OS-specific changes), and the push to `main` on Windows and macOS when the queue checked Linux
   only, so you need it locally only when you want that certainty before queueing. The queue
-  skips the WebAssembly goldens when the change doesn't touch WebAssembly code
-  (`VELT_WASM_GOLDENS=skip`). On Windows, `-Linux` also builds and tests the committed `HEAD` in
+  skips the WebAssembly goldens when the change doesn't touch WebAssembly code, and otherwise
+  runs them in parallel shards next to the goldens' (`--part wasm`, `VELT_WASM_SHARD=<i>/<n>`),
+  not in the lint-and-test job (`VELT_WASM_GOLDENS=skip`). On Windows, `-Linux` also builds and tests the committed `HEAD` in
   WSL (`scripts/test-linux.sh`, in a clone at `~/velt-linux`; run the script with `--dir
   /mnt/d/...` to keep it on the bigger disk, see below);
   `scripts/linux-check.sh` runs the gate in Docker from macOS or Linux (`--services` starts

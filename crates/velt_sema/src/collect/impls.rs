@@ -363,6 +363,10 @@ fn check_method_sig(
             d = d.with_note(format!(
                 "`return()` returns a finished result, as in TypeScript: declare it `{want}` and end it with `return {{ done: true }};`"
             ));
+        } else if let Some(note) =
+            crate::body::defaults::applied_default_note(cx, [(def, &ps, &want_ps); 2])
+        {
+            d = d.with_note(note);
         }
         cx.error(d);
     } else if is_getter != m.is_getter {

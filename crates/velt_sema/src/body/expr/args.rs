@@ -224,13 +224,12 @@ impl FnCx<'_, '_> {
             hargs.push(h);
         }
         for p in &c.params[args.len()..] {
-            let Some(mut d) = p.default.clone() else {
+            let Some(d) = &p.default else {
                 // A left-out `void` parameter (checked by arity).
                 hargs.push(self.unit_expr(span));
                 continue;
             };
-            crate::visit::map_expr_types(&mut d, &mut |t| self.cx.subst(t, &type_args));
-            d.span = span;
+            let d = self.placed_default(d, &type_args, span);
             hargs.push(d);
         }
         // A deferred type in the result that the type arguments let reduce is reported here.
@@ -283,9 +282,7 @@ impl FnCx<'_, '_> {
         };
         let test = crate::body::defaults::undefined_test(name(span), span);
         let cond = self.cond(&test);
-        let mut d = default.clone();
-        crate::visit::map_expr_types(&mut d, &mut |t| self.cx.subst(t, type_args));
-        d.span = span;
+        let d = self.placed_default(default, type_args, span);
         let els = self.read_temp(arg, ty, span);
         let pick = H::If {
             cond: Box::new(cond),
@@ -398,12 +395,11 @@ impl FnCx<'_, '_> {
             return ck;
         }
         for (k, p) in skipped.iter().enumerate() {
-            let mut d = p
+            let d = p
                 .default
-                .clone()
+                .as_ref()
                 .expect("ICE: skipped parameters have defaults");
-            crate::visit::map_expr_types(&mut d, &mut |t| self.cx.subst(t, &ck.type_args));
-            d.span = span;
+            let d = self.placed_default(d, &ck.type_args, span);
             ck.args.insert(skip.start + k, d);
         }
         ck

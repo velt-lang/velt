@@ -1,0 +1,77 @@
+// Destructuring views (#1485): object patterns in `const`, parameters, `for...of` and nested
+// patterns read a view (and a typed proxy) through its object, as in Node, where sigx
+// destructures VNodes (`const { type, props } = vnode`).
+type Props = { title: string; count: number };
+type VNode = { type: string; props: Props; key?: string };
+
+class Element {
+  type = "div";
+  props: Props = { title: "box", count: 2 };
+  key = "k1";
+  children = 3;
+}
+
+// A program with proxies: an `any` holding another type converts to `VNode` as a view.
+const traced =
+  new Proxy(
+    { type: "span", props: { title: "traced", count: 7 } },
+    {
+      get(t: any, k: any, r: any): any {
+        console.log("get", k);
+        return Reflect.get(t, k, r);
+      },
+    },
+  ) as VNode;
+
+function node(x: any): VNode {
+  return x as VNode;
+}
+
+const arr: VNode[] = [
+  { type: "p", props: { title: "plain", count: 1 } },
+  node(new Element()),
+  node({ type: "li", props: { title: "literal", count: 5 }, extra: true }),
+];
+
+const { type, props } = arr[1];
+console.log(type, props.title, props.count);
+
+const { type: t2, props: { title, count }, key } = arr[2];
+console.log(t2, title, count, key === undefined);
+
+function render({ type, props }: VNode): string {
+  return `<${type} title=${props.title}>${props.count}`;
+}
+
+for (const n of arr) {
+  console.log(render(n));
+}
+for (const { type, key } of arr) {
+  console.log(type, key ?? "-");
+}
+const pick = ({ props: { count } }: VNode): number => count * 10;
+console.log(arr.map(pick).join(","));
+
+// Writes through the object stay visible to later destructuring.
+const el: any = arr[1];
+el.type = "section";
+const { type: after } = arr[1];
+console.log(after, (el as Element).type);
+
+const { type: tt, props: tp } = traced;
+console.log(tt, tp.title);
+
+let total = 0;
+for (let i = 0; i < 3; i++) {
+  const { props: { count: c } } = arr[i];
+  total += c;
+}
+console.log(total);
+
+async function later(v: VNode): Promise<string> {
+  await Promise.resolve(0);
+  const { type, props } = v;
+  return type + ":" + props.title;
+}
+
+later(arr[2]).then((s) => console.log(s));

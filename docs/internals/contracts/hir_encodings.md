@@ -25,6 +25,19 @@ Maintainer-owned, like `hir/mod.rs`, `hir/intrinsic.rs` and `hir/module_state.rs
   own field `at` it runs before (that class's field count: after its last). They belong to
   the split of the declaring class: whoever runs that class's initializers runs each of them
   as `this.<field> = init` (dropping the old value) right before field `at`'s, in list order.
+  Sema checks every initializer (`FieldDef::default`, `FieldInit::init`) and every parameter
+  default a call fills in in a frame of its own, outside any function body: the locals it
+  uses (its own temporaries, such as the one a `Record` literal fills) are numbered from 0
+  there and belong to no body. Wherever lowering places one, it renumbers them after the
+  locals of the body it runs in (`velt_sema::rebase_detached_locals(e, base)`, which also
+  returns how many there are) and declares each at its `let` or binding pattern, which gives
+  its type; sema puts no `let` without an initializer and no `catch` local in one, which
+  would have none. A default sema inserts at a call (`FnInfo` parameter defaults, struct
+  field defaults in object literals) already has locals of the calling body. A parameter
+  default the function applies itself (a dynamic or `T | undefined` parameter's, which
+  includes one using an earlier parameter, `this` or a closure, typed `T | undefined` by the
+  parser) is checked in the function's body instead (`default_prologue`), as the initializer
+  of the `let` that hides the parameter at the start of the body, with locals of that body.
 - Virtual dispatch only for methods overridden somewhere: `Callee::Virtual { slot }` indexes
   `AdtDef::vtable` of the receiver's dynamic class; all other method calls are `Callee::Def`.
 - Interface values (`Shape[]`) are `TyKind::Dyn`: fat pointer (data, vtable). `ExprKind::ToDyn`
@@ -1136,6 +1149,21 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   `lower/proxy_call.rs`). Object conversions keep a proxy's identity: `AdtLit` has
   `converted` ("Object conversions" below), and a converted literal whose source has a proxiable type gives the
   source's proxy when it holds one (and makes the target type proxiable, as `Upcast` does).
+- Views (#1485, velt_vir `lower/any_view.rs`): in a program with typed proxies, `AnyTo` to a
+  proxiable object type (not a class) of an `any` holding an object or function of another type
+  (and not a proxy) is the tagged result of the prelude's `Proxy.__view(x)`, a `Proxy` without traps whose
+  `#view` is set: field reads and writes run its forwarding `__get` / `__set` and check the value
+  as the field's type. A tagged value whose `Proxy` is a view converts to `any` as the `any` it
+  holds (`__target()`, the view released), so the view is the object to every dynamic
+  operation. The conversion gives the object's live view when it has one (the runtime's table of
+  views, rt_abi.md "Views", which `__view`'s result enters and a view's drop leaves), so an
+  object has at most one view at a time, and `===` and key hashes on a proxiable type compare
+  the pointer, as on any object type. A weak key of such a type goes the way of an
+  `object` key, by the `any` the value converts to (velt_vir `lower/weak_view.rs`). Object
+  patterns, `FieldPresent` and `JSON.stringify` on a proxiable type read a tagged value through
+  its traps (`JSON` as the `any` it converts to). The prelude's
+  `__proxyKeysOf`, `__proxyHas`, `__proxyHasOwnOf` and `__proxyAny`, which sema calls behind
+  `IsTypedProxy`, take such a value (no longer a proxy once in an `any`) as a plain one.
 - Object conversions (#650, #651; sema `body/expr/object_copy.rs`): an object type converted to
   another object type whose fields it has (in another order, or only some of them) is an
   `AdtLit` of the expected type with `converted: Conversion::Copy`, whose fields each read the

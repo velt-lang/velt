@@ -348,6 +348,14 @@ impl FnCx<'_, '_> {
         // `const f = (x, y = 1) => …; f(2)`: the closure's defaults fill in left-out arguments.
         let closure = match &f.kind {
             H::Local(l, _) => self.f.closure_consts.get(l).copied(),
+            // A module-level `const` holding the closure, called from a function.
+            H::Global(g) => match self.cx.global(*g) {
+                Some(g) if !g.mutable => match g.init.as_ref().map(|i| &i.kind) {
+                    Some(H::Closure(c)) => Some(*c),
+                    _ => None,
+                },
+                _ => None,
+            },
             _ => None,
         };
         let mut ps = vec![];

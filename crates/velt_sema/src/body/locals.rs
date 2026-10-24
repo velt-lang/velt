@@ -105,6 +105,27 @@ fn add_capture(f: &mut Frame, name: &str, outer: LocalId, ty: TyId, span: Span) 
 }
 
 impl FnCx<'_, '_> {
+    /// `e`, an expression checked outside any body (a parameter's or a field's default),
+    /// placed in this one: its temporaries, numbered from 0 in a frame no body has
+    /// (`visit::detached_locals`), become new locals of this body instead of naming this body's
+    /// own locals with the same ids.
+    pub(crate) fn adopt_detached(&mut self, mut e: crate::hir::Expr) -> crate::hir::Expr {
+        let declared = crate::visit::detached_locals(&mut e);
+        if declared.is_empty() {
+            return e;
+        }
+        let error = self.cx.ty.error;
+        let map: Vec<LocalId> = declared
+            .into_iter()
+            .map(|(ty, mutable)| {
+                let ty = ty.unwrap_or(error);
+                self.new_local("<default>", ty, mutable, e.span, LocalKind::Temp)
+            })
+            .collect();
+        crate::visit::remap_expr_locals(&mut e, &map);
+        e
+    }
+
     pub fn new_local(
         &mut self,
         name: &str,

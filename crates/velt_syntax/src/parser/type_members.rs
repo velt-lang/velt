@@ -26,7 +26,7 @@ impl<'a> Parser<'a> {
             span: velt_common::Span::new(at.file, at.lo, at.lo),
         };
         let sig_lo = self.cur_lo();
-        let sig = self.parse_sig_rest(sig_lo, name, false)?;
+        let sig = self.parse_sig_rest(sig_lo, name, false, false)?;
         Ok(Some(CallSig {
             sig,
             construct,

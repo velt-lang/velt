@@ -37,6 +37,7 @@ mod any_rest;
 mod any_set;
 mod any_set_site;
 mod any_tuple;
+mod any_view;
 mod append;
 mod array;
 mod assign_target;
@@ -109,6 +110,7 @@ mod types;
 mod upcast;
 mod weak;
 mod weak_object;
+mod weak_view;
 mod widen;
 
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -344,6 +346,8 @@ struct Cx<'h> {
     hir: &'h hir::Program,
     /// Native library inits `velt_main` runs first (entry.rs).
     native_inits: Vec<crate::NativeInit>,
+    /// The prelude's `Proxy.__view` (any_view.rs), once looked up.
+    view_fn: Option<Option<DefId>>,
     /// The program pins a task (`spawn(…, { worker })`): `velt_main` selects the per-core
     /// scheduler. Known once every function
     /// but `velt_main` is lowered, which is why it is built last (`lower_program`).
@@ -642,10 +646,12 @@ struct FnLower<'c, 'h> {
     /// `deepEqual`, `Glue::KeyEq`): floats compare with JS's SameValueZero, as
     /// `Intrinsic::Hash` hashes them (glue/eq.rs).
     key_mode: bool,
-    /// Lowering the module state's initializer (module_state.rs): the locals of each global's
-    /// initializer (the temporaries of a `Record` literal, ...) belong to no function body and
-    /// are declared at their `let` (`declare_init_local`).
-    init_locals: bool,
+    /// Lowering an expression checked outside any body (module_state.rs): the module state's
+    /// initializer (`Some(0)`), or a class field's initializer, whose locals are renumbered
+    /// from this index on (`consume_detached`). Those locals (the temporaries of a `Record`
+    /// literal, ...) belong to no function body and are declared at their `let`
+    /// (`declare_init_local`).
+    init_locals: Option<u32>,
     /// While lowering a class's constructor: the (concrete) class type, whose field
     /// initializers the constructor runs (ctor_init.rs).
     ctor_self: Option<TyId>,

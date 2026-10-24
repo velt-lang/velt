@@ -470,8 +470,7 @@ impl<'a> Parser<'a> {
         if !name.name.starts_with('[') {
             return self.generator_method_prop(lo, name, is_async).map(Some);
         }
-        let mut sig = self.parse_sig_rest(lo, name, is_async)?;
-        sig.is_generator = is_generator;
+        let sig = self.parse_sig_rest(lo, name, is_async, is_generator)?;
         let body = self.parse_fn_body()?;
         Ok(Some(ObjectProp::Method(Box::new(FnDecl {
             sig,
@@ -518,8 +517,7 @@ impl<'a> Parser<'a> {
             name: String::new(),
             span: name.span,
         };
-        let mut sig = self.parse_sig_rest(lo, anonymous, is_async)?;
-        sig.is_generator = true;
+        let mut sig = self.parse_sig_rest(lo, anonymous, is_async, true)?;
         let body = self.parse_fn_body()?;
         self.method_this_param(lo, &mut sig.params, &body);
         let span = self.span_from(lo);

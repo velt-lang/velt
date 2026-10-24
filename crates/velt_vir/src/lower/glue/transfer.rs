@@ -178,10 +178,21 @@ impl<'c, 'h> FnLower<'c, 'h> {
             // Moved out of a `read` callback: no longer the reader's own (locks.rs).
             self.leave_read(o.clone(), ty);
         }
+        // A view leaves the table of views before its target may be copied (any_view.rs).
+        let view_of = match self.cx.kind(ty) {
+            TyKind::Adt(d, _) => Some(d),
+            _ => None,
+        };
+        if let Some(d) = view_of {
+            self.proxy_unview(o.clone(), d);
+        }
         let tys = self.cx.adt_field_tys(ty);
         for (i, t) in tys.into_iter().enumerate() {
             let fp = self.field_place(&Place::local(obj), ty, i as u32);
             self.transfer_in_place(fp, t);
+        }
+        if let Some(d) = view_of {
+            self.proxy_review(o, d);
         }
         self.goto(done);
         self.switch_to(done);

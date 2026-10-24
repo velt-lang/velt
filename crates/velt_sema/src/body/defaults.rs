@@ -360,3 +360,48 @@ fn inherited_iface_defaults(cx: &mut Ctx, d: DefId) {
         }
     }
 }
+
+/// A note for a signature that doesn't match the one it implements or overrides, when a
+/// parameter explains it: one of a function in `sigs` (with its parameter types, then the
+/// other signature's) whose default the function applies itself because it uses an earlier
+/// parameter, `this` or a closure, or follows such a default (the parser made its type
+/// `T | undefined`, `applied_in_callee`), which callers see as a `T | undefined` where the
+/// other signature has something else. Adapting between the two is not supported yet.
+pub(crate) fn applied_default_note(
+    cx: &Ctx,
+    sigs: [(DefId, &[TyId], &[TyId]); 2],
+) -> Option<String> {
+    let (def, i) = sigs.into_iter().find_map(|(d, own, other)| {
+        let sig = fn_sig_ast(cx.fn_info(d).source?);
+        let i = (0..sig.params.len())
+            .find(|&i| applied_in_callee(&sig.params[i]) && own.get(i) != other.get(i))?;
+        Some((d, i))
+    })?;
+    let f = cx.fn_info(def);
+    let ty = f.params.get(i)?.ty;
+    let inner = undefined_only(cx, ty)?;
+    let name = &fn_sig_ast(f.source?).params[i].name.name;
+    let name = if name.starts_with('#') {
+        "this parameter"
+    } else {
+        name
+    };
+    let (t, inner) = (cx.display(ty), cx.display(inner));
+    Some(format!(
+        "`{name}` is a `{t}` to callers of `{f}`: its default uses an earlier parameter, `this` or a closure, or follows such a default, so the function applies it itself when the call starts. Velt can't match it with a `{inner}` parameter of the method it implements or overrides yet: declare that one `{name}?: {inner}` too, or take `{name}?: {inner}` and compute the default in the body",
+        f = f.name
+    ))
+}
+
+/// Did the parser make `p`'s type `T | undefined` because the function applies its default
+/// itself? Its `undefined` is the one `optional_types::or_undefined` adds, at an empty span.
+fn applied_in_callee(p: &ast::Param) -> bool {
+    let ast::TypeExprKind::Union(ms) = &p.ty.kind else {
+        return false;
+    };
+    !p.optional
+        && p.default.is_some()
+        && ms.last().is_some_and(|u| {
+            matches!(u.kind, ast::TypeExprKind::Undefined) && u.span.lo == u.span.hi
+        })
+}

@@ -195,6 +195,7 @@ impl FnCx<'_, '_> {
     }
 
     pub fn expr(&mut self, e: &ast::Expr, exp: Option<TyId>, want: Want) -> hir::Expr {
+        crate::check_work::add_expr_check();
         let outer = std::mem::take(&mut self.call_temps);
         let h = self.expr_kind(e, exp, want);
         let temps = std::mem::replace(&mut self.call_temps, outer);
