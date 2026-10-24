@@ -413,6 +413,9 @@ impl FnCx<'_, '_> {
             };
             return self.mk(kind, unit, span);
         };
+        if let Some(h) = self.union_local_compound(&place, op, target, value, span) {
+            return h;
+        }
         if lty == self.cx.ty.str_ && op == ast::BinaryOp::Add {
             // `rows[f()].out += x` / `g().out += x`: the object and indices are evaluated once,
             // before `x`, as in JS (`ns[f()] += 1` on numbers is one `CompoundAssign`).
