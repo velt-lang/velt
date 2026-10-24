@@ -137,10 +137,7 @@ fn defaults_that_run_in_the_function_take_undefined_at_calls() {
 /// The error and its note for `src`'s first diagnostic.
 fn first_error(src: &str) -> (String, String) {
     let (_, d) = parse(src);
-    let d = d
-        .iter()
-        .next()
-        .unwrap_or_else(|| panic!("no error for {src}"));
+    let d = d.first().unwrap_or_else(|| panic!("no error for {src}"));
     (d.message.clone(), d.notes.join(" "))
 }
 
@@ -189,7 +186,7 @@ fn defaults_that_cannot_run_in_the_function_say_why() {
     }
     // A generator's defaults stay at the call: its parameter keeps its type.
     let m = parse_ok("function* f(a: number, cb: () => number = () => 1) {}");
-    assert_eq!(ty(&func(&m, 0).sig.params[1].ty), "() => number");
+    assert_eq!(ty(&func(&m, 0).sig.params[1].ty), "fn() => number");
 }
 
 #[test]
