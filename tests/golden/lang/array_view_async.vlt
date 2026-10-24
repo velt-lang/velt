@@ -1,0 +1,38 @@
+// check: no leaks
+// Array views (#1485) through a generic function, nested views written at depth, `await`,
+// a view sent to `spawn` (the task gets a copy) and converted again after it, and whole-array
+// operations (`slice`, `splice`, `sort(cmp)`, destructuring, `length` set) seen in the original.
+type Child = string | number | null | Child[];
+
+function firstOf<T>(xs: T[]): T {
+  return xs[0];
+}
+
+async function tick(xs: Child[]): Promise<number> {
+  await Promise.resolve(0);
+  xs.push("z");
+  return xs.length;
+}
+
+async function main() {
+  const raw: any = [[1, 2], "a", [3, [4, 5]]];
+  const v = raw as Child[];
+  console.log(firstOf(v), v.length);
+  const inner = v[2] as Child[];
+  const deep = inner[1] as Child[];
+  deep[0] = 44;
+  console.log(JSON.stringify(v));
+  console.log(await tick(v), raw.length, (raw as Child[]) === v);
+  const again = await spawn(tick(raw as Child[]));
+  console.log(again, raw.length, v.length);
+  const s = v.slice(1, 3);
+  console.log(s.length, v.indexOf("a"), v.includes("z"), [...v].length);
+  v.splice(1, 1);
+  console.log(JSON.stringify(v), v.length);
+  v.sort((a, b) => String(a).localeCompare(String(b)));
+  console.log(JSON.stringify(v));
+  const [p, ...q] = v;
+  console.log(JSON.stringify(p), q.length);
+  v.length = 1;
+  console.log(JSON.stringify(v), v.at(-1) === v[0]);
+}
