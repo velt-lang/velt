@@ -9,7 +9,7 @@
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
-use super::error_slots::{error_only, occurs_plain};
+use super::error_slots::{error_only, occurs_plain, union_member_only};
 use super::ops::untyped;
 use super::widen_fresh::is_fresh;
 use crate::body::{FnCx, Want};
@@ -141,6 +141,17 @@ impl FnCx<'_, '_> {
         for (a, p) in args.iter().zip(&c.params) {
             if p.default.is_some() {
                 self.optional_slot(a, crate::body::OptionalSlot::Param);
+            }
+        }
+        // A type parameter bounded by a function type (`F extends (x: number) => number`) is
+        // that function type: arrows take their parameter types from it, other functions convert
+        // to it, and the body calls it as one (`fn_bound_value`; issue #1212).
+        for (k, slot) in slots.iter_mut().enumerate() {
+            let Some(Some(b)) = c.constraints.get(k) else {
+                continue;
+            };
+            if slot.is_none() && self.cx.exact_fn_bound(*b) {
+                *slot = Some(*b);
             }
         }
         let args_before = self.cx.diags.len();
@@ -642,7 +653,21 @@ impl FnCx<'_, '_> {
             let tys: Vec<TyId> = c.params.iter().map(|p| p.ty).collect();
             let unconstrained_error = tys.iter().any(|t| error_only(self.cx, *t, k as u32))
                 && !tys.iter().any(|t| occurs_plain(self.cx, *t, k as u32));
-            if unconstrained_error {
+            // A type parameter only ever a member of a parameter's union (`x: T | string`)
+            // that the arguments left open (`f("s")`, which the `string` member takes) holds
+            // nothing here: TypeScript infers `unknown`, under which `T | string` is `unknown`;
+            // `never` keeps it `string`.
+            let mut member_only = || {
+                let mut any_member = false;
+                for t in &tys {
+                    match union_member_only(self.cx, *t, k as u32) {
+                        Some(m) => any_member |= m,
+                        None => return false,
+                    }
+                }
+                any_member
+            };
+            if unconstrained_error || member_only() {
                 *slot = Some(self.cx.ty.never);
             }
         }

@@ -307,12 +307,30 @@ impl FnCx<'_, '_> {
         self.mk(kind, ck.ret, span)
     }
 
+    /// A value of a type parameter bounded by a function type (`f: F`, `F extends (x: number)
+    /// => number`) as that function type: every call site makes `F` the bound itself
+    /// (`check_call`), so it is the same value (issue #1212). `Err(h)` for any other value.
+    pub(crate) fn fn_bound_value(&mut self, h: hir::Expr) -> Result<hir::Expr, hir::Expr> {
+        let TyKind::Param(p) = *self.cx.ty.kind(h.ty) else {
+            return Err(h);
+        };
+        let Some(b) = self.cx.constraint_of(p) else {
+            return Err(h);
+        };
+        if !self.cx.exact_fn_bound(b) {
+            return Err(h);
+        }
+        let span = h.span;
+        Ok(self.mk(H::Upcast(Box::new(h)), b, span))
+    }
+
     /// Call through a function value (`TyKind::FnPtr`).
     pub(crate) fn call_value(&mut self, f: hir::Expr, args: &[ast::Expr], span: Span) -> hir::Expr {
         let f = match self.dynamic_apply(f, args, span) {
             Ok(h) => return h,
             Err(f) => f,
         };
+        let f = self.fn_bound_value(f).unwrap_or_else(|f| f);
         // A function with properties (#921): a call of the function it holds.
         if self.cx.is_callable_object(f.ty) {
             return match self.call_of_callable(f, span) {

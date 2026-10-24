@@ -413,6 +413,39 @@ impl FnCx<'_, '_> {
             return Some(self.error_expr(span));
         }
         crate::body::places::set_place_mode(&mut obj, hir::UseMode::Borrow);
+        Some(self.any_has(obj, k, lhs.span, span))
+    }
+
+    /// `key in obj` where `obj`'s type is known only per instantiation (`T`, `T & object`,
+    /// issue #1212): `Intrinsic::AnyHas` on the value boxed as an `any`. `None` for any other
+    /// `obj`.
+    pub(crate) fn generic_in(
+        &mut self,
+        lhs: &ast::Expr,
+        rhs: &ast::Expr,
+        span: Span,
+    ) -> Option<hir::Expr> {
+        let t = self.trial_expr(rhs).ty;
+        if !self.per_instance(t) {
+            return None;
+        }
+        let k = match self.symbol_key_of(lhs) {
+            Some(name) => self.str_lit(&name, lhs.span),
+            None => self.expr(lhs, None, crate::body::Want::Borrow),
+        };
+        let obj = self.expr(rhs, None, crate::body::Want::Borrow);
+        if self.cx.ty.is_bottom(k.ty) || self.cx.ty.is_bottom(obj.ty) {
+            return Some(self.error_expr(span));
+        }
+        let obj = match self.generic_as_any(obj) {
+            Ok(boxed) => boxed,
+            Err(_) => return Some(self.error_expr(span)),
+        };
+        Some(self.any_has(obj, k, lhs.span, span))
+    }
+
+    /// `k in obj` of a checked key and `any` (`Intrinsic::AnyHas`).
+    fn any_has(&mut self, obj: hir::Expr, k: hir::Expr, key_span: Span, span: Span) -> hir::Expr {
         self.note_dyn_members();
         let str_ = self.cx.ty.str_;
         let kt = self.cx.widened(k.ty);
@@ -428,13 +461,13 @@ impl FnCx<'_, '_> {
             self.cx.error(
                 Diagnostic::error(
                     format!("`in` with a `{tn}` key on an `any` is not supported yet (#823)"),
-                    lhs.span,
+                    key_span,
                 )
                 .with_note("use a `string` or `number` key"),
             );
-            return Some(self.error_expr(span));
+            return self.error_expr(span);
         };
         let b = self.cx.ty.bool_;
-        Some(self.intrinsic(hir::Intrinsic::AnyHas, vec![obj, k], b, span))
+        self.intrinsic(hir::Intrinsic::AnyHas, vec![obj, k], b, span)
     }
 }

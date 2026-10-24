@@ -375,6 +375,10 @@ impl FnCx<'_, '_> {
             Ok(h) => return h,
             Err(obj) => obj,
         };
+        let obj = match self.generic_index(obj, index, want, span) {
+            Ok(h) => return h,
+            Err(obj) => obj,
+        };
         let obj = match matches!(self.cx.ty.kind(obj.ty), TyKind::Shared(_)) {
             true => match self.shared_indexed(obj, index, want, span) {
                 Ok(obj) => obj,
@@ -463,6 +467,69 @@ impl FnCx<'_, '_> {
                 self.error_expr(span)
             }
         }
+    }
+
+    /// `obj[index]` read where `obj`'s type is known only per instantiation and the key is an
+    /// ordinary one (`xs[0]` with `T extends readonly number[]`, `o[k]` with `T extends
+    /// Record<string, V>` and `k: string`; issue #1212): the member of the value boxed as an
+    /// `any`, converted to the element type of `T`'s bound when it is an array or a record
+    /// (checked at run time), else an `any`. A key whose type is a key of `T` known only per
+    /// instantiation is `key_index.rs`'s. `Err(obj)` for anything else.
+    fn generic_index(
+        &mut self,
+        obj: hir::Expr,
+        index: &ast::Expr,
+        want: Want,
+        span: Span,
+    ) -> Result<hir::Expr, hir::Expr> {
+        if want == Want::BorrowMut || !self.per_instance(obj.ty) {
+            return Err(obj);
+        }
+        // `o[p as keyof T]` reads the key `p` holds: the assertion converts nothing.
+        let index = match &index.kind {
+            ast::ExprKind::Cast { expr, ty } if matches!(ty.kind, ast::TypeExprKind::KeyOf(_)) => {
+                &**expr
+            }
+            _ => index,
+        };
+        // The key's type must be known, and not a key of `T` known only per instantiation.
+        let literal = matches!(&index.kind, ast::ExprKind::Lit(_));
+        let generic_key = !literal
+            && self.peek_ty(index).is_none_or(|k| {
+                matches!(
+                    self.cx.ty.kind(k),
+                    TyKind::Param(_) | TyKind::Op(hir::TyOp::Inline(_), _)
+                )
+            });
+        // A string key of a parameter with interface bounds names a member of theirs, read
+        // through them (`o["name"]` as `o.name`).
+        let bounded = match self.cx.ty.kind(obj.ty) {
+            TyKind::Param(p) => self.bounds.get(*p as usize).is_some_and(|b| !b.is_empty()),
+            _ => false,
+        };
+        let named = matches!(&index.kind, ast::ExprKind::Lit(ast::Lit::Str(_)));
+        if generic_key || (named && bounded) {
+            return Err(obj);
+        }
+        let elem = match self.cx.ty.kind(obj.ty) {
+            TyKind::Param(p) => self
+                .cx
+                .constraint_of(*p)
+                .and_then(|c| match self.cx.ty.kind(c) {
+                    TyKind::Array(e) => Some(*e),
+                    _ => self.record_args(c).map(|(_, v)| v),
+                }),
+            _ => None,
+        };
+        let boxed = self.generic_as_any(obj)?;
+        let read = match self.dynamic_index(boxed, index, want, span) {
+            Ok(h) => h,
+            Err(_) => return Ok(self.error_expr(span)),
+        };
+        Ok(match elem.filter(|e| self.cx.dynamic(*e).is_none()) {
+            Some(e) => self.intrinsic(hir::Intrinsic::AnyTo, vec![read], e, span),
+            None => read,
+        })
     }
 
     /// `xs[i]`: the index is converted to `usize`.
@@ -614,7 +681,8 @@ impl FnCx<'_, '_> {
             .or_else(|h| self.param_as_object(h, target))
             .or_else(|h| self.param_as_object_part(h, target))
             .or_else(|h| self.narrowing_assertion(h, target, span))
-            .or_else(|h| self.union_view_cast(h, target, span));
+            .or_else(|h| self.union_view_cast(h, target, span))
+            .or_else(|h| self.generic_assertion(h, target));
         match coerced {
             Ok(h) => h,
             Err(h) => {

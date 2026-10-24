@@ -1,0 +1,60 @@
+// Operations TypeScript allows on a type parameter's apparent type that need the value's
+// run-time shape: `Object.keys`, `in`, `Array.isArray` (narrowing to `any`), indexing through
+// an array or record bound, calls through a function-type bound (#1212, #1456, #1304).
+function keysOf<T extends Record<string, number>>(o: T): string[] {
+  return Object.keys(o);
+}
+function keysObj<T>(t: T): string[] {
+  if (t === null || typeof t !== "object") return [];
+  return Object.keys(t as T & object);
+}
+function has<T>(t: T, k: string): boolean {
+  if (t === null || typeof t !== "object") return false;
+  return k in (t as T & object);
+}
+function hasKind<T extends object>(t: T): boolean {
+  return "kind" in t;
+}
+function hasU<T extends object>(x: T | { kind: string }): boolean {
+  return "kind" in x;
+}
+function len<T>(t: T): number {
+  if (Array.isArray(t)) {
+    return t.length;
+  }
+  return -1;
+}
+function firstOf<T extends object>(t: T): unknown {
+  if (Array.isArray(t)) {
+    return t[0];
+  }
+  return "no";
+}
+function isList<T>(x: T | string): boolean {
+  return Array.isArray(x);
+}
+function first<T extends readonly number[]>(xs: T): number {
+  return xs[0];
+}
+function get<T extends Record<string, number>>(o: T, k: string): number {
+  return o[k];
+}
+function prop<T extends Record<string, any>>(target: T, p: string | symbol): unknown {
+  return target[p as keyof T];
+}
+function call<F extends (x: number) => number>(f: F): number {
+  return f(1);
+}
+function twice<F extends (x: number) => number>(f: F, x: number): number {
+  const g: (x: number) => number = f;
+  return g(f(x));
+}
+function keep<F extends (s: string) => string>(f: F): F {
+  return f;
+}
+console.log(keysOf({ a: 1, b: 2 }), keysObj({ x: 1, y: "z" }), keysObj(3));
+console.log(has({ a: 1 }, "a"), has({ a: 1 }, "b"), has(3, "a"), hasKind({ kind: 1 }), hasKind({ z: 1 }));
+console.log(hasU<{ kind: string }>({ kind: "a" }), hasU<{ z: number }>({ z: 1 }));
+console.log(len([1, 2, 3]), len("ab"), firstOf([9]), firstOf({ a: 1 }), isList([1]), isList("s"));
+console.log(first([3, 4]), get({ a: 1, b: 2 }, "b"), prop({ q: 5 }, "q"));
+console.log(call((x) => x + 1), call((x: number) => x * 10), twice((x) => x * 3, 2), keep((s) => s + "!")("a"));

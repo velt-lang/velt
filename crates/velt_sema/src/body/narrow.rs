@@ -532,6 +532,14 @@ impl FnCx<'_, '_> {
 
     /// Facts for `Array.isArray(e)`: its array members.
     pub(super) fn is_array_facts(&mut self, e: &ast::Expr) -> (Vec<Fact>, Vec<Fact>) {
+        // A variable of a type parameter (`T`, `T & object`) reads as an `any` where the test
+        // holds (TypeScript's `T & any[]`), boxed per instantiation (`downcast_narrowed`).
+        if let Some(l) = self.own_generic_local(e) {
+            return match self.any_ty() {
+                Some(any) => (vec![Fact::Class(l, any)], vec![]),
+                None => (vec![], vec![]),
+            };
+        }
         let Some((l, nullable, u)) = self.local_with_members(e) else {
             return (vec![], vec![]);
         };

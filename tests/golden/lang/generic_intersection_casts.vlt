@@ -1,0 +1,23 @@
+// Casts in generic code to an intersection with members the value may lack
+// (`objectTarget as Signal<T & object>`, sigx's `signal`), checked at run time, and
+// intersections of function types with a declared method signature or an `any` parameter
+// (#1304, #350).
+type Signal<T> = T & { $set: (v: T) => void };
+type Setter = { $set(v: string): void };
+function asSig<T>(t: T): Signal<T & object> {
+  const o = t as T & object;
+  return o as Signal<T & object>;
+}
+function setterOf<T extends object>(s: T & Setter): number {
+  return 1;
+}
+function unwrap<T extends object>(s: T & Setter): T {
+  return s;
+}
+const s = { a: 1, $set: (v: any) => {} };
+console.log(asSig(s).a);
+const w = { a: 1, $set(v: string) { console.log("set", v); } };
+console.log(setterOf(w));
+const u = unwrap(w);
+u.$set("x");
+console.log(u === w, u.a);

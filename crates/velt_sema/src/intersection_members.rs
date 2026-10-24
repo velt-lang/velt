@@ -95,11 +95,14 @@ impl Ctx<'_> {
         else {
             return false;
         };
-        if pw.len() != pn.len() || rw != rn || tw != tn || xw != xn {
+        // A written signature's error set may still be a variable (`throws::vars`): the same
+        // but for it is the same.
+        if pw.len() != pn.len() || rw != rn || xw != xn || !self.same_ty(tw, tn) {
             return false;
         }
         pw.iter().zip(&pn).all(|(&w, &n)| {
-            if w == n {
+            // A parameter of type `any` takes whatever the other takes.
+            if w == n || self.dynamic(w) == Some(crate::any::Dynamic::Any) {
                 return true;
             }
             if !(self.is_object_type(w) && self.is_object_type(n)) {
@@ -113,8 +116,27 @@ impl Ctx<'_> {
         })
     }
 
+    /// Is `b`, a type parameter's bound, a function type the parameter is taken to be exactly
+    /// (`F extends (x: number) => number`; issue #1212): no type parameters, no rest parameter
+    /// and nothing dynamic, unlike the "any function" bound `(...args: any[]) => any`, under
+    /// which a parameter keeps the argument's own function type.
+    pub(crate) fn exact_fn_bound(&self, b: TyId) -> bool {
+        let TyKind::FnPtr {
+            params, ret, rest, ..
+        } = self.ty.kind(b)
+        else {
+            return false;
+        };
+        !*rest
+            && !self.has_type_params(b)
+            && params
+                .iter()
+                .chain(std::iter::once(ret))
+                .all(|&t| self.dynamic(t).is_none())
+    }
+
     /// The constraint (`T extends string`) of type parameter `n` of the function being checked.
-    fn constraint_of(&self, n: u32) -> Option<TyId> {
+    pub(crate) fn constraint_of(&self, n: u32) -> Option<TyId> {
         let d = *self.checking.last()?;
         let f = self.try_fn(d)?;
         f.generics.constraints.get(n as usize).copied().flatten()

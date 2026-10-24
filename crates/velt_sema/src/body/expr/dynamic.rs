@@ -133,6 +133,60 @@ impl FnCx<'_, '_> {
         self.box_dynamic(h, exp)
     }
 
+    /// Is `t` known only per instantiation: a type parameter, an intersection with one, or a
+    /// union or `| null` with such a member (`T`, `T & object`, `T | string`)?
+    pub(crate) fn per_instance(&mut self, t: TyId) -> bool {
+        fn open(cx: &crate::ctx::Ctx, m: TyId, depth: u32) -> bool {
+            match cx.ty.kind(m) {
+                TyKind::Param(_) => true,
+                TyKind::Op(hir::TyOp::Intersect, parts) if depth < 8 => {
+                    parts.iter().any(|&p| open(cx, p, depth + 1))
+                }
+                _ => false,
+            }
+        }
+        let core = self.cx.ty.opt_payload(t).unwrap_or(t);
+        open(self.cx, core, 0)
+            || self
+                .cx
+                .union_members(core)
+                .is_some_and(|ms| ms.iter().any(|&m| open(self.cx, m, 0)))
+    }
+
+    /// `h` shared into an `any` when its type is known only per instantiation
+    /// ([`Self::per_instance`]), for what TypeScript allows on its apparent type that needs the
+    /// value's run-time shape (`Object.keys`, `in`, `Array.isArray`, `x[k]`; issue #1212):
+    /// lowering boxes each instantiation's value. `Err(h)` for any other `h`.
+    pub(crate) fn generic_as_any(&mut self, h: hir::Expr) -> Result<hir::Expr, hir::Expr> {
+        if !self.per_instance(h.ty) {
+            return Err(h);
+        }
+        let Some(any) = self.any_ty() else {
+            return Err(h);
+        };
+        let h = self.share_if_place(h);
+        self.box_dynamic(h, any)
+    }
+
+    /// `x as D` where `x`'s type or `D` is known only per instantiation and nothing else
+    /// converts it (`objectTarget as Signal<T & object>`, which asserts members the value may
+    /// lack; issue #1304): the value through an `any`, checked at run time as `AnyTo` checks
+    /// it, so an instantiation where the value already is a `D` keeps it, and any other stops
+    /// with a `TypeError` naming both types.
+    pub(crate) fn generic_assertion(
+        &mut self,
+        h: hir::Expr,
+        target: TyId,
+    ) -> Result<hir::Expr, hir::Expr> {
+        if !(self.per_instance(h.ty) && self.per_instance(target)) {
+            return Err(h);
+        }
+        let span = h.span;
+        let boxed = self.generic_as_any(h)?;
+        let boxed = self.share_if_place(boxed);
+        Ok(self.intrinsic(Intrinsic::AnyTo, vec![boxed], target, span))
+    }
+
     /// The key of a weak operation (`WeakMap.set` / `get` / `has` / `delete`, `WeakSet`'s,
     /// `new WeakRef`) converted to its parameter `exp` (issue #926). A variable stays its own:
     /// the conversion to `object` takes a share of it, so the key (a fresh `WeakRef`'s target)
@@ -665,6 +719,26 @@ impl FnCx<'_, '_> {
             .rev()
             .find_map(|s| s.names.get(name).copied())?;
         self.cx.dynamic(self.local_ty(l)).map(|_| l)
+    }
+
+    /// The variable `e` names when its type is a type parameter or an intersection with one
+    /// (not a union or `| null` of it).
+    pub(crate) fn own_generic_local(&mut self, e: &velt_syntax::ast::Expr) -> Option<LocalId> {
+        use velt_syntax::ast::ExprKind as A;
+        let name = match &e.kind {
+            A::Paren(x) => return self.own_generic_local(x),
+            A::Ident(i) => i.name.as_str(),
+            _ => return None,
+        };
+        let l = self
+            .f
+            .scopes
+            .iter()
+            .rev()
+            .find_map(|s| s.names.get(name).copied())?;
+        let t = self.local_ty(l);
+        let plain = self.cx.ty.opt_payload(t).is_none() && self.cx.union_members(t).is_none();
+        (plain && self.per_instance(t)).then_some(l)
     }
 
     /// `s === null` / `s == undefined` (`word`) on a dynamic value `s`.

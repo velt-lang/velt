@@ -59,6 +59,16 @@ impl FnCx<'_, '_> {
     }
 
     fn try_coerce_value(&mut self, h: hir::Expr, exp: TyId) -> Result<hir::Expr, hir::Expr> {
+        let h = match self.fn_bound_value(h) {
+            Ok(f) if f.ty == exp || matches!(self.cx.ty.kind(exp), TyKind::FnPtr { .. }) => {
+                return self.try_coerce_value(f, exp)
+            }
+            Ok(f) => match &f.kind {
+                H::Upcast(inner) => (**inner).clone(),
+                _ => f,
+            },
+            Err(h) => h,
+        };
         let h = match self.try_coerce_typed(h, exp) {
             Ok(h) => return Ok(h),
             Err(h) => h,

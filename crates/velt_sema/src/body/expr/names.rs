@@ -160,6 +160,10 @@ impl FnCx<'_, '_> {
         let Some(target) = self.narrowed_class(l) else {
             return e;
         };
+        if self.cx.dynamic(target) == Some(crate::any::Dynamic::Any) && self.per_instance(e.ty) {
+            // `Array.isArray(x)` on a value of a type parameter: the value, as an `any`.
+            return self.generic_as_any(e).unwrap_or_else(|e| e);
+        }
         if !self.downcast_applies(e.ty, target) {
             // `typeof x === "string"` on a `T | string` (`typeof_facts`).
             return self.open_view(l, e, target).unwrap_or_else(|e| e);
