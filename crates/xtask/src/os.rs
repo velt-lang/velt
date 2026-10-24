@@ -95,13 +95,35 @@ pub const GOLDEN_SHARDS: &[(&str, usize)] = &[
     ("macos-latest", 1),
 ];
 
+/// How many jobs check the WebAssembly goldens (crates/veltc/tests/wasm_goldens.rs) in parallel
+/// on each OS, in the merge queue when a change touches WebAssembly code and in the nightly, from
+/// the build of the goldens' job (.github/workflows/queue-goldens.yml). They take about as long
+/// as all the other tests together: on a 4-vCPU Windows runner about 45 minutes in one job. The
+/// test splits them into 8 functions of about 330 s there, which the shards share (two each on
+/// Windows). Every runner in [`QUEUE_OSES`] needs an entry, as for [`GOLDEN_SHARDS`].
+pub const WASM_SHARDS: &[(&str, usize)] = &[
+    ("ubuntu-latest", 2),
+    ("windows-latest", 4),
+    ("macos-latest", 2),
+];
+
 /// The queue's golden shards (`VELT_GOLDEN_SHARD` values) on each of the runners `oses`, as a
 /// JSON object: `{"ubuntu-latest":["1/2","2/2"],…}`. A runner without a [`GOLDEN_SHARDS`] entry
 /// gets none, which fails the queue (never a silent skip of its goldens).
 pub fn golden_shards_json(oses: &[&str]) -> String {
+    shards_json(GOLDEN_SHARDS, oses)
+}
+
+/// The WebAssembly goldens' shards (`VELT_WASM_SHARD` values) on each of the runners `oses`, as
+/// [`golden_shards_json`] gives the goldens'.
+pub fn wasm_shards_json(oses: &[&str]) -> String {
+    shards_json(WASM_SHARDS, oses)
+}
+
+fn shards_json(table: &[(&str, usize)], oses: &[&str]) -> String {
     let mut entries = vec![];
     for os in oses {
-        let Some(&(_, n)) = GOLDEN_SHARDS.iter().find(|(name, _)| name == os) else {
+        let Some(&(_, n)) = table.iter().find(|(name, _)| name == os) else {
             continue;
         };
         let shards: Vec<String> = (1..=n).map(|i| format!("\"{i}/{n}\"")).collect();
@@ -134,12 +156,26 @@ mod tests {
 
     #[test]
     fn every_queue_os_has_at_least_one_golden_shard() {
-        for os in QUEUE_OSES {
-            let n = GOLDEN_SHARDS
-                .iter()
-                .find(|(name, _)| name == os)
-                .map(|e| e.1);
-            assert!(n.is_some_and(|n| n >= 1), "{os} has no golden shards");
+        for table in [GOLDEN_SHARDS, WASM_SHARDS] {
+            for os in QUEUE_OSES {
+                let n = table.iter().find(|(name, _)| name == os).map(|e| e.1);
+                assert!(n.is_some_and(|n| n >= 1), "{os} has no shards");
+            }
         }
+    }
+
+    #[test]
+    fn the_webassembly_goldens_get_shards_of_their_own() {
+        let all = wasm_shards_json(QUEUE_OSES);
+        assert!(
+            all.contains(r#""windows-latest":["1/4","2/4","3/4","4/4"]"#),
+            "{all}"
+        );
+        assert!(all.contains(r#""macos-latest":["1/2","2/2"]"#), "{all}");
+        assert_eq!(
+            wasm_shards_json(&["ubuntu-latest"]),
+            r#"{"ubuntu-latest":["1/2","2/2"]}"#
+        );
+        assert_eq!(wasm_shards_json(&["other"]), "{}");
     }
 }
