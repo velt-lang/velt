@@ -52,7 +52,7 @@ impl<'a> Parser<'a> {
         }
         self.expect(Tok::RParen)?;
         let checked: Vec<_> = params.iter().map(ParamDefault::of_param).collect();
-        for i in self.check_param_defaults(&checked) {
+        for i in self.check_param_defaults(&checked, false) {
             params[i].ty = super::param_patterns::applied_in_callee(params[i].ty.clone());
         }
         Ok((params, fields))

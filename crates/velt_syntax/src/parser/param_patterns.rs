@@ -122,15 +122,18 @@ impl Parser<'_> {
     /// the function is called, before the call. One that uses an earlier parameter
     /// (`b: number = a * 2`), `this` or a closure (`cb: () => number = () => local`, which may
     /// capture the function's surroundings) runs in the function instead, at the start of its
-    /// body, as in JavaScript, and so does
-    /// every later default that is not a constant (JavaScript runs them in order): the indices
-    /// returned, whose types the caller makes `T | undefined` ([`applied_in_callee`]). The body
-    /// applies them before it destructures parameters, so a default can't use a name a
-    /// destructured parameter binds yet, nor one whose type is left to it (an arrow's
-    /// `(a: number, b = a)`). A call-site default would also run before the defaults inside an
-    /// earlier destructured parameter (`({ x = f() }: P, y = g())`, which run in the body), where
-    /// JS runs `f()` first, so after such a pattern a default must be a constant.
-    pub(super) fn check_param_defaults(&mut self, params: &[ParamDefault<'_>]) -> Vec<usize> {
+    /// body, as in JavaScript, and so does every later default that is not a constant
+    /// (JavaScript runs them in order): the indices returned, whose types the caller makes
+    /// `T | undefined` ([`applied_in_callee`]). A `generator`'s defaults all run at the call
+    /// (its body starts at the first `next()`). What can't be applied in the function yet is
+    /// reported ([`Unmovable`]). A call-site default would also run before the defaults inside
+    /// an earlier destructured parameter (`({ x = f() }: P, y = g())`, which run in the body),
+    /// where JS runs `f()` first, so after such a pattern a default must be a constant.
+    pub(super) fn check_param_defaults(
+        &mut self,
+        params: &[ParamDefault<'_>],
+        generator: bool,
+    ) -> Vec<usize> {
         let mut bound: Vec<&str> = vec![];
         let mut plain: Vec<&str> = vec![];
         let mut pattern_defaults = false;
@@ -139,21 +142,16 @@ impl Parser<'_> {
             if let Some(d) = p.default {
                 let uses_plain = first_use_of(d, &plain);
                 let in_order = !in_callee.is_empty() && !is_constant(d);
-                // A `T | null` parameter stays one after the body applies its default, which
-                // `p!` would not keep.
-                let typed = p.ty.is_some_and(|t| !has_null(t));
-                let unsupported = first_use_of(d, &bound).or(uses_plain.filter(|_| !typed));
-                if let Some(used) = unsupported {
-                    self.diags.push(
-                        Diagnostic::error(
-                            format!(
-                                "a parameter default cannot use an earlier parameter (`{}`) yet",
-                                used.name
-                            ),
-                            used.span,
-                        )
-                        .with_note("Velt can't apply it before destructured parameters, or infer a type from it; compute the value in the body instead (`q?: number`, then `const r = q ?? p + 1;`), or write the parameter's type"),
-                    );
+                let blocker = if generator {
+                    Some(Unmovable::Generator)
+                } else if let Some(t) = p.ty {
+                    has_null(t).then_some(Unmovable::Null)
+                } else {
+                    Some(Unmovable::Untyped)
+                };
+                if let Some(used) = first_use_of(d, &bound) {
+                    self.diags
+                        .push(earlier_param_error(used, Unmovable::Pattern));
                 } else if pattern_defaults && !is_constant(d) {
                     self.diags.push(
                         Diagnostic::error(
@@ -162,7 +160,12 @@ impl Parser<'_> {
                         )
                         .with_note("JavaScript runs the defaults inside the earlier pattern first, but Velt evaluates this default where the function is called, before them; compute the value in the body instead (`q?: number`, then `const r = q ?? f();`)"),
                     );
-                } else if (uses_plain.is_some() || in_order || runs_in_body(d)) && typed {
+                } else if let (Some(used), Some(why)) = (uses_plain, blocker) {
+                    self.diags.push(earlier_param_error(used, why));
+                } else if let (true, Some(why)) = (in_order, blocker) {
+                    self.diags.push(out_of_order_error(d, why));
+                } else if blocker.is_none() && (uses_plain.is_some() || in_order || runs_in_body(d))
+                {
                     in_callee.push(i);
                 }
             }
@@ -176,6 +179,66 @@ impl Parser<'_> {
         }
         in_callee
     }
+}
+
+/// Why a parameter default that must run in the function (it uses an earlier parameter, or
+/// follows one that does) can't yet.
+#[derive(Clone, Copy)]
+enum Unmovable {
+    /// It uses a name a destructured parameter binds: the function applies its defaults before
+    /// it unpacks those.
+    Pattern,
+    /// A generator's defaults run where it is called.
+    Generator,
+    /// The parameter has no written type (an arrow's `(a: number, b = a)`), which the
+    /// `T | undefined` callers see needs.
+    Untyped,
+    /// The parameter's type includes `null`, which the body's `T` would drop with the
+    /// `undefined` (`p!`).
+    Null,
+}
+
+impl Unmovable {
+    /// Why, and what to write instead.
+    fn note(self) -> &'static str {
+        match self {
+            Unmovable::Pattern => "Velt applies such a default when the call starts, before it unpacks destructured parameters, so it can't use a name one binds yet; compute the value in the body instead (`q?: number`, then `const r = q ?? p + 1;`)",
+            Unmovable::Generator => "a generator's parameter defaults are evaluated where it is called, so they can't use earlier parameters yet; compute the value in the body instead (`q?: number`, then `const r = q ?? p + 1;`)",
+            Unmovable::Untyped => "Velt applies such a default when the call starts, which needs the parameter's written type: write `q: T = …`, or take `q?: T` and write `const r = q ?? p + 1;` in the body",
+            Unmovable::Null => "Velt applies such a default when the call starts, which it can't do yet for a parameter whose type includes `null`; take `q?: T | null` and write `const r = q === undefined ? p + 1 : q;` in the body",
+        }
+    }
+}
+
+fn earlier_param_error(used: &Ident, why: Unmovable) -> Diagnostic {
+    Diagnostic::error(
+        format!(
+            "a parameter default cannot use an earlier parameter (`{}`) yet",
+            used.name
+        ),
+        used.span,
+    )
+    .with_note(why.note())
+}
+
+/// A non-constant default `d` after one the function applies itself: JavaScript runs it after
+/// that one, so it must run in the function too, which `why` prevents.
+fn out_of_order_error(d: &Expr, why: Unmovable) -> Diagnostic {
+    let what = match why {
+        Unmovable::Null => "cannot be on a parameter whose type includes `null` yet",
+        _ => "needs the parameter's written type",
+    };
+    Diagnostic::error(
+        format!("a parameter default after one the function applies itself {what}"),
+        d.span,
+    )
+    .with_note(format!(
+        "JavaScript runs parameter defaults in order. An earlier default uses an earlier parameter, `this` or a closure, so the function applies it when the call starts, and this one must run after it, there too. {}",
+        match why {
+            Unmovable::Null => "Velt can't apply it there for a type that includes `null`; take `q?: T | null` and write `const r = q === undefined ? f() : q;` in the body",
+            _ => "Write the parameter's type (`q: T = …`)",
+        }
+    ))
 }
 
 /// The names pattern `p` binds, appended to `out`.

@@ -169,3 +169,17 @@ function rec(n: number, acc: number | undefined = n): number {
 }
 
 console.log(rec(3));
+
+// A generator's defaults are evaluated where it is called, with their own types: a closure
+// default and a constant after it.
+class G {
+  *m(cb: () => number = () => 1, k: number = 2): Generator<number> {
+    yield cb() + k;
+  }
+}
+
+function* gd(a: number, b: number = 5): Generator<number> {
+  yield a + b;
+}
+
+console.log([...new G().m()], [...gd(1)], [...gd(1, 1)]);
