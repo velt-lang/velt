@@ -73,8 +73,9 @@ impl FnCx<'_, '_> {
         };
         // The members a test left, when they are some but not all of them and the read is a
         // value whose expected type is not the field's own.
+        let test = self.field_test == Some(h.span);
         let some = match (&union, allowed) {
-            (Some(ms), Some(vs)) if vs.len() < ms.len() && want != Want::BorrowMut => {
+            (Some(ms), Some(vs)) if vs.len() < ms.len() && want != Want::BorrowMut && !test => {
                 Some((ms.clone(), vs))
             }
             _ => None,
@@ -132,6 +133,19 @@ impl FnCx<'_, '_> {
             }
             None => h,
         }
+    }
+
+    /// The operand `e` of a type test (`typeof e`, `e instanceof C`, `e === lit`), checked: a
+    /// narrowed field reads as it is (`FnCx::field_test`).
+    pub(crate) fn type_test_operand(&mut self, e: &ast::Expr) -> hir::Expr {
+        let mut inner = e;
+        while let ast::ExprKind::Paren(x) = &inner.kind {
+            inner = x;
+        }
+        let outer = self.field_test.replace(inner.span);
+        let h = self.expr(e, None, Want::Borrow);
+        self.field_test = outer;
+        h
     }
 
     /// The `U | null` (or `| undefined`) field read `h` that a test narrowed to the members

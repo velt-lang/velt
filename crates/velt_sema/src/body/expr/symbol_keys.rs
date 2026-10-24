@@ -223,7 +223,7 @@ impl FnCx<'_, '_> {
                 return self.dynamic_key_in(lhs, rhs, span);
             }
         }
-        let s = self.expr(rhs, None, Want::Borrow);
+        let s = self.type_test_operand(rhs);
         if self.cx.ty.is_bottom(s.ty) {
             return self.error_expr(span);
         }
