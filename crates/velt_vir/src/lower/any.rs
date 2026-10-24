@@ -747,6 +747,8 @@ impl FnLower<'_, '_> {
         self.assign(out.clone(), Rvalue::Use(v));
         self.goto(done);
         self.switch_to(bad_bb);
+        // A record built by `{} as D` (sema's `empty_as_deferred`) where `D` is an object type.
+        self.any_record_fill(p, from, ty, &out, done);
         // An object implementing the interface, or the interface at other type arguments.
         self.any_to_iface(p, ty, &out, done);
         if self.cx.proxiable(ty) {
@@ -768,4 +770,146 @@ fn proj(p: &Place, pr: Proj) -> Place {
     let mut p = p.clone();
     p.proj.push(pr);
     p
+}
+
+impl FnLower<'_, '_> {
+    /// The `Record<string, any>` type, if the program has the prelude's `Record`.
+    fn record_of_any(&mut self) -> Option<TyId> {
+        let d = (0..self.cx.hir.defs.len() as u32)
+            .map(hir::DefId)
+            .find(|&d| {
+                matches!(self.cx.hir.def(d), hir::Def::Adt(a)
+                if (a.name == "Record" || a.name.ends_with("::Record"))
+                    && a.fields.first().is_some_and(|f| f.name == "entries"))
+            })?;
+        let (str_ty, any) = (self.cx.str_ty(), self.cx.any_ty());
+        Some(self.cx.intern(TyKind::Adt(d, vec![str_ty, any])))
+    }
+
+    /// Where the `any` at `p` (of type `from`, owned) holds a `Record<string, any>` and `ty` is
+    /// an object type without optional fields: `ty` built from the record's entries, each value
+    /// converted as `AnyTo` converts it, a missing key a `TypeError` naming it
+    /// (docs/internals/design/deferred-types.md, decision 5); then on to `done` with it in
+    /// `out`. Any other value goes on in the current block. Nothing for other target types.
+    fn any_record_fill(
+        &mut self,
+        p: &Place,
+        from: TyId,
+        ty: TyId,
+        out: &Place,
+        done: crate::vir::BlockId,
+    ) {
+        let TyKind::Adt(d, _) = self.cx.kind(ty) else {
+            return;
+        };
+        let hir::Def::Adt(a) = self.cx.hir.def(d) else {
+            return;
+        };
+        if self.cx.is_class(ty) || a.fields.is_empty() {
+            return;
+        }
+        let names: Vec<String> = a.fields.iter().map(|f| f.name.clone()).collect();
+        let optional: Vec<bool> = a.fields.iter().map(|f| f.optional).collect();
+        if a.name == "Record" || a.name.ends_with("::Record") {
+            return;
+        }
+        let Some(rec) = self.record_of_any() else {
+            return;
+        };
+        let desc = Operand::Copy(proj(p, Proj::Field(1)));
+        let data = Operand::Copy(proj(p, Proj::Field(0)));
+        let imp = self.cx.hir.any_impl.unwrap_or(0);
+        let want = self.vtable_addr(VtableKey::Impl(imp, rec));
+        let is_rec = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, desc.clone(), want));
+        let (fill, no) = (self.new_block(), self.new_block());
+        self.branch(is_rec, fill, no);
+        self.switch_to(fill);
+        let any = self.cx.any_ty();
+        let avt = self.cx.ty(any);
+        let tys = self.cx.adt_field_tys(ty);
+        let mut ops = vec![];
+        let mut flags = vec![];
+        for (i, (name, fty)) in names.iter().zip(tys).enumerate() {
+            let tmp = Place::local(self.temp(avt));
+            let ta = self.addr(tmp.clone());
+            let key = self.str_lit(name);
+            let ka = self.operand_addr(key, Ty::Agg(crate::vir::STR_AGG));
+            self.any_get_str(&data, &desc, ka.clone(), ta);
+            // Whether the record has the key (a key set to `undefined` is present).
+            self.cx.note_any_has();
+            let st = self.any_slot(
+                desc.clone(),
+                super::any_has::SLOT_HAS,
+                vec![data.clone(), ka],
+                vec![Ty::Ptr; 2],
+            );
+            let yes = cint(super::any_has::HAS_YES as i128, Ty::U8);
+            let missing = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ne, st, yes));
+            let (absent, ok) = (self.new_block(), self.new_block());
+            self.branch(missing, absent, ok);
+            if !optional[i] {
+                // A key `{} as D` never set: TypeScript would hand out an object without it.
+                self.switch_to(absent);
+                self.panic_msg(&format!(
+                    "TypeError: the object built with `{{}} as` lacks its field `{name}`"
+                ));
+                self.terminate(crate::vir::Terminator::Unreachable);
+                self.switch_to(ok);
+                let v = self.any_unbox(&tmp, any, fty);
+                if !self.cx.is_unit(fty) {
+                    ops.push(v);
+                }
+                continue;
+            }
+            // An optional field: absent while the record lacks the key, else its value.
+            let vt = self.cx.ty(fty);
+            let (val, flag) = (
+                Place::local(self.temp(vt)),
+                Place::local(self.temp(Ty::Bool)),
+            );
+            let join = self.new_block();
+            self.switch_to(absent);
+            self.drop_glue(tmp.clone(), any);
+            let none = self.none_value(fty);
+            self.assign(val.clone(), Rvalue::Use(none));
+            self.assign(
+                flag.clone(),
+                Rvalue::Use(Operand::Const(Const::Bool(false), Ty::Bool)),
+            );
+            self.goto(join);
+            self.switch_to(ok);
+            let v = self.any_unbox(&tmp, any, fty);
+            self.assign(val.clone(), Rvalue::Use(v));
+            self.assign(
+                flag.clone(),
+                Rvalue::Use(Operand::Const(Const::Bool(true), Ty::Bool)),
+            );
+            self.goto(join);
+            self.switch_to(join);
+            if !self.cx.is_unit(fty) {
+                ops.push(Operand::Copy(val));
+            }
+            if self.cx.presence_slot(ty, i as u32).is_some() {
+                flags.push(Operand::Copy(flag));
+            }
+        }
+        ops.extend(flags);
+        self.drop_glue(p.clone(), from);
+        let agg = match self.cx.boxed(ty) {
+            true => self.cx.payload_ty(ty),
+            false => self.cx.ty(ty),
+        };
+        let Ty::Agg(agg) = agg else {
+            super::ice("an object type that is no aggregate");
+        };
+        let t = self.temp(Ty::Agg(agg));
+        self.assign(Place::local(t), Rvalue::Aggregate(agg, ops));
+        let v = match self.cx.boxed(ty) {
+            true => self.box_value(Operand::Copy(Place::local(t)), ty),
+            false => Operand::Copy(Place::local(t)),
+        };
+        self.assign(out.clone(), Rvalue::Use(v));
+        self.goto(done);
+        self.switch_to(no);
+    }
 }

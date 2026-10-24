@@ -836,6 +836,13 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   `crate::object_copies`, which reports it where the program could tell it from the original
   (TypeScript passes the same object). Any other instantiation is reported. Otherwise lowering's
   `Upcast` is the value itself.
+- `{} as D` with `D` an object type known only per instantiation (`Pick<T, K>`, `Partial<T>`) is a
+  new `Record<string, any>` converted to `any`; its keys are set through `AnySet`, and converting
+  it to `D` is an `AnyTo`, which lowering makes, for an `any` holding a `Record<string, any>` and
+  an object type `D`, a new `D` of the record's entries (each converted as `AnyTo` converts it; a
+  required field whose key the record lacks is a `TypeError` naming it, an optional one is
+  absent). `AnyTo` of an `any` holding a string to a string literal type, or a union of them,
+  checks the string's content.
 - `TyOp::Inline(n)` (additive): a conditional, mapped, indexed access, `keyof` or utility type
   (`Partial`, `Required`, `Readonly`, `Pick`, `Omit`) written in a generic definition, not in an
   alias, whose evaluation needs a type parameter (`{ [K in keyof M]: Topic<M[K]> }` in a

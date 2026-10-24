@@ -769,6 +769,9 @@ impl FnCx<'_, '_> {
         if let Some(h) = self.fn_through_top(expr, target, want) {
             return h;
         }
+        if let Some(h) = self.empty_as_deferred(expr, target, span) {
+            return h;
+        }
         let inner = self.expr(expr, Some(target), want);
         if self.cx.dynamic(inner.ty).is_some() {
             if let Ok(h) = self.coerce_dynamic(inner.clone(), target, true) {
@@ -820,6 +823,38 @@ impl FnCx<'_, '_> {
                 self.error_expr(span)
             }
         }
+    }
+
+    /// `{} as D` where `D` is an object type known only per instantiation (`Pick<T, K>` in the
+    /// standard `pick` body; docs/internals/design/deferred-types.md, decision 5): a new empty
+    /// record of `any` values, as an `any`. Its keys are set through it (`r[k] = o[k]`), and
+    /// converting it to `D` (`return r`) builds `D` from its entries at each instantiation,
+    /// each value checked, a missing required key a `TypeError` naming it. `None` for any
+    /// other assertion.
+    fn empty_as_deferred(
+        &mut self,
+        expr: &ast::Expr,
+        target: TyId,
+        span: Span,
+    ) -> Option<hir::Expr> {
+        let ast::ExprKind::Object(props) = &super::object_builtins::strip_parens(expr).kind else {
+            return None;
+        };
+        let deferred = matches!(
+            self.cx.ty.kind(target),
+            TyKind::Op(hir::TyOp::Inline(_) | hir::TyOp::Alias(_), _)
+        ) && self.cx.has_type_params(target);
+        if !props.is_empty() || !deferred {
+            return None;
+        }
+        let any = self.any_ty()?;
+        let record = self.cx.prelude_adt("Record")?;
+        let str_ = self.cx.ty.str_;
+        let rty = self.cx.ty.intern(TyKind::Adt(record, vec![str_, any]));
+        let r = self.expr(expr, Some(rty), Want::Move);
+        let r = self.coerce(r, rty);
+        let _ = span;
+        Some(self.coerce(r, any))
     }
 
     /// `x as UserId`: brands a value of the brand's primitive `base` (or one that converts to

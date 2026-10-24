@@ -218,6 +218,11 @@ impl FnCx<'_, '_> {
             let k = self.coerce(k, any);
             return Ok(self.intrinsic(Intrinsic::AnyGet, vec![obj, k], any, span));
         }
+        // A key of a type parameter's keys (`K extends keyof T`): its string.
+        let k = match self.generic_key_string(k, str_) {
+            Ok(s) => return Ok(self.intrinsic(Intrinsic::AnyGet, vec![obj, s], any, span)),
+            Err(k) => k,
+        };
         let tn = self.cx.display(k.ty);
         self.cx.error(
             Diagnostic::error(

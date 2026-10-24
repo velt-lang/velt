@@ -464,6 +464,9 @@ impl FnCx<'_, '_> {
                 }
                 None => self.constraint_expected(c, &args[i], p.ty, expected, (&known, slots)),
             };
+            let expected = self
+                .literal_key_array(c, p.ty, &args[i], slots, expected)
+                .unwrap_or(expected);
             let mode = self.callback_mode(&args[i]);
             let arrow = as_arrow(&args[i]);
             let named = matches!(args[i].kind, ast::ExprKind::Ident(_));

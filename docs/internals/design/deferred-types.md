@@ -440,7 +440,9 @@ these answers:
    with presence flags. Since #1517: reads and writes through a union of keys (a write checks
    the value's member, decision 4), and fields of a stuck `Partial<T>`, `Pick<T, K>` and the
    other forms read through `T`'s object bound (P3). Conversions between different layouts (an
-   error at the instantiation, by decision) and decision 5's `{} as D` remain.
+   error at the instantiation, by decision) are copies of the target's fields where the program
+   cannot tell (`crate::object_copies`); decision 5's `{} as D` is a record of `any` values
+   converted to `D` at each instantiation.
 7. **`{ a: F | null }` where `{ a?: F | null }` is expected**, which TypeScript accepts, stays an
    error with the `{ ...x }` fix-it, like the other storage-position conversions (#672 covers
    parameters); types.md lists it as a difference from TypeScript.

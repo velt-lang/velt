@@ -222,8 +222,8 @@ impl Ctx<'_> {
                 return body;
             };
             match fields.iter().find(|f| f.name == name) {
-                Some(f) if !f.optional => tys.push(self.canon(f.ty)),
-                _ => tys.push(self.ty.error),
+                Some(f) => tys.push(self.canon(f.ty)),
+                None => tys.push(self.ty.error),
             }
         }
         // Keys whose fields have different types: `T[K]` is the union of them, a read is the

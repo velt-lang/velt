@@ -1362,8 +1362,23 @@ fields have different types, `T[K]` is the union of them (`number | string` for 
 on `{ id: number; name: string }`): a read gives the field the key names as that union, and a
 write takes the value's member when it is the field's type, and otherwise stops the program
 with a `TypeError` where TypeScript would store a value of the wrong type (`setField(u, k, 5)`
-with `k` holding `"name"`). Keys that name an optional field are not supported yet, an error at
-that instantiation. An error at an instantiation is reported in the generic function,
+with `k` holding `"name"`). A key of an optional field reads as `F | undefined`.
+
+An object of such a form is built as TypeScript's standard `pick` builds it:
+`const r = {} as Pick<T, K>` (or `Partial<T>`, `Omit<T, K>`, any object type over a type
+parameter), keys set with `r[k] = o[k]`, then returned as that type. `{} as D` is a dictionary
+until then; the conversion to `D` takes each of `D`'s fields from it (checked like a conversion
+from `any`), and a key of a required field that was never set stops the program with a
+`TypeError` naming it, where TypeScript would hand out an object without it.
+
+```ts
+function pick<T, K extends keyof T>(o: T, ks: K[]): Pick<T, K> {
+  const r = {} as Pick<T, K>;
+  for (const k of ks) r[k] = o[k];
+  return r;
+}
+console.log(pick({ id: 1, name: "a", age: 3 }, ["id", "name"])); // { id: 1, name: 'a' }
+``` An error at an instantiation is reported in the generic function,
 where the failing form is, with the call that instantiates it and the type arguments (and each
 call on the way, when another generic function's body makes the call). A call whose argument
 breaks a type parameter's constraint (`get(p, "w")`, a key `p` lacks) is one error, at that

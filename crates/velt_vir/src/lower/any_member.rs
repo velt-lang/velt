@@ -413,7 +413,13 @@ impl FnLower<'_, '_> {
         Operand::Copy(out)
     }
 
-    fn any_get_str(&mut self, data: &Operand, desc: &Operand, key: Operand, out: Operand) {
+    pub(super) fn any_get_str(
+        &mut self,
+        data: &Operand,
+        desc: &Operand,
+        key: Operand,
+        out: Operand,
+    ) {
         self.any_nullish_check(desc, NullKey::Str(&key));
         let args = vec![data.clone(), key.clone(), out];
         let st = self.any_slot(desc.clone(), SLOT_GET, args, vec![Ty::Ptr; 3]);
