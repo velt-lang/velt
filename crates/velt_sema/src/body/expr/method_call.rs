@@ -100,7 +100,7 @@ impl FnCx<'_, '_> {
             && matches!(self.cx.ty.kind(recv.ty), TyKind::Promise(..))
             && super::promise_then::is_promise_callback_method(&prop.name)
         {
-            return self.promise_callback_call(recv, prop, args, span);
+            return self.promise_callback_call(recv, prop, args, exp, span);
         }
         let recv = match self.cx.has_overloads && !getter {
             true => match self.overloaded_method_call(recv, prop, type_args, args, exp, span) {

@@ -79,13 +79,17 @@ impl FnCx<'_, '_> {
         }
         match (t.nothing_of(h.ty), t.core(h.ty)) {
             (Some(n), Some(core)) => {
-                if core != target && !self.has_member(core, target) {
-                    return Err(h);
-                }
                 let msg = format!(
                     "TypeError: type assertion failed: the value is {}",
                     n.word()
                 );
+                if core != target && !self.has_member(core, target) {
+                    // `props as Record<string, any>` of a `Record<string, unknown> | undefined`:
+                    // the present value, then the assertion its type allows (TypeScript checks
+                    // the cast against the type without the nothing).
+                    let present = self.checked_present(h.clone(), &msg, None, false, span);
+                    return self.try_coerce(present, target).map_err(|_| h);
+                }
                 let present = self.checked_present(h, &msg, None, false, span);
                 if present.ty == target {
                     return Ok(present);

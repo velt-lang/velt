@@ -199,6 +199,7 @@ impl FnCx<'_, '_> {
         recv: hir::Expr,
         prop: &ast::Ident,
         args: &[ast::Expr],
+        exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
         let TyKind::Promise(t, e) = *self.cx.ty.kind(recv.ty) else {
@@ -233,9 +234,17 @@ impl FnCx<'_, '_> {
                 _ => vec![e],
             };
             let error = self.cx.ty.error;
+            // `p.then(() => undefined)` where a `Promise<void>` is expected: a callback that
+            // returns nothing, as TypeScript takes `undefined` for `void`.
+            let unit = self.cx.ty.unit;
+            let void_expected = exp.and_then(|x| self.cx.ty.promise_payload(x)) == Some(unit);
+            let ret = match void_expected && method != "finally" && gives_undefined(a) {
+                true => unit,
+                false => error,
+            };
             let hint = self.cx.ty.intern(TyKind::FnPtr {
                 params: params.clone(),
-                ret: error,
+                ret,
                 throws: error,
                 rest: false,
             });
@@ -457,5 +466,22 @@ impl FnCx<'_, '_> {
             args: all,
         };
         self.mk(kind, ret, span)
+    }
+}
+
+/// Is `a` an arrow whose body is `undefined` (or `void e`): a callback that gives nothing?
+fn gives_undefined(a: &ast::Expr) -> bool {
+    let Some(ast::ExprKind::Arrow {
+        body, ret: None, ..
+    }) = super::args::as_arrow(a).map(|f| &f.kind)
+    else {
+        return false;
+    };
+    match body {
+        ast::ArrowBody::Expr(e) => {
+            crate::body::narrow::nothing_word(e) == Some("undefined")
+                || crate::body::stmt::void_op(e).is_some()
+        }
+        _ => false,
     }
 }

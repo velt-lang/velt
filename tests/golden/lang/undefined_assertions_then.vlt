@@ -1,0 +1,26 @@
+// check: no leaks
+// `x as R` of an `x: T | undefined` where `T as R` is allowed, and `p.then(() => undefined)`
+// where a `Promise<void>` is expected. Expected output: Node's.
+function count(props: Record<string, any>): number {
+  return Object.keys(props).length;
+}
+function jsxs(props?: Record<string, unknown>): number {
+  return count(props as Record<string, any>);
+}
+console.log(jsxs({ a: 1, b: "x" }));
+
+function refresh(ps: Promise<number>[]): Promise<void> {
+  return Promise.all(ps).then(() => undefined);
+}
+function settle(p: Promise<string>): Promise<void> {
+  return p.then(() => void console.log("settled"));
+}
+async function run() {
+  await refresh([Promise.resolve(1), Promise.resolve(2)]);
+  console.log("refreshed");
+  await settle(Promise.resolve("x"));
+  const done: Promise<void> = Promise.resolve(3).then(() => undefined);
+  await done;
+  console.log("done");
+}
+run();
