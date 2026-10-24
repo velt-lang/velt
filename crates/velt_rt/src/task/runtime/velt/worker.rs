@@ -118,6 +118,22 @@ struct Local {
     window: spread::Window,
 }
 
+impl Local {
+    fn new(index: usize, me: &'static Shared) -> Local {
+        Local {
+            index,
+            me,
+            dispatching: Cell::new(false),
+            waking_output: Cell::new(false),
+            woken: RefCell::new(Vec::new()),
+            woken_output: RefCell::new(Vec::new()),
+            running_home: Cell::new(usize::MAX),
+            polls: Cell::new(0),
+            window: spread::Window::new(Instant::now()),
+        }
+    }
+}
+
 thread_local! {
     static LOCAL: Cell<*const Local> = const { Cell::new(std::ptr::null()) };
 }
@@ -321,17 +337,7 @@ fn run(index: usize) {
     crate::task::runtime::set_worker(index);
     super::coop::drive();
     let me = &workers()[index];
-    let local = Local {
-        index,
-        me,
-        dispatching: Cell::new(false),
-        waking_output: Cell::new(false),
-        woken: RefCell::new(Vec::new()),
-        woken_output: RefCell::new(Vec::new()),
-        running_home: Cell::new(usize::MAX),
-        polls: Cell::new(0),
-        window: spread::Window::new(Instant::now()),
-    };
+    let local = Local::new(index, me);
     LOCAL.with(|l| l.set(&local));
     let mut tick: u32 = 0;
     let mut since_io: u32 = 0;
@@ -343,14 +349,7 @@ fn run(index: usize) {
             (next, q.len())
         };
         if let Some(task) = next {
-            me.progress
-                .store(TICKS.load(Ordering::Relaxed), Ordering::Relaxed);
-            local.running_home.set(task.home.load(Ordering::Relaxed));
-            let ran = task.run();
-            local.running_home.set(usize::MAX);
-            if let Ran::Again = ran {
-                lock(&me.queue).push(task, Instant::now);
-            }
+            poll_task(me, &local, task);
             local.polls.set(local.polls.get() + 1);
             tick = tick.wrapping_add(1);
             if tick.is_multiple_of(HELP_INTERVAL) {
@@ -393,6 +392,20 @@ fn run(index: usize) {
             .store(TICKS.load(Ordering::Relaxed), Ordering::Relaxed);
         me.parked.store(false, Ordering::SeqCst);
         kick_monitor();
+    }
+}
+
+/// Polls `task`, taken from this worker's queue, as the task running (the wakes it makes run
+/// next here, see [`schedule`]), and queues it again if it was woken meanwhile.
+#[inline]
+fn poll_task(me: &Shared, local: &Local, task: Arc<Task>) {
+    me.progress
+        .store(TICKS.load(Ordering::Relaxed), Ordering::Relaxed);
+    local.running_home.set(task.home.load(Ordering::Relaxed));
+    let ran = task.run();
+    local.running_home.set(usize::MAX);
+    if let Ran::Again = ran {
+        lock(&me.queue).push(task, Instant::now);
     }
 }
 
@@ -697,47 +710,5 @@ pub(super) fn queued_from_outside() -> usize {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn idle_task() -> Arc<Task> {
-        super::super::task::make(async {}, 0, true).0
-    }
-
-    #[test]
-    fn tasks_handed_back_go_through_the_inbox_and_wake_the_worker() {
-        // The monitor's rescue hands tasks back to a worker that may have parked meanwhile: they
-        // must be where its park check looks, and it must be woken.
-        let w = new_shared();
-        w.parked.store(true, Ordering::SeqCst);
-        send_back(&w, vec![idle_task(), idle_task()]);
-        assert_eq!(w.inbox_len.load(Ordering::SeqCst), 2);
-        assert!(!w.parked.load(Ordering::SeqCst), "the worker was not woken");
-        let mut r = lock(&w.reactor);
-        let Reactor { poll, events } = &mut *r;
-        poll.poll(events, Some(Duration::ZERO)).expect("poll");
-        assert!(events.iter().any(|e| e.token() == WAKE), "no wake event");
-    }
-
-    #[test]
-    fn a_woken_worker_is_not_stalled() {
-        // Woken from its park, a worker the OS has not run yet still has its old progress tick:
-        // the wake restarts it, so the monitor does not take its tasks.
-        let w = new_shared();
-        w.parked.store(true, Ordering::SeqCst);
-        let old = u64::MAX;
-        w.progress.store(old, Ordering::Relaxed);
-        let before = TICKS.load(Ordering::Relaxed);
-        wake(&w);
-        let progress = w.progress.load(Ordering::Relaxed);
-        assert!(progress >= before && progress <= TICKS.load(Ordering::Relaxed));
-    }
-
-    #[test]
-    fn a_worker_with_queued_tasks_does_not_sleep_in_its_turn() {
-        let w = new_shared();
-        assert_eq!(park_timeout(&w), None);
-        lock(&w.queue).push_next(idle_task());
-        assert_eq!(park_timeout(&w), Some(Duration::ZERO));
-    }
-}
+#[path = "worker_tests.rs"]
+mod tests;
