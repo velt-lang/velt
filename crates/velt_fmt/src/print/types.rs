@@ -250,6 +250,9 @@ impl<'a> Printer<'a> {
         if let Some(sig) = self.method_sig_type(&f.name, f.optional, &f.ty) {
             return sig;
         }
+        if let Some(doc) = self.type_accessor(f) {
+            return doc;
+        }
         let key = self.prop_key(&f.name);
         let name = if f.readonly {
             cat!["readonly ", key]
@@ -536,4 +539,53 @@ pub(super) fn callable_members<'a>(
     out.extend(sigs.iter().map(IndexSigMember::Sig));
     out.sort_by_key(|m| m.range().0);
     out
+}
+
+impl Printer<'_> {
+    /// A field the parser made of an accessor in an object type (`get v(): T`, `set v(x: T)`,
+    /// or both, which it records as one field): the accessors as written.
+    fn type_accessor(&mut self, f: &ObjectTypeField) -> Option<Doc> {
+        let written = slice(self.src, f.span);
+        let word = |w: &str| {
+            written
+                .strip_prefix(w)
+                .is_some_and(|r| r.starts_with(char::is_whitespace))
+        };
+        let (getter, setter) = (word("get"), word("set"));
+        if !getter && !setter {
+            return None;
+        }
+        let key = self.prop_key(&f.name);
+        let get = cat!["get ", key.clone(), "(): ", self.ty(&f.ty)];
+        let set = |p: &mut Self, name: &str| {
+            cat![
+                "set ",
+                key.clone(),
+                "(",
+                name.to_string(),
+                ": ",
+                p.ty(&f.ty),
+                ")"
+            ]
+        };
+        // The setter's parameter name, from the source after its `set`.
+        let rest = self.src.get(f.span.lo as usize..).unwrap_or("");
+        let at = rest.find("set ").map_or(rest, |i| &rest[i..]);
+        let param = at
+            .split_once('(')
+            .and_then(|(_, r)| r.split_once(':'))
+            .map(|(n, _)| n.trim())
+            .filter(|n| {
+                !n.is_empty()
+                    && n.chars()
+                        .all(|c| c.is_alphanumeric() || c == '_' || c == '$')
+            })
+            .unwrap_or("value")
+            .to_string();
+        Some(match (getter, f.readonly) {
+            (true, true) => get,
+            (true, false) => cat![get, "; ", set(self, &param)],
+            (false, _) => set(self, &param),
+        })
+    }
 }
