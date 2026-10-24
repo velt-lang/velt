@@ -183,7 +183,10 @@ impl FnLower<'_, '_> {
     }
 
     /// The locals whose own address is taken, each with the locals holding that address
-    /// (through copies too), or `None` when it is stored anywhere else.
+    /// (through whole-local copies), or `None` when the address escapes: any other use of a
+    /// holder than a whole-local copy or an access through it (a store into a projected place,
+    /// an aggregate, cast or arithmetic operand, a call argument, a return, a derived address)
+    /// may let code the loop calls reach the local.
     fn addresses(&self) -> FxHashMap<Local, Option<Vec<Local>>> {
         let mut out: FxHashMap<Local, Option<Vec<Local>>> = FxHashMap::default();
         let stmts = || self.blocks.iter().flat_map(|(s, _)| s.iter());
@@ -200,23 +203,70 @@ impl FnLower<'_, '_> {
                 (_, held) => *held = None,
             }
         }
-        // The copies of those pointers.
         for held in out.values_mut() {
-            let Some(v) = held else { continue };
-            let mut i = 0;
-            while i < v.len() {
-                let a = v[i];
-                for s in stmts() {
-                    if let vir::Stmt::Assign(d, Rvalue::Use(o)) = s {
-                        if is_local(o, a) && !v.contains(&d.local) {
-                            v.push(d.local);
-                        }
-                    }
+            if let Some(v) = held {
+                if self.address_escapes(v) {
+                    *held = None;
                 }
-                i += 1;
             }
         }
         out
+    }
+
+    /// Follow the whole-local copies of the addresses in `v` (adding the copies to it), and
+    /// tell whether any holder is used in another way than [`Self::addresses`] allows.
+    fn address_escapes(&self, v: &mut Vec<Local>) -> bool {
+        let whole = |o: &Operand, v: &[Local]| {
+            matches!(o, Operand::Copy(p) if p.proj.is_empty() && v.contains(&p.local))
+        };
+        let mut i = 0;
+        while i < v.len() {
+            i = v.len();
+            for (stmts, term) in &self.blocks {
+                for s in stmts {
+                    match s {
+                        vir::Stmt::Assign(d, Rvalue::Use(o)) if whole(o, v) => {
+                            if !d.proj.is_empty() {
+                                return true;
+                            }
+                            if !v.contains(&d.local) {
+                                v.push(d.local);
+                            }
+                        }
+                        vir::Stmt::Assign(_, Rvalue::AddrOf(p)) if v.contains(&p.local) => {
+                            return true;
+                        }
+                        vir::Stmt::Assign(_, Rvalue::Unary(_, o) | Rvalue::Cast(o, _))
+                            if whole(o, v) =>
+                        {
+                            return true;
+                        }
+                        vir::Stmt::Assign(_, Rvalue::Binary(_, a, b))
+                            if whole(a, v) || whole(b, v) =>
+                        {
+                            return true;
+                        }
+                        vir::Stmt::Assign(_, Rvalue::Aggregate(_, os))
+                            if os.iter().any(|o| whole(o, v)) =>
+                        {
+                            return true;
+                        }
+                        _ => {}
+                    }
+                }
+                match term {
+                    Some(Terminator::Call { callee, args, .. }) => {
+                        let target = matches!(callee, vir::Callee::Ptr { target, .. } if whole(target, v));
+                        if target || args.iter().any(|o| whole(o, v)) {
+                            return true;
+                        }
+                    }
+                    Some(Terminator::Return(o)) if whole(o, v) => return true,
+                    _ => {}
+                }
+            }
+        }
+        false
     }
 
     /// Might the loop `region` change the local `l` through its address?
