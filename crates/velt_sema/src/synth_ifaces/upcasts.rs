@@ -30,9 +30,10 @@ impl Ctx<'_> {
                     && match (x, m) {
                         (Member::Field(a, ra), Member::Field(b, rb)) => a == b && (*rb || !ra),
                         // A getter fills a field's slot, as TypeScript allows; writing the
-                        // field takes a setter `set k` (`upcast_setter`).
-                        (Member::Method(ps, a, true, 0), Member::Field(b, _)) => {
-                            ps.is_empty() && a == b
+                        // field takes a setter `set k` (`upcast_setter`), which must take the
+                        // field's type.
+                        (Member::Method(ps, a, true, 0), Member::Field(b, rb)) => {
+                            ps.is_empty() && a == b && (*rb || setter_param(&ours, n, *b).is_none())
                         }
                         (a, b) => a == b,
                     }
@@ -242,6 +243,28 @@ impl Ctx<'_> {
         None
     }
 
+    /// For an interface value of `found` where one of `expected` is expected: a setter that
+    /// would write a field of `expected` but takes another type.
+    pub(crate) fn upcast_setter_note(&mut self, expected: TyId, found: TyId) -> Option<String> {
+        let (TyKind::Dyn(want, to), TyKind::Dyn(have, from)) =
+            (self.ty.kind(expected).clone(), self.ty.kind(found).clone())
+        else {
+            return None;
+        };
+        let ours = self.iface_members(have, &from);
+        let theirs = self.iface_members(want, &to);
+        let (name, field, param) = theirs.iter().find_map(|(n, m)| match m {
+            Member::Field(b, false) => setter_param(&ours, n, *b).map(|p| (n.clone(), *b, p)),
+            _ => None,
+        })?;
+        let (e, f, p) = (
+            self.display(expected),
+            self.display(field),
+            self.display(param),
+        );
+        Some(format!("the setter `set {name}` takes a `{p}`, but `{name}` is a `{f}` field of `{e}`, which writes it through that setter; give the setter a `{f}` parameter, or make the field `readonly`"))
+    }
+
     /// After every body is checked, before errors are reported: a value converted to an
     /// interface written through is written through its own (`Ctx::writes_through_upcasts`).
     pub(crate) fn upcast_writes(&mut self) {
@@ -393,4 +416,18 @@ impl Ctx<'_> {
             .map(|s| s.unwrap_or(self.ty.never))
             .collect()
     }
+}
+
+/// The parameter type of setter `set name` of `ours` when it is not `ty` (`None`: it takes
+/// `ty`, or there is no such setter: a write is then reported where it is written).
+fn setter_param(ours: &[(String, Member)], name: &str, ty: TyId) -> Option<TyId> {
+    let set = format!("set {name}");
+    ours.iter().find_map(|(o, m)| match m {
+        Member::Method(ps, ..) if *o == set => match ps.as_slice() {
+            [p] if *p == ty => None,
+            [p, ..] => Some(*p),
+            [] => None,
+        },
+        _ => None,
+    })
 }

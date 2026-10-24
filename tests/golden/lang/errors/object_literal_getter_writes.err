@@ -1,4 +1,15 @@
-object_literal_getter_writes.vlt:25:5: error: `name` is written through `Named`, whose value gives `name` with a getter and no setter
+object_literal_getter_writes.vlt:57:22: error: mismatched types
+  = note: expected Valued, found { get value(): f64; set value(v: string); f(): f64 }
+  = note: `{ get value(): f64; set value(v: string); f(): f64 }` does not declare `implements Valued`
+  = note: the setter `set value` takes a `string`, but `value` is a `f64` field of `Valued`, which writes it through that setter; give the setter a `f64` parameter, or make the field `readonly`
+
+object_literal_getter_writes.vlt:72:22: error: mismatched types
+  = note: expected Valued, found { get value(): f64; set value(v: string | f64); f(): f64 }
+  = note: `{ get value(): f64; set value(v: string | f64); f(): f64 }` does not declare `implements Valued`
+  = note: the setter `set value` takes a `string | f64`, but `value` is a `f64` field of `Valued`, which writes it through that setter; give the setter a `f64` parameter, or make the field `readonly`
+
+object_literal_getter_writes.vlt:30:5: error: `name` is written through `Named`, whose value gives `name` with a getter and no setter
   = note: Node throws a `TypeError` here; add `set name(v)` to the object literal
-object_literal_getter_writes.vlt:37:5: error: a part of `pos` is changed through `Placed`, whose value gives `pos` with a getter, which is not supported yet (#350)
+
+object_literal_getter_writes.vlt:42:5: error: a part of `pos` is changed through `Placed`, whose value gives `pos` with a getter, which is not supported yet (#350)
   = note: Node changes the object the getter returns in place and never calls a setter; Velt reads a copy here and would have to write it back through a setter
