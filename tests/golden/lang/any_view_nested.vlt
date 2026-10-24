@@ -1,0 +1,52 @@
+// Views (#1485) in generic weak maps, nested and defaulted object patterns, `for...of` over
+// tuples and `Map` entries, and `WeakRef`s of views and typed proxies, as in Node.
+type Item = { name: string; price: number; key?: string };
+
+class Q {
+  name = "q";
+  price = 2;
+  extra = "x";
+}
+
+const t = new Proxy({ name: "p", price: 1 }, {}) as Item;
+const a: any = new Q();
+
+function view(x: any): Item {
+  return x as Item;
+}
+
+class Cache<K extends object, V> {
+  m: WeakMap<K, V> = new WeakMap<K, V>();
+  put(k: K, v: V): void {
+    this.m.set(k, v);
+  }
+  take(k: K): V | undefined {
+    return this.m.get(k);
+  }
+}
+
+const c = new Cache<Item, number>();
+c.put(view(a), 5);
+console.log(c.take(view(a)), c.take(t));
+const { key = "none", name } = view(a);
+console.log(key, name);
+const maybe: Item | null = Math.random() > 2 ? null : view(a);
+if (maybe !== null) {
+  const { price } = maybe;
+  console.log(price);
+}
+const pairs: [string, Item][] = [
+  ["a", view(a)],
+  ["t", t],
+];
+for (const [label, { name: n, price: p }] of pairs) {
+  console.log(label, n, p);
+}
+const m = new Map<string, Item>([["x", view(a)]]);
+for (const [k, { name: nm }] of m) {
+  console.log(k, nm);
+}
+const refs = [new WeakRef(view(a)), new WeakRef(t)];
+console.log(refs.map((r) => r.deref()?.name).join(","));
+const ws = new WeakSet<Item>().add(view(a));
+console.log(ws.has(view(a)));
