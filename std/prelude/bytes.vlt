@@ -19,7 +19,7 @@ declare function velt_rt_bytes_fill(b: u8[], byte: u8, start: i64, end: i64);
 declare function velt_rt_bytes_slice(b: u8[], start: i64, end: i64): u8[];
 declare function velt_rt_bytes_concat(a: u8[], b: u8[]): u8[];
 declare function velt_rt_bytes_xor_mask(b: u8[], mask: u32, start: i64, end: i64);
-declare function velt_rt_bytes_set_str(dst: u8[], s: string, offset: u64): bool;
+declare function velt_rt_bytes_write_str(dst: u8[], s: string, offset: u64): i64;
 declare function velt_rt_bytes_from_str(s: string): u8[];
 declare function velt_rt_bytes_range_to_str_lossy(b: u8[], start: i64, end: i64): string;
 declare function velt_rt_str_eq_range(s: string, b: u8[], start: u64, end: u64): bool;
@@ -250,10 +250,9 @@ extend Array<u8> {
     if (offset > this.length) {
       panic("RangeError: offset is out of bounds");
     }
-    const n = velt_rt_str_byte_length(s) as usize;
-    if (n <= this.length - offset) {
-      velt_rt_bytes_set_str(this, s, offset as u64);
-      return n;
+    const n = velt_rt_bytes_write_str(this, s, offset as u64);
+    if (n >= 0) {
+      return n as usize;
     }
     const bytes = velt_rt_bytes_from_str(s);
     const room = this.length - offset;

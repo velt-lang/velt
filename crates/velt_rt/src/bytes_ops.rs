@@ -161,6 +161,17 @@ pub unsafe extern "C" fn velt_rt_bytes_set_str(
     s: *const VeltStr,
     offset: u64,
 ) -> u8 {
+    u8::from(velt_rt_bytes_write_str(dst, s, offset) >= 0)
+}
+
+/// [`velt_rt_bytes_set_str`] returning the number of bytes copied, or -1 (nothing copied) when
+/// they do not fit: `u8[]`'s `write`, one call where it fits.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_bytes_write_str(
+    dst: *const VeltBytes,
+    s: *const VeltStr,
+    offset: u64,
+) -> i64 {
     let d = &*dst;
     let text = (*s).text_lossy();
     let src = text.as_bytes();
@@ -168,12 +179,12 @@ pub unsafe extern "C" fn velt_rt_bytes_set_str(
         .checked_add(src.len() as u64)
         .is_some_and(|end| end <= d.len);
     if !fits {
-        return 0;
+        return -1;
     }
     if !src.is_empty() {
         std::ptr::copy_nonoverlapping(src.as_ptr(), d.ptr.add(offset as usize), src.len());
     }
-    1
+    src.len() as i64
 }
 
 /// The bytes in `[start, end)` (relative indices) as a new string, validating UTF-8
