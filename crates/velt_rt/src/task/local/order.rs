@@ -389,13 +389,16 @@ impl Order {
                 .then(|| self.peek(current, false, &mut clock_ms).next)
                 .flatten(),
         ];
-        let mut keys = nexts.map(|n| n.map(|(k, _)| k));
-        if keys[0].is_none() {
-            // Nothing is due: the earliest timer sleeps until it is (if it is not already).
-            keys[1] = self
-                .earliest_for(current, true)
-                .map(|(k, _)| k)
-                .filter(|k| self.armed != Some(*k));
+        let [a, b] = nexts.map(|n| n.map(|(k, _)| k));
+        let mut keys = [a, b, None, None];
+        if a.is_none() {
+            // Nothing is due: the earliest timer sleeps until it is (if it is not already): the
+            // earliest of a task not busy elsewhere, and the earliest of all, whose task polls it
+            // once its poll has ended (to sleep as well).
+            let unarmed =
+                |e: Option<(Key, u64)>| e.map(|(k, _)| k).filter(|k| self.armed != Some(*k));
+            keys[2] = unarmed(self.earliest_for(current, true));
+            keys[3] = unarmed(self.earliest_for(current, false));
         }
         for k in keys.into_iter().flatten() {
             if let Some(w) = self.entry_mut(k).and_then(|e| e.waker.take()) {
@@ -433,9 +436,16 @@ impl Order {
     fn expired(&mut self, look: &Peek, current: Option<&Arc<Gate>>, key: Key) {
         self.loop_woke(look, current);
         self.armed = None;
-        if let Some((k, _)) = self.earliest_for(current, true).filter(|(k, _)| *k != key) {
-            if let Some(w) = self.entry_mut(k).and_then(|e| e.waker.take()) {
-                w.wake();
+        // The earliest of a task not busy elsewhere sleeps next, and the earliest of all once its
+        // task's poll has ended.
+        for skip_busy in [true, false] {
+            if let Some((k, _)) = self
+                .earliest_for(current, skip_busy)
+                .filter(|(k, _)| *k != key)
+            {
+                if let Some(w) = self.entry_mut(k).and_then(|e| e.waker.take()) {
+                    w.wake();
+                }
             }
         }
     }
