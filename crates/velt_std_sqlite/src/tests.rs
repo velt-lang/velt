@@ -27,13 +27,50 @@ fn run(stmt: StmtHandle, params: &str) -> Result<(i64, i64), String> {
         .map_err(text)
 }
 
-/// The rows as the JSON text they stand for (`""` for no row with `first_only`).
+/// The rows as the JSON text they stand for (`""` for no row with `first_only`), read through
+/// the cursor std's decoder reads.
 fn query(stmt: StmtHandle, params: &str, first_only: bool) -> Result<String, String> {
-    let rows = statement::query(stmt, params.as_bytes(), first_only, Vec::new()).map_err(text)?;
-    if rows.is_empty() {
+    use velt_text::rows::{header_end, name_at, push_cell, NAMES};
+    use velt_text::rows_cursor::RawCursor;
+    let handle = statement::open_rows(stmt, params.as_bytes(), first_only).map_err(text)?;
+    if handle == 0 {
         return Ok(String::new());
     }
-    Ok(String::from_utf8(velt_text::rows::to_json(&rows).unwrap()).unwrap())
+    let mut out = Vec::new();
+    // SAFETY: a cursor `open_rows` just made, given back once.
+    unsafe {
+        let raw = &*(handle as *const RawCursor);
+        let header = raw.header();
+        let (single, columns, _) = header_end(header).unwrap();
+        if !single {
+            out.push(b'[');
+        }
+        let mut rows = 0;
+        while (!single || rows == 0) && raw.step() {
+            if rows > 0 {
+                out.push(b',');
+            }
+            rows += 1;
+            out.push(b'{');
+            let mut name = NAMES;
+            for col in 0..columns {
+                if col > 0 {
+                    out.push(b',');
+                }
+                let (start, end, _) = name_at(header, name);
+                name = end;
+                velt_text::json_escape::push_json_string(&mut out, &header[start..end]);
+                out.push(b':');
+                push_cell(&mut out, raw.cell(col));
+            }
+            out.push(b'}');
+        }
+        if !single {
+            out.push(b']');
+        }
+        super::cursor::close(handle).map_err(text)?;
+    }
+    Ok(String::from_utf8(out).unwrap())
 }
 
 fn sql_query(db: DbHandle, sql: &str, params: &str) -> Result<String, String> {

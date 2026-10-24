@@ -19,7 +19,6 @@ use super::rows::{self, ShapeCell};
 use std::sync::Arc;
 use velt_native::handles::Single;
 use velt_text::db_json::parse_params;
-use velt_text::Out;
 
 /// A statement: its connection and what it runs.
 pub struct StmtObj {
@@ -86,21 +85,15 @@ pub fn run(stmt: StmtHandle, params: &[u8]) -> Result<RunInfo, DbError> {
     })
 }
 
-/// `stmt.all()` / `get()`: the rows in binary form ([`velt_text::rows`]) appended to `out`:
-/// every row, or with `first_only` the first row's object; nothing if `first_only` found no
-/// row.
-pub fn query<O: Out>(
-    stmt: StmtHandle,
-    params: &[u8],
-    first_only: bool,
-    out: O,
-) -> Result<O, DbError> {
+/// `stmt.all()` / `get()`: binds `params` (JSON, empty for none) and steps to the first row;
+/// a cursor over the rows ([`super::cursor`]) for std's decoder, which gives it back to
+/// [`super::cursor::close`]; with `first_only` the first row alone, and 0 when there is none.
+pub fn open_rows(stmt: StmtHandle, params: &[u8], first_only: bool) -> Result<u64, DbError> {
     let stmt = obj(stmt)?;
-    stmt.db.with(|conn| {
+    let p = &stmt.prepared;
+    super::cursor::open(stmt.db.lock_owned(), &p.sql, &p.shape, first_only, |st| {
         let params = parse_params(params).map_err(DbError::range)?;
-        let mut st = conn.prepare_cached(&stmt.prepared.sql)?;
-        bind(&mut st, &params)?;
-        rows::read(&mut st, first_only, out, &stmt.prepared.shape)
+        bind(st, &params)
     })
 }
 

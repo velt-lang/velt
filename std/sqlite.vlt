@@ -45,9 +45,11 @@ declare function velt_std_sqlite__reset_error_count(db: u64, count: u64);
 declare function velt_std_sqlite__last_error(db: u64): IoStatus;
 declare function velt_std_sqlite__prepare(db: u64, sql: string): IoResult<u64>;
 declare function velt_std_sqlite__run(stmt: u64, params: string): IoResult<RunSlot>;
-// The rows in binary form (`velt_text::rows`), decoded by the same generated decoder as JSON
-// text; empty for `firstOnly` without a row.
-declare function velt_std_sqlite__query(stmt: u64, params: string, firstOnly: bool): IoResult<u8[]>;
+// A cursor over the rows (`velt_text::rows_cursor`): the decoder reads each value from the
+// stepped statement; 0 for `firstOnly` without a row. Given back with `close_rows`, which
+// reports a failure met while stepping.
+declare function velt_std_sqlite__open_rows(stmt: u64, params: string, firstOnly: bool): IoResult<u64>;
+declare function velt_std_sqlite__close_rows(cursor: u64): IoStatus;
 declare function velt_std_sqlite__note_error(stmt: u64, code: i32, message: string);
 declare function velt_std_sqlite__stmt_free(stmt: u64);
 declare function velt_std_sqlite__error_name(code: i32): string;
@@ -224,20 +226,22 @@ export class Statement {
 
   /** The first row, or null if there is none. */
   get<T>(): T | null {
-    return this.first(unwrap(velt_std_sqlite__query(this.#handle, "", true)));
+    return this.first(unwrap(velt_std_sqlite__open_rows(this.#handle, "", true)));
   }
 
   getWith<T, P>(params: P): T | null {
-    return this.first(unwrap(velt_std_sqlite__query(this.#handle, JSON.stringify(params), true)));
+    const params_ = JSON.stringify(params);
+    return this.first(unwrap(velt_std_sqlite__open_rows(this.#handle, params_, true)));
   }
 
   /** Every row. */
   all<T>(): T[] {
-    return this.rows(unwrap(velt_std_sqlite__query(this.#handle, "", false)));
+    return this.rows(unwrap(velt_std_sqlite__open_rows(this.#handle, "", false)));
   }
 
   allWith<T, P>(params: P): T[] {
-    return this.rows(unwrap(velt_std_sqlite__query(this.#handle, JSON.stringify(params), false)));
+    const params_ = JSON.stringify(params);
+    return this.rows(unwrap(velt_std_sqlite__open_rows(this.#handle, params_, false)));
   }
 
   /** Releases the statement now (later calls throw "SQLITE_MISUSE"). */
@@ -257,23 +261,39 @@ export class Statement {
     return new RunResult(r.changes, r.lastInsertRowid);
   }
 
-  private first<T>(rows: u8[]): T | null {
-    if (rows.length == 0) {
+  // The decoder reads the rows from the cursor, which is given back once, whatever happens: a
+  // failure SQLite met while stepping comes first, then one of decoding.
+  private first<T>(cursor: u64): T | null {
+    if (cursor == 0) {
       return null;
     }
+    let row: T | null = null;
+    let failure: string | null = null;
     try {
-      return __intrinsic_json_parse_rows<T>(rows, 0, 0);
+      row = __intrinsic_json_parse_cursor<T>(cursor, 0, 0);
     } catch (e) {
-      throw this.decodeError(e.message);
+      failure = e.message;
     }
+    check(velt_std_sqlite__close_rows(cursor));
+    if (failure != null) {
+      throw this.decodeError(failure);
+    }
+    return row;
   }
 
-  private rows<T>(rows: u8[]): T[] {
+  private rows<T>(cursor: u64): T[] {
+    let rows: T[] = [];
+    let failure: string | null = null;
     try {
-      return __intrinsic_json_parse_rows<T[]>(rows, 0, 0);
+      rows = __intrinsic_json_parse_cursor<T[]>(cursor, 0, 0);
     } catch (e) {
-      throw this.decodeError(e.message);
+      failure = e.message;
     }
+    check(velt_std_sqlite__close_rows(cursor));
+    if (failure != null) {
+      throw this.decodeError(failure);
+    }
+    return rows;
   }
 
   // A row did not fit the requested type; counted against the connection so an enclosing

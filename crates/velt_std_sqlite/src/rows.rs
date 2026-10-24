@@ -10,110 +10,88 @@ use super::error::DbError;
 use parking_lot::Mutex;
 use rusqlite::types::ValueRef;
 use rusqlite::{Statement, StatementStatus};
-use velt_text::rows::{encode_names, BinRows};
-use velt_text::Out;
+use std::sync::Arc;
+use velt_text::rows::encode_names;
+use velt_text::rows_cursor::Cell;
 
-/// What a prepared statement's rows look like: the column names (encoded for the rows header)
-/// and which columns are declared boolean. Asking SQLite costs a call per column (each a UTF-8
+/// What a prepared statement's rows look like: the rows header (with the column names) and
+/// which columns are declared boolean. Asking SQLite costs a call per column (each a UTF-8
 /// check of the name), so a statement keeps them until SQLite compiles it anew.
 pub struct Shape {
     /// SQLite's count of recompilations (a schema change) when the shape was read.
     reprepared: i32,
     count: usize,
-    names: Vec<u8>,
+    /// The rows header (`velt_text::rows`), for many rows and for a single one.
+    rows_header: Vec<u8>,
+    single_header: Vec<u8>,
     bools: Vec<bool>,
 }
 
 /// A statement's [`Shape`], once known.
-pub type ShapeCell = Mutex<Option<Shape>>;
+pub type ShapeCell = Mutex<Option<Arc<Shape>>>;
 
 impl Shape {
     fn of(stmt: &Statement<'_>) -> Shape {
         let count = stmt.column_count();
+        // A name SQLite cannot give (out of memory) is empty.
+        let names = encode_names((0..count).map(|i| stmt.column_name(i).unwrap_or("")));
+        let header = |single: u8| [&[single][..], &names].concat();
         Shape {
             reprepared: stmt.get_status(StatementStatus::RePrepare),
             count,
-            // A name SQLite cannot give (out of memory) is empty.
-            names: encode_names((0..count).map(|i| stmt.column_name(i).unwrap_or(""))),
+            rows_header: header(0),
+            single_header: header(1),
             bools: declared_bools(stmt),
         }
+    }
+
+    /// The rows header: `single`, the column count and names.
+    pub fn header(&self, single: bool) -> &[u8] {
+        match single {
+            true => &self.single_header,
+            false => &self.rows_header,
+        }
+    }
+
+    /// Cell `col` of `row`. SQLite has no booleans: a 0 or 1 in a column declared
+    /// `BOOL`/`BOOLEAN` is a boolean.
+    pub fn cell<'r>(&self, row: &'r rusqlite::Row<'_>, col: usize) -> Cell<'r> {
+        match row.get_ref(col) {
+            Ok(ValueRef::Null) | Err(_) => Cell::Null,
+            Ok(ValueRef::Integer(v @ (0 | 1))) if self.bools[col] => Cell::Bool(v == 1),
+            Ok(ValueRef::Integer(v)) => Cell::Int(v),
+            Ok(ValueRef::Real(v)) => Cell::Float(v),
+            Ok(ValueRef::Text(t)) => Cell::Text(t),
+            Ok(ValueRef::Blob(b)) => Cell::Blob(b),
+        }
+    }
+
+    pub fn columns(&self) -> usize {
+        self.count
     }
 }
 
 /// Whether `stmt` has never run: just compiled (also anew, after the connection's cache let it
 /// go), so a shape kept from before may not be its own. Asked before it steps (the reset at the
 /// end of its rows counts a run).
-fn fresh(stmt: &Statement<'_>) -> bool {
+pub fn fresh(stmt: &Statement<'_>) -> bool {
     stmt.get_status(StatementStatus::Run) == 0
 }
 
 /// The shape of `stmt`, which has stepped (so SQLite recompiled it if the schema changed),
 /// from `cell` while it still applies.
-fn shape<'c>(
-    stmt: &Statement<'_>,
-    fresh: bool,
-    cell: &'c ShapeCell,
-) -> parking_lot::MappedMutexGuard<'c, Shape> {
+pub fn shape(stmt: &Statement<'_>, fresh: bool, cell: &ShapeCell) -> Arc<Shape> {
     let mut kept = cell.lock();
-    let applies = kept
-        .as_ref()
-        .is_some_and(|s| !fresh && s.reprepared == stmt.get_status(StatementStatus::RePrepare));
-    if !applies {
-        *kept = Some(Shape::of(stmt));
-    }
-    parking_lot::MutexGuard::map(kept, |s| s.as_mut().expect("ICE: shape just set"))
-}
-
-/// Step `stmt` (already bound) and encode its rows into `out`: every row, or with `first_only`
-/// the first row alone (nothing at all if there is none; the statement is not stepped further).
-/// `cell` keeps the statement's [`Shape`].
-pub fn read<O: Out>(
-    stmt: &mut Statement<'_>,
-    first_only: bool,
-    out: O,
-    cell: &ShapeCell,
-) -> Result<O, DbError> {
-    let fresh = fresh(stmt);
-    let mut rows = stmt.raw_query();
-    let Some(row) = rows.next()? else {
-        drop(rows);
-        if first_only {
-            // No row is an empty result.
-            return Ok(out);
+    match &*kept {
+        Some(s) if !fresh && s.reprepared == stmt.get_status(StatementStatus::RePrepare) => {
+            s.clone()
         }
-        let shape = shape(stmt, fresh, cell);
-        return Ok(BinRows::with_names(out, &shape.names, false).finish());
-    };
-    let shape = shape(row.as_ref(), fresh, cell);
-    let mut w = BinRows::with_names(out, &shape.names, first_only);
-    write_row(&mut w, row, &shape)?;
-    if !first_only {
-        while let Some(row) = rows.next()? {
-            write_row(&mut w, row, &shape)?;
+        _ => {
+            let s = Arc::new(Shape::of(stmt));
+            *kept = Some(s.clone());
+            s
         }
     }
-    Ok(w.finish())
-}
-
-/// One row's cells. SQLite has no booleans: a 0 or 1 in a column declared `BOOL`/`BOOLEAN` is
-/// written as a boolean.
-fn write_row<O: Out>(
-    w: &mut BinRows<O>,
-    row: &rusqlite::Row<'_>,
-    shape: &Shape,
-) -> Result<(), DbError> {
-    for i in 0..shape.count {
-        match row.get_ref(i)? {
-            ValueRef::Null => w.null(),
-            ValueRef::Integer(v @ (0 | 1)) if shape.bools[i] => w.bool(v == 1),
-            ValueRef::Integer(v) => w.int(v),
-            ValueRef::Real(v) => w.float(v),
-            ValueRef::Text(t) => w.text(t),
-            ValueRef::Blob(b) => w.bytes(b),
-        }
-    }
-    w.end_row();
-    Ok(())
 }
 
 /// For every column of `stmt`, whether it is declared `BOOL` or `BOOLEAN`.

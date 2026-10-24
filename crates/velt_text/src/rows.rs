@@ -17,6 +17,7 @@
 //! [`BinRows`], which checks them. A buffer cut short reads as a mismatch, never out of bounds.
 
 use crate::json_escape::push_json_string;
+use crate::rows_cursor::Cell;
 use crate::Out;
 
 pub const NULL: u8 = 0;
@@ -257,22 +258,42 @@ pub fn name_at(buf: &[u8], pos: usize) -> (usize, usize, bool) {
 /// Append one cell as a JSON value: a float in its shortest form that reads back the same, a
 /// blob as an array of byte values.
 pub fn push_cell_json(out: &mut Vec<u8>, buf: &[u8], cell: BinCell) {
+    push_cell(
+        out,
+        match cell {
+            BinCell::Null => Cell::Null,
+            BinCell::Bool(v) => Cell::Bool(v),
+            BinCell::Int(v) => Cell::Int(v),
+            BinCell::Float(v) => Cell::Float(v),
+            BinCell::Text(start, end, _) => Cell::Text(&buf[start..end]),
+            BinCell::Blob(start, end) => Cell::Blob(&buf[start..end]),
+        },
+    );
+}
+
+/// [`push_cell_json`] of a cell however it is held (a live cursor's,
+/// [`crate::rows_cursor`]); text that is not UTF-8 gets U+FFFD.
+pub fn push_cell(out: &mut Vec<u8>, cell: Cell<'_>) {
     match cell {
-        BinCell::Null => out.extend_from_slice(b"null"),
-        BinCell::Bool(v) => out.extend_from_slice(if v { b"true" } else { b"false" }),
-        BinCell::Int(v) => crate::fmt::push_i64(out, v),
-        BinCell::Float(v) if v.fract() == 0.0 && v.abs() < MAX_EXACT_INT => {
+        Cell::Null => out.extend_from_slice(b"null"),
+        Cell::Bool(v) => out.extend_from_slice(if v { b"true" } else { b"false" }),
+        Cell::Int(v) => crate::fmt::push_i64(out, v),
+        Cell::Float(v) if v.fract() == 0.0 && v.abs() < MAX_EXACT_INT => {
             crate::fmt::push_i64(out, v as i64)
         }
-        BinCell::Float(v) => crate::fmt::push_f64(out, v),
-        BinCell::Text(start, end, _) => push_json_string(out, &buf[start..end]),
-        BinCell::Blob(start, end) => {
+        Cell::Float(v) => crate::fmt::push_f64(out, v),
+        Cell::Ascii(t) => push_json_string(out, t),
+        Cell::Text(t) => match std::str::from_utf8(t) {
+            Ok(_) => push_json_string(out, t),
+            Err(_) => push_json_string(out, String::from_utf8_lossy(t).as_bytes()),
+        },
+        Cell::Blob(b) => {
             out.push(b'[');
-            for (i, &b) in buf[start..end].iter().enumerate() {
+            for (i, &v) in b.iter().enumerate() {
                 if i > 0 {
                     out.push(b',');
                 }
-                crate::fmt::push_u64(out, b as u64);
+                crate::fmt::push_u64(out, v as u64);
             }
             out.push(b']');
         }

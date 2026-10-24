@@ -83,6 +83,9 @@ pub const FLAG_NULL_NOT_ABSENT: u32 = 2;
 /// The source is a `u8[]` of a driver's binary rows (`rows_bin.rs`), not a string
 /// (`__intrinsic_json_parse_rows`).
 pub const FLAG_ROWS: u32 = 4;
+/// The source is a driver's live rows (a `velt_text::rows_cursor::RawCursor`), read as binary
+/// rows are (`__intrinsic_json_parse_cursor`).
+pub const FLAG_CURSOR: u32 = 8;
 
 /// Bits of a mark: position, open containers, `after_open`.
 const MARK_DEPTH_BITS: u32 = 21;

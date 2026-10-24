@@ -289,6 +289,11 @@ pub enum Intrinsic {
     /// text: the same generated decoder, the reader made with flag `FLAG_ROWS`
     /// (native_abi.md "Rows").
     JsonParseRows,
+    /// std only: `__intrinsic_json_parse_cursor<T>(cursor: u64, flags: i64, max_depth: i64): T`
+    /// — `JsonParseRows` over a driver's live rows (the address of a
+    /// `velt_text::rows_cursor::RawCursor`, which the caller keeps and releases afterwards): the
+    /// reader made with flag `FLAG_CURSOR` (native_abi.md "Row cursors").
+    JsonParseCursor,
     /// std only: `__intrinsic_http_handler(f: (raw: u64) => Promise<u64>)` → `[u64; 6]` =
     /// `{init, poll, drop, state_size, state_align, env}` for `velt_rt_http_serve` (the closure's
     /// state machine is the per-request state; `init(env, req, state)` sets `raw = req`; the env

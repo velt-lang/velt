@@ -23,6 +23,7 @@
 pub mod abi;
 pub mod bind;
 pub mod connection;
+pub mod cursor;
 pub mod error;
 pub mod rows;
 pub mod statement;

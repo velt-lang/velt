@@ -2,7 +2,7 @@
 //! `velt_rt_json_error`). Return conventions: 1 = ok / 0 = error, except `next_key` and
 //! `array_next` (0 = end, 1 = more, 2 = error) and `peek` (a `TOKEN_*` kind).
 
-use super::reader::{Reader, FLAG_ROWS, STEP_END, STEP_ERROR, STEP_MORE};
+use super::reader::{Reader, FLAG_CURSOR, FLAG_ROWS, STEP_END, STEP_ERROR, STEP_MORE};
 use super::rows_reader::RowReader;
 use super::value_abi::ValueHandle;
 use crate::bytes::VeltBytes;
@@ -18,14 +18,25 @@ pub unsafe extern "C" fn velt_rt_json_reader_new(src: *const VeltStr) -> *mut Re
 }
 
 /// `new Reader(src)` with options: `flags` (1 = fail on object keys the target type does
-/// not have; 4 = `src` is a `u8[]` of binary rows, `rows_bin.rs`) and the deepest nesting
-/// allowed (`max_depth`, 0 = no limit; rows have no nesting to limit).
+/// not have; 4 = `src` is a `u8[]` of binary rows, `rows_bin.rs`; 8 = `src` is a driver's
+/// live rows, a `velt_text::rows_cursor::RawCursor`, which the reader uses and does not free)
+/// and the deepest nesting allowed (`max_depth`, 0 = no limit; rows have no nesting to limit).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_json_reader_new_with(
     src: *const VeltStr,
     flags: u32,
     max_depth: u32,
 ) -> *mut Reader {
+    if flags & FLAG_CURSOR != 0 {
+        // A driver's live rows: the caller keeps the cursor until the reader is freed.
+        let c = &*(src as *const velt_text::rows_cursor::RawCursor);
+        let cursor = velt_text::rows_cursor::RawCursor {
+            data: c.data,
+            vtable: c.vtable,
+        };
+        let rows = RowReader::live(cursor, flags);
+        return Box::into_raw(Box::new(Reader::over_rows(rows, flags)));
+    }
     if flags & FLAG_ROWS != 0 {
         // A driver's binary rows (`rows_bin.rs`) in a `u8[]`, borrowed like a source string.
         let rows = RowReader::borrowed((*(src as *const VeltBytes)).as_bytes(), flags);

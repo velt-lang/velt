@@ -98,9 +98,55 @@ impl DbObj {
         Ok(p)
     }
 
+    /// The connection, locked until the result is dropped (a row cursor holds it while std
+    /// reads the rows).
+    pub(crate) fn lock_owned(self: &Arc<Self>) -> Locked {
+        let guard = self.state.lock();
+        Locked {
+            // SAFETY: the guard borrows `self.state`, which lives as long as the `Arc` the
+            // result keeps (and drops after the guard).
+            guard: unsafe {
+                std::mem::transmute::<
+                    parking_lot::MutexGuard<'_, ConnState>,
+                    parking_lot::MutexGuard<'static, ConnState>,
+                >(guard)
+            },
+            _db: self.clone(),
+        }
+    }
+
     /// Record a failure that happened outside the runtime (row decoding in std).
     pub fn note_error(&self, e: DbError) {
         self.state.lock().note(e);
+    }
+}
+
+/// A connection locked for as long as this lives ([`DbObj::lock_owned`]).
+pub(crate) struct Locked {
+    // Dropped first: it borrows the object `_db` keeps alive.
+    guard: parking_lot::MutexGuard<'static, ConnState>,
+    _db: Arc<DbObj>,
+}
+
+impl Locked {
+    /// The open connection, valid while this lives (`close` waits for the lock); a failure
+    /// ("not open") is counted.
+    pub(crate) fn conn(&mut self) -> Result<&'static Connection, DbError> {
+        match &self.guard.conn {
+            // SAFETY: the connection stays in place while the lock is held, which `self` does
+            // until it is dropped; the cursor using it drops what borrows it first.
+            Some(c) => Ok(unsafe { &*(c as *const Connection) }),
+            None => {
+                let e = DbError::closed("database connection");
+                self.guard.note(e.clone());
+                Err(e)
+            }
+        }
+    }
+
+    /// Count a failure against the connection.
+    pub(crate) fn note(&mut self, e: DbError) {
+        self.guard.note(e);
     }
 }
 
