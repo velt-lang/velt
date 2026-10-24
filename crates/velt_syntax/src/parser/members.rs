@@ -118,7 +118,7 @@ impl<'a> Parser<'a> {
 
     /// After `get` / `set`: is the next token a name (or the next tokens a symbol key) followed
     /// by `(`?
-    fn at_accessor_name(&mut self) -> bool {
+    pub(super) fn at_accessor_name(&mut self) -> bool {
         let key = self.member_key_len(1, true);
         match key {
             0 => self.nth(2) == Tok::LParen,

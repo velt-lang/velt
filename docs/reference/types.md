@@ -2457,6 +2457,10 @@ Where an interface with methods is expected (an annotation, a parameter, a retur
   (`set f(v: T)`) a setter `set f(v) { … }`, which runs on each `x.f = v`. A field of the
   interface can't be written through the interface value yet (`x.f = v` is an error), so a
   setter given for a field never runs: declare a setter method in the interface instead.
+  A type alias of an object type with accessors (`type Sized = { get size(): number }`) is
+  such an interface. An object type written in place (`x: { get size(): number }`) reads a
+  getter as a `readonly` field (and a setter as a field): it takes plain values (`{ size: 2 }`)
+  but not yet an object literal with accessors or a class instance.
 - A method with a default body and an optional field may be left out (the field is `undefined`);
   every other member must be given, and a member the interface doesn't declare is an error.
 - The value is an interface value: its members are read and called through the interface.

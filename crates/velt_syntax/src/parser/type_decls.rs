@@ -178,6 +178,18 @@ impl<'a> Parser<'a> {
         if self.eat_kw(Kw::Extends) {
             extends = self.parse_type_list()?;
         }
+        self.parse_interface_body(lo, name, generics, extends)
+    }
+
+    /// The `{ members }` of an interface (also of a type alias of an object type with
+    /// accessors, `type_members::parse_type_alias_item`).
+    pub(super) fn parse_interface_body(
+        &mut self,
+        lo: u32,
+        name: Ident,
+        generics: Vec<GenericParam>,
+        extends: Vec<TypeExpr>,
+    ) -> PResult<ItemKind> {
         let mut decl = InterfaceDecl {
             name,
             generics,

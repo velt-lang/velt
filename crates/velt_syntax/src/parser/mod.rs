@@ -98,6 +98,9 @@ pub(crate) struct Parser<'a> {
     /// How many `static { … }` blocks the file has had so far: each is named by its number
     /// (`static_blocks`), which formatting does not change.
     static_blocks: u32,
+    /// Where the last object type with an accessor (`{ get v(): T }`) starts
+    /// (`type_members::parse_type_alias_item`).
+    accessor_type: Option<u32>,
     /// The names computed keys `[NAME]` mention (`parse_symbol_key`): a script keeps a top-level
     /// `const` of such a name at module level, where sema can resolve the key (`kept_vars`).
     computed_keys: BTreeSet<String>,
@@ -182,6 +185,7 @@ impl<'a> Parser<'a> {
             plain_ts: false,
             more_vars: Vec::new(),
             static_blocks: 0,
+            accessor_type: None,
             this_param: None,
             fn_in_object: false,
             first_this_param: None,

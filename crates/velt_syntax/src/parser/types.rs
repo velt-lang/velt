@@ -393,6 +393,14 @@ impl<'a> Parser<'a> {
                 }
                 continue;
             }
+            if let Some(accessor) = self.parse_type_accessor(flo)? {
+                self.add_type_accessor(&mut fields, accessor, readonly);
+                self.accessor_type = Some(lo);
+                if !self.eat_type_member_end() {
+                    break;
+                }
+                continue;
+            }
             let name = self.parse_prop_key()?;
             let optional = self.eat(Tok::Question);
             let mut ty = if self.at(Tok::LParen) || self.at(Tok::Lt) {
