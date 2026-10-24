@@ -295,6 +295,10 @@ impl FnCx<'_, '_> {
             Ok(h) => return h,
             Err(obj) => obj,
         };
+        let obj = match self.form_member(obj, &prop.name, want, span) {
+            Ok(h) => return h,
+            Err(obj) => obj,
+        };
         match self.field_access(obj, prop, want, span) {
             Some(h) => h,
             None => self.error_expr(span),
@@ -571,6 +575,58 @@ impl FnCx<'_, '_> {
             }
             false => read,
         })
+    }
+
+    /// `p.name` read where `p`'s type is a deferred form over type parameters bounded by
+    /// object types (`p: Partial<T>`, `T extends { name: string }`; #350): the field has the
+    /// type the form gives at the bounds (`string | undefined`), and is read from the value
+    /// boxed as an `any`, checked. `Err(obj)` for anything else.
+    fn form_member(
+        &mut self,
+        obj: hir::Expr,
+        name: &str,
+        want: Want,
+        span: Span,
+    ) -> Result<hir::Expr, hir::Expr> {
+        let TyKind::Op(hir::TyOp::Inline(_) | hir::TyOp::Alias(_), _) = self.cx.ty.kind(obj.ty)
+        else {
+            return Err(obj);
+        };
+        if want == Want::BorrowMut || !self.cx.has_type_params(obj.ty) {
+            return Err(obj);
+        }
+        // Each type parameter at its object bound, the others as they are.
+        let n = self.bounds.len() as u32;
+        let at_bounds: Vec<TyId> = (0..n)
+            .map(|p| {
+                self.cx
+                    .constraint_of(p)
+                    .filter(|&c| self.cx.is_object_type(c) && !self.cx.has_type_params(c))
+                    .unwrap_or_else(|| self.cx.ty.param(p))
+            })
+            .collect();
+        let at = self.cx.subst(obj.ty, &at_bounds);
+        if !self.cx.is_object_type(at) {
+            return Err(obj);
+        }
+        let Some(f) = self
+            .cx
+            .public_fields(at)
+            .into_iter()
+            .find(|f| f.name == name)
+        else {
+            return Err(obj);
+        };
+        let fty = match f.optional && self.cx.dynamic(f.ty).is_none() {
+            true => self.cx.ty.option_of(f.ty, hir::Nothing::Undefined),
+            false => f.ty,
+        };
+        let boxed = self.generic_as_any(obj)?;
+        let read = match self.dynamic_get(boxed, name, want, span) {
+            Ok(h) => h,
+            Err(_) => return Ok(self.error_expr(span)),
+        };
+        Ok(self.intrinsic(hir::Intrinsic::AnyTo, vec![read], fty, span))
     }
 
     /// `xs[i]`: the index is converted to `usize`.

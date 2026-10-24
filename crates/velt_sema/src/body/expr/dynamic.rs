@@ -142,6 +142,8 @@ impl FnCx<'_, '_> {
                 TyKind::Op(hir::TyOp::Intersect, parts) if depth < 8 => {
                     parts.iter().any(|&p| open(cx, p, depth + 1))
                 }
+                // A deferred form over type parameters (`Partial<T>`, `Pick<T, K>`).
+                TyKind::Op(hir::TyOp::Inline(_) | hir::TyOp::Alias(_), _) => cx.has_type_params(m),
                 _ => false,
             }
         }
