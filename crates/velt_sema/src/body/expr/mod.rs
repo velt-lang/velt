@@ -53,6 +53,7 @@ mod errors;
 mod eval_effects;
 mod fn_union_call;
 mod fn_widen;
+mod frameless_fn;
 mod frozen;
 mod gen_closure;
 mod gen_value;
@@ -141,10 +142,12 @@ mod three_state;
 mod throws_mismatch;
 mod top_level_await;
 mod truthiness;
+mod tuple_text;
 mod type_tests;
 mod typeof_member;
 mod union_coerce;
 mod union_iface;
+mod union_view;
 mod widen_fresh;
 mod written_order;
 
@@ -162,6 +165,9 @@ impl FnCx<'_, '_> {
     pub fn expr_coerce(&mut self, e: &ast::Expr, exp: TyId, want: Want) -> hir::Expr {
         // `const f: (s: string) => void = count`: a named function adapted to the type.
         let fn_ty = self.cx.ty.core(exp).unwrap_or(exp);
+        if let Some(h) = self.frameless_named_fn(e, Some(exp)) {
+            return self.coerce(h, exp);
+        }
         let adapted = match self.cx.ty.kind(fn_ty) {
             TyKind::FnPtr { .. } => self.callback_adapter(e, exp, callback::CallbackMode::Plain),
             _ => None,

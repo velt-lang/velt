@@ -146,6 +146,16 @@ Maintainer-owned, like `hir/mod.rs`, `hir/intrinsic.rs` and `hir/module_state.rs
   `g(x)`, stops with a `TypeError` if that returned `true` (the predicate was wrong), and runs
   only `B`; `A` is not lowered for that instantiation (a generic function that calls itself as
   `signal({ value: x })` in `A` has finitely many instantiations).
+- Text of a type parameter (issue #1462): `String(x)`, a template part `${x}` and a string
+  `+` operand `x` of the type of a type parameter `T` are `If { cond: Call {
+  Intrinsic(HoldsDynamic), [Call { Intrinsic(NullAs), [] }: T] }, then: <x converted to any,
+  written as `String(x)` (the prelude's `__anyString`) or a template part / `+` operand of an
+  `any` writes it>, els: Call { Intrinsic(ToString | TemplateToString), [x] } }`, each branch
+  with its own copy of `x`. `HoldsDynamic` is a constant per instantiation: `true` when `T` is
+  `any`, `unknown` or `object`, or an array, tuple, union or nullable type holding one; a `+`
+  operand tests `HoldsDynamicOrClass` instead, also `true` for a class (its `valueOf()` comes
+  first). The probe is never evaluated. Lowering evaluates it like `HoldsNull` (`const_cond`),
+  so each instantiation lowers one branch, and the others the code they had without the test.
 
 ## M3/M4 encodings (lowering assumptions, confirmed at merge of ir-3)
 - An async fn's `FnDef::ret` is the body's return type `T` (the call's type is `Promise<T>`).
@@ -353,6 +363,31 @@ Maintainer-owned, like `hir/mod.rs`, `hir/intrinsic.rs` and `hir/module_state.rs
   `Match` on `x` reading each member's field (`Variant(v, [Binding b]) => b.field`, a literal
   field as its constant, a non-Copy field as `Intrinsic::Share` of it), typed as the union of the
   field types.
+
+## Union views
+- A union whose members are all interfaces with methods sharing an interface (velt_sema
+  `union_views.rs`, #1410) can hold a *view*: an interface value of the union's view interface
+  (an interface sema makes: the members' nearest shared interface plus every field all members
+  have, readonly, typed as the union of their types; one per family of unions, the members'
+  interfaces at any arguments, so a generic union's instance and sema's union of the same
+  members hold the same payload type). When the program makes a view of a family
+  (`w as U`: `Variant { variant: <view>, args: [Upcast(w)] }`), each union def of the family
+  has one more variant, named `<view>`, after the members' (its index is the member count).
+- Every match sema makes on such a union has an arm for `<view>` that does the same through the
+  view interface (a field read calls the getter, converted to the type the members flow
+  narrowing left give it with a checked conversion: `match` on the value or `checked_present`,
+  a `TypeError` panic on a mismatch; a discriminant test compares the live value); a `switch` on
+  the discriminant matches the discriminant's value (read through the view for a view), its
+  slots still narrowing the union local. A union local narrowed to one member that is the object
+  of a member read or call, or read where a union of its family is expected, stays the union
+  (narrowed) instead of an `UnwrapVariant`, unless it holds that member because it was assigned
+  to it.
+- Lowering: `canon_union` leaves the `<view>` variant out of a union's member list (the family's
+  unions all have it), and a match on such a union that has no arm for the variant panics there
+  (`TypeError`) instead of being unreachable. Sema reports a match without a `<view>` arm and a
+  narrowed `UnwrapVariant` read of such a union as not supported. Only the families an earlier
+  round of checking made views of get `<view>` arms: a round that makes a view of another family
+  is checked again with it, so a program that makes no view gets the HIR it got before views.
 
 ## switch
 - No HIR statement: sema desugars `switch` (`hir/mod.rs`, sema `body/switch`) into
@@ -721,6 +756,10 @@ an intersection of object types to one ordinary anonymous object type (`intersec
 an indexed access to the type of the field it names (a union for several keys,
 `utility_types.rs`). Branded types (`string & { __brand: "UserId" }`) are replaced by their
 primitive before HIR leaves sema (`brands.rs`, `readonly::erase`).
+In a program that uses a container of `any` as one of `unknown` or back (`Record<string, any>`
+as a `Record<string, unknown>`, an `Upcast` between them; `Ctx::same_but_any_unknown`), `unknown`
+is replaced by `any` everywhere in the same pass, so the two views are one type for lowering;
+other programs keep their `unknown`s (lowering treats both alike).
 
 ## Deferred types (issue #934, phase 2)
 `TyKind::Op(TyOp, args)` appears only in generic definitions (signatures, fields, bodies): a type
@@ -825,9 +864,25 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   types, `optional` and `presence` flags, in order; never a def replaced by readonly erasure,
   and `{ d?: string }` and `{ d: string | undefined }`, whose field types are the same, are two
   shapes) and
-  `Program::union_shapes` (the concrete union def of each sorted member list), so one shape is one
-  VIR type. A generic union whose members are not all plain types (a union or nullable member)
-  keeps its own variants.
+  `Program::union_shapes` (the concrete union def of each member list as lowering sees it: the
+  payloads after readonly erasure but a union view's `<view>`, deduplicated and sorted by type
+  id), so one shape is one
+  VIR type. Concrete unions that erasure makes one member list (`number | A` and `number | {
+  readonly a: number }`, `A` a field-only interface) are the first def of that list in the
+  program lowering gets: every type, `Variant`, `UnwrapVariant` and `PatKind::Variant` of the
+  others is that def, with its variant numbers. Variants of one union whose payloads erase to
+  one type (`(R | number)[] | (number | A)[] | string`) are the first of them: no `Variant`,
+  `UnwrapVariant` or `PatKind::Variant` names the others. Concrete anonymous object types whose
+  fields erase alike (`{ v: number | A }` and `{ v: number | R }`, once those unions are one) are
+  the first def of those fields. A concrete union whose members erase to one type
+  (`USD | number`, `USD` a brand of `number`) is that type, its variants still written as
+  `Variant`s: a variant of a value whose type is no enum is the whole value. Sema treats
+  members that erase to one type as one member when it re-interns an instance (`T | A` at
+  `T = { a: number }` is `A`), as lowering deduplicates them.
+  A generic union whose members are not all plain types (a union or nullable member) keeps its
+  own variants. An optional field `v?: T` of a generic object type at a dynamic `T` (`unknown`,
+  `any`) keeps its option (`{ v?: unknown | undefined }`), as the generic def lays it out,
+  while a written `v?: unknown` holds the dynamic `undefined` itself.
 - `TyTable::intern` never makes `Option(Option(T))`: an option of an option is the inner option
   (`T | null | null` is `T | null`), whatever the outer option's `Nothing` (see "Undefined"). `WrapSome` and `UnwrapSome` of a value whose type is already
   that option, and a `PatKind::Some` on it, are the identity in lowering.

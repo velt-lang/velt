@@ -251,6 +251,7 @@ impl FnCx<'_, '_> {
             .map_or(vec![], |ps| ps[params.len()..].to_vec());
         ptys.extend(&extra);
         let std_callback = std::mem::take(&mut self.std_callback);
+        let promise_callback = std::mem::take(&mut self.promise_callback);
         // Trailing parameters with defaults beyond the expected function type's
         // (`apply((x, k = 2) => x * k)`): never passed, so they are locals set to the default.
         let n_params = exp_params
@@ -281,6 +282,7 @@ impl FnCx<'_, '_> {
         // A future owns everything it uses: async closures always capture by value.
         frame.escaping = escaping || is_async;
         frame.discards_value = ret.is_none() && !is_async && ret_ty == Some(self.cx.ty.unit);
+        frame.never_end = ret.is_none() && (exp.is_none() || promise_callback);
         frame.is_async = is_async;
         // A JS API callback returning a number (a comparator) may return any integer.
         frame.int_returns_number = std_callback.is_some() && ret_ty == Some(self.cx.ty.f64);

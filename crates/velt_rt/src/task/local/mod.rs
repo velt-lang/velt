@@ -510,6 +510,12 @@ pub(crate) unsafe fn deliver_unadopted(f: *mut VeltFut) {
     node::deliver_unadopted(f)
 }
 
+/// Where finished started promise `f` threw its error (unknown if it did not, or threw it in
+/// the standard library).
+pub(crate) unsafe fn node_loc(f: *mut VeltFut) -> crate::panic::ThrowLoc {
+    node::loc_of(f)
+}
+
 /// The task that runs the promises code outside a task hands to tasks (a holder of a shared
 /// promise given to a spawned call in a synchronous `main`, task/shared.rs): like any task it
 /// has an id and a set, so the promise is shared on it. Code outside a task enters it for each

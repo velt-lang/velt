@@ -39,7 +39,18 @@ impl FnCx<'_, '_> {
         }
         let union = self.cx.ty.core(ty).unwrap_or(ty);
         if self.cx.union_def(union).is_some_and(|(d, _)| d == *def) && inner.ty == union {
+            // A view (`x as U`, `crate::union_views`) is no member.
+            if self
+                .cx
+                .union_view(union)
+                .is_some_and(|(_, v, _)| v == *variant)
+            {
+                return;
+            }
             self.narrow(&Fact::Members(token, vec![*variant]));
+            if let Some(s) = self.f.scopes.last_mut() {
+                s.held.push(token);
+            }
         }
     }
 }

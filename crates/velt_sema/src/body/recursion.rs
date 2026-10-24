@@ -32,6 +32,8 @@ pub(crate) struct RecState {
     pub in_return: bool,
     /// Bodies checked so far, in order, and whether their return type was inferred.
     pub(super) completed: Vec<(DefId, bool)>,
+    /// Module constants and `let`s checked so far, in order.
+    pub(super) globals_done: Vec<DefId>,
 }
 
 /// The first use of a function before its return type is known (preferring one in a `return`

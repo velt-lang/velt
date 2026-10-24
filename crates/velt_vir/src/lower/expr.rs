@@ -171,6 +171,12 @@ impl FnLower<'_, '_> {
                 let (from, to) = (self.vty(inner.ty), self.vty(e.ty));
                 self.cast_to(v, from, to)
             }
+            // The text of a type parameter's value: the branch this instantiation takes, as
+            // if it were the expression (no join temporary).
+            K::If { cond, then, els } if super::template::is_holds_dynamic(cond) => {
+                let dynamic = self.const_cond(cond) == Some(true);
+                self.expr(if dynamic { then } else { els })
+            }
             K::If { cond, then, els } => self.if_expr(cond, then, els, e.ty),
             K::Block(b) => self.block_expr(b, e.ty),
             _ => self.expr_m2(e),
@@ -468,6 +474,20 @@ impl FnLower<'_, '_> {
             } => {
                 let t = self.sub(args.first()?.ty);
                 Some(!self.cx.object_only(t))
+            }
+            hir::ExprKind::Call {
+                callee: hir::Callee::Intrinsic(hir::Intrinsic::HoldsDynamic),
+                args,
+            } => {
+                let t = self.sub(args.first()?.ty);
+                Some(self.cx.holds_dynamic(t))
+            }
+            hir::ExprKind::Call {
+                callee: hir::Callee::Intrinsic(hir::Intrinsic::HoldsDynamicOrClass),
+                args,
+            } => {
+                let t = self.sub(args.first()?.ty);
+                Some(self.cx.holds_dynamic_or_class(t))
             }
             hir::ExprKind::Unary {
                 op: hir::UnOp::Not,

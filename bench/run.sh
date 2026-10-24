@@ -11,13 +11,16 @@ set -euo pipefail
 RUNS=${1:-5}
 ONLY=${2:-}
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-OUT="$ROOT/target/bench"
+PYTHON=$(command -v python3 || command -v python)
+# Cargo's target directory for this workspace: CARGO_TARGET_DIR, a cargo config, or <repo>/target.
+TARGET=$(cargo metadata --format-version 1 --no-deps --manifest-path "$ROOT/Cargo.toml" |
+  "$PYTHON" -c 'import json, sys; sys.stdout.write(json.load(sys.stdin)["target_directory"])')
+OUT="$TARGET/bench"
 mkdir -p "$OUT"
 
 echo "building velt (release) and the runtime..." >&2
 cargo build --release -q -p veltc -p velt_rt --manifest-path "$ROOT/Cargo.toml"
-VELT="$ROOT/target/release/velt"
-PYTHON=$(command -v python3 || command -v python)
+VELT="$TARGET/release/velt"
 
 # best_ms <expected-output-file> <command...>: prints the best time; fails on differing output.
 best_ms() {
@@ -44,6 +47,11 @@ echo "|---|---|---|---|---|---|"
 for src in "$ROOT"/bench/*.vlt; do
   name=$(basename "$src" .vlt)
   [[ -n "$ONLY" && "$name" != "$ONLY" ]] && continue
+  # Programs only bench/nightly.sh counts (weakmap) have no Rust and Node versions.
+  if [[ ! -f "$ROOT/bench/rust/$name.rs" || ! -f "$ROOT/bench/node/$name.js" ]]; then
+    echo "$name: no Rust or Node version, skipped" >&2
+    continue
+  fi
   rustc -O --edition 2021 -o "$OUT/$name-rust" "$ROOT/bench/rust/$name.rs"
   "$OUT/$name-rust" > "$OUT/$name.expected"
   row="| $name"

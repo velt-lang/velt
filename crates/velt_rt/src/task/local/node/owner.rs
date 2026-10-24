@@ -30,6 +30,8 @@ pub(super) unsafe extern "C" fn started_poll(f: *mut VeltFut, cx: *mut c_void) -
         }
     }
     h.owner.set(OWNER_DELIVERED);
+    // Its error, if it rejected, was thrown where the node says (loc.rs).
+    super::loc::claim(f);
     READY
 }
 

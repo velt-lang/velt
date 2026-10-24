@@ -208,8 +208,14 @@ usable and no copy method is needed.
 - `+` with a string on one side and a number or boolean (or one of those or `null`) on the
   other concatenates, as in JS: `"Total: " + 5` is `"Total: 5"`, `"a" + true` is `"atrue"` and
   `s += n` appends. The number is written as `String(n)` and `console.log` write it (`1.5`,
-  `1e+21`, `NaN`, `Infinity`, `0` for `-0`). Any other value next to a string is a compile
-  error; build that text with a template literal (`` `Total: ${xs}` ``).
+  `1e+21`, `NaN`, `Infinity`, `0` for `-0`). An array or a tuple is written as `join()` writes
+  it (`"" + [1, 2]` is `"1,2"`), a class instance by its `valueOf()` when that returns a
+  primitive (`+` asks for it before `toString()`, as in JS; a `Date` by its `toString()`), else
+  by its `toString()`, and a value whose type is a type parameter as `String(x)` writes the
+  type it is instantiated with (an `any` and a class instance with `+`'s order: `valueOf()`
+  first). Any other value
+  next to a string is a compile error; build that text with a template literal
+  (`` `Total: ${m}` ``).
 - `String(x)` converts any value that can be printed to its text, exactly as `` `${x}` ``
   writes it (`String(1.5)` is `"1.5"`, `String(null)` is `"null"`, `String([1, 2])` is
   `"1,2"`). `Number(x)` converts a string (as JS: the whole trimmed string, `""` is `0`, else
@@ -1044,6 +1050,56 @@ for (const s of shapes) {
   console.log(s.kind, s.describe()); // circle round, then square four corners
   if (s.kind === "square") console.log(s.side); // 2
 }
+```
+- **A live object as a union of interfaces (a union view).** When every member is an interface
+  with methods and the members share an interface (`Base` above), one object whose getters
+  change can be cast to the union, as libraries build such state machines
+  (`impl as AsyncState<T>`): `wide as Shape` keeps the same object, and every discriminant
+  test, `switch` and field read on the union calls its getters again, so the union sees the
+  object change, as in Node. The cast needs the object's type to have every member's fields,
+  each typed as the union of the members' types (`kind: "circle" | "square"`), and the methods
+  of the shared interface (a class instance converts through an interface its class
+  implements: `new Wide() as Shape`); else it is an error. A read after a test is checked
+  against the member the test selected: an object whose state no longer fits it (`kind` is
+  `"circle"` but `r` is `null`) gives a `TypeError`, never a value of the wrong type. Values built from
+  literals keep their member and its tag, and can sit next to the live object in one variable
+  or array. Using a narrowed union that may hold such an object as a value of its member type
+  (passing it where a `Circle` is expected) is not supported yet (an error); read its fields
+  instead, or pass it where the union is expected.
+
+```ts
+interface Base {
+  describe(): string;
+}
+interface Circle extends Base {
+  readonly kind: "circle";
+  readonly r: number;
+}
+interface Square extends Base {
+  readonly kind: "square";
+  readonly side: number;
+}
+type Shape = Circle | Square;
+
+interface Wide {
+  readonly kind: "circle" | "square";
+  readonly r: number;
+  readonly side: number;
+  describe(): string;
+}
+let kind: "circle" | "square" = "circle";
+const wide: Wide = {
+  get kind() {
+    return kind;
+  },
+  r: 1,
+  side: 2,
+  describe: () => "changes",
+};
+const live = wide as Shape;
+console.log(live.kind, live.describe()); // circle changes
+kind = "square";
+if (live.kind === "square") console.log(live.side); // 2
 ```
 - A discriminated union may name itself behind an indirection
   (`type Tree = { kind: "leaf"; v: number } | { kind: "node"; kids: Tree[] }`; see
@@ -2039,7 +2095,11 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   serializing the record is then an error (Node would show the original's fields). A key holding a function is called as a
   method (`props.onClick()`, also on any `Record<string, any>`). A spread of a record that may be
   `null` or `undefined` (`{ ...props }` with `props: Props | null`) is a record too, and copies
-  nothing when it is. Not supported yet (each is an error): named members next to an index
+  nothing when it is. A spread of a record of another value type into a record literal
+  (`{ ...a, ...b }` of a `Record<string, string>` where a `Record<string, any>` is expected),
+  or of a record keyed by string literals into one keyed by `string` (`Record<"a" | "b", V>`),
+  converts each key and value into the new record, in the spread record's key order; a value that
+  doesn't convert is an error. Not supported yet (each is an error): named members next to an index
   signature of other values (`{ name?: string; [key: string]: string | undefined }`, which needs
   `undefined`, #930), a `number` or `symbol` key, two index signatures in one type,
   and an interface with an index signature that also has methods or `extends`. An object of a
@@ -2470,7 +2530,14 @@ is a `bigint`.
 value converts to either. An `any` converts back to every type, and the value is checked where it
 enters typed code: a value of another type stops the program with a `TypeError` (Node would
 keep the wrong value). An `unknown` must be narrowed first (`typeof`, `instanceof`), or
-converted with `as T`, which is checked the same way. Both are the same value at run time.
+converted with `as T`, which is checked the same way. Both are the same value at run time, so
+a container of one is a container of the other: a `Record<string, any>` is a
+`Record<string, unknown>` (and back), and so are `any[]` and `unknown[]`, `Map<string, any>` and
+`Map<string, unknown>`, `Set`s, nullables and function types that differ only there. It is the
+same object seen through the other type, as in TypeScript: a write through one is seen through
+the other, and `===` compares them as one value. A tuple (`[any, number]` as
+`[unknown, number]`) converts too, but is copied, as every tuple is when assigned
+([Values and references](memory.md#values-and-references)).
 
 ```ts
 class Point {
@@ -2660,12 +2727,17 @@ members in the same order; another object as `Object.prototype.toString` does
 with Node's `TypeError: Cannot convert object to primitive value`, and when one returns a
 symbol with `TypeError: Cannot convert a Symbol value to a string`, reporting the line of the
 `String`, template, `+` or `join`. An array (also one held in a typed `any[]`, `unknown[]`, `object[]` or a tuple
-of them, and its `join()` and `toString()`) is written as `Array.prototype.join` does: each
+of them, and its `join()` and `toString()`, also `xs.join(sep)` of an `any` `xs` holding one) is
+written as `Array.prototype.join` does: each
 element as `String(x)` writes it, `null` and `undefined` elements and an array holding itself
 as empty text (`[1, [2, 3], null]` is `1,2,3,`). In a template or a `+`, a symbol stops with
 Node's `TypeError: Cannot convert a Symbol value to a string` (only `String(s)` writes it, as
 `Symbol(desc)`); a function stops with a `TypeError` naming #924 (Node writes its source text),
-and so does a proxy (Node reads its `toString` through the `get` trap).
+and so does a proxy (Node reads its `toString` through the `get` trap). So is a value whose
+type is a type parameter instantiated with `any`, `unknown` or `object`, or an array or tuple
+of them (`String(v)` or `` `${v}` `` in `function show<T>(v: T)` called as `show<any>({ a: 1 })`
+is `[object Object]`, as `show<unknown[]>([{ a: 1 }])`; a symbol in a template or a `+` stops
+with the `TypeError`); the function's other instantiations write their own types' text.
 
 ```ts
 class Celsius {

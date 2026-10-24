@@ -115,7 +115,12 @@ fn golden() {
     let files: Vec<_> = files
         .into_iter()
         .filter(|f| {
-            let name = f.to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/");
+            // Matched against the path in the checkout, so a checkout whose own path contains
+            // the filter (`branches/uncaught-flush`) doesn't run every file.
+            let rel = f.strip_prefix(&root).unwrap_or(f);
+            let name = rel
+                .to_string_lossy()
+                .replace(std::path::MAIN_SEPARATOR, "/");
             filters.iter().any(|filter| name.contains(filter.as_str()))
         })
         .collect();

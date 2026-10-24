@@ -123,8 +123,8 @@ async function main() {
 ## Task placement
 
 `workerCount()` and `currentWorker()`, with `spawn(p, { worker })` (a built-in), place tasks on
-workers: the threads that run tasks, fixed for the process (`VELT_THREADS`, else the number of
-cores; 1 on WebAssembly). A sharded program (one task per worker owning a slice of the data,
+workers: the threads that run tasks (`VELT_THREADS`, else the number of cores; 1 on
+WebAssembly), plus the spare ones started while tasks compute without pausing (below). A sharded program (one task per worker owning a slice of the data,
 Seastar or Orleans style) pins each shard to a worker and its callers next to it, so a call
 never wakes another thread.
 
@@ -142,11 +142,12 @@ never wakes another thread.
   worker takes on part of a worker's tasks only while that one stays busy and the help raises
   how much gets done. A pinned task never moves. A task that computes without pausing for more
   than a few milliseconds doesn't hold up the rest of its worker: its timers, sockets and woken
-  tasks go to another worker meanwhile, except tasks pinned to that worker, and with one worker
-  (`VELT_THREADS=1`) there is no other to take them. `VELT_SCHEDULER=stealing` or `per-core` selects one of
-  tokio's schedulers instead (for comparison; [`VELT_SCHEDULER`](../tooling/cli.md)); with
-  `stealing`, `{ worker }` is checked but the task may run on any worker, and
-  `currentWorker()` can change at any `await`.
+  tasks go to another worker meanwhile, except tasks pinned to that worker. When no other worker
+  can take them (one worker, or every other one computing too), a spare worker starts and does,
+  up to four in all; `workerCount()` counts each from then on. `VELT_SCHEDULER=stealing` or
+  `per-core` selects one of tokio's schedulers instead (for comparison;
+  [`VELT_SCHEDULER`](../tooling/cli.md)); with `stealing`, `{ worker }` is checked but the task
+  may run on any worker, and `currentWorker()` can change at any `await`.
 - A pinned task can't borrow an idle core: CPU-bound code in it delays everything else on its
   worker. `scope.spawn` takes no placement yet.
 

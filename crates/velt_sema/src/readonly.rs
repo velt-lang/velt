@@ -25,7 +25,11 @@ pub(crate) fn erase(cx: &mut Ctx) -> HashMap<TyId, String> {
     let mut named: Vec<(TyId, String)> = (cx.alias_names.iter())
         .map(|(t, n)| (*t, crate::namespaces::written(n).into_owned()))
         .collect();
-    if cx.readonly_twins.is_empty() && cx.brands.is_empty() && cx.fn_sites.vars.is_empty() {
+    if cx.readonly_twins.is_empty()
+        && cx.brands.is_empty()
+        && cx.fn_sites.vars.is_empty()
+        && !cx.any_unknown_views
+    {
         return unique_names(named);
     }
     let mut twins = cx.readonly_twins.clone();
@@ -43,11 +47,19 @@ pub(crate) fn erase(cx: &mut Ctx) -> HashMap<TyId, String> {
         let brand = cx.ty.intern(TyKind::Adt(d, vec![]));
         cache.insert(brand, base);
     }
-    // A type with error-set variables is its solved type (`throws::vars`), erased.
-    for (t, s) in cx.solved_types() {
-        let r = erase_ty(&mut cx.ty, &twins, &mut cache, s);
-        cache.insert(t, r);
+    // `unknown` is `any` for lowering (the same values, the same layout) where a container of
+    // one is used as one of the other (`Ctx::same_but_any_unknown`).
+    if let (true, Some(defs)) = (cx.any_unknown_views, cx.any) {
+        let unknown = cx.ty.intern(TyKind::Dyn(defs.unknown, vec![]));
+        let any = cx.ty.intern(TyKind::Dyn(defs.any, vec![]));
+        cache.insert(unknown, any);
     }
+    // A type with error-set variables is its solved type (`throws::vars`), erased; unions of
+    // one erased member list are one def, of one erased member that member.
+    let solved = cx.solved_types();
+    let mut plan = crate::union_layouts::plan(&mut cx.ty, &twins, &mut cache, &cx.defs, &solved);
+    let merged = std::mem::take(&mut plan.merged);
+    cx.replaced_unions = std::mem::take(&mut plan.replaced);
     // A field-only interface's object type is called by the interface's name.
     for d in twins.keys() {
         if let Some(Def::Adt(a)) = &cx.defs[d.0 as usize] {
@@ -68,6 +80,15 @@ pub(crate) fn erase(cx: &mut Ctx) -> HashMap<TyId, String> {
         type_level,
         ..
     } = cx;
+    for def in defs.iter_mut().flatten() {
+        match def {
+            Def::Fn(f) => crate::union_layouts::renumber_block(&mut f.body.block, ty, &merged),
+            Def::Global(g) => crate::union_layouts::renumber_expr(&mut g.init, ty, &merged),
+            Def::Adt(a) => (a.fields.iter_mut().filter_map(|f| f.default.as_mut()))
+                .for_each(|d| crate::union_layouts::renumber_expr(d, ty, &merged)),
+            _ => {}
+        }
+    }
     let never = ty.never;
     let mut e = |t: TyId| erase_ty(ty, &twins, &mut cache, t);
     // A twin must know a field is assigned if its readonly view's is (it never is today).
@@ -78,6 +99,14 @@ pub(crate) fn erase(cx: &mut Ctx) -> HashMap<TyId, String> {
             (plain.0, a)
         })
         .collect();
+    // An object type merged into another (`crate::union_layouts`) shares its values.
+    let assigned = assigned
+        .into_iter()
+        .chain(plan.objects.iter().map(|&(d, rep)| {
+            let a = matches!(&defs[d.0 as usize], Some(Def::Adt(a)) if a.assigned);
+            (rep, a)
+        }));
+    let assigned: Vec<(DefId, bool)> = assigned.collect();
     for (plain, a) in assigned {
         if let Some(Def::Adt(d)) = &mut defs[plain.0 as usize] {
             d.assigned |= a;
@@ -223,6 +252,11 @@ pub(crate) fn erase_ty(
         }
     };
     let r = ty.intern(nk);
+    // A twin, or a type holding erased parts, may itself be replaced (`crate::union_layouts`).
+    let r = match cache.get(&r) {
+        Some(&s) if r != t => s,
+        _ => r,
+    };
     cache.insert(t, r);
     r
 }

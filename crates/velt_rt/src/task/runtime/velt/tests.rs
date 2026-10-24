@@ -384,3 +384,69 @@ fn data_after_a_short_read_still_wakes_the_reader() {
     ));
     assert_eq!(got.ok().expect("joined"), b"onetwo");
 }
+
+/// Tells the child process of [`a_task_that_runs_on_holds_back_no_other_tasks_timer`] to play
+/// its part.
+const SPIN_CHILD: &str = "VELT_RT_SPIN_CHILD";
+
+#[test]
+fn a_task_that_runs_on_holds_back_no_other_tasks_timer() {
+    // With one worker and with two: a task that computes without returning, queued behind a task
+    // sleeping on the same worker, must not keep that sleep from ending (the spare worker takes
+    // over when no other can). Each count runs in a child process, as the runtime starts once.
+    for workers in ["1", "2"] {
+        let exe = std::env::current_exe().expect("test executable");
+        let out = crate::abi_tests::command::command(exe)
+            .args([
+                "--exact",
+                "task::runtime::velt::tests::spin_child",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(SPIN_CHILD, "1")
+            .env(super::super::THREADS_ENV, workers)
+            .output()
+            .expect("run the child");
+        let text = String::from_utf8_lossy(&out.stdout).into_owned()
+            + &String::from_utf8_lossy(&out.stderr);
+        assert!(out.status.success(), "{workers} worker(s): {text}");
+        assert!(text.contains("1 passed"), "{workers} worker(s): {text}");
+    }
+}
+
+#[test]
+fn spin_child() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    if std::env::var_os(SPIN_CHILD).is_none() {
+        return;
+    }
+    let flag = Arc::new(AtomicBool::new(false));
+    let seen = flag.clone();
+    let ended = block_on(spawn(
+        async move {
+            // Queued behind this task on its worker: it runs once this task sleeps.
+            let spinner = spawn(
+                async move {
+                    let t = Instant::now();
+                    while !seen.load(Ordering::SeqCst) {
+                        if t.elapsed() > Duration::from_secs(10) {
+                            return false;
+                        }
+                        std::hint::spin_loop();
+                    }
+                    true
+                },
+                None,
+            );
+            Sleep::until(Instant::now() + Duration::from_millis(20)).await;
+            flag.store(true, Ordering::SeqCst);
+            spinner.await.ok()
+        },
+        None,
+    ));
+    assert_eq!(
+        ended.ok().flatten(),
+        Some(true),
+        "the sleep waited for the spin"
+    );
+}

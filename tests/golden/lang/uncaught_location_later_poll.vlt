@@ -1,0 +1,21 @@
+// A promise awaited twice (shared), whose second `await` runs in a later poll of the task,
+// after a timer, maybe on another worker: the report gives where the promise threw (#1100).
+class Bad extends Error {}
+
+async function make(n: number): Promise<number> {
+  await sleep(5);
+  throw new Bad("bad " + n);
+}
+
+async function main() {
+  const p = make(3);
+  try {
+    await p;
+  } catch (e) {
+    console.log("first await: " + (e as Bad).message);
+  }
+  await sleep(10);
+  const t = Date.now();
+  while (Date.now() - t < 20) {}
+  console.log(await p);
+}

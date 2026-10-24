@@ -506,6 +506,13 @@ impl FnCx<'_, '_> {
             s.cx.union_def(t).is_none()
                 && matches!(s.cx.ty.kind(t), TyKind::Adt(..) | TyKind::Dyn(..))
         };
+        // `xs === ys` of an `unknown[]` and an `any[]`: one type (`Ctx::same_but_any_unknown`).
+        if self.cx.same_but_any_unknown(r.ty, l.ty) {
+            let to = l.ty;
+            return match self.try_coerce(r, to) {
+                Ok(r) | Err(r) => (l, r),
+            };
+        }
         if l.ty == r.ty || !object(self, l.ty) || !object(self, r.ty) {
             return (l, r);
         }

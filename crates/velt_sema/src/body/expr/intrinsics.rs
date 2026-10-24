@@ -195,7 +195,9 @@ impl FnCx<'_, '_> {
             | I::Truthy
             | I::IsNull
             | I::IsNullish
-            | I::MayHoldPrimitive => (vec![(t, B)], bool_, true),
+            | I::MayHoldPrimitive
+            | I::HoldsDynamic
+            | I::HoldsDynamicOrClass => (vec![(t, B)], bool_, true),
             I::NullAs => (vec![], t, true),
             I::ToString => (vec![(t, B)], str_, true),
             I::SharedNew => {

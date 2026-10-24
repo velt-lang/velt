@@ -1,0 +1,40 @@
+// check: no leaks
+// Containers of `any` used as containers of `unknown` and back (`Record<string, any>` as a
+// `Record<string, unknown>`, `unknown[]` as `any[]`, maps, tuples, nullables, function types):
+// one value seen through both types, so a write through one is seen through the other, as in
+// TypeScript (#1185). Expected output: Node's.
+function lower(m: Record<string, any>): Record<string, unknown> {
+  return m;
+}
+function upper(m: Record<string, unknown>): Record<string, any> {
+  return m;
+}
+const rec: Record<string, any> = { q: 1 };
+const seen = lower(rec);
+seen.w = "two";
+console.log(JSON.stringify(rec), JSON.stringify(upper(seen)), seen === rec);
+const props: Record<string, unknown> | null = ({ a: true } as Record<string, any>) || {};
+console.log(JSON.stringify(props));
+const xs: unknown[] = [1, "a"];
+const ys: any[] = xs;
+ys.push(3);
+console.log(xs.length, ys.length, xs === ys);
+const m: Map<string, any> = new Map();
+const n: Map<string, unknown> = m;
+n.set("k", [1, 2]);
+console.log(m.size, JSON.stringify(m.get("k")));
+const t: [any, string] = [1, "s"];
+const u: [unknown, string] = t;
+console.log(u[0], u[1]);
+const s: Set<unknown> = new Set<any>([1, 1, 2]);
+console.log(s.size);
+const take: (v: unknown) => void = (v: any) => console.log("take", v);
+const f: (v: any) => unknown = take;
+console.log("result", f(9));
+const maybe: Record<string, any> | undefined = rec;
+const viewed: Record<string, unknown> | undefined = maybe;
+console.log(viewed === rec, Object.keys(viewed ?? {}).join(","));
+const nested: Record<string, any>[] = [rec];
+const nestedSeen: Record<string, unknown>[] = nested;
+nestedSeen[0].z = null;
+console.log(JSON.stringify(rec));

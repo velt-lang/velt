@@ -668,6 +668,18 @@ impl FnCx<'_, '_> {
     /// A function value `h` as function type `exp` inside an adapter: `{ const f = h; (p…) =>
     /// f(p…) }`, the arrow checked against `exp`, which converts each argument and the result.
     pub(super) fn adapt_fn(&mut self, h: hir::Expr, exp: TyId) -> Result<hir::Expr, hir::Expr> {
+        self.adapt_fn_as(h, exp, false)
+    }
+
+    /// [`Self::adapt_fn`]; `undefined`: the function returns nothing and the arrow returns
+    /// `undefined` after calling it (`(p…) => { f(p…); return undefined; }`), for a callback
+    /// whose `void` result is a member of a union (`then(f, g)`, TypeScript's `T | void`).
+    pub(super) fn adapt_fn_as(
+        &mut self,
+        h: hir::Expr,
+        exp: TyId,
+        undefined: bool,
+    ) -> Result<hir::Expr, hir::Expr> {
         let TyKind::FnPtr { params, rest, .. } = self.cx.ty.kind(exp) else {
             return Err(h);
         };
@@ -693,6 +705,7 @@ impl FnCx<'_, '_> {
                     false,
                     span,
                 );
+                let arrow = undefined_after(arrow, undefined, span);
                 let w = self.closure(&arrow, Some(exp), false);
                 self.pop_scope();
                 return Ok(w);
@@ -706,6 +719,7 @@ impl FnCx<'_, '_> {
             false,
             span,
         );
+        let arrow = undefined_after(arrow, undefined, span);
         let w = self.closure(&arrow, Some(exp), true);
         self.pop_scope();
         let mut h = h;
@@ -724,4 +738,24 @@ impl FnCx<'_, '_> {
         };
         Ok(self.mk(H::Block(block), ty, span))
     }
+}
+
+/// The wrapper arrow `(p…) => f(p…)` as `(p…) => { f(p…); return undefined; }` when `undefined`.
+fn undefined_after(arrow: ast::Expr, undefined: bool, span: velt_common::Span) -> ast::Expr {
+    let mut arrow = arrow;
+    if let (true, ast::ExprKind::Arrow { body, .. }) = (undefined, &mut arrow.kind) {
+        if let ast::ArrowBody::Expr(call) = body {
+            let call = (**call).clone();
+            let undef = synth(ast::ExprKind::Lit(ast::Lit::Undefined), span);
+            let stmt = |kind| ast::Stmt { kind, span };
+            *body = ast::ArrowBody::Block(ast::Block {
+                stmts: vec![
+                    stmt(ast::StmtKind::Expr(call)),
+                    stmt(ast::StmtKind::Return(Some(undef))),
+                ],
+                span,
+            });
+        }
+    }
+    arrow
 }

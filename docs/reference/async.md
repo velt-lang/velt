@@ -251,11 +251,16 @@ Promises have JavaScript's callback methods. Each returns a new promise, which s
 like any stored promise:
 
 - `p.then(f)`: `f(value)` once `p` fulfills; a rejection passes through to the new promise.
-- `p.then(f, g)`: `g(reason)` when `p` rejects (both callbacks give the same type).
+- `p.then(f, g)`: `g(reason)` when `p` rejects. As in TypeScript, the new promise gives
+  what either callback gives (`Promise<A | B>`; a `g` that returns nothing adds `undefined`,
+  one that only throws, `(e) => { throw e; }`, adds nothing) and rejects with what either
+  throws. Two `async` callbacks give the same type (**Planned**: a union there too).
   `p.then(null, g)` and `p.then(undefined, g)` are `p.catch(g)`, and `p.then(f, null)` is
   `p.then(f)`, as in JS.
 - `p.catch(g)`: `g(reason)` when `p` rejects; a value passes through, so `g` gives the
-  promise's value type, or nothing: `p.catch(() => {})` (or an `async` handler) is a
+  promise's value type (a handler that only throws, `(e) => { throw e; }`, keeps it; on a
+  promise that never fulfills, `Promise.reject(e)`, the new promise gives what `g` gives), or
+  nothing: `p.catch(() => {})` (or an `async` handler) is a
   `Promise<T | undefined>`, TypeScript's `Promise<T | void>`, which gives `p`'s value or
   `undefined` once `g` handled a rejection (**Planned**: a `catch` that changes the value
   type otherwise, `T | U`).
@@ -437,7 +442,9 @@ anything that task prints in response. Hand-offs are:
 - a channel `send`, a `close`, or a `receive` that frees room in a bounded channel;
 - settling a `new Promise` or `Promise.withResolvers` promise;
 - `abort()`;
-- a child leaving a task scope.
+- a child leaving a task scope;
+- sending on a socket: `fetch`, a server's response or body chunk, a TCP connect, write or
+  close, a UDP datagram (the peer is often a task of the same program).
 
 Hand-offs through shared state (`shared`, a `Mutex`) and through timers are not covered: to keep
 such lines in order, print them from one task. Writing to stderr flushes stdout first.

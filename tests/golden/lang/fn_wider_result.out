@@ -1,0 +1,15 @@
+nothing runs
+run undefined
+run 42
+run text
+either sync 2
+unknown result pushed
+nothing runs
+unknown result undefined
+union result 8
+union result n5
+nullable result 6
+field result 7
+either async 1
+scope value 4
+scope 3

@@ -4,6 +4,7 @@
 //! value held. Arguments are boxed; results are `any`. On an `unknown` they are errors until
 //! it is narrowed, as in TypeScript.
 
+use super::setters::synth;
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
@@ -235,6 +236,16 @@ impl FnCx<'_, '_> {
             self.check_args_loose(args);
             return Ok(self.error_expr(span));
         };
+        // `xs.join(sep)`: an array held is joined as `Array.prototype.join` does (issue #1462).
+        if prop.name == "join" && args.len() <= 1 && !self.cx.scopes[self.module].is_std {
+            self.note_dyn_members();
+            let recv = self.share_if_place(recv);
+            return Ok(self.with_temp("<list>", recv, span, span, |lw, v| {
+                let undefined = || synth(ast::ExprKind::Lit(ast::Lit::Undefined), span);
+                let sep = args.first().cloned().unwrap_or_else(undefined);
+                lw.text_helper_call("__anyJoinMethod", vec![v.clone(), sep], span)
+            }));
+        }
         let key = self.key_lit(&prop.name, prop.span);
         let text = format!("{}.{}", self.callee_text(&recv), prop.name);
         let text = self.key_lit(&text, span);
