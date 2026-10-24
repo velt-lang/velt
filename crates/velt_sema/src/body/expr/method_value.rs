@@ -131,6 +131,9 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
+        if self.own_literal_iface(obj.ty) {
+            return self.detached_literal_method(prop, span);
+        }
         // `this` and a `const`/`using` local name one object for as long as the value lives:
         // the arrow names it directly and captures it as an arrow would, with no block around
         // it (so a callback parameter keeps it off the heap, and a `using` value stays put).
@@ -229,6 +232,7 @@ impl FnCx<'_, '_> {
         if self.cx.ty.has_error(t)
             || !self.direct_receiver(object, t)
             || !self.is_method_value(t, &prop.name)
+            || self.own_literal_iface(t)
         {
             return None;
         }

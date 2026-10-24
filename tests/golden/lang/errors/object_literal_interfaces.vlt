@@ -10,13 +10,6 @@ interface Mapper {
 }
 
 function main(): void {
-  // A getter where no interface is expected: the literal's own type is plain data.
-  const plain = {
-    get value() {
-      return 1;
-    },
-  };
-
   // A missing method.
   const a: Counter = { count: 1 };
 

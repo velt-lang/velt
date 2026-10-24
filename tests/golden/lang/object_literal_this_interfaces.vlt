@@ -1,0 +1,143 @@
+// `this` in the methods, getters and setters of object literals implementing an interface:
+// `this` is the interface value, the object the method was called on (#941).
+
+interface Counter {
+  count: number;
+  readonly label: string;
+  inc(by: number): void;
+  twice(): void;
+  get double(): number;
+  set half(v: number);
+  show(): string;
+  later(): Promise<number>;
+  reader(): () => number;
+}
+
+function counter(label: string): Counter {
+  return {
+    count: 1,
+    label,
+    inc(by) {
+      this.count += by;
+    },
+    twice() {
+      this.inc(1);
+      this.inc(1);
+    },
+    get double() {
+      return this.count * 2;
+    },
+    set half(v) {
+      this.count = v * 2;
+    },
+    show() {
+      return this.label + "=" + this.count + " (double " + this.double + ")";
+    },
+    async later() {
+      await Promise.resolve(0);
+      return this.count + 100;
+    },
+    reader() {
+      return () => this.count + 1000;
+    },
+  };
+}
+
+const c = counter("c");
+c.inc(2);
+console.log(c.show());
+c.twice();
+console.log(c.show());
+c.half = 21;
+console.log(c.count, c.double);
+const read = c.reader();
+c.count = 5;
+console.log(read());
+
+// Passed where the interface is expected: every call reaches the same object.
+function bump(k: Counter): string {
+  k.inc(10);
+  return k.show();
+}
+console.log(bump(c), c.count);
+const both = [c, counter("d")];
+for (const k of both) {
+  k.twice();
+}
+console.log(both.map((k) => k.show()).join(", "));
+
+// An argument, a cast and a variable typed by an interface.
+interface Named {
+  name: string;
+  greet(): string;
+}
+function hello(x: Named): string {
+  return x.greet();
+}
+console.log(
+  hello({
+    name: "arg",
+    greet() {
+      return "hello " + this.name;
+    },
+  }),
+);
+const cast = {
+  name: "cast",
+  greet() {
+    return "hi " + this.name;
+  },
+} as Named;
+console.log(cast.greet());
+const named: Named = {
+  name: "var",
+  greet() {
+    return "hey " + this.name.toUpperCase();
+  },
+};
+named.name = "renamed";
+console.log(named.greet());
+
+// A plugin object: its methods share state through `this`.
+interface Plugin {
+  name: string;
+  installs: number;
+  install(app: string[]): void;
+  get summary(): string;
+}
+const plugin: Plugin = {
+  name: "router",
+  installs: 0,
+  install(app) {
+    this.installs++;
+    app.push(this.name + "#" + this.installs);
+  },
+  get summary() {
+    return `${this.name} x${this.installs}`;
+  },
+};
+const app: string[] = [];
+plugin.install(app);
+plugin.install(app);
+console.log(app, plugin.summary);
+
+// Generator methods of an interface.
+interface Range {
+  lo: number;
+  hi: number;
+  values(): Generator<number>;
+}
+const range: Range = {
+  lo: 2,
+  hi: 5,
+  *values() {
+    for (let i = this.lo; i < this.hi; i++) {
+      yield i;
+    }
+  },
+};
+console.log([...range.values()]);
+range.hi = 3;
+console.log([...range.values()]);
+
+c.later().then((v) => console.log("later", v));

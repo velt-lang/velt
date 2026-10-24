@@ -317,7 +317,7 @@ impl FnCx<'_, '_> {
         if let Some(target) = self.literal_iface(exp) {
             return self.iface_object(props, target, span);
         }
-        if self.hint(exp).is_none() && self.wants_own_iface(props) {
+        if self.no_expected_type(exp) && self.wants_own_iface(props) {
             return self.own_iface_object(props, span);
         }
         if let Some(at) = props.iter().find_map(super::iface_object::is_accessor) {

@@ -41,7 +41,6 @@ fn golden_m1_files_parse() {
                 | "destructuring_computed_key_expr.vlt"
                 | "overloads_missing_impl.vlt"
                 | "overloads_declarations.vlt"
-                | "object_literal_accessors.vlt"
                 | "ts_syntax_errors.vlt"
                 | "ts_parse_leftovers_errors.vlt"
                 | "catch_types_errors.vlt"

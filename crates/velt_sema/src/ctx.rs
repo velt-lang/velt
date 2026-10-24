@@ -165,6 +165,9 @@ pub(crate) struct Ctx<'m> {
     /// What the methods of the object literals being checked throw, by interface slot, before
     /// their implementations exist (`body/expr/iface_object.rs`; read by `crate::throws`).
     pub provisional_slots: Vec<(DefId, u32, Vec<crate::defs::ThrowSrc>)>,
+    /// The interfaces made from object literals with no expected type
+    /// (`body/expr/literal_iface.rs`), whose methods all use `this`.
+    pub literal_ifaces: FxHashSet<DefId>,
     /// The adapters converting generic interface values to `unknown` type arguments
     /// (`body/expr/iface_adapt.rs`), made on first use.
     pub iface_adapters: FxHashMap<
@@ -395,6 +398,7 @@ impl<'m> Ctx<'m> {
             groups: None,
             literal_hosts: Default::default(),
             provisional_slots: vec![],
+            literal_ifaces: Default::default(),
             iface_adapters: FxHashMap::default(),
             dyn_iface_targets: vec![],
             throw_checks: vec![],

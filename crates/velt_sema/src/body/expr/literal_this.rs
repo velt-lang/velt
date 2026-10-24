@@ -111,10 +111,11 @@ impl FnCx<'_, '_> {
         }
         self.cx.error(
             Diagnostic::error(
-                "`this` in this object-literal method is not supported here",
+                "`this` in an object-literal method is supported only where the literal implements an interface or has no expected type",
                 at.unwrap_or(span),
             )
-            .with_note("TypeScript allows this (`this` is the object the method is called on); Velt supports it where the literal implements an interface (an annotation, a parameter, a return type or `as I`) and in a literal with no expected type, whose `this` is the literal itself; declare the expected type as an interface, or use the object's variable"),
+            .with_note("TypeScript allows this (`this` is the object the method is called on); here the method is stored as a plain function, which has no object to use as `this`")
+            .with_note("declare the expected type as an interface (`interface T { m(): R }`), or use the object's variable instead of `this`"),
         );
         None
     }

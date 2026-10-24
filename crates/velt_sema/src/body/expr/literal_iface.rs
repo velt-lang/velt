@@ -45,6 +45,15 @@ impl FnCx<'_, '_> {
         })
     }
 
+    /// Is nothing known about the type expected where `exp` is (none, or one still being
+    /// inferred)?
+    pub(super) fn no_expected_type(&self, exp: Option<TyId>) -> bool {
+        match self.hint(exp) {
+            None => true,
+            Some(t) => t == self.cx.ty.error,
+        }
+    }
+
     /// The literal with `props` (no expected type) as the value of its own interface.
     pub(super) fn own_iface_object(&mut self, props: &[ast::ObjectProp], span: Span) -> hir::Expr {
         match self.own_iface(props, span) {
@@ -333,7 +342,27 @@ impl FnCx<'_, '_> {
             parents: vec![],
             decl: None,
         };
-        self.cx.alloc_def(span, DefInfo::Iface(Box::new(info)))
+        let d = self.cx.alloc_def(span, DefInfo::Iface(Box::new(info)));
+        self.cx.literal_ifaces.insert(d);
+        d
+    }
+
+    /// Is `t` the interface of an object literal with no expected type?
+    pub(super) fn own_literal_iface(&self, t: TyId) -> bool {
+        matches!(self.cx.ty.kind(t), TyKind::Dyn(d, _) if self.cx.literal_ifaces.contains(d))
+    }
+
+    /// `o.m` read as a value, where `m` is a method of an object literal using `this`: reported.
+    pub(super) fn detached_literal_method(&mut self, prop: &ast::Ident, span: Span) -> hir::Expr {
+        self.cx.error(
+            Diagnostic::error(
+                format!("the method `{}` uses `this`, so it cannot be read as a value", prop.name),
+                span,
+            )
+            .with_note("TypeScript allows this, but `this` is then the object the function is called on, if any (`undefined` for a plain call, which throws a TypeError in strict mode)")
+            .with_note(format!("call the method on its object, or wrap the call in an arrow function: `(...) => o.{}(...)`", prop.name)),
+        );
+        self.error_expr(span)
     }
 
     /// Names interface `d` as TypeScript shows the literal's type: `{ x: number; m(): string }`.
