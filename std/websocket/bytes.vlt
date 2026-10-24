@@ -1,0 +1,99 @@
+// std/websocket/bytes (std-internal): the byte-level pieces of the WebSocket codec that stay in
+// the runtime (masking keys, UTF-8 checks, copying text into a buffer), and `ByteBuf`, a byte
+// array that grows by doubling. Not part of the public API.
+
+import { IoResult } from "velt:io";
+
+declare function velt_rt_bytes_set_str(dst: u8[], s: string, offset: u64): bool;
+declare function velt_rt_bytes_range_to_str(b: u8[], start: i64, end: i64): IoResult<string>;
+declare function velt_rt_bytes_utf8_prefix(b: u8[], start: i64, end: i64): i64;
+declare function velt_rt_random_mask(): u32;
+
+/** A fresh masking key (RFC 6455 §5.3: from the OS random source). */
+export function maskKey(): u32 {
+  return velt_rt_random_mask();
+}
+
+/**
+ * How many of the bytes in [start, end) are well-formed UTF-8: all of them, fewer when they end
+ * inside a character (more bytes may complete it), or -1 when no continuation can make them
+ * valid.
+ */
+export function utf8Prefix(b: u8[], start: i64, end: i64): i64 {
+  return velt_rt_bytes_utf8_prefix(b, start, end);
+}
+
+/** The bytes in [start, end) as a string (one copy), or null if they are not valid UTF-8. */
+export function textOf(b: u8[], start: i64, end: i64): string | null {
+  const r = velt_rt_bytes_range_to_str(b, start, end);
+  return r.code == 0 ? r.value : null;
+}
+
+/** Copies the UTF-8 bytes of `s` to `dst[offset..]` (they must fit). */
+export function setText(dst: u8[], s: string, offset: i64) {
+  if (!velt_rt_bytes_set_str(dst, s, offset as u64)) {
+    panic("internal error: a WebSocket frame was sized wrong");
+  }
+}
+
+/** Bytes that are appended to and taken whole: `data` holds them, with room for `cap`. */
+export class ByteBuf {
+  data: u8[] = [];
+  cap: i64 = 0;
+
+  /**
+   * Makes the buffer `extra` bytes longer and returns where those bytes start. Private: the new
+   * bytes hold whatever the memory held until the caller writes them.
+   */
+  private grow(extra: i64): i64 {
+    const at = this.data.length as i64;
+    const need = at + extra;
+    if (need > this.cap) {
+      let cap = this.cap * 2;
+      if (cap < need) {
+        cap = need;
+      }
+      if (cap < 256) {
+        cap = 256;
+      }
+      const next: u8[] = __intrinsic_array_with_capacity(cap as usize);
+      __intrinsic_array_set_len(next, at as usize);
+      if (at > 0) {
+        next.set(this.data, 0);
+      }
+      this.data = next;
+      this.cap = cap;
+    }
+    __intrinsic_array_set_len(this.data, need as usize);
+    return at;
+  }
+
+  append(src: u8[]) {
+    const at = this.grow(src.length as i64);
+    this.data.set(src, at as usize);
+  }
+
+  /** Drops the first `n` bytes (0 <= n <= length). */
+  dropFront(n: i64) {
+    const rest = (this.data.length as i64) - n;
+    if (n < 0 || rest < 0) {
+      panic(`ByteBuf.dropFront(${n}) on ${this.data.length} bytes`);
+    }
+    this.data.copyWithin(0, n);
+    __intrinsic_array_set_len(this.data, rest as usize);
+  }
+
+  /** Replaces the contents with `bytes`. */
+  adopt(bytes: u8[]) {
+    this.cap = bytes.length as i64;
+    this.data = bytes;
+  }
+
+  /** The contents, moved out; the buffer is empty and holds no memory afterwards. */
+  take(): u8[] {
+    const out = this.data;
+    this.data = [];
+    this.cap = 0;
+    return out;
+  }
+}

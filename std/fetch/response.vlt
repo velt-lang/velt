@@ -198,6 +198,15 @@ export class Response {
     return r;
   }
 
+  // A `101 Switching Protocols` response with `headers` (std only: std/http's
+  // `upgradeConnection`; the constructor takes 200-599).
+  private static switching(headers: Headers): Response {
+    const r = new Response();
+    r.#code = 101;
+    r.#fields = headers;
+    return r;
+  }
+
   /**
    * A response whose body is `JSON.stringify(data)`, with `content-type: application/json`
    * unless `init` sets one.

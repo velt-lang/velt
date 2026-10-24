@@ -4,6 +4,12 @@
 import { IoStatus } from "velt:io";
 
 declare async function velt_rt_tcp_write_bytes(s: u64, data: u8[]): Promise<IoStatus>;
+declare function velt_rt_tcp_try_write(s: u64, data: u8[]): u64;
+
+/** Writes what the stream handle `s` takes of `data` right now; the number of bytes written. */
+export function tryWriteTo(s: u64, data: u8[]): i64 {
+  return velt_rt_tcp_try_write(s, data) as i64;
+}
 
 /** Writes every byte of `data` to the stream handle `s`. */
 export async function writeBytesTo(s: u64, data: u8[]): Promise<IoStatus> {

@@ -222,6 +222,19 @@ macro_rules! with_state_store {
         } else if size <= 256 {
             type $S = $crate::task::compiled::Inline<256>;
             $body
+        } else if size <= 448 {
+            // A task per connection is often past 256 bytes (a session that receives, sends
+            // and closes), and need not take the 1024 its neighbours do. 448, not 512: with the
+            // task's header the cell then fills an allocator bin instead of spilling into the
+            // next (measured per idle WebSocket connection: 0.27 KB less than with 512).
+            type $S = $crate::task::compiled::Inline<448>;
+            $body
+        } else if size <= 576 {
+            // The next allocator bin up (640 with the header): a WebSocket session's task with
+            // a few more locals (488 bytes for `bench/websocket`'s echo handler) takes 640 bytes
+            // instead of the 1024 class's 1088.
+            type $S = $crate::task::compiled::Inline<576>;
+            $body
         } else {
             type $S = $crate::task::compiled::Inline<1024>;
             $body
@@ -229,3 +242,37 @@ macro_rules! with_state_store {
     }};
 }
 pub(crate) use with_state_store;
+
+#[cfg(test)]
+mod tests {
+    /// The storage class a state of `size` bytes gets: the inline size, or 0 for the heap.
+    fn class(size: usize) -> usize {
+        with_state_store!(size, 8, |S| {
+            if std::any::type_name::<S>().ends_with("Heap") {
+                0
+            } else {
+                std::mem::size_of::<S>()
+            }
+        })
+    }
+
+    #[test]
+    fn states_take_the_smallest_class_that_holds_them() {
+        for (size, want) in [
+            (1, 64),
+            (64, 64),
+            (65, 256),
+            (256, 256),
+            (257, 448),
+            (448, 448),
+            (449, 576),
+            (488, 576),
+            (576, 576),
+            (577, 1024),
+            (1024, 1024),
+            (1025, 0),
+        ] {
+            assert_eq!(class(size), want, "a state of {size} bytes");
+        }
+    }
+}

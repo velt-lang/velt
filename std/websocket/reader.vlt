@@ -1,0 +1,291 @@
+// std/websocket/reader (std-internal): the receiving side of a connection. Not part of the
+// public API.
+//
+// The connection's `Reader` holds the bytes read and not yet parsed, and a fragmented message
+// so far. It lives in the connection's `SendQueue` (std/websocket/queue), under the same lock,
+// and is only touched in short steps under it: `next` takes a whole message out of
+// the buffer, or says that more bytes are needed; the task that asked reads them from the
+// stream with the lock released and hands them over with `feed`. So nothing of the state lives
+// in a task, one task at a time reads the socket, and the buffer is dropped once every byte in
+// it is used: an idle connection holds none.
+
+import { Channel, channel } from "velt:channel";
+import { ByteBuf, textOf, utf8Prefix } from "velt:websocket/bytes";
+import {
+  Frame,
+  OP_BINARY,
+  OP_CLOSE,
+  OP_CONT,
+  OP_PING,
+  OP_PONG,
+  OP_TEXT,
+  INVALID,
+  PARTIAL,
+  TOO_LONG,
+  closePayload,
+  parse,
+  validCloseCode,
+} from "velt:websocket/frame";
+
+/** Largest message accepted (64 MiB, as most servers). */
+export const MAX_MESSAGE: i64 = 67108864;
+// What `Reader.next` found.
+/** The peer closed the connection (or the stream ended): no more messages. */
+export const CLOSED: i64 = 0;
+/** A text message, in `text`. */
+export const TEXT: i64 = 1;
+/** A binary message, in `data`. */
+export const BINARY: i64 = 2;
+/** More bytes are needed, and the caller is the one to read them (then `feed`). */
+export const READ: i64 = 3;
+/** More bytes are needed, and another task is reading them (`awaitTurn`). */
+export const WAIT: i64 = 4;
+/** A ping, to answer with `data`. */
+export const PING: i64 = 5;
+/** The peer's close frame, to answer with `code`. */
+export const CLOSE: i64 = 6;
+/** A protocol error `text`: the connection is failed with close code `code`. */
+export const FAIL: i64 = 7;
+/** The handle was released. */
+export const RELEASED: i64 = 8;
+
+/** One step of receiving: a message, or what to do before there is one. */
+export class Step {
+  kind: i64;
+  text: string;
+  data: u8[];
+  code: i64;
+
+  constructor(kind: i64, text: string = "", data: u8[] = [], code: i64 = 0) {
+    this.kind = kind;
+    this.text = text;
+    this.data = data;
+    this.code = code;
+  }
+}
+
+export class Reader {
+  buf: ByteBuf = new ByteBuf();
+  pos: i64 = 0;
+  /** A server requires masked frames, a client unmasked ones. */
+  fromClient: bool;
+  frame: Frame = new Frame();
+  /** A fragmented message so far: its opcode (-1: none), its payload, and how much of a text
+   * payload is known to be valid UTF-8 (checked fragment by fragment, so bad text fails early). */
+  partOp: i64 = -1;
+  part: ByteBuf | null = null;
+  checked: i64 = 0;
+  /** The peer's close frame was seen, or the stream ended: every later `next` is `CLOSED`. */
+  done: bool = false;
+  released: bool = false;
+  /** A task is reading from the stream; `waiting` others wait on `turn` for it to finish. */
+  reading: bool = false;
+  waiting: i64 = 0;
+  turn: Channel<bool> | null = null;
+
+  constructor(fromClient: bool, prefix: u8[]) {
+    this.fromClient = fromClient;
+    if (prefix.length > 0) {
+      this.buf.adopt(prefix);
+    }
+  }
+
+  /** Whether every byte read so far is used (no further message is waiting in the buffer). */
+  drained(): bool {
+    return this.pos >= (this.buf.data.length as i64);
+  }
+
+  // Drops the buffer once every byte in it is used.
+  private releaseIfDrained() {
+    if (this.pos == (this.buf.data.length as i64)) {
+      this.buf.take();
+      this.pos = 0;
+    }
+  }
+
+  private fail(code: i64, what: string): Step {
+    this.done = true;
+    this.buf.take();
+    this.pos = 0;
+    return new Step(FAIL, what, [], code);
+  }
+
+  /** The next message in the buffer, or what stands in the way. `first`: the caller's first step. */
+  next(first: bool): Step {
+    if (this.released) {
+      // A receive that was waiting when the handle was released sees the connection end.
+      return new Step(first ? RELEASED : CLOSED);
+    }
+    while (true) {
+      if (this.done) {
+        return new Step(CLOSED);
+      }
+      const f = this.frame;
+      const status = parse(this.buf.data, this.pos, this.fromClient, MAX_MESSAGE, f);
+      if (status == PARTIAL) {
+        if (this.reading) {
+          return new Step(WAIT);
+        }
+        this.reading = true;
+        return new Step(READ);
+      }
+      if (status == INVALID) {
+        return this.fail(f.error == TOO_LONG ? 1009 : 1002, f.error);
+      }
+      this.pos = f.end;
+      if (f.op == OP_PONG) {
+        this.releaseIfDrained();
+        continue;
+      }
+      if (f.op == OP_PING) {
+        const payload = this.buf.data.slice(f.start, f.end);
+        this.releaseIfDrained();
+        return new Step(PING, "", payload);
+      }
+      if (f.op == OP_CLOSE) {
+        // Answered with the peer's code (RFC 6455 §5.5.1); a malformed close frame is a
+        // protocol error (1002), a reason that isn't UTF-8 is 1007.
+        let reply: i64 = 1000;
+        if (f.len == 1) {
+          reply = 1002;
+        } else if (f.len >= 2) {
+          const data = this.buf.data;
+          const code = ((data[f.start] as i64) << 8) | (data[f.start + 1] as i64);
+          reply =
+            !validCloseCode(code)
+              ? 1002
+              : utf8Prefix(data, f.start + 2, f.end) != f.len - 2 ? 1007 : code;
+        }
+        this.done = true;
+        this.buf.take();
+        this.pos = 0;
+        return new Step(CLOSE, "", [], reply);
+      }
+      const whole = this.data(f);
+      if (whole != null) {
+        return whole;
+      }
+    }
+  }
+
+  // A text, binary or continuation frame: the message it completes, a failure, or null.
+  private data(f: Frame): Step | null {
+    if (f.op != OP_CONT && this.partOp < 0 && f.fin) {
+      // A message in one frame: straight out of the read buffer.
+      if (f.op == OP_BINARY) {
+        const data = this.buf.data.slice(f.start, f.end);
+        this.releaseIfDrained();
+        return new Step(BINARY, "", data);
+      }
+      const text = textOf(this.buf.data, f.start, f.end);
+      if (text == null) {
+        return this.fail(1007, "invalid UTF-8 in a text message");
+      }
+      this.releaseIfDrained();
+      return new Step(TEXT, text);
+    }
+    if (f.op == OP_CONT) {
+      if (this.partOp < 0) {
+        return this.fail(1002, "continuation without a message");
+      }
+      if ((this.part?.data.length ?? 0) as i64 + f.len > MAX_MESSAGE) {
+        return this.fail(1009, TOO_LONG);
+      }
+    } else {
+      if (this.partOp >= 0) {
+        return this.fail(1002, "new message inside a fragmented one");
+      }
+      this.partOp = f.op;
+      this.checked = 0;
+    }
+    // The buffer for the fragments exists only while a fragmented message is arriving.
+    const part = this.part ?? new ByteBuf();
+    part.append(this.buf.data.slice(f.start, f.end));
+    this.releaseIfDrained();
+    const size = part.data.length as i64;
+    if (this.partOp == OP_TEXT) {
+      // Invalid UTF-8 fails at the fragment that has it (§8.1); a character split across
+      // fragments is merely incomplete until the last one.
+      const valid = utf8Prefix(part.data, this.checked, size);
+      if (valid < 0 || (f.fin && this.checked + valid != size)) {
+        this.part = null;
+        this.partOp = -1;
+        return this.fail(1007, "invalid UTF-8 in a text message");
+      }
+      this.checked += valid;
+    }
+    if (!f.fin) {
+      this.part = part;
+      return null;
+    }
+    const op = this.partOp;
+    this.partOp = -1;
+    this.part = null;
+    const all = part.take();
+    if (op == OP_BINARY) {
+      return new Step(BINARY, "", all);
+    }
+    return new Step(TEXT, textOf(all, 0, size) ?? "");
+  }
+
+  private endRead() {
+    this.reading = false;
+    const ch = this.turn;
+    if (ch != null) {
+      for (let i: i64 = 0; i < this.waiting; i++) {
+        ch.trySend(true);
+      }
+    }
+    this.waiting = 0;
+  }
+
+  /** What the reading task read (nothing: the stream ended). */
+  feed(chunk: u8[]) {
+    if (chunk.length == 0) {
+      this.done = true;
+    } else if (this.pos >= (this.buf.data.length as i64)) {
+      this.buf.adopt(chunk);
+      this.pos = 0;
+    } else {
+      if (this.pos > 0) {
+        this.buf.dropFront(this.pos);
+        this.pos = 0;
+      }
+      this.buf.append(chunk);
+    }
+    this.endRead();
+  }
+
+  /** The reading task gave up (its read failed, or it was dropped). */
+  abandon() {
+    if (this.reading) {
+      this.endRead();
+    }
+  }
+
+  /** The channel that gets a value when the reading task is done, or null if none is reading. */
+  awaitTurn(): Channel<bool> | null {
+    if (!this.reading) {
+      return null;
+    }
+    this.waiting++;
+    const ch = this.turn ?? channel<bool>();
+    this.turn = ch;
+    return ch;
+  }
+
+  /** `close()` is done with the connection. */
+  release() {
+    this.released = true;
+    this.buf.take();
+    this.part = null;
+    this.pos = 0;
+    this.endRead();
+    const ch = this.turn;
+    if (ch != null) {
+      ch.close();
+      while (ch.tryReceive() != null) {}
+      this.turn = null;
+    }
+  }
+}

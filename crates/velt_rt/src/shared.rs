@@ -1,12 +1,12 @@
 //! Primitives behind `shared<T>`: reference counts (`velt_rt_rc_*`), atomic integers
-//! (`velt_rt_atomic_*`), the `Mutex<T>` lock (`velt_rt_mutex_*`) and the `RwLock<T>` lock
-//! (`velt_rt_rwlock_*`).
+//! (`velt_rt_atomic_*`) and the `RwLock<T>` lock (`velt_rt_rwlock_*`); the `Mutex<T>` lock is
+//! in [`crate::mutex`].
 //!
 //! All operate on memory owned by generated code (a refcount word, an `i64` cell, an 8-byte lock
 //! word inside the shared object), so none of them allocates.
 
-use lock_api::{RawMutex as _, RawRwLock as _, RawRwLockRecursive as _};
-use parking_lot::{RawMutex, RawRwLock};
+use lock_api::{RawRwLock as _, RawRwLockRecursive as _};
+use parking_lot::RawRwLock;
 use std::sync::atomic::{fence, AtomicI64, AtomicU64, Ordering};
 
 /// Refcounts above this abort (a leak of `isize::MAX` clones is a bug, as in `Arc`).
@@ -50,42 +50,6 @@ pub unsafe extern "C" fn velt_rt_atomic_load_i64(p: *mut i64) -> i64 {
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_atomic_store_i64(p: *mut i64, v: i64) {
     AtomicI64::from_ptr(p).store(v, Ordering::SeqCst)
-}
-
-/// Size of the lock word generated code reserves inside a `Mutex<T>` object (align 8).
-pub const MUTEX_SIZE: usize = 8;
-
-const _: () = assert!(std::mem::size_of::<RawMutex>() <= MUTEX_SIZE);
-const _: () = assert!(std::mem::align_of::<RawMutex>() <= 8);
-
-/// Initialize the 8-byte lock word at `p` (unlocked). No destroy call is needed.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_mutex_init(p: *mut u64) {
-    (p as *mut RawMutex).write(RawMutex::INIT);
-}
-
-/// Lock (blocking the thread; `with` bodies never await, so holds are short). The module lock
-/// stays held meanwhile: a `with` callback never takes it (task/local/module_state.rs).
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_mutex_lock(p: *mut u64) {
-    (*(p as *const RawMutex)).lock();
-    crate::task::local::mutex_locked();
-}
-
-/// [`velt_rt_mutex_lock`] from code that may run in a `read` callback (velt_vir: code not known
-/// to run outside one), where a `with` stops the program: the callback shares the `RwLock`'s
-/// value without counting it, which a `with` callback could not tell from what it changes.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_mutex_lock_checked(p: *mut u64) {
-    crate::read_mode::refuse_in_read("with");
-    velt_rt_mutex_lock(p)
-}
-
-/// Unlock a mutex locked by this thread's `velt_rt_mutex_lock`.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_mutex_unlock(p: *mut u64) {
-    crate::task::local::mutex_unlocked();
-    (*(p as *const RawMutex)).unlock();
 }
 
 /// The words generated code reserves at the start of an `RwLock<T>` (`lock`, padding, then
@@ -520,6 +484,7 @@ fn read_unlock_nested(r: &crate::hazard::Reader, how: u8) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mutex::{velt_rt_mutex_init, velt_rt_mutex_lock, velt_rt_mutex_unlock};
     use crate::rwlock_write::{velt_rt_rwlock_write, velt_rt_rwlock_write_unlock};
 
     fn tag(how: u64) -> u8 {
@@ -699,5 +664,50 @@ mod tests {
         }
         let cell = unsafe { Box::from_raw(shared as *mut Cell) };
         assert_eq!(cell.items.len(), 8000);
+    }
+
+    #[test]
+    fn a_parked_thread_gets_the_lock_from_threads_that_keep_taking_it() {
+        use std::sync::atomic::{AtomicBool, AtomicU64};
+        use std::time::{Duration, Instant};
+        // Liveness under the worst pattern for a waiter: four threads take the lock again right
+        // after releasing it, so a thread that parks loses most races for it. (The hand-off
+        // bounds the wait; here, on an M4, it took the 50 acquisitions from ~200 ms to ~10 ms.
+        // A bound that tight would be flaky on a loaded machine, so this checks only progress.)
+        let lock = Box::leak(Box::new(AtomicU64::new(0))).as_ptr() as usize;
+        let stop = std::sync::Arc::new(AtomicBool::new(false));
+        let hogs: Vec<_> = (0..4)
+            .map(|_| {
+                let stop = stop.clone();
+                std::thread::spawn(move || {
+                    while !stop.load(Ordering::Relaxed) {
+                        unsafe {
+                            velt_rt_mutex_lock(lock as *mut u64);
+                            for _ in 0..2000 {
+                                std::hint::spin_loop();
+                            }
+                            velt_rt_mutex_unlock(lock as *mut u64);
+                        }
+                    }
+                })
+            })
+            .collect();
+        std::thread::sleep(Duration::from_millis(20));
+        let start = Instant::now();
+        for _ in 0..50 {
+            unsafe {
+                velt_rt_mutex_lock(lock as *mut u64);
+                velt_rt_mutex_unlock(lock as *mut u64);
+            }
+        }
+        let took = start.elapsed();
+        stop.store(true, Ordering::Relaxed);
+        for h in hogs {
+            h.join().unwrap();
+        }
+        assert!(
+            took < Duration::from_secs(5),
+            "50 acquisitions took {took:?}"
+        );
     }
 }

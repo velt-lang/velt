@@ -249,7 +249,7 @@ CPU-bound task delays every task on its worker; placement counts live tasks, not
 stays on the worker whose driver registered it; spawn bursts and cross-worker request/reply are
 much slower than stealing (no batch steal-before-start yet, #997).
 Allocation per task: states ≤ 1 KiB (align ≤ 16) live inline in tokio's task cell (size classes
-64/256/1024), so a detached spawn is 1 allocation and a joinable one 2 (task + join handle).
+64/256/448/576/1024), so a detached spawn is 1 allocation and a joinable one 2 (task + join handle).
 Panics inside tasks print `panic: <msg>` and exit 101 (same hook as sync code).
 
 ### 2.1 Latches (`new Promise`)
@@ -295,6 +295,20 @@ it.
 | `velt_rt_chan_try_send` | `(u64 ch, const void* src, u64 size, void (*item_drop)(void*)) -> bool` | moves the item's bytes into the channel if it has room now; false when full or closed, and the item is dropped with `item_drop` |
 | `velt_rt_chan_receive` | `(u64 ch, u64 size, u64 payload, u64 slot_size) -> VeltFut*` | result: a `slot_size`-byte `T \| null` (see above), null once closed and drained |
 | `velt_rt_chan_try_receive` | `(u64 ch, void* dst, u64 size, u64 payload)` | writes the oldest item, or null, as a `T \| null` at `dst` |
+
+**Process-wide slots.** A module has no mutable globals; a std feature that needs one object
+per process (std/websocket's topics, slot 0) keeps a `shared<T>` in a runtime slot. Only the
+std module that owns a slot touches it, with the slot's one type: there is no generic accessor
+an importer could use to read a slot as another type. A slot is an unbounded channel holding at most one item, since a channel is what can own
+a typed Velt value: std locks the slot, takes the item out (making it the first time), puts a
+reference back and unlocks. The item is dropped with the channel's leftovers when the program
+ends. No suspension point may lie between lock and unlock.
+
+| Symbol | Signature | Notes |
+|---|---|---|
+| `velt_rt_global_lock` | `(u32 slot)` | locks slot `slot` (0..8; std assigns them) |
+| `velt_rt_global_unlock` | `(u32 slot)` | unlocks it, on the thread that locked it |
+| `velt_rt_global_chan` | `(u32 slot) -> u64` | the slot's channel, made on first use; called with the slot locked |
 
 ### 2.3 Abort signals (`velt:task`)
 
@@ -372,11 +386,11 @@ declaration in `std/` with velt_rt's and velt_rt_wasm's definitions.
 
 Runtime objects that Velt code holds (`VeltListener`, `VeltStream`, `VeltServer`, `VeltReq`,
 `VeltResp`, `VeltFetchResp`, `VeltRegex`, `VeltChild`, `VeltUdp`, `VeltFileReader`,
-`VeltFileWriter`, `VeltWs`, `VeltJson`) are **`uint64_t` handles**, 0 = none. Velt has no
+`VeltFileWriter`, `VeltJson`) are **`uint64_t` handles**, 0 = none. Velt has no
 pointer type, so `std` stores them in `u64` fields and passes `u64` arguments; the runtime takes
 and returns the same `u64`, in argument lists, results and result slots alike.
 - Handles that `std` wraps in **Copy structs** (`VeltListener`, `VeltStream`, `VeltUdp`,
-  `VeltChild`, `VeltFileReader`, `VeltFileWriter`, `VeltWs`) are keys into runtime handle tables
+  `VeltChild`, `VeltFileReader`, `VeltFileWriter`) are keys into runtime handle tables
   (`velt_rt::registry::Key<T>`: generation, shard and slot), because Velt code may hold several copies:
   releasing one (`close`/`free`) makes every copy dead. Later operations fail with `EBADF`
   (code 16, "handle is closed"), sync accessors return their documented empty value (port 0,
@@ -451,10 +465,12 @@ read or write of an opened file names no path (`EISDIR: illegal operation on a d
 read`), and a directory opened as a file is `EISDIR` on every system (Windows reports access
 denied).
 
-## 6. std/net (TCP)
+## 6. std/net (TCP, TLS over TCP)
 
 Handles (`VeltListener`, `VeltStream`: §3.2) are `Arc`s; in-flight operations keep the socket
-alive, so `close` may be called at any time.
+alive, so `close` may be called at any time. A `VeltStream` is a raw TCP socket, a TLS stream
+(rustls, §14.8) or an HTTP connection handed over by an upgrade (`velt_rt_http_req_take_upgrade`,
+§14.8); every operation below works on all of them, and one task may read while another writes.
 
 | Symbol | Signature | Result slot / notes |
 |---|---|---|
@@ -465,11 +481,15 @@ alive, so `close` may be called at any time.
 | `velt_rt_tcp_connect` | `(const VeltStr* addr) -> VeltFut*` | `IoResult<VeltStream>` |
 | `velt_rt_tcp_read` | `(VeltStream s, u64 max) -> VeltFut*` | `IoResult<VeltBytes>` 1..max bytes, empty = EOF; `max == 0` ⇒ 64 KiB |
 | `velt_rt_tcp_read_string` | `(VeltStream s, u64 max) -> VeltFut*` | `IoResult<VeltStr>` next chunk as UTF-8 (split characters are completed on the next call, invalid bytes → U+FFFD), `""` = EOF |
-| `velt_rt_tcp_write` | `(VeltStream s, const VeltStr* data) -> VeltFut*` | `IoResult<()>` after all bytes are written; `data` is copied |
+| `velt_rt_tcp_write` | `(VeltStream s, const VeltStr* data) -> VeltFut*` | `IoResult<()>` after all bytes are written; `data` is copied. Writes go out in call order: a write that cannot finish at the call goes on in its first poll (at the `await`, which a std `write` reaches at its call), and later ones wait for it |
 | `velt_rt_tcp_write_bytes` | `(VeltStream s, const VeltBytes* data) -> VeltFut*` | same for a `u8[]` |
+| `velt_rt_tcp_try_write` | `(VeltStream s, const VeltBytes* data) -> u64` | writes what a raw socket takes right now, without waiting; the number of bytes written (0: nothing now, an earlier write still going on, a closed handle, a TLS stream or one not set up yet, or an error, which the next write reports) |
 | `velt_rt_tcp_shutdown` | `(VeltStream s, VeltErr* out)` | half-close (peer reads EOF) |
 | `velt_rt_tcp_peer_addr` | `(VeltStream s, VeltStr* out)` | `"ip:port"` |
+| `velt_rt_tcp_abort` | `(VeltStream s)` | operations in flight and every later one fail with `ECONNABORTED` (a raw socket is shut down both ways, which ends a waiting read; the read then reports the abort, not EOF); the handle stays open |
 | `velt_rt_tcp_close` | `(VeltStream s)` | releases the handle |
+| `velt_rt_tcp_listen_tls` | `(const VeltStr* addr, const VeltStr* cert_pem, const VeltStr* key_pem, const VeltStr* alpn) -> VeltFut*` | `IoResult<VeltListener>` whose accepted streams are TLS; `alpn` = protocols to offer, comma-separated (`""`: none); bad PEM ⇒ `EINVAL`. `velt_rt_tcp_accept` returns once the TCP connection is accepted: the handshake (10 s limit) runs with the stream's first operation, which reports its failure |
+| `velt_rt_tcp_connect_tls` | `(const VeltStr* addr, const VeltStr* server_name, const VeltStr* ca_pem, const VeltStr* alpn) -> VeltFut*` | `IoResult<VeltStream>` once the handshake is done; `server_name` `""` = the host of `addr`; `ca_pem` = extra trusted CAs |
 
 ## 7. std/http (hyper 1.x, HTTP/1.1 keep-alive + h2c)
 
@@ -1080,6 +1100,7 @@ of a Copy element type, built from a Rust `Vec<T>` (same allocator), like `VeltS
 |---|---|---|
 | `velt_rt_random_bytes` | `(u64 n, VeltBytes* out)` | `n` bytes from the OS CSPRNG (`getrandom`); failure of the OS generator is fatal |
 | `velt_rt_random_u64` | `() -> u64` | uniform, OS CSPRNG |
+| `velt_rt_random_mask` | `() -> u32` | a WebSocket masking key (RFC 6455 §5.3): OS CSPRNG, from a per-thread buffer of 64 keys |
 | `velt_rt_local_offset_minutes` | `(i64 epoch_ms) -> i32` | minutes to add to UTC for local time at that instant (DST-aware: the C library tz database on Unix; on Windows `TZ` when it names UTC or a fixed offset (`Etc/GMT±N`), else the system time zone with its dynamic per-year DST rules, `SystemTimeToTzSpecificLocalTimeEx`) |
 
 ### 14.2 Regular expressions (`velt:regex`)
@@ -1206,36 +1227,22 @@ HTTP/1.1 server connections now support upgrades (`serve_connection_with_upgrade
 |---|---|---|
 | `velt_rt_http_serve_tls` | `(const VeltStr* addr, const VeltHandler* h, const VeltStr* cert_pem, const VeltStr* key_pem) -> VeltFut*` | as `velt_rt_http_serve`, over TLS; certificate chain + PKCS#8/PKCS#1/SEC1 key; bad PEM or mismatch ⇒ `EINVAL`; handshakes time out after 10 s |
 | `velt_rt_http_req_upgrade` | `(VeltReq r) -> u64` | key of the request's parked HTTP upgrade (0 = the request has no `Upgrade` header); an unclaimed upgrade is dropped when the handler's response is produced |
+| `velt_rt_http_req_take_upgrade` | `(VeltReq r) -> u64` | claims the request's parked upgrade (once) and returns its connection as a `VeltStream` (§6), 0 if there is none or it was claimed. The handler must return a `101` response; the stream's first operation waits until it is sent (what is written before goes out after it) and fails with `ECONNABORTED` if the upgrade does not happen. Over plain TCP the stream is the raw socket |
 
 ### 14.9 WebSockets (`velt:websocket`)
 
-`VeltWs` is an `Arc`; one task may wait in `receive` while others send. The runtime has its own
-RFC 6455 codec (`crates/velt_rt/src/ws/`): a send encodes the frame into the connection's queue
-at the call (call order is wire order, also before a server-side upgrade completes) and
-completes once it is queued; a writer task per connection sends everything queued in one
-write, and a send waits while more than 1 MiB is queued (backpressure). A write that fails is
-reported by the next send. The read buffer exists only while bytes are waiting to be parsed.
-Pings are answered automatically. No callbacks are stored.
-
-```c
-typedef struct { VeltWs ws; VeltResp response; } VeltWsAccept;                    // 16 bytes
-typedef struct { uint32_t kind; uint32_t pad; VeltStr text; VeltBytes data; } VeltWsMessage; // 56
-// kind: 0 = closed (no more messages), 1 = text (in `text`), 2 = binary (in `data`)
-```
-
-| Symbol | Signature | Notes |
-|---|---|---|
-| `velt_rt_ws_accept` | `(u64 upgrade_key, const VeltStr* sec_websocket_key, IoResult<VeltWsAccept>* out)` | claims the parked upgrade (§14.8) and builds the `101` response (handshake headers) the handler must return; the connection's first operation waits for the upgrade; `EINVAL` if not an upgrade request |
-| `velt_rt_ws_connect` | `(const VeltStr* url, const VeltStr* ca_pem) -> VeltFut*` | `IoResult<VeltWs>`; `ws://` / `wss://` (TLS as §14.8, extra CAs in `ca_pem`); HTTP/1.1 handshake |
-| `velt_rt_ws_send_text` | `(VeltWs ws, const VeltStr* text) -> VeltFut*` | `IoResult<()>` once the frame is queued; copied |
-| `velt_rt_ws_send_binary` | `(VeltWs ws, const VeltBytes* data) -> VeltFut*` | `IoResult<()>` once the frame is queued; copied |
-| `velt_rt_ws_receive` | `(VeltWs ws) -> VeltFut*` | `IoResult<VeltWsMessage>` |
-| `velt_rt_ws_close` | `(VeltWs ws, u32 code, const VeltStr* reason) -> VeltFut*` | `IoResult<()>` once the close frame (after everything queued before it) is written, or the peer stopped reading for 30 s; closing a closed connection succeeds; `EINVAL` (nothing sent) for a code outside 1000–1003, 1007–1014, 3000–4999 |
-| `velt_rt_ws_free` | `(VeltWs ws)` | releases the handle |
-| `velt_rt_ws_subscribe` | `(VeltWs ws, const VeltStr* topic) -> VeltFut*` | `IoResult<()>` once the connection is open; subscribing twice is a no-op |
-| `velt_rt_ws_unsubscribe` | `(VeltWs ws, const VeltStr* topic)` | leaves the topic (nothing if not subscribed or not open yet) |
-| `velt_rt_ws_publish` | `(const VeltStr* topic, const VeltStr* text, VeltWs except) -> u64` | text frame encoded once, queued for every subscriber but `except` (0: none) with at most 16 MiB queued; returns how many |
-| `velt_rt_ws_publish_binary` | `(const VeltStr* topic, const VeltBytes* data, VeltWs except) -> u64` | the same, binary |
+`velt:websocket` is written in Velt (`std/websocket.vlt`, `std/websocket/`) on std/net streams
+(§6): a client connects with `velt_rt_tcp_connect` / `velt_rt_tcp_connect_tls`, a server takes
+the upgraded connection with `velt_rt_http_req_take_upgrade` (§14.8). A `WebSocket` is a struct
+of the stream's handle and a `shared` value holding the connection's send queue and reader (one
+lock), so
+there is no `VeltWs` handle and no `velt_rt_ws_*` symbol. The runtime contributes byte helpers
+(rt_abi.md "Byte arrays"), `velt_rt_random_mask` and the process-wide slot of the topics
+(§2.2). A send encodes its frame into the connection's queue at the call (call order is wire
+order, also before a server-side upgrade completes) and completes once it is queued; a flusher
+task started by whoever queues into an idle connection writes everything queued in one write
+(a reply by the connection's reading task, with no more input waiting, is written at once
+instead), and a send waits while more than 1 MiB is queued. No callbacks are stored (§13.5).
 
 ### 14.10 HTML escaping (`velt:html`; stream std-2, additive)
 

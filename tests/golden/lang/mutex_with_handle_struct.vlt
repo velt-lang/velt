@@ -1,0 +1,39 @@
+// A struct of plain fields and `shared` values (a handle: std's `TcpStream`, a `WebSocket` with
+// its `shared` queue) may still be used after a `with` callback stored it in the locked value:
+// the copy the value got reaches the same shared objects, so the two are interchangeable.
+class Counter {
+  n: i64 = 0;
+}
+
+struct Handle {
+  id: u64;
+  name: string;
+  hits: shared<Mutex<Counter>>;
+  extra?: shared<i64>;
+
+  hit(): i64 {
+    return this.hits.with((c) => {
+      c.n += 1;
+      return c.n;
+    });
+  }
+}
+
+function main() {
+  const room = shared(new Mutex<Map<u64, Handle>>(new Map<u64, Handle>()));
+  const h = Handle { id: 7, name: "seven", hits: shared(new Mutex<Counter>(new Counter())) };
+  room.with((r) => {
+    r.set(h.id, h);
+  });
+  // Used after it was stored: counts on the object the stored copy reaches too.
+  console.log(h.hit(), h.hit());
+  const stored = room.with((r) => r.get(7));
+  console.log(stored?.hit() ?? -1, stored?.name ?? "none", h.hit());
+  const extra = shared(40);
+  const g = Handle { id: 8, name: "eight", hits: h.hits, extra: extra };
+  room.with((r) => {
+    r.set(g.id, g);
+  });
+  g.extra?.add(2);
+  console.log(room.with((r) => r.get(8)?.extra?.get() ?? -1), g.hit());
+}
