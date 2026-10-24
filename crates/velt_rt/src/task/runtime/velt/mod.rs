@@ -39,9 +39,10 @@ where
     handle
 }
 
+/// The workers running: the configured ones, and the spare ones started so far.
 pub(super) fn worker_count() -> usize {
     start();
-    worker::workers().len()
+    worker::started()
 }
 
 /// Tasks queued for a worker by other threads and not taken yet (quiet.rs).

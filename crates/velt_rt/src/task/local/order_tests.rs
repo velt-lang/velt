@@ -165,6 +165,39 @@ fn turns_follow_the_order() {
             velt_rt_timer_free(second);
         }
         assert!(ORDER.lock().is_empty());
+
+        // The earliest timer is a busy task's, not due when a later one of another task first
+        // takes a look: that one sleeps until it is due itself, instead of waiting for the busy
+        // task to wake the loop (it never polls while it runs on).
+        let task = super::super::gate::Gate::new_busy();
+        let (key, at) = ORDER.lock().insert(1, Some(task.clone()), None);
+        let first = Box::into_raw(Box::new(Handle {
+            key: Some(key),
+            at,
+            task: Some(task.clone()),
+            ran: None,
+        })) as u64;
+        let second = velt_rt_timer_new(20);
+        let t = std::time::Instant::now();
+        // The timeout ends a wait that would not: its wake polls the turn once more.
+        let took = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            turns(&[first, second], &[1]),
+        )
+        .await;
+        assert!(
+            t.elapsed() < std::time::Duration::from_secs(4),
+            "the busy task's timer held back the other"
+        );
+        assert_eq!(took.ok(), Some(vec![1]));
+        task.leave();
+        assert_eq!(turns(&[first, second], &[0]).await, [0]);
+        // SAFETY: live handles, not used again.
+        unsafe {
+            velt_rt_timer_free(first);
+            velt_rt_timer_free(second);
+        }
+        assert!(ORDER.lock().is_empty());
     });
 }
 

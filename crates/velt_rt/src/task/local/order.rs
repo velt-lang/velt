@@ -393,7 +393,7 @@ impl Order {
         if keys[0].is_none() {
             // Nothing is due: the earliest timer sleeps until it is (if it is not already).
             keys[1] = self
-                .earliest()
+                .earliest_for(current, true)
                 .map(|(k, _)| k)
                 .filter(|k| self.armed != Some(*k));
         }
@@ -406,8 +406,20 @@ impl Order {
 
     /// The first timer of the first list, and the list's expiry (whole milliseconds; the timer
     /// itself is due then or later).
+    #[cfg(test)]
     fn earliest(&self) -> Option<(Key, u64)> {
-        let &(expiry, gate) = self.heads.first()?;
+        self.earliest_for(None, false)
+    }
+
+    /// [`Order::earliest`], seen from the task with gate `current` (`skip_busy`: the lists of a
+    /// task busy in another poll are passed over). The timer that sleeps until the loop's next
+    /// wake-up must be one whose task can poll it: a task that runs on without a pause never
+    /// does, and the timers of the others would wait for that wake-up for as long as it runs.
+    fn earliest_for(&self, current: Option<&Arc<Gate>>, skip_busy: bool) -> Option<(Key, u64)> {
+        let &(expiry, gate) = self
+            .heads
+            .iter()
+            .find(|(_, g)| !skip_busy || !self.groups[g].busy_elsewhere(current))?;
         let group = &self.groups[&gate];
         let &(_, ms) = group.order.first()?;
         let (seq, _) = group.lists[&ms].timers.first()?;
@@ -421,7 +433,7 @@ impl Order {
     fn expired(&mut self, look: &Peek, current: Option<&Arc<Gate>>, key: Key) {
         self.loop_woke(look, current);
         self.armed = None;
-        if let Some((k, _)) = self.earliest().filter(|(k, _)| *k != key) {
+        if let Some((k, _)) = self.earliest_for(current, true).filter(|(k, _)| *k != key) {
             if let Some(w) = self.entry_mut(k).and_then(|e| e.waker.take()) {
                 w.wake();
             }
@@ -642,7 +654,8 @@ impl Future for Turn {
             }
         }
         if first.is_none() {
-            if let Some((k, expiry)) = order.earliest().filter(|(k, _)| *k == key) {
+            let earliest = order.earliest_for(current.as_ref(), true);
+            if let Some((k, expiry)) = earliest.filter(|(k, _)| *k == key) {
                 // The first timer of the first list, nothing due yet: it wakes the loop at the
                 // list's expiry, as Node's loop wakes then (its own due time may be later).
                 order.armed = Some(k);
@@ -650,6 +663,17 @@ impl Future for Turn {
                 let at = origin + Duration::from_millis(expiry);
                 if self.sleep_until(at, cx) {
                     order.expired(&look, current.as_ref(), key);
+                    cx.waker().wake_by_ref();
+                }
+            } else if let Some(g) = earliest
+                .and_then(|(k, _)| order.groups[&k.gate].gate.clone())
+                .filter(|g| !current.as_ref().is_some_and(|c| Arc::ptr_eq(c, g)))
+            {
+                // Another task's timer sleeps until the loop wakes. Should that task run on
+                // without a pause from now on, it never polls that sleep: its next poll wakes
+                // this turn, to sleep in its place.
+                g.note_blocking();
+                if order.earliest_for(current.as_ref(), true).map(|(k, _)| k) == Some(key) {
                     cx.waker().wake_by_ref();
                 }
             }

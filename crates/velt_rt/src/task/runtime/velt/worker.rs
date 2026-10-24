@@ -13,8 +13,10 @@
 //! ([`monitor`]) notices a worker that has started no poll for [`STALL_TICKS`] ticks while
 //! work waits, and does its duties for it: a turn of its reactor (its sockets' events and its
 //! due timers), then its inbox and half of its queue to another worker, a sleeping one if
-//! there is one, which becomes their home; each tick again while the stall lasts. So a timer
-//! of `main` still fires while a spawned task computes, and requests do not wait out a
+//! there is one, which becomes their home; each tick again while the stall lasts. When every
+//! other worker is stalled too (or there is no other: one core), a spare worker starts and
+//! takes them ([`SPARES`]). So a timer of `main` still fires while a spawned task computes,
+//! whatever the number of cores, and requests do not wait out a
 //! preempted worker (JSON on 512 connections, server and load generator sharing 9 cores: p99
 //! 4.4 ms before, against 3.4 ms with tokio's work stealing). The fast path pays two atomic
 //! stores per poll and a lock of its own queue; while every worker sleeps, so does the
@@ -80,9 +82,22 @@ pub(super) struct Shared {
     queued: AtomicUsize,
 }
 
+/// Workers beyond the configured ones that start when the monitor finds every worker stalled
+/// with work waiting (tasks that run on without a pause, as many as there are workers): each
+/// takes the work the stalled ones hold, and stays a worker from then on. Their state exists
+/// from the start (an idle reactor each); their threads start only then.
+const SPARES: usize = 4;
+
 static WORKERS: OnceLock<Vec<Shared>> = OnceLock::new();
+/// Every worker, the spare ones included (their threads may not have started).
 pub(super) fn workers() -> &'static [Shared] {
     WORKERS.get().map_or(&[], Vec::as_slice)
+}
+
+/// The workers whose threads have started: the first [`started`] of [`workers`].
+static STARTED: AtomicUsize = AtomicUsize::new(0);
+pub(super) fn started() -> usize {
+    STARTED.load(Ordering::SeqCst)
 }
 
 /// This thread's state when it is a worker.
@@ -245,18 +260,24 @@ fn new_shared() -> Shared {
 /// Starts `n` workers, each entering the compat bridge's tokio context for its whole life,
 /// and the monitor.
 pub(super) fn start(n: usize) {
-    let shared: Vec<Shared> = (0..n).map(|_| new_shared()).collect();
+    let shared: Vec<Shared> = (0..n + SPARES)
+        .map(|i| {
+            let w = new_shared();
+            if i >= n {
+                // Not started: asleep, as far as the others can tell (never woken, never
+                // offered work, nothing for the monitor to watch).
+                w.parked.store(true, Ordering::Relaxed);
+            }
+            w
+        })
+        .collect();
     if WORKERS.set(shared).is_err() {
         return;
     }
+    STARTED.store(n, Ordering::SeqCst);
     crate::task::quiet::add_workers(n);
     for index in 0..n {
-        let started = std::thread::Builder::new()
-            .name("velt-worker".into())
-            .spawn(move || run(index));
-        if let Err(e) = started {
-            fatal(e);
-        }
+        start_thread(index);
     }
     let started = std::thread::Builder::new()
         .name("velt-monitor".into())
@@ -264,6 +285,31 @@ pub(super) fn start(n: usize) {
     if let Err(e) = started {
         fatal(e);
     }
+}
+
+fn start_thread(index: usize) {
+    let started = std::thread::Builder::new()
+        .name("velt-worker".into())
+        .spawn(move || run(index));
+    if let Err(e) = started {
+        fatal(e);
+    }
+}
+
+/// Starts the next spare worker (the monitor's thread only); its index, or `None` once all
+/// have started.
+fn start_spare() -> Option<usize> {
+    let ws = workers();
+    let index = started();
+    let w = ws.get(index)?;
+    // Counted before it runs anything: the process is not quiet while it has work.
+    crate::task::quiet::add_workers(1);
+    w.progress
+        .store(TICKS.load(Ordering::Relaxed), Ordering::Relaxed);
+    w.parked.store(false, Ordering::SeqCst);
+    STARTED.store(index + 1, Ordering::SeqCst);
+    start_thread(index);
+    Some(index)
 }
 
 fn fatal(e: impl std::fmt::Display) -> ! {
@@ -423,7 +469,7 @@ fn maybe_help(index: usize, local: &Local) {
 /// The sleeping worker that did least: one with nothing to do, not a busy one between bursts.
 fn sleeping_helper(index: usize) -> Option<usize> {
     let ws = workers();
-    (0..ws.len())
+    (0..started())
         .filter(|&i| i != index && ws[i].parked.load(Ordering::SeqCst))
         .min_by_key(|&i| ws[i].work.load(Ordering::Relaxed))
 }
@@ -550,20 +596,24 @@ fn monitor() {
         }
         std::thread::sleep(TICK);
         let now = TICKS.fetch_add(1, Ordering::Relaxed) + 1;
-        for (i, w) in ws.iter().enumerate() {
-            let stalled = !w.parked.load(Ordering::SeqCst)
-                && now.saturating_sub(w.progress.load(Ordering::Relaxed)) >= STALL_TICKS;
-            if stalled {
-                rescue(i);
+        for (i, w) in ws.iter().enumerate().take(started()) {
+            if stalled(w, now) {
+                rescue(i, now);
             }
         }
     }
 }
 
+/// Awake and no task poll started for [`STALL_TICKS`] ticks up to tick `now`.
+fn stalled(w: &Shared, now: u64) -> bool {
+    !w.parked.load(Ordering::SeqCst)
+        && now.saturating_sub(w.progress.load(Ordering::Relaxed)) >= STALL_TICKS
+}
+
 /// Does the duties of worker `i`, stalled: a turn of its reactor (I/O and due timers), then its
 /// inbox (the tasks that woke) and half of its queue to another worker, which becomes their
 /// home. Pinned tasks stay.
-fn rescue(i: usize) {
+fn rescue(i: usize, now: u64) {
     let ws = workers();
     let w = &ws[i];
     if let Ok(mut r) = w.reactor.try_lock() {
@@ -599,11 +649,16 @@ fn rescue(i: usize) {
     if !pinned.is_empty() {
         send_back(w, pinned);
     }
-    let helper = sleeping_helper(i).or_else(|| {
-        (0..ws.len())
-            .filter(|&j| j != i)
-            .min_by_key(|&j| ws[j].queued.load(Ordering::Relaxed))
-    });
+    let others = || (0..started()).filter(|&j| j != i);
+    let least_queued = |j: &usize| ws[*j].queued.load(Ordering::Relaxed);
+    let helper = sleeping_helper(i)
+        .or_else(|| {
+            others()
+                .filter(|&j| !stalled(&ws[j], now))
+                .min_by_key(least_queued)
+        })
+        .or_else(start_spare)
+        .or_else(|| others().min_by_key(least_queued));
     let Some(helper) = helper else {
         send_back(w, moved);
         return;
