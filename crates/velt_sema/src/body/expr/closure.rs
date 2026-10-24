@@ -169,6 +169,7 @@ impl FnCx<'_, '_> {
         else {
             unreachable!("ICE: closure of a non-arrow expression")
         };
+        crate::check_work::add_closure_check();
         // A member of a recursive closure group (`closure_group`).
         let member = self.pending_member.take();
         if !type_params.is_empty() {

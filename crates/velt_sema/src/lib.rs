@@ -36,6 +36,7 @@ mod body;
 mod brands;
 mod call_sigs;
 mod callables;
+mod check_work;
 mod collect;
 mod copy_flow;
 mod copy_types;
@@ -121,6 +122,7 @@ use velt_syntax::ast;
 use crate::ctx::Item;
 use crate::defs::{DefInfo, FnKind};
 
+pub use check_work::{check_work, CheckWork};
 pub use dispatch::{instantiation_work, InstantiationWork};
 
 /// One parsed module handed to sema by the driver.
