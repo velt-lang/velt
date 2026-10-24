@@ -1,8 +1,9 @@
-// std/http/server/parse: HTTP/1.1 requests parsed in place (internal to std/http/server).
+// std/http/server/parse: HTTP/1.1 request heads parsed in place (internal to std/http/server).
 //
-// A connection reads into one buffer of its own (`Parser`); a request is ranges of that buffer
-// (`HttpRequest`), valid until the connection reads the next one, so nothing is copied or
-// allocated per request unless the handler asks for a string. The end of a request's head is
+// A connection reads into one buffer of its own (`Parser`); a request's head is ranges of that
+// buffer (`Head`), valid until the connection reads the next one, so nothing is copied or
+// allocated per request unless the handler asks for a string. The body is not waited for: the
+// request's reader (http/server/request.vlt) reads it as the handler asks. The end of a head is
 // found 16 bytes at a time (`velt:simd`: lanes equal to LF), and the headers the server acts on
 // are recognised by their length and one vector compare, letters folded to lowercase. Every
 // header's ranges are kept (four numbers each) for `header(name)`.
@@ -10,14 +11,9 @@
 // The byte strings the parser compares with are made per connection: module-level constants
 // that are not literals are module state, behind one process-wide lock (#1487).
 
-import { utf8DecodeLossy, utf8Encode } from "velt:encoding";
-import { IoResult } from "velt:io";
+import { utf8Encode } from "velt:encoding";
 import { TcpStream } from "velt:net";
 import { u8x16, mask8x16 } from "velt:simd";
-
-declare function velt_rt_str_eq_range(s: string, b: u8[], start: u64, end: u64): bool;
-declare function velt_rt_str_eq_range_ci(s: string, b: u8[], start: u64, end: u64): bool;
-declare function velt_rt_bytes_range_to_str(b: u8[], start: i64, end: i64): IoResult<string>;
 
 const CR: u8 = 13;
 const LF: u8 = 10;
@@ -40,10 +36,18 @@ export class BadRequest {
   }
 }
 
-/// A request, parsed in place in its connection's buffer: valid until the handler's response is
-/// sent (the connection then reads on). Strings are made only when asked for.
-export class HttpRequest {
-  /// The connection's buffer (shared with its parser, not copied).
+/// How a request's body is framed (`Head.bodyMode`).
+export const BODY_NONE: i64 = 0;
+/// The whole body is in the buffer already: `bodyStart..bodyEnd`.
+export const BODY_BUFFERED: i64 = 1;
+/// `bodyLength` bytes follow the head, not all read yet.
+export const BODY_LENGTH: i64 = 2;
+/// `Transfer-Encoding: chunked`.
+export const BODY_CHUNKED: i64 = 3;
+
+/// A request's head, parsed in place: ranges of the connection's buffer (`buf`), valid until
+/// the connection reads its next request.
+export class Head {
   buf: u8[] = [];
   methodStart: i64 = 0;
   methodEnd: i64 = 0;
@@ -51,95 +55,19 @@ export class HttpRequest {
   targetEnd: i64 = 0;
   /// Where the path ends (`?` or the target's end).
   pathEnd: i64 = 0;
-  bodyStart: i64 = 0;
-  bodyEnd: i64 = 0;
   /// The headers, four numbers each: name start, name end, value start, value end.
   heads: i64[] = [];
   /// The connection stays open after the response (HTTP/1.1 unless `Connection: close`).
   keepAlive: bool = true;
   /// `Expect: 100-continue` was sent.
   expectsContinue: bool = false;
-
-  /// Whether the method is `m` (`"GET"`), without making a string.
-  isMethod(m: string): bool {
-    return velt_rt_str_eq_range(m, this.buf, this.methodStart as u64, this.methodEnd as u64);
-  }
-
-  /// The method (`"GET"`, `"POST"`, ...).
-  method(): string {
-    return this.text(this.methodStart, this.methodEnd);
-  }
-
-  /// Whether the path (the target up to `?`) is `p`, without making a string.
-  pathIs(p: string): bool {
-    return velt_rt_str_eq_range(p, this.buf, this.targetStart as u64, this.pathEnd as u64);
-  }
-
-  /// The path: the request target up to `?` (`/users/1`).
-  path(): string {
-    return this.text(this.targetStart, this.pathEnd);
-  }
-
-  /// The query after `?`, without it, or `""`.
-  query(): string {
-    return this.pathEnd < this.targetEnd ? this.text(this.pathEnd + 1, this.targetEnd) : "";
-  }
-
-  /// The whole request target (`/users/1?full=1`).
-  target(): string {
-    return this.text(this.targetStart, this.targetEnd);
-  }
-
-  /// The value of header `name` (any case), the first one if there are several, or null.
-  header(name: string): string | null {
-    const i = this.find(name);
-    return i < 0 ? null : this.text(this.heads[i + 2], this.heads[i + 3]);
-  }
-
-  /// Whether header `name` (any case) was sent.
-  hasHeader(name: string): bool {
-    return this.find(name) >= 0;
-  }
-
-  /// The headers' names (as sent) and values, in order.
-  headers(): [string, string][] {
-    const out: [string, string][] = [];
-    for (let i: i64 = 0; i < (this.heads.length as i64); i += 4) {
-      out.push([
-        this.text(this.heads[i], this.heads[i + 1]),
-        this.text(this.heads[i + 2], this.heads[i + 3]),
-      ]);
-    }
-    return out;
-  }
-
-  /// The body's bytes (a copy).
-  body(): u8[] {
-    return this.buf.slice(this.bodyStart, this.bodyEnd);
-  }
-
-  /// The body as text (UTF-8; invalid bytes become U+FFFD).
-  bodyText(): string {
-    return utf8DecodeLossy(this.buf.slice(this.bodyStart, this.bodyEnd));
-  }
-
-  private find(name: string): i64 {
-    const n = Buffer.byteLength(name) as i64;
-    for (let i: i64 = 0; i < (this.heads.length as i64); i += 4) {
-      if (
-        this.heads[i + 1] - this.heads[i] == n &&
-        velt_rt_str_eq_range_ci(name, this.buf, this.heads[i] as u64, this.heads[i + 1] as u64)
-      ) {
-        return i;
-      }
-    }
-    return -1;
-  }
-
-  private text(start: i64, end: i64): string {
-    const r = velt_rt_bytes_range_to_str(this.buf, start, end);
-    return r.code == 0 ? r.value : utf8DecodeLossy(this.buf.slice(start, end));
-  }
+  /// HTTP/1.1 (chunked responses can be sent).
+  http11: bool = true;
+  /// The body's framing (`BODY_*`), its range when buffered, its length when not all read.
+  bodyMode: i64 = BODY_NONE;
+  bodyStart: i64 = 0;
+  bodyEnd: i64 = 0;
+  bodyLength: i64 = 0;
 }
 
 /// The lowercase name `s` (at most 16 bytes) as a vector, for [`Parser`]'s compares.
@@ -256,9 +184,11 @@ export class Parser {
     return -1;
   }
 
-  /// The next complete request into `req`: true when there is one, false when more input is
-  /// needed. Throws `BadRequest` for input that is not a request.
-  next(req: HttpRequest): bool {
+  /// The next request's head into `req`: true when there is one, false when more input is
+  /// needed. The body is not waited for: a body already read is `BODY_BUFFERED`, else the
+  /// request's reader reads it (`BODY_LENGTH`, `BODY_CHUNKED`). Throws `BadRequest` for input
+  /// that is not a request.
+  next(req: Head): bool {
     // Empty lines before a request are ignored (RFC 9112 §2.2).
     while (this.pos + 1 < this.end && this.buf[this.pos] == CR && this.buf[this.pos + 1] == LF) {
       this.pos += 2;
@@ -304,6 +234,7 @@ export class Parser {
       throw new BadRequest(400);
     }
     req.keepAlive = b[p + 7] == 49;
+    req.http11 = req.keepAlive;
     req.expectsContinue = false;
     p += 8;
     if (b[p] != CR || b[p + 1] != LF) {
@@ -360,24 +291,62 @@ export class Parser {
       }
     }
     if (chunked) {
-      // Chunked request bodies are not read yet: answered before the body, then closed.
-      throw new BadRequest(501);
+      // RFC 9112 §6.3: chunked wins over Content-Length (which a proxy must not pass on).
+      req.bodyMode = BODY_CHUNKED;
+      this.pos = headEnd;
+    } else if (length == 0) {
+      req.bodyMode = BODY_NONE;
+      this.pos = headEnd;
+    } else if (this.end - headEnd >= length) {
+      // Here already: the handler gets it without waiting.
+      req.bodyMode = BODY_BUFFERED;
+      req.bodyStart = headEnd;
+      req.bodyEnd = headEnd + length;
+      this.pos = headEnd + length;
+    } else {
+      req.bodyMode = BODY_LENGTH;
+      req.bodyLength = length;
+      this.pos = headEnd;
     }
-    if (length > this.maxBody) {
-      throw new BadRequest(413);
-    }
-    if (this.end - headEnd < length) {
-      // The body has not all arrived: room for it; the head is parsed again then.
-      if (headEnd + length + SLACK > (this.buf.length as i64)) {
-        this.room(headEnd + length - this.end);
-      }
-      return false;
-    }
-    req.bodyStart = headEnd;
-    req.bodyEnd = headEnd + length;
-    this.pos = headEnd + length;
     this.scanned = this.pos;
     return true;
+  }
+
+  /// The bytes read and not taken yet.
+  available(): i64 {
+    return this.end - this.pos;
+  }
+
+  /// The next `n` bytes read (`n <= available()`), copied, and taken.
+  take(n: i64): u8[] {
+    const out = this.buf.slice(this.pos, this.pos + n);
+    this.pos += n;
+    return out;
+  }
+
+  /// Drops the next `n` bytes read (`n <= available()`).
+  skip(n: i64) {
+    this.pos += n;
+  }
+
+  /// The index of the next LF in what was read, or -1.
+  lineEnd(): i64 {
+    for (let i = this.pos; i < this.end; i++) {
+      if (this.buf[i] == LF) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  /// The byte at index `i` of the buffer.
+  byteAt(i: i64): u8 {
+    return this.buf[i];
+  }
+
+  /// The largest body `body()` collects.
+  maxBodySize(): i64 {
+    return this.maxBody;
   }
 
   /// A Content-Length value: its digits only, the same as an earlier one if repeated.

@@ -1,0 +1,169 @@
+// check: no leaks
+// velt:http/server streaming: a response written piece by piece (chunked; to an HTTP/1.0 client
+// up to the connection's end), Server-Sent Events, a proxy piping an upstream body through, an
+// upload read piece by piece (chunked or Content-Length, 100 Continue), an unread body skipped
+// before the next request, and a client that goes away mid-stream (the write throws and the
+// request's signal aborts).
+import { connect } from "velt:net";
+import { HttpRequest, HttpResponse, serve } from "velt:http/server";
+
+async function raw(port: number, text: string): Promise<string> {
+  const c = await connect(`127.0.0.1:${port}`);
+  await c.write(text);
+  c.shutdown();
+  let all = "";
+  while (true) {
+    const chunk = await c.readString();
+    if (chunk == "") {
+      break;
+    }
+    all += chunk;
+  }
+  c.close();
+  return all.replace(/Date: [^\r]*\r\n/g, "");
+}
+
+class Gone {
+  what: string = "not yet";
+}
+
+async function main() {
+  const gone = shared(new Mutex<Gone>(new Gone()));
+  const seen = gone.clone();
+  const server = await serve({ port: 0 }, async (req: HttpRequest, res: HttpResponse) => {
+    if (req.pathIs("/count")) {
+      const s = await res.stream();
+      for (let i = 1; i <= 3; i++) {
+        await s.write(`piece ${i}\n`);
+      }
+      await s.end();
+    } else if (req.pathIs("/events")) {
+      const events = await res.sse();
+      await events.send("hello");
+      await events.send("two\nlines", "update", "7");
+      await events.comment("ping");
+      await events.end();
+    } else if (req.pathIs("/upload")) {
+      let pieces = 0;
+      let bytes = 0;
+      let piece = await req.read();
+      while (piece != null) {
+        pieces++;
+        bytes += piece.length;
+        piece = await req.read();
+      }
+      res.send(`${bytes} bytes${pieces > 1 ? " in pieces" : ""}`);
+    } else if (req.pathIs("/ignore")) {
+      res.send("ignored the body");
+    } else if (req.pathIs("/forever")) {
+      const signal = res.signal();
+      const s = await res.stream("application/octet-stream");
+      const block: u8[] = Buffer.alloc(65536);
+      try {
+        while (true) {
+          await s.write(block);
+        }
+      } catch (e) {
+        const what = `write failed, signal aborted: ${signal.aborted}`;
+        seen.with((g) => {
+          g.what = what;
+        });
+      }
+    } else if (req.pathIs("/proxy")) {
+      const upstream = await fetch(`http://127.0.0.1:${req.query()}/count`);
+      const s = await res.stream();
+      for await (const chunk of upstream.body!) {
+        await s.write(chunk);
+      }
+      // Left open: the server ends it.
+    } else {
+      res.status(404);
+      res.send("no");
+    }
+  });
+  const base = `http://127.0.0.1:${server.port}`;
+
+  // Pieces arrive as they are written.
+  const counted = await fetch(`${base}/count`);
+  console.log(
+    "count:",
+    counted.headers.get("transfer-encoding"),
+    JSON.stringify(await counted.text()),
+  );
+
+  // The wire format: chunk sizes, then a last empty chunk.
+  const wire = await raw(server.port, "GET /count HTTP/1.1\r\nConnection: close\r\n\r\n");
+  console.log("chunked on the wire:", JSON.stringify(wire.substring(wire.indexOf("\r\n\r\n") + 4)));
+
+  const sse = await fetch(`${base}/events`);
+  console.log("sse:", sse.headers.get("content-type"), sse.headers.get("cache-control"));
+  console.log(JSON.stringify(await sse.text()));
+
+  // A proxy: an upstream body piped through without being collected.
+  const proxied = await fetch(`${base}/proxy?${server.port}`);
+  console.log("proxy:", JSON.stringify(await proxied.text()));
+
+  // HTTP/1.0: no chunking, the body ends with the connection.
+  const old = await raw(server.port, "GET /count HTTP/1.0\r\n\r\n");
+  console.log(
+    "HTTP/1.0:",
+    old.includes("Transfer-Encoding"),
+    old.includes("Connection: close"),
+    old.endsWith("piece 3\n"),
+  );
+
+  // An upload in pieces, chunked and with Content-Length.
+  const c = await connect(`127.0.0.1:${server.port}`);
+  await c.write("POST /upload HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n");
+  for (let i = 0; i < 4; i++) {
+    await c.write("8000\r\n" + "x".repeat(32768) + "\r\n");
+    await sleep(5);
+  }
+  await c.write("0\r\n\r\n");
+  let reply = "";
+  while (!reply.includes("in pieces") && !reply.includes(" bytes")) {
+    reply += await c.readString();
+  }
+  console.log("chunked upload:", reply.substring(reply.lastIndexOf("\r\n") + 2));
+  c.close();
+  const big = await fetch(`${base}/upload`, { method: "POST", body: "y".repeat(300000) });
+  console.log("upload:", await big.text());
+
+  // Expect: 100-continue: the body is sent after the interim response.
+  const e = await connect(`127.0.0.1:${server.port}`);
+  await e.write("POST /upload HTTP/1.1\r\nContent-Length: 5\r\nExpect: 100-continue\r\n\r\n");
+  let interim = "";
+  while (!interim.includes("\r\n\r\n")) {
+    interim += await e.readString();
+  }
+  console.log("expect:", interim.split("\r\n")[0]);
+  await e.write("hello");
+  let after = "";
+  while (!after.endsWith("5 bytes")) {
+    after += await e.readString();
+  }
+  console.log("after continue:", after.substring(after.lastIndexOf("\r\n") + 2));
+  e.close();
+
+  // A body the handler does not read is skipped: the next request on the connection works.
+  const skipped = await raw(
+    server.port,
+    "POST /ignore HTTP/1.1\r\nContent-Length: 6\r\n\r\nunreadGET /count HTTP/1.1\r\nConnection: close\r\n\r\n",
+  );
+  console.log("skipped:", skipped.includes("ignored the body"), skipped.includes("piece 3"));
+
+  // A client that goes away mid-stream.
+  const f = await connect(`127.0.0.1:${server.port}`);
+  await f.write("GET /forever HTTP/1.1\r\n\r\n");
+  await f.read();
+  f.abort();
+  f.close();
+  let state = "not yet";
+  for (let i = 0; i < 200 && state == "not yet"; i++) {
+    await sleep(10);
+    state = gone.with((g) => g.what);
+  }
+  console.log("gone:", state);
+
+  server.close();
+}

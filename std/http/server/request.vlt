@@ -1,0 +1,359 @@
+// std/http/server/request: `HttpRequest`, a request's head (parsed in place, http/server/parse.vlt)
+// and its body, read as the handler asks (internal to std/http/server, which exports the class).
+//
+// The handler runs once the head has arrived; the body comes through `read()` (the next piece,
+// for uploads and proxies: nothing is held but the connection's buffer) or `body()` (all of it,
+// up to the server's `maxBodySize`). A body framed by Content-Length is read as it arrives; a
+// chunked one (RFC 9112 §7.1) is decoded, its extensions and trailers skipped. A client that
+// sent `Expect: 100-continue` gets `100 Continue` when the handler first reads. What the handler
+// leaves unread is skipped before the connection's next request (`finish`).
+
+import { utf8DecodeLossy } from "velt:encoding";
+import { IoError, IoResult } from "velt:io";
+import { TcpStream } from "velt:net";
+import {
+  BODY_BUFFERED,
+  BODY_CHUNKED,
+  BODY_LENGTH,
+  BODY_NONE,
+  Head,
+  Parser,
+} from "velt:http/server/parse";
+
+declare function velt_rt_str_eq_range(s: string, b: u8[], start: u64, end: u64): bool;
+declare function velt_rt_str_eq_range_ci(s: string, b: u8[], start: u64, end: u64): bool;
+declare function velt_rt_bytes_range_to_str(b: u8[], start: i64, end: i64): IoResult<string>;
+
+const CR: u8 = 13;
+const LF: u8 = 10;
+
+/// Where a chunked body's decoding is.
+const CHUNK_SIZE: i64 = 0; // the next chunk-size line
+const CHUNK_DATA: i64 = 1; // `left` bytes of the current chunk to go
+const CHUNK_END: i64 = 2; // the CR LF after a chunk's data
+const CHUNK_TRAILERS: i64 = 3; // trailer lines up to an empty one
+const CHUNK_DONE: i64 = 4;
+
+/// The body a handler collects (`body()`) is larger than the server's `maxBodySize`.
+export class BodyTooLarge extends Error {
+  constructor(limit: i64) {
+    super(`request body larger than ${limit} bytes`);
+  }
+}
+
+/// A request: its head, parsed in place in its connection's buffer, and its body, read on
+/// demand. Valid while the handler runs.
+export class HttpRequest {
+  /// The head (internal).
+  head: Head = new Head();
+  // The connection, its parser and how long a read may wait for input (internal, set once per
+  // connection by the server). Nothing here is shared with the response, so a handler may pass
+  // what it reads from one to the other.
+  private parser: Parser;
+  private conn: TcpStream;
+  private idle: i64;
+  // The body: bytes of the current chunk (or of the whole body) still to read, the chunked
+  // decoding's state, whether it was read to its end, whether 100 Continue went out.
+  private left: i64 = 0;
+  private chunk: i64 = CHUNK_DONE;
+  private ended: bool = true;
+  private continued: bool = false;
+  private overLimit: bool = false;
+
+  constructor(parser: Parser, conn: TcpStream, idle: i64) {
+    this.parser = parser;
+    this.conn = conn;
+    this.idle = idle;
+  }
+
+  /// A new request's head was parsed into `head` (internal).
+  begin() {
+    const h = this.head;
+    this.continued = false;
+    this.overLimit = false;
+    this.ended = h.bodyMode == BODY_NONE;
+    this.left = h.bodyMode == BODY_LENGTH ? h.bodyLength : 0;
+    this.chunk = h.bodyMode == BODY_CHUNKED ? CHUNK_SIZE : CHUNK_DONE;
+  }
+
+  /// The connection stays open after the response (HTTP/1.1 unless `Connection: close`).
+  get keepAlive(): bool {
+    return this.head.keepAlive;
+  }
+
+  /// Whether the method is `m` (`"GET"`), without making a string.
+  isMethod(m: string): bool {
+    const h = this.head;
+    return velt_rt_str_eq_range(m, h.buf, h.methodStart as u64, h.methodEnd as u64);
+  }
+
+  /// The method (`"GET"`, `"POST"`, ...).
+  method(): string {
+    return this.text(this.head.methodStart, this.head.methodEnd);
+  }
+
+  /// Whether the path (the target up to `?`) is `p`, without making a string.
+  pathIs(p: string): bool {
+    const h = this.head;
+    return velt_rt_str_eq_range(p, h.buf, h.targetStart as u64, h.pathEnd as u64);
+  }
+
+  /// The path: the request target up to `?` (`/users/1`).
+  path(): string {
+    return this.text(this.head.targetStart, this.head.pathEnd);
+  }
+
+  /// The query after `?`, without it, or `""`.
+  query(): string {
+    const h = this.head;
+    return h.pathEnd < h.targetEnd ? this.text(h.pathEnd + 1, h.targetEnd) : "";
+  }
+
+  /// The whole request target (`/users/1?full=1`).
+  target(): string {
+    return this.text(this.head.targetStart, this.head.targetEnd);
+  }
+
+  /// The value of header `name` (any case), the first one if there are several, or null.
+  header(name: string): string | null {
+    const i = this.find(name);
+    return i < 0 ? null : this.text(this.head.heads[i + 2], this.head.heads[i + 3]);
+  }
+
+  /// Whether header `name` (any case) was sent.
+  hasHeader(name: string): bool {
+    return this.find(name) >= 0;
+  }
+
+  /// The headers' names (as sent) and values, in order.
+  headers(): [string, string][] {
+    const out: [string, string][] = [];
+    const heads = this.head.heads;
+    for (let i: i64 = 0; i < (heads.length as i64); i += 4) {
+      out.push([this.text(heads[i], heads[i + 1]), this.text(heads[i + 2], heads[i + 3])]);
+    }
+    return out;
+  }
+
+  /**
+   * The next piece of the body (as it arrives, decoded when chunked), or null at its end. For
+   * bodies of any size: what was read is not kept.
+   */
+  async read(): Promise<u8[] | null> {
+    const h = this.head;
+    if (this.ended) {
+      return null;
+    }
+    if (h.bodyMode == BODY_BUFFERED) {
+      this.ended = true;
+      return h.buf.slice(h.bodyStart, h.bodyEnd);
+    }
+    while (true) {
+      const piece = this.piece();
+      if (piece != null || this.ended) {
+        return piece;
+      }
+      await this.fill();
+    }
+  }
+
+  /**
+   * The whole body (what `read()` has not taken yet). Throws `BodyTooLarge` beyond the server's
+   * `maxBodySize`.
+   */
+  async body(): Promise<u8[]> {
+    const h = this.head;
+    const limit = this.parser.maxBodySize();
+    const declared = h.bodyMode == BODY_BUFFERED ? h.bodyEnd - h.bodyStart : h.bodyLength;
+    if ((h.bodyMode == BODY_BUFFERED || h.bodyMode == BODY_LENGTH) && declared > limit) {
+      this.overLimit = true;
+      throw new BodyTooLarge(limit);
+    }
+    if (h.bodyMode == BODY_BUFFERED && !this.ended) {
+      this.ended = true;
+      return h.buf.slice(h.bodyStart, h.bodyEnd);
+    }
+    let all: u8[] = [];
+    let piece = await this.read();
+    while (piece != null) {
+      if ((all.length + piece.length) as i64 > limit) {
+        this.overLimit = true;
+        throw new BodyTooLarge(limit);
+      }
+      all = all.length == 0 ? piece : all.concat(piece);
+      piece = await this.read();
+    }
+    return all;
+  }
+
+  /// Whether the body was read to its end, or there is none (internal).
+  bodyRead(): bool {
+    return this.ended;
+  }
+
+  /// Whether `body()` found the body larger than the server's limit (internal: answered 413).
+  bodyTooLarge(): bool {
+    return this.overLimit;
+  }
+
+  /// The whole body as text (UTF-8; invalid bytes become U+FFFD).
+  async bodyText(): Promise<string> {
+    return utf8DecodeLossy(await this.body());
+  }
+
+  /**
+   * Skips what the handler did not read (internal): true when the connection can go on to its
+   * next request, false when the rest is too large to skip (the connection then closes).
+   */
+  async finish(): Promise<bool> {
+    let skipped: i64 = 0;
+    const limit = this.parser.maxBodySize();
+    while (!this.ended) {
+      const piece = await this.read();
+      if (piece != null) {
+        skipped += piece.length as i64;
+        if (skipped > limit) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  /// The next piece of the body from what was read, or null (then `ended`, or more is needed).
+  private piece(): u8[] | null {
+    const p = this.parser;
+    if (this.chunk == CHUNK_DONE) {
+      // A Content-Length body.
+      const n = p.available() < this.left ? p.available() : this.left;
+      if (n == 0) {
+        return null;
+      }
+      this.left -= n;
+      this.ended = this.left == 0;
+      return p.take(n);
+    }
+    while (true) {
+      if (this.chunk == CHUNK_DATA) {
+        const n = p.available() < this.left ? p.available() : this.left;
+        if (n == 0) {
+          return null;
+        }
+        this.left -= n;
+        if (this.left == 0) {
+          this.chunk = CHUNK_END;
+        }
+        return p.take(n);
+      }
+      // The other states each take one line.
+      const lf = p.lineEnd();
+      if (lf < 0) {
+        if (p.available() > 4096) {
+          throw new IoError("EINVAL", "invalid chunked request body: a line too long");
+        }
+        return null;
+      }
+      const length = this.lineLength(lf);
+      if (this.chunk == CHUNK_END) {
+        if (length != 0) {
+          throw new IoError("EINVAL", "invalid chunked request body: no CR LF after a chunk");
+        }
+        this.chunk = CHUNK_SIZE;
+      } else if (this.chunk == CHUNK_SIZE) {
+        const size = this.chunkSize(lf);
+        this.left = size;
+        this.chunk = size == 0 ? CHUNK_TRAILERS : CHUNK_DATA;
+      } else if (length == 0) {
+        // The empty line after the trailers ends the body.
+        this.skipLine(lf);
+        this.chunk = CHUNK_DONE;
+        this.ended = true;
+        return null;
+      }
+      this.skipLine(lf);
+    }
+  }
+
+  /// The length of the line ending at LF index `lf`, without its CR LF.
+  private lineLength(lf: i64): i64 {
+    let n = lf - this.parser.pos;
+    if (n > 0 && this.parser.byteAt(lf - 1) == CR) {
+      n--;
+    }
+    return n;
+  }
+
+  /// Takes the line ending at LF index `lf`.
+  private skipLine(lf: i64) {
+    this.parser.skip(lf + 1 - this.parser.pos);
+  }
+
+  /// The chunk size on the line ending at `lf` (hex digits, up to `;` or the line's end).
+  private chunkSize(lf: i64): i64 {
+    const p = this.parser;
+    let size: i64 = 0;
+    let digits = 0;
+    for (let i = this.parser.pos; i < lf; i++) {
+      const c = p.byteAt(i) as i64;
+      let d: i64 = -1;
+      if (c >= 48 && c <= 57) {
+        d = c - 48;
+      } else if ((c | 32) >= 97 && (c | 32) <= 102) {
+        d = (c | 32) - 87;
+      } else if (c == 59 || c == 13 || c == 32 || c == 9) {
+        break;
+      } else {
+        throw new IoError("EINVAL", "invalid chunked request body: a bad chunk size");
+      }
+      if (size > 0x7ffffffffffff) {
+        throw new IoError("EINVAL", "invalid chunked request body: a chunk too large");
+      }
+      size = size * 16 + d;
+      digits++;
+    }
+    if (digits == 0) {
+      throw new IoError("EINVAL", "invalid chunked request body: no chunk size");
+    }
+    return size;
+  }
+
+  /// Reads more of the body from the connection (sending 100 Continue first if asked for).
+  private async fill() {
+    if (this.head.expectsContinue && !this.continued) {
+      this.continued = true;
+      await this.conn.write("HTTP/1.1 100 Continue\r\n\r\n");
+    }
+    while (true) {
+      const n = this.parser.readFrom(this.conn);
+      if (n == null) {
+        throw new IoError("ECONNRESET", "the client ended the request body early");
+      }
+      if (n > 0) {
+        return;
+      }
+      if (!(await this.conn.readableWithin(this.idle as number))) {
+        throw new IoError("ETIMEDOUT", "the request body did not arrive in time");
+      }
+    }
+  }
+
+  private find(name: string): i64 {
+    const n = Buffer.byteLength(name) as i64;
+    const h = this.head;
+    for (let i: i64 = 0; i < (h.heads.length as i64); i += 4) {
+      if (
+        h.heads[i + 1] - h.heads[i] == n &&
+        velt_rt_str_eq_range_ci(name, h.buf, h.heads[i] as u64, h.heads[i + 1] as u64)
+      ) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  private text(start: i64, end: i64): string {
+    const buf = this.head.buf;
+    const r = velt_rt_bytes_range_to_str(buf, start, end);
+    return r.code == 0 ? r.value : utf8DecodeLossy(buf.slice(start, end));
+  }
+}

@@ -1,0 +1,532 @@
+// std/http/server/response: `HttpResponse`, `HttpStream` and `EventStream` (internal to
+// std/http/server, which exports them).
+//
+// A response written at once (`send` and the like) goes into one buffer per connection, so the
+// responses to the requests one read brought leave in one write; the fixed parts of a head are
+// encoded per response and the `Date` value once a second. A streamed response (`stream`, `sse`)
+// writes its head at once and each piece as one chunk (`Transfer-Encoding: chunked`; to an
+// HTTP/1.0 client, the body ends with the connection): `write` resolves once the connection took
+// the piece, so a fast producer waits for a slow client (backpressure), and a client that went
+// away makes it throw and aborts the request's signal (cancellation).
+
+import { utf8Encode } from "velt:encoding";
+import { TcpStream } from "velt:net";
+import { AbortController, AbortSignal } from "velt:task";
+import { Uint8Array } from "velt:typed_array/uint8_array";
+
+declare function velt_rt_bytes_set_str(dst: u8[], s: string, offset: u64): bool;
+
+const CR: u8 = 13;
+const LF: u8 = 10;
+const SP: u8 = 32;
+/// The response buffer a connection starts with.
+const INITIAL_OUT: i64 = 16384;
+// Indexes of `HttpResponse.types`.
+const TYPE_TEXT: i64 = 0;
+const TYPE_BYTES: i64 = 1;
+const TYPE_JSON: i64 = 2;
+const TYPE_HTML: i64 = 3;
+const TYPE_SSE: i64 = 4;
+
+/**
+ * A response being written: `status`, `header`, then one of the `send` methods (the whole
+ * response) or `stream` / `sse` (a body written piece by piece). One per connection, reused for
+ * its requests; valid while the handler runs.
+ */
+export class HttpResponse {
+  /** The responses not yet written to the connection (internal). */
+  buf: u8[] = Buffer.alloc(INITIAL_OUT as usize);
+  length: i64 = 0;
+  private conn: TcpStream;
+  private statusCode: number = 200;
+  /** The headers set for this response, encoded (`name: value\r\n` each). */
+  private extra: u8[] = Buffer.alloc(256);
+  private extraLength: i64 = 0;
+  private hasType: bool = false;
+  private keepAlive: bool = true;
+  private http11: bool = true;
+  private done: bool = false;
+  /** A streamed body is being written, chunked (HTTP/1.1) or until the connection closes. */
+  private streaming: bool = false;
+  private chunked: bool = false;
+  // `Date` header bytes for `dateSecond`.
+  private date: u8[] = [];
+  private dateSecond: i64 = -1;
+  // Aborted when a write to the client fails or the server closes (made when first asked for).
+  private stopped: AbortSignal;
+  private failed: AbortController = new AbortController();
+  private either: AbortSignal | null = null;
+  // The fixed parts of a head and the default content types, encoded once per connection
+  // (not module state, #1487), copied as bytes.
+  private ok: u8[] = utf8Encode("HTTP/1.1 200 OK\r\nServer: Velt\r\nDate: ");
+  private statusStart: u8[] = utf8Encode("HTTP/1.1 ");
+  private serverDate: u8[] = utf8Encode("\r\nServer: Velt\r\nDate: ");
+  private typeHead: u8[] = utf8Encode("\r\nContent-Type: ");
+  private lengthHead: u8[] = utf8Encode("\r\nContent-Length: ");
+  private chunkedHead: u8[] = utf8Encode("\r\nTransfer-Encoding: chunked");
+  private closeHead: u8[] = utf8Encode("\r\nConnection: close");
+  private types: u8[][] = [
+    utf8Encode("text/plain; charset=utf-8"),
+    utf8Encode("application/octet-stream"),
+    utf8Encode("application/json"),
+    utf8Encode("text/html; charset=utf-8"),
+    utf8Encode("text/event-stream"),
+  ];
+
+  constructor(conn: TcpStream, stopped: AbortSignal) {
+    this.conn = conn;
+    this.stopped = stopped;
+  }
+
+  /** Sets the status code (200 by default). */
+  status(code: number) {
+    this.statusCode = code;
+  }
+
+  /** Adds header `name: value` (a `content-type` replaces the default one). */
+  header(name: string, value: string) {
+    const n = (Buffer.byteLength(name) + Buffer.byteLength(value) + 4) as i64;
+    if (this.extraLength + n > (this.extra.length as i64)) {
+      const grown: u8[] = Buffer.alloc(((this.extraLength + n) * 2) as usize);
+      grown.set(this.extra.slice(0, this.extraLength), 0);
+      this.extra = grown;
+    }
+    let at = this.extraLength;
+    velt_rt_bytes_set_str(this.extra, name, at as u64);
+    at += Buffer.byteLength(name) as i64;
+    this.extra[at] = 58;
+    this.extra[at + 1] = SP;
+    at += 2;
+    velt_rt_bytes_set_str(this.extra, value, at as u64);
+    at += Buffer.byteLength(value) as i64;
+    this.extra[at] = CR;
+    this.extra[at + 1] = LF;
+    this.extraLength = at + 2;
+    if (name.length == 12 && name.toLowerCase() == "content-type") {
+      this.hasType = true;
+    }
+  }
+
+  /** Writes the response with body `body` (default type `text/plain; charset=utf-8`). */
+  send(body: string) {
+    const n = Buffer.byteLength(body) as i64;
+    this.head(TYPE_TEXT, null, n);
+    this.textOf(body, n);
+  }
+
+  /** Writes the response with body `body` (default type `application/octet-stream`). */
+  sendBytes(body: u8[]) {
+    this.head(TYPE_BYTES, null, body.length as i64);
+    this.bytes(body);
+  }
+
+  /** Writes the response with JSON text `json` (type `application/json`). */
+  json(json: string) {
+    const n = Buffer.byteLength(json) as i64;
+    this.head(TYPE_JSON, null, n);
+    this.textOf(json, n);
+  }
+
+  /** Writes the response with HTML `html` (type `text/html; charset=utf-8`). */
+  html(html: string) {
+    const n = Buffer.byteLength(html) as i64;
+    this.head(TYPE_HTML, null, n);
+    this.textOf(html, n);
+  }
+
+  /**
+   * Starts a streamed response (default type `text/plain; charset=utf-8`): its head goes out
+   * now, the body piece by piece through the returned stream (`write`, `end`). For large or
+   * unbounded bodies, proxies and Server-Sent Events: nothing of the body is buffered beyond
+   * the piece being written.
+   */
+  async stream(type: string = "text/plain; charset=utf-8"): Promise<HttpStream> {
+    this.head(-1, type, -1);
+    await this.flush();
+    return new HttpStream(this);
+  }
+
+  /**
+   * Starts a Server-Sent Events response (`text/event-stream`, not cached): `send` writes an
+   * event, `comment` a line clients ignore (a keep-alive), `end` finishes it.
+   */
+  async sse(): Promise<EventStream> {
+    this.header("Cache-Control", "no-cache");
+    this.head(TYPE_SSE, null, -1);
+    await this.flush();
+    return new EventStream(new HttpStream(this));
+  }
+
+  /**
+   * Aborted when the client can no longer be written to (it went away while a response was
+   * being written) or the server closes: give it to the work done for this request.
+   */
+  signal(): AbortSignal {
+    const either = this.either;
+    if (either != null) {
+      return either;
+    }
+    const made = AbortSignal.any([this.failed.signal, this.stopped]);
+    this.either = made;
+    return made;
+  }
+
+  /** Whether a response was started for the current request. */
+  sent(): bool {
+    return this.done;
+  }
+
+  /** A new request: status 200, no headers (internal). */
+  begin(keepAlive: bool, http11: bool) {
+    this.statusCode = 200;
+    this.extraLength = 0;
+    this.hasType = false;
+    this.keepAlive = keepAlive;
+    this.http11 = http11;
+    this.done = false;
+    this.streaming = false;
+    this.chunked = false;
+  }
+
+  /**
+   * Whether the connection can serve another request after this response (internal): not after
+   * a streamed body that ends with the connection, nor one left unfinished.
+   */
+  reusable(): bool {
+    return this.keepAlive && !this.streaming;
+  }
+
+  /** Whether a streamed body is still open (internal). */
+  streamOpen(): bool {
+    return this.streaming;
+  }
+
+  /** Ends a streamed body the handler left open (internal). */
+  async endStream() {
+    if (this.streaming) {
+      await this.finishStream();
+    }
+  }
+
+  /** The `Date` value for the responses of this batch: once a second a new one (internal). */
+  tick() {
+    const now = Date.now();
+    const second = (now / 1000) as i64;
+    if (second != this.dateSecond) {
+      this.dateSecond = second;
+      this.date = utf8Encode(new Date(now as number).toUTCString());
+    }
+  }
+
+  /** Writes what is buffered to the connection; a failure aborts `signal()` (internal). */
+  async flush() {
+    if (this.length > 0) {
+      try {
+        await this.conn.writeBytes(this.buf, 0, this.length as number);
+      } catch (e) {
+        this.length = 0;
+        this.failed.abort();
+        throw e;
+      }
+      this.length = 0;
+    }
+  }
+
+  /** One piece of a streamed body (internal: `HttpStream.write`). */
+  async piece(data: string | u8[] | Uint8Array) {
+    if (!this.streaming) {
+      throw new Error("the streamed response has ended");
+    }
+    if (data instanceof Uint8Array) {
+      this.chunk(data.length as i64);
+      this.reserve(data.length as i64 + 2);
+      for (let i = 0; i < data.length; i++) {
+        this.buf[this.length + (i as i64)] = data[i] as u8;
+      }
+      this.length += data.length as i64;
+    } else if (typeof data == "string") {
+      const n = Buffer.byteLength(data) as i64;
+      this.chunk(n);
+      this.text(data);
+    } else {
+      this.chunk(data.length as i64);
+      this.reserve(data.length as i64 + 2);
+      this.buf.set(data, this.length as usize);
+      this.length += data.length as i64;
+    }
+    if (this.chunked) {
+      this.reserve(2);
+      this.buf[this.length] = CR;
+      this.buf[this.length + 1] = LF;
+      this.length += 2;
+    }
+    await this.flush();
+  }
+
+  /** Ends a streamed body (internal: `HttpStream.end`). */
+  async finishStream() {
+    if (!this.streaming) {
+      return;
+    }
+    this.streaming = false;
+    if (this.chunked) {
+      this.text("0\r\n\r\n");
+    }
+    // Otherwise (HTTP/1.0) the body ends with the connection: the head set `keepAlive` false.
+    await this.flush();
+  }
+
+  /// A chunk's size line (HTTP/1.1), before `n` bytes of data.
+  private chunk(n: i64) {
+    if (!this.chunked) {
+      return;
+    }
+    this.reserve(20);
+    const start = this.length;
+    let v = n;
+    do {
+      const d = v % 16;
+      this.buf[this.length] = (d < 10 ? 48 + d : 87 + d) as u8;
+      this.length++;
+      v = v / 16;
+    } while (v > 0);
+    this.reverse(start);
+    this.buf[this.length] = CR;
+    this.buf[this.length + 1] = LF;
+    this.length += 2;
+  }
+
+  private reserve(n: i64) {
+    if (this.length + n <= (this.buf.length as i64)) {
+      return;
+    }
+    let size = (this.buf.length as i64) * 2;
+    while (size < this.length + n) {
+      size *= 2;
+    }
+    const grown: u8[] = Buffer.alloc(size as usize);
+    grown.set(this.buf.slice(0, this.length), 0);
+    this.buf = grown;
+  }
+
+  private text(s: string) {
+    this.textOf(s, Buffer.byteLength(s) as i64);
+  }
+
+  /// The UTF-8 bytes of `s`, `n` of them (`Buffer.byteLength(s)`).
+  private textOf(s: string, n: i64) {
+    this.reserve(n);
+    velt_rt_bytes_set_str(this.buf, s, this.length as u64);
+    this.length += n;
+  }
+
+  /// The bytes of `b` (a field of `this` passed through a local: one argument, not two).
+  private bytes(b: u8[]) {
+    const n = b.length as i64;
+    this.reserve(n);
+    this.buf.set(b, this.length as usize);
+    this.length += n;
+  }
+
+  private number(n: i64) {
+    this.reserve(20);
+    const start = this.length;
+    let v = n;
+    do {
+      this.buf[this.length] = (48 + v % 10) as u8;
+      this.length++;
+      v = v / 10;
+    } while (v > 0);
+    this.reverse(start);
+  }
+
+  /// Reverses the bytes written since `start` (digits come least significant first).
+  private reverse(start: i64) {
+    let i = start;
+    let j = this.length - 1;
+    while (i < j) {
+      const t = this.buf[i];
+      this.buf[i] = this.buf[j];
+      this.buf[j] = t;
+      i++;
+      j--;
+    }
+  }
+
+  /// The head: content type `types[type]` (or `custom` when `type` < 0) unless one was set;
+  /// `length` < 0 starts a streamed body.
+  private head(type: i64, custom: string | null, length: i64) {
+    if (this.done) {
+      throw new Error("the response was already sent");
+    }
+    this.done = true;
+    if (this.statusCode == 200) {
+      const ok = this.ok;
+      this.bytes(ok);
+    } else {
+      const start = this.statusStart;
+      this.bytes(start);
+      this.number(this.statusCode as i64);
+      this.reserve(1);
+      this.buf[this.length] = SP;
+      this.length++;
+      this.text(reason(this.statusCode));
+      const serverDate = this.serverDate;
+      this.bytes(serverDate);
+    }
+    const date = this.date;
+    this.bytes(date);
+    if (!this.hasType) {
+      const typeHead = this.typeHead;
+      this.bytes(typeHead);
+      if (custom != null) {
+        this.text(custom);
+      } else {
+        const t = this.types[type];
+        this.bytes(t);
+      }
+    }
+    if (length >= 0) {
+      const lengthHead = this.lengthHead;
+      this.bytes(lengthHead);
+      this.number(length);
+    } else {
+      this.streaming = true;
+      this.chunked = this.http11;
+      if (this.chunked) {
+        const chunkedHead = this.chunkedHead;
+        this.bytes(chunkedHead);
+      } else {
+        this.keepAlive = false;
+      }
+    }
+    if (!this.keepAlive) {
+      const closeHead = this.closeHead;
+      this.bytes(closeHead);
+    }
+    const extra = this.extra;
+    const n = this.extraLength;
+    this.reserve(n + 4);
+    this.buf[this.length] = CR;
+    this.buf[this.length + 1] = LF;
+    this.length += 2;
+    for (let i: i64 = 0; i < n; i++) {
+      this.buf[this.length + i] = extra[i];
+    }
+    this.length += n;
+    this.buf[this.length] = CR;
+    this.buf[this.length + 1] = LF;
+    this.length += 2;
+  }
+}
+
+/** A streamed response body (`HttpResponse.stream`). */
+export class HttpStream {
+  private res: HttpResponse;
+
+  constructor(res: HttpResponse) {
+    this.res = res;
+  }
+
+  /**
+   * Writes `data` as the next piece of the body (an empty one writes nothing). Resolves once
+   * the connection took it; throws if the client went away (and aborts the request's signal).
+   */
+  async write(data: string | u8[] | Uint8Array) {
+    let empty = false;
+    if (typeof data == "string") {
+      empty = data.length == 0;
+    } else if (data instanceof Uint8Array) {
+      empty = data.length == 0;
+    } else {
+      empty = data.length == 0;
+    }
+    if (!empty) {
+      await this.res.piece(data);
+    }
+  }
+
+  /** Ends the body (the server ends one the handler leaves open). */
+  async end() {
+    await this.res.finishStream();
+  }
+}
+
+/** A Server-Sent Events stream (`HttpResponse.sse`). */
+export class EventStream {
+  private stream: HttpStream;
+
+  constructor(stream: HttpStream) {
+    this.stream = stream;
+  }
+
+  /**
+   * Writes an event: `data` (each of its lines a `data:` line), with an `event` name and an
+   * `id` when given. Resolves once the connection took it.
+   */
+  async send(data: string, event: string | null = null, id: string | null = null) {
+    let text = "";
+    if (event != null) {
+      text += `event: ${event}\n`;
+    }
+    if (id != null) {
+      text += `id: ${id}\n`;
+    }
+    for (const line of data.split("\n")) {
+      text += `data: ${line}\n`;
+    }
+    await this.stream.write(text + "\n");
+  }
+
+  /** Writes a comment line, which clients ignore: a keep-alive through idle proxies. */
+  async comment(text: string = "") {
+    await this.stream.write(`: ${text}\n\n`);
+  }
+
+  /** Ends the stream. */
+  async end() {
+    await this.stream.end();
+  }
+}
+
+/** The reason phrase of `status`. */
+export function reason(status: number): string {
+  switch (status) {
+    case 100:
+      return "Continue";
+    case 200:
+      return "OK";
+    case 201:
+      return "Created";
+    case 204:
+      return "No Content";
+    case 301:
+      return "Moved Permanently";
+    case 302:
+      return "Found";
+    case 304:
+      return "Not Modified";
+    case 400:
+      return "Bad Request";
+    case 401:
+      return "Unauthorized";
+    case 403:
+      return "Forbidden";
+    case 404:
+      return "Not Found";
+    case 405:
+      return "Method Not Allowed";
+    case 413:
+      return "Content Too Large";
+    case 431:
+      return "Request Header Fields Too Large";
+    case 500:
+      return "Internal Server Error";
+    case 501:
+      return "Not Implemented";
+    case 503:
+      return "Service Unavailable";
+    default:
+      return "Unknown";
+  }
+}

@@ -10,5 +10,5 @@ HTTP/1.0: HTTP/1.1 200 OK true
 garbage: HTTP/1.1 400 Bad Request
 bad header: HTTP/1.1 400 Bad Request
 too large: HTTP/1.1 413 Content Too Large
-chunked: HTTP/1.1 501 Not Implemented
+chunked: HTTP/1.1 200 OK true
 head too large: HTTP/1.1 431 Request Header Fields Too Large

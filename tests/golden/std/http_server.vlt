@@ -2,7 +2,7 @@
 // velt:http/server: requests parsed in place, responses written per batch. Routes, the method,
 // path, query, headers and body of a request, response headers and types, pipelined requests
 // answered in order, a request that arrives in pieces, HTTP/1.0 and Connection: close, and input
-// that is not a request (400, 413, 431, 501).
+// that is not a request (400, 431), a body over the limit (413).
 import { connect, TcpStream } from "velt:net";
 import { HttpRequest, HttpResponse, serve } from "velt:http/server";
 
@@ -47,7 +47,8 @@ async function main() {
       );
     } else if (req.pathIs("/echo")) {
       res.header("Content-Type", "text/x-echo");
-      res.sendBytes(req.body());
+      const body = await req.body();
+      res.sendBytes(body);
     } else if (req.pathIs("/fail")) {
       throw new Error("handler failed");
     } else if (req.pathIs("/quiet")) {
@@ -121,17 +122,19 @@ async function main() {
   );
   console.log(
     "too large:",
-    statusLines(await exchange(server.port, "POST /echo HTTP/1.1\r\nContent-Length: 100\r\n\r\n")),
-  );
-  console.log(
-    "chunked:",
     statusLines(
       await exchange(
         server.port,
-        "POST /echo HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n",
+        "POST /echo HTTP/1.1\r\nContent-Length: 100\r\n\r\n" + "b".repeat(100),
       ),
     ),
   );
+  // A chunked body, decoded (extensions and trailers skipped).
+  const chunked = await exchange(
+    server.port,
+    "POST /echo HTTP/1.1\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n3;x=1\r\nabc\r\n4\r\ndefg\r\n0\r\nX-Trailer: t\r\n\r\n",
+  );
+  console.log("chunked:", statusLines(chunked), chunked.endsWith("abcdefg"));
   const longHead = "GET / HTTP/1.1\r\nX-Long: " + "a".repeat(70000) + "\r\n\r\n";
   console.log("head too large:", statusLines(await exchange(server.port, longHead)));
 
