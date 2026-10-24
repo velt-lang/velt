@@ -5,6 +5,8 @@
 //! idle, and at every newline when stdout is an interactive terminal. stderr is unbuffered: each
 //! call formats into a small local buffer and writes it in one go.
 
+#[cfg(test)]
+mod exit_tests;
 pub mod stats;
 mod stdout;
 pub mod tty;
@@ -23,7 +25,8 @@ pub fn flush_stdout() {
     stdout::flush();
 }
 
-/// Best-effort flush for panic/abort paths: never blocks.
+/// Flush for panic and fatal-error paths: waits for another thread's write a bounded time only,
+/// never forever (see [`stdout::try_flush`]).
 pub fn try_flush_stdout() {
     #[cfg(test)]
     if capture::active() {

@@ -1,5 +1,6 @@
 // An error a `setTimeout` callback created in a microtask throws ends the process at the throw,
-// as in Node (#1154).
+// as in Node (#1154). The later timeout is long so it is not due first even on a loaded machine
+// (#1478).
 queueMicrotask(() => {
   console.log("m1");
   setTimeout(
@@ -11,4 +12,4 @@ queueMicrotask(() => {
     1,
   );
 });
-setTimeout(() => console.log("t-later"), 100);
+setTimeout(() => console.log("t-later"), 1000);
