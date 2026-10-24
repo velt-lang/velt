@@ -377,7 +377,8 @@ impl FnLower<'_, '_> {
             self.goto(done);
             self.switch_to(next);
         }
-        // An array of another element type: a view of it as the union's array member.
+        // An object or array of another type: a view of it as the union's member.
+        self.union_object_view(p, ty, n, &out, done);
         self.union_array_view(p, desc.clone(), ty, n, &out, done);
         self.any_type_error(desc, ty);
         self.switch_to(done);

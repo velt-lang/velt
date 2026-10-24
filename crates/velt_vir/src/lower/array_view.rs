@@ -103,13 +103,22 @@ impl Cx<'_> {
             hir::Def::Fn(f) => f.name.starts_with("std/"),
             _ => false,
         });
-        let TyKind::Array(_) = self.types.kind(t) else {
+        let TyKind::Array(mut e) = self.types.kind(t).clone() else {
             return;
         };
         if std {
             return;
         }
         self.facts.array_view_targets.insert(t);
+        // The view converts its elements out of `any` (`__arrayViewSyncAt`, in the prelude):
+        // an object among them may be a view too (any_view.rs), as when the program converts
+        // one itself.
+        while let TyKind::Array(x) = self.types.kind(e).clone() {
+            e = x;
+        }
+        if matches!(self.types.kind(e), TyKind::Adt(..)) {
+            self.note_proxy_target(e);
+        }
     }
 
     /// The view types implied by this pass's facts: the targets and the arrays their elements
