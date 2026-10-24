@@ -370,8 +370,8 @@ impl FnCx<'_, '_> {
     }
 
     /// `x` as the non-string operand of a string `+` or `+=` ([`concat_operands`]): its
-    /// `String(x)` text when it is a number or boolean (or one of those or `null`), or an
-    /// object with a `toString()`, else `x`.
+    /// `String(x)` text: a number or boolean (or one of those or `null`), an object by its
+    /// `toString()`, anything else as `String(x)` writes it (a string stays itself).
     pub(crate) fn concat_operand(&mut self, h: hir::Expr) -> hir::Expr {
         let h = self.unbrand(h);
         let h = self.widen_value(h);
@@ -399,8 +399,13 @@ impl FnCx<'_, '_> {
             return self.js_text(h, "a string concatenation");
         }
         let ty = &self.cx.ty;
-        if h.ty == ty.str_ || !(ty.is_numeric(t) || t == ty.bool_) {
+        if h.ty == ty.str_ {
             return h;
+        }
+        // Anything else (`string | null`, `string | string[]`, an object) as `String(x)`
+        // writes it, as in a template literal (#1485).
+        if !(ty.is_numeric(t) || t == ty.bool_) {
+            return self.js_text(h, "a string concatenation");
         }
         let (s, span) = (ty.str_, h.span);
         self.intrinsic(Intrinsic::ToString, vec![h], s, span)
