@@ -110,6 +110,7 @@ mod types;
 mod upcast;
 mod weak;
 mod weak_object;
+mod weak_view;
 mod widen;
 
 use rustc_hash::{FxHashMap, FxHashSet};

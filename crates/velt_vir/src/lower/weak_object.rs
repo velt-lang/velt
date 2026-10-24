@@ -217,6 +217,11 @@ impl FnLower<'_, '_> {
             return cint(0, Ty::U32);
         };
         self.dyn_key_check(&k, WeakUse::Ref);
+        self.weakref_new_key(&k)
+    }
+
+    /// The `WeakRef` slot of the checked dynamic key `k`, keeping its descriptor.
+    pub(super) fn weakref_new_key(&mut self, k: &DynKey) -> Operand {
         let kept = k.table.clone().unwrap_or_else(|| k.desc.clone());
         let desc = self.cast_to(kept, Ty::Ptr, Ty::U64);
         let d = self.temp(Ty::U32);
