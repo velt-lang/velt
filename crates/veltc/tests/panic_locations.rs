@@ -82,7 +82,8 @@ const CASES: &[(&str, i32, &str)] = &[
         "panic_uncaught_std",
         1,
         "Uncaught IoError: ENOENT: no such file or directory, lstat 'velt-missing-file-b' at tests/golden/lang/panic_uncaught_std.vlt:7:3",
-    ),    // Reported once (#1497): the task that started the promise used to report it too.
+    ),
+    // Reported once (#1497): the task that started the promise used to report it too.
     (
         "process_lifetime_sync_main_rejection",
         1,
