@@ -56,6 +56,8 @@ mod fresh_returns;
 mod generic_arrows;
 mod generic_spread;
 mod global_this;
+#[cfg(test)]
+mod hasher_tests;
 mod holds_promise;
 mod hooks;
 pub mod ide;
