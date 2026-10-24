@@ -222,8 +222,9 @@ pub(crate) struct Ctx<'m> {
     /// Name spans of the `const`s that closures in their own initializer use (`body::late_consts`):
     /// a closure may capture one before it is assigned.
     pub late_consts: FxHashSet<Span>,
-    /// Per generator with a dynamic default, the function its value is (`gen_value.rs`).
-    pub generator_values: FxHashMap<DefId, (DefId, TyId)>,
+    /// Per generator with a dynamic default (and its type arguments), the function its value
+    /// is (`gen_value.rs`).
+    pub generator_values: FxHashMap<(DefId, Vec<TyId>), (DefId, TyId)>,
     /// Recursive closure groups made by `crate::nested_closures`.
     pub closure_groups: Vec<crate::nested_closures::ClosureGroup>,
     /// Group and member of each group member, by the name span of its `const`.

@@ -514,11 +514,11 @@ impl FnCx<'_, '_> {
         if self.gated_value(d, &id.name, span) {
             return self.error_expr(span);
         }
-        if let Some(h) = self.generator_value(d, None, exp, span) {
-            return h;
-        }
         let f = self.cx.fn_info(d);
         let slots = vec![None; f.generics.len()];
+        if let Some(h) = self.generator_value(d, None, &slots, exp, span) {
+            return h;
+        }
         self.fn_ref_slots(d, &id.name, slots, exp, span)
     }
 

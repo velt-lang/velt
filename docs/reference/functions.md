@@ -559,7 +559,8 @@ console.log(g.next(), g.next().value, g.next().done);  // { value: 1, done: fals
 - A generator's parameter defaults are evaluated when it is called, before the body runs, as
   in JS; a default of a parameter of a dynamic type (`x: any = "g"`) also applies to a passed
   `undefined`, whether the generator is called directly or through a function value
-  (`const gv = gen; gv(undefined)`).
+  (`const gv = gen; gv(undefined)`, also for a generic generator and a static generator of a
+  generic class).
 - A generator keeps its arguments (they are owned, as for an async function) and its locals
   between `yield`s. A generator method sees `this` as it is when the body runs, not when the
   method was called, as in JS. Calling `next()` or `return()` on a generator from inside its
