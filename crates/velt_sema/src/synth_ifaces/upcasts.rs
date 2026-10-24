@@ -4,8 +4,10 @@
 use std::collections::HashMap;
 
 use super::{Form, Member};
+use crate::collect::forwarders::{synth_method, Host, Target};
 use crate::ctx::Ctx;
-use crate::hir::{DefId, ImplDef, TyId, TyKind};
+use crate::defs::ParamSig;
+use crate::hir::{DefId, ImplDef, PassMode, TyId, TyKind};
 use crate::iface_writes::SetterSrc;
 
 impl Ctx<'_> {
@@ -29,6 +31,16 @@ impl Ctx<'_> {
                 o == n
                     && match (x, m) {
                         (Member::Field(a, ra), Member::Field(b, rb)) => a == b && (*rb || !ra),
+                        // A getter fills a field's slot, as TypeScript allows; writing the
+                        // field takes a setter `set k` (`upcast_setter`), which must take the
+                        // field's type.
+                        (Member::Method(ps, a, true, 0), Member::Field(b, rb)) => {
+                            ps.is_empty() && a == b && (*rb || setter_param(&ours, n, *b).is_none())
+                        }
+                        // A field holding a function fills a method's slot (`fn_field_method`).
+                        (Member::Field(f, _), Member::Method(ps, r, false, 0)) => {
+                            self.fn_fills(*f, ps, *r)
+                        }
                         (a, b) => a == b,
                     }
             })
@@ -237,6 +249,50 @@ impl Ctx<'_> {
         None
     }
 
+    /// For an interface value of `found` where one of `expected` is expected: a setter that
+    /// would write a field of `expected` but takes another type, or a field holding a function
+    /// that may throw where `expected` has a method.
+    pub(crate) fn upcast_member_note(&mut self, expected: TyId, found: TyId) -> Option<String> {
+        let (TyKind::Dyn(want, to), TyKind::Dyn(have, from)) =
+            (self.ty.kind(expected).clone(), self.ty.kind(found).clone())
+        else {
+            return None;
+        };
+        let ours = self.iface_members(have, &from);
+        let theirs = self.iface_members(want, &to);
+        let throwing = theirs.iter().find_map(|(n, m)| match m {
+            Member::Method(..) => ours.iter().find_map(|(o, x)| match x {
+                Member::Field(f, _) if o == n => match self.ty.kind(*f) {
+                    TyKind::FnPtr { throws, .. } if *throws != self.ty.never => Some(n.clone()),
+                    _ => None,
+                },
+                _ => None,
+            }),
+            _ => None,
+        });
+        if let Some(name) = throwing {
+            let e = self.display(expected);
+            return Some(format!("`{name}` holds a function that may throw, which does not fill the method slot of `{e}` yet; an object literal written where `{e}` is expected (`const v: {e} = {{ … }}`) may have such a method"));
+        }
+        let (name, field, param) = theirs.iter().find_map(|(n, m)| match m {
+            Member::Field(b, false) => setter_param(&ours, n, *b).map(|p| (n.clone(), *b, p)),
+            _ => None,
+        })?;
+        let (e, f, p) = (
+            self.display(expected),
+            self.display(field),
+            self.display(param),
+        );
+        Some(format!("the setter `set {name}` takes a `{p}`, but `{name}` is a `{f}` field of `{e}`, which writes it through that setter; give the setter a `{f}` parameter, or make the field `readonly`"))
+    }
+
+    /// After every body is checked, before errors are reported: a value converted to an
+    /// interface written through is written through its own (`Ctx::writes_through_upcasts`).
+    pub(crate) fn upcast_writes(&mut self) {
+        let pairs = self.synth_ifaces.upcasts.clone();
+        self.writes_through_upcasts(&pairs);
+    }
+
     /// After every body is checked: per interface `A` converted to others, the targets in
     /// table order, and per implementation of `A` the implementation of each target for the
     /// same type, made from `A`'s (each target slot is the slot of the same member in `A`).
@@ -281,37 +337,47 @@ impl Ctx<'_> {
         let slot_of = |name: &str, field: bool| -> usize {
             let s = match field {
                 false => ai.methods.iter().position(|m| m.name == name),
+                // A field's slot is filled by our field's getter, or by a getter of that name.
                 true => ai
                     .fields
                     .iter()
                     .position(|f| f.name == name)
-                    .map(|k| ai.methods.len() + k),
+                    .map(|k| ai.methods.len() + k)
+                    .or_else(|| {
+                        ai.methods
+                            .iter()
+                            .position(|m| m.is_getter && m.name == name)
+                    }),
             };
             s.expect("ICE: an upcast target member the source lacks")
         };
-        let mut slots: Vec<usize> = bi.methods.iter().map(|m| slot_of(&m.name, false)).collect();
-        slots.extend(bi.fields.iter().map(|f| slot_of(&f.name, true)));
-        if self.iface_written(b) {
-            let n = ai.methods.len() + ai.fields.len();
-            for k in self.setter_fields(b) {
-                let name = &self.iface(b).expect("ICE: iface").fields[k].name;
-                let f = self
-                    .iface(a)
-                    .expect("ICE: iface")
-                    .fields
-                    .iter()
-                    .position(|f| &f.name == name);
-                slots.push(n + f.expect("ICE: an upcast target setter the source lacks"));
-            }
-        }
+        // A method of `b` is filled by our method, or by our field holding a function.
+        let mut slots: Vec<Result<usize, (usize, usize)>> = (bi.methods.iter().enumerate())
+            .map(
+                |(j, m)| match ai.methods.iter().position(|x| x.name == m.name) {
+                    Some(s) => Ok(s),
+                    None => Err((j, slot_of(&m.name, true))),
+                },
+            )
+            .collect();
+        slots.extend(bi.fields.iter().map(|f| Ok(slot_of(&f.name, true))));
         // `b`'s arguments: from the interface types the conversion was checked with, the
         // members agree, so `a`'s implementation arguments give `b`'s by matching its fields
         // and methods; interfaces made here and parents name them directly.
         let iface_args = self.upcast_args(a, &imp.iface_args, b);
-        let methods = slots
-            .into_iter()
-            .map(|s| *imp.methods.get(s).expect("ICE: upcast slot out of range"))
-            .collect();
+        let at = |s: usize| *imp.methods.get(s).expect("ICE: upcast slot out of range");
+        let mut methods: Vec<DefId> = vec![];
+        for s in slots {
+            methods.push(match s {
+                Ok(s) => at(s),
+                Err((j, g)) => self.fn_field_method(&imp, b, j, at(g)),
+            });
+        }
+        if self.iface_written(b) {
+            for k in self.setter_fields(b) {
+                methods.push(self.upcast_setter(&imp, b, k, &iface_args));
+            }
+        }
         self.impls.push(ImplDef {
             ty: imp.ty,
             generics: imp.generics,
@@ -320,6 +386,91 @@ impl Ctx<'_> {
             methods,
         });
         (self.impls.len() - 1) as u32
+    }
+
+    /// Does a field of function type `f` fill the slot of a method taking `ps` and returning
+    /// `r`: the same parameters and result, no rest parameter, and nothing thrown (a value
+    /// read from the field is called, `fn_field_method`)?
+    fn fn_fills(&self, f: TyId, ps: &[TyId], r: TyId) -> bool {
+        match self.ty.kind(f) {
+            TyKind::FnPtr {
+                params,
+                ret,
+                throws,
+                rest,
+            } => !rest && *throws == self.ty.never && params == ps && *ret == r,
+            _ => false,
+        }
+    }
+
+    /// The method in the slot of method `j` of interface `b` for the type of implementation
+    /// `imp`, where our field's getter `getter` gives a function: one calling that function.
+    fn fn_field_method(&mut self, imp: &ImplDef, b: DefId, j: usize, getter: DefId) -> DefId {
+        let fn_ty = self.fn_info(getter).ret;
+        let TyKind::FnPtr {
+            params: tys, ret, ..
+        } = self.ty.kind(fn_ty).clone()
+        else {
+            panic!("ICE: a field filling a method slot holds no function");
+        };
+        let m = self.iface(b).expect("ICE: iface").methods[j].clone();
+        let params: Vec<ParamSig> = tys
+            .iter()
+            .zip(&m.params)
+            .map(|(&ty, p)| ParamSig {
+                ty,
+                mode: if self.is_copy(ty) {
+                    PassMode::Copy
+                } else {
+                    PassMode::Borrow
+                },
+                default: None,
+                ..p.clone()
+            })
+            .collect();
+        let TyKind::Adt(d, _) = *self.ty.kind(imp.ty) else {
+            panic!("ICE: an upcast method for a value that is not an object");
+        };
+        let host = Host::adt(self, d);
+        let targs = (0..imp.generics).map(|i| self.ty.param(i)).collect();
+        let name = format!(
+            "{}.<fn {}>",
+            self.adt(d).map_or("", |a| &a.qual_name),
+            m.name
+        );
+        let target = Target::Getter {
+            def: getter,
+            targs,
+            fn_ty,
+        };
+        synth_method(self, &host, imp.ty, name, params, ret, false, target)
+    }
+
+    /// The setter slot of field `k` of interface `b<args>` (written through) for the type of
+    /// implementation `imp` of an interface converting to it: our field's setter slot, else
+    /// the setter `set k` our getter `k` has. A getter without one gives a slot that is never
+    /// called: a `readonly` field, or one whose write was reported (`Ctx::writes_through_upcasts`).
+    fn upcast_setter(&mut self, imp: &ImplDef, b: DefId, k: usize, args: &[TyId]) -> DefId {
+        let ai = self.iface(imp.iface).expect("ICE: iface");
+        let f = self.iface(b).expect("ICE: iface").fields[k].clone();
+        let n = ai.methods.len() + ai.fields.len();
+        let slot = match ai.fields.iter().position(|g| g.name == f.name) {
+            Some(g) => Some(n + g),
+            None => {
+                let set = format!("set {}", f.name);
+                ai.methods.iter().position(|m| m.name == set)
+            }
+        };
+        if let Some(def) = slot.and_then(|s| imp.methods.get(s)) {
+            return *def;
+        }
+        let TyKind::Adt(d, _) = *self.ty.kind(imp.ty) else {
+            panic!("ICE: an upcast setter for a value that is not an object");
+        };
+        let mut targs = args.to_vec();
+        targs.push(imp.ty);
+        let ty = self.subst(f.ty, &targs);
+        crate::collect::getters::unused_setter(self, d, imp.ty, &f.name, ty)
     }
 
     /// The arguments of `b` for a value of `a<args>`: through `a`'s parents, else by matching
@@ -339,8 +490,16 @@ impl Ctx<'_> {
                 continue;
             };
             match (m, x) {
-                (Member::Field(p, _), Member::Field(t, _)) => {
+                (Member::Field(p, _), Member::Field(t, _) | Member::Method(_, t, true, 0)) => {
                     self.match_ty(*p, *t, &mut slots);
+                }
+                (Member::Method(ps, r, ..), Member::Field(f, _)) => {
+                    if let TyKind::FnPtr { params, ret, .. } = self.ty.kind(*f).clone() {
+                        for (p, t) in ps.iter().zip(&params) {
+                            self.match_ty(*p, *t, &mut slots);
+                        }
+                        self.match_ty(*r, ret, &mut slots);
+                    }
                 }
                 (Member::Method(ps, r, ..), Member::Method(ts, s, ..)) => {
                     for (p, t) in ps.iter().zip(ts) {
@@ -356,4 +515,18 @@ impl Ctx<'_> {
             .map(|s| s.unwrap_or(self.ty.never))
             .collect()
     }
+}
+
+/// The parameter type of setter `set name` of `ours` when it is not `ty` (`None`: it takes
+/// `ty`, or there is no such setter: a write is then reported where it is written).
+fn setter_param(ours: &[(String, Member)], name: &str, ty: TyId) -> Option<TyId> {
+    let set = format!("set {name}");
+    ours.iter().find_map(|(o, m)| match m {
+        Member::Method(ps, ..) if *o == set => match ps.as_slice() {
+            [p] if *p == ty => None,
+            [p, ..] => Some(*p),
+            [] => None,
+        },
+        _ => None,
+    })
 }

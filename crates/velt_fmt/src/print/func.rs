@@ -2,7 +2,8 @@
 //! lists, generic parameter lists and arrow functions.
 
 use velt_syntax::ast::{
-    ArrowBody, ArrowParam, Expr, FnDecl, FnSig, GenericParam, Ident, Param, Pattern, TypeExpr,
+    is_method_this, ArrowBody, ArrowParam, Expr, FnDecl, FnSig, GenericParam, Ident, Param,
+    Pattern, TypeExpr,
 };
 
 use super::lists::delimited;
@@ -90,6 +91,11 @@ impl<'a> Printer<'a> {
     }
 
     fn params(&mut self, params: &[Param], end: u32) -> Doc {
+        // An object-literal method's `this`, which the parser adds (`METHOD_THIS`).
+        let params = match params.first() {
+            Some(p) if is_method_this(&p.name) => &params[1..],
+            _ => params,
+        };
         let list = self.list(
             params,
             end,
@@ -180,6 +186,11 @@ impl<'a> Printer<'a> {
         let body_lo = match body {
             ArrowBody::Block(b) => b.span.lo,
             ArrowBody::Expr(e) => e.span.lo,
+        };
+        // An object-literal method's `this`, which the parser adds (`METHOD_THIS`).
+        let params = match params.first() {
+            Some(p) if is_method_this(&p.name) => &params[1..],
+            _ => params,
         };
         let list = self.list(
             params,

@@ -1,6 +1,6 @@
 // `this` in a generator function expression (TypeScript's TS2683, as for other function
-// expressions), and in a function expression that is an object-literal property (TypeScript
-// types `this` as the literal there; not supported yet).
+// expressions). As an object-literal property's value, `this` is the literal
+// (`lang/object_literal_this`).
 class K {
   x = 5;
   m(): number[] {
@@ -10,9 +10,3 @@ class K {
     return [...g()];
   }
 }
-const o = {
-  v: 1,
-  get: function () {
-    return this.v;
-  },
-};

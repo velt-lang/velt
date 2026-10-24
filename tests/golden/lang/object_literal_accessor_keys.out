@@ -1,0 +1,20 @@
+[ 'n', 'd', 'm' ]
+p n
+p d
+p m
+set w 4
+[ 'n', 'w' ]
+w n
+w w
+[ 'a', 'n', 's', 'm' ] 2
+q a
+q n
+q s
+q m
+1 1 v1
+1
+7 7 7 w
+10 10
+abc 3 ABC
+42 s boolean
+hello a hello b

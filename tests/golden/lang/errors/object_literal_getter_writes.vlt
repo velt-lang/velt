@@ -1,0 +1,74 @@
+// Writes through an interface value whose field an object literal's getter gives (#941):
+// without a setter Node throws a `TypeError`; a part of it changed in place is not supported
+// yet; a setter taking another type than the field's is reported where the literal converts.
+
+interface Named {
+  name: string;
+  hi(): string;
+}
+
+interface Placed {
+  pos: { x: number };
+  hi(): string;
+}
+
+interface Valued {
+  value: number;
+  f(): number;
+}
+
+function main(): void {
+  const o = {
+    get name() {
+      return "x";
+    },
+    hi() {
+      return "hi " + this.name;
+    },
+  };
+  const s: Named = o;
+  s.name = "y";
+
+  const p = {
+    get pos() {
+      return { x: 1 };
+    },
+    set pos(v: { x: number }) {},
+    hi() {
+      return "hi " + this.pos.x;
+    },
+  };
+  const q: Placed = p;
+  q.pos.x = 3;
+
+  // Node passes the number to the setter, which then fails (`v.toUpperCase` is not a
+  // function).
+  const e = {
+    get value(): number {
+      return 1;
+    },
+    set value(v: string) {
+      console.log(v.toUpperCase());
+    },
+    f() {
+      return this.value;
+    },
+  };
+  const ev: Valued = e;
+  ev.value = 2;
+
+  // A wider parameter: the setter would be called with the field's type.
+  const w = {
+    get value(): number {
+      return 1;
+    },
+    set value(v: number | string) {
+      console.log(typeof v, v);
+    },
+    f() {
+      return this.value;
+    },
+  };
+  const wv: Valued = w;
+  wv.value = 2;
+}
