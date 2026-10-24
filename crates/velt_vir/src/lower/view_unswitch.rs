@@ -23,8 +23,8 @@ use crate::vir::{self, BlockId, Local, Operand, Place, Proj, Rvalue, Terminator,
 #[derive(Default)]
 pub(super) struct ViewLoops {
     /// The view bit tests: the `Bool` local holding the result, the local holding the box
-    /// whose header it read, and the header's type.
-    tests: Vec<(Local, Local, Ty)>,
+    /// whose header it read with the header's type (when a local holds it).
+    tests: Vec<(Local, Option<(Local, Ty)>)>,
     /// The loops lowered: their header (the block entered from before the loop) and the
     /// range of blocks made while lowering them.
     loops: Vec<(BlockId, u32, u32)>,
@@ -34,12 +34,19 @@ impl FnLower<'_, '_> {
     /// The test `is` reads the view bit of the header at `hdr`. A branch on it must go to its
     /// first target for a view (the copy of a versioned loop goes to the second).
     pub(super) fn note_view_test(&mut self, hdr: &Place, is: &Operand) {
-        let ([Proj::Deref(t)], Operand::Copy(Place { local, proj })) = (&hdr.proj[..], is) else {
+        let Operand::Copy(Place { local, proj }) = is else {
             return;
         };
-        if proj.is_empty() && self.locals[hdr.local.0 as usize].ty == Ty::Ptr {
-            self.view_loops.tests.push((*local, hdr.local, *t));
+        if !proj.is_empty() {
+            return;
         }
+        let held = match &hdr.proj[..] {
+            [Proj::Deref(t)] if self.locals[hdr.local.0 as usize].ty == Ty::Ptr => {
+                Some((hdr.local, *t))
+            }
+            _ => None,
+        };
+        self.view_loops.tests.push((*local, held));
     }
 
     /// The first block of a loop about to be lowered (for [`Self::note_loop`]).
@@ -84,31 +91,34 @@ impl FnLower<'_, '_> {
                 uses.get(t)
                     .is_some_and(|bs| region.iter().any(|b| bs.contains(b)))
             };
-            let mut seen = FxHashSet::default();
-            let boxes: Vec<(Local, Ty)> = self
+            let here: Vec<(Local, Option<(Local, Ty)>)> = self
                 .view_loops
                 .tests
                 .iter()
-                .filter(|(t, _, _)| !handled.contains(t) && used_here(t))
-                .filter(|(_, b, _)| seen.insert(*b))
-                .filter(|(_, b, _)| !region.iter().any(|&r| self.block_assigns(r, *b)))
-                .filter(|(_, b, _)| !self.written_through(*b, &region, &addrs))
-                .map(|(_, b, t)| (*b, *t))
+                .filter(|(t, _)| !handled.contains(t) && used_here(t))
+                .copied()
                 .collect();
-            if boxes.is_empty() {
+            if here.is_empty() {
                 continue;
             }
-            let plain: FxHashSet<Local> = self
-                .view_loops
-                .tests
+            let mut seen = FxHashSet::default();
+            let boxes: Vec<(Local, Ty)> = here
                 .iter()
-                .filter(|(_, b, _)| boxes.iter().any(|(x, _)| x == b))
-                .map(|(t, _, _)| *t)
+                .filter_map(|(_, held)| *held)
+                .filter(|(b, _)| seen.insert(*b))
+                .filter(|(b, _)| !region.iter().any(|&r| self.block_assigns(r, *b)))
+                .filter(|(b, _)| !self.written_through(*b, &region, &addrs))
                 .collect();
-            // The loops inside this one keep the tests of these boxes (in the original, the
-            // copy has none).
-            handled.extend(plain.iter().filter(|t| used_here(t)));
-            self.version(h, &region, &boxes, &plain, params);
+            type Test = (Local, Option<(Local, Ty)>);
+            let (plain, leave): (Vec<&Test>, Vec<_>) = here.iter().partition(|(_, held)| {
+                held.is_some_and(|(b, _)| boxes.iter().any(|(x, _)| *x == b))
+            });
+            let plain: FxHashSet<Local> = plain.iter().map(|x| x.0).collect();
+            let leave: FxHashSet<Local> = leave.iter().map(|x| x.0).collect();
+            // The loops inside this one are versioned with it (the copy holds theirs, and the
+            // original runs only for a view).
+            handled.extend(here.iter().map(|x| x.0));
+            self.version(h, &region, &boxes, &plain, &leave, params);
         }
     }
 
@@ -296,14 +306,16 @@ impl FnLower<'_, '_> {
         seen
     }
 
-    /// Copy the loop `region` (header `h`) with the tests in `plain` false, and enter the copy
-    /// from before the loop when none of `boxes` (their header type each) is a view.
+    /// Copy the loop `region` (header `h`) with the tests in `plain` false and those in
+    /// `leave` going on in the original loop when true, and enter the copy from before the loop
+    /// when none of `boxes` (their header type each) is a view.
     fn version(
         &mut self,
         h: BlockId,
         region: &[BlockId],
         boxes: &[(Local, Ty)],
         plain: &FxHashSet<Local>,
+        leave: &FxHashSet<Local>,
         params: usize,
     ) {
         let inside: FxHashSet<BlockId> = region.iter().copied().collect();
@@ -327,10 +339,9 @@ impl FnLower<'_, '_> {
             }
         }
         let mut fresh = FxHashMap::default();
+        let mut copied = vec![];
         for &b in region {
-            let c = map[&b];
-            let (mut stmts, term) = self.blocks[b.0 as usize].clone();
-            let mut term = term;
+            let (mut stmts, mut term) = self.blocks[b.0 as usize].clone();
             let mut rename = |l: &mut Local| {
                 if l.0 as usize >= params && !outside.contains(l) {
                     *l = *fresh.entry(*l).or_insert_with(|| {
@@ -342,24 +353,68 @@ impl FnLower<'_, '_> {
             };
             stmts.iter_mut().for_each(|s| stmt_locals(s, &mut rename));
             term.iter_mut().for_each(|t| term_locals(t, &mut rename));
-            // A test of one of `boxes` (renamed or not) is false in the copy.
-            let plain_here = |o: &Operand| {
-                plain
-                    .iter()
-                    .any(|&p| is_local(o, p) || fresh.get(&p).is_some_and(|&q| is_local(o, q)))
-            };
+            copied.push((b, stmts, term));
+        }
+        let named = |set: &FxHashSet<Local>, o: &Operand| {
+            set.iter()
+                .any(|&p| is_local(o, p) || fresh.get(&p).is_some_and(|&q| is_local(o, q)))
+        };
+        // Where the copy goes on in the original, the original's locals take the values of the
+        // copy's that are live there (and assigned on every way there).
+        let renamed: FxHashSet<Local> = fresh.keys().copied().collect();
+        let (live, set) = match leave.is_empty() {
+            true => (FxHashMap::default(), FxHashMap::default()),
+            false => (
+                self.live_ins(region, &renamed),
+                self.assigned_outs(h, region, &renamed),
+            ),
+        };
+        let mut edges = vec![];
+        for (b, stmts, term) in copied {
+            let c = map[&b];
             let locs = self.block_locs[b.0 as usize].clone();
-            let term = term.map(|t| {
-                let t = match t {
-                    Terminator::Branch { cond, els, .. } if plain_here(&cond) => {
-                        Terminator::Goto(els)
-                    }
-                    t => t,
-                };
-                super::cfg::remap_term(t, |s| map.get(&s).copied().unwrap_or(s))
-            });
+            let term = match term {
+                // A test of one of `boxes` is false in the copy.
+                Some(Terminator::Branch { cond, els, .. }) if named(plain, &cond) => {
+                    Some(Terminator::Goto(els))
+                }
+                Some(Terminator::Branch { cond, then, els }) if named(leave, &cond) => {
+                    let mut back: Vec<Local> = live
+                        .get(&then)
+                        .into_iter()
+                        .flatten()
+                        .filter(|l| set.get(&b).is_some_and(|s| s.contains(l)))
+                        .copied()
+                        .collect();
+                    back.sort_by_key(|l| l.0);
+                    let stmts: Vec<vir::Stmt> = back
+                        .iter()
+                        .map(|l| {
+                            let from = Operand::Copy(Place::local(fresh[l]));
+                            vir::Stmt::Assign(Place::local(*l), Rvalue::Use(from))
+                        })
+                        .collect();
+                    let edge = self.new_block();
+                    self.live[edge.0 as usize] = true;
+                    let n = stmts.len();
+                    edges.push((edge, then));
+                    self.blocks[edge.0 as usize] = (stmts, None);
+                    self.block_locs[edge.0 as usize] = (vec![locs.1; n], locs.1);
+                    Some(Terminator::Branch {
+                        cond,
+                        then: edge,
+                        els,
+                    })
+                }
+                t => t,
+            };
+            let term =
+                term.map(|t| super::cfg::remap_term(t, |s| map.get(&s).copied().unwrap_or(s)));
             self.blocks[c.0 as usize] = (stmts, term);
             self.block_locs[c.0 as usize] = locs;
+        }
+        for (edge, then) in edges {
+            self.blocks[edge.0 as usize].1 = Some(Terminator::Goto(then));
         }
         // The test before the loop, entered by every jump into it from outside.
         let entry = self.new_block();
@@ -393,6 +448,135 @@ impl FnLower<'_, '_> {
         self.switch_to(at);
         self.goto(map[&h]);
     }
+
+    /// The locals of `cands` live into each of the `blocks` (those of a loop when only the loop
+    /// mentions them, or all of them).
+    fn live_ins(
+        &self,
+        region: &[BlockId],
+        cands: &FxHashSet<Local>,
+    ) -> FxHashMap<BlockId, FxHashSet<Local>> {
+        let mut live: FxHashMap<BlockId, FxHashSet<Local>> =
+            region.iter().map(|&b| (b, FxHashSet::default())).collect();
+        let mut grew = true;
+        while grew {
+            grew = false;
+            for &b in region.iter().rev() {
+                let (stmts, term) = &self.blocks[b.0 as usize];
+                let mut l = FxHashSet::default();
+                if let Some(t) = term {
+                    for s in super::cfg::successors(t) {
+                        l.extend(live.get(&s).into_iter().flatten().copied());
+                    }
+                    term_flow(t, &mut l, cands);
+                }
+                for s in stmts.iter().rev() {
+                    stmt_flow(s, &mut l, cands);
+                }
+                if l.len() != live[&b].len() {
+                    grew = true;
+                    live.insert(b, l);
+                }
+            }
+        }
+        live
+    }
+
+    /// The locals of `cands` (which only the loop `region` with header `h` mentions) assigned
+    /// on every way from the header to the end of each block of the loop, as the verifier
+    /// counts assignments (vir invariant 6).
+    fn assigned_outs(
+        &self,
+        h: BlockId,
+        region: &[BlockId],
+        cands: &FxHashSet<Local>,
+    ) -> FxHashMap<BlockId, FxHashSet<Local>> {
+        let inside: FxHashSet<BlockId> = region.iter().copied().collect();
+        let mut preds: FxHashMap<BlockId, Vec<BlockId>> = FxHashMap::default();
+        for &b in region {
+            if let Some(t) = &self.blocks[b.0 as usize].1 {
+                for s in super::cfg::successors(t) {
+                    if inside.contains(&s) {
+                        preds.entry(s).or_default().push(b);
+                    }
+                }
+            }
+        }
+        let mut out: FxHashMap<BlockId, FxHashSet<Local>> =
+            region.iter().map(|&b| (b, cands.clone())).collect();
+        let mut changed = true;
+        while changed {
+            changed = false;
+            for &b in region {
+                let mut set = match b == h {
+                    true => FxHashSet::default(),
+                    false => {
+                        let mut ps = preds.get(&b).into_iter().flatten();
+                        let first = ps.next().map(|p| out[p].clone()).unwrap_or_default();
+                        ps.fold(first, |acc, p| &acc & &out[p])
+                    }
+                };
+                let (stmts, term) = &self.blocks[b.0 as usize];
+                for s in stmts {
+                    if let vir::Stmt::Assign(p, rv) = s {
+                        assigns(p, cands, &mut set);
+                        if let Rvalue::AddrOf(a) = rv {
+                            assigns(a, cands, &mut set);
+                        }
+                    }
+                }
+                if let Some(Terminator::Call { dest: Some(p), .. }) = term {
+                    assigns(p, cands, &mut set);
+                }
+                if set.len() != out[&b].len() {
+                    changed = true;
+                    out.insert(b, set);
+                }
+            }
+        }
+        out
+    }
+}
+
+/// A write to `p` assigns its local (one of `cands`) unless it goes through a pointer.
+fn assigns(p: &Place, cands: &FxHashSet<Local>, set: &mut FxHashSet<Local>) {
+    if !matches!(p.proj.first(), Some(Proj::Deref(_))) && cands.contains(&p.local) {
+        set.insert(p.local);
+    }
+}
+
+/// Liveness through `s` (backwards) of the locals in `cands`: an assignment to a whole local
+/// defines it, any other mention uses it.
+fn stmt_flow(s: &vir::Stmt, l: &mut FxHashSet<Local>, cands: &FxHashSet<Local>) {
+    let mut s = s.clone();
+    let mut skip = false;
+    if let vir::Stmt::Assign(p, _) = &s {
+        if p.proj.is_empty() {
+            l.remove(&p.local);
+            skip = true;
+        }
+    }
+    // `stmt_locals` visits an assignment's destination first.
+    stmt_locals(&mut s, &mut |x: &mut Local| {
+        if !std::mem::take(&mut skip) && cands.contains(x) {
+            l.insert(*x);
+        }
+    });
+}
+
+/// Liveness through `t` (backwards), as [`stmt_flow`].
+fn term_flow(t: &Terminator, l: &mut FxHashSet<Local>, cands: &FxHashSet<Local>) {
+    let mut t = t.clone();
+    if let Terminator::Call { dest, .. } = &mut t {
+        if let Some(p) = dest.take_if(|p| p.proj.is_empty()) {
+            l.remove(&p.local);
+        }
+    }
+    term_locals(&mut t, &mut |x: &mut Local| {
+        if cands.contains(x) {
+            l.insert(*x);
+        }
+    });
 }
 
 fn is_local(o: &Operand, l: Local) -> bool {

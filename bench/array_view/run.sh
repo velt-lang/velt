@@ -15,7 +15,8 @@
 #                                                 JSXChild[], so that the base compiler runs
 #                                                 it), and push_local, forof_local, index_local
 #                                                 and index_inc: loops over a local string[]
-#                                                 with no_view's guarded conversion
+#                                                 with no_view's guarded conversion, and the
+#                                                 loops described below (field_index ...)
 #
 # The programs are written to $WORK (default: a new temporary directory). Each compiler uses
 # its own std (VELT_STD is left as each build finds it).
@@ -240,6 +241,116 @@ $guard
 }
 EOF
 
+# Loops that a local's versioning alone does not cover: an array in an object field, a loop
+# that may reassign its array (never taken), the same for a push loop, a nested `rows[k][i]`,
+# a `string[]` parameter of a function called 200 times, and an array in a module variable.
+cat >"$WORK/field_index.vlt" <<EOF
+function main() {
+  let total = 0;
+$fill
+  const o = { xs };
+  for (let r = 0; r < 200; r++) {
+    for (let i = 0; i < o.xs.length; i++) {
+      total += o.xs[i].length;
+    }
+  }
+$guard
+  console.log(total);
+}
+EOF
+cat >"$WORK/maybe_assign.vlt" <<EOF
+function main() {
+  let total = 0;
+  let xs: string[] = [];
+  for (let i = 0; i < 1000; i++) {
+    xs.push("v" + (i % 10));
+  }
+  for (let r = 0; r < 200; r++) {
+    for (let i = 0; i < xs.length; i++) {
+      total += xs[i].length;
+      if (total < 0) {
+        xs = [];
+      }
+    }
+  }
+$guard
+  console.log(total);
+}
+EOF
+cat >"$WORK/push_maybe.vlt" <<EOF
+function main() {
+  let total = 0;
+  let xs: string[] = [];
+  for (let i = 0; i < 200000; i++) {
+    xs.push("v");
+    if (i < 0) {
+      xs = [];
+    }
+  }
+  total += xs.length;
+$guard
+  console.log(total);
+}
+EOF
+cat >"$WORK/rows_index.vlt" <<EOF
+function main() {
+  let total = 0;
+  const rows: string[][] = [];
+  for (let k = 0; k < 10; k++) {
+    const row: string[] = [];
+    for (let i = 0; i < 100; i++) {
+      row.push("v" + (i % 10));
+    }
+    rows.push(row);
+  }
+  for (let r = 0; r < 200; r++) {
+    for (let k = 0; k < rows.length; k++) {
+      for (let i = 0; i < rows[k].length; i++) {
+        total += rows[k][i].length;
+      }
+    }
+  }
+$guard
+  console.log(total);
+}
+EOF
+cat >"$WORK/sum_param.vlt" <<EOF
+function sum(xs: string[]): number {
+  let n = 0;
+  for (let i = 0; i < xs.length; i++) {
+    n += xs[i].length;
+  }
+  return n;
+}
+
+function main() {
+  let total = 0;
+$fill
+  for (let r = 0; r < 200; r++) {
+    total += sum(xs);
+  }
+$guard
+  console.log(total);
+}
+EOF
+cat >"$WORK/module_index.vlt" <<EOF
+const gxs: string[] = [];
+
+function main() {
+  let total = 0;
+  for (let i = 0; i < 1000; i++) {
+    gxs.push("v" + (i % 10));
+  }
+  for (let r = 0; r < 200; r++) {
+    for (let i = 0; i < gxs.length; i++) {
+      total += gxs[i].length;
+    }
+  }
+$guard
+  console.log(total);
+}
+EOF
+
 case $mode in
 time)
   velt=$1
@@ -250,7 +361,7 @@ time)
 instr)
   base_velt=$1
   head_velt=$2
-  for p in ${PROGRAMS:-no_view sigx_like push_local forof_local index_local index_inc}; do
+  for p in ${PROGRAMS:-no_view sigx_like push_local forof_local index_local index_inc field_index maybe_assign push_maybe rows_index sum_param module_index}; do
     line="$p"
     for side in base head; do
       velt=$base_velt
