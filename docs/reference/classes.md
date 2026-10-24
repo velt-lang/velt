@@ -65,7 +65,10 @@ hidden classes and no runtime shape checks.
   running a constructor; `JSON.stringify` writes it as usual
   ([`velt:json`](../std/json.md)).
 - **Single inheritance**: `class B extends A`. The base's fields are a prefix of the subclass
-  layout, so upcasts are free. A subclass without a constructor of its own inherits its
+  layout, so upcasts are free. A subclass may declare an inherited field again with the same
+  type and an initializer of its own (`class Dog extends Animal { kind: string = "dog" }`): it is
+  the same field, which the subclass's initializer sets after the base class's, in its turn among
+  the subclass's initializers. A subclass without a constructor of its own inherits its
   base's. Redefining a base method requires `override`, except a method of a standard-library
   class (`toString()` in a subclass of `Error`), which TypeScript code redefines without it;
   `super.m()` calls the base version. An override may give a parameter a default of its own: a
