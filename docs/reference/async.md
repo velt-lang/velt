@@ -162,7 +162,9 @@ Promises behave like JavaScript's, at Rust's cost:
   anywhere else moves as it is; an object it still shares is deep-copied for the task (like a
   structured clone), so threads never share reference counts. As with a structured clone, an
   object the value reaches more than once is copied once (`p.x === p.y` still holds in the
-  task) and a cycle is copied as a cycle. That includes the receiver of
+  task) and a cycle is copied as a cycle. A view of an object (an `any` converted to an object
+  type, [Types](types.md)) is copied with its object: the task writes to its copy, and the
+  object here, converted again, is a view of this thread's object. That includes the receiver of
   `spawn(obj.method())` (also through a base-class reference or an interface value) and what a
   closure or interface value passed to the task reaches. A closure the caller still uses
   afterwards is copied too, with what it captures (also a variable it assigns), so the task and

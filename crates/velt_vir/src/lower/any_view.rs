@@ -112,6 +112,28 @@ impl FnLower<'_, '_> {
         self.switch_to(join);
     }
 
+    /// In the transfer or deep copy of the class `d` object at `this` (the untagged pointer) for
+    /// the thread that gets it: a view of a `Proxy`, in a program with views, is recorded as the
+    /// live view of the object its `#target` now holds (`velt_rt_view_put`, which keeps an entry
+    /// already there). A transfer first takes the view out of the table (`proxy_unview`, while
+    /// `#target` is still the sender's object), since it may replace `#target` by a copy: the
+    /// sender's next conversion of its object then makes a view of its own.
+    pub(in crate::lower) fn proxy_review(&mut self, this: Operand, d: DefId) {
+        if self.cx.boxing.proxy_class != Some(d) || self.cx.view_fn().is_none() {
+            return;
+        }
+        let pty = self.cx.proxy_class_ty();
+        let view = self.proxy_hot_place(&this, pty, self.proxy_field_index(d, "#view"));
+        let (yes, join) = (self.new_block(), self.new_block());
+        self.branch(Operand::Copy(view), yes, join);
+        self.switch_to(yes);
+        let target = self.proxy_hot_place(&this, pty, self.proxy_field_index(d, "#target"));
+        let data = Operand::Copy(proj(&target, Proj::Field(0)));
+        self.call_rt(Rt::ViewPut, vec![data, this], None);
+        self.goto(join);
+        self.switch_to(join);
+    }
+
     /// The index of the `Proxy` class's field `name`.
     fn proxy_field_index(&self, pd: DefId, name: &str) -> u32 {
         let fields = &self.cx.adt_def(pd).fields;

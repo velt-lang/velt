@@ -1,0 +1,52 @@
+// check: no leaks
+// A view (an object of another type converted to an object type, #1485) passed to `spawn`
+// while its object is still used here goes to the task as a copy, like any other object: the
+// task's writes land on its copy, and converting the object here again gives a view of this
+// thread's object. A view a task returns is a view on this thread, of the task's object.
+type Item = { name: string; price: number };
+
+const tracked = new Proxy({ name: "proxy", price: 1 }, {}) as Item;
+
+class Product {
+  name = "lamp";
+  price = 30;
+  stock = 4;
+}
+
+async function use(v: Item): Promise<number> {
+  v.price = v.price + 1;
+  const again: any = v;
+  return (again as Item) === v ? v.price : -1;
+}
+
+async function make(x: any, price: number): Promise<Item> {
+  const v = x as Item;
+  v.price = price;
+  return v;
+}
+
+async function main(): Promise<void> {
+  const a: any = new Product();
+  for (let i = 0; i < 3; i++) {
+    const v = a as Item;
+    const r = await spawn(use(v));
+    console.log(r, (a as Item).price, v === (a as Item));
+  }
+  const kept = a as Item;
+  const r = await spawn(use(kept));
+  console.log(r, kept.price, kept === (a as Item));
+
+  const back = await spawn(make(a, 7));
+  const any: any = back;
+  console.log(back.price, (a as Item).price, (any as Item) === back, any === a);
+  const moved = await spawn(make(new Product(), 8));
+  console.log(moved.name, moved.price);
+
+  // Freed blocks are reused: no view outlives its object.
+  const junk: any[] = [];
+  for (let i = 0; i < 1000; i++) {
+    junk.push({ name: "x" + i, price: i });
+  }
+  const w = a as Item;
+  console.log(w.name, w.price, tracked.name, junk.length);
+}

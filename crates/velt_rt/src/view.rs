@@ -46,10 +46,13 @@ pub extern "C" fn velt_rt_view_get(obj: *const u8) -> *mut u8 {
     with(|t| t.get(&(obj as usize)).copied().unwrap_or(0) as *mut u8)
 }
 
-/// `view` (just made, untagged) is the live view of the object at `obj`.
+/// `view` (untagged: just made, or a view just copied or transferred) is the live view of the
+/// object at `obj`, unless the object has one already.
 #[no_mangle]
 pub extern "C" fn velt_rt_view_put(obj: *const u8, view: *const u8) {
-    with(|t| t.insert(obj as usize, view as usize));
+    with(|t| {
+        t.entry(obj as usize).or_insert(view as usize);
+    });
 }
 
 /// The drop of `view`, a view of the object at `obj`: its entry goes (if it is still the
@@ -87,6 +90,28 @@ mod tests {
         assert_eq!(velt_rt_view_get(obj) as usize, 0x3000);
         velt_rt_view_remove(obj, other);
         assert!(velt_rt_view_get(obj).is_null());
+    }
+
+    #[test]
+    fn a_put_keeps_the_live_view() {
+        let (obj, view, copy) = (
+            0x4000 as *const u8,
+            0x5000 as *const u8,
+            0x6000 as *const u8,
+        );
+        velt_rt_view_put(obj, view);
+        // A copied view whose object was not copied is no second entry for the object.
+        velt_rt_view_put(obj, copy);
+        assert_eq!(velt_rt_view_get(obj) as usize, 0x5000);
+        velt_rt_view_remove(obj, copy);
+        assert_eq!(velt_rt_view_get(obj) as usize, 0x5000);
+        // A transfer takes the view out, then puts it back under its (new) object.
+        velt_rt_view_remove(obj, view);
+        velt_rt_view_put(copy, view);
+        assert!(velt_rt_view_get(obj).is_null());
+        assert_eq!(velt_rt_view_get(copy) as usize, 0x5000);
+        velt_rt_view_remove(copy, view);
+        assert!(velt_rt_view_get(copy).is_null());
     }
 
     #[test]

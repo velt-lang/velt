@@ -461,8 +461,11 @@ view's drop glue (before its fields drop) calls `velt_rt_view_remove`, so an ent
 as long as its view and its address is not reused meanwhile.
 
 `velt_rt_view_get(obj)` answers the view, not counted (the caller retains it), or null;
-`velt_rt_view_put(obj, view)` records a view just made; `velt_rt_view_remove(obj, view)` forgets
-the entry if it is `view`'s. One table for the process, behind a lock (a task moves between
+`velt_rt_view_put(obj, view)` records a view just made, copied or transferred, unless `obj`
+has one already; `velt_rt_view_remove(obj, view)` forgets the entry if it is `view`'s. A view's
+transfer glue removes its entry before its `#target` may be replaced by a copy for another
+thread and puts it under the new `#target` afterwards; its clone glue puts the copy under the
+copied target. One table for the process, behind a lock (a task moves between
 worker threads at an `await`). Both runtimes provide them (`velt_rt/src/view.rs`, compiled into
 velt_rt_wasm too). Programs without views never call them.
 

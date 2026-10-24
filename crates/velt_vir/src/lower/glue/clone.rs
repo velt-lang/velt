@@ -285,6 +285,10 @@ impl FnLower<'_, '_> {
             let dp = self.field_place(&np, ty, i as u32);
             self.clone_into(sp, dp, t);
         }
+        // A copy of a view is the view of the copy of its object (any_view.rs).
+        if let TyKind::Adt(d, _) = self.cx.kind(ty) {
+            self.proxy_review(new.clone(), d);
+        }
         self.terminate(Terminator::Return(new));
     }
 
