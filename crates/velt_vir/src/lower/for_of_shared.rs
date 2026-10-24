@@ -47,9 +47,13 @@ impl FnLower<'_, '_> {
         // Whether the array is a view, tested once: the loop holds a reference to it.
         let view = self.cx.array_view(aty).then(|| {
             let payload = self.cx.payload_ty(aty);
-            let is = self.view_tagged(&proj(&arr, Proj::Deref(payload)));
-            Operand::Copy(Place::local(self.copy_to_temp(is, Ty::Bool)))
+            let hdr = proj(&arr, Proj::Deref(payload));
+            let is = self.view_tagged(&hdr);
+            let is = Operand::Copy(Place::local(self.copy_to_temp(is, Ty::Bool)));
+            self.note_view_test(&hdr, &is);
+            is
         });
+        let first = self.loop_start();
         let (cond_bb, body_bb, exit) = (self.new_block(), self.new_block(), self.new_block());
         self.goto(cond_bb);
         self.switch_to(cond_bb);
@@ -94,6 +98,7 @@ impl FnLower<'_, '_> {
         self.pop_scope();
         self.goto(cond_bb);
         self.pop_scope();
+        self.note_loop(cond_bb, first);
         self.switch_to(exit);
         self.pop_scope();
     }

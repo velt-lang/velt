@@ -223,7 +223,9 @@ impl FnLower<'_, '_> {
 
     /// Is the header at `hdr` a view's (bit 0 of its data pointer)?
     pub(super) fn view_tagged(&mut self, hdr: &Place) -> Operand {
-        self.proxy_tagged(Operand::Copy(proj(hdr, Proj::Field(0))))
+        let is = self.proxy_tagged(Operand::Copy(proj(hdr, Proj::Field(0))));
+        self.note_view_test(hdr, &is);
+        is
     }
 
     /// The view object of the header at `hdr` when it is a view: `(is_view, untagged)`.
@@ -233,6 +235,7 @@ impl FnLower<'_, '_> {
             Rvalue::Use(Operand::Copy(proj(hdr, Proj::Field(0)))),
         );
         let is = self.proxy_tagged(d.clone());
+        self.note_view_test(hdr, &is);
         (is, self.proxy_untag(d))
     }
 
@@ -459,8 +462,7 @@ impl FnLower<'_, '_> {
         if std::mem::take(&mut self.mirror_drop) || !self.cx.array_view_of(e) {
             return rest(self);
         }
-        let d = Operand::Copy(proj(arr, Proj::Field(0)));
-        let is = self.proxy_tagged(d);
+        let is = self.view_tagged(arr);
         let (yes, no, join) = (self.new_block(), self.new_block(), self.new_block());
         self.branch(is, yes, no);
         self.switch_to(yes);

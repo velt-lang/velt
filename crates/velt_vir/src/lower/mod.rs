@@ -111,6 +111,7 @@ mod transfer;
 mod truthy;
 mod types;
 mod upcast;
+mod view_unswitch;
 mod weak;
 mod weak_object;
 mod weak_view;
@@ -586,6 +587,8 @@ struct FnLower<'c, 'h> {
     view_writes: Option<Vec<(Operand, TyId, Option<Operand>)>>,
     /// The next array dropped is a view's mirror, never a view itself (`Glue::MirrorDrop`).
     mirror_drop: bool,
+    /// The view bit tests and loops lowered, for versioning (view_unswitch.rs).
+    view_loops: view_unswitch::ViewLoops,
     /// This function's read mode, once asked (rc.rs `lk_mode`).
     lk_mode: Option<Local>,
     /// This thread's `RwLock` reader state, once a `read` returned it (async_fn/sync.rs).
