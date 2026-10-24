@@ -46,7 +46,7 @@ scope everywhere without an import, and so are Node's web globals: [`fetch`](fet
 | Area | Modules |
 |---|---|
 | Files and I/O | [fs](fs.md) · [fs_stream](fs_stream.md) · [io](io.md) · [stdin](stdin.md) · [path](path.md) |
-| Network | [fetch](fetch.md) (global) · [http](http.md) · [websocket](websocket.md) · [net](net.md) · [udp](udp.md) · [dns](dns.md) |
+| Network | [fetch](fetch.md) (global) · [http](http.md) · [http/server](http_server.md) · [websocket](websocket.md) · [net](net.md) · [udp](udp.md) · [dns](dns.md) |
 | Data formats | [json](json.md) · [csv](csv.md) · [encoding](encoding.md) · [typed arrays](typed_array.md) · [streams](streams.md) · [url](url.md) · [html](html.md) · [jsx](jsx.md) (TSX rendering) |
 | Collections | [collections/set](collections/set.md) · [collections/deque](collections/deque.md) · [collections/priority_queue](collections/priority_queue.md) · [collections/sorted_map](collections/sorted_map.md) · [arena](arena.md) |
 | Numbers and time | [math](math.md) · [bigint](bigint.md) · [random](random.md) · [datetime](datetime.md) · [timers](timers.md) |

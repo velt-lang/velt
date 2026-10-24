@@ -1,0 +1,424 @@
+// std/http/server: an HTTP/1.1 server written in Velt on std/net (docs/std/http_server.md).
+//
+// One task per connection. The connection reads into a buffer of its own; each request is parsed
+// in place there (http/server/parse.vlt) and handed to the handler with a response writer whose
+// bytes go into one buffer per connection: every response to the requests one read brought
+// (pipelining) leaves in one write. The fixed parts of a response head are encoded once per
+// connection and the `Date` value once per second; text goes into the buffer without a copy in
+// between. Nothing on the request path is module state (#1487).
+
+import { utf8Encode } from "velt:encoding";
+import { listen, TcpListener, TcpStream } from "velt:net";
+import { AbortController, AbortSignal } from "velt:task";
+import { BadRequest, HttpRequest, Parser } from "velt:http/server/parse";
+
+export { HttpRequest } from "velt:http/server/parse";
+
+declare function velt_rt_bytes_set_str(dst: u8[], s: string, offset: u64): bool;
+
+const CR: u8 = 13;
+const LF: u8 = 10;
+const SP: u8 = 32;
+const DEFAULT_HOST = "127.0.0.1";
+/// A request head (request line and headers) larger than this is refused (431).
+const MAX_HEAD: number = 65536;
+/// A request body larger than this is refused (413).
+const MAX_BODY: number = 8388608;
+/// The response buffer a connection starts with.
+const INITIAL_OUT: i64 = 16384;
+
+export struct HttpServeOptions {
+  port: number;
+  host?: string;
+  /** The largest request head accepted, in bytes (431 beyond it). Default 64 KiB. */
+  maxHeadSize?: number;
+  /** The largest request body accepted, in bytes (413 beyond it). Default 8 MiB. */
+  maxBodySize?: number;
+  /**
+   * Milliseconds a connection may wait for its next request (or the rest of one) before it is
+   * closed. Default 5000, as Node's `keepAliveTimeout`.
+   */
+  idleTimeout?: number;
+}
+
+/**
+ * A response being written: `status`, `header` and one of the `send` methods, which writes it.
+ * One per connection, reused for its requests; valid while the handler runs.
+ */
+export class HttpResponse {
+  /** The responses not yet written to the connection (internal). */
+  buf: u8[] = Buffer.alloc(INITIAL_OUT as usize);
+  length: i64 = 0;
+  private statusCode: number = 200;
+  /** The headers set for this response, encoded (`name: value\r\n` each). */
+  private extra: u8[] = Buffer.alloc(256);
+  private extraLength: i64 = 0;
+  private hasType: bool = false;
+  private keepAlive: bool = true;
+  private done: bool = false;
+  // `Date` header bytes for `dateSecond`.
+  private date: u8[] = [];
+  private dateSecond: i64 = -1;
+
+  /** Sets the status code (200 by default). */
+  status(code: number) {
+    this.statusCode = code;
+  }
+
+  /** Adds header `name: value` (a `content-type` replaces the default one). */
+  header(name: string, value: string) {
+    const n = (Buffer.byteLength(name) + Buffer.byteLength(value) + 4) as i64;
+    if (this.extraLength + n > (this.extra.length as i64)) {
+      const grown: u8[] = Buffer.alloc(((this.extraLength + n) * 2) as usize);
+      grown.set(this.extra.slice(0, this.extraLength), 0);
+      this.extra = grown;
+    }
+    let at = this.extraLength;
+    velt_rt_bytes_set_str(this.extra, name, at as u64);
+    at += Buffer.byteLength(name) as i64;
+    this.extra[at] = 58;
+    this.extra[at + 1] = SP;
+    at += 2;
+    velt_rt_bytes_set_str(this.extra, value, at as u64);
+    at += Buffer.byteLength(value) as i64;
+    this.extra[at] = CR;
+    this.extra[at + 1] = LF;
+    this.extraLength = at + 2;
+    if (name.length == 12 && name.toLowerCase() == "content-type") {
+      this.hasType = true;
+    }
+  }
+
+  /** Writes the response with body `body` (default type `text/plain; charset=utf-8`). */
+  send(body: string) {
+    this.head("text/plain; charset=utf-8", Buffer.byteLength(body) as i64);
+    this.text(body);
+  }
+
+  /** Writes the response with body `body` (default type `application/octet-stream`). */
+  sendBytes(body: u8[]) {
+    this.head("application/octet-stream", body.length as i64);
+    this.reserve(body.length as i64);
+    this.buf.set(body, this.length as usize);
+    this.length += body.length as i64;
+  }
+
+  /** Writes the response with JSON text `json` (type `application/json`). */
+  json(json: string) {
+    this.head("application/json", Buffer.byteLength(json) as i64);
+    this.text(json);
+  }
+
+  /** Writes the response with HTML `html` (type `text/html; charset=utf-8`). */
+  html(html: string) {
+    this.head("text/html; charset=utf-8", Buffer.byteLength(html) as i64);
+    this.text(html);
+  }
+
+  /** Whether a response was written for the current request. */
+  sent(): bool {
+    return this.done;
+  }
+
+  /** A new request: status 200, no headers (internal). */
+  begin(keepAlive: bool) {
+    this.statusCode = 200;
+    this.extraLength = 0;
+    this.hasType = false;
+    this.keepAlive = keepAlive;
+    this.done = false;
+  }
+
+  /** The `Date` value for the responses of this batch: once a second a new one (internal). */
+  tick() {
+    const now = Date.now();
+    const second = (now / 1000) as i64;
+    if (second != this.dateSecond) {
+      this.dateSecond = second;
+      this.date = utf8Encode(new Date(now as number).toUTCString());
+    }
+  }
+
+  /** Writes what is buffered to `conn` (internal). */
+  async flush(conn: TcpStream) {
+    if (this.length > 0) {
+      await conn.writeBytes(this.buf, 0, this.length as number);
+      this.length = 0;
+    }
+  }
+
+  private reserve(n: i64) {
+    if (this.length + n <= (this.buf.length as i64)) {
+      return;
+    }
+    let size = (this.buf.length as i64) * 2;
+    while (size < this.length + n) {
+      size *= 2;
+    }
+    const grown: u8[] = Buffer.alloc(size as usize);
+    grown.set(this.buf.slice(0, this.length), 0);
+    this.buf = grown;
+  }
+
+  private text(s: string) {
+    const n = Buffer.byteLength(s) as i64;
+    this.reserve(n);
+    velt_rt_bytes_set_str(this.buf, s, this.length as u64);
+    this.length += n;
+  }
+
+  private number(n: i64) {
+    this.reserve(20);
+    const start = this.length;
+    let v = n;
+    do {
+      this.buf[this.length] = (48 + v % 10) as u8;
+      this.length++;
+      v = v / 10;
+    } while (v > 0);
+    let i = start;
+    let j = this.length - 1;
+    while (i < j) {
+      const t = this.buf[i];
+      this.buf[i] = this.buf[j];
+      this.buf[j] = t;
+      i++;
+      j--;
+    }
+  }
+
+  private head(type: string, length: i64) {
+    if (this.done) {
+      throw new Error("the response was already sent");
+    }
+    this.done = true;
+    this.text("HTTP/1.1 ");
+    this.number(this.statusCode as i64);
+    this.buf[this.length] = SP;
+    this.length++;
+    this.text(reason(this.statusCode));
+    this.text("\r\nServer: Velt\r\nDate: ");
+    const date = this.date;
+    this.reserve(date.length as i64);
+    this.buf.set(date, this.length as usize);
+    this.length += date.length as i64;
+    if (!this.hasType) {
+      this.text("\r\nContent-Type: ");
+      this.text(type);
+    }
+    this.text("\r\nContent-Length: ");
+    this.number(length);
+    if (!this.keepAlive) {
+      this.text("\r\nConnection: close");
+    }
+    this.text("\r\n");
+    const extra = this.extra;
+    const n = this.extraLength;
+    this.reserve(n + 2);
+    for (let i: i64 = 0; i < n; i++) {
+      this.buf[this.length + i] = extra[i];
+    }
+    this.length += n;
+    this.buf[this.length] = CR;
+    this.buf[this.length + 1] = LF;
+    this.length += 2;
+  }
+}
+
+/** The reason phrase of `status`. */
+function reason(status: number): string {
+  switch (status) {
+    case 100:
+      return "Continue";
+    case 200:
+      return "OK";
+    case 201:
+      return "Created";
+    case 204:
+      return "No Content";
+    case 301:
+      return "Moved Permanently";
+    case 302:
+      return "Found";
+    case 304:
+      return "Not Modified";
+    case 400:
+      return "Bad Request";
+    case 401:
+      return "Unauthorized";
+    case 403:
+      return "Forbidden";
+    case 404:
+      return "Not Found";
+    case 405:
+      return "Method Not Allowed";
+    case 413:
+      return "Content Too Large";
+    case 431:
+      return "Request Header Fields Too Large";
+    case 500:
+      return "Internal Server Error";
+    case 501:
+      return "Not Implemented";
+    case 503:
+      return "Service Unavailable";
+    default:
+      return "Unknown";
+  }
+}
+
+/** A running server. */
+export class HttpServer {
+  /** The real port (useful after `port: 0`). */
+  port: number = 0;
+  private listener: TcpListener;
+  private stop: AbortController;
+
+  constructor(listener: TcpListener, stop: AbortController) {
+    this.listener = listener;
+    this.port = listener.port;
+    this.stop = stop;
+  }
+
+  /**
+   * Stops accepting connections and closes the idle ones; a connection in the middle of a
+   * request answers it, then closes. Idempotent.
+   */
+  close() {
+    this.listener.close();
+    this.stop.abort();
+  }
+}
+
+/**
+ * Binds `host:port` (default host 127.0.0.1; port 0 picks a free port) and serves `handler` in
+ * the background: an `async` handler answers each request through `res` (`res.send(...)`). A
+ * handler that throws, or returns without sending, gets a 500 or an empty 200.
+ */
+export async function serve<E>(
+  opts: HttpServeOptions,
+  handler: (req: HttpRequest, res: HttpResponse) => Promise<void, E> throws E,
+): Promise<HttpServer> {
+  const listener = await listen(`${opts.host ?? DEFAULT_HOST}:${opts.port}`);
+  const maxHead = (opts.maxHeadSize ?? MAX_HEAD) as i64;
+  const maxBody = (opts.maxBodySize ?? MAX_BODY) as i64;
+  const idle = (opts.idleTimeout ?? IDLE_MS) as i64;
+  const stop = new AbortController();
+  const stopped = stop.signal;
+  const accepting = listener;
+  spawn(async () => {
+    try {
+      while (true) {
+        const conn = await accepting.accept();
+        spawn(connection(conn, handler, maxHead, maxBody, idle, stopped));
+      }
+    } catch (e) {
+      // `close()`: stop accepting.
+    }
+  });
+  return new HttpServer(listener, stop);
+}
+
+/// How long a connection waits for its next request by default (Node's `keepAliveTimeout`).
+const IDLE_MS: number = 5000;
+
+/// Waits until `conn` may have input: true, or false once `stopped` is aborted or `idle`
+/// milliseconds passed (the connection then closes).
+async function more(conn: TcpStream, stopped: AbortSignal, idle: i64): Promise<bool> {
+  return !stopped.aborted && (await conn.readableWithin(idle as number, stopped));
+}
+
+async function connection<E>(
+  conn: TcpStream,
+  handler: (req: HttpRequest, res: HttpResponse) => Promise<void, E> throws E,
+  maxHead: i64,
+  maxBody: i64,
+  idle: i64,
+  stopped: AbortSignal,
+): Promise<void> {
+  const parser = new Parser(maxHead, maxBody);
+  const req = new HttpRequest();
+  const res = new HttpResponse();
+  let open = true;
+  let rejected = false;
+  try {
+    while (open) {
+      const n = parser.readFrom(conn);
+      if (n == null) {
+        break;
+      }
+      if (n == 0) {
+        if (!(await more(conn, stopped, idle))) {
+          break;
+        }
+        continue;
+      }
+      res.tick();
+      try {
+        while (open && parser.next(req)) {
+          res.begin(req.keepAlive);
+          try {
+            await handler(req, res);
+          } catch (e) {
+            if (!res.sent()) {
+              res.status(500);
+              res.send("Internal Server Error");
+            }
+            console.error("request handler failed:", e);
+          }
+          if (!res.sent()) {
+            res.send("");
+          }
+          open = req.keepAlive && !stopped.aborted;
+        }
+      } catch (e) {
+        if (e instanceof BadRequest) {
+          res.begin(false);
+          res.status(e.status);
+          res.send(reason(e.status));
+          rejected = true;
+        }
+        open = false;
+      }
+      await res.flush(conn);
+    }
+    if (rejected) {
+      await linger(conn);
+    }
+  } catch (e) {
+    // The client went away.
+  }
+  conn.close();
+}
+
+/// The most a rejected request's remaining input is read for, before the connection closes.
+const LINGER_BYTES: number = 1048576;
+const LINGER_MS: i64 = 2000;
+
+/// After an error response to input that was not read (a head or body too large): ends the
+/// sending side and reads what the client still sends (up to `LINGER_BYTES`, for `LINGER_MS`),
+/// so closing with unread input does not reset the connection before the client read the
+/// response (as nginx's and Kestrel's lingering close).
+async function linger(conn: TcpStream) {
+  conn.shutdown();
+  const until = Date.now() + LINGER_MS;
+  let left = LINGER_BYTES;
+  const scratch: u8[] = Buffer.alloc(16384);
+  while (left > 0 && Date.now() < until) {
+    const n = conn.tryRead(scratch);
+    if (n == null) {
+      return;
+    }
+    if (n == 0) {
+      const wait = until - Date.now();
+      if (wait <= 0) {
+        return;
+      }
+      if (!(await conn.readableWithin(wait as number))) {
+        return;
+      }
+      continue;
+    }
+    left -= n;
+  }
+}

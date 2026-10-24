@@ -1,0 +1,14 @@
+200 text/plain; charset=utf-8 Velt hello
+200 yes {"method":"POST","path":"/info","query":"a=1&b=2","hasAuth":false,"post":true}
+text/x-echo 9 some body
+404 no /nope?q
+500 Internal Server Error
+200 ""
+pipelined: HTTP/1.1 200 OK | HTTP/1.1 404 Not Found | HTTP/1.1 200 OK true
+in pieces: HTTP/1.1 200 OK true
+HTTP/1.0: HTTP/1.1 200 OK true
+garbage: HTTP/1.1 400 Bad Request
+bad header: HTTP/1.1 400 Bad Request
+too large: HTTP/1.1 413 Content Too Large
+chunked: HTTP/1.1 501 Not Implemented
+head too large: HTTP/1.1 431 Request Header Fields Too Large
