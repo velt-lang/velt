@@ -518,3 +518,75 @@ export class __HasOwnProperty {
     return __anyHasOwn(o, key);
   }
 }
+
+// Array views (#1485; velt_vir lower/array_view.rs). An `any` holding an array of
+// another element type, converted to `T[]` (`kids as JSXChild[]`, or a cast `xs as T[]` of an
+// existing array, which sema writes through `any`), is a view of that one array, as in Node:
+// the `T[]` value's header points at an `__ArrayView<T>`, which holds the original array as an
+// `any` and a mirror of its elements converted to `T`. Lowering brings the mirror up to date
+// before each access to the view's contents (`__arrayViewSync`) and writes it back after each
+// change through the view (`__arrayViewFlush`), so reads see the original's current elements
+// and writes reach the original. Nothing here is called in a program without views.
+
+/** The state of one view: the original array and the mirror of its elements as `T`. */
+class __ArrayView<T> {
+  __target: any;
+  __seen: T[];
+
+  constructor(target: any) {
+    this.__target = target;
+    this.__seen = [];
+  }
+}
+
+/** A view of the array `target` holds (moved in) as a `T[]`. */
+function __arrayViewNew<T>(target: any): __ArrayView<T> {
+  return new __ArrayView<T>(target);
+}
+
+/**
+ * The mirror brought up to date with the original: an element that is still the original's
+ * (`===` through `any`) is kept, so a borrow of it stays valid; any other is the original's
+ * element converted again (a `TypeError` when it is not a `T`). The mirror has the original's
+ * length afterwards.
+ */
+function __arrayViewSync<T>(v: __ArrayView<T>) {
+  const t = v.__target;
+  const seen = v.__seen;
+  const n = t.length as number;
+  for (let i = 0; i < n; i++) {
+    const cur: any = t[i];
+    if (i < seen.length) {
+      const had: any = seen[i];
+      if (had !== cur) {
+        seen[i] = cur as T;
+      }
+    } else {
+      seen.push(cur as T);
+    }
+  }
+  if (seen.length > n) {
+    seen.truncate(n as i64);
+  }
+}
+
+/**
+ * The mirror written back to the original after a change through the view: each element that
+ * is not the original's (`===` through `any`) is stored into it, converted to the original's
+ * element type (a `TypeError` when it cannot hold it), and a shorter mirror shortens it.
+ */
+function __arrayViewFlush<T>(v: __ArrayView<T>) {
+  const t = v.__target;
+  const seen = v.__seen;
+  const n = seen.length;
+  for (let i: usize = 0; i < n; i++) {
+    const now: any = seen[i];
+    const k = i as number;
+    if (k >= (t.length as number) || t[k] !== now) {
+      t[k] = now;
+    }
+  }
+  if ((t.length as number) > (n as number)) {
+    t.length = n as number;
+  }
+}

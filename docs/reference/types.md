@@ -1850,7 +1850,9 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   initializer or a default value for now. TypeScript also converts an existing array, which
   is unsound: storing a `Named` that is not a `C` through the `Named[]` would put it into the
   `C[]`. Velt reports that and
-  suggests a copy, `[...cs]` or `cs.map((x): Named => x)`. A generic class converts only when
+  suggests a copy, `[...cs]` or `cs.map((x): Named => x)`. An `as` cast of an existing array to
+  another element type (`cs as Named[]`) is allowed and gives a view of the array (see "any and
+  unknown" below), checked element by element as it is read and written. A generic class converts only when
   it has no base class, no subclasses and no `[Symbol.dispose]()`; the new object shares the
   old one's field values.
 
@@ -2648,6 +2650,40 @@ function main(): void {
   console.log(p.price, item.name, tracked.hits); // 3 pen 0
   const back: any = item;
   console.log(back === a, item === (a as Item)); // true true
+}
+```
+
+An array of another element type converted to an array type is a *view* of that one array, in
+every program (#1485): an `any` holding an array converted to `T[]` (`kids as JSXChild[]` with
+`kids` holding `["a", 1]`, also as a union's array member: `kids as JSXChild`), and a cast of an
+existing array to another, comparable element type (`items as VNode[]` with `items:
+JSXElement[]`, `result as JSXChildren`), which sema writes as the conversion through `any`.
+Nothing is copied up front: each access sees the original's elements at that moment, each
+converted to `T` with the check above (an object element of another type is a view of it, in a
+program with views of objects), and a change through the view (an index assignment, `push`,
+`pop`, `reverse`, `splice`, ...) is written back to the original at once, converted to the
+original's element type, so a value the original's element type cannot hold (a `string` written
+into a view of a `VNode[]`) stops with a `TypeError` where Node stores it. Back in an `any` the
+view is the original array (`===`, `Array.isArray`, `WeakMap` keys). Two conversions of one
+array are two views, so `===` between them as `T[]` values is `false` (Node: `true`); compare
+them through `any`. A view sent to another thread or `clone()`d is a plain array of its elements
+(a copy, as any array sent while it is still used here). A view brings its elements up to date
+on each access, so a loop over a large view costs a pass over it per access; the stable sort
+(`sort` with a comparison function on elements that are not numbers or strings) of a view stops
+with a `TypeError` for now. Array types that no conversion makes a view keep their layout and
+code.
+
+```ts
+type VNode = { type: string };
+type JSXChild = VNode | string | number | boolean | null | undefined | JSXChild[];
+
+function main(): void {
+  const kids: any = ["a", 1];
+  const view = kids as JSXChild[]; // a view of the array `kids` holds
+  view.push("b");
+  console.log(kids.length, view[2]); // 3 b
+  const back: any = view;
+  console.log(back === kids); // true
 }
 ```
 

@@ -46,13 +46,24 @@ impl FnCx<'_, '_> {
         self.try_coerce(v, target).map_err(|_| orig)
     }
 
+    /// A conversion of an `any` to `t` here: when `t` holds an array, the view it may make reads
+    /// that array's members through `any`, so the `any` tables need the member slots.
+    pub(super) fn note_array_view_target(&mut self, t: TyId) {
+        if self.array_member(t).is_some() {
+            self.note_dyn_members();
+        }
+    }
+
     /// `t` itself when it is an array type, else the one array member of the union (or
     /// nullable) `t`.
     fn array_member(&mut self, t: TyId) -> Option<TyId> {
         if matches!(self.cx.ty.kind(t), TyKind::Array(_)) {
             return Some(t);
         }
-        let inner = self.cx.ty.opt_payload(t).unwrap_or(t);
+        let mut inner = t;
+        while let Some(p) = self.cx.ty.opt_payload(inner) {
+            inner = p;
+        }
         if inner != t && matches!(self.cx.ty.kind(inner), TyKind::Array(_)) {
             return Some(inner);
         }

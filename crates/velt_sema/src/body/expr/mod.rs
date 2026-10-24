@@ -47,6 +47,7 @@ mod dynamic_whole;
 mod dynamic_write;
 mod env_globals;
 pub(crate) use env_globals::NODE_GLOBALS;
+mod array_view_cast;
 mod error_slots;
 mod error_view;
 mod errors;
@@ -148,7 +149,6 @@ mod typeof_member;
 mod union_coerce;
 mod union_iface;
 mod union_view;
-mod array_view_cast;
 mod widen_fresh;
 mod written_order;
 

@@ -1151,6 +1151,20 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   its traps (`JSON` as the `any` it converts to). The prelude's
   `__proxyKeysOf`, `__proxyHas`, `__proxyHasOwnOf` and `__proxyAny`, which sema calls behind
   `IsTypedProxy`, take such a value (no longer a proxy once in an `any`) as a plain one.
+- Array views (#1485, velt_vir `lower/array_view.rs`, std/prelude/zzz_adapt.vlt; additive): the
+  array types that `AnyTo` targets in the program's own code (also as a union's array member),
+  and the arrays their elements hold, are boxed *view types*. `AnyTo` to a view type of an `any`
+  holding an array (or tuple) that is no such value is a box whose header is
+  `{ data: view | 1, len: 0, cap: 0 }`, `view` the prelude's `__ArrayView<T>` (`__target`: the
+  original as an `any`, `__seen`: a mirror `T[]`). Every access to a view type's contents
+  (`content`) tests bit 0 of `data`; a view first syncs the mirror (`__arrayViewSync`: an
+  element still `===` the original's is kept, others are converted again) and the access runs
+  on the mirror; array intrinsics that change the array, and assignments whose target goes
+  through a view type, write the mirror back after the change (`__arrayViewFlush`).
+  `ArrayMove` / `ArraySetLen` on a view stop with a `TypeError`. A view converts to `any` as
+  `__target`, drops by releasing the view object, and deep-copies or transfers as a plain array
+  of the mirror. Sema writes a cast `xs as U[]` of an `S[]` with comparable element types (or
+  to a union with one array member `U[]`) as `AnyTo(U[], xs as any)`, upcast to the union.
 - Object conversions (#650, #651; sema `body/expr/object_copy.rs`): an object type converted to
   another object type whose fields it has (in another order, or only some of them) is an
   `AdtLit` of the expected type with `converted: Conversion::Copy`, whose fields each read the

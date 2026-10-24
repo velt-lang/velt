@@ -1,4 +1,4 @@
-//! Array views (#1485; std/prelude/array_view.vlt): an `any` holding an array of another
+//! Array views (#1485; std/prelude/zzz_adapt.vlt): an `any` holding an array of another
 //! element type, converted to `U[]` (`kids as JSXChild[]`, also as a union member, and a cast
 //! `xs as U[]` of an existing array, which sema writes through `any`), is a view of that one
 //! array, as in Node, not a copy.
@@ -29,10 +29,10 @@ use super::operand::proj;
 use super::{cint, ice, Cx, FnLower};
 use crate::vir::{self, BinOp, Callee, Operand, Place, Proj, Rvalue, Ty};
 
-const VIEW_CLASS: &str = "std/prelude/array_view::__ArrayView";
-const VIEW_NEW: &str = "std/prelude/array_view::__arrayViewNew";
-const VIEW_SYNC: &str = "std/prelude/array_view::__arrayViewSync";
-const VIEW_FLUSH: &str = "std/prelude/array_view::__arrayViewFlush";
+pub(super) const VIEW_CLASS: &str = "std/prelude/zzz_adapt::__ArrayView";
+const VIEW_NEW: &str = "std/prelude/zzz_adapt::__arrayViewNew";
+const VIEW_SYNC: &str = "std/prelude/zzz_adapt::__arrayViewSync";
+const VIEW_FLUSH: &str = "std/prelude/zzz_adapt::__arrayViewFlush";
 
 impl Cx<'_> {
     /// May a value of the array type `t` be a view?
@@ -99,7 +99,7 @@ impl Cx<'_> {
         }
     }
 
-    /// The prelude definition `name` (std/prelude/array_view.vlt).
+    /// The prelude definition `name` (std/prelude/zzz_adapt.vlt).
     fn view_def(&self, name: &str) -> Option<DefId> {
         let found = self.hir.defs.iter().position(|d| match d {
             hir::Def::Fn(f) => f.name == name,
@@ -144,7 +144,10 @@ impl FnLower<'_, '_> {
 
     /// The view object of the header at `hdr` when it is a view: `(is_view, untagged)`.
     fn array_view_of_hdr(&mut self, hdr: &Place) -> (Operand, Operand) {
-        let d = self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(proj(hdr, Proj::Field(0)))));
+        let d = self.rvalue_temp(
+            Ty::Ptr,
+            Rvalue::Use(Operand::Copy(proj(hdr, Proj::Field(0)))),
+        );
         let is = self.proxy_tagged(d.clone());
         (is, self.proxy_untag(d))
     }
