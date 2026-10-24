@@ -10,3 +10,5 @@ xytruefalse xytruefalse
 kept true true true
 rug true rug true
 vase true true
+true 1 1 2
+await true

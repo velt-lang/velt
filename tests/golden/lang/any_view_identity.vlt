@@ -111,3 +111,20 @@ const e: any = { name: "vase", price: 3 };
 const re = new WeakRef(view(e));
 const again = re.deref();
 console.log(again?.name, again === view(e), view(e) === (e as Item));
+
+// A view held across an `await`, and conversions in a loop into an array and a `Map`.
+async function across(x: any): Promise<boolean> {
+  const before = x as Item;
+  await Promise.resolve(0);
+  return before === (x as Item);
+}
+
+across(a).then((same) => console.log("await", same));
+const f: any = { name: "rack", price: 9 };
+const list: Item[] = [];
+const byView = new Map<Item, number>();
+for (let k = 0; k < 3; k++) {
+  list.push(f as Item);
+  byView.set(f as Item, k);
+}
+console.log(list[0] === list[2], new Set(list).size, byView.size, byView.get(f as Item));
