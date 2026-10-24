@@ -543,6 +543,15 @@ impl Plan {
         Some(format!("({}) - {excluded}", parts.join(" | ")))
     }
 
+    /// Whether the WebAssembly goldens (`veltc::wasm_goldens`) run.
+    pub fn wasm_goldens(&self) -> bool {
+        match &self.veltc {
+            Veltc::All => self.wasm,
+            Veltc::Some(binaries) => binaries.contains("wasm_goldens"),
+            Veltc::None => false,
+        }
+    }
+
     /// `VELT_GOLDEN` for the goldens (and the WebAssembly goldens): `None` for all of them.
     pub fn golden_env(&self) -> Option<String> {
         match &self.goldens {
@@ -592,8 +601,7 @@ impl Plan {
         out.push_str(&format!("  goldens: {goldens}\n"));
         let wasm = match &self.veltc {
             Veltc::All if !self.wasm => "no (nightly; no WebAssembly code changed)",
-            Veltc::All => "yes",
-            Veltc::Some(binaries) if binaries.contains("wasm_goldens") => "yes",
+            _ if self.wasm_goldens() => "yes",
             _ => "no",
         };
         out.push_str(&format!("  WebAssembly goldens: {wasm}\n"));
