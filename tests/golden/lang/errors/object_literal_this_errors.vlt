@@ -9,10 +9,18 @@ interface HasM {
 }
 
 class C {
+  static readonly tag = "C";
   n = 1;
   m(): number {
     return this.n;
   }
+  static s(): string {
+    return this.tag;
+  }
+}
+
+function mk(): C {
+  return new C();
 }
 
 function main(): void {
@@ -70,4 +78,13 @@ function main(): void {
   };
   const p2: HasM = { n: 4, m: lit.m };
   const p3 = { n: 2, m: c.m };
+
+  // The same off receivers that are not paths, and a static method using `this`.
+  const cs = [new C()];
+  const p4 = { n: 2, m: new C().m };
+  const p5 = { n: 3, m: [new C()][0].m };
+  const p6 = { n: 4, m: mk().m };
+  const p7: HasM = { n: 5, m: mk().m };
+  const p8 = { n: 6, m: cs[0].m };
+  const p9 = { s: C.s };
 }

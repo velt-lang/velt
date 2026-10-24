@@ -212,6 +212,9 @@ impl FnCx<'_, '_> {
         let obj = self.expr(object, None, Want::Borrow);
         self.view_receiver = false;
         if want != Want::BorrowMut && self.is_method_value(obj.ty, &prop.name) {
+            if self.stored_method_read(object, prop, obj.ty, span) {
+                return self.error_expr(span);
+            }
             return self.method_value(obj, object, prop, exp, span);
         }
         let r = self.in_place_receiver(object, obj);

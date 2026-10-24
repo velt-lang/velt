@@ -585,7 +585,7 @@ pub(super) fn is_path(e: &ast::Expr) -> bool {
 }
 
 /// `a.b.c` for a path (`None` for other expressions).
-fn path_text(e: &ast::Expr) -> Option<String> {
+pub(super) fn path_text(e: &ast::Expr) -> Option<String> {
     match &strip_parens(e).kind {
         ast::ExprKind::Ident(x) => Some(x.name.clone()),
         ast::ExprKind::This => Some("this".into()),
