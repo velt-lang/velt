@@ -75,8 +75,8 @@ fn velt_std_sqlite__last_error(db_h: u64) -> Result<(), Error> {
 
 /// `db.prepare(sql)` → `IoResult<u64>`.
 #[export]
-fn velt_std_sqlite__prepare(db_h: u64, sql: &str) -> Result<u64, Error> {
-    io(statement::prepare(db(db_h), sql).map(|s| s.bits()))
+fn velt_std_sqlite__prepare(db_h: u64, sql: &Str) -> Result<u64, Error> {
+    io(statement::prepare(db(db_h), sql.as_bytes()).map(|s| s.bits()))
 }
 
 /// `stmt.run()` → `IoResult<RunSlot>`; `params` is JSON (empty: none), read as stored: it comes

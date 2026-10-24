@@ -2378,6 +2378,7 @@ version = "0.3.0"
 dependencies = [
  "parking_lot",
  "rusqlite",
+ "rustc-hash",
  "velt_native",
  "velt_text",
 ]

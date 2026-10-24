@@ -9,3 +9,4 @@ velt_native = { path = "../velt_native" }
 velt_text = { path = "../velt_text", features = ["sdk"] }
 rusqlite = { version = "0.40.2", features = ["bundled", "column_decltype"] }
 parking_lot = "0.12.5"
+rustc-hash = "2.1.3"

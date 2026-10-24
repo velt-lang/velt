@@ -2,24 +2,45 @@
 //! [`crate::abi`] exports.
 //!
 //! rusqlite's `Statement` borrows its `Connection`, so a handle cannot own one. A statement
-//! handle instead keeps an `Arc` of the connection object and its SQL text, and every call
-//! takes the compiled statement out of the connection's prepared-statement cache
-//! (`prepare_cached`: a hash lookup; SQLite compiles it once) under the connection lock. This
-//! keeps `close()` of the database safe while statements exist.
+//! handle instead keeps an `Arc` of the connection object and of its [`Prepared`] (the SQL text
+//! and the shape of its rows), and every call takes the compiled statement out of the
+//! connection's prepared-statement cache (`prepare_cached`: a hash lookup; SQLite compiles it
+//! once) under the connection lock. This keeps `close()` of the database safe while statements
+//! exist.
+//!
+//! The connection keeps one [`Prepared`] per SQL text ([`DbObj::prepared`]): preparing the same
+//! SQL again (a statement prepared per request) finds it without asking SQLite, and every
+//! handle of that SQL shares the shape its first query read.
 
 use super::bind::bind;
 use super::connection::{DbHandle, DbObj};
 use super::error::DbError;
-use super::rows;
+use super::rows::{self, ShapeCell};
 use std::sync::Arc;
 use velt_native::handles::Single;
 use velt_text::db_json::parse_params;
 use velt_text::Out;
 
-/// A statement: its connection and SQL text (trimmed, the cache key).
+/// A statement: its connection and what it runs.
 pub struct StmtObj {
     db: Arc<DbObj>,
-    sql: String,
+    prepared: Arc<Prepared>,
+}
+
+/// SQL a connection compiled: the text (trimmed, the key of rusqlite's cache) and the shape of
+/// its rows once a query read them.
+pub struct Prepared {
+    pub(crate) sql: String,
+    shape: ShapeCell,
+}
+
+impl Prepared {
+    pub(crate) fn new(sql: String) -> Prepared {
+        Prepared {
+            sql,
+            shape: ShapeCell::default(),
+        }
+    }
 }
 
 /// A statement's handle: std's `Statement` class owns it (it never copies the handle, and
@@ -42,15 +63,11 @@ fn obj<'a>(stmt: StmtHandle) -> Result<&'a StmtObj, DbError> {
 }
 
 /// `db.prepare(sql)`: compiles `sql` (exactly one statement) into the connection's cache, so
-/// syntax errors surface here.
-pub fn prepare(db: DbHandle, sql: &str) -> Result<StmtHandle, DbError> {
-    let sql = sql.trim();
+/// syntax errors surface here; SQL this connection compiled before is not compiled again.
+pub fn prepare(db: DbHandle, sql: &[u8]) -> Result<StmtHandle, DbError> {
     let o = super::connection::obj(db)?;
-    o.with(|c| c.prepare_cached(sql).map(drop).map_err(DbError::from))?;
-    Ok(Single::new(Arc::new(StmtObj {
-        db: o,
-        sql: sql.to_string(),
-    })))
+    let prepared = o.prepared(sql.trim_ascii())?;
+    Ok(Single::new(Arc::new(StmtObj { db: o, prepared })))
 }
 
 /// `stmt.run()` / `runWith(params)`: execute to completion. `params` is the JSON of the
@@ -59,9 +76,9 @@ pub fn run(stmt: StmtHandle, params: &[u8]) -> Result<RunInfo, DbError> {
     let stmt = obj(stmt)?;
     stmt.db.with(|conn| {
         let params = parse_params(params).map_err(DbError::range)?;
-        let mut st = conn.prepare_cached(&stmt.sql)?;
+        let mut st = conn.prepare_cached(&stmt.prepared.sql)?;
         bind(&mut st, &params)?;
-        rows::drain(&mut st)?;
+        rows::drain(&mut st, &stmt.prepared.shape)?;
         Ok(RunInfo {
             changes: conn.changes() as i64,
             last_insert_rowid: conn.last_insert_rowid(),
@@ -81,9 +98,9 @@ pub fn query<O: Out>(
     let stmt = obj(stmt)?;
     stmt.db.with(|conn| {
         let params = parse_params(params).map_err(DbError::range)?;
-        let mut st = conn.prepare_cached(&stmt.sql)?;
+        let mut st = conn.prepare_cached(&stmt.prepared.sql)?;
         bind(&mut st, &params)?;
-        rows::read(&mut st, first_only, out)
+        rows::read(&mut st, first_only, out, &stmt.prepared.shape)
     })
 }
 

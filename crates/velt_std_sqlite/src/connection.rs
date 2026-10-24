@@ -12,6 +12,7 @@
 //! that rolled back resets the count, so its failure only undoes its own savepoint.
 
 use super::error::DbError;
+use super::statement::Prepared;
 use parking_lot::Mutex;
 use rusqlite::{Connection, OpenFlags};
 use std::sync::Arc;
@@ -19,7 +20,8 @@ use std::time::Duration;
 use velt_native::handles::{Key, Registry};
 
 /// Prepared statements kept per connection: `Statement` handles re-find theirs by SQL text on
-/// every call, so this bounds how many distinct statements stay compiled.
+/// every call, so this bounds how many distinct statements stay compiled. The SQL texts the
+/// connection knows ([`DbObj::prepared`]) are bounded the same way, beyond those a handle uses.
 const STATEMENT_CACHE: usize = 256;
 
 /// A connection and its error bookkeeping (see the module docs).
@@ -31,6 +33,8 @@ struct ConnState {
     conn: Option<Connection>,
     errors: u64,
     last_error: Option<DbError>,
+    /// The SQL compiled on this connection, by its text as given (trimmed).
+    prepared: rustc_hash::FxHashMap<Box<[u8]>, Arc<Prepared>>,
 }
 
 /// Opaque handle: a key into [`DATABASES`] (std's `Database` is a Copy struct, so after
@@ -46,6 +50,7 @@ impl DbObj {
                 conn: Some(conn),
                 errors: 0,
                 last_error: None,
+                prepared: Default::default(),
             }),
         }
     }
@@ -62,6 +67,35 @@ impl DbObj {
             state.note(e.clone());
         }
         r
+    }
+
+    /// The [`Prepared`] of `sql` (exactly one statement): the one made before for this text, or
+    /// a new one once SQLite compiled it (a syntax error fails here). Bytes that are not UTF-8
+    /// (a lone surrogate) become U+FFFD.
+    pub fn prepared(&self, sql: &[u8]) -> Result<Arc<Prepared>, DbError> {
+        let mut state = self.state.lock();
+        let state = &mut *state;
+        let Some(conn) = &state.conn else {
+            let e = DbError::closed("database connection");
+            state.note(e.clone());
+            return Err(e);
+        };
+        if let Some(p) = state.prepared.get(sql) {
+            return Ok(p.clone());
+        }
+        let text = String::from_utf8_lossy(sql).trim().to_string();
+        let compiled = conn.prepare_cached(&text).map(drop).map_err(DbError::from);
+        if let Err(e) = compiled {
+            state.note(e.clone());
+            return Err(e);
+        }
+        if state.prepared.len() >= STATEMENT_CACHE {
+            // Forget the SQL no handle uses (a handle keeps its own).
+            state.prepared.retain(|_, p| Arc::strong_count(p) > 1);
+        }
+        let p = Arc::new(Prepared::new(text));
+        state.prepared.insert(sql.into(), p.clone());
+        Ok(p)
     }
 
     /// Record a failure that happened outside the runtime (row decoding in std).
@@ -113,7 +147,11 @@ pub fn close(db: DbHandle) -> Result<(), DbError> {
     let Some(obj) = DATABASES.remove(db) else {
         return Ok(());
     };
-    let conn = obj.state.lock().conn.take();
+    let conn = {
+        let mut state = obj.state.lock();
+        state.prepared.clear();
+        state.conn.take()
+    };
     match conn.map(Connection::close) {
         Some(Err((_, e))) => Err(DbError::from(e)),
         _ => Ok(()),

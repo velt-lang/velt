@@ -34,6 +34,39 @@ pub const ASCII_NAME: u32 = 0x8000_0000;
 /// 2^53: every integer below it in magnitude is exactly representable as an `f64`.
 const MAX_EXACT_INT: f64 = 9_007_199_254_740_992.0;
 
+/// The column-names part of a header (the count, then each name), for [`BinRows::with_names`].
+///
+/// # Panics
+/// As [`BinRows::with_out`].
+pub fn encode_names<'n, I>(columns: I) -> Vec<u8>
+where
+    I: IntoIterator<Item = &'n str>,
+    I::IntoIter: ExactSizeIterator,
+{
+    let mut out = Vec::new();
+    push_names(&mut out, columns);
+    out
+}
+
+fn push_names<'n, I>(out: &mut (impl Out + ?Sized), columns: I)
+where
+    I: IntoIterator<Item = &'n str>,
+    I::IntoIter: ExactSizeIterator,
+{
+    let columns = columns.into_iter();
+    let count = u16::try_from(columns.len()).expect("more database columns than 65,535");
+    out.extend(&count.to_le_bytes());
+    for name in columns {
+        assert!(
+            name.len() < ASCII_NAME as usize,
+            "database column name too long"
+        );
+        let ascii = if name.is_ascii() { ASCII_NAME } else { 0 };
+        out.extend(&(name.len() as u32 | ascii).to_le_bytes());
+        out.extend(name.as_bytes());
+    }
+}
+
 /// Builds a result set into `O` (a `Vec<u8>`, or a Velt `u8[]` itself, a native library's
 /// `velt_native::Array<u8>`: no copy): one value method per column, in column order, for every
 /// row.
@@ -64,20 +97,18 @@ impl<O: Out> BinRows<O> {
         I: IntoIterator<Item = &'n str>,
         I::IntoIter: ExactSizeIterator,
     {
-        let columns = columns.into_iter();
-        let count = u16::try_from(columns.len()).expect("more database columns than 65,535");
         out.reserve(256);
         out.push(single as u8);
-        out.extend(&count.to_le_bytes());
-        for name in columns {
-            assert!(
-                name.len() < ASCII_NAME as usize,
-                "database column name too long"
-            );
-            let ascii = if name.is_ascii() { ASCII_NAME } else { 0 };
-            out.extend(&(name.len() as u32 | ascii).to_le_bytes());
-            out.extend(name.as_bytes());
-        }
+        push_names(&mut out, columns);
+        BinRows { buf: out, rows: 0 }
+    }
+
+    /// [`BinRows::with_out`] with the column names encoded by [`encode_names`] (a driver keeps
+    /// them per statement rather than asking the database for them on every query).
+    pub fn with_names(mut out: O, names: &[u8], single: bool) -> BinRows<O> {
+        out.reserve(names.len() + 256);
+        out.push(single as u8);
+        out.extend(names);
         BinRows { buf: out, rows: 0 }
     }
 
