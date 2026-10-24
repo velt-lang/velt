@@ -9,8 +9,9 @@
 #                                                 of two programs, built by both compilers:
 #                                                 no_view (a Map<string, string[]> loop with one
 #                                                 guarded `any as string[]` that never runs) and
-#                                                 sigx_like (string[] and JSXChild[] view types,
-#                                                 children normalized through views)
+#                                                 sigx_like (string[] and JSXChild[] view types:
+#                                                 `kids as JSXChild[]` of an `any` that holds a
+#                                                 JSXChild[], so that the base compiler runs it)
 #
 # The programs are written to $WORK (default: a new temporary directory). Each compiler uses
 # its own std (VELT_STD is left as each build finds it).
@@ -155,13 +156,14 @@ function render(c: JSXChild, out: string[]) {
 function main() {
   let size = 0;
   for (let round = 0; round < 200; round++) {
-    const rows: any[] = [];
+    const rows: JSXChild[] = [];
     for (let i = 0; i < 50; i++) {
-      const cells: any[] = ["cell", i, null, [String(round), "x"]];
+      const cells: JSXChild[] = ["cell", i, null, [String(round), "x"]];
       rows.push(h("td", cells));
     }
-    const names = ["a", "b", "c"] as any as string[];
-    const tree = h("table", [h("tr", rows), names.join(",")]);
+    const names: any = ["a", "b", "c"];
+    const top: JSXChild[] = [h("tr", rows), (names as string[]).join(",")];
+    const tree = h("table", top);
     const out: string[] = [];
     render(tree, out);
     size += out.join("").length;
