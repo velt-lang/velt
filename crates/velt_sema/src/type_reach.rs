@@ -47,9 +47,16 @@ impl Ctx<'_> {
                 queue.push_back((p, 1));
             }
         }
+        // The types looked at, for the scaling tests (`check_work`).
+        let mut looked = 0;
+        let mut found = None;
         while let Some((t, level)) = queue.pop_front() {
+            looked += 1;
             match look(self, t) {
-                Look::Found => return Some(t),
+                Look::Found => {
+                    found = Some(t);
+                    break;
+                }
                 Look::Stop => {}
                 Look::Parts(parts) if level < levels => {
                     for p in parts {
@@ -61,7 +68,8 @@ impl Ctx<'_> {
                 Look::Parts(_) => {}
             }
         }
-        None
+        crate::check_work::add_type_search(looked);
+        found
     }
 }
 
