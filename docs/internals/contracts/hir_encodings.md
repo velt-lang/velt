@@ -829,10 +829,13 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   the requirement `TyOp::Convert(n)` over `[from, to]` (`n` numbers the conversion, so each is
   reported where it is written; never the type of an expression) as a type the body
   mentions, so `type_level::instances` reduces it at every instantiation: to `to` when both are
-  one object type there (the same canonical type, or the same layout), else it reports the
-  instantiation, since a value can't be seen as an object type with other fields without a copy,
-  and a copy would be another object where TypeScript passes the same one. Lowering's `Upcast` is
-  the value itself.
+  one object type there (the same canonical type, or the same layout); to `to` as well when
+  `to` is an object type whose fields `from` has, of the same types and optionality, plus
+  others: lowering's `Upcast` of two object types of different layouts is then a new `to`
+  holding those fields (shared, as `SpreadObject` builds one), and sema records the copy with
+  `crate::object_copies`, which reports it where the program could tell it from the original
+  (TypeScript passes the same object). Any other instantiation is reported. Otherwise lowering's
+  `Upcast` is the value itself.
 - `TyOp::Inline(n)` (additive): a conditional, mapped, indexed access, `keyof` or utility type
   (`Partial`, `Required`, `Readonly`, `Pick`, `Omit`) written in a generic definition, not in an
   alias, whose evaluation needs a type parameter (`{ [K in keyof M]: Topic<M[K]> }` in a

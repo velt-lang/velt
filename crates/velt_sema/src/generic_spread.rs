@@ -152,6 +152,36 @@ impl Ctx<'_> {
         Some(fields)
     }
 
+    /// The fields of object type `to` when object type `from` has each of them, of the same
+    /// type and optionality (`from` has more): a copy of them converts a `from` to a `to`.
+    /// `None` for anything else (a class, a record, a missing or different field).
+    fn part_copy(&mut self, from: TyId, to: TyId) -> Option<Vec<String>> {
+        let object = |cx: &Self, t: TyId| match cx.ty.kind(t) {
+            TyKind::Adt(d, _) => cx.adt(*d).is_some_and(|a| {
+                (a.kind == AdtKind::Anon || cx.field_only_of.contains_key(d))
+                    && Some(*d) != cx.prelude_adt("Record")
+            }),
+            _ => false,
+        };
+        if !(object(self, from) && object(self, to)) {
+            return None;
+        }
+        let (have, want) = (self.public_fields(from), self.public_fields(to));
+        if want.is_empty() || want.len() >= have.len() {
+            return None;
+        }
+        let mut names = vec![];
+        for w in &want {
+            let f = have.iter().find(|f| f.name == w.name)?;
+            let same = self.canon(f.ty) == self.canon(w.ty) || self.same_ty(f.ty, w.ty);
+            if !same || f.optional != w.optional {
+                return None;
+            }
+            names.push(w.name.clone());
+        }
+        Some(names)
+    }
+
     /// The requirement `TyOp::Convert` number `c` with known arguments `[from, to]`: `to` when
     /// a value of `from` is a `to` without a copy (or, for a spread built as `to`, has its
     /// fields), else `Error`, reported at `span`.
@@ -166,6 +196,28 @@ impl Ctx<'_> {
             return to;
         }
         if self.type_level.spread_into.contains(&c) && self.spread_fits(a, b) {
+            return to;
+        }
+        // An object type with the target's fields and more (`T & { $set }` as `T`, or as its
+        // object part): lowering copies those fields into a new object, and the copy is checked
+        // like any other (`crate::object_copies`): the program must not be able to tell it from
+        // the original, which TypeScript passes as it is.
+        if let Some(fields) = self.part_copy(a, b) {
+            let in_order = self
+                .public_fields(a)
+                .iter()
+                .map(|f| &f.name)
+                .eq(fields.iter());
+            self.object_copies.copies.push(crate::object_copies::Copy {
+                from: a,
+                to: b,
+                fields,
+                absent: vec![],
+                span,
+                source: None,
+                fresh: false,
+                in_order,
+            });
             return to;
         }
         let (fa, tb) = (self.display(a), self.display(b));

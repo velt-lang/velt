@@ -15,6 +15,10 @@ impl FnLower<'_, '_> {
         use hir::ExprKind as K;
         if let K::Upcast(inner) = &e.kind {
             let (from, to) = (self.sub(inner.ty), self.sub(e.ty));
+            // An object type as one with some of its fields: a copy of them (`expr`, below).
+            if self.part_copy(from, to) {
+                return self.spread_object(std::slice::from_ref(&**inner), e.ty);
+            }
             // An interface upcast builds a new interface value (`expr`, below).
             if self.upcast_slot(from, to).is_none() {
                 self.cx.note_proxy_cast(from, to);
@@ -212,6 +216,17 @@ impl FnLower<'_, '_> {
             K::New { args, .. } => self.new_object(e.ty, args),
             K::Upcast(inner) => {
                 let (from, to) = (self.sub(inner.ty), self.sub(e.ty));
+                // An object type as one with some of its fields (sema's `part_copy`, checked by
+                // `object_copies`): a new object of those fields.
+                if self.part_copy(from, to) {
+                    let v = self.spread_object(std::slice::from_ref(&**inner), e.ty);
+                    let t = self.sub(e.ty);
+                    let vt = self.vty(t);
+                    let l = self.temp(vt);
+                    self.assign(Place::local(l), crate::vir::Rvalue::Use(v));
+                    self.own_temp(l, t);
+                    return Operand::Copy(Place::local(l));
+                }
                 if let Some(slot) = self.upcast_slot(from, to) {
                     let v = self.consume(inner);
                     return self.upcast_value(v, from, to, slot);
@@ -660,5 +675,31 @@ fn float_to_int(v: f64, to: Ty) -> i128 {
         0
     } else {
         (v as i128).clamp(lo, hi)
+    }
+}
+
+impl FnLower<'_, '_> {
+    /// Is the `Upcast` of a `from` to a `to` a copy of some of `from`'s fields (both object
+    /// types, `to` with fewer fields; sema accepted it as such, `generic_spread::part_copy`)?
+    /// Two forms of one layout are the same value.
+    fn part_copy(&mut self, from: TyId, to: TyId) -> bool {
+        let (hir::TyKind::Adt(a, _), hir::TyKind::Adt(b, _)) =
+            (self.cx.kind(from), self.cx.kind(to))
+        else {
+            return false;
+        };
+        if a == b || self.cx.is_class(from) || self.cx.is_class(to) {
+            return false;
+        }
+        let (hir::Def::Adt(da), hir::Def::Adt(db)) = (self.cx.hir.def(a), self.cx.hir.def(b))
+        else {
+            return false;
+        };
+        if da.fields.len() <= db.fields.len() {
+            return false;
+        }
+        db.fields
+            .iter()
+            .all(|f| da.fields.iter().any(|g| g.name == f.name))
     }
 }

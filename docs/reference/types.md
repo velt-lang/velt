@@ -1338,6 +1338,13 @@ intersection with such a part) is an `object`, so it can be a `WeakMap` key. So 
 intersection with a part that is an object type and no part that is a type parameter
 (`{ value: T } & { $set(v: T): void }`): it satisfies `T extends object`. `T & { __brand: "Id" }`
 with an unbounded `T` is not an `object` (at `T = string` it is a branded `string`).
+In a generic body, a value of such an intersection may be returned or passed as `T`, or as one
+of its object parts (`s: T & { $set }` as `T`, as `{ $set }`), as TypeScript allows: it is the
+same value where both are one type at an instantiation, and otherwise a new object with the
+fields of the expected type. TypeScript passes the same object there, so such a copy is an
+error where the program could tell it from the original: comparing values of the expected type
+with `===`, assigning a field of either object, printing or serializing it (the copy lacks the
+other fields).
 
 **Type-level forms and keys in generic code.** A mapped type, `T[K]`, `keyof T` or a utility
 type over a type parameter (`Partial<T>`, `Pick<T, K>`, …) may be written in a generic function's
