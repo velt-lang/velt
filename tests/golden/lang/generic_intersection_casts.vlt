@@ -21,3 +21,10 @@ console.log(setterOf(w));
 const u = unwrap(w);
 u.$set("x");
 console.log(u === w, u.a);
+function nest<V>(v: V): Signal<Signal<{ value: V }>> {
+  const inner = { value: v, $set: (x: { value: V }) => {} };
+  return { ...inner, $set: (x: { value: V }) => {} };
+}
+const n = nest(1);
+n.$set(n);
+console.log(n.value, typeof n.$set);
