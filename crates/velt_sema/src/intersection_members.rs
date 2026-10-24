@@ -163,9 +163,22 @@ impl Ctx<'_> {
     /// of its object parts: the interface made of that part (its arguments are the type
     /// parameters the part mentions) and the field's index there.
     pub(crate) fn part_field(&mut self, t: TyId, name: &str) -> Option<PartField> {
-        let TyKind::Op(TyOp::Intersect, parts) = self.ty.kind(t).clone() else {
+        let TyKind::Op(TyOp::Intersect, top) = self.ty.kind(t).clone() else {
             return None;
         };
+        // A nested intersection's parts are parts of this one (`Signal<U & { a } & object>`).
+        fn flatten(cx: &Ctx, ps: &[TyId], out: &mut Vec<TyId>, depth: u32) {
+            for &p in ps {
+                match cx.ty.kind(p) {
+                    TyKind::Op(TyOp::Intersect, inner) if depth < 8 => {
+                        flatten(cx, inner, out, depth + 1)
+                    }
+                    _ => out.push(p),
+                }
+            }
+        }
+        let mut parts = vec![];
+        flatten(self, &top, &mut parts, 0);
         if !parts.iter().any(|&p| self.deferred_part(p)) {
             return None;
         }
