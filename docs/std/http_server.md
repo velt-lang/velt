@@ -75,6 +75,8 @@ first reads it.
 - `method()`, `path()` (the target up to `?`), `query()` (after `?`, without it), `target()`.
 - `header(name): string | null` (any case; the first if repeated), `hasHeader(name)`,
   `headers(): [string, string][]`.
+- `isUpgrade(protocol): bool`: an HTTP/1.1 request asking to switch its connection to
+  `protocol` (`Upgrade: protocol`, `Connection: upgrade`).
 - `read(): Promise<u8[] | null>`: the next piece of the body as it arrives, null at its end.
   Nothing is kept: for uploads of any size, and proxies.
 - `body(): Promise<u8[]>`, `bodyText(): Promise<string>` (UTF-8, invalid bytes as U+FFFD): the
@@ -109,6 +111,11 @@ first reads it.
 - `signal(): AbortSignal`: aborted when the client can no longer be written to or the server
   closes; pass it to the work done for the request (`fetch(url, { signal })`).
 - `sent(): bool`.
+- `upgrade(protocol, headers: [string, string][] = []): TcpStream`: answers `101 Switching
+  Protocols` (after the responses to earlier requests) and hands the connection over: the
+  stream is the caller's, the server no longer reads, writes or closes it. The client waits for
+  the 101 before it speaks the new protocol. For WebSockets, `acceptWebSocket(res,
+  req.header("sec-websocket-key"))` of [velt:websocket](websocket.md) does the handshake.
 
 A `HEAD` request gets the head a `GET` would (with its `Content-Length`) and no body: what the
 handler writes, streamed or not, is not sent. Responses with status 1xx, 204 or 304 have no body

@@ -22,6 +22,7 @@
 
 import { IoError, IoResult, ioError } from "velt:io";
 import { isUpgradeRequest, upgradeConnection } from "velt:http";
+import { HttpResponse } from "velt:http/server";
 import { Request } from "velt:fetch/request";
 import { Response } from "velt:fetch/response";
 import { TcpStream } from "velt:net";
@@ -336,6 +337,21 @@ export function upgradeWebSocket(req: Request): WebSocketUpgrade {
   } catch (e) {
     throw new IoError("EINVAL", "not a WebSocket upgrade request");
   }
+}
+
+/**
+ * Accepts a WebSocket upgrade request on a `velt:http/server` server, given the request's
+ * `Sec-WebSocket-Key` header (`req.header("sec-websocket-key")`, for a request where
+ * `req.isUpgrade("websocket")`): answers `101 Switching Protocols` with the handshake's accept
+ * key and returns the socket (the connection is the socket's from then on). Throws `IoError`
+ * "EINVAL" without a key or once a response was started.
+ */
+export function acceptWebSocket(res: HttpResponse, key: string | null): WebSocket {
+  if (key == null || key == "" || res.sent()) {
+    throw new IoError("EINVAL", "not a WebSocket upgrade request");
+  }
+  const stream = res.upgrade("websocket", [["Sec-WebSocket-Accept", acceptKey(key)]]);
+  return connection(stream, false, []);
 }
 
 export struct WsConnectOptions {

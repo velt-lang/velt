@@ -149,6 +149,10 @@ async function connection<E>(
               console.error("request handler failed:", e);
             }
           }
+          if (res.upgraded()) {
+            // The connection is the handler's now (also if it failed after switching).
+            return;
+          }
           if (!res.sent()) {
             res.send("");
           }

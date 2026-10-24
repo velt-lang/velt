@@ -125,6 +125,18 @@ export class HttpRequest {
     return this.find(name) >= 0;
   }
 
+  /**
+   * Whether the request asks to switch its connection to `protocol` (`"websocket"`): HTTP/1.1,
+   * an `Upgrade` header naming it and `Connection: upgrade` (any case, among other tokens).
+   */
+  isUpgrade(protocol: string): bool {
+    if (!this.head.http11) {
+      return false;
+    }
+    return hasToken(this.header("upgrade"), protocol) &&
+      hasToken(this.header("connection"), "upgrade");
+  }
+
   /// The headers' names (as sent) and values, in order.
   headers(): [string, string][] {
     const out: [string, string][] = [];
@@ -356,4 +368,18 @@ export class HttpRequest {
     const r = velt_rt_bytes_range_to_str(buf, start, end);
     return r.code == 0 ? r.value : utf8DecodeLossy(buf.slice(start, end));
   }
+}
+
+/// Whether the comma-separated header value `value` holds `token` (any case).
+function hasToken(value: string | null, token: string): bool {
+  if (value == null) {
+    return false;
+  }
+  const want = token.toLowerCase();
+  for (const part of value.split(",")) {
+    if (part.trim().toLowerCase() == want) {
+      return true;
+    }
+  }
+  return false;
 }

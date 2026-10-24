@@ -59,6 +59,8 @@ export class HttpResponse {
   /// The response has no body (a `HEAD` request, or status 1xx, 204 or 304): what the handler
   /// writes as one is not sent.
   private noBody: bool = false;
+  /// The connection was switched to another protocol (`upgrade`): the server lets it go.
+  private switched: bool = false;
   // `Date` header bytes for `dateSecond`.
   private date: u8[] = [];
   private dateSecond: i64 = -1;
@@ -212,6 +214,40 @@ export class HttpResponse {
     return made;
   }
 
+  /**
+   * Switches the connection to `protocol` (see `HttpRequest.isUpgrade`): queues `101 Switching
+   * Protocols` with `Upgrade: protocol`, `Connection: Upgrade` and `headers` (after the responses
+   * to earlier requests), and hands the connection over: the returned stream is the caller's,
+   * the server reads, writes and closes it no more. The client waits for the 101 before it sends
+   * in the new protocol. Throws if a response was started or the request is HTTP/1.0.
+   */
+  upgrade(protocol: string, headers: [string, string][] = []): TcpStream {
+    if (this.done) {
+      throw new Error("the response was already sent");
+    }
+    if (!this.http11) {
+      throw new Error("only an HTTP/1.1 connection can be upgraded");
+    }
+    this.done = true;
+    this.switched = true;
+    this.keepAlive = false;
+    this.text("HTTP/1.1 101 Switching Protocols\r\nUpgrade: ");
+    this.text(protocol);
+    this.text("\r\nConnection: Upgrade\r\n");
+    for (const h of headers) {
+      this.text(`${h[0]}: ${h[1]}\r\n`);
+    }
+    this.text("\r\n");
+    this.conn.writeBytesLater(this.buf, 0, this.length as number);
+    this.length = 0;
+    return this.conn;
+  }
+
+  /** Whether the connection was switched to another protocol (internal). */
+  upgraded(): bool {
+    return this.switched;
+  }
+
   /** Whether a response was started for the current request. */
   sent(): bool {
     return this.done;
@@ -220,6 +256,7 @@ export class HttpResponse {
   /** A new request: status 200, no headers (internal). */
   begin(keepAlive: bool, http11: bool, headOnly: bool = false) {
     this.headOnly = headOnly;
+    this.switched = false;
     this.noBody = false;
     this.statusCode = 200;
     this.extraLength = 0;

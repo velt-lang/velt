@@ -1,0 +1,45 @@
+// check: no leaks
+// velt:http/server switches a connection to WebSockets (`acceptWebSocket`, `res.upgrade`): a
+// client from `connectWebSocket` talks to it, an ordinary request on the same server is still
+// answered, and a request that is not an upgrade is refused.
+import { HttpRequest, HttpResponse, serve } from "velt:http/server";
+import { acceptWebSocket, connectWebSocket } from "velt:websocket";
+
+async function main() {
+  const server = await serve({ port: 0 }, async (req: HttpRequest, res: HttpResponse) => {
+    if (req.pathIs("/ws")) {
+      if (!req.isUpgrade("websocket")) {
+        res.status(426);
+        res.send("upgrade required");
+        return;
+      }
+      const ws = acceptWebSocket(res, req.header("sec-websocket-key"));
+      spawn(async () => {
+        for await (const m of ws) {
+          await ws.send(`echo ${m.text}`);
+        }
+        await ws.close();
+      });
+    } else {
+      res.send("plain");
+    }
+  });
+  const port = server.port;
+  const ws = await connectWebSocket(`ws://127.0.0.1:${port}/ws`);
+  await ws.send("one");
+  await ws.send("two");
+  let n = 0;
+  for await (const m of ws) {
+    console.log(m.text);
+    n++;
+    if (n == 2) {
+      break;
+    }
+  }
+  await ws.close();
+  const plain = await fetch(`http://127.0.0.1:${port}/other`);
+  console.log(plain.status, await plain.text());
+  const refused = await fetch(`http://127.0.0.1:${port}/ws`);
+  console.log(refused.status, await refused.text());
+  server.close();
+}

@@ -10,6 +10,9 @@ upgrade, or opened as a client to `ws://` / `wss://` URLs. The protocol is writt
 - `upgradeWebSocket(req: Request): WebSocketUpgrade { socket: WebSocket; response: Response }`:
   return `response` (a `101`) from the handler and use `socket` from a spawned task. Throws
   `IoError` "EINVAL" if `req` is not an upgrade request.
+- `acceptWebSocket(res: HttpResponse, key: string | null): WebSocket`: the same on a
+  [velt:http/server](http_server.md) server, for a request where `req.isUpgrade("websocket")`,
+  with its `req.header("sec-websocket-key")`: answers the `101` itself and returns the socket.
 - `connectWebSocket(url, opts: WsConnectOptions { ca? } = {}): Promise<WebSocket>`.
 - `WebSocket` (a handle): `send(text)`, `sendBytes(data: u8[])`, `receive(): Promise<WsMessage
   | null>` (null once the peer closed), `close(code = 1000, reason = "")` (sends a close frame
