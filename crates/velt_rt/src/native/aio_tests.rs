@@ -114,8 +114,34 @@ fn a_tcp_stream_echoes_through_tokios_traits() {
 
 #[test]
 fn a_refused_connection_is_an_io_error_of_its_kind() {
-    // A port bound but never listening, kept for the whole test: Linux, macOS and Windows refuse
-    // connections to it (a closed port could be taken by another process meanwhile).
+    // A port nobody listens on. Linux and Windows refuse connections to a port bound but never
+    // listening, so it stays bound for the whole test and no other process can take it. macOS
+    // drops them instead (the connect times out), so there the port is closed again, and the
+    // test tries another one if a process took it meanwhile (the connect then succeeds).
+    let refused = || {
+        let (addr, socket) = refusing_addr();
+        let kind = run(async move {
+            match sdk::net::TcpStream::connect(&addr).await {
+                Ok(_) => None,
+                Err(e) => Some(e.kind()),
+            }
+        });
+        drop(socket);
+        kind
+    };
+    let mut kind = refused();
+    for _ in 0..20 {
+        if kind.is_some() {
+            break;
+        }
+        kind = refused();
+    }
+    assert_eq!(kind, Some(std::io::ErrorKind::ConnectionRefused));
+}
+
+/// An address nobody listens on, with what keeps it so for the test (see
+/// [`a_refused_connection_is_an_io_error_of_its_kind`]).
+fn refusing_addr() -> (String, Option<socket2::Socket>) {
     use socket2::{Domain, Socket, Type};
     let socket = Socket::new(Domain::IPV4, Type::STREAM, None).unwrap();
     socket
@@ -127,14 +153,12 @@ fn a_refused_connection_is_an_io_error_of_its_kind() {
         .as_socket()
         .unwrap()
         .to_string();
-    let kind = run(async move {
-        match sdk::net::TcpStream::connect(&addr).await {
-            Ok(_) => None,
-            Err(e) => Some(e.kind()),
-        }
-    });
-    drop(socket);
-    assert_eq!(kind, Some(std::io::ErrorKind::ConnectionRefused));
+    let keep = if cfg!(target_os = "macos") {
+        None
+    } else {
+        Some(socket)
+    };
+    (addr, keep)
 }
 
 #[test]
