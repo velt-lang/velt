@@ -179,8 +179,9 @@ jobs:
     # The slowest job takes about 25 minutes on a cold cache: a runner that hangs fails the queue
     # entry within the hour instead of holding the queue for two. A change to WebAssembly code
     # also runs the WebAssembly goldens here, about 45 minutes more on Windows (8 shards of about
-    # 330 s, two at a time), so it gets the nightly's 90.
-    timeout-minutes: ${{ needs.queue-plan.outputs.wasm_goldens == 'skip' && 45 || 90 }}
+    # 330 s, two at a time), and one that changes Cargo.lock also misses the build cache (the
+    # Windows build alone took 44 minutes for #1056), so such a change gets 150.
+    timeout-minutes: ${{ needs.queue-plan.outputs.wasm_goldens == 'skip' && 45 || 150 }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
