@@ -1,6 +1,7 @@
 // Literals spread where an `any` is expected, and literals an `any` holds: a conditional,
 // `&&`, `||` or `??` with an `any` value stays an `any` there too, as in TypeScript, so a
-// string it holds stays a string (#1492). Elsewhere the values keep their own types.
+// string it holds stays a string (#1492). So it does where an `unknown` is expected. Elsewhere
+// the values keep their own types.
 const o: any = { name: "str", n: 5 };
 const far = process.argv.length > 99;
 const sp: any[] = [...[far ? 1 : o.name]];
@@ -39,3 +40,18 @@ function takes(x: any): string {
   return JSON.stringify(x);
 }
 console.log(takes({ ...{ q: far ? 1 : o.name } }), takes([...[o.n && o.name]]));
+// Where an `unknown` is expected, the same.
+const un: unknown = [far ? 1 : o.name];
+console.log(un);
+const u: unknown = far ? 1 : o.name;
+console.log(u, typeof u);
+const us: unknown[] = [...[far ? 1 : o.name], o.n ?? 2];
+console.log(us);
+const uo: unknown = { ...{ q: far ? 1 : o.name } };
+console.log(uo);
+function ug(): unknown { return o.zz || "fallback"; }
+console.log(ug());
+const typed: number = far ? 1 : o.n;
+console.log(typed + 1);
+const sk: any = { ...o, k: far ? 1 : o.name };
+console.log(sk);

@@ -76,7 +76,9 @@ impl FnCx<'_, '_> {
             // `const xs: any[] = [...[c ? 1 : a.q]]`: a literal spread into `any` elements is an
             // `any[]`, so its values keep their `any` (`any_join`).
             let hint = match (&inner.kind, exp_elem) {
-                (ast::ExprKind::Array(_), Some(t)) if self.is_any(t) => Some(self.cx.ty.array(t)),
+                (ast::ExprKind::Array(_), Some(t)) if self.cx.dynamic(t).is_some() => {
+                    Some(self.cx.ty.array(t))
+                }
                 _ => None,
             };
             let mut h = self.expr(inner, hint, Want::Borrow);

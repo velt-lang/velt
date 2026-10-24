@@ -80,7 +80,9 @@ impl FnCx<'_, '_> {
                     // `const o: any = { ...{ q: c ? 1 : a.q } }`: the literal spread is checked
                     // as one an `any` holds, so its values keep their `any` (`any_join`).
                     let any = match (&e.kind, exp) {
-                        (ast::ExprKind::Object(_), Some(t)) if self.is_any(t) => Some(t),
+                        (ast::ExprKind::Object(_), Some(t)) if self.cx.dynamic(t).is_some() => {
+                            Some(t)
+                        }
                         _ => None,
                     };
                     let fields = self.spread_fields(e, any, &mut lets, false);

@@ -14,3 +14,10 @@
 [ [ 'str' ], { z: 5 } ]
 [ [ 'str' ] ]
 {"q":"str"} ["str"]
+[ 'str' ]
+str string
+[ 'str', 5 ]
+{ q: 'str' }
+fallback
+6
+{ name: 'str', n: 5, k: 'str' }

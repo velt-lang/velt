@@ -148,11 +148,11 @@ impl FnCx<'_, '_> {
     }
 
     /// The element type of an array literal of `elems` where a `t` is expected: `t`'s, or for an
-    /// `any` an `any` when an element is a conditional, `&&`, `||` or `??` (`[c ? 1 : a.q]`), or
+    /// `any` (or `unknown`) `t` when an element is a conditional, `&&`, `||` or `??` (`[c ? 1 : a.q]`), or
     /// a literal holding or spreading one, whose `any` value stays one (`any_join`).
     pub(super) fn literal_elem(&mut self, t: TyId, elems: &[ast::Expr]) -> Option<TyId> {
         let elem = self.cx.ty.array_elem(t).or(self.cx.iterable_elem(t));
-        elem.or_else(|| (self.is_any(t) && elems.iter().any(holds_join)).then_some(t))
+        elem.or_else(|| (self.cx.dynamic(t).is_some() && elems.iter().any(holds_join)).then_some(t))
     }
 
     /// `null` takes its `T | null` type from context.

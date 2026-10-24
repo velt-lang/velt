@@ -542,10 +542,10 @@ impl FnCx<'_, '_> {
         self.union_join(t, f, span)
     }
 
-    /// Two values of different types where one is an `any`, where an `any` is expected (a `: any`
-    /// result such as a proxy `get` trap, annotation, variable or parameter): values of that
-    /// `any`, as TypeScript types `c ? 99 : t[k]` and `n || t[k]` (`number | any` is `any`).
-    /// Converted to the other value's type instead, the `any` would stop where it holds
+    /// Two values of different types where one is an `any`, where an `any` (or `unknown`) is
+    /// expected (a `: any` result such as a proxy `get` trap, annotation, variable or parameter):
+    /// values of that `any`, as TypeScript types `c ? 99 : t[k]` and `n || t[k]` (`number | any`
+    /// is `any`). Converted to the other value's type instead, the `any` would stop where it holds
     /// something else. The type is `None` when no `any` is expected, neither value is one, or the
     /// other value does not convert to it. Elsewhere the `any` still converts to the other
     /// value's type: operators and built-in methods through an `any` are not supported yet
@@ -556,7 +556,7 @@ impl FnCx<'_, '_> {
         f: hir::Expr,
         exp: Option<TyId>,
     ) -> (hir::Expr, hir::Expr, Option<TyId>) {
-        if !exp.is_some_and(|e| self.is_any(e)) {
+        if !exp.is_some_and(|e| self.cx.dynamic(e).is_some()) {
             return (t, f, None);
         }
         match (self.is_any(t.ty), self.is_any(f.ty)) {

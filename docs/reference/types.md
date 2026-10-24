@@ -688,8 +688,8 @@ nothings alike:
   x.m.get(k)`, `if (x?.ok())`); `switch` supports `case null` and `case undefined`.
   The type of `x ?? d` is `x`'s non-null type when `d` converts to it, else `d`'s type when
   `x`'s non-null type converts to that, else their union, as in TypeScript: with
-  `n: number | null`, `n ?? "none"` is a `number | string`. Where an `any` is expected and one
-  side is an `any`, it is an `any` (see `||` in [Variables](variables.md)).
+  `n: number | null`, `n ?? "none"` is a `number | string`. Where an `any` (or `unknown`) is expected
+  and one side is an `any`, it is an `any` (see `||` in [Variables](variables.md)).
 - `x ??= d` assigns `d` when `x` is `null` or `undefined` and narrows `x` (likewise `x ||= d`
   and `x &&= d`). Its value is `x` afterwards, which is not null when `d` is not, also for a
   module-level variable (`(handlers ??= []).push(h)`). The target may not call a function yet
