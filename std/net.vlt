@@ -17,6 +17,7 @@
 import { IoResult, IoStatus, unwrapIo, checkIo } from "velt:io";
 import { tryWriteTo, writeBytesTo } from "velt:net_bytes";
 import { Uint8Array } from "velt:typed_array/uint8_array";
+import { AbortSignal } from "velt:task";
 
 declare async function velt_rt_tcp_listen(addr: string): Promise<IoResult<u64>>;
 declare function velt_rt_tcp_listener_port(l: u64): u32;
@@ -30,6 +31,11 @@ declare async function velt_rt_tcp_write(s: u64, data: string): Promise<IoStatus
 // Reads into and writes from a range of the program's own bytes (a `Uint8Array`'s buffer).
 declare function velt_rt_tcp_try_read_into(s: u64, data: u8[], start: u64, end: u64): IoResult<i64>;
 declare async function velt_rt_tcp_readable(s: u64): Promise<IoStatus>;
+declare async function velt_rt_tcp_readable_within(
+  s: u64,
+  ms: i64,
+  signal: u64,
+): Promise<IoResult<u8>>;
 declare async function velt_rt_tcp_write_range(
   s: u64,
   data: u8[],
@@ -156,6 +162,17 @@ export struct TcpStream {
    */
   async readable(): Promise<void> {
     checkIo(await velt_rt_tcp_readable(this.handle));
+  }
+
+  /**
+   * `readable()` with a limit: true once a `tryRead` may find something, false when `ms`
+   * milliseconds passed first or `signal` was aborted. One wait in the runtime, so nothing of it
+   * is left behind (unlike `Promise.race` with a timer): a server waiting for the next request on
+   * each idle connection.
+   */
+  async readableWithin(ms: number, signal: AbortSignal | null = null): Promise<bool> {
+    const h = signal == null ? 0u64 : signal.handle();
+    return unwrapIo(await velt_rt_tcp_readable_within(this.handle, ms as i64, h)) == 1;
   }
 
   /** Resolves once every byte is written; `data` is copied at the call. */

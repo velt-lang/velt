@@ -514,6 +514,7 @@ alive, so `close` may be called at any time. A `VeltStream` is a raw TCP socket,
 | `velt_rt_tcp_write_bytes` | `(VeltStream s, const VeltBytes* data) -> VeltFut*` | same for a `u8[]` |
 | `velt_rt_tcp_try_read_into` | `(VeltStream s, const VeltBytes* data, u64 start, u64 end, IoResult<i64>* out)` | `readInto`: reads what is there into `data[start..end]` (a `u8[]` the caller lends for the call and the runtime writes; sema's written-parameter list has it), without waiting: the bytes read, 0 at the end of the stream, -1 when nothing has arrived yet. A raw socket reads straight into the range; a TLS or upgraded stream hands over what `velt_rt_tcp_readable` read ahead. An empty or out-of-range range reads nothing (0). Additive |
 | `velt_rt_tcp_readable` | `(VeltStream s) -> VeltFut*` | result `IoStatus` once a `velt_rt_tcp_try_read_into` may find data, the end of the stream or an error (it may also find nothing yet: try again); holds no buffer of the caller's. A TLS or upgraded stream reads its next chunk (up to 64 KiB) ahead here. `read` / `readString` deliver what was read ahead first. Additive |
+| `velt_rt_tcp_readable_within` | `(StreamHandle s, int64_t ms, uint64_t signal) -> VeltFut*` (`IoResult<u8>`) | 1 once a `tryRead` may find something, 0 when `ms` passed first (`ms < 0`: no limit) or the signal (0: none) was aborted; additive |
 | `velt_rt_tcp_write_range` | `(VeltStream s, const VeltBytes* data, u64 start, u64 end) -> VeltFut*` | `velt_rt_tcp_write_bytes` of `data[start..end]` (clamped): a `Uint8Array`'s range. Additive |
 | `velt_rt_tcp_try_write_range` | `(VeltStream s, const VeltBytes* data, u64 start, u64 end) -> u64` | `velt_rt_tcp_try_write` of `data[start..end]` (clamped). Additive |
 | `velt_rt_tcp_try_write` | `(VeltStream s, const VeltBytes* data) -> u64` | writes what a raw socket takes right now, without waiting; the number of bytes written (0: nothing now, an earlier write still going on, a closed handle, a TLS stream or one not set up yet, or an error, which the next write reports) |
@@ -658,6 +659,8 @@ network access`), and the accessors of a fetched response are unreachable (fatal
 | `velt_rt_str_hash` | `(const VeltStr* s) -> u64` | string Map/Set keys; fixed seed (deterministic), not flood-resistant |
 | `velt_rt_bytes_hash` | `(const VeltBytes* b) -> u64` | `velt_rt_str_hash` of the string whose bytes are `b` (`Map.getUtf8`: a key looked up by its UTF-8 bytes); additive |
 | `velt_rt_str_eq_bytes` | `(const VeltStr* s, const VeltBytes* b) -> u8` | whether `s`'s bytes are `b`; additive |
+| `velt_rt_str_eq_range` | `(const VeltStr* s, const VeltBytes* b, uint64_t start, uint64_t end) -> u8` | whether `s`'s bytes are `b[start..end]` (false for a range outside `b`); additive |
+| `velt_rt_str_eq_range_ci` | same | the same with ASCII letters compared regardless of case; additive |
 | `velt_rt_math_sqrt` / `_floor` / `_ceil` / `_round` / `_trunc` / `_fabs` | `(f64) -> f64` | `round` = JS `Math.round` (ties toward +∞, keeps `-0`) |
 | `velt_rt_math_to_int32` | `(f64) -> i32` | JS ToInt32 (bitwise operators on numbers); backends emit the case of magnitude below 2^63 inline and call it only for the rest [additive, #521] |
 | `velt_rt_math_mul_int32` | `(i32 a, i32 b) -> i32` | JS `(a * b) \| 0`: the exact product rounded like the double multiply, low 32 bits; emitted inline [additive, #521] |

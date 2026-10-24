@@ -7,7 +7,8 @@
 - `listen(addr: "host:port"): Promise<TcpListener>`: port 0 picks a free port. The listen
   backlog is the OS maximum (a burst of connects waits to be accepted).
   `connect(addr): Promise<TcpStream>`.
-- `TcpListener { port: number }`: `accept(): Promise<TcpStream>` (TCP_NODELAY on), `close()`.
+- `TcpListener { port: number }`: `accept(): Promise<TcpStream>` (TCP_NODELAY on), `close()`
+  (an `accept` still waiting then fails with `EBADF`).
 - `TcpStream`:
   - `read(max = 0): Promise<u8[]>`: empty means end of stream.
   - `readString(max = 0): Promise<string>`: UTF-8; a character split across reads is completed
@@ -35,7 +36,13 @@
   - `shutdown()`: half-close.
   - `abort()`: fails the operations in flight (a `write` to a peer that stopped reading would
     otherwise never finish) and every later one. The handle stays open until `close()`.
-  - `peerAddr(): string`, `close()`.
+  - `readableWithin(ms, signal?: AbortSignal): Promise<bool>`: `readable()` with a limit: true
+    once a `tryRead` may find something, false when `ms` milliseconds passed first or `signal` was
+    aborted. One wait in the runtime, so nothing is left behind (a `Promise.race` of `readable()`
+    and a timer leaves the losing wait running): a server waiting for each idle connection's next
+    request.
+  - `peerAddr(): string`, `close()`: releases the handle; a read or `readable()` still waiting
+    then fails with `EBADF` (no code can read what it would bring), a write in flight goes on.
 - `connectTls(addr, opts?: TlsConnectOptions { serverName?; ca?; alpn?: string[] }):
   Promise<TcpStream>`: a TLS connection (rustls), resolved once the handshake is done. The
   certificate is checked for the host in `addr` (or `serverName`) against the built-in roots

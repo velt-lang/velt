@@ -208,6 +208,12 @@ pub fn closed_error() -> VeltErr {
     VeltErr::new(code::BAD_HANDLE, "handle is closed")
 }
 
+/// [`closed_error`] as an `io::Error` (its code is kept: `EBADF`), for an operation whose handle
+/// was closed while it waited.
+pub(crate) fn closed_io_error() -> std::io::Error {
+    std::io::Error::other(closed_error())
+}
+
 /// A failed `IoResult<T>` for a closed handle.
 pub fn closed<T>() -> IoResult<T> {
     IoResult::err(closed_error())

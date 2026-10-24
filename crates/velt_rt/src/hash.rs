@@ -58,6 +58,36 @@ pub unsafe extern "C" fn velt_rt_str_eq_bytes(
     u8::from((*s).as_bytes() == (*b).as_bytes())
 }
 
+/// `b[start..end]`, or `None` when the range is not inside `b`.
+unsafe fn range(b: &crate::bytes::VeltBytes, start: u64, end: u64) -> Option<&[u8]> {
+    let bytes = b.as_bytes();
+    let (start, end) = (usize::try_from(start).ok()?, usize::try_from(end).ok()?);
+    bytes.get(start..end)
+}
+
+/// Whether string `s`'s UTF-8 bytes are `b[start..end]` (an HTTP server comparing a path or a
+/// method in its read buffer, without making a string); false for a range outside `b`.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_str_eq_range(
+    s: *const crate::str::VeltStr,
+    b: *const crate::bytes::VeltBytes,
+    start: u64,
+    end: u64,
+) -> u8 {
+    u8::from(range(&*b, start, end).is_some_and(|r| (*s).as_bytes() == r))
+}
+
+/// [`velt_rt_str_eq_range`] with ASCII letters compared regardless of case (header names).
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_str_eq_range_ci(
+    s: *const crate::str::VeltStr,
+    b: *const crate::bytes::VeltBytes,
+    start: u64,
+    end: u64,
+) -> u8 {
+    u8::from(range(&*b, start, end).is_some_and(|r| (*s).as_bytes().eq_ignore_ascii_case(r)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -79,5 +109,29 @@ mod tests {
             .map(|i| hash(format!("k{i}").as_bytes()) & 1023)
             .collect();
         assert!(buckets.len() > 950);
+    }
+
+    #[test]
+    fn strings_compare_with_byte_ranges() {
+        let buf =
+            crate::bytes::VeltBytes::from_vec(b"GET /json HTTP/1.1\r\nContent-Length".to_vec());
+        let json = crate::str::VeltStr::from_bytes(b"/json");
+        let name = crate::str::VeltStr::from_bytes(b"content-length");
+        unsafe {
+            assert_eq!(velt_rt_str_eq_range(&json, &buf, 4, 9), 1);
+            assert_eq!(velt_rt_str_eq_range(&json, &buf, 4, 8), 0);
+            assert_eq!(
+                velt_rt_str_eq_range(&json, &buf, 30, 99),
+                0,
+                "outside the bytes"
+            );
+            assert_eq!(velt_rt_str_eq_range(&name, &buf, 20, 34), 0, "case matters");
+            assert_eq!(velt_rt_str_eq_range_ci(&name, &buf, 20, 34), 1);
+            assert_eq!(
+                velt_rt_str_eq_range_ci(&name, &buf, 9, 5),
+                0,
+                "an inverted range"
+            );
+        }
     }
 }

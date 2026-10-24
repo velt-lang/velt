@@ -10,6 +10,7 @@ use crate::result::IoResult;
 use crate::task::leaf::new_leaf;
 use crate::task::VeltFut;
 use std::io;
+use std::time::Duration;
 
 /// `velt_rt_tcp_try_read_into(s, data, start, end)` → `IoResult<i64>`: reads what is there into
 /// `data[start..end]` (a borrowed `u8[]` it writes), without waiting: the bytes read, 0 at the
@@ -51,6 +52,45 @@ pub unsafe extern "C" fn velt_rt_tcp_try_read_into(
 pub unsafe extern "C" fn velt_rt_tcp_readable(s: StreamHandle) -> *mut VeltFut {
     STREAMS.op::<()>(s, |obj| {
         new_leaf(async move { IoResult::from_io(obj.readable().await, |()| ()) })
+    })
+}
+
+/// `readableWithin(ms, signal)` → `IoResult<u8>`: 1 once a `tryRead` may find something (as
+/// `readable`), 0 when `ms` milliseconds passed first (`ms < 0`: no limit) or `signal` (a signal
+/// handle, 0: none) was aborted. One runtime wait: nothing of it outlives it, unlike a race of
+/// promises (an HTTP server waits so for the next request on each kept-alive connection).
+///
+/// # Safety
+/// A nonzero `signal` is a live signal handle.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_tcp_readable_within(
+    s: StreamHandle,
+    ms: i64,
+    signal: u64,
+) -> *mut VeltFut {
+    let signal = crate::task::abort::signal_of(signal);
+    STREAMS.op::<u8>(s, |obj| {
+        new_leaf(async move {
+            let stop = async {
+                match &signal {
+                    Some(s) => s.aborted().await,
+                    None => std::future::pending().await,
+                }
+            };
+            let limit = async {
+                match u64::try_from(ms) {
+                    Ok(ms) => crate::task::runtime::time::sleep(Duration::from_millis(ms)).await,
+                    Err(_) => std::future::pending().await,
+                }
+            };
+            let (stop, limit) = (std::pin::pin!(stop), std::pin::pin!(limit));
+            let other = futures_util::future::select(stop, limit);
+            let ready = std::pin::pin!(obj.readable());
+            match futures_util::future::select(ready, other).await {
+                futures_util::future::Either::Left((r, _)) => IoResult::from_io(r, |()| 1),
+                futures_util::future::Either::Right(_) => IoResult::ok(0),
+            }
+        })
     })
 }
 
