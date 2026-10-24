@@ -277,6 +277,11 @@ impl VisitMut for Declared {
 /// temporaries (a `Record` literal's, ...), numbered from 0 in a frame no body has, so the body
 /// `e` is placed in must give them locals of its own. Per local: its type (`None`: no `let` or
 /// pattern gives one) and whether it is assigned. Empty: `e` has none.
+///
+/// The type comes from the `let` or binding pattern that declares the local, so a `let`
+/// without an initializer or a `catch` local (typed by neither) would come back as `None`, and
+/// `FnCx::adopt_detached` would give it the error type. Sema does not produce either in an
+/// initializer or default today (hir_encodings.md, field defaults).
 pub(crate) fn detached_locals(e: &mut Expr) -> Vec<(Option<TyId>, bool)> {
     let mut d = Declared::default();
     expr(e, &mut d);

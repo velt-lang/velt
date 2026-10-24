@@ -25,6 +25,15 @@ Maintainer-owned, like `hir/mod.rs`, `hir/intrinsic.rs` and `hir/module_state.rs
   own field `at` it runs before (that class's field count: after its last). They belong to
   the split of the declaring class: whoever runs that class's initializers runs each of them
   as `this.<field> = init` (dropping the old value) right before field `at`'s, in list order.
+  Sema checks every initializer (`FieldDef::default`, `FieldInit::init`) and every parameter
+  default in a frame of its own, outside any function body: the locals it uses (its own
+  temporaries, such as the one a `Record` literal fills) are numbered from 0 there and belong
+  to no body. Wherever lowering places one, it renumbers them after the locals of the body it
+  runs in (`velt_sema::rebase_detached_locals(e, base)`, which also returns how many there
+  are) and declares each at its `let` or binding pattern, which gives its type; sema puts no
+  `let` without an initializer and no `catch` local in one, which would have none. A default sema inserts at a call
+  (`FnInfo` parameter defaults, struct field defaults in object literals) already has locals
+  of the calling body.
 - Virtual dispatch only for methods overridden somewhere: `Callee::Virtual { slot }` indexes
   `AdtDef::vtable` of the receiver's dynamic class; all other method calls are `Callee::Def`.
 - Interface values (`Shape[]`) are `TyKind::Dyn`: fat pointer (data, vtable). `ExprKind::ToDyn`
