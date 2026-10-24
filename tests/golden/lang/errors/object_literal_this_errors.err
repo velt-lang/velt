@@ -1,16 +1,25 @@
-object_literal_this_errors.vlt:11:14: error: `this` in an object-literal method is supported only where the literal implements an interface or has no expected type
+object_literal_this_errors.vlt:23:14: error: `this` in an object-literal method is supported only where the literal implements an interface or has no expected type
   = note: TypeScript allows this (`this` is the object the method is called on); here the method is stored as a plain function, which has no object to use as `this`
   = note: declare the expected type as an interface (`interface T { m(): R }`), or use the object's variable instead of `this`
-object_literal_this_errors.vlt:19:14: error: `this` in an object-literal method is supported only where the literal implements an interface or has no expected type
+object_literal_this_errors.vlt:31:14: error: `this` in an object-literal method is supported only where the literal implements an interface or has no expected type
   = note: TypeScript allows this (`this` is the object the method is called on); here the method is stored as a plain function, which has no object to use as `this`
   = note: declare the expected type as an interface (`interface T { m(): R }`), or use the object's variable instead of `this`
-object_literal_this_errors.vlt:26:5: error: the result type of method `loop` cannot be inferred: it depends on its own result through `this`
+object_literal_this_errors.vlt:38:5: error: the result type of method `loop` cannot be inferred: it depends on its own result through `this`
   = note: write it: `loop(): T`
-object_literal_this_errors.vlt:34:9: error: parameter `k` of method `add` needs a type: the object literal has no expected type
+object_literal_this_errors.vlt:46:9: error: parameter `k` of method `add` needs a type: the object literal has no expected type
   = note: write its type, or annotate the literal with an interface that declares the method
-object_literal_this_errors.vlt:46:20: error: the method `get` uses `this`, so it cannot be read as a value
+object_literal_this_errors.vlt:58:20: error: the method `get` uses `this`, so it cannot be read as a value
   = note: TypeScript allows this, but `this` is then the object the function is called on, if any (`undefined` for a plain call, which throws a TypeError in strict mode)
   = note: call the method on its object, or wrap the call in an arrow function: `(...) => o.get(...)`
-object_literal_this_errors.vlt:47:29: error: the method `get` uses `this`, so it cannot be read as a value
+object_literal_this_errors.vlt:59:29: error: the method `get` uses `this`, so it cannot be read as a value
   = note: TypeScript allows this, but `this` is then the object the function is called on, if any (`undefined` for a plain call, which throws a TypeError in strict mode)
   = note: call the method on its object, or wrap the call in an arrow function: `(...) => o.get(...)`
+object_literal_this_errors.vlt:64:31: error: the method `c.m` may use `this`, so it cannot be the value of an object-literal property
+  = note: TypeScript allows this, but `this` is then the object the property is called on (`o.m()` calls it with `o`), while Velt keeps the object the method was read from
+  = note: call it from a method or an arrow function: `(...) => c.m(...)`, or write the method in the literal
+object_literal_this_errors.vlt:71:31: error: the method `lit.m` may use `this`, so it cannot be the value of an object-literal property
+  = note: TypeScript allows this, but `this` is then the object the property is called on (`o.m()` calls it with `o`), while Velt keeps the object the method was read from
+  = note: call it from a method or an arrow function: `(...) => lit.m(...)`, or write the method in the literal
+object_literal_this_errors.vlt:72:25: error: the method `c.m` may use `this`, so it cannot be the value of an object-literal property
+  = note: TypeScript allows this, but `this` is then the object the property is called on (`o.m()` calls it with `o`), while Velt keeps the object the method was read from
+  = note: call it from a method or an arrow function: `(...) => c.m(...)`, or write the method in the literal

@@ -152,6 +152,9 @@ impl FnCx<'_, '_> {
         this: TyId,
     ) -> (hir::Expr, bool) {
         if !takes_this(e) {
+            if self.stored_method_value(e) {
+                return (self.error_expr(e.span), false);
+            }
             return (self.slot_value(e, exp, slot), false);
         }
         let exp = self.with_this_param(exp, this);
@@ -159,5 +162,52 @@ impl FnCx<'_, '_> {
         let h = self.slot_value(e, exp, slot);
         self.method_this = saved;
         (h, true)
+    }
+
+    /// Is object-literal property value `v` a method read off another object whose body may
+    /// use `this` (`{ m: c.m }`)? Reported: Node calls it with the literal as `this`
+    /// (`o.m()`), while the value read keeps the object it was read from.
+    pub(super) fn stored_method_value(&mut self, v: &ast::Expr) -> bool {
+        let ast::ExprKind::Member {
+            object,
+            prop,
+            optional: false,
+        } = &super::method_value::strip_parens(v).kind
+        else {
+            return false;
+        };
+        let uses = if self.static_namespace(object) {
+            // A static method that uses `this` runs on its class.
+            match self.class_of_name(object) {
+                Some(d) => match self.find_static(d, &prop.name) {
+                    Ok((m, ..)) => self.cx.static_this.contains_key(&m.def),
+                    Err(_) => false,
+                },
+                None => false,
+            }
+        } else {
+            // Only a path's type is looked at (`o.m`, `this.a.m`), so that a literal nested in
+            // the object's expression is not checked again. A literal's own method using `this`
+            // is reported where it is read (`detached_literal_method`).
+            match self.peek_ty(object) {
+                Some(t) => !self.own_literal_iface(t) && self.method_of_reads_this(t, prop),
+                None => false,
+            }
+        };
+        if !uses {
+            return false;
+        }
+        let read = self
+            .method_value_read_text(v)
+            .unwrap_or_else(|| format!("o.{}", prop.name));
+        self.cx.error(
+            Diagnostic::error(
+                format!("the method `{read}` may use `this`, so it cannot be the value of an object-literal property"),
+                v.span,
+            )
+            .with_note("TypeScript allows this, but `this` is then the object the property is called on (`o.m()` calls it with `o`), while Velt keeps the object the method was read from")
+            .with_note(format!("call it from a method or an arrow function: `(...) => {read}(...)`, or write the method in the literal")),
+        );
+        true
     }
 }

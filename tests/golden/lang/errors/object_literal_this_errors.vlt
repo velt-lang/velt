@@ -3,6 +3,18 @@
 
 type Point = { x: number; norm(): number };
 
+interface HasM {
+  n: number;
+  m(): number;
+}
+
+class C {
+  n = 1;
+  m(): number {
+    return this.n;
+  }
+}
+
 function main(): void {
   // A plain object type with a method signature: its fields hold plain functions.
   const p: Point = {
@@ -45,4 +57,17 @@ function main(): void {
   };
   const detached = o.get;
   const mapped = [1, 2].map(o.get);
+
+  // A method using `this` read off another object as a property's value: Node calls it
+  // with the literal as `this`.
+  const c = new C();
+  const p1: HasM = { n: 2, m: c.m };
+  const lit: HasM = {
+    n: 3,
+    m() {
+      return this.n;
+    },
+  };
+  const p2: HasM = { n: 4, m: lit.m };
+  const p3 = { n: 2, m: c.m };
 }

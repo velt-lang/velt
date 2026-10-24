@@ -265,6 +265,7 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
     ) -> hir::Expr {
         match value {
+            Some(v) if self.stored_method_value(v) => self.error_expr(v.span),
             Some(v) => self.expr(v, exp, Want::Move),
             None => self.ident_expr(name, exp, Want::Move),
         }
