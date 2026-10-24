@@ -458,7 +458,7 @@ impl FnCx<'_, '_> {
             _ => payload,
         };
         let d = self.expr(rhs, Some(hint), Want::Move);
-        self.nullish_match(s, l, mode, payload, d, exp, span)
+        self.nullish_match(s, (l, mode), payload, d, exp, span)
     }
 
     /// `s ?? rhs` where `s` is `null` or `undefined` alone (an option of `never`): `rhs`, after
@@ -502,15 +502,14 @@ impl FnCx<'_, '_> {
         if mode == UseMode::Move {
             self.force_move(&mut s);
         }
-        self.nullish_match(s, l, mode, payload, d, None, span)
+        self.nullish_match(s, (l, mode), payload, d, None, span)
     }
 
     /// The match `s ?? d` lowers to, with `l` bound to the payload.
     fn nullish_match(
         &mut self,
         s: hir::Expr,
-        l: hir::LocalId,
-        mode: UseMode,
+        (l, mode): (hir::LocalId, UseMode),
         payload: TyId,
         d: hir::Expr,
         exp: Option<TyId>,
