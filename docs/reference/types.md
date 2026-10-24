@@ -1512,7 +1512,8 @@ type Conflict = { k: string } & { k: number }; // error: no value has type ...
 A primitive `&` an object type (`string & { __brand: "UserId" }`) is a **branded type**: a
 nominal alias of the primitive, with no cost at run time. `x as UserId` brands a value; a
 branded value works wherever its primitive does (members, operators, `${}`, arguments, map
-keys); a plain `string`, or another brand of it, does not convert to the brand.
+keys, `typeof`, also in generic code: `typeof x` of an `x: T & { n?: number }` at `T = number` is
+`"number"`); a plain `string`, or another brand of it, does not convert to the brand.
 
 ```ts
 type UserId = string & { __brand: "UserId" };
@@ -3377,7 +3378,10 @@ with TypeScript's rules:
   keep the primitive); `null` and `undefined` pass.
 - A value of a type parameter without an `object` bound converts with `as object` too
   (`function toRaw<T>(observed: T) { ... observed as object ... }`): a `T | null` or a union
-  is unpacked to the value it holds, and a primitive is the same `TypeError`.
+  is unpacked to the value it holds, and a primitive is the same `TypeError`. `as T & object`
+  is checked the same way, and `null` and `undefined` are a `TypeError` there too, since
+  `T & object` holds neither (`asObject(null)` stops with `the value is not an object (it is
+  null)`, and so does a `null` at `T = { a: number } | null`; TypeScript keeps the `null`).
 - `object` can be a `WeakMap` key, a `WeakSet` member and a `WeakRef` target
   ([WeakMap, WeakSet and WeakRef](../std/prelude.md#weakmap-weakset-and-weakref)): the key is
   the object it holds, whichever type it reached `object` through. A primitive (passed as an

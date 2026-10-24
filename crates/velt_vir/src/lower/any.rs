@@ -431,6 +431,7 @@ impl FnLower<'_, '_> {
     /// `AnyTo`: the value of type `ty` the owned `any` `a` holds, or a `TypeError`.
     pub(super) fn any_to(&mut self, a: &hir::Expr, ty: TyId) -> Operand {
         let from = self.sub(a.ty);
+        let written = ty;
         let ty = self.sub(ty);
         if let Some(v) = self.unboxed_own(a, ty) {
             return v;
@@ -441,7 +442,7 @@ impl FnLower<'_, '_> {
             return self.zero_value(vt);
         }
         if matches!(self.cx.kind(ty), TyKind::Never) {
-            return self.any_to_never(v, from, ty);
+            return self.any_to_never(v, from, ty, written);
         }
         if matches!(self.cx.kind(ty), TyKind::Unit) {
             return self.any_to_void(v, from);

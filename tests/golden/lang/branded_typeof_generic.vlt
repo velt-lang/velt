@@ -1,0 +1,19 @@
+// `typeof` of a branded primitive in generic code (#1313): `x: T & { n?: number }` at
+// `T = number` is a `number`, as the instantiation's value tells at run time.
+function t1<T>(x: T & { n?: number }) {
+  return typeof x;
+}
+
+function t2<T>(x: T & { n?: number }): string {
+  return typeof x === "string" ? "S" : "-";
+}
+
+console.log(
+  t1<number>(5 as (number & { n?: number })),
+  t1<string>("s" as (string & { n?: number })),
+  t1<{ a: number }>({ a: 1 }),
+);
+console.log(
+  t2<string>("s" as (string & { n?: number })),
+  t2<number>(1 as (number & { n?: number })),
+);
