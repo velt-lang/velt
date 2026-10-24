@@ -5,17 +5,17 @@
 //! | intrinsic | mirror synced | written back |
 //! |---|---|---|
 //! | `length` | nothing (the original's length) | nothing |
-//! | `push`, `reserve` | to the original's length | the pushed elements |
+//! | `push`, `reserve` | to the original's length (`push`: after its argument) | the pushed elements |
 //! | `pop`, `truncate` | to the original's length (and the last element) | the length |
 //! | `swap` | the two elements | the two elements |
 //! | others (`remove`, `set_len`) | every element | every element |
 
 use velt_sema::hir::{self, DefId, TyId, TyKind};
 
-use super::array_view::{ViewFlush, ViewSync, VIEW_LEN, VIEW_SORT};
+use super::array_view::{ViewFlush, ViewSync, VIEW_FLUSH_FROM, VIEW_LEN, VIEW_SORT, VIEW_SYNC_LEN};
 use super::operand::proj;
-use super::{ice, FnLower};
-use crate::vir::{self, Operand, Place, Proj, Rvalue, Ty};
+use super::{cint, ice, FnLower};
+use crate::vir::{self, BinOp, Const, Operand, Place, Proj, Rvalue, Ty};
 
 /// The stable sort every `sort(cmp)` runs (std/sort/stable.vlt).
 const STABLE_SORT: &str = "std/sort/stable::stableSort";
@@ -36,6 +36,7 @@ impl FnLower<'_, '_> {
         let len = |arr: &Place| Rvalue::Use(Operand::Copy(proj(arr, Proj::Field(1))));
         match (i, rest) {
             (I::ArrayLen, []) => self.view_len(bxp, aty),
+            (I::ArrayPush, [x]) => self.view_push(bxp, aty, x),
             (I::ArrayPush | I::ArrayReserve, _) => {
                 let arr = self.content_with(bxp, aty, ViewSync::Len);
                 let old = self.rvalue_temp(Ty::U64, len(&arr));
@@ -90,11 +91,24 @@ impl FnLower<'_, '_> {
             out.clone(),
             Rvalue::Use(Operand::Copy(proj(&hdr, Proj::Field(1)))),
         );
+        // A view's own header has length 0: a longer array is plain.
+        let empty = self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(BinOp::Eq, Operand::Copy(out.clone()), cint(0, Ty::U64)),
+        );
+        let (test, yes, join) = (self.new_block(), self.new_block(), self.new_block());
+        self.branch(empty, test, join);
+        self.switch_to(test);
         let (is, v) = self.array_view_of_hdr(&hdr);
-        let (yes, join) = (self.new_block(), self.new_block());
         self.branch(is, yes, join);
         self.switch_to(yes);
-        self.view_call_with(VIEW_LEN, vec![e], vec![v], Some(out.clone()));
+        // Through an array header's length field, so the optimizer knows it for an array
+        // length (below 2^53) as it knows the plain header's (velt_opt numrep).
+        let a = self.cx.array_agg();
+        let held = Place::local(self.temp(Ty::Agg(a)));
+        let n = proj(&held, Proj::Field(1));
+        self.view_call_with(VIEW_LEN, vec![e], vec![v], Some(n.clone()));
+        self.assign(out.clone(), Rvalue::Use(Operand::Copy(n)));
         self.goto(join);
         self.switch_to(join);
         Operand::Copy(out)
@@ -135,5 +149,46 @@ impl FnLower<'_, '_> {
         self.goto(join);
         self.switch_to(no);
         Some(join)
+    }
+}
+
+impl FnLower<'_, '_> {
+    /// `push(x)` onto the array of the view type `t` whose box pointer `bxp` holds (after `x`
+    /// is evaluated). A view's own header is full (length and capacity 0), so a push onto a
+    /// plain array with room tests nothing more than any push; a full one tests the view bit:
+    /// a view syncs its mirror's length, pushes onto the mirror and writes the new element back.
+    pub(super) fn view_push(&mut self, bxp: &Place, t: TyId, x: &hir::Expr) -> Operand {
+        let e = self.elem_ty(t);
+        let v = self.consume(x);
+        let vt = self.cx.ty(e);
+        let v = match vt {
+            Ty::Unit => v,
+            _ => Operand::Copy(Place::local(self.copy_to_temp(v, vt))),
+        };
+        let payload = self.cx.payload_ty(t);
+        let base = self.retained_hop(bxp, t);
+        let hdr = proj(&base, Proj::Deref(payload));
+        let done = self.new_block();
+        self.push_value_full(&hdr, e, v, |lw, v| {
+            let is = lw.view_tagged(&hdr);
+            let (yes, no) = (lw.new_block(), lw.new_block());
+            lw.branch(is, yes, no);
+            lw.switch_to(yes);
+            let (_, view) = lw.array_view_of_hdr(&hdr);
+            let last = Operand::Const(Const::Bool(false), Ty::Bool);
+            lw.view_call(VIEW_SYNC_LEN, e, vec![view.clone(), last], None);
+            let seen = lw.view_field(&view, e, "__seen");
+            let at = Place::local(lw.copy_to_temp(Operand::Copy(seen), Ty::Ptr));
+            let mirror = proj(&at, Proj::Deref(payload));
+            let len = Operand::Copy(proj(&mirror, Proj::Field(1)));
+            let old = lw.rvalue_temp(Ty::U64, Rvalue::Use(len));
+            lw.push_value(&mirror, e, v);
+            lw.view_call(VIEW_FLUSH_FROM, e, vec![view, old], None);
+            lw.goto(done);
+            lw.switch_to(no);
+        });
+        self.goto(done);
+        self.switch_to(done);
+        super::unit()
     }
 }

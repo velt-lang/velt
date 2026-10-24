@@ -419,6 +419,18 @@ impl FnLower<'_, '_> {
 
     /// Append the owned value `v` to the array at `arr` (growing it when full).
     pub(in crate::lower) fn push_value(&mut self, arr: &Place, elem: TyId, v: Operand) {
+        self.push_value_full(arr, elem, v, |_, _| {});
+    }
+
+    /// [`Self::push_value`], where `full` runs first when the array is full, with the value
+    /// (it may push it elsewhere and leave; the grow follows in the block it ends in).
+    pub(in crate::lower) fn push_value_full(
+        &mut self,
+        arr: &Place,
+        elem: TyId,
+        v: Operand,
+        full_hook: impl FnOnce(&mut Self, Operand),
+    ) {
         let vt = self.cx.ty(elem);
         // Snapshot the value: it may live in the buffer that growing reallocates.
         let v = match v {
@@ -436,6 +448,7 @@ impl FnLower<'_, '_> {
         let join = self.new_block();
         self.branch(full, grow_bb, join);
         self.switch_to(grow_bb);
+        full_hook(self, v.clone());
         let (stride, align) = self.stride(elem);
         let a = self.addr(arr.clone());
         let f = self.cx.func(Work::ArrayGrow);

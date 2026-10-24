@@ -39,6 +39,7 @@ use velt_sema::hir::{self, DefId, TyId, TyKind};
 
 use super::any_set_site::ARRAY_ID;
 use super::boxing::Boxing;
+use super::glue::Glue;
 use super::operand::proj;
 use super::rt::Rt;
 use super::{cint, ice, Cx, FnLower};
@@ -47,11 +48,11 @@ use crate::vir::{self, BinOp, Callee, Const, Operand, Place, Proj, Rvalue, Ty};
 pub(super) const VIEW_CLASS: &str = "std/prelude/zzz_adapt::__ArrayView";
 const VIEW_NEW: &str = "std/prelude/zzz_adapt::__arrayViewNew";
 const VIEW_SYNC: &str = "std/prelude/zzz_adapt::__arrayViewSync";
-const VIEW_SYNC_AT: &str = "std/prelude/zzz_adapt::__arrayViewSyncAt";
-const VIEW_SYNC_LEN: &str = "std/prelude/zzz_adapt::__arrayViewSyncLen";
+pub(super) const VIEW_SYNC_AT: &str = "std/prelude/zzz_adapt::__arrayViewSyncAt";
+pub(super) const VIEW_SYNC_LEN: &str = "std/prelude/zzz_adapt::__arrayViewSyncLen";
 const VIEW_FLUSH: &str = "std/prelude/zzz_adapt::__arrayViewFlush";
 const VIEW_FLUSH_AT: &str = "std/prelude/zzz_adapt::__arrayViewFlushAt";
-const VIEW_FLUSH_FROM: &str = "std/prelude/zzz_adapt::__arrayViewFlushFrom";
+pub(super) const VIEW_FLUSH_FROM: &str = "std/prelude/zzz_adapt::__arrayViewFlushFrom";
 pub(super) const VIEW_LEN: &str = "std/prelude/zzz_adapt::__arrayViewLen";
 pub(super) const VIEW_SORT: &str = "std/prelude/zzz_adapt::__arrayViewSort";
 
@@ -172,7 +173,13 @@ impl Cx<'_> {
 }
 
 impl FnLower<'_, '_> {
-    fn view_call(&mut self, name: &str, e: TyId, args: Vec<Operand>, out: Option<Place>) {
+    pub(super) fn view_call(
+        &mut self,
+        name: &str,
+        e: TyId,
+        args: Vec<Operand>,
+        out: Option<Place>,
+    ) {
         self.view_call_with(name, vec![e], args, out);
     }
 
@@ -202,7 +209,7 @@ impl FnLower<'_, '_> {
     }
 
     /// The place of field `name` of the `__ArrayView<e>` object `v` (untagged).
-    fn view_field(&mut self, v: &Operand, e: TyId, name: &str) -> Place {
+    pub(super) fn view_field(&mut self, v: &Operand, e: TyId, name: &str) -> Place {
         let cls = self.view_class(e);
         let TyKind::Adt(d, _) = self.cx.kind(cls) else {
             ice("`__ArrayView` is not a class")
@@ -212,6 +219,11 @@ impl FnLower<'_, '_> {
             ice(format_args!("`__ArrayView` without `{name}`"))
         };
         self.proxy_hot_place(v, cls, i as u32)
+    }
+
+    /// Is the header at `hdr` a view's (bit 0 of its data pointer)?
+    pub(super) fn view_tagged(&mut self, hdr: &Place) -> Operand {
+        self.proxy_tagged(Operand::Copy(proj(hdr, Proj::Field(0))))
     }
 
     /// The view object of the header at `hdr` when it is a view: `(is_view, untagged)`.
@@ -303,9 +315,20 @@ impl FnLower<'_, '_> {
         let e = self.elem_ty(t);
         let (is, v) = self.array_view_of_hdr(&hdr);
         let at = Place::local(self.temp(Ty::Ptr));
+        let len = Operand::Copy(proj(&hdr, Proj::Field(1)));
         let here = self.addr(hdr);
         self.assign(at.clone(), Rvalue::Use(here));
         let (yes, join) = (self.new_block(), self.new_block());
+        if let ViewSync::Slots(at) = &sync {
+            if let [i] = &at[..] {
+                // A view's own header has length 0: an index below the header's length is
+                // a plain array's element, read with no test of the view bit.
+                let inb = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Lt, i.clone(), len));
+                let test = self.new_block();
+                self.branch(inb, join, test);
+                self.switch_to(test);
+            }
+        }
         self.branch(is, yes, join);
         self.switch_to(yes);
         let flag = |b| Operand::Const(Const::Bool(b), Ty::Bool);
@@ -385,72 +408,6 @@ impl FnLower<'_, '_> {
         r
     }
 
-    /// The index operand `i` (of VIR type `ity`) as the `u64` the view helpers take.
-    pub(super) fn view_index(&mut self, i: Operand, ity: Ty) -> Operand {
-        let iu = self.cast_to(i, ity, Ty::U64);
-        self.rvalue_temp(Ty::U64, Rvalue::Use(iu))
-    }
-
-    /// The target of the assignment being lowered is element `iu` of the view type `t`'s
-    /// array, whose box pointer the last entry of `view_writes` since `mark` holds (when the
-    /// barrier made one): only that element is written back.
-    pub(super) fn view_write_at(&mut self, mark: usize, t: TyId, iu: Operand) {
-        if let Some(w) = &mut self.view_writes {
-            if w.len() == mark + 1 && w[mark].1 == t {
-                w[mark].2 = Some(iu);
-            }
-        }
-    }
-
-    /// The contents of the array at `arr` of type `t` for a read (or, with `mark`, an
-    /// assignment target) of element `index`, whose value `given` may hold already: a view
-    /// brings only that element up to date, the index evaluated first unless that may run code
-    /// that writes (then every element). Answers the index's value when it is evaluated here.
-    pub(super) fn index_content(
-        &mut self,
-        arr: &Place,
-        t: TyId,
-        index: &hir::Expr,
-        given: Option<Operand>,
-        mark: Option<usize>,
-    ) -> (Place, Option<Operand>) {
-        if !self.cx.array_view(t) || (given.is_none() && self.index_may_write(index)) {
-            return (self.content(arr, t), given);
-        }
-        let i = match given {
-            Some(i) => i,
-            None => self.expr(index),
-        };
-        let ity = self.vty(index.ty);
-        let iu = self.view_index(i.clone(), ity);
-        if let Some(mark) = mark {
-            self.view_write_at(mark, t, iu.clone());
-        }
-        let c = self.content_with(arr, t, ViewSync::Slots(vec![iu]));
-        (c, Some(i))
-    }
-
-    /// [`Self::may_write`] of an index, where a `number` index's conversion
-    /// (`__floatIndex(i)`, sema `float_index`) changes nothing.
-    fn index_may_write(&mut self, index: &hir::Expr) -> bool {
-        if let hir::ExprKind::Call {
-            callee: hir::Callee::Def(d, _),
-            args,
-        } = &index.kind
-        {
-            let float_index = matches!(self.cx.hir.def(*d), hir::Def::Fn(f) if f.name.ends_with("::__floatIndex"));
-            if let (true, [i]) = (float_index, &args[..]) {
-                return self.may_write(i);
-            }
-        }
-        self.may_write(index)
-    }
-
-    /// The number of entries in `view_writes` (for [`Self::view_write_at`]).
-    pub(super) fn view_writes_mark(&self) -> usize {
-        self.view_writes.as_ref().map_or(0, Vec::len)
-    }
-
     /// The `(data, table)` of the `any` for the box `data` (owned) of the view type `t`, whose
     /// own table is `table`: for a view, the original array (a new reference; the view is
     /// released).
@@ -493,26 +450,63 @@ impl FnLower<'_, '_> {
         )
     }
 
-    /// In the drop of the inline value `arr` of an array of `e`: when it is a view, the view
-    /// object is released, and `true` is answered (the elements and buffer are the mirror's).
-    /// The current block then continues after the drop on both paths.
+    /// In the drop of the inline value `arr` of an array of `e`: a view releases its view
+    /// object (`Glue::ViewDrop`, out of line, so the drop of a plain array stays as small as
+    /// in a program without views and is inlined as there); anything else runs `rest`. The
+    /// current block then continues after the drop on both paths.
     pub(super) fn view_drop(&mut self, arr: &Place, e: TyId, rest: impl FnOnce(&mut Self)) {
-        if !self.cx.array_view_of(e) {
+        // A mirror is a plain array (only the outermost one: its elements may be views).
+        if std::mem::take(&mut self.mirror_drop) || !self.cx.array_view_of(e) {
             return rest(self);
         }
-        let (is, v) = self.array_view_of_hdr(arr);
+        let d = Operand::Copy(proj(arr, Proj::Field(0)));
+        let is = self.proxy_tagged(d);
         let (yes, no, join) = (self.new_block(), self.new_block(), self.new_block());
         self.branch(is, yes, no);
         self.switch_to(yes);
-        self.view_unlist(arr, e, &v);
-        let cls = self.view_class(e);
-        let vp = Place::local(self.copy_to_temp(v, Ty::Ptr));
-        self.drop_glue(vp, cls);
+        let t = self.cx.intern(TyKind::Array(e));
+        let at = self.addr(arr.clone());
+        self.call_glue(Glue::ViewDrop, t, vec![at]);
         self.goto(join);
         self.switch_to(no);
         rest(self);
         self.goto(join);
         self.switch_to(join);
+    }
+
+    /// The body of `Glue::ViewDrop` for the view type `t`: the view whose header `p` points at
+    /// leaves the runtime's table, and its view object is released. The view object's drop
+    /// drops its mirror by `Glue::MirrorDrop` (`drop_field`), not by the view type's drop, so
+    /// that drop (which calls this) is not recursive and is inlined as a plain array's is.
+    pub(super) fn view_drop_body(&mut self, p: vir::Local, t: TyId) {
+        let e = self.elem_ty(t);
+        let payload = self.cx.payload_ty(t);
+        let arr = Place {
+            local: p,
+            proj: vec![Proj::Deref(payload)],
+        };
+        let (_, v) = self.array_view_of_hdr(&arr);
+        self.view_unlist(&arr, e, &v);
+        let cls = self.view_class(e);
+        let vp = Place::local(self.copy_to_temp(v, Ty::Ptr));
+        self.drop_glue(vp, cls);
+        self.terminate(vir::Terminator::Return(super::unit()));
+    }
+
+    /// Is field `f` of the class type `ty` a view's mirror (`__ArrayView.__seen`)?
+    pub(super) fn view_mirror_field(&mut self, ty: TyId, f: u32) -> bool {
+        if self.cx.boxing.array_views.is_empty() {
+            return false;
+        }
+        let TyKind::Adt(d, _) = self.cx.kind(ty) else {
+            return false;
+        };
+        let def = self.cx.adt_def(d);
+        def.name == VIEW_CLASS
+            && def
+                .fields
+                .get(f as usize)
+                .is_some_and(|x| x.name == "__seen")
     }
 
     /// Before a deep copy or transfer of the inline value at `arr` of an array of `e`: a view

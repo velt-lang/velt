@@ -70,6 +70,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             read_target: false,
             owner_write: false,
             view_writes: None,
+            mirror_drop: false,
             lk_mode: None,
             rw_reader: None,
             mode: LkMode::Plain,

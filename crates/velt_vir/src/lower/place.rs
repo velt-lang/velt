@@ -181,6 +181,9 @@ impl FnLower<'_, '_> {
                 };
                 let v = self.projection_base(base, hold);
                 let arr = self.place_of(v, bty);
+                if let Some(p) = self.view_index_elem(&arr, bty, index, None, None) {
+                    return Operand::Copy(p);
+                }
                 let (arr, i) = self.index_content(&arr, bty, index, None, None);
                 pre_i = i;
                 arr
@@ -407,7 +410,14 @@ impl FnLower<'_, '_> {
                 if !self.captured_root(base) {
                     self.target_barrier(&arr, bty);
                 }
-                let (arr, i) = self.index_content(&arr, bty, index, pre.pop_front(), Some(mark));
+                let given = pre.pop_front();
+                let prev = self.enter_span(e.span);
+                if let Some(p) = self.view_index_elem(&arr, bty, index, given.clone(), Some(mark)) {
+                    self.restore_loc(prev);
+                    return p;
+                }
+                self.restore_loc(prev);
+                let (arr, i) = self.index_content(&arr, bty, index, given, Some(mark));
                 let i = match i {
                     Some(i) => i,
                     None => self.expr(index),

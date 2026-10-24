@@ -295,8 +295,13 @@ impl FnLower<'_, '_> {
         chain: Option<&super::drop_chain::Chain>,
     ) {
         let fp = self.field_place(obj, ty, f);
-        if self.cx.field_drop_reenters(ty, f, t, chain) {
+        let reenters = self.cx.field_drop_reenters(ty, f, t, chain);
+        if reenters {
             self.drop_field_bracketed(fp, t);
+        } else if self.cx.boxed(t) && self.view_mirror_field(ty, f) {
+            // Not the view type's drop, which drops views (array_view.rs `view_drop_body`).
+            let at = self.addr(fp);
+            self.call_glue(super::Glue::MirrorDrop, t, vec![at]);
         } else {
             self.drop_glue(fp, t);
         }
