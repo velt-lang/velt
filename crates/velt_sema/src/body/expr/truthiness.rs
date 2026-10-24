@@ -556,11 +556,10 @@ impl FnCx<'_, '_> {
         f: hir::Expr,
         exp: Option<TyId>,
     ) -> (hir::Expr, hir::Expr, Option<TyId>) {
-        let any = |s: &Self, ty: TyId| s.cx.dynamic(ty) == Some(crate::any::Dynamic::Any);
-        if !exp.is_some_and(|e| any(self, e)) {
+        if !exp.is_some_and(|e| self.is_any(e)) {
             return (t, f, None);
         }
-        match (any(self, t.ty), any(self, f.ty)) {
+        match (self.is_any(t.ty), self.is_any(f.ty)) {
             (false, true) => {
                 let ft = f.ty;
                 match self.try_coerce(t, ft) {
@@ -577,6 +576,11 @@ impl FnCx<'_, '_> {
             }
             _ => (t, f, None),
         }
+    }
+
+    /// Is `ty` an `any` (not an `unknown`)?
+    pub(crate) fn is_any(&self, ty: TyId) -> bool {
+        self.cx.dynamic(ty) == Some(crate::any::Dynamic::Any)
     }
 
     /// Two values of different types (neither converts to the other) as values of their union,
