@@ -16,6 +16,7 @@
 //! (`.name`, `[3]`) while returning, so paths cost nothing on success.
 
 pub(in crate::lower) mod any;
+mod db_bind;
 mod dynamic;
 mod key;
 mod literal;

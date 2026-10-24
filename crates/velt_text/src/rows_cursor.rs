@@ -10,6 +10,9 @@
 //!
 //! The cursor answers like the binary rows it replaces: the same header (`single`, the column
 //! names), then the rows, each read cell by cell, in any order, between two steps.
+//!
+//! The other way, a [`ParamSink`] takes a statement's parameters as typed values from std's
+//! generated code (`__intrinsic_db_bind<P>`), instead of as JSON text the driver parses.
 
 use std::ffi::c_void;
 
@@ -100,29 +103,52 @@ impl RawCursor {
     /// # Safety
     /// As [`RawCursor::header`]; `col` is below the header's column count.
     pub unsafe fn cell<'a>(&self, col: usize) -> Cell<'a> {
-        use crate::rows::*;
-        let mut c = RawCell {
-            tag: NULL,
-            int: 0,
-            float: 0.0,
-            ptr: std::ptr::null(),
-            len: 0,
-        };
+        let mut c = raw_cell(Cell::Null);
         (self.vtable.cell)(self.data, col, &mut c);
-        let bytes = || match c.len {
-            0 => &[][..],
-            n => std::slice::from_raw_parts(c.ptr, n),
-        };
-        match c.tag {
-            FALSE => Cell::Bool(false),
-            TRUE => Cell::Bool(true),
-            INT => Cell::Int(c.int),
-            FLOAT => Cell::Float(c.float),
-            TEXT => Cell::Text(bytes()),
-            ASCII => Cell::Ascii(bytes()),
-            BLOB => Cell::Blob(bytes()),
-            _ => Cell::Null,
-        }
+        cell_of(&c)
+    }
+}
+
+/// `c` across the C ABI.
+fn raw_cell(c: Cell<'_>) -> RawCell {
+    use crate::rows::*;
+    let (tag, int, float, bytes): (u8, i64, f64, &[u8]) = match c {
+        Cell::Null => (NULL, 0, 0.0, &[]),
+        Cell::Bool(b) => (if b { TRUE } else { FALSE }, 0, 0.0, &[]),
+        Cell::Int(v) => (INT, v, 0.0, &[]),
+        Cell::Float(v) => (FLOAT, 0, v, &[]),
+        Cell::Text(t) => (TEXT, 0, 0.0, t),
+        Cell::Ascii(t) => (ASCII, 0, 0.0, t),
+        Cell::Blob(b) => (BLOB, 0, 0.0, b),
+    };
+    RawCell {
+        tag,
+        int,
+        float,
+        ptr: bytes.as_ptr(),
+        len: bytes.len(),
+    }
+}
+
+/// The cell `c` stands for.
+///
+/// # Safety
+/// `c`'s bytes are valid for `'a`.
+unsafe fn cell_of<'a>(c: &RawCell) -> Cell<'a> {
+    use crate::rows::*;
+    let bytes = || match c.len {
+        0 => &[][..],
+        n => std::slice::from_raw_parts(c.ptr, n),
+    };
+    match c.tag {
+        FALSE => Cell::Bool(false),
+        TRUE => Cell::Bool(true),
+        INT => Cell::Int(c.int),
+        FLOAT => Cell::Float(c.float),
+        TEXT => Cell::Text(bytes()),
+        ASCII => Cell::Ascii(bytes()),
+        BLOB => Cell::Blob(bytes()),
+        _ => Cell::Null,
     }
 }
 
@@ -146,24 +172,90 @@ impl<C: RowCursor> Vtable<C> {
     }
 
     unsafe extern "C" fn cell(data: *mut c_void, col: usize, out: *mut RawCell) {
-        use crate::rows::*;
-        let (tag, int, float, bytes): (u8, i64, f64, &[u8]) = match (*(data as *const C)).cell(col)
-        {
-            Cell::Null => (NULL, 0, 0.0, &[]),
-            Cell::Bool(b) => (if b { TRUE } else { FALSE }, 0, 0.0, &[]),
-            Cell::Int(v) => (INT, v, 0.0, &[]),
-            Cell::Float(v) => (FLOAT, 0, v, &[]),
-            Cell::Text(t) => (TEXT, 0, 0.0, t),
-            Cell::Ascii(t) => (ASCII, 0, 0.0, t),
-            Cell::Blob(b) => (BLOB, 0, 0.0, b),
+        out.write(raw_cell((*(data as *const C)).cell(col)));
+    }
+}
+
+/// What a driver implements to take a statement's parameters as typed values (native_abi.md
+/// "Parameter sinks"): std's generated code hands them over one by one instead of as JSON
+/// text. An array (or a lone value) gives values only, in order; an object says so first, then
+/// gives each member's name and value.
+pub trait ParamSink {
+    /// The parameters are an object's members (by name), not values in order.
+    fn object(&mut self);
+    /// The next value is the member `name` (UTF-8) of an object.
+    fn name(&mut self, name: &[u8]);
+    /// The next value (text is UTF-8).
+    fn value(&mut self, v: Cell<'_>);
+}
+
+/// The functions of a [`RawSink`].
+#[repr(C)]
+pub struct SinkVTable {
+    pub object: unsafe extern "C" fn(data: *mut c_void),
+    pub name: unsafe extern "C" fn(data: *mut c_void, name: *const u8, len: usize),
+    pub value: unsafe extern "C" fn(data: *mut c_void, v: *const RawCell),
+}
+
+/// A driver's parameter sink as std and the runtime see it.
+#[repr(C)]
+pub struct RawSink {
+    pub data: *mut c_void,
+    pub vtable: &'static SinkVTable,
+}
+
+impl RawSink {
+    /// The sink of `s`, which must stay at its address (and not be used otherwise) while the
+    /// sink is.
+    pub fn new<S: ParamSink>(s: *mut S) -> RawSink {
+        RawSink {
+            data: s as *mut c_void,
+            vtable: &SinkTable::<S>::VTABLE,
+        }
+    }
+
+    /// # Safety
+    /// The sink's data is alive.
+    pub unsafe fn object(&self) {
+        (self.vtable.object)(self.data)
+    }
+
+    /// # Safety
+    /// As [`RawSink::object`].
+    pub unsafe fn name(&self, name: &[u8]) {
+        (self.vtable.name)(self.data, name.as_ptr(), name.len())
+    }
+
+    /// # Safety
+    /// As [`RawSink::name`].
+    pub unsafe fn value(&self, v: Cell<'_>) {
+        (self.vtable.value)(self.data, &raw_cell(v))
+    }
+}
+
+struct SinkTable<S>(std::marker::PhantomData<S>);
+
+impl<S: ParamSink> SinkTable<S> {
+    const VTABLE: SinkVTable = SinkVTable {
+        object: Self::object,
+        name: Self::name,
+        value: Self::value,
+    };
+
+    unsafe extern "C" fn object(data: *mut c_void) {
+        (*(data as *mut S)).object()
+    }
+
+    unsafe extern "C" fn name(data: *mut c_void, name: *const u8, len: usize) {
+        let name = match len {
+            0 => &[][..],
+            n => std::slice::from_raw_parts(name, n),
         };
-        out.write(RawCell {
-            tag,
-            int,
-            float,
-            ptr: bytes.as_ptr(),
-            len: bytes.len(),
-        });
+        (*(data as *mut S)).name(name)
+    }
+
+    unsafe extern "C" fn value(data: *mut c_void, v: *const RawCell) {
+        (*(data as *mut S)).value(cell_of(&*v))
     }
 }
 
@@ -192,6 +284,48 @@ mod tests {
                 _ => Cell::Text(self.text.as_bytes()),
             }
         }
+    }
+
+    #[derive(Default)]
+    struct Taken(Vec<String>);
+
+    impl ParamSink for Taken {
+        fn object(&mut self) {
+            self.0.push("object".to_string());
+        }
+        fn name(&mut self, name: &[u8]) {
+            self.0
+                .push(format!("name {}", String::from_utf8_lossy(name)));
+        }
+        fn value(&mut self, v: Cell<'_>) {
+            self.0.push(format!("{v:?}"));
+        }
+    }
+
+    #[test]
+    fn a_sink_takes_names_and_values_through_its_raw_form() {
+        let mut taken = Taken::default();
+        let raw = RawSink::new(&mut taken);
+        // SAFETY: `taken` outlives `raw` and stays put.
+        unsafe {
+            raw.object();
+            raw.name(b"id");
+            raw.value(Cell::Int(7));
+            raw.name(b"note");
+            raw.value(Cell::Text(b"hi"));
+            raw.value(Cell::Null);
+        }
+        assert_eq!(
+            taken.0,
+            [
+                "object",
+                "name id",
+                "Int(7)",
+                "name note",
+                "Text([104, 105])",
+                "Null"
+            ]
+        );
     }
 
     #[test]

@@ -589,6 +589,7 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::JsonParse
         | I::JsonParseRows
         | I::JsonParseCursor
+        | I::DbBind
         | I::HttpHandler
         | I::StrCharCodeAt
         | I::ArrayDataPtr

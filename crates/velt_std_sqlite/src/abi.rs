@@ -107,6 +107,36 @@ fn velt_std_sqlite__close_rows(cursor: u64) -> Result<(), Error> {
     io(unsafe { super::cursor::close(cursor) })
 }
 
+/// `runWith` / `getWith` / `allWith` → `IoResult<u64>`: a parameter sink
+/// (`velt_text::rows_cursor::RawSink`) for `__intrinsic_db_bind`, then handed on to
+/// `velt_std_sqlite__open_rows_bound` or `velt_std_sqlite__run_bound`, or given up with
+/// `velt_std_sqlite__bind_abort`.
+#[export]
+fn velt_std_sqlite__bind_begin(stmt_h: u64) -> Result<u64, Error> {
+    io(statement::bind_begin(stmt(stmt_h)))
+}
+
+/// `velt_std_sqlite__open_rows` with the parameters a sink bound.
+#[export]
+fn velt_std_sqlite__open_rows_bound(sink: u64, first_only: bool) -> Result<u64, Error> {
+    // SAFETY: std hands on each sink it was given, once.
+    io(unsafe { super::sink::rows(sink, first_only) })
+}
+
+/// `velt_std_sqlite__run` with the parameters a sink bound.
+#[export]
+fn velt_std_sqlite__run_bound(sink: u64) -> Result<RunInfo, Error> {
+    // SAFETY: as above.
+    io(unsafe { super::sink::run(sink) })
+}
+
+/// Gives up a sink std did not use.
+#[export]
+fn velt_std_sqlite__bind_abort(sink: u64) {
+    // SAFETY: as above.
+    unsafe { super::sink::abort(sink) }
+}
+
 /// Count a decode failure std found against the statement's connection.
 #[export]
 fn velt_std_sqlite__note_error(stmt_h: u64, code: i32, message: &str) {

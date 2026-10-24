@@ -298,6 +298,7 @@ impl FnLower<'_, '_> {
             (I::JsonParseCursor, [a, flags, depth]) => {
                 self.json_parse(a, flags, depth, JsonSource::Cursor, ty)
             }
+            (I::DbBind, [sink, a]) => self.db_bind(sink, a),
             (I::HttpHandler, [f]) => self.http_handler(f, ty),
             (I::Attempt, [f]) => self.attempt(f, ty),
             (

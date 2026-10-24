@@ -27,6 +27,7 @@ pub mod cursor;
 pub mod error;
 pub(crate) mod raw;
 pub mod rows;
+pub mod sink;
 pub mod statement;
 
 #[cfg(test)]

@@ -97,6 +97,13 @@ pub fn open_rows(stmt: StmtHandle, params: &[u8], first_only: bool) -> Result<u6
     })
 }
 
+/// `stmt.getWith(params)` and the like, for a parameter type std hands over value by value: a
+/// sink taking them ([`super::sink`]).
+pub fn bind_begin(stmt: StmtHandle) -> Result<u64, DbError> {
+    let stmt = obj(stmt)?;
+    super::sink::begin(stmt.db.lock_owned(), &stmt.prepared)
+}
+
 /// Count a failure std detected for this statement (a row that does not decode into the
 /// requested type) against its connection, so an enclosing `transaction` rolls back.
 pub fn note_error(stmt: StmtHandle, e: DbError) {

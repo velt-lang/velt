@@ -294,6 +294,11 @@ pub enum Intrinsic {
     /// `velt_text::rows_cursor::RawCursor`, which the caller keeps and releases afterwards): the
     /// reader made with flag `FLAG_CURSOR` (native_abi.md "Row cursors").
     JsonParseCursor,
+    /// std only: `__intrinsic_db_bind<P>(sink: u64, params: borrow P): bool` — hands `params`
+    /// to a driver's parameter sink (the address of a `velt_text::rows_cursor::RawSink`) value
+    /// by value, as their JSON text would bind; false (nothing done) for a type std binds as
+    /// JSON text (native_abi.md "Parameter sinks").
+    DbBind,
     /// std only: `__intrinsic_http_handler(f: (raw: u64) => Promise<u64>)` → `[u64; 6]` =
     /// `{init, poll, drop, state_size, state_align, env}` for `velt_rt_http_serve` (the closure's
     /// state machine is the per-request state; `init(env, req, state)` sets `raw = req`; the env

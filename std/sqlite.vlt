@@ -50,6 +50,12 @@ declare function velt_std_sqlite__run(stmt: u64, params: string): IoResult<RunSl
 // reports a failure met while stepping.
 declare function velt_std_sqlite__open_rows(stmt: u64, params: string, firstOnly: bool): IoResult<u64>;
 declare function velt_std_sqlite__close_rows(cursor: u64): IoStatus;
+// A parameter sink (`velt_text::rows_cursor`): `__intrinsic_db_bind` hands it the parameters
+// value by value, for the types it can (else they go as JSON text); then it runs the statement.
+declare function velt_std_sqlite__bind_begin(stmt: u64): IoResult<u64>;
+declare function velt_std_sqlite__open_rows_bound(sink: u64, firstOnly: bool): IoResult<u64>;
+declare function velt_std_sqlite__run_bound(sink: u64): IoResult<RunSlot>;
+declare function velt_std_sqlite__bind_abort(sink: u64);
 declare function velt_std_sqlite__note_error(stmt: u64, code: i32, message: string);
 declare function velt_std_sqlite__stmt_free(stmt: u64);
 declare function velt_std_sqlite__error_name(code: i32): string;
@@ -221,6 +227,12 @@ export class Statement {
   }
 
   runWith<P>(params: P): RunResult {
+    const sink = unwrap(velt_std_sqlite__bind_begin(this.#handle));
+    if (__intrinsic_db_bind<P>(sink, params)) {
+      const r = unwrap(velt_std_sqlite__run_bound(sink));
+      return new RunResult(r.changes, r.lastInsertRowid);
+    }
+    velt_std_sqlite__bind_abort(sink);
     return this.runJson(JSON.stringify(params));
   }
 
@@ -230,8 +242,7 @@ export class Statement {
   }
 
   getWith<T, P>(params: P): T | null {
-    const params_ = JSON.stringify(params);
-    return this.first(unwrap(velt_std_sqlite__open_rows(this.#handle, params_, true)));
+    return this.first(this.openWith(params, true));
   }
 
   /** Every row. */
@@ -240,8 +251,7 @@ export class Statement {
   }
 
   allWith<T, P>(params: P): T[] {
-    const params_ = JSON.stringify(params);
-    return this.rows(unwrap(velt_std_sqlite__open_rows(this.#handle, params_, false)));
+    return this.rows(this.openWith(params, false));
   }
 
   /** Releases the statement now (later calls throw "SQLITE_MISUSE"). */
@@ -254,6 +264,18 @@ export class Statement {
   [Symbol.dispose]() {
     velt_std_sqlite__stmt_free(this.#handle);
     this.#handle = 0;
+  }
+
+  // A cursor over the rows with `params` bound: handed to the driver value by value when the
+  // type allows (the same binding as their JSON text), else as JSON text.
+  private openWith<P>(params: P, firstOnly: bool): u64 {
+    const sink = unwrap(velt_std_sqlite__bind_begin(this.#handle));
+    if (__intrinsic_db_bind<P>(sink, params)) {
+      return unwrap(velt_std_sqlite__open_rows_bound(sink, firstOnly));
+    }
+    velt_std_sqlite__bind_abort(sink);
+    const text = JSON.stringify(params);
+    return unwrap(velt_std_sqlite__open_rows(this.#handle, text, firstOnly));
   }
 
   private runJson(params: string): RunResult {

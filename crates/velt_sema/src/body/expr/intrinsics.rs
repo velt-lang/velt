@@ -58,6 +58,7 @@ pub(super) fn intrinsic_named(name: &str) -> Option<Intrinsic> {
         "json_parse" => I::JsonParse,
         "json_parse_rows" => I::JsonParseRows,
         "json_parse_cursor" => I::JsonParseCursor,
+        "db_bind" => I::DbBind,
         "http_handler" => I::HttpHandler,
         "promise_any" => I::PromiseAny,
         "chan_send" => I::ChanSend,
@@ -306,6 +307,7 @@ impl FnCx<'_, '_> {
                 (vec![(bytes, B), (ty.i64, C), (ty.i64, C)], t, true)
             }
             I::JsonParseCursor => (vec![(u64_, C), (ty.i64, C), (ty.i64, C)], t, true),
+            I::DbBind => (vec![(u64_, C), (t, B)], ty.bool_, true),
             I::HttpHandler => {
                 let f = http_handler_fn(ty);
                 (vec![(f, O)], ty.intern(TyKind::Tuple(vec![u64_; 6])), false)
