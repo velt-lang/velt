@@ -272,7 +272,7 @@ impl Ctx<'_> {
         });
         if let Some(name) = throwing {
             let e = self.display(expected);
-            return Some(format!("`{name}` holds a function that may throw, which does not fill the method slot of `{e}` yet; write the literal where `{e}` is expected (`const v: {e} = {{ … }}`)"));
+            return Some(format!("`{name}` holds a function that may throw, which does not fill the method slot of `{e}` yet; an object literal written where `{e}` is expected (`const v: {e} = {{ … }}`) may have such a method"));
         }
         let (name, field, param) = theirs.iter().find_map(|(n, m)| match m {
             Member::Field(b, false) => setter_param(&ours, n, *b).map(|p| (n.clone(), *b, p)),
