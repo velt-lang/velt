@@ -1243,8 +1243,9 @@ console.log(add.call(null, 1, 2), add.apply(null, pair)); // 3 7
   closure assigns, or that the enclosing code assigns after creating it, lives in a cell. Every
   call runs as a started promise on the caller's task, so it interleaves with the rest of the
   task only at `await`s, never in parallel ([Async](async.md#promises)).
-- An async closure that may run on another thread copies what it captured for each call, and
-  may not modify a captured variable or object, itself or through a closure it creates (``this
+- An async closure that may run on another thread copies what it captured for each call (one
+  copy per call: two reads of a captured object in a call are the same object, `===` also as an
+  `any`), and may not modify a captured variable or object, itself or through a closure it creates (``this
   async closure modifies captured `n`, so it must stay on the task that created it``, with where
   it leaves its task); nor may the enclosing code assign one it captured (``cannot assign to `k`
   after a stored closure captured it``), nor a closure created in another closure (``…is
