@@ -141,6 +141,11 @@ impl Ctx<'_> {
                         None => self.ty.error,
                     };
                 }
+                // `const K = Symbol("k")` / `Symbol.for("k")` is a symbol (TypeScript's
+                // `unique symbol`), known without checking the initializer.
+                if init.is_some_and(symbol_init) {
+                    return self.ty.intern(TyKind::Symbol);
+                }
                 if !self.bodies_ok {
                     return self.query_needs_body(name, "constant", span);
                 }
@@ -345,6 +350,11 @@ impl Ctx<'_> {
         if ty == self.ty.error {
             return ty;
         }
+        // `keyof any` is every key type, `string | number | symbol`, as in TypeScript.
+        if self.dynamic(ty) == Some(crate::any::Dynamic::Any) {
+            let (s, n, y) = (self.ty.str_, self.ty.f64, self.ty.intern(TyKind::Symbol));
+            return self.union_of(&[s, n, y], false, t.span);
+        }
         if self.has_type_params(ty) && matches!(self.ty.kind(ty), TyKind::Param(_) | TyKind::Op(..))
         {
             if !self.defer_param_form() {
@@ -403,11 +413,9 @@ impl Ctx<'_> {
                 if args[0] != self.ty.str_ {
                     return args[0];
                 }
-                self.err(
-                    format!("`keyof {shown}` (`string | number` in TypeScript) is not supported yet (#936)"),
-                    t.span,
-                );
-                self.ty.error
+                // A string index signature takes number keys too (TypeScript).
+                let (s, n) = (self.ty.str_, self.ty.f64);
+                self.union_of(&[s, n], false, t.span)
             }
             TyKind::Adt(d, _)
                 if self.adt(d).is_some_and(|a| a.kind == AdtKind::Anon)
@@ -499,6 +507,21 @@ impl Ctx<'_> {
 }
 
 /// The literal a constant's initializer is (`"a"`, `4`, `-1`, `true`), as a literal type.
+/// Is `e` a call of `Symbol(…)` or `Symbol.for(…)`?
+fn symbol_init(e: &ast::Expr) -> bool {
+    let ast::ExprKind::Call { callee, .. } = &e.kind else {
+        return false;
+    };
+    match &callee.kind {
+        ast::ExprKind::Ident(i) => i.name == "Symbol",
+        ast::ExprKind::Member { object, prop, .. } => {
+            prop.name == "for"
+                && matches!(&object.kind, ast::ExprKind::Ident(i) if i.name == "Symbol")
+        }
+        _ => false,
+    }
+}
+
 fn literal_init(e: &ast::Expr) -> Option<ast::SignedLit> {
     match &e.kind {
         ast::ExprKind::Lit(

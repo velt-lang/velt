@@ -1,0 +1,27 @@
+// `keyof any`, `keyof Record<string, V>`, `typeof` of a symbol constant in an interface, a
+// mapped type over non-literal keys (an index signature) and `any` under utility and indexed
+// access types (#936).
+const Fragment = Symbol.for("F");
+const Txt = Symbol("T");
+interface VNode {
+  type: string | typeof Fragment | typeof Txt;
+}
+const n: VNode = { type: Fragment };
+const m: VNode = { type: "div" };
+type K = keyof any;
+const k1: K = "x";
+const k2: K = 3;
+type RK = keyof Record<string, number>;
+const k3: RK = "a";
+type PropsAccessor<T> = { readonly [P in keyof T]: T[P] };
+function acc<T extends Record<string, any>>(p: T): PropsAccessor<T> {
+  return p;
+}
+type OmitD<T> = T extends any ? Omit<T, "default"> : never;
+const o: OmitD<any> = { a: 1 };
+type IA = any["x"];
+const ia: IA = 3;
+const r: { [P in string | number]: number } = { a: 1 };
+const rec: Record<string, number> = { z: 26 };
+console.log(n.type === Fragment, n.type === Txt, m.type, k1, k2, k3);
+console.log(acc({ x: 1 }).x, acc(rec).z, o, ia, r.a);

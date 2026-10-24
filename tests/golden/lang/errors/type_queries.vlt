@@ -25,7 +25,7 @@ type C = typeof Point;
 type D = typeof Shape;
 type E = typeof missing;
 type G = keyof Point;
-type H = keyof { [k: string]: number };
+// `keyof { [k: string]: number }` is `string | number` (lang/type_queries_keys).
 type I = ReturnType<number>;
 
 function me(z: ReturnType<typeof me>) {
