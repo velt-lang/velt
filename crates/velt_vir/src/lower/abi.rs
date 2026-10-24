@@ -101,6 +101,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             direct_siblings: FxHashMap::default(),
             self_env: None,
             in_reflect: false,
+            record_fill: false,
         };
         lw.mode = lw.cx.cur_mode;
         lw.own_captures = lw.cx.cur_own;

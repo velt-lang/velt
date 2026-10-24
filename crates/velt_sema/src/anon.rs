@@ -54,6 +54,9 @@ pub(crate) struct ObjectState {
     pub frozen_defs: FxHashSet<DefId>,
     /// The program calls `Object.create(null)`: records may have no prototype.
     pub null_proto_records: bool,
+    /// The program writes `{} as D` for an object type known per instantiation
+    /// (`hir::Program::record_fills`).
+    pub record_fills: bool,
     /// `Object.defineProperty` brands (`crate::defined_props`).
     pub brands: crate::defined_props::Brands,
     /// The key names of the brands' hidden fields, once resolved (`Ctx::hidden_keys`).

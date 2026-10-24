@@ -670,4 +670,7 @@ struct FnLower<'c, 'h> {
     /// Lowering a method of the prelude's `Reflect`, where a proxy's reads reach their target:
     /// a read `any` cannot do yet names #823 (any_member.rs `any_get_str`).
     in_reflect: bool,
+    /// An object is being built from a record's entries (`any_record_fill`): its fields are
+    /// converted without that path, so a type that contains itself ends.
+    record_fill: bool,
 }

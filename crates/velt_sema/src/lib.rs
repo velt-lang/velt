@@ -444,6 +444,7 @@ fn check_timed(
         union_shapes: union_shapes.into_iter().collect(),
         counted_objects,
         null_proto_records: objects.null_proto_records,
+        record_fills: objects.record_fills,
         module_state,
         type_ops: type_ops.into_iter().collect(),
         any_impl: any.and_then(|a| a.imp),

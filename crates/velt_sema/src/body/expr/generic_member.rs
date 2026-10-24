@@ -187,6 +187,7 @@ impl FnCx<'_, '_> {
         let record = self.cx.prelude_adt("Record")?;
         let str_ = self.cx.ty.str_;
         let rty = self.cx.ty.intern(TyKind::Adt(record, vec![str_, any]));
+        self.cx.objects.record_fills = true;
         let r = self.expr(expr, Some(rty), Want::Move);
         let r = self.coerce(r, rty);
         let _ = span;

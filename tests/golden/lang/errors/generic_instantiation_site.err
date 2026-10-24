@@ -1,3 +1,4 @@
-generic_instantiation_site.vlt:5:10: error: this generic function reads or writes `x[k]` with the key type `"x" | "name"` at this instantiation, which names an optional field; that is not supported yet (#350)
-  = note: the keys must name required fields (or pass one key, a string literal)
-  = note: in `getA` at this instantiation: `T = Pt`, `K = "x" | "name"`
+generic_instantiation_site.vlt:9:21: error: `Required` needs an object type; found `string[]`
+  = note: in `patchB` at this instantiation: `T = string[]`
+generic_instantiation_site.vlt:5:20: error: `Partial` needs an object type; found `f64[]`
+  = note: in `patchA` at this instantiation: `T = f64[]`

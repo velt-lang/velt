@@ -74,7 +74,11 @@ impl FnLower<'_, '_> {
         let hir::Def::Adt(a) = self.cx.hir.def(d) else {
             return;
         };
-        if self.cx.is_class(ty) || a.fields.is_empty() {
+        if !self.cx.hir.record_fills
+            || self.record_fill
+            || self.cx.is_class(ty)
+            || a.fields.is_empty()
+        {
             return;
         }
         let names: Vec<String> = a.fields.iter().map(|f| f.name.clone()).collect();
@@ -96,6 +100,7 @@ impl FnLower<'_, '_> {
         let any = self.cx.any_ty();
         let avt = self.cx.ty(any);
         let tys = self.cx.adt_field_tys(ty);
+        let filling = std::mem::replace(&mut self.record_fill, true);
         let mut ops = vec![];
         let mut flags = vec![];
         for (i, (name, fty)) in names.iter().zip(tys).enumerate() {
@@ -139,7 +144,11 @@ impl FnLower<'_, '_> {
             let join = self.new_block();
             self.switch_to(absent);
             self.drop_glue(tmp.clone(), any);
-            let none = self.none_value(fty);
+            // An absent `a?: any` holds the dynamic `undefined`, any other the option's nothing.
+            let none = match self.cx.hir.any_impl.filter(|_| self.cx.is_dynamic(fty)) {
+                Some(imp) => self.dynamic_undefined(imp, fty),
+                None => self.none_value(fty),
+            };
             self.assign(val.clone(), Rvalue::Use(none));
             self.assign(
                 flag.clone(),
@@ -162,6 +171,7 @@ impl FnLower<'_, '_> {
                 flags.push(Operand::Copy(flag));
             }
         }
+        self.record_fill = filling;
         ops.extend(flags);
         self.drop_glue(p.clone(), from);
         let agg = match self.cx.boxed(ty) {
