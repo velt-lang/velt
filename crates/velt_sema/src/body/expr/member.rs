@@ -217,7 +217,7 @@ impl FnCx<'_, '_> {
         let r = self.in_place_receiver(object, obj);
         let h = self.member_of(r.recv, prop, want, span);
         let h = self.after_receiver(r.before, h);
-        let h = self.narrowed_field(object, prop, h, want);
+        let h = self.narrowed_field(object, prop, h, want, exp);
         self.downcast_field(object, prop, h)
     }
 
@@ -337,7 +337,7 @@ impl FnCx<'_, '_> {
                     name,
                     span: index.span,
                 };
-                let h = self.narrowed_field(object, &prop, h, want);
+                let h = self.narrowed_field(object, &prop, h, want, exp);
                 self.downcast_field(object, &prop, h)
             }
             None => h,

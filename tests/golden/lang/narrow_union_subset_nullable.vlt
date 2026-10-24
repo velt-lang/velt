@@ -1,0 +1,85 @@
+// check: no leaks
+// A `U | null` variable that a test narrowed to some members of `U` (`typeof x !== "number"`, a
+// type predicate's `false` branch) is a value of the smaller union with its `null`, as in
+// TypeScript: it can be returned, passed and stored where that union is expected. sigx's
+// `JSXElement | App` render input, narrowed by `isApp`. `x ?? null` on a `T | null | undefined`
+// is a `T | null`. Expected output: Node's.
+interface VNode {
+  type: string;
+  children: VNode[];
+}
+
+interface App {
+  root: JSXElement;
+  context: number;
+}
+
+type JSXElement = VNode | string | number | boolean | null;
+
+function isApp(input: JSXElement | App): input is App {
+  return input !== null && typeof input === "object" && "root" in input;
+}
+
+function show(e: JSXElement): string {
+  if (e === null) return "null";
+  if (typeof e === "object") return `<${e.type}>(${e.children.length})`;
+  return `${typeof e} ${e}`;
+}
+
+// The false branch of a predicate, after a `return`.
+function extract(input: JSXElement | App): { element: JSXElement; context: number | null } {
+  if (isApp(input)) {
+    return { element: input.root, context: input.context };
+  }
+  return { element: input, context: null };
+}
+
+// `typeof` tests, in `if`/`else` and after a `return`.
+function noNumber(x: VNode | string | number | null): VNode | string | null {
+  if (typeof x === "number") return `n${x}`;
+  return x;
+}
+
+function noString(x: VNode | string | number | null): VNode | number | null {
+  if (typeof x !== "string") {
+    const kept: VNode | number | null = x;
+    return kept;
+  } else {
+    return x.length;
+  }
+}
+
+function onlyObjects(xs: (VNode | string | number | null)[]): (VNode | null)[] {
+  const out: (VNode | null)[] = [];
+  for (const x of xs) {
+    if (typeof x === "string" || typeof x === "number") continue;
+    out.push(x);
+  }
+  return out;
+}
+
+// One member left, still with its `null`.
+function vnodeOrNull(x: VNode | string | null): VNode | null {
+  if (typeof x === "string") return null;
+  return x;
+}
+
+// `x ?? null` on a `T | null | undefined`.
+function orNull(x: string | null | undefined): string | null {
+  const y = x ?? null;
+  return y;
+}
+
+function main() {
+  const div: VNode = { type: "div", children: [] };
+  const app: App = { root: div, context: 7 };
+  for (const input of [app, div, "text", 3, true, null] as (JSXElement | App)[]) {
+    const { element, context } = extract(input);
+    console.log(show(element), context);
+  }
+  console.log(show(noNumber(4)), show(noNumber("s")), show(noNumber(null)), show(noNumber(div)));
+  console.log(noString("abc"), noString(5), noString(null), noString(div) === div);
+  console.log(onlyObjects([div, "a", 1, null, div]).map((v) => (v === null ? "null" : v.type)).join(","));
+  console.log(vnodeOrNull("x"), vnodeOrNull(null), vnodeOrNull(div)?.type);
+  console.log(orNull(undefined), orNull(null), orNull("v"));
+}

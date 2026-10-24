@@ -1,0 +1,52 @@
+// check: no leaks
+// A union field narrowed by `typeof` to two members, one of them a function, read where no type
+// is expected (`const r = b.v`): the read is the union of the members left, whose type is first
+// complete once the function type's errors are known. Also optional, and with the union
+// written as an annotation elsewhere. Expected output: Node's.
+interface I {
+  v: string | number | (() => number);
+}
+
+interface V {
+  name: string;
+}
+
+interface J {
+  v: string | V | (() => number);
+}
+
+interface O {
+  v?: string | number | (() => number);
+}
+
+function g(b: I): string {
+  if (typeof b.v === "string") return "str";
+  const r = b.v;
+  const xs = [b.v];
+  return `${typeof r} ${xs.length}`;
+}
+
+function h(b: J): string {
+  if (typeof b.v === "string") return "str";
+  const r = b.v;
+  return typeof r === "function" ? `fn ${r()}` : `v ${r.name}`;
+}
+
+function opt(b: O): string {
+  if (typeof b.v === "string") return "str";
+  const r = b.v;
+  return r === undefined ? "none" : typeof r === "function" ? `fn ${r()}` : `n ${r}`;
+}
+
+function annotated(b: I): number {
+  if (typeof b.v === "string") return -1;
+  const r: number | (() => number) = b.v;
+  return typeof r === "function" ? r() : r;
+}
+
+function main() {
+  console.log(g({ v: 3 }), g({ v: () => 1 }), g({ v: "s" }));
+  console.log(h({ v: { name: "n" } }), h({ v: () => 2 }), h({ v: "s" }));
+  console.log(opt({}), opt({ v: 4 }), opt({ v: () => 5 }), opt({ v: "s" }));
+  console.log(annotated({ v: 6 }), annotated({ v: () => 7 }));
+}

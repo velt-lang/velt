@@ -40,13 +40,17 @@ impl FnCx<'_, '_> {
     }
 
     /// `h`, the value of `object.prop`, as its payload if a condition proved it non-null, and
-    /// as the union member a `typeof` test narrowed it to.
+    /// as the union member a `typeof` test narrowed it to. A read narrowed to several members
+    /// (or to members but not past its `null`) where `exp` is not its declared type reads as
+    /// the union of those members (`string | undefined` of `string | (() => string) |
+    /// undefined` after `typeof x.f === "function"` returned).
     pub(crate) fn narrowed_field(
         &mut self,
         object: &ast::Expr,
         prop: &ast::Ident,
         h: hir::Expr,
         want: Want,
+        exp: Option<TyId>,
     ) -> hir::Expr {
         if self.f.field_tokens.is_empty() {
             return h;
@@ -62,8 +66,18 @@ impl FnCx<'_, '_> {
         let Some(t) = self.find_token(root, &path) else {
             return h;
         };
-        let member = match (union, self.allowed_members(t).as_deref()) {
+        let allowed = self.allowed_members(t);
+        let member = match (&union, allowed.as_deref()) {
             (Some(ms), Some(&[v])) => Some((v, ms[v as usize])),
+            _ => None,
+        };
+        // The members a test left, when they are some but not all of them and the read is a
+        // value whose expected type is not the field's own.
+        let test = self.field_test == Some(h.span);
+        let some = match (&union, allowed) {
+            (Some(ms), Some(vs)) if vs.len() < ms.len() && want != Want::BorrowMut && !test => {
+                Some((ms.clone(), vs))
+            }
             _ => None,
         };
         let base_mode = match want {
@@ -89,9 +103,22 @@ impl FnCx<'_, '_> {
                     .expect("ICE: option without a payload");
                 return self.checked_unwrap(h, mid, want, span);
             }
-            Some(_) => return h,
+            Some(_) => {
+                return match some {
+                    Some((ms, vs)) if exp != Some(h.ty) => {
+                        self.narrowed_option_read(h, &ms, vs, span)
+                    }
+                    _ => h,
+                };
+            }
             None => h,
         };
+        if let (None, Some((ms, vs))) = (member, some) {
+            if exp != Some(h.ty) {
+                return self.narrowed_union_read(h, &ms, vs, span);
+            }
+            return h;
+        }
         match member {
             // `typeof x.f === "string"` (#1264): lowering checks the variant again, as a call
             // since the test may have changed the field.
@@ -106,6 +133,66 @@ impl FnCx<'_, '_> {
             }
             None => h,
         }
+    }
+
+    /// The operand `e` of a type test (`typeof e`, `e instanceof C`, `e === lit`), checked: a
+    /// narrowed field reads as it is (`FnCx::field_test`).
+    pub(crate) fn type_test_operand(&mut self, e: &ast::Expr) -> hir::Expr {
+        let mut inner = e;
+        while let ast::ExprKind::Paren(x) = &inner.kind {
+            inner = x;
+        }
+        let outer = self.field_test.replace(inner.span);
+        let h = self.expr(e, None, Want::Borrow);
+        self.field_test = outer;
+        h
+    }
+
+    /// The `U | null` (or `| undefined`) field read `h` that a test narrowed to the members
+    /// `vs` of `U` (`ms`), but not past its nothing: as the union of those members, with it.
+    fn narrowed_option_read(
+        &mut self,
+        h: hir::Expr,
+        ms: &[TyId],
+        vs: Vec<u32>,
+        span: Span,
+    ) -> hir::Expr {
+        let sub: Vec<TyId> = vs.iter().map(|v| ms[*v as usize]).collect();
+        let (Some(n), false) = (self.cx.ty.nothing_of(h.ty), sub.is_empty()) else {
+            return h;
+        };
+        let core = match sub.as_slice() {
+            [one] => *one,
+            _ => self.cx.union_of(&sub, false, span),
+        };
+        let target = self.cx.ty.option_of(core, n);
+        let outer = std::mem::replace(&mut self.field_retag, true);
+        let r = self.option_to_option_narrowed(h, target, Some(vs));
+        self.field_retag = outer;
+        r.unwrap_or_else(|h| h)
+    }
+
+    /// The union field read `h` that a test narrowed to its members `vs` (of `ms`, two or
+    /// more): as the union of those members.
+    fn narrowed_union_read(
+        &mut self,
+        h: hir::Expr,
+        ms: &[TyId],
+        vs: Vec<u32>,
+        span: Span,
+    ) -> hir::Expr {
+        let sub: Vec<TyId> = vs.iter().map(|v| ms[*v as usize]).collect();
+        if sub.len() < 2 {
+            return h;
+        }
+        let target = self.cx.union_of(&sub, false, span);
+        if self.cx.union_def(target).is_none() {
+            return h;
+        }
+        let outer = std::mem::replace(&mut self.field_retag, true);
+        let r = self.retag_live(h, target, Some(vs));
+        self.field_retag = outer;
+        r.unwrap_or_else(|h| h)
     }
 
     /// `h`, the value of `object.prop`, as the subclass an `instanceof` test narrowed it to.

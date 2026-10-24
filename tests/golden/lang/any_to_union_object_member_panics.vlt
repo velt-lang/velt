@@ -1,0 +1,22 @@
+// An `any` converted to `VNode | string | number`: an object that is no `VNode` passes none of
+// the primitive tests and fails the interface's run-time check, a `TypeError`, where Node goes
+// on with the object.
+interface VNode {
+  type: string;
+  n: number;
+}
+
+function make(k: number): any {
+  if (k === 0) return "text";
+  const other = { name: "not a vnode" };
+  return other;
+}
+
+function element(k: number): VNode | string | number {
+  return make(k);
+}
+
+function main() {
+  console.log(element(0));
+  console.log(element(1));
+}
