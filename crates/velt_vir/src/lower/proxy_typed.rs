@@ -387,6 +387,45 @@ impl FnLower<'_, '_> {
         Place::local(val)
     }
 
+    /// `FieldPresent` of field `index` of `base`, of the proxiable `bty` (a spread or an object
+    /// rest pattern copies only the fields present): the presence flag, or for a typed proxy or
+    /// a view whether the `get` trap's answer for the field is not `undefined`.
+    pub(super) fn proxy_field_present(
+        &mut self,
+        base: &hir::Expr,
+        bty: TyId,
+        index: u32,
+    ) -> Operand {
+        let v = self.expr(base);
+        let bp = self.place_of(v, bty);
+        let hop = self.retained_hop(&bp, bty);
+        let ptr = self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(hop)));
+        let out = self.temp(Ty::Bool);
+        let Some(slot) = self.cx.presence_slot(bty, index) else {
+            super::ice("`FieldPresent` of a field without a presence flag")
+        };
+        self.proxy_split(
+            &ptr,
+            |lw, _| {
+                let (_, fty) = lw.proxy_field(bty, index);
+                let fp = lw.proxy_read_at(&ptr, bty, index);
+                let some = match lw.cx.kind(fty) {
+                    TyKind::Option(..) => lw.option_is_some(&fp, fty),
+                    _ => super::FnLower::ctrue(),
+                };
+                lw.assign(Place::local(out), Rvalue::Use(some));
+            },
+            |lw| {
+                let mut fp = lw.proxy_hot_place(&ptr, bty, index);
+                if let Some(Proj::Field(f)) = fp.proj.last_mut() {
+                    *f = slot;
+                }
+                lw.assign(Place::local(out), Rvalue::Use(Operand::Copy(fp)));
+            },
+        );
+        Operand::Copy(Place::local(out))
+    }
+
     /// The vtable of the class object `obj` of the proxiable class `cls` for a virtual call: a
     /// proxy's comes from its target (an instance of the class, or a `TypeError`).
     pub(super) fn proxy_obj_vtable(&mut self, obj: Operand, cls: TyId) -> Operand {

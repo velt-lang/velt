@@ -1,0 +1,54 @@
+// Views (#1485) through spreads, object rest patterns, keyed reads and writes, and
+// `JSON.stringify`, which reach the object a view views, as in Node; `JSON.stringify` of a
+// typed proxy runs its traps.
+type Item = { name: string; price: number; tags?: string[] };
+
+class Product {
+  name = "lamp";
+  price = 30;
+  stock = 4;
+}
+
+const traced = new Proxy({ name: "proxy", price: 1 }, {
+  get(t: any, k: any, r: any): any {
+    if (typeof k === "string") {
+      console.log("get", k);
+    }
+    return Reflect.get(t, k, r);
+  },
+}) as Item;
+
+function view(x: any): Item {
+  return x as Item;
+}
+
+const p: any = new Product();
+const v = view(p);
+const lit = view({ name: "chair", price: 12, tags: ["wood"], legs: 4 });
+
+const s = { ...v, price: 5 };
+console.log(s.name, s.price, s.tags === undefined);
+const s2 = { ...lit };
+console.log(s2.name, s2.price, s2.tags?.join("+"));
+
+const { name, ...rest } = v;
+console.log(name, rest.price);
+const { price, ...others } = lit;
+console.log(price, others.name, others.tags?.length);
+
+function read(k: "name" | "price", x: Item): string | number {
+  return x[k];
+}
+function write(k: "price", x: Item, n: number): void {
+  x[k] = n;
+}
+console.log(read("name", v), read("price", lit));
+write("price", v, 31);
+console.log(v.price, (p as Product).price);
+
+console.log(JSON.stringify(v));
+console.log(JSON.stringify(lit));
+console.log(JSON.stringify({ item: v, list: [lit, v] }));
+console.log(JSON.stringify(traced));
+const plain: Item = { name: "table", price: 99 };
+console.log(JSON.stringify([plain, v]));

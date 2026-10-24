@@ -57,6 +57,12 @@ impl FnLower<'_, '_> {
                 }
             }
             (I::FieldPresent, [f]) => {
+                if let hir::ExprKind::Field { base, index, .. } = &f.kind {
+                    let bt = self.sub(base.ty);
+                    if self.cx.proxiable(bt) {
+                        return self.proxy_field_present(base, bt, *index);
+                    }
+                }
                 // Only read: no write barrier.
                 let outer = std::mem::replace(&mut self.read_target, true);
                 let p = self.place_expr(f);

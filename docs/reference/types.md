@@ -2609,13 +2609,17 @@ instance with `Item`'s fields, or an object literal with more fields than `Item`
 that makes proxies (`new Proxy` anywhere in its own code, as a reactive framework does), a *view*
 of that object (#1485). Nothing is copied: each field is read from the object when it is read,
 and checked then as the field's type, so a field the object lacks stops with a `TypeError` at
-that read (Node reads `undefined`); a write goes to the object, and back in an `any` (and for
-`===`, `WeakMap` keys, `in`, `Object.keys` and `for...in`) the view is the object itself. A
-union with one object type member (`VNode | string | null`) converts an object that is no
-`VNode` the same way. The view is a proxy without traps (Proxy and Reflect, below), so
-`JSON.stringify` of it stops with a `TypeError` for now, as of every typed proxy (#823). In a
-program without proxies, and into a class or an interface with methods, an object of another
-type stays a `TypeError`.
+that read (Node reads `undefined`). A write goes to the object for the fields the object has;
+writing an optional field the object lacks (`item.note = "hi"` on a class instance without
+`note`) stops with the `TypeError` of a fixed-shape object (#924), where Node adds the property.
+Back in an `any` (and for `===`, `Map`, `Set`, `WeakMap`, `WeakSet` and `WeakRef`, `in`,
+`Object.keys`, `for...in` and `JSON.stringify`) the view is the object itself: two views of one
+object are one key, a `WeakMap` entry lives as long as the object, and `deref()` gives a view of
+it again. Destructuring (`const { type, props } = vnode`, also in parameters and `for...of`),
+spreads (`{ ...item }`) and keyed reads read the object's fields at that moment. A union with
+one object type member (`VNode | string | null`) converts an object that is no `VNode` the same
+way. In a program without proxies, and into a class or an interface with methods, an object of
+another type stays a `TypeError`.
 
 ```ts
 type Item = { name: string; price: number };
