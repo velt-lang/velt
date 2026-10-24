@@ -181,6 +181,10 @@ pub(crate) fn synth_method(
     def
 }
 
+/// A type and an implementation index (`Program::impls`): the interface value a call result
+/// becomes, or the receiver passed as one.
+type AsDyn = Option<(TyId, u32)>;
+
 /// `return callee(this, p1, .., pn);` (with `wrap = Some((ty, impl))`, the call has type `ty`
 /// and its result becomes an interface value through `impl`). An indirect call passes no
 /// receiver, unless `this_arg` says how to pass it (`Target::Field`).
@@ -190,7 +194,7 @@ fn forward_body(
     this_mode: PassMode,
     params: &[ParamSig],
     ret: TyId,
-    (callee, wrap, this_arg): (Callee, Option<(TyId, u32)>, Option<(TyId, u32)>),
+    (callee, wrap, this_arg): (Callee, AsDyn, AsDyn),
     span: Span,
 ) -> hir::Body {
     let local = |name: &str, ty| LocalDef {

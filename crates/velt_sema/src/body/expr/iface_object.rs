@@ -225,7 +225,7 @@ impl FnCx<'_, '_> {
             let method = methods.iter().position(|m| m.name == tag);
             let field = fields.iter().position(|f| f.0 == key.name);
             let index = values.len() as u32;
-            let takes = value.is_some_and(|v| super::literal_this::prop_takes_this(v));
+            let takes = value.is_some_and(super::literal_this::prop_takes_this);
             match (w, method, field) {
                 (Written::Set(arrow), Some(slot), _) => {
                     let m = &methods[slot];
