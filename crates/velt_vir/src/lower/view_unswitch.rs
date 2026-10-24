@@ -233,9 +233,7 @@ impl FnLower<'_, '_> {
     /// Follow the whole-local copies of the addresses in `v` (adding the copies to it), and
     /// tell whether any holder is used in another way than [`Self::addresses`] allows.
     fn address_escapes(&self, v: &mut Vec<Local>) -> bool {
-        let whole = |o: &Operand, v: &[Local]| {
-            matches!(o, Operand::Copy(p) if p.proj.is_empty() && v.contains(&p.local))
-        };
+        let whole = |o: &Operand, v: &[Local]| matches!(o, Operand::Copy(p) if p.proj.is_empty() && v.contains(&p.local));
         let mut i = 0;
         while i < v.len() {
             i = v.len();
