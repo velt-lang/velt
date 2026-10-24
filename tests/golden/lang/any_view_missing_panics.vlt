@@ -1,0 +1,18 @@
+// A view of an object that lacks a field of the object type (#1485): the conversion goes on,
+// as in Node, and reading the missing field stops with a `TypeError` (Node reads `undefined`),
+// never a read of another layout.
+type Item = {
+  name: string;
+  price: number;
+};
+
+const tracked = new Proxy({ n: 0 }, {});
+
+function load(): any {
+  return { name: "pen" };
+}
+
+const item = load() as Item;
+console.log(item.name);
+console.log(tracked.n);
+console.log(item.price);

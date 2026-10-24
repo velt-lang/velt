@@ -1136,6 +1136,21 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   `lower/proxy_call.rs`). Object conversions keep a proxy's identity: `AdtLit` has
   `converted` ("Object conversions" below), and a converted literal whose source has a proxiable type gives the
   source's proxy when it holds one (and makes the target type proxiable, as `Upcast` does).
+- Views (#1485, velt_vir `lower/any_view.rs`): in a program with typed proxies, `AnyTo` to a
+  proxiable object type (not a class) of an `any` holding an object or function of another type
+  (and not a proxy) is the tagged result of the prelude's `Proxy.__view(x)`, a `Proxy` without traps whose
+  `#view` is set: field reads and writes run its forwarding `__get` / `__set` and check the value
+  as the field's type. A tagged value whose `Proxy` is a view converts to `any` as the `any` it
+  holds (`__target()`, the view released), so the view is the object to every dynamic
+  operation. The conversion gives the object's live view when it has one (the runtime's table of
+  views, rt_abi.md "Views", which `__view`'s result enters and a view's drop leaves), so an
+  object has at most one view at a time, and `===` and key hashes on a proxiable type compare
+  the pointer, as on any object type. A weak key of such a type goes the way of an
+  `object` key, by the `any` the value converts to (velt_vir `lower/weak_view.rs`). Object
+  patterns, `FieldPresent` and `JSON.stringify` on a proxiable type read a tagged value through
+  its traps (`JSON` as the `any` it converts to). The prelude's
+  `__proxyKeysOf`, `__proxyHas`, `__proxyHasOwnOf` and `__proxyAny`, which sema calls behind
+  `IsTypedProxy`, take such a value (no longer a proxy once in an `any`) as a plain one.
 - Object conversions (#650, #651; sema `body/expr/object_copy.rs`): an object type converted to
   another object type whose fields it has (in another order, or only some of them) is an
   `AdtLit` of the expected type with `converted: Conversion::Copy`, whose fields each read the

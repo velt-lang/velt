@@ -2604,6 +2604,53 @@ with `ToPrimitive`: `[] == 0` is `true`); an instance of a subclass of a generic
 convert to that class (`Sub extends Box<number>` to `Box<number>`: a `TypeError`); and a
 function prints as `[Function (anonymous)]` (Node prints its name, `[Function: f]`).
 
+An object of another type converted to an object type (`a as Item` where `a` holds a class
+instance with `Item`'s fields, or an object literal with more fields than `Item`) is, in a program
+that makes proxies (`new Proxy` anywhere in its own code, as a reactive framework does), a *view*
+of that object (#1485). Nothing is copied: each field is read from the object when it is read,
+and checked then as the field's type, so a field the object lacks stops with a `TypeError` at
+that read (Node reads `undefined`). A write goes to the object for the fields the object has;
+writing an optional field the object lacks (`item.note = "hi"` on a class instance without
+`note`) stops with the `TypeError` of a fixed-shape object (#924), where Node adds the property.
+Converting the object again while a view of it lives gives that view (an object has one view at
+a time, whatever object type it is converted to), so `===`, `Map`, `Set` and `indexOf` see one
+value. Back in an `any` (and for `WeakMap`, `WeakSet` and `WeakRef`, `in`, `Object.keys`,
+`for...in` and `JSON.stringify`) the view is the object itself: a `WeakMap` entry lives as long
+as the object, and `deref()` gives its view again. Destructuring (`const { type, props } = vnode`, also in parameters and `for...of`),
+spreads (`{ ...item }`) and keyed reads read the object's fields at that moment. A spread or an
+object rest pattern (`const { name, ...rest } = item`) copies the fields of the view's type only
+(`{ ...item }` of a `Product` viewed as `Item` has `name` and `price`, not `stock`; Node keeps
+every own property), since an object type has a fixed shape; `JSON.stringify(item)` shows all
+of the object's members. A view is copied like the object it views: `item.clone()` is a view of
+a copy of the object, and a view sent to another thread (`spawn`, a channel, `shared(...)`, a
+`Mutex`'s value, a task's result) while the object is still used here is a view of the copy
+there ([Async](async.md)), so a write there does not reach the object here, and converting the
+object here again gives a view of its own. A union with
+one object type member (`VNode | string | null`) converts an object that is no `VNode` the same
+way. In a program without proxies, and into a class or an interface with methods, an object of
+another type stays a `TypeError`.
+
+```ts
+type Item = { name: string; price: number };
+
+class Product {
+  name = "pen";
+  price = 2;
+  stock = 10;
+}
+
+function main(): void {
+  const tracked = new Proxy({ hits: 0 }, {}); // the program makes proxies
+  const p = new Product();
+  const a: any = p;
+  const item = a as Item; // a view of `p`
+  item.price = 3;
+  console.log(p.price, item.name, tracked.hits); // 3 pen 0
+  const back: any = item;
+  console.log(back === a, item === (a as Item)); // true true
+}
+```
+
 Members of an `any` are read and called as in JavaScript: `x.f`, `x["f"]`, `x[k]` with a
 `string`, `number` or `any` key (any expression: `x[key()]`, `x[i + 1]`), `x.m(a, b)` (a method,
 or a field holding a function, typed or `any`) and `x(a, b)` when `x` holds a function. The member

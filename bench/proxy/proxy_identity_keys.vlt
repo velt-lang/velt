@@ -1,0 +1,25 @@
+// Identity and hashing of a proxiable object type (#1485): `Map` and `Set` keyed by `Item`,
+// in a program that converts a proxy (an `any`) to `Item`, so `Item` may hold a view
+// or a typed proxy and every `===` and key hash of it tests the tag. bench/proxy/proxy_identity.sh
+// runs it.
+type Item = { id: number; name: string };
+
+const items: Item[] = [];
+for (let i = 0; i < 1000; i++) {
+  items.push({ id: i, name: "item" + i });
+}
+const m = new Map<Item, number>();
+const s = new Set<Item>();
+let total = 0;
+for (let round = 0; round < 2000; round++) {
+  for (let i = 0; i < 1000; i++) {
+    const it = items[i];
+    m.set(it, round + i);
+    total += m.get(it) ?? 0;
+    s.add(it);
+  }
+}
+const p = new Proxy({ id: -1, name: "proxy" }, {}) as Item;
+m.set(p, 1);
+s.add(p);
+console.log(total, m.size, s.size, s.has(p), m.has(p));

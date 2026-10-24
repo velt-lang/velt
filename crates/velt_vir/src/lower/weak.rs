@@ -79,6 +79,10 @@ impl FnLower<'_, '_> {
                     kt if self.dyn_weak_key(kt) => {
                         self.dyn_key(key, kt).map(|k| self.dyn_probe_addr(&k))
                     }
+                    // A view is keyed by the object it views (weak_view.rs).
+                    kt if self.view_weak_key(kt) => {
+                        self.view_key(key, kt).map(|k| self.dyn_probe_addr(&k))
+                    }
                     _ => self.weak_key(key, true),
                 };
                 let Some(k) = k else {
@@ -110,6 +114,9 @@ impl FnLower<'_, '_> {
                 if self.dyn_weak_key(kt) {
                     return self.weakref_new_dyn(target, kt);
                 }
+                if self.view_weak_key(kt) {
+                    return self.weakref_new_view(target, kt);
+                }
                 let Some(k) = self.weak_key(target, false) else {
                     return cint(0, Ty::U32);
                 };
@@ -124,6 +131,9 @@ impl FnLower<'_, '_> {
                     TyKind::Option(e, _) => e,
                     _ => t,
                 };
+                if self.view_weak_key(obj) {
+                    return self.weakref_deref_view(r, t);
+                }
                 if self.dyn_weak_key(obj) {
                     self.cx.note_weak_object();
                     if !self.cx.weak_object() {
@@ -196,12 +206,16 @@ impl FnLower<'_, '_> {
         let m = self.expr(m);
         let kt = self.sub(key.ty);
         // An `object` key (issue #926, weak_object.rs): checked, with its own trace glue.
-        let (k, dyn_key) = match self.dyn_weak_key(kt) {
-            true => match self.dyn_key(key, kt) {
-                Some(d) => (Some(d.data.clone()), Some(d)),
-                None => (None, None),
-            },
-            false => (self.weak_key(key, true), None),
+        let dk = match self.dyn_weak_key(kt) {
+            true => Some(self.dyn_key(key, kt)),
+            // A view is keyed by the object it views (weak_view.rs).
+            false if self.view_weak_key(kt) => Some(self.view_key(key, kt)),
+            false => None,
+        };
+        let (k, dyn_key) = match dk {
+            Some(Some(d)) => (Some(d.data.clone()), Some(d)),
+            Some(None) => (None, None),
+            None => (self.weak_key(key, true), None),
         };
         let vty = self.sub(value.ty);
         self.cx.note_share(vty);

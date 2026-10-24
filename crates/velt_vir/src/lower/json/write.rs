@@ -70,6 +70,35 @@ impl FnLower<'_, '_> {
     /// `key`: the value's key in its parent, for a type that passes it to a `toJSON(key)`
     /// (key.rs).
     fn json_write_expand(&mut self, buf: &Operand, place: &Place, ty: TyId, key: Option<&Place>) {
+        if self.cx.proxiable(ty) && self.cx.ty(ty) == Ty::Ptr {
+            // A typed proxy or a view (any_view.rs) is written as the `any` it converts to: the
+            // proxy (its `__json`), or the object a view views, with all of its members.
+            let p = self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(place.clone())));
+            let t = self.proxy_tagged(p);
+            let (cold, hot, join) = (self.new_block(), self.new_block(), self.new_block());
+            self.branch(t, cold, hot);
+            self.switch_to(cold);
+            self.push_scope(crate::lower::ScopeKind::Block);
+            let any = self.cx.any_ty();
+            let avt = self.cx.ty(any);
+            let s = self.share_value(Operand::Copy(place.clone()), ty);
+            let held = Place::local(self.temp(avt));
+            self.any_box_into(s, ty, &held);
+            self.json_write_any(buf, &held);
+            self.drop_glue(held, any);
+            self.scopes.pop();
+            self.goto(join);
+            self.switch_to(hot);
+            self.json_write_typed(buf, place, ty, key);
+            self.goto(join);
+            self.switch_to(join);
+            return;
+        }
+        self.json_write_typed(buf, place, ty, key);
+    }
+
+    /// `json_write_expand` of a value that is not a typed proxy.
+    fn json_write_typed(&mut self, buf: &Operand, place: &Place, ty: TyId, key: Option<&Place>) {
         let v = Operand::Copy(place.clone());
         let vt = self.cx.ty(ty);
         let b = buf.clone();
