@@ -101,6 +101,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             direct_siblings: FxHashMap::default(),
             self_env: None,
             in_reflect: false,
+            proxy_routes: false,
         };
         lw.mode = lw.cx.cur_mode;
         lw.own_captures = lw.cx.cur_own;
@@ -375,6 +376,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
     }
 
     pub(super) fn lower_body(&mut self, f: &FnDef) {
+        self.proxy_routes = !f.name.starts_with("std/") || f.name.starts_with("std/proxy::");
         // Outermost scope: owned params, dropped on every return.
         self.push_scope(ScopeKind::Block);
         for p in &f.params[f.captures.len()..] {

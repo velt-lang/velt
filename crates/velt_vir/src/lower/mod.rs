@@ -84,6 +84,7 @@ mod place;
 mod program;
 mod proxy_call;
 mod proxy_method;
+mod proxy_throws;
 mod proxy_typed;
 mod proxy_write;
 mod quiet;
@@ -338,6 +339,8 @@ enum Work {
 /// Program-level lowering state.
 struct Cx<'h> {
     hir: &'h hir::Program,
+    /// The prelude's `Proxy` class type, once looked up (proxy_throws.rs).
+    prelude_proxy: Option<Option<TyId>>,
     /// Native library inits `velt_main` runs first (entry.rs).
     native_inits: Vec<crate::NativeInit>,
     /// The program pins a task (`spawn(…, { worker })`): `velt_main` selects the per-core
@@ -659,4 +662,7 @@ struct FnLower<'c, 'h> {
     /// Lowering a method of the prelude's `Reflect`, where a proxy's reads reach their target:
     /// a read `any` cannot do yet names #823 (any_member.rs `any_get_str`).
     in_reflect: bool,
+    /// The body of a function of a user module or of std/proxy: its operations on `any` throw
+    /// what a proxy's trap throws, as velt_sema counts them (proxy_throws.rs).
+    proxy_routes: bool,
 }

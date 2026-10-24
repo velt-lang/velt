@@ -31,11 +31,12 @@ pub(super) const OBJECT_PROTO: [&str; 12] = [
     "__lookupSetter__",
 ];
 
-/// A method or getter ready to call: its def, type arguments and result type.
+/// A method or getter ready to call (only a `Proxy` method throws: proxy_throws.rs).
 pub(super) struct Ready {
     pub(super) def: DefId,
     pub(super) targs: Vec<TyId>,
     pub(super) ret: TyId,
+    pub(super) throws: Option<TyId>,
 }
 
 impl FnLower<'_, '_> {
@@ -163,7 +164,8 @@ impl FnLower<'_, '_> {
         if f.params.first().is_none_or(|p| p.mode == PassMode::Owned) {
             return None;
         }
-        if !f.is_async && self.cx.fn_throws(f, &targs).is_some() {
+        let throws = self.cx.fn_throws(f, &targs).filter(|_| !f.is_async);
+        if throws.is_some() && !self.is_proxy(owner) {
             return None;
         }
         let (ret, _) = self.cx.call_sig(f);
@@ -175,6 +177,7 @@ impl FnLower<'_, '_> {
             def: m.def,
             targs,
             ret,
+            throws,
         })
     }
 
@@ -237,7 +240,7 @@ impl FnLower<'_, '_> {
                 }
             }
         }
-        let v = self.finish_call(Callee::Func(fid), argv, r.ret, None);
+        let v = self.finish_ready_call(Callee::Func(fid), argv, r);
         for (p, t) in after {
             self.drop_glue(p, t);
         }

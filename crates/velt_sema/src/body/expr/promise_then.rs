@@ -288,6 +288,9 @@ impl FnCx<'_, '_> {
             .iter()
             .map(|(h, _)| self.callback_parts(h.ty))
             .collect();
+        let parts: Vec<(TyId, Option<TyId>)> = (parts.into_iter())
+            .map(|(u, x)| (u, self.cx.assume_trap_vars_empty(x)))
+            .collect();
         let never = self.cx.ty.never;
         // `then(f)` and `finally(h)` reject with what the promise rejects with and what the
         // callback throws: one type (the error types are type parameters of their own).

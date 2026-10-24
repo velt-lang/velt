@@ -563,6 +563,27 @@ impl Ctx<'_> {
         }
     }
 
+    /// `t` without the variables of std/proxy's traps, which a check assumes empty: a choice
+    /// made by what a callback throws (`promiseThen` or `promiseThenThrows`) is the one a
+    /// program whose traps throw nothing makes; when a trap does throw, the program is checked
+    /// again with the solved sets.
+    pub(crate) fn assume_trap_vars_empty(&mut self, t: Option<TyId>) -> Option<TyId> {
+        let t = t?;
+        if !self.mentions_err_var(t) {
+            return Some(t);
+        }
+        let mut keep = vec![];
+        for m in self.error_members(t) {
+            match self.err_var(m) {
+                Some(v) if self.fn_sites.trap_vars.contains(&v) => {
+                    self.fn_sites.var_sets.assumed_empty.push(v)
+                }
+                _ => keep.push(m),
+            }
+        }
+        self.error_union(&keep)
+    }
+
     /// `t` without its variables, which a check assumes empty (a `catch` variable's type).
     pub(crate) fn assume_vars_empty(&mut self, t: Option<TyId>) -> Option<TyId> {
         let t = t?;

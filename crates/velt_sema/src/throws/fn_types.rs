@@ -1,7 +1,8 @@
 //! Inferred error types of function types written without `throws` (docs/reference/errors.md
 //! "Dynamic calls").
 //!
-//! Every function type written without a `throws` clause in a user module is a *site*. When a
+//! Every function type written without a `throws` clause in a user module is a *site*, and so
+//! is each trap of std/proxy's `ProxyHandler` (a trap may throw, as in JavaScript). When a
 //! closure that throws is used as a value of a function type that does not allow its errors,
 //! the sites that type may come from (matched structurally, a site's type parameters matching
 //! anything, error parts ignored) get the closure's errors ([`Ctx::seed_fn_sites`]). When some
@@ -42,6 +43,10 @@ pub(crate) struct FnTypeSeeds {
     hints: HashMap<DefId, (Span, Vec<Portable>)>,
     /// Check with the sets written in, without variables (`throws::vars`).
     no_vars: bool,
+    /// The sites of std/proxy's `ProxyHandler` traps the previous check met.
+    proxy_sites: HashSet<Span>,
+    /// Check without any variable, also for the traps (`FnSites::doubted`).
+    exact: bool,
 }
 
 /// The sites of one check: the sets it applies and what it found.
@@ -77,10 +82,18 @@ pub(crate) struct FnSites {
     /// How many errors were added to `found`.
     pub added: usize,
     last: bool,
-    /// Sites get an error-set variable (`TyOp::ErrSite`) instead of a seeded set.
+    /// The check has error-set variables (`TyOp::ErrSite`): the program's own sites get one
+    /// (`user_vars`), or the traps of std/proxy without a seeded set do. A trap's set grows
+    /// through the program's sites and other traps (a `has` trap calling `Reflect.has` throws
+    /// what `get` throws), so a variable for each, also in the checks with seeded sets, keeps a
+    /// program whose traps throw at the number of checks it needs without proxies.
     pub use_vars: bool,
+    /// The program's own sites get variables instead of seeded sets.
+    pub user_vars: bool,
     /// The variable of each site, by its span, and the site of each variable.
     pub(super) var_of: HashMap<Span, TyId>,
+    /// The variables of std/proxy's trap sites (`ProxyHandler`), by number.
+    pub(super) trap_vars: HashSet<u32>,
     pub vars: Vec<Span>,
     /// Each variable's solved error type, once solved (`never` for an empty set).
     pub solved: HashMap<TyId, TyId>,
@@ -95,10 +108,12 @@ impl FnSites {
     /// The sites of a check with `seeds`; `last`: the program is not checked again whatever
     /// this check finds.
     pub fn new(seeds: FnTypeSeeds, last: bool) -> Self {
+        let allowed = std::env::var_os("VELT_NO_SITE_VARS").is_none();
+        let user_vars = seeds.sites.is_empty() && !seeds.no_vars && allowed;
+        let trap_vars = allowed && !seeds.exact && !seeds.proxy_sites.is_empty();
         FnSites {
-            use_vars: seeds.sites.is_empty()
-                && !seeds.no_vars
-                && std::env::var_os("VELT_NO_SITE_VARS").is_none(),
+            use_vars: user_vars || trap_vars,
+            user_vars,
             found: seeds.clone(),
             seeds,
             last,
@@ -125,6 +140,7 @@ impl FnSites {
         (self.use_vars && self.doubt.get() && errors).then(|| {
             let mut s = self.found.clone();
             s.no_vars = true;
+            s.exact = true;
             s
         })
     }
@@ -182,13 +198,19 @@ impl Ctx<'_> {
             e
         });
         let inferred = throws.is_none();
+        // A trap of std/proxy gets a variable in every check with variables, unless the previous
+        // check seeded its set; the program's own sites only in a check without seeds.
+        let gets_var = match self.scopes.get(env.module).is_some_and(|s| s.is_std) {
+            true => self.fn_sites.use_vars && !self.fn_sites.seeds.sites.contains_key(&span),
+            false => self.fn_sites.user_vars,
+        };
         let err = match err {
             Some(e) => self.canon_error(Some(e)),
-            None if self.fn_sites.use_vars => self.site_var(span, env.module),
+            None if gets_var => self.site_var(span, env.module),
             None => self.site_error(span, env.module),
         };
-        let var_site = inferred && err.is_some() && self.fn_sites.use_vars;
-        let inferred = inferred && err.is_some() && !self.fn_sites.use_vars;
+        let var_site = inferred && err.is_some() && gets_var;
+        let inferred = inferred && err.is_some() && !gets_var;
         let err = err.unwrap_or(never);
         let plain_ret = ret;
         let throws = match self.ty.kind(ret).clone() {
@@ -271,7 +293,7 @@ impl Ctx<'_> {
     /// The error-set variable of the site at `span` in module `module` (`None` outside user
     /// modules).
     fn site_var(&mut self, span: Span, module: usize) -> Option<TyId> {
-        if self.scopes.get(module).is_none_or(|s| s.is_std) || span == Span::DUMMY {
+        if !self.site_module(module) || span == Span::DUMMY {
             return None;
         }
         if let Some(&v) = self.fn_sites.var_of.get(&span) {
@@ -283,6 +305,9 @@ impl Ctx<'_> {
             .intern(TyKind::Op(crate::hir::TyOp::ErrSite(id), vec![]));
         self.fn_sites.vars.push(span);
         self.fn_sites.var_of.insert(span, v);
+        if self.scopes.get(module).is_some_and(|s| s.is_std) {
+            self.fn_sites.trap_vars.insert(id);
+        }
         Some(v)
     }
 
@@ -290,7 +315,7 @@ impl Ctx<'_> {
     /// `params => ret`: what it throws (`never` when nothing was stored into it that throws),
     /// recording the site.
     fn site_error(&mut self, span: Span, module: usize) -> Option<TyId> {
-        if self.scopes.get(module).is_none_or(|s| s.is_std) {
+        if !self.site_module(module) {
             return None;
         }
         let members = self.fn_sites.seeds.sites.get(&span)?.clone();
@@ -298,11 +323,29 @@ impl Ctx<'_> {
         self.error_union(&ms)
     }
 
+    /// Are the function types written without `throws` in module `module` sites: those of a
+    /// user module, and the traps of std/proxy's `ProxyHandler` (the only function types that
+    /// module writes), so a trap may throw: a proxy operation throws what its trap throws
+    /// (hir_encodings.md "Proxy and Reflect").
+    fn site_module(&self, module: usize) -> bool {
+        match self.scopes.get(module) {
+            None => false,
+            Some(s) if s.is_std => self
+                .modules
+                .get(module)
+                .is_some_and(|m| m.path == "std/proxy"),
+            Some(_) => true,
+        }
+    }
+
     /// Record `t` as the type of the site at `span` (a user module's function type written
     /// without `throws`).
     fn record_fn_site(&mut self, span: Span, module: usize, t: TyId) {
-        if self.scopes.get(module).is_none_or(|s| s.is_std) || span == Span::DUMMY {
+        if !self.site_module(module) || span == Span::DUMMY {
             return;
+        }
+        if self.scopes.get(module).is_some_and(|s| s.is_std) {
+            self.fn_sites.found.proxy_sites.insert(span);
         }
         if self.fn_sites.seen.insert((span, t)) {
             let i = self.fn_sites.sites.len();
@@ -519,8 +562,20 @@ impl Ctx<'_> {
         Some(self.ty.intern(k))
     }
 
+    /// Is a closure stored at `site` (when known) as a value of `used_as` a trap of std/proxy's
+    /// `ProxyHandler`: that site, or (an object literal's method) a trap of its shape?
+    pub(crate) fn is_trap_site(&self, site: Option<Span>, used_as: TyId) -> bool {
+        let in_proxy =
+            |s: &Span| (self.modules.iter()).any(|m| m.file == s.file && m.path == "std/proxy");
+        match site {
+            Some(s) => in_proxy(&s),
+            None => (self.fn_sites.sites.iter())
+                .any(|(s, g)| in_proxy(s) && self.site_matches(*g, used_as, 0)),
+        }
+    }
+
     /// Is `t` the prelude's `Error` or a class extending it?
-    fn is_error_class(&mut self, t: TyId) -> bool {
+    pub(super) fn is_error_class(&mut self, t: TyId) -> bool {
         let Some(root) = self.prelude_adt("Error") else {
             return false;
         };
