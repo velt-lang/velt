@@ -24,7 +24,10 @@ impl Ctx<'_> {
         let Some(e) = self.enum_info(d) else {
             return false;
         };
-        args.is_empty() && e.variants.iter().all(|v| v.payload.first().is_some_and(|p| self.is_err_var(*p)))
+        args.is_empty()
+            && e.variants
+                .iter()
+                .all(|v| v.payload.first().is_some_and(|p| self.is_err_var(*p)))
     }
 
     pub(crate) fn display_in(&self, t: TyId, names: &[String]) -> String {

@@ -148,6 +148,7 @@ fn clause_violation(cx: &mut Ctx, d: DefId, m: TyId, allowed: Option<TyId>, clau
             Some(_) if !inferred => format!("add `{mn}` to the function type's `throws`"),
             _ => format!("write the function type with `throws {mn}`"),
         };
+        let used_ty = used_as;
         let used_as = cx.display(used_as);
         let mut diag = Diagnostic::error(
             format!("this function throws `{mn}`, but the function type it is used as {what}"),
@@ -155,9 +156,7 @@ fn clause_violation(cx: &mut Ctx, d: DefId, m: TyId, allowed: Option<TyId>, clau
         )
         .with_note(format!("it is used as `{used_as}`"));
         // A `ProxyHandler` trap (std/proxy.vlt): its type can't be changed.
-        let trap = site.is_some_and(|s| {
-            (cx.modules.iter()).any(|m| m.file == s.file && m.path == "std/proxy")
-        });
+        let trap = cx.is_trap_site(site, used_ty);
         if trap && !cx.is_error_class(m) {
             return cx.error(
                 diag.with_note("TypeScript lets a proxy trap throw any value; in Velt a trap may throw only `Error` classes, since its error type is inferred from what it throws (and a `catch` around the proxy operation gets that type)")

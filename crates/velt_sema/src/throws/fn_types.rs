@@ -562,6 +562,18 @@ impl Ctx<'_> {
         Some(self.ty.intern(k))
     }
 
+    /// Is a closure stored at `site` (when known) as a value of `used_as` a trap of std/proxy's
+    /// `ProxyHandler`: that site, or (an object literal's method) a trap of its shape?
+    pub(crate) fn is_trap_site(&self, site: Option<Span>, used_as: TyId) -> bool {
+        let in_proxy =
+            |s: &Span| (self.modules.iter()).any(|m| m.file == s.file && m.path == "std/proxy");
+        match site {
+            Some(s) => in_proxy(&s),
+            None => (self.fn_sites.sites.iter())
+                .any(|(s, g)| in_proxy(s) && self.site_matches(*g, used_as, 0)),
+        }
+    }
+
     /// Is `t` the prelude's `Error` or a class extending it?
     pub(super) fn is_error_class(&mut self, t: TyId) -> bool {
         let Some(root) = self.prelude_adt("Error") else {
