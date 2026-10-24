@@ -520,7 +520,7 @@ impl FnCx<'_, '_> {
             let ty = f.ty;
             return (t, f, ty);
         }
-        let (t, f, joined) = self.any_join(t, f);
+        let (t, f, joined) = self.any_join(t, f, exp);
         if let Some(ty) = joined {
             return (t, f, ty);
         }
@@ -542,17 +542,25 @@ impl FnCx<'_, '_> {
         self.union_join(t, f, span)
     }
 
-    /// Two values of different types where one is an `any`: values of that `any`, as TypeScript
-    /// types `c ? 99 : t[k]` and `n || t[k]` (`number | any` is `any`). Converted to the other
-    /// value's type instead, the `any` would stop where it holds something else. The type is
-    /// `None` when neither is an `any` (or the other value does not convert to it).
+    /// Two values of different types where one is an `any`, where an `any` is expected (a `: any`
+    /// result such as a proxy `get` trap, annotation, variable or parameter): values of that
+    /// `any`, as TypeScript types `c ? 99 : t[k]` and `n || t[k]` (`number | any` is `any`).
+    /// Converted to the other value's type instead, the `any` would stop where it holds
+    /// something else. The type is `None` when no `any` is expected, neither value is one, or the
+    /// other value does not convert to it. Elsewhere the `any` still converts to the other
+    /// value's type: operators and built-in methods through an `any` are not supported yet
+    /// (#924), so `(c ? 1 : a) + 1` and `(s ?? a).trim()` need the typed value.
     pub(crate) fn any_join(
         &mut self,
         t: hir::Expr,
         f: hir::Expr,
+        exp: Option<TyId>,
     ) -> (hir::Expr, hir::Expr, Option<TyId>) {
-        let any = |s: &Self, e: &hir::Expr| s.cx.dynamic(e.ty) == Some(crate::any::Dynamic::Any);
-        match (any(self, &t), any(self, &f)) {
+        let any = |s: &Self, ty: TyId| s.cx.dynamic(ty) == Some(crate::any::Dynamic::Any);
+        if !exp.is_some_and(|e| any(self, e)) {
+            return (t, f, None);
+        }
+        match (any(self, t.ty), any(self, f.ty)) {
             (false, true) => {
                 let ft = f.ty;
                 match self.try_coerce(t, ft) {

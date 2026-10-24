@@ -725,7 +725,7 @@ impl FnCx<'_, '_> {
         if t.ty == error || f.ty == error {
             return (t, f, error);
         }
-        let (t, f, joined) = self.any_join(t, f);
+        let (t, f, joined) = self.any_join(t, f, exp);
         if let Some(ty) = joined {
             return (t, f, ty);
         }

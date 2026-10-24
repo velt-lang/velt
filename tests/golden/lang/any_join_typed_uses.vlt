@@ -1,0 +1,39 @@
+// A conditional, `||`, `&&` or `??` with an `any` value and a typed one, where no `any` is
+// expected, keeps the typed value's type (#1492): built-in methods and operators on it work as
+// in TypeScript, which types these as `any` and runs them on whatever the value holds.
+const data: any = { name: " Ada ", tags: ["a", "b"], ratio: 0.25, n: 4, s: "x" };
+const far = process.argv.length > 99;
+const given: string | undefined = far ? "x" : undefined;
+const name = given ?? data.name;
+console.log(name.trim());
+const tags = far ? ["z"] : data.tags;
+console.log(tags.map((t: string) => t + "!"));
+const ratio = far ? 1 : data.ratio;
+console.log(ratio.toFixed(2));
+
+// String and array methods on the joined value.
+const s = far ? "zz" : data.s;
+console.log(s.toUpperCase(), s.includes("x"), s.slice(0, 1), s.split(""), s.indexOf("x"));
+console.log(s.startsWith("x"), s.replace("x", "y"), s.charAt(0));
+const arr = far ? ["q"] : data.tags;
+console.log(arr.filter((t: string) => t !== "a"), arr.includes("b"), arr.indexOf("b"));
+console.log(arr.slice(1));
+
+// Operators on the joined value.
+const k = far ? 1 : 0;
+const maybe: number | null = far ? 1 : null;
+console.log((far ? 1 : data.n) + 1, (k || data.n) * 2, (maybe ?? data.n) - 1);
+let x = far ? 1 : data.n;
+x += 1;
+console.log(x);
+const t: number = (far ? 1 : data.n) + 1;
+console.log(t);
+const both = k && data.n;
+console.log(both);
+
+// Where an `any` is expected, the value stays an `any` (the proxy `get` trap of #1492).
+function get(o: any, key: string): any {
+  return key === "price" ? 99 : o[key];
+}
+
+console.log(get(data, "price"), get(data, "s"));

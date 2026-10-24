@@ -1,7 +1,10 @@
 // A conditional, `||`, `&&` or `??` whose values are an `any` and a value of another type is an
-// `any`, as in TypeScript (`number | any` is `any`) (#1492). The `any` was converted to the
+// `any` where an `any` is expected (a `: any` result, annotation, variable, parameter or
+// element), as in TypeScript (`number | any` is `any`) (#1492). The `any` was converted to the
 // other value's type instead (`k === "price" ? 99 : t[k]` was a `number`), which stopped with
-// "the value is not a number" when it held a string.
+// "the value is not a number" when it held a string. Elsewhere the `any` still takes the other
+// value's type, so built-in methods and operators work on the result
+// (any_join_typed_uses.vlt).
 const o: any = { name: "a", price: 1, zero: 0 };
 
 function get(t: any, k: string): any {
@@ -26,10 +29,6 @@ let v: any = flag ? "s" : o.price;
 console.log(v, typeof v);
 const q: any = flag ? 1 : o.name;
 console.log(q, typeof q);
-const r = flag ? 1 : o.name;
-console.log(r, typeof r);
-const s = flag ? true : o.price;
-console.log(s, typeof s);
 const nested: any = flag ? 1 : flag ? "x" : o.name;
 console.log(nested);
 let w: any;
@@ -42,19 +41,15 @@ console.log(v);
 const n = o.zero as number;
 const or1: any = n || o.name;
 console.log(or1);
-const or2 = n || o.name;
-console.log(or2, typeof or2);
 const and1: any = 1 && o.name;
 console.log(and1);
 const maybe: number | null = flag ? 1 : null;
 const nn: any = maybe ?? o.name;
 console.log(nn);
-const nn2 = maybe ?? o.name;
-console.log(nn2, typeof nn2);
 w = maybe ?? o.name;
 console.log(w);
 
-// Returned, passed, in literals, in a template.
+// Returned, passed, in literals.
 function pick(c: boolean): any {
   if (c) {
     return 1;
@@ -78,12 +73,20 @@ console.log(a, typeof a[1]);
 const u: unknown = "text";
 const un = flag ? 1 : u;
 console.log(un);
-console.log(`${flag ? 1 : o.name}`);
 const sum: any = ((flag ? 1 : o.price) as number) + 1;
 console.log(sum);
-const st = flag ? "s" : o.price;
-console.log(st, typeof st);
-const obj = { k: flag ? 1 : o.name };
+
+// No `any` expected: the other value's type, which these values have.
+const r = flag ? 1 : o.price;
+console.log(r, typeof r);
+const or2 = n || o.price;
+console.log(or2, typeof or2);
+const nn2 = maybe ?? o.price;
+console.log(nn2, typeof nn2);
+const st = flag ? "s" : o.name;
+console.log(st, typeof st, st.toUpperCase());
+console.log(`${flag ? 1 : o.price}`);
+const obj = { k: flag ? "b" : o.name };
 console.log(obj);
 
 // A typed context still converts both values.
