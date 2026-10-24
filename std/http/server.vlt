@@ -7,7 +7,7 @@
 // connection and the `Date` value once per second; text goes into the buffer without a copy in
 // between. Nothing on the request path is module state (#1487).
 
-import { listen, TcpListener, TcpStream } from "velt:net";
+import { listen, listenTls, TcpListener, TcpStream, TlsListenOptions } from "velt:net";
 import { AbortController, AbortSignal } from "velt:task";
 import { BadRequest, Parser } from "velt:http/server/parse";
 import { HttpRequest } from "velt:http/server/request";
@@ -34,6 +34,8 @@ export struct HttpServeOptions {
    * closed. Default 5000, as Node's `keepAliveTimeout`.
    */
   idleTimeout?: number;
+  /** Serve HTTPS: the certificate chain and key (PEM text), as `listenTls` takes them. */
+  tls?: TlsListenOptions;
 }
 
 /** A running server. */
@@ -68,7 +70,9 @@ export async function serve<E>(
   opts: HttpServeOptions,
   handler: (req: HttpRequest, res: HttpResponse) => Promise<void, E> throws E,
 ): Promise<HttpServer> {
-  const listener = await listen(`${opts.host ?? DEFAULT_HOST}:${opts.port}`);
+  const addr = `${opts.host ?? DEFAULT_HOST}:${opts.port}`;
+  const tls = opts.tls;
+  const listener = tls != null ? await listenTls(addr, tls) : await listen(addr);
   const maxHead = (opts.maxHeadSize ?? MAX_HEAD) as i64;
   const maxBody = (opts.maxBodySize ?? MAX_BODY) as i64;
   const idle = (opts.idleTimeout ?? IDLE_MS) as i64;
@@ -179,6 +183,13 @@ async function connection<E>(
     }
   } catch (e) {
     // The client went away.
+  }
+  // The end of the responses: a TLS connection says so (close_notify), so a client reading to
+  // the end does not see it cut short.
+  try {
+    conn.shutdown();
+  } catch (e) {
+    // Already gone.
   }
   conn.close();
 }

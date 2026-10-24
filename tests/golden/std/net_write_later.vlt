@@ -59,6 +59,20 @@ async function main() {
   r2.close();
   await big;
 
+  // A shutdown right after queueing: the peer reads every byte queued, then the end.
+  const ended = spawn(async () => {
+    const c = await server.accept();
+    const data: u8[] = Buffer.alloc(BIG);
+    c.writeBytesLater(data);
+    c.writeLater("END");
+    c.shutdown();
+    c.close();
+  });
+  const r5 = await connect(`127.0.0.1:${port}`);
+  console.log("before the end:", (await readAll(r5)).length);
+  r5.close();
+  await ended;
+
   // A peer that went away: sending fails, and the next call reports it.
   const gone = spawn(async () => {
     const c = await server.accept();

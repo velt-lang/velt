@@ -573,15 +573,27 @@ impl StreamObj {
         }
     }
 
-    /// Half-close: the peer reads end of stream. A raw socket is shut down at once; any other
-    /// stream in the background, once it is set up (TLS sends its close_notify).
+    /// Half-close: the peer reads end of stream, after every byte written or queued before
+    /// (`writeLater`). A raw socket with nothing pending is shut down at once; otherwise in the
+    /// background, once those bytes are written and (any other stream) it is set up (TLS sends
+    /// its close_notify).
     pub(crate) fn shutdown(self: &std::sync::Arc<Self>) -> io::Result<()> {
-        if let Some(s) = self.socket() {
+        let pending = self.later.active() || self.writing.load(Ordering::Acquire) > 0;
+        if let (Some(s), false) = (self.socket(), pending) {
             return shutdown_socket(s, std::net::Shutdown::Write);
         }
         let obj = self.clone();
         crate::task::runtime::spawn(async move {
-            let Io::Lazy(lazy) = &obj.io else { return };
+            // What was queued goes first, then what is being written (the socket's turn).
+            let _ = obj.clone().drained(0).await;
+            let _turn = obj.turn.clone().lock_owned().await;
+            let lazy = match &obj.io {
+                Io::Tcp(s) => {
+                    let _ = shutdown_socket(s, std::net::Shutdown::Write);
+                    return;
+                }
+                Io::Lazy(lazy) => lazy,
+            };
             let _ = tokio::time::timeout(SHUTDOWN, async {
                 match obj.until_abort(obj.set_up(lazy)).await {
                     Ok(Ready::Tcp { stream, .. }) => {

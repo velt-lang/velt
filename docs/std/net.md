@@ -44,7 +44,8 @@
     (or written after them) are still to be sent, at once when there are no more: keeps a
     producer that queues faster than the peer reads bounded. Throws `IoError` when sending
     failed.
-  - `shutdown()`: half-close.
+  - `shutdown()`: half-close, after every byte written or queued before it (a TLS stream then
+    sends its close_notify).
   - `abort()`: fails the operations in flight (a `write` to a peer that stopped reading would
     otherwise never finish) and every later one. The handle stays open until `close()`.
   - `readableWithin(ms, signal?: AbortSignal): Promise<bool>`: `readable()` with a limit: true

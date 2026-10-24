@@ -270,7 +270,10 @@ export struct TcpStream {
     checkIo(await velt_rt_tcp_drained(this.handle, (max < 0 ? 0 : max) as u64));
   }
 
-  /** Half-close: the peer reads end of stream; this side can still read. */
+  /**
+   * Half-close: the peer reads end of stream, after every byte written or queued (`writeLater`)
+   * before; this side can still read.
+   */
   shutdown() {
     checkIo(velt_rt_tcp_shutdown(this.handle));
   }

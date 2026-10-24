@@ -45,8 +45,9 @@ async function main() {
 
 `serve<E>(opts: HttpServeOptions, handler: (req: HttpRequest, res: HttpResponse) =>
 Promise<void, E> throws E): Promise<HttpServer>`. `HttpServeOptions { port: number; host?;
-maxHeadSize?; maxBodySize?; idleTimeout? }`: the default host is 127.0.0.1 and port 0 picks a free
-port. One task serves each connection; requests on one connection are answered in order.
+maxHeadSize?; maxBodySize?; idleTimeout?; tls? }`: the default host is 127.0.0.1 and port 0 picks a
+free port. With `tls: { cert, key }` (PEM text, as [`listenTls`](net.md) takes them) the server
+speaks HTTPS. One task serves each connection; requests on one connection are answered in order.
 
 - A head (request line and headers) larger than `maxHeadSize` (64 KiB) gets 431 and input that
   is not a request 400; the connection then closes, after reading what the client still sends
