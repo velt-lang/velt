@@ -85,6 +85,37 @@ impl FnCx<'_, '_> {
         out
     }
 
+    /// Does `t` implement the interface of slot `k`'s object type bound (`collect::shapes`), a
+    /// class through its `get` accessors too?
+    fn has_bound_fields(
+        &mut self,
+        c: &Callable,
+        k: usize,
+        t: TyId,
+        slots: &[Option<TyId>],
+    ) -> bool {
+        let Some(bounds) = c.bounds.get(k) else {
+            return false;
+        };
+        let Some(b) = bounds
+            .iter()
+            .find(|b| self.cx.is_object_bound(b.iface))
+            .cloned()
+        else {
+            return false;
+        };
+        let b = Bound {
+            iface: b.iface,
+            args: b
+                .args
+                .iter()
+                .map(|a| self.cx.subst_known(*a, slots))
+                .collect(),
+        };
+        let in_scope = self.bounds.clone();
+        self.cx.satisfies(t, &b, &in_scope)
+    }
+
     /// The slot of `pty` when it is a type parameter an earlier argument fixed to string
     /// literal types (`K extends keyof T`).
     pub(super) fn literal_slot(&mut self, pty: TyId, slots: &[Option<TyId>]) -> Option<usize> {
@@ -120,7 +151,7 @@ impl FnCx<'_, '_> {
             return true;
         };
         let bound = self.cx.subst_known(bound, slots);
-        if self.constraint_holds(t, bound) {
+        if self.constraint_holds(t, bound) || self.has_bound_fields(c, k, t, slots) {
             return true;
         }
         let at = sites

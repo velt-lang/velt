@@ -17,6 +17,18 @@ use crate::hir::{
 
 /// The getter of field `index` (type `ty`) of class/struct `d` (self type `self_ty`).
 pub(crate) fn field_getter(cx: &mut Ctx, d: DefId, self_ty: TyId, index: usize, ty: TyId) -> DefId {
+    getter_of(cx, d, self_ty, index, ty, None)
+}
+
+/// [`field_getter`], its value wrapped as a `wrap` (an option of `ty`) when given.
+fn getter_of(
+    cx: &mut Ctx,
+    d: DefId,
+    self_ty: TyId,
+    index: usize,
+    ty: TyId,
+    wrap: Option<TyId>,
+) -> DefId {
     let a = cx.adt(d).expect("ICE: adt");
     let (qual, n, span, module) = (a.qual_name.clone(), a.generics.clone(), a.span, a.module);
     let fname = a.fields[index].name.clone();
@@ -27,7 +39,7 @@ pub(crate) fn field_getter(cx: &mut Ctx, d: DefId, self_ty: TyId, index: usize, 
         ty: self_ty,
         mode: PassMode::Borrow,
     });
-    info.ret = ty;
+    info.ret = wrap.unwrap_or(ty);
     info.fixed_modes = true;
     info.state = BodyState::Done;
     info.owner = Some(d);
@@ -60,15 +72,39 @@ pub(crate) fn field_getter(cx: &mut Ctx, d: DefId, self_ty: TyId, index: usize, 
             span,
         }
     };
+    let (ret, value) = match wrap {
+        Some(w) => (
+            w,
+            hir::Expr {
+                kind: H::WrapSome(Box::new(value)),
+                ty: w,
+                span,
+            },
+        ),
+        None => (ty, value),
+    };
     cx.defs[def.0 as usize] = Some(Def::Fn(getter_def(
         name,
         n.len() as u32,
         self_ty,
-        ty,
+        ret,
         value,
         span,
     )));
     def
+}
+
+/// The getter of required field `index` (type `ty`) of `d` for an optional field of type
+/// `want` (`ty | undefined`) of a bound's interface: the field's value, wrapped.
+pub(crate) fn field_getter_some(
+    cx: &mut Ctx,
+    d: DefId,
+    self_ty: TyId,
+    index: usize,
+    ty: TyId,
+    want: TyId,
+) -> DefId {
+    getter_of(cx, d, self_ty, index, ty, Some(want))
 }
 
 /// The setter of field `index` (type `ty`) of class/struct `d` (self type `self_ty`):

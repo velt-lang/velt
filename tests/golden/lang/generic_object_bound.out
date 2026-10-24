@@ -1,0 +1,6 @@
+ann got lit
+2 2 c
+5
+2 none
+[ 'a', 'b' ]
+new { name: 'renamed', n: 1 }
