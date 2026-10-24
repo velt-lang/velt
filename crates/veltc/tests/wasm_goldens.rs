@@ -8,7 +8,9 @@
 //! Needs the rustup targets (`rustup target add wasm32-wasip1 wasm32-unknown-unknown`), LLVM's
 //! `opt`/`llc` (`rustup component add llvm-tools`), wasmtime and node; each part is skipped with
 //! a note when its tools are missing. Filter with `VELT_GOLDEN=<substring>` (several separated
-//! by `,`).
+//! by `,`). With `VELT_RT_WASM_PREBUILT=1` (CI's shards, which run this test from an archive of
+//! another job's build: crates/xtask/src/golden_archive.rs) the runtime libraries are already
+//! built, and a missing tool fails the test instead of skipping it.
 //!
 //! The wasm32-wasip1 goldens are split into [`SHARDS`] test functions (every `SHARDS`-th file
 //! of the sorted list), so the test runner spreads them over its threads with everything else
@@ -71,22 +73,39 @@ fn runs(program: &str) -> bool {
         .is_ok_and(|o| o.status.success())
 }
 
-/// Why this flavor cannot be tested here, if it cannot.
+/// Whether the runtime libraries are prebuilt (`VELT_RT_WASM_PREBUILT=1`).
+fn prebuilt() -> bool {
+    std::env::var_os("VELT_RT_WASM_PREBUILT").is_some_and(|v| v == "1")
+}
+
+/// Why this flavor cannot be tested here, if it cannot. A run with prebuilt runtimes exists to
+/// run these goldens: there a missing tool fails.
 fn missing_tools(triple: &str, runner: &str) -> Option<String> {
-    if velt_codegen_llvm::find_wasm_tools().is_none() {
-        return Some("LLVM's opt/llc (rustup component add llvm-tools)".into());
+    let missing = if velt_codegen_llvm::find_wasm_tools().is_none() {
+        Some("LLVM's opt/llc (rustup component add llvm-tools)".into())
+    } else if !has_rust_target(triple) {
+        Some(format!("the {triple} Rust target"))
+    } else {
+        (!runs(runner)).then(|| runner.to_string())
+    };
+    if let Some(missing) = &missing {
+        assert!(
+            !prebuilt(),
+            "VELT_RT_WASM_PREBUILT=1, but {missing} is not available"
+        );
     }
-    if !has_rust_target(triple) {
-        return Some(format!("the {triple} Rust target"));
-    }
-    (!runs(runner)).then(|| runner.to_string())
+    missing
 }
 
 /// Builds the runtime library the `velt run --target` builds link. Every shard calls this in a
 /// process of its own, at the same time: cargo locks the build directory, so the first call
 /// builds it and the others wait and then find it up to date; none returns before the library is
-/// complete.
+/// complete. Prebuilt (`VELT_RT_WASM_PREBUILT=1`), it is not built again: in a checkout that
+/// only unpacked the build, cargo would find every source newer than its record of the build.
 fn build_runtime(root: &Path, triple: &str) {
+    if prebuilt() {
+        return;
+    }
     let st = crate::no_window::command(env!("CARGO"))
         .args(["build", "-p", "velt_rt_wasm", "--target", triple])
         .current_dir(root)

@@ -1,0 +1,23 @@
+// Two tasks fail with the same rejection at once: a spawned call and `main` both await a shared
+// promise that rejects. As in Node, only the first uncaught error is reported: the other task,
+// on another worker, does not print a second report before the process ends (#1497).
+class Bad extends Error {}
+
+async function make(n: number): Promise<number, Bad> {
+  if (n > 0) {
+    throw new Bad("bad " + n);
+  }
+  return n;
+}
+
+async function use(p: Promise<number, Bad>): Promise<void, Bad> {
+  console.log(await p);
+}
+
+async function main() {
+  console.log("main start");
+  const p = make(3);
+  const q = p;
+  spawn(use(q));
+  await use(p);
+}

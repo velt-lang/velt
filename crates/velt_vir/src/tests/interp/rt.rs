@@ -159,6 +159,7 @@ impl Interp<'_> {
                 return Err(101);
             }
             "velt_rt_exit" => return Err(a[0] as u32 as i32),
+            "velt_rt_uncaught_report" => {}
             "velt_rt_set_throw_loc" => self.throw_loc = a[0],
             "velt_rt_throw_loc" => return Ok(self.throw_loc),
             "velt_rt_pow_f64" => {

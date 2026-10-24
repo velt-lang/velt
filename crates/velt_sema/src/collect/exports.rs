@@ -15,6 +15,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_syntax::ast;
 
+use crate::check_work::add_export_work;
 use crate::ctx::{Ctx, Item};
 use crate::hir::{DefId, TyId, TyKind};
 use crate::SourceModule;
@@ -132,6 +133,7 @@ fn build_table(cx: &Ctx, t: usize, depth: u32) -> Option<Rc<[(String, Item)]>> {
             if !complete {
                 return None;
             }
+            add_export_work(1 + members.len() as u64);
             for x in members {
                 let name = format!("{bound}.{x}");
                 if let std::collections::hash_map::Entry::Vacant(e) = decided.entry(name) {
@@ -145,7 +147,9 @@ fn build_table(cx: &Ctx, t: usize, depth: u32) -> Option<Rc<[(String, Item)]>> {
         let Some(target) = import_target(cx, t, &imp.from) else {
             continue;
         };
-        for (name, item) in table(cx, target, depth + 1)?.iter() {
+        let names = table(cx, target, depth + 1)?;
+        add_export_work(names.len() as u64);
+        for (name, item) in names.iter() {
             if !decided.contains_key(name) {
                 decided.insert(name.clone(), Some(*item));
             }
@@ -276,14 +280,14 @@ pub(crate) fn imports_of<'m>(
     m: usize,
 ) -> impl Iterator<Item = (&'m ast::Import, bool)> + 'm {
     let modules = cx.modules;
-    modules[m]
-        .ast
-        .items
-        .iter()
-        .filter_map(|item| match &item.kind {
+    modules[m].ast.items.iter().filter_map(|item| {
+        // The items looked at, for the scaling tests (`check_work`).
+        add_export_work(1);
+        match &item.kind {
             ast::ItemKind::Import(imp) => Some((imp, item.exported)),
             _ => None,
-        })
+        }
+    })
 }
 
 fn export_at(cx: &Ctx, t: usize, name: &str, depth: u32) -> Option<Item> {
@@ -430,6 +434,7 @@ fn export_names(
     }
     seen.insert(t, depth);
     let mut complete = true;
+    add_export_work(cx.scopes[t].exports.len() as u64);
     out.extend(cx.scopes[t].exports.iter().cloned());
     for (imp, exported) in imports_of(cx, t) {
         if !exported {
@@ -440,6 +445,7 @@ fn export_names(
             out.push(bound.clone());
             let (members, members_complete) = list_members(cx, t, imp, n, depth);
             complete &= members_complete;
+            add_export_work(1 + members.len() as u64);
             out.extend(members.into_iter().map(|x| format!("{bound}.{x}")));
         }
         if imp.all {
