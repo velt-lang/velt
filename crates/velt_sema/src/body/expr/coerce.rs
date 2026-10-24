@@ -70,6 +70,14 @@ impl FnCx<'_, '_> {
             },
             Err(h) => h,
         };
+        // `T extends readonly number[]` where an array of the bound's elements is expected.
+        let h = match self.array_bound_target(&h, exp) {
+            true => match self.array_bound_value(h) {
+                Ok(a) => return Ok(a),
+                Err(h) => h,
+            },
+            false => h,
+        };
         let h = match self.try_coerce_typed(h, exp) {
             Ok(h) => return Ok(h),
             Err(h) => h,
@@ -388,6 +396,24 @@ impl FnCx<'_, '_> {
             return false;
         };
         x == y && e != f && self.cx.error_outside(Some(f), Some(e)).is_none()
+    }
+
+    /// Is `h` a value of a type parameter bounded by an array type whose elements `exp`'s are
+    /// (`array_bound_value`)?
+    fn array_bound_target(&mut self, h: &hir::Expr, exp: TyId) -> bool {
+        let TyKind::Param(p) = *self.cx.ty.kind(h.ty) else {
+            return false;
+        };
+        let elem = |cx: &crate::ctx::Ctx, t: TyId| match cx.ty.kind(t) {
+            TyKind::Array(e) => Some(*e),
+            _ => None,
+        };
+        let want = elem(self.cx, exp);
+        want.is_some()
+            && self
+                .cx
+                .constraint_of(p)
+                .is_some_and(|b| elem(self.cx, b) == want)
     }
 
     /// `Promise<A, E>` where `Promise<B, E>` is expected and `B` is `unknown` / `any`, or `void`

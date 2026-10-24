@@ -291,6 +291,10 @@ impl FnCx<'_, '_> {
             Ok(call) => return call,
             Err(obj) => obj,
         };
+        let obj = match self.bound_member(obj, &prop.name, want, span) {
+            Ok(h) => return h,
+            Err(obj) => obj,
+        };
         match self.field_access(obj, prop, want, span) {
             Some(h) => h,
             None => self.error_expr(span),
@@ -529,6 +533,43 @@ impl FnCx<'_, '_> {
         Ok(match elem.filter(|e| self.cx.dynamic(*e).is_none()) {
             Some(e) => self.intrinsic(hir::Intrinsic::AnyTo, vec![read], e, span),
             None => read,
+        })
+    }
+
+    /// `x.name` read where `x`'s type is a type parameter bounded by a type that is no
+    /// interface or object type (`T extends readonly number[]`, `T extends string`; issue
+    /// #1212): the member of the value boxed as an `any` (an `any`; `length` of an array or
+    /// string bound is a number). `Err(obj)` for anything else.
+    fn bound_member(
+        &mut self,
+        obj: hir::Expr,
+        name: &str,
+        want: Want,
+        span: Span,
+    ) -> Result<hir::Expr, hir::Expr> {
+        let TyKind::Param(p) = *self.cx.ty.kind(obj.ty) else {
+            return Err(obj);
+        };
+        let interface_bound = self.bounds.get(p as usize).is_some_and(|b| !b.is_empty());
+        let Some(c) = self.cx.constraint_of(p).filter(|_| !interface_bound) else {
+            return Err(obj);
+        };
+        if want == Want::BorrowMut || matches!(self.cx.ty.kind(c), TyKind::FnPtr { .. }) {
+            return Err(obj);
+        }
+        let length = name == "length"
+            && (matches!(self.cx.ty.kind(c), TyKind::Array(_)) || c == self.cx.ty.str_);
+        let boxed = self.generic_as_any(obj)?;
+        let read = match self.dynamic_get(boxed, name, want, span) {
+            Ok(h) => h,
+            Err(_) => return Ok(self.error_expr(span)),
+        };
+        Ok(match length {
+            true => {
+                let f64_ = self.cx.ty.f64;
+                self.intrinsic(hir::Intrinsic::AnyTo, vec![read], f64_, span)
+            }
+            false => read,
         })
     }
 
