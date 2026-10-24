@@ -244,8 +244,16 @@ impl FnCx<'_, '_> {
         let sty = s.ty;
         let union = self.cx.union_def(sty).map(|(d, _)| d);
         let members = self.cx.union_members(sty).unwrap_or_else(|| vec![sty]);
+        // The members a test narrowed the operand to (`typeof o === "object" && "k" in o`):
+        // the others cannot be there, and are not asked about.
+        let live = self.narrowed_variants(&s);
+        let dead = |v: usize| live.as_ref().is_some_and(|vs| !vs.contains(&(v as u32)));
         let mut found = Vec::with_capacity(members.len());
-        for &m in &members {
+        for (v, &m) in members.iter().enumerate() {
+            if dead(v) {
+                found.push((Presence::No, vec![]));
+                continue;
+            }
             match self.in_test(m, &key, lhs.span, true) {
                 Some(p) => found.push(p),
                 None => return self.error_expr(span),
@@ -254,6 +262,9 @@ impl FnCx<'_, '_> {
         let mut arms = vec![];
         let b = self.cx.ty.bool_;
         for (v, (&m, (p, held))) in members.iter().zip(&found).enumerate() {
+            if dead(v) {
+                continue;
+            }
             if *p == Presence::No {
                 if let InKey::Str(k) = &key {
                     // A copy made for a narrower object type lacks the original's other fields.

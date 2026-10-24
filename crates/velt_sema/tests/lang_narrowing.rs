@@ -159,3 +159,57 @@ fn instanceof_downcasts_test_the_class_and_read_as_the_subclass() {
     );
     assert!(r.contains("no field `x` on type `A`"), "{r}");
 }
+
+#[test]
+fn nullable_unions_narrow_to_some_members() {
+    ok_src(
+        "interface V { t: string }
+         function f(x: V | string | number | null): V | string | null {
+           if (typeof x === \"number\") { return null; } return x; }
+         function g(x: string | null | undefined): string | null { const y = x ?? null; return y; }
+         function main() { console.log(f(1), g(undefined)); }",
+    );
+    // What the test leaves must fit: `string` is still possible here.
+    let r = err_src(
+        "interface V { t: string }
+         function f(x: V | string | number | null): V | null {
+           if (typeof x === \"number\") { return null; } return x; }
+         function main() { console.log(f(1)); }",
+    );
+    assert!(r.contains("mismatched types"), "{r}");
+}
+
+#[test]
+fn union_fields_narrow_to_some_members_and_call_their_function() {
+    ok_src(
+        "interface P { f?: string | number | (() => string) }
+         function f(p: P): string {
+           if (typeof p.f === \"function\") { return p.f(); }
+           const r: string | number | undefined = p.f;
+           return `${r}`;
+         }
+         function main() { console.log(f({ f: () => \"a\" })); }",
+    );
+    let r = err_src(
+        "interface P { f: string | (() => string) }
+         function f(p: P): string { return p.f(); }
+         function main() { console.log(f({ f: \"a\" })); }",
+    );
+    assert!(r.contains("cannot call `f` of type"), "{r}");
+}
+
+#[test]
+fn any_converts_to_a_union_with_one_interface_member() {
+    ok_src(
+        "interface V { t: string }
+         function f(a: any): V | string | number { return a; }
+         function main() { console.log(f(\"s\")); }",
+    );
+    // Two interfaces cannot be told apart at run time.
+    let r = err_src(
+        "interface V { t: string } interface W { w: number }
+         function f(a: any): V | W | string { return a; }
+         function main() { console.log(f(\"s\")); }",
+    );
+    assert!(r.contains("no run-time test for"), "{r}");
+}

@@ -62,10 +62,33 @@ impl FnCx<'_, '_> {
     /// Union value `h` → union `exp` (`targets`): every member `h` can hold is a member of
     /// `exp` or converts to one (a literal to its base, a subclass to its base class, ...).
     fn retag(&mut self, h: hir::Expr, exp: TyId, targets: &[TyId]) -> Result<hir::Expr, hir::Expr> {
+        let live = self.narrowed_variants(&h);
+        self.retag_in(h, exp, targets, live)
+    }
+
+    /// Union value `h` that holds one of its variants `live` (`None`: any) → union `exp`, as
+    /// [`Self::retag`] (a field read a test narrowed: `field_narrow`).
+    pub(crate) fn retag_live(
+        &mut self,
+        h: hir::Expr,
+        exp: TyId,
+        live: Option<Vec<u32>>,
+    ) -> Result<hir::Expr, hir::Expr> {
+        let targets = self.cx.union_members(exp).unwrap_or_default();
+        self.retag_in(h, exp, &targets, live)
+    }
+
+    fn retag_in(
+        &mut self,
+        h: hir::Expr,
+        exp: TyId,
+        targets: &[TyId],
+        live: Option<Vec<u32>>,
+    ) -> Result<hir::Expr, hir::Expr> {
         let Some((tdef, targs)) = self.cx.union_def(exp) else {
             return Err(h);
         };
-        self.map_members(h, exp, &mut |s, value| {
+        self.map_members_in(h, exp, live, &mut |s, value| {
             if let Some(j) = targets.iter().position(|t| *t == value.ty) {
                 return Some(s.union_variant(tdef, &targs, j as u32, value, exp));
             }
@@ -205,18 +228,10 @@ impl FnCx<'_, '_> {
     }
 
     /// `T | null` → `U | null` for a type `U` that `T` converts to (a union, an interface, a
-    /// base class, ...): `match (h) { Some(v) => Some(<v as U>), null => null }`.
-    pub(super) fn option_to_option(
-        &mut self,
-        h: hir::Expr,
-        exp: TyId,
-    ) -> Result<hir::Expr, hir::Expr> {
-        self.option_to_option_narrowed(h, exp, None)
-    }
-
-    /// [`Self::option_to_option`] for a `T | null` whose union `T` is narrowed to `members`
-    /// (the variants a flow test left): the payload converts as the narrowed union.
-    pub(super) fn option_to_option_narrowed(
+    /// base class, ...): `match (h) { Some(v) => Some(<v as U>), null => null }`. When `T` is a
+    /// union narrowed to `members` (the variants a flow test left), the payload converts as the
+    /// narrowed union.
+    pub(crate) fn option_to_option_narrowed(
         &mut self,
         h: hir::Expr,
         exp: TyId,
