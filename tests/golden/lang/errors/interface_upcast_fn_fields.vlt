@@ -1,0 +1,36 @@
+// What does not convert to an interface with methods yet (#941): a literal property holding
+// a function that may throw, and a plain object literal (no getters or methods using `this`)
+// stored in a variable first.
+
+interface V {
+  readonly value: number;
+  show(k: number): string;
+}
+
+interface P {
+  x: number;
+  show(): string;
+}
+
+function main(): void {
+  const o = {
+    get value() {
+      return 1;
+    },
+    show(k: number) {
+      if (k < 0) {
+        throw new Error("negative");
+      }
+      return "x" + k;
+    },
+  };
+  const v: V = o;
+
+  const p = {
+    x: 1,
+    show() {
+      return "p";
+    },
+  };
+  const q: P = p;
+}

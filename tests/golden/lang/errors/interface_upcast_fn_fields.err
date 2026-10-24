@@ -1,0 +1,8 @@
+interface_upcast_fn_fields.vlt:27:16: error: mismatched types
+  = note: expected V, found { get value(): f64; show: (f64) => string throws Error }
+  = note: `{ get value(): f64; show: (f64) => string throws Error }` does not declare `implements V`
+  = note: `show` holds a function that may throw, which does not fill the method slot of `V` yet; write the literal where `V` is expected (`const v: V = { … }`)
+
+interface_upcast_fn_fields.vlt:35:16: error: mismatched types
+  = note: expected P, found { x: f64; show: () => string }
+  = note: `{ x: f64; show: () => string }` does not declare `implements P`

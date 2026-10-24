@@ -44,6 +44,14 @@ pub(crate) enum Target {
         fn_ty: TyId,
         this: Option<(TyId, u32)>,
     },
+    /// The function value (of type `fn_ty`, which throws nothing) getter `def` with these type
+    /// args returns for the receiver, called with the parameters: a field holding a function
+    /// that fills a method's slot (`synth_ifaces/upcasts.rs`).
+    Getter {
+        def: DefId,
+        targs: Vec<TyId>,
+        fn_ty: TyId,
+    },
 }
 
 /// The type a synthesized method belongs to.
@@ -145,6 +153,25 @@ pub(crate) fn synth_method(
                     base: Box::new(this),
                     index,
                     mode: UseMode::Borrow,
+                },
+                ty: fn_ty,
+                span,
+            }))
+        }
+        Target::Getter {
+            def: g,
+            targs,
+            fn_ty,
+        } => {
+            let this = hir::Expr {
+                kind: H::Local(LocalId(0), UseMode::Borrow),
+                ty: self_ty,
+                span,
+            };
+            Callee::Indirect(Box::new(hir::Expr {
+                kind: H::Call {
+                    callee: Callee::Def(g, targs),
+                    args: vec![this],
                 },
                 ty: fn_ty,
                 span,

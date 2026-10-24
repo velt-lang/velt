@@ -2578,9 +2578,17 @@ console.log(app, router.installs); // [ 'router' ] 1
 - A getter fills the slot of an interface field when the literal's value is converted to an
   interface with methods (`o as V`, `const v: V = o` with
   `interface V { readonly value: number; show(): string }`), as in TypeScript; the getter runs
-  on each read. Writing the field through the interface calls the literal's setter; without one
-  it is an error (Node throws a `TypeError`). An interface with only fields is an object type,
-  which such a value does not convert to yet.
+  on each read. Writing the field through the interface calls the literal's setter, which takes
+  the field's type (a setter taking another type, also a wider union, is an error where the
+  literal converts); without a setter, writing it is an error (Node throws a `TypeError`). A
+  property holding a function, a method that doesn't use `this` or an arrow
+  (`show: () => "x"`), fills the slot of a method with the same parameters and result, unless
+  the function may throw (an error for now: write the literal where the interface is
+  expected). An interface with only fields is an object type, which such a value does not
+  convert to yet (#1510). A plain literal, with no getters or setters and no method using
+  `this` (`const p = { x: 1, show() { return "p"; } }`), is an object of its own type, which
+  does not convert to an interface with methods once stored: write it where the interface is
+  expected (`const p: P = { … }`).
 - Not supported yet: `this` in a method of a literal whose expected type is an object type
   (`{ x: number; norm(): number }`, whose fields hold plain functions) or `any`; declare an
   interface instead. Calling such a method with another `this` (`.call`, `.apply`, `.bind`) is
