@@ -315,7 +315,7 @@ impl FnCx<'_, '_> {
         let hint = exp.unwrap_or(mid);
         let d = self.expr(default, Some(hint), crate::body::Want::Move);
         let v = self.mk(H::Local(l, mode), mid, span);
-        let (v, d, ty) = self.nullish_join(v, d, mid);
+        let (v, d, ty) = self.nullish_join(v, d, mid, exp);
         let sty = s.ty;
         let bind = self.pat(P::Binding(l, mode), mid, span);
         let arms = vec![

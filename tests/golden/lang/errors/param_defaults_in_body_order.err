@@ -1,0 +1,10 @@
+param_defaults_in_body_order.vlt:13:51: error: a parameter default after one the function applies itself needs the parameter's written type
+  = note: JavaScript runs parameter defaults in order. An earlier default uses an earlier parameter, `this` or a closure, so the function applies it when the call starts, and this one must run after it, there too. Write the parameter's type (`q: T = …`)
+param_defaults_in_body_order.vlt:15:66: error: a parameter default after one the function applies itself cannot be on a parameter whose type includes `null` yet
+  = note: JavaScript runs parameter defaults in order. An earlier default uses an earlier parameter, `this` or a closure, so the function applies it when the call starts, and this one must run after it, there too. Velt can't apply it there for a type that includes `null`; take `q?: T | null` and write `const r = q === undefined ? f() : q;` in the body
+param_defaults_in_body_order.vlt:20:42: error: a parameter default cannot use an earlier parameter (`a`) yet
+  = note: Velt applies such a default when the call starts, which it can't do yet for a parameter whose type includes `null`; take `q?: T | null` and write `const r = q === undefined ? p + 1 : q;` in the body
+param_defaults_in_body_order.vlt:25:38: error: a parameter default cannot use an earlier parameter (`a`) yet
+  = note: a generator's parameter defaults are evaluated where it is called, so they can't use earlier parameters yet; compute the value in the body instead (`q?: number`, then `const r = q ?? p + 1;`)
+param_defaults_in_body_order.vlt:30:45: error: a parameter default cannot use an earlier parameter (`a`) yet
+  = note: a generator's parameter defaults are evaluated where it is called, so they can't use earlier parameters yet; compute the value in the body instead (`q?: number`, then `const r = q ?? p + 1;`)

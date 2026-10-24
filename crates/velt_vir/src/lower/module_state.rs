@@ -70,9 +70,16 @@ impl Cx<'_> {
 }
 
 impl FnLower<'_, '_> {
-    /// `let local = init` in a global's initializer, lowered by the module state's initializer
-    /// (`init_locals`): the local belongs to no function body (each initializer numbers its own
-    /// from 0), so it gets a fresh VIR local of the initializer's type here.
+    /// Is `local` one of the locals of an expression checked outside any body being lowered
+    /// (`init_locals`), declared where it is bound?
+    pub(super) fn init_local(&self, local: hir::LocalId) -> bool {
+        self.init_locals.is_some_and(|from| local.0 >= from)
+    }
+
+    /// `let local = init` in an expression checked outside any body (`init_locals`: a global's
+    /// initializer, lowered by the module state's initializer, or a field initializer): the
+    /// local belongs to no function body (each initializer numbers its own from 0), so it gets a
+    /// fresh VIR local of the initializer's type here.
     pub(super) fn declare_init_local(&mut self, local: hir::LocalId, init: Option<&hir::Expr>) {
         let Some(e) = init else {
             super::ice("a `let` without an initializer in a global's initializer")
@@ -195,7 +202,7 @@ impl FnLower<'_, '_> {
             .unwrap_or_default()
             .to_vec();
         let mut lw = FnLower::bare(cx, vec![]);
-        lw.init_locals = true;
+        lw.init_locals = Some(0);
         let state = lw.new_local(Ty::Ptr, Some("state".into()));
         lw.push_scope(ScopeKind::Block);
         for (i, d) in (from as usize..).zip(slots) {

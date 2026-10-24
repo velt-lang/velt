@@ -164,8 +164,7 @@ impl<'a> Parser<'a> {
                 name.span,
             );
         }
-        let mut sig = self.parse_sig_rest(lo, name, mods.is_async)?;
-        sig.is_generator = star.is_some();
+        let sig = self.parse_sig_rest(lo, name, mods.is_async, star.is_some())?;
         self.check_accessor(&sig, &mods);
         if self.at(Tok::Semi) || (!self.at(Tok::LBrace) && self.line_break_before()) {
             return self.method_overload(sig, &mods);
@@ -472,7 +471,7 @@ impl<'a> Parser<'a> {
                 name.span,
             );
         }
-        let sig = self.parse_sig_rest(lo, name, mods.is_async)?;
+        let sig = self.parse_sig_rest(lo, name, mods.is_async, false)?;
         self.check_accessor(&sig, &mods);
         let body = if self.at(Tok::LBrace) {
             Some(self.parse_fn_body()?)

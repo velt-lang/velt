@@ -77,7 +77,15 @@ impl FnCx<'_, '_> {
             let new: Vec<(String, Value)> = match p {
                 ast::ObjectProp::Spread(e) => {
                     let before = lets.len();
-                    let fields = self.spread_fields(e, &mut lets, false);
+                    // `const o: any = { ...{ q: c ? 1 : a.q } }`: the literal spread is checked
+                    // as one an `any` holds, so its values keep their `any` (`any_join`).
+                    let any = match (&e.kind, exp) {
+                        (ast::ExprKind::Object(_), Some(t)) if self.cx.dynamic(t).is_some() => {
+                            Some(t)
+                        }
+                        _ => None,
+                    };
+                    let fields = self.spread_fields(e, any, &mut lets, false);
                     parts.push(self.spread_part(e.span, &lets[before..], lets.len()));
                     (fields.into_iter())
                         .map(|(n, h, src)| (n, Value::Read(h, src)))
@@ -208,7 +216,7 @@ impl FnCx<'_, '_> {
         e: &ast::Expr,
         lets: &mut Vec<hir::Stmt>,
     ) -> Vec<(String, hir::Expr, bool)> {
-        self.spread_fields(e, lets, true)
+        self.spread_fields(e, None, lets, true)
             .into_iter()
             .map(|(n, h, src)| {
                 let optional = src.optional && !(src.presence && self.is_three_state(h.ty));
@@ -223,10 +231,11 @@ impl FnCx<'_, '_> {
     fn spread_fields(
         &mut self,
         e: &ast::Expr,
+        hint: Option<TyId>,
         lets: &mut Vec<hir::Stmt>,
         record_ok: bool,
     ) -> Vec<(String, hir::Expr, Src)> {
-        let h = self.expr(e, None, Want::Borrow);
+        let h = self.expr(e, hint, Want::Borrow);
         if !record_ok && self.record_args(h.ty).is_some() {
             let tn = self.cx.display(h.ty);
             self.cx.error(
