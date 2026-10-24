@@ -25,6 +25,7 @@ libm = "0.2.16"
 libmimalloc-sys = { version = "0.1.49", default-features = false, optional = true }
 lock_api = "0.4.14"
 memchr = "2.8.3"
+mio = { version = "1.2.3", features = ["os-poll", "net", "os-ext"] }
 mimalloc = { version = "0.1.52", default-features = false, optional = true }
 parking_lot = "0.12.5"
 parking_lot_core = "0.9.12"
@@ -46,7 +47,7 @@ libc = "0.2.189"
 
 [target.'cfg(windows)'.dependencies]
 # Listener handover in dev mode (named pipe + WSADuplicateSocketW).
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Networking_WinSock", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Pipes"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Networking_WinSock", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Pipes", "Win32_System_Threading"] }
 
 [features]
 # mimalloc is the global allocator by default; build with --no-default-features for the system allocator.

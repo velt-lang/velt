@@ -6,8 +6,9 @@
 # Usage: bench/web/run.sh   (needs wrk, python3, the toolchains of the chosen SERVERS and a
 #                            database from bench/web/db/db.sh up)
 # Knobs (environment):
-#   SERVERS         velt velt-tsx node node-cluster bun go rust (also: velt-per-core, the Velt
-#                   server under VELT_SCHEDULER=per-core)
+#   SERVERS         velt velt-tsx node node-cluster bun go rust (also: velt-stealing and
+#                   velt-per-core, the Velt server under VELT_SCHEDULER=stealing or per-core:
+#                   tokio's schedulers, for comparison with the default)
 #   TESTS           json plaintext db queries fortunes updates
 #   QUICK=1         5 s runs, 2 s warm-up and fewer levels (a smoke run; numbers mean little)
 #   DURATION        seconds per measurement (15; QUICK 5)      WARMUP  seconds (5; QUICK 2)
@@ -90,7 +91,7 @@ find_velt() {
 
 build() {
   case "$1" in
-    velt | velt-per-core) "$(find_velt)" build --release "$HERE/velt/server.vlt" -o "$WORK/velt-server" ;;
+    velt | velt-stealing | velt-per-core) "$(find_velt)" build --release "$HERE/velt/server.vlt" -o "$WORK/velt-server" ;;
     velt-tsx) "$(find_velt)" build --release "$HERE/velt-tsx/server.vlt" -o "$WORK/velt-tsx-server" ;;
     node | node-cluster)
       [ -d "$HERE/node/node_modules" ] || (cd "$HERE/node" && npm ci --no-audit --no-fund) ;;
@@ -106,6 +107,7 @@ start() {
   local log="$WORK/$1.log"
   case "$1" in
     velt) ${SERVER_PIN[@]+"${SERVER_PIN[@]}"} "$WORK/velt-server" "$2" >"$log" 2>&1 & ;;
+    velt-stealing) VELT_SCHEDULER=stealing ${SERVER_PIN[@]+"${SERVER_PIN[@]}"} "$WORK/velt-server" "$2" >"$log" 2>&1 & ;;
     velt-per-core) VELT_SCHEDULER=per-core ${SERVER_PIN[@]+"${SERVER_PIN[@]}"} "$WORK/velt-server" "$2" >"$log" 2>&1 & ;;
     velt-tsx) ${SERVER_PIN[@]+"${SERVER_PIN[@]}"} "$WORK/velt-tsx-server" "$2" >"$log" 2>&1 & ;;
     node) ${SERVER_PIN[@]+"${SERVER_PIN[@]}"} node "$HERE/node/server.mjs" "$2" >"$log" 2>&1 & ;;

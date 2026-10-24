@@ -15,6 +15,7 @@
 //! would cost every read); `abort` shuts the socket down, which ends the read, and the read then
 //! reports the abort instead of the end of the stream.
 
+use super::sys::TcpStream;
 use super::utf8::Utf8Decoder;
 use std::future::Future;
 use std::io;
@@ -23,7 +24,6 @@ use std::pin::Pin;
 use std::sync::atomic::{fence, AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf};
-use tokio::net::TcpStream;
 use tokio::sync::{Mutex as AsyncMutex, Notify};
 
 /// Any byte stream besides a raw TCP socket (TLS over TCP, an upgraded HTTP connection).
@@ -124,28 +124,52 @@ fn aborted_error() -> io::Error {
     io::Error::new(io::ErrorKind::ConnectionAborted, "the stream was aborted")
 }
 
+/// Reads up to this size go through [`READ_SCRATCH`].
+const SCRATCH: usize = 256 << 10;
+
+thread_local! {
+    static READ_SCRATCH: std::cell::RefCell<Vec<u8>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
 fn buffer(max: u64) -> Vec<u8> {
     Vec::with_capacity(max.clamp(1, 16 << 20) as usize)
 }
 
 /// Read what is available (at least 1 byte, at most `max`; empty only at end of stream).
 pub(crate) async fn read_chunk(stream: &TcpStream, max: u64) -> io::Result<Vec<u8>> {
+    let limit = usize::try_from(max).unwrap_or(usize::MAX);
     loop {
         // The buffer is allocated once there is something to read, so a connection waiting
         // for data holds none (a server's idle connections would otherwise each keep `max`).
         stream.readable().await?;
-        let mut buf = buffer(max);
-        match stream.try_read_buf(&mut buf) {
+        if max > SCRATCH as u64 {
+            let mut buf = buffer(max);
+            match stream.try_read_buf(&mut buf, limit) {
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
+                Err(e) => return Err(e),
+                Ok(_) => return Ok(buf),
+            }
+        }
+        // Read into this thread's scratch buffer and keep only what came: a message is usually
+        // far smaller than `max`, and a buffer of `max` for each read costs more than the copy.
+        let r = READ_SCRATCH.with(|scratch| {
+            let mut scratch = scratch.borrow_mut();
+            scratch.clear();
+            scratch.reserve(max as usize);
+            stream
+                .try_read_buf(&mut scratch, limit)
+                .map(|_| scratch.to_vec())
+        });
+        match r {
             Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
-            Err(e) => return Err(e),
-            Ok(_) => return Ok(buf),
+            r => return r,
         }
     }
 }
 
 fn shutdown_socket(stream: &TcpStream, how: std::net::Shutdown) -> io::Result<()> {
     // tokio only offers shutdown through `AsyncWrite` (needs `&mut`); go to the socket directly.
-    socket2::SockRef::from(stream).shutdown(how)
+    stream.sock_ref().shutdown(how)
 }
 
 impl StreamObj {
@@ -377,7 +401,7 @@ impl StreamObj {
             return shutdown_socket(s, std::net::Shutdown::Write);
         }
         let obj = self.clone();
-        crate::task::runtime::handle().spawn(async move {
+        crate::task::runtime::spawn(async move {
             let Io::Lazy(lazy) = &obj.io else { return };
             let _ = tokio::time::timeout(SHUTDOWN, async {
                 match obj.until_abort(obj.set_up(lazy)).await {

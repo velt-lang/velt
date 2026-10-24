@@ -9,7 +9,7 @@ use crate::task::leaf::new_leaf;
 use crate::task::local::TimerLeaf;
 use crate::task::VeltFut;
 use std::time::Duration;
-use tokio::time::Instant;
+use std::time::Instant;
 
 /// Future completing `ms` milliseconds (negative = 0) after this call. Result: none (unit).
 #[no_mangle]

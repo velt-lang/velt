@@ -510,6 +510,12 @@ pub(crate) unsafe fn deliver_unadopted(f: *mut VeltFut) {
     node::deliver_unadopted(f)
 }
 
+/// Where finished started promise `f` threw its error (unknown if it did not, or threw it in
+/// the standard library).
+pub(crate) unsafe fn node_loc(f: *mut VeltFut) -> crate::panic::ThrowLoc {
+    node::loc_of(f)
+}
+
 /// The task that runs the promises code outside a task hands to tasks (a holder of a shared
 /// promise given to a spawned call in a synchronous `main`, task/shared.rs): like any task it
 /// has an id and a set, so the promise is shared on it. Code outside a task enters it for each
@@ -536,7 +542,7 @@ fn outside_home_step(f: impl FnOnce()) {
     let mut home = OUTSIDE_HOME.lock();
     home.4 |= module_state::used();
     // Its promises may start timers and I/O, which need the runtime.
-    let _rt = super::runtime::handle().enter();
+    let _rt = super::runtime::enter();
     let mut f = Some(f);
     // SAFETY: the no-op waker is static; the set is the home's own.
     unsafe {

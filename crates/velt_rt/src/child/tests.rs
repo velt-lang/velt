@@ -94,7 +94,7 @@ fn spawned_child_is_reaped_and_killable() {
         velt_rt_child_kill(child, libc::SIGTERM, err.as_mut_ptr());
         assert_eq!(err.assume_init().code, 0);
         let mut status = super::CHILDREN.get(child).expect("open").status.clone();
-        crate::task::runtime::handle().block_on(async {
+        crate::task::runtime::runtime().block_on(async {
             status
                 .wait_for(Option::is_some)
                 .await

@@ -4,7 +4,7 @@
 use super::body::RespBody;
 use super::response::{register, velt_rt_http_resp_drop, RespObj};
 use super::stream::*;
-use crate::task::runtime::handle;
+use crate::task::runtime::runtime;
 use bytes::Bytes;
 use futures_util::FutureExt;
 use http_body_util::BodyExt;
@@ -16,7 +16,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::sync::Arc;
 
 fn block_on<F: Future>(f: F) -> F::Output {
-    handle().block_on(f)
+    runtime().block_on(f)
 }
 
 /// The next frame: `Some(Ok(data))`, `Some(Err(()))` for an aborted body, `None` at the end.
@@ -159,7 +159,7 @@ fn serve_once(resp: RespObj) -> u16 {
     listener.set_nonblocking(true).unwrap();
     let port = listener.local_addr().unwrap().port();
     let resp = Arc::new(parking_lot::Mutex::new(Some(resp)));
-    handle().spawn(async move {
+    runtime().spawn(async move {
         let listener = tokio::net::TcpListener::from_std(listener).unwrap();
         let (io, _) = listener.accept().await.unwrap();
         let svc = hyper::service::service_fn(move |_req| {

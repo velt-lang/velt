@@ -55,6 +55,8 @@ pub unsafe extern "C" fn velt_rt_udp_send_to(
     data: *const VeltBytes,
     addr: *const VeltStr,
 ) -> *mut VeltFut {
+    // A hand-off: the receiver (often a task of this program) may get the datagram at once.
+    crate::io::publish_before_handoff();
     let data = (*data).as_bytes().to_vec();
     let addr = text_arg(addr);
     SOCKETS.op::<u64>(u, |sock| {
