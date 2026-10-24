@@ -131,7 +131,10 @@ impl FnLower<'_, '_> {
         if self.cx.view_fn().is_none() {
             self.assign(Place::local(d), Rvalue::Use(u));
             self.assign(Place::local(t), Rvalue::Use(table));
-            return (Operand::Copy(Place::local(d)), Operand::Copy(Place::local(t)));
+            return (
+                Operand::Copy(Place::local(d)),
+                Operand::Copy(Place::local(t)),
+            );
         }
         let (pd, pty) = self.proxy_def();
         let obj = Place::local(self.temp(Ty::Ptr));
@@ -152,7 +155,10 @@ impl FnLower<'_, '_> {
         self.assign(Place::local(t), Rvalue::Use(table));
         self.goto(join);
         self.switch_to(join);
-        (Operand::Copy(Place::local(d)), Operand::Copy(Place::local(t)))
+        (
+            Operand::Copy(Place::local(d)),
+            Operand::Copy(Place::local(t)),
+        )
     }
 }
 
