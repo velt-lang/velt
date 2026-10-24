@@ -174,7 +174,9 @@ nothing; `null` means success).
   object `Uncaught { code: 503 }`. `JSON.parse`'s `JsonError` reports
   `Uncaught SyntaxError: <message>`, as Node reports the error `JSON.parse` throws. An `Error`
   held in an `any` or `unknown` (`const e: any = new RangeError("x"); throw e;`, or passed to a
-  generator's `throw()`) gets the `Error` header too (`Uncaught RangeError: x`).
+  generator's `throw()`) gets the `Error` header too (`Uncaught RangeError: x`). Only the
+  first uncaught error is reported, also when tasks running in parallel fail at once
+  ([Async](async.md)).
 - Node's report shows where an `Error` was **created** (the top of its stack); Velt's location
   is where it was last thrown. They differ for a rethrow (`catch (e) { throw e; }`) and for an
   error made earlier than it is thrown (#356).

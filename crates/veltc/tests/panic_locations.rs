@@ -1,6 +1,7 @@
 //! Panic and uncaught-error messages name their source location (stderr; the goldens under
 //! `tests/golden/lang/panic_*` check stdout and exit codes). Each program runs in debug and
-//! release mode, plus release with the LLVM backend when clang is installed.
+//! release mode, plus release with the LLVM backend when clang is installed. An uncaught error is
+//! reported once.
 
 use std::path::{Path, PathBuf};
 
@@ -81,6 +82,16 @@ const CASES: &[(&str, i32, &str)] = &[
         "panic_uncaught_std",
         1,
         "Uncaught IoError: ENOENT: no such file or directory, lstat 'velt-missing-file-b' at tests/golden/lang/panic_uncaught_std.vlt:7:3",
+    ),    // Reported once (#1497): the task that started the promise used to report it too.
+    (
+        "process_lifetime_sync_main_rejection",
+        1,
+        "Uncaught Bad [Error]: bad 3 at tests/golden/lang/process_lifetime_sync_main_rejection.vlt:7:5",
+    ),
+    (
+        "panic_uncaught_two_tasks",
+        1,
+        "Uncaught Bad [Error]: bad 3 at tests/golden/lang/panic_uncaught_two_tasks.vlt:8:5",
     ),
 ];
 
@@ -118,7 +129,13 @@ fn panics_report_their_source_location() {
                 .expect("run program");
             let stderr = String::from_utf8_lossy(&r.stderr).replace("\r\n", "\n");
             let code = r.status.code().unwrap_or(-1);
-            if code != *want_code || !stderr.lines().any(|l| l == *want) {
+            // Reported once: a second report (another task failing at the same time) would
+            // follow the first before the process ends.
+            let reports = stderr
+                .lines()
+                .filter(|l| l.starts_with("Uncaught "))
+                .count();
+            if code != *want_code || !stderr.lines().any(|l| l == *want) || reports > 1 {
                 failures.push(format!(
                     "{name} {mode:?}: exit {code} (want {want_code})\n  want: {want}\n  stderr: {stderr}"
                 ));

@@ -494,6 +494,7 @@ message). Allocation sites are not recorded. The first violation prints `velt de
 |---|---|---|
 | `velt_rt_panic` | `(const VeltStr* msg) -> noreturn` | flush stdout, print `panic: <msg>\n` to stderr, exit 101 |
 | `velt_rt_exit` | `(int32_t code) -> noreturn` | flush stdout, exit |
+| `velt_rt_uncaught_report` | `(void)` | called before an `Uncaught …` report is written (the report then ends the process): returns on the first thread to report (and on it again); any other thread waits until the process ends, so one report is printed (#1497). (additive) |
 | `velt_rt_set_throw_loc` | `(const VeltStr* loc)` | per-thread slot: where the error being thrown comes from (static ` at <path>:<line>:<col>` string, or null) |
 | `velt_rt_throw_loc` | `(void) -> const VeltStr*` | the slot's value (null if never set); appended to `Uncaught …` reports |
 | `velt_rt_pow_f64` | `(double a, double b) -> double` | |

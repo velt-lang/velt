@@ -784,7 +784,12 @@ async function main() {
   first. Awaiting it (or chaining `catch`, or handing it to a combinator) before then handles
   it. A promise or handle handed to a
   combinator (`Promise.race`, `all`, `any`) is handled, and so is a `scope.spawn` child, whose
-  error fails its `taskScope`.
+  error fails its `taskScope`. A stored promise handed to another task (`spawn(use(p))`, a
+  channel) is that task's to await: if it rejects, the error is reported once, by the task that
+  holds it then (or as that task's own error), not by the task that started it.
+- Only the first uncaught error is reported, as in Node, which stops at it: when tasks on
+  different workers fail at the same moment, the process ends with one report (which one goes
+  first depends on the scheduling).
 
 ## `new Promise`
 
