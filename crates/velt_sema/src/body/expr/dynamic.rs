@@ -76,7 +76,7 @@ impl FnCx<'_, '_> {
         let mut d = Diagnostic::error(format!("an `{f}` value cannot be a `never`"), h.span)
             .with_note("no value has type `never`");
         if self.cx.ty.bigint_named {
-            d = d.with_note("a `bigint` is a `never` too: it has no values in Velt yet (#1088)");
+            d = d.with_note(crate::types::BIGINT_NEVER_NOTE);
         }
         self.cx.error(d);
         self.error_expr(h.span)

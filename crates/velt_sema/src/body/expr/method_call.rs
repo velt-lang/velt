@@ -415,6 +415,9 @@ impl FnCx<'_, '_> {
             format!("no method named `{}` found for type `{tn}`", prop.name),
             prop.span,
         );
+        if self.cx.ty.bigint_named && tn.contains("never") {
+            d = d.with_note(crate::types::BIGINT_NEVER_NOTE);
+        }
         if recv.ty == self.cx.ty.str_ && prop.name == "length" {
             d = Diagnostic::error(
                 "`length` is a property, not a method; write `s.length`",

@@ -213,7 +213,10 @@ usable and no copy method is needed.
   primitive (`+` asks for it before `toString()`, as in JS; a `Date` by its `toString()`), else
   by its `toString()`, and a value whose type is a type parameter as `String(x)` writes the
   type it is instantiated with (an `any` and a class instance with `+`'s order: `valueOf()`
-  first). Any other value
+  first). A union of
+  strings, numbers and booleans (`"k:" + x` with `x: string | number`), or one with an array
+  among its members, is written by the member it holds, as `String(x)` writes
+  it. Any other value
   next to a string is a compile error; build that text with a template literal
   (`` `Total: ${m}` ``).
 - `String(x)` converts any value that can be printed to its text, exactly as `` `${x}` ``
@@ -637,8 +640,8 @@ of a value that may itself be `undefined` and `JSON.parse` into a type holding `
 the nothing the type lacks; `as` between `T | undefined` and `T | null`; a parameter default
 other than `undefined` on a parameter whose type allows both nothings (`T | null | undefined`);
 and a type argument whose nothing differs from one the generic keeps
-of it, directly or through what it calls (a `T | undefined` for a generic function holding a
-`T | null`), which includes a generic
+of it, directly or through what it calls (`undefined`, or a `T | undefined`, for a generic
+function holding a `T | null`), which includes a generic
 alias applied that way (`type Nullable<T> = T | null` as `Nullable<number | undefined>`). The
 other way round is supported: a generic holding a `U | undefined` at `U = T | null` holds a
 `T | null | undefined`. A `Map` or `Record` value type may allow either nothing or both
@@ -2700,8 +2703,8 @@ give an `any` that is `undefined` when nothing is there, and `null` when a `null
 a left-out optional field `q?: any` holds `undefined`. A value whose type is a type parameter
 converts to `any` and `unknown` too (`const a: any = t` with `t: T`, `t as unknown as X`): the
 value of the instantiation goes in as above, so a `T` that is `number | null` holding `null`
-gives the dynamic `null`, a union the member it holds and a literal type its value (an
-instantiation with an enum stops with a `TypeError` for now, #1241). An enum value is its number or string
+gives the dynamic `null`, a union the member it holds, a literal type its value and an enum
+its number or string. An enum value is its number or string
 in an `any` (`typeof` is `"number"` or `"string"`), and converts back to the member with that
 value. Generic code compares an `any` as `===` does (`indexOf`, `includes`, a generic
 `a === b`), and `Set<any>` and `Map<any, V>` keys compare by value as in JavaScript (`NaN` is
