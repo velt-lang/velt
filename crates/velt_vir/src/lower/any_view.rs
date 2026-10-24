@@ -78,7 +78,11 @@ impl FnLower<'_, '_> {
     /// pointers, or two tagged pointers of one identity (`view_identity`). A tagged pointer and
     /// an untagged one never have one identity: a typed proxy is its own object, and a view
     /// views an object of another type than the untagged one's. So the hot path is the pointer
-    /// comparison and a test of one tag, which does not change inside a search loop.
+    /// comparison, and only unequal pointers test tags. `===` (`indexOf`, `includes`) tests the
+    /// tag of `b` first, which does not change inside a search loop, so LLVM unswitches it. A
+    /// `Map` or `Set` key comparison (`key_mode`) tests both at once (`a & b & 1`): a test of
+    /// the probed key alone would be hoisted to the top of every lookup, where a hit pays it
+    /// too, while unequal keys are rare there (their hashes matched).
     pub(super) fn view_same(&mut self, a: &Place, b: &Place) -> Operand {
         let r = Place::local(self.temp(Ty::Bool));
         let (x, y) = (Operand::Copy(a.clone()), Operand::Copy(b.clone()));
@@ -89,10 +93,19 @@ impl FnLower<'_, '_> {
         let (ne, join) = (self.new_block(), self.new_block());
         self.branch(eq, join, ne);
         self.switch_to(ne);
-        let ty = self.proxy_tagged(y.clone());
-        self.when(ty, join);
-        let tx = self.proxy_tagged(x.clone());
-        self.when(tx, join);
+        if self.key_mode {
+            let wx = self.rvalue_temp(Ty::U64, Rvalue::Cast(x.clone(), Ty::U64));
+            let wy = self.rvalue_temp(Ty::U64, Rvalue::Cast(y.clone(), Ty::U64));
+            let both = self.rvalue_temp(Ty::U64, Rvalue::Binary(BinOp::BitAnd, wx, wy));
+            let both = self.rvalue_temp(Ty::Ptr, Rvalue::Cast(both, Ty::Ptr));
+            let tagged = self.proxy_tagged(both);
+            self.when(tagged, join);
+        } else {
+            let ty = self.proxy_tagged(y.clone());
+            self.when(ty, join);
+            let tx = self.proxy_tagged(x.clone());
+            self.when(tx, join);
+        }
         let pty = self.cx.proxy_class_ty();
         let ix = self.call_glue(Glue::ViewIdentity, pty, vec![x]);
         let iy = self.call_glue(Glue::ViewIdentity, pty, vec![y]);

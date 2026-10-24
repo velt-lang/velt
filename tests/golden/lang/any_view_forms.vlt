@@ -1,24 +1,52 @@
 // check: no leaks
 // Views (#1485) through other forms: a conversion to a smaller object type, for...in, a
-// function-typed field, an await, generic code, and views of one object in an array and a Set.
+// function-typed field, an await, generic code, views of one object in an array and a Set, and
+// Map keys: two views of one object, a typed proxy and a plain value.
 
 type P = { name: string; n: number; cb?: () => string };
 type Small = { name: string };
 const t = new Proxy({ k: 1 }, {});
-class Q { name = "q"; n = 2; extra = "x"; cb: () => string = (): string => "called"; }
+
+class Q {
+  name = "q";
+  n = 2;
+  extra = "x";
+  cb: () => string = (): string => "called";
+}
+
 const a: any = new Q();
 const v = a as P;
 const s: Small = v;
 console.log(s.name);
-for (const k in v) console.log("key", k);
+for (const k in v) {
+  console.log("key", k);
+}
 console.log(Object.keys(v).length);
 console.log(v.cb ? v.cb() : "none");
-async function later(x: P): Promise<string> { await Promise.resolve(0); return x.name + x.n; }
+
+async function later(x: P): Promise<string> {
+  await Promise.resolve(0);
+  return x.name + x.n;
+}
+
 later(v).then((r) => console.log(r));
-function gen<T>(x: any): T { return x as T; }
+
+function gen<T>(x: any): T {
+  return x as T;
+}
+
 const g = gen<P>(a);
 console.log(g.name, g === v);
 const arr: P[] = [v, g];
 console.log(arr.indexOf(g), arr.includes(v));
 const set = new Set<P>([v, g]);
 console.log(set.size);
+const keys = new Map<P, number>();
+keys.set(v, 1);
+const tp = new Proxy({ name: "t", n: 3 }, {}) as P;
+keys.set(tp, 2);
+const plain: P = { name: "p", n: 4 };
+keys.set(plain, 3);
+console.log(keys.get(g), keys.has(tp), keys.get(plain), keys.size);
+keys.delete(g);
+console.log(keys.has(v), keys.get(tp), keys.size);
