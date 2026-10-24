@@ -21,14 +21,16 @@ async function fill(i: i64): Promise<i64> {
 
 async function main() {
   const tasks: Promise<i64>[] = [];
-  for (let i = 0; i < workerCount(); i++) {
+  // Read once: the count can grow by spare workers while tasks run.
+  const workers = workerCount();
+  for (let i = 0; i < workers; i++) {
     tasks.push(spawn(fill(i), { worker: i }));
   }
   let n: i64 = 0;
   for (const t of tasks) {
     n += await t;
   }
-  console.log(n, process.memoryUsage().rss);
+  console.log(n, workers, process.memoryUsage().rss);
 }
 ";
 
@@ -47,8 +49,10 @@ fn rss(dir: &std::path::Path, threads: u32, env: &[(&str, &str)]) -> u64 {
     );
     let text = String::from_utf8_lossy(&out.stdout);
     let mut words = text.split_whitespace();
-    let want = (threads * 2000).to_string();
-    assert_eq!(words.next(), Some(want.as_str()), "{text}");
+    let n: u64 = words.next().and_then(|w| w.parse().ok()).expect("count");
+    let workers: u64 = words.next().and_then(|w| w.parse().ok()).expect("workers");
+    assert_eq!(n, workers * 2000, "{text}");
+    assert!(workers >= u64::from(threads), "{text}");
     words.next().and_then(|w| w.parse().ok()).expect("rss")
 }
 
