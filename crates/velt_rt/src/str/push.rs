@@ -337,6 +337,65 @@ impl VeltStr {
         }
     }
 
+    /// Room to write at the end of `self` in place: makes it a unique heap buffer with at least
+    /// `min` bytes free after its text (moving inline, static, shared or slice text to a fresh
+    /// buffer first; growing a full one) and returns where the free bytes start and how many
+    /// there are. Bytes written there become text with [`Self::commit`].
+    ///
+    /// # Safety
+    /// `self` must be valid. Nothing may read or append to `self` between this and the commit.
+    pub unsafe fn spare(&mut self, min: usize) -> (*mut u8, usize) {
+        let len = self.len();
+        let need = len.saturating_add(min);
+        let tag = self.tag();
+        if tag & (INLINE | SLICE_TAG) == 0 && self.w2 != 0 && heap::is_unique(self.ptr()) {
+            let cap = self.w2 as usize;
+            if need > cap {
+                let new_cap = grown(cap, need);
+                self.w0 = heap::grow(self.ptr(), cap, new_cap, !self.is_ascii()) as usize as u64;
+                self.w2 = new_cap as u64;
+            }
+        } else {
+            let s = VeltStr::heap_of(&[self.as_bytes()], self.summary(), grown(need, need));
+            self.release();
+            *self = s;
+        }
+        let cap = self.w2 as usize;
+        (self.ptr().add(len), cap - len)
+    }
+
+    /// Makes the `n` bytes written after the text (at [`Self::spare`]) part of it: counts their
+    /// units (none when `ascii` says they are ASCII) and, if they are the first non-ASCII text
+    /// of an ASCII buffer, moves the text behind a header (once per string; a writer commits as
+    /// soon as its text turns non-ASCII, so only what came before moves).
+    ///
+    /// # Safety
+    /// `spare` gave room for `n` bytes, which are UTF-8 (complete characters) and written.
+    pub unsafe fn commit(&mut self, n: usize, ascii: bool) {
+        if n == 0 {
+            return;
+        }
+        let len = self.len();
+        let piece = std::slice::from_raw_parts(self.ptr().add(len), n);
+        let sum = if ascii {
+            debug_assert!(piece.is_ascii());
+            Summary::ascii(n)
+        } else {
+            // UTF-8 holds no lone surrogates: only the units are counted (as `from_text`).
+            Summary {
+                units: wtf8::count_units(piece),
+                lone: 0,
+            }
+        };
+        invariants::check_piece(piece, Some(sum));
+        if sum.units != n && self.is_ascii() {
+            let cap = self.w2 as usize;
+            self.w0 = heap::add_header(self.ptr(), cap, len + n, cap) as usize as u64;
+        }
+        self.w1 += pack(sum.units, n);
+        invariants::check_whole(self);
+    }
+
     /// Append without a seam join, in place when there is room.
     #[inline(always)]
     unsafe fn append(&mut self, bytes: &[u8], sum: Summary) {

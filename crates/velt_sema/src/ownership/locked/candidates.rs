@@ -310,7 +310,7 @@ pub(super) fn would_cross(
         instantiate(cx, f, targs);
     }
     let before = transfers(&mut bodies);
-    let found = super::crossings(cx, s, c, &mut bodies, resolved, named);
+    let found = super::crossings(cx, s, c, &mut bodies, resolved, named, &Default::default());
     let mut after = transfers(&mut bodies);
     for (d, f) in originals {
         cx.defs[d.0 as usize] = Some(Def::Fn(f));

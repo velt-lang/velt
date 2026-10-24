@@ -2,9 +2,10 @@
 //! `velt_rt_json_error`). Return conventions: 1 = ok / 0 = error, except `next_key` and
 //! `array_next` (0 = end, 1 = more, 2 = error) and `peek` (a `TOKEN_*` kind).
 
-use super::reader::{Reader, STEP_END, STEP_ERROR, STEP_MORE};
+use super::reader::{Reader, FLAG_ROWS, STEP_END, STEP_ERROR, STEP_MORE};
 use super::rows_reader::RowReader;
 use super::value_abi::ValueHandle;
+use crate::bytes::VeltBytes;
 use crate::handle::Handle;
 use crate::str::VeltStr;
 
@@ -17,15 +18,17 @@ pub unsafe extern "C" fn velt_rt_json_reader_new(src: *const VeltStr) -> *mut Re
 }
 
 /// `new Reader(src)` with options: `flags` (1 = fail on object keys the target type does
-/// not have) and the deepest nesting allowed (`max_depth`, 0 = no limit).
+/// not have; 4 = `src` is a `u8[]` of binary rows, `rows_bin.rs`) and the deepest nesting
+/// allowed (`max_depth`, 0 = no limit; rows have no nesting to limit).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_json_reader_new_with(
     src: *const VeltStr,
     flags: u32,
     max_depth: u32,
 ) -> *mut Reader {
-    // A driver's parked rows (`rows_bin.rs`): the reader owns them, not the marker string.
-    if let Some(rows) = super::rows_bin::take_pending((*src).as_bytes()) {
+    if flags & FLAG_ROWS != 0 {
+        // A driver's binary rows (`rows_bin.rs`) in a `u8[]`, borrowed like a source string.
+        let rows = RowReader::borrowed((*(src as *const VeltBytes)).as_bytes(), flags);
         return Box::into_raw(Box::new(Reader::over_rows(rows, flags)));
     }
     let bytes: &'static [u8] = std::mem::transmute::<&[u8], &'static [u8]>((*src).as_bytes());

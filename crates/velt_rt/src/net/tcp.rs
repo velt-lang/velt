@@ -310,7 +310,7 @@ pub unsafe extern "C" fn velt_rt_tcp_write_bytes(
     write_copy(s, (*data).as_bytes())
 }
 
-fn write_copy(s: StreamHandle, data: &[u8]) -> *mut VeltFut {
+pub(super) fn write_copy(s: StreamHandle, data: &[u8]) -> *mut VeltFut {
     // A hand-off: the peer (often a task of this program) may read these bytes on another
     // worker before this task's poll ends, so what it printed before the write goes first.
     crate::io::publish_before_handoff();
@@ -352,6 +352,11 @@ fn write_copy(s: StreamHandle, data: &[u8]) -> *mut VeltFut {
 /// `write` reports it).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_tcp_try_write(s: StreamHandle, data: *const VeltBytes) -> u64 {
+    try_write_now(s, (*data).as_bytes())
+}
+
+/// What `velt_rt_tcp_try_write` writes of `data`.
+pub(super) fn try_write_now(s: StreamHandle, data: &[u8]) -> u64 {
     crate::io::publish_before_handoff();
     let Some(obj) = STREAMS.get(s) else { return 0 };
     // Nothing while another write goes on (these bytes go after its), in the socket's turn.
@@ -359,7 +364,6 @@ pub unsafe extern "C" fn velt_rt_tcp_try_write(s: StreamHandle, data: *const Vel
     let Some((stream, _turn)) = w.0.plain().filter(|_| first).zip(w.0.try_turn()) else {
         return 0;
     };
-    let data = (*data).as_bytes();
     let mut done = 0;
     while done < data.len() {
         match stream.try_write(&data[done..]) {

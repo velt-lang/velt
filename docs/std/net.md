@@ -12,9 +12,23 @@
   - `read(max = 0): Promise<u8[]>`: empty means end of stream.
   - `readString(max = 0): Promise<string>`: UTF-8; a character split across reads is completed
     by the next read.
-  - `write(data: string)`, `writeBytes(data: u8[])`: bytes go out in the order of the calls,
-    also when a write is started and not awaited yet.
-  - `tryWrite(data: u8[]): i64`: writes what the socket takes right now, without waiting, and
+  - `readInto(buf: Uint8Array): Promise<number | null>`: reads what has arrived into `buf` (at
+    most `buf.length` bytes) and returns how many, or `null` at the end of the stream, as
+    Deno's `conn.read`. It waits only when nothing has arrived yet, and a plain TCP stream reads
+    straight into `buf`: nothing is allocated or copied on the way. Reuse one buffer per
+    connection and parse with `subarray` views of what was read. An empty `buf` returns 0.
+    `read` and `readInto` may be mixed on one stream.
+  - `tryRead(buf: u8[] | Uint8Array, start = 0, end = buf.length): number | null`: reads what
+    has arrived into `buf[start..end]` without waiting: the bytes read, `0` when nothing has
+    arrived yet, `null` at the end of the stream (`RangeError` for an empty or out-of-range
+    range). With `readable(): Promise<void>`, which waits until a `tryRead` may find something,
+    a parser reads straight into its own `u8[]` buffer.
+  - `write(data: string)`, `writeBytes(data: u8[] | Uint8Array, start = 0, end = data.length)`: bytes go out in the order of
+    the calls, also when a write is started and not awaited yet. What the socket takes at the
+    call is written from `data` itself; only the rest is copied. A `Uint8Array` writes its own
+    range (a `subarray` writes just that part); `start` and `end` write part of either (taken
+    as `subarray` takes them: a negative one counts from the end, and both are clamped to it), so a reply buffer kept per connection goes out without a copy.
+  - `tryWrite(data: u8[] | Uint8Array, start = 0, end = data.length): i64`: writes what the socket takes right now, without waiting, and
     returns the number of bytes written (0 when it takes nothing now, while an earlier write is
     still going on, for a TLS stream, and after an error, which the next `write` reports). When
     everything was written there is nothing to await.

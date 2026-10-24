@@ -678,6 +678,11 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
     function ("the function passed to `with` comes from an object's field, and may be a
     closure that stores a part of the locked `State` outside it …"); otherwise the call is
     accepted as written.
+  - A variable the callback only reads, and that the function does not use after the `with`
+    (nor again in a loop around it), goes into the lock with the callback: what the callback
+    stores of it into the value is not copied (`const batch = parse(input); m.with((db) =>
+    apply(db, batch))` stores `batch`'s own objects). An object it shares with another
+    variable is still copied. Nothing changes in what the program sees; only the copies go.
   - A promise made from the value runs after the lock is released. One that only reads what it
     is given gets a copy, like a spawned call (`m.with((v) => save(v.name))`,
     `m.with((v) => read(v))`: `read` sees the value as it was; a copy of a resource without

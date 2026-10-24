@@ -587,6 +587,7 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::SharedGet
         | I::SharedRead
         | I::JsonParse
+        | I::JsonParseRows
         | I::HttpHandler
         | I::StrCharCodeAt
         | I::ArrayDataPtr

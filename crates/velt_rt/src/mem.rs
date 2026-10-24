@@ -154,6 +154,28 @@ pub unsafe extern "C" fn velt_rt_free(p: *mut u8, size: u64, align: u64) {
     raw::free(p, size as usize, check_align(align));
 }
 
+/// mimalloc's `mi_option_arena_eager_commit` (v3's `mimalloc.h`).
+#[cfg(feature = "mimalloc")]
+const ARENA_EAGER_COMMIT: std::ffi::c_int = 4;
+
+#[cfg(feature = "mimalloc")]
+extern "C" {
+    /// In the mimalloc library `libmimalloc-sys` builds (bound only by its `extended` feature).
+    fn mi_option_set_default(option: std::ffi::c_int, value: std::ffi::c_long);
+}
+
+/// Allocator settings, before the first allocation (`velt_rt_start`). Arenas commit memory as
+/// it is used, not all at once: committed eagerly on Linux (mimalloc's default where memory is
+/// overcommitted), an arena is marked for transparent huge pages, so each worker's first
+/// allocations made 2 MiB resident (redis-clone on 10 workers: 44 MB for 100k keys, 22 MB
+/// without; 11 MB for a server doing nothing, 4 MB without), at no throughput cost measured on
+/// bench/web or redis-benchmark. `MIMALLOC_ARENA_EAGER_COMMIT` still overrides it.
+#[cfg(feature = "mimalloc")]
+pub(crate) fn configure() {
+    // SAFETY: sets a default before mimalloc reads the option; no other effect.
+    unsafe { mi_option_set_default(ARENA_EAGER_COMMIT, 0) };
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

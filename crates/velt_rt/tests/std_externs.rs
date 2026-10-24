@@ -242,6 +242,12 @@ fn mismatches(defs: &BTreeMap<String, Vec<(Sig, PathBuf)>>, required: bool) -> V
         if name.starts_with("velt_simd_") {
             continue;
         }
+        // std's drivers (crates/velt_std_*) export through the SDK's `#[export]`: the compiler
+        // checks std's declarations of them against their signature records, as it checks a
+        // package's (veltc/src/native, `check_std_driver`).
+        if name.starts_with("velt_std_") {
+            continue;
+        }
         let Some(found) = defs.get(&name) else {
             if required {
                 out.push(format!(

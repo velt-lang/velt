@@ -1,0 +1,8 @@
+plain hello, readInto!!|17
+plain empty: 0
+tls hello, readInto!!|17
+tls empty: 0
+tryRead: ranges|6
+empty range: true
+mixed: ab cdef|6
+closed: EBADF

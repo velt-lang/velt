@@ -56,6 +56,7 @@ pub(super) fn intrinsic_named(name: &str) -> Option<Intrinsic> {
         "array_data_ptr" => I::ArrayDataPtr,
         "json_stringify" => I::JsonStringify,
         "json_parse" => I::JsonParse,
+        "json_parse_rows" => I::JsonParseRows,
         "http_handler" => I::HttpHandler,
         "promise_any" => I::PromiseAny,
         "chan_send" => I::ChanSend,
@@ -298,6 +299,11 @@ impl FnCx<'_, '_> {
             I::JsonStringify => (vec![(t, B)], str_, true),
             // `(text, flags, max_depth)`: the options as std's `JSON.parse` encodes them.
             I::JsonParse => (vec![(str_, B), (ty.i64, C), (ty.i64, C)], t, true),
+            I::JsonParseRows => {
+                let bytes = ty.intern(TyKind::Int(IntTy::U8));
+                let bytes = ty.array(bytes);
+                (vec![(bytes, B), (ty.i64, C), (ty.i64, C)], t, true)
+            }
             I::HttpHandler => {
                 let f = http_handler_fn(ty);
                 (vec![(f, O)], ty.intern(TyKind::Tuple(vec![u64_; 6])), false)
