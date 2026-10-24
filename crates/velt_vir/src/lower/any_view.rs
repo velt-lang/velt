@@ -88,10 +88,11 @@ impl FnLower<'_, '_> {
     /// of its members, as glue converts it (the prelude's `x as T` at a union `T`, such as an
     /// array view's element): an object of another type is a view of it as the union's first
     /// proxiable object member, into `out`, and on to `done` (what sema's own conversion of a
-    /// union does member by member); anything else goes on in the current block.
+    /// union does member by member); anything else (an array too) goes on in the current block.
     pub(super) fn union_object_view(
         &mut self,
         p: &Place,
+        desc: Operand,
         ty: TyId,
         n: u32,
         out: &Place,
@@ -105,9 +106,17 @@ impl FnLower<'_, '_> {
             if !object || !self.cx.proxiable(pt) {
                 continue;
             }
+            // An array (or tuple) is never an object's view: it stays an array (a view of it
+            // as an array member is `union_array_view`).
+            let id = self.vtable_class_id(desc);
+            let want = cint(super::any_set_site::ARRAY_ID as i128, Ty::U64);
+            let array = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, id, want));
+            let (object, other) = (self.new_block(), self.new_block());
+            self.branch(array, other, object);
+            self.switch_to(object);
             let vt = self.cx.ty(pt);
             let val = Place::local(self.temp(vt));
-            let (made, other) = (self.new_block(), self.new_block());
+            let made = self.new_block();
             self.any_view(p, pt, &val, made);
             self.goto(other);
             self.switch_to(made);
