@@ -71,6 +71,9 @@ const ADOPTED: u32 = 128;
 const HANDLED: u32 = 256;
 /// It finished with the location of a `throw`, kept in a side table (loc.rs).
 const LOC: u32 = 512;
+/// Its owner handed it to another task (`velt_rt_fut_transfer`): the task driving it no longer
+/// reports its rejection at a checkpoint, the task holding it now awaits it or gives it up.
+const HANDED_OVER: u32 = 1024;
 
 /// `owner` bit of a lazy node: its state finished (it is polled by its owner only).
 const OWNER_DONE: u32 = 1;
@@ -317,6 +320,14 @@ pub(super) unsafe fn mark_rejectable(f: *mut VeltFut) {
     head(f).flags.fetch_or(REJECTABLE, Ordering::Relaxed);
 }
 
+/// The owner of started node `f` hands it to another task (no-op for any other future): from
+/// now on that task claims its rejection or gives it up ([`rejection_unclaimed`]).
+pub(super) unsafe fn mark_handed_over(f: *mut VeltFut) {
+    if is_started(f) {
+        head(f).flags.fetch_or(HANDED_OVER, Ordering::Release);
+    }
+}
+
 /// Node `f` finished with flags `prev` (before `DONE`) and nobody waits for it: if it rejected
 /// and nothing handles it, it is reported at the next checkpoint unless its owner awaits it
 /// before then, as Node reports a rejection without a handler (unhandled.rs).
@@ -331,7 +342,10 @@ unsafe fn watch_rejection(f: *mut VeltFut, prev: u32) {
 pub(super) unsafe fn rejection_unclaimed(f: *mut VeltFut) -> bool {
     let h = head(f);
     let fl = h.flags.load(Ordering::Acquire);
-    if fl & (DETACHED | HANDLED | ADOPTED) != 0
+    // A promise handed to another task is that task's to claim: its owner bits and awaiter are
+    // the other task's, touched on another thread meanwhile, and a report here would race with
+    // that task claiming the same result (two reports, the error freed twice).
+    if fl & (DETACHED | HANDLED | ADOPTED | HANDED_OVER) != 0
         || h.owner.get() & OWNER_DELIVERED != 0
         || !h.transfer.load(Ordering::Acquire).is_null()
     {

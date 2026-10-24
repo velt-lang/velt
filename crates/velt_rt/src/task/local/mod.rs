@@ -473,6 +473,8 @@ pub unsafe extern "C" fn velt_rt_fut_transfer(f: *mut VeltFut, transfer: Option<
     if crate::task::shared::is_shared(f) {
         return crate::task::shared::hand_over(f, transfer);
     }
+    // Whatever its result needs, the promise is the other task's now (#1497).
+    node::mark_handed_over(f);
     if crate::task::race::pass_transfer(f, transfer) {
         return;
     }
