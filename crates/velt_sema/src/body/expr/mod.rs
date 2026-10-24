@@ -148,6 +148,7 @@ mod typeof_member;
 mod union_coerce;
 mod union_iface;
 mod union_view;
+mod array_view_cast;
 mod widen_fresh;
 mod written_order;
 

@@ -184,16 +184,19 @@ impl FnLower<'_, '_> {
     }
 
     fn drop_array(&mut self, arr: &Place, e: TyId) {
-        if self.cx.needs_drop(e) {
-            let k = self.temp(Ty::U64);
-            self.assign(Place::local(k), Rvalue::Use(cint(0, Ty::U64)));
-            let len = Operand::Copy(proj(arr, Proj::Field(1)));
-            self.count_loop(k, len, |lw, k| {
-                let p = lw.elem_place(arr, k, e);
-                lw.drop_glue(p, e);
-            });
-        }
-        self.free_buffer(arr, e);
+        // A view releases its view object instead (array_view.rs).
+        self.view_drop(arr, e, |lw| {
+            if lw.cx.needs_drop(e) {
+                let k = lw.temp(Ty::U64);
+                lw.assign(Place::local(k), Rvalue::Use(cint(0, Ty::U64)));
+                let len = Operand::Copy(proj(arr, Proj::Field(1)));
+                lw.count_loop(k, len, |lw, k| {
+                    let p = lw.elem_place(arr, k, e);
+                    lw.drop_glue(p, e);
+                });
+            }
+            lw.free_buffer(arr, e);
+        });
     }
 
     fn drop_shared(&mut self, place: &Place, e: TyId) {

@@ -56,6 +56,9 @@ impl FnLower<'_, '_> {
             // the caller's, caller_stores.rs `caller_object`).
             self.write_barrier(Operand::Copy(arr.clone()), aty);
         }
+        if i == I::ArraySetLen {
+            self.view_unsupported(&arr, aty, "sorting with a comparison function");
+        }
         let ptr = Operand::Copy(arr.clone());
         let arr = self.content(&arr, aty);
         if caller && i != I::ArrayLen && self.cx.lock_counted(aty) && !self.captured_root(&args[0])
@@ -67,7 +70,12 @@ impl FnLower<'_, '_> {
         if caller {
             return self.caller_array_op(i, &args[1..], &arr, aty, ty);
         }
-        self.array_op(i, &args[1..], &arr, aty, ty)
+        let r = self.array_op(i, &args[1..], &arr, aty, ty);
+        if i != I::ArrayLen && self.cx.array_view(aty) {
+            // A change through a view goes back to the original (array_view.rs).
+            self.view_flush(ptr, aty);
+        }
+        r
     }
 
     /// An array intrinsic on the caller's array in a `read` callback (caller_stores.rs): it
@@ -235,6 +243,7 @@ impl FnLower<'_, '_> {
         let elem = self.elem_ty(dty);
         let dv = self.expr(dst);
         let darr = self.place_of(dv, dty);
+        self.view_unsupported(&darr, dty, "sorting with a comparison function");
         if self.cx.lock_counted(dty) && !self.captured_root(dst) {
             self.write_barrier(Operand::Copy(darr.clone()), dty);
         }
@@ -243,6 +252,7 @@ impl FnLower<'_, '_> {
         let id = self.freeze(id, d.ty);
         let sv = self.expr(src);
         let sarr = self.place_of(sv, sty);
+        self.view_unsupported(&sarr, sty, "sorting with a comparison function");
         if self.cx.lock_counted(sty) {
             self.write_barrier(Operand::Copy(sarr.clone()), sty);
         }

@@ -19,7 +19,11 @@ impl FnLower<'_, '_> {
         }
         let payload = self.cx.payload_ty(t);
         let base = self.retained_hop(place, t);
-        proj(&base, Proj::Deref(payload))
+        let hdr = proj(&base, Proj::Deref(payload));
+        match self.cx.array_view(t) {
+            true => self.view_inline(hdr, t),
+            false => hdr,
+        }
     }
 
     /// The value of type `t` made from the inline value `v` (owned): for a boxed type, a new

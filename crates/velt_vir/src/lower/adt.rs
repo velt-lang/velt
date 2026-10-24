@@ -290,6 +290,10 @@ impl FnLower<'_, '_> {
             true => self.proxy_any_parts(data, vtable),
             false => (data, vtable),
         };
+        let (data, vtable) = match self.cx.is_any_impl(impl_index) && self.cx.array_view(cty) {
+            true => self.view_any_parts(data, vtable, cty),
+            false => (data, vtable),
+        };
         self.build_agg(ty, vec![data, vtable])
     }
 

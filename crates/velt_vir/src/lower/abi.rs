@@ -69,6 +69,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             frozen_binds: false,
             read_target: false,
             owner_write: false,
+            view_writes: None,
             lk_mode: None,
             rw_reader: None,
             mode: LkMode::Plain,

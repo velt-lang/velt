@@ -611,7 +611,8 @@ impl FnCx<'_, '_> {
             .or_else(|h| self.param_as_object(h, target))
             .or_else(|h| self.param_as_object_part(h, target))
             .or_else(|h| self.narrowing_assertion(h, target, span))
-            .or_else(|h| self.union_view_cast(h, target, span));
+            .or_else(|h| self.union_view_cast(h, target, span))
+            .or_else(|h| self.array_view_cast(h, target, span));
         match coerced {
             Ok(h) => h,
             Err(h) => {

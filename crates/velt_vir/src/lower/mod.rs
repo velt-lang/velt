@@ -40,6 +40,7 @@ mod any_tuple;
 mod any_view;
 mod append;
 mod array;
+mod array_view;
 mod assign_target;
 mod async_fn;
 mod attempt;
@@ -577,6 +578,9 @@ struct FnLower<'c, 'h> {
     /// The field read lowered next is about to be changed in place, reached by running code
     /// (caller_stores.rs `owner_barrier`): it puts the barrier on its owner.
     owner_write: bool,
+    /// While an assignment is lowered: the box pointers of the array views its target goes
+    /// through, written back after the store (array_view.rs).
+    view_writes: Option<Vec<(Operand, TyId)>>,
     /// This function's read mode, once asked (rc.rs `lk_mode`).
     lk_mode: Option<Local>,
     /// This thread's `RwLock` reader state, once a `read` returned it (async_fn/sync.rs).
