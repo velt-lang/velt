@@ -6,12 +6,16 @@
 #                                                 (default 10000) elements against a plain array
 #   bench/array_view/run.sh instr <base velt> <head velt>
 #                                                 cachegrind instruction counts (VELT_THREADS=1)
-#                                                 of two programs, built by both compilers:
+#                                                 of these programs (PROGRAMS="..." picks
+#                                                 some), built by both compilers:
 #                                                 no_view (a Map<string, string[]> loop with one
 #                                                 guarded `any as string[]` that never runs) and
 #                                                 sigx_like (string[] and JSXChild[] view types:
 #                                                 `kids as JSXChild[]` of an `any` that holds a
-#                                                 JSXChild[], so that the base compiler runs it)
+#                                                 JSXChild[], so that the base compiler runs
+#                                                 it), and push_local, forof_local, index_local
+#                                                 and index_inc: loops over a local string[]
+#                                                 with no_view's guarded conversion
 #
 # The programs are written to $WORK (default: a new temporary directory). Each compiler uses
 # its own std (VELT_STD is left as each build finds it).
@@ -172,6 +176,70 @@ function main() {
 }
 EOF
 
+# Loops over a local `string[]` in a program with one guarded `any as string[]` that never runs
+# (so `string[]` is a view type): a push, a `for...of`, an index loop and a `v[i++]` loop.
+guard='  const maybe: any = Date.now() < 0 ? ["x"] : null;
+  if (maybe !== null) {
+    const ys = maybe as string[];
+    total += ys.length;
+  }'
+fill='  const xs: string[] = [];
+  for (let i = 0; i < 1000; i++) {
+    xs.push("v" + (i % 10));
+  }'
+cat >"$WORK/push_local.vlt" <<EOF
+function main() {
+  let total = 0;
+  const xs: string[] = [];
+  for (let i = 0; i < 200000; i++) {
+    xs.push("v");
+  }
+  total += xs.length;
+$guard
+  console.log(total);
+}
+EOF
+cat >"$WORK/forof_local.vlt" <<EOF
+function main() {
+  let total = 0;
+$fill
+  for (let r = 0; r < 200; r++) {
+    for (const s of xs) {
+      total += s.length;
+    }
+  }
+$guard
+  console.log(total);
+}
+EOF
+cat >"$WORK/index_local.vlt" <<EOF
+function main() {
+  let total = 0;
+$fill
+  for (let r = 0; r < 200; r++) {
+    for (let i = 0; i < xs.length; i++) {
+      total += xs[i].length;
+    }
+  }
+$guard
+  console.log(total);
+}
+EOF
+cat >"$WORK/index_inc.vlt" <<EOF
+function main() {
+  let total = 0;
+$fill
+  for (let r = 0; r < 200; r++) {
+    let i = 0;
+    while (i < xs.length) {
+      total += xs[i++].length;
+    }
+  }
+$guard
+  console.log(total);
+}
+EOF
+
 case $mode in
 time)
   velt=$1
@@ -182,7 +250,7 @@ time)
 instr)
   base_velt=$1
   head_velt=$2
-  for p in no_view sigx_like; do
+  for p in ${PROGRAMS:-no_view sigx_like push_local forof_local index_local index_inc}; do
     line="$p"
     for side in base head; do
       velt=$base_velt
