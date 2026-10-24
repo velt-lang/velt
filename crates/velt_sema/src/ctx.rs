@@ -32,6 +32,10 @@ pub(crate) struct ModuleScope {
     pub is_std: bool,
 }
 
+/// The classes below a class, deepest first, each with the method its vtable calls at a slot
+/// (`Ctx::classes_below`).
+pub(crate) type ClassesBelow = std::rc::Rc<[(DefId, DefId)]>;
+
 pub(crate) struct Ctx<'m> {
     pub modules: &'m [SourceModule],
     pub root: usize,
@@ -134,6 +138,9 @@ pub(crate) struct Ctx<'m> {
     /// Functions whose parameter defaults are checked (or being checked): they are checked on
     /// first use, since a field default or constant may call with fewer arguments.
     pub defaults_checked: FxHashSet<DefId>,
+    /// Per class and vtable slot: the classes below it, deepest first, with the method each
+    /// one's vtable calls there (`body::expr::virtual_defaults`).
+    pub classes_below: FxHashMap<(DefId, u32), ClassesBelow>,
     /// The adapter of each `toString` / `toJSON` method glue calls through one (`crate::hooks`).
     pub hook_adapters: FxHashMap<DefId, DefId>,
     /// Types whose field defaults are checked (or being checked): checked up front, or on first
@@ -395,6 +402,7 @@ impl<'m> Ctx<'m> {
             getter_only_setters: FxHashSet::default(),
             display_params: vec![],
             defaults_checked: FxHashSet::default(),
+            classes_below: FxHashMap::default(),
             hook_adapters: FxHashMap::default(),
             field_defaults_checked: FxHashSet::default(),
             closure_counts: FxHashMap::default(),

@@ -68,7 +68,10 @@ hidden classes and no runtime shape checks.
   layout, so upcasts are free. A subclass without a constructor of its own inherits its
   base's. Redefining a base method requires `override`, except a method of a standard-library
   class (`toString()` in a subclass of `Error`), which TypeScript code redefines without it;
-  `super.m()` calls the base version.
+  `super.m()` calls the base version. An override may give a parameter a default of its own: a
+  call that leaves the argument out takes the default of the method that runs, also through a
+  base-class type (`const s: Shape = new Square(); s.scale()` uses `Square`'s), as in
+  JavaScript.
   There are no abstract classes.
 - **`super(…)`**: the constructor of a subclass calls `super(…)`, as in TypeScript, also when
   the base class has no constructor (`super();`). Statements may come before it as long as they

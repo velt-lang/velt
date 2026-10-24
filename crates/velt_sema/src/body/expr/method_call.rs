@@ -219,17 +219,44 @@ impl FnCx<'_, '_> {
             }
             Resolved::Virtual { def, slot, slots } => {
                 let c = self.fn_callable(def, format!("method `{}`", prop.name), span);
-                let ck = self.check_call(&c, slots, args, exp, span);
+                // Left-out arguments take the default of the override that runs.
+                let spread = args
+                    .iter()
+                    .any(|a| matches!(a.kind, ast::ExprKind::Spread(_)));
+                let vd = match spread || c.rest {
+                    true => None,
+                    false => self.virtual_defaults(recv.ty, def, slot, args),
+                };
                 let this_recv = self.this_recv(&recv);
+                let mut stmts = vec![];
+                let (recv, class) = match &vd {
+                    Some(vd) => {
+                        let (r, l) = self.dispatch_receiver(recv, vd, &mut stmts);
+                        (r, Some(l))
+                    }
+                    None => (recv, None),
+                };
+                let ck = self.check_call(&c, slots, args, exp, span);
                 let recv = self.receiver(recv, None, self.this_mode(def), self.is_async_fn(def));
                 let mut all = vec![recv];
                 all.extend(ck.args);
+                if let (Some(vd), Some(l)) = (vd, class) {
+                    self.dispatch_defaults(vd, l, &mut all, &ck.type_args, span);
+                }
                 self.call_throws(def, &ck.type_args, ck.ret, span);
                 let kind = H::Call {
                     callee: Callee::Virtual { slot },
                     args: all,
                 };
                 let call = self.mk(kind, ck.ret, span);
+                let call = match stmts.is_empty() {
+                    true => call,
+                    false => {
+                        let ty = call.ty;
+                        let b = super::accessor_rmw::block(stmts, Some(call), span);
+                        self.mk(H::Block(b), ty, span)
+                    }
+                };
                 self.this_result(call, def, this_recv)
             }
             Resolved::Iface {
