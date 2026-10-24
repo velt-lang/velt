@@ -213,9 +213,9 @@ usable and no copy method is needed.
   primitive (`+` asks for it before `toString()`, as in JS; a `Date` by its `toString()`), else
   by its `toString()`, and a value whose type is a type parameter as `String(x)` writes the
   type it is instantiated with (an `any` and a class instance with `+`'s order: `valueOf()`
-  first). Any other value
-  next to a string is a compile error; build that text with a template literal
-  (`` `Total: ${m}` ``).
+  first). Any other value next to a string is written as `String(x)` writes it: `"" + s` of a
+  `string | string[] | null` is `"k,l"`, `"x"` or `"null"`, an object without a `toString()` is
+  `[object Object]`, a map `[object Map]`. A function value there is a compile error.
 - `String(x)` converts any value that can be printed to its text, exactly as `` `${x}` ``
   writes it (`String(1.5)` is `"1.5"`, `String(null)` is `"null"`, `String([1, 2])` is
   `"1,2"`). `Number(x)` converts a string (as JS: the whole trimmed string, `""` is `0`, else
