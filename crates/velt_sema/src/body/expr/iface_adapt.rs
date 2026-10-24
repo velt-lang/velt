@@ -63,21 +63,21 @@ pub(super) struct SlotSig {
     pub name: String,
     pub params: Vec<ParamSig>,
     pub ret: TyId,
+    /// The method's own type parameters: a generic method has no table entry and is never
+    /// called through an interface value, so its slot needs no adapting (`adapter_stub`).
+    pub own: u32,
 }
 
-/// The slots of `iface` in table order (methods, then the getters of its fields), or `None`
-/// when a generic method has no slot to adapt.
+/// The slots of `iface` in table order (methods, then the getters of its fields).
 fn slot_sigs(cx: &Ctx, iface: DefId) -> Option<Vec<SlotSig>> {
     let info = cx.iface(iface)?;
     let mut out = vec![];
     for m in &info.methods {
-        if !m.generics.names.is_empty() {
-            return None;
-        }
         out.push(SlotSig {
             name: m.name.clone(),
             params: m.params.clone(),
             ret: m.ret,
+            own: m.generics.names.len() as u32,
         });
     }
     for f in &info.fields {
@@ -85,6 +85,7 @@ fn slot_sigs(cx: &Ctx, iface: DefId) -> Option<Vec<SlotSig>> {
             name: format!("<{}>", f.name),
             params: vec![],
             ret: f.ty,
+            own: 0,
         });
     }
     Some(out)
@@ -248,7 +249,7 @@ pub(super) fn adaptable(
     // The slots of this interface are positions of its own, not of a function type around it.
     let in_fn = std::mem::replace(&mut m.in_fn, false);
     let ok = sigs.iter().all(|s| {
-        if unresolved_slot(cx, s, own, &fa, &ta) {
+        if s.own > 0 || unresolved_slot(cx, s, own, &fa, &ta) {
             return true;
         }
         let (rf, rt) = (cx.subst(s.ret, &fa), cx.subst(s.ret, &ta));
@@ -535,7 +536,10 @@ impl FnCx<'_, '_> {
         let methods = sigs
             .iter()
             .enumerate()
-            .map(|(slot, s)| adapter_method(self.cx, &parts, slot as u32, s, false))
+            .map(|(slot, s)| match s.own {
+                0 => adapter_method(self.cx, &parts, slot as u32, s, false),
+                own => super::iface_adapt_slots::adapter_stub(self.cx, &parts, s, own),
+            })
             .collect();
         self.cx.impls[a.impl_index as usize].methods = methods;
         // Its setters, made once a field of the interface is written through.
