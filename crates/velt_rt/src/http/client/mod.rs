@@ -183,6 +183,10 @@ pub unsafe extern "C" fn velt_rt_http_fetch_send(
     signal: u64,
     ca: *const VeltStr,
 ) -> *mut VeltFut {
+    // A hand-off: the request goes out while this task's poll goes on, and the server (often a
+    // handler in this program) may run on another worker at once, so what this task printed
+    // before `fetch` must be published first.
+    crate::io::publish_before_handoff();
     let body = match kind {
         1 => super::take_text(text),
         // Copied: a `u8[]` the caller borrowed is still freed by its owner.

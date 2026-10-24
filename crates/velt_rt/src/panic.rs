@@ -9,7 +9,10 @@
 //! thread than the one that threw it (`async main` runs on a worker, a spawned task's handle is
 //! awaited anywhere), so finished tasks carry the slot to whoever takes their result
 //! ([`ThrowLoc`]). Each poll of a task starts with an empty slot, so a task that threw nothing in
-//! its last poll hands over no location and leaves the taker's own in place. Known limits (the
+//! its last poll hands over no location and leaves the taker's own in place. Started promises
+//! carry it the same way: a promise that rejects keeps where it threw (task/local/node/loc.rs)
+//! and hands it to whoever claims or reports the rejection, on whichever thread and in
+//! whichever poll that is; so does a shared promise's hub (task/shared.rs). Known limits (the
 //! slot is "the last throw on this thread", not part of the error value): a task that throws,
 //! then awaits before its error leaves it (in a `finally`), reports no location; and a task that
 //! threw and caught an error in its last poll hands that location to a taker that is itself
@@ -107,6 +110,9 @@ pub(crate) struct ThrowLoc(*const VeltStr);
 unsafe impl Send for ThrowLoc {}
 
 impl ThrowLoc {
+    /// No location.
+    pub(crate) const NONE: ThrowLoc = ThrowLoc(std::ptr::null());
+
     /// This thread's location (of the last `throw` here).
     pub(crate) fn current() -> ThrowLoc {
         ThrowLoc(velt_rt_throw_loc())
@@ -128,6 +134,21 @@ impl ThrowLoc {
     /// Forget this thread's location (a task poll starts with none).
     pub(crate) fn clear() {
         velt_rt_set_throw_loc(std::ptr::null());
+    }
+
+    /// This thread's location, which is forgotten (one thread-local access).
+    pub(crate) fn take() -> ThrowLoc {
+        ThrowLoc(THROW_LOC.with(|c| c.replace(std::ptr::null())))
+    }
+
+    /// Make it this thread's location and return the one it replaces.
+    pub(crate) fn replace(self) -> ThrowLoc {
+        ThrowLoc(THROW_LOC.with(|c| c.replace(self.0)))
+    }
+
+    /// Is a location recorded?
+    pub(crate) fn is_known(self) -> bool {
+        !self.0.is_null()
     }
 }
 

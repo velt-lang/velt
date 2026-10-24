@@ -520,5 +520,74 @@ fn ill_formed_text_through_the_string_methods() {
     unsafe { crate::str_array::velt_rt_str_array_drop(&mut a) };
 }
 
+/// Writes `pieces` at `spare` (asking for room per piece but committing once, as a native
+/// library's `StrBuf` does), then commits them all.
+unsafe fn write_spare(s: &mut VeltStr, pieces: &[&str]) {
+    let mut written = 0;
+    let (mut base, mut room) = s.spare(0);
+    for piece in pieces {
+        if room - written < piece.len() {
+            // Growing keeps what was written but not yet committed.
+            (base, room) = s.spare(written + piece.len());
+        }
+        std::ptr::copy_nonoverlapping(piece.as_ptr(), base.add(written), piece.len());
+        written += piece.len();
+    }
+    s.commit(written, pieces.iter().all(|p| p.is_ascii()));
+}
+
+#[test]
+fn spare_room_becomes_text_in_every_form() {
+    let tails: [&[&str]; 4] = [
+        &["abc"],
+        &["héllo", " wörld"],
+        &[
+            "an ASCII piece longer than any inline string, ",
+            "and another",
+        ],
+        &[&"x".repeat(100), "😀", &"y".repeat(300)],
+    ];
+    let heads = [
+        "",
+        "abc",
+        "日本",
+        "an ASCII head longer than the inline form",
+    ];
+    for head in heads {
+        for tail in tails {
+            let want = format!("{head}{}", tail.concat());
+            let leaked: &'static [u8] = Box::leak(head.as_bytes().to_vec().into_boxed_slice());
+            let owned = VeltStr::from_text(head);
+            let shared = unsafe { owned.share() };
+            let mut forms = [
+                Owned(VeltStr::from_static(leaked)),
+                Owned(VeltStr::from_text(head)),
+                Owned(owned),
+                Owned(VeltStr::with_capacity(8)),
+            ];
+            unsafe { forms[3].0.push_wtf8(head.as_bytes(), None) };
+            for s in &mut forms {
+                unsafe { write_spare(&mut s.0, tail) };
+                assert_eq!(bytes(&s.0), want.as_bytes());
+                let units = want.encode_utf16().count();
+                assert_eq!((s.0.units(), s.0.is_ascii()), (units, want.is_ascii()));
+            }
+            // Writing into a shared buffer gave the writer its own copy.
+            assert_eq!(bytes(&shared), head.as_bytes());
+            drop(Owned(shared));
+        }
+    }
+}
+
+#[test]
+fn committing_nothing_changes_nothing() {
+    let mut s = Owned(VeltStr::from_text("héllo"));
+    unsafe {
+        s.0.spare(10);
+        s.0.commit(0, true);
+    }
+    assert_eq!((bytes(&s.0), s.0.units()), ("héllo".as_bytes(), 5));
+}
+
 mod positions;
 mod slices;

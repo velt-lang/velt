@@ -1,7 +1,7 @@
-//! Which programs select the per-core scheduler (#211): `velt_main` calls
-//! `velt_rt_set_scheduler` only in a program that pins a task (`spawn(p, { worker })`). One that
-//! only calls `workerCount()` (to size a pool of unpinned tasks) or `currentWorker()` keeps the
-//! work-stealing scheduler, which runs such pools faster.
+//! Which programs call `velt_rt_set_scheduler` (#211): `velt_main` does so only in a program
+//! that pins a task (`spawn(p, { worker })`), not in one that only calls `workerCount()` or
+//! `currentWorker()`. The default scheduler keeps pinned tasks on their workers itself, so the
+//! call changes nothing at run time; it stays in the ABI for programs compiled to make it.
 
 mod no_window;
 mod test_dir;
@@ -24,7 +24,7 @@ fn vir_of(src: &str) -> String {
 }
 
 /// Whether `velt_main` calls `velt_rt_set_scheduler`.
-fn selects_per_core(vir: &str) -> bool {
+fn calls_set_scheduler(vir: &str) -> bool {
     let mut in_main = false;
     for line in vir.lines() {
         if line.starts_with("fn#") {
@@ -37,7 +37,7 @@ fn selects_per_core(vir: &str) -> bool {
 }
 
 #[test]
-fn pinning_a_task_selects_per_core() {
+fn pinning_a_task_calls_set_scheduler() {
     let vir = vir_of(
         "async function work(): Promise<void> {}
 
@@ -46,11 +46,11 @@ async function main() {
 }
 ",
     );
-    assert!(selects_per_core(&vir), "{vir}");
+    assert!(calls_set_scheduler(&vir), "{vir}");
 }
 
 #[test]
-fn worker_queries_alone_keep_the_stealing_scheduler() {
+fn worker_queries_alone_make_no_scheduler_call() {
     let vir = vir_of(
         "import { workerCount, currentWorker } from \"velt:task\";
 
@@ -67,11 +67,11 @@ async function main() {
 }
 ",
     );
-    assert!(!selects_per_core(&vir), "{vir}");
+    assert!(!calls_set_scheduler(&vir), "{vir}");
 }
 
 #[test]
-fn programs_without_placement_keep_the_stealing_scheduler() {
+fn programs_without_placement_make_no_scheduler_call() {
     let vir = vir_of(
         "async function work(): Promise<i64> {
   return 1;
@@ -82,5 +82,5 @@ async function main() {
 }
 ",
     );
-    assert!(!selects_per_core(&vir), "{vir}");
+    assert!(!calls_set_scheduler(&vir), "{vir}");
 }

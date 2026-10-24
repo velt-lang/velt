@@ -17,21 +17,21 @@ struct RawMessage {
   pattern: string;
 }
 
-declare async function velt_rt_redis_subscribe(
+declare async function velt_std_redis__subscribe(
   c: u64,
   url: string,
   ca: string,
   names: string[],
   patterns: bool,
 ): Promise<IoResult<u64>>;
-declare async function velt_rt_redis_sub_next(s: u64): Promise<IoResult<RawMessage>>;
-declare async function velt_rt_redis_sub_change(
+declare async function velt_std_redis__sub_next(s: u64): Promise<IoResult<RawMessage>>;
+declare async function velt_std_redis__sub_change(
   s: u64,
   names: string[],
   patterns: bool,
   subscribe: bool,
 ): Promise<IoStatus>;
-declare function velt_rt_redis_sub_close(s: u64);
+declare function velt_std_redis__sub_close(s: u64);
 
 /** A published message. */
 export class RedisMessage {
@@ -64,7 +64,7 @@ export struct RedisSubscriber implements AsyncIterable<RedisMessage, RedisError>
    * the server closes the connection.
    */
   async next(): Promise<RedisMessage | null> {
-    const r = await velt_rt_redis_sub_next(this.handle);
+    const r = await velt_std_redis__sub_next(this.handle);
     if (r.code != 0) {
       throw redisError(r.code, r.message);
     }
@@ -91,22 +91,22 @@ export struct RedisSubscriber implements AsyncIterable<RedisMessage, RedisError>
 
   /** Also listens to `channels`; resolves once the server confirmed them. */
   async subscribe(channels: string[]): Promise<void> {
-    check(await velt_rt_redis_sub_change(this.handle, channels, false, true));
+    check(await velt_std_redis__sub_change(this.handle, channels, false, true));
   }
 
   /** Stops listening to `channels` (an empty list does nothing; use `close()` to stop entirely). */
   async unsubscribe(channels: string[]): Promise<void> {
-    check(await velt_rt_redis_sub_change(this.handle, channels, false, false));
+    check(await velt_std_redis__sub_change(this.handle, channels, false, false));
   }
 
   /** Also listens to channels matching the glob `patterns`. */
   async psubscribe(patterns: string[]): Promise<void> {
-    check(await velt_rt_redis_sub_change(this.handle, patterns, true, true));
+    check(await velt_std_redis__sub_change(this.handle, patterns, true, true));
   }
 
   /** Stops listening to `patterns`. */
   async punsubscribe(patterns: string[]): Promise<void> {
-    check(await velt_rt_redis_sub_change(this.handle, patterns, true, false));
+    check(await velt_std_redis__sub_change(this.handle, patterns, true, false));
   }
 
   /**
@@ -114,7 +114,7 @@ export struct RedisSubscriber implements AsyncIterable<RedisMessage, RedisError>
    * released. Closing again does nothing.
    */
   close() {
-    velt_rt_redis_sub_close(this.handle);
+    velt_std_redis__sub_close(this.handle);
   }
 }
 
@@ -126,7 +126,7 @@ export async function openSubscriber(
   names: string[],
   patterns: bool,
 ): Promise<RedisSubscriber> {
-  const r = await velt_rt_redis_subscribe(client, url, ca, names, patterns);
+  const r = await velt_std_redis__subscribe(client, url, ca, names, patterns);
   if (r.code != 0) {
     throw redisError(r.code, r.message);
   }

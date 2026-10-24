@@ -288,6 +288,8 @@ fn extern_written_param(symbol: &str) -> Option<usize> {
         | "velt_rt_bytes_fill"
         | "velt_rt_bytes_xor_mask" => 0,
         "velt_rt_regex_exec" => 3,
+        // `readInto(buf)` reads into the buffer's bytes.
+        "velt_rt_tcp_try_read_into" => 1,
         // `velt_simd_<type>_store(v, to, at)` (rt_abi.md "SIMD"): `v.store(K)` modifies `K`.
         s if s.starts_with("velt_simd_") && s.ends_with("_store") => 1,
         _ => return None,

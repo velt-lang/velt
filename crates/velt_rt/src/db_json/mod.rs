@@ -9,11 +9,10 @@
 //! - [`rows`] writes result rows as a JSON array of objects (`[{"col":val,...}]`), keyed by
 //!   column name, with exact integers and JS-formatted floats.
 
-pub mod params;
-pub mod rows;
-
-pub use params::{parse_param_list, parse_params, DbValue, Params};
-pub use rows::{push_byte_array, RowWriter};
+pub use velt_text::db_json::{params, rows};
+pub use velt_text::db_json::{
+    parse_param_list, parse_params, push_byte_array, DbValue, Params, RowWriter,
+};
 
 #[cfg(test)]
 mod tests;

@@ -255,6 +255,9 @@ pub(crate) struct Ctx<'m> {
     /// Module constants kept in the module state because of how the program uses them, in the
     /// order `crate::kept_consts::keep` kept them (a rolled-back check undoes its own).
     pub kept_consts: Vec<DefId>,
+    /// The classes extending each class, directly or not (`ownership::locked::regions`), built
+    /// on first use once every class is known.
+    pub subclasses: Option<FxHashMap<DefId, Vec<DefId>>>,
     /// The member names symbols give (`crate::symbols`).
     pub symbol_keys: crate::symbols::KeyNames,
     /// Set while [`Ctx::match_context`] runs (`crate::infer`).
@@ -437,6 +440,7 @@ impl<'m> Ctx<'m> {
             kept_fns: Default::default(),
             pure_fns: FxHashMap::default(),
             kept_consts: vec![],
+            subclasses: None,
             symbol_keys: Default::default(),
             matching_context: false,
             checking: vec![],

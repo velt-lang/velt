@@ -16,6 +16,9 @@ use crate::visit;
 pub(super) struct Found {
     /// Closures `with` calls, and whether the literal is `with`'s argument itself.
     pub(super) callbacks: Vec<(DefId, bool)>,
+    /// The literals written as the argument of a `Mutex`'s `with` (not an `RwLock`'s
+    /// `read` or `write`): only those take variables along into the lock (`super::moves`).
+    pub(super) mutex_literals: FxHashSet<DefId>,
     /// Named functions `with` calls, and where they are passed.
     pub(super) named: Vec<(DefId, velt_common::Span)>,
     /// Opaque callbacks: the function passing them, and the argument expressions.
@@ -41,7 +44,10 @@ pub(super) fn find(cx: &mut Ctx, res: &mut Resolver) -> Found {
             )
         });
         for (args, params) in calls {
-            if let [_, cb] = args.as_slice() {
+            if let [m, cb] = args.as_slice() {
+                if let (E::Closure(c), false) = (&cb.kind, cx.is_rwlock(m.ty)) {
+                    found.mutex_literals.insert(*c);
+                }
                 resolve(cx, res, d, cb, &params, true, &mut found);
             }
         }

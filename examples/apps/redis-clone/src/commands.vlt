@@ -297,6 +297,12 @@ function expireTime(db: Db, n: i64, seconds: bool, absolute: bool, command: stri
 }
 
 function set(db: Db, args: u8[][], out: Writer) {
+  if (args.length === 3) {
+    // No options: replace the value (the key string is made only for a new key).
+    db.setStringUtf8(args[1], args[2]);
+    out.ok();
+    return;
+  }
   const key = text(args[1]);
   let expireAt: i64 = 0;
   let nx = false;
@@ -542,7 +548,7 @@ export function execute(db: Db, args: u8[][], out: Writer): bool {
   if (args.length === 0) {
     return true;
   }
-  const name = text(args[0]).toLowerCase();
+  const name = commandName(args[0]);
   try {
     run(db, name, args, out);
   } catch (e) {
@@ -554,6 +560,24 @@ export function execute(db: Db, args: u8[][], out: Writer): bool {
     }
   }
   return name !== "quit";
+}
+
+/// The command's name in lower case: the hot ones without making a string.
+function commandName(b: u8[]): string {
+  if (b.length === 3) {
+    const c0 = b[0] | 32;
+    const c1 = b[1] | 32;
+    const c2 = b[2] | 32;
+    if (c1 === 101 && c2 === 116) {
+      if (c0 === 103) {
+        return "get";
+      }
+      if (c0 === 115) {
+        return "set";
+      }
+    }
+  }
+  return text(b).toLowerCase();
 }
 
 function run(db: Db, name: string, args: u8[][], out: Writer) {
@@ -617,7 +641,7 @@ function run(db: Db, name: string, args: u8[][], out: Writer) {
       return;
     case "get": {
       arity(name, args, 2);
-      const v = db.getString(text(args[1]));
+      const v = db.getStringUtf8(args[1]);
       if (v == null) {
         out.nil();
       } else {

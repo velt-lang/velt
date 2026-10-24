@@ -40,10 +40,27 @@ fn main() {
     );
     let mut names = vec![];
     collect(&src, &mut names);
+    // std's drivers (crates/velt_std_*: SDK-only crates linked into the runtime) export their
+    // functions with `#[export]`; generated code calls them like the runtime's own, and the
+    // compiler checks std's declarations against their signature records.
+    let mut drivers = vec![];
+    if let Ok(crates) = std::fs::read_dir(manifest.join("..")) {
+        for c in crates.flatten() {
+            if c.file_name().to_string_lossy().starts_with("velt_std_") {
+                let dir = c.path().join("src");
+                println!("cargo::rerun-if-changed={}", dir.display());
+                collect(&dir, &mut drivers);
+            }
+        }
+    }
+    drivers.sort();
+    drivers.dedup();
+    names.extend(drivers.iter().cloned());
     names.sort();
     names.dedup();
     let out = PathBuf::from(std::env::var("OUT_DIR").expect("cargo sets it"));
-    std::fs::write(out.join("abi_symbols.rs"), render(&names)).expect("write abi_symbols.rs");
+    let text = render(&names) + &render_signatures(&drivers);
+    std::fs::write(out.join("abi_symbols.rs"), text).expect("write abi_symbols.rs");
 }
 
 /// Exported function names in every `.rs` file under `dir` (tests excluded).
@@ -70,7 +87,7 @@ pub(crate) fn exported_functions(text: &str) -> Vec<String> {
     let mut out = vec![];
     let mut pending = false;
     for line in strip_comments(text).lines().map(str::trim) {
-        if line == "#[no_mangle]" {
+        if line == "#[no_mangle]" || line == "#[export]" || line.starts_with("#[export(") {
             pending = true;
             continue;
         }
@@ -78,8 +95,13 @@ pub(crate) fn exported_functions(text: &str) -> Vec<String> {
             continue;
         }
         pending = false;
-        let Some((_, rest)) = line.split_once("extern \"C\" fn ") else {
-            continue;
+        // `extern "C" fn name` after `#[no_mangle]`; `fn name` / `async fn name` after `#[export]`.
+        let rest = match line.split_once("extern \"C\" fn ") {
+            Some((_, rest)) => rest,
+            None => match plain_fn(line) {
+                Some(rest) => rest,
+                None => continue,
+            },
         };
         let name: String = rest
             .chars()
@@ -90,6 +112,13 @@ pub(crate) fn exported_functions(text: &str) -> Vec<String> {
         }
     }
     out
+}
+
+/// The rest of `line` after `fn ` when it declares a plain Rust function (`fn`, `pub fn`,
+/// `async fn`, `pub async fn`): what an `#[export]` attribute decorates.
+fn plain_fn(line: &str) -> Option<&str> {
+    let (before, rest) = line.split_once("fn ")?;
+    matches!(before.trim(), "" | "pub" | "async" | "pub async").then_some(rest)
 }
 
 /// `text` without its comments (doc comments included), keeping every newline. String and
@@ -179,6 +208,27 @@ fn literal_end(c: &[char], i: usize) -> Option<usize> {
         Some('\'') if c.get(j + 2) == Some(&'\'') => Some(j + 3),
         _ => None,
     }
+}
+
+/// The drivers' signature records (`velt_sig_<name>`, emitted by the SDK's `#[export]`).
+fn render_signatures(names: &[String]) -> String {
+    let mut s = String::from("\nextern \"C\" {\n");
+    for n in names {
+        s.push_str(&format!("    static velt_sig_{n}: u8;\n"));
+    }
+    s.push_str(
+        "}\n\n/// std's driver exports with their signature records (`(name, signature)`).\n",
+    );
+    s.push_str("pub fn driver_signatures() -> Vec<(&'static str, &'static str)> {\n");
+    s.push_str("    // SAFETY: each record is a NUL-terminated static of the linked-in driver.\n");
+    s.push_str("    unsafe {\n        vec![\n");
+    for n in names {
+        s.push_str(&format!(
+            "            (\"{n}\", record(std::ptr::addr_of!(velt_sig_{n}))),\n"
+        ));
+    }
+    s.push_str("        ]\n    }\n}\n");
+    s
 }
 
 fn render(names: &[String]) -> String {

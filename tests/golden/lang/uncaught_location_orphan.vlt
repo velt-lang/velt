@@ -1,0 +1,27 @@
+// A promise that rejects after the task that started it returned (its set is driven by a
+// task of its own) and that another spawned task awaits: the report gives where the promise
+// threw (#1100).
+class Bad extends Error {}
+
+async function make(n: number): Promise<number> {
+  await sleep(20);
+  if (n > 0) {
+    throw new Bad("bad " + n);
+  }
+  return n;
+}
+
+async function use(p: Promise<number, Bad>): Promise<void> {
+  console.log(await p);
+}
+
+async function start(): Promise<void> {
+  spawn(use(make(3)));
+}
+
+async function main() {
+  console.log("main start");
+  await spawn(start());
+  // The rejection ends the process long before this.
+  await sleep(5000);
+}

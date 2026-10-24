@@ -1,0 +1,63 @@
+// check: no leaks
+// A `with` callback written at the call takes along a variable only it uses: what it stores
+// into the locked value is that variable's own objects, not copies (the variable is released
+// under the lock). An object the variable shares with another one is still copied, and a
+// variable used again (a loop around the call) keeps its reference: the value never shares an
+// object with the outside.
+class Item {
+  n: i64 = 0;
+}
+
+class Db {
+  items: Item[] = [];
+}
+
+function keep(d: Db, batch: Item[]) {
+  for (const x of batch) {
+    d.items.push(x);
+  }
+}
+
+async function worker(m: shared<Mutex<Db>>, rounds: i64): Promise<void> {
+  for (let k = 0; k < rounds; k++) {
+    const batch = [new Item(), new Item()];
+    m.with((d) => keep(d, batch));
+    await yieldNow();
+  }
+}
+
+async function main() {
+  const m = shared(new Mutex(new Db()));
+  const tasks: Promise<void>[] = [];
+  for (let t = 0; t < 8; t++) {
+    tasks.push(spawn(worker(m, 200)));
+  }
+  await Promise.all(tasks);
+  m.with((d) => {
+    for (const x of d.items) {
+      x.n += 1;
+    }
+  });
+  console.log("stored:", m.with((d) => d.items.length), "sum:", m.with((d) => {
+    let s: i64 = 0;
+    for (const x of d.items) {
+      s += x.n;
+    }
+    return s;
+  }));
+
+  // An item the batch shares with another variable goes in as a copy.
+  const seen = new Item();
+  const shared_batch = [seen, new Item()];
+  const before = m.with((d) => d.items.length);
+  m.with((d) => keep(d, shared_batch));
+  seen.n = 99;
+  console.log("aliased:", m.with((d) => d.items[before].n), seen.n);
+
+  // A batch declared outside a loop is used again by each iteration.
+  const again = [new Item()];
+  for (let i = 0; i < 3; i++) {
+    m.with((d) => keep(d, again));
+  }
+  console.log("again:", m.with((d) => d.items.length - before));
+}

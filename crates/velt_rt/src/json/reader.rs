@@ -80,6 +80,9 @@ pub const FLAG_REJECT_UNKNOWN: u32 = 1;
 /// A JSON `null` for an optional field whose type has no `null` fails the decode
 /// (`velt_rt_json_reader_null_absent` answers 0).
 pub const FLAG_NULL_NOT_ABSENT: u32 = 2;
+/// The source is a `u8[]` of a driver's binary rows (`rows_bin.rs`), not a string
+/// (`__intrinsic_json_parse_rows`).
+pub const FLAG_ROWS: u32 = 4;
 
 /// Bits of a mark: position, open containers, `after_open`.
 const MARK_DEPTH_BITS: u32 = 21;
@@ -120,9 +123,9 @@ impl Reader {
     }
 
     /// A reader over a driver's binary rows (`rows_bin.rs`), with `FLAG_*` options.
-    pub fn over_rows(rows: Vec<u8>, flags: u32) -> Reader {
+    pub fn over_rows(rows: RowReader, flags: u32) -> Reader {
         let mut r = Reader::with_source(&[], true, flags, 0);
-        r.rows = Some(Box::new(RowReader::new(rows, flags)));
+        r.rows = Some(Box::new(rows));
         r.error = Some(ReadError::Mismatch);
         r
     }

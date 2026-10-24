@@ -11,7 +11,8 @@
 //! ([`wait`]) checks the counters in an order that makes a snapshot of them consistent: it reads
 //! the wake count first, then that every worker is parked, then the rest, then the wake count
 //! again. While every worker stays parked nothing in a task changes the counters, and a worker
-//! woken in between changes the wake count.
+//! woken in between changes the wake count. A thread outside the workers that moves queued tasks
+//! between them (the Velt executor's monitor) holds a [`Moving`] meanwhile.
 //!
 //! Once quiet, the process is ending, whenever the waiting thread gets to run: the last worker to
 //! park checks the condition itself, records it ([`ending`]) and signals that thread, so an
@@ -46,6 +47,18 @@ struct Counters {
 }
 
 impl Counters {
+    /// A [`Moving`] starts: pending first, then the wake count, so a check that read the wake
+    /// count after this sees it pending.
+    fn moving_begin(&self) {
+        self.external.fetch_add(1, SeqCst);
+        self.wakes.fetch_add(1, SeqCst);
+    }
+
+    /// The moved tasks are in a queue now, which counts them.
+    fn moving_end(&self) {
+        self.external.fetch_sub(1, SeqCst);
+    }
+
     const fn new() -> Counters {
         Counters {
             workers: AtomicUsize::new(0),
@@ -254,6 +267,26 @@ impl Drop for Pending {
     }
 }
 
+/// Held while a thread that is not a worker moves queued tasks between workers that may count
+/// as idle (the Velt executor's monitor, taking over a stalled worker's queue): between leaving
+/// one queue and reaching another, no queue counts them. It counts as pending meanwhile, and its
+/// start changes the wake count too, so a check of the counters in progress ([`wait`]) either
+/// sees it pending or sees the wake count change, as for a worker woken in between.
+pub(crate) struct Moving(());
+
+impl Moving {
+    pub(crate) fn new() -> Moving {
+        COUNTERS.moving_begin();
+        Moving(())
+    }
+}
+
+impl Drop for Moving {
+    fn drop(&mut self) {
+        COUNTERS.moving_end();
+    }
+}
+
 /// What the process waits for besides the counters: keep-alive references and the runtime's
 /// tasks, as [`wait`] reads them.
 #[derive(Clone, Copy)]
@@ -353,6 +386,31 @@ mod tests {
             ..rt
         };
         assert!(none.is_quiet(&c), "no task is alive");
+    }
+
+    #[test]
+    fn tasks_moved_between_idle_workers_keep_the_process_alive() {
+        // The monitor takes a woken worker's queued task (the worker still counts as idle: the OS
+        // has not run it yet) to another worker: no queue counts the task meanwhile.
+        let c = Counters::new();
+        c.workers.store(1, SeqCst);
+        let rt = Runtime {
+            keep_alive: &|| 0,
+            alive_tasks: &|| 1,
+            queued: &|| 0,
+        };
+        assert!(c.parked());
+        assert!(rt.is_quiet(&c));
+        let wakes = c.wakes.load(SeqCst);
+        c.moving_begin();
+        assert!(!rt.is_quiet(&c), "tasks being moved are pending");
+        assert_ne!(
+            c.wakes.load(SeqCst),
+            wakes,
+            "a check in progress sees the change"
+        );
+        c.moving_end();
+        assert!(rt.is_quiet(&c));
     }
 
     #[test]

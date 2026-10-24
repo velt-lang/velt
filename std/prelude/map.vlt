@@ -46,6 +46,11 @@
 
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
 
+declare function velt_rt_bytes_hash(b: u8[]): u64;
+declare function velt_rt_bytes_is_utf8(b: u8[]): bool;
+declare function velt_rt_str_eq_bytes(s: string, b: u8[]): bool;
+declare function velt_rt_bytes_to_str_lossy(b: u8[]): string;
+
 // First index capacity once a map receives its first entry.
 const INITIAL_SLOTS: usize = 8;
 
@@ -1039,5 +1044,74 @@ function visit<K, V, E>(slot: V | null, key: K, f: (value: V, key: K) => void th
     f(slot, key);
   } else if (__intrinsic_holds_null(__intrinsic_null_as<V>())) {
     f(__intrinsic_null_as<V>(), key);
+  }
+}
+
+/**
+ * A map with string keys, looked up by the UTF-8 bytes of a key (Velt): a server reading keys
+ * from the network finds them without making a string per request. Each method is the one
+ * without `Utf8` called with the bytes decoded (`utf8DecodeLossy`: an invalid sequence reads as
+ * U+FFFD); valid UTF-8 is hashed and compared as it is, and a string is made only to store a
+ * new key.
+ */
+extend<V> Map<string, V> {
+  /** `get` of the key whose UTF-8 bytes are `key`. */
+  getUtf8(key: u8[]): V | undefined {
+    if (!velt_rt_bytes_is_utf8(key)) {
+      return this.get(velt_rt_bytes_to_str_lossy(key));
+    }
+    const e = lookupUtf8(this, key, velt_rt_bytes_hash(key) * FIB);
+    if (e < 0) {
+      return undefined;
+    }
+    return sharedValue(this.entryValues[e as usize]);
+  }
+
+  /** `has` of the key whose UTF-8 bytes are `key`. */
+  hasUtf8(key: u8[]): bool {
+    if (!velt_rt_bytes_is_utf8(key)) {
+      return this.has(velt_rt_bytes_to_str_lossy(key));
+    }
+    return lookupUtf8(this, key, velt_rt_bytes_hash(key) * FIB) >= 0;
+  }
+
+  /** `set` of the key whose UTF-8 bytes are `key`: the string is made only for a new entry. */
+  setUtf8(key: u8[], value: V) {
+    if (velt_rt_bytes_is_utf8(key)) {
+      const e = lookupUtf8(this, key, velt_rt_bytes_hash(key) * FIB);
+      if (e >= 0) {
+        this.entryValues[e as usize] = value;
+        return;
+      }
+    }
+    this.set(velt_rt_bytes_to_str_lossy(key), value);
+  }
+}
+
+// `Map.lookup` of valid UTF-8 bytes against the string keys of `m` (hashed alike:
+// `velt_rt_bytes_hash`): the entry position, or -1.
+function lookupUtf8<V>(m: Map<string, V>, key: u8[], p: u64): i64 {
+  if (m.slots.length == 0) {
+    return -1;
+  }
+  const mask = m.slots.length - 1;
+  let s = (p >> m.shift) as usize;
+  let dist: usize = 0;
+  while (true) {
+    const w = m.slots[s];
+    if (w == 0) {
+      return -1;
+    }
+    if (((w ^ p) >> 32) == 0) {
+      const e = ((w & POS_MASK) - 1) as usize;
+      if (velt_rt_str_eq_bytes(m.entryKeys[e], key)) {
+        return e as i64;
+      }
+    }
+    if (((s - ((w >> m.shift) as usize)) & mask) < dist) {
+      return -1;
+    }
+    s = (s + 1) & mask;
+    dist++;
   }
 }

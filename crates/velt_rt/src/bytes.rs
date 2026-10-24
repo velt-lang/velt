@@ -98,6 +98,22 @@ pub unsafe extern "C" fn velt_rt_bytes_to_str(b: *const VeltBytes, out: *mut IoR
     r.write_to(out);
 }
 
+/// The text of the UTF-8 bytes `b`, an invalid sequence as U+FFFD (WHATWG's decoder, as std's
+/// `utf8DecodeLossy`: one per maximal invalid subpart).
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_bytes_to_str_lossy(b: *const VeltBytes, out: *mut VeltStr) {
+    out.write(VeltStr::from_bytes(
+        String::from_utf8_lossy((*b).as_bytes()).as_bytes(),
+    ));
+}
+
+/// Whether `b` is valid UTF-8: the bytes of a string, as it stores them (a lone surrogate's
+/// three bytes are not UTF-8, and decoding replaces them).
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_bytes_is_utf8(b: *const VeltBytes) -> u8 {
+    u8::from(std::str::from_utf8((*b).as_bytes()).is_ok())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

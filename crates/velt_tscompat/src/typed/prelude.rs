@@ -491,6 +491,18 @@ pub(crate) const VELT_MEMBERS: &[(&str, &[VeltOnly])] = &[
                 "getOrInsert",
                 "write `m.get(k) ?? d` and `m.set(k, d)` when it is missing",
             ),
+            (
+                "getUtf8",
+                "decode the key first: `m.get(new TextDecoder().decode(bytes))`",
+            ),
+            (
+                "hasUtf8",
+                "decode the key first: `m.has(new TextDecoder().decode(bytes))`",
+            ),
+            (
+                "setUtf8",
+                "decode the key first: `m.set(new TextDecoder().decode(bytes), v)`",
+            ),
             ("update", "read with `m.get(k)`, then `m.set(k, f(v))`"),
             ("upsert", "read with `m.get(k)`, then `m.set(k, …)`"),
         ],
