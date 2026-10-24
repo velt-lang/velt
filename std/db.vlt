@@ -1,4 +1,5 @@
-// std/rows: rows of any source into typed values (docs/std/rows.md). A driver written in Velt
+// std/db: what database drivers share (docs/std/db.md): rows of any source into typed values.
+// A driver written in Velt
 // (a database's wire protocol parsed in place, a file format) implements `RowSource`, and
 // `readRows<T>` fills a `T` per row: each column the field of its name, as `JSON.parse<T>` fills
 // fields from keys, with the same conversions and the same messages for a row that does not

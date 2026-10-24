@@ -293,8 +293,8 @@ is read with a JSON reader over its text.
 When the row type is an object of plain fields (numbers, bools, strings, `T | null` of those,
 `u8[]`), the compiler reads the rows by column instead of through the JSON reader
 (`Glue::RowsRead`, rt_abi_async.md), with the same results and messages. std/sqlite and
-std/postgres use cursors. A driver written in Velt offers its rows as std/rows' `RowSource`
-instead ([velt:rows](../../std/rows.md)), read the same way through its own methods.
+std/postgres use cursors. A driver written in Velt offers its rows as std/db' `RowSource`
+instead ([velt:db](../../std/db.md)), read the same way through its own methods.
 
 ## Parameter sinks
 

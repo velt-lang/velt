@@ -300,9 +300,9 @@ pub enum Intrinsic {
     /// JSON text (native_abi.md "Parameter sinks").
     DbBind,
     /// std only: `__intrinsic_read_rows<T, S>(src: borrow S): T[] | null` — every remaining row
-    /// of the std/rows `RowSource` `src`, read by column when `T` is an object of plain fields
+    /// of the std/db `RowSource` `src`, read by column when `T` is an object of plain fields
     /// and `S` a class whose row methods do not throw; throws `JsonError { message }` for a row
-    /// that does not fit. `null` (nothing read) for any other `T` or `S`: std/rows then reads
+    /// that does not fit. `null` (nothing read) for any other `T` or `S`: std/db then reads
     /// the rows as JSON.
     ReadRows,
     /// std only: `__intrinsic_read_row<T, S>(src: borrow S): T | null` — the current row of

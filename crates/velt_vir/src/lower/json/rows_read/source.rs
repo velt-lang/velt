@@ -1,4 +1,4 @@
-//! std/rows' `RowSource` written in Velt read by column (`__intrinsic_read_rows<T, S>`): the
+//! std/db' `RowSource` written in Velt read by column (`__intrinsic_read_rows<T, S>`): the
 //! source's own methods called for each value, a column map from its column names.
 
 use velt_sema::hir::{self, DefId, TyId, TyKind};
@@ -138,7 +138,7 @@ impl FnLower<'_, '_> {
     }
 
     /// The `RowSource` methods of `cls`, when rows can be read from it by column: a class that
-    /// implements std/rows' `RowSource` itself (not generically), whose methods do not throw.
+    /// implements std/db' `RowSource` itself (not generically), whose methods do not throw.
     fn rows_source_methods(&mut self, cls: TyId) -> Option<Vec<DefId>> {
         if !self.cx.is_class(cls) {
             return None;
@@ -189,7 +189,7 @@ impl FnLower<'_, '_> {
             .rows_source_methods(cls)
             .filter(|_| self.rows_row_ok(row_ty))
         else {
-            // Read as JSON by std/rows.
+            // Read as JSON by std/db.
             return self.zero_value(ovt);
         };
         let vt = self.cx.ty(t);

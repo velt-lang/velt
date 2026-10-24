@@ -1,7 +1,7 @@
-# velt:rows
+# velt:db
 
-`import { CellKind, readRow, readRows, RowSource, RowError } from "velt:rows"`. Typed rows from
-any source of tabular data. A driver written in Velt (a database's wire protocol parsed in
+`import { CellKind, readRow, readRows, RowSource, RowError } from "velt:db"`. What database
+drivers share: typed rows from any source of tabular data. A driver written in Velt (a database's wire protocol parsed in
 place, a file format) implements `RowSource`, and `readRows<T>` fills one `T` per row: each
 column fills the field of its name, as `JSON.parse<T>` fills fields from keys, with the same
 conversions (an integer into an `f64` field, an exact float into an integer field, `null` into a
@@ -26,7 +26,7 @@ type (nested objects, arrays, unions) is read through the JSON text of the rows,
 result.
 
 ```ts
-import { CellKind, readRows, RowSource } from "velt:rows";
+import { CellKind, readRows, RowSource } from "velt:db";
 
 // Rows of `key=value` pairs, one row per line.
 class Pairs implements RowSource {

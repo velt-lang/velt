@@ -50,7 +50,7 @@ Written in Velt. The compiler resolves `import { x } from "velt:<path>"` to `std
 | `jsx.vlt` | `velt:jsx`: server-side TSX rendering, `renderToString renderToStringSync renderToStream raw Fragment`, `Element`, `RenderError`, the `JSX` types. |
 | `jsx/jsx-runtime.vlt` | `velt:jsx/jsx-runtime`: the JSX provider module compiled JSX calls (docs/internals/contracts/jsx.md), with the SSR precompile exports; `jsx/generic/jsx-runtime.vlt` without them. Internal: `jsx/node.vlt` (`Element`), `factory.vlt`, `escape.vlt`, `void_elements.vlt`, `render.vlt`, `intrinsic.vlt` + `attrs/*.vlt` (HTML tags and attributes). |
 | `csv.vlt` | `std/csv`: RFC 4180 `parseCsv parseCsvRecords stringifyCsv`, `CsvError`. |
-| `rows.vlt` | `std/rows`: `RowSource`, `readRows readRow`, `CellKind`, `RowError`: typed rows from any source. |
+| `db.vlt` | `std/db`: `RowSource`, `readRows readRow`, `CellKind`, `RowError`: typed rows from any source. |
 | `cli.vlt` | `std/cli`: `ArgParser` (flags, options, positionals, help text), `ParsedArgs`, `CliError`. |
 | `child_process.vlt` | `std/child_process`: `exec execSync execShell spawn`, `ChildProcess`, `ExecResult`. |
 | `stdin.vlt` | `std/stdin`: `readLine readAll` (+ `*Sync`). |

@@ -30,7 +30,7 @@ struct Failure {
 pub(super) enum RowSrc {
     /// A driver's row cursor, through the runtime's rows state `st` (`velt_rt_rows_*`).
     Native { st: Local },
-    /// A `RowSource` class of std/rows (`cls`), its methods called directly; `st` keeps the
+    /// A `RowSource` class of std/db (`cls`), its methods called directly; `st` keeps the
     /// column map, `ncols` the column count.
     Velt {
         st: Local,
@@ -49,7 +49,7 @@ impl RowSrc {
     }
 }
 
-/// `RowSource` methods, in the interface's order (std/rows.vlt).
+/// `RowSource` methods, in the interface's order (std/db.vlt).
 const COLUMN_COUNT: usize = 0;
 const COLUMN_NAME: usize = 1;
 const NEXT: usize = 2;
@@ -59,15 +59,15 @@ const GET_INT: usize = 5;
 const GET_FLOAT: usize = 6;
 const GET_TEXT: usize = 7;
 const GET_BLOB: usize = 8;
-/// `CellKind` values (std/rows.vlt).
+/// `CellKind` values (std/db.vlt).
 const KIND_NULL: i128 = 0;
 const KIND_BOOL: i128 = 1;
 const KIND_INT: i128 = 2;
 const KIND_FLOAT: i128 = 3;
 const KIND_TEXT: i128 = 4;
 const KIND_BLOB: i128 = 5;
-/// The qualified name of std/rows' `RowSource`.
-const ROW_SOURCE: &str = "std/rows::RowSource";
+/// The qualified name of std/db' `RowSource`.
+const ROW_SOURCE: &str = "std/db::RowSource";
 
 /// A value a column is read into before it is stored: a temp, or the field itself.
 enum Fetch {

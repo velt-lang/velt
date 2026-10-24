@@ -137,7 +137,7 @@ unsafe fn cell<'a>(state: *const RowsState, col: u64) -> Cell<'a> {
     }
 }
 
-/// Starts reading a `RowSource` written in Velt (std/rows): a state without a cursor, whose
+/// Starts reading a `RowSource` written in Velt (std/db): a state without a cursor, whose
 /// column map [`velt_rt_rows_map_column`] fills from the source's column names.
 ///
 /// # Safety
