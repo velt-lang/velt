@@ -6,7 +6,6 @@
 //! the replacement from the AST and sema's types:
 //! - [`fixits`]: `mut` removal, a non-`bool` condition → an explicit comparison,
 //!   `async` for a method whose promise must carry its errors;
-//! - [`concat`]: `"a" + xs` → a template literal;
 //! - [`exports`]: `export default` → a named export;
 //! - [`promise`]: a floating promise (a promise-typed expression statement, a compiler error) →
 //!   `await` it or `spawn` it;
@@ -16,7 +15,6 @@
 //! ([`fix_all_like`]), and every preferred fix of the document as one `source.fixAll` action
 //! ([`fix_all_preferred`]).
 
-mod concat;
 mod exports;
 mod fixits;
 mod promise;
@@ -50,7 +48,6 @@ pub fn fixes(analysis: &Analysis, lo: u32, hi: u32) -> Vec<Fix> {
             continue;
         }
         let fix = fixits::for_diagnostic(analysis, d, span)
-            .or_else(|| concat::for_diagnostic(analysis, d, span))
             .or_else(|| exports::for_diagnostic(analysis, d, span));
         out.extend(fix.map(|(title, edits)| Fix {
             title,
