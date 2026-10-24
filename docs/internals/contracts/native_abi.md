@@ -285,7 +285,9 @@ step) — and hands std the address of a `RawCursor` (`RawCursor::new`: the data
 `#[repr(C)]` table of those three functions). std decodes with the std-only intrinsic
 `__intrinsic_json_parse_cursor<T>(cursor, flags, max_depth)` (reader flag 8, rt_abi_async.md)
 and gives the cursor back to the driver afterwards, which releases what it held (std/sqlite: the
-connection's lock) and reports a failure met while stepping. The decoder reads every cell once,
+connection's lock) and reports a failure met while stepping. When the row type is an object of plain fields (numbers,
+bools, strings, `T | null` of those, `u8[]`), the compiler reads the rows by column instead of
+through the JSON reader (`Glue::RowsRead`, rt_abi_async.md), with the same results and messages. The decoder reads every cell once,
 in order, between two steps; a decoder that looks ahead across rows (a union of whole results)
 gets the remaining rows copied into binary form once.
 
