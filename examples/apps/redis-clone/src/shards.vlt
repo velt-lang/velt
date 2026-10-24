@@ -1,0 +1,251 @@
+// The keyspace split into shards, one per worker thread, each behind its own lock: a command
+// runs on the shard of its key, so threads working on different keys don't wait for each other.
+// A command over several keys or the whole keyspace (DEL, EXISTS, MGET and MSET of several
+// keys; KEYS, DBSIZE, FLUSHDB, FLUSHALL, INFO) holds the locks of every shard it touches at
+// once, taken in ascending order (so two of them can't deadlock), runs its part on each, and
+// merges the replies: it is as atomic as in Redis.
+import { utf8DecodeLossy } from "velt:encoding";
+import { execute } from "./commands";
+import { Db } from "./db";
+import { Writer } from "./resp";
+
+/// The shard of a command: its key's (the first argument after the name).
+export function shardOf(args: u8[][], n: i64): i64 {
+  if (args.length < 2 || n === 1) {
+    return 0;
+  }
+  // FNV-1a.
+  const k = args[1];
+  let h: u32 = 2166136261;
+  for (let i = 0; i < k.length; i++) {
+    h = ((h ^ (k[i] as u32)) * 16777619) as u32;
+  }
+  return (h as i64) % n;
+}
+
+/// How a command over several shards merges their replies.
+export type Merge = "none" | "sum" | "ok" | "mget" | "keys" | "info";
+
+/// How `args` (named `name`) spreads over the shards; "none" for a command of one shard (one key,
+/// none, or arguments that only earn an error).
+export function mergeOf(name: string, args: u8[][]): Merge {
+  switch (name) {
+    case "del":
+    case "unlink":
+    case "exists":
+      return args.length > 2 ? "sum" : "none";
+    case "mget":
+      return args.length > 2 ? "mget" : "none";
+    case "mset":
+      return args.length > 3 && args.length % 2 === 1 ? "ok" : "none";
+    case "dbsize":
+      return args.length === 1 ? "sum" : "none";
+    case "flushdb":
+    case "flushall":
+      return "ok";
+    case "keys":
+      return args.length === 2 ? "keys" : "none";
+    case "info":
+      return "info";
+  }
+  return "none";
+}
+
+/// A command's part for each shard it touches, in ascending shard order, and for MGET where
+/// each key's value lands in the merged reply.
+type Parts = { order: i64[]; parts: u8[][][]; places: i64[][] };
+
+function split(name: string, merge: Merge, args: u8[][], n: i64): Parts {
+  const parts: u8[][][] = [];
+  const places: i64[][] = [];
+  const index: i64[] = [];
+  for (let s = 0; s < n; s++) {
+    index.push(-1);
+  }
+  const order: i64[] = [];
+  const whole =
+    merge === "keys" ||
+    merge === "info" ||
+    name === "dbsize" ||
+    name === "flushdb" ||
+    name === "flushall";
+  if (whole) {
+    // Every shard runs the command as it is.
+    for (let s = 0; s < n; s++) {
+      order.push(s);
+      parts.push(args.slice());
+      places.push([]);
+    }
+    return { order, parts, places };
+  }
+  const step = merge === "ok" ? 2 : 1;
+  for (let i = 1; i < args.length; i += step) {
+    const s = shardOf([args[0], args[i]], n);
+    if (index[s] < 0) {
+      index[s] = order.length as i64;
+      order.push(s);
+      parts.push([args[0]]);
+      places.push([]);
+    }
+    const p = index[s];
+    parts[p].push(args[i]);
+    if (step === 2) {
+      parts[p].push(args[i + 1]);
+    }
+    places[p].push((i - 1) as i64);
+  }
+  // Ascending shard order: the order every command takes the locks in.
+  const sorted: i64[] = [];
+  for (let s = 0; s < n; s++) {
+    if (index[s] >= 0) {
+      sorted.push(index[s]);
+    }
+  }
+  return {
+    order: sorted.map((p) => order[p]),
+    parts: sorted.map((p) => parts[p].slice()),
+    places: sorted.map((p) => places[p].slice()),
+  };
+}
+
+/// Runs `parts[k..]` on shards `order[k..]`, each under its lock, holding every lock until the
+/// last part ran; the replies, last shard first.
+function underLocks(
+  shards: shared<Mutex<Db>>[],
+  order: i64[],
+  parts: u8[][][],
+  k: i64,
+  now: i64,
+): u8[][] {
+  if (k === (order.length as i64)) {
+    return [];
+  }
+  const part = parts[k];
+  return shards[order[k]].with((d) => {
+    d.now = now;
+    const out = new Writer(256);
+    execute(d, part, out);
+    const replies = underLocks(shards, order, parts, k + 1, now);
+    replies.push(out.take());
+    return replies;
+  });
+}
+
+/// The command `args` (named `name`, spreading as `merge`) on the shards; its reply.
+export function across(
+  shards: shared<Mutex<Db>>[],
+  name: string,
+  merge: Merge,
+  args: u8[][],
+  now: i64,
+): u8[] {
+  const p = split(name, merge, args, shards.length as i64);
+  const replies = underLocks(shards, p.order, p.parts, 0, now);
+  replies.reverse();
+  const out = new Writer(256);
+  switch (merge) {
+    case "sum": {
+      let n: i64 = 0;
+      for (const r of replies) {
+        n += integerOf(r, 1, (r.length as i64) - 2);
+      }
+      out.integer(n);
+      break;
+    }
+    case "ok":
+      out.ok();
+      break;
+    case "mget": {
+      const values: u8[][] = [];
+      for (let i = 1; i < args.length; i++) {
+        values.push([]);
+      }
+      for (let k = 0; k < replies.length; k++) {
+        const elems = elements(replies[k]);
+        for (let j = 0; j < elems.length; j++) {
+          values[p.places[k][j]] = elems[j];
+        }
+      }
+      out.array(values.length as i64);
+      for (const v of values) {
+        out.bytes(v);
+      }
+      break;
+    }
+    case "keys": {
+      const all: u8[][] = [];
+      for (const r of replies) {
+        for (const e of elements(r)) {
+          all.push(e);
+        }
+      }
+      out.array(all.length as i64);
+      for (const e of all) {
+        out.bytes(e);
+      }
+      break;
+    }
+    case "info": {
+      let keys: i64 = 0;
+      let expires: i64 = 0;
+      for (const r of replies) {
+        keys += field(r, "keys=");
+        expires += field(r, "expires=");
+      }
+      out.bulkString(
+        `# Server\r\nredis_version:7.4.0\r\nredis_mode:standalone\r\nimplementation:velt\r\n\r\n# Keyspace\r\ndb0:keys=${keys},expires=${expires}\r\n`,
+      );
+      break;
+    }
+    case "none":
+      break;
+  }
+  return out.take();
+}
+
+/// The decimal number in `r[from..to]`.
+function integerOf(r: u8[], from: i64, to: i64): i64 {
+  let n: i64 = 0;
+  let neg = false;
+  for (let i = from; i < to; i++) {
+    if (r[i] === 45) {
+      neg = true;
+    } else {
+      n = n * 10 + ((r[i] as i64) - 48);
+    }
+  }
+  return neg ? -n : n;
+}
+
+/// The elements of an array reply of bulk strings (`*n` then `$len` + data, or `$-1`), each as
+/// its raw reply bytes.
+function elements(r: u8[]): u8[][] {
+  const out: u8[][] = [];
+  let i = (r.indexOf(10, 0) as i64) + 1;
+  while (i < r.length) {
+    const eol = r.indexOf(10, i) as i64;
+    const len = integerOf(r, i + 1, eol - 1);
+    const end = len < 0 ? eol + 1 : eol + 1 + len + 2;
+    out.push(r.slice(i, end));
+    i = end;
+  }
+  return out;
+}
+
+/// The number after `name` in an INFO reply.
+function field(r: u8[], name: string): i64 {
+  const text = utf8DecodeLossy(r);
+  const at = text.indexOf(name);
+  if (at < 0) {
+    return 0;
+  }
+  let n: i64 = 0;
+  for (let i = at + name.length; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    if (c < 48 || c > 57) {
+      break;
+    }
+    n = n * 10 + (c as i64) - 48;
+  }
+  return n;
+}

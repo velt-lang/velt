@@ -17,7 +17,7 @@ pub(crate) mod shutdown;
 
 use std::io;
 
-use tokio::net::TcpListener;
+use crate::net::sys::TcpListener;
 use tokio::sync::watch;
 
 /// Names the supervisor's dev channel for listener handover.

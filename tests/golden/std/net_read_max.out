@@ -1,0 +1,2 @@
+first: 100
+second: 1000, every read at most 10: true

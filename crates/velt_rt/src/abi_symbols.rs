@@ -15,3 +15,13 @@ include!(concat!(env!("OUT_DIR"), "/abi_symbols.rs"));
 pub fn symbol_table() -> Vec<(&'static str, *const u8)> {
     ABI_SYMBOLS.iter().map(|(name, a)| (*name, a.0)).collect()
 }
+
+/// The NUL-terminated signature record at `p` (an SDK `velt_sig_<name>` static).
+///
+/// # Safety
+/// `p` points to a NUL-terminated static.
+unsafe fn record(p: *const u8) -> &'static str {
+    std::ffi::CStr::from_ptr(p.cast())
+        .to_str()
+        .unwrap_or("ICE: a signature record is not UTF-8")
+}

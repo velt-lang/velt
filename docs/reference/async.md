@@ -428,9 +428,8 @@ use one object (also on single-threaded WebAssembly, where tasks share the one t
 `spawn(p, { worker: i })` pins the task to worker `i` (`0` to `workerCount() - 1`, from
 [`velt:task`](../std/task.md#task-placement)): it starts there and never moves. `p` must be a
 call or a task body (not a promise that already started); an index out of range is a panic at
-the spawn. A program that pins a task runs on the per-core scheduler, where every task stays on
-the worker it started on, so a caller pinned next to the task it talks to never wakes another
-thread. Calling `workerCount()` or `currentWorker()` alone doesn't change the scheduler.
+the spawn. Every task stays on the worker it started on unless that worker is busy enough to
+share its work, so a caller pinned next to the task it talks to never wakes another thread.
 
 Tasks exchange values through channels ([`velt:channel`](../std/channel.md)): typed,
 bounded or unbounded queues where `send` waits while a bounded channel is full.
@@ -443,7 +442,9 @@ anything that task prints in response. Hand-offs are:
 - a channel `send`, a `close`, or a `receive` that frees room in a bounded channel;
 - settling a `new Promise` or `Promise.withResolvers` promise;
 - `abort()`;
-- a child leaving a task scope.
+- a child leaving a task scope;
+- sending on a socket: `fetch`, a server's response or body chunk, a TCP connect, write or
+  close, a UDP datagram (the peer is often a task of the same program).
 
 Hand-offs through shared state (`shared`, a `Mutex`) and through timers are not covered: to keep
 such lines in order, print them from one task. Writing to stderr flushes stdout first.
@@ -677,6 +678,11 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
     function ("the function passed to `with` comes from an object's field, and may be a
     closure that stores a part of the locked `State` outside it …"); otherwise the call is
     accepted as written.
+  - A variable the callback only reads, and that the function does not use after the `with`
+    (nor again in a loop around it), goes into the lock with the callback: what the callback
+    stores of it into the value is not copied (`const batch = parse(input); m.with((db) =>
+    apply(db, batch))` stores `batch`'s own objects). An object it shares with another
+    variable is still copied. Nothing changes in what the program sees; only the copies go.
   - A promise made from the value runs after the lock is released. One that only reads what it
     is given gets a copy, like a spawned call (`m.with((v) => save(v.name))`,
     `m.with((v) => read(v))`: `read` sees the value as it was; a copy of a resource without

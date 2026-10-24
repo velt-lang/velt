@@ -21,8 +21,8 @@
 //! atomic read-modify-write: the node takes a counted reference to its set only when it
 //! suspends (or when a waker raced with its completion), and the owner's side is plain memory.
 //!
-//! The owner's side of a started node is in `owner.rs`, its wakers in `waker.rs`, and result
-//! transfers for another task in `transfer.rs`.
+//! The owner's side of a started node is in `owner.rs`, its wakers in `waker.rs`, result
+//! transfers for another task in `transfer.rs`, and where its error was thrown in `loc.rs`.
 
 use std::alloc::Layout;
 use std::cell::Cell;
@@ -34,6 +34,7 @@ use std::task::{Context, Poll, RawWaker, Waker};
 
 use futures_util::task::AtomicWaker;
 
+mod loc;
 mod owner;
 mod transfer;
 mod waker;
@@ -41,6 +42,7 @@ mod waker;
 pub(super) use self::transfer::set_transfer;
 pub(super) use self::waker::{local_awaiter, queue};
 
+pub(super) use self::loc::of as loc_of;
 pub(super) use self::owner::{deliver_unadopted, is_done, poll_unadopted};
 use self::owner::{started_drop, started_poll};
 use self::transfer::run_transfer;
@@ -67,6 +69,8 @@ const SET_REF: u32 = 64;
 const ADOPTED: u32 = 128;
 /// A combinator handles its outcome ([`mark_handled`]).
 const HANDLED: u32 = 256;
+/// It finished with the location of a `throw`, kept in a side table (loc.rs).
+const LOC: u32 = 512;
 
 /// `owner` bit of a lazy node: its state finished (it is polled by its owner only).
 const OWNER_DONE: u32 = 1;
@@ -179,9 +183,11 @@ pub(super) unsafe fn alloc_node(
 
 unsafe fn free(f: *mut VeltFut) {
     let h = head_mut(f);
-    if *h.flags.get_mut() & SET_REF != 0 {
+    let fl = *h.flags.get_mut();
+    if fl & SET_REF != 0 {
         drop(Arc::from_raw(h.set));
     }
+    loc::forget(f, fl);
     let l = layout(h.state_size);
     std::ptr::drop_in_place(&mut h.awaiter);
     std::alloc::dealloc((f as *mut u8).sub(HEAD), l);
@@ -262,7 +268,9 @@ pub(super) unsafe fn poll_state(f: *mut VeltFut, word: *const u32) -> bool {
         std::mem::ManuallyDrop::new(Waker::from_raw(RawWaker::new(f as *const (), &NODE_WAKER)));
     let mut cx = Context::from_waker(&w);
     let h = head(f);
-    (h.poll)(state(f), crate::task::raw_cx_with(&mut cx, word).ptr()) == READY
+    loc::polled(f, || {
+        (h.poll)(state(f), crate::task::raw_cx_with(&mut cx, word).ptr()) == READY
+    })
 }
 
 /// The first poll of started node `f`, part of its creator's synchronous run (like calling an
@@ -279,8 +287,10 @@ pub(super) unsafe fn poll_first(f: *mut VeltFut, word: *const u32) -> bool {
             _ => Poll::Pending,
         }
     });
-    let mut first = std::pin::pin!(tokio::task::unconstrained(first));
-    first.as_mut().poll(&mut Context::from_waker(&w)).is_ready()
+    let mut first = std::pin::pin!(crate::task::coop::unconstrained(first));
+    loc::polled(f, || {
+        first.as_mut().poll(&mut Context::from_waker(&w)).is_ready()
+    })
 }
 
 /// Make `f`'s reference to its set a counted one (it outlives the poll that started it).
@@ -374,7 +384,7 @@ unsafe fn drop_result(f: *mut VeltFut) {
     if !d.is_null() {
         // SAFETY: only ever stored from a `ResultDropFn` (`drop_fn_ptr`).
         let d = std::mem::transmute::<*mut (), ResultDropFn>(d);
-        super::unhandled::drop_result(f, d);
+        loc::with_loc(f, || super::unhandled::drop_result(f, d));
     }
 }
 
@@ -384,7 +394,7 @@ pub(super) unsafe fn drop_result_now(f: *mut VeltFut) {
     if !d.is_null() {
         // SAFETY: only ever stored from a `ResultDropFn` (`drop_fn_ptr`).
         let d = std::mem::transmute::<*mut (), ResultDropFn>(d);
-        d(state(f));
+        loc::with_loc(f, || d(state(f)));
     }
 }
 

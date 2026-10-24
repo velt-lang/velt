@@ -8,6 +8,7 @@
 //! a raw socket, or a stream set up by its first operation (TLS, an upgraded HTTP connection).
 
 use super::stream::{Ready, StreamObj, Writing};
+use super::sys::{TcpListener, TcpStream};
 use crate::bytes::VeltBytes;
 use crate::registry::{closed_error, Key, Registry};
 use crate::result::{IoResult, VeltErr};
@@ -16,7 +17,6 @@ use crate::task::leaf::new_leaf;
 use crate::task::VeltFut;
 use std::io;
 use std::time::Duration;
-use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls::{TlsAcceptor, TlsConnector};
 
 /// Default chunk size for `read()` / `readString()` without an explicit maximum.
@@ -183,6 +183,8 @@ pub unsafe extern "C" fn velt_rt_tcp_accept(l: ListenerHandle) -> *mut VeltFut {
 /// `connect("host:port")` → `IoResult<StreamHandle>` (TCP_NODELAY enabled).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_tcp_connect(addr: *const VeltStr) -> *mut VeltFut {
+    // A hand-off: the server (often in this program) may accept on another worker at once.
+    crate::io::publish_before_handoff();
     let addr = text_arg(addr);
     new_leaf(async move { stream_result(TcpStream::connect(addr.as_str()).await) })
 }
@@ -203,6 +205,7 @@ pub unsafe extern "C" fn velt_rt_tcp_connect_tls(
     ca_pem: *const VeltStr,
     alpn: *const VeltStr,
 ) -> *mut VeltFut {
+    crate::io::publish_before_handoff();
     let addr = text_arg(addr);
     let name = match text_arg(server_name) {
         n if n.is_empty() => host_of(&addr).to_string(),
@@ -307,7 +310,10 @@ pub unsafe extern "C" fn velt_rt_tcp_write_bytes(
     write_copy(s, (*data).as_bytes())
 }
 
-fn write_copy(s: StreamHandle, data: &[u8]) -> *mut VeltFut {
+pub(super) fn write_copy(s: StreamHandle, data: &[u8]) -> *mut VeltFut {
+    // A hand-off: the peer (often a task of this program) may read these bytes on another
+    // worker before this task's poll ends, so what it printed before the write goes first.
+    crate::io::publish_before_handoff();
     STREAMS.op::<()>(s, |obj| {
         // Counted from the call, so a write made after this one waits for it.
         let (w, first) = Writing::begin(obj);
@@ -346,13 +352,18 @@ fn write_copy(s: StreamHandle, data: &[u8]) -> *mut VeltFut {
 /// `write` reports it).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_tcp_try_write(s: StreamHandle, data: *const VeltBytes) -> u64 {
+    try_write_now(s, (*data).as_bytes())
+}
+
+/// What `velt_rt_tcp_try_write` writes of `data`.
+pub(super) fn try_write_now(s: StreamHandle, data: &[u8]) -> u64 {
+    crate::io::publish_before_handoff();
     let Some(obj) = STREAMS.get(s) else { return 0 };
     // Nothing while another write goes on (these bytes go after its), in the socket's turn.
     let (w, first) = Writing::begin(obj);
     let Some((stream, _turn)) = w.0.plain().filter(|_| first).zip(w.0.try_turn()) else {
         return 0;
     };
-    let data = (*data).as_bytes();
     let mut done = 0;
     while done < data.len() {
         match stream.try_write(&data[done..]) {
@@ -366,6 +377,8 @@ pub unsafe extern "C" fn velt_rt_tcp_try_write(s: StreamHandle, data: *const Vel
 /// Shut down the write half (the peer reads end of stream). `out` receives the status.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_tcp_shutdown(s: StreamHandle, out: *mut VeltErr) {
+    // The peer reads the end of the stream: a hand-off like a write.
+    crate::io::publish_before_handoff();
     let Some(obj) = STREAMS.get(s) else {
         return out.write(closed_error());
     };
@@ -380,6 +393,7 @@ pub unsafe extern "C" fn velt_rt_tcp_shutdown(s: StreamHandle, out: *mut VeltErr
 /// is shut down in both directions). The handle stays open until `velt_rt_tcp_close`.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_tcp_abort(s: StreamHandle) {
+    crate::io::publish_before_handoff();
     if let Some(obj) = STREAMS.get(s) {
         obj.abort();
     }
@@ -400,5 +414,6 @@ pub unsafe extern "C" fn velt_rt_tcp_peer_addr(s: StreamHandle, out: *mut VeltSt
 /// closing it again, through any copy, is a no-op.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_tcp_close(s: StreamHandle) {
+    crate::io::publish_before_handoff();
     STREAMS.remove(s);
 }

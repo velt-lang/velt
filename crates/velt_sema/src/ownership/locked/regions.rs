@@ -19,6 +19,9 @@ use crate::visit;
 pub(super) const IN: u8 = 1;
 /// May reach the callback's captured state.
 pub(super) const OUT: u8 = 2;
+/// May reach a variable the callback took along into the lock (`super::moves`): released under
+/// the lock, so a part of it may go into the value as it is, but not into the outside state.
+pub(super) const MOVED: u8 = 4;
 
 type Key = (DefId, LocalId);
 
@@ -50,7 +53,8 @@ pub(super) struct Regions {
 
 impl Regions {
     /// The starting regions of callback `c` and the closures in `bodies` (`c`'s included).
-    pub(super) fn new(c: DefId, bodies: &mut [(DefId, FnDef)]) -> Self {
+    /// `moved`: the callback's captures that moved into the lock (`super::moves`).
+    pub(super) fn new(c: DefId, bodies: &mut [(DefId, FnDef)], moved: &FxHashSet<LocalId>) -> Self {
         let mut r = Regions {
             bits: FxHashMap::default(),
             alias: FxHashMap::default(),
@@ -75,7 +79,11 @@ impl Regions {
                     // The callback's, or those of a closure made outside it that it calls
                     // (`super::values`): outside state.
                     _ => {
-                        r.bits.insert((*d, k.inner), OUT);
+                        let region = match *d == c && moved.contains(&k.inner) {
+                            true => MOVED,
+                            false => OUT,
+                        };
+                        r.bits.insert((*d, k.inner), region);
                         r.homes.insert((*d, k.inner));
                     }
                 }
@@ -190,27 +198,76 @@ fn holds_shared_in(cx: &mut Ctx, t: TyId, depth: u32) -> bool {
     if depth > 8 || cx.is_copy(t) || cx.is_string_value(t) {
         return false;
     }
-    let parts: Vec<TyId> = match cx.ty.kind(t).clone() {
-        TyKind::Array(e) | TyKind::Option(e, _) => vec![e],
-        TyKind::Tuple(ts) => ts,
+    let (parts, class): (Vec<TyId>, Option<DefId>) = match cx.ty.kind(t).clone() {
+        TyKind::Array(e) | TyKind::Option(e, _) => (vec![e], None),
+        TyKind::Tuple(ts) => (ts, None),
         TyKind::Adt(d, args) => {
-            let fields: Vec<TyId> = cx
-                .adt(d)
-                .map_or(vec![], |a| a.fields.iter().map(|f| f.ty).collect());
-            fields.into_iter().map(|f| cx.subst(f, &args)).collect()
+            // A union (or another enum) may hold any of its members.
+            let Some(a) = cx.adt(d) else {
+                return true;
+            };
+            let fields: Vec<TyId> = a.fields.iter().map(|f| f.ty).collect();
+            (
+                fields.into_iter().map(|f| cx.subst(f, &args)).collect(),
+                Some(d),
+            )
         }
         TyKind::Promise(..) => return false,
         // Type parameters, interface and function values may hold anything.
         _ => return true,
     };
-    parts.into_iter().any(|p| {
-        (cx.is_shared_value(p) && !cx.is_string_value(p)) || holds_shared_in(cx, p, depth + 1)
+    let held = parts.into_iter().any(|p| part_holds_shared(cx, p, depth));
+    // A value of a class may be one of its subclasses: the fields they add count too.
+    held || class.is_some_and(|d| {
+        subclasses(cx, d).into_iter().any(|s| {
+            let own: Vec<TyId> = cx.adt(s).map_or(vec![], |a| {
+                a.fields[a.own_fields_start..]
+                    .iter()
+                    .map(|f| f.ty)
+                    .collect()
+            });
+            own.into_iter().any(|p| part_holds_shared(cx, p, depth))
+        })
     })
 }
 
-/// A store of a value reaching `b` into a place reaching `dest` crosses the boundary.
+fn part_holds_shared(cx: &mut Ctx, p: TyId, depth: u32) -> bool {
+    (cx.is_shared_value(p) && !cx.is_string_value(p)) || holds_shared_in(cx, p, depth + 1)
+}
+
+/// The classes extending class `d`, directly or not.
+fn subclasses(cx: &mut Ctx, d: DefId) -> Vec<DefId> {
+    if cx.subclasses.is_none() {
+        let mut map: FxHashMap<DefId, Vec<DefId>> = FxHashMap::default();
+        let base_of = |cx: &Ctx, c: DefId| {
+            cx.adt(c)
+                .and_then(|a| a.base)
+                .and_then(|b| cx.class_of(b))
+                .map(|(b, _)| b)
+        };
+        for s in (0..cx.info.len() as u32).map(DefId) {
+            let mut base = base_of(cx, s);
+            // Bounded like `Ctx::class_extends`.
+            for _ in 0..64 {
+                let Some(b) = base else { break };
+                map.entry(b).or_default().push(s);
+                base = base_of(cx, b);
+            }
+        }
+        cx.subclasses = Some(map);
+    }
+    cx.subclasses
+        .as_ref()
+        .and_then(|m| m.get(&d))
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// A store of a value reaching `b` into a place reaching `dest` crosses the boundary. A moved
+/// variable is released under the lock, so it shares with the value freely; with the outside
+/// state it shares nothing, either way: a part of it stored outside could also be in the value.
 pub(super) fn crosses(dest: u8, b: u8) -> bool {
-    (dest & IN != 0 && b & OUT != 0) || (dest & OUT != 0 && b & IN != 0)
+    (dest & (IN | MOVED) != 0 && b & OUT != 0) || (dest & OUT != 0 && b & (IN | MOVED) != 0)
 }
 
 /// Where the closures of the bodies are made: the creating body, and whether one is passed

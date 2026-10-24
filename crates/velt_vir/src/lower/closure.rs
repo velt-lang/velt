@@ -352,6 +352,21 @@ impl<'c, 'h> FnLower<'c, 'h> {
         }
     }
 
+    /// The captures closure `def` takes by move (not shared), with their env field index and
+    /// concrete type: what a `with` callback took along into the lock.
+    pub(super) fn moved_captures(&mut self, def: DefId) -> Vec<(u32, TyId)> {
+        let f = self.cx.fn_def(def);
+        let mut out = vec![];
+        for (k, c) in f.captures.iter().enumerate() {
+            let cell = f.body.locals[c.inner.0 as usize].boxed;
+            if c.mode == PassMode::Owned && !c.share && !cell {
+                let ty = self.sub(f.body.locals[c.inner.0 as usize].ty);
+                out.push((ENV_HEADER + k as u32, ty));
+            }
+        }
+        out
+    }
+
     /// Value captures of closure `def` with their env field index and concrete type (shared
     /// cells are `cell_captures`).
     pub(super) fn value_captures(&mut self, def: DefId) -> Vec<(u32, PassMode, TyId)> {

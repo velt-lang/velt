@@ -19,8 +19,9 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::task::{Context, Poll, Waker};
 
+use crate::task::runtime::time::{sleep_until, Sleep};
 use parking_lot::Mutex;
-use tokio::time::{Instant, Sleep};
+use std::time::Instant;
 
 /// Position in a queue: deadline, then creation sequence (per task), then the leaf's address
 /// (sequences of timers handed over from other tasks may repeat).
@@ -127,7 +128,7 @@ impl Queue {
 struct State {
     queue: Queue,
     /// The tokio timer armed for the earliest deadline, and that deadline.
-    armed: Option<(Pin<Box<Sleep>>, Instant)>,
+    armed: Option<(Sleep, Instant)>,
     /// Wakers of the timers being fired (kept to reuse its allocation).
     due: Vec<Waker>,
 }
@@ -234,18 +235,17 @@ impl Timers {
 }
 
 /// Arm `armed` for `deadline` and poll it with `task`'s waker; true if it is already due.
-fn arm(armed: &mut Option<(Pin<Box<Sleep>>, Instant)>, deadline: Instant, task: &Waker) -> bool {
+fn arm(armed: &mut Option<(Sleep, Instant)>, deadline: Instant, task: &Waker) -> bool {
     match armed {
         Some((_, at)) if *at == deadline => {}
         Some((sleep, at)) => {
-            sleep.as_mut().reset(deadline);
+            sleep.reset(deadline);
             *at = deadline;
         }
-        None => *armed = Some((Box::pin(tokio::time::sleep_until(deadline)), deadline)),
+        None => *armed = Some((sleep_until(deadline), deadline)),
     }
     let (sleep, _) = armed.as_mut().expect("ICE: armed above");
-    sleep
-        .as_mut()
+    Pin::new(sleep)
         .poll(&mut Context::from_waker(task))
         .is_ready()
 }
@@ -258,7 +258,7 @@ pub(crate) struct TimerLeaf {
     /// The queue it is registered in, under which key.
     registered: Option<(Arc<Timers>, Key)>,
     /// Outside any task: a plain tokio timer.
-    fallback: Option<Pin<Box<Sleep>>>,
+    fallback: Option<Sleep>,
     /// A queue holds a pointer to `fired`: the leaf must not move once polled.
     _pinned: PhantomPinned,
 }
@@ -328,10 +328,8 @@ impl Future for TimerLeaf {
                     return Poll::Ready(());
                 }
                 let deadline = this.deadline;
-                let sleep = this
-                    .fallback
-                    .get_or_insert_with(|| Box::pin(tokio::time::sleep_until(deadline)));
-                sleep.as_mut().poll(cx)
+                let sleep = this.fallback.get_or_insert_with(|| sleep_until(deadline));
+                Pin::new(sleep).poll(cx)
             }
         }
     }

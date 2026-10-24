@@ -32,12 +32,14 @@ use velt_sema::hir::{self, AdtKind, TyId, TyKind};
 
 use super::rt::Rt;
 use super::{cint, ice, unit, Cx, FnLower, Glue};
-use crate::vir::{AggId, BlockId, Operand, Place, Proj, Rvalue, Ty, STR_AGG};
+use crate::vir::{AggId, BinOp, BlockId, Operand, Place, Proj, Rvalue, Ty, STR_AGG};
 
 /// Qualified name of the prelude's dynamic JSON value class.
 const PRELUDE_JSON_VALUE: &str = "std/prelude/json::JsonValue";
 
 const STR: Ty = Ty::Agg(STR_AGG);
+/// `velt_rt_json_reader_new_with`'s flag: the source is a `u8[]` of binary rows (rt_abi.md).
+const FLAG_ROWS: i128 = 4;
 
 /// `velt_rt_json_reader_peek` kinds (rt_abi_async.md §12.3).
 const TOKEN_NULL: u32 = 1;
@@ -176,9 +178,11 @@ impl FnLower<'_, '_> {
         a: &hir::Expr,
         flags: &hir::Expr,
         depth: &hir::Expr,
+        rows: bool,
         ty: TyId,
     ) -> Operand {
         let t = self.sub(ty);
+        let a_ty = self.sub(a.ty);
         let v = self.expr(a);
         let flags = self.expr(flags);
         let depth = self.expr(depth);
@@ -187,10 +191,25 @@ impl FnLower<'_, '_> {
         }
         let flags = self.cast_to(flags, Ty::I64, Ty::U32);
         let depth = self.cast_to(depth, Ty::I64, Ty::U32);
+        // `u8[]` rows: the reader reads them as rows (`FLAG_ROWS`), never as text.
+        let flags = if rows {
+            let f = Rvalue::Binary(BinOp::BitOr, flags, cint(FLAG_ROWS, Ty::U32));
+            self.rvalue_temp(Ty::U32, f)
+        } else {
+            flags
+        };
         // A zero-sized target (`null`, a literal type) is only checked: decode into a dummy.
         let vt = self.cx.ty(t);
         let zero_sized = vt == Ty::Unit;
-        let src = self.operand_addr(v, STR);
+        let src = if rows {
+            // The array itself, also when the operand only refers to it (a borrowed parameter).
+            let avt = self.cx.ty(a_ty);
+            let p = self.operand_place(v, avt);
+            let p = self.content(&p, a_ty);
+            self.addr(p)
+        } else {
+            self.operand_addr(v, STR)
+        };
         let out = self.temp(if zero_sized { Ty::U8 } else { vt });
         if !zero_sized {
             self.json_init(out, t);

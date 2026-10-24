@@ -15,6 +15,7 @@ pub mod abort;
 pub mod all;
 pub mod channel;
 pub mod compiled;
+pub mod coop;
 pub mod group;
 pub mod latch;
 pub mod leaf;
@@ -135,6 +136,6 @@ pub unsafe extern "C" fn velt_rt_yield_now(cx: *mut c_void) {
 pub extern "C" fn velt_rt_yield_now_fut() -> *mut VeltFut {
     leaf::new_inner_leaf(async {
         local::note_yield();
-        tokio::task::yield_now().await
+        coop::yield_now().await
     })
 }

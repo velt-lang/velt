@@ -1,0 +1,8 @@
+client: first request
+server: /first
+client: ok
+client: second request
+server: /second
+client: ok
+writer: sending
+reader: got hello

@@ -1,0 +1,23 @@
+// A promise that rejected in `main` and is awaited by a spawned task that runs on another
+// worker while `main` is still busy: the report gives where the promise threw, not the
+// `await` that took its error (#1100).
+class Bad extends Error {}
+
+async function make(n: number): Promise<number> {
+  if (n > 0) {
+    throw new Bad("bad " + n);
+  }
+  return n;
+}
+
+async function use(p: Promise<number, Bad>): Promise<void> {
+  console.log(await p);
+}
+
+async function main() {
+  console.log("main start");
+  spawn(use(make(3)));
+  // Busy, so that another worker (or the monitor's spare) runs `use` meanwhile.
+  const t = Date.now();
+  while (Date.now() - t < 100) {}
+}

@@ -1,0 +1,23 @@
+// A spawned task awaits a promise that rejects later in `main`'s task, and its `finally`
+// awaits before the error leaves the task: the report gives where the promise threw (#1100).
+class Bad extends Error {}
+
+async function make(n: number): Promise<number> {
+  await sleep(5);
+  throw new Bad("bad " + n);
+}
+
+async function cleanup(p: Promise<number, Bad>): Promise<void> {
+  try {
+    console.log(await p);
+  } finally {
+    await sleep(5);
+    console.log("cleaned up");
+  }
+}
+
+async function main() {
+  spawn(cleanup(make(3)));
+  // The rejection ends the process long before this.
+  await sleep(5000);
+}

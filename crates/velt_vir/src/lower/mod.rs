@@ -317,6 +317,10 @@ enum Work {
     /// (async_fn/widen.rs).
     WidenPoll(TyId, TyId),
     WidenDrop(TyId, TyId),
+    /// Poll / drop of the wrapper adopting a foreign result slot of an async extern's promise of
+    /// type `T` (async_fn/foreign_promise.rs).
+    AdoptPoll(TyId),
+    AdoptDrop(TyId),
     /// `(slot: ptr)`: disposes of the unclaimed result of a started promise of a rejecting
     /// promise type (async_fn/start.rs).
     Unclaimed(TyId),

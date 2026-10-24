@@ -19,6 +19,8 @@ itoa = "1.0.18"
 libm = "0.2.16"
 memchr = "2.8.3"
 ryu = "1.0.23"
+# velt_rt's text modules (compiled here) re-export it.
+velt_text = { path = "../velt_text" }
 
 [lints.rust]
 # crates/velt_rt/src/mem.rs (compiled here) has a fast path behind velt_rt's `mimalloc` feature and

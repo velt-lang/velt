@@ -17,7 +17,7 @@ use rustc_hash::FxHashSet;
 
 use velt_common::Span;
 
-use super::regions::{Regions, IN};
+use super::regions::{Regions, IN, MOVED};
 use super::stores::wrap;
 use super::summary::outer_mode;
 use super::summary::Summaries;
@@ -74,7 +74,8 @@ struct Promises<'a, 'r, 's, 'm> {
 
 impl Promises<'_, '_, '_, '_> {
     fn reaches_value(&mut self, e: &Expr) -> bool {
-        self.r.mentions(self.cx, self.def, e) & IN != 0
+        // A moved variable is released under the lock too (`super::moves`).
+        self.r.mentions(self.cx, self.def, e) & (IN | MOVED) != 0
     }
 
     /// A call (or `new`) `e` of `callee` with `args`; may give some arguments copies.

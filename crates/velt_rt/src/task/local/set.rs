@@ -12,9 +12,9 @@ use std::sync::atomic::{AtomicBool, AtomicPtr};
 use std::sync::Arc;
 use std::task::Waker;
 
+use crate::task::coop::has_budget_remaining;
 use futures_util::task::AtomicWaker;
 use parking_lot::Mutex;
-use tokio::task::coop::has_budget_remaining;
 
 use super::node::{self, CANCELLED, DONE, NO_MEMBER, QUEUED};
 use super::timers::Timers;
