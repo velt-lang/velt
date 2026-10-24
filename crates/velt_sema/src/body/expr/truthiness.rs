@@ -520,6 +520,10 @@ impl FnCx<'_, '_> {
             let ty = f.ty;
             return (t, f, ty);
         }
+        let (t, f, joined) = self.any_join(t, f);
+        if let Some(ty) = joined {
+            return (t, f, ty);
+        }
         let tt = t.ty;
         let f = match self.try_coerce(f, tt) {
             Ok(f) => return (t, f, tt),
@@ -536,6 +540,35 @@ impl FnCx<'_, '_> {
             return (t, f, e);
         }
         self.union_join(t, f, span)
+    }
+
+    /// Two values of different types where one is an `any`: values of that `any`, as TypeScript
+    /// types `c ? 99 : t[k]` and `n || t[k]` (`number | any` is `any`). Converted to the other
+    /// value's type instead, the `any` would stop where it holds something else. The type is
+    /// `None` when neither is an `any` (or the other value does not convert to it).
+    pub(crate) fn any_join(
+        &mut self,
+        t: hir::Expr,
+        f: hir::Expr,
+    ) -> (hir::Expr, hir::Expr, Option<TyId>) {
+        let any = |s: &Self, e: &hir::Expr| s.cx.dynamic(e.ty) == Some(crate::any::Dynamic::Any);
+        match (any(self, &t), any(self, &f)) {
+            (false, true) => {
+                let ft = f.ty;
+                match self.try_coerce(t, ft) {
+                    Ok(t) => (t, f, Some(ft)),
+                    Err(t) => (t, f, None),
+                }
+            }
+            (true, false) => {
+                let tt = t.ty;
+                match self.try_coerce(f, tt) {
+                    Ok(f) => (t, f, Some(tt)),
+                    Err(f) => (t, f, None),
+                }
+            }
+            _ => (t, f, None),
+        }
     }
 
     /// Two values of different types (neither converts to the other) as values of their union,

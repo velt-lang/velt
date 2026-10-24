@@ -86,14 +86,16 @@ test values of any type as JavaScript does.
   `b` otherwise; `a && b` is `b` when `a` is truthy and `a` otherwise. `b` runs only when it is
   the result. The type is TypeScript's: when both sides have the same type, that type
   (`count || 8080` is a `number`, `name || "anon"` a `string`), else their union
-  (`count || "none"` is a `number | string`). `||` drops `null` from the left side's type
+  (`count || "none"` is a `number | string`); when one side is an `any`, an `any` (`n || t[k]`,
+  as TypeScript's `number | any` is `any`). `||` drops `null` from the left side's type
   (`(n: number | null) || 0` is a `number`). On a nullable object, `a || b` is `a ?? b` and
   `a && b` is `b` or `null` (type `B | null`: `user && user.name` is a `string | null`). When a
   `boolean` is expected (conditions, `const ok: boolean = …`) or both sides are `boolean`s,
   they give a `boolean`.
 - `x ||= v` and `x &&= v` assign when `||` or `&&` would take the right side.
-- `c ? a : b` is typed the same way: when one branch converts to the other's type, that type,
-  else their union (`qty ? qty : "none"` is a `number | string`).
+- `c ? a : b` is typed the same way: an `any` when one branch is one (`k === "price" ? 99 : t[k]`),
+  else, when one branch converts to the other's type, that type, else their union
+  (`qty ? qty : "none"` is a `number | string`).
 
 ```ts
 function label(count: number, name: string | null): string {

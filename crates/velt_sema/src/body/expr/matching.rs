@@ -551,15 +551,20 @@ impl FnCx<'_, '_> {
         self.mk(kind, ty, span)
     }
 
-    /// The type of `s ?? d` with `v` the non-null payload of `s`: the payload's type when `d`
-    /// converts to it, else `d`'s when the payload converts to that, else their union, as in
-    /// TypeScript (`n ?? "none"` with `n: number | null` is a `number | string`).
+    /// The type of `s ?? d` with `v` the non-null payload of `s`: an `any` when either is one
+    /// (`any_join`), else the payload's type when `d` converts to it, else `d`'s when the payload
+    /// converts to that, else their union, as in TypeScript (`n ?? "none"` with
+    /// `n: number | null` is a `number | string`).
     pub(crate) fn nullish_join(
         &mut self,
         v: hir::Expr,
         d: hir::Expr,
         payload: TyId,
     ) -> (hir::Expr, hir::Expr, TyId) {
+        let (v, d, joined) = self.any_join(v, d);
+        if let Some(ty) = joined {
+            return (v, d, ty);
+        }
         let d = match self.try_coerce(d, payload) {
             Ok(d) => return (v, d, payload),
             Err(d) => d,

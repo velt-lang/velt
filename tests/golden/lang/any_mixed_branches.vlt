@@ -1,0 +1,91 @@
+// A conditional, `||`, `&&` or `??` whose values are an `any` and a value of another type is an
+// `any`, as in TypeScript (`number | any` is `any`) (#1492). The `any` was converted to the
+// other value's type instead (`k === "price" ? 99 : t[k]` was a `number`), which stopped with
+// "the value is not a number" when it held a string.
+const o: any = { name: "a", price: 1, zero: 0 };
+
+function get(t: any, k: string): any {
+  return k === "price" ? 99 : t[k];
+}
+
+function get2(t: any, k: string): any {
+  return k !== "price" ? t[k] : 99;
+}
+
+console.log(get(o, "price"), get(o, "name"), get2(o, "price"), get2(o, "name"));
+
+const p = new Proxy({ name: "a", price: 1 } as any, {
+  get(t: any, k: string | symbol): any {
+    return k === "price" ? 99 : t[k];
+  },
+});
+console.log(p.price, p.name);
+
+const flag = o.zero > 0;
+let v: any = flag ? "s" : o.price;
+console.log(v, typeof v);
+const q: any = flag ? 1 : o.name;
+console.log(q, typeof q);
+const r = flag ? 1 : o.name;
+console.log(r, typeof r);
+const s = flag ? true : o.price;
+console.log(s, typeof s);
+const nested: any = flag ? 1 : flag ? "x" : o.name;
+console.log(nested);
+let w: any;
+w = flag ? 2 : o.name;
+console.log(w);
+v = flag ? o.name : 3;
+console.log(v);
+
+// `||`, `&&` and `??`.
+const n = o.zero as number;
+const or1: any = n || o.name;
+console.log(or1);
+const or2 = n || o.name;
+console.log(or2, typeof or2);
+const and1: any = 1 && o.name;
+console.log(and1);
+const maybe: number | null = flag ? 1 : null;
+const nn: any = maybe ?? o.name;
+console.log(nn);
+const nn2 = maybe ?? o.name;
+console.log(nn2, typeof nn2);
+w = maybe ?? o.name;
+console.log(w);
+
+// Returned, passed, in literals, in a template.
+function pick(c: boolean): any {
+  if (c) {
+    return 1;
+  }
+  return c ? 2 : o.name;
+}
+
+console.log(pick(false));
+const arr: any[] = [flag ? 1 : o.name, flag ? o.name : "y"];
+console.log(arr);
+
+function take(x: any): string {
+  return typeof x;
+}
+
+console.log(take(flag ? 1 : o.name));
+const arrow = (c: boolean): any => (c ? 1 : o.name);
+console.log(arrow(false));
+const a = [1, o.name];
+console.log(a, typeof a[1]);
+const u: unknown = "text";
+const un = flag ? 1 : u;
+console.log(un);
+console.log(`${flag ? 1 : o.name}`);
+const sum: any = ((flag ? 1 : o.price) as number) + 1;
+console.log(sum);
+const st = flag ? "s" : o.price;
+console.log(st, typeof st);
+const obj = { k: flag ? 1 : o.name };
+console.log(obj);
+
+// A typed context still converts both values.
+const typed: string = flag ? "s" : o.name;
+console.log(typed.length);
