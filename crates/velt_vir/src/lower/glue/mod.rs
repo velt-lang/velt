@@ -32,7 +32,6 @@
 //! | WeakRetain / WeakRelease | `(word: u64)`       | retain / release a weak map value word   |
 //! | WeakBoxTrace | `(box: ptr, visit: ptr, ctx: ptr)` | Trace of a boxed weak map value       |
 //! | ProxyGet / ProxySet | `(proxy: ptr, key: ptr, v: ptr)` | a field of type `ty` through a typed proxy's `get` / `set` trap (proxy_typed.rs) |
-//! | ViewIdentity | `(p: ptr) -> ptr`               | the identity of a tagged pointer of a proxiable type, for the `Proxy` class: a view's object (any_view.rs) |
 //!
 //! Class objects in a hierarchy with a vtable are dropped/cloned/formatted/transferred through
 //! their vtable (slots -1/-2/-3/-6, glue/vtable.rs), so a `Dog` held as an `Animal` releases
@@ -120,7 +119,6 @@ pub(crate) enum Glue {
     AnyJson,
     ProxyGet,
     ProxySet,
-    ViewIdentity,
     /// `(data, desc, out) -> bool`: an `any` as the interface type (any_iface.rs).
     AnyIface,
 }
@@ -188,7 +186,6 @@ impl Glue {
             Glue::AnyJson => "anyjson",
             Glue::ProxyGet => "proxyget",
             Glue::ProxySet => "proxyset",
-            Glue::ViewIdentity => "viewidentity",
             Glue::AnyIface => "anyiface",
         }
     }
@@ -209,8 +206,7 @@ impl Glue {
             | Glue::DynClone
             | Glue::DynShare
             | Glue::ObjTransfer
-            | Glue::DynTransfer
-            | Glue::ViewIdentity => (vec![Ptr], Ptr),
+            | Glue::DynTransfer => (vec![Ptr], Ptr),
             Glue::Format | Glue::ObjFormat | Glue::DynFormat => (vec![Ptr, Ptr, U32], Unit),
             Glue::Eq | Glue::Same | Glue::SameValue | Glue::KeyEq | Glue::KeySame => {
                 (vec![Ptr, Ptr], Bool)
@@ -295,7 +291,6 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Glue::AnyJson => lw.any_json_glue(args[0], args[1], ty),
             Glue::ProxyGet => lw.proxy_get_glue(args[0], args[1], args[2], ty),
             Glue::ProxySet => lw.proxy_set_glue(args[0], args[1], args[2], ty),
-            Glue::ViewIdentity => lw.view_identity_body(args[0]),
             Glue::AnyIface => lw.any_iface_body(args[0], args[1], args[2], ty),
         }
         let sym = format!("_G{}_{}", g.name(), lw.cx.type_symbol(ty));

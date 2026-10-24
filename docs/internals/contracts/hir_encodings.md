@@ -1141,9 +1141,11 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   (and not a proxy) is the tagged result of the prelude's `Proxy.__view(x)`, a `Proxy` without traps whose
   `#view` is set: field reads and writes run its forwarding `__get` / `__set` and check the value
   as the field's type. A tagged value whose `Proxy` is a view converts to `any` as the `any` it
-  holds (`__target()`, the view released), and `===` and key hashes on a proxiable type take a
-  view as that `any`'s data pointer (an outlined glue, called only for a tagged pointer), so the
-  view is the object to every dynamic operation. A weak key of such a type goes the way of an
+  holds (`__target()`, the view released), so the view is the object to every dynamic
+  operation. The conversion gives the object's live view when it has one (the runtime's table of
+  views, rt_abi.md "Views", which `__view`'s result enters and a view's drop leaves), so an
+  object has at most one view at a time, and `===` and key hashes on a proxiable type compare
+  the pointer, as on any object type. A weak key of such a type goes the way of an
   `object` key, by the `any` the value converts to (velt_vir `lower/weak_view.rs`). Object
   patterns, `FieldPresent` and `JSON.stringify` on a proxiable type read a tagged value through
   its traps (`JSON` as the `any` it converts to). The prelude's

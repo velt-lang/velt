@@ -445,6 +445,27 @@ the gap before an element written past the end) and reports them as absent; else
 `TypeError`s. Both runtimes provide them (`velt_rt/src/proxy_array.rs`, compiled into
 velt_rt_wasm too).
 
+## Views [additive, #1485]
+
+```c
+uint8_t *velt_rt_view_get(const uint8_t *obj);
+void velt_rt_view_put(const uint8_t *obj, const uint8_t *view);
+void velt_rt_view_remove(const uint8_t *obj, const uint8_t *view);
+```
+
+The live view of each object (velt_vir `lower/any_view.rs`): the `Proxy` that an `any` holding
+an object of another type becomes when it is converted to an object type, so that converting an
+object again while its view lives gives that view. `obj` is the data pointer of the `any`,
+`view` the untagged `Proxy` object. The table counts neither: the view holds the object, and the
+view's drop glue (before its fields drop) calls `velt_rt_view_remove`, so an entry lives exactly
+as long as its view and its address is not reused meanwhile.
+
+`velt_rt_view_get(obj)` answers the view, not counted (the caller retains it), or null;
+`velt_rt_view_put(obj, view)` records a view just made; `velt_rt_view_remove(obj, view)` forgets
+the entry if it is `view`'s. One table for the process, behind a lock (a task moves between
+worker threads at an `await`). Both runtimes provide them (`velt_rt/src/view.rs`, compiled into
+velt_rt_wasm too). Programs without views never call them.
+
 ## Output [M1]
 `stream`: 1 = stdout (buffered, flushed at exit / before any stderr write / on `velt_rt_flush`), 2 = stderr.
 

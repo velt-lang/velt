@@ -1,13 +1,13 @@
 //! Weak collections keyed by an object type that may hold a view (any_view.rs): a `WeakMap`
 //! key, a `WeakSet` member or a `WeakRef` target of such a type is the object a view views, as
-//! in Node, where the view is that object. Two views of one object are one key, an entry lives
-//! as long as the object (not as long as the view), and `deref()` of a `WeakRef` gives a view
-//! of the object again.
+//! in Node, where the view is that object. A view is often a temporary of a conversion, so an
+//! entry keyed by the view itself would go with it: keyed by the object, an entry lives as long
+//! as the object, and `deref()` of a `WeakRef` gives the object's live view (or a new one).
 //!
 //! Such a key goes the way of an `object` key (weak_object.rs): the value converted to `any`
 //! (a value of the type itself and a typed proxy keep their own pointer, so their identity is
 //! the one they had; a view gives its object) and keyed by its data pointer. `deref()` converts
-//! the `any` it rebuilds back to the type, which makes a new view of an object of another type.
+//! the `any` it rebuilds back to the type, which gives the view of an object of another type.
 //! Only programs with views get here (`Cx::view_fn`).
 
 use velt_sema::hir::{self, TyId, TyKind};

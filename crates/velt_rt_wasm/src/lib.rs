@@ -86,6 +86,8 @@ pub mod task;
 pub mod top_level_await;
 #[path = "../../velt_rt/src/transfer_map.rs"]
 pub mod transfer_map;
+#[path = "../../velt_rt/src/view.rs"]
+pub mod view;
 #[path = "../../velt_rt/src/weak/mod.rs"]
 pub mod weak;
 

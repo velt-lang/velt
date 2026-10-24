@@ -253,7 +253,8 @@ export class Proxy {
    * A view of `target` as an object type (velt_vir `lower/any_view.rs`): an `any` holding an
    * object of another type converted to an object type. It has no traps, so every read and
    * write reaches the target, and converting the view back to `any` gives the target itself:
-   * to the program the view is the target, as in Node.
+   * to the program the view is the target, as in Node. The conversion calls this only for an
+   * object without a live view: it asks the runtime's table of views first (`any_view.rs`).
    */
   static __view(target: any): Proxy {
     const p = new Proxy(target, {});

@@ -73,6 +73,7 @@ pub mod timer;
 pub mod tls;
 pub mod top_level_await;
 pub mod transfer_map;
+pub mod view;
 pub mod weak;
 
 pub use crate::str::VeltStr;

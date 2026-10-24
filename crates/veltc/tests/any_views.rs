@@ -1,6 +1,7 @@
 //! Views (#1485, velt_vir `lower/any_view.rs`): an `any` holding an object of another type,
 //! converted to an object type, becomes a view of it only in a program with typed proxies.
-//! A program without proxies keeps the checked conversion and gets no view code at all.
+//! A program without proxies keeps the checked conversion and gets no view code at all, also
+//! none of the runtime's table that gives an object one view.
 
 mod no_window;
 mod test_dir;
@@ -26,6 +27,12 @@ fn vir_of(src: &str) -> String {
 fn calls(vir: &str, name: &str) -> bool {
     vir.lines()
         .any(|l| !l.starts_with("fn#") && l.contains("call fn#") && l.contains(name))
+}
+
+/// Does a call in `vir` reach the runtime function `name`?
+fn calls_rt(vir: &str, name: &str) -> bool {
+    vir.lines()
+        .any(|l| l.contains("call extern#") && l.contains(name))
 }
 
 const CONVERSION: &str = "
@@ -55,6 +62,14 @@ fn a_program_with_proxies_makes_views() {
         calls(&vir, "__isView"),
         "no view test where a typed proxy goes into an `any`"
     );
+    assert!(
+        calls_rt(&vir, "velt_rt_view_get") && calls_rt(&vir, "velt_rt_view_put"),
+        "no lookup in the table of views where a view is made"
+    );
+    assert!(
+        calls_rt(&vir, "velt_rt_view_remove"),
+        "no removal from the table of views where a proxy is dropped"
+    );
 }
 
 #[test]
@@ -67,5 +82,9 @@ fn a_program_without_proxies_has_no_views() {
     assert!(
         !calls(&vir, "__isView"),
         "a view test in a program without proxies"
+    );
+    assert!(
+        !vir.contains("velt_rt_view_"),
+        "the table of views in a program without proxies"
     );
 }

@@ -2612,10 +2612,11 @@ and checked then as the field's type, so a field the object lacks stops with a `
 that read (Node reads `undefined`). A write goes to the object for the fields the object has;
 writing an optional field the object lacks (`item.note = "hi"` on a class instance without
 `note`) stops with the `TypeError` of a fixed-shape object (#924), where Node adds the property.
-Back in an `any` (and for `===`, `Map`, `Set`, `WeakMap`, `WeakSet` and `WeakRef`, `in`,
-`Object.keys`, `for...in` and `JSON.stringify`) the view is the object itself: two views of one
-object are one key, a `WeakMap` entry lives as long as the object, and `deref()` gives a view of
-it again. Destructuring (`const { type, props } = vnode`, also in parameters and `for...of`),
+Converting the object again while a view of it lives gives that view (an object has one view at
+a time, whatever object type it is converted to), so `===`, `Map`, `Set` and `indexOf` see one
+value. Back in an `any` (and for `WeakMap`, `WeakSet` and `WeakRef`, `in`, `Object.keys`,
+`for...in` and `JSON.stringify`) the view is the object itself: a `WeakMap` entry lives as long
+as the object, and `deref()` gives its view again. Destructuring (`const { type, props } = vnode`, also in parameters and `for...of`),
 spreads (`{ ...item }`) and keyed reads read the object's fields at that moment. A union with
 one object type member (`VNode | string | null`) converts an object that is no `VNode` the same
 way. In a program without proxies, and into a class or an interface with methods, an object of
@@ -2638,7 +2639,7 @@ function main(): void {
   item.price = 3;
   console.log(p.price, item.name, tracked.hits); // 3 pen 0
   const back: any = item;
-  console.log(back === a); // true
+  console.log(back === a, item === (a as Item)); // true true
 }
 ```
 

@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Identity and hashing on a proxiable object type (#1485): proxy_identity_keys.vlt (`Map` and
-# `Set` keyed by an object type) and proxy_identity_index.vlt (`indexOf` / `includes` over an
-# array of it), each built by two compilers (LLVM release, with the release runtime
-# `$VELT_RT_LIB` when set) and run interleaved RUNS times. Prints the range of user seconds
-# per program and compiler, and stops when the two builds print different output.
+# `Set` keyed by an object type), proxy_identity_index.vlt (`indexOf` / `includes` over an
+# array of it) and proxy_view_convert.vlt (conversions that make views), each built by two
+# compilers (LLVM release, with the release runtime `$VELT_RT_LIB` when set) and run
+# interleaved RUNS times. Prints the range of user seconds per program and compiler, and stops
+# when the two builds print different output.
 #
 #   bench/proxy/proxy_identity.sh <base velt> <base std> <head velt> <head std> [runs] [workdir]
 set -euo pipefail
@@ -13,10 +14,15 @@ RUNS=${5:-9}
 W=${6:-$(mktemp -d)}
 mkdir -p "$W"
 TIMEFORMAT=%U
-for p in proxy_identity_keys proxy_identity_index; do
+for p in proxy_identity_keys proxy_identity_index proxy_view_convert; do
   VELT_STD="$2" "$1" build --release --backend llvm "$HERE/$p.vlt" -o "$W/$p-base" >/dev/null
   VELT_STD="$4" "$3" build --release --backend llvm "$HERE/$p.vlt" -o "$W/$p-head" >/dev/null
-  b=$("$W/$p-base"); h=$("$W/$p-head")
+  # A compiler from before views (#1485) stops proxy_view_convert with a TypeError.
+  if ! b=$("$W/$p-base" 2>/dev/null); then
+    echo "$p: skipped, the base build has no views"
+    continue
+  fi
+  h=$("$W/$p-head")
   if [ "$b" != "$h" ]; then
     echo "$p: base printed '$b', head '$h'" >&2
     exit 1

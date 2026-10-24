@@ -254,6 +254,8 @@ impl FnLower<'_, '_> {
         let TyKind::Adt(d, _) = self.cx.kind(ty) else {
             return;
         };
+        // A view leaves the cache of views (any_view.rs).
+        self.proxy_unview(this.clone(), d);
         let Some(m) = self.cx.dispose_of(d) else {
             return;
         };

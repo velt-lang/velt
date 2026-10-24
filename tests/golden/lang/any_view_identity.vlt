@@ -1,0 +1,113 @@
+// check: no leaks
+// Views (#1485) keep the identity of their object: an object converted to an object type twice
+// gives one view while the first lives, as Node gives the one object. So `===`, `Object.is`,
+// `Map` and `Set` keys and `indexOf` see one value across conversions, also after a view was
+// freed and made again, for objects in a cycle and for views held by weak collections.
+type Item = { name: string; price: number };
+type Small = { name: string };
+
+class Product {
+  name = "lamp";
+  price = 30;
+  stock = 4;
+}
+
+class Node2 {
+  name = "node";
+  price = 1;
+  next: Node2 | null = null;
+}
+
+// A program with proxies: an `any` holding another type converts to `Item` as a view.
+const proxied = new Proxy({ name: "proxy", price: 1 }, {}) as Item;
+
+function view(x: any): Item {
+  return x as Item;
+}
+
+function gen<T>(x: any): T {
+  return x as T;
+}
+
+const a: any = new Product();
+const b: any = { name: "chair", price: 12, legs: 4 };
+
+const v1 = a as Item;
+const v2 = view(a);
+const v3 = gen<Item>(a);
+console.log(v1 === v2, v2 === v3, Object.is(v1, v3), v1 === view(b));
+const back: any = v1;
+console.log(back === a, (back as Item) === v1, gen<Item>(back) === v2);
+const s1 = a as Small;
+console.log(s1.name, s1 === (a as Small));
+
+// Keys and searches across conversions.
+const m = new Map<Item, number>();
+m.set(view(a), 1);
+m.set(view(b), 2);
+m.set(proxied, 3);
+console.log(m.get(v1), m.get(view(b)), m.has(view(a)), m.size);
+m.set(view(a), 4);
+console.log(m.get(v2), m.size, m.delete(view(b)), m.has(view(b)), m.size);
+const set = new Set<Item>([view(a), view(a), view(b)]);
+console.log(set.size, set.has(view(b)));
+const arr: Item[] = [view(b), view(a)];
+console.log(arr.indexOf(v3), arr.includes(view(b)), arr.indexOf(proxied));
+
+// A view freed and made again: the new one is the object's view again.
+function priceOf(x: any): number {
+  return (x as Item).price;
+}
+
+const c: any = { name: "desk", price: 70 };
+let sum = 0;
+for (let i = 0; i < 1000; i++) {
+  sum += priceOf(c);
+}
+const w1 = view(c);
+w1.price = 71;
+console.log(sum, w1 === view(c), view(c).price, (c as Item).price);
+
+// Objects in a cycle, each with a view (`vx` holds `x`, which holds `y`, which holds `x`).
+function cycle(): string {
+  const x = new Node2();
+  const y = new Node2();
+  x.next = y;
+  y.next = x;
+  x.name = "x";
+  y.name = "y";
+  const vx = view(x);
+  const vy = view(y);
+  const r = `${vx.name}${vy.name}${vx === view(x)}${vy === view(x)}`;
+  // Velt counts references: the program breaks its own cycle, and the views add none.
+  x.next = null;
+  return r;
+}
+
+console.log(cycle(), cycle());
+
+// Views held by weak collections.
+const wm = new WeakMap<Item, string>();
+const ws = new WeakSet<Item>();
+const d: any = { name: "shelf", price: 5 };
+wm.set(view(d), "kept");
+ws.add(view(d));
+const r = new WeakRef(view(d));
+const held = view(d);
+console.log(wm.get(held), ws.has(held), r.deref() === held, r.deref() === view(d));
+
+// A weak map whose value is a view of its key (a cycle through the map, freed with the key),
+// and a `WeakRef` whose view was freed: `deref()` gives the object's view again.
+function ephemeron(): string {
+  const wv = new WeakMap<object, Item>();
+  const o: any = { name: "rug", price: 8 };
+  wv.set(o as object, view(o));
+  const got = wv.get(o as object);
+  return `${got?.name} ${got === view(o)}`;
+}
+
+console.log(ephemeron(), ephemeron());
+const e: any = { name: "vase", price: 3 };
+const re = new WeakRef(view(e));
+const again = re.deref();
+console.log(again?.name, again === view(e), view(e) === (e as Item));
