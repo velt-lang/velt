@@ -129,6 +129,9 @@ impl<'a> Parser<'a> {
     /// One `struct`/`class`/`extend` member.
     pub(super) fn parse_member(&mut self) -> PResult<Member> {
         let lo = self.cur_lo();
+        if self.at_static_block() {
+            return Ok(Member::Field(self.parse_static_block(lo)?));
+        }
         let mods = self.parse_modifiers();
         if self.at_kw(Kw::Constructor) && self.nth(1) == Tok::LParen {
             let (ctor, fields) = self.parse_constructor(lo, &mods)?;

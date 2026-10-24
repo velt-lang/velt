@@ -1,0 +1,8 @@
+start
+block 1 11
+block 2 11 22 5
+after 11 22 3
+T block 11
+sum 6
+Q.k
+end

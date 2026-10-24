@@ -150,10 +150,11 @@ hidden classes and no runtime shape checks.
   [module constants](variables.md#module-state) (once, with the class, when the program
   modifies, takes over or compares one, or its value is not a constant), and `static` fields
   (`static count: number = 0;`), which are [module state](variables.md#module-state) like a
-  module-level `let`: initialized once, where the class is declared, in source order, and
-  assigned through their class (`Counter.count++`, also
+  module-level `let`: initialized once, where the class is declared, in source order with the
+  class's `static { … }` blocks, and assigned through their class (`Counter.count++`, also
   read through a subclass, `Sub.count`; `this.count = v` in a static method is not supported
-  yet).
+  yet). `static { … }` blocks run once, where the class is declared, as in JavaScript (`this`
+  in one is not supported yet: name the class, `Counter.count`).
   `protected` members don't exist (only a constructor can be `protected`). Static and
   instance members are separate namespaces, as in TypeScript: a subclass's `static m()` doesn't
   hide an inherited instance method `m()`, and a class below it can still `override` that method.

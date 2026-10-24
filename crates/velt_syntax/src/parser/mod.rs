@@ -31,6 +31,7 @@ mod primary;
 mod recovery;
 mod script;
 pub(crate) mod script_names;
+mod static_blocks;
 mod stmt;
 mod switch;
 mod symbol_keys;
@@ -94,6 +95,9 @@ pub(crate) struct Parser<'a> {
     /// The declarators after the first of `let a = 1, b = 2;` (`parse_var_decl`), for the
     /// statement or item list to add after the first one.
     more_vars: Vec<VarDecl>,
+    /// How many `static { … }` blocks the file has had so far: each is named by its number
+    /// (`static_blocks`), which formatting does not change.
+    static_blocks: u32,
     /// The names computed keys `[NAME]` mention (`parse_symbol_key`): a script keeps a top-level
     /// `const` of such a name at module level, where sema can resolve the key (`kept_vars`).
     computed_keys: BTreeSet<String>,
@@ -177,6 +181,7 @@ impl<'a> Parser<'a> {
             paren_matches: ParenMatches::default(),
             plain_ts: false,
             more_vars: Vec::new(),
+            static_blocks: 0,
             this_param: None,
             fn_in_object: false,
             first_this_param: None,
