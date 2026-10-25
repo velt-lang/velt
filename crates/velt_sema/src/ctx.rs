@@ -225,6 +225,9 @@ pub(crate) struct Ctx<'m> {
     /// used, each with the function using it (`None`: outside any) (`body::static_copy_uses`).
     pub copy_diags: Vec<(DefId, Diagnostic)>,
     pub copy_uses: Vec<(Option<DefId>, DefId)>,
+    /// Interface values converted to the object type of their shape, checked once the bodies are
+    /// (`body::expr::iface_from_object::check_unwraps`).
+    pub unwraps: Vec<crate::body::expr::iface_from_object::Unwrap>,
     /// Name spans of the nested functions made from local generic arrows (`generic_arrows`).
     pub generic_arrow_fns: FxHashSet<Span>,
     /// Name spans of every function made from a generic arrow (diagnostics show arrows).
@@ -446,6 +449,7 @@ impl<'m> Ctx<'m> {
             static_copy_of: FxHashMap::default(),
             copy_diags: vec![],
             copy_uses: vec![],
+            unwraps: vec![],
             generic_arrow_fns: FxHashSet::default(),
             kept_nested: FxHashSet::default(),
             late_consts: FxHashSet::default(),

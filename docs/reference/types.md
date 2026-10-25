@@ -2464,9 +2464,15 @@ Where an interface with methods is expected (an annotation, a parameter, a retur
   getter as a `readonly` field (and a setter as a field): it takes plain values (`{ size: 2 }`)
   but not yet an object literal with accessors or a class instance. Such an alias is an
   interface, not an object type: a value of an object type with the same members converts to it
-  (`const t: T = p` with `p: { v: number }`, the same object, read and written through it), but
-  not yet the reverse (`const q: { v: number } = t`), and `JSON.stringify`, object spread
-  (`{ ...t }`), `keyof T` and `Partial<T>` do not take it yet.
+  (`const t: T = p` with `p: { v: number }`, or an interface `I { v: number }`, or a wider
+  object type, the same object, read and written through it). When its accessors come in pairs
+  of one type (`get v(): number` with `set v(x: number)`, or a getter alone), an object literal
+  of values for it (`{ v: 1 }`) is such an object, and a value of it converts back to that
+  object type (`const q: { v: number } = t`, also a `readonly` or field-only interface form of
+  it) as the object it holds. That conversion needs every value of the alias in the program to
+  hold such an object: a class implementing it, or a literal with accessors for it, makes it an
+  error. `JSON.stringify`, object spread (`{ ...t }`), `keyof T` and `Partial<T>` do not take
+  the alias yet.
 - A method with a default body and an optional field may be left out (the field is `undefined`);
   every other member must be given, and a member the interface doesn't declare is an error.
 - The value is an interface value: its members are read and called through the interface.

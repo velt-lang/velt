@@ -314,6 +314,10 @@ impl FnCx<'_, '_> {
             Ok(h) => return Ok(h),
             Err(h) => h,
         };
+        let h = match self.iface_as_object(h, exp) {
+            Ok(h) => return Ok(h),
+            Err(h) => h,
+        };
         let h = match self.copy_object(h, exp) {
             Ok(h) => return Ok(h),
             Err(h) => h,
