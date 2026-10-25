@@ -21,6 +21,9 @@ function main() {
     console.log(rows[0] === l[0], l[0].length);
   });
   rows[0].push([9]);
-  c.write((q) => { q.items[0].push(5); q.items = []; });
+  c.write((q) => {
+    q.items[0].push(5);
+    q.items = [];
+  });
   console.log(JSON.stringify(rows));
 }

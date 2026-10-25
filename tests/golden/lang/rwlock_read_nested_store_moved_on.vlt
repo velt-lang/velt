@@ -31,7 +31,13 @@ function moved(a: RwLock<Box>, b: RwLock<Box>) {
     l[5].push([8]);
   });
   keep[0].push([9]);
-  console.log(JSON.stringify(keep), top.length, JSON.stringify(m.get("k")!), s.size, JSON.stringify(h.v));
+  console.log(
+    JSON.stringify(keep),
+    top.length,
+    JSON.stringify(m.get("k")!),
+    s.size,
+    JSON.stringify(h.v),
+  );
 }
 
 function kept(a: RwLock<Box>, b: RwLock<Box>) {
