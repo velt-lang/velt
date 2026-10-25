@@ -53,6 +53,9 @@ pub(crate) struct Ctx<'m> {
     /// and number-keyed record types, directly or through other such aliases
     /// ([`Ctx::marked_aliases`]).
     pub marked_aliases: std::cell::OnceCell<(FxHashSet<String>, FxHashSet<String>)>,
+    /// Sites of `globalThis` whose variable key is not one of the listed keys, with the key
+    /// (`body::expr::checked_key`): the key's error is the site's only one.
+    pub bad_key_sites: Vec<(velt_common::Span, velt_common::Span)>,
     pub extensions: Vec<Extension>,
     /// The extensions declaring each method name, built for the first `extensions.len()`
     /// extensions (body/expr/method.rs `applicable_extensions`).
@@ -397,6 +400,7 @@ impl<'m> Ctx<'m> {
             prelude: FxHashMap::default(),
             aliases: vec![],
             marked_aliases: Default::default(),
+            bad_key_sites: vec![],
             extensions: vec![],
             extension_names: (0, FxHashMap::default()),
             impls: vec![],

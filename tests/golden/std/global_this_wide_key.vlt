@@ -20,3 +20,12 @@ function define(k: string): void {
 read("console");
 write("__WZ__");
 define("__WZ__");
+function bump(k: string): void {
+  const h = globalThis as Host;
+  h[k] += 2;
+}
+function either(k: "__WA__" | "__WZ__"): number | undefined {
+  return (globalThis as Host)[k];
+}
+const TYPED: string = "__WA__";
+console.log((globalThis as Host)[TYPED]);

@@ -33,12 +33,8 @@ pub(super) fn mentions(module: &ast::Module) -> bool {
 pub(super) fn string_consts(module: &ast::Module) -> FxHashMap<String, String> {
     let mut out = FxHashMap::default();
     let mut add = |v: &ast::VarDecl| {
-        if let (ast::VarKind::Const, ast::PatternKind::Ident(n), Some(init)) =
-            (v.kind, &v.pattern.kind, &v.init)
-        {
-            if let Some(s) = string_lit(init) {
-                out.insert(n.name.clone(), s);
-            }
+        if let Some((n, s)) = const_key(v) {
+            out.insert(n, s);
         }
     };
     for item in &module.items {
@@ -83,6 +79,23 @@ pub(super) fn visible_consts(
         }
     }
     out
+}
+
+/// The name and string of `const K = "k";`: a key of `globalThis` where `K` is in scope. A
+/// constant declared with a type (`const K: string = "k"`) is not one, as in TypeScript, unless
+/// the type is the string itself (`const K: "k" = "k"`).
+pub(super) fn const_key(v: &ast::VarDecl) -> Option<(String, String)> {
+    let (ast::VarKind::Const, ast::PatternKind::Ident(n), Some(init)) =
+        (v.kind, &v.pattern.kind, &v.init)
+    else {
+        return None;
+    };
+    let s = string_lit(init)?;
+    let typed_as_itself = |t: &ast::TypeExpr| matches!(&t.kind, ast::TypeExprKind::Literal(ast::SignedLit { lit: ast::Lit::Str(l), .. }) if *l == s);
+    match &v.ty {
+        Some(t) if !typed_as_itself(t) => None,
+        _ => Some((n.name.clone(), s)),
+    }
 }
 
 /// `"k"`, `` `k` `` or `"k" as const`.

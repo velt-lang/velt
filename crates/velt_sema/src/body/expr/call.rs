@@ -25,6 +25,9 @@ impl FnCx<'_, '_> {
         if optional {
             return self.optional_chain(callee, span, |s, f| s.call_value(f, args, span));
         }
+        if let Some(h) = self.checked_key_call(callee, type_args, args, span) {
+            return h;
+        }
         if let Some(callee) = self.without_namespace(callee) {
             return self.call(&callee, type_args, args, false, exp, span);
         }

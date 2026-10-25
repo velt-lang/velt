@@ -8,7 +8,8 @@ use velt_common::Diagnostic;
 use velt_syntax::ast::{self, ExprKind as E, ItemKind as I, StmtKind as S};
 
 use super::keys::{
-    listed_keys, names_global, params_names, pattern_names, says_nothing, string_lit, GLOBAL_THIS,
+    const_key, listed_keys, names_global, params_names, pattern_names, says_nothing, string_lit,
+    GLOBAL_THIS,
 };
 use super::{slot_name, Site};
 use crate::ast_walk::children_mut;
@@ -206,6 +207,21 @@ impl<'a> Walk<'a> {
 
     /// Statements of one scope: a constant standing for `globalThis` is dropped.
     fn stmts(&mut self, stmts: &mut [ast::Stmt]) {
+        // The scope's declarations are block-scoped: a closure or function walked before one
+        // sees it (`const g = () => h[K]; const K = "b";`), so they are known first.
+        for s in stmts.iter() {
+            if let S::Var(v) = &s.kind {
+                if self.alias_of(v).is_none() {
+                    let mut names = vec![];
+                    pattern_names(&v.pattern, &mut names);
+                    self.shadow(names);
+                    if let Some((n, k)) = const_key(v) {
+                        let scope = self.const_scopes.last_mut().expect("ICE: no scope");
+                        scope.insert(n, k);
+                    }
+                }
+            }
+        }
         for s in stmts {
             if let S::Var(v) = &s.kind {
                 if self.alias_of(v).is_some() {
@@ -228,13 +244,9 @@ impl<'a> Walk<'a> {
                 let mut names = vec![];
                 pattern_names(&v.pattern, &mut names);
                 self.shadow(names);
-                if let (ast::VarKind::Const, ast::PatternKind::Ident(n), Some(k)) = (
-                    v.kind,
-                    &v.pattern.kind,
-                    v.init.as_ref().and_then(string_lit),
-                ) {
+                if let Some((n, k)) = const_key(v) {
                     let scope = self.const_scopes.last_mut().expect("ICE: no scope");
-                    scope.insert(n.name.clone(), k);
+                    scope.insert(n, k);
                 }
             }
             S::Expr(e) => match self.define_listed(e).or_else(|| self.assign_listed(e)) {
@@ -433,7 +445,7 @@ impl<'a> Walk<'a> {
                                 cond: Box::new(is_key(
                                     &k,
                                     &key,
-                                    (i == 0).then_some(&all[..]),
+                                    (i == 0).then_some((&all[..], &t, false)),
                                     span,
                                 )),
                                 then: Box::new(read),
@@ -521,7 +533,7 @@ impl<'a> Walk<'a> {
             };
             els = Some(Box::new(ast::Stmt {
                 kind: S::If {
-                    cond: is_key(&k, &key, (i == 0).then_some(&all[..]), span),
+                    cond: is_key(&k, &key, (i == 0).then_some((&all[..], &t, true)), span),
                     then,
                     els,
                 },
@@ -590,7 +602,7 @@ impl<'a> Walk<'a> {
             };
             els = Some(Box::new(ast::Stmt {
                 kind: S::If {
-                    cond: is_key(&k, &key, (i == 0).then_some(&all[..]), span),
+                    cond: is_key(&k, &key, (i == 0).then_some((&all[..], &t, false)), span),
                     then,
                     els,
                 },
@@ -656,9 +668,6 @@ impl<'a> Walk<'a> {
     }
 }
 
-/// The prelude function `e satisfies T` is a call of.
-const SATISFIES: &str = "__satisfies";
-
 fn synth(kind: E, span: velt_common::Span) -> ast::Expr {
     ast::Expr {
         id: ast::NodeId(u32::MAX),
@@ -681,12 +690,16 @@ fn ident(name: &str, span: velt_common::Span) -> ast::Expr {
 /// another (a read in the value of an assignment) is not always false. The first test of a
 /// chain (`listed`: the keys) also checks that `k` is one of them, `__satisfies<"a" | "b">(k)`,
 /// as TypeScript requires (TS7053): a wider key is a type error, not a property the chain skips.
-fn is_key(
-    k: &ast::Ident,
-    key: &str,
-    listed: Option<&[String]>,
-    span: velt_common::Span,
-) -> ast::Expr {
+/// The checks of a variable key against the listed keys (`body::expr::checked_key`): a read
+/// or an assignment, and a definition.
+pub(crate) const KEY_CHECK: &str = "globalThis.key";
+pub(crate) const DEFINE_KEY_CHECK: &str = "globalThis.defineKey";
+
+/// The first test of a chain checks the key: the listed keys, the asserted type (for the
+/// message) and whether the site is a `defineProperty`.
+type Listed<'a> = Option<(&'a [String], &'a ast::TypeExpr, bool)>;
+
+fn is_key(k: &ast::Ident, key: &str, listed: Listed<'_>, span: velt_common::Span) -> ast::Expr {
     let string = ast::TypeExpr {
         kind: ast::TypeExprKind::Named {
             path: vec![ast::Ident {
@@ -698,7 +711,7 @@ fn is_key(
         span: k.span,
     };
     let mut read = synth(E::Ident(k.clone()), k.span);
-    if let Some(keys) = listed {
+    if let Some((keys, asserted, define)) = listed {
         let lit = |s: &String| ast::TypeExpr {
             kind: ast::TypeExprKind::Literal(ast::SignedLit {
                 lit: ast::Lit::Str(s.clone()),
@@ -713,14 +726,15 @@ fn is_key(
                 span: k.span,
             },
         };
+        let check = if define { DEFINE_KEY_CHECK } else { KEY_CHECK };
         read = synth(
             E::Call {
-                callee: Box::new(ident(SATISFIES, k.span)),
-                type_args: vec![union],
+                callee: Box::new(ident(check, k.span)),
+                type_args: vec![union, asserted.clone()],
                 args: vec![read],
                 optional: false,
             },
-            k.span,
+            span,
         );
     }
     let k = synth(

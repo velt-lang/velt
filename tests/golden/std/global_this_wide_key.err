@@ -1,3 +1,6 @@
-global_this_wide_key.vlt:18:45: error: mismatched types
-global_this_wide_key.vlt:12:31: error: mismatched types
-global_this_wide_key.vlt:15:24: error: mismatched types
+global_this_wide_key.vlt:18:45: error: the key of `globalThis as Host` must be one of its keys `"__WA__" | "__WB__"`, found `string` (TypeScript's TS7053)
+global_this_wide_key.vlt:12:31: error: the key of `globalThis as Host` must be one of its keys `"__WA__" | "__WB__"`, found `string` (TypeScript's TS7053)
+global_this_wide_key.vlt:15:24: error: the key of `globalThis as Host` must be one of its keys `"__WA__" | "__WB__"`, found `string` (TypeScript's TS7053)
+global_this_wide_key.vlt:25:5: error: the key of `globalThis as Host` must be one of its keys `"__WA__" | "__WB__"`, found `string` (TypeScript's TS7053)
+global_this_wide_key.vlt:28:31: error: the key of `globalThis as Host` must be one of its keys `"__WA__" | "__WB__"`, found `"__WA__" | "__WZ__"` (TypeScript's TS7053)
+global_this_wide_key.vlt:31:34: error: the key of `globalThis as Host` must be one of its keys `"__WA__" | "__WB__"`, found `string` (TypeScript's TS7053)

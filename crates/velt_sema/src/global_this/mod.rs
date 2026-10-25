@@ -29,6 +29,8 @@
 mod keys;
 mod walk;
 
+pub(crate) use walk::{DEFINE_KEY_CHECK, KEY_CHECK};
+
 use rustc_hash::{FxHashMap, FxHashSet};
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
@@ -322,4 +324,21 @@ pub(crate) fn check_sites(cx: &mut Ctx) {
         );
     }
     cx.global_props.sites = sites;
+}
+
+/// Drop the errors reported inside a site whose key was wrong, but the key's own.
+pub(crate) fn drop_site_errors(cx: &mut Ctx) {
+    if cx.bad_key_sites.is_empty() {
+        return;
+    }
+    let sites = std::mem::take(&mut cx.bad_key_sites);
+    cx.diags.retain(|d| {
+        let Some(at) = d.labels.first().map(|l| l.span) else {
+            return true;
+        };
+        !d.is_error()
+            || !sites.iter().any(|(site, key)| {
+                at != *key && at.file == site.file && at.lo >= site.lo && at.hi <= site.hi
+            })
+    });
 }
