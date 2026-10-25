@@ -8,37 +8,77 @@ use velt_common::{Diagnostic, Span};
 use super::assign::AssignTarget;
 use super::assign_paths::is_pure_place;
 use crate::body::{FnCx, Want};
-use crate::hir::{self, TyId, TyKind};
+use crate::hir::{self, DefId, TyId, TyKind};
 
 impl FnCx<'_, '_> {
-    /// `Type.NAME = v` on a static field: its slot when it is a `static` (module state, as a
-    /// module-level `let`), `Some(None)` after reporting a write to a `static readonly` one;
-    /// `None` when `Type.NAME` is no static field of `Type`.
+    /// `Type.NAME = v` (or `this.NAME = v` in a static method) on a static field: its slot when
+    /// it is a `static` of that class (module state, as a module-level `let`), `Some(None)`
+    /// after reporting a write to a `static readonly` one or to one the class inherits; `None`
+    /// when `Type.NAME` is no static field of `Type`.
     pub(super) fn static_field_target(
         &mut self,
         object: &ast::Expr,
         prop: &ast::Ident,
     ) -> Option<Option<hir::Expr>> {
-        let ast::ExprKind::Ident(id) = &object.kind else {
-            return None;
+        let d = match (&object.kind, self.static_this) {
+            (ast::ExprKind::This, Some((this, _))) => this,
+            (ast::ExprKind::Ident(id), _) if !self.is_local_name(&id.name) => {
+                let Some(crate::ctx::Item::Def(d)) = self.lookup_item(&id.name, id.span) else {
+                    return None;
+                };
+                d
+            }
+            _ => return None,
         };
-        if self.is_local_name(&id.name) {
-            return None;
-        }
-        let Some(crate::ctx::Item::Def(d)) = self.lookup_item(&id.name, id.span) else {
-            return None;
+        let cname = self.cx.adt(d)?.name.clone();
+        let Some(&g) = self.cx.adt(d)?.statics.get(&prop.name) else {
+            return self.inherited_static_write(d, &cname, object, prop);
         };
-        let g = *self.cx.adt(d)?.statics.get(&prop.name)?;
         if self.cx.global(g).is_some_and(|g| g.mutable) {
             let place = self.static_field(d, prop, Want::BorrowMut, object.span.to(prop.span))?;
             return Some(Some(place));
         }
         self.cx.err(
             format!(
-                "cannot assign to `{}.{}`: it is a `static readonly` field",
-                id.name, prop.name
+                "cannot assign to `{cname}.{}`: it is a `static readonly` field",
+                prop.name
             ),
             prop.span,
+        );
+        Some(None)
+    }
+
+    /// A write to static field `prop` that class `d` (named `cname`) inherits: in JavaScript it
+    /// creates a static field of `d` itself, which Velt does not support yet (reported).
+    fn inherited_static_write(
+        &mut self,
+        d: DefId,
+        cname: &str,
+        object: &ast::Expr,
+        prop: &ast::Ident,
+    ) -> Option<Option<hir::Expr>> {
+        let mut cur = self.cx.class_of(self.cx.adt(d)?.base?)?.0;
+        for _ in 0..64 {
+            if self.cx.adt(cur)?.statics.contains_key(&prop.name) {
+                break;
+            }
+            cur = self.cx.class_of(self.cx.adt(cur)?.base?)?.0;
+        }
+        let owner = self.cx.adt(cur)?.name.clone();
+        let p = &prop.name;
+        let via = match object.kind {
+            ast::ExprKind::This => format!(
+                "`this` in a static method is the class it is called on, here `{cname}`, so "
+            ),
+            _ => String::new(),
+        };
+        self.cx.error(
+            Diagnostic::error(
+                format!("cannot assign to `{cname}.{p}`: `{p}` is a static field of `{owner}`, which `{cname}` inherits"),
+                prop.span,
+            )
+            .with_note(format!("{via}in JavaScript this assignment creates a static field `{p}` of `{cname}` itself and leaves `{owner}.{p}` as it is; Velt does not support that yet"))
+            .with_note(format!("assign `{owner}.{p}`, or declare `static {p}` in `{cname}`")),
         );
         Some(None)
     }

@@ -73,8 +73,11 @@ hidden classes and no runtime shape checks.
   class (`toString()` in a subclass of `Error`), which TypeScript code redefines without it;
   `super.m()` calls the base version. An override may give a parameter a default of its own: a
   call that leaves the argument out takes the default of the method that runs, also through a
-  base-class type (`const s: Shape = new Square(); s.scale()` uses `Square`'s), as in
-  JavaScript.
+  base-class type (`const s: Shape = new Square(); s.scale()` uses `Square`'s), through a
+  method value (`const f = s.scale; f()`, `s.scale.bind(s)`) and when the argument is
+  `undefined`, as in JavaScript. Such a call goes through a second vtable slot whose entry in
+  each class applies that class's own default, so a call passing every argument costs the same
+  as before.
   There are no abstract classes.
 - **`super(…)`**: the constructor of a subclass calls `super(…)`, as in TypeScript, also when
   the base class has no constructor (`super();`). Statements may come before it as long as they
@@ -151,10 +154,15 @@ hidden classes and no runtime shape checks.
   modifies, takes over or compares one, or its value is not a constant), and `static` fields
   (`static count: number = 0;`), which are [module state](variables.md#module-state) like a
   module-level `let`: initialized once, where the class is declared, in source order with the
-  class's `static { … }` blocks, and assigned through their class (`Counter.count++`, also
-  read through a subclass, `Sub.count`; `this.count = v` in a static method is not supported
-  yet). `static { … }` blocks run once, where the class is declared, as in JavaScript (`this`
-  in one is not supported yet: name the class, `Counter.count`).
+  class's `static { … }` blocks, and assigned through their class (`Counter.count++`, or
+  `++this.count` in a static method of `Counter`) and read through a subclass (`Sub.count`).
+  Assigning one through a subclass (`Sub.count = 5`, or `this.count = v` in a static method
+  called on a subclass) is an error: in JavaScript it creates a static field of the subclass
+  itself, which Velt does not support yet; assign `Counter.count`. `static { … }` blocks run
+  once, where the class is declared, as in JavaScript (`this` in one is not supported yet: name
+  the class, `Counter.count`; a `return` in one is an error, as in TypeScript). A class declared
+  inside a function or block can't have `static` fields that are not `readonly` or `static`
+  blocks yet: JavaScript evaluates them each time the declaration runs, Velt once.
   `protected` members don't exist (only a constructor can be `protected`). Static and
   instance members are separate namespaces, as in TypeScript: a subclass's `static m()` doesn't
   hide an inherited instance method `m()`, and a class below it can still `override` that method.
