@@ -78,6 +78,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             kept_handed: vec![],
             kept_drops: vec![],
             caller_aliases: None,
+            leave_levels: None,
             lock_callback: None,
             scope_ends: FxHashMap::default(),
             asyncx: None,

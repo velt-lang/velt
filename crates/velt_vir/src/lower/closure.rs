@@ -125,6 +125,9 @@ impl<'c, 'h> FnLower<'c, 'h> {
         // in a `read` callback, so plain code's asks (in a program with a lock set); any other
         // closure may run anywhere.
         let callback = std::mem::take(&mut self.lock_callback);
+        let read_callback = matches!(callback, Some((d, LkMode::Read)) if d == def);
+        let parent = self.cx.cur_def;
+        self.cx.closure_parents.insert(def, (parent, read_callback));
         // A `read` callback plain code calls captures that code's variables only.
         let own =
             matches!(callback, Some((d, LkMode::Read)) if d == def) && self.mode == LkMode::Plain;

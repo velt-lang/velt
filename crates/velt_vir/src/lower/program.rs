@@ -69,6 +69,7 @@ impl<'h> Cx<'h> {
             cur_def: None,
             cur_mode: super::LkMode::Plain,
             cur_own: false,
+            closure_parents: FxHashMap::default(),
             nothing_clashes: vec![],
             map_fields: 0,
         }

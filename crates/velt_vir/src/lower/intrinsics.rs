@@ -133,7 +133,7 @@ impl FnLower<'_, '_> {
             (I::Transfer, [a]) => {
                 let v = self.consume(a);
                 let t = self.sub(a.ty);
-                let v = self.transfer_value(v, t);
+                let v = self.transfer_stored(v, t, args);
                 self.own_value(v, t)
             }
             (I::NeedsTransfer, [a]) => {

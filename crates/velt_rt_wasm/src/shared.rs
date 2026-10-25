@@ -171,9 +171,19 @@ pub extern "C" fn velt_rt_lk_mode() -> u8 {
 /// velt_rt `read_mode::velt_rt_lk_leave`.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_lk_leave(p: *mut u64) {
-    if READ_DEPTH <= 1 {
+    if READ_DEPTH as u64 <= LEAVE_TO {
         *p &= !LOCAL;
     }
+}
+
+/// velt_rt `read_mode::velt_rt_lk_leave_to` (one thread).
+static mut LEAVE_TO: u64 = 1;
+
+/// velt_rt `read_mode::velt_rt_lk_leave_to`.
+#[no_mangle]
+pub extern "C" fn velt_rt_lk_leave_to(levels: u64) -> u64 {
+    // SAFETY: one thread.
+    unsafe { std::mem::replace(&mut *std::ptr::addr_of_mut!(LEAVE_TO), levels) }
 }
 
 #[no_mangle]

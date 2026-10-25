@@ -73,6 +73,7 @@ mod js_string;
 mod json;
 mod keys;
 mod layout;
+mod leave_levels;
 mod match_switch;
 mod matching;
 mod module_state;
@@ -430,6 +431,9 @@ struct Cx<'h> {
     cur_mode: LkMode,
     /// Whether the function being built is a `Work::ReadOwn`.
     cur_own: bool,
+    /// Each closure literal lowered so far: the function it is in, and whether it is a `read`
+    /// callback running in read mode (leave_levels.rs).
+    closure_parents: FxHashMap<DefId, (Option<DefId>, bool)>,
     /// Functions whose instances made an option of an option with another nothing (`T | null`
     /// at `T = U | undefined`, or the reverse; types.rs `intern`), which this phase cannot
     /// represent (issue #930): reported, not lowered silently.
@@ -603,6 +607,9 @@ struct FnLower<'c, 'h> {
     /// A `read` callback's variables naming the caller's objects (caller_stores.rs
     /// `caller_alias`), once asked.
     caller_aliases: Option<FxHashSet<LocalId>>,
+    /// The frames the stores of this `read` callback put what they transfer in, by the
+    /// address of each transfer's arguments (leave_levels.rs), once asked.
+    leave_levels: Option<FxHashMap<usize, u64>>,
     /// With debug info: where the block declaring a local ends (debug_vars.rs).
     scope_ends: FxHashMap<LocalId, SrcLoc>,
     /// Set while lowering the body of an async function (a poll function).

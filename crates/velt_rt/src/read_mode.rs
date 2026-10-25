@@ -17,7 +17,7 @@
 //! - a reader that writes a store object, through any reference, stops the program: other
 //!   readers read it at the same time (sema rejects the writes it can see).
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::hazard::{FREES_WAIT, READER};
@@ -138,17 +138,36 @@ pub unsafe extern "C" fn velt_rt_lk_write(p: *mut u64) {
 }
 
 /// The reader's own lock-set object whose count word is at `p` (`LOCAL` set) is transferred
-/// out of a `read` callback: it is no longer the reader's own once the thread leaves read mode,
-/// so the bit goes, unless the thread stays in read mode after this callback (the result of a
-/// `read` nested in another, which the outer reader then holds as one it made).
+/// out of a `read` callback: it is no longer the reader's own once it reaches code outside read
+/// mode, so the bit goes, unless the frame it goes to still runs in read mode. That frame is
+/// [`velt_rt_lk_leave_to`]'s number of `read` callbacks out from the one running (1 unless the
+/// compiler says otherwise: a callback's result goes to the code that called `read`, still in
+/// read mode when that `read` is nested in another, and the outer reader holds it as one it
+/// made).
 ///
 /// # Safety
 /// `p` is the count word of a counted object.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_lk_leave(p: *mut u64) {
-    if READER.with(|r| r.depth()) <= 1 {
+    if READER.with(|r| r.depth()) as u64 <= LEAVE_TO.with(Cell::get) {
         *p &= !LOCAL;
     }
+}
+
+thread_local! {
+    /// How many `read` callbacks out from the running one the objects [`velt_rt_lk_leave`]
+    /// sees go (`velt_rt_lk_leave_to`).
+    static LEAVE_TO: Cell<u64> = const { Cell::new(1) };
+}
+
+/// The transfers that follow, until the next call, move what a `read` callback made into a
+/// frame `levels` `read` callbacks out from the running one (`u64::MAX`: code outside every
+/// read): a container that frame holds, which a callback captured through `levels` nested
+/// callbacks (velt_vir `leave_levels.rs`). Returns the number it replaces, for the caller to put
+/// back.
+#[no_mangle]
+pub extern "C" fn velt_rt_lk_leave_to(levels: u64) -> u64 {
+    LEAVE_TO.with(|l| l.replace(levels))
 }
 
 #[cfg(test)]
@@ -167,6 +186,12 @@ mod tests {
         READER.with(|r| r.push());
         unsafe { velt_rt_lk_leave(&mut mine) };
         assert_eq!(mine, 1 | LOCAL);
+        // Stored two callbacks out, into a container of code outside every read: no longer.
+        let was = velt_rt_lk_leave_to(2);
+        unsafe { velt_rt_lk_leave(&mut mine) };
+        assert_eq!(mine, 1);
+        mine |= LOCAL;
+        assert_eq!(velt_rt_lk_leave_to(was), 2);
         READER.with(|r| r.pop());
         unsafe { velt_rt_lk_leave(&mut mine) };
         assert_eq!(mine, 1);
