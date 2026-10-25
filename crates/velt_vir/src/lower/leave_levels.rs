@@ -37,6 +37,9 @@ impl FnLower<'_, '_> {
         if levels == 1 || self.dead() {
             return self.transfer_value(v, ty);
         }
+        if self.cx.is_class(ty) && self.cx.lock_counted(ty) {
+            self.stop_shared_made(v.clone());
+        }
         let was = self.temp(Ty::U64);
         let to = vec![cint(i128::from(levels), Ty::U64)];
         self.call_rt(Rt::LkLeaveTo, to, Some(Place::local(was)));
@@ -45,6 +48,34 @@ impl FnLower<'_, '_> {
         let ignored = self.temp(Ty::U64);
         self.call_rt(Rt::LkLeaveTo, back, Some(Place::local(ignored)));
         v
+    }
+
+    /// Sema's transfer in a nested `read` callback is about to store the class object `v` into
+    /// a frame outside it: one the readers made and still reference elsewhere would be stored
+    /// as a copy, which their later changes would not reach (they may also store a part of the
+    /// lock's value into it, the reason for the transfer). That stops the program, as a write
+    /// to an object the callbacks no longer own does (#1541 tracks sharing it, as JavaScript does).
+    fn stop_shared_made(&mut self, v: Operand) {
+        let c = self.count_place(v);
+        let mine = self.is_local(&c);
+        let (check, stop, done) = (self.new_block(), self.new_block(), self.new_block());
+        self.branch(mine, check, done);
+        self.switch_to(check);
+        let once = self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(
+                BinOp::Eq,
+                Operand::Copy(c),
+                cint(super::rc::LOCAL | 1, Ty::U64),
+            ),
+        );
+        self.branch(once, done, stop);
+        self.switch_to(stop);
+        self.panic_msg(
+            "cannot modify a value an `RwLock` holds inside its `read` callback (other readers read it at the same time): change it in `write`",
+        );
+        self.goto(done);
+        self.switch_to(done);
     }
 
     /// Is this a `read` callback nested in another one that code outside read mode calls

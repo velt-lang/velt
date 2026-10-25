@@ -602,7 +602,13 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
   read it through its own variables, but a write through them stops the program, as for the
   value's own (store it once it is complete). One a `read` nested in another stores there
   stays the readers' own until the outermost `read` returns, so the callbacks around it can
-  still change it through their variables, and the caller sees those changes, as in JavaScript.
+  still change it through their variables, also after moving it on into another of the
+  caller's containers (`keep.push(top.pop()!)`), and the caller sees those changes, as in
+  JavaScript. Sent on a channel before then, it is sent as a copy. This holds only while the
+  callbacks store no part of the value into it (`n.kids.push(x.items[0])`, before or after
+  the store): then a class object they still reference stops the program at the nested
+  store, and an array is stored as a copy, as in a single `read`, which the changes made
+  through their variables after the store don't reach.
   One whose type the value cannot hold, and a
   function value, that the callback still uses after storing it is stored as a copy. So is a
   container of the callback's own whose type the value cannot hold, or a `Map` or `Set` of its
