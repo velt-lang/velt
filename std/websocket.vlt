@@ -347,16 +347,48 @@ export function upgradeWebSocket(req: Request): WebSocketUpgrade {
 /**
  * Accepts a WebSocket upgrade request on a `velt:http/server` server: answers `101 Switching
  * Protocols` with the handshake's accept key and returns the socket (the connection is the
- * socket's from then on). Throws `IoError` "EINVAL" if `req` is not a WebSocket upgrade request
- * (`req.isUpgrade("websocket")` with a `Sec-WebSocket-Key`) or a response was started.
+ * socket's from then on). A request that is not a valid handshake (RFC 6455 §4.2.1: `GET`,
+ * HTTP/1.1, `Upgrade: websocket`, `Connection: upgrade`, `Sec-WebSocket-Version: 13`, a key of 16
+ * base64-encoded bytes) is answered here instead, as the `ws` package does: 426 with
+ * `Sec-WebSocket-Version: 13` for another version or no upgrade, else 400; it then returns null.
+ * Throws `IoError` "EINVAL" if a response was started.
  */
-export function acceptWebSocket(req: HttpRequest, res: HttpResponse): WebSocket {
+export function acceptWebSocket(req: HttpRequest, res: HttpResponse): WebSocket | null {
+  if (res.sent()) {
+    throw new IoError("EINVAL", "a response was already started");
+  }
+  const version = req.header("sec-websocket-version");
+  if (!req.isUpgrade("websocket") || (version != null && version != "13")) {
+    res.status(426);
+    res.header("Upgrade", "websocket");
+    res.header("Sec-WebSocket-Version", "13");
+    res.send("a WebSocket handshake (version 13) is required");
+    return null;
+  }
   const key = req.header("sec-websocket-key") ?? "";
-  if (key == "" || !req.isUpgrade("websocket") || res.sent()) {
-    throw new IoError("EINVAL", "not a WebSocket upgrade request");
+  if (!req.isMethod("GET") || version == null || !validKey(key)) {
+    res.status(400);
+    res.send("invalid WebSocket handshake");
+    return null;
   }
   const stream = res.upgrade("websocket", [["Sec-WebSocket-Accept", acceptKey(key)]]);
-  return connection(stream, false, []);
+  // What the client sent past the request (its first frames, if it did not wait for the 101).
+  return connection(stream, false, req.takeUnread());
+}
+
+// Whether `key` is 16 bytes in base64: 22 characters of its alphabet and `==`.
+function validKey(key: string): bool {
+  if (key.length != 24 || !key.endsWith("==")) {
+    return false;
+  }
+  for (let i = 0; i < 22; i++) {
+    const c = key.charCodeAt(i);
+    const letter = (c >= 65 && c <= 90) || (c >= 97 && c <= 122);
+    if (!letter && !(c >= 48 && c <= 57) && c != 43 && c != 47) {
+      return false;
+    }
+  }
+  return true;
 }
 
 export struct WsConnectOptions {

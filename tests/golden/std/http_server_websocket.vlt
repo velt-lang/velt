@@ -1,19 +1,47 @@
 // check: no leaks
 // velt:http/server switches a connection to WebSockets (`acceptWebSocket`, `res.upgrade`): a
 // client from `connectWebSocket` talks to it, an ordinary request on the same server is still
-// answered, and a request that is not an upgrade is refused.
+// answered, and a request that is not an upgrade is refused. A handshake that is not valid (version,
+// key, method) is answered 426 or 400; a frame sent along with the upgrade request is not lost.
+import { utf8Encode } from "velt:encoding";
 import { HttpRequest, HttpResponse, serve } from "velt:http/server";
+import { connect } from "velt:net";
 import { acceptWebSocket, connectWebSocket } from "velt:websocket";
+
+// Sends `head` (and `extra` right after it, in the same write), half-closes, reads everything.
+async function raw(port: number, head: string, extra: u8[] = []): Promise<string> {
+  const c = await connect(`127.0.0.1:${port}`);
+  await c.writeBytes(utf8Encode(head).concat(extra));
+  c.shutdown();
+  let all = "";
+  while (true) {
+    const chunk = await c.readString();
+    if (chunk == "") {
+      break;
+    }
+    all += chunk;
+  }
+  c.close();
+  return all;
+}
+
+function handshake(method: string, version: string, key: string): string {
+  return `${method} /ws HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n` +
+    `Sec-WebSocket-Version: ${version}\r\nSec-WebSocket-Key: ${key}\r\n\r\n`;
+}
+
+function firstLine(text: string): string {
+  return text.split("\r\n")[0];
+}
 
 async function main() {
   const server = await serve({ port: 0 }, async (req: HttpRequest, res: HttpResponse) => {
     if (req.pathIs("/ws")) {
-      if (!req.isUpgrade("websocket")) {
-        res.status(426);
-        res.send("upgrade required");
+      // Not a valid handshake: acceptWebSocket answered it (426 or 400).
+      const ws = acceptWebSocket(req, res);
+      if (ws == null) {
         return;
       }
-      const ws = acceptWebSocket(req, res);
       spawn(async () => {
         for await (const m of ws) {
           await ws.send(`echo ${m.text}`);
@@ -40,6 +68,16 @@ async function main() {
   const plain = await fetch(`http://127.0.0.1:${port}/other`);
   console.log(plain.status, await plain.text());
   const refused = await fetch(`http://127.0.0.1:${port}/ws`);
-  console.log(refused.status, await refused.text());
+  console.log(refused.status, refused.headers.get("sec-websocket-version"), await refused.text());
+
+  const key = "dGhlIHNhbXBsZSBub25jZQ==";
+  const v99 = await raw(port, handshake("GET", "99", key));
+  console.log(firstLine(v99), v99.includes("Sec-WebSocket-Version: 13"));
+  console.log(firstLine(await raw(port, handshake("GET", "13", "short=="))));
+  console.log(firstLine(await raw(port, handshake("POST", "13", key))));
+  // A masked text frame "hi" (mask 0) in the same write as the request: echoed.
+  const frame: u8[] = [0x81, 0x82, 0, 0, 0, 0, 0x68, 0x69];
+  const early = await raw(port, handshake("GET", "13", key), frame);
+  console.log(firstLine(early), early.includes("echo hi"));
   server.close();
 }
