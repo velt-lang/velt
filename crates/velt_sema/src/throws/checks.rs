@@ -41,7 +41,12 @@ pub(super) fn check_all(cx: &mut Ctx, fns: &[DefId], groups: &Groups) {
             let own = own_final(cx, d);
             let own = solved(cx, own);
             match cx.error_outside(decl.ty, own) {
-                Some(m) if decl.from_body => closure_too_early(cx, d, m),
+                Some(m) if decl.from_body => {
+                    let srcs = cx.fn_info(d).throw_srcs.clone();
+                    if !slots_found_late(cx, &srcs) {
+                        closure_too_early(cx, d, m);
+                    }
+                }
                 Some(m) => clause_violation(cx, d, m, decl.ty, decl.span),
                 None => {}
             }
@@ -310,7 +315,7 @@ fn observed(cx: &mut Ctx, c: &ThrowCheck) {
     } else {
         cx.error_outside(obs, fin).is_none()
     };
-    if ok || slots_found_late(cx, c) {
+    if ok || slots_found_late(cx, &c.srcs) {
         return;
     }
     let fs = fin.map_or("nothing".to_string(), |t| {
@@ -341,21 +346,38 @@ fn observed(cx: &mut Ctx, c: &ThrowCheck) {
     );
 }
 
-/// The slots `c` calls through, without a `throws` clause, whose implementations were found
-/// after the body was checked (an object literal converted to the interface by code checked
-/// later): when what they throw is new, the program is checked again with it known from the
-/// start (`FnTypeSeeds::slots`), and this check's diagnostics are dropped.
-fn slots_found_late(cx: &mut Ctx, c: &ThrowCheck) -> bool {
+/// The slots `srcs` call through, without a `throws` clause, whose implementations were found
+/// after the reading body was checked (an object literal converted to the interface by code
+/// checked later): when what they throw is new, the program is checked again with it known from the
+/// start (`FnTypeSeeds::slots`), and the diagnostic is dropped. The slots read by
+/// the functions `srcs` call count too, through any depth of calls: an `async` function that
+/// reads the slot after an `await` is checked before the conversion, and its promise's error
+/// type with it.
+fn slots_found_late(cx: &mut Ctx, srcs: &[ThrowSrc]) -> bool {
     let mut again = false;
-    for s in &c.srcs {
-        let ThrowSrc::Slot { iface, slot, .. } = s else {
-            continue;
-        };
-        if super::slot_clause(cx, *iface, *slot).is_some() {
-            continue;
-        }
-        if let Some(t) = super::infer::slot_group_final(cx, *iface, *slot) {
-            again |= cx.record_slot_hint(*iface, *slot, t);
+    let mut todo: Vec<ThrowSrc> = srcs.to_vec();
+    let mut seen: Vec<DefId> = vec![];
+    while let Some(s) = todo.pop() {
+        match s {
+            ThrowSrc::Call(d, ..) => {
+                let Some(f) = cx.try_fn(d) else {
+                    continue;
+                };
+                if f.declared_throws.is_some() || seen.contains(&d) {
+                    continue;
+                }
+                seen.push(d);
+                todo.extend(f.throw_srcs.iter().cloned());
+            }
+            ThrowSrc::Slot { iface, slot, .. } => {
+                if super::slot_clause(cx, iface, slot).is_some() {
+                    continue;
+                }
+                if let Some(t) = super::infer::slot_group_final(cx, iface, slot) {
+                    again |= cx.record_slot_hint(iface, slot, t);
+                }
+            }
+            _ => {}
         }
     }
     again

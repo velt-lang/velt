@@ -195,13 +195,14 @@ error type depends on a function still being checked through recursion, may need
 clause (``` the error type of this function is not known yet ```). A call through an interface
 value whose method's error type is found only after the call is checked (the recursion goes
 through the interface, or an object literal is converted to the interface by code checked
-later) needs none: the program is checked again with that error type known, as in Node. Only
-when it holds a type the next check cannot carry over (an object type, `throw { code: 1 }`)
-does the `throws` clause go on the interface method (`get size(): string throws { code:
-string };`). Error types of
-overridden methods, and inferred error types of interface methods, cannot depend on type
-parameters; a written `throws` clause of a generic interface's method can name the interface's
-own parameters (`next(): IteratorResult<T> throws E` in `Iterator<T, E>`): an implementation
+later) needs none, also when the `catch` or promise sees it through other functions (an
+`async` function that reads the interface value after an `await`): the program is checked
+again with that error type known, as in Node. Only when it holds a type the next check
+cannot carry over (an object type, `throw { code: 1 }`) does the `throws` clause go on the
+interface method (`get size(): string throws { code: string };`). Error types of overridden
+methods, and inferred error types of interface methods, cannot depend on type parameters; a
+written `throws` clause of a generic interface's method can name the interface's own parameters
+(`next(): IteratorResult<T> throws E` in `Iterator<T, E>`): an implementation
 then throws what its `implements Iterator<string, IoError>` says, and a call through an
 `Iterator<string, E>` value throws `E` (also through an interface extending it with its
 parameters in another order). A method of another interface without a `throws` clause that
