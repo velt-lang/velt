@@ -2,7 +2,8 @@
 
 `import { SortedMap } from "velt:collections/sorted_map"`. A map with its keys kept in ascending
 order (`K extends Comparable<K>`). It uses two sorted arrays: lookups are O(log n), and inserts
-and deletes are O(n).
+and deletes are O(n). For maps of more than a few hundred keys, or that change often, use
+[`BTreeMap`](btree_map.md), a B+tree with O(log n) inserts and deletes.
 
 - `new SortedMap<K, V>()`, `size`, `isEmpty()`, `clear()`.
 - `set(k, v)`, `get(k): V | undefined` (a clone), `has(k)`, `delete(k): bool`.
