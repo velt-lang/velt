@@ -1,0 +1,2 @@
+function t [ 'default', 'title' ] false true
+{ a: 1, b: 2, c: 3 } true

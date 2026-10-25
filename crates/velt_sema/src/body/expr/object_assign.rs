@@ -164,6 +164,72 @@ impl FnCx<'_, '_> {
             }
             let sty = s.ty;
             let sname = format!("<assign@{}:{i}>", span.lo);
+            // A record that may be `null` or `undefined`: copied when present, as
+            // `Object.assign` skips a `null` or `undefined` source.
+            let core = self
+                .cx
+                .ty
+                .core(sty)
+                .filter(|_| self.cx.ty.nothing_of(sty).is_some());
+            if record && core.is_some_and(|c| self.record_args(c).is_some()) {
+                // A record target is the temporary `tname` (never written in place).
+                self.named_temp(&sname, s, &mut lets);
+                let read = |name: &str| {
+                    synth(
+                        ast::ExprKind::Ident(ast::Ident {
+                            name: name.to_string(),
+                            span,
+                        }),
+                        span,
+                    )
+                };
+                let copy = synth(
+                    ast::ExprKind::Call {
+                        callee: Box::new(synth(
+                            ast::ExprKind::Member {
+                                object: Box::new(read("Object")),
+                                prop: ast::Ident {
+                                    name: "assign".into(),
+                                    span,
+                                },
+                                optional: false,
+                            },
+                            span,
+                        )),
+                        type_args: vec![],
+                        args: vec![
+                            read(&tname),
+                            synth(ast::ExprKind::NonNull(Box::new(read(&sname))), span),
+                        ],
+                        optional: false,
+                    },
+                    span,
+                );
+                let present = synth(
+                    ast::ExprKind::Binary {
+                        op: ast::BinaryOp::NotEq,
+                        lhs: Box::new(read(&sname)),
+                        rhs: Box::new(synth(ast::ExprKind::Lit(ast::Lit::Null), span)),
+                    },
+                    span,
+                );
+                let stmt = ast::Stmt {
+                    kind: ast::StmtKind::If {
+                        cond: present,
+                        then: ast::Block {
+                            stmts: vec![ast::Stmt {
+                                kind: ast::StmtKind::Expr(copy),
+                                span,
+                            }],
+                            span,
+                        },
+                        els: None,
+                    },
+                    span,
+                };
+                self.stmt(&stmt, &mut lets);
+                continue;
+            }
             if record && self.record_args(sty).is_some() {
                 let s = self.coerce(s, tty);
                 let s_read = self.named_temp(&sname, s, &mut lets);

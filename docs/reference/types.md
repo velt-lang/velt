@@ -2243,7 +2243,9 @@ does is an error saying it is not supported yet, never a quiet difference.
   object, interface or class target only fields its type declares (adding one is not supported
   yet). `Object.assign(fn, { … })` onto a
   function makes a [function with properties](functions.md#functions-with-properties).
-  Assigning from a value that may hold another class is not supported yet.
+  Assigning from a value that may hold another class is not supported yet. A record source that
+  may be `null` or `undefined` (`Record<string, V> | null`) is skipped when it is, as in
+  JavaScript.
 - `Object.freeze({ ... })` of a new object literal returns it with every field readonly, so
   writing one is a compile error, as in TypeScript. Node throws a `TypeError` when a frozen
   object's field is written through any reference, so a frozen object converts only to types
@@ -2266,6 +2268,8 @@ does is an error saying it is not supported yet, never a quiet difference.
 - `Object.create(null)` makes an empty `Record<string, V>` without a prototype, where one is
   expected (`const d: Record<string, number> = Object.create(null)`): `"toString" in d` is
   `false`, `Object.getPrototypeOf(d)` is `null`, and it prints as `[Object: null prototype] {}`.
+  Where an `any` is expected (`const slots: any = Object.create(null)`), it is a
+  `Record<string, any>`.
   `{ ...d }` copies it into an ordinary object. `Object.create` with another prototype, and
   `structuredClone` of a record in a program that calls `Object.create(null)`, are not
   supported yet.
