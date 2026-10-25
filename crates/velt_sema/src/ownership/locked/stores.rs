@@ -12,12 +12,12 @@ use rustc_hash::FxHashSet;
 
 use velt_common::Span;
 
-use super::regions::{crosses, holds_shared, pat_locals, Regions, IN, OUT};
+use super::regions::{crosses, holds_shared, pat_locals, Regions, IN};
 use super::summary::{call_flows, outer_mode, Summaries};
 use crate::body::places::{is_place, place_root};
 use crate::ctx::Ctx;
 use crate::hir::{
-    Callee, Def, DefId, Expr, ExprKind as E, FnDef, Intrinsic, LocalId, Pat, Stmt, StmtKind as S,
+    Callee, DefId, Expr, ExprKind as E, FnDef, Intrinsic, LocalId, Pat, Stmt, StmtKind as S,
     TyKind, UseMode,
 };
 use crate::visit::{self, VisitMut};
@@ -169,20 +169,6 @@ impl Stores<'_, '_, '_, '_> {
             }
             _ => call_flows(self.s, callee, args),
         };
-        // A method of the caller's own object (`all.concat(s.items)`) runs in a `read` callback
-        // by the counts outside read mode, keeping what it is given as the caller keeps its
-        // objects (velt_vir call.rs `changes_captured`): what may be the value's goes in as a
-        // copy, whether or not the method stores it.
-        let mut flows = flows;
-        if let (Callee::Def(g, _), Some(recv)) = (callee, args.first()) {
-            let method = matches!(
-                &self.cx.defs[g.0 as usize],
-                Some(Def::Fn(gf)) if gf.self_ty.is_some()
-            );
-            if method && bits[0] & IN == 0 && self.mentions(recv) & OUT != 0 {
-                flows.extend((1..args.len()).map(|a| (a, Some(0))));
-            }
-        }
         for (a, b) in flows {
             let fn_value = match (b, callee) {
                 (None, Callee::Indirect(c)) => Some(c.span),

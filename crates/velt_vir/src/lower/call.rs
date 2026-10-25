@@ -95,7 +95,7 @@ impl FnLower<'_, '_> {
                     && self.captured_root(a)
             });
         let rty = self.cx.subst(ret, &targs);
-        let plain = changes_captured && self.hand_result_ok(rty, args, &modes);
+        let plain = changes_captured && (!self.needs_drop(rty) || self.hand_ok(rty));
         let mode = match plain {
             true => LkMode::Deferred,
             false => self.mode,
@@ -307,12 +307,6 @@ impl FnLower<'_, '_> {
             if *mode == PassMode::BorrowMut {
                 // Held inline in an object (caller_stores.rs).
                 self.owner_barrier(a);
-            }
-            let lent = matches!(mode, PassMode::Borrow | PassMode::BorrowMut);
-            if self.args_to_caller && lent && transferred(a) {
-                let v = self.lent_copy(a);
-                argv.push(v);
-                continue;
             }
             if i < 64 && kept >> i & 1 == 1 {
                 let v = self.keep_mut_arg(a);
@@ -582,36 +576,4 @@ pub(super) enum Stabilize {
     Facts,
     /// A runtime extern: plain borrows.
     No,
-}
-
-/// Is `e` a copy sema made (`Intrinsic::Transfer`)?
-pub(super) fn transferred(e: &hir::Expr) -> bool {
-    matches!(
-        &e.kind,
-        hir::ExprKind::Call {
-            callee: hir::Callee::Intrinsic(hir::Intrinsic::Transfer),
-            ..
-        }
-    )
-}
-
-impl FnLower<'_, '_> {
-    /// A copy sema made of what a `read` callback lends a call changing the caller's
-    /// containers (`holder.fill(x.items.slice())`, caller_stores.rs): the call may keep it,
-    /// counted by the counts outside read mode, so the call's own reference goes by those counts
-    /// after it too. Read mode's would leave it counted: the reader no longer made it.
-    fn lent_copy(&mut self, a: &hir::Expr) -> Operand {
-        let ty = self.sub(a.ty);
-        let vt = self.cx.ty(ty);
-        let v = self.consume(a);
-        let p = match &v {
-            Operand::Copy(p) if self.take_temp(&p.clone()) => p.clone(),
-            _ => Place::local(self.copy_to_temp(v, vt)),
-        };
-        self.kept_drops.push((p.clone(), ty, LkMode::Deferred));
-        match vt {
-            Ty::Agg(_) => self.addr(p),
-            _ => Operand::Copy(p),
-        }
-    }
 }

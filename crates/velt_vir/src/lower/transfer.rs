@@ -374,7 +374,7 @@ impl FnLower<'_, '_> {
             .func_direct(Work::Glue(Glue::TransferRoot, ty), super::LkMode::Read);
         self.lk_split(
             |_| {},
-            |lw| lw.in_caller_frame(|lw| lw.call(vir::Callee::Func(f), vec![a], None, false)),
+            |lw| lw.call(vir::Callee::Func(f), vec![a], None, false),
         );
         Operand::Copy(t)
     }

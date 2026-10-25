@@ -388,16 +388,7 @@ impl FnLower<'_, '_> {
         if shared_read {
             self.mode = crate::lower::LkMode::Read;
         }
-        // Code counting by the counts outside read mode (`Work::Deferred`) holds what it gets
-        // as code outside every read does, though other reads may run around it.
-        let r = match shared_read && mode == crate::lower::LkMode::Deferred {
-            true => {
-                let mut out = None;
-                self.leave_to_outside(|lw| out = Some(lw.leave_lock(r, ret)));
-                out.unwrap_or_else(|| ice("a read's result"))
-            }
-            false => self.leave_lock(r, ret),
-        };
+        let r = self.leave_lock(r, ret);
         self.mode = mode;
         // A function value stored into the value while the lock was held may be called by
         // another thread next (glue/many.rs).

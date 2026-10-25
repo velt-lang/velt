@@ -141,7 +141,6 @@ fn summarize(cx: &mut Ctx, s: &Summaries, f: &mut FnDef) -> (Summary, FxHashSet<
         cx,
         s,
         bits: FxHashMap::default(),
-        alias: FxHashMap::default(),
         out: Summary::default(),
         changed: false,
         spawned: FxHashSet::default(),
@@ -149,7 +148,6 @@ fn summarize(cx: &mut Ctx, s: &Summaries, f: &mut FnDef) -> (Summary, FxHashSet<
     };
     for (i, p) in f.params.iter().enumerate() {
         w.bits.insert(p.local, bit(i));
-        w.alias.insert(p.local, bit(i));
     }
     loop {
         w.changed = false;
@@ -165,10 +163,6 @@ struct Walk<'a, 's, 'm> {
     s: &'s Summaries,
     /// The parameters each local may reach.
     bits: FxHashMap<LocalId, u64>,
-    /// The parameters each local may be a part of (bound or assigned to one), a subset of
-    /// `bits`: a local also reaches what is stored into it (`const out = []; out.push(this.x)`),
-    /// which a store into the local itself does not change (`out.push(other)`).
-    alias: FxHashMap<LocalId, u64>,
     out: Summary,
     changed: bool,
     /// Spans of the calls `spawn` takes.
@@ -193,16 +187,6 @@ impl Walk<'_, '_, '_> {
         }
     }
 
-    /// Local `l` is bound or assigned to a value reaching `b`: it may be a part of those.
-    fn add_alias(&mut self, l: LocalId, b: u64) {
-        self.add(l, b);
-        let e = self.alias.entry(l).or_insert(0);
-        if *e | b != *e {
-            *e |= b;
-            self.changed = true;
-        }
-    }
-
     /// A value reaching `b` stored into `place`.
     fn store(&mut self, place: &Expr, b: u64) {
         if b == 0 {
@@ -210,11 +194,6 @@ impl Walk<'_, '_, '_> {
         }
         let root = place_root(place);
         let dest = match root {
-            // Into the local's own object: what the local is a part of.
-            Some(l) if matches!(place.kind, E::Local(..)) => {
-                self.alias.get(&l).copied().unwrap_or(0)
-            }
-            // Into a part of it, which may be one stored into it.
             Some(l) => self.bits.get(&l).copied().unwrap_or(0),
             None => self.mentions(place),
         };
@@ -237,7 +216,7 @@ impl Walk<'_, '_, '_> {
         let mut ls = vec![];
         pat_locals(p, &mut ls);
         for l in ls {
-            self.add_alias(l, b);
+            self.add(l, b);
         }
     }
 
@@ -369,7 +348,7 @@ impl VisitMut for Walk<'_, '_, '_> {
                 init: Some(init),
             } => {
                 let b = self.mentions(init);
-                self.add_alias(*local, b);
+                self.add(*local, b);
             }
             S::LetPat { pat, init } => {
                 let b = self.mentions(init);
@@ -389,7 +368,7 @@ impl VisitMut for Walk<'_, '_, '_> {
                 let b = self.mentions(value);
                 match place.kind {
                     // Rebinding a local only changes what it reaches.
-                    E::Local(l, _) => self.add_alias(l, b),
+                    E::Local(l, _) => self.add(l, b),
                     _ => {
                         let place = (**place).clone();
                         self.store(&place, b);

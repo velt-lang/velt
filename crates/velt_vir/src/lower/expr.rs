@@ -110,16 +110,10 @@ impl FnLower<'_, '_> {
     /// `consume` each of `es` in order, snapshotting a value that a later one may change
     /// (`[xs[0], grow(xs)]` reads `xs[0]` before `grow` reallocates `xs`, #580).
     pub(super) fn consume_each(&mut self, es: &[hir::Expr]) -> Vec<Operand> {
-        // The elements of an array literal going into the caller's container in a `read`
-        // callback (caller_stores.rs `Held::Elems`).
-        let to_caller = std::mem::take(&mut self.elems_to_caller);
         let later = self.later_each(es);
         let mut vals = Vec::with_capacity(es.len());
         for (e, later) in es.iter().zip(later) {
-            let v = match to_caller {
-                true => self.keep_for_caller(e),
-                false => self.consume(e),
-            };
+            let v = self.consume(e);
             vals.push(self.hold_owned(v, e.ty, later));
         }
         vals

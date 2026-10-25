@@ -85,9 +85,7 @@ pub unsafe extern "C" fn velt_rt_rwlock_read(p: *mut u64, _reader: u64) -> u64 {
 pub unsafe extern "C" fn velt_rt_rwlock_read_unlock(p: *mut u64, _how: u64) {
     READ_DEPTH -= 1;
     *p -= 1;
-    if READ_DEPTH == 0
-        && !((*std::ptr::addr_of!(WAITING)).is_empty() && (*std::ptr::addr_of!(LEAVING)).is_empty())
-    {
+    if READ_DEPTH == 0 && !(*std::ptr::addr_of!(WAITING)).is_empty() {
         free_waiting();
     }
 }
@@ -136,11 +134,6 @@ pub unsafe extern "C" fn velt_rt_free_after_reads(p: *mut u8, drop: DropGlue) {
 
 #[cold]
 unsafe fn free_waiting() {
-    while let Some((c, p, drop)) = (*std::ptr::addr_of_mut!(LEAVING)).pop() {
-        *c &= !LOCAL;
-        let mut slot = p;
-        drop(&mut slot);
-    }
     while let Some((p, drop)) = (*std::ptr::addr_of_mut!(WAITING)).pop() {
         let mut slot = p;
         drop(&mut slot);
@@ -173,50 +166,6 @@ unsafe fn refuse_in_read(method: &str) {
 pub extern "C" fn velt_rt_lk_mode() -> u8 {
     // SAFETY: one thread.
     u8::from(unsafe { in_read() })
-}
-
-/// velt_rt `read_mode::velt_rt_lk_leave`: in a nested read, the bit goes when the reads end.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_lk_leave(p: *mut u64, obj: *mut u8, drop: DropGlue) {
-    if READ_DEPTH as u64 > LEAVE_TO {
-        return;
-    }
-    if READ_DEPTH <= 1 {
-        if !leaving(p) {
-            *p &= !LOCAL;
-        }
-        return;
-    }
-    *p += 1;
-    (*std::ptr::addr_of_mut!(LEAVING)).push((p, obj, drop));
-}
-
-/// velt_rt `read_mode::velt_rt_lk_keep_made`.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_lk_keep_made(p: *mut u64) {
-    if (READ_DEPTH <= 1 || READ_DEPTH as u64 > LEAVE_TO) && !leaving(p) {
-        *p = 1;
-    }
-}
-
-/// velt_rt `read_mode::leaving`.
-unsafe fn leaving(p: *mut u64) -> bool {
-    (*std::ptr::addr_of!(LEAVING))
-        .iter()
-        .any(|&(c, _, _)| c == p)
-}
-
-/// Objects a nested read stored outside every read (velt_rt `read_mode::LEAVING`).
-static mut LEAVING: Vec<(*mut u64, *mut u8, DropGlue)> = Vec::new();
-
-/// velt_rt `read_mode::velt_rt_lk_leave_to` (one thread).
-static mut LEAVE_TO: u64 = 1;
-
-/// velt_rt `read_mode::velt_rt_lk_leave_to`.
-#[no_mangle]
-pub extern "C" fn velt_rt_lk_leave_to(levels: u64) -> u64 {
-    // SAFETY: one thread.
-    unsafe { std::mem::replace(&mut *std::ptr::addr_of_mut!(LEAVE_TO), levels) }
 }
 
 #[no_mangle]

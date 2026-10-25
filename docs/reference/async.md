@@ -588,9 +588,7 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
   captured from code outside any `read` callback, its fields and elements at any depth, a
   variable of the callback bound to one of them and never given another value (`const x =
   out[0]`, `for (const o of set)`), what a method or function called on one of them returns
-  when given nothing of the value (`out.at(0)!.tags.push("t")`; through a variable bound to it
-  and never given another value, `const g = first(mine)` or `const g = mine.at(0)!`, only an
-  array's `push` and `pop` change it, and other changes stop the program), and a method or function
+  when given nothing of the value (`out.at(0)!.tags.push("t")`), and a method or function
   called with one of them to change it (`out.push(x)`, `seen.add(x)`, `m.set(k, x)`, `mine.v =
   x`, `out[0].tags.push("t")`, `sortItems(out)`). What the callback stores there from the caller's own variables and
   containers is that same object, as in JavaScript (`out.push(out[0])`, `out[0] = a`,
@@ -600,16 +598,7 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
   returns, a closure capturing a part of the value). An array or object the callback made that
   holds objects of the value's types is the caller's once stored there: the callback can still
   read it through its own variables, but a write through them stops the program, as for the
-  value's own (store it once it is complete). One a `read` nested in another stores there
-  stays the readers' own until the outermost `read` returns, so the callbacks around it can
-  still change it through their variables, also after moving it on into another of the
-  caller's containers (`keep.push(top.pop()!)`), and the caller sees those changes, as in
-  JavaScript. Sent on a channel before then, it is sent as a copy. This holds only while the
-  callbacks store no part of the value into it (`n.kids.push(x.items[0])`, before or after
-  the store): then a class object they still reference stops the program at the nested
-  store, and an array is stored as a copy, as in a single `read`, which the changes made
-  through their variables after the store don't reach.
-  One whose type the value cannot hold, and a
+  value's own (store it once it is complete). One whose type the value cannot hold, and a
   function value, that the callback still uses after storing it is stored as a copy. So is a
   container of the callback's own whose type the value cannot hold, or a `Map` or `Set` of its
   own, holding objects of the value's types, given to a method or function that changes the

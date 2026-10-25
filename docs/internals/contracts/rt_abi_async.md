@@ -653,9 +653,6 @@ network access`), and the accessors of a fetched response are unreachable (fatal
 | `velt_rt_rwlock_write` | `(u64* lock, u64 reader) -> u64` | `rw.write(f)`: the lock exclusively; in read mode it stops the program before locking (§9.1). `reader` as for `read`; the result is this thread's reader state, for the unlock and later calls [additive, #708] |
 | `velt_rt_rwlock_write_unlock` | `(u64* lock, u64 reader)` | the end of the `write` that returned `reader` [additive, #708] |
 | `velt_rt_lk_mode` | `() -> u8` | 1 when this thread is in read mode (a thread-local read, §9.1) [additive, #708] |
-| `velt_rt_lk_leave` | `(u64* count, void* obj, void (*drop)(void** slot))` | the reader's own lock-set object `obj`, whose count word is at `count`, is transferred out of a `read` callback: clears `LOCAL` unless the frame it goes to still runs in read mode, that frame being `velt_rt_lk_leave_to`'s number of callbacks out (1 by default: a nested `read`'s result stays the outer reader's). One a nested `read` stores into code outside every read keeps `LOCAL` until the thread's outermost read ends (the callbacks around it may still change it), with one more reference meanwhile, which `drop` (its drop glue) releases once the bit is cleared; transferred again before then, at any depth, it stays so (its count never drops to 1, so a transfer to another thread copies it) (§9.1) [additive, #1523] |
-| `velt_rt_lk_keep_made` | `(u64* count)` | a transfer started by `velt_rt_xfer_keep_begin` moves the reader's own object whose count word is at `count`, which the reader may still reference: its count becomes 1 (the caller's reference) without `LOCAL`, unless `velt_rt_lk_leave` would keep the bit until the reads end, or already did for this object, when the count stays (§9.1) [additive, #1523] |
-| `velt_rt_lk_leave_to` | `(u64 levels) -> u64` | the transfers that follow move into a frame `levels` `read` callbacks out from the running one (`u64::MAX`: code outside every read; `0`: the running callback itself, so the object stays the reader's own and keeps `LOCAL`, for a copy lent to a method of the lock's value or of a temporary the reader made), for a store into a container a nested callback captured; returns the number it replaces, which the caller puts back after them (§9.1) [additive, #1523] |
 | `velt_rt_lk_write` | `(u64* count)` | a write of the lock-set object whose count word is at `count`: stops the program in read mode unless the reader made the object (§9.1) [additive, #708] |
 | `velt_rt_free_after_reads` | `(void* obj, void (*drop)(void** slot))` | the last reference to the lock-set object `obj` (count still 1) went in code changing the caller's containers inside a read: `drop` (its drop glue) frees it now, or in read mode once this thread's outermost read ends (§9.1) [additive, #708] |
 | `velt_rt_str_hash` | `(const VeltStr* s) -> u64` | string Map/Set keys; fixed seed (deterministic), not flood-resistant |
@@ -693,11 +690,7 @@ counts and writes lock-set objects by these rules, inline (velt_vir `rc.rs`):
   unlock, whatever the calling code's mode: an object it shares with the store is copied, never
   moved out;
 - the caller's containers (places rooted in a variable a `read` callback literal captured from
-  code outside read mode, velt_vir `Work::ReadOwn`, also through each `read` callback around a
-  nested one, `leave_levels.rs`; that code is also a function instance counting by the counts
-  outside read mode, `Work::Deferred`, which a reader calls to change the caller's containers,
-  and code whose mode is asked when the thread is outside read mode as the literal is
-  evaluated) hold no store object and are counted by the
+  code outside read mode, velt_vir `Work::ReadOwn`) hold no store object and are counted by the
   counts outside read mode. What a store, a `push` or a method or function changing one
   (velt_vir `LkMode::Deferred`) keeps there gets a reference by those counts when it is a
   place the caller holds already (also a reader's variable borrowing one; what comes from the
