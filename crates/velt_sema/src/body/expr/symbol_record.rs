@@ -1,15 +1,16 @@
 //! `(v as Record<symbol, unknown>)[KEY]` (docs/reference/types.md "Record"): a look at a value's
 //! symbol-keyed member, as sigx's brand checks do (`isCell`). Velt has no record with symbol
 //! keys, so this one form is supported: the read goes through `any`, as `(v as any)[KEY]`
-//! does, and gives the record's value type (`unknown`, or `any`). A literal key (`["a"]`) and
-//! any other use of such a cast (a member read, a write, a value of its own) are errors.
+//! does, and gives the record's value type (`unknown`, or `any`). A key that is not a symbol
+//! (`["a"]`, a `string` or `symbol | string` variable) is TypeScript's TS7053, and any other use
+//! of such a cast (a member read, a write, a value of its own) is an error.
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
 use super::callback::synth;
 use crate::body::{FnCx, Want};
-use crate::hir;
+use crate::hir::{self, TyKind};
 
 impl FnCx<'_, '_> {
     /// `(v as Record<symbol, V>)[index]` read (`object` is the parenthesized cast), `V` being
@@ -22,17 +23,31 @@ impl FnCx<'_, '_> {
     ) -> Option<hir::Expr> {
         let (expr, ty) = symbol_record_cast(object)?;
         let value = symbol_record_value(ty)?;
-        let named = matches!(
+        // The key's type: a symbol, or TypeScript's TS7053. A name, literal or member read is
+        // checked on its own first (evaluating it has no effect the read below repeats).
+        let simple = matches!(
             index.kind,
-            ast::ExprKind::Lit(_) | ast::ExprKind::Template { .. }
+            ast::ExprKind::Ident(_)
+                | ast::ExprKind::Lit(_)
+                | ast::ExprKind::Template { .. }
+                | ast::ExprKind::Member { .. }
         );
-        if named {
+        let found = match simple {
+            true => {
+                let k = self.expr(index, None, Want::Borrow);
+                let bad =
+                    !matches!(self.cx.ty.kind(k.ty), TyKind::Symbol) && !self.cx.ty.is_bottom(k.ty);
+                bad.then(|| self.cx.display(k.ty))
+            }
+            false => Some("a computed value".to_string()),
+        };
+        if let Some(found) = found {
             self.cx.error(
                 Diagnostic::error(
-                    "the key of a `Record<symbol, ...>` must be a symbol (TypeScript's TS2339 for other keys)",
+                    format!("a `Record<symbol, ...>` is indexed by symbols, not by `{found}` (TypeScript's TS7053)"),
                     index.span,
                 )
-                .with_note("Velt reads a symbol-keyed member through it: `(v as Record<symbol, unknown>)[KEY]`, with `KEY` a symbol constant"),
+                .with_note("Velt reads a symbol-keyed member through it: `(v as Record<symbol, unknown>)[KEY]`, with `KEY` a symbol"),
             );
             self.expr(expr, None, Want::Borrow);
             return Some(self.error_expr(span));
