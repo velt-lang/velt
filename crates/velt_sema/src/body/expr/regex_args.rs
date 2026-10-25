@@ -102,15 +102,16 @@ impl FnCx<'_, '_> {
     }
 
     /// The number of capturing groups and the flags of the regex `e`, when known while
-    /// compiling: a regex literal (or `new RegExp` of literals), a `const` local holding one
-    /// (`Frame::regex_consts`), or a `readonly` field initialized with one that its class's
-    /// constructor does not assign.
+    /// compiling: a regex literal (or `new RegExp` of literals, or of a template literal whose
+    /// holes cannot open a group), a `const` local holding one (`Frame::regex_consts`), or a
+    /// `readonly` field initialized with one that its class's constructor does not assign.
     pub(in crate::body) fn regex_shape(&mut self, e: &ast::Expr) -> Option<(usize, String)> {
         let e = strip_parens(e);
         if let Some(shape) = literal_shape(e) {
             return Some(shape);
         }
         match &e.kind {
+            E::New { args, .. } => self.template_shape(args),
             E::Ident(id) => self.peek_regex_local(&id.name),
             E::Member {
                 object,
@@ -119,6 +120,53 @@ impl FnCx<'_, '_> {
             } => self.field_regex(object, prop),
             _ => None,
         }
+    }
+
+    /// `new RegExp(`<${tag}(\\s[^>]*)?>`, "i")`: a pattern written as a template literal, with
+    /// literal flags, whose every hole is a number, a boolean or a string literal type (or a
+    /// `const` of one) spelling no regex syntax that could open or hide a group (`(`, `)`, `[`,
+    /// `]`, `\`): the groups are those of the written parts.
+    fn template_shape(&mut self, args: &[ast::Expr]) -> Option<(usize, String)> {
+        let (pattern, flags) = match args {
+            [p] => (p, ""),
+            [p, f] => match &f.kind {
+                E::Lit(ast::Lit::Str(s)) => (p, s.as_str()),
+                _ => return None,
+            },
+            _ => return None,
+        };
+        let E::Template { quasis, exprs } = &strip_parens(pattern).kind else {
+            return None;
+        };
+        for x in exprs {
+            if !self.hole_is_plain(x) {
+                return None;
+            }
+        }
+        // Each hole stands in as a plain character, which neither opens nor escapes a group.
+        Some((capture_groups(&quasis.join("x")), flags.to_string()))
+    }
+
+    /// Can what template hole `x` spells never be regex syntax around a group (see
+    /// `template_shape`)?
+    fn hole_is_plain(&mut self, x: &ast::Expr) -> bool {
+        if let E::Lit(ast::Lit::Int { .. } | ast::Lit::Float { .. } | ast::Lit::Bool(_)) = &x.kind {
+            return true;
+        }
+        let plain = |s: &str| {
+            !s.bytes()
+                .any(|b| matches!(b, b'(' | b')' | b'[' | b']' | b'\\'))
+        };
+        if let Some(keys) = self.literal_keys(x) {
+            return keys.iter().all(|k| plain(k));
+        }
+        if !is_path(x) {
+            return false;
+        }
+        self.peek_ty(x).is_some_and(|t| {
+            let t = self.cx.ty.kind(t);
+            matches!(t, TyKind::Float(_) | TyKind::Int(_) | TyKind::Bool)
+        })
     }
 
     /// `const re = …` of type `ty`: what `regex_shape` knows of the regex it holds.
@@ -194,7 +242,24 @@ impl FnCx<'_, '_> {
         }
         let mut stmts = vec![];
         for (i, p) in params.iter().enumerate() {
-            let value = self.replacer_arg(i, p.optional, p.default.as_ref(), groups, span);
+            // A group parameter that admits a nothing (`g?: string`, `g: string | undefined`)
+            // gets it when the group did not take part, as in JavaScript.
+            let nothing = p.ty.as_ref().and_then(admitted_nothing);
+            let optional = p.optional || nothing.is_some();
+            let mut value = self.replacer_arg(i, optional, p.default.as_ref(), groups, span);
+            // The group reads as `string | null`: `undefined` for a `string | undefined`.
+            let is_group = groups.is_some_and(|n| (1..=n).contains(&i));
+            if is_group && !p.optional && nothing == Some(ast::Lit::Undefined) {
+                let undefined = expr(E::Lit(ast::Lit::Undefined), span);
+                value = expr(
+                    E::Binary {
+                        op: ast::BinaryOp::Nullish,
+                        lhs: Box::new(value),
+                        rhs: Box::new(undefined),
+                    },
+                    span,
+                );
+            }
             // `let`: the function may assign its parameters.
             let decl = ast::VarDecl {
                 kind: ast::VarKind::Let,
@@ -382,6 +447,21 @@ fn adapter(
         },
         span,
     )
+}
+
+/// The nothing a parameter type written as a union with `null` or `undefined` admits:
+/// `undefined` when it admits that one (`T | undefined`, `T | null | undefined`), else `null`.
+fn admitted_nothing(t: &ast::TypeExpr) -> Option<ast::Lit> {
+    use ast::TypeExprKind as T;
+    let T::Union(ts) = &t.kind else {
+        return None;
+    };
+    if ts.iter().any(|t| matches!(t.kind, T::Undefined)) {
+        return Some(ast::Lit::Undefined);
+    }
+    ts.iter()
+        .any(|t| matches!(t.kind, T::Null))
+        .then_some(ast::Lit::Null)
 }
 
 /// The number of groups and the flags of `new RegExp("…", "…")` with literal arguments.
