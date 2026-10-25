@@ -89,4 +89,45 @@ mod tests {
         let msgs = messages("const a = <number>x;\n", false);
         assert!(msgs[0].contains("no corresponding closing tag"), "{msgs:?}");
     }
+
+    #[test]
+    fn as_is_a_name_and_a_type_assertion_after_an_expression() {
+        // #1503: `as` is a contextual keyword, as in TypeScript.
+        let src = "function as(x: any) { return x; }\n\
+                   function g() {\nconst a = as(1) as number;\nconst b = as;\nas(2);\n}\n";
+        assert_eq!(messages(src, false), Vec::<String>::new());
+        let (module, _) = crate::parse_file(FileId(0), src);
+        let ItemKind::Function(g) = &module.items[1].kind else {
+            panic!("{:?}", module.items[1]);
+        };
+        assert_eq!(g.body.stmts.len(), 3, "`as(2)` is a call statement");
+        let inits: Vec<_> = (g.body.stmts.iter())
+            .filter_map(|s| match &s.kind {
+                crate::ast::StmtKind::Var(decl) => decl.init.as_ref().map(|e| &e.kind),
+                _ => None,
+            })
+            .collect();
+        let [ExprKind::Cast { expr, .. }, b] = &inits[..] else {
+            panic!("{inits:?}");
+        };
+        assert!(matches!(expr.kind, ExprKind::Call { .. }), "{expr:?}");
+        // `b` is the function `as` itself.
+        assert!(matches!(b, ExprKind::Ident(_)), "{b:?}");
+    }
+
+    #[test]
+    fn a_line_break_before_as_or_satisfies_ends_the_expression() {
+        // TypeScript: `const y = 1` and `as(2)` on the next line declare `y`, then call `as`.
+        for word in ["as", "satisfies"] {
+            let src = format!(
+                "function {word}(x: any) {{ return x; }}\nfunction g() {{\nconst y = 1\n{word}(2)\n}}\n"
+            );
+            assert_eq!(messages(&src, false), Vec::<String>::new(), "{src}");
+            let (module, _) = crate::parse_file(FileId(0), &src);
+            let ItemKind::Function(g) = &module.items[1].kind else {
+                panic!("{:?}", module.items[1]);
+            };
+            assert_eq!(g.body.stmts.len(), 2, "{src}");
+        }
+    }
 }

@@ -234,6 +234,12 @@ impl FnCx<'_, '_> {
             {
                 self.expr_stmt(inner)
             }
+            // `await null;`: one step (`expr::await_value`).
+            ast::ExprKind::Await(inner)
+                if self.f.is_async && crate::body::expr::await_value::nothing_lit(inner) =>
+            {
+                self.await_step(e.span)
+            }
             // `void e;`: evaluates `e` and ignores its value (also a promise's).
             ast::ExprKind::Unary {
                 op: ast::UnaryOp::Void,

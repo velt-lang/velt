@@ -76,9 +76,23 @@ pub(crate) fn field_getter(cx: &mut Ctx, d: DefId, self_ty: TyId, index: usize, 
 /// class setter takes it: the caller shares a value it uses again. The old value is released by
 /// the assignment.
 pub(crate) fn field_setter(cx: &mut Ctx, d: DefId, self_ty: TyId, index: usize, ty: TyId) -> DefId {
+    field_setter_taking(cx, d, self_ty, index, ty, false)
+}
+
+/// [`field_setter`] for the slot of an interface's `set name(v)` method, whose parameter is
+/// borrowed when `borrowed` (the field gets a share of it).
+pub(crate) fn field_setter_taking(
+    cx: &mut Ctx,
+    d: DefId,
+    self_ty: TyId,
+    index: usize,
+    ty: TyId,
+    borrowed: bool,
+) -> DefId {
     let fname = cx.adt(d).expect("ICE: adt").fields[index].name.clone();
     let unit = cx.ty.unit;
-    setter_def(cx, d, self_ty, &fname, ty, |span, copy| {
+    let borrowed = borrowed && !cx.is_copy(ty);
+    setter_def(cx, d, self_ty, &fname, ty, borrowed, |span, copy| {
         let this = hir::Expr {
             kind: H::Local(LocalId(0), UseMode::BorrowMut),
             ty: self_ty,
@@ -93,11 +107,26 @@ pub(crate) fn field_setter(cx: &mut Ctx, d: DefId, self_ty: TyId, index: usize, 
             ty,
             span,
         };
-        let value = hir::Expr {
-            kind: H::Local(LocalId(1), if copy { UseMode::Copy } else { UseMode::Move }),
+        let mode = match (copy, borrowed) {
+            (true, _) => UseMode::Copy,
+            (false, true) => UseMode::Borrow,
+            (false, false) => UseMode::Move,
+        };
+        let mut value = hir::Expr {
+            kind: H::Local(LocalId(1), mode),
             ty,
             span,
         };
+        if borrowed {
+            value = hir::Expr {
+                kind: H::Call {
+                    callee: Callee::Intrinsic(Intrinsic::Share),
+                    args: vec![value],
+                },
+                ty,
+                span,
+            };
+        }
         let assign = H::Assign {
             place: Box::new(place),
             value: Box::new(value),
@@ -120,7 +149,7 @@ pub(crate) fn getter_only_setter(
     let msg =
         format!("TypeError: Cannot set property {fname} of #<{cname}> which has only a getter");
     let (str_, never) = (cx.ty.str_, cx.ty.never);
-    setter_def(cx, d, self_ty, fname, ty, |span, _| {
+    setter_def(cx, d, self_ty, fname, ty, false, |span, _| {
         let call = H::Call {
             callee: Callee::Intrinsic(Intrinsic::Panic),
             args: vec![hir::Expr {
@@ -138,7 +167,7 @@ pub(crate) fn getter_only_setter(
 /// never called (a write into a part of the field reports the literal,
 /// `crate::iface_writes`).
 pub(crate) fn unused_setter(cx: &mut Ctx, d: DefId, self_ty: TyId, fname: &str, ty: TyId) -> DefId {
-    setter_def(cx, d, self_ty, fname, ty, |_, _| None)
+    setter_def(cx, d, self_ty, fname, ty, false, |_, _| None)
 }
 
 /// A setter method `<set fname>(v: ty)` of class/struct `d` whose body is the statement
@@ -149,16 +178,17 @@ fn setter_def(
     self_ty: TyId,
     fname: &str,
     ty: TyId,
+    borrowed: bool,
     body: impl FnOnce(Span, bool) -> Option<(H, TyId)>,
 ) -> DefId {
     let a = cx.adt(d).expect("ICE: adt");
     let (qual, n, span, module) = (a.qual_name.clone(), a.generics.clone(), a.span, a.module);
     let name = format!("{qual}.<set {fname}>");
     let copy = cx.is_copy(ty);
-    let mode = if copy {
-        PassMode::Copy
-    } else {
-        PassMode::Owned
+    let mode = match (copy, borrowed) {
+        (true, _) => PassMode::Copy,
+        (false, true) => PassMode::Borrow,
+        (false, false) => PassMode::Owned,
     };
     let mut info = super::fn_placeholder(name.clone(), span, span, module, FnKind::Method, None);
     info.generics = n.clone();

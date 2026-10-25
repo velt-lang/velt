@@ -1,23 +1,18 @@
-//! Constants: module-level `const` declarations and `static readonly` fields of structs and
+//! Constants: module-level `const` declarations and `static` fields of structs and
 //! classes. Both become `Def::Global`s, checked on first use (`body::driver::ensure_global`);
-//! a static field is named `Type.NAME` and keeps its declaring type for `private` checks.
+//! a static field is named `Type.NAME` and keeps its declaring type for `private` checks. A
+//! `static` field that is not `readonly` is module state, as a module-level `let` is: evaluated
+//! once, where the class is declared, and assignable (`Type.count = 5`).
 
-use velt_common::Diagnostic;
 use velt_syntax::ast;
 
 use crate::ctx::Ctx;
 use crate::defs::{BodyState, DefInfo, GlobalInfo, GlobalSrc};
 use crate::hir::DefId;
 
-/// `static readonly NAME: T = e;` fields: a module constant each, named `Type.NAME`.
+/// `static [readonly] NAME: T = e;` fields: a module constant (or `let`) each, named `Type.NAME`.
 pub(super) fn declare_statics<'m>(cx: &mut Ctx<'m>, m: usize, owner: DefId, t: &'m ast::TypeDecl) {
     for f in t.fields.iter().filter(|f| f.is_static) {
-        if !f.readonly {
-            cx.error(
-                Diagnostic::error("static fields must be `readonly`", f.name.span)
-                    .with_note("write `static readonly` (mutable statics are not supported)"),
-            );
-        }
         let owner_qual = cx
             .adt(owner)
             .map(|a| a.qual_name.clone())
@@ -38,8 +33,8 @@ pub(super) fn declare_statics<'m>(cx: &mut Ctx<'m>, m: usize, owner: DefId, t: &
                 owner: Some(owner),
                 is_private: f.is_private,
             },
-            mutable: false,
-            stored: false,
+            mutable: !f.readonly,
+            stored: !f.readonly,
         };
         let g = cx.alloc_def(f.name.span, DefInfo::Global(Box::new(info)));
         if cx

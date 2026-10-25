@@ -1,0 +1,12 @@
+// A class value reaching an alias with accessors through another alias of the same shape:
+// converting it to `{ v: number }` would need a copy of the class's object (#1501).
+type T = { get v(): number; set v(x: number) };
+type U = { get v(): number; set v(x: number) };
+class C implements U {
+  w = 7;
+  v = 3;
+}
+const u: U = new C();
+const t: T = u;
+const back: { v: number } = t;
+console.log(back.v);

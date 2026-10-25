@@ -236,6 +236,7 @@ fn add_members(item: &mut ast::Item, adds: &[(String, ast::Ident, ast::TypeExpr)
                     optional: true,
                     readonly: false,
                     span,
+                    accessors: vec![],
                 });
             }
         }

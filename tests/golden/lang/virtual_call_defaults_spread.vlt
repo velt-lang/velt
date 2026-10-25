@@ -1,0 +1,21 @@
+// Spreads of a known length in a virtual call: a tuple, an array literal, `apply`'s list. The
+// parameters they leave out take the defaults of the override that runs (#1506).
+class B {
+  m(a: number = 1, b: number = 2): string {
+    return "B" + a + b;
+  }
+}
+class D extends B {
+  override m(a: number = 3, b: number = 4): string {
+    return "D" + a + b;
+  }
+}
+const one: [number] = [9];
+const two: [number, number] = [5, 6];
+const none: [] = [];
+const maybe: [number | undefined] = [undefined];
+const xs: B[] = [new B(), new D()];
+for (const x of xs) {
+  console.log(x.m(...one), x.m(...two), x.m(...none), x.m(...[8]), x.m(...[]), x.m(...maybe));
+  console.log(x.m.apply(x, one), x.m.apply(x, [undefined, 7]));
+}

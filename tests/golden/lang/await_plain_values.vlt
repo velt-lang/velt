@@ -1,0 +1,30 @@
+// `await` on a value that is no promise (#1501): `await null;` takes one step and lets queued
+// callbacks run, as in Node; `await 5`, `await "s"` and `await obj` give the value itself.
+class Box { v: number = 1; }
+async function f(tag: string): Promise<void> {
+  console.log(tag, "a");
+  await null;
+  console.log(tag, "b");
+  await undefined;
+  console.log(tag, "c");
+  const r: number | null = await null;
+  const n = await 5;
+  const s = await (tag + "!");
+  const b = await new Box();
+  const u = await undefined;
+  console.log(tag, r, n, s, b.v, u);
+  const z: string | null = await null;
+  console.log(tag, z ?? "dflt");
+}
+async function g(): Promise<void> {
+  console.log("g1");
+  await Promise.resolve();
+  console.log("g2");
+  await Promise.resolve();
+  console.log("g3");
+}
+f("x");
+g();
+f("y");
+Promise.resolve().then(() => console.log("then"));
+console.log("sync end");

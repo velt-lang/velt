@@ -65,10 +65,19 @@ hidden classes and no runtime shape checks.
   running a constructor; `JSON.stringify` writes it as usual
   ([`velt:json`](../std/json.md)).
 - **Single inheritance**: `class B extends A`. The base's fields are a prefix of the subclass
-  layout, so upcasts are free. A subclass without a constructor of its own inherits its
+  layout, so upcasts are free. A subclass may declare an inherited field again with the same
+  type and an initializer of its own (`class Dog extends Animal { kind: string = "dog" }`): it is
+  the same field, which the subclass's initializer sets after the base class's, in its turn among
+  the subclass's initializers. A subclass without a constructor of its own inherits its
   base's. Redefining a base method requires `override`, except a method of a standard-library
   class (`toString()` in a subclass of `Error`), which TypeScript code redefines without it;
-  `super.m()` calls the base version.
+  `super.m()` calls the base version. An override may give a parameter a default of its own: a
+  call that leaves the argument out takes the default of the method that runs, also through a
+  base-class type (`const s: Shape = new Square(); s.scale()` uses `Square`'s), through a
+  method value (`const f = s.scale; f()`, `s.scale.bind(s)`) and when the argument is
+  `undefined`, as in JavaScript. Such a call goes through a second vtable slot whose entry in
+  each class applies that class's own default, so a call passing every argument costs the same
+  as before.
   There are no abstract classes.
 - **`super(…)`**: the constructor of a subclass calls `super(…)`, as in TypeScript, also when
   the base class has no constructor (`super();`). Statements may come before it as long as they
@@ -142,8 +151,19 @@ hidden classes and no runtime shape checks.
   fields (assignable only in the constructor), `static` methods, and
   `static readonly NAME: T = …;` constants (`Account.LIMIT`, `Math.PI`), evaluated like
   [module constants](variables.md#module-state) (once, with the class, when the program
-  modifies, takes over or compares one, or its value is not a constant). Mutable statics
-  and `protected` members don't exist (only a constructor can be `protected`). Static and
+  modifies, takes over or compares one, or its value is not a constant), and `static` fields
+  (`static count: number = 0;`), which are [module state](variables.md#module-state) like a
+  module-level `let`: initialized once, where the class is declared, in source order with the
+  class's `static { … }` blocks, and assigned through their class (`Counter.count++`, or
+  `++this.count` in a static method of `Counter`) and read through a subclass (`Sub.count`).
+  Assigning one through a subclass (`Sub.count = 5`, or `this.count = v` in a static method
+  called on a subclass) is an error: in JavaScript it creates a static field of the subclass
+  itself, which Velt does not support yet; assign `Counter.count`. `static { … }` blocks run
+  once, where the class is declared, as in JavaScript (`this` in one is not supported yet: name
+  the class, `Counter.count`; a `return` in one is an error, as in TypeScript). A class declared
+  inside a function or block can't have `static` fields that are not `readonly` or `static`
+  blocks yet: JavaScript evaluates them each time the declaration runs, Velt once.
+  `protected` members don't exist (only a constructor can be `protected`). Static and
   instance members are separate namespaces, as in TypeScript: a subclass's `static m()` doesn't
   hide an inherited instance method `m()`, and a class below it can still `override` that method.
   Static methods are inherited, as in TypeScript: with `class B extends A {}`, `B.f()` calls

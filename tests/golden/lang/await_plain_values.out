@@ -1,0 +1,15 @@
+x a
+g1
+y a
+sync end
+x b
+g2
+y b
+then
+x c
+g3
+y c
+x null 5 x! 1 undefined
+y null 5 y! 1 undefined
+x dflt
+y dflt

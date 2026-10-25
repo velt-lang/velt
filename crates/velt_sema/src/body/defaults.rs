@@ -66,7 +66,12 @@ fn check_default(
     fcx.fn_name = fn_name.to_string();
     fcx.owner = owner;
     let h = fcx.expr_coerce(e, ty, Want::Move);
+    // What the default may throw, which each call placing it throws too (`placed_default`).
+    let throws = std::mem::take(&mut fcx.f.uncaught);
     cx.display_params = saved;
+    if !throws.is_empty() {
+        cx.default_throws.insert(h.span, throws);
+    }
     undefined_default(cx, e, ty);
     h
 }
