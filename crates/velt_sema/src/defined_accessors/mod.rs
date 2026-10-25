@@ -1,7 +1,10 @@
 //! Accessors defined after construction (#922): `Object.defineProperty(o, "k", { get, set })`
 //! on a `const o: I = { get k() { … }, set k(v) { … }, … }` of the same function, where `I` is
 //! an interface that declares the accessor (an object literal implementing an interface may
-//! have getters and setters, `body::expr::iface_object`). Rewritten before checking, so the
+//! have getters and setters, `body::expr::iface_object`), or on a `const o = { get k(): T { … } }`
+//! without a type, whose getter's result type is written (the literal is then of its own
+//! interface, `body::expr::literal_iface`; a setter the call defines is added to it, which
+//! throws Node's `TypeError` until the call has run). Rewritten before checking, so the
 //! literal's accessors call functions held in variables that the call replaces:
 //!
 //! ```text
@@ -178,12 +181,15 @@ pub(super) struct Define {
     pub span: Span,
 }
 
-/// A `const o: I = { … }` of a function body: the interface type and the literal's accessors.
+/// A `const o: I = { … }` (or `const o = { … }`) of a function body: the interface type, if
+/// written, and the literal's accessors.
 #[derive(Clone, Debug)]
 pub(super) struct Decl {
-    pub ty: ast::TypeExpr,
+    pub ty: Option<ast::TypeExpr>,
     /// Per key: the literal has a getter, a setter.
     pub accessors: FxHashMap<String, (bool, bool)>,
+    /// Per key: the result type written on the literal's getter.
+    pub getter_types: FxHashMap<String, ast::TypeExpr>,
 }
 
 /// Walks every function body of a module.

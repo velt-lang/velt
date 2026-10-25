@@ -2232,7 +2232,10 @@ does is an error saying it is not supported yet, never a quiet difference.
   as in Node: one the descriptor leaves out stays, and after `configurable: false` defining it
   again throws `TypeError: Cannot redefine property: k`. A shorthand descriptor (`{ get }`) is
   `{ get: get }`. `enumerable` changes nothing Velt shows, since an interface value is not
-  listed by key. Not supported yet: accessors defined on other objects (a parameter, a class
+  listed by key. On a `const o = { get k(): T { … } }` written without a type, the getter's
+  result type must be written; a setter the descriptor gives is added to the literal, and a
+  write before the call has run throws Node's `TypeError: Cannot set property k of #<Object>
+  which has only a getter`. Not supported yet: accessors defined on other objects (a parameter, a class
   instance, a loop variable named like the literal), in a module that binds the name `Object`
   anywhere (its `Object.defineProperty` may be its own), with `this` inside them (#941), that may
   throw (until #1326), that are `undefined` (the property would read `undefined`), and a
