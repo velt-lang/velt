@@ -46,11 +46,26 @@ struct Shape {
 #[derive(Default)]
 pub(crate) struct GenericFns {
     by_shape: FxHashMap<Shape, DefId>,
-    /// Per interface made here: the number of its own type parameters' and how many
-    /// arguments it takes.
-    made: FxHashMap<DefId, (usize, usize)>,
+    /// Per interface made here: whether its last parameter is a rest parameter.
+    made: FxHashMap<DefId, bool>,
     /// The type parameter names each was first written with, for showing it.
     names: FxHashMap<DefId, Vec<String>>,
+    /// Where each is written without `throws` in a user module: the sites what its generic
+    /// closures throw is added to.
+    sites: FxHashMap<DefId, Vec<Span>>,
+}
+
+/// A generic function type's parts, over the type parameters in scope, the implementor and
+/// its own type parameters (`Ctx::generic_fn_type`).
+pub(crate) struct FnParts {
+    pub params: Vec<TyId>,
+    pub ret: TyId,
+    pub throws: Option<TyId>,
+    pub rest: bool,
+    pub bounds: Vec<Vec<Bound>>,
+    pub constraints: Vec<Option<TyId>>,
+    /// Where it is written without `throws` (a site: `Ctx::resolve_generic_fn`).
+    pub site: Option<Span>,
 }
 
 /// A generic function type's signature in terms of the type parameters in scope where it is
@@ -60,6 +75,8 @@ pub(crate) struct GenericSig {
     pub args: Vec<TyId>,
     /// The method: params, result, own generics, declared error type.
     pub method: IfaceMethod,
+    /// The last parameter is a rest parameter.
+    pub rest: bool,
 }
 
 impl Ctx<'_> {
@@ -96,11 +113,19 @@ impl Ctx<'_> {
             .map(|t| self.resolve_type(t, &inner_env))
             .collect();
         let ret = self.resolve_type(ret, &inner_env);
-        let throws = throws.as_ref().map(|t| {
+        let written = throws.as_ref().map(|t| {
             let e = self.resolve_type(t, &inner_env);
             self.no_void_error(e, t.span);
             e
         });
+        // Written without `throws` in a user module: a site, which throws what the generic
+        // closures stored into it throw (found by checking again, `throws::fn_types`).
+        let user = self.scopes.get(env.module).is_some_and(|s| !s.is_std);
+        let site = (written.is_none() && user && span != Span::DUMMY).then_some(span);
+        let throws = match site {
+            Some(s) => Some(self.site_error(s, env.module).unwrap_or(self.ty.never)),
+            None => written,
+        };
         let b = crate::collect::shapes::resolve_bounds(self, type_params, &inner_env);
         if [ret]
             .iter()
@@ -110,20 +135,44 @@ impl Ctx<'_> {
         {
             return self.ty.error;
         }
+        let parts = FnParts {
+            params: pts,
+            ret,
+            throws,
+            rest: *rest,
+            bounds: b.bounds,
+            constraints: b.constraints,
+            site,
+        };
+        let own_names: Vec<String> = type_params.iter().map(|g| g.name.name.clone()).collect();
+        self.generic_fn_type(parts, m, own_names, env.module, span)
+    }
+
+    /// The generic function type of `parts`, written over the `m` type parameters in scope,
+    /// the implementor (`Param(m)`) and its own type parameters named `own_names` (`Param(m +
+    /// 1 + k)`).
+    pub(crate) fn generic_fn_type(
+        &mut self,
+        parts: FnParts,
+        m: usize,
+        own_names: Vec<String>,
+        module: usize,
+        span: Span,
+    ) -> TyId {
         // The type parameters in scope it mentions become the interface's.
         let mut mentioned = vec![];
         let mut walk = |cx: &Ctx, t: TyId| crate::types::collect_params(&cx.ty, t, &mut mentioned);
-        for t in pts.iter().chain([&ret]).chain(&throws) {
+        for t in parts.params.iter().chain([&parts.ret]).chain(&parts.throws) {
             walk(self, *t);
         }
-        for bs in &b.bounds {
+        for bs in &parts.bounds {
             for bound in bs {
                 for a in &bound.args {
                     walk(self, *a);
                 }
             }
         }
-        for t in b.constraints.iter().flatten() {
+        for t in parts.constraints.iter().flatten() {
             walk(self, *t);
         }
         let mut outer: Vec<u32> = mentioned
@@ -133,7 +182,7 @@ impl Ctx<'_> {
         outer.sort_unstable();
         outer.dedup();
         let n = outer.len();
-        let own = type_params.len();
+        let own = own_names.len();
         let mut map: Vec<TyId> = vec![self.ty.error; m + 1 + own];
         for (i, p) in outer.iter().enumerate() {
             map[*p as usize] = self.ty.param(i as u32);
@@ -143,32 +192,45 @@ impl Ctx<'_> {
             map[m + 1 + k] = self.ty.param((n + 1 + k) as u32);
         }
         let renumber = |cx: &mut Ctx, t: TyId| cx.subst(t, &map);
+        let mut bounds: Vec<Vec<(DefId, Vec<TyId>)>> = parts
+            .bounds
+            .iter()
+            .map(|bs| {
+                bs.iter()
+                    .map(|x| {
+                        let args = x.args.iter().map(|a| renumber(self, *a)).collect();
+                        (x.iface, args)
+                    })
+                    .collect()
+            })
+            .collect();
+        bounds.resize(own, vec![]);
+        let mut constraints: Vec<Option<TyId>> = parts
+            .constraints
+            .iter()
+            .map(|c| c.map(|t| renumber(self, t)))
+            .collect();
+        if constraints.iter().all(Option::is_none) {
+            constraints.clear();
+        } else {
+            constraints.resize(own, None);
+        }
         let shape = Shape {
-            params: pts.iter().map(|t| renumber(self, *t)).collect(),
-            ret: renumber(self, ret),
-            throws: throws.map(|t| renumber(self, t)),
-            rest: *rest,
-            bounds: b
-                .bounds
-                .iter()
-                .map(|bs| {
-                    bs.iter()
-                        .map(|x| {
-                            let args = x.args.iter().map(|a| renumber(self, *a)).collect();
-                            (x.iface, args)
-                        })
-                        .collect()
-                })
-                .collect(),
-            constraints: b
-                .constraints
-                .iter()
-                .map(|c| c.map(|t| renumber(self, t)))
-                .collect(),
+            params: parts.params.iter().map(|t| renumber(self, *t)).collect(),
+            ret: renumber(self, parts.ret),
+            throws: parts.throws.map(|t| renumber(self, t)),
+            rest: parts.rest,
+            bounds,
+            constraints,
             outer: n,
         };
-        let own_names: Vec<String> = type_params.iter().map(|g| g.name.name.clone()).collect();
-        let iface = self.generic_fn_iface(shape, own_names, env.module, span);
+        let iface = self.generic_fn_iface(shape, own_names, module, span);
+        if let Some(s) = parts.site {
+            let sites = self.generic_fns.sites.entry(iface).or_default();
+            if !sites.contains(&s) {
+                sites.push(s);
+            }
+        }
         let args = outer.iter().map(|p| self.ty.param(*p)).collect();
         self.ty.intern(TyKind::Dyn(iface, args))
     }
@@ -252,7 +314,7 @@ impl Ctx<'_> {
                 decl: None,
             })),
         );
-        self.generic_fns.made.insert(d, (s.bounds.len(), n));
+        self.generic_fns.made.insert(d, s.rest);
         self.generic_fns.names.insert(d, own_names);
         self.generic_fns.by_shape.insert(s, d);
         d
@@ -275,11 +337,7 @@ impl Ctx<'_> {
         own: &[String],
         names: &[String],
     ) -> String {
-        let mut ps: Vec<String> = params
-            .iter()
-            .enumerate()
-            .map(|(k, t)| format!("a{k}: {}", self.display_in(*t, names)))
-            .collect();
+        let mut ps: Vec<String> = params.iter().map(|t| self.display_in(*t, names)).collect();
         if let (true, Some(last)) = (rest, ps.last_mut()) {
             last.insert_str(0, "...");
         }
@@ -289,6 +347,11 @@ impl Ctx<'_> {
             ps.join(", "),
             self.display_in(ret, names)
         )
+    }
+
+    /// The sites generic function type interface `d` is written at without `throws`.
+    pub(crate) fn generic_fn_sites(&self, d: DefId) -> Vec<Span> {
+        self.generic_fns.sites.get(&d).cloned().unwrap_or_default()
     }
 
     /// Is `t` a generic function type?
@@ -314,10 +377,7 @@ impl Ctx<'_> {
 
     /// Does generic function type interface `d` take a rest parameter?
     fn generic_fn_rest(&self, d: DefId) -> bool {
-        self.generic_fns
-            .by_shape
-            .iter()
-            .any(|(s, x)| *x == d && s.rest)
+        self.generic_fns.made.get(&d).copied().unwrap_or(false)
     }
 
     /// The signature of generic function type `t`, if it is one.
@@ -331,6 +391,7 @@ impl Ctx<'_> {
             iface: *d,
             args: args.clone(),
             method,
+            rest: self.generic_fn_rest(*d),
         })
     }
 }

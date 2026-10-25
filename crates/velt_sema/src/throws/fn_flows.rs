@@ -92,6 +92,39 @@ impl Ctx<'_> {
     }
 
     /// Add `members` to what site `s` throws, and to the sites its values flow to.
+    /// A generic closure throwing `err` is stored into a generic function type written without
+    /// `throws` at `spans` (`crate::generic_fns`), which does not allow it: add `err` to those
+    /// sites, as [`Ctx::seed_fn_sites`] does for a function type. False when `err` can't be
+    /// kept (then the use is reported).
+    pub(crate) fn seed_generic_sites(&mut self, spans: &[Span], err: TyId) -> bool {
+        // An error-set variable (a call of a function-typed parameter) is only solved after
+        // the bodies: check again with the sets written in, where it is a set.
+        if self.mentions_err_var(err) {
+            if self.fn_sites.is_last() {
+                return false;
+            }
+            self.fn_sites.fallback();
+            return true;
+        }
+        let mut members = vec![];
+        for m in self.error_members(err) {
+            if !self.is_error_class(m) {
+                return false;
+            }
+            match self.port(m, 0) {
+                Some(p) => members.push(p),
+                None => return false,
+            }
+        }
+        if spans.is_empty() || self.fn_sites.is_last() {
+            return false;
+        }
+        for &s in spans {
+            self.add_to_site(s, &members);
+        }
+        true
+    }
+
     pub(super) fn add_to_site(&mut self, s: Span, members: &[Portable]) {
         let mut work = vec![s];
         while let Some(s) = work.pop() {

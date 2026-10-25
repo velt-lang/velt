@@ -1,0 +1,84 @@
+// Values of generic function types (#943): a parameter, a field, an array element or a result
+// of type `<T>(x: T) => R` takes any type arguments at each call. Generic arrows (also capturing
+// locals, inside generic functions), plain arrows checked against the type, named generic
+// functions and generic methods of object literals are such values.
+type Wrap = <T>(x: T) => T[];
+
+function apply(f: Wrap, tag: string): void {
+  console.log(tag, f(1), f("a"), f([true]));
+}
+
+function make(n: number): Wrap {
+  let count = 0;
+  return <T>(x: T): T[] => {
+    count += n;
+    const out: T[] = [];
+    for (let i = 0; i < count; i++) out.push(x);
+    return out;
+  };
+}
+
+function inGeneric<U>(u: U): Wrap {
+  return <T,>(x: T): T[] => {
+    console.log("u", u);
+    return [x];
+  };
+}
+
+interface Holder {
+  w: Wrap;
+  name: string;
+}
+
+type Scope = { run<T>(fn: () => T): T | undefined; stop(): void };
+
+function scope(): Scope {
+  let active = true;
+  let runs = 0;
+  return {
+    run<T>(fn: () => T): T | undefined {
+      if (!active) return undefined;
+      runs++;
+      return fn();
+    },
+    stop() {
+      active = false;
+      console.log("runs", runs);
+    },
+  };
+}
+
+function id<T>(x: T): T {
+  return x;
+}
+
+function applyId(f: <T>(x: T) => T): void {
+  console.log(f(1), f("a"));
+}
+
+function applyNumber(f: (x: number) => number): number {
+  return f(2);
+}
+
+function main(): void {
+  apply((x) => [x], "contextual");
+  const w = make(1);
+  apply(w, "made");
+  const h: Holder = { w: make(2), name: "h" };
+  console.log(h.w(9), h.name);
+  const ws: Wrap[] = [w, (x) => [x, x]];
+  for (const f of ws) console.log(f("z"));
+  console.log(typeof w);
+  const g = inGeneric(5);
+  console.log(g(1), g("b"));
+  const s = scope();
+  console.log(s.run(() => 3), s.run(() => "x"));
+  s.stop();
+  console.log(s.run(() => 4));
+  applyId(id);
+  applyId(<U,>(y: U): U => y);
+  console.log(applyNumber(<T,>(x: T): T => x));
+  let k = 10;
+  const local = <T,>(x: T): [T, number] => [x, k++];
+  console.log(local("q"), local(true), k);
+}

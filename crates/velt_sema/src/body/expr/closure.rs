@@ -148,6 +148,9 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         escaping: bool,
     ) -> hir::Expr {
+        if let Some(h) = self.instantiated_arrow(e, exp, escaping) {
+            return h;
+        }
         if self.is_generic_closure(e, exp) {
             return self.generic_closure(e, exp);
         }

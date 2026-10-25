@@ -1,10 +1,8 @@
-// A generic function type is supported as the type of a `const` initialized with an arrow or a
-// name (#943); a value that stays generic anywhere else (a parameter, a `let`, a constant with
-// another initializer) is not supported yet.
+// A value of a generic function type takes any type arguments at each call (#943): a function
+// of fixed types is not one, as TypeScript reports too.
 type Id = <T>(x: T) => T;
-function apply(f: <T>(x: T) => T): number {
+function apply(f: Id): number {
   return f(1);
 }
-let g: <T>(x: T) => T = (x) => x;
 const h: Id = [(x: number) => x][0];
-console.log(apply((x) => x), g(1), h(2));
+console.log(apply(h));

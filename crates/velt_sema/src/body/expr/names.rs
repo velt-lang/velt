@@ -516,6 +516,10 @@ impl FnCx<'_, '_> {
         }
         let f = self.cx.fn_info(d);
         let slots = vec![None; f.generics.len()];
+        // A generic function where a generic function value is expected (#943).
+        if let Some(g) = exp.filter(|t| !slots.is_empty() && self.cx.is_generic_fn(*t)) {
+            return self.generic_fn_value(id, g);
+        }
         if let Some(h) = self.generator_value(d, None, &slots, exp, span) {
             return h;
         }
