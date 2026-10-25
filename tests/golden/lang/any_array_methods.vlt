@@ -37,3 +37,12 @@ console.log(mixed.sort());
 const empty: any = [];
 const flags: any = [true, false];
 console.log(empty.sort(), flags.sort());
+const und: any = [undefined, 3, undefined, 1];
+console.log(und.sort((a: any, b: any) => b - a));
+const u2: any = [2, undefined, 1];
+let calls = 0;
+u2.sort((a: any, b: any) => {
+  calls++;
+  return a - b;
+});
+console.log(u2, calls);

@@ -20,3 +20,5 @@
 [ 100, 10, 9, 1 ]
 [ 3, 'a', 'b', undefined ]
 [] [ false, true ]
+[ 3, 1, undefined, undefined ]
+[ 1, 2, undefined ] 1

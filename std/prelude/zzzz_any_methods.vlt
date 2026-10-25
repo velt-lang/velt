@@ -309,6 +309,10 @@ export function __anyArr_sort<T>(a: T[], args: any[]): any {
   a.sort((x: T, y: T): number => {
     const ex: any = x;
     const ey: any = y;
+    // `SortCompare` puts `undefined` last before it calls the comparator.
+    if (ex === undefined || ey === undefined) {
+      return __anySortDefault(ex, ey);
+    }
     // The comparator's result is `ToNumber`ed; `NaN` counts as equal.
     const n: number = +f(ex, ey);
     return n !== n ? 0 : n;
