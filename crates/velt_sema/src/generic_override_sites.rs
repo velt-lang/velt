@@ -43,7 +43,7 @@ pub(crate) fn check(cx: &mut Ctx) {
     }
     // One error per place (`new C<A>(…).m()` is two sites starting there).
     let mut reported = FxHashSet::default();
-    for (g, targs, span, exact) in sites {
+    for (g, targs, span, args) in sites {
         if reported.contains(&(span.file, span.lo)) {
             continue;
         }
@@ -51,7 +51,7 @@ pub(crate) fn check(cx: &mut Ctx) {
             let Some((c, _)) = cx.class_of(*t) else {
                 continue;
             };
-            if exact.contains(t) {
+            if args.as_ref().is_some_and(|a| exact(cx, g, j as u32, *t, a)) {
                 continue;
             }
             let slots: Vec<Slot> = uses
@@ -113,9 +113,9 @@ fn overridden(
     )
 }
 
-/// An instantiation site: the generic definition, its type arguments, where, and the class
-/// types the site's values of are all exactly of that class ([`exact_classes`]).
-type Site = (DefId, Vec<TyId>, Span, Vec<TyId>);
+/// An instantiation site: the generic definition, its type arguments, where, and for a call
+/// each argument's type and whether it is a `new` ([`exact`]).
+type Site = (DefId, Vec<TyId>, Span, Option<Vec<(TyId, bool)>>);
 
 type Collected = (
     FxHashMap<Node, FxHashSet<Slot>>,
@@ -123,19 +123,37 @@ type Collected = (
     Vec<Site>,
 );
 
-/// The class types among `targs` for which every argument of that type is a `new` of exactly
-/// that class (`go(new Sq())`): such a value holds no subclass, so its own method is the one
-/// JavaScript runs. A type argument no argument has (`run<A>(…)` with a `B` upcast, a value read
-/// from a variable) is not one.
-fn exact_classes(targs: &[TyId], args: &[Expr]) -> Vec<TyId> {
-    targs
-        .iter()
-        .copied()
-        .filter(|t| {
-            let mut of_t = args.iter().filter(|a| a.ty == *t).peekable();
-            of_t.peek().is_some() && of_t.all(|a| matches!(a.kind, E::New { .. }))
-        })
-        .collect()
+/// Do the values of type parameter `j` (given class type `t`) that call `g` receives all hold
+/// exactly that class (`go(new Sq())`), so that its own method is the one JavaScript runs? Each
+/// parameter of `g` whose declared type mentions the parameter must be of the parameter's type
+/// itself, and given a `new` of `t`. A value inside another type (`get: () => T`, `ys: T[]`,
+/// `o: { m: T }`) or read from a variable may be of a subclass, and so may one given to a class
+/// instantiated with `t`, whose methods take more later.
+fn exact(cx: &Ctx, g: DefId, j: u32, t: TyId, args: &[(TyId, bool)]) -> bool {
+    let Some(f) = cx.try_fn(g) else {
+        return false;
+    };
+    if f.this.is_some() || f.params.len() != args.len() {
+        return false;
+    }
+    let mut given = false;
+    for (p, (ty, new)) in f.params.iter().zip(args) {
+        if matches!(cx.ty.kind(p.ty), TyKind::Param(i) if *i == j) {
+            if !(*new && *ty == t) {
+                return false;
+            }
+            given = true;
+            continue;
+        }
+        let mut mentions = false;
+        cx.ty.visit(p.ty, &mut |k| {
+            mentions |= matches!(k, TyKind::Param(i) if *i == j)
+        });
+        if mentions {
+            return false;
+        }
+    }
+    given
 }
 
 /// The slots each parameter is called through directly, the edges from a parameter to the
@@ -192,7 +210,15 @@ fn collect(cx: &mut Ctx) -> Collected {
                         edges.push(((me, p), (*g, j as u32)));
                     }
                 }
-                sites.push((*g, targs.clone(), e.span, exact_classes(targs, args)));
+                let given = match &e.kind {
+                    E::Call { .. } => Some(
+                        args.iter()
+                            .map(|a| (a.ty, matches!(a.kind, E::New { .. })))
+                            .collect(),
+                    ),
+                    _ => None,
+                };
+                sites.push((*g, targs.clone(), e.span, given));
             }
             E::FnRef(g, targs)
             | E::AdtLit {
@@ -205,7 +231,7 @@ fn collect(cx: &mut Ctx) -> Collected {
                         edges.push(((me, p), (*g, j as u32)));
                     }
                 }
-                sites.push((*g, targs.clone(), e.span, vec![]));
+                sites.push((*g, targs.clone(), e.span, None));
             }
             _ => {}
         });
