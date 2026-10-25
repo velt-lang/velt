@@ -3095,13 +3095,17 @@ returning it) converts to an `any` holding `undefined`.
 The arithmetic, bitwise and unary operators take an `any` operand as JavaScript does, as
 TypeScript accepts them: `-`, `*`, `/`, `%`, `**`, `|`, `&`, `^`, `<<`, `>>`, `>>>`, unary `-`,
 `+` and `~` convert each operand with `ToNumber` (`"3"` is 3, `true` 1, `null` 0, `undefined`
-and `"abc"` `NaN`; an object first with `ToPrimitive`, so `[5]` is 5 and `{}` `NaN`, a `Date` its
-time) and give a `number`. `+` adds when neither side holds a string, an object or a symbol, and
+and `"abc"` `NaN`; an object first with `ToPrimitive`: its `[Symbol.toPrimitive](hint)`, else
+its `valueOf()` and `toString()`, keeping the first primitive result, so `[5]` is 5, `{}` `NaN`, a
+`Date` its time and an object whose `valueOf()` returns 10 is 10) and give a `number`. Only an
+`any` converts: arithmetic on an `object` or a `Function` value is a compile error, as in
+TypeScript. `+` adds when neither side holds a string, an object or a symbol, and
 otherwise concatenates the two as `String` writes them after `ToPrimitive` (`1 + [2]` is
 `"12"`); its result is an `any`, as in TypeScript. `==` converts an object compared with a
 primitive the same way (`[] == 0` is `true`, `[1, 2] == "1,2"`). `x += v`, `x -= v` and the other
 compound assignments, `x++` and `--x` work on `any` variables, fields, elements and members of
 an `any`; `x++` gives the old number, and the value written is boxed back into the `any`. A
+`number` variable combined with an `any` (`n += a`) stays a `number`. A
 symbol operand stops with Node's `TypeError: Cannot convert a Symbol value to a number`. Each
 conversion of a primitive is one call through the descriptor of the value held; `+` and the
 comparisons test the descriptors' tags before it.
@@ -3114,13 +3118,16 @@ method of that value, with the arguments converted as JavaScript converts them
 string patterns), `charAt`, `charCodeAt`, `at`, `repeat`, `padStart`, `padEnd`, `concat`,
 `localeCompare`, `toString` and `valueOf`; on arrays `push`, `pop`, `shift`, `unshift`,
 `splice`, `slice`, `at`, `reverse`, `concat`, `indexOf`, `lastIndexOf`, `includes`, `map`,
-`forEach`, `filter`, `find`, `findIndex`, `some`, `every`, `reduce`, `join` and `toString`; on
+`forEach`, `filter`, `find`, `findIndex`, `some`, `every`, `reduce`, `sort` (by `ToString`
+without a comparator, `undefined` last), `join` and `toString`; on
 numbers `toFixed`, `toString` (with a radix), `toPrecision` and `valueOf`; on booleans
 `toString` and `valueOf`. Callbacks get each element, its index and the array, as `any`s; the
 result is an `any` (`map` gives an `any[]`, `filter` an array of the elements' own type). An
 array keeps its element type: pushing a value of another type stops with the conversion's
-`TypeError` (Node's arrays take anything). Other methods of these values stop with a
-`TypeError` naming #924.
+`TypeError` (Node's arrays take anything); an empty literal converted to `any`
+(`const xs: any = []`) is an `any[]`, which takes every value. Other built-in methods of these
+values stop with a `TypeError` naming #924, and a name that is no method of the value is Node's
+`TypeError: x.foo is not a function`.
 
 ```ts
 function main(): void {
