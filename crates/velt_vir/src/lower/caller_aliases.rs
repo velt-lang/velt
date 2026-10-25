@@ -129,13 +129,18 @@ impl Bindings {
             return self.bound.push((l, root));
         }
         self.changed.insert(l);
+        // `mine.at(0)!`: the payload of such a call (`caller_object` checks the arms).
+        let called = match &init.kind {
+            K::Match { scrutinee, .. } => scrutinee,
+            _ => init,
+        };
         if let (
             true,
             K::Call {
                 callee: hir::Callee::Def(..) | hir::Callee::Intrinsic(_),
                 args,
             },
-        ) = (call, &init.kind)
+        ) = (call, &called.kind)
         {
             if args.first().is_some_and(|a| place_root(a).is_some()) {
                 self.called.push((l, init.clone()));
