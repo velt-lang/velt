@@ -51,6 +51,39 @@ impl FnCx<'_, '_> {
         self.mk(H::Block(block), ty, span)
     }
 
+    /// `place op= v` on a typed place (`n += a` with `n: number`) and an `any` `v`: `place op v`
+    /// as the operator gives it on an `any` (dynamic_arith.rs), converted back to the place's
+    /// type (`+` gives an `any`, the others a number). The place is read before `v` is
+    /// evaluated, as in JavaScript.
+    pub(super) fn number_place_any_rmw(
+        &mut self,
+        place: hir::Expr,
+        op: ast::BinaryOp,
+        v: hir::Expr,
+        span: Span,
+    ) -> hir::Expr {
+        let mut place = place;
+        let mut stmts = Vec::new();
+        self.hoist_indices(&mut place, &mut stmts);
+        let cur = self.place_read(&place, Want::Borrow);
+        let r = match op {
+            ast::BinaryOp::Add => self.dynamic_concat(cur, v, span),
+            _ => self.dynamic_arith(op, cur, v, span),
+        };
+        let lty = place.ty;
+        let r = match self.cx.dynamic(r.ty) {
+            Some(_) => self.coerce(r, lty),
+            None => self.coerce_number(r, lty),
+        };
+        let unit = self.cx.ty.unit;
+        let kind = H::Assign {
+            place: Box::new(place),
+            value: Box::new(r),
+        };
+        let assign = self.mk(kind, unit, span);
+        self.with_temps(stmts, assign)
+    }
+
     /// `obj.f op= v`, `obj[k]++` and the like (`target`) on an `any` `obj`: the receiver and the
     /// key are bound first, the member read once and written once.
     pub(super) fn dynamic_member_rmw(

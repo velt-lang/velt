@@ -43,3 +43,15 @@ let pre: any = 1;
 const p1 = ++pre;
 const p2 = pre++;
 console.log(p1, p2, pre);
+// A number place combined with an `any` (`n += a`) stays a number.
+let total: number = 1;
+const two: any = 2;
+total += two;
+total *= two;
+total -= "1" as any;
+total **= two;
+total %= 7 as any;
+console.log(total);
+const counts: number[] = [1];
+counts[0] += two;
+console.log(counts);
