@@ -145,6 +145,8 @@ pub(crate) struct Ctx<'m> {
     pub fills: FxHashMap<DefId, crate::collect::fill_defaults::Fill>,
     /// What each parameter default that may throw throws, by its span (`defaults::check_default`).
     pub default_throws: FxHashMap<Span, Vec<crate::defs::ThrowSrc>>,
+    /// Implementations of accessor interfaces for object types (`body::expr::iface_from_object`).
+    pub object_impls: crate::body::expr::iface_from_object::ObjectImpls,
     /// The adapter of each `toString` / `toJSON` method glue calls through one (`crate::hooks`).
     pub hook_adapters: FxHashMap<DefId, DefId>,
     /// Types whose field defaults are checked (or being checked): checked up front, or on first
@@ -409,6 +411,7 @@ impl<'m> Ctx<'m> {
             classes_below: FxHashMap::default(),
             fills: FxHashMap::default(),
             default_throws: FxHashMap::default(),
+            object_impls: Default::default(),
             hook_adapters: FxHashMap::default(),
             field_defaults_checked: FxHashSet::default(),
             closure_counts: FxHashMap::default(),

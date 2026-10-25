@@ -416,7 +416,7 @@ impl FnCx<'_, '_> {
             }
         }
         let Some((index, iargs, imp_ty)) = self.cx.find_impl(h.ty, iface) else {
-            return Err(h);
+            return self.object_as_iface(h, exp, iface, args);
         };
         // Arguments that differ only in their error-set variables are one (`throws::vars`).
         if iargs != args && !self.cx.unify_err_var_lists(&iargs, args) {
