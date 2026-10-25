@@ -536,12 +536,16 @@ console.log(p.len(), q.len());  // 4 4
   (`m?: (x: T) => R`): an implementing class declares the field as `m?: (x: T) => R` or
   `m: ((x: T) => R) | undefined = undefined`, and a caller writes `o.m?.(x)`.
 - **Generic methods** (`apply<U>(f: (x: i64) => U): U[]`) are called on a concrete class, on a
-  `T extends I` generic (resolved for each instantiation), or on an interface value: there the
-  method's table entry is itself a table, with one entry per list of type arguments the program
-  calls it with, compiled for every class implementing the interface (#943). A generic method
-  calling itself through an interface value with a growing type argument (`r.go([x])` in
-  `go<T>(x: T)`) has infinitely many instantiations and is an error, as for a direct call.
-  Generic interface methods cannot have default bodies yet.
+  `T extends I` generic (resolved for each instantiation, also when an interface value stands
+  for `T`), or on an interface value: there the method's table entry is itself a table, with
+  one entry per list of type arguments the program calls it with, compiled for every class
+  implementing the interface (#943). A generic method calling itself through an interface value
+  with a growing type argument (`r.go([x])` in `go<T>(x: T)`) has infinitely many
+  instantiations and is an error, as for a direct call. Not supported yet: converting a class
+  to such an interface where a subclass overrides the generic method (a `Base` that may hold a
+  `Sub` would run `Base`'s method; converting a `new Base()` or the `Sub` itself is fine), and
+  converting an interface value with a generic method to other type arguments (`H<number>` as
+  `H<unknown>`). Both are errors. Generic interface methods cannot have default bodies yet.
   The method that runs is the one of the class the type parameter is given: when a subclass of that
   class overrides it, a value of the class may hold the subclass, so instantiating the generic
   with that class is the same error as calling the method on it directly (pass the concrete

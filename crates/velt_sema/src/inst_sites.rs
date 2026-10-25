@@ -378,6 +378,17 @@ impl ParamCall {
                     out.extend(self.method_of(cx, index, implementor));
                 }
             }
+            // A generic implementation may also be made only where a generic function is
+            // instantiated (`new TG<X[]>` in `mk<X>`), which interns no concrete type here:
+            // the method at the call's type arguments, its owner's left unknown (`error`), so
+            // what it needs of those alone is still reached.
+            let imp = &cx.impls[index as usize];
+            let (generics, pattern, iargs) = (imp.generics, imp.ty, imp.iface_args.clone());
+            if generics > 0 && iargs == dargs {
+                let unknown = vec![cx.ty.error; generics as usize];
+                let implementor = cx.subst(pattern, &unknown);
+                out.extend(self.method_of(cx, index, implementor));
+            }
         }
         out
     }

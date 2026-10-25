@@ -451,6 +451,10 @@ impl FnCx<'_, '_> {
         let Some((index, iargs, imp_ty)) = self.cx.find_impl(h.ty, iface) else {
             return self.object_as_iface(h, exp, iface, args);
         };
+        let exact = matches!(h.kind, H::New { .. });
+        if !exact && self.check_generic_override_dyn(h.ty, iface, h.span) {
+            return Ok(self.error_expr(h.span));
+        }
         // Arguments that differ only in their error-set variables are one (`throws::vars`).
         if iargs != args && !self.cx.unify_err_var_lists(&iargs, args) {
             // A value implementing `I<A>`: an `I<A>` first, then adapted.
