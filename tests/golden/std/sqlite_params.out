@@ -1,0 +1,26 @@
+integer 5
+integer 0
+real 1.5
+real 1.0e+21
+real 9.3e+18
+null NULL
+null NULL
+real 1.8446744073709552e+19
+integer 1
+text 'x�y'
+null NULL
+blob X'0102FF'
+text 'tuple'
+integer 2
+integer 2
+integer 3
+integer 0
+text 'é'
+null NULL
+blob X'09'
+7 'z'
+4
+the statement has 1 parameter(s) but 2 value(s) were given
+the statement has 1 parameter(s) but 0 value(s) were given
+missing named parameter "b"
+parameter 1 is positional (`?`); pass an array to bind it

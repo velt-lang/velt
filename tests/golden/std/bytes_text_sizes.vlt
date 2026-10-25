@@ -1,0 +1,101 @@
+// u8[] write / utf8Equals / utf8EqualsIgnoreCase (Velt code reading the string's bytes with
+// SIMD) against TextEncoder and toLowerCase, at every length around a vector (16) and an inline
+// string (23 bytes), from ASCII, two- and three-byte text, Hangul (bytes ED 80..9F, valid) and
+// lone surrogates (written as U+FFFD).
+const enc = new TextEncoder();
+const units = ["a", "Z", "é", "€", "한", "@", "["];
+let failures = 0;
+let checked = 0;
+
+function sameBytes(d: u8[], at: usize, want: Uint8Array): bool {
+  for (let i = 0; i < want.length; i++) {
+    if (d[at + (i as usize)] != want[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+for (const u of units) {
+  for (let n = 0; n < 40; n++) {
+    const s = u.repeat(n) + (n % 3 == 0 ? "x" : "");
+    const want = enc.encode(s);
+    const buf: u8[] = Buffer.alloc((want.length as usize) + 8);
+    const w = buf.write(s, 3);
+    checked++;
+    if (w != (want.length as usize) || !sameBytes(buf, 3, want) || buf[2] != 0 || buf[3 + w] != 0) {
+      failures++;
+      console.log("write", u, n, w, (want.length as usize));
+    }
+    if (!buf.utf8Equals(s, 3, (3 + w) as i64) || buf.utf8Equals(s + "!", 3, (3 + w) as i64)) {
+      failures++;
+      console.log("equals", u, n);
+    }
+    if (w > 0) {
+      const changed = buf.slice(0);
+      changed[2 + w] = changed[2 + w] ^ 1;
+      if (changed.utf8Equals(s, 3, (3 + w) as i64)) {
+        failures++;
+        console.log("equals last byte", u, n);
+      }
+      changed[2 + w] = changed[2 + w] ^ 1;
+      changed[3] = changed[3] ^ 1;
+      if (changed.utf8Equals(s, 3, (3 + w) as i64)) {
+        failures++;
+        console.log("equals first byte", u, n);
+      }
+    }
+    const upper = s.toUpperCase();
+    const ub = enc.encode(upper);
+    if ((ub.length as usize) == (want.length as usize)) {
+      const ubuf: u8[] = Buffer.alloc((ub.length as usize));
+      ubuf.write(upper);
+      const ci = ubuf.utf8EqualsIgnoreCase(s.toLowerCase());
+      const asciiOnly = u == "a" || u == "Z" || u == "@" || u == "[";
+      if (asciiOnly && !ci) {
+        failures++;
+        console.log("ci", u, n);
+      }
+    }
+    // Partial writes: whole characters only.
+    for (let room = 0; room < (want.length as usize); room += 5) {
+      const small: u8[] = Buffer.alloc(room);
+      const got = small.write(s);
+      let fit: usize = 0;
+      let at: usize = 0;
+      for (const ch of s) {
+        const len = enc.encode(ch).length as usize;
+        if (at + len > room) {
+          break;
+        }
+        at += len;
+        fit = at;
+      }
+      checked++;
+      if (got != fit || !sameBytes(small, 0, want.subarray(0, fit as number))) {
+        failures++;
+        console.log("partial", u, n, room, got, fit);
+      }
+    }
+  }
+}
+
+// `@` and `[` sit next to `A` and `Z`: not letters, so case does not join them with `` ` `` / `{`.
+const at: u8[] = Buffer.alloc(2);
+at.write("@[");
+console.log(at.utf8EqualsIgnoreCase("`{"), at.utf8EqualsIgnoreCase("@["));
+
+// Lone surrogates inside longer text, inline and heap strings.
+const high = String.fromCharCode(0xd800);
+const low = String.fromCharCode(0xdc00);
+for (const s of ["a" + high + "b", "x".repeat(20) + low + "y".repeat(20), high + "한" + low]) {
+  const want = enc.encode(s);
+  const buf: u8[] = Buffer.alloc((want.length as usize));
+  const w = buf.write(s);
+  checked++;
+  if (w != (want.length as usize) || !sameBytes(buf, 0, want)) {
+    failures++;
+    console.log("lone", s.length);
+  }
+}
+console.log(checked > 500, failures);

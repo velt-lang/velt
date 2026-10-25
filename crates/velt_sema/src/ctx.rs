@@ -273,8 +273,6 @@ pub(crate) struct Ctx<'m> {
     pub overloaded_methods: FxHashSet<String>,
     /// Each JSX module's runtime, resolved on first use (`None` after its errors).
     pub jsx_providers: FxHashMap<usize, Option<std::rc::Rc<crate::body::expr::jsx::Provider>>>,
-    /// JSX component adapters, checked after ownership inference.
-    pub jsx_adapters: Vec<crate::body::expr::jsx::Adapter>,
     /// Sync wrappers of async closures (`body/expr/callback.rs`) and the type of the async
     /// closure each one calls: the thread analysis (`ownership::local_async`) matches a wrapper
     /// stored on the heap by that type, the function the user wrote.
@@ -486,7 +484,6 @@ impl<'m> Ctx<'m> {
             gen_throw: false,
             overloaded_methods: FxHashSet::default(),
             jsx_providers: FxHashMap::default(),
-            jsx_adapters: vec![],
             callback_wrappers: Default::default(),
             reported_captures: vec![],
             sync_handlers: vec![],

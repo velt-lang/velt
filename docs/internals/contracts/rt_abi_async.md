@@ -514,8 +514,12 @@ alive, so `close` may be called at any time. A `VeltStream` is a raw TCP socket,
 | `velt_rt_tcp_write_bytes` | `(VeltStream s, const VeltBytes* data) -> VeltFut*` | same for a `u8[]` |
 | `velt_rt_tcp_try_read_into` | `(VeltStream s, const VeltBytes* data, u64 start, u64 end, IoResult<i64>* out)` | `readInto`: reads what is there into `data[start..end]` (a `u8[]` the caller lends for the call and the runtime writes; sema's written-parameter list has it), without waiting: the bytes read, 0 at the end of the stream, -1 when nothing has arrived yet. A raw socket reads straight into the range; a TLS or upgraded stream hands over what `velt_rt_tcp_readable` read ahead. An empty or out-of-range range reads nothing (0). Additive |
 | `velt_rt_tcp_readable` | `(VeltStream s) -> VeltFut*` | result `IoStatus` once a `velt_rt_tcp_try_read_into` may find data, the end of the stream or an error (it may also find nothing yet: try again); holds no buffer of the caller's. A TLS or upgraded stream reads its next chunk (up to 64 KiB) ahead here. `read` / `readString` deliver what was read ahead first. Additive |
+| `velt_rt_tcp_readable_within` | `(StreamHandle s, int64_t ms, uint64_t signal) -> VeltFut*` (`IoResult<u8>`) | 1 once a `tryRead` may find something, 0 when `ms` passed first (`ms < 0`: no limit) or the signal (0: none) was aborted; additive |
 | `velt_rt_tcp_write_range` | `(VeltStream s, const VeltBytes* data, u64 start, u64 end) -> VeltFut*` | `velt_rt_tcp_write_bytes` of `data[start..end]` (clamped): a `Uint8Array`'s range. Additive |
 | `velt_rt_tcp_try_write_range` | `(VeltStream s, const VeltBytes* data, u64 start, u64 end) -> u64` | `velt_rt_tcp_try_write` of `data[start..end]` (clamped). Additive |
+| `velt_rt_tcp_write_later` | `(VeltStream s, const VeltStr* data, IoResult<u64>* out)` | queues `data` (copied), sent after the current task poll with everything else queued on the stream; the bytes still to be sent; fails once sending failed, after `abort`, on a closed handle. Additive |
+| `velt_rt_tcp_write_later_range` | `(VeltStream s, const VeltBytes* data, u64 start, u64 end, IoResult<u64>* out)` | `velt_rt_tcp_write_later` of `data[start..end]` (clamped). Additive |
+| `velt_rt_tcp_drained` | `(VeltStream s, u64 max) -> VeltFut*` (`IoResult<()>`) | once at most `max` queued bytes (and writes after them) are still to be sent, or the error that stopped sending. Additive |
 | `velt_rt_tcp_try_write` | `(VeltStream s, const VeltBytes* data) -> u64` | writes what a raw socket takes right now, without waiting; the number of bytes written (0: nothing now, an earlier write still going on, a closed handle, a TLS stream or one not set up yet, or an error, which the next write reports) |
 | `velt_rt_tcp_shutdown` | `(VeltStream s, VeltErr* out)` | half-close (peer reads EOF) |
 | `velt_rt_tcp_peer_addr` | `(VeltStream s, VeltStr* out)` | `"ip:port"` |
@@ -857,6 +861,14 @@ buffer grows. An adopted string's head must not lie in its buffer.
 | `velt_rt_strbuf_finish` | `(VeltStrBuf* b, VeltStr* out)` | moves the text to `*out`; `*b` becomes empty (reusable, nothing to free) |
 | `velt_rt_strbuf_drop` | `(VeltStrBuf* b)` | abandon an unfinished builder (exception path); zeroes it |
 | `velt_rt_json_enter` | `(const void* p) -> u8` | `JSON.stringify` glue starts writing the object at `p`: 1, or 0 if it is already being written (a cycle; the caller panics with `JSON.stringify: converting circular structure to JSON`). Per thread |
+| `velt_rt_rows_begin` / `_end` | `(const RawCursor* c, const u8* fields) -> RowsState*` / `(RowsState* st)` | `Glue::RowsRead` (std's `__intrinsic_json_parse_cursor<T>` when the row type is an object of plain fields) reads a driver's row cursor by column: `fields` is static data (`u32` count, then per field `u32` byte length and the name); each column is matched to its field once (the map is kept per thread for the next result with the same header and table). Additive |
+| `velt_rt_rows_next` / `_columns` / `_field` | `(st) -> u8` / `(st) -> u64` / `(st, u64 col) -> i64` | step to the next row (1, or 0 at the end); the column count; the field column `col` fills (-1: none). Additive |
+| `velt_rt_rows_i64` / `_f64` / `_bool` / `_str` / `_bytes` | `(st, u64 col, T* out) -> u8` | column `col` of the current row typed: 1 = written, 2 = NULL, 0 = another kind (an integer accepts an exact float, a float an integer, a string's invalid UTF-8 becomes U+FFFD). Additive |
+| `velt_rt_rows_map` / `_map_column` | `(const u8* fields) -> RowsState*` / `(RowsState* st, const VeltStr* name)` | the column map of std/db' `RowSource` written in Velt (`__intrinsic_read_rows<T, S>`), whose rows the compiled code reads through the source's own methods: a state without a cursor, then each column's name in order. Additive |
+| `velt_rt_rows_exact_i64` | `(f64 v, i64* out) -> u8` | 1 and the integer when `v` is one exactly (an integer field from a float cell), else 0. Additive |
+| `velt_rt_rows_fail` | `(const VeltStr* expected, i64 row, const VeltStr* field, VeltStr* out)` | the JSON decoder's message for a row that does not fit: `expected <expected> at $[row].field` (`row` -1: the single row; `field` empty: the row itself). Additive |
+| `velt_rt_param_object` / `velt_rt_param_name` | `(const RawSink* s)` / `(const RawSink* s, const VeltStr* name)` | `Glue::DbBind` (`__intrinsic_db_bind<P>`, std only) hands a driver's parameter sink (native_abi.md "Parameter sinks") an object's members: `object` first, then each member's name before its value. Additive |
+| `velt_rt_param_i64` / `_u64` / `_f64` / `_bool` / `_null` / `_str` / `_bytes` | `(const RawSink* s, v)` (`_str`: `const VeltStr*`, `_bytes`: `const VeltBytes*`, `_null`: no value) | one value, as its JSON text would bind: a `u64` beyond `i64` and a non-integral `f64` (or one of 1e21 or more) a REAL, an integral `f64` an INTEGER, NaN/±Infinity NULL, a string UTF-8 (lone surrogates U+FFFD), a `u8[]` a BLOB. Additive |
 | `velt_rt_json_leave` | `()` | done with the innermost object entered |
 
 ### 12.2 String methods
@@ -912,7 +924,7 @@ typedef struct VeltJsonReader VeltJsonReader;   // opaque
 | Symbol | Signature | Notes |
 |---|---|---|
 | `velt_rt_json_reader_new` | `(const VeltStr* src) -> VeltJsonReader*` | never null; `src` must stay alive, unchanged **and in place** (an inline string's bytes live in the `VeltStr` itself) until `free` |
-| `velt_rt_json_reader_new_with` | `(const VeltStr* src, u32 flags, u32 max_depth) -> VeltJsonReader*` (with flag 4, `src` is a `const VeltBytes*`) | `JSON.parse` options: flag 1 = `skip_unknown` fails; flag 2 = a JSON `null` for an optional field without `null` is not an absent field (`velt_rt_json_reader_null_absent`); `max_depth` = most arrays/objects open at once, counted from the top-level value (0 = no limit), checked by `expect_*_start`, `skip_value` and `read_value`. Flag 4 (`FLAG_ROWS`, set only by `__intrinsic_json_parse_rows`): `src` is a `const VeltBytes*`, a `u8[]` of a driver's binary rows (`velt_text::rows`, native_abi.md "Rows"), which the reader walks instead of text, borrowed like a source string. Every reader call then answers as it would for the JSON the rows stand for; the only failures are a value of another kind and a rejected unknown key. `max_depth` does not apply to such rows (they nest three deep at most) |
+| `velt_rt_json_reader_new_with` | `(const VeltStr* src, u32 flags, u32 max_depth) -> VeltJsonReader*` (with flag 4, `src` is a `const VeltBytes*`) | `JSON.parse` options: flag 1 = `skip_unknown` fails; flag 2 = a JSON `null` for an optional field without `null` is not an absent field (`velt_rt_json_reader_null_absent`); `max_depth` = most arrays/objects open at once, counted from the top-level value (0 = no limit), checked by `expect_*_start`, `skip_value` and `read_value`. Flag 4 (`FLAG_ROWS`, set only by `__intrinsic_json_parse_rows`): `src` is a `const VeltBytes*`, a `u8[]` of a driver's binary rows (`velt_text::rows`, native_abi.md "Rows"), which the reader walks instead of text, borrowed like a source string. Every reader call then answers as it would for the JSON the rows stand for; the only failures are a value of another kind and a rejected unknown key. `max_depth` does not apply to such rows (they nest three deep at most). Flag 8 (`FLAG_CURSOR`, set only by `__intrinsic_json_parse_cursor`, additive): `src` is a driver's row cursor (`const RawCursor*`, native_abi.md "Row cursors"), read as binary rows are, which the reader uses but does not free; a decoder that marks a position outside a row (a union of whole results) gets the rows left copied into binary form |
 | `velt_rt_json_reader_free` | `(VeltJsonReader* r)` | null ok |
 | `velt_rt_json_reader_null_absent` | `(VeltJsonReader* r) -> u8` | 1 when a JSON `null` may stand for an absent optional field whose type has no `null` (`JSON.parse<T>`), 0 when the reader was made with flag 2 (`JSON.parse(text) as T`): the decoder then reads the field's value, which fails |
 | `velt_rt_json_reader_peek` | `(VeltJsonReader* r) -> u32` | next token kind, skipping whitespace: 0 EOF, 1 `null`, 2 `true`, 3 `false`, 4 number, 5 string, 6 `[`, 7 `]`, 8 `{`, 9 `}`, 10 error (bad byte, or the reader already failed). Classifies by first byte only; the `read_*` call validates. |
@@ -1135,7 +1147,6 @@ of a Copy element type, built from a Rust `Vec<T>` (same allocator), like `VeltS
 |---|---|---|
 | `velt_rt_random_bytes` | `(u64 n, VeltBytes* out)` | `n` bytes from the OS CSPRNG (`getrandom`); failure of the OS generator is fatal |
 | `velt_rt_random_u64` | `() -> u64` | uniform, OS CSPRNG |
-| `velt_rt_random_mask` | `() -> u32` | a WebSocket masking key (RFC 6455 §5.3): OS CSPRNG, from a per-thread buffer of 64 keys |
 | `velt_rt_local_offset_minutes` | `(i64 epoch_ms) -> i32` | minutes to add to UTC for local time at that instant (DST-aware: the C library tz database on Unix; on Windows `TZ` when it names UTC or a fixed offset (`Etc/GMT±N`), else the system time zone with its dynamic per-year DST rules, `SystemTimeToTzSpecificLocalTimeEx`) |
 
 ### 14.2 Regular expressions (`velt:regex`)
@@ -1269,11 +1280,10 @@ HTTP/1.1 server connections now support upgrades (`serve_connection_with_upgrade
 `velt:websocket` is written in Velt (`std/websocket.vlt`, `std/websocket/`) on std/net streams
 (§6): a client connects with `velt_rt_tcp_connect` / `velt_rt_tcp_connect_tls`, a server takes
 the upgraded connection with `velt_rt_http_req_take_upgrade` (§14.8). A `WebSocket` is a struct
-of the stream's handle and a `shared` value holding the connection's send queue and reader (one
-lock), so
-there is no `VeltWs` handle and no `velt_rt_ws_*` symbol. The runtime contributes byte helpers
-(rt_abi.md "Byte arrays"), `velt_rt_random_mask` and the process-wide slot of the topics
-(§2.2). A send encodes its frame into the connection's queue at the call (call order is wire
+of the `TcpStream` and a `shared` value holding the connection's send queue and reader (one
+lock), so there is no `VeltWs` handle and no `velt_rt_ws_*` symbol. It uses public APIs only
+(reads with `TcpStream.read`, masking keys from `randomBytes`, text through `u8[]`'s `write` and
+`utf8Slice`), except the process-wide slot of the topics (§2.2). A send encodes its frame into the connection's queue at the call (call order is wire
 order, also before a server-side upgrade completes) and completes once it is queued; a flusher
 task started by whoever queues into an idle connection writes everything queued in one write
 (a reply by the connection's reading task, with no more input waiting, is written at once
@@ -1314,11 +1324,14 @@ Parameters (`params`) are JSON text (`velt_text::db_json`): `""` = none, an obje
 `:name` / `@name` / `$name` by name (missing member ⇒ `SQLITE_RANGE`, extra members ignored), an
 array or a lone scalar binds by position (count must match). Integer literals in i64 range ⇒
 INTEGER (exact), other numbers ⇒ REAL, strings ⇒ TEXT, `true`/`false` ⇒ 1/0, `null` ⇒ NULL,
-arrays of integers 0–255 (`u8[]`) ⇒ BLOB, nested objects ⇒ `SQLITE_RANGE`. Rows are binary rows
-(`velt_text::rows`, native_abi.md "Rows") in a `u8[]`, which std decodes with
-`__intrinsic_json_parse_rows<T>`: they read as the JSON `[{"col":value,...}]` keyed by column
-name, INTEGER exact, REAL a number (non-finite ⇒ `null`), TEXT a string, BLOB a number array,
-NULL `null`; a 0/1 value in a column declared `BOOL`/`BOOLEAN` is `false`/`true`.
+arrays of integers 0–255 (`u8[]`) ⇒ BLOB, nested objects ⇒ `SQLITE_RANGE`. For the parameter
+types it can, std hands the parameters to a sink instead (`bind_begin`, native_abi.md "Parameter
+sinks"), which binds them as their JSON text would. Rows come through a row cursor
+(native_abi.md "Row cursors"), which std decodes with `__intrinsic_json_parse_cursor<T>`: they
+read as the JSON `[{"col":value,...}]` keyed by column name, INTEGER exact, REAL a number
+(non-finite ⇒ `null`), TEXT a string, BLOB a number array, NULL `null`; a 0/1 value in a column
+declared `BOOL`/`BOOLEAN` is `false`/`true`. The cursor holds the connection's lock until std
+gives it back with `close_rows`, as a sink does until it is handed on or given up.
 
 | Symbol | Signature | Notes |
 |---|---|---|
@@ -1330,9 +1343,14 @@ NULL `null`; a 0/1 value in a column declared `BOOL`/`BOOLEAN` is `false`/`true`
 | `velt_std_sqlite__error_count` | `(u64 db) -> u64` | failed operations so far (incl. `note_error`) |
 | `velt_std_sqlite__reset_error_count` | `(u64 db, u64 count)` | a nested `transaction` that rolled back hands its failure to its caller |
 | `velt_std_sqlite__last_error` | `(u64 db) -> IoStatus` | the most recent failure as a failed status (success if none) |
-| `velt_std_sqlite__prepare` | `(u64 db, string sql) -> IoResult<u64>` | compiles exactly one statement into the cache |
+| `velt_std_sqlite__prepare` | `(u64 db, string sql) -> IoResult<u64>` | compiles exactly one statement; the connection keeps it per SQL text (preparing the same text again compiles nothing) |
 | `velt_std_sqlite__run` | `(u64 stmt, string params) -> IoResult<{changes:i64,lastInsertRowid:i64}>` | steps to completion (rows discarded) |
-| `velt_std_sqlite__query` | `(u64 stmt, string params, bool first_only) -> IoResult<u8[]>` | the rows as binary rows for `__intrinsic_json_parse_rows<T[]>`; `first_only` ⇒ the first row (an object, `<T>`), or an empty array if there is none |
+| `velt_std_sqlite__open_rows` | `(u64 stmt, string params, bool first_only) -> IoResult<u64>` | binds, steps to the first row: a row cursor (`RawCursor*`) for `__intrinsic_json_parse_cursor<T[]>`; `first_only` ⇒ the first row alone (`<T>`), or 0 if there is none |
+| `velt_std_sqlite__close_rows` | `(u64 cursor) -> IoStatus` | releases a cursor (and the connection's lock); fails with what SQLite met while stepping; 0 ⇒ no-op |
+| `velt_std_sqlite__bind_begin` | `(u64 stmt) -> IoResult<u64>` | a parameter sink (`RawSink*`) for `__intrinsic_db_bind<P>` |
+| `velt_std_sqlite__open_rows_bound` | `(u64 sink, bool first_only) -> IoResult<u64>` | `open_rows` with the parameters the sink bound (missing or extra ones fail as with JSON text) |
+| `velt_std_sqlite__run_bound` | `(u64 sink) -> IoResult<{changes:i64,lastInsertRowid:i64}>` | `run` with the parameters the sink bound |
+| `velt_std_sqlite__bind_abort` | `(u64 sink)` | gives up a sink std did not use (it then binds JSON text) |
 | `velt_std_sqlite__note_error` | `(u64 stmt, i32 code, string message)` | counts a failure std found (a row that does not decode) against the connection |
 | `velt_std_sqlite__stmt_free` | `(u64 stmt)` | releases the handle; null ⇒ no-op |
 | `velt_std_sqlite__error_name` | `(i32 code) -> string` | known extended names (`SQLITE_CONSTRAINT_UNIQUE`, `SQLITE_BUSY_SNAPSHOT` …), else the primary one |
@@ -1415,8 +1433,12 @@ quotes and comments are skipped; mixing with `$1` ⇒ `EINVAL`; missing member �
 are converted for the prepared parameter types: Int ⇒ int2/int4/int8/oid (range-checked),
 float4/float8, numeric, text types; Float ⇒ float4/float8, numeric, text types; Bool ⇒ bool,
 text types; Bytes ⇒ bytea; Text ⇒ text types and json/jsonb in binary, any other type in text
-format (parsed by the server); Null ⇒ NULL; anything else ⇒ `EINVAL`.
-Rows are JSON text (`db_json::RowWriter`): int2/int4/int8/oid exact, float4/float8 (non-finite
+format (parsed by the server); Null ⇒ NULL; anything else ⇒ `EINVAL`. For the parameter
+types it can, std hands them to a sink instead (`bind_begin`, native_abi.md "Parameter sinks"),
+which keeps them as the JSON text would have parsed.
+Rows come through a row cursor (native_abi.md "Row cursors", decoded by
+`__intrinsic_json_parse_cursor`), the values as JSON text would give them (batches still return
+JSON text, `db_json::RowWriter`): int2/int4/int8/oid exact, float4/float8 (non-finite
 ⇒ `null`), numeric ⇒ string of its digits, bool, text types/enums ⇒ string, uuid ⇒ string,
 date/time/timestamp ⇒ ISO 8601 string, timestamptz ⇒ ISO 8601 UTC with `Z`, json/jsonb ⇒ the
 document, bytea ⇒ number array, arrays ⇒ nested arrays, domains ⇒ base type, NULL ⇒ `null`;
@@ -1425,7 +1447,12 @@ other column types ⇒ `ENOTSUP` (checked before any row).
 | Symbol | Signature | Notes |
 |---|---|---|
 | `velt_std_postgres__connect` | `(const VeltStr* url) -> VeltFut*` | `IoResult<VeltPgClient>`; URL or libpq `key=value` string |
-| `velt_std_postgres__query` | `(VeltPgClient c, const VeltStr* sql, const VeltStr* params, u8 first_only) -> VeltFut*` | `IoResult<VeltStr>`: rows as a JSON array; `first_only` ⇒ the first row's object or `""` |
+| `velt_std_postgres__query_rows` | `(VeltPgClient c, const VeltStr* sql, const VeltStr* params, u8 first_only) -> VeltFut*` | `IoResult<u64>`: a row cursor (`RawCursor*`) over the rows, given back to `close_rows`; `first_only` ⇒ the first row alone, or 0 if there is none |
+| `velt_std_postgres__query_bound` | `(VeltPgClient c, const VeltStr* sql, u64 sink, u8 first_only) -> VeltFut*` | `query_rows` with the parameters a sink took |
+| `velt_std_postgres__execute_bound` | `(VeltPgClient c, const VeltStr* sql, u64 sink) -> VeltFut*` | `execute` with the parameters a sink took |
+| `velt_std_postgres__bind_begin` | `() -> u64` | a parameter sink (`RawSink*`) for `__intrinsic_db_bind<P>`, handed on to a `…_bound` call |
+| `velt_std_postgres__bind_abort` | `(u64 sink)` | gives up a sink std did not use |
+| `velt_std_postgres__close_rows` | `(u64 cursor, VeltErr* out)` | releases a row cursor; fails if a value could not be read; 0 ⇒ no-op |
 | `velt_std_postgres__execute` | `(VeltPgClient c, const VeltStr* sql, const VeltStr* params) -> VeltFut*` | `IoResult<i64>`: rows affected/returned |
 | `velt_std_postgres__batch` | `(VeltPgClient c, const VeltStr* sql) -> VeltFut*` | `VeltErr`: `;`-separated statements, simple protocol, not cached |
 | `velt_std_postgres__begin` | `(VeltPgClient c) -> VeltFut*` | `IoResult<u32>`: new level (1 = `BEGIN`, n > 1 = `SAVEPOINT velt_tx_n`) |
@@ -1438,7 +1465,7 @@ other column types ⇒ `ENOTSUP` (checked before any row).
 | `velt_std_postgres__close` | `(VeltPgClient c)` | closes (or returns a pooled connection to its pool unless broken or in a transaction) and releases the handle; null ⇒ no-op |
 | `velt_std_postgres__pool_new` | `(const VeltStr* url, u32 max, IoResult<VeltPgPool>* out)` | parses the URL and reads `sslrootcert` now; connections open on demand; `max == 0` ⇒ 10 |
 | `velt_std_postgres__pool_connect` | `(VeltPgPool p) -> VeltFut*` | `IoResult<VeltPgClient>`: a dedicated connection (holds a permit) until `velt_std_postgres__close` |
-| `velt_std_postgres__pool_query` | `(VeltPgPool p, const VeltStr* sql, const VeltStr* params, u8 first_only) -> VeltFut*` | as `velt_std_postgres__query` on a borrowed connection |
+| `velt_std_postgres__pool_query_rows` / `_pool_query_bound` / `_pool_execute_bound` | as the client's, with `VeltPgPool p` | on a borrowed connection |
 | `velt_std_postgres__pool_execute` | `(VeltPgPool p, const VeltStr* sql, const VeltStr* params) -> VeltFut*` | as `velt_std_postgres__execute` |
 | `velt_std_postgres__pool_batch` | `(VeltPgPool p, const VeltStr* sql) -> VeltFut*` | as `velt_std_postgres__batch` |
 | `velt_std_postgres__pool_idle` | `(VeltPgPool p) -> u32` | idle connections |

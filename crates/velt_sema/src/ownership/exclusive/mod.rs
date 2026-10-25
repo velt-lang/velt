@@ -15,7 +15,8 @@
 //! `xs[j]` always overlap, `a.f` and `a.g` never do); borrowing pattern bindings count as
 //! the place they borrow from. The non-Copy params of closures and of named functions used as
 //! values may alias each other (calls through a function value don't check their arguments
-//! against each other), so there they count as one place. Guarantees for code generation: during a call, memory reachable
+//! against each other), so there they count as one place, unless their types cannot be one
+//! value (instances of unrelated classes, an array and a class instance). Guarantees for code generation: during a call, memory reachable
 //! from a `BorrowMut` parameter is not reachable from any other parameter (including the
 //! captures of a closure argument), and `Borrow` parameters may alias each other but never a
 //! `BorrowMut` or `Owned` one.
@@ -324,15 +325,51 @@ fn aliasing_params(cx: &mut Ctx, d: DefId, f: &FnDef) -> Aliases {
         return out;
     }
     let first = f.captures.len() + usize::from(f.self_ty.is_some());
-    let mut shared: Option<LocalId> = None;
-    for p in &f.params[first..] {
-        if cx.is_copy(p.ty) {
-            continue;
+    // Params that may be the same value (directly or through another, `any`) are one place.
+    let params: Vec<(LocalId, crate::hir::TyId)> = f.params[first..]
+        .iter()
+        .filter(|p| !cx.is_copy(p.ty))
+        .map(|p| (p.local, p.ty))
+        .collect();
+    let mut set: Vec<usize> = (0..params.len()).collect();
+    fn find(set: &mut [usize], i: usize) -> usize {
+        let mut r = i;
+        while set[r] != r {
+            r = set[r];
         }
-        let root = *shared.get_or_insert(p.local);
-        out.insert(p.local, Place { root, proj: vec![] });
+        set[i] = r;
+        r
+    }
+    for i in 0..params.len() {
+        for j in 0..i {
+            if may_be_same_value(cx, params[i].1, params[j].1) {
+                let (ri, rj) = (find(&mut set, i), find(&mut set, j));
+                set[ri.max(rj)] = ri.min(rj);
+            }
+        }
+    }
+    for i in 0..params.len() {
+        let root = params[find(&mut set, i)].0;
+        out.insert(params[i].0, Place { root, proj: vec![] });
     }
     out
+}
+
+/// Can one value be of type `a` and of type `b` at once (so params of those types may be the
+/// same object)? Not instances of two classes neither of which extends the other, nor an array
+/// and a class instance; anything else (object types, which are structural, interfaces, `any`,
+/// type parameters, unions) may be.
+fn may_be_same_value(cx: &Ctx, a: crate::hir::TyId, b: crate::hir::TyId) -> bool {
+    if a == b {
+        return true;
+    }
+    let class = |t: crate::hir::TyId| cx.class_of(t).map(|(d, _)| d);
+    match (class(a), class(b)) {
+        (Some(x), Some(y)) => cx.class_extends(x, y) || cx.class_extends(y, x),
+        (Some(_), None) => !matches!(cx.ty.kind(b), TyKind::Array(_)),
+        (None, Some(_)) => !matches!(cx.ty.kind(a), TyKind::Array(_)),
+        (None, None) => true,
+    }
 }
 
 struct Checker<'a, 'm> {

@@ -1,0 +1,148 @@
+// check: no leaks
+// velt:http/server: requests parsed in place, responses written per batch. Routes, the method,
+// path, query, headers and body of a request, response headers and types, pipelined requests
+// answered in order, a request that arrives in pieces, HTTP/1.0 and Connection: close, and input
+// that is not a request (400, 431), a body over the limit (413).
+import { connect, TcpStream } from "velt:net";
+import { HttpRequest, HttpResponse, serve } from "velt:http/server";
+
+async function exchange(port: number, raw: string): Promise<string> {
+  const c = await connect(`127.0.0.1:${port}`);
+  await c.write(raw);
+  c.shutdown();
+  let all = "";
+  while (true) {
+    const chunk = await c.readString();
+    if (chunk == "") {
+      break;
+    }
+    all += chunk;
+  }
+  c.close();
+  // The Date header changes every second.
+  return all.replace(/Date: [^\r]*\r\n/g, "");
+}
+
+function statusLines(text: string): string {
+  return (text.match(/HTTP\/1\.1 \d\d\d [A-Za-z ]+/g) ?? []).join(" | ");
+}
+
+async function main() {
+  const server = await serve({ port: 0, maxBodySize: 64 }, async (
+    req: HttpRequest,
+    res: HttpResponse,
+  ) => {
+    if (req.pathIs("/hello")) {
+      res.send("hello");
+    } else if (req.pathIs("/info")) {
+      res.header("X-Seen", req.header("x-test") ?? "none");
+      res.json(
+        JSON.stringify({
+          method: req.method(),
+          path: req.path(),
+          query: req.query(),
+          hasAuth: req.hasHeader("authorization"),
+          post: req.isMethod("POST"),
+        }),
+      );
+    } else if (req.pathIs("/echo")) {
+      res.header("Content-Type", "text/x-echo");
+      const body = await req.body();
+      res.sendBytes(body);
+    } else if (req.pathIs("/fail")) {
+      throw new Error("handler failed");
+    } else if (req.pathIs("/quiet")) {
+      // Nothing sent: an empty 200.
+    } else {
+      res.status(404);
+      res.send(`no ${req.target()}`);
+    }
+  });
+  const base = `http://127.0.0.1:${server.port}`;
+
+  const hello = await fetch(`${base}/hello`);
+  console.log(
+    hello.status,
+    hello.headers.get("content-type"),
+    hello.headers.get("server"),
+    await hello.text(),
+  );
+
+  const info = await fetch(`${base}/info?a=1&b=2`, {
+    method: "POST",
+    headers: { "X-Test": "yes" },
+    body: "x",
+  });
+  console.log(info.status, info.headers.get("x-seen"), await info.text());
+
+  const echo = await fetch(`${base}/echo`, { method: "PUT", body: "some body" });
+  console.log(
+    echo.headers.get("content-type"),
+    echo.headers.get("content-length"),
+    await echo.text(),
+  );
+
+  const missing = await fetch(`${base}/nope?q`);
+  console.log(missing.status, await missing.text());
+  const failed = await fetch(`${base}/fail`);
+  console.log(failed.status, await failed.text());
+  const quiet = await fetch(`${base}/quiet`);
+  console.log(quiet.status, JSON.stringify(await quiet.text()));
+
+  // Pipelined: three requests in one write, answered in order; the last closes.
+  const piped = await exchange(
+    server.port,
+    "GET /hello HTTP/1.1\r\nHost: x\r\n\r\nGET /nope HTTP/1.1\r\nHost: x\r\n\r\nGET /hello HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+  );
+  console.log("pipelined:", statusLines(piped), piped.endsWith("hello"));
+
+  // A request in pieces, the body after the head.
+  const c = await connect(`127.0.0.1:${server.port}`);
+  const parts = [
+    "POST /ec",
+    "ho HTTP/1.1\r\nHost: x\r\nCont",
+    "ent-Length: 5\r\n",
+    "\r\nab",
+    "cde",
+  ];
+  for (const p of parts) {
+    await c.write(p);
+    await sleep(5);
+  }
+  let got = "";
+  while (!got.endsWith("abcde")) {
+    got += await c.readString();
+  }
+  console.log("in pieces:", statusLines(got), got.endsWith("abcde"));
+  c.close();
+
+  // HTTP/1.0 closes after the response.
+  const old = await exchange(server.port, "GET /hello HTTP/1.0\r\n\r\n");
+  console.log("HTTP/1.0:", statusLines(old), old.includes("Connection: close"));
+
+  // Not requests: answered, then the connection closes.
+  console.log("garbage:", statusLines(await exchange(server.port, "NOT A REQUEST\r\n\r\n")));
+  console.log(
+    "bad header:",
+    statusLines(await exchange(server.port, "GET / HTTP/1.1\r\nHost: x\r\nNo colon here\r\n\r\n")),
+  );
+  console.log(
+    "too large:",
+    statusLines(
+      await exchange(
+        server.port,
+        "POST /echo HTTP/1.1\r\nHost: x\r\nContent-Length: 100\r\n\r\n" + "b".repeat(100),
+      ),
+    ),
+  );
+  // A chunked body, decoded (extensions and trailers skipped).
+  const chunked = await exchange(
+    server.port,
+    "POST /echo HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n3;x=1\r\nabc\r\n4\r\ndefg\r\n0\r\nX-Trailer: t\r\n\r\n",
+  );
+  console.log("chunked:", statusLines(chunked), chunked.endsWith("abcdefg"));
+  const longHead = "GET / HTTP/1.1\r\nHost: x\r\nX-Long: " + "a".repeat(70000) + "\r\n\r\n";
+  console.log("head too large:", statusLines(await exchange(server.port, longHead)));
+
+  server.close();
+}

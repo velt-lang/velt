@@ -25,6 +25,7 @@ use super::{network, temporal};
 use tokio_postgres::types::{Kind, Type};
 use velt_text::db_json::push_byte_array;
 use velt_text::json_escape::push_json_string;
+use velt_text::rows_cursor::Cell;
 use velt_text::Out;
 
 /// OID of `json`.
@@ -114,6 +115,65 @@ pub fn push_value<O: Out + ?Sized>(out: &mut O, ty: &Type, raw: &[u8]) -> Result
         },
     }
     Ok(())
+}
+
+/// One non-NULL value of type `ty` as a row cursor's cell (`velt_text::rows_cursor`), the same
+/// value [`push_value`] writes as JSON: numbers, bools, text, bytea and json from `raw` itself;
+/// the rest as text or (arrays) JSON it renders into `scratch`. The error names what is
+/// unsupported.
+pub fn cell<'a>(ty: &Type, raw: &'a [u8], scratch: &'a mut Vec<u8>) -> Result<Cell<'a>, String> {
+    Ok(match *ty {
+        Type::BOOL => Cell::Bool(raw.first() != Some(&0)),
+        Type::INT2 => Cell::Int(i16::from_be_bytes(be(raw)?) as i64),
+        Type::INT4 => Cell::Int(i32::from_be_bytes(be(raw)?) as i64),
+        Type::INT8 => Cell::Int(i64::from_be_bytes(be(raw)?)),
+        Type::OID => Cell::Int(u32::from_be_bytes(be(raw)?) as i64),
+        Type::FLOAT4 => float(f32::from_be_bytes(be(raw)?) as f64),
+        Type::FLOAT8 => float(f64::from_be_bytes(be(raw)?)),
+        Type::NUMERIC => rendered(scratch, temporal::numeric(raw))?,
+        Type::UUID => {
+            scratch.clear();
+            push_uuid(scratch, raw)?;
+            // Without the quotes the JSON form has.
+            Cell::Ascii(&scratch[1..scratch.len() - 1])
+        }
+        Type::DATE => rendered(scratch, temporal::date(raw))?,
+        Type::TIME => rendered(scratch, temporal::time(raw))?,
+        Type::TIMESTAMP => rendered(scratch, temporal::timestamp(raw, false))?,
+        Type::TIMESTAMPTZ => rendered(scratch, temporal::timestamp(raw, true))?,
+        Type::INTERVAL => rendered(scratch, temporal::interval(raw))?,
+        Type::MONEY => rendered(scratch, temporal::money(raw))?,
+        Type::INET | Type::CIDR => rendered(scratch, network::inet(raw))?,
+        Type::MACADDR | Type::MACADDR8 => rendered(scratch, network::macaddr(raw))?,
+        Type::BYTEA => Cell::Blob(raw),
+        _ if ty.oid() == JSON => Cell::Json(raw),
+        _ if ty.oid() == JSONB => Cell::Json(raw.get(1..).unwrap_or_default()),
+        _ if is_texty(ty) => Cell::Text(raw),
+        _ => match ty.kind() {
+            Kind::Array(elem) => {
+                scratch.clear();
+                push_array(scratch, elem, raw)?;
+                Cell::Json(scratch)
+            }
+            Kind::Domain(base) => cell(base, raw, scratch)?,
+            _ => return Err(format!("type {}", ty.name())),
+        },
+    })
+}
+
+/// Text a conversion rendered, kept in `scratch`.
+fn rendered(scratch: &mut Vec<u8>, s: Result<String, String>) -> Result<Cell<'_>, String> {
+    *scratch = s?.into_bytes();
+    Ok(Cell::Text(scratch))
+}
+
+/// A float as its JSON would read back: NaN and the infinities are `null`.
+fn float(v: f64) -> Cell<'static> {
+    if v.is_finite() {
+        Cell::Float(v)
+    } else {
+        Cell::Null
+    }
 }
 
 /// Whether [`push_value`] can decode values of `ty` (checked per column before any row, so an

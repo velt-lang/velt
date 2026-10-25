@@ -49,6 +49,11 @@ export class TextEncoder {
    */
   encodeInto(source: string, destination: Uint8Array): TextEncoderEncodeIntoResult {
     const room = destination.len;
+    // Room for all of it (the usual case): written in place, with no copy in between.
+    if (Buffer.byteLength(source) <= room) {
+      const written = destination.buf.bytes.write(source, destination.off);
+      return { read: source.length as number, written: written as number };
+    }
     const bytes = velt_rt_bytes_from_str(source);
     let written: usize = 0;
     let read: usize = 0;

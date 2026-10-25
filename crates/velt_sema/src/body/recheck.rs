@@ -23,7 +23,6 @@ pub(crate) struct Lens {
     throw_checks: usize,
     fresh_checks: usize,
     object_copies: [usize; 5],
-    jsx_adapters: usize,
     fn_values: usize,
     fn_defs: usize,
     closures: usize,
@@ -42,7 +41,6 @@ impl Lens {
             throw_checks: cx.throw_checks.len(),
             fresh_checks: cx.fresh_checks.len(),
             object_copies: cx.object_copies.mark(),
-            jsx_adapters: cx.jsx_adapters.len(),
             fn_values: cx.fn_values.len(),
             fn_defs: cx.fn_defs.len(),
             closures: cx.closure_defs.len(),
@@ -144,7 +142,6 @@ impl Mark {
         cx.throw_checks.truncate(m.throw_checks);
         cx.fresh_checks.truncate(m.fresh_checks);
         cx.object_copies.rollback(m.object_copies);
-        cx.jsx_adapters.truncate(m.jsx_adapters);
         cx.fn_values.truncate(m.fn_values);
         for d in cx.fn_defs.split_off(m.fn_defs) {
             drop_orphan(cx, d);
@@ -238,11 +235,6 @@ impl Mark {
             start[4],
             &ranges(|l| l.object_copies[4]),
         );
-        keep_ranges(
-            &mut cx.jsx_adapters,
-            m.jsx_adapters,
-            &ranges(|l| l.jsx_adapters),
-        );
         keep_ranges(&mut cx.fn_values, m.fn_values, &ranges(|l| l.fn_values));
         let own_fns = keep_ranges(&mut cx.fn_defs, m.fn_defs, &ranges(|l| l.fn_defs));
         let own_closures = keep_ranges(&mut cx.closure_defs, m.closures, &ranges(|l| l.closures));
@@ -330,7 +322,6 @@ mod tests {
             throw_checks: 0,
             fresh_checks: 0,
             object_copies: [0; 5],
-            jsx_adapters: 0,
             fn_values: 0,
             fn_defs: 0,
             closures: 0,
