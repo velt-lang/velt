@@ -30,6 +30,9 @@ pub(super) enum Held {
     /// A value sema transferred (`Intrinsic::Transfer`): a copy of what the reader did not
     /// make, with what it made moved in.
     Copied,
+    /// An array literal holding such a value (a rest parameter's, `out.unshift(v)`): each
+    /// element is kept on its own (`elems_to_caller`).
+    Elems,
     /// Anything else, which may be the store's.
     Other,
 }
@@ -43,6 +46,16 @@ impl FnLower<'_, '_> {
         }
         let ty = self.sub(value.ty);
         let held = self.held_of(value);
+        if held == Held::Elems {
+            self.elems_to_caller = true;
+            let v = self.consume(value);
+            self.elems_to_caller = false;
+            // A new array of the reader's, which the caller's counts hold from now on.
+            if !self.dead() && self.lock_ref(ty).is_some() {
+                self.leave_read(v.clone(), ty);
+            }
+            return v;
+        }
         let v = self.consume(value);
         self.keep_value(v, held, ty)
     }
@@ -54,6 +67,13 @@ impl FnLower<'_, '_> {
                 callee: hir::Callee::Intrinsic(Intrinsic::Transfer),
                 ..
             } => Held::Copied,
+            K::ArrayLit(xs)
+                if xs
+                    .iter()
+                    .any(|x| matches!(self.held_of(x), Held::Copied | Held::Elems)) =>
+            {
+                Held::Elems
+            }
             _ if self.held_by_caller(e) => Held::Caller,
             _ => Held::Other,
         }
@@ -67,7 +87,8 @@ impl FnLower<'_, '_> {
             // second transfer would take an object the first moved out (no longer `LOCAL`,
             // counted once) for one of the store's: it would copy it and never release it.
             Held::Copied => return v,
-            Held::Other => return self.reader_copy(v, ty),
+            // Already evaluated (`caller_or_own_op`): as anything else.
+            Held::Other | Held::Elems => return self.reader_copy(v, ty),
             Held::Caller => {}
         }
         if !self.cx.reaches_lock_set(ty) {

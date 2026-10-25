@@ -610,6 +610,9 @@ struct FnLower<'c, 'h> {
     /// The frames the stores of this `read` callback put what they transfer in, by the
     /// address of each transfer's arguments (leave_levels.rs), once asked.
     leave_levels: Option<FxHashMap<usize, u64>>,
+    /// The array literal lowered next gives each element to the caller's container on its own
+    /// (caller_stores.rs `Held::Elems`).
+    elems_to_caller: bool,
     /// With debug info: where the block declaring a local ends (debug_vars.rs).
     scope_ends: FxHashMap<LocalId, SrcLoc>,
     /// Set while lowering the body of an async function (a poll function).
