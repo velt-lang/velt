@@ -444,6 +444,13 @@ impl FnCx<'_, '_> {
         let own: Vec<TyId> = (0..ps.len() as u32).map(|i| self.cx.ty.param(i)).collect();
         let self_ty = self.cx.ty.intern(TyKind::Adt(d, own));
         let niargs: Vec<TyId> = iargs.iter().map(|a| norm(self.cx, *a)).collect();
+        // The struct implements the interface, and so the interfaces it extends: what an
+        // inherited method throws (`next(): … throws E` of `Iterator<T, E>` in an
+        // `IterableIterator<T>`) is read in the struct's terms (`throws/groups.rs`).
+        self.cx.adt_mut(d).implements = vec![crate::defs::Bound {
+            iface,
+            args: niargs.clone(),
+        }];
         let mut sargs = niargs.clone();
         sargs.push(self_ty);
         let host = Host::adt(self.cx, d);

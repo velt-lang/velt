@@ -303,6 +303,10 @@ impl FnCx<'_, '_> {
             .iter()
             .any(|p| matches!(p, ast::ObjectProp::Method(_)))
         {
+            if let Some(target) = self.literal_iface(exp) {
+                let props = Self::methods_as_values(props);
+                return self.iface_object(&props, target, span);
+            }
             return self.method_object(props, span);
         }
         // A union's member by the literal's discriminants or fields (`union_member_for`).

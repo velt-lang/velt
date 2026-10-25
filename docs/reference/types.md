@@ -2444,6 +2444,11 @@ console.log([...range(1, 3)]); // [ 1, 2, 3 ]
   object): use variables, or declare a class that `implements Iterable<T>` and reads its
   fields. Other generator methods in object literals are errors too: write a property holding a
   generator function.
+- Where an interface with methods is expected, the iterator method is one more member of a
+  literal [implementing it](#object-literals-implementing-interfaces), next to the others, and
+  `this` in it is the object: an `IterableIterator<T>` written as `{ next() { … },
+  [Symbol.iterator]() { return this; } }` is the iterator, so a loop over it goes on from where
+  `next()` left off, as in Node.
 - The value is an instance of the prelude class `__IterableObject<T, E>` (async:
   `__AsyncIterableObject<T, E>`), which holds the method; annotate it as `Iterable<T>`.
 
