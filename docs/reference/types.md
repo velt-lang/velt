@@ -2399,8 +2399,9 @@ that stands for `globalThis` (`const g = globalThis as Seam;`), and
 `Object.defineProperty(globalThis, "K", { value, writable: true, configurable: true })`
 assigns it. The property's type is `T["K"] | undefined` with `T` the asserted type; the
 assertions of one key must all give it the same type, and a site without one (`globalThis.K`,
-typed for tsc by a `declare global { var K: T }`, or asserted `any`) takes the type the others
-give. A property no site asserts a type for is an error, unless the program only defines it
+or asserted `any`) takes the type the others give. Where no site asserts one, a
+`declare global { var K: T }` in a module that names `globalThis` gives it `T` (with `undefined`,
+as it starts unset), as it does for tsc. A property without a type is an error, unless the program only defines it
 with `Object.defineProperty` and never reads or assigns it: nothing can see it then, and the
 call only evaluates its `value`. A Node global Velt has is that global
 (`globalThis.console.log(…)` is `console.log(…)`).

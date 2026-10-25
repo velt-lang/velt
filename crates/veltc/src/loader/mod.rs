@@ -263,8 +263,11 @@ impl Loader<'_, '_> {
                 plain_ts,
                 defines: self.ambient.defines(),
             };
-            let parsed = velt_syntax::parse_with(file, &self.sm.get(file).src, &opts);
+            let mut parsed = velt_syntax::parse_with(file, &self.sm.get(file).src, &opts);
             self.diags.extend(parsed.diags);
+            if self.sm.get(file).src.contains("globalThis") {
+                ambient::declare_global_types(&mut parsed.module, &parsed.ambient);
+            }
             self.ambient
                 .declared(parsed.ambient, file, parsed.is_module);
             parsed.module

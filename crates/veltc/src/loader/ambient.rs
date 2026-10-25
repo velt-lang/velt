@@ -17,6 +17,9 @@
 //!   (anything else in them is skipped, as are their syntax errors: they may use TypeScript
 //!   Velt doesn't parse).
 //!
+//! A typed variable in the `declare global { var K: T }` of a module that names `globalThis` is
+//! also the type of `globalThis.K` ([`declare_global_types`]).
+//!
 //! Velt has no global variables, so an ambient constant needs a `define`. One that a module
 //! refers to without a `define` (and without declaring the name in scope,
 //! `velt_syntax::scope::free_values`) is an error at its declaration ([`Ambients::check`]), and
@@ -230,5 +233,27 @@ fn declaration_files(dir: &Path, deep: bool, out: &mut Vec<PathBuf>) {
         } else if name.ends_with(".d.ts") {
             out.push(path);
         }
+    }
+}
+
+/// The typed variables of a module's `declare global { var K: T }` (`ambient`), given to the
+/// rewrite of `globalThis` (`velt_sema`'s `global_this`) as items of `module`: a type alias named
+/// `globalThis.K` (a name no source can spell) for `T`, which types `globalThis.K` where no site
+/// asserts one.
+pub(super) fn declare_global_types(module: &mut ast::Module, ambient: &[Ambient]) {
+    for a in ambient.iter().filter(|a| a.global) {
+        let Some(ty) = &a.ty else { continue };
+        module.items.push(ast::Item {
+            kind: ast::ItemKind::TypeAlias(ast::TypeAlias {
+                name: ast::Ident {
+                    name: format!("globalThis.{}", a.name.name),
+                    span: a.name.span,
+                },
+                generics: vec![],
+                ty: ty.clone(),
+            }),
+            exported: false,
+            span: a.span,
+        });
     }
 }

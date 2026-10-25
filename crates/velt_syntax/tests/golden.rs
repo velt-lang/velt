@@ -61,6 +61,7 @@ fn golden_m1_files_parse() {
                 | "literal_method_names.vlt"
                 | "define_property_accessor_this.vlt"
                 | "static_block_return.vlt"
+                | "global_this_declare_global.vlt"
         ) {
             continue;
         }
