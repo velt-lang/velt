@@ -19,7 +19,10 @@ impl FnLower<'_, '_> {
     pub(super) fn builtin_prefix(&self, ty: TyId) -> Option<&'static str> {
         match self.cx.kind(ty) {
             TyKind::Str => Some("__anyStr_"),
-            TyKind::Array(_) => Some("__anyArr_"),
+            // An array of nothing but `void` (an empty literal's type) has no element to hand out.
+            TyKind::Array(e) if !matches!(self.cx.kind(e), TyKind::Unit | TyKind::Never) => {
+                Some("__anyArr_")
+            }
             TyKind::Int(_) | TyKind::Float(_) => Some("__anyNum_"),
             TyKind::Bool => Some("__anyBool_"),
             _ => None,
