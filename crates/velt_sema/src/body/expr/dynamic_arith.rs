@@ -87,7 +87,14 @@ impl FnCx<'_, '_> {
     }
 
     /// `AnyTag(t) op k` of the `any` in `t`.
-    pub(crate) fn tag_test(&mut self, t: LocalId, d: TyId, op: BinOp, k: u128, span: Span) -> hir::Expr {
+    pub(crate) fn tag_test(
+        &mut self,
+        t: LocalId,
+        d: TyId,
+        op: BinOp,
+        k: u128,
+        span: Span,
+    ) -> hir::Expr {
         let (i64_, bool_) = (self.cx.ty.i64, self.cx.ty.bool_);
         let read = self.side_any(t, d, span);
         let tag = self.intrinsic(Intrinsic::AnyTag, vec![read], i64_, span);
@@ -138,7 +145,12 @@ impl FnCx<'_, '_> {
         self.mk(kind, ty, span)
     }
 
-    pub(crate) fn op_block(&mut self, stmts: Vec<hir::Stmt>, value: hir::Expr, span: Span) -> hir::Expr {
+    pub(crate) fn op_block(
+        &mut self,
+        stmts: Vec<hir::Stmt>,
+        value: hir::Expr,
+        span: Span,
+    ) -> hir::Expr {
         let ty = value.ty;
         let block = hir::Block {
             stmts,

@@ -43,7 +43,12 @@ function __anyFnArg(args: any[], k: i64): any {
   const f = __anyArg(args, k);
   if (typeof f !== "function") {
     const t = typeof f;
-    const what = f === undefined || f === null ? __anyText(f, "") : t === "object" ? "#<Object>" : t === "string" ? `${t} "${__anyText(f, "")}"` : `${t} ${__anyText(f, "")}`;
+    const what =
+      f === undefined || f === null
+        ? __anyText(f, "")
+        : t === "object"
+          ? "#<Object>"
+          : t === "string" ? `${t} "${__anyText(f, "")}"` : `${t} ${__anyText(f, "")}`;
     panic(`TypeError: ${what} is not a function`);
   }
   return f;
@@ -54,48 +59,62 @@ function __anyFnArg(args: any[], k: i64): any {
 export function __anyStr_trim(s: string, args: any[]): any {
   return s.trim();
 }
+
 export function __anyStr_trimStart(s: string, args: any[]): any {
   return s.trimStart();
 }
+
 export function __anyStr_trimEnd(s: string, args: any[]): any {
   return s.trimEnd();
 }
+
 export function __anyStr_toUpperCase(s: string, args: any[]): any {
   return s.toUpperCase();
 }
+
 export function __anyStr_toLowerCase(s: string, args: any[]): any {
   return s.toLowerCase();
 }
+
 export function __anyStr_toString(s: string, args: any[]): any {
   return s;
 }
+
 export function __anyStr_valueOf(s: string, args: any[]): any {
   return s;
 }
+
 export function __anyStr_slice(s: string, args: any[]): any {
   return s.slice(__anyIntArg(args, 0, 0), __anyIntArg(args, 1, 9223372036854775807));
 }
+
 export function __anyStr_substring(s: string, args: any[]): any {
   return s.substring(__anyIntArg(args, 0, 0), __anyIntArg(args, 1, 9223372036854775807));
 }
+
 export function __anyStr_indexOf(s: string, args: any[]): any {
   return s.indexOf(__anyStrArg(args, 0), __anyIntArg(args, 1, 0)) as number;
 }
+
 export function __anyStr_lastIndexOf(s: string, args: any[]): any {
   return s.lastIndexOf(__anyStrArg(args, 0), __anyIntArg(args, 1, 9223372036854775807)) as number;
 }
+
 export function __anyStr_includes(s: string, args: any[]): any {
   const from = __anyIntArg(args, 1, 0);
   return s.indexOf(__anyStrArg(args, 0), from < 0 ? 0 : from) >= 0;
 }
+
 export function __anyStr_startsWith(s: string, args: any[]): any {
   const from = __anyIntArg(args, 1, 0);
   return s.slice(from < 0 ? 0 : from).startsWith(__anyStrArg(args, 0));
 }
+
 export function __anyStr_endsWith(s: string, args: any[]): any {
   const end = __anyIntArg(args, 1, 9223372036854775807);
   return s.slice(0, end < 0 ? 0 : end).endsWith(__anyStrArg(args, 0));
 }
+
 export function __anyStr_split(s: string, args: any[]): any {
   if (__anyArg(args, 0) === undefined) {
     const whole: string[] = [s.slice(0)];
@@ -108,15 +127,19 @@ export function __anyStr_split(s: string, args: any[]): any {
   }
   return parts.slice(0, __anyIntArg(args, 1, 0) >= 0 ? __anyIntArg(args, 1, 0) : 0);
 }
+
 export function __anyStr_replace(s: string, args: any[]): any {
   return s.replace(__anyStrArg(args, 0), __anyStrArg(args, 1));
 }
+
 export function __anyStr_replaceAll(s: string, args: any[]): any {
   return s.replaceAll(__anyStrArg(args, 0), __anyStrArg(args, 1));
 }
+
 export function __anyStr_charAt(s: string, args: any[]): any {
   return s.charAt(__anyIntArg(args, 0, 0));
 }
+
 export function __anyStr_charCodeAt(s: string, args: any[]): any {
   const i = __anyIntArg(args, 0, 0);
   if (i < 0 || i >= (s.length as i64)) {
@@ -124,9 +147,11 @@ export function __anyStr_charCodeAt(s: string, args: any[]): any {
   }
   return s.charCodeAt(i) as number;
 }
+
 export function __anyStr_at(s: string, args: any[]): any {
   return s.at(__anyIntArg(args, 0, 0));
 }
+
 export function __anyStr_repeat(s: string, args: any[]): any {
   const n = __anyIntArg(args, 0, 0);
   if (n < 0 || n === 9223372036854775807) {
@@ -134,14 +159,17 @@ export function __anyStr_repeat(s: string, args: any[]): any {
   }
   return s.repeat(n);
 }
+
 export function __anyStr_padStart(s: string, args: any[]): any {
   const fill = __anyArg(args, 1) === undefined ? " " : __anyStrArg(args, 1);
   return s.padStart(__anyIntArg(args, 0, 0), fill);
 }
+
 export function __anyStr_padEnd(s: string, args: any[]): any {
   const fill = __anyArg(args, 1) === undefined ? " " : __anyStrArg(args, 1);
   return s.padEnd(__anyIntArg(args, 0, 0), fill);
 }
+
 export function __anyStr_concat(s: string, args: any[]): any {
   let out = s;
   for (let k: i64 = 0; k < (args.length as i64); k++) {
@@ -149,6 +177,7 @@ export function __anyStr_concat(s: string, args: any[]): any {
   }
   return out;
 }
+
 export function __anyStr_localeCompare(s: string, args: any[]): any {
   return s.localeCompare(__anyStrArg(args, 0)) as number;
 }
@@ -158,6 +187,7 @@ export function __anyStr_localeCompare(s: string, args: any[]): any {
 export function __anyNum_toFixed(n: number, args: any[]): any {
   return n.toFixed(__anyIntArg(args, 0, 0));
 }
+
 export function __anyNum_toString(n: number, args: any[]): any {
   const radix = __anyArg(args, 0);
   if (radix === undefined) {
@@ -165,6 +195,7 @@ export function __anyNum_toString(n: number, args: any[]): any {
   }
   return n.toString(__anyIntArg(args, 0, 10) as number);
 }
+
 export function __anyNum_toPrecision(n: number, args: any[]): any {
   const p = __anyArg(args, 0);
   if (p === undefined) {
@@ -172,12 +203,15 @@ export function __anyNum_toPrecision(n: number, args: any[]): any {
   }
   return n.toPrecision(+p);
 }
+
 export function __anyNum_valueOf(n: number, args: any[]): any {
   return n;
 }
+
 export function __anyBool_toString(b: boolean, args: any[]): any {
   return b ? "true" : "false";
 }
+
 export function __anyBool_valueOf(b: boolean, args: any[]): any {
   return b;
 }
@@ -200,12 +234,15 @@ export function __anyArr_push<T>(a: T[], args: any[]): any {
   }
   return a.length as number;
 }
+
 export function __anyArr_pop<T>(a: T[], args: any[]): any {
   return a.pop();
 }
+
 export function __anyArr_shift<T>(a: T[], args: any[]): any {
   return a.shift();
 }
+
 export function __anyArr_unshift<T>(a: T[], args: any[]): any {
   const items: T[] = [];
   for (let k: i64 = 0; k < (args.length as i64); k++) {
@@ -214,10 +251,14 @@ export function __anyArr_unshift<T>(a: T[], args: any[]): any {
   a.unshift(...items);
   return a.length as number;
 }
+
 export function __anyArr_splice<T>(a: T[], args: any[]): any {
   const n = a.length as i64;
   const start = __anyPos(__anyIntArg(args, 0, 0), n);
-  let count = (args.length as i64) === 0 ? 0 : (args.length as i64) === 1 ? n - start : __anyIntArg(args, 1, 0);
+  let count =
+    (args.length as i64) === 0
+      ? 0
+      : (args.length as i64) === 1 ? n - start : __anyIntArg(args, 1, 0);
   count = count < 0 ? 0 : count > n - start ? n - start : count;
   const items: T[] = [];
   for (let k: i64 = 2; k < (args.length as i64); k++) {
@@ -225,16 +266,20 @@ export function __anyArr_splice<T>(a: T[], args: any[]): any {
   }
   return a.splice(start, count, ...items);
 }
+
 export function __anyArr_slice<T>(a: T[], args: any[]): any {
   return a.slice(__anyIntArg(args, 0, 0), __anyIntArg(args, 1, 9223372036854775807));
 }
+
 export function __anyArr_at<T>(a: T[], args: any[]): any {
   return a.at(__anyIntArg(args, 0, 0));
 }
+
 export function __anyArr_reverse<T>(a: T[], args: any[]): any {
   a.reverse();
   return a;
 }
+
 export function __anyArr_concat<T>(a: T[], args: any[]): any {
   const out: any[] = [];
   for (let i: usize = 0; i < a.length; i++) {
@@ -252,6 +297,7 @@ export function __anyArr_concat<T>(a: T[], args: any[]): any {
   }
   return out;
 }
+
 export function __anyArr_indexOf<T>(a: T[], args: any[]): any {
   const x = __anyArg(args, 0);
   const n = a.length as i64;
@@ -263,6 +309,7 @@ export function __anyArr_indexOf<T>(a: T[], args: any[]): any {
   }
   return -1;
 }
+
 export function __anyArr_lastIndexOf<T>(a: T[], args: any[]): any {
   const x = __anyArg(args, 0);
   const n = a.length as i64;
@@ -276,6 +323,7 @@ export function __anyArr_lastIndexOf<T>(a: T[], args: any[]): any {
   }
   return -1;
 }
+
 export function __anyArr_includes<T>(a: T[], args: any[]): any {
   const x = __anyArg(args, 0);
   const n = a.length as i64;
@@ -288,6 +336,7 @@ export function __anyArr_includes<T>(a: T[], args: any[]): any {
   }
   return false;
 }
+
 export function __anyArr_map<T>(a: T[], args: any[]): any {
   const f = __anyFnArg(args, 0);
   const out: any[] = [];
@@ -297,6 +346,7 @@ export function __anyArr_map<T>(a: T[], args: any[]): any {
   }
   return out;
 }
+
 export function __anyArr_forEach<T>(a: T[], args: any[]): any {
   const f = __anyFnArg(args, 0);
   for (let i: usize = 0; i < a.length; i++) {
@@ -305,6 +355,7 @@ export function __anyArr_forEach<T>(a: T[], args: any[]): any {
   }
   return undefined;
 }
+
 export function __anyArr_filter<T>(a: T[], args: any[]): any {
   const f = __anyFnArg(args, 0);
   const out: T[] = [];
@@ -316,6 +367,7 @@ export function __anyArr_filter<T>(a: T[], args: any[]): any {
   }
   return out;
 }
+
 export function __anyArr_find<T>(a: T[], args: any[]): any {
   const f = __anyFnArg(args, 0);
   for (let i: usize = 0; i < a.length; i++) {
@@ -326,6 +378,7 @@ export function __anyArr_find<T>(a: T[], args: any[]): any {
   }
   return undefined;
 }
+
 export function __anyArr_findIndex<T>(a: T[], args: any[]): any {
   const f = __anyFnArg(args, 0);
   for (let i: usize = 0; i < a.length; i++) {
@@ -336,6 +389,7 @@ export function __anyArr_findIndex<T>(a: T[], args: any[]): any {
   }
   return -1;
 }
+
 export function __anyArr_some<T>(a: T[], args: any[]): any {
   const f = __anyFnArg(args, 0);
   for (let i: usize = 0; i < a.length; i++) {
@@ -346,6 +400,7 @@ export function __anyArr_some<T>(a: T[], args: any[]): any {
   }
   return false;
 }
+
 export function __anyArr_every<T>(a: T[], args: any[]): any {
   const f = __anyFnArg(args, 0);
   for (let i: usize = 0; i < a.length; i++) {
@@ -356,6 +411,7 @@ export function __anyArr_every<T>(a: T[], args: any[]): any {
   }
   return true;
 }
+
 export function __anyArr_reduce<T>(a: T[], args: any[]): any {
   const f = __anyFnArg(args, 0);
   let i: usize = 0;
@@ -375,6 +431,7 @@ export function __anyArr_reduce<T>(a: T[], args: any[]): any {
   }
   return acc;
 }
+
 export function __anyArr_toString<T>(a: T[], args: any[]): any {
   const v: any = a;
   return __anyJoin(v, ",", "");

@@ -7,9 +7,9 @@
 
 use velt_common::Span;
 
+use super::dynamic_arith::TAG_FUNCTION;
 use crate::any::Dynamic;
 use crate::body::{FnCx, LocalKind};
-use super::dynamic_arith::TAG_FUNCTION;
 use crate::hir::{self, BinOp, ExprKind as H, Intrinsic, LocalId, TyId, UseMode};
 
 /// One operand of the comparison, bound to a temporary.
