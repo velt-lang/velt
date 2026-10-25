@@ -196,5 +196,21 @@ async function main() {
   console.log(summary(seen + (await readAll(c))));
   c.close();
 
+  console.log("-- 100 Continue the handler does not ask for");
+  // The handler does not read: the response goes out at once, without a 100, and the
+  // connection closes instead of waiting for the body.
+  const noread = await exchange(
+    port,
+    `POST /noread HTTP/1.1\r\n${H}Content-Length: 3\r\nExpect: 100-continue\r\n\r\n`,
+  );
+  console.log(summary(noread), noread.includes("Connection: close"));
+  // HTTP/1.0 ignores the expectation: no 100.
+  const d = await connect(`127.0.0.1:${port}`);
+  await d.write("POST /echo HTTP/1.0\r\nContent-Length: 5\r\nExpect: 100-continue\r\n\r\n");
+  await d.write("hello");
+  d.shutdown();
+  console.log("HTTP/1.0:", summary(await readAll(d)));
+  d.close();
+
   server.close();
 }

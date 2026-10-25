@@ -15,8 +15,9 @@ upgrade, or opened as a client to `ws://` / `wss://` URLs. The protocol is writt
   (with the frames the client sent along with the request). A request that is not a valid
   handshake (RFC 6455 §4.2.1: `GET`, HTTP/1.1, `Upgrade: websocket`, `Connection: upgrade`,
   `Sec-WebSocket-Version: 13`, a `Sec-WebSocket-Key` of 16 base64-encoded bytes) is answered
-  there, as the `ws` package answers it: 426 with `Sec-WebSocket-Version: 13` when it is not an
-  upgrade or asks for another version, else 400; it then returns null. Throws `IoError`
+  there, as RFC 6455 §4.2.2 allows: 426 with `Sec-WebSocket-Version: 13` when it is not an
+  upgrade or asks for another version, else 400 (the `ws` package answers 400 to another
+  version and 405 to another method); it then returns null. Throws `IoError`
   "EINVAL" if a response was started.
 - `connectWebSocket(url, opts: WsConnectOptions { ca? } = {}): Promise<WebSocket>`.
 - `WebSocket` (a handle): `send(text)`, `sendBytes(data: u8[])`, `receive(): Promise<WsMessage

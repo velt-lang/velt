@@ -349,7 +349,7 @@ export function upgradeWebSocket(req: Request): WebSocketUpgrade {
  * Protocols` with the handshake's accept key and returns the socket (the connection is the
  * socket's from then on). A request that is not a valid handshake (RFC 6455 §4.2.1: `GET`,
  * HTTP/1.1, `Upgrade: websocket`, `Connection: upgrade`, `Sec-WebSocket-Version: 13`, a key of 16
- * base64-encoded bytes) is answered here instead, as the `ws` package does: 426 with
+ * base64-encoded bytes) is answered here instead (RFC 6455 §4.2.2): 426 with
  * `Sec-WebSocket-Version: 13` for another version or no upgrade, else 400; it then returns null.
  * Throws `IoError` "EINVAL" if a response was started.
  */

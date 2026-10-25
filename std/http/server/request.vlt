@@ -49,11 +49,10 @@ export class HttpRequest {
   private conn: TcpStream;
   private idle: i64;
   // The body: bytes of the current chunk (or of the whole body) still to read, the chunked
-  // decoding's state, whether it was read to its end, whether 100 Continue went out.
+  // decoding's state, whether it was read to its end.
   private left: i64 = 0;
   private chunk: i64 = CHUNK_DONE;
   private ended: bool = true;
-  private continued: bool = false;
   private overLimit: bool = false;
   private malformed: bool = false;
   // The body must have arrived by `deadline` (`Date.now()` ms): `requestTimeout` from its head.
@@ -71,7 +70,6 @@ export class HttpRequest {
   /// A new request's head was parsed into `head` (internal).
   begin(now: i64) {
     const h = this.head;
-    this.continued = false;
     this.overLimit = false;
     this.malformed = false;
     this.late = false;
@@ -138,8 +136,23 @@ export class HttpRequest {
     if (!this.head.http11) {
       return false;
     }
-    return hasToken(this.header("upgrade"), protocol) &&
-      hasToken(this.header("connection"), "upgrade");
+    return this.anyHasToken("upgrade", protocol) && this.anyHasToken("connection", "upgrade");
+  }
+
+  /// Whether any header `name` holds `token` in its comma-separated value (any case).
+  private anyHasToken(name: string, token: string): bool {
+    const n = Buffer.byteLength(name) as i64;
+    const h = this.head;
+    for (let i: i64 = 0; i < (h.heads.length as i64); i += 4) {
+      if (
+        h.heads[i + 1] - h.heads[i] == n &&
+        h.buf.utf8EqualsIgnoreCase(name, h.heads[i], h.heads[i + 1]) &&
+        hasToken(this.text(h.heads[i + 2], h.heads[i + 3]), token)
+      ) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /// The headers' names (as sent) and values, in order.
@@ -394,8 +407,8 @@ export class HttpRequest {
 
   /// Reads more of the body from the connection (sending 100 Continue first if asked for).
   private async fill() {
-    if (this.head.expectsContinue && !this.continued) {
-      this.continued = true;
+    if (this.head.expectsContinue && !this.head.continueSent) {
+      this.head.continueSent = true;
       await this.conn.write("HTTP/1.1 100 Continue\r\n\r\n");
     }
     while (true) {
@@ -437,10 +450,7 @@ export class HttpRequest {
 }
 
 /// Whether the comma-separated header value `value` holds `token` (any case).
-function hasToken(value: string | null, token: string): bool {
-  if (value == null) {
-    return false;
-  }
+function hasToken(value: string, token: string): bool {
   const want = token.toLowerCase();
   for (const part of value.split(",")) {
     if (part.trim().toLowerCase() == want) {

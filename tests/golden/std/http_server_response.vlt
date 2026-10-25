@@ -61,6 +61,13 @@ async function main() {
       res.header("Content-Length", "2");
       res.header("Transfer-Encoding", "chunked");
       res.send("abcdef");
+    } else if (req.pathIs("/upgrade")) {
+      // A value from the request in an upgrade header: refused, and nothing of it is sent.
+      try {
+        res.upgrade("x", [["A", "b\r\nC: d"]]);
+      } catch (e) {
+        res.send(`refused: ${e.name}`);
+      }
     } else if (req.pathIs("/head")) {
       res.header("Content-Length", "1000");
       res.send("");
@@ -80,6 +87,9 @@ async function main() {
   );
   console.log(
     show(await exchange(port, "HEAD /head HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")),
+  );
+  console.log(
+    show(await exchange(port, "GET /upgrade HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")),
   );
   for (const code of [418, 422, 429, 409, 410, 502, 504, 599]) {
     const text = await exchange(

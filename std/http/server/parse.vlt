@@ -62,8 +62,10 @@ export class Head {
   /// The connection stays open after the response (HTTP/1.1 unless `Connection: close`,
   /// HTTP/1.0 with `Connection: keep-alive`).
   keepAlive: bool = true;
-  /// `Expect: 100-continue` was sent.
+  /// `Expect: 100-continue` was sent with an HTTP/1.1 request whose body has not arrived yet
+  /// (the client waits for `100 Continue` before sending it), and whether that went out.
   expectsContinue: bool = false;
+  continueSent: bool = false;
   /// HTTP/1.1 (chunked responses can be sent).
   http11: bool = true;
   /// The body's framing (`BODY_*`), its range when buffered, its length when not all read.
@@ -326,6 +328,7 @@ export class Parser {
     }
     req.http11 = b[p + 7] == 49;
     req.expectsContinue = false;
+    req.continueSent = false;
     p += 8;
     if (b[p] != CR || b[p + 1] != LF) {
       throw new BadRequest(400);
@@ -404,7 +407,8 @@ export class Parser {
         te = this.transferCodings(valueStart, valueEnd, te);
       } else if (len == 6 && this.nameIs(nameStart, len, this.expect)) {
         const vl = valueEnd - valueStart;
-        req.expectsContinue = vl == 12 && this.nameIs(valueStart, vl, this.continue_);
+        // An HTTP/1.0 client does not wait for it (RFC 9110 §10.1.1).
+        req.expectsContinue = req.http11 && vl == 12 && this.nameIs(valueStart, vl, this.continue_);
       }
     }
     // HTTP/1.1 needs exactly one Host; none may have two (RFC 9112 §3.2).
@@ -431,6 +435,10 @@ export class Parser {
       req.bodyMode = BODY_LENGTH;
       req.bodyLength = length;
       this.pos = headEnd;
+    }
+    // A body that has arrived needs no `100 Continue`.
+    if (req.bodyMode == BODY_NONE || req.bodyMode == BODY_BUFFERED) {
+      req.expectsContinue = false;
     }
     this.scanned = this.pos;
     return true;

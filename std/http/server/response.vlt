@@ -13,7 +13,7 @@
 
 import { utf8Encode } from "velt:encoding";
 import { BodyStream } from "velt:fetch/body";
-import { isTchar } from "velt:http/server/parse";
+import { Head, isTchar } from "velt:http/server/parse";
 import { TcpStream } from "velt:net";
 import { AbortController, AbortSignal } from "velt:task";
 import { Uint8Array } from "velt:typed_array/uint8_array";
@@ -69,6 +69,8 @@ export class HttpResponse {
   private dateSecond: i64 = -1;
   // Aborted when a write to the client fails or the server closes (made when first asked for).
   private stopped: AbortSignal;
+  /// The head of the request being answered (its `Expect: 100-continue` state).
+  private request: Head;
   private failed: AbortController = new AbortController();
   private either: AbortSignal | null = null;
   // The fixed parts of a head and the default content types, encoded once per connection
@@ -89,9 +91,10 @@ export class HttpResponse {
     utf8Encode("text/event-stream"),
   ];
 
-  constructor(conn: TcpStream, stopped: AbortSignal) {
+  constructor(conn: TcpStream, stopped: AbortSignal, request: Head) {
     this.conn = conn;
     this.stopped = stopped;
+    this.request = request;
   }
 
   /** Sets the status code (200 by default); throws `RangeError` outside 100–999, as Node. */
@@ -254,13 +257,17 @@ export class HttpResponse {
     if (!this.http11) {
       throw new Error("only an HTTP/1.1 connection can be upgraded");
     }
-    // Checked before anything is written: a bad name or value throws, and nothing was sent.
+    // Checked before anything is kept: a bad name or value throws, and what the check wrote is
+    // dropped, so nothing of it is sent.
     const start = this.length;
-    this.field("Upgrade", protocol);
-    for (const h of headers) {
-      this.field(h[0], h[1]);
+    try {
+      this.field("Upgrade", protocol);
+      for (const h of headers) {
+        this.field(h[0], h[1]);
+      }
+    } finally {
+      this.length = start;
     }
-    this.length = start;
     this.done = true;
     this.switched = true;
     this.keepAlive = false;
@@ -279,6 +286,11 @@ export class HttpResponse {
   /** Whether the connection was switched to another protocol (internal). */
   upgraded(): bool {
     return this.switched;
+  }
+
+  /** Whether writing to the client failed: it went away (internal). */
+  clientGone(): bool {
+    return this.failed.signal.aborted;
   }
 
   /** Whether a response was started for the current request. */
@@ -557,6 +569,13 @@ export class HttpResponse {
       } else {
         this.keepAlive = false;
       }
+    }
+    // The client holds its body back until `100 Continue`, which the handler did not ask for (it
+    // did not read): the body is not waited for, so the connection closes after this response
+    // (RFC 9110 §10.1.1).
+    const r = this.request;
+    if (r.expectsContinue && !r.continueSent) {
+      this.keepAlive = false;
     }
     if (!this.keepAlive) {
       const closeHead = this.closeHead;

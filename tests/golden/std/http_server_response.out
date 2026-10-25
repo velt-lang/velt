@@ -11,6 +11,7 @@ status 200.5: RangeError: invalid status code: 200.5
 bad Content-Length: TypeError: invalid Content-Length: 2x
 HTTP/1.1 200 OK / Content-Type: text/plain; charset=utf-8 / Content-Length: 6 / Connection: close /  / abcdef
 HTTP/1.1 200 OK / Content-Type: text/plain; charset=utf-8 / Content-Length: 1000 / Connection: close /  / 
+HTTP/1.1 200 OK / Content-Type: text/plain; charset=utf-8 / Content-Length: 18 / Connection: close /  / refused: TypeError
 HTTP/1.1 418 I'm a Teapot
 HTTP/1.1 422 Unprocessable Entity
 HTTP/1.1 429 Too Many Requests

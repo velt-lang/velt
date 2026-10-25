@@ -154,7 +154,7 @@ async function connection<E>(
 ): Promise<void> {
   const parser = new Parser(maxHead, maxBody, limits.maxHeaders);
   const req = new HttpRequest(parser, conn, idle, limits.requestMs);
-  const res = new HttpResponse(conn, stopped);
+  const res = new HttpResponse(conn, stopped, req.head);
   let open = true;
   let rejected = false;
   // When the head being read began to arrive (`Date.now()`), or -1 between requests.
@@ -217,13 +217,15 @@ async function connection<E>(
                 res.status(code);
                 res.send(reason(code));
               }
-            } else {
+            } else if (!res.clientGone()) {
               if (!res.sent()) {
                 res.status(500);
                 res.send("Internal Server Error");
               }
               console.error("request handler failed:", e);
             }
+            // Otherwise the client went away while the response was being written (a streamed
+            // one): nothing can be sent, and it is not the handler's failure.
           }
           if (res.upgraded()) {
             // The connection is the handler's now (also if it failed after switching).
@@ -238,12 +240,15 @@ async function connection<E>(
           if (finished && (res.streamOpen() || !req.bodyRead())) {
             try {
               await res.endStream();
-              finished = await req.finish();
+              // A body held back for a `100 Continue` the handler did not ask for is not waited
+              // for: its response said `Connection: close`.
+              const h = req.head;
+              finished = h.expectsContinue && !h.continueSent ? false : await req.finish();
             } catch (e) {
               finished = false;
             }
           }
-          // A body too large to skip: the client may still be sending it.
+          // A body too large to skip, or held back for `100 Continue`: the client may still send it.
           rejected = rejected || !finished;
           open = finished && res.reusable() && !stopped.aborted;
         }

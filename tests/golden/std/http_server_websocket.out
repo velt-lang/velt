@@ -5,4 +5,5 @@ echo two
 HTTP/1.1 426 Upgrade Required true
 HTTP/1.1 400 Bad Request
 HTTP/1.1 400 Bad Request
+two Connection headers: HTTP/1.1 101 Switching Protocols
 HTTP/1.1 101 Switching Protocols true

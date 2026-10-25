@@ -41,3 +41,6 @@ HTTP/1.0 keep-alive: 200 OK | 200 OK true true
 -- 100 Continue after the responses before it
 200 first: true
 200 OK | 100 Continue | 200 OK | echo:hello
+-- 100 Continue the handler does not ask for
+200 OK true
+HTTP/1.0: 200 OK | echo:hello

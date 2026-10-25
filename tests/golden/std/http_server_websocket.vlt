@@ -77,6 +77,13 @@ async function main() {
   console.log(firstLine(await raw(port, handshake("POST", "13", key))));
   // A masked text frame "hi" (mask 0) in the same write as the request: echoed.
   const frame: u8[] = [0x81, 0x82, 0, 0, 0, 0, 0x68, 0x69];
+  // The Connection tokens of every Connection header count.
+  const split = await raw(
+    port,
+    `GET /ws HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: keep-alive\r\n` +
+      `Connection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: ${key}\r\n\r\n`,
+  );
+  console.log("two Connection headers:", firstLine(split));
   const early = await raw(port, handshake("GET", "13", key), frame);
   console.log(firstLine(early), early.includes("echo hi"));
   server.close();

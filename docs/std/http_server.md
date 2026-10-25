@@ -80,7 +80,8 @@ speaks HTTPS. One task serves each connection; requests on one connection are an
 - A connection that waits more than `idleTimeout` milliseconds (5000, Node's `keepAliveTimeout`)
   for its next request is closed.
 - A handler that throws gets a 500 (the error is printed to stderr); one that returns without
-  sending gets an empty 200.
+  sending gets an empty 200. A handler that throws because the client went away while its
+  response was being written (a streamed one) is not logged: nothing can be sent.
 - A connection with a body still to come gets the responses to the requests before it first, so
   a client that waits for them (or for `100 Continue`) sends it.
 - Accepting stops only with `close()`: when it fails otherwise (out of file descriptors), the
@@ -93,15 +94,17 @@ the middle of a request answers it first).
 
 Valid while the handler runs: the server reads the next request into the same buffer. The body
 is framed by `Content-Length` or `Transfer-Encoding: chunked` (decoded; extensions and trailers
-are skipped); a client that sent `Expect: 100-continue` gets `100 Continue` when the handler
-first reads it.
+are skipped); an HTTP/1.1 client that sent `Expect: 100-continue` and waits with its body gets
+`100 Continue` when the handler first reads it. If the handler answers without reading, no 100
+is sent: the response goes out at once with `Connection: close`, and the body is not waited
+for (RFC 9110 §10.1.1). An HTTP/1.0 request's expectation is ignored.
 
 - `isMethod(m: string): bool`, `pathIs(p: string): bool`: compare without making a string.
 - `method()`, `path()` (the target up to `?`), `query()` (after `?`, without it), `target()`.
 - `header(name): string | null` (any case; the first if repeated), `hasHeader(name)`,
   `headers(): [string, string][]`.
 - `isUpgrade(protocol): bool`: an HTTP/1.1 request asking to switch its connection to
-  `protocol` (`Upgrade: protocol`, `Connection: upgrade`).
+  `protocol` (`Upgrade: protocol`, `upgrade` among the tokens of its `Connection` headers).
 - `read(): Promise<u8[] | null>`: the next piece of the body as it arrives, null at its end.
   Nothing is kept: for uploads of any size, and proxies.
 - `body(): Promise<u8[]>`, `bodyText(): Promise<string>` (UTF-8, invalid bytes as U+FFFD): the
@@ -119,9 +122,10 @@ first reads it.
   phrase is Node's `http.STATUS_CODES`), `header(name, value)` (a `content-type` replaces the
   default). As Node, `header` throws `TypeError` for a name that is not a token or a value with
   a control character other than TAB, so a value taken from a request cannot add a header
-  (`a\r\nX-Injected: 1`). `Content-Length` and `Transfer-Encoding` are the server's, which frames
-  the body itself: a handler's are not sent, except a `Content-Length` for the response to a
-  `HEAD` request (the length a `GET` would get).
+  (`a\r\nX-Injected: 1`). Unlike Node, which throws for characters above U+00FF and sends a
+  value as Latin-1, a value is sent as UTF-8. `Content-Length` and `Transfer-Encoding` are the
+  server's, which frames the body itself: a handler's are not sent, except a `Content-Length` for
+  the response to a `HEAD` request (the length a `GET` would get).
 - `send(text)` (`text/plain; charset=utf-8`), `sendBytes(bytes)` (`application/octet-stream`),
   `json(text)` (`application/json`), `html(text)` (`text/html; charset=utf-8`): write the
   response, with `Server`, `Date` and `Content-Length`; one per request.

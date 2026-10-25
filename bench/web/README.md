@@ -36,6 +36,13 @@ bench/web/linux.sh --platform linux/arm64          # everything in Docker, no lo
 bench/web/summarize.py bench/web/results/<run>.jsonl
 ```
 
+The TechEmpower table in #1533 came from `linux.sh`'s setup (the bench image and a Postgres
+container with `db/db.sh`'s settings) on Apple silicon: `DURATION=10 WARMUP=3 bench/web/run.sh`
+once per server (`SERVERS=velt-native`, `SERVERS="velt rust go bun node"`), each cell the best
+level. Comparisons between two builds of one server were interleaved rounds of the same `wrk`
+runs, A then B, three times. `run.sh` warns when the database does not run with
+`synchronous_commit=off`, which makes `/updates` wait for the disk.
+
 **Use a release `velt`** (`cargo build --release -p veltc -p velt_rt`, then
 `VELT=target/release/velt`): `velt` links the runtime library that sits next to it, so a debug
 `velt` produces servers on the *debug* runtime (debug assertions, checked allocator), which
