@@ -66,6 +66,15 @@ impl FnCx<'_, '_> {
         }
         let owner = self.cx.adt(cur)?.name.clone();
         let p = &prop.name;
+        let g = *self.cx.adt(cur)?.statics.get(p)?;
+        if !self.cx.global(g).is_some_and(|g| g.mutable) {
+            // TypeScript's TS2540 comes first: the field can't be assigned anywhere.
+            self.cx.err(
+                format!("cannot assign to `{cname}.{p}`: it is a `static readonly` field (of `{owner}`)"),
+                prop.span,
+            );
+            return Some(None);
+        }
         let via = match object.kind {
             ast::ExprKind::This => format!(
                 "`this` in a static method is the class it is called on, here `{cname}`, so "
