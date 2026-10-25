@@ -90,7 +90,7 @@ impl FnCx<'_, '_> {
         let Some(c) = self.cx.constraint_of(p).filter(|_| !interface_bound) else {
             return Err(obj);
         };
-        if want == Want::BorrowMut || matches!(self.cx.ty.kind(c), TyKind::FnPtr { .. }) {
+        if want == Want::BorrowMut || !self.array_or_primitive(c) {
             return Err(obj);
         }
         let length = name == "length"
@@ -107,6 +107,25 @@ impl FnCx<'_, '_> {
             }
             false => read,
         })
+    }
+
+    /// Is `t` an array or primitive type (or a union of them), whose members a value read
+    /// through `any` has as the bound does? A class bound (`T extends Map<K, V>`) keeps its
+    /// compile error: its members are resolved statically, not by name.
+    fn array_or_primitive(&mut self, t: TyId) -> bool {
+        if let Some(ms) = self.cx.union_members(t) {
+            return ms.iter().all(|m| self.array_or_primitive(*m));
+        }
+        let t = self.cx.brand_base(t).unwrap_or(t);
+        matches!(
+            self.cx.ty.kind(t),
+            TyKind::Array(_)
+                | TyKind::Str
+                | TyKind::Bool
+                | TyKind::Int(_)
+                | TyKind::Float(_)
+                | TyKind::Literal(_)
+        )
     }
 
     /// `p.name` read where `p`'s type is a deferred form over type parameters bounded by
@@ -188,6 +207,8 @@ impl FnCx<'_, '_> {
         let str_ = self.cx.ty.str_;
         let rty = self.cx.ty.intern(TyKind::Adt(record, vec![str_, any]));
         self.cx.objects.record_fills = true;
+        // Filling an object from the record reads it through the `any` table (`any_record_fill`).
+        self.note_dyn_members();
         let r = self.expr(expr, Some(rty), Want::Move);
         let r = self.coerce(r, rty);
         let _ = span;

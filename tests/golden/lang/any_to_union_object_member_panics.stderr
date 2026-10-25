@@ -1,1 +1,1 @@
-panic: TypeError: the value is not a VNode (it is an object)
+panic: TypeError: the value is not a VNode (it is an object of another type)
