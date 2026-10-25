@@ -114,4 +114,20 @@ mod tests {
         // `b` is the function `as` itself.
         assert!(matches!(b, ExprKind::Ident(_)), "{b:?}");
     }
+
+    #[test]
+    fn a_line_break_before_as_or_satisfies_ends_the_expression() {
+        // TypeScript: `const y = 1` and `as(2)` on the next line declare `y`, then call `as`.
+        for word in ["as", "satisfies"] {
+            let src = format!(
+                "function {word}(x: any) {{ return x; }}\nfunction g() {{\nconst y = 1\n{word}(2)\n}}\n"
+            );
+            assert_eq!(messages(&src, false), Vec::<String>::new(), "{src}");
+            let (module, _) = crate::parse_file(FileId(0), &src);
+            let ItemKind::Function(g) = &module.items[1].kind else {
+                panic!("{:?}", module.items[1]);
+            };
+            assert_eq!(g.body.stmts.len(), 2, "{src}");
+        }
+    }
 }
