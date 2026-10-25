@@ -318,7 +318,9 @@ impl FnLower<'_, '_> {
         (oty, vty): (TyId, TyId),
         fields: &[(i128, u32)],
     ) -> Operand {
-        let v = self.expr(value);
+        // Owned: each field's branch stores the member it holds (`key_read`'s result is a
+        // registered temporary, taken over here; a place is shared).
+        let v = self.consume(value);
         let vt = self.vty(vty);
         let tmp = self.temp(vt);
         self.assign(Place::local(tmp), Rvalue::Use(v));
@@ -338,7 +340,9 @@ impl FnLower<'_, '_> {
             let fi = ftys[*k as usize];
             let fp = self.field_place(&place, oty, *k);
             let name = names.get(*k as usize).cloned().unwrap_or_default();
-            let stored = self.key_store_value(&Place::local(tmp), vty, fi, &name);
+            // The field as the `TypeError`s name it, with its type as written.
+            let field = format!("`{name}` ({})", self.field_type_name(fi));
+            let stored = self.key_store_value(&Place::local(tmp), vty, fi, &field);
             if !self.cx.is_unit(fi) {
                 self.drop_glue(fp.clone(), fi);
                 self.assign(fp.clone(), Rvalue::Use(stored));
@@ -422,7 +426,6 @@ impl FnLower<'_, '_> {
         let dt = self.cx.ty(to);
         let dst = self.temp(dt);
         let join = self.new_block();
-        let fname = self.field_type_name(to);
         let member = |lw: &mut Self, payload: Operand, m: TyId| match lw.member_variant(to, m) {
             Some(k) if lw.cx.variant_tys(to, k)[0] == m => {
                 let w = lw.union_value(to, k, payload, m);
@@ -431,8 +434,8 @@ impl FnLower<'_, '_> {
             }
             _ => {
                 lw.panic_msg(&format!(
-                        "TypeError: `x[k] = v` stores a value of another type in the field `{name}` ({fname})"
-                    ));
+                    "TypeError: `x[k] = v` stores a value of another type in the field {name}"
+                ));
                 lw.terminate(Terminator::Unreachable);
             }
         };
@@ -446,10 +449,11 @@ impl FnLower<'_, '_> {
     }
 
     /// The value at `src` (of type `from`, the union `T[K]` or an option of it, owned) as the
-    /// field type `to` of field `name`: a nothing is the field's same nothing, a member of the
-    /// field's type is its payload, and a member of another type, or a nothing the field
-    /// cannot hold, stops the program with a `TypeError` (decision 4). A `T | null |
-    /// undefined` is an option of a `T | null` (`Cx::kind`), taken one option at a time.
+    /// field type `to` of the field `name` names (`` `s` (string | null) ``): a nothing is the
+    /// field's same nothing, a member of the field's type is its payload, and a member of
+    /// another type, or a nothing the field cannot hold, stops the program with a `TypeError`
+    /// (decision 4). A `T | null | undefined` is an option of a `T | null` (`Cx::kind`), taken
+    /// one option at a time.
     fn key_store_value(&mut self, src: &Place, from: TyId, to: TyId, name: &str) -> Operand {
         if from == to {
             return Operand::Copy(src.clone());
@@ -496,10 +500,9 @@ impl FnLower<'_, '_> {
         if let Some(w) = self.nothing_in(n, to) {
             return w;
         }
-        let fname = self.field_type_name(to);
         let what = if n.has_null() { "null" } else { "undefined" };
         self.panic_msg(&format!(
-            "TypeError: `x[k] = v` stores `{what}` in the field `{name}` ({fname})"
+            "TypeError: `x[k] = v` stores `{what}` in the field {name}"
         ));
         self.terminate(Terminator::Unreachable);
         unit()
@@ -522,7 +525,7 @@ impl FnLower<'_, '_> {
     }
 
     /// The member of the union value at `src` (type `from`) that has type `to`, or a
-    /// `TypeError` naming field `name`; the value itself when `from` is `to`.
+    /// `TypeError` naming the field `name`; the value itself when `from` is `to`.
     fn key_member(&mut self, src: &Place, from: TyId, to: TyId, name: &str) -> Operand {
         if from == to {
             return Operand::Copy(src.clone());
@@ -549,9 +552,8 @@ impl FnLower<'_, '_> {
             default: bad,
         });
         self.switch_to(bad);
-        let fname = self.field_type_name(to);
         self.panic_msg(&format!(
-            "TypeError: `x[k] = v` stores a value of another type in the field `{name}` ({fname})"
+            "TypeError: `x[k] = v` stores a value of another type in the field {name}"
         ));
         self.terminate(Terminator::Unreachable);
         self.switch_to(ok);
