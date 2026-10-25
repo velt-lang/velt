@@ -78,6 +78,16 @@ impl FnCx<'_, '_> {
             .collect()
     }
 
+    /// Does a literal with `props` and an iterator method have other members, or use `this` in
+    /// the method?
+    pub(super) fn method_member(props: &[ast::ObjectProp]) -> bool {
+        props.len() > 1
+            || props.iter().any(|p| match p {
+                ast::ObjectProp::Method(d) => this_in(&d.body).is_some(),
+                _ => false,
+            })
+    }
+
     /// The literal's `[Symbol.iterator]()` / `[Symbol.asyncIterator]()` method, if it is its one
     /// member, takes no parameters and does not use `this`; else reported.
     fn iterator_method<'p>(
