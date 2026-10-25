@@ -1,4 +1,3 @@
 generic_dyn_refused.vlt:39:39: error: generic method `wrap` is overridden in `Sub`, so a `Base` converted to `Box` would need dynamic dispatch
-generic_dyn_refused.vlt:41:25: error: mismatched types
 generic_dyn_refused.vlt:17:16: error: generic method `wrap` is overridden in `Sub`, so a `Base` converted to `Box` would need dynamic dispatch
-  = note: `C` converts to `H<unknown>` through a wrapper that checks each call's arguments, but the wrapper doesn't forward the type arguments of the generic method `wrap` yet (#943)
+generic_dyn_refused.vlt:41:25: error: an `H` at other type arguments can't be a value here yet: the program calls its generic method `wrap` through interface values

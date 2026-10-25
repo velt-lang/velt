@@ -528,6 +528,7 @@ fn analyze_bodies(cx: &mut ctx::Ctx) {
     timings::pass("absent_fields::check", || absent_fields::check(cx));
     timings::pass("fresh_returns::check", || fresh_returns::check(cx));
     timings::pass("generic_override_sites::check", || {
+        generic_override_sites::check_adapters(cx);
         generic_override_sites::check(cx)
     });
     // Growing generic recursion has infinitely many instantiations: the passes below propagate
