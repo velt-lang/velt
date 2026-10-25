@@ -2471,7 +2471,7 @@ Where an interface with methods is expected (an annotation, a parameter, a retur
   object type (`const q: { v: number } = t`, also a `readonly` or field-only interface form of
   it) as the object it holds. That conversion needs every value of the alias in the program to
   hold such an object: a class implementing it, or a literal with accessors for it, makes it an
-  error. `JSON.stringify`, object spread (`{ ...t }`), `keyof T` and `Partial<T>` do not take
+  error, also when the value reaches the alias through another interface of the same members. `JSON.stringify`, object spread (`{ ...t }`), `keyof T` and `Partial<T>` do not take
   the alias yet.
 - A method with a default body and an optional field may be left out (the field is `undefined`);
   every other member must be given, and a member the interface doesn't declare is an error.

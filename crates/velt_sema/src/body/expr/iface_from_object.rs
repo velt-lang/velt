@@ -256,12 +256,18 @@ impl FnCx<'_, '_> {
 
 /// The conversions of interface values to the object type of their shape (`Ctx::unwraps`):
 /// each is an error unless every implementation of the interface in the program is for that
-/// object type (or one differing in `readonly`), so every value holds such an object.
+/// object type (or one differing in `readonly`), so every value holds such an object. A value
+/// of another interface converted to it (`Upcast`, `synth_ifaces`) holds an object of one of
+/// that interface's implementations, so those count too.
 pub(crate) fn check_unwraps(cx: &mut Ctx) {
     let unwraps = std::mem::take(&mut cx.unwraps);
     for (iface, args, full, span) in unwraps {
+        let sources = upcast_sources(cx, iface);
         let tys: Vec<TyId> = (cx.impls.iter())
-            .filter(|i| i.iface == iface && i.iface_args == args)
+            .filter(|i| {
+                (i.iface == iface && i.iface_args == args)
+                    || (i.iface != iface && sources.contains(&i.iface))
+            })
             .map(|i| i.ty)
             .collect();
         let Some(other) = tys
@@ -271,14 +277,37 @@ pub(crate) fn check_unwraps(cx: &mut Ctx) {
             continue;
         };
         let iname = cx.iface(iface).map(|i| i.name.clone()).unwrap_or_default();
-        let (to, of) = (cx.display(full), cx.display(other));
+        let to = cx.display(full);
+        let literal =
+            matches!(cx.ty.kind(other), TyKind::Adt(d, _) if cx.literal_structs.contains(d));
+        let of = match literal {
+            true => "an object literal with accessors".to_string(),
+            false => format!("`{}`", cx.display(other)),
+        };
         cx.error(
             Diagnostic::error(
-                format!("a `{iname}` converts to `{to}` only as the object it holds, and this program also makes `{iname}` values of `{of}`, which is no `{to}`"),
+                format!("a `{iname}` converts to `{to}` only as the object it holds, and this program also makes `{iname}` values of {of}, which is no `{to}`"),
                 span,
             )
             .with_note(format!("a `{iname}` made from a `{to}` (an object literal of values, or a value of that type) converts back as the same object; one made from a class or from a literal with accessors would need a copy, which Velt does not make here"))
             .with_note(format!("build the object explicitly from the `{iname}`'s members, or keep the value a `{to}`")),
         );
     }
+}
+
+/// The interfaces whose values the program converts to interface `iface`, directly or through
+/// others (`synth_ifaces` upcasts).
+fn upcast_sources(cx: &Ctx, iface: DefId) -> Vec<DefId> {
+    let edges = &cx.synth_ifaces.upcasts;
+    let mut out: Vec<DefId> = vec![];
+    let mut todo = vec![iface];
+    while let Some(want) = todo.pop() {
+        for &(have, _) in edges.iter().filter(|(h, w)| *w == want && *h != iface) {
+            if !out.contains(&have) {
+                out.push(have);
+                todo.push(have);
+            }
+        }
+    }
+    out
 }
