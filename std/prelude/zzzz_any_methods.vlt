@@ -152,3 +152,32 @@ export function __anyStr_concat(s: string, args: any[]): any {
 export function __anyStr_localeCompare(s: string, args: any[]): any {
   return s.localeCompare(__anyStrArg(args, 0)) as number;
 }
+
+// Numbers and booleans.
+
+export function __anyNum_toFixed(n: number, args: any[]): any {
+  return n.toFixed(__anyIntArg(args, 0, 0));
+}
+export function __anyNum_toString(n: number, args: any[]): any {
+  const radix = __anyArg(args, 0);
+  if (radix === undefined) {
+    return __anyText(n, "");
+  }
+  return n.toString(__anyIntArg(args, 0, 10) as number);
+}
+export function __anyNum_toPrecision(n: number, args: any[]): any {
+  const p = __anyArg(args, 0);
+  if (p === undefined) {
+    return __anyText(n, "");
+  }
+  return n.toPrecision(+p);
+}
+export function __anyNum_valueOf(n: number, args: any[]): any {
+  return n;
+}
+export function __anyBool_toString(b: boolean, args: any[]): any {
+  return b ? "true" : "false";
+}
+export function __anyBool_valueOf(b: boolean, args: any[]): any {
+  return b;
+}
