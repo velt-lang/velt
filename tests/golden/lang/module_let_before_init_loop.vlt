@@ -1,0 +1,15 @@
+// A module-level `let` read in a loop, through a call, before its initializer ran: the first
+// access stops with Node's `ReferenceError`, also once a release build asks the runtime for the
+// module state once per function call (#1571).
+let a = sum();
+let xs = [1, 2, 3];
+function sum(): number {
+  let s = 0;
+  for (let i = 0; i < 3; i++) {
+    s += xs.length;
+  }
+  return s;
+}
+function main() {
+  console.log(a, xs.length);
+}

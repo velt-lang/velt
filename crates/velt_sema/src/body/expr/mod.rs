@@ -96,6 +96,7 @@ mod literal_keys;
 mod literal_this;
 mod literal_types;
 mod matching;
+mod math_minmax;
 pub(crate) mod member;
 mod member_errors;
 mod member_keys;
