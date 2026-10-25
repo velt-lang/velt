@@ -117,7 +117,6 @@ function indexOfByte(d: u8[], byte: u8, start: usize): i64 {
   return -1;
 }
 
-
 // `Buffer.byteLength` in a named encoding (kept out of the inlined default, UTF-8).
 function byteLengthIn(s: string, encoding: string): usize {
   if (encoding == "utf8") {
@@ -167,7 +166,6 @@ export class Buffer {
     }
     return byteLengthIn(s, encoding);
   }
-
 }
 
 // `write` at an offset past the end (cold: kept out of the inlined `write`).
