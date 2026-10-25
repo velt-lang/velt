@@ -1,7 +1,25 @@
-6 4 true true
-9 91 true 9
-5 4
-7 12 true
- [object Object] 2 0 NaN true true
-false false false true
-true false true
+1 1 1 1!
+true true true true!
+null null null null!
+undefined undefined undefined undefined!
+s s s s!
+0 0 0 0!
+1.5 1.5 1.5 1.5!
+42 [object Object] [object Object] 42!
+vs [object Object] [object Object] vs!
+7 W! W! 7!
+true base base true!
+prim:default prim:string prim:string prim:default!
+p0 p0 p0 p0!
+2 1 1 2!
+G(3) G(3) G(3) G(3)!
+Error: boom Error: boom Error: boom Error: boom!
+base base
+lit! arrow! lit! arrow!
+field! field! field!
+3 [object Object] [object Object]
+4 four
+o=[object Object] [object Object]!
+s:[object Object]true3
+[object Object],base,prim:string [object Object],base,prim:string
+1|2
