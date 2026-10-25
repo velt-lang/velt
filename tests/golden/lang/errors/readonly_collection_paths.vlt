@@ -28,3 +28,10 @@ function copied(s: ReadonlySet<string>): void {
 }
 const made = new Set<string>() as ReadonlySet<string>;
 made.add("v");
+function afterTest(s: ReadonlySet<string>, xs: string[]): void {
+  if (s instanceof Set) {
+    s.add("ok");
+  }
+  s.add("no");
+  (xs as readonly string[]).push("no");
+}

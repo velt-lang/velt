@@ -279,7 +279,9 @@ impl FnCx<'_, '_> {
         if let Some(g) = guard {
             self.f.cpu_guards.push(g);
         }
+        let unmarked = self.instanceof_unmark(cond);
         let (t, then_facts) = self.block_narrowed_ending(then, &when_true);
+        self.restore_marks(unmarked);
         if guard.is_some() {
             self.f.cpu_guards.pop();
         }

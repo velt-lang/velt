@@ -5,4 +5,6 @@ readonly_collection_paths.vlt:19:6: error: property 'add' does not exist on type
 readonly_collection_paths.vlt:22:5: error: property 'delete' does not exist on type 'ReadonlySet<string>' (TypeScript's TS2339)
 readonly_collection_paths.vlt:23:5: error: property 'push' does not exist on type 'readonly string[]' (TypeScript's TS2339)
 readonly_collection_paths.vlt:27:5: error: property 'clear' does not exist on type 'ReadonlySet<string>' (TypeScript's TS2339)
+readonly_collection_paths.vlt:35:5: error: property 'add' does not exist on type 'ReadonlySet<string>' (TypeScript's TS2339)
+readonly_collection_paths.vlt:36:29: error: property 'push' does not exist on type 'readonly string[]' (TypeScript's TS2339)
 readonly_collection_paths.vlt:30:6: error: property 'add' does not exist on type 'ReadonlySet<string>' (TypeScript's TS2339)

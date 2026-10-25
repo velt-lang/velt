@@ -295,6 +295,11 @@ pub(crate) struct Frame {
     /// `new C()` assigned through `any` with `??=`, `||=` or `&&=` takes its type arguments from
     /// it (`dynamic_write`).
     pub assign_hint: Option<TyId>,
+    /// The read-only local a method call written `(x as T).m()` may change (`T` not read-only;
+    /// `readonly_arrays.rs`).
+    pub readonly_exempt: Option<LocalId>,
+    /// A method call written `(x as T).m()` with `T` read-only (`readonly_arrays.rs`).
+    pub readonly_cast_recv: bool,
     /// `const c = [2, "y"] as const` (literals of different types): its elements, which an
     /// array pattern taking `c` apart reads as the literal (`literal_patterns`).
     pub as_const_tuples: FxHashMap<LocalId, Vec<velt_syntax::ast::Expr>>,
@@ -416,6 +421,8 @@ impl Frame {
             await_using: Default::default(),
             local_marks: Default::default(),
             assign_hint: None,
+            readonly_exempt: None,
+            readonly_cast_recv: false,
             as_const_tuples: Default::default(),
             closure_consts: Default::default(),
             callable_writes: None,

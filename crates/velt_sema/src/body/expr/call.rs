@@ -468,6 +468,7 @@ impl FnCx<'_, '_> {
                 self.view_receiver = super::member::is_name(object);
                 let recv = self.expr(object, None, Want::Borrow);
                 self.view_receiver = false;
+                self.exempt_cast_receiver(object, &recv);
                 recv
             }
         };

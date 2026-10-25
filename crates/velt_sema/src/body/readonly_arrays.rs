@@ -60,12 +60,80 @@ impl FnCx<'_, '_> {
     /// Records local `l`, declared without a type, as read-only when its initializer `init`
     /// (`ast`, checked as `h`) is a cast to a read-only type or a read-only variable.
     pub(super) fn note_readonly_init(&mut self, l: LocalId, init: &ast::Expr, h: &hir::Expr) {
-        let cast = match &init.kind {
+        // A cast decides: to a read-only type it marks, to another (`xs as string[]`, how
+        // TypeScript code gets past `readonly`) it does not.
+        let marked = match &strip_parens(init).kind {
             ast::ExprKind::Cast { ty, .. } => self.is_readonly_written(ty, 0),
-            _ => false,
+            _ => self.readonly_local(h).is_some(),
         };
-        if cast || self.readonly_local(h).is_some() {
+        if marked {
             self.mark_local(l, READONLY);
+        }
+    }
+
+    /// The receiver `recv` of a method call written `(x as T).m()`: with `T` not read-only the
+    /// call may change it, with `T` read-only it may not ([`Frame::readonly_exempt`](super::Frame)
+    /// and `readonly_cast_recv`, taken by the check).
+    pub(crate) fn exempt_cast_receiver(&mut self, object: &ast::Expr, recv: &hir::Expr) {
+        if let ast::ExprKind::Cast { ty, .. } = &strip_parens(object).kind {
+            match self.is_readonly_written(ty, 0) {
+                // `(xs as readonly string[]).push(x)`: TS2339 as through a variable.
+                true => self.f.readonly_cast_recv = true,
+                false => self.f.readonly_exempt = self.readonly_local(recv),
+            }
+        }
+    }
+
+    /// The read-only locals `cond` tests with `x instanceof Set` (`Map`, `Array`), alone or in an
+    /// `&&` chain: TypeScript narrows them to the mutable class there, so their mark is lifted
+    /// for the branch where `cond` holds. What to give [`Self::restore_marks`] after it.
+    pub(super) fn instanceof_unmark(&mut self, cond: &ast::Expr) -> Vec<(LocalId, u8)> {
+        let mut out = vec![];
+        self.instanceof_unmark_into(cond, &mut out);
+        out
+    }
+
+    fn instanceof_unmark_into(&mut self, cond: &ast::Expr, out: &mut Vec<(LocalId, u8)>) {
+        match &cond.kind {
+            ast::ExprKind::Paren(x) => self.instanceof_unmark_into(x, out),
+            ast::ExprKind::Binary {
+                op: ast::BinaryOp::And,
+                lhs,
+                rhs,
+            } => {
+                self.instanceof_unmark_into(lhs, out);
+                self.instanceof_unmark_into(rhs, out);
+            }
+            ast::ExprKind::InstanceOf { expr, ty } => {
+                let ast::ExprKind::Ident(x) = &strip_parens(expr).kind else {
+                    return;
+                };
+                let mutable_class = matches!(&ty.kind, ast::TypeExprKind::Named { path, .. }
+                    if path.len() == 1 && matches!(path[0].name.as_str(), "Set" | "Map" | "Array"));
+                if self.f.local_marks.is_empty() || !mutable_class {
+                    return;
+                }
+                let Some(l) = self.lookup_local(&x.name, x.span) else {
+                    return;
+                };
+                if let Some(m) = self
+                    .f
+                    .local_marks
+                    .get_mut(&l)
+                    .filter(|m| **m & READONLY != 0)
+                {
+                    out.push((l, *m));
+                    *m &= !READONLY;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Put back the marks [`Self::instanceof_unmark`] lifted.
+    pub(super) fn restore_marks(&mut self, marks: Vec<(LocalId, u8)>) {
+        for (l, m) in marks {
+            self.f.local_marks.insert(l, m);
         }
     }
 
@@ -124,9 +192,14 @@ impl FnCx<'_, '_> {
     /// it (`readonly number[]`).
     fn readonly_shown(&mut self, h: &hir::Expr) -> Option<String> {
         self.readonly_local(h)?;
-        let TyKind::Array(elem) = *self.cx.ty.kind(h.ty) else {
+        self.readonly_type_shown(h.ty)
+    }
+
+    /// The read-only type over `t` (`T[]`, `Set<T>`, `Map<K, V>`) as TypeScript shows it.
+    fn readonly_type_shown(&mut self, t: TyId) -> Option<String> {
+        let TyKind::Array(elem) = *self.cx.ty.kind(t) else {
             // `ReadonlySet<T>` / `ReadonlyMap<K, V>`, shown as TypeScript does.
-            let shown = self.cx.display(h.ty);
+            let shown = self.cx.display(t);
             let col = shown.starts_with("Set<") || shown.starts_with("Map<");
             return col.then(|| format!("Readonly{shown}"));
         };
@@ -162,6 +235,11 @@ impl FnCx<'_, '_> {
         args: &[ast::Expr],
         span: Span,
     ) {
+        let exempt = self.f.readonly_exempt.take();
+        let forced = std::mem::take(&mut self.f.readonly_cast_recv);
+        if exempt.is_some() && exempt == self.readonly_local(recv) {
+            return;
+        }
         let array = matches!(self.cx.ty.kind(recv.ty), TyKind::Array(_));
         if array && !MUTATING.contains(&name) {
             self.array_method_in_place(recv, name, args);
@@ -170,7 +248,11 @@ impl FnCx<'_, '_> {
         if !array && !COLLECTION_MUTATING.contains(&name) {
             return;
         }
-        if let Some(shown) = self.readonly_shown(recv) {
+        let shown = match forced {
+            true => self.readonly_type_shown(recv.ty),
+            false => self.readonly_shown(recv),
+        };
+        if let Some(shown) = shown {
             if !array {
                 self.cx.error(
                     Diagnostic::error(
@@ -372,5 +454,13 @@ pub(crate) fn is_readonly_array(t: &ast::TypeExpr) -> bool {
             matches!((non_null.next(), non_null.next()), (Some(m), None) if is_readonly_array(m))
         }
         _ => false,
+    }
+}
+
+/// `e` without the parentheses around it.
+fn strip_parens(e: &ast::Expr) -> &ast::Expr {
+    match &e.kind {
+        ast::ExprKind::Paren(x) => strip_parens(x),
+        _ => e,
     }
 }
