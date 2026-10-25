@@ -25,7 +25,10 @@ impl FnCx<'_, '_> {
             return false;
         };
         // Also as an optional value (`f?: Id`, `Id | undefined`).
-        !type_params.is_empty() || self.hint(exp).is_some_and(|t| self.cx.generic_sig(t).is_some())
+        !type_params.is_empty()
+            || self
+                .hint(exp)
+                .is_some_and(|t| self.cx.generic_sig(t).is_some())
     }
 
     /// Generic closure `e` (an arrow) as a value of generic function type `exp`, or of the
@@ -161,7 +164,10 @@ impl FnCx<'_, '_> {
             },
             span: e.span,
         };
-        let outer = self.cx.closure_constraints.replace(self.constraints.clone());
+        let outer = self
+            .cx
+            .closure_constraints
+            .replace(self.constraints.clone());
         let h = self.closure(&plain, Some(want), true);
         self.cx.closure_constraints = outer;
         let own_bounds = self.bounds[m..].to_vec();

@@ -561,6 +561,36 @@ impl FnCx<'_, '_> {
         self.static_call_as(d, d, prop, type_args, args, exp, span)
     }
 
+    /// Is static field `prop` of class `d` (or a base class) of a function type, a generic
+    /// function type or a callable object's?
+    fn static_fn_field(&mut self, d: DefId, prop: &ast::Ident) -> bool {
+        let mut cur = Some(d);
+        for _ in 0..64 {
+            let Some(c) = cur else {
+                return false;
+            };
+            if let Some(g) = self
+                .cx
+                .adt(c)
+                .and_then(|a| a.statics.get(&prop.name).copied())
+            {
+                crate::body::driver::ensure_global(self.cx, g);
+                let t = self.cx.global(g).map_or(self.cx.ty.error, |g| g.ty);
+                let t = self.cx.ty.core(t).unwrap_or(t);
+                return matches!(self.cx.ty.kind(t), TyKind::FnPtr { .. })
+                    || self.cx.is_generic_fn(t)
+                    || self.cx.is_callable_object(t);
+            }
+            cur = self
+                .cx
+                .adt(c)
+                .and_then(|a| a.base)
+                .and_then(|b| self.cx.class_of(b))
+                .map(|(c, _)| c);
+        }
+        false
+    }
+
     /// `C.f(args)`, the static method `f` that class `d` declares or inherits, run with `this`
     /// being class `this_class` (`d` or a subclass of it: `this.f()` and `super.f()` in a static
     /// method keep the class the outer call was made on).
@@ -596,6 +626,15 @@ impl FnCx<'_, '_> {
         };
         let (m, owner_generics, owner_args) = match self.find_static(d, lookup) {
             Ok(found) => found,
+            Err(false) if self.static_fn_field(d, prop) => {
+                // A static field holding a function value: a call of what it holds.
+                let f = self.static_field(d, prop, Want::Borrow, prop.span);
+                let f = f.or_else(|| self.inherited_static_field(d, prop, Want::Borrow, prop.span));
+                return match f {
+                    Some(f) => self.call_value(f, args, span),
+                    None => self.error_expr(span),
+                };
+            }
             Err(instance) => {
                 let what = match instance {
                     true => "an instance method",

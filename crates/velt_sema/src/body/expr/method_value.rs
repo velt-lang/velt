@@ -149,13 +149,23 @@ impl FnCx<'_, '_> {
                 obj.span,
             )
         };
-        let Some((arrow, fn_ty)) = self.bound_parts(obj.ty, recv, prop, exp, span) else {
+        // Where a generic function type is expected, a generic closure calling the method at
+        // each call's type arguments (`generic_values.rs`).
+        let generic = self.hint(exp).filter(|t| self.cx.is_generic_fn(*t));
+        let parts = match generic.and_then(|g| self.cx.generic_sig(g)) {
+            Some(g) => {
+                let arrow = bound_arrow(recv, prop, g.method.params.len(), &[], false, span);
+                Some((arrow, generic.unwrap_or(self.cx.ty.error)))
+            }
+            None => self.bound_parts(obj.ty, recv, prop, exp, span),
+        };
+        let Some((arrow, fn_ty)) = parts else {
             let d = Diagnostic::error(
                 format!("method `{}` cannot be used as a function value", prop.name),
                 prop.span,
             )
             .with_note(
-                "a generic method, or one with a rest parameter, has no single function type",
+                "a generic method, or one with a rest parameter, has no single function type: use it where a generic function type (`<T>(x: T) => R`) is expected, or",
             )
             .with_note(format!(
                 "wrap it in an arrow function: `{}`",
@@ -165,7 +175,10 @@ impl FnCx<'_, '_> {
             return self.error_expr(span);
         };
         if direct {
-            return self.bound_closure(&arrow, fn_ty, None);
+            return match generic {
+                Some(g) => self.generic_closure(&arrow, Some(g)),
+                None => self.bound_closure(&arrow, fn_ty, None),
+            };
         }
         self.push_scope();
         set_place_mode(&mut obj, UseMode::Move);
@@ -180,7 +193,10 @@ impl FnCx<'_, '_> {
             },
             span: at,
         }];
-        let value = self.bound_closure(&arrow, fn_ty, None);
+        let value = match generic {
+            Some(g) => self.generic_closure(&arrow, Some(g)),
+            None => self.bound_closure(&arrow, fn_ty, None),
+        };
         self.pop_scope();
         let ty = value.ty;
         let block = hir::Block {

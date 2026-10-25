@@ -304,7 +304,9 @@ impl Ctx<'_> {
                 // (`undefined`), as for a function value (`body::expr::call`).
                 let empty = |kind| crate::hir::Expr { kind, ty, span };
                 let default = match self.ty.kind(ty) {
-                    _ if s.rest && k + 1 == n => Some(empty(crate::hir::ExprKind::ArrayLit(vec![]))),
+                    _ if s.rest && k + 1 == n => {
+                        Some(empty(crate::hir::ExprKind::ArrayLit(vec![])))
+                    }
                     TyKind::Option(_, nothing) if nothing.has_undefined() => {
                         Some(empty(crate::hir::ExprKind::Lit(crate::hir::Lit::Null)))
                     }
