@@ -2073,6 +2073,12 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   assignment (`xs[0] = x`, TS2542) are errors; the elements' own fields may change
   (`xs[0].n = 1`). The check follows the variable: a `readonly T[]` copied into a `T[]`
   variable or passed as a `T[]` parameter (TypeScript's TS4104) is not reported yet.
+- **`ReadonlySet<T>`** and **`ReadonlyMap<K, V>`** are `Set<T>` and `Map<K, V>` seen through a
+  type that may not change them, as in TypeScript: a `Set` or `Map` is passed where one is
+  expected (`const keys: ReadonlySet<string> = new Set(["a"])`), and everything that reads it
+  works (`has`, `get`, `size`, `forEach`, `keys()`, `for...of`, `new Map(m)`). Through a
+  variable or parameter declared with one, the methods that change the collection (`add`,
+  `set`, `delete`, `clear`, `upsert`, `update`, `getOrInsert`) are TypeScript's TS2339.
 - **Tuples** `[A, B]`: `t[0]`, destructuring, printed like arrays. Element labels document the
   elements and are otherwise ignored, as in TypeScript: `type Wire = [kind: string, b64:
   string]`. Optional elements (`[A, B?]`, `[name: string, age?: number]`) and rest elements

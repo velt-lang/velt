@@ -1115,3 +1115,10 @@ function lookupUtf8<V>(m: Map<string, V>, key: u8[], p: u64): i64 {
     dist++;
   }
 }
+
+/**
+ * TypeScript's `ReadonlyMap<K, V>`: a `Map<K, V>` that a variable or parameter declared with
+ * this type may not change (`set`, `delete`, `clear` and the other updates are errors
+ * through it).
+ */
+export type ReadonlyMap<K, V> = Map<K, V>;

@@ -3,7 +3,9 @@
 //! parameter declared with one of them may not be written through: a mutating method
 //! (`push`, `sort`, …) is TypeScript's TS2339 and an element assignment TS2542. The check
 //! follows the variable, not the value: a copy into a `T[]` variable is not checked (TypeScript
-//! rejects that assignment, TS4104).
+//! rejects that assignment, TS4104). `ReadonlySet<T>` and `ReadonlyMap<K, V>` are `Set<T>` and
+//! `Map<K, V>` (prelude aliases), checked the same way: through a variable declared with one,
+//! the methods that change the collection (`add`, `set`, `delete`, `clear`, ...) are TS2339.
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
@@ -14,7 +16,7 @@ use crate::hir::{self, ExprKind as H, LitValue, LocalId, TyId, TyKind};
 impl FnCx<'_, '_> {
     /// Records local `l` declared with the written type `ty` when that is a read-only array.
     pub(super) fn note_readonly_array(&mut self, l: LocalId, ty: Option<&ast::TypeExpr>) {
-        if ty.is_some_and(is_readonly_array) {
+        if ty.is_some_and(|t| is_readonly_array(t) || is_readonly_collection(t)) {
             self.f.readonly_arrays.insert(l);
         }
     }
@@ -29,7 +31,10 @@ impl FnCx<'_, '_> {
             return None;
         }
         let TyKind::Array(elem) = *self.cx.ty.kind(h.ty) else {
-            return None;
+            // `ReadonlySet<T>` / `ReadonlyMap<K, V>`, shown as TypeScript does.
+            let shown = self.cx.display(h.ty);
+            let col = shown.starts_with("Set<") || shown.starts_with("Map<");
+            return col.then(|| format!("Readonly{shown}"));
         };
         let shown = self.cx.display(elem);
         match self.cx.union_members(elem) {
@@ -63,13 +68,25 @@ impl FnCx<'_, '_> {
         args: &[ast::Expr],
         span: Span,
     ) {
-        if !MUTATING.contains(&name) {
-            if matches!(self.cx.ty.kind(recv.ty), TyKind::Array(_)) {
-                self.array_method_in_place(recv, name, args);
-            }
+        let array = matches!(self.cx.ty.kind(recv.ty), TyKind::Array(_));
+        if array && !MUTATING.contains(&name) {
+            self.array_method_in_place(recv, name, args);
+            return;
+        }
+        if !array && !COLLECTION_MUTATING.contains(&name) {
             return;
         }
         if let Some(shown) = self.readonly_shown(recv) {
+            if !array {
+                self.cx.error(
+                    Diagnostic::error(
+                        format!("property '{name}' does not exist on type '{shown}' (TypeScript's TS2339)"),
+                        span,
+                    )
+                    .with_note("a read-only collection has no methods that change it; copy it first (`new Set(s)`, `new Map(m)`) to get one you may change"),
+                );
+                return;
+            }
             self.cx.error(
                 Diagnostic::error(
                     format!("property '{name}' does not exist on type '{shown}' (TypeScript's TS2339)"),
@@ -186,6 +203,41 @@ const MUTATING: [&str; 9] = [
     "fill",
     "copyWithin",
 ];
+
+/// The methods of `Set<T>` and `Map<K, V>` that `ReadonlySet<T>` and `ReadonlyMap<K, V>` don't
+/// have.
+const COLLECTION_MUTATING: [&str; 7] = [
+    "add",
+    "set",
+    "delete",
+    "clear",
+    "upsert",
+    "update",
+    "getOrInsert",
+];
+
+/// `ReadonlySet<T>` or `ReadonlyMap<K, V>`, possibly `| null`.
+fn is_readonly_collection(t: &ast::TypeExpr) -> bool {
+    match &t.kind {
+        ast::TypeExprKind::Named { path, args } => {
+            path.len() == 1
+                && matches!(
+                    (path[0].name.as_str(), args.len()),
+                    ("ReadonlySet", 1) | ("ReadonlyMap", 2)
+                )
+        }
+        ast::TypeExprKind::Union(ms) => {
+            let mut non_null = ms.iter().filter(|m| {
+                !matches!(
+                    m.kind,
+                    ast::TypeExprKind::Null | ast::TypeExprKind::Undefined
+                )
+            });
+            matches!((non_null.next(), non_null.next()), (Some(m), None) if is_readonly_collection(m))
+        }
+        _ => false,
+    }
+}
 
 /// `readonly T[]` (parsed as `ReadonlyArray<T>`) or `ReadonlyArray<T>`, possibly `| null`.
 pub(crate) fn is_readonly_array(t: &ast::TypeExpr) -> bool {
