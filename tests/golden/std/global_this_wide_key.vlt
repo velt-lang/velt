@@ -1,0 +1,22 @@
+// A variable key of `globalThis` asserted as a type listing its keys must be one of them, as
+// TypeScript requires (TS7053): a `string` is an error, not a property Velt would skip.
+// `Object.defineProperty` takes any key in TypeScript; Velt, which keeps each property as a
+// variable, needs one of the listed keys there too.
+type Host = { __WA__?: number; __WB__?: number };
+let calls = 0;
+function value(): number {
+  calls++;
+  return calls;
+}
+function read(k: string): number | undefined {
+  return (globalThis as Host)[k];
+}
+function write(k: string): void {
+  (globalThis as Host)[k] = value();
+}
+function define(k: string): void {
+  Object.defineProperty(globalThis as Host, k, { value: value(), writable: true, configurable: true });
+}
+read("console");
+write("__WZ__");
+define("__WZ__");

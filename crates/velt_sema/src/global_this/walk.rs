@@ -405,7 +405,8 @@ impl<'a> Walk<'a> {
                     };
                     let span = e.span;
                     let mut chain = synth(E::Lit(ast::Lit::Undefined), span);
-                    for key in keys.into_iter().rev() {
+                    let all = keys.clone();
+                    for (i, key) in keys.into_iter().enumerate().rev() {
                         let mut read = synth(
                             E::Member {
                                 object: Box::new(synth(
@@ -429,7 +430,12 @@ impl<'a> Walk<'a> {
                         self.property(&mut read, false);
                         chain = synth(
                             E::Cond {
-                                cond: Box::new(is_key(&k, &key, span)),
+                                cond: Box::new(is_key(
+                                    &k,
+                                    &key,
+                                    (i == 0).then_some(&all[..]),
+                                    span,
+                                )),
                                 then: Box::new(read),
                                 els: Box::new(chain),
                             },
@@ -499,7 +505,8 @@ impl<'a> Walk<'a> {
         let (k, keys) = self.listed(&t, &args[1])?;
         let span = e.span;
         let mut els: Option<Box<ast::Stmt>> = None;
-        for key in keys.into_iter().rev() {
+        let all = keys.clone();
+        for (i, key) in keys.into_iter().enumerate().rev() {
             let mut call = e.clone();
             if let E::Call { args, .. } = &mut call.kind {
                 args[1] = synth(E::Lit(ast::Lit::Str(key.clone())), args[1].span);
@@ -514,7 +521,7 @@ impl<'a> Walk<'a> {
             };
             els = Some(Box::new(ast::Stmt {
                 kind: S::If {
-                    cond: is_key(&k, &key, span),
+                    cond: is_key(&k, &key, (i == 0).then_some(&all[..]), span),
                     then,
                     els,
                 },
@@ -543,7 +550,8 @@ impl<'a> Walk<'a> {
         let (k, keys) = self.listed(&t, index)?;
         let span = e.span;
         let mut els: Option<Box<ast::Stmt>> = None;
-        for key in keys.into_iter().rev() {
+        let all = keys.clone();
+        for (i, key) in keys.into_iter().enumerate().rev() {
             let member = synth(
                 E::Member {
                     object: Box::new(synth(
@@ -582,7 +590,7 @@ impl<'a> Walk<'a> {
             };
             els = Some(Box::new(ast::Stmt {
                 kind: S::If {
-                    cond: is_key(&k, &key, span),
+                    cond: is_key(&k, &key, (i == 0).then_some(&all[..]), span),
                     then,
                     els,
                 },
@@ -648,6 +656,9 @@ impl<'a> Walk<'a> {
     }
 }
 
+/// The prelude function `e satisfies T` is a call of.
+const SATISFIES: &str = "__satisfies";
+
 fn synth(kind: E, span: velt_common::Span) -> ast::Expr {
     ast::Expr {
         id: ast::NodeId(u32::MAX),
@@ -667,8 +678,15 @@ fn ident(name: &str, span: velt_common::Span) -> ast::Expr {
 }
 
 /// `(k as string) === "key"`: the cast keeps `k` from narrowing, so a test in a branch of
-/// another (a read in the value of an assignment) is not always false.
-fn is_key(k: &ast::Ident, key: &str, span: velt_common::Span) -> ast::Expr {
+/// another (a read in the value of an assignment) is not always false. The first test of a
+/// chain (`listed`: the keys) also checks that `k` is one of them, `__satisfies<"a" | "b">(k)`,
+/// as TypeScript requires (TS7053): a wider key is a type error, not a property the chain skips.
+fn is_key(
+    k: &ast::Ident,
+    key: &str,
+    listed: Option<&[String]>,
+    span: velt_common::Span,
+) -> ast::Expr {
     let string = ast::TypeExpr {
         kind: ast::TypeExprKind::Named {
             path: vec![ast::Ident {
@@ -679,9 +697,35 @@ fn is_key(k: &ast::Ident, key: &str, span: velt_common::Span) -> ast::Expr {
         },
         span: k.span,
     };
+    let mut read = synth(E::Ident(k.clone()), k.span);
+    if let Some(keys) = listed {
+        let lit = |s: &String| ast::TypeExpr {
+            kind: ast::TypeExprKind::Literal(ast::SignedLit {
+                lit: ast::Lit::Str(s.clone()),
+                negative: false,
+            }),
+            span: k.span,
+        };
+        let union = match keys {
+            [one] => lit(one),
+            _ => ast::TypeExpr {
+                kind: ast::TypeExprKind::Union(keys.iter().map(lit).collect()),
+                span: k.span,
+            },
+        };
+        read = synth(
+            E::Call {
+                callee: Box::new(ident(SATISFIES, k.span)),
+                type_args: vec![union],
+                args: vec![read],
+                optional: false,
+            },
+            k.span,
+        );
+    }
     let k = synth(
         E::Cast {
-            expr: Box::new(synth(E::Ident(k.clone()), k.span)),
+            expr: Box::new(read),
             ty: string,
         },
         k.span,
