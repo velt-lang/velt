@@ -14,7 +14,7 @@ async function run() {
     console.log(s.next(), JSON.stringify(s.return?.(undefined)), JSON.stringify(s.next()));
     const b: Box | null = new Box();
     console.log(b?.get?.());
-    const n: Box | null = null;
+    const n = null as Box | null;
     console.log(n?.get?.());
 }
 run();
