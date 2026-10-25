@@ -16,8 +16,8 @@ use velt_sema::hir::{self, DefId, ExprKind as K, Intrinsic, LocalId, TyId};
 
 use super::frozen::place_root;
 use super::rt::Rt;
-use super::{cint, FnLower, LkMode};
-use crate::vir::{Operand, Place, Ty};
+use super::{cfunc, cint, FnLower, LkMode, Work};
+use crate::vir::{BinOp, Operand, Place, Rvalue, Ty};
 
 /// A frame outside every read (velt_rt `velt_rt_lk_leave_to`).
 const OUTSIDE: u64 = u64::MAX;
@@ -27,7 +27,7 @@ impl FnLower<'_, '_> {
     /// `args`): in a `read` callback that code in read mode may call, it moves into the frame
     /// holding the store's destination (module docs).
     pub(super) fn transfer_stored(&mut self, v: Operand, ty: TyId, args: &[hir::Expr]) -> Operand {
-        let outermost = self.own_captures && !self.own_nested();
+        let outermost = self.own_captures && !self.own_nested() && !self.own_deep;
         let levels = match self.mode == LkMode::Read && !outermost {
             true if self.cx.reaches_lock_set(ty) && self.cx.transfers(ty) => {
                 self.store_levels(args.as_ptr() as usize)
@@ -73,10 +73,15 @@ impl FnLower<'_, '_> {
         };
         let mut var = root;
         loop {
-            let callback = matches!(self.cx.closure_parents.get(&def), Some((_, true)));
+            // The code calling the outermost callback, outside read mode for counting: its
+            // variables are the caller's, declared there or captured by it (a closure
+            // such as `const run = () => a.read(…)`).
+            if !matches!(self.cx.closure_parents.get(&def), Some((_, true))) {
+                return true;
+            }
             let f = self.cx.fn_def(def);
             let Some(c) = f.captures.iter().find(|c| c.inner == var) else {
-                return !callback;
+                return false;
             };
             match self.cx.closure_parents.get(&def) {
                 Some(&(Some(p), true)) => (var, def) = (c.outer, p),
@@ -89,7 +94,39 @@ impl FnLower<'_, '_> {
     /// (caller_stores.rs): in a nested `read` callback (`own_nested`) that frame is outside
     /// every read, not the callback around this one (`velt_rt_lk_leave_to`).
     pub(super) fn in_caller_frame(&mut self, f: impl FnOnce(&mut Self)) {
-        if !self.own_nested() || self.dead() {
+        if !self.own_nested() && !self.own_deep {
+            return f(self);
+        }
+        self.leave_to_outside(f);
+    }
+
+    /// The code of the `read` callback literal `def` (with captures) in code whose read mode is
+    /// asked (`LkMode::Checked`: a closure, a poll): outside read mode that code is the caller
+    /// whose variables the callback captured (`Work::ReadOwn`), in it a reader (`Work::Read`).
+    pub(super) fn read_callback_code(&mut self, def: DefId) -> Operand {
+        let work = Work::Fn(def, self.targs.clone());
+        let own = cfunc(self.cx.func_read_own(work.clone(), false));
+        let read = cfunc(self.cx.func_direct(work, LkMode::Read));
+        let m = self.lk_mode();
+        let reading = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ne, m, cint(0, Ty::U8)));
+        let code = self.temp(Ty::Ptr);
+        let (r, o, join) = (self.new_block(), self.new_block(), self.new_block());
+        self.branch(reading, r, o);
+        self.switch_to(r);
+        self.assign(Place::local(code), Rvalue::Use(read));
+        self.goto(join);
+        self.switch_to(o);
+        self.assign(Place::local(code), Rvalue::Use(own));
+        self.goto(join);
+        self.switch_to(join);
+        Operand::Copy(Place::local(code))
+    }
+
+    /// `f`, transfers moving what a `read` callback made into code outside every read (velt_rt
+    /// `velt_rt_lk_leave_to(u64::MAX)`): in a nested callback (`in_caller_frame`), or the result
+    /// of a `read` that a `Work::Deferred` instance calls (async_fn/sync.rs).
+    pub(super) fn leave_to_outside(&mut self, f: impl FnOnce(&mut Self)) {
+        if self.dead() {
             return f(self);
         }
         let was = self.temp(Ty::U64);
@@ -165,9 +202,12 @@ impl FnLower<'_, '_> {
             let f = self.cx.fn_def(def);
             let Some(c) = f.captures.iter().find(|c| c.inner == var) else {
                 // Declared here: a callback's own variable (a reader's container; not this
-                // callback's, whose own variables name what the walk cannot follow).
+                // callback's, whose own variables name what the walk cannot follow), or one of
+                // the code around a chain of `Work::ReadOwn` callbacks, outside every read
+                // however deep the chain starts (`own_deep`).
                 return match levels {
                     0 => OUTSIDE,
+                    _ if !callback && self.own_captures => OUTSIDE,
                     n => n,
                 };
             };

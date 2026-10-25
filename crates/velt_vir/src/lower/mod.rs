@@ -437,6 +437,8 @@ struct Cx<'h> {
     cur_mode: LkMode,
     /// Whether the function being built is a `Work::ReadOwn`.
     cur_own: bool,
+    /// Whether it is one in a `Work::Deferred` instance (`FnLower::own_deep`).
+    cur_own_deep: bool,
     /// Each closure literal lowered so far: the function it is in, and whether it is a `read`
     /// callback running in read mode (leave_levels.rs).
     closure_parents: FxHashMap<DefId, (Option<DefId>, bool)>,
@@ -604,6 +606,11 @@ struct FnLower<'c, 'h> {
     /// A `read` callback that code outside read mode calls (`Work::ReadOwn`): the caller's
     /// variables it captured hold none of a store's objects.
     own_captures: bool,
+    /// A `Work::ReadOwn` callback literal in a function instance that counts by the counts
+    /// outside read mode (`Work::Deferred`, which read mode calls): that code is outside read
+    /// mode for its callbacks, but the thread may be in other reads around it, so what leaves
+    /// for it goes out of every read (leave_levels.rs).
+    own_deep: bool,
     /// The closure literal a `with`, `write` or `read` is about to call, and the read mode its
     /// code runs in.
     lock_callback: Option<(DefId, LkMode)>,

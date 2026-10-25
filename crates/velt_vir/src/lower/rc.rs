@@ -44,7 +44,7 @@ impl FnLower<'_, '_> {
     /// This function's read mode: `velt_rt_lk_mode()`, asked the first time a lock-set object is
     /// counted or written, then kept in a local (2 until asked). A thread enters or leaves read
     /// mode only around a `read` callback, which is a function of its own.
-    fn lk_mode(&mut self) -> Operand {
+    pub(super) fn lk_mode(&mut self) -> Operand {
         let m = match self.lk_mode {
             Some(m) => m,
             None => {

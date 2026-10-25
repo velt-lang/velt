@@ -129,8 +129,11 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let parent = self.cx.cur_def;
         self.cx.closure_parents.insert(def, (parent, read_callback));
         // A `read` callback plain code calls captures that code's variables only; one nested
-        // in such a callback also those of the callbacks around it (leave_levels.rs).
-        let own = read_callback && (self.mode == LkMode::Plain || self.own_captures);
+        // in such a callback also those of the callbacks around it (leave_levels.rs). A
+        // function instance counting by the counts outside read mode (`Work::Deferred`) is
+        // such code for its callbacks too, at a depth of reads not known here (`own_deep`).
+        let deep = read_callback && self.mode == LkMode::Deferred && !self.own_captures;
+        let own = read_callback && (self.mode == LkMode::Plain || self.own_captures || deep);
         let mode = match callback {
             Some((d, m)) if d == def => m,
             _ if in_frame && !borrowed => self.mode,
@@ -153,11 +156,14 @@ impl<'c, 'h> FnLower<'c, 'h> {
         }
         let frozen = self.frozen_captures(def);
         let code = match frozen {
-            0 if own => self.cx.func_read_own(Work::Fn(def, targs.clone())),
-            0 => self.cx.func_direct(Work::Fn(def, targs.clone()), mode),
-            mask => self
-                .cx
-                .func(Work::Frozen(def, targs.clone(), mask, None, vec![])),
+            0 if own => cfunc(self.cx.func_read_own(Work::Fn(def, targs.clone()), deep)),
+            // Code whose mode is asked: the thread's mode picks the callback's instance.
+            0 if read_callback && self.mode == LkMode::Checked => self.read_callback_code(def),
+            0 => cfunc(self.cx.func_direct(Work::Fn(def, targs.clone()), mode)),
+            mask => cfunc(
+                self.cx
+                    .func(Work::Frozen(def, targs.clone(), mask, None, vec![])),
+            ),
         };
         let ea = self.cx.env_agg(def, &targs);
         // A closure holding shared cells owns references too: a frame env of one would have a
@@ -194,10 +200,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         };
         self.fill_env(def, env.clone(), drop_fn, clone_fn);
         let t = self.temp(Ty::Agg(ca));
-        self.assign(
-            Place::local(t),
-            Rvalue::Aggregate(ca, vec![cfunc(code), env]),
-        );
+        self.assign(Place::local(t), Rvalue::Aggregate(ca, vec![code, env]));
         let ty = self.sub(ty);
         self.own_temp(t, ty);
         Operand::Copy(Place::local(t))

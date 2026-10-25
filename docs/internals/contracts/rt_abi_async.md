@@ -693,7 +693,10 @@ counts and writes lock-set objects by these rules, inline (velt_vir `rc.rs`):
   moved out;
 - the caller's containers (places rooted in a variable a `read` callback literal captured from
   code outside read mode, velt_vir `Work::ReadOwn`, also through each `read` callback around a
-  nested one, `leave_levels.rs`) hold no store object and are counted by the
+  nested one, `leave_levels.rs`; that code is also a function instance counting by the counts
+  outside read mode, `Work::Deferred`, which a reader calls to change the caller's containers,
+  and code whose mode is asked when the thread is outside read mode as the literal is
+  evaluated) hold no store object and are counted by the
   counts outside read mode. What a store, a `push` or a method or function changing one
   (velt_vir `LkMode::Deferred`) keeps there gets a reference by those counts when it is a
   place the caller holds already (also a reader's variable borrowing one; what comes from the

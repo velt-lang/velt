@@ -1,0 +1,44 @@
+// check: no leaks
+// A closure the code calls (`const run = () => …`) runs nested reads that store into the
+// code's array and `Set`, and another one takes them out again.
+class Box {
+  items: number[][] = [[1, 2], [3]];
+}
+
+function main() {
+  const a = new RwLock(new Box());
+  const b = new RwLock(new Box());
+  const out: number[][][] = [];
+  const s = new Set<number[][]>();
+  const run = () => {
+    a.read((x) => {
+      b.read((y) => {
+        out.push(y.items.slice());
+        s.add(x.items.map((e) => e));
+      });
+    });
+  };
+  run();
+  run();
+  console.log(out.length, s.size);
+  const drop = () => {
+    a.read((x) => {
+      b.read((y) => {
+        out.pop();
+        for (const t of s) {
+          s.delete(t);
+        }
+      });
+    });
+  };
+  drop();
+  out[0].push([4]);
+  console.log(JSON.stringify(out), s.size);
+  const once = () => {
+    a.read((x) => {
+      out.push(x.items.slice(0, 1));
+    });
+  };
+  once();
+  console.log(JSON.stringify(out));
+}
