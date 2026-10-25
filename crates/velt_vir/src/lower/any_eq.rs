@@ -20,7 +20,7 @@ use super::rt::Rt;
 use super::{cint, ice, FnLower};
 use crate::vir::{self, BinOp, Const, Operand, Place, Proj, Rvalue, Terminator, Ty, STR_AGG};
 
-/// The prelude's `==` of an object and a primitive (std/prelude/zzz_adapt.vlt).
+/// The prelude's `==` of an object and a primitive (std/prelude/zzzzz_any_ops.vlt).
 const LOOSE_EQ: &str = "std/prelude/zzzzz_any_ops::__anyLooseEq";
 
 /// Is `e` the literal `null` or `undefined` made dynamic?
@@ -30,14 +30,6 @@ fn nothing_lit(e: &hir::Expr) -> bool {
         hir::ExprKind::ToDyn { expr, .. } => nothing_lit(expr),
         _ => false,
     }
-}
-
-/// The data pointer and the descriptor of the `any` at `p`.
-fn parts(p: &Place) -> (Operand, Operand) {
-    (
-        Operand::Copy(proj(p, Proj::Field(0))),
-        Operand::Copy(proj(p, Proj::Field(1))),
-    )
 }
 
 /// How two `any`s compare.
@@ -60,14 +52,12 @@ impl FnLower<'_, '_> {
         }
         let va = self.expr(a);
         let vb = self.expr(b);
-        let pa = self.place_of(va, ta);
-        let pb = self.place_of(vb, tb);
-        let (da, xa) = parts(&pa);
-        let (db, xb) = parts(&pb);
+        let (da, xa) = self.any_parts(va, ta);
+        let (db, xb) = self.any_parts(vb, tb);
         let cmp = if loose { AnyCmp::Loose } else { AnyCmp::Strict };
         // `x == null` never compares an object with a boolean, number or string.
-        let places = (!nothing_lit(a) && !nothing_lit(b)).then_some((&pa, &pb));
-        self.any_compare(&da, &xa, &db, &xb, cmp, places)
+        let objects = !nothing_lit(a) && !nothing_lit(b);
+        self.any_compare(&da, &xa, &db, &xb, cmp, objects)
     }
 
     /// Is the `any` operand `e` a literal or a primitive made dynamic (`x === undefined`,
@@ -101,7 +91,7 @@ impl FnLower<'_, '_> {
         let db = Operand::Copy(proj(b, Proj::Field(0)));
         let xb = Operand::Copy(proj(b, Proj::Field(1)));
         let cmp = if key { AnyCmp::Key } else { AnyCmp::Strict };
-        self.any_compare(&da, &xa, &db, &xb, cmp, None)
+        self.any_compare(&da, &xa, &db, &xb, cmp, false)
     }
 
     /// `==` of the `any`s at `a` and `b` (Bool operand).
@@ -111,7 +101,7 @@ impl FnLower<'_, '_> {
         let xa = Operand::Copy(proj(a, Proj::Field(1)));
         let db = Operand::Copy(proj(b, Proj::Field(0)));
         let xb = Operand::Copy(proj(b, Proj::Field(1)));
-        self.any_compare(&da, &xa, &db, &xb, AnyCmp::Loose, Some((a, b)))
+        self.any_compare(&da, &xa, &db, &xb, AnyCmp::Loose, true)
     }
 
     /// Hash of the `any` at `place`, agreeing with SameValueZero (U64 operand).
@@ -172,7 +162,7 @@ impl FnLower<'_, '_> {
         db: &Operand,
         xb: &Operand,
         cmp: AnyCmp,
-        places: Option<(&Place, &Place)>,
+        objects: bool,
     ) -> Operand {
         let loose = cmp == AnyCmp::Loose;
         let (da, xa, db, xb) = (da.clone(), xa.clone(), db.clone(), xb.clone());
@@ -282,24 +272,38 @@ impl FnLower<'_, '_> {
             // loosely (`[] == 0` is `true`), the prelude's `__anyLooseEq`. A function's
             // `ToPrimitive` is its source text, which is never a number or a boolean: `false`.
             self.switch_to(no_bb);
+            if !objects {
+                set(self, Operand::Const(Const::Bool(false), Ty::Bool));
+                self.switch_to(done);
+                return Operand::Copy(out);
+            }
             let a_case = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitAnd, a_obj, b_p));
             let b_case = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitAnd, b_obj, a_p));
             let mixed = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitOr, a_case, b_case));
             let (mixed_bb, false_bb) = (self.new_block(), self.new_block());
             self.branch(mixed, mixed_bb, false_bb);
             self.switch_to(mixed_bb);
-            match places {
-                Some((pa, pb)) => {
-                    let r = self.any_loose_object(pa, pb);
-                    set(self, r);
-                }
-                None => set(self, Operand::Const(Const::Bool(false), Ty::Bool)),
-            }
+            // The operands go in places of their own only here: the other arms read them as
+            // parts, which keeps them out of memory.
+            let pa = self.any_from_parts(&da, &xa);
+            let pb = self.any_from_parts(&db, &xb);
+            let r = self.any_loose_object(&pa, &pb);
+            set(self, r);
             self.switch_to(false_bb);
             set(self, Operand::Const(Const::Bool(false), Ty::Bool));
         }
         self.switch_to(done);
         Operand::Copy(out)
+    }
+
+    /// A place holding the `any` with data pointer `data` and descriptor `desc` (borrowed).
+    fn any_from_parts(&mut self, data: &Operand, desc: &Operand) -> Place {
+        let any = self.cx.any_ty();
+        let vt = self.cx.ty(any);
+        let p = Place::local(self.temp(vt));
+        self.assign(proj(&p, Proj::Field(0)), Rvalue::Use(data.clone()));
+        self.assign(proj(&p, Proj::Field(1)), Rvalue::Use(desc.clone()));
+        p
     }
 
     /// `__anyLooseEq(a, b, at)` of the `any`s at `a` and `b` (borrowed), one an object and the
