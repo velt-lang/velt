@@ -2397,8 +2397,16 @@ that stands for `globalThis` (`const g = globalThis as Seam;`), and
 assigns it. The property's type is `T["K"] | undefined` with `T` the asserted type; the
 assertions of one key must all give it the same type, and a site without one (`globalThis.K`,
 typed for tsc by a `declare global { var K: T }`, or asserted `any`) takes the type the others
-give. A property no site asserts a type for is an error. A Node global Velt has is that global
+give. A property no site asserts a type for is an error, unless the program only defines it
+with `Object.defineProperty` and never reads or assigns it: nothing can see it then, and the
+call only evaluates its `value`. A Node global Velt has is that global
 (`globalThis.console.log(…)` is `console.log(…)`).
+
+When the asserted type lists its keys (an object type, or a mapped type over a union of string
+literals such as `{ [K in StampKey]?: Stamp }`, also through type aliases of the module), the key
+may be a variable: `(globalThis as Host)[key]` reads the property `key` holds, the statement
+`host[key] = v` (or `host[key] ??= v`, `host[key] += v`, …) assigns it, and
+`Object.defineProperty(host, key, { value, … })` defines it.
 
 ```ts
 interface Hook {
@@ -2421,8 +2429,25 @@ emit("kept");
 console.log((globalThis as Seam).__HOOK__?.events); // [ 'kept' ]
 ```
 
+```ts
+type StampKey = "__A__" | "__B__";
+type StampHost = { [K in StampKey]?: { version: string } };
+
+function stamp(key: StampKey, version: string): void {
+  const host = globalThis as StampHost;
+  if (host[key] === undefined) {
+    Object.defineProperty(host, key, { value: { version }, writable: true, configurable: true });
+  }
+}
+
+stamp("__A__", "1.0");
+stamp("__A__", "2.0");
+console.log((globalThis as StampHost).__A__?.version, (globalThis as StampHost).__B__); // 1.0 undefined
+```
+
 Not supported yet: `globalThis` as a value of its own (`console.log(globalThis)`,
-`Object.keys(globalThis)`), symbol keys, keys known only at run time, `defineProperty` on it
+`Object.keys(globalThis)`), symbol keys, other keys known only at run time (and using the
+value of an assignment through a variable key, `f(host[key] = v)`), `defineProperty` on it
 without a `value`, neither writable nor configurable, without `writable: true` on a property
 the program also assigns (Node throws there), or with other `writable` and `configurable` than
 another call with the same key (an attribute a call leaves out is `false` on the property it

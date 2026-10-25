@@ -11,8 +11,13 @@
 //! - the same through a `const g = globalThis as T;` (the constant stands for `globalThis`);
 //! - `globalThis.K` and `globalThis[KEY]` without an assertion (or asserted `any` or
 //!   `unknown`), when another site asserts `K`'s type;
+//! - `(globalThis as T)[k]` with `k` a variable, when `T` lists a fixed set of keys (an object
+//!   type, or a mapped type over a union of string literals, `{ [K in "a" | "b"]?: V }`, also
+//!   through the module's type aliases): `k === "a" ? <a> : k === "b" ? <b> : undefined`
+//!   (and `Object.defineProperty(g, k, d)` an `if` over the keys);
 //! - `Object.defineProperty(globalThis, "K", { value, ... })`, which assigns it
-//!   (`body::expr::object_define`).
+//!   (`body::expr::object_define`). A property only ever defined, never read or assigned,
+//!   needs no type: nothing in the program can see it, so the call only evaluates `value`.
 //!
 //! The asserted type at each site must give `K` the same type ([`check_sites`]). A Node global
 //! Velt has (`globalThis.setTimeout`) is that global. Programs that don't name `globalThis` are
@@ -43,6 +48,8 @@ pub(crate) struct Site {
     pub span: Span,
     /// The site is assigned (`=`, a compound assignment, `++`), not through `defineProperty`.
     pub written: bool,
+    /// The site is an `Object.defineProperty` call.
+    pub defined: bool,
 }
 
 /// The properties of `globalThis` a program uses.
@@ -56,6 +63,9 @@ pub(crate) struct GlobalProps {
     /// The `writable` and `configurable` the first `defineProperty` of each key gives, and
     /// where (`body::expr::object_define`).
     pub defined: FxHashMap<String, (bool, bool, Span)>,
+    /// Properties the program only defines (`Object.defineProperty`), with no type: no site
+    /// reads them, so a definition only evaluates its value.
+    pub write_only: FxHashSet<String>,
 }
 
 impl GlobalProps {
@@ -109,7 +119,8 @@ pub(crate) fn rewrite(
             continue;
         }
         let keys = keys::visible_consts(m, modules, &consts, i);
-        let mut w = walk::Walk::new(i, &keys);
+        let aliases = keys::type_aliases(&m.ast);
+        let mut w = walk::Walk::new(i, &keys, &aliases);
         w.module_items(&mut m.ast);
         props.sites.append(&mut w.sites);
         diags.append(&mut w.diags);
@@ -132,6 +143,11 @@ pub(crate) fn rewrite(
         .iter()
         .filter(|s| !props.homes.contains_key(&s.key))
     {
+        let key = &s.key;
+        if props.sites.iter().all(|o| o.key != *key || o.defined) {
+            props.write_only.insert(key.clone());
+            continue;
+        }
         if untyped.insert(s.key.clone()) {
             diags.push(
                 Diagnostic::error(

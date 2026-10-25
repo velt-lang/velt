@@ -1,5 +1,6 @@
 //! What the rewrite of `globalThis` reads around a property (see the parent module): which
-//! modules name it, the string constants that may be keys, and the names declarations bind.
+//! modules name it, the string constants that may be keys, the keys an asserted type lists,
+//! and the names declarations bind.
 
 use rustc_hash::FxHashMap;
 use velt_syntax::ast::{self, ExprKind as E, ItemKind as I, StmtKind as S};
@@ -123,5 +124,75 @@ pub(super) fn pattern_names(p: &ast::Pattern, out: &mut Vec<String>) {
             out.extend(rest.iter().map(|r| r.name.clone()));
         }
         ast::PatternKind::Default { pattern, .. } => pattern_names(pattern, out),
+    }
+}
+
+/// The module-level type aliases of `module` without type parameters, by name.
+pub(super) fn type_aliases(module: &ast::Module) -> FxHashMap<String, ast::TypeExpr> {
+    let mut out = FxHashMap::default();
+    for item in &module.items {
+        if let I::TypeAlias(a) = &item.kind {
+            if a.generics.is_empty() {
+                out.insert(a.name.name.clone(), a.ty.clone());
+            }
+        }
+    }
+    out
+}
+
+/// The property names the asserted type `t` lists, when they are a fixed set: an object type's
+/// fields, or the keys of a mapped type over a union of string literals
+/// (`{ [K in "a" | "b"]?: T }`), also through the module's type aliases (`aliases`).
+pub(super) fn listed_keys(
+    t: &ast::TypeExpr,
+    aliases: &FxHashMap<String, ast::TypeExpr>,
+) -> Option<Vec<String>> {
+    use ast::TypeExprKind as T;
+    match &t.kind {
+        T::Object(fields) if !fields.is_empty() => {
+            Some(fields.iter().map(|f| f.name.name.clone()).collect())
+        }
+        T::Mapped(m) if m.name.is_none() => literal_keys(&m.source, aliases, 0),
+        T::Named { path, args } if path.len() == 1 && args.is_empty() => {
+            let t = aliases.get(&path[0].name)?;
+            match t.kind {
+                T::Named { .. } => None,
+                _ => listed_keys(t, aliases),
+            }
+        }
+        _ => None,
+    }
+}
+
+/// The strings of a string literal type or a union of them (through `aliases`).
+fn literal_keys(
+    t: &ast::TypeExpr,
+    aliases: &FxHashMap<String, ast::TypeExpr>,
+    depth: usize,
+) -> Option<Vec<String>> {
+    use ast::TypeExprKind as T;
+    if depth > 16 {
+        return None;
+    }
+    match &t.kind {
+        T::Literal(ast::SignedLit {
+            lit: ast::Lit::Str(s),
+            ..
+        }) => Some(vec![s.clone()]),
+        T::Union(ms) => {
+            let mut out = vec![];
+            for m in ms {
+                for k in literal_keys(m, aliases, depth + 1)? {
+                    if !out.contains(&k) {
+                        out.push(k);
+                    }
+                }
+            }
+            Some(out)
+        }
+        T::Named { path, args } if path.len() == 1 && args.is_empty() => {
+            literal_keys(aliases.get(&path[0].name)?, aliases, depth + 1)
+        }
+        _ => None,
     }
 }

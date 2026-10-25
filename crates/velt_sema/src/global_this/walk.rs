@@ -8,7 +8,7 @@ use velt_common::Diagnostic;
 use velt_syntax::ast::{self, ExprKind as E, ItemKind as I, StmtKind as S};
 
 use super::keys::{
-    names_global, params_names, pattern_names, says_nothing, string_lit, GLOBAL_THIS,
+    listed_keys, names_global, params_names, pattern_names, says_nothing, string_lit, GLOBAL_THIS,
 };
 use super::{slot_name, Site};
 use crate::ast_walk::children_mut;
@@ -21,16 +21,23 @@ type Binding = Option<Option<ast::TypeExpr>>;
 pub(super) struct Walk<'a> {
     module: usize,
     consts: &'a FxHashMap<String, String>,
+    /// The module's type aliases, for the keys an asserted type lists.
+    aliases: &'a FxHashMap<String, ast::TypeExpr>,
     scopes: Vec<FxHashMap<String, Binding>>,
     pub sites: Vec<Site>,
     pub diags: Vec<Diagnostic>,
 }
 
 impl<'a> Walk<'a> {
-    pub(super) fn new(module: usize, consts: &'a FxHashMap<String, String>) -> Self {
+    pub(super) fn new(
+        module: usize,
+        consts: &'a FxHashMap<String, String>,
+        aliases: &'a FxHashMap<String, ast::TypeExpr>,
+    ) -> Self {
         Walk {
             module,
             consts,
+            aliases,
             scopes: vec![FxHashMap::default()],
             sites: vec![],
             diags: vec![],
@@ -210,7 +217,10 @@ impl<'a> Walk<'a> {
                 pattern_names(&v.pattern, &mut names);
                 self.shadow(names);
             }
-            S::Expr(e) => self.expr(e, true),
+            S::Expr(e) => match self.define_listed(e).or_else(|| self.assign_listed(e)) {
+                Some(chain) => s.kind = chain,
+                None => self.expr(e, true),
+            },
             S::Throw(e) | S::Return(Some(e)) => self.expr(e, false),
             S::If { cond, then, els } => {
                 self.expr(cond, false);
@@ -369,6 +379,46 @@ impl<'a> Walk<'a> {
             },
             E::Index { object, index, .. } => match (self.base(object), self.key(index)) {
                 (Some(t), Some(k)) => (t, k),
+                (Some(Some(t)), None) if !written => {
+                    let Some((k, keys)) = self.listed(&t, index) else {
+                        return false;
+                    };
+                    let span = e.span;
+                    let mut chain = synth(E::Lit(ast::Lit::Undefined), span);
+                    for key in keys.into_iter().rev() {
+                        let mut read = synth(
+                            E::Member {
+                                object: Box::new(synth(
+                                    E::Paren(Box::new(synth(
+                                        E::Cast {
+                                            expr: Box::new(ident(GLOBAL_THIS, span)),
+                                            ty: t.clone(),
+                                        },
+                                        span,
+                                    ))),
+                                    span,
+                                )),
+                                prop: ast::Ident {
+                                    name: key.clone(),
+                                    span,
+                                },
+                                optional: false,
+                            },
+                            span,
+                        );
+                        self.property(&mut read, false);
+                        chain = synth(
+                            E::Cond {
+                                cond: Box::new(is_key(&k, &key, span)),
+                                then: Box::new(read),
+                                els: Box::new(chain),
+                            },
+                            span,
+                        );
+                    }
+                    *e = synth(E::Paren(Box::new(chain)), span);
+                    return true;
+                }
                 _ => return false,
             },
             _ => return false,
@@ -384,12 +434,142 @@ impl<'a> Walk<'a> {
             ty,
             span,
             written,
+            defined: false,
         });
         e.kind = E::Ident(ast::Ident {
             name: slot_name(&key),
             span,
         });
         true
+    }
+
+    /// The variable `index` names and the keys the asserted type `t` lists, when `index` is a
+    /// variable (not a string constant) and `t` lists a fixed set of keys.
+    fn listed(&self, t: &ast::TypeExpr, index: &ast::Expr) -> Option<(ast::Ident, Vec<String>)> {
+        let E::Ident(k) = &index.kind else {
+            return None;
+        };
+        if matches!(self.lookup(&k.name), Some(Some(_))) {
+            return None;
+        }
+        Some((k.clone(), listed_keys(t, self.aliases)?))
+    }
+
+    /// `Object.defineProperty(g, k, d);` with `g` standing for `globalThis` as a type listing a
+    /// fixed set of keys and `k` a variable: `if (k === "a") Object.defineProperty(g, "a", d);
+    /// else if ...`, each branch rewritten as a definition of its key.
+    fn define_listed(&mut self, e: &ast::Expr) -> Option<S> {
+        let E::Call { callee, args, .. } = &e.kind else {
+            return None;
+        };
+        let E::Member { object, prop, .. } = &callee.kind else {
+            return None;
+        };
+        let is_object = matches!(&object.kind, E::Ident(o) if o.name == "Object" && self.lookup("Object").is_none());
+        if !is_object
+            || prop.name != "defineProperty"
+            || args.len() != 3
+            || self.key(&args[1]).is_some()
+        {
+            return None;
+        }
+        let Some(Some(t)) = self.base(&args[0]) else {
+            return None;
+        };
+        let (k, keys) = self.listed(&t, &args[1])?;
+        let span = e.span;
+        let mut els: Option<Box<ast::Stmt>> = None;
+        for key in keys.into_iter().rev() {
+            let mut call = e.clone();
+            if let E::Call { args, .. } = &mut call.kind {
+                args[1] = synth(E::Lit(ast::Lit::Str(key.clone())), args[1].span);
+            }
+            self.define_property(&mut call, true);
+            let then = ast::Block {
+                stmts: vec![ast::Stmt {
+                    kind: S::Expr(call),
+                    span,
+                }],
+                span,
+            };
+            els = Some(Box::new(ast::Stmt {
+                kind: S::If {
+                    cond: is_key(&k, &key, span),
+                    then,
+                    els,
+                },
+                span,
+            }));
+        }
+        els.map(|s| s.kind)
+    }
+
+    /// `g[k] = v;` (or `op=`) with `g` standing for `globalThis` as a type listing a fixed set
+    /// of keys and `k` a variable: `if (k === "a") g.a = v; else if ...`, each branch rewritten
+    /// as an assignment of its key.
+    fn assign_listed(&mut self, e: &ast::Expr) -> Option<S> {
+        let E::Assign { op, target, value } = &e.kind else {
+            return None;
+        };
+        let E::Index { object, index, .. } = &target.kind else {
+            return None;
+        };
+        if self.key(index).is_some() {
+            return None;
+        }
+        let Some(Some(t)) = self.base(object) else {
+            return None;
+        };
+        let (k, keys) = self.listed(&t, index)?;
+        let span = e.span;
+        let mut els: Option<Box<ast::Stmt>> = None;
+        for key in keys.into_iter().rev() {
+            let member = synth(
+                E::Member {
+                    object: Box::new(synth(
+                        E::Paren(Box::new(synth(
+                            E::Cast {
+                                expr: Box::new(ident(GLOBAL_THIS, span)),
+                                ty: t.clone(),
+                            },
+                            span,
+                        ))),
+                        span,
+                    )),
+                    prop: ast::Ident {
+                        name: key.clone(),
+                        span: target.span,
+                    },
+                    optional: false,
+                },
+                target.span,
+            );
+            let mut assign = synth(
+                E::Assign {
+                    op: *op,
+                    target: Box::new(member),
+                    value: value.clone(),
+                },
+                span,
+            );
+            self.expr(&mut assign, true);
+            let then = ast::Block {
+                stmts: vec![ast::Stmt {
+                    kind: S::Expr(assign),
+                    span,
+                }],
+                span,
+            };
+            els = Some(Box::new(ast::Stmt {
+                kind: S::If {
+                    cond: is_key(&k, &key, span),
+                    then,
+                    els,
+                },
+                span,
+            }));
+        }
+        els.map(|s| s.kind)
     }
 
     /// `Object.defineProperty(g, KEY, d)` with `g` standing for `globalThis`: normalized to
@@ -418,6 +598,7 @@ impl<'a> Walk<'a> {
             ty,
             span: args[0].span.to(args[1].span),
             written: false,
+            defined: stmt,
         };
         if !stmt {
             // Reported here; the checker sees the property.
@@ -445,4 +626,52 @@ impl<'a> Walk<'a> {
         self.expr(&mut args[2], false);
         true
     }
+}
+
+fn synth(kind: E, span: velt_common::Span) -> ast::Expr {
+    ast::Expr {
+        id: ast::NodeId(u32::MAX),
+        kind,
+        span,
+    }
+}
+
+fn ident(name: &str, span: velt_common::Span) -> ast::Expr {
+    synth(
+        E::Ident(ast::Ident {
+            name: name.to_string(),
+            span,
+        }),
+        span,
+    )
+}
+
+/// `(k as string) === "key"`: the cast keeps `k` from narrowing, so a test in a branch of
+/// another (a read in the value of an assignment) is not always false.
+fn is_key(k: &ast::Ident, key: &str, span: velt_common::Span) -> ast::Expr {
+    let string = ast::TypeExpr {
+        kind: ast::TypeExprKind::Named {
+            path: vec![ast::Ident {
+                name: "string".into(),
+                span: k.span,
+            }],
+            args: vec![],
+        },
+        span: k.span,
+    };
+    let k = synth(
+        E::Cast {
+            expr: Box::new(synth(E::Ident(k.clone()), k.span)),
+            ty: string,
+        },
+        k.span,
+    );
+    synth(
+        E::Binary {
+            op: ast::BinaryOp::StrictEq,
+            lhs: Box::new(k),
+            rhs: Box::new(synth(E::Lit(ast::Lit::Str(key.to_string())), span)),
+        },
+        span,
+    )
 }
