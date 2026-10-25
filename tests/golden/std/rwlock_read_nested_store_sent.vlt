@@ -1,0 +1,51 @@
+// check: no leaks
+// An object a `read` nested in another stores into a container of the code outside every read,
+// which the outer callback then sends on a channel before the reads end: the receiver gets a
+// copy (the callbacks may still change the object), on this thread or on a spawned task, also
+// after moving it through another container first (#1523).
+import { channel, Channel } from "velt:channel";
+
+class Box {
+  items: number[][] = [[1, 2], [3]];
+}
+
+async function recv(ch: Channel<number[][]>): Promise<string> {
+  const r = await ch.receive();
+  r!.push([9]);
+  return JSON.stringify(r);
+}
+
+async function main() {
+  const a = new RwLock(new Box());
+  const b = new RwLock(new Box());
+  const top: number[][][] = [];
+  const keep: number[][][] = [];
+  const ch = channel<number[][]>(8);
+  a.read((x) => {
+    const l: number[][][] = [[[1], [2]], [[3]], [[4]]];
+    b.read((y) => {
+      top.push(l[0]);
+      top.push(l[1]);
+      top.push(l[2]);
+    });
+    ch.trySend(top.shift()!);
+    keep.push(top.shift()!);
+    ch.trySend(keep.pop()!);
+    l[0].push([5]);
+  });
+  const r = await ch.receive();
+  r!.push([6]);
+  console.log(JSON.stringify(r), JSON.stringify(await ch.receive()), top.length, keep.length);
+
+  const t = spawn(recv(ch));
+  a.read((x) => {
+    const l: number[][][] = [[[1], [2]], [[3]]];
+    b.read((y) => {
+      top.push(l[0]);
+      top.push(l[1]);
+    });
+    ch.trySend(top.pop()!);
+    ch.trySend(top.shift()!);
+  });
+  console.log(await t, top.length, JSON.stringify(await ch.receive()));
+}

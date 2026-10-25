@@ -161,7 +161,8 @@ pub unsafe extern "C" fn velt_rt_lk_write(p: *mut u64) {
 /// of code outside every read keeps the bit until this thread's outermost read ends: the
 /// callbacks around it still run and may change it through their own variables, as in
 /// JavaScript, and only this thread reaches it meanwhile. It waits with one more reference,
-/// which `drop` (its drop glue) releases once the bit is gone.
+/// which `drop` (its drop glue) releases once the bit is gone. Transferred again before then
+/// it keeps the bit ([`leaving`]).
 ///
 /// # Safety
 /// `p` is the count word of the counted object `obj`, and `drop` its drop glue.
@@ -172,7 +173,9 @@ pub unsafe extern "C" fn velt_rt_lk_leave(p: *mut u64, obj: *mut u8, drop: DropG
         return;
     }
     if depth <= 1 {
-        *p &= !LOCAL;
+        if !leaving(p) {
+            *p &= !LOCAL;
+        }
         return;
     }
     leave_after_reads(p, obj, drop);
@@ -182,16 +185,33 @@ pub unsafe extern "C" fn velt_rt_lk_leave(p: *mut u64, obj: *mut u8, drop: DropG
 /// object whose count word is at `p`, which the reader may still reference: the caller's
 /// reference becomes its only one and the bit goes, since the reader no longer counts it. In a
 /// nested read storing into code outside every read ([`velt_rt_lk_leave`] keeps the bit until
-/// the reads end) the reader still counts its references, so the count stays.
+/// the reads end), and for an object such a store left the reader's own ([`leaving`]), the
+/// reader still counts its references, so the count stays.
 ///
 /// # Safety
 /// `p` is the count word of a counted object.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_lk_keep_made(p: *mut u64) {
     let depth = READER.with(|r| r.depth()) as u64;
-    if depth <= 1 || depth > LEAVE_TO.with(Cell::get) {
+    if (depth <= 1 || depth > LEAVE_TO.with(Cell::get)) && !leaving(p) {
         *p = 1;
     }
+}
+
+/// Did a nested read's store leave the object whose count word is at `p` the reader's own
+/// until the reads end ([`leave_after_reads`])? Moved on again before they end (into another of
+/// the caller's containers, a callback's result), it stays so: its count keeps the reference
+/// that store took, so it is never unique and a transfer to another thread copies it, and the
+/// end of the reads settles it once. Only searched when objects wait (`FREES_WAIT`).
+#[inline]
+fn leaving(p: *mut u64) -> bool {
+    READER.with(|r| r.read_depth.get() & FREES_WAIT != 0) && leaving_slow(p)
+}
+
+#[cold]
+#[inline(never)]
+fn leaving_slow(p: *mut u64) -> bool {
+    LEAVING.with(|w| w.borrow().iter().any(|&(c, _, _)| c == p))
 }
 
 /// [`velt_rt_lk_leave`] in a nested read: the bit goes when the outermost read ends.
@@ -251,7 +271,12 @@ mod tests {
         unsafe { velt_rt_lk_leave(&mut mine, obj, count_drop) };
         assert_eq!(mine, 2 | LOCAL);
         assert_eq!(velt_rt_lk_leave_to(was), 2);
+        // Moved on again at the outermost read (into another of the caller's containers): still
+        // the reader's own, its count kept.
         READER.with(|r| r.pop());
+        unsafe { velt_rt_lk_keep_made(&mut mine) };
+        unsafe { velt_rt_lk_leave(&mut mine, obj, count_drop) };
+        assert_eq!(mine, 2 | LOCAL);
         let mut other = 1 | LOCAL;
         unsafe { velt_rt_lk_leave(&mut other, obj, count_drop) };
         assert_eq!(other, 1);

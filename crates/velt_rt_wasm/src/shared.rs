@@ -182,7 +182,9 @@ pub unsafe extern "C" fn velt_rt_lk_leave(p: *mut u64, obj: *mut u8, drop: DropG
         return;
     }
     if READ_DEPTH <= 1 {
-        *p &= !LOCAL;
+        if !leaving(p) {
+            *p &= !LOCAL;
+        }
         return;
     }
     *p += 1;
@@ -192,9 +194,16 @@ pub unsafe extern "C" fn velt_rt_lk_leave(p: *mut u64, obj: *mut u8, drop: DropG
 /// velt_rt `read_mode::velt_rt_lk_keep_made`.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_lk_keep_made(p: *mut u64) {
-    if READ_DEPTH <= 1 || READ_DEPTH as u64 > LEAVE_TO {
+    if (READ_DEPTH <= 1 || READ_DEPTH as u64 > LEAVE_TO) && !leaving(p) {
         *p = 1;
     }
+}
+
+/// velt_rt `read_mode::leaving`.
+unsafe fn leaving(p: *mut u64) -> bool {
+    (*std::ptr::addr_of!(LEAVING))
+        .iter()
+        .any(|&(c, _, _)| c == p)
 }
 
 /// Objects a nested read stored outside every read (velt_rt `read_mode::LEAVING`).
