@@ -53,6 +53,15 @@ function relative(i: i64, n: usize): usize {
   return (i as usize) < n ? i as usize : n;
 }
 
+// Position `i` in an array of `n` elements as Node's `buf.toString(encoding, start, end)` reads
+// it: clamped to `0..=n` (a negative one is 0, it does not count from the end).
+function clamped(i: i64, n: usize): usize {
+  if (i < 0) {
+    return 0;
+  }
+  return (i as usize) < n ? i as usize : n;
+}
+
 // The position of the first set lane of `m`, a mask of the 16 bytes at `at`.
 function hit(at: usize, m: mask8x16): i64 {
   return (at + (velt_simd_mask8x16_first(m) as usize)) as i64;
@@ -483,21 +492,27 @@ extend Array<u8> {
   }
 
   /**
-   * The bytes in [start, end) decoded as UTF-8, an invalid sequence as U+FFFD: Node's
-   * `buf.utf8Slice(start, end)` (`buf.toString("utf8", start, end)`), without slicing first.
+   * The bytes in [start, end) decoded as UTF-8, an invalid sequence as U+FFFD, without slicing
+   * first: Node's `buf.toString("utf8", start, end)`. Like it (and unlike Node's `utf8Slice`,
+   * which throws), `start` and `end` are clamped to the array: a negative one is 0, one past the
+   * end is the end, and `end` before `start` gives `""`.
    */
   utf8Slice(start: i64 = 0, end: i64 = 9223372036854775807): string {
-    return velt_rt_bytes_range_to_str_lossy(this, start, end);
+    const n = this.length;
+    const from = clamped(start, n);
+    const to = clamped(end, n);
+    return velt_rt_bytes_range_to_str_lossy(this, from as i64, (to > from ? to : from) as i64);
   }
 
   /**
    * Whether the bytes in [start, end) are the UTF-8 bytes of `s` (Velt): a server comparing a
-   * method, a path or a key in its read buffer without making a string.
+   * method, a path or a key in its read buffer without making a string. `start` and `end` are
+   * clamped as `utf8Slice` clamps them.
    */
   utf8Equals(s: string, start: i64 = 0, end: i64 = 9223372036854775807): bool {
     const n = this.length;
-    const from = relative(start, n);
-    const to = relative(end, n);
+    const from = clamped(start, n);
+    const to = clamped(end, n);
     const len = __intrinsic_str_byte_len(s);
     return (to > from ? to - from : 0) == len &&
       (len == 0 || textEquals(this, from, s, len, false));
@@ -506,8 +521,8 @@ extend Array<u8> {
   /** `utf8Equals` with ASCII letters compared regardless of case (header names; Velt). */
   utf8EqualsIgnoreCase(s: string, start: i64 = 0, end: i64 = 9223372036854775807): bool {
     const n = this.length;
-    const from = relative(start, n);
-    const to = relative(end, n);
+    const from = clamped(start, n);
+    const to = clamped(end, n);
     const len = __intrinsic_str_byte_len(s);
     return (to > from ? to - from : 0) == len && (len == 0 || textEquals(this, from, s, len, true));
   }

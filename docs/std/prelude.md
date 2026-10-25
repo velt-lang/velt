@@ -136,10 +136,12 @@ of `mask` (most significant first) repeating from `start`: WebSocket masking (RF
 Text goes in and out of byte arrays without intermediate copies, as a server written in Velt
 needs on its read and write buffers: `write(s, offset = 0)` writes the UTF-8 bytes of `s` and
 returns how many it wrote (Node's `buf.write`: only whole characters that fit, the array does
-not grow), `utf8Slice(start?, end?)` decodes a range (Node's `buf.utf8Slice`, an invalid sequence
-as U+FFFD), and `utf8Equals(s, start?, end?)` / `utf8EqualsIgnoreCase(s, start?, end?)` (Velt)
-tell whether a range holds the UTF-8 bytes of `s`, the second with ASCII letters in any case
-(a method, a path, a header name), without making a string. `write` and the comparisons are Velt
+not grow), `utf8Slice(start?, end?)` decodes a range (Node's `buf.toString("utf8", start, end)`,
+an invalid sequence as U+FFFD), and `utf8Equals(s, start?, end?)` /
+`utf8EqualsIgnoreCase(s, start?, end?)` (Velt) tell whether a range holds the UTF-8 bytes of `s`,
+the second with ASCII letters in any case (a method, a path, a header name), without making a
+string. Their ranges are clamped as `toString` clamps them: a negative `start` is 0, an `end`
+past the array is its end (Node's `buf.utf8Slice` throws for both instead). `write` and the comparisons are Velt
 code in the prelude: they read the string's bytes where it keeps them, sixteen at a time with
 SIMD vectors, and are compiled into their caller.
 
