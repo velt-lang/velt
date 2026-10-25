@@ -2117,7 +2117,9 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   record key is not supported yet. A cast to `Record<symbol, unknown>` (or `Record<symbol,
   any>`) looks at a value's symbol-keyed members, as through `any`:
   `(v as Record<symbol, unknown>)[BRAND] === true` reads the member `BRAND` names, or
-  `undefined`; other uses of a symbol-keyed record are not supported yet.
+  `undefined`, as a value of the record's value type (`unknown` must be narrowed before use, as
+  TypeScript's TS2322 says). A string key (`["a"]`, `.a`, TypeScript's TS2339) is an error, and so
+  is any other use of the cast: writing through it and keeping it are not supported yet.
   With `string` keys a record is *open*: `r[k]` and `r.name` are `V | undefined`, `r[k] = v`
   inserts or replaces, `r[k] ??= v` sets a missing key, and `delete r[k]` removes. Because a
   key may be missing, `r[k] += 1`, `r[k]++` and the other compound assignments are errors on an

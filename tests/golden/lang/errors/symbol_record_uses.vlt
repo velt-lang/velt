@@ -1,0 +1,10 @@
+// A cast to `Record<symbol, unknown>` reads a symbol-keyed member; its values are `unknown`
+// (TS2322 assigning one to a `number`), a string key or member is TypeScript's TS2339, and
+// other uses (a write, a record of its own) are not supported yet.
+export const K: unique symbol = Symbol("k");
+const o: unknown = { a: 1 };
+const n: number = (o as Record<symbol, unknown>)[K];
+console.log((o as Record<symbol, unknown>)["a"], (o as Record<symbol, unknown>).a);
+const w = {} as Record<symbol, unknown>;
+(o as Record<symbol, unknown>)[K] = 1;
+console.log(n, w);

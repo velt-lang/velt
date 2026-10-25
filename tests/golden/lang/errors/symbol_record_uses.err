@@ -1,0 +1,5 @@
+symbol_record_uses.vlt:6:19: error: an `unknown` value must be narrowed before use
+symbol_record_uses.vlt:7:44: error: the key of a `Record<symbol, ...>` must be a symbol (TypeScript's TS2339 for other keys)
+symbol_record_uses.vlt:7:51: error: a `Record<symbol, ...>` is only supported to read a symbol-keyed member
+symbol_record_uses.vlt:8:11: error: a `Record<symbol, ...>` is only supported to read a symbol-keyed member
+symbol_record_uses.vlt:9:2: error: a `Record<symbol, ...>` is only supported to read a symbol-keyed member

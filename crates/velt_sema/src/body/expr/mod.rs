@@ -149,6 +149,7 @@ mod std_glue;
 mod structured_clone;
 mod supers;
 mod symbol_keys;
+mod symbol_record;
 mod sync;
 pub(crate) mod tasks;
 mod ternary;
