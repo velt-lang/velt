@@ -58,6 +58,10 @@ async function main() {
       // The head is read after the body: it must still be this request's.
       const body = await req.body();
       res.send(`${req.method()} ${req.path()} ${req.header("x-a")} ${body.length}`);
+    } else if (req.pathIs("/send-then-read")) {
+      res.send("sent first");
+      const body = await req.body();
+      console.log("send-then-read got", body.length);
     } else if (req.pathIs("/stream-then-read")) {
       const s = await res.stream();
       await s.write("head;");
@@ -251,23 +255,27 @@ async function main() {
   await held.write("abc");
   console.log("answered before the body:", summary(first + (await readAll(held))));
   held.close();
-  // A streamed response before the body is read: no 100 in the middle of its chunks.
-  const st = await connect(`127.0.0.1:${port}`);
-  await st.write(
-    `POST /stream-then-read HTTP/1.1\r\n${H}Content-Length: 3\r\nExpect: 100-continue\r\n\r\n`,
-  );
-  let streamed = "";
-  while (!streamed.includes("head;")) {
-    streamed += await st.readString();
+  // A client that sends its body only after `100 Continue` (as Node's does), to a handler that
+  // answers first and reads after: the 100 still comes, ahead of the response.
+  for (const route of ["/send-then-read", "/stream-then-read"]) {
+    const c2 = await connect(`127.0.0.1:${port}`);
+    await c2.write(
+      `POST ${route} HTTP/1.1\r\n${H}Content-Length: 3\r\nExpect: 100-continue\r\n\r\n`,
+    );
+    let wire = "";
+    while (!wire.includes("100 Continue")) {
+      wire += await c2.readString();
+    }
+    // Then a GET on the same connection: a streamed response keeps it open.
+    await c2.write(`abcGET /after HTTP/1.1\r\n${H}\r\n`);
+    c2.shutdown();
+    wire += await readAll(c2);
+    c2.close();
+    // The first response's body (the next response, if any, starts with its status line).
+    const body =
+      wire.substring(wire.indexOf("\r\n\r\n", wire.indexOf("200 OK")) + 4).split("HTTP/1.1")[0];
+    console.log(`${route}:`, summary(wire), JSON.stringify(body));
   }
-  await st.write("abc");
-  streamed += await readAll(st);
-  console.log(
-    "streamed:",
-    streamed.includes("100 Continue"),
-    JSON.stringify(streamed.substring(streamed.indexOf("\r\n\r\n") + 4)),
-  );
-  st.close();
 
   server.close();
 }

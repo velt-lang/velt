@@ -83,6 +83,7 @@ export class HttpResponse {
   private chunkedHead: u8[] = utf8Encode("\r\nTransfer-Encoding: chunked");
   private closeHead: u8[] = utf8Encode("\r\nConnection: close");
   private keepAliveHead: u8[] = utf8Encode("\r\nConnection: keep-alive");
+  private continue_: u8[] = utf8Encode("HTTP/1.1 100 Continue\r\n\r\n");
   private types: u8[][] = [
     utf8Encode("text/plain; charset=utf-8"),
     utf8Encode("application/octet-stream"),
@@ -527,6 +528,16 @@ export class HttpResponse {
       throw new Error("the response was already sent");
     }
     this.done = true;
+    // A client that holds its body back until `100 Continue`: a streamed head goes out before
+    // the handler may read the body, so the 100 goes first, as Node sends it, and the connection
+    // stays open. A head written at once stays buffered until the handler returns, so a read
+    // before that still sends its 100 ahead of it.
+    const r = this.request;
+    if (length < 0 && r.expectsContinue && !r.continueSent) {
+      r.continueSent = true;
+      const continue_ = this.continue_;
+      this.bytes(continue_);
+    }
     const code = this.statusCode as i64;
     // No body (RFC 9110 §6.4.1): for HEAD the head says what GET's body would be, for 1xx, 204
     // and 304 there is none to describe.
@@ -576,11 +587,9 @@ export class HttpResponse {
         this.keepAlive = false;
       }
     }
-    // The client holds its body back until `100 Continue`, which the handler did not ask for (it
-    // did not read): the body is not waited for, so the connection closes after this response
-    // (RFC 9110 §10.1.1).
-    const r = this.request;
-    r.responded = true;
+    // The client holds its body back until `100 Continue`, which the handler has not asked for
+    // (it did not read yet): if it answers without reading, the body is not waited for, so the
+    // connection closes after this response (RFC 9110 §10.1.1).
     if (r.expectsContinue && !r.continueSent) {
       this.keepAlive = false;
     }

@@ -48,4 +48,6 @@ HTTP/1.0: 200 OK | echo:hello
 3 POST /late yes 3
 200000 POST /late yes 200000
 answered before the body: 200 OK
-streamed: false "5\r\nhead;\r\n5\r\ngot 3\r\n0\r\n\r\n"
+send-then-read got 3
+/send-then-read: 100 Continue | 200 OK "sent first"
+/stream-then-read: 100 Continue | 200 OK | 200 OK "5\r\nhead;\r\n5\r\ngot 3\r\n0\r\n\r\n"

@@ -407,9 +407,10 @@ export class HttpRequest {
 
   /// Reads more of the body from the connection (sending 100 Continue first if asked for).
   private async fill() {
-    // Not once the response's head went out: a 100 after it would break its framing.
+    // A response the handler wrote is still in the connection's buffer (a streamed one sent its
+    // 100 before its head): the 100 goes out ahead of it.
     const h = this.head;
-    if (h.expectsContinue && !h.continueSent && !h.responded) {
+    if (h.expectsContinue && !h.continueSent) {
       this.head.continueSent = true;
       await this.conn.write("HTTP/1.1 100 Continue\r\n\r\n");
     }
