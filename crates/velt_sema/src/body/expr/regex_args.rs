@@ -111,7 +111,7 @@ impl FnCx<'_, '_> {
             return Some(shape);
         }
         match &e.kind {
-            E::New { args, .. } => self.template_shape(args),
+            E::New { class, args } if is_named_regexp(class) => self.template_shape(args),
             E::Ident(id) => self.peek_regex_local(&id.name),
             E::Member {
                 object,
@@ -123,9 +123,11 @@ impl FnCx<'_, '_> {
     }
 
     /// `new RegExp(`<${tag}(\\s[^>]*)?>`, "i")`: a pattern written as a template literal, with
-    /// literal flags, whose every hole is a number, a boolean or a string literal type (or a
-    /// `const` of one) spelling no regex syntax that could open or hide a group (`(`, `)`, `[`,
-    /// `]`, `\`): the groups are those of the written parts.
+    /// literal flags, whose every hole is a number, a boolean, a `const` of one string, or of a
+    /// string literal type whose members spell no regex syntax that could open or hide a group
+    /// (`(`, `)`, `[`, `]`, `\`, `?`). A hole of one known string counts as written (`(${nc}a)`
+    /// with `const nc = "?:"` is no capturing group); the others stand in as a plain character,
+    /// which neither opens nor escapes a group.
     fn template_shape(&mut self, args: &[ast::Expr]) -> Option<(usize, String)> {
         let (pattern, flags) = match args {
             [p] => (p, ""),
@@ -138,35 +140,39 @@ impl FnCx<'_, '_> {
         let E::Template { quasis, exprs } = &strip_parens(pattern).kind else {
             return None;
         };
-        for x in exprs {
-            if !self.hole_is_plain(x) {
-                return None;
-            }
+        let mut source = quasis.first()?.clone();
+        for (x, q) in exprs.iter().zip(&quasis[1..]) {
+            source.push_str(&self.hole_text(x)?);
+            source.push_str(q);
         }
-        // Each hole stands in as a plain character, which neither opens nor escapes a group.
-        Some((capture_groups(&quasis.join("x")), flags.to_string()))
+        Some((capture_groups(&source), flags.to_string()))
     }
 
-    /// Can what template hole `x` spells never be regex syntax around a group (see
-    /// `template_shape`)?
-    fn hole_is_plain(&mut self, x: &ast::Expr) -> bool {
+    /// What template hole `x` counts as (see `template_shape`), or `None` when it may change
+    /// the groups.
+    fn hole_text(&mut self, x: &ast::Expr) -> Option<String> {
         if let E::Lit(ast::Lit::Int { .. } | ast::Lit::Float { .. } | ast::Lit::Bool(_)) = &x.kind {
-            return true;
+            return Some("x".into());
         }
         let plain = |s: &str| {
             !s.bytes()
-                .any(|b| matches!(b, b'(' | b')' | b'[' | b']' | b'\\'))
+                .any(|b| matches!(b, b'(' | b')' | b'[' | b']' | b'\\' | b'?'))
         };
         if let Some(keys) = self.literal_keys(x) {
-            return keys.iter().all(|k| plain(k));
+            return match keys.as_slice() {
+                [one] => Some(one.clone()),
+                _ => keys.iter().all(|k| plain(k)).then(|| "x".into()),
+            };
         }
         if !is_path(x) {
-            return false;
+            return None;
         }
-        self.peek_ty(x).is_some_and(|t| {
-            let t = self.cx.ty.kind(t);
-            matches!(t, TyKind::Float(_) | TyKind::Int(_) | TyKind::Bool)
-        })
+        let t = self.peek_ty(x)?;
+        matches!(
+            self.cx.ty.kind(t),
+            TyKind::Float(_) | TyKind::Int(_) | TyKind::Bool
+        )
+        .then(|| "x".into())
     }
 
     /// `const re = …` of type `ty`: what `regex_shape` knows of the regex it holds.
@@ -447,6 +453,12 @@ fn adapter(
         },
         span,
     )
+}
+
+/// Is the class of a `new` written `RegExp`?
+fn is_named_regexp(class: &ast::TypeExpr) -> bool {
+    matches!(&class.kind, ast::TypeExprKind::Named { path, .. }
+        if path.len() == 1 && path[0].name == "RegExp")
 }
 
 /// The nothing a parameter type written as a union with `null` or `undefined` admits:

@@ -1,8 +1,9 @@
 // check: no leaks
-// `new RegExp` of a template literal whose holes are string literal types or numbers: the
-// groups are counted from the written parts, so a replacer may take them.
+// `new RegExp` of a template literal whose holes are string literal types, numbers or a `const`
+// of one string: the groups are counted from the written parts (a one-string hole as written),
+// so a replacer may take them.
 function merge(html: string, tag: 'html' | 'body', extra: string): string {
-    const tagRe = new RegExp(`<${tag}(\s[^>]*)?>`, 'i');
+    const tagRe = new RegExp(`<${tag}(\\s[^>]*)?>`, 'i');
     return html.replace(tagRe, (_match, existing: string | undefined) => {
         return `<${tag}${existing ?? ''} ${extra}>`;
     });
@@ -14,3 +15,7 @@ function tagged(s: string, n: number): string {
     return s.replace(re, (m, bs: string, c: string | undefined, at: number) => `[${m}|${bs}|${c ?? '-'}|${at}]`);
 }
 console.log(tagged("xaabbcaab", 2));
+// A hole of one known string counts as written: `(?:a)` is not a capturing group.
+const nc = "?:";
+const re = new RegExp(`(${nc}a)(b)`);
+console.log("ab".replace(re, (m, g1: string, at: number) => `${g1}|${at}`));

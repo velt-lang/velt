@@ -50,9 +50,10 @@ the string, as in JS, and may take fewer parameters. A group that did not take p
 default (`(m, p1 = "none") => …`); the parameters are variables the function may assign. The
 offset and the string follow the groups, so the number of groups must be known when compiling:
 the regex is a literal, or a `const` or `readonly` field initialized with one (or with
-`new RegExp` of string literals, or of a template literal whose holes are numbers, booleans or
-string literal types without `(`, `)`, `[`, `]` or `\`: `` new RegExp(`<${tag}(\\s[^>]*)?>`) ``
-with `tag: "html" | "body"`). For another regex (a parameter, a `let`), a replacer taking
+`new RegExp` of string literals, or of a template literal whose holes are numbers, booleans,
+`const`s of one string (counted as written), or string literal types without `(`, `)`, `[`,
+`]`, `\` or `?`: `` new RegExp(`<${tag}(\\s[^>]*)?>`) `` with `tag: "html" | "body"`). For
+another regex (a parameter, a `let`), a replacer taking
 more than the match is a compile error; take the match only, or use the regex's `exec`. For
 `matchAll` and `replaceAll`, such a regex without `g` is a compile error, and another regex
 without it panics like JS's `TypeError`.
