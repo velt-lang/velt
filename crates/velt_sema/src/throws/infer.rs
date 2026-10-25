@@ -15,6 +15,10 @@ use crate::hir::{Def, DefId, TyId, TyKind};
 /// Fill `FnInfo::throws` of every checked function, then check written clauses and the error
 /// types sema committed to while checking bodies.
 pub(crate) fn infer_all(cx: &mut Ctx) {
+    // Built again with everything checking made: the implementations of object literals'
+    // interfaces and the conversions between interfaces (`groups.rs`) are made after a first
+    // use while checking.
+    cx.groups = None;
     let groups = cx.throw_groups().clone();
     let fns: Vec<DefId> = cx
         .fn_defs
@@ -245,22 +249,25 @@ fn src_final_in(cx: &mut Ctx, s: &ThrowSrc, visited: &mut InitsSeen) -> Option<T
         }
         ThrowSrc::Slot {
             iface, slot, args, ..
-        } => {
-            let groups = cx.throw_groups();
-            let member = groups
-                .slot_group(*iface, *slot)
-                .and_then(|g| groups.list[g].members.first().copied());
-            let t = match member {
-                Some(m) => cx.fn_info(m).throws,
-                None => bound_of_slot(cx, *iface, *slot),
-            };
-            // A generic group error type is reported once, where it is inferred (checks.rs).
-            let t = t.filter(|t| !cx.mentions_params(*t));
-            (t, args.clone())
-        }
+        } => (slot_group_final(cx, *iface, *slot), args.clone()),
     };
     let t = t.map(|t| cx.subst(t, &args));
     cx.canon_error(t)
+}
+
+/// What a call through slot `slot` of `iface`, written without a `throws` clause, throws (in
+/// the interface's terms): its group's error type.
+pub(super) fn slot_group_final(cx: &mut Ctx, iface: DefId, slot: u32) -> Option<TyId> {
+    let groups = cx.throw_groups();
+    let member = groups
+        .slot_group(iface, slot)
+        .and_then(|g| groups.list[g].members.first().copied());
+    let t = match member {
+        Some(m) => cx.fn_info(m).throws,
+        None => bound_of_slot(cx, iface, slot),
+    };
+    // A generic group error type is reported once, where it is inferred (checks.rs).
+    t.filter(|t| !cx.mentions_params(*t))
 }
 
 /// A slot without any implementation: its written clause (if any).

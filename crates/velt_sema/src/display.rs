@@ -205,7 +205,14 @@ impl Ctx<'_> {
             let params: Vec<String> = m
                 .params
                 .iter()
-                .map(|p| format!("{}: {}", p.name, ty(p.ty)))
+                .map(|p| {
+                    // The setter `Object.defineProperty` adds (`crate::defined_accessors`).
+                    let name = match p.name == crate::defined_accessors::ADDED_SETTER_PARAM {
+                        true => "v",
+                        false => &p.name,
+                    };
+                    format!("{name}: {}", ty(p.ty))
+                })
                 .collect();
             let s = match (m.is_getter, m.name.strip_prefix("set ")) {
                 (true, _) => format!("get {}(): {}", key(&m.name), ty(m.ret)),

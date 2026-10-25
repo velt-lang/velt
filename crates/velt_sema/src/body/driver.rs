@@ -7,7 +7,7 @@ use velt_common::{Diagnostic, Span};
 use super::{literal_locals, recheck, recursion, FnCx, Frame, LocalKind, Want};
 use crate::ctx::Ctx;
 use crate::defs::{BodyState, DefInfo, FnKind, FnSource, RetSource};
-use crate::hir::{self, Def, DefId, ExprKind as H, TyId};
+use crate::hir::{self, Def, DefId, ExprKind as H, TyId, TyKind};
 use crate::resolve::TyEnv;
 
 /// How many times a body is checked again for the types of its locals declared from literals
@@ -165,7 +165,29 @@ pub(crate) fn ensure_global(cx: &mut Ctx, d: DefId) {
     match g.state {
         BodyState::Done => return,
         BodyState::InProgress => {
+            // Read in a function value of its own initializer (`const r: R = { m() { return r; } }`):
+            // the function runs once the constant is initialized, as in Node, so the constant is
+            // kept in the module state (a read before its initialization throws Node's
+            // `ReferenceError`), of its written or inferred type.
+            if cx.fn_value_depth > 0 && (g.ty != cx.ty.error || cx.typing_globals.contains(&d)) {
+                if let DefInfo::Global(g) = &mut cx.info[d.0 as usize] {
+                    g.stored = true;
+                }
+                return;
+            }
             let span = g.span;
+            if cx.fn_value_depth > 0 && cx.checking.is_empty() {
+                let name = g.name.clone();
+                cx.error(
+                    Diagnostic::error(
+                        format!("type annotation needed for `{name}`: a closure in its initializer uses it"),
+                        span,
+                    )
+                    .with_note(format!("write its type, e.g. `const {name}: T = …`")),
+                );
+                cx.global_cycles += 1;
+                return;
+            }
             // The function bodies being checked lead from the initializer back to the constant.
             let chain: Vec<String> = cx
                 .checking
@@ -195,16 +217,23 @@ pub(crate) fn ensure_global(cx: &mut Ctx, d: DefId) {
     let (ann, init_expr, decl_span) = (g.src.ann, g.src.init, g.src.span);
     set_global_state(cx, d, BodyState::InProgress);
     cx.literal_hosts.in_constants += 1;
+    let depth = std::mem::take(&mut cx.fn_value_depth);
     let saved = std::mem::take(&mut cx.display_params);
     let mut fcx = detached(cx, module, &[]);
     fcx.fn_name = qual;
     fcx.owner = owner;
     let ann = ann.map(|t| fcx.cx.resolve_type(t, &TyEnv::new(module, &[])));
+    if let (Some(t), DefInfo::Global(g)) = (ann, &mut fcx.cx.info[d.0 as usize]) {
+        g.ty = t;
+    }
     let own_symbol = fcx.cx.symbol_init(d, ann);
     let init = match (init_expr, ann) {
         _ if own_symbol.is_some() => own_symbol,
         (Some(e), Some(t)) => Some(fcx.expr_coerce(e, t, Want::Move)),
-        (Some(e), None) => Some(fcx.expr(e, None, Want::Move)),
+        (Some(e), None) => {
+            self_typed(&mut fcx, d, e);
+            Some(fcx.expr(e, None, Want::Move))
+        }
         (None, _) => {
             let what = if owner.is_some() {
                 "static fields must be initialized"
@@ -217,8 +246,10 @@ pub(crate) fn ensure_global(cx: &mut Ctx, d: DefId) {
             None
         }
     };
+    cx.fn_value_depth = depth;
     let ty = ann.or(init.as_ref().map(|i| i.ty)).unwrap_or(cx.ty.error);
-    let mut stored = mutable || kept;
+    // Kept as well when a function value in the initializer reads the constant.
+    let mut stored = mutable || kept || cx.global(d).is_some_and(|g| g.stored);
     // A top-level constant that reads a module `let` (or a property of `globalThis`) holds
     // the value it had when Node evaluated the constant, once: evaluated at each use, it would
     // see later writes. Kept in the module state, it is evaluated in Node's order instead.
@@ -324,6 +355,63 @@ pub(crate) fn holds_promise_by_value(cx: &Ctx, t: crate::hir::TyId, depth: u32) 
         },
         _ => false,
     }
+}
+
+/// Module constant `d` without a written type, whose initializer `e` reads it inside a function
+/// value (`const Level = component<P>(() => jsx(Level, …))`): typed by a trial check of `e` in
+/// which those reads are of unknown type, when that gives `e` a type without them (TypeScript
+/// infers it the same way). The reads then have that type.
+fn self_typed(fcx: &mut FnCx, d: DefId, e: &velt_syntax::ast::Expr) {
+    let Some(name) = fcx.cx.global(d).map(|g| g.name.clone()) else {
+        return;
+    };
+    if !reads_in_fn_value(e, &name) {
+        return;
+    }
+    let kept = fcx.cx.global(d).is_some_and(|g| g.stored);
+    let defs = fcx.cx.info.len() as u32;
+    fcx.cx.typing_globals.push(d);
+    let t = fcx.trial_type(e);
+    fcx.cx.typing_globals.pop();
+    // Not a type the trial made (an object literal's struct or interface): it was rolled back.
+    let t = t.filter(|&t| {
+        let mut made = false;
+        fcx.cx.ty.visit(t, &mut |k| {
+            made |= matches!(k, TyKind::Adt(x, _) | TyKind::Dyn(x, _) | TyKind::Closure(x) if x.0 >= defs);
+        });
+        !made && !fcx.cx.ty.has_error(t)
+    });
+    if let DefInfo::Global(g) = &mut fcx.cx.info[d.0 as usize] {
+        g.stored = kept;
+        if let Some(t) = t {
+            g.ty = t;
+        }
+    }
+}
+
+/// Does `e` name `name` inside an arrow or function expression?
+fn reads_in_fn_value(e: &velt_syntax::ast::Expr, name: &str) -> bool {
+    use velt_syntax::ast::ExprKind as E;
+    use velt_syntax::visit::{walk_expr, Visit};
+    struct Names<'n>(&'n str, bool);
+    impl Visit<'_> for Names<'_> {
+        fn expr(&mut self, e: &velt_syntax::ast::Expr) {
+            self.1 |= matches!(&e.kind, E::Ident(i) if i.name == self.0);
+        }
+    }
+    struct Fns<'n>(&'n str, bool);
+    impl Visit<'_> for Fns<'_> {
+        fn expr(&mut self, e: &velt_syntax::ast::Expr) {
+            if !self.1 && matches!(e.kind, E::Arrow { .. } | E::Function(_)) {
+                let mut n = Names(self.0, false);
+                walk_expr(e, &mut n);
+                self.1 = n.1;
+            }
+        }
+    }
+    let mut f = Fns(name, false);
+    walk_expr(e, &mut f);
+    f.1
 }
 
 fn set_global_state(cx: &mut Ctx, d: DefId, s: BodyState) {

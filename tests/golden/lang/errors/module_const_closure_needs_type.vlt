@@ -1,0 +1,11 @@
+// A module constant whose type depends on itself through a closure in its initializer needs a
+// written type, as TypeScript requires (TS7022, TS7023).
+const handler = {
+  run(n: number) {
+    return n <= 0 ? 0 : handler.run(n - 1);
+  },
+};
+
+export function use(): number {
+  return handler.run(3);
+}

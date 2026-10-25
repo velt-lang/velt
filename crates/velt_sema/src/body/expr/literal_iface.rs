@@ -30,6 +30,8 @@ struct Member<'e> {
     value: Option<&'e ast::Expr>,
     is_getter: bool,
     is_setter: bool,
+    /// A setter `Object.defineProperty` gives a getter-only property (`Ctx::defined_setters`).
+    defined: bool,
 }
 
 impl FnCx<'_, '_> {
@@ -139,12 +141,14 @@ impl FnCx<'_, '_> {
                     continue;
                 }
             };
+            let defined = is_setter && value.is_some_and(added_setter);
             members.push(Member {
                 name: key.name.clone(),
                 span: key.span,
                 value,
                 is_getter,
                 is_setter,
+                defined,
             });
         }
         let n = self.bounds.len();
@@ -162,6 +166,9 @@ impl FnCx<'_, '_> {
                 false => m.name.clone(),
             };
             known.push(ret.is_some() || m.is_setter);
+            if m.defined {
+                self.cx.defined_setters.insert((d, name.clone()));
+            }
             let unit = self.cx.ty.unit;
             iface_mut(self.cx, d).methods.push(IfaceMethod {
                 name,
@@ -439,6 +446,12 @@ impl FnCx<'_, '_> {
         i.name.clone_from(&name);
         i.qual_name = name;
     }
+}
+
+/// Is `e` the setter `crate::defined_accessors` adds to a getter-only property?
+fn added_setter(e: &ast::Expr) -> bool {
+    matches!(&e.kind, ast::ExprKind::Arrow { params, .. }
+        if params.first().is_some_and(|p| p.name.name == crate::defined_accessors::ADDED_SETTER_PARAM))
 }
 
 /// Field `key` of type `ty`, as a literal's value gives it.

@@ -41,7 +41,12 @@ pub(super) fn check_all(cx: &mut Ctx, fns: &[DefId], groups: &Groups) {
             let own = own_final(cx, d);
             let own = solved(cx, own);
             match cx.error_outside(decl.ty, own) {
-                Some(m) if decl.from_body => closure_too_early(cx, d, m),
+                Some(m) if decl.from_body => {
+                    let srcs = cx.fn_info(d).throw_srcs.clone();
+                    if !slots_found_late(cx, &srcs) {
+                        closure_too_early(cx, d, m);
+                    }
+                }
                 Some(m) => clause_violation(cx, d, m, decl.ty, decl.span),
                 None => {}
             }
@@ -310,7 +315,7 @@ fn observed(cx: &mut Ctx, c: &ThrowCheck) {
     } else {
         cx.error_outside(obs, fin).is_none()
     };
-    if ok {
+    if ok || slots_found_late(cx, &c.srcs) {
         return;
     }
     let fs = fin.map_or("nothing".to_string(), |t| {
@@ -318,17 +323,12 @@ fn observed(cx: &mut Ctx, c: &ThrowCheck) {
     });
     // A call through an interface value: its error type is the interface method's.
     let slot = c.srcs.iter().find_map(|s| match s {
-        ThrowSrc::Slot { iface, slot, .. } => {
-            let i = cx.iface(*iface)?;
-            let m = i.methods.get(*slot as usize)?;
-            Some((i.name.clone(), m.name.clone()))
-        }
+        ThrowSrc::Slot { iface, slot, .. } => Some((*iface, *slot)),
         _ => None,
     });
-    let note = match slot {
-        Some((i, m)) => {
-            let e = fin.map_or("E".to_string(), |t| shown_errors(cx, t));
-            format!("add a `throws` clause to interface method `{i}.{m}` (`{m}(): T throws {e};`)")
+    let note = match slot.and_then(|(i, s)| slot_signature(cx, i, s, fin)) {
+        Some((i, m, sig)) => {
+            format!("add a `throws` clause to interface method `{i}.{m}` (`{sig}`)")
         }
         None => {
             "add a `throws` clause to the functions in the recursion (`function f(): T throws E`)"
@@ -344,6 +344,72 @@ fn observed(cx: &mut Ctx, c: &ThrowCheck) {
         )
         .with_note(note),
     );
+}
+
+/// The slots `srcs` call through, without a `throws` clause, whose implementations were found
+/// after the reading body was checked (an object literal converted to the interface by code
+/// checked later): when what they throw is new, the program is checked again with it known from the
+/// start (`FnTypeSeeds::slots`), and the diagnostic is dropped. The slots read by
+/// the functions `srcs` call count too, through any depth of calls: an `async` function that
+/// reads the slot after an `await` is checked before the conversion, and its promise's error
+/// type with it.
+fn slots_found_late(cx: &mut Ctx, srcs: &[ThrowSrc]) -> bool {
+    let mut again = false;
+    let mut todo: Vec<ThrowSrc> = srcs.to_vec();
+    let mut seen: Vec<DefId> = vec![];
+    while let Some(s) = todo.pop() {
+        match s {
+            ThrowSrc::Call(d, ..) => {
+                let Some(f) = cx.try_fn(d) else {
+                    continue;
+                };
+                if f.declared_throws.is_some() || seen.contains(&d) {
+                    continue;
+                }
+                seen.push(d);
+                todo.extend(f.throw_srcs.iter().cloned());
+            }
+            ThrowSrc::Slot { iface, slot, .. } => {
+                if super::slot_clause(cx, iface, slot).is_some() {
+                    continue;
+                }
+                if let Some(t) = super::infer::slot_group_final(cx, iface, slot) {
+                    again |= cx.record_slot_hint(iface, slot, t);
+                }
+            }
+            _ => {}
+        }
+    }
+    again
+}
+
+/// Interface `iface`'s name, slot `slot`'s name and its declaration with `throws fin` (`get
+/// value(): string throws TypeError;`), for a note.
+fn slot_signature(
+    cx: &mut Ctx,
+    iface: DefId,
+    slot: u32,
+    fin: Option<TyId>,
+) -> Option<(String, String, String)> {
+    let i = cx.iface(iface)?;
+    let m = i.methods.get(slot as usize)?;
+    let (iname, mname, getter) = (i.name.clone(), m.name.clone(), m.is_getter);
+    let (params, ret) = (m.params.clone(), m.ret);
+    let names = i.generics.names.clone();
+    let saved = std::mem::replace(&mut cx.display_params, names);
+    let params: Vec<String> = params
+        .iter()
+        .map(|p| format!("{}: {}", p.name, cx.display(p.ty)))
+        .collect();
+    let e = fin.map_or("E".to_string(), |t| shown_errors(cx, t));
+    let ret = cx.display(ret);
+    cx.display_params = saved;
+    let sig = match mname.strip_prefix("set ") {
+        Some(n) => format!("set {n}({}) throws {e};", params.join(", ")),
+        None if getter => format!("get {mname}(): {ret} throws {e};"),
+        None => format!("{mname}({}): {ret} throws {e};", params.join(", ")),
+    };
+    Some((iname, mname, sig))
 }
 
 /// How many members of an error union a message shows.

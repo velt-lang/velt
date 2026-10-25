@@ -2294,7 +2294,12 @@ does is an error saying it is not supported yet, never a quiet difference.
   as in Node: one the descriptor leaves out stays, and after `configurable: false` defining it
   again throws `TypeError: Cannot redefine property: k`. A shorthand descriptor (`{ get }`) is
   `{ get: get }`. `enumerable` changes nothing Velt shows, since an interface value is not
-  listed by key. Not supported yet: accessors defined on other objects (a parameter, a class
+  listed by key. On a `const o = { get k(): T { … } }` written without a type, the getter's
+  result type must be written; a setter the descriptor gives is added to the literal. As in
+  TypeScript, `o.k = v` through the literal's own type stays an error (`k` is a getter there);
+  the setter is reached through a type that declares it (`o as WritableBox`), and a write before
+  the call has run throws Node's `TypeError: Cannot set property k of #<Object> which has only a
+  getter`. Not supported yet: accessors defined on other objects (a parameter, a class
   instance, a loop variable named like the literal), in a module that binds the name `Object`
   anywhere (its `Object.defineProperty` may be its own), with `this` inside them (#941), that may
   throw (until #1326), that are `undefined` (the property would read `undefined`), and a
@@ -2506,6 +2511,11 @@ console.log([...range(1, 3)]); // [ 1, 2, 3 ]
   object): use variables, or declare a class that `implements Iterable<T>` and reads its
   fields. Other generator methods in object literals are errors too: write a property holding a
   generator function.
+- Where an interface with methods is expected, the iterator method is one more member of a
+  literal [implementing it](#object-literals-implementing-interfaces), next to the others, and
+  `this` in it is the object: an `IterableIterator<T>` written as `{ next() { … },
+  [Symbol.iterator]() { return this; } }` is the iterator, so a loop over it goes on from where
+  `next()` left off, as in Node.
 - The value is an instance of the prelude class `__IterableObject<T, E>` (async:
   `__AsyncIterableObject<T, E>`), which holds the method; annotate it as `Iterable<T>`.
 

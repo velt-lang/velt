@@ -132,6 +132,13 @@ pub(crate) struct Ctx<'m> {
     pub global_props: crate::global_this::GlobalProps,
     /// Module constants found to depend on themselves so far (`body::driver::ensure_global`).
     pub global_cycles: u32,
+    /// How many function values (arrows, function expressions, literal methods) are being
+    /// checked inside the module constant being checked: a read of the constant there runs
+    /// later, once it is initialized (`body::driver::ensure_global`).
+    pub fn_value_depth: u32,
+    /// Module constants whose initializer is being checked on trial for its type, while it
+    /// reads the constant inside a function value (`body::driver::ensure_global`).
+    pub typing_globals: Vec<DefId>,
     /// Union enums by canonical member list (`crate::unions`).
     pub unions: FxHashMap<Vec<TyId>, DefId>,
     pub recursive_unions: FxHashMap<u32, Option<TyId>>, // by alias (crate::recursive_unions)
@@ -142,6 +149,10 @@ pub(crate) struct Ctx<'m> {
     /// The throwing setters a getter-only override gets (`collect::classes`): a write through
     /// the class itself is a type error, as in TypeScript, one through a base class throws.
     pub getter_only_setters: FxHashSet<DefId>,
+    /// Setters of object literals' own interfaces that `Object.defineProperty` gives a
+    /// getter-only property (`crate::defined_accessors`), by interface and method name: a
+    /// write through the literal's own type is rejected, as TypeScript does (TS2540).
+    pub defined_setters: FxHashSet<(DefId, String)>,
     /// Names of `Param(i)` in the definition being checked (for messages).
     pub display_params: Vec<String>,
     /// Functions whose parameter defaults are checked (or being checked): they are checked on
@@ -421,11 +432,14 @@ impl<'m> Ctx<'m> {
             promoted_consts: FxHashSet::default(),
             global_props: Default::default(),
             global_cycles: 0,
+            fn_value_depth: 0,
+            typing_globals: Vec::new(),
             unions: FxHashMap::default(),
             recursive_unions: FxHashMap::default(),
             alias_names: FxHashMap::default(),
             generic_overrides: vec![],
             getter_only_setters: FxHashSet::default(),
+            defined_setters: FxHashSet::default(),
             display_params: vec![],
             defaults_checked: FxHashSet::default(),
             classes_below: FxHashMap::default(),

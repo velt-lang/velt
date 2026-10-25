@@ -47,6 +47,9 @@ impl Ctx<'_> {
         });
         if fits && !known {
             self.synth_ifaces.upcasts.push((have, want));
+            // The dispatch groups link the two interfaces' slots (`throws/groups.rs`): built
+            // again on next use.
+            self.groups = None;
         }
         fits
     }

@@ -361,11 +361,14 @@ impl FnCx<'_, '_> {
         for (t, w) in ptys.iter_mut().zip(&wide) {
             *t = w.unwrap_or(*t);
         }
+        // A module constant read in the body runs once the constant is initialized.
+        self.cx.fn_value_depth += 1;
         let mut block = match body {
             ast::ArrowBody::Expr(x) if void_task => self.void_task_body(x),
             ast::ArrowBody::Expr(x) if await_body => self.awaited_body(x),
             _ => self.closure_body(body, span),
         };
+        self.cx.fn_value_depth -= 1;
         block.stmts.splice(0..0, locals);
         let ptys: Vec<TyId> = ptys
             .iter()
