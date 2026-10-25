@@ -16,6 +16,7 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::{Diagnostic, Span};
+use velt_syntax::ast;
 
 use crate::ctx::Ctx;
 use crate::defs::DefInfo;
@@ -107,6 +108,57 @@ impl Ctx<'_> {
             None => d,
         });
         false
+    }
+}
+
+impl Ctx<'_> {
+    /// The names of the type aliases without parameters that are read-only array or collection
+    /// types, and of those that are number-keyed record types, directly or through other such
+    /// aliases: only a written type naming one of them needs looking up (`body::readonly_arrays`,
+    /// `body::expr::number_records`). Computed once, after the declarations are collected.
+    pub(crate) fn marked_aliases(&self) -> &(FxHashSet<String>, FxHashSet<String>) {
+        self.marked_aliases.get_or_init(|| {
+            let (mut ro, mut num) = (FxHashSet::default(), FxHashSet::default());
+            loop {
+                let before = ro.len() + num.len();
+                for a in self.aliases.iter().filter(|a| a.decl.generics.is_empty()) {
+                    let t = &a.decl.ty;
+                    let names = |set: &FxHashSet<String>| {
+                        matches!(&t.kind, ast::TypeExprKind::Named { path, args }
+                            if args.is_empty() && path.len() == 1 && set.contains(&path[0].name))
+                    };
+                    if crate::body::is_readonly_type(t) || names(&ro) {
+                        ro.insert(a.decl.name.name.clone());
+                    }
+                    if is_number_record_type(t) || names(&num) {
+                        num.insert(a.decl.name.name.clone());
+                    }
+                }
+                if ro.len() + num.len() == before {
+                    break;
+                }
+            }
+            (ro, num)
+        })
+    }
+}
+
+/// `Record<number, V>` or `{ [k: number]: V }` as written, possibly `| null` / `| undefined`.
+pub(crate) fn is_number_record_type(t: &ast::TypeExpr) -> bool {
+    use ast::TypeExprKind as T;
+    let number = |t: &ast::TypeExpr| matches!(&t.kind, T::Named { path, args } if args.is_empty() && path.len() == 1 && path[0].name == "number");
+    match &t.kind {
+        T::Named { path, args } if path.len() == 1 && path[0].name == "Record" => {
+            matches!(&args[..], [k, _] if number(k))
+        }
+        T::IndexSig { fields, key, .. } => fields.is_empty() && number(&key.ty),
+        T::Union(ms) => {
+            let mut rest = ms
+                .iter()
+                .filter(|m| !matches!(m.kind, T::Null | T::Undefined));
+            matches!((rest.next(), rest.next()), (Some(m), None) if is_number_record_type(m))
+        }
+        _ => false,
     }
 }
 

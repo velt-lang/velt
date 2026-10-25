@@ -49,6 +49,10 @@ pub(crate) struct Ctx<'m> {
     /// Exports of `std/prelude/*` modules, visible everywhere.
     pub prelude: FxHashMap<String, Item>,
     pub aliases: Vec<AliasInfo<'m>>,
+    /// The names of type aliases without parameters that are read-only array or collection types
+    /// and number-keyed record types, directly or through other such aliases
+    /// ([`Ctx::marked_aliases`]).
+    pub marked_aliases: std::cell::OnceCell<(FxHashSet<String>, FxHashSet<String>)>,
     pub extensions: Vec<Extension>,
     /// The extensions declaring each method name, built for the first `extensions.len()`
     /// extensions (body/expr/method.rs `applicable_extensions`).
@@ -392,6 +396,7 @@ impl<'m> Ctx<'m> {
                 .collect(),
             prelude: FxHashMap::default(),
             aliases: vec![],
+            marked_aliases: Default::default(),
             extensions: vec![],
             extension_names: (0, FxHashMap::default()),
             impls: vec![],

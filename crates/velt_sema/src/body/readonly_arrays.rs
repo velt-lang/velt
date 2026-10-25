@@ -18,11 +18,26 @@ use velt_syntax::ast;
 use super::FnCx;
 use crate::hir::{self, ExprKind as H, LitValue, LocalId, TyId, TyKind};
 
+/// [`super::Frame::local_marks`]: a local declared with a read-only type.
+pub(crate) const READONLY: u8 = 1;
+/// [`super::Frame::local_marks`]: a local declared with a number-keyed record type.
+pub(crate) const NUMBER_RECORD: u8 = 2;
+
 impl FnCx<'_, '_> {
+    /// Marks local `l` with `mark` ([`super::Frame::local_marks`]).
+    pub(crate) fn mark_local(&mut self, l: LocalId, mark: u8) {
+        *self.f.local_marks.entry(l).or_default() |= mark;
+    }
+
+    /// Does local `l` have `mark`?
+    pub(crate) fn local_marked(&self, l: LocalId, mark: u8) -> bool {
+        self.f.local_marks.get(&l).is_some_and(|m| m & mark != 0)
+    }
+
     /// Records local `l` declared with the written type `ty` when that is a read-only array.
     pub(super) fn note_readonly_array(&mut self, l: LocalId, ty: Option<&ast::TypeExpr>) {
         if ty.is_some_and(|t| self.is_readonly_written(t, 0)) {
-            self.f.readonly_arrays.insert(l);
+            self.mark_local(l, READONLY);
         }
     }
 
@@ -34,7 +49,7 @@ impl FnCx<'_, '_> {
             _ => false,
         };
         if cast || self.readonly_local(h).is_some() {
-            self.f.readonly_arrays.insert(l);
+            self.mark_local(l, READONLY);
         }
     }
 
@@ -42,14 +57,14 @@ impl FnCx<'_, '_> {
     /// a read-only variable.
     pub(crate) fn note_readonly_binding(&mut self, l: LocalId, object: &hir::Expr) {
         if self.readonly_local(object).is_some() {
-            self.f.readonly_arrays.insert(l);
+            self.mark_local(l, READONLY);
         }
     }
 
     /// The read-only variable `h` reads (through casts, narrowing and upcasts).
     fn readonly_local(&self, h: &hir::Expr) -> Option<LocalId> {
         match &h.kind {
-            H::Local(l, _) => self.f.readonly_arrays.contains(l).then_some(*l),
+            H::Local(l, _) => self.local_marked(*l, READONLY).then_some(*l),
             H::Cast(x) | H::UnwrapSome(x, _) | H::Upcast(x) | H::Downcast(x) => {
                 self.readonly_local(x)
             }
@@ -68,6 +83,9 @@ impl FnCx<'_, '_> {
             return false;
         };
         if depth > 8 || path.len() != 1 || !args.is_empty() {
+            return false;
+        }
+        if !self.cx.marked_aliases().0.contains(&path[0].name) {
             return false;
         }
         match self
@@ -201,7 +219,7 @@ impl FnCx<'_, '_> {
             }
         }
         if super::expr::member::is_as_const(ty) && as_const_strings(expr).is_some() {
-            self.f.readonly_arrays.insert(l);
+            self.mark_local(l, READONLY);
         }
     }
 }
@@ -271,6 +289,11 @@ const COLLECTION_MUTATING: [&str; 7] = [
     "update",
     "getOrInsert",
 ];
+
+/// A read-only array or collection type as written (not through aliases).
+pub(crate) fn is_readonly_type(t: &ast::TypeExpr) -> bool {
+    is_readonly_array(t) || is_readonly_collection(t)
+}
 
 /// `ReadonlySet<T>` or `ReadonlyMap<K, V>`, possibly `| null`.
 fn is_readonly_collection(t: &ast::TypeExpr) -> bool {

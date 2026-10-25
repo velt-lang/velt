@@ -81,6 +81,7 @@ pub(crate) mod recursion;
 pub(crate) mod returns;
 mod stmt;
 pub(crate) use readonly_arrays::is_readonly_array;
+pub(crate) use readonly_arrays::{is_readonly_type, NUMBER_RECORD};
 pub(crate) use stmt::closure_def;
 pub(crate) mod switch;
 mod untyped_let;
@@ -286,11 +287,10 @@ pub(crate) struct Frame {
     pub using_shares: Vec<(Span, LocalId)>,
     /// The `using` locals declared `await using`.
     pub await_using: rustc_hash::FxHashSet<LocalId>,
-    /// Locals declared with a read-only array type (`readonly T[]`, `ReadonlyArray<T>`), which
-    /// the body may not write to (`readonly_arrays.rs`).
-    pub readonly_arrays: rustc_hash::FxHashSet<LocalId>,
-    /// Locals declared with a number-keyed record type (`expr::number_records`).
-    pub number_records: rustc_hash::FxHashSet<LocalId>,
+    /// Marks of locals: [`READONLY`] for one declared with a read-only array or collection type,
+    /// which the body may not write to (`readonly_arrays.rs`), [`NUMBER_RECORD`] for one declared
+    /// with a number-keyed record type (`expr::number_records`).
+    pub local_marks: FxHashMap<LocalId, u8>,
     /// What the position of an assignment used as a value expects (`assign_value`): a
     /// `new C()` assigned through `any` with `??=`, `||=` or `&&=` takes its type arguments from
     /// it (`dynamic_write`).
@@ -414,8 +414,7 @@ impl Frame {
             soft_moves: vec![],
             using_shares: vec![],
             await_using: Default::default(),
-            readonly_arrays: Default::default(),
-            number_records: Default::default(),
+            local_marks: Default::default(),
             assign_hint: None,
             as_const_tuples: Default::default(),
             closure_consts: Default::default(),

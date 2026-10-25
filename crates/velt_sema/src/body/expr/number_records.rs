@@ -24,7 +24,7 @@ impl FnCx<'_, '_> {
         let Some(t) = ty.filter(|t| self.is_number_record_written(t, 0)) else {
             return;
         };
-        self.f.number_records.insert(l);
+        self.mark_local(l, crate::body::NUMBER_RECORD);
         let Some(ast::ExprKind::Object(props)) = init.map(|e| &e.kind) else {
             return;
         };
@@ -72,7 +72,7 @@ impl FnCx<'_, '_> {
 
     fn is_number_record(&self, h: &hir::Expr) -> bool {
         match &h.kind {
-            H::Local(l, _) => self.f.number_records.contains(l),
+            H::Local(l, _) => self.local_marked(*l, crate::body::NUMBER_RECORD),
             H::Cast(x) | H::UnwrapSome(x, _) | H::Upcast(x) => self.is_number_record(x),
             _ => false,
         }
@@ -81,31 +81,25 @@ impl FnCx<'_, '_> {
     /// `Record<number, V>` or `{ [k: number]: V }`, possibly `| null` / `| undefined`, also
     /// through type aliases of the module.
     fn is_number_record_written(&self, t: &ast::TypeExpr, depth: usize) -> bool {
-        use ast::TypeExprKind as T;
-        let number = |t: &ast::TypeExpr| matches!(&t.kind, T::Named { path, args } if args.is_empty() && path.len() == 1 && path[0].name == "number");
-        match &t.kind {
-            T::Named { path, args } if path.len() == 1 && path[0].name == "Record" => {
-                matches!(&args[..], [k, _] if number(k))
-            }
-            T::IndexSig { fields, key, .. } => fields.is_empty() && number(&key.ty),
-            T::Union(ms) => {
-                let mut rest = ms
-                    .iter()
-                    .filter(|m| !matches!(m.kind, T::Null | T::Undefined));
-                matches!((rest.next(), rest.next()), (Some(m), None) if self.is_number_record_written(m, depth))
-            }
-            T::Named { path, args } if depth < 8 && path.len() == 1 && args.is_empty() => {
-                match self
-                    .cx
-                    .lookup_item_at(self.module, &path[0].name, path[0].span)
-                {
-                    Some(crate::ctx::Item::Alias(a)) => {
-                        let decl = self.cx.aliases[a as usize].decl;
-                        decl.generics.is_empty()
-                            && self.is_number_record_written(&decl.ty, depth + 1)
-                    }
-                    _ => false,
-                }
+        if crate::record_keys::is_number_record_type(t) {
+            return true;
+        }
+        let ast::TypeExprKind::Named { path, args } = &t.kind else {
+            return false;
+        };
+        if depth > 8 || path.len() != 1 || !args.is_empty() {
+            return false;
+        }
+        if !self.cx.marked_aliases().1.contains(&path[0].name) {
+            return false;
+        }
+        match self
+            .cx
+            .lookup_item_at(self.module, &path[0].name, path[0].span)
+        {
+            Some(crate::ctx::Item::Alias(a)) => {
+                let decl = self.cx.aliases[a as usize].decl;
+                decl.generics.is_empty() && self.is_number_record_written(&decl.ty, depth + 1)
             }
             _ => false,
         }
