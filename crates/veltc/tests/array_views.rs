@@ -99,3 +99,41 @@ console.log(sum(kids as string[]), sum([\"x\"]));
         .count();
     assert_eq!(cold, 1, "{}", sum[0]);
 }
+
+#[test]
+fn a_loop_copy_reads_past_the_length_of_a_row_its_test_found_plain_as_a_plain_array() {
+    // In the copy of the loop of `total`, `rows[k][i]` reads the row whose header the loop's
+    // test `i < rows[k].length` found plain, with nothing in between that may write memory: past
+    // its length is the plain array's out-of-bounds error, so the copy goes on in its own access
+    // past the length (which takes the header's address, as a view's would its mirror's)
+    // instead of in the original's. The function has two of them, the original's and the copy's.
+    let vir = vir_of(
+        "function total(rows: string[][]): number {
+  let n = 0;
+  for (let k = 0; k < rows.length; k++) {
+    for (let i = 0; i < rows[k].length; i++) {
+      n += rows[k][i].length;
+    }
+  }
+  return n;
+}
+const kids: any = [1, \"bc\"];
+console.log(total([kids as string[], [\"x\"]]), total([[\"y\", \"zz\"]]));
+",
+    );
+    let total: Vec<&str> = vir
+        .split(
+            "
+fn#",
+        )
+        .filter(|f| f.lines().next().is_some_and(|l| l.contains("total(")))
+        .collect();
+    assert_eq!(
+        total.len(),
+        1,
+        "no single `total` in the VIR:
+{vir}"
+    );
+    let past = total[0].lines().filter(|l| l.contains("= &(*(*")).count();
+    assert_eq!(past, 2, "{}", total[0]);
+}

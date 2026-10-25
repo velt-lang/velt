@@ -87,16 +87,15 @@ impl FnLower<'_, '_> {
         let base = self.retained_hop(bxp, t);
         let hdr = proj(&base, Proj::Deref(payload));
         let out = Place::local(self.temp(Ty::U64));
-        self.assign(
-            out.clone(),
-            Rvalue::Use(Operand::Copy(proj(&hdr, Proj::Field(1)))),
-        );
+        // The header's length in a temporary of its own, which a loop's copy knows as the
+        // header's (view_unswitch_plain.rs); `out` is assigned again for a view.
+        let n = Operand::Copy(proj(&hdr, Proj::Field(1)));
+        let n = self.rvalue_temp(Ty::U64, Rvalue::Use(n));
+        self.assign(out.clone(), Rvalue::Use(n.clone()));
         // A view's own header has length 0: a longer array is plain.
-        let empty = self.rvalue_temp(
-            Ty::Bool,
-            Rvalue::Binary(BinOp::Eq, Operand::Copy(out.clone()), cint(0, Ty::U64)),
-        );
+        let empty = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, n, cint(0, Ty::U64)));
         let (test, yes, join) = (self.new_block(), self.new_block(), self.new_block());
+        self.note_view_zero(&hdr, &empty);
         self.branch(empty, test, join);
         self.switch_to(test);
         let (is, v) = self.array_view_of_hdr(&hdr);

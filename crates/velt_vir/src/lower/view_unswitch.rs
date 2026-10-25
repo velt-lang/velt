@@ -24,6 +24,10 @@
 //!   in the original there too, whatever its box. So the copy reads only a plain array's
 //!   element, with no way on from the test where the index may be past the length: the index
 //!   is known to be below it after the test, which lets `velt_opt` keep it an integer.
+//! - Except where the copy knows the header is plain (view_unswitch_plain.rs): the same header
+//!   a test before found plain, with nothing in between that may write memory. A view test of
+//!   it is false in the copy, and an access past its length is a plain array's, which is only
+//!   the out-of-bounds error, as in a program without views.
 //!
 //! The backend should compile the copy as it would the loop of a program without views: the
 //! copy's blocks are in the order the backend's own loop versioning leaves a copy in (reverse
@@ -46,6 +50,13 @@ pub(super) struct ViewLoops {
     /// The tests of an element access's index against the header's length, whose false side
     /// tests the view bit (array_view_index.rs).
     slows: FxHashSet<Local>,
+    /// The tests of a header's length against 0, whose false side is a plain array's (a view's
+    /// own header has length 0).
+    pub(super) zeros: FxHashSet<Local>,
+    /// The header each of the tests above read.
+    pub(super) hdrs: FxHashMap<Local, Place>,
+    /// The quiet functions called directly (quiet.rs), each an instance of its definition.
+    pub(super) quiet: FxHashMap<vir::FuncId, velt_sema::hir::DefId>,
     /// The loops lowered: their header (the block entered from before the loop) and the
     /// range of blocks made while lowering them.
     loops: Vec<(BlockId, u32, u32)>,
@@ -68,13 +79,33 @@ impl FnLower<'_, '_> {
             _ => None,
         };
         self.view_loops.tests.push((*local, held));
+        self.view_loops.hdrs.insert(*local, hdr.clone());
     }
 
-    /// The test `inb` is an element access's `i < len`, whose false side tests the view bit.
-    pub(super) fn note_view_slow(&mut self, inb: &Operand) {
+    /// The test `inb` is an element access's `i < len` of the header at `hdr`, whose false side
+    /// tests the view bit.
+    pub(super) fn note_view_slow(&mut self, hdr: &Place, inb: &Operand) {
         if let Operand::Copy(Place { local, proj }) = inb {
             if proj.is_empty() {
                 self.view_loops.slows.insert(*local);
+                self.view_loops.hdrs.insert(*local, hdr.clone());
+            }
+        }
+    }
+
+    /// `f`, an instance of `def`, is a quiet function called directly.
+    pub(super) fn note_quiet_call(&mut self, f: vir::FuncId, def: velt_sema::hir::DefId) {
+        if !self.cx.boxing.array_views.is_empty() {
+            self.view_loops.quiet.insert(f, def);
+        }
+    }
+
+    /// The test `empty` is the header at `hdr`'s `length == 0`.
+    pub(super) fn note_view_zero(&mut self, hdr: &Place, empty: &Operand) {
+        if let Operand::Copy(Place { local, proj }) = empty {
+            if proj.is_empty() {
+                self.view_loops.zeros.insert(*local);
+                self.view_loops.hdrs.insert(*local, hdr.clone());
             }
         }
     }
@@ -437,6 +468,7 @@ impl FnLower<'_, '_> {
         // Where the copy goes on in the original, the original's locals take the values of the
         // copy's that are live there (and assigned on every way there).
         let renamed: FxHashSet<Local> = fresh.keys().copied().collect();
+        let proven = self.plain_headers(h, region, tests, params);
         let (live, set) = match leave.is_empty() && slows.is_empty() {
             true => (FxHashMap::default(), FxHashMap::default()),
             false => (
@@ -475,16 +507,21 @@ impl FnLower<'_, '_> {
                 edge
             };
             let term = match term {
-                // A test of one of `boxes` is false in the copy.
-                Some(Terminator::Branch { cond, els, .. }) if named(plain, &cond) => {
+                // A test of one of `boxes`, or of a header known plain, is false in the copy.
+                Some(Terminator::Branch { cond, els, .. })
+                    if named(plain, &cond) || proven.tests.contains(&b) =>
+                {
                     Some(Terminator::Goto(els))
                 }
                 Some(Terminator::Branch { cond, then, els }) if named(leave, &cond) => {
                     let then = hand_over(self, then);
                     Some(Terminator::Branch { cond, then, els })
                 }
-                // Past the header's length: a view, or an error on a plain array.
-                Some(Terminator::Branch { cond, then, els }) if named(slows, &cond) => {
+                // Past the header's length: a view, or an error on a plain array (which is all
+                // it is for a header known plain).
+                Some(Terminator::Branch { cond, then, els })
+                    if named(slows, &cond) && !proven.slows.contains(&b) =>
+                {
                     let els = hand_over(self, els);
                     Some(Terminator::Branch { cond, then, els })
                 }
@@ -628,10 +665,10 @@ impl FnLower<'_, '_> {
 
 /// The tests in a loop's copy: false there (`plain`), going on in the original when true
 /// (`leave`), and element accesses' `i < len` going on in the original when false (`slows`).
-struct Tests {
-    plain: FxHashSet<Local>,
-    leave: FxHashSet<Local>,
-    slows: FxHashSet<Local>,
+pub(super) struct Tests {
+    pub(super) plain: FxHashSet<Local>,
+    pub(super) leave: FxHashSet<Local>,
+    pub(super) slows: FxHashSet<Local>,
 }
 
 /// A write to `p` assigns its local (one of `cands`) unless it goes through a pointer.

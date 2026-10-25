@@ -112,6 +112,7 @@ mod truthy;
 mod types;
 mod upcast;
 mod view_unswitch;
+mod view_unswitch_plain;
 mod weak;
 mod weak_object;
 mod weak_view;
