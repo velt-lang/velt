@@ -279,7 +279,11 @@ impl FnCx<'_, '_> {
         let read = synth(ast::ExprKind::Ident(ast::Ident { name, span }), span);
         let mut classes: Vec<(usize, DefId)> = (0..self.cx.info.len() as u32)
             .map(DefId)
-            .filter(|&d| self.cx.adt(d).is_some_and(|a| a.kind == AdtKind::Class))
+            .filter(|&d| {
+                self.cx
+                    .adt(d)
+                    .is_some_and(|a| a.kind == AdtKind::Class && !is_internal(&a.name))
+            })
             .collect::<Vec<_>>()
             .into_iter()
             .filter(|&d| only(self, d))
@@ -461,4 +465,10 @@ fn std_string_tag(s: &FnCx<'_, '_>, d: DefId, name: &str) -> Option<&'static str
         }
         _ => return None,
     })
+}
+
+/// A prelude class whose objects never reach an `any`: an array view's state
+/// (std/prelude/zzz_adapt.vlt; a view converts to `any` as the array it views).
+fn is_internal(name: &str) -> bool {
+    name.rsplit("::").next() == Some("__ArrayView")
 }

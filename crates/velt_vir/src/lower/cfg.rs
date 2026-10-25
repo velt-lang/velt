@@ -24,7 +24,7 @@ pub(crate) fn successors(t: &Terminator) -> Vec<BlockId> {
     }
 }
 
-fn remap_term(t: Terminator, map: impl Fn(BlockId) -> BlockId) -> Terminator {
+pub(super) fn remap_term(t: Terminator, map: impl Fn(BlockId) -> BlockId) -> Terminator {
     match t {
         Terminator::Goto(b) => Terminator::Goto(map(b)),
         Terminator::Branch { cond, then, els } => Terminator::Branch {
@@ -158,6 +158,7 @@ impl FnLower<'_, '_> {
     /// Materialize deferred blocks, prune unreachable ones and build the VIR function.
     pub(super) fn finish(mut self, symbol: String, params: Vec<Ty>, ret: Ty) -> Function {
         self.build_div_zero_blocks();
+        self.version_view_loops(params.len());
         let mut remap = vec![None; self.blocks.len()];
         for (n, (i, _)) in self
             .live

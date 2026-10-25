@@ -488,6 +488,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
     }
 
     fn transfer_elems(&mut self, arr: &Place, e: TyId) {
+        // A view goes as a plain array of its elements (array_view.rs).
+        self.view_materialize(arr, e);
         if !self.cx.transfers(e) {
             return;
         }

@@ -46,7 +46,7 @@ impl FnLower<'_, '_> {
                 }
                 for (pp, pt) in parts {
                     if !lw.push_js_object(buf, &pp, pt) {
-                        lw.format_top(buf, &pp, pt);
+                        lw.push_js_string(buf, &pp, pt);
                     }
                 }
             });
@@ -124,8 +124,23 @@ impl FnLower<'_, '_> {
 
     /// Does union `ty` have a member [`js_object`](Self::js_object) writes?
     fn union_has_object(&mut self, ty: TyId) -> bool {
+        let members = self.union_members(ty);
+        members.into_iter().any(|p| self.js_object(p))
+    }
+
+    /// Is `ty` a union with an array or tuple member, which `String(x)` writes as a JS list?
+    pub(super) fn union_has_list(&mut self, ty: TyId) -> bool {
+        let members = self.union_members(ty);
+        members.into_iter().any(|p| self.writes_js_list(p))
+    }
+
+    /// The payload types of union `ty`'s members (none if `ty` is not a union).
+    pub(super) fn union_members(&mut self, ty: TyId) -> Vec<TyId> {
+        if !self.cx.is_union(ty) {
+            return vec![];
+        }
         let TyKind::Adt(d, args) = self.cx.kind(ty) else {
-            return false;
+            return vec![];
         };
         let payloads: Vec<TyId> = self
             .cx
@@ -134,10 +149,10 @@ impl FnLower<'_, '_> {
             .iter()
             .flat_map(|v| v.payload.clone())
             .collect();
-        payloads.into_iter().any(|p| {
-            let p = self.cx.subst(p, &args);
-            self.js_object(p)
-        })
+        payloads
+            .into_iter()
+            .map(|p| self.cx.subst(p, &args))
+            .collect()
     }
 }
 

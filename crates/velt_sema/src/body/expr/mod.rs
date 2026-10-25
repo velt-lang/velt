@@ -47,6 +47,7 @@ mod dynamic_whole;
 mod dynamic_write;
 mod env_globals;
 pub(crate) use env_globals::NODE_GLOBALS;
+mod array_view_cast;
 pub(crate) mod await_value;
 mod error_slots;
 mod error_view;

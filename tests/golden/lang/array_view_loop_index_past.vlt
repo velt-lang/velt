@@ -1,0 +1,69 @@
+// check: no leaks
+// Index reads and writes in loops over arrays of a view type (#1485), where an index past the
+// header's length (a view's is 0) goes on in the loop's original: rows of plain arrays and
+// views mixed, writes, `xs[i + 1]`, a row that becomes a view in the middle of the loop, and a
+// local that becomes a view after a few steps.
+function total(rows: string[][]): number {
+  let n = 0;
+  for (let k = 0; k < rows.length; k++) {
+    for (let i = 0; i < rows[k].length; i++) {
+      n += rows[k][i].length;
+    }
+  }
+  return n;
+}
+
+function pairs(xs: string[]): string {
+  let out = "";
+  for (let i = 0; i + 1 < xs.length; i += 2) {
+    out += xs[i + 1] + xs[i] + ",";
+  }
+  return out;
+}
+
+function mark(rows: string[][]) {
+  for (let k = 0; k < rows.length; k++) {
+    for (let i = 0; i < rows[k].length; i++) {
+      rows[k][i] = rows[k][i] + "!";
+    }
+  }
+}
+
+function swapIn(rows: string[][], at: number, v: string[]): number {
+  let n = 0;
+  for (let k = 0; k < rows.length; k++) {
+    if (k === at) {
+      rows[k + 1] = v;
+    }
+    for (let i = 0; i < rows[k].length; i++) {
+      n += rows[k][i].length * (k + 1);
+    }
+  }
+  return n;
+}
+
+function main() {
+  const raw: any = ["ab", "cde"];
+  const view = raw as string[];
+  const plain = ["x", "yz"];
+  const rows: string[][] = [plain, view, ["q"], view];
+  console.log(total(rows));
+  console.log(pairs(view), pairs(plain), pairs(["a", "b", "c", "d", "e"]));
+  mark(rows);
+  console.log(JSON.stringify(rows), JSON.stringify(raw));
+  const raw2: any = ["long", "longer", "longest"];
+  const rows2: string[][] = [["a"], ["bb"], ["ccc"]];
+  console.log(swapIn(rows2, 0, raw2 as string[]));
+  console.log(JSON.stringify(rows2));
+  let cur: string[] = ["p", "q"];
+  let seen = "";
+  for (let r = 0; r < 3; r++) {
+    for (let i = 0; i < cur.length; i++) {
+      seen += cur[i] + i;
+    }
+    if (r === 0) {
+      cur = raw2 as string[];
+    }
+  }
+  console.log(seen);
+}
