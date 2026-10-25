@@ -554,7 +554,12 @@ impl FnCx<'_, '_> {
         want: Want,
         span: Span,
     ) -> hir::Expr {
-        let target = self.resolve(ty);
+        // `v as Record<symbol, unknown>` (or `any` values): a look at an object's symbol-keyed
+        // members, `(v as Record<symbol, unknown>)[KEY]`, which reads as it does through `any`.
+        let target = match symbol_record_of_dynamic(ty) {
+            Some(any) => self.resolve(&any),
+            None => self.resolve(ty),
+        };
         if let Some(h) = self.callable_cast(expr, target, span) {
             return h;
         }
@@ -748,5 +753,32 @@ pub(crate) fn is_name(e: &ast::Expr) -> bool {
         ast::ExprKind::Ident(_) => true,
         ast::ExprKind::Paren(inner) => is_name(inner),
         _ => false,
+    }
+}
+
+/// `any` (spelled at `t`'s span) when `t` is `Record<symbol, unknown>` or `Record<symbol, any>`.
+fn symbol_record_of_dynamic(t: &ast::TypeExpr) -> Option<ast::TypeExpr> {
+    let named = |t: &ast::TypeExpr, names: &[&str]| {
+        matches!(&t.kind, ast::TypeExprKind::Named { path, args }
+            if args.is_empty() && path.len() == 1 && names.contains(&path[0].name.as_str()))
+    };
+    let ast::TypeExprKind::Named { path, args } = &t.kind else {
+        return None;
+    };
+    let record = path.len() == 1 && path[0].name == "Record";
+    match &args[..] {
+        [k, v] if record && named(k, &["symbol"]) && named(v, &["unknown", "any"]) => {
+            Some(ast::TypeExpr {
+                kind: ast::TypeExprKind::Named {
+                    path: vec![ast::Ident {
+                        name: "any".into(),
+                        span: t.span,
+                    }],
+                    args: vec![],
+                },
+                span: t.span,
+            })
+        }
+        _ => None,
     }
 }
