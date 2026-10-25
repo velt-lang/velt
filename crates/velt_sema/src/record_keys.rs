@@ -112,8 +112,8 @@ impl Ctx<'_> {
 }
 
 impl Ctx<'_> {
-    /// The names of the type aliases without parameters that are read-only array or collection
-    /// types, and of those that are number-keyed record types, directly or through other such
+    /// The names of the program's type aliases (not std's) without parameters that are read-only
+    /// array or collection types, and of those that are number-keyed record types, directly or through other such
     /// aliases: only a written type naming one of them needs looking up (`body::readonly_arrays`,
     /// `body::expr::number_records`). Computed once, after the declarations are collected.
     pub(crate) fn marked_aliases(&self) -> &(FxHashSet<String>, FxHashSet<String>) {
@@ -121,7 +121,11 @@ impl Ctx<'_> {
             let (mut ro, mut num) = (FxHashSet::default(), FxHashSet::default());
             loop {
                 let before = ro.len() + num.len();
-                for a in self.aliases.iter().filter(|a| a.decl.generics.is_empty()) {
+                // The program's own aliases: std neither needs these errors nor pays for them.
+                let own = |a: &&crate::defs::AliasInfo| {
+                    a.decl.generics.is_empty() && !self.scopes[a.module].is_std
+                };
+                for a in self.aliases.iter().filter(own) {
                     let t = &a.decl.ty;
                     let names = |set: &FxHashSet<String>| {
                         matches!(&t.kind, ast::TypeExprKind::Named { path, args }
