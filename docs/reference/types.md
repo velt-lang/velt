@@ -667,9 +667,9 @@ arrays), the `value` of a finished iterator's result, `WeakMap.get`, `WeakRef.de
 target, `Symbol.keyFor` and `description` of a symbol without one, and an unset
 `process.env.X`. Each gives a `T | undefined` (a `T | null | undefined` when `T` holds `null`:
 `m.get("a")` of a `Map<string, number | null>` tells a stored `null` from a missing key).
-Velt's own collections follow the same rule (`Deque`, `PriorityQueue`, `SortedMap`). APIs whose
-lib.d.ts result is `null` keep it: `RegExp.exec`, `String.match`, `Headers.get`,
-`URLSearchParams.get`.
+Velt's own collections follow the same rule (`Deque`, `PriorityQueue`, `SortedMap`,
+`BTreeMap`). APIs whose lib.d.ts result is `null` keep it: `RegExp.exec`, `String.match`,
+`Headers.get`, `URLSearchParams.get`.
 
 ```ts
 const m = new Map<string, number | null>([["a", null]]);

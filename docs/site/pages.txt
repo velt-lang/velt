@@ -40,6 +40,7 @@ velt:collections/deque = ../std/collections/deque.md
 velt:collections/priority_queue = ../std/collections/priority_queue.md
 velt:collections/set = ../std/collections/set.md
 velt:collections/sorted_map = ../std/collections/sorted_map.md
+velt:collections/btree_map = ../std/collections/btree_map.md
 velt:crypto = ../std/crypto.md
 velt:csv = ../std/csv.md
 velt:datetime = ../std/datetime.md

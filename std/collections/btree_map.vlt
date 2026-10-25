@@ -1,0 +1,265 @@
+// std/collections/btree_map: `BTreeMap<K, V>`, a map that keeps its keys in ascending order
+// (`K extends Comparable<K>`: numbers, strings, bool, user types that implement `Comparable`).
+//
+// A B+tree of 32-slot nodes in flat pools (velt:collections/btree/pool): lookups, inserts and
+// deletes are O(log n) and touch a few cache lines per level; ordered walks follow the linked
+// leaves. Values are shared as `Map` shares them (objects are not copied); keys are shared too.
+
+import { F, NONE, Pool } from "velt:collections/btree/pool";
+
+/** A map ordered by key, as a B+tree. */
+export class BTreeMap<K extends Comparable<K>, V> implements Iterable<[K, V]> {
+  private p: Pool<K, V>;
+
+  /** A map holding `entries` (a later entry replaces an earlier one with the same key). */
+  constructor(entries: [K, V][] = []) {
+    this.p = new Pool<K, V>();
+    for (const [k, v] of entries) {
+      this.p.insert(k, v);
+    }
+  }
+
+  /** Number of entries. */
+  get size(): usize {
+    return this.p.size;
+  }
+
+  /** Whether the map is empty. */
+  isEmpty(): bool {
+    return this.p.size == 0;
+  }
+
+  /** Removes every entry. */
+  clear() {
+    this.p.clear();
+  }
+
+  /** Inserts or replaces the value for `key`. */
+  set(key: K, value: V) {
+    this.p.insert(key, value);
+  }
+
+  /** The value for `key` (shared, as `Map.get` returns it), or `undefined`. */
+  get(key: K): V | undefined {
+    if (this.p.size == 0) {
+      return undefined;
+    }
+    const leaf = this.p.leafOf(key);
+    const pos = this.p.slotIn(leaf, key);
+    if (pos < 0) {
+      return undefined;
+    }
+    return valueOf(this.p.leafVals[(leaf as usize) * F + (pos as usize)]);
+  }
+
+  /** Whether `key` is present. */
+  has(key: K): bool {
+    return this.p.size > 0 && this.p.slotIn(this.p.leafOf(key), key) >= 0;
+  }
+
+  /** Removes `key`; returns whether it was present. */
+  delete(key: K): bool {
+    if (this.p.size == 0) {
+      return false;
+    }
+    const leaf = this.p.findLeaf(key);
+    const pos = this.p.slotIn(leaf, key);
+    if (pos < 0) {
+      return false;
+    }
+    this.p.removeAt(leaf, pos as usize);
+    return true;
+  }
+
+  /** The keys, ascending. */
+  keys(): K[] {
+    const out: K[] = __intrinsic_array_with_capacity(this.p.size);
+    let leaf = this.firstLeaf();
+    while (leaf != NONE) {
+      const base = (leaf as usize) * F;
+      const n = this.p.leafLen[leaf as usize] as usize;
+      for (let i: usize = 0; i < n; i++) {
+        out.push(this.p.leafKeys[base + i]);
+      }
+      leaf = this.p.leafNext[leaf as usize];
+    }
+    return out;
+  }
+
+  /** The values, in key order (shared). */
+  values(): V[] {
+    const out: V[] = __intrinsic_array_with_capacity(this.p.size);
+    let leaf = this.firstLeaf();
+    while (leaf != NONE) {
+      const base = (leaf as usize) * F;
+      const n = this.p.leafLen[leaf as usize] as usize;
+      for (let i: usize = 0; i < n; i++) {
+        out.push(valueOf(this.p.leafVals[base + i]));
+      }
+      leaf = this.p.leafNext[leaf as usize];
+    }
+    return out;
+  }
+
+  /** The `[key, value]` pairs, in key order. */
+  entries(): [K, V][] {
+    const out: [K, V][] = __intrinsic_array_with_capacity(this.p.size);
+    let leaf = this.firstLeaf();
+    while (leaf != NONE) {
+      this.pushEntries(out, leaf, 0, this.p.leafLen[leaf as usize] as usize);
+      leaf = this.p.leafNext[leaf as usize];
+    }
+    return out;
+  }
+
+  /** An iterator over the entries when it is made (`entries()`), in key order. */
+  [Symbol.iterator](): Iterator<[K, V]> {
+    return new ArrayIterator<[K, V]>(this.entries());
+  }
+
+  /**
+   * Visits the entries in key order (JS argument order: value, key). When the callback changes
+   * the map through another reference, the walk goes on from the first key after the one it
+   * visited last: keys added past it are visited, keys deleted before their turn are not.
+   */
+  forEach<E>(f: (value: V, key: K) => void throws E) throws E {
+    if (this.p.size == 0) {
+      return;
+    }
+    let leaf = this.firstLeaf();
+    let i: usize = 0;
+    while (leaf != NONE) {
+      if (i >= (this.p.leafLen[leaf as usize] as usize)) {
+        leaf = this.p.leafNext[leaf as usize];
+        i = 0;
+        continue;
+      }
+      const at = (leaf as usize) * F + i;
+      const key = this.p.leafKeys[at];
+      const value = valueOf(this.p.leafVals[at]);
+      const edits = this.p.edits;
+      f(value, key);
+      if (this.p.edits == edits) {
+        i++;
+        continue;
+      }
+      // The keys changed: find the first key after `key` again.
+      if (this.p.size == 0) {
+        return;
+      }
+      leaf = this.p.leafOf(key);
+      i = this.p.atMost(
+        this.p.leafKeys,
+        (leaf as usize) * F,
+        this.p.leafLen[leaf as usize] as usize,
+        key,
+      );
+    }
+  }
+
+  /** The smallest key, or `undefined` if empty. */
+  first(): K | undefined {
+    if (this.p.size == 0) {
+      return undefined;
+    }
+    return this.p.leafKeys[(this.firstLeaf() as usize) * F];
+  }
+
+  /** The largest key, or `undefined` if empty. */
+  last(): K | undefined {
+    if (this.p.size == 0) {
+      return undefined;
+    }
+    const leaf = this.p.edgeLeaf(true);
+    return this.p.leafKeys[(leaf as usize) * F + (this.p.leafLen[leaf as usize] as usize) - 1];
+  }
+
+  /** The largest key <= `key`, or `undefined`. */
+  floorKey(key: K): K | undefined {
+    if (this.p.size == 0) {
+      return undefined;
+    }
+    let leaf = this.p.leafOf(key);
+    const base = (leaf as usize) * F;
+    const i = this.p.atMost(this.p.leafKeys, base, this.p.leafLen[leaf as usize] as usize, key);
+    if (i > 0) {
+      return this.p.leafKeys[base + i - 1];
+    }
+    leaf = this.p.leafPrev[leaf as usize];
+    if (leaf == NONE) {
+      return undefined;
+    }
+    return this.p.leafKeys[(leaf as usize) * F + (this.p.leafLen[leaf as usize] as usize) - 1];
+  }
+
+  /** The smallest key >= `key`, or `undefined`. */
+  ceilingKey(key: K): K | undefined {
+    if (this.p.size == 0) {
+      return undefined;
+    }
+    let leaf = this.p.leafOf(key);
+    const base = (leaf as usize) * F;
+    const n = this.p.leafLen[leaf as usize] as usize;
+    const i = this.p.below(this.p.leafKeys, base, n, key);
+    if (i < n) {
+      return this.p.leafKeys[base + i];
+    }
+    leaf = this.p.leafNext[leaf as usize];
+    if (leaf == NONE) {
+      return undefined;
+    }
+    return this.p.leafKeys[(leaf as usize) * F];
+  }
+
+  /** The entries with `from <= key < to`, in key order. */
+  range(from: K, to: K): [K, V][] {
+    const out: [K, V][] = [];
+    if (this.p.size == 0 || !(from < to)) {
+      return out;
+    }
+    let leaf = this.p.leafOf(from);
+    let i = this.p.below(
+      this.p.leafKeys,
+      (leaf as usize) * F,
+      this.p.leafLen[leaf as usize] as usize,
+      from,
+    );
+    while (leaf != NONE) {
+      const base = (leaf as usize) * F;
+      const n = this.p.leafLen[leaf as usize] as usize;
+      const end = this.p.below(this.p.leafKeys, base, n, to);
+      this.pushEntries(out, leaf, i, end);
+      if (end < n) {
+        break;
+      }
+      leaf = this.p.leafNext[leaf as usize];
+      i = 0;
+    }
+    return out;
+  }
+
+  // ─────────────── internals ───────────────
+
+  private firstLeaf(): u32 {
+    return this.p.size == 0 ? NONE : this.p.edgeLeaf(false);
+  }
+
+  private pushEntries(out: [K, V][], leaf: u32, from: usize, to: usize) {
+    const base = (leaf as usize) * F;
+    for (let i = from; i < to; i++) {
+      const pair: [K, V] = [this.p.leafKeys[base + i], valueOf(this.p.leafVals[base + i])];
+      out.push(pair);
+    }
+  }
+}
+
+// A stored value, shared. A slot of a live entry holds `null` only when `V` holds `null`.
+function valueOf<V>(slot: V | null): V {
+  if (slot != null) {
+    return __intrinsic_share(slot);
+  }
+  if (__intrinsic_holds_null(__intrinsic_null_as<V>())) {
+    return __intrinsic_null_as<V>();
+  }
+  panic("ICE: BTreeMap entry without a value");
+}
