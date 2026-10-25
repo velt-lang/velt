@@ -737,9 +737,58 @@ builtins included, at zero cost (the calls are direct):
 - Scope today: an extension applies wherever its module is loaded; `extend` blocks cannot be
   exported.
 - **Planned** ([TypeScript alignment §4](../internals/design/ts-alignment.md#4-extend--full-power-zero-cost-module-scoped)):
-  `static readonly` constants in `extend`; retroactive
-  `extend Point implements Comparable<Point>`; module scoping (an extension is visible where it
-  is imported) with ambiguity errors.
+  `static readonly` constants in `extend`; module scoping (an extension is visible where it is
+  imported) with ambiguity errors.
+
+### `extend … implements`
+
+`extend Target implements I, J { … }` makes the block's methods implement interfaces for every
+type the target matches, built-in types included: the type then satisfies `I` as a bound and
+converts to an `I` value, as a class with `implements I` does. The block is checked as a class
+is: each method of `I` must be in it with the same parameter and result types (a static method
+does not count), and a method `I` gives a default for may be left out.
+
+- **Blanket blocks** (`extend<T extends Comparable<T>> T implements Describe`) give the
+  interface to every type that meets their bounds, type parameters included: in
+  `function f<K extends Comparable<K>>(k: K)`, `k.describe()` works and `k` may be passed where
+  a `Describe` is required.
+- **The most specific block wins** for each type, by the rule above: with the blanket block and
+  `extend u64 implements Describe`, a `u64` uses the `u64` block everywhere, in generic code too
+  (`f(5 as u64)` calls it through `K`), and every other comparable type uses the blanket one.
+  Generic code is compiled for each type it is used with, so the call is direct: specializing a
+  generic function or class for some types costs nothing at run time.
+- **Errors**: a missing or mismatched method; two blocks for one interface that are equally
+  specific (``conflicting implementations of `I` ``), or a block for an interface the type
+  already implements (`` `P` already implements `I` ``); an interface with fields
+  (``cannot implement `I`: `I` declares fields``: an `extend` block cannot add fields).
+- `extend X implements Comparable<X>` may be written out too; a block that only defines
+  `compareTo` or `[Symbol.iterator]()` implements `Comparable` or `Iterable` without it (above).
+
+```ts
+interface Describe {
+  describe(): string;
+}
+
+extend<T extends Comparable<T>> T implements Describe {
+  describe(): string {
+    return "a comparable value";
+  }
+}
+
+extend u64 implements Describe {
+  describe(): string {
+    return `the u64 ${this}`;
+  }
+}
+
+function label<K extends Comparable<K>>(k: K): string {
+  return k.describe();
+}
+
+const items: Describe[] = [7 as u64, "x"];
+console.log(label(5 as u64), label("abc"), items.map((d) => d.describe()));
+// the u64 5 a comparable value [ 'the u64 7', 'a comparable value' ]
+```
 
 ```ts
 type Shape = { kind: "circle"; r: f64 } | { kind: "square"; side: f64 };

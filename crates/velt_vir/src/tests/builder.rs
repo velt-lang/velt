@@ -98,6 +98,7 @@ impl PB {
             super_calls: Default::default(),
             upcasts: Default::default(),
             upcast_impls: Default::default(),
+            extension_impls: Default::default(),
             cpu_targets: Default::default(),
             type_names: Default::default(),
         }

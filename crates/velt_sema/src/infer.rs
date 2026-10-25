@@ -483,18 +483,19 @@ impl Ctx<'_> {
         let mut guard = 0;
         while let Some(t) = cur {
             // The first impl (in `impls` order) that fits wins: a non-generic impl fits exactly
-            // its own type, so only generic impls before it need matching.
+            // its own type, so only generic impls before it need matching. When it is an
+            // `extend … implements` block's, the most specific such block that fits wins.
             let (exact, generic) = self.impl_index.candidates(iface, t);
             for i in generic
                 .into_iter()
                 .take_while(|&i| exact.is_none_or(|e| i < e))
             {
-                if let Some(found) = self.try_impl(i, t) {
-                    return Some(found);
+                if let Some(found) = self.fitting_impl(i, t) {
+                    return Some(self.most_specific_ext(found, iface, t));
                 }
             }
-            if let Some(found) = exact.and_then(|e| self.try_impl(e, t)) {
-                return Some(found);
+            if let Some(found) = exact.and_then(|e| self.fitting_impl(e, t)) {
+                return Some(self.most_specific_ext(found, iface, t));
             }
             guard += 1;
             cur = if guard > 64 { None } else { self.base_of(t) };
@@ -503,6 +504,130 @@ impl Ctx<'_> {
             return self.field_only_impl(ty, iface);
         }
         self.synth_impl(ty, iface)
+    }
+
+    /// `try_impl`, and for an `extend … implements` block's impl, its bounds hold too.
+    fn fitting_impl(&mut self, i: u32, t: TyId) -> Option<(u32, Vec<TyId>, TyId)> {
+        let found = self.try_impl(i, t)?;
+        let Some(&e) = self.ext_impls.get(&i) else {
+            return Some(found);
+        };
+        self.ext_bounds_hold(i, e, t).then_some(found)
+    }
+
+    /// Do the bounds of extension `e` hold for the type args with which its impl `i` fits `t`?
+    fn ext_bounds_hold(&mut self, i: u32, e: usize, t: TyId) -> bool {
+        let imp = &self.impls[i as usize];
+        let mut slots = vec![None; imp.generics as usize];
+        if !self.match_ty(imp.ty, t, &mut slots) {
+            return false;
+        }
+        let args: Vec<TyId> = slots.iter().map(|s| s.unwrap_or(self.ty.error)).collect();
+        let bounds = self.extensions[e].generics.bounds.clone();
+        let scope = self.impl_scope.clone();
+        bounds.iter().zip(&args).all(|(bs, &a)| {
+            bs.iter().all(|b| {
+                let b = Bound {
+                    iface: b.iface,
+                    args: b.args.iter().map(|x| self.subst(*x, &args)).collect(),
+                };
+                self.satisfies(a, &b, &scope)
+            })
+        })
+    }
+
+    /// `found`, or when it is an `extend … implements` block's impl, the most specific block's
+    /// impl of `iface` that fits `t` (the first of equally specific ones, which
+    /// collect/ext_impls.rs reports).
+    fn most_specific_ext(
+        &mut self,
+        found: (u32, Vec<TyId>, TyId),
+        iface: crate::hir::DefId,
+        t: TyId,
+    ) -> (u32, Vec<TyId>, TyId) {
+        if !self.ext_impls.contains_key(&found.0) {
+            return found;
+        }
+        let mut ext: Vec<u32> = self
+            .ext_impls
+            .keys()
+            .copied()
+            .filter(|&i| self.impls[i as usize].iface == iface)
+            .collect();
+        ext.sort_unstable();
+        let mut best = found;
+        for i in ext {
+            if i == best.0 || !self.ext_more_specific(i, best.0) {
+                continue;
+            }
+            if let Some(f) = self.fitting_impl(i, t) {
+                best = f;
+            }
+        }
+        best
+    }
+
+    /// Is the `extend … implements` impl `a` strictly more specific than impl `b`: its target
+    /// an instance of `b`'s and not the reverse, or the same pattern with bounds where `b` has
+    /// none (the rule for extension methods, body/expr/method.rs)?
+    pub(crate) fn ext_more_specific(&mut self, a: u32, b: u32) -> bool {
+        let (ta, tb) = (self.impls[a as usize].ty, self.impls[b as usize].ty);
+        let (na, nb) = (
+            self.impls[a as usize].generics as usize,
+            self.impls[b as usize].generics as usize,
+        );
+        if !self.instance_of(ta, tb, nb) {
+            return false;
+        }
+        if !self.instance_of(tb, ta, na) {
+            return true;
+        }
+        let bounded = |cx: &Self, i: u32| {
+            cx.ext_impls
+                .get(&i)
+                .is_some_and(|&e| crate::collect::ext_impls::has_bounds(cx, e))
+        };
+        bounded(self, a) && !bounded(self, b)
+    }
+
+    /// Is `t` an instance of `pattern` (with `n` type params)?
+    fn instance_of(&mut self, t: TyId, pattern: TyId, n: usize) -> bool {
+        let mut slots = vec![None; n];
+        self.match_ty(pattern, t, &mut slots) && self.subst_known(pattern, &slots) == t
+    }
+
+    /// The bounds type parameter `ty` has through blanket impls (`extend<T extends B> T
+    /// implements I`) whose bounds it meets with its declared ones (`scope`): `I` for each.
+    pub fn blanket_bounds(&mut self, ty: TyId, scope: &[Vec<Bound>]) -> Vec<Bound> {
+        if self.in_blanket || self.ext_impls.is_empty() {
+            return vec![];
+        }
+        self.in_blanket = true;
+        let mut blankets: Vec<(u32, usize)> =
+            self.ext_impls.iter().map(|(&i, &e)| (i, e)).collect();
+        blankets.sort_unstable();
+        let mut out = vec![];
+        for (i, e) in blankets {
+            let imp = &self.impls[i as usize];
+            if imp.generics != 1 || !matches!(self.ty.kind(imp.ty), TyKind::Param(0)) {
+                continue;
+            }
+            let (iface, iargs) = (imp.iface, imp.iface_args.clone());
+            let bounds = self.extensions[e].generics.bounds[0].clone();
+            let ok = bounds.iter().all(|b| {
+                let b = Bound {
+                    iface: b.iface,
+                    args: b.args.iter().map(|x| self.subst(*x, &[ty])).collect(),
+                };
+                self.satisfies(ty, &b, scope)
+            });
+            if ok {
+                let args = iargs.iter().map(|x| self.subst(*x, &[ty])).collect();
+                out.push(Bound { iface, args });
+            }
+        }
+        self.in_blanket = false;
+        out
     }
 
     /// `(impl index, interface args, t)` if impl `i` is for type `t`.
@@ -559,7 +684,15 @@ impl Ctx<'_> {
         }
         if let TyKind::Param(n) = self.ty.kind(ty) {
             let declared = bounds.get(*n as usize).cloned().unwrap_or_default();
-            return declared
+            if declared
+                .iter()
+                .any(|x| x == b || self.iface_ancestors(x).contains(b))
+            {
+                return true;
+            }
+            // Through a blanket `extend<T extends …> T implements I` whose bounds it has.
+            return self
+                .blanket_bounds(ty, bounds)
                 .iter()
                 .any(|x| x == b || self.iface_ancestors(x).contains(b));
         }
@@ -570,8 +703,18 @@ impl Ctx<'_> {
                 return true;
             }
         }
-        self.impl_args(ty, b.iface)
-            .is_some_and(|args| args == b.args)
+        if self.ext_impls.is_empty() {
+            return self
+                .impl_args(ty, b.iface)
+                .is_some_and(|args| args == b.args);
+        }
+        // `extend` impls check their bounds in this scope (`fitting_impl`).
+        let saved = std::mem::replace(&mut self.impl_scope, bounds.to_vec());
+        let ok = self
+            .impl_args(ty, b.iface)
+            .is_some_and(|args| args == b.args);
+        self.impl_scope = saved;
+        ok
     }
 
     /// Does interface `b`, or one it extends, declare a generic method?

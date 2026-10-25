@@ -890,6 +890,20 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   recorded: each table holds the other (lowering fills a table's targets in once the table is
   registered). Values of `A` are compared by identity when values of a target are.
 
+## `extend … implements` (issue #1546)
+- An `extend<T…> X implements I` block is an ordinary `ImplDef` (`ty` the target pattern, generic
+  when the block is; a blanket block's `ty` is `Param(0)`), listed in `Program::extension_impls`
+  (additive) with the bounds on its type parameters (`ImplBound`: parameter, interface, args in
+  the impl's params). Lowering's impl lookup for `iface<args>` and a concrete type: the first
+  impl in `impls` order that fits (for an extension impl: its pattern matches and its bounds hold,
+  each bound looked up the same way); when that one is an extension impl, the most specific
+  extension impl that fits replaces it (A over B when A's `ty` is an instance of B's and not the
+  reverse, or the same pattern where only A has bounds). Sema reports equally specific ones, so
+  the choice is unique. Other impls keep first-fit.
+- A call through a type parameter's bound that only a blanket block gives it (`k.m()` with
+  `K extends Comparable<K>` and `extend<T extends Comparable<T>> T implements I`) is a
+  `Callee::ParamMethod` of `I`, resolved by that lookup per instantiation.
+
 ## Canonical instances and optional fields (docs/internals/design/deferred-types.md, P1 and P2)
 - An instance of a generic object type is the object type it spells out: sema substitutes
   through `Ctx::subst`, which re-interns anonymous object types and unions from their

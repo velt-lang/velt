@@ -199,6 +199,22 @@ pub struct Program {
     pub cpu_targets: HashMap<DefId, CpuTarget>,
     /// Names of structural types for messages: aliases' and field-only interfaces'. Additive.
     pub type_names: HashMap<TyId, String>,
+    /// The impls of `extend … implements I` blocks (by index into `impls`) with the bounds on
+    /// their type parameters. Such an impl fits a type only where its bounds hold, and when the
+    /// first impl in `impls` order that fits a type is one of them, the most specific of these
+    /// that fit it is the type's impl: A over B when A's target is an instance of B's and not
+    /// the reverse, or the same pattern where only A has bounds (docs/reference/classes.md
+    /// "extend"). Additive.
+    pub extension_impls: HashMap<u32, Vec<ImplBound>>,
+}
+
+/// A bound on type parameter `param` of a generic impl: the type bound to it implements
+/// `iface<args>` (`args` use the impl's `TyKind::Param`s).
+#[derive(Clone, Debug)]
+pub struct ImplBound {
+    pub param: u32,
+    pub iface: DefId,
+    pub args: Vec<TyId>,
 }
 
 /// `ty` implements `iface<iface_args>` using `methods` (one per interface method, in order).

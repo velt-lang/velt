@@ -191,6 +191,16 @@ fn extend_blocks() {
     assert!(matches!(&m.items[1].kind, ItemKind::Extend(e) if ty(&e.target) == "string"));
     assert!(matches!(m.items[2].kind, ItemKind::Function(_)));
 
+    let m = parse_ok(
+        "extend<T> Box<T> implements Describe, Convert<T> { describe(): string { return \"b\"; } }",
+    );
+    let ItemKind::Extend(e) = &m.items[0].kind else {
+        panic!()
+    };
+    let names: Vec<String> = e.implements.iter().map(ty).collect();
+    assert_eq!(names, ["Describe", "Convert<T>"]);
+    assert_eq!(e.methods.len(), 1);
+
     let (m, d) = parse("export extend Foo { f() {} }");
     assert!(d[0].message.contains("cannot be exported"), "{:?}", d);
     assert!(!m.items[0].exported);

@@ -71,7 +71,11 @@ switch (s.kind) { case "circle": return s.r; case "rect": return s.w * s.h; }
   `extend Shape { area(): f64 { switch … } }`.
 - **Blanket extensions** (implemented): `extend<T extends Comparable<T>> T { clamp(lo: T, hi: T):
   T { … } }`; extending through a bound adds the method to every implementor.
-- **Retroactive implements** (planned): `extend Point implements Comparable<Point> { … }`.
+- **Retroactive implements** (implemented, #1546): `extend Point implements Comparable<Point> { … }`,
+  for any type and interface without fields. Blanket blocks (`extend<T extends B> T implements I`)
+  give `I` to every type with `B`, type parameters included, and the most specific block that fits
+  a type is its implementation (the overlap rule below), so generic code can be specialized for
+  some types at no run-time cost (`velt_sema` `collect/ext_impls.rs`).
 - **Overlapping extensions** (implemented): among the applicable blocks (target matches,
   bounds hold) the most specific wins, A over B when A's target is an instance of B's and not
   the reverse (`extend Array<i64>` over `extend<T> Array<T[]>` over `extend<T> Array<T>`), or

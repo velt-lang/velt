@@ -255,11 +255,13 @@ pub struct InterfaceMethod {
     pub is_setter: bool,
 }
 
-/// `extend<T> Target<T> { methods }`
+/// `extend<T> Target<T> [implements A, B] { methods }`
 #[derive(Clone, Debug)]
 pub struct ExtendDecl {
     pub generics: Vec<GenericParam>,
     pub target: TypeExpr,
+    /// `implements A, B`: the interfaces the block's methods implement for the target.
+    pub implements: Vec<TypeExpr>,
     pub methods: Vec<Method>,
 }
 
