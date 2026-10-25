@@ -6,17 +6,15 @@
 // The file name sorts after the other prelude modules, so their indexes stay the same.
 
 /**
- * JavaScript's `ToPrimitive(v, hint)` of an `any` (`hint` is `"string"`, `"default"` or
- * `"number"`): a primitive as it is; an object's `[Symbol.toPrimitive](hint)`, else its
+ * JavaScript's `ToPrimitive(v, hint)` of an `any` holding an object or a function (`hint` is
+ * `"string"`, `"default"` or `"number"`; a primitive is its own, which the callers keep, so
+ * this only borrows `v`): an object's `[Symbol.toPrimitive](hint)`, else its
  * `valueOf()` and `toString()` (`toString()` first for `"string"`), the first primitive one
  * returns kept as it is (a number stays a number). A `Date` takes `"default"` as `"string"`. Sema
  * writes the dispatch over the program's classes into this body (any_prim.rs); other values go
  * to `__anyToPrimitivePlain`.
  */
 export function __anyToPrimitive(v: any, hint: string, at: string): any {
-  if (!__anyHoldsObject(v)) {
-    return v;
-  }
   if (v instanceof Date) {
     if (hint === "number") {
       return (v as Date).getTime();
@@ -99,8 +97,8 @@ export function __anyAdd(a: any, b: any, at: string): any {
     // The text of a function is its source, which a compiled function doesn't keep.
     __anyText(typeof a === "function" ? a : b, at);
   }
-  const pa = __anyToPrimitive(a, "default", at);
-  const pb = __anyToPrimitive(b, "default", at);
+  const pa = __anyHoldsObject(a) ? __anyToPrimitive(a, "default", at) : a;
+  const pb = __anyHoldsObject(b) ? __anyToPrimitive(b, "default", at) : b;
   if (typeof pa === "string" || typeof pb === "string") {
     return __anyPrimText(pa, at) + __anyPrimText(pb, at);
   }
@@ -114,18 +112,25 @@ export function __anyAdd(a: any, b: any, at: string): any {
  * `valueOf()` compares by the number it returns.
  */
 export function __anyRelational(a: any, b: any, op: i64, at: string): boolean {
-  const pa = __anyToPrimitive(a, "number", at);
-  const pb = __anyToPrimitive(b, "number", at);
-  if (op === 0) {
-    return pa < pb;
+  const pa = __anyHoldsObject(a) ? __anyToPrimitive(a, "number", at) : a;
+  const pb = __anyHoldsObject(b) ? __anyToPrimitive(b, "number", at) : b;
+  let lt = false;
+  let gt = false;
+  if (typeof pa === "string" && typeof pb === "string") {
+    const x = pa as string;
+    const y = pb as string;
+    lt = x < y;
+    gt = x > y;
+  } else {
+    const x: number = +pa;
+    const y: number = +pb;
+    if (x !== x || y !== y) {
+      return false;
+    }
+    lt = x < y;
+    gt = x > y;
   }
-  if (op === 1) {
-    return pa > pb;
-  }
-  if (op === 2) {
-    return pa <= pb;
-  }
-  return pa >= pb;
+  return op === 0 ? lt : op === 1 ? gt : op === 2 ? !gt : !lt;
 }
 
 /**

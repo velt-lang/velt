@@ -23,6 +23,15 @@ use crate::vir::{self, BinOp, Const, Operand, Place, Proj, Rvalue, Terminator, T
 /// The prelude's `==` of an object and a primitive (std/prelude/zzz_adapt.vlt).
 const LOOSE_EQ: &str = "std/prelude/zzzzz_any_ops::__anyLooseEq";
 
+/// Is `e` the literal `null` or `undefined` made dynamic?
+fn nothing_lit(e: &hir::Expr) -> bool {
+    match &e.kind {
+        hir::ExprKind::Lit(hir::Lit::Null) => true,
+        hir::ExprKind::ToDyn { expr, .. } => nothing_lit(expr),
+        _ => false,
+    }
+}
+
 /// The data pointer and the descriptor of the `any` at `p`.
 fn parts(p: &Place) -> (Operand, Operand) {
     (
@@ -56,7 +65,9 @@ impl FnLower<'_, '_> {
         let (da, xa) = parts(&pa);
         let (db, xb) = parts(&pb);
         let cmp = if loose { AnyCmp::Loose } else { AnyCmp::Strict };
-        self.any_compare(&da, &xa, &db, &xb, cmp, Some((&pa, &pb)))
+        // `x == null` never compares an object with a boolean, number or string.
+        let places = (!nothing_lit(a) && !nothing_lit(b)).then_some((&pa, &pb));
+        self.any_compare(&da, &xa, &db, &xb, cmp, places)
     }
 
     /// Is the `any` operand `e` a literal or a primitive made dynamic (`x === undefined`,
@@ -282,10 +293,7 @@ impl FnLower<'_, '_> {
                     let r = self.any_loose_object(pa, pb);
                     set(self, r);
                 }
-                None => {
-                    self.panic_msg("ICE: `==` of `any` places without the places");
-                    self.terminate(Terminator::Unreachable);
-                }
+                None => set(self, Operand::Const(Const::Bool(false), Ty::Bool)),
             }
             self.switch_to(false_bb);
             set(self, Operand::Const(Const::Bool(false), Ty::Bool));
