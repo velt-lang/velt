@@ -107,7 +107,10 @@ fn generics_inference_bounds_and_interfaces() {
         Callee::ParamMethod { slot: 0, .. }
     )));
     // `sh.describe()` on an interface value.
-    assert!(has_callee(main, |c| matches!(c, Callee::Dyn { slot: 1 })));
+    assert!(has_callee(main, |c| matches!(
+        c,
+        Callee::Dyn { slot: 1, .. }
+    )));
     let to_dyn: Vec<u32> = exprs(main)
         .iter()
         .filter_map(|e| match e.kind {

@@ -305,7 +305,10 @@ pub(super) fn adapter_method(
     }
     let call = g.mk(
         H::Call {
-            callee: Callee::Dyn { slot },
+            callee: Callee::Dyn {
+                slot,
+                method_type_args: vec![],
+            },
             args,
         },
         ret_from,

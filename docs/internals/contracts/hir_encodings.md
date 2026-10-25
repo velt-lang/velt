@@ -313,7 +313,17 @@ Maintainer-owned, like `hir/mod.rs`, `hir/intrinsic.rs` and `hir/module_state.rs
   params follow the interface's params and the implementor (`Param(n + 1 + k)`).
   `Callee::ParamMethod::method_type_args` carries their arguments; lowering appends them to
   the implementing method's owner type args (`Program::impls` entry, a generic `Def::Fn`).
-  Sema never emits `Callee::Dyn` for them; interface vtables leave their slots empty.
+  On an interface value the call is `Callee::Dyn { slot, method_type_args }` (#943; empty for a
+  method that is not generic). The vtable slot of a generic method holds the address of the
+  slot's *instantiation table* (a read-only static): one entry (the borrow-ABI entry of the
+  implementing method at its owner args followed by the method args) per list of method type
+  arguments lowering reaches through `Dyn` calls of that slot of that interface instance,
+  numbered in the order lowering meets them, so every implementation's table has a list at the
+  same index. A call loads the table from the slot, then the entry at its list's index. Tables
+  grow while functions are lowered (the statics are emitted at the end). Sema rejects a generic
+  method that calls itself through an interface value with growing type arguments
+  (`instantiation_cycles`), and carries deferred types and record keys to the methods such a
+  call may run (every implementation, at each concrete type made for a generic one).
 - `x instanceof C` where `x` is a base class of `C`, an interface value, or a union member of
   such a type: a `Match` whose arm pattern is `PatKind::InstanceOf(C)` (inside `Some` /
   `Variant` patterns as for any member test). It matches when the dynamic class is `C` or a

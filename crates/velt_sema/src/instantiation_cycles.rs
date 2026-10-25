@@ -15,7 +15,7 @@
 //! parameter (`s.area<V>(…)`, `s: S`): those run the implementing method of whatever type `S`
 //! becomes, so they instantiate the method of every implementation of the interface (its
 //! owner's parameters come from inside `S`, which does not grow them; its own from the call's
-//! type arguments).
+//! type arguments). A generic method called on an interface value does the same.
 //!
 //! A growing edge is allowed when its call lies in the `then` block of an `if` whose type
 //! predicate rules out objects for the edge's own source parameter (`if (isPrimitive(x))`,
@@ -129,6 +129,27 @@ fn collect(cx: &mut Ctx) -> Sites {
                     args,
                 } => {
                     let Some(recv) = args.first() else { return };
+                    Site::Param(ParamCall {
+                        recv: recv.ty,
+                        iface: *iface,
+                        slot: *slot,
+                        margs: method_type_args.clone(),
+                    })
+                }
+                // A generic method called on an interface value runs the method of every
+                // implementation, as a call through a type parameter may.
+                E::Call {
+                    callee:
+                        Callee::Dyn {
+                            slot,
+                            method_type_args,
+                        },
+                    args,
+                } if !method_type_args.is_empty() => {
+                    let Some(recv) = args.first() else { return };
+                    let TyKind::Dyn(iface, _) = tys.kind(recv.ty) else {
+                        return;
+                    };
                     Site::Param(ParamCall {
                         recv: recv.ty,
                         iface: *iface,

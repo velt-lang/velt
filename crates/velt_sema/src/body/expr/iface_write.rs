@@ -170,7 +170,10 @@ impl FnCx<'_, '_> {
                 method_type_args: vec![],
             }
         } else {
-            Callee::Dyn { slot }
+            Callee::Dyn {
+                slot,
+                method_type_args: vec![],
+            }
         };
         let unit = self.cx.ty.unit;
         self.mk(H::Call { callee, args }, unit, span)

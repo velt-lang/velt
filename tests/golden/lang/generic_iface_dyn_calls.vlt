@@ -1,0 +1,67 @@
+// Generic interface methods called on interface values (#943): the method's table slot holds
+// one entry per instantiation the program calls, for every implementation (generic classes and
+// methods using deferred types included).
+interface Box {
+  wrap<T>(x: T): T[];
+  name(): string;
+}
+
+class A implements Box {
+  tag = "a";
+  wrap<T>(x: T): T[] {
+    return [x];
+  }
+  name(): string {
+    return this.tag;
+  }
+}
+
+class B<P> implements Box {
+  constructor(public p: P) {}
+  wrap<T>(x: T): T[] {
+    return [x, x];
+  }
+  name(): string {
+    return "b " + String(this.p);
+  }
+}
+
+interface Mapper<K> {
+  pair<V>(k: K, v: V): [K, V];
+}
+
+class M implements Mapper<string> {
+  pair<V>(k: string, v: V): [string, V] {
+    return [k + "!", v];
+  }
+}
+
+type Tagged<T> = T extends string ? { s: T } : { v: T };
+
+interface Tagger {
+  tag<T>(x: T): Tagged<T>;
+}
+
+class T1 implements Tagger {
+  tag<T>(x: T): Tagged<T> {
+    return (typeof x === "string" ? { s: x } : { v: x }) as unknown as Tagged<T>;
+  }
+}
+
+function useBox(b: Box): void {
+  console.log(b.name(), b.wrap(1), b.wrap("s"), b.wrap([true]));
+}
+
+function gen<U>(b: Box, u: U): U[] {
+  return b.wrap(u);
+}
+
+function main(): void {
+  const bs: Box[] = [new A(), new B(7)];
+  for (const b of bs) useBox(b);
+  console.log(gen(bs[1], { x: 1 }), gen(bs[0], 2.5));
+  const m: Mapper<string> = new M();
+  console.log(m.pair("k", 3), m.pair("j", null));
+  const t: Tagger = new T1();
+  console.log(t.tag(3), t.tag("s"));
+}

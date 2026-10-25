@@ -1,0 +1,17 @@
+// A generic method that calls itself through an interface value with a growing type argument
+// has infinitely many instantiations (#943), as a direct call would.
+interface Rec {
+  go<T>(x: T, n: number): number;
+}
+
+class R implements Rec {
+  go<T>(x: T, n: number): number {
+    const r: Rec = new R();
+    return n == 0 ? 0 : r.go([x], n - 1) + 1;
+  }
+}
+
+function main(): void {
+  const r: Rec = new R();
+  console.log(r.go(1, 3));
+}

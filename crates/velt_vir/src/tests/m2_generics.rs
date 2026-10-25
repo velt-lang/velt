@@ -372,7 +372,14 @@ pub(super) fn generics() -> Program {
             pbind(sh, U::Borrow, dyn_shape),
             f.bw(shapes),
             vec![se(print(
-                vec![callee(Callee::Dyn { slot: 1 }, vec![f.bw(sh)], t.str)],
+                vec![callee(
+                    Callee::Dyn {
+                        slot: 1,
+                        method_type_args: vec![],
+                    },
+                    vec![f.bw(sh)],
+                    t.str,
+                )],
                 t,
             ))],
         ),

@@ -429,6 +429,7 @@ fn check_timed(
         gen_throw,
         super_calls,
         cpu_targets,
+        generic_called,
         ..
     } = cx;
     let defs = defs
@@ -459,6 +460,7 @@ fn check_timed(
         upcast_impls,
         cpu_targets: cpu_targets.into_iter().collect(),
         type_names,
+        generic_dyn_methods: generic_called.into_iter().collect(),
     };
     (Some(program), diags)
 }

@@ -18,8 +18,9 @@ use velt_common::Span;
 use crate::ctx::Ctx;
 use crate::defs::DefInfo;
 use crate::dispatch::{class_chain, Rounds};
-use crate::hir::{AdtKind, Callee, Def, DefId, Expr, ExprKind as E, TyId};
+use crate::hir::{AdtKind, Callee, Def, DefId, Expr, ExprKind as E, TyId, TyKind};
 use crate::types::collect_params;
+use crate::types::Types;
 use crate::visit;
 
 /// The types one function body (or one type's field initializers) mentions, and the
@@ -62,12 +63,13 @@ pub(crate) fn collect(cx: &mut Ctx, signature: bool) -> Vec<(DefId, Uses)> {
     let mut out: Vec<(DefId, Uses, News)> = vec![];
     let mut converts = cx.type_level.converts.clone();
     converts.extend(cx.type_level.inline.reads.iter().map(|(&k, &v)| (k, v)));
+    let tys = &cx.ty;
     for (i, d) in cx.defs.iter_mut().enumerate() {
         let Some(Def::Fn(f)) = d else { continue };
         let mut u = Uses::default();
         let mut news = vec![];
         let mut seen: FxHashSet<TyId> = FxHashSet::default();
-        let guards = guards_of(&cx.ty, &mut f.body.block);
+        let guards = guards_of(tys, &mut f.body.block);
         if signature {
             let span = f.body.block.span;
             for t in f.params.iter().map(|p| p.ty).chain([f.ret]) {
@@ -83,7 +85,7 @@ pub(crate) fn collect(cx: &mut Ctx, signature: bool) -> Vec<(DefId, Uses)> {
         }
         visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| {
             let guard = guards.get(&(e as *const Expr)).copied().unwrap_or(0);
-            add_site(&mut u, &mut news, &mut seen, e, guard);
+            add_site(tys, &mut u, &mut news, &mut seen, e, guard);
             if !converts.is_empty() {
                 convert_site(&mut u, &mut seen, e, &converts);
             }
@@ -91,9 +93,9 @@ pub(crate) fn collect(cx: &mut Ctx, signature: bool) -> Vec<(DefId, Uses)> {
         out.push((DefId(i as u32), u, news));
     }
     let mut inits: FxHashMap<DefId, (Uses, News, FxHashSet<TyId>)> = FxHashMap::default();
-    for_each_init(cx, &mut |d, e| {
+    for_each_init(cx, &mut |tys, d, e| {
         let (u, news, seen) = inits.entry(d).or_default();
-        add_site(u, news, seen, e, 0);
+        add_site(tys, u, news, seen, e, 0);
         if !converts.is_empty() {
             convert_site(u, seen, e, &converts);
         }
@@ -148,6 +150,7 @@ fn convert_site(
 /// Records what expression `e` mentions and instantiates in `u` (`news`: the types it
 /// constructs, resolved by [`constructed`] afterwards; `guard`: its guard bits).
 fn add_site(
+    tys: &Types,
     u: &mut Uses,
     news: &mut Vec<(DefId, Vec<TyId>, Span, u64)>,
     seen: &mut FxHashSet<TyId>,
@@ -164,7 +167,7 @@ fn add_site(
             }
         }
     };
-    match site(e) {
+    match site(tys, e) {
         Some(Site::Call(d, targs)) => {
             mention(u, &targs);
             u.calls.push((d, targs, e.span));
@@ -191,7 +194,7 @@ enum Site {
 }
 
 /// The site expression `e` is, if any.
-fn site(e: &Expr) -> Option<Site> {
+fn site(tys: &Types, e: &Expr) -> Option<Site> {
     Some(match &e.kind {
         E::Call {
             callee: Callee::Def(d, targs),
@@ -221,6 +224,27 @@ fn site(e: &Expr) -> Option<Site> {
             slot: *slot,
             margs: method_type_args.clone(),
         }),
+        // A generic method called on an interface value runs the method of each
+        // implementation ([`ParamCall::targets`]).
+        E::Call {
+            callee:
+                Callee::Dyn {
+                    slot,
+                    method_type_args,
+                },
+            args,
+        } if !method_type_args.is_empty() => {
+            let recv = args.first()?.ty;
+            let TyKind::Dyn(iface, _) = tys.kind(recv) else {
+                return None;
+            };
+            Site::Param(ParamCall {
+                recv,
+                iface: *iface,
+                slot: *slot,
+                margs: method_type_args.clone(),
+            })
+        }
         _ => return None,
     })
 }
@@ -255,7 +279,8 @@ fn constructed(cx: &mut Ctx, def: DefId, targs: Vec<TyId>) -> Vec<(DefId, Vec<Ty
 
 /// Visits the field initializers of every struct and class (own fields and the inherited ones
 /// it gives an initializer), in terms of its type parameters, with the type's def.
-fn for_each_init(cx: &mut Ctx, f: &mut dyn FnMut(DefId, &mut Expr)) {
+fn for_each_init(cx: &mut Ctx, f: &mut dyn FnMut(&Types, DefId, &mut Expr)) {
+    let tys = &cx.ty;
     for (i, info) in cx.info.iter_mut().enumerate() {
         let DefInfo::Adt(a) = info else { continue };
         let d = DefId(i as u32);
@@ -265,7 +290,7 @@ fn for_each_init(cx: &mut Ctx, f: &mut dyn FnMut(DefId, &mut Expr)) {
             .filter_map(|x| x.default.as_mut());
         let redefined = a.redefined.iter_mut().filter_map(|r| r.init.as_mut());
         for e in own.chain(redefined) {
-            crate::visit::exprs_in(e, &mut |e| f(d, e));
+            crate::visit::exprs_in(e, &mut |e| f(tys, d, e));
         }
     }
 }
@@ -313,6 +338,42 @@ impl ParamCall {
     /// The method that runs for a concrete receiver, with its type arguments.
     pub(crate) fn resolve(&self, cx: &mut Ctx) -> Option<(DefId, Vec<TyId>)> {
         let (index, _, implementor) = cx.find_impl(self.recv, self.iface)?;
+        self.method_of(cx, index, implementor)
+    }
+
+    /// The methods that may run for a concrete receiver: the one [`Self::resolve`] finds, or for
+    /// a generic method called on an interface value (`Callee::Dyn`), the method of every
+    /// implementation of the interface, for each type the program has made that it implements
+    /// it for (an implementation that is not generic has its one type).
+    pub(crate) fn targets(&self, cx: &mut Ctx) -> Vec<(DefId, Vec<TyId>)> {
+        let TyKind::Dyn(i, dargs) = cx.ty.kind(self.recv).clone() else {
+            return self.resolve(cx).into_iter().collect();
+        };
+        if i != self.iface {
+            return vec![];
+        }
+        let mut out = vec![];
+        for index in 0..cx.impls.len() as u32 {
+            let imp = &cx.impls[index as usize];
+            if imp.iface != i {
+                continue;
+            }
+            let found = match imp.generics {
+                0 => cx.try_impl(index, imp.ty).into_iter().collect(),
+                _ => made_instances(cx, index),
+            };
+            for (_, iargs, implementor) in found {
+                if iargs == dargs {
+                    out.extend(self.method_of(cx, index, implementor));
+                }
+            }
+        }
+        out
+    }
+
+    /// The method of impl `index` for `implementor` that this call runs, with its type
+    /// arguments.
+    fn method_of(&self, cx: &mut Ctx, index: u32, implementor: TyId) -> Option<(DefId, Vec<TyId>)> {
         let imp = cx.impls.get(index as usize)?;
         let (pattern, generics, iface_args) = (imp.ty, imp.generics, imp.iface_args.clone());
         let method = *imp.methods.get(self.slot as usize)?;
@@ -336,6 +397,26 @@ impl ParamCall {
         args.extend(self.margs.iter().copied());
         Some((method, args))
     }
+}
+
+/// The concrete types generic impl `index` implements its interface for, among the types
+/// interned so far, as `Ctx::try_impl` gives them.
+fn made_instances(cx: &mut Ctx, index: u32) -> Vec<(u32, Vec<TyId>, TyId)> {
+    let pattern = cx.impls[index as usize].ty;
+    let shape = std::mem::discriminant(cx.ty.kind(pattern));
+    let mut out = vec![];
+    for t in 0..cx.ty.table.len() as u32 {
+        let t = TyId(t);
+        if std::mem::discriminant(cx.ty.kind(t)) != shape {
+            continue;
+        }
+        let mut ps = vec![];
+        collect_params(&cx.ty, t, &mut ps);
+        if ps.is_empty() {
+            out.extend(cx.try_impl(index, t));
+        }
+    }
+    out
 }
 
 /// What a pass takes from each method a param call resolves to (see [`resolve_param_calls`]).
@@ -367,11 +448,10 @@ pub(crate) fn resolve_param_calls(
             generic.push(p);
             continue;
         }
-        let Some((m, args)) = p.resolve(cx) else {
-            continue;
-        };
-        rounds.read(at, m);
-        stack.extend(method(cx, m, &args));
+        for (m, args) in p.targets(cx) {
+            rounds.read(at, m);
+            stack.extend(method(cx, m, &args));
+        }
     }
     generic
 }
