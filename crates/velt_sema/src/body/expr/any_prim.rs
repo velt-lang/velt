@@ -76,7 +76,7 @@ enum PrimMethod {
 impl FnCx<'_, '_> {
     /// `__intrinsic_any_to_primitive(v, hint, at)` in the prelude's `__anyToPrimitive`: the
     /// dispatch (module docs).
-    pub(super) fn to_primitive_dispatch(&mut self, args: &[ast::Expr], span: Span) -> hir::Expr {
+    pub(super) fn primitive_dispatch(&mut self, args: &[ast::Expr], span: Span) -> hir::Expr {
         let (Some(any), [v, ..]) = (self.any_ty(), args) else {
             return self.error_expr(span);
         };

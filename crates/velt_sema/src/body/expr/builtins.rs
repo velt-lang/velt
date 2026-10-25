@@ -118,7 +118,7 @@ impl FnCx<'_, '_> {
             return self.target_stmt(args, span);
         }
         if rest == "any_to_primitive" {
-            return self.to_primitive_dispatch(args, span);
+            return self.primitive_dispatch(args, span);
         }
         let Some(i) = intrinsic_named(rest) else {
             self.cx
