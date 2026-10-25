@@ -10,6 +10,8 @@
 //! The entries' bodies are made here ([`build_fill_bodies`]), before the function bodies are
 //! checked, with each override's defaults checked as its callers' would be.
 
+use std::borrow::Cow;
+
 use velt_common::Span;
 use velt_syntax::ast;
 
@@ -33,7 +35,7 @@ pub(super) struct FillTarget {
 
 impl FnCx<'_, '_> {
     /// The fill slot for a call of method `def` (vtable `slot` of the class of `recv_ty`) when
-    /// the class has one, an override below it may run, and `args` (as written) leaves
+    /// the class has one, an override below it may run, and `args` (spreads expanded) leaves
     /// out an argument of one of its parameters, passes `undefined` there, or a value that may
     /// be `undefined` (a variable, a call's result, a method value's arrow, `method_value.rs`).
     /// A call that only leaves out trailing arguments takes the slot that applies the defaults
@@ -57,6 +59,55 @@ impl FnCx<'_, '_> {
             }
         }
         (left_out || passed.contains(&true)).then_some(t)
+    }
+
+    /// The fill target of a virtual call of method `def` (vtable `slot`, callable `c`) on a
+    /// `recv_ty` (`fill_target`) and the arguments it passes: spreads of a known length (a
+    /// tuple, an array literal, `apply`'s list) stand for their elements. A spread of an unknown
+    /// length before a parameter whose default an override changes is reported (`Err`).
+    pub(super) fn virtual_fill<'e>(
+        &mut self,
+        c: &Callable,
+        recv_ty: TyId,
+        (def, slot): (DefId, u32),
+        args: &'e [ast::Expr],
+        span: Span,
+    ) -> Result<(Option<FillTarget>, Cow<'e, [ast::Expr]>), ()> {
+        let Some(general) = self.fill_slot(recv_ty, def, slot, None) else {
+            return Ok((None, Cow::Borrowed(args)));
+        };
+        let mut args = Cow::Borrowed(args);
+        let is_spread = |a: &ast::Expr| matches!(a.kind, ast::ExprKind::Spread(_));
+        if args.iter().any(is_spread) {
+            if let Some(a) = self.expand_spreads(c, &args, span)? {
+                args = Cow::Owned(a);
+            }
+        }
+        if let Some(i) = args.iter().position(is_spread) {
+            if let Some(&k) = general.positions.iter().find(|&&k| k >= i) {
+                self.spread_before_fill(c, k, &args[i]);
+                let others: Vec<ast::Expr> =
+                    args.iter().filter(|a| !is_spread(a)).cloned().collect();
+                self.check_args_loose(&others);
+                return Err(());
+            }
+        }
+        let fill = self.fill_target(recv_ty, def, slot, &args);
+        Ok((fill, args))
+    }
+
+    /// A spread of an unknown length `a` that may fill parameter `k`, whose default an override
+    /// changes (reported).
+    fn spread_before_fill(&mut self, c: &Callable, k: usize, a: &ast::Expr) {
+        let name = c.params.get(k).map_or("", |p| p.name.as_str()).to_string();
+        self.cx.error(
+            velt_common::Diagnostic::error(
+                format!("a spread argument that may fill parameter `{name}` of {} is not supported yet", c.what),
+                a.span,
+            )
+            .with_note(format!("an override gives `{name}` another default, and which override runs and whether the spread gives `{name}` a value are only known at run time"))
+            .with_note(format!("pass `{name}` (and the parameters before it) as separate arguments, then spread the rest")),
+        );
     }
 
     /// May argument `a` be `undefined`: the literal, or a value whose checked type holds it

@@ -220,13 +220,11 @@ impl FnCx<'_, '_> {
             Resolved::Virtual { def, slot, slots } => {
                 let c = self.fn_callable(def, format!("method `{}`", prop.name), span);
                 // Left-out arguments take the default of the override that runs.
-                let spread = args
-                    .iter()
-                    .any(|a| matches!(a.kind, ast::ExprKind::Spread(_)));
-                let fill = match spread {
-                    true => None,
-                    false => self.fill_target(recv.ty, def, slot, args),
+                let Ok((fill, args)) = self.virtual_fill(&c, recv.ty, (def, slot), args, span)
+                else {
+                    return self.error_expr(span);
                 };
+                let args = &args[..];
                 let this_recv = self.this_recv(&recv);
                 let (c, slot, throws_def) = match &fill {
                     Some(t) => (self.fill_callable(&c, t, span), t.slot, t.entry),
