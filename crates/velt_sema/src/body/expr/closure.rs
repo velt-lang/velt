@@ -148,6 +148,9 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         escaping: bool,
     ) -> hir::Expr {
+        if self.is_generic_closure(e, exp) {
+            return self.generic_closure(e, exp);
+        }
         // Stored into a site, it throws into that one (`throws::fn_flows`); its body stores
         // nothing there.
         self.cx.note_closure_site(e.span, exp);
@@ -159,12 +162,12 @@ impl FnCx<'_, '_> {
 
     fn closure_in(&mut self, e: &ast::Expr, exp: Option<TyId>, escaping: bool) -> hir::Expr {
         let ast::ExprKind::Arrow {
-            type_params,
             params,
             ret,
             throws,
             body,
             is_async,
+            ..
         } = &e.kind
         else {
             unreachable!("ICE: closure of a non-arrow expression")
@@ -172,16 +175,6 @@ impl FnCx<'_, '_> {
         crate::check_work::add_closure_check();
         // A member of a recursive closure group (`closure_group`).
         let member = self.pending_member.take();
-        if !type_params.is_empty() {
-            self.cx.error(
-                velt_common::Diagnostic::error(
-                    "a generic arrow function must be the value of a `const` with typed parameters",
-                    e.span,
-                )
-                .with_note("a function value has one type; declare it as `const id = <T>(x: T) => x;` and call it, or write a generic `function`"),
-            );
-            return self.error_expr(e.span);
-        }
         // An object-literal method using `this` (`literal_this.rs`).
         if super::literal_this::takes_this(e) {
             let at = super::literal_this::first_this(e);

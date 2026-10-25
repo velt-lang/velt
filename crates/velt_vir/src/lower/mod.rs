@@ -231,6 +231,10 @@ enum ThunkKind {
     Env(Option<TyId>),
     /// First param is the receiver's data pointer (Dyn data / class object) → target's `this`.
     SelfData,
+    /// First param is the data pointer of an interface value holding a closure (a generic
+    /// closure as a generic function value, glue/generic_slots.rs): the closure's code runs
+    /// with the closure's env.
+    BoxedClosure,
     /// The code of a method read as a value through `any` (a typed proxy's `get` trap answers
     /// a method call with it, proxy_method.rs): the method's parameters after a closure env;
     /// called on its own (without the proxy as `this`) it throws a `TypeError`.

@@ -285,7 +285,15 @@ impl FnLower<'_, '_> {
         if self.cx.is_any_impl(impl_index) && self.is_proxy(cty) {
             self.cx.note_proxy_new();
         }
-        let vtable = self.vtable_addr(VtableKey::Impl(impl_index, cty));
+        let key = match self.cx.kind(cty) {
+            // A generic closure (glue/generic_slots.rs): its table is per instance.
+            TyKind::Closure(_) => {
+                let targs = self.cx.intern(TyKind::Tuple(self.targs.clone()));
+                VtableKey::Closure(impl_index, targs)
+            }
+            _ => VtableKey::Impl(impl_index, cty),
+        };
+        let vtable = self.vtable_addr(key);
         let (data, vtable) = match self.cx.is_any_impl(impl_index) && self.cx.proxiable(cty) {
             true => self.proxy_any_parts(data, vtable),
             false => (data, vtable),

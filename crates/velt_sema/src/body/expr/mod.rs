@@ -68,6 +68,7 @@ mod gen_closure;
 mod gen_value;
 mod generic_member;
 mod generic_spread;
+mod generic_values;
 mod hidden_nothings;
 mod hoist;
 pub(crate) mod iface_adapt;

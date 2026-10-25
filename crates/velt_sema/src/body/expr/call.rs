@@ -314,6 +314,17 @@ impl FnCx<'_, '_> {
             Err(f) => f,
         };
         let f = self.fn_bound_value(f).unwrap_or_else(|f| f);
+        // A generic function value: a call of its interface's one method (`crate::generic_fns`).
+        if let Some(g) = self.cx.generic_sig(f.ty) {
+            let s = super::iface_call::IfaceSlot {
+                on_param: false,
+                iface: g.iface,
+                iface_args: g.args,
+                slot: 0,
+                method: g.method,
+            };
+            return self.iface_call(f, s, &[], args, None, span);
+        }
         // A function with properties (#921): a call of the function it holds.
         if self.cx.is_callable_object(f.ty) {
             return match self.call_of_callable(f, span) {

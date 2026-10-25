@@ -367,6 +367,7 @@ impl FnCx<'_, '_> {
             // A field holding a function value, or a `Function` / `any` (issue #926): a dynamic
             // call of the value it holds.
             if matches!(self.cx.ty.kind(fty), TyKind::FnPtr { .. })
+                || self.cx.generic_sig(fty).is_some()
                 || self.cx.is_callable_object(fty)
                 || matches!(
                     self.cx.dynamic(fty),
@@ -399,9 +400,12 @@ impl FnCx<'_, '_> {
                 return self.call_value(f, args, span);
             }
         }
-        // A function in an object part of `T & { … }` (`s.$set(v)`), read through its slot.
+        // A function in an object part of `T & { … }` (`s.$set(v)`), read through its slot;
+        // also a generic function value in an interface field.
         if let Some(f) = self.iface_field_of(recv.ty, &prop.name) {
-            if matches!(self.cx.ty.kind(f.ty), TyKind::FnPtr { .. }) {
+            if matches!(self.cx.ty.kind(f.ty), TyKind::FnPtr { .. })
+                || self.cx.generic_sig(f.ty).is_some()
+            {
                 return match self.field_access(recv, prop, Want::Borrow, span) {
                     Some(f) => self.call_value(f, args, span),
                     None => self.error_expr(span),

@@ -59,6 +59,7 @@ pub(crate) struct Ctx<'m> {
     pub(crate) part_ifaces: crate::intersection_members::PartIfaces,
     /// Interfaces made for intersections and `Pick`s of interfaces with methods.
     pub(crate) synth_ifaces: crate::synth_ifaces::SynthIfaces,
+    pub(crate) generic_fns: crate::generic_fns::GenericFns,
     /// Views of unions of interfaces (`crate::union_views`).
     pub(crate) union_views: crate::union_views::UnionViews,
     pub(crate) any: Option<crate::any::AnyDefs>,
@@ -389,6 +390,7 @@ impl<'m> Ctx<'m> {
             iface_writes: Default::default(),
             part_ifaces: Default::default(),
             synth_ifaces: Default::default(),
+            generic_fns: Default::default(),
             union_views: Default::default(),
             any: None,
             impl_index: Default::default(),

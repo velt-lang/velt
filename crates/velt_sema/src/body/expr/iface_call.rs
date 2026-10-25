@@ -1,10 +1,10 @@
 //! Calls of interface methods: on interface values (`Callee::Dyn`, through the vtable) and on
 //! bounded generics (`Callee::ParamMethod`, static after monomorphization).
 //!
-//! Generic interface methods (`m<U>(...)`) have no vtable slot (a table cannot hold every
-//! instantiation), so they can only be called on a `T extends I` receiver, where the call is
-//! resolved statically; calling one on an interface value is an error. The method's own type
-//! arguments (inferred or explicit) go into `ParamMethod::method_type_args`.
+//! A generic interface method (`m<U>(...)`) is called with its own type arguments (inferred or
+//! explicit) in `method_type_args`: on a `T extends I` receiver the call is resolved statically;
+//! on an interface value, the method's vtable slot holds a table with one entry per
+//! instantiation that lowering reaches (#943).
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
@@ -66,28 +66,6 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let own = s.method.generics.len();
-        if own > 0 && !s.on_param {
-            let tn = self.cx.display(recv.ty);
-            let iface = self
-                .cx
-                .iface(s.iface)
-                .map_or(tn.clone(), |i| i.name.clone());
-            self.cx.error(
-                Diagnostic::error(
-                    format!(
-                        "generic method `{}` cannot be called on an interface value (`{tn}`)",
-                        s.method.name
-                    ),
-                    span,
-                )
-                .with_note("an interface value calls its methods through a table with one entry per method, but a generic method is compiled once for each type argument")
-                .with_note(format!(
-                    "make the calling function generic over the receiver, `<T extends {iface}>(x: T)` instead of `(x: {iface})`, so the call is resolved for each concrete type; or call a method of `{iface}` that is not generic"
-                )),
-            );
-            self.check_args_loose(args);
-            return self.error_expr(span);
-        }
         let n = s.iface_args.len();
         let mut slots: Vec<Option<TyId>> = s.iface_args.iter().map(|t| Some(*t)).collect();
         slots.push(Some(recv.ty));
@@ -128,15 +106,19 @@ impl FnCx<'_, '_> {
         let ret = self.slot_call_throws(&s, src, ck.ret, span);
         let what = format!("`{}()` called", s.method.name);
         self.note_iface_array_read(s.iface, &s.iface_args, (s.slot, what), ret, span);
+        let method_type_args = ck.type_args.get(n + 1..).unwrap_or_default().to_vec();
         let callee = if s.on_param {
             Callee::ParamMethod {
                 iface: s.iface,
                 iface_args: s.iface_args,
                 slot: s.slot,
-                method_type_args: ck.type_args.get(n + 1..).unwrap_or_default().to_vec(),
+                method_type_args,
             }
         } else {
-            Callee::Dyn { slot: s.slot }
+            Callee::Dyn {
+                slot: s.slot,
+                method_type_args,
+            }
         };
         let kind = H::Call { callee, args: all };
         self.mk(kind, ret, span)

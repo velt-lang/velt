@@ -55,6 +55,7 @@ mod flow;
 mod fn_types;
 mod fresh_returns;
 mod generic_arrows;
+mod generic_fns;
 mod generic_override_sites;
 mod generic_spread;
 mod global_this;

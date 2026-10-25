@@ -603,6 +603,10 @@ pub enum Callee {
     /// Interface method call on a `Dyn` receiver `args[0]`; `slot` indexes `InterfaceDef::methods`.
     Dyn {
         slot: u32,
+        /// Type arguments of a generic interface method's own type params (empty for
+        /// non-generic methods): the table holds one entry per instantiation lowering reaches
+        /// (hir_encodings.md "Generic methods").
+        method_type_args: Vec<TyId>,
     },
     /// Method call on a receiver of type `TyKind::Param(n)` bounded by `iface` (`<T extends I>`);
     /// resolved statically via `Program::impls` after monomorphization. M2.

@@ -26,6 +26,9 @@ const SLOT_CLASS_ID: i128 = -7;
 pub(in crate::lower) enum VtableKey {
     Class(TyId),
     Impl(u32, TyId),
+    /// `Program::impls[i]` for a generic closure (its `ty` is the closure's type), with the
+    /// enclosing function's type arguments as a tuple type (glue/generic_slots.rs).
+    Closure(u32, TyId),
 }
 
 impl Cx<'_> {
@@ -90,6 +93,10 @@ impl Cx<'_> {
                     entries.push((SLOT_NAME, t));
                 }
                 (entries, id)
+            }
+            VtableKey::Closure(index, targs) => {
+                let ty = self.hir.impls[index as usize].ty;
+                (self.closure_entries(index, ty, targs), 0)
             }
         };
         let tag = match key {
@@ -175,13 +182,43 @@ impl Cx<'_> {
         entries
     }
 
+    /// The table of generic closure `ty` implementing a generic function type through impl
+    /// `index`, in the enclosing function's instance `targs` (a tuple type): the instantiation
+    /// table of its one method and the glue of the closure value the interface value boxes.
+    fn closure_entries(&mut self, index: u32, ty: TyId, inst: TyId) -> Vec<(i128, Const)> {
+        let TyKind::Tuple(targs) = self.kind(inst) else {
+            ice("closure table without its type arguments")
+        };
+        let imp = &self.hir.impls[index as usize];
+        let (iface, iargs, def) = (imp.iface, imp.iface_args.clone(), imp.methods[0]);
+        let iargs: Vec<TyId> = iargs.iter().map(|&a| self.subst(a, &targs)).collect();
+        let t = self.generic_slot_table(
+            (iface, iargs, 0),
+            (index, inst),
+            super::generic_slots::Entry::Closure(def, targs),
+        );
+        let mut entries = vec![(0, Const::Static(t))];
+        for (slot, g) in [
+            (SLOT_DROP, Glue::DynDrop),
+            (SLOT_CLONE, Glue::DynClone),
+            (SLOT_FORMAT, Glue::DynFormat),
+            (SLOT_SHARE, Glue::DynShare),
+            (SLOT_TRANSFER, Glue::DynTransfer),
+        ] {
+            entries.push((slot, Const::Func(self.func(Work::Glue(g, ty)))));
+        }
+        entries
+    }
+
     fn impl_entries(&mut self, index: u32, ty: TyId) -> Vec<(i128, Const)> {
         let n = self.hir.impls[index as usize].methods.len();
         let mut entries = vec![];
+        let mut tables = vec![];
         for slot in 0..n {
             let (m, targs) = self.impl_method(index, ty, slot as u32);
-            // Generic methods have no entry: sema only calls them statically.
+            // A generic method's entry is its instantiation table (generic_slots.rs).
             if self.fn_def(m).generics as usize > targs.len() {
+                tables.push((slot, m, targs));
                 continue;
             }
             entries.push((slot as i128, self.self_entry(m, targs)));
@@ -191,10 +228,21 @@ impl Cx<'_> {
         entries.push((SLOT_FORMAT, self.func(Work::Glue(Glue::DynFormat, ty))));
         entries.push((SLOT_SHARE, self.func(Work::Glue(Glue::DynShare, ty))));
         entries.push((SLOT_TRANSFER, self.func(Work::Glue(Glue::DynTransfer, ty))));
-        entries
+        let mut entries: Vec<(i128, Const)> = entries
             .into_iter()
             .map(|(slot, f)| (slot, Const::Func(f)))
-            .collect()
+            .collect();
+        for (slot, m, targs) in tables {
+            let key = (
+                self.hir.impls[index as usize].iface,
+                self.impl_iface_args(index, ty),
+                slot as u32,
+            );
+            let entry = super::generic_slots::Entry::Method(m, targs);
+            let t = self.generic_slot_table(key, (index, ty), entry);
+            entries.push((slot as i128, Const::Static(t)));
+        }
+        entries
     }
 }
 

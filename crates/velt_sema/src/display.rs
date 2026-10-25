@@ -142,6 +142,9 @@ impl Ctx<'_> {
                 DefInfo::Enum(e) => with_args(self, &e.name, args),
                 _ => "unknown".into(),
             },
+            TyKind::Dyn(..) if self.display_generic_fn(t, names).is_some() => {
+                self.display_generic_fn(t, names).unwrap_or_default()
+            }
             TyKind::Dyn(d, args) if self.literal_ifaces.contains(d) => {
                 self.display_literal_iface(*d, args, names)
             }
