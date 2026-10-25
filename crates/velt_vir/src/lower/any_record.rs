@@ -103,6 +103,8 @@ impl FnLower<'_, '_> {
         let filling = std::mem::replace(&mut self.record_fill, true);
         let mut ops = vec![];
         let mut flags = vec![];
+        // Whether the record has each field's key (`record_fill_order`).
+        let mut present = vec![];
         for (i, (name, fty)) in names.iter().zip(tys).enumerate() {
             let tmp = Place::local(self.temp(avt));
             let ta = self.addr(tmp.clone());
@@ -133,6 +135,7 @@ impl FnLower<'_, '_> {
                 if !self.cx.is_unit(fty) {
                     ops.push(v);
                 }
+                present.push(Operand::Const(Const::Bool(true), Ty::Bool));
                 continue;
             }
             // An optional field: absent while the record lacks the key, else its value.
@@ -167,12 +170,13 @@ impl FnLower<'_, '_> {
             if !self.cx.is_unit(fty) {
                 ops.push(Operand::Copy(val));
             }
+            present.push(Operand::Copy(flag.clone()));
             if self.cx.presence_slot(ty, i as u32).is_some() {
                 flags.push(Operand::Copy(flag));
             }
         }
         self.record_fill = filling;
-        self.record_fill_order(&data, rec, &names);
+        self.record_fill_order(&data, rec, &names, &present);
         ops.extend(flags);
         self.drop_glue(p.clone(), from);
         let agg = match self.cx.boxed(ty) {
@@ -196,32 +200,74 @@ impl FnLower<'_, '_> {
     /// The record `data` holds (of type `rec`) has a key the object type with fields `names`
     /// lacks, or its keys in another order: Velt's object has its type's fields in their order,
     /// where JavaScript's object would have the record's (decision 5 in
-    /// docs/internals/design/deferred-types.md), so it is a `TypeError` (`Record.__fills`).
-    fn record_fill_order(&mut self, data: &Operand, rec: TyId, names: &[String]) {
-        let fills = self.plain_adt(rec).and_then(|(d, _)| {
+    /// docs/internals/design/deferred-types.md), so it is a `TypeError`. The record's keys
+    /// (`__keyNames`, in JavaScript's order) must be the names of the fields it holds
+    /// (`present`), in order.
+    fn record_fill_order(
+        &mut self,
+        data: &Operand,
+        rec: TyId,
+        names: &[String],
+        present: &[Operand],
+    ) {
+        let key_names = self.plain_adt(rec).and_then(|(d, _)| {
             self.dyn_members_of(d)
                 .into_iter()
-                .find(|m| m.name == "__fills" && m.kind == DynMemberKind::Method)
+                .find(|m| m.name == "__keyNames" && m.kind == DynMemberKind::Method)
         });
-        let Some(r) = fills.and_then(|m| self.ready(rec, &m)) else {
+        let Some(r) = key_names.and_then(|m| self.ready(rec, &m)) else {
             return;
         };
         let dl = self.temp(Ty::Ptr);
         self.assign(Place::local(dl), Rvalue::Use(data.clone()));
         let this = self.any_this(dl, rec);
+        let keys_v = self.invoke_ready(&r, this, vec![]);
+        let keys_ty = r.ret;
+        let kt = self.cx.ty(keys_ty);
+        let keys = Place::local(self.temp(kt));
+        self.assign(keys.clone(), Rvalue::Use(keys_v));
         let str_ = self.cx.str_ty();
-        let joined: String = names.iter().map(|n| format!("{n}\0")).collect();
-        let lit = self.str_lit(&joined);
-        let arg = Place::local(self.temp(Ty::Agg(crate::vir::STR_AGG)));
-        self.assign(arg.clone(), Rvalue::Use(lit));
-        let ok = self.invoke_ready(&r, this, vec![(arg, str_)]);
-        let (yes, no) = (self.new_block(), self.new_block());
-        self.branch(ok, yes, no);
-        self.switch_to(no);
+        let len = self.rvalue_temp(
+            Ty::U64,
+            Rvalue::Use(Operand::Copy(proj(&keys, Proj::Field(1)))),
+        );
+        let j = Place::local(self.temp(Ty::U64));
+        self.assign(j.clone(), Rvalue::Use(cint(0, Ty::U64)));
+        let bad = self.new_block();
+        for (name, has) in names.iter().zip(present) {
+            let (check, next) = (self.new_block(), self.new_block());
+            self.branch(has.clone(), check, next);
+            self.switch_to(check);
+            let jv = Operand::Copy(j.clone());
+            let more =
+                self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Lt, jv.clone(), len.clone()));
+            let at = self.new_block();
+            self.branch(more, at, bad);
+            self.switch_to(at);
+            let key = self.elem_place(&keys, jv.clone(), str_);
+            let lit = self.str_lit(name);
+            let (ka, la) = (
+                self.addr(key),
+                self.operand_addr(lit, Ty::Agg(crate::vir::STR_AGG)),
+            );
+            let same = self.str_eq(ka, la);
+            let step = self.new_block();
+            self.branch(same, step, bad);
+            self.switch_to(step);
+            let j1 = self.rvalue_temp(Ty::U64, Rvalue::Binary(BinOp::Add, jv, cint(1, Ty::U64)));
+            self.assign(j.clone(), Rvalue::Use(j1));
+            self.goto(next);
+            self.switch_to(next);
+        }
+        let all = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, Operand::Copy(j), len));
+        let ok = self.new_block();
+        self.branch(all, ok, bad);
+        self.switch_to(bad);
         self.panic_msg(
             "TypeError: the object built with `{} as` has keys of its type in another order, or keys its type lacks",
         );
         self.terminate(crate::vir::Terminator::Unreachable);
-        self.switch_to(yes);
+        self.switch_to(ok);
+        self.drop_glue(keys, keys_ty);
     }
 }
