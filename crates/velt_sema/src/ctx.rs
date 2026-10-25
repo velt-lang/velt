@@ -50,6 +50,9 @@ pub(crate) struct Ctx<'m> {
     pub prelude: FxHashMap<String, Item>,
     pub aliases: Vec<AliasInfo<'m>>,
     pub extensions: Vec<Extension>,
+    /// The extensions declaring each method name, built for the first `extensions.len()`
+    /// extensions (body/expr/method.rs `applicable_extensions`).
+    pub(crate) extension_names: (usize, FxHashMap<String, Vec<usize>>),
     pub impls: Vec<ImplDef>,
     /// Interfaces written through and their setter slots (`crate::iface_writes`).
     pub(crate) iface_writes: crate::iface_writes::IfaceWrites,
@@ -392,6 +395,7 @@ impl<'m> Ctx<'m> {
             prelude: FxHashMap::default(),
             aliases: vec![],
             extensions: vec![],
+            extension_names: (0, FxHashMap::default()),
             impls: vec![],
             iface_writes: Default::default(),
             part_ifaces: Default::default(),

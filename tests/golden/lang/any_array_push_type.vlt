@@ -1,0 +1,4 @@
+// An array keeps its element type through `any`: pushing a value of another type stops with
+// the conversion's `TypeError` (Node's arrays take anything).
+const xs: any = [1, 2];
+xs.push("x");

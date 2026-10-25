@@ -523,6 +523,8 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::AnyIsArray
         | I::AnyKeys
         | I::AnyTruthy
+        | I::AnyTag
+        | I::AnyToNumber
         | I::AnyStrictEq
         | I::AnyLooseEq
         | I::StrLen
