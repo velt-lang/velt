@@ -318,6 +318,15 @@ pub enum Intrinsic {
     /// std only: `__intrinsic_str_char_code_at(s: borrow string, i: i64) -> i64` — the byte at
     /// `i`, or -1 when out of range (`s.charCodeAt(i)`, POC byte model); inline code, no call.
     StrCharCodeAt,
+    /// `(s, i: u64)` → u8: byte `i` of the UTF-8 bytes of `s`, unchecked (std checks the
+    /// range against `StrByteLen`). The bytes are read where the string keeps them.
+    StrByteAt,
+    /// `(s, at: u64)` → u8x16: the 16 UTF-8 bytes of `s` from `at`, unchecked (a SIMD `load`
+    /// of the string's bytes, no copy).
+    StrLoadU8x16,
+    /// `(s, at: u64, count: u64)` → u8x16: `count` (below 16) bytes from `at` in the low lanes,
+    /// 0 in the others, unchecked (a SIMD `load_partial` of the string's bytes).
+    StrLoadPartialU8x16,
     /// std only: `__intrinsic_array_data_ptr(xs: borrow T[]) -> u64` — address of element 0.
     ArrayDataPtr,
     /// `attempt(f)`: call `f: () => T throws E` (borrowed) and return its result or error as a

@@ -283,15 +283,17 @@ pub(super) fn modes_of(cx: &Ctx, d: DefId) -> Vec<PassMode> {
 /// would be accepted, and a table is read-only data.
 fn extern_written_param(symbol: &str) -> Option<usize> {
     Some(match symbol {
-        "velt_rt_bytes_set"
-        | "velt_rt_bytes_write_str"
-        | "velt_rt_bytes_copy_within"
-        | "velt_rt_bytes_fill" => 0,
+        "velt_rt_bytes_set" | "velt_rt_bytes_copy_within" | "velt_rt_bytes_fill" => 0,
         "velt_rt_regex_exec" => 3,
         // `readInto(buf)` reads into the buffer's bytes.
         "velt_rt_tcp_try_read_into" => 1,
-        // `velt_simd_<type>_store(v, to, at)` (rt_abi.md "SIMD"): `v.store(K)` modifies `K`.
-        s if s.starts_with("velt_simd_") && s.ends_with("_store") => 1,
+        // `velt_simd_<type>_store(v, to, at)` and `_store_partial(v, to, at, count)` (rt_abi.md
+        // "SIMD"): `v.store(K)` modifies `K`.
+        s if s.starts_with("velt_simd_")
+            && (s.ends_with("_store") || s.ends_with("_store_partial")) =>
+        {
+            1
+        }
         _ => return None,
     })
 }

@@ -662,8 +662,6 @@ network access`), and the accessors of a fetched response are unreachable (fatal
 | `velt_rt_str_hash` | `(const VeltStr* s) -> u64` | string Map/Set keys; fixed seed (deterministic), not flood-resistant |
 | `velt_rt_bytes_hash` | `(const VeltBytes* b) -> u64` | `velt_rt_str_hash` of the string whose bytes are `b` (`Map.getUtf8`: a key looked up by its UTF-8 bytes); additive |
 | `velt_rt_str_eq_bytes` | `(const VeltStr* s, const VeltBytes* b) -> u8` | whether `s`'s bytes are `b`; additive |
-| `velt_rt_str_eq_range` | `(const VeltStr* s, const VeltBytes* b, int64_t start, int64_t end) -> u8` | whether `s`'s bytes are `b[start..end]` (relative positions, clamped, as `slice`); additive |
-| `velt_rt_str_eq_range_ci` | same | the same with ASCII letters compared regardless of case; additive |
 | `velt_rt_math_sqrt` / `_floor` / `_ceil` / `_round` / `_trunc` / `_fabs` | `(f64) -> f64` | `round` = JS `Math.round` (ties toward +∞, keeps `-0`) |
 | `velt_rt_math_to_int32` | `(f64) -> i32` | JS ToInt32 (bitwise operators on numbers); backends emit the case of magnitude below 2^63 inline and call it only for the rest [additive, #521] |
 | `velt_rt_math_mul_int32` | `(i32 a, i32 b) -> i32` | JS `(a * b) \| 0`: the exact product rounded like the double multiply, low 32 bits; emitted inline [additive, #521] |

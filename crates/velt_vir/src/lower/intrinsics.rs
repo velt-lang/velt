@@ -86,6 +86,22 @@ impl FnLower<'_, '_> {
                 let p = self.operand_place(v, Ty::Agg(STR_AGG));
                 self.str_bytes(&p)
             }
+            (I::StrByteAt, [s, i]) => {
+                let v = self.projection_base(s, BoxHold::No);
+                let i = self.expr(i);
+                self.str_byte_at(v, i)
+            }
+            (I::StrLoadU8x16, [s, at]) => {
+                let v = self.projection_base(s, BoxHold::No);
+                let at = self.expr(at);
+                self.str_load_u8x16(v, at, None)
+            }
+            (I::StrLoadPartialU8x16, [s, at, count]) => {
+                let v = self.projection_base(s, BoxHold::No);
+                let at = self.expr(at);
+                let count = self.expr(count);
+                self.str_load_u8x16(v, at, Some(count))
+            }
             (I::StrCharCodeAt, [s, i]) => {
                 let hold = match self.may_write(i) {
                     true => BoxHold::Yes,

@@ -547,16 +547,13 @@ Declared in std (Velt signatures; `u8[]`/`string` are passed as in rt_abi_async.
   `velt_rt_bytes_concat(a: u8[], b: u8[]): u8[]`. XOR masking (`xorMask`) is Velt code on SIMD
   vectors there, and UTF-8 validation (`utf8Valid`, the WebSocket reader) in
   `std/encoding/utf8.vlt`.
-- For protocols written in Velt (the `u8[]` methods `write`, `utf8Slice`, `utf8Equals` and
-  `utf8EqualsIgnoreCase` in `std/prelude/bytes.vlt`; `std/websocket/bytes.vlt`), on a range
-  `[start, end)` (relative indices) so no slice is made: `velt_rt_bytes_write_str(dst: u8[], s:
-  string, offset: u64): i64` (the UTF-8 bytes of `s`, a lone surrogate as U+FFFD, as many whole
-  characters as fit; the bytes copied, or -1 when `offset` is past the end),
+- For protocols written in Velt (`u8[]`'s `utf8Slice` in `std/prelude/bytes.vlt`;
+  `std/websocket/bytes.vlt`), on a range `[start, end)` (relative indices) so no slice is made:
   `velt_rt_bytes_range_to_str(b: u8[], start: i64, end: i64): IoResult<string>` (`INVALID_DATA` if
-  not UTF-8), `velt_rt_bytes_range_to_str_lossy(b: u8[], start: i64, end: i64): string` (an
-  invalid sequence as U+FFFD, one per maximal invalid subpart), `velt_rt_str_eq_range(s: string,
-  b: u8[], start: i64, end: i64): bool` and `velt_rt_str_eq_range_ci` (whether the range holds the
-  UTF-8 bytes of `s`, ASCII letters in any case for `_ci`; relative positions, clamped).
+  not UTF-8) and `velt_rt_bytes_range_to_str_lossy(b: u8[], start: i64, end: i64): string` (an
+  invalid sequence as U+FFFD, one per maximal invalid subpart): making a string is the runtime's.
+  Writing a string's bytes and comparing them (`write`, `utf8Equals`) is Velt code that reads the
+  string's bytes in place (intrinsics `StrByteAt`, `StrLoadU8x16`, `StrLoadPartialU8x16`).
 - BigInt (`std/bigint.vlt`, handle `u64`, freed by `velt_rt_bigint_free`): `from_i64`, `from_f64`,
   `parse(s, radix)`, `clone`, `assign(dst, a)`, `neg(dst, a)`, `op(dst, a, b, op: u32): bool` and
   `op_i64(dst, a, k: i64, op: u32): bool` (false: division by zero or a negative or huge shift; `dst` unchanged), `cmp`/`cmp_i64` (−1/0/1),

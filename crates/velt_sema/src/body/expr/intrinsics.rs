@@ -20,6 +20,9 @@ pub(super) fn intrinsic_named(name: &str) -> Option<Intrinsic> {
         "str_len" => I::StrLen,
         "str_byte_len" => I::StrByteLen,
         "str_char_code_at" => I::StrCharCodeAt,
+        "str_byte_at" => I::StrByteAt,
+        "str_load_u8x16" => I::StrLoadU8x16,
+        "str_load_partial_u8x16" => I::StrLoadPartialU8x16,
         "exit" => I::Exit,
         "panic" => I::Panic,
         "array_with_capacity" => I::ArrayWithCapacity,
@@ -218,6 +221,18 @@ impl FnCx<'_, '_> {
             I::StrConcat => (vec![(str_, B), (str_, B)], str_, false),
             I::StrLen | I::StrByteLen => (vec![(str_, B)], usize_, false),
             I::StrCharCodeAt => (vec![(str_, B), (ty.i64, C)], ty.i64, false),
+            I::StrByteAt => {
+                let u8_ = ty.intern(TyKind::Int(IntTy::U8));
+                (vec![(str_, B), (ty.u64, C)], u8_, false)
+            }
+            I::StrLoadU8x16 => {
+                let v = ty.intern(TyKind::Simd(crate::hir::SimdTy::U8x16));
+                (vec![(str_, B), (ty.u64, C)], v, false)
+            }
+            I::StrLoadPartialU8x16 => {
+                let v = ty.intern(TyKind::Simd(crate::hir::SimdTy::U8x16));
+                (vec![(str_, B), (ty.u64, C), (ty.u64, C)], v, false)
+            }
             I::Exit => (vec![(ty.i32, C)], ty.never, false),
             I::Panic => (vec![(str_, B)], ty.never, false),
             I::ArrayDataPtr => (vec![(arr, B)], ty.u64, true),

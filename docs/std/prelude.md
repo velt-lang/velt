@@ -139,7 +139,9 @@ returns how many it wrote (Node's `buf.write`: only whole characters that fit, t
 not grow), `utf8Slice(start?, end?)` decodes a range (Node's `buf.utf8Slice`, an invalid sequence
 as U+FFFD), and `utf8Equals(s, start?, end?)` / `utf8EqualsIgnoreCase(s, start?, end?)` (Velt)
 tell whether a range holds the UTF-8 bytes of `s`, the second with ASCII letters in any case
-(a method, a path, a header name), without making a string.
+(a method, a path, a header name), without making a string. `write` and the comparisons are Velt
+code in the prelude: they read the string's bytes where it keeps them, sixteen at a time with
+SIMD vectors, and are compiled into their caller.
 
 ```ts
 const buf: u8[] = Buffer.alloc(16);

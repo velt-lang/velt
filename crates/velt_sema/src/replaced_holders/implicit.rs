@@ -598,6 +598,9 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::ReadRow
         | I::HttpHandler
         | I::StrCharCodeAt
+        | I::StrByteAt
+        | I::StrLoadU8x16
+        | I::StrLoadPartialU8x16
         | I::ArrayDataPtr
         | I::Attempt
         | I::Yield

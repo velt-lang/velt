@@ -24,7 +24,7 @@ unsafe fn bytes_mut<'a>(b: *const VeltBytes) -> &'a mut [u8] {
 
 /// JS relative index: negative counts from `len`, then clamped to `0..=len`. Clamped in `i64`
 /// before converting, so an index beyond a 32-bit `usize` (wasm32) isn't truncated.
-pub(crate) fn relative(i: i64, len: usize) -> usize {
+fn relative(i: i64, len: usize) -> usize {
     // A Rust allocation is at most `isize::MAX` bytes, so `len` fits in an `i64`.
     let n = len as i64;
     (if i < 0 { n + i.max(-n) } else { i.min(n) }) as usize
@@ -147,31 +147,6 @@ unsafe fn range<'a>(b: *const VeltBytes, start: i64, end: i64) -> &'a [u8] {
     &s[start..end.max(start)]
 }
 
-/// `u8[]`'s `write` (Node's `buf.write(s, offset)`): copies the UTF-8 bytes of `s` into `dst`
-/// from `offset`, as many whole characters as fit, and returns how many bytes it copied; -1
-/// when `offset` is past the end.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_bytes_write_str(
-    dst: *const VeltBytes,
-    s: *const VeltStr,
-    offset: u64,
-) -> i64 {
-    let d = &*dst;
-    if offset > d.len {
-        return -1;
-    }
-    let text = (*s).text_lossy();
-    let room = (d.len - offset) as usize;
-    let mut n = text.len().min(room);
-    while !text.is_char_boundary(n) {
-        n -= 1;
-    }
-    if n > 0 {
-        std::ptr::copy_nonoverlapping(text.as_ptr(), d.ptr.add(offset as usize), n);
-    }
-    n as i64
-}
-
 /// The bytes in `[start, end)` (relative indices) as a new string, validating UTF-8
 /// (`INVALID_DATA` on failure): `velt_rt_bytes_to_str` of a slice, without making the slice.
 #[no_mangle]
@@ -247,19 +222,6 @@ mod tests {
             assert_eq!(z.as_bytes(), [0, 0, 0]);
             drop(z.take_vec());
             drop(d.take_vec());
-        }
-    }
-
-    #[test]
-    fn write_str_writes_the_whole_characters_that_fit() {
-        let dst = VeltBytes::from_vec(vec![0; 4]);
-        let s = VeltStr::from_bytes("abé€".as_bytes());
-        unsafe {
-            assert_eq!(velt_rt_bytes_write_str(&dst, &s, 0), 4);
-            assert_eq!(dst.as_bytes(), "abé".as_bytes());
-            assert_eq!(velt_rt_bytes_write_str(&dst, &s, 3), 1, "only `a` fits");
-            assert_eq!(velt_rt_bytes_write_str(&dst, &s, 4), 0);
-            assert_eq!(velt_rt_bytes_write_str(&dst, &s, 5), -1, "past the end");
         }
     }
 
