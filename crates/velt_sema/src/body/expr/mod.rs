@@ -79,6 +79,7 @@ mod iface_call;
 pub(crate) mod iface_field;
 pub(crate) mod iface_from_object;
 mod iface_nested;
+mod iface_notes;
 mod iface_object;
 mod iface_object_setters;
 mod iface_write;
