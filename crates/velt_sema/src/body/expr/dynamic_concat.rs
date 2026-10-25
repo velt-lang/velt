@@ -1,6 +1,6 @@
 //! `+` with an `any` (or `object`) operand and a string (#1242): the `any` is written as
 //! JavaScript's `+` writes it (`ToPrimitive` with hint `"default"`), in `s + a`, `a + s` and
-//! `s += a`.
+//! `s += a`; any other `+` with an `any` is `dynamic_arith.rs`'s.
 
 use velt_common::Span;
 
@@ -13,7 +13,7 @@ impl FnCx<'_, '_> {
     /// `l + r` with an `any` or `object` operand: when the other operand is a string, the
     /// dynamic one is written as JavaScript's `+` writes it (`ToPrimitive` with hint
     /// `"default"`: `valueOf()` before `toString()`; `"" + e` of an error is `Error: boom`,
-    /// #1242); any other `+` is [`Self::dynamic_operator`]'s.
+    /// #1242); any other `+` is [`Self::dynamic_add`]'s.
     pub(crate) fn dynamic_concat(&mut self, l: hir::Expr, r: hir::Expr, span: Span) -> hir::Expr {
         let s = self.cx.ty.str_;
         let is_any = |cx: &mut Self, t: TyId| {
@@ -28,7 +28,7 @@ impl FnCx<'_, '_> {
             let l = self.implicit_any_text(l, "a string concatenation", Hint::Default);
             return self.concat(l, r, span);
         }
-        self.dynamic_operator("+", &l, &r, span)
+        self.dynamic_add(l, r, span)
     }
 
     /// `h` when it is an `any`, or the `any` value `h` converts when `h` is its checked

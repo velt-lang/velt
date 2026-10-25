@@ -43,7 +43,7 @@ impl Cx<'_> {
 /// site as its last argument (`at`, a `"path:line:col"` constant per site, like the hidden
 /// location argument of Rust's `#[track_caller]`), which its stops write into their messages:
 /// their panics get no suffix of their own ([`Cx::reports_own_site`]).
-const UNTRACKED: [&str; 9] = [
+const UNTRACKED: [&str; 12] = [
     "__anyString",
     "__anyConcatText",
     "__anyConcatPlain",
@@ -53,6 +53,9 @@ const UNTRACKED: [&str; 9] = [
     "__anyTextUnsupported",
     "__anyJoin",
     "__anyJoinSeen",
+    "__anyToPrimitive",
+    "__anyToPrimitivePlain",
+    "__anyPrimKeep",
 ];
 
 /// Is the function named `name` (its last path segment) one of [`UNTRACKED`]?

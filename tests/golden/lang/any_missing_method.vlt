@@ -1,0 +1,5 @@
+// A method no value of its kind has, called through `any`, is Node's "is not a function".
+const n: any = 5;
+const s: any = "x";
+console.log(s.toUpperCase());
+n.foo();

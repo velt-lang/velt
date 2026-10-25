@@ -1,0 +1,3 @@
+any_object_arith.vlt:5:15: error: the operator `*` cannot be applied to a value of type `object`
+any_object_arith.vlt:7:15: error: the operator `-` cannot be applied to a value of type `Function`
+any_object_arith.vlt:8:15: error: the operator `+` cannot be applied to a value of type `object`

@@ -484,6 +484,13 @@ impl FnLower<'_, '_> {
         ty: TyId,
     ) -> Operand {
         let ty = self.sub(ty);
+        if let Some(k) = key {
+            // The built-in methods the `AnyCall` slots look for (any_builtin.rs).
+            match &k.kind {
+                hir::ExprKind::Lit(hir::Lit::Str(name)) => self.cx.note_any_call_key(name),
+                _ => self.cx.note_any_call_key(""),
+            }
+        }
         let (data, desc) = self.any_receiver(o);
         let ka = key.map(|k| {
             let kt = self.sub(k.ty);

@@ -723,7 +723,8 @@ impl FnCx<'_, '_> {
     }
 
     /// `l === r` / `l == r` (`negate`: `!==` / `!=`) where the checked type of an operand is
-    /// `any` or `unknown`: both sides boxed (`Intrinsic::AnyStrictEq` / `AnyLooseEq`).
+    /// `any` or `unknown`: both sides boxed (`Intrinsic::AnyStrictEq` / `AnyLooseEq`, whose
+    /// lowering compares an object with a primitive through the prelude's `__anyLooseEq`).
     pub(crate) fn dynamic_eq(
         &mut self,
         l: hir::Expr,
@@ -737,6 +738,11 @@ impl FnCx<'_, '_> {
         };
         let l = self.dynamic_operand(l, any);
         let r = self.dynamic_operand(r, any);
+        if !strict {
+            // An object against a primitive is the prelude's `__anyLooseEq` (velt_vir
+            // any_eq.rs), which reads its members through `any`.
+            self.note_dyn_members();
+        }
         let i = if strict {
             Intrinsic::AnyStrictEq
         } else {
@@ -763,6 +769,22 @@ impl FnCx<'_, '_> {
             .any(|t| self.cx.dynamic(*t) == Some(Dynamic::Unknown))
         {
             self.unknown_use_error(span);
+        } else if let Some(d) = [l.ty, r.ty]
+            .iter()
+            .filter_map(|t| self.cx.dynamic(*t))
+            .find(|d| matches!(d, Dynamic::Object | Dynamic::Function))
+        {
+            // As in TypeScript (TS2362 / TS2365): only an `any` converts to a number.
+            self.cx.error(
+                Diagnostic::error(
+                    format!(
+                        "the operator `{op}` cannot be applied to a value of type `{}`",
+                        d.name()
+                    ),
+                    span,
+                )
+                .with_note("an arithmetic operand must be a number, an enum value or an `any`"),
+            );
         } else {
             self.cx.error(
                 Diagnostic::error(

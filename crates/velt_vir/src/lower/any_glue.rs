@@ -676,6 +676,9 @@ impl FnLower<'_, '_> {
         if self.is_proxy(ty) {
             return self.proxy_call_body((data, key, argv, argc, out), ty);
         }
+        if let Some(prefix) = self.builtin_prefix(ty) {
+            return self.any_builtin_call(prefix, (data, key, argv, argc, out), ty);
+        }
         let outp = self.any_out(out);
         // A record's function values (later).
         let adt = self

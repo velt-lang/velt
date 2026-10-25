@@ -1,9 +1,10 @@
-// An `unknown` must be narrowed before use (TS2322 / TS18046 in `tsc --strict`); operators
-// other than `==` and `===` on an `any` come with phase 2 of #924 (`tsc` accepts them).
+// An `unknown` must be narrowed before use (TS2322 / TS18046 in `tsc --strict`), also as an
+// operand (`tsc` accepts the same operators on an `any`).
 function main(): void {
   const u: unknown = 1;
   const n: number = u;
   console.log(n);
   const a: any = 1;
   console.log(a + 1);
+  console.log(u * 2);
 }
