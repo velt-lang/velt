@@ -1,7 +1,7 @@
 // A generic arrow function needs typed parameters (or a generic function type where it is used);
 // without a return type it infers one, which a self-use in its return expressions prevents. A
-// local one that captures nothing is a generic function nested in its function, and a use as a
-// value needs a function type to instantiate it at; `this` keeps it from being either.
+// local one that captures nothing is a generic function nested in its function (used as a value,
+// it is a generic function value); `this` keeps it from being either.
 
 const untypedParam = <T,>(x) => x;
 const selfReturning = <T,>(x: T) => selfReturning(x);
