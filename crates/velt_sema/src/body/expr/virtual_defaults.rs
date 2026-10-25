@@ -39,8 +39,8 @@ impl FnCx<'_, '_> {
     /// out an argument of one of its parameters, passes `undefined` there, or a value that may
     /// be `undefined` (a variable, a call's result, a method value's arrow, `method_value.rs`).
     /// A call that only leaves out trailing arguments (or passes `undefined` literals for them:
-    /// `m(i, undefined)` is `m(i)`) takes the slot that applies the defaults of the rest, which
-    /// takes the arguments before them only.
+    /// `m(i, undefined)` is `m(i)`, but not for a rest parameter) takes the slot that applies
+    /// the defaults of the rest, which takes the arguments before them only.
     pub(super) fn fill_target(
         &mut self,
         recv_ty: TyId,
@@ -50,7 +50,14 @@ impl FnCx<'_, '_> {
     ) -> Option<FillTarget> {
         let t = self.fill_slot(recv_ty, def, slot, None)?;
         let is_undefined = crate::body::defaults::is_undefined;
-        let written = args.len() - args.iter().rev().take_while(|a| is_undefined(a)).count();
+        // Only the `undefined`s standing for named parameters can be left out: one passed to a
+        // rest parameter is an element of it (and those before it are then passed too).
+        let rest_at = (crate::body::defaults::has_rest(self.cx, def))
+            .then(|| self.cx.fn_info(def).params.len().saturating_sub(1));
+        let written = match rest_at {
+            Some(r) if args.len() > r => args.len(),
+            _ => args.len() - args.iter().rev().take_while(|a| is_undefined(a)).count(),
+        };
         let passed: Vec<bool> = (t.positions.clone().into_iter())
             .map(|k| k < written && self.maybe_undefined(&args[k]))
             .collect();
@@ -165,6 +172,9 @@ impl FnCx<'_, '_> {
     pub(super) fn fill_callable(&mut self, c: &Callable, t: &FillTarget, span: Span) -> Callable {
         let mut c = c.clone();
         if let Some(k) = t.trailing {
+            // A trailing entry stops before the rest parameter, if any: the call passes no
+            // rest arguments, and the entry passes the empty array on.
+            c.rest &= k >= c.params.len();
             c.params.truncate(k);
             return c;
         }
