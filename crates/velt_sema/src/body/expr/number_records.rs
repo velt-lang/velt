@@ -13,18 +13,17 @@ use crate::body::FnCx;
 use crate::hir::{self, ExprKind as H, LocalId};
 
 impl FnCx<'_, '_> {
-    /// Records local `l` declared with the written type `ty` when that is a number-keyed record,
-    /// and checks the object literal `init` it is initialized with.
+    /// Records local `l` declared with the written type `t` when that is a number-keyed record,
+    /// and checks the object literal `init` it is initialized with (`note_marks`).
     pub(crate) fn note_number_record(
         &mut self,
         l: LocalId,
-        ty: Option<&ast::TypeExpr>,
+        t: &ast::TypeExpr,
         init: Option<&ast::Expr>,
     ) {
-        let Some(t) = ty.filter(|t| self.may_be_marked(t) && self.is_number_record_written(t, 0))
-        else {
+        if !self.is_number_record_written(t, 0) {
             return;
-        };
+        }
         self.mark_local(l, crate::body::NUMBER_RECORD);
         let Some(ast::ExprKind::Object(props)) = init.map(|e| &e.kind) else {
             return;

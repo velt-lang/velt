@@ -23,6 +23,9 @@ impl FnCx<'_, '_> {
         let ast::ExprKind::Ident(id) = &callee.kind else {
             return None;
         };
+        if !id.name.starts_with("globalThis.") {
+            return None;
+        }
         let define = match id.name.as_str() {
             KEY_CHECK => false,
             DEFINE_KEY_CHECK => true,

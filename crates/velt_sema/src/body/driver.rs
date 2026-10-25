@@ -659,8 +659,7 @@ impl FnCx<'_, '_> {
             let l = self.new_local(&p.name, p.ty, false, p.span, LocalKind::Param);
             if let Some(crate::defs::FnSource::Decl(d)) = f.source {
                 let written = d.sig.params.iter().find(|q| q.name.name == p.name);
-                self.note_readonly_array(l, written.map(|q| &q.ty));
-                self.note_number_record(l, written.map(|q| &q.ty), None);
+                self.note_marks(l, written.map(|q| &q.ty), None);
             }
             self.f.scopes[0].names.entry(p.name.clone()).or_insert(l);
             self.rec_local_decl(l);

@@ -41,6 +41,23 @@ impl FnCx<'_, '_> {
         }
     }
 
+    /// [`Self::note_readonly_array`] and `note_number_record` for local `l` declared with the
+    /// written type `ty` (and initialized with `init`), behind one cheap filter.
+    pub(super) fn note_marks(
+        &mut self,
+        l: LocalId,
+        ty: Option<&ast::TypeExpr>,
+        init: Option<&ast::Expr>,
+    ) {
+        let Some(t) = ty.filter(|t| self.may_be_marked(t)) else {
+            return;
+        };
+        if self.is_readonly_written(t, 0) {
+            self.mark_local(l, READONLY);
+        }
+        self.note_number_record(l, t, init);
+    }
+
     /// Can the written type `t` be a read-only or number-keyed record type? A cheap filter
     /// before the checks: most declared types are neither.
     pub(crate) fn may_be_marked(&self, t: &ast::TypeExpr) -> bool {
@@ -89,6 +106,9 @@ impl FnCx<'_, '_> {
     /// for the branch where `cond` holds. What to give [`Self::restore_marks`] after it.
     pub(super) fn instanceof_unmark(&mut self, cond: &ast::Expr) -> Vec<(LocalId, u8)> {
         let mut out = vec![];
+        if self.f.local_marks.is_empty() {
+            return out;
+        }
         self.instanceof_unmark_into(cond, &mut out);
         out
     }
