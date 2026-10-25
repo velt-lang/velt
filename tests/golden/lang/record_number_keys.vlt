@@ -1,0 +1,28 @@
+// `Record<number, V>` and `Record<string | number, V>`: JavaScript makes a number key its
+// string, so the record holds string keys (array indices first, ascending) and `r[n]` reads
+// and writes `r[String(n)]`.
+const table: Record<number, string> = {};
+const ids = [30, 2, 10];
+for (const id of ids) table[id] = "rec" + id;
+table[1.5] = "half";
+console.log(table, Object.keys(table), JSON.stringify(table));
+console.log(table[2], table[10], table[99], 10 in table, 7 in table);
+delete table[2];
+console.log(Object.entries(table));
+for (const k in table) console.log(typeof k, k);
+
+const patch: Record<number, { id: number }> = {};
+const record = { id: 4 };
+patch[record.id] = record;
+console.log(patch, patch[4]?.id);
+
+function assignment(name: string, values: Record<string | number, unknown>): string {
+  return `${name}=${JSON.stringify(values)}`;
+}
+console.log(assignment("a", { b: 1, 0: "zero" }));
+const mixed: Record<string | number, number> = { x: 1 };
+mixed[3] = 3;
+mixed["y"] = 2;
+const n = -0;
+mixed[n] = 0;
+console.log(mixed, mixed[3], mixed["3"]);

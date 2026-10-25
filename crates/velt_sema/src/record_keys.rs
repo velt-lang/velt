@@ -2,7 +2,8 @@
 //! union of string literal types or a string enum (a *closed* record, which has every key).
 //!
 //! A written `Record<K, V>` with a concrete `K` is checked where the type is resolved
-//! (`resolve.rs`). A key that comes from a type parameter is checked where the parameter meets a
+//! (`resolve.rs`); there `number` and `string | number` keys become `string`, as JavaScript
+//! makes a number key a string ([`Ctx::number_key_as_string`]). A key that comes from a type parameter is checked where the parameter meets a
 //! concrete type: after all bodies, [`check_instantiations`] collects the key types each function's
 //! types mention (through struct, class and union fields too), propagates the generic ones to every
 //! instantiation site (calls, function values, `new` and generic methods called through a type
@@ -56,6 +57,23 @@ impl Ctx<'_> {
                 e.variants.iter().map(|v| v.str_value.clone()).collect()
             }
             _ => None,
+        }
+    }
+
+    /// The key type of a written `Record<k, V>`: `number` and `string | number` are `string`
+    /// (Velt's integer types stay errors).
+    /// JavaScript converts a number key to its string, so such a record holds string keys
+    /// (`Object.keys` lists them, in its order: array indices first) and a number index is
+    /// converted where it is used (`r[1]` is `r["1"]`, `body::expr::record_call`).
+    pub(crate) fn number_key_as_string(&mut self, k: TyId) -> TyId {
+        let str_ = self.ty.str_;
+        let num = self.ty.f64;
+        if k == num {
+            return str_;
+        }
+        match self.union_members(k) {
+            Some(ms) if ms.iter().all(|m| *m == str_ || *m == num) => str_,
+            _ => k,
         }
     }
 

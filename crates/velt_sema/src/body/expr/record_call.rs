@@ -174,7 +174,7 @@ impl FnCx<'_, '_> {
     /// on an enum-keyed record as the member with that value.
     fn record_key_arg(&mut self, k: TyId, key: &RecordKey<'_>, want: Want) -> hir::Expr {
         let id = match key {
-            RecordKey::Index(e) => return self.expr(e, Some(k), want),
+            RecordKey::Index(e) => return self.index_key_arg(k, e, want),
             RecordKey::Computed(e) => return self.computed_key_arg(k, e, want),
             RecordKey::Name(id) => *id,
         };
@@ -183,6 +183,26 @@ impl FnCx<'_, '_> {
         }
         let lit = synth(ast::ExprKind::Lit(ast::Lit::Str(id.name.clone())), id.span);
         self.expr(&lit, Some(k), want)
+    }
+
+    /// The key `e` of `r[e]` for a record keyed by `k`: on a `string`-keyed record a number is
+    /// converted to its string, as JavaScript converts a property key (`r[1]` is `r["1"]`;
+    /// `Record<number, V>` is such a record, `crate::record_keys`).
+    fn index_key_arg(&mut self, k: TyId, e: &ast::Expr, want: Want) -> hir::Expr {
+        let str_ = self.cx.ty.str_;
+        let plain = matches!(
+            e.kind,
+            ast::ExprKind::Lit(ast::Lit::Str(_)) | ast::ExprKind::Template { .. }
+        );
+        if k != str_ || plain {
+            return self.expr(e, Some(k), want);
+        }
+        let h = self.expr(e, None, want);
+        if self.cx.ty.is_numeric(h.ty) {
+            let span = h.span;
+            return self.intrinsic(Intrinsic::ToString, vec![h], str_, span);
+        }
+        self.coerce(h, k)
     }
 
     /// The key `e` of `{ [e]: value }` for a record keyed by `k`: on a `string`-keyed record

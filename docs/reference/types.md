@@ -2110,6 +2110,11 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
 - **`Record<K, V>`**: a dictionary written with object syntax, like TypeScript's `Record`.
   `K` is `string`, a union of string literal types, or a string enum; any other key type is
   an error (use a `Map`), also when a generic function or class gets it as a type argument.
+  `Record<number, V>` and `Record<string | number, V>` are `Record<string, V>`, as JavaScript
+  makes a number key its string: `r[n]` with a `number` `n` reads and writes `r[String(n)]`
+  (`r[1.5]` is `r["1.5"]`), and `Object.keys` lists the keys as strings, array indices first.
+  A number index works on any `string`-keyed record. A type parameter given `number` as a
+  record key is not supported yet.
   With `string` keys a record is *open*: `r[k]` and `r.name` are `V | undefined`, `r[k] = v`
   inserts or replaces, `r[k] ??= v` sets a missing key, and `delete r[k]` removes. Because a
   key may be missing, `r[k] += 1`, `r[k]++` and the other compound assignments are errors on an
