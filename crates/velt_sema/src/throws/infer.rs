@@ -40,22 +40,19 @@ pub(crate) fn infer_all(cx: &mut Ctx) {
         }
     }
     let mut guarded = Guarded::new(cx, &fns);
+    let mut work = Worklist::new(cx, &fns, &groups);
+    let mut round = 0;
     loop {
-        let mut changed = false;
-        for &d in &fns {
-            let fixed = cx.fn_info(d).declared_throws.is_some() || groups.group_of(d).is_some();
-            if !fixed {
-                let t = match guarded.ranges.contains_key(&d) {
-                    true => {
-                        let (t, moved) = guarded.own_final(cx, d);
-                        changed |= moved;
-                        t
-                    }
-                    false => own_final(cx, d),
-                };
-                changed |= set_throws(cx, d, t);
-            }
+        // The functions to evaluate: all of them at first, and all again after the stored
+        // closures grew a site's set; otherwise the callers of what changed (queued as it
+        // changed) and the ones that read more than their callees.
+        if round == 0 {
+            work.queue_all();
+        } else {
+            work.queue_volatile();
         }
+        round += 1;
+        let mut changed = work.settle(cx, &mut guarded);
         for g in groups.list.iter().filter(|g| g.bound.is_none()) {
             let mut acc = None;
             for &m in &g.members {
@@ -63,16 +60,118 @@ pub(crate) fn infer_all(cx: &mut Ctx) {
                 acc = cx.join_errors(acc, t);
             }
             for &m in &g.members {
-                changed |= set_throws(cx, m, acc);
+                if set_throws(cx, m, acc) {
+                    work.queue_callers(m);
+                    changed = true;
+                }
             }
         }
-        changed |= super::checks::seed_stored(cx, &fns);
+        if super::checks::seed_stored(cx, &fns) {
+            round = 0;
+            changed = true;
+        }
         if !changed {
             break;
         }
     }
     super::checks::check_all(cx, &fns, &groups);
     cx.record_recursion_hints(&fns);
+}
+
+/// The fixpoint's functions whose error type is inferred (no written clause, no dispatch
+/// group), evaluated as a worklist: a function is evaluated again when a callee's error type
+/// changed, rather than every function in every round.
+struct Worklist {
+    open: Vec<DefId>,
+    /// The functions (indexes into `open`) that call each function directly.
+    callers: FxHashMap<DefId, Vec<u32>>,
+    /// The functions whose sources read more than their callees' error types (field
+    /// defaults, interface slots): evaluated again in every round after a change.
+    volatile: Vec<u32>,
+    queued: Vec<bool>,
+    queue: std::collections::VecDeque<u32>,
+}
+
+impl Worklist {
+    fn new(cx: &Ctx, fns: &[DefId], groups: &super::groups::Groups) -> Worklist {
+        let open: Vec<DefId> = (fns.iter().copied())
+            .filter(|&d| cx.fn_info(d).declared_throws.is_none() && groups.group_of(d).is_none())
+            .collect();
+        let mut callers: FxHashMap<DefId, Vec<u32>> = FxHashMap::default();
+        let mut volatile = vec![];
+        for (i, &d) in open.iter().enumerate() {
+            let i = i as u32;
+            let mut reads_more = false;
+            for s in &cx.fn_info(d).throw_srcs {
+                match s {
+                    ThrowSrc::Call(g, _, _) => {
+                        let v = callers.entry(*g).or_default();
+                        if v.last() != Some(&i) {
+                            v.push(i);
+                        }
+                    }
+                    ThrowSrc::Defaults(..) | ThrowSrc::Slot { .. } => reads_more = true,
+                    ThrowSrc::Direct(..) | ThrowSrc::Indirect(..) => {}
+                }
+            }
+            if reads_more {
+                volatile.push(i);
+            }
+        }
+        let n = open.len();
+        Worklist {
+            open,
+            callers,
+            volatile,
+            queued: vec![false; n],
+            queue: Default::default(),
+        }
+    }
+
+    fn push(&mut self, i: u32) {
+        if !std::mem::replace(&mut self.queued[i as usize], true) {
+            self.queue.push_back(i);
+        }
+    }
+
+    fn queue_all(&mut self) {
+        (0..self.open.len() as u32).for_each(|i| self.push(i));
+    }
+
+    fn queue_volatile(&mut self) {
+        for k in 0..self.volatile.len() {
+            self.push(self.volatile[k]);
+        }
+    }
+
+    /// Queue the callers of `d`, whose error type changed.
+    fn queue_callers(&mut self, d: DefId) {
+        let Some(cs) = self.callers.get(&d) else {
+            return;
+        };
+        for k in 0..cs.len() {
+            let c = self.callers[&d][k];
+            self.push(c);
+        }
+    }
+
+    /// Evaluate the queued functions until none is left; true when an error type changed.
+    fn settle(&mut self, cx: &mut Ctx, guarded: &mut Guarded) -> bool {
+        let mut changed = false;
+        while let Some(i) = self.queue.pop_front() {
+            self.queued[i as usize] = false;
+            let d = self.open[i as usize];
+            let (t, moved) = match guarded.ranges.contains_key(&d) {
+                true => guarded.own_final(cx, d),
+                false => (own_final(cx, d), false),
+            };
+            if set_throws(cx, d, t) | moved {
+                changed = true;
+                self.queue_callers(d);
+            }
+        }
+        changed
+    }
 }
 
 /// Error inference for generic functions with branches a type predicate on a type parameter's
