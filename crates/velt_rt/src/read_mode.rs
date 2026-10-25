@@ -137,6 +137,20 @@ pub unsafe extern "C" fn velt_rt_lk_write(p: *mut u64) {
     }
 }
 
+/// The reader's own lock-set object whose count word is at `p` (`LOCAL` set) is transferred
+/// out of a `read` callback: it is no longer the reader's own once the thread leaves read mode,
+/// so the bit goes, unless the thread stays in read mode after this callback (the result of a
+/// `read` nested in another, which the outer reader then holds as one it made).
+///
+/// # Safety
+/// `p` is the count word of a counted object.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_lk_leave(p: *mut u64) {
+    if READER.with(|r| r.depth()) <= 1 {
+        *p &= !LOCAL;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -149,6 +163,13 @@ mod tests {
         assert_eq!(velt_rt_lk_mode(), 1);
         let mut mine = 1 | LOCAL;
         unsafe { velt_rt_lk_write(&mut mine) };
+        // Nested: still the reader's own after the inner callback; outermost: no longer.
+        READER.with(|r| r.push());
+        unsafe { velt_rt_lk_leave(&mut mine) };
+        assert_eq!(mine, 1 | LOCAL);
+        READER.with(|r| r.pop());
+        unsafe { velt_rt_lk_leave(&mut mine) };
+        assert_eq!(mine, 1);
         READER.with(|r| r.pop());
         assert_eq!(in_read() as u8, 0);
         let mut store = 1u64;

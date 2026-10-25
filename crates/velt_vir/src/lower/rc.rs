@@ -263,20 +263,38 @@ impl FnLower<'_, '_> {
     }
 
     /// The object of type `ty` at `p` leaves a `read` callback (transferred out of it): no longer
-    /// the reader's own.
+    /// the reader's own, unless the thread stays in read mode (the result of a `read` nested in
+    /// another, which the outer reader made: velt_rt `velt_rt_lk_leave`).
     pub(super) fn leave_read(&mut self, p: Operand, ty: TyId) {
-        if self.cx.lock_counted(ty) {
-            let c = self.count_place(p);
-            let k = self.rvalue_temp(
-                Ty::U64,
-                Rvalue::Binary(
-                    BinOp::BitAnd,
-                    Operand::Copy(c.clone()),
-                    cint(COUNT_MASK, Ty::U64),
-                ),
-            );
-            self.assign(c, Rvalue::Use(k));
+        if !self.cx.lock_counted(ty) {
+            return;
         }
+        let q = p.clone();
+        self.lk_split(
+            |lw| {
+                let c = lw.count_place(q);
+                let k = lw.rvalue_temp(
+                    Ty::U64,
+                    Rvalue::Binary(
+                        BinOp::BitAnd,
+                        Operand::Copy(c.clone()),
+                        cint(COUNT_MASK, Ty::U64),
+                    ),
+                );
+                lw.assign(c, Rvalue::Use(k));
+            },
+            |lw| {
+                let c = lw.count_place(p.clone());
+                let mine = lw.is_local(&c);
+                let (leave, done) = (lw.new_block(), lw.new_block());
+                lw.branch(mine, leave, done);
+                lw.switch_to(leave);
+                let c = lw.count_addr(p);
+                lw.call_rt(Rt::LkLeave, vec![c], None);
+                lw.goto(done);
+                lw.switch_to(done);
+            },
+        );
     }
 
     /// [`counted_alloc`](Self::counted_alloc) of a value of type `ty`: one made in a `read`

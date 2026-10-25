@@ -168,6 +168,14 @@ pub extern "C" fn velt_rt_lk_mode() -> u8 {
     u8::from(unsafe { in_read() })
 }
 
+/// velt_rt `read_mode::velt_rt_lk_leave`.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_lk_leave(p: *mut u64) {
+    if READ_DEPTH <= 1 {
+        *p &= !LOCAL;
+    }
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_lk_write(p: *mut u64) {
     if in_read() && *p & LOCAL == 0 {
