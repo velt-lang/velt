@@ -13,10 +13,9 @@
 //!   by those counts too, and freed only once the thread's reads end, since the reader may still
 //!   borrow it uncounted (`hand_to_reader`, `LkMode::Deferred`).
 
-use rustc_hash::FxHashSet;
 use velt_sema::hir::{self, ExprKind as K, Intrinsic, LocalId, PassMode, TyId, TyKind};
 
-use super::frozen::place_root;
+use super::caller_aliases::binds;
 use super::operand::proj;
 use super::rt::Rt;
 use super::{FnLower, Glue, LkMode, Work};
@@ -461,6 +460,7 @@ impl FnLower<'_, '_> {
             return true;
         }
         match &e.kind {
+            K::Local(l, _) => self.call_alias(*l),
             K::Field { base, .. }
             | K::Index { base, .. }
             | K::UnwrapSome(base, _)
@@ -556,7 +556,7 @@ impl FnLower<'_, '_> {
     }
 
     /// The lock-set object type `ty` refers to, itself or as an option of one (a pointer).
-    fn lock_ref(&mut self, ty: TyId) -> Option<TyId> {
+    pub(super) fn lock_ref(&mut self, ty: TyId) -> Option<TyId> {
         if self.cx.ty(ty) != Ty::Ptr {
             return None;
         }
@@ -631,169 +631,5 @@ impl FnLower<'_, '_> {
         self.mode = mode;
         self.goto(done);
         self.switch_to(done);
-    }
-
-    /// Is `l` a variable of this `read` callback naming one of the caller's objects: bound to
-    /// a part of what the callback captured (`captured_root`, or of another such variable),
-    /// directly or as a `for…of` element, and never given another value? Code changing what it
-    /// names changes the caller's containers.
-    pub(super) fn caller_alias(&mut self, l: LocalId) -> bool {
-        if self.caller_aliases.is_none() {
-            let found = match self.cx.cur_def.map(|d| self.cx.hir.def(d)) {
-                Some(hir::Def::Fn(f)) => {
-                    let caps: Vec<LocalId> = f.captures.iter().map(|c| c.inner).collect();
-                    let captures = caps.into_iter().filter(|&c| self.caller_capture(c));
-                    let mut b = Bindings {
-                        captures: captures.collect(),
-                        ..Bindings::default()
-                    };
-                    b.block(&f.body.block);
-                    b.aliases()
-                }
-                _ => FxHashSet::default(),
-            };
-            self.caller_aliases = Some(found);
-        }
-        self.caller_aliases.as_ref().is_some_and(|a| a.contains(&l))
-    }
-}
-
-/// What `caller_alias` looks at in a body.
-#[derive(Default)]
-struct Bindings {
-    captures: FxHashSet<LocalId>,
-    /// Each variable bound to a place, with the place's root.
-    bound: Vec<(LocalId, LocalId)>,
-    /// Variables given a value more than once (assigned, or bound twice).
-    changed: FxHashSet<LocalId>,
-}
-
-impl Bindings {
-    fn bind(&mut self, l: LocalId, init: &hir::Expr) {
-        if self.bound.iter().any(|(b, _)| *b == l) {
-            self.changed.insert(l);
-        }
-        match place_root(unshared(init)) {
-            Some(root) => self.bound.push((l, root)),
-            None => {
-                self.changed.insert(l);
-            }
-        }
-    }
-
-    fn aliases(&self) -> FxHashSet<LocalId> {
-        let mut out = FxHashSet::default();
-        loop {
-            let before = out.len();
-            for &(l, root) in &self.bound {
-                if !self.changed.contains(&l)
-                    && (self.captures.contains(&root) || out.contains(&root))
-                {
-                    out.insert(l);
-                }
-            }
-            if out.len() == before {
-                return out;
-            }
-        }
-    }
-}
-
-impl Bindings {
-    fn block(&mut self, b: &hir::Block) {
-        b.stmts.iter().for_each(|s| self.stmt(s));
-        if let Some(e) = &b.value {
-            self.expr(e);
-        }
-    }
-
-    fn stmt(&mut self, s: &hir::Stmt) {
-        use hir::StmtKind as S;
-        match &s.kind {
-            S::Let { local, init } => {
-                if let Some(init) = init {
-                    self.bind(*local, init);
-                    self.expr(init);
-                }
-            }
-            S::LetPat { pat, init } => {
-                if let hir::PatKind::Binding(l, _) = pat.kind {
-                    self.bind(l, init);
-                }
-                self.expr(init);
-            }
-            S::Expr(init) | S::Return(Some(init)) => self.expr(init),
-            S::Return(None) | S::Break(_) | S::Continue(_) => {}
-            S::If { cond, then, els } => {
-                self.expr(cond);
-                self.block(then);
-                els.iter().for_each(|b| self.block(b));
-            }
-            S::While {
-                cond, body, step, ..
-            } => {
-                self.expr(cond);
-                self.block(body);
-                step.iter().for_each(|e| self.expr(e));
-            }
-            S::ForOf {
-                binding,
-                iter,
-                body,
-                ..
-            } => {
-                if let hir::PatKind::Binding(l, _) = binding.kind {
-                    self.bind(l, iter);
-                }
-                self.expr(iter);
-                self.block(body);
-            }
-            S::Try {
-                body,
-                catch,
-                finally,
-            } => {
-                self.block(body);
-                catch.iter().for_each(|(_, b)| self.block(b));
-                finally.iter().for_each(|b| self.block(b));
-            }
-            S::Block(b) => self.block(b),
-        }
-    }
-
-    fn expr(&mut self, e: &hir::Expr) {
-        if let K::Assign { place, .. } | K::CompoundAssign { place, .. } = &e.kind {
-            if let K::Local(l, _) = place.kind {
-                self.changed.insert(l);
-            }
-        }
-        match &e.kind {
-            K::Block(b) => self.block(b),
-            _ => super::frame_envs::children(e, &mut |x| self.expr(x)),
-        }
-    }
-}
-
-/// Does `p` bind `l`?
-fn binds(p: &hir::Pat, l: LocalId) -> bool {
-    use hir::PatKind as P;
-    match &p.kind {
-        P::Binding(b, _) => *b == l,
-        P::Some(p) => binds(p, l),
-        P::Variant { args: ps, .. } | P::Tuple(ps) | P::Or(ps) => ps.iter().any(|p| binds(p, l)),
-        P::Adt { fields } => fields.iter().any(|(_, p)| binds(p, l)),
-        P::Array { elems, rest } => *rest == Some(l) || elems.iter().any(|p| binds(p, l)),
-        _ => false,
-    }
-}
-
-/// `e` without a `Share` around it.
-fn unshared(e: &hir::Expr) -> &hir::Expr {
-    match &e.kind {
-        K::Call {
-            callee: hir::Callee::Intrinsic(Intrinsic::Share),
-            args,
-        } if args.len() == 1 => &args[0],
-        _ => e,
     }
 }

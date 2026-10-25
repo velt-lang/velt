@@ -50,6 +50,7 @@ mod boxes;
 mod boxing;
 mod call;
 mod callee;
+mod caller_aliases;
 mod caller_stores;
 mod cells;
 mod cfg;
@@ -625,9 +626,9 @@ struct FnLower<'c, 'h> {
     kept_handed: Vec<(Operand, TyId, Option<Local>)>,
     /// Those of them the call's own values, dropped after that in the mode given.
     kept_drops: Vec<(Place, TyId, LkMode)>,
-    /// A `read` callback's variables naming the caller's objects (caller_stores.rs
-    /// `caller_alias`), once asked.
-    caller_aliases: Option<FxHashSet<LocalId>>,
+    /// A `read` callback's variables naming the caller's objects (caller_aliases.rs), once
+    /// asked.
+    caller_aliases: Option<caller_aliases::Aliases>,
     /// The frames the stores of this `read` callback put what they transfer in, by the
     /// address of each transfer's arguments (leave_levels.rs), once asked.
     leave_levels: Option<FxHashMap<usize, u64>>,

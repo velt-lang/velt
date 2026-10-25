@@ -588,7 +588,8 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
   captured from code outside any `read` callback, its fields and elements at any depth, a
   variable of the callback bound to one of them and never given another value (`const x =
   out[0]`, `for (const o of set)`), what a method or function called on one of them returns
-  when given nothing of the value (`out.at(0)!.tags.push("t")`), and a method or function
+  when given nothing of the value (`out.at(0)!.tags.push("t")`, also through a variable bound
+  to it and never given another value: `const g = first(mine); g.push(x)`), and a method or function
   called with one of them to change it (`out.push(x)`, `seen.add(x)`, `m.set(k, x)`, `mine.v =
   x`, `out[0].tags.push("t")`, `sortItems(out)`). What the callback stores there from the caller's own variables and
   containers is that same object, as in JavaScript (`out.push(out[0])`, `out[0] = a`,
