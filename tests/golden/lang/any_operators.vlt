@@ -55,3 +55,14 @@ console.log(total);
 const counts: number[] = [1];
 counts[0] += two;
 console.log(counts);
+// A `+` feeding another operator: numbers stay numbers, a concatenation converts after.
+const one: any = 1,
+  sx: any = "2";
+let acc: any = 0;
+for (let i = 0; i < 3; i++) {
+  acc = acc + one * 2 - 1;
+}
+console.log(acc, one + sx - 1, (sx + one) * 2, -(one + one), ("a" + one) + one, one + one + "!");
+let bump: any = 5;
+const after = bump - (bump = 1);
+console.log(after, bump);

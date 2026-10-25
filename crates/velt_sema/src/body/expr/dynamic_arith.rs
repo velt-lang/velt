@@ -33,6 +33,17 @@ impl FnCx<'_, '_> {
     /// Binds the operand `h` to a temporary appended to `stmts` (operands are evaluated left
     /// to right, once, before either is converted).
     pub(crate) fn op_side(&mut self, h: hir::Expr, stmts: &mut Vec<hir::Stmt>) -> Option<Side> {
+        self.op_side_read(h, stmts, false)
+    }
+
+    /// [`Self::op_side`]; `direct`: nothing evaluated after `h` can change it, so an `any`
+    /// variable is read where it is (no share of its value).
+    pub(crate) fn op_side_read(
+        &mut self,
+        h: hir::Expr,
+        stmts: &mut Vec<hir::Stmt>,
+        direct: bool,
+    ) -> Option<Side> {
         let span = h.span;
         if self.cx.ty.is_bottom(h.ty) {
             return None;
@@ -40,6 +51,10 @@ impl FnCx<'_, '_> {
         let f64_ = self.cx.ty.f64;
         let h = self.unbrand(h);
         let wide = self.cx.widened(h.ty);
+        if let (true, H::Local(l, _), Some(Dynamic::Any)) = (direct, &h.kind, self.cx.dynamic(h.ty))
+        {
+            return Some(Side::Dyn(*l, h.ty));
+        }
         let (side, init) = if self.cx.dynamic(h.ty) == Some(Dynamic::Any) {
             let ty = h.ty;
             let tmp = self.new_local("<any>", ty, false, span, LocalKind::Temp);
@@ -180,8 +195,13 @@ impl FnCx<'_, '_> {
         if !self.any_operands(&l, &r) {
             return self.dynamic_operator(super::ops::op_str(op), &l, &r, span);
         }
+        // A `+` operand converts to a number anyway: its sum stays an `f64`.
+        let l = self.number_of_sum(l).unwrap_or_else(|h| h);
+        let r = self.number_of_sum(r).unwrap_or_else(|h| h);
         let mut stmts = Vec::new();
-        let (Some(a), Some(b)) = (self.op_side(l, &mut stmts), self.op_side(r, &mut stmts)) else {
+        let direct = !crate::effects::may_change_memory(&r);
+        let a = self.op_side_read(l, &mut stmts, direct);
+        let (Some(a), Some(b)) = (a, self.op_side_read(r, &mut stmts, true)) else {
             return self.error_expr(span);
         };
         let x = self.op_number(a, span);
@@ -201,7 +221,9 @@ impl FnCx<'_, '_> {
             return self.error_expr(span);
         };
         let mut stmts = Vec::new();
-        let (Some(a), Some(b)) = (self.op_side(l, &mut stmts), self.op_side(r, &mut stmts)) else {
+        let direct = !crate::effects::may_change_memory(&r);
+        let a = self.op_side_read(l, &mut stmts, direct);
+        let (Some(a), Some(b)) = (a, self.op_side_read(r, &mut stmts, true)) else {
             return self.error_expr(span);
         };
         let bool_ = self.cx.ty.bool_;
@@ -254,6 +276,48 @@ impl FnCx<'_, '_> {
         self.op_block(stmts, v, span)
     }
 
+    /// `ToNumber` of `h` when it is a dynamic `+` (`dynamic_add`'s block) feeding another
+    /// arithmetic operator (`a + b - 1`): the numbers' sum stays an `f64`, and only the other
+    /// path (`__anyAdd`) is converted. `Err` gives `h` back otherwise.
+    fn number_of_sum(&mut self, h: hir::Expr) -> Result<hir::Expr, hir::Expr> {
+        let f64_ = self.cx.ty.f64;
+        let H::Block(b) = &h.kind else { return Err(h) };
+        let Some(v) = &b.value else { return Err(h) };
+        let H::If { then, els, .. } = &v.kind else {
+            return Err(h);
+        };
+        let H::ToDyn { expr, .. } = &then.kind else {
+            return Err(h);
+        };
+        let add = self.cx.prelude_fn("__anyAdd");
+        let is_add =
+            matches!(&els.kind, H::Call { callee: hir::Callee::Def(d, _), .. } if Some(*d) == add);
+        if expr.ty != f64_ || !is_add {
+            return Err(h);
+        }
+        let span = h.span;
+        let H::Block(mut b) = h.kind else {
+            return Err(h);
+        };
+        let Some(v) = b.value.take() else {
+            return Err(self.error_expr(span));
+        };
+        let H::If { cond, then, els } = v.kind else {
+            return Err(self.error_expr(span));
+        };
+        let H::ToDyn { expr: sum, .. } = then.kind else {
+            return Err(self.error_expr(span));
+        };
+        let mut stmts = Vec::new();
+        let n = match self.op_side(*els, &mut stmts) {
+            Some(side) => self.op_number(side, span),
+            None => return Err(self.error_expr(span)),
+        };
+        let slow = self.op_block(stmts, n, span);
+        b.value = Some(Box::new(self.op_choose(*cond, *sum, slow, f64_, span)));
+        Ok(self.mk(H::Block(b), f64_, span))
+    }
+
     /// `-x`, `+x` and `~x` of an `any` `x`: a number.
     pub(crate) fn dynamic_unary(
         &mut self,
@@ -265,8 +329,9 @@ impl FnCx<'_, '_> {
             self.unknown_use_error(span);
             return self.error_expr(span);
         }
+        let inner = self.number_of_sum(inner).unwrap_or_else(|h| h);
         let mut stmts = Vec::new();
-        let Some(a) = self.op_side(inner, &mut stmts) else {
+        let Some(a) = self.op_side_read(inner, &mut stmts, true) else {
             return self.error_expr(span);
         };
         let x = self.op_number(a, span);
