@@ -126,7 +126,9 @@ function scale(xs: f64[], k: f64 = 2.0): f64[] {
   (`Promise<void>` when `async`). Not supported yet: a generator calling itself this way (pass
   the locals it uses as parameters, or declare it at module level), and a use before a local
   it uses is declared, which JS allows when the call runs later (declare the local first). A
-  generic nested function cannot use the enclosing function's locals.
+  generic nested function cannot use the enclosing function's locals. A nested function may
+  name the type parameters of the enclosing function or class (`function failed(): Res<T>`)
+  even when it uses no locals.
 
   ```ts
   function tally(words: string[]): string {
