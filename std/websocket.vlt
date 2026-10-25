@@ -42,8 +42,6 @@ import { READ_CHUNK, ReadTurn, other } from "velt:websocket/receive";
 import { leave, publish as publishFrame, subscribe, unsubscribe } from "velt:websocket/topics";
 import { Tx, closeDown, closedHandle, flush, settle, writeDirect } from "velt:websocket/writer";
 
-declare async function velt_rt_tcp_read(s: u64, max: u64): Promise<IoResult<u8[]>>;
-
 /** One received message: text, or binary data. */
 export class WsMessage {
   /** True for a binary message (`data`), false for text (`text`). */
@@ -80,11 +78,11 @@ function pushBytes(ws: WebSocket, data: u8[]): i64 {
 function begun(ws: WebSocket, r: i64): bool {
   if (r == DIRECT) {
     // Most likely a reply from the task that reads this connection: written here.
-    writeDirect(TcpStream { handle: ws.handle }, ws.tx!);
+    writeDirect(ws.handle, ws.tx!);
     return true;
   }
   if (r == START) {
-    spawn(flush(TcpStream { handle: ws.handle }, ws.tx!.clone()));
+    spawn(flush(ws.handle, ws.tx!.clone()));
     return true;
   }
   return false;
@@ -110,12 +108,8 @@ function firstStep(tx: Tx): Step {
 }
 
 // What the reading task read, handed to the reader; its next step. A failed read is thrown.
-function fedStep(tx: Tx, r: IoResult<u8[]>, turn: ReadTurn): Step {
-  if (r.code != 0) {
-    throw ioError(r.code, r.message);
-  }
+function fedStep(tx: Tx, chunk: u8[], turn: ReadTurn): Step {
   turn.done();
-  const chunk = r.value;
   return tx.with((q) => q.fed(chunk));
 }
 
@@ -149,13 +143,13 @@ function binaryFrame(data: u8[]): u8[] {
  */
 export struct WebSocket implements AsyncIterable<WsMessage, IoError> {
   // The connection's stream (std/net).
-  private handle: u64;
+  private handle: TcpStream;
   // The connection's send queue, which also holds its receiving side: one shared value, so a
   // copy of the handle costs one reference. Always there on a connection std made.
   private tx?: Tx;
 
   private stream(): TcpStream {
-    return TcpStream { handle: this.handle };
+    return this.handle;
   }
 
   private sending(): Tx {
@@ -196,7 +190,7 @@ export struct WebSocket implements AsyncIterable<WsMessage, IoError> {
     while (step.kind > BINARY) {
       if (step.kind == READ) {
         const turn = readTurn(tx);
-        const r = await velt_rt_tcp_read(this.handle, READ_CHUNK);
+        const r = await this.handle.read(READ_CHUNK);
         step = fedStep(tx, r, turn);
       } else {
         const handled = other(this.stream(), tx, step);
@@ -211,7 +205,8 @@ export struct WebSocket implements AsyncIterable<WsMessage, IoError> {
    * until `unsubscribe(topic)` or the connection closes. Subscribing twice is a no-op.
    */
   async subscribe(topic: string): Promise<void> {
-    if (!subscribe(this.handle, this.sending(), topic)) {
+    const tx = this.sending();
+    if (!subscribe(this.handle, tx, topic)) {
       throw closedHandle();
     }
   }
@@ -220,7 +215,7 @@ export struct WebSocket implements AsyncIterable<WsMessage, IoError> {
   unsubscribe(topic: string) {
     const tx = this.tx;
     if (tx != null) {
-      unsubscribe(this.handle, tx, topic);
+      unsubscribe(tx, topic);
     }
   }
 
@@ -233,13 +228,18 @@ export struct WebSocket implements AsyncIterable<WsMessage, IoError> {
       topic,
       textFrame(text),
       headSize(Buffer.byteLength(text) as i64, false),
-      this.handle,
+      this.tx ?? null,
     );
   }
 
   /** `publish` with a binary message. */
   publishBytes(topic: string, data: u8[]): i64 {
-    return publishFrame(topic, binaryFrame(data), headSize(data.length as i64, false), this.handle);
+    return publishFrame(
+      topic,
+      binaryFrame(data),
+      headSize(data.length as i64, false),
+      this.tx ?? null,
+    );
   }
 
   /**
@@ -281,7 +281,7 @@ export struct WebSocket implements AsyncIterable<WsMessage, IoError> {
       return;
     }
     for (const topic of topics) {
-      leave(this.handle, topic);
+      leave(tx, topic);
     }
     stream.close();
   }
@@ -294,12 +294,17 @@ export struct WebSocket implements AsyncIterable<WsMessage, IoError> {
  * was queued for.
  */
 export function publish(topic: string, text: string): i64 {
-  return publishFrame(topic, textFrame(text), headSize(Buffer.byteLength(text) as i64, false), 0);
+  return publishFrame(
+    topic,
+    textFrame(text),
+    headSize(Buffer.byteLength(text) as i64, false),
+    null,
+  );
 }
 
 /** `publish` with a binary message. */
 export function publishBytes(topic: string, data: u8[]): i64 {
-  return publishFrame(topic, binaryFrame(data), headSize(data.length as i64, false), 0);
+  return publishFrame(topic, binaryFrame(data), headSize(data.length as i64, false), null);
 }
 
 /** What `upgradeWebSocket` returns: the connection, and the response to return from the handler. */
@@ -316,7 +321,7 @@ export function isWebSocketRequest(req: Request): bool {
 // A connection over `stream`; `prefix`: bytes already read from it past the handshake.
 function connection(stream: TcpStream, client: bool, prefix: u8[]): WebSocket {
   return WebSocket {
-    handle: stream.handle,
+    handle: stream,
     tx: shared(new Mutex<SendQueue>(new SendQueue(client, new Reader(!client, prefix)))),
   };
 }

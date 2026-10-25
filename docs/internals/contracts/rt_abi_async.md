@@ -1147,7 +1147,6 @@ of a Copy element type, built from a Rust `Vec<T>` (same allocator), like `VeltS
 |---|---|---|
 | `velt_rt_random_bytes` | `(u64 n, VeltBytes* out)` | `n` bytes from the OS CSPRNG (`getrandom`); failure of the OS generator is fatal |
 | `velt_rt_random_u64` | `() -> u64` | uniform, OS CSPRNG |
-| `velt_rt_random_mask` | `() -> u32` | a WebSocket masking key (RFC 6455 §5.3): OS CSPRNG, from a per-thread buffer of 64 keys |
 | `velt_rt_local_offset_minutes` | `(i64 epoch_ms) -> i32` | minutes to add to UTC for local time at that instant (DST-aware: the C library tz database on Unix; on Windows `TZ` when it names UTC or a fixed offset (`Etc/GMT±N`), else the system time zone with its dynamic per-year DST rules, `SystemTimeToTzSpecificLocalTimeEx`) |
 
 ### 14.2 Regular expressions (`velt:regex`)
@@ -1281,11 +1280,10 @@ HTTP/1.1 server connections now support upgrades (`serve_connection_with_upgrade
 `velt:websocket` is written in Velt (`std/websocket.vlt`, `std/websocket/`) on std/net streams
 (§6): a client connects with `velt_rt_tcp_connect` / `velt_rt_tcp_connect_tls`, a server takes
 the upgraded connection with `velt_rt_http_req_take_upgrade` (§14.8). A `WebSocket` is a struct
-of the stream's handle and a `shared` value holding the connection's send queue and reader (one
-lock), so
-there is no `VeltWs` handle and no `velt_rt_ws_*` symbol. The runtime contributes byte helpers
-(rt_abi.md "Byte arrays"), `velt_rt_random_mask` and the process-wide slot of the topics
-(§2.2). A send encodes its frame into the connection's queue at the call (call order is wire
+of the `TcpStream` and a `shared` value holding the connection's send queue and reader (one
+lock), so there is no `VeltWs` handle and no `velt_rt_ws_*` symbol. It uses public APIs only
+(reads with `TcpStream.read`, masking keys from `randomBytes`, text through `u8[]`'s `write` and
+`utf8Slice`), except the process-wide slot of the topics (§2.2). A send encodes its frame into the connection's queue at the call (call order is wire
 order, also before a server-side upgrade completes) and completes once it is queued; a flusher
 task started by whoever queues into an idle connection writes everything queued in one write
 (a reply by the connection's reading task, with no more input waiting, is written at once

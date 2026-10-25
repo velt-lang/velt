@@ -1,17 +1,49 @@
-// std/websocket/bytes (std-internal): the byte-level pieces of the WebSocket codec that stay in
-// the runtime (masking keys, copying text into a buffer), the UTF-8 check of text that arrives
-// in pieces (std/encoding/utf8), and `ByteBuf`, a byte array that grows by doubling. Not part of
-// the public API.
+// std/websocket/bytes (std-internal): the byte-level pieces of the WebSocket codec: masking
+// keys, text in and out of buffers, the UTF-8 check of text that arrives in pieces
+// (std/encoding/utf8), and `ByteBuf`, a byte array that grows by doubling. Public APIs only, as a
+// package would write them. Not part of the public API.
 
+import { randomBytes } from "velt:crypto";
 import { validPrefix } from "velt:encoding/utf8";
-import { IoResult } from "velt:io";
 
-declare function velt_rt_bytes_range_to_str(b: u8[], start: i64, end: i64): IoResult<string>;
-declare function velt_rt_random_mask(): u32;
-
-/** A fresh masking key (RFC 6455 §5.3: from the OS random source). */
+/** A fresh masking key (RFC 6455 §5.3: from the OS random source), drawn on its own. */
 export function maskKey(): u32 {
-  return velt_rt_random_mask();
+  return keyAt(randomBytes(4), 0);
+}
+
+// The key in the four bytes of `p` from `i` (most significant first).
+function keyAt(p: u8[], i: usize): u32 {
+  return ((p[i] as u32) << 24) |
+    ((p[i + 1] as u32) << 16) |
+    ((p[i + 2] as u32) << 8) |
+    (p[i + 3] as u32);
+}
+
+/** Keys taken from one draw of the OS random source. */
+const KEYS_PER_DRAW: usize = 64;
+
+/**
+ * Masking keys for a client connection (RFC 6455 §5.3, §10.3: unpredictable, from the OS random
+ * source): drawn 64 at a time with `randomBytes`, so a frame costs no system call.
+ */
+export class MaskKeys {
+  private pool: u8[] = [];
+  private at: usize = 0;
+
+  /** The next key. */
+  next(): u32 {
+    if (this.at == this.pool.length) {
+      this.pool = randomBytes(KEYS_PER_DRAW * 4);
+      this.at = 0;
+    }
+    const p = this.pool;
+    const i = this.at;
+    this.at = i + 4;
+    return ((p[i] as u32) << 24) |
+      ((p[i + 1] as u32) << 16) |
+      ((p[i + 2] as u32) << 8) |
+      (p[i + 3] as u32);
+  }
 }
 
 /**
@@ -23,10 +55,27 @@ export function utf8Prefix(b: u8[], start: i64, end: i64): i64 {
   return validPrefix(b, start as usize, end as usize);
 }
 
-/** The bytes in [start, end) as a string (one copy), or null if they are not valid UTF-8. */
+/**
+ * The bytes in [start, end) (relative positions, as `slice` takes them) as a string (one copy),
+ * or null if they are not valid UTF-8.
+ */
 export function textOf(b: u8[], start: i64, end: i64): string | null {
-  const r = velt_rt_bytes_range_to_str(b, start, end);
-  return r.code == 0 ? r.value : null;
+  const from = relative(start, b.length);
+  const to = relative(end, b.length);
+  const len = to > from ? to - from : 0;
+  if (validPrefix(b, from, from + len) != (len as i64)) {
+    return null;
+  }
+  return b.utf8Slice(from as i64, (from + len) as i64);
+}
+
+// Position `i` in `n` bytes as JS reads it: negative counts from the end; clamped to `0..=n`.
+function relative(i: i64, n: usize): usize {
+  if (i < 0) {
+    const fromEnd = (n as i64) + i;
+    return fromEnd < 0 ? 0 : fromEnd as usize;
+  }
+  return (i as usize) < n ? i as usize : n;
 }
 
 /** Copies the UTF-8 bytes of `s` to `dst[offset..]` (they must fit). */
