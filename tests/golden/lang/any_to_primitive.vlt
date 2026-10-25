@@ -1,126 +1,52 @@
-// The text of an `any`, `unknown` or `object` follows JavaScript's `ToPrimitive` (#924):
-// `String(x)` and templates use `[Symbol.toPrimitive]("string")`, else `toString()`; `+` and
-// `+=` use `[Symbol.toPrimitive]("default")`, else a `valueOf()` returning a primitive, else
-// `toString()`. Object literals are written by their own `toString` / `valueOf`.
-// check: no leaks
-class V {
-  valueOf(): number {
-    return 42;
-  }
-}
-
-class VS {
-  valueOf(): string {
-    return "vs";
-  }
-}
-
-class W {
-  valueOf(): number {
-    return 7;
-  }
-
-  toString(): string {
-    return "W!";
-  }
-}
-
+// `ToPrimitive` through `any` (#924): inherited and generic `valueOf`, an object result going on
+// to the next method, the `"string"` hint's order, arrays and plain objects, `null` and a `Date`.
 class Base {
+  valueOf(): number {
+    return 3;
+  }
+}
+class Derived extends Base {}
+const dv: any = new Derived();
+console.log(dv * 2, dv + 1, dv == 3, dv < 4);
+class ObjFirst {
+  valueOf(): any {
+    return {};
+  }
   toString(): string {
-    return "base";
+    return "9";
   }
 }
-
-class Sub extends Base {
-  valueOf(): boolean {
-    return true;
+const of: any = new ObjFirst();
+console.log(of * 1, of + 1, of == 9, `${of}`);
+class StrOrder {
+  toString(): any {
+    return [];
+  }
+  valueOf(): number {
+    return 4;
   }
 }
-
-class P {
-  [Symbol.toPrimitive](hint: string): string {
-    return "prim:" + hint;
-  }
-}
-
-class P0 {
-  [Symbol.toPrimitive](): string {
-    return "p0";
-  }
-}
-
-class PN {
-  [Symbol.toPrimitive](hint: string): number {
-    return hint === "string" ? 1 : 2;
-  }
-}
-
-class G<T> {
+const so: any = new StrOrder();
+console.log(so + 1, so * 1);
+class W<T> {
   v: T;
   constructor(v: T) {
     this.v = v;
   }
-
-  toString(): string {
-    return "G(" + String(this.v) + ")";
+  valueOf(): T {
+    return this.v;
   }
 }
-
-class F {
-  name = "f";
-  toString: () => string = () => "field!";
-}
-
-async function later(a: any): Promise<string> {
-  return `${a}|` + a;
-}
-
-function main(): void {
-  const vals: any[] = [
-    1,
-    true,
-    null,
-    undefined,
-    "s",
-    -0,
-    1.5,
-    new V(),
-    new VS(),
-    new W(),
-    new Sub(),
-    new P(),
-    new P0(),
-    new PN(),
-    new G<number>(3),
-    new Error("boom"),
-  ];
-  for (const a of vals) {
-    console.log("" + a, `${a}`, String(a), a + "!");
-  }
-  const u: unknown = new Sub();
-  console.log(`${u}`, String(u));
-  const a: any = {
-    toString(): string {
-      return "lit!";
-    },
-  };
-  const b: any = { toString: () => "arrow!" };
-  console.log(String(a), `${b}`, "" + a, b + "");
-  const f: any = new F();
-  console.log(String(f), `${f}`, "" + f);
-  const lit: any = { valueOf: () => 3 };
-  console.log("" + lit, String(lit), `${lit}`);
-  const both: any = { valueOf: () => 4, toString: () => "four" };
-  console.log("" + both, String(both));
-  const o: object = { a: 1 };
-  console.log("o=" + o, o + "!");
-  const so: object = new Sub();
-  let s = "s:";
-  s += o;
-  s += so;
-  s += lit;
-  console.log(s);
-  const xs: any[] = [new V(), new Sub(), [new P()]];
-  console.log(xs.join(), String(xs));
-  later(new PN()).then((r) => console.log(r));
-}
+const wn: any = new W<number>(6);
+console.log(wn + 1, wn * 2, wn == 6);
+const e1: any = [],
+  e2: any = [],
+  o1: any = {},
+  a1: any = [1],
+  a2: any = [2];
+console.log(e1 + e2, o1 + e1, a1 * a2, +e1, -o1, a1 < a2, o1 == "[object Object]");
+const nul: any = null,
+  und: any = undefined;
+console.log(nul == o1, und == o1, o1 == nul, o1 != und);
+const dd: any = new Date(0);
+console.log(dd == dd.toString(), dd > 0, dd + 0 === dd.toString() + "0");
