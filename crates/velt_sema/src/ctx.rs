@@ -141,6 +141,10 @@ pub(crate) struct Ctx<'m> {
     /// Per class and vtable slot: the classes below it, deepest first, with the method each
     /// one's vtable calls there (`body::expr::virtual_defaults`).
     pub classes_below: FxHashMap<(DefId, u32), ClassesBelow>,
+    /// The default-filling vtable entries (`collect::fill_defaults`).
+    pub fills: FxHashMap<DefId, crate::collect::fill_defaults::Fill>,
+    /// What each parameter default that may throw throws, by its span (`defaults::check_default`).
+    pub default_throws: FxHashMap<Span, Vec<crate::defs::ThrowSrc>>,
     /// The adapter of each `toString` / `toJSON` method glue calls through one (`crate::hooks`).
     pub hook_adapters: FxHashMap<DefId, DefId>,
     /// Types whose field defaults are checked (or being checked): checked up front, or on first
@@ -403,6 +407,8 @@ impl<'m> Ctx<'m> {
             display_params: vec![],
             defaults_checked: FxHashSet::default(),
             classes_below: FxHashMap::default(),
+            fills: FxHashMap::default(),
+            default_throws: FxHashMap::default(),
             hook_adapters: FxHashMap::default(),
             field_defaults_checked: FxHashSet::default(),
             closure_counts: FxHashMap::default(),

@@ -1,104 +1,117 @@
-//! Parameter defaults of a virtual call (`x.m(5)` on a `B` holding a `D` whose override has
+//! Parameter defaults of a virtual call (`x.m()` on a `B` holding a `D` whose override has
 //! its own default): in JavaScript a default belongs to the function that runs, so a left-out
-//! argument (or one passed as `undefined`) takes the default of the override the call reaches.
-//! When the overrides below the receiver's static class disagree on a default, the call tests
-//! the receiver's dynamic class first and places the default of the override that runs:
-//! `{ let <r> = recv; let <class> = match <r> { InstanceOf(E) => 2, InstanceOf(D) => 1, _ => 0 };
-//! <r>.m(5, match <class> { 2 => <E's default>, 1 => <D's default>, _ => <B's default> }) }`.
-//! The test runs before the arguments (the receiver is evaluated first, as before), each default
-//! after them, as in JavaScript. A call whose overrides agree is left as it is.
+//! argument (or one that is `undefined`) takes the default of the override the call reaches.
+//! Such a call goes through the method's default-filling slot (`collect::fill_defaults`): the
+//! arguments those parameters get are `T | undefined` (`undefined` where left out), and the
+//! entry of the receiver's class applies its own default where one is `undefined`. A call
+//! passing every argument, or one whose receiver's class has no override below it, calls the
+//! method's own slot as before.
+//!
+//! The entries' bodies are made here ([`build_fill_bodies`]), before the function bodies are
+//! checked, with each override's defaults checked as its callers' would be.
 
-use crate::body::places::is_path;
-use crate::body::FnCx;
-
-use crate::hir::{self, AdtKind, DefId, ExprKind as H, LocalId, PatKind, TyId, UseMode};
 use velt_common::Span;
+use velt_syntax::ast;
 
-/// The class-dispatched defaults of one call: the classes to test (deepest first) and, per
-/// left-out parameter, its position and the default each class gets (`None`: the base's).
-pub(super) struct VirtualDefaults {
-    classes: Vec<DefId>,
-    params: Vec<(usize, Vec<Option<hir::Expr>>)>,
+use super::args::Callable;
+use crate::body::{FnCx, Frame, LocalKind, Want};
+use crate::collect::fill_defaults::fill_key;
+use crate::ctx::Ctx;
+use crate::defs::FnKind;
+use crate::hir::{self, Callee, Def, DefId, ExprKind as H, Nothing, PassMode, TyId, UseMode};
+use crate::resolve::TyEnv;
+
+/// The default-filling slot a call uses: its slot, the receiver class's entry there, the
+/// parameters it takes as `T | undefined`, and for one of left-out trailing arguments the
+/// number of arguments it takes (`collect::fill_defaults`).
+pub(super) struct FillTarget {
+    pub slot: u32,
+    pub entry: DefId,
+    pub positions: Vec<usize>,
+    pub trailing: Option<usize>,
 }
 
 impl FnCx<'_, '_> {
-    /// The defaults of the parameters a call leaves out or passes `undefined` (`args`: the
-    /// arguments as written) of method `def` (vtable `slot` of the receiver's class, of type
-    /// `recv_ty`) that overrides below that class replace with defaults of their own; `None`
-    /// when every override takes the same ones (or the classes are generic, whose defaults keep
-    /// the declaring method's).
-    pub(super) fn virtual_defaults(
+    /// The fill slot for a call of method `def` (vtable `slot` of the class of `recv_ty`) when
+    /// the class has one, an override below it may run, and `args` (as written) leaves out an
+    /// argument of one of its parameters, passes `undefined` there, or a variable that may hold
+    /// it (a method value's arrow, `method_value.rs`). A call that only leaves out trailing
+    /// arguments takes the slot that applies the defaults of the rest.
+    pub(super) fn fill_target(
         &mut self,
         recv_ty: TyId,
         def: DefId,
         slot: u32,
-        args: &[velt_syntax::ast::Expr],
-    ) -> Option<VirtualDefaults> {
-        let (s, targs) = self.adt_of(recv_ty)?;
-        let n = self.cx.fn_info(def).params.len();
-        let omitted: Vec<usize> = (0..n)
-            .filter(|&k| args.get(k).is_none_or(crate::body::defaults::is_undefined))
+        args: &[ast::Expr],
+    ) -> Option<FillTarget> {
+        let t = self.fill_slot(recv_ty, def, slot, None)?;
+        let missing = |cx: &mut Self, k: usize| match args.get(k) {
+            None => true,
+            Some(a) if crate::body::defaults::is_undefined(a) => true,
+            Some(a) => cx
+                .peek_ty(a)
+                .is_some_and(|t| cx.cx.ty.nothing_of(t) == Some(Nothing::Undefined)),
+        };
+        let given: Vec<bool> = (t.positions.clone().into_iter())
+            .map(|k| k < args.len() && missing(self, k))
             .collect();
-        if !targs.is_empty()
-            || omitted.is_empty()
-            || !self.cx.fn_info(def).generics.names.is_empty()
-        {
-            return None;
+        let left_out = t.positions.iter().any(|&k| k >= args.len());
+        if !given.contains(&true) && left_out {
+            if let Some(tt) = self.fill_slot(recv_ty, def, slot, Some(args.len())) {
+                return Some(tt);
+            }
         }
-        crate::body::defaults::param_defaults(self.cx, def);
-        // Defaults that can differ between overrides: not one the function applies itself
-        // (the caller passes `undefined`), nor an optional parameter's `undefined`.
-        let candidates: Vec<(usize, TyId, hir::Expr)> = (omitted.into_iter())
-            .filter_map(|k| {
-                let p = &self.cx.fn_info(def).params[k];
-                let (ty, d) = (p.ty, p.default.clone()?);
-                let same_for_all = self.cx.dynamic(ty).is_some()
-                    || crate::body::defaults::undefined_only(self.cx, ty).is_some();
-                (!same_for_all).then_some((k, ty, d))
-            })
-            .collect();
-        if candidates.is_empty() {
-            return None;
-        }
+        (left_out || given.contains(&true)).then_some(t)
+    }
+
+    /// The fill slot of method `def` (vtable `slot`) in the class of `recv_ty` (the general
+    /// one, or the one taking `trailing` arguments), when an override below that class may run.
+    pub(super) fn fill_slot(
+        &mut self,
+        recv_ty: TyId,
+        def: DefId,
+        slot: u32,
+        trailing: Option<usize>,
+    ) -> Option<FillTarget> {
+        let (s, _) = self.adt_of(recv_ty)?;
+        let a = self.cx.adt(s)?;
+        let key = a.vslots.iter().find(|(_, &v)| v == slot)?.0;
+        let fslot = *a.vslots.get(&fill_key(key, trailing))?;
+        let entry = *a.vtable.get(fslot as usize)?;
+        let positions = self.cx.fills.get(&entry)?.positions.clone();
         let below = self.classes_below(s, slot);
         if below.iter().all(|&(_, m)| m == def) {
             return None;
         }
-        let mut params = vec![];
-        for (k, ty, base_default) in candidates {
-            let mut own = vec![];
-            for &(_, m) in below.iter() {
-                own.push(self.override_default(m, def, k, ty, &base_default));
-            }
-            if own.iter().any(Option::is_some) {
-                params.push((k, own));
-            }
-        }
-        if params.is_empty() {
-            return None;
-        }
-        let classes = below.iter().map(|&(c, _)| c).collect();
-        Some(VirtualDefaults { classes, params })
+        Some(FillTarget {
+            slot: fslot,
+            entry,
+            positions,
+            trailing,
+        })
     }
 
-    /// The default of parameter `k` of override `m` when it differs from the base method's
-    /// (`base`, of type `ty`): `None` when it is the same constant or `m` cannot replace it
-    /// (generic, another parameter type, no default).
-    fn override_default(
-        &mut self,
-        m: DefId,
-        def: DefId,
-        k: usize,
-        ty: TyId,
-        base: &hir::Expr,
-    ) -> Option<hir::Expr> {
-        if m == def || !self.cx.fn_info(m).generics.names.is_empty() {
-            return None;
+    /// Callable `c` of the method with the parameters of fill target `t`: the first `k` for
+    /// one of left-out trailing arguments, else those at its positions taking `T | undefined`,
+    /// `undefined` when left out.
+    pub(super) fn fill_callable(&mut self, c: &Callable, t: &FillTarget, span: Span) -> Callable {
+        let mut c = c.clone();
+        if let Some(k) = t.trailing {
+            c.params.truncate(k);
+            return c;
         }
-        crate::body::defaults::param_defaults(self.cx, m);
-        let p = self.cx.fn_info(m).params.get(k)?;
-        let d = p.default.as_ref().filter(|_| p.ty == ty)?;
-        (!same_constant(d, base)).then(|| d.clone())
+        let undefined = super::setters::synth(ast::ExprKind::Lit(ast::Lit::Undefined), span);
+        for &k in &t.positions {
+            let Some(ty) = c.params.get(k).map(|p| p.ty) else {
+                continue;
+            };
+            let opt = self.cx.ty.option_of(ty, Nothing::Undefined);
+            let d = self.expr_coerce(&undefined, opt, Want::Move);
+            let p = &mut c.params[k];
+            p.ty = opt;
+            p.default = Some(d);
+        }
+        c
     }
 
     /// The classes below class `s`, deepest first, each with the method its vtable calls at
@@ -107,21 +120,20 @@ impl FnCx<'_, '_> {
         if let Some(b) = self.cx.classes_below.get(&(s, slot)) {
             return b.clone();
         }
-        let mut below: Vec<(usize, DefId, DefId)> = vec![];
+        let mut below: Vec<(DefId, DefId)> = vec![];
         for i in 0..self.cx.info.len() as u32 {
             let c = DefId(i);
-            let Some(a) = self.cx.adt(c).filter(|a| a.kind == AdtKind::Class) else {
+            let Some(a) = self.cx.adt(c).filter(|a| a.kind == hir::AdtKind::Class) else {
                 continue;
             };
             let Some(&m) = a.vtable.get(slot as usize) else {
                 continue;
             };
             if c != s && self.class_extends(c, s) {
-                below.push((self.class_depth(c), c, m));
+                below.push((c, m));
             }
         }
-        below.sort_by(|a, b| b.0.cmp(&a.0).then(a.1 .0.cmp(&b.1 .0)));
-        let below: crate::ctx::ClassesBelow = below.into_iter().map(|(_, c, m)| (c, m)).collect();
+        let below: crate::ctx::ClassesBelow = below.into();
         self.cx.classes_below.insert((s, slot), below.clone());
         below
     }
@@ -142,109 +154,131 @@ impl FnCx<'_, '_> {
         }
         false
     }
+}
 
-    /// The receiver for a call with class-dispatched defaults: a path is read again for the
-    /// class test; anything else is bound to a temporary first (in `stmts`), which the call
-    /// then uses. Returns the receiver for the call and the local holding the class number.
-    pub(super) fn dispatch_receiver(
-        &mut self,
-        recv: hir::Expr,
-        vd: &VirtualDefaults,
-        stmts: &mut Vec<hir::Stmt>,
-    ) -> (hir::Expr, LocalId) {
-        let (ty, span) = (recv.ty, recv.span);
-        let recv = if is_path(strip_casts(&recv)) {
-            recv
-        } else {
-            let l = self.bind_temp("<receiver>", recv, stmts);
-            self.mk(H::Local(l, UseMode::Borrow), ty, span)
-        };
-        let mut test = recv.clone();
-        crate::body::places::set_place_mode(&mut test, UseMode::Borrow);
-        let i32_ = self.cx.ty.i32;
-        let mut arms = vec![];
-        for (i, &c) in vd.classes.iter().enumerate() {
-            arms.push(hir::Arm {
-                pat: self.pat(PatKind::InstanceOf(c), ty, span),
-                guard: None,
-                body: self.class_number(i as u128 + 1, span),
-            });
-        }
-        arms.push(hir::Arm {
-            pat: self.pat(PatKind::Wildcard, ty, span),
-            guard: None,
-            body: self.class_number(0, span),
+/// The bodies of the default-filling entries (`Ctx::fills`):
+/// `return C.m(this, …, x === undefined ? <C.m's default> : x, …)`.
+pub(crate) fn build_fill_bodies(cx: &mut Ctx) {
+    let mut fills: Vec<(DefId, crate::collect::fill_defaults::Fill)> =
+        cx.fills.iter().map(|(d, f)| (*d, f.clone())).collect();
+    fills.sort_by_key(|(d, _)| d.0);
+    for (def, fill) in fills {
+        fill_body(cx, def, fill.method, &fill.positions, fill.trailing);
+    }
+}
+
+fn fill_body(cx: &mut Ctx, def: DefId, m: DefId, positions: &[usize], trailing: Option<usize>) {
+    crate::body::defaults::param_defaults(cx, m);
+    let f = cx.fn_info(def);
+    let (module, span, owner, name) = (f.module, f.span, f.owner, f.name.clone());
+    let Some(this_sig) = f.this.clone() else {
+        return;
+    };
+    let names = f.generics.names.clone();
+    let params = f.params.clone();
+    let ret = crate::body::returns::ret_of(cx, m, span);
+    cx.fn_info_mut(def).ret = ret;
+    let self_args: Vec<TyId> = (0..names.len() as u32).map(|i| cx.ty.param(i)).collect();
+    let defaults: Vec<Option<hir::Expr>> = cx
+        .fn_info(m)
+        .params
+        .iter()
+        .map(|p| p.default.clone())
+        .collect();
+    let own_tys: Vec<TyId> = cx.fn_info(m).params.iter().map(|p| p.ty).collect();
+    let env = TyEnv::new(module, &names);
+    let mut g = FnCx::new(cx, module, env, Frame::new(FnKind::Method, Some(ret)));
+    g.fn_name = name.clone();
+    g.owner = owner;
+    g.body_def = Some(def);
+    g.cx.checking.push(def);
+    let this_use = match this_sig.mode {
+        PassMode::BorrowMut => UseMode::BorrowMut,
+        _ => UseMode::Borrow,
+    };
+    let this = g.new_local("this", this_sig.ty, false, span, LocalKind::This);
+    let mut hir_params = vec![hir::Param {
+        local: this,
+        ty: this_sig.ty,
+        mode: this_sig.mode,
+    }];
+    let mut args = vec![g.mk(H::Local(this, this_use), this_sig.ty, span)];
+    for (k, p) in params.iter().enumerate() {
+        let l = g.new_local(&p.name, p.ty, false, span, LocalKind::Param);
+        hir_params.push(hir::Param {
+            local: l,
+            ty: p.ty,
+            mode: p.mode,
         });
-        let kind = H::Match {
-            scrutinee: Box::new(test),
-            arms,
+        let want = match p.mode {
+            PassMode::Owned => Want::Move,
+            _ => Want::Borrow,
         };
-        let pick = self.mk(kind, i32_, span);
-        let class = self.bind_temp("<class>", pick, stmts);
-        (recv, class)
-    }
-
-    /// Replace the left-out arguments in `args` (receiver first) with the default of the
-    /// override the class number in `class` names.
-    pub(super) fn dispatch_defaults(
-        &mut self,
-        vd: VirtualDefaults,
-        class: LocalId,
-        args: &mut [hir::Expr],
-        type_args: &[TyId],
-        span: Span,
-    ) {
-        let i32_ = self.cx.ty.i32;
-        for (k, own) in vd.params {
-            let Some(slot) = args.get_mut(k + 1) else {
-                continue;
-            };
-            let base = std::mem::replace(slot, self.unit_expr(span));
-            let ty = base.ty;
-            let mut arms = vec![];
-            for (i, d) in own.into_iter().enumerate() {
-                let Some(d) = d else { continue };
-                let body = self.placed_default(&d, type_args, span);
-                arms.push(hir::Arm {
-                    pat: self.pat(PatKind::Lit(hir::Lit::Int(i as u128 + 1)), i32_, span),
-                    guard: None,
-                    body,
-                });
+        let mode = g.use_mode(p.ty, want);
+        let read = g.mk(H::Local(l, mode), p.ty, span);
+        let arg = match (positions.contains(&k), defaults.get(k).cloned().flatten()) {
+            (true, Some(d)) => {
+                let target = own_tys.get(k).copied().unwrap_or(p.ty);
+                match g.default_where_undefined(read, target, &d, &self_args) {
+                    Ok(e) | Err(e) => e,
+                }
             }
-            arms.push(hir::Arm {
-                pat: self.pat(PatKind::Wildcard, i32_, span),
-                guard: None,
-                body: base,
-            });
-            let read = self.mk(H::Local(class, UseMode::Copy), i32_, span);
-            let kind = H::Match {
-                scrutinee: Box::new(read),
-                arms,
-            };
-            args[k + 1] = self.mk(kind, ty, span);
-        }
+            _ => read,
+        };
+        args.push(arg);
     }
-
-    fn class_number(&self, v: u128, span: Span) -> hir::Expr {
-        self.mk(H::Lit(hir::Lit::Int(v)), self.cx.ty.i32, span)
+    // The parameters a trailing entry does not take: the method's own defaults.
+    for d in defaults
+        .iter()
+        .skip(params.len())
+        .take_while(|_| trailing.is_some())
+    {
+        let arg = match d {
+            Some(d) => g.placed_default(d, &self_args, span),
+            None => g.unit_expr(span),
+        };
+        args.push(arg);
     }
-}
-
-fn strip_casts(e: &hir::Expr) -> &hir::Expr {
-    match &e.kind {
-        H::Upcast(x) | H::Downcast(x) => strip_casts(x),
-        _ => e,
-    }
-}
-
-/// Are defaults `a` and `b` the same constant (`= 1` in both)?
-fn same_constant(a: &hir::Expr, b: &hir::Expr) -> bool {
-    a.ty == b.ty
-        && match (&a.kind, &b.kind) {
-            (H::Lit(x), H::Lit(y)) => x == y,
-            (H::Unary { op: x, expr: ex }, H::Unary { op: y, expr: ey }) => {
-                x == y && same_constant(ex, ey)
-            }
-            _ => false,
-        }
+    g.call_throws(m, &self_args, ret, span);
+    let call = g.mk(
+        H::Call {
+            callee: Callee::Def(m, self_args),
+            args,
+        },
+        ret,
+        span,
+    );
+    let unit = g.cx.ty.unit;
+    let kind = match ret == unit {
+        true => hir::StmtKind::Expr(call),
+        false => hir::StmtKind::Return(Some(call)),
+    };
+    g.cx.checking.pop();
+    let frame = std::mem::replace(&mut g.f, Frame::new(FnKind::Method, None));
+    drop(g);
+    let fndef = hir::FnDef {
+        name,
+        generics: names.len() as u32,
+        params: hir_params,
+        ret,
+        is_async: false,
+        is_generator: false,
+        self_ty: Some(this_sig.ty),
+        captures: vec![],
+        shares_captures: false,
+        body: hir::Body {
+            locals: frame.locals,
+            block: hir::Block {
+                stmts: vec![hir::Stmt { kind, span }],
+                value: None,
+                span,
+            },
+        },
+        throws: None,
+        span,
+    };
+    cx.defs[def.0 as usize] = Some(Def::Fn(fndef));
+    let info = cx.fn_info_mut(def);
+    info.local_kinds = frame.kinds;
+    info.throw_srcs = frame.uncaught;
 }

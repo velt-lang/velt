@@ -151,7 +151,7 @@ mod typeof_member;
 mod union_coerce;
 mod union_iface;
 mod union_view;
-mod virtual_defaults;
+pub(crate) mod virtual_defaults;
 mod widen_fresh;
 mod written_order;
 
