@@ -1389,13 +1389,17 @@ docs/internals/design/deferred-types.md):
 
 - a write `x[k] = v` through a union of keys, of a value whose type is not the field's
   (`swapKeys(q, "id" as keyof U, "name" as keyof U)`, which Node stores);
-- a write of `undefined` into a required field through such a key;
+- a write of `null` or `undefined` through such a key into a field that cannot hold it
+  (`undefined` into a required field or a `number | null` one, `null` into a `b?: number`);
 - `{} as D` with a required key never set, keys set in another order than `D`'s fields, or a
   key `D` lacks;
 - a value of another type written into that dictionary through `any`;
 - a cast to `T & X` (`x as Signal<T & object>`) of a value that is not one at the
   instantiation, which is checked at run time;
 - `as T & object` of `null`.
+
+These stops are not exceptions: a `catch` around the call is never reached, and the program
+exits with status 101 after printing the `TypeError`.
 
 An error at an instantiation is reported in the generic function,
 where the failing form is, with the call that instantiates it and the type arguments (and each

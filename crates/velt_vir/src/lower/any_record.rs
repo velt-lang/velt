@@ -127,7 +127,7 @@ impl FnLower<'_, '_> {
                 // A key `{} as D` never set: TypeScript would hand out an object without it.
                 self.switch_to(absent);
                 self.panic_msg(&format!(
-                    "TypeError: the object built with `{{}} as` lacks its field `{name}`"
+                    "TypeError: an object built with `{{}} as` a type lacks its field `{name}`"
                 ));
                 self.terminate(crate::vir::Terminator::Unreachable);
                 self.switch_to(ok);
@@ -226,10 +226,12 @@ impl FnLower<'_, '_> {
         let kt = self.cx.ty(keys_ty);
         let keys = Place::local(self.temp(kt));
         self.assign(keys.clone(), Rvalue::Use(keys_v));
+        // A program that shares `string[]`s boxes them (`Cx::boxed`).
+        let arr = self.content(&keys, keys_ty);
         let str_ = self.cx.str_ty();
         let len = self.rvalue_temp(
             Ty::U64,
-            Rvalue::Use(Operand::Copy(proj(&keys, Proj::Field(1)))),
+            Rvalue::Use(Operand::Copy(proj(&arr, Proj::Field(1)))),
         );
         let j = Place::local(self.temp(Ty::U64));
         self.assign(j.clone(), Rvalue::Use(cint(0, Ty::U64)));
@@ -244,7 +246,7 @@ impl FnLower<'_, '_> {
             let at = self.new_block();
             self.branch(more, at, bad);
             self.switch_to(at);
-            let key = self.elem_place(&keys, jv.clone(), str_);
+            let key = self.elem_place(&arr, jv.clone(), str_);
             let lit = self.str_lit(name);
             let (ka, la) = (
                 self.addr(key),
@@ -264,7 +266,7 @@ impl FnLower<'_, '_> {
         self.branch(all, ok, bad);
         self.switch_to(bad);
         self.panic_msg(
-            "TypeError: the object built with `{} as` has keys of its type in another order, or keys its type lacks",
+            "TypeError: an object built with `{} as` a type has its keys in another order than the type's fields, or keys the type lacks",
         );
         self.terminate(crate::vir::Terminator::Unreachable);
         self.switch_to(ok);

@@ -7,7 +7,7 @@
 //! optional field (which sema allows only from one part) keeps that part's presence. A class's
 //! optional field is always present (an own property holding `undefined` until set).
 
-use velt_sema::hir::{self, LitValue, TyId, TyKind};
+use velt_sema::hir::{self, LitValue, Nothing, TyId, TyKind};
 
 use super::operand::proj;
 use super::{ice, unit, FnLower};
@@ -412,17 +412,13 @@ impl FnLower<'_, '_> {
         }
     }
 
-    /// The value at `src` (of type `from`, the union `T[K]` or an option of it, owned) as the
-    /// field type `to` of field `name`: an option's nothing is the field's, a member of the
-    /// field's type is its payload, and a member of another type stops the program with a
-    /// `TypeError` (decision 4).
     /// [`Self::key_member`] into a field whose type is union `to`: each member of the value the
     /// field holds becomes that member of `to` (`"b"` of `f64 | "a" | "b"` into `"a" | "b"`).
     fn key_union_member(&mut self, src: &Place, from: TyId, to: TyId, name: &str) -> Operand {
         let dt = self.cx.ty(to);
         let dst = self.temp(dt);
         let join = self.new_block();
-        let fname = self.cx.type_name(to);
+        let fname = self.field_type_name(to);
         let member = |lw: &mut Self, payload: Operand, m: TyId| match lw.member_variant(to, m) {
             Some(k) if lw.cx.variant_tys(to, k)[0] == m => {
                 let w = lw.union_value(to, k, payload, m);
@@ -445,52 +441,70 @@ impl FnLower<'_, '_> {
         Operand::Copy(Place::local(dst))
     }
 
+    /// The value at `src` (of type `from`, the union `T[K]` or an option of it, owned) as the
+    /// field type `to` of field `name`: a nothing is the field's same nothing, a member of the
+    /// field's type is its payload, and a member of another type, or a nothing the field
+    /// cannot hold, stops the program with a `TypeError` (decision 4). A `T | null |
+    /// undefined` is an option of a `T | null` (`Cx::kind`), taken one option at a time.
     fn key_store_value(&mut self, src: &Place, from: TyId, to: TyId, name: &str) -> Operand {
         if from == to {
             return Operand::Copy(src.clone());
         }
-        if let TyKind::Option(g, _) = self.cx.kind(to) {
-            if let TyKind::Option(u, _) = self.cx.kind(from) {
-                let vt = self.vty(to);
-                let out = Place::local(self.temp(vt));
-                let some = self.option_is_some(src, from);
-                let (yes, no, join) = (self.new_block(), self.new_block(), self.new_block());
-                self.branch(some, yes, no);
-                self.switch_to(yes);
-                let payload = self.some_payload(src, from);
-                let w = self.key_member(&payload, u, g, name);
-                let w = self.some_of(to, w);
-                self.assign(out.clone(), Rvalue::Use(w));
-                self.goto(join);
-                self.switch_to(no);
-                let none = self.none_value(to);
-                self.assign(out.clone(), Rvalue::Use(none));
-                self.goto(join);
-                self.switch_to(join);
-                return Operand::Copy(out);
+        let TyKind::Option(u, n) = self.cx.kind(from) else {
+            if let TyKind::Option(g, _) = self.cx.kind(to) {
+                let w = self.key_store_value(src, from, g, name);
+                return self.some_of(to, w);
             }
-            let w = self.key_member(src, from, g, name);
-            return self.some_of(to, w);
+            return self.key_member(src, from, to, name);
+        };
+        let vt = self.vty(to);
+        let out = Place::local(self.temp(vt));
+        let some = self.option_is_some(src, from);
+        let (yes, no, join) = (self.new_block(), self.new_block(), self.new_block());
+        self.branch(some, yes, no);
+        self.switch_to(no);
+        let none = self.nothing_as(n, to, name);
+        self.assign(out.clone(), Rvalue::Use(none));
+        self.goto(join);
+        self.switch_to(yes);
+        let payload = self.some_payload(src, from);
+        let w = self.key_store_value(&payload, u, to, name);
+        self.assign(out.clone(), Rvalue::Use(w));
+        self.goto(join);
+        self.switch_to(join);
+        Operand::Copy(out)
+    }
+
+    /// Field type `t` as the `TypeError`s of key writes name it (`number | null`).
+    fn field_type_name(&self, t: TyId) -> String {
+        match self.cx.kind(t) {
+            TyKind::Option(g, n) => {
+                let what = if n.has_null() { "null" } else { "undefined" };
+                format!("{} | {what}", self.field_type_name(g))
+            }
+            _ => self.cx.type_name(t),
         }
-        if let TyKind::Option(..) = self.cx.kind(from) {
-            // `undefined` (or a value) into a required field: the value, checked present.
-            let some = self.option_is_some(src, from);
-            let (yes, no) = (self.new_block(), self.new_block());
-            self.branch(some, yes, no);
-            self.switch_to(no);
-            let fname = self.cx.type_name(to);
-            self.panic_msg(&format!(
-                "TypeError: `x[k] = v` stores `undefined` in the field `{name}` ({fname})"
-            ));
-            self.terminate(Terminator::Unreachable);
-            self.switch_to(yes);
-            let TyKind::Option(u, _) = self.cx.kind(from) else {
-                ice("an option")
-            };
-            let payload = self.some_payload(src, from);
-            return self.key_member(&payload, u, to, name);
+    }
+
+    /// The nothing `n` (`null` or `undefined`) as a value of field type `to`: its own nothing,
+    /// or its payload's (`null` into a `T | null | undefined`), else a `TypeError`.
+    fn nothing_as(&mut self, n: Nothing, to: TyId, name: &str) -> Operand {
+        if let TyKind::Option(g, m) = self.cx.kind(to) {
+            if m == n {
+                return self.none_value(to);
+            }
+            if matches!(self.cx.kind(g), TyKind::Option(_, k) if k == n) {
+                let w = self.none_value(g);
+                return self.some_of(to, w);
+            }
         }
-        self.key_member(src, from, to, name)
+        let fname = self.field_type_name(to);
+        let what = if n.has_null() { "null" } else { "undefined" };
+        self.panic_msg(&format!(
+            "TypeError: `x[k] = v` stores `{what}` in the field `{name}` ({fname})"
+        ));
+        self.terminate(Terminator::Unreachable);
+        unit()
     }
 
     /// The member of the union value at `src` (type `from`) that has type `to`, or a
@@ -521,7 +535,7 @@ impl FnLower<'_, '_> {
             default: bad,
         });
         self.switch_to(bad);
-        let fname = self.cx.type_name(to);
+        let fname = self.field_type_name(to);
         self.panic_msg(&format!(
             "TypeError: `x[k] = v` stores a value of another type in the field `{name}` ({fname})"
         ));
