@@ -85,29 +85,8 @@ impl FnCx<'_, '_> {
     /// `Record<number, V>` or `{ [k: number]: V }`, possibly `| null` / `| undefined`, also
     /// through type aliases of the module.
     fn is_number_record_written(&self, t: &ast::TypeExpr, depth: usize) -> bool {
-        if crate::record_keys::is_number_record_type(t) {
-            return true;
-        }
-        let ast::TypeExprKind::Named { path, args } = &t.kind else {
-            return false;
-        };
-        if depth > 8 || path.len() != 1 || !args.is_empty() {
-            return false;
-        }
-        let marked = &self.cx.marked_aliases().1;
-        if marked.is_empty() || !marked.contains(&path[0].name) {
-            return false;
-        }
-        match self
-            .cx
-            .lookup_item_at(self.module, &path[0].name, path[0].span)
-        {
-            Some(crate::ctx::Item::Alias(a)) => {
-                let decl = self.cx.aliases[a as usize].decl;
-                decl.generics.is_empty() && self.is_number_record_written(&decl.ty, depth + 1)
-            }
-            _ => false,
-        }
+        crate::record_keys::is_number_record_type(t)
+            || self.through_alias(t, depth, 1, &|cx, t, d| cx.is_number_record_written(t, d))
     }
 }
 

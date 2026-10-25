@@ -112,8 +112,8 @@ impl Ctx<'_> {
 }
 
 impl Ctx<'_> {
-    /// The names of the program's type aliases (not std's) without parameters that are read-only
-    /// array or collection types, and of those that are number-keyed record types, directly or through other such
+    /// The names of the program's type aliases (not std's) that are read-only array or
+    /// collection types (whatever their type arguments), and of those that are number-keyed record types, directly or through other such
     /// aliases: only a written type naming one of them needs looking up (`body::readonly_arrays`,
     /// `body::expr::number_records`). Computed once, after the declarations are collected.
     pub(crate) fn marked_aliases(&self) -> &(FxHashSet<String>, FxHashSet<String>) {
@@ -122,15 +122,10 @@ impl Ctx<'_> {
             loop {
                 let before = ro.len() + num.len();
                 // The program's own aliases: std neither needs these errors nor pays for them.
-                let own = |a: &&crate::defs::AliasInfo| {
-                    a.decl.generics.is_empty() && !self.scopes[a.module].is_std
-                };
+                let own = |a: &&crate::defs::AliasInfo| !self.scopes[a.module].is_std;
                 for a in self.aliases.iter().filter(own) {
                     let t = &a.decl.ty;
-                    let names = |set: &FxHashSet<String>| {
-                        matches!(&t.kind, ast::TypeExprKind::Named { path, args }
-                            if args.is_empty() && path.len() == 1 && set.contains(&path[0].name))
-                    };
+                    let names = |set: &FxHashSet<String>| names_marked(t, set);
                     if crate::body::is_readonly_type(t) || names(&ro) {
                         ro.insert(a.decl.name.name.clone());
                     }
@@ -144,6 +139,23 @@ impl Ctx<'_> {
             }
             (ro, num)
         })
+    }
+}
+
+/// Does `t` name an alias in `set`, or is it `A | null` / `A | undefined` with `A` one?
+fn names_marked(t: &ast::TypeExpr, set: &FxHashSet<String>) -> bool {
+    match &t.kind {
+        ast::TypeExprKind::Named { path, .. } => path.len() == 1 && set.contains(&path[0].name),
+        ast::TypeExprKind::Union(ms) => {
+            let mut rest = ms.iter().filter(|m| {
+                !matches!(
+                    m.kind,
+                    ast::TypeExprKind::Null | ast::TypeExprKind::Undefined
+                )
+            });
+            matches!((rest.next(), rest.next()), (Some(m), None) if names_marked(m, set))
+        }
+        _ => false,
     }
 }
 

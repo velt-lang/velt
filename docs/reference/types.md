@@ -2079,10 +2079,15 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   works (`has`, `get`, `size`, `forEach`, `keys()`, `for...of`, `new Map(m)`). Through a
   variable or parameter declared with one, the methods that change the collection (`add`,
   `set`, `delete`, `clear`, `upsert`, `update`, `getOrInsert`) are TypeScript's TS2339, also
-  when it is declared through a type alias (`type Tags = ReadonlySet<string>`), made by a cast
-  (`new Set() as ReadonlySet<string>`), captured by a closure, narrowed (`if (s)`, `s!`), read
+  when it is declared through a type alias of the program (`type Tags = ReadonlySet<string>`,
+  also an alias of one, one in `| null` / `| undefined`, and a generic alias whose body is
+  read-only, `type RO<T> = ReadonlySet<T>`), made by a cast
+  (`new Set() as ReadonlySet<string>`, also inline: `(xs as readonly T[]).push(x)`), captured by
+  a closure, narrowed (`if (s)`, `s!`), read
   with `?.`, or copied into a variable without a type (`const t = s`); the same holds for
-  `readonly T[]`. Not reported yet (TypeScript reports them): such a method called on a field,
+  `readonly T[]`. A cast to a type that is not read-only (`xs as string[]`, `s as Set<string>`)
+  may change the value, as a variable or inline, and so may a collection narrowed by `s instanceof
+  Set` (or `Map`) where the test holds. Not reported yet (TypeScript reports them): such a method called on a field,
   an element, a destructured or returned value or a `for...of` variable of a read-only type, a
   method read as a value (`const add = s.add`), and passing or assigning a read-only
   collection where a `Set` or `Map` is expected (TS2345, TS2739).
@@ -2128,8 +2133,8 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   any>`) looks at a value's symbol-keyed members, as through `any`:
   `(v as Record<symbol, unknown>)[BRAND] === true` reads the member `BRAND` names, or
   `undefined`, as a value of the record's value type (`unknown` must be narrowed before use, as
-  TypeScript's TS2322 says). A string key (`["a"]`, `.a`, TypeScript's TS2339) is an error, and so
-  is any other use of the cast: writing through it and keeping it are not supported yet.
+  TypeScript's TS2322 says). A string key (`["a"]`, `.a`, TypeScript's TS2339) and any key that is not a symbol (a `string` or `symbol | string`
+  variable, TS7053) are errors, and so is any other use of the cast: writing through it and keeping it are not supported yet.
   With `string` keys a record is *open*: `r[k]` and `r.name` are `V | undefined`, `r[k] = v`
   inserts or replaces, `r[k] ??= v` sets a missing key, and `delete r[k]` removes. Because a
   key may be missing, `r[k] += 1`, `r[k]++` and the other compound assignments are errors on an

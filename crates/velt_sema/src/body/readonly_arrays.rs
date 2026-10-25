@@ -166,14 +166,43 @@ impl FnCx<'_, '_> {
         if is_readonly_array(t) || is_readonly_collection(t) {
             return true;
         }
-        let ast::TypeExprKind::Named { path, args } = &t.kind else {
-            return false;
-        };
-        if depth > 8 || path.len() != 1 || !args.is_empty() {
+        self.through_alias(t, depth, 0, &|cx, t, d| cx.is_readonly_written(t, d))
+    }
+
+    /// `test` of what `t` names when it is one of the program's aliases in `marked_aliases()`
+    /// set `set` (generic or not: the body decides, whatever the arguments), or of the one
+    /// member of `t | null` / `t | undefined`.
+    pub(crate) fn through_alias(
+        &self,
+        t: &ast::TypeExpr,
+        depth: usize,
+        set: usize,
+        test: &dyn Fn(&Self, &ast::TypeExpr, usize) -> bool,
+    ) -> bool {
+        if depth > 8 {
             return false;
         }
-        let marked = &self.cx.marked_aliases().0;
-        if marked.is_empty() || !marked.contains(&path[0].name) {
+        let path = match &t.kind {
+            ast::TypeExprKind::Named { path, .. } => path,
+            ast::TypeExprKind::Union(ms) => {
+                let mut rest = ms.iter().filter(|m| {
+                    !matches!(
+                        m.kind,
+                        ast::TypeExprKind::Null | ast::TypeExprKind::Undefined
+                    )
+                });
+                return match (rest.next(), rest.next()) {
+                    (Some(m), None) => test(self, m, depth + 1),
+                    _ => false,
+                };
+            }
+            _ => return false,
+        };
+        let marked = match set {
+            0 => &self.cx.marked_aliases().0,
+            _ => &self.cx.marked_aliases().1,
+        };
+        if path.len() != 1 || marked.is_empty() || !marked.contains(&path[0].name) {
             return false;
         }
         match self
@@ -181,8 +210,7 @@ impl FnCx<'_, '_> {
             .lookup_item_at(self.module, &path[0].name, path[0].span)
         {
             Some(crate::ctx::Item::Alias(a)) => {
-                let decl = self.cx.aliases[a as usize].decl;
-                decl.generics.is_empty() && self.is_readonly_written(&decl.ty, depth + 1)
+                test(self, &self.cx.aliases[a as usize].decl.ty, depth + 1)
             }
             _ => false,
         }
