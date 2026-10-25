@@ -1,0 +1,11 @@
+// A cast receiver lifts the read-only mark for its own call only: the next write through the
+// read-only variable is TypeScript's TS2339.
+function leak1(xs: readonly unknown[]): void {
+  (xs as unknown[]).join();
+  xs.push(1);
+}
+function leak3(s: ReadonlySet<string>, t: Set<string>): void {
+  (s as Set<string>).has("a");
+  s.add("b");
+  t.add("c");
+}

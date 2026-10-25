@@ -458,7 +458,10 @@ impl FnCx<'_, '_> {
                     s.check_args_loose(args);
                     return s.error_expr(span);
                 }
-                s.method_call_on(recv, prop, type_args, args, None, span)
+                s.exempt_cast_receiver(object, &recv);
+                let call = s.method_call_on(recv, prop, type_args, args, None, span);
+                s.clear_cast_receiver();
+                call
             });
         }
         let recv = match &object.kind {
@@ -468,7 +471,6 @@ impl FnCx<'_, '_> {
                 self.view_receiver = super::member::is_name(object);
                 let recv = self.expr(object, None, Want::Borrow);
                 self.view_receiver = false;
-                self.exempt_cast_receiver(object, &recv);
                 recv
             }
         };
@@ -482,7 +484,9 @@ impl FnCx<'_, '_> {
         };
         let recv = self.nullable_helper_receiver(recv, &prop.name);
         let r = self.in_place_receiver(object, recv);
+        self.exempt_cast_receiver(object, &r.recv);
         let call = self.method_call_on(r.recv, prop, type_args, args, exp, span);
+        self.clear_cast_receiver();
         self.after_receiver(r.before, call)
     }
 

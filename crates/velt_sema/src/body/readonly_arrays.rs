@@ -92,6 +92,7 @@ impl FnCx<'_, '_> {
     /// call may change it, with `T` read-only it may not ([`Frame::readonly_exempt`](super::Frame)
     /// and `readonly_cast_recv`, taken by the check).
     pub(crate) fn exempt_cast_receiver(&mut self, object: &ast::Expr, recv: &hir::Expr) {
+        self.clear_cast_receiver();
         if let ast::ExprKind::Cast { ty, .. } = &strip_parens(object).kind {
             match self.is_readonly_written(ty, 0) {
                 // `(xs as readonly string[]).push(x)`: TS2339 as through a variable.
@@ -99,6 +100,13 @@ impl FnCx<'_, '_> {
                 false => self.f.readonly_exempt = self.readonly_local(recv),
             }
         }
+    }
+
+    /// Forget what [`Self::exempt_cast_receiver`] noted, once the call it was for is checked
+    /// (whichever path checked it).
+    pub(crate) fn clear_cast_receiver(&mut self) {
+        self.f.readonly_exempt = None;
+        self.f.readonly_cast_recv = false;
     }
 
     /// The read-only locals `cond` tests with `x instanceof Set` (`Map`, `Array`), alone or in an
@@ -159,8 +167,13 @@ impl FnCx<'_, '_> {
 
     /// Records the binding `l` of an optional chain on `object` as read-only when `object` is
     /// a read-only variable.
-    pub(crate) fn note_readonly_binding(&mut self, l: LocalId, object: &hir::Expr) {
-        if self.readonly_local(object).is_some() {
+    pub(crate) fn note_readonly_binding(&mut self, l: LocalId, object: &ast::Expr, h: &hir::Expr) {
+        let marked = match &strip_parens(object).kind {
+            // `(xs as string[] | undefined)?.push(x)`: the cast decides, as for a `const`.
+            ast::ExprKind::Cast { ty, .. } => self.is_readonly_written(ty, 0),
+            _ => self.readonly_local(h).is_some(),
+        };
+        if marked {
             self.mark_local(l, READONLY);
         }
     }
