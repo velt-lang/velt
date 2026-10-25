@@ -45,14 +45,14 @@ struct Shape {
 /// The interfaces made for generic function types.
 #[derive(Default)]
 pub(crate) struct GenericFns {
-    by_shape: FxHashMap<Shape, DefId>,
+    /// Per shape, with the error-set variables of its types left out.
+    by_plain: FxHashMap<Shape, DefId>,
     /// Per interface made here: whether its last parameter is a rest parameter.
     made: FxHashMap<DefId, bool>,
     /// The type parameter names each was first written with, for showing it.
     names: FxHashMap<DefId, Vec<String>>,
-    /// Where each is written without `throws` in a user module: the sites what its generic
-    /// closures throw is added to.
-    sites: FxHashMap<DefId, Vec<Span>>,
+    /// The site of each one's error type: its first spelling, when in a user module.
+    sites: FxHashMap<DefId, Span>,
 }
 
 /// A generic function type's parts, over the type parameters in scope, the implementor and
@@ -64,7 +64,7 @@ pub(crate) struct FnParts {
     pub rest: bool,
     pub bounds: Vec<Vec<Bound>>,
     pub constraints: Vec<Option<TyId>>,
-    /// Where it is written without `throws` (a site: `Ctx::resolve_generic_fn`).
+    /// Where it is written, in a user module (`Ctx::generic_fn_type`).
     pub site: Option<Span>,
 }
 
@@ -118,14 +118,11 @@ impl Ctx<'_> {
             self.no_void_error(e, t.span);
             e
         });
-        // Written without `throws` in a user module: a site, which throws what the generic
-        // closures stored into it throw (found by checking again, `throws::fn_types`).
+        let throws = written;
+        // Where it is written in a user module: the site of its interface's errors, if it is
+        // the first spelling (`Ctx::generic_fn_type`).
         let user = self.scopes.get(env.module).is_some_and(|s| !s.is_std);
-        let site = (written.is_none() && user && span != Span::DUMMY).then_some(span);
-        let throws = match site {
-            Some(s) => Some(self.site_error(s, env.module).unwrap_or(self.ty.never)),
-            None => written,
-        };
+        let site = (user && span != Span::DUMMY).then_some(span);
         let b = crate::collect::shapes::resolve_bounds(self, type_params, &inner_env);
         if [ret]
             .iter()
@@ -218,18 +215,50 @@ impl Ctx<'_> {
         let shape = Shape {
             params: parts.params.iter().map(|t| renumber(self, *t)).collect(),
             ret: renumber(self, parts.ret),
-            throws: parts.throws.map(|t| renumber(self, t)),
+            // Not part of the type (below).
+            throws: None,
             rest: parts.rest,
             bounds,
             constraints,
             outer: n,
         };
-        let iface = self.generic_fn_iface(shape, own_names, module, span);
-        if let Some(s) = parts.site {
-            let sites = self.generic_fns.sites.entry(iface).or_default();
-            if !sites.contains(&s) {
-                sites.push(s);
+        // Spellings that differ only in the error-set variables of the function types in them
+        // (`throws::vars`) are one type: the variables are unified, and the first one kept.
+        let plain = Shape {
+            params: shape.params.iter().map(|t| self.plain_type(*t)).collect(),
+            ret: self.plain_type(shape.ret),
+            ..shape.clone()
+        };
+        let iface = match self.generic_fns.by_plain.get(&plain).copied() {
+            Some(d) => {
+                if let Some(m) = self.iface(d).and_then(|i| i.methods.first()) {
+                    let had: Vec<TyId> = m.params.iter().map(|p| p.ty).chain([m.ret]).collect();
+                    let now: Vec<TyId> = shape.params.iter().copied().chain([shape.ret]).collect();
+                    for (a, b) in had.into_iter().zip(now) {
+                        self.unify_err_vars(b, a);
+                    }
+                }
+                d
             }
+            None => {
+                // The errors are no part of the type: its interface's error type is what
+                // anything stored into one of its spellings throws, kept as the set of the
+                // site of its first spelling (`throws::fn_types`), so the program is checked
+                // again when it grows.
+                let mut shape = shape;
+                shape.throws = parts.site.and_then(|s| self.site_error(s, module));
+                let d = self.generic_fn_iface(shape, own_names, module, span);
+                if let Some(s) = parts.site {
+                    self.generic_fns.sites.insert(d, s);
+                }
+                self.generic_fns.by_plain.insert(plain, d);
+                d
+            }
+        };
+        if let Some(e) = parts.throws.filter(|t| *t != self.ty.never) {
+            let e = renumber(self, e);
+            let args: Vec<TyId> = (0..n).map(|i| self.ty.param(i as u32)).collect();
+            self.add_generic_errors(iface, e, &args, span);
         }
         let args = outer.iter().map(|p| self.ty.param(*p)).collect();
         self.ty.intern(TyKind::Dyn(iface, args))
@@ -243,9 +272,6 @@ impl Ctx<'_> {
         module: usize,
         span: Span,
     ) -> DefId {
-        if let Some(&d) = self.generic_fns.by_shape.get(&s) {
-            return d;
-        }
         let n = s.outer;
         let mut generics = Generics::default();
         for k in 0..n {
@@ -283,8 +309,11 @@ impl Ctx<'_> {
                 default: None,
             })
             .collect();
-        let throws = s.throws.map(|t| crate::defs::DeclaredThrows {
-            ty: (t != self.ty.never).then_some(t),
+        // Always declared (nothing, when the shape has no error type): the generic closures
+        // stored into the type are checked against it (`body::expr::generic_values`), so the
+        // slot's error type is known before any of them is.
+        let throws = Some(crate::defs::DeclaredThrows {
+            ty: s.throws,
             span,
             from_body: false,
         });
@@ -316,7 +345,6 @@ impl Ctx<'_> {
         );
         self.generic_fns.made.insert(d, s.rest);
         self.generic_fns.names.insert(d, own_names);
-        self.generic_fns.by_shape.insert(s, d);
         d
     }
 
@@ -349,9 +377,48 @@ impl Ctx<'_> {
         )
     }
 
-    /// The sites generic function type interface `d` is written at without `throws`.
-    pub(crate) fn generic_fn_sites(&self, d: DefId) -> Vec<Span> {
-        self.generic_fns.sites.get(&d).cloned().unwrap_or_default()
+    /// Errors `e` (in the terms of the place the interface is used at, its arguments `args`)
+    /// are stored into generic function type interface `d`: those its error type lacks are
+    /// added to its site's set, and the program is checked again; reported at `span` where
+    /// they can't be.
+    pub(crate) fn add_generic_errors(&mut self, d: DefId, e: TyId, args: &[TyId], span: Span) {
+        let allowed = self
+            .iface(d)
+            .and_then(|i| i.methods.first())
+            .and_then(|m| m.throws)
+            .and_then(|t| t.ty);
+        let have = match allowed {
+            Some(a) => {
+                let a = self.subst(a, args);
+                self.error_members(a)
+            }
+            None => vec![],
+        };
+        let (unit, never) = (self.ty.unit, self.ty.never);
+        let extra: Vec<TyId> = (self.error_members(e).into_iter())
+            .filter(|m| *m != unit && *m != never && !have.contains(m))
+            .collect();
+        let Some(extra) = self.error_union(&extra) else {
+            return;
+        };
+        let site: Vec<Span> = self
+            .generic_fns
+            .sites
+            .get(&d)
+            .copied()
+            .into_iter()
+            .collect();
+        if !self.seed_generic_sites(&site, extra) {
+            let gt = self.ty.intern(TyKind::Dyn(d, args.to_vec()));
+            let (e, t) = (self.display(extra), self.display(gt));
+            self.error(
+                Diagnostic::error(
+                    format!("this function throws `{e}`, which `{t}` does not allow"),
+                    span,
+                )
+                .with_note("only `Error` classes are kept as what a generic function type throws; a type the standard library declares throws only what it declares"),
+            );
+        }
     }
 
     /// Is `t` a generic function type?

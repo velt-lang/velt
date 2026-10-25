@@ -119,12 +119,8 @@ impl FnCx<'_, '_> {
                     .map(|p| self.cx.subst(p.ty, &map))
                     .collect();
                 let r = self.cx.subst(g.method.ret, &map);
-                // A site's set is checked once the closure's own errors are known (below).
-                let err = match g.method.throws {
-                    _ if !self.cx.generic_fn_sites(g.iface).is_empty() => unknown,
-                    Some(d) => d.ty.map_or(self.cx.ty.never, |t| self.cx.subst(t, &map)),
-                    None => unknown,
-                };
+                // Checked against the type's once the closure's own errors are known (below).
+                let err = unknown;
                 self.cx.ty.intern(TyKind::FnPtr {
                     params: pts,
                     ret: r,
@@ -170,11 +166,11 @@ impl FnCx<'_, '_> {
         };
         let (iface, args) = match g {
             Some(g) => {
-                self.closure_errors_into(&g, h.ty, &map, e.span);
+                self.closure_errors_into(&g, h.ty, e.span);
                 (g.iface, g.args)
             }
             None => {
-                let parts = self.closure_parts(h.ty, m, own, own_bounds, own_constraints);
+                let parts = self.closure_parts(h.ty, m, own, own_bounds, own_constraints, e.span);
                 let t = match parts {
                     Some(p) => self.cx.generic_fn_type(p, m, names, self.module, e.span),
                     None => self.cx.ty.error,
@@ -210,46 +206,14 @@ impl FnCx<'_, '_> {
         )
     }
 
-    /// A generic closure of function type `fty` stored into generic function type `g`
-    /// written without `throws` (a site): what it throws beyond the site's set is added to the
-    /// set (the program is checked again), or reported when it can't be.
-    fn closure_errors_into(
-        &mut self,
-        g: &crate::generic_fns::GenericSig,
-        fty: TyId,
-        map: &[TyId],
-        span: Span,
-    ) {
-        let sites = self.cx.generic_fn_sites(g.iface);
-        if sites.is_empty() {
-            return;
-        }
+    /// A generic closure of function type `fty` stored into generic function type `g`: what
+    /// it throws is stored into the type (`Ctx::add_generic_errors`).
+    fn closure_errors_into(&mut self, g: &crate::generic_fns::GenericSig, fty: TyId, span: Span) {
         let TyKind::FnPtr { throws, .. } = self.cx.ty.kind(fty).clone() else {
             return;
         };
-        let allowed = g.method.throws.and_then(|d| d.ty);
-        let allowed = allowed.map(|t| self.cx.subst(t, map));
-        let have = match allowed {
-            Some(a) => self.cx.error_members(a),
-            None => vec![],
-        };
-        let extra: Vec<TyId> = (self.cx.error_members(throws).into_iter())
-            .filter(|m| *m != self.cx.ty.unit && *m != self.cx.ty.never && !have.contains(m))
-            .collect();
-        let Some(extra) = self.cx.error_union(&extra) else {
-            return;
-        };
-        if !self.cx.seed_generic_sites(&sites, extra) {
-            let gt = self.cx.ty.intern(TyKind::Dyn(g.iface, g.args.clone()));
-            let (e, t) = (self.cx.display(extra), self.cx.display(gt));
-            self.cx.error(
-                Diagnostic::error(
-                    format!("this function throws `{e}`, which `{t}` does not allow"),
-                    span,
-                )
-                .with_note("write the errors it may throw in the type (`<T>(x: T) => R throws E`)"),
-            );
-        }
+        let args = g.args.clone();
+        self.cx.add_generic_errors(g.iface, throws, &args, span);
     }
 
     /// The parts of the generic function type of a closure of function type `fty` (its own
@@ -262,6 +226,7 @@ impl FnCx<'_, '_> {
         own: usize,
         bounds: Vec<Vec<Bound>>,
         constraints: Vec<Option<TyId>>,
+        span: Span,
     ) -> Option<FnParts> {
         let TyKind::FnPtr {
             params,
@@ -278,8 +243,9 @@ impl FnCx<'_, '_> {
             .collect();
         let sub = |cx: &mut crate::ctx::Ctx, t: TyId| cx.subst(t, &shift);
         let throws = (throws != self.cx.ty.never).then(|| sub(self.cx, throws));
+        let user = self.cx.scopes.get(self.module).is_some_and(|s| !s.is_std);
         Some(FnParts {
-            site: None,
+            site: user.then_some(span),
             params: params.iter().map(|t| sub(self.cx, *t)).collect(),
             ret: sub(self.cx, ret),
             throws,

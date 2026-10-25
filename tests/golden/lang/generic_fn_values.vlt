@@ -48,6 +48,21 @@ function scope(): Scope {
   };
 }
 
+// A literal with a generic method returned as an object type with a generic method signature.
+function scopeOf(): { run<T>(fn: () => T): T | undefined; stop(): void } {
+  let active = true;
+  const scope = {
+    run<T>(fn: () => T): T | undefined {
+      if (!active) return undefined;
+      return fn();
+    },
+    stop() {
+      active = false;
+    },
+  };
+  return scope;
+}
+
 function id<T>(x: T): T {
   return x;
 }
@@ -75,6 +90,10 @@ function main(): void {
   console.log(s.run(() => 3), s.run(() => "x"));
   s.stop();
   console.log(s.run(() => 4));
+  const s2 = scopeOf();
+  console.log(s2.run(() => [1]));
+  s2.stop();
+  console.log(s2.run(() => 2));
   applyId(id);
   applyId(<U,>(y: U): U => y);
   console.log(applyNumber(<T,>(x: T): T => x));
