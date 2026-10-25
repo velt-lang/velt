@@ -3105,7 +3105,9 @@ otherwise concatenates the two as `String` writes them after `ToPrimitive` (`1 +
 primitive the same way (`[] == 0` is `true`, `[1, 2] == "1,2"`). `x += v`, `x -= v` and the other
 compound assignments, `x++` and `--x` work on `any` variables, fields, elements and members of
 an `any`; `x++` gives the old number, and the value written is boxed back into the `any`. A
-`number` variable combined with an `any` (`n += a`) stays a `number`. A
+`number` variable combined with an `any` (`n += a`) stays a `number` (when `a` holds a string,
+`+=` concatenates and the conversion back stops with its `TypeError`, where Node stores the
+string). A
 symbol operand stops with Node's `TypeError: Cannot convert a Symbol value to a number`. Each
 conversion of a primitive is one call through the descriptor of the value held; `+` and the
 comparisons test the descriptors' tags before it.
