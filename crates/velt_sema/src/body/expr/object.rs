@@ -303,13 +303,7 @@ impl FnCx<'_, '_> {
             .iter()
             .any(|p| matches!(p, ast::ObjectProp::Method(_)))
         {
-            // With other members, or `this` (the object), the method is one of the members of
-            // a literal implementing the expected interface; alone it is an iterable object.
-            if let Some(target) = self.literal_iface(exp).filter(|_| Self::method_member(props)) {
-                let props = Self::methods_as_values(props);
-                return self.iface_object(&props, target, span);
-            }
-            return self.method_object(props, span);
+            return self.method_object_for(props, exp, span);
         }
         // A union's member by the literal's discriminants or fields (`union_member_for`).
         let exp = match self.union_literal_member(props, exp) {

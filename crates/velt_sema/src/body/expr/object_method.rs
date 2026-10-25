@@ -26,6 +26,25 @@ use crate::body::{FnCx, Want};
 use crate::hir::{self, TyId, TyKind};
 
 impl FnCx<'_, '_> {
+    /// An object literal with a method where `exp` is expected: with other members, or `this`
+    /// (the object), the method is one of the members of a literal implementing the expected
+    /// interface with methods; else an iterable object.
+    pub(super) fn method_object_for(
+        &mut self,
+        props: &[ast::ObjectProp],
+        exp: Option<TyId>,
+        span: Span,
+    ) -> hir::Expr {
+        if let Some(target) = self
+            .literal_iface(exp)
+            .filter(|_| Self::method_member(props))
+        {
+            let props = Self::methods_as_values(props);
+            return self.iface_object(&props, target, span);
+        }
+        self.method_object(props, span)
+    }
+
     /// An object literal with a method (see the module docs).
     pub(super) fn method_object(&mut self, props: &[ast::ObjectProp], span: Span) -> hir::Expr {
         let Some(d) = self.iterator_method(props, span) else {
@@ -66,7 +85,7 @@ impl FnCx<'_, '_> {
     /// methods the parser keeps as methods) as a property holding the function, as the parser
     /// makes other methods: `[Symbol.iterator]: (this) => { … }`, or a generator function for
     /// `*[Symbol.iterator]()`. For a literal implementing an interface (module docs).
-    pub(super) fn methods_as_values(props: &[ast::ObjectProp]) -> Vec<ast::ObjectProp> {
+    fn methods_as_values(props: &[ast::ObjectProp]) -> Vec<ast::ObjectProp> {
         props
             .iter()
             .map(|p| match p {
@@ -80,7 +99,7 @@ impl FnCx<'_, '_> {
 
     /// Does a literal with `props` and an iterator method have other members, or use `this` in
     /// the method?
-    pub(super) fn method_member(props: &[ast::ObjectProp]) -> bool {
+    fn method_member(props: &[ast::ObjectProp]) -> bool {
         props.len() > 1
             || props.iter().any(|p| match p {
                 ast::ObjectProp::Method(d) => this_in(&d.body).is_some(),
