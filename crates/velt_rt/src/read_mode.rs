@@ -49,6 +49,9 @@ thread_local! {
     /// Objects whose last reference went in read mode, with their drop glue: freed when this
     /// thread's reads end (`velt_rt_free_after_reads`).
     static WAITING: RefCell<Vec<(*mut u8, DropGlue)>> = const { RefCell::new(Vec::new()) };
+    /// Objects a nested read stored into code outside every read, with their count words and
+    /// drop glue: they lose `LOCAL` when this thread's reads end (`velt_rt_lk_leave`).
+    static LEAVING: RefCell<Vec<(*mut u64, *mut u8, DropGlue)>> = const { RefCell::new(Vec::new()) };
 }
 
 /// The last reference to the lock-set object `p` goes, in code that changes the caller's
@@ -69,10 +72,21 @@ pub unsafe extern "C" fn velt_rt_free_after_reads(p: *mut u8, drop: DropGlue) {
     READER.with(|r| r.read_depth.set(r.read_depth.get() | FREES_WAIT));
 }
 
-/// This thread's outermost read ended: free what waited (`velt_rt_free_after_reads`).
+/// This thread's outermost read ended: what a nested read stored outside every read is no
+/// longer the reader's own (`velt_rt_lk_leave`), and what waited is freed
+/// (`velt_rt_free_after_reads`).
 #[cold]
 #[inline(never)]
 pub(crate) fn free_waiting() {
+    while let Some((c, p, drop)) = LEAVING.with(|w| w.borrow_mut().pop()) {
+        let mut slot = p;
+        // SAFETY: `velt_rt_lk_leave` took it with one more reference, its count word and its
+        // drop glue, which releases that reference (outside read mode now).
+        unsafe {
+            *c &= !LOCAL;
+            drop(&mut slot);
+        }
+    }
     while let Some((p, drop)) = WAITING.with(|w| w.borrow_mut().pop()) {
         let mut slot = p;
         // SAFETY: `velt_rt_free_after_reads` took it with its count at 1 and its drop glue.
@@ -137,21 +151,56 @@ pub unsafe extern "C" fn velt_rt_lk_write(p: *mut u64) {
     }
 }
 
-/// The reader's own lock-set object whose count word is at `p` (`LOCAL` set) is transferred
-/// out of a `read` callback: it is no longer the reader's own once it reaches code outside read
-/// mode, so the bit goes, unless the frame it goes to still runs in read mode. That frame is
-/// [`velt_rt_lk_leave_to`]'s number of `read` callbacks out from the one running (1 unless the
-/// compiler says otherwise: a callback's result goes to the code that called `read`, still in
-/// read mode when that `read` is nested in another, and the outer reader holds it as one it
-/// made).
+/// The reader's own lock-set object `obj`, whose count word is at `p` (`LOCAL` set), is
+/// transferred out of a `read` callback: it is no longer the reader's own once it reaches code
+/// outside read mode, so the bit goes, unless the frame it goes to still runs in read mode. That
+/// frame is [`velt_rt_lk_leave_to`]'s number of `read` callbacks out from the one running (1
+/// unless the compiler says otherwise: a callback's result goes to the code that called `read`,
+/// still in read mode when that `read` is nested in another, and the outer reader holds it as one
+/// it made; 0: it stays in the running callback). One a nested callback stores into a container
+/// of code outside every read keeps the bit until this thread's outermost read ends: the
+/// callbacks around it still run and may change it through their own variables, as in
+/// JavaScript, and only this thread reaches it meanwhile. It waits with one more reference,
+/// which `drop` (its drop glue) releases once the bit is gone.
+///
+/// # Safety
+/// `p` is the count word of the counted object `obj`, and `drop` its drop glue.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_lk_leave(p: *mut u64, obj: *mut u8, drop: DropGlue) {
+    let depth = READER.with(|r| r.depth()) as u64;
+    if depth > LEAVE_TO.with(Cell::get) {
+        return;
+    }
+    if depth <= 1 {
+        *p &= !LOCAL;
+        return;
+    }
+    leave_after_reads(p, obj, drop);
+}
+
+/// A transfer keeping what the caller holds (`velt_rt_xfer_keep_begin`) moves the reader's own
+/// object whose count word is at `p`, which the reader may still reference: the caller's
+/// reference becomes its only one and the bit goes, since the reader no longer counts it. In a
+/// nested read storing into code outside every read ([`velt_rt_lk_leave`] keeps the bit until
+/// the reads end) the reader still counts its references, so the count stays.
 ///
 /// # Safety
 /// `p` is the count word of a counted object.
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_lk_leave(p: *mut u64) {
-    if READER.with(|r| r.depth()) as u64 <= LEAVE_TO.with(Cell::get) {
-        *p &= !LOCAL;
+pub unsafe extern "C" fn velt_rt_lk_keep_made(p: *mut u64) {
+    let depth = READER.with(|r| r.depth()) as u64;
+    if depth <= 1 || depth > LEAVE_TO.with(Cell::get) {
+        *p = 1;
     }
+}
+
+/// [`velt_rt_lk_leave`] in a nested read: the bit goes when the outermost read ends.
+#[cold]
+#[inline(never)]
+unsafe fn leave_after_reads(p: *mut u64, obj: *mut u8, drop: DropGlue) {
+    *p += 1;
+    LEAVING.with(|w| w.borrow_mut().push((p, obj, drop)));
+    READER.with(|r| r.read_depth.set(r.read_depth.get() | FREES_WAIT));
 }
 
 thread_local! {
@@ -174,6 +223,15 @@ pub extern "C" fn velt_rt_lk_leave_to(levels: u64) -> u64 {
 mod tests {
     use super::*;
 
+    thread_local! {
+        static DROPS: Cell<u32> = const { Cell::new(0) };
+    }
+
+    /// Counts the references the leaving objects' glue releases.
+    unsafe extern "C" fn count_drop(_: *mut *mut u8) {
+        DROPS.with(|d| d.set(d.get() + 1));
+    }
+
     #[test]
     fn read_mode_follows_read_callbacks() {
         assert_eq!(in_read() as u8, 0);
@@ -184,18 +242,25 @@ mod tests {
         unsafe { velt_rt_lk_write(&mut mine) };
         // Nested: still the reader's own after the inner callback; outermost: no longer.
         READER.with(|r| r.push());
-        unsafe { velt_rt_lk_leave(&mut mine) };
+        let obj = std::ptr::null_mut();
+        unsafe { velt_rt_lk_leave(&mut mine, obj, count_drop) };
         assert_eq!(mine, 1 | LOCAL);
-        // Stored two callbacks out, into a container of code outside every read: no longer.
+        // Stored two callbacks out, into a container of code outside every read: the reader's
+        // own until the outermost read ends, with one more reference meanwhile.
         let was = velt_rt_lk_leave_to(2);
-        unsafe { velt_rt_lk_leave(&mut mine) };
-        assert_eq!(mine, 1);
-        mine |= LOCAL;
+        unsafe { velt_rt_lk_leave(&mut mine, obj, count_drop) };
+        assert_eq!(mine, 2 | LOCAL);
         assert_eq!(velt_rt_lk_leave_to(was), 2);
         READER.with(|r| r.pop());
-        unsafe { velt_rt_lk_leave(&mut mine) };
-        assert_eq!(mine, 1);
+        let mut other = 1 | LOCAL;
+        unsafe { velt_rt_lk_leave(&mut other, obj, count_drop) };
+        assert_eq!(other, 1);
         READER.with(|r| r.pop());
+        // As `velt_rt_rwlock_read_unlock` ends the outermost read.
+        READER.with(|r| r.read_depth.set(0));
+        free_waiting();
+        assert_eq!(mine, 2);
+        assert_eq!(DROPS.with(Cell::get), 1);
         assert_eq!(in_read() as u8, 0);
         let mut store = 1u64;
         unsafe { velt_rt_lk_write(&mut store) };

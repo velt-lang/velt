@@ -351,9 +351,11 @@ impl<'c, 'h> FnLower<'c, 'h> {
         self.goto(done);
         self.switch_to(made);
         match self.holds_lock_set(ty) {
+            // The caller's only reference from now on, unless a nested reader's store keeps
+            // it the reader's own until the reads end (velt_rt `velt_rt_lk_keep_made`).
             true => {
-                let c = self.count_place(o);
-                self.assign(c, Rvalue::Use(cint(1, Ty::U64)));
+                let c = self.count_addr(o);
+                self.call_rt(Rt::LkKeepMade, vec![c], None);
                 self.goto(unique);
             }
             false => self.goto(done),

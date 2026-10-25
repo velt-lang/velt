@@ -289,8 +289,10 @@ impl FnLower<'_, '_> {
                 let (leave, done) = (lw.new_block(), lw.new_block());
                 lw.branch(mine, leave, done);
                 lw.switch_to(leave);
-                let c = lw.count_addr(p);
-                lw.call_rt(Rt::LkLeave, vec![c], None);
+                let c = lw.count_addr(p.clone());
+                // Its glue releases the reference a nested reader's store keeps until the reads end.
+                let glue = cfunc(lw.cx.func(Work::Glue(Glue::Drop, ty)));
+                lw.call_rt(Rt::LkLeave, vec![c, p, glue], None);
                 lw.goto(done);
                 lw.switch_to(done);
             },

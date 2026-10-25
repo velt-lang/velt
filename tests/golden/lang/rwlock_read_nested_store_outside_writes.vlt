@@ -1,0 +1,58 @@
+// check: no leaks
+// A `read` nested in another stores what an outer callback made into a container of the code
+// outside every read; the callbacks around it still change it through their own variables,
+// and the caller sees those changes: the same object, as in JavaScript (#1523).
+class Box {
+  items: number[][] = [[1, 2], [3]];
+}
+
+function main() {
+  const a = new RwLock(new Box());
+  const b = new RwLock(new Box());
+  const c = new RwLock(new Box());
+  const top: number[][][] = [];
+  a.read((x) => {
+    const l: number[][][] = [[[1]]];
+    b.read((y) => {
+      top.push(l[0]);
+    });
+    l[0].push([4]);
+    console.log("one", top[0] === l[0]);
+  });
+  a.read((x) => {
+    const l1: number[][][] = [];
+    b.read((y) => {
+      c.read((z) => {
+        l1.push(z.items.map((e) => e));
+        top.push(l1[0]);
+      });
+      l1[0].push([5]);
+    });
+    l1[0].push([6]);
+  });
+  a.read((x) => {
+    const l: number[][][] = [[[2]]];
+    b.read((y) => {
+      top.push(l[0]);
+    });
+    const g = top.pop()!;
+    l[0].push([7]);
+    console.log("popped", JSON.stringify(g), g === l[0]);
+  });
+  const again: number[][][] = [];
+  a.read((x) => {
+    const l: number[][][] = [[[3]]];
+    b.read((y) => {
+      top.push(l[0]);
+    });
+    b.read((y) => {
+      again.push(top[2]);
+    });
+    l[0].push([8]);
+  });
+  top[0].push([9]);
+  c.write((q) => {
+    q.items = [];
+  });
+  console.log(JSON.stringify(top), again[0] === top[2]);
+}

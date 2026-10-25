@@ -599,7 +599,10 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
   returns, a closure capturing a part of the value). An array or object the callback made that
   holds objects of the value's types is the caller's once stored there: the callback can still
   read it through its own variables, but a write through them stops the program, as for the
-  value's own (store it once it is complete). One whose type the value cannot hold, and a
+  value's own (store it once it is complete). One a `read` nested in another stores there
+  stays the readers' own until the outermost `read` returns, so the callbacks around it can
+  still change it through their variables, and the caller sees those changes, as in JavaScript.
+  One whose type the value cannot hold, and a
   function value, that the callback still uses after storing it is stored as a copy. So is a
   container of the callback's own whose type the value cannot hold, or a `Map` or `Set` of its
   own, holding objects of the value's types, given to a method or function that changes the
