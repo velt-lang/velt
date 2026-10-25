@@ -69,7 +69,11 @@ impl FnLower<'_, '_> {
             _ => false,
         };
         let tag = match self.prelude_record(ty).is_some() || !std {
-            true => "Object".to_string(),
+            // A subclass of `Map` or `Set` keeps its base's `Symbol.toStringTag`.
+            true => match self.collection_subclass(ty) {
+                Some((base, _)) => self.cx.type_name(base),
+                None => "Object".to_string(),
+            },
             false => self.cx.type_name(ty),
         };
         self.push_text(buf, &format!("[object {tag}]"));

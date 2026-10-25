@@ -1,0 +1,4 @@
+Counts(2) [Map] { 'a' => 2, 'b' => 1 } [object Map]
+Tags(1) [Set] { 'x' } [object Set]
+Named(0) [Map] {} Deeper(1) [Map] { 'z' => 1 } [ Counts(2) [Map] { 'a' => 2, 'b' => 1 } ]
+{ inner: { deep: { more: [Counts [Map]] } } }
