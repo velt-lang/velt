@@ -59,6 +59,11 @@ impl FnCx<'_, '_> {
     }
 
     fn try_coerce_value(&mut self, h: hir::Expr, exp: TyId) -> Result<hir::Expr, hir::Expr> {
+        // A generic function value where a function type is expected: instantiated there
+        // (`generic_values.rs`).
+        if self.cx.is_generic_fn(h.ty) && matches!(self.cx.ty.kind(exp), TyKind::FnPtr { .. }) {
+            return self.generic_as_fn(h, exp);
+        }
         let h = match self.fn_bound_value(h) {
             Ok(f) if f.ty == exp || matches!(self.cx.ty.kind(exp), TyKind::FnPtr { .. }) => {
                 return self.try_coerce_value(f, exp)

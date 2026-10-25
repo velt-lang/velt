@@ -16,6 +16,10 @@ use crate::ctx::Item;
 use crate::defs::Bound;
 use crate::defs::{BodyState, DefInfo, GlobalInfo, GlobalSrc};
 use crate::generic_fns::FnParts;
+
+/// The local a generic function value converted to a function type is held in
+/// (`FnCx::generic_as_fn`): no source can name it.
+const HELD: &str = "<generic value>";
 use crate::hir::{self, DefId, ExprKind as H, ImplDef, TyId, TyKind};
 
 impl FnCx<'_, '_> {
@@ -570,6 +574,128 @@ impl FnCx<'_, '_> {
         };
         let names = m.generics.names.clone();
         self.cx.generic_fn_type(parts, mm, names, self.module, span)
+    }
+
+    /// Generic function value `h` as a value of function type `exp`, as TypeScript instantiates
+    /// it: the closure `(a0, …) => g(a0, …)` over `g`, a local holding `h`, whose call
+    /// instantiates `h` at `exp`'s parameter types. `Err` when it doesn't take them.
+    pub(super) fn generic_as_fn(
+        &mut self,
+        h: hir::Expr,
+        exp: TyId,
+    ) -> Result<hir::Expr, hir::Expr> {
+        let TyKind::FnPtr { params, rest, .. } = self.cx.ty.kind(exp).clone() else {
+            return Err(h);
+        };
+        // A function value may take fewer parameters than its type gives.
+        let takes = self.cx.generic_sig(h.ty).map_or(0, |g| g.method.params.len());
+        let rest = rest && takes >= params.len();
+        let params = &params[..params.len().min(takes)];
+        let span = h.span;
+        self.push_scope();
+        let (ty, at) = (h.ty, h.span);
+        let l = self.new_local(HELD, ty, false, at, crate::body::LocalKind::Temp);
+        let scope = self.f.scopes.last_mut().expect("ICE: no scope");
+        scope.names.insert(HELD.to_string(), l);
+        let mut h = h;
+        crate::body::places::set_place_mode(&mut h, hir::UseMode::Move);
+        let stmts = vec![hir::Stmt {
+            kind: hir::StmtKind::Let {
+                local: l,
+                init: Some(h),
+            },
+            span: at,
+        }];
+        let n = params.len();
+        let mk = |kind| ast::Expr {
+            id: ast::NodeId(u32::MAX),
+            kind,
+            span,
+        };
+        let name = |k: usize| ast::Ident {
+            name: format!("#a{k}"),
+            span,
+        };
+        let ps = (0..n)
+            .map(|k| ast::ArrowParam {
+                name: name(k),
+                pattern: None,
+                ty: None,
+                default: None,
+                optional: false,
+                rest: rest && k + 1 == n,
+            })
+            .collect();
+        let args = (0..n)
+            .map(|k| match rest && k + 1 == n {
+                true => mk(ast::ExprKind::Spread(Box::new(mk(ast::ExprKind::Ident(name(k)))))),
+                false => mk(ast::ExprKind::Ident(name(k))),
+            })
+            .collect();
+        let held = ast::Ident {
+            name: HELD.into(),
+            span,
+        };
+        let call = mk(ast::ExprKind::Call {
+            callee: Box::new(mk(ast::ExprKind::Ident(held))),
+            type_args: vec![],
+            args,
+            optional: false,
+        });
+        let arrow = mk(ast::ExprKind::Arrow {
+            type_params: vec![],
+            params: ps,
+            ret: None,
+            throws: None,
+            body: ast::ArrowBody::Expr(Box::new(call)),
+            is_async: false,
+        });
+        let value = self.closure(&arrow, Some(exp), true);
+        self.pop_scope();
+        let value = self.coerce(value, exp);
+        let block = hir::Block {
+            stmts,
+            value: Some(Box::new(value)),
+            span,
+        };
+        Ok(self.mk(H::Block(block), exp, span))
+    }
+
+    /// A generic function value (of type `g`) passed for a parameter of function type `pat`
+    /// (over a call's type parameters, `slots` those known so far): the value is instantiated
+    /// at `pat`'s parameter types (`generic_as_fn`), so its result there fixes the slots of
+    /// `pat`'s result (`xs.map(id)` with `map<U>(f: (x: T) => U)`).
+    pub(super) fn infer_from_generic(&mut self, pat: TyId, g: TyId, slots: &mut [Option<TyId>]) {
+        let TyKind::FnPtr { params, ret, .. } = self.cx.ty.kind(pat).clone() else {
+            return;
+        };
+        let Some(sig) = self.cx.generic_sig(g) else {
+            return;
+        };
+        let known: Vec<TyId> = slots.iter().map(|s| s.unwrap_or(self.cx.ty.error)).collect();
+        let n = sig.args.len();
+        let own = sig.method.generics.len();
+        // Its own type parameters as `0..own`, its arguments in place.
+        let mut map = sig.args.clone();
+        map.push(self.cx.ty.error);
+        map.extend((0..own).map(|k| self.cx.ty.param(k as u32)));
+        let mut own_slots = vec![None; own];
+        for (gp, pp) in sig.method.params.iter().zip(&params) {
+            let gp = self.cx.subst(gp.ty, &map);
+            let pp = self.cx.subst(*pp, &known);
+            if !self.cx.ty.has_error(pp) {
+                self.cx.match_ty(gp, pp, &mut own_slots);
+            }
+        }
+        let Some(own_args) = own_slots.into_iter().collect::<Option<Vec<TyId>>>() else {
+            return;
+        };
+        let mut inst = sig.args.clone();
+        inst.resize(n, self.cx.ty.error);
+        inst.push(self.cx.ty.error);
+        inst.extend(own_args);
+        let r = self.cx.subst(sig.method.ret, &inst);
+        self.cx.match_ty(ret, r, slots);
     }
 
     /// Reports a generic arrow where no generic function type is expected (`span`).
