@@ -1,0 +1,20 @@
+// `{} as` a mapped type over `keyof T`, filled by `for…in`: the keys come in the fields' order,
+// with counted values, in a program that boxes its `string[]`s (the record's key list too).
+function mapValues<T, R>(o: T, f: (v: T[keyof T]) => R): { [K in keyof T]: R } {
+  const r = {} as { [K in keyof T]: R };
+  for (const k in o) r[k] = f(o[k]);
+  return r;
+}
+function mapOpt<T, R>(o: T, f: (v: T[keyof T]) => R): { [K in keyof T]?: R } {
+  const r = {} as { [K in keyof T]?: R };
+  for (const k in o) r[k] = f(o[k]);
+  return r;
+}
+function main() {
+  const shared: string[][] = [];
+  const m = mapValues({ a: 1, b: 2, c: 3 }, (v) => [String(v), "x"]);
+  shared.push(m.a); shared.push(m.a);
+  console.log(m, shared.length);
+  console.log(mapOpt({ x: "p", y: "q" }, (v) => v + "!"));
+  console.log(JSON.stringify(mapValues({ z: true, w: false }, (v) => !v)));
+}

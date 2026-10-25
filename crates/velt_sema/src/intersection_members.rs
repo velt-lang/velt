@@ -95,11 +95,14 @@ impl Ctx<'_> {
         else {
             return false;
         };
-        if pw.len() != pn.len() || rw != rn || tw != tn || xw != xn {
+        // A written signature's error set may still be a variable (`throws::vars`): the same
+        // but for it is the same.
+        if pw.len() != pn.len() || rw != rn || xw != xn || !self.same_ty(tw, tn) {
             return false;
         }
         pw.iter().zip(&pn).all(|(&w, &n)| {
-            if w == n {
+            // A parameter of type `any` takes whatever the other takes.
+            if w == n || self.dynamic(w) == Some(crate::any::Dynamic::Any) {
                 return true;
             }
             if !(self.is_object_type(w) && self.is_object_type(n)) {
@@ -113,8 +116,27 @@ impl Ctx<'_> {
         })
     }
 
+    /// Is `b`, a type parameter's bound, a function type the parameter is taken to be exactly
+    /// (`F extends (x: number) => number`; issue #1212): no type parameters, no rest parameter
+    /// and nothing dynamic, unlike the "any function" bound `(...args: any[]) => any`, under
+    /// which a parameter keeps the argument's own function type.
+    pub(crate) fn exact_fn_bound(&self, b: TyId) -> bool {
+        let TyKind::FnPtr {
+            params, ret, rest, ..
+        } = self.ty.kind(b)
+        else {
+            return false;
+        };
+        !*rest
+            && !self.has_type_params(b)
+            && params
+                .iter()
+                .chain(std::iter::once(ret))
+                .all(|&t| self.dynamic(t).is_none())
+    }
+
     /// The constraint (`T extends string`) of type parameter `n` of the function being checked.
-    fn constraint_of(&self, n: u32) -> Option<TyId> {
+    pub(crate) fn constraint_of(&self, n: u32) -> Option<TyId> {
         let d = *self.checking.last()?;
         let f = self.try_fn(d)?;
         f.generics.constraints.get(n as usize).copied().flatten()
@@ -141,9 +163,22 @@ impl Ctx<'_> {
     /// of its object parts: the interface made of that part (its arguments are the type
     /// parameters the part mentions) and the field's index there.
     pub(crate) fn part_field(&mut self, t: TyId, name: &str) -> Option<PartField> {
-        let TyKind::Op(TyOp::Intersect, parts) = self.ty.kind(t).clone() else {
+        let TyKind::Op(TyOp::Intersect, top) = self.ty.kind(t).clone() else {
             return None;
         };
+        // A nested intersection's parts are parts of this one (`Signal<U & { a } & object>`).
+        fn flatten(cx: &Ctx, ps: &[TyId], out: &mut Vec<TyId>, depth: u32) {
+            for &p in ps {
+                match cx.ty.kind(p) {
+                    TyKind::Op(TyOp::Intersect, inner) if depth < 8 => {
+                        flatten(cx, inner, out, depth + 1)
+                    }
+                    _ => out.push(p),
+                }
+            }
+        }
+        let mut parts = vec![];
+        flatten(self, &top, &mut parts, 0);
         if !parts.iter().any(|&p| self.deferred_part(p)) {
             return None;
         }

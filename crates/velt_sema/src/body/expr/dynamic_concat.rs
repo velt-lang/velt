@@ -144,3 +144,18 @@ impl FnCx<'_, '_> {
         self.mk(H::Block(block), ty, span)
     }
 }
+
+impl FnCx<'_, '_> {
+    /// Is `t` a union whose members are all strings, numbers or booleans (or literals of
+    /// them, `string | number`)? Such a value is written in a string `+` as `String(x)` writes it.
+    pub(crate) fn primitive_union(&mut self, t: TyId) -> bool {
+        let Some(members) = self.cx.union_members(t) else {
+            return false;
+        };
+        members.into_iter().all(|m| {
+            let m = self.cx.widened(m);
+            let ty = &self.cx.ty;
+            ty.is_numeric(m) || m == ty.str_ || m == ty.bool_
+        })
+    }
+}

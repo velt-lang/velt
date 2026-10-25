@@ -1,0 +1,4 @@
+{ id: 1, name: 'a' } { name: 'a' }
+{ name: 'a' } { id: 1, nick: 'n' }
+{ id: 1, name: 'a' }
+{ id: 2, nick: undefined } { nick: undefined }

@@ -17,7 +17,6 @@ type_queries.vlt:24:10: error: `typeof Point` (the type of `Point` itself, not o
 type_queries.vlt:25:10: error: `Shape` is a type, not a value: `typeof` needs a value
 type_queries.vlt:26:10: error: cannot find `missing` in this scope
 type_queries.vlt:27:10: error: `keyof Point` is not supported yet (#936): `keyof` works on object types
-type_queries.vlt:28:10: error: `keyof Record<string, f64>` (`string | number` in TypeScript) is not supported yet (#936)
 type_queries.vlt:29:10: error: `ReturnType` needs a function type; found `f64`
 type_queries.vlt:68:21: error: `typeof restf` of a function with a rest parameter is not supported yet (#936)
 type_queries.vlt:69:21: error: `typeof opt` of a function with an optional parameter is not supported yet (#936)

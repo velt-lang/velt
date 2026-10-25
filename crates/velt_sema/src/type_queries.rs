@@ -141,6 +141,11 @@ impl Ctx<'_> {
                         None => self.ty.error,
                     };
                 }
+                // `const K = Symbol("k")` / `Symbol.for("k")` is a symbol (TypeScript's
+                // `unique symbol`), known without checking the initializer.
+                if init.is_some_and(symbol_init) {
+                    return self.ty.intern(TyKind::Symbol);
+                }
                 if !self.bodies_ok {
                     return self.query_needs_body(name, "constant", span);
                 }
@@ -243,6 +248,17 @@ impl Ctx<'_> {
             return self.ty.error;
         }
         if !self.bodies_ok {
+            // Outside a signature being resolved (an interface or class field), from the
+            // declaration alone; a signature has its own order and cycle errors (`sig_fill`).
+            let resolving = self.sigq.filling_sigs.iter().any(|f| f.0 == d);
+            if !self.sigq.sig_fill && !resolving {
+                self.sigq.filling_sigs.push((d, name.to_string()));
+                let t = self.declared_fn_type(d);
+                self.sigq.filling_sigs.pop();
+                if let Some(t) = t {
+                    return t;
+                }
+            }
             return self.query_needs_body(name, "function", span);
         }
         let f = self.fn_info(d);
@@ -263,6 +279,46 @@ impl Ctx<'_> {
             throws,
             rest,
         })
+    }
+
+    /// The type of function `d` from its declaration alone, before signatures are resolved
+    /// (`typeof f` in an interface field): a function with a written result and plain
+    /// parameters, not generic, async or a generator, with no `throws` written (its function
+    /// type allows no error, as one written out would). `None` for any other.
+    fn declared_fn_type(&mut self, d: DefId) -> Option<TyId> {
+        let f = self.fn_info(d);
+        let (module, Some(FnSource::Decl(decl))) = (f.module, f.source) else {
+            return None;
+        };
+        let sig = &decl.sig;
+        let plain = sig
+            .params
+            .iter()
+            .all(|p| !p.rest && !p.optional && p.default.is_none());
+        if !sig.generics.is_empty() || sig.is_async || sig.is_generator || !plain {
+            return None;
+        }
+        if sig.throws.is_some() || sig.this_param.is_some() {
+            return None;
+        }
+        let ret = sig.ret.as_ref()?;
+        let env = TyEnv::new(module, &[]);
+        let params: Vec<TyId> = sig
+            .params
+            .iter()
+            .map(|p| self.resolve_type(&p.ty, &env))
+            .collect();
+        let ret = self.resolve_type(ret, &env);
+        if params.contains(&self.ty.error) || ret == self.ty.error {
+            return None;
+        }
+        let throws = self.ty.never;
+        Some(self.ty.intern(TyKind::FnPtr {
+            params,
+            ret,
+            throws,
+            rest: false,
+        }))
     }
 
     /// Does `t` mention a type parameter other than as an error type (a function type's
@@ -345,6 +401,11 @@ impl Ctx<'_> {
         if ty == self.ty.error {
             return ty;
         }
+        // `keyof any` is every key type, `string | number | symbol`, as in TypeScript.
+        if self.dynamic(ty) == Some(crate::any::Dynamic::Any) {
+            let (s, n, y) = (self.ty.str_, self.ty.f64, self.ty.intern(TyKind::Symbol));
+            return self.union_of(&[s, n, y], false, t.span);
+        }
         if self.has_type_params(ty) && matches!(self.ty.kind(ty), TyKind::Param(_) | TyKind::Op(..))
         {
             if !self.defer_param_form() {
@@ -403,11 +464,9 @@ impl Ctx<'_> {
                 if args[0] != self.ty.str_ {
                     return args[0];
                 }
-                self.err(
-                    format!("`keyof {shown}` (`string | number` in TypeScript) is not supported yet (#936)"),
-                    t.span,
-                );
-                self.ty.error
+                // A string index signature takes number keys too (TypeScript).
+                let (s, n) = (self.ty.str_, self.ty.f64);
+                self.union_of(&[s, n], false, t.span)
             }
             TyKind::Adt(d, _)
                 if self.adt(d).is_some_and(|a| a.kind == AdtKind::Anon)
@@ -499,6 +558,21 @@ impl Ctx<'_> {
 }
 
 /// The literal a constant's initializer is (`"a"`, `4`, `-1`, `true`), as a literal type.
+/// Is `e` a call of `Symbol(…)` or `Symbol.for(…)`?
+fn symbol_init(e: &ast::Expr) -> bool {
+    let ast::ExprKind::Call { callee, .. } = &e.kind else {
+        return false;
+    };
+    match &callee.kind {
+        ast::ExprKind::Ident(i) => i.name == "Symbol",
+        ast::ExprKind::Member { object, prop, .. } => {
+            prop.name == "for"
+                && matches!(&object.kind, ast::ExprKind::Ident(i) if i.name == "Symbol")
+        }
+        _ => false,
+    }
+}
+
 fn literal_init(e: &ast::Expr) -> Option<ast::SignedLit> {
     match &e.kind {
         ast::ExprKind::Lit(

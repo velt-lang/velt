@@ -16,7 +16,27 @@ impl Ctx<'_> {
     pub fn match_context(&mut self, pat: TyId, actual: TyId, slots: &mut [Option<TyId>]) {
         self.matching_context = true;
         self.match_ty(pat, actual, slots);
+        self.match_through_impl(pat, actual, slots);
         self.matching_context = false;
+    }
+
+    /// A class instance where an interface it implements is expected (`new Set()` as an
+    /// `Iterable<number>`): the implementation's interface arguments, in the class's, match
+    /// the expected ones.
+    pub fn match_through_impl(&mut self, pat: TyId, actual: TyId, slots: &mut [Option<TyId>]) {
+        let (TyKind::Adt(..), TyKind::Dyn(iface, want)) =
+            (self.ty.kind(pat).clone(), self.ty.kind(actual).clone())
+        else {
+            return;
+        };
+        if self.class_of(pat).is_none() || self.dynamic(actual).is_some() {
+            return;
+        }
+        if let Some((_, have, _)) = self.find_impl(pat, iface) {
+            for (h, w) in have.iter().zip(&want) {
+                self.match_ty(*h, *w, slots);
+            }
+        }
     }
 
     fn context_slot_ok(&self, actual: TyId) -> bool {
@@ -43,6 +63,17 @@ impl Ctx<'_> {
             },
             (TyKind::Adt(d, ps), TyKind::Adt(d2, as_)) if d == d2 => {
                 self.match_all(&ps, &as_, slots)
+            }
+            // Two brands of one primitive: through their object parts (`InjectionToken<T>`).
+            (TyKind::Adt(d, _), TyKind::Adt(..))
+                if self.generic_brands.contains(&d)
+                    && self.brand_base(pat).is_some()
+                    && self.brand_base(pat) == self.brand_base(actual) =>
+            {
+                match (self.brand_tag(pat), self.brand_tag(actual)) {
+                    (Some(p), Some(a)) => self.match_ty(p, a, slots),
+                    _ => false,
+                }
             }
             (TyKind::Adt(..), _) if self.union_def(pat).is_some() => {
                 self.match_union_member(pat, actual, slots)
@@ -155,6 +186,49 @@ impl Ctx<'_> {
         }
         if let Some((ifaces, object)) = self.meet_parts(actual) {
             return self.match_iface_intersection(&flat, ifaces, object, slots);
+        }
+        // A brand (`Brand<string>` against `T & { __b?: true }`) gives `T` its primitive, and a
+        // class instance (`new C()` against `T & { id?: string }`) the class, as TypeScript
+        // infers them.
+        // A brand's tag gives the pattern's object parts their fields (`InjectionToken<T>`,
+        // `symbol & { __type?: T }`, against `symbol & { __type?: number }` binds `T = number`).
+        if let Some(tag) = self.brand_tag(actual) {
+            let have = self.public_fields(tag);
+            for &p in &flat {
+                if !self.is_object_type(p) {
+                    continue;
+                }
+                for f in self.public_fields(p) {
+                    if let Some(a) = have.iter().find(|a| a.name == f.name) {
+                        self.match_ty(f.ty, a.ty, slots);
+                    }
+                }
+            }
+        }
+        let whole = match self.brand_base(actual) {
+            Some(base) => Some(base),
+            None if self.class_of(actual).is_some() && !self.ty.has_error(actual) => Some(actual),
+            None => None,
+        };
+        if let Some(w) = whole {
+            let params: Vec<usize> = flat
+                .iter()
+                .filter_map(|&p| match self.ty.kind(p) {
+                    TyKind::Param(i) => Some(*i as usize),
+                    _ => None,
+                })
+                .collect();
+            match params[..] {
+                [i] => {
+                    if i < slots.len() && slots[i].is_none() {
+                        slots[i] = Some(w);
+                    }
+                    return i >= slots.len() || slots[i] == Some(w);
+                }
+                // No type parameter part: the brand matched through its tag.
+                [] if self.brand_tag(actual).is_some() => return true,
+                _ => {}
+            }
         }
         if !self.is_object_type(actual) {
             return false;
@@ -489,8 +563,52 @@ impl Ctx<'_> {
                 .iter()
                 .any(|x| x == b || self.iface_ancestors(x).contains(b));
         }
+        if let TyKind::Dyn(d, args) = self.ty.kind(ty).clone() {
+            // An interface value satisfies the interfaces its interface extends (#1368), unless
+            // the bound has a generic method: those have no slot in the value's table.
+            if self.extends_iface(&Bound { iface: d, args }, b) && !self.has_generic_method(b) {
+                return true;
+            }
+        }
         self.impl_args(ty, b.iface)
             .is_some_and(|args| args == b.args)
+    }
+
+    /// Does interface `b`, or one it extends, declare a generic method?
+    pub(crate) fn has_generic_method(&mut self, b: &Bound) -> bool {
+        let mut todo = vec![b.clone()];
+        let mut seen = 0;
+        while let Some(x) = todo.pop() {
+            seen += 1;
+            if seen > 64 {
+                return true;
+            }
+            let generic = self
+                .iface(x.iface)
+                .is_some_and(|i| i.methods.iter().any(|m| m.generics.len() > 0));
+            if generic {
+                return true;
+            }
+            todo.extend(self.iface_ancestors(&x));
+        }
+        false
+    }
+
+    /// Does the interface `from` extend `to`, directly or through its parents (or is it `to`)?
+    fn extends_iface(&mut self, from: &Bound, to: &Bound) -> bool {
+        let mut todo = vec![from.clone()];
+        let mut seen = 0;
+        while let Some(x) = todo.pop() {
+            if &x == to {
+                return true;
+            }
+            seen += 1;
+            if seen > 64 {
+                return false;
+            }
+            todo.extend(self.iface_ancestors(&x));
+        }
+        false
     }
 }
 

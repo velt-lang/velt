@@ -431,6 +431,7 @@ impl FnLower<'_, '_> {
     /// `AnyTo`: the value of type `ty` the owned `any` `a` holds, or a `TypeError`.
     pub(super) fn any_to(&mut self, a: &hir::Expr, ty: TyId) -> Operand {
         let from = self.sub(a.ty);
+        let written = ty;
         let ty = self.sub(ty);
         if let Some(v) = self.unboxed_own(a, ty) {
             return v;
@@ -441,7 +442,7 @@ impl FnLower<'_, '_> {
             return self.zero_value(vt);
         }
         if matches!(self.cx.kind(ty), TyKind::Never) {
-            return self.any_to_never(v, from, ty);
+            return self.any_to_never(v, from, ty, written);
         }
         if matches!(self.cx.kind(ty), TyKind::Unit) {
             return self.any_to_void(v, from);
@@ -605,7 +606,6 @@ impl FnLower<'_, '_> {
         self.build_agg(ty, vec![data, table])
     }
 
-    /// The value of type `ty` the `any` at `p` (owned, consumed here) holds.
     pub(super) fn any_unbox(&mut self, p: &Place, from: TyId, ty: TyId) -> Operand {
         if self.cx.is_dynamic(ty) {
             // The payload of an `any | null`: the value itself.
@@ -613,6 +613,9 @@ impl FnLower<'_, '_> {
         }
         if self.cx.is_union(ty) {
             return self.any_unbox_union(p, from, ty);
+        }
+        if let TyKind::Literal(hir::LitValue::Str(lit)) = self.cx.kind(ty) {
+            return self.any_unbox_str_literal(p, from, ty, &lit);
         }
         let vt = self.cx.ty(ty);
         let out = Place::local(self.temp(vt));
@@ -721,6 +724,8 @@ impl FnLower<'_, '_> {
         self.assign(out.clone(), Rvalue::Use(v));
         self.goto(done);
         self.switch_to(bad_bb);
+        // A record built by `{} as D` (sema's `empty_as_deferred`) where `D` is an object type.
+        self.any_record_fill(p, from, ty, &out, done);
         // An object implementing the interface, or the interface at other type arguments.
         self.any_to_iface(p, ty, &out, done);
         if self.cx.proxiable(ty) {

@@ -169,6 +169,15 @@ Maintainer-owned, like `hir/mod.rs`, `hir/intrinsic.rs` and `hir/module_state.rs
   operand tests `HoldsDynamicOrClass` instead, also `true` for a class (its `valueOf()` comes
   first). The probe is never evaluated. Lowering evaluates it like `HoldsNull` (`const_cond`),
   so each instantiation lowers one branch, and the others the code they had without the test.
+- A value of a type parameter passed for a union parameter with that type parameter as a member
+  (issue #1456; sema `param_member.rs`): the argument `Variant { [x] }` (or `WrapSome(x)`,
+  `WrapSome(Variant { [x] })` for an option), `x` a variable or field path, is `If { cond:
+  HoldsDynamic(NullAs: T), then: <x converted to any and routed to the member whose test it
+  passes, as an `any` converted to the union is>, els: <the wrap> }`. The routing reads `x`
+  once per test and converts it once in each arm (no temporary); where the wrap moves `x`,
+  every arm moves it. Lowering's drop-flag scan (`FlagScan`) looks only at the branch the
+  instantiation takes, and `velt_sema::effects::routed_wrap` gives the effects of such an
+  argument as the wrap's.
 
 ## M3/M4 encodings (lowering assumptions, confirmed at merge of ir-3)
 - An async fn's `FnDef::ret` is the body's return type `T` (the call's type is `Promise<T>`).
@@ -820,10 +829,20 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   the requirement `TyOp::Convert(n)` over `[from, to]` (`n` numbers the conversion, so each is
   reported where it is written; never the type of an expression) as a type the body
   mentions, so `type_level::instances` reduces it at every instantiation: to `to` when both are
-  one object type there (the same canonical type, or the same layout), else it reports the
-  instantiation, since a value can't be seen as an object type with other fields without a copy,
-  and a copy would be another object where TypeScript passes the same one. Lowering's `Upcast` is
-  the value itself.
+  one object type there (the same canonical type, or the same layout); to `to` as well when
+  `to` is an object type whose fields `from` has, of the same types and optionality, plus
+  others: lowering's `Upcast` of two object types of different layouts is then a new `to`
+  holding those fields (shared, as `SpreadObject` builds one), and sema records the copy with
+  `crate::object_copies`, which reports it where the program could tell it from the original
+  (TypeScript passes the same object). Any other instantiation is reported. Otherwise lowering's
+  `Upcast` is the value itself.
+- `{} as D` with `D` an object type known only per instantiation (`Pick<T, K>`, `Partial<T>`) is a
+  new `Record<string, any>` converted to `any`; its keys are set through `AnySet`, and converting
+  it to `D` is an `AnyTo`, which lowering makes, for an `any` holding a `Record<string, any>` and
+  an object type `D`, a new `D` of the record's entries (each converted as `AnyTo` converts it; a
+  required field whose key the record lacks is a `TypeError` naming it, an optional one is
+  absent). `AnyTo` of an `any` holding a string to a string literal type, or a union of them,
+  checks the string's content.
 - `TyOp::Inline(n)` (additive): a conditional, mapped, indexed access, `keyof` or utility type
   (`Partial`, `Required`, `Readonly`, `Pick`, `Omit`) written in a generic definition, not in an
   alias, whose evaluation needs a type parameter (`{ [K in keyof M]: Topic<M[K]> }` in a
@@ -838,11 +857,14 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   `Intrinsic::KeyWrite(x, k, v)` (type `void`; `v: T[K]`, owned), `x` and `k` borrowed places
   (`x` mutably for a write; any expressions, bound to temporaries in order when they are no
   places). An object type written through `KeyWrite` at some instantiation is
-  `AdtDef::assigned`. Sema records the requirement that `K` is one key, or keys whose
-  fields have one type (an `Inline` form that is never a value's type, reduced like
+  `AdtDef::assigned`. Sema records the requirement that `K` is one key, or keys naming
+  required fields (an `Inline` form that is never a value's type, reduced like
   `TyOp::Convert`'s); any other instantiation is an error. Lowering reads (shared) or assigns the
   field the key's string literal type names, as `x.name` does, switching on the key's tag for a
-  union of keys.
+  union of keys. When those fields have different types, `T[K]` is their union: a read wraps
+  the field in its member's variant, and a write evaluates the value once and stores the
+  value's member into the field when it is the field's type, else stops the program with a
+  `TypeError` (deferred-types.md, decision 4).
 
 ## Interface intersections and upcasts (#350)
 

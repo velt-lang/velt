@@ -1,13 +1,11 @@
 // An error at an instantiation reached through another generic function (#350) is reported where
-// the failing form is, with each call on the way (`getA(o, k)` in `outer`, then `outer(p, k)`)
-// and the type arguments of both.
-function getA<T extends object, K extends keyof T>(o: T, k: K): T[K] {
-  return o[k];
+// the failing form is, with each call on the way (`patchA(o)` in `outer`, then `outer([1])`) and
+// the type arguments of both.
+function patchA<T>(o: T): number {
+  const p: Partial<T> | null = null;
+  return p === null ? 1 : 0;
 }
-function outer<T extends object, K extends keyof T>(o: T, k: K): T[K] {
-  return getA(o, k);
+function outer<U>(o: U): number {
+  return patchA(o);
 }
-type Pt = { x: number; name: string };
-const p: Pt = { x: 1, name: "n" };
-const k: keyof Pt = p.x > 2 ? "x" : "name";
-console.log(outer(p, k));
+console.log(outer([1]));

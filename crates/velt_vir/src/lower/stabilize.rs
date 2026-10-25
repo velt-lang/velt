@@ -79,7 +79,7 @@ impl FnLower<'_, '_> {
                 if !share {
                     return self.borrowed_arg(a);
                 }
-                if later.iter().all(runs_no_code) {
+                if later.iter().all(|x| self.runs_no_code(x)) {
                     if let Some(v) = self.unique_array_elem(a, ty) {
                         return v;
                     }
@@ -334,20 +334,22 @@ pub(super) struct PendingBorrow {
     ty: TyId,
 }
 
-/// Does evaluating `e` run no code that could reach an array: a local, a literal, a closure
-/// literal (which only captures), or a plain field, element or numeric cast of one of those?
-fn runs_no_code(e: &hir::Expr) -> bool {
-    use hir::ExprKind as K;
-    match &e.kind {
-        K::Lit(_) | K::Local(..) | K::FnRef(..) | K::Closure(_) => true,
-        K::Field { base, .. } | K::Cast(base) | K::Upcast(base) | K::WrapSome(base) => {
-            runs_no_code(base)
-        }
-        K::Index { base, index, .. } => runs_no_code(base) && runs_no_code(index),
-        _ => false,
-    }
-}
-
 fn cbool(b: bool) -> Operand {
     Operand::Const(Const::Bool(b), Ty::Bool)
+}
+
+impl FnLower<'_, '_> {
+    /// Does evaluating `e` run no code that could reach an array: a local, a literal, a closure
+    /// literal (which only captures), or a plain field, element or numeric cast of one of those?
+    /// A copy of an object type's fields (`part_copy_upcast`) makes a new object.
+    fn runs_no_code(&mut self, e: &hir::Expr) -> bool {
+        use hir::ExprKind as K;
+        match &e.kind {
+            K::Lit(_) | K::Local(..) | K::FnRef(..) | K::Closure(_) => true,
+            K::Upcast(base) => !self.part_copy_upcast(e) && self.runs_no_code(base),
+            K::Field { base, .. } | K::Cast(base) | K::WrapSome(base) => self.runs_no_code(base),
+            K::Index { base, index, .. } => self.runs_no_code(base) && self.runs_no_code(index),
+            _ => false,
+        }
+    }
 }

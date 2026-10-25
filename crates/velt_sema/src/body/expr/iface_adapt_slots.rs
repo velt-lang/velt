@@ -39,6 +39,89 @@ impl AdapterParts {
 /// The method of the adapter for slot `slot` (signature `s`): calls the slot on the wrapped
 /// value, converting the arguments and the result. A `setter` slot takes `this` mutably and its
 /// value by move, as the setters of `iface_writes` do.
+/// The entry of a generic method's slot `s` (with `own` type parameters of its own) in an
+/// adapter: a method generic over the adapter's and its own type parameters, so it has no table
+/// entry (lowering's `impl_entries`); a generic method is only called statically, on a type
+/// parameter, and an adapter is never one. It stops the program if ever reached.
+pub(super) fn adapter_stub(cx: &mut Ctx, p: &AdapterParts, s: &SlotSig, own: u32) -> DefId {
+    let span = p.span;
+    let name = format!("{} adapter.{}", p.iname, s.name);
+    let mut info =
+        crate::collect::fn_placeholder(name.clone(), span, span, p.module, FnKind::Method, None);
+    let mut generics = Generics::default();
+    for n in p.param_names() {
+        generics.push(&n);
+    }
+    for k in 0..own {
+        generics.push(&format!("M{k}"));
+    }
+    let n = generics.len() as u32;
+    info.generics = generics;
+    info.this = Some(ThisSig {
+        ty: p.self_ty,
+        mode: PassMode::Borrow,
+    });
+    let unit = cx.ty.unit;
+    info.ret = unit;
+    info.fixed_modes = true;
+    info.state = BodyState::Done;
+    info.owner = Some(p.def);
+    info.local_kinds = vec![crate::body::LocalKind::This];
+    let def = cx.alloc_def(span, DefInfo::Fn(Box::new(info)));
+    let never = cx.ty.never;
+    let msg = hir::Expr {
+        kind: H::Lit(hir::Lit::Str(format!(
+            "internal: the generic method `{}` called through an interface adapter",
+            s.name
+        ))),
+        ty: cx.ty.str_,
+        span,
+    };
+    let stop = hir::Expr {
+        kind: H::Call {
+            callee: Callee::Intrinsic(hir::Intrinsic::Panic),
+            args: vec![msg],
+        },
+        ty: never,
+        span,
+    };
+    cx.defs[def.0 as usize] = Some(hir::Def::Fn(hir::FnDef {
+        name,
+        generics: n,
+        params: vec![hir::Param {
+            local: hir::LocalId(0),
+            ty: p.self_ty,
+            mode: PassMode::Borrow,
+        }],
+        ret: unit,
+        is_async: false,
+        is_generator: false,
+        self_ty: Some(p.self_ty),
+        captures: vec![],
+        shares_captures: false,
+        body: hir::Body {
+            locals: vec![hir::LocalDef {
+                name: "this".into(),
+                ty: p.self_ty,
+                mutable: false,
+                boxed: false,
+                span,
+            }],
+            block: hir::Block {
+                stmts: vec![hir::Stmt {
+                    kind: hir::StmtKind::Expr(stop),
+                    span,
+                }],
+                value: None,
+                span,
+            },
+        },
+        throws: None,
+        span,
+    }));
+    def
+}
+
 pub(super) fn adapter_method(
     cx: &mut Ctx,
     p: &AdapterParts,
@@ -325,6 +408,55 @@ pub(crate) fn adapter_setter(cx: &mut Ctx, p: &AdapterParts, field: usize) -> Op
             default: None,
         }],
         ret: cx.ty.unit,
+        own: 0,
     };
     Some(adapter_method(cx, p, slot, &sig, true))
+}
+
+/// Are `from` and `to` object types with the same fields in order, each of the same type or
+/// converting inside an adapter ([`value_ok`])?
+pub(super) fn fields_ok(cx: &mut Ctx, from: TyId, to: TyId, m: &mut Mode) -> bool {
+    if !(cx.is_object_type(from) && cx.is_object_type(to)) {
+        return false;
+    }
+    let (fa, fb) = (cx.public_fields(from), cx.public_fields(to));
+    fa.len() == fb.len()
+        && fa.iter().zip(&fb).all(|(a, b)| {
+            a.name == b.name
+                && a.optional == b.optional
+                && (a.ty == b.ty || value_ok(cx, a.ty, b.ty, false, m))
+        })
+}
+
+/// Is slot `s` one whose type could not be resolved, in the interface (a generic function type)
+/// or at these type arguments (`keyof any` in a mapped type)? Its error was reported where the
+/// type is written: refusing the conversion too would add an error at every conversion site
+/// for the same cause. A slot mentioning the implementor's own type parameter (`own`) is
+/// decided as usual.
+pub(super) fn unresolved_slot(
+    cx: &mut Ctx,
+    s: &SlotSig,
+    own: u32,
+    fa: &[TyId],
+    ta: &[TyId],
+) -> bool {
+    let tys: Vec<TyId> = s
+        .params
+        .iter()
+        .map(|p| p.ty)
+        .chain(std::iter::once(s.ret))
+        .collect();
+    let mut mentions_own = false;
+    for &t in &tys {
+        cx.ty.visit(t, &mut |k| {
+            mentions_own |= matches!(k, TyKind::Param(p) if *p == own)
+        });
+    }
+    if mentions_own {
+        return false;
+    }
+    tys.iter().any(|&t| {
+        let (f, g) = (cx.subst(t, fa), cx.subst(t, ta));
+        cx.ty.has_error(f) || cx.ty.has_error(g)
+    })
 }

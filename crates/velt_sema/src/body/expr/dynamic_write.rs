@@ -339,6 +339,11 @@ impl FnCx<'_, '_> {
             let any = self.any_ty()?;
             return Some(WriteKey::Str(self.coerce(k, any)));
         }
+        // A key of a type parameter's keys (`r[k] = o[k]` with `K extends keyof T`): its string.
+        let k = match self.generic_key_string(k, str_) {
+            Ok(s) => return Some(WriteKey::Str(s)),
+            Err(k) => k,
+        };
         let tn = self.cx.display(k.ty);
         self.cx.error(
             Diagnostic::error(

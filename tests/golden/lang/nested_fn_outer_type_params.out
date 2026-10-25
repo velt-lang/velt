@@ -1,0 +1,4 @@
+[ { ok: false, error: 'no' }, { ok: true, value: 4 } ] { ok: true, value: 'x' }
+[ [], [] ]
+[ 'a', 'b' ] 3
+[ 0, 0 ]

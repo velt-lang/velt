@@ -48,7 +48,11 @@ pub(super) struct KnownFn {
 
 impl FnLower<'_, '_> {
     /// Is `e` a frozen root (module docs), or a part of one?
-    pub(super) fn frozen_root(&self, e: &hir::Expr) -> bool {
+    pub(super) fn frozen_root(&mut self, e: &hir::Expr) -> bool {
+        // A copy of an object type's fields is a new object of this thread's.
+        if self.part_copy_upcast(e) {
+            return false;
+        }
         match &e.kind {
             K::Call {
                 callee: Callee::Intrinsic(Intrinsic::SharedRead),
@@ -126,7 +130,7 @@ impl FnLower<'_, '_> {
         if !self.own_captures {
             return false;
         }
-        let Some(root) = place_root(e) else {
+        let Some(root) = self.own_place_root(e) else {
             return false;
         };
         let captured = match self.cx.cur_def.map(|d| self.cx.hir.def(d)) {
@@ -134,6 +138,22 @@ impl FnLower<'_, '_> {
             _ => false,
         };
         captured || self.caller_alias(root)
+    }
+
+    /// [`place_root`], not through a copy of an object type's fields (`part_copy_upcast`),
+    /// which is a new object rather than a part of its operand.
+    fn own_place_root(&mut self, e: &hir::Expr) -> Option<LocalId> {
+        match &e.kind {
+            K::Local(l, _) => Some(*l),
+            K::Upcast(_) if self.part_copy_upcast(e) => None,
+            K::Field { base, .. }
+            | K::Index { base, .. }
+            | K::UnwrapSome(base, _)
+            | K::UnwrapVariant { expr: base, .. }
+            | K::Downcast(base)
+            | K::Upcast(base) => self.own_place_root(base),
+            _ => None,
+        }
     }
 
     /// The frozen value `e` read in place: its own use borrowed whatever its HIR mode, since
@@ -153,7 +173,7 @@ impl FnLower<'_, '_> {
     }
 
     /// The frozen value `e` shares (`Intrinsic::Share` of a frozen root), if it is such a share.
-    pub(super) fn frozen_share<'e>(&self, e: &'e hir::Expr) -> Option<&'e hir::Expr> {
+    pub(super) fn frozen_share<'e>(&mut self, e: &'e hir::Expr) -> Option<&'e hir::Expr> {
         match &e.kind {
             K::Call {
                 callee: Callee::Intrinsic(Intrinsic::Share),
@@ -445,7 +465,8 @@ struct Changed<'h> {
     out: FxHashSet<LocalId>,
 }
 
-/// The local a place is rooted in.
+/// The local a place is rooted in (through a copy of an object type's fields too, which
+/// its users here only over-approximate: a write to it, or an alias of it).
 pub(super) fn place_root(e: &hir::Expr) -> Option<LocalId> {
     match &e.kind {
         K::Local(l, _) => Some(*l),

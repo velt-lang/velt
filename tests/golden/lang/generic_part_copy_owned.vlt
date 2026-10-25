@@ -1,0 +1,74 @@
+// A generic copy of `T & { tag }` as its `T` part owns what it holds: returned, stored in a
+// local, an array, an object or a closure argument, with array and string fields, a type that
+// is boxed elsewhere, and inside a `read` callback, every copy is freed once (#350).
+type Tagged<T> = T & { tag: string };
+
+function unwrap<T>(s: Tagged<T>): T {
+  return s;
+}
+function viaLocal<T>(s: Tagged<T>): T {
+  const r: T = s;
+  return r;
+}
+function viaLet<T>(s: Tagged<T>): T {
+  let r: T = s;
+  const q = r;
+  return q;
+}
+function keep<T>(s: Tagged<T>, out: T[]): void {
+  out.push(s);
+}
+function each<T>(s: Tagged<T>, f: (t: T) => void): void {
+  f(s);
+}
+function arr<T>(s: Tagged<T>): T[] {
+  return [s, s];
+}
+function obj<T>(s: Tagged<T>): { v: T } {
+  return { v: s };
+}
+
+class St {
+  n: number = 1;
+}
+function underRead<T>(rw: shared<RwLock<St>>, mine: Tagged<T>, out: T[]): void {
+  rw.read((c) => {
+    const r: T = mine;
+    out.push(r);
+    out.push(unwrap(mine));
+  });
+}
+
+function main() {
+  const x: Tagged<{ a: number; xs: number[]; name: string }> = {
+    a: 1,
+    xs: [1, 2],
+    tag: "t",
+    name: "n",
+  };
+  const y = unwrap(x);
+  console.log(y.xs, x.xs, y.name);
+  console.log(viaLocal(x).name, viaLet(x).xs.length);
+  const outs: { a: number; xs: number[]; name: string }[] = [];
+  keep(x, outs);
+  keep(x, outs);
+  outs[0].xs.push(9);
+  console.log(outs.length, outs[1].xs, outs[0].name, x.xs);
+  each(x, (t) => console.log(t.name));
+  console.log(arr(x).length, obj(x).v.name);
+
+  // `{ a: number }` is boxed: it is a `Set` element type.
+  const boxes = new Set<{ a: number }>();
+  const b: Tagged<{ a: number }> = { a: 1, tag: "t" };
+  const p = unwrap(b);
+  const q = unwrap(b);
+  console.log(p.a, q.a, boxes.size, b.a);
+
+  const mine: Tagged<{ a: number; xs: string[] }> = { a: 1, xs: ["p"], tag: "t" };
+  const rw = shared(new RwLock<St>(new St()));
+  const got: { a: number; xs: string[] }[] = [];
+  underRead(rw, mine, got);
+  underRead(rw, mine, got);
+  got[0].xs.push("z");
+  console.log(got.length, got[2].xs, mine.xs);
+}

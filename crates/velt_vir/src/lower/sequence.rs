@@ -100,6 +100,9 @@ pub(super) fn may_move_local(e: &hir::Expr, l: hir::LocalId) -> bool {
 /// Can evaluating `e` write to a local of the enclosing function?
 fn writes_local(e: &hir::Expr) -> bool {
     use hir::ExprKind as K;
+    if let Some(wrap) = velt_sema::effects::routed_wrap(e) {
+        return writes_local(wrap);
+    }
     match &e.kind {
         K::Lit(_) | K::Local(..) | K::Global(_) | K::FnRef(..) => false,
         K::Unary { expr, .. }

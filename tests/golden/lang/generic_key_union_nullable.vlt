@@ -1,0 +1,25 @@
+// A write through a key union whose value type is `T | null | undefined` (nullable and optional
+// fields side by side): each nothing goes into a field that holds it, each value into its field.
+function setF<T, K extends keyof T>(o: T, k: K, v: T[K]): void {
+  o[k] = v;
+}
+type W = { a: number | null; b?: number; c: number | null | undefined; d?: number | null };
+
+function main() {
+  const v: W = { a: null, b: 0, c: 1, d: 0 };
+  const ks: (keyof W)[] = ["a", "b", "c", "d"];
+  setF(v, ks[1], 4);
+  setF(v, ks[0], 2);
+  console.log(v);
+  setF(v, ks[0], null);
+  setF(v, ks[2], undefined);
+  setF(v, ks[3], null);
+  console.log(v);
+  setF(v, ks[1], undefined);
+  setF(v, ks[2], null);
+  setF(v, ks[3], undefined);
+  console.log(v);
+  setF(v, ks[3], 7);
+  setF(v, ks[2], 8);
+  console.log(v);
+}

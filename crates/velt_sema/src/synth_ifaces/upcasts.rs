@@ -61,9 +61,11 @@ impl Ctx<'_> {
         let TyKind::Adt(d, targs) = self.ty.kind(ty).clone() else {
             return None;
         };
-        // Only a nominal type: an object literal implements the interface itself.
+        // Only a nominal type: an object literal implements the interface itself. An object
+        // type implements a bound's interface of fields with its own fields.
         let a = self.adt(d)?;
-        if self.class_of(ty).is_none() && a.kind != crate::hir::AdtKind::Struct {
+        let anon_ok = a.kind == crate::hir::AdtKind::Anon && self.is_object_bound(iface);
+        if self.class_of(ty).is_none() && a.kind != crate::hir::AdtKind::Struct && !anon_ok {
             return None;
         }
         let n = a.generics.len();
@@ -121,6 +123,31 @@ impl Ctx<'_> {
             }
             impls.push((pd, index));
         }
+        let bound = self.is_object_bound(iface);
+        if bound {
+            // A bound's interface over other type parameters (`T extends { value: U }`): the
+            // type's fields give them (`U` is the type of its `value`).
+            let own_args = match self.ty.kind(own_ty) {
+                TyKind::Adt(_, a) => a.clone(),
+                _ => vec![],
+            };
+            let own = self.adt(d)?.fields.clone();
+            let want: Vec<(String, TyId)> = self
+                .iface(iface)?
+                .fields
+                .iter()
+                .map(|f| (f.name.clone(), f.ty))
+                .collect();
+            for (name, fty) in want {
+                if let Some(f) = own
+                    .iter()
+                    .find(|f| f.name == name && f.private_to.is_none())
+                {
+                    let have = self.subst(f.ty, &own_args);
+                    self.match_ty(fty, have, &mut slots);
+                }
+            }
+        }
         let args: Vec<TyId> = slots
             .into_iter()
             .map(|s| s.unwrap_or(self.ty.never))
@@ -154,6 +181,19 @@ impl Ctx<'_> {
             let field = own
                 .iter()
                 .position(|f| f.name == name && f.private_to.is_none());
+            // A required field satisfies a bound's optional one (`T extends { id?: number }`):
+            // read, it is present; there is no setter (it can't be made absent).
+            let wrapped = field.filter(|&k| {
+                bound && self.ty.opt_payload(want) == Some(self.subst(own[k].ty, &own_args))
+            });
+            if let Some(k) = wrapped {
+                let fty = self.subst(own[k].ty, &own_args);
+                methods.push(crate::collect::getters::field_getter_some(
+                    self, d, own_ty, k, fty, want,
+                ));
+                stored.push(None);
+                continue;
+            }
             let Some(k) = field.filter(|&k| self.subst(own[k].ty, &own_args) == want) else {
                 // A `get` (and `set`) accessor of the class provides the field.
                 let (g, set) = crate::collect::impls::accessor_slots(self, d, own_ty, &name, want)?;

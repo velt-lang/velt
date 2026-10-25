@@ -1,0 +1,24 @@
+// A value of a type parameter with more fields used as `T` or as an object part of it
+// (`T & { tag }` as `T`, as `{ tag }`, `{ $set }`), which TypeScript passes as it is: the same
+// value where both are one type at an instantiation, else a copy of the fields, which the
+// program cannot tell from the original (#350, #1317; lang/errors/generic_convert_copy shows
+// what it may not do with a copy).
+type Tagged<T> = T & { tag: string };
+type Setter = { $set(v: string): void };
+function unwrap<T>(s: Tagged<T>): T {
+  return s;
+}
+function tagPart<T>(s: Tagged<T>): { tag: string } {
+  return s;
+}
+function setter<T extends object>(s: T & Setter): Setter {
+  return s;
+}
+function stamp<T>(x: T & { id?: string }): T {
+  return x;
+}
+const x: Tagged<{ a: number }> = { a: 1, tag: "t" };
+console.log(unwrap(x).a, tagPart(x).tag);
+const w = { a: 1, $set(v: string) { console.log("set", v); } };
+setter(w).$set("through the part");
+console.log(stamp({ n: 1 }).n, stamp({ n: 2, id: "z" }));

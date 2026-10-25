@@ -11,123 +11,140 @@ use velt_syntax::ast::{self, ItemKind as I, StmtKind as S};
 
 use super::arrow_function;
 use super::recursive::recursive_arrow;
+use super::typed::{typed_function, GenericFnTypes};
 use crate::ast_walk::{children, children_mut};
 
 /// Does a body or initializer in `item` declare a local generic arrow constant?
-pub(super) fn item_has_local(item: &ast::Item) -> bool {
+pub(super) fn item_has_local(item: &ast::Item, t: &GenericFnTypes) -> bool {
     match &item.kind {
-        I::Function(f) => fn_has(f),
-        I::Struct(t) | I::Class(t) => {
-            t.fields
+        I::Function(f) => fn_has(f, t),
+        I::Struct(d) | I::Class(d) => {
+            d.fields
                 .iter()
                 .filter_map(|f| f.default.as_ref())
-                .any(expr_has)
-                || t.constructor.as_ref().is_some_and(fn_has)
-                || t.methods.iter().any(|m| fn_has(&m.decl))
+                .any(|x| expr_has(x, t))
+                || d.constructor.as_ref().is_some_and(|x| fn_has(x, t))
+                || d.methods.iter().any(|m| fn_has(&m.decl, t))
         }
-        I::Extend(e) => e.methods.iter().any(|m| fn_has(&m.decl)),
+        I::Extend(e) => e.methods.iter().any(|m| fn_has(&m.decl, t)),
         I::Interface(i) => i
             .methods
             .iter()
             .filter_map(|m| m.body.as_ref())
-            .any(block_has),
-        I::Var(v) => v.init.as_ref().is_some_and(expr_has),
-        I::Augment(a) => a.items.iter().any(item_has_local),
-        I::Namespace(n) => n.items.iter().any(item_has_local),
+            .any(|x| block_has(x, t)),
+        I::Var(v) => v.init.as_ref().is_some_and(|x| expr_has(x, t)),
+        I::Augment(a) => a.items.iter().any(|x| item_has_local(x, t)),
+        I::Namespace(n) => n.items.iter().any(|x| item_has_local(x, t)),
         I::Import(_) | I::Enum(_) | I::TypeAlias(_) | I::ExternFn(_) => false,
     }
 }
 
-fn fn_has(f: &ast::FnDecl) -> bool {
+fn fn_has(f: &ast::FnDecl, t: &GenericFnTypes) -> bool {
     f.sig
         .params
         .iter()
         .filter_map(|p| p.default.as_ref())
-        .any(expr_has)
-        || block_has(&f.body)
+        .any(|x| expr_has(x, t))
+        || block_has(&f.body, t)
 }
 
-fn block_has(b: &ast::Block) -> bool {
-    b.stmts.iter().any(stmt_has)
+fn block_has(b: &ast::Block, t: &GenericFnTypes) -> bool {
+    b.stmts.iter().any(|x| stmt_has(x, t))
 }
 
-fn stmt_has(s: &ast::Stmt) -> bool {
+fn stmt_has(s: &ast::Stmt, t: &GenericFnTypes) -> bool {
     match &s.kind {
         S::Var(v) => {
             arrow_function(v).is_some()
                 || recursive_arrow(v).is_some()
-                || v.init.as_ref().is_some_and(expr_has)
+                || t.may_declare(v)
+                || v.init.as_ref().is_some_and(|x| expr_has(x, t))
         }
-        S::Expr(e) | S::Throw(e) | S::Return(Some(e)) => expr_has(e),
+        S::Expr(e) | S::Throw(e) | S::Return(Some(e)) => expr_has(e, t),
         S::If { cond, then, els } => {
-            expr_has(cond) || block_has(then) || els.as_deref().is_some_and(stmt_has)
+            expr_has(cond, t)
+                || block_has(then, t)
+                || els.as_deref().is_some_and(|x| stmt_has(x, t))
         }
-        S::While { cond, body } | S::DoWhile { body, cond } => expr_has(cond) || block_has(body),
+        S::While { cond, body } | S::DoWhile { body, cond } => {
+            expr_has(cond, t) || block_has(body, t)
+        }
         S::For {
             init,
             cond,
             update,
             body,
         } => {
-            init.as_deref().is_some_and(stmt_has)
-                || cond.as_ref().is_some_and(expr_has)
-                || update.as_ref().is_some_and(expr_has)
-                || block_has(body)
+            init.as_deref().is_some_and(|x| stmt_has(x, t))
+                || cond.as_ref().is_some_and(|x| expr_has(x, t))
+                || update.as_ref().is_some_and(|x| expr_has(x, t))
+                || block_has(body, t)
         }
-        S::ForOf { iter, body, .. } => expr_has(iter) || block_has(body),
-        S::Block(b) => block_has(b),
-        S::Labeled { body, .. } => stmt_has(body),
+        S::ForOf { iter, body, .. } => expr_has(iter, t) || block_has(body, t),
+        S::Block(b) => block_has(b, t),
+        S::Labeled { body, .. } => stmt_has(body, t),
         S::Switch {
             discriminant,
             cases,
         } => {
-            expr_has(discriminant)
-                || cases
-                    .iter()
-                    .any(|c| c.test.as_ref().is_some_and(expr_has) || c.body.iter().any(stmt_has))
+            expr_has(discriminant, t)
+                || cases.iter().any(|c| {
+                    c.test.as_ref().is_some_and(|x| expr_has(x, t))
+                        || c.body.iter().any(|x| stmt_has(x, t))
+                })
         }
         S::Try {
             body,
             catch,
             finally,
         } => {
-            block_has(body)
-                || catch.as_ref().is_some_and(|(_, c)| block_has(c))
-                || finally.as_ref().is_some_and(block_has)
+            block_has(body, t)
+                || catch.as_ref().is_some_and(|(_, c)| block_has(c, t))
+                || finally.as_ref().is_some_and(|x| block_has(x, t))
         }
-        S::Item(item) => item_has_local(item),
+        S::Item(item) => item_has_local(item, t),
         S::Return(None) | S::Break(_) | S::Continue(_) | S::Empty => false,
     }
 }
 
-fn expr_has(e: &ast::Expr) -> bool {
+fn expr_has(e: &ast::Expr, t: &GenericFnTypes) -> bool {
     let nested = match &e.kind {
         ast::ExprKind::Arrow {
             body: ast::ArrowBody::Block(b),
             ..
-        } => block_has(b),
-        ast::ExprKind::Function(d) => fn_has(d),
+        } => block_has(b, t),
+        ast::ExprKind::Function(d) => fn_has(d, t),
         ast::ExprKind::Object(props) => props
             .iter()
-            .any(|p| matches!(p, ast::ObjectProp::Method(d) if fn_has(d))),
+            .any(|p| matches!(p, ast::ObjectProp::Method(d) if fn_has(d, t))),
         _ => false,
     };
     if nested {
         return true;
     }
     let mut found = false;
-    children(e, &mut |c| found = found || expr_has(c));
+    children(e, &mut |c| found = found || expr_has(c, t));
     found
 }
 
 /// Rewrites local generic arrow constants into nested functions, collecting the name spans of
 /// the functions it creates.
-#[derive(Default)]
-pub(super) struct Rewriter {
+pub(super) struct Rewriter<'t, 'm> {
     pub lifted: Vec<Span>,
+    /// The module of the item being rewritten.
+    pub module: usize,
+    types: &'t GenericFnTypes<'m>,
 }
 
-impl Rewriter {
+impl<'t, 'm> Rewriter<'t, 'm> {
+    pub(super) fn new(types: &'t GenericFnTypes<'m>) -> Self {
+        Rewriter {
+            lifted: vec![],
+            module: 0,
+            types,
+        }
+    }
+
     /// Rewrite every local generic arrow constant in `item`.
     pub(super) fn item(&mut self, item: &mut ast::Item) {
         match &mut item.kind {
@@ -180,7 +197,13 @@ impl Rewriter {
     /// `s`, a statement of a block: the constant itself becomes a nested function.
     fn stmt(&mut self, s: &mut ast::Stmt) {
         if let S::Var(v) = &s.kind {
-            if let Some(f) = arrow_function(v) {
+            let typed = || {
+                self.types
+                    .may_declare(v)
+                    .then(|| typed_function(v, self.module, self.types))
+                    .flatten()
+            };
+            if let Some(f) = arrow_function(v).or_else(typed) {
                 self.lifted.push(f.sig.name.span);
                 let item = ast::Item {
                     kind: I::Function(f),

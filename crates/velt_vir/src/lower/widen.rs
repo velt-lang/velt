@@ -56,7 +56,7 @@ impl FnLower<'_, '_> {
 
     /// The variant of union `u` that can hold an error of type `m`: `m` itself, a union member
     /// containing it, or a base class of it.
-    fn member_variant(&mut self, u: TyId, m: TyId) -> Option<u32> {
+    pub(super) fn member_variant(&mut self, u: TyId, m: TyId) -> Option<u32> {
         let n = self.union_len(u);
         let members: Vec<TyId> = (0..n).map(|k| self.cx.variant_tys(u, k)[0]).collect();
         if let Some(k) = members.iter().position(|&p| p == m) {
@@ -95,7 +95,13 @@ impl FnLower<'_, '_> {
     }
 
     /// Union value of type `u` in variant `k` holding `payload` (of type `payload_ty`).
-    fn union_value(&mut self, u: TyId, k: u32, payload: Operand, payload_ty: TyId) -> Operand {
+    pub(super) fn union_value(
+        &mut self,
+        u: TyId,
+        k: u32,
+        payload: Operand,
+        payload_ty: TyId,
+    ) -> Operand {
         let base = self.cx.ty(u);
         let view = self.cx.view(u, k);
         let t = self.temp(base);

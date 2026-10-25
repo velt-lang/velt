@@ -22,6 +22,11 @@ pub(crate) struct Types {
     pub inferred_fns: rustc_hash::FxHashSet<TyId>,
 }
 
+/// The note on an error about a `never` in a program that names `bigint`, whose `never` is
+/// likely a `bigint` (`bigint[]` is `never[]`).
+pub(crate) const BIGINT_NEVER_NOTE: &str =
+    "a `bigint` is a `never` too: it has no values in Velt yet (#1088)";
+
 impl Types {
     pub fn new() -> Self {
         let mut table = TyTable::new();
