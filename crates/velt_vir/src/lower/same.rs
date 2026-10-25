@@ -103,6 +103,13 @@ impl FnLower<'_, '_> {
     /// function value is its code and its environment (each evaluation of a closure has its
     /// own once function values are compared: closure.rs).
     pub(super) fn ref_identity(&mut self, a: &Place, b: &Place, ty: TyId) -> Operand {
+        // A generic function value (glue/generic_slots.rs): copies box the same closure, whose
+        // env is its identity (every closure has one in a program that compares functions).
+        if self.cx.is_generic_fn_value(ty) {
+            self.cx.note_fn_identity();
+            let (x, y) = (self.boxed_env(a), self.boxed_env(b));
+            return self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, x, y));
+        }
         if matches!(self.cx.kind(ty), TyKind::Dyn(..)) {
             self.cx.note_identity(ty);
             let (a, b) = (self.through_adapters(a, ty), self.through_adapters(b, ty));
@@ -112,6 +119,17 @@ impl FnLower<'_, '_> {
         let code = self.word_eq(a, b, 0);
         let env = self.word_eq(a, b, 1);
         self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitAnd, code, env))
+    }
+
+    /// The env of the closure the generic function value at `p` boxes.
+    pub(super) fn boxed_env(&mut self, p: &Place) -> Operand {
+        let agg = self.cx.closure_agg();
+        let data = self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(proj(p, Proj::Field(0)))));
+        let dp = self.operand_place(data, Ty::Ptr);
+        Operand::Copy(Place {
+            local: dp.local,
+            proj: vec![Proj::Deref(Ty::Agg(agg)), Proj::Field(1)],
+        })
     }
 
     /// Do the words `field` of the values at `a` and `b` agree (Bool operand)?
@@ -147,6 +165,16 @@ impl FnLower<'_, '_> {
 }
 
 impl super::Cx<'_> {
+    /// Is `t` a generic function value: an interface value of an interface whose one method is
+    /// sema's `#call` (`velt_sema` `generic_fns`), which only generic closures implement?
+    pub(super) fn is_generic_fn_value(&self, t: TyId) -> bool {
+        let TyKind::Dyn(d, _) = self.kind(t) else {
+            return false;
+        };
+        matches!(self.hir.def(d), hir::Def::Interface(i)
+            if i.methods.len() == 1 && i.methods[0].name == "#call")
+    }
+
     /// Is `t` an object type (compared by identity)?
     pub(super) fn is_object(&self, t: TyId) -> bool {
         match self.types.kind(t) {

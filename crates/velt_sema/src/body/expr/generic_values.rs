@@ -11,10 +11,12 @@
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
-use crate::body::FnCx;
+use crate::body::{FnCx, Want};
+use crate::ctx::Item;
 use crate::defs::Bound;
+use crate::defs::{BodyState, DefInfo, GlobalInfo, GlobalSrc};
 use crate::generic_fns::FnParts;
-use crate::hir::{self, ExprKind as H, ImplDef, TyId, TyKind};
+use crate::hir::{self, DefId, ExprKind as H, ImplDef, TyId, TyKind};
 
 impl FnCx<'_, '_> {
     /// Is arrow `e` a generic closure where `exp` is expected (module docs)?
@@ -270,9 +272,146 @@ impl FnCx<'_, '_> {
 
     /// Named generic function `id` where generic function type `exp` is expected: the generic
     /// closure `(a0, …) => id(a0, …)`, each call of which instantiates `id`.
-    pub(super) fn generic_fn_value(&mut self, id: &ast::Ident, exp: TyId) -> hir::Expr {
+    ///
+    /// A module-level function has one value per type, as JavaScript has one function object: a
+    /// constant of the module state, made when the function is first used as a value of that
+    /// type (as a class's value is, `ctor_values`), so `===`, `Map` and `Set` keys see one
+    /// value.
+    pub(super) fn generic_fn_value(&mut self, d: DefId, id: &ast::Ident, exp: TyId) -> hir::Expr {
+        if let Some(g) = self.generic_fn_global(d, exp) {
+            let read = self.global_read(g, Want::Move, id.span);
+            return self.coerce(read, exp);
+        }
+        let arrow = self.generic_fn_arrow(id, exp);
+        self.generic_closure(&arrow, Some(exp))
+    }
+
+    /// The module constant holding function `d` as a value of generic function type `exp`
+    /// (made once; `None` for a local function or a type over type parameters).
+    fn generic_fn_global(&mut self, d: DefId, exp: TyId) -> Option<DefId> {
+        if self.cx.has_type_params(exp) || self.cx.ty.has_error(exp) {
+            return None;
+        }
+        let f = self.cx.fn_info(d);
+        let (module, qual, span) = (f.module, f.name.clone(), f.name_span);
+        let name = qual.rsplit([':', '.']).next().unwrap_or(&qual).to_string();
+        if !matches!(self.cx.lookup_item(module, &name), Some(Item::Def(x)) if x == d) {
+            return None;
+        }
+        let key = (d, exp);
+        let values = &self.cx.objects.class_values;
+        if let Some((_, g)) = values.iter().find(|(k, _)| *k == key) {
+            return Some(*g);
+        }
+        let info = GlobalInfo {
+            name: format!("{name}#value"),
+            qual_name: format!("{qual}#value"),
+            module,
+            span: Span::DUMMY,
+            ty: exp,
+            init: None,
+            state: BodyState::InProgress,
+            src: GlobalSrc {
+                ann: None,
+                init: None,
+                span,
+                owner: None,
+                is_private: false,
+            },
+            mutable: false,
+            stored: true,
+        };
+        let g = self
+            .cx
+            .alloc_def(Span::DUMMY, DefInfo::Global(Box::new(info)));
+        self.cx.objects.class_values.push((key, g));
+        let id = ast::Ident { name, span };
+        let init = {
+            let mut fcx = crate::body::driver::detached(self.cx, module, &[]);
+            fcx.fn_name = format!("{qual}#value");
+            let arrow = fcx.generic_fn_arrow(&id, exp);
+            fcx.generic_closure(&arrow, Some(exp))
+        };
+        if let DefInfo::Global(info) = &mut self.cx.info[g.0 as usize] {
+            info.init = Some(init);
+            info.state = BodyState::Done;
+        }
+        Some(g)
+    }
+
+    /// The generic function type of generic function `d`'s own signature, for a use as a value
+    /// where `exp` gives no function type to instantiate it at; `None` where it does, or for a
+    /// function whose type parameters include an enclosing function's.
+    pub(super) fn own_generic_type(
+        &mut self,
+        d: DefId,
+        exp: Option<TyId>,
+        span: Span,
+    ) -> Option<TyId> {
+        if let Some(t) = self.hint(exp) {
+            let fns = match self.cx.union_members(t) {
+                Some(ms) => ms,
+                None => vec![t],
+            };
+            if fns
+                .iter()
+                .any(|m| matches!(self.cx.ty.kind(*m), TyKind::FnPtr { .. }))
+            {
+                return None;
+            }
+        }
+        let f = self.cx.fn_info(d);
+        if f.owner.is_some() || f.is_generator || f.is_async {
+            return None;
+        }
+        let (module, qual) = (f.module, f.name.clone());
+        let name = qual.rsplit([':', '.']).next().unwrap_or(&qual).to_string();
+        let top = matches!(self.cx.lookup_item(module, &name), Some(Item::Def(x)) if x == d);
+        if !top && !self.env.params.is_empty() {
+            return None;
+        }
+        let f = self.cx.fn_info(d);
+        let n = f.generics.len();
+        let (params, throws) = (f.params.clone(), f.declared_throws.and_then(|t| t.ty));
+        let generics = f.generics.clone();
+        let ret = crate::body::returns::ret_of(self.cx, d, span);
+        // Its type parameters after the implementor (`Ctx::generic_fn_type`'s numbering).
+        let shift: Vec<TyId> = (1..=n).map(|k| self.cx.ty.param(k as u32)).collect();
+        let sub = |cx: &mut crate::ctx::Ctx, t: TyId| cx.subst(t, &shift);
+        let parts = FnParts {
+            params: params.iter().map(|p| sub(self.cx, p.ty)).collect(),
+            ret: sub(self.cx, ret),
+            throws: throws.map(|t| sub(self.cx, t)),
+            rest: false,
+            bounds: (generics.bounds.iter())
+                .map(|bs| {
+                    bs.iter()
+                        .map(|b| Bound {
+                            iface: b.iface,
+                            args: b.args.iter().map(|a| sub(self.cx, *a)).collect(),
+                        })
+                        .collect()
+                })
+                .collect(),
+            constraints: (generics.constraints.iter())
+                .map(|c| c.map(|t| sub(self.cx, t)))
+                .collect(),
+            site: None,
+        };
+        let t = self
+            .cx
+            .generic_fn_type(parts, 0, generics.names, module, span);
+        (t != self.cx.ty.error).then_some(t)
+    }
+
+    /// `(a0, …) => id(a0, …)` for generic function type `exp`.
+    fn generic_fn_arrow(&mut self, id: &ast::Ident, exp: TyId) -> ast::Expr {
         let Some(g) = self.cx.generic_sig(exp) else {
-            return self.error_expr(id.span);
+            return ast::Expr {
+                id: ast::NodeId(u32::MAX),
+                kind: ast::ExprKind::Ident(id.clone()),
+                span: id.span,
+            };
         };
         let n = g.method.params.len();
         let at = id.span;
@@ -309,15 +448,14 @@ impl FnCx<'_, '_> {
             args,
             optional: false,
         });
-        let arrow = mk(ast::ExprKind::Arrow {
+        mk(ast::ExprKind::Arrow {
             type_params: vec![],
             params,
             ret: None,
             throws: None,
             body: ast::ArrowBody::Expr(Box::new(call)),
             is_async: false,
-        });
-        self.generic_closure(&arrow, Some(exp))
+        })
     }
 
     /// Generic arrow `e` where function type `exp` (not generic) is expected, as TypeScript

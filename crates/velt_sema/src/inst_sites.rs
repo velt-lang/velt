@@ -358,6 +358,17 @@ impl ParamCall {
             if imp.iface != i {
                 continue;
             }
+            // A generic closure made in a generic function runs at that function's type
+            // arguments too, which are not known here.
+            if let TyKind::Closure(c) = *cx.ty.kind(imp.ty) {
+                let own = match &cx.info[c.0 as usize] {
+                    DefInfo::Fn(f) => f.generics.len(),
+                    _ => 0,
+                };
+                if own != self.margs.len() {
+                    continue;
+                }
+            }
             let found = match imp.generics {
                 0 => cx.try_impl(index, imp.ty).into_iter().collect(),
                 _ => made_instances(cx, index),

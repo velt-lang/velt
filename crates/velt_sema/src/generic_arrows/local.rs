@@ -140,6 +140,9 @@ pub(super) struct Rewriter<'t, 'm> {
     /// arrow in it takes from its surroundings that is not among them is a local of an
     /// enclosing function.
     outer_free: Option<FxHashSet<String>>,
+    /// The names the outermost code uses as values somewhere (not only as the callee of a
+    /// call): a generic arrow constant of such a name stays a value (`captures`).
+    values: FxHashSet<String>,
 }
 
 impl<'t, 'm> Rewriter<'t, 'm> {
@@ -149,6 +152,7 @@ impl<'t, 'm> Rewriter<'t, 'm> {
             module: 0,
             types,
             outer_free: None,
+            values: FxHashSet::default(),
         }
     }
 
@@ -164,14 +168,16 @@ impl<'t, 'm> Rewriter<'t, 'm> {
             .map(|id| id.name.clone())
             .collect();
         self.outer_free = Some(names);
+        self.values = value_uses(&root);
         let out = f(self);
         self.outer_free = None;
+        self.values.clear();
         out
     }
 
-    /// Does generic arrow constant `v` use a local of an enclosing function? Then it stays a
-    /// generic closure (`body::expr::generic_values`): a nested generic function captures
-    /// nothing.
+    /// Does generic arrow constant `v` use a local of an enclosing function, or is it used as a
+    /// value? Then it stays a generic closure (`body::expr::generic_values`): a nested generic
+    /// function captures nothing, and is a new value at each use.
     fn captures(&self, v: &ast::VarDecl) -> bool {
         let (Some(outer), Some(init)) = (&self.outer_free, &v.init) else {
             return false;
@@ -180,6 +186,9 @@ impl<'t, 'm> Rewriter<'t, 'm> {
             ast::PatternKind::Ident(n) => n.name.as_str(),
             _ => "",
         };
+        if self.values.contains(own) {
+            return true;
+        }
         velt_syntax::scope::free_in_expr(init)
             .iter()
             .any(|id| id.name != own && id.name != "this" && !outer.contains(&id.name))
@@ -375,4 +384,34 @@ fn expr_of(f: ast::FnDecl) -> ast::Expr {
         kind: ast::ExprKind::Function(Box::new(f)),
         span,
     }
+}
+
+/// The names `root` uses as values: those of identifiers that are not only callees of calls.
+fn value_uses(root: &ast::Expr) -> FxHashSet<String> {
+    struct Uses<'a> {
+        all: rustc_hash::FxHashMap<&'a str, usize>,
+        called: rustc_hash::FxHashMap<&'a str, usize>,
+    }
+    impl<'a> velt_syntax::visit::Visit<'a> for Uses<'a> {
+        fn expr(&mut self, e: &'a ast::Expr) {
+            match &e.kind {
+                ast::ExprKind::Ident(id) => *self.all.entry(&id.name).or_default() += 1,
+                ast::ExprKind::Call { callee, .. } => {
+                    if let ast::ExprKind::Ident(id) = &callee.kind {
+                        *self.called.entry(&id.name).or_default() += 1;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut u = Uses {
+        all: Default::default(),
+        called: Default::default(),
+    };
+    velt_syntax::visit::walk_expr(root, &mut u);
+    (u.all.into_iter())
+        .filter(|(n, k)| u.called.get(n).copied().unwrap_or(0) < *k)
+        .map(|(n, _)| n.to_string())
+        .collect()
 }
