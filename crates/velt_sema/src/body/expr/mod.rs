@@ -143,6 +143,7 @@ pub(crate) mod spawn_promises;
 mod spread;
 mod spread_args;
 mod spread_array;
+mod spread_cond;
 mod spread_optional;
 pub(crate) mod static_copy;
 mod std_glue;

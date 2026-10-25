@@ -740,6 +740,11 @@ nothings alike:
   `string` ``): Node would copy the `undefined`, which the field's type can't hold. Without a
   target type the field has the earlier part's type, as TypeScript types it (`{ ...u, ...p }`
   with `u.n: number` and `p.n?: number` has `n: number`), so the same holds there.
+- A spread of a conditional of object literals, `{ id, ...(c ? { boundaryId: id } : {}) }`, adds
+  the keys of the branch taken, as in Node: the conditional is an object type in which a field
+  only some branches write is optional (TypeScript's `{ boundaryId: number } | {}`, spread as
+  `{ boundaryId?: number }`), so the key is absent when the other branch is taken. Each branch is
+  checked under the narrowing of the condition (`r ? { redirect: { ...r } } : {}`).
 - An object literal may leave out an optional field (`{ port: i64; host?: string }` accepts
   `{ port: 80 }`). A field of an object type declared `a: T | null` may be left out too, and is
   then `null`.

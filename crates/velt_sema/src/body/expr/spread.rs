@@ -235,6 +235,7 @@ impl FnCx<'_, '_> {
         lets: &mut Vec<hir::Stmt>,
         record_ok: bool,
     ) -> Vec<(String, hir::Expr, Src)> {
+        let hint = hint.or_else(|| self.cond_spread_hint(e));
         let h = self.expr(e, hint, Want::Borrow);
         if !record_ok && self.record_args(h.ty).is_some() {
             let tn = self.cx.display(h.ty);
