@@ -289,6 +289,10 @@ pub(crate) struct Frame {
     /// Locals declared with a read-only array type (`readonly T[]`, `ReadonlyArray<T>`), which
     /// the body may not write to (`readonly_arrays.rs`).
     pub readonly_arrays: rustc_hash::FxHashSet<LocalId>,
+    /// What the position of an assignment used as a value expects (`assign_value`): a
+    /// `new C()` assigned through `any` with `??=`, `||=` or `&&=` takes its type arguments from
+    /// it (`dynamic_write`).
+    pub assign_hint: Option<TyId>,
     /// `const c = [2, "y"] as const` (literals of different types): its elements, which an
     /// array pattern taking `c` apart reads as the literal (`literal_patterns`).
     pub as_const_tuples: FxHashMap<LocalId, Vec<velt_syntax::ast::Expr>>,
@@ -409,6 +413,7 @@ impl Frame {
             using_shares: vec![],
             await_using: Default::default(),
             readonly_arrays: Default::default(),
+            assign_hint: None,
             as_const_tuples: Default::default(),
             closure_consts: Default::default(),
             callable_writes: None,

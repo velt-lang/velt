@@ -2985,7 +2985,9 @@ Writing a `readonly` field, a method, an element further past the end of an arra
 `length` (Node leaves holes, which Velt's arrays don't have), or a member of a
 string, number or function stops with a `TypeError` naming #924. `x.f ??= v`, `x.f ||= v` and
 `x.f &&= v` read the member once and evaluate and write `v` only when the operator calls for it,
-as in JavaScript; the expression is the member read or the value written. The other compound
+as in JavaScript; the expression is the member read or the value written. A `new C()` without
+type arguments there takes them from what the expression is assigned to, as nothing else gives
+them: `const seen: Set<string> = (ctx.keys ??= new Set());` stores a `Set<string>`. The other compound
 assignments (`x.n += 1`, `x[i] *= 2`) and `x.n++` read the member once, combine it as the
 operator does (below) and write the result back.
 
