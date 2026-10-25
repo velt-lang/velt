@@ -62,6 +62,9 @@ pub(crate) struct Ctx<'m> {
     pub(crate) generic_fns: crate::generic_fns::GenericFns,
     /// `hir::Program::generic_dyn_methods`.
     pub(crate) generic_called: FxHashSet<String>,
+    /// While a generic closure's body is checked: the type bounds of the type parameters in
+    /// scope, its own included (`Ctx::constraint_of`).
+    pub(crate) closure_constraints: Option<Vec<Option<TyId>>>,
     /// Views of unions of interfaces (`crate::union_views`).
     pub(crate) union_views: crate::union_views::UnionViews,
     pub(crate) any: Option<crate::any::AnyDefs>,
@@ -394,6 +397,7 @@ impl<'m> Ctx<'m> {
             synth_ifaces: Default::default(),
             generic_fns: Default::default(),
             generic_called: Default::default(),
+            closure_constraints: None,
             union_views: Default::default(),
             any: None,
             impl_index: Default::default(),

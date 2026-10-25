@@ -322,6 +322,7 @@ impl FnCx<'_, '_> {
                 iface_args: g.args,
                 slot: 0,
                 method: g.method,
+                rest: g.rest,
             };
             return self.iface_call(f, s, &[], args, None, span);
         }

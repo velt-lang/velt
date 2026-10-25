@@ -519,7 +519,7 @@ impl FnCx<'_, '_> {
         // A generic function where a generic function value is expected, or where no function
         // type to instantiate it at is: the value of its own generic function type (#943).
         if !slots.is_empty() {
-            let want = exp.filter(|t| self.cx.is_generic_fn(*t));
+            let want = self.hint(exp).filter(|t| self.cx.is_generic_fn(*t));
             if let Some(g) = want.or_else(|| self.own_generic_type(d, exp, span)) {
                 return self.generic_fn_value(d, id, g);
             }

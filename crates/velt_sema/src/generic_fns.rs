@@ -297,16 +297,26 @@ impl Ctx<'_> {
         if s.constraints.iter().any(Option::is_some) {
             own.constraints = s.constraints.clone();
         }
-        let params = s
-            .params
-            .iter()
-            .enumerate()
-            .map(|(k, &ty)| ParamSig {
-                name: format!("a{k}"),
-                span,
-                ty,
-                mode: crate::collect::sigs::declared_mode(self, ty),
-                default: None,
+        let n = s.params.len();
+        let params = (s.params.iter().enumerate())
+            .map(|(k, &ty)| {
+                // A call may leave out a rest parameter (the empty array) and an optional one
+                // (`undefined`), as for a function value (`body::expr::call`).
+                let empty = |kind| crate::hir::Expr { kind, ty, span };
+                let default = match self.ty.kind(ty) {
+                    _ if s.rest && k + 1 == n => Some(empty(crate::hir::ExprKind::ArrayLit(vec![]))),
+                    TyKind::Option(_, nothing) if nothing.has_undefined() => {
+                        Some(empty(crate::hir::ExprKind::Lit(crate::hir::Lit::Null)))
+                    }
+                    _ => None,
+                };
+                ParamSig {
+                    name: format!("a{k}"),
+                    span,
+                    ty,
+                    mode: crate::collect::sigs::declared_mode(self, ty),
+                    default,
+                }
             })
             .collect();
         // Always declared (nothing, when the shape has no error type): the generic closures

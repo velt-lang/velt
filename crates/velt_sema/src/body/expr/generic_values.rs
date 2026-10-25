@@ -24,7 +24,8 @@ impl FnCx<'_, '_> {
         let ast::ExprKind::Arrow { type_params, .. } = &e.kind else {
             return false;
         };
-        !type_params.is_empty() || exp.is_some_and(|t| self.cx.generic_sig(t).is_some())
+        // Also as an optional value (`f?: Id`, `Id | undefined`).
+        !type_params.is_empty() || self.hint(exp).is_some_and(|t| self.cx.generic_sig(t).is_some())
     }
 
     /// Generic closure `e` (an arrow) as a value of generic function type `exp`, or of the
@@ -42,6 +43,7 @@ impl FnCx<'_, '_> {
         else {
             unreachable!("ICE: generic closure of a non-arrow expression")
         };
+        let exp = self.hint(exp);
         let g = exp.and_then(|t| self.cx.generic_sig(t));
         if g.is_none() && (type_params.is_empty() || params.iter().any(|p| p.ty.is_none())) {
             return self.generic_arrow_without_type(e.span);
@@ -159,7 +161,9 @@ impl FnCx<'_, '_> {
             },
             span: e.span,
         };
+        let outer = self.cx.closure_constraints.replace(self.constraints.clone());
         let h = self.closure(&plain, Some(want), true);
+        self.cx.closure_constraints = outer;
         let own_bounds = self.bounds[m..].to_vec();
         let own_constraints = self.constraints.get(m..).unwrap_or_default().to_vec();
         (self.env.params, self.bounds, self.constraints) = saved;
