@@ -6,6 +6,11 @@
 //! rejects that assignment, TS4104). `ReadonlySet<T>` and `ReadonlyMap<K, V>` are `Set<T>` and
 //! `Map<K, V>` (prelude aliases), checked the same way: through a variable declared with one,
 //! the methods that change the collection (`add`, `set`, `delete`, `clear`, ...) are TS2339.
+//!
+//! The variable may also be declared through a type alias (`type Tags = ReadonlySet<string>`)
+//! or initialized with a cast to one (`new Set() as ReadonlySet<string>`), and the check follows
+//! it into closures that capture it, through narrowing (`if (s)`, `s!`), optional chains
+//! (`s?.add(x)`) and into a `const` (or `let`) it is copied to without a type (`const t = s`).
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
@@ -16,20 +21,71 @@ use crate::hir::{self, ExprKind as H, LitValue, LocalId, TyId, TyKind};
 impl FnCx<'_, '_> {
     /// Records local `l` declared with the written type `ty` when that is a read-only array.
     pub(super) fn note_readonly_array(&mut self, l: LocalId, ty: Option<&ast::TypeExpr>) {
-        if ty.is_some_and(|t| is_readonly_array(t) || is_readonly_collection(t)) {
+        if ty.is_some_and(|t| self.is_readonly_written(t, 0)) {
             self.f.readonly_arrays.insert(l);
+        }
+    }
+
+    /// Records local `l`, declared without a type, as read-only when its initializer `init`
+    /// (`ast`, checked as `h`) is a cast to a read-only type or a read-only variable.
+    pub(super) fn note_readonly_init(&mut self, l: LocalId, init: &ast::Expr, h: &hir::Expr) {
+        let cast = match &init.kind {
+            ast::ExprKind::Cast { ty, .. } => self.is_readonly_written(ty, 0),
+            _ => false,
+        };
+        if cast || self.readonly_local(h).is_some() {
+            self.f.readonly_arrays.insert(l);
+        }
+    }
+
+    /// Records the binding `l` of an optional chain on `object` as read-only when `object` is
+    /// a read-only variable.
+    pub(crate) fn note_readonly_binding(&mut self, l: LocalId, object: &hir::Expr) {
+        if self.readonly_local(object).is_some() {
+            self.f.readonly_arrays.insert(l);
+        }
+    }
+
+    /// The read-only variable `h` reads (through casts, narrowing and upcasts).
+    fn readonly_local(&self, h: &hir::Expr) -> Option<LocalId> {
+        match &h.kind {
+            H::Local(l, _) => self.f.readonly_arrays.contains(l).then_some(*l),
+            H::Cast(x) | H::UnwrapSome(x, _) | H::Upcast(x) | H::Downcast(x) => {
+                self.readonly_local(x)
+            }
+            // `s!`: a match on `s` that gives its payload.
+            H::Match { scrutinee, .. } => self.readonly_local(scrutinee),
+            _ => None,
+        }
+    }
+
+    /// Is `t` a read-only array or collection type, also through type aliases of the module?
+    fn is_readonly_written(&self, t: &ast::TypeExpr, depth: usize) -> bool {
+        if is_readonly_array(t) || is_readonly_collection(t) {
+            return true;
+        }
+        let ast::TypeExprKind::Named { path, args } = &t.kind else {
+            return false;
+        };
+        if depth > 8 || path.len() != 1 || !args.is_empty() {
+            return false;
+        }
+        match self
+            .cx
+            .lookup_item_at(self.module, &path[0].name, path[0].span)
+        {
+            Some(crate::ctx::Item::Alias(a)) => {
+                let decl = self.cx.aliases[a as usize].decl;
+                decl.generics.is_empty() && self.is_readonly_written(&decl.ty, depth + 1)
+            }
+            _ => false,
         }
     }
 
     /// The readonly array type local `l` (of type `ty`) is declared with, as TypeScript shows
     /// it (`readonly number[]`).
     fn readonly_shown(&mut self, h: &hir::Expr) -> Option<String> {
-        let H::Local(l, _) = h.kind else {
-            return None;
-        };
-        if !self.f.readonly_arrays.contains(&l) {
-            return None;
-        }
+        self.readonly_local(h)?;
         let TyKind::Array(elem) = *self.cx.ty.kind(h.ty) else {
             // `ReadonlySet<T>` / `ReadonlyMap<K, V>`, shown as TypeScript does.
             let shown = self.cx.display(h.ty);

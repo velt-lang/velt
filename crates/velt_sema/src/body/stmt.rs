@@ -569,6 +569,9 @@ impl FnCx<'_, '_> {
             self.f.late_lets.insert(local);
         }
         self.note_readonly_array(local, v.ty.as_ref());
+        if let (None, Some(e), Some(h)) = (&v.ty, &v.init, &init) {
+            self.note_readonly_init(local, e, h);
+        }
         self.note_as_const_array(local, v.init.as_ref());
         if v.kind == ast::VarKind::AwaitUsing {
             self.f.await_using.insert(local);

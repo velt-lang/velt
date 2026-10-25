@@ -1,0 +1,30 @@
+// TypeScript's TS2339 for changing a `ReadonlySet` / `ReadonlyMap` (or `readonly T[]`) also
+// where the variable is captured by a closure, narrowed, read through `?.` or `!`, declared through a
+// type alias, copied to another variable or made by a cast.
+type Tags = ReadonlySet<string>;
+type Names = readonly string[];
+
+function captured(s: ReadonlySet<string>): () => void {
+  return () => {
+    s.add("x");
+  };
+}
+function narrowed(m: ReadonlyMap<string, number> | null): void {
+  if (m) {
+    m.set("a", 1);
+  }
+}
+function chained(s: ReadonlySet<string> | undefined): void {
+  s?.add("y");
+  s!.add("y");
+}
+function aliased(t: Tags, n: Names): void {
+  t.delete("z");
+  n.push("w");
+}
+function copied(s: ReadonlySet<string>): void {
+  const t = s;
+  t.clear();
+}
+const made = new Set<string>() as ReadonlySet<string>;
+made.add("v");

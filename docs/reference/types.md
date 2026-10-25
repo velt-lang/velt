@@ -2078,7 +2078,14 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   expected (`const keys: ReadonlySet<string> = new Set(["a"])`), and everything that reads it
   works (`has`, `get`, `size`, `forEach`, `keys()`, `for...of`, `new Map(m)`). Through a
   variable or parameter declared with one, the methods that change the collection (`add`,
-  `set`, `delete`, `clear`, `upsert`, `update`, `getOrInsert`) are TypeScript's TS2339.
+  `set`, `delete`, `clear`, `upsert`, `update`, `getOrInsert`) are TypeScript's TS2339, also
+  when it is declared through a type alias (`type Tags = ReadonlySet<string>`), made by a cast
+  (`new Set() as ReadonlySet<string>`), captured by a closure, narrowed (`if (s)`, `s!`), read
+  with `?.`, or copied into a variable without a type (`const t = s`); the same holds for
+  `readonly T[]`. Not reported yet (TypeScript reports them): such a method called on a field,
+  an element, a destructured or returned value or a `for...of` variable of a read-only type, a
+  method read as a value (`const add = s.add`), and passing or assigning a read-only
+  collection where a `Set` or `Map` is expected (TS2345, TS2739).
 - **Tuples** `[A, B]`: `t[0]`, destructuring, printed like arrays. Element labels document the
   elements and are otherwise ignored, as in TypeScript: `type Wire = [kind: string, b64:
   string]`. Optional elements (`[A, B?]`, `[name: string, age?: number]`) and rest elements

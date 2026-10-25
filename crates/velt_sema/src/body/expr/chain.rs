@@ -47,6 +47,7 @@ impl FnCx<'_, '_> {
             .dynamic(s.ty)
             .is_some_and(|d| d != crate::any::Dynamic::Unknown);
         let (l, mode) = self.option_binding(&s, payload.unwrap_or(s.ty), &name, false);
+        self.note_readonly_binding(l, &s);
         self.push_scope();
         if let Some(scope) = self.f.scopes.last_mut() {
             scope.names.insert(name, l);
