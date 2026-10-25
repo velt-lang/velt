@@ -1,0 +1,20 @@
+// check: no leaks
+// `it.return?.(undefined)`: a method is never nullish, so an optional call of one is a call.
+async function* gen(): AsyncGenerator<string> {
+    try { yield "a"; yield "b"; } finally { console.log("closed"); }
+}
+function* sgen(): Generator<number> { yield 1; yield 2; }
+class Box { n = 1; get(): number { return this.n; } }
+async function run() {
+    const g = gen();
+    console.log(await g.next());
+    console.log(JSON.stringify(await g.return?.(undefined)));
+    console.log(JSON.stringify(await g.next()));
+    const s = sgen();
+    console.log(s.next(), JSON.stringify(s.return?.(undefined)), JSON.stringify(s.next()));
+    const b: Box | null = new Box();
+    console.log(b?.get?.());
+    const n: Box | null = null;
+    console.log(n?.get?.());
+}
+run();

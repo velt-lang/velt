@@ -22,7 +22,7 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
-        if optional {
+        if optional && !self.is_method_member(callee) {
             return self.optional_chain(callee, span, |s, f| s.call_value(f, args, span));
         }
         if let Some(callee) = self.without_namespace(callee) {

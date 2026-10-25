@@ -101,6 +101,7 @@ mod member_errors;
 mod member_keys;
 mod method;
 mod method_call;
+mod method_optional_call;
 mod method_value;
 mod mixed_array;
 mod names;

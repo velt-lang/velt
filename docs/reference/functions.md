@@ -585,7 +585,9 @@ console.log(g.next(), g.next().value, g.next().done);  // { value: 1, done: fals
 - Not supported: a return value (TS's `TReturn`), `return(value)`, `await` in a (sync)
   generator (write an [async generator](#async-generators)), and `next(value)` / `throw()` on
   an async generator. `return()` returns `{ done: true }`, as in TS (where it may carry a
-  value). Arrow functions cannot be generators (as in TS).
+  value); `return(undefined)` is `return()`, and so is `g.return?.(undefined)` (a method is
+  never nullish, so an optional call of one is a plain call, as in JS). Arrow functions cannot
+  be generators (as in TS).
 - **Cost**: `for (const x of gen(a))` with a direct call (or over a class whose
   `[Symbol.iterator]` is a generator method) keeps the generator's state in the loop: no
   allocation, no `IteratorResult` objects, and the body is resumed by a direct call that the
