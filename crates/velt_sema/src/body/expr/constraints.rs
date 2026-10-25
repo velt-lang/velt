@@ -59,6 +59,56 @@ impl FnCx<'_, '_> {
         }
     }
 
+    /// An array literal of string literals (`["id", "name"]`) for a parameter `K[]` whose `K`
+    /// is still open and bounded by literal keys (`K extends keyof T`): the array of exactly
+    /// those keys (`("id" | "name")[]`), so `K` is inferred as them, as in TypeScript, not as
+    /// every key of the bound (`expected`, the bound's array). `None` otherwise.
+    pub(super) fn literal_key_array(
+        &mut self,
+        c: &Callable,
+        pty: TyId,
+        arg: &ast::Expr,
+        slots: &[Option<TyId>],
+        expected: TyId,
+    ) -> Option<TyId> {
+        let TyKind::Array(e) = *self.cx.ty.kind(pty) else {
+            return None;
+        };
+        let TyKind::Param(k) = *self.cx.ty.kind(e) else {
+            return None;
+        };
+        let k = k as usize;
+        if slots.get(k).is_none_or(Option::is_some)
+            || c.constraints.get(k).is_none_or(Option::is_none)
+        {
+            return None;
+        }
+        let ast::ExprKind::Array(items) = &super::object_builtins::strip_parens(arg).kind else {
+            return None;
+        };
+        let bound = self.cx.ty.array_elem(expected)?;
+        let allowed = self.string_literals(bound)?;
+        let mut keys = vec![];
+        for it in items {
+            let ast::ExprKind::Lit(ast::Lit::Str(s)) = &it.kind else {
+                return None;
+            };
+            if !allowed.iter().any(|a| a == s) {
+                return None;
+            }
+            let t = self.cx.lit_type(crate::hir::LitValue::Str(s.clone()));
+            if !keys.contains(&t) {
+                keys.push(t);
+            }
+        }
+        let elem = match keys.len() {
+            0 => return None,
+            1 => keys[0],
+            _ => self.cx.union_of(&keys, false, arg.span),
+        };
+        Some(self.cx.ty.array(elem))
+    }
+
     /// `slots` with each one whose type breaks an interface bound of its slot an error type.
     fn unbroken_slots(&mut self, c: &Callable, slots: &[Option<TyId>]) -> Vec<Option<TyId>> {
         let mut out = slots.to_vec();
@@ -83,6 +133,37 @@ impl FnCx<'_, '_> {
             }
         }
         out
+    }
+
+    /// Does `t` implement the interface of slot `k`'s object type bound (`collect::shapes`), a
+    /// class through its `get` accessors too?
+    fn has_bound_fields(
+        &mut self,
+        c: &Callable,
+        k: usize,
+        t: TyId,
+        slots: &[Option<TyId>],
+    ) -> bool {
+        let Some(bounds) = c.bounds.get(k) else {
+            return false;
+        };
+        let Some(b) = bounds
+            .iter()
+            .find(|b| self.cx.is_object_bound(b.iface))
+            .cloned()
+        else {
+            return false;
+        };
+        let b = Bound {
+            iface: b.iface,
+            args: b
+                .args
+                .iter()
+                .map(|a| self.cx.subst_known(*a, slots))
+                .collect(),
+        };
+        let in_scope = self.bounds.clone();
+        self.cx.satisfies(t, &b, &in_scope)
     }
 
     /// The slot of `pty` when it is a type parameter an earlier argument fixed to string
@@ -120,7 +201,7 @@ impl FnCx<'_, '_> {
             return true;
         };
         let bound = self.cx.subst_known(bound, slots);
-        if self.constraint_holds(t, bound) {
+        if self.constraint_holds(t, bound) || self.has_bound_fields(c, k, t, slots) {
             return true;
         }
         let at = sites
@@ -242,6 +323,13 @@ impl FnCx<'_, '_> {
                         d = d.with_note(format!(
                             "`{bn}` has only fields: a type satisfies it by having them ({})",
                             fields.join(", ")
+                        ));
+                    }
+                    if matches!(self.cx.ty.kind(t), TyKind::Dyn(..))
+                        && self.cx.has_generic_method(&b)
+                    {
+                        d = d.with_note(format!(
+                            "an interface value cannot stand for `{name}`: `{bn}` has a generic method, which is called on the concrete type (generic methods are dispatched statically); pass the class instance itself"
                         ));
                     }
                     self.cx.error(d);

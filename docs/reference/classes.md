@@ -259,9 +259,7 @@ hidden classes and no runtime shape checks.
   `x.size++` and `x.size ??= v` (also `||=`, `&&=`) use both, as in JS: `x` is evaluated once,
   then the getter runs, then the right-hand side, then the setter (which `??=`, `||=` and `&&=`
   skip when the old value decides). The setter runs on the object `x` named before the
-  right-hand side, even when the right-hand side assigns another one to `x`. **Known gap:**
-  a getter that assigns another object to `x` itself (also in `x.size++`) makes the setter run
-  on the new one. A getter may change its object (a signal recording who read it). As a value, `x.size = v` is `v` (converted to the setter's parameter type, but
+  getter and the right-hand side ran, even when one of them assigns another one to `x`. A getter may change its object (a signal recording who read it). As a value, `x.size = v` is `v` (converted to the setter's parameter type, but
   non-null when `v` is; the getter is not read again; an object is shared, not copied) and `x.size ??= v` is the old value where it decides, else `v` (so
   non-null when `v` is). Implementations and overrides of a
   getter or setter must be accessors too. An override of only the getter of a base class's
@@ -542,6 +540,14 @@ console.log(p.len(), q.len());  // 4 4
   (``generic method `apply` cannot be called on an interface value``): make the calling
   function generic over the receiver (`<T extends Mapper>(m: T)` instead of `(m: Mapper)`), or
   call a method that is not generic. Generic interface methods cannot have default bodies yet.
+  The method that runs is the one of the class the type parameter is given: when a subclass of that
+  class overrides it, a value of the class may hold the subclass, so instantiating the generic
+  with that class is the same error as calling the method on it directly (pass the concrete
+  class), and an interface value cannot stand for such a type parameter. A call that passes
+  exactly that class is allowed: a `new C()` given directly to a parameter of type `T` of a
+  function or of a generic method, or a `const` initialized with `new C()`. Other variables, a
+  value inside another parameter's type (`get: () => T`, `xs: T[]`), a default (`y: T = x`)
+  and a class instantiated with `C` (`new Holder<C>(new C())`) don't count.
 - A default body can be `async` (`async load(): Promise<T> { … }`), with the rules of an async
   class method ([Async](async.md#errors)). A method without a body cannot be: like in TypeScript,
   it declares a `Promise` result, and implementations may be `async`.
@@ -665,7 +671,10 @@ console.log(p.x + p.y); // 3
 Classes, structs, interfaces and functions take type parameters (`class Stack<T>`,
 `interface Box<T>`, `function f<T extends Comparable<T>>`). Every instantiation is compiled
 separately (monomorphization): no boxing, and bounds resolve to direct calls. Bounds are
-interfaces (an interface with only fields is satisfied by any type with its fields) or, as in
+interfaces (an interface with only fields is satisfied by any type with its fields; an
+interface value by its own interface and the ones it extends, so `f<Person>` fits
+`function f<T extends Named>` with `interface Person extends Named`, and its methods are
+called through the value's table) or, as in
 TypeScript, other types a type argument must be assignable to (`T extends Record<string, V>`,
 `T extends string | number`; [Generic functions](functions.md#generic-functions)). Type
 parameters may have **defaults** (`interface Iterator<T, E = never>`), used when a type leaves

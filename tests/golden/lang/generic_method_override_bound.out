@@ -1,0 +1,5 @@
+1 30 30 500
+sq 1 sq 30 sq 30 sq5 500
+box(a, true)
+lab(b, false)
+num(3, true)

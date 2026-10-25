@@ -34,7 +34,8 @@ pub(crate) fn is_ctor_field(name: &str) -> bool {
     [NEW, IS, NAME].contains(&name)
 }
 
-/// The function type forms Velt parses but doesn't support yet (#943): its error and a note.
+/// The function type forms Velt parses but doesn't support yet (#943): its error and a note. (A
+/// constant of a generic function type is a generic function, `generic_arrows::typed`.)
 pub(crate) fn unsupported_fn_type(kind: &ast::TypeExprKind) -> (&'static str, &'static str) {
     match kind {
         ast::TypeExprKind::Construct(_) => (
@@ -43,7 +44,7 @@ pub(crate) fn unsupported_fn_type(kind: &ast::TypeExprKind) -> (&'static str, &'
         ),
         _ => (
             "generic function types (`<T>(x: T) => R`) are not supported yet",
-            "a function value has one type; declare a generic `function` and call it, or give the type parameters values (`(x: string) => R`)",
+            "a value of this type stays generic, which only a `const` initialized with an arrow function or a name can be (`const id: Id = (x) => x;`, #943); elsewhere declare a generic `function` and call it, or give the type parameters values (`(x: string) => R`)",
         ),
     }
 }

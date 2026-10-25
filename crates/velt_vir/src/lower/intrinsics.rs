@@ -354,7 +354,7 @@ impl FnLower<'_, '_> {
 
     /// The dynamic `undefined` as a value of the `any` type `t`: a `boolean | undefined`
     /// holding nothing, boxed by implementation `any` (as sema boxes `undefined`).
-    fn dynamic_undefined(&mut self, any: u32, t: TyId) -> Operand {
+    pub(super) fn dynamic_undefined(&mut self, any: u32, t: TyId) -> Operand {
         let b = self.cx.intern(hir::TyKind::Bool);
         let opt = self
             .cx

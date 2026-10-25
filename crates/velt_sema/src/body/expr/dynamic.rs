@@ -76,7 +76,7 @@ impl FnCx<'_, '_> {
         let mut d = Diagnostic::error(format!("an `{f}` value cannot be a `never`"), h.span)
             .with_note("no value has type `never`");
         if self.cx.ty.bigint_named {
-            d = d.with_note("a `bigint` is a `never` too: it has no values in Velt yet (#1088)");
+            d = d.with_note(crate::types::BIGINT_NEVER_NOTE);
         }
         self.cx.error(d);
         self.error_expr(h.span)
@@ -189,7 +189,7 @@ impl FnCx<'_, '_> {
     }
 
     /// A typed value boxed as `exp` (`any` or `unknown`).
-    fn box_dynamic(&mut self, h: hir::Expr, exp: TyId) -> Result<hir::Expr, hir::Expr> {
+    pub(super) fn box_dynamic(&mut self, h: hir::Expr, exp: TyId) -> Result<hir::Expr, hir::Expr> {
         let span = h.span;
         // Already dynamic (the payload of an `any | null`): the same value, never a box in a
         // box.
@@ -576,8 +576,23 @@ impl FnCx<'_, '_> {
         m: TyId,
         span: Span,
     ) -> Option<(hir::Expr, hir::Expr)> {
+        let x = self.mk(H::Local(tmp, UseMode::Borrow), dty, span);
+        let owned = self.intrinsic(Intrinsic::Share, vec![x.clone()], dty, span);
+        self.member_test_on(x, owned, m, span)
+    }
+
+    /// The test that the dynamic value `x` holds a `m`, and `owned` (the same value, owned) as
+    /// `m`.
+    pub(super) fn member_test_on(
+        &mut self,
+        x: hir::Expr,
+        owned: hir::Expr,
+        m: TyId,
+        span: Span,
+    ) -> Option<(hir::Expr, hir::Expr)> {
         let b = self.cx.ty.bool_;
-        let read = |s: &mut Self| s.mk(H::Local(tmp, UseMode::Borrow), dty, span);
+        let dty = x.ty;
+        let read = |_: &mut Self| x.clone();
         if let Some(v) = self.cx.lit_value(m) {
             let base = self.base_lit_expr(&v, span);
             let any = self.any_ty()?;
@@ -631,9 +646,7 @@ impl FnCx<'_, '_> {
                 self.mk(kind, b, span)
             }
         };
-        let x = read(self);
-        let share = self.intrinsic(Intrinsic::Share, vec![x], dty, span);
-        let value = self.intrinsic(Intrinsic::AnyTo, vec![share], m, span);
+        let value = self.intrinsic(Intrinsic::AnyTo, vec![owned], m, span);
         Some((test, value))
     }
 

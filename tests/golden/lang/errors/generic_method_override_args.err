@@ -1,0 +1,6 @@
+generic_method_override_args.vlt:8:13: error: generic method `apply` is overridden in `B`, so calling it on a `A` would need dynamic dispatch
+  = note: `f` calls `apply` through a type parameter given `A` here; generic methods are dispatched statically: instantiate it with the concrete class, or make the method non-generic
+generic_method_override_args.vlt:10:13: error: generic method `apply` is overridden in `B`, so calling it on a `A` would need dynamic dispatch
+  = note: `g` calls `apply` through a type parameter given `A` here; generic methods are dispatched statically: instantiate it with the concrete class, or make the method non-generic
+generic_method_override_args.vlt:12:13: error: generic method `apply` is overridden in `B`, so calling it on a `A` would need dynamic dispatch
+  = note: `h` calls `apply` through a type parameter given `A` here; generic methods are dispatched statically: instantiate it with the concrete class, or make the method non-generic

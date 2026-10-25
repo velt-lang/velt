@@ -296,6 +296,16 @@ impl FnCx<'_, '_> {
             }
             return self.intrinsic(hir::Intrinsic::AnyIsArray, vec![s], b, span);
         }
+        if self.per_instance(s.ty) {
+            // Which type argument it holds is known only per instantiation: whether that value
+            // is an array, at run time.
+            if let Ok(boxed) = self.generic_as_any(s.clone()) {
+                if self.uses_proxy() && !self.cx.scopes[self.module].is_std {
+                    return self.prelude_hir_call("__anyIsArrayProxy", vec![boxed], b, span);
+                }
+                return self.intrinsic(hir::Intrinsic::AnyIsArray, vec![boxed], b, span);
+            }
+        }
         let core = self.cx.ty.opt_payload(s.ty).unwrap_or(s.ty);
         let mut members = self.cx.union_members(core).unwrap_or_default();
         members.push(core);

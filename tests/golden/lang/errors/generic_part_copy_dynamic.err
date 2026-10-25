@@ -1,0 +1,9 @@
+generic_part_copy_dynamic.vlt:12:10: error: a value of type `{ c: f64; tag: string }` converts to `{ c: f64 }` by copying its fields, and this program compares `unknown` values with `===` or `!==`: two copies of one object are not `===`
+  = note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `{ c: f64 }` made from a `{ c: f64; tag: string }` value is a new object with the same field values
+  = note: build the new object explicitly, `(x) => ({ c: x.c })` with `.map` (a new object in TypeScript too), or declare the parameter or variable as `{ c: f64; tag: string }`
+generic_part_copy_dynamic.vlt:9:10: error: a value of type `{ b: f64; tag: string }` converts to `{ b: f64 }` by copying its fields, and this program compares `unknown` values with `===` or `!==`: two copies of one object are not `===`
+  = note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `{ b: f64 }` made from a `{ b: f64; tag: string }` value is a new object with the same field values
+  = note: build the new object explicitly, `(x) => ({ b: x.b })` with `.map` (a new object in TypeScript too), or declare the parameter or variable as `{ b: f64; tag: string }`
+generic_part_copy_dynamic.vlt:6:10: error: a value of type `{ a: f64; tag: string }` converts to `{ a: f64 }` by copying its fields, and this program assigns field `a`, which the other object would not see
+  = note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `{ a: f64 }` made from a `{ a: f64; tag: string }` value is a new object with the same field values
+  = note: build the new object explicitly, `(x) => ({ a: x.a })` with `.map` (a new object in TypeScript too), or declare the parameter or variable as `{ a: f64; tag: string }`

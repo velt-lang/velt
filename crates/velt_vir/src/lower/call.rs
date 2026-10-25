@@ -43,6 +43,13 @@ impl FnLower<'_, '_> {
                     .first()
                     .unwrap_or_else(|| ice("method call without receiver"));
                 let recv_ty = self.sub(recv.ty);
+                if method_type_args.is_empty() {
+                    if let Some(slot) = self.dyn_slot_for(*iface, *slot, recv_ty) {
+                        // An interface value instantiating a type parameter bound by an
+                        // interface its interface is or extends (#1368): through its table.
+                        return self.call_dyn(slot, args, ty, transfer);
+                    }
+                }
                 let iargs: Vec<TyId> = iface_args.iter().map(|&t| self.sub(t)).collect();
                 let (def, mut targs) = self.resolve_param_method(*iface, &iargs, *slot, recv_ty);
                 // A generic method's own type args follow its owner's.

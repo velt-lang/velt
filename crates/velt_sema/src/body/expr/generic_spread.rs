@@ -199,7 +199,15 @@ impl FnCx<'_, '_> {
         h: hir::Expr,
         exp: TyId,
     ) -> Result<hir::Expr, hir::Expr> {
-        if !(self.deferred_object(h.ty) || self.deferred_object(exp)) || !self.covers(h.ty, exp) {
+        // A value of `T` as a deferred form of `T` itself (`PropsAccessor<T>`, a mapped type
+        // over `keyof T`), which TypeScript relates structurally: the same value where the
+        // two are one object type, as below.
+        let own_form = matches!(self.cx.ty.kind(h.ty), TyKind::Param(_))
+            && matches!(self.cx.ty.kind(exp), TyKind::Op(TyOp::Alias(_) | TyOp::Inline(_), args) if args.contains(&h.ty));
+        if !own_form
+            && (!(self.deferred_object(h.ty) || self.deferred_object(exp))
+                || !self.covers(h.ty, exp))
+        {
             return Err(h);
         }
         let site = self.cx.type_level.converts.len() as u32;

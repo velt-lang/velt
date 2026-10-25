@@ -407,6 +407,7 @@ impl FnCx<'_, '_> {
         let (b, span) = (self.cx.ty.bool_, c.span);
         let probe = self.mk(H::Local(l, UseMode::Borrow), ty, span);
         let may = self.intrinsic(hir::Intrinsic::MayHoldPrimitive, vec![probe], b, span);
+        self.cx.primitive_guards = true;
         let kind = H::Logical {
             op: hir::LogicOp::And,
             lhs: Box::new(c),

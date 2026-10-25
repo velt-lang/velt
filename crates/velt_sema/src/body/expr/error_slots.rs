@@ -135,6 +135,28 @@ pub(super) fn occurs_plain(cx: &mut crate::ctx::Ctx, t: TyId, k: u32) -> bool {
     param_uses(cx, t, k).1
 }
 
+/// `Some(true)` when type parameter `k` is a member of union `t` (`T | string`, `T | null`)
+/// and occurs nowhere else in it, `Some(false)` when `t` doesn't mention `k`, `None` when it
+/// occurs some other way.
+pub(super) fn union_member_only(cx: &mut crate::ctx::Ctx, t: TyId, k: u32) -> Option<bool> {
+    let is_k = |cx: &crate::ctx::Ctx, m: TyId| matches!(cx.ty.kind(m), TyKind::Param(p) if *p == k);
+    let core = cx.ty.opt_payload(t).unwrap_or(t);
+    let members = match cx.union_members(core) {
+        Some(ms) => ms,
+        None if cx.ty.opt_payload(t).is_some() => vec![core],
+        None => return (!occurs_plain(cx, t, k)).then_some(false),
+    };
+    let mut member = false;
+    for m in members {
+        if is_k(cx, m) {
+            member = true;
+        } else if occurs_plain(cx, m, k) {
+            return None;
+        }
+    }
+    Some(member)
+}
+
 /// (occurs as an error type, occurs elsewhere) for type parameter `k` in `t`. A union is
 /// looked at through its members (its type arguments don't say where `k` sits).
 fn param_uses(cx: &mut crate::ctx::Ctx, t: TyId, k: u32) -> (bool, bool) {

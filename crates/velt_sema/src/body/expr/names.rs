@@ -160,6 +160,10 @@ impl FnCx<'_, '_> {
         let Some(target) = self.narrowed_class(l) else {
             return e;
         };
+        if self.cx.dynamic(target) == Some(crate::any::Dynamic::Any) && self.per_instance(e.ty) {
+            // `Array.isArray(x)` on a value of a type parameter: the value, as an `any`.
+            return self.generic_as_any(e).unwrap_or_else(|e| e);
+        }
         if !self.downcast_applies(e.ty, target) {
             // `typeof x === "string"` on a `T | string` (`typeof_facts`).
             return self.open_view(l, e, target).unwrap_or_else(|e| e);
@@ -510,11 +514,11 @@ impl FnCx<'_, '_> {
         if self.gated_value(d, &id.name, span) {
             return self.error_expr(span);
         }
-        if let Some(h) = self.generator_value(d, None, exp, span) {
-            return h;
-        }
         let f = self.cx.fn_info(d);
         let slots = vec![None; f.generics.len()];
+        if let Some(h) = self.generator_value(d, None, &slots, exp, span) {
+            return h;
+        }
         self.fn_ref_slots(d, &id.name, slots, exp, span)
     }
 

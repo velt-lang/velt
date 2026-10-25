@@ -2,7 +2,8 @@
 //! `b.dom = n` with `n: H`, `n as unknown as X`). Sema boxes such a value as it is; the
 //! instantiation may be a type sema would have unpacked first (`hir_encodings.md` "any and
 //! unknown"): an option holds its payload or the dynamic `null` / `undefined`, `void` is
-//! `undefined`, a union the member it holds, a literal type its value.
+//! `undefined`, a union the member it holds, a literal type its value, an enum its number or
+//! string.
 
 use velt_sema::hir::{self, FloatTy, LitValue, Nothing, TyId, TyKind};
 
@@ -90,17 +91,47 @@ impl FnLower<'_, '_> {
                     },
                 });
             }
-            _ if self.is_enum(t) => {
-                // A C-like or string enum (an `I64` member index): not reached here yet.
-                self.panic_msg(
-                    "TypeError: an enum value of a type parameter converted to `any` is not supported yet (#1241)",
-                );
-                self.terminate(Terminator::Unreachable);
-                let next = self.new_block();
-                self.switch_to(next);
-            }
+            _ if self.is_enum(t) => self.any_enum_into(v, t, out),
             _ => self.any_box_into(v, t, out),
         }
+    }
+
+    /// A value of the C-like or string enum `t` (its `I64` discriminant `v`) boxed into `out` as
+    /// JavaScript holds it (#1266): a numeric member as its number, a string member as its
+    /// string, as sema converts a concrete enum (`enum_to_dynamic`).
+    fn any_enum_into(&mut self, v: Operand, t: TyId, out: &Place) {
+        let TyKind::Adt(d, _) = self.cx.kind(t) else {
+            return self.any_box_into(v, t, out);
+        };
+        let members: Vec<(i64, Option<String>)> = (self.cx.enum_def(d).variants.iter())
+            .map(|m| (m.discriminant, m.str_value.clone()))
+            .collect();
+        let f64_ty = self.cx.intern(TyKind::Float(FloatTy::F64));
+        if members.iter().all(|(_, s)| s.is_none()) {
+            let n = self.rvalue_temp(Ty::F64, Rvalue::Cast(v, Ty::F64));
+            return self.any_box_into(n, f64_ty, out);
+        }
+        let blocks: Vec<_> = members.iter().map(|_| self.new_block()).collect();
+        let done = self.new_block();
+        let cases = (members.iter().zip(&blocks))
+            .map(|((disc, _), b)| (*disc as i128, *b))
+            .collect();
+        let default = *blocks.last().unwrap_or(&done);
+        self.terminate(Terminator::Switch {
+            value: v,
+            cases,
+            default,
+        });
+        for ((disc, text), b) in members.into_iter().zip(blocks) {
+            self.switch_to(b);
+            let lit = match text {
+                Some(s) => LitValue::Str(s),
+                None => LitValue::Float(FloatTy::F64, (disc as f64).to_bits()),
+            };
+            self.any_literal_into(&lit, out);
+            self.goto(done);
+        }
+        self.switch_to(done);
     }
 
     /// A literal type, a union, an interface value or an option of one (`"ok"`,

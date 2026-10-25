@@ -247,6 +247,12 @@ impl FnCx<'_, '_> {
             Some(_) => return self.any_keys(obj, span),
             None => {}
         }
+        // A value of a type parameter (`T extends Record<string, V>`, `T & object`): the keys
+        // of each instantiation's value, at run time.
+        let obj = match self.generic_as_any(obj) {
+            Ok(boxed) => return self.any_keys(boxed, span),
+            Err(obj) => obj,
+        };
         self.cx
             .object_copies
             .observe(obj.ty, span, crate::object_copies::Seen::Keys);

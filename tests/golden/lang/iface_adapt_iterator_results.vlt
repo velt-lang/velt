@@ -1,0 +1,38 @@
+// An iterator of tuples used as an iterator of `any`: its results convert field by field.
+function* pairs(): IterableIterator<[any, any]> {
+  yield [1, "a"];
+  yield [2, "b"];
+}
+
+function anyIter(): IterableIterator<any> {
+  return pairs();
+}
+
+function* entries(m: Map<string, number>): IterableIterator<[string, number]> {
+  for (const e of m) {
+    yield e;
+  }
+}
+
+function entriesOf(m: Map<string, number>): IterableIterator<any> {
+  return entries(m);
+}
+
+function main(): void {
+  for (const e of anyIter()) {
+    console.log(e);
+  }
+  const it = anyIter();
+  const first = it.next();
+  console.log(first.done, first.value);
+  it.next();
+  const last = it.next();
+  console.log(last.done);
+  const m = new Map<string, number>([["x", 1], ["y", 2]]);
+  console.log([...entriesOf(m)]);
+  let n = 0;
+  for (const _ of entriesOf(m)) {
+    n++;
+  }
+  console.log(n);
+}

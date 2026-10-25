@@ -3,10 +3,14 @@
 //! (or context-fixed) `throws` keep it; dispatch groups get their bound or the union of what
 //! their members throw.
 
+use rustc_hash::FxHashMap;
+
+use velt_common::Span;
+
 use super::InitsSeen;
 use crate::ctx::Ctx;
 use crate::defs::{BodyState, ThrowSrc};
-use crate::hir::{DefId, TyId};
+use crate::hir::{Def, DefId, TyId, TyKind};
 
 /// Fill `FnInfo::throws` of every checked function, then check written clauses and the error
 /// types sema committed to while checking bodies.
@@ -31,12 +35,20 @@ pub(crate) fn infer_all(cx: &mut Ctx) {
             }
         }
     }
+    let mut guarded = Guarded::new(cx, &fns);
     loop {
         let mut changed = false;
         for &d in &fns {
             let fixed = cx.fn_info(d).declared_throws.is_some() || groups.group_of(d).is_some();
             if !fixed {
-                let t = own_final(cx, d);
+                let t = match guarded.ranges.contains_key(&d) {
+                    true => {
+                        let (t, moved) = guarded.own_final(cx, d);
+                        changed |= moved;
+                        t
+                    }
+                    false => own_final(cx, d),
+                };
                 changed |= set_throws(cx, d, t);
             }
         }
@@ -57,6 +69,118 @@ pub(crate) fn infer_all(cx: &mut Ctx) {
     }
     super::checks::check_all(cx, &fns, &groups);
     cx.record_recursion_hints(&fns);
+}
+
+/// Error inference for generic functions with branches a type predicate on a type parameter's
+/// value guards (`if (isPrimitive(x))`, #1251): such a branch is not instantiated where the
+/// parameter is an object type, so neither is what it throws. Each error type member of such a
+/// function carries the bits of the parameters whose guards it lies under, carried through
+/// calls as the requirement passes carry theirs (`inst_sites::carry_guard`); a member reaching a
+/// call that makes a guarded parameter an object type is dropped. Without this a function that
+/// calls itself as `f({ value: x })` in such a branch would grow its error type without end.
+#[derive(Default)]
+struct Guarded {
+    /// The guarded `then` blocks of each such function, with their parameters' bits.
+    ranges: FxHashMap<DefId, Vec<(Span, u64)>>,
+    /// The members of each such function's error type, with their guard bits.
+    members: FxHashMap<DefId, Vec<(TyId, u64)>>,
+}
+
+impl Guarded {
+    fn new(cx: &mut Ctx, fns: &[DefId]) -> Guarded {
+        let mut g = Guarded::default();
+        if !cx.primitive_guards {
+            return g;
+        }
+        struct Ranges<'a> {
+            ty: &'a crate::types::Types,
+            out: Vec<(Span, u64)>,
+        }
+        impl crate::visit::VisitMut for Ranges<'_> {
+            fn stmt(&mut self, s: &mut crate::hir::Stmt) {
+                let crate::hir::StmtKind::If { cond, then, .. } = &s.kind else {
+                    return;
+                };
+                let p = crate::visit::guard_param(cond).and_then(|t| match self.ty.kind(t) {
+                    TyKind::Param(p) => Some(*p),
+                    _ => None,
+                });
+                if let Some(bit) = p.and_then(|p| 1u64.checked_shl(p)) {
+                    self.out.push((then.span, bit));
+                }
+            }
+        }
+        for &d in fns {
+            let Some(Some(Def::Fn(f))) = cx.defs.get_mut(d.0 as usize) else {
+                continue;
+            };
+            if f.generics == 0 {
+                continue;
+            }
+            let mut r = Ranges {
+                ty: &cx.ty,
+                out: vec![],
+            };
+            crate::visit::block(&mut f.body.block, &mut r);
+            if !r.out.is_empty() {
+                g.ranges.insert(d, r.out);
+            }
+        }
+        g
+    }
+
+    /// The guard bits of a source at `span` in `d`.
+    fn site(&self, d: DefId, span: Span) -> u64 {
+        self.ranges.get(&d).map_or(0, |rs| {
+            rs.iter()
+                .filter(|(r, _)| r.file == span.file && r.lo <= span.lo && span.hi <= r.hi)
+                .fold(0, |acc, (_, b)| acc | b)
+        })
+    }
+
+    /// What `d`'s body throws ([`own_final`]), dropping what guarded branches throw in the
+    /// instances that don't have them; with whether its members or their bits changed.
+    fn own_final(&mut self, cx: &mut Ctx, d: DefId) -> (Option<TyId>, bool) {
+        let srcs = cx.fn_info(d).throw_srcs.clone();
+        let mut out: Vec<(TyId, u64)> = vec![];
+        for s in &srcs {
+            let site = self.site(d, s.span());
+            match s {
+                ThrowSrc::Call(g, targs, _) if self.ranges.contains_key(g) => {
+                    let callee = self.members.get(g).cloned().unwrap_or_default();
+                    for (m, need) in callee {
+                        let Some(bits) = crate::inst_sites::carry_guard(cx, need, targs, site)
+                        else {
+                            continue;
+                        };
+                        let t = cx.subst(m, targs);
+                        for x in cx.error_members(t) {
+                            push_member(&mut out, x, bits);
+                        }
+                    }
+                }
+                _ => {
+                    if let Some(t) = src_final(cx, s) {
+                        for x in cx.error_members(t) {
+                            push_member(&mut out, x, site);
+                        }
+                    }
+                }
+            }
+        }
+        let all: Vec<TyId> = out.iter().map(|(m, _)| *m).collect();
+        let moved = self.members.get(&d) != Some(&out);
+        self.members.insert(d, out);
+        (cx.error_union(&all), moved)
+    }
+}
+
+/// Adds member `m` under guard bits `bits` (a member under fewer guards subsumes the others).
+fn push_member(out: &mut Vec<(TyId, u64)>, m: TyId, bits: u64) {
+    match out.iter_mut().find(|(x, _)| *x == m) {
+        Some((_, b)) => *b &= bits,
+        None => out.push((m, bits)),
+    }
 }
 
 fn set_throws(cx: &mut Ctx, d: DefId, t: Option<TyId>) -> bool {

@@ -1,0 +1,1 @@
+TypeError: an object built with `{} as` a type has its keys in another order than the type's fields, or keys the type lacks

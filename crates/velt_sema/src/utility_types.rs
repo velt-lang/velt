@@ -48,6 +48,10 @@ impl Ctx<'_> {
         if tys.contains(&self.ty.error) {
             return self.ty.error;
         }
+        // Of `any`, each is `any` (TypeScript; `T extends any ? Omit<T, K> : never` at `any`).
+        if self.dynamic(tys[0]) == Some(crate::any::Dynamic::Any) {
+            return tys[0];
+        }
         let written = match &args[0].kind {
             ast::TypeExprKind::Named { path, .. } if path.len() == 1 => Some(path[0].name.clone()),
             _ => None,
@@ -103,6 +107,10 @@ impl Ctx<'_> {
         let k = self.subst(k, &env.args);
         if t == self.ty.error || k == self.ty.error {
             return self.ty.error;
+        }
+        // `any[K]` is `any`.
+        if self.dynamic(t) == Some(crate::any::Dynamic::Any) {
+            return t;
         }
         let op = "an indexed access type";
         let written = match &object.kind {

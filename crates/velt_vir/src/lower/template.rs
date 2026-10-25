@@ -710,6 +710,15 @@ impl FnLower<'_, '_> {
             }
             TyKind::Adt(..) if self.prelude_map(ty).is_some() => Some("[object Map]"),
             TyKind::Adt(..) if self.std_set(ty).is_some() => Some("[object Set]"),
+            TyKind::Adt(..) if self.collection_subclass(ty).is_some() => {
+                match self
+                    .collection_subclass(ty)
+                    .and_then(|(b, _)| self.prelude_map(b))
+                {
+                    Some(_) => Some("[object Map]"),
+                    None => Some("[object Set]"),
+                }
+            }
             TyKind::Adt(..) => Some("[object Object]"),
             _ => None,
         }

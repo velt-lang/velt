@@ -67,6 +67,7 @@ impl FnCx<'_, '_> {
             source,
             fresh,
             in_order,
+            generic: false,
         });
         let mut lets = vec![];
         let mut base = match path {
@@ -183,7 +184,7 @@ impl FnCx<'_, '_> {
 
     /// Does the copy have the source's fields (`copied`, in the expected type's order), in the
     /// source's order, each of the same type (no nested copy)?
-    fn in_order(&self, from: TyId, copied: &[String], slots: &[Slot]) -> bool {
+    fn in_order(&mut self, from: TyId, copied: &[String], slots: &[Slot]) -> bool {
         let TyKind::Adt(d, _) = self.cx.ty.kind(from) else {
             return false;
         };
@@ -192,7 +193,14 @@ impl FnCx<'_, '_> {
         };
         a.fields.len() == copied.len()
             && a.fields.iter().zip(copied).all(|(f, c)| f.name == *c)
-            && (slots.iter()).all(|s| !matches!(s, Slot::Field { from, to, .. } if from != to))
+            && (slots.iter()).all(|s| match s {
+                // A value boxed as an `any` shows as itself (`boxes_shared`).
+                Slot::Field { from, to, .. } => {
+                    from == to
+                        || (self.cx.dynamic(*to).is_some() && boxes_shared(self.cx, *from, 0))
+                }
+                _ => true,
+            })
     }
 
     /// The names of the fields of `exp` that `slots` copy from the source, and of the optional
@@ -304,7 +312,43 @@ impl FnCx<'_, '_> {
             // A function that throws into a function type written without `throws` (its sites
             // take its errors), converted through a wrapper as a value is.
             || self.cx.fn_throws_differ(from, to) == Some(true)
+            // A value boxed into a field of a dynamic type (`{ value: [any, any] }` as
+            // `{ value: any }`, an `IteratorResult<any>`; #1185).
+            || (self.cx.dynamic(from).is_none()
+                && matches!(
+                    self.cx.dynamic(to),
+                    Some(crate::any::Dynamic::Any | crate::any::Dynamic::Unknown)
+                )
+                && !matches!(self.cx.ty.kind(from), TyKind::Promise(..) | TyKind::Unit | TyKind::Never)
+                // In an interface adapter, a method's result converted as the call returns it
+                // (an iterator's `IteratorResult<[any, any]>` as `IteratorResult<any>`).
+                && (self.adapting || boxes_shared(self.cx, from, 0)))
             || self.copy_plan(from, to, depth + 1).is_some()
+    }
+}
+
+/// Is a value of type `t` boxed as an `any` the same value, or one the program cannot tell from
+/// it: a primitive, or an object held by reference (an array, map, set, class instance,
+/// function or dynamic value)? A tuple or an object type may be stored inline and boxed as a
+/// copy, which a later write into the original's element or field would not reach.
+fn boxes_shared(cx: &mut crate::ctx::Ctx, t: TyId, depth: u32) -> bool {
+    if depth > 8 {
+        return false;
+    }
+    if let Some(p) = cx.ty.opt_payload(t) {
+        return boxes_shared(cx, p, depth + 1);
+    }
+    match cx.ty.kind(t) {
+        TyKind::Tuple(_) => false,
+        TyKind::Adt(d, _) => match cx.adt(*d) {
+            Some(a) => a.kind == crate::hir::AdtKind::Class,
+            // A union (an enum of members): each member.
+            None => match cx.union_members(t) {
+                Some(ms) => ms.iter().all(|m| boxes_shared(cx, *m, depth + 1)),
+                None => true,
+            },
+        },
+        _ => true,
     }
 }
 

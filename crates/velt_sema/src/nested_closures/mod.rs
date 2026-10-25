@@ -20,7 +20,9 @@
 //!
 //! A nested function reading a class declared in an enclosing function as a value (`return C;`)
 //! becomes a closure constant too, though it captures nothing: the class's value is a `const`
-//! of the block declaring it (`body::expr::ctor_locals`), which only a closure there reads.
+//! of the block declaring it (`body::expr::ctor_locals`), which only a closure there reads. So
+//! does one naming a type parameter of an enclosing function or class (`function none():
+//! Res<T>`): a declaration is collected outside the function, without its type parameters.
 //!
 //! Declarations that capture nothing, generic ones, overloaded ones and ones using `this` stay
 //! nested functions (`collect::nested`).
@@ -123,8 +125,10 @@ struct Cand {
     name: ast::Ident,
     /// The names it uses that it does not bind itself.
     free: FxHashSet<String>,
-    /// Does it read a class of an enclosing function as a value (module docs)?
-    reads_class: bool,
+    /// Does it read a class of an enclosing function as a value, or name a type parameter of
+    /// an enclosing function or class (module docs)? It becomes a closure constant though it
+    /// captures nothing.
+    encloses: bool,
 }
 
 /// The entry of `locals` standing for class `name` declared in an enclosing function (no
@@ -133,20 +137,58 @@ fn class_key(name: &str) -> String {
     format!("#class {name}")
 }
 
+/// The key in `locals` of a type parameter of an enclosing function or class: a nested
+/// function naming it becomes a closure constant, which sees it (a declaration is collected
+/// outside the function, without its type parameters).
+fn type_key(name: &str) -> String {
+    format!("#type {name}")
+}
+
+/// `locals` with the type parameters `generics` added (`type_key`).
+fn with_generics<'a>(
+    locals: &'a FxHashSet<String>,
+    generics: &[ast::GenericParam],
+) -> std::borrow::Cow<'a, FxHashSet<String>> {
+    if generics.is_empty() {
+        return std::borrow::Cow::Borrowed(locals);
+    }
+    let mut l = locals.clone();
+    l.extend(generics.iter().map(|g| type_key(&g.name.name)));
+    std::borrow::Cow::Owned(l)
+}
+
+/// The single-segment type names function `f` writes anywhere (`T` of `Res<T>`).
+fn type_names(f: &ast::FnDecl) -> FxHashSet<String> {
+    struct Names(FxHashSet<String>);
+    impl<'a> velt_syntax::visit::Visit<'a> for Names {
+        fn ty(&mut self, t: &'a ast::TypeExpr) {
+            if let ast::TypeExprKind::Named { path, .. } = &t.kind {
+                if let [one] = path.as_slice() {
+                    self.0.insert(one.name.clone());
+                }
+            }
+        }
+    }
+    let mut v = Names(FxHashSet::default());
+    velt_syntax::visit::walk_fn(f, &mut v);
+    v.0
+}
+
 impl Rw {
     /// Every function body in `item`; `outer`: the locals of the functions around it.
     fn item(&mut self, item: &mut ast::Item, outer: &FxHashSet<String>) {
         match &mut item.kind {
             I::Function(f) => self.func(f, outer),
             I::Struct(t) | I::Class(t) => {
+                let outer = with_generics(outer, &t.generics).into_owned();
                 for e in t.fields.iter_mut().filter_map(|f| f.default.as_mut()) {
-                    self.expr(e, outer);
+                    self.expr(e, &outer);
                 }
                 if let Some(c) = &mut t.constructor {
-                    self.func(c, outer);
+                    self.func(c, &outer);
                 }
                 for m in &mut t.methods {
-                    self.func(&mut m.decl, outer);
+                    self.func(&mut m.decl, &outer);
                 }
             }
             I::Extend(e) => {
@@ -171,6 +213,8 @@ impl Rw {
     }
 
     fn func(&mut self, f: &mut ast::FnDecl, outer: &FxHashSet<String>) {
+        let generics = f.sig.generics.clone();
+        let outer = &*with_generics(outer, &generics);
         let params = f.sig.params.clone();
         for e in f.sig.params.iter_mut().filter_map(|p| p.default.as_mut()) {
             self.expr(e, outer);
@@ -244,11 +288,12 @@ impl Rw {
             if sc.this {
                 continue;
             }
-            let reads_class = sc
+            let encloses = sc
                 .values
                 .iter()
                 .filter(|n| !sc.binds.contains(*n) && !sc.classes.contains(*n))
-                .any(|n| locals.contains(&class_key(n)));
+                .any(|n| locals.contains(&class_key(n)))
+                || type_names(f).iter().any(|n| locals.contains(&type_key(n)));
             let free = sc
                 .refs
                 .into_iter()
@@ -258,13 +303,13 @@ impl Rw {
                 at,
                 name: f.sig.name.clone(),
                 free,
-                reads_class,
+                encloses,
             });
         }
         // Those capturing a local, then those using one of those (a closure constant).
         let mut conv: Vec<bool> = cands
             .iter()
-            .map(|c| c.reads_class || c.free.iter().any(|n| locals.contains(n)))
+            .map(|c| c.encloses || c.free.iter().any(|n| locals.contains(n)))
             .collect();
         loop {
             let names: FxHashSet<&str> = cands

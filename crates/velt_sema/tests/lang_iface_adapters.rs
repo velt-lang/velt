@@ -6,10 +6,10 @@ mod common;
 use common::programs::{err_src, ok_src};
 
 #[test]
-fn a_slot_whose_type_is_unresolved_does_not_refuse_the_conversion() {
-    // `keyof any` is reported where the mapped type is written; the conversion of the value
-    // whose field has that type is not reported again at each use.
-    let r = err_src(
+fn a_slot_of_a_mapped_type_over_any_converts() {
+    // `Acc<any>`, a homomorphic mapped type over `any`, is `any` (it was an unresolved slot
+    // while `keyof any` was not supported): the value converts to `Ctx<any>`.
+    ok_src(
         "type Acc<T> = { readonly [K in keyof T]: T[K] };
          interface Ctx<P = {}> { props: Acc<P>; name(): string; }
          function take(c: Ctx<any>): string { return c.name(); }
@@ -18,8 +18,6 @@ fn a_slot_whose_type_is_unresolved_does_not_refuse_the_conversion() {
            console.log(take(c));
          }",
     );
-    assert!(r.contains("`keyof any` is not supported yet"), "{r}");
-    assert!(!r.contains("mismatched types"), "{r}");
 }
 
 #[test]

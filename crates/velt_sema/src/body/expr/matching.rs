@@ -195,6 +195,27 @@ impl FnCx<'_, '_> {
         )
     }
 
+    /// A value whose type is a type parameter (or a deferred `T[K]` or `T & {…}`) as an `any`
+    /// (a share of a variable), so `typeof` tells the instantiation's value at run time (#1036);
+    /// also a `T | undefined` / `T | null` (its nothing, or the payload's tag); other values as
+    /// they are.
+    pub(super) fn param_as_any(&mut self, s: hir::Expr) -> hir::Expr {
+        let core = self.cx.ty.opt_payload(s.ty).unwrap_or(s.ty);
+        // `T & { n?: number }` too: a branded primitive at `T = number` (#1313).
+        let intersect = matches!(
+            self.cx.ty.kind(core),
+            hir::TyKind::Op(hir::TyOp::Intersect, _)
+        );
+        let Some(any) = self
+            .any_ty()
+            .filter(|_| intersect || self.instance_valued(core))
+        else {
+            return s;
+        };
+        let s = self.share_if_place(s);
+        self.coerce(s, any)
+    }
+
     /// Is `t` a union (or an option of one) with a type parameter among its members?
     pub(super) fn param_union(&mut self, t: TyId) -> bool {
         let core = self.cx.ty.core(t).unwrap_or(t);

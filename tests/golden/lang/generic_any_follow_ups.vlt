@@ -1,0 +1,77 @@
+// Generics through `any` (#1266): an enum value of a type parameter converted to `any` is its
+// number or string; a string `+` with a union of primitives; `String(a)` of an `any` holding an
+// object or array; `unknown` back to a union through `T`; `x as object` at `T = null`.
+// check: no leaks
+enum E {
+  A = 1,
+  B = 2,
+}
+
+enum S {
+  Up = "UP",
+  Down = "DOWN",
+}
+
+enum Auto {
+  X,
+  Y,
+  Z,
+}
+
+function toAny<T>(x: T): any {
+  return x;
+}
+
+function toUnknown<T>(x: T): unknown {
+  return x;
+}
+
+const a = toAny(E.B);
+console.log(a, typeof a, a === 2, toAny(S.Down), typeof toAny(S.Up), a === toAny(E.B));
+console.log(toUnknown(Auto.Z), toAny(Auto.X), String(toAny(S.Up)) + "!", toAny<E | null>(null));
+console.log(toAny<E | string>(E.A), toAny<E | string>("s"));
+const xs: any[] = [toAny(E.A), toAny(S.Up)];
+console.log(xs, JSON.stringify(xs));
+
+function k(x: string | number | boolean): string {
+  return x + ":k";
+}
+
+function sn(x: unknown): string {
+  if (typeof x === "string" || typeof x === "number") {
+    return "sn:" + x;
+  }
+  return "other";
+}
+
+function lit(x: "a" | 1): string {
+  let s = "L";
+  s += x;
+  return s;
+}
+
+const z: string | number = xs.length > 0 ? 1 : "z";
+console.log(k(1.5), k("a"), k(false), "k:" + z, z + ":k");
+
+function joinU(x: string | number[]): string {
+  return "a:" + x + "/";
+}
+
+console.log(sn(2), sn("q"), sn(true), lit("a"), lit(1), joinU([1, 2]), joinU("s"));
+
+const o: any = { a: 1 };
+const arr: any = [1, 2];
+console.log(String(o), String(arr), `${arr}`, "" + o);
+
+function back<T>(u: unknown): T {
+  return u as T;
+}
+
+const u: unknown = 3;
+console.log(back<number | string>(u), back<number | string>("s" as unknown));
+
+function asObject<T>(x: T): object {
+  return x as object;
+}
+
+console.log(asObject<null>(null), asObject<{ b: number }>({ b: 2 }));

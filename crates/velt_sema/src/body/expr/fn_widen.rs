@@ -14,7 +14,7 @@
 use velt_syntax::ast;
 
 use super::callback::Wrap;
-use super::callback_wrap::Shape;
+use super::callback_wrap::{Arg, Plan, Shape};
 use crate::body::recheck::Mark;
 use crate::body::{FnCx, LocalKind};
 use crate::hir::{self, ExprKind as H, LocalId, TyId, TyKind, UseMode};
@@ -263,17 +263,24 @@ impl FnCx<'_, '_> {
             }
         };
         let shape = Shape::of(want.len(), rest);
-        if Shape::of(own.len(), own_rest) != shape
-            || !own
-                .iter()
-                .zip(&want)
-                .any(|(&o, &w)| self.param_differs(o, w))
+        // A function taking fewer parameters gets the first ones (#943).
+        let fewer = !own_rest && own.len() < shape.fixed;
+        if !fewer
+            && (Shape::of(own.len(), own_rest) != shape
+                || !own
+                    .iter()
+                    .zip(&want)
+                    .any(|(&o, &w)| self.param_differs(o, w)))
         {
             return None;
         }
+        let plan = match fewer {
+            true => Plan::one((0..own.len()).map(Arg::Param).collect()),
+            false => shape.same(),
+        };
         let callee = super::callback::Callee::Named(arg.clone());
         self.widen_trial(fn_ty, |s| {
-            s.wrap(callee, shape, &shape.same(), Wrap::Call, Some(exp))
+            s.wrap(callee, shape, &plan, Wrap::Call, Some(exp))
         })
     }
 
@@ -296,7 +303,7 @@ impl FnCx<'_, '_> {
     }
 
     /// Are `from` and `to` function types of the same shape whose parameter or result types
-    /// differ?
+    /// differ, or is `from` one taking fewer parameters?
     /// Whether each of `to`'s converts to `from`'s, and `from`'s result and errors to `to`'s,
     /// is what the wrapper's check finds (the conversions of arguments and results, object
     /// copies included).
@@ -317,11 +324,10 @@ impl FnCx<'_, '_> {
                     ..
                 },
             ) => {
-                fp.len() == tp.len()
-                    && frest == trest
-                    && (fp != tp || fr != tr)
-                    && !t.has_error(from)
-                    && !t.has_error(to)
+                let same = fp.len() == tp.len() && frest == trest && (fp != tp || fr != tr);
+                // Fewer parameters: the wrapper passes the first ones (#943).
+                let fewer = !frest && fp.len() < tp.len() - usize::from(*trest);
+                (same || fewer) && !t.has_error(from) && !t.has_error(to)
             }
             _ => false,
         }
