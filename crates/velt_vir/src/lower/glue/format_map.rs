@@ -134,9 +134,9 @@ impl FnLower<'_, '_> {
         ty: TyId,
         depth: &Operand,
     ) -> bool {
-        // A subclass of `Map` or `Set` with no fields of its own: its base's entries, under its
-        // own name (`M(1) [Map] { 'a' => 1 }`, `[M [Map]]` past the depth limit), as Node
-        // writes it.
+        // A subclass of `Map` or `Set`: its base's entries, then its own fields, under its own
+        // name (`M(1) [Map] { 'a' => 1, tag: 't' }`, `[M [Map]]` past the depth limit), as
+        // Node writes it.
         if let Some((base, sub)) = self.collection_subclass(ty) {
             let (kind, set) = match self.prelude_map(base) {
                 Some(_) => ("Map", false),
@@ -159,7 +159,14 @@ impl FnLower<'_, '_> {
             let tag = format!(") [{kind}] ");
             let cut = format!("[{sub} [{kind}]]");
             let parts = (map, map_ty, kt, vt, entries);
-            self.format_entries_named(buf, obj, ty, depth, parts, (&name, &tag, &cut));
+            let TyKind::Adt(b, _) = self.cx.kind(base) else {
+                crate::lower::ice("a collection base")
+            };
+            let inherited = self.cx.adt_def(b).fields.len() as u32;
+            let mut own = self.shown_fields(ty);
+            own.retain(|(i, _, _)| *i >= inherited);
+            let texts = (name.as_str(), tag.as_str(), cut.as_str());
+            self.format_entries_named(buf, obj, ty, depth, parts, &own, texts);
             return true;
         }
         // (the `Map` holding the entries, its type, key and value types, how they print)
@@ -209,8 +216,8 @@ impl FnLower<'_, '_> {
     }
 
     /// `(base, name)` if `ty` is a user class extending the prelude `Map` or std's `Set`
-    /// (through other classes too) with no fields of its own: the base's type, with its
-    /// arguments, and the class's short name.
+    /// (through other classes too): the base's type, with its arguments, and the class's short
+    /// name.
     pub(in crate::lower) fn collection_subclass(&mut self, ty: TyId) -> Option<(TyId, String)> {
         let TyKind::Adt(d, args) = self.cx.kind(ty) else {
             return None;
@@ -221,15 +228,10 @@ impl FnLower<'_, '_> {
         if a.name.starts_with("std/") {
             return None;
         }
-        let n = a.fields.len();
         let mut base = self.cx.subst(a.base?, &args);
         for _ in 0..16 {
             if self.prelude_map(base).is_some() || self.std_set(base).is_some() {
-                let TyKind::Adt(b, _) = self.cx.kind(base) else {
-                    return None;
-                };
-                let same = self.cx.adt_def(b).fields.len() == n;
-                return same.then(|| (base, self.cx.type_name(ty)));
+                return Some((base, self.cx.type_name(ty)));
             }
             let TyKind::Adt(b, bargs) = self.cx.kind(base) else {
                 return None;
@@ -240,8 +242,9 @@ impl FnLower<'_, '_> {
         None
     }
 
-    /// [`Self::format_entries`] under a subclass's name: `{name}{size}{tag}{ … }`, `cut` past
-    /// node's depth limit.
+    /// [`Self::format_entries`] under a subclass's name, then its `own` fields:
+    /// `{name}{size}{tag}{ … }`, `cut` past node's depth limit.
+    #[allow(clippy::too_many_arguments)] // `format_entries`' arguments, plus the fields
     fn format_entries_named(
         &mut self,
         buf: &Operand,
@@ -249,6 +252,7 @@ impl FnLower<'_, '_> {
         ty: TyId,
         depth: &Operand,
         parts: (Place, TyId, TyId, TyId, Entries),
+        own: &[(u32, String, TyId)],
         (name, tag, cut): (&str, &str, &str),
     ) {
         let (map, map_ty, kt, vt, entries) = parts;
@@ -261,10 +265,14 @@ impl FnLower<'_, '_> {
             Rvalue::Binary(BinOp::Eq, size.clone(), cint(0, size_t)),
         );
         let (empty_bb, full_bb, done) = (self.new_block(), self.new_block(), self.new_block());
-        self.branch(empty, empty_bb, full_bb);
-        self.switch_to(empty_bb);
-        self.push_text(buf, &format!("{name}0{tag}{{}}"));
-        self.goto(done);
+        if own.is_empty() {
+            self.branch(empty.clone(), empty_bb, full_bb);
+            self.switch_to(empty_bb);
+            self.push_text(buf, &format!("{name}0{tag}{{}}"));
+            self.goto(done);
+        } else {
+            self.goto(full_bb);
+        }
         self.switch_to(full_bb);
         let p = Operand::Copy(obj.clone());
         self.within_depth(buf, depth, cut, Some(p.clone()), |lw, child| {
@@ -274,13 +282,29 @@ impl FnLower<'_, '_> {
                 lw.push_text(buf, tag);
                 lw.push_text(buf, "{ ");
                 let types = (map_ty, kt, vt);
-                lw.format_map_entries(buf, &map, types, (entries, None), size, &child);
+                if own.is_empty() {
+                    lw.format_map_entries(buf, &map, types, (entries, None), size, &child);
+                } else {
+                    // The entries, if any, then each field after a comma.
+                    let (some, none) = (lw.new_block(), lw.new_block());
+                    lw.branch(empty, none, some);
+                    lw.switch_to(some);
+                    lw.format_map_entries(buf, &map, types, (entries, None), size, &child);
+                    lw.push_text(buf, ", ");
+                    lw.goto(none);
+                    lw.switch_to(none);
+                    for (i, (index, n, t)) in own.iter().enumerate() {
+                        let sep = if i > 0 { ", " } else { "" };
+                        lw.push_text(buf, &format!("{sep}{n}: "));
+                        let fp = lw.field_place(obj, ty, *index);
+                        lw.format_nested(buf, &fp, *t, &child);
+                    }
+                }
                 lw.push_text(buf, " }");
             })
         });
         self.goto(done);
         self.switch_to(done);
-        let _ = ty;
     }
 
     /// Is the prelude `Map` at `map` (of type `map_ty`) marked as a prototype-less record's
