@@ -295,6 +295,40 @@ export function __anyArr_reverse<T>(a: T[], args: any[]): any {
   return a;
 }
 
+export function __anyArr_sort<T>(a: T[], args: any[]): any {
+  const f = __anyArg(args, 0);
+  if (f === undefined) {
+    a.sort((x: T, y: T): number => __anySortDefault(x, y));
+    return a;
+  }
+  if (typeof f !== "function") {
+    panic(
+      `TypeError: The comparison function must be either a function or undefined: ${__anyText(f, "")}`,
+    );
+  }
+  a.sort((x: T, y: T): number => {
+    const ex: any = x;
+    const ey: any = y;
+    // The comparator's result is `ToNumber`ed; `NaN` counts as equal.
+    const n: number = +f(ex, ey);
+    return n !== n ? 0 : n;
+  });
+  return a;
+}
+
+/** `sort`'s default order: by `ToString`, `undefined` last. */
+function __anySortDefault(x: any, y: any): number {
+  if (x === undefined) {
+    return y === undefined ? 0 : 1;
+  }
+  if (y === undefined) {
+    return -1;
+  }
+  const sx = __anyString(x, "");
+  const sy = __anyString(y, "");
+  return sx < sy ? -1 : sx > sy ? 1 : 0;
+}
+
 export function __anyArr_concat<T>(a: T[], args: any[]): any {
   const out: any[] = [];
   for (let i: usize = 0; i < a.length; i++) {

@@ -22,3 +22,18 @@ const nested: any = { list: [1, 2, 3], name: "  sigx " };
 console.log(nested.list.map((x: any) => x + 1), nested.name.trim().toUpperCase(), nested.list.length);
 nested.list.push(4);
 console.log(nested.list);
+// An empty array literal converted to an `any` takes elements of every type.
+const grow: any = [];
+grow.push(1);
+grow.push("two", 3);
+console.log(grow, grow.length, grow.pop(), grow.find((x: any) => x === "two"), grow.reduce((a: any, x: any) => a + x, ""));
+// `sort` through `any`: by `ToString` (10 before 9), `undefined` last; a comparator's result is `ToNumber`ed.
+const nums: any = [10, 9, 1, 100];
+console.log(nums.sort(), nums);
+console.log(nums.sort((a: number, b: number) => a - b));
+console.log(nums.sort((a: number, b: number) => (b > a ? "1" : "-1") as any));
+const mixed: any = ["b", undefined, "a", 3];
+console.log(mixed.sort());
+const empty: any = [];
+const flags: any = [true, false];
+console.log(empty.sort(), flags.sort());

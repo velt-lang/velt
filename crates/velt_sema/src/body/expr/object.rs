@@ -9,6 +9,7 @@ use velt_syntax::ast;
 
 use super::mixed_array::first_typed_elem;
 use super::setters::synth;
+use crate::any::Dynamic;
 use crate::body::{FnCx, Want};
 use crate::ctx::Item;
 use crate::defs::FieldInfo;
@@ -48,7 +49,16 @@ impl FnCx<'_, '_> {
         }
         if elems.is_empty() {
             // Nothing says what it holds (`JSON.stringify([])`, `[].length`): `never[]`, as in TS.
-            let e = exp_elem.unwrap_or(self.cx.ty.never);
+            // Converted to an `any` (`const xs: any = []`), it is an `any[]`, which takes
+            // elements of every type (TypeScript's evolving `any[]`).
+            let dynamic = exp.and_then(|t| self.cx.dynamic(t));
+            let to_any = matches!(dynamic, Some(Dynamic::Any | Dynamic::Unknown))
+                && !self.cx.scopes[self.module].is_std;
+            let e = match exp_elem {
+                Some(e) => e,
+                None if to_any => self.any_ty().unwrap_or(self.cx.ty.never),
+                None => self.cx.ty.never,
+            };
             let ty = self.cx.ty.array(e);
             return self.mk(H::ArrayLit(vec![]), ty, span);
         }
