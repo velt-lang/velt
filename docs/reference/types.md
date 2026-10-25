@@ -2120,7 +2120,10 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   `Record<number, V>` and `Record<string | number, V>` are `Record<string, V>`, as JavaScript
   makes a number key its string: `r[n]` with a `number` `n` reads and writes `r[String(n)]`
   (`r[1.5]` is `r["1.5"]`), and `Object.keys` lists the keys as strings, array indices first.
-  A number index works on any `string`-keyed record. A type parameter given `number` as a
+  Through a variable or parameter declared with one, a string key that is not a number's
+  name is an error, as in TypeScript: `r["abc"]` (TS7015), `r.abc` (TS2339) and `{ a: v }` as
+  its initializer (TS2353); `r["1"]` and `r["1.5"]` are keys. A number index works on any
+  `string`-keyed record. A type parameter given `number` as a
   record key is not supported yet. A cast to `Record<symbol, unknown>` (or `Record<symbol,
   any>`) looks at a value's symbol-keyed members, as through `any`:
   `(v as Record<symbol, unknown>)[BRAND] === true` reads the member `BRAND` names, or

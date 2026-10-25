@@ -136,6 +136,7 @@ impl FnCx<'_, '_> {
         checked: Option<hir::Expr>,
         span: Span,
     ) -> hir::Expr {
+        self.number_record_key(&obj, &key);
         let obj = self.unview(obj);
         let (def, slots, recv_ty, vslot) = match self.resolve_method(obj.ty, method) {
             Some(Resolved::Def {

@@ -289,6 +289,8 @@ pub(crate) struct Frame {
     /// Locals declared with a read-only array type (`readonly T[]`, `ReadonlyArray<T>`), which
     /// the body may not write to (`readonly_arrays.rs`).
     pub readonly_arrays: rustc_hash::FxHashSet<LocalId>,
+    /// Locals declared with a number-keyed record type (`expr::number_records`).
+    pub number_records: rustc_hash::FxHashSet<LocalId>,
     /// What the position of an assignment used as a value expects (`assign_value`): a
     /// `new C()` assigned through `any` with `??=`, `||=` or `&&=` takes its type arguments from
     /// it (`dynamic_write`).
@@ -413,6 +415,7 @@ impl Frame {
             using_shares: vec![],
             await_using: Default::default(),
             readonly_arrays: Default::default(),
+            number_records: Default::default(),
             assign_hint: None,
             as_const_tuples: Default::default(),
             closure_consts: Default::default(),

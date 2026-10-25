@@ -244,6 +244,7 @@ impl FnCx<'_, '_> {
         let method = self.outer[j].method_values.contains(&prev);
         // A read-only array or collection is read-only in the closures that capture it too.
         let readonly = self.outer[j].readonly_arrays.contains(&prev);
+        let numbered = self.outer[j].number_records.contains(&prev);
         for idx in j + 1..self.outer.len() {
             let f = &mut self.outer[idx];
             prev = add_narrowed_capture(f, name, prev, ty, span, narrowing);
@@ -255,6 +256,9 @@ impl FnCx<'_, '_> {
             }
             if readonly {
                 f.readonly_arrays.insert(prev);
+            }
+            if numbered {
+                f.number_records.insert(prev);
             }
             ty = f.locals[prev.0 as usize].ty;
             narrowing = match assigned {
@@ -274,6 +278,9 @@ impl FnCx<'_, '_> {
         }
         if readonly {
             self.f.readonly_arrays.insert(inner);
+        }
+        if numbered {
+            self.f.number_records.insert(inner);
         }
         self.late_lookup(Some(declared.0), declared.1, inner, name, span);
         Some(inner)

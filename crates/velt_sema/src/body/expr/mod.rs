@@ -107,6 +107,7 @@ mod names;
 mod namespaces;
 mod narrowing_casts;
 mod never_null;
+mod number_records;
 mod numbers;
 mod object;
 mod object_assign;
