@@ -85,7 +85,8 @@ impl FnCx<'_, '_> {
         if depth > 8 || path.len() != 1 || !args.is_empty() {
             return false;
         }
-        if !self.cx.marked_aliases().0.contains(&path[0].name) {
+        let marked = &self.cx.marked_aliases().0;
+        if marked.is_empty() || !marked.contains(&path[0].name) {
             return false;
         }
         match self
@@ -169,6 +170,24 @@ impl FnCx<'_, '_> {
                 .with_note("a read-only array has no methods that change it; copy it first (`[...xs]`) to get an array you may change"),
             );
         }
+    }
+}
+
+impl crate::ctx::Ctx<'_> {
+    /// `ReadonlyMap<K, V>` (unless an item of that name is in scope): `Map<K, V>`. It is a built-in
+    /// name rather than a prelude alias, which every program would pay for.
+    pub(crate) fn resolve_readonly_map(
+        &mut self,
+        t: &ast::TypeExpr,
+        args: &[ast::TypeExpr],
+        env: &crate::resolve::TyEnv,
+    ) -> TyId {
+        let args: Vec<TyId> = args.iter().map(|a| self.resolve_type(a, env)).collect();
+        let Some(map) = self.prelude_adt("Map").filter(|_| args.len() == 2) else {
+            self.arity_error("ReadonlyMap", 2, args.len(), t);
+            return self.ty.error;
+        };
+        self.ty.intern(TyKind::Adt(map, args))
     }
 }
 

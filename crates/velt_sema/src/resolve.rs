@@ -464,6 +464,7 @@ impl Ctx<'_> {
             "Promise" if args.len() == 2 => 2,
             "Promise" => 1,
             "Result" => return Some(self.removed_result(t)),
+            "ReadonlyMap" => return Some(self.resolve_readonly_map(t, args, env)),
             "ReturnType" | "Parameters" => {
                 return Some(self.resolve_fn_operator(t, name, args, env))
             }

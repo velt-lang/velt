@@ -90,7 +90,8 @@ impl FnCx<'_, '_> {
         if depth > 8 || path.len() != 1 || !args.is_empty() {
             return false;
         }
-        if !self.cx.marked_aliases().1.contains(&path[0].name) {
+        let marked = &self.cx.marked_aliases().1;
+        if marked.is_empty() || !marked.contains(&path[0].name) {
             return false;
         }
         match self
