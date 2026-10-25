@@ -38,8 +38,9 @@ impl FnCx<'_, '_> {
     /// the class has one, an override below it may run, and `args` (spreads expanded) leaves
     /// out an argument of one of its parameters, passes `undefined` there, or a value that may
     /// be `undefined` (a variable, a call's result, a method value's arrow, `method_value.rs`).
-    /// A call that only leaves out trailing arguments takes the slot that applies the defaults
-    /// of the rest.
+    /// A call that only leaves out trailing arguments (or passes `undefined` literals for them:
+    /// `m(i, undefined)` is `m(i)`) takes the slot that applies the defaults of the rest, which
+    /// takes the arguments before them only.
     pub(super) fn fill_target(
         &mut self,
         recv_ty: TyId,
@@ -48,7 +49,8 @@ impl FnCx<'_, '_> {
         args: &[ast::Expr],
     ) -> Option<FillTarget> {
         let t = self.fill_slot(recv_ty, def, slot, None)?;
-        let written = args.len();
+        let is_undefined = crate::body::defaults::is_undefined;
+        let written = args.len() - args.iter().rev().take_while(|a| is_undefined(a)).count();
         let passed: Vec<bool> = (t.positions.clone().into_iter())
             .map(|k| k < written && self.maybe_undefined(&args[k]))
             .collect();
@@ -63,8 +65,9 @@ impl FnCx<'_, '_> {
 
     /// The fill target of a virtual call of method `def` (vtable `slot`, callable `c`) on a
     /// `recv_ty` (`fill_target`) and the arguments it passes: spreads of a known length (a
-    /// tuple, an array literal, `apply`'s list) stand for their elements. A spread of an unknown
-    /// length before a parameter whose default an override changes is reported (`Err`).
+    /// tuple, an array literal, `apply`'s list) stand for their elements, and the `undefined`s
+    /// a trailing entry leaves out are dropped. A spread of an unknown length before a
+    /// parameter whose default an override changes is reported (`Err`).
     pub(super) fn virtual_fill<'e>(
         &mut self,
         c: &Callable,
@@ -93,6 +96,11 @@ impl FnCx<'_, '_> {
             }
         }
         let fill = self.fill_target(recv_ty, def, slot, &args);
+        if let Some(k) = fill.as_ref().and_then(|t| t.trailing) {
+            if k < args.len() {
+                args = Cow::Owned(args[..k].to_vec());
+            }
+        }
         Ok((fill, args))
     }
 
@@ -246,6 +254,7 @@ fn fill_body(cx: &mut Ctx, def: DefId, m: DefId, positions: &[usize], trailing: 
         .map(|p| p.default.clone())
         .collect();
     let own_tys: Vec<TyId> = cx.fn_info(m).params.iter().map(|p| p.ty).collect();
+    let own_modes: Vec<PassMode> = cx.fn_info(m).params.iter().map(|p| p.mode).collect();
     let env = TyEnv::new(module, &names);
     let mut g = FnCx::new(cx, module, env, Frame::new(FnKind::Method, Some(ret)));
     g.fn_name = name.clone();
@@ -263,6 +272,9 @@ fn fill_body(cx: &mut Ctx, def: DefId, m: DefId, positions: &[usize], trailing: 
         mode: this_sig.mode,
     }];
     let mut args = vec![g.mk(H::Local(this, this_use), this_sig.ty, span)];
+    // A default is computed into a local before the call, so the call's arguments are reads of
+    // locals and `this` is passed as borrowed (no reference count taken for the call).
+    let mut stmts = vec![];
     for (k, p) in params.iter().enumerate() {
         let l = g.new_local(&p.name, p.ty, false, span, LocalKind::Param);
         hir_params.push(hir::Param {
@@ -279,22 +291,25 @@ fn fill_body(cx: &mut Ctx, def: DefId, m: DefId, positions: &[usize], trailing: 
         let arg = match (positions.contains(&k), defaults.get(k).cloned().flatten()) {
             (true, Some(d)) => {
                 let target = own_tys.get(k).copied().unwrap_or(p.ty);
-                match g.default_where_undefined(read, target, &d, &self_args) {
+                let e = match g.default_where_undefined(read, target, &d, &self_args) {
                     Ok(e) | Err(e) => e,
-                }
+                };
+                hoisted(&mut g, e, own_modes.get(k).copied(), &mut stmts)
             }
             _ => read,
         };
         args.push(arg);
     }
     // The parameters a trailing entry does not take: the method's own defaults.
-    for d in defaults
-        .iter()
+    for (k, d) in (defaults.iter().enumerate())
         .skip(params.len())
         .take_while(|_| trailing.is_some())
     {
         let arg = match d {
-            Some(d) => g.placed_default(d, &self_args, span),
+            Some(d) => {
+                let e = g.placed_default(d, &self_args, span);
+                hoisted(&mut g, e, own_modes.get(k).copied(), &mut stmts)
+            }
             None => g.unit_expr(span),
         };
         args.push(arg);
@@ -313,6 +328,7 @@ fn fill_body(cx: &mut Ctx, def: DefId, m: DefId, positions: &[usize], trailing: 
         true => hir::StmtKind::Expr(call),
         false => hir::StmtKind::Return(Some(call)),
     };
+    stmts.push(hir::Stmt { kind, span });
     g.cx.checking.pop();
     let frame = std::mem::replace(&mut g.f, Frame::new(FnKind::Method, None));
     drop(g);
@@ -329,7 +345,7 @@ fn fill_body(cx: &mut Ctx, def: DefId, m: DefId, positions: &[usize], trailing: 
         body: hir::Body {
             locals: frame.locals,
             block: hir::Block {
-                stmts: vec![hir::Stmt { kind, span }],
+                stmts,
                 value: None,
                 span,
             },
@@ -341,4 +357,32 @@ fn fill_body(cx: &mut Ctx, def: DefId, m: DefId, positions: &[usize], trailing: 
     let info = cx.fn_info_mut(def);
     info.local_kinds = frame.kinds;
     info.throw_srcs = frame.uncaught;
+}
+
+/// `e`, an argument of the call in a fill entry, as a read of a local holding it (a `let`
+/// added to `stmts`) unless it is a literal or a local's read; `mode` is how the method takes it.
+fn hoisted(
+    g: &mut FnCx,
+    e: hir::Expr,
+    mode: Option<PassMode>,
+    stmts: &mut Vec<hir::Stmt>,
+) -> hir::Expr {
+    if matches!(e.kind, H::Lit(_) | H::Local(..)) {
+        return e;
+    }
+    let (ty, span) = (e.ty, e.span);
+    let l = g.new_local("<default>", ty, false, span, LocalKind::Temp);
+    stmts.push(hir::Stmt {
+        kind: hir::StmtKind::Let {
+            local: l,
+            init: Some(e),
+        },
+        span,
+    });
+    let want = match mode {
+        Some(PassMode::Owned) => Want::Move,
+        _ => Want::Borrow,
+    };
+    let use_mode = g.use_mode(ty, want);
+    g.mk(H::Local(l, use_mode), ty, span)
 }
