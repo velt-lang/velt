@@ -539,6 +539,9 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::ArrayMove
         | I::ArraySetLen
         | I::ArrayReserve
+        | I::ArrayPrefetch
+        | I::ArrayRotateRight
+        | I::ArrayRotateLeft
         | I::Hash
         | I::Eq
         | I::KeyEq

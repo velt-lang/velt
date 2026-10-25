@@ -1,0 +1,287 @@
+// velt:collections/btree/remove: deletes from a `Pool` (velt:collections/btree/pool), internal.
+//
+// A leaf below `MIN_LEAF` entries (an inner node below `MIN_INNER` separators) borrows one from a
+// sibling that has more, or merges with it, and the parent loses a separator, which may leave it
+// short in turn, up to the root; a root left with one child gives way to it. A node whose
+// separators on either side change (a borrow moves the one between the two nodes, a merge widens
+// the range) gets its prefix and words again (`refreshLeaf`, `refreshInner`); a node that moves
+// to another parent keeps its separators, so its words stay.
+
+import { F, NONE, Pool, Range, moveSlot } from "velt:collections/btree/pool";
+import { shiftDown } from "velt:collections/btree/line";
+import { removeEntry, sortLeaf } from "velt:collections/btree/leaf";
+
+/** The fewest entries a leaf other than the root keeps; below it, it borrows or merges. */
+const MIN_LEAF: usize = F / 4;
+/** The fewest separators an inner node other than the root keeps. */
+const MIN_INNER: usize = F / 4 - 1;
+
+/**
+ * Removes the entry in physical slot `s` of `leaf` (`findLeaf` recorded the path to it;
+ * velt:collections/btree/leaf `leafFind` gives the slot).
+ */
+export function removeAt<K extends Comparable<K>, V>(p: Pool<K, V>, leaf: u32, s: usize) {
+  removeEntry(p, leaf, s);
+  p.size--;
+  p.edits++;
+  if (p.height > 0 && p.leafCount(leaf) < MIN_LEAF) {
+    rebalanceLeaf(p, leaf);
+  }
+}
+
+function rebalanceLeaf<K extends Comparable<K>, V>(p: Pool<K, V>, leaf: u32) {
+  const depth = p.pathNodes.length - 1;
+  const parent = p.pathNodes[depth];
+  const slot = p.pathSlots[depth];
+  const pb = (parent as usize) * F;
+  const pn = p.innerCount(parent);
+  // Borrowing and merging move entries by rank, from slots in rank order.
+  sortLeaf(p, leaf);
+  if (slot > 0) {
+    const left = p.innerKids[pb + slot - 1];
+    sortLeaf(p, left);
+    if (p.leafCount(left) > MIN_LEAF) {
+      shiftLeafRight(p, left, leaf);
+      setSeparator(p, parent, slot - 1, p.keyAt((leaf as usize) * F));
+      p.refreshLeaf(left, p.childFences(depth, slot - 1));
+      p.refreshLeaf(leaf, p.childFences(depth, slot));
+      return;
+    }
+    const range = merged(p.childFences(depth, slot - 1), p.childFences(depth, slot));
+    mergeLeaves(p, left, leaf);
+    p.refreshLeaf(left, range);
+    removeSeparator(p, depth, slot - 1);
+    return;
+  }
+  if (slot < pn) {
+    const right = p.innerKids[pb + slot + 1];
+    sortLeaf(p, right);
+    if (p.leafCount(right) > MIN_LEAF) {
+      shiftLeafLeft(p, leaf, right);
+      setSeparator(p, parent, slot, p.keyAt((right as usize) * F));
+      p.refreshLeaf(leaf, p.childFences(depth, slot));
+      p.refreshLeaf(right, p.childFences(depth, slot + 1));
+      return;
+    }
+    const range = merged(p.childFences(depth, slot), p.childFences(depth, slot + 1));
+    mergeLeaves(p, leaf, right);
+    p.refreshLeaf(leaf, range);
+    removeSeparator(p, depth, slot);
+  }
+}
+
+// The range of two neighboring nodes together: the left one's low end, the right one's high end.
+function merged<K>(left: Range<K>, right: Range<K>): Range<K> {
+  return [left[0], right[1]];
+}
+
+// Separator `i` of inner `node` becomes `key` (a share of it), with its word.
+function setSeparator<K extends Comparable<K>, V>(p: Pool<K, V>, node: u32, i: usize, key: K) {
+  p.innerKeys[(node as usize) * F + i] = key;
+  if (p.inline()) {
+    p.innerWord(node, i);
+  }
+}
+
+// Moves the last entry of `left` to the front of `leaf`.
+function shiftLeafRight<K extends Comparable<K>, V>(p: Pool<K, V>, left: u32, leaf: u32) {
+  const lb = (left as usize) * F;
+  const ln = p.leafCount(left);
+  const base = (leaf as usize) * F;
+  const n = p.leafCount(leaf);
+  p.keyRotateRight(base, base + n);
+  p.valRotateRight(base, base + n);
+  p.keySwap(base, lb + ln - 1);
+  p.valSwap(base, lb + ln - 1);
+  p.setKey(lb + ln - 1, p.fill[0]);
+  p.valClear(lb + ln - 1);
+  p.setLeafCount(left, ln - 1);
+  p.setLeafCount(leaf, n + 1);
+}
+
+// Moves the first entry of `right` to the end of `leaf`.
+function shiftLeafLeft<K extends Comparable<K>, V>(p: Pool<K, V>, leaf: u32, right: u32) {
+  const base = (leaf as usize) * F;
+  const n = p.leafCount(leaf);
+  const rb = (right as usize) * F;
+  const rn = p.leafCount(right);
+  p.keySwap(base + n, rb);
+  p.valSwap(base + n, rb);
+  p.setLeafCount(leaf, n + 1);
+  // `right`'s first slot holds `leaf`'s fillers now: they rotate to its end.
+  p.keyRotateLeft(rb, rb + rn - 1);
+  p.valRotateLeft(rb, rb + rn - 1);
+  p.setLeafCount(right, rn - 1);
+}
+
+// Appends `right`'s entries to `left` and frees `right`.
+function mergeLeaves<K extends Comparable<K>, V>(p: Pool<K, V>, left: u32, right: u32) {
+  const lb = (left as usize) * F;
+  const ln = p.leafCount(left);
+  const rb = (right as usize) * F;
+  const rn = p.leafCount(right);
+  for (let i: usize = 0; i < rn; i++) {
+    p.keySwap(lb + ln + i, rb + i);
+    p.valSwap(lb + ln + i, rb + i);
+  }
+  p.setLeafCount(left, ln + rn);
+  const next = p.leafNext[right as usize];
+  p.leafNext[left as usize] = next;
+  if (next != NONE) {
+    p.leafPrev[next as usize] = left;
+  }
+  p.freeLeaf(right);
+}
+
+// Removes separator `sep` and the child right of it from the inner node at `depth` of the
+// recorded path, then rebalances that node.
+function removeSeparator<K extends Comparable<K>, V>(p: Pool<K, V>, depth: usize, sep: usize) {
+  const node = p.pathNodes[depth];
+  const base = (node as usize) * F;
+  const n = p.innerCount(node);
+  __intrinsic_array_rotate_left(p.innerKeys, base + sep, base + n - 1);
+  __intrinsic_array_rotate_left(p.innerKids, base + sep + 1, base + n);
+  p.innerLines[node as usize] = shiftDown(p.innerLines[node as usize], sep, n, p.scratch);
+  if (p.wide()) {
+    p.innerLinesB[node as usize] = shiftDown(p.innerLinesB[node as usize], sep, n, p.scratch);
+  }
+  p.innerKeys[base + n - 1] = p.fill[0];
+  p.setInnerCount(node, n - 1);
+  if (depth == 0) {
+    if (n - 1 == 0) {
+      // The root kept one child: it becomes the root, at the edge of the tree on both sides.
+      p.root = p.innerKids[base];
+      p.height--;
+      p.freeInner(node);
+      if (p.height == 0) {
+        p.refreshLeaf(p.root, [null, null]);
+      } else {
+        p.refreshInner(p.root, [null, null]);
+      }
+    }
+    return;
+  }
+  if (n - 1 < MIN_INNER) {
+    rebalanceInner(p, depth);
+  }
+}
+
+function rebalanceInner<K extends Comparable<K>, V>(p: Pool<K, V>, depth: usize) {
+  const node = p.pathNodes[depth];
+  const parent = p.pathNodes[depth - 1];
+  const slot = p.pathSlots[depth - 1];
+  const pb = (parent as usize) * F;
+  const pn = p.innerCount(parent);
+  if (slot > 0) {
+    const left = p.innerKids[pb + slot - 1];
+    if (p.innerCount(left) > MIN_INNER) {
+      rotateRight(p, parent, slot, left, node);
+      p.refreshInner(left, p.childFences(depth - 1, slot - 1));
+      p.refreshInner(node, p.childFences(depth - 1, slot));
+      return;
+    }
+    const range = merged(p.childFences(depth - 1, slot - 1), p.childFences(depth - 1, slot));
+    mergeInners(p, left, node, pb + slot - 1);
+    p.refreshInner(left, range);
+    removeSeparator(p, depth - 1, slot - 1);
+    return;
+  }
+  if (slot < pn) {
+    const right = p.innerKids[pb + slot + 1];
+    if (p.innerCount(right) > MIN_INNER) {
+      rotateLeft(p, parent, slot, node, right);
+      p.refreshInner(node, p.childFences(depth - 1, slot));
+      p.refreshInner(right, p.childFences(depth - 1, slot + 1));
+      return;
+    }
+    const range = merged(p.childFences(depth - 1, slot), p.childFences(depth - 1, slot + 1));
+    mergeInners(p, node, right, pb + slot);
+    p.refreshInner(node, range);
+    removeSeparator(p, depth - 1, slot);
+  }
+}
+
+// The parent's separator left of `node` (child `slot`) comes down to the front of `node`, and
+// `left`'s last separator goes up in its place, with `left`'s last child.
+function rotateRight<K extends Comparable<K>, V>(
+  p: Pool<K, V>,
+  parent: u32,
+  slot: usize,
+  left: u32,
+  node: u32,
+) {
+  const pb = (parent as usize) * F;
+  const lb = (left as usize) * F;
+  const ln = p.innerCount(left);
+  const base = (node as usize) * F;
+  const n = p.innerCount(node);
+  for (let i = n; i > 0; i--) {
+    moveSlot(p.innerKeys, base + i, base + i - 1);
+  }
+  for (let i = n + 1; i > 0; i--) {
+    p.innerKids[base + i] = p.innerKids[base + i - 1];
+  }
+  moveSlot(p.innerKeys, base, pb + slot - 1);
+  p.innerKids[base] = p.innerKids[lb + ln];
+  moveSlot(p.innerKeys, pb + slot - 1, lb + ln - 1);
+  p.innerKeys[lb + ln - 1] = p.fill[0];
+  p.setInnerCount(left, ln - 1);
+  p.setInnerCount(node, n + 1);
+  if (p.inline()) {
+    p.innerWord(parent, slot - 1);
+  }
+}
+
+// The parent's separator right of `node` (child `slot`) comes down to the end of `node`, and
+// `right`'s first separator goes up in its place, with `right`'s first child.
+function rotateLeft<K extends Comparable<K>, V>(
+  p: Pool<K, V>,
+  parent: u32,
+  slot: usize,
+  node: u32,
+  right: u32,
+) {
+  const pb = (parent as usize) * F;
+  const base = (node as usize) * F;
+  const n = p.innerCount(node);
+  const rb = (right as usize) * F;
+  const rn = p.innerCount(right);
+  moveSlot(p.innerKeys, base + n, pb + slot);
+  p.innerKids[base + n + 1] = p.innerKids[rb];
+  moveSlot(p.innerKeys, pb + slot, rb);
+  for (let i: usize = 0; i + 1 < rn; i++) {
+    moveSlot(p.innerKeys, rb + i, rb + i + 1);
+  }
+  for (let i: usize = 0; i < rn; i++) {
+    p.innerKids[rb + i] = p.innerKids[rb + i + 1];
+  }
+  p.innerKeys[rb + rn - 1] = p.fill[0];
+  p.setInnerCount(right, rn - 1);
+  p.setInnerCount(node, n + 1);
+  if (p.inline()) {
+    p.innerWord(parent, slot);
+  }
+}
+
+// Appends the parent's separator at `sepAt` and `right`'s separators and children to `left`,
+// and frees `right`.
+function mergeInners<K extends Comparable<K>, V>(
+  p: Pool<K, V>,
+  left: u32,
+  right: u32,
+  sepAt: usize,
+) {
+  const lb = (left as usize) * F;
+  const ln = p.innerCount(left);
+  const rb = (right as usize) * F;
+  const rn = p.innerCount(right);
+  moveSlot(p.innerKeys, lb + ln, sepAt);
+  for (let i: usize = 0; i < rn; i++) {
+    moveSlot(p.innerKeys, lb + ln + 1 + i, rb + i);
+  }
+  for (let i: usize = 0; i <= rn; i++) {
+    p.innerKids[lb + ln + 1 + i] = p.innerKids[rb + i];
+  }
+  p.setInnerCount(left, ln + 1 + rn);
+  p.freeInner(right);
+}

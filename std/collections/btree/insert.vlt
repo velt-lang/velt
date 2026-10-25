@@ -1,0 +1,203 @@
+// velt:collections/btree/insert: inserts into a `Pool` (velt:collections/btree/pool), internal.
+//
+// An entry goes into the leaf its key belongs to; a full leaf moves entries to a sibling with
+// room (`shiftToSibling`), and only when both are full splits in two, the new leaf going right
+// of it under a separator, which may split the parent in turn, up to a new root. Moving entries
+// to a sibling instead of splitting keeps leaves fuller (B*-trees): about 85% instead of 70%
+// for random keys, so fewer leaves, less memory and fewer cache lines per entry.
+
+import { CAP, F, NONE, Pool, Range } from "velt:collections/btree/pool";
+import { noteEdges } from "velt:collections/btree/edges";
+import { prefixOf, shiftUp } from "velt:collections/btree/line";
+import {
+  NO_SLOT,
+  appendEntry,
+  leafLocate,
+  moveRanks,
+  slotAtRank,
+} from "velt:collections/btree/leaf";
+
+/** Stores `value` under `key` in `p`, replacing the value already there. */
+export function insert<K extends Comparable<K>, V>(p: Pool<K, V>, key: K, value: V) {
+  if (p.fill.length == 0) {
+    p.fill.push(key);
+    if (p.plainVals()) {
+      p.valFill.push(value);
+    }
+    p.root = p.newLeaf();
+  }
+  noteEdges(p, key);
+  const leaf = p.findLeaf(key);
+  const base = (leaf as usize) * F;
+  const n = p.leafCount(leaf);
+  const [found, pos] = leafLocate(p, leaf, key);
+  if (found != NO_SLOT) {
+    p.valSet(base + found, value);
+    return;
+  }
+  if (n < CAP) {
+    p.size++;
+    p.edits++;
+    appendEntry(p, leaf, pos, key, value);
+    return;
+  }
+  if (shiftToSibling(p, leaf)) {
+    // The leaf or the sibling the key belongs to now has room.
+    insert(p, key, value);
+    return;
+  }
+  p.size++;
+  p.edits++;
+  // Split the full leaf: its ranks from `half` up move to a new leaf, then the key goes into the
+  // half it belongs to.
+  const half = (CAP + 1) / 2;
+  const right = p.newLeaf();
+  moveRanks(p, leaf, half, n - half, right, true);
+  const next = p.leafNext[leaf as usize];
+  p.leafNext[right as usize] = next;
+  p.leafPrev[right as usize] = leaf;
+  p.leafNext[leaf as usize] = right;
+  if (next != NONE) {
+    p.leafPrev[next as usize] = right;
+  }
+  if (pos <= half) {
+    appendEntry(p, leaf, pos, key, value);
+  } else {
+    appendEntry(p, right, pos - half, key, value);
+  }
+  const sep = p.keyAt(slotAtRank(p, right, 0));
+  const [low, high] = p.fencesAt(p.pathNodes.length);
+  p.refreshLeaf(leaf, [low, sep]);
+  p.refreshLeaf(right, [sep, high]);
+  addSeparator(p, sep, right);
+}
+
+// The child at the end of the recorded path split: `right` goes right of it, under `sep`.
+function addSeparator<K extends Comparable<K>, V>(p: Pool<K, V>, sep0: K, right0: u32) {
+  let sep = sep0;
+  let right = right0;
+  let depth = p.pathNodes.length;
+  while (depth > 0) {
+    depth--;
+    const node = p.pathNodes[depth];
+    const slot = p.pathSlots[depth];
+    const base = (node as usize) * F;
+    const n = p.innerCount(node);
+    if (n < CAP) {
+      __intrinsic_array_rotate_right(p.innerKeys, base + slot, base + n);
+      __intrinsic_array_rotate_right(p.innerKids, base + slot + 1, base + n + 1);
+      const at = node as usize;
+      p.innerLines[at] = shiftUp(p.innerLines[at], slot, n, p.scratch);
+      if (p.wide()) {
+        p.innerLinesB[at] = shiftUp(p.innerLinesB[at], slot, n, p.scratch);
+      }
+      p.innerKeys[base + slot] = sep;
+      p.innerKids[base + slot + 1] = right;
+      p.setInnerCount(node, n + 1);
+      if (p.inline()) {
+        p.innerWord(node, slot);
+      }
+      return;
+    }
+    // Full: lay out the F separators and F + 1 children, keep the left half here, move the
+    // right half to a new node and pass the middle separator up.
+    const keys: K[] = __intrinsic_array_with_capacity(F);
+    const kids: u32[] = __intrinsic_array_with_capacity(F + 1);
+    for (let i: usize = 0; i < n; i++) {
+      if (i == slot) {
+        keys.push(sep);
+      }
+      keys.push(p.innerKeys[base + i]);
+    }
+    if (slot == n) {
+      keys.push(sep);
+    }
+    for (let i: usize = 0; i <= n; i++) {
+      kids.push(p.innerKids[base + i]);
+      if (i == slot) {
+        kids.push(right);
+      }
+    }
+    const mid = F / 2;
+    const other = p.newInner();
+    const ob = (other as usize) * F;
+    for (let i: usize = 0; i < F; i++) {
+      p.innerKeys[base + i] = i < mid ? keys[i] : p.fill[0];
+    }
+    for (let i: usize = 0; i <= mid; i++) {
+      p.innerKids[base + i] = kids[i];
+    }
+    p.setInnerCount(node, mid);
+    const rn = F - mid - 1;
+    for (let i: usize = 0; i < rn; i++) {
+      p.innerKeys[ob + i] = keys[mid + 1 + i];
+    }
+    for (let i: usize = 0; i <= rn; i++) {
+      p.innerKids[ob + i] = kids[mid + 1 + i];
+    }
+    p.setInnerCount(other, rn);
+    sep = keys[mid];
+    right = other;
+    const [low, high] = p.fencesAt(depth);
+    p.refreshInner(node, [low, sep]);
+    p.refreshInner(other, [sep, high]);
+  }
+  const top = p.newInner();
+  const tb = (top as usize) * F;
+  p.innerKeys[tb] = sep;
+  p.innerKids[tb] = p.root;
+  p.innerKids[tb + 1] = right;
+  p.setInnerCount(top, 1);
+  p.root = top;
+  p.height++;
+  p.refreshInner(top, [null, null]);
+}
+
+/**
+ * Moves entries of the full `leaf` (`findLeaf` recorded the path to it) to the sibling under the
+ * same parent with more room, if it has room for two: half of that room's worth, so both keep
+ * room. Gives whether it moved any.
+ */
+function shiftToSibling<K extends Comparable<K>, V>(p: Pool<K, V>, leaf: u32): bool {
+  if (p.height == 0) {
+    return false;
+  }
+  const depth = p.pathNodes.length - 1;
+  const parent = p.pathNodes[depth];
+  const slot = p.pathSlots[depth];
+  const pb = (parent as usize) * F;
+  const right = slot < p.innerCount(parent) ? p.innerKids[pb + slot + 1] : NONE;
+  const left = slot > 0 ? p.innerKids[pb + slot - 1] : NONE;
+  const rightRoom = right == NONE ? 0 : CAP - p.leafCount(right);
+  const leftRoom = left == NONE ? 0 : CAP - p.leafCount(left);
+  if (rightRoom < 2 && leftRoom < 2) {
+    return false;
+  }
+  if (rightRoom >= leftRoom) {
+    moveRanks(p, leaf, p.leafCount(leaf) - rightRoom / 2, rightRoom / 2, right, true);
+    setSeparator(p, parent, slot, p.keyAt(slotAtRank(p, right, 0)));
+    refreshIfMoved(p, leaf, p.childFences(depth, slot));
+    refreshIfMoved(p, right, p.childFences(depth, slot + 1));
+  } else {
+    moveRanks(p, leaf, 0, leftRoom / 2, left, false);
+    setSeparator(p, parent, slot - 1, p.keyAt(slotAtRank(p, leaf, 0)));
+    refreshIfMoved(p, left, p.childFences(depth, slot - 1));
+    refreshIfMoved(p, leaf, p.childFences(depth, slot));
+  }
+  return true;
+}
+
+// Gives `leaf` its words again when the prefix of its new `range` is not the one they have.
+function refreshIfMoved<K extends Comparable<K>, V>(p: Pool<K, V>, leaf: u32, range: Range<K>) {
+  if (p.inline() && p.prefixFor(range) != prefixOf(p.lineOf(leaf))) {
+    p.refreshLeaf(leaf, range);
+  }
+}
+
+// Separator `i` of inner `node` becomes `key` (a share of it), with its word.
+function setSeparator<K extends Comparable<K>, V>(p: Pool<K, V>, node: u32, i: usize, key: K) {
+  p.innerKeys[(node as usize) * F + i] = key;
+  if (p.inline()) {
+    p.innerWord(node, i);
+  }
+}

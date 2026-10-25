@@ -1,41 +1,123 @@
 // velt:collections/btree/pool: the nodes of `BTreeMap` (velt:collections/btree_map), internal.
 //
-// A B+tree whose nodes live in flat pools, a struct of arrays: node `n`'s keys are
-// `leafKeys[n * F .. n * F + F]`, its count `leafLen[n]`, and nodes link by `u32` index, not by
-// pointer, so a node is a few cache lines with no header to chase. Leaves hold the entries and
-// link to both neighbors; inner nodes hold up to `F - 1` separators and `F` children, every key
-// of child `i` at least separator `i - 1` and below separator `i`. A freed node goes on a free
-// list and is reused for the next node of its kind.
+// A B+tree whose nodes live in flat pools, a struct of arrays, nodes linked by `u32` index:
+// node `n`'s keys are slots `n * F .. n * F + F`. Leaves hold up to `CAP` entries and link to
+// both neighbors; inner nodes hold up to `CAP` separators and `CAP + 1` children, every key of
+// child `i` at least separator `i - 1` and below separator `i`. The leaf pools are in chunks of
+// 256 leaves, so they grow without copying (and hold at most a chunk unused). A freed node goes on
+// a free list. Leaf entries: velt:collections/btree/leaf; inserts: velt:collections/btree/insert;
+// deletes: velt:collections/btree/remove; the smallest and largest key:
+// velt:collections/btree/edges.
 //
-// Searching a node is a count, not a search: the number of keys below the target is the slot.
-// For keys that hold nothing on the heap (numbers, bool, plain structs) the count compares every
-// key, which compiles to branch-free code; for others (strings) it is a binary search, since
-// each comparison reads the key's bytes elsewhere in memory.
+// A node's 32 `u16` words (`leafLines` / `innerLines`, 64 bytes, each in one cache line) are
+// what a search reads first: slot `HEAD` holds the node's count and prefix, and the slots below
+// it, for keys with an order-preserving encoding (velt:collections/btree/inline_key: numbers,
+// `bool`, strings), two bytes of each key's encoding past the prefix all of the node's keys
+// share (`prefixFor`); strings keep the next two in a second line (`leafLinesB`), a four-byte
+// word in all. Vector compares count the words below the target's, which is its rank unless
+// words tie with it; only those keys are compared in full. So a level of a lookup reads one line
+// and one child index. Keys without an encoding are compared one by one.
 //
 // Unused key slots hold a share of `fill[0]`, the first key ever stored, so that the pools stay
-// arrays of plain `K`; value slots are `V | null`.
+// arrays of plain `K`; value slots of types that own nothing likewise (`valPlain`), others are
+// `V | null`; unused word slots are `EMPTY`.
 
-/** Slots per node. */
+import { InlineKey } from "velt:collections/btree/inline_key";
+import {
+  EMPTY,
+  Line,
+  Order,
+  identityOrder,
+  countOf,
+  emptyLine,
+  fill,
+  prefixOf,
+  withCount,
+  withWord,
+  wordsAtMost,
+  wordsAtMost2,
+  wordsBelow,
+  wordsBelow2,
+} from "velt:collections/btree/line";
+
+/**
+ * A node's range: the separators on either side of it, `null` at the edge of the tree. An
+ * inline pair, so describing a range allocates nothing.
+ */
+export type Range<K> = [K | null, K | null];
+
+/** Slots per node: words, keys and children. */
 export const F: usize = 32;
-/** The fewest entries a leaf other than the root keeps; below it, it borrows or merges. */
-const MIN_LEAF: usize = F / 4;
-/** The fewest separators an inner node other than the root keeps. */
-const MIN_INNER: usize = F / 4 - 1;
+/** The most keys a node holds: the last word slot is its header. */
+export const CAP: usize = F - 1;
+/** Leaves per chunk of the leaf pools (`leafKeys`, values, `leafLines`), as a shift and mask. */
+export const LEAF_SHIFT: u32 = 8;
+export const LEAF_MASK: u32 = 255;
+/** Slots per chunk (`F` per leaf), as a shift and mask of a slot number. */
+export const SLOT_SHIFT: usize = 13;
+export const SLOT_MASK: usize = 8191;
 /** No node: the ends of the leaf chain. */
 export const NONE: u32 = 4294967295;
+/** The longest node prefix looked for, in bytes. */
+const MAX_PREFIX: usize = 2040;
 
 export class Pool<K extends Comparable<K>, V> {
-  leafKeys: K[] = [];
-  leafVals: (V | null)[] = [];
-  leafLen: u32[] = [];
+  /**
+   * The leaves' keys, `F` slots a leaf, in chunks of `CHUNK_LEAVES` leaves: slot `s` (`leaf * F +
+   * i`) is `leafKeys[s >> SLOT_SHIFT][s & SLOT_MASK]`. A chunk grows only until it is full, so
+   * the pools never copy their whole contents to grow, and hold at most one chunk unused.
+   */
+  leafKeys: K[][] = [];
+  /**
+   * The leaves' value slots, addressed like their keys. A value type that owns nothing (numbers,
+   * `bool`, structs of them) keeps its values in `valPlain`, its own size per slot, an unused
+   * slot holding `valFill[0]`, the first value stored: dropping such a value does nothing, so a
+   * filler is never told from a value. Other value types keep `valOpt`, so a removed value is
+   * dropped at once. Which one is a constant per instantiation (`plainVals`).
+   */
+  valPlain: V[][] = [];
+  valOpt: (V | null)[][] = [];
+  valFill: V[] = [];
+  /** Each leaf's words and header, a cache line each (velt:collections/btree/line). */
+  /** Leaf `l`'s line is `leafLines[l >> LEAF_SHIFT][l & LEAF_MASK]`. */
+  leafLines: Line[][] = [];
+  /**
+   * For keys with wide words (`InlineKey.inlineWide`), the next two bytes of each key past the
+   * word in `leafLines` / `innerLines`, chunked the same way; empty otherwise.
+   */
+  leafLinesB: Line[][] = [];
+  /**
+   * Each leaf's rank order (velt:collections/btree/line `Order`), chunked as the lines are. A
+   * leaf's keys and values sit in physical slots in the order they came; `leafOrder` gives the
+   * slot of each rank (velt:collections/btree/leaf).
+   */
+  leafOrder: Order[][] = [];
+  /** 32 bytes for editing an order, and a second order and lines (velt:collections/btree/leaf). */
+  orderScratch: u8[] = new Array<u8>(32).fill(0);
+  orderScratch2: u8[] = new Array<u8>(32).fill(0);
+  scratch2: u16[] = new Array<u16>(32).fill(0);
+  scratch3: u16[] = new Array<u16>(32).fill(0);
+  scratch4: u16[] = new Array<u16>(32).fill(0);
   leafNext: u32[] = [];
   leafPrev: u32[] = [];
   innerKeys: K[] = [];
+  innerLines: Line[] = [];
+  innerLinesB: Line[] = [];
+  /** 32 words for editing a line (velt:collections/btree/line `spill` / `fill`). */
+  scratch: u16[] = new Array<u16>(32).fill(0);
   innerKids: u32[] = [];
-  innerLen: u32[] = [];
   freeLeaves: u32[] = [];
   freeInners: u32[] = [];
   fill: K[] = [];
+  /**
+   * The smallest and the largest key (one each, or none while empty), the separators the edges
+   * of the tree lack (`prefixFor`), and the first 16 bytes of their encodings for a quick check
+   * that a key lies between them (velt:collections/btree/edges).
+   */
+  minKey: K[] = [];
+  maxKey: K[] = [];
+  minWindow: u64[] = [0, 0];
+  maxWindow: u64[] = [0, 0];
   root: u32 = 0;
   /** 0 while the root is a leaf. */
   height: u32 = 0;
@@ -48,39 +130,31 @@ export class Pool<K extends Comparable<K>, V> {
 
   // ─────────────── searching ───────────────
 
-  /** How many of the `n` keys at `keys[base..]` are below `t`. */
-  below(keys: K[], base: usize, n: usize, t: K): usize {
-    if (!__intrinsic_needs_drop(t)) {
-      let c: usize = 0;
-      for (let i: usize = 0; i < n; i++) {
-        c += keys[base + i] < t ? 1 : 0;
-      }
-      return c;
-    }
+  /** How many keys of the node at `keys[base..]` (its words `line`) are at most `t`. */
+  countAtMost(keys: K[], line: Line, lineB: Line, base: usize, t: K): usize {
+    const n = countOf(line);
     let lo: usize = 0;
     let hi = n;
-    while (lo < hi) {
-      const mid = lo + (hi - lo) / 2;
-      if (keys[base + mid] < t) {
-        lo = mid + 1;
+    if (t.hasInlineKey()) {
+      const pre = prefixOf(line);
+      if (t.inlineWide()) {
+        const q = t.inlineQuad(pre as usize);
+        const w = (q >> 16) as u16;
+        const wb = q as u16;
+        lo = wordsBelow2(line, lineB, w, wb);
+        hi = wordsAtMost2(line, lineB, n, w, wb);
       } else {
-        hi = mid;
+        const w = wordOf(t, pre);
+        lo = wordsBelow(line, w);
+        hi = wordsAtMost(line, n, w);
       }
-    }
-    return lo;
-  }
-
-  /** How many of the `n` keys at `keys[base..]` are at most `t`. */
-  atMost(keys: K[], base: usize, n: usize, t: K): usize {
-    if (!__intrinsic_needs_drop(t)) {
+    } else if (!__intrinsic_needs_drop(t)) {
       let c: usize = 0;
       for (let i: usize = 0; i < n; i++) {
         c += t < keys[base + i] ? 0 : 1;
       }
       return c;
     }
-    let lo: usize = 0;
-    let hi = n;
     while (lo < hi) {
       const mid = lo + (hi - lo) / 2;
       if (t < keys[base + mid]) {
@@ -92,17 +166,48 @@ export class Pool<K extends Comparable<K>, V> {
     return lo;
   }
 
+  // The searches below compare words only for a target inside the node's range (between the
+  // separators on either side of it), the only targets that share the node's prefix: the ones
+  // a descent brings to the node.
+
+  /** The child slot of inner `node` whose range holds `t`: its separators at most `t`. */
+  innerSlot(node: u32, t: K): usize {
+    const i = node as usize;
+    const line = this.innerLines[i];
+    const lineB = t.inlineWide() ? this.innerLinesB[i] : line;
+    return this.countAtMost(this.innerKeys, line, lineB, i * F, t);
+  }
+
+  // ─────────────── headers ───────────────
+
+  /** How many entries `leaf` holds. */
+  leafCount(leaf: u32): usize {
+    return countOf(this.lineOf(leaf));
+  }
+
+  setLeafCount(leaf: u32, n: usize) {
+    this.setLine(leaf, withCount(this.lineOf(leaf), n));
+  }
+
+  /** How many separators inner `node` holds. */
+  innerCount(node: u32): usize {
+    return countOf(this.innerLines[node as usize]);
+  }
+
+  setInnerCount(node: u32, n: usize) {
+    this.innerLines[node as usize] = withCount(this.innerLines[node as usize], n);
+  }
+
   /** The leaf whose range holds `t`, recording the descent in `pathNodes` / `pathSlots`. */
   findLeaf(t: K): u32 {
     __intrinsic_array_truncate(this.pathNodes, 0);
     __intrinsic_array_truncate(this.pathSlots, 0);
     let node = this.root;
     for (let h = this.height; h > 0; h--) {
-      const base = (node as usize) * F;
-      const slot = this.atMost(this.innerKeys, base, this.innerLen[node as usize] as usize, t);
+      const slot = this.innerSlot(node, t);
       this.pathNodes.push(node);
       this.pathSlots.push(slot);
-      node = this.innerKids[base + slot];
+      node = this.innerKids[(node as usize) * F + slot];
     }
     return node;
   }
@@ -111,9 +216,7 @@ export class Pool<K extends Comparable<K>, V> {
   leafOf(t: K): u32 {
     let node = this.root;
     for (let h = this.height; h > 0; h--) {
-      const base = (node as usize) * F;
-      const slot = this.atMost(this.innerKeys, base, this.innerLen[node as usize] as usize, t);
-      node = this.innerKids[base + slot];
+      node = this.innerKids[(node as usize) * F + this.innerSlot(node, t)];
     }
     return node;
   }
@@ -122,21 +225,289 @@ export class Pool<K extends Comparable<K>, V> {
   edgeLeaf(right: bool): u32 {
     let node = this.root;
     for (let h = this.height; h > 0; h--) {
-      const slot = right ? (this.innerLen[node as usize] as usize) : 0;
+      const slot = right ? this.innerCount(node) : 0;
       node = this.innerKids[(node as usize) * F + slot];
     }
     return node;
   }
 
-  /** The slot of `t` in `leaf`, or -1. */
-  slotIn(leaf: u32, t: K): i64 {
-    const base = (leaf as usize) * F;
-    const n = this.leafLen[leaf as usize] as usize;
-    const pos = this.below(this.leafKeys, base, n, t);
-    if (pos < n && !(t < this.leafKeys[base + pos])) {
-      return pos as i64;
+  // ─────────────── words and prefixes ───────────────
+
+  /**
+   * The prefix of a node with range `fences`: the common prefix of the separators on either side
+   * of it, the smallest or the largest key standing in for one the tree's edge lacks. Every key
+   * between them has it, and so does every key a search brings to the node: a search first
+   * settles keys outside the smallest and the largest (velt:collections/btree/edges).
+   */
+  prefixFor(fences: Range<K>): u32 {
+    const [low, high] = fences;
+    if (this.minKey.length == 0) {
+      return 0;
     }
-    return -1;
+    const lo = low != null ? low : this.minKey[0];
+    const hi = high != null ? high : this.maxKey[0];
+    return commonPrefix(lo, hi);
+  }
+
+  /** Do this map's keys have words (an `InlineKey` encoding)? Only after the first insert. */
+  inline(): bool {
+    return this.fill.length > 0 && this.fill[0].hasInlineKey();
+  }
+
+  /** Whether nodes keep wide words (`InlineKey.inlineWide`). Only after the first insert. */
+  wide(): bool {
+    return this.fill.length > 0 && this.fill[0].inlineWide();
+  }
+
+  /** Sets the word of slot `i` of `leaf` from its key. */
+  leafWord(leaf: u32, i: usize) {
+    const line = this.lineOf(leaf);
+    const key = this.keyAt((leaf as usize) * F + i);
+    const pre = prefixOf(line);
+    this.setLine(leaf, withWord(line, i, wordOf(key, pre)));
+    if (this.wide()) {
+      this.setLineB(leaf, withWord(this.lineBOf(leaf), i, wordOfB(key, pre)));
+    }
+  }
+
+  /** Sets the word of separator `i` of inner `node` from its key. */
+  innerWord(node: u32, i: usize) {
+    const n = node as usize;
+    const line = this.innerLines[n];
+    const pre = prefixOf(line);
+    this.innerLines[n] = withWord(line, i, wordOf(this.innerKeys[n * F + i], pre));
+    if (this.wide()) {
+      const lineB = this.innerLinesB[n];
+      this.innerLinesB[n] = withWord(lineB, i, wordOfB(this.innerKeys[n * F + i], pre));
+    }
+  }
+
+  /** Gives `leaf` the prefix of its range `fences` and every key its word. */
+  refreshLeaf(leaf: u32, fences: Range<K>) {
+    if (!this.inline()) {
+      return;
+    }
+    const n = this.leafCount(leaf);
+    const c = (leaf >> LEAF_SHIFT) as usize;
+    const base = ((leaf & LEAF_MASK) as usize) * F;
+    const pre = this.prefixFor(fences);
+    const line = wordsOf(this.leafKeys[c], base, n, pre, this.scratch, false);
+    this.setLine(leaf, line);
+    if (this.wide()) {
+      const lineB = wordsOf(this.leafKeys[c], base, n, pre, this.scratch, true);
+      this.setLineB(leaf, lineB);
+    }
+  }
+
+  /** Gives inner `node` the prefix of its range `fences` and every separator its word. */
+  refreshInner(node: u32, fences: Range<K>) {
+    if (!this.inline()) {
+      return;
+    }
+    const i = node as usize;
+    const n = this.innerCount(node);
+    const pre = this.prefixFor(fences);
+    this.innerLines[i] = wordsOf(this.innerKeys, i * F, n, pre, this.scratch, false);
+    if (this.wide()) {
+      this.innerLinesB[i] = wordsOf(this.innerKeys, i * F, n, pre, this.scratch, true);
+    }
+  }
+
+  /**
+   * The range of the node at `depth` of the recorded path (0: the root; `pathNodes.length`: the
+   * leaf): the separators on either side of it, `null` at the edge of the tree.
+   */
+  fencesAt(depth: usize): Range<K> {
+    if (depth == 0) {
+      return [null, null];
+    }
+    return this.childFences(depth - 1, this.pathSlots[depth - 1]);
+  }
+
+  /** The range of child `slot` of the path's inner node at `depth`. */
+  childFences(depth: usize, slot: usize): Range<K> {
+    const node = this.pathNodes[depth];
+    const base = (node as usize) * F;
+    const n = this.innerCount(node);
+    if (slot > 0 && slot < n) {
+      return [this.innerKeys[base + slot - 1], this.innerKeys[base + slot]];
+    }
+    const [up, upHigh] = this.fencesAt(depth);
+    const low = slot > 0 ? this.innerKeys[base + slot - 1] : up;
+    const high = slot < n ? this.innerKeys[base + slot] : upHigh;
+    return [low, high];
+  }
+
+  // ─────────────── leaf slots ───────────────
+
+  /** The key in slot `s` (`leaf * F + i`). */
+  keyAt(s: usize): K {
+    return this.leafKeys[s >> SLOT_SHIFT][s & SLOT_MASK];
+  }
+
+  /** `t.compareTo` the key in slot `s`, read in place (no share of it). */
+  cmpKey(t: K, s: usize): i64 {
+    return t.compareTo(this.leafKeys[s >> SLOT_SHIFT][s & SLOT_MASK]);
+  }
+
+  /** Stores `k` in slot `s`, dropping what it held. */
+  setKey(s: usize, k: K) {
+    this.leafKeys[s >> SLOT_SHIFT][s & SLOT_MASK] = k;
+  }
+
+  /** `leaf`'s line. */
+  lineOf(leaf: u32): Line {
+    return this.leafLines[(leaf >> LEAF_SHIFT) as usize][(leaf & LEAF_MASK) as usize];
+  }
+
+  setLine(leaf: u32, line: Line) {
+    this.leafLines[(leaf >> LEAF_SHIFT) as usize][(leaf & LEAF_MASK) as usize] = line;
+  }
+
+  /** `leaf`'s second line (wide words only). */
+  lineBOf(leaf: u32): Line {
+    return this.leafLinesB[(leaf >> LEAF_SHIFT) as usize][(leaf & LEAF_MASK) as usize];
+  }
+
+  setLineB(leaf: u32, line: Line) {
+    this.leafLinesB[(leaf >> LEAF_SHIFT) as usize][(leaf & LEAF_MASK) as usize] = line;
+  }
+
+  /** `leaf`'s rank order. */
+  orderOf(leaf: u32): Order {
+    return this.leafOrder[(leaf >> LEAF_SHIFT) as usize][(leaf & LEAF_MASK) as usize];
+  }
+
+  setOrder(leaf: u32, order: Order) {
+    this.leafOrder[(leaf >> LEAF_SHIFT) as usize][(leaf & LEAF_MASK) as usize] = order;
+  }
+
+  /** Starts loading the cache line of key slot `s`. */
+  keyPrefetch(s: usize) {
+    __intrinsic_array_prefetch(this.leafKeys[s >> SLOT_SHIFT], s & SLOT_MASK);
+  }
+
+  /** Starts loading the line of `node`, an inner node when `inner`, else a leaf. */
+  prefetchNode(node: u32, inner: bool) {
+    if (inner) {
+      __intrinsic_array_prefetch(this.innerLines, node as usize);
+    } else {
+      const c = (node >> LEAF_SHIFT) as usize;
+      __intrinsic_array_prefetch(this.leafLines[c], (node & LEAF_MASK) as usize);
+    }
+  }
+
+  /** `__intrinsic_array_rotate_right` of key slots `lo ..= hi` (of one leaf). */
+  keyRotateRight(lo: usize, hi: usize) {
+    const at = lo & SLOT_MASK;
+    __intrinsic_array_rotate_right(this.leafKeys[lo >> SLOT_SHIFT], at, at + (hi - lo));
+  }
+
+  /** `__intrinsic_array_rotate_left` of key slots `lo ..= hi` (of one leaf). */
+  keyRotateLeft(lo: usize, hi: usize) {
+    const at = lo & SLOT_MASK;
+    __intrinsic_array_rotate_left(this.leafKeys[lo >> SLOT_SHIFT], at, at + (hi - lo));
+  }
+
+  /**
+   * Exchanges the keys of slots `a` and `b` (of two leaves, maybe in two chunks): a swap within
+   * a chunk; across chunks, through a local, since one call may not change two chunks.
+   */
+  keySwap(a: usize, b: usize) {
+    const ca = a >> SLOT_SHIFT;
+    const cb = b >> SLOT_SHIFT;
+    if (ca == cb) {
+      __intrinsic_array_swap(this.leafKeys[ca], a & SLOT_MASK, b & SLOT_MASK);
+      return;
+    }
+    const k = this.leafKeys[ca][a & SLOT_MASK];
+    this.leafKeys[ca][a & SLOT_MASK] = this.leafKeys[cb][b & SLOT_MASK];
+    this.leafKeys[cb][b & SLOT_MASK] = k;
+  }
+
+  /**
+   * Whether values live in `valPlain` (a constant: `valFill[0]` only gives the type). The
+   * value slots are chunked as the key slots are.
+   */
+  plainVals(): bool {
+    return !__intrinsic_needs_drop(this.valFill[0]);
+  }
+
+  /** The value in slot `s`, shared as `Map.get` gives it. */
+  valAt(s: usize): V {
+    if (this.plainVals()) {
+      return this.valPlain[s >> SLOT_SHIFT][s & SLOT_MASK];
+    }
+    return valueOf(this.valOpt[s >> SLOT_SHIFT][s & SLOT_MASK]);
+  }
+
+  /** Stores `v` in slot `s`, dropping what it held. */
+  valSet(s: usize, v: V) {
+    if (this.plainVals()) {
+      this.valPlain[s >> SLOT_SHIFT][s & SLOT_MASK] = v;
+    } else {
+      this.valOpt[s >> SLOT_SHIFT][s & SLOT_MASK] = v;
+    }
+  }
+
+  /** Makes slot `s` unused, dropping its value (a plain one stays: dropping it is nothing). */
+  valClear(s: usize) {
+    if (!this.plainVals()) {
+      this.valOpt[s >> SLOT_SHIFT][s & SLOT_MASK] = null;
+    }
+  }
+
+  valRotateRight(lo: usize, hi: usize) {
+    const c = lo >> SLOT_SHIFT;
+    const at = lo & SLOT_MASK;
+    if (this.plainVals()) {
+      __intrinsic_array_rotate_right(this.valPlain[c], at, at + (hi - lo));
+    } else {
+      __intrinsic_array_rotate_right(this.valOpt[c], at, at + (hi - lo));
+    }
+  }
+
+  valRotateLeft(lo: usize, hi: usize) {
+    const c = lo >> SLOT_SHIFT;
+    const at = lo & SLOT_MASK;
+    if (this.plainVals()) {
+      __intrinsic_array_rotate_left(this.valPlain[c], at, at + (hi - lo));
+    } else {
+      __intrinsic_array_rotate_left(this.valOpt[c], at, at + (hi - lo));
+    }
+  }
+
+  /** Exchanges the values of slots `a` and `b`, as `keySwap` does keys. */
+  valSwap(a: usize, b: usize) {
+    const ca = a >> SLOT_SHIFT;
+    const cb = b >> SLOT_SHIFT;
+    const ia = a & SLOT_MASK;
+    const ib = b & SLOT_MASK;
+    if (this.plainVals()) {
+      if (ca == cb) {
+        __intrinsic_array_swap(this.valPlain[ca], ia, ib);
+        return;
+      }
+      const v = this.valPlain[ca][ia];
+      this.valPlain[ca][ia] = this.valPlain[cb][ib];
+      this.valPlain[cb][ib] = v;
+      return;
+    }
+    if (ca == cb) {
+      __intrinsic_array_swap(this.valOpt[ca], ia, ib);
+      return;
+    }
+    const v = this.valOpt[ca][ia];
+    this.valOpt[ca][ia] = this.valOpt[cb][ib];
+    this.valOpt[cb][ib] = v;
+  }
+
+  valPrefetch(s: usize) {
+    if (this.plainVals()) {
+      __intrinsic_array_prefetch(this.valPlain[s >> SLOT_SHIFT], s & SLOT_MASK);
+    } else {
+      __intrinsic_array_prefetch(this.valOpt[s >> SLOT_SHIFT], s & SLOT_MASK);
+    }
   }
 
   // ─────────────── nodes ───────────────
@@ -145,12 +516,38 @@ export class Pool<K extends Comparable<K>, V> {
     if (this.freeLeaves.length > 0) {
       return this.freeLeaves.pop()!;
     }
-    const id = this.leafLen.length as u32;
-    for (let i: usize = 0; i < F; i++) {
-      this.leafKeys.push(this.fill[0]);
-      this.leafVals.push(null);
+    const id = this.leafNext.length as u32;
+    const c = (id >> LEAF_SHIFT) as usize;
+    if (c == this.leafKeys.length) {
+      this.leafKeys.push([]);
+      this.leafLines.push([]);
+      if (this.wide()) {
+        this.leafLinesB.push([]);
+      }
+      this.leafOrder.push([]);
+      if (this.plainVals()) {
+        this.valPlain.push([]);
+      } else {
+        this.valOpt.push([]);
+      }
     }
-    this.leafLen.push(0);
+    for (let i: usize = 0; i < F; i++) {
+      this.leafKeys[c].push(this.fill[0]);
+    }
+    if (this.plainVals()) {
+      for (let i: usize = 0; i < F; i++) {
+        this.valPlain[c].push(this.valFill[0]);
+      }
+    } else {
+      for (let i: usize = 0; i < F; i++) {
+        this.valOpt[c].push(null);
+      }
+    }
+    this.leafLines[c].push(emptyLine());
+    if (this.wide()) {
+      this.leafLinesB[c].push(emptyLine());
+    }
+    this.leafOrder[c].push(identityOrder());
     this.leafNext.push(NONE);
     this.leafPrev.push(NONE);
     return id;
@@ -160,22 +557,29 @@ export class Pool<K extends Comparable<K>, V> {
     if (this.freeInners.length > 0) {
       return this.freeInners.pop()!;
     }
-    const id = this.innerLen.length as u32;
+    const id = this.innerLines.length as u32;
     for (let i: usize = 0; i < F; i++) {
       this.innerKeys.push(this.fill[0]);
       this.innerKids.push(0);
     }
-    this.innerLen.push(0);
+    this.innerLines.push(emptyLine());
+    if (this.wide()) {
+      this.innerLinesB.push(emptyLine());
+    }
     return id;
   }
 
   freeLeaf(leaf: u32) {
     const base = (leaf as usize) * F;
     for (let i: usize = 0; i < F; i++) {
-      this.leafKeys[base + i] = this.fill[0];
-      this.leafVals[base + i] = null;
+      this.setKey(base + i, this.fill[0]);
+      this.valClear(base + i);
     }
-    this.leafLen[leaf as usize] = 0;
+    this.setLine(leaf, emptyLine());
+    if (this.wide()) {
+      this.setLineB(leaf, emptyLine());
+    }
+    this.setOrder(leaf, identityOrder());
     this.freeLeaves.push(leaf);
   }
 
@@ -184,379 +588,104 @@ export class Pool<K extends Comparable<K>, V> {
     for (let i: usize = 0; i < F; i++) {
       this.innerKeys[base + i] = this.fill[0];
     }
-    this.innerLen[node as usize] = 0;
+    this.innerLines[node as usize] = emptyLine();
+    if (this.wide()) {
+      this.innerLinesB[node as usize] = emptyLine();
+    }
     this.freeInners.push(node);
   }
 
   /** Drops every node; the next `insert` starts a new root. */
   clear() {
     __intrinsic_array_truncate(this.leafKeys, 0);
-    __intrinsic_array_truncate(this.leafVals, 0);
-    __intrinsic_array_truncate(this.leafLen, 0);
+    __intrinsic_array_truncate(this.valPlain, 0);
+    __intrinsic_array_truncate(this.valOpt, 0);
+    __intrinsic_array_truncate(this.valFill, 0);
+    __intrinsic_array_truncate(this.leafLines, 0);
+    __intrinsic_array_truncate(this.leafLinesB, 0);
+    __intrinsic_array_truncate(this.leafOrder, 0);
     __intrinsic_array_truncate(this.leafNext, 0);
     __intrinsic_array_truncate(this.leafPrev, 0);
     __intrinsic_array_truncate(this.innerKeys, 0);
+    __intrinsic_array_truncate(this.innerLines, 0);
+    __intrinsic_array_truncate(this.innerLinesB, 0);
     __intrinsic_array_truncate(this.innerKids, 0);
-    __intrinsic_array_truncate(this.innerLen, 0);
     __intrinsic_array_truncate(this.freeLeaves, 0);
     __intrinsic_array_truncate(this.freeInners, 0);
     __intrinsic_array_truncate(this.fill, 0);
+    __intrinsic_array_truncate(this.minKey, 0);
+    __intrinsic_array_truncate(this.maxKey, 0);
     this.root = 0;
     this.height = 0;
     this.size = 0;
     this.edits++;
   }
-
-  // ─────────────── insert ───────────────
-
-  /** Stores `value` under `key`, replacing the value already there. */
-  insert(key: K, value: V) {
-    if (this.fill.length == 0) {
-      this.fill.push(key);
-      this.root = this.newLeaf();
-    }
-    const leaf = this.findLeaf(key);
-    const base = (leaf as usize) * F;
-    const n = this.leafLen[leaf as usize] as usize;
-    const pos = this.below(this.leafKeys, base, n, key);
-    if (pos < n && !(key < this.leafKeys[base + pos])) {
-      this.leafVals[base + pos] = value;
-      return;
-    }
-    this.size++;
-    this.edits++;
-    if (n < F) {
-      this.leafInsert(leaf, pos, key, value);
-      return;
-    }
-    // Split the full leaf in halves, then insert into the half the key belongs to.
-    const half = F / 2;
-    const right = this.newLeaf();
-    const rb = (right as usize) * F;
-    for (let i: usize = 0; i < half; i++) {
-      moveSlot(this.leafKeys, rb + i, base + half + i);
-      moveSlot(this.leafVals, rb + i, base + half + i);
-      this.leafKeys[base + half + i] = this.fill[0];
-      this.leafVals[base + half + i] = null;
-    }
-    this.leafLen[leaf as usize] = half as u32;
-    this.leafLen[right as usize] = half as u32;
-    const next = this.leafNext[leaf as usize];
-    this.leafNext[right as usize] = next;
-    this.leafPrev[right as usize] = leaf;
-    this.leafNext[leaf as usize] = right;
-    if (next != NONE) {
-      this.leafPrev[next as usize] = right;
-    }
-    if (pos <= half) {
-      this.leafInsert(leaf, pos, key, value);
-    } else {
-      this.leafInsert(right, pos - half, key, value);
-    }
-    this.addSeparator(this.leafKeys[rb], right);
-  }
-
-  private leafInsert(leaf: u32, pos: usize, key: K, value: V) {
-    const base = (leaf as usize) * F;
-    const n = this.leafLen[leaf as usize] as usize;
-    for (let i = n; i > pos; i--) {
-      moveSlot(this.leafKeys, base + i, base + i - 1);
-      moveSlot(this.leafVals, base + i, base + i - 1);
-    }
-    this.leafKeys[base + pos] = key;
-    this.leafVals[base + pos] = value;
-    this.leafLen[leaf as usize] = (n + 1) as u32;
-  }
-
-  // The child at the end of the recorded path split: `right` goes right of it, under `sep`.
-  private addSeparator(sep0: K, right0: u32) {
-    let sep = sep0;
-    let right = right0;
-    let depth = this.pathNodes.length;
-    while (depth > 0) {
-      depth--;
-      const node = this.pathNodes[depth];
-      const slot = this.pathSlots[depth];
-      const base = (node as usize) * F;
-      const n = this.innerLen[node as usize] as usize;
-      if (n < F - 1) {
-        for (let i = n; i > slot; i--) {
-          moveSlot(this.innerKeys, base + i, base + i - 1);
-        }
-        for (let i = n + 1; i > slot + 1; i--) {
-          this.innerKids[base + i] = this.innerKids[base + i - 1];
-        }
-        this.innerKeys[base + slot] = sep;
-        this.innerKids[base + slot + 1] = right;
-        this.innerLen[node as usize] = (n + 1) as u32;
-        return;
-      }
-      // Full: lay out the F separators and F + 1 children, keep the left half here, move the
-      // right half to a new node and pass the middle separator up.
-      const keys: K[] = __intrinsic_array_with_capacity(F);
-      const kids: u32[] = __intrinsic_array_with_capacity(F + 1);
-      for (let i: usize = 0; i < n; i++) {
-        if (i == slot) {
-          keys.push(sep);
-        }
-        keys.push(this.innerKeys[base + i]);
-      }
-      if (slot == n) {
-        keys.push(sep);
-      }
-      for (let i: usize = 0; i <= n; i++) {
-        kids.push(this.innerKids[base + i]);
-        if (i == slot) {
-          kids.push(right);
-        }
-      }
-      const mid = F / 2;
-      const other = this.newInner();
-      const ob = (other as usize) * F;
-      for (let i: usize = 0; i < F; i++) {
-        this.innerKeys[base + i] = i < mid ? keys[i] : this.fill[0];
-      }
-      for (let i: usize = 0; i <= mid; i++) {
-        this.innerKids[base + i] = kids[i];
-      }
-      this.innerLen[node as usize] = mid as u32;
-      const rn = F - mid - 1;
-      for (let i: usize = 0; i < rn; i++) {
-        this.innerKeys[ob + i] = keys[mid + 1 + i];
-      }
-      for (let i: usize = 0; i <= rn; i++) {
-        this.innerKids[ob + i] = kids[mid + 1 + i];
-      }
-      this.innerLen[other as usize] = rn as u32;
-      sep = keys[mid];
-      right = other;
-    }
-    const top = this.newInner();
-    const tb = (top as usize) * F;
-    this.innerKeys[tb] = sep;
-    this.innerKids[tb] = this.root;
-    this.innerKids[tb + 1] = right;
-    this.innerLen[top as usize] = 1;
-    this.root = top;
-    this.height++;
-  }
-
-  // ─────────────── remove ───────────────
-
-  /** Removes the entry in `leaf` at `pos` (`findLeaf` recorded the path to it). */
-  removeAt(leaf: u32, pos: usize) {
-    const base = (leaf as usize) * F;
-    const n = this.leafLen[leaf as usize] as usize;
-    for (let i = pos; i + 1 < n; i++) {
-      moveSlot(this.leafKeys, base + i, base + i + 1);
-      moveSlot(this.leafVals, base + i, base + i + 1);
-    }
-    this.leafKeys[base + n - 1] = this.fill[0];
-    this.leafVals[base + n - 1] = null;
-    this.leafLen[leaf as usize] = (n - 1) as u32;
-    this.size--;
-    this.edits++;
-    if (this.height > 0 && n - 1 < MIN_LEAF) {
-      this.rebalanceLeaf(leaf);
-    }
-  }
-
-  private rebalanceLeaf(leaf: u32) {
-    const depth = this.pathNodes.length - 1;
-    const parent = this.pathNodes[depth];
-    const slot = this.pathSlots[depth];
-    const pb = (parent as usize) * F;
-    const pn = this.innerLen[parent as usize] as usize;
-    if (slot > 0) {
-      const left = this.innerKids[pb + slot - 1];
-      if ((this.leafLen[left as usize] as usize) > MIN_LEAF) {
-        this.shiftLeafRight(left, leaf);
-        this.innerKeys[pb + slot - 1] = this.leafKeys[(leaf as usize) * F];
-        return;
-      }
-      this.mergeLeaves(left, leaf);
-      this.removeSeparator(depth, slot - 1);
-      return;
-    }
-    if (slot < pn) {
-      const right = this.innerKids[pb + slot + 1];
-      if ((this.leafLen[right as usize] as usize) > MIN_LEAF) {
-        this.shiftLeafLeft(leaf, right);
-        this.innerKeys[pb + slot] = this.leafKeys[(right as usize) * F];
-        return;
-      }
-      this.mergeLeaves(leaf, right);
-      this.removeSeparator(depth, slot);
-    }
-  }
-
-  // Moves the last entry of `left` to the front of `leaf`.
-  private shiftLeafRight(left: u32, leaf: u32) {
-    const lb = (left as usize) * F;
-    const ln = this.leafLen[left as usize] as usize;
-    const key = this.leafKeys[lb + ln - 1];
-    const value = this.leafVals[lb + ln - 1];
-    this.leafKeys[lb + ln - 1] = this.fill[0];
-    this.leafVals[lb + ln - 1] = null;
-    this.leafLen[left as usize] = (ln - 1) as u32;
-    const base = (leaf as usize) * F;
-    const n = this.leafLen[leaf as usize] as usize;
-    for (let i = n; i > 0; i--) {
-      moveSlot(this.leafKeys, base + i, base + i - 1);
-      moveSlot(this.leafVals, base + i, base + i - 1);
-    }
-    this.leafKeys[base] = key;
-    this.leafVals[base] = value;
-    this.leafLen[leaf as usize] = (n + 1) as u32;
-  }
-
-  // Moves the first entry of `right` to the end of `leaf`.
-  private shiftLeafLeft(leaf: u32, right: u32) {
-    const base = (leaf as usize) * F;
-    const n = this.leafLen[leaf as usize] as usize;
-    const rb = (right as usize) * F;
-    const rn = this.leafLen[right as usize] as usize;
-    moveSlot(this.leafKeys, base + n, rb);
-    moveSlot(this.leafVals, base + n, rb);
-    this.leafLen[leaf as usize] = (n + 1) as u32;
-    for (let i: usize = 0; i + 1 < rn; i++) {
-      moveSlot(this.leafKeys, rb + i, rb + i + 1);
-      moveSlot(this.leafVals, rb + i, rb + i + 1);
-    }
-    this.leafKeys[rb + rn - 1] = this.fill[0];
-    this.leafVals[rb + rn - 1] = null;
-    this.leafLen[right as usize] = (rn - 1) as u32;
-  }
-
-  // Appends `right`'s entries to `left` and frees `right`.
-  private mergeLeaves(left: u32, right: u32) {
-    const lb = (left as usize) * F;
-    const ln = this.leafLen[left as usize] as usize;
-    const rb = (right as usize) * F;
-    const rn = this.leafLen[right as usize] as usize;
-    for (let i: usize = 0; i < rn; i++) {
-      moveSlot(this.leafKeys, lb + ln + i, rb + i);
-      moveSlot(this.leafVals, lb + ln + i, rb + i);
-    }
-    this.leafLen[left as usize] = (ln + rn) as u32;
-    const next = this.leafNext[right as usize];
-    this.leafNext[left as usize] = next;
-    if (next != NONE) {
-      this.leafPrev[next as usize] = left;
-    }
-    this.freeLeaf(right);
-  }
-
-  // Removes separator `sep` and the child right of it from the inner node at `depth` of the
-  // recorded path, then rebalances that node.
-  private removeSeparator(depth: usize, sep: usize) {
-    const node = this.pathNodes[depth];
-    const base = (node as usize) * F;
-    const n = this.innerLen[node as usize] as usize;
-    for (let i = sep; i + 1 < n; i++) {
-      moveSlot(this.innerKeys, base + i, base + i + 1);
-    }
-    for (let i = sep + 1; i < n; i++) {
-      this.innerKids[base + i] = this.innerKids[base + i + 1];
-    }
-    this.innerKeys[base + n - 1] = this.fill[0];
-    this.innerLen[node as usize] = (n - 1) as u32;
-    if (depth == 0) {
-      if (n - 1 == 0) {
-        // The root kept one child: it becomes the root.
-        this.root = this.innerKids[base];
-        this.height--;
-        this.freeInner(node);
-      }
-      return;
-    }
-    if (n - 1 < MIN_INNER) {
-      this.rebalanceInner(depth);
-    }
-  }
-
-  private rebalanceInner(depth: usize) {
-    const node = this.pathNodes[depth];
-    const parent = this.pathNodes[depth - 1];
-    const slot = this.pathSlots[depth - 1];
-    const pb = (parent as usize) * F;
-    const pn = this.innerLen[parent as usize] as usize;
-    const base = (node as usize) * F;
-    const n = this.innerLen[node as usize] as usize;
-    if (slot > 0) {
-      const left = this.innerKids[pb + slot - 1];
-      const lb = (left as usize) * F;
-      const ln = this.innerLen[left as usize] as usize;
-      if (ln > MIN_INNER) {
-        // Rotate right: the parent's separator comes down, the left's last goes up.
-        for (let i = n; i > 0; i--) {
-          moveSlot(this.innerKeys, base + i, base + i - 1);
-        }
-        for (let i = n + 1; i > 0; i--) {
-          this.innerKids[base + i] = this.innerKids[base + i - 1];
-        }
-        moveSlot(this.innerKeys, base, pb + slot - 1);
-        this.innerKids[base] = this.innerKids[lb + ln];
-        moveSlot(this.innerKeys, pb + slot - 1, lb + ln - 1);
-        this.innerKeys[lb + ln - 1] = this.fill[0];
-        this.innerLen[left as usize] = (ln - 1) as u32;
-        this.innerLen[node as usize] = (n + 1) as u32;
-        return;
-      }
-      this.mergeInners(left, node, pb + slot - 1);
-      this.removeSeparator(depth - 1, slot - 1);
-      return;
-    }
-    if (slot < pn) {
-      const right = this.innerKids[pb + slot + 1];
-      const rb = (right as usize) * F;
-      const rn = this.innerLen[right as usize] as usize;
-      if (rn > MIN_INNER) {
-        // Rotate left: the parent's separator comes down, the right's first goes up.
-        moveSlot(this.innerKeys, base + n, pb + slot);
-        this.innerKids[base + n + 1] = this.innerKids[rb];
-        moveSlot(this.innerKeys, pb + slot, rb);
-        for (let i: usize = 0; i + 1 < rn; i++) {
-          moveSlot(this.innerKeys, rb + i, rb + i + 1);
-        }
-        for (let i: usize = 0; i < rn; i++) {
-          this.innerKids[rb + i] = this.innerKids[rb + i + 1];
-        }
-        this.innerKeys[rb + rn - 1] = this.fill[0];
-        this.innerLen[right as usize] = (rn - 1) as u32;
-        this.innerLen[node as usize] = (n + 1) as u32;
-        return;
-      }
-      this.mergeInners(node, right, pb + slot);
-      this.removeSeparator(depth - 1, slot);
-    }
-  }
-
-  // Appends the parent's separator at `sepAt` and `right`'s separators and children to `left`,
-  // and frees `right`.
-  private mergeInners(left: u32, right: u32, sepAt: usize) {
-    const lb = (left as usize) * F;
-    const ln = this.innerLen[left as usize] as usize;
-    const rb = (right as usize) * F;
-    const rn = this.innerLen[right as usize] as usize;
-    moveSlot(this.innerKeys, lb + ln, sepAt);
-    for (let i: usize = 0; i < rn; i++) {
-      moveSlot(this.innerKeys, lb + ln + 1 + i, rb + i);
-    }
-    for (let i: usize = 0; i <= rn; i++) {
-      this.innerKids[lb + ln + 1 + i] = this.innerKids[rb + i];
-    }
-    this.innerLen[left as usize] = (ln + 1 + rn) as u32;
-    this.freeInner(right);
-  }
 }
 
-// Moves `xs[from]` to `xs[to]`, whose value is about to be overwritten or is a filler: a swap
-// for values that own something, so moving a string or an object costs no count changes.
-function moveSlot<T>(xs: T[], to: usize, from: usize) {
+/** The word of `k` in a node with prefix `pre`: the two bytes of its encoding past it. */
+export function wordOf<T extends InlineKey>(k: T, pre: u32): u16 {
+  return k.inlineWord(pre as usize);
+}
+
+/** The second half of `k`'s wide word in a node with prefix `pre`: the two bytes after `wordOf`'s. */
+export function wordOfB<T extends InlineKey>(k: T, pre: u32): u16 {
+  return k.inlineWord((pre + 2) as usize);
+}
+
+// The line of a node whose `n` keys are at `keys[base..]` and whose prefix is `pre` (its second
+// line, `second`, for wide words).
+function wordsOf<K extends Comparable<K>>(
+  keys: K[],
+  base: usize,
+  n: usize,
+  pre: u32,
+  scratch: u16[],
+  second: bool,
+): Line {
+  for (let i: usize = 0; i < 31; i++) {
+    scratch[i] =
+      i >= n ? EMPTY : second ? wordOfB(keys[base + i], pre) : wordOf(keys[base + i], pre);
+  }
+  scratch[31] = ((pre as u16) << 5) | (n as u16);
+  return fill(scratch);
+}
+
+// The number of leading bytes the encodings of `a` and `b` share, at most `MAX_PREFIX`.
+function commonPrefix<K extends InlineKey>(a: K, b: K): u32 {
+  for (let off: usize = 0; off < MAX_PREFIX; off += 8) {
+    let d = a.inlineKey(off) ^ b.inlineKey(off);
+    if (d != 0) {
+      let bytes: usize = 0;
+      while (d >> 56 == 0) {
+        d = d << 8;
+        bytes++;
+      }
+      return (off + bytes) as u32;
+    }
+  }
+  return MAX_PREFIX as u32;
+}
+
+/**
+ * Moves `xs[from]` to `xs[to]`, whose value is about to be overwritten or is a filler: a swap
+ * for values that own something, so moving a string or an object costs no count changes.
+ */
+export function moveSlot<T>(xs: T[], to: usize, from: usize) {
   if (__intrinsic_needs_drop(xs[from])) {
     __intrinsic_array_swap(xs, to, from);
   } else {
     xs[to] = xs[from];
   }
+}
+
+// A value from a `valOpt` slot, shared. A slot of a live entry holds `null` only when `V` holds
+// `null`.
+function valueOf<V>(slot: V | null): V {
+  if (slot != null) {
+    return __intrinsic_share(slot);
+  }
+  if (__intrinsic_holds_null(__intrinsic_null_as<V>())) {
+    return __intrinsic_null_as<V>();
+  }
+  panic("ICE: BTreeMap entry without a value");
 }

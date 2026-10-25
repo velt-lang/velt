@@ -14,7 +14,7 @@ use velt_sema::hir::{self, DefId, TyId, TyKind};
 
 use super::array_view::{ViewFlush, ViewSync, VIEW_FLUSH_FROM, VIEW_LEN, VIEW_SORT, VIEW_SYNC_LEN};
 use super::operand::proj;
-use super::{cint, ice, FnLower};
+use super::{cint, ice, unit, FnLower};
 use crate::vir::{self, BinOp, Const, Operand, Place, Proj, Rvalue, Ty};
 
 /// The stable sort every `sort(cmp)` runs (std/sort/stable.vlt).
@@ -36,6 +36,11 @@ impl FnLower<'_, '_> {
         let len = |arr: &Place| Rvalue::Use(Operand::Copy(proj(arr, Proj::Field(1))));
         match (i, rest) {
             (I::ArrayLen, []) => self.view_len(bxp, aty),
+            // Only a hint: a view's elements are not where a plain array's are.
+            (I::ArrayPrefetch, [n]) => {
+                self.expr(n);
+                unit()
+            }
             (I::ArrayPush, [x]) => self.view_push(bxp, aty, x),
             (I::ArrayPush | I::ArrayReserve, _) => {
                 let arr = self.content_with(bxp, aty, ViewSync::Len);
@@ -55,6 +60,12 @@ impl FnLower<'_, '_> {
                 let r = self.array_op(i, rest, &arr, aty, ty);
                 let now = self.rvalue_temp(Ty::U64, len(&arr));
                 self.view_flush(bx, aty, ViewFlush::From(now));
+                r
+            }
+            (I::ArrayRotateRight | I::ArrayRotateLeft, _) => {
+                let arr = self.content_with(bxp, aty, ViewSync::All);
+                let r = self.array_op(i, rest, &arr, aty, ty);
+                self.view_flush(bx, aty, ViewFlush::From(cint(0, Ty::U64)));
                 r
             }
             (I::ArraySwap, [a, b]) => {

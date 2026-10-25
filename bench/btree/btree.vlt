@@ -1,6 +1,7 @@
 // Ordered maps: `BTreeMap` (velt:collections/btree_map) against Rust's std `BTreeMap`
-// (btree.rs). 1M random `u64` keys: inserts, lookups (half of them misses), an in-order walk,
-// then deletes of every key; and the same for 200k string keys. Each line: name, milliseconds,
+// (btree.rs). 1M random `u64` keys: inserts, lookups (half of them misses), the same lookups as
+// one `getMany` (Rust: one `get` each), an in-order walk, then deletes of every key; and the
+// same for 200k string keys. Each line: name, milliseconds,
 // checksum (run.sh checks that both programs print the same checksums).
 import { BTreeMap } from "velt:collections/btree_map";
 
@@ -46,6 +47,20 @@ function ints(n: usize) {
     }
   }
   report("u64_get", t, sum);
+  const probes: u64[] = [];
+  for (let i: usize = 0; i < n / 2; i++) {
+    probes.push(keys[(i * 7919) % n]);
+    probes.push(misses[i]);
+  }
+  t = performance.now();
+  const got = m.getMany(probes);
+  let many: u64 = 0;
+  for (const v of got) {
+    if (v !== undefined) {
+      many += v;
+    }
+  }
+  report("u64_get_many", t, many);
   t = performance.now();
   let walk: u64 = 0;
   m.forEach((v, k) => {

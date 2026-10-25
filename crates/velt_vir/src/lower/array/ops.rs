@@ -205,6 +205,24 @@ impl FnLower<'_, '_> {
                 self.set_len(&arr, elem, nv);
                 unit()
             }
+            (I::ArrayRotateRight | I::ArrayRotateLeft, [lo, hi]) => {
+                let (lv, lt) = (self.expr(lo), self.vty(lo.ty));
+                let lv = self.freeze(lv, lo.ty);
+                let (hv, ht) = (self.expr(hi), self.vty(hi.ty));
+                let lv = self.cast_to(lv, lt, Ty::U64);
+                let lv = self.rvalue_temp(Ty::U64, Rvalue::Use(lv));
+                let hv = self.cast_to(hv, ht, Ty::U64);
+                let hv = self.rvalue_temp(Ty::U64, Rvalue::Use(hv));
+                self.rotate(&arr, aty, (lv, hv), i == I::ArrayRotateRight);
+                unit()
+            }
+            (I::ArrayPrefetch, [n]) => {
+                let (nv, nt) = (self.expr(n), self.vty(n.ty));
+                let nv = self.cast_to(nv, nt, Ty::U64);
+                let addr = self.elem_addr(&arr, nv, elem);
+                self.simd_call("velt_simd_prefetch", vec![addr]);
+                unit()
+            }
             (I::ArrayReserve, [n]) => {
                 let (nv, nt) = (self.expr(n), self.vty(n.ty));
                 let nv = self.cast_to(nv, nt, Ty::U64);
@@ -216,6 +234,49 @@ impl FnLower<'_, '_> {
                 rest.len() + 1
             )),
         }
+    }
+
+    /// `__intrinsic_array_rotate_right` (`right`) or `_left` of `xs[lo..=hi]` (U64 operands):
+    /// the end element is held aside, the rest moved one slot by one `memmove`, and the held
+    /// element stored at the other end. `hi` is bounds-checked, which covers the range.
+    fn rotate(&mut self, arr: &Place, aty: TyId, (lo, hi): (Operand, Operand), right: bool) {
+        let elem = self.elem_ty(aty);
+        let vt = self.cx.ty(elem);
+        let some = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Lt, lo.clone(), hi.clone()));
+        let (go, join) = (self.new_block(), self.new_block());
+        self.branch(some, go, join);
+        self.switch_to(go);
+        let p_hi = self.elem_place_checked(arr, aty, hi.clone(), Ty::U64);
+        if vt == Ty::Unit {
+            self.goto(join);
+            self.switch_to(join);
+            return;
+        }
+        let p_lo = self.elem_place(arr, lo.clone(), elem);
+        let next = self.rvalue_temp(
+            Ty::U64,
+            Rvalue::Binary(BinOp::Add, lo.clone(), cint(1, Ty::U64)),
+        );
+        let p_next = self.elem_place(arr, next, elem);
+        let (stride, _) = self.stride(elem);
+        let n = self.rvalue_temp(Ty::U64, Rvalue::Binary(BinOp::Sub, hi, lo));
+        let bytes = self.rvalue_temp(
+            Ty::U64,
+            Rvalue::Binary(BinOp::Mul, n, cint(stride as i128, Ty::U64)),
+        );
+        let (held_at, store_at) = match right {
+            true => (p_hi.clone(), p_lo.clone()),
+            false => (p_lo.clone(), p_hi.clone()),
+        };
+        let held = self.copy_to_temp(Operand::Copy(held_at), vt);
+        let (a_lo, a_next) = (self.addr(p_lo), self.addr(p_next));
+        match right {
+            true => self.mem_copy_dyn(a_next, a_lo, bytes, true),
+            false => self.mem_copy_dyn(a_lo, a_next, bytes, true),
+        }
+        self.assign(store_at, Rvalue::Use(Operand::Copy(Place::local(held))));
+        self.goto(join);
+        self.switch_to(join);
     }
 
     /// `__intrinsic_array_swap` of the elements at the (evaluated) indices `a` and `b`.

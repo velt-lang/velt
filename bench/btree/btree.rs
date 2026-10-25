@@ -33,6 +33,11 @@ fn ints(n: usize) {
         if let Some(v) = m.get(&misses[i]) { sum = sum.wrapping_add(*v); }
     }
     report("u64_get", t, sum);
+    let probes: Vec<u64> = (0..n / 2).flat_map(|i| [keys[(i * 7919) % n], misses[i]]).collect();
+    let t = Instant::now();
+    let got: Vec<Option<u64>> = probes.iter().map(|k| m.get(k).copied()).collect();
+    let many = got.iter().flatten().fold(0u64, |a, v| a.wrapping_add(*v));
+    report("u64_get_many", t, many);
     let t = Instant::now();
     let mut walk = 0u64;
     for (k, v) in &m { walk ^= k.wrapping_add(*v); }

@@ -349,6 +349,11 @@ inline. They never cross the C ABI, so no target's vector calling convention is 
 check it: the prelude's methods do. `load_partial` and `store_partial` take a count of elements
 too, below the lane count, and touch only those elements.
 
+`velt_simd_prefetch(void* addr)` (`-> void`, additive) starts loading the cache line at `addr`
+for a read soon, as a hint: LLVM emits `llvm.prefetch` (read, every cache level, data), which
+never faults; Cranelift emits nothing. Std reaches it through `__intrinsic_array_prefetch(xs, i)`
+(HIR `Intrinsic::ArrayPrefetch`, the address of element `i`, not bounds-checked).
+
 A shuffle is `velt_simd_<type>_shuffle_<i0>_<i1>…`, one lane index per lane spelled in the symbol
 (`velt_simd_u32x4_shuffle_1_0_7_6`; indices below twice the lane count, a lane of the first
 argument then of the second), so the mask is a constant wherever the call is: `(a, b) -> v`. No
@@ -512,6 +517,11 @@ never reads), so that it treats the loop's copy for a plain array as the one tha
 | `velt_rt_alloc` | `(uint64_t size, uint64_t align) -> void*` — aborts on OOM, never null for size > 0 |
 | `velt_rt_realloc` | `(void* p, uint64_t old_size, uint64_t align, uint64_t new_size) -> void*` |
 | `velt_rt_free` | `(void* p, uint64_t size, uint64_t align)` |
+
+An array buffer (generated code's `T[]`) has its element's alignment, or a cache line's (64)
+when the element's size is a whole number of cache lines (`velt_vir` `buffer_align`): each
+element of such an array is then whole lines, a B-tree node's 64-byte block in one line. Every
+allocation, growth and free of one buffer passes the same alignment.
 
 `VELT_RT_DEBUG_ALLOC=1` with a **debug** runtime (programs linked against `<target>/debug/velt_rt`,
 e.g. every golden run) checks every allocation of the process (generated code and runtime alike):
