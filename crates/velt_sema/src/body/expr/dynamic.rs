@@ -58,20 +58,7 @@ impl FnCx<'_, '_> {
                 );
                 Ok(self.error_expr(h.span))
             }
-            // `any` and `Function` call what they hold, which a generic function value would
-            // need type arguments for.
-            (None, Some(d @ (Dynamic::Any | Dynamic::Function))) if self.cx.is_generic_fn(h.ty) => {
-                let (tn, to) = (self.cx.display(h.ty), d.name());
-                self.cx.error(
-                    velt_common::Diagnostic::error(
-                        format!("a generic function value (`{tn}`) cannot be held as `{to}` yet"),
-                        h.span,
-                    )
-                    .with_note("a call through it would need the type arguments of each call (#943); hold it as `unknown` and convert it back with `as`, or keep its type"),
-                );
-                Ok(self.error_expr(h.span))
-            }
-            (None, Some(_)) => self.box_dynamic(h, exp),
+            (None, Some(d)) => self.box_value_dynamic(h, exp, d),
             (Some(f), Some(t)) if !dynamic_converts(f, t, checked_from_unknown) => Err(h),
             (Some(Dynamic::Any), _) | (Some(_), Some(_)) => Ok(self.unbox_dynamic(h, exp)),
             (Some(_), None) if self.takes_dynamic_whole(exp, h.ty) => {

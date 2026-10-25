@@ -59,8 +59,6 @@ impl FnCx<'_, '_> {
     }
 
     fn try_coerce_value(&mut self, h: hir::Expr, exp: TyId) -> Result<hir::Expr, hir::Expr> {
-        // A generic function value where a function type is expected: instantiated there
-        // (`generic_values.rs`).
         if self.cx.is_generic_fn(h.ty) && matches!(self.cx.ty.kind(exp), TyKind::FnPtr { .. }) {
             return self.generic_as_fn(h, exp);
         }
@@ -583,9 +581,7 @@ impl FnCx<'_, '_> {
             d = d.with_note(self.unreadable_shared_note(found.ty));
         }
         if self.cx.is_generic_fn(expected) {
-            d = d.with_note(format!(
-                "a value of `{e}` takes any type arguments at each call; a function of fixed types (`{f}`) is not one: pass a generic function, or a closure that works for every type"
-            ));
+            d = d.with_note(super::generic_conversions::fixed_note(&e, &f));
         } else if let TyKind::Dyn(..) = self.cx.ty.kind(expected) {
             d = match (
                 self.adapt_refusal(expected, found.ty),
