@@ -6,6 +6,7 @@
 use velt_sema::hir::{self, DefId, PassMode, TyId, TyKind, UseMode};
 
 use super::operand::proj;
+use super::view_unswitch_plain::FLOAT_INDEX;
 use super::{ice, unit, FnLower, LkMode, Work};
 use crate::vir::{self, Operand, Place, Proj, Rvalue, Ty};
 
@@ -107,6 +108,10 @@ impl FnLower<'_, '_> {
             true => Stabilize::Facts,
             false => Stabilize::Share,
         };
+        // An index's conversion (`xs[i]` with a number `i`) reads only the number it is given.
+        if how == Stabilize::Facts || f.name == FLOAT_INDEX {
+            self.note_quiet_call(fid, def);
+        }
         let outer = std::mem::replace(&mut self.frozen_args, frozen != 0);
         let to_caller = std::mem::replace(&mut self.args_to_caller, plain);
         let kept = match plain {
@@ -125,7 +130,12 @@ impl FnLower<'_, '_> {
         let ret = self.cx.subst(ret, &targs);
         let throws = throws.map(|e| self.cx.subst(e, &targs));
         let throws = self.cx.error_ty(throws);
+        let view_sort = self.view_sort_branch(def, &targs, &argv);
         let r = self.finish_call(vir::Callee::Func(fid), argv, ret, throws);
+        if let Some(join) = view_sort {
+            self.goto(join);
+            self.switch_to(join);
+        }
         if plain && self.needs_drop(ret) {
             self.hand_to_reader(&r, ret);
         }

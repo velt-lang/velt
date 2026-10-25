@@ -151,6 +151,8 @@ pub(crate) enum Effects {
     ReadCaching,
     /// Touches no memory (arithmetic).
     None,
+    /// Does nothing; a call marks the way it is on as rare (`velt_rt_array_view_cold`).
+    Cold,
 }
 
 /// Memory effects of the runtime function `symbol`.
@@ -178,6 +180,7 @@ pub(crate) fn effects(symbol: &str) -> Effects {
         | "velt_rt_str_index_of"
         | "velt_rt_str_last_index_of"
         | "velt_rt_str_includes" => Effects::ReadCaching,
+        "velt_rt_array_view_cold" => Effects::Cold,
         _ => Effects::Any,
     }
 }
@@ -264,6 +267,7 @@ mod tests {
         assert_eq!(effects("velt_rt_math_round"), Effects::None);
         assert_eq!(effects("velt_rt_str_cmp"), Effects::ReadOnly);
         assert_eq!(effects("velt_rt_str_index_of"), Effects::ReadCaching);
+        assert_eq!(effects("velt_rt_array_view_cold"), Effects::Cold);
         assert_eq!(effects("velt_rt_write_i64"), Effects::Any);
         assert_eq!(
             Allocator::of("velt_rt_alloc", &[Ty::U64, Ty::U64], Ty::Ptr),

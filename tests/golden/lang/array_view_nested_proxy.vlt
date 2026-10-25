@@ -1,0 +1,67 @@
+// check: no leaks
+// Arrays nested in a union array view (#1485) stay arrays in a program with proxies, where an
+// object of another type is a view as the union's object member: sigx's fragments and
+// `.map()` results among a VNode's children. Also an index that changes a variable
+// (`v[i++]`), which reads one element per step.
+interface VNode {
+  type: string;
+  children: JSXChild[];
+}
+type JSXChild = VNode | string | number | boolean | null | undefined | JSXChild[];
+
+// The program makes proxies (sigx's signals do), so its object types can hold views.
+const state = new Proxy({ count: 1 }, {});
+
+function kind(c: JSXChild): string {
+  if (Array.isArray(c)) {
+    return "array";
+  }
+  if (c === null || c === undefined) {
+    return "empty";
+  }
+  if (typeof c === "object") {
+    return "node";
+  }
+  return typeof c;
+}
+
+function render(c: JSXChild): string {
+  if (Array.isArray(c)) {
+    return "[" + c.map((k) => render(k)).join(",") + "]";
+  }
+  if (c === null || c === undefined || typeof c === "boolean") {
+    return "";
+  }
+  if (typeof c === "string" || typeof c === "number") {
+    return String(c);
+  }
+  const n = c as VNode;
+  return "<" + n.type + ">" + n.children.map((k) => render(k)).join("") + "</" + n.type + ">";
+}
+
+function main() {
+  const obj = { type: "b", children: ["x"] };
+  const a: any = [[1, obj], [[obj]]];
+  const kids = a as JSXChild[];
+  console.log(Array.isArray(kids[0]), Array.isArray(kids[1]), kids.length);
+  const first = kids[0] as JSXChild[];
+  console.log(kind(first), kind(first[0]), kind(first[1]), kind(kids[1]));
+  const inner = (kids[1] as JSXChild[])[0] as JSXChild[];
+  console.log(kind(inner), kind(inner[0]), inner.length);
+  console.log(render(kids));
+  for (const k of kids) {
+    console.log(kind(k), render(k));
+  }
+
+  const nums: any = [10, 20, 30, 40];
+  const v = nums as JSXChild[];
+  let i = 0;
+  let s = "";
+  while (i < v.length) {
+    s += String(v[i++]) + ";";
+  }
+  let j = 0;
+  v[j++] = 1;
+  v[j++] = 2;
+  console.log(s, i, j, nums[0], nums[1], nums.length, state.count);
+}

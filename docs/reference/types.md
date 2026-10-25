@@ -213,9 +213,9 @@ usable and no copy method is needed.
   primitive (`+` asks for it before `toString()`, as in JS; a `Date` by its `toString()`), else
   by its `toString()`, and a value whose type is a type parameter as `String(x)` writes the
   type it is instantiated with (an `any` and a class instance with `+`'s order: `valueOf()`
-  first). Any other value
-  next to a string is a compile error; build that text with a template literal
-  (`` `Total: ${m}` ``).
+  first). Any other value next to a string is written as `String(x)` writes it: `"" + s` of a
+  `string | string[] | null` is `"k,l"`, `"x"` or `"null"`, an object without a `toString()` is
+  `[object Object]`, a map `[object Map]`. A function value there is a compile error.
 - `String(x)` converts any value that can be printed to its text, exactly as `` `${x}` ``
   writes it (`String(1.5)` is `"1.5"`, `String(null)` is `"null"`, `String([1, 2])` is
   `"1,2"`). `Number(x)` converts a string (as JS: the whole trimmed string, `""` is `0`, else
@@ -1853,7 +1853,9 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   initializer or a default value for now. TypeScript also converts an existing array, which
   is unsound: storing a `Named` that is not a `C` through the `Named[]` would put it into the
   `C[]`. Velt reports that and
-  suggests a copy, `[...cs]` or `cs.map((x): Named => x)`. A generic class converts only when
+  suggests a copy, `[...cs]` or `cs.map((x): Named => x)`. An `as` cast of an existing array to
+  another element type (`cs as Named[]`) is allowed and gives a view of the array (see "any and
+  unknown" below), checked element by element as it is read and written. A generic class converts only when
   it has no base class, no subclasses and no `[Symbol.dispose]()`; the new object shares the
   old one's field values.
 
@@ -2761,6 +2763,47 @@ function main(): void {
   console.log(p.price, item.name, tracked.hits); // 3 pen 0
   const back: any = item;
   console.log(back === a, item === (a as Item)); // true true
+}
+```
+
+An array of another element type converted to an array type is a *view* of that one array, in
+every program (#1485): an `any` holding an array converted to `T[]` (`kids as JSXChild[]` with
+`kids` holding `["a", 1]`, also as a union's array member: `kids as JSXChild`), and a cast of an
+existing array to another, comparable element type (`items as VNode[]` with `items:
+JSXElement[]`, `result as JSXChildren`), which sema writes as the conversion through `any`.
+Nothing is copied up front: each access sees the original's elements at that moment, each
+converted to `T` with the check above (an object element of another type is a view of it, in a
+program with views of objects), and a change through the view (an index assignment, `push`,
+`pop`, `reverse`, `splice`, ...) is written back to the original at once, converted to the
+original's element type, so a value the original's element type cannot hold (a `string` written
+into a view of a `VNode[]`) stops with a `TypeError` where Node stores it. Back in an `any` the
+view is the original array (`===`, `Array.isArray`, `WeakMap` keys). An array has one view of
+each element type at a time, so two conversions of one array to `T[]` are one value, as in
+Node: `===`, `indexOf`, `includes`, and `Set` and `Map` keys see one array. A view sent to
+another thread or `clone()`d is a plain array of its elements (a copy, as any array sent while
+it is still used here). An access brings only what it touches up to date: `length` is the
+original's, an index, a `for...of` step or a callback method's step (`forEach`, `map`, ...)
+converts that element (and, the first time, the ones before it), and a write of an element, a
+`push`, `pop` or swap writes back only what changed; operations on the whole array (`slice`,
+spread, `sort`, `JSON.stringify`, `clone()`) bring every element up to date. So a loop over a
+view costs a plain loop plus a conversion of each element it reaches, and the elements after
+the last one read are never checked, as Node never checks them. `sort(cmp)` sorts a copy of
+the elements stably and writes them back. An object view whose field is an array of another
+element type (`(raw as any) as View` with `raw.items: string[]` and `View.items: Child[]`)
+shares that array as an array view. Array types that no conversion makes a view keep their
+layout and code.
+
+```ts
+type VNode = { type: string };
+type JSXChild = VNode | string | number | boolean | null | undefined | JSXChild[];
+
+function main(): void {
+  const kids: any = ["a", 1];
+  const view = kids as JSXChild[]; // a view of the array `kids` holds
+  view.push("b");
+  console.log(kids.length, view[2]); // 3 b
+  const back: any = view;
+  console.log(back === kids); // true
 }
 ```
 

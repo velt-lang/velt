@@ -1,0 +1,381 @@
+// check: no leaks
+// Loops over a view type (#1485) whose array variable changes while they run: through a
+// closure, a nested function, a stored callback, a generator, an async task and the other ways
+// a loop's variable can be reassigned, from a plain array to a view and back, as in Node.
+function view(tag: string, n: number): string[] {
+  const raw: any[] = [];
+  for (let i = 0; i < n; i++) {
+    raw.push(tag + i);
+  }
+  return raw as any as string[];
+}
+
+function plain(tag: string, n: number): string[] {
+  const xs: string[] = [];
+  for (let i = 0; i < n; i++) {
+    xs.push(tag + i);
+  }
+  return xs;
+}
+
+const make = [plain, view];
+
+function viaClosure(from: number, to: number): string {
+  let xs: string[] = make[from]("p", 5);
+  const sw = () => {
+    xs = make[to]("V", 6);
+  };
+  let out = "";
+  for (let i = 0; i < xs.length; i++) {
+    out += xs[i];
+    if (i === 1) {
+      sw();
+    }
+  }
+  return out;
+}
+
+function viaNested(from: number, to: number): string {
+  let xs: string[] = make[from]("p", 5);
+  function sw() {
+    xs = make[to]("V", 6);
+  }
+  let out = "";
+  for (let i = 0; i < xs.length; i++) {
+    out += xs[i];
+    if (i === 1) {
+      sw();
+    }
+  }
+  return out;
+}
+
+function viaPush(from: number): string {
+  const raw: any[] = ["V0"];
+  let xs: string[] = make[from]("p", 0);
+  const sw = () => {
+    xs = raw as any as string[];
+  };
+  for (let i = 0; i < 4; i++) {
+    if (i === 2) {
+      sw();
+    }
+    if (i >= 2) {
+      xs.push("n" + i);
+    }
+  }
+  return xs.join(",") + " | " + raw.join(",");
+}
+
+function viaWrite(from: number): string {
+  const raw: any[] = ["W0", "W1", "W2", "W3"];
+  let xs: string[] = make[from]("a", 4);
+  function sw() {
+    xs = raw as any as string[];
+  }
+  for (let i = 0; i < 4; i++) {
+    if (i === 1) {
+      sw();
+    }
+    xs[i] = xs[i] + "!";
+  }
+  return xs.join(",") + " | " + raw.join(",");
+}
+
+function viaForOf(from: number, to: number): string {
+  let xs: string[] = make[from]("p", 4);
+  const sw = () => {
+    xs = make[to]("V", 6);
+  };
+  let out = "";
+  for (const s of xs) {
+    out += s;
+    sw();
+  }
+  return out + " " + xs.length;
+}
+
+function viaCallback(from: number, to: number): string {
+  let xs: string[] = make[from]("p", 5);
+  const cbs: (() => void)[] = [];
+  cbs.push(() => {
+    xs = make[to]("C", 6);
+  });
+  let out = "";
+  for (let i = 0; i < xs.length; i++) {
+    out += xs[i];
+    if (i === 2) {
+      cbs[0]();
+    }
+  }
+  return out;
+}
+
+async function viaAsyncClosure(from: number, to: number): Promise<string> {
+  let xs: string[] = make[from]("p", 5);
+  const sw = async () => {
+    await Promise.resolve();
+    xs = make[to]("A", 6);
+  };
+  let out = "";
+  for (let i = 0; i < xs.length; i++) {
+    out += xs[i];
+    if (i === 0) {
+      await sw();
+    }
+  }
+  return out;
+}
+
+async function racing(from: number, to: number): Promise<string> {
+  let xs: string[] = make[from]("p", 5);
+  const writer = async () => {
+    await Promise.resolve();
+    xs = make[to]("R", 6);
+  };
+  const reader = async () => {
+    let out = "";
+    for (let i = 0; i < xs.length; i++) {
+      out += xs[i];
+      await Promise.resolve();
+      await Promise.resolve();
+    }
+    return out;
+  };
+  const [out] = await Promise.all([reader(), writer().then(() => "")]);
+  return out;
+}
+
+function plainAssign(from: number, to: number): string {
+  let xs: string[] = make[from]("p", 5);
+  let out = "";
+  for (let i = 0; i < xs.length; i++) {
+    out += xs[i];
+    if (i === 1) {
+      xs = make[to]("Q", 6);
+    }
+  }
+  return out;
+}
+
+function param(xs: string[], to: number): string {
+  let out = "";
+  for (let i = 0; i < xs.length; i++) {
+    out += xs[i];
+    if (i === 2) {
+      xs = make[to]("P", 4);
+    }
+  }
+  return out;
+}
+
+function swap(from: number, to: number): string {
+  let xs: string[] = make[from]("x", 3);
+  let ys: string[] = make[to]("y", 6);
+  let out = "";
+  for (let i = 0; i < xs.length; i++) {
+    out += xs[i];
+    if (i === 1) {
+      [xs, ys] = [ys, xs];
+    }
+  }
+  return out + " " + ys.length;
+}
+
+function nullish(from: number, to: number): string {
+  let xs: string[] = make[from]("p", 3);
+  let next: string[] | undefined;
+  let out = "";
+  for (let i = 0; i < xs.length; i++) {
+    out += xs[i];
+    if (i === 1) {
+      next ??= make[to]("N", 6);
+      xs = next;
+    }
+  }
+  return out;
+}
+
+function forUpdate(from: number, to: number): string {
+  let xs: string[] = make[from]("p", 3);
+  let out = "";
+  for (let i = 0; i < xs.length; i++, xs = i === 2 ? make[to]("U", 6) : xs) {
+    out += xs[i];
+  }
+  return out;
+}
+
+function iife(from: number, to: number): string {
+  let xs: string[] = make[from]("p", 3);
+  let out = "";
+  for (let i = 0; i < xs.length; i++) {
+    out += xs[i];
+    if (i === 1) {
+      (() => {
+        xs = make[to]("I", 6);
+      })();
+    }
+  }
+  return out;
+}
+
+function inCatch(from: number, to: number): string {
+  let xs: string[] = make[from]("p", 3);
+  let out = "";
+  for (let i = 0; i < xs.length; i++) {
+    out += xs[i];
+    try {
+      if (i === 1) {
+        throw new Error("swap");
+      }
+    } catch {
+      xs = make[to]("K", 6);
+    }
+  }
+  return out;
+}
+
+function labelled(from: number, to: number): string {
+  let xs: string[] = make[from]("p", 3);
+  let out = "";
+  outer: for (let r = 0; r < 2; r++) {
+    for (let i = 0; i < xs.length; i++) {
+      out += xs[i];
+      if (r === 0 && i === 1) {
+        xs = make[to]("L", 6);
+        continue outer;
+      }
+    }
+  }
+  return out;
+}
+
+function inSwitch(from: number, to: number): string {
+  let xs: string[] = make[from]("p", 4);
+  let out = "";
+  for (let i = 0; i < xs.length; i++) {
+    out += xs[i];
+    switch (i) {
+      case 1:
+        xs = make[to]("S", 6);
+        break;
+      default:
+        out += ".";
+    }
+  }
+  return out;
+}
+
+function doWhile(from: number, to: number): string {
+  let xs: string[] = make[from]("p", 4);
+  let out = "";
+  let i = 0;
+  do {
+    out += xs[i];
+    if (i === 0) {
+      xs = make[to]("D", 6);
+    }
+    i++;
+  } while (i < xs.length);
+  return out;
+}
+
+function field(from: number, to: number): string {
+  const o = { xs: make[from]("p", 4) };
+  const sw = () => {
+    o.xs = make[to]("F", 6);
+  };
+  let out = "";
+  for (let i = 0; i < o.xs.length; i++) {
+    out += o.xs[i];
+    if (i === 1) {
+      sw();
+    }
+  }
+  return out;
+}
+
+function anyWrite(from: number, to: number): string {
+  const o = { xs: make[from]("p", 4) };
+  const a: any = o;
+  let out = "";
+  for (let i = 0; i < o.xs.length; i++) {
+    out += o.xs[i];
+    if (i === 1) {
+      a.xs = make[to]("Y", 6);
+    }
+  }
+  return out;
+}
+
+class Holder {
+  xs: string[];
+  to: number;
+  constructor(xs: string[], to: number) {
+    this.xs = xs;
+    this.to = to;
+  }
+  swap() {
+    this.xs = make[this.to]("M", 6);
+  }
+  run(): string {
+    let out = "";
+    for (let i = 0; i < this.xs.length; i++) {
+      out += this.xs[i];
+      if (i === 1) {
+        this.swap();
+      }
+    }
+    return out;
+  }
+}
+
+let shared: string[] = [];
+
+function* stepper(to: number): Generator<number> {
+  yield 1;
+  shared = make[to]("G", 6);
+  yield 2;
+}
+
+function moduleVar(from: number, to: number): string {
+  shared = make[from]("p", 4);
+  const g = stepper(to);
+  let out = "";
+  for (let i = 0; i < shared.length; i++) {
+    out += shared[i];
+    g.next();
+  }
+  return out;
+}
+
+function rows(from: number, to: number): string {
+  const rs: string[][] = [make[from]("a", 3), make[from]("b", 3)];
+  let out = "";
+  for (let k = 0; k < rs.length; k++) {
+    for (let i = 0; i < rs[k].length; i++) {
+      out += rs[k][i];
+      if (k === 0 && i === 1) {
+        rs[1] = make[to]("Z", 6);
+      }
+    }
+  }
+  return out;
+}
+
+async function main() {
+  for (const [from, to] of [
+    [0, 1],
+    [1, 0],
+    [1, 1],
+  ]) {
+    console.log(from, to);
+    console.log(viaClosure(from, to), viaNested(from, to), viaPush(from), viaWrite(from));
+    console.log(viaForOf(from, to), viaCallback(from, to), await viaAsyncClosure(from, to));
+    console.log(await racing(from, to), plainAssign(from, to), param(make[from]("q", 6), to));
+    console.log(swap(from, to), nullish(from, to), forUpdate(from, to), iife(from, to));
+    console.log(inCatch(from, to), labelled(from, to), inSwitch(from, to), doWhile(from, to));
+    console.log(field(from, to), anyWrite(from, to), new Holder(make[from]("h", 6), to).run());
+    console.log(moduleVar(from, to), rows(from, to));
+  }
+}

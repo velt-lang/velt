@@ -44,22 +44,38 @@ impl FnLower<'_, '_> {
         let arr = self.operand_place(own, avt);
         let k = self.temp(Ty::U64);
         self.assign(Place::local(k), Rvalue::Use(cint(0, Ty::U64)));
+        // Whether the array is a view, tested once: the loop holds a reference to it.
+        let view = self.cx.array_view(aty).then(|| {
+            let payload = self.cx.payload_ty(aty);
+            let hdr = proj(&arr, Proj::Deref(payload));
+            let is = self.view_tagged(&hdr);
+            let is = Operand::Copy(Place::local(self.copy_to_temp(is, Ty::Bool)));
+            self.note_view_test(&hdr, &is);
+            is
+        });
+        let first = self.loop_start();
         let (cond_bb, body_bb, exit) = (self.new_block(), self.new_block(), self.new_block());
         self.goto(cond_bb);
         self.switch_to(cond_bb);
-        let hdr = self.content(&arr, aty);
-        let len = Operand::Copy(proj(&hdr, Proj::Field(1)));
         let kv = Operand::Copy(Place::local(k));
-        let more = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Lt, kv.clone(), len));
-        self.branch(more, body_bb, exit);
-        self.switch_to(body_bb);
+        // A view brings only the element this step reads up to date (array_view_index.rs).
+        let ep = match view {
+            Some(is) => self.view_step(&arr, aty, kv.clone(), is, body_bb, exit),
+            None => {
+                let hdr = self.content(&arr, aty);
+                let len = Operand::Copy(proj(&hdr, Proj::Field(1)));
+                let more = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Lt, kv.clone(), len));
+                self.branch(more, body_bb, exit);
+                self.switch_to(body_bb);
+                self.elem_place(&hdr, kv.clone(), elem)
+            }
+        };
         self.push_scope(ScopeKind::Loop {
             label: label.clone(),
             brk: exit,
             cont: cond_bb,
         });
         self.push_scope(ScopeKind::Block);
-        let ep = self.elem_place(&hdr, kv.clone(), elem);
         let next = self.rvalue_temp(Ty::U64, Rvalue::Binary(BinOp::Add, kv, cint(1, Ty::U64)));
         self.assign(Place::local(k), Rvalue::Use(next));
         let s = self.share_value(Operand::Copy(ep), elem);
@@ -82,6 +98,7 @@ impl FnLower<'_, '_> {
         self.pop_scope();
         self.goto(cond_bb);
         self.pop_scope();
+        self.note_loop(cond_bb, first);
         self.switch_to(exit);
         self.pop_scope();
     }

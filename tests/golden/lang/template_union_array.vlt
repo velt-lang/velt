@@ -1,0 +1,84 @@
+// check: no leaks
+// A template literal, `String(x)` and a string `+` write a union holding an array as JS's
+// `String(x)` does (#1485): the active member, an array's elements joined with "," (nested
+// arrays flattened, `null` elements empty), an object as `[object Object]` or by its
+// `toString()`.
+class Product {
+  price = 30;
+}
+
+class Named {
+  toString(): string {
+    return "named";
+  }
+}
+
+function f(s: string | string[] | null) {
+  console.log(`${s}`);
+  console.log(String(s));
+  console.log("" + s);
+  console.log("[" + s + "]");
+}
+f(["k", "l"]);
+f("x");
+f(null);
+f([]);
+
+function g(v: number | number[][] | undefined) {
+  console.log(`<${v}>`, String(v), "" + v);
+}
+g([[1, 2], [3]]);
+g(4);
+g(undefined);
+g([]);
+
+function h(v: string | (string | null)[]) {
+  console.log(`${v}|`);
+}
+h(["a", null, "b"]);
+h("z");
+
+function o(v: Product | string[] | number) {
+  console.log(`${v}`, String(v), "" + v);
+}
+o(new Product());
+o(["p", "q"]);
+o(7);
+
+function n(v: Named | number[] | null) {
+  console.log(`${v}`, "" + v);
+}
+n(new Named());
+n([5, 6]);
+n(null);
+
+function b(v: boolean | [number, string]) {
+  console.log(`${v}`);
+}
+b(true);
+b([1, "x"]);
+
+function q(v: string | Product[]) {
+  console.log(`${v}`);
+}
+q([new Product(), new Product()]);
+q("w");
+
+function m(s: string | string[] | null, map: Map<string, number>, e: Error | null) {
+  let t = "a";
+  t += s;
+  t += "|" + map;
+  console.log(t, "" + e, `${e}`);
+}
+m(["x", "y"], new Map(), new Error("boom"));
+m(null, new Map(), null);
+
+// A recursive union whose arrays hold themselves is written the same way, nested arrays
+// flattened at any depth.
+type C = string | number | null | undefined | C[];
+const xs: C[] = ["a", 1, ["b", [2, [null, "c"]]], null, undefined];
+console.log(`${xs}`, String(xs), "" + xs, xs.join(), xs.join("-"));
+const c: C = ["d", ["e", [3]]];
+console.log(`${c}`, String(c), "" + c);
+const one: C = "f";
+console.log(`${one}|${[c, one]}`);

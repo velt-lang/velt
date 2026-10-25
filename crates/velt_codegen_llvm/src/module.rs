@@ -31,6 +31,8 @@ const PURE_ATTRS: &str = "#3";
 const READONLY_ATTRS: &str = "#4";
 /// Attribute group of runtime functions that read memory and update private caches.
 const READ_CACHING_ATTRS: &str = "#8";
+/// Attribute group of runtime functions whose call marks the way it is on as rare.
+const COLD_ATTRS: &str = "#9";
 /// Attribute groups of the allocator functions (`runtime::Allocator`).
 const ALLOCATOR_ATTRS: [(Allocator, &str); 3] = [
     (Allocator::Alloc, "#5"),
@@ -166,6 +168,11 @@ pub(crate) fn emit_unit(
         out,
         "attributes {READ_CACHING_ATTRS} = {{ nounwind willreturn memory(read, inaccessiblemem: readwrite) }}"
     );
+    // Not `memory(none)`, so that the call stays for the backend to see.
+    let _ = writeln!(
+        out,
+        "attributes {COLD_ATTRS} = {{ cold nounwind willreturn memory(inaccessiblemem: readwrite) }}"
+    );
     for (kind, group) in ALLOCATOR_ATTRS {
         let _ = writeln!(out, "attributes {group} = {{ {} }}", kind.function_attrs());
     }
@@ -228,6 +235,7 @@ fn plain_declaration(e: &vir::ExternFn) -> CodegenResult<String> {
         (false, Effects::None) => PURE_ATTRS,
         (false, Effects::ReadOnly) => READONLY_ATTRS,
         (false, Effects::ReadCaching) => READ_CACHING_ATTRS,
+        (false, Effects::Cold) => COLD_ATTRS,
         (false, Effects::Any) => EXTERN_ATTRS,
     };
     Ok(format!(

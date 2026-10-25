@@ -19,11 +19,6 @@ pub(super) fn make_share(e: &mut Expr) {
     wrap_place(e, Intrinsic::Share);
 }
 
-/// Turn the place `e` (moved) into `clone(e)` (a deep copy).
-pub(super) fn make_deep_copy(e: &mut Expr) {
-    wrap_place(e, Intrinsic::Clone);
-}
-
 /// Turn the place `e` (moved) into `op(e)` of the borrowed place.
 fn wrap_place(e: &mut Expr, op: Intrinsic) {
     let (ty, span) = (e.ty, e.span);
