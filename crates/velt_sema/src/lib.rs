@@ -55,6 +55,7 @@ mod flow;
 mod fn_types;
 mod fresh_returns;
 mod generic_arrows;
+mod generic_override_sites;
 mod generic_spread;
 mod global_this;
 #[cfg(test)]
@@ -521,6 +522,9 @@ fn analyze_bodies(cx: &mut ctx::Ctx) {
     });
     timings::pass("absent_fields::check", || absent_fields::check(cx));
     timings::pass("fresh_returns::check", || fresh_returns::check(cx));
+    timings::pass("generic_override_sites::check", || {
+        generic_override_sites::check(cx)
+    });
     // Growing generic recursion has infinitely many instantiations: the passes below propagate
     // requirements per instantiation and would never finish.
     if timings::pass("instantiation_cycles::check", || {

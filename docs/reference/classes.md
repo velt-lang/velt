@@ -520,6 +520,10 @@ console.log(p.len(), q.len());  // 4 4
   (``generic method `apply` cannot be called on an interface value``): make the calling
   function generic over the receiver (`<T extends Mapper>(m: T)` instead of `(m: Mapper)`), or
   call a method that is not generic. Generic interface methods cannot have default bodies yet.
+  The method that runs is the one of the class the type parameter is given: when a subclass of that
+  class overrides it, a value of the class may hold the subclass, so instantiating the generic
+  with that class is the same error as calling the method on it directly (pass the concrete
+  class), and an interface value cannot stand for such a type parameter.
 - A default body can be `async` (`async load(): Promise<T> { … }`), with the rules of an async
   class method ([Async](async.md#errors)). A method without a body cannot be: like in TypeScript,
   it declares a `Promise` result, and implementations may be `async`.
