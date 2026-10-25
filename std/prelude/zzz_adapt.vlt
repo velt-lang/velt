@@ -441,6 +441,26 @@ export function __anyCtorName(v: any): string {
   return "Object";
 }
 
+/**
+ * A call of a class's object without `new` (`x.constructor` or a class read as a plain value):
+ * Node's `TypeError`, `msg`.
+ */
+export function __classCall(msg: string): never {
+  panic(msg);
+}
+
+/**
+ * `v.constructor` of an `any` (or `object`) `v` that holds no class instance: a function of its
+ * own, which equals no class's object. Calling it is not supported yet.
+ */
+export function __anyCtor(v: any): any {
+  const name = __anyCtorName(v);
+  const f = (): any => __classCall(
+    `TypeError: calling the constructor ${name} of a value is not supported yet (#926)`,
+  );
+  return f;
+}
+
 /** `v.constructor.name` of an `any` holding an instance of class `name`, whose constructor Velt doesn't name. */
 export function __anyCtorNameUnsupported(name: string): string {
   panic(`TypeError: \`constructor\` of a ${name} through \`any\` is not supported yet (#926)`);

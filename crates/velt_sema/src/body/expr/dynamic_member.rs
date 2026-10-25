@@ -138,6 +138,14 @@ impl FnCx<'_, '_> {
         want: Want,
         span: Span,
     ) -> Result<hir::Expr, hir::Expr> {
+        // `x.constructor`: the object of the class `x` holds (`ctor_objects.rs`).
+        let obj = match name == "constructor" && want != Want::BorrowMut {
+            true => match self.dynamic_constructor(obj, span) {
+                Ok(h) => return Ok(h),
+                Err(obj) => obj,
+            },
+            false => obj,
+        };
         let (obj, any) = self.dynamic_receiver(obj, Some(Some(name)))?;
         let Some(any) = any else {
             return Ok(self.error_expr(span));

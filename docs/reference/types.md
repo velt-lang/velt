@@ -1043,7 +1043,9 @@ for (const s of shapes) {
   may be classes too (`Circle | Sq` with `area()` on both, or a union of classes only): each
   member's own method runs on the value itself: the receiver first, then the arguments in order,
   each evaluated once. The call's type is the union of the members' results (`number | string`
-  when `scale()` returns a `number` on `Circle` and a `string` on `Sq`), as in TypeScript.
+  when `scale()` returns a `number` on `Circle` and a `string` on `Sq`), as in TypeScript. A
+  getter every class of a union of classes has reads the same way (`.size` of a
+  `Map<K, V> | Set<T>`).
 
 ```ts
 interface Base {
@@ -3590,6 +3592,15 @@ with TypeScript's rules:
   library class that JavaScript has no constructor of the same name for, stops with a
   `TypeError` naming #926; `null` and `undefined` with Node's `TypeError: Cannot read
   properties of null (reading 'constructor')`.
+- `x.constructor` of an `object`, `any` or `Function` is the object of the class the value
+  holds, and a class named where an `any`, `unknown`, `object` or `Function` is expected is
+  that object too, so `ctor === Set || ctor === Map` and `new Set<unknown>([Set, Map])` work as
+  in JavaScript: one object per class (for every instantiation of a generic class), `typeof`
+  `"function"`. Calling it stops with Node's `TypeError` (`Class constructor A cannot be
+  invoked without 'new'`); `new` through it is not supported yet. A value that holds no class
+  instance (an object literal, an array, a primitive) gives a function equal to no class. A
+  class declared in a function has one object for every run of its declaration (in Node, each
+  run makes another class).
 
 ```ts
 class Point {
@@ -3618,6 +3629,6 @@ function main(): void {
 ```
 
 **Not yet** (#926): `object` as a `WeakMap` key, a `WeakSet` member or a `WeakRef` target, the
-members every object has (`constructor` as a value, `toString`, `hasOwnProperty`) and a function has
-(`call` and `apply` with another `thisArg`, `bind`, `name`, `length`), and a type parameter without the `object` bound
+members every object has (`toString`, `hasOwnProperty`) and a function has (`call`, `apply` and
+`bind` with another `thisArg`, `name`, `length`), and a type parameter without the `object` bound
 converted with `as object`. Each is a compile error.
