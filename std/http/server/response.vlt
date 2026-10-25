@@ -327,10 +327,16 @@ export class HttpResponse {
     return this.streaming;
   }
 
-  /** Ends a streamed body the handler left open (internal). */
-  async endStream() {
+  /**
+   * Ends a streamed body the handler left open; with `send`, also writes what is buffered
+   * (internal: before the server waits for the rest of a request's body).
+   */
+  async endStream(send: bool = false) {
     if (this.streaming) {
       await this.finishStream();
+    }
+    if (send) {
+      await this.flush();
     }
   }
 
@@ -574,6 +580,7 @@ export class HttpResponse {
     // did not read): the body is not waited for, so the connection closes after this response
     // (RFC 9110 §10.1.1).
     const r = this.request;
+    r.responded = true;
     if (r.expectsContinue && !r.continueSent) {
       this.keepAlive = false;
     }

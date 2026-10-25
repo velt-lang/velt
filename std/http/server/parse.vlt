@@ -66,6 +66,8 @@ export class Head {
   /// (the client waits for `100 Continue` before sending it), and whether that went out.
   expectsContinue: bool = false;
   continueSent: bool = false;
+  /// The response's head went out (no `100 Continue` may follow it).
+  responded: bool = false;
   /// HTTP/1.1 (chunked responses can be sent).
   http11: bool = true;
   /// The body's framing (`BODY_*`), its range when buffered, its length when not all read.
@@ -141,6 +143,9 @@ export class Parser {
   end: i64 = 0;
   /// The head's end was searched for up to here.
   private scanned: i64 = 0;
+  /// The request being answered points into `buf` (its `Head`): until `release()`, reads must
+  /// not move or overwrite what was read before them.
+  private held: bool = false;
   /// The largest head and body accepted (431 and 413 past them), and the most headers (431).
   private maxHead: i64;
   private maxBody: i64;
@@ -173,7 +178,7 @@ export class Parser {
   /// Reads what `conn` has into the buffer: the bytes read, 0 when nothing has arrived yet,
   /// null at the end of the stream.
   readFrom(conn: TcpStream): number | null {
-    if (this.pos == this.end) {
+    if (this.pos == this.end && !this.held) {
       this.pos = 0;
       this.end = 0;
       this.scanned = 0;
@@ -194,8 +199,33 @@ export class Parser {
     return this.pos < this.end;
   }
 
+  /// The request being answered is finished: its bytes in the buffer may be reused.
+  release() {
+    this.held = false;
+  }
+
+  /// Room for `n` more bytes while the request being answered holds the buffer: its head stays
+  /// where it is (its `Head` keeps the buffer), and what is left to parse moves to a new one.
+  private moveOut(n: i64) {
+    let size = this.buf.length as i64;
+    while (size < this.end - this.pos + n + SLACK) {
+      size *= 2;
+    }
+    const moved: u8[] = Buffer.alloc(size as usize);
+    moved.set(this.buf.slice(this.pos, this.end), 0);
+    this.buf = moved;
+    this.end -= this.pos;
+    this.scanned = this.scanned > this.pos ? this.scanned - this.pos : 0;
+    this.pos = 0;
+    this.held = false;
+  }
+
   /// Room for `n` more bytes past the data: drops what was parsed, then grows by doubling.
   private room(n: i64) {
+    if (this.held) {
+      this.moveOut(n);
+      return;
+    }
     if (this.pos > 0) {
       this.buf.copyWithin(0, this.pos, this.end);
       this.end -= this.pos;
@@ -329,6 +359,7 @@ export class Parser {
     req.http11 = b[p + 7] == 49;
     req.expectsContinue = false;
     req.continueSent = false;
+    req.responded = false;
     p += 8;
     if (b[p] != CR || b[p + 1] != LF) {
       throw new BadRequest(400);
@@ -441,6 +472,7 @@ export class Parser {
       req.expectsContinue = false;
     }
     this.scanned = this.pos;
+    this.held = true;
     return true;
   }
 

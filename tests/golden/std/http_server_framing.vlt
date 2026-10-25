@@ -45,11 +45,25 @@ async function probe(port: number, name: string, raw: string) {
 const H = "Host: x\r\n";
 
 async function main() {
-  const server = await serve({ port: 0 }, async (req: HttpRequest, res: HttpResponse) => {
+  // A long idle timeout: nothing here may wait for one to answer.
+  const server = await serve({ port: 0, idleTimeout: 120000 }, async (
+    req: HttpRequest,
+    res: HttpResponse,
+  ) => {
     if (req.pathIs("/echo")) {
       res.send(`echo:${await req.bodyText()}\r\n`);
     } else if (req.pathIs("/noread")) {
       res.send("ok");
+    } else if (req.pathIs("/late")) {
+      // The head is read after the body: it must still be this request's.
+      const body = await req.body();
+      res.send(`${req.method()} ${req.path()} ${req.header("x-a")} ${body.length}`);
+    } else if (req.pathIs("/stream-then-read")) {
+      const s = await res.stream();
+      await s.write("head;");
+      const body = await req.body();
+      await s.write(`got ${body.length}`);
+      await s.end();
     } else {
       res.send(`${req.method()} ${req.target()}`);
     }
@@ -211,6 +225,49 @@ async function main() {
   d.shutdown();
   console.log("HTTP/1.0:", summary(await readAll(d)));
   d.close();
+
+  console.log("-- a body that arrives after the head");
+  for (const size of [3, 200000]) {
+    const late = await connect(`127.0.0.1:${port}`);
+    await late.write(
+      `POST /late HTTP/1.1\r\n${H}X-A: yes\r\nContent-Length: ${size}\r\nExpect: 100-continue\r\nConnection: close\r\n\r\n`,
+    );
+    let got = "";
+    while (!got.includes("100 Continue")) {
+      got += await late.readString();
+    }
+    await late.write("y".repeat(size));
+    const all = got + (await readAll(late));
+    console.log(size, all.substring(all.lastIndexOf("\r\n\r\n") + 4));
+    late.close();
+  }
+  // Without Expect: the response to a handler that does not read goes out before the body.
+  const held = await connect(`127.0.0.1:${port}`);
+  await held.write(`POST /noread HTTP/1.1\r\n${H}Content-Length: 3\r\nConnection: close\r\n\r\n`);
+  let first = "";
+  while (!first.includes("ok")) {
+    first += await held.readString();
+  }
+  await held.write("abc");
+  console.log("answered before the body:", summary(first + (await readAll(held))));
+  held.close();
+  // A streamed response before the body is read: no 100 in the middle of its chunks.
+  const st = await connect(`127.0.0.1:${port}`);
+  await st.write(
+    `POST /stream-then-read HTTP/1.1\r\n${H}Content-Length: 3\r\nExpect: 100-continue\r\n\r\n`,
+  );
+  let streamed = "";
+  while (!streamed.includes("head;")) {
+    streamed += await st.readString();
+  }
+  await st.write("abc");
+  streamed += await readAll(st);
+  console.log(
+    "streamed:",
+    streamed.includes("100 Continue"),
+    JSON.stringify(streamed.substring(streamed.indexOf("\r\n\r\n") + 4)),
+  );
+  st.close();
 
   server.close();
 }

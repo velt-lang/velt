@@ -239,7 +239,8 @@ async function connection<E>(
           // The usual request has neither: no async step for them.
           if (finished && (res.streamOpen() || !req.bodyRead())) {
             try {
-              await res.endStream();
+              // The response goes out before the rest of the body is waited for.
+              await res.endStream(!req.bodyRead());
               // A body held back for a `100 Continue` the handler did not ask for is not waited
               // for: its response said `Connection: close`.
               const h = req.head;
@@ -251,6 +252,7 @@ async function connection<E>(
           // A body too large to skip, or held back for `100 Continue`: the client may still send it.
           rejected = rejected || !finished;
           open = finished && res.reusable() && !stopped.aborted;
+          parser.release();
         }
         // Part of the next head is here already: its time runs from now.
         if (headStart < 0 && parser.available() > 0) {
