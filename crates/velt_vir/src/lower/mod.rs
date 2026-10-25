@@ -32,6 +32,7 @@ mod any_has;
 mod any_iface;
 mod any_keys;
 mod any_member;
+mod any_number;
 mod any_proxy;
 mod any_record;
 mod any_rest;

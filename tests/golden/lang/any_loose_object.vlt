@@ -1,12 +1,14 @@
-// `==` between an object and a boolean, number or string in `any`s: JavaScript converts the
-// object with `ToPrimitive` (`[] == 0` is `true`), which is not there yet (#924), so it stops
-// with a `TypeError` instead of answering `false`. Objects against `null` and other objects
-// are compared as usual.
+// `==` between an object and a boolean, number or string in `any`s: the object is converted
+// with `ToPrimitive` (`[] == 0` is `true`, `[1, 2] == "1,2"`), as in JavaScript. Objects against
+// `null` and other objects are compared as usual.
 function main(): void {
   const a: any = [];
   const o: any = { x: 1 };
   console.log(a == null, o == undefined, a == a, a === o, a != o);
   const z: any = 0;
   console.log(a === z);
-  console.log(a == z);
+  console.log(a == z, z == a, a != z);
+  const pair: any = [1, 2];
+  const text: any = "1,2";
+  console.log(pair == text, o == "[object Object]", [7] == (7 as any), o == true);
 }

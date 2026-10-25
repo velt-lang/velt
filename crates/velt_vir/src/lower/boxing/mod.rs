@@ -57,6 +57,10 @@ pub(super) struct Boxing {
     /// The program writes a dynamic value as JSON: the `any` tables have the JSON slot
     /// (json/any.rs).
     pub(super) any_json: bool,
+    /// The program converts an `any` to a number (`Intrinsic::AnyToNumber`, an operator on
+    /// `any`): every `any` table has the `ToNumber` slot, not only those of primitives
+    /// (any_number.rs).
+    pub(super) any_number: bool,
     /// Object types that contain themselves by value (`interface Node { next?: Node }`, #376):
     /// every instance is a counted box, so the field holds a pointer and the size is finite.
     recursive: FxHashSet<DefId>,
@@ -201,6 +205,8 @@ pub(super) struct Facts {
     any_keys: bool,
     /// A dynamic value is written as JSON.
     any_json: bool,
+    /// An `any` is converted to a number.
+    any_number: bool,
     /// Capture types of the closure environments built (transfers.rs).
     captures: FxHashSet<TyId>,
     /// Concrete types a vtable was built for: interface implementors and classes in a
@@ -296,6 +302,11 @@ impl Cx<'_> {
         self.facts.any_json = true;
     }
 
+    /// Record that an `any` is converted to a number.
+    pub(super) fn note_any_number(&mut self) {
+        self.facts.any_number = true;
+    }
+
     /// Do closures need an identity of their own (see [`Boxing::fn_identity`])?
     pub(super) fn fn_identity(&self) -> bool {
         self.boxing.fn_identity
@@ -368,6 +379,7 @@ impl Cx<'_> {
         next.any_delete |= self.facts.any_delete;
         next.any_keys |= self.facts.any_keys;
         next.any_json |= self.facts.any_json;
+        next.any_number |= self.facts.any_number;
         next.dyn_to_any
             .extend(self.facts.dyn_to_any.iter().copied());
         let dyns = self.facts.identity.iter().copied();

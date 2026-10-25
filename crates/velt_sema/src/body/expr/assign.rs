@@ -5,6 +5,7 @@ use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
 use super::any_text::Hint;
+use super::dynamic_arith::DynRmw;
 use super::ops::{hir_binop, untyped};
 use crate::body::narrow::{nothing_word, only_nothings};
 use crate::body::places::set_place_mode;
@@ -197,7 +198,7 @@ impl FnCx<'_, '_> {
     }
 
     /// A read of a place that was built for writing (compound assignment / `++` value).
-    fn place_read(&mut self, place: &hir::Expr, want: Want) -> hir::Expr {
+    pub(super) fn place_read(&mut self, place: &hir::Expr, want: Want) -> hir::Expr {
         let mut r = place.clone();
         set_place_mode(&mut r, self.use_mode(place.ty, want));
         r
@@ -413,6 +414,9 @@ impl FnCx<'_, '_> {
             };
             return self.mk(kind, unit, span);
         };
+        if self.cx.dynamic(lty) == Some(crate::any::Dynamic::Any) {
+            return self.dynamic_place_rmw(place, DynRmw::Assign(op, value), false, span);
+        }
         if let Some(h) = self.union_local_compound(&place, op, target, value, span) {
             return h;
         }
@@ -530,9 +534,9 @@ impl FnCx<'_, '_> {
             Some(AssignTarget::Indexer(obj)) => {
                 return self.indexer_update(obj, op, prefix, target, as_value, span)
             }
-            Some(AssignTarget::Dynamic(_)) => {
-                self.dynamic_write_error(span);
-                return self.error_expr(span);
+            Some(AssignTarget::Dynamic(obj)) => {
+                let rmw = DynRmw::Update(op, prefix);
+                return self.dynamic_member_rmw(obj, target, rmw, as_value, span);
             }
             Some(AssignTarget::Keyed(obj, _)) => {
                 self.cannot_index(&obj);
@@ -540,6 +544,9 @@ impl FnCx<'_, '_> {
             }
             None => return self.error_expr(span),
         };
+        if self.cx.dynamic(place.ty) == Some(crate::any::Dynamic::Any) {
+            return self.dynamic_place_rmw(place, DynRmw::Update(op, prefix), as_value, span);
+        }
         if self.untyped_update(&place, span) {
             return self.error_expr(span);
         }

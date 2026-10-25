@@ -734,6 +734,10 @@ impl FnCx<'_, '_> {
         };
         let l = self.dynamic_operand(l, any);
         let r = self.dynamic_operand(r, any);
+        if !strict {
+            let test = self.dynamic_loose_eq(l, r, span);
+            return self.negated(test, negate, span);
+        }
         let i = if strict {
             Intrinsic::AnyStrictEq
         } else {

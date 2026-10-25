@@ -139,7 +139,7 @@ impl FnCx<'_, '_> {
 
     /// The call site a text helper's stops report: the helper's own `at` inside one, else the
     /// location of `span` (`Intrinsic::SourceLocation`, a string constant).
-    fn text_site(&mut self, span: Span) -> hir::Expr {
+    pub(crate) fn text_site(&mut self, span: Span) -> hir::Expr {
         if self.in_text_helper() {
             return self.expr(&site_param(span), None, Want::Borrow);
         }

@@ -1,2 +1,2 @@
 any_unknown.vlt:5:21: error: an `unknown` value must be narrowed before use
-any_unknown.vlt:8:15: error: the operator `+` on an `any` value is not supported yet (#924)
+any_unknown.vlt:9:15: error: an `unknown` value must be narrowed before use

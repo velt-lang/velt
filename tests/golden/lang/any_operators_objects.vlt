@@ -1,0 +1,94 @@
+// Operators on objects held in `any` (#924): `ToPrimitive` calls a class's `valueOf` or
+// `toString`, a `Date` is its time, a plain object `[object Object]`; compound assignments and
+// updates of members and elements of an `any` read and write the member once.
+class Money {
+  cents: number;
+  constructor(cents: number) {
+    this.cents = cents;
+  }
+  valueOf(): number {
+    return this.cents;
+  }
+}
+class Label {
+  text: string;
+  constructor(text: string) {
+    this.text = text;
+  }
+  toString(): string {
+    return `<${this.text}>`;
+  }
+}
+class Plain {
+  x = 1;
+}
+const m: any = new Money(250);
+const l: any = new Label("hi");
+const p: any = new Plain();
+const d: any = new Date(1000);
+const mp: any = new Map([["a", 1]]);
+const st: any = new Set([1]);
+const f: any = (x: number) => x;
+console.log(m * 2, m - 50, m > 100, -m);
+console.log(l + "!", "?" + l, l + 1, l * 1);
+console.log(p + "", p * 2, p == "[object Object]");
+console.log(d - 0, d * 1, d > 500, d < 2000, +d);
+console.log(mp * 1, st + 1, mp + "");
+console.log(f * 1, f < 1, f > 1);
+console.log([1] == (1 as any), ([] as any) == 0, ([1, 2] as any) == "1,2", (null as any) == 0, (undefined as any) == null);
+const nums: any[] = [1, 2, 3];
+let total: any = 0;
+for (const n of nums) {
+  total += n;
+}
+console.log(total, typeof total);
+let acc: any = "";
+for (const n of nums) {
+  acc += n;
+}
+console.log(acc);
+const rec: any = { count: 0, name: "x" };
+rec.count += 5;
+rec.count++;
+++rec.count;
+rec.count--;
+rec.name += "y";
+rec["count"] *= 2;
+console.log(rec.count, rec.name);
+const before = rec.count++;
+const after = ++rec.count;
+console.log(before, after, rec.count);
+const arr: any = [10, 20];
+arr[0]++;
+arr[1] -= 5;
+const v = (arr[0] += 1);
+console.log(arr, v);
+let n: any = 7;
+n %= 4;
+console.log(n);
+n **= 3;
+console.log(n);
+n <<= 2;
+console.log(n);
+n |= 1;
+console.log(n);
+n >>= 1;
+console.log(n);
+n &= 6;
+console.log(n);
+n ^= 15;
+console.log(n);
+n >>>= 1;
+console.log(n);
+n /= 2;
+console.log(n);
+let z: any = null;
+z += 1;
+console.log(z);
+let w: any = true;
+w++;
+console.log(w);
+const typed: number = (n as any) * 2;
+console.log(typed);
+console.log(1 / (-0 as any), (-0 as any) * 1, 5 % (0 as any), 2 ** (0.5 as any));
+console.log("3" as any > 12, ("3" as any) > "12", "b" > ("a" as any), (null as any) >= 0, (undefined as any) < 1);
