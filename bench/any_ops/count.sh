@@ -1,9 +1,17 @@
 #!/usr/bin/env bash
-# Instruction count (cachegrind) of the `any` operator and method loop (#924):
-#   bench/any_ops/count.sh <release velt> <std dir> <release libvelt_rt.a>
+# Instruction counts (cachegrind) of the `any` operator and method loops (#924): hot.ts, and
+# eq.ts (`==` of primitives) by default.
+#   bench/any_ops/count.sh <release velt> <std dir> <release libvelt_rt.a> [program.ts...]
 set -euo pipefail
+velt=$1 std=$2 rt=$3
+shift 3
+dir=$(cd "$(dirname "$0")" && pwd)
+[ $# -gt 0 ] || set -- "$dir/hot.ts" "$dir/eq.ts"
 tmp=$(mktemp -d)
-VELT_STD="$2" VELT_RT_LIB="$3" "$1" build "$(dirname "$0")/hot.ts" -o "$tmp/hot" --release
-"$tmp/hot"
-valgrind --tool=cachegrind --cache-sim=no --cachegrind-out-file=/dev/null "$tmp/hot" 2>&1 | grep -E "I +refs"
+for p in "$@"; do
+  VELT_STD="$std" VELT_RT_LIB="$rt" "$velt" build "$p" -o "$tmp/prog" --release
+  n=$(valgrind --tool=cachegrind --cache-sim=no --cachegrind-out-file=/dev/null "$tmp/prog" 2>&1 >/dev/null |
+    sed -n 's/.*I[[:space:]]*refs:[[:space:]]*\([0-9,]*\).*/\1/p' | tr -d ,)
+  printf '%s\t%s\n' "$(basename "$p")" "$n"
+done
 rm -rf "$tmp"
