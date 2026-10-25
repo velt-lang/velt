@@ -1,0 +1,25 @@
+// A `globalThis` key constant read before its declaration, in the function that declares it,
+// is TypeScript's TS2448 (a `ReferenceError` in Node), also in a block and over an outer
+// constant of the same name. A constant made a `string` by a cast is no key (TS7053).
+type H = { __KA__?: number; __KB__?: number };
+export const K = "__KA__";
+(globalThis as H).__KB__ = 2;
+function direct(): number | undefined {
+  const v = (globalThis as H)[K];
+  const K = "__KB__";
+  return v;
+}
+function inBlock(c: boolean): number | undefined {
+  if (c) {
+    const v = (globalThis as H)[J];
+    const J = "__KB__";
+    return v;
+  }
+  return 0;
+}
+const C = "__KA__" as string;
+function casted(): number | undefined {
+  const M = "__KB__" as string;
+  return (globalThis as H)[C] ?? (globalThis as H)[M];
+}
+console.log(typeof direct, typeof inBlock, typeof casted);

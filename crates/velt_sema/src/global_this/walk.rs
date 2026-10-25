@@ -27,7 +27,12 @@ pub(super) struct Walk<'a> {
     scopes: Vec<FxHashMap<String, Binding>>,
     /// The string constants each scope declares (`const KEY = "k";`, also a script's
     /// module-level ones, which the parser moved into its `main`): keys there.
-    const_scopes: Vec<FxHashMap<String, String>>,
+    const_scopes: Vec<FxHashMap<String, ConstKey>>,
+    /// How many functions (and arrow functions) the walk is inside: a read directly in the
+    /// function declaring a constant (not in a closure) may not come before it.
+    fn_depth: usize,
+    /// Keys read before their constant's declaration (reported once the walk is done).
+    early: std::cell::RefCell<Vec<Diagnostic>>,
     pub sites: Vec<Site>,
     pub diags: Vec<Diagnostic>,
 }
@@ -44,6 +49,8 @@ impl<'a> Walk<'a> {
             aliases,
             scopes: vec![FxHashMap::default()],
             const_scopes: vec![FxHashMap::default()],
+            fn_depth: 0,
+            early: Default::default(),
             sites: vec![],
             diags: vec![],
         }
@@ -75,6 +82,8 @@ impl<'a> Walk<'a> {
         for item in &mut module.items {
             self.item(item);
         }
+        let early = self.early.take();
+        self.diags.extend(early);
     }
 
     /// Record what `v` binds in the innermost scope.
@@ -128,8 +137,16 @@ impl<'a> Walk<'a> {
     fn key(&self, e: &ast::Expr) -> Option<String> {
         if let E::Ident(id) = &e.kind {
             for (names, consts) in self.scopes.iter().zip(&self.const_scopes).rev() {
-                if let Some(k) = consts.get(&id.name) {
-                    return Some(k.clone());
+                if let Some(c) = consts.get(&id.name) {
+                    // Read before its declaration in the same function: the constant is not
+                    // initialized yet (TypeScript's TS2448, a `ReferenceError` in Node).
+                    if c.depth == self.fn_depth && e.span.lo < c.at {
+                        self.early.borrow_mut().push(Diagnostic::error(
+                            format!("block-scoped variable `{}` used before its declaration (TypeScript's TS2448)", id.name),
+                            id.span,
+                        ));
+                    }
+                    return Some(c.key.clone());
                 }
                 if names.contains_key(&id.name) {
                     return None;
@@ -192,6 +209,7 @@ impl<'a> Walk<'a> {
     }
 
     fn func(&mut self, f: &mut ast::FnDecl) {
+        self.fn_depth += 1;
         self.with_scope(|w| {
             w.shadow(params_names(&f.sig.params));
             for e in f.sig.params.iter_mut().filter_map(|p| p.default.as_mut()) {
@@ -199,6 +217,7 @@ impl<'a> Walk<'a> {
             }
             w.block(&mut f.body);
         });
+        self.fn_depth -= 1;
     }
 
     fn block(&mut self, b: &mut ast::Block) {
@@ -217,7 +236,14 @@ impl<'a> Walk<'a> {
                     self.shadow(names);
                     if let Some((n, k)) = const_key(v) {
                         let scope = self.const_scopes.last_mut().expect("ICE: no scope");
-                        scope.insert(n, k);
+                        scope.insert(
+                            n,
+                            ConstKey {
+                                key: k,
+                                at: v.span.lo,
+                                depth: self.fn_depth,
+                            },
+                        );
                     }
                 }
             }
@@ -246,7 +272,14 @@ impl<'a> Walk<'a> {
                 self.shadow(names);
                 if let Some((n, k)) = const_key(v) {
                     let scope = self.const_scopes.last_mut().expect("ICE: no scope");
-                    scope.insert(n, k);
+                    scope.insert(
+                        n,
+                        ConstKey {
+                            key: k,
+                            at: v.span.lo,
+                            depth: self.fn_depth,
+                        },
+                    );
                 }
             }
             S::Expr(e) => match self.define_listed(e).or_else(|| self.assign_listed(e)) {
@@ -373,6 +406,7 @@ impl<'a> Walk<'a> {
                 for p in params.iter().filter_map(|p| p.pattern.as_ref()) {
                     pattern_names(p, &mut names);
                 }
+                self.fn_depth += 1;
                 self.with_scope(|w| {
                     w.shadow(names);
                     for d in params.iter_mut().filter_map(|p| p.default.as_mut()) {
@@ -383,6 +417,7 @@ impl<'a> Walk<'a> {
                         ast::ArrowBody::Expr(x) => w.expr(x, false),
                     }
                 });
+                self.fn_depth -= 1;
                 return;
             }
             E::Function(d) => {
@@ -690,6 +725,14 @@ fn ident(name: &str, span: velt_common::Span) -> ast::Expr {
 /// another (a read in the value of an assignment) is not always false. The first test of a
 /// chain (`listed`: the keys) also checks that `k` is one of them, `__satisfies<"a" | "b">(k)`,
 /// as TypeScript requires (TS7053): a wider key is a type error, not a property the chain skips.
+/// A string constant of a scope that is a key of `globalThis`, where it is declared and in how
+/// many functions.
+struct ConstKey {
+    key: String,
+    at: u32,
+    depth: usize,
+}
+
 /// The checks of a variable key against the listed keys (`body::expr::checked_key`): a read
 /// or an assignment, and a definition.
 pub(crate) const KEY_CHECK: &str = "globalThis.key";

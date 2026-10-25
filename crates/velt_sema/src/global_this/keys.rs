@@ -91,10 +91,35 @@ pub(super) fn const_key(v: &ast::VarDecl) -> Option<(String, String)> {
         return None;
     };
     let s = string_lit(init)?;
+    if !casts_keep(init, &s) {
+        return None;
+    }
     let typed_as_itself = |t: &ast::TypeExpr| matches!(&t.kind, ast::TypeExprKind::Literal(ast::SignedLit { lit: ast::Lit::Str(l), .. }) if *l == s);
     match &v.ty {
         Some(t) if !typed_as_itself(t) => None,
         _ => Some((n.name.clone(), s)),
+    }
+}
+
+/// Do the casts around a constant's string `s` keep its literal type (`as const`, `as "k"`)?
+/// `"k" as string` makes it a `string`, which is no key (TypeScript's TS7053).
+fn casts_keep(e: &ast::Expr, s: &str) -> bool {
+    match &e.kind {
+        E::Paren(x) => casts_keep(x, s),
+        E::Cast { expr, ty } => {
+            let keeps = match &ty.kind {
+                ast::TypeExprKind::Named { path, args } => {
+                    args.is_empty() && path.len() == 1 && path[0].name == "const"
+                }
+                ast::TypeExprKind::Literal(ast::SignedLit {
+                    lit: ast::Lit::Str(l),
+                    ..
+                }) => l == s,
+                _ => false,
+            };
+            keeps && casts_keep(expr, s)
+        }
+        _ => true,
     }
 }
 
