@@ -1,8 +1,9 @@
 // check: no leaks
 // Loops over rows of a view type (#1485) whose copy goes on in the original loop when a row is a
 // view, with locals reached through their address: the string buffer of a `+` chain, a `let` a
-// closure captures and changes, an array or object literal, a destructuring, an inner `for...of`
-// and a template literal. The original sees what the copy left in them.
+// closure captures and changes, an array or object literal, a destructuring, an inner `for...of`,
+// a template literal, a spread, `try` / `catch`, a generator and an `await`. The original sees
+// what the copy left in them.
 interface Cell {
   n: number;
   tag: string;
@@ -16,7 +17,9 @@ function view(): string[] {
 
 function concat(rows: string[][]): string {
   let out = "";
-  for (let k = 0; k < rows.length; k++) out += "(" + rows[k].length + ")";
+  for (let k = 0; k < rows.length; k++) {
+    out += "(" + rows[k].length + ")";
+  }
   return out;
 }
 
@@ -115,6 +118,92 @@ function stored(rows: string[][]): string {
   return fns.map((f) => f()).join(" ");
 }
 
+function nested(rows: string[][]): string {
+  let out = "";
+  for (let k = 0; k < rows.length; k++) {
+    for (let i = 0; i < rows[k].length; i++) {
+      out += "<" + rows[k][i] + ":" + i + ">";
+    }
+    out += "|";
+  }
+  return out;
+}
+
+function whileLoop(rows: string[][]): string {
+  let out = "";
+  let k = 0;
+  while (k < rows.length) {
+    const r = rows[k];
+    out = `${out}${r.length}` + "-" + r[0];
+    k++;
+  }
+  return out;
+}
+
+async function asyncLoop(rows: string[][]): Promise<string> {
+  let out = "";
+  for (let k = 0; k < rows.length; k++) {
+    const a = "x" + rows[k].length;
+    await Promise.resolve();
+    out += a + rows[k][0] + ";";
+  }
+  return out;
+}
+
+function* gen(rows: string[][]): Generator<string> {
+  for (let k = 0; k < rows.length; k++) {
+    const s = "g" + rows[k].length;
+    yield s + rows[k][rows[k].length - 1];
+  }
+}
+
+function tryLoop(rows: string[][]): string {
+  let out = "";
+  for (let k = 0; k < rows.length; k++) {
+    try {
+      if (rows[k].length === 3) {
+        throw new Error("e" + k + rows[k][2]);
+      }
+      out += "ok" + rows[k].length;
+    } catch (e) {
+      out += "caught " + (e as Error).message;
+    }
+    out += ",";
+  }
+  return out;
+}
+
+interface P {
+  a: number;
+  b: string;
+}
+
+function spreads(rows: string[][]): string {
+  let out = "";
+  let a = 1;
+  let b = 2;
+  for (const row of rows) {
+    const base: P = { a: row.length, b: "q" };
+    const o: P = { ...base, b: base.b + row[0] };
+    [a, b] = [b, a + row.length];
+    out += o.a + o.b + a + "," + b + " ";
+  }
+  return out;
+}
+
+function closures(rows: string[][]): string {
+  let total = "";
+  for (let k = 0; k < rows.length; k++) {
+    let s = "";
+    rows[k].forEach((x, i) => {
+      s += x + i;
+    });
+    const parts = rows[k].map((x) => x + "!");
+    total += s + "/" + parts.join("") + " ";
+  }
+  return total;
+}
+
 const tail = "x".repeat(3000);
 for (let round = 0; round < 3; round++) {
   const rows: string[][] = [["a", "bb"], view(), ["ccc"]];
@@ -130,3 +219,11 @@ for (let round = 0; round < 3; round++) {
 }
 const first: string[][] = [view(), ["p"], view()];
 console.log(concat(first), tags(first), counter(first), grow(first, "yy"));
+const mixed: string[][] = [["a", "bb"], view(), ["ccc"]];
+console.log(nested(mixed));
+console.log(whileLoop(mixed));
+console.log([...gen(mixed)].join(" "));
+console.log(tryLoop(mixed));
+console.log(spreads(mixed));
+console.log(closures(mixed));
+asyncLoop(mixed).then((s) => console.log(s));
