@@ -24,6 +24,9 @@ pub(super) struct Walk<'a> {
     /// The module's type aliases, for the keys an asserted type lists.
     aliases: &'a FxHashMap<String, ast::TypeExpr>,
     scopes: Vec<FxHashMap<String, Binding>>,
+    /// The string constants each scope declares (`const KEY = "k";`, also a script's
+    /// module-level ones, which the parser moved into its `main`): keys there.
+    const_scopes: Vec<FxHashMap<String, String>>,
     pub sites: Vec<Site>,
     pub diags: Vec<Diagnostic>,
 }
@@ -39,6 +42,7 @@ impl<'a> Walk<'a> {
             consts,
             aliases,
             scopes: vec![FxHashMap::default()],
+            const_scopes: vec![FxHashMap::default()],
             sites: vec![],
             diags: vec![],
         }
@@ -118,11 +122,17 @@ impl<'a> Walk<'a> {
         }
     }
 
-    /// The property key `e` names: a string literal or constant.
+    /// The property key `e` names: a string literal or constant (the innermost declaration of
+    /// the name decides).
     fn key(&self, e: &ast::Expr) -> Option<String> {
         if let E::Ident(id) = &e.kind {
-            if self.lookup(&id.name).is_some() {
-                return None;
+            for (names, consts) in self.scopes.iter().zip(&self.const_scopes).rev() {
+                if let Some(k) = consts.get(&id.name) {
+                    return Some(k.clone());
+                }
+                if names.contains_key(&id.name) {
+                    return None;
+                }
             }
             return self.consts.get(&id.name).cloned();
         }
@@ -131,8 +141,10 @@ impl<'a> Walk<'a> {
 
     fn with_scope(&mut self, f: impl FnOnce(&mut Self)) {
         self.scopes.push(FxHashMap::default());
+        self.const_scopes.push(FxHashMap::default());
         f(self);
         self.scopes.pop();
+        self.const_scopes.pop();
     }
 
     /// Hide outer constants named like `names` in the innermost scope.
@@ -216,6 +228,14 @@ impl<'a> Walk<'a> {
                 let mut names = vec![];
                 pattern_names(&v.pattern, &mut names);
                 self.shadow(names);
+                if let (ast::VarKind::Const, ast::PatternKind::Ident(n), Some(k)) = (
+                    v.kind,
+                    &v.pattern.kind,
+                    v.init.as_ref().and_then(string_lit),
+                ) {
+                    let scope = self.const_scopes.last_mut().expect("ICE: no scope");
+                    scope.insert(n.name.clone(), k);
+                }
             }
             S::Expr(e) => match self.define_listed(e).or_else(|| self.assign_listed(e)) {
                 Some(chain) => s.kind = chain,
