@@ -1,0 +1,7 @@
+// Assigning an inherited static through a subclass creates a static of the subclass in
+// JavaScript, which Velt does not support yet (#1501).
+class Base { static count: number = 0; static bump(): number { return ++this.count; } }
+class Sub extends Base {}
+Sub.count = 5;
+Sub.count++;
+console.log(Base.count, Sub.count);

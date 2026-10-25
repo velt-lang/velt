@@ -1,0 +1,13 @@
+// A line break before `as` or `satisfies` ends the expression, as in TypeScript: the next line
+// starts a statement, here a call of a function of that name.
+function as(x: any): any { console.log("as called", x); return x; }
+function satisfies(x: any): any { console.log("satisfies called", x); return x; }
+const y = 1
+as(2)
+console.log(y)
+let z: any = "s"
+as(z)
+console.log(z)
+const w = 3
+satisfies(4)
+console.log(w)

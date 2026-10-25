@@ -2454,9 +2454,25 @@ Where an interface with methods is expected (an annotation, a parameter, a retur
   parameter types may be left out: they come from the interface's method.
 - A field is a value, or a **getter** `get f() { … }`, which runs on each read. A getter
   method of the interface (`get f(): T`) takes a getter or a value (`f: 5`), and a setter method
-  (`set f(v: T)`) a setter `set f(v) { … }`, which runs on each `x.f = v`. A field of the
+  (`set f(v: T)`) a setter `set f(v) { … }`, which runs on each `x.f = v`; a value given for a
+  `get f()`/`set f(v)` pair (`{ f: 1 }`) is stored, and `x.f = v` writes it. A class implements
+  such a pair with a field of the same name and type, too (`class C implements T { f = 3 }`). A field of the
   interface can't be written through the interface value yet (`x.f = v` is an error), so a
   setter given for a field never runs: declare a setter method in the interface instead.
+  A type alias of an object type with accessors (`type Sized = { get size(): number }`) is
+  such an interface. An object type written in place (`x: { get size(): number }`) reads a
+  getter as a `readonly` field (and a setter as a field): it takes plain values (`{ size: 2 }`)
+  but not yet an object literal with accessors or a class instance. Such an alias is an
+  interface, not an object type: a value of an object type with the same members converts to it
+  (`const t: T = p` with `p: { v: number }`, or an interface `I { v: number }`, or a wider
+  object type, the same object, read and written through it). When its accessors come in pairs
+  of one type (`get v(): number` with `set v(x: number)`, or a getter alone), an object literal
+  of values for it (`{ v: 1 }`) is such an object, and a value of it converts back to that
+  object type (`const q: { v: number } = t`, also a `readonly` or field-only interface form of
+  it) as the object it holds. That conversion needs every value of the alias in the program to
+  hold such an object: a class implementing it, or a literal with accessors for it, makes it an
+  error, also when the value reaches the alias through another interface of the same members. `JSON.stringify`, object spread (`{ ...t }`), `keyof T` and `Partial<T>` do not take
+  the alias yet.
 - A method with a default body and an optional field may be left out (the field is `undefined`);
   every other member must be given, and a member the interface doesn't declare is an error.
 - The value is an interface value: its members are read and called through the interface.

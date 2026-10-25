@@ -175,6 +175,7 @@ fn fn_body<'m>(
             continue;
         };
         reject_nested_overloads(cx, item);
+        reject_nested_statics(cx, item);
         let mut q = format!("{qual}::{name}");
         let mut k = 2;
         while !used.insert(q.clone()) {
@@ -403,6 +404,37 @@ fn reject_nested_overloads(cx: &mut Ctx, item: &ast::Item) {
         cx.err(
             "overloads of a function or class declared inside a function are not supported yet: declare it at module level",
             sig.name.span,
+        );
+    }
+}
+
+/// A class declared inside a function or block with a `static {}` block or a `static` field
+/// that is not `readonly`: JavaScript runs those each time the declaration runs, while Velt
+/// hoists the class and its statics to the module, evaluated once.
+fn reject_nested_statics(cx: &mut Ctx, item: &ast::Item) {
+    let (ast::ItemKind::Class(t) | ast::ItemKind::Struct(t)) = &item.kind else {
+        return;
+    };
+    let name = &t.name.name;
+    for f in t.fields.iter().filter(|f| f.is_static) {
+        let block = f.name.name.starts_with("<static block ");
+        if !block && f.readonly {
+            continue;
+        }
+        let what = match block {
+            true => "a `static {}` block".to_string(),
+            false => format!(
+                "the static field `{}`, which is not `readonly`,",
+                f.name.name
+            ),
+        };
+        cx.error(
+            velt_common::Diagnostic::error(
+                format!("class `{name}` is declared inside a function or block, so {what} is not supported yet"),
+                f.name.span,
+            )
+            .with_note("JavaScript evaluates a class's statics each time its declaration runs; Velt evaluates them once, for the whole program")
+            .with_note(format!("declare `{name}` at module level, or make the field `static readonly`")),
         );
     }
 }

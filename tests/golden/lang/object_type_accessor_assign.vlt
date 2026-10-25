@@ -1,0 +1,14 @@
+// A value of an object type is a value of an alias with accessors of the same members: the
+// same object, read and written through them (#1501).
+type T = { get v(): number; set v(x: number); label: string };
+type P = { v: number; label: string };
+const p: P = { v: 1, label: "a" };
+const t: T = p;
+t.v = 7;
+console.log(t.v, t.label, p.v);
+type G = { get v(): number };
+function show(g: G): number { return g.v; }
+console.log(show(p), show({ v: 3 }));
+const ps: P[] = [{ v: 2, label: "b" }];
+const ts: T[] = [p, ps[0]];
+console.log(ts.map((x) => x.v + x.label).join());

@@ -130,9 +130,7 @@ impl<'a> Parser<'a> {
             Some(Kw::Class) => ItemKind::Class(self.parse_type_decl(true)?),
             Some(Kw::Interface) => self.parse_interface()?,
             Some(Kw::Enum) => ItemKind::Enum(self.parse_enum()?),
-            Some(Kw::Type) if Self::is_ident_like(self.nth(1)) => {
-                ItemKind::TypeAlias(self.parse_type_alias()?)
-            }
+            Some(Kw::Type) if Self::is_ident_like(self.nth(1)) => self.parse_type_alias_item()?,
             Some(Kw::Const | Kw::Let) if self.at_class_binding() => {
                 ItemKind::Class(self.parse_class_binding()?)
             }

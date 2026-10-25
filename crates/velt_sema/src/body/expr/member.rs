@@ -181,7 +181,7 @@ impl FnCx<'_, '_> {
                     if self.cx.enum_info(d).is_some() {
                         return self.variant_value(d, prop, &[], exp, span);
                     }
-                    if let Some(h) = self.static_field(d, prop, want, span) {
+                    if let Some(h) = self.inherited_static_field(d, prop, want, span) {
                         return h;
                     }
                     if let Some(h) = self.static_method_value(d, d, prop, exp, span) {

@@ -1,0 +1,2 @@
+error: class `L` is declared inside a function or block, so the static field `c`, which is not `readonly`, is not supported yet
+error: class `T` is declared inside a function or block, so a `static {}` block is not supported yet

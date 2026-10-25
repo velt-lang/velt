@@ -32,6 +32,10 @@ pub(crate) struct ModuleScope {
     pub is_std: bool,
 }
 
+/// The classes below a class, deepest first, each with the method its vtable calls at a slot
+/// (`Ctx::classes_below`).
+pub(crate) type ClassesBelow = std::rc::Rc<[(DefId, DefId)]>;
+
 pub(crate) struct Ctx<'m> {
     pub modules: &'m [SourceModule],
     pub root: usize,
@@ -134,6 +138,15 @@ pub(crate) struct Ctx<'m> {
     /// Functions whose parameter defaults are checked (or being checked): they are checked on
     /// first use, since a field default or constant may call with fewer arguments.
     pub defaults_checked: FxHashSet<DefId>,
+    /// Per class and vtable slot: the classes below it, deepest first, with the method each
+    /// one's vtable calls there (`body::expr::virtual_defaults`).
+    pub classes_below: FxHashMap<(DefId, u32), ClassesBelow>,
+    /// The default-filling vtable entries (`collect::fill_defaults`).
+    pub fills: FxHashMap<DefId, crate::collect::fill_defaults::Fill>,
+    /// What each parameter default that may throw throws, by its span (`defaults::check_default`).
+    pub default_throws: FxHashMap<Span, Vec<crate::defs::ThrowSrc>>,
+    /// Implementations of accessor interfaces for object types (`body::expr::iface_from_object`).
+    pub object_impls: crate::body::expr::iface_from_object::ObjectImpls,
     /// The adapter of each `toString` / `toJSON` method glue calls through one (`crate::hooks`).
     pub hook_adapters: FxHashMap<DefId, DefId>,
     /// Types whose field defaults are checked (or being checked): checked up front, or on first
@@ -208,6 +221,13 @@ pub(crate) struct Ctx<'m> {
     pub static_copies: FxHashMap<(DefId, DefId), DefId>,
     /// For each copy of a static method: the method.
     pub static_copy_of: FxHashMap<DefId, DefId>,
+    /// Errors in copies of static methods reported only if the copy is used, and the copies
+    /// used, each with the function using it (`None`: outside any) (`body::static_copy_uses`).
+    pub copy_diags: Vec<(DefId, Diagnostic)>,
+    pub copy_uses: Vec<(Option<DefId>, DefId)>,
+    /// Interface values converted to the object type of their shape, checked once the bodies are
+    /// (`body::expr::iface_from_object::check_unwraps`).
+    pub unwraps: Vec<crate::body::expr::iface_from_object::Unwrap>,
     /// Name spans of the nested functions made from local generic arrows (`generic_arrows`).
     pub generic_arrow_fns: FxHashSet<Span>,
     /// Name spans of every function made from a generic arrow (diagnostics show arrows).
@@ -395,6 +415,10 @@ impl<'m> Ctx<'m> {
             getter_only_setters: FxHashSet::default(),
             display_params: vec![],
             defaults_checked: FxHashSet::default(),
+            classes_below: FxHashMap::default(),
+            fills: FxHashMap::default(),
+            default_throws: FxHashMap::default(),
+            object_impls: Default::default(),
             hook_adapters: FxHashMap::default(),
             field_defaults_checked: FxHashSet::default(),
             closure_counts: FxHashMap::default(),
@@ -423,6 +447,9 @@ impl<'m> Ctx<'m> {
             static_this: FxHashMap::default(),
             static_copies: FxHashMap::default(),
             static_copy_of: FxHashMap::default(),
+            copy_diags: vec![],
+            copy_uses: vec![],
+            unwraps: vec![],
             generic_arrow_fns: FxHashSet::default(),
             kept_nested: FxHashSet::default(),
             late_consts: FxHashSet::default(),

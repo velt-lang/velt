@@ -1,0 +1,25 @@
+class B {
+  m(a: number, b: number = 1): number {
+    return a + b;
+  }
+}
+
+class D extends B {
+  override m(a: number, b: number = 2): number {
+    return a - b;
+  }
+}
+
+class E extends D {
+  override m(a: number, b: number = 3): number {
+    return a * 0.5 + b;
+  }
+}
+
+const xs: B[] = [new B(), new D(), new E()];
+let s = 0;
+const t0 = Date.now();
+for (let i = 0; i < 200000000; i++) {
+  s += xs[i % 3].m(i, 1);
+}
+console.log(s, "ms", Date.now() - t0);

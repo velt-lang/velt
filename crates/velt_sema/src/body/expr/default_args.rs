@@ -25,6 +25,12 @@ impl FnCx<'_, '_> {
     ) -> hir::Expr {
         let mut d = d.clone();
         crate::visit::map_expr_types(&mut d, &mut |t| self.cx.subst(t, type_args));
+        if let Some(throws) = self.cx.default_throws.get(&d.span).cloned() {
+            for s in throws {
+                let s = s.used_at(span, |t| self.cx.subst(t, type_args));
+                self.throw_src(s);
+            }
+        }
         d.span = span;
         self.adopt_detached(d)
     }
