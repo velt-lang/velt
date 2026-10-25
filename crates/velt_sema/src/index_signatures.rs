@@ -94,7 +94,13 @@ impl Ctx<'_> {
     /// brand of the record (`crate::brands`), so it is that record for everything but reading
     /// a required named member, and lowering sees the record. A `tag` that mentions type
     /// parameters gives the record itself (its members read as `V`).
-    fn record_view_type(&mut self, base: TyId, tag: TyId, module: usize, span: Span) -> TyId {
+    pub(crate) fn record_view_type(
+        &mut self,
+        base: TyId,
+        tag: TyId,
+        module: usize,
+        span: Span,
+    ) -> TyId {
         let mut params = vec![];
         crate::types::collect_params(&self.ty, tag, &mut params);
         if !params.is_empty() {

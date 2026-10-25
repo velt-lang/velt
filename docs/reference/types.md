@@ -213,12 +213,14 @@ usable and no copy method is needed.
   primitive (`+` asks for it before `toString()`, as in JS; a `Date` by its `toString()`), else
   by its `toString()`, and a value whose type is a type parameter as `String(x)` writes the
   type it is instantiated with (an `any` and a class instance with `+`'s order: `valueOf()`
-  first). Any other value
-  next to a string is a compile error; build that text with a template literal
-  (`` `Total: ${m}` ``).
+  first), also inside another type (`"v=" + t[k]` with `k: K extends keyof T`). Any other
+  value next to a string is written as `String(x)` writes it: `"" + s` of a
+  `string | string[] | null` is `"k,l"`, `"x"` or `"null"`, an object without a `toString()` is
+  `[object Object]`, a map `[object Map]`. A function value there is a compile error.
 - `String(x)` converts any value that can be printed to its text, exactly as `` `${x}` ``
   writes it (`String(1.5)` is `"1.5"`, `String(null)` is `"null"`, `String([1, 2])` is
-  `"1,2"`). `Number(x)` converts a string (as JS: the whole trimmed string, `""` is `0`, else
+  `"1,2"`, also when the array is held by a union: `String(x)` of a `string | number[]` or a
+  `T | string`). `Number(x)` converts a string (as JS: the whole trimmed string, `""` is `0`, else
   `NaN`), a number or a boolean (`1` / `0`); `Boolean(x)` is `x`'s
   [truthiness](variables.md#conditions-truthiness). They are called as functions, not as values
   (`xs.map(String)` is not supported yet: write `xs.map((x) => String(x))`).
@@ -552,7 +554,13 @@ their types, or a discriminant no member has), and null tests (also `a == b` of 
 `typeof x === "number"` and `switch (typeof x)`), printing and `JSON.stringify` ask that value
 itself, as they do a plain `unknown`. Where `typeof x === "string"` holds, `x` reads as a
 `string` also when generic code put the string in the `T` member (`s<T>(v)` with `v: T` passed
-to `s<T>(x: T | string)`). `a == b` of two values of a type parameter's type (also
+to `s<T>(x: T | string)`). A variable or field of a type parameter passed for such a
+parameter (`i<T>(v)` with `i<T>(x: T | Foo)`, also `T | null`, `T | undefined` and
+`T | Foo | null`) goes to the member its value belongs to at `T = unknown` (or `any`), as an
+`unknown` passed where the type is written out does, so `x instanceof Foo`, `x === null`,
+`x === undefined`, `x === true` and `x === "a"` see a `Foo`, a nothing, a boolean or a string
+that generic code passed (#1456); the other instantiations pass the value as they did. A value
+passed another way (a call's result passed as it is: `i<T>(f(v))`) stays in the `T` member. `a == b` of two values of a type parameter's type (also
 `T | null | undefined`) compares with JavaScript's coercions at `T = unknown` or `any`
 (`1 == "1"`), as `==` on `any` does. An `any` or `unknown` converted to it (`const n: number | null | undefined = v`, `v as T | null |
 undefined`) gives `null` for a `null` and `undefined` for an `undefined`. Converted to a
@@ -630,8 +638,8 @@ of a value that may itself be `undefined` and `JSON.parse` into a type holding `
 the nothing the type lacks; `as` between `T | undefined` and `T | null`; a parameter default
 other than `undefined` on a parameter whose type allows both nothings (`T | null | undefined`);
 and a type argument whose nothing differs from one the generic keeps
-of it, directly or through what it calls (a `T | undefined` for a generic function holding a
-`T | null`), which includes a generic
+of it, directly or through what it calls (`undefined`, or a `T | undefined`, for a generic
+function holding a `T | null`), which includes a generic
 alias applied that way (`type Nullable<T> = T | null` as `Nullable<number | undefined>`). The
 other way round is supported: a generic holding a `U | undefined` at `U = T | null` holds a
 `T | null | undefined`. A `Map` or `Record` value type may allow either nothing or both
@@ -1328,6 +1336,13 @@ intersection with such a part) is an `object`, so it can be a `WeakMap` key. So 
 intersection with a part that is an object type and no part that is a type parameter
 (`{ value: T } & { $set(v: T): void }`): it satisfies `T extends object`. `T & { __brand: "Id" }`
 with an unbounded `T` is not an `object` (at `T = string` it is a branded `string`).
+In a generic body, a value of such an intersection may be returned or passed as `T`, or as one
+of its object parts (`s: T & { $set }` as `T`, as `{ $set }`), as TypeScript allows: it is the
+same value where both are one type at an instantiation, and otherwise a new object with the
+fields of the expected type. TypeScript passes the same object there, so such a copy is an
+error where the program could tell it from the original: comparing values of the expected type
+with `===`, assigning a field of either object, printing or serializing it (the copy lacks the
+other fields).
 
 **Type-level forms and keys in generic code.** A mapped type, `T[K]`, `keyof T` or a utility
 type over a type parameter (`Partial<T>`, `Pick<T, K>`, …) may be written in a generic function's
@@ -1340,9 +1355,51 @@ too: `first(os)[key()] = v`). The object and the key may be any expressions, eac
 once, in order. An optional field reads as `F | undefined`, and `typeof`, `=== undefined` and
 `== null` on a `T[K]` value test the instantiation's value (`typeof o[k]` is `"undefined"` for an
 absent optional field, `"number"` for a present one). A key type of several keys reads or
-writes the field the key holds when those fields have one type (`k: "x" | "y"` on
-`{ x: number; y: number }`); keys whose fields have different types are not supported yet, an
-error at that instantiation. An error at an instantiation is reported in the generic function,
+writes the field the key holds (`k: "x" | "y"` on `{ x: number; y: number }`). When those
+fields have different types, `T[K]` is the union of them (`number | string` for `"id" | "name"`
+on `{ id: number; name: string }`): a read gives the field the key names as that union, and a
+write takes the value's member when it is the field's type, and otherwise stops the program
+with a `TypeError` where TypeScript would store a value of the wrong type (`setField(u, k, 5)`
+with `k` holding `"name"`). A key of an optional field reads as `F | undefined`.
+
+An object of such a form is built as TypeScript's standard `pick` builds it:
+`const r = {} as Pick<T, K>` (or `Partial<T>`, `Omit<T, K>`, any object type over a type
+parameter), keys set with `r[k] = o[k]`, then returned as that type. `{} as D` is a dictionary
+until then; the conversion to `D` takes each of `D`'s fields from it (checked like a conversion
+from `any`), and a key of a required field that was never set stops the program with a
+`TypeError` naming it, where TypeScript would hand out an object without it. Velt's object has
+`D`'s fields in `D`'s order, where JavaScript's has the keys in the order they were set: keys set
+in another order (`pick(o, ["name", "id"])`), or a key `D` lacks (`(r as any).extra = 5`), stop
+the program with a `TypeError` too, rather than print, serialize or list the keys differently.
+
+```ts
+function pick<T, K extends keyof T>(o: T, ks: K[]): Pick<T, K> {
+  const r = {} as Pick<T, K>;
+  for (const k of ks) r[k] = o[k];
+  return r;
+}
+console.log(pick({ id: 1, name: "a", age: 3 }, ["id", "name"])); // { id: 1, name: 'a' }
+```
+
+Where Velt's fixed layouts cannot hold what TypeScript would store, generic code stops with a
+`TypeError` that `try` does not catch (decisions 4 and 5 in
+docs/internals/design/deferred-types.md):
+
+- a write `x[k] = v` through a union of keys, of a value whose type is not the field's
+  (`swapKeys(q, "id" as keyof U, "name" as keyof U)`, which Node stores);
+- a write of `null` or `undefined` through such a key into a field that cannot hold it
+  (`undefined` into a required field or a `number | null` one, `null` into a `b?: number`);
+- `{} as D` with a required key never set, keys set in another order than `D`'s fields, or a
+  key `D` lacks;
+- a value of another type written into that dictionary through `any`;
+- a cast to `T & X` (`x as Signal<T & object>`) of a value that is not one at the
+  instantiation, which is checked at run time;
+- `as T & object` of `null`.
+
+These stops are not exceptions: a `catch` around the call is never reached, and the program
+exits with status 101 after printing the `TypeError`.
+
+An error at an instantiation is reported in the generic function,
 where the failing form is, with the call that instantiates it and the type arguments (and each
 call on the way, when another generic function's body makes the call). A call whose argument
 breaks a type parameter's constraint (`get(p, "w")`, a key `p` lacks) is one error, at that
@@ -1501,7 +1558,8 @@ type Conflict = { k: string } & { k: number }; // error: no value has type ...
 A primitive `&` an object type (`string & { __brand: "UserId" }`) is a **branded type**: a
 nominal alias of the primitive, with no cost at run time. `x as UserId` brands a value; a
 branded value works wherever its primitive does (members, operators, `${}`, arguments, map
-keys); a plain `string`, or another brand of it, does not convert to the brand.
+keys, `typeof`, also in generic code: `typeof x` of an `x: T & { n?: number }` at `T = number` is
+`"number"`); a plain `string`, or another brand of it, does not convert to the brand.
 
 ```ts
 type UserId = string & { __brand: "UserId" };
@@ -1545,7 +1603,11 @@ down, even in the signature of another function, declared before or after it. A 
 needs its own type (`function f(x: ReturnType<typeof f>)`, also through other functions) is an
 error, as in TypeScript (TS2502). `ReturnType<F>` is the result type of function type `F`, and
 `Parameters<F>` its parameter types as a tuple. `typeof f` of a function with a rest, optional or
-default parameter is not supported yet (#936).
+default parameter is not supported yet (#936). In a field of an interface, object type or class
+(`signal: typeof signal`), `typeof f` is the type the function's declaration writes: its
+parameter types and its written result, and no error (a function there needs a written result,
+and one that throws needs its `throws` written in a function type instead). `typeof` of a
+symbol constant (`const K = Symbol("k")`) is `symbol` there too.
 
 `keyof T` is the union of an object type's keys as string literal types (`keyof { a: number; b:
 string }` is `"a" | "b"`; a key a mapped type made from a number literal stays that number:
@@ -1853,7 +1915,9 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   initializer or a default value for now. TypeScript also converts an existing array, which
   is unsound: storing a `Named` that is not a `C` through the `Named[]` would put it into the
   `C[]`. Velt reports that and
-  suggests a copy, `[...cs]` or `cs.map((x): Named => x)`. A generic class converts only when
+  suggests a copy, `[...cs]` or `cs.map((x): Named => x)`. An `as` cast of an existing array to
+  another element type (`cs as Named[]`) is allowed and gives a view of the array (see "any and
+  unknown" below), checked element by element as it is read and written. A generic class converts only when
   it has no base class, no subclasses and no `[Symbol.dispose]()`; the new object shares the
   old one's field values.
 
@@ -2704,8 +2768,8 @@ give an `any` that is `undefined` when nothing is there, and `null` when a `null
 a left-out optional field `q?: any` holds `undefined`. A value whose type is a type parameter
 converts to `any` and `unknown` too (`const a: any = t` with `t: T`, `t as unknown as X`): the
 value of the instantiation goes in as above, so a `T` that is `number | null` holding `null`
-gives the dynamic `null`, a union the member it holds and a literal type its value (an
-instantiation with an enum stops with a `TypeError` for now, #1241). An enum value is its number or string
+gives the dynamic `null`, a union the member it holds, a literal type its value and an enum
+its number or string. An enum value is its number or string
 in an `any` (`typeof` is `"number"` or `"string"`), and converts back to the member with that
 value. Generic code compares an `any` as `===` does (`indexOf`, `includes`, a generic
 `a === b`), and `Set<any>` and `Map<any, V>` keys compare by value as in JavaScript (`NaN` is
@@ -2764,6 +2828,47 @@ function main(): void {
 }
 ```
 
+An array of another element type converted to an array type is a *view* of that one array, in
+every program (#1485): an `any` holding an array converted to `T[]` (`kids as JSXChild[]` with
+`kids` holding `["a", 1]`, also as a union's array member: `kids as JSXChild`), and a cast of an
+existing array to another, comparable element type (`items as VNode[]` with `items:
+JSXElement[]`, `result as JSXChildren`), which sema writes as the conversion through `any`.
+Nothing is copied up front: each access sees the original's elements at that moment, each
+converted to `T` with the check above (an object element of another type is a view of it, in a
+program with views of objects), and a change through the view (an index assignment, `push`,
+`pop`, `reverse`, `splice`, ...) is written back to the original at once, converted to the
+original's element type, so a value the original's element type cannot hold (a `string` written
+into a view of a `VNode[]`) stops with a `TypeError` where Node stores it. Back in an `any` the
+view is the original array (`===`, `Array.isArray`, `WeakMap` keys). An array has one view of
+each element type at a time, so two conversions of one array to `T[]` are one value, as in
+Node: `===`, `indexOf`, `includes`, and `Set` and `Map` keys see one array. A view sent to
+another thread or `clone()`d is a plain array of its elements (a copy, as any array sent while
+it is still used here). An access brings only what it touches up to date: `length` is the
+original's, an index, a `for...of` step or a callback method's step (`forEach`, `map`, ...)
+converts that element (and, the first time, the ones before it), and a write of an element, a
+`push`, `pop` or swap writes back only what changed; operations on the whole array (`slice`,
+spread, `sort`, `JSON.stringify`, `clone()`) bring every element up to date. So a loop over a
+view costs a plain loop plus a conversion of each element it reaches, and the elements after
+the last one read are never checked, as Node never checks them. `sort(cmp)` sorts a copy of
+the elements stably and writes them back. An object view whose field is an array of another
+element type (`(raw as any) as View` with `raw.items: string[]` and `View.items: Child[]`)
+shares that array as an array view. Array types that no conversion makes a view keep their
+layout and code.
+
+```ts
+type VNode = { type: string };
+type JSXChild = VNode | string | number | boolean | null | undefined | JSXChild[];
+
+function main(): void {
+  const kids: any = ["a", 1];
+  const view = kids as JSXChild[]; // a view of the array `kids` holds
+  view.push("b");
+  console.log(kids.length, view[2]); // 3 b
+  const back: any = view;
+  console.log(back === kids); // true
+}
+```
+
 Members of an `any` are read and called as in JavaScript: `x.f`, `x["f"]`, `x[k]` with a
 `string`, `number` or `any` key (any expression: `x[key()]`, `x[i + 1]`), `x.m(a, b)` (a method,
 or a field holding a function, typed or `any`) and `x(a, b)` when `x` holds a function. The member
@@ -2808,8 +2913,9 @@ A member the value's fixed shape does not have reads as `undefined`, as in Node.
 `x.f?.()` are `undefined` when the link is `null` or `undefined`, and the rest of the chain
 (`x?.a.b`) is not evaluated. What this phase cannot reach yet
 stops with a `TypeError` naming #924 rather than giving a wrong value: a method read without a
-call, methods of arrays and strings, string indexing, methods that throw or are generic, and
-members whose type is an enum. A member of a literal type (`kind: "ok"`), a union or an
+call, string indexing, methods that throw or are generic, and members whose type is an enum.
+The built-in methods of a string, an array, a number or a boolean held are called as in
+JavaScript (see "Operators and built-in methods on `any`" below). A member of a literal type (`kind: "ok"`), a union or an
 interface reads as the value it holds.
 
 Members of an `any` are written as in JavaScript too: `x.f = v`, `x["f"] = v` and `x[k] = v`
@@ -2831,7 +2937,8 @@ Writing a `readonly` field, a method, an element further past the end of an arra
 string, number or function stops with a `TypeError` naming #924. `x.f ??= v`, `x.f ||= v` and
 `x.f &&= v` read the member once and evaluate and write `v` only when the operator calls for it,
 as in JavaScript; the expression is the member read or the value written. The other compound
-assignments (`x.n += 1`) and `x.n++` are compile errors until the operators of `any` come.
+assignments (`x.n += 1`, `x[i] *= 2`) and `x.n++` read the member once, combine it as the
+operator does (below) and write the result back.
 
 `Array.isArray(x)`, `x instanceof C` for a generic class `C` (TypeScript's `C<any>`, including
 `Map` and `Set`) and `typeof x === "function"` narrow an `unknown` to an `any` (and leave an
@@ -2874,8 +2981,9 @@ function main(): void {
 UTF-16 code units, any other pair as numbers, each converted with `ToNumber` (`true` is 1,
 `null` is 0, `undefined` and a string that is not a number are `NaN`, and every comparison with
 `NaN` is `false`). Comparing a symbol stops with Node's `TypeError: Cannot convert a Symbol value
-to a number`; comparing an object or a function (which JavaScript converts with `valueOf` /
-`toString`) stops with a `TypeError` naming #924 for now.
+to a number`; an object is converted first, as JavaScript's `ToPrimitive` does: a `Date` is its
+time, another object the text its `valueOf()` or `toString()` gives (`[2] < 10` is `true`,
+`[2] < "10"` compares strings, `{}` is `NaN` against a number).
 
 ```ts
 function main(): void {
@@ -2982,9 +3090,68 @@ An object literal converted to `any` or `unknown` (`const u: unknown = { a: null
 holds an `any` that is `null`. A `void` value or one of type `undefined` (a call of a function
 returning it) converts to an `any` holding `undefined`.
 
-**Planned** (#924): the other compound assignments and `++` on members, arithmetic operators,
-`JSON.parse` into an `any`, `any` converted to interface types and the warning on a
-written `any`; until then each is a compile error.
+### Operators and built-in methods on `any`
+
+The arithmetic, bitwise and unary operators take an `any` operand as JavaScript does, as
+TypeScript accepts them: `-`, `*`, `/`, `%`, `**`, `|`, `&`, `^`, `<<`, `>>`, `>>>`, unary `-`,
+`+` and `~` convert each operand with `ToNumber` (`"3"` is 3, `true` 1, `null` 0, `undefined`
+and `"abc"` `NaN`; an object first with `ToPrimitive`: its `[Symbol.toPrimitive](hint)`, else
+its `valueOf()` and `toString()`, keeping the first primitive result, so `[5]` is 5, `{}` `NaN`, a
+`Date` its time and an object whose `valueOf()` returns 10 is 10) and give a `number`. Only an
+`any` converts: arithmetic on an `object` or a `Function` value is a compile error, as in
+TypeScript. `+` adds when neither side holds a string, an object or a symbol, and
+otherwise concatenates the two as `String` writes them after `ToPrimitive` (`1 + [2]` is
+`"12"`); its result is an `any`, as in TypeScript. `==` converts an object compared with a
+primitive the same way (`[] == 0` is `true`, `[1, 2] == "1,2"`). `x += v`, `x -= v` and the other
+compound assignments, `x++` and `--x` work on `any` variables, fields, elements and members of
+an `any`; `x++` gives the old number, and the value written is boxed back into the `any`. A
+`number` variable combined with an `any` (`n += a`) stays a `number` (when `a` holds a string,
+`+=` concatenates and the conversion back stops with its `TypeError`, where Node stores the
+string). A
+symbol operand stops with Node's `TypeError: Cannot convert a Symbol value to a number`. Like
+the other stops on `any`, these `TypeError`s cannot be caught: a `catch` around the operator is
+never reached (see "These stops are not exceptions" under [Intersection
+types](#intersection-types)). Each
+conversion of a primitive is one call through the descriptor of the value held; `+` and the
+comparisons test the descriptors' tags before it.
+
+A method called on an `any` holding a string, an array, a number or a boolean is the built-in
+method of that value, with the arguments converted as JavaScript converts them
+(`s.slice("1")`, `s.includes(5)`, a missing argument as `undefined`): on strings `trim`,
+`trimStart`, `trimEnd`, `toUpperCase`, `toLowerCase`, `slice`, `substring`, `indexOf`,
+`lastIndexOf`, `includes`, `startsWith`, `endsWith`, `split`, `replace` and `replaceAll` (with
+string patterns), `charAt`, `charCodeAt`, `at`, `repeat`, `padStart`, `padEnd`, `concat`,
+`localeCompare`, `toString` and `valueOf`; on arrays `push`, `pop`, `shift`, `unshift`,
+`splice`, `slice`, `at`, `reverse`, `concat`, `indexOf`, `lastIndexOf`, `includes`, `map`,
+`forEach`, `filter`, `find`, `findIndex`, `some`, `every`, `reduce`, `sort` (by `ToString`
+without a comparator, `undefined` last), `join` and `toString`; on
+numbers `toFixed`, `toString` (with a radix), `toPrecision` and `valueOf`; on booleans
+`toString` and `valueOf`. Callbacks get each element, its index and the array, as `any`s; the
+result is an `any` (`map` gives an `any[]`, `filter` an array of the elements' own type). An
+array keeps its element type: pushing a value of another type stops with the conversion's
+`TypeError` (Node's arrays take anything); an empty literal converted to `any`
+(`const xs: any = []`) is an `any[]`, which takes every value. Other built-in methods of these
+values stop with a `TypeError` naming #924, and a name that is no method of the value is Node's
+`TypeError: x.foo is not a function`. A function held has no methods through `any` yet: `call`,
+`apply`, `bind` and `toString` stop with a `TypeError` naming #924, and any other name is not a
+function.
+
+```ts
+function main(): void {
+  let n: any = "4";
+  n++;
+  const xs: any = [3, 1, 2];
+  xs.push(n);
+  console.log(n, xs.map((x: number) => x * 2), xs.includes(5)); // 5 [ 6, 2, 4, 10 ] true
+  const s: any = "  sigx ";
+  console.log(s.trim().toUpperCase(), s.length - 1, "1" + (n as any) * 2); // SIGX 6 110
+  const price: any = 2.5;
+  console.log(price.toFixed(2), price * "2", [2] == (2 as any)); // 2.50 5 true
+}
+```
+
+**Planned** (#924): `JSON.parse` into an `any`, `any` converted to interface types and the
+warning on a written `any`; until then each is a compile error.
 
 `key in x` on an `any` asks the value held: a class instance or object type has its fields,
 methods and accessors and what every object has from `Object.prototype` (`toString`), a
@@ -3162,8 +3329,10 @@ The conversion applies where each type argument is the original's or `unknown` /
 each parameter and result converts as described. It is a compile error, with a note naming the
 case, when a method's parameter has another type holding `unknown` or `any` (a generic class
 such as `Box<unknown>`, or `Map<string, unknown>`; #1185) or is an interface (#924), and when a
-result is a promise of another type, a parameter is an array of the type parameter, or a method
-has type parameters of its own. A parameter of a function value (an optional method
+result is a promise of another type, or a parameter is an array of the type parameter. A method
+with type parameters of its own converts too. A result that is an object type, or a union of
+them, whose fields convert (an iterator's `IteratorResult<[any, any]>` as `IteratorResult<any>`)
+is a new object of the target type holding the same field values. A parameter of a function value (an optional method
 `revive?(e: E): T` with `E` an `unknown[]`) is checked against its own type as it is (#1185),
 except a generic class with `unknown` arguments, which is a compile error. A program without
 such a conversion is unchanged.
@@ -3382,7 +3551,10 @@ with TypeScript's rules:
   keep the primitive); `null` and `undefined` pass.
 - A value of a type parameter without an `object` bound converts with `as object` too
   (`function toRaw<T>(observed: T) { ... observed as object ... }`): a `T | null` or a union
-  is unpacked to the value it holds, and a primitive is the same `TypeError`.
+  is unpacked to the value it holds, and a primitive is the same `TypeError`. `as T & object`
+  is checked the same way, and `null` and `undefined` are a `TypeError` there too, since
+  `T & object` holds neither (`asObject(null)` stops with `the value is not an object (it is
+  null)`, and so does a `null` at `T = { a: number } | null`; TypeScript keeps the `null`).
 - `object` can be a `WeakMap` key, a `WeakSet` member and a `WeakRef` target
   ([WeakMap, WeakSet and WeakRef](../std/prelude.md#weakmap-weakset-and-weakref)): the key is
   the object it holds, whichever type it reached `object` through. A primitive (passed as an

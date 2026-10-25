@@ -493,6 +493,15 @@ pub enum Intrinsic {
     /// the fields of an object); a `TypeError` for `null` / `undefined` or a value not
     /// supported yet. Sets `Program::dyn_members`.
     AnyKeys,
+    /// `(x: borrow any) -> i64`: the `typeof` tag of the value held, as a number (0 `undefined`,
+    /// 1 `null`, 2 boolean, 3 number, 4 string, 5 symbol, 6 function, 7 object), read from its
+    /// descriptor without a call. Additive (#924, operators through `any`).
+    AnyTag,
+    /// `(x: borrow any) -> f64`: JavaScript's `ToNumber` of a primitive held (`null` is 0,
+    /// `undefined` NaN, a string as `Number(s)`; a symbol stops with Node's `TypeError`), one
+    /// call through the descriptor. An object or a function held gives `NaN`: sema converts
+    /// those with `ToPrimitive` first. Additive (#924).
+    AnyToNumber,
     /// `T.shuffle(a, b, i0, …)` of a SIMD vector type (`velt:simd`): `(a: T, b: T) -> T`, lane
     /// `k` of the result being lane `lanes[k]` of `a`'s lanes followed by `b`'s. The indices
     /// were integer literals in range (sema checks them), so they are part of the operation:

@@ -179,19 +179,6 @@ async function main() {
 }
 
 #[test]
-fn converts_string_concatenation_to_a_template_literal() {
-    // A number or an array next to a string concatenates as in JS (#740, #1462); an object
-    // is still an error.
-    let text = "function main() {\n  const n = 3;\n  const xs = { a: 1 };\n  const s = 1 + n + \"a`\" + xs + \"!\";\n  console.log(s);\n}\n";
-    let (mut client, doc, diags) = open("fix_concat.vlt", text);
-    let offered = actions(&mut client, &doc, text, "xs +", &diags);
-    let fixed = apply(text, find(&offered, "Convert to a template literal"), &doc);
-    assert!(fixed.contains("const s = `${1 + n}a\\`${xs}!`;"), "{fixed}");
-    assert_eq!(errors_after(&mut client, &doc, &fixed), [] as [Value; 0]);
-    client.shutdown();
-}
-
-#[test]
 fn floating_promise_can_be_awaited_or_spawned() {
     let text = "async function load(): Promise<i64> {\n  return 1;\n}\n\nasync function main() {\n  load();\n}\n";
     let (mut client, doc, _) = open("fix_promise.vlt", text);

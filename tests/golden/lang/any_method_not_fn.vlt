@@ -1,0 +1,3 @@
+// A non-function callback of an array method through `any` stops with Node's `TypeError`.
+const xs: any = [1, 2];
+xs.map(5);

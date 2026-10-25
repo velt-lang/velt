@@ -1,0 +1,17 @@
+// A generic interface with a generic method converts to its `any` instance through an adapter
+// (`App<TContainer>` as `App<any>`, sigx's app context; #1185): the generic method has no table
+// entry and is never called through the interface value, so its slot needs no adapting.
+interface App<T = any> {
+  name: string;
+  use<O>(plugin: (app: App<T>, o: O) => void, options: O): App<T>;
+  mount(c: T): string;
+}
+class AppImpl<T> implements App<T> {
+  constructor(public name: string) {}
+  use<O>(plugin: (app: App<T>, o: O) => void, options: O): App<T> { plugin(this, options); return this; }
+  mount(c: T): string { return `${this.name}:${c}`; }
+}
+let current: App<any> | null = null;
+function setup<TContainer>(n: string): App<TContainer> { const app: App<TContainer> = new AppImpl<TContainer>(n); current = app; return app; }
+setup<number>("x");
+console.log(current!.name, current!.mount(5));

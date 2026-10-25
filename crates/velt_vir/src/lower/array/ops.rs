@@ -56,6 +56,13 @@ impl FnLower<'_, '_> {
             // the caller's, caller_stores.rs `caller_object`).
             self.write_barrier(Operand::Copy(arr.clone()), aty);
         }
+        if i == I::ArraySetLen {
+            self.view_unsupported(&arr, aty, "sorting with a comparison function");
+        }
+        if !caller && self.cx.array_view(aty) {
+            // Each operation on a view syncs and writes back what it needs (array_view_ops.rs).
+            return self.view_array_op(i, &args[1..], &arr, aty, ty);
+        }
         let ptr = Operand::Copy(arr.clone());
         let arr = self.content(&arr, aty);
         if caller && i != I::ArrayLen && self.cx.lock_counted(aty) && !self.captured_root(&args[0])
@@ -164,7 +171,7 @@ impl FnLower<'_, '_> {
         }
     }
 
-    fn array_op(
+    pub(in crate::lower) fn array_op(
         &mut self,
         i: hir::Intrinsic,
         rest: &[hir::Expr],
@@ -183,17 +190,7 @@ impl FnLower<'_, '_> {
                 let (ia, ta) = (self.expr(a), self.vty(a.ty));
                 let ia = self.freeze(ia, a.ty);
                 let (ib, tb) = (self.expr(b), self.vty(b.ty));
-                let pa = self.elem_place_checked(&arr, aty, ia, ta);
-                let pb = self.elem_place_checked(&arr, aty, ib, tb);
-                let vt = self.cx.ty(elem);
-                if vt == Ty::Unit {
-                    // Zero-sized elements (a single literal type): nothing to exchange.
-                    return unit();
-                }
-                let t = self.copy_to_temp(Operand::Copy(pa.clone()), vt);
-                self.assign(pa, Rvalue::Use(Operand::Copy(pb.clone())));
-                self.assign(pb, Rvalue::Use(Operand::Copy(Place::local(t))));
-                unit()
+                self.swap_elems(&arr, aty, (ia, ta), (ib, tb))
             }
             (I::ArrayRemove, [idx]) => self.remove(&arr, aty, idx),
             (I::ArrayTruncate, [n]) => {
@@ -221,6 +218,28 @@ impl FnLower<'_, '_> {
         }
     }
 
+    /// `__intrinsic_array_swap` of the elements at the (evaluated) indices `a` and `b`.
+    pub(in crate::lower) fn swap_elems(
+        &mut self,
+        arr: &Place,
+        aty: TyId,
+        (ia, ta): (Operand, Ty),
+        (ib, tb): (Operand, Ty),
+    ) -> Operand {
+        let elem = self.elem_ty(aty);
+        let pa = self.elem_place_checked(arr, aty, ia, ta);
+        let pb = self.elem_place_checked(arr, aty, ib, tb);
+        let vt = self.cx.ty(elem);
+        if vt == Ty::Unit {
+            // Zero-sized elements (a single literal type): nothing to exchange.
+            return unit();
+        }
+        let t = self.copy_to_temp(Operand::Copy(pa.clone()), vt);
+        self.assign(pa, Rvalue::Use(Operand::Copy(pb.clone())));
+        self.assign(pb, Rvalue::Use(Operand::Copy(Place::local(t))));
+        unit()
+    }
+
     /// `__intrinsic_array_move(dst, d, src, s, n)`: `dst[d..d + n)` = the bits of
     /// `src[s..s + n)`, both ranges bounds-checked; no drop of what `dst` held, no share of
     /// what `src` holds. A literal `n` of 1 is one element copy, anything else one memcpy.
@@ -235,6 +254,7 @@ impl FnLower<'_, '_> {
         let elem = self.elem_ty(dty);
         let dv = self.expr(dst);
         let darr = self.place_of(dv, dty);
+        self.view_unsupported(&darr, dty, "sorting with a comparison function");
         if self.cx.lock_counted(dty) && !self.captured_root(dst) {
             self.write_barrier(Operand::Copy(darr.clone()), dty);
         }
@@ -243,6 +263,7 @@ impl FnLower<'_, '_> {
         let id = self.freeze(id, d.ty);
         let sv = self.expr(src);
         let sarr = self.place_of(sv, sty);
+        self.view_unsupported(&sarr, sty, "sorting with a comparison function");
         if self.cx.lock_counted(sty) {
             self.write_barrier(Operand::Copy(sarr.clone()), sty);
         }
@@ -398,6 +419,18 @@ impl FnLower<'_, '_> {
 
     /// Append the owned value `v` to the array at `arr` (growing it when full).
     pub(in crate::lower) fn push_value(&mut self, arr: &Place, elem: TyId, v: Operand) {
+        self.push_value_full(arr, elem, v, |_, _| {});
+    }
+
+    /// [`Self::push_value`], where `full` runs first when the array is full, with the value
+    /// (it may push it elsewhere and leave; the grow follows in the block it ends in).
+    pub(in crate::lower) fn push_value_full(
+        &mut self,
+        arr: &Place,
+        elem: TyId,
+        v: Operand,
+        full_hook: impl FnOnce(&mut Self, Operand),
+    ) {
         let vt = self.cx.ty(elem);
         // Snapshot the value: it may live in the buffer that growing reallocates.
         let v = match v {
@@ -415,6 +448,7 @@ impl FnLower<'_, '_> {
         let join = self.new_block();
         self.branch(full, grow_bb, join);
         self.switch_to(grow_bb);
+        full_hook(self, v.clone());
         let (stride, align) = self.stride(elem);
         let a = self.addr(arr.clone());
         let f = self.cx.func(Work::ArrayGrow);

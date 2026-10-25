@@ -1,0 +1,22 @@
+// Fields of a deferred form over a type parameter with an object bound (`Partial<T>`,
+// `Pick<T, K>`, `Readonly<T>` with `T extends User`), read in the generic body (#350).
+type User = { name: string; age: number; nick?: string };
+function patchName<T extends User>(p: Partial<T>): string {
+  return p.name ?? "none";
+}
+function picked<T extends User>(p: Pick<T, "name" | "age">): string {
+  return `${p.name}/${p.age}`;
+}
+function ro<T extends User>(p: Readonly<T>): number {
+  return p.age + 1;
+}
+function nickOf<T extends User>(p: Partial<T>): string {
+  return p.nick ?? "-";
+}
+function patchStr<T extends { name: string }>(p: Partial<T>): string {
+  return p.name ?? "none";
+}
+console.log(patchName<User>({ age: 3 }), patchName<User>({ name: "x" }));
+console.log(picked<User>({ name: "a", age: 2 }), ro<User>({ name: "b", age: 4 }));
+console.log(nickOf<User>({}), nickOf<User>({ nick: "n" }));
+console.log(patchStr<{ name: string; id: number }>({ name: "y" }), patchStr<{ name: string }>({}));

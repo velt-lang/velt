@@ -11,8 +11,7 @@ use crate::body::LocalKind;
 use crate::ctx::Ctx;
 use crate::defs::BodyState;
 use crate::hir::{
-    Callee, Def, DefId, Expr, ExprKind as E, FnDef, Intrinsic, LocalDef, LocalId, PassMode, TyId,
-    UseMode,
+    Callee, Def, DefId, Expr, ExprKind as E, FnDef, Intrinsic, LocalDef, LocalId, PassMode, UseMode,
 };
 use crate::visit;
 
@@ -31,7 +30,6 @@ pub(crate) fn validate_moves(cx: &mut Ctx) {
         };
         let mut errors = vec![];
         let mut copied_captures = vec![];
-        let mut deep_copies = vec![];
         let kinds = cx.fn_info(d).local_kinds.clone();
         let fixed = cx.fn_info(d).fixed_modes;
         let keeps_fn_params = cx.fn_info(d).keeps_fn_params;
@@ -72,18 +70,10 @@ pub(crate) fn validate_moves(cx: &mut Ctx) {
                         e,
                     ) {
                         Some(err) => errors.push(err),
-                        // An async closure that may run on several threads at once (an
-                        // http handler) copies what it captured: counts are not atomic. (An
-                        // async generator and a local async closure stay on their task and
-                        // share, like JS.)
-                        None if v.f.is_async
-                            && !v.f.is_generator
-                            && !v.f.shares_captures
-                            && v.captured(e) =>
-                        {
-                            deep_copies.push((e.span, e.ty));
-                            soft::make_deep_copy(e)
-                        }
+                        // Anything else is shared, a capture of an async closure that may
+                        // run on another thread too: each call's state owns a copy of what the
+                        // closure captured (velt_vir async_fn/ctor.rs), so two reads of a
+                        // capture in one call are one object, as in JS (#1504).
                         None => soft::make_share(e),
                     }
                     return;
@@ -98,7 +88,6 @@ pub(crate) fn validate_moves(cx: &mut Ctx) {
             v.check(e, &mut errors)
         });
         cx.diags.extend(errors);
-        share_uncopyable(cx, &mut block, &deep_copies);
         f.body.block = block;
         cx.defs[d.0 as usize] = Some(Def::Fn(f));
         for (c, pinned) in copied_captures {
@@ -146,32 +135,6 @@ fn keep_moved_constants(cx: &mut Ctx, b: &mut crate::hir::Block, soft: &FxHashSe
     for d in roots {
         crate::kept_consts::keep(cx, d);
     }
-}
-
-/// Of the captures an async closure deep-copies (`deep_copies`: the copy's span and type),
-/// those owning a resource without `clone()` are shared instead (#122): a copy would release
-/// the resource twice, and the call runs on the task that owns the closure. (An http handler
-/// clones what its body consumes per request, and that copy panics on such a resource.)
-fn share_uncopyable(cx: &mut Ctx, b: &mut crate::hir::Block, deep_copies: &[(Span, TyId)]) {
-    let spans: FxHashSet<Span> = deep_copies
-        .iter()
-        .filter(|(_, t)| cx.owns_uncopyable(*t))
-        .map(|(s, _)| *s)
-        .collect();
-    if spans.is_empty() {
-        return;
-    }
-    visit::exprs_mut(b, &mut |e: &mut Expr| {
-        if let E::Call {
-            callee: c @ Callee::Intrinsic(Intrinsic::Clone),
-            ..
-        } = &mut e.kind
-        {
-            if spans.contains(&e.span) {
-                *c = Callee::Intrinsic(Intrinsic::Share);
-            }
-        }
-    });
 }
 
 /// The shared captures (`super::shares::shared_captures`) of every closure created in `b`.
@@ -323,12 +286,6 @@ impl Validator<'_, '_, '_> {
                 !invalid.is_empty()
             })
             .collect()
-    }
-
-    /// Is the place `e` rooted at a captured variable?
-    fn captured(&self, e: &Expr) -> bool {
-        crate::body::places::place_root(e)
-            .is_some_and(|l| matches!(self.kinds.get(l.0 as usize), Some(LocalKind::Capture)))
     }
 
     fn param_mode(&self, l: LocalId) -> Option<PassMode> {

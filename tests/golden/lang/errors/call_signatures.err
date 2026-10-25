@@ -1,3 +1,2 @@
-call_signatures.vlt:22:15: error: mismatched types
-call_signatures.vlt:9:3: error: intersections of function types (overloads) are not supported
-call_signatures.vlt:13:3: error: generic function types (`<T>(x: T) => R`) are not supported yet
+call_signatures.vlt:23:15: error: mismatched types
+call_signatures.vlt:10:3: error: intersections of function types (overloads) are not supported

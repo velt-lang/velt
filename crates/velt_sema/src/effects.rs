@@ -10,6 +10,9 @@ use crate::hir::{self, ExprKind as H, UseMode};
 /// (`xs.pop()`)? Then an address into an array computed before `e` may be stale after it.
 /// Conservative: anything else but reads, literals and arithmetic counts.
 pub fn may_change_memory(e: &hir::Expr) -> bool {
+    if let Some(wrap) = routed_wrap(e) {
+        return may_change_memory(wrap);
+    }
     match &e.kind {
         H::Lit(_) | H::Local(..) | H::Global(_) | H::FnRef(..) => false,
         H::Unary { expr: x, .. }
@@ -33,6 +36,25 @@ pub fn may_change_memory(e: &hir::Expr) -> bool {
         } => runs_user_code(*i) || args.iter().any(|a| may_change_memory(a) || writes_place(a)),
         _ => true,
     }
+}
+
+/// The plain wrap of `e` when `e` is a value of a type parameter wrapped into a union member or
+/// an option and routed by its value at a dynamic instantiation (sema `param_member.rs`):
+/// `HoldsDynamic(_) ? <routing> : <wrap>`. The routing only reads the value (and moves it where
+/// the wrap does), so what evaluating `e` can do is what the wrap can.
+pub fn routed_wrap(e: &hir::Expr) -> Option<&hir::Expr> {
+    let H::If { cond, els, .. } = &e.kind else {
+        return None;
+    };
+    let fixed = matches!(
+        cond.kind,
+        H::Call {
+            callee: hir::Callee::Intrinsic(hir::Intrinsic::HoldsDynamic),
+            ..
+        }
+    );
+    let wrap = matches!(els.kind, H::Variant { .. } | H::WrapSome(_));
+    (fixed && wrap).then_some(&**els)
 }
 
 /// Does intrinsic `i` run user code itself (a method, getter or function it finds at run

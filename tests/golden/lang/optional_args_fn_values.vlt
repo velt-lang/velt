@@ -1,0 +1,40 @@
+// check: no leaks
+// Optional arguments left out through function values, and `typeof` of a left-out optional
+// generic parameter (#1186).
+function f(a: number, b?: string): string {
+  return `${a}${b}`;
+}
+
+function none(x?: number): string {
+  return `${x}`;
+}
+
+function d(x: any = "dv"): string {
+  return `${x}`;
+}
+
+function gen<T>(x?: T): string {
+  return typeof x;
+}
+
+function opt(o?: any): string {
+  return `${o}`;
+}
+
+function call(fn: (a: number, b?: string) => string): string {
+  return fn(5);
+}
+
+function main(): void {
+  const fn = f;
+  console.log(fn(1), fn(2, "x"), fn(3, undefined));
+  const typed: (a: number, b?: string) => string = f;
+  console.log(typed(4), call(f));
+  const n = none;
+  console.log(n(), n(1));
+  const g = d;
+  console.log(g(), g(undefined), g(null));
+  console.log(gen<any>(), gen<number>(), gen<unknown>(), gen<string>("s"));
+  const o = opt;
+  console.log(opt(), opt(undefined), opt(0), o(), o("v"));
+}

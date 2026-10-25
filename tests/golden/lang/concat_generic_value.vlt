@@ -1,0 +1,25 @@
+// A string `+` with a value of a type built from type parameters (#1368): `"v=" + t[k]` with
+// `k: K extends keyof T`, or a `T | string`, as a template literal writes it.
+// check: no leaks
+function s<T>(t: T): string {
+  return "v=" + t;
+}
+
+function sk<T, K extends keyof T>(t: T, k: K): string {
+  return "v=" + t[k];
+}
+
+function ks<T, K extends keyof T>(t: T, k: K): string {
+  let out = "<";
+  out += t[k];
+  return t[k] + out;
+}
+
+console.log(s(1), s("a"), s([1, 2]), sk({ a: 2 }, "a"), sk({ a: [1, 2] }, "a"));
+
+function u<T>(t: T | string): string {
+  return "u=" + t;
+}
+
+console.log(sk({ a: { b: 1 } }, "a"), sk({ a: true, b: "x" }, "b"), ks({ n: 5 }, "n"));
+console.log(u<number[]>([3, 4]), u<number>(5), u<string>("s"));

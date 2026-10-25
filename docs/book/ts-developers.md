@@ -86,8 +86,9 @@ accept; compiler messages and editors print `boolean` either way
 
 - `+` with a string and a number or boolean concatenates, as in JS: `"Total: " + 5` is
   `"Total: 5"`, and `s += n` appends `n` written as `String(n)` writes it (`1e+21`, `NaN`, `0`
-  for `-0`). Other values (arrays, objects) are a compile error next to a string: use a
-  template literal, `` `Total: ${xs.length}` ``.
+  for `-0`). Other values are written as `String(x)` writes them, as in JS: an array joined
+  with commas, an object by its `toString()` (`[object Object]` without one). A function
+  next to a string is a compile error.
 - Lengths and positions count UTF-16 code units, as in JS (`"😀".length` is 2), and `<` orders
   by code units. `s[i]` is `s.charAt(i)`, but `""` past the end where JS gives `undefined`, and
   `charCodeAt` out of range is `-1` where JS gives `NaN`. Text is stored as UTF-8, so files,

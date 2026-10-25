@@ -1,0 +1,48 @@
+// check: no leaks
+// The other function type forms of #943, as sigx writes them: rest parameters (with a tuple
+// type parameter), construct signatures for a class used as a value, and assignability of a
+// function to a function type (fewer parameters, also a function value passed or stored where
+// more are expected, an `any` parameter, a narrower result).
+// Expected output from `node`.
+type Emit = (event: string, ...args: any[]) => void;
+const emit: Emit = (e, ...a) => console.log(e, a.length);
+
+type Factory<TArgs extends unknown[], R> = (...args: TArgs) => R;
+const make: Factory<[number, string], string> = (n, s) => s + n;
+
+class View {
+  constructor(public size: number) {}
+}
+class Wide extends View {}
+type ViewCtor = new (size: number) => View;
+const kinds: [string, ViewCtor][] = [
+  ["view", View],
+  ["wide", Wide],
+];
+
+type Cb = (x: number, y: string) => unknown;
+const fewer: Cb = (x: number) => x;
+const loose: (x: any) => void = (x: number) => {};
+const narrower: () => object = () => ({ a: 1 });
+
+const triple = (x: number) => x * 3;
+function inc(x: number): number {
+  return x + 1;
+}
+
+console.log([1, 2].map(triple), [1, 2].map(inc));
+emit("x", 1, 2);
+emit("none");
+console.log(make(1, "a"));
+const v: View = new Wide(3);
+const kind = kinds.find(([, C]) => v instanceof C && C !== View);
+const K = kinds[0][1];
+console.log(kind ? kind[0] : "none", new K(2).size);
+console.log(fewer(1, "a"), typeof loose, narrower());
+function inner(offset: number): void {
+  const shift = (s: string) => s.length + offset;
+  console.log(["ab", "c"].map(shift), ["ab", "c"].filter((s) => s.length > 1));
+  const cb: (v: number, i: number) => number = triple;
+  console.log(cb(2, 0));
+}
+inner(10);

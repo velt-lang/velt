@@ -291,6 +291,14 @@ impl FnCx<'_, '_> {
             Ok(call) => return call,
             Err(obj) => obj,
         };
+        let obj = match self.bound_member(obj, &prop.name, want, span) {
+            Ok(h) => return h,
+            Err(obj) => obj,
+        };
+        let obj = match self.form_member(obj, &prop.name, want, span) {
+            Ok(h) => return h,
+            Err(obj) => obj,
+        };
         match self.field_access(obj, prop, want, span) {
             Some(h) => h,
             None => self.error_expr(span),
@@ -372,6 +380,10 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let obj = match self.dynamic_index(obj, index, want, span) {
+            Ok(h) => return h,
+            Err(obj) => obj,
+        };
+        let obj = match self.generic_index(obj, index, want, span) {
             Ok(h) => return h,
             Err(obj) => obj,
         };
@@ -602,6 +614,12 @@ impl FnCx<'_, '_> {
         want: Want,
         span: Span,
     ) -> hir::Expr {
+        if let Some(h) = self.fn_through_top(expr, target, want) {
+            return h;
+        }
+        if let Some(h) = self.empty_as_deferred(expr, target, span) {
+            return h;
+        }
         let inner = self.expr(expr, Some(target), want);
         if self.cx.dynamic(inner.ty).is_some() {
             if let Ok(h) = self.coerce_dynamic(inner.clone(), target, true) {
@@ -614,7 +632,9 @@ impl FnCx<'_, '_> {
             .or_else(|h| self.param_as_object(h, target))
             .or_else(|h| self.param_as_object_part(h, target))
             .or_else(|h| self.narrowing_assertion(h, target, span))
-            .or_else(|h| self.union_view_cast(h, target, span));
+            .or_else(|h| self.union_view_cast(h, target, span))
+            .or_else(|h| self.array_view_cast(h, target, span))
+            .or_else(|h| self.generic_assertion(h, target));
         match coerced {
             Ok(h) => h,
             Err(h) => {

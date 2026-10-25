@@ -1,0 +1,5 @@
+// An arithmetic operator on a symbol held in an `any` stops with Node's `TypeError`.
+const s: any = Symbol("k");
+const n: any = 1;
+console.log(n * 2);
+console.log(s - n);

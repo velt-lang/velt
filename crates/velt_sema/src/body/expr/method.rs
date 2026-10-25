@@ -247,10 +247,20 @@ impl FnCx<'_, '_> {
     /// `extend` blocks with a method `name` that apply to `recv`, with their type arguments.
     fn applicable_extensions(&mut self, recv: TyId, name: &str) -> Vec<(usize, Vec<TyId>)> {
         let mut out = vec![];
-        for i in 0..self.cx.extensions.len() {
-            if !self.cx.extensions[i].methods.contains_key(name) {
-                continue;
+        let n = self.cx.extensions.len();
+        if self.cx.extension_names.0 != n {
+            let mut names: rustc_hash::FxHashMap<String, Vec<usize>> = Default::default();
+            for (i, x) in self.cx.extensions.iter().enumerate() {
+                for k in x.methods.keys() {
+                    names.entry(k.clone()).or_default().push(i);
+                }
             }
+            self.cx.extension_names = (n, names);
+        }
+        let Some(found) = self.cx.extension_names.1.get(name) else {
+            return out;
+        };
+        for i in found.clone() {
             let target = self.cx.extensions[i].target;
             let Some(slots) = self.instance_args(target, recv) else {
                 continue;

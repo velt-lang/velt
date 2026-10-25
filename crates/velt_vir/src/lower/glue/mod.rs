@@ -32,6 +32,9 @@
 //! | WeakRetain / WeakRelease | `(word: u64)`       | retain / release a weak map value word   |
 //! | WeakBoxTrace | `(box: ptr, visit: ptr, ctx: ptr)` | Trace of a boxed weak map value       |
 //! | ProxyGet / ProxySet | `(proxy: ptr, key: ptr, v: ptr)` | a field of type `ty` through a typed proxy's `get` / `set` trap (proxy_typed.rs) |
+//! | JsText    | `(p: ptr, buf: ptr)`               | append `String(*p)` of an array that may hold itself (template/js_list.rs) |
+//! | ViewDrop  | `(p: ptr)`                         | release the array view whose header is at `p` (array_view.rs) |
+//! | MirrorDrop | `(p: ptr)`                        | Drop of an array that is not a view: a view's mirror (array_view.rs) |
 //!
 //! Class objects in a hierarchy with a vtable are dropped/cloned/formatted/transferred through
 //! their vtable (slots -1/-2/-3/-6, glue/vtable.rs), so a `Dog` held as an `Animal` releases
@@ -123,6 +126,9 @@ pub(crate) enum Glue {
     ProxySet,
     /// `(data, desc, out) -> bool`: an `any` as the interface type (any_iface.rs).
     AnyIface,
+    JsText,
+    ViewDrop,
+    MirrorDrop,
 }
 
 /// Vtable slots below 0 (interface/virtual methods use slots 0..n).
@@ -191,6 +197,9 @@ impl Glue {
             Glue::ProxyGet => "proxyget",
             Glue::ProxySet => "proxyset",
             Glue::AnyIface => "anyiface",
+            Glue::JsText => "jstext",
+            Glue::ViewDrop => "viewdrop",
+            Glue::MirrorDrop => "mirrordrop",
         }
     }
 
@@ -204,7 +213,9 @@ impl Glue {
             | Glue::DynDrop
             | Glue::Transfer
             | Glue::TransferRoot
-            | Glue::ManyCheck => (vec![Ptr], Unit),
+            | Glue::ManyCheck
+            | Glue::ViewDrop
+            | Glue::MirrorDrop => (vec![Ptr], Unit),
             Glue::Clone | Glue::Share | Glue::ShareSlot => (vec![Ptr, Ptr], Unit),
             Glue::ObjClone
             | Glue::DynClone
@@ -237,6 +248,7 @@ impl Glue {
             Glue::AnyHas | Glue::AnyDelete | Glue::AnyKeys | Glue::AnyJson => (vec![Ptr, Ptr], U8),
             Glue::ProxyGet | Glue::ProxySet => (vec![Ptr, Ptr, Ptr], Unit),
             Glue::AnyIface => (vec![Ptr, Ptr, Ptr], Bool),
+            Glue::JsText => (vec![Ptr, Ptr], Unit),
         }
     }
 }
@@ -300,6 +312,12 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Glue::ProxyGet => lw.proxy_get_glue(args[0], args[1], args[2], ty),
             Glue::ProxySet => lw.proxy_set_glue(args[0], args[1], args[2], ty),
             Glue::AnyIface => lw.any_iface_body(args[0], args[1], args[2], ty),
+            Glue::JsText => lw.js_text_body(args[0], a(1), ty),
+            Glue::ViewDrop => lw.view_drop_body(args[0], ty),
+            Glue::MirrorDrop => {
+                lw.mirror_drop = true;
+                lw.drop_body(args[0], ty);
+            }
         }
         let sym = format!("_G{}_{}", g.name(), lw.cx.type_symbol(ty));
         lw.finish(sym, params, ret)

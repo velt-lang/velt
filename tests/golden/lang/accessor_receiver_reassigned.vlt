@@ -1,0 +1,96 @@
+// check: no leaks
+// `x.p += v`, `x.p++` and `x.p ??= v` write to the object `x` named before the getter ran,
+// even when the getter (or one on the right-hand side) assigns another object to `x` (#1186).
+class P {
+  constructor(public name: string, public v: number) {}
+  get p(): number {
+    swap();
+    return this.v;
+  }
+  set p(n: number) {
+    this.v = n;
+  }
+  get q(): number {
+    swap();
+    return 10;
+  }
+  get o(): number | null {
+    swap();
+    return null;
+  }
+  set o(n: number | null) {
+    this.v = n ?? -1;
+  }
+}
+
+let a = new P("a", 1);
+const b = new P("b", 100);
+const holder = { x: a };
+let current = a;
+let doSwap = false;
+let onSwap: () => void = () => {};
+
+function swap(): void {
+  if (!doSwap) {
+    return;
+  }
+  doSwap = false;
+  holder.x = b;
+  current = b;
+  onSwap();
+}
+
+function show(label: string): void {
+  console.log(label, a.v, b.v);
+}
+
+function reset(): void {
+  a.v = 1;
+  b.v = 100;
+  holder.x = a;
+  current = a;
+}
+
+function main(): void {
+  doSwap = true;
+  holder.x.p += 5;
+  show("field +=");
+  reset();
+  doSwap = true;
+  holder.x.p++;
+  show("field ++");
+  reset();
+  doSwap = true;
+  const old = holder.x.p--;
+  show(`field -- ${old}`);
+  reset();
+  doSwap = true;
+  holder.x.o ??= 7;
+  show("field ??=");
+  reset();
+  doSwap = true;
+  current.p += 2;
+  show("module let +=");
+  reset();
+  doSwap = true;
+  current.p += b.q;
+  show("rhs getter");
+  reset();
+  // A local a closure assigns, the getter calling that closure.
+  let local = a;
+  onSwap = () => {
+    local = b;
+  };
+  doSwap = true;
+  local.p *= 3;
+  show("closure-assigned local");
+  onSwap = () => {};
+  reset();
+  // Nothing reassigns: still the one object.
+  const k = a;
+  k.p += 1;
+  let m = b;
+  m.p++;
+  holder.x.p += 10;
+  show("plain");
+}

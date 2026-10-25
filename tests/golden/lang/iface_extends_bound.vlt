@@ -1,0 +1,90 @@
+// An interface value as the type argument of a parameter bound by an interface its interface
+// is or extends (#1368): `f<Person>` fits `T extends Named` with `interface Person extends
+// Named`, and the bound's methods (and fields) are reached through the value's table.
+// check: no leaks
+interface Named {
+  name(): string;
+}
+
+interface Person extends Named {
+  age(): number;
+}
+
+interface Student extends Person {
+  school(): string;
+}
+
+function f<T extends Named>(x: T): string {
+  return x.name();
+}
+
+function g<T extends Person>(x: T): string {
+  return `${x.name()} ${x.age()}`;
+}
+
+function all<T extends Named>(xs: T[]): string {
+  return xs.map((x) => x.name()).join(",");
+}
+
+class Kid implements Student {
+  name(): string {
+    return "kid";
+  }
+  age(): number {
+    return 7;
+  }
+  school(): string {
+    return "s";
+  }
+}
+
+const s: Student = new Kid();
+const p: Person = { name: () => "p", age: () => 3 };
+const n: Named = p;
+console.log(f(s), g(s), f<Person>(p), f(p), f<Named>(n), all([p, s]), all<Student>([s]));
+
+interface Box<V> {
+  get(): V;
+}
+
+interface NumBox extends Box<number> {
+  twice(): number;
+}
+
+function read<V, B extends Box<V>>(b: B): V {
+  return b.get();
+}
+
+const nb: NumBox = { get: () => 4, twice: () => 8 };
+console.log(read<number, NumBox>(nb));
+
+interface HasName {
+  name: string;
+}
+
+interface P2 extends HasName {
+  age: number;
+}
+
+function h<T extends HasName>(x: T): string {
+  return x.name;
+}
+
+const q: P2 = { name: "q", age: 1 };
+console.log(h(q), h<HasName>(q));
+
+interface Greeter {
+  greet(): string;
+  tag: string;
+}
+
+interface Loud extends Greeter {
+  shout(): string;
+}
+
+function hi<T extends Greeter>(x: T): string {
+  return x.greet() + x.tag;
+}
+
+const l: Loud = { greet: () => "hi", tag: "!", shout: () => "HI" };
+console.log(hi(l));

@@ -6,6 +6,7 @@
 use velt_sema::hir::{self, DefId, PassMode, TyId, TyKind, UseMode};
 
 use super::operand::proj;
+use super::view_unswitch_plain::FLOAT_INDEX;
 use super::{ice, unit, FnLower, LkMode, Work};
 use crate::vir::{self, Operand, Place, Proj, Rvalue, Ty};
 
@@ -42,6 +43,13 @@ impl FnLower<'_, '_> {
                     .first()
                     .unwrap_or_else(|| ice("method call without receiver"));
                 let recv_ty = self.sub(recv.ty);
+                if method_type_args.is_empty() {
+                    if let Some(slot) = self.dyn_slot_for(*iface, *slot, recv_ty) {
+                        // An interface value instantiating a type parameter bound by an
+                        // interface its interface is or extends (#1368): through its table.
+                        return self.call_dyn(slot, args, ty, transfer);
+                    }
+                }
                 let iargs: Vec<TyId> = iface_args.iter().map(|&t| self.sub(t)).collect();
                 let (def, mut targs) = self.resolve_param_method(*iface, &iargs, *slot, recv_ty);
                 // A generic method's own type args follow its owner's.
@@ -107,6 +115,10 @@ impl FnLower<'_, '_> {
             true => Stabilize::Facts,
             false => Stabilize::Share,
         };
+        // An index's conversion (`xs[i]` with a number `i`) reads only the number it is given.
+        if how == Stabilize::Facts || f.name == FLOAT_INDEX {
+            self.note_quiet_call(fid, def);
+        }
         let outer = std::mem::replace(&mut self.frozen_args, frozen != 0);
         let to_caller = std::mem::replace(&mut self.args_to_caller, plain);
         let kept = match plain {
@@ -125,7 +137,12 @@ impl FnLower<'_, '_> {
         let ret = self.cx.subst(ret, &targs);
         let throws = throws.map(|e| self.cx.subst(e, &targs));
         let throws = self.cx.error_ty(throws);
+        let view_sort = self.view_sort_branch(def, &targs, &argv);
         let r = self.finish_call(vir::Callee::Func(fid), argv, ret, throws);
+        if let Some(join) = view_sort {
+            self.goto(join);
+            self.switch_to(join);
+        }
         if plain && self.needs_drop(ret) {
             self.hand_to_reader(&r, ret);
         }

@@ -1,0 +1,10 @@
+// A generic class's type arguments inferred from an interface it implements, where a value of
+// that interface is expected (`new Set()` as an `Iterable<number>`; type-argument inference).
+const it: Iterable<number> = new Set();
+function total(xs: Iterable<number>): number {
+  let s = 0;
+  for (const x of xs) s += x;
+  return s;
+}
+const s: Iterable<string> = new Set(["a", "b"]);
+console.log([...it].length, total(new Set([1, 2, 3])), [...s].join(","));

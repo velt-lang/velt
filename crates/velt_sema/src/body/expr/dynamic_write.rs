@@ -13,7 +13,7 @@ use crate::body::{FnCx, LocalKind, Want};
 use crate::hir::{self, ExprKind as H, Intrinsic, Lit, UseMode};
 
 /// The key of a dynamic write.
-enum WriteKey {
+pub(super) enum WriteKey {
     /// `x.f` / `x["f"]`, or a `string` / `any` key.
     Str(hir::Expr),
     /// A number key.
@@ -68,18 +68,12 @@ impl FnCx<'_, '_> {
             op,
             Some(ast::BinaryOp::And | ast::BinaryOp::Or | ast::BinaryOp::Nullish)
         );
-        if op.is_some() && !logical {
-            self.cx.error(
-                Diagnostic::error(
-                    "a compound assignment to a member of an `any` is not supported yet (#924)",
-                    span,
-                )
-                .with_note(
-                    "convert the member first and assign the result: `x.n = (x.n as number) + 1`",
-                ),
+        if let Some(op) = op.filter(|_| !logical) {
+            let rmw = super::dynamic_arith::DynRmw::Assign(op, value);
+            return (
+                self.dynamic_member_rmw(obj, target, rmw, as_value, span),
+                as_value,
             );
-            self.expr(value, None, Want::Borrow);
-            return (self.error_expr(span), false);
         }
         let key = match &strip(target).kind {
             ast::ExprKind::Member { prop, .. } => {
@@ -164,21 +158,7 @@ impl FnCx<'_, '_> {
         let Some(any) = self.any_ty() else {
             return self.error_expr(span);
         };
-        let read = match &key {
-            WriteKey::Str(k) => {
-                self.intrinsic(Intrinsic::AnyGet, vec![obj.clone(), k.clone()], any, span)
-            }
-            WriteKey::Num(k) => {
-                self.intrinsic(Intrinsic::AnyIndex, vec![obj.clone(), k.clone()], any, span)
-            }
-            WriteKey::Sym(n, _) if !self.uses_proxy() => {
-                self.intrinsic(Intrinsic::AnyGet, vec![obj.clone(), n.clone()], any, span)
-            }
-            WriteKey::Sym(n, k) => {
-                let args = vec![obj.clone(), n.clone(), k.clone()];
-                self.prelude_hir_call("__anyGetSym", args, any, span)
-            }
-        };
+        let read = self.dynamic_member_read(&obj, &key, any, span);
         let cur = self.new_local("<current>", any, false, span, LocalKind::Temp);
         stmts.push(hir::Stmt {
             kind: hir::StmtKind::Let {
@@ -248,8 +228,33 @@ impl FnCx<'_, '_> {
         self.mk(H::Block(block), any, span)
     }
 
+    /// The read `obj[key]` of the member a dynamic write writes.
+    pub(super) fn dynamic_member_read(
+        &mut self,
+        obj: &hir::Expr,
+        key: &WriteKey,
+        any: hir::TyId,
+        span: Span,
+    ) -> hir::Expr {
+        match key {
+            WriteKey::Str(k) => {
+                self.intrinsic(Intrinsic::AnyGet, vec![obj.clone(), k.clone()], any, span)
+            }
+            WriteKey::Num(k) => {
+                self.intrinsic(Intrinsic::AnyIndex, vec![obj.clone(), k.clone()], any, span)
+            }
+            WriteKey::Sym(n, _) if !self.uses_proxy() => {
+                self.intrinsic(Intrinsic::AnyGet, vec![obj.clone(), n.clone()], any, span)
+            }
+            WriteKey::Sym(n, k) => {
+                let args = vec![obj.clone(), n.clone(), k.clone()];
+                self.prelude_hir_call("__anyGetSym", args, any, span)
+            }
+        }
+    }
+
     /// The write `obj[key] = v` (`v` boxed).
-    fn dynamic_set(
+    pub(super) fn dynamic_set(
         &mut self,
         obj: hir::Expr,
         key: WriteKey,
@@ -302,7 +307,7 @@ impl FnCx<'_, '_> {
 
     /// The key of `x[index] = v` on an `any`: a string or `any` key names a member, a number
     /// key an element (`None` after reporting an error).
-    fn dynamic_write_key(&mut self, index: &ast::Expr) -> Option<WriteKey> {
+    pub(super) fn dynamic_write_key(&mut self, index: &ast::Expr) -> Option<WriteKey> {
         // A symbol constant (`o[KEY] = v`) names the member it keys.
         if let Some(name) = self.symbol_key_of(index) {
             self.note_dynamic_write(&name, index.span);
@@ -339,6 +344,11 @@ impl FnCx<'_, '_> {
             let any = self.any_ty()?;
             return Some(WriteKey::Str(self.coerce(k, any)));
         }
+        // A key of a type parameter's keys (`r[k] = o[k]` with `K extends keyof T`): its string.
+        let k = match self.generic_key_string(k, str_) {
+            Ok(s) => return Some(WriteKey::Str(s)),
+            Err(k) => k,
+        };
         let tn = self.cx.display(k.ty);
         self.cx.error(
             Diagnostic::error(
@@ -382,7 +392,7 @@ impl FnCx<'_, '_> {
     }
 }
 
-fn strip(e: &ast::Expr) -> &ast::Expr {
+pub(super) fn strip(e: &ast::Expr) -> &ast::Expr {
     match &e.kind {
         ast::ExprKind::Paren(inner) => strip(inner),
         _ => e,

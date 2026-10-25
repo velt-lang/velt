@@ -1,0 +1,23 @@
+// Reads and writes `x[k]` through a key type of several keys whose fields have different
+// types (`T[K]` is their union; #350, decision 4 of docs/internals/design/deferred-types.md).
+function pluck<T, K extends keyof T>(xs: T[], k: K): T[K][] {
+  return xs.map((x) => x[k]);
+}
+function copyField<T, K extends keyof T>(dst: T, src: T, k: K): void {
+  dst[k] = src[k];
+}
+function setField<T, K extends keyof T>(r: T, k: K, v: T[K]): void {
+  r[k] = v;
+}
+const us = [{ id: 1, name: "a" }, { id: 2, name: "b" }];
+const which: "id" | "name" = us.length > 5 ? "id" : "name";
+console.log(pluck(us, "name"), pluck(us, "id"), pluck(us, which));
+const a = { id: 1, name: "a" };
+const b = { id: 2, name: "b" };
+copyField(a, b, which);
+console.log(a);
+const other: "id" | "name" = us.length > 5 ? "name" : "id";
+copyField(a, b, other);
+setField(a, which, "renamed");
+const kind = typeof pluck([b], other)[0];
+console.log(a, kind);

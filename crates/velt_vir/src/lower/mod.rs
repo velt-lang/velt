@@ -23,6 +23,7 @@ mod abi;
 mod adapters;
 mod adt;
 mod any;
+mod any_builtin;
 mod any_checks;
 mod any_delete;
 mod any_eq;
@@ -32,7 +33,9 @@ mod any_has;
 mod any_iface;
 mod any_keys;
 mod any_member;
+mod any_number;
 mod any_proxy;
+mod any_record;
 mod any_rest;
 mod any_set;
 mod any_set_site;
@@ -40,6 +43,9 @@ mod any_tuple;
 mod any_view;
 mod append;
 mod array;
+mod array_view;
+mod array_view_index;
+mod array_view_ops;
 mod assign_target;
 mod async_fn;
 mod attempt;
@@ -108,6 +114,8 @@ mod transfer;
 mod truthy;
 mod types;
 mod upcast;
+mod view_unswitch;
+mod view_unswitch_plain;
 mod weak;
 mod weak_object;
 mod weak_view;
@@ -577,6 +585,14 @@ struct FnLower<'c, 'h> {
     /// The field read lowered next is about to be changed in place, reached by running code
     /// (caller_stores.rs `owner_barrier`): it puts the barrier on its owner.
     owner_write: bool,
+    /// While an assignment is lowered: the box pointers of the array views its target goes
+    /// through, written back after the store (array_view.rs), each with the element index
+    /// written when the target is an element of it (only that element is written back).
+    view_writes: Option<Vec<(Operand, TyId, Option<Operand>)>>,
+    /// The next array dropped is a view's mirror, never a view itself (`Glue::MirrorDrop`).
+    mirror_drop: bool,
+    /// The view bit tests and loops lowered, for versioning (view_unswitch.rs).
+    view_loops: view_unswitch::ViewLoops,
     /// This function's read mode, once asked (rc.rs `lk_mode`).
     lk_mode: Option<Local>,
     /// This thread's `RwLock` reader state, once a `read` returned it (async_fn/sync.rs).
@@ -669,4 +685,7 @@ struct FnLower<'c, 'h> {
     /// Lowering a method of the prelude's `Reflect`, where a proxy's reads reach their target:
     /// a read `any` cannot do yet names #823 (any_member.rs `any_get_str`).
     in_reflect: bool,
+    /// An object is being built from a record's entries (`any_record_fill`): its fields are
+    /// converted without that path, so a type that contains itself ends.
+    record_fill: bool,
 }

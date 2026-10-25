@@ -33,7 +33,9 @@ function scale(xs: f64[], k: f64 = 2.0): f64[] {
   a passed `undefined`, as in JavaScript. The function applies it itself when the call starts,
   so it is the function's own default whichever way it is called: through an interface whose
   method takes `x?: any`, through a base class whose method the class overrides, through a
-  function value (`const g = d; g(undefined)`), or as a callback (`xs.map((v: any = 0) => …)`).
+  function value (`const g = d; g(undefined)`, and `g()`: a left-out argument of a dynamic
+  type is `undefined` through a function value too), or as a callback
+  (`xs.map((v: any = 0) => …)`).
   So does the default of a parameter whose type allows `undefined` (`x: number | undefined =
   5`, or `status = 302` where an interface declares `status?: number`), which is a `number` in
   the body. Any other default also applies to a passed `undefined`, tested where it is passed:
@@ -124,7 +126,9 @@ function scale(xs: f64[], k: f64 = 2.0): f64[] {
   (`Promise<void>` when `async`). Not supported yet: a generator calling itself this way (pass
   the locals it uses as parameters, or declare it at module level), and a use before a local
   it uses is declared, which JS allows when the call runs later (declare the local first). A
-  generic nested function cannot use the enclosing function's locals.
+  generic nested function cannot use the enclosing function's locals. A nested function may
+  name the type parameters of the enclosing function or class (`function failed(): Res<T>`)
+  even when it uses no locals.
 
   ```ts
   function tally(words: string[]): string {
@@ -384,10 +388,13 @@ function main() {
 }
 ```
 
-Not yet: in the body, a value of such a type parameter has none of its bound's members
-(`Object.keys(o)` on a `T extends Record<string, V>`, `xs[0]` on a `T extends X[]`; take the
-bound's type as the parameter's where the body needs them, #1212), and a parameter has at most
-one such bound (`T extends A & B` with both no interfaces).
+In the body, a value of a type parameter bounded by an array or primitive type reads the
+bound's fields and elements (`xs.length` and `xs[0]` on a `T extends number[]`), through the
+value as an `any`, converted to the bound's type. Not yet: its methods (`s.toUpperCase()` on a
+`T extends string`), the members of a class bound (`x.size` on a `T extends Map<K, V>`, which
+are resolved statically), `Object.keys(o)` on a `T extends Record<string, V>` (take the bound's
+type as the parameter's where the body needs them, #1212), and more than one such bound for a
+parameter (`T extends A & B` with both no interfaces).
 
 A type parameter may have a **default** (`<T = string>`), as in TypeScript: a type parameter
 nothing infers takes it, an inferred one ignores it, and explicit type arguments may leave out
@@ -437,7 +444,12 @@ the parameter that grows, when the grown argument is an object type (a struct, c
 type, array, tuple, map or function type). An instantiation whose argument is such an object type
 does not compile that branch (`g(x)` still runs; if it returns `true`, which its type rules
 out, the program stops with a `TypeError`), so the recursion ends there. An argument that may
-hold a primitive (a union with a primitive member, `any`, `unknown`) keeps the branch.
+hold a primitive (a union with a primitive member, `any`, `unknown`) keeps the branch. What
+the branch throws is part of the function's error type only for the instantiations that have
+it (`throw new Fail(x)` there makes `depth<number>` throw `Fail<number>`, and
+`depth<{ value: number }>` nothing). The recursion is still rejected when only a value
+bounds it (`if (n > 0) return depth({ value: x }, n - 1)`): the type predicate is what tells
+the instantiations apart.
 
 ```ts
 type Primitive = string | number | boolean | null | undefined;
@@ -554,7 +566,8 @@ console.log(g.next(), g.next().value, g.next().done);  // { value: 1, done: fals
 - A generator's parameter defaults are evaluated when it is called, before the body runs, as
   in JS; a default of a parameter of a dynamic type (`x: any = "g"`) also applies to a passed
   `undefined`, whether the generator is called directly or through a function value
-  (`const gv = gen; gv(undefined)`).
+  (`const gv = gen; gv(undefined)`, also for a generic generator and a static generator of a
+  generic class).
 - A generator keeps its arguments (they are owned, as for an async function) and its locals
   between `yield`s. A generator method sees `this` as it is when the body runs, not when the
   method was called, as in JS. Calling `next()` or `return()` on a generator from inside its
@@ -1035,9 +1048,38 @@ async function main() {
   }
   console.log(kinds.indexOf(Point3), kinds[0] === Point); // 1 true
   ```
-- **Planned** (#943): generic function types (`<T>(description: string) => Token<T>`, a value
-  each call instantiates). They parse, and using one is an error saying it is not supported
-  yet.
+- **Generic function types** (`<T>(x: T) => T`, a value each call instantiates, #943): a
+  `const` of such a type is a generic function, as a generic arrow constant is, so each call
+  instantiates it and nothing is boxed. The type may be written at the constant, named by a type
+  alias (also a generic one at its arguments, `const pair: Pair<string> = …`, or one imported
+  from another module), or by an interface with one generic call signature (`interface Mapper {
+  <A, B>(xs: A[], f: (a: A) => B): B[] }`). Its value is an arrow function, whose parameters
+  take their types from the function type where it writes none (it may take fewer parameters
+  than the type, as in TypeScript), or a name, which each call reads and calls at the
+  instantiated type: also a name asserted to the type,
+  `const createToken = Symbol as unknown as <T>(description: string) => Token<T>`, whose
+  function converts to the instantiated type directly, a branded result such as
+  `symbol & { __t?: T }` taking the value as it is. Like a local generic arrow, a local constant
+  of such a type cannot use the local variables around it. A generic function type anywhere
+  else (a parameter, a field, a `let`, a constant with another initializer) is a value that
+  stays generic, which is not supported yet: using one is an error saying so, as are generic
+  construct signatures (`new <T>(x: T) => Box<T>`).
+
+  ```ts
+  type Id = <T>(x: T) => T;
+  const id: Id = (x) => x;
+  type Pair<K> = <V>(key: K, value: V) => [K, V];
+  const pair: Pair<string> = (k, v) => [k, v];
+  type Token<T> = symbol & { readonly __type?: T };
+  const createToken = Symbol as unknown as <T>(description: string) => Token<T>;
+
+  function main() {
+    console.log(id(3), id("s")); // 3 s
+    console.log(pair("a", true)); // [ 'a', true ]
+    const t = createToken<number>("port");
+    console.log(typeof t, t.description); // symbol port
+  }
+  ```
 - A function type's parameter may be named by a destructuring pattern
   (`([a, b]: [number, number]) => number`), which, like a name, is only for the reader.
 - A function type's parameter may be **optional** (`(app: App, options?: Options) => void`): its
@@ -1255,8 +1297,9 @@ console.log(add.call(null, 1, 2), add.apply(null, pair)); // 3 7
   closure assigns, or that the enclosing code assigns after creating it, lives in a cell. Every
   call runs as a started promise on the caller's task, so it interleaves with the rest of the
   task only at `await`s, never in parallel ([Async](async.md#promises)).
-- An async closure that may run on another thread copies what it captured for each call, and
-  may not modify a captured variable or object, itself or through a closure it creates (``this
+- An async closure that may run on another thread copies what it captured for each call (one
+  copy per call: two reads of a captured object in a call are the same object, `===` also as an
+  `any`), and may not modify a captured variable or object, itself or through a closure it creates (``this
   async closure modifies captured `n`, so it must stay on the task that created it``, with where
   it leaves its task); nor may the enclosing code assign one it captured (``cannot assign to `k`
   after a stored closure captured it``), nor a closure created in another closure (``…is

@@ -1,0 +1,60 @@
+// check: no leaks
+// A generic function that calls itself with a growing type argument behind a primitive type
+// predicate (#1251) and throws a generic error in that branch: its error type takes only what
+// the instances that have the branch throw (`Fail<T>` for a primitive `T`), so error inference
+// finishes. Also an async one, one that grows through a class and an array, and one that
+// passes the value to another generic function there. Expected output from `node`.
+type Primitive = string | number | boolean | symbol | bigint | null | undefined;
+
+function isPrimitive(value: unknown): value is Primitive {
+  return value === null || (typeof value !== "object" && typeof value !== "function");
+}
+
+class Fail<T> extends Error {
+  constructor(public v: T) {
+    super("fail");
+  }
+}
+
+function keep<U>(x: U): U | null {
+  return x;
+}
+
+function wrap<T>(target: T, depth: number): string {
+  if (isPrimitive(target)) {
+    if (depth > 9) throw new Fail(target);
+    const k = keep(target);
+    return `${k === null}:` + wrap({ value: target }, depth + 1);
+  }
+  return JSON.stringify(target);
+}
+
+async function later<T>(t: T): Promise<string> {
+  if (isPrimitive(t)) return await later({ value: t });
+  return JSON.stringify(t);
+}
+
+class Box<T> {
+  constructor(public v: T) {}
+}
+
+function boxed<T>(t: T): string {
+  if (isPrimitive(t)) return "box(" + boxed(new Box(t)) + ")";
+  return "object";
+}
+
+function listed<T>(t: T): number {
+  if (isPrimitive(t)) return listed([t, t]);
+  return 1;
+}
+
+async function main() {
+  console.log(wrap(1, 0), wrap("s", 3));
+  try {
+    console.log(wrap(true, 10));
+  } catch (e) {
+    console.log((e as Error).message, e instanceof Fail ? e.v : "?");
+  }
+  console.log(await later("q"), await later({ k: 2 }));
+  console.log(boxed(2), boxed({}), listed("a"), listed([1]));
+}

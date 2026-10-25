@@ -50,6 +50,9 @@ pub(crate) struct Ctx<'m> {
     pub prelude: FxHashMap<String, Item>,
     pub aliases: Vec<AliasInfo<'m>>,
     pub extensions: Vec<Extension>,
+    /// The extensions declaring each method name, built for the first `extensions.len()`
+    /// extensions (body/expr/method.rs `applicable_extensions`).
+    pub(crate) extension_names: (usize, FxHashMap<String, Vec<usize>>),
     pub impls: Vec<ImplDef>,
     /// Interfaces written through and their setter slots (`crate::iface_writes`).
     pub(crate) iface_writes: crate::iface_writes::IfaceWrites,
@@ -77,6 +80,9 @@ pub(crate) struct Ctx<'m> {
     pub brands: FxHashMap<DefId, TyId>,
     /// (primitive, object part) → the brand's definition.
     pub brand_keys: FxHashMap<(TyId, TyId), DefId>,
+    /// Brands whose object part mentions type parameters (`symbol & { __t?: T }`): substitution
+    /// brands the substituted object part (`Ctx::subst`). Empty in most programs.
+    pub generic_brands: FxHashSet<DefId>,
     /// Brands of a `Record<string, any>` (or `unknown`) by the named members written next to
     /// its index signature → that object type of the named members (`crate::index_signatures`).
     pub record_views: FxHashMap<DefId, TyId>,
@@ -98,6 +104,9 @@ pub(crate) struct Ctx<'m> {
     /// Checking type aliases nothing uses (`resolve::check_unused_aliases`): a utility type on
     /// one of the alias's own type parameters is fine there (it is resolved at each use).
     pub checking_unused_aliases: bool,
+    /// Some body has a type predicate on a type parameter's value (`MayHoldPrimitive`, #1251):
+    /// error inference then drops what a guarded branch throws in object instances.
+    pub primitive_guards: bool,
     /// The state of type-level evaluation (`crate::type_level`).
     pub(crate) type_level: crate::type_level::State,
     /// The program (not std) writes `undefined`: else the checks only it needs (`undefined_args`,
@@ -239,8 +248,9 @@ pub(crate) struct Ctx<'m> {
     /// Name spans of the `const`s that closures in their own initializer use (`body::late_consts`):
     /// a closure may capture one before it is assigned.
     pub late_consts: FxHashSet<Span>,
-    /// Per generator with a dynamic default, the function its value is (`gen_value.rs`).
-    pub generator_values: FxHashMap<DefId, (DefId, TyId)>,
+    /// Per generator with a dynamic default (and its type arguments), the function its value
+    /// is (`gen_value.rs`).
+    pub generator_values: FxHashMap<(DefId, Vec<TyId>), (DefId, TyId)>,
     /// Recursive closure groups made by `crate::nested_closures`.
     pub closure_groups: Vec<crate::nested_closures::ClosureGroup>,
     /// Group and member of each group member, by the name span of its `const`.
@@ -372,6 +382,7 @@ impl<'m> Ctx<'m> {
             prelude: FxHashMap::default(),
             aliases: vec![],
             extensions: vec![],
+            extension_names: (0, FxHashMap::default()),
             impls: vec![],
             iface_writes: Default::default(),
             part_ifaces: Default::default(),
@@ -385,6 +396,7 @@ impl<'m> Ctx<'m> {
             objects: Default::default(),
             brands: FxHashMap::default(),
             brand_keys: FxHashMap::default(),
+            generic_brands: FxHashSet::default(),
             record_views: FxHashMap::default(),
             field_only: FxHashMap::default(),
             field_only_of: FxHashMap::default(),
@@ -393,6 +405,7 @@ impl<'m> Ctx<'m> {
             bodies_ok: false,
             sigq: Default::default(),
             checking_unused_aliases: false,
+            primitive_guards: false,
             type_level: Default::default(),
             writes_undefined: false,
             shaped: FxHashSet::default(),

@@ -25,25 +25,34 @@ use crate::hir::{self, DefId, TyId};
 impl FnCx<'_, '_> {
     /// Generator `d` (a static method of `class` when given) used as a value at `span`, when
     /// one of its parameters has a default a passed `undefined` takes (module docs); `None`
-    /// otherwise.
+    /// otherwise, and when the context leaves a type argument of a generic generator open
+    /// (`slots`: the ones known; `fn_ref_slots` reports the others).
     pub(super) fn generator_value(
         &mut self,
         d: DefId,
         class: Option<DefId>,
+        slots: &[Option<TyId>],
         exp: Option<TyId>,
         span: Span,
     ) -> Option<hir::Expr> {
         let n = self.generator_value_params(d)?;
-        if let Some(&(c, ty)) = self.cx.generator_values.get(&d) {
-            return Some(self.mk(hir::ExprKind::FnRef(c, vec![]), ty, span));
-        }
         let f = self.cx.fn_info(d);
         let params: Vec<TyId> = f.params.iter().map(|p| p.ty).collect();
         let (is_async, fn_module) = (f.is_async, f.module);
         let name = crate::body::defaults::fn_sig_ast(f.source?).name.clone();
         let ret = crate::body::returns::ret_of(self.cx, d, span);
-        let ty = self.fn_value_type(d, params, ret, is_async);
-        let ty = self.fn_value_errors(d, &[], ty, exp, span);
+        let fn_ty = self.fn_value_type(d, params, ret, is_async);
+        let mut slots = slots.to_vec();
+        if let Some(e) = self.hint(exp) {
+            self.cx.match_ty(fn_ty, e, &mut slots);
+        }
+        let args = slots.into_iter().collect::<Option<Vec<TyId>>>()?;
+        let key = (d, args);
+        if let Some(&(c, ty)) = self.cx.generator_values.get(&key) {
+            return Some(self.mk(hir::ExprKind::FnRef(c, vec![]), ty, span));
+        }
+        let ty = self.cx.subst(fn_ty, &key.1);
+        let ty = self.fn_value_errors(d, &key.1, ty, exp, span);
         // The wrapper is checked in the scope of the module that names the generator, outside
         // any function: it is the same function wherever the generator is read.
         let (module, callee) = match class.and_then(|c| self.cx.adt(c)) {
@@ -61,14 +70,22 @@ impl FnCx<'_, '_> {
             }
             None => (fn_module, synth(ast::ExprKind::Ident(name), span)),
         };
+        // The call in the arrow infers the generator's type arguments from the arrow's
+        // parameters and result, which are the ones taken from the context.
         let arrow = generator_arrow(&callee, n, span);
+        if key.1.iter().any(|&a| self.cx.mentions_params(a)) {
+            // The type arguments name the enclosing generic function's type parameters: the
+            // arrow is a closure of that function (the names it reads resolve here as they did
+            // where the generator was named).
+            return Some(self.closure(&arrow, Some(ty), true));
+        }
         let mut fcx = crate::body::driver::detached(self.cx, module, &[]);
         let h = fcx.closure(&arrow, Some(ty), true);
         // The arrow captures nothing: one function per generator, named by every read as a
         // function is (`gen === gen`, one `Set` member), not a new closure each time.
         match h.kind {
             hir::ExprKind::Closure(c) if self.closure_captures_nothing(c) => {
-                self.cx.generator_values.insert(d, (c, h.ty));
+                self.cx.generator_values.insert(key, (c, h.ty));
                 Some(self.mk(hir::ExprKind::FnRef(c, vec![]), h.ty, span))
             }
             _ => Some(h),
@@ -82,17 +99,13 @@ impl FnCx<'_, '_> {
 
     /// The number of parameters of generator `d` when a call through a function value must
     /// apply one of its defaults (a parameter of a dynamic type whose default is not
-    /// `undefined`); `None` for any other function, and for a generic generator or one with a
-    /// rest parameter (no single function type to check the arrow against).
+    /// `undefined`); `None` for any other function, and for one with a rest parameter.
     fn generator_value_params(&mut self, d: DefId) -> Option<usize> {
         if !self.is_generator_fn(d) {
             return None;
         }
         let f = self.cx.fn_info(d);
         let src = f.source?;
-        if !f.generics.names.is_empty() {
-            return None;
-        }
         let sig = crate::body::defaults::fn_sig_ast(src);
         if sig.params.iter().any(|p| p.rest) {
             return None;

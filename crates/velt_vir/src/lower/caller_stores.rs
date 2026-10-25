@@ -117,6 +117,9 @@ impl FnLower<'_, '_> {
     /// method or function takes out of or reads from the caller's container (`out.pop()`,
     /// `m.get(k)`), literals, objects and closures made of these.
     pub(super) fn held_by_caller(&mut self, e: &hir::Expr) -> bool {
+        // A copy of an object type's fields (`part_copy_upcast`) is an object the reader makes
+        // of the operand's fields, as an object literal of them would be: held when the
+        // operand is, by the arm below.
         match &e.kind {
             K::Local(..) | K::Lit(_) | K::Closure(_) => true,
             K::Field { base, .. }
@@ -404,6 +407,10 @@ impl FnLower<'_, '_> {
     /// container given nothing that may reach the lock set (`out.at(0)!`, `out.find(f)`), or a
     /// choice of two of them?
     pub(super) fn caller_object(&mut self, e: &hir::Expr) -> bool {
+        // A copy of an object type's fields is a new object (`part_copy_upcast`).
+        if self.part_copy_upcast(e) {
+            return false;
+        }
         if self.captured_root(e) {
             return true;
         }

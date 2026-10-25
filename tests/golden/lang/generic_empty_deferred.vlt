@@ -1,0 +1,11 @@
+// `{} as Partial<T>` / `{} as Pick<T, K>` never written: the object is built from the empty
+// record, which needs the `any` table's member slots though nothing else reads through `any`.
+function emptyP<T>(o: T): Partial<T> {
+  const r = {} as Partial<T>;
+  return r;
+}
+function nonePicked<T, K extends keyof T>(o: T, ks: K[]): Partial<Pick<T, K>> {
+  const r = {} as Partial<Pick<T, K>>;
+  return r;
+}
+console.log(emptyP({ a: 1 }), nonePicked({ a: 1, b: "x" }, ["a"]));

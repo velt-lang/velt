@@ -1,0 +1,118 @@
+// check: no leaks
+// Loops over rows of a view type (#1485) where a row may become a view between the loop's
+// test `i < rows[k].length` and the element access `rows[k][i]`: the access then reads the
+// view, so a loop's copy may take the row as plain only when nothing in between can change it.
+// Here a call in the test's right side, a store in the body before the access, a closure
+// call, an `await`, a store into another array and a reassigned index change it (or might).
+function bump(rows: string[][], k: number, v: string[]): number {
+  if (k === 1) {
+    rows[k] = v;
+  }
+  return 0;
+}
+
+function inCondition(rows: string[][], v: string[]): number {
+  let n = 0;
+  for (let k = 0; k < rows.length; k++) {
+    for (let i = 0; i < rows[k].length + bump(rows, k, v); i++) {
+      n += rows[k][i].length * (i + 1);
+    }
+  }
+  return n;
+}
+
+function storeInBody(rows: string[][], v: string[]): string {
+  let out = "";
+  for (let k = 0; k < rows.length; k++) {
+    for (let i = 0; i < rows[k].length; i++) {
+      if (k === 0 && i === 1) {
+        rows[k] = v;
+      }
+      out += rows[k][i] + ",";
+    }
+  }
+  return out;
+}
+
+function closureCall(rows: string[][], v: string[]): string {
+  let out = "";
+  let at = 0;
+  const swap = () => {
+    rows[at] = v;
+  };
+  for (let k = 0; k < rows.length; k++) {
+    at = k;
+    for (let i = 0; i < rows[k].length; i++) {
+      if (i === 0 && k === 1) {
+        swap();
+      }
+      out += rows[k][i] + ";";
+    }
+  }
+  return out;
+}
+
+async function awaited(rows: string[][]): Promise<string> {
+  let out = "";
+  for (let k = 0; k < rows.length; k++) {
+    for (let i = 0; i < rows[k].length; i++) {
+      await Promise.resolve(0);
+      out += rows[k][i] + "|";
+    }
+  }
+  return out;
+}
+
+function otherStore(rows: string[][], other: string[][]): number {
+  let n = 0;
+  for (let k = 0; k < rows.length; k++) {
+    for (let i = 0; i < rows[k].length; i++) {
+      other[0] = rows[k];
+      n += rows[k][i].length + other[0][i].length;
+    }
+  }
+  return n;
+}
+
+function movedIndex(rows: string[][]): string {
+  let out = "";
+  for (let k = 0; k < rows.length; k++) {
+    let j = k;
+    for (let i = 0; i < rows[j].length; i++) {
+      j = rows.length - 1 - k;
+      out += i < rows[j].length ? rows[j][i] : "-";
+    }
+  }
+  return out;
+}
+
+function plainRows(rows: string[][]): number {
+  let n = 0;
+  for (let k = 0; k < rows.length; k++) {
+    for (let i = 0; i < rows[k].length; i++) {
+      n += rows[k][i].length;
+    }
+  }
+  return n;
+}
+
+async function main() {
+  // `raw` holds a `(string | number)[]`, so `v` is a view of it.
+  const src: (string | number)[] = ["long", "longer", "longest", "longests"];
+  const raw: any = src;
+  const v = raw as string[];
+  console.log(inCondition([["a", "bb"], ["c", "dd", "eee"], ["f"]], v));
+  console.log(storeInBody([["a", "b", "c"], ["d"]], v));
+  console.log(closureCall([["x"], ["y", "z"], ["w"]], v));
+  const rows: string[][] = [["p", "q"], ["r", "s", "t"]];
+  const done = awaited(rows);
+  rows[0] = v;
+  rows[1] = v;
+  console.log(await done);
+  const other: string[][] = [[]];
+  console.log(otherStore([["ab", "c"], v, ["de"]], other));
+  console.log(movedIndex([["a", "b", "c"], ["d"], v]));
+  console.log(plainRows([["a", "bb"], ["ccc"], v, ["dddd"]]));
+  v.push("pushed");
+  console.log(JSON.stringify(src));
+}

@@ -15,8 +15,9 @@ impl FnLower<'_, '_> {
         use hir::ExprKind as K;
         if let K::Upcast(inner) = &e.kind {
             let (from, to) = (self.sub(inner.ty), self.sub(e.ty));
-            // An interface upcast builds a new interface value (`expr`, below).
-            if self.upcast_slot(from, to).is_none() {
+            // An interface upcast builds a new interface value, and an object type as one with
+            // some of its fields a copy of them (`expr`, below).
+            if self.upcast_slot(from, to).is_none() && !self.part_copy(from, to) {
                 self.cx.note_proxy_cast(from, to);
                 return self.consume(inner);
             }
@@ -145,8 +146,10 @@ impl FnLower<'_, '_> {
                 self.binop(*op, l, r, lhs.ty, e.ty)
             }
             K::Logical { op, lhs, rhs } => self.logical(*op, lhs, rhs),
-            K::Assign { place, value } => self.assign_expr(place, value),
-            K::CompoundAssign { op, place, value } => self.compound_assign(*op, place, value),
+            K::Assign { place, value } => self.with_view_writes(|lw| lw.assign_expr(place, value)),
+            K::CompoundAssign { op, place, value } => {
+                self.with_view_writes(|lw| lw.compound_assign(*op, place, value))
+            }
             K::Call {
                 callee: hir::Callee::Intrinsic(hir::Intrinsic::SourceLocation),
                 ..
@@ -212,6 +215,12 @@ impl FnLower<'_, '_> {
             K::New { args, .. } => self.new_object(e.ty, args),
             K::Upcast(inner) => {
                 let (from, to) = (self.sub(inner.ty), self.sub(e.ty));
+                // An object type as one with some of its fields (sema's `part_copy`, checked by
+                // `object_copies`): a new object of those fields.
+                // It is an owned temporary (`build_agg`), which `consume` takes over.
+                if self.part_copy(from, to) {
+                    return self.spread_object(std::slice::from_ref(&**inner), e.ty);
+                }
                 if let Some(slot) = self.upcast_slot(from, to) {
                     let v = self.consume(inner);
                     return self.upcast_value(v, from, to, slot);
@@ -660,5 +669,41 @@ fn float_to_int(v: f64, to: Ty) -> i128 {
         0
     } else {
         (v as i128).clamp(lo, hi)
+    }
+}
+
+impl FnLower<'_, '_> {
+    /// Is `e` an `Upcast` that copies an object type's fields into a new object of the
+    /// target type (`part_copy`): a fresh owned temporary, not a place rooted in its operand?
+    pub(super) fn part_copy_upcast(&mut self, e: &hir::Expr) -> bool {
+        let hir::ExprKind::Upcast(inner) = &e.kind else {
+            return false;
+        };
+        let (from, to) = (self.sub(inner.ty), self.sub(e.ty));
+        self.part_copy(from, to)
+    }
+
+    /// Is the `Upcast` of a `from` to a `to` a copy of some of `from`'s fields (both object
+    /// types, `to` with fewer fields; sema accepted it as such, `generic_spread::part_copy`)?
+    /// Two forms of one layout are the same value.
+    fn part_copy(&mut self, from: TyId, to: TyId) -> bool {
+        let (hir::TyKind::Adt(a, _), hir::TyKind::Adt(b, _)) =
+            (self.cx.kind(from), self.cx.kind(to))
+        else {
+            return false;
+        };
+        if a == b || self.cx.is_class(from) || self.cx.is_class(to) {
+            return false;
+        }
+        let (hir::Def::Adt(da), hir::Def::Adt(db)) = (self.cx.hir.def(a), self.cx.hir.def(b))
+        else {
+            return false;
+        };
+        if da.fields.len() <= db.fields.len() {
+            return false;
+        }
+        db.fields
+            .iter()
+            .all(|f| da.fields.iter().any(|g| g.name == f.name))
     }
 }
