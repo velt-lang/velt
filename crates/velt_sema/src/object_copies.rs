@@ -22,7 +22,9 @@
 //! The fix keeps Node's behavior: an object literal with the fields (`{ a: x.a }`) is a new
 //! object in TypeScript too. Generic code is checked where it has concrete types (`JSON.stringify` everywhere).
 
-use rustc_hash::FxHashSet;
+use std::cell::RefCell;
+
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::{Diagnostic, Span};
 
@@ -170,6 +172,9 @@ pub(crate) fn check(cx: &mut Ctx) {
         seen: &seen,
         sources: &dyn_sources,
         flow: &flow,
+        held: Default::default(),
+        dynamic: Default::default(),
+        generic: Default::default(),
     };
     let built = match proxies {
         true => built_types(cx),
@@ -296,13 +301,8 @@ fn sees(
             related(cx, t, c.to) || (cx.dynamic(t).is_some() && dynamic_holds(cx, c, ci, looks))
         }
         _ => {
-            holds(cx, t, c.to, &mut FxHashSet::default())
-                || (holds_by(
-                    cx,
-                    t,
-                    &mut |cx, x| cx.dynamic(x).is_some(),
-                    &mut FxHashSet::default(),
-                ) && dynamic_holds(cx, c, ci, looks))
+            looks.holds(cx, t, c.to)
+                || (looks.holds_dynamic(cx, t) && dynamic_holds(cx, c, ci, looks))
         }
     }
 }
@@ -312,18 +312,56 @@ struct Dynamic<'a> {
     seen: &'a [(TyId, Span, Seen)],
     sources: &'a [Vec<Store>],
     flow: &'a CopyFlow,
+    /// What the type walks below found, as each copy asks them of each look at a type:
+    /// [`holds`] of a type and a copy's type, whether a type can hold a dynamic value, and
+    /// [`dynamic_holds`] of a generic copy, which depends only on its type.
+    held: RefCell<FxHashMap<(TyId, TyId), bool>>,
+    dynamic: RefCell<FxHashMap<TyId, bool>>,
+    generic: RefCell<FxHashMap<TyId, bool>>,
+}
+
+impl Dynamic<'_> {
+    /// [`holds`], remembered.
+    fn holds(&self, cx: &mut Ctx, t: TyId, target: TyId) -> bool {
+        if let Some(&h) = self.held.borrow().get(&(t, target)) {
+            return h;
+        }
+        let h = holds(cx, t, target, &mut FxHashSet::default());
+        self.held.borrow_mut().insert((t, target), h);
+        h
+    }
+
+    /// Can a value of type `t` hold a dynamic value (`any`, `unknown`, `object`)? Remembered.
+    fn holds_dynamic(&self, cx: &mut Ctx, t: TyId) -> bool {
+        if let Some(&h) = self.dynamic.borrow().get(&t) {
+            return h;
+        }
+        let is = &mut |cx: &mut Ctx, x| cx.dynamic(x).is_some();
+        let h = holds_by(cx, t, is, &mut FxHashSet::default());
+        self.dynamic.borrow_mut().insert(t, h);
+        h
+    }
 }
 
 /// Does the program convert a value that may be (or hold) the copy `c` (number `ci`) made to a
 /// dynamic type?
 fn dynamic_holds(cx: &mut Ctx, c: &Copy, ci: usize, looks: &Dynamic) -> bool {
-    looks.seen.iter().any(|&(t, _, how)| match how {
+    if c.generic {
+        if let Some(&h) = looks.generic.borrow().get(&c.to) {
+            return h;
+        }
+    }
+    let h = looks.seen.iter().any(|&(t, _, how)| match how {
         Seen::Dynamic(i) => {
             (c.generic || looks.flow.carries(ci, &looks.sources[i as usize]))
-                && holds(cx, t, c.to, &mut FxHashSet::default())
+                && looks.holds(cx, t, c.to)
         }
         _ => false,
-    })
+    });
+    if c.generic {
+        looks.generic.borrow_mut().insert(c.to, h);
+    }
+    h
 }
 
 /// Does the program convert the copy `c` (number `ci`), or a value that may hold its source, to
