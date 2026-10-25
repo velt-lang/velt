@@ -543,7 +543,11 @@ console.log(p.len(), q.len());  // 4 4
   The method that runs is the one of the class the type parameter is given: when a subclass of that
   class overrides it, a value of the class may hold the subclass, so instantiating the generic
   with that class is the same error as calling the method on it directly (pass the concrete
-  class), and an interface value cannot stand for such a type parameter.
+  class), and an interface value cannot stand for such a type parameter. A call that passes
+  exactly that class is allowed: a `new C()` given directly to a parameter of type `T` of a
+  function or of a generic method, or a `const` initialized with `new C()`. Other variables, a
+  value inside another parameter's type (`get: () => T`, `xs: T[]`), a default (`y: T = x`)
+  and a class instantiated with `C` (`new Holder<C>(new C())`) don't count.
 - A default body can be `async` (`async load(): Promise<T> { … }`), with the rules of an async
   class method ([Async](async.md#errors)). A method without a body cannot be: like in TypeScript,
   it declares a `Promise` result, and implementations may be `async`.

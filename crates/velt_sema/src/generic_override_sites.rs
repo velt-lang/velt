@@ -13,7 +13,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use velt_common::{Diagnostic, Span};
 
 use crate::ctx::Ctx;
-use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E, TyId, TyKind};
+use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E, LocalId, TyId, TyKind};
 use crate::visit;
 
 /// Type parameter `.1` of definition `.0` (a function, or a class for its methods).
@@ -126,14 +126,29 @@ type Collected = (
 /// Do the values of type parameter `j` (given class type `t`) that call `g` receives all hold
 /// exactly that class (`go(new Sq())`), so that its own method is the one JavaScript runs? Each
 /// parameter of `g` whose declared type mentions the parameter must be of the parameter's type
-/// itself, and given a `new` of `t`. A value inside another type (`get: () => T`, `ys: T[]`,
-/// `o: { m: T }`) or read from a variable may be of a subclass, and so may one given to a class
-/// instantiated with `t`, whose methods take more later.
+/// itself, and given a `new` of `t` (or a variable never reassigned that was initialized with
+/// one, [`new_locals`]). A value inside another type (`get: () => T`, `ys: T[]`, `o: { m: T }`),
+/// a default, or one read from another variable may be of a subclass, and so may one given to a
+/// class instantiated with `t`, whose methods take more later. A method's receiver (`this`) may
+/// hold its class's type parameters, so only the method's own ones can be exact.
 fn exact(cx: &Ctx, g: DefId, j: u32, t: TyId, args: &[(TyId, bool)]) -> bool {
     let Some(f) = cx.try_fn(g) else {
         return false;
     };
-    if f.this.is_some() || f.params.len() != args.len() {
+    let args = match f.this {
+        Some(_) => {
+            let class = f
+                .owner
+                .and_then(|o| cx.adt(o))
+                .map_or(0, |a| a.generics.len());
+            if (j as usize) < class || args.len() != f.params.len() + 1 {
+                return false;
+            }
+            &args[1..]
+        }
+        None => args,
+    };
+    if f.params.len() != args.len() {
         return false;
     }
     let mut given = false;
@@ -154,6 +169,34 @@ fn exact(cx: &Ctx, g: DefId, j: u32, t: TyId, args: &[(TyId, bool)]) -> bool {
         }
     }
     given
+}
+
+/// The variables of a body that are initialized with a `new` and never reassigned (`const a =
+/// new A()`), with the `new`'s type: such a variable holds exactly that class.
+fn new_locals(f: &mut crate::hir::FnDef) -> FxHashMap<LocalId, TyId> {
+    struct Lets(FxHashMap<LocalId, TyId>);
+    impl visit::VisitMut for Lets {
+        fn stmt(&mut self, s: &mut crate::hir::Stmt) {
+            if let crate::hir::StmtKind::Let {
+                local,
+                init: Some(e),
+            } = &s.kind
+            {
+                if matches!(e.kind, E::New { .. }) {
+                    self.0.insert(*local, e.ty);
+                }
+            }
+        }
+    }
+    let mut lets = Lets(FxHashMap::default());
+    visit::block(&mut f.body.block, &mut lets);
+    let locals = &f.body.locals;
+    lets.0.retain(|l, _| {
+        locals
+            .get(l.0 as usize)
+            .is_some_and(|d| !d.mutable && !d.boxed)
+    });
+    lets.0
 }
 
 /// The slots each parameter is called through directly, the edges from a parameter to the
@@ -182,6 +225,7 @@ fn collect(cx: &mut Ctx) -> Collected {
         }
         let n = f.generics;
         let generic = n > 0;
+        let news = new_locals(f);
         visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| match &e.kind {
             E::Call {
                 callee: Callee::ParamMethod { iface, slot, .. },
@@ -213,7 +257,14 @@ fn collect(cx: &mut Ctx) -> Collected {
                 let given = match &e.kind {
                     E::Call { .. } => Some(
                         args.iter()
-                            .map(|a| (a.ty, matches!(a.kind, E::New { .. })))
+                            .map(|a| {
+                                let new = match &a.kind {
+                                    E::New { .. } => true,
+                                    E::Local(l, _) => news.get(l) == Some(&a.ty),
+                                    _ => false,
+                                };
+                                (a.ty, new)
+                            })
                             .collect(),
                     ),
                     _ => None,
