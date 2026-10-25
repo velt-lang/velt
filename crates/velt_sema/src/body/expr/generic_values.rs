@@ -381,6 +381,49 @@ impl FnCx<'_, '_> {
         Some(h)
     }
 
+    /// Generic interface method `m` (as the interface declares it, `n_iface` type
+    /// parameters) of an interface with arguments `iargs`, as the generic function type of a
+    /// value implementing it (an object literal's member written at `span`).
+    pub(super) fn method_generic_type(
+        &mut self,
+        m: &crate::defs::IfaceMethod,
+        n_iface: usize,
+        iargs: &[TyId],
+        span: Span,
+    ) -> TyId {
+        let mm = self.env.params.len();
+        let own = m.generics.len();
+        let mut map = iargs.to_vec();
+        map.resize(n_iface, self.cx.ty.error);
+        map.push(self.cx.ty.param(mm as u32));
+        for k in 0..own {
+            map.push(self.cx.ty.param((mm + 1 + k) as u32));
+        }
+        let user = self.cx.scopes.get(self.module).is_some_and(|s| !s.is_std);
+        let parts = FnParts {
+            params: m.params.iter().map(|p| self.cx.subst(p.ty, &map)).collect(),
+            ret: self.cx.subst(m.ret, &map),
+            throws: (m.throws.and_then(|t| t.ty)).map(|t| self.cx.subst(t, &map)),
+            rest: false,
+            bounds: (m.generics.bounds.iter())
+                .map(|bs| {
+                    bs.iter()
+                        .map(|b| Bound {
+                            iface: b.iface,
+                            args: b.args.iter().map(|a| self.cx.subst(*a, &map)).collect(),
+                        })
+                        .collect()
+                })
+                .collect(),
+            constraints: (m.generics.constraints.iter())
+                .map(|c| c.map(|t| self.cx.subst(t, &map)))
+                .collect(),
+            site: user.then_some(span),
+        };
+        let names = m.generics.names.clone();
+        self.cx.generic_fn_type(parts, mm, names, self.module, span)
+    }
+
     /// Reports a generic arrow where no generic function type is expected (`span`).
     fn generic_arrow_without_type(&mut self, span: Span) -> hir::Expr {
         self.cx.error(

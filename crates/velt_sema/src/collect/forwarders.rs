@@ -44,6 +44,15 @@ pub(crate) enum Target {
         fn_ty: TyId,
         this: Option<(TyId, u32)>,
     },
+    /// The generic function value in field `index` of the receiver (of generic function type
+    /// `fn_ty`, `crate::generic_fns`), called with the parameters at the method's own type
+    /// parameters `margs`: an object literal implementing a generic interface method
+    /// (`body/expr/iface_object.rs`).
+    GenericField {
+        index: u32,
+        fn_ty: TyId,
+        margs: Vec<TyId>,
+    },
     /// The function value (of type `fn_ty`, which throws nothing) getter `def` with these type
     /// args returns for the receiver, called with the parameters: a field holding a function
     /// that fills a method's slot (`synth_ifaces/upcasts.rs`).
@@ -55,6 +64,7 @@ pub(crate) enum Target {
 }
 
 /// The type a synthesized method belongs to.
+#[derive(Clone)]
 pub(crate) struct Host {
     /// The class / struct / interface (`None`: an `extend` block's target).
     pub d: Option<DefId>,
@@ -111,6 +121,7 @@ pub(crate) fn synth_method(
     let def = cx.alloc_def(span, DefInfo::Fn(Box::new(info)));
     let mut wrap = None;
     let mut this_arg = None;
+    let mut recv = None;
     let callee = match target {
         Target::Default(dd, targs) => {
             cx.fn_info_mut(def).throw_srcs = vec![ThrowSrc::Call(dd, targs.clone(), span)];
@@ -158,6 +169,42 @@ pub(crate) fn synth_method(
                 span,
             }))
         }
+        Target::GenericField {
+            index,
+            fn_ty,
+            margs,
+        } => {
+            let this = hir::Expr {
+                kind: H::Local(LocalId(0), UseMode::Borrow),
+                ty: self_ty,
+                span,
+            };
+            if let TyKind::Dyn(iface, gargs) = cx.ty.kind(fn_ty).clone() {
+                let mut args = gargs;
+                args.push(fn_ty);
+                args.extend(margs.iter().copied());
+                cx.fn_info_mut(def).throw_srcs = vec![ThrowSrc::Slot {
+                    iface,
+                    slot: 0,
+                    args,
+                    span,
+                }];
+            }
+            cx.generic_called.insert(crate::generic_fns::CALL.into());
+            recv = Some(hir::Expr {
+                kind: H::Field {
+                    base: Box::new(this),
+                    index,
+                    mode: UseMode::Borrow,
+                },
+                ty: fn_ty,
+                span,
+            });
+            Callee::Dyn {
+                slot: 0,
+                method_type_args: margs,
+            }
+        }
         Target::Getter {
             def: g,
             targs,
@@ -178,7 +225,7 @@ pub(crate) fn synth_method(
             }))
         }
     };
-    let call = (callee, wrap, this_arg);
+    let call = (callee, wrap, this_arg, recv);
     let body = forward_body(cx, self_ty, this_mode, &params, ret, call, span);
     let fndef = hir::FnDef {
         name,
@@ -214,14 +261,15 @@ type AsDyn = Option<(TyId, u32)>;
 
 /// `return callee(this, p1, .., pn);` (with `wrap = Some((ty, impl))`, the call has type `ty`
 /// and its result becomes an interface value through `impl`). An indirect call passes no
-/// receiver, unless `this_arg` says how to pass it (`Target::Field`).
+/// receiver, unless `this_arg` says how to pass it (`Target::Field`); `recv` is the receiver
+/// of a call through a field (`Target::GenericField`).
 fn forward_body(
     cx: &mut Ctx,
     self_ty: TyId,
     this_mode: PassMode,
     params: &[ParamSig],
     ret: TyId,
-    (callee, wrap, this_arg): (Callee, AsDyn, AsDyn),
+    (callee, wrap, this_arg, recv): (Callee, AsDyn, AsDyn, Option<hir::Expr>),
     span: Span,
 ) -> hir::Body {
     let local = |name: &str, ty| LocalDef {
@@ -244,6 +292,8 @@ fn forward_body(
         span,
     };
     match (&callee, this_arg) {
+        // The receiver of a call through a field (`Target::GenericField`).
+        _ if recv.is_some() => args.extend(recv),
         (Callee::Indirect(_), None) => {}
         (Callee::Indirect(_), Some((ty, impl_index))) => args.push(hir::Expr {
             kind: H::ToDyn {

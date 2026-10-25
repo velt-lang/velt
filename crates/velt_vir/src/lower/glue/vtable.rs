@@ -8,7 +8,7 @@
 //! (`AdtDef::vtable`) or the interface's methods. A virtual/interface call loads the entry and calls it: no
 //! dispatcher call in between.
 
-use velt_sema::hir::{DefId, TyId, TyKind};
+use velt_sema::hir::{self, DefId, TyId, TyKind};
 
 use super::{Glue, SLOT_CLONE, SLOT_DROP, SLOT_FORMAT, SLOT_NAME, SLOT_SHARE, SLOT_TRANSFER};
 use crate::lower::weak_object::WeakSlot;
@@ -210,15 +210,29 @@ impl Cx<'_> {
         entries
     }
 
+    /// Does the program call generic method `slot` of impl `index`'s interface with type
+    /// arguments of its own (`Program::generic_dyn_methods`)?
+    fn generic_called(&self, index: u32, slot: u32) -> bool {
+        let iface = self.hir.impls[index as usize].iface;
+        let hir::Def::Interface(i) = self.hir.def(iface) else {
+            return false;
+        };
+        (i.methods.get(slot as usize))
+            .is_some_and(|m| self.hir.generic_dyn_methods.contains(&m.name))
+    }
+
     fn impl_entries(&mut self, index: u32, ty: TyId) -> Vec<(i128, Const)> {
         let n = self.hir.impls[index as usize].methods.len();
         let mut entries = vec![];
         let mut tables = vec![];
         for slot in 0..n {
             let (m, targs) = self.impl_method(index, ty, slot as u32);
-            // A generic method's entry is its instantiation table (generic_slots.rs).
+            // A generic method's entry is its instantiation table (generic_slots.rs), when the
+            // program calls it through a table at all.
             if self.fn_def(m).generics as usize > targs.len() {
-                tables.push((slot, m, targs));
+                if self.generic_called(index, slot as u32) {
+                    tables.push((slot, m, targs));
+                }
                 continue;
             }
             entries.push((slot as i128, self.self_entry(m, targs)));

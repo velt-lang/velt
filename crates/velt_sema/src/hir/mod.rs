@@ -199,6 +199,11 @@ pub struct Program {
     pub cpu_targets: HashMap<DefId, CpuTarget>,
     /// Names of structural types for messages: aliases' and field-only interfaces'. Additive.
     pub type_names: HashMap<TyId, String>,
+    /// The names of the generic interface methods the program calls with type arguments of
+    /// their own (`Callee::Dyn`, or `Callee::ParamMethod`, which may be instantiated with an
+    /// interface value): only their vtable slots hold instantiation tables (hir_encodings.md
+    /// "Generic methods"). Additive.
+    pub generic_dyn_methods: HashSet<String>,
 }
 
 /// `ty` implements `iface<iface_args>` using `methods` (one per interface method, in order).

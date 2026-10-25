@@ -60,6 +60,8 @@ pub(crate) struct Ctx<'m> {
     /// Interfaces made for intersections and `Pick`s of interfaces with methods.
     pub(crate) synth_ifaces: crate::synth_ifaces::SynthIfaces,
     pub(crate) generic_fns: crate::generic_fns::GenericFns,
+    /// `hir::Program::generic_dyn_methods`.
+    pub(crate) generic_called: FxHashSet<String>,
     /// Views of unions of interfaces (`crate::union_views`).
     pub(crate) union_views: crate::union_views::UnionViews,
     pub(crate) any: Option<crate::any::AnyDefs>,
@@ -391,6 +393,7 @@ impl<'m> Ctx<'m> {
             part_ifaces: Default::default(),
             synth_ifaces: Default::default(),
             generic_fns: Default::default(),
+            generic_called: Default::default(),
             union_views: Default::default(),
             any: None,
             impl_index: Default::default(),

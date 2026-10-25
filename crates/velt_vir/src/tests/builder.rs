@@ -100,6 +100,7 @@ impl PB {
             upcast_impls: Default::default(),
             cpu_targets: Default::default(),
             type_names: Default::default(),
+            generic_dyn_methods: Default::default(),
         }
     }
 }

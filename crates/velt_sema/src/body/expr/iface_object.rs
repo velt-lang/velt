@@ -48,6 +48,9 @@ pub(super) enum Slot {
     Value(u32),
     /// A setter writing this field of the struct (`{ v: 1 }` for `get v()` and `set v(x)`).
     SetValue(u32),
+    /// The generic function value in this field, called at the method's own type arguments
+    /// (a generic method: `crate::generic_fns`).
+    GenericCall(u32),
 }
 
 /// One interface method, with the interface's type arguments substituted.
@@ -58,7 +61,8 @@ struct MethodSig {
     throws: Option<TyId>,
     default: Option<DefId>,
     is_getter: bool,
-    generic: bool,
+    /// A generic method as the interface declares it (over its own numbering).
+    raw: Option<crate::defs::IfaceMethod>,
 }
 
 /// The accessor a property is written as, if it is a getter or setter (`ast::OBJECT_GET_FN`).
@@ -150,15 +154,16 @@ impl FnCx<'_, '_> {
                     m.throws.and_then(|t| t.ty),
                     m.default,
                     m.is_getter,
-                    !m.generics.names.is_empty(),
+                    (!m.generics.names.is_empty()).then(|| m.clone()),
                 )
             })
             .collect();
+        let n_iface = info.generics.len();
         let self_ty = self.cx.ty.error;
         let mut sargs = iargs.clone();
         sargs.push(self_ty);
         let mut methods = vec![];
-        for (name, params, ret, throws, default, is_getter, generic) in raw {
+        for (name, params, ret, throws, default, is_getter, raw) in raw {
             let params = params
                 .into_iter()
                 .map(|p| ParamSig {
@@ -173,7 +178,7 @@ impl FnCx<'_, '_> {
                 throws: throws.map(|t| self.cx.subst(t, &sargs)),
                 default,
                 is_getter,
-                generic,
+                raw,
             });
         }
         let fields: Vec<(String, TyId, bool)> = fields
@@ -263,15 +268,26 @@ impl FnCx<'_, '_> {
                 }
                 (Written::Value(v), Some(slot), _) if !methods[slot].is_getter => {
                     let m = &methods[slot];
-                    if m.generic {
-                        self.cx.error(
-                            Diagnostic::error(
-                                format!("an object literal cannot implement the generic method `{}` of `{iname}`", m.name),
-                                key.span,
-                            )
-                            .with_note("a function value is not generic; declare a class that implements the interface"),
-                        );
-                        ok = false;
+                    if let Some(raw) = m.raw.clone() {
+                        // A generic method: a generic function value (`generic_values.rs`),
+                        // which the implementation calls at its own type arguments.
+                        if v.is_some_and(super::literal_this::takes_this) {
+                            self.cx.error(
+                                Diagnostic::error(
+                                    format!("a generic method of an object literal implementing `{iname}` cannot use `this` yet"),
+                                    key.span,
+                                )
+                                .with_note("declare a class that implements the interface"),
+                            );
+                            ok = false;
+                            continue;
+                        }
+                        let g = self.method_generic_type(&raw, n_iface, &iargs, key.span);
+                        let h = self.prop_value(&key, v, Some(g));
+                        let h = self.coerce(h, g);
+                        values.push((key.name.clone(), h));
+                        slots[slot] = Some(Slot::GenericCall(index));
+                        this_values.resize(values.len(), false);
                         continue;
                     }
                     let mut exp = self.method_fn_type(m);
@@ -470,6 +486,53 @@ impl FnCx<'_, '_> {
                     let ty = field_tys[j as usize].1;
                     crate::collect::getters::field_getter(self.cx, d, self_ty, j as usize, ty)
                 }
+                (Slot::GenericCall(j), Some(m)) => {
+                    let raw = m.raw.clone().expect("ICE: a generic slot's method");
+                    let n = ps.len();
+                    let own = raw.generics.len();
+                    let mut map = niargs.clone();
+                    map.push(self_ty);
+                    let margs: Vec<TyId> =
+                        (0..own).map(|k| self.cx.ty.param((n + k) as u32)).collect();
+                    map.extend(margs.iter().copied());
+                    let params: Vec<ParamSig> = (raw.params.iter())
+                        .map(|p| {
+                            let ty = self.cx.subst(p.ty, &map);
+                            ParamSig {
+                                ty,
+                                mode: match self.cx.is_copy(ty) {
+                                    true => PassMode::Copy,
+                                    false => PassMode::Borrow,
+                                },
+                                ..p.clone()
+                            }
+                        })
+                        .collect();
+                    let ret = self.cx.subst(raw.ret, &map);
+                    let mut host = host.clone();
+                    host.generics
+                        .names
+                        .extend(raw.generics.names.iter().cloned());
+                    host.generics.bounds.resize(n, vec![]);
+                    for bs in &raw.generics.bounds {
+                        let bs = (bs.iter())
+                            .map(|b| crate::defs::Bound {
+                                iface: b.iface,
+                                args: b.args.iter().map(|a| self.cx.subst(*a, &map)).collect(),
+                            })
+                            .collect();
+                        host.generics.bounds.push(bs);
+                    }
+                    host.generics.bounds.resize(n + own, vec![]);
+                    let target = Target::GenericField {
+                        index: j,
+                        fn_ty: field_tys[j as usize].1,
+                        margs,
+                    };
+                    let name = format!("{iname} literal.{}", m.name);
+                    synth_method(self.cx, &host, self_ty, name, params, ret, false, target)
+                }
+                (Slot::GenericCall(_), None) => unreachable!("ICE: a generic slot is a method's"),
                 (Slot::SetValue(j), m) => {
                     let ty = field_tys[j as usize].1;
                     let borrowed = m
