@@ -1,6 +1,5 @@
-// A compound assignment or an update of a member of an `any` comes with a later part of #924
-// (it needs the operators of `any`); a member of an `unknown` needs narrowing first (TS18046 in
-// `tsc --strict`).
+// A member of an `unknown` needs narrowing first (TS18046 in `tsc --strict`), also for a
+// compound assignment or an update; on an `any` they run as in JavaScript.
 class P {
   x: number = 1;
 }
@@ -12,4 +11,5 @@ function main(): void {
   const u: unknown = new P();
   console.log(u.x);
   u.x = 3;
+  u.x += 1;
 }

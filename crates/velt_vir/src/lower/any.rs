@@ -8,7 +8,7 @@
 //! | 0 | the `typeof` tag (`TAG_*`, an integer, not an address) |
 //! | 1 | `AnyTruthy`: `(data: ptr) -> bool` |
 //! | 2 | `AnySame`: `(a: ptr, b: ptr) -> bool`, `===` of two data pointers of this type |
-//! | 3 | `AnyNumber`: `(data: ptr) -> f64`, JavaScript's `ToNumber` (booleans, numbers and strings only) |
+//! | 3 | `AnyNumber`: `(data: ptr) -> f64`, JavaScript's `ToNumber` (booleans, numbers and strings; every type in a program with operators on `any`, any_number.rs) |
 //! | 4 | `AnyHash`: `(data: ptr) -> u64`, a hash agreeing with SameValueZero (`Set` / `Map` keys: any_eq.rs) |
 //! | 5..8 | member reads and calls (any_member.rs), when the program has them |
 //! | 9..11 | member writes and `in` (any_set.rs, any_has.rs), when the program has them |
@@ -172,10 +172,12 @@ impl Cx<'_> {
                 Const::Func(self.func(Work::Glue(Glue::AnyHash, ty))),
             ),
         ];
-        if matches!(
-            self.types.kind(ty),
-            TyKind::Bool | TyKind::Int(_) | TyKind::Float(_) | TyKind::Str
-        ) {
+        if self.boxing.any_number
+            || matches!(
+                self.types.kind(ty),
+                TyKind::Bool | TyKind::Int(_) | TyKind::Float(_) | TyKind::Str
+            )
+        {
             e.push((
                 SLOT_NUMBER,
                 Const::Func(self.func(Work::Glue(Glue::AnyNumber, ty))),
@@ -276,6 +278,11 @@ impl FnLower<'_, '_> {
             TyKind::Bool => {
                 let n = self.rvalue_temp(Ty::U8, Rvalue::Cast(v, Ty::U8));
                 self.rvalue_temp(Ty::F64, Rvalue::Cast(n, Ty::F64))
+            }
+            // The other types have the slot only in a program with operators on `any`
+            // (`Boxing::any_number`, any_number.rs).
+            k if !matches!(k, TyKind::Int(_) | TyKind::Float(_)) => {
+                return self.any_number_other(ty)
             }
             _ => {
                 let from = self.cx.ty(ty);

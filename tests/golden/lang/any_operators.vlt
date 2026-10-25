@@ -1,0 +1,68 @@
+// Operators on values held in `any` (#924), as JavaScript runs them: `+` adds numbers or
+// concatenates after `ToPrimitive`, the other arithmetic and bitwise operators convert with
+// `ToNumber`, relational operators compare strings or numbers, `==` converts, `===` does not;
+// `++`, `--` and compound assignments write the result back.
+const vals: any[] = [1, 2.5, "3", "abc", "", true, false, null, undefined, [], [5], [1, 2], {}, NaN, -0];
+const names = ["1", "2.5", "'3'", "'abc'", "''", "true", "false", "null", "undefined", "[]", "[5]", "[1,2]", "{}", "NaN", "-0"];
+for (let i = 0; i < vals.length; i++) {
+  const a: any = vals[i];
+  console.log(names[i], "+1:", a + 1, "1+:", 1 + a, "-1:", a - 1, "*2:", a * 2, "/2:", a / 2, "%2:", a % 2, "**2:", a ** 2);
+  console.log(names[i], "neg:", -a, "pos:", +a, "not:", ~a, "|0:", a | 0, "<<1:", a << 1, ">>>0:", a >>> 0);
+  for (let j = 0; j < vals.length; j++) {
+    const b: any = vals[j];
+    console.log("  ", names[i], names[j], "+", a + b, "-", a - b, "<", a < b, ">=", a >= b, "==", a == b, "===", a === b);
+  }
+}
+let x: any = 5;
+x++;
+console.log(x, typeof x);
+x += 1;
+console.log(x);
+x -= 2;
+console.log(x);
+x *= 3;
+console.log(x);
+let s: any = "7";
+s++;
+console.log(s, typeof s);
+let t: any = "7";
+t += 1;
+console.log(t, typeof t);
+let u: any = undefined;
+u++;
+console.log(u);
+const o: any = { n: 1 };
+o.n++;
+o.n += 10;
+console.log(o.n);
+const arr: any = [1, 2];
+arr[0] += 5;
+arr[1]++;
+console.log(arr);
+let pre: any = 1;
+const p1 = ++pre;
+const p2 = pre++;
+console.log(p1, p2, pre);
+// A number place combined with an `any` (`n += a`) stays a number.
+let total: number = 1;
+const two: any = 2;
+total += two;
+total *= two;
+total -= "1" as any;
+total **= two;
+total %= 7 as any;
+console.log(total);
+const counts: number[] = [1];
+counts[0] += two;
+console.log(counts);
+// A `+` feeding another operator: numbers stay numbers, a concatenation converts after.
+const one: any = 1,
+  sx: any = "2";
+let acc: any = 0;
+for (let i = 0; i < 3; i++) {
+  acc = acc + one * 2 - 1;
+}
+console.log(acc, one + sx - 1, (sx + one) * 2, -(one + one), ("a" + one) + one, one + one + "!");
+let bump: any = 5;
+const after = bump - (bump = 1);
+console.log(after, bump);
