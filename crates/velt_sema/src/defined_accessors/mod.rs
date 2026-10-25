@@ -27,6 +27,17 @@
 mod emit;
 mod synth;
 
+/// The parameter name of the setter added to an untyped literal for a definition
+/// (`emit::added_setter`), which no source can write: its interface's setter is then one a
+/// write through the literal's own type doesn't reach (`Ctx::defined_setters`).
+pub(crate) const ADDED_SETTER_PARAM: &str = "<defined value>";
+
+/// Is `name` a variable of the rewrite holding an accessor (`<o.k:get>`, `<o.k:set>`)? It
+/// holds only functions written in the function that declares it.
+pub(crate) fn is_accessor_cell(name: &str) -> bool {
+    name.starts_with('<') && (name.ends_with(":get>") || name.ends_with(":set>"))
+}
+
 use rustc_hash::FxHashMap;
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast::{self, ExprKind as E, ItemKind as I, StmtKind as S};

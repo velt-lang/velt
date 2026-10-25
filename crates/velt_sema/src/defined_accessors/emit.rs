@@ -424,16 +424,6 @@ fn declaration(
         if plan.setter || plan.add_setter {
             out.push(let_cell(&cell(o, k, "set"), setter_type(&member), span));
         }
-        if plan.add_setter {
-            if let Some(E::Object(props)) = v.init.as_mut().map(literal_mut) {
-                let set = added_setter(&cell(o, k, "set"), k, &member, span);
-                let key = ast::Ident {
-                    name: k.to_string(),
-                    span,
-                };
-                props.push(ast::ObjectProp::KeyValue(key, set));
-            }
-        }
         if plan.fixed {
             out.push(stmt(
                 S::Var(ast::VarDecl {
@@ -449,6 +439,7 @@ fn declaration(
         let Some(E::Object(props)) = v.init.as_mut().map(literal_mut) else {
             continue;
         };
+        let mut getter_key = None;
         for p in props.iter_mut() {
             let ast::ObjectProp::KeyValue(name, value) = p else {
                 continue;
@@ -461,6 +452,7 @@ fn declaration(
             };
             let which = if is_get { "get" } else { "set" };
             let (forward, first) = if is_get {
+                getter_key = Some(name.clone());
                 (get_forward(&cell(o, k, which), f.span), f)
             } else {
                 let f = typed_setter(f, &member);
@@ -470,6 +462,17 @@ fn declaration(
                 args[0] = forward;
             }
             after.push(assign(&cell(o, k, which), first, span));
+        }
+        // Added after the forwarding above: it is the literal's own, and its variable stays
+        // `undefined` until a definition gives a setter. Its key is the getter's, so the
+        // literal's type shows the two together.
+        if plan.add_setter {
+            let set = added_setter(&cell(o, k, "set"), k, &member, span);
+            let key = getter_key.unwrap_or_else(|| ast::Ident {
+                name: k.to_string(),
+                span,
+            });
+            props.push(ast::ObjectProp::KeyValue(key, set));
         }
     }
     out.push(stmt(S::Var(v.clone()), span));
@@ -481,7 +484,7 @@ fn declaration(
 /// getter until the definition has run.
 fn added_setter(cell: &str, k: &str, member: &ast::TypeExpr, span: Span) -> ast::Expr {
     let v = ast::Ident {
-        name: "v".to_string(),
+        name: super::ADDED_SETTER_PARAM.to_string(),
         span,
     };
     let unset = expr(

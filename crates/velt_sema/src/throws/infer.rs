@@ -15,6 +15,10 @@ use crate::hir::{Def, DefId, TyId, TyKind};
 /// Fill `FnInfo::throws` of every checked function, then check written clauses and the error
 /// types sema committed to while checking bodies.
 pub(crate) fn infer_all(cx: &mut Ctx) {
+    // Built again with everything checking made: the implementations of object literals'
+    // interfaces and the conversions between interfaces (`groups.rs`) are made after a first
+    // use while checking.
+    cx.groups = None;
     let groups = cx.throw_groups().clone();
     let fns: Vec<DefId> = cx
         .fn_defs
