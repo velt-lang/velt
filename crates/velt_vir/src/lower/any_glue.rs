@@ -165,9 +165,7 @@ impl FnLower<'_, '_> {
             return None;
         }
         let throws = self.cx.fn_throws(f, &targs).filter(|_| !f.is_async);
-        if throws.is_some() && !self.is_proxy(owner) {
-            return None;
-        }
+        (throws.is_none() || self.is_proxy(owner)).then_some(())?;
         let (ret, _) = self.cx.call_sig(f);
         let ret = self.cx.subst(ret, &targs);
         if !self.cx.any_boxable(ret) {
