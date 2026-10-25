@@ -189,9 +189,22 @@ function main() {
   signature leaves open is `void` there (TypeScript's `unknown`). A signature's function
   parameter may take fixed parameters where the implementation's takes a rest parameter
   (`setup: (ctx: Ctx, p1: T1) => R` for `setup: (ctx: Ctx, ...args: unknown[]) => R`), which
-  TypeScript relates loosely: each rest argument converts to the signature's parameter type
-  when the implementation calls it, checked at run time (so a left-out argument the signature's
-  type does not admit panics, where Node passes `undefined`).
+  TypeScript relates loosely. The signature passes the implementation a function that converts
+  each rest argument to the callback's parameter type when the implementation calls it:
+  - an argument the implementation leaves out is `undefined`, as in Node, where the parameter's
+    type admits it (`p1: number | undefined`, or a type parameter instantiated with such a
+    type);
+  - where it doesn't (`p1: number`), the program stops with a `TypeError` naming the callback
+    and the argument (``the callback `fn` of `setup` was called without its argument 2 (Node
+    would pass `undefined`): the value is not a number (it is undefined)``): Velt can't pass
+    `undefined` there. A `T | null` parameter admits `null`, not `undefined`, so it stops too;
+  - an argument of another type stops the same way (``… was called with a wrong argument 1:
+    the value is not a string (it is a number)``), where Node would pass it on.
+
+  That function is a new one for each call of the signature, so the implementation may only
+  call such a parameter: comparing it (`===`, a `Map` or `Set` key, `includes`), keeping it or
+  passing it on is a compile error (it would see that function, not the caller's). Declare the
+  signature's callback with the implementation's parameter types to keep the caller's function.
 - A signature may promise a narrower result than the implementation's: `T` out of `T | null`,
   one member of a union, a literal type out of its base (`"U"` out of `string`), a class out
   of a base class or an interface, or any of these in a `Promise` of an `async` implementation.

@@ -9,6 +9,11 @@ export function define<R, T1, T2>(setup: (ctx: Ctx, p1: T1, p2: T2) => R): (p1: 
 export function define<R>(setup: (ctx: Ctx, ...args: unknown[]) => R) {
     return (...args: unknown[]) => setup({ name: "c" }, ...args);
 }
-console.log(define((ctx, who: string) => ctx.name + " " + who)("bob"));
-console.log(define((ctx) => ctx.name.length)());
-console.log(define((ctx, a: number, b: number) => ctx.name + (a + b))(1, 2));
+console.log(define((ctx: Ctx, who: string) => ctx.name + " " + who)("bob"));
+console.log(define((ctx: Ctx) => ctx.name.length)());
+console.log(define((ctx: Ctx, a: number, b: number) => ctx.name + (a + b))(1, 2));
+// An implementation type parameter the signature does not name: the adapter's parameters take
+// their types from the implementation's.
+function each<U, P1>(x: U, cb: (v: U, p: P1) => string): string;
+function each<T>(x: T, cb: (v: T, ...a: unknown[]) => string): string { return cb(x, 3); }
+console.log(each("s", (v: string, p: number) => v + p));

@@ -44,6 +44,8 @@ pub(crate) struct Rewritten {
     pub sig_spans: FxHashMap<Span, Span>,
     /// Names of overloaded methods (a method call with one of them may need resolving).
     pub methods: FxHashSet<String>,
+    /// The implementation parameters signatures pass adapters for (`crate::overload_adapter`).
+    pub adapted: FxHashSet<crate::overload_adapter::Adapted>,
 }
 
 /// The modules with their overload signatures made functions, or `None` when there are none
@@ -61,6 +63,7 @@ pub(crate) fn rewrite(modules: &[SourceModule]) -> Option<Rewritten> {
         modules: vec![],
         sig_spans: FxHashMap::default(),
         methods: FxHashSet::default(),
+        adapted: FxHashSet::default(),
     };
     for m in modules {
         let local: FxHashMap<String, usize> = m
@@ -81,6 +84,7 @@ pub(crate) fn rewrite(modules: &[SourceModule]) -> Option<Rewritten> {
                 ast::ItemKind::Function(f) if !f.overloads.is_empty() => {
                     for (k, sig) in std::mem::take(&mut f.overloads).into_iter().enumerate() {
                         out.sig_spans.insert(sig.span, sig.name.span);
+                        note_adapted(&mut out, &sig, &f.sig);
                         let decl = signature_fn(sig, k, &f.sig.name.name, false, &f.sig);
                         items.push(ast::Item {
                             kind: ast::ItemKind::Function(decl),
@@ -208,6 +212,7 @@ fn methods(
             .enumerate()
         {
             out.sig_spans.insert(sig.span, sig.name.span);
+            note_adapted(out, &sig, &m.decl.sig);
             let is_override =
                 m.is_override && base_has_signature(classes, base.as_deref(), &name, k);
             added.push(ast::Method {
@@ -381,7 +386,9 @@ fn signature_fn(
             .enumerate()
             .map(|(i, p)| {
                 let read = expr(ast::ExprKind::Ident(ident(&p.name.name)));
-                if let Some(arrow) = imp.params.get(i).and_then(|ip| rest_adapter(p, ip, span)) {
+                let adapter = (imp.params.get(i))
+                    .and_then(|ip| crate::overload_adapter::rest_adapter(p, ip, name, span));
+                if let Some(arrow) = adapter {
                     return arrow;
                 }
                 match p.rest {
@@ -441,101 +448,19 @@ fn signature_fn(
     }
 }
 
-/// A signature's function parameter `p` (`setup: (ctx: Ctx, p1: T1) => R`) passed where the
-/// implementation's `ip` takes a function with a rest parameter (`setup: (ctx: Ctx, ...args:
-/// unknown[]) => R`): TypeScript relates the two loosely (bivariantly), so the signature fits.
-/// The signature passes an arrow taking the implementation's parameters that calls `p` with
-/// each rest argument converted to the signature's parameter type, checked at run time:
-/// `(a#0: Ctx, ...rest#: unknown[]) => setup(a#0, rest#[0] as T1)`. `None` for other
-/// parameters (passed as they are).
-fn rest_adapter(p: &ast::Param, ip: &ast::Param, span: Span) -> Option<ast::Expr> {
-    use ast::TypeExprKind as T;
-    let (
-        T::Function {
-            params: want,
-            rest: false,
-            ..
-        },
-        T::Function {
-            params: have,
-            rest: true,
-            ..
-        },
-    ) = (&p.ty.kind, &ip.ty.kind)
-    else {
-        return None;
-    };
-    if p.rest || ip.rest || p.optional || ip.optional {
-        return None;
+/// Records the parameters of implementation `imp` that signature `sig` passes adapters for.
+fn note_adapted(out: &mut Rewritten, sig: &ast::FnSig, imp: &ast::FnSig) {
+    let name = &imp.name.name;
+    for (i, (p, ip)) in sig.params.iter().zip(&imp.params).enumerate() {
+        if crate::overload_adapter::rest_adapter(p, ip, name, sig.span).is_some() {
+            out.adapted.insert(crate::overload_adapter::Adapted {
+                imp: (imp.span, imp.name.span),
+                name: name.clone(),
+                param: i,
+                param_name: ip.name.name.clone(),
+            });
+        }
     }
-    let fixed = have.len() - 1;
-    let T::Array(_) = &have.last()?.kind else {
-        return None;
-    };
-    if want.len() < fixed {
-        return None;
-    }
-    let expr = |kind| ast::Expr {
-        id: ast::NodeId(u32::MAX),
-        kind,
-        span,
-    };
-    let ident = |n: String| ast::Ident { name: n, span };
-    let read = |n: String| expr(ast::ExprKind::Ident(ident(n)));
-    let param = |name: String, ty: &ast::TypeExpr, rest: bool| ast::ArrowParam {
-        name: ident(name),
-        pattern: None,
-        ty: Some(ty.clone()),
-        default: None,
-        optional: false,
-        rest,
-    };
-    let mut params: Vec<ast::ArrowParam> = have[..fixed]
-        .iter()
-        .enumerate()
-        .map(|(i, t)| param(format!("a#{i}"), t, false))
-        .collect();
-    params.push(param("rest#".into(), &have[fixed], true));
-    let cast = |e: ast::Expr, ty: &ast::TypeExpr| {
-        expr(ast::ExprKind::Cast {
-            expr: Box::new(e),
-            ty: ty.clone(),
-        })
-    };
-    let args = want
-        .iter()
-        .enumerate()
-        .map(|(j, w)| match j < fixed {
-            true if same_type(&have[j], w) => read(format!("a#{j}")),
-            true => cast(read(format!("a#{j}")), w),
-            false => {
-                let index = expr(ast::ExprKind::Lit(ast::Lit::Int {
-                    value: (j - fixed) as u128,
-                    suffix: None,
-                }));
-                let at = expr(ast::ExprKind::Index {
-                    object: Box::new(read("rest#".into())),
-                    index: Box::new(index),
-                    optional: false,
-                });
-                cast(at, w)
-            }
-        })
-        .collect();
-    let call = expr(ast::ExprKind::Call {
-        callee: Box::new(read(p.name.name.clone())),
-        type_args: vec![],
-        args,
-        optional: false,
-    });
-    Some(expr(ast::ExprKind::Arrow {
-        type_params: vec![],
-        params,
-        ret: None,
-        throws: None,
-        body: ast::ArrowBody::Expr(Box::new(call)),
-        is_async: false,
-    }))
 }
 
 /// Is `t` the plain named type `name`?
@@ -556,7 +481,7 @@ fn promised(t: Option<&ast::TypeExpr>) -> Option<&ast::TypeExpr> {
 
 /// Are `a` and `b` written alike (spans aside)? `false` for the kinds of type it doesn't
 /// compare, which only costs an `await`.
-fn same_type(a: &ast::TypeExpr, b: &ast::TypeExpr) -> bool {
+pub(crate) fn same_type(a: &ast::TypeExpr, b: &ast::TypeExpr) -> bool {
     use ast::TypeExprKind as T;
     let all = |x: &[ast::TypeExpr], y: &[ast::TypeExpr]| {
         x.len() == y.len() && x.iter().zip(y).all(|(x, y)| same_type(x, y))

@@ -591,6 +591,9 @@ struct FnLower<'c, 'h> {
     view_writes: Option<Vec<(Operand, TyId, Option<Operand>)>>,
     /// The next array dropped is a view's mirror, never a view itself (`Glue::MirrorDrop`).
     mirror_drop: bool,
+    /// While an `AnyTo` with a text is lowered: the words its `TypeError` starts with
+    /// (any_errors.rs).
+    any_context: Option<String>,
     /// The view bit tests and loops lowered, for versioning (view_unswitch.rs).
     view_loops: view_unswitch::ViewLoops,
     /// This function's read mode, once asked (rc.rs `lk_mode`).

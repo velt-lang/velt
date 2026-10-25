@@ -27,6 +27,7 @@ impl FnCx<'_, '_> {
             return self.intrinsic_call(id, rest, type_args, args, exp, span);
         }
         match name {
+            super::overload_arg::OVERLOAD_ARG => self.overload_arg(type_args, args, span),
             "panic" => self.simple_intrinsic(Intrinsic::Panic, "`panic`", args, exp, span),
             "shared" => {
                 // `shared<i64>(0)`: the written type argument types the value. Without one, an
