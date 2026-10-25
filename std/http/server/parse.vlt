@@ -91,6 +91,39 @@ export function isTchar(c: u8): bool {
     c == 126;
 }
 
+/// What a head's Connection tokens said, and its Transfer-Encoding codings: one was seen, the
+/// last so far is `chunked`, another one is there.
+const CONN_CLOSE: i64 = 1;
+const CONN_KEEP_ALIVE: i64 = 2;
+const TE_SEEN: i64 = 1;
+const TE_LAST_CHUNKED: i64 = 2;
+const TE_OTHER: i64 = 4;
+
+/// Transfer-Encoding (RFC 9112 §6.1, §6.3): not with Content-Length (`length` >= 0), not in
+/// HTTP/1.0, and `chunked` last, else the body's end is unknown (400). The server decodes no
+/// other coding (501).
+function checkCodings(te: i64, length: i64, http11: bool) {
+  if (length >= 0 || !http11 || (te & TE_LAST_CHUNKED) == 0) {
+    throw new BadRequest(400);
+  }
+  if ((te & TE_OTHER) != 0) {
+    throw new BadRequest(501);
+  }
+}
+
+/// The bit of `byteClasses()` for a token character.
+const TOKEN: u8 = 1;
+
+/// For each byte value, its `TOKEN` bit: a method's and a header name's scan take one load a
+/// byte.
+function byteClasses(): u8[] {
+  const t: u8[] = Buffer.alloc(256);
+  for (let c: i64 = 0; c < 256; c++) {
+    t[c] = isTchar(c as u8) ? TOKEN : 0;
+  }
+  return t;
+}
+
 /// The lowercase name `s` (at most 16 bytes) as a vector, for [`Parser`]'s compares.
 function nameVector(s: string): u8x16 {
   const b: u8[] = Buffer.alloc(16);
@@ -110,14 +143,7 @@ export class Parser {
   private maxHead: i64;
   private maxBody: i64;
   private maxHeaders: i64;
-  // What the head being parsed said: `close` and `keep-alive` among the Connection tokens; the
-  // Transfer-Encoding headers, whether `chunked` is the last coding so far and whether there is
-  // another; the list element `element` found.
-  private sawClose: bool = false;
-  private sawKeepAlive: bool = false;
-  private codings: i64 = 0;
-  private lastChunked: bool = false;
-  private otherCoding: bool = false;
+  // The list element `element` found.
   private elementStart: i64 = 0;
   private elementEnd: i64 = 0;
   // The headers the server acts on, lowercase; vectors for one compare each.
@@ -130,7 +156,10 @@ export class Parser {
   private close: u8x16 = nameVector("close");
   private keepAlive: u8x16 = nameVector("keep-alive");
   private continue_: u8x16 = nameVector("100-continue");
-  private host: u8x16 = nameVector("host");
+  private classes: u8[] = byteClasses();
+  private space: u8x16 = u8x16.splat(SP);
+  private del: u8x16 = u8x16.splat(DEL);
+  private question: u8x16 = u8x16.splat(63);
   private chunked: u8x16 = nameVector("chunked");
 
   constructor(maxHead: i64, maxBody: i64, maxHeaders: i64) {
@@ -240,12 +269,13 @@ export class Parser {
       throw new BadRequest(431);
     }
     const b = this.buf;
+    const classes = this.classes;
     // The request line: method SP target SP HTTP/1.x CR LF. The head ends in CR LF CR LF, so
     // every scan below stops by then.
     let p = this.pos;
     req.buf = b;
     req.methodStart = p;
-    while (isTchar(b[p])) {
+    while ((classes[b[p]] & TOKEN) != 0) {
       p++;
     }
     req.methodEnd = p;
@@ -254,13 +284,24 @@ export class Parser {
     }
     p++;
     req.targetStart = p;
+    // Visible characters (and bytes past ASCII): it ends at the first control, space or DEL,
+    // 16 bytes at a time; the path at the first `?` before that.
     req.pathEnd = -1;
-    // Visible characters (and bytes past ASCII): no controls, no spaces.
-    while (b[p] > SP && b[p] != DEL) {
-      if (b[p] == 63 && req.pathEnd < 0) {
-        req.pathEnd = p;
+    while (true) {
+      const v = u8x16.load(b, p as usize);
+      const stop = v.le(this.space).or(v.eq(this.del));
+      const query = v.eq(this.question);
+      if (req.pathEnd < 0 && query.any()) {
+        const q = query.first() as i64;
+        if (!stop.any() || q < (stop.first() as i64)) {
+          req.pathEnd = p + q;
+        }
       }
-      p++;
+      if (stop.any()) {
+        p += stop.first() as i64;
+        break;
+      }
+      p += 16;
     }
     req.targetEnd = p;
     if (req.pathEnd < 0) {
@@ -291,20 +332,17 @@ export class Parser {
     }
     p += 2;
     req.heads.length = 0;
-    // Content-Length (-1: none), the Host headers, and the Connection and Transfer-Encoding
-    // tokens seen.
+    // Content-Length (-1: none), the Host headers, and the Connection tokens and
+    // Transfer-Encoding codings seen (`CONN_*`, `TE_*` bits).
     let length: i64 = -1;
     let hosts = 0;
-    this.sawClose = false;
-    this.sawKeepAlive = false;
-    this.codings = 0;
-    this.lastChunked = false;
-    this.otherCoding = false;
+    let conn: i64 = 0;
+    let te: i64 = 0;
     while (p < headEnd - 2) {
       // A name of token characters, then a colon: no space before it (RFC 9112 §5.1), no line
       // folding (a line that starts with a space, §5.2).
       const nameStart = p;
-      while (isTchar(b[p])) {
+      while ((classes[b[p]] & TOKEN) != 0) {
         p++;
       }
       if (p == nameStart || b[p] != COLON) {
@@ -315,9 +353,20 @@ export class Parser {
       while (b[p] == SP || b[p] == TAB) {
         p++;
       }
-      // The value: no controls but TAB (no NUL, no CR or LF of its own, RFC 9110 §5.5).
+      // The value: no controls but TAB (no NUL, no CR or LF of its own, RFC 9110 §5.5). It ends
+      // at the first other control or DEL, found 16 bytes at a time: the CR of its line end.
       const valueStart = p;
-      while (b[p] >= SP ? b[p] != DEL : b[p] == TAB) {
+      while (true) {
+        const v = u8x16.load(b, p as usize);
+        const stop = v.lt(this.space).or(v.eq(this.del));
+        if (!stop.any()) {
+          p += 16;
+          continue;
+        }
+        p += stop.first() as i64;
+        if (b[p] != TAB) {
+          break;
+        }
         p++;
       }
       let valueEnd = p;
@@ -333,7 +382,13 @@ export class Parser {
       }
       req.heads.push(nameStart, nameEnd, valueStart, valueEnd);
       const len = nameEnd - nameStart;
-      if (len == 4 && this.nameIs(nameStart, len, this.host)) {
+      if (
+        len == 4 &&
+        (b[nameStart] | 32) == 104 &&
+        (b[nameStart + 1] | 32) == 111 &&
+        (b[nameStart + 2] | 32) == 115 &&
+        (b[nameStart + 3] | 32) == 116
+      ) {
         hosts++;
       } else if (len == 14 && this.nameIs(nameStart, len, this.contentLength)) {
         // Two of them, even equal, are refused: a proxy may have used the other (§6.3).
@@ -342,11 +397,11 @@ export class Parser {
         }
         length = this.number(valueStart, valueEnd);
       } else if (len == 10 && this.nameIs(nameStart, len, this.connection)) {
-        this.connectionTokens(valueStart, valueEnd);
+        conn |= this.connectionTokens(valueStart, valueEnd);
       } else if (
         len == 17 && this.nameIs(nameStart, 16, this.transfer) && (b[nameStart + 16] | 32) == 103
       ) {
-        this.transferCodings(valueStart, valueEnd);
+        te = this.transferCodings(valueStart, valueEnd, te);
       } else if (len == 6 && this.nameIs(nameStart, len, this.expect)) {
         const vl = valueEnd - valueStart;
         req.expectsContinue = vl == 12 && this.nameIs(valueStart, vl, this.continue_);
@@ -358,17 +413,9 @@ export class Parser {
     }
     // HTTP/1.1 keeps the connection open unless `close` is among the Connection tokens; HTTP/1.0
     // only with `keep-alive`.
-    req.keepAlive = !this.sawClose && (req.http11 || this.sawKeepAlive);
-    if (this.codings > 0) {
-      // Transfer-Encoding (RFC 9112 §6.1, §6.3): not with Content-Length, not in HTTP/1.0, and
-      // `chunked` last, else the body's end is unknown (400). The server decodes no other coding
-      // (501).
-      if (length >= 0 || !req.http11 || !this.lastChunked) {
-        throw new BadRequest(400);
-      }
-      if (this.otherCoding) {
-        throw new BadRequest(501);
-      }
+    req.keepAlive = (conn & CONN_CLOSE) == 0 && (req.http11 || (conn & CONN_KEEP_ALIVE) != 0);
+    if (te != 0) {
+      checkCodings(te, length, req.http11);
       req.bodyMode = BODY_CHUNKED;
       this.pos = headEnd;
     } else if (length <= 0) {
@@ -409,25 +456,28 @@ export class Parser {
     return i;
   }
 
-  /// The tokens of a Connection value (`close`, `keep-alive`; others are ignored).
-  private connectionTokens(start: i64, end: i64) {
+  /// The tokens of a Connection value: `CONN_CLOSE`, `CONN_KEEP_ALIVE` (others are ignored).
+  private connectionTokens(start: i64, end: i64): i64 {
+    let found: i64 = 0;
     let at = start;
     while (at < end) {
       at = this.element(at, end);
       const s = this.elementStart;
       const n = this.elementEnd - s;
       if (n == 5 && this.nameIs(s, n, this.close)) {
-        this.sawClose = true;
+        found |= CONN_CLOSE;
       } else if (n == 10 && this.nameIs(s, n, this.keepAlive)) {
-        this.sawKeepAlive = true;
+        found |= CONN_KEEP_ALIVE;
       }
     }
+    return found;
   }
 
-  /// The codings of a Transfer-Encoding value, in order: `chunked` twice is refused.
-  private transferCodings(start: i64, end: i64) {
-    // A header without codings still counts: it is refused below for not ending in `chunked`.
-    this.codings++;
+  /// `te` (`TE_*` bits) after the codings of a Transfer-Encoding value, in order: `chunked`
+  /// twice is refused.
+  private transferCodings(start: i64, end: i64, te: i64): i64 {
+    // A header without codings still counts: it is refused for not ending in `chunked`.
+    let state = te | TE_SEEN;
     let at = start;
     while (at < end) {
       at = this.element(at, end);
@@ -437,15 +487,15 @@ export class Parser {
         continue;
       }
       if (n == 7 && this.nameIs(s, n, this.chunked)) {
-        if (this.lastChunked) {
+        if ((state & TE_LAST_CHUNKED) != 0) {
           throw new BadRequest(400);
         }
-        this.lastChunked = true;
+        state |= TE_LAST_CHUNKED;
       } else {
-        this.lastChunked = false;
-        this.otherCoding = true;
+        state = (state & ~TE_LAST_CHUNKED) | TE_OTHER;
       }
     }
+    return state;
   }
 
   /// The bytes read and not taken yet.
