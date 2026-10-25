@@ -11,19 +11,19 @@
 // their prefix again (`noteEdges`). A delete of the smallest or the largest leaves the edge
 // prefixes as they are: a range that narrows keeps them true, if shorter than they could be.
 
-import { F, Pool } from "velt:collections/btree/pool";
+import { F, Pool, Window } from "velt:collections/btree/pool";
 import { slotAtRank } from "velt:collections/btree/leaf";
 
 /**
- * Where `t` lies against the smallest and the largest key: -1 below the smallest, 1 above the
- * largest, 0 between them (or when the map is empty, or keys have no words: no prefix to keep
- * true). The first 16 bytes of the encodings settle it unless they tie.
+ * Where `t` (window `win`) lies against the smallest and the largest key: -1 below the smallest,
+ * 1 above the largest, 0 between them (or when the map is empty, or keys have no words: no prefix
+ * to keep true). The windows settle it unless they tie.
  */
-export function edgeOrder<K extends Comparable<K>, V>(p: Pool<K, V>, t: K): i64 {
+export function edgeOrder<K extends Comparable<K>, V>(p: Pool<K, V>, t: K, win: Window): i64 {
   if (!t.hasInlineKey() || p.minKey.length == 0) {
     return 0;
   }
-  const a = t.inlineKey(0);
+  const [a, b] = win;
   if (a < p.minWindow[0]) {
     return -1;
   }
@@ -31,7 +31,6 @@ export function edgeOrder<K extends Comparable<K>, V>(p: Pool<K, V>, t: K): i64 
     return 1;
   }
   if (a == p.minWindow[0] || a == p.maxWindow[0]) {
-    const b = t.inlineKey(8);
     if (a == p.minWindow[0] && b <= p.minWindow[1] && t < p.minKey[0]) {
       return -1;
     }
@@ -46,14 +45,14 @@ export function edgeOrder<K extends Comparable<K>, V>(p: Pool<K, V>, t: K): i64 
  * Before `key` goes in: makes it the smallest or the largest key when it is outside them (the
  * first key both), and gives the nodes along that edge their prefixes for the wider range.
  */
-export function noteEdges<K extends Comparable<K>, V>(p: Pool<K, V>, key: K) {
+export function noteEdges<K extends Comparable<K>, V>(p: Pool<K, V>, key: K, win: Window) {
   if (p.minKey.length == 0) {
     p.minKey.push(key);
     p.maxKey.push(key);
     setWindows(p);
     return;
   }
-  const at = edgeOrder(p, key);
+  const at = edgeOrder(p, key, win);
   if (at < 0) {
     p.minKey[0] = key;
     setWindows(p);
@@ -90,10 +89,12 @@ function setWindows<K extends Comparable<K>, V>(p: Pool<K, V>) {
   if (!p.fill[0].hasInlineKey()) {
     return;
   }
-  p.minWindow[0] = p.minKey[0].inlineKey(0);
-  p.minWindow[1] = p.minKey[0].inlineKey(8);
-  p.maxWindow[0] = p.maxKey[0].inlineKey(0);
-  p.maxWindow[1] = p.maxKey[0].inlineKey(8);
+  const [a, b] = p.minKey[0].inlineWindow();
+  p.minWindow[0] = a;
+  p.minWindow[1] = b;
+  const [c, d] = p.maxKey[0].inlineWindow();
+  p.maxWindow[0] = c;
+  p.maxWindow[1] = d;
 }
 
 // Gives the nodes along the left (or right) edge their words for the range the smallest (or
@@ -114,13 +115,12 @@ function refreshEdge<K extends Comparable<K>, V>(p: Pool<K, V>, right: bool) {
   p.refreshLeaf(node, p.fencesAt(p.pathNodes.length));
 }
 
-/** Whether `key` is the smallest or the largest key (its windows first, then the key). */
-export function isEdge<K extends Comparable<K>, V>(p: Pool<K, V>, key: K): bool {
+/** Whether `key` (window `win`) is the smallest or the largest key (windows first, then keys). */
+export function isEdge<K extends Comparable<K>, V>(p: Pool<K, V>, key: K, win: Window): bool {
   if (!key.hasInlineKey() || p.minKey.length == 0) {
     return false;
   }
-  const a = key.inlineKey(0);
-  const b = key.inlineKey(8);
+  const [a, b] = win;
   if (a == p.minWindow[0] && b == p.minWindow[1] && key.compareTo(p.minKey[0]) == 0) {
     return true;
   }

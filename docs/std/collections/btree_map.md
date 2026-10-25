@@ -56,7 +56,8 @@ order-preserving bytes: `hasInlineKey()` is `true`, and `inlineKey(offset)` retu
 are at most `b`'s in byte order), as a big-endian `u64`, zero past its end. Numbers encode
 big-endian (signed ones with the sign bit flipped), `bool` as one byte, strings as their CESU-8
 bytes (UTF-16 code units written as UTF-8 would, the order of `<`, read in place for ASCII);
-floats have no encoding yet. `inlineWord`, `inlineQuad` (2 and 4 bytes) and `inlineWide()`
+floats have no encoding yet. `inlineWord`, `inlineQuad` (2 and 4 bytes), `inlineWindow()` (the
+first 16, which an operation computes once and reads each node's word from) and `inlineWide()`
 (whether nodes keep 4 bytes per key, `false` by default; strings say `true`) have defaults from
 `inlineKey`. Every other comparable type has the default, `hasInlineKey()` `false`, through
 `extend<T extends Comparable<T>> T implements InlineKey`, and an `extend` block for one type

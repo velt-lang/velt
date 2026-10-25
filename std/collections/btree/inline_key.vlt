@@ -36,6 +36,13 @@ export interface InlineKey {
   inlineQuad(offset: usize): u32 {
     return (this.inlineKey(offset) >> 32) as u32;
   }
+  /**
+   * The first 16 bytes of the encoding, `[inlineKey(0), inlineKey(8)]`: what an operation
+   * computes once and reads every node's word from.
+   */
+  inlineWindow(): [u64, u64] {
+    return [this.inlineKey(0), this.inlineKey(8)];
+  }
 }
 
 /** Every other comparable type: no encoding, so the map compares whole keys. */
@@ -170,31 +177,41 @@ extend string implements InlineKey {
   inlineKey(offset: usize): u64 {
     const n = __intrinsic_str_byte_len(this);
     if (__intrinsic_str_len(this) == n || !fourByteBefore(this, n, offset + 8)) {
-      let w: u64 = 0;
-      for (let i: usize = 0; i < 8; i++) {
-        const at = offset + i;
-        w = (w << 8) | (at < n ? (__intrinsic_str_byte_at(this, at as u64) as u64) : 0);
-      }
-      return w;
+      return bytesFrom(this, n, offset).asU64x2().reverseBytes().lane(0);
     }
     return cesuBytes(this, n, offset, 8);
   }
   inlineWord(offset: usize): u16 {
     return (this.inlineQuad(offset) >> 16) as u16;
   }
+  inlineWindow(): [u64, u64] {
+    const n = __intrinsic_str_byte_len(this);
+    // Bytes 0 .. 16 in one load when they are the bytes as kept (as `inlineQuad` decides).
+    if (__intrinsic_str_len(this) == n || !fourByteBefore(this, n, 16)) {
+      const w = bytesFrom(this, n, 0).asU64x2().reverseBytes();
+      return [w.lane(0), w.lane(1)];
+    }
+    return [cesuBytes(this, n, 0, 8), cesuBytes(this, n, 8, 8)];
+  }
   inlineQuad(offset: usize): u32 {
     const n = __intrinsic_str_byte_len(this);
     // ASCII (as many UTF-16 units as bytes) or no four-byte character before: the bytes as kept.
     if (__intrinsic_str_len(this) == n || !fourByteBefore(this, n, offset + 4)) {
-      let w: u32 = 0;
-      for (let i: usize = 0; i < 4; i++) {
-        const at = offset + i;
-        w = (w << 8) | (at < n ? (__intrinsic_str_byte_at(this, at as u64) as u32) : 0);
-      }
-      return w;
+      return bytesFrom(this, n, offset).asU32x4().reverseBytes().lane(0);
     }
     return cesuBytes(this, n, offset, 4) as u32;
   }
+}
+
+// The 16 bytes of `s` (`n` bytes) from `offset` as kept, 0 past its end: one load.
+function bytesFrom(s: string, n: usize, offset: usize): u8x16 {
+  if (offset + 16 <= n) {
+    return __intrinsic_str_load_u8x16(s, offset as u64);
+  }
+  if (offset < n) {
+    return __intrinsic_str_load_partial_u8x16(s, offset as u64, (n - offset) as u64);
+  }
+  return u8x16.splat(0);
 }
 
 // Whether one of the first `upto` bytes of `s` (`n` bytes) starts a four-byte character: a byte

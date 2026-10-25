@@ -6,7 +6,15 @@
 // leaves. Keys with an order-preserving encoding (`InlineKey`: numbers, `bool`, strings, and user
 // types that implement it) are searched by two bytes of it per key, eight keys per compare. Values are shared as `Map` shares them (objects are not copied); keys are shared too.
 
-import { F, NONE, Pool } from "velt:collections/btree/pool";
+import {
+  F,
+  NONE,
+  Pool,
+  SLOT_MASK,
+  SLOT_SHIFT,
+  valueOf,
+  windowOf,
+} from "velt:collections/btree/pool";
 import { insert } from "velt:collections/btree/insert";
 import { removeAt } from "velt:collections/btree/remove";
 import { afterRemove, edgeOrder, isEdge } from "velt:collections/btree/edges";
@@ -54,8 +62,9 @@ export class BTreeMap<K extends Comparable<K>, V> implements Iterable<[K, V]> {
     if (this.p.size == 0) {
       return undefined;
     }
-    const leaf = this.p.leafOf(key);
-    const s = leafFind(this.p, leaf, key);
+    const win = windowOf(key);
+    const leaf = this.p.leafOf(key, win);
+    const s = leafFind(this.p, leaf, key, win);
     if (s == NO_SLOT) {
       return undefined;
     }
@@ -85,12 +94,9 @@ export class BTreeMap<K extends Comparable<K>, V> implements Iterable<[K, V]> {
         const leaf = leaves[j];
         const key = keys[start + j];
         let s = slots[j];
-        if (s != NO_SLOT) {
-          const k = this.p.keyAt((leaf as usize) * F + s);
-          if (key < k || k < key) {
-            // Another key with the same word: look at all of them.
-            s = leafFind(this.p, leaf, key);
-          }
+        if (s != NO_SLOT && this.p.cmpKey(key, (leaf as usize) * F + s) != 0) {
+          // Another key with the same word: look at all of them.
+          s = leafFind(this.p, leaf, key, windowOf(key));
         }
         out.push(s == NO_SLOT ? undefined : this.p.valAt((leaf as usize) * F + s));
       }
@@ -100,7 +106,11 @@ export class BTreeMap<K extends Comparable<K>, V> implements Iterable<[K, V]> {
 
   /** Whether `key` is present. */
   has(key: K): bool {
-    return this.p.size > 0 && leafFind(this.p, this.p.leafOf(key), key) != NO_SLOT;
+    if (this.p.size == 0) {
+      return false;
+    }
+    const win = windowOf(key);
+    return leafFind(this.p, this.p.leafOf(key, win), key, win) != NO_SLOT;
   }
 
   /** Removes `key`; returns whether it was present. */
@@ -108,12 +118,13 @@ export class BTreeMap<K extends Comparable<K>, V> implements Iterable<[K, V]> {
     if (this.p.size == 0) {
       return false;
     }
-    const leaf = this.p.findLeaf(key);
-    const s = leafFind(this.p, leaf, key);
+    const win = windowOf(key);
+    const leaf = this.p.findLeaf(key, win);
+    const s = leafFind(this.p, leaf, key, win);
     if (s == NO_SLOT) {
       return false;
     }
-    const edge = isEdge(this.p, key);
+    const edge = isEdge(this.p, key, win);
     removeAt(this.p, leaf, s);
     if (edge || this.p.size == 0) {
       afterRemove(this.p);
@@ -178,33 +189,73 @@ export class BTreeMap<K extends Comparable<K>, V> implements Iterable<[K, V]> {
     if (this.p.size == 0) {
       return;
     }
+    // Per leaf: its count, its rank order as bytes, and the chunks of its keys and values, read
+    // once; per entry a callback and a check that it left the map as it was.
+    const ranks: u8[] = new Array<u8>(32).fill(0);
+    let last = this.p.fill[0];
     let leaf = this.firstLeaf();
     let i: usize = 0;
     while (leaf != NONE) {
-      if (i >= (this.p.leafCount(leaf))) {
+      // The next two leaves load while this one is walked: leaves are in no order in memory.
+      const next = this.p.leafNext[leaf as usize];
+      if (next != NONE) {
+        const after = this.p.leafNext[next as usize];
+        if (after != NONE) {
+          this.p.prefetchLeaf(after);
+        }
+      }
+      const n = this.p.leafCount(leaf);
+      const order = this.p.orderOf(leaf);
+      order[0].store(ranks, 0);
+      order[1].store(ranks, 16);
+      const base = (leaf as usize) * F;
+      const c = base >> SLOT_SHIFT;
+      const off = base & SLOT_MASK;
+      const keys = this.p.leafKeys[c];
+      const edits = this.p.edits;
+      let changed = false;
+      if (this.p.plainVals()) {
+        const vals = this.p.valPlain[c];
+        while (i < n) {
+          const s = off + (ranks[i] as usize);
+          const key = keys[s];
+          f(vals[s], key);
+          if (this.p.edits != edits) {
+            last = key;
+            changed = true;
+            break;
+          }
+          i++;
+        }
+      } else {
+        const vals = this.p.valOpt[c];
+        while (i < n) {
+          const s = off + (ranks[i] as usize);
+          const key = keys[s];
+          f(valueOf(vals[s]), key);
+          if (this.p.edits != edits) {
+            last = key;
+            changed = true;
+            break;
+          }
+          i++;
+        }
+      }
+      if (!changed) {
         leaf = this.p.leafNext[leaf as usize];
         i = 0;
         continue;
       }
-      const at = slotAtRank(this.p, leaf, i);
-      const key = this.p.keyAt(at);
-      const value = this.p.valAt(at);
-      const edits = this.p.edits;
-      f(value, key);
-      if (this.p.edits == edits) {
-        i++;
-        continue;
-      }
-      // The keys changed: find the first key after `key` again.
+      // The keys changed: go on from the first key after the one visited last.
       if (this.p.size == 0) {
         return;
       }
-      const edge = edgeOrder(this.p, key);
+      const edge = edgeOrder(this.p, last, windowOf(last));
       if (edge > 0) {
         return;
       }
-      leaf = edge < 0 ? this.p.edgeLeaf(false) : this.p.leafOf(key);
-      i = edge < 0 ? 0 : leafRank(this.p, leaf, key, true);
+      leaf = edge < 0 ? this.p.edgeLeaf(false) : this.p.leafOf(last, windowOf(last));
+      i = edge < 0 ? 0 : leafRank(this.p, leaf, last, true);
     }
   }
 
@@ -230,11 +281,12 @@ export class BTreeMap<K extends Comparable<K>, V> implements Iterable<[K, V]> {
     if (this.p.size == 0) {
       return undefined;
     }
-    const at = edgeOrder(this.p, key);
+    const win = windowOf(key);
+    const at = edgeOrder(this.p, key, win);
     if (at != 0) {
       return at < 0 ? undefined : this.last();
     }
-    let leaf = this.p.leafOf(key);
+    let leaf = this.p.leafOf(key, win);
     const i = leafRank(this.p, leaf, key, true);
     if (i > 0) {
       return this.p.keyAt(slotAtRank(this.p, leaf, i - 1));
@@ -251,11 +303,12 @@ export class BTreeMap<K extends Comparable<K>, V> implements Iterable<[K, V]> {
     if (this.p.size == 0) {
       return undefined;
     }
-    const at = edgeOrder(this.p, key);
+    const win = windowOf(key);
+    const at = edgeOrder(this.p, key, win);
     if (at != 0) {
       return at < 0 ? this.first() : undefined;
     }
-    let leaf = this.p.leafOf(key);
+    let leaf = this.p.leafOf(key, win);
     const n = this.p.leafCount(leaf);
     const i = leafRank(this.p, leaf, key, false);
     if (i < n) {
@@ -274,11 +327,12 @@ export class BTreeMap<K extends Comparable<K>, V> implements Iterable<[K, V]> {
     if (this.p.size == 0 || !(from < to)) {
       return out;
     }
-    const at = edgeOrder(this.p, from);
+    const win = windowOf(from);
+    const at = edgeOrder(this.p, from, win);
     if (at > 0) {
       return out;
     }
-    let leaf = at < 0 ? this.p.edgeLeaf(false) : this.p.leafOf(from);
+    let leaf = at < 0 ? this.p.edgeLeaf(false) : this.p.leafOf(from, win);
     let i = at < 0 ? 0 : leafRank(this.p, leaf, from, false);
     while (leaf != NONE) {
       const n = this.p.leafCount(leaf);

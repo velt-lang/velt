@@ -38,6 +38,12 @@ export function withCount(line: Line, n: usize): Line {
   return [line[0], line[1], line[2], line[3].withLane(7, head)];
 }
 
+/** `line` with prefix `pre` (at most 2047 bytes). */
+export function withPrefix(line: Line, pre: u32): Line {
+  const head = (line[3].lane(7) & 31) | ((pre << 5) as u16);
+  return [line[0], line[1], line[2], line[3].withLane(7, head)];
+}
+
 /** The word in slot `i` (below `HEAD`). */
 export function wordAt(line: Line, i: usize): u16 {
   if (i < 8) {
@@ -81,18 +87,25 @@ export function wordsBelow(line: Line, w: u16): usize {
 }
 
 /**
- * How many of the node's `n` words are at most `w`: with `wordsBelow`, the keys whose words tie
- * with `w` (words are in key order), the ones to compare in full. Compares, not a scan: a word
- * read at a computed slot would take the line out of its registers.
+ * Where `w` falls among an inner node's `n` words (in key order): how many are below it and how
+ * many at most it, from one pass of compares.
  */
-export function wordsAtMost(line: Line, n: usize, w: u16): usize {
+export function rankRange(line: Line, n: usize, w: u16): [usize, usize] {
   const v = u16x8.splat(w);
-  const c =
-    line[0].le(v).count() +
-    line[1].le(v).count() +
-    line[2].le(v).count() +
-    line[3].le(v).and(mask16x8.prefix(7)).count();
-  return c < n ? c : n;
+  const head = mask16x8.prefix(7);
+  const lo =
+    line[0].lt(v).count() +
+    line[1].lt(v).count() +
+    line[2].lt(v).count() +
+    line[3].lt(v).and(head).count();
+  const ties =
+    line[0].eq(v).count() +
+    line[1].eq(v).count() +
+    line[2].eq(v).count() +
+    line[3].eq(v).and(head).count();
+  // Unused slots (`EMPTY`, after the words) tie only with an `EMPTY` target: cut them off.
+  const hi = lo + ties;
+  return [lo, hi < n ? hi : n];
 }
 
 // Edits of several slots go through a scratch array of 32 words (`scratch` arguments): four
@@ -224,6 +237,29 @@ export function slotsWithWord(line: Line, n: usize, w: u16): u64 {
 // with the next two bytes of each key's encoding, so that a word is four bytes, compared as two
 // halves. The ones below are the ones above over such a pair.
 
+/** `rankRange` over wide words `(wa, wb)`: the compares of each half shared by both counts. */
+export function rankRange2(a: Line, b: Line, n: usize, wa: u16, wb: u16): [usize, usize] {
+  const va = u16x8.splat(wa);
+  const vb = u16x8.splat(wb);
+  const head = mask16x8.prefix(7);
+  const e0 = a[0].eq(va);
+  const e1 = a[1].eq(va);
+  const e2 = a[2].eq(va);
+  const e3 = a[3].eq(va).and(head);
+  const lo =
+    a[0].lt(va).or(e0.and(b[0].lt(vb))).count() +
+    a[1].lt(va).or(e1.and(b[1].lt(vb))).count() +
+    a[2].lt(va).or(e2.and(b[2].lt(vb))).count() +
+    a[3].lt(va).and(head).or(e3.and(b[3].lt(vb))).count();
+  const ties =
+    e0.and(b[0].eq(vb)).count() +
+    e1.and(b[1].eq(vb)).count() +
+    e2.and(b[2].eq(vb)).count() +
+    e3.and(b[3].eq(vb)).count();
+  const hi = lo + ties;
+  return [lo, hi < n ? hi : n];
+}
+
 /** How many word slots hold wide words below `(wa, wb)`. */
 export function wordsBelow2(a: Line, b: Line, wa: u16, wb: u16): usize {
   const va = u16x8.splat(wa);
@@ -234,18 +270,6 @@ export function wordsBelow2(a: Line, b: Line, wa: u16, wb: u16): usize {
     a[2].lt(va).or(a[2].eq(va).and(b[2].lt(vb))).count() +
     a[3].lt(va).or(a[3].eq(va).and(b[3].lt(vb))).and(mask16x8.prefix(7)).count()
   );
-}
-
-/** How many of the `n` wide words are at most `(wa, wb)`. */
-export function wordsAtMost2(a: Line, b: Line, n: usize, wa: u16, wb: u16): usize {
-  const va = u16x8.splat(wa);
-  const vb = u16x8.splat(wb);
-  const c =
-    a[0].lt(va).or(a[0].eq(va).and(b[0].le(vb))).count() +
-    a[1].lt(va).or(a[1].eq(va).and(b[1].le(vb))).count() +
-    a[2].lt(va).or(a[2].eq(va).and(b[2].le(vb))).count() +
-    a[3].lt(va).or(a[3].eq(va).and(b[3].le(vb))).and(mask16x8.prefix(7)).count();
-  return c < n ? c : n;
 }
 
 /** The physical slots below `n` whose wide words equal `(wa, wb)`, as a bit mask. */

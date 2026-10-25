@@ -45,7 +45,7 @@ function checkNode<K extends Comparable<K>, V>(
   // Keys by rank (a leaf's through its order); words by physical slot.
   const keyAt = (i: usize): K => (leaf ? p.keyAt(slotAtRank(p, node, i)) : p.innerKeys[base + i]);
   const physical = (i: usize): K => (leaf ? p.keyAt(base + i) : p.innerKeys[base + i]);
-  const line = leaf ? p.lineOf(node) : p.innerLines[node as usize];
+  const line = leaf ? p.lineOf(node) : p.innerLineOf(node);
   const what = `${leaf ? "leaf" : "inner node"} ${node}`;
   if (node != p.root && n == 0) {
     return `${what}: empty`;
@@ -87,7 +87,7 @@ function checkNode<K extends Comparable<K>, V>(
         return `${what}: word ${i} is ${wordAt(line, i)}, its key gives ${w}`;
       }
       if (p.wide()) {
-        const lineB = leaf ? p.lineBOf(node) : p.innerLinesB[node as usize];
+        const lineB = leaf ? p.lineBOf(node) : p.innerLineBOf(node);
         const wb = i < n ? wordOfB(physical(i), pre) : EMPTY;
         if (wordAt(lineB, i) != wb) {
           return `${what}: second word ${i} is ${wordAt(lineB, i)}, its key gives ${wb}`;

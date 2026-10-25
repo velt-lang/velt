@@ -13,7 +13,7 @@
 // what a search reads first: slot `HEAD` holds the node's count and prefix, and the slots below
 // it, for keys with an order-preserving encoding (velt:collections/btree/inline_key: numbers,
 // `bool`, strings), two bytes of each key's encoding past the prefix all of the node's keys
-// share (`prefixFor`); strings keep the next two in a second line (`leafLinesB`), a four-byte
+// share (`prefixFor`); strings keep the next two in a second line next to it, a four-byte
 // word in all. Vector compares count the words below the target's, which is its rank unless
 // words tie with it; only those keys are compared in full. So a level of a lookup reads one line
 // and one child index. Keys without an encoding are compared one by one.
@@ -24,20 +24,18 @@
 
 import { InlineKey } from "velt:collections/btree/inline_key";
 import {
-  EMPTY,
-  Line,
-  Order,
-  identityOrder,
   countOf,
+  EMPTY,
   emptyLine,
   fill,
+  identityOrder,
+  Line,
+  Order,
   prefixOf,
+  rankRange,
+  rankRange2,
   withCount,
   withWord,
-  wordsAtMost,
-  wordsAtMost2,
-  wordsBelow,
-  wordsBelow2,
 } from "velt:collections/btree/line";
 
 /**
@@ -78,31 +76,34 @@ export class Pool<K extends Comparable<K>, V> {
   valPlain: V[][] = [];
   valOpt: (V | null)[][] = [];
   valFill: V[] = [];
-  /** Each leaf's words and header, a cache line each (velt:collections/btree/line). */
-  /** Leaf `l`'s line is `leafLines[l >> LEAF_SHIFT][l & LEAF_MASK]`. */
-  leafLines: Line[][] = [];
   /**
-   * For keys with wide words (`InlineKey.inlineWide`), the next two bytes of each key past the
-   * word in `leafLines` / `innerLines`, chunked the same way; empty otherwise.
+   * Each leaf's words and header (velt:collections/btree/line), 64 bytes: leaf `l`'s line is
+   * `leafLines[l >> LEAF_SHIFT][(l & LEAF_MASK) << lineShift]`. Keys with wide words
+   * (`InlineKey.inlineWide`) keep the next two bytes of each key past the word in a second line
+   * right after it (`lineShift` 1), so a search loads both as one 128-byte block (arrays of whole
+   * lines are 128-byte aligned): one cache line on CPUs with 128-byte lines, an adjacent pair
+   * elsewhere.
    */
-  leafLinesB: Line[][] = [];
+  leafLines: Line[][] = [];
+  /** 1 when nodes keep two lines (wide words), else 0: set with the first key. */
+  lineShift: usize = 0;
   /**
    * Each leaf's rank order (velt:collections/btree/line `Order`), chunked as the lines are. A
    * leaf's keys and values sit in physical slots in the order they came; `leafOrder` gives the
    * slot of each rank (velt:collections/btree/leaf).
    */
   leafOrder: Order[][] = [];
-  /** 32 bytes for editing an order, and a second order and lines (velt:collections/btree/leaf). */
+  /** 32 bytes for reading an order by rank (velt:collections/btree_map `ranks`). */
   orderScratch: u8[] = new Array<u8>(32).fill(0);
-  orderScratch2: u8[] = new Array<u8>(32).fill(0);
+  /** More lines' words for editing (velt:collections/btree/leaf `moveRanks`). */
   scratch2: u16[] = new Array<u16>(32).fill(0);
   scratch3: u16[] = new Array<u16>(32).fill(0);
   scratch4: u16[] = new Array<u16>(32).fill(0);
   leafNext: u32[] = [];
   leafPrev: u32[] = [];
   innerKeys: K[] = [];
+  /** Inner node `i`'s line is `innerLines[i << lineShift]`, a second as for leaves. */
   innerLines: Line[] = [];
-  innerLinesB: Line[] = [];
   /** 32 words for editing a line (velt:collections/btree/line `spill` / `fill`). */
   scratch: u16[] = new Array<u16>(32).fill(0);
   innerKids: u32[] = [];
@@ -115,6 +116,11 @@ export class Pool<K extends Comparable<K>, V> {
    * that a key lies between them (velt:collections/btree/edges).
    */
   minKey: K[] = [];
+  /** The windows of a `getMany` batch (velt:collections/btree/leaf `descendMany`), two words each. */
+  batchWindows: u64[] = new Array<u64>(32).fill(0);
+  /** Two slots for `keySwap`'s (and `valSwap`'s) raw moves across chunks, empty between them. */
+  keyMoves: K[] = [];
+  valMoves: (V | null)[] = [];
   maxKey: K[] = [];
   minWindow: u64[] = [0, 0];
   maxWindow: u64[] = [0, 0];
@@ -131,51 +137,60 @@ export class Pool<K extends Comparable<K>, V> {
   // ─────────────── searching ───────────────
 
   /** How many keys of the node at `keys[base..]` (its words `line`) are at most `t`. */
-  countAtMost(keys: K[], line: Line, lineB: Line, base: usize, t: K): usize {
-    const n = countOf(line);
+  // The searches below compare words only for a target inside the node's range (between the
+  // separators on either side of it), the only targets that share the node's prefix: the ones
+  // a descent brings to the node.
+
+  /** The child slot of inner `node` whose range holds `t`: its separators at most `t`. */
+  innerSlot(node: u32, t: K, win: Window): usize {
+    const i = (node as usize) << this.lineShift;
+    const base = (node as usize) * F;
     let lo: usize = 0;
-    let hi = n;
+    let hi: usize = 0;
     if (t.hasInlineKey()) {
-      const pre = prefixOf(line);
+      // The word first, from the header alone, then the lines: nothing of them is live across
+      // `quadIn`, which may call out, so they stay in registers.
+      const pre = prefixOf(this.innerLines[i]) as usize;
       if (t.inlineWide()) {
-        const q = t.inlineQuad(pre as usize);
-        const w = (q >> 16) as u16;
-        const wb = q as u16;
-        lo = wordsBelow2(line, lineB, w, wb);
-        hi = wordsAtMost2(line, lineB, n, w, wb);
+        const q = quadIn(t, win, pre);
+        const r = rankRange2(
+          this.innerLines[i],
+          this.innerLines[i + 1],
+          countOf(this.innerLines[i]),
+          (q >> 16) as u16,
+          q as u16,
+        );
+        lo = r[0];
+        hi = r[1];
       } else {
-        const w = wordOf(t, pre);
-        lo = wordsBelow(line, w);
-        hi = wordsAtMost(line, n, w);
+        const w = wordIn(t, win, pre);
+        const r = rankRange(this.innerLines[i], countOf(this.innerLines[i]), w);
+        lo = r[0];
+        hi = r[1];
       }
-    } else if (!__intrinsic_needs_drop(t)) {
-      let c: usize = 0;
-      for (let i: usize = 0; i < n; i++) {
-        c += t < keys[base + i] ? 0 : 1;
+      if (lo == hi) {
+        return lo;
       }
-      return c;
+    } else {
+      hi = countOf(this.innerLines[i]);
+      if (!__intrinsic_needs_drop(t)) {
+        let c: usize = 0;
+        for (let k: usize = 0; k < hi; k++) {
+          c += t < this.innerKeys[base + k] ? 0 : 1;
+        }
+        return c;
+      }
     }
+    // Ties (or keys without words): a binary search of the keys between.
     while (lo < hi) {
       const mid = lo + (hi - lo) / 2;
-      if (t < keys[base + mid]) {
+      if (t < this.innerKeys[base + mid]) {
         hi = mid;
       } else {
         lo = mid + 1;
       }
     }
     return lo;
-  }
-
-  // The searches below compare words only for a target inside the node's range (between the
-  // separators on either side of it), the only targets that share the node's prefix: the ones
-  // a descent brings to the node.
-
-  /** The child slot of inner `node` whose range holds `t`: its separators at most `t`. */
-  innerSlot(node: u32, t: K): usize {
-    const i = node as usize;
-    const line = this.innerLines[i];
-    const lineB = t.inlineWide() ? this.innerLinesB[i] : line;
-    return this.countAtMost(this.innerKeys, line, lineB, i * F, t);
   }
 
   // ─────────────── headers ───────────────
@@ -191,20 +206,23 @@ export class Pool<K extends Comparable<K>, V> {
 
   /** How many separators inner `node` holds. */
   innerCount(node: u32): usize {
-    return countOf(this.innerLines[node as usize]);
+    return countOf(this.innerLineOf(node));
   }
 
   setInnerCount(node: u32, n: usize) {
-    this.innerLines[node as usize] = withCount(this.innerLines[node as usize], n);
+    this.setInnerLine(node, withCount(this.innerLineOf(node), n));
   }
 
-  /** The leaf whose range holds `t`, recording the descent in `pathNodes` / `pathSlots`. */
-  findLeaf(t: K): u32 {
+  /**
+   * The leaf whose range holds `t` (`win` its window), recording the descent in `pathNodes` /
+   * `pathSlots`.
+   */
+  findLeaf(t: K, win: Window): u32 {
     __intrinsic_array_truncate(this.pathNodes, 0);
     __intrinsic_array_truncate(this.pathSlots, 0);
     let node = this.root;
     for (let h = this.height; h > 0; h--) {
-      const slot = this.innerSlot(node, t);
+      const slot = this.innerSlot(node, t, win);
       this.pathNodes.push(node);
       this.pathSlots.push(slot);
       node = this.innerKids[(node as usize) * F + slot];
@@ -212,11 +230,11 @@ export class Pool<K extends Comparable<K>, V> {
     return node;
   }
 
-  /** The leaf whose range holds `t`, without recording the descent. */
-  leafOf(t: K): u32 {
+  /** The leaf whose range holds `t` (`win` its window), without recording the descent. */
+  leafOf(t: K, win: Window): u32 {
     let node = this.root;
     for (let h = this.height; h > 0; h--) {
-      node = this.innerKids[(node as usize) * F + this.innerSlot(node, t)];
+      node = this.innerKids[(node as usize) * F + this.innerSlot(node, t, win)];
     }
     return node;
   }
@@ -259,38 +277,46 @@ export class Pool<K extends Comparable<K>, V> {
     return this.fill.length > 0 && this.fill[0].inlineWide();
   }
 
-  /** Sets the word of slot `i` of `leaf` from its key. */
-  leafWord(leaf: u32, i: usize) {
-    const line = this.lineOf(leaf);
-    const key = this.keyAt((leaf as usize) * F + i);
-    const pre = prefixOf(line);
-    this.setLine(leaf, withWord(line, i, wordOf(key, pre)));
-    if (this.wide()) {
-      this.setLineB(leaf, withWord(this.lineBOf(leaf), i, wordOfB(key, pre)));
-    }
-  }
-
   /** Sets the word of separator `i` of inner `node` from its key. */
   innerWord(node: u32, i: usize) {
     const n = node as usize;
-    const line = this.innerLines[n];
+    const line = this.innerLineOf(node);
     const pre = prefixOf(line);
-    this.innerLines[n] = withWord(line, i, wordOf(this.innerKeys[n * F + i], pre));
     if (this.wide()) {
-      const lineB = this.innerLinesB[n];
-      this.innerLinesB[n] = withWord(lineB, i, wordOfB(this.innerKeys[n * F + i], pre));
+      const q = this.innerKeys[n * F + i].inlineQuad(pre as usize);
+      this.setInnerLine(node, withWord(line, i, (q >> 16) as u16));
+      this.setInnerLineB(node, withWord(this.innerLineBOf(node), i, q as u16));
+    } else {
+      this.setInnerLine(node, withWord(line, i, wordOf(this.innerKeys[n * F + i], pre)));
     }
   }
 
   /** Gives `leaf` the prefix of its range `fences` and every key its word. */
   refreshLeaf(leaf: u32, fences: Range<K>) {
+    if (this.inline()) {
+      this.refreshLeafAt(leaf, this.prefixFor(fences));
+    }
+  }
+
+  /**
+   * `refreshLeaf` only when the prefix of `fences` is not `leaf`'s: its words, kept by the
+   * edits that moved its entries at its present prefix, are then already right.
+   */
+  refreshLeafIfChanged(leaf: u32, fences: Range<K>) {
     if (!this.inline()) {
       return;
     }
+    const pre = this.prefixFor(fences);
+    if (pre != prefixOf(this.lineOf(leaf))) {
+      this.refreshLeafAt(leaf, pre);
+    }
+  }
+
+  /** `leaf`'s words (and header) for prefix `pre`. */
+  refreshLeafAt(leaf: u32, pre: u32) {
     const n = this.leafCount(leaf);
     const c = (leaf >> LEAF_SHIFT) as usize;
     const base = ((leaf & LEAF_MASK) as usize) * F;
-    const pre = this.prefixFor(fences);
     const line = wordsOf(this.leafKeys[c], base, n, pre, this.scratch, false);
     this.setLine(leaf, line);
     if (this.wide()) {
@@ -307,9 +333,11 @@ export class Pool<K extends Comparable<K>, V> {
     const i = node as usize;
     const n = this.innerCount(node);
     const pre = this.prefixFor(fences);
-    this.innerLines[i] = wordsOf(this.innerKeys, i * F, n, pre, this.scratch, false);
+    const line = wordsOf(this.innerKeys, i * F, n, pre, this.scratch, false);
+    this.setInnerLine(node, line);
     if (this.wide()) {
-      this.innerLinesB[i] = wordsOf(this.innerKeys, i * F, n, pre, this.scratch, true);
+      const lineB = wordsOf(this.innerKeys, i * F, n, pre, this.scratch, true);
+      this.setInnerLineB(node, lineB);
     }
   }
 
@@ -350,6 +378,16 @@ export class Pool<K extends Comparable<K>, V> {
     return t.compareTo(this.leafKeys[s >> SLOT_SHIFT][s & SLOT_MASK]);
   }
 
+  /** The wide word (`inlineQuad`) of the key in slot `s` past prefix `pre`, read in place. */
+  slotQuad(s: usize, pre: u32): u32 {
+    return this.leafKeys[s >> SLOT_SHIFT][s & SLOT_MASK].inlineQuad(pre as usize);
+  }
+
+  /** The word of the key in slot `s` past prefix `pre`, read in place. */
+  slotWord(s: usize, pre: u32): u16 {
+    return this.leafKeys[s >> SLOT_SHIFT][s & SLOT_MASK].inlineWord(pre as usize);
+  }
+
   /** Stores `k` in slot `s`, dropping what it held. */
   setKey(s: usize, k: K) {
     this.leafKeys[s >> SLOT_SHIFT][s & SLOT_MASK] = k;
@@ -357,20 +395,40 @@ export class Pool<K extends Comparable<K>, V> {
 
   /** `leaf`'s line. */
   lineOf(leaf: u32): Line {
-    return this.leafLines[(leaf >> LEAF_SHIFT) as usize][(leaf & LEAF_MASK) as usize];
+    return this.leafLines[(leaf >> LEAF_SHIFT) as usize][((leaf & LEAF_MASK) as usize) <<
+      this.lineShift];
   }
 
   setLine(leaf: u32, line: Line) {
-    this.leafLines[(leaf >> LEAF_SHIFT) as usize][(leaf & LEAF_MASK) as usize] = line;
+    this.leafLines[(leaf >> LEAF_SHIFT) as usize][((leaf & LEAF_MASK) as usize) << this.lineShift] =
+      line;
   }
 
   /** `leaf`'s second line (wide words only). */
   lineBOf(leaf: u32): Line {
-    return this.leafLinesB[(leaf >> LEAF_SHIFT) as usize][(leaf & LEAF_MASK) as usize];
+    return this.leafLines[(leaf >> LEAF_SHIFT) as usize][(((leaf & LEAF_MASK) as usize) << 1) + 1];
   }
 
   setLineB(leaf: u32, line: Line) {
-    this.leafLinesB[(leaf >> LEAF_SHIFT) as usize][(leaf & LEAF_MASK) as usize] = line;
+    this.leafLines[(leaf >> LEAF_SHIFT) as usize][(((leaf & LEAF_MASK) as usize) << 1) + 1] = line;
+  }
+
+  /** Inner `node`'s line. */
+  innerLineOf(node: u32): Line {
+    return this.innerLines[(node as usize) << this.lineShift];
+  }
+
+  setInnerLine(node: u32, line: Line) {
+    this.innerLines[(node as usize) << this.lineShift] = line;
+  }
+
+  /** Inner `node`'s second line (wide words only). */
+  innerLineBOf(node: u32): Line {
+    return this.innerLines[((node as usize) << 1) + 1];
+  }
+
+  setInnerLineB(node: u32, line: Line) {
+    this.innerLines[((node as usize) << 1) + 1] = line;
   }
 
   /** `leaf`'s rank order. */
@@ -390,23 +448,30 @@ export class Pool<K extends Comparable<K>, V> {
   /** Starts loading the line of `node`, an inner node when `inner`, else a leaf. */
   prefetchNode(node: u32, inner: bool) {
     if (inner) {
-      __intrinsic_array_prefetch(this.innerLines, node as usize);
+      __intrinsic_array_prefetch(this.innerLines, (node as usize) << this.lineShift);
     } else {
       const c = (node >> LEAF_SHIFT) as usize;
-      __intrinsic_array_prefetch(this.leafLines[c], (node & LEAF_MASK) as usize);
+      __intrinsic_array_prefetch(
+        this.leafLines[c],
+        ((node & LEAF_MASK) as usize) << this.lineShift,
+      );
     }
   }
 
-  /** `__intrinsic_array_rotate_right` of key slots `lo ..= hi` (of one leaf). */
-  keyRotateRight(lo: usize, hi: usize) {
-    const at = lo & SLOT_MASK;
-    __intrinsic_array_rotate_right(this.leafKeys[lo >> SLOT_SHIFT], at, at + (hi - lo));
-  }
-
-  /** `__intrinsic_array_rotate_left` of key slots `lo ..= hi` (of one leaf). */
-  keyRotateLeft(lo: usize, hi: usize) {
-    const at = lo & SLOT_MASK;
-    __intrinsic_array_rotate_left(this.leafKeys[lo >> SLOT_SHIFT], at, at + (hi - lo));
+  /**
+   * Starts loading all of `leaf`: its line, its order, and its key and value slots (four cache
+   * lines each at 8 bytes a slot, the ones a walk reads).
+   */
+  prefetchLeaf(leaf: u32) {
+    const c = (leaf >> LEAF_SHIFT) as usize;
+    const at = (leaf & LEAF_MASK) as usize;
+    __intrinsic_array_prefetch(this.leafLines[c], at << this.lineShift);
+    __intrinsic_array_prefetch(this.leafOrder[c], at);
+    const base = (leaf as usize) * F;
+    for (let j: usize = 0; j < F; j += 8) {
+      this.keyPrefetch(base + j);
+      this.valPrefetch(base + j);
+    }
   }
 
   /**
@@ -420,9 +485,20 @@ export class Pool<K extends Comparable<K>, V> {
       __intrinsic_array_swap(this.leafKeys[ca], a & SLOT_MASK, b & SLOT_MASK);
       return;
     }
-    const k = this.leafKeys[ca][a & SLOT_MASK];
-    this.leafKeys[ca][a & SLOT_MASK] = this.leafKeys[cb][b & SLOT_MASK];
-    this.leafKeys[cb][b & SLOT_MASK] = k;
+    if (!__intrinsic_needs_drop(this.fill[0])) {
+      const k = this.leafKeys[ca][a & SLOT_MASK];
+      this.leafKeys[ca][a & SLOT_MASK] = this.leafKeys[cb][b & SLOT_MASK];
+      this.leafKeys[cb][b & SLOT_MASK] = k;
+      return;
+    }
+    // Raw moves through `keyMoves` (no share, no drop): each key stays owned once, and
+    // `keyMoves` holds none after.
+    __intrinsic_array_set_len(this.keyMoves, 2);
+    __intrinsic_array_move(this.keyMoves, 0, this.leafKeys[ca], a & SLOT_MASK, 1);
+    __intrinsic_array_move(this.keyMoves, 1, this.leafKeys[cb], b & SLOT_MASK, 1);
+    __intrinsic_array_move(this.leafKeys[ca], a & SLOT_MASK, this.keyMoves, 1, 1);
+    __intrinsic_array_move(this.leafKeys[cb], b & SLOT_MASK, this.keyMoves, 0, 1);
+    __intrinsic_array_set_len(this.keyMoves, 0);
   }
 
   /**
@@ -457,26 +533,6 @@ export class Pool<K extends Comparable<K>, V> {
     }
   }
 
-  valRotateRight(lo: usize, hi: usize) {
-    const c = lo >> SLOT_SHIFT;
-    const at = lo & SLOT_MASK;
-    if (this.plainVals()) {
-      __intrinsic_array_rotate_right(this.valPlain[c], at, at + (hi - lo));
-    } else {
-      __intrinsic_array_rotate_right(this.valOpt[c], at, at + (hi - lo));
-    }
-  }
-
-  valRotateLeft(lo: usize, hi: usize) {
-    const c = lo >> SLOT_SHIFT;
-    const at = lo & SLOT_MASK;
-    if (this.plainVals()) {
-      __intrinsic_array_rotate_left(this.valPlain[c], at, at + (hi - lo));
-    } else {
-      __intrinsic_array_rotate_left(this.valOpt[c], at, at + (hi - lo));
-    }
-  }
-
   /** Exchanges the values of slots `a` and `b`, as `keySwap` does keys. */
   valSwap(a: usize, b: usize) {
     const ca = a >> SLOT_SHIFT;
@@ -497,9 +553,13 @@ export class Pool<K extends Comparable<K>, V> {
       __intrinsic_array_swap(this.valOpt[ca], ia, ib);
       return;
     }
-    const v = this.valOpt[ca][ia];
-    this.valOpt[ca][ia] = this.valOpt[cb][ib];
-    this.valOpt[cb][ib] = v;
+    // Raw moves, as `keySwap` does for keys.
+    __intrinsic_array_set_len(this.valMoves, 2);
+    __intrinsic_array_move(this.valMoves, 0, this.valOpt[ca], ia, 1);
+    __intrinsic_array_move(this.valMoves, 1, this.valOpt[cb], ib, 1);
+    __intrinsic_array_move(this.valOpt[ca], ia, this.valMoves, 1, 1);
+    __intrinsic_array_move(this.valOpt[cb], ib, this.valMoves, 0, 1);
+    __intrinsic_array_set_len(this.valMoves, 0);
   }
 
   valPrefetch(s: usize) {
@@ -521,9 +581,6 @@ export class Pool<K extends Comparable<K>, V> {
     if (c == this.leafKeys.length) {
       this.leafKeys.push([]);
       this.leafLines.push([]);
-      if (this.wide()) {
-        this.leafLinesB.push([]);
-      }
       this.leafOrder.push([]);
       if (this.plainVals()) {
         this.valPlain.push([]);
@@ -544,8 +601,8 @@ export class Pool<K extends Comparable<K>, V> {
       }
     }
     this.leafLines[c].push(emptyLine());
-    if (this.wide()) {
-      this.leafLinesB[c].push(emptyLine());
+    if (this.lineShift == 1) {
+      this.leafLines[c].push(emptyLine());
     }
     this.leafOrder[c].push(identityOrder());
     this.leafNext.push(NONE);
@@ -557,14 +614,14 @@ export class Pool<K extends Comparable<K>, V> {
     if (this.freeInners.length > 0) {
       return this.freeInners.pop()!;
     }
-    const id = this.innerLines.length as u32;
+    const id = (this.innerLines.length >> this.lineShift) as u32;
     for (let i: usize = 0; i < F; i++) {
       this.innerKeys.push(this.fill[0]);
       this.innerKids.push(0);
     }
     this.innerLines.push(emptyLine());
-    if (this.wide()) {
-      this.innerLinesB.push(emptyLine());
+    if (this.lineShift == 1) {
+      this.innerLines.push(emptyLine());
     }
     return id;
   }
@@ -588,9 +645,9 @@ export class Pool<K extends Comparable<K>, V> {
     for (let i: usize = 0; i < F; i++) {
       this.innerKeys[base + i] = this.fill[0];
     }
-    this.innerLines[node as usize] = emptyLine();
+    this.setInnerLine(node, emptyLine());
     if (this.wide()) {
-      this.innerLinesB[node as usize] = emptyLine();
+      this.setInnerLineB(node, emptyLine());
     }
     this.freeInners.push(node);
   }
@@ -602,13 +659,11 @@ export class Pool<K extends Comparable<K>, V> {
     __intrinsic_array_truncate(this.valOpt, 0);
     __intrinsic_array_truncate(this.valFill, 0);
     __intrinsic_array_truncate(this.leafLines, 0);
-    __intrinsic_array_truncate(this.leafLinesB, 0);
     __intrinsic_array_truncate(this.leafOrder, 0);
     __intrinsic_array_truncate(this.leafNext, 0);
     __intrinsic_array_truncate(this.leafPrev, 0);
     __intrinsic_array_truncate(this.innerKeys, 0);
     __intrinsic_array_truncate(this.innerLines, 0);
-    __intrinsic_array_truncate(this.innerLinesB, 0);
     __intrinsic_array_truncate(this.innerKids, 0);
     __intrinsic_array_truncate(this.freeLeaves, 0);
     __intrinsic_array_truncate(this.freeInners, 0);
@@ -625,6 +680,45 @@ export class Pool<K extends Comparable<K>, V> {
 /** The word of `k` in a node with prefix `pre`: the two bytes of its encoding past it. */
 export function wordOf<T extends InlineKey>(k: T, pre: u32): u16 {
   return k.inlineWord(pre as usize);
+}
+
+/**
+ * The first 16 bytes of `t`'s encoding (`inlineKey(0)`, `inlineKey(8)`), its "window": an
+ * operation computes it once, and every node's word for `t` is a shift of it (`quadIn`), where
+ * the prefix leaves it inside the 16 bytes. Zeros for keys without an encoding.
+ */
+export type Window = [u64, u64];
+
+/** `t`'s window. */
+export function windowOf<T extends InlineKey>(t: T): Window {
+  if (!t.hasInlineKey()) {
+    return [0, 0];
+  }
+  return t.inlineWindow();
+}
+
+/** Bytes `pre .. pre + 4` of `t`'s encoding (`inlineQuad`), from its window `win` up to byte 12. */
+export function quadIn<T extends InlineKey>(t: T, win: Window, pre: usize): u32 {
+  if (pre > 12) {
+    return t.inlineQuad(pre);
+  }
+  const [hi, lo] = win;
+  if (pre == 0) {
+    return (hi >> 32) as u32;
+  }
+  if (pre < 8) {
+    const s = (pre * 8) as u64;
+    return (((hi << s) | (lo >> (64 - s))) >> 32) as u32;
+  }
+  return ((lo << (((pre - 8) * 8) as u64)) >> 32) as u32;
+}
+
+/** Bytes `pre .. pre + 2` of `t`'s encoding (`inlineWord`), from its window as `quadIn`. */
+export function wordIn<T extends InlineKey>(t: T, win: Window, pre: usize): u16 {
+  if (pre > 12) {
+    return t.inlineWord(pre);
+  }
+  return (quadIn(t, win, pre) >> 16) as u16;
 }
 
 /** The second half of `k`'s wide word in a node with prefix `pre`: the two bytes after `wordOf`'s. */
@@ -650,21 +744,22 @@ function wordsOf<K extends Comparable<K>>(
   return fill(scratch);
 }
 
-// The number of leading bytes the encodings of `a` and `b` share, at most `MAX_PREFIX`.
-function commonPrefix<K extends InlineKey>(a: K, b: K): u32 {
+/** The number of leading bytes the encodings of `a` and `b` share, at most 2040. */
+export function commonPrefix<K extends InlineKey>(a: K, b: K): u32 {
   for (let off: usize = 0; off < MAX_PREFIX; off += 8) {
-    let d = a.inlineKey(off) ^ b.inlineKey(off);
+    const d = a.inlineKey(off) ^ b.inlineKey(off);
     if (d != 0) {
-      let bytes: usize = 0;
-      while (d >> 56 == 0) {
-        d = d << 8;
-        bytes++;
-      }
-      return (off + bytes) as u32;
+      // The equal leading bytes: leading zero bits of `d`, by halves, over 8.
+      const high = (d >> 32) as i32;
+      const zeros = high != 0 ? velt_rt_math_clz32(high) : 32 + velt_rt_math_clz32(d as i32);
+      return (off + ((zeros as usize) >> 3)) as u32;
     }
   }
   return MAX_PREFIX as u32;
 }
+
+// Leading zero bits of a 32-bit value (`Math.clz32`), one instruction.
+declare function velt_rt_math_clz32(x: i32): i32;
 
 /**
  * Moves `xs[from]` to `xs[to]`, whose value is about to be overwritten or is a filler: a swap
@@ -678,9 +773,11 @@ export function moveSlot<T>(xs: T[], to: usize, from: usize) {
   }
 }
 
-// A value from a `valOpt` slot, shared. A slot of a live entry holds `null` only when `V` holds
-// `null`.
-function valueOf<V>(slot: V | null): V {
+/**
+ * A value from a `valOpt` slot, shared. A slot of a live entry holds `null` only when `V` holds
+ * `null`.
+ */
+export function valueOf<V>(slot: V | null): V {
   if (slot != null) {
     return __intrinsic_share(slot);
   }

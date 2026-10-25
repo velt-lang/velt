@@ -206,9 +206,9 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
 | `velt_rt_str_from_u64` | `(uint64_t v, VeltStr* out)` | decimal (inline) |
 | `velt_rt_str_from_f64` | `(double v, VeltStr* out)` | JS `Number.prototype.toString` formatting (inline) |
 | `velt_rt_str_from_bool` | `(uint8_t v, VeltStr* out)` | `true`/`false` (static) |
-| `velt_rt_str_clone` | `(const VeltStr* s, VeltStr* out)` | a copy: bitwise, plus count +1 for heap strings (never a deep copy) |
+| `velt_rt_str_clone` | `(const VeltStr* s, VeltStr* out)` | a copy: bitwise, plus count +1 for heap strings (never a deep copy); generated code calls it for heap strings only (`(int64_t)w2 > 0`) and copies the three words of any other |
 | `velt_rt_str_own` | `(const VeltStr* s, VeltStr* out)` | like `str_clone`, but a static-form string (which may borrow memory, e.g. a JSON key pointing into the parsed text) is copied into an inline or heap string |
-| `velt_rt_str_drop` | `(VeltStr* s)` | count −1 for heap strings (frees at 0), then zeroes `*s` |
+| `velt_rt_str_drop` | `(VeltStr* s)` | count −1 for heap strings (frees at 0), then zeroes `*s`; generated code calls it for heap strings only and zeroes any other itself |
 | `velt_rt_str_cmp` | `(const VeltStr* a, const VeltStr* b) -> int32_t` | -1 / 0 / 1 in UTF-16 code-unit order (`<`, `sort()`; #377 phase 2b): `memcmp` for two ASCII strings, else byte order corrected where it differs from code-unit order (design/strings.md "The ordering rule") |
 | `velt_rt_str_char_code_at` | `(const VeltStr* s, int64_t i) -> int64_t` | the UTF-16 code unit at `i` (a supplementary character gives its high or low surrogate), -1 out of range; generated code calls it for non-ASCII strings only |
 | `velt_rt_str_byte_length` | `(const VeltStr* s) -> uint64_t` | the UTF-8 length: the stored byte length, O(1) (generated code reads it inline, above) |
@@ -518,10 +518,11 @@ never reads), so that it treats the loop's copy for a plain array as the one tha
 | `velt_rt_realloc` | `(void* p, uint64_t old_size, uint64_t align, uint64_t new_size) -> void*` |
 | `velt_rt_free` | `(void* p, uint64_t size, uint64_t align)` |
 
-An array buffer (generated code's `T[]`) has its element's alignment, or a cache line's (64)
-when the element's size is a whole number of cache lines (`velt_vir` `buffer_align`): each
-element of such an array is then whole lines, a B-tree node's 64-byte block in one line. Every
-allocation, growth and free of one buffer passes the same alignment.
+An array buffer (generated code's `T[]`) has its element's alignment, or 128 bytes when the
+element's size is a multiple of 64 (`velt_vir` `buffer_align`): each element of such an array is
+then whole 64-byte lines, and an aligned pair of them one 128-byte block (one cache line on
+Apple's CPUs, an adjacent pair that others fetch together), as a B-tree node's two lines are.
+Every allocation, growth and free of one buffer passes the same alignment.
 
 `VELT_RT_DEBUG_ALLOC=1` with a **debug** runtime (programs linked against `<target>/debug/velt_rt`,
 e.g. every golden run) checks every allocation of the process (generated code and runtime alike):

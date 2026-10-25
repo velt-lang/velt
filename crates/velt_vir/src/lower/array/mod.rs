@@ -2,8 +2,8 @@
 //! (aggregate sizes are multiples of their alignment, so size is the stride). An empty array
 //! has a null buffer and `cap == 0`; buffers come from `velt_rt_alloc` and grow by amortized
 //! doubling (the shared `ArrayGrow` helper, starting at 4). A buffer has its element's
-//! alignment, and a cache line's (`LINE`) when the element's size is a multiple of it, so each
-//! element of such an array is whole cache lines ([`FnLower::stride`]). `cap == 0` with elements is a
+//! alignment, and `LINE_ALIGN` when the element's size is a multiple of 64 bytes, so each element
+//! of such an array is whole cache lines ([`FnLower::stride`]). `cap == 0` with elements is a
 //! buffer the array does not own: a module constant table's read-only data (`table_read` in
 //! `expr.rs`), seen only by the code that reads an element, the length or iterates. Indexing is
 //! bounds-checked
@@ -12,13 +12,16 @@
 mod builtins;
 mod ops;
 
-/// A cache line, in bytes: the alignment of buffers whose elements are whole lines.
+/// A cache line, in bytes, on most CPUs: elements whose size is a multiple of it are whole lines.
 const LINE: u32 = 64;
+/// The alignment of buffers of whole-line elements: Apple's CPUs have 128-byte lines, and other
+/// CPUs fetch 64-byte lines in aligned pairs, so a 128-byte element is one fetch either way.
+const LINE_ALIGN: u32 = 128;
 
 /// The alignment of an array buffer whose elements have this size and alignment.
 pub(crate) fn buffer_align(size: u32, align: u32) -> u32 {
     if size >= LINE && size.is_multiple_of(LINE) {
-        align.max(LINE)
+        align.max(LINE_ALIGN)
     } else {
         align
     }
@@ -281,8 +284,8 @@ mod tests {
     #[test]
     fn buffers_of_whole_cache_lines_are_line_aligned() {
         // A `[u16x8, u16x8, u16x8, u16x8]` (64 bytes, align 16) and a 128-byte element.
-        assert_eq!(buffer_align(64, 16), 64);
-        assert_eq!(buffer_align(128, 8), 64);
+        assert_eq!(buffer_align(64, 16), 128);
+        assert_eq!(buffer_align(128, 8), 128);
         // Anything else keeps its element's alignment.
         assert_eq!(buffer_align(8, 8), 8);
         assert_eq!(buffer_align(48, 16), 16);

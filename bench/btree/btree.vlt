@@ -1,8 +1,9 @@
-// Ordered maps: `BTreeMap` (velt:collections/btree_map) against Rust's std `BTreeMap`
-// (btree.rs). 1M random `u64` keys: inserts, lookups (half of them misses), the same lookups as
-// one `getMany` (Rust: one `get` each), an in-order walk, then deletes of every key; and the
-// same for 200k string keys. Each line: name, milliseconds,
-// checksum (run.sh checks that both programs print the same checksums).
+// Ordered maps: `BTreeMap` (velt:collections/btree_map) against Rust's std `BTreeMap` and
+// bbtree's (rust/, the same workloads). 1M random `u64` keys: inserts, lookups (half of them
+// misses), the same lookups as one `getMany` (bbtree: its `get_many` in batches of 16; std: a
+// `get` each), an in-order walk, then deletes of every key; and inserts, lookups and deletes of
+// 200k string keys. Each line: name, milliseconds, checksum (run.sh checks that all programs
+// print the same checksums).
 import { BTreeMap } from "velt:collections/btree_map";
 
 function next(x: u64): u64 {
@@ -22,7 +23,7 @@ function keysOf(n: usize, seed: u64): u64[] {
 }
 
 function report(name: string, start: f64, check: u64) {
-  console.log(`${name} ${Math.round(performance.now() - start)} ${check}`);
+  console.log(`${name} ${(performance.now() - start).toFixed(1)} ${check}`);
 }
 
 function ints(n: usize) {

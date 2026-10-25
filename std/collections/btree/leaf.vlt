@@ -7,15 +7,14 @@
 // hole. So neither moves the other entries: an insert touches one key and one value line where
 // a sorted leaf would shift (and so read) every key and value after the new one. A search needs
 // no order: words below the target's give its rank, words equal to it give the slots of the
-// keys to compare. What works on ranks (walks, ranges, splits, merges) reads the order, and a
-// structural change first puts the slots in rank order (`sortLeaf`), keeping it after.
+// keys to compare. What works on ranks (walks, ranges, splits, merges) reads the order; entries
+// move between leaves by rank (`moveRanks`), so no leaf is ever sorted.
 
-import { F, Pool, wordOf, wordOfB } from "velt:collections/btree/pool";
-import { u8x16 } from "velt:simd";
+import { F, Pool, Window, quadIn, windowOf, wordIn } from "velt:collections/btree/pool";
 import {
   EMPTY,
-  Order,
-  identityOrder,
+  HEAD,
+  withCount,
   orderInsert,
   orderMove,
   orderRemove,
@@ -35,14 +34,20 @@ import {
 /** No physical slot: a key that is not in its leaf. */
 export const NO_SLOT: usize = 63;
 
-// `t`'s word in `leaf` (a two-byte word, or a wide one as two halves; the second is 0 then).
-function wordsIn<K extends Comparable<K>, V>(p: Pool<K, V>, leaf: u32, t: K): [u16, u16] {
-  const pre = prefixOf(p.lineOf(leaf));
+// `t`'s word in `leaf` (a two-byte word, or a wide one as two halves; the second is 0 then),
+// from its window `win`.
+function wordsIn<K extends Comparable<K>, V>(
+  p: Pool<K, V>,
+  leaf: u32,
+  t: K,
+  win: Window,
+): [u16, u16] {
+  const pre = prefixOf(p.lineOf(leaf)) as usize;
   if (t.inlineWide()) {
-    const q = t.inlineQuad(pre as usize);
+    const q = quadIn(t, win, pre);
     return [(q >> 16) as u16, q as u16];
   }
-  return [wordOf(t, pre), 0];
+  return [wordIn(t, win, pre), 0];
 }
 
 // The physical slots of `leaf` (its `n` keys) whose words equal `(w, wb)`.
@@ -68,12 +73,17 @@ function below<K extends Comparable<K>, V>(p: Pool<K, V>, leaf: u32, t: K, w: u1
   return wordsBelow(p.lineOf(leaf), w);
 }
 
-/** The physical slot of key `t` in `leaf` (whose range holds it), or `NO_SLOT`. */
-export function leafFind<K extends Comparable<K>, V>(p: Pool<K, V>, leaf: u32, t: K): usize {
+/** The physical slot of key `t` (window `win`) in `leaf` (whose range holds it), or `NO_SLOT`. */
+export function leafFind<K extends Comparable<K>, V>(
+  p: Pool<K, V>,
+  leaf: u32,
+  t: K,
+  win: Window,
+): usize {
   const n = p.leafCount(leaf);
   const base = (leaf as usize) * F;
   if (t.hasInlineKey()) {
-    const [w, wb] = wordsIn(p, leaf, t);
+    const [w, wb] = wordsIn(p, leaf, t, win);
     let bits = matches(p, leaf, n, t, w, wb);
     while (bits != 0) {
       const s = lowestBit(bits);
@@ -100,11 +110,12 @@ export function leafLocate<K extends Comparable<K>, V>(
   p: Pool<K, V>,
   leaf: u32,
   t: K,
+  win: Window,
 ): [usize, usize] {
   const n = p.leafCount(leaf);
   const base = (leaf as usize) * F;
   if (t.hasInlineKey()) {
-    const [w, wb] = wordsIn(p, leaf, t);
+    const [w, wb] = wordsIn(p, leaf, t, win);
     let rank = below(p, leaf, t, w, wb);
     let bits = matches(p, leaf, n, t, w, wb);
     while (bits != 0) {
@@ -135,11 +146,16 @@ export function leafLocate<K extends Comparable<K>, V>(
  * most likely gives, without reading a key (`getMany` prefetches it). Keys without words: the
  * slot `leafFind` gives.
  */
-export function leafCandidate<K extends Comparable<K>, V>(p: Pool<K, V>, leaf: u32, t: K): usize {
+export function leafCandidate<K extends Comparable<K>, V>(
+  p: Pool<K, V>,
+  leaf: u32,
+  t: K,
+  win: Window,
+): usize {
   if (!t.hasInlineKey()) {
-    return leafFind(p, leaf, t);
+    return leafFind(p, leaf, t, win);
   }
-  const [w, wb] = wordsIn(p, leaf, t);
+  const [w, wb] = wordsIn(p, leaf, t, win);
   const bits = matches(p, leaf, p.leafCount(leaf), t, w, wb);
   return bits == 0 ? NO_SLOT : lowestBit(bits);
 }
@@ -157,7 +173,7 @@ export function leafRank<K extends Comparable<K>, V>(
   const n = p.leafCount(leaf);
   const base = (leaf as usize) * F;
   if (t.hasInlineKey()) {
-    const [w, wb] = wordsIn(p, leaf, t);
+    const [w, wb] = wordsIn(p, leaf, t, windowOf(t));
     let rank = below(p, leaf, t, w, wb);
     let bits = matches(p, leaf, n, t, w, wb);
     while (bits != 0) {
@@ -187,16 +203,27 @@ export function appendEntry<K extends Comparable<K>, V>(
   r: usize,
   key: K,
   value: V,
+  win: Window,
 ) {
   const n = p.leafCount(leaf);
   const at = (leaf as usize) * F + n;
   p.setKey(at, key);
   p.valSet(at, value);
-  const order = orderInsert(p.orderOf(leaf), r, n);
-  p.setOrder(leaf, order);
-  p.setLeafCount(leaf, n + 1);
-  if (p.inline()) {
-    p.leafWord(leaf, n);
+  p.setOrder(leaf, orderInsert(p.orderOf(leaf), r, n));
+  // The new key's words from its window (`win`), computed before the lines are loaded (nothing
+  // of them live across `quadIn`); then one write of each line.
+  if (!p.inline()) {
+    p.setLeafCount(leaf, n + 1);
+    return;
+  }
+  const pre = prefixOf(p.lineOf(leaf)) as usize;
+  if (p.wide()) {
+    const q = quadIn(key, win, pre);
+    p.setLine(leaf, withWord(withCount(p.lineOf(leaf), n + 1), n, (q >> 16) as u16));
+    p.setLineB(leaf, withWord(p.lineBOf(leaf), n, q as u16));
+  } else {
+    const w = wordIn(key, win, pre);
+    p.setLine(leaf, withWord(withCount(p.lineOf(leaf), n + 1), n, w));
   }
 }
 
@@ -205,78 +232,29 @@ export function removeEntry<K extends Comparable<K>, V>(p: Pool<K, V>, leaf: u32
   const n = p.leafCount(leaf);
   const base = (leaf as usize) * F;
   const last = n - 1;
-  let order = orderRemove(p.orderOf(leaf), rankOfSlot(p.orderOf(leaf), s, n));
-  let line = p.lineOf(leaf);
-  const wide = p.wide();
-  let lineB = wide ? p.lineBOf(leaf) : line;
+  // The key and value first (calls), then the order and words, which stay in registers.
   if (s != last) {
     p.keySwap(base + s, base + last);
     p.valSwap(base + s, base + last);
-    line = withWord(line, s, wordAt(line, last));
-    if (wide) {
-      lineB = withWord(lineB, s, wordAt(lineB, last));
-    }
-    order = orderMove(order, last, s, last);
   }
   // The removed entry is in the last slot now: the fillers replace (and drop) it.
   p.setKey(base + last, p.fill[0]);
   p.valClear(base + last);
-  p.setLine(leaf, withWord(line, last, EMPTY));
-  if (wide) {
+  let order = orderRemove(p.orderOf(leaf), rankOfSlot(p.orderOf(leaf), s, n));
+  let line = p.lineOf(leaf);
+  if (s != last) {
+    line = withWord(line, s, wordAt(line, last));
+    order = orderMove(order, last, s, last);
+  }
+  p.setLine(leaf, withCount(withWord(line, last, EMPTY), last));
+  p.setOrder(leaf, order);
+  if (p.wide()) {
+    let lineB = p.lineBOf(leaf);
+    if (s != last) {
+      lineB = withWord(lineB, s, wordAt(lineB, last));
+    }
     p.setLineB(leaf, withWord(lineB, last, EMPTY));
   }
-  p.setOrder(leaf, order);
-  p.setLeafCount(leaf, last);
-}
-
-/**
- * Puts `leaf`'s physical slots in rank order (keys, values and words), so that the code that
- * moves entries between leaves by rank can move slots; its order becomes the identity.
- */
-export function sortLeaf<K extends Comparable<K>, V>(p: Pool<K, V>, leaf: u32) {
-  const n = p.leafCount(leaf);
-  const order = p.orderOf(leaf);
-  const base = (leaf as usize) * F;
-  let sorted = true;
-  for (let r: usize = 0; r < n; r++) {
-    if (slotOfRank(order, r) != r) {
-      sorted = false;
-      break;
-    }
-  }
-  if (sorted) {
-    // Ranks past `n` too: the code that moves entries in extends the count over them.
-    p.setOrder(leaf, identityOrder());
-    return;
-  }
-  // Slot `r` takes the entry of slot `order[r]`: follow each cycle; an entry an earlier step
-  // moved is found where that step put it.
-  const words = p.scratch;
-  spill(p.lineOf(leaf), words);
-  const wide = p.wide();
-  const wordsB = p.scratch3;
-  if (wide) {
-    spill(p.lineBOf(leaf), wordsB);
-  }
-  for (let r: usize = 0; r < n; r++) {
-    let from = slotOfRank(order, r);
-    while (from < r) {
-      from = slotOfRank(order, from);
-    }
-    if (from != r) {
-      p.keySwap(base + r, base + from);
-      p.valSwap(base + r, base + from);
-      __intrinsic_array_swap(words, r, from);
-      if (wide) {
-        __intrinsic_array_swap(wordsB, r, from);
-      }
-    }
-  }
-  p.setLine(leaf, fill(words));
-  if (wide) {
-    p.setLineB(leaf, fill(wordsB));
-  }
-  p.setOrder(leaf, identityOrder());
 }
 
 /**
@@ -298,17 +276,25 @@ export function descendMany<K extends Comparable<K>, V>(
   for (let j: usize = 0; j < m; j++) {
     leaves.push(p.root);
   }
+  // Each key's window, once (`wins[2j]`, `wins[2j + 1]`).
+  const wins = p.batchWindows;
+  for (let j: usize = 0; j < m; j++) {
+    const [a, b] = windowOf(keys[start + j]);
+    wins[2 * j] = a;
+    wins[2 * j + 1] = b;
+  }
   for (let h = p.height; h > 0; h--) {
     for (let j: usize = 0; j < m; j++) {
       const node = leaves[j];
-      const child = p.innerKids[(node as usize) * F + p.innerSlot(node, keys[start + j])];
+      const win: Window = [wins[2 * j], wins[2 * j + 1]];
+      const child = p.innerKids[(node as usize) * F + p.innerSlot(node, keys[start + j], win)];
       leaves[j] = child;
       p.prefetchNode(child, h > 1);
     }
   }
   for (let j: usize = 0; j < m; j++) {
     const leaf = leaves[j];
-    const s = leafCandidate(p, leaf, keys[start + j]);
+    const s = leafCandidate(p, leaf, keys[start + j], [wins[2 * j], wins[2 * j + 1]]);
     slots.push(s);
     if (s != NO_SLOT) {
       p.keyPrefetch((leaf as usize) * F + s);
@@ -317,31 +303,13 @@ export function descendMany<K extends Comparable<K>, V>(
   }
 }
 
-// The index of the lowest set bit of `x` (not 0; below 32).
+// The index of the lowest set bit of `x` (not 0; below 32): one count of leading zeros.
 function lowestBit(x: u64): usize {
-  let b: usize = 0;
-  let v = x & 4294967295;
-  if ((v & 65535) == 0) {
-    b += 16;
-    v = v >> 16;
-  }
-  if ((v & 255) == 0) {
-    b += 8;
-    v = v >> 8;
-  }
-  if ((v & 15) == 0) {
-    b += 4;
-    v = v >> 4;
-  }
-  if ((v & 3) == 0) {
-    b += 2;
-    v = v >> 2;
-  }
-  if ((v & 1) == 0) {
-    b += 1;
-  }
-  return b;
+  return (31 - velt_rt_math_clz32((x & (~x + 1)) as i32)) as usize;
 }
+
+// Leading zero bits of a 32-bit value (`Math.clz32`), one instruction.
+declare function velt_rt_math_clz32(x: i32): i32;
 
 /**
  * Moves the entries of `from`'s ranks `lo .. lo + k` (its smallest when `lo` is 0, else its
@@ -363,10 +331,10 @@ export function moveRanks<K extends Comparable<K>, V>(
   const tn = p.leafCount(to);
   const fb = (from as usize) * F;
   const tb = (to as usize) * F;
-  const ford = p.orderScratch;
-  const tord = p.orderScratch2;
-  spillOrder(p.orderOf(from), ford);
-  spillOrder(p.orderOf(to), tord);
+  // Orders stay in registers, edited by `orderInsert` / `orderRemove` / `orderMove` (no pass
+  // over the leaf); words are edited by slot in scratch.
+  let ford = p.orderOf(from);
+  let tord = p.orderOf(to);
   const fwords = p.scratch;
   const twords = p.scratch2;
   spill(p.lineOf(from), fwords);
@@ -380,80 +348,66 @@ export function moveRanks<K extends Comparable<K>, V>(
   }
   const inline = p.inline();
   const tpre = prefixOf(p.lineOf(to));
+  // A moved entry's words: the ones it had when both leaves have one prefix, else from its key.
+  const same = tpre == prefixOf(p.lineOf(from));
   // The entries into `to`'s slots `tn ..` (fillers, which go to the holes in `from`).
+  let moved: u64 = 0;
   for (let i: usize = 0; i < k; i++) {
-    const s = ford[lo + i] as usize;
+    const s = slotOfRank(ford, lo + i);
+    moved = moved | ((1 as u64) << (s as u64));
     p.keySwap(tb + tn + i, fb + s);
     p.valSwap(tb + tn + i, fb + s);
-    if (inline) {
-      twords[tn + i] = wordOf(p.keyAt(tb + tn + i), tpre);
+    if (same) {
+      twords[tn + i] = fwords[s];
+      if (wide) {
+        twordsB[tn + i] = fwordsB[s];
+      }
+    } else if (wide) {
+      const q = p.slotQuad(tb + tn + i, tpre);
+      twords[tn + i] = (q >> 16) as u16;
+      twordsB[tn + i] = q as u16;
+    } else if (inline) {
+      twords[tn + i] = p.slotWord(tb + tn + i, tpre);
     }
     fwords[s] = EMPTY;
     if (wide) {
-      twordsB[tn + i] = wordOfB(p.keyAt(tb + tn + i), tpre);
       fwordsB[s] = EMPTY;
     }
+    tord = orderInsert(tord, before ? i : tn + i, tn + i);
   }
-  if (before) {
-    for (let r = tn; r > 0; r--) {
-      tord[r - 1 + k] = tord[r - 1];
-    }
-    for (let i: usize = 0; i < k; i++) {
-      tord[i] = (tn + i) as u8;
-    }
-  } else {
-    for (let i: usize = 0; i < k; i++) {
-      tord[tn + i] = (tn + i) as u8;
-    }
+  for (let i: usize = 0; i < k; i++) {
+    ford = orderRemove(ford, lo);
   }
-  // `from`'s ranks past the moved ones close up.
+  // `from`'s entries left in slots `m ..` move into the holes below `m`: both sets are bit
+  // masks, from the slots that moved.
   const m = fn - k;
-  if (lo == 0) {
-    for (let r: usize = 0; r < m; r++) {
-      ford[r] = ford[r + k];
+  const low = ((1 as u64) << (m as u64)) - 1;
+  let holes = moved & low;
+  let rest = (((1 as u64) << (fn as u64)) - 1) & ~low & ~moved;
+  while (rest != 0) {
+    const s = lowestBit(rest);
+    rest = rest & (rest - 1);
+    const h = lowestBit(holes);
+    holes = holes & (holes - 1);
+    p.keySwap(fb + h, fb + s);
+    p.valSwap(fb + h, fb + s);
+    fwords[h] = fwords[s];
+    fwords[s] = EMPTY;
+    if (wide) {
+      fwordsB[h] = fwordsB[s];
+      fwordsB[s] = EMPTY;
     }
+    ford = orderMove(ford, s, h, m);
   }
-  // Its entries in slots `m ..` move into the holes below `m`.
-  let used: u64 = 0;
-  for (let r: usize = 0; r < m; r++) {
-    used = used | ((1 as u64) << (ford[r] as u64));
-  }
-  let holes = ~used & (((1 as u64) << (m as u64)) - 1);
-  for (let r: usize = 0; r < m; r++) {
-    const s = ford[r] as usize;
-    if (s >= m) {
-      const h = lowestBit(holes);
-      holes = holes & (holes - 1);
-      p.keySwap(fb + h, fb + s);
-      p.valSwap(fb + h, fb + s);
-      fwords[h] = fwords[s];
-      fwords[s] = EMPTY;
-      if (wide) {
-        fwordsB[h] = fwordsB[s];
-        fwordsB[s] = EMPTY;
-      }
-      ford[r] = h as u8;
-    }
-  }
-  p.setOrder(from, loadOrder(ford));
-  p.setOrder(to, loadOrder(tord));
+  p.setOrder(from, ford);
+  p.setOrder(to, tord);
+  // The new counts in the headers (the low 5 bits of slot `HEAD`), written with the words.
+  fwords[HEAD] = (fwords[HEAD] & 65504) | (m as u16);
+  twords[HEAD] = (twords[HEAD] & 65504) | ((tn + k) as u16);
   p.setLine(from, fill(fwords));
   p.setLine(to, fill(twords));
   if (wide) {
     p.setLineB(from, fill(fwordsB));
     p.setLineB(to, fill(twordsB));
   }
-  p.setLeafCount(from, m);
-  p.setLeafCount(to, tn + k);
-}
-
-// `order`'s 32 bytes into `bytes`.
-function spillOrder(order: Order, bytes: u8[]) {
-  order[0].store(bytes, 0);
-  order[1].store(bytes, 16);
-}
-
-// The order `bytes` holds.
-function loadOrder(bytes: u8[]): Order {
-  return [u8x16.load(bytes, 0), u8x16.load(bytes, 16)];
 }
