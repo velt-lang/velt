@@ -116,16 +116,31 @@ export function __anyStr_endsWith(s: string, args: any[]): any {
 }
 
 export function __anyStr_split(s: string, args: any[]): any {
+  // The limit is `ToUint32` (`-1` is 4294967295), converted before the separator.
+  const limit = __anyArg(args, 1);
+  const lim: number = limit === undefined ? 4294967295 : __anyUint32(+limit);
+  if (lim === 0) {
+    const none: string[] = [];
+    return none;
+  }
   if (__anyArg(args, 0) === undefined) {
     const whole: string[] = [s.slice(0)];
     return whole;
   }
   const parts = s.split(__anyStrArg(args, 0));
-  const limit = __anyArg(args, 1);
-  if (limit === undefined) {
-    return parts;
+  if (lim < (parts.length as number)) {
+    return parts.slice(0, lim as i64);
   }
-  return parts.slice(0, __anyIntArg(args, 1, 0) >= 0 ? __anyIntArg(args, 1, 0) : 0);
+  return parts;
+}
+
+/** JavaScript's `ToUint32` of the number `n`. */
+function __anyUint32(n: number): number {
+  if (n !== n || n === Infinity || n === -Infinity) {
+    return 0;
+  }
+  const r = Math.trunc(n) % 4294967296;
+  return r < 0 ? r + 4294967296 : r;
 }
 
 export function __anyStr_replace(s: string, args: any[]): any {

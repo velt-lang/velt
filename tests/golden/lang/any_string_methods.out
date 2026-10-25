@@ -10,3 +10,4 @@ true false true true true true
 hell0 world hell0 w0rld e  104 NaN
 d undefined hello worldhello world   x x-- hello world!1null
 1 hello world hello world 11
+[ 'a', 'b', 'c' ] [] [ 'a' ] [] [] [ 'a', 'b' ]
