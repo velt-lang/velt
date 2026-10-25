@@ -81,37 +81,21 @@ impl FnCx<'_, '_> {
             },
             false => h,
         };
+        // A value whose types hold only the traps' error-set variables converts as written
+        // first: the conversion of the types themselves (a union with a variable member) would
+        // have the shape they lose once the variables are solved empty.
+        let h = match self.coerce_as_written(h, exp, true) {
+            Ok(h) => return Ok(h),
+            Err(h) => h,
+        };
         let h = match self.try_coerce_typed(h, exp) {
             Ok(h) => return Ok(h),
             Err(h) => h,
         };
-        // Types that convert as written, but for the error-set variables in them
-        // (`throws::vars`): converted as written, assuming the variables empty; when one is
-        // not, the program is checked again with the solved sets.
-        if !self.cx.fn_sites.use_vars
-            || !(self.cx.mentions_err_var(h.ty) || self.cx.mentions_err_var(exp))
-        {
-            return Err(h);
-        }
-        let (from, to) = (self.cx.plain_type(h.ty), self.cx.plain_type(exp));
-        let ty = h.ty;
-        let mut p = h;
-        p.ty = from;
-        match self.try_coerce_typed(p, to) {
-            Ok(mut c) => {
-                self.cx.assume_empty_in(ty);
-                self.cx.assume_empty_in(exp);
-                c.ty = exp;
-                Ok(c)
-            }
-            Err(mut p) => {
-                p.ty = ty;
-                Err(p)
-            }
-        }
+        self.coerce_as_written(h, exp, false)
     }
 
-    fn try_coerce_typed(&mut self, h: hir::Expr, exp: TyId) -> Result<hir::Expr, hir::Expr> {
+    pub(super) fn try_coerce_typed(&mut self, h: hir::Expr, exp: TyId) -> Result<hir::Expr, hir::Expr> {
         let t = &self.cx.ty;
         if h.ty == exp
             || t.is_bottom(h.ty)

@@ -223,11 +223,12 @@ impl FnCx<'_, '_> {
             self.check_args_loose(args);
             return self.error_expr(span);
         }
-        // The reason a callback gets, with its error-set variables assumed empty as a `catch`
-        // variable's type is (`assume_vars_empty`): a conversion of the reason is made for the
-        // type it has once they are solved. When one is not empty, the program is checked again
-        // with the solved sets.
-        let reason = self.cx.assume_vars_empty(Some(e)).unwrap_or(self.cx.ty.never);
+        // The reason a callback gets, without the traps' error-set variables, assumed empty
+        // (`assume_trap_vars_empty`): a conversion of the reason is made for the type it has
+        // once they are solved. When one is not empty, the program is checked again with the
+        // solved sets.
+        let reason = self.cx.assume_trap_vars_empty(Some(e));
+        let reason = reason.unwrap_or(self.cx.ty.never);
         let mut callbacks = vec![];
         for (i, a) in args.iter().enumerate() {
             // What the callback gets: the value (`then`'s first), the reason (`then`'s second,

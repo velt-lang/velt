@@ -563,6 +563,34 @@ impl Ctx<'_> {
         }
     }
 
+    /// Does `t` hold error-set variables, all of them std/proxy's traps' (at any depth)?
+    pub(crate) fn only_trap_vars(&mut self, t: TyId) -> bool {
+        if self.fn_sites.trap_vars.is_empty() {
+            return false;
+        }
+        let mut seen = rustc_hash::FxHashSet::default();
+        let mut stack = vec![t];
+        while let Some(t) = stack.pop() {
+            if !seen.insert(t) || !self.mentions_err_var(t) {
+                continue;
+            }
+            if let Some(v) = self.err_var(t) {
+                if !self.fn_sites.trap_vars.contains(&v) {
+                    return false;
+                }
+                continue;
+            }
+            stack.extend(crate::types::children(self.ty.kind(t)));
+            if self.union_def(t).is_some() {
+                stack.extend(self.union_members(t).unwrap_or_default());
+            }
+            if let Some((d, _)) = self.anon_of(t) {
+                stack.extend(self.anon_field_tys(d));
+            }
+        }
+        true
+    }
+
     /// `t` without the variables of std/proxy's traps, which a check assumes empty: a choice
     /// made by what a callback throws (`promiseThen` or `promiseThenThrows`) is the one a
     /// program whose traps throw nothing makes; when a trap does throw, the program is checked
