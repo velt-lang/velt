@@ -221,6 +221,10 @@ pub(crate) struct Ctx<'m> {
     pub static_copies: FxHashMap<(DefId, DefId), DefId>,
     /// For each copy of a static method: the method.
     pub static_copy_of: FxHashMap<DefId, DefId>,
+    /// Errors in copies of static methods reported only if the copy is used, and the copies
+    /// used, each with the function using it (`None`: outside any) (`body::static_copy_uses`).
+    pub copy_diags: Vec<(DefId, Diagnostic)>,
+    pub copy_uses: Vec<(Option<DefId>, DefId)>,
     /// Name spans of the nested functions made from local generic arrows (`generic_arrows`).
     pub generic_arrow_fns: FxHashSet<Span>,
     /// Name spans of every function made from a generic arrow (diagnostics show arrows).
@@ -440,6 +444,8 @@ impl<'m> Ctx<'m> {
             static_this: FxHashMap::default(),
             static_copies: FxHashMap::default(),
             static_copy_of: FxHashMap::default(),
+            copy_diags: vec![],
+            copy_uses: vec![],
             generic_arrow_fns: FxHashSet::default(),
             kept_nested: FxHashSet::default(),
             late_consts: FxHashSet::default(),

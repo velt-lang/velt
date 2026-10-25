@@ -35,6 +35,39 @@ pub(crate) fn check_bodies(cx: &mut Ctx) {
         ensure_body(cx, d);
     }
     super::returns::check_deferred(cx);
+    static_copy_uses(cx);
+}
+
+/// The errors of copies of static methods (`Ctx::copy_diags`) whose copy the program uses: one
+/// named by a function that is no copy, or by a used copy. Each is reported once.
+fn static_copy_uses(cx: &mut Ctx) {
+    if cx.copy_diags.is_empty() {
+        return;
+    }
+    let mut used: rustc_hash::FxHashSet<DefId> = rustc_hash::FxHashSet::default();
+    loop {
+        let before = used.len();
+        for &(from, copy) in &cx.copy_uses {
+            let live =
+                from.is_none_or(|f| !cx.static_copy_of.contains_key(&f) || used.contains(&f));
+            if live {
+                used.insert(copy);
+            }
+        }
+        if used.len() == before {
+            break;
+        }
+    }
+    let mut seen = rustc_hash::FxHashSet::default();
+    for (copy, d) in std::mem::take(&mut cx.copy_diags) {
+        let key = (
+            format!("{:?}", d.labels.first().map(|l| l.span)),
+            d.message.clone(),
+        );
+        if used.contains(&copy) && seen.insert(key) {
+            cx.error(d);
+        }
+    }
 }
 
 /// A checker for an expression outside any function body (defaults, constants).

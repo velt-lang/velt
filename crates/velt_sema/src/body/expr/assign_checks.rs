@@ -72,14 +72,24 @@ impl FnCx<'_, '_> {
             ),
             _ => String::new(),
         };
-        self.cx.error(
-            Diagnostic::error(
+        let d = Diagnostic::error(
                 format!("cannot assign to `{cname}.{p}`: `{p}` is a static field of `{owner}`, which `{cname}` inherits"),
                 prop.span,
             )
             .with_note(format!("{via}in JavaScript this assignment creates a static field `{p}` of `{cname}` itself and leaves `{owner}.{p}` as it is; Velt does not support that yet"))
-            .with_note(format!("assign `{owner}.{p}`, or declare `static {p}` in `{cname}`")),
-        );
+            .with_note(format!("assign `{owner}.{p}`, or declare `static {p}` in `{cname}`"));
+        // In a subclass's copy of a static method (`collect::static_this`), the write happens
+        // only if the copy runs: reported once the program calls or names it
+        // (`body::static_copy_uses`). Until then the copy writes `owner`'s field, which keeps
+        // its body well formed.
+        if let (ast::ExprKind::This, Some(copy)) = (&object.kind, self.body_def) {
+            if self.cx.static_copy_of.contains_key(&copy) {
+                self.cx.copy_diags.push((copy, d));
+                let span = object.span.to(prop.span);
+                return Some(self.static_field(cur, prop, Want::BorrowMut, span));
+            }
+        }
+        self.cx.error(d);
         Some(None)
     }
 
