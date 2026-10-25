@@ -543,6 +543,9 @@ impl FnCx<'_, '_> {
         let Some((l, nullable, u)) = self.local_with_members(e) else {
             return (vec![], vec![]);
         };
+        if let Some(facts) = self.generic_member_array_facts(l, nullable, u) {
+            return facts;
+        }
         let pred = crate::body::expr::object_builtins::is_array_ty;
         self.split_facts(l, nullable, u, &pred, false)
     }

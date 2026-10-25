@@ -31,6 +31,9 @@ impl FnCx<'_, '_> {
     /// instantiation when it wraps a value of a type parameter into a union member or an
     /// option (module docs); `h` itself otherwise.
     pub(super) fn routed_param_arg(&mut self, h: hir::Expr) -> hir::Expr {
+        if self.cx.ty.nothing_of(h.ty) == Some(Nothing::Both) {
+            return self.routed_both_arg(h);
+        }
         let (value, member) = match &h.kind {
             H::Variant {
                 def,
@@ -88,6 +91,126 @@ impl FnCx<'_, '_> {
             els: Box::new(h),
         };
         self.mk(kind, ty, span)
+    }
+
+    /// [`Self::routed_param_arg`] for a `T | null | undefined` parameter, whose present value
+    /// is `WrapSome(WrapSome(v))` (hir_encodings.md "Undefined"): `undefined` and `null` go to
+    /// their own nothings.
+    fn routed_both_arg(&mut self, h: hir::Expr) -> hir::Expr {
+        let H::WrapSome(outer) = &h.kind else {
+            return h;
+        };
+        let H::WrapSome(inner) = &outer.kind else {
+            return h;
+        };
+        let (value, member) = match &inner.kind {
+            H::Variant {
+                def,
+                type_args,
+                variant,
+                args,
+            } if args.len() == 1 => (&args[0], Some((*def, type_args.clone(), *variant))),
+            _ => (&**inner, None),
+        };
+        if !matches!(self.cx.ty.kind(value.ty), TyKind::Param(_))
+            || !is_place(value)
+            || self.cx.scopes[self.module].is_std
+            || self.any_ty().is_none()
+        {
+            return h;
+        }
+        let (exp, span) = (h.ty, h.span);
+        let Some(payload_ty) = self.cx.ty.opt_payload(exp) else {
+            return h;
+        };
+        let value = value.clone();
+        let present = match member {
+            Some(m) => {
+                let Some(union) = self.cx.ty.opt_payload(payload_ty) else {
+                    return h;
+                };
+                match self.route_to_members(&value, union, m.clone(), span) {
+                    Some(routed) => routed,
+                    None => {
+                        let back = self.any_back(&value, span);
+                        let (def, type_args, variant) = m;
+                        let kind = H::Variant {
+                            def,
+                            type_args,
+                            variant,
+                            args: vec![back],
+                        };
+                        self.mk(kind, union, span)
+                    }
+                }
+            }
+            None => self.any_back(&value, span),
+        };
+        let some = self.mk(H::WrapSome(Box::new(present)), payload_ty, span);
+        let some = self.mk(H::WrapSome(Box::new(some)), exp, span);
+        let null = self.mk(H::Lit(hir::Lit::Null), payload_ty, span);
+        let null = self.mk(H::WrapSome(Box::new(null)), exp, span);
+        let null = self.taken_over(&value, null);
+        let undefined = self.mk(H::Lit(hir::Lit::Null), exp, span);
+        let undefined = self.taken_over(&value, undefined);
+        let (Some(is_null), Some(is_undefined)) = (
+            self.nothing_test(&value, Nothing::Null, span),
+            self.nothing_test(&value, Nothing::Undefined, span),
+        ) else {
+            return h;
+        };
+        let rest = self.mk(
+            H::If {
+                cond: Box::new(is_null),
+                then: Box::new(null),
+                els: Box::new(some),
+            },
+            exp,
+            span,
+        );
+        let then = self.mk(
+            H::If {
+                cond: Box::new(is_undefined),
+                then: Box::new(undefined),
+                els: Box::new(rest),
+            },
+            exp,
+            span,
+        );
+        let bool_ = self.cx.ty.bool_;
+        let probe = self.intrinsic(Intrinsic::NullAs, vec![], value.ty, span);
+        let cond = self.intrinsic(Intrinsic::HoldsDynamic, vec![probe], bool_, span);
+        let kind = H::If {
+            cond: Box::new(cond),
+            then: Box::new(then),
+            els: Box::new(h),
+        };
+        self.mk(kind, exp, span)
+    }
+
+    /// Is `value` (of a type parameter, read as an `any`) the nothing `n` (`null` or
+    /// `undefined`)?
+    fn nothing_test(&mut self, value: &hir::Expr, n: Nothing, span: Span) -> Option<hir::Expr> {
+        let (bool_, any) = (self.cx.ty.bool_, self.any_ty()?);
+        let x = self.read_as_any(value);
+        Some(match n {
+            Nothing::Null => {
+                let null = self.dynamic_nothing(Nothing::Null, any, span);
+                self.intrinsic(Intrinsic::AnyStrictEq, vec![x, null], bool_, span)
+            }
+            Nothing::Undefined => {
+                let str_ = self.cx.ty.str_;
+                let tag = self.intrinsic(Intrinsic::AnyTypeof, vec![x], str_, span);
+                let want = self.str_lit("undefined", span);
+                let kind = H::Binary {
+                    op: hir::BinOp::Eq,
+                    lhs: Box::new(tag),
+                    rhs: Box::new(want),
+                };
+                self.mk(kind, bool_, span)
+            }
+            Nothing::Both => return None,
+        })
     }
 
     /// `value` read as an `any` for a test (a share of it).
@@ -180,26 +303,7 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> Option<hir::Expr> {
         let nothing = self.cx.ty.nothing_of(exp)?;
-        let (bool_, any) = (self.cx.ty.bool_, self.any_ty()?);
-        let x = self.read_as_any(value);
-        let test = match nothing {
-            Nothing::Null => {
-                let null = self.dynamic_nothing(Nothing::Null, any, span);
-                self.intrinsic(Intrinsic::AnyStrictEq, vec![x, null], bool_, span)
-            }
-            Nothing::Undefined => {
-                let str_ = self.cx.ty.str_;
-                let tag = self.intrinsic(Intrinsic::AnyTypeof, vec![x], str_, span);
-                let want = self.str_lit("undefined", span);
-                let kind = H::Binary {
-                    op: hir::BinOp::Eq,
-                    lhs: Box::new(tag),
-                    rhs: Box::new(want),
-                };
-                self.mk(kind, bool_, span)
-            }
-            _ => return None,
-        };
+        let test = self.nothing_test(value, nothing, span)?;
         let present = match member {
             Some(m) => {
                 let union = self.cx.ty.opt_payload(exp)?;
