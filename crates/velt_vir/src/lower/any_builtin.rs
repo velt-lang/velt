@@ -4,7 +4,9 @@
 //! `__anyArr_<name><T>(a, args)` instantiated at the element type, `__anyNum_<name>(n, args)`,
 //! `__anyBool_<name>(b, args)`) and calls the one named, with the value borrowed and the
 //! arguments packed into an `any[]`; its `any` result is the call's. Another name is a
-//! member not supported yet (`ST_UNSUPPORTED`, a `TypeError` naming #924).
+//! member not supported yet (`ST_UNSUPPORTED`, a `TypeError` naming #924). Only the names the
+//! program calls through `any` are compared (`Boxing::any_call_keys`), so a program that calls
+//! none of them has the slots it had before.
 
 use velt_sema::hir::{self, DefId, PassMode, TyId, TyKind};
 
@@ -57,6 +59,17 @@ impl FnLower<'_, '_> {
         (data, key, argv, argc, out): (vir::Local, vir::Local, vir::Local, vir::Local, vir::Local),
         ty: TyId,
     ) {
+        let keys = &self.cx.boxing.any_call_keys;
+        let methods: Vec<(String, DefId)> = self
+            .builtin_methods(prefix)
+            .into_iter()
+            .filter(|(name, _)| keys.contains("") || keys.contains(name))
+            .collect();
+        if methods.is_empty() {
+            // No call through `any` names one of them: the slot as before.
+            self.any_drop_args(argv, 0, argc);
+            return self.ret_status(ST_UNSUPPORTED);
+        }
         let outp = self.any_out(out);
         let any = self.cx.any_ty();
         let rest = self.cx.intern(TyKind::Array(any));
@@ -65,7 +78,7 @@ impl FnLower<'_, '_> {
             _ => vec![],
         };
         let f64_ = self.cx.intern(TyKind::Float(hir::FloatTy::F64));
-        for (name, def) in self.builtin_methods(prefix) {
+        for (name, def) in methods {
             if self.cx.fn_def(def).generics as usize != targs.len() {
                 continue;
             }
