@@ -1,0 +1,46 @@
+// A call through a base-class type that leaves out an argument takes the default of the
+// override that runs (#1506), as in JavaScript: several levels deep, inherited, evaluated after
+// the given arguments, on `this`, on a call result, chained and async; also for `undefined` passed.
+class B1 { m(a: number, b: number = 1): number { return a + b; } }
+class D1 extends B1 { override m(a: number, b: number = 7): number { return a * 100 + b; } }
+class E1 extends D1 { override m(a: number, b: number = 9): number { return a * 1000 + b; } }
+class F1 extends E1 { }
+class G1 extends D1 { override m(a: number, b: number = 1): number { return a - b; } }
+const xs: B1[] = [new B1(), new D1(), new E1(), new F1(), new G1()];
+for (const x of xs) console.log(x.m(5), x.m(5, 2));
+const d: D1 = new E1();
+console.log(d.m(3));
+function mk(): B1 { console.log("mk"); return new E1(); }
+console.log(mk().m(1));
+let label = "base";
+class S1 { greet(name: string = label + "!"): string { return "hi " + name; } }
+class S2 extends S1 { override greet(name: string = "s2"): string { return "yo " + name; } }
+const s: S1 = new S2();
+console.log(s.greet(), new S1().greet());
+let n = 0;
+function tick(tag: string): number { n++; console.log("tick", tag, n); return n; }
+class B3 { m(a: number, b: number = tick("B3"), c: string = "Bc"): string { return `B3 ${a} ${b} ${c}`; }
+  run(): string { return this.m(tick("arg")); } }
+class D3 extends B3 { override m(a: number, b: number = tick("D3") * 10, c: string = "Bc"): string { return `D3 ${a} ${b} ${c}`; } }
+class E3 extends D3 { override m(a: number, b: number = 5, c: string = "Ec"): string { return `E3 ${a} ${b} ${c}`; } }
+class F3 extends B3 { }
+const objs: B3[] = [new B3(), new D3(), new E3(), new F3()];
+for (const o of objs) { console.log(o.m(tick("a"))); console.log(o.run()); console.log(o.m(1, 2)); }
+function pick(i: number): B3 { console.log("pick", i); return objs[i]; }
+console.log(pick(2).m(tick("x")));
+class Chain { v: number = 0; add(k: number = 1): this { this.v += k; return this; } }
+class Chain2 extends Chain { override add(k: number = 10): this { this.v += k; return this; } }
+const ch: Chain = new Chain2();
+console.log(ch.add().add(2).add().v);
+class Counter { count: number = 0; bump(by: number = 1): void { this.count += by; } }
+class Counter2 extends Counter { override bump(by: number = 3): void { this.count += by * 2; } }
+const cs: Counter[] = [new Counter(), new Counter2()];
+for (const c of cs) { c.bump(); c.bump(); console.log(c.count); }
+class AsyncB { async get(k: number = 1): Promise<number> { return k; } }
+class AsyncD extends AsyncB { override async get(k: number = 2): Promise<number> { return k * 100; } }
+async function amain() { const xs: AsyncB[] = [new AsyncB(), new AsyncD()]; for (const x of xs) console.log(await x.get()); }
+amain();
+class B4 { m(a: number, b: number = 1, c: string = "B4"): string { return `${a} ${b} ${c}`; } }
+class D4 extends B4 { override m(a: number, b: number = 7, c: string = "D4"): string { return `D4 ${a} ${b} ${c}`; } }
+const x4: B4 = new D4();
+console.log(x4.m(1, undefined), x4.m(1, undefined, "z"), x4.m(1, 2, undefined), x4.m(1, void 0));

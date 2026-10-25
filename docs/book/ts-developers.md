@@ -193,7 +193,8 @@ contents.
   constructor can be `private` or `protected`, with TypeScript's rules. ES private names
   (`#x`, `#m()`, `#x in o`) work as in JavaScript: hidden from `console.log`, `JSON` and
   `Object.keys`, never inherited.
-- `static readonly` constants exist; mutable statics don't.
+- `static` fields and `static readonly` constants exist, and `static { … }` blocks run where
+  the class is declared, as in JavaScript.
 - Constructors follow TypeScript's `super(...)` rules: a derived constructor calls it exactly
   once (also when the base has no constructor), and statements before it cannot use `this`.
   As in TypeScript 4.6+, such statements are allowed also when the class has initialized fields

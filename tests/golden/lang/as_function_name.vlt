@@ -1,0 +1,12 @@
+// `as` is a contextual keyword (#1503): a function, parameter or property may be named `as`;
+// after an expression on the same line it is a type assertion.
+function as(x: any): any { return x; }
+console.log(as(1));
+const v = as("s") as string;
+console.log(v, as(as(2)));
+const o = { as: 3, f(as: number): number { return as + 1; } };
+console.log(o.as, o.f(4));
+let as2 = 5 as number;
+console.log(as2);
+const sat = { k: 1 } satisfies { k: number };
+console.log(sat.k);

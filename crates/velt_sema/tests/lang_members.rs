@@ -119,10 +119,8 @@ fn static_readonly_fields_are_globals() {
         "class K { private static readonly M: i64 = 4; } function main() { console.log(K.M); }",
     );
     assert!(r.contains("`M` is private"), "{r}");
-    let r = err_src("class K { static N: i64 = 1; } function main() {}");
-    assert!(r.contains("static fields must be `readonly`"), "{r}");
     let r = err_src("class K { static readonly N: i64 = 1; } function main() { K.N = 2; }");
-    assert!(r.contains("static fields are readonly"), "{r}");
+    assert!(r.contains("it is a `static readonly` field"), "{r}");
 }
 
 #[test]
@@ -172,4 +170,22 @@ fn a_chain_on_an_object_of_a_failed_type_names_no_internal_local() {
     );
     assert!(!r.contains("<chain"), "{r}");
     assert!(r.contains("`Missing`"), "{r}");
+}
+
+#[test]
+fn an_inherited_field_is_declared_again_only_with_its_type_and_an_initializer() {
+    ok_src(
+        "class A { x: i64 = 1; } class B extends A { x: i64 = 2; }
+         function main() { console.log(new B().x); }",
+    );
+    for decl in ["x: string = \"s\";", "x?: i64;", "x: i64;"] {
+        let r = err_src(&format!(
+            "class A {{ x: i64 = 1; }} class B extends A {{ {decl} }} function main() {{}}"
+        ));
+        assert!(
+            r.contains("field `x` is already declared in a base class"),
+            "{decl}: {r}"
+        );
+        assert!(r.contains("`x: i64 = ...`"), "{decl}: {r}");
+    }
 }
