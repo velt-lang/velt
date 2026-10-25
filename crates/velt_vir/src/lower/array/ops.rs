@@ -117,7 +117,7 @@ impl FnLower<'_, '_> {
         let mine = self.is_local(&c);
         let (own, theirs, join) = (self.new_block(), self.new_block(), self.new_block());
         if let (hir::Intrinsic::ArrayPush, [x]) = (i, rest) {
-            let held = self.held_by_caller(x);
+            let held = self.held_of(x);
             let xty = self.sub(x.ty);
             let v = self.consume(x);
             let elem = self.elem_ty(aty);
