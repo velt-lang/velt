@@ -1369,7 +1369,10 @@ An object of such a form is built as TypeScript's standard `pick` builds it:
 parameter), keys set with `r[k] = o[k]`, then returned as that type. `{} as D` is a dictionary
 until then; the conversion to `D` takes each of `D`'s fields from it (checked like a conversion
 from `any`), and a key of a required field that was never set stops the program with a
-`TypeError` naming it, where TypeScript would hand out an object without it.
+`TypeError` naming it, where TypeScript would hand out an object without it. Velt's object has
+`D`'s fields in `D`'s order, where JavaScript's has the keys in the order they were set: keys set
+in another order (`pick(o, ["name", "id"])`), or a key `D` lacks (`(r as any).extra = 5`), stop
+the program with a `TypeError` too, rather than print, serialize or list the keys differently.
 
 ```ts
 function pick<T, K extends keyof T>(o: T, ks: K[]): Pick<T, K> {
@@ -1378,7 +1381,23 @@ function pick<T, K extends keyof T>(o: T, ks: K[]): Pick<T, K> {
   return r;
 }
 console.log(pick({ id: 1, name: "a", age: 3 }, ["id", "name"])); // { id: 1, name: 'a' }
-``` An error at an instantiation is reported in the generic function,
+```
+
+Where Velt's fixed layouts cannot hold what TypeScript would store, generic code stops with a
+`TypeError` that `try` does not catch (decisions 4 and 5 in
+docs/internals/design/deferred-types.md):
+
+- a write `x[k] = v` through a union of keys, of a value whose type is not the field's
+  (`swapKeys(q, "id" as keyof U, "name" as keyof U)`, which Node stores);
+- a write of `undefined` into a required field through such a key;
+- `{} as D` with a required key never set, keys set in another order than `D`'s fields, or a
+  key `D` lacks;
+- a value of another type written into that dictionary through `any`;
+- a cast to `T & X` (`x as Signal<T & object>`) of a value that is not one at the
+  instantiation, which is checked at run time;
+- `as T & object` of `null`.
+
+An error at an instantiation is reported in the generic function,
 where the failing form is, with the call that instantiates it and the type arguments (and each
 call on the way, when another generic function's body makes the call). A call whose argument
 breaks a type parameter's constraint (`get(p, "w")`, a key `p` lacks) is one error, at that

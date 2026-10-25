@@ -231,6 +231,12 @@ is read only. `F` and `opt` are the field's type and optionality in `B(T)`:
 | `T & U` | `B(T)` ∪ `B(U)` ∪ written fields | the meet of the parts' types | yes |
 | `Pick<T, K>` or `Omit<T, K>`, `K` a parameter | none (TypeScript: TS2339) | — | — |
 
+**Status.** Reads `p.f` of these forms work through `T`'s object bound (`form_member`, read
+through the value boxed as an `any`, #350). The writes in the last column are not implemented
+yet: `p.f = v` on a `Partial<T>`, `Pick<T, K>`, `Omit<T, K>` or `Required<T>` is still a
+compile error (`no field f on type Partial<T>`). The one write into such a form that works is
+the standard `pick` body's `r[k] = v` on `{} as D` (decision 5 below).
+
 Reading a non-copyable field through `FieldByName` or `x[k]` shares it; a partial move by name is
 an error.
 
@@ -420,7 +426,10 @@ these answers:
    initializer of a local. It is stored as `Partial<D>`, `r[k] = …` writes set fields, and its
    first other use converts it with a run-time check that every field is present; a missing key
    is a run-time error that names it (TypeScript would hand out an object without it). The
-   standard `pick` compiles unchanged, at one presence test per field at the conversion.
+   standard `pick` compiles unchanged, at one presence test per field at the conversion. The
+   object has `D`'s fields in `D`'s order: keys set in another order, or a key `D` lacks, are a
+   run-time error too (`Record.__fills`), since printing, serializing or listing the keys would
+   differ from Node's object, which keeps the order the keys were set in.
 6. **`T & U` with a type parameter part** (`merge<T, U>(t: T, u: U): T & U`), which #649 left to
    #350, is a deferred operator, `TyOp::Intersect`, reduced by `crate::intersections` at
    instantiation, in step 4; the spread is a `DeferredObject` like `update`'s. Landed first, ahead
