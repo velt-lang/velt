@@ -209,6 +209,16 @@ reset_db() {
   fi
 }
 
+# A database started without db/db.sh's settings makes every commit wait for an fsync, so
+# /updates measures the disk instead of the server.
+if command -v psql >/dev/null 2>&1; then
+  sync_commit="$(psql "$DATABASE_URL" -tAc "SHOW synchronous_commit" 2>/dev/null || true)"
+  if [ -n "$sync_commit" ] && [ "$sync_commit" != "off" ]; then
+    echo "warning: the database runs with synchronous_commit=$sync_commit, not db/db.sh's" \
+      "settings; /updates is bound by fsync" >&2
+  fi
+fi
+
 failed=""
 for server in $SERVERS; do
   reset_db
