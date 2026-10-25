@@ -99,7 +99,7 @@ impl FnCx<'_, '_> {
                     ast::ExprKind::Paren(inner) => self.immediate_closure(inner),
                     _ => self.expr(callee, None, Want::Borrow),
                 };
-                self.call_value(f, args, span)
+                self.call_value_with(f, type_args, args, exp, span)
             }
         }
     }
@@ -179,7 +179,7 @@ impl FnCx<'_, '_> {
                 }
                 _ => {
                     let f = self.ident_expr(id, None, Want::Borrow);
-                    self.call_value(f, args, span)
+                    self.call_value_with(f, type_args, args, exp, span)
                 }
             },
             _ => self.builtin_call(id, type_args, args, exp, span),

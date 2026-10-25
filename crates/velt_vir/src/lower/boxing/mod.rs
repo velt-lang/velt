@@ -42,6 +42,9 @@ pub(super) struct Boxing {
     /// The program compares function values: every evaluation of a closure without captures
     /// gets an environment of its own as its identity (closure.rs).
     fn_identity: bool,
+    /// The program holds a generic closure as `unknown` (glue/vtable.rs `ClosureAny`): every
+    /// function's `any` table has the slots that carry its table back.
+    pub(super) generic_any: bool,
     /// The program writes a member through `any` (`AnySet` / `AnySetIndex`): the `any` tables
     /// have the write slots (any_set.rs).
     pub(super) any_writes: bool,
@@ -202,6 +205,8 @@ pub(super) struct Facts {
     transfers: FxHashSet<TyId>,
     /// Function values are compared (or hashed) somewhere.
     fn_compared: bool,
+    /// A generic closure is held as `unknown` (`Boxing::generic_any`).
+    pub(super) generic_any: bool,
     /// A member is written through `any`.
     any_set: bool,
     /// `key in x` is tested on an `any`.
@@ -391,6 +396,7 @@ impl Cx<'_> {
     pub(super) fn close_boxing(&mut self) -> Boxing {
         let mut next = self.boxing.clone();
         next.fn_identity |= self.facts.fn_compared;
+        next.generic_any |= self.facts.generic_any;
         next.any_identity |= self.facts.any_identity;
         next.any_writes |= self.facts.any_set;
         next.any_has |= self.facts.any_has;

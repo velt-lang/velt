@@ -22,7 +22,8 @@ impl FnLower<'_, '_> {
         out: &Place,
         done: vir::BlockId,
     ) {
-        if !self.cx.is_generic_fn_value(ty) {
+        // Only then do functions' `any` tables have the slots read here.
+        if !self.cx.is_generic_fn_value(ty) || !self.cx.boxing.generic_any {
             return;
         }
         let tag = self.any_tag_of(desc.clone());

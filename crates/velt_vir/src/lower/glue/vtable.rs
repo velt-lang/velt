@@ -122,8 +122,11 @@ impl Cx<'_> {
             .chain(targets.iter().map(|t| t.0));
         let n = slots.map(|s| s + HIDDEN + 1).max().unwrap_or(0);
         let n = match tag {
-            // A function's: as long as a generic closure's (`VtableKey::ClosureAny`).
-            Some(super::super::any::TAG_FUNCTION) => n.max(SLOT_GENERIC_TYPE + HIDDEN + 1),
+            // A function's, in a program holding generic closures as `unknown`: as long as a
+            // generic closure's (`VtableKey::ClosureAny`).
+            Some(super::super::any::TAG_FUNCTION) if self.boxing.generic_any => {
+                n.max(SLOT_GENERIC_TYPE + HIDDEN + 1)
+            }
             Some(_) => n.max(super::super::any::SLOT_TAG + HIDDEN + 1),
             None => n,
         };
@@ -244,6 +247,7 @@ impl Cx<'_> {
     /// with the id of the interface value type in `SLOT_GENERIC_TYPE` (the closure's own table
     /// goes into `SLOT_GENERIC_TABLE` once it is registered: `vtable`).
     fn closure_any_table(&mut self, index: u32, inst: TyId) -> StaticId {
+        self.facts.generic_any = true;
         let imp = &self.hir.impls[index as usize];
         let (ty, iface, iargs) = (imp.ty, imp.iface, imp.iface_args.clone());
         let any = self.hir.any_impl.unwrap_or(0);

@@ -265,6 +265,9 @@ pub(crate) fn typed_function(
             let g = table.generic_fn(module, t)?;
             from_arrow(name, g, init, v.span)
         }
+        // A name (`const asA: A = id`) stays a constant holding that value, so it is the
+        // same value (`asA === id`, #943).
+        (Some(_), ast::ExprKind::Ident(_)) => None,
         (Some(t), _) => {
             let g = table.generic_fn(module, t)?;
             calling(name, g, init, v.span)

@@ -387,13 +387,26 @@ fn expr_of(f: ast::FnDecl) -> ast::Expr {
     }
 }
 
-/// The names `root` uses as values: those of identifiers that are not only callees of calls.
+/// The names `root` uses as values: those of identifiers that are not only callees of calls,
+/// or the initializers of constants of a function type of fixed types (`const asNumber: (x:
+/// number) => number = id`, which instantiates the function).
 fn value_uses(root: &ast::Expr) -> FxHashSet<String> {
     struct Uses<'a> {
         all: rustc_hash::FxHashMap<&'a str, usize>,
         called: rustc_hash::FxHashMap<&'a str, usize>,
     }
     impl<'a> velt_syntax::visit::Visit<'a> for Uses<'a> {
+        fn var_decl(&mut self, v: &'a ast::VarDecl) {
+            let fixed = matches!(
+                v.ty.as_ref().map(|t| &t.kind),
+                Some(ast::TypeExprKind::Function { .. })
+            );
+            if let (true, Some(ast::ExprKind::Ident(id))) =
+                (fixed, v.init.as_ref().map(|e| &e.kind))
+            {
+                *self.called.entry(&id.name).or_default() += 1;
+            }
+        }
         fn expr(&mut self, e: &'a ast::Expr) {
             match &e.kind {
                 ast::ExprKind::Ident(id) => *self.all.entry(&id.name).or_default() += 1,

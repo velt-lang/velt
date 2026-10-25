@@ -1113,14 +1113,25 @@ Such a value is:
 - a generic method of an object (`apply(k.id)`), bound to it as other method values are;
 - another value of the same type, or of the same type written with other names (`<U>(y: U) => U`).
 
-A value is itself however it is copied or converted: `===`, `includes`, `Map` and `Set` keys
-compare generic function values by identity, as JavaScript does. Where a function type of fixed
+A value is itself however it is copied, stored or converted between spellings of its type:
+`===`, `includes`, `Map` and `Set` keys compare generic function values by identity, as
+JavaScript does. A module-level generic function used as such a value is one value per type
+(`id === id`, also through `const asA: A = id`). Not yet the same value: a generic function
+declared in a function body used as a value twice, a generic value converted to a function of
+fixed types twice (each conversion is a new function), and a generic function used at a type
+that mentions the caller's type parameters (`P<U>` in `getP<U>`), which is a new value per
+use. Where a function type of fixed
 types is expected (`const p: (x: number) => number = f`, `[1, 2].map(f)`), a generic function
 value is instantiated at it, as TypeScript does. A function of fixed types is not a generic one
 (`(x: number) => number` is not a `<T>(x: T) => T`, as TypeScript reports), also not through
-`unknown` (`plus as unknown as Id` is an error). Held as `unknown`, a generic function value's
-`typeof` is `"function"` and `u as Id` gives it back; it can't be held as `any` or `Function`
-yet, since a call through those would need its type arguments.
+`unknown` (`plus as unknown as Id` is an error), unless it takes the type's parameters at every
+type argument: `Symbol as unknown as <T>(d: string) => Token<T>` is the generic arrow calling
+`Symbol`. Held as `unknown`, a generic function value's `typeof` is `"function"`, it compares
+with `===`, and `u as Id` gives it back; it can't be held as `any` or `Function` yet (an error),
+since a call through those would need its type arguments, and calling one through an `any`
+reached otherwise (`(u as any)(1)`) stops the program with a `TypeError` (#924). An
+overloaded generic function is its implementation as a value (as for any overloaded
+function): where a generic function type is expected it is called through its signatures.
 
 Velt compiles the value's code once per list of type arguments the program calls such values
 with, and a call picks its entry from a table, so nothing is boxed (no `any`). Without a

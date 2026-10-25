@@ -518,9 +518,15 @@ impl FnCx<'_, '_> {
         let slots = vec![None; f.generics.len()];
         // A generic function where a generic function value is expected, or where no function
         // type to instantiate it at is: the value of its own generic function type (#943).
-        if !slots.is_empty() && !self.overloaded(d) {
+        if !slots.is_empty() {
             let want = self.hint(exp).filter(|t| self.cx.is_generic_fn(*t));
-            if let Some(g) = want.or_else(|| self.own_generic_type(d, exp, span)) {
+            // Without an expected type, an overloaded function is its implementation (and has
+            // no one generic type of its own).
+            let own = |s: &mut Self| match s.overloaded(d) {
+                true => None,
+                false => s.own_generic_type(d, exp, span),
+            };
+            if let Some(g) = want.or_else(|| own(self)) {
                 return self.generic_fn_value(d, id, g);
             }
         }

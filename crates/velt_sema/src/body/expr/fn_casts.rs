@@ -61,7 +61,7 @@ impl FnCx<'_, '_> {
     pub(super) fn fn_as_generic(
         &mut self,
         expr: &ast::Expr,
-        target: TyId,
+        (target, written): (TyId, &ast::TypeExpr),
         want: Want,
         span: Span,
     ) -> Option<hir::Expr> {
@@ -88,6 +88,12 @@ impl FnCx<'_, '_> {
         ) {
             return None;
         }
+        // A function that takes the type's parameters at every type argument (`Symbol` as
+        // `<T>(d: string) => Token<T>`, sigx's `createToken`): the generic arrow calling it,
+        // its result asserted to the type's (`<T>(a0: string) => Symbol(a0) as Token<T>`).
+        if let Some(h) = self.fixed_as_generic(x, written, target) {
+            return Some(h);
+        }
         let (f, g) = (self.cx.display(t), self.cx.display(target));
         self.cx.error(
             velt_common::Diagnostic::error(
@@ -98,6 +104,85 @@ impl FnCx<'_, '_> {
             .with_note("pass a generic function, or a generic arrow (`<T>(x: T) => …`)"),
         );
         Some(self.error_expr(span))
+    }
+
+    /// `x` (a function of fixed types) as generic function type `target`, written `written`:
+    /// the generic arrow calling it, when that checks (`fn_as_generic`). `None`, with nothing
+    /// reported, when it doesn't (or the type is not written out here).
+    fn fixed_as_generic(
+        &mut self,
+        x: &ast::Expr,
+        written: &ast::TypeExpr,
+        target: TyId,
+    ) -> Option<hir::Expr> {
+        let ast::TypeExprKind::GenericFunction { type_params, ty } = &written.kind else {
+            return None;
+        };
+        let ast::TypeExprKind::Function {
+            params, ret, rest, ..
+        } = &ty.kind
+        else {
+            return None;
+        };
+        let at = x.span;
+        let mk = |kind| ast::Expr {
+            id: ast::NodeId(u32::MAX),
+            kind,
+            span: at,
+        };
+        let name = |k: usize| ast::Ident {
+            name: format!("#a{k}"),
+            span: at,
+        };
+        let n = params.len();
+        let last = |k: usize| *rest && k + 1 == n;
+        let ps = (params.iter().enumerate())
+            .map(|(k, t)| ast::ArrowParam {
+                name: name(k),
+                pattern: None,
+                ty: Some(t.clone()),
+                default: None,
+                optional: false,
+                rest: last(k),
+            })
+            .collect();
+        let args = (0..n)
+            .map(|k| match last(k) {
+                true => mk(ast::ExprKind::Spread(Box::new(mk(ast::ExprKind::Ident(
+                    name(k),
+                ))))),
+                false => mk(ast::ExprKind::Ident(name(k))),
+            })
+            .collect();
+        let call = mk(ast::ExprKind::Call {
+            callee: Box::new(x.clone()),
+            type_args: vec![],
+            args,
+            optional: false,
+        });
+        let body = mk(ast::ExprKind::Cast {
+            expr: Box::new(call),
+            ty: (**ret).clone(),
+        });
+        let arrow = mk(ast::ExprKind::Arrow {
+            type_params: type_params.clone(),
+            params: ps,
+            ret: Some((**ret).clone()),
+            throws: None,
+            body: ast::ArrowBody::Expr(Box::new(body)),
+            is_async: false,
+        });
+        let mark = crate::body::recheck::Mark::here(self.cx);
+        let frames = self.trial_frames();
+        let diags = self.cx.diags.len();
+        let h = self.expr(&arrow, Some(target), Want::Move);
+        if self.cx.diags.len() == diags {
+            return Some(self.coerce(h, target));
+        }
+        self.cx.diags.truncate(diags);
+        mark.rollback(self.cx);
+        self.restore_trial_frames(frames);
+        None
     }
 
     /// Function type `t` with each branded parameter and result type its primitive.

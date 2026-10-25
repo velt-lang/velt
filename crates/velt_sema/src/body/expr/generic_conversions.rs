@@ -203,6 +203,85 @@ impl FnCx<'_, '_> {
         false
     }
 
+    /// Generic function value `h` as a function taking `params` (a callback whose result type
+    /// is not given: `p.then(f)`): instantiated at them (`generic_as_fn`); any other `h` as it is.
+    pub(super) fn generic_callback(&mut self, h: hir::Expr, params: &[TyId]) -> hir::Expr {
+        let Some(sig) = self.cx.generic_sig(h.ty) else {
+            return h;
+        };
+        let own = sig.method.generics.len();
+        let mut map = sig.args.clone();
+        map.push(self.cx.ty.error);
+        map.extend((0..own).map(|k| self.cx.ty.param(k as u32)));
+        let mut slots = vec![None; own];
+        for (gp, p) in sig.method.params.iter().zip(params) {
+            let gp = self.cx.subst(gp.ty, &map);
+            self.cx.match_ty(gp, *p, &mut slots);
+        }
+        let Some(own_args) = slots.into_iter().collect::<Option<Vec<TyId>>>() else {
+            return h;
+        };
+        let mut inst = sig.args.clone();
+        inst.push(self.cx.ty.error);
+        inst.extend(own_args);
+        let ps = (sig.method.params.iter().take(params.len()))
+            .map(|p| self.cx.subst(p.ty, &inst))
+            .collect();
+        let ret = self.cx.subst(sig.method.ret, &inst);
+        let throws = (sig.method.throws.and_then(|t| t.ty))
+            .map_or(self.cx.ty.never, |t| self.cx.subst(t, &inst));
+        let f = self.cx.ty.intern(TyKind::FnPtr {
+            params: ps,
+            ret,
+            throws,
+            rest: false,
+        });
+        self.coerce(h, f)
+    }
+
+    /// Does dynamic type `d` take a value of static type `t`? A generic function value is taken
+    /// to be reported (`box_value_dynamic`) rather than mismatched.
+    pub(super) fn takes_static(&mut self, d: Dynamic, t: TyId) -> bool {
+        self.cx.is_generic_fn(t) || self.dynamic_takes_static(d, t)
+    }
+
+    /// An operand of `===` / `==` against an `any` or `unknown` (`dynamic_eq`), as an `any`: a
+    /// generic function value too, which is compared, never called.
+    pub(super) fn compared_operand(&mut self, h: hir::Expr, any: TyId) -> hir::Expr {
+        if !self.cx.is_generic_fn(h.ty) {
+            return self.dynamic_operand(h, any);
+        }
+        match self.box_dynamic(h, any) {
+            Ok(b) => b,
+            Err(h) => self.dynamic_operand(h, any),
+        }
+    }
+
+    /// A call of function value `f` written with type arguments `type_args`, where `exp` is
+    /// expected: a generic function value takes them (and is inferred against `exp`), as a call
+    /// of a generic function does; any other value is called as `call_value` calls it.
+    pub(super) fn call_value_with(
+        &mut self,
+        f: hir::Expr,
+        type_args: &[ast::TypeExpr],
+        args: &[ast::Expr],
+        exp: Option<TyId>,
+        span: Span,
+    ) -> hir::Expr {
+        let Some(g) = self.cx.generic_sig(f.ty) else {
+            return self.call_value(f, args, span);
+        };
+        let s = super::iface_call::IfaceSlot {
+            on_param: false,
+            iface: g.iface,
+            iface_args: g.args,
+            slot: 0,
+            method: g.method,
+            rest: g.rest,
+        };
+        self.iface_call(f, s, type_args, args, exp, span)
+    }
+
     /// `C.f(args)` for a static field `f` of class `d` holding a function value.
     pub(super) fn static_field_call(
         &mut self,

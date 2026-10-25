@@ -558,7 +558,7 @@ impl FnCx<'_, '_> {
         if let Some(h) = self.callable_cast(expr, target, span) {
             return h;
         }
-        if let Some(h) = self.fn_as_generic(expr, target, want, span) {
+        if let Some(h) = self.fn_as_generic(expr, (target, ty), want, span) {
             return h;
         }
         if let Some(base) = self.cx.brand_base(target) {
