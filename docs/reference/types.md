@@ -2065,6 +2065,16 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   `n` elements in one allocation. A bare `new Array<T>(n)` is an error: arrays have no holes.
   `Array.from(src)` and `Array.from(src, (v, i) => …)` copy (and map) anything `for...of` takes:
   an array, a string's characters, a map's entries, a generator, any iterable.
+- **Length limit.** An array holds at most 2^52 - 1 elements, and its elements take at most
+  2^52 - 1 bytes together, where JS stops at 2^32 - 1 elements. Velt allows more on purpose: its
+  arrays are native buffers, so a byte array, a column of numbers or a buffer may be larger than
+  4 GiB, as in Rust, while 2^52 bytes (4 PiB) is still beyond any machine's memory. So
+  `xs.length = 2 ** 32` is a `RangeError` in Node but truncates a longer Velt array. Growing an
+  array past the limit (`push`, `concat`, `splice`, spread, `Array.from`, `new Array<T>(n)`)
+  panics with `RangeError: Invalid array length: an array holds at most 2^52 - 1 elements, and
+  its elements at most 2^52 - 1 bytes`, and so does `xs.length = n` with an `n` past 2^52 - 1. The
+  bound is also what lets the compiler count a loop such as
+  `for (let i = 0; i <= xs.length; i++)` in integers. Typed arrays hold at most 2^52 - 1 bytes.
 - **`readonly T[]`** and **`ReadonlyArray<T>`** (the same type) are array types, and
   `readonly [A, B]` a tuple type; a `T[]` is passed where one is expected. A variable or
   parameter declared with a read-only array type cannot be written through: a mutating method

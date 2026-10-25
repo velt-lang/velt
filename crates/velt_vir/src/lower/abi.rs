@@ -132,6 +132,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Work::EnvTransfer(def, targs) => Self::build_env_transfer(cx, *def, targs),
             Work::Oob(signed) => Self::build_oob(cx, *signed),
             Work::ArrayGrow => Self::build_array_grow(cx),
+            Work::ArrayTooLong => Self::build_array_too_long(cx),
             Work::Main => Self::build_main(cx),
             Work::SyncMainRoot => Self::build_sync_main_root(cx),
             Work::Poll(def, targs) => Self::build_poll(cx, *def, targs),

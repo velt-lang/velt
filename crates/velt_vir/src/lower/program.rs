@@ -160,6 +160,7 @@ impl<'h> Cx<'h> {
                 | Work::Main
                 | Work::ModuleInit(..)
                 | Work::ArrayGrow
+                | Work::ArrayTooLong
                 | Work::Oob(_)
         ) || !self.has_lock_set();
         let work = match (fixed, mode) {

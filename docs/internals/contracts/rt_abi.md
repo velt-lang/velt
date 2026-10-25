@@ -419,6 +419,21 @@ keeps the module lock while it blocks; taking the module lock while the thread h
 stops with an `ICE:` panic (sema rejects module state in a `with` callback). On WebAssembly (one
 thread) there is no lock.
 
+## Array length limit [additive, #1572]
+
+An array (`{ data, len, cap }`) holds at most `MAX_ARRAY_LEN` = 2^52 - 1 elements, and its
+buffer at most 2^52 - 1 bytes (`cap * size(T)`), so a byte size never wraps. Generated code
+checks it where it chooses a length (`velt_vir` `lower/array`: `with_capacity`, `reserve`, an
+array adopted from native code, and the growth of an array of zero-sized elements);
+`velt_rt_realloc`, which generated code calls only to grow an array, refuses a `new_size` past it
+(`velt_rt_alloc` does not check: it is on every `new`); the runtime checks the length in
+`VeltBytes::from_vec`, `VeltArray::from_vec` and `VeltStrArray::from_vec` before handing a Rust
+`Vec` over. Past it, both stop with
+`panic: RangeError: Invalid array length: an array holds at most 2^52 - 1 elements, and its elements at most 2^52 - 1 bytes`
+(exit code 101). Optimizations may rely on it: `velt_opt`'s `numrep` takes an array's `len` to be
+at most 2^53 - 3 (all an index running to `len` inclusive needs). A typed array's byte length is
+below 2^52 for the same reason (its buffer is a `u8[]`).
+
 ## Array methods on a proxy [additive, #823]
 
 ```c

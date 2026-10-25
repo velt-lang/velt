@@ -130,6 +130,13 @@ pub unsafe extern "C" fn velt_rt_realloc(
     align: u64,
     new_size: u64,
 ) -> *mut u8 {
+    // Generated code reallocates only to grow an array: past the limit on an array's buffer
+    // (rt_abi.md "Array length limit") it stops here, so growth stays one compare away from
+    // the limit without a check in every inlined `push`. `velt_rt_alloc`, on every `new`, has
+    // none.
+    if new_size > crate::bytes::MAX_ARRAY_LEN {
+        crate::bytes::array_too_long();
+    }
     if p.is_null() || old_size == 0 {
         return velt_rt_alloc(new_size, align);
     }

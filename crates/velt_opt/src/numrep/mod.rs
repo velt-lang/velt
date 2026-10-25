@@ -5,7 +5,8 @@
 //! identical, this pass stores it as an `i32` or `i64` instead:
 //! - **Facts** (`fact`, `flow`, `refine`): an interval, integrality, NaN and `-0` for every
 //!   numeric local at every point, refined by branch conditions (and through copies of the
-//!   compared values) and widened at loop heads. An array's length is below 2^53, and a
+//!   compared values) and widened at loop heads. An array's length is at most 2^53 - 3 (enforced
+//!   lower still, `velt_vir::MAX_ARRAY_LEN`), and a
 //!   parameter every call sets to a constant starts with that constant's facts (`params`).
 //!   A counter (`n++` from a whole constant) is bounded by the trip counts of the loops
 //!   around its steps (`counter`).

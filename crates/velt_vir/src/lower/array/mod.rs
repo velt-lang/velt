@@ -6,6 +6,14 @@
 //! `expr.rs`), seen only by the code that reads an element, the length or iterates. Indexing is
 //! bounds-checked
 //! (the `Oob` helper panics with `index out of bounds: the len is L but the index is I`).
+//! A buffer holds at most [`crate::MAX_ARRAY_LEN`] bytes, so an array at most that many
+//! elements (fewer of larger ones, [`max_elems`]) and a byte size never wraps. It is checked where
+//! a length is chosen, off the hot paths: a capacity (`with_capacity`, in its test for an empty
+//! one), `reserve`'s growth, an array from native code (`adopt_array`), and doubling, where
+//! `velt_rt_realloc` refuses the buffer (so `ArrayGrow`, inlined into every `push`, stays as
+//! small as it was; zero-sized elements, which never reach it, are checked at the call).
+//! `alloc_elems` itself does not check: its other callers copy an array (a clone, a pattern's
+//! rest), whose length is within the limit already, or build a literal.
 
 mod builtins;
 mod ops;
@@ -15,7 +23,16 @@ use velt_sema::hir::{self, TyId, TyKind};
 use super::operand::proj;
 use super::rt::Rt;
 use super::{cint, ice, unit, FnLower, Work};
-use crate::vir::{self, BinOp, Local, Operand, Place, Proj, Rvalue, Ty};
+use crate::vir::{self, BinOp, Local, Operand, Place, Proj, Rvalue, Terminator, Ty};
+
+/// The most elements a buffer of `stride`-byte elements holds: as many as fit in
+/// [`crate::MAX_ARRAY_LEN`] bytes (all of them for zero-sized elements).
+pub(super) fn max_elems(stride: u32) -> u64 {
+    match stride {
+        0 => crate::MAX_ARRAY_LEN,
+        s => crate::MAX_ARRAY_LEN / u64::from(s),
+    }
+}
 
 impl FnLower<'_, '_> {
     /// Element type of the concrete array type `arr`.
@@ -91,7 +108,22 @@ impl FnLower<'_, '_> {
         self.elem_place(arr, iu, elem)
     }
 
-    /// A fresh heap buffer for `n` (operand, u64) elements.
+    /// Panic with [`crate::ARRAY_LEN_MESSAGE`] unless an array of `stride`-byte elements may
+    /// hold `n` (a `u64` operand) of them ([`max_elems`]).
+    pub(super) fn check_len(&mut self, n: Operand, stride: u32) {
+        let limit = cint(i128::from(max_elems(stride)), Ty::U64);
+        let ok = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Le, n, limit));
+        let (fits, over) = (self.new_block(), self.new_block());
+        self.branch(ok, fits, over);
+        self.switch_to(over);
+        let f = self.cx.func(Work::ArrayTooLong);
+        self.call(vir::Callee::Func(f), vec![], None, false);
+        self.terminate(Terminator::Unreachable);
+        self.switch_to(fits);
+    }
+
+    /// A fresh heap buffer for `n` (operand, u64) elements: within [`max_elems`] (the caller
+    /// checked it, or copies an array's length).
     fn alloc_elems(&mut self, n: Operand, elem: TyId) -> Operand {
         let (stride, align) = self.stride(elem);
         let size = self.rvalue_temp(
