@@ -68,6 +68,14 @@ impl FnCx<'_, '_> {
         Some(side)
     }
 
+    /// Is every dynamic operand an `any`? Arithmetic on an `unknown`, an `object` or a
+    /// `Function` is a compile error, as in TypeScript (TS2362).
+    fn any_operands(&self, l: &hir::Expr, r: &hir::Expr) -> bool {
+        [l.ty, r.ty]
+            .iter()
+            .all(|t| matches!(self.cx.dynamic(*t), None | Some(Dynamic::Any)))
+    }
+
     /// A call of the prelude's operator helper `name`, which reads arrays and objects through
     /// `any` (their member slots).
     pub(crate) fn dyn_helper_call(
@@ -169,7 +177,7 @@ impl FnCx<'_, '_> {
         r: hir::Expr,
         span: Span,
     ) -> hir::Expr {
-        if !self.no_unknown_operand(&l, &r) {
+        if !self.any_operands(&l, &r) {
             return self.dynamic_operator(super::ops::op_str(op), &l, &r, span);
         }
         let mut stmts = Vec::new();
@@ -186,7 +194,7 @@ impl FnCx<'_, '_> {
     /// both hold `undefined`, `null`, a boolean or a number, else `__anyAdd` runs JavaScript's
     /// `+` (a string concatenation when either side's `ToPrimitive` is a string). An `any`.
     pub(crate) fn dynamic_add(&mut self, l: hir::Expr, r: hir::Expr, span: Span) -> hir::Expr {
-        if !self.no_unknown_operand(&l, &r) {
+        if !self.any_operands(&l, &r) {
             return self.dynamic_operator("+", &l, &r, span);
         }
         let Some(any) = self.any_ty() else {

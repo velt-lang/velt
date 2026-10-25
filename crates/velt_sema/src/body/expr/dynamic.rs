@@ -769,6 +769,22 @@ impl FnCx<'_, '_> {
             .any(|t| self.cx.dynamic(*t) == Some(Dynamic::Unknown))
         {
             self.unknown_use_error(span);
+        } else if let Some(d) = [l.ty, r.ty]
+            .iter()
+            .filter_map(|t| self.cx.dynamic(*t))
+            .find(|d| matches!(d, Dynamic::Object | Dynamic::Function))
+        {
+            // As in TypeScript (TS2362 / TS2365): only an `any` converts to a number.
+            self.cx.error(
+                Diagnostic::error(
+                    format!(
+                        "the operator `{op}` cannot be applied to a value of type `{}`",
+                        d.name()
+                    ),
+                    span,
+                )
+                .with_note("an arithmetic operand must be a number, an enum value or an `any`"),
+            );
         } else {
             self.cx.error(
                 Diagnostic::error(
