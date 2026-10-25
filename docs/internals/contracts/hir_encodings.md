@@ -1181,11 +1181,12 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   original's length (`__arrayViewLen`). A loop with such tests runs as a copy without the view
   side (`lower/view_unswitch.rs`): a test of a box in a local the loop does not change (by
   assignment or through its address) is false in the copy, entered after one test before the
-  loop (a box never becomes a view); any other test that finds a view goes on in the original
-  loop, at the same point. Array intrinsics that change the array, and assignments whose target
-  goes through a view type, write the mirror back after the change, only the written element
-  for an `Index` target and a swap (`__arrayViewFlushAt`), the new tail or length for `push` /
-  `pop` / `truncate` (`__arrayViewFlushFrom`), else all of it (`__arrayViewFlush`). A call of
+  loop (a box never becomes a view); any other test that finds a view, and an `Index` past the
+  header's length, go on in the original loop at the same point. Array intrinsics that change
+  the array, and assignments whose target goes through a view type, write the mirror back
+  after the change, only the written element for an `Index` target and a swap
+  (`__arrayViewFlushAt`), the new tail or length for `push` / `pop` / `truncate`
+  (`__arrayViewFlushFrom`), else all of it (`__arrayViewFlush`). A call of
   `std/sort/stable::stableSort` on a view sorts a copy of the mirror instead
   (`__arrayViewSort`); `ArrayMove` / `ArraySetLen` on a view stop with a `TypeError`. The
   runtime's table of array views (rt_abi.md "Views") keeps one live view per (original, view

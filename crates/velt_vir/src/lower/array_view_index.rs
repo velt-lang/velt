@@ -120,6 +120,7 @@ impl FnLower<'_, '_> {
         let inb = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Lt, iu.clone(), len));
         let ep = Place::local(self.temp(Ty::Ptr));
         let (fast, slow, done) = (self.new_block(), self.new_block(), self.new_block());
+        self.note_view_slow(&inb);
         self.branch(inb, fast, slow);
         self.switch_to(fast);
         let p = self.elem_place(&hdr, iu.clone(), e);

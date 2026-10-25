@@ -20,6 +20,10 @@
 //!   assign) stays in the copy, but when it finds a view the copy goes on in the original loop
 //!   at the same point, its locals handed over. The copy then has no call on the view side, so
 //!   the backend keeps a plain array's header in registers there.
+//! - An element access whose index is not below the header's length (a view's is 0) goes on
+//!   in the original there too, whatever its box. So the copy reads only a plain array's
+//!   element, with no way on from the test where the index may be past the length: the index
+//!   is known to be below it after the test, which lets `velt_opt` keep it an integer.
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -32,6 +36,9 @@ pub(super) struct ViewLoops {
     /// The view bit tests: the `Bool` local holding the result, the local holding the box
     /// whose header it read with the header's type (when a local holds it).
     tests: Vec<(Local, Option<(Local, Ty)>)>,
+    /// The tests of an element access's index against the header's length, whose false side
+    /// tests the view bit (array_view_index.rs).
+    slows: FxHashSet<Local>,
     /// The loops lowered: their header (the block entered from before the loop) and the
     /// range of blocks made while lowering them.
     loops: Vec<(BlockId, u32, u32)>,
@@ -54,6 +61,15 @@ impl FnLower<'_, '_> {
             _ => None,
         };
         self.view_loops.tests.push((*local, held));
+    }
+
+    /// The test `inb` is an element access's `i < len`, whose false side tests the view bit.
+    pub(super) fn note_view_slow(&mut self, inb: &Operand) {
+        if let Operand::Copy(Place { local, proj }) = inb {
+            if proj.is_empty() {
+                self.view_loops.slows.insert(*local);
+            }
+        }
     }
 
     /// The first block of a loop about to be lowered (for [`Self::note_loop`]).
@@ -79,7 +95,8 @@ impl FnLower<'_, '_> {
         loops.sort_by_key(|&(_, first, end)| (first, std::cmp::Reverse(end)));
         let addrs = self.addresses();
         // The blocks using each test (the copies made below are in no loop's range).
-        let tested: FxHashSet<Local> = self.view_loops.tests.iter().map(|x| x.0).collect();
+        let mut tested: FxHashSet<Local> = self.view_loops.tests.iter().map(|x| x.0).collect();
+        tested.extend(self.view_loops.slows.iter().copied());
         let mut uses: FxHashMap<Local, FxHashSet<BlockId>> = FxHashMap::default();
         for i in 0..self.blocks.len() {
             let b = BlockId(i as u32);
@@ -125,7 +142,17 @@ impl FnLower<'_, '_> {
             // The loops inside this one are versioned with it (the copy holds theirs, and the
             // original runs only for a view).
             handled.extend(here.iter().map(|x| x.0));
-            self.version(h, &region, &boxes, &plain, &leave, params);
+            let slows: FxHashSet<Local> = (self.view_loops.slows.iter())
+                .filter(|t| !handled.contains(t) && used_here(t))
+                .copied()
+                .collect();
+            handled.extend(slows.iter().copied());
+            let tests = Tests {
+                plain,
+                leave,
+                slows,
+            };
+            self.version(h, &region, &boxes, &tests, params);
         }
     }
 
@@ -313,18 +340,21 @@ impl FnLower<'_, '_> {
         seen
     }
 
-    /// Copy the loop `region` (header `h`) with the tests in `plain` false and those in
-    /// `leave` going on in the original loop when true, and enter the copy from before the loop
-    /// when none of `boxes` (their header type each) is a view.
+    /// Copy the loop `region` (header `h`) with its tests as `tests` says, and enter the copy
+    /// from before the loop when none of `boxes` (their header type each) is a view.
     fn version(
         &mut self,
         h: BlockId,
         region: &[BlockId],
         boxes: &[(Local, Ty)],
-        plain: &FxHashSet<Local>,
-        leave: &FxHashSet<Local>,
+        tests: &Tests,
         params: usize,
     ) {
+        let Tests {
+            plain,
+            leave,
+            slows,
+        } = tests;
         let inside: FxHashSet<BlockId> = region.iter().copied().collect();
         let copies = self.blocks.len();
         let mut map = FxHashMap::default();
@@ -369,7 +399,7 @@ impl FnLower<'_, '_> {
         // Where the copy goes on in the original, the original's locals take the values of the
         // copy's that are live there (and assigned on every way there).
         let renamed: FxHashSet<Local> = fresh.keys().copied().collect();
-        let (live, set) = match leave.is_empty() {
+        let (live, set) = match leave.is_empty() && slows.is_empty() {
             true => (FxHashMap::default(), FxHashMap::default()),
             false => (
                 self.live_ins(region, &renamed),
@@ -380,38 +410,45 @@ impl FnLower<'_, '_> {
         for (b, stmts, term) in copied {
             let c = map[&b];
             let locs = self.block_locs[b.0 as usize].clone();
+            // A block going on in the original at `to` from the end of `b` in the copy: the
+            // original's locals live there take the values of the copy's.
+            let mut hand_over = |this: &mut Self, to: BlockId| {
+                let mut back: Vec<Local> = live
+                    .get(&to)
+                    .into_iter()
+                    .flatten()
+                    .filter(|l| set.get(&b).is_some_and(|s| s.contains(l)))
+                    .copied()
+                    .collect();
+                back.sort_by_key(|l| l.0);
+                let stmts: Vec<vir::Stmt> = back
+                    .iter()
+                    .map(|l| {
+                        let from = Operand::Copy(Place::local(fresh[l]));
+                        vir::Stmt::Assign(Place::local(*l), Rvalue::Use(from))
+                    })
+                    .collect();
+                let edge = this.new_block();
+                this.live[edge.0 as usize] = true;
+                let n = stmts.len();
+                edges.push((edge, to));
+                this.blocks[edge.0 as usize] = (stmts, None);
+                this.block_locs[edge.0 as usize] = (vec![locs.1; n], locs.1);
+                edge
+            };
             let term = match term {
                 // A test of one of `boxes` is false in the copy.
                 Some(Terminator::Branch { cond, els, .. }) if named(plain, &cond) => {
                     Some(Terminator::Goto(els))
                 }
                 Some(Terminator::Branch { cond, then, els }) if named(leave, &cond) => {
-                    let mut back: Vec<Local> = live
-                        .get(&then)
-                        .into_iter()
-                        .flatten()
-                        .filter(|l| set.get(&b).is_some_and(|s| s.contains(l)))
-                        .copied()
-                        .collect();
-                    back.sort_by_key(|l| l.0);
-                    let stmts: Vec<vir::Stmt> = back
-                        .iter()
-                        .map(|l| {
-                            let from = Operand::Copy(Place::local(fresh[l]));
-                            vir::Stmt::Assign(Place::local(*l), Rvalue::Use(from))
-                        })
-                        .collect();
-                    let edge = self.new_block();
-                    self.live[edge.0 as usize] = true;
-                    let n = stmts.len();
-                    edges.push((edge, then));
-                    self.blocks[edge.0 as usize] = (stmts, None);
-                    self.block_locs[edge.0 as usize] = (vec![locs.1; n], locs.1);
-                    Some(Terminator::Branch {
-                        cond,
-                        then: edge,
-                        els,
-                    })
+                    let then = hand_over(self, then);
+                    Some(Terminator::Branch { cond, then, els })
+                }
+                // Past the header's length: a view, or an error on a plain array.
+                Some(Terminator::Branch { cond, then, els }) if named(slows, &cond) => {
+                    let els = hand_over(self, els);
+                    Some(Terminator::Branch { cond, then, els })
                 }
                 t => t,
             };
@@ -543,6 +580,14 @@ impl FnLower<'_, '_> {
         }
         out
     }
+}
+
+/// The tests in a loop's copy: false there (`plain`), going on in the original when true
+/// (`leave`), and element accesses' `i < len` going on in the original when false (`slows`).
+struct Tests {
+    plain: FxHashSet<Local>,
+    leave: FxHashSet<Local>,
+    slows: FxHashSet<Local>,
 }
 
 /// A write to `p` assigns its local (one of `cands`) unless it goes through a pointer.
