@@ -1,0 +1,61 @@
+// check: no leaks
+// More ways a nested `read` callback changes the code's containers around both reads: a
+// `for…of` over them that deletes what it visits, elements of the outer reader's own variable
+// moved into them, the lock's values (copied), a function given the container, and the outer
+// reader looking at what the inner one changed.
+class Box {
+  items: number[][] = [[1, 2], [3]];
+}
+
+function drain(a: RwLock<Box>, b: RwLock<Box>, out: number[][][]): number {
+  let n = 0;
+  a.read((x) => {
+    b.read((y) => {
+      while (out.length > 0) {
+        out.pop();
+        n++;
+      }
+    });
+  });
+  return n;
+}
+
+function main() {
+  const a = new RwLock(new Box());
+  const b = new RwLock(new Box());
+  const s = new Set<number[][]>();
+  const m = new Map<number, number[][]>();
+  const out: number[][][] = [[[1]], [[2]]];
+  for (let i = 0; i < 4; i++) {
+    s.add([[i]]);
+    m.set(i, [[i, i]]);
+  }
+  a.read((x) => {
+    const mine: number[][][] = [x.items.slice(), [[7]]];
+    b.read((y) => {
+      for (const t of s) {
+        if (t[0][0] % 2 == 0) {
+          s.delete(t);
+        }
+      }
+      for (const [k, v] of m) {
+        if (k > 1) {
+          m.delete(k);
+        }
+      }
+      out.push(mine[1]);
+      out.push(y.items);
+      out.shift();
+    });
+    console.log("outer sees", out.length, s.size, m.size, mine.length);
+  });
+  out[0].push([8]);
+  console.log(out, s, m);
+  console.log("drained", drain(a, b, out), out.length);
+  b.write((q) => {
+    q.items.push([9]);
+  });
+  b.read((y) => {
+    console.log(y.items.length);
+  });
+}

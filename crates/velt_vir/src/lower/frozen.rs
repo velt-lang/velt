@@ -133,7 +133,7 @@ impl FnLower<'_, '_> {
             Some(hir::Def::Fn(f)) => f.captures.iter().any(|c| c.inner == root),
             _ => false,
         };
-        captured || self.caller_alias(root)
+        (captured && self.caller_capture(root)) || self.caller_alias(root)
     }
 
     /// The frozen value `e` read in place: its own use borrowed whatever its HIR mode, since

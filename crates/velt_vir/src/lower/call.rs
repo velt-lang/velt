@@ -87,7 +87,7 @@ impl FnLower<'_, '_> {
                     && self.captured_root(a)
             });
         let rty = self.cx.subst(ret, &targs);
-        let plain = changes_captured && (!self.needs_drop(rty) || self.hand_ok(rty));
+        let plain = changes_captured && self.hand_result_ok(rty, args, &modes);
         let mode = match plain {
             true => LkMode::Deferred,
             false => self.mode,

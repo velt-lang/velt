@@ -67,6 +67,7 @@ mod foreign;
 mod frame_envs;
 mod frozen;
 mod glue;
+mod hand_result;
 mod hooks;
 mod intrinsics;
 mod js_string;

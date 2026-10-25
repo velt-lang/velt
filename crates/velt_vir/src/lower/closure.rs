@@ -128,9 +128,9 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let read_callback = matches!(callback, Some((d, LkMode::Read)) if d == def);
         let parent = self.cx.cur_def;
         self.cx.closure_parents.insert(def, (parent, read_callback));
-        // A `read` callback plain code calls captures that code's variables only.
-        let own =
-            matches!(callback, Some((d, LkMode::Read)) if d == def) && self.mode == LkMode::Plain;
+        // A `read` callback plain code calls captures that code's variables only; one nested
+        // in such a callback also those of the callbacks around it (leave_levels.rs).
+        let own = read_callback && (self.mode == LkMode::Plain || self.own_captures);
         let mode = match callback {
             Some((d, m)) if d == def => m,
             _ if in_frame && !borrowed => self.mode,

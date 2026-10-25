@@ -52,7 +52,7 @@ impl FnLower<'_, '_> {
             self.elems_to_caller = false;
             // A new array of the reader's, which the caller's counts hold from now on.
             if !self.dead() && self.lock_ref(ty).is_some() {
-                self.leave_read(v.clone(), ty);
+                self.in_caller_frame(|lw| lw.leave_read(v.clone(), ty));
             }
             return v;
         }
@@ -152,9 +152,11 @@ impl FnLower<'_, '_> {
         self.lk_split(
             |_| {},
             |lw| {
-                lw.call_rt(Rt::XferKeepBegin, vec![], None);
-                lw.call(vir::Callee::Func(f), vec![a], None, false);
-                lw.call_rt(Rt::XferEnd, vec![], None);
+                lw.in_caller_frame(|lw| {
+                    lw.call_rt(Rt::XferKeepBegin, vec![], None);
+                    lw.call(vir::Callee::Func(f), vec![a], None, false);
+                    lw.call_rt(Rt::XferEnd, vec![], None);
+                })
             },
         );
         Operand::Copy(t)
@@ -185,12 +187,13 @@ impl FnLower<'_, '_> {
                 ..
             } => false,
             // From the caller's container, given nothing of the reader's that may be the
-            // store's.
+            // store's; given as owned arguments, only the caller's (`first(mine)`).
             K::Call {
                 callee: hir::Callee::Def(..) | hir::Callee::Intrinsic(_),
                 args,
             } => match args.split_first() {
-                Some((c, rest)) => self.captured_root(c) && self.made_of_held(rest),
+                Some((c, rest)) if self.captured_root(c) => self.made_of_held(rest),
+                Some(_) => self.callers_only(args),
                 None => false,
             },
             // `out.pop()!`: the payload, or a panic.
@@ -604,7 +607,7 @@ impl FnLower<'_, '_> {
                 self.goto(done);
                 self.switch_to(done);
             }
-            _ => {}
+            _ => self.hand_boxed(p, ty),
         }
     }
 
@@ -638,8 +641,10 @@ impl FnLower<'_, '_> {
         if self.caller_aliases.is_none() {
             let found = match self.cx.cur_def.map(|d| self.cx.hir.def(d)) {
                 Some(hir::Def::Fn(f)) => {
+                    let caps: Vec<LocalId> = f.captures.iter().map(|c| c.inner).collect();
+                    let captures = caps.into_iter().filter(|&c| self.caller_capture(c));
                     let mut b = Bindings {
-                        captures: f.captures.iter().map(|c| c.inner).collect(),
+                        captures: captures.collect(),
                         ..Bindings::default()
                     };
                     b.block(&f.body.block);

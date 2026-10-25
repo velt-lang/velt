@@ -12,7 +12,7 @@
 //! counts outside read mode hold it.
 
 use rustc_hash::FxHashMap;
-use velt_sema::hir::{self, ExprKind as K, Intrinsic, LocalId, TyId};
+use velt_sema::hir::{self, DefId, ExprKind as K, Intrinsic, LocalId, TyId};
 
 use super::frozen::place_root;
 use super::rt::Rt;
@@ -27,7 +27,8 @@ impl FnLower<'_, '_> {
     /// `args`): in a `read` callback that code in read mode may call, it moves into the frame
     /// holding the store's destination (module docs).
     pub(super) fn transfer_stored(&mut self, v: Operand, ty: TyId, args: &[hir::Expr]) -> Operand {
-        let levels = match self.mode == LkMode::Read && !self.own_captures {
+        let outermost = self.own_captures && !self.own_nested();
+        let levels = match self.mode == LkMode::Read && !outermost {
             true if self.cx.reaches_lock_set(ty) && self.cx.transfers(ty) => {
                 self.store_levels(args.as_ptr() as usize)
             }
@@ -44,6 +45,78 @@ impl FnLower<'_, '_> {
         let ignored = self.temp(Ty::U64);
         self.call_rt(Rt::LkLeaveTo, back, Some(Place::local(ignored)));
         v
+    }
+
+    /// Is this a `read` callback nested in another one that code outside read mode calls
+    /// (`Work::ReadOwn` of a literal in a `Work::ReadOwn` callback's body, closure.rs)? The
+    /// caller's containers are then the variables it captured through each callback around it
+    /// from the code outside them all (`caller_capture`).
+    pub(super) fn own_nested(&self) -> bool {
+        let parent = |d: Option<DefId>| d.and_then(|d| self.cx.closure_parents.get(&d).copied());
+        self.own_captures
+            && matches!(
+                parent(parent(self.cx.cur_def).and_then(|p| p.0)),
+                Some((_, true))
+            )
+    }
+
+    /// Is `root`, a variable this `Work::ReadOwn` callback captured, one of the code outside
+    /// every read around it: captured through each `read` callback around this one from the
+    /// code declaring it, which calls the outermost (`own_nested`)? A variable of a callback
+    /// around this one is that reader's, counted by read mode's rules.
+    pub(super) fn caller_capture(&mut self, root: LocalId) -> bool {
+        if !self.own_nested() {
+            return true;
+        }
+        let Some(mut def) = self.cx.cur_def else {
+            return false;
+        };
+        let mut var = root;
+        loop {
+            let callback = matches!(self.cx.closure_parents.get(&def), Some((_, true)));
+            let f = self.cx.fn_def(def);
+            let Some(c) = f.captures.iter().find(|c| c.inner == var) else {
+                return !callback;
+            };
+            match self.cx.closure_parents.get(&def) {
+                Some(&(Some(p), true)) => (var, def) = (c.outer, p),
+                _ => return false,
+            }
+        }
+    }
+
+    /// `f`, a transfer moving what this callback made into one of the caller's containers
+    /// (caller_stores.rs): in a nested `read` callback (`own_nested`) that frame is outside
+    /// every read, not the callback around this one (`velt_rt_lk_leave_to`).
+    pub(super) fn in_caller_frame(&mut self, f: impl FnOnce(&mut Self)) {
+        if !self.own_nested() || self.dead() {
+            return f(self);
+        }
+        let was = self.temp(Ty::U64);
+        let to = vec![cint(i128::from(OUTSIDE), Ty::U64)];
+        self.call_rt(Rt::LkLeaveTo, to, Some(Place::local(was)));
+        f(self);
+        let back = vec![Operand::Copy(Place::local(was))];
+        let ignored = self.temp(Ty::U64);
+        self.call_rt(Rt::LkLeaveTo, back, Some(Place::local(ignored)));
+    }
+
+    /// Are the arguments `xs` of a call whose result a `read` callback stores into the caller's
+    /// container (caller_stores.rs `held_by_caller`) the caller's places, also given owned
+    /// (`first(mine)`), or values that cannot reach the lock set? Its result is then made of
+    /// what the caller holds and what the call made, never of the store's objects.
+    pub(super) fn callers_only(&mut self, xs: &[hir::Expr]) -> bool {
+        xs.iter().all(|x| {
+            let t = self.sub(x.ty);
+            let x = match &x.kind {
+                K::Call {
+                    callee: hir::Callee::Intrinsic(Intrinsic::Share),
+                    args,
+                } if args.len() == 1 => &args[0],
+                _ => x,
+            };
+            !self.cx.reaches_lock_set(t) || self.captured_root(x)
+        })
     }
 
     /// The frame the transfer whose arguments start at `key` stores into (module docs).
@@ -170,6 +243,11 @@ impl Stores {
                     self.found.push((keys, root.into_iter().collect()));
                 }
             }
+            // A transfer is no store: the store it is part of names its destination.
+            K::Call {
+                callee: hir::Callee::Intrinsic(Intrinsic::Transfer),
+                ..
+            } => {}
             K::Call { args, .. } => {
                 let keys = transfers_in(args);
                 if !keys.is_empty() {
@@ -198,7 +276,11 @@ fn transfers_in(xs: &[hir::Expr]) -> Vec<usize> {
             K::Call {
                 callee: hir::Callee::Intrinsic(Intrinsic::Transfer),
                 args,
-            } => out.push(args.as_ptr() as usize),
+            } => {
+                // Sema may transfer a transfer (a stored `slice()`): both go to the same frame.
+                out.push(args.as_ptr() as usize);
+                out.extend(transfers_in(args));
+            }
             K::ArrayLit(es) => out.extend(transfers_in(es)),
             _ => {}
         }
