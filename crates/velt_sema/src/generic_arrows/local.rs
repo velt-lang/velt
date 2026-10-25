@@ -136,10 +136,11 @@ pub(super) struct Rewriter<'t, 'm> {
     /// The module of the item being rewritten.
     pub module: usize,
     types: &'t GenericFnTypes<'m>,
-    /// The names free in the outermost function (or initializer) being rewritten: a name an
-    /// arrow in it takes from its surroundings that is not among them is a local of an
-    /// enclosing function.
-    outer_free: Option<FxHashSet<String>>,
+    /// Where the outermost function (or initializer) being rewritten names something it does
+    /// not declare (a module-level name): a name an arrow in it takes from its surroundings
+    /// anywhere else is bound by an enclosing function (by scope, as `velt_syntax::scope`
+    /// resolves names: a local shadowing a module-level one is a local).
+    outer_free: Option<FxHashSet<Span>>,
     /// The names the outermost code uses as values somewhere (not only as the callee of a
     /// call): a generic arrow constant of such a name stays a value (`captures`).
     values: FxHashSet<String>,
@@ -165,7 +166,7 @@ impl<'t, 'm> Rewriter<'t, 'm> {
         let root = root();
         let names = velt_syntax::scope::free_in_expr(&root)
             .into_iter()
-            .map(|id| id.name.clone())
+            .map(|id| id.span)
             .collect();
         self.outer_free = Some(names);
         self.values = value_uses(&root);
@@ -191,7 +192,7 @@ impl<'t, 'm> Rewriter<'t, 'm> {
         }
         velt_syntax::scope::free_in_expr(init)
             .iter()
-            .any(|id| id.name != own && id.name != "this" && !outer.contains(&id.name))
+            .any(|id| id.name != own && id.name != "this" && !outer.contains(&id.span))
     }
 
     /// Rewrite every local generic arrow constant in `item`.

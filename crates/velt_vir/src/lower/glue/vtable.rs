@@ -198,6 +198,11 @@ impl Cx<'_> {
             super::generic_slots::Entry::Closure(def, targs),
         );
         let mut entries = vec![(0, Const::Static(t))];
+        // Held as `unknown`, the boxed closure's `any` table (lower/any.rs): `typeof` is
+        // `"function"`.
+        if let Some(t) = self.any_table_entry(index, ty) {
+            entries.push((SLOT_NAME, t));
+        }
         for (slot, g) in [
             (SLOT_DROP, Glue::DynDrop),
             (SLOT_CLONE, Glue::DynClone),
