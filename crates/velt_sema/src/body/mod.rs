@@ -304,6 +304,9 @@ pub(crate) struct Frame {
     /// Locals declared with a method read as a value (`const f = o.m`): a call that passes
     /// them another `this` is not supported yet (`call_apply`).
     pub method_values: rustc_hash::FxHashSet<LocalId>,
+    /// `const` locals declared with a property read (`const f = (o as T).m`), with the object
+    /// read from: `f.call(o)` runs `f` on the object it keeps (`call_apply`).
+    pub member_reads: rustc_hash::FxHashMap<LocalId, velt_syntax::ast::Expr>,
     /// Throw sources of the enclosing `try` bodies (innermost last).
     pub tries: Vec<Vec<ThrowSrc>>,
     /// Each `catch` variable used only as `throw e`, with the throw sources of its `try` body:
@@ -414,6 +417,7 @@ impl Frame {
             callable_writes: None,
             assign_targets: vec![],
             method_values: Default::default(),
+            member_reads: Default::default(),
             tries: vec![],
             caught: vec![],
             uncaught: vec![],

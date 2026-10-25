@@ -592,6 +592,11 @@ impl FnCx<'_, '_> {
         if let (LocalKind::Const, Some(d)) = (kind, init.as_ref().and_then(closure_def)) {
             self.f.closure_consts.insert(local, d);
         }
+        if let (LocalKind::Const, Some(o)) =
+            (kind, v.init.as_ref().and_then(super::expr::read_object))
+        {
+            self.f.member_reads.insert(local, o.clone());
+        }
         if let (Some(e), Some(_)) = (&v.init, init.as_ref().and_then(closure_def)) {
             if super::expr::is_member_read(e) {
                 self.f.method_values.insert(local);

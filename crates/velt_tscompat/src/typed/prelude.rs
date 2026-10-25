@@ -315,7 +315,7 @@ pub(crate) const TS_MEMBERS: &[(&str, &[&str])] = &[
             "valueOf",
         ],
     ),
-    ("Error", &["message", "name", "toString"]),
+    ("Error", &["message", "name", "stack", "toString"]),
     ("JSON", &["parse", "stringify"]),
     (
         "Map",

@@ -3553,7 +3553,8 @@ with TypeScript's rules:
   `f.apply(thisArg, [a, b])` are the call `f(a, b)` when `thisArg` is `null` or `undefined` (or
   left out: `f.call()`); `f` and `thisArg` are evaluated once, before the arguments. A Velt
   function value has no `this` to set, so another `thisArg` stops with a `TypeError` naming
-  #926 (Node would call the function with it).
+  #926 (Node would call the function with it). `f.bind(thisArg)` without arguments to fix is
+  `f` itself (an `any`) under the same rule.
 - `Set<object>` and `Map<object, V>` (and `Map<Function, V>`) key their entries by identity, as
   in JavaScript.
 - An `any` or `unknown` converts to `object` with `as object` (an `any` also without it),
