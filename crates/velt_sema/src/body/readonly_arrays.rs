@@ -36,8 +36,24 @@ impl FnCx<'_, '_> {
 
     /// Records local `l` declared with the written type `ty` when that is a read-only array.
     pub(super) fn note_readonly_array(&mut self, l: LocalId, ty: Option<&ast::TypeExpr>) {
-        if ty.is_some_and(|t| self.is_readonly_written(t, 0)) {
+        if ty.is_some_and(|t| self.may_be_marked(t) && self.is_readonly_written(t, 0)) {
             self.mark_local(l, READONLY);
+        }
+    }
+
+    /// Can the written type `t` be a read-only or number-keyed record type? A cheap filter
+    /// before the checks: most declared types are neither.
+    pub(crate) fn may_be_marked(&self, t: &ast::TypeExpr) -> bool {
+        match &t.kind {
+            ast::TypeExprKind::Named { path, .. } => {
+                let name = &path[path.len() - 1].name;
+                name.starts_with('R') || {
+                    let (ro, num) = self.cx.marked_aliases();
+                    !(ro.is_empty() && num.is_empty())
+                }
+            }
+            ast::TypeExprKind::Union(_) | ast::TypeExprKind::IndexSig { .. } => true,
+            _ => false,
         }
     }
 
@@ -63,6 +79,9 @@ impl FnCx<'_, '_> {
 
     /// The read-only variable `h` reads (through casts, narrowing and upcasts).
     fn readonly_local(&self, h: &hir::Expr) -> Option<LocalId> {
+        if self.f.local_marks.is_empty() {
+            return None;
+        }
         match &h.kind {
             H::Local(l, _) => self.local_marked(*l, READONLY).then_some(*l),
             H::Cast(x) | H::UnwrapSome(x, _) | H::Upcast(x) | H::Downcast(x) => {

@@ -21,7 +21,8 @@ impl FnCx<'_, '_> {
         ty: Option<&ast::TypeExpr>,
         init: Option<&ast::Expr>,
     ) {
-        let Some(t) = ty.filter(|t| self.is_number_record_written(t, 0)) else {
+        let Some(t) = ty.filter(|t| self.may_be_marked(t) && self.is_number_record_written(t, 0))
+        else {
             return;
         };
         self.mark_local(l, crate::body::NUMBER_RECORD);
@@ -71,6 +72,9 @@ impl FnCx<'_, '_> {
     }
 
     fn is_number_record(&self, h: &hir::Expr) -> bool {
+        if self.f.local_marks.is_empty() {
+            return false;
+        }
         match &h.kind {
             H::Local(l, _) => self.local_marked(*l, crate::body::NUMBER_RECORD),
             H::Cast(x) | H::UnwrapSome(x, _) | H::Upcast(x) => self.is_number_record(x),
