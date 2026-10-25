@@ -10,6 +10,13 @@ use crate::{io, panic};
 /// Run a program: install the panic hook, call `velt_main`, flush stdout; returns the exit code.
 pub fn run_main(velt_main: extern "C" fn() -> i32) -> i32 {
     panic::install_hook();
+    run_program(velt_main)
+}
+
+/// [`run_main`] without the panic hook. The hook is process-wide and exits on any panic, so the
+/// unit tests call this: with the hook installed, every later `#[should_panic]` test in the same
+/// test process (`cargo test`) would exit the process instead of unwinding.
+fn run_program(velt_main: extern "C" fn() -> i32) -> i32 {
     let code = velt_main();
     io::flush_stdout();
     code
@@ -50,6 +57,9 @@ mod tests {
         extern "C" fn seven() -> i32 {
             7
         }
-        assert_eq!(run_main(seven), 7);
+        assert_eq!(run_program(seven), 7);
+        // The test process keeps Rust's own hook: a panic still unwinds (the runtime's hook would
+        // exit with 101 here, and in every `#[should_panic]` test that ran after this one).
+        assert!(std::panic::catch_unwind(|| panic!("unwinds")).is_err());
     }
 }
