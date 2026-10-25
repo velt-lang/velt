@@ -33,10 +33,11 @@ pub(super) struct FillTarget {
 
 impl FnCx<'_, '_> {
     /// The fill slot for a call of method `def` (vtable `slot` of the class of `recv_ty`) when
-    /// the class has one, an override below it may run, and `args` (as written) leaves out an
-    /// argument of one of its parameters, passes `undefined` there, or a variable that may hold
-    /// it (a method value's arrow, `method_value.rs`). A call that only leaves out trailing
-    /// arguments takes the slot that applies the defaults of the rest.
+    /// the class has one, an override below it may run, and `args` (as written) leaves
+    /// out an argument of one of its parameters, passes `undefined` there, or a value that may
+    /// be `undefined` (a variable, a call's result, a method value's arrow, `method_value.rs`).
+    /// A call that only leaves out trailing arguments takes the slot that applies the defaults
+    /// of the rest.
     pub(super) fn fill_target(
         &mut self,
         recv_ty: TyId,
@@ -45,23 +46,31 @@ impl FnCx<'_, '_> {
         args: &[ast::Expr],
     ) -> Option<FillTarget> {
         let t = self.fill_slot(recv_ty, def, slot, None)?;
-        let missing = |cx: &mut Self, k: usize| match args.get(k) {
-            None => true,
-            Some(a) if crate::body::defaults::is_undefined(a) => true,
-            Some(a) => cx
-                .peek_ty(a)
-                .is_some_and(|t| cx.cx.ty.nothing_of(t) == Some(Nothing::Undefined)),
-        };
-        let given: Vec<bool> = (t.positions.clone().into_iter())
-            .map(|k| k < args.len() && missing(self, k))
+        let written = args.len();
+        let passed: Vec<bool> = (t.positions.clone().into_iter())
+            .map(|k| k < written && self.maybe_undefined(&args[k]))
             .collect();
-        let left_out = t.positions.iter().any(|&k| k >= args.len());
-        if !given.contains(&true) && left_out {
-            if let Some(tt) = self.fill_slot(recv_ty, def, slot, Some(args.len())) {
+        let left_out = t.positions.iter().any(|&k| k >= written);
+        if !passed.contains(&true) && left_out {
+            if let Some(tt) = self.fill_slot(recv_ty, def, slot, Some(written)) {
                 return Some(tt);
             }
         }
-        (left_out || given.contains(&true)).then_some(t)
+        (left_out || passed.contains(&true)).then_some(t)
+    }
+
+    /// May argument `a` be `undefined`: the literal, or a value whose checked type holds it
+    /// (checked as a trial; it is checked again as the argument)?
+    fn maybe_undefined(&mut self, a: &ast::Expr) -> bool {
+        if crate::body::defaults::is_undefined(a) {
+            return true;
+        }
+        let ty = match self.peek_ty(a) {
+            Some(t) => Some(t),
+            None if super::method_value::is_path(a) => None,
+            None => self.trial_type(a),
+        };
+        ty.is_some_and(|t| self.cx.ty.nothing_of(t) == Some(Nothing::Undefined))
     }
 
     /// The fill slot of method `def` (vtable `slot`) in the class of `recv_ty` (the general
