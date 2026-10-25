@@ -1,0 +1,14 @@
+// check: no leaks
+// Overload signatures whose function parameter takes fixed parameters where the implementation's
+// takes a rest parameter (TypeScript relates them loosely), and an implementation result taking
+// a rest parameter returned as the signature's fixed-parameter function.
+interface Ctx { name: string }
+export function define<R>(setup: (ctx: Ctx) => R): () => R;
+export function define<R, T1>(setup: (ctx: Ctx, p1: T1) => R): (p1: T1) => R;
+export function define<R, T1, T2>(setup: (ctx: Ctx, p1: T1, p2: T2) => R): (p1: T1, p2: T2) => R;
+export function define<R>(setup: (ctx: Ctx, ...args: unknown[]) => R) {
+    return (...args: unknown[]) => setup({ name: "c" }, ...args);
+}
+console.log(define((ctx, who: string) => ctx.name + " " + who)("bob"));
+console.log(define((ctx) => ctx.name.length)());
+console.log(define((ctx, a: number, b: number) => ctx.name + (a + b))(1, 2));

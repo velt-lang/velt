@@ -186,7 +186,12 @@ function main() {
   A signature with fewer parameters, or an optional one left out of a call, leaves the
   implementation's parameters out, which then take their defaults. A signature's parameters
   have no defaults of their own (TS2371). A type parameter of the implementation that a
-  signature leaves open is `void` there (TypeScript's `unknown`).
+  signature leaves open is `void` there (TypeScript's `unknown`). A signature's function
+  parameter may take fixed parameters where the implementation's takes a rest parameter
+  (`setup: (ctx: Ctx, p1: T1) => R` for `setup: (ctx: Ctx, ...args: unknown[]) => R`), which
+  TypeScript relates loosely: each rest argument converts to the signature's parameter type
+  when the implementation calls it, checked at run time (so a left-out argument the signature's
+  type does not admit panics, where Node passes `undefined`).
 - A signature may promise a narrower result than the implementation's: `T` out of `T | null`,
   one member of a union, a literal type out of its base (`"U"` out of `string`), a class out
   of a base class or an interface, or any of these in a `Promise` of an `async` implementation.
@@ -814,7 +819,9 @@ async function main() {
   `double`, also a method value or a generic callback type (`xs.reduce(plus, 0)` and
   `xs.reduce(acc.add, 0)` with a two-parameter `plus` and `add`, where `reduce` passes
   `(acc, x, i)`). A function may also take more, when the extra ones are optional or have defaults
-  (`setTimeout(tick, 10)` with `function tick(n?: number)`): they are left out.
+  (`setTimeout(tick, 10)` with `function tick(n?: number)`): they are left out. A function with
+  a rest parameter takes fixed ones (`(...args: unknown[]) => R` as a `(p1: T1) => R`, also
+  returned from a call): the arguments past its fixed parameters become the rest array.
 - As in TS, a function whose **parameter types are wider** than the function type's is accepted
   where the function type is expected: `p.then((v: any) => …)` for a `Promise<number>`,
   `xs.forEach((x: unknown) => …)`, `const f: (x: number) => void = (v: number | string) => …`,
