@@ -146,6 +146,10 @@ pub(crate) struct Ctx<'m> {
     /// The throwing setters a getter-only override gets (`collect::classes`): a write through
     /// the class itself is a type error, as in TypeScript, one through a base class throws.
     pub getter_only_setters: FxHashSet<DefId>,
+    /// Setters of object literals' own interfaces that `Object.defineProperty` gives a
+    /// getter-only property (`crate::defined_accessors`), by interface and method name: a
+    /// write through the literal's own type is rejected, as TypeScript does (TS2540).
+    pub defined_setters: FxHashSet<(DefId, String)>,
     /// Names of `Param(i)` in the definition being checked (for messages).
     pub display_params: Vec<String>,
     /// Functions whose parameter defaults are checked (or being checked): they are checked on
@@ -431,6 +435,7 @@ impl<'m> Ctx<'m> {
             alias_names: FxHashMap::default(),
             generic_overrides: vec![],
             getter_only_setters: FxHashSet::default(),
+            defined_setters: FxHashSet::default(),
             display_params: vec![],
             defaults_checked: FxHashSet::default(),
             classes_below: FxHashMap::default(),
