@@ -1,6 +1,7 @@
 //! `f as unknown as F` for a function type `F` (#943): the function converted directly, as
 //! TypeScript keeps the value (`FnCx::fn_through_top`).
 
+use velt_common::Span;
 use velt_syntax::ast;
 
 use crate::body::{FnCx, Want};
@@ -51,6 +52,52 @@ impl FnCx<'_, '_> {
         mark.rollback(self.cx);
         self.restore_trial_frames(frames);
         None
+    }
+
+    /// `f as unknown as G` (or `as any`) for a generic function type `G` (#943): a generic
+    /// function `f` is its value of `G`; a function of fixed types can't be one (each call
+    /// would need its type arguments), which is reported here rather than as a failing check at
+    /// run time. `None`: not this shape.
+    pub(super) fn fn_as_generic(
+        &mut self,
+        expr: &ast::Expr,
+        target: TyId,
+        want: Want,
+        span: Span,
+    ) -> Option<hir::Expr> {
+        if !self.cx.is_generic_fn(target) {
+            return None;
+        }
+        let ast::ExprKind::Cast { expr: x, ty } = &strip_parens(expr).kind else {
+            return None;
+        };
+        let top = matches!(&ty.kind, ast::TypeExprKind::Named { path, args }
+            if args.is_empty() && path.len() == 1 && matches!(path[0].name.as_str(), "unknown" | "any"));
+        if !top || !is_path(x) {
+            return None;
+        }
+        let t = self.peek_ty(x)?;
+        let t = self.cx.ty.core(t).unwrap_or(t);
+        if self.cx.is_generic_fn(t) {
+            let h = self.expr(x, Some(target), want);
+            return Some(self.coerce(h, target));
+        }
+        if !matches!(
+            self.cx.ty.kind(t),
+            TyKind::FnPtr { .. } | TyKind::Closure(_)
+        ) {
+            return None;
+        }
+        let (f, g) = (self.cx.display(t), self.cx.display(target));
+        self.cx.error(
+            velt_common::Diagnostic::error(
+                format!("a function of fixed types (`{f}`) cannot be a `{g}`"),
+                span,
+            )
+            .with_note("a value of a generic function type takes any type arguments at each call; one of fixed types is checked against the type when it is converted back, and would fail there (#943)")
+            .with_note("pass a generic function, or a generic arrow (`<T>(x: T) => …`)"),
+        );
+        Some(self.error_expr(span))
     }
 
     /// Function type `t` with each branded parameter and result type its primitive.

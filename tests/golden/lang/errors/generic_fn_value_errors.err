@@ -1,0 +1,4 @@
+generic_fn_value_errors.vlt:14:18: error: a generic function value (`<T>(T) => T`) cannot be held as `any` yet
+generic_fn_value_errors.vlt:16:15: error: a function of fixed types (`(f64) => f64`) cannot be a `<T>(T) => T`
+generic_fn_value_errors.vlt:17:18: error: this arrow function has 1 type parameter(s), but `<A, B>(A, B) => A` has 2
+generic_fn_value_errors.vlt:20:5: error: a generic method of an object literal implementing `Boxer` cannot use `this` yet

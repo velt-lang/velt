@@ -354,7 +354,12 @@ the table), and its vtable is per closure and instance of the enclosing function
 closure value's glue in the hidden slots and the instantiation table in slot 0, whose entries
 call the closure's code at the enclosing args followed by the call's with the closure's env
 (`ThunkKind::BoxedClosure`). Its parameter modes for `Dyn` calls are `Borrow` for the receiver
-followed by the closure's declared params' (its captures excluded).
+followed by the closure's declared params' (its captures excluded). Two generic function values
+are the same value when the closures they box have one env (`===`, keys): a program that
+compares them gives every closure an env, as for function values. A module-level generic
+function used as a value of a generic function type without type parameters is a `Global` of
+the module state per function and type, whose initializer is the `ToDyn` of the generic closure
+calling it (a class value's encoding, "Classes as values"), so every use is one value.
 
 ## Union types
 - `A | B | C` (two or more distinct non-null members) is `TyKind::Adt(d, args)` where `d` is a

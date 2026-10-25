@@ -1,0 +1,86 @@
+// More forms of generic function values (#943): rest and optional parameters, bounds, optional
+// values, generic methods as values, static fields, values where a function type of fixed types
+// is expected, and local generic arrows that read a local shadowing a module-level name.
+type Log = <K extends string>(name: K, ...args: unknown[]) => number;
+type All = <T>(...xs: T[]) => T[];
+type Len = <K extends string>(name: K) => number;
+type Id = <T>(x: T) => T;
+
+const k = 100;
+
+function helper(): number {
+  return 7;
+}
+
+function emitAll(l: Log): void {
+  console.log(l("x"), l("y", 1, [2], "z"));
+}
+
+function lengths(f: Len): void {
+  console.log(f("abc"));
+}
+
+function opt(f?: Id): void {
+  console.log(f ? f(1) : "none");
+}
+
+function orU(f: Id | undefined): void {
+  console.log(f === undefined ? "u" : f("s"));
+}
+
+function apply(f: (x: number) => number): number {
+  return f(2);
+}
+
+class K {
+  tag = "k";
+  id<T>(x: T): T {
+    return x;
+  }
+}
+
+class Reg {
+  static f: Id = (x) => x;
+  static g: (n: number) => number = (n) => n * 2;
+}
+
+function main(): void {
+  let n = 0;
+  emitAll((name, ...args) => {
+    n += args.length;
+    console.log(name, args);
+    return n;
+  });
+  const all: All = (...xs) => xs;
+  console.log(all(1, 2, 3), all("q"));
+  const use = (f: All): void => console.log(f(true, false));
+  use(all);
+  lengths(<K2 extends string>(name: K2): number => name.length);
+  lengths((name) => name.length + 1);
+  opt((x) => x);
+  opt();
+  orU((x) => x);
+  orU(undefined);
+  let maybe: Id | undefined = undefined;
+  maybe = (x) => x;
+  console.log(maybe?.(5), maybe === undefined);
+  const kk = new K();
+  opt(kk.id);
+  opt(kk.id.bind(kk));
+  console.log(Reg.f(2), Reg.f("s"), Reg.g(3));
+  const f: Id = (x) => x;
+  const p: (x: number) => number = f;
+  console.log(p(3), apply(f), [1, 2].map(f));
+  {
+    const k = 1;
+    const sh = <T,>(x: T): number => k;
+    console.log(sh(1), sh("a"));
+  }
+  {
+    const helper = (): number => 1;
+    const sh = <T,>(x: T): number => helper();
+    console.log(sh(1), sh("a"));
+  }
+  const top = <T,>(x: T): number => k + helper();
+  console.log(top(true));
+}

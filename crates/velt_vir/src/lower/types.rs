@@ -528,7 +528,9 @@ impl<'h> Cx<'h> {
             | TyKind::Promise(..)
             | TyKind::FnPtr { .. }
             | TyKind::Dyn(..) => true,
-            TyKind::Closure(d) => self.closure_env_is_heap(d),
+            // A closure without captures has a counted env too in a program that compares
+            // functions (closure.rs `identity_closure`): a generic closure's boxed value does.
+            TyKind::Closure(d) => self.closure_env_is_heap(d) || self.fn_identity(),
             TyKind::Adt(..) if self.is_class(t) => true,
             TyKind::Adt(d, _) if self.dispose_of(d).is_some() => true,
             TyKind::Adt(..) | TyKind::Tuple(_) | TyKind::Result(..) => {

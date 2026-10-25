@@ -62,7 +62,7 @@ mod vtable;
 pub(super) use generic_slots::{GenericSlot, SlotKey};
 #[cfg(test)]
 pub(crate) use literals::{inspect_key, inspect_quote};
-pub(super) use vtable::VtableKey;
+pub(super) use vtable::{VtableKey, SLOT_GENERIC_TABLE, SLOT_GENERIC_TYPE};
 
 use velt_sema::hir::{TyId, TyKind};
 

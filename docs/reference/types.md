@@ -1799,7 +1799,9 @@ console.log(b.v); // hi
   a literal with no expected type
   ([`this` in object-literal methods](#this-in-object-literal-methods)), not yet in a literal of
   an object type. A generic method (`match<R>(arms: Arms<R>): R { ... }`)
-  is a property holding a [generic function value](functions.md#generic-function-values). A generator method `*name() { ... }` (`async *name()`) is
+  is a property holding a [generic function value](functions.md#generic-function-values); in
+  a literal that implements an interface, such a method can't use `this` yet (an error says
+  so). A generator method `*name() { ... }` (`async *name()`) is
   a property holding a [generator function](functions.md#generator-function-expressions), as
   `name: function* () { ... }` is; a generator method with a symbol key only as
   `*[Symbol.iterator]()`

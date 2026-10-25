@@ -1,0 +1,39 @@
+// Generic function values keep their identity through copies and conversions (#943): `===`,
+// `includes` and `Set` keys see one value per closure, and a module-level generic function is
+// one value. A generic function used as a value without a function type is a value of its own
+// generic type, and one held as `unknown` is a function that converts back.
+type Id = <T>(x: T) => T;
+type Id2 = <U>(y: U) => U;
+
+function id<T>(x: T): T {
+  return x;
+}
+
+function pass(f: Id): Id {
+  return f;
+}
+
+function cmp(a: Id, b: Id, c: Id2): void {
+  console.log(a === b, a === c, b === c, a !== b);
+  const xs: Id[] = [a, b];
+  console.log(xs.includes(c), xs.indexOf(b), xs[0] === xs[1]);
+}
+
+function main(): void {
+  const f: Id = (x) => x;
+  const g = pass(f);
+  cmp(f, g, f);
+  const h: Id = (x) => x;
+  console.log(f === h);
+  const s = new Set<Id>([f, g, h, id, id]);
+  console.log(s.size);
+  const i1: Id = id;
+  const i2: Id2 = id;
+  console.log(i1 === i2, i1 === f);
+  const xs = [id, f];
+  console.log(xs.length, xs[0](2), xs[1]("x"));
+  const u: unknown = f;
+  console.log(typeof u);
+  const back = u as Id;
+  console.log(back(3), back("s"), back === f);
+}

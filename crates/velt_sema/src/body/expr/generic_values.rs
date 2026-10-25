@@ -172,7 +172,10 @@ impl FnCx<'_, '_> {
             .cx
             .closure_constraints
             .replace(self.constraints.clone());
+        // Messages show its own type parameters by their names.
+        let shown = std::mem::replace(&mut self.cx.display_params, self.env.params.clone());
         let h = self.closure(&plain, Some(want), true);
+        self.cx.display_params = shown;
         self.cx.closure_constraints = outer;
         let own_bounds = self.bounds[m..].to_vec();
         let own_constraints = self.constraints.get(m..).unwrap_or_default().to_vec();
@@ -588,7 +591,10 @@ impl FnCx<'_, '_> {
             return Err(h);
         };
         // A function value may take fewer parameters than its type gives.
-        let takes = self.cx.generic_sig(h.ty).map_or(0, |g| g.method.params.len());
+        let takes = self
+            .cx
+            .generic_sig(h.ty)
+            .map_or(0, |g| g.method.params.len());
         let rest = rest && takes >= params.len();
         let params = &params[..params.len().min(takes)];
         let span = h.span;
@@ -628,7 +634,9 @@ impl FnCx<'_, '_> {
             .collect();
         let args = (0..n)
             .map(|k| match rest && k + 1 == n {
-                true => mk(ast::ExprKind::Spread(Box::new(mk(ast::ExprKind::Ident(name(k)))))),
+                true => mk(ast::ExprKind::Spread(Box::new(mk(ast::ExprKind::Ident(
+                    name(k),
+                ))))),
                 false => mk(ast::ExprKind::Ident(name(k))),
             })
             .collect();
@@ -672,7 +680,10 @@ impl FnCx<'_, '_> {
         let Some(sig) = self.cx.generic_sig(g) else {
             return;
         };
-        let known: Vec<TyId> = slots.iter().map(|s| s.unwrap_or(self.cx.ty.error)).collect();
+        let known: Vec<TyId> = slots
+            .iter()
+            .map(|s| s.unwrap_or(self.cx.ty.error))
+            .collect();
         let n = sig.args.len();
         let own = sig.method.generics.len();
         // Its own type parameters as `0..own`, its arguments in place.
