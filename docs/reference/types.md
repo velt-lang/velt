@@ -1799,8 +1799,7 @@ console.log(b.v); // hi
   a literal with no expected type
   ([`this` in object-literal methods](#this-in-object-literal-methods)), not yet in a literal of
   an object type. A generic method (`match<R>(arms: Arms<R>): R { ... }`)
-  parses as a property holding a generic arrow, which is not supported yet there (a generic
-  arrow must be the value of a `const`, [Functions](functions.md#arrow-functions-and-function-types)). A generator method `*name() { ... }` (`async *name()`) is
+  is a property holding a [generic function value](functions.md#generic-function-values). A generator method `*name() { ... }` (`async *name()`) is
   a property holding a [generator function](functions.md#generator-function-expressions), as
   `name: function* () { ... }` is; a generator method with a symbol key only as
   `*[Symbol.iterator]()`
@@ -1811,7 +1810,7 @@ console.log(b.v); // hi
   when left out; call it as `o.label?.(p)`). A generic method signature
   (`run<T>(f: () => T): T`) declares a method in an interface; in an object type, and as an
   optional one in an interface (`wrap?<A>(a: A): A`), it declares a field of generic function
-  type (`<T>(f: () => T) => T`), which is not supported yet and is reported where it is used.
+  type (`<T>(f: () => T) => T`), a [generic function value](functions.md#generic-function-values).
   A call signature alone (`interface F { (x: T): R }`, `type F = { (x: T): R }`) declares the
   function type `(x: T) => R`: a value of it is called as `f(x)`, any function or arrow of that
   type is one, and `typeof f` is `"function"`. With members, an object type or interface with

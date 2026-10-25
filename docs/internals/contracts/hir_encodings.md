@@ -313,7 +313,17 @@ Maintainer-owned, like `hir/mod.rs`, `hir/intrinsic.rs` and `hir/module_state.rs
   params follow the interface's params and the implementor (`Param(n + 1 + k)`).
   `Callee::ParamMethod::method_type_args` carries their arguments; lowering appends them to
   the implementing method's owner type args (`Program::impls` entry, a generic `Def::Fn`).
-  Sema never emits `Callee::Dyn` for them; interface vtables leave their slots empty.
+  On an interface value the call is `Callee::Dyn { slot, method_type_args }` (#943; empty for a
+  method that is not generic). The vtable slot of a generic method holds the address of the
+  slot's *instantiation table* (a read-only static): one entry (the borrow-ABI entry of the
+  implementing method at its owner args followed by the method args) per list of method type
+  arguments lowering reaches through `Dyn` calls of that slot of that interface instance,
+  numbered in the order lowering meets them, so every implementation's table has a list at the
+  same index. A call loads the table from the slot, then the entry at its list's index. Tables
+  grow while functions are lowered (the statics are emitted at the end). Sema rejects a generic
+  method that calls itself through an interface value with growing type arguments
+  (`instantiation_cycles`), and carries deferred types and record keys to the methods such a
+  call may run (every implementation, at each concrete type made for a generic one).
 - `x instanceof C` where `x` is a base class of `C`, an interface value, or a union member of
   such a type: a `Match` whose arm pattern is `PatKind::InstanceOf(C)` (inside `Some` /
   `Variant` patterns as for any member test). It matches when the dynamic class is `C` or a
@@ -329,6 +339,22 @@ Maintainer-owned, like `hir/mod.rs`, `hir/intrinsic.rs` and `hir/module_state.rs
 - Generic class methods never get a vtable slot (an `override` of one is recorded by sema only);
   calls are `Callee::Def` on the static class. Sema rejects calls through a class that has a
   subclass overriding the generic method.
+
+## Generic function values (#943)
+A generic function type (`<T>(x: T) => R`, also a generic method signature in an object type) is
+an interface value type `Dyn(I, args)` of an interface sema makes once per shape (velt_sema
+`generic_fns.rs`): no fields, one generic method `#call` whose own type params are the
+function type's, `args` the type params in scope it mentions. A call of such a value is a
+`Callee::Dyn { slot: 0, method_type_args }` call. A value is made by `ToDyn` of a generic
+closure: `ExprKind::Closure(def)` typed `TyKind::Closure(def)`, whose `FnDef::generics` are
+the enclosing function's followed by its own, with an `ImplDef` whose `ty` is that
+`Closure(def)`, `generics` 0, `iface_args` in the enclosing function's terms and `methods:
+[def]`. Lowering boxes the closure value (its `code` is null: the closure is only called through
+the table), and its vtable is per closure and instance of the enclosing function, with the
+closure value's glue in the hidden slots and the instantiation table in slot 0, whose entries
+call the closure's code at the enclosing args followed by the call's with the closure's env
+(`ThunkKind::BoxedClosure`). Its parameter modes for `Dyn` calls are `Borrow` for the receiver
+followed by the closure's declared params' (its captures excluded).
 
 ## Union types
 - `A | B | C` (two or more distinct non-null members) is `TyKind::Adt(d, args)` where `d` is a
