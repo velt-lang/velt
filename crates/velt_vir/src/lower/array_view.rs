@@ -126,7 +126,7 @@ impl Cx<'_> {
     /// hold, each boxed.
     pub(super) fn close_array_views(&mut self, next: &mut Boxing) {
         let mut work: Vec<TyId> = self.facts.array_view_targets.iter().copied().collect();
-        if work.is_empty() || self.view_def(VIEW_NEW).is_none() {
+        if work.is_empty() || self.prelude_def(VIEW_NEW).is_none() {
             return;
         }
         let mut seen = FxHashSet::default();
@@ -162,7 +162,7 @@ impl Cx<'_> {
     }
 
     /// The prelude definition `name` (std/prelude/zzz_adapt.vlt).
-    fn view_def(&self, name: &str) -> Option<DefId> {
+    pub(super) fn prelude_def(&self, name: &str) -> Option<DefId> {
         let found = self.hir.defs.iter().position(|d| match d {
             hir::Def::Fn(f) => f.name == name,
             hir::Def::Adt(a) => a.name == name,
@@ -193,7 +193,7 @@ impl FnLower<'_, '_> {
     ) {
         let d = self
             .cx
-            .view_def(name)
+            .prelude_def(name)
             .unwrap_or_else(|| ice(format_args!("no prelude `{name}`")));
         let f = self.cx.func_for_direct(d, targs, self.mode);
         self.call(Callee::Func(f), args, out, false);
@@ -203,7 +203,7 @@ impl FnLower<'_, '_> {
     fn view_class(&mut self, e: TyId) -> TyId {
         let d = self
             .cx
-            .view_def(VIEW_CLASS)
+            .prelude_def(VIEW_CLASS)
             .unwrap_or_else(|| ice("no prelude `__ArrayView`"));
         self.cx.intern(TyKind::Adt(d, vec![e]))
     }

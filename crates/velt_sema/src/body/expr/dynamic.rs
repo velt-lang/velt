@@ -723,7 +723,8 @@ impl FnCx<'_, '_> {
     }
 
     /// `l === r` / `l == r` (`negate`: `!==` / `!=`) where the checked type of an operand is
-    /// `any` or `unknown`: both sides boxed (`Intrinsic::AnyStrictEq` / `AnyLooseEq`).
+    /// `any` or `unknown`: both sides boxed (`Intrinsic::AnyStrictEq` / `AnyLooseEq`, whose
+    /// lowering compares an object with a primitive through the prelude's `__anyLooseEq`).
     pub(crate) fn dynamic_eq(
         &mut self,
         l: hir::Expr,
@@ -738,8 +739,9 @@ impl FnCx<'_, '_> {
         let l = self.dynamic_operand(l, any);
         let r = self.dynamic_operand(r, any);
         if !strict {
-            let test = self.dynamic_loose_eq(l, r, span);
-            return self.negated(test, negate, span);
+            // An object against a primitive is the prelude's `__anyLooseEq` (velt_vir
+            // any_eq.rs), which reads its members through `any`.
+            self.note_dyn_members();
         }
         let i = if strict {
             Intrinsic::AnyStrictEq

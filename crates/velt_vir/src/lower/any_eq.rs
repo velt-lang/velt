@@ -10,15 +10,26 @@
 //! types converted to dynamic types (`Cx::note_dyn_identity`): an object is then itself in
 //! every `any` it is converted to (#1256), not a copy per conversion.
 
-use velt_sema::hir::{self, TyId, TyKind};
+use velt_sema::hir::{self, PassMode, TyId, TyKind};
 
 use super::any::{
     SLOT_HASH, SLOT_NUMBER, SLOT_SAME, TAG_BOOLEAN, TAG_NULL, TAG_NUMBER, TAG_OBJECT, TAG_STRING,
 };
 use super::operand::proj;
 use super::rt::Rt;
-use super::{cint, FnLower};
-use crate::vir::{self, BinOp, Const, Operand, Place, Proj, Rvalue, Terminator, Ty};
+use super::{cint, ice, FnLower};
+use crate::vir::{self, BinOp, Const, Operand, Place, Proj, Rvalue, Terminator, Ty, STR_AGG};
+
+/// The prelude's `==` of an object and a primitive (std/prelude/zzz_adapt.vlt).
+const LOOSE_EQ: &str = "std/prelude/zzzzz_any_ops::__anyLooseEq";
+
+/// The data pointer and the descriptor of the `any` at `p`.
+fn parts(p: &Place) -> (Operand, Operand) {
+    (
+        Operand::Copy(proj(p, Proj::Field(0))),
+        Operand::Copy(proj(p, Proj::Field(1))),
+    )
+}
 
 /// How two `any`s compare.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -40,10 +51,12 @@ impl FnLower<'_, '_> {
         }
         let va = self.expr(a);
         let vb = self.expr(b);
-        let (da, xa) = self.any_parts(va, ta);
-        let (db, xb) = self.any_parts(vb, tb);
+        let pa = self.place_of(va, ta);
+        let pb = self.place_of(vb, tb);
+        let (da, xa) = parts(&pa);
+        let (db, xb) = parts(&pb);
         let cmp = if loose { AnyCmp::Loose } else { AnyCmp::Strict };
-        self.any_compare(&da, &xa, &db, &xb, cmp)
+        self.any_compare(&da, &xa, &db, &xb, cmp, Some((&pa, &pb)))
     }
 
     /// Is the `any` operand `e` a literal or a primitive made dynamic (`x === undefined`,
@@ -77,7 +90,7 @@ impl FnLower<'_, '_> {
         let db = Operand::Copy(proj(b, Proj::Field(0)));
         let xb = Operand::Copy(proj(b, Proj::Field(1)));
         let cmp = if key { AnyCmp::Key } else { AnyCmp::Strict };
-        self.any_compare(&da, &xa, &db, &xb, cmp)
+        self.any_compare(&da, &xa, &db, &xb, cmp, None)
     }
 
     /// `==` of the `any`s at `a` and `b` (Bool operand).
@@ -87,7 +100,7 @@ impl FnLower<'_, '_> {
         let xa = Operand::Copy(proj(a, Proj::Field(1)));
         let db = Operand::Copy(proj(b, Proj::Field(0)));
         let xb = Operand::Copy(proj(b, Proj::Field(1)));
-        self.any_compare(&da, &xa, &db, &xb, AnyCmp::Loose)
+        self.any_compare(&da, &xa, &db, &xb, AnyCmp::Loose, Some((a, b)))
     }
 
     /// Hash of the `any` at `place`, agreeing with SameValueZero (U64 operand).
@@ -148,6 +161,7 @@ impl FnLower<'_, '_> {
         db: &Operand,
         xb: &Operand,
         cmp: AnyCmp,
+        places: Option<(&Place, &Place)>,
     ) -> Operand {
         let loose = cmp == AnyCmp::Loose;
         let (da, xa, db, xb) = (da.clone(), xa.clone(), db.clone(), xb.clone());
@@ -253,9 +267,9 @@ impl FnLower<'_, '_> {
             self.switch_to(conv_bb);
             let r = self.any_numbers_equal(&da, &xa, &db, &xb);
             set(self, r);
-            // An object and a boolean, number or string: JavaScript converts the object with
-            // `ToPrimitive` (`[] == 0` is `true`), which is not there yet: stop rather than
-            // answer `false`.
+            // An object and a boolean, number or string: the object's `ToPrimitive` compared
+            // loosely (`[] == 0` is `true`), the prelude's `__anyLooseEq`. A function's
+            // `ToPrimitive` is its source text, which is never a number or a boolean: `false`.
             self.switch_to(no_bb);
             let a_case = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitAnd, a_obj, b_p));
             let b_case = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitAnd, b_obj, a_p));
@@ -263,15 +277,57 @@ impl FnLower<'_, '_> {
             let (mixed_bb, false_bb) = (self.new_block(), self.new_block());
             self.branch(mixed, mixed_bb, false_bb);
             self.switch_to(mixed_bb);
-            self.panic_msg(
-                "TypeError: `==` between an object and a boolean, number or string is not supported yet (#924); compare with `===`, or convert the object first",
-            );
-            self.terminate(Terminator::Unreachable);
+            match places {
+                Some((pa, pb)) => {
+                    let r = self.any_loose_object(pa, pb);
+                    set(self, r);
+                }
+                None => {
+                    self.panic_msg("ICE: `==` of `any` places without the places");
+                    self.terminate(Terminator::Unreachable);
+                }
+            }
             self.switch_to(false_bb);
             set(self, Operand::Const(Const::Bool(false), Ty::Bool));
         }
         self.switch_to(done);
         Operand::Copy(out)
+    }
+
+    /// `__anyLooseEq(a, b, at)` of the `any`s at `a` and `b` (borrowed), one an object and the
+    /// other a boolean, number or string; `at` is this location (the prelude's stops report it).
+    fn any_loose_object(&mut self, a: &Place, b: &Place) -> Operand {
+        let d = self
+            .cx
+            .prelude_def(LOOSE_EQ)
+            .unwrap_or_else(|| ice(format_args!("no prelude `{LOOSE_EQ}`")));
+        let text = self
+            .panic_loc()
+            .and_then(|l| self.cx.locs.as_ref().map(|m| m.describe(l)))
+            .unwrap_or_else(|| "an unknown location".into());
+        let at = self.str_lit(&text);
+        let at = Place::local(self.copy_to_temp(at, Ty::Agg(STR_AGG)));
+        let any = self.cx.any_ty();
+        let modes: Vec<PassMode> = self.cx.fn_def(d).params.iter().map(|p| p.mode).collect();
+        let mut argv = vec![];
+        for (p, mode) in [a.clone(), b.clone()].into_iter().zip(modes) {
+            // A parameter the helper keeps takes a share of the value.
+            let p = match mode {
+                PassMode::Owned => {
+                    let v = self.share_value(Operand::Copy(p), any);
+                    let vt = self.cx.ty(any);
+                    let t = Place::local(self.copy_to_temp(v, vt));
+                    self.take_temp(&t);
+                    t
+                }
+                _ => p,
+            };
+            argv.push(self.addr(p));
+        }
+        argv.push(self.addr(at));
+        let f = self.cx.func_for(d, vec![]);
+        let bool_ = self.cx.intern(TyKind::Bool);
+        self.finish_call(vir::Callee::Func(f), argv, bool_, None)
     }
 
     /// Is `tag` a boolean, number or string?

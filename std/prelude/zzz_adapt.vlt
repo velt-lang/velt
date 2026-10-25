@@ -295,7 +295,7 @@ export function __anyTextUnsupported(name: string, at: string): string {
 }
 
 /** Is `k` one of the own keys of the object `v`, holding a function? */
-function __anyOwnFn(v: any, k: string): boolean {
+export function __anyOwnFn(v: any, k: string): boolean {
   return Object.keys(v).includes(k) && typeof v[k] === "function";
 }
 
@@ -517,109 +517,6 @@ export class __HasOwnProperty {
   call(o: any, key: string | symbol): boolean {
     return __anyHasOwn(o, key);
   }
-}
-
-/**
- * `ToNumber` of an object or a function an `any` holds, for an operator on it (`-`, `*`, `<`,
- * `+` with a number, issue #924): JavaScript's `ToPrimitive` with hint `"number"`, then
- * `ToNumber`. A `Date` is its time, a function `NaN`; any other value is the number its `+`
- * text writes (`__anyConcatText`: `valueOf()` before `toString()`), so `[5]` is 5, `[]` 0 and
- * `{}` NaN.
- */
-export function __anyObjectNumber(v: any, at: string): number {
-  if (v instanceof Date) {
-    return (v as Date).getTime();
-  }
-  if (typeof v === "function") {
-    return NaN;
-  }
-  return Number(__anyConcatText(v, at));
-}
-
-/**
- * `a + b` of dynamic values one of which holds a string, an object, a function or a symbol
- * (sema adds numbers itself, issue #924): JavaScript's `+`. Each side's `ToPrimitive` (hint
- * `"default"`) is taken; when either is a string the two are concatenated as `String` writes
- * them, else they are added as numbers.
- */
-export function __anyAdd(a: any, b: any, at: string): any {
-  const pa = __anyAddPrimitive(a, at);
-  const pb = __anyAddPrimitive(b, at);
-  if (typeof pa === "string" || typeof pb === "string") {
-    return __anyPrimText(pa, at) + __anyPrimText(pb, at);
-  }
-  return +pa + +pb;
-}
-
-/** `ToPrimitive(v, "default")` for `+`: an object or a function as its `+` text. */
-function __anyAddPrimitive(v: any, at: string): any {
-  const t = typeof v;
-  if ((t === "object" && v !== null) || t === "function") {
-    return __anyConcatText(v, at);
-  }
-  return v;
-}
-
-/**
- * `a < b` (`op` 0), `a > b` (1), `a <= b` (2) or `a >= b` (3) of dynamic values one of which
- * holds an object or a function (issue #924): JavaScript's comparison after `ToPrimitive` with
- * hint `"number"` (a `Date` is its time, another object its `valueOf()` or `toString()`
- * text), so `[2] < 10` is true and `[2] < "10"` compares strings.
- */
-export function __anyRelational(a: any, b: any, op: i64, at: string): boolean {
-  const pa = __anyNumberPrimitive(a, at);
-  const pb = __anyNumberPrimitive(b, at);
-  if (op === 0) {
-    return pa < pb;
-  }
-  if (op === 1) {
-    return pa > pb;
-  }
-  if (op === 2) {
-    return pa <= pb;
-  }
-  return pa >= pb;
-}
-
-/** `ToPrimitive(v, "number")` of an `any`: an object or a function as its time or its text. */
-function __anyNumberPrimitive(v: any, at: string): any {
-  if (v instanceof Date) {
-    return (v as Date).getTime();
-  }
-  const t = typeof v;
-  if (t === "function") {
-    // A function's text is its source, which a compiled function doesn't keep.
-    return NaN;
-  }
-  if (t === "object" && v !== null) {
-    return __anyConcatText(v, at);
-  }
-  return v;
-}
-
-/**
- * `a == b` of dynamic values one of which holds an object or a function (issue #924): two
- * objects are equal when they are one; an object is never `null` or `undefined`; against a
- * primitive the object's `ToPrimitive` (hint `"default"`) is compared loosely (`[] == 0`,
- * `[1, 2] == "1,2"`).
- */
-export function __anyLooseEq(a: any, b: any, at: string): boolean {
-  const ao = __anyHoldsObject(a);
-  const bo = __anyHoldsObject(b);
-  if (ao && bo) {
-    return a === b;
-  }
-  const p = ao ? b : a;
-  if (p === null || p === undefined) {
-    return false;
-  }
-  return ao ? __anyAddPrimitive(a, at) == b : a == __anyAddPrimitive(b, at);
-}
-
-/** Does `v` hold an object or a function? */
-function __anyHoldsObject(v: any): boolean {
-  const t = typeof v;
-  return (t === "object" && v !== null) || t === "function";
 }
 
 // Array views (#1485; velt_vir lower/array_view.rs). An `any` holding an array of

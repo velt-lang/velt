@@ -117,6 +117,9 @@ impl FnCx<'_, '_> {
         if rest == "target" {
             return self.target_stmt(args, span);
         }
+        if rest == "any_to_primitive" {
+            return self.to_primitive_dispatch(args, span);
+        }
         let Some(i) = intrinsic_named(rest) else {
             self.cx
                 .err(format!("unknown intrinsic `{}`", id.name), id.span);
