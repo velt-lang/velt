@@ -2856,8 +2856,9 @@ A member the value's fixed shape does not have reads as `undefined`, as in Node.
 `x.f?.()` are `undefined` when the link is `null` or `undefined`, and the rest of the chain
 (`x?.a.b`) is not evaluated. What this phase cannot reach yet
 stops with a `TypeError` naming #924 rather than giving a wrong value: a method read without a
-call, methods of arrays and strings, string indexing, methods that throw or are generic, and
-members whose type is an enum. A member of a literal type (`kind: "ok"`), a union or an
+call, string indexing, methods that throw or are generic, and members whose type is an enum.
+The built-in methods of a string, an array, a number or a boolean held are called as in
+JavaScript (see "Operators and built-in methods on `any`" below). A member of a literal type (`kind: "ok"`), a union or an
 interface reads as the value it holds.
 
 Members of an `any` are written as in JavaScript too: `x.f = v`, `x["f"] = v` and `x[k] = v`
@@ -2879,7 +2880,8 @@ Writing a `readonly` field, a method, an element further past the end of an arra
 string, number or function stops with a `TypeError` naming #924. `x.f ??= v`, `x.f ||= v` and
 `x.f &&= v` read the member once and evaluate and write `v` only when the operator calls for it,
 as in JavaScript; the expression is the member read or the value written. The other compound
-assignments (`x.n += 1`) and `x.n++` are compile errors until the operators of `any` come.
+assignments (`x.n += 1`, `x[i] *= 2`) and `x.n++` read the member once, combine it as the
+operator does (below) and write the result back.
 
 `Array.isArray(x)`, `x instanceof C` for a generic class `C` (TypeScript's `C<any>`, including
 `Map` and `Set`) and `typeof x === "function"` narrow an `unknown` to an `any` (and leave an
@@ -2922,8 +2924,9 @@ function main(): void {
 UTF-16 code units, any other pair as numbers, each converted with `ToNumber` (`true` is 1,
 `null` is 0, `undefined` and a string that is not a number are `NaN`, and every comparison with
 `NaN` is `false`). Comparing a symbol stops with Node's `TypeError: Cannot convert a Symbol value
-to a number`; comparing an object or a function (which JavaScript converts with `valueOf` /
-`toString`) stops with a `TypeError` naming #924 for now.
+to a number`; an object is converted first, as JavaScript's `ToPrimitive` does: a `Date` is its
+time, another object the text its `valueOf()` or `toString()` gives (`[2] < 10` is `true`,
+`[2] < "10"` compares strings, `{}` is `NaN` against a number).
 
 ```ts
 function main(): void {
@@ -3030,9 +3033,54 @@ An object literal converted to `any` or `unknown` (`const u: unknown = { a: null
 holds an `any` that is `null`. A `void` value or one of type `undefined` (a call of a function
 returning it) converts to an `any` holding `undefined`.
 
-**Planned** (#924): the other compound assignments and `++` on members, arithmetic operators,
-`JSON.parse` into an `any`, `any` converted to interface types and the warning on a
-written `any`; until then each is a compile error.
+### Operators and built-in methods on `any`
+
+The arithmetic, bitwise and unary operators take an `any` operand as JavaScript does, as
+TypeScript accepts them: `-`, `*`, `/`, `%`, `**`, `|`, `&`, `^`, `<<`, `>>`, `>>>`, unary `-`,
+`+` and `~` convert each operand with `ToNumber` (`"3"` is 3, `true` 1, `null` 0, `undefined`
+and `"abc"` `NaN`; an object first with `ToPrimitive`, so `[5]` is 5 and `{}` `NaN`, a `Date` its
+time) and give a `number`. `+` adds when neither side holds a string, an object or a symbol, and
+otherwise concatenates the two as `String` writes them after `ToPrimitive` (`1 + [2]` is
+`"12"`); its result is an `any`, as in TypeScript. `==` converts an object compared with a
+primitive the same way (`[] == 0` is `true`, `[1, 2] == "1,2"`). `x += v`, `x -= v` and the other
+compound assignments, `x++` and `--x` work on `any` variables, fields, elements and members of
+an `any`; `x++` gives the old number, and the value written is boxed back into the `any`. A
+symbol operand stops with Node's `TypeError: Cannot convert a Symbol value to a number`. Each
+conversion of a primitive is one call through the descriptor of the value held; `+` and the
+comparisons test the descriptors' tags before it.
+
+A method called on an `any` holding a string, an array, a number or a boolean is the built-in
+method of that value, with the arguments converted as JavaScript converts them
+(`s.slice("1")`, `s.includes(5)`, a missing argument as `undefined`): on strings `trim`,
+`trimStart`, `trimEnd`, `toUpperCase`, `toLowerCase`, `slice`, `substring`, `indexOf`,
+`lastIndexOf`, `includes`, `startsWith`, `endsWith`, `split`, `replace` and `replaceAll` (with
+string patterns), `charAt`, `charCodeAt`, `at`, `repeat`, `padStart`, `padEnd`, `concat`,
+`localeCompare`, `toString` and `valueOf`; on arrays `push`, `pop`, `shift`, `unshift`,
+`splice`, `slice`, `at`, `reverse`, `concat`, `indexOf`, `lastIndexOf`, `includes`, `map`,
+`forEach`, `filter`, `find`, `findIndex`, `some`, `every`, `reduce`, `join` and `toString`; on
+numbers `toFixed`, `toString` (with a radix), `toPrecision` and `valueOf`; on booleans
+`toString` and `valueOf`. Callbacks get each element, its index and the array, as `any`s; the
+result is an `any` (`map` gives an `any[]`, `filter` an array of the elements' own type). An
+array keeps its element type: pushing a value of another type stops with the conversion's
+`TypeError` (Node's arrays take anything). Other methods of these values stop with a
+`TypeError` naming #924.
+
+```ts
+function main(): void {
+  let n: any = "4";
+  n++;
+  const xs: any = [3, 1, 2];
+  xs.push(n);
+  console.log(n, xs.map((x: number) => x * 2), xs.includes(5)); // 5 [ 6, 2, 4, 10 ] true
+  const s: any = "  sigx ";
+  console.log(s.trim().toUpperCase(), s.length - 1, "1" + (n as any) * 2); // SIGX 6 110
+  const price: any = 2.5;
+  console.log(price.toFixed(2), price * "2", [2] == (2 as any)); // 2.50 5 true
+}
+```
+
+**Planned** (#924): `JSON.parse` into an `any`, `any` converted to interface types and the
+warning on a written `any`; until then each is a compile error.
 
 `key in x` on an `any` asks the value held: a class instance or object type has its fields,
 methods and accessors and what every object has from `Object.prototype` (`toString`), a
