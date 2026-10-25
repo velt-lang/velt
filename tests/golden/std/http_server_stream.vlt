@@ -92,7 +92,10 @@ async function main() {
   );
 
   // The wire format: chunk sizes, then a last empty chunk.
-  const wire = await raw(server.port, "GET /count HTTP/1.1\r\nConnection: close\r\n\r\n");
+  const wire = await raw(
+    server.port,
+    "GET /count HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+  );
   console.log("chunked on the wire:", JSON.stringify(wire.substring(wire.indexOf("\r\n\r\n") + 4)));
 
   const sse = await fetch(`${base}/events`);
@@ -114,7 +117,7 @@ async function main() {
 
   // An upload in pieces, chunked and with Content-Length.
   const c = await connect(`127.0.0.1:${server.port}`);
-  await c.write("POST /upload HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n");
+  await c.write("POST /upload HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n");
   for (let i = 0; i < 4; i++) {
     await c.write("8000\r\n" + "x".repeat(32768) + "\r\n");
     await sleep(5);
@@ -131,7 +134,9 @@ async function main() {
 
   // Expect: 100-continue: the body is sent after the interim response.
   const e = await connect(`127.0.0.1:${server.port}`);
-  await e.write("POST /upload HTTP/1.1\r\nContent-Length: 5\r\nExpect: 100-continue\r\n\r\n");
+  await e.write(
+    "POST /upload HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\nExpect: 100-continue\r\n\r\n",
+  );
   let interim = "";
   while (!interim.includes("\r\n\r\n")) {
     interim += await e.readString();
@@ -148,13 +153,13 @@ async function main() {
   // A body the handler does not read is skipped: the next request on the connection works.
   const skipped = await raw(
     server.port,
-    "POST /ignore HTTP/1.1\r\nContent-Length: 6\r\n\r\nunreadGET /count HTTP/1.1\r\nConnection: close\r\n\r\n",
+    "POST /ignore HTTP/1.1\r\nHost: x\r\nContent-Length: 6\r\n\r\nunreadGET /count HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
   );
   console.log("skipped:", skipped.includes("ignored the body"), skipped.includes("piece 3"));
 
   // A client that goes away mid-stream.
   const f = await connect(`127.0.0.1:${server.port}`);
-  await f.write("GET /forever HTTP/1.1\r\n\r\n");
+  await f.write("GET /forever HTTP/1.1\r\nHost: x\r\n\r\n");
   await f.read();
   f.abort();
   f.close();

@@ -92,13 +92,19 @@ async function main() {
   // Pipelined: three requests in one write, answered in order; the last closes.
   const piped = await exchange(
     server.port,
-    "GET /hello HTTP/1.1\r\nHost: x\r\n\r\nGET /nope HTTP/1.1\r\n\r\nGET /hello HTTP/1.1\r\nConnection: close\r\n\r\n",
+    "GET /hello HTTP/1.1\r\nHost: x\r\n\r\nGET /nope HTTP/1.1\r\nHost: x\r\n\r\nGET /hello HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
   );
   console.log("pipelined:", statusLines(piped), piped.endsWith("hello"));
 
   // A request in pieces, the body after the head.
   const c = await connect(`127.0.0.1:${server.port}`);
-  const parts = ["POST /ec", "ho HTTP/1.1\r\nCont", "ent-Length: 5\r\n", "\r\nab", "cde"];
+  const parts = [
+    "POST /ec",
+    "ho HTTP/1.1\r\nHost: x\r\nCont",
+    "ent-Length: 5\r\n",
+    "\r\nab",
+    "cde",
+  ];
   for (const p of parts) {
     await c.write(p);
     await sleep(5);
@@ -118,24 +124,24 @@ async function main() {
   console.log("garbage:", statusLines(await exchange(server.port, "NOT A REQUEST\r\n\r\n")));
   console.log(
     "bad header:",
-    statusLines(await exchange(server.port, "GET / HTTP/1.1\r\nNo colon here\r\n\r\n")),
+    statusLines(await exchange(server.port, "GET / HTTP/1.1\r\nHost: x\r\nNo colon here\r\n\r\n")),
   );
   console.log(
     "too large:",
     statusLines(
       await exchange(
         server.port,
-        "POST /echo HTTP/1.1\r\nContent-Length: 100\r\n\r\n" + "b".repeat(100),
+        "POST /echo HTTP/1.1\r\nHost: x\r\nContent-Length: 100\r\n\r\n" + "b".repeat(100),
       ),
     ),
   );
   // A chunked body, decoded (extensions and trailers skipped).
   const chunked = await exchange(
     server.port,
-    "POST /echo HTTP/1.1\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n3;x=1\r\nabc\r\n4\r\ndefg\r\n0\r\nX-Trailer: t\r\n\r\n",
+    "POST /echo HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n3;x=1\r\nabc\r\n4\r\ndefg\r\n0\r\nX-Trailer: t\r\n\r\n",
   );
   console.log("chunked:", statusLines(chunked), chunked.endsWith("abcdefg"));
-  const longHead = "GET / HTTP/1.1\r\nX-Long: " + "a".repeat(70000) + "\r\n\r\n";
+  const longHead = "GET / HTTP/1.1\r\nHost: x\r\nX-Long: " + "a".repeat(70000) + "\r\n\r\n";
   console.log("head too large:", statusLines(await exchange(server.port, longHead)));
 
   server.close();

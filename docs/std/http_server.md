@@ -51,7 +51,8 @@ async function main() {
 
 `serve<E>(opts: HttpServeOptions, handler: (req: HttpRequest, res: HttpResponse) =>
 Promise<void, E> throws E): Promise<HttpServer>`. `HttpServeOptions { port: number; host?;
-maxHeadSize?; maxBodySize?; idleTimeout?; tls?; headersTimeout?; requestTimeout? }`: the default
+maxHeadSize?; maxHeaders?; maxBodySize?; idleTimeout?; tls?; headersTimeout?; requestTimeout? }`:
+the default
 host is 127.0.0.1 and port 0 picks a free port. `idleTimeout` (5 s) is how long a connection
 waits for its next request or more of one; `headersTimeout` (60 s) the most a head may take
 from its first byte, and `requestTimeout` (300 s) the most a body may take from its head, however
@@ -59,17 +60,31 @@ steadily they trickle in: past either, the request gets 408 and the connection c
 limits of the same names). With `tls: { cert, key }` (PEM text, as [`listenTls`](net.md) takes them) the server
 speaks HTTPS. One task serves each connection; requests on one connection are answered in order.
 
-- A head (request line and headers) larger than `maxHeadSize` (64 KiB) gets 431 and input that
-  is not a request 400; the connection then closes, after reading what the client still sends
-  for up to 2 s, so it gets the response. A body larger than `maxBodySize` (8 MiB) makes
-  `body()` throw `BodyTooLarge` (413 if the handler lets it through); `read()` streams a body
-  of any size.
+- A head (request line and headers) larger than `maxHeadSize` (16 KiB, Node's default) or with
+  more than `maxHeaders` headers (100) gets 431 and input that is not a request 400; the
+  connection then closes, after reading what the client still sends for up to 2 s, so it gets
+  the response. A body larger than `maxBodySize` (8 MiB) makes `body()` throw `BodyTooLarge`
+  (413 if the handler lets it through); `read()` streams a body of any size.
+- Requests are framed strictly as RFC 9112 says, so that a proxy in front of the server cannot
+  find other request boundaries than it does (request smuggling). The request line is a token
+  method, a target without spaces or control characters, and exactly `HTTP/1.0` or `HTTP/1.1`;
+  header names are tokens, values have no control characters but TAB (no NUL, no bare CR or LF),
+  and no line is folded. An HTTP/1.1 request needs exactly one `Host` and no request two.
+  Two `Content-Length` headers, `Transfer-Encoding` with `Content-Length`, `Transfer-Encoding` in
+  HTTP/1.0, or codings that do not end in `chunked` get 400; another coding before `chunked`
+  (`gzip, chunked`) gets 501. A chunked body takes CR LF line ends only, and nothing after a
+  chunk size but whitespace and `;` extensions; one framed otherwise, or cut short, gets 400
+  (not logged) and the connection closes.
 - The handler runs once a request's head has arrived; a body it does not read is skipped before
   the connection's next request (one larger than `maxBodySize` closes the connection instead).
 - A connection that waits more than `idleTimeout` milliseconds (5000, Node's `keepAliveTimeout`)
   for its next request is closed.
 - A handler that throws gets a 500 (the error is printed to stderr); one that returns without
   sending gets an empty 200.
+- A connection with a body still to come gets the responses to the requests before it first, so
+  a client that waits for them (or for `100 Continue`) sends it.
+- Accepting stops only with `close()`: when it fails otherwise (out of file descriptors), the
+  server waits (5 ms, doubling up to 1 s) and accepts again.
 
 `HttpServer`: `port: number`, `close()` (stops accepting and closes the idle connections; one in
 the middle of a request answers it first).
@@ -92,11 +107,21 @@ first reads it.
 - `body(): Promise<u8[]>`, `bodyText(): Promise<string>` (UTF-8, invalid bytes as U+FFFD): the
   whole body (what `read()` has not taken), up to `maxBodySize` (`BodyTooLarge` beyond it):
   `res.send(await req.bodyText())`.
-- `keepAlive: bool`: the connection stays open after the response.
+- `keepAlive: bool`: the connection stays open after the response: HTTP/1.1 unless `close` is
+  among the `Connection` tokens (`keep-alive, close` closes), HTTP/1.0 with `keep-alive` (the
+  response then says `Connection: keep-alive`).
+- `takeUnread(): u8[]`: after `res.upgrade`, what the client sent past the request (in the new
+  protocol, before the 101 reached it).
 
 ## `HttpResponse`
 
-- `status(code)` (200 by default), `header(name, value)` (a `content-type` replaces the default).
+- `status(code)` (200 by default; outside 100–999 it throws `RangeError`, as Node; the reason
+  phrase is Node's `http.STATUS_CODES`), `header(name, value)` (a `content-type` replaces the
+  default). As Node, `header` throws `TypeError` for a name that is not a token or a value with
+  a control character other than TAB, so a value taken from a request cannot add a header
+  (`a\r\nX-Injected: 1`). `Content-Length` and `Transfer-Encoding` are the server's, which frames
+  the body itself: a handler's are not sent, except a `Content-Length` for the response to a
+  `HEAD` request (the length a `GET` would get).
 - `send(text)` (`text/plain; charset=utf-8`), `sendBytes(bytes)` (`application/octet-stream`),
   `json(text)` (`application/json`), `html(text)` (`text/html; charset=utf-8`): write the
   response, with `Server`, `Date` and `Content-Length`; one per request.
@@ -122,7 +147,8 @@ first reads it.
 - `upgrade(protocol, headers: [string, string][] = []): TcpStream`: answers `101 Switching
   Protocols` (after the responses to earlier requests) and hands the connection over: the
   stream is the caller's, the server no longer reads, writes or closes it. The client waits for
-  the 101 before it speaks the new protocol. For WebSockets, `acceptWebSocket(req, res)` of
+  the 101 before it speaks the new protocol; what it sent already is `req.takeUnread()`. Names and
+  values are checked as `header` checks them. For WebSockets, `acceptWebSocket(req, res)` of
   [velt:websocket](websocket.md) does the handshake.
 
 A `HEAD` request gets the head a `GET` would (with its `Content-Length`) and no body: what the

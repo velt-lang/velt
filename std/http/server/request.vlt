@@ -55,6 +55,7 @@ export class HttpRequest {
   private ended: bool = true;
   private continued: bool = false;
   private overLimit: bool = false;
+  private malformed: bool = false;
   // The body must have arrived by `deadline` (`Date.now()` ms): `requestTimeout` from its head.
   private requestMs: i64;
   private deadline: i64 = 0;
@@ -72,6 +73,7 @@ export class HttpRequest {
     const h = this.head;
     this.continued = false;
     this.overLimit = false;
+    this.malformed = false;
     this.late = false;
     this.deadline = now + this.requestMs;
     this.ended = h.bodyMode == BODY_NONE;
@@ -188,15 +190,27 @@ export class HttpRequest {
       this.ended = true;
       return h.buf.slice(h.bodyStart, h.bodyEnd);
     }
-    let all: u8[] = [];
+    // The pieces are kept and copied once at the end.
+    const pieces: u8[][] = [];
+    let total: i64 = 0;
     let piece = await this.read();
     while (piece != null) {
-      if ((all.length + piece.length) as i64 > limit) {
+      total += piece.length as i64;
+      if (total > limit) {
         this.overLimit = true;
         throw new BodyTooLarge(limit);
       }
-      all = all.length == 0 ? piece : all.concat(piece);
+      pieces.push(piece);
       piece = await this.read();
+    }
+    if (pieces.length == 1) {
+      return pieces[0];
+    }
+    const all: u8[] = Buffer.alloc(total as usize);
+    let at: usize = 0;
+    for (const p of pieces) {
+      all.set(p, at);
+      at += p.length;
     }
     return all;
   }
@@ -214,6 +228,19 @@ export class HttpRequest {
   /// Whether `body()` found the body larger than the server's limit (internal: answered 413).
   bodyTooLarge(): bool {
     return this.overLimit;
+  }
+
+  /// Whether the body was not framed right, or cut short (internal: answered 400, not logged).
+  bodyMalformed(): bool {
+    return this.malformed;
+  }
+
+  /**
+   * Takes the bytes the connection read past this request: after `res.upgrade`, what the client
+   * sent in the new protocol along with the request (a WebSocket's first frame).
+   */
+  takeUnread(): u8[] {
+    return this.parser.take(this.parser.available());
   }
 
   /// The whole body as text (UTF-8; invalid bytes become U+FFFD).
@@ -269,14 +296,14 @@ export class HttpRequest {
       const lf = p.lineEnd();
       if (lf < 0) {
         if (p.available() > 4096) {
-          throw new IoError("EINVAL", "invalid chunked request body: a line too long");
+          throw this.bad("a line too long");
         }
         return null;
       }
       const length = this.lineLength(lf);
       if (this.chunk == CHUNK_END) {
         if (length != 0) {
-          throw new IoError("EINVAL", "invalid chunked request body: no CR LF after a chunk");
+          throw this.bad("no CR LF after a chunk");
         }
         this.chunk = CHUNK_SIZE;
       } else if (this.chunk == CHUNK_SIZE) {
@@ -289,18 +316,37 @@ export class HttpRequest {
         this.chunk = CHUNK_DONE;
         this.ended = true;
         return null;
+      } else {
+        // A trailer line: skipped, but no controls in it either.
+        this.visible(this.parser.pos, lf - 1);
       }
       this.skipLine(lf);
     }
   }
 
-  /// The length of the line ending at LF index `lf`, without its CR LF.
+  /// The length of the line ending at LF index `lf`, without its CR LF (a bare LF is refused).
   private lineLength(lf: i64): i64 {
-    let n = lf - this.parser.pos;
-    if (n > 0 && this.parser.byteAt(lf - 1) == CR) {
-      n--;
+    const n = lf - this.parser.pos;
+    if (n == 0 || this.parser.byteAt(lf - 1) != CR) {
+      throw this.bad("a line not ended by CR LF");
     }
-    return n;
+    return n - 1;
+  }
+
+  /// Refuses controls other than TAB in [start, end).
+  private visible(start: i64, end: i64) {
+    for (let i = start; i < end; i++) {
+      const c = this.parser.byteAt(i);
+      if (c < 32 ? c != 9 : c == 127) {
+        throw this.bad("a control character");
+      }
+    }
+  }
+
+  /// The error for a body not framed as RFC 9112 §7.1 says (answered 400).
+  private bad(what: string): IoError {
+    this.malformed = true;
+    return new IoError("EINVAL", `invalid chunked request body: ${what}`);
   }
 
   /// Takes the line ending at LF index `lf`.
@@ -308,31 +354,40 @@ export class HttpRequest {
     this.parser.skip(lf + 1 - this.parser.pos);
   }
 
-  /// The chunk size on the line ending at `lf` (hex digits, up to `;` or the line's end).
+  /// The chunk size on the line ending at `lf` (its CR at `lf - 1`): hex digits, then only
+  /// whitespace and `;` extensions (skipped).
   private chunkSize(lf: i64): i64 {
     const p = this.parser;
+    const last = lf - 1;
     let size: i64 = 0;
-    let digits = 0;
-    for (let i = this.parser.pos; i < lf; i++) {
+    let i = p.pos;
+    while (i < last) {
       const c = p.byteAt(i) as i64;
       let d: i64 = -1;
       if (c >= 48 && c <= 57) {
         d = c - 48;
       } else if ((c | 32) >= 97 && (c | 32) <= 102) {
         d = (c | 32) - 87;
-      } else if (c == 59 || c == 13 || c == 32 || c == 9) {
-        break;
       } else {
-        throw new IoError("EINVAL", "invalid chunked request body: a bad chunk size");
+        break;
       }
       if (size > 0x7ffffffffffff) {
-        throw new IoError("EINVAL", "invalid chunked request body: a chunk too large");
+        throw this.bad("a chunk too large");
       }
       size = size * 16 + d;
-      digits++;
+      i++;
     }
-    if (digits == 0) {
-      throw new IoError("EINVAL", "invalid chunked request body: no chunk size");
+    if (i == p.pos) {
+      throw this.bad("no chunk size");
+    }
+    while (i < last && (p.byteAt(i) == 32 || p.byteAt(i) == 9)) {
+      i++;
+    }
+    if (i < last) {
+      if (p.byteAt(i) != 59) {
+        throw this.bad("a bad chunk size");
+      }
+      this.visible(i + 1, last);
     }
     return size;
   }
@@ -346,6 +401,7 @@ export class HttpRequest {
     while (true) {
       const n = this.parser.readFrom(this.conn);
       if (n == null) {
+        this.malformed = true;
         throw new IoError("ECONNRESET", "the client ended the request body early");
       }
       if (n > 0) {

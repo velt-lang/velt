@@ -1,0 +1,43 @@
+-- Transfer-Encoding and Content-Length
+TE + CL, then a pipelined GET: 400 Bad Request
+TE gzip + CL: 400 Bad Request
+TE gzip: 400 Bad Request
+TE chunked, identity: 400 Bad Request
+TE chunked twice: 400 Bad Request
+TE gzip, chunked: 501 Not Implemented
+TE in HTTP/1.0: 400 Bad Request
+TE Chunked (any case): 200 OK | echo:abc
+CL 0 then CL 5: 400 Bad Request
+CL 5 twice: 400 Bad Request
+CL +5: 400 Bad Request
+-- the request line and headers
+bare LF in a value: 400 Bad Request
+NUL in a value: 400 Bad Request
+control in a name: 400 Bad Request
+( in a name: 400 Bad Request
+line folding: 400 Bad Request
+space before the colon: 400 Bad Request
+( in the method: 400 Bad Request
+control in the target: 400 Bad Request
+HTXX/1.1: 400 Bad Request
+HTTP/1.9: 400 Bad Request
+HTTP/2.0: 400 Bad Request
+tab and UTF-8 in a value: 200 OK
+-- chunked framing
+bare LF lines: 400 Bad Request
+junk after the size: 400 Bad Request
+extensions and whitespace: 200 OK | echo:abcde
+no CR LF after a chunk: 400 Bad Request
+-- Host and limits
+no Host in HTTP/1.1: 400 Bad Request
+two Hosts: 400 Bad Request
+no Host in HTTP/1.0: 200 OK
+101 headers: 431 Request Header Fields Too Large
+100 headers: 200 OK
+a 17 KiB head: 431 Request Header Fields Too Large
+-- Connection
+keep-alive, close: 200 OK true
+HTTP/1.0 keep-alive: 200 OK | 200 OK true true
+-- 100 Continue after the responses before it
+200 first: true
+200 OK | 100 Continue | 200 OK | echo:hello

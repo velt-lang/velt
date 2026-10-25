@@ -7,9 +7,11 @@
 // connection and the `Date` value once per second; text goes into the buffer without a copy in
 // between. Nothing on the request path is module state (#1487).
 
+import { IoError } from "velt:io";
 import { listen, listenTls, TcpListener, TcpStream, TlsListenOptions } from "velt:net";
 import { AbortController, AbortSignal } from "velt:task";
-import { BadRequest, Parser } from "velt:http/server/parse";
+import { delay } from "velt:timers";
+import { BadRequest, BODY_CHUNKED, BODY_LENGTH, Parser } from "velt:http/server/parse";
 import { HttpRequest } from "velt:http/server/request";
 import { HttpResponse, reason } from "velt:http/server/response";
 
@@ -17,16 +19,21 @@ export { BodyTooLarge, HttpRequest } from "velt:http/server/request";
 export { EventStream, HttpResponse, HttpStream } from "velt:http/server/response";
 
 const DEFAULT_HOST = "127.0.0.1";
-/// A request head (request line and headers) larger than this is refused (431).
-const MAX_HEAD: number = 65536;
+/// A request head (request line and headers) larger than this is refused (431), as Node's
+/// `maxHeaderSize`.
+const MAX_HEAD: number = 16384;
+/// A request with more headers than this is refused (431).
+const MAX_HEADERS: number = 100;
 /// A request body larger than this is refused (413).
 const MAX_BODY: number = 8388608;
 
 export struct HttpServeOptions {
   port: number;
   host?: string;
-  /** The largest request head accepted, in bytes (431 beyond it). Default 64 KiB. */
+  /** The largest request head accepted, in bytes (431 beyond it). Default 16 KiB, as Node's. */
   maxHeadSize?: number;
+  /** The most headers a request may have (431 beyond them). Default 100. */
+  maxHeaders?: number;
   /** The largest request body accepted, in bytes (413 beyond it). Default 8 MiB. */
   maxBodySize?: number;
   /**
@@ -85,22 +92,32 @@ export async function serve<E>(
   const listener = tls != null ? await listenTls(addr, tls) : await listen(addr);
   const maxHead = (opts.maxHeadSize ?? MAX_HEAD) as i64;
   const maxBody = (opts.maxBodySize ?? MAX_BODY) as i64;
+  const maxHeaders = (opts.maxHeaders ?? MAX_HEADERS) as i64;
   const idle = (opts.idleTimeout ?? IDLE_MS) as i64;
   const limits = Limits {
     headMs: (opts.headersTimeout ?? HEADERS_MS) as i64,
     requestMs: (opts.requestTimeout ?? REQUEST_MS) as i64,
+    maxHeaders: maxHeaders,
   };
   const stop = new AbortController();
   const stopped = stop.signal;
   const accepting = listener;
   spawn(async () => {
-    try {
-      while (true) {
+    // Only `close()` ends the loop. Another failure (out of file descriptors, a connection reset
+    // before it was accepted) is waited out, 5 ms doubling up to 1 s, as Go's net/http does.
+    let backoff: i64 = 0;
+    while (!stopped.aborted) {
+      try {
         const conn = await accepting.accept();
+        backoff = 0;
         spawn(connection(conn, handler, maxHead, maxBody, idle, limits, stopped));
+      } catch (e) {
+        if (stopped.aborted || (e instanceof IoError && e.code == "EBADF")) {
+          break;
+        }
+        backoff = backoff == 0 ? 5 : backoff >= 500 ? 1000 : backoff * 2;
+        await delay(backoff);
       }
-    } catch (e) {
-      // `close()`: stop accepting.
     }
   });
   return new HttpServer(listener, stop);
@@ -117,6 +134,7 @@ const REQUEST_MS: number = 300000;
 struct Limits {
   headMs: i64;
   requestMs: i64;
+  maxHeaders: i64;
 }
 
 /// Waits until `conn` may have input: true, or false once `stopped` is aborted or `idle`
@@ -134,7 +152,7 @@ async function connection<E>(
   limits: Limits,
   stopped: AbortSignal,
 ): Promise<void> {
-  const parser = new Parser(maxHead, maxBody);
+  const parser = new Parser(maxHead, maxBody, limits.maxHeaders);
   const req = new HttpRequest(parser, conn, idle, limits.requestMs);
   const res = new HttpResponse(conn, stopped);
   let open = true;
@@ -177,14 +195,25 @@ async function connection<E>(
           headStart = -1;
           req.begin(now);
           res.begin(req.head.keepAlive, req.head.http11, req.isMethod("HEAD"));
+          // A body still to come: the responses before it go out first, so a client waiting
+          // for them (or for `100 Continue` after them) sends it.
+          if (
+            res.length > 0 &&
+            (req.head.bodyMode == BODY_LENGTH || req.head.bodyMode == BODY_CHUNKED)
+          ) {
+            await res.flush();
+          }
           let failed = false;
           try {
             await handler(req, res);
           } catch (e) {
             failed = true;
-            if (req.bodyTooLarge() || req.timedOut()) {
+            if (req.bodyTooLarge() || req.timedOut() || req.bodyMalformed()) {
+              // The client's fault, not the handler's: answered, not logged. The rest of the
+              // body cannot be found, so the connection closes after it.
               if (!res.sent()) {
-                const code = req.bodyTooLarge() ? 413 : 408;
+                const code = req.bodyTooLarge() ? 413 : req.timedOut() ? 408 : 400;
+                res.closeAfter();
                 res.status(code);
                 res.send(reason(code));
               }

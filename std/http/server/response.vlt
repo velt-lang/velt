@@ -13,6 +13,7 @@
 
 import { utf8Encode } from "velt:encoding";
 import { BodyStream } from "velt:fetch/body";
+import { isTchar } from "velt:http/server/parse";
 import { TcpStream } from "velt:net";
 import { AbortController, AbortSignal } from "velt:task";
 import { Uint8Array } from "velt:typed_array/uint8_array";
@@ -20,6 +21,8 @@ import { Uint8Array } from "velt:typed_array/uint8_array";
 const CR: u8 = 13;
 const LF: u8 = 10;
 const SP: u8 = 32;
+const TAB: u8 = 9;
+const DEL: u8 = 127;
 /// How many bytes of a streamed body may wait to be sent before `write` waits.
 const QUEUED: number = 65536;
 /// The response buffer a connection starts with.
@@ -46,6 +49,8 @@ export class HttpResponse {
   private extra: u8[] = Buffer.alloc(256);
   private extraLength: i64 = 0;
   private hasType: bool = false;
+  /// The Content-Length a handler set (-1: none), sent for a HEAD request's response.
+  private headLength: i64 = -1;
   private keepAlive: bool = true;
   private http11: bool = true;
   private done: bool = false;
@@ -75,6 +80,7 @@ export class HttpResponse {
   private lengthHead: u8[] = utf8Encode("\r\nContent-Length: ");
   private chunkedHead: u8[] = utf8Encode("\r\nTransfer-Encoding: chunked");
   private closeHead: u8[] = utf8Encode("\r\nConnection: close");
+  private keepAliveHead: u8[] = utf8Encode("\r\nConnection: keep-alive");
   private types: u8[][] = [
     utf8Encode("text/plain; charset=utf-8"),
     utf8Encode("application/octet-stream"),
@@ -88,31 +94,55 @@ export class HttpResponse {
     this.stopped = stopped;
   }
 
-  /** Sets the status code (200 by default). */
+  /** Sets the status code (200 by default); throws `RangeError` outside 100–999, as Node. */
   status(code: number) {
+    if (!(code >= 100 && code <= 999) || code != Math.floor(code)) {
+      throw new RangeError(`invalid status code: ${code}`);
+    }
     this.statusCode = code;
   }
 
-  /** Adds header `name: value` (a `content-type` replaces the default one). */
+  /**
+   * Adds header `name: value` (a `content-type` replaces the default one). Throws `TypeError` for
+   * a name that is not a token or a value with a control character other than TAB (CR, LF, NUL),
+   * as Node: a value from the client cannot add a header of its own. The server frames the body,
+   * so `Content-Length` and `Transfer-Encoding` are its own: a handler's are not sent, except a
+   * Content-Length for the response to a HEAD request (the length a GET would get).
+   */
   header(name: string, value: string) {
-    const n = (Buffer.byteLength(name) + Buffer.byteLength(value) + 4) as i64;
+    const nameLength = Buffer.byteLength(name) as i64;
+    const n = nameLength + (Buffer.byteLength(value) as i64) + 4;
     if (this.extraLength + n > (this.extra.length as i64)) {
       const grown: u8[] = Buffer.alloc(((this.extraLength + n) * 2) as usize);
       grown.set(this.extra.slice(0, this.extraLength), 0);
       this.extra = grown;
     }
-    let at = this.extraLength;
+    const start = this.extraLength;
+    let at = start;
     at += this.extra.write(name, at as usize) as i64;
-    this.extra[at] = 58;
-    this.extra[at + 1] = SP;
-    at += 2;
-    at += this.extra.write(value, at as usize) as i64;
+    const valueStart = at + 2;
+    at = valueStart + (this.extra.write(value, valueStart as usize) as i64);
+    checkField(this.extra, start, start + nameLength, valueStart, at);
+    if (nameLength == 14 && name.toLowerCase() == "content-length") {
+      this.headLength = lengthValue(value);
+      return;
+    }
+    if (nameLength == 17 && name.toLowerCase() == "transfer-encoding") {
+      return;
+    }
+    this.extra[start + nameLength] = 58;
+    this.extra[start + nameLength + 1] = SP;
     this.extra[at] = CR;
     this.extra[at + 1] = LF;
     this.extraLength = at + 2;
-    if (name.length == 12 && name.toLowerCase() == "content-type") {
+    if (nameLength == 12 && name.toLowerCase() == "content-type") {
       this.hasType = true;
     }
+  }
+
+  /** The connection closes after this response (internal: an error response to bad input). */
+  closeAfter() {
+    this.keepAlive = false;
   }
 
   /** Writes the response with body `body` (default type `text/plain; charset=utf-8`). */
@@ -224,6 +254,13 @@ export class HttpResponse {
     if (!this.http11) {
       throw new Error("only an HTTP/1.1 connection can be upgraded");
     }
+    // Checked before anything is written: a bad name or value throws, and nothing was sent.
+    const start = this.length;
+    this.field("Upgrade", protocol);
+    for (const h of headers) {
+      this.field(h[0], h[1]);
+    }
+    this.length = start;
     this.done = true;
     this.switched = true;
     this.keepAlive = false;
@@ -231,7 +268,7 @@ export class HttpResponse {
     this.text(protocol);
     this.text("\r\nConnection: Upgrade\r\n");
     for (const h of headers) {
-      this.text(`${h[0]}: ${h[1]}\r\n`);
+      this.field(h[0], h[1]);
     }
     this.text("\r\n");
     this.conn.writeBytesLater(this.buf, 0, this.length as number);
@@ -252,6 +289,7 @@ export class HttpResponse {
   /** A new request: status 200, no headers (internal). */
   begin(keepAlive: bool, http11: bool, headOnly: bool = false) {
     this.headOnly = headOnly;
+    this.headLength = -1;
     this.switched = false;
     this.noBody = false;
     this.statusCode = 200;
@@ -412,6 +450,18 @@ export class HttpResponse {
     this.textOf(s, Buffer.byteLength(s) as i64);
   }
 
+  /// Header `name: value` and its CR LF, checked as `header` checks them.
+  private field(name: string, value: string) {
+    const start = this.length;
+    this.text(name);
+    const nameEnd = this.length;
+    this.text(": ");
+    const valueStart = this.length;
+    this.text(value);
+    checkField(this.buf, start, nameEnd, valueStart, this.length);
+    this.text("\r\n");
+  }
+
   /// The UTF-8 bytes of `s`, `n` of them (`Buffer.byteLength(s)`).
   private textOf(s: string, n: i64) {
     this.reserve(n);
@@ -497,7 +547,7 @@ export class HttpResponse {
     } else if (length >= 0) {
       const lengthHead = this.lengthHead;
       this.bytes(lengthHead);
-      this.number(length);
+      this.number(this.headOnly && this.headLength >= 0 ? this.headLength : length);
     } else {
       this.streaming = true;
       this.chunked = this.http11;
@@ -511,6 +561,10 @@ export class HttpResponse {
     if (!this.keepAlive) {
       const closeHead = this.closeHead;
       this.bytes(closeHead);
+    } else if (!this.http11) {
+      // HTTP/1.0 closes unless told otherwise.
+      const keepAliveHead = this.keepAliveHead;
+      this.bytes(keepAliveHead);
     }
     const extra = this.extra;
     const n = this.extraLength;
@@ -598,50 +652,172 @@ export class EventStream {
   }
 }
 
-/** The reason phrase of `status`. */
+/** The reason phrase of `status`: Node's `http.STATUS_CODES`, `Unknown` for others. */
 export function reason(status: number): string {
   switch (status) {
     case 100:
       return "Continue";
     case 101:
       return "Switching Protocols";
+    case 102:
+      return "Processing";
+    case 103:
+      return "Early Hints";
     case 200:
       return "OK";
     case 201:
       return "Created";
+    case 202:
+      return "Accepted";
+    case 203:
+      return "Non-Authoritative Information";
     case 204:
       return "No Content";
+    case 205:
+      return "Reset Content";
+    case 206:
+      return "Partial Content";
+    case 207:
+      return "Multi-Status";
+    case 208:
+      return "Already Reported";
+    case 226:
+      return "IM Used";
+    case 300:
+      return "Multiple Choices";
     case 301:
       return "Moved Permanently";
     case 302:
       return "Found";
+    case 303:
+      return "See Other";
     case 304:
       return "Not Modified";
+    case 305:
+      return "Use Proxy";
+    case 307:
+      return "Temporary Redirect";
+    case 308:
+      return "Permanent Redirect";
     case 400:
       return "Bad Request";
     case 401:
       return "Unauthorized";
+    case 402:
+      return "Payment Required";
     case 403:
       return "Forbidden";
     case 404:
       return "Not Found";
     case 405:
       return "Method Not Allowed";
+    case 406:
+      return "Not Acceptable";
+    case 407:
+      return "Proxy Authentication Required";
     case 408:
       return "Request Timeout";
+    case 409:
+      return "Conflict";
+    case 410:
+      return "Gone";
+    case 411:
+      return "Length Required";
+    case 412:
+      return "Precondition Failed";
+    case 413:
+      return "Payload Too Large";
+    case 414:
+      return "URI Too Long";
+    case 415:
+      return "Unsupported Media Type";
+    case 416:
+      return "Range Not Satisfiable";
+    case 417:
+      return "Expectation Failed";
+    case 418:
+      return "I'm a Teapot";
+    case 421:
+      return "Misdirected Request";
+    case 422:
+      return "Unprocessable Entity";
+    case 423:
+      return "Locked";
+    case 424:
+      return "Failed Dependency";
+    case 425:
+      return "Too Early";
     case 426:
       return "Upgrade Required";
-    case 413:
-      return "Content Too Large";
+    case 428:
+      return "Precondition Required";
+    case 429:
+      return "Too Many Requests";
     case 431:
       return "Request Header Fields Too Large";
+    case 451:
+      return "Unavailable For Legal Reasons";
     case 500:
       return "Internal Server Error";
     case 501:
       return "Not Implemented";
+    case 502:
+      return "Bad Gateway";
     case 503:
       return "Service Unavailable";
+    case 504:
+      return "Gateway Timeout";
+    case 505:
+      return "HTTP Version Not Supported";
+    case 506:
+      return "Variant Also Negotiates";
+    case 507:
+      return "Insufficient Storage";
+    case 508:
+      return "Loop Detected";
+    case 509:
+      return "Bandwidth Limit Exceeded";
+    case 510:
+      return "Not Extended";
+    case 511:
+      return "Network Authentication Required";
     default:
       return "Unknown";
   }
+}
+
+/// Throws `TypeError` unless `b[nameStart..nameEnd)` is a token and `b[valueStart..valueEnd)` has
+/// no control character other than TAB (Node's `ERR_INVALID_HTTP_TOKEN`, `ERR_INVALID_CHAR`).
+function checkField(b: u8[], nameStart: i64, nameEnd: i64, valueStart: i64, valueEnd: i64) {
+  if (nameStart == nameEnd) {
+    throw new TypeError("a header name must not be empty");
+  }
+  for (let i = nameStart; i < nameEnd; i++) {
+    if (!isTchar(b[i])) {
+      throw new TypeError(`invalid header name: ${b.utf8Slice(nameStart, nameEnd)}`);
+    }
+  }
+  for (let i = valueStart; i < valueEnd; i++) {
+    const c = b[i];
+    if (c < SP ? c != TAB : c == DEL) {
+      throw new TypeError(`invalid character in header ${b.utf8Slice(nameStart, nameEnd)}`);
+    }
+  }
+}
+
+/// A Content-Length value a handler set: digits only (`TypeError` otherwise).
+function lengthValue(value: string): i64 {
+  const t = value.trim();
+  let n: i64 = 0;
+  for (let i: i64 = 0; i < (t.length as i64); i++) {
+    const d = (t.charCodeAt(i) as i64) - 48;
+    if (d < 0 || d > 9 || n > 92233720368547757) {
+      throw new TypeError(`invalid Content-Length: ${value}`);
+    }
+    n = n * 10 + d;
+  }
+  if (t.length == 0) {
+    throw new TypeError(`invalid Content-Length: ${value}`);
+  }
+  return n;
 }

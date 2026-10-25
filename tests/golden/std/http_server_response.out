@@ -1,0 +1,21 @@
+CR LF in a value: TypeError: invalid character in header X-A
+LF in a value: TypeError: invalid character in header X-A
+NUL in a value: TypeError: invalid character in header X-A
+space in a name: TypeError: invalid header name: X A
+empty name: TypeError: a header name must not be empty
+tab and UTF-8: ok
+status 7: RangeError: invalid status code: 7
+status -5: RangeError: invalid status code: -5
+status 1000: RangeError: invalid status code: 1000
+status 200.5: RangeError: invalid status code: 200.5
+bad Content-Length: TypeError: invalid Content-Length: 2x
+HTTP/1.1 200 OK / Content-Type: text/plain; charset=utf-8 / Content-Length: 6 / Connection: close /  / abcdef
+HTTP/1.1 200 OK / Content-Type: text/plain; charset=utf-8 / Content-Length: 1000 / Connection: close /  / 
+HTTP/1.1 418 I'm a Teapot
+HTTP/1.1 422 Unprocessable Entity
+HTTP/1.1 429 Too Many Requests
+HTTP/1.1 409 Conflict
+HTTP/1.1 410 Gone
+HTTP/1.1 502 Bad Gateway
+HTTP/1.1 504 Gateway Timeout
+HTTP/1.1 599 Unknown

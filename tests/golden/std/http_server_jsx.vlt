@@ -41,7 +41,7 @@ async function main() {
 
   // Streamed: the head arrives while the posts wait for the gate.
   const c = await connect(`127.0.0.1:${server.port}`);
-  await c.write("GET /stream HTTP/1.1\r\nConnection: close\r\n\r\n");
+  await c.write("GET /stream HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
   let received = "";
   let told = false;
   while (true) {
