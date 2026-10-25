@@ -164,6 +164,7 @@ impl FnLower<'_, '_> {
                 stores.block(&f.body.block);
             }
             let mut found = FxHashMap::default();
+            let value = self.lock_value();
             for (keys, roots) in stores.found {
                 // The places that could hold what the reader made.
                 let roots: Vec<LocalId> = roots
@@ -174,6 +175,16 @@ impl FnLower<'_, '_> {
                     })
                     .map(|(r, _)| r)
                     .collect();
+                // The lock's value is never a store's destination (a reader writing it stops):
+                // a copy given to one of its methods (`y.items.concat(x.items)`, a part of the
+                // outer reader's lock) is lent to the call and dropped by this reader, which
+                // keeps it as its own (no callback out).
+                if !roots.is_empty() && roots.iter().all(|&r| Some(r) == value) {
+                    for k in keys {
+                        found.insert(k, 0);
+                    }
+                    continue;
+                }
                 let levels = roots.iter().map(|&r| self.root_levels(r)).max();
                 let levels = levels.unwrap_or(OUTSIDE);
                 for k in keys {
@@ -187,6 +198,19 @@ impl FnLower<'_, '_> {
             .as_ref()
             .and_then(|m| m.get(&key).copied());
         levels.unwrap_or(OUTSIDE)
+    }
+
+    /// The parameter of this `read` callback naming the lock's value, if this is one.
+    fn lock_value(&self) -> Option<LocalId> {
+        let def = self.cx.cur_def?;
+        if !matches!(self.cx.closure_parents.get(&def), Some((_, true))) {
+            return None;
+        }
+        match self.cx.hir.def(def) {
+            // After the captures, which lead the parameters.
+            hir::Def::Fn(f) => f.params.get(f.captures.len()).map(|p| p.local),
+            _ => None,
+        }
     }
 
     /// How many `read` callbacks out from this one the frame holding the variable `root` of

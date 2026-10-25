@@ -133,7 +133,15 @@ impl FnLower<'_, '_> {
             (I::Transfer, [a]) => {
                 let v = self.consume(a);
                 let t = self.sub(a.ty);
-                let v = self.transfer_stored(v, t, args);
+                // Sema transfers a transfer when a store crosses two locks (one for each
+                // callback around it): the inner one already made the value its destination's,
+                // into the same frame (leave_levels.rs). A second would take what the first moved
+                // out of a `read` callback (no longer `LOCAL`) for the store's, copy it and never
+                // release the first copy.
+                let v = match super::call::transferred(a) {
+                    true => v,
+                    false => self.transfer_stored(v, t, args),
+                };
                 self.own_value(v, t)
             }
             (I::NeedsTransfer, [a]) => {
