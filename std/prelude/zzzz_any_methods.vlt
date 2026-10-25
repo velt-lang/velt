@@ -1,0 +1,154 @@
+// Prelude: the built-in methods of strings, arrays, numbers and booleans called through `any`
+// (issue #924, docs/reference/types.md "any and unknown"). A call `x.name(args)` on an `any`
+// is one call through the descriptor of the value held (`AnyCall`); for a string it runs
+// `__anyStr_<name>(s, args)`, for an array of `T` `__anyArr_<name><T>(a, args)`, for a number
+// `__anyNum_<name>(n, args)` and for a boolean `__anyBool_<name>(b, args)` (velt_vir
+// any_builtin.rs finds them by name). The arguments come as an `any[]` and are converted as
+// JavaScript converts them (`ToString`, `ToIntegerOrInfinity`); the result goes back as an
+// `any`. A name without a function here is a `TypeError` naming #924.
+//
+// The file name sorts after the other prelude modules, so their indexes stay the same.
+
+/** Argument `k` of `args`, `undefined` when it was left out. */
+function __anyArg(args: any[], k: i64): any {
+  return k < (args.length as i64) ? args[k as usize] : undefined;
+}
+
+/** Argument `k` as JavaScript's `ToIntegerOrInfinity` makes it (`d` when left out or `undefined`). */
+function __anyIntArg(args: any[], k: i64, d: i64): i64 {
+  const v = __anyArg(args, k);
+  if (v === undefined) {
+    return d;
+  }
+  const n: number = +v;
+  if (n !== n) {
+    return 0;
+  }
+  if (n >= 9007199254740992) {
+    return 9223372036854775807;
+  }
+  if (n <= -9007199254740992) {
+    return -9223372036854775807;
+  }
+  return Math.trunc(n) as i64;
+}
+
+/** Argument `k` as JavaScript's `ToString` writes it (`"undefined"` when left out). */
+function __anyStrArg(args: any[], k: i64): string {
+  return __anyString(__anyArg(args, k), "");
+}
+
+/** The function argument `k` of an array method, or Node's `TypeError`. */
+function __anyFnArg(args: any[], k: i64): any {
+  const f = __anyArg(args, k);
+  if (typeof f !== "function") {
+    const t = typeof f;
+    const what = f === undefined || f === null ? __anyText(f, "") : t === "object" ? "#<Object>" : t === "string" ? `${t} "${__anyText(f, "")}"` : `${t} ${__anyText(f, "")}`;
+    panic(`TypeError: ${what} is not a function`);
+  }
+  return f;
+}
+
+// Strings.
+
+export function __anyStr_trim(s: string, args: any[]): any {
+  return s.trim();
+}
+export function __anyStr_trimStart(s: string, args: any[]): any {
+  return s.trimStart();
+}
+export function __anyStr_trimEnd(s: string, args: any[]): any {
+  return s.trimEnd();
+}
+export function __anyStr_toUpperCase(s: string, args: any[]): any {
+  return s.toUpperCase();
+}
+export function __anyStr_toLowerCase(s: string, args: any[]): any {
+  return s.toLowerCase();
+}
+export function __anyStr_toString(s: string, args: any[]): any {
+  return s;
+}
+export function __anyStr_valueOf(s: string, args: any[]): any {
+  return s;
+}
+export function __anyStr_slice(s: string, args: any[]): any {
+  return s.slice(__anyIntArg(args, 0, 0), __anyIntArg(args, 1, 9223372036854775807));
+}
+export function __anyStr_substring(s: string, args: any[]): any {
+  return s.substring(__anyIntArg(args, 0, 0), __anyIntArg(args, 1, 9223372036854775807));
+}
+export function __anyStr_indexOf(s: string, args: any[]): any {
+  return s.indexOf(__anyStrArg(args, 0), __anyIntArg(args, 1, 0)) as number;
+}
+export function __anyStr_lastIndexOf(s: string, args: any[]): any {
+  return s.lastIndexOf(__anyStrArg(args, 0), __anyIntArg(args, 1, 9223372036854775807)) as number;
+}
+export function __anyStr_includes(s: string, args: any[]): any {
+  const from = __anyIntArg(args, 1, 0);
+  return s.indexOf(__anyStrArg(args, 0), from < 0 ? 0 : from) >= 0;
+}
+export function __anyStr_startsWith(s: string, args: any[]): any {
+  const from = __anyIntArg(args, 1, 0);
+  return s.slice(from < 0 ? 0 : from).startsWith(__anyStrArg(args, 0));
+}
+export function __anyStr_endsWith(s: string, args: any[]): any {
+  const end = __anyIntArg(args, 1, 9223372036854775807);
+  return s.slice(0, end < 0 ? 0 : end).endsWith(__anyStrArg(args, 0));
+}
+export function __anyStr_split(s: string, args: any[]): any {
+  if (__anyArg(args, 0) === undefined) {
+    const whole: string[] = [s.slice(0)];
+    return whole;
+  }
+  const parts = s.split(__anyStrArg(args, 0));
+  const limit = __anyArg(args, 1);
+  if (limit === undefined) {
+    return parts;
+  }
+  return parts.slice(0, __anyIntArg(args, 1, 0) >= 0 ? __anyIntArg(args, 1, 0) : 0);
+}
+export function __anyStr_replace(s: string, args: any[]): any {
+  return s.replace(__anyStrArg(args, 0), __anyStrArg(args, 1));
+}
+export function __anyStr_replaceAll(s: string, args: any[]): any {
+  return s.replaceAll(__anyStrArg(args, 0), __anyStrArg(args, 1));
+}
+export function __anyStr_charAt(s: string, args: any[]): any {
+  return s.charAt(__anyIntArg(args, 0, 0));
+}
+export function __anyStr_charCodeAt(s: string, args: any[]): any {
+  const i = __anyIntArg(args, 0, 0);
+  if (i < 0 || i >= (s.length as i64)) {
+    return NaN;
+  }
+  return s.charCodeAt(i) as number;
+}
+export function __anyStr_at(s: string, args: any[]): any {
+  return s.at(__anyIntArg(args, 0, 0));
+}
+export function __anyStr_repeat(s: string, args: any[]): any {
+  const n = __anyIntArg(args, 0, 0);
+  if (n < 0 || n === 9223372036854775807) {
+    panic(`RangeError: Invalid count value: ${__anyText(__anyArg(args, 0), "")}`);
+  }
+  return s.repeat(n);
+}
+export function __anyStr_padStart(s: string, args: any[]): any {
+  const fill = __anyArg(args, 1) === undefined ? " " : __anyStrArg(args, 1);
+  return s.padStart(__anyIntArg(args, 0, 0), fill);
+}
+export function __anyStr_padEnd(s: string, args: any[]): any {
+  const fill = __anyArg(args, 1) === undefined ? " " : __anyStrArg(args, 1);
+  return s.padEnd(__anyIntArg(args, 0, 0), fill);
+}
+export function __anyStr_concat(s: string, args: any[]): any {
+  let out = s;
+  for (let k: i64 = 0; k < (args.length as i64); k++) {
+    out += __anyStrArg(args, k);
+  }
+  return out;
+}
+export function __anyStr_localeCompare(s: string, args: any[]): any {
+  return s.localeCompare(__anyStrArg(args, 0)) as number;
+}
