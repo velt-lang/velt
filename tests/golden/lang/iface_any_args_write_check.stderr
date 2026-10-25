@@ -1,1 +1,1 @@
-TypeError: the value is not an object { n: number } (it is an object of another type)
+TypeError: the value is not an object { n: number } (it is an object)

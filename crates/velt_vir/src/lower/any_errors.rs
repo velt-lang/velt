@@ -119,19 +119,6 @@ impl FnLower<'_, '_> {
         }
     }
 
-    /// Is `ty` an object type (no class, record or array): one an object of another shape is
-    /// not?
-    fn object_target(&mut self, ty: TyId) -> bool {
-        match self.cx.kind(ty) {
-            TyKind::Adt(d, _) => {
-                !self.cx.is_class(ty)
-                    && self.prelude_record(ty).is_none()
-                    && matches!(self.cx.hir.def(d), velt_sema::hir::Def::Adt(_))
-            }
-            _ => false,
-        }
-    }
-
     /// Stop with `TypeError: the value is not <ty> (it is <found>)`.
     pub(super) fn any_type_error(&mut self, desc: Operand, ty: TyId) {
         let want = self.any_target_name(ty);
@@ -182,13 +169,6 @@ impl FnLower<'_, '_> {
                 "TypeError: the value is not {an} {want} (it is {})",
                 FOUND[k]
             );
-            if k == TAG_OBJECT as usize && self.object_target(ty) {
-                // The tables differ: an object of another type (one lacking a member, or with
-                // members of other types), not "an object" as if that contradicted the target.
-                msg = format!(
-                    "TypeError: the value is not {an} {want} (it is an object of another type)"
-                );
-            }
             if k == TAG_OBJECT as usize && self.prelude_record(ty).is_some() {
                 // Node reads any object as a record; Velt's objects of a fixed shape are not one.
                 msg.push_str(": only a Record converts to a Record (an object of a fixed shape does not yet, #1219)");
