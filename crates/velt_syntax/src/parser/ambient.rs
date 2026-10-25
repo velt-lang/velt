@@ -46,6 +46,7 @@ impl Parser<'_> {
 
     /// `const|let|var A: T, B: U;`, at the keyword.
     pub(super) fn parse_ambient_vars(&mut self, global: bool) -> PResult<()> {
+        let is_var = self.is_word(0, "var");
         self.bump(); // const / let / var
         loop {
             let lo = self.cur_lo();
@@ -67,6 +68,7 @@ impl Parser<'_> {
                     ty,
                     span,
                     global,
+                    is_var,
                 });
             }
             if !self.eat(Tok::Comma) {
