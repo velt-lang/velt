@@ -1,0 +1,65 @@
+// Text in byte arrays without copies (u8[] write, utf8Slice, utf8Equals): what a server written
+// in Velt uses on its read and write buffers.
+const buf: u8[] = Buffer.alloc(16);
+const w1 = buf.write("GET /a");
+const w2 = buf.write("é", 6);
+const w3 = buf.write("x", 8);
+console.log(w1, w2, w3);
+console.log(buf.utf8Slice(0, 3), buf.utf8Slice(4, 6), buf.utf8Slice(6, 9), buf.utf8Slice(-16, 1));
+console.log(buf.utf8Equals("GET", 0, 3), buf.utf8Equals("GE", 0, 3), buf.utf8Equals("/a", 4, 6));
+console.log(buf.utf8Equals("GET", 0, 99), buf.utf8EqualsIgnoreCase("get", 0, 3));
+console.log(buf.utf8EqualsIgnoreCase("gex", 0, 3), buf.utf8Equals("", 3, 3));
+console.log(buf.utf8Equals("x", -8, -7), buf.utf8Equals("", 9, 2), buf.utf8Equals("", -8, -7));
+
+// Ranges are clamped as Node's buf.toString("utf8", start, end) clamps them: a negative start is
+// 0, an end past the array is its end, an end before the start is empty.
+const abcd: u8[] = [0x61, 0x62, 0x63, 0x64];
+console.log(
+  abcd.utf8Slice(-2, 4),
+  abcd.utf8Slice(0, 10),
+  abcd.utf8Slice(3, 1) == "",
+  abcd.utf8Slice(-5, -1) == "",
+);
+
+// Only whole characters that fit are written, as Node's buf.write.
+const small: u8[] = Buffer.alloc(4);
+const s1 = small.write("abé€");
+console.log(s1, small.utf8Slice(), small[3]);
+const s2 = small.write("€", 2);
+const s3 = small.write("", 4);
+console.log(s2, s3);
+
+// Invalid UTF-8 reads as U+FFFD, one per maximal invalid subpart.
+const bad: u8[] = [0x61, 0xff, 0xe2, 0x82, 0x62];
+console.log(bad.utf8Slice(), bad.utf8Slice(1, 2).length, bad.utf8Slice(4));
+
+// TextEncoder.encodeInto with room for all of it writes in place (into a view at an offset too).
+const whole = new Uint8Array(12);
+const r = new TextEncoder().encodeInto("é😀a", whole.subarray(2));
+console.log(r.read, r.written, whole);
+
+// A lone surrogate is written as the three bytes of U+FFFD, and counts as one character.
+const lone: u8[] = Buffer.alloc(4);
+const high = String.fromCharCode(0xd800);
+const l1 = lone.write(high + "x");
+const l2 = lone.write(high, 2);
+console.log(l1, lone, l2);
+
+// `write` modifies its array, a module constant too.
+const K: u8[] = [0, 0, 0, 0];
+
+function fillK() {
+  K.write("ab", 1);
+}
+
+fillK();
+console.log(K);
+
+// Buffer.byteLength is read from the string (inline strings hold up to 23 bytes).
+const longer = "x".repeat(40) + "é";
+console.log(Buffer.byteLength(""), Buffer.byteLength("é😀"), Buffer.byteLength(longer));
+console.log(
+  Buffer.byteLength(high),
+  Buffer.byteLength("a".repeat(23)),
+  Buffer.byteLength("a".repeat(24)),
+);

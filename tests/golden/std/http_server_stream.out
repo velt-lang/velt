@@ -1,0 +1,12 @@
+count: chunked "piece 1\npiece 2\npiece 3\n"
+chunked on the wire: "8\r\npiece 1\n\r\n8\r\npiece 2\n\r\n8\r\npiece 3\n\r\n0\r\n\r\n"
+sse: text/event-stream no-cache
+"data: hello\n\nevent: update\nid: 7\ndata: two\ndata: lines\n\n: ping\n\n"
+proxy: "piece 1\npiece 2\npiece 3\n"
+HTTP/1.0: false true true
+chunked upload: 131072 bytes in pieces
+upload: 300000 bytes in pieces
+expect: HTTP/1.1 100 Continue
+after continue: 5 bytes
+skipped: true true
+gone: write failed, signal aborted: true

@@ -12,12 +12,11 @@
 //! them), so binding allocates nothing.
 
 use super::error::DbError;
-use rusqlite::types::{ToSqlOutput, ValueRef};
-use rusqlite::Statement;
+use super::raw::{Bind, RawStmt};
 use velt_text::db_json::{DbValue, Params};
 
 /// Bind `params` to every parameter of `stmt` (see the module docs).
-pub fn bind(stmt: &mut Statement<'_>, params: &Params<'_>) -> Result<(), DbError> {
+pub fn bind(stmt: &RawStmt, params: &Params<'_>) -> Result<(), DbError> {
     let count = stmt.parameter_count();
     match params {
         Params::None if count == 0 => Ok(()),
@@ -38,7 +37,7 @@ pub fn bind(stmt: &mut Statement<'_>, params: &Params<'_>) -> Result<(), DbError
     }
 }
 
-fn bind_named(stmt: &mut Statement<'_>, params: &Params<'_>, count: usize) -> Result<(), DbError> {
+fn bind_named(stmt: &RawStmt, params: &Params<'_>, count: usize) -> Result<(), DbError> {
     for i in 1..=count {
         let key = match stmt.parameter_name(i) {
             Some(name) if !name.starts_with('?') => &name[1..],
@@ -56,15 +55,16 @@ fn bind_named(stmt: &mut Statement<'_>, params: &Params<'_>, count: usize) -> Re
     Ok(())
 }
 
-fn bind_value(stmt: &mut Statement<'_>, index: usize, v: &DbValue<'_>) -> Result<(), DbError> {
-    let value = match v {
-        DbValue::Null => ValueRef::Null,
-        DbValue::Bool(b) => ValueRef::Integer(*b as i64),
-        DbValue::Int(i) => ValueRef::Integer(*i),
-        DbValue::Float(f) => ValueRef::Real(*f),
-        DbValue::Text(s) => ValueRef::Text(s.as_bytes()),
-        DbValue::Bytes(b) => ValueRef::Blob(b),
-    };
-    stmt.raw_bind_parameter(index, ToSqlOutput::Borrowed(value))?;
-    Ok(())
+fn bind_value(stmt: &RawStmt, index: usize, v: &DbValue<'_>) -> Result<(), DbError> {
+    stmt.bind(
+        index,
+        match v {
+            DbValue::Null => Bind::Null,
+            DbValue::Bool(b) => Bind::Int(*b as i64),
+            DbValue::Int(i) => Bind::Int(*i),
+            DbValue::Float(f) => Bind::Float(*f),
+            DbValue::Text(s) => Bind::Text(s.as_bytes()),
+            DbValue::Bytes(b) => Bind::Blob(b),
+        },
+    )
 }

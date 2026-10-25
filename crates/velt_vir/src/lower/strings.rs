@@ -98,6 +98,63 @@ impl FnLower<'_, '_> {
         self.select(inline, inline_len, heap_len)
     }
 
+    /// Where the UTF-8 bytes of the string at `p` are (a `Ptr`): inside the value for an inline
+    /// string, else its pointer. No branch.
+    fn str_data(&mut self, p: &Place) -> Operand {
+        let w2 = self.rvalue_temp(Ty::U64, Rvalue::Use(Operand::Copy(proj(p, Proj::Field(2)))));
+        let signed = self.rvalue_temp(Ty::I64, Rvalue::Cast(w2, Ty::I64));
+        let fill = self.rvalue_temp(
+            Ty::I64,
+            Rvalue::Binary(BinOp::Shr, signed, cint(63, Ty::I64)),
+        );
+        let inline = self.rvalue_temp(Ty::U64, Rvalue::Cast(fill, Ty::U64));
+        let here = self.addr(p.clone());
+        let here = self.rvalue_temp(Ty::U64, Rvalue::Cast(here, Ty::U64));
+        let ptr = Operand::Copy(proj(p, Proj::Field(0)));
+        let ptr = self.rvalue_temp(Ty::U64, Rvalue::Cast(ptr, Ty::U64));
+        let data = self.select(inline, here, ptr);
+        self.rvalue_temp(Ty::Ptr, Rvalue::Cast(data, Ty::Ptr))
+    }
+
+    /// Byte `i` of the UTF-8 bytes of string `v` (a `u8`), unchecked (`StrByteAt`).
+    pub(super) fn str_byte_at(&mut self, v: Operand, i: Operand) -> Operand {
+        let p = self.operand_place(v, Ty::Agg(STR_AGG));
+        let data = self.str_data(&p);
+        let Operand::Copy(bp) = self.rvalue_temp(Ty::Ptr, Rvalue::Binary(BinOp::PtrAdd, data, i))
+        else {
+            ice("rvalue_temp returns a place")
+        };
+        let byte = Operand::Copy(proj(&bp, Proj::Deref(Ty::U8)));
+        self.rvalue_temp(Ty::U8, Rvalue::Use(byte))
+    }
+
+    /// The SIMD `load` (or `load_partial` of `count` bytes) of string `v`'s UTF-8 bytes from
+    /// `at`, unchecked (`StrLoadU8x16`, `StrLoadPartialU8x16`): through a byte-array header on
+    /// the stack that views the bytes where the string keeps them. The header is no value of
+    /// the program (not owned, never dropped, gone after the load), so nothing can write
+    /// through it or keep it.
+    pub(super) fn str_load_u8x16(
+        &mut self,
+        v: Operand,
+        at: Operand,
+        count: Option<Operand>,
+    ) -> Operand {
+        let p = self.operand_place(v, Ty::Agg(STR_AGG));
+        let data = self.str_data(&p);
+        let len = self.str_bytes(&p);
+        let a = self.cx.array_agg();
+        let view = self.temp(Ty::Agg(a));
+        self.assign(
+            Place::local(view),
+            Rvalue::Aggregate(a, vec![data, len, cint(0, Ty::U64)]),
+        );
+        let addr = self.addr(Place::local(view));
+        match count {
+            None => self.simd_call("velt_simd_u8x16_load", vec![addr, at]),
+            Some(n) => self.simd_call("velt_simd_u8x16_load_partial", vec![addr, at, n]),
+        }
+    }
+
     /// `s.length` (a `u64`): UTF-16 code units. Inline: byte 22 when bit 0x40 of byte 23 says
     /// the string is not ASCII, else byte 23's length; otherwise the high half of `w1`.
     pub(super) fn str_len(&mut self, v: Operand) -> Operand {

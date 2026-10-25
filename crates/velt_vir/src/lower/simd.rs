@@ -14,7 +14,7 @@ use crate::vir::{Callee, Operand, Place, Ty};
 
 impl FnLower<'_, '_> {
     /// Call the SIMD extern `symbol` and give its result.
-    fn simd_call(&mut self, symbol: &str, args: Vec<Operand>) -> Operand {
+    pub(super) fn simd_call(&mut self, symbol: &str, args: Vec<Operand>) -> Operand {
         let call = SimdCall::of_symbol(symbol)
             .unwrap_or_else(|| super::ice(format_args!("`{symbol}` is not a SIMD operation")));
         let (params, ret) = call.signature();

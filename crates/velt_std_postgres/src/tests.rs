@@ -364,10 +364,12 @@ fn hot_query_futures_stay_small() {
     }
     let prepared = ret(|c: &Conn| async move { c.prepared("", false).await.map(|_| ()) });
     let bound = ret(|c: &Conn| async move { c.bound("", b"").await.map(|_| ()) });
-    let query = ret(|c: &Conn| c.query("", b"", true, Vec::<u8>::new()));
+    let query = ret(|c: &Conn| c.query_params("", velt_text::db_json::Params::None));
     let pooled = ret(|p: u64| {
         crate::pool::pool_op(p, move |c: Arc<Conn>| async move {
-            c.query("", b"", true, Vec::<u8>::new()).await
+            c.query_params("", velt_text::db_json::Params::None)
+                .await
+                .map(|_| ())
         })
     });
     assert!(prepared <= 128, "prepared: {prepared} bytes");

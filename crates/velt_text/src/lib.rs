@@ -9,6 +9,7 @@ pub mod fmt;
 pub mod json_escape;
 pub mod json_scan;
 pub mod rows;
+pub mod rows_cursor;
 pub mod wtf8;
 
 /// Where the encoders write: a `Vec<u8>`, or (feature `sdk`) a native library's

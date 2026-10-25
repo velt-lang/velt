@@ -140,40 +140,11 @@ pub unsafe extern "C" fn velt_rt_bytes_concat(
     out.write(VeltBytes::from_vec(v));
 }
 
-/// Whether the array is well-formed UTF-8.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_bytes_utf8_valid(b: *const VeltBytes) -> u8 {
-    std::str::from_utf8((*b).as_bytes()).is_ok() as u8
-}
-
 /// The bytes of `b` in `[start, end)` (relative indices).
 unsafe fn range<'a>(b: *const VeltBytes, start: i64, end: i64) -> &'a [u8] {
     let s = (*b).as_bytes();
     let (start, end) = (relative(start, s.len()), relative(end, s.len()));
     &s[start..end.max(start)]
-}
-
-/// Copies the UTF-8 bytes of `s` into `dst` starting at `offset` (a lone surrogate as U+FFFD,
-/// the 3 bytes `velt_rt_str_byte_length` counts for it); 0 (nothing copied) when it does not fit.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_bytes_set_str(
-    dst: *const VeltBytes,
-    s: *const VeltStr,
-    offset: u64,
-) -> u8 {
-    let d = &*dst;
-    let text = (*s).text_lossy();
-    let src = text.as_bytes();
-    let fits = offset
-        .checked_add(src.len() as u64)
-        .is_some_and(|end| end <= d.len);
-    if !fits {
-        return 0;
-    }
-    if !src.is_empty() {
-        std::ptr::copy_nonoverlapping(src.as_ptr(), d.ptr.add(offset as usize), src.len());
-    }
-    1
 }
 
 /// The bytes in `[start, end)` (relative indices) as a new string, validating UTF-8
@@ -193,47 +164,18 @@ pub unsafe extern "C" fn velt_rt_bytes_range_to_str(
     r.write_to(out);
 }
 
-/// How far `[start, end)` (relative indices) is well-formed UTF-8, as an offset from `start`:
-/// the whole length when all of it is, less when it ends inside a character (the rest may be
-/// completed by more bytes), and -1 when it holds a sequence no continuation can make valid.
-/// For text that arrives in pieces (a WebSocket message's fragments).
+/// The bytes in `[start, end)` (relative indices) as a new string, an invalid sequence as
+/// U+FFFD (one per maximal invalid subpart, as `TextDecoder`): Node's `buf.utf8Slice`.
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_bytes_utf8_prefix(
+pub unsafe extern "C" fn velt_rt_bytes_range_to_str_lossy(
     b: *const VeltBytes,
     start: i64,
     end: i64,
-) -> i64 {
-    let bytes = range(b, start, end);
-    match std::str::from_utf8(bytes) {
-        Ok(_) => bytes.len() as i64,
-        Err(e) if e.error_len().is_none() => e.valid_up_to() as i64,
-        Err(_) => -1,
-    }
-}
-
-/// XORs `[start, end)` (relative indices) with the four bytes of `mask` (most significant first),
-/// repeating from `start`: WebSocket masking (RFC 6455 §5.3), its own inverse.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_bytes_xor_mask(
-    b: *const VeltBytes,
-    mask: u32,
-    start: i64,
-    end: i64,
+    out: *mut VeltStr,
 ) {
-    let s = bytes_mut(b);
-    let (start, end) = (relative(start, s.len()), relative(end, s.len()));
-    if start >= end {
-        return;
-    }
-    let m = mask.to_be_bytes();
-    let wide = u64::from_ne_bytes([m[0], m[1], m[2], m[3], m[0], m[1], m[2], m[3]]);
-    let (chunks, rest) = s[start..end].as_chunks_mut::<8>();
-    for c in chunks {
-        *c = (u64::from_ne_bytes(*c) ^ wide).to_ne_bytes();
-    }
-    for (i, byte) in rest.iter_mut().enumerate() {
-        *byte ^= m[i & 3];
-    }
+    out.write(VeltStr::from_bytes(
+        String::from_utf8_lossy(range(b, start, end)).as_bytes(),
+    ));
 }
 
 #[cfg(test)]
@@ -303,7 +245,7 @@ mod tests {
     }
 
     #[test]
-    fn slice_concat_utf8_xor() {
+    fn slice_concat() {
         let b = arr(b"hello world");
         // SAFETY: valid owned buffers; `out` is written before it is read.
         unsafe {
@@ -316,21 +258,6 @@ mod tests {
             assert_eq!(out.assume_init_ref().as_bytes(), b"");
             velt_rt_bytes_concat(&arr(b"ab"), &arr(b"cd"), out.as_mut_ptr());
             assert_eq!(out.assume_init_ref().as_bytes(), b"abcd");
-            assert_eq!(velt_rt_bytes_utf8_valid(&arr("héllo ✓".as_bytes())), 1);
-            assert_eq!(velt_rt_bytes_utf8_valid(&arr(b"\xff\xfe")), 0);
-            // Every length around the 8-byte chunks, and an offset start.
-            for n in 0..20 {
-                let plain: Vec<u8> = (0..n as u8).collect();
-                let x = arr(&[&[9u8, 9][..], &plain].concat());
-                velt_rt_bytes_xor_mask(&x, 0x01020304, 2, i64::MAX);
-                let want: Vec<u8> = plain
-                    .iter()
-                    .enumerate()
-                    .map(|(i, b)| b ^ [1, 2, 3, 4][i % 4])
-                    .collect();
-                assert_eq!(&x.as_bytes()[2..], &want[..]);
-                assert_eq!(&x.as_bytes()[..2], &[9, 9]);
-            }
         }
     }
 }

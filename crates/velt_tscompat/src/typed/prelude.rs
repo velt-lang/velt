@@ -410,6 +410,16 @@ pub(crate) const VELT_MEMBERS: &[(&str, &[VeltOnly])] = &[
             ("isEmpty", "write `xs.length === 0`"),
             ("set", "assign the element: `xs[i] = v`"),
             ("truncate", "remove the tail with `xs.splice(n)`"),
+            (
+                "utf8Equals",
+                "compare `new TextDecoder().decode(bytes)` with the string",
+            ),
+            (
+                "utf8EqualsIgnoreCase",
+                "compare the decoded text's `toLowerCase()`",
+            ),
+            ("utf8Slice", "decode with `new TextDecoder().decode(bytes)`"),
+            ("write", "use `TextEncoder`'s `encodeInto(s, bytes)`"),
             ("xorMask", "XOR the bytes in a loop"),
             // Builtins.
             ("clone", "copy with `[...xs]` or `xs.slice()`"),

@@ -7,7 +7,8 @@
 - `listen(addr: "host:port"): Promise<TcpListener>`: port 0 picks a free port. The listen
   backlog is the OS maximum (a burst of connects waits to be accepted).
   `connect(addr): Promise<TcpStream>`.
-- `TcpListener { port: number }`: `accept(): Promise<TcpStream>` (TCP_NODELAY on), `close()`.
+- `TcpListener { port: number }`: `accept(): Promise<TcpStream>` (TCP_NODELAY on), `close()`
+  (an `accept` still waiting then fails with `EBADF`).
 - `TcpStream`:
   - `read(max = 0): Promise<u8[]>`: empty means end of stream.
   - `readString(max = 0): Promise<string>`: UTF-8; a character split across reads is completed
@@ -32,10 +33,29 @@
     returns the number of bytes written (0 when it takes nothing now, while an earlier write is
     still going on, for a TLS stream, and after an error, which the next `write` reports). When
     everything was written there is nothing to await.
-  - `shutdown()`: half-close.
+  - `writeLater(data: string): i64`, `writeBytesLater(data: u8[] | Uint8Array, start = 0, end =
+    data.length): i64`: queue bytes (copied at the call) that are sent when the task next waits
+    or finishes, together with everything else it queued until then: one system call for a
+    response head and the body pieces a render produced without waiting, and nothing held back
+    past a wait. They return the number of bytes still to be sent on the stream. A `write` goes
+    after what was queued before it. They throw `IoError` once sending failed (the error a
+    `write` would report), after `abort()` and on a closed handle.
+  - `drained(max = 0): Promise<void>`: resolves once at most `max` bytes queued by `writeLater`
+    (or written after them) are still to be sent, at once when there are no more: keeps a
+    producer that queues faster than the peer reads bounded. Throws `IoError` when sending
+    failed.
+  - `shutdown()`: half-close, after every byte written or queued before it (a TLS stream then
+    sends its close_notify).
   - `abort()`: fails the operations in flight (a `write` to a peer that stopped reading would
     otherwise never finish) and every later one. The handle stays open until `close()`.
-  - `peerAddr(): string`, `close()`.
+  - `readableWithin(ms, signal?: AbortSignal): Promise<bool>`: `readable()` with a limit: true
+    once a `tryRead` may find something, false when `ms` milliseconds passed first or `signal` was
+    aborted. One wait in the runtime, so nothing is left behind (a `Promise.race` of `readable()`
+    and a timer leaves the losing wait running): a server waiting for each idle connection's next
+    request.
+  - `peerAddr(): string`, `close()`: releases the handle; a read or `readable()` still waiting
+    then fails with `EBADF` (no code can read what it would bring), a write in flight goes on,
+    and so do bytes queued with `writeLater` (`await drained()` first to know they were sent).
 - `connectTls(addr, opts?: TlsConnectOptions { serverName?; ca?; alpn?: string[] }):
   Promise<TcpStream>`: a TLS connection (rustls), resolved once the handshake is done. The
   certificate is checked for the host in `addr` (or `serverName`) against the built-in roots

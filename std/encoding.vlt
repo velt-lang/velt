@@ -7,12 +7,12 @@
 
 import { IoResult } from "velt:io";
 import { HEX_VALUES, STD_DIGITS, STD_VALUES, URL_DIGITS, URL_VALUES } from "velt:encoding/tables";
+import { validPrefix } from "velt:encoding/utf8";
 
 // `(const VeltStr* s, VeltBytes* out)`: copies a string's bytes.
 declare function velt_rt_bytes_from_str(s: string): u8[];
 // `(const VeltBytes* b, IoResult<VeltStr>* out)`: copies bytes into a string, `EILSEQ` if invalid.
 declare function velt_rt_bytes_to_str(b: u8[]): IoResult<string>;
-declare function velt_rt_bytes_utf8_valid(b: u8[]): bool;
 
 // The SIMD operations hex uses (`velt:simd`, std/simd/*.vlt, is the API; declared again here
 // so that this module does not load it). `load` and `store` do not check their range.
@@ -377,7 +377,7 @@ export function utf8DecodeLossy(data: u8[]): string {
 
 /** Whether `data` is valid UTF-8. */
 export function utf8Valid(data: u8[]): bool {
-  return velt_rt_bytes_utf8_valid(data);
+  return validPrefix(data, 0, data.length) == (data.length as i64);
 }
 
 /** Offset of the first byte of `data` that starts an invalid UTF-8 sequence, or -1. */

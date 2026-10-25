@@ -32,6 +32,63 @@ const MAYBE_LONE: u8 = 1;
 
 const HEX: &[u8; 16] = b"0123456789abcdef";
 
+/// Where, from `i`, the 16-byte blocks of `s` that need no escaping end: the first block with
+/// a byte below 0x20, `"`, `\\` or `ED` (a possible lone surrogate), or the last whole block.
+/// The byte loop after it finds the exact byte; text is mostly such runs, read a block at a time.
+#[inline]
+fn clean_run(s: &[u8], mut i: usize) -> usize {
+    #[cfg(target_arch = "aarch64")]
+    // SAFETY: NEON is part of every aarch64 target; each load reads 16 bytes in bounds.
+    unsafe {
+        use core::arch::aarch64::*;
+        let (ctl, quote, slash, lone) = (
+            vdupq_n_u8(0x20),
+            vdupq_n_u8(b'"'),
+            vdupq_n_u8(b'\\'),
+            vdupq_n_u8(0xED),
+        );
+        while i + 16 <= s.len() {
+            let v = vld1q_u8(s.as_ptr().add(i));
+            let m = vorrq_u8(
+                vorrq_u8(vcltq_u8(v, ctl), vceqq_u8(v, quote)),
+                vorrq_u8(vceqq_u8(v, slash), vceqq_u8(v, lone)),
+            );
+            if vmaxvq_u8(m) != 0 {
+                break;
+            }
+            i += 16;
+        }
+    }
+    #[cfg(target_arch = "x86_64")]
+    // SAFETY: SSE2 is part of every x86-64 target; each load reads 16 bytes in bounds.
+    unsafe {
+        use core::arch::x86_64::*;
+        let (ctl, quote, slash, lone) = (
+            _mm_set1_epi8(0x1F),
+            _mm_set1_epi8(b'"' as i8),
+            _mm_set1_epi8(b'\\' as i8),
+            _mm_set1_epi8(0xEDu8 as i8),
+        );
+        while i + 16 <= s.len() {
+            let v = _mm_loadu_si128(s.as_ptr().add(i) as *const __m128i);
+            // Below 0x20: min(v, 0x1F) == v.
+            let m = _mm_or_si128(
+                _mm_or_si128(
+                    _mm_cmpeq_epi8(_mm_min_epu8(v, ctl), v),
+                    _mm_cmpeq_epi8(v, quote),
+                ),
+                _mm_or_si128(_mm_cmpeq_epi8(v, slash), _mm_cmpeq_epi8(v, lone)),
+            );
+            let bits = _mm_movemask_epi8(m) as u32;
+            if bits != 0 {
+                return i + bits.trailing_zeros() as usize;
+            }
+            i += 16;
+        }
+    }
+    i
+}
+
 /// Append `s` (canonical WTF-8) as a quoted, escaped JSON string literal.
 #[inline]
 pub fn push_json_string(out: &mut (impl Out + ?Sized), s: &[u8]) {
@@ -47,6 +104,7 @@ pub fn push_json_string_counted(out: &mut (impl Out + ?Sized), s: &[u8]) -> usiz
     let mut lone = 0;
     let mut i = 0;
     loop {
+        i = clean_run(s, i);
         while i < s.len() && ESCAPE[s[i] as usize] == 0 {
             i += 1;
         }
@@ -95,6 +153,47 @@ mod tests {
         let mut o = Vec::new();
         push_json_string(&mut o, s.as_bytes());
         String::from_utf8(o).unwrap()
+    }
+
+    /// Every special byte at every position of strings longer than a block, against the byte
+    /// by byte escaping.
+    #[test]
+    fn blocks_escape_like_bytes() {
+        fn slow(s: &[u8]) -> Vec<u8> {
+            let mut o = vec![b'"'];
+            for (i, &c) in s.iter().enumerate() {
+                match ESCAPE[c as usize] {
+                    0 => o.push(c),
+                    MAYBE_LONE if s.get(i + 1).is_some_and(|&b| b >= 0xA0) => {
+                        return Vec::new(); // not exercised: no lone surrogates below
+                    }
+                    MAYBE_LONE => o.push(c),
+                    b'u' => o.extend_from_slice(format!("\\u{:04x}", c).as_bytes()),
+                    e => o.extend_from_slice(&[b'\\', e]),
+                }
+            }
+            o.push(b'"');
+            o
+        }
+        for len in [15, 16, 17, 31, 32, 33, 47, 64, 100] {
+            for at in 0..len {
+                for special in [b'"', b'\\', b'\n', 0x01, 0x1F, 0xED] {
+                    let mut s = vec![b'a'; len];
+                    s[at] = special;
+                    if special == 0xED {
+                        // U+D7FF: ED 9F BF, a lead byte that is no lone surrogate.
+                        if at + 2 >= len {
+                            continue;
+                        }
+                        s[at + 1] = 0x9F;
+                        s[at + 2] = 0xBF;
+                    }
+                    let mut fast = Vec::new();
+                    push_json_string(&mut fast, &s);
+                    assert_eq!(fast, slow(&s), "len {len} at {at} byte {special:#x}");
+                }
+            }
+        }
     }
 
     #[test]

@@ -19,7 +19,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use velt_native::handles::{Key, Registry};
-use velt_native::{export, Error, Str, StrBuf};
+use velt_native::{export, Error, Str};
+use velt_text::db_json::parse_params;
 
 /// A pool (see the module docs).
 pub struct PoolObj {
@@ -142,20 +143,50 @@ async fn velt_std_postgres__pool_connect(pool: u64) -> Result<u64, Error> {
     io_result(r.await)
 }
 
-/// `pool.query(sql, params)` → `IoResult<string>` (as `velt_std_postgres__query`).
+/// `pool.query(sql, params)` as a row cursor (as `velt_std_postgres__query_rows`).
 #[export(async)]
-async fn velt_std_postgres__pool_query(
+async fn velt_std_postgres__pool_query_rows(
     pool: u64,
     sql: Str,
     params: Str,
     first_only: bool,
-) -> Result<Str, Error> {
+) -> Result<u64, Error> {
     pool_op(pool, move |c| async move {
-        let out = StrBuf::new();
-        let json = c
-            .query(&sql.to_str(), params.as_bytes(), first_only, out)
-            .await?;
-        Ok(json.finish())
+        let parsed = parse_params(params.as_bytes()).map_err(PgError::invalid)?;
+        let (statement, rows) = c.query_params(&sql.to_str(), parsed).await?;
+        Ok(super::cursor::open(statement, rows, first_only))
+    })
+    .await
+}
+
+/// As `velt_std_postgres__query_bound`, on one of the pool's connections.
+#[export(async)]
+async fn velt_std_postgres__pool_query_bound(
+    pool: u64,
+    sql: Str,
+    sink: u64,
+    first_only: bool,
+) -> Result<u64, Error> {
+    // SAFETY: std hands on each sink it was given, once.
+    let parsed = unsafe { super::sink::take(sink) };
+    pool_op(pool, move |c| async move {
+        let (statement, rows) = c.query_params(&sql.to_str(), parsed).await?;
+        Ok(super::cursor::open(statement, rows, first_only))
+    })
+    .await
+}
+
+/// As `velt_std_postgres__execute_bound`, on one of the pool's connections.
+#[export(async)]
+async fn velt_std_postgres__pool_execute_bound(
+    pool: u64,
+    sql: Str,
+    sink: u64,
+) -> Result<i64, Error> {
+    // SAFETY: as above.
+    let parsed = unsafe { super::sink::take(sink) };
+    pool_op(pool, move |c| async move {
+        Ok(c.execute_params(&sql.to_str(), parsed).await? as i64)
     })
     .await
 }

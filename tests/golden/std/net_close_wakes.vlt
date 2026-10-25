@@ -1,0 +1,62 @@
+// check: no leaks
+// Closing a handle ends what waits on it: a pending `accept` fails with EBADF (it kept the port
+// bound and the process alive), and so does a pending read or `readable()` of a stream closed
+// meanwhile; a write in flight still goes out. `readableWithin` waits with a limit and a
+// signal, leaving nothing behind.
+import { connect, listen } from "velt:net";
+import { AbortController } from "velt:task";
+
+async function main() {
+  const l = await listen("127.0.0.1:0");
+  const waiting = l;
+  const accept = spawn(async () => {
+    try {
+      await waiting.accept();
+      return "accepted";
+    } catch (e) {
+      return `accept: ${e.code}`;
+    }
+  });
+  await sleep(10);
+  l.close();
+  console.log(await accept);
+
+  const server = await listen("127.0.0.1:0");
+  const accepted = spawn(async () => await server.accept());
+  const c = await connect(`127.0.0.1:${server.port}`);
+  const s = await accepted;
+
+  // A read waiting when its stream is closed.
+  const reader = s;
+  const read = spawn(async () => {
+    try {
+      const data = await reader.read();
+      return `read ${data.length} bytes`;
+    } catch (e) {
+      return `read: ${e.code}`;
+    }
+  });
+  await sleep(10);
+  s.close();
+  console.log(await read);
+
+  // readableWithin: the limit, an aborted signal, and data that arrives.
+  const accepted2 = spawn(async () => await server.accept());
+  const c2 = await connect(`127.0.0.1:${server.port}`);
+  const s2 = await accepted2;
+  const t0 = Date.now();
+  console.log("limit:", await s2.readableWithin(50), Date.now() - t0 >= 40);
+  const stop = new AbortController();
+  const signal = stop.signal;
+  const stopped = spawn(async () => await s2.readableWithin(10000, signal));
+  await sleep(10);
+  stop.abort();
+  console.log("aborted:", await stopped);
+  await c2.write("x");
+  console.log("data:", await s2.readableWithin(10000), s2.tryRead(new Uint8Array(4)));
+
+  c.close();
+  c2.close();
+  s2.close();
+  server.close();
+}
