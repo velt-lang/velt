@@ -3108,7 +3108,10 @@ an `any`; `x++` gives the old number, and the value written is boxed back into t
 `number` variable combined with an `any` (`n += a`) stays a `number` (when `a` holds a string,
 `+=` concatenates and the conversion back stops with its `TypeError`, where Node stores the
 string). A
-symbol operand stops with Node's `TypeError: Cannot convert a Symbol value to a number`. Each
+symbol operand stops with Node's `TypeError: Cannot convert a Symbol value to a number`. Like
+the other stops on `any`, these `TypeError`s cannot be caught: a `catch` around the operator is
+never reached (see "These stops are not exceptions" under [Intersection
+types](#intersection-types)). Each
 conversion of a primitive is one call through the descriptor of the value held; `+` and the
 comparisons test the descriptors' tags before it.
 
@@ -3129,7 +3132,9 @@ array keeps its element type: pushing a value of another type stops with the con
 `TypeError` (Node's arrays take anything); an empty literal converted to `any`
 (`const xs: any = []`) is an `any[]`, which takes every value. Other built-in methods of these
 values stop with a `TypeError` naming #924, and a name that is no method of the value is Node's
-`TypeError: x.foo is not a function`.
+`TypeError: x.foo is not a function`. A function held has no methods through `any` yet: `call`,
+`apply`, `bind` and `toString` stop with a `TypeError` naming #924, and any other name is not a
+function.
 
 ```ts
 function main(): void {
