@@ -1,0 +1,3 @@
+iface_value_generic_bound.vlt:7:17: error: the type `Mapper` does not implement `Mapper`
+  = note: required by `T extends Mapper` of function `run`
+  = note: an interface value cannot stand for `T`: `Mapper` has a generic method, which is called on the concrete type (generic methods are dispatched statically); pass the class instance itself

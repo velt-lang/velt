@@ -1,0 +1,6 @@
+null true false null null
+[ null, undefined, null ]
+null true false null null
+[ null, 0, null, undefined, null ]
+{ a: null, b: 0, s: null, c: undefined, d: null }
+{ a: 5, b: undefined, s: 'y', c: null, d: undefined }

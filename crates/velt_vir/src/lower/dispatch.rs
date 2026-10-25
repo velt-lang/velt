@@ -155,6 +155,26 @@ impl FnLower<'_, '_> {
         )
     }
 
+    /// The slot of method `slot` of interface `iface` in the table of the interface value type
+    /// `recv` (an interface that is `iface` or extends it), found by name; `None` when `recv` is
+    /// not an interface value.
+    pub(super) fn dyn_slot_for(&mut self, iface: DefId, slot: u32, recv: TyId) -> Option<u32> {
+        let TyKind::Dyn(have, _) = self.cx.kind(recv) else {
+            return None;
+        };
+        if have == iface {
+            return Some(slot);
+        }
+        let (hir::Def::Interface(want), hir::Def::Interface(own)) =
+            (self.cx.hir.def(iface), self.cx.hir.def(have))
+        else {
+            return None;
+        };
+        let name = &want.methods.get(slot as usize)?.name;
+        let found = own.methods.iter().position(|m| &m.name == name)?;
+        Some(found as u32)
+    }
+
     pub(super) fn call_dyn(
         &mut self,
         slot: u32,

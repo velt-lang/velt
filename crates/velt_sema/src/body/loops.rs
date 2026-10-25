@@ -324,15 +324,11 @@ impl FnCx<'_, '_> {
 
     /// `for (kind pattern of it) body` over the checked source `it`: an iterable
     /// (`for_iter.rs`), else an array (a `Map` or `entries()` class through `entries()`).
-    pub(super) fn for_of(
-        &mut self,
-        mut it: hir::Expr,
-        p: ForOfParts<'_>,
-        out: &mut Vec<hir::Stmt>,
-    ) {
+    pub(super) fn for_of(&mut self, it: hir::Expr, p: ForOfParts<'_>, out: &mut Vec<hir::Stmt>) {
         if !p.await_each && self.cx.dynamic(it.ty) == Some(crate::any::Dynamic::Any) {
             return self.for_of_any(it, p, out);
         }
+        let mut it = self.array_bound_value(it).unwrap_or_else(|it| it);
         if self.is_iterable(it.ty) {
             return self.for_of_iterable(it, p, out);
         }

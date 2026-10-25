@@ -17,7 +17,3 @@ console.log(Object.isFrozen(target), Object.seal(target));
 const dict: Record<string, number> = Object.create(null);
 console.log(structuredClone(dict));
 console.log(Date.prototype);
-function isList<T>(v: T): boolean {
-  return Array.isArray(v);
-}
-console.log(isList([1]));

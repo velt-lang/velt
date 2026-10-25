@@ -1,0 +1,5 @@
+// `x as { z: number }` of an `unknown` holding `null` (#1313): the TypeError names the written
+// object type (expected output from `node` up to there; TypeScript keeps the `null`).
+const f = (x: unknown) => x as { z: number };
+console.log(f({ z: 1 }).z);
+console.log(f(null));

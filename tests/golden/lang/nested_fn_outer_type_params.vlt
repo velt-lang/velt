@@ -1,0 +1,57 @@
+// Nested function declarations that name a type parameter of the enclosing function or class
+// but capture nothing.
+type Res<T> = { ok: true; value: T } | { ok: false; error: string };
+
+function results<T>(x: T): Res<T>[] {
+  function failed(): Res<T> {
+    return { ok: false, error: "no" };
+  }
+  function passed(): Res<T> {
+    return { ok: true, value: x };
+  }
+  return [failed(), passed()];
+}
+
+function emptyLists<T>(n: number): T[][] {
+  function none(): T[] {
+    return [];
+  }
+  function fill(k: number, acc: T[][]): T[][] {
+    if (k === 0) {
+      return acc;
+    }
+    acc.push(none());
+    return fill(k - 1, acc);
+  }
+  return fill(n, []);
+}
+
+class Stack<T> {
+  items: T[] = [];
+  snapshot(): T[] {
+    function copy(xs: T[]): T[] {
+      const out: T[] = [];
+      for (const x of xs) {
+        out.push(x);
+      }
+      return out;
+    }
+    return copy(this.items);
+  }
+}
+
+function makers<T>(): (() => T[])[] {
+  function make(): T[] {
+    return [];
+  }
+  return [make, make];
+}
+
+const s = new Stack<string>();
+s.items.push("a", "b");
+const snap = s.snapshot();
+s.items.push("c");
+console.log(results(4), results("x")[1]);
+console.log(emptyLists<number>(2));
+console.log(snap, s.items.length);
+console.log(makers<boolean>().map((f) => f().length));

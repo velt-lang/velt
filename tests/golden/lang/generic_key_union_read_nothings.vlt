@@ -1,0 +1,37 @@
+// Reads through a key union keep each nothing: `null` of a `number | null` field is the `null`
+// of `T[K]`, which also holds `undefined`, and copies through the same read store it as `null`.
+type Q = { a: number | null; b?: number; s: string | null; c: number | null | undefined; d?: number | null };
+function get<T, K extends keyof T>(o: T, k: K): T[K] {
+  return o[k];
+}
+function copyKey<T, K extends keyof T>(dst: T, src: T, k: K): void {
+  dst[k] = src[k];
+}
+function setVia<T, K extends keyof T>(dst: T, src: T, k: K, j: K): void {
+  dst[j] = src[k];
+}
+function main() {
+  const q0: { a: number | null; b?: number; s: string | null } = { a: null, s: null };
+  const k0 = ["a", "b", "s"] as ("a" | "b" | "s")[];
+  const g0 = get(q0, k0[0]);
+  console.log(g0, g0 === null, g0 === undefined, get(q0, k0[2]), get(q0, "a"));
+  const v0: (number | string | null | undefined)[] = [];
+  for (const k of k0) v0.push(get(q0, k));
+  console.log(v0);
+  const q: Q = { a: null, b: 0, s: null, c: undefined, d: null };
+  const ks = ["a", "b", "s", "c", "d"] as (keyof Q)[];
+  const g = get(q, ks[0]);
+  console.log(g, g === null, g === undefined, get(q, ks[2]), get(q, "a"));
+  const vals: (number | string | null | undefined)[] = [];
+  for (const k of ks) vals.push(get(q, k));
+  console.log(vals);
+  const r: Q = { a: 1, b: 2, s: "x", c: 3, d: 4 };
+  for (const k of ks) copyKey(r, q, k);
+  console.log(r);
+  const t: Q = { a: 5, b: 6, s: "y", c: 7, d: 8 };
+  setVia(t, q, ks[0], ks[4]);
+  setVia(t, q, ks[3], ks[4]);
+  setVia(t, q, ks[0], ks[3]);
+  setVia(t, q, ks[3], ks[1]);
+  console.log(t);
+}

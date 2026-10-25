@@ -147,6 +147,41 @@ impl Ctx<'_> {
         Some(Ok(self.synth_iface(form, Some(written), module, span)))
     }
 
+    /// The interface of the fields of object type `t` written as a type parameter's bound
+    /// (`T extends { name: string }`): a type argument implements it with its own fields of
+    /// those names and types ([`Ctx::synth_impl`]), so `x.name` with `x: T` reads and writes
+    /// that field per instantiation. `None` when `t` is no object type with fields.
+    pub(crate) fn object_bound(
+        &mut self,
+        t: TyId,
+        env: &crate::resolve::TyEnv,
+        span: Span,
+    ) -> Option<Bound> {
+        if !self.is_object_type(t) || self.public_fields(t).is_empty() {
+            return None;
+        }
+        let form = Form::Meet {
+            ifaces: vec![],
+            object: Some(t),
+        };
+        // Shown with the names of the type parameters where it is written.
+        let saved = std::mem::replace(&mut self.display_params, env.params.clone());
+        let made = self.synth_iface(form, Some(vec![t]), env.module, span);
+        self.display_params = saved;
+        match self.ty.kind(made).clone() {
+            TyKind::Dyn(iface, args) => Some(Bound { iface, args }),
+            _ => None,
+        }
+    }
+
+    /// Is `iface` made by [`Self::object_bound`]?
+    pub(crate) fn is_object_bound(&self, iface: DefId) -> bool {
+        matches!(
+            self.synth_ifaces.forms.get(&iface),
+            Some((Form::Meet { ifaces, object: Some(_) }, _)) if ifaces.is_empty()
+        )
+    }
+
     /// The parts of `t` as written when it is an intersection interface made here, with `t`'s
     /// arguments.
     fn written_parts(&mut self, t: TyId) -> Option<Vec<TyId>> {

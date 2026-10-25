@@ -1,0 +1,59 @@
+// check: no leaks
+// A generic generator, and a static generator of a generic class, used as values apply their
+// dynamic defaults to a passed `undefined` (#1222); so does one assigned to a function type
+// with fewer parameters.
+function* gg<T>(t: T, x: any = "D"): Generator<any> {
+  yield t;
+  yield x;
+}
+
+function* gr<T>(x: any = "R"): Generator<T | string> {
+  yield `${x}`;
+}
+
+function* two<T>(a: T, x: any = "two", y: number = 2): Generator<any> {
+  yield a;
+  yield x;
+  yield y;
+}
+
+class G<T> {
+  static *gs(x: any = "G"): Generator<any> {
+    yield x;
+  }
+  static *gm<U>(u: U, x: any = "M"): Generator<any> {
+    yield u;
+    yield x;
+  }
+}
+
+function* gen(x: any = "g", y: number = 1): Generator<any> {
+  yield x;
+  yield y;
+}
+
+function inGeneric<U>(u: U): string {
+  const g: (t: U, x: any) => Generator<any> = gg;
+  return [...g(u, undefined)].join(",");
+}
+
+function main(): void {
+  const g: (t: number, x: any) => Generator<any> = gg;
+  console.log([...g(1, undefined)].join(","));
+  console.log([...g(2, "given")].join(","));
+  const h: (t: string, x: any) => Generator<any> = gg;
+  console.log([...h("s", undefined)].join(","));
+  const g2: (t: number, x: any) => Generator<any> = gg;
+  console.log(g === g2);
+  const r: (x: any) => Generator<number | string> = gr;
+  console.log([...r(undefined)].join(","));
+  const t1: (a: boolean, x: any, y: number) => Generator<any> = two;
+  console.log([...t1(true, undefined, 3)].join(","));
+  const s = G.gs;
+  console.log([...s(undefined)].join(","), [...s(7)].join(","));
+  const m: (u: number, x: any) => Generator<any> = G.gm;
+  console.log([...m(5, undefined)].join(","));
+  const fewer: (x: any) => Generator<any> = gen;
+  console.log([...fewer(undefined)].join(","));
+  console.log(inGeneric<number>(9), inGeneric<string>("q"));
+}

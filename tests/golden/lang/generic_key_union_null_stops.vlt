@@ -1,0 +1,15 @@
+// `null` written through a key union into an optional field that cannot hold it stops the
+// program (decision 4 of deferred-types.md); Node stores it.
+function setF<T, K extends keyof T>(o: T, k: K, v: T[K]): void {
+  o[k] = v;
+}
+type W = { a: number | null; b?: number };
+
+function main() {
+  const v: W = { a: 1 };
+  const ks: (keyof W)[] = ["a", "b"];
+  setF(v, ks[0], null);
+  console.log(v);
+  setF(v, ks[1], null);
+  console.log(v);
+}

@@ -72,6 +72,11 @@ impl FnCx<'_, '_> {
                 let mut ps = self.cx.fn_info(c).params.clone();
                 for p in &mut ps {
                     p.ty = self.cx.subst(p.ty, &oargs);
+                    // An inherited constructor's defaults are in its class's terms too
+                    // (`class S extends Set<string>`: `values: T[] = []`, issue #1096).
+                    if let Some(e) = p.default.as_mut().filter(|_| owner != d) {
+                        crate::visit::map_expr_types(e, &mut |t| self.cx.subst(t, &oargs));
+                    }
                 }
                 ctor_args = oargs;
                 (ps, format!("the constructor of `{cname}`"))

@@ -1,0 +1,4 @@
+iface_adapt_refusals.vlt:16:43: error: mismatched types
+  = note: `Handler<Shape, f64>` converts to `Handler<unknown, unknown>` through a wrapper that checks each call's arguments, but a parameter of type `Shape`: converting `unknown` to an interface is not supported yet (#924)
+iface_adapt_refusals.vlt:26:50: error: mismatched types
+  = note: `Handler<Box<f64>, f64>` converts to `Handler<Box<unknown>, unknown>` through a wrapper that checks each call's arguments, but the type argument `Box<unknown>`, which holds `unknown` or `any`: converting a generic class or container to other type arguments is not supported yet (#1185); `unknown` / `any` themselves are

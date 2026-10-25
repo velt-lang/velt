@@ -3,7 +3,7 @@ intersection_types.vlt:18:12: error: no field `name` on type `T & { tag: string 
 intersection_types.vlt:25:23: error: missing field `b` in `AB` literal
 intersection_types.vlt:26:35: error: no field `c` on type `AB`
   = note: objects have a fixed shape; use a `Map<string, V>` for dynamic keys
-intersection_types.vlt:15:18: error: `&` combines object types; `Point` is a class
+intersection_types.vlt:27:16: error: `&` combines object types; `Point` is a class
   = note: Velt classes are nominal: use `Pick<Point, …>` for its fields, or a field-only interface
 intersection_types.vlt:5:17: error: no value has type `{ k: string } & { k: f64 }`: field `k` is `string` in one part and `f64` in another
   = note: a value of an intersection has every part's fields at once

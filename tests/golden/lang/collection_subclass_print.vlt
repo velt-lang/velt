@@ -1,0 +1,46 @@
+// A subclass of `Map` or `Set` prints as Node prints it: its entries under its own name, tagged
+// with the base, then its own fields, and `String()` gives the base's tag.
+class Counts extends Map<string, number> {
+  bump(k: string): void {
+    this.set(k, (this.get(k) ?? 0) + 1);
+  }
+}
+class Tags extends Set<string> {}
+class Named<V> extends Map<string, V> {}
+class Deeper extends Counts {}
+const c = new Counts();
+c.bump("a");
+c.bump("a");
+c.bump("b");
+const t = new Tags();
+t.add("x");
+const n = new Named<boolean>();
+const d = new Deeper();
+d.bump("z");
+console.log(c, String(c));
+console.log(t, `${t}`);
+console.log(n, d, [c]);
+console.log({ inner: { deep: { more: c } } });
+
+class MF extends Map<string, number> {
+  tag = "t";
+  n = 2;
+}
+class SF extends Set<number> {
+  label = "s";
+}
+class Big extends Map<string, string> {
+  description = "a fairly long description string here";
+}
+const mf = new MF();
+console.log(mf);
+mf.set("z", 3);
+console.log(mf);
+const sf = new SF();
+sf.add(1);
+console.log(sf, [mf], { deep: { deeper: { m: mf } } });
+console.log(String(mf), `${sf}`);
+const b = new Big();
+b.set("key-one", "value number one");
+b.set("key-two", "value number two");
+console.log(b);

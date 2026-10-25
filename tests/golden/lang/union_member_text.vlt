@@ -1,0 +1,56 @@
+// `String(x)`, a template literal and a string `+` of a union with an array, tuple or type
+// parameter member (#1274) write the member the value holds as `String(m)` does (`1,2`), not
+// as `console.log` prints it (`[ 1, 2 ]`).
+// check: no leaks
+function u<T>(x: T | string): string {
+  return String(x);
+}
+
+function s<T>(x: T): string {
+  return String(x);
+}
+
+function mk(n: number): string | number[] {
+  return n > 0 ? [n, n + 1] : "none";
+}
+
+function opt(x: string | number[] | null): string {
+  return String(x) + "/" + `${x}`;
+}
+
+function tup(x: [number, string] | boolean): string {
+  return `${x}`;
+}
+
+class P {
+  toString(): string {
+    return "P!";
+  }
+}
+
+function cls(x: P | number[]): string {
+  return String(x);
+}
+
+function n<T>(x: T | null): string {
+  return String(x) + " " + `${x}`;
+}
+
+function m<T>(x: T | string | undefined): string {
+  return `m:${x}`;
+}
+
+console.log(u(["a", "b"]), s(["a", "b"]), `${u([1, 2])}`);
+console.log(String(mk(1)), `${mk(0)}`, `x${mk(2)}`);
+console.log(opt([1]), opt(null), opt("s"));
+console.log(u<string>("same"), u<number[][]>([[1, 2], [3]]), u<boolean>(true));
+console.log(tup([1, "a"]), tup(false), cls(new P()), cls([7, 8]));
+console.log(
+  n<number[]>([1, 2]),
+  n<number[]>(null),
+  m<number[]>([3]),
+  m<number>(undefined),
+  m<number>(4),
+);
+const xs: (string | number[])[] = ["a", [1]];
+console.log(xs, String(xs));

@@ -1,0 +1,8 @@
+generic_method_override_vars.vlt:10:13: error: generic method `apply` is overridden in `B`, so calling it on a `A` would need dynamic dispatch
+  = note: `run` calls `apply` through a type parameter given `A` here; generic methods are dispatched statically: instantiate it with the concrete class, or make the method non-generic
+generic_method_override_vars.vlt:12:13: error: generic method `apply` is overridden in `B`, so calling it on a `A` would need dynamic dispatch
+  = note: `run` calls `apply` through a type parameter given `A` here; generic methods are dispatched statically: instantiate it with the concrete class, or make the method non-generic
+generic_method_override_vars.vlt:13:13: error: generic method `apply` is overridden in `B`, so calling it on a `A` would need dynamic dispatch
+  = note: `Runner.run` calls `apply` through a type parameter given `A` here; generic methods are dispatched statically: instantiate it with the concrete class, or make the method non-generic
+generic_method_override_vars.vlt:16:13: error: generic method `apply` is overridden in `B`, so calling it on a `A` would need dynamic dispatch
+  = note: `run` calls `apply` through a type parameter given `A` here; generic methods are dispatched statically: instantiate it with the concrete class, or make the method non-generic

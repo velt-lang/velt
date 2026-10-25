@@ -5,16 +5,18 @@
 //! function infers it from its body like any other (`collect::ret_infer`). The syntax is rewritten
 //! before collection, so every later pass sees an ordinary generic function. Generic arrows
 //! anywhere else are reported by `body::expr::closure` (a closure value has one type; Velt has
-//! no generic function values). Likewise a module-level `const g = function* (...) { ... };` is
-//! the generator function `function* g(...) { ... }`, and a module-level arrow (or function
-//! expression) constant with a rest parameter and typed parameters, `const f = (...xs: T[]) =>
-//! body;`, the function `function f(...xs: T[]) { return body; }`: a function value cannot take
+//! no generic function values). A constant of a generic function type (`const id: Id = (x) =>
+//! x;`) is a generic function the same way ([`typed`]). Likewise a module-level
+//! `const g = function* (...) { ... };` is the generator function `function* g(...) { ... }`,
+//! and a module-level arrow (or function expression) constant with a rest parameter and typed
+//! parameters, `const f = (...xs: T[]) => body;`, the function `function f(...xs: T[]) { return body; }`: a function value cannot take
 //! rest arguments yet (#943), a function can. Local ones stay closures (a nested function
 //! cannot capture locals), which `body::expr::closure` reports. An arrow constant naming
 //! itself becomes a function too, at module level and in bodies ([`recursive`]).
 
 mod local;
 mod recursive;
+mod typed;
 
 use rustc_hash::FxHashSet;
 
@@ -36,19 +38,21 @@ pub(crate) struct Lifted {
 /// The modules with their liftable generic arrow constants rewritten into functions, or `None`
 /// when no module has one (the common case: nothing is copied).
 pub(crate) fn lift(modules: &[SourceModule]) -> Option<Lifted> {
-    let any = modules.iter().any(|m| {
+    let types = typed::GenericFnTypes::new(modules);
+    let any = modules.iter().enumerate().any(|(k, m)| {
         m.ast
             .items
             .iter()
-            .any(|i| as_function(i).is_some() || local::item_has_local(i))
+            .any(|i| as_function(i, k, &types).is_some() || local::item_has_local(i, &types))
     });
     if !any {
         return None;
     }
-    let mut locals = local::Rewriter::default();
+    let mut locals = local::Rewriter::new(&types);
     let mut module_fns = vec![];
-    let mut lift_item = |i: &ast::Item| {
-        let mut i = match as_function(i) {
+    let mut lift_item = |k: usize, i: &ast::Item| {
+        locals.module = k;
+        let mut i = match as_function(i, k, &types) {
             Some(f) => {
                 if let ast::ItemKind::Function(f) = &f.kind {
                     if !f.sig.is_generator {
@@ -64,12 +68,13 @@ pub(crate) fn lift(modules: &[SourceModule]) -> Option<Lifted> {
     };
     let modules = modules
         .iter()
-        .map(|m| SourceModule {
+        .enumerate()
+        .map(|(k, m)| SourceModule {
             path: m.path.clone(),
             is_std: m.is_std,
             file: m.file,
             ast: ast::Module {
-                items: m.ast.items.iter().map(&mut lift_item).collect(),
+                items: m.ast.items.iter().map(|i| lift_item(k, i)).collect(),
                 span: m.ast.span,
                 jsx_import_source: m.ast.jsx_import_source.clone(),
             },
@@ -87,13 +92,24 @@ pub(crate) fn lift(modules: &[SourceModule]) -> Option<Lifted> {
 }
 
 /// A module-level `const f = <T>(x: T): R => body;` as `function f<T>(x: T): R { return body; }`
-/// (`: R` only when the arrow has it).
-fn as_function(item: &ast::Item) -> Option<ast::Item> {
+/// (`: R` only when the arrow has it); likewise a constant of a generic function type
+/// ([`typed`]) of module `module`.
+fn as_function(
+    item: &ast::Item,
+    module: usize,
+    types: &typed::GenericFnTypes,
+) -> Option<ast::Item> {
     let ast::ItemKind::Var(v) = &item.kind else {
         return None;
     };
     let f = generator_function(v)
         .or_else(|| arrow_function(v))
+        .or_else(|| {
+            types
+                .may_declare(v)
+                .then(|| typed::typed_function(v, module, types))
+                .flatten()
+        })
         .or_else(|| lifted_arrow(v, true))
         .or_else(|| recursive::recursive_arrow(v))?;
     Some(ast::Item {
@@ -269,6 +285,46 @@ mod tests {
         // Untyped parameters, or a local one (it could capture locals), stay closures.
         assert!(lifted("const f = (a, ...xs: number[]) => a;").is_none());
         assert!(lifted("function f() { const g = (...xs: number[]) => xs; }").is_none());
+    }
+
+    #[test]
+    fn lifts_constants_of_generic_function_types() {
+        let fn_of = |src: &str, at: usize| {
+            let (ast, d) = velt_syntax::parse_file(FileId(0), src);
+            assert!(d.is_empty(), "{d:?}");
+            let m = SourceModule {
+                path: "main".into(),
+                is_std: false,
+                file: FileId(0),
+                ast,
+                imports: vec![],
+                jsx_runtime: None,
+            };
+            let mut l = lift(&[m])?;
+            match l.modules.remove(0).ast.items.remove(at).kind {
+                ast::ItemKind::Function(f) => Some(f),
+                _ => None,
+            }
+        };
+        let f = fn_of("const id: <T>(x: T) => T = (x) => x;", 0).expect("lifted");
+        assert_eq!((f.sig.generics.len(), f.sig.params.len()), (1, 1));
+        assert!(f.sig.ret.is_some());
+        // Through a generic alias; the arrow takes fewer parameters than the type.
+        let src = "type P<K> = <V>(k: K, v: V) => K; const p: P<string> = (k) => k;";
+        let f = fn_of(src, 1).expect("lifted");
+        assert_eq!(f.sig.params.len(), 2);
+        assert_eq!(f.sig.params[1].name.name, "#arg1");
+        // A name asserted to the type is called.
+        let src = "const mk = Symbol as unknown as <T>(d: string) => T;";
+        let f = fn_of(src, 0).expect("lifted");
+        assert!(
+            matches!(&f.body.stmts[0].kind, ast::StmtKind::Return(Some(e))
+            if matches!(e.kind, ast::ExprKind::Call { .. }))
+        );
+        // Other initializers, `let`, and non-generic types stay as they are.
+        assert!(fn_of("type Id = <T>(x: T) => T; const h: Id = [f][0];", 1).is_none());
+        assert!(fn_of("type Id = <T>(x: T) => T; let g: Id = (x) => x;", 1).is_none());
+        assert!(fn_of("const n: (x: number) => number = (x) => x;", 0).is_none());
     }
 
     #[test]
