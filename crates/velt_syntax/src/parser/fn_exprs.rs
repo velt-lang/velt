@@ -4,10 +4,11 @@
 //! A function expression that is not a generator is parsed as the arrow function with the same
 //! parameters, result and body (`ExprKind::Arrow`): without `this` in its body the two behave
 //! the same. Its span starts at `function` (or `async`), which tells `velt fmt` to print it as
-//! written. `this` in the body is TypeScript's TS2683 without a `this` parameter; the
-//! expression's own name used inside its body (recursion) is not supported yet; so is `this` in
-//! one that is an object-literal property's value, where TypeScript types `this` as the literal.
-//! Generators stay `ExprKind::Function` (sema's `gen_closure`), with the same rules for `this`.
+//! written. `this` in the body is TypeScript's TS2683 without a `this` parameter, except in one
+//! that is an object-literal property's value, where TypeScript types `this` as the literal: it
+//! gets the `METHOD_THIS` parameter, as a method does. The expression's own name used inside its
+//! body (recursion) is not supported yet. Generators stay `ExprKind::Function` (sema's
+//! `gen_closure`), with the same rules for `this`.
 //!
 //! A `this: T` parameter declares the type of `this` and is no parameter: callers pass the
 //! receiver. A function declaration keeps `T` in `FnSig::this_param` (unless it is `void`); so
@@ -39,6 +40,9 @@ impl<'a> Parser<'a> {
             sig.this_param = None;
             let this_param = self.this_param.take();
             let body = self.parse_fn_body()?;
+            if in_object && this_param.is_none() {
+                self.method_this_param(lo, &mut sig.params, &body);
+            }
             self.check_fn_this(this_param, &body, in_object);
             return Ok(ExprKind::Function(Box::new(FnDecl {
                 sig,
@@ -47,7 +51,7 @@ impl<'a> Parser<'a> {
             })));
         }
         let type_params = self.parse_generic_params()?;
-        let params = self.parse_arrow_params()?;
+        let mut params = self.parse_arrow_params()?;
         let this_param = self.this_param.take();
         let (ret, throws) = if self.eat(Tok::Colon) {
             (Some(self.parse_ret_type()?), self.parse_throws_clause()?)
@@ -82,6 +86,9 @@ impl<'a> Parser<'a> {
                     })));
                 }
             }
+        }
+        if in_object && this_param.is_none() {
+            self.method_this_arrow_param(lo, &mut params, &body);
         }
         self.check_fn_this(this_param, &body, in_object);
         Ok(ExprKind::Arrow {
@@ -137,11 +144,8 @@ impl<'a> Parser<'a> {
             return;
         };
         let d = match this_param {
-            None if in_object => Diagnostic::error(
-                "`this` in a function expression that is an object-literal property is not supported yet",
-                at,
-            )
-            .with_note("TypeScript allows this (`this` is the object the function is called on, typed as the literal); Velt doesn't yet because a function value has no receiver; use the object's variable, or declare a class"),
+            // The object the function is called on: a `METHOD_THIS` parameter.
+            None if in_object => return,
             None => Diagnostic::error(
                 "'this' implicitly has type 'any' because it does not have a type annotation (TypeScript's TS2683)",
                 at,
@@ -217,7 +221,8 @@ fn typed_param(a: &ArrowParam, this_at: &Span) -> Option<Param> {
     })
 }
 
-/// The first `this` of `body` outside the classes and functions declared in it.
+/// The first `this` of `body` outside the classes and functions declared in it (object-literal
+/// methods included).
 pub(super) fn own_this(body: &Block) -> Option<Span> {
     #[derive(Default)]
     struct Find {
@@ -231,9 +236,15 @@ pub(super) fn own_this(body: &Block) -> Option<Span> {
             }
         }
         fn expr(&mut self, e: &'a Expr) {
-            match e.kind {
+            match &e.kind {
                 ExprKind::This => self.this.push(e.span),
                 ExprKind::Function(_) => self.items.push(e.span),
+                // A nested object-literal method: its `this` is its own object.
+                ExprKind::Arrow { params, .. }
+                    if params.first().is_some_and(|p| is_method_this(&p.name)) =>
+                {
+                    self.items.push(e.span)
+                }
                 _ => {}
             }
         }

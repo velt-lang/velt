@@ -774,9 +774,10 @@ async function main() {
   annotation``, as under `--strict`, also in a generator (`function* () { … }`); with one
   (`function (this: T, …)`) it is not supported yet as a value (a function value has no
   receiver): declare the function and call it with `call` or `apply` (below), take the object as
-  an ordinary parameter, or write a class method. In a function expression that is the value of
-  an object-literal property (`{ v: 1, get: function () { return this.v; } }`), where TS types
-  `this` as the literal, `this` is not supported yet either.
+  an ordinary parameter, or write a class method. A function expression that is the value of an
+  object-literal property (`{ v: 1, get: function () { return this.v; } }`) is a method of the
+  literal: `this` is the object, as in TS
+  ([`this` in object-literal methods](types.md#this-in-object-literal-methods)).
 - A `this: T` parameter (first in a function's or method's parameter list) declares the type of
   `this` and is no parameter. `this: void` says the function doesn't use `this`. An arrow cannot
   have one (TS2730). `velt fmt` does not keep it yet, so it leaves a file with one as written

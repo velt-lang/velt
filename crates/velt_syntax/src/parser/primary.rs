@@ -490,7 +490,8 @@ impl<'a> Parser<'a> {
         else {
             return;
         };
-        let msg = match (setter, params.len()) {
+        let own = params.iter().filter(|p| !is_method_this(&p.name)).count();
+        let msg = match (setter, own) {
             (false, 0) | (true, 1) => None,
             (false, _) => Some("a getter cannot have parameters"),
             (true, _) => Some("a setter must have exactly one parameter"),
@@ -516,9 +517,9 @@ impl<'a> Parser<'a> {
             name: String::new(),
             span: name.span,
         };
-        let sig = self.parse_sig_rest(lo, anonymous, is_async, true)?;
+        let mut sig = self.parse_sig_rest(lo, anonymous, is_async, true)?;
         let body = self.parse_fn_body()?;
-        self.reject_this_in_method(&name, &body);
+        self.method_this_param(lo, &mut sig.params, &body);
         let span = self.span_from(lo);
         let f = FnDecl {
             sig,
@@ -529,36 +530,79 @@ impl<'a> Parser<'a> {
         Ok(ObjectProp::KeyValue(name, f))
     }
 
-    /// Reports `this` in the body of object-literal method `name` (not supported yet).
-    fn reject_this_in_method(&mut self, name: &Ident, body: &Block) {
-        if let Some(at) = this_in_block(body) {
-            self.diags.push(
-                velt_common::Diagnostic::error(
-                    format!(
-                        "`this` in the object-literal method `{}` is not supported yet",
-                        name.name
-                    ),
-                    at,
-                )
-                .with_note("TypeScript allows this (`this` is the object the method is called on); Velt doesn't yet because the method is a function stored in a field, which sees the variables around it but not the object; use those variables, or declare a class"),
-            );
+    /// [`METHOD_THIS`] in front of `params` of a generator method (or `function*` property
+    /// value) starting at `lo` whose `body` uses `this`. Its type is a placeholder sema
+    /// replaces (`infer this`, which is no type outside a conditional type).
+    pub(super) fn method_this_param(&mut self, lo: u32, params: &mut Vec<Param>, body: &Block) {
+        if super::fn_exprs::own_this(body).is_none() {
+            return;
         }
+        let at = Span::new(self.file, lo, lo);
+        let name = Ident {
+            name: METHOD_THIS.into(),
+            span: at,
+        };
+        let ty = TypeExpr {
+            kind: TypeExprKind::Infer(name.clone()),
+            span: at,
+        };
+        params.insert(
+            0,
+            Param {
+                name,
+                pattern: None,
+                ty,
+                default: None,
+                optional: false,
+                rest: false,
+                span: at,
+            },
+        );
+    }
+
+    /// [`METHOD_THIS`] in front of `params` of a method (or getter, setter, or `function`
+    /// property value) starting at `lo` whose `body` uses `this`.
+    pub(super) fn method_this_arrow_param(
+        &mut self,
+        lo: u32,
+        params: &mut Vec<ArrowParam>,
+        body: &Block,
+    ) {
+        if super::fn_exprs::own_this(body).is_none() {
+            return;
+        }
+        let name = Ident {
+            name: METHOD_THIS.into(),
+            span: Span::new(self.file, lo, lo),
+        };
+        params.insert(
+            0,
+            ArrowParam {
+                name,
+                pattern: None,
+                ty: None,
+                default: None,
+                optional: false,
+                rest: false,
+            },
+        );
     }
 
     /// `name(params) { body }` in an object literal, after the name: a property holding the
     /// function, `name: (params) => { body }`. The parameter types may be left out: they come
     /// from the object's context, as an arrow's do (a `ProxyHandler`'s `get(obj, prop) {}`).
-    /// `this` in the body is not supported yet (an arrow's `this` is the enclosing one).
+    /// A body that uses `this` gets the [`METHOD_THIS`] parameter (an arrow's `this` is the
+    /// enclosing one).
     fn finish_method_prop(&mut self, lo: u32, name: Ident, is_async: bool) -> PResult<ObjectProp> {
         let type_params = self.parse_generic_params()?;
-        let params = self.parse_arrow_params()?;
+        let mut params = self.parse_arrow_params()?;
         let (ret, throws) = if self.eat(Tok::Colon) {
             (Some(self.parse_ret_type()?), self.parse_throws_clause()?)
         } else {
             (None, None)
         };
         let body = self.parse_fn_body()?;
-        self.reject_this_in_method(&name, &body);
+        self.method_this_arrow_param(lo, &mut params, &body);
         let span = self.span_from(lo);
         let arrow = self.mk_expr(
             ExprKind::Arrow {
@@ -647,23 +691,6 @@ impl Parser<'_> {
         ];
         ExprKind::New { class, args }
     }
-}
-
-/// Where `body` uses `this` (in nested arrows too, which see the same `this`).
-fn this_in_block(body: &Block) -> Option<Span> {
-    struct Find(Option<Span>);
-    impl<'a> crate::visit::Visit<'a> for Find {
-        fn expr(&mut self, e: &'a Expr) {
-            if matches!(e.kind, ExprKind::This) && self.0.is_none() {
-                self.0 = Some(e.span);
-            }
-        }
-    }
-    let mut f = Find(None);
-    for s in &body.stmts {
-        crate::visit::walk_stmt(s, &mut f);
-    }
-    f.0
 }
 
 /// The property name a number literal key stands for: the number as `String` spells it (`7`,

@@ -1,0 +1,169 @@
+// Object literals with getters and setters: the keys `Object.keys` and `for…in` list (one per
+// getter/setter pair, setter-only names too), a getter filling an interface field when the
+// literal is converted, and method values that don't use `this` as property values (#941).
+
+interface P {
+  n: number;
+  get d(): number;
+  set d(v: number);
+  m(): number;
+}
+
+const p: P = {
+  n: 1,
+  get d() {
+    return this.n * 2;
+  },
+  set d(v: number) {
+    this.n = v / 2;
+  },
+  m() {
+    return this.n;
+  },
+};
+console.log(Object.keys(p));
+for (const k in p) {
+  console.log("p", k);
+}
+
+// No expected type: a setter alone, a pair written apart, a method using `this`.
+const w = {
+  n: 1,
+  set w(v: number) {
+    console.log("set w", v);
+  },
+};
+w.w = 4;
+console.log(Object.keys(w));
+for (const k in w) {
+  console.log("w", k);
+}
+const q = {
+  get a() {
+    return 1;
+  },
+  n: 2,
+  set a(v: number) {
+    console.log("set a", v);
+  },
+  s: "x",
+  m() {
+    return this.n;
+  },
+};
+console.log(Object.keys(q), q.m());
+for (const k in q) {
+  console.log("q", k);
+}
+
+// A getter fills the slot of an interface field (`readonly` or not), with `as` and without
+// (the methods use `this`: a function that doesn't is a field of the literal's own type).
+interface V {
+  readonly value: number;
+  show(): string;
+}
+
+const o = {
+  get value() {
+    return 1;
+  },
+  show() {
+    return "v" + this.value;
+  },
+};
+const c = o as V;
+const e: V = o;
+console.log(c.value, e.value, e.show());
+
+function show(v: V): number {
+  return v.value;
+}
+
+console.log(show(o));
+
+interface W {
+  value: number;
+  readonly label: string;
+  bump(): void;
+}
+
+let n = 5;
+const o2 = {
+  label: "w",
+  get value() {
+    return n;
+  },
+  set value(v: number) {
+    n = v;
+  },
+  bump() {
+    this.value = this.value + 1;
+  },
+};
+const ww: W = o2;
+ww.value = 7;
+console.log(ww.value, o2.value, n, ww.label);
+const ws = o2 as W;
+ws.value = 9;
+ws.bump();
+console.log(ws.value, n);
+
+// Read when used, not when converted.
+interface Text {
+  readonly value: string;
+  readonly size: number;
+  upper(): string;
+}
+
+let held = "a";
+const t = {
+  get value() {
+    return held;
+  },
+  get size() {
+    return held.length;
+  },
+  upper() {
+    return this.value.toUpperCase();
+  },
+};
+const tv: Text = t;
+held = "abc";
+console.log(tv.value, tv.size, tv.upper());
+
+// A generic literal's getter.
+interface G<T> {
+  readonly value: T;
+  tag(): string;
+}
+
+function make<T>(x: T): G<T> {
+  const obj = {
+    get value(): T {
+      return x;
+    },
+    tag(): string {
+      return typeof this.value;
+    },
+  };
+  return obj as G<T>;
+}
+
+console.log(make(42).value, make("s").value, make(true).tag());
+
+// A method that doesn't use `this`, read off an object, as a property's value.
+class Greeter {
+  hello(name: string): string {
+    return "hello " + name;
+  }
+}
+
+interface Hi {
+  n: number;
+  hi(name: string): string;
+}
+
+const g = new Greeter();
+const hi: Hi = { n: 1, hi: g.hello };
+const plain = { n: 2, hi: g.hello };
+console.log(hi.hi("a"), plain.hi("b"));

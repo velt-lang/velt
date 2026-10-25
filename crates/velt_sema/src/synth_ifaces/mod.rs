@@ -176,6 +176,9 @@ impl Ctx<'_> {
         if let Some(note) = self.field_only_parent_note(expected, found) {
             return Some(note);
         }
+        if let Some(note) = self.upcast_member_note(expected, found) {
+            return Some(note);
+        }
         self.meet_parts(found)?;
         if !self.is_object_type(expected) {
             return None;

@@ -1731,10 +1731,12 @@ console.log(b.v); // hi
 - **Methods in object literals**: `{ name(x: T): R { ... } }` is a property holding the function,
   as `{ name: (x: T): R => { ... } }` is; `async name() {}` holds an async function. As in an
   arrow, the parameter types may be left out where the literal's type gives them. `this` in such
-  a method is not supported yet (an object literal is plain data). Getters and setters
-  (`get x() {}`, `set x(v) {}`) are supported where the literal implements an interface with
-  methods ([Object literals implementing interfaces](#object-literals-implementing-interfaces)),
-  not yet in a literal of an object type. A generic method (`match<R>(arms: Arms<R>): R { ... }`)
+  a method, and getters and setters (`get x() {}`, `set x(v) {}`), are supported where the
+  literal implements an interface with methods
+  ([Object literals implementing interfaces](#object-literals-implementing-interfaces)) and in
+  a literal with no expected type
+  ([`this` in object-literal methods](#this-in-object-literal-methods)), not yet in a literal of
+  an object type. A generic method (`match<R>(arms: Arms<R>): R { ... }`)
   parses as a property holding a generic arrow, which is not supported yet there (a generic
   arrow must be the value of a `const`, [Functions](functions.md#arrow-functions-and-function-types)). A generator method `*name() { ... }` (`async *name()`) is
   a property holding a [generator function](functions.md#generator-function-expressions), as
@@ -2492,7 +2494,8 @@ c.next(3);
 console.log(c.count); // 5
 ```
 
-- The methods use the variables around them, as arrows do; `this` in them is not supported yet.
+- The methods use the variables around them, as arrows do, and `this`, the interface value
+  they are called on ([`this` in object-literal methods](#this-in-object-literal-methods)).
 - A generic interface method (`map<R>(f: (x: T) => R): R`) cannot be a function value: declare a
   class that implements the interface.
 - A method that throws must be allowed to by the interface method's function type, as for any
@@ -2500,6 +2503,99 @@ console.log(c.count); // 5
   doesn't allow throwing unless it says `throws`.
 - `console.log` and `JSON.stringify` of such a value are not supported yet (as for other
   interface values).
+
+### `this` in object-literal methods
+
+In a method, getter or setter of an object literal, `this` is the object the method is called
+on, as in TypeScript, where Velt knows the literal's type:
+
+- where an interface is expected ([above](#object-literals-implementing-interfaces)), `this` is
+  the interface value: its members are read, written and called through the interface;
+- in a literal with no expected type (`const o = { … }`, or one returned from a function
+  without a result type), `this` has the literal's own type, which TypeScript shows as
+  `{ count: number; inc(): void }`. Such a literal, and one with getters or setters, is a value
+  of an interface Velt makes from its members.
+
+```ts
+const counter = {
+  count: 0,
+  step: 2,
+  inc() {
+    this.count += this.step;
+    return this;
+  },
+  get double() {
+    return this.count * 2;
+  },
+  set double(v) {
+    this.count = v / 2;
+  },
+};
+
+counter.inc().inc();
+console.log(counter.count, counter.double); // 4 8
+counter.double = 20;
+console.log(counter.count); // 10
+
+interface Plugin {
+  name: string;
+  installs: number;
+  install(app: string[]): void;
+}
+
+const router: Plugin = {
+  name: "router",
+  installs: 0,
+  install(app) {
+    this.installs++;
+    app.push(this.name);
+  },
+};
+const app: string[] = [];
+router.install(app);
+console.log(app, router.installs); // [ 'router' ] 1
+```
+
+- Arrows inside a method see its `this`, as in TS; an arrow property of the literal
+  (`{ f: () => this.x }`) has the `this` around the literal, as it does in TS. A literal nested
+  in a method has its own `this`. Generator and async methods take `this` too, and so does a
+  function expression that is a property's value (`{ f: function () { return this.x; } }`).
+- In a literal with no expected type, a method using `this` gives its parameter types
+  (`add(n: number) { … }`), as TS's `--noImplicitAny` requires. Its result type comes from its
+  body, also when it calls other methods through `this`; a method whose result depends on
+  itself (`fact(n: number): number { … this.fact(n - 1) … }`) writes it, as TS requires
+  (TS7023). A setter's parameter without a type takes its getter's.
+- The object is passed to the method by the call (`o.m()`), so the object and its methods
+  form no reference cycle. Such a method read as a value (`const f = o.m`, `xs.map(o.m)`) is an
+  error in a literal with no expected type: Node would call it without its object (`this`
+  `undefined`, a `TypeError` once it reads a member); call it on its object, or wrap it in an
+  arrow (`(x) => o.m(x)`). A method of an interface value read as a value stays bound to the
+  object it was read from ([methods as values](functions.md#arrow-functions-and-function-types)).
+- A method read off another object as a property's value (`{ n: 2, m: c.m }`) is an error when
+  its body may use `this`: Node calls it with the literal as `this` (`o.m()`), while the value
+  read keeps the object it was read from. Write a method that calls it (`m() { return c.m(); }`).
+  A method that doesn't use `this` may be such a value.
+- `Object.keys` and `for…in` list a getter and setter pair once, under its name, as Node does:
+  `Object.keys({ n: 1, get d() { … }, set d(v) { … } })` is `[ 'n', 'd' ]`.
+- A getter fills the slot of an interface field when the literal's value is converted to an
+  interface with methods (`o as V`, `const v: V = o` with
+  `interface V { readonly value: number; show(): string }`), as in TypeScript; the getter runs
+  on each read. Writing the field through the interface calls the literal's setter, which takes
+  the field's type (a setter taking another type, also a wider union, is an error where the
+  literal converts); without a setter, writing it is an error (Node throws a `TypeError`). A
+  property holding a function, a method that doesn't use `this` or an arrow
+  (`show: () => "x"`), fills the slot of a method with the same parameters and result, unless
+  the function may throw (an error for now: write the literal where the interface is
+  expected). An interface with only fields is an object type, which such a value does not
+  convert to yet (#1510). A plain literal, with no getters or setters and no method using
+  `this` (`const p = { x: 1, show() { return "p"; } }`), is an object of its own type, which
+  does not convert to an interface with methods once stored: write it where the interface is
+  expected (`const p: P = { … }`).
+- Not supported yet: `this` in a method of a literal whose expected type is an object type
+  (`{ x: number; norm(): number }`, whose fields hold plain functions) or `any`; declare an
+  interface instead. Calling such a method with another `this` (`.call`, `.apply`, `.bind`) is
+  not supported either. Object spread (`{ ...o }`) of such a value, `console.log` and
+  `JSON.stringify` of it are not supported yet, as for other interface values.
 
 ## bigint
 

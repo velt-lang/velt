@@ -170,7 +170,7 @@ impl FnCx<'_, '_> {
 
     /// Is `e` the name of a class or of a built-in namespace (`String`, `Math`), whose members
     /// are static?
-    fn static_namespace(&mut self, e: &ast::Expr) -> bool {
+    pub(super) fn static_namespace(&mut self, e: &ast::Expr) -> bool {
         let ast::ExprKind::Ident(id) = &e.kind else {
             return false;
         };
@@ -230,7 +230,7 @@ impl FnCx<'_, '_> {
     }
 
     /// The class `e` names, if it names one of the program (not a built-in namespace).
-    fn class_of_name(&mut self, e: &ast::Expr) -> Option<DefId> {
+    pub(super) fn class_of_name(&mut self, e: &ast::Expr) -> Option<DefId> {
         let ast::ExprKind::Ident(id) = &e.kind else {
             return None;
         };
@@ -246,6 +246,12 @@ impl FnCx<'_, '_> {
         if self.cx.ty.is_bottom(t) {
             return true;
         }
+        self.method_of_reads_this(t, prop)
+    }
+
+    /// May the method `prop` of a value of type `t` read `this` (a field holding a function:
+    /// no)?
+    pub(super) fn method_of_reads_this(&mut self, t: TyId, prop: &ast::Ident) -> bool {
         if !self.is_method_value(t, &prop.name) {
             return false;
         }

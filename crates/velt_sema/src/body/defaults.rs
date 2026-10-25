@@ -121,6 +121,22 @@ fn optional_default(
     h
 }
 
+/// Default `e` of parameter `optional` (written `x?: T`) or not, of type `ty`, of a method
+/// of the interface an object literal with no expected type implements
+/// (`expr/literal_iface.rs`): checked as an interface method's.
+pub(crate) fn literal_method_default(
+    cx: &mut Ctx,
+    module: usize,
+    (e, optional): (&ast::Expr, bool),
+    ty: TyId,
+    fn_name: &str,
+) -> crate::hir::Expr {
+    match optional {
+        true => optional_default(cx, module, &[], e, ty),
+        false => check_default(cx, module, &[], fn_name, None, e, ty),
+    }
+}
+
 /// A default of a parameter whose type allows `undefined`: JavaScript applies it to a passed
 /// `undefined` too, which calls do not do yet; only a default of `undefined` itself (the same
 /// either way) is accepted (issue #930).

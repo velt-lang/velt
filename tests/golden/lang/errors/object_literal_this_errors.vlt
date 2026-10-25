@@ -1,0 +1,90 @@
+// `this` in object-literal methods where Velt doesn't know the object it is (#941), and the
+// methods of a literal with no expected type that it can't type.
+
+type Point = { x: number; norm(): number };
+
+interface HasM {
+  n: number;
+  m(): number;
+}
+
+class C {
+  static readonly tag = "C";
+  n = 1;
+  m(): number {
+    return this.n;
+  }
+  static s(): string {
+    return this.tag;
+  }
+}
+
+function mk(): C {
+  return new C();
+}
+
+function main(): void {
+  // A plain object type with a method signature: its fields hold plain functions.
+  const p: Point = {
+    x: 3,
+    norm() {
+      return this.x;
+    },
+  };
+
+  // `any` (TypeScript types `this` as `any` here too).
+  const a: any = {
+    x: 1,
+    m() {
+      return this.x;
+    },
+  };
+
+  // A method with no written result whose result depends on itself through `this`.
+  const r = {
+    n: 1,
+    loop() {
+      return this.loop();
+    },
+  };
+
+  // A parameter without a type, where nothing gives it one.
+  const q = {
+    n: 1,
+    add(k) {
+      return this.n + k;
+    },
+  };
+
+  // A method using `this` read as a value: Node calls it without the object.
+  const o = {
+    x: 1,
+    get() {
+      return this.x;
+    },
+  };
+  const detached = o.get;
+  const mapped = [1, 2].map(o.get);
+
+  // A method using `this` read off another object as a property's value: Node calls it
+  // with the literal as `this`.
+  const c = new C();
+  const p1: HasM = { n: 2, m: c.m };
+  const lit: HasM = {
+    n: 3,
+    m() {
+      return this.n;
+    },
+  };
+  const p2: HasM = { n: 4, m: lit.m };
+  const p3 = { n: 2, m: c.m };
+
+  // The same off receivers that are not paths, and a static method using `this`.
+  const cs = [new C()];
+  const p4 = { n: 2, m: new C().m };
+  const p5 = { n: 3, m: [new C()][0].m };
+  const p6 = { n: 4, m: mk().m };
+  const p7: HasM = { n: 5, m: mk().m };
+  const p8 = { n: 6, m: cs[0].m };
+  const p9 = { s: C.s };
+}

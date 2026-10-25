@@ -1,0 +1,13 @@
+c=3 (double 6)
+c=5 (double 10)
+42 84
+1005
+c=15 (double 30) 15
+c=17 (double 34), d=3 (double 6)
+hello arg
+hi cast
+hey RENAMED
+[ 'router#1', 'router#2' ] router x2
+[ 2, 3, 4 ]
+[ 2 ]
+later 117

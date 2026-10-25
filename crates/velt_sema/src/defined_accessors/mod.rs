@@ -17,7 +17,8 @@
 //! with `configurable: false` defining it again throws `TypeError: Cannot redefine property:
 //! k` (checked only where the property may be defined twice: another call, or a loop).
 //! `enumerable` changes nothing Velt shows (an interface value is not listed by key). `this`
-//! inside the accessors is not supported (#941; the parser reports it). Other accessor
+//! inside the accessors is not supported yet (`emit.rs` reports it in a descriptor; the
+//! literal's own become functions held in variables, where sema reports it). Other accessor
 //! definitions are errors in `body::expr::object_define`.
 
 mod emit;

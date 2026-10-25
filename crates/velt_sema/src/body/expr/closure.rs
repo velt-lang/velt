@@ -182,6 +182,13 @@ impl FnCx<'_, '_> {
             );
             return self.error_expr(e.span);
         }
+        // An object-literal method using `this` (`literal_this.rs`).
+        if super::literal_this::takes_this(e) {
+            let at = super::literal_this::first_this(e);
+            if self.method_this_ty(e.span, at).is_none() {
+                return self.error_expr(e.span);
+            }
+        }
         // A rest parameter's type is checked as a function's is.
         if let Some(t) = params.last().filter(|p| p.rest).and_then(|p| p.ty.as_ref()) {
             let ty = self.resolve(t);

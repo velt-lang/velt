@@ -75,6 +75,32 @@ fn object_literal_accessors() {
 }
 
 #[test]
+fn object_literal_methods_using_this() {
+    // The parser gives these a leading `this` parameter, which is not written.
+    round_trips(
+        "const o = {
+  n: 1,
+  inc(by: number) {
+    this.n += by;
+  },
+  get double() {
+    return this.n * 2;
+  },
+  set double(v) {
+    this.n = v / 2;
+  },
+  *each(): Generator<number> {
+    yield this.n;
+  },
+  f: function () {
+    return this.n;
+  },
+};
+",
+    );
+}
+
+#[test]
 fn symbol_keys() {
     round_trips("const KEY: unique symbol = Symbol(\"k\");\n");
     round_trips(

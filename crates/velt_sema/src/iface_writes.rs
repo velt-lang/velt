@@ -57,13 +57,15 @@ pub(crate) enum SetterSrc {
         ty: TyId,
     },
     /// An object literal's `set f(v)`: the function value in field `index` of the literal's
-    /// struct `d` (of function type `fn_ty`, taking a `param`).
+    /// struct `d` (of function type `fn_ty`, taking a `param`, after the object as interface
+    /// value `this.0` through implementation `this.1` when it uses `this`).
     Call {
         d: DefId,
         self_ty: TyId,
         index: u32,
         fn_ty: TyId,
         param: TyId,
+        this: Option<(TyId, u32)>,
     },
     /// Class `d`'s `set name(v)` (or the trampoline dispatching to it): the setter slot itself.
     /// Only for writes of the whole field: a part write through a class's accessor is an error
@@ -318,6 +320,89 @@ impl Ctx<'_> {
         );
     }
 
+    /// Has field `field` of `iface` (or a part of it) been written through the interface?
+    pub(crate) fn field_written(&self, iface: DefId, field: usize) -> bool {
+        self.iface_writes.fields.contains_key(&(iface, field))
+    }
+
+    /// Once every body is checked, for the interface conversions `pairs` (`a` to `b`,
+    /// `crate::synth_ifaces`): a field of `b` written through it (or a part of one) is written
+    /// through `a` too, whose implementations then give `b`'s setters. A field `a` gives with
+    /// a getter (`get k()`) can only be written whole, through its setter: a part of it
+    /// changed through `b` is an error, as for a class's accessor.
+    pub(crate) fn writes_through_upcasts(&mut self, pairs: &[(DefId, DefId)]) {
+        // Each is tried once: one that cannot be written through is reported once.
+        let mut tried: FxHashSet<DefId> = FxHashSet::default();
+        let mut parts: FxHashSet<(DefId, usize)> = FxHashSet::default();
+        let mut reported: FxHashSet<(DefId, usize)> = FxHashSet::default();
+        loop {
+            let mut changed = false;
+            for &(a, b) in pairs {
+                let Some(&span) = self.iface_writes.written.get(&b) else {
+                    continue;
+                };
+                let mut fields: Vec<(usize, Span)> = (self.iface_writes.fields.iter())
+                    .filter(|((i, _), _)| *i == b)
+                    .map(|(&(_, k), &at)| (k, at))
+                    .collect();
+                fields.sort_unstable_by_key(|f| f.0);
+                for (k, at) in fields {
+                    let part = self.iface_writes.parts.contains_key(&(b, k));
+                    let name = self
+                        .iface(b)
+                        .map_or(String::new(), |i| i.fields[k].name.clone());
+                    let ours =
+                        (self.iface(a)).and_then(|i| i.fields.iter().position(|f| f.name == name));
+                    match ours {
+                        Some(g) if part && parts.insert((a, g)) => {
+                            changed = true;
+                            self.mark_part_written(a, g, at);
+                        }
+                        Some(g) if !self.field_written(a, g) => {
+                            changed = true;
+                            self.note_field_written(a, g, at);
+                        }
+                        Some(_) => {}
+                        None if part => {
+                            let iname = self.iface_name(b);
+                            self.error(
+                                Diagnostic::error(
+                                    format!("a part of `{name}` is changed through `{iname}`, whose value gives `{name}` with a getter, which is not supported yet (#350)"),
+                                    at,
+                                )
+                                .with_note("Node changes the object the getter returns in place and never calls a setter; Velt reads a copy here and would have to write it back through a setter"),
+                            );
+                            self.iface_writes.parts.remove(&(b, k));
+                        }
+                        None => {
+                            let set = format!("set {name}");
+                            let setter = self
+                                .iface(a)
+                                .is_some_and(|i| i.methods.iter().any(|m| m.name == set));
+                            let readonly = self.iface(b).is_some_and(|i| i.fields[k].readonly);
+                            if !setter && !readonly && reported.insert((a, k)) {
+                                let iname = self.iface_name(b);
+                                self.error(
+                                    Diagnostic::error(
+                                        format!("`{name}` is written through `{iname}`, whose value gives `{name}` with a getter and no setter"),
+                                        at,
+                                    )
+                                    .with_note(format!("Node throws a `TypeError` here; add `set {name}(v)` to the object literal")),
+                                );
+                            }
+                        }
+                    }
+                }
+                if !self.iface_written(a) && tried.insert(a) && self.mark_iface_written(a, span) {
+                    changed = true;
+                }
+            }
+            if !changed {
+                return;
+            }
+        }
+    }
+
     /// Field `field` of `iface` (or a part of it) is written through the interface.
     pub(crate) fn note_field_written(&mut self, iface: DefId, field: usize, span: Span) {
         self.iface_writes
@@ -406,7 +491,8 @@ impl Ctx<'_> {
                     index,
                     fn_ty,
                     param,
-                } => defs.push(self.literal_setter(d, self_ty, (index, fn_ty), param)),
+                    this,
+                } => defs.push(self.literal_setter(d, self_ty, (index, fn_ty), param, this)),
                 SetterSrc::Method { d, name, .. } | SetterSrc::GetterOnly { d, name, .. }
                     if self.iface_writes.parts.contains_key(&(iface, k)) =>
                 {
@@ -486,6 +572,7 @@ impl Ctx<'_> {
         self_ty: TyId,
         (index, fn_ty): (u32, TyId),
         param: TyId,
+        this: Option<(TyId, u32)>,
     ) -> DefId {
         let host = Host::adt(self, d);
         let name = format!("{}.<set>", self.adt(d).map_or("", |a| &a.qual_name));
@@ -502,7 +589,7 @@ impl Ctx<'_> {
             default: None,
         }];
         let unit = self.ty.unit;
-        let target = Target::Field { index, fn_ty };
+        let target = Target::Field { index, fn_ty, this };
         synth_method(self, &host, self_ty, name, params, unit, false, target)
     }
 }
