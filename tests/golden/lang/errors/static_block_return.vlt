@@ -1,0 +1,3 @@
+// `return` in a class static block is a SyntaxError in JavaScript (TS18041).
+class T { static { if (T.name.length > 0) { return; } } }
+console.log("x");

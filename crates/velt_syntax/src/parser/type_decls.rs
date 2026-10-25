@@ -252,6 +252,7 @@ impl<'a> Parser<'a> {
                 optional: f.optional,
                 readonly: f.readonly,
                 span: f.span,
+                accessors: vec![],
             })
             .collect();
         let span = self.span_from(lo);

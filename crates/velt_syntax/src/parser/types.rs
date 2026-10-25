@@ -418,6 +418,7 @@ impl<'a> Parser<'a> {
                 optional,
                 readonly,
                 span: self.span_from(flo),
+                accessors: vec![],
             });
             if !self.eat_type_member_end() {
                 break;

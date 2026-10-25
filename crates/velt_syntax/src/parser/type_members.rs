@@ -66,10 +66,14 @@ impl<'a> Parser<'a> {
             self.error(what, name.span);
             return Err(Fail);
         };
+        let setter_param = match setter {
+            true => sig.params.first().map(|p| p.name.clone()),
+            false => None,
+        };
         Ok(Some(TypeAccessor {
             name,
             ty,
-            setter,
+            setter_param,
             span: self.span_from(lo),
         }))
     }
@@ -82,16 +86,29 @@ impl<'a> Parser<'a> {
         a: TypeAccessor,
         readonly: bool,
     ) {
-        if let Some(f) = fields.iter_mut().find(|f| f.name.name == a.name.name) {
-            f.readonly &= !a.setter;
+        let setter = a.setter_param.is_some();
+        let part = TypeFieldAccessor {
+            setter_param: a.setter_param,
+            ty: a.ty.clone(),
+            span: a.span,
+        };
+        let pair = |f: &ObjectTypeField| f.name.name == a.name.name && !f.accessors.is_empty();
+        if let Some(f) = fields.iter_mut().find(|f| pair(f)) {
+            f.readonly &= !setter;
+            if !setter {
+                // The property reads as the getter's type.
+                f.ty = a.ty;
+            }
+            f.accessors.push(part);
             return;
         }
         fields.push(ObjectTypeField {
             name: a.name,
             ty: a.ty,
             optional: false,
-            readonly: readonly || !a.setter,
+            readonly: readonly || !setter,
             span: a.span,
+            accessors: vec![part],
         });
     }
 }
@@ -142,7 +159,8 @@ impl Parser<'_> {
 pub(super) struct TypeAccessor {
     name: Ident,
     ty: TypeExpr,
-    setter: bool,
+    /// A setter's parameter name (`None`: a getter).
+    setter_param: Option<Ident>,
     span: velt_common::Span,
 }
 

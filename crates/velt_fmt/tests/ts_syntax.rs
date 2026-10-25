@@ -427,6 +427,9 @@ fn accessors_in_object_types() {
     round_trips("type G<X> = {\n  get item(): X;\n};\n\ninterface I {\n  get v(): number;\n}\n");
     round_trips("function f(x: { get size(): number }): number {\n  return x.size;\n}\n");
     round_trips("let a: { get n(): number; set n(v: number) };\nlet b: { set m(x: string) };\n");
+    // Each accessor is kept as written: the setter first, a setter of its own type.
+    round_trips("let y: { set b(val: number); get b(): number };\n");
+    round_trips("let z: { get w(): string; set w(input: string | number) };\n");
     // Members named `get` and `set` stay fields and methods.
     round_trips("let c: { get: () => number; set(x: number): void };\n");
 }

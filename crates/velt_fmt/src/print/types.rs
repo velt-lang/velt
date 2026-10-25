@@ -542,50 +542,25 @@ pub(super) fn callable_members<'a>(
 }
 
 impl Printer<'_> {
-    /// A field the parser made of an accessor in an object type (`get v(): T`, `set v(x: T)`,
-    /// or both, which it records as one field): the accessors as written.
+    /// A field the parser made of accessors in an object type (`get v(): T`, `set v(x: T)`):
+    /// each accessor as written, in the written order.
     fn type_accessor(&mut self, f: &ObjectTypeField) -> Option<Doc> {
-        let written = slice(self.src, f.span);
-        let word = |w: &str| {
-            written
-                .strip_prefix(w)
-                .is_some_and(|r| r.starts_with(char::is_whitespace))
-        };
-        let (getter, setter) = (word("get"), word("set"));
-        if !getter && !setter {
+        if f.accessors.is_empty() {
             return None;
         }
         let key = self.prop_key(&f.name);
-        let get = cat!["get ", key.clone(), "(): ", self.ty(&f.ty)];
-        let set = |p: &mut Self, name: &str| {
-            cat![
-                "set ",
-                key.clone(),
-                "(",
-                name.to_string(),
-                ": ",
-                p.ty(&f.ty),
-                ")"
-            ]
-        };
-        // The setter's parameter name, from the source after its `set`.
-        let rest = self.src.get(f.span.lo as usize..).unwrap_or("");
-        let at = rest.find("set ").map_or(rest, |i| &rest[i..]);
-        let param = at
-            .split_once('(')
-            .and_then(|(_, r)| r.split_once(':'))
-            .map(|(n, _)| n.trim())
-            .filter(|n| {
-                !n.is_empty()
-                    && n.chars()
-                        .all(|c| c.is_alphanumeric() || c == '_' || c == '$')
-            })
-            .unwrap_or("value")
-            .to_string();
-        Some(match (getter, f.readonly) {
-            (true, true) => get,
-            (true, false) => cat![get, "; ", set(self, &param)],
-            (false, _) => set(self, &param),
-        })
+        let mut parts = vec![];
+        for a in &f.accessors {
+            let ty = self.ty(&a.ty);
+            parts.push(match &a.setter_param {
+                None => cat!["get ", key.clone(), "(): ", ty],
+                Some(p) => cat!["set ", key.clone(), "(", p.name.clone(), ": ", ty, ")"],
+            });
+        }
+        let mut doc = parts.remove(0);
+        for p in parts {
+            doc = cat![doc, "; ", p];
+        }
+        Some(doc)
     }
 }

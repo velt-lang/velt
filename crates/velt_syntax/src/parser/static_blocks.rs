@@ -22,6 +22,10 @@ impl Parser<'_> {
         self.static_blocks += 1;
         self.bump(); // static
         let body = self.parse_fn_body()?;
+        for r in returns(&body.stmts) {
+            // TS18041; a SyntaxError in JavaScript.
+            self.error("a `return` cannot be used inside a class static block", r);
+        }
         let span = self.span_from(lo);
         let void = TypeExpr {
             kind: TypeExprKind::Void,
@@ -60,6 +64,59 @@ impl Parser<'_> {
     }
 }
 
+/// The spans of the `return` statements of `stmts` (not inside a nested function or class).
+fn returns(stmts: &[Stmt]) -> Vec<velt_common::Span> {
+    let mut out = vec![];
+    for s in stmts {
+        returns_in(s, &mut out);
+    }
+    out
+}
+
+fn returns_in(s: &Stmt, out: &mut Vec<velt_common::Span>) {
+    let block = |b: &Block, out: &mut Vec<velt_common::Span>| {
+        for s in &b.stmts {
+            returns_in(s, out);
+        }
+    };
+    match &s.kind {
+        StmtKind::Return(_) => out.push(s.span),
+        StmtKind::If { then, els, .. } => {
+            block(then, out);
+            if let Some(e) = els {
+                returns_in(e, out);
+            }
+        }
+        StmtKind::While { body, .. }
+        | StmtKind::DoWhile { body, .. }
+        | StmtKind::ForOf { body, .. }
+        | StmtKind::For { body, .. }
+        | StmtKind::Block(body) => block(body, out),
+        StmtKind::Labeled { body, .. } => returns_in(body, out),
+        StmtKind::Switch { cases, .. } => {
+            for c in cases {
+                for s in &c.body {
+                    returns_in(s, out);
+                }
+            }
+        }
+        StmtKind::Try {
+            body,
+            catch,
+            finally,
+        } => {
+            block(body, out);
+            if let Some((_, c)) = catch {
+                block(c, out);
+            }
+            if let Some(f) = finally {
+                block(f, out);
+            }
+        }
+        _ => {}
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::ast::{ExprKind, ItemKind};
@@ -87,5 +144,19 @@ mod tests {
         );
         // `static() {}` is a method named `static`.
         assert_eq!(c.methods.len(), 1);
+    }
+
+    #[test]
+    fn a_return_in_a_static_block_is_an_error() {
+        let src = concat!(
+            "class A { static { if (true) { return; } } m() { return 1; } }\n",
+            "class B { static { const f = () => { return 2; }; function g() { return 3; } } }\n",
+        );
+        let (_, diags) = crate::parse_file(FileId(0), src);
+        let msgs: Vec<_> = diags.iter().map(|d| d.message.as_str()).collect();
+        assert_eq!(
+            msgs,
+            ["a `return` cannot be used inside a class static block"]
+        );
     }
 }
