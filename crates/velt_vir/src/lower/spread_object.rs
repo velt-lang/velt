@@ -360,33 +360,37 @@ impl FnLower<'_, '_> {
 
     /// The owned value `v` of a field of type `from` as `to`, the type of a read through keys
     /// whose fields have different types (`T[K]`): a member is tagged with its variant, a
-    /// required field's value is the option's value, and an optional field's nothing stays
-    /// the nothing.
+    /// required field's value is the option's value, and a nothing stays that nothing (`null`
+    /// of a `number | null` field is the `null` of a `T[K]` that also holds `undefined`). A
+    /// `T | null | undefined` is an option of a `T | null` (`Cx::kind`), taken one option at
+    /// a time.
     fn key_value_into(&mut self, v: Operand, from: TyId, to: TyId) -> Operand {
         if from == to || self.dead() {
             return v;
         }
+        if let TyKind::Option(u, n) = self.cx.kind(from) {
+            let vt = self.vty(to);
+            let out = Place::local(self.temp(vt));
+            let pv = self.place_of(v, from);
+            let some = self.option_is_some(&pv, from);
+            let (yes, no, join) = (self.new_block(), self.new_block(), self.new_block());
+            self.branch(some, yes, no);
+            self.switch_to(yes);
+            let payload = Operand::Copy(self.some_payload(&pv, from));
+            let w = self.key_value_into(payload, u, to);
+            self.assign(out.clone(), Rvalue::Use(w));
+            self.goto(join);
+            self.switch_to(no);
+            let none = match self.nothing_in(n, to) {
+                Some(w) => w,
+                None => ice("a key read of a nothing its union cannot hold"),
+            };
+            self.assign(out.clone(), Rvalue::Use(none));
+            self.goto(join);
+            self.switch_to(join);
+            return Operand::Copy(out);
+        }
         if let TyKind::Option(u, _) = self.cx.kind(to) {
-            if let TyKind::Option(g, _) = self.cx.kind(from) {
-                let vt = self.vty(to);
-                let out = Place::local(self.temp(vt));
-                let pv = self.place_of(v, from);
-                let some = self.option_is_some(&pv, from);
-                let (yes, no, join) = (self.new_block(), self.new_block(), self.new_block());
-                self.branch(some, yes, no);
-                self.switch_to(yes);
-                let payload = Operand::Copy(self.some_payload(&pv, from));
-                let w = self.key_value_into(payload, g, u);
-                let w = self.some_of(to, w);
-                self.assign(out.clone(), Rvalue::Use(w));
-                self.goto(join);
-                self.switch_to(no);
-                let none = self.none_value(to);
-                self.assign(out.clone(), Rvalue::Use(none));
-                self.goto(join);
-                self.switch_to(join);
-                return Operand::Copy(out);
-            }
             let w = self.key_value_into(v, from, u);
             return self.some_of(to, w);
         }
@@ -489,14 +493,8 @@ impl FnLower<'_, '_> {
     /// The nothing `n` (`null` or `undefined`) as a value of field type `to`: its own nothing,
     /// or its payload's (`null` into a `T | null | undefined`), else a `TypeError`.
     fn nothing_as(&mut self, n: Nothing, to: TyId, name: &str) -> Operand {
-        if let TyKind::Option(g, m) = self.cx.kind(to) {
-            if m == n {
-                return self.none_value(to);
-            }
-            if matches!(self.cx.kind(g), TyKind::Option(_, k) if k == n) {
-                let w = self.none_value(g);
-                return self.some_of(to, w);
-            }
+        if let Some(w) = self.nothing_in(n, to) {
+            return w;
         }
         let fname = self.field_type_name(to);
         let what = if n.has_null() { "null" } else { "undefined" };
@@ -505,6 +503,22 @@ impl FnLower<'_, '_> {
         ));
         self.terminate(Terminator::Unreachable);
         unit()
+    }
+
+    /// The nothing `n` as a value of type `to`, if `to` holds it: its own nothing, or its
+    /// payload's (`null` of a `T | null | undefined` is `Some(None)`).
+    fn nothing_in(&mut self, n: Nothing, to: TyId) -> Option<Operand> {
+        let TyKind::Option(g, m) = self.cx.kind(to) else {
+            return None;
+        };
+        if m == n {
+            return Some(self.none_value(to));
+        }
+        if matches!(self.cx.kind(g), TyKind::Option(_, k) if k == n) {
+            let w = self.none_value(g);
+            return Some(self.some_of(to, w));
+        }
+        None
     }
 
     /// The member of the union value at `src` (type `from`) that has type `to`, or a
