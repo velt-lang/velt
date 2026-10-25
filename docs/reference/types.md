@@ -744,7 +744,10 @@ nothings alike:
   the keys of the branch taken, as in Node: the conditional is an object type in which a field
   only some branches write is optional (TypeScript's `{ boundaryId: number } | {}`, spread as
   `{ boundaryId?: number }`), so the key is absent when the other branch is taken. Each branch is
-  checked under the narrowing of the condition (`r ? { redirect: { ...r } } : {}`).
+  checked under the narrowing of the condition (`r ? { redirect: { ...r } } : {}`); a key the
+  branches write with different types has their union (`c ? { k: 1 } : { k: "s" }` spreads `k:
+  number | string`), and a getter is read where the spread is written (one using `this`, or a
+  setter, keeps the literal's own rules).
 - An object literal may leave out an optional field (`{ port: i64; host?: string }` accepts
   `{ port: 80 }`). A field of an object type declared `a: T | null` may be left out too, and is
   then `null`.

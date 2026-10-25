@@ -20,10 +20,6 @@ impl FnCx<'_, '_> {
             return None;
         }
         let out = self.cond_shape(e)?;
-        // Every branch writes every field: the literal types it already (nothing to add).
-        if out.iter().all(|f| !f.optional) {
-            return None;
-        }
         Some(self.cx.anon_type_with(&out, self.module))
     }
 
@@ -66,9 +62,13 @@ impl FnCx<'_, '_> {
         for (k, shape) in shapes.iter().enumerate() {
             for f in shape {
                 let other = shapes[1 - k].iter().find(|g| g.name == f.name);
-                if let Some(seen) = out.iter().find(|g| g.name == f.name) {
+                if let Some(seen) = out.iter_mut().find(|g| g.name == f.name) {
+                    // Written with another type by the other branch: their union, as
+                    // TypeScript types it (`c ? { k: 1 } : { k: "s" }` spreads `k: number |
+                    // string`).
                     if seen.ty != f.ty {
-                        return None;
+                        let span = e.span;
+                        seen.ty = self.cx.union_of(&[seen.ty, f.ty], false, span);
                     }
                     continue;
                 }
@@ -80,6 +80,95 @@ impl FnCx<'_, '_> {
         }
         Some(out)
     }
+}
+
+/// A conditional spread operand whose object literals have getters (`c ? { get g() { return
+/// 1; } } : {}`) with each getter called where it is written (`g: (() => { return 1; })()`):
+/// a spread reads a getter's value, in property order, as JavaScript does. `None` when there
+/// is none, or a getter uses `this` or the literal has a setter (kept as written).
+pub(super) fn called_getters(e: &ast::Expr) -> Option<ast::Expr> {
+    if !matches!(strip(e).kind, ast::ExprKind::Cond { .. }) {
+        return None;
+    }
+    let mut found = false;
+    let out = call_getters(e, &mut found)?;
+    found.then_some(out)
+}
+
+fn call_getters(e: &ast::Expr, found: &mut bool) -> Option<ast::Expr> {
+    let e = strip(e);
+    let kind = match &e.kind {
+        ast::ExprKind::Cond { cond, then, els } => ast::ExprKind::Cond {
+            cond: cond.clone(),
+            then: Box::new(call_getters(then, found)?),
+            els: Box::new(call_getters(els, found)?),
+        },
+        ast::ExprKind::Object(props) => {
+            let mut out = vec![];
+            for p in props {
+                let accessor = match p {
+                    ast::ObjectProp::KeyValue(k, v) => match &v.kind {
+                        ast::ExprKind::Call { callee, args, .. } => match (&callee.kind, &args[..])
+                        {
+                            (ast::ExprKind::Ident(f), [arrow]) if f.name == ast::OBJECT_GET_FN => {
+                                Some((k, arrow, true))
+                            }
+                            (ast::ExprKind::Ident(f), _) if f.name == ast::OBJECT_SET_FN => {
+                                return None;
+                            }
+                            _ => None,
+                        },
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                let Some((k, arrow, _)) = accessor else {
+                    out.push(p.clone());
+                    continue;
+                };
+                if uses_this(arrow) {
+                    return None;
+                }
+                *found = true;
+                let call = ast::ExprKind::Call {
+                    callee: Box::new(ast::Expr {
+                        id: ast::NodeId(u32::MAX),
+                        kind: ast::ExprKind::Paren(Box::new(arrow.clone())),
+                        span: arrow.span,
+                    }),
+                    type_args: vec![],
+                    args: vec![],
+                    optional: false,
+                };
+                let value = ast::Expr {
+                    id: ast::NodeId(u32::MAX),
+                    kind: call,
+                    span: arrow.span,
+                };
+                out.push(ast::ObjectProp::KeyValue(k.clone(), value));
+            }
+            ast::ExprKind::Object(out)
+        }
+        _ => return Some(e.clone()),
+    };
+    Some(ast::Expr {
+        id: e.id,
+        kind,
+        span: e.span,
+    })
+}
+
+/// Does the getter function `f` use `this` (its object, which a spread does not pass)?
+fn uses_this(f: &ast::Expr) -> bool {
+    struct Find(bool);
+    impl<'a> velt_syntax::visit::Visit<'a> for Find {
+        fn expr(&mut self, e: &'a ast::Expr) {
+            self.0 |= matches!(e.kind, ast::ExprKind::This);
+        }
+    }
+    let mut v = Find(false);
+    velt_syntax::visit::walk_expr(f, &mut v);
+    v.0
 }
 
 fn strip(e: &ast::Expr) -> &ast::Expr {
