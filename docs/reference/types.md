@@ -2089,7 +2089,8 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   may change the value, as a variable or inline, and so may a collection narrowed by `s instanceof
   Set` (or `Map`) where the test holds. Not reported yet (TypeScript reports them): such a method called on a field,
   an element, a destructured or returned value or a `for...of` variable of a read-only type, a
-  method read as a value (`const add = s.add`), and passing or assigning a read-only
+  method read as a value (`const add = s.add`), a read-only type given to an alias whose body is
+  its parameter (`type Box<T> = T`, then `Box<ReadonlySet<string>>`), and passing or assigning a read-only
   collection where a `Set` or `Map` is expected (TS2345, TS2739).
 - **Tuples** `[A, B]`: `t[0]`, destructuring, printed like arrays. Element labels document the
   elements and are otherwise ignored, as in TypeScript: `type Wire = [kind: string, b64:
