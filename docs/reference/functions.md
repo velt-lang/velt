@@ -1380,6 +1380,12 @@ show();
   method yourself. A recursive arrow constant (above) holds no cycle.
 - Not supported yet: a closure that runs on another task (a timer callback, a spawned
   closure) using the constant it initializes (`const t = setInterval(() => clearInterval(t),
-  5)` reports ``…is used by a closure in its own initializer, which cannot share it``), and a
-  module-level constant other than a recursive arrow whose closures use it
-  (``module-level constant refers to itself``) (#1292). The cycle is tracked in #1291.
+  5)` reports ``…is used by a closure in its own initializer, which cannot share it``)
+  (#1292). The cycle is tracked in #1291.
+- A module-level constant read by a closure in its own initializer
+  (`const INERT: Recorder = { status() { return INERT; } }`) is kept in the module state: the
+  closures read the one object once it is initialized, and a read while the initializer still
+  runs stops the program with `Uncaught ReferenceError: Cannot access 'INERT' before
+  initialization` (exit code 1). Without an annotation, its type is the initializer's, checked
+  with those reads first (`const Level = component<P>(() => … Level(…) …)`); when that type
+  depends on the constant itself, write it, as above.
