@@ -24,8 +24,11 @@ pub(super) struct Found {
 /// What the rewrite does to one property: its variables, and whether it is checked for
 /// being defined again.
 struct Plan {
-    ty: ast::TypeExpr,
+    /// The property's type.
+    member: ast::TypeExpr,
     setter: bool,
+    /// The literal has no setter, and a definition gives one: one is added.
+    add_setter: bool,
     fixed: bool,
 }
 
@@ -98,17 +101,28 @@ impl Found {
             return;
         }
         let mut accessors: FxHashMap<String, (bool, bool)> = FxHashMap::default();
+        let mut getter_types = FxHashMap::default();
         for p in props {
             if let ast::ObjectProp::KeyValue(k, value) = p {
                 let entry = accessors.entry(k.name.clone()).or_default();
                 match accessor_fn(value) {
-                    Some((true, _)) => entry.0 = true,
+                    Some((true, f)) => {
+                        entry.0 = true;
+                        if let E::Arrow { ret: Some(t), .. } = &f.kind {
+                            getter_types.insert(k.name.clone(), t.clone());
+                        }
+                    }
                     Some((false, _)) => entry.1 = true,
                     None => {}
                 }
             }
         }
-        self.decls.insert(name.name.clone(), Decl { ty, accessors });
+        let decl = Decl {
+            ty,
+            accessors,
+            getter_types,
+        };
+        self.decls.insert(name.name.clone(), decl);
     }
 
     fn define(&mut self, e: &ast::Expr, in_loop: bool) {
@@ -148,6 +162,10 @@ impl Found {
             match self.check(d) {
                 Ok(decl) => {
                     let (_, setter) = decl.accessors[&d.key];
+                    let member = match &decl.ty {
+                        Some(t) => member_type(t, &d.key),
+                        None => decl.getter_types[&d.key].clone(),
+                    };
                     let again = d.in_loop
                         || (self.defines.iter())
                             .filter(|o| o.object == d.object && o.key == d.key)
@@ -156,11 +174,13 @@ impl Found {
                     let plan = plans
                         .entry((d.object.clone(), d.key.clone()))
                         .or_insert(Plan {
-                            ty: decl.ty.clone(),
+                            member,
                             setter,
+                            add_setter: false,
                             fixed: false,
                         });
                     plan.fixed |= d.fixes && again;
+                    plan.add_setter |= d.set.is_some() && !setter;
                 }
                 Err(Some(diag)) => {
                     diags.push(diag);
@@ -215,6 +235,20 @@ impl Found {
                 .with_note("in Node, the property then reads `undefined` (a getter) or throws on a write (a setter), which the interface's type doesn't allow: give a function"),
             ));
         }
+        if let Some(f) = [&d.get, &d.set]
+            .into_iter()
+            .flatten()
+            .find(|f| takes_this(f))
+        {
+            return Err(Some(
+                Diagnostic::error(
+                    format!("`this` in an accessor that `Object.defineProperty` defines for `{k}` on `{o}` is not supported yet"),
+                    f.span,
+                )
+                .with_note("TypeScript allows this (`this` is the object the accessor is called on); here the accessor replaces one of the literal's as a plain function, which has no object to use as `this`")
+                .with_note(format!("use the object's variable instead of `this`: `{o}`")),
+            ));
+        }
         if d.data {
             return Err(Some(
                 Diagnostic::error(
@@ -234,7 +268,16 @@ impl Found {
                 .with_note(format!("Velt turns the accessors of the literal into ones the call can replace: write the property as `get {k}() {{ … }}` in the literal, and declare it in its interface")),
             ));
         }
-        if d.set.is_some() && !setter {
+        if decl.ty.is_none() && !decl.getter_types.contains_key(k) {
+            return Err(Some(
+                Diagnostic::error(
+                    format!("`Object.defineProperty` of an accessor `{k}` on `{o}`, whose getter `{k}` has no written result type, is not supported yet"),
+                    d.span,
+                )
+                .with_note(format!("write the getter's result type in the literal (`get {k}(): T {{ … }}`), or annotate the literal with an interface that declares it")),
+            ));
+        }
+        if d.set.is_some() && !setter && decl.ty.is_some() {
             return Err(Some(
                 Diagnostic::error(
                     format!("`Object.defineProperty` of a setter `{k}` on `{o}`, whose object literal has no setter `{k}`, is not supported yet"),
@@ -248,12 +291,13 @@ impl Found {
 }
 
 /// The object literal and the type a declaration gives it.
-fn literal_of(v: &ast::VarDecl) -> Option<(&[ast::ObjectProp], ast::TypeExpr)> {
+fn literal_of(v: &ast::VarDecl) -> Option<(&[ast::ObjectProp], Option<ast::TypeExpr>)> {
     let init = v.init.as_ref()?;
     match (&v.ty, &init.kind) {
-        (Some(t), E::Object(props)) => Some((props, t.clone())),
+        (Some(t), E::Object(props)) => Some((props, Some(t.clone()))),
+        (None, E::Object(props)) => Some((props, None)),
         (None, E::Cast { expr, ty }) => match &expr.kind {
-            E::Object(props) => Some((props, ty.clone())),
+            E::Object(props) => Some((props, Some(ty.clone()))),
             _ => None,
         },
         _ => None,
@@ -375,9 +419,9 @@ fn declaration(
 ) {
     let mut after = vec![];
     for (k, plan) in keys {
-        let member = member_type(&plan.ty, k);
+        let member = plan.member.clone();
         out.push(let_cell(&cell(o, k, "get"), getter_type(&member), span));
-        if plan.setter {
+        if plan.setter || plan.add_setter {
             out.push(let_cell(&cell(o, k, "set"), setter_type(&member), span));
         }
         if plan.fixed {
@@ -395,6 +439,7 @@ fn declaration(
         let Some(E::Object(props)) = v.init.as_mut().map(literal_mut) else {
             continue;
         };
+        let mut getter_key = None;
         for p in props.iter_mut() {
             let ast::ObjectProp::KeyValue(name, value) = p else {
                 continue;
@@ -407,6 +452,7 @@ fn declaration(
             };
             let which = if is_get { "get" } else { "set" };
             let (forward, first) = if is_get {
+                getter_key = Some(name.clone());
                 (get_forward(&cell(o, k, which), f.span), f)
             } else {
                 let f = typed_setter(f, &member);
@@ -417,9 +463,99 @@ fn declaration(
             }
             after.push(assign(&cell(o, k, which), first, span));
         }
+        // Added after the forwarding above: it is the literal's own, and its variable stays
+        // `undefined` until a definition gives a setter. Its key is the getter's, so the
+        // literal's type shows the two together.
+        if plan.add_setter {
+            let set = added_setter(&cell(o, k, "set"), k, &member, span);
+            let key = getter_key.unwrap_or_else(|| ast::Ident {
+                name: k.to_string(),
+                span,
+            });
+            props.push(ast::ObjectProp::KeyValue(key, set));
+        }
     }
     out.push(stmt(S::Var(v.clone()), span));
     out.extend(after);
+}
+
+/// `set k(v: T) { if (<cell> === undefined) throw new TypeError(…); <cell>!(v); }`: the setter
+/// added for a definition, which throws as Node does on a write to a property with only a
+/// getter until the definition has run.
+fn added_setter(cell: &str, k: &str, member: &ast::TypeExpr, span: Span) -> ast::Expr {
+    let v = ast::Ident {
+        name: super::ADDED_SETTER_PARAM.to_string(),
+        span,
+    };
+    let unset = expr(
+        E::Binary {
+            op: ast::BinaryOp::StrictEq,
+            lhs: Box::new(ident(cell, span)),
+            rhs: Box::new(expr(E::Lit(ast::Lit::Undefined), span)),
+        },
+        span,
+    );
+    let message = format!("Cannot set property {k} of #<Object> which has only a getter");
+    let error = expr(
+        E::New {
+            class: named_type("TypeError", span),
+            args: vec![expr(E::Lit(ast::Lit::Str(message)), span)],
+        },
+        span,
+    );
+    let then = ast::Block {
+        stmts: vec![stmt(S::Throw(error), span)],
+        span,
+    };
+    let check = stmt(
+        S::If {
+            cond: unset,
+            then,
+            els: None,
+        },
+        span,
+    );
+    let call = expr(
+        E::Call {
+            callee: Box::new(expr(E::NonNull(Box::new(ident(cell, span))), span)),
+            type_args: vec![],
+            args: vec![expr(E::Ident(v.clone()), span)],
+            optional: false,
+        },
+        span,
+    );
+    let param = ast::ArrowParam {
+        name: v,
+        pattern: None,
+        ty: Some(member.clone()),
+        default: None,
+        optional: false,
+        rest: false,
+    };
+    let body = ast::ArrowBody::Block(ast::Block {
+        stmts: vec![check, stmt(S::Expr(call), span)],
+        span,
+    });
+    let f = expr(
+        E::Arrow {
+            type_params: vec![],
+            params: vec![param],
+            ret: None,
+            throws: None,
+            body,
+            is_async: false,
+        },
+        span,
+    );
+    expr(
+        E::Call {
+            callee: Box::new(ident(ast::OBJECT_SET_FN, span)),
+            type_args: vec![],
+            args: vec![f],
+            optional: false,
+        },
+        span,
+    )
 }
 
 /// The literal of a declaration's initializer (inside an `as`).
@@ -439,7 +575,7 @@ fn definition(e: &ast::Expr, plans: &FxHashMap<(String, String), Plan>) -> Optio
     };
     let plan = plans.get(&(o.name.clone(), k.clone()))?;
     let span = e.span;
-    let member = member_type(&plan.ty, k);
+    let member = plan.member.clone();
     let mut stmts = vec![];
     if plan.fixed {
         let error = expr(
@@ -543,4 +679,17 @@ pub(super) fn pattern_names(p: &ast::Pattern, out: &mut Vec<String>) {
 /// The variable holding accessor `which` of property `k` of `o`.
 fn cell(o: &str, k: &str, which: &str) -> String {
     format!("<{o}.{k}:{which}>")
+}
+
+/// Does the method `f` take the object as its `this` parameter (`ast::METHOD_THIS`)?
+fn takes_this(f: &ast::Expr) -> bool {
+    match &f.kind {
+        E::Arrow { params, .. } => params.first().is_some_and(|p| ast::is_method_this(&p.name)),
+        E::Function(d) => d
+            .sig
+            .params
+            .first()
+            .is_some_and(|p| ast::is_method_this(&p.name)),
+        _ => false,
+    }
 }

@@ -16,6 +16,8 @@ pub enum Intrinsic {
     StrConcat,
     /// `s.length` → usize (byte length in POC).
     StrLen,
+    /// `Buffer.byteLength(s)` → usize: the UTF-8 length, which a string stores (no call).
+    StrByteLen,
     /// `process.exit(code: i32)` → Never.
     Exit,
     /// `panic(msg: string)` → Never.
@@ -284,6 +286,30 @@ pub enum Intrinsic {
     /// reader options of `velt_rt_json_reader_new_with` (flag 1 = reject unknown keys;
     /// `max_depth` 0 = no limit); throws `JsonError { message }`.
     JsonParse,
+    /// std only: `__intrinsic_json_parse_rows<T>(rows: borrow u8[], flags: i64, max_depth: i64): T`
+    /// — `JsonParse` over a driver's binary result rows (`velt_text::rows`) instead of JSON
+    /// text: the same generated decoder, the reader made with flag `FLAG_ROWS`
+    /// (native_abi.md "Rows").
+    JsonParseRows,
+    /// std only: `__intrinsic_json_parse_cursor<T>(cursor: u64, flags: i64, max_depth: i64): T`
+    /// — `JsonParseRows` over a driver's live rows (the address of a
+    /// `velt_text::rows_cursor::RawCursor`, which the caller keeps and releases afterwards): the
+    /// reader made with flag `FLAG_CURSOR` (native_abi.md "Row cursors").
+    JsonParseCursor,
+    /// std only: `__intrinsic_db_bind<P>(sink: u64, params: borrow P): bool` — hands `params`
+    /// to a driver's parameter sink (the address of a `velt_text::rows_cursor::RawSink`) value
+    /// by value, as their JSON text would bind; false (nothing done) for a type std binds as
+    /// JSON text (native_abi.md "Parameter sinks").
+    DbBind,
+    /// std only: `__intrinsic_read_rows<T, S>(src: borrow S): T[] | null` — every remaining row
+    /// of the std/db `RowSource` `src`, read by column when `T` is an object of plain fields
+    /// and `S` a class whose row methods do not throw; throws `JsonError { message }` for a row
+    /// that does not fit. `null` (nothing read) for any other `T` or `S`: std/db then reads
+    /// the rows as JSON.
+    ReadRows,
+    /// std only: `__intrinsic_read_row<T, S>(src: borrow S): T | null` — the current row of
+    /// `src` (`next()` returned true), as `ReadRows` reads each; `null` as for `ReadRows`.
+    ReadRow,
     /// std only: `__intrinsic_http_handler(f: (raw: u64) => Promise<u64>)` → `[u64; 6]` =
     /// `{init, poll, drop, state_size, state_align, env}` for `velt_rt_http_serve` (the closure's
     /// state machine is the per-request state; `init(env, req, state)` sets `raw = req`; the env
@@ -292,6 +318,15 @@ pub enum Intrinsic {
     /// std only: `__intrinsic_str_char_code_at(s: borrow string, i: i64) -> i64` — the byte at
     /// `i`, or -1 when out of range (`s.charCodeAt(i)`, POC byte model); inline code, no call.
     StrCharCodeAt,
+    /// `(s, i: u64)` → u8: byte `i` of the UTF-8 bytes of `s`, unchecked (std checks the
+    /// range against `StrByteLen`). The bytes are read where the string keeps them.
+    StrByteAt,
+    /// `(s, at: u64)` → u8x16: the 16 UTF-8 bytes of `s` from `at`, unchecked (a SIMD `load`
+    /// of the string's bytes, no copy).
+    StrLoadU8x16,
+    /// `(s, at: u64, count: u64)` → u8x16: `count` (below 16) bytes from `at` in the low lanes,
+    /// 0 in the others, unchecked (a SIMD `load_partial` of the string's bytes).
+    StrLoadPartialU8x16,
     /// std only: `__intrinsic_array_data_ptr(xs: borrow T[]) -> u64` — address of element 0.
     ArrayDataPtr,
     /// `attempt(f)`: call `f: () => T throws E` (borrowed) and return its result or error as a
@@ -458,6 +493,15 @@ pub enum Intrinsic {
     /// the fields of an object); a `TypeError` for `null` / `undefined` or a value not
     /// supported yet. Sets `Program::dyn_members`.
     AnyKeys,
+    /// `(x: borrow any) -> i64`: the `typeof` tag of the value held, as a number (0 `undefined`,
+    /// 1 `null`, 2 boolean, 3 number, 4 string, 5 symbol, 6 function, 7 object), read from its
+    /// descriptor without a call. Additive (#924, operators through `any`).
+    AnyTag,
+    /// `(x: borrow any) -> f64`: JavaScript's `ToNumber` of a primitive held (`null` is 0,
+    /// `undefined` NaN, a string as `Number(s)`; a symbol stops with Node's `TypeError`), one
+    /// call through the descriptor. An object or a function held gives `NaN`: sema converts
+    /// those with `ToPrimitive` first. Additive (#924).
+    AnyToNumber,
     /// `T.shuffle(a, b, i0, …)` of a SIMD vector type (`velt:simd`): `(a: T, b: T) -> T`, lane
     /// `k` of the result being lane `lanes[k]` of `a`'s lanes followed by `b`'s. The indices
     /// were integer literals in range (sema checks them), so they are part of the operation:

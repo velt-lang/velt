@@ -1,0 +1,4 @@
+caught: getter failed
+caught: setter refused 3
+read: 1
+wrote: 4

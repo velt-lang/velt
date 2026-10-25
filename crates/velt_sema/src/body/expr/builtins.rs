@@ -117,6 +117,9 @@ impl FnCx<'_, '_> {
         if rest == "target" {
             return self.target_stmt(args, span);
         }
+        if rest == "any_to_primitive" {
+            return self.primitive_dispatch(args, span);
+        }
         let Some(i) = intrinsic_named(rest) else {
             self.cx
                 .err(format!("unknown intrinsic `{}`", id.name), id.span);
@@ -136,7 +139,14 @@ impl FnCx<'_, '_> {
             }
         }
         let ck = self.check_call(&c, slots, args, exp, span);
-        if i == Intrinsic::JsonParse {
+        if matches!(
+            i,
+            Intrinsic::JsonParse
+                | Intrinsic::JsonParseRows
+                | Intrinsic::JsonParseCursor
+                | Intrinsic::ReadRows
+                | Intrinsic::ReadRow
+        ) {
             self.json_parse_throws(span);
         }
         if matches!(
@@ -220,6 +230,28 @@ impl FnCx<'_, '_> {
             // A `Date` prints as its ISO string, like Node.
             let h = self.own_to_string(h, "__inspect");
             let h = self.narrowed_for_print(h);
+            // A `void` variable (`then((v) => console.log(v))` on a `Promise<void>`) holds
+            // `undefined`. A call returning nothing stays an error: Velt's `reverse()` returns
+            // nothing where TypeScript's returns the array.
+            let h = match h.ty == self.cx.ty.unit && matches!(h.kind, hir::ExprKind::Local(..)) {
+                true => {
+                    let at = h.span;
+                    let undefined =
+                        super::setters::synth(ast::ExprKind::Lit(ast::Lit::Undefined), at);
+                    let u = self.expr(&undefined, None, Want::Move);
+                    let ty = u.ty;
+                    let block = hir::Block {
+                        stmts: vec![hir::Stmt {
+                            kind: hir::StmtKind::Expr(h),
+                            span: at,
+                        }],
+                        value: Some(Box::new(u)),
+                        span: at,
+                    };
+                    self.mk(hir::ExprKind::Block(block), ty, at)
+                }
+                false => h,
+            };
             if !self.printable(h.ty) {
                 let tn = self.cx.display(h.ty);
                 let mut d =

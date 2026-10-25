@@ -600,11 +600,15 @@ fn effect_of(i: Intrinsic) -> Option<String> {
         I::MutexNew | I::MutexWith => "Mutex",
         I::RwLockNew | I::LockRead => "RwLock",
         I::Spawn | I::SpawnHandled => "spawn",
-        I::JsonParse => "JSON.parse",
+        I::JsonParse | I::JsonParseRows | I::JsonParseCursor => "JSON.parse",
         I::ToString
         | I::StrConcat
         | I::StrLen
+        | I::StrByteLen
         | I::StrCharCodeAt
+        | I::StrByteAt
+        | I::StrLoadU8x16
+        | I::StrLoadPartialU8x16
         | I::Panic
         | I::ArrayWithCapacity
         | I::ArrayLen

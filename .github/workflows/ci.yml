@@ -11,9 +11,11 @@
 #
 # The merge queue checks everything against the pull request merged with the latest main: per OS
 # one job lints and tests, and the goldens (debug and release mode) are built once and checked in
-# parallel shards (queue-goldens.yml). Linux always; Windows and macOS when the change touches
-# OS-specific code (crates/xtask/src/os.rs). The single required check is `ci`, which summarizes
-# whichever jobs ran. The pull request's text and commits are checked by
+# parallel shards (queue-goldens.yml), as are the WebAssembly goldens when the change touches
+# WebAssembly code (shards of their own from the same build; the `check` job leaves them out).
+# Linux always; Windows and macOS when the change touches OS-specific code
+# (crates/xtask/src/os.rs). The single required check is `ci`, which summarizes whichever jobs
+# ran. The pull request's text and commits are checked by
 # the separate required check `hygiene` (hygiene.yml, which says why it is separate).
 #
 # Each push to main checks everything on Windows and macOS when the queue checked the change on
@@ -122,8 +124,9 @@ jobs:
       robustness_files: ${{ steps.plan.outputs.robustness_files }}
       # `skip` unless the change touches WebAssembly code.
       wasm_goldens: ${{ steps.plan.outputs.wasm_goldens }}
-      # The golden shards of each OS (crates/xtask/src/os.rs).
+      # The golden shards and the WebAssembly goldens' shards of each OS (crates/xtask/src/os.rs).
       golden_shards: ${{ steps.plan.outputs.golden_shards || '{}' }}
+      wasm_shards: ${{ steps.plan.outputs.wasm_shards || '{}' }}
     steps:
       # A queue entry that drops out (fails, is removed, or another one moves ahead of it) makes
       # the queue test the entries behind it again, under new branches, and deletes the old
@@ -175,13 +178,11 @@ jobs:
     env:
       VELT_ROBUSTNESS: ${{ needs.queue-plan.outputs.robustness }}
       VELT_ROBUSTNESS_FILES: ${{ needs.queue-plan.outputs.robustness_files }}
-      VELT_WASM_GOLDENS: ${{ needs.queue-plan.outputs.wasm_goldens }}
+      # The WebAssembly goldens run in shards of their own (`queue-golden`).
+      VELT_WASM_GOLDENS: skip
     # The slowest job takes about 25 minutes on a cold cache: a runner that hangs fails the queue
-    # entry within the hour instead of holding the queue for two. A change to WebAssembly code
-    # also runs the WebAssembly goldens here, about 45 minutes more on Windows (8 shards of about
-    # 330 s, two at a time), and one that changes Cargo.lock also misses the build cache (the
-    # Windows build alone took 44 minutes for #1056), so such a change gets 150.
-    timeout-minutes: ${{ needs.queue-plan.outputs.wasm_goldens == 'skip' && 45 || 150 }}
+    # entry within the hour instead of holding the queue for two.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
@@ -194,7 +195,8 @@ jobs:
         with:
           job: check (${{ matrix.os }})
 
-  # The goldens: per OS a build, then shards (queue-goldens.yml).
+  # The goldens: per OS a build, then shards (queue-goldens.yml); the WebAssembly goldens too,
+  # unless the plan skips them (`wasm_goldens`: no WebAssembly code changed).
   queue-golden:
     needs: queue-plan
     if: needs.queue-plan.outputs.os != '[]'
@@ -210,6 +212,9 @@ jobs:
     with:
       os: ${{ matrix.os }}
       shards: ${{ toJSON(fromJSON(needs.queue-plan.outputs.golden_shards)[matrix.os]) }}
+      wasm_shards: >-
+        ${{ needs.queue-plan.outputs.wasm_goldens == 'skip' && '[]'
+        || toJSON(fromJSON(needs.queue-plan.outputs.wasm_shards)[matrix.os]) }}
 
   # Which OSes the push to main checks. Only a commit the merge queue tested (a ci run on it that
   # passed: the queue's head is the commit that lands) can skip any; a direct push or an admin

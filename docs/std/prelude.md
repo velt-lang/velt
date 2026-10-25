@@ -133,6 +133,24 @@ Byte arrays are plain `u8[]` with faster versions of `indexOf`, `lastIndexOf`, `
 `fill`, `slice` and `concat`, plus `set(src, offset)` and `copyWithin(target, start, end)` like
 Node's `Buffer`, and `xorMask(mask: u32, start?, end?)`, which XORs the bytes with the four bytes
 of `mask` (most significant first) repeating from `start`: WebSocket masking (RFC 6455 §5.3).
+Text goes in and out of byte arrays without intermediate copies, as a server written in Velt
+needs on its read and write buffers: `write(s, offset = 0)` writes the UTF-8 bytes of `s` and
+returns how many it wrote (Node's `buf.write`: only whole characters that fit, the array does
+not grow), `utf8Slice(start?, end?)` decodes a range (Node's `buf.toString("utf8", start, end)`,
+an invalid sequence as U+FFFD), and `utf8Equals(s, start?, end?)` /
+`utf8EqualsIgnoreCase(s, start?, end?)` (Velt) tell whether a range holds the UTF-8 bytes of `s`,
+the second with ASCII letters in any case (a method, a path, a header name), without making a
+string. Their ranges are clamped as `toString` clamps them: a negative `start` is 0, an `end`
+past the array is its end (Node's `buf.utf8Slice` throws for both instead). `write` and the comparisons are Velt
+code in the prelude: they read the string's bytes where it keeps them, sixteen at a time with
+SIMD vectors, and are compiled into their caller.
+
+```ts
+const buf: u8[] = Buffer.alloc(16);
+const n = buf.write("GET /");
+console.log(buf.utf8Equals("GET", 0, 3), buf.utf8Slice(0, n)); // true GET /
+```
+
 `Buffer.alloc(n)` creates `n` zero bytes. `Buffer.byteLength(s, encoding = "utf8")` is the
 number of bytes `s` takes, as in Node: UTF-8 by default (O(1); a lone surrogate counts the 3
 bytes of U+FFFD), two per code unit for `utf16le`/`ucs2`, one for `latin1`/`binary`/`ascii`,
@@ -188,6 +206,7 @@ One difference from JavaScript's keys:
 | `upsert(k, init, (v) => v + 1)` | insert `init` or replace the value with the callback's result, in one lookup |
 | `update(k, (v) => { … }): bool` | modify the stored value in place; `false` when `k` is absent |
 | `getOrInsert(k, () => v)` | |
+| `getUtf8(bytes: u8[])`, `hasUtf8(bytes)`, `setUtf8(bytes, v)` (`Map<string, V>` only, Velt) | `get`, `has` and `set` of the key whose UTF-8 bytes are `bytes`, without making the string: a server finds the keys it reads from the network as they came. The same entries as with the bytes decoded (`utf8DecodeLossy`: an invalid sequence reads as U+FFFD); `setUtf8` makes the key string only for a new entry |
 | `keys()`, `values()`, `entries()`, `forEach((v, k) => …)` | in insertion order; the first three return arrays (JS: iterators). `forEach` is live, as in JS: it visits entries its callback adds and skips the ones it deletes |
 | `[Symbol.iterator](): Iterator<[K, V]>` | a map is an `Iterable<[K, V]>`; the iterator visits the entries as of the call (JS's is a live view) |
 | `for (const [k, v] of map)` | live, as in JS: so is `for...of` over `map.keys()`, `map.values()` and `map.entries()` when `map` is a variable, `this`, a field, a getter, an array element or a call result (`ms[0]`, `obj.m`, `get()!`; a map expression with an optional chain, a spread or a function expression iterates the array of entries as of the loop's start). The loop walks the map object `map` named when it started, so assigning another map to `map` in the body does not change what it visits, as in JS |

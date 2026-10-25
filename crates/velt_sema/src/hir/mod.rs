@@ -153,6 +153,11 @@ pub struct Program {
     /// The program calls `Object.create(null)`: a record may have no prototype (its map is
     /// marked, std/prelude/map.vlt `__markNullProto`), which printing and cloning look at.
     pub null_proto_records: bool,
+    /// The program builds an object type known per instantiation with `{} as D` (a record of
+    /// `any` values, hir_encodings.md "Spreads and conversions in generic bodies"): lowering's
+    /// `AnyTo` of a record to an object type builds the object from the record's entries.
+    /// Additive.
+    pub record_fills: bool,
     /// The program's module state (module-level `let`s), `None` when it has none
     /// (hir_encodings.md "Module state").
     pub module_state: Option<ModuleState>,

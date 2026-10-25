@@ -118,7 +118,7 @@ impl<'a> Parser<'a> {
 
     /// After `get` / `set`: is the next token a name (or the next tokens a symbol key) followed
     /// by `(`?
-    fn at_accessor_name(&mut self) -> bool {
+    pub(super) fn at_accessor_name(&mut self) -> bool {
         let key = self.member_key_len(1, true);
         match key {
             0 => self.nth(2) == Tok::LParen,
@@ -129,6 +129,9 @@ impl<'a> Parser<'a> {
     /// One `struct`/`class`/`extend` member.
     pub(super) fn parse_member(&mut self) -> PResult<Member> {
         let lo = self.cur_lo();
+        if self.at_static_block() {
+            return Ok(Member::Field(self.parse_static_block(lo)?));
+        }
         let mods = self.parse_modifiers();
         if self.at_kw(Kw::Constructor) && self.nth(1) == Tok::LParen {
             let (ctor, fields) = self.parse_constructor(lo, &mods)?;
@@ -164,8 +167,7 @@ impl<'a> Parser<'a> {
                 name.span,
             );
         }
-        let mut sig = self.parse_sig_rest(lo, name, mods.is_async)?;
-        sig.is_generator = star.is_some();
+        let sig = self.parse_sig_rest(lo, name, mods.is_async, star.is_some())?;
         self.check_accessor(&sig, &mods);
         if self.at(Tok::Semi) || (!self.at(Tok::LBrace) && self.line_break_before()) {
             return self.method_overload(sig, &mods);
@@ -472,7 +474,7 @@ impl<'a> Parser<'a> {
                 name.span,
             );
         }
-        let sig = self.parse_sig_rest(lo, name, mods.is_async)?;
+        let sig = self.parse_sig_rest(lo, name, mods.is_async, false)?;
         self.check_accessor(&sig, &mods);
         let body = if self.at(Tok::LBrace) {
             Some(self.parse_fn_body()?)

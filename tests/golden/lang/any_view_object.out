@@ -1,0 +1,25 @@
+vnode div with 0 children, text none
+computed 42
+vnode section with 0 children, text hello
+vnode p with 1 children, text none
+k1 k1
+changed
+1 1
+true
+true true
+found
+true
+type,props,key,children,text,extra
+true false
+Element {
+  type: 'section',
+  props: {},
+  key: 'k1',
+  children: [ { type: 'i', props: {}, key: null, children: [] } ],
+  text: 'changed',
+  extra: 1
+}
+section span
+section
+null
+1

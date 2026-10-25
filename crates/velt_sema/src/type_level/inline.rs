@@ -222,20 +222,23 @@ impl Ctx<'_> {
                 return body;
             };
             match fields.iter().find(|f| f.name == name) {
-                Some(f) if !f.optional => tys.push(self.canon(f.ty)),
-                _ => tys.push(self.ty.error),
+                Some(f) => tys.push(self.canon(f.ty)),
+                None => tys.push(self.ty.error),
             }
         }
-        if tys.iter().all(|&t| t == tys[0] && t != self.ty.error) {
+        // Keys whose fields have different types: `T[K]` is the union of them, a read is the
+        // field the key names as that union, and a write checks the value's member against the
+        // field at run time (docs/internals/design/deferred-types.md, decision 4).
+        if tys.iter().all(|&t| t != self.ty.error) {
             return body;
         }
         let shown = self.display(k);
         self.error(
             velt_common::Diagnostic::error(
-                format!("this generic function reads or writes `x[k]` with the key type `{shown}` at this instantiation, whose fields have different types; that is not supported yet (#350)"),
+                format!("this generic function reads or writes `x[k]` with the key type `{shown}` at this instantiation, which names an optional field; that is not supported yet (#350)"),
                 span,
             )
-            .with_note("the keys' fields must have one type (or pass one key, a string literal)"),
+            .with_note("the keys must name required fields (or pass one key, a string literal)"),
         );
         self.ty.error
     }

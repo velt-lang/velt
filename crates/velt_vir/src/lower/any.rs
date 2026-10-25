@@ -8,7 +8,7 @@
 //! | 0 | the `typeof` tag (`TAG_*`, an integer, not an address) |
 //! | 1 | `AnyTruthy`: `(data: ptr) -> bool` |
 //! | 2 | `AnySame`: `(a: ptr, b: ptr) -> bool`, `===` of two data pointers of this type |
-//! | 3 | `AnyNumber`: `(data: ptr) -> f64`, JavaScript's `ToNumber` (booleans, numbers and strings only) |
+//! | 3 | `AnyNumber`: `(data: ptr) -> f64`, JavaScript's `ToNumber` (booleans, numbers and strings; every type in a program with operators on `any`, any_number.rs) |
 //! | 4 | `AnyHash`: `(data: ptr) -> u64`, a hash agreeing with SameValueZero (`Set` / `Map` keys: any_eq.rs) |
 //! | 5..8 | member reads and calls (any_member.rs), when the program has them |
 //! | 9..11 | member writes and `in` (any_set.rs, any_has.rs), when the program has them |
@@ -172,10 +172,12 @@ impl Cx<'_> {
                 Const::Func(self.func(Work::Glue(Glue::AnyHash, ty))),
             ),
         ];
-        if matches!(
-            self.types.kind(ty),
-            TyKind::Bool | TyKind::Int(_) | TyKind::Float(_) | TyKind::Str
-        ) {
+        if self.boxing.any_number
+            || matches!(
+                self.types.kind(ty),
+                TyKind::Bool | TyKind::Int(_) | TyKind::Float(_) | TyKind::Str
+            )
+        {
             e.push((
                 SLOT_NUMBER,
                 Const::Func(self.func(Work::Glue(Glue::AnyNumber, ty))),
@@ -276,6 +278,11 @@ impl FnLower<'_, '_> {
             TyKind::Bool => {
                 let n = self.rvalue_temp(Ty::U8, Rvalue::Cast(v, Ty::U8));
                 self.rvalue_temp(Ty::F64, Rvalue::Cast(n, Ty::F64))
+            }
+            // The other types have the slot only in a program with operators on `any`
+            // (`Boxing::any_number`, any_number.rs).
+            k if !matches!(k, TyKind::Int(_) | TyKind::Float(_)) => {
+                return self.any_number_other(ty)
             }
             _ => {
                 let from = self.cx.ty(ty);
@@ -431,6 +438,7 @@ impl FnLower<'_, '_> {
     /// `AnyTo`: the value of type `ty` the owned `any` `a` holds, or a `TypeError`.
     pub(super) fn any_to(&mut self, a: &hir::Expr, ty: TyId) -> Operand {
         let from = self.sub(a.ty);
+        let written = ty;
         let ty = self.sub(ty);
         if let Some(v) = self.unboxed_own(a, ty) {
             return v;
@@ -441,7 +449,7 @@ impl FnLower<'_, '_> {
             return self.zero_value(vt);
         }
         if matches!(self.cx.kind(ty), TyKind::Never) {
-            return self.any_to_never(v, from, ty);
+            return self.any_to_never(v, from, ty, written);
         }
         if matches!(self.cx.kind(ty), TyKind::Unit) {
             return self.any_to_void(v, from);
@@ -605,7 +613,6 @@ impl FnLower<'_, '_> {
         self.build_agg(ty, vec![data, table])
     }
 
-    /// The value of type `ty` the `any` at `p` (owned, consumed here) holds.
     pub(super) fn any_unbox(&mut self, p: &Place, from: TyId, ty: TyId) -> Operand {
         if self.cx.is_dynamic(ty) {
             // The payload of an `any | null`: the value itself.
@@ -613,6 +620,9 @@ impl FnLower<'_, '_> {
         }
         if self.cx.is_union(ty) {
             return self.any_unbox_union(p, from, ty);
+        }
+        if let TyKind::Literal(hir::LitValue::Str(lit)) = self.cx.kind(ty) {
+            return self.any_unbox_str_literal(p, from, ty, &lit);
         }
         let vt = self.cx.ty(ty);
         let out = Place::local(self.temp(vt));
@@ -667,8 +677,10 @@ impl FnLower<'_, '_> {
             return Operand::Copy(out);
         }
         let (ok_bb, bad_bb, done) = (self.new_block(), self.new_block(), self.new_block());
-        if matches!(self.cx.kind(ty), TyKind::Adt(..)) {
-            self.cx.note_proxy_target(ty);
+        match self.cx.kind(ty) {
+            TyKind::Adt(..) => self.cx.note_proxy_target(ty),
+            TyKind::Array(_) => self.cx.note_array_view(ty),
+            _ => {}
         }
         // A class without type arguments: an instance of it or of a subclass. A generic class
         // (`Box<number>`, `Map<string, string>`): the table of that very instantiation, since
@@ -719,6 +731,8 @@ impl FnLower<'_, '_> {
         self.assign(out.clone(), Rvalue::Use(v));
         self.goto(done);
         self.switch_to(bad_bb);
+        // A record built by `{} as D` (sema's `empty_as_deferred`) where `D` is an object type.
+        self.any_record_fill(p, from, ty, &out, done);
         // An object implementing the interface, or the interface at other type arguments.
         self.any_to_iface(p, ty, &out, done);
         if self.cx.proxiable(ty) {
@@ -727,6 +741,12 @@ impl FnLower<'_, '_> {
             let data = Operand::Copy(proj(p, Proj::Field(0)));
             self.proxy_unbox(data, desc.clone(), &out, done, err);
             self.switch_to(err);
+            // An object of another type: a view of it (any_view.rs).
+            self.any_view(p, ty, &out, done);
+        }
+        if self.cx.array_view(ty) {
+            // An array of another element type: a view of it (array_view.rs).
+            self.array_view_make(p, desc.clone(), ty, &out, done);
         }
         self.any_type_error(desc, ty);
         self.switch_to(done);

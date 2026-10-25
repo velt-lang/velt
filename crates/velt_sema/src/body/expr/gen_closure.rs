@@ -59,6 +59,13 @@ impl FnCx<'_, '_> {
         if !self.gen_closure_sig_ok(sig) {
             return self.error_expr(span);
         }
+        // A generator method using `this` (`literal_this.rs`).
+        if super::literal_this::fn_takes_this(d) {
+            let at = super::literal_this::first_this_fn(d, span);
+            if self.method_this_ty(span, at).is_none() {
+                return self.error_expr(span);
+            }
+        }
         let ret = match &sig.ret {
             Some(t) => self.resolve(t),
             None => self.expected_gen_result(exp, sig.is_async),
@@ -140,12 +147,18 @@ impl FnCx<'_, '_> {
         let mut params = vec![];
         let mut ptys = vec![];
         for p in &sig.params {
-            let ty = self.resolve(&p.ty);
+            let this = self.method_this.filter(|(at, _)| *at == span);
+            let ty = match this.filter(|_| ast::is_method_this(&p.name)) {
+                Some((_, this)) => this,
+                None => self.resolve(&p.ty),
+            };
             params.push(self.declare_local_mut(&p.name, ty, LocalKind::Param, false));
             ptys.push(ty);
         }
         let mut stmts = vec![];
+        self.cx.fn_value_depth += 1;
         self.stmts_into(&d.body.stmts, &mut stmts);
+        self.cx.fn_value_depth -= 1;
         let block = hir::Block {
             stmts,
             value: None,

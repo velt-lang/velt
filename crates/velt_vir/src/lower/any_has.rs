@@ -26,7 +26,7 @@ use crate::vir::{self, BinOp, Operand, Place, Proj, Rvalue, Terminator, Ty, STR_
 pub(super) const SLOT_HAS: i128 = 11;
 
 const HAS_NO: i128 = 0;
-const HAS_YES: i128 = 1;
+pub(super) const HAS_YES: i128 = 1;
 const HAS_UNSUPPORTED: i128 = 2;
 
 impl FnLower<'_, '_> {

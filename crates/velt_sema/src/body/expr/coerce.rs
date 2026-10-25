@@ -59,6 +59,28 @@ impl FnCx<'_, '_> {
     }
 
     fn try_coerce_value(&mut self, h: hir::Expr, exp: TyId) -> Result<hir::Expr, hir::Expr> {
+        let h = match self.fn_bound_value(h) {
+            Ok(f) if f.ty == exp || matches!(self.cx.ty.kind(exp), TyKind::FnPtr { .. }) => {
+                return self.try_coerce_value(f, exp)
+            }
+            Ok(f) => match &f.kind {
+                H::Upcast(inner) => (**inner).clone(),
+                _ => f,
+            },
+            Err(h) => h,
+        };
+        let h = match self.generic_key_string(h, exp) {
+            Ok(k) => return Ok(k),
+            Err(h) => h,
+        };
+        // `T extends readonly number[]` where an array of the bound's elements is expected.
+        let h = match self.array_bound_target(&h, exp) {
+            true => match self.array_bound_value(h) {
+                Ok(a) => return Ok(a),
+                Err(h) => h,
+            },
+            false => h,
+        };
         let h = match self.try_coerce_typed(h, exp) {
             Ok(h) => return Ok(h),
             Err(h) => h,
@@ -161,6 +183,10 @@ impl FnCx<'_, '_> {
             };
             return Ok(self.mk(call, exp, span));
         }
+        let h = match self.promise_retype(h, exp) {
+            Ok(h) => return Ok(h),
+            Err(h) => h,
+        };
         if let Some(widens) = self.cx.fn_throws_differ(h.ty, exp) {
             return match widens {
                 true => self.adapt_fn(h, exp),
@@ -314,6 +340,10 @@ impl FnCx<'_, '_> {
             Ok(h) => return Ok(h),
             Err(h) => h,
         };
+        let h = match self.iface_as_object(h, exp) {
+            Ok(h) => return Ok(h),
+            Err(h) => h,
+        };
         let h = match self.copy_object(h, exp) {
             Ok(h) => return Ok(h),
             Err(h) => h,
@@ -416,7 +446,7 @@ impl FnCx<'_, '_> {
             }
         }
         let Some((index, iargs, imp_ty)) = self.cx.find_impl(h.ty, iface) else {
-            return Err(h);
+            return self.object_as_iface(h, exp, iface, args);
         };
         // Arguments that differ only in their error-set variables are one (`throws::vars`).
         if iargs != args && !self.cx.unify_err_var_lists(&iargs, args) {

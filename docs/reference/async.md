@@ -21,7 +21,10 @@ callback, or `Promise<T> | null`) awaits a promise and gives any other value as 
 `await h(1)` where `h: (x: number) => Resp | Promise<Resp>` is a `Resp`. A promise that may be
 missing keeps its nothing: `await r["k"]` of a `Record<string, Promise<number>>` (or
 `await m.get(k)`) is a `number | undefined`, and so is `await x` with
-`x: number | Promise<void>`.
+`x: number | Promise<void>`. `await` on a value that is no promise at all (`await null`,
+`await 5`, `await obj`) takes one step, as an awaited settled promise does, and gives the value
+itself; `await null;` is a common way to let queued callbacks run first. A value of type `any`
+or with a `then` method (a thenable) cannot be awaited this way yet.
 
 An async function that returns a promise (`return Promise.resolve(x)`, `return load()`) or a value
 that may be one (`return fn()` with `fn: () => T | Promise<T>`) adopts it, as in JS: its own
@@ -162,7 +165,9 @@ Promises behave like JavaScript's, at Rust's cost:
   anywhere else moves as it is; an object it still shares is deep-copied for the task (like a
   structured clone), so threads never share reference counts. As with a structured clone, an
   object the value reaches more than once is copied once (`p.x === p.y` still holds in the
-  task) and a cycle is copied as a cycle. That includes the receiver of
+  task) and a cycle is copied as a cycle. A view of an object (an `any` converted to an object
+  type, [Types](types.md)) is copied with its object: the task writes to its copy, and the
+  object here, converted again, is a view of this thread's object. That includes the receiver of
   `spawn(obj.method())` (also through a base-class reference or an interface value) and what a
   closure or interface value passed to the task reaches. A closure the caller still uses
   afterwards is copied too, with what it captures (also a variable it assigns), so the task and
@@ -678,6 +683,11 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
     function ("the function passed to `with` comes from an object's field, and may be a
     closure that stores a part of the locked `State` outside it …"); otherwise the call is
     accepted as written.
+  - A variable the callback only reads, and that the function does not use after the `with`
+    (nor again in a loop around it), goes into the lock with the callback: what the callback
+    stores of it into the value is not copied (`const batch = parse(input); m.with((db) =>
+    apply(db, batch))` stores `batch`'s own objects). An object it shares with another
+    variable is still copied. Nothing changes in what the program sees; only the copies go.
   - A promise made from the value runs after the lock is released. One that only reads what it
     is given gets a copy, like a spawned call (`m.with((v) => save(v.name))`,
     `m.with((v) => read(v))`: `read` sees the value as it was; a copy of a resource without
@@ -784,7 +794,12 @@ async function main() {
   first. Awaiting it (or chaining `catch`, or handing it to a combinator) before then handles
   it. A promise or handle handed to a
   combinator (`Promise.race`, `all`, `any`) is handled, and so is a `scope.spawn` child, whose
-  error fails its `taskScope`.
+  error fails its `taskScope`. A stored promise handed to another task (`spawn(use(p))`, a
+  channel) is that task's to await: if it rejects, the error is reported once, by the task that
+  holds it then (or as that task's own error), not by the task that started it.
+- Only the first uncaught error is reported, as in Node, which stops at it: when tasks on
+  different workers fail at the same moment, the process ends with one report (which one goes
+  first depends on the scheduling).
 
 ## `new Promise`
 

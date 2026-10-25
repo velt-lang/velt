@@ -165,13 +165,13 @@ impl<R: OutRet> Future<R> {
 /// The result type of a `#[export(future)]` function (only [`Future`]).
 pub trait FutureRet {
     /// The awaited result's name in a signature.
-    const SIG: &'static str;
+    const SIG: crate::sig::Buf;
     #[doc(hidden)]
     fn __into_raw(self) -> *mut c_void;
 }
 
 impl<R: OutRet> FutureRet for Future<R> {
-    const SIG: &'static str = R::SIG;
+    const SIG: crate::sig::Buf = R::SIG;
     fn __into_raw(self) -> *mut c_void {
         self.raw
     }

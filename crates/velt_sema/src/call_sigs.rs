@@ -196,6 +196,7 @@ fn interface_alias(
             optional: f.optional,
             readonly: f.readonly,
             span: f.span,
+            accessors: vec![],
         })
         .collect();
     for m in decl.methods {
@@ -213,6 +214,7 @@ fn interface_alias(
             optional: false,
             readonly: false,
             span: field_span,
+            accessors: vec![],
         });
     }
     let mut rest = decl.extends;

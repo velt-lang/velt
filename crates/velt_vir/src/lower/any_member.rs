@@ -210,6 +210,10 @@ impl FnLower<'_, '_> {
             true => self.proxy_any_parts(data, table),
             false => (data, table),
         };
+        let (data, table) = match self.cx.array_view(t) {
+            true => self.view_any_parts(data, table, t),
+            false => (data, table),
+        };
         self.assign(proj(out, Proj::Field(0)), Rvalue::Use(data));
         self.assign(proj(out, Proj::Field(1)), Rvalue::Use(table));
     }
@@ -414,7 +418,13 @@ impl FnLower<'_, '_> {
         Operand::Copy(out)
     }
 
-    fn any_get_str(&mut self, data: &Operand, desc: &Operand, key: Operand, out: Operand) {
+    pub(super) fn any_get_str(
+        &mut self,
+        data: &Operand,
+        desc: &Operand,
+        key: Operand,
+        out: Operand,
+    ) {
         self.any_nullish_check(desc, NullKey::Str(&key));
         let done = self.proxy_branch("__get", data, desc, |lw, obj, pty, r| {
             let k = lw.copy_to_temp(key.clone(), Ty::Ptr);
@@ -485,6 +495,13 @@ impl FnLower<'_, '_> {
         ty: TyId,
     ) -> Operand {
         let ty = self.sub(ty);
+        if let Some(k) = key {
+            // The built-in methods the `AnyCall` slots look for (any_builtin.rs).
+            match &k.kind {
+                hir::ExprKind::Lit(hir::Lit::Str(name)) => self.cx.note_any_call_key(name),
+                _ => self.cx.note_any_call_key(""),
+            }
+        }
         let (data, desc) = self.any_receiver(o);
         let ka = key.map(|k| {
             let kt = self.sub(k.ty);

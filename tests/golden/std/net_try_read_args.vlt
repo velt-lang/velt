@@ -1,0 +1,42 @@
+// tryRead's and writeBytes' indices are taken as JS takes them: truncated, and a negative
+// writeBytes index counts from the end, as `subarray` takes it.
+import { connect, listen } from "velt:net";
+
+async function main() {
+  const BUF: u8[] = [0, 0, 0, 0];
+  const server = await listen("127.0.0.1:0");
+  const c = await connect(`127.0.0.1:${server.port}`);
+  const s = await server.accept();
+
+  await c.write("ABCD");
+  let got = 0;
+  while (got < 4) {
+    await s.readable();
+    got += s.tryRead(BUF, got) ?? 0;
+  }
+  console.log("read:", new TextDecoder().decode(BUF));
+
+  // 2.2..2.7 is 2..2: empty, so a RangeError (not the end of the stream).
+  try {
+    s.tryRead(BUF, 2.2, 2.7);
+  } catch (e) {
+    console.log("fractional empty range:", e instanceof RangeError);
+  }
+
+  const data = new TextEncoder().encode("abcdef");
+  await c.writeBytes(data, -2);
+  await c.writeBytes(data, 1.9, -3.5);
+  c.shutdown();
+  let text = "";
+  while (true) {
+    const chunk = await s.readString();
+    if (chunk == "") {
+      break;
+    }
+    text += chunk;
+  }
+  console.log("negative and fractional:", text);
+  s.close();
+  c.close();
+  server.close();
+}

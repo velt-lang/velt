@@ -34,6 +34,20 @@ pub const OBJECT_GET_FN: &str = "__object_get";
 /// }) }`, the callee's span being the `set` keyword.
 pub const OBJECT_SET_FN: &str = "__object_set";
 
+/// The parameter the parser puts in front of the parameters of an object-literal method whose
+/// body uses `this` (outside the functions and classes declared in it): `{ m(x) { return
+/// this.n + x; } }` is `{ m: (this, x) => { ... } }`. The same goes for getters, setters,
+/// generator methods and `function` expressions that are a property's value. No written
+/// parameter can have this name (it is a keyword), and the parameter's span is empty, at the
+/// start of the method. Sema passes the object the method is called on as this parameter where
+/// it knows the literal's type, and reports `this` elsewhere.
+pub const METHOD_THIS: &str = "this";
+
+/// Is `name` the [`METHOD_THIS`] parameter the parser added?
+pub fn is_method_this(name: &crate::ast::Ident) -> bool {
+    name.name == METHOD_THIS && name.span.lo == name.span.hi
+}
+
 /// Member name of the computed key `[Symbol.dispose]` (a method declaration
 /// `[Symbol.dispose]() {}` or an access `x[Symbol.dispose]`): an `Ident` with this exact
 /// name. No plain identifier can collide with it.

@@ -3,8 +3,8 @@
 //! generic code), else `Object.prototype.toString`'s `[object Object]`, or `[object Name]` for
 //! std's classes, as Node's built-ins write their `Symbol.toStringTag` (`[object Map]`,
 //! `[object Headers]`). An error is a class with a `toString()` (the prelude `Error`'s,
-//! `name: message`), and everything else (unions, enums, `JsonValue`) is written by the
-//! format glue.
+//! `name: message`), a union by its member (an array member as `Array.prototype.toString`
+//! writes it), and everything else (enums, `JsonValue`) is written by the format glue.
 
 use velt_sema::hir::{self, TyId, TyKind};
 
@@ -21,7 +21,7 @@ impl FnLower<'_, '_> {
         }
         if let TyKind::Option(e, n) = self.cx.kind(ty) {
             // An object, or a union with an object member (`number | VNode | undefined`).
-            let union = self.cx.is_union(e) && self.union_has_object(e);
+            let union = self.cx.is_union(e) && (self.union_has_object(e) || self.union_js_list(e));
             if !self.js_object(e) && !union {
                 return false;
             }
@@ -38,15 +38,17 @@ impl FnLower<'_, '_> {
             self.switch_to(done);
             return true;
         }
-        if self.cx.is_union(ty) && self.union_has_object(ty) {
-            // The active member, as JS writes it: an object member as `[object Object]`.
+        let lists = self.cx.is_union(ty) && self.union_js_list(ty);
+        if lists || (self.cx.is_union(ty) && self.union_has_object(ty)) {
+            // The active member, as JS writes it: an object member as `[object Object]`, an
+            // array or tuple member as `Array.prototype.toString` does (`1,2`, #1274).
             self.for_each_variant(place, ty, |lw, v, parts| {
                 if let Some(l) = lw.variant_literal(ty, v) {
                     lw.push_literal(buf, &l, false);
                 }
                 for (pp, pt) in parts {
                     if !lw.push_js_object(buf, &pp, pt) {
-                        lw.format_top(buf, &pp, pt);
+                        lw.push_js_string(buf, &pp, pt);
                     }
                 }
             });
@@ -63,7 +65,11 @@ impl FnLower<'_, '_> {
             _ => false,
         };
         let tag = match self.prelude_record(ty).is_some() || !std {
-            true => "Object".to_string(),
+            // A subclass of `Map` or `Set` keeps its base's `Symbol.toStringTag`.
+            true => match self.collection_subclass(ty) {
+                Some((base, _)) => self.cx.type_name(base),
+                None => "Object".to_string(),
+            },
             false => self.cx.type_name(ty),
         };
         self.push_text(buf, &format!("[object {tag}]"));
@@ -123,9 +129,60 @@ impl FnLower<'_, '_> {
     }
 
     /// Does union `ty` have a member [`js_object`](Self::js_object) writes?
-    fn union_has_object(&mut self, ty: TyId) -> bool {
-        let TyKind::Adt(d, args) = self.cx.kind(ty) else {
+    /// Does the union `ty` have an array or tuple member, and none that holds `ty` again? A
+    /// recursive union (`type Child = string | Child[]`) is left to the format glue: its arrays
+    /// would be written inline without end.
+    fn union_js_list(&mut self, ty: TyId) -> bool {
+        let TyKind::Adt(d, _) = self.cx.kind(ty) else {
             return false;
+        };
+        let n = self.cx.enum_def(d).variants.len() as u32;
+        let members: Vec<TyId> = (0..n).flat_map(|k| self.cx.variant_tys(ty, k)).collect();
+        members
+            .iter()
+            .any(|m| matches!(self.cx.kind(*m), TyKind::Array(_) | TyKind::Tuple(_)))
+            && !members.iter().any(|m| self.holds_type(*m, ty, 0))
+    }
+
+    /// Does a value of `t` hold a `target` (through arrays, tuples, nullables and unions)?
+    /// Deep types count as holding it.
+    fn holds_type(&mut self, t: TyId, target: TyId, depth: u32) -> bool {
+        if t == target || depth > 8 {
+            return true;
+        }
+        match self.cx.kind(t) {
+            TyKind::Array(e) | TyKind::Option(e, _) => self.holds_type(e, target, depth + 1),
+            TyKind::Tuple(ts) => ts
+                .into_iter()
+                .any(|e| self.holds_type(e, target, depth + 1)),
+            TyKind::Adt(d, _) if self.cx.is_union(t) => {
+                let n = self.cx.enum_def(d).variants.len() as u32;
+                let ms: Vec<TyId> = (0..n).flat_map(|k| self.cx.variant_tys(t, k)).collect();
+                ms.into_iter()
+                    .any(|m| self.holds_type(m, target, depth + 1))
+            }
+            _ => false,
+        }
+    }
+
+    fn union_has_object(&mut self, ty: TyId) -> bool {
+        let members = self.union_members(ty);
+        members.into_iter().any(|p| self.js_object(p))
+    }
+
+    /// Is `ty` a union with an array or tuple member, which `String(x)` writes as a JS list?
+    pub(super) fn union_has_list(&mut self, ty: TyId) -> bool {
+        let members = self.union_members(ty);
+        members.into_iter().any(|p| self.writes_js_list(p))
+    }
+
+    /// The payload types of union `ty`'s members (none if `ty` is not a union).
+    pub(super) fn union_members(&mut self, ty: TyId) -> Vec<TyId> {
+        if !self.cx.is_union(ty) {
+            return vec![];
+        }
+        let TyKind::Adt(d, args) = self.cx.kind(ty) else {
+            return vec![];
         };
         let payloads: Vec<TyId> = self
             .cx
@@ -134,10 +191,10 @@ impl FnLower<'_, '_> {
             .iter()
             .flat_map(|v| v.payload.clone())
             .collect();
-        payloads.into_iter().any(|p| {
-            let p = self.cx.subst(p, &args);
-            self.js_object(p)
-        })
+        payloads
+            .into_iter()
+            .map(|p| self.cx.subst(p, &args))
+            .collect()
     }
 }
 

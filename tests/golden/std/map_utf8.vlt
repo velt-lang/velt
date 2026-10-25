@@ -1,0 +1,63 @@
+// check: no leaks
+// `Map<string, V>` looked up by the UTF-8 bytes of a key: the same entries `get`, `has` and
+// `set` find with the bytes decoded (an invalid sequence reads as U+FFFD).
+import { utf8DecodeLossy, utf8Encode } from "velt:encoding";
+
+function main() {
+  const m = new Map<string, number>();
+  m.set("apple", 1);
+  m.set("päron", 2);
+  m.set("日本", 3);
+  m.set("a\u{FFFD}b", 4);
+  console.log(
+    m.getUtf8(utf8Encode("apple")),
+    m.getUtf8(utf8Encode("päron")),
+    m.getUtf8(utf8Encode("日本")),
+  );
+  console.log(m.getUtf8(utf8Encode("pear")), m.hasUtf8(utf8Encode("apple")), m.hasUtf8([]));
+  // 0xff is not UTF-8: it reads as U+FFFD, as decoding would.
+  const bad: u8[] = [97, 255, 98];
+  console.log(m.getUtf8(bad), m.hasUtf8(bad));
+  // An existing key keeps its place; a new one is added at the end.
+  m.setUtf8(utf8Encode("apple"), 10);
+  m.setUtf8(utf8Encode("kiwi"), 5);
+  m.setUtf8([200, 201], 6);
+  console.log([...m.keys()].join(","), m.get("apple"), m.get("\u{FFFD}\u{FFFD}"));
+  m.delete("päron");
+  console.log(m.getUtf8(utf8Encode("päron")), m.size);
+  // Many keys: the index grows and entries are compacted.
+  const big = new Map<string, i64>();
+  for (let i = 0; i < 5000; i++) {
+    big.set(`key:${i}`, i as i64);
+  }
+  for (let i = 0; i < 5000; i += 2) {
+    big.delete(`key:${i}`);
+  }
+  let found: i64 = 0;
+  let missing: i64 = 0;
+  for (let i = 0; i < 5000; i++) {
+    const v = big.getUtf8(utf8Encode(`key:${i}`));
+    if (v == undefined) {
+      missing++;
+    } else if (v == (i as i64)) {
+      found++;
+    }
+  }
+  console.log(found, missing);
+  // Invalid sequences decode as `utf8DecodeLossy` decodes them: a cut character, an encoded
+  // surrogate, an overlong form, a stray continuation byte.
+  const cases: u8[][] = [
+    [0xe6, 0x97],
+    [0xed, 0xa0, 0x80],
+    [0xc0, 0x80],
+    [0x80, 0x41],
+    [0xf0, 0x9f, 0x98],
+  ];
+  const seen: bool[] = [];
+  for (const b of cases) {
+    const m2 = new Map<string, i64>();
+    m2.setUtf8(b, 1);
+    seen.push(m2.has(utf8DecodeLossy(b)) && m2.getUtf8(b) == 1);
+  }
+  console.log(seen.join(","));
+}

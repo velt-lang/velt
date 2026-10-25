@@ -1,0 +1,8 @@
+still to send: 4
+abcd|w|e
+bounded: true
+received: 16777216
+before the end: 1048579
+sending failed
+closed: EBADF
+aborted: ECONNRESET

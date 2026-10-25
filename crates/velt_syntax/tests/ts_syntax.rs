@@ -263,10 +263,7 @@ fn object_literal_methods_are_arrow_properties() {
         };
         assert!(matches!(v.kind, ExprKind::Arrow { .. }));
     }
-    assert_eq!(
-        errors("const o = { n: 1, m() { return this.n; } };"),
-        vec!["`this` in the object-literal method `m` is not supported yet"]
-    );
+    assert!(errors("const o = { n: 1, m() { return this.n; } };").is_empty());
     assert!(errors("const o = { get v() { return 1; }, set v(x: number) {} };").is_empty());
     assert_eq!(
         errors("const o = { get v(x) { return 1; } };"),
@@ -517,17 +514,14 @@ fn function_expressions_are_arrows() {
         errors("const g = function* () { yield this; };"),
         vec!["'this' implicitly has type 'any' because it does not have a type annotation (TypeScript's TS2683)"]
     );
-    // As an object-literal property, TypeScript types `this` as the literal.
+    // As an object-literal property, TypeScript types `this` as the literal: the function
+    // takes it as a method does (`object_literal_methods_take_this`).
     for src in [
         "const o = { v: 1, get: function () { return this.v; } };",
         "const o = { v: 1, get: async function () { return this.v; } };",
         "const o = { v: 1, g: function* () { yield this.v; } };",
     ] {
-        assert_eq!(
-            errors(src),
-            vec!["`this` in a function expression that is an object-literal property is not supported yet"],
-            "{src}"
-        );
+        assert!(errors(src).is_empty(), "{src}");
     }
     // Only the property's own value: a function expression nested in it is not one.
     assert_eq!(
@@ -658,5 +652,57 @@ fn catch_binding_annotations() {
     assert_eq!(
         errors("try { f(); } catch (e: unknown[]) { g(e); }"),
         [ts1196]
+    );
+}
+
+/// The names of the leading `this` parameters (`ast::METHOD_THIS`) of the members of the object
+/// literal `x = { ... }`, and whether each has an empty span.
+fn method_this_params(src: &str) -> Vec<(String, bool)> {
+    let e = expr(src);
+    let ExprKind::Assign { value, .. } = &e.kind else {
+        panic!()
+    };
+    let ExprKind::Object(ps) = &value.kind else {
+        panic!()
+    };
+    let mut out = vec![];
+    for p in ps {
+        let ObjectProp::KeyValue(k, v) = p else {
+            continue;
+        };
+        let v = match &v.kind {
+            ExprKind::Call { args, .. } => &args[0],
+            _ => v,
+        };
+        let first = match &v.kind {
+            ExprKind::Arrow { params, .. } => params.first().map(|p| p.name.clone()),
+            ExprKind::Function(f) => f.sig.params.first().map(|p| p.name.clone()),
+            _ => None,
+        };
+        if let Some(n) = first.filter(is_method_this) {
+            out.push((k.name.clone(), n.span.lo == n.span.hi));
+        }
+    }
+    out
+}
+
+#[test]
+fn object_literal_methods_take_this() {
+    let src = "x = { n: 1, a() { return this.n; }, b() { return 1; }, get c() { return this.n; }, \
+               set c(v: number) { this.n = v; }, *d() { yield this.n; }, e: function () { return this.n; }, \
+               f: () => this, g() { return () => this.n; }, h() { return { k() { return this; } }; } }";
+    let names: Vec<String> = method_this_params(src)
+        .into_iter()
+        .map(|(n, empty)| {
+            assert!(empty, "{n}");
+            n
+        })
+        .collect();
+    // `b` doesn't use `this`, `f` is an arrow (its `this` is the enclosing one), and `h`'s
+    // `this` belongs to the nested literal's method.
+    assert_eq!(names, ["a", "c", "c", "d", "e", "g"]);
+    assert!(
+        !errors("x = { get v(this) { return 1; } };").is_empty(),
+        "a written parameter named `this` is no method's `this`"
     );
 }

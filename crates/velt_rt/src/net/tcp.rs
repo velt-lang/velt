@@ -16,7 +16,9 @@ use crate::str::VeltStr;
 use crate::task::leaf::new_leaf;
 use crate::task::VeltFut;
 use std::io;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
+use tokio::sync::Notify;
 use tokio_rustls::{TlsAcceptor, TlsConnector};
 
 /// Default chunk size for `read()` / `readString()` without an explicit maximum.
@@ -29,6 +31,37 @@ const TLS_HANDSHAKE: Duration = Duration::from_secs(10);
 pub struct ListenerObj {
     listener: TcpListener,
     tls: Option<TlsAcceptor>,
+    /// Set by `close()`, which also wakes the accepts waiting then: they fail with `EBADF`
+    /// instead of waiting for a connection that keeps the socket bound and the process alive.
+    closed: AtomicBool,
+    closing: Notify,
+}
+
+impl ListenerObj {
+    fn new(listener: TcpListener, tls: Option<TlsAcceptor>) -> ListenerObj {
+        ListenerObj {
+            listener,
+            tls,
+            closed: AtomicBool::new(false),
+            closing: Notify::new(),
+        }
+    }
+
+    /// The next connection, or `None` once the listener is closed.
+    async fn accept(&self) -> Option<io::Result<(TcpStream, std::net::SocketAddr)>> {
+        let closing = self.closing.notified();
+        let mut closing = std::pin::pin!(closing);
+        // Registered before the check: a close in between still wakes it.
+        closing.as_mut().enable();
+        if self.closed.load(Ordering::Acquire) {
+            return None;
+        }
+        let accept = std::pin::pin!(self.listener.accept());
+        match futures_util::future::select(closing, accept).await {
+            futures_util::future::Either::Left(_) => None,
+            futures_util::future::Either::Right((r, _)) => Some(r),
+        }
+    }
 }
 
 /// An accepted connection on its way to the task that serves it. With the per-core scheduler a
@@ -86,10 +119,7 @@ pub unsafe extern "C" fn velt_rt_tcp_listen(addr: *const VeltStr) -> *mut VeltFu
     new_leaf(async move {
         let r = crate::dev::bind(addr.as_str()).await;
         IoResult::from_io(r, |listener| {
-            LISTENERS.insert(ListenerObj {
-                listener,
-                tls: None,
-            })
+            LISTENERS.insert(ListenerObj::new(listener, None))
         })
     })
 }
@@ -132,10 +162,7 @@ pub unsafe extern "C" fn velt_rt_tcp_listen_tls(
     new_leaf(async move {
         let r = crate::dev::bind(addr.as_str()).await;
         IoResult::from_io(r, |listener| {
-            LISTENERS.insert(ListenerObj {
-                listener,
-                tls: Some(acceptor),
-            })
+            LISTENERS.insert(ListenerObj::new(listener, Some(acceptor)))
         })
     })
 }
@@ -153,7 +180,10 @@ pub unsafe extern "C" fn velt_rt_tcp_listener_port(l: ListenerHandle) -> u32 {
 /// Release a listener handle (closing it again is a no-op).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_tcp_listener_close(l: ListenerHandle) {
-    LISTENERS.remove(l);
+    if let Some(obj) = LISTENERS.remove(l) {
+        obj.closed.store(true, Ordering::Release);
+        obj.closing.notify_waiters();
+    }
 }
 
 /// `accept()` → `IoResult<StreamHandle>` (TCP_NODELAY enabled). On a TLS listener the handshake
@@ -163,7 +193,9 @@ pub unsafe extern "C" fn velt_rt_tcp_listener_close(l: ListenerHandle) {
 pub unsafe extern "C" fn velt_rt_tcp_accept(l: ListenerHandle) -> *mut VeltFut {
     LISTENERS.op::<StreamHandle>(l, |obj| {
         new_leaf(async move {
-            let accepted = obj.listener.accept().await;
+            let Some(accepted) = obj.accept().await else {
+                return IoResult::err(closed_error());
+            };
             let Some(acceptor) = obj.tls.clone() else {
                 return stream_result(accepted.map(|(s, _)| s));
             };
@@ -310,11 +342,18 @@ pub unsafe extern "C" fn velt_rt_tcp_write_bytes(
     write_copy(s, (*data).as_bytes())
 }
 
-fn write_copy(s: StreamHandle, data: &[u8]) -> *mut VeltFut {
+pub(super) fn write_copy(s: StreamHandle, data: &[u8]) -> *mut VeltFut {
     // A hand-off: the peer (often a task of this program) may read these bytes on another
     // worker before this task's poll ends, so what it printed before the write goes first.
     crate::io::publish_before_handoff();
     STREAMS.op::<()>(s, |obj| {
+        // Bytes deferred with `writeLater` go first: these join their queue.
+        if obj.later.active() {
+            let data = data.to_vec();
+            return new_leaf(
+                async move { IoResult::from_io(obj.write_queued(&data).await, |()| ()) },
+            );
+        }
         // Counted from the call, so a write made after this one waits for it.
         let (w, first) = Writing::begin(obj);
         // A raw socket usually takes everything at once: written here, from the caller's
@@ -352,14 +391,21 @@ fn write_copy(s: StreamHandle, data: &[u8]) -> *mut VeltFut {
 /// `write` reports it).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_tcp_try_write(s: StreamHandle, data: *const VeltBytes) -> u64 {
+    try_write_now(s, (*data).as_bytes())
+}
+
+/// What `velt_rt_tcp_try_write` writes of `data`.
+pub(super) fn try_write_now(s: StreamHandle, data: &[u8]) -> u64 {
     crate::io::publish_before_handoff();
     let Some(obj) = STREAMS.get(s) else { return 0 };
+    if obj.later.active() {
+        return 0;
+    }
     // Nothing while another write goes on (these bytes go after its), in the socket's turn.
     let (w, first) = Writing::begin(obj);
     let Some((stream, _turn)) = w.0.plain().filter(|_| first).zip(w.0.try_turn()) else {
         return 0;
     };
-    let data = (*data).as_bytes();
     let mut done = 0;
     while done < data.len() {
         match stream.try_write(&data[done..]) {
@@ -406,10 +452,16 @@ pub unsafe extern "C" fn velt_rt_tcp_peer_addr(s: StreamHandle, out: *mut VeltSt
     out.write(VeltStr::from_bytes(a.as_bytes()));
 }
 
-/// `close()`: release a stream handle (the socket closes when no operation is in flight);
-/// closing it again, through any copy, is a no-op.
+/// `close()`: release a stream handle (the socket closes when no operation is in flight; one
+/// that waits for input then ends with `EBADF`, a write in flight goes on); closing it again,
+/// through any copy, is a no-op.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_tcp_close(s: StreamHandle) {
     crate::io::publish_before_handoff();
-    STREAMS.remove(s);
+    if let Some(obj) = STREAMS.remove(s) {
+        // An operation still in flight holds the stream too: its waits for input end now.
+        if std::sync::Arc::strong_count(&obj) > 1 {
+            obj.close_reads();
+        }
+    }
 }

@@ -1,0 +1,1 @@
+error: a `T` converts to `{ v: f64 }` only as the object it holds, and this program also makes `T` values of `C`, which is no `{ v: f64 }`

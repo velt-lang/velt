@@ -1,0 +1,15 @@
+// `Object.defineProperty` replacing a getter of an object literal written without a type needs
+// the getter's result type written.
+export function make(): number {
+  const o = {
+    get value() {
+      return 1;
+    },
+  };
+  Object.defineProperty(o, "value", {
+    get() {
+      return 2;
+    },
+  });
+  return o.value;
+}

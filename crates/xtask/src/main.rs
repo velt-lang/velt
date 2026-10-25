@@ -21,6 +21,7 @@ mod file_size;
 mod golden_archive;
 mod graph;
 mod hooks;
+mod junit;
 mod os;
 mod plan;
 mod pr_lint;
@@ -56,15 +57,18 @@ Options:
   --base <rev>         Compare with this revision (default: origin/main, else main)
   --paths <p>...       Plan for these paths instead of the git changes (with `affected`)
   --part <parts>       all (default), or a comma-separated list of: lint (fmt + clippy),
-                       test (build, tests, velt fmt, smoke), golden (end-to-end goldens)
+                       test (build, tests, velt fmt, smoke), golden (end-to-end goldens),
+                       wasm (only the WebAssembly goldens, which `test` runs too; not in
+                       `all`, not with `test`; VELT_WASM_SHARD=<i>/<n> runs one of n shards)
   --fast               Goldens in debug mode only, no smoke test
   --golden-modes <m>   debug or release (default: both, or debug with --fast)
   --no-smoke           Skip the smoke test (it runs only with --full, on Linux and macOS)
-  --pack <file>        (--part golden) Build what the goldens run and pack it into a tar
-                       instead of running them; the path is relative to the repository root
-  --archive <file>     (--part golden) Run the goldens from a `--pack` tar, unpacked into a
-                       checkout at the same path, without building (VELT_GOLDEN_SHARD=<i>/<n>
-                       runs one of n shards)
+  --pack <file>        (--part golden, wasm or both) Build what those goldens run and pack it
+                       into a tar instead of running them; the path is relative to the
+                       repository root
+  --archive <file>     (--part golden, wasm or both) Run those goldens from a `--pack` tar,
+                       unpacked into a checkout at the same path, without building
+                       (VELT_GOLDEN_SHARD=<i>/<n>, VELT_WASM_SHARD=<i>/<n>: one of n shards)
   --dry-run            Print the commands without running them
   --github             (affected) Write the plan to $GITHUB_OUTPUT and $GITHUB_STEP_SUMMARY
   --force              (install-hooks) Replace a pre-push hook xtask didn't install (kept as
@@ -142,14 +146,15 @@ fn run() -> Result<(), String> {
             println!("root: {}", root.display());
             print!("{}", plan.describe());
             let part = args.part.as_deref().unwrap_or("all");
-            if (args.pack.is_some() || args.archive.is_some()) && part != "golden" {
-                return Err("--pack and --archive need `--part golden`".into());
+            let parts = Parts::parse(part)?;
+            if (args.pack.is_some() || args.archive.is_some()) && !parts.only_goldens() {
+                return Err("--pack and --archive need `--part golden`, `wasm` or both".into());
             }
             if args.pack.is_some() && args.archive.is_some() {
                 return Err("--pack builds, --archive runs without building: use one".into());
             }
             let opts = Options {
-                parts: Parts::parse(part).ok_or(format!("unknown part `{part}`"))?,
+                parts,
                 golden_modes: args
                     .golden_modes
                     .clone()
@@ -245,7 +250,8 @@ fn precheck_paths(root: &Path, args: &Args) -> Result<(Vec<String>, String), Str
 /// the change touches OS-specific code: PR CI otherwise runs on Linux only), and how the
 /// parser's robustness test cuts the goldens in the queue, which runs `--full` and so knows no
 /// changes (`robustness`, `robustness_files`: `VELT_ROBUSTNESS`, `VELT_ROBUSTNESS_FILES`), nor
-/// whether the WebAssembly goldens run (`wasm_goldens`: `VELT_WASM_GOLDENS`). After a push to
+/// whether the WebAssembly goldens run (`wasm_goldens`: `skip` when they don't). The goldens and
+/// the WebAssembly goldens run in shards per OS (`golden_shards`, `wasm_shards`). After a push to
 /// `main`, `main_os` lists the OSes of the `main` job: Linux (it saves the build cache) and,
 /// when [`Plan::after_merge`] says so, Windows and macOS for the whole gate.
 fn github_output_text(plan: &Plan) -> String {
@@ -266,9 +272,10 @@ fn github_output_text(plan: &Plan) -> String {
     };
     let (os, other_os) = (json(oses), json(&oses[1..]));
     let golden_shards = os::golden_shards_json(oses);
+    let wasm_shards = os::wasm_shards_json(oses);
     let mut text = format!(
         "full={}\nlint={}\ntest={}\ngolden={}\nos={os}\nother_os={other_os}\nmain_os={main_os}\n\
-         golden_shards={golden_shards}\n",
+         golden_shards={golden_shards}\nwasm_shards={wasm_shards}\n",
         flag(plan.full),
         "true",
         flag(plan.needs_build() || plan.difftest || plan.vscode),
@@ -423,9 +430,11 @@ name = \"a\"
                     .unwrap_or_default()
                     .to_string()
             };
-            let (oses, shards) = (line("os"), line("golden_shards"));
-            for os in os::QUEUE_OSES.iter().filter(|os| oses.contains(*os)) {
-                assert!(shards.contains(&format!("\"{os}\":[\"1/")), "{text}");
+            let oses = line("os");
+            for shards in [line("golden_shards"), line("wasm_shards")] {
+                for os in os::QUEUE_OSES.iter().filter(|os| oses.contains(*os)) {
+                    assert!(shards.contains(&format!("\"{os}\":[\"1/")), "{text}");
+                }
             }
         }
     }

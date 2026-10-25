@@ -1,0 +1,4 @@
+// `bigint` has no values yet (#1088), so `bigint[]` is `never[]`: an error about a `never`
+// in a program that names `bigint` says so (#1266).
+const xs: bigint[] = [];
+console.log(xs.find((x) => true));

@@ -36,6 +36,7 @@ mod body;
 mod brands;
 mod call_sigs;
 mod callables;
+mod check_work;
 mod collect;
 mod copy_flow;
 mod copy_types;
@@ -54,8 +55,11 @@ mod flow;
 mod fn_types;
 mod fresh_returns;
 mod generic_arrows;
+mod generic_override_sites;
 mod generic_spread;
 mod global_this;
+#[cfg(test)]
+mod hasher_tests;
 mod holds_promise;
 mod hooks;
 pub mod ide;
@@ -66,6 +70,7 @@ mod inst_sites;
 mod instantiation_cycles;
 mod interface_merge;
 mod intersection_members;
+mod intersection_records;
 mod intersections;
 mod js_api;
 mod json;
@@ -119,7 +124,23 @@ use velt_syntax::ast;
 use crate::ctx::Item;
 use crate::defs::{DefInfo, FnKind};
 
+pub use check_work::{check_work, CheckWork};
 pub use dispatch::{instantiation_work, InstantiationWork};
+
+/// `e`, an expression checked outside any function body (a class field's initializer, run by
+/// a constructor or a `new`), with its own temporaries (a `Record` literal's, ...) renumbered
+/// from `base` on, so that they don't name the locals of the body it is lowered in (those are
+/// below `base`); and how many there are. `None`: `e` declares no local.
+pub fn rebase_detached_locals(e: &hir::Expr, base: u32) -> Option<(hir::Expr, u32)> {
+    let mut e = e.clone();
+    let n = visit::detached_locals(&mut e).len() as u32;
+    if n == 0 {
+        return None;
+    }
+    let map: Vec<hir::LocalId> = (0..n).map(|i| hir::LocalId(base + i)).collect();
+    visit::remap_expr_locals(&mut e, &map);
+    Some((e, n))
+}
 
 /// One parsed module handed to sema by the driver.
 pub struct SourceModule {
@@ -384,6 +405,7 @@ fn check_timed(
         }
     }
     union_views::finish(&mut cx);
+    cx.upcast_writes();
     if !recovered.is_empty() || cx.diags.iter().any(|d| d.is_error()) {
         return (None, cx.diags);
     }
@@ -423,6 +445,7 @@ fn check_timed(
         union_shapes: union_shapes.into_iter().collect(),
         counted_objects,
         null_proto_records: objects.null_proto_records,
+        record_fills: objects.record_fills,
         module_state,
         type_ops: type_ops.into_iter().collect(),
         any_impl: any.and_then(|a| a.imp),
@@ -487,6 +510,9 @@ fn analyze_bodies(cx: &mut ctx::Ctx) {
     timings::pass("collect::collect", || collect::collect(cx));
     cx.collected_defs = cx.defs.len();
     timings::pass("global_this::declare", || global_this::declare(cx));
+    timings::pass("build_fill_bodies", || {
+        body::expr::virtual_defaults::build_fill_bodies(cx)
+    });
     timings::pass("body::check_bodies", || body::check_bodies(cx));
     timings::pass("global_this::check_sites", || global_this::check_sites(cx));
     timings::pass("module_scripts::declare", || module_scripts::declare(cx));
@@ -499,6 +525,9 @@ fn analyze_bodies(cx: &mut ctx::Ctx) {
     });
     timings::pass("absent_fields::check", || absent_fields::check(cx));
     timings::pass("fresh_returns::check", || fresh_returns::check(cx));
+    timings::pass("generic_override_sites::check", || {
+        generic_override_sites::check(cx)
+    });
     // Growing generic recursion has infinitely many instantiations: the passes below propagate
     // requirements per instantiation and would never finish.
     if timings::pass("instantiation_cycles::check", || {
@@ -540,9 +569,6 @@ fn ownership_passes(cx: &mut ctx::Ctx) {
         ownership::infer_local_async(cx)
     });
     timings::pass("ownership::infer_modes", || ownership::infer_modes(cx));
-    timings::pass("body::expr::jsx::check_prop_copies", || {
-        body::expr::jsx::check_prop_copies(cx)
-    });
     timings::pass("throws::infer_all", || throws::infer_all(cx));
     // The program is checked again with the error types of function types written without
     // `throws` that this check found (`throws::fn_types`): the rest would be redone.

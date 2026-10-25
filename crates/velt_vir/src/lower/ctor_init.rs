@@ -167,7 +167,7 @@ impl FnLower<'_, '_> {
         fty: TyId,
         fresh: bool,
     ) {
-        let v = self.consume(def);
+        let v = self.consume_detached(def);
         let p = self.field_place(obj, ty, i as u32);
         if fresh || !self.cx.needs_drop(fty) {
             self.store(p, v);
@@ -178,6 +178,26 @@ impl FnLower<'_, '_> {
             self.store(p, v);
             self.drop_glue(Place::local(old), fty);
         }
+    }
+
+    /// Field initializer `e`, checked outside any body, lowered here: its own temporaries (a
+    /// `Record` literal's, numbered from 0) become locals after this body's, declared at their
+    /// `let` (`init_locals`), instead of naming this body's locals with the same ids.
+    fn consume_detached(&mut self, e: &hir::Expr) -> Operand {
+        let base = self.info.len() as u32;
+        let Some((e, n)) = velt_sema::rebase_detached_locals(e, base) else {
+            return self.consume(e);
+        };
+        // Reserved now: a `new` inside `e` places its initializers' locals after these.
+        let unit = self.cx.intern(TyKind::Unit);
+        let end = (base + n) as usize;
+        self.info.resize_with(end, || {
+            super::LInfo::new(None, unit, false, false, super::LState::Uninit)
+        });
+        let outer = self.init_locals.replace(base);
+        let v = self.consume(&e);
+        self.init_locals = outer;
+        v
     }
 
     /// The initializers `new` runs for class `ty` (concrete) after its constructor `ctor`:

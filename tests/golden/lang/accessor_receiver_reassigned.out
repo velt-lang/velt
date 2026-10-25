@@ -1,0 +1,8 @@
+field += 6 100
+field ++ 2 100
+field -- 1 0 100
+field ??= 7 100
+module let += 3 100
+rhs getter 11 100
+closure-assigned local 3 100
+plain 12 101

@@ -247,12 +247,32 @@ impl FnCx<'_, '_> {
             Some(_) => return self.any_keys(obj, span),
             None => {}
         }
+        // A value of a type parameter (`T extends Record<string, V>`, `T & object`): the keys
+        // of each instantiation's value, at run time.
+        let obj = match self.generic_as_any(obj) {
+            Ok(boxed) => return self.any_keys(boxed, span),
+            Err(obj) => obj,
+        };
         self.cx
             .object_copies
             .observe(obj.ty, span, crate::object_copies::Seen::Keys);
         // An interface value lists the fields of the class it holds (none can hold anything
         // else: see `iface_classes`).
+        let own = match self.cx.ty.kind(obj.ty) {
+            // The interface of a literal with no expected type holds only that literal.
+            TyKind::Dyn(i, _) if self.cx.literal_ifaces.contains(i) => {
+                (self.cx.impls.iter()).find(|m| m.iface == *i).map(|m| m.ty)
+            }
+            _ => None,
+        };
         let (keys, classes) = match self.cx.ty.kind(obj.ty).clone() {
+            TyKind::Dyn(..) if own.is_some() => {
+                let t = own.expect("ICE: a literal's own type");
+                let Some(keys) = self.object_key_names(t, obj.span) else {
+                    return self.error_expr(span);
+                };
+                (keys, None)
+            }
             TyKind::Dyn(i, _) => match self.iface_classes(i, obj.ty, obj.span) {
                 Some(classes) => (vec![], Some(classes)),
                 None => return self.error_expr(span),
@@ -441,11 +461,13 @@ impl FnCx<'_, '_> {
     ) -> hir::Expr {
         let mut arms = vec![];
         for s in subs {
+            let literal = self.cx.literal_structs.contains(&s);
             let names: Vec<Key> = self.cx.adt(s).map_or(vec![], |a| {
                 let fields = a.fields.iter().filter(|f| !is_private_name(&f.name));
                 fields
-                    .map(|f| Key {
-                        name: f.name.clone(),
+                    .filter_map(|f| listed_name(literal, &a.fields, &f.name))
+                    .map(|name| Key {
+                        name,
                         optional: false,
                         presence: false,
                     })
@@ -573,16 +595,19 @@ impl FnCx<'_, '_> {
             return self.not_an_object(t, span);
         }
         let class = a.kind == AdtKind::Class;
+        let literal = self.cx.literal_structs.contains(&d.expect("ICE: an ADT"));
         let keys = a
             .fields
             .iter()
             .filter(|f| {
                 !is_private_name(&f.name) && crate::property_order::symbol_key(&f.name).is_none()
             })
-            .map(|f| Key {
-                name: f.name.clone(),
-                optional: f.optional && !class,
-                presence: crate::anon::has_presence(&self.cx.ty, a.kind, f),
+            .filter_map(|f| {
+                Some(Key {
+                    name: listed_name(literal, &a.fields, &f.name)?,
+                    optional: f.optional && !class,
+                    presence: crate::anon::has_presence(&self.cx.ty, a.kind, f),
+                })
             });
         // JavaScript's order: array-index names (`"404"`) first, ascending (#756).
         let keys: Vec<Key> = keys.collect();
@@ -619,6 +644,17 @@ fn is_object_lit(e: &ast::Expr) -> bool {
         ast::ExprKind::Paren(inner) => is_object_lit(inner),
         ast::ExprKind::Object(_) => true,
         _ => false,
+    }
+}
+
+/// The key field `name` of an ADT with `fields` is listed under, if any. An object literal's
+/// (`literal`) accessor pair is one property: its getter's field is listed under the name, and
+/// a setter's (`set k`) only when there is no getter.
+fn listed_name(literal: bool, fields: &[crate::defs::FieldInfo], name: &str) -> Option<String> {
+    match name.strip_prefix("set ") {
+        Some(n) if literal && fields.iter().any(|f| f.name == n) => None,
+        Some(n) if literal => Some(n.to_string()),
+        _ => Some(name.to_string()),
     }
 }
 

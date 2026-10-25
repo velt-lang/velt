@@ -8,16 +8,20 @@ use std::time::Instant;
 use crate::doctests;
 use crate::golden_archive::{self, Manifest, MANIFEST};
 use crate::graph::Graph;
+use crate::junit;
 use crate::plan::{Goldens, Plan, DIFFTEST};
 
 /// The parts of the gate to run: `all`, or a comma-separated list of `lint` (`cargo fmt`,
 /// clippy), `test` (build, unit and integration tests, doctests, `velt fmt --check`, the VS Code
-/// extension's `npm test`, smoke test) and `golden` (the end-to-end goldens).
+/// extension's `npm test`, smoke test), `golden` (the end-to-end goldens) and `wasm` (the
+/// WebAssembly goldens alone, which `test` otherwise runs with veltc's other tests; the merge
+/// queue and the nightly run them in parallel shards of their own). `all` is the first three.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Parts {
     lint: bool,
     test: bool,
     golden: bool,
+    wasm: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,31 +29,43 @@ enum Part {
     Lint,
     Test,
     Golden,
+    Wasm,
 }
 
 impl Parts {
-    pub fn parse(s: &str) -> Option<Parts> {
+    pub fn parse(s: &str) -> Result<Parts, String> {
         if s == "all" {
-            return Some(Parts {
+            return Ok(Parts {
                 lint: true,
                 test: true,
                 golden: true,
+                wasm: false,
             });
         }
         let mut parts = Parts {
             lint: false,
             test: false,
             golden: false,
+            wasm: false,
         };
         for name in s.split(',').map(str::trim) {
             match name {
                 "lint" => parts.lint = true,
                 "test" => parts.test = true,
                 "golden" => parts.golden = true,
-                _ => return None,
+                "wasm" => parts.wasm = true,
+                _ => return Err(format!("unknown part `{name}`")),
             }
         }
-        Some(parts)
+        if parts.test && parts.wasm {
+            return Err("`--part test` runs the WebAssembly goldens itself: drop `wasm`".into());
+        }
+        Ok(parts)
+    }
+
+    /// Only `golden` and `wasm`, at least one of them: the parts `--pack` and `--archive` take.
+    pub fn only_goldens(self) -> bool {
+        !self.lint && !self.test && (self.golden || self.wasm)
     }
 
     fn has(self, part: Part) -> bool {
@@ -57,6 +73,7 @@ impl Parts {
             Part::Lint => self.lint,
             Part::Test => self.test,
             Part::Golden => self.golden,
+            Part::Wasm => self.wasm,
         }
     }
 }
@@ -100,7 +117,9 @@ pub fn run(root: &Path, graph: &Graph, plan: &Plan, opts: &Options) -> Result<()
         )?;
     }
     let goldens = part.has(Part::Golden) && plan.goldens != Goldens::None;
-    let build = opts.archive.is_none() && ((part.has(Part::Test) && plan.needs_build()) || goldens);
+    let wasm = part.has(Part::Wasm) && plan.wasm_goldens();
+    let build =
+        opts.archive.is_none() && ((part.has(Part::Test) && plan.needs_build()) || goldens || wasm);
     if build {
         // Every later step reuses this build: the same packages and targets resolve the same
         // features, so nothing compiles twice (`VELT_RT_PREBUILT` below). Any test target makes
@@ -111,7 +130,12 @@ pub fn run(root: &Path, graph: &Graph, plan: &Plan, opts: &Options) -> Result<()
         if part.has(Part::Test) {
             b.arg("--all-targets");
         } else {
-            b.args(["--lib", "--bins", "--test", "golden"]);
+            b.args(["--lib", "--bins"]);
+            for (selected, test) in [(goldens, "golden"), (wasm, "wasm_goldens")] {
+                if selected {
+                    b.args(["--test", test]);
+                }
+            }
         }
         gate.step("build", &mut b)?;
     }
@@ -133,29 +157,38 @@ pub fn run(root: &Path, graph: &Graph, plan: &Plan, opts: &Options) -> Result<()
         tests.arg("--manifest-path").arg(difftest_manifest(root));
         gate.step("tests/difftest unit tests", &mut tests)?;
     }
-    if goldens && opts.pack.is_some() {
-        gate.pack(&ws, opts.pack.as_deref().unwrap_or_default())?;
-    } else if goldens {
-        let test = match &opts.archive {
+    if let Some(file) = &opts.pack {
+        if !goldens && !wasm {
+            return Err("--pack: the plan selects no goldens, so there is nothing to pack".into());
+        }
+        gate.pack(&ws, file, goldens, wasm)?;
+    } else if goldens || wasm {
+        let manifest = match &opts.archive {
             Some(file) => Some(gate.unpack(file)?),
             None => None,
         };
-        let golden = || golden_test(root, &ws, test.as_deref());
-        let mut goldens = golden();
-        if let Some(path) = path_with_rust_lld(root) {
-            goldens.env("PATH", path);
+        if goldens {
+            let test = archived(&manifest, |m| m.test.clone(), "golden")?;
+            let golden = || golden_test(root, &ws, test.as_deref());
+            let mut goldens = golden();
+            if let Some(path) = path_with_rust_lld(root) {
+                goldens.env("PATH", path);
+            }
+            if let Some(filter) = plan.golden_env() {
+                goldens.env("VELT_GOLDEN", filter);
+            }
+            if let Some(modes) = &opts.golden_modes {
+                goldens.env("VELT_GOLDEN_MODES", modes);
+            }
+            let modes = opts.golden_modes.as_deref().unwrap_or("debug + release");
+            gate.step(&format!("goldens ({modes})"), &mut goldens)?;
+            let modes = opts.golden_modes.as_deref();
+            gate.bundled_linker_goldens(golden(), plan.golden_env(), modes)?;
         }
-        if let Some(filter) = plan.golden_env() {
-            goldens.env("VELT_GOLDEN", filter);
+        if wasm {
+            let test = archived(&manifest, |m| m.wasm.clone(), "wasm")?;
+            gate.wasm_goldens(&ws, test.as_deref(), plan.golden_env())?;
         }
-        if let Some(modes) = &opts.golden_modes {
-            goldens.env("VELT_GOLDEN_MODES", modes);
-        }
-        let modes = opts.golden_modes.as_deref().unwrap_or("debug + release");
-        gate.step(&format!("goldens ({modes})"), &mut goldens)?;
-        gate.bundled_linker_goldens(golden(), plan.golden_env(), opts.golden_modes.as_deref())?;
-    } else if opts.pack.is_some() {
-        return Err("--pack: the plan selects no goldens, so there is nothing to pack".into());
     }
     if part.has(Part::Test) && plan.vscode {
         gate.vscode()?;
@@ -174,6 +207,21 @@ pub fn run(root: &Path, graph: &Graph, plan: &Plan, opts: &Options) -> Result<()
     }
     gate.summary();
     Ok(())
+}
+
+/// The test binary `pick` names in the archive's manifest, if the run is from an archive; an
+/// error if the archive was packed without `--part <part>`.
+fn archived(
+    manifest: &Option<Manifest>,
+    pick: impl Fn(&Manifest) -> Option<String>,
+    part: &str,
+) -> Result<Option<String>, String> {
+    match manifest {
+        None => Ok(None),
+        Some(m) => pick(m).map(Some).ok_or_else(|| {
+            format!("the archive has no test binary for `--part {part}` (pack it with that part)")
+        }),
+    }
 }
 
 /// veltc's golden test: through cargo, or the binary `test` (relative to `root`) from an archive.
@@ -235,17 +283,33 @@ impl Gate<'_> {
         result
     }
 
-    /// Packs what the goldens run into `file` (see [`golden_archive`]).
-    fn pack(&mut self, ws: &[String], file: &str) -> Result<(), String> {
+    /// Packs what the goldens run into `file` (see [`golden_archive`]): for the goldens
+    /// (`goldens`), the WebAssembly goldens (`wasm`, after building their runtimes), or both.
+    fn pack(&mut self, ws: &[String], file: &str, goldens: bool, wasm: bool) -> Result<(), String> {
+        if wasm {
+            for (target, _) in golden_archive::WASM_RUNTIMES {
+                let mut b = cargo(&["build", "-p", "velt_rt_wasm", "--target", target]);
+                self.step(&format!("the WebAssembly runtime ({target})"), &mut b)?;
+            }
+        }
+        let names: Vec<&str> = [(goldens, "golden"), (wasm, "wasm_goldens")]
+            .into_iter()
+            .filter_map(|(selected, name)| selected.then_some(name))
+            .collect();
         let mut find = cargo(&["test"]);
-        find.args(ws)
-            .args(["--test", "golden", "--no-run", "--message-format=json"]);
-        println!(
-            "\x1b[36m==> the golden test binary\x1b[0m\n    {}",
-            show(&find)
-        );
-        let test = if self.dry_run {
-            "target/debug/deps/golden-<hash>".to_string()
+        find.args(ws);
+        for name in &names {
+            find.args(["--test", name]);
+        }
+        find.args(["--no-run", "--message-format=json"]);
+        println!("\x1b[36m==> the test binaries\x1b[0m\n    {}", show(&find));
+        let mut tests = vec![];
+        if self.dry_run {
+            tests.extend(
+                names
+                    .iter()
+                    .map(|n| format!("target/debug/deps/{n}-<hash>")),
+            );
         } else {
             let out = find
                 .current_dir(self.root)
@@ -258,13 +322,18 @@ impl Gate<'_> {
                     String::from_utf8_lossy(&out.stderr)
                 ));
             }
-            let exe = golden_archive::test_binary(&String::from_utf8_lossy(&out.stdout))
-                .ok_or("cargo built no golden test binary for veltc")?;
-            golden_archive::relative(self.root, &exe)?
-        };
+            let messages = String::from_utf8_lossy(&out.stdout);
+            for name in &names {
+                let exe = golden_archive::test_binary(&messages, name)
+                    .ok_or(format!("cargo built no `{name}` test binary for veltc"))?;
+                tests.push(golden_archive::relative(self.root, &exe)?);
+            }
+        }
+        let mut binaries = tests.iter().cloned();
         let manifest = Manifest {
             root: self.root.to_string_lossy().into_owned(),
-            test: test.clone(),
+            test: goldens.then(|| binaries.next()).flatten(),
+            wasm: wasm.then(|| binaries.next()).flatten(),
         };
         if !self.dry_run {
             std::fs::write(self.root.join(MANIFEST), manifest.render())
@@ -272,21 +341,27 @@ impl Gate<'_> {
         }
         // Relative paths only: GNU tar (Git's, on Windows) reads `C:` as a remote host.
         let mut tar = Command::new("tar");
-        tar.args(["-cf", file, MANIFEST, &test]);
+        tar.args(["-cf", file, MANIFEST]).args(&tests);
         tar.args(golden_archive::files(|f| {
             self.dry_run || self.root.join(f).is_file()
         }));
+        if wasm {
+            tar.args(golden_archive::WASM_RUNTIMES.iter().map(|(_, lib)| lib));
+        }
         self.step(&format!("pack the goldens' build into {file}"), &mut tar)
     }
 
-    /// Unpacks `file` (made by [`Gate::pack`]) into the checkout; returns the golden test
-    /// binary's path.
-    fn unpack(&mut self, file: &str) -> Result<String, String> {
+    /// Unpacks `file` (made by [`Gate::pack`]) into the checkout; returns its manifest.
+    fn unpack(&mut self, file: &str) -> Result<Manifest, String> {
         let mut tar = Command::new("tar");
         tar.args(["-xf", file]);
         self.step(&format!("unpack {file}"), &mut tar)?;
         if self.dry_run {
-            return Ok("target/debug/deps/golden-<hash>".into());
+            return Ok(Manifest {
+                root: self.root.to_string_lossy().into_owned(),
+                test: Some("target/debug/deps/golden-<hash>".into()),
+                wasm: Some("target/debug/deps/wasm_goldens-<hash>".into()),
+            });
         }
         let text = std::fs::read_to_string(self.root.join(MANIFEST))
             .map_err(|e| format!("{file} has no {MANIFEST}: {e}"))?;
@@ -294,12 +369,79 @@ impl Gate<'_> {
         let here = self.root.to_string_lossy();
         if manifest.root != here {
             return Err(format!(
-                "{file} was built in {}, not in this checkout ({here}): its golden test has \
+                "{file} was built in {}, not in this checkout ({here}): its test binaries have \
                  that checkout's paths compiled in",
                 manifest.root
             ));
         }
-        Ok(manifest.test)
+        Ok(manifest)
+    }
+
+    /// The WebAssembly goldens (crates/veltc/tests/wasm_goldens.rs): through cargo, or the test
+    /// binary `test` (relative to the root) from an archive, whose runtimes are prebuilt.
+    /// `VELT_WASM_SHARD=<i>/<n>` runs the tests of shard `i` ([`golden_archive::shard_tests`]).
+    fn wasm_goldens(
+        &mut self,
+        ws: &[String],
+        test: Option<&str>,
+        selected: Option<String>,
+    ) -> Result<(), String> {
+        let root = self.root;
+        let command = || {
+            let mut c = match test {
+                Some(test) => Command::new(root.join(test)),
+                None => {
+                    let mut c = cargo(&["test"]);
+                    c.args(ws).args(["--test", "wasm_goldens", "--"]);
+                    c
+                }
+            };
+            if test.is_some() {
+                c.env("VELT_RT_WASM_PREBUILT", "1");
+            }
+            if let Some(filter) = &selected {
+                c.env("VELT_GOLDEN", filter);
+            }
+            c
+        };
+        let mut run = command();
+        run.arg("--nocapture");
+        let mut name = "WebAssembly goldens".to_string();
+        if let Ok(shard) = std::env::var("VELT_WASM_SHARD") {
+            let (i, n) = golden_archive::parse_shard(&shard)?;
+            name = format!("WebAssembly goldens, shard {i}/{n}");
+            let mut list = command();
+            list.args(["--list", "--format", "terse"]);
+            println!(
+                "\x1b[36m==> the WebAssembly goldens' tests\x1b[0m\n    {}",
+                show(&list)
+            );
+            if self.dry_run {
+                run.arg(format!("<the tests of shard {i}/{n}>"));
+            } else {
+                let out = list
+                    .current_dir(root)
+                    .output()
+                    .map_err(|e| format!("cannot run `{}`: {e}", show(&list)))?;
+                if !out.status.success() {
+                    return Err(format!(
+                        "`{}` failed:\n{}",
+                        show(&list),
+                        String::from_utf8_lossy(&out.stderr)
+                    ));
+                }
+                let all = golden_archive::listed_tests(&String::from_utf8_lossy(&out.stdout));
+                let tests = golden_archive::shard_tests(&all, i, n);
+                if tests.is_empty() {
+                    return Err(format!(
+                        "{name}: no tests ({} in all, fewer than {n} shards)",
+                        all.len()
+                    ));
+                }
+                run.arg("--exact").args(tests);
+            }
+        }
+        self.step(&name, &mut run)
     }
 
     fn tests(&mut self, plan: &Plan, graph: &Graph, ws: &[String]) -> Result<(), String> {
@@ -336,7 +478,7 @@ impl Gate<'_> {
         }
         let result = self.step("unit + integration tests", &mut tests);
         if let (Err(_), Some(report)) = (&result, &junit) {
-            summarize_failed_tests(report);
+            junit::summarize_failed_tests(report);
         }
         result?;
         if plan.rust {
@@ -428,66 +570,6 @@ impl Gate<'_> {
         }
         println!("  {total:>5}s  total");
     }
-}
-
-/// Lists the failed tests of a nextest JUnit report in the job summary (`$GITHUB_STEP_SUMMARY`),
-/// so a failure is attributable from the run's page. Best effort: without the report or the
-/// summary file there is nothing to add to nextest's own output.
-fn summarize_failed_tests(report: &Path) {
-    let (Some(summary), Ok(xml)) = (
-        std::env::var_os("GITHUB_STEP_SUMMARY"),
-        std::fs::read_to_string(report),
-    ) else {
-        return;
-    };
-    let failed = junit_failures(&xml);
-    if failed.is_empty() {
-        return;
-    }
-    let mut text = format!(
-        "### {} failed tests ({})\n\n",
-        failed.len(),
-        std::env::consts::OS
-    );
-    for test in &failed {
-        text += &format!("- `{test}`\n");
-    }
-    use std::io::Write;
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .append(true)
-        .create(true)
-        .open(summary)
-    {
-        let _ = f.write_all(text.as_bytes());
-    }
-}
-
-/// The test cases a JUnit report records as failed (a `<failure>` or `<error>` child), as
-/// `classname name` (nextest: `velt_sema::scaling sema_time_grows_linearly`).
-fn junit_failures(xml: &str) -> Vec<String> {
-    let mut failed = vec![];
-    for case in xml.split("<testcase ").skip(1) {
-        if !(case.contains("<failure") || case.contains("<error")) {
-            continue;
-        }
-        let tag = format!(" {}", &case[..case.find('>').unwrap_or(case.len())]);
-        let attr = |name: &str| {
-            let key = format!(" {name}=\"");
-            let Some(start) = tag.find(&key).map(|i| i + key.len()) else {
-                return String::new();
-            };
-            let value = &tag[start..];
-            let value = &value[..value.find('"').unwrap_or(value.len())];
-            value
-                .replace("&lt;", "<")
-                .replace("&gt;", ">")
-                .replace("&quot;", "\"")
-                .replace("&apos;", "'")
-                .replace("&amp;", "&")
-        };
-        failed.push(format!("{} {}", attr("classname"), attr("name")));
-    }
-    failed
 }
 
 pub(crate) fn cargo(args: &[&str]) -> Command {
@@ -612,35 +694,4 @@ pub(crate) fn show(cmd: &Command) -> String {
         }
     }
     s
-}
-
-#[cfg(test)]
-mod junit_tests {
-    use super::junit_failures;
-
-    #[test]
-    fn failed_cases_are_named_by_class_and_name() {
-        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
-<testsuites name="nextest-run" tests="3" failures="1" errors="1">
-    <testsuite name="velt_sema::scaling" tests="2" failures="1">
-        <testcase name="sema_time_grows_linearly" classname="velt_sema::scaling" time="17.5">
-            <failure type="test failure">thread panicked: &lt;grew&gt;</failure>
-        </testcase>
-        <testcase name="instantiation_work_grows_linearly" classname="velt_sema::scaling" time="1.0"/>
-    </testsuite>
-    <testsuite name="xtask" tests="1" errors="1">
-        <testcase name="a &amp; b &lt;T&gt;" classname="xtask" time="0.1">
-            <error type="test abort">SIGSEGV</error>
-        </testcase>
-    </testsuite>
-</testsuites>"#;
-        assert_eq!(
-            junit_failures(xml),
-            [
-                "velt_sema::scaling sema_time_grows_linearly",
-                "xtask a & b <T>"
-            ]
-        );
-        assert!(junit_failures("<testsuites/>").is_empty());
-    }
 }

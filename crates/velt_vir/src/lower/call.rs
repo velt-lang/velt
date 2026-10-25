@@ -6,6 +6,7 @@
 use velt_sema::hir::{self, DefId, PassMode, TyId, TyKind, UseMode};
 
 use super::operand::proj;
+use super::view_unswitch_plain::FLOAT_INDEX;
 use super::{ice, unit, FnLower, LkMode, Work};
 use crate::vir::{self, Operand, Place, Proj, Rvalue, Ty};
 
@@ -42,6 +43,13 @@ impl FnLower<'_, '_> {
                     .first()
                     .unwrap_or_else(|| ice("method call without receiver"));
                 let recv_ty = self.sub(recv.ty);
+                if method_type_args.is_empty() {
+                    if let Some(slot) = self.dyn_slot_for(*iface, *slot, recv_ty) {
+                        // An interface value instantiating a type parameter bound by an
+                        // interface its interface is or extends (#1368): through its table.
+                        return self.call_dyn(slot, args, ty, transfer);
+                    }
+                }
                 let iargs: Vec<TyId> = iface_args.iter().map(|&t| self.sub(t)).collect();
                 let (def, mut targs) = self.resolve_param_method(*iface, &iargs, *slot, recv_ty);
                 // A generic method's own type args follow its owner's.
@@ -107,6 +115,10 @@ impl FnLower<'_, '_> {
             true => Stabilize::Facts,
             false => Stabilize::Share,
         };
+        // An index's conversion (`xs[i]` with a number `i`) reads only the number it is given.
+        if how == Stabilize::Facts || f.name == FLOAT_INDEX {
+            self.note_quiet_call(fid, def);
+        }
         let outer = std::mem::replace(&mut self.frozen_args, frozen != 0);
         let to_caller = std::mem::replace(&mut self.args_to_caller, plain);
         let kept = match plain {
@@ -125,7 +137,12 @@ impl FnLower<'_, '_> {
         let ret = self.cx.subst(ret, &targs);
         let throws = throws.map(|e| self.cx.subst(e, &targs));
         let throws = self.cx.error_ty(throws);
+        let view_sort = self.view_sort_branch(def, &targs, &argv);
         let r = self.finish_call(vir::Callee::Func(fid), argv, ret, throws);
+        if let Some(join) = view_sort {
+            self.goto(join);
+            self.switch_to(join);
+        }
         if plain && self.needs_drop(ret) {
             self.hand_to_reader(&r, ret);
         }
@@ -179,11 +196,23 @@ impl FnLower<'_, '_> {
         };
         let never = self.cx.is_never(x.ret);
         let id = self.cx.extern_sym(&x.symbol, params, ret, never);
+        let mut bufs = vec![];
         let argv = match foreign {
-            true => self.foreign_args(&x.params, args, false),
+            true => self.foreign_args(&x.params, args, false, &mut bufs),
             false => self.lower_args(args, &modes, Stabilize::No),
         };
-        self.finish_call(vir::Callee::Extern(id), argv, x.ret, None)
+        let fut = self.finish_call(vir::Callee::Extern(id), argv, x.ret, None);
+        self.free_foreign_bufs(bufs);
+        let rt = self.sub(x.ret);
+        let adopt = x.is_async && {
+            let slot = self.cx.promise_slot(rt);
+            self.cx.foreign_differs(slot)
+        };
+        match adopt {
+            // The result slot is foreign: every use of the promise sees it adopted.
+            true => self.adopt_foreign_promise(fut, rt),
+            false => fut,
+        }
     }
 
     /// A synchronous extern whose signature mentions boxed values: arguments as foreign views,
@@ -202,7 +231,8 @@ impl FnLower<'_, '_> {
         // the header where it is instead of a copy, so after inlining nothing reads the copy
         // (which LLVM would redo after every element store, tbaa.rs in velt_codegen_llvm).
         let in_place = x.symbol.starts_with("velt_simd_");
-        let mut argv = self.foreign_args(&x.params, args, in_place);
+        let mut bufs = vec![];
+        let mut argv = self.foreign_args(&x.params, args, in_place, &mut bufs);
         let fret = self.cx.foreign_ty(x.ret);
         let ret = match fret {
             Ty::Agg(_) => Ty::Unit,
@@ -217,6 +247,7 @@ impl FnLower<'_, '_> {
         let id = self.cx.extern_sym(&x.symbol, params, ret, never);
         let dest = out.filter(|_| ret != Ty::Unit).map(Place::local);
         self.call(vir::Callee::Extern(id), argv, dest, never);
+        self.free_foreign_bufs(bufs);
         let Some(o) = out else { return unit() };
         let rt = self.sub(x.ret);
         let vt = self.cx.ty(rt);
@@ -225,13 +256,15 @@ impl FnLower<'_, '_> {
         self.owned_result(Some(native), rt)
     }
 
-    /// Arguments of an extern as foreign views (borrowed: the caller keeps ownership).
-    /// `in_place`: an array is passed as its own header rather than a copy of it.
+    /// Arguments of an extern as foreign views (borrowed: the caller keeps ownership); the
+    /// buffers of array views go to `bufs`, to free once the extern returned. `in_place`: an
+    /// array is passed as its own header rather than a view of it.
     fn foreign_args(
         &mut self,
         params: &[TyId],
         args: &[hir::Expr],
         in_place: bool,
+        bufs: &mut Vec<super::foreign::ForeignBuf>,
     ) -> Vec<Operand> {
         let mut argv = vec![];
         for (&p, a) in params.iter().zip(args) {
@@ -243,7 +276,7 @@ impl FnLower<'_, '_> {
                     let place = self.operand_place(v, vt);
                     let view = match in_place && matches!(self.cx.kind(p), TyKind::Array(_)) {
                         true => self.content(&place, p),
-                        false => self.foreign_view(&place, p),
+                        false => self.foreign_view(&place, p, bufs),
                     };
                     argv.push(self.addr(view));
                 }

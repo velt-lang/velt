@@ -613,13 +613,10 @@ fn a_call_breaking_a_key_constraint_is_not_instantiated() {
 #[test]
 fn an_instantiation_error_through_another_generic_labels_each_call() {
     let e = err_src(
-        "function getA<T extends object, K extends keyof T>(o: T, k: K): T[K] { return o[k]; }
-         function outer<T extends object, K extends keyof T>(o: T, k: K): T[K] { return getA(o, k); }
-         type Pt = { x: number; name: string };
+        "function getA<T>(o: T): number { const p: Partial<T> | null = null; return p === null ? 1 : 0; }
+         function outer<U>(o: U): number { return getA(o); }
          function main() {
-           const p: Pt = { x: 1, name: \"n\" };
-           const k: keyof Pt = p.x > 2 ? \"x\" : \"name\";
-           outer(p, k);
+           outer([1]);
          }",
     );
     assert!(e.contains("`getA` is instantiated here"), "{e}");

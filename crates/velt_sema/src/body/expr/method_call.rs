@@ -219,12 +219,22 @@ impl FnCx<'_, '_> {
             }
             Resolved::Virtual { def, slot, slots } => {
                 let c = self.fn_callable(def, format!("method `{}`", prop.name), span);
-                let ck = self.check_call(&c, slots, args, exp, span);
+                // Left-out arguments take the default of the override that runs.
+                let Ok((fill, args)) = self.virtual_fill(&c, recv.ty, (def, slot), args, span)
+                else {
+                    return self.error_expr(span);
+                };
+                let args = &args[..];
                 let this_recv = self.this_recv(&recv);
+                let (c, slot, throws_def) = match &fill {
+                    Some(t) => (self.fill_callable(&c, t, span), t.slot, t.entry),
+                    None => (c, slot, def),
+                };
+                let ck = self.check_call(&c, slots, args, exp, span);
                 let recv = self.receiver(recv, None, self.this_mode(def), self.is_async_fn(def));
                 let mut all = vec![recv];
                 all.extend(ck.args);
-                self.call_throws(def, &ck.type_args, ck.ret, span);
+                self.call_throws(throws_def, &ck.type_args, ck.ret, span);
                 let kind = H::Call {
                     callee: Callee::Virtual { slot },
                     args: all,
@@ -415,6 +425,9 @@ impl FnCx<'_, '_> {
             format!("no method named `{}` found for type `{tn}`", prop.name),
             prop.span,
         );
+        if self.cx.ty.bigint_named && tn.contains("never") {
+            d = d.with_note(crate::types::BIGINT_NEVER_NOTE);
+        }
         if recv.ty == self.cx.ty.str_ && prop.name == "length" {
             d = Diagnostic::error(
                 "`length` is a property, not a method; write `s.length`",

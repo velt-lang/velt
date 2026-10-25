@@ -69,6 +69,9 @@ impl<'c, 'h> FnLower<'c, 'h> {
             frozen_binds: false,
             read_target: false,
             owner_write: false,
+            view_writes: None,
+            mirror_drop: false,
+            view_loops: Default::default(),
             lk_mode: None,
             rw_reader: None,
             mode: LkMode::Plain,
@@ -94,7 +97,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             same_mode: false,
             value_mode: false,
             key_mode: false,
-            init_locals: false,
+            init_locals: None,
             ctor_self: None,
             init_stack: vec![],
             frame_closures: FxHashSet::default(),
@@ -102,6 +105,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             self_env: None,
             in_reflect: false,
             proxy_routes: false,
+            record_fill: false,
         };
         lw.mode = lw.cx.cur_mode;
         lw.own_captures = lw.cx.cur_own;
@@ -143,6 +147,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Work::RaceBoxDrop(t) => Self::build_race_box_drop(cx, *t),
             Work::WidenPoll(from, to) => Self::build_widen_poll(cx, *from, *to),
             Work::WidenDrop(from, to) => Self::build_widen_drop(cx, *from, *to),
+            Work::AdoptPoll(p) => Self::build_adopt_poll(cx, *p),
+            Work::AdoptDrop(p) => Self::build_adopt_drop(cx, *p),
             Work::HandlerInit(def, targs) => Self::build_handler_init(cx, *def, targs),
             Work::Unclaimed(t) => Self::build_unclaimed(cx, *t),
             Work::Init(t, e) => Self::build_init(cx, *t, *e),
@@ -216,7 +222,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
         lw.in_reflect = f
             .name
             .starts_with(super::any_proxy::PRELUDE_REFLECT_METHODS);
-        let scan = FlagScan::run(hir_prog, &f.body);
+        let mut pick = |c: &hir::Expr| lw.const_cond(c) == Some(true);
+        let scan = FlagScan::run_picking(hir_prog, &f.body, Some(&mut pick));
         lw.ref_bindings = scan.ref_bindings.iter().copied().collect();
         (lw.frame_closures, lw.direct_siblings) = super::frame_envs::scan(hir_prog, f);
         let (params, attrs) = lw.declare_locals(def, f);

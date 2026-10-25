@@ -16,7 +16,8 @@ use std::os::windows::io::{AsRawHandle, AsRawSocket, FromRawHandle, FromRawSocke
 use std::time::{Duration, Instant};
 
 use windows_sys::Win32::Foundation::{
-    GetLastError, ERROR_FILE_NOT_FOUND, ERROR_PIPE_BUSY, ERROR_PIPE_CONNECTED, INVALID_HANDLE_VALUE,
+    GetLastError, ERROR_FILE_NOT_FOUND, ERROR_NO_DATA, ERROR_PIPE_BUSY, ERROR_PIPE_CONNECTED,
+    INVALID_HANDLE_VALUE,
 };
 use windows_sys::Win32::Networking::WinSock::{
     WSADuplicateSocketW, WSASocketW, WSAStartup, FROM_PROTOCOL_INFO, INVALID_SOCKET, SOCKET,
@@ -83,7 +84,9 @@ impl Server {
         &self.name
     }
 
-    /// Wait for the next connection.
+    /// Wait for the next connection. A client that connected, wrote its request and closed its
+    /// end before this call (a failed build's report, which waits for no reply) is a connection
+    /// too: what it wrote is still there to read (`ConnectNamedPipe` reports `ERROR_NO_DATA`).
     pub fn accept(&mut self) -> io::Result<Stream> {
         let pending = match self.next.take() {
             Some(handle) => handle,
@@ -93,7 +96,7 @@ impl Server {
         let connected = unsafe { ConnectNamedPipe(pending.as_raw_handle(), std::ptr::null_mut()) }
             != 0
             // SAFETY: reads this thread's last error.
-            || unsafe { GetLastError() } == ERROR_PIPE_CONNECTED;
+            || matches!(unsafe { GetLastError() }, ERROR_PIPE_CONNECTED | ERROR_NO_DATA);
         let error = io::Error::last_os_error();
         self.next = self.instance(false).ok();
         if connected {

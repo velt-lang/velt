@@ -51,6 +51,8 @@ pub(super) struct Layouts {
     pub(super) race_boxes: FxHashMap<TyId, AggId>,
     /// State of the wrapper widening a promise, per target promise type (async_fn/widen.rs).
     pub(super) widen_boxes: FxHashMap<TyId, AggId>,
+    /// States of the wrappers adopting async externs' foreign results (async_fn/foreign_promise.rs).
+    pub(super) adopt_boxes: FxHashMap<TyId, AggId>,
     /// Failure context of JSON decoders (json/).
     pub(super) json_ctx: Option<AggId>,
     /// Promise-value wrappers of throwing async functions: layout and inner-state field.

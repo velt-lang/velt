@@ -159,6 +159,17 @@ impl FnCx<'_, '_> {
         want: Want,
         span: Span,
     ) -> Result<hir::Expr, hir::Expr> {
+        // `o[p as keyof T]` reads the key `p` holds: the assertion converts nothing, and an
+        // `any` takes any key.
+        let index = match &index.kind {
+            ast::ExprKind::Cast { expr, ty }
+                if matches!(ty.kind, ast::TypeExprKind::KeyOf(_))
+                    && self.cx.dynamic(obj.ty).is_some() =>
+            {
+                &**expr
+            }
+            _ => index,
+        };
         let key = match &index.kind {
             ast::ExprKind::Lit(ast::Lit::Str(k)) => Some(k.as_str()),
             _ => None,
@@ -207,6 +218,11 @@ impl FnCx<'_, '_> {
             let k = self.coerce(k, any);
             return Ok(self.any_op(Intrinsic::AnyGet, vec![obj, k], any, span));
         }
+        // A key of a type parameter's keys (`K extends keyof T`): its string.
+        let k = match self.generic_key_string(k, str_) {
+            Ok(s) => return Ok(self.any_op(Intrinsic::AnyGet, vec![obj, s], any, span)),
+            Err(k) => k,
+        };
         let tn = self.cx.display(k.ty);
         self.cx.error(
             Diagnostic::error(

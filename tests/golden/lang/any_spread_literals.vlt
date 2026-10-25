@@ -1,0 +1,57 @@
+// Literals spread where an `any` is expected, and literals an `any` holds: a conditional,
+// `&&`, `||` or `??` with an `any` value stays an `any` there too, as in TypeScript, so a
+// string it holds stays a string (#1492). So it does where an `unknown` is expected. Elsewhere
+// the values keep their own types.
+const o: any = { name: "str", n: 5 };
+const far = process.argv.length > 99;
+const sp: any[] = [...[far ? 1 : o.name]];
+console.log(sp);
+const sp2: any[] = [0, ...[far ? 1 : o.name, o.n || "z"], ...[3]];
+console.log(sp2);
+const ob: any = { ...{ q: far ? 1 : o.name } };
+console.log(ob);
+const ob2: any = { a: 1, ...{ q: far ? 1 : o.name, r: o.zz ?? "d" }, z: far ? 2 : o.n };
+console.log(ob2);
+const x: any = { q: far ? 1 : o.name, w: { v: o.n && o.name } };
+console.log(x);
+const y: any = [far ? 1 : o.name];
+console.log(y);
+const z: any = { a: [far ? 1 : o.name] };
+console.log(z);
+const t: Record<string, any> = { ...{ q: far ? 1 : o.name } };
+console.log(t);
+const plain = { ...{ q: far ? 1 : 2 } };
+console.log(plain, plain.q + 1);
+const nums: number[] = [...[far ? 1 : 2]];
+console.log(nums);
+const v: any = { a: { ...{ q: far ? 1 : o.name } } };
+console.log(v);
+function r(): any {
+  return [...[far ? 1 : o.name]];
+}
+console.log(r());
+const rec: Record<string, any> = { k: [...[far ? 1 : o.name]] };
+console.log(rec);
+const m: any[] = [[far ? 1 : o.name], { z: o.n ?? 1 }];
+console.log(m);
+const w: any = [[far ? 1 : o.name]];
+console.log(w);
+function takes(x: any): string {
+  return JSON.stringify(x);
+}
+console.log(takes({ ...{ q: far ? 1 : o.name } }), takes([...[o.n && o.name]]));
+// Where an `unknown` is expected, the same.
+const un: unknown = [far ? 1 : o.name];
+console.log(un);
+const u: unknown = far ? 1 : o.name;
+console.log(u, typeof u);
+const us: unknown[] = [...[far ? 1 : o.name], o.n ?? 2];
+console.log(us);
+const uo: unknown = { ...{ q: far ? 1 : o.name } };
+console.log(uo);
+function ug(): unknown { return o.zz || "fallback"; }
+console.log(ug());
+const typed: number = far ? 1 : o.n;
+console.log(typed + 1);
+const sk: any = { ...o, k: far ? 1 : o.name };
+console.log(sk);

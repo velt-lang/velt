@@ -1,0 +1,2 @@
+intersection_part_errors.vlt:9:13: error: `&` combines object types; `Record` is a map of keys to values
+intersection_part_errors.vlt:7:10: error: `&` combines object types; `Point` is a class

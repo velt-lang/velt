@@ -6,6 +6,7 @@ use velt_syntax::ast;
 use super::any_text::Hint;
 use crate::any::Dynamic;
 use crate::body::{FnCx, Want};
+use crate::defs::{BodyState, DefInfo};
 use crate::hir::{self, Callee, ExprKind as H, Intrinsic, Nothing, TyId, TyKind};
 use crate::types::{int_max, int_name, int_range};
 
@@ -132,7 +133,8 @@ impl FnCx<'_, '_> {
     /// The value of field `name` of an object literal of its own type. Converted to an `any`
     /// or `unknown` (`dynamic`: `const u: unknown = { a: null }`), a `null` field (TypeScript's
     /// type `null`) is an `any` holding `null`, and so is one in a nested object or array
-    /// literal (`{ b: { c: null } }`, `{ a: [null, 1] }`).
+    /// literal (`{ b: { c: null } }`, `{ a: [null, 1] }`). A conditional, `&&`, `||` or `??`
+    /// with an `any` value is an `any` there too (`{ q: c ? 1 : a.q }`, `any_join`).
     pub(super) fn anon_prop_value(
         &mut self,
         name: &ast::Ident,
@@ -144,6 +146,14 @@ impl FnCx<'_, '_> {
             false => None,
         };
         self.prop_value(name, value, any)
+    }
+
+    /// The element type of an array literal of `elems` where a `t` is expected: `t`'s, or for an
+    /// `any` (or `unknown`) `t` when an element is a conditional, `&&`, `||` or `??` (`[c ? 1 : a.q]`), or
+    /// a literal holding or spreading one, whose `any` value stays one (`any_join`).
+    pub(super) fn literal_elem(&mut self, t: TyId, elems: &[ast::Expr]) -> Option<TyId> {
+        let elem = self.cx.ty.array_elem(t).or(self.cx.iterable_elem(t));
+        elem.or_else(|| (self.cx.dynamic(t).is_some() && elems.iter().any(holds_join)).then_some(t))
     }
 
     /// `null` takes its `T | null` type from context.
@@ -352,7 +362,30 @@ impl FnCx<'_, '_> {
     }
 
     pub(crate) fn concat(&self, a: hir::Expr, b: hir::Expr, span: Span) -> hir::Expr {
+        // Constant text on both sides (`${BASE}/users`, `PREFIX + ":"`): one literal, so a
+        // module constant built from others costs nothing at each use.
+        if let (Some(x), Some(y)) = (self.const_text(&a), self.const_text(&b)) {
+            return self.str_lit(&format!("{x}{y}"), span);
+        }
         self.intrinsic(Intrinsic::StrConcat, vec![a, b], self.cx.ty.str_, span)
+    }
+
+    /// The text of `e` when it is known: a string literal, or a module constant whose
+    /// initializer is one (once checked; a module-level `let` never is).
+    fn const_text<'e>(&'e self, e: &'e hir::Expr) -> Option<&'e str> {
+        match &e.kind {
+            H::Lit(hir::Lit::Str(s)) => Some(s),
+            H::Global(d) => match &self.cx.info[d.0 as usize] {
+                DefInfo::Global(g) if !g.mutable && !g.stored && g.state == BodyState::Done => {
+                    match g.init.as_ref().map(|i| &i.kind) {
+                        Some(H::Lit(hir::Lit::Str(s))) => Some(s),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            },
+            _ => None,
+        }
     }
 
     /// The operands of `a + b` when one is a string (#740): a number or boolean on the other
@@ -370,8 +403,8 @@ impl FnCx<'_, '_> {
     }
 
     /// `x` as the non-string operand of a string `+` or `+=` ([`concat_operands`]): its
-    /// `String(x)` text when it is a number or boolean (or one of those or `null`), or an
-    /// object with a `toString()`, else `x`.
+    /// `String(x)` text: a number or boolean (or one of those or `null`), an object by its
+    /// `toString()`, anything else as `String(x)` writes it (a string stays itself).
     pub(crate) fn concat_operand(&mut self, h: hir::Expr) -> hir::Expr {
         let h = self.unbrand(h);
         let h = self.widen_value(h);
@@ -398,9 +431,22 @@ impl FnCx<'_, '_> {
         if self.writes_by_to_string(t) {
             return self.js_text(h, "a string concatenation");
         }
+        // A union of primitives (`string | number`) or with an array member, or a type built
+        // from type parameters (`T[K]`, `T | string`): written as a template literal writes it.
+        if h.ty != self.cx.ty.str_
+            && (self.primitive_union(t) || self.cx.mentions_params(t) || self.union_text_differs(t))
+        {
+            let text = self.implicit_any_text(h, "a string concatenation", Hint::Default);
+            return self.implicit_text(text);
+        }
         let ty = &self.cx.ty;
-        if h.ty == ty.str_ || !(ty.is_numeric(t) || t == ty.bool_) {
+        if h.ty == ty.str_ {
             return h;
+        }
+        // Anything else (`string | null`, `string | string[]`, an object) as `String(x)`
+        // writes it, as in a template literal (#1485).
+        if !(ty.is_numeric(t) || t == ty.bool_) {
+            return self.js_text(h, "a string concatenation");
         }
         let (s, span) = (ty.str_, h.span);
         self.intrinsic(Intrinsic::ToString, vec![h], s, span)
@@ -674,16 +720,46 @@ impl FnCx<'_, '_> {
     }
 }
 
+/// Is `e` a conditional, `&&`, `||` or `??`, whose value that is an `any` stays one where an
+/// `any` is expected (`any_join`)?
+fn joins_any(e: &ast::Expr) -> bool {
+    match &e.kind {
+        ast::ExprKind::Paren(inner) => joins_any(inner),
+        ast::ExprKind::Cond { .. } => true,
+        ast::ExprKind::Binary { op, .. } => matches!(
+            op,
+            ast::BinaryOp::And | ast::BinaryOp::Or | ast::BinaryOp::Nullish
+        ),
+        _ => false,
+    }
+}
+
+/// Is `e` a [`joins_any`] expression, or a literal holding or spreading one?
+fn holds_join(e: &ast::Expr) -> bool {
+    match &e.kind {
+        _ if joins_any(e) => true,
+        ast::ExprKind::Paren(x) | ast::ExprKind::Spread(x) => holds_join(x),
+        ast::ExprKind::Array(xs) => xs.iter().any(holds_join),
+        ast::ExprKind::Object(props) => props.iter().any(|p| match p {
+            ast::ObjectProp::KeyValue(_, v) | ast::ObjectProp::Spread(v) => holds_join(v),
+            _ => false,
+        }),
+        _ => false,
+    }
+}
+
 /// Does the field value `e` of an object literal converted to an `any` take the `any` as its
-/// expected type: the literal `null` (in parentheses or not), or an object or array literal
-/// holding one?
+/// expected type: the literal `null` (in parentheses or not), a conditional, `&&`, `||` or `??`
+/// (whose `any` value stays one), or an object or array literal holding or spreading one?
 fn dynamic_hinted(e: &ast::Expr) -> bool {
     match &e.kind {
         ast::ExprKind::Paren(inner) => dynamic_hinted(inner),
         ast::ExprKind::Lit(ast::Lit::Null) => true,
+        _ if joins_any(e) => true,
         ast::ExprKind::Array(xs) => xs.iter().any(dynamic_hinted),
+        ast::ExprKind::Spread(x) => dynamic_hinted(x),
         ast::ExprKind::Object(props) => props.iter().any(|p| match p {
-            ast::ObjectProp::KeyValue(_, v) => dynamic_hinted(v),
+            ast::ObjectProp::KeyValue(_, v) | ast::ObjectProp::Spread(v) => dynamic_hinted(v),
             _ => false,
         }),
         _ => false,

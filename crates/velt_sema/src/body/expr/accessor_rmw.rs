@@ -260,12 +260,13 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// The receiver to read and write through: `obj` itself when evaluating it again has no
-    /// effect (a variable, `this`, a path of fields) and `later` (the value evaluated between
-    /// the read and the write, if any) cannot change what it names, else a temporary holding
-    /// it. A path through a getter (`h.inner.value++`) runs that getter once, as in JS, and in
-    /// `holder.val += f()` the setter runs on the object `holder` named before `f` ran, even
-    /// when `f` assigns another one to `holder`.
+    /// The receiver to read and write through: `obj` itself when evaluating it again names the
+    /// same object whatever runs in between (`this`, a `const`, or a variable that only this
+    /// function's own code assigns while `later`, the value evaluated between the read and the
+    /// write, assigns nothing), else a temporary holding it. A path through a getter
+    /// (`h.inner.value++`) runs that getter once, as in JS; and the setter runs on the object
+    /// named before the getter and `later` ran, even when one of them assigns another object
+    /// to the variable, field or module `let` naming it (`holder.x.p += f()`).
     pub(super) fn receiver_once(
         &mut self,
         mut obj: hir::Expr,
@@ -273,7 +274,9 @@ impl FnCx<'_, '_> {
         later: Option<&ast::Expr>,
         stmts: &mut Vec<hir::Stmt>,
     ) -> hir::Expr {
-        let stable = is_this(object) || later.is_none_or(is_pure_value) || self.const_local(&obj);
+        let stable = is_this(object)
+            || self.const_local(&obj)
+            || (later.is_none_or(is_pure_value) && self.only_written_here(&obj));
         if stable && side_effect_free(object) && is_field_path(&obj) {
             return obj;
         }
@@ -283,15 +286,45 @@ impl FnCx<'_, '_> {
         self.mk(H::Local(l, UseMode::Borrow), ty, span)
     }
 
+    /// Is `obj` a variable that no call can assign another object to: a module `const`, or a
+    /// local of this function that no closure assigns? (A field, or a module `let`, may be
+    /// assigned by the getter that runs before the setter.)
+    fn only_written_here(&self, obj: &hir::Expr) -> bool {
+        match obj.kind {
+            H::Global(d) => self.cx.global(d).is_some_and(|g| !g.mutable),
+            H::Local(l, _) => {
+                let kind = self.f.kinds.get(l.0 as usize);
+                let name = &self.f.locals[l.0 as usize].name;
+                !matches!(kind, Some(LocalKind::Capture) | None)
+                    && !self.f.closure_assigned.contains_key(name)
+            }
+            _ => false,
+        }
+    }
+
     /// Is `obj` a `const` of this function? Nothing evaluated later can make it name another
     /// object, so it needs no temporary (one would count a reference per statement).
     fn const_local(&self, obj: &hir::Expr) -> bool {
-        match obj.kind {
-            H::Local(l, _) => matches!(
-                self.f.kinds.get(l.0 as usize),
-                Some(LocalKind::Const | LocalKind::Using)
-            ),
-            _ => false,
+        let H::Local(l, _) = obj.kind else {
+            return false;
+        };
+        // A capture of an enclosing function's `const` is one too.
+        let (mut frame, mut l) = (&self.f, l);
+        let mut outer = self.outer.iter().rev();
+        loop {
+            match frame.kinds.get(l.0 as usize) {
+                Some(LocalKind::Const | LocalKind::Using) => return true,
+                Some(LocalKind::Capture) => {
+                    let Some(c) = frame.captures.iter().find(|c| c.inner == l) else {
+                        return false;
+                    };
+                    let Some(up) = outer.next() else {
+                        return false;
+                    };
+                    (frame, l) = (up, c.outer);
+                }
+                _ => return false,
+            }
         }
     }
 

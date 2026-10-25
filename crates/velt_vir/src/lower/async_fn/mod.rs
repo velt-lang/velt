@@ -27,6 +27,7 @@ mod all_settle;
 pub(crate) mod await_order;
 mod channel;
 mod ctor;
+mod foreign_promise;
 mod gen_object;
 mod gen_send;
 mod generator;
@@ -203,7 +204,9 @@ impl<'c, 'h> FnLower<'c, 'h> {
         if f.is_generator {
             self.set_tag(generator::GEN_RUNNING);
         }
-        let scan = FlagScan::run(self.cx.hir, &f.body);
+        let hir = self.cx.hir;
+        let mut pick = |c: &hir::Expr| self.const_cond(c) == Some(true);
+        let scan = FlagScan::run_picking(hir, &f.body, Some(&mut pick));
         self.ref_bindings = scan.ref_bindings.iter().copied().collect();
         let inputs = self.declare_async_locals(f, shared);
         self.declare_drop_flags(f, &scan);

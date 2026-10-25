@@ -46,6 +46,18 @@ impl FnLower<'_, '_> {
         (p, tys[k])
     }
 
+    /// The place of field `index` of the `ty` value at `place` for an object pattern: on a
+    /// proxiable type a typed proxy or a view (any_view.rs) reads it through `__get`, as
+    /// `place.f` does (`proxy_read_at`; the value is borrowed from a slot of the scope).
+    fn pat_field(&mut self, place: &Place, ty: TyId, index: u32) -> Place {
+        if !self.cx.proxiable(ty) || self.is_unit_field(ty, index) {
+            return self.field_place(place, ty, index);
+        }
+        let hop = self.retained_hop(place, ty);
+        let ptr = self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(hop)));
+        self.proxy_read_at(&ptr, ty, index)
+    }
+
     fn cond_jump(&mut self, ok: Operand, fail: BlockId) {
         let next = self.new_block();
         self.branch(ok, next, fail);
@@ -73,7 +85,7 @@ impl FnLower<'_, '_> {
             PatKind::Adt { fields } => {
                 for (i, p) in fields {
                     let fty = self.cx.adt_field_tys(ty)[*i as usize];
-                    let fp = self.field_place(place, ty, *i);
+                    let fp = self.pat_field(place, ty, *i);
                     self.test_pat(p, &fp, fty, fail);
                 }
             }
@@ -201,7 +213,7 @@ impl FnLower<'_, '_> {
     fn bind_parts(&mut self, pat: &Pat, place: &Place, ty: TyId, register: bool) {
         match &pat.kind {
             PatKind::Binding(id, mode) => {
-                if self.init_locals {
+                if self.init_local(*id) {
                     let by_ref = matches!(mode, UseMode::Borrow | UseMode::BorrowMut);
                     self.declare_init_binding(*id, pat.ty, by_ref);
                 }
@@ -226,7 +238,7 @@ impl FnLower<'_, '_> {
             PatKind::Adt { fields } => {
                 for (i, p) in fields {
                     let fty = self.cx.adt_field_tys(ty)[*i as usize];
-                    let fp = self.field_place(place, ty, *i);
+                    let fp = self.pat_field(place, ty, *i);
                     self.bind_pat(p, &fp, fty, register);
                 }
             }
@@ -345,7 +357,7 @@ impl FnLower<'_, '_> {
 
     /// `[a, b, ...rest]`: `rest` gets a new array of the remaining elements (shared, like JS).
     fn bind_rest(&mut self, r: hir::LocalId, place: &Place, ty: TyId, skip: usize) {
-        if self.init_locals {
+        if self.init_local(r) {
             self.declare_init_binding(r, ty, false);
         }
         let Some(l) = self.info[r.0 as usize].vir else {

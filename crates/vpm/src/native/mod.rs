@@ -28,7 +28,7 @@ use serde::{Deserialize, Serialize};
 
 /// The version of the runtime function table this `velt` provides (velt_rt's
 /// `NATIVE_ABI_VERSION`); bundles needing more are refused before download.
-pub const NATIVE_ABI: u32 = 1;
+pub const NATIVE_ABI: u32 = 2;
 
 /// File name of a bundle's metadata (generated JSON, [`crate::json_file`]).
 pub const META_FILE: &str = "native.json";

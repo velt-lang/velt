@@ -181,7 +181,7 @@ impl FnCx<'_, '_> {
                     if self.cx.enum_info(d).is_some() {
                         return self.variant_value(d, prop, &[], exp, span);
                     }
-                    if let Some(h) = self.static_field(d, prop, want, span) {
+                    if let Some(h) = self.inherited_static_field(d, prop, want, span) {
                         return h;
                     }
                     if let Some(h) = self.static_method_value(d, d, prop, exp, span) {
@@ -212,6 +212,9 @@ impl FnCx<'_, '_> {
         let obj = self.expr(object, None, Want::Borrow);
         self.view_receiver = false;
         if want != Want::BorrowMut && self.is_method_value(obj.ty, &prop.name) {
+            if self.stored_method_read(object, prop, obj.ty, span) {
+                return self.error_expr(span);
+            }
             return self.method_value(obj, object, prop, exp, span);
         }
         let r = self.in_place_receiver(object, obj);
@@ -286,6 +289,14 @@ impl FnCx<'_, '_> {
         let obj = self.error_union_accessor(obj, &prop.name);
         let obj = match self.getter_read(obj, prop, span) {
             Ok(call) => return call,
+            Err(obj) => obj,
+        };
+        let obj = match self.bound_member(obj, &prop.name, want, span) {
+            Ok(h) => return h,
+            Err(obj) => obj,
+        };
+        let obj = match self.form_member(obj, &prop.name, want, span) {
+            Ok(h) => return h,
             Err(obj) => obj,
         };
         match self.field_access(obj, prop, want, span) {
@@ -369,6 +380,10 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let obj = match self.dynamic_index(obj, index, want, span) {
+            Ok(h) => return h,
+            Err(obj) => obj,
+        };
+        let obj = match self.generic_index(obj, index, want, span) {
             Ok(h) => return h,
             Err(obj) => obj,
         };
@@ -599,6 +614,12 @@ impl FnCx<'_, '_> {
         want: Want,
         span: Span,
     ) -> hir::Expr {
+        if let Some(h) = self.fn_through_top(expr, target, want) {
+            return h;
+        }
+        if let Some(h) = self.empty_as_deferred(expr, target, span) {
+            return h;
+        }
         let inner = self.expr(expr, Some(target), want);
         if self.cx.dynamic(inner.ty).is_some() {
             if let Ok(h) = self.coerce_dynamic(inner.clone(), target, true) {
@@ -611,7 +632,9 @@ impl FnCx<'_, '_> {
             .or_else(|h| self.param_as_object(h, target))
             .or_else(|h| self.param_as_object_part(h, target))
             .or_else(|h| self.narrowing_assertion(h, target, span))
-            .or_else(|h| self.union_view_cast(h, target, span));
+            .or_else(|h| self.union_view_cast(h, target, span))
+            .or_else(|h| self.array_view_cast(h, target, span))
+            .or_else(|h| self.generic_assertion(h, target));
         match coerced {
             Ok(h) => h,
             Err(h) => {

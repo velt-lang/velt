@@ -1,0 +1,6 @@
+// A tuple boxed into a field of type `any` would be a copy, which a later write into the
+// original's elements would not reach: the conversion is refused outside interface adapters.
+const src: { value: [number, string]; done: boolean } = { value: [1, "a"], done: false };
+const dst: { value: any; done: boolean } = src;
+src.value[0] = 9;
+console.log(dst.value[0], dst);

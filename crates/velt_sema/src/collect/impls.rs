@@ -6,7 +6,7 @@
 //! once the program writes through the interface, a setter per writable field
 //! (`crate::iface_writes`).
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::Diagnostic;
 
@@ -30,6 +30,56 @@ pub(super) fn build_impls(cx: &mut Ctx) {
             if let Some((imp, setters)) = check_impl(cx, d, &b, &mut getters) {
                 cx.impls.push(imp);
                 // A field with a getter and no setter leaves the implementation without setters.
+                if let Some(setters) = setters {
+                    cx.note_setters(cx.impls.len() as u32 - 1, setters);
+                }
+            }
+        }
+    }
+    override_impls(cx, &mut getters);
+}
+
+/// A class overriding a generic method of an interface that a base class implements gets an
+/// implementation of its own: a call through a type-parameter bound (`s.area<U>(…)` with
+/// `S extends Sh`) runs the method of the receiver's nearest implementation, statically, so
+/// that must be the override (issue #1132). Generic methods have no vtable slot to dispatch
+/// through instead.
+fn override_impls(cx: &mut Ctx, getters: &mut Getters) {
+    let built = cx.impls.len() as u32;
+    let mut done: FxHashSet<(DefId, DefId)> = FxHashSet::default();
+    for (d, key) in cx.generic_overrides.clone() {
+        let n = cx.adt(d).map_or(0, |a| a.generics.len());
+        let self_ty = self_type(cx, d, n);
+        for b in cx.adt(d).map(|a| a.implements.clone()).unwrap_or_default() {
+            done.insert((d, b.iface));
+        }
+        let mut bounds = vec![];
+        let mut cur = cx.base_of(self_ty);
+        for _ in 0..64 {
+            let Some(t) = cur else { break };
+            let class = cx.class_of(t).map(|(c, _)| c);
+            for i in 0..built {
+                let imp = &cx.impls[i as usize];
+                let (ty, iface) = (imp.ty, imp.iface);
+                let own =
+                    matches!(cx.ty.kind(ty), crate::hir::TyKind::Adt(c, _) if Some(*c) == class);
+                let declares = cx.iface(iface).is_some_and(|f| {
+                    f.methods
+                        .iter()
+                        .any(|m| m.name == key && m.generics.len() > 0)
+                });
+                if !own || !declares || !done.insert((d, iface)) {
+                    continue;
+                }
+                if let Some((_, args, _)) = cx.try_impl(i, t) {
+                    bounds.push(Bound { iface, args });
+                }
+            }
+            cur = cx.base_of(t);
+        }
+        for b in bounds {
+            if let Some((imp, setters)) = check_impl(cx, d, &b, getters) {
+                cx.impls.push(imp);
                 if let Some(setters) = setters {
                     cx.note_setters(cx.impls.len() as u32 - 1, setters);
                 }
@@ -228,6 +278,9 @@ fn impl_method(cx: &mut Ctx, p: &Pair, m: &IfaceMethod) -> Option<DefId> {
             })
         }
         _ => {
+            if let Some(def) = field_accessor(cx, p, m) {
+                return Some(def);
+            }
             if m.default.is_none() {
                 let (cname, iname) = (&p.cname, &p.iname);
                 cx.error(
@@ -244,6 +297,36 @@ fn impl_method(cx: &mut Ctx, p: &Pair, m: &IfaceMethod) -> Option<DefId> {
             m.default
         }
     }
+}
+
+/// The implementation of interface accessor `m` (`get v()` or `set v(x)`) by a field `v` of
+/// the class of its type, as TypeScript allows (`class C implements T { v = 3 }`): reads or
+/// writes the field.
+fn field_accessor(cx: &mut Ctx, p: &Pair, m: &IfaceMethod) -> Option<DefId> {
+    let (name, setter) = match m.name.strip_prefix("set ") {
+        Some(n) => (n, true),
+        None if m.is_getter => (m.name.as_str(), false),
+        None => return None,
+    };
+    let mut full_args = p.bound.args.clone();
+    full_args.push(p.self_ty);
+    let want = match setter {
+        true => cx.subst(m.params.first()?.ty, &full_args),
+        false => cx.subst(m.ret, &full_args),
+    };
+    let fields = &cx.adt(p.d)?.fields;
+    let i = fields.iter().position(|f| f.name == name)?;
+    let ty = fields[i].ty;
+    if !cx.same_ty(ty, want) {
+        return None;
+    }
+    Some(match setter {
+        true => {
+            let borrowed = m.params.first()?.mode == crate::hir::PassMode::Borrow;
+            super::getters::field_setter_taking(cx, p.d, p.self_ty, i, ty, borrowed)
+        }
+        false => super::getters::field_getter(cx, p.d, p.self_ty, i, ty),
+    })
 }
 
 /// Does method `def` always mutate `this` (setters, `[Symbol.dispose]`)? Other methods start borrowing
@@ -363,6 +446,10 @@ fn check_method_sig(
             d = d.with_note(format!(
                 "`return()` returns a finished result, as in TypeScript: declare it `{want}` and end it with `return {{ done: true }};`"
             ));
+        } else if let Some(note) =
+            crate::body::defaults::applied_default_note(cx, [(def, &ps, &want_ps); 2])
+        {
+            d = d.with_note(note);
         }
         cx.error(d);
     } else if is_getter != m.is_getter {

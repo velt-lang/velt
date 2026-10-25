@@ -1,7 +1,10 @@
 //! Dispatch groups: functions that are called through one dynamic entry must agree on their
 //! error type (it is part of the ABI: a throwing function returns `Result<ret, E>`). A group is
 //! an interface method slot with its default and every implementation, and a class vtable slot
-//! with the base method and every override (linked when a method is in both).
+//! with the base method and every override (linked when a method is in both). A method slot of
+//! an interface whose values convert to another (`synth_ifaces` upcasts) is in the group of the
+//! other's method of that name: the target's table holds the same implementations, made only
+//! after this inference (`Ctx::upcast_tables`).
 //!
 //! A group's error type is the interface method's (or the base method's) `throws` clause when
 //! written — the implementations may throw only what it allows — else the union of what the
@@ -265,6 +268,17 @@ fn link_interfaces(cx: &mut Ctx, uf: &mut UnionFind, bounds: &mut Vec<(Node, Gro
             }
         }
     }
+    // A method of `want` is filled by the method of that name of `have` (`upcast_impl`).
+    for (have, want) in cx.synth_ifaces.upcasts.clone() {
+        let (Some(h), Some(w)) = (cx.iface(have), cx.iface(want)) else {
+            continue;
+        };
+        for (j, m) in w.methods.iter().enumerate() {
+            if let Some(s) = h.methods.iter().position(|x| x.name == m.name) {
+                uf.union(Node::Slot(want, j as u32), Node::Slot(have, s as u32));
+            }
+        }
+    }
 }
 
 /// Link every vtable slot's base method with its overrides; returns the base methods (the
@@ -358,9 +372,14 @@ fn iface_args_of(cx: &mut Ctx, d: DefId, iface: DefId, depth: u32) -> Option<Vec
 }
 
 /// The interface arguments of an implementation of `iface` that uses `m` (`extend` blocks).
-fn impl_args(cx: &Ctx, iface: DefId, m: DefId) -> Option<Vec<TyId>> {
-    cx.impls
-        .iter()
-        .find(|imp| imp.iface == iface && imp.methods.contains(&m))
-        .map(|imp| imp.iface_args.clone())
+fn impl_args(cx: &mut Ctx, iface: DefId, m: DefId) -> Option<Vec<TyId>> {
+    let imp = cx.impls.iter().find(|imp| imp.methods.contains(&m))?;
+    let (own, own_args) = (imp.iface, imp.iface_args.clone());
+    if own == iface {
+        return Some(own_args);
+    }
+    // A slot `iface` declares, implemented through an interface extending it (an adapter of
+    // `IterableIterator` implements `Iterator`'s `next`).
+    let args = iface_args_of(cx, own, iface, 0)?;
+    Some(args.iter().map(|a| cx.subst(*a, &own_args)).collect())
 }

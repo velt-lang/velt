@@ -160,6 +160,9 @@ impl Ctx<'_> {
                 DefInfo::Enum(e) => with_args(self, &e.name, args),
                 _ => "unknown".into(),
             },
+            TyKind::Dyn(d, args) if self.literal_ifaces.contains(d) => {
+                self.display_literal_iface(*d, args, names)
+            }
             TyKind::Dyn(d, args) if self.synth_display(*d, args, names).is_some() => {
                 self.synth_display(*d, args, names).unwrap_or_default()
             }
@@ -184,5 +187,61 @@ impl Ctx<'_> {
                 .cloned()
                 .unwrap_or_else(|| format!("T{n}")),
         }
+    }
+}
+
+impl Ctx<'_> {
+    /// The interface of an object literal with no expected type (`body/expr/literal_iface.rs`)
+    /// as TypeScript shows the literal's type, its members in written order:
+    /// `{ n: number; get d(): number; m(k: number): number }`. A result not known yet (while
+    /// the literal's methods are checked) shows as `any`, as in TypeScript.
+    fn display_literal_iface(
+        &self,
+        d: crate::hir::DefId,
+        args: &[TyId],
+        names: &[String],
+    ) -> String {
+        let Some(i) = self.iface(d) else {
+            return "unknown".into();
+        };
+        if self.literal_display.borrow().contains(&d) {
+            return "this".into();
+        }
+        self.literal_display.borrow_mut().push(d);
+        // The interface is over the generic parameters in scope where the literal is written.
+        let own: Vec<String> = args.iter().map(|a| self.display_in(*a, names)).collect();
+        let ty = |t: TyId| match self.ty.has_error(t) {
+            true => "any".to_string(),
+            false => self.display_in(t, &own),
+        };
+        let key = |n: &str| self.key_spelling(n).unwrap_or_else(|| display_key(n));
+        let mut parts: Vec<(u32, String)> = vec![];
+        for f in &i.fields {
+            parts.push((f.span.lo, format!("{}: {}", key(&f.name), ty(f.ty))));
+        }
+        for m in &i.methods {
+            let params: Vec<String> = m
+                .params
+                .iter()
+                .map(|p| {
+                    // The setter `Object.defineProperty` adds (`crate::defined_accessors`).
+                    let name = match p.name == crate::defined_accessors::ADDED_SETTER_PARAM {
+                        true => "v",
+                        false => &p.name,
+                    };
+                    format!("{name}: {}", ty(p.ty))
+                })
+                .collect();
+            let s = match (m.is_getter, m.name.strip_prefix("set ")) {
+                (true, _) => format!("get {}(): {}", key(&m.name), ty(m.ret)),
+                (_, Some(n)) => format!("set {}({})", key(n), params.join(", ")),
+                _ => format!("{}({}): {}", key(&m.name), params.join(", "), ty(m.ret)),
+            };
+            parts.push((m.span.lo, s));
+        }
+        self.literal_display.borrow_mut().pop();
+        parts.sort_by_key(|(lo, _)| *lo);
+        let parts: Vec<String> = parts.into_iter().map(|(_, s)| s).collect();
+        format!("{{ {} }}", parts.join("; "))
     }
 }

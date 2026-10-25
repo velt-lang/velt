@@ -23,6 +23,7 @@ mod abi;
 mod adapters;
 mod adt;
 mod any;
+mod any_builtin;
 mod any_checks;
 mod any_delete;
 mod any_eq;
@@ -32,13 +33,19 @@ mod any_has;
 mod any_iface;
 mod any_keys;
 mod any_member;
+mod any_number;
 mod any_proxy;
+mod any_record;
 mod any_rest;
 mod any_set;
 mod any_set_site;
 mod any_tuple;
+mod any_view;
 mod append;
 mod array;
+mod array_view;
+mod array_view_index;
+mod array_view_ops;
 mod assign_target;
 mod async_fn;
 mod attempt;
@@ -108,8 +115,11 @@ mod transfer;
 mod truthy;
 mod types;
 mod upcast;
+mod view_unswitch;
+mod view_unswitch_plain;
 mod weak;
 mod weak_object;
+mod weak_view;
 mod widen;
 
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -318,6 +328,10 @@ enum Work {
     /// (async_fn/widen.rs).
     WidenPoll(TyId, TyId),
     WidenDrop(TyId, TyId),
+    /// Poll / drop of the wrapper adopting a foreign result slot of an async extern's promise of
+    /// type `T` (async_fn/foreign_promise.rs).
+    AdoptPoll(TyId),
+    AdoptDrop(TyId),
     /// `(slot: ptr)`: disposes of the unclaimed result of a started promise of a rejecting
     /// promise type (async_fn/start.rs).
     Unclaimed(TyId),
@@ -343,6 +357,8 @@ struct Cx<'h> {
     prelude_proxy: Option<Option<TyId>>,
     /// Native library inits `velt_main` runs first (entry.rs).
     native_inits: Vec<crate::NativeInit>,
+    /// The prelude's `Proxy.__view` (any_view.rs), once looked up.
+    view_fn: Option<Option<DefId>>,
     /// The program pins a task (`spawn(…, { worker })`): `velt_main` selects the per-core
     /// scheduler. Known once every function
     /// but `velt_main` is lowered, which is why it is built last (`lower_program`).
@@ -572,6 +588,14 @@ struct FnLower<'c, 'h> {
     /// The field read lowered next is about to be changed in place, reached by running code
     /// (caller_stores.rs `owner_barrier`): it puts the barrier on its owner.
     owner_write: bool,
+    /// While an assignment is lowered: the box pointers of the array views its target goes
+    /// through, written back after the store (array_view.rs), each with the element index
+    /// written when the target is an element of it (only that element is written back).
+    view_writes: Option<Vec<(Operand, TyId, Option<Operand>)>>,
+    /// The next array dropped is a view's mirror, never a view itself (`Glue::MirrorDrop`).
+    mirror_drop: bool,
+    /// The view bit tests and loops lowered, for versioning (view_unswitch.rs).
+    view_loops: view_unswitch::ViewLoops,
     /// This function's read mode, once asked (rc.rs `lk_mode`).
     lk_mode: Option<Local>,
     /// This thread's `RwLock` reader state, once a `read` returned it (async_fn/sync.rs).
@@ -641,10 +665,12 @@ struct FnLower<'c, 'h> {
     /// `deepEqual`, `Glue::KeyEq`): floats compare with JS's SameValueZero, as
     /// `Intrinsic::Hash` hashes them (glue/eq.rs).
     key_mode: bool,
-    /// Lowering the module state's initializer (module_state.rs): the locals of each global's
-    /// initializer (the temporaries of a `Record` literal, ...) belong to no function body and
-    /// are declared at their `let` (`declare_init_local`).
-    init_locals: bool,
+    /// Lowering an expression checked outside any body (module_state.rs): the module state's
+    /// initializer (`Some(0)`), or a class field's initializer, whose locals are renumbered
+    /// from this index on (`consume_detached`). Those locals (the temporaries of a `Record`
+    /// literal, ...) belong to no function body and are declared at their `let`
+    /// (`declare_init_local`).
+    init_locals: Option<u32>,
     /// While lowering a class's constructor: the (concrete) class type, whose field
     /// initializers the constructor runs (ctor_init.rs).
     ctor_self: Option<TyId>,
@@ -665,4 +691,7 @@ struct FnLower<'c, 'h> {
     /// The body of a function of a user module or of std/proxy: its operations on `any` throw
     /// what a proxy's trap throws, as velt_sema counts them (proxy_throws.rs).
     proxy_routes: bool,
+    /// An object is being built from a record's entries (`any_record_fill`): its fields are
+    /// converted without that path, so a type that contains itself ends.
+    record_fill: bool,
 }

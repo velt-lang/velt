@@ -33,7 +33,11 @@ impl FnCx<'_, '_> {
                     .with_note("mark the enclosing function or arrow `async`"),
             );
         }
-        let hint = self.hint(exp).map(|t| self.cx.ty.promise(t));
+        // `await null`: the value as the result expects it (`await_value.rs`).
+        let hint = match super::await_value::nothing_lit(inner) {
+            true => exp,
+            false => self.hint(exp).map(|t| self.cx.ty.promise(t)),
+        };
         let h = self.top_level_operand(span, |fx| fx.expr(inner, hint, Want::Move));
         self.awaited_using_shares(&h);
         let awaited = self.await_union_with(h, span, &mut |s, read, p| s.awaiting(read, p, span));
@@ -42,9 +46,11 @@ impl FnCx<'_, '_> {
             Err(h) => h,
         };
         self.await_throws(&h);
+        let plain = self.awaits_as_value(h.ty);
         let ty = match self.cx.ty.kind(h.ty) {
             TyKind::Promise(t, _) => *t,
             TyKind::Error | TyKind::Never => self.cx.ty.error,
+            _ if plain => return self.await_plain(h, span),
             _ => {
                 let found = self.cx.display(h.ty);
                 self.cx.error(

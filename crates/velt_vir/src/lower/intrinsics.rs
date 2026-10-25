@@ -3,6 +3,7 @@
 use velt_sema::hir::{self, Intrinsic, TyId};
 
 use super::async_fn::BoxHold;
+use super::json::JsonSource;
 use super::operand::proj;
 use super::rt::Rt;
 use super::{ice, unit, FnLower};
@@ -57,6 +58,12 @@ impl FnLower<'_, '_> {
                 }
             }
             (I::FieldPresent, [f]) => {
+                if let hir::ExprKind::Field { base, index, .. } = &f.kind {
+                    let bt = self.sub(base.ty);
+                    if self.cx.proxiable(bt) {
+                        return self.proxy_field_present(base, bt, *index);
+                    }
+                }
                 // Only read: no write barrier.
                 let outer = std::mem::replace(&mut self.read_target, true);
                 let p = self.place_expr(f);
@@ -73,6 +80,27 @@ impl FnLower<'_, '_> {
             (I::StrLen, [a]) => {
                 let v = self.projection_base(a, BoxHold::No);
                 self.str_len(v)
+            }
+            (I::StrByteLen, [a]) => {
+                let v = self.projection_base(a, BoxHold::No);
+                let p = self.operand_place(v, Ty::Agg(STR_AGG));
+                self.str_bytes(&p)
+            }
+            (I::StrByteAt, [s, i]) => {
+                let v = self.projection_base(s, BoxHold::No);
+                let i = self.expr(i);
+                self.str_byte_at(v, i)
+            }
+            (I::StrLoadU8x16, [s, at]) => {
+                let v = self.projection_base(s, BoxHold::No);
+                let at = self.expr(at);
+                self.str_load_u8x16(v, at, None)
+            }
+            (I::StrLoadPartialU8x16, [s, at, count]) => {
+                let v = self.projection_base(s, BoxHold::No);
+                let at = self.expr(at);
+                let count = self.expr(count);
+                self.str_load_u8x16(v, at, Some(count))
             }
             (I::StrCharCodeAt, [s, i]) => {
                 let hold = match self.may_write(i) {
@@ -211,6 +239,8 @@ impl FnLower<'_, '_> {
             (I::AnyIsArray, [a]) => self.any_is_array(a),
             (I::AnyKeys, [o]) => self.any_keys(o, ty),
             (I::AnyTruthy, [a]) => self.any_truthy(a),
+            (I::AnyTag, [a]) => self.any_tag_value(a),
+            (I::AnyToNumber, [a]) => self.any_to_number(a),
             (I::AnyStrictEq, [a, b]) => self.any_eq(a, b, false),
             (I::AnyLooseEq, [a, b]) => self.any_eq(a, b, true),
             (I::Share, [a]) => {
@@ -282,7 +312,18 @@ impl FnLower<'_, '_> {
                 _,
             ) => self.async_intrinsic(i, args, ty),
             (I::JsonStringify, [a]) => self.json_stringify(a, ty),
-            (I::JsonParse, [a, flags, depth]) => self.json_parse(a, flags, depth, ty),
+            (I::JsonParse, [a, flags, depth]) => {
+                self.json_parse(a, flags, depth, JsonSource::Text, ty)
+            }
+            (I::JsonParseRows, [a, flags, depth]) => {
+                self.json_parse(a, flags, depth, JsonSource::Rows, ty)
+            }
+            (I::JsonParseCursor, [a, flags, depth]) => {
+                self.json_parse(a, flags, depth, JsonSource::Cursor, ty)
+            }
+            (I::DbBind, [sink, a]) => self.db_bind(sink, a),
+            (I::ReadRows, [a]) => self.read_rows(a, true, ty),
+            (I::ReadRow, [a]) => self.read_rows(a, false, ty),
             (I::HttpHandler, [f]) => self.http_handler(f, ty),
             (I::Attempt, [f]) => self.attempt(f, ty),
             (
@@ -339,7 +380,7 @@ impl FnLower<'_, '_> {
 
     /// The dynamic `undefined` as a value of the `any` type `t`: a `boolean | undefined`
     /// holding nothing, boxed by implementation `any` (as sema boxes `undefined`).
-    fn dynamic_undefined(&mut self, any: u32, t: TyId) -> Operand {
+    pub(super) fn dynamic_undefined(&mut self, any: u32, t: TyId) -> Operand {
         let b = self.cx.intern(hir::TyKind::Bool);
         let opt = self
             .cx

@@ -104,6 +104,15 @@ impl TcpStream {
         })
     }
 
+    /// Reads what is there into `dst`, without waiting.
+    pub fn try_read(&self, dst: &mut [u8]) -> io::Result<usize> {
+        self.follow();
+        let want = dst.len();
+        self.0.try_transfer(READABLE, want, |s| {
+            (&*s).read(dst).inspect(|&n| super::moved(n))
+        })
+    }
+
     pub fn try_write(&self, data: &[u8]) -> io::Result<usize> {
         self.0.try_io(WRITABLE, |s| {
             (&*s).write(data).inspect(|&n| super::moved(n))

@@ -1,0 +1,2 @@
+error: cannot assign to `Sub.count`: `count` is a static field of `Base`, which `Sub` inherits
+in JavaScript this assignment creates a static field `count` of `Sub` itself and leaves `Base.count` as it is; Velt does not support that yet

@@ -162,6 +162,12 @@ pub(crate) fn resolve_bounds(cx: &mut Ctx, gs: &[ast::GenericParam], env: &TyEnv
             match as_bound(cx, ty) {
                 Some(Ok(bound)) => bounds.push(bound),
                 Some(Err(ty)) => {
+                    // An object type bound (`T extends { name: string }`) also reads and writes
+                    // its fields in the body, through an interface of them that each type
+                    // argument implements with its own fields (deferred-types.md, P3).
+                    if let Some(b) = cx.object_bound(ty, env, b.span) {
+                        bounds.push(b);
+                    }
                     out.constraints.resize(i + 1, None);
                     match out.constraints[i] {
                         None => out.constraints[i] = Some(ty),
@@ -506,10 +512,39 @@ fn layout_fields(cx: &mut Ctx, d: DefId, stack: &mut Vec<DefId>) {
         }
         // A subclass's `#x` is a field of its own next to the base class's (ES private names).
         let private_name = f.name.starts_with(ast::PRIVATE_NAME_PREFIX);
-        if !private_name && all.iter().any(|g: &FieldInfo| g.name == f.name) {
-            cx.err(
-                format!("field `{}` is already declared in a base class", f.name),
-                f.span,
+        let inherited = (!private_name)
+            .then(|| all.iter().position(|g: &FieldInfo| g.name == f.name))
+            .flatten();
+        if let Some(i) = inherited {
+            // Declared again with the same type and an initializer (`x: number = 2`): the
+            // inherited field, which this class's initializer sets in its turn, as in JS.
+            let g = &all[i];
+            if f.has_default
+                && !f.optional
+                && !g.optional
+                && g.private_to.is_none()
+                && f.private_to.is_none()
+                && f.declared == g.declared
+            {
+                redefined.push(crate::defs::Redefined {
+                    field: i,
+                    at: all.len(),
+                    name: f.name.clone(),
+                    init: None,
+                    throws: vec![],
+                });
+                continue;
+            }
+            let base_ty = cx.display(g.declared);
+            cx.error(
+                Diagnostic::error(
+                    format!("field `{}` is already declared in a base class", f.name),
+                    f.span,
+                )
+                .with_note(format!(
+                    "a subclass may give it an initializer of its own when it declares it as the base class does: `{}: {base_ty} = ...`",
+                    f.name
+                )),
             );
             continue;
         }

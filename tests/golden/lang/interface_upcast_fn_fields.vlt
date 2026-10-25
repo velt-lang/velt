@@ -1,0 +1,74 @@
+// A literal property holding a function (a method that doesn't use `this`, or an arrow) fills
+// a method's slot when the literal converts to an interface with methods (#941).
+
+interface V {
+  readonly value: number;
+  show(): string;
+}
+
+interface W {
+  value: number;
+  show(): string;
+  add(k: number): number;
+}
+
+interface X {
+  readonly value: number;
+  show(): string;
+  add(k: number): number;
+}
+
+let n = 0;
+
+const o = {
+  get value() {
+    return 1;
+  },
+  show() {
+    return "x";
+  },
+};
+const v: V = o;
+console.log(v.value, v.show());
+
+const p = {
+  base: 10,
+  get value() {
+    return this.base;
+  },
+  set value(x: number) {
+    this.base = x;
+  },
+  show: () => "arrow",
+  add(k: number) {
+    n += k;
+    return n;
+  },
+};
+const w: W = p;
+w.value = 5;
+console.log(w.value, p.value, w.show(), w.add(2), w.add(3));
+
+// Further on, through the converted value.
+const wv: V = w;
+console.log(wv.value, wv.show());
+
+function viaV(x: V): string {
+  return x.show() + x.value;
+}
+
+console.log(viaV(o), viaV(p), (o as V).show());
+
+// A function with parameters and a captured variable.
+const prefix = "#";
+const q = {
+  get value() {
+    return 7;
+  },
+  show() {
+    return prefix + n;
+  },
+  add: (k: number) => k * 2,
+};
+const qw: X = q;
+console.log(qw.show(), qw.add(4), qw.value);

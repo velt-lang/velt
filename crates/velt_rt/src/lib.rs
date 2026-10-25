@@ -20,6 +20,8 @@ pub mod cell_owner;
 pub mod child;
 pub mod cpu;
 pub mod db_json;
+pub mod db_params;
+pub mod db_rows;
 #[cfg(all(debug_assertions, not(velt_rt_host)))]
 pub mod debug_alloc;
 pub mod dev;
@@ -49,19 +51,16 @@ pub mod native;
 pub mod net;
 pub mod os;
 pub mod panic;
-pub mod postgres;
 pub mod prng;
 pub mod process;
 pub mod proxy_array;
 pub mod random;
 pub mod read_mode;
-pub mod redis;
 pub mod regex;
 pub mod registry;
 pub mod result;
 pub mod rwlock_write;
 pub mod shared;
-pub mod sqlite;
 pub mod stdin;
 pub mod str;
 pub mod str_array;
@@ -73,6 +72,7 @@ pub mod timer;
 pub mod tls;
 pub mod top_level_await;
 pub mod transfer_map;
+pub mod view;
 pub mod weak;
 
 pub use crate::str::VeltStr;
@@ -102,3 +102,9 @@ static GLOBAL_QUARANTINE: debug_alloc::Quarantine = debug_alloc::Quarantine::new
 #[cfg(test)]
 #[path = "../tests/abi/mod.rs"]
 mod abi_tests;
+
+// std's drivers: crates on the native SDK only, linked into the runtime (their `#[export]`
+// functions are std's externs; abi_symbols lists them for the JIT host).
+use velt_std_postgres as _;
+use velt_std_redis as _;
+use velt_std_sqlite as _;

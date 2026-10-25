@@ -1,0 +1,61 @@
+// A setter that `Object.defineProperty` defines on an untyped object literal with only a
+// getter (#922): until the call has run, a write through a type with the setter throws Node's
+// `TypeError`; after it, the write calls the defined setter.
+interface Box {
+  get value(): number;
+  set value(v: number);
+}
+
+function make(define: boolean): Box {
+  let stored = 1;
+  const o = {
+    get value(): number {
+      return stored;
+    },
+  };
+  if (define) {
+    Object.defineProperty(o, "value", {
+      get(): number {
+        return stored;
+      },
+      set(v: number) {
+        stored = v * 10;
+      },
+    });
+  }
+  return o as Box;
+}
+
+function write(b: Box, v: number): void {
+  try {
+    b.value = v;
+    console.log("set:", b.value);
+  } catch (e) {
+    console.log("caught:", (e as Error).message);
+  }
+}
+
+const plain = make(false);
+write(plain, 4);
+console.log("still:", plain.value);
+const defined = make(true);
+write(defined, 4);
+write(defined, 5);
+
+// Defined later: the write before the call throws, the one after it doesn't.
+function late(): void {
+  let stored = 0;
+  const o = {
+    get value(): number {
+      return stored;
+    },
+  };
+  write(o as Box, 1);
+  Object.defineProperty(o, "value", {
+    set(v: number) {
+      stored = v + 100;
+    },
+  });
+  write(o as Box, 2);
+}
+late();

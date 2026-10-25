@@ -94,6 +94,13 @@ impl TcpStream {
         }
     }
 
+    pub fn try_read(&self, dst: &mut [u8]) -> io::Result<usize> {
+        match self {
+            TcpStream::Tokio(s) => s.try_read(dst),
+            TcpStream::Velt(s) => s.try_read(dst),
+        }
+    }
+
     pub fn try_write(&self, data: &[u8]) -> io::Result<usize> {
         match self {
             TcpStream::Tokio(s) => s.try_write(data),

@@ -25,6 +25,19 @@ Maintainer-owned, like `hir/mod.rs`, `hir/intrinsic.rs` and `hir/module_state.rs
   own field `at` it runs before (that class's field count: after its last). They belong to
   the split of the declaring class: whoever runs that class's initializers runs each of them
   as `this.<field> = init` (dropping the old value) right before field `at`'s, in list order.
+  Sema checks every initializer (`FieldDef::default`, `FieldInit::init`) and every parameter
+  default a call fills in in a frame of its own, outside any function body: the locals it
+  uses (its own temporaries, such as the one a `Record` literal fills) are numbered from 0
+  there and belong to no body. Wherever lowering places one, it renumbers them after the
+  locals of the body it runs in (`velt_sema::rebase_detached_locals(e, base)`, which also
+  returns how many there are) and declares each at its `let` or binding pattern, which gives
+  its type; sema puts no `let` without an initializer and no `catch` local in one, which
+  would have none. A default sema inserts at a call (`FnInfo` parameter defaults, struct
+  field defaults in object literals) already has locals of the calling body. A parameter
+  default the function applies itself (a dynamic or `T | undefined` parameter's, which
+  includes one using an earlier parameter, `this` or a closure, typed `T | undefined` by the
+  parser) is checked in the function's body instead (`default_prologue`), as the initializer
+  of the `let` that hides the parameter at the start of the body, with locals of that body.
 - Virtual dispatch only for methods overridden somewhere: `Callee::Virtual { slot }` indexes
   `AdtDef::vtable` of the receiver's dynamic class; all other method calls are `Callee::Def`.
 - Interface values (`Shape[]`) are `TyKind::Dyn`: fat pointer (data, vtable). `ExprKind::ToDyn`
@@ -156,6 +169,15 @@ Maintainer-owned, like `hir/mod.rs`, `hir/intrinsic.rs` and `hir/module_state.rs
   operand tests `HoldsDynamicOrClass` instead, also `true` for a class (its `valueOf()` comes
   first). The probe is never evaluated. Lowering evaluates it like `HoldsNull` (`const_cond`),
   so each instantiation lowers one branch, and the others the code they had without the test.
+- A value of a type parameter passed for a union parameter with that type parameter as a member
+  (issue #1456; sema `param_member.rs`): the argument `Variant { [x] }` (or `WrapSome(x)`,
+  `WrapSome(Variant { [x] })` for an option), `x` a variable or field path, is `If { cond:
+  HoldsDynamic(NullAs: T), then: <x converted to any and routed to the member whose test it
+  passes, as an `any` converted to the union is>, els: <the wrap> }`. The routing reads `x`
+  once per test and converts it once in each arm (no temporary); where the wrap moves `x`,
+  every arm moves it. Lowering's drop-flag scan (`FlagScan`) looks only at the branch the
+  instantiation takes, and `velt_sema::effects::routed_wrap` gives the effects of such an
+  argument as the wrap's.
 
 ## M3/M4 encodings (lowering assumptions, confirmed at merge of ir-3)
 - An async fn's `FnDef::ret` is the body's return type `T` (the call's type is `Promise<T>`).
@@ -807,10 +829,20 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   the requirement `TyOp::Convert(n)` over `[from, to]` (`n` numbers the conversion, so each is
   reported where it is written; never the type of an expression) as a type the body
   mentions, so `type_level::instances` reduces it at every instantiation: to `to` when both are
-  one object type there (the same canonical type, or the same layout), else it reports the
-  instantiation, since a value can't be seen as an object type with other fields without a copy,
-  and a copy would be another object where TypeScript passes the same one. Lowering's `Upcast` is
-  the value itself.
+  one object type there (the same canonical type, or the same layout); to `to` as well when
+  `to` is an object type whose fields `from` has, of the same types and optionality, plus
+  others: lowering's `Upcast` of two object types of different layouts is then a new `to`
+  holding those fields (shared, as `SpreadObject` builds one), and sema records the copy with
+  `crate::object_copies`, which reports it where the program could tell it from the original
+  (TypeScript passes the same object). Any other instantiation is reported. Otherwise lowering's
+  `Upcast` is the value itself.
+- `{} as D` with `D` an object type known only per instantiation (`Pick<T, K>`, `Partial<T>`) is a
+  new `Record<string, any>` converted to `any`; its keys are set through `AnySet`, and converting
+  it to `D` is an `AnyTo`, which lowering makes, for an `any` holding a `Record<string, any>` and
+  an object type `D`, a new `D` of the record's entries (each converted as `AnyTo` converts it; a
+  required field whose key the record lacks is a `TypeError` naming it, an optional one is
+  absent). `AnyTo` of an `any` holding a string to a string literal type, or a union of them,
+  checks the string's content.
 - `TyOp::Inline(n)` (additive): a conditional, mapped, indexed access, `keyof` or utility type
   (`Partial`, `Required`, `Readonly`, `Pick`, `Omit`) written in a generic definition, not in an
   alias, whose evaluation needs a type parameter (`{ [K in keyof M]: Topic<M[K]> }` in a
@@ -825,11 +857,14 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   `Intrinsic::KeyWrite(x, k, v)` (type `void`; `v: T[K]`, owned), `x` and `k` borrowed places
   (`x` mutably for a write; any expressions, bound to temporaries in order when they are no
   places). An object type written through `KeyWrite` at some instantiation is
-  `AdtDef::assigned`. Sema records the requirement that `K` is one key, or keys whose
-  fields have one type (an `Inline` form that is never a value's type, reduced like
+  `AdtDef::assigned`. Sema records the requirement that `K` is one key, or keys naming
+  required fields (an `Inline` form that is never a value's type, reduced like
   `TyOp::Convert`'s); any other instantiation is an error. Lowering reads (shared) or assigns the
   field the key's string literal type names, as `x.name` does, switching on the key's tag for a
-  union of keys.
+  union of keys. When those fields have different types, `T[K]` is their union: a read wraps
+  the field in its member's variant, and a write evaluates the value once and stores the
+  value's member into the field when it is the field's type, else stops the program with a
+  `TypeError` (deferred-types.md, decision 4).
 
 ## Interface intersections and upcasts (#350)
 
@@ -972,7 +1007,9 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   Besides the hidden slots of every interface table it holds, at slot 0, the `typeof` tag (an
   integer: 0 `undefined`, 1 `null`, 2 boolean, 3 number, 4 string, 5 symbol, 6 function, 7
   object), and at slots 1 to 4 the glue `AnyTruthy (data) -> bool`, `AnySame (a, b) -> bool`,
-  `AnyNumber (data) -> f64` (booleans, numbers and strings) and `AnyHash (data) -> u64` (agrees
+  `AnyNumber (data) -> f64` (booleans, numbers and strings; every type's table when
+  `Boxing::any_number` is set, that is when the program has an `AnyToNumber`: `null` 0,
+  `undefined` and objects `NaN`, a symbol Node's `TypeError`) and `AnyHash (data) -> u64` (agrees
   with SameValueZero: numbers of every width hash their value as a float). Tables are memoized
   per concrete type, so equal tables mean equal types. `===` / `Intrinsic::Same` and
   `Intrinsic::KeyEq` / `Intrinsic::Hash` on a dynamic type (generic code, `Set` / `Map` keys)
@@ -1002,8 +1039,23 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   with an operand whose checked type is dynamic (or `any | null`) box the other operand and use
   `AnyStrictEq` / `AnyLooseEq` (JavaScript's algorithms for primitives: numbers by value,
   `null == undefined`, `"1" == 1`, `true == 1`; objects by identity: tables of two static types
-  of one object, such as a class and its base, compare the data pointers; `==` of an object
-  and a primitive stops with a `TypeError`).
+  of one object, such as a class and its base, compare the data pointers). `==` of an object
+  and a boolean, number or string is the lowering's call of the prelude's `__anyLooseEq` (the
+  object's `ToPrimitive` with hint `"default"`, compared loosely), made only in that arm of
+  `AnyLooseEq`'s tag switch; a function compares `false` with every primitive.
+- Operators on `any` (#924): `Intrinsic::AnyTag (x: borrow any) -> i64` is the `typeof` tag of
+  the value held (a load from its table), `Intrinsic::AnyToNumber (x: borrow any) -> f64`
+  JavaScript's `ToNumber` of a primitive held (one call of slot 3). Sema writes `a op b` with an
+  `any` operand (only `Dynamic::Any`: an `object` or `Function` operand is TS2362) as a block
+  binding each operand once, left to right, then `ToNumber` of each: an operand whose tag is
+  6 or more goes to the prelude's `__anyObjectNumber`, which takes `ToPrimitive(v, "number")`
+  (`__anyToPrimitive`: `[Symbol.toPrimitive](hint)`, else `valueOf` / `toString` in the hint's
+  order, keeping a primitive result; the dispatch over the program's classes is sema's, written
+  where the prelude calls `__intrinsic_any_to_primitive`). `+` adds numbers when both tags are
+  at most 3, else it is `__anyAdd` (an `any`); `<` / `>` / `<=` / `>=` go to `__anyRelational`
+  when a tag is 6 or more. `x op= v` and `++` / `--` on an `any` place or member read it once
+  and write the boxed result; a typed number place with an `any` value (`n += a`) converts the
+  result back with `AnyTo`.
 - A dynamic value is never boxed again: `ToDyn` has no dynamic operand but a weak key (below; an `any | null`
   unpacks to the `any` it holds). An interface value converted to `any` is `ToDyn` of the
   interface value; lowering keeps its data pointer and takes the `any` table of the concrete
@@ -1024,7 +1076,12 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   5 `AnyGet (data, key, out) -> u8`, 6 `AnyIndex (data, f64, out) -> u8`, 7 `AnyCall (data, key,
   argv, argc, out) -> u8`, 8 `AnyApply (data, argv, argc, out) -> u8`, returning 0 (the result
   is in `*out`), 1 (not supported yet: a `TypeError` naming #924) or 2 (not a function). Without
-  them the tables and the VIR are unchanged.
+  them the tables and the VIR are unchanged. The `AnyCall` slot of a string, an array, a number
+  or a boolean dispatches by name to the prelude's `__anyStr_<name>(s, args)`,
+  `__anyArr_<name><T>(a, args)`, `__anyNum_<name>(n, args)` and `__anyBool_<name>(b, args)`
+  (std/prelude/zzzz_any_methods.vlt; the arguments packed into an `any[]`, the result an `any`),
+  comparing only the names the program calls through `any` (`Boxing::any_call_keys`); another
+  JavaScript built-in of that kind gives 1, any other name 2.
 - Member writes (phase 1b of #924): `x.f = v` / `x["f"] = v` / `x[k] = v` with a `string` or
   `any` key is `AnySet(x, key, v)`, with a number key `AnySetIndex(x, i as f64, v)`, of type
   `void`; `x` is borrowed and `v` boxed and moved in. Used as a value, the assignment is a block
@@ -1154,6 +1211,56 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   `lower/proxy_call.rs`). Object conversions keep a proxy's identity: `AdtLit` has
   `converted` ("Object conversions" below), and a converted literal whose source has a proxiable type gives the
   source's proxy when it holds one (and makes the target type proxiable, as `Upcast` does).
+- Views (#1485, velt_vir `lower/any_view.rs`): in a program with typed proxies, `AnyTo` to a
+  proxiable object type (not a class) of an `any` holding an object or function of another type
+  (and not a proxy) is the tagged result of the prelude's `Proxy.__view(x)`, a `Proxy` without traps whose
+  `#view` is set: field reads and writes run its forwarding `__get` / `__set` and check the value
+  as the field's type. A tagged value whose `Proxy` is a view converts to `any` as the `any` it
+  holds (`__target()`, the view released), so the view is the object to every dynamic
+  operation. The conversion gives the object's live view when it has one (the runtime's table of
+  views, rt_abi.md "Views", which `__view`'s result enters and a view's drop leaves), so an
+  object has at most one view at a time, and `===` and key hashes on a proxiable type compare
+  the pointer, as on any object type. A weak key of such a type goes the way of an
+  `object` key, by the `any` the value converts to (velt_vir `lower/weak_view.rs`). Object
+  patterns, `FieldPresent` and `JSON.stringify` on a proxiable type read a tagged value through
+  its traps (`JSON` as the `any` it converts to). The prelude's
+  `__proxyKeysOf`, `__proxyHas`, `__proxyHasOwnOf` and `__proxyAny`, which sema calls behind
+  `IsTypedProxy`, take such a value (no longer a proxy once in an `any`) as a plain one.
+- Array views (#1485, velt_vir `lower/array_view.rs`, std/prelude/zzz_adapt.vlt; additive): the
+  array types that `AnyTo` targets in the program's own code (also as a union's array member),
+  and the arrays their elements hold, are boxed *view types*. `AnyTo` to a view type of an `any`
+  holding an array (or tuple) that is no such value is a box whose header is
+  `{ data: view | 1, len: 0, cap: 0 }`, `view` the prelude's `__ArrayView<T>` (`__target`: the
+  original as an `any`, `__seen`: a mirror `T[]`). A view's own header has length 0, so an
+  `Index` read or target below the header's length, a `for...of` step below it and a `push`
+  with room are a plain array's, with no test; past the length (a view always is), for
+  `ArrayLen` when the header's length is 0, before a `push` grows the array, and for every other
+  access to the contents (`content`), bit 0 of `data` is tested. A view first syncs the mirror
+  as far as the access needs (`__arrayViewSyncAt` for an `Index` or a `for...of` step,
+  `__arrayViewSyncLen` before a `push` / `pop` / `truncate`, `__arrayViewSync` for the rest: an
+  element still `===` the original's is kept, others are converted again; elements are
+  converted in order as first reached) and the access runs on the mirror; `ArrayLen` is the
+  original's length (`__arrayViewLen`). A loop with such tests runs as a copy without the view
+  side (`lower/view_unswitch.rs`): a test of a box in a local the loop does not change (by
+  assignment or through its address) is false in the copy, entered after one test before the
+  loop (a box never becomes a view); any other test that finds a view, and an `Index` past the
+  header's length, go on in the original loop at the same point, except an `Index` of a header
+  the copy knows is plain (`lower/view_unswitch_plain.rs`: one a test before found plain, with
+  nothing in between that may write memory), where it is a plain array's out-of-bounds error.
+  The copy's locals are its own, except those whose address the loop takes (a string buffer, a
+  captured `let`), which the copy and the original share. Array intrinsics that change
+  the array, and assignments whose target goes through a view type, write the mirror back
+  after the change, only the written element for an `Index` target and a swap
+  (`__arrayViewFlushAt`), the new tail or length for `push` / `pop` / `truncate`
+  (`__arrayViewFlushFrom`), else all of it (`__arrayViewFlush`). A call of
+  `std/sort/stable::stableSort` on a view sorts a copy of the mirror instead
+  (`__arrayViewSort`); `ArrayMove` / `ArraySetLen` on a view stop with a `TypeError`. The
+  runtime's table of array views (rt_abi.md "Views") keeps one live view per (original, view
+  type), so two conversions give one box. A view converts to `any` as `__target`, drops by
+  leaving the table and releasing the view object, and deep-copies or transfers as a plain
+  array of the mirror (a transfer in place leaves the table first). Sema writes a cast
+  `xs as U[]` of an `S[]` with comparable element types (or to a union with one array member
+  `U[]`) as `AnyTo(U[], xs as any)`, upcast to the union.
 - Object conversions (#650, #651; sema `body/expr/object_copy.rs`): an object type converted to
   another object type whose fields it has (in another order, or only some of them) is an
   `AdtLit` of the expected type with `converted: Conversion::Copy`, whose fields each read the

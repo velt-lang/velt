@@ -1,7 +1,10 @@
 //! Accessors defined after construction (#922): `Object.defineProperty(o, "k", { get, set })`
 //! on a `const o: I = { get k() { … }, set k(v) { … }, … }` of the same function, where `I` is
 //! an interface that declares the accessor (an object literal implementing an interface may
-//! have getters and setters, `body::expr::iface_object`). Rewritten before checking, so the
+//! have getters and setters, `body::expr::iface_object`), or on a `const o = { get k(): T { … } }`
+//! without a type, whose getter's result type is written (the literal is then of its own
+//! interface, `body::expr::literal_iface`; a setter the call defines is added to it, which
+//! throws Node's `TypeError` until the call has run). Rewritten before checking, so the
 //! literal's accessors call functions held in variables that the call replaces:
 //!
 //! ```text
@@ -17,11 +20,23 @@
 //! with `configurable: false` defining it again throws `TypeError: Cannot redefine property:
 //! k` (checked only where the property may be defined twice: another call, or a loop).
 //! `enumerable` changes nothing Velt shows (an interface value is not listed by key). `this`
-//! inside the accessors is not supported (#941; the parser reports it). Other accessor
+//! inside the accessors is not supported yet (`emit.rs` reports it in a descriptor; the
+//! literal's own become functions held in variables, where sema reports it). Other accessor
 //! definitions are errors in `body::expr::object_define`.
 
 mod emit;
 mod synth;
+
+/// The parameter name of the setter added to an untyped literal for a definition
+/// (`emit::added_setter`), which no source can write: its interface's setter is then one a
+/// write through the literal's own type doesn't reach (`Ctx::defined_setters`).
+pub(crate) const ADDED_SETTER_PARAM: &str = "<defined value>";
+
+/// Is `name` a variable of the rewrite holding an accessor (`<o.k:get>`, `<o.k:set>`)? It
+/// holds only functions written in the function that declares it.
+pub(crate) fn is_accessor_cell(name: &str) -> bool {
+    name.starts_with('<') && (name.ends_with(":get>") || name.ends_with(":set>"))
+}
 
 use rustc_hash::FxHashMap;
 use velt_common::{Diagnostic, Span};
@@ -177,12 +192,15 @@ pub(super) struct Define {
     pub span: Span,
 }
 
-/// A `const o: I = { … }` of a function body: the interface type and the literal's accessors.
+/// A `const o: I = { … }` (or `const o = { … }`) of a function body: the interface type, if
+/// written, and the literal's accessors.
 #[derive(Clone, Debug)]
 pub(super) struct Decl {
-    pub ty: ast::TypeExpr,
+    pub ty: Option<ast::TypeExpr>,
     /// Per key: the literal has a getter, a setter.
     pub accessors: FxHashMap<String, (bool, bool)>,
+    /// Per key: the result type written on the literal's getter.
+    pub getter_types: FxHashMap<String, ast::TypeExpr>,
 }
 
 /// Walks every function body of a module.

@@ -1,0 +1,18 @@
+// A value of `T` passed for a `T | string` or `T | null | undefined` parameter at `T = unknown`:
+// `Array.isArray` narrows a `T | string` to its `T` member, and `null` and `undefined` go to
+// their own nothings (#1456).
+function isArr<T>(x: T | string): string {
+  return Array.isArray(x) ? "arr" + x.length : typeof x;
+}
+function passA<T>(v: T): string {
+  return isArr<T>(v);
+}
+function j<T>(x: T | null | undefined): string {
+  return x === null ? "N" : x === undefined ? "U" : String(x);
+}
+function passJ<T>(v: T): string {
+  return j<T>(v);
+}
+console.log(passA<unknown>([1, 2]), passA<unknown>("s"), passA<unknown>(3), passA<number[]>([4]));
+console.log(passJ<unknown>(null), passJ<unknown>(undefined), passJ<unknown>(0), passJ<unknown>("x"));
+console.log(passJ<number>(5), passJ<string | null>(null));

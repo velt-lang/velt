@@ -292,6 +292,19 @@ impl FnLower<'_, '_> {
             }
             _ => false,
         };
+        // A callback literal that took variables along into the lock (velt_sema
+        // ownership/locked/moves.rs): its env lives in this frame (it is only called), what it
+        // moved in is transferred before the lock is taken, and it is dropped before anything
+        // leaves the lock, so every reference those variables held is released under it.
+        // Only a `Mutex`'s: sema takes variables along for `with` alone, and an `RwLock`
+        // callback's own captures keep their identity (velt_sema ownership/locked/moves.rs).
+        let moved = match &f.kind {
+            hir::ExprKind::Closure(d) if !rw => self.moved_captures(*d),
+            _ => vec![],
+        };
+        if let (false, hir::ExprKind::Closure(d)) = (moved.is_empty(), &f.kind) {
+            self.frame_closures.insert(*d);
+        }
         if let hir::ExprKind::Closure(d) = &f.kind {
             let mode = match shared_read {
                 true => crate::lower::LkMode::Read,
@@ -301,7 +314,16 @@ impl FnLower<'_, '_> {
         }
         let fv = self.borrowed_arg(f);
         self.lock_callback = None;
-        let fp = self.place_of(fv, fty);
+        let fp = self.place_of(fv.clone(), fty);
+        if let hir::ExprKind::Closure(d) = &f.kind {
+            if !moved.is_empty() {
+                let ea = self.cx.env_agg(*d, &self.targs.clone());
+                let env = proj(&proj(&fp, Proj::Field(1)), Proj::Deref(Ty::Agg(ea)));
+                for &(field, ty) in &moved {
+                    self.transfer_root_in_place(proj(&env, Proj::Field(field)), ty);
+                }
+            }
+        }
         let code = self.rvalue_temp(
             Ty::Ptr,
             Rvalue::Use(Operand::Copy(proj(&fp, Proj::Field(0)))),
@@ -351,6 +373,14 @@ impl FnLower<'_, '_> {
             ret: abi.ret,
         };
         let r = self.finish_call(callee, vec![env, arg], ret, None);
+        // The callback's environment, holding what it took along, is released under the lock;
+        // released after it, it would race the next holder.
+        if !moved.is_empty() {
+            match &fv {
+                Operand::Copy(p) if self.take_temp(p) => self.drop_glue(p.clone(), fty),
+                _ => panic!("ICE: a `with` callback that takes variables along is not a temporary"),
+            }
+        }
         // A shared read's result leaves by read mode's rules whatever this code's mode: the
         // store's objects are uncounted there, so one the result shares is copied, never moved
         // out (it would look unique to the writers' counts).

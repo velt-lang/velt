@@ -75,6 +75,32 @@ fn object_literal_accessors() {
 }
 
 #[test]
+fn object_literal_methods_using_this() {
+    // The parser gives these a leading `this` parameter, which is not written.
+    round_trips(
+        "const o = {
+  n: 1,
+  inc(by: number) {
+    this.n += by;
+  },
+  get double() {
+    return this.n * 2;
+  },
+  set double(v) {
+    this.n = v / 2;
+  },
+  *each(): Generator<number> {
+    yield this.n;
+  },
+  f: function () {
+    return this.n;
+  },
+};
+",
+    );
+}
+
+#[test]
 fn symbol_keys() {
     round_trips("const KEY: unique symbol = Symbol(\"k\");\n");
     round_trips(
@@ -386,4 +412,29 @@ fn literal_and_number_member_names_keep_their_form() {
     round_trips(
         "const o = { 1.50: \"y\", [-1]: \"n\", [\"p\"]: 2 };\nconst { 1.5: a, [-1]: b } = o;\n",
     );
+}
+
+#[test]
+fn static_blocks() {
+    round_trips(
+        "class S {\n  static n: number = 1;\n  static {\n    S.n += 1;\n  }\n  static {}\n}\n",
+    );
+}
+
+#[test]
+fn accessors_in_object_types() {
+    round_trips("type T = {\n  get v(): number;\n  set v(x: number);\n  label: string;\n};\n");
+    round_trips("type G<X> = {\n  get item(): X;\n};\n\ninterface I {\n  get v(): number;\n}\n");
+    round_trips("function f(x: { get size(): number }): number {\n  return x.size;\n}\n");
+    round_trips("let a: { get n(): number; set n(v: number) };\nlet b: { set m(x: string) };\n");
+    // Each accessor is kept as written: the setter first, a setter of its own type.
+    round_trips("let y: { set b(val: number); get b(): number };\n");
+    round_trips("let z: { get w(): string; set w(input: string | number) };\n");
+    // Members named `get` and `set` stay fields and methods.
+    round_trips("let c: { get: () => number; set(x: number): void };\n");
+}
+
+#[test]
+fn as_as_a_name() {
+    round_trips("function as(x: any): any {\n  return x;\n}\n\nconst v = as(as(1)) as number;\n");
 }

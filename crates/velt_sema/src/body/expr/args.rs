@@ -9,7 +9,7 @@
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
-use super::error_slots::{error_only, occurs_plain};
+use super::error_slots::{error_only, occurs_plain, union_member_only};
 use super::ops::untyped;
 use super::widen_fresh::is_fresh;
 use crate::body::{FnCx, Want};
@@ -20,6 +20,7 @@ use crate::hir::{self, ExprKind as H, PassMode, TyId, TyKind};
 const ARG: &str = "<arg>";
 
 /// A callable signature; `Param(i)` in its types are the callee's type parameters ("slots").
+#[derive(Clone)]
 pub(crate) struct Callable {
     /// For messages: "function `f`", "method `push`".
     pub what: String,
@@ -143,12 +144,24 @@ impl FnCx<'_, '_> {
                 self.optional_slot(a, crate::body::OptionalSlot::Param);
             }
         }
+        // A type parameter bounded by a function type (`F extends (x: number) => number`) is
+        // that function type: arrows take their parameter types from it, other functions convert
+        // to it, and the body calls it as one (`fn_bound_value`; issue #1212).
+        for (k, slot) in slots.iter_mut().enumerate() {
+            let Some(Some(b)) = c.constraints.get(k) else {
+                continue;
+            };
+            if slot.is_none() && self.cx.exact_fn_bound(*b) {
+                *slot = Some(*b);
+            }
+        }
         let args_before = self.cx.diags.len();
         let checked = self.args_in_rounds(c, &mut slots, &context, args, collect);
         let reported = self.cx.diags.len() > args_before;
         if let Some(e) = exp {
             self.prefer_context(c, &mut slots, &context, &checked, e);
             self.cx.match_ty(c.ret, e, &mut slots);
+            self.cx.match_through_impl(c.ret, e, &mut slots);
         }
         // An argument that is already an error (reported) leaves its slots unknown: no second
         // error about inferring them. So does one holding an error type when checking the
@@ -215,6 +228,7 @@ impl FnCx<'_, '_> {
                 }
             };
             self.set_target(outer_target);
+            h = self.routed_param_arg(h);
             if let Some(d) = &p.default {
                 h = self.default_on_undefined(h, arg_ty, d, &type_args);
             }
@@ -224,13 +238,12 @@ impl FnCx<'_, '_> {
             hargs.push(h);
         }
         for p in &c.params[args.len()..] {
-            let Some(mut d) = p.default.clone() else {
+            let Some(d) = &p.default else {
                 // A left-out `void` parameter (checked by arity).
                 hargs.push(self.unit_expr(span));
                 continue;
             };
-            crate::visit::map_expr_types(&mut d, &mut |t| self.cx.subst(t, &type_args));
-            d.span = span;
+            let d = self.placed_default(d, &type_args, span);
             hargs.push(d);
         }
         // A deferred type in the result that the type arguments let reduce is reported here.
@@ -283,9 +296,7 @@ impl FnCx<'_, '_> {
         };
         let test = crate::body::defaults::undefined_test(name(span), span);
         let cond = self.cond(&test);
-        let mut d = default.clone();
-        crate::visit::map_expr_types(&mut d, &mut |t| self.cx.subst(t, type_args));
-        d.span = span;
+        let d = self.placed_default(default, type_args, span);
         let els = self.read_temp(arg, ty, span);
         let pick = H::If {
             cond: Box::new(cond),
@@ -398,12 +409,11 @@ impl FnCx<'_, '_> {
             return ck;
         }
         for (k, p) in skipped.iter().enumerate() {
-            let mut d = p
+            let d = p
                 .default
-                .clone()
+                .as_ref()
                 .expect("ICE: skipped parameters have defaults");
-            crate::visit::map_expr_types(&mut d, &mut |t| self.cx.subst(t, &ck.type_args));
-            d.span = span;
+            let d = self.placed_default(d, &ck.type_args, span);
             ck.args.insert(skip.start + k, d);
         }
         ck
@@ -456,6 +466,9 @@ impl FnCx<'_, '_> {
                 }
                 None => self.constraint_expected(c, &args[i], p.ty, expected, (&known, slots)),
             };
+            let expected = self
+                .literal_key_array(c, p.ty, &args[i], slots, expected)
+                .unwrap_or(expected);
             let mode = self.callback_mode(&args[i]);
             let arrow = as_arrow(&args[i]);
             let named = matches!(args[i].kind, ast::ExprKind::Ident(_));
@@ -646,7 +659,21 @@ impl FnCx<'_, '_> {
             let tys: Vec<TyId> = c.params.iter().map(|p| p.ty).collect();
             let unconstrained_error = tys.iter().any(|t| error_only(self.cx, *t, k as u32))
                 && !tys.iter().any(|t| occurs_plain(self.cx, *t, k as u32));
-            if unconstrained_error {
+            // A type parameter only ever a member of a parameter's union (`x: T | string`)
+            // that the arguments left open (`f("s")`, which the `string` member takes) holds
+            // nothing here: TypeScript infers `unknown`, under which `T | string` is `unknown`;
+            // `never` keeps it `string`.
+            let mut member_only = || {
+                let mut any_member = false;
+                for t in &tys {
+                    match union_member_only(self.cx, *t, k as u32) {
+                        Some(m) => any_member |= m,
+                        None => return false,
+                    }
+                }
+                any_member
+            };
+            if unconstrained_error || member_only() {
                 *slot = Some(self.cx.ty.never);
             }
         }

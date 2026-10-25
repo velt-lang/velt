@@ -27,6 +27,7 @@ Written in Velt. The compiler resolves `import { x } from "velt:<path>"` to `std
 | `net.vlt` | `std/net`: `listen`/`connect`, `listenTls`/`connectTls`, `TcpListener`, `TcpStream` (`net_bytes.vlt`: internal). |
 | `http.vlt` | `std/http`: `serve` (HTTP/1.1, HTTP/2, HTTPS), `Server`, `ServeInfo`, `upgradeConnection`; handlers take and return the global `Request` and `Response` (streamed bodies: `http/stream.vlt`, internal). |
 | `fetch.vlt` | `std/fetch`: the global `fetch`, `Request`, `Response` (`fetch/request.vlt`, `fetch/response.vlt`), `Headers` (`fetch/headers.vlt`, also the server's request headers) and `BodyInit` (`fetch/body.vlt`). |
+| `http/server.vlt` | `std/http/server`: `serve`, `HttpRequest`, `HttpResponse`, `HttpStream`, `EventStream`, `HttpServer`: an HTTP/1.1 server written in Velt on std/net (requests parsed in place, responses written per batch, streamed bodies both ways); internal: `http/server/parse.vlt` (request heads), `request.vlt` (`HttpRequest`, body reading), `response.vlt` (`HttpResponse`, streaming). |
 | `websocket.vlt` | `std/websocket`: server upgrades (`upgradeWebSocket`) and clients (`connectWebSocket`), `WebSocket`, topics. Written in Velt on std/net streams; internal: `websocket/frame.vlt` (framing), `reader.vlt` and `receive.vlt` (the receiving side), `queue.vlt` and `writer.vlt` (the send queue and its flusher), `handshake.vlt`, `topics.vlt`, `bytes.vlt` (byte helpers). |
 | `json.vlt` | `std/json`: `Value` (= prelude `JsonValue`). |
 | `process.vlt` | `std/process`: `argv args env setEnv removeEnv cwd chdir exit`. |
@@ -36,6 +37,7 @@ Written in Velt. The compiler resolves `import { x } from "velt:<path>"` to `std
 | `collections/priority_queue.vlt` | `std/collections/priority_queue`: `PriorityQueue<T>`, binary heap ordered by a comparator. |
 | `collections/sorted_map.vlt` | `std/collections/sorted_map`: `SortedMap<K, V>`, key-ordered map (sorted arrays) with `floorKey ceilingKey range`. |
 | `encoding.vlt` | `std/encoding`: Base64 (std + URL-safe), hex, UTF-8 encode/decode/validate; `EncodingError`. |
+| `encoding/utf8.vlt` | Internal: UTF-8 validation of a byte range with SIMD over ASCII runs, behind `utf8Valid` and the WebSocket reader's check of text that arrives in pieces. |
 | `encoding/binary_string.vlt` | `std/encoding/binary_string`: the globals `btoa atob` (Node's Base64 of binary strings, forgiving decoding). |
 | `dom_exception.vlt` | `std/dom_exception`: the global `DOMException` (`name`, legacy `code`) web APIs throw. |
 | `crypto.vlt` | `std/crypto`: `sha256 sha1 hmacSha256 hmacSha1 randomBytes randomInt timingSafeEqual`. |
@@ -49,6 +51,7 @@ Written in Velt. The compiler resolves `import { x } from "velt:<path>"` to `std
 | `jsx.vlt` | `velt:jsx`: server-side TSX rendering, `renderToString renderToStringSync renderToStream raw Fragment`, `Element`, `RenderError`, the `JSX` types. |
 | `jsx/jsx-runtime.vlt` | `velt:jsx/jsx-runtime`: the JSX provider module compiled JSX calls (docs/internals/contracts/jsx.md), with the SSR precompile exports; `jsx/generic/jsx-runtime.vlt` without them. Internal: `jsx/node.vlt` (`Element`), `factory.vlt`, `escape.vlt`, `void_elements.vlt`, `render.vlt`, `intrinsic.vlt` + `attrs/*.vlt` (HTML tags and attributes). |
 | `csv.vlt` | `std/csv`: RFC 4180 `parseCsv parseCsvRecords stringifyCsv`, `CsvError`. |
+| `db.vlt` | `std/db`: `RowSource`, `readRows readRow`, `CellKind`, `RowError`: typed rows from any source. |
 | `cli.vlt` | `std/cli`: `ArgParser` (flags, options, positionals, help text), `ParsedArgs`, `CliError`. |
 | `child_process.vlt` | `std/child_process`: `exec execSync execShell spawn`, `ChildProcess`, `ExecResult`. |
 | `stdin.vlt` | `std/stdin`: `readLine readAll` (+ `*Sync`). |

@@ -32,6 +32,10 @@ pub(crate) struct ModuleScope {
     pub is_std: bool,
 }
 
+/// The classes below a class, deepest first, each with the method its vtable calls at a slot
+/// (`Ctx::classes_below`).
+pub(crate) type ClassesBelow = std::rc::Rc<[(DefId, DefId)]>;
+
 pub(crate) struct Ctx<'m> {
     pub modules: &'m [SourceModule],
     pub root: usize,
@@ -46,6 +50,9 @@ pub(crate) struct Ctx<'m> {
     pub prelude: FxHashMap<String, Item>,
     pub aliases: Vec<AliasInfo<'m>>,
     pub extensions: Vec<Extension>,
+    /// The extensions declaring each method name, built for the first `extensions.len()`
+    /// extensions (body/expr/method.rs `applicable_extensions`).
+    pub(crate) extension_names: (usize, FxHashMap<String, Vec<usize>>),
     pub impls: Vec<ImplDef>,
     /// Interfaces written through and their setter slots (`crate::iface_writes`).
     pub(crate) iface_writes: crate::iface_writes::IfaceWrites,
@@ -73,6 +80,9 @@ pub(crate) struct Ctx<'m> {
     pub brands: FxHashMap<DefId, TyId>,
     /// (primitive, object part) → the brand's definition.
     pub brand_keys: FxHashMap<(TyId, TyId), DefId>,
+    /// Brands whose object part mentions type parameters (`symbol & { __t?: T }`): substitution
+    /// brands the substituted object part (`Ctx::subst`). Empty in most programs.
+    pub generic_brands: FxHashSet<DefId>,
     /// Brands of a `Record<string, any>` (or `unknown`) by the named members written next to
     /// its index signature → that object type of the named members (`crate::index_signatures`).
     pub record_views: FxHashMap<DefId, TyId>,
@@ -94,6 +104,9 @@ pub(crate) struct Ctx<'m> {
     /// Checking type aliases nothing uses (`resolve::check_unused_aliases`): a utility type on
     /// one of the alias's own type parameters is fine there (it is resolved at each use).
     pub checking_unused_aliases: bool,
+    /// Some body has a type predicate on a type parameter's value (`MayHoldPrimitive`, #1251):
+    /// error inference then drops what a guarded branch throws in object instances.
+    pub primitive_guards: bool,
     /// The state of type-level evaluation (`crate::type_level`).
     pub(crate) type_level: crate::type_level::State,
     /// The program (not std) writes `undefined`: else the checks only it needs (`undefined_args`,
@@ -119,6 +132,13 @@ pub(crate) struct Ctx<'m> {
     pub global_props: crate::global_this::GlobalProps,
     /// Module constants found to depend on themselves so far (`body::driver::ensure_global`).
     pub global_cycles: u32,
+    /// How many function values (arrows, function expressions, literal methods) are being
+    /// checked inside the module constant being checked: a read of the constant there runs
+    /// later, once it is initialized (`body::driver::ensure_global`).
+    pub fn_value_depth: u32,
+    /// Module constants whose initializer is being checked on trial for its type, while it
+    /// reads the constant inside a function value (`body::driver::ensure_global`).
+    pub typing_globals: Vec<DefId>,
     /// Union enums by canonical member list (`crate::unions`).
     pub unions: FxHashMap<Vec<TyId>, DefId>,
     pub recursive_unions: FxHashMap<u32, Option<TyId>>, // by alias (crate::recursive_unions)
@@ -129,11 +149,24 @@ pub(crate) struct Ctx<'m> {
     /// The throwing setters a getter-only override gets (`collect::classes`): a write through
     /// the class itself is a type error, as in TypeScript, one through a base class throws.
     pub getter_only_setters: FxHashSet<DefId>,
+    /// Setters of object literals' own interfaces that `Object.defineProperty` gives a
+    /// getter-only property (`crate::defined_accessors`), by interface and method name: a
+    /// write through the literal's own type is rejected, as TypeScript does (TS2540).
+    pub defined_setters: FxHashSet<(DefId, String)>,
     /// Names of `Param(i)` in the definition being checked (for messages).
     pub display_params: Vec<String>,
     /// Functions whose parameter defaults are checked (or being checked): they are checked on
     /// first use, since a field default or constant may call with fewer arguments.
     pub defaults_checked: FxHashSet<DefId>,
+    /// Per class and vtable slot: the classes below it, deepest first, with the method each
+    /// one's vtable calls there (`body::expr::virtual_defaults`).
+    pub classes_below: FxHashMap<(DefId, u32), ClassesBelow>,
+    /// The default-filling vtable entries (`collect::fill_defaults`).
+    pub fills: FxHashMap<DefId, crate::collect::fill_defaults::Fill>,
+    /// What each parameter default that may throw throws, by its span (`defaults::check_default`).
+    pub default_throws: FxHashMap<Span, Vec<crate::defs::ThrowSrc>>,
+    /// Implementations of accessor interfaces for object types (`body::expr::iface_from_object`).
+    pub object_impls: crate::body::expr::iface_from_object::ObjectImpls,
     /// The adapter of each `toString` / `toJSON` method glue calls through one (`crate::hooks`).
     pub hook_adapters: FxHashMap<DefId, DefId>,
     /// Types whose field defaults are checked (or being checked): checked up front, or on first
@@ -165,6 +198,15 @@ pub(crate) struct Ctx<'m> {
     /// What the methods of the object literals being checked throw, by interface slot, before
     /// their implementations exist (`body/expr/iface_object.rs`; read by `crate::throws`).
     pub provisional_slots: Vec<(DefId, u32, Vec<crate::defs::ThrowSrc>)>,
+    /// The interfaces made from object literals with no expected type
+    /// (`body/expr/literal_iface.rs`), whose methods all use `this`.
+    pub literal_ifaces: FxHashSet<DefId>,
+    /// The structs (or classes) of object literals implementing interfaces
+    /// (`body/expr/iface_object.rs`), whose `set k` fields hold the setters.
+    pub literal_structs: FxHashSet<DefId>,
+    /// The literal interfaces being displayed (`display.rs`): one inside its own members
+    /// (`add(): this`) shows as `this`.
+    pub literal_display: std::cell::RefCell<Vec<DefId>>,
     /// The adapters converting generic interface values to `unknown` type arguments
     /// (`body/expr/iface_adapt.rs`), made on first use.
     pub iface_adapters: FxHashMap<
@@ -199,6 +241,13 @@ pub(crate) struct Ctx<'m> {
     pub static_copies: FxHashMap<(DefId, DefId), DefId>,
     /// For each copy of a static method: the method.
     pub static_copy_of: FxHashMap<DefId, DefId>,
+    /// Errors in copies of static methods reported only if the copy is used, and the copies
+    /// used, each with the function using it (`None`: outside any) (`body::static_copy_uses`).
+    pub copy_diags: Vec<(DefId, Diagnostic)>,
+    pub copy_uses: Vec<(Option<DefId>, DefId)>,
+    /// Interface values converted to the object type of their shape, checked once the bodies are
+    /// (`body::expr::iface_from_object::check_unwraps`).
+    pub unwraps: Vec<crate::body::expr::iface_from_object::Unwrap>,
     /// Name spans of the nested functions made from local generic arrows (`generic_arrows`).
     pub generic_arrow_fns: FxHashSet<Span>,
     /// Name spans of every function made from a generic arrow (diagnostics show arrows).
@@ -210,8 +259,9 @@ pub(crate) struct Ctx<'m> {
     /// Name spans of the `const`s that closures in their own initializer use (`body::late_consts`):
     /// a closure may capture one before it is assigned.
     pub late_consts: FxHashSet<Span>,
-    /// Per generator with a dynamic default, the function its value is (`gen_value.rs`).
-    pub generator_values: FxHashMap<DefId, (DefId, TyId)>,
+    /// Per generator with a dynamic default (and its type arguments), the function its value
+    /// is (`gen_value.rs`).
+    pub generator_values: FxHashMap<(DefId, Vec<TyId>), (DefId, TyId)>,
     /// Recursive closure groups made by `crate::nested_closures`.
     pub closure_groups: Vec<crate::nested_closures::ClosureGroup>,
     /// Group and member of each group member, by the name span of its `const`.
@@ -226,8 +276,6 @@ pub(crate) struct Ctx<'m> {
     pub overloaded_methods: FxHashSet<String>,
     /// Each JSX module's runtime, resolved on first use (`None` after its errors).
     pub jsx_providers: FxHashMap<usize, Option<std::rc::Rc<crate::body::expr::jsx::Provider>>>,
-    /// JSX component adapters, checked after ownership inference.
-    pub jsx_adapters: Vec<crate::body::expr::jsx::Adapter>,
     /// Sync wrappers of async closures (`body/expr/callback.rs`) and the type of the async
     /// closure each one calls: the thread analysis (`ownership::local_async`) matches a wrapper
     /// stored on the heap by that type, the function the user wrote.
@@ -252,6 +300,9 @@ pub(crate) struct Ctx<'m> {
     /// Module constants kept in the module state because of how the program uses them, in the
     /// order `crate::kept_consts::keep` kept them (a rolled-back check undoes its own).
     pub kept_consts: Vec<DefId>,
+    /// The classes extending each class, directly or not (`ownership::locked::regions`), built
+    /// on first use once every class is known.
+    pub subclasses: Option<FxHashMap<DefId, Vec<DefId>>>,
     /// The member names symbols give (`crate::symbols`).
     pub symbol_keys: crate::symbols::KeyNames,
     /// Set while [`Ctx::match_context`] runs (`crate::infer`).
@@ -342,6 +393,7 @@ impl<'m> Ctx<'m> {
             prelude: FxHashMap::default(),
             aliases: vec![],
             extensions: vec![],
+            extension_names: (0, FxHashMap::default()),
             impls: vec![],
             iface_writes: Default::default(),
             part_ifaces: Default::default(),
@@ -355,6 +407,7 @@ impl<'m> Ctx<'m> {
             objects: Default::default(),
             brands: FxHashMap::default(),
             brand_keys: FxHashMap::default(),
+            generic_brands: FxHashSet::default(),
             record_views: FxHashMap::default(),
             field_only: FxHashMap::default(),
             field_only_of: FxHashMap::default(),
@@ -363,6 +416,7 @@ impl<'m> Ctx<'m> {
             bodies_ok: false,
             sigq: Default::default(),
             checking_unused_aliases: false,
+            primitive_guards: false,
             type_level: Default::default(),
             writes_undefined: false,
             shaped: FxHashSet::default(),
@@ -376,13 +430,20 @@ impl<'m> Ctx<'m> {
             promoted_consts: FxHashSet::default(),
             global_props: Default::default(),
             global_cycles: 0,
+            fn_value_depth: 0,
+            typing_globals: Vec::new(),
             unions: FxHashMap::default(),
             recursive_unions: FxHashMap::default(),
             alias_names: FxHashMap::default(),
             generic_overrides: vec![],
             getter_only_setters: FxHashSet::default(),
+            defined_setters: FxHashSet::default(),
             display_params: vec![],
             defaults_checked: FxHashSet::default(),
+            classes_below: FxHashMap::default(),
+            fills: FxHashMap::default(),
+            default_throws: FxHashMap::default(),
+            object_impls: Default::default(),
             hook_adapters: FxHashMap::default(),
             field_defaults_checked: FxHashSet::default(),
             closure_counts: FxHashMap::default(),
@@ -395,6 +456,9 @@ impl<'m> Ctx<'m> {
             groups: None,
             literal_hosts: Default::default(),
             provisional_slots: vec![],
+            literal_ifaces: Default::default(),
+            literal_structs: Default::default(),
+            literal_display: Default::default(),
             iface_adapters: FxHashMap::default(),
             dyn_iface_targets: vec![],
             throw_checks: vec![],
@@ -408,6 +472,9 @@ impl<'m> Ctx<'m> {
             static_this: FxHashMap::default(),
             static_copies: FxHashMap::default(),
             static_copy_of: FxHashMap::default(),
+            copy_diags: vec![],
+            copy_uses: vec![],
+            unwraps: vec![],
             generic_arrow_fns: FxHashSet::default(),
             kept_nested: FxHashSet::default(),
             late_consts: FxHashSet::default(),
@@ -421,7 +488,6 @@ impl<'m> Ctx<'m> {
             gen_throw: false,
             overloaded_methods: FxHashSet::default(),
             jsx_providers: FxHashMap::default(),
-            jsx_adapters: vec![],
             callback_wrappers: Default::default(),
             reported_captures: vec![],
             sync_handlers: vec![],
@@ -433,6 +499,7 @@ impl<'m> Ctx<'m> {
             kept_fns: Default::default(),
             pure_fns: FxHashMap::default(),
             kept_consts: vec![],
+            subclasses: None,
             symbol_keys: Default::default(),
             matching_context: false,
             checking: vec![],

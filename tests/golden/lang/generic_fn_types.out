@@ -1,0 +1,11 @@
+3 s true
+[ 'a', 1 ] [ 'b', [ true ] ]
+[ 2, 4, 6 ] [ 1, 2 ]
+5 9 undefined
+n:3 s:0
+7 ADA
+42
+[ 'x', 'x' ] 3 { key: 1, value: 'one' }
+symbol svc Symbol(svc) false
+8080 false
+4,4 2

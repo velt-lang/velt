@@ -73,7 +73,14 @@ impl Ctx<'_> {
             if ty == self.ty.error {
                 return ty;
             }
-            operands.push((ty, p.span));
+            // A part that is the alias's own parameter (`T` of `type Tagged<T> = T & { … }`)
+            // is the argument written where the alias is used: its errors are reported there.
+            let own_param = written_name(p).is_some_and(|n| env.params.iter().any(|q| q == n));
+            let at = match (own_param, self.type_level.alias_site) {
+                (true, Some(site)) => site,
+                _ => p.span,
+            };
+            operands.push((ty, at));
         }
         // A part written as an alias's type parameter (`T` in `type Tagged<T> = T & { … }`)
         // is shown as its argument.
@@ -84,6 +91,9 @@ impl Ctx<'_> {
             .collect();
         if operands.iter().any(|&(o, _)| self.deferred_part(o)) {
             return self.deferred_intersection(operands, &names, env.module, t.span);
+        }
+        if let Some(view) = self.record_intersection(&operands, env.module, t.span) {
+            return view;
         }
         self.intersect(operands, names, env.module, t.span)
     }
@@ -408,6 +418,9 @@ impl Ctx<'_> {
                 .or_insert(parts);
         }
         match brand {
+            // `string & {}` (the literal-union idiom `T | (string & {})`) holds every string, as
+            // in TypeScript: only a part with fields brands a primitive.
+            Some(base) if self.is_object_type(acc) && self.public_fields(acc).is_empty() => base,
             Some(base) => self.brand_type(base, acc, module, span),
             None => acc,
         }
@@ -573,6 +586,10 @@ impl Ctx<'_> {
         let object = "write the fields as an object type `{ … }`";
         let (msg, note) = match self.ty.kind(t).clone() {
             TyKind::Adt(d, _) => match self.adt(d).map(|a| a.kind) {
+                Some(AdtKind::Class) if Some(d) == self.prelude_adt("Record") => (
+                    format!("`&` combines object types; `{shown}` is a map of keys to values"),
+                    "a `Record` is a dictionary, not an object type with fields: write the fields as an object type (`{ a: V; b: V }`), or keep the record in a field (`{ data: Record<string, V> } & { … }`)".to_string(),
+                ),
                 Some(AdtKind::Class) => (
                     format!("`&` combines object types; `{shown}` is a class"),
                     format!("Velt classes are nominal: use `Pick<{shown}, …>` for its fields, or a field-only interface"),

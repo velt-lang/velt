@@ -1,0 +1,23 @@
+// check: no leaks
+// A spread or an object rest pattern of a view (#1485) copies the fields of the view's type,
+// since an object type has a fixed shape; Node also keeps `stock`. `JSON.stringify` of the
+// view shows every member of its object, as in Node.
+type Item = { name: string; price: number };
+
+const tracked = new Proxy({ name: "proxy", price: 1 }, {}) as Item;
+
+class Product {
+  name = "pen";
+  price = 2;
+  stock = 10;
+}
+
+function main(): void {
+  const a: any = new Product();
+  const item = a as Item;
+  const { name, ...rest } = item;
+  const copy = { ...item };
+  copy.price = 5;
+  console.log(copy, rest, name, item.price, tracked.price);
+  console.log(JSON.stringify(item));
+}

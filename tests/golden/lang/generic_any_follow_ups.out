@@ -1,0 +1,9 @@
+2 number true DOWN string true
+2 0 UP! null
+1 s
+[ 1, 'UP' ] [1,"UP"]
+1.5:k a:k false:k k:1 1:k
+sn:2 sn:q other La L1 a:1,2/ a:s/
+[object Object] 1,2 1,2 [object Object]
+3 s
+null { b: 2 }

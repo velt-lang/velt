@@ -174,7 +174,9 @@ nothing; `null` means success).
   object `Uncaught { code: 503 }`. `JSON.parse`'s `JsonError` reports
   `Uncaught SyntaxError: <message>`, as Node reports the error `JSON.parse` throws. An `Error`
   held in an `any` or `unknown` (`const e: any = new RangeError("x"); throw e;`, or passed to a
-  generator's `throw()`) gets the `Error` header too (`Uncaught RangeError: x`).
+  generator's `throw()`) gets the `Error` header too (`Uncaught RangeError: x`). Only the
+  first uncaught error is reported, also when tasks running in parallel fail at once
+  ([Async](async.md)).
 - Node's report shows where an `Error` was **created** (the top of its stack); Velt's location
   is where it was last thrown. They differ for a rethrow (`catch (e) { throw e; }`) and for an
   error made earlier than it is thrown (#356).
@@ -190,11 +192,17 @@ A closure created inside a recursive function that it calls throws what the func
 throws before the closure (`if (d > max) throw new RangeError(…)` at the top, then
 `xs.map((x) => walk(x, d + 1))`); when the function throws more after it, such a closure, and a `catch` or promise whose
 error type depends on a function still being checked through recursion, may need a `throws`
-clause (``` the error type of this function is not known yet ```); when the recursion goes
-through an interface value, the `throws` clause goes on the interface method. Error types of
-overridden methods, and inferred error types of interface methods, cannot depend on type
-parameters; a written `throws` clause of a generic interface's method can name the interface's
-own parameters (`next(): IteratorResult<T> throws E` in `Iterator<T, E>`): an implementation
+clause (``` the error type of this function is not known yet ```). A call through an interface
+value whose method's error type is found only after the call is checked (the recursion goes
+through the interface, or an object literal is converted to the interface by code checked
+later) needs none, also when the `catch` or promise sees it through other functions (an
+`async` function that reads the interface value after an `await`): the program is checked
+again with that error type known, as in Node. Only when it holds a type the next check
+cannot carry over (an object type, `throw { code: 1 }`) does the `throws` clause go on the
+interface method (`get size(): string throws { code: string };`). Error types of overridden
+methods, and inferred error types of interface methods, cannot depend on type parameters; a
+written `throws` clause of a generic interface's method can name the interface's own parameters
+(`next(): IteratorResult<T> throws E` in `Iterator<T, E>`): an implementation
 then throws what its `implements Iterator<string, IoError>` says, and a call through an
 `Iterator<string, E>` value throws `E` (also through an interface extending it with its
 parameters in another order). A method of another interface without a `throws` clause that

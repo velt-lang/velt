@@ -195,6 +195,27 @@ impl FnCx<'_, '_> {
         )
     }
 
+    /// A value whose type is a type parameter (or a deferred `T[K]` or `T & {…}`) as an `any`
+    /// (a share of a variable), so `typeof` tells the instantiation's value at run time (#1036);
+    /// also a `T | undefined` / `T | null` (its nothing, or the payload's tag); other values as
+    /// they are.
+    pub(super) fn param_as_any(&mut self, s: hir::Expr) -> hir::Expr {
+        let core = self.cx.ty.opt_payload(s.ty).unwrap_or(s.ty);
+        // `T & { n?: number }` too: a branded primitive at `T = number` (#1313).
+        let intersect = matches!(
+            self.cx.ty.kind(core),
+            hir::TyKind::Op(hir::TyOp::Intersect, _)
+        );
+        let Some(any) = self
+            .any_ty()
+            .filter(|_| intersect || self.instance_valued(core))
+        else {
+            return s;
+        };
+        let s = self.share_if_place(s);
+        self.coerce(s, any)
+    }
+
     /// Is `t` a union (or an option of one) with a type parameter among its members?
     pub(super) fn param_union(&mut self, t: TyId) -> bool {
         let core = self.cx.ty.core(t).unwrap_or(t);
@@ -458,7 +479,7 @@ impl FnCx<'_, '_> {
             _ => payload,
         };
         let d = self.expr(rhs, Some(hint), Want::Move);
-        self.nullish_match(s, l, mode, payload, d, span)
+        self.nullish_match(s, (l, mode), payload, d, exp, span)
     }
 
     /// `s ?? rhs` where `s` is `null` or `undefined` alone (an option of `never`): `rhs`, after
@@ -502,17 +523,17 @@ impl FnCx<'_, '_> {
         if mode == UseMode::Move {
             self.force_move(&mut s);
         }
-        self.nullish_match(s, l, mode, payload, d, span)
+        self.nullish_match(s, (l, mode), payload, d, None, span)
     }
 
     /// The match `s ?? d` lowers to, with `l` bound to the payload.
     fn nullish_match(
         &mut self,
         s: hir::Expr,
-        l: hir::LocalId,
-        mode: UseMode,
+        (l, mode): (hir::LocalId, UseMode),
         payload: TyId,
         d: hir::Expr,
+        exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
         let opt = self.cx.ty.option(payload);
@@ -525,7 +546,7 @@ impl FnCx<'_, '_> {
             v = self.mk(H::WrapSome(Box::new(v)), dty, span);
             (dty, d)
         } else {
-            let (value, d, ty) = self.nullish_join(v, d, payload);
+            let (value, d, ty) = self.nullish_join(v, d, payload, exp);
             v = value;
             (ty, d)
         };
@@ -551,15 +572,21 @@ impl FnCx<'_, '_> {
         self.mk(kind, ty, span)
     }
 
-    /// The type of `s ?? d` with `v` the non-null payload of `s`: the payload's type when `d`
-    /// converts to it, else `d`'s when the payload converts to that, else their union, as in
-    /// TypeScript (`n ?? "none"` with `n: number | null` is a `number | string`).
+    /// The type of `s ?? d` with `v` the non-null payload of `s`: an `any` when either is one
+    /// and an `any` is expected (`any_join`), else the payload's type when `d` converts to it, else `d`'s when the payload
+    /// converts to that, else their union, as in TypeScript (`n ?? "none"` with
+    /// `n: number | null` is a `number | string`).
     pub(crate) fn nullish_join(
         &mut self,
         v: hir::Expr,
         d: hir::Expr,
         payload: TyId,
+        exp: Option<TyId>,
     ) -> (hir::Expr, hir::Expr, TyId) {
+        let (v, d, joined) = self.any_join(v, d, exp);
+        if let Some(ty) = joined {
+            return (v, d, ty);
+        }
         let d = match self.try_coerce(d, payload) {
             Ok(d) => return (v, d, payload),
             Err(d) => d,

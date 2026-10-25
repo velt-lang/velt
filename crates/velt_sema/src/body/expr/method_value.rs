@@ -131,6 +131,9 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
+        if self.own_literal_iface(obj.ty) {
+            return self.detached_literal_method(prop, span);
+        }
         // `this` and a `const`/`using` local name one object for as long as the value lives:
         // the arrow names it directly and captures it as an arrow would, with no block around
         // it (so a callback parameter keeps it off the heap, and a `using` value stays put).
@@ -229,6 +232,7 @@ impl FnCx<'_, '_> {
         if self.cx.ty.has_error(t)
             || !self.direct_receiver(object, t)
             || !self.is_method_value(t, &prop.name)
+            || self.own_literal_iface(t)
         {
             return None;
         }
@@ -332,7 +336,12 @@ impl FnCx<'_, '_> {
     /// The parameter types and result of method `prop` on values of type `t`, when it has one
     /// function type (not generic, no rest parameter).
     fn method_sig(&mut self, t: TyId, prop: &ast::Ident, span: Span) -> Option<Sig> {
-        match self.resolve_method(t, &prop.name)? {
+        let r = self.resolve_method(t, &prop.name)?;
+        let fill = match &r {
+            Resolved::Virtual { def, slot, .. } => self.fill_slot(t, *def, *slot, None),
+            _ => None,
+        };
+        match r {
             Resolved::Def { def, slots, .. } | Resolved::Virtual { def, slots, .. } => {
                 let slots: Option<Vec<TyId>> = slots.into_iter().collect();
                 let slots = slots?;
@@ -341,12 +350,34 @@ impl FnCx<'_, '_> {
                     return None;
                 }
                 let params = c.params.iter().map(|p| self.cx.subst(p.ty, &slots));
-                let params = params.collect();
+                let params: Vec<TyId> = params.collect();
                 let ret = self.cx.subst(c.ret, &slots);
-                let defaults = match self.cx.fn_info(def).source {
+                let mut defaults = match self.cx.fn_info(def).source {
                     Some(src) => literal_defaults(&crate::body::defaults::fn_sig_ast(src).params),
                     None => c.params.iter().map(|_| None).collect(),
                 };
+                let mut params: Vec<TyId> = params;
+                if let Some(f) = fill {
+                    // An override's default may run: the value takes those parameters as
+                    // `T | undefined` and leaves the default to the method that runs.
+                    let undefined = || synth(ast::ExprKind::Lit(ast::Lit::Undefined), span);
+                    for k in 0..params.len() {
+                        if !f.positions.contains(&k) {
+                            if k >= defaults.len() {
+                                break;
+                            }
+                            continue;
+                        }
+                        params[k] = self.cx.ty.option_of(params[k], hir::Nothing::Undefined);
+                        if k < defaults.len() {
+                            defaults[k] = Some(undefined());
+                        } else if k == defaults.len() {
+                            defaults.push(Some(undefined()));
+                        } else {
+                            break;
+                        }
+                    }
+                }
                 Some(Sig {
                     params,
                     defaults,
@@ -581,7 +612,7 @@ pub(super) fn is_path(e: &ast::Expr) -> bool {
 }
 
 /// `a.b.c` for a path (`None` for other expressions).
-fn path_text(e: &ast::Expr) -> Option<String> {
+pub(super) fn path_text(e: &ast::Expr) -> Option<String> {
     match &strip_parens(e).kind {
         ast::ExprKind::Ident(x) => Some(x.name.clone()),
         ast::ExprKind::This => Some("this".into()),

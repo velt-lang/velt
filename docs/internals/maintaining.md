@@ -130,7 +130,10 @@ not a reason for another round.
   `crates/xtask/src/plan.rs`; the label `ci:full` selects everything). The **merge queue** runs the whole gate against the pull request
   merged with the latest `main`, then squash-merges: per OS a lint-and-test job and the goldens
   (built once, then checked in parallel shards: `.github/workflows/queue-goldens.yml`), Linux
-  always, Windows and macOS when the change touches OS-specific code (`crates/xtask/src/os.rs`). Enable it with `gh pr merge <n>
+  always, Windows and macOS when the change touches OS-specific code (`crates/xtask/src/os.rs`).
+  For a change to WebAssembly code the same build also packs the WebAssembly goldens, which then
+  run in shards of their own (`WASM_SHARDS` in `os.rs`: 4 on Windows, 2 on Linux and macOS)
+  instead of in the lint-and-test job, where on Windows they took about 45 minutes. Enable it with `gh pr merge <n>
   --auto` in the same step as the approving review, never before it.
 - The description becomes the commit message. `hygiene` fails on generated footers, trailers,
   session links, machine paths and review-process wording, so there is no footer to strip by hand
@@ -142,7 +145,8 @@ not a reason for another round.
   test cutting every golden at every character, `VELT_ROBUSTNESS=full`, and the WebAssembly
   goldens, which pull requests and the queue run only for WebAssembly changes), the Cranelift memory
   stress run (`bench/compile/stress.sh`, `stress.ps1`: long_main_16000 under 2 GB) on Linux and
-  Windows, the WebAssembly goldens on Windows and macOS, and the `tsc` oracle for
+  Windows, the WebAssembly goldens on Windows and macOS (built once per OS, then run in shards,
+  as in the queue), and the `tsc` oracle for
   `velt check --ts-compat` (`crates/velt_tscompat/tests/oracle.rs` against the `typescript`
   pinned in `tests/tscompat-oracle`), and the benchmark guard
   (`bench/nightly.sh`: the instructions each benchmark executes, counted with valgrind, against

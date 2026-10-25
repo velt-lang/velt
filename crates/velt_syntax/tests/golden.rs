@@ -41,13 +41,13 @@ fn golden_m1_files_parse() {
                 | "destructuring_computed_key_expr.vlt"
                 | "overloads_missing_impl.vlt"
                 | "overloads_declarations.vlt"
-                | "object_literal_accessors.vlt"
                 | "ts_syntax_errors.vlt"
                 | "ts_parse_leftovers_errors.vlt"
                 | "catch_types_errors.vlt"
                 | "type_operators_unsupported.vlt"
                 | "param_property_pattern.vlt"
                 | "param_defaults_unsupported.vlt"
+                | "param_defaults_in_body_order.vlt"
                 | "dynamic_import.vlt"
                 | "namespace_values.vlt"
                 | "overload_signature_asi_no_body.vlt"
@@ -60,6 +60,7 @@ fn golden_m1_files_parse() {
                 | "destructure_computed_path.vlt"
                 | "literal_method_names.vlt"
                 | "define_property_accessor_this.vlt"
+                | "static_block_return.vlt"
         ) {
             continue;
         }

@@ -1,0 +1,52 @@
+// Weak collections keyed by views (#1485): a `WeakMap`, a `WeakSet` and a `WeakRef` of an
+// object type hold the object a view views, so two views of one object are one key, and
+// `deref()` gives the object back, as in Node.
+type Item = { name: string; price: number };
+
+class Product {
+  name = "lamp";
+  price = 30;
+  stock = 4;
+}
+
+// A program with proxies: an `any` holding another type converts to `Item` as a view.
+const proxied = new Proxy({ name: "proxy", price: 1 }, {}) as Item;
+
+function view(x: any): Item {
+  return x as Item;
+}
+
+const a: any = new Product();
+const b: any = { name: "chair", price: 12, legs: 4 };
+const plain: Item = { name: "table", price: 99 };
+
+const wm = new WeakMap<Item, string>();
+wm.set(view(a), "x");
+console.log(wm.get(view(a)), wm.has(view(a)), wm.has(view(b)));
+wm.set(view(b), "y");
+wm.set(plain, "z");
+wm.set(proxied, "p");
+console.log(wm.get(view(b)), wm.get(plain), wm.get(proxied), wm.get(view(a)));
+console.log(wm.delete(view(a)), wm.has(view(a)), wm.delete(view(a)));
+wm.set(view(a), "again");
+const v = view(a);
+console.log(wm.get(v), wm.get(view(a)));
+
+const ws = new WeakSet<Item>();
+ws.add(view(a));
+console.log(ws.has(view(a)), ws.has(view(b)), ws.has(plain));
+ws.add(plain);
+ws.add(proxied);
+console.log(ws.has(plain), ws.has(proxied), ws.delete(view(a)), ws.has(view(a)));
+
+const r = new WeakRef(view(a));
+const back = r.deref();
+console.log(back === undefined ? "gone" : back.name, back === v, back?.price);
+if (back !== undefined) {
+  back.price = 35;
+}
+console.log((a as Product).price, v.price);
+const rp = new WeakRef(plain);
+console.log(rp.deref() === plain, rp.deref()?.name);
+const rq = new WeakRef(proxied);
+console.log(rq.deref() === proxied, rq.deref()?.name);

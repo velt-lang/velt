@@ -5,8 +5,10 @@
 //! definitions, impls of one interface, vtables and call chains that modification inference
 //! must propagate through. The fast test runs in CI; `cargo test -p velt_sema --release --test
 //! scaling -- --ignored --nocapture` runs the N = 100 / 1000 / 5000 sizes. The instantiation
-//! checks (record keys, JSON, promise copies) count their work, which these tests compare
-//! between sizes exactly instead of by CPU time.
+//! checks (record keys, JSON, promise copies), the type searches, the checks of arrows and of
+//! expressions and the resolution of exports count their work (`check_work`), which these tests
+//! compare between sizes exactly instead of by CPU time, which load on the machine tilts (#1502).
+//! Only `sema_time_grows_linearly`, which guards every pass at once, measures CPU time.
 
 mod common;
 
@@ -16,7 +18,7 @@ use common::hir_walk::func;
 use common::process_work;
 use common::programs::{err_src, load_src, load_src_at, ok_src, repo_root, Loaded};
 use velt_sema::hir::PassMode;
-use velt_sema::{instantiation_work, InstantiationWork};
+use velt_sema::{check_work, instantiation_work, InstantiationWork};
 
 /// `n` generated units; `g{i}` calls `g{i-1}` except for every `chain`-th unit, which modifies
 /// the array itself (so the modification travels up `chain` calls).
@@ -135,8 +137,8 @@ fn barrel_package(n: usize) -> Loaded {
     loaded
 }
 
-/// The tests of this file run one at a time: `sema_cost` reads the process's CPU clock, which
-/// would count another test's work too.
+/// The tests of this file run one at a time: `sema_cost` reads the process's CPU clock and the
+/// work counters count every check in the process, which would count another test's work too.
 fn serial() -> MutexGuard<'static, ()> {
     static LOCK: Mutex<()> = Mutex::new(());
     LOCK.lock().unwrap_or_else(|e| e.into_inner())
@@ -165,11 +167,6 @@ fn assert_linear(sizes: &[usize], chain: impl Fn(usize) -> usize, slack: f64) {
 
 /// [`assert_linear`] for the programs `program` generates.
 fn assert_slopes(sizes: &[usize], program: impl Fn(usize) -> String, slack: f64) {
-    assert_slopes_of(sizes, |n| load_src(&program(n)), slack);
-}
-
-/// [`assert_slopes`] for the programs `load` loads.
-fn assert_slopes_of(sizes: &[usize], load: impl Fn(usize) -> Loaded, slack: f64) {
     // A shared CI runner can slow one size's measurements enough to tilt a slope past the
     // slack. A pass that really grows faster than linearly fails every attempt, so the test
     // measures again, up to `ATTEMPTS` times, before it fails.
@@ -180,7 +177,7 @@ fn assert_slopes_of(sizes: &[usize], load: impl Fn(usize) -> Loaded, slack: f64)
     );
     // Before loading: parsing the programs is work on the process's clock too.
     let _serial = serial();
-    let programs: Vec<Loaded> = sizes.iter().map(|&n| load(n)).collect();
+    let programs: Vec<Loaded> = sizes.iter().map(|&n| load_src(&program(n))).collect();
     let mut failure = String::new();
     for attempt in 1..=ATTEMPTS {
         match linear_slopes(sizes, &programs, slack) {
@@ -207,8 +204,13 @@ fn linear_slopes(sizes: &[usize], programs: &[Loaded], slack: f64) -> Result<(),
     for (&n, &c) in sizes.iter().zip(&best) {
         eprintln!("N = {n:>5}: cost {c:>12}");
     }
+    slopes_within(sizes, &best, slack)
+}
+
+/// The slopes of `cost` between consecutive `sizes`, each later one under `slack`× the first.
+fn slopes_within(sizes: &[usize], cost: &[u64], slack: f64) -> Result<(), String> {
     let slopes: Vec<f64> = (1..sizes.len())
-        .map(|i| (best[i] as f64 - best[i - 1] as f64).max(0.0) / (sizes[i] - sizes[i - 1]) as f64)
+        .map(|i| (cost[i] as f64 - cost[i - 1] as f64).max(0.0) / (sizes[i] - sizes[i - 1]) as f64)
         .collect();
     if slopes[0] <= 0.0 {
         return Err(format!(
@@ -232,14 +234,23 @@ fn linear_slopes(sizes: &[usize], programs: &[Loaded], slack: f64) -> Result<(),
     Ok(())
 }
 
-/// The instantiation checks' work for one `check` of `loaded`.
-fn instantiation_cost(loaded: &Loaded) -> [u64; 3] {
-    let parts = |w: InstantiationWork| [w.record_keys, w.json, w.promise_copies];
-    let start = parts(instantiation_work());
+/// The work `counters` count during one `check` of `loaded`.
+fn counted_work<const K: usize>(loaded: &Loaded, counters: &impl Fn() -> [u64; K]) -> [u64; K] {
+    let start = counters();
     let (program, diags) = loaded.check();
     assert!(program.is_some(), "{}", loaded.render(&diags));
-    let end = parts(instantiation_work());
-    [0, 1, 2].map(|i| end[i] - start[i])
+    let end = counters();
+    std::array::from_fn(|i| end[i] - start[i])
+}
+
+/// The instantiation checks' counters.
+fn instantiation_counters() -> [u64; 3] {
+    let InstantiationWork {
+        record_keys,
+        json,
+        promise_copies,
+    } = instantiation_work();
+    [record_keys, json, promise_copies]
 }
 
 /// Each instantiation check's work per unit (above an empty program's) must not grow by more
@@ -247,22 +258,35 @@ fn instantiation_cost(loaded: &Loaded) -> [u64; 3] {
 /// exact: a check that revisits every function per round of its fixed point, or scans every
 /// impl per class type, grows by the size ratio per unit and fails.
 fn assert_linear_work(sizes: &[usize], program: impl Fn(usize) -> String, slack: f64) {
-    const PASSES: [&str; 3] = ["record_keys", "json", "promise_copies"];
+    let names = ["record_keys", "json", "promise_copies"];
+    let load = |n| load_src(&program(n));
+    assert_linear_counted(sizes, load, names, instantiation_counters, slack);
+}
+
+/// [`assert_linear_work`] for the work `counters` count (named `names`) in the programs `load`
+/// loads.
+fn assert_linear_counted<const K: usize>(
+    sizes: &[usize],
+    load: impl Fn(usize) -> Loaded,
+    names: [&str; K],
+    counters: impl Fn() -> [u64; K],
+    slack: f64,
+) {
     let _serial = serial();
-    let empty = instantiation_cost(&load_src("function main() {}"));
-    let per_unit: Vec<[f64; 3]> = sizes
+    let empty = counted_work(&load_src("function main() {}"), &counters);
+    let per_unit: Vec<[f64; K]> = sizes
         .iter()
         .map(|&n| {
-            let work = instantiation_cost(&load_src(&program(n)));
+            let work = counted_work(&load(n), &counters);
             eprintln!("N = {n:>5}: work {work:?} (empty program {empty:?})");
-            [0, 1, 2].map(|i| work[i].saturating_sub(empty[i]) as f64 / n as f64)
+            std::array::from_fn(|i| work[i].saturating_sub(empty[i]) as f64 / n as f64)
         })
         .collect();
     for (n, u) in sizes.iter().zip(&per_unit).skip(1) {
-        for (i, pass) in PASSES.iter().enumerate() {
+        for (i, name) in names.iter().enumerate() {
             assert!(
                 u[i] <= slack * per_unit[0][i],
-                "{pass}: work per unit grew from {:.1} (N = {}) to {:.1} (N = {n})",
+                "{name}: work per unit grew from {:.1} (N = {}) to {:.1} (N = {n})",
                 per_unit[0][i],
                 sizes[0],
                 u[i],
@@ -294,11 +318,16 @@ fn sema_time_grows_linearly() {
 }
 
 /// Walks over a type graph whose types share parts (`known::owns_resource`, the record keys)
-/// visit each type once, not each path (#859): `N` types with 2^N paths.
+/// visit each type once, not each path (#859): `N` types with 2^N paths. The type searches stop
+/// 32 levels down, so they are compared below that depth, where a walk by path costs 2^N: per
+/// unit 2^8 / 8 at N = 8 against 2^20 / 20 at N = 20. They are compared first: a walk by path
+/// does not finish at the record-key sizes.
 #[test]
 fn shared_type_graphs_are_walked_by_type() {
+    let search = || [check_work().type_search];
+    let load = |n| load_src(&shared_type_graph(n));
+    assert_linear_counted(&[8, 20], load, ["type_search"], search, 1.5);
     assert_linear_work(&[100, 800], shared_type_graph, 1.5);
-    assert_slopes(&[200, 800, 3200], shared_type_graph, 2.0);
 }
 
 /// `n` interfaces `T{i}` and a type holding one of each, then `last`: a type far wider than a
@@ -319,6 +348,7 @@ fn wide_holder(n: usize, generic: &str, last: &str) -> String {
 /// generic types) limits them, not the number of types (#859).
 #[test]
 fn wide_types_are_searched_completely() {
+    let _serial = serial();
     // The promise after 4100 other fields still makes reading `h` of the union a copy of a
     // value that owns one (`known::owns_resource`).
     let src = wide_holder(4100, "", "res: Promise<number>")
@@ -366,6 +396,7 @@ fn wrapped_chain(n: usize, wrappers: &[&str]) -> String {
 /// generic type that grows as it recurses (#859).
 #[test]
 fn chains_through_generic_wrappers_are_walked_to_the_end() {
+    let _serial = serial();
     for src in [
         wrapped_chain(70, &["Box"]),
         wrapped_chain(140, &["Box", "Cell"]),
@@ -380,19 +411,35 @@ fn chains_through_generic_wrappers_are_walked_to_the_end() {
 }
 
 /// Importing every name of a package through barrels of `export *` costs the same per name
-/// at every size: a module's exports are found once, not again for each import.
+/// at every size: a module's exports are found once, not again for each import. Walking the
+/// barrels again per imported name makes the work per module grow with the modules.
 #[test]
 fn imports_through_barrels_grow_linearly() {
-    assert_slopes_of(&[100, 400, 1600], barrel_package, 2.0);
+    let exports = || [check_work().exports];
+    assert_linear_counted(&[100, 800], barrel_package, ["exports"], exports, 1.5);
 }
 
 /// Choosing the member of a union of function types for nested arrows that each use the
 /// enclosing arrow's parameter grows polynomially with the nesting, not exponentially (#859).
-/// Each try of an arrow checks the arrows nested in it, so the work is quadratic in the depth:
-/// its slope doubles with the depth, and a cubic one would quadruple.
+/// Each try of an arrow checks the arrows nested in it, so the arrows checked are quadratic in
+/// the depth: their slope doubles with the depth, and a cubic one would quadruple.
 #[test]
 fn nested_arrow_trials_grow_polynomially() {
-    assert_slopes(&[15, 30, 60], nested_trials, 3.0);
+    let sizes = [15, 30, 60];
+    let _serial = serial();
+    let checks: Vec<u64> = sizes
+        .iter()
+        .map(|&n| {
+            let [c] = counted_work(&load_src(&nested_trials(n)), &|| {
+                [check_work().closure_checks]
+            });
+            eprintln!("depth {n:>3}: {c} arrows checked");
+            c
+        })
+        .collect();
+    if let Err(e) = slopes_within(&sizes, &checks, 3.0) {
+        panic!("{e}");
+    }
 }
 
 /// An array literal, an object literal and a call of a rest parameter, each holding one chain
@@ -415,19 +462,22 @@ fn spread_chains(n: usize, spread: bool) -> String {
 /// first, is told by one walk over it, so a long operand costs about what it costs without the
 /// spread: telling it once checked the operand again per operator (800 terms took 19 s, 3000
 /// over 300 s; `bench/spread_order/chains.sh`). Checking such a chain is not linear in its
-/// length by itself, so the test compares with the same program without spreads.
+/// length by itself, so the test compares the expressions checked with those of the same program
+/// without spreads.
 #[test]
 fn spread_operand_chains_cost_what_they_cost_without_spreads() {
     let _serial = serial();
+    let checks = |p: &Loaded| {
+        let [c] = counted_work(p, &|| [check_work().expr_checks]);
+        c
+    };
     for n in [800, 3000] {
-        let with = load_src(&spread_chains(n, true));
-        let without = load_src(&spread_chains(n, false));
-        let best = |p: &Loaded| (0..3).map(|_| sema_cost(p)).min().unwrap_or(u64::MAX);
-        let (w, wo) = (best(&with), best(&without));
-        eprintln!("n = {n}: cost {w} with spreads, {wo} without");
+        let w = checks(&load_src(&spread_chains(n, true)));
+        let wo = checks(&load_src(&spread_chains(n, false)));
+        eprintln!("n = {n}: {w} expressions checked with spreads, {wo} without");
         assert!(
             (w as f64) < 1.5 * wo as f64,
-            "n = {n}: sema cost {w} with spreads against {wo} without"
+            "n = {n}: {w} expressions checked with spreads against {wo} without"
         );
     }
 }

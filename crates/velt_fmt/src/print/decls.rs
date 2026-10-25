@@ -66,6 +66,18 @@ impl<'a> Printer<'a> {
         let mut members: Vec<Member> = decl.fields.iter().map(Member::Field).collect();
         members.extend(decl.methods.iter().map(Member::InterfaceMethod));
         members.extend(decl.call_sigs.iter().map(Member::CallSig));
+        // `type T = { get v(): number }`: the parser reads an alias of an object type with
+        // accessors as the interface it spells out; it is printed as written.
+        let before = self.src.get(..decl.name.span.lo as usize).unwrap_or("");
+        if before.trim_end().ends_with("type") {
+            let head = cat![
+                "type ",
+                decl.name.name.clone(),
+                self.generic_params(&decl.generics),
+                " = "
+            ];
+            return cat![head, self.members(members, decl.name.span.hi), ";"];
+        }
         let head = cat![
             "interface ",
             decl.name.name.clone(),
@@ -206,6 +218,9 @@ impl<'a> Printer<'a> {
     }
 
     fn field(&mut self, f: &Field) -> Doc {
+        if let Some(body) = static_block(f) {
+            return cat!["static ", self.block(body)];
+        }
         let private = if f.is_private && !f.name.is_private_name() {
             "private "
         } else {
@@ -274,4 +289,26 @@ fn closing_brace(s: &str) -> Option<usize> {
         }
     }
     None
+}
+
+/// The body of a `static { … }` block, which the parser gives the form of a static field named
+/// `<static block N>` whose initializer calls an arrow with the block as its body.
+fn static_block(f: &Field) -> Option<&velt_syntax::ast::Block> {
+    use velt_syntax::ast::{ArrowBody, ExprKind};
+    if !f.is_static || !f.name.name.starts_with("<static block ") {
+        return None;
+    }
+    let ExprKind::Call { callee, .. } = &f.default.as_ref()?.kind else {
+        return None;
+    };
+    let ExprKind::Paren(arrow) = &callee.kind else {
+        return None;
+    };
+    match &arrow.kind {
+        ExprKind::Arrow {
+            body: ArrowBody::Block(b),
+            ..
+        } => Some(b),
+        _ => None,
+    }
 }

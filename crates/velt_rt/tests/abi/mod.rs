@@ -10,6 +10,7 @@ pub(crate) mod command;
 mod core;
 mod fake;
 mod fs;
+mod handover;
 mod http;
 mod http_bench;
 mod js_table;

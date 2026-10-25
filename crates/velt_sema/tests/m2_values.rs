@@ -433,6 +433,28 @@ fn printing_and_formatting() {
 }
 
 #[test]
+fn constant_text_is_joined_at_compile_time() {
+    // A module constant built from constant text is one literal, not a concatenation at each
+    // use; text that is not constant is still joined at run time.
+    let p = ok_src(
+        "const BASE = \"SELECT a FROM t\"; const ONE = `${BASE} WHERE id = ?`; const TWO = ONE + \" LIMIT 1\"; function show(n: string) { console.log(TWO, `${BASE}${n}`); } function main() { show(\"x\"); }",
+    );
+    let init = p.defs.iter().find_map(|d| match d {
+        Def::Global(g) if g.name == "TWO" => Some(&g.init),
+        _ => None,
+    });
+    assert!(
+        matches!(&init.map(|i| &i.kind), Some(E::Lit(velt_sema::hir::Lit::Str(s))) if s == "SELECT a FROM t WHERE id = ? LIMIT 1"),
+        "{init:?}"
+    );
+    let concats = calls(func(&p, "show"))
+        .iter()
+        .filter(|(c, _)| matches!(c, Callee::Intrinsic(Intrinsic::StrConcat)))
+        .count();
+    assert_eq!(concats, 1);
+}
+
+#[test]
 fn shared_values() {
     let p = ok_src("function main() { const s = shared(\"x\"); }");
     assert!(calls(func(&p, "main"))

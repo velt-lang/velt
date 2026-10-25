@@ -86,8 +86,9 @@ accept; compiler messages and editors print `boolean` either way
 
 - `+` with a string and a number or boolean concatenates, as in JS: `"Total: " + 5` is
   `"Total: 5"`, and `s += n` appends `n` written as `String(n)` writes it (`1e+21`, `NaN`, `0`
-  for `-0`). Other values (arrays, objects) are a compile error next to a string: use a
-  template literal, `` `Total: ${xs.length}` ``.
+  for `-0`). Other values are written as `String(x)` writes them, as in JS: an array joined
+  with commas, an object by its `toString()` (`[object Object]` without one). A function
+  next to a string is a compile error.
 - Lengths and positions count UTF-16 code units, as in JS (`"😀".length` is 2), and `<` orders
   by code units. `s[i]` is `s.charAt(i)`, but `""` past the end where JS gives `undefined`, and
   `charCodeAt` out of range is `-1` where JS gives `NaN`. Text is stored as UTF-8, so files,
@@ -193,7 +194,8 @@ contents.
   constructor can be `private` or `protected`, with TypeScript's rules. ES private names
   (`#x`, `#m()`, `#x in o`) work as in JavaScript: hidden from `console.log`, `JSON` and
   `Object.keys`, never inherited.
-- `static readonly` constants exist; mutable statics don't.
+- `static` fields and `static readonly` constants exist, and `static { … }` blocks run where
+  the class is declared, as in JavaScript.
 - Constructors follow TypeScript's `super(...)` rules: a derived constructor calls it exactly
   once (also when the base has no constructor), and statements before it cannot use `this`.
   As in TypeScript 4.6+, such statements are allowed also when the class has initialized fields

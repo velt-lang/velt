@@ -65,10 +65,19 @@ hidden classes and no runtime shape checks.
   running a constructor; `JSON.stringify` writes it as usual
   ([`velt:json`](../std/json.md)).
 - **Single inheritance**: `class B extends A`. The base's fields are a prefix of the subclass
-  layout, so upcasts are free. A subclass without a constructor of its own inherits its
+  layout, so upcasts are free. A subclass may declare an inherited field again with the same
+  type and an initializer of its own (`class Dog extends Animal { kind: string = "dog" }`): it is
+  the same field, which the subclass's initializer sets after the base class's, in its turn among
+  the subclass's initializers. A subclass without a constructor of its own inherits its
   base's. Redefining a base method requires `override`, except a method of a standard-library
   class (`toString()` in a subclass of `Error`), which TypeScript code redefines without it;
-  `super.m()` calls the base version.
+  `super.m()` calls the base version. An override may give a parameter a default of its own: a
+  call that leaves the argument out takes the default of the method that runs, also through a
+  base-class type (`const s: Shape = new Square(); s.scale()` uses `Square`'s), through a
+  method value (`const f = s.scale; f()`, `s.scale.bind(s)`) and when the argument is
+  `undefined`, as in JavaScript. Such a call goes through a second vtable slot whose entry in
+  each class applies that class's own default, so a call passing every argument costs the same
+  as before.
   There are no abstract classes.
 - **`super(…)`**: the constructor of a subclass calls `super(…)`, as in TypeScript, also when
   the base class has no constructor (`super();`). Statements may come before it as long as they
@@ -142,8 +151,19 @@ hidden classes and no runtime shape checks.
   fields (assignable only in the constructor), `static` methods, and
   `static readonly NAME: T = …;` constants (`Account.LIMIT`, `Math.PI`), evaluated like
   [module constants](variables.md#module-state) (once, with the class, when the program
-  modifies, takes over or compares one, or its value is not a constant). Mutable statics
-  and `protected` members don't exist (only a constructor can be `protected`). Static and
+  modifies, takes over or compares one, or its value is not a constant), and `static` fields
+  (`static count: number = 0;`), which are [module state](variables.md#module-state) like a
+  module-level `let`: initialized once, where the class is declared, in source order with the
+  class's `static { … }` blocks, and assigned through their class (`Counter.count++`, or
+  `++this.count` in a static method of `Counter`) and read through a subclass (`Sub.count`).
+  Assigning one through a subclass (`Sub.count = 5`, or `this.count = v` in a static method
+  called on a subclass) is an error: in JavaScript it creates a static field of the subclass
+  itself, which Velt does not support yet; assign `Counter.count`. `static { … }` blocks run
+  once, where the class is declared, as in JavaScript (`this` in one is not supported yet: name
+  the class, `Counter.count`; a `return` in one is an error, as in TypeScript). A class declared
+  inside a function or block can't have `static` fields that are not `readonly` or `static`
+  blocks yet: JavaScript evaluates them each time the declaration runs, Velt once.
+  `protected` members don't exist (only a constructor can be `protected`). Static and
   instance members are separate namespaces, as in TypeScript: a subclass's `static m()` doesn't
   hide an inherited instance method `m()`, and a class below it can still `override` that method.
   Static methods are inherited, as in TypeScript: with `class B extends A {}`, `B.f()` calls
@@ -239,9 +259,7 @@ hidden classes and no runtime shape checks.
   `x.size++` and `x.size ??= v` (also `||=`, `&&=`) use both, as in JS: `x` is evaluated once,
   then the getter runs, then the right-hand side, then the setter (which `??=`, `||=` and `&&=`
   skip when the old value decides). The setter runs on the object `x` named before the
-  right-hand side, even when the right-hand side assigns another one to `x`. **Known gap:**
-  a getter that assigns another object to `x` itself (also in `x.size++`) makes the setter run
-  on the new one. A getter may change its object (a signal recording who read it). As a value, `x.size = v` is `v` (converted to the setter's parameter type, but
+  getter and the right-hand side ran, even when one of them assigns another one to `x`. A getter may change its object (a signal recording who read it). As a value, `x.size = v` is `v` (converted to the setter's parameter type, but
   non-null when `v` is; the getter is not read again; an object is shared, not copied) and `x.size ??= v` is the old value where it decides, else `v` (so
   non-null when `v` is). Implementations and overrides of a
   getter or setter must be accessors too. An override of only the getter of a base class's
@@ -522,6 +540,14 @@ console.log(p.len(), q.len());  // 4 4
   (``generic method `apply` cannot be called on an interface value``): make the calling
   function generic over the receiver (`<T extends Mapper>(m: T)` instead of `(m: Mapper)`), or
   call a method that is not generic. Generic interface methods cannot have default bodies yet.
+  The method that runs is the one of the class the type parameter is given: when a subclass of that
+  class overrides it, a value of the class may hold the subclass, so instantiating the generic
+  with that class is the same error as calling the method on it directly (pass the concrete
+  class), and an interface value cannot stand for such a type parameter. A call that passes
+  exactly that class is allowed: a `new C()` given directly to a parameter of type `T` of a
+  function or of a generic method, or a `const` initialized with `new C()`. Other variables, a
+  value inside another parameter's type (`get: () => T`, `xs: T[]`), a default (`y: T = x`)
+  and a class instantiated with `C` (`new Holder<C>(new C())`) don't count.
 - A default body can be `async` (`async load(): Promise<T> { … }`), with the rules of an async
   class method ([Async](async.md#errors)). A method without a body cannot be: like in TypeScript,
   it declares a `Promise` result, and implementations may be `async`.
@@ -645,7 +671,10 @@ console.log(p.x + p.y); // 3
 Classes, structs, interfaces and functions take type parameters (`class Stack<T>`,
 `interface Box<T>`, `function f<T extends Comparable<T>>`). Every instantiation is compiled
 separately (monomorphization): no boxing, and bounds resolve to direct calls. Bounds are
-interfaces (an interface with only fields is satisfied by any type with its fields) or, as in
+interfaces (an interface with only fields is satisfied by any type with its fields; an
+interface value by its own interface and the ones it extends, so `f<Person>` fits
+`function f<T extends Named>` with `interface Person extends Named`, and its methods are
+called through the value's table) or, as in
 TypeScript, other types a type argument must be assignable to (`T extends Record<string, V>`,
 `T extends string | number`; [Generic functions](functions.md#generic-functions)). Type
 parameters may have **defaults** (`interface Iterator<T, E = never>`), used when a type leaves

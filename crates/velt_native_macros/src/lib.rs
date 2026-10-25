@@ -10,6 +10,14 @@
 //!   runs on the runtime's blocking pool (parameters must be owned).
 //! - `#[export(future)] fn f(...) -> Future<R>`: `declare async function`; the body returns a
 //!   runtime future (from a `Completer`).
+//! - `#[export(async)] async fn f(a: String) -> Result<T, Error>`: `declare async function`; the
+//!   future runs on the runtime's scheduler, polled by the task awaiting it (parameters must be
+//!   owned).
+//! - `#[export(async)] fn f(a: &[Str]) -> impl Future<Output = Result<T, Error>> + Send + 'static`:
+//!   the same, but the parameters are borrowed for the call: the function does its synchronous
+//!   part (encoding a request from them) and returns the future, which cannot borrow them.
+
+mod derive;
 
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as Tokens};
@@ -22,6 +30,7 @@ enum Mode {
     Sync,
     Blocking,
     Future,
+    Async,
 }
 
 const SCALARS: &[&str] = &[
@@ -29,16 +38,26 @@ const SCALARS: &[&str] = &[
 ];
 
 /// See the crate docs.
+/// `#[derive(velt_native::Value)]` on a `#[repr(C)]` struct: a Velt `struct` (see `derive.rs`).
+#[proc_macro_derive(Value, attributes(velt))]
+pub fn derive_value(item: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(item as syn::DeriveInput);
+    derive::expand(input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
 #[proc_macro_attribute]
 pub fn export(attr: TokenStream, item: TokenStream) -> TokenStream {
     let mode = match attr.to_string().trim() {
         "" => Mode::Sync,
         "blocking" => Mode::Blocking,
         "future" => Mode::Future,
+        "async" => Mode::Async,
         other => {
             return error(
                 Span::call_site(),
-                &format!("unknown `export` option `{other}` (use `blocking` or `future`)"),
+                &format!("unknown `export` option `{other}` (use `blocking`, `future` or `async`)"),
             )
         }
     };
@@ -47,6 +66,32 @@ pub fn export(attr: TokenStream, item: TokenStream) -> TokenStream {
         Ok(t) => t.into(),
         Err(e) => e.to_compile_error().into(),
     }
+}
+
+/// `R` of a return type `impl Future<Output = R> (+ ...)`.
+fn future_output(output: &ReturnType) -> Option<Type> {
+    let ReturnType::Type(_, t) = output else {
+        return None;
+    };
+    let Type::ImplTrait(it) = &**t else {
+        return None;
+    };
+    it.bounds.iter().find_map(|b| {
+        let syn::TypeParamBound::Trait(tb) = b else {
+            return None;
+        };
+        let last = tb.path.segments.last()?;
+        if last.ident != "Future" {
+            return None;
+        }
+        let syn::PathArguments::AngleBracketed(args) = &last.arguments else {
+            return None;
+        };
+        args.args.iter().find_map(|a| match a {
+            syn::GenericArgument::AssocType(at) if at.ident == "Output" => Some(at.ty.clone()),
+            _ => None,
+        })
+    })
 }
 
 fn error(span: Span, msg: &str) -> TokenStream {
@@ -111,17 +156,40 @@ fn is_direct(ret: &ReturnType) -> bool {
 
 fn expand(mode: Mode, func: ItemFn) -> syn::Result<Tokens> {
     let sig = &func.sig;
-    if !sig.generics.params.is_empty() || sig.asyncness.is_some() || sig.variadic.is_some() {
-        return Err(syn::Error::new(
-            sig.span(),
-            "an exported function cannot be generic, `async` or variadic (use `#[export(blocking)]`)",
-        ));
+    let async_ok = matches!(mode, Mode::Async);
+    // `#[export(async)] fn f(..) -> impl Future<Output = R>`: borrowed parameters.
+    let prepared = if async_ok && sig.asyncness.is_none() {
+        Some(future_output(&sig.output).ok_or_else(|| {
+            syn::Error::new(
+                sig.span(),
+                "`#[export(async)]` takes an `async fn`, or a `fn` returning \
+                 `impl Future<Output = R> + Send + 'static`",
+            )
+        })?)
+    } else {
+        None
+    };
+    if !sig.generics.params.is_empty()
+        || (sig.asyncness.is_some() != async_ok && prepared.is_none())
+        || sig.variadic.is_some()
+    {
+        let msg = if async_ok {
+            "`#[export(async)]` takes an `async fn` (not generic or variadic)"
+        } else {
+            "an exported function cannot be generic, `async` or variadic (use `#[export(async)]` \
+             for an `async fn`, `#[export(blocking)]` for blocking work)"
+        };
+        return Err(syn::Error::new(sig.span(), msg));
     }
     let name = &sig.ident;
     let inner = format_ident!("__velt_inner_{}", name);
     let mut inner_fn = func.clone();
     inner_fn.sig.ident = inner.clone();
     inner_fn.attrs.retain(|a| !a.path().is_ident("no_mangle"));
+    // Export names (`velt_pkg__name`) are not snake case; the inner function keeps them.
+    inner_fn
+        .attrs
+        .push(syn::parse_quote!(#[allow(non_snake_case)]));
 
     let mut raw_params = vec![];
     let mut args = vec![];
@@ -147,13 +215,14 @@ fn expand(mode: Mode, func: ItemFn) -> syn::Result<Tokens> {
         raw_params.push(quote! { #a: <#ty as ::velt_native::Param<'static>>::Raw });
         args.push(a);
         if i > 0 {
-            sig_parts.push(quote! { "," });
+            sig_parts.push(quote! { ::velt_native::sig::Buf::lit(",") });
         }
         sig_parts.push(quote! { <#ty as ::velt_native::Param<'static>>::SIG });
     }
-    let ret_ty: Type = match &sig.output {
-        ReturnType::Default => syn::parse_quote!(()),
-        ReturnType::Type(_, t) => (**t).clone(),
+    let ret_ty: Type = match (&prepared, &sig.output) {
+        (Some(r), _) => r.clone(),
+        (None, ReturnType::Default) => syn::parse_quote!(()),
+        (None, ReturnType::Type(_, t)) => (**t).clone(),
     };
 
     let catch = |call: Tokens, on_panic: Tokens| {
@@ -235,6 +304,53 @@ fn expand(mode: Mode, func: ItemFn) -> syn::Result<Tokens> {
                 },
             )
         }
+        Mode::Async if prepared.is_some() => (
+            "async ",
+            quote! { <#ret_ty as ::velt_native::OutRet>::SIG },
+            quote! {
+                #[no_mangle]
+                pub unsafe extern "C" fn #name(#(#raw_params),*) -> *mut ::std::ffi::c_void {
+                    #inner_fn
+                    let __scope = ::velt_native::__Scope::default();
+                    let __f = ::std::panic::catch_unwind(::std::panic::AssertUnwindSafe(|| {
+                        #inner(#from_raw)
+                    }));
+                    match __f {
+                        ::std::result::Result::Ok(f) => ::velt_native::rt::__async::<#ret_ty, _>(f),
+                        ::std::result::Result::Err(p) => {
+                            let m = ::velt_native::__panic_message(p);
+                            ::velt_native::rt::__async::<#ret_ty, _>(async move {
+                                <#ret_ty as ::velt_native::OutRet>::panicked(&m)
+                            })
+                        }
+                    }
+                }
+            },
+        ),
+        Mode::Async => {
+            let owned: Vec<Tokens> = sig
+                .inputs
+                .iter()
+                .zip(&args)
+                .map(|(arg, a)| {
+                    let FnArg::Typed(pt) = arg else { unreachable!() };
+                    let ty = &pt.ty;
+                    quote! { let #a: #ty = ::velt_native::__owned(::velt_native::Param::from_raw(#a)); }
+                })
+                .collect();
+            (
+                "async ",
+                quote! { <#ret_ty as ::velt_native::OutRet>::SIG },
+                quote! {
+                    #[no_mangle]
+                    pub unsafe extern "C" fn #name(#(#raw_params),*) -> *mut ::std::ffi::c_void {
+                        #inner_fn
+                        #(#owned)*
+                        ::velt_native::rt::__async::<#ret_ty, _>(#inner(#(#args),*))
+                    }
+                },
+            )
+        }
         Mode::Future => {
             let body = catch(
                 quote! { #inner(#from_raw) },
@@ -259,7 +375,14 @@ fn expand(mode: Mode, func: ItemFn) -> syn::Result<Tokens> {
     let sig_static = format_ident!("__VELT_SIG_{}", name);
     let sig_symbol = format!("velt_sig_{name}");
     let open = format!("{prefix}(");
-    let parts = quote! { &[#open, #(#sig_parts,)* ")->", #ret_sig] };
+    let parts = quote! {
+        &[
+            ::velt_native::sig::Buf::lit(#open),
+            #(#sig_parts,)*
+            ::velt_native::sig::Buf::lit(")->"),
+            #ret_sig,
+        ]
+    };
     Ok(quote! {
         #wrapper
 

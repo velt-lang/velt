@@ -1,0 +1,140 @@
+// check: no leaks
+// Generic code passing a value of `T` for a `T | X` parameter: at `T = unknown` / `any` the
+// value goes to the member it belongs to, so `instanceof` and `===` see it (#1456).
+class Foo {
+  n = 3;
+}
+
+class Bar extends Foo {}
+
+function i1<T>(x: T | Foo): number {
+  return x instanceof Foo ? x.n : -1;
+}
+
+function gi<T>(v: T): number {
+  return i1<T>(v);
+}
+
+function n1<T>(x: T | null): string {
+  return x === null ? "null" : "v";
+}
+
+function gn<T>(v: T): string {
+  return n1<T>(v);
+}
+
+function u1<T>(x: T | undefined): string {
+  return x === undefined ? "u" : "v";
+}
+
+function gu<T>(v: T): string {
+  return u1<T>(v);
+}
+
+function b1<T>(x: T | boolean): string {
+  return x === true ? "yes" : "no";
+}
+
+function gb<T>(v: T): string {
+  return b1<T>(v);
+}
+
+function s1<T>(x: T | string): string {
+  return x === "a" ? "A" : typeof x === "string" ? "str" : "-";
+}
+
+function gs<T>(v: T): string {
+  return s1<T>(v);
+}
+
+function lit1<T>(x: T | "on" | "off"): string {
+  return x === "on" ? "ON" : x === "off" ? "OFF" : `${x}`;
+}
+
+function glit<T>(v: T): string {
+  return lit1<T>(v);
+}
+
+function many<T>(x: T | Foo | number | null): string {
+  if (x === null) {
+    return "null";
+  }
+  if (x instanceof Foo) {
+    return `foo${x.n}`;
+  }
+  if (typeof x === "number") {
+    return `num${x}`;
+  }
+  return `other:${x}`;
+}
+
+function gm<T>(v: T): string {
+  return many<T>(v);
+}
+
+function deeper<T>(v: T): number {
+  return gi<T>(v);
+}
+
+class Box<T> {
+  constructor(public v: T) {}
+  test(): number {
+    return i1<T>(this.v);
+  }
+}
+
+function owned<T>(v: T): number {
+  const w = v;
+  return i1<T>(w);
+}
+
+function main(): void {
+  console.log(
+    gi<unknown>(new Foo()),
+    gn<unknown>(null),
+    gu<unknown>(undefined),
+    gb<unknown>(true),
+    gs<unknown>("a"),
+  );
+  console.log(
+    gi<unknown>(1),
+    gn<unknown>(0),
+    gu<unknown>(null),
+    gb<unknown>(false),
+    gs<unknown>("b"),
+  );
+  console.log(gi<any>(new Bar()), gn<any>(null), gu<any>(undefined), gb<any>(true), gs<any>("a"));
+  console.log(gi<object>(new Foo()), gi<object>({}), gn<object>({}));
+  console.log(
+    gi<number>(4),
+    gn<string>("s"),
+    gu<number>(1),
+    gb<number>(2),
+    gs<number>(5),
+    gs<string>("a"),
+  );
+  console.log(gi<Foo>(new Foo()), deeper<unknown>(new Bar()), deeper<unknown>("x"));
+  console.log(glit<unknown>("on"), glit<unknown>("off"), glit<unknown>("mid"));
+  console.log(
+    gm<unknown>(null),
+    gm<unknown>(new Foo()),
+    gm<unknown>(7),
+    gm<unknown>("s"),
+    gm<unknown>(undefined),
+  );
+  console.log(
+    new Box<unknown>(new Foo()).test(),
+    new Box<number>(1).test(),
+    owned<unknown>(new Bar()),
+  );
+  const fs: unknown[] = [new Foo(), null, "a", true, undefined, 2];
+  console.log(
+    fs
+      .map(
+        (
+          f,
+        ) => `${gi<unknown>(f)}${gn<unknown>(f)}${gu<unknown>(f)}${gb<unknown>(f)}${gs<unknown>(f)}`,
+      )
+      .join(" "),
+  );
+}

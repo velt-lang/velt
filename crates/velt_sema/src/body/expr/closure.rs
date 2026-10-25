@@ -169,6 +169,7 @@ impl FnCx<'_, '_> {
         else {
             unreachable!("ICE: closure of a non-arrow expression")
         };
+        crate::check_work::add_closure_check();
         // A member of a recursive closure group (`closure_group`).
         let member = self.pending_member.take();
         if !type_params.is_empty() {
@@ -180,6 +181,13 @@ impl FnCx<'_, '_> {
                 .with_note("a function value has one type; declare it as `const id = <T>(x: T) => x;` and call it, or write a generic `function`"),
             );
             return self.error_expr(e.span);
+        }
+        // An object-literal method using `this` (`literal_this.rs`).
+        if super::literal_this::takes_this(e) {
+            let at = super::literal_this::first_this(e);
+            if self.method_this_ty(e.span, at).is_none() {
+                return self.error_expr(e.span);
+            }
         }
         // A rest parameter's type is checked as a function's is.
         if let Some(t) = params.last().filter(|p| p.rest).and_then(|p| p.ty.as_ref()) {
@@ -353,11 +361,14 @@ impl FnCx<'_, '_> {
         for (t, w) in ptys.iter_mut().zip(&wide) {
             *t = w.unwrap_or(*t);
         }
+        // A module constant read in the body runs once the constant is initialized.
+        self.cx.fn_value_depth += 1;
         let mut block = match body {
             ast::ArrowBody::Expr(x) if void_task => self.void_task_body(x),
             ast::ArrowBody::Expr(x) if await_body => self.awaited_body(x),
             _ => self.closure_body(body, span),
         };
+        self.cx.fn_value_depth -= 1;
         block.stmts.splice(0..0, locals);
         let ptys: Vec<TyId> = ptys
             .iter()

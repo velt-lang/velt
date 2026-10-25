@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use vpm::edit::{add_dependency, DependencySpec};
 use vpm::lockfile::Lockfile;
-use vpm::native::{library_files, NativeMeta, NativeOrigin};
+use vpm::native::{library_files, NativeMeta, NativeOrigin, NATIVE_ABI};
 use vpm::{install, InstallOptions, Locations};
 
 const LINUX: &str = "x86_64-unknown-linux-gnu";
@@ -226,7 +226,9 @@ fn native_packages_end_to_end() {
     .unwrap();
     let e = install(&dir.join("app"), &loc, for_linux).unwrap_err();
     assert!(
-        e.contains("needs Velt native ABI 99; this velt provides 1"),
+        e.contains(&format!(
+            "needs Velt native ABI 99; this velt provides {NATIVE_ABI}"
+        )),
         "{e}"
     );
 

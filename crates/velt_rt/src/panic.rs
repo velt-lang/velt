@@ -152,6 +152,44 @@ impl ThrowLoc {
     }
 }
 
+/// The thread reporting an uncaught error ([`velt_rt_uncaught_report`]); 0: none.
+static REPORTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+thread_local! {
+    /// Its address tells the threads apart for [`REPORTER`].
+    static THREAD_MARK: u8 = const { 0 };
+}
+
+/// An uncaught error is about to be reported (`Uncaught …`), which ends the process: as in Node,
+/// only the first one is. Tasks on other workers may fail at the same time (two spawned tasks
+/// that reject, a task and `main`): their reports would follow the first before the process is
+/// gone, so a thread that comes second waits here until the reporting thread ends the process.
+/// The reporting thread itself goes on (an error reported while dropping the first one's
+/// values ends the process the same way).
+#[no_mangle]
+pub extern "C" fn velt_rt_uncaught_report() {
+    if !may_report(THREAD_MARK.with(|m| m as *const u8 as usize)) {
+        loop {
+            std::thread::park();
+        }
+    }
+}
+
+/// May the thread marked `me` report an uncaught error: it is the first to, or reports again?
+fn may_report(me: usize) -> bool {
+    use std::sync::atomic::Ordering;
+    match REPORTER.compare_exchange(0, me, Ordering::AcqRel, Ordering::Acquire) {
+        Ok(_) => true,
+        Err(first) => first == me,
+    }
+}
+
+/// Nobody reported yet (tests).
+#[cfg(test)]
+fn reset_uncaught_report() {
+    REPORTER.store(0, std::sync::atomic::Ordering::Release);
+}
+
 #[no_mangle]
 pub extern "C" fn velt_rt_exit(code: i32) -> ! {
     io::flush_stdout();
@@ -175,6 +213,18 @@ mod tests {
             .unwrap();
         super::velt_rt_set_throw_loc(std::ptr::null());
         assert!(super::velt_rt_throw_loc().is_null());
+    }
+
+    #[test]
+    fn only_the_first_thread_reports_an_uncaught_error() {
+        // The only test that reports (marks are thread-local addresses, never 1 or 2).
+        super::reset_uncaught_report();
+        assert!(super::may_report(1));
+        // The reporting thread may report again (an error while dropping the first one's
+        // values); another one may not.
+        assert!(super::may_report(1));
+        assert!(!super::may_report(2));
+        super::reset_uncaught_report();
     }
 
     #[test]

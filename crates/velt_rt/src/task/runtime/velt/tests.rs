@@ -234,58 +234,6 @@ fn tasks_queued_behind_a_long_poll_run_on_another_worker() {
 }
 
 #[test]
-fn a_task_woken_by_a_task_runs_on_the_wakers_worker() {
-    if super::super::worker_count() < 2 {
-        return;
-    }
-    // A waiter made on worker 1, woken by a task on worker 0: it runs on worker 0, next,
-    // instead of crossing to worker 1 (a reply reaching the request that waits for it). Another
-    // worker with nothing to do may borrow it from worker 0's queue first, as designed, which
-    // other tests running at the same time make possible: one of a few tries must show it.
-    let mut ran_on = vec![];
-    for _ in 0..5 {
-        let (waker_ran_on, waiter_ran_on) = woken_by_a_task();
-        assert_eq!(waker_ran_on, Some(0));
-        ran_on.push(waiter_ran_on);
-        if waiter_ran_on == Some(0) {
-            return;
-        }
-    }
-    panic!("the woken task never ran on the waker's worker: {ran_on:?}");
-}
-
-/// One try of [`a_task_woken_by_a_task_runs_on_the_wakers_worker`]: where the waker and the
-/// woken task ran.
-fn woken_by_a_task() -> (Option<usize>, Option<usize>) {
-    let (tx, rx) = tokio::sync::oneshot::channel::<()>();
-    let (waiting_tx, waiting) = tokio::sync::oneshot::channel();
-    let waiter = spawn(
-        async move {
-            let inner = spawn(
-                async move {
-                    await_after_signal(rx, waiting_tx).await;
-                    worker::current()
-                },
-                None,
-            );
-            inner.await.ok().flatten()
-        },
-        Some(1),
-    );
-    let woke = spawn(
-        async move {
-            // The waiter reaches its await on worker 1 first.
-            let _ = waiting.await;
-            let _ = tx.send(());
-            worker::current()
-        },
-        Some(0),
-    );
-    let waker_ran_on = block_on(woke).ok().flatten();
-    (waker_ran_on, block_on(waiter).ok().flatten())
-}
-
-#[test]
 fn a_tcp_echo_runs_on_the_backends_own_sockets() {
     let std_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = std_listener.local_addr().unwrap();

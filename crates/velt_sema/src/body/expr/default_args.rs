@@ -13,6 +13,28 @@ use crate::hir::{self, ExprKind as H, Nothing, TyId, TyKind};
 const ARG: &str = "<maybe undefined arg>";
 
 impl FnCx<'_, '_> {
+    /// Default `d` (a parameter's, checked once per signature outside any body: `defaults.rs`;
+    /// or a field's) placed in this body at `span`, with the type arguments of the call or
+    /// literal: its own temporaries (a `Record` literal's, ...) become locals of this body
+    /// (`adopt_detached`).
+    pub(super) fn placed_default(
+        &mut self,
+        d: &hir::Expr,
+        type_args: &[TyId],
+        span: velt_common::Span,
+    ) -> hir::Expr {
+        let mut d = d.clone();
+        crate::visit::map_expr_types(&mut d, &mut |t| self.cx.subst(t, type_args));
+        if let Some(throws) = self.cx.default_throws.get(&d.span).cloned() {
+            for s in throws {
+                let s = s.used_at(span, |t| self.cx.subst(t, type_args));
+                self.throw_src(s);
+            }
+        }
+        d.span = span;
+        self.adopt_detached(d)
+    }
+
     /// The argument `h` for a parameter of type `target` with the call-site default `default`,
     /// when `h` may be `undefined` and `target` cannot hold it; `Err(h)` otherwise. A
     /// `T | null | undefined` argument for a `T | null` parameter keeps the error: `!` would
@@ -34,10 +56,7 @@ impl FnCx<'_, '_> {
             && !self.is_undefined_lit(default);
         if takes_default && h.ty == undefined && matches!(h.kind, H::Lit(hir::Lit::Null)) {
             // `f(undefined)`: the default itself.
-            let mut d = default.clone();
-            crate::visit::map_expr_types(&mut d, &mut |t| self.cx.subst(t, type_args));
-            d.span = h.span;
-            return Ok(d);
+            return Ok(self.placed_default(default, type_args, h.span));
         }
         let applies = self.cx.dynamic(target).is_none()
             && self.cx.dynamic(h.ty).is_none()
@@ -67,9 +86,7 @@ impl FnCx<'_, '_> {
         };
         let test = crate::body::defaults::undefined_test(name(), span);
         let cond = self.cond(&test);
-        let mut d = default.clone();
-        crate::visit::map_expr_types(&mut d, &mut |t| self.cx.subst(t, type_args));
-        d.span = span;
+        let d = self.placed_default(default, type_args, span);
         let value = super::setters::synth(ast::ExprKind::NonNull(Box::new(name())), span);
         let els = self.expr_coerce(&value, target, Want::Move);
         self.pop_scope();

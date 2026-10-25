@@ -192,9 +192,11 @@ impl<'a> Parser<'a> {
             Tok::Lt => (Lt, PREC_REL, 1),
             Tok::LtEq => (LtEq, PREC_REL, 1),
             Tok::Kw(Kw::In) if !self.no_in => (In, PREC_REL, 1),
-            Tok::Kw(Kw::As) => return Some((BinTok::As, PREC_REL, 1)),
+            // TypeScript ends the expression at a line break before `as` / `satisfies`
+            // (`const y = 1` and `as(2)` on the next line call a function `as`).
+            Tok::Kw(Kw::As) if !self.line_break_before() => return Some((BinTok::As, PREC_REL, 1)),
             Tok::Kw(Kw::Instanceof) => return Some((BinTok::InstanceOf, PREC_REL, 1)),
-            Tok::Ident if self.at_word("satisfies") => {
+            Tok::Ident if self.at_word("satisfies") && !self.line_break_before() => {
                 return Some((BinTok::Satisfies, PREC_REL, 1))
             }
             Tok::Shl => (Shl, PREC_SHIFT, 1),

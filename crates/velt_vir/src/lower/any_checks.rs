@@ -1,7 +1,7 @@
 //! Run-time checks of an `any` on its way to a static type (`AnyTo`): a primitive where
 //! `object` is expected (issue #926), and any value where `never` is (#1304).
 
-use velt_sema::hir::TyId;
+use velt_sema::hir::{TyId, TyKind, TyOp};
 
 use super::any::{TAG_BOOLEAN, TAG_SYMBOL};
 use super::operand::proj;
@@ -26,11 +26,26 @@ impl FnLower<'_, '_> {
     }
 
     /// The owned `any` `v` (of type `from`) as a `never` (`x as T & object` at a `T` that is
-    /// `null`, #1304): no value is one, so this stops with a `TypeError`.
-    pub(super) fn any_to_never(&mut self, v: Operand, from: TyId, ty: TyId) -> Operand {
+    /// `null`, #1304): no value is one, so this stops with a `TypeError`. `written`, the
+    /// target before instantiation, names it: `T & object` is "an object" (#1313), not "a never".
+    pub(super) fn any_to_never(
+        &mut self,
+        v: Operand,
+        from: TyId,
+        ty: TyId,
+        written: TyId,
+    ) -> Operand {
         let fvt = self.cx.ty(from);
         let p = Place::local(self.copy_to_temp(v, fvt));
-        self.any_type_error(Operand::Copy(proj(&p, Proj::Field(1))), ty);
+        let named = match self.cx.kind(written) {
+            TyKind::Op(TyOp::Intersect, parts) => parts
+                .iter()
+                .copied()
+                .find(|t| self.is_object_ty(*t))
+                .unwrap_or(ty),
+            _ => ty,
+        };
+        self.any_type_error(Operand::Copy(proj(&p, Proj::Field(1))), named);
         let vt = self.cx.ty(ty);
         self.zero_value(vt)
     }

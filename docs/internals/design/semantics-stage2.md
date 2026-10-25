@@ -312,7 +312,11 @@ value's captures, an interface value's implementor) panics (glue/clone.rs). Stri
   calls through virtual and interface methods are assumed to store any argument into any
   argument they modify; summaries cover direct calls only. A resource without `clone()`
   stored into the value from a captured variable stays shared with the variable (it cannot
-  be copied, and a callback cannot move what it captured even though `with` calls it once).
+  be copied, and such a callback keeps its reference capture). A callback written at the call
+  takes along by move a variable only it reads and the program does not use afterwards
+  (ownership/locked/moves.rs): transferred before the lock, released under it, so what it
+  stores into the value needs no copy. Other captures are still copied at a call that may
+  store a part of them, whatever the call then stores.
 - `Map` (and `Set`) keys of tuple type compare part by part, as `===` compares tuples (JS:
   arrays, by identity). Object keys compare by identity (#1257, see §7); `struct` keys by
   content (#641).

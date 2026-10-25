@@ -1,8 +1,0 @@
-// Object-literal methods that use `this` are not supported yet (the method is a function
-// stored in a field, which sees the variables around it but not the object).
-const counter = {
-  n: 1,
-  next() {
-    return this.n + 1;
-  },
-};

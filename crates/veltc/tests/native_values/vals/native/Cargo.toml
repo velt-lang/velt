@@ -1,0 +1,18 @@
+[package]
+name = "velt_vals_native"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "velt_native_vals"
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+velt_native = { path = "../../../../../velt_native" }
+
+[profile.release]
+panic = "unwind"
+
+# Not part of the compiler's workspace.
+[workspace]

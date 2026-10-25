@@ -38,8 +38,8 @@ use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
 use super::callback::synth;
-use super::callback_wrap::{wrapper, Shape};
-use super::iface_adapt_slots::{adapter_method, AdapterParts};
+use super::callback_wrap::{wrapper, Arg, Plan, Shape};
+use super::iface_adapt_slots::{adapter_method, fields_ok, unresolved_slot, AdapterParts};
 use crate::any::Dynamic;
 use crate::body::{FnCx, LocalKind, Want};
 use crate::ctx::Ctx;
@@ -63,21 +63,21 @@ pub(super) struct SlotSig {
     pub name: String,
     pub params: Vec<ParamSig>,
     pub ret: TyId,
+    /// The method's own type parameters: a generic method has no table entry and is never
+    /// called through an interface value, so its slot needs no adapting (`adapter_stub`).
+    pub own: u32,
 }
 
-/// The slots of `iface` in table order (methods, then the getters of its fields), or `None`
-/// when a generic method has no slot to adapt.
+/// The slots of `iface` in table order (methods, then the getters of its fields).
 fn slot_sigs(cx: &Ctx, iface: DefId) -> Option<Vec<SlotSig>> {
     let info = cx.iface(iface)?;
     let mut out = vec![];
     for m in &info.methods {
-        if !m.generics.names.is_empty() {
-            return None;
-        }
         out.push(SlotSig {
             name: m.name.clone(),
             params: m.params.clone(),
             ret: m.ret,
+            own: m.generics.names.len() as u32,
         });
     }
     for f in &info.fields {
@@ -85,6 +85,7 @@ fn slot_sigs(cx: &Ctx, iface: DefId) -> Option<Vec<SlotSig>> {
             name: format!("<{}>", f.name),
             params: vec![],
             ret: f.ty,
+            own: 0,
         });
     }
     Some(out)
@@ -225,8 +226,19 @@ pub(super) fn adaptable(
         || from == to
         || cx.any.is_some_and(|a| a.any == iface || a.unknown == iface)
         || from.iter().any(|t| open(cx, *t, generic))
-        || !from.iter().zip(to).all(|(a, b)| arg_ok(cx, *a, *b))
     {
+        return false;
+    }
+    if let Some((_, b)) = from.iter().zip(to).find(|(a, b)| !arg_ok(cx, **a, **b)) {
+        // A type argument that holds `unknown` or `any` without being one (`Box<unknown>`,
+        // `Map<any, any>`, `Map<string, unknown>`): only whole `unknown` / `any` arguments
+        // and the containers of `Container` are adapted.
+        if holds_dynamic(cx, *b) {
+            let t = cx.display(*b);
+            m.why = Some(format!(
+                "the type argument `{t}`, which holds `unknown` or `any`: converting a generic class or container to other type arguments is not supported yet (#1185); `unknown` / `any` themselves are"
+            ));
+        }
         return false;
     }
     let key = (iface, from.to_vec(), to.to_vec());
@@ -248,7 +260,7 @@ pub(super) fn adaptable(
     // The slots of this interface are positions of its own, not of a function type around it.
     let in_fn = std::mem::replace(&mut m.in_fn, false);
     let ok = sigs.iter().all(|s| {
-        if unresolved_slot(cx, s, own, &fa, &ta) {
+        if s.own > 0 || unresolved_slot(cx, s, own, &fa, &ta) {
             return true;
         }
         let (rf, rt) = (cx.subst(s.ret, &fa), cx.subst(s.ret, &ta));
@@ -260,33 +272,6 @@ pub(super) fn adaptable(
     });
     m.in_fn = in_fn;
     ok
-}
-
-/// Is slot `s` one whose type could not be resolved, in the interface (a generic function type)
-/// or at these type arguments (`keyof any` in a mapped type)? Its error was reported where the
-/// type is written: refusing the conversion too would add an error at every conversion site
-/// for the same cause. A slot mentioning the implementor's own type parameter (`own`) is
-/// decided as usual.
-fn unresolved_slot(cx: &mut Ctx, s: &SlotSig, own: u32, fa: &[TyId], ta: &[TyId]) -> bool {
-    let tys: Vec<TyId> = s
-        .params
-        .iter()
-        .map(|p| p.ty)
-        .chain(std::iter::once(s.ret))
-        .collect();
-    let mut mentions_own = false;
-    for &t in &tys {
-        cx.ty.visit(t, &mut |k| {
-            mentions_own |= matches!(k, TyKind::Param(p) if *p == own)
-        });
-    }
-    if mentions_own {
-        return false;
-    }
-    tys.iter().any(|&t| {
-        let (f, g) = (cx.subst(t, fa), cx.subst(t, ta));
-        cx.ty.has_error(f) || cx.ty.has_error(g)
-    })
 }
 
 /// Does a value of type `from` convert to `to` inside an adapter? `param` when it is a
@@ -307,6 +292,9 @@ pub(super) fn value_ok(cx: &mut Ctx, from: TyId, to: TyId, param: bool, m: &mut 
     if cx.dynamic(from).is_some() {
         let t = cx.display(to);
         let reason = match cx.ty.kind(to) {
+            // A `never` parameter (`serialize(v: T)` at `T = never`) takes no value: a call
+            // reaching it through the adapter throws, as converting any value to `never` does.
+            TyKind::Never if param => None,
             TyKind::Promise(..) | TyKind::Unit | TyKind::Never => return false,
             // `any` converted to an interface type is not supported yet (#924).
             TyKind::Dyn(..) => Some(format!(
@@ -362,6 +350,18 @@ pub(super) fn value_ok(cx: &mut Ctx, from: TyId, to: TyId, param: bool, m: &mut 
             ok
         }
         (TyKind::Dyn(i, xs), TyKind::Dyn(j, ys)) if i == j => adaptable(cx, i, &xs, &ys, m),
+        // A result that is an object type, or a union of them, whose fields convert
+        // (`IteratorResult<[any, any]>` as `IteratorResult<any>`): a copy (`object_copy`).
+        _ if !param && cx.union_members(from).is_some() => {
+            let (Some(xs), Some(ys)) = (cx.union_members(from), cx.union_members(to)) else {
+                return false;
+            };
+            xs.len() == ys.len()
+                && xs.iter().zip(&ys).all(|(a, b)| {
+                    a == b || value_ok(cx, *a, *b, false, m) || fields_ok(cx, *a, *b, m)
+                })
+        }
+        _ if !param && fields_ok(cx, from, to, m) => true,
         // An array of interface values read through the adapter (a field `kids: Tree<T>[]`): a
         // new array of the elements, each adapted (`adapt_array`). Nothing is written back, so
         // where a value goes the other way (a parameter, a setter) it is refused, and so is one
@@ -532,7 +532,10 @@ impl FnCx<'_, '_> {
         let methods = sigs
             .iter()
             .enumerate()
-            .map(|(slot, s)| adapter_method(self.cx, &parts, slot as u32, s, false))
+            .map(|(slot, s)| match s.own {
+                0 => adapter_method(self.cx, &parts, slot as u32, s, false),
+                own => super::iface_adapt_slots::adapter_stub(self.cx, &parts, s, own),
+            })
             .collect();
         self.cx.impls[a.impl_index as usize].methods = methods;
         // Its setters, made once a field of the interface is written through.
@@ -555,6 +558,16 @@ impl FnCx<'_, '_> {
     pub(super) fn adapt_value(&mut self, h: hir::Expr, to: TyId) -> hir::Expr {
         if h.ty == to {
             return h;
+        }
+        // An argument for a `never` parameter: no value is one, so the call stops with a
+        // `TypeError`, as a failed conversion of an `any` does.
+        if to == self.cx.ty.never && self.cx.dynamic(h.ty).is_some() {
+            let span = h.span;
+            let msg = self.str_lit(
+                "TypeError: a value was passed where the interface takes `never`",
+                span,
+            );
+            return self.intrinsic(hir::Intrinsic::Panic, vec![msg], to, span);
         }
         match self.try_coerce(h, to) {
             Ok(h) => h,
@@ -684,6 +697,15 @@ impl FnCx<'_, '_> {
             return Err(h);
         };
         let shape = Shape::of(params.len(), *rest);
+        // A function taking fewer parameters than `exp` gets the first ones (#943).
+        let plan = match self.cx.ty.kind(h.ty) {
+            TyKind::FnPtr {
+                params: own,
+                rest: false,
+                ..
+            } if own.len() < shape.fixed => Plan::one((0..own.len()).map(Arg::Param).collect()),
+            _ => shape.same(),
+        };
         let span = h.span;
         let name = ast::Ident {
             name: format!("#adapted{}", self.f.locals.len()),
@@ -701,7 +723,7 @@ impl FnCx<'_, '_> {
                 let arrow = wrapper(
                     synth(ast::ExprKind::Ident(name), span),
                     shape,
-                    &shape.same(),
+                    &plan,
                     false,
                     span,
                 );
@@ -715,7 +737,7 @@ impl FnCx<'_, '_> {
         let arrow = wrapper(
             synth(ast::ExprKind::Ident(name), span),
             shape,
-            &shape.same(),
+            &plan,
             false,
             span,
         );

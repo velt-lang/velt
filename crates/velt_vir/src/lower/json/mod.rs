@@ -16,12 +16,14 @@
 //! (`.name`, `[3]`) while returning, so paths cost nothing on success.
 
 pub(in crate::lower) mod any;
+mod db_bind;
 mod dynamic;
 mod key;
 mod literal;
 mod map;
 mod object;
 mod read;
+mod rows_read;
 mod union;
 mod union_object;
 
@@ -32,12 +34,27 @@ use velt_sema::hir::{self, AdtKind, TyId, TyKind};
 
 use super::rt::Rt;
 use super::{cint, ice, unit, Cx, FnLower, Glue};
-use crate::vir::{AggId, BlockId, Operand, Place, Proj, Rvalue, Ty, STR_AGG};
+use crate::vir::{AggId, BinOp, BlockId, Operand, Place, Proj, Rvalue, Ty, STR_AGG};
 
 /// Qualified name of the prelude's dynamic JSON value class.
 const PRELUDE_JSON_VALUE: &str = "std/prelude/json::JsonValue";
 
 const STR: Ty = Ty::Agg(STR_AGG);
+/// `velt_rt_json_reader_new_with`'s flag: the source is a `u8[]` of binary rows (rt_abi.md).
+const FLAG_ROWS: i128 = 4;
+/// `velt_rt_json_reader_new_with`'s flag for a driver's live rows (a `RawCursor`).
+const FLAG_CURSOR: i128 = 8;
+
+/// What `JSON.parse`'s glue reads.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(in crate::lower) enum JsonSource {
+    /// JSON text (a string).
+    Text,
+    /// A driver's binary rows (a `u8[]`).
+    Rows,
+    /// A driver's live rows (the address of its cursor, a `u64`).
+    Cursor,
+}
 
 /// `velt_rt_json_reader_peek` kinds (rt_abi_async.md §12.3).
 const TOKEN_NULL: u32 = 1;
@@ -176,9 +193,11 @@ impl FnLower<'_, '_> {
         a: &hir::Expr,
         flags: &hir::Expr,
         depth: &hir::Expr,
+        source: JsonSource,
         ty: TyId,
     ) -> Operand {
         let t = self.sub(ty);
+        let a_ty = self.sub(a.ty);
         let v = self.expr(a);
         let flags = self.expr(flags);
         let depth = self.expr(depth);
@@ -187,10 +206,36 @@ impl FnLower<'_, '_> {
         }
         let flags = self.cast_to(flags, Ty::I64, Ty::U32);
         let depth = self.cast_to(depth, Ty::I64, Ty::U32);
+        // `u8[]` rows and a cursor: the reader reads them as rows (`FLAG_ROWS`, `FLAG_CURSOR`),
+        // never as text.
+        let flags = match source {
+            JsonSource::Text => flags,
+            JsonSource::Rows | JsonSource::Cursor => {
+                let flag = if source == JsonSource::Rows {
+                    FLAG_ROWS
+                } else {
+                    FLAG_CURSOR
+                };
+                let f = Rvalue::Binary(BinOp::BitOr, flags, cint(flag, Ty::U32));
+                self.rvalue_temp(Ty::U32, f)
+            }
+        };
         // A zero-sized target (`null`, a literal type) is only checked: decode into a dummy.
         let vt = self.cx.ty(t);
         let zero_sized = vt == Ty::Unit;
-        let src = self.operand_addr(v, STR);
+        let src = match source {
+            JsonSource::Rows => {
+                // The array itself, also when the operand only refers to it (a borrowed
+                // parameter).
+                let avt = self.cx.ty(a_ty);
+                let p = self.operand_place(v, avt);
+                let p = self.content(&p, a_ty);
+                self.addr(p)
+            }
+            // The cursor's address.
+            JsonSource::Cursor => self.rvalue_temp(Ty::Ptr, Rvalue::Cast(v, Ty::Ptr)),
+            JsonSource::Text => self.operand_addr(v, STR),
+        };
         let out = self.temp(if zero_sized { Ty::U8 } else { vt });
         if !zero_sized {
             self.json_init(out, t);
@@ -198,7 +243,12 @@ impl FnLower<'_, '_> {
         let err = self.temp(STR);
         let oa = self.addr(Place::local(out));
         let ea = self.addr(Place::local(err));
-        let ok = self.call_glue(Glue::JsonParse, t, vec![src, flags, depth, oa, ea]);
+        // Rows of plain objects from a cursor: read by column (rows_read.rs).
+        let ok = if source == JsonSource::Cursor && self.rows_read_supported(t) {
+            self.call_glue(Glue::RowsRead, t, vec![src, oa, ea])
+        } else {
+            self.call_glue(Glue::JsonParse, t, vec![src, flags, depth, oa, ea])
+        };
         let (err_bb, ok_bb) = (self.new_block(), self.new_block());
         self.branch(ok, ok_bb, err_bb);
         self.switch_to(err_bb);

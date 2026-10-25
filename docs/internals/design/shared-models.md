@@ -114,6 +114,12 @@ field-only interface gets the error above.
   are the same object.
 - **Contract change:** `ast::ObjectTypeField` gains `readonly: bool`; `velt fmt` and `velt doc`
   print it.
+- **Accessors in object types** (`{ get v(): number; set v(x: number) }`, #1501): the parser reads
+  each as a field of the getter's type (else the setter's), `readonly` without a setter, so an
+  object type written in place keeps one layout. **Contract change:** `ast::ObjectTypeField`
+  gains `accessors: Vec<TypeFieldAccessor>` (each accessor as written: a setter's parameter
+  name, its type, its span; empty for a plain field), which `velt fmt` prints back. A type alias
+  of such an object type becomes the interface it spells out (docs/reference/types.md).
 
 ### 3. Utility types
 

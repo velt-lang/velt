@@ -1,0 +1,165 @@
+// Class field initializers and parameter defaults that are `Record` literals (#1490): such a
+// literal fills a temporary, and the initializer, checked outside any function body, gave it a
+// local id of no body. Run by a constructor or a `new`, the temporary named a local of that
+// function instead (an index-out-of-bounds stop, or a VIR type mismatch next to a proxy), and a
+// default placed at a call named one of the caller's (a false "already borrowed" error). The
+// temporaries are now locals of the body they run in. A module-level arrow called from a
+// function now takes its defaults too ("takes 1 argument but 0 arguments were supplied").
+const keep = new Proxy({}, {});
+
+class El {
+  props: Record<string, any> = {};
+  counts: Record<string, number> = {};
+  named: Record<string, number> = { a: 1, b: 2 };
+  items: number[] = [];
+  rows: Record<string, number>[] = [{}, { x: 1 }];
+  cfg: { m: Record<string, string>; n: number } = { m: { k: "v" }, n: 2 };
+  plain: { inner: { x: number }; tags: string[] } = { inner: { x: 1 }, tags: ["a", "b"] };
+  map: Map<string, number> = new Map<string, number>();
+  static readonly shared: Record<string, number> = { s: 1 };
+}
+
+class WithCtor {
+  data: Record<string, number> = { one: 1 };
+  label: string;
+  constructor(label: string) {
+    const local = label + "!";
+    this.label = local;
+    this.data[label] = 2;
+  }
+}
+
+class Base {
+  baseRec: Record<string, number> = { base: 1 };
+  tag: string;
+  constructor(tag: string) {
+    this.tag = tag;
+  }
+}
+
+class Derived extends Base {
+  own: Record<string, string> = { d: "x" };
+  constructor() {
+    const pre = "p";
+    super(pre);
+  }
+}
+
+class NoCtorDerived extends Base {
+  more: Record<string, number> = {};
+}
+
+class Box<T> {
+  m: Record<string, T> = {};
+  put(k: string, v: T): Box<T> {
+    this.m[k] = v;
+    return this;
+  }
+}
+
+class Inner {
+  r: Record<string, number> = { i: 1 };
+}
+
+class Outer {
+  inner: Inner = new Inner();
+  r2: Record<string, number> = { o: 2 };
+}
+
+function boom(): number {
+  throw new Error("boom");
+}
+
+class Throws {
+  r: Record<string, number> = { a: boom() };
+}
+
+function make(): string {
+  const a = [1, 2, 3];
+  const s = "local";
+  const e = new El();
+  e.props.x = s;
+  e.counts.n = a.length;
+  return JSON.stringify(e.props) + JSON.stringify(e.counts) + a.join(",");
+}
+
+async function later(): Promise<number> {
+  const x = 5;
+  await Promise.resolve(1);
+  const e = new El();
+  e.counts.z = x;
+  return e.counts.z ?? 0;
+}
+
+console.log(new El().props, new El().counts, new El().named);
+const e = new El();
+console.log(e.items, e.rows, e.cfg, e.plain, e.map.size, El.shared);
+console.log(make());
+const w = new WithCtor("w");
+console.log(w.label, w.data);
+const d = new Derived();
+console.log(d.tag, d.baseRec, d.own);
+const nd = new NoCtorDerived("n");
+console.log(nd.tag, nd.baseRec, nd.more);
+console.log(new Box<number>().put("a", 1).m, new Box<string>().put("b", "s").m);
+const o = new Outer();
+console.log(o.inner.r, o.r2);
+for (let i = 0; i < 2; i++) {
+  const el = new El();
+  el.counts.i = i;
+  console.log(el.counts);
+}
+try {
+  const before = [1];
+  const t = new Throws();
+  console.log(t.r, before);
+} catch (err) {
+  console.log("caught", (err as Error).message);
+} finally {
+  const fin = "fin";
+  console.log(fin);
+}
+
+// Parameter defaults: placed at each call that leaves the argument out.
+function withDefault(x: Record<string, number> = { a: 1 }): Record<string, number> {
+  return x;
+}
+
+function emptyDefault(x: Record<string, string> = {}): number {
+  return Object.keys(x).length;
+}
+
+class Svc {
+  opts: Record<string, number>;
+  constructor(opts: Record<string, number> = { retries: 3 }) {
+    this.opts = opts;
+  }
+  get(k: string, table: Record<string, number> = { hit: 1 }): number {
+    return table[k] ?? -1;
+  }
+}
+
+const arrowDefault = (r: Record<string, boolean> = { on: true }): boolean => r.on ?? false;
+// A module-level arrow called from a function takes its defaults too.
+const plusOne = (n: number = 1): number => n + 1;
+
+function caller(): void {
+  const s = "hi";
+  const n = [3];
+  console.log(withDefault(), s, n, emptyDefault());
+  const svc = new Svc();
+  console.log(
+    svc.opts,
+    svc.get("hit"),
+    svc.get("miss", { miss: 2 }),
+    arrowDefault(),
+    plusOne(),
+    plusOne(5),
+  );
+}
+
+caller();
+const kept = [1, 2];
+console.log(withDefault(), kept, withDefault(undefined), emptyDefault({ z: "z" }));
+
+later().then((v) => console.log("later", v, keep !== null));

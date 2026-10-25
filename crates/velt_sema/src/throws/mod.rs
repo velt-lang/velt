@@ -203,8 +203,15 @@ fn slot_now(cx: &mut Ctx, iface: DefId, slot: u32, visited: &mut Visited) -> Opt
     if let Some(name) = slot_name(cx, iface, slot) {
         crate::body::literal_hosts::ensure_named(cx, &name);
     }
-    let g = cx.throw_groups().slot_group(iface, slot)?;
-    group_now(cx, g, visited)
+    let now = match cx.throw_groups().slot_group(iface, slot) {
+        Some(g) => group_now(cx, g, visited),
+        None => None,
+    };
+    // Implementations found after a body read the slot, in the previous check.
+    match cx.slot_hint(iface, slot) {
+        Some(h) => cx.join_errors(now, Some(h)),
+        None => now,
+    }
 }
 
 /// A slot without a `throws` clause whose dispatch group is bounded by a clause in another

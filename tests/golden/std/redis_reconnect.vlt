@@ -1,7 +1,7 @@
 // requires-env: VELT_TEST_REDIS_URL
 // std/redis: a client whose connection was killed reconnects on its next command instead of
 // failing with ECONNRESET from then on.
-import { connect, RedisClient } from "velt:redis";
+import { connect, RedisClient, RedisError, RedisReply } from "velt:redis";
 import { redisUrl, freshPrefix, cleanup } from "./_redis";
 
 // Whether the server reports client `id` waiting in `BLPOP`.
@@ -20,7 +20,9 @@ async function blockedInBlpop(admin: RedisClient, id: i64): Promise<bool> {
 // It waits for the server to report the `BLPOP` first (a minute is a hang guard, not a limit).
 async function kill(c: RedisClient, admin: RedisClient, p: string): Promise<i64> {
   const id = (await c.call(["CLIENT", "ID"])).int;
-  const blocked = c.call(["BLPOP", `${p}never`, "0"]);
+  // Handled from the start: the kill can fail it before `CLIENT KILL`'s own reply arrives, and
+  // a rejection nobody handles by then is an uncaught error (as in Node).
+  const blocked = failed(c.call(["BLPOP", `${p}never`, "0"]));
   for (let t = 0; t < 60000; t++) {
     if (await blockedInBlpop(admin, id)) {
       break;
@@ -28,13 +30,18 @@ async function kill(c: RedisClient, admin: RedisClient, p: string): Promise<i64>
     await sleep(1);
   }
   const killed = await admin.call(["CLIENT", "KILL", "ID", `${id}`]);
-  try {
-    await blocked;
-    console.log("unexpected: the BLPOP returned");
-  } catch (e) {
-    console.log("blocked command failed");
-  }
+  console.log(await blocked ? "blocked command failed" : "unexpected: the BLPOP returned");
   return killed.int;
+}
+
+// Whether `reply` fails.
+async function failed(reply: Promise<RedisReply, RedisError>): Promise<bool> {
+  try {
+    await reply;
+    return false;
+  } catch (e) {
+    return true;
+  }
 }
 
 async function main() {

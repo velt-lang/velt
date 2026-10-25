@@ -57,6 +57,14 @@ pub(super) struct Boxing {
     /// The program writes a dynamic value as JSON: the `any` tables have the JSON slot
     /// (json/any.rs).
     pub(super) any_json: bool,
+    /// The program converts an `any` to a number (`Intrinsic::AnyToNumber`, an operator on
+    /// `any`): every `any` table has the `ToNumber` slot, not only those of primitives
+    /// (any_number.rs).
+    pub(super) any_number: bool,
+    /// The method names called through `any` with a key known at compile time (`""`: a key
+    /// known only at run time, which may name any): the built-in methods the `AnyCall` slots
+    /// of strings, arrays, numbers and booleans look for (any_builtin.rs).
+    pub(super) any_call_keys: BTreeSet<String>,
     /// Object types that contain themselves by value (`interface Node { next?: Node }`, #376):
     /// every instance is a counted box, so the field holds a pointer and the size is finite.
     recursive: FxHashSet<DefId>,
@@ -85,6 +93,9 @@ pub(super) struct Boxing {
     /// The types a `Proxy` object's target is traced as by weak maps (glue/trace.rs): the
     /// concrete `AnyTo` targets and `Proxy` itself. Others are opaque (a leak at worst).
     pub(super) proxy_traced: BTreeSet<TyId>,
+    /// Array views (#1485, array_view.rs): the boxed array types whose header may point at an
+    /// `__ArrayView`. Empty in a program that converts no `any` to an array type.
+    pub(super) array_views: FxHashSet<TyId>,
     /// The value types of the program's `RwLock`s, the lock set they reach (class hierarchies
     /// by root, other counted types), and those whose `read` is exclusive (locks.rs).
     pub(super) lock_values: FxHashSet<TyId>,
@@ -201,6 +212,10 @@ pub(super) struct Facts {
     any_keys: bool,
     /// A dynamic value is written as JSON.
     any_json: bool,
+    /// An `any` is converted to a number.
+    any_number: bool,
+    /// Method names called through `any`.
+    any_call_keys: BTreeSet<String>,
     /// Capture types of the closure environments built (transfers.rs).
     captures: FxHashSet<TyId>,
     /// Concrete types a vtable was built for: interface implementors and classes in a
@@ -225,6 +240,8 @@ pub(super) struct Facts {
     pub(super) proxy_targets: FxHashSet<TyId>,
     /// `(from, to)` of the `Upcast`s lowered: a proxiable `from` makes `to` proxiable.
     pub(super) proxy_casts: FxHashSet<(TyId, TyId)>,
+    /// Array types an `any` is converted to in the program's own code (array_view.rs).
+    pub(super) array_view_targets: FxHashSet<TyId>,
     /// A share was lowered as a placeholder because its type was not counted yet: the output
     /// of this pass must not be used.
     pub(super) unmet: bool,
@@ -294,6 +311,18 @@ impl Cx<'_> {
     /// Record that a dynamic value is written as JSON.
     pub(super) fn note_any_json(&mut self) {
         self.facts.any_json = true;
+    }
+
+    /// Record that a method named `name` (`""`: any name) is called through `any`.
+    pub(super) fn note_any_call_key(&mut self, name: &str) {
+        if !self.facts.any_call_keys.contains(name) {
+            self.facts.any_call_keys.insert(name.to_string());
+        }
+    }
+
+    /// Record that an `any` is converted to a number.
+    pub(super) fn note_any_number(&mut self) {
+        self.facts.any_number = true;
     }
 
     /// Do closures need an identity of their own (see [`Boxing::fn_identity`])?
@@ -368,6 +397,9 @@ impl Cx<'_> {
         next.any_delete |= self.facts.any_delete;
         next.any_keys |= self.facts.any_keys;
         next.any_json |= self.facts.any_json;
+        next.any_number |= self.facts.any_number;
+        next.any_call_keys
+            .extend(self.facts.any_call_keys.iter().cloned());
         next.dyn_to_any
             .extend(self.facts.dyn_to_any.iter().copied());
         let dyns = self.facts.identity.iter().copied();
@@ -391,6 +423,7 @@ impl Cx<'_> {
         next.boxes
             .extend(self.facts.identity_borrows.iter().copied());
         self.close_proxies(&mut next);
+        self.close_array_views(&mut next);
         let mut work: Vec<TyId> = self.facts.shares.iter().copied().collect();
         // A weak key of type `object` (issue #926) is any dynamic value's object: each type
         // dynamic values hold is counted, so its data pointer is the object itself.

@@ -313,6 +313,7 @@ impl FnCx<'_, '_> {
             Ok(h) => return h,
             Err(f) => f,
         };
+        let f = self.fn_bound_value(f).unwrap_or_else(|f| f);
         // A function with properties (#921): a call of the function it holds.
         if self.cx.is_callable_object(f.ty) {
             return match self.call_of_callable(f, span) {
@@ -348,6 +349,14 @@ impl FnCx<'_, '_> {
         // `const f = (x, y = 1) => …; f(2)`: the closure's defaults fill in left-out arguments.
         let closure = match &f.kind {
             H::Local(l, _) => self.f.closure_consts.get(l).copied(),
+            // A module-level `const` holding the closure, called from a function.
+            H::Global(g) => match self.cx.global(*g) {
+                Some(g) if !g.mutable => match g.init.as_ref().map(|i| &i.kind) {
+                    Some(H::Closure(c)) => Some(*c),
+                    _ => None,
+                },
+                _ => None,
+            },
             _ => None,
         };
         let mut ps = vec![];
@@ -370,6 +379,11 @@ impl FnCx<'_, '_> {
                 && matches!(self.cx.ty.kind(*ty), TyKind::Option(_, n) if n.has_undefined())
             {
                 default = Some(self.mk(H::Lit(hir::Lit::Null), *ty, span));
+            } else if default.is_none() && i >= args.len() && self.cx.dynamic(*ty).is_some() {
+                // A left-out argument of a dynamic type is `undefined`, as for a function whose
+                // value the context typed without its `?` (`const g = d` for `d(x?: any)`).
+                let undefined = hir::Nothing::Undefined;
+                default = Some(self.dynamic_nothing(undefined, *ty, span));
             }
             ps.push(ParamSig {
                 name: format!("arg{i}"),
@@ -666,14 +680,18 @@ impl FnCx<'_, '_> {
 
     /// The function running static method `m` with `this` being class `this_class`: `m`, or its
     /// copy for that subclass when `m` uses `this` (`collect::static_this`).
-    pub(crate) fn static_def_for(&self, m: DefId, this_class: DefId) -> DefId {
+    /// A copy used is recorded (`Ctx::copy_uses`).
+    pub(crate) fn static_def_for(&mut self, m: DefId, this_class: DefId) -> DefId {
         match self.cx.static_this.get(&m) {
-            Some(&declaring) if declaring != this_class => self
-                .cx
-                .static_copies
-                .get(&(m, this_class))
-                .copied()
-                .unwrap_or(m),
+            Some(&declaring) if declaring != this_class => {
+                match self.cx.static_copies.get(&(m, this_class)).copied() {
+                    Some(copy) => {
+                        self.cx.copy_uses.push((self.body_def, copy));
+                        copy
+                    }
+                    None => m,
+                }
+            }
             _ => m,
         }
     }

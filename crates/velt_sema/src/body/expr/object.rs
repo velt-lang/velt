@@ -32,7 +32,7 @@ impl FnCx<'_, '_> {
         if let Some(TyKind::Tuple(ts)) = exp.map(|t| self.cx.ty.kind(t).clone()) {
             return self.tuple_lit(elems, &ts, exp.expect("ICE: tuple"), span);
         }
-        let raw_elem = exp.and_then(|t| self.cx.ty.array_elem(t).or(self.cx.iterable_elem(t)));
+        let raw_elem = exp.and_then(|t| self.literal_elem(t, elems));
         let exp_elem = raw_elem.filter(|t| !self.cx.ty.has_error(*t));
         // A tuple element type that is only partly known (`[K, V][]` while inferring `K` and
         // `V`) still says the elements are tuples: the first one is checked against it.
@@ -48,7 +48,7 @@ impl FnCx<'_, '_> {
         }
         if elems.is_empty() {
             // Nothing says what it holds (`JSON.stringify([])`, `[].length`): `never[]`, as in TS.
-            let e = exp_elem.unwrap_or(self.cx.ty.never);
+            let e = exp_elem.unwrap_or_else(|| self.empty_literal_elem(exp));
             let ty = self.cx.ty.array(e);
             return self.mk(H::ArrayLit(vec![]), ty, span);
         }
@@ -265,7 +265,7 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
     ) -> hir::Expr {
         match value {
-            Some(v) => self.expr(v, exp, Want::Move),
+            Some(v) => self.stored_value(v, |s| s.expr(v, exp, Want::Move)),
             None => self.ident_expr(name, exp, Want::Move),
         }
     }
@@ -303,7 +303,7 @@ impl FnCx<'_, '_> {
             .iter()
             .any(|p| matches!(p, ast::ObjectProp::Method(_)))
         {
-            return self.method_object(props, span);
+            return self.method_object_for(props, exp, span);
         }
         // A union's member by the literal's discriminants or fields (`union_member_for`).
         let exp = match self.union_literal_member(props, exp) {
@@ -315,17 +315,13 @@ impl FnCx<'_, '_> {
             Err(()) => return self.error_expr(span),
         };
         if let Some(target) = self.literal_iface(exp) {
+            if let Some(h) = self.plain_literal_as_iface(props, &target, span) {
+                return h;
+            }
             return self.iface_object(props, target, span);
         }
-        if let Some(at) = props.iter().find_map(super::iface_object::is_accessor) {
-            self.cx.error(
-                Diagnostic::error(
-                    "getters and setters in object literals are not supported yet where no interface with methods is expected",
-                    at,
-                )
-                .with_note("an object literal of an object type is plain data: its fields hold values; store the value in a field, annotate the literal with an interface that declares the member, or declare a class with the accessor"),
-            );
-            return self.error_expr(span);
+        if let Some(h) = self.accessor_literal(props, exp, span) {
+            return h;
         }
         if let Some(props) = self.local_computed_keys(props) {
             return self.object_lit(&props, exp, span);
@@ -666,8 +662,7 @@ impl FnCx<'_, '_> {
                     self.intrinsic(hir::Intrinsic::FieldAbsent, vec![], fty, span)
                 }
                 (None, Some(dflt)) => {
-                    let mut h = dflt.clone();
-                    crate::visit::map_expr_types(&mut h, &mut |t| self.cx.subst(t, &type_args));
+                    let h = self.placed_default(dflt, &type_args, dflt.span);
                     for s in &f.default_throws {
                         let s = s.used_at(span, |t| self.cx.subst(t, &type_args));
                         self.throw_src(s);
