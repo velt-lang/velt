@@ -1,0 +1,23 @@
+// A copy of `T & { tag }` as `T` made in generic code is checked like any other copy, also where
+// the program converts values to `any`, `unknown` or `object` and writes through them, keys a
+// weak map with them or compares them with `===`.
+type Tagged<T> = T & { tag: string };
+function unwrapA<T>(s: Tagged<T>): T {
+  return s;
+}
+function unwrapB<T>(s: Tagged<T>): T {
+  return s;
+}
+function unwrapC<T>(s: Tagged<T>): T {
+  return s;
+}
+const x: Tagged<{ a: number }> = { a: 1, tag: "t" };
+const d: any = unwrapA(x);
+d.a = 7;
+const y: Tagged<{ b: number }> = { b: 1, tag: "t" };
+const wm = new WeakMap<object, number>();
+wm.set(unwrapB(y), 1);
+const z: Tagged<{ c: number }> = { c: 1, tag: "t" };
+const u: unknown = unwrapC(z);
+const v: unknown = z;
+console.log(x.a, wm.get(y), u === v);

@@ -46,6 +46,10 @@ pub(crate) struct Copy {
     /// source, printing, serializing, listing the keys of or spreading the copy shows what the
     /// original would (an optional field the source lacks is absent in the copy).
     pub in_order: bool,
+    /// Made per instantiation of a generic body (`T & { tag }` as `T`, lowered from an
+    /// `Upcast`): [`CopyFlow`] does not follow it, so any value converted to a dynamic type
+    /// whose type holds `to` may be it.
+    pub generic: bool,
 }
 
 /// An assignment to field `name` of a value of type `ty` (`None`: a type parameter's, which may
@@ -315,7 +319,7 @@ struct Dynamic<'a> {
 fn dynamic_holds(cx: &mut Ctx, c: &Copy, ci: usize, looks: &Dynamic) -> bool {
     looks.seen.iter().any(|&(t, _, how)| match how {
         Seen::Dynamic(i) => {
-            looks.flow.carries(ci, &looks.sources[i as usize])
+            (c.generic || looks.flow.carries(ci, &looks.sources[i as usize]))
                 && holds(cx, t, c.to, &mut FxHashSet::default())
         }
         _ => false,

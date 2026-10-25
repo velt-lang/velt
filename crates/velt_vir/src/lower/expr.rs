@@ -682,6 +682,16 @@ impl FnLower<'_, '_> {
     /// Is the `Upcast` of a `from` to a `to` a copy of some of `from`'s fields (both object
     /// types, `to` with fewer fields; sema accepted it as such, `generic_spread::part_copy`)?
     /// Two forms of one layout are the same value.
+    /// Is `e` an `Upcast` that copies an object type's fields into a new object of the
+    /// target type (`part_copy`): a fresh owned temporary, not a place rooted in its operand?
+    pub(super) fn part_copy_upcast(&mut self, e: &hir::Expr) -> bool {
+        let hir::ExprKind::Upcast(inner) = &e.kind else {
+            return false;
+        };
+        let (from, to) = (self.sub(inner.ty), self.sub(e.ty));
+        self.part_copy(from, to)
+    }
+
     fn part_copy(&mut self, from: TyId, to: TyId) -> bool {
         let (hir::TyKind::Adt(a, _), hir::TyKind::Adt(b, _)) =
             (self.cx.kind(from), self.cx.kind(to))
