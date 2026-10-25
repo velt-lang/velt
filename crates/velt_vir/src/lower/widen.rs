@@ -95,7 +95,13 @@ impl FnLower<'_, '_> {
     }
 
     /// Union value of type `u` in variant `k` holding `payload` (of type `payload_ty`).
-    fn union_value(&mut self, u: TyId, k: u32, payload: Operand, payload_ty: TyId) -> Operand {
+    pub(super) fn union_value(
+        &mut self,
+        u: TyId,
+        k: u32,
+        payload: Operand,
+        payload_ty: TyId,
+    ) -> Operand {
         let base = self.cx.ty(u);
         let view = self.cx.view(u, k);
         let t = self.temp(base);

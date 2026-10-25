@@ -416,6 +416,35 @@ impl FnLower<'_, '_> {
     /// field type `to` of field `name`: an option's nothing is the field's, a member of the
     /// field's type is its payload, and a member of another type stops the program with a
     /// `TypeError` (decision 4).
+    /// [`Self::key_member`] into a field whose type is union `to`: each member of the value the
+    /// field holds becomes that member of `to` (`"b"` of `f64 | "a" | "b"` into `"a" | "b"`).
+    fn key_union_member(&mut self, src: &Place, from: TyId, to: TyId, name: &str) -> Operand {
+        let dt = self.cx.ty(to);
+        let dst = self.temp(dt);
+        let join = self.new_block();
+        let fname = self.cx.type_name(to);
+        let member = |lw: &mut Self, payload: Operand, m: TyId| match lw.member_variant(to, m) {
+            Some(k) if lw.cx.variant_tys(to, k)[0] == m => {
+                let w = lw.union_value(to, k, payload, m);
+                lw.assign(Place::local(dst), Rvalue::Use(w));
+                lw.goto(join);
+            }
+            _ => {
+                lw.panic_msg(&format!(
+                        "TypeError: `x[k] = v` stores a value of another type in the field `{name}` ({fname})"
+                    ));
+                lw.terminate(Terminator::Unreachable);
+            }
+        };
+        if self.cx.is_union(from) {
+            self.for_each_member(src, from, member);
+        } else {
+            member(self, Operand::Copy(src.clone()), from);
+        }
+        self.switch_to(join);
+        Operand::Copy(Place::local(dst))
+    }
+
     fn key_store_value(&mut self, src: &Place, from: TyId, to: TyId, name: &str) -> Operand {
         if from == to {
             return Operand::Copy(src.clone());
@@ -469,6 +498,9 @@ impl FnLower<'_, '_> {
     fn key_member(&mut self, src: &Place, from: TyId, to: TyId, name: &str) -> Operand {
         if from == to {
             return Operand::Copy(src.clone());
+        }
+        if self.cx.is_union(to) {
+            return self.key_union_member(src, from, to, name);
         }
         let variant = match self.cx.is_union(from) {
             true => self.member_variant(from, to),
