@@ -454,6 +454,7 @@ void velt_rt_view_remove(const uint8_t *obj, const uint8_t *view);
 uint8_t *velt_rt_array_view_get(const uint8_t *arr, uint64_t ty);
 void velt_rt_array_view_put(const uint8_t *arr, uint64_t ty, const uint8_t *view);
 void velt_rt_array_view_remove(const uint8_t *arr, uint64_t ty, const uint8_t *object);
+void velt_rt_array_view_cold(void);
 ```
 
 The live view of each object (velt_vir `lower/any_view.rs`): the `Proxy` that an `any` holding
@@ -481,6 +482,11 @@ into a plain array in place. `velt_rt_array_view_remove` takes the view's view o
 `__ArrayView`, untagged) and removes the entry if it is that object's view: if the entry's box
 header holds `object | 1`. So the view's own box never reaches the runtime, and the backend
 need not assume that a call may change a box of a view type.
+
+`velt_rt_array_view_cold()` does nothing. The test before a loop versioned for a box
+(`lower/view_unswitch.rs`) calls it when the box is a view, on the way into the loop's
+original, and the LLVM backend declares it `cold` (and touching only memory compiled code
+never reads), so that it treats the loop's copy for a plain array as the one that runs.
 
 ## Output [M1]
 `stream`: 1 = stdout (buffered, flushed at exit / before any stderr write / on `velt_rt_flush`), 2 = stderr.

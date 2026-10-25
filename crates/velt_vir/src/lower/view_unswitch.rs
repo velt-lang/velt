@@ -24,9 +24,16 @@
 //!   in the original there too, whatever its box. So the copy reads only a plain array's
 //!   element, with no way on from the test where the index may be past the length: the index
 //!   is known to be below it after the test, which lets `velt_opt` keep it an integer.
+//!
+//! The backend should compile the copy as it would the loop of a program without views: the
+//! copy's blocks are in the order the backend's own loop versioning leaves a copy in (reverse
+//! postorder), and the way from the test before the loop into the original calls
+//! `velt_rt_array_view_cold`, so that the original is the rare loop (the LLVM backend then
+//! lays the copy out first and keeps the copy's constants in registers).
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
+use super::rt::Rt;
 use super::FnLower;
 use crate::vir::{self, BlockId, Local, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
@@ -207,6 +214,37 @@ impl FnLower<'_, '_> {
         Some(region)
     }
 
+    /// The blocks of the loop `inside` (header `h`) in reverse postorder, successors visited in
+    /// their terminator's order: the order the backend's own loop versioning gives a copy, so
+    /// that the copy's blocks are laid out as the loop's would be in a program without views.
+    fn loop_rpo(&self, h: BlockId, inside: &FxHashSet<BlockId>) -> Vec<BlockId> {
+        let succ = |b: BlockId| match &self.blocks[b.0 as usize].1 {
+            Some(t) => super::cfg::successors(t),
+            None => vec![],
+        };
+        let mut post = Vec::with_capacity(inside.len());
+        let mut seen = FxHashSet::default();
+        seen.insert(h);
+        let mut stack = vec![(h, succ(h), 0)];
+        while let Some((b, ss, i)) = stack.last_mut() {
+            match ss.get(*i).copied() {
+                Some(s) => {
+                    *i += 1;
+                    if inside.contains(&s) && seen.insert(s) {
+                        let next = succ(s);
+                        stack.push((s, next, 0));
+                    }
+                }
+                None => {
+                    post.push(*b);
+                    stack.pop();
+                }
+            }
+        }
+        post.reverse();
+        post
+    }
+
     /// Does block `b` assign the test `t` or branch on it?
     fn block_uses(&self, b: BlockId, t: Local) -> bool {
         let (stmts, term) = &self.blocks[b.0 as usize];
@@ -358,7 +396,7 @@ impl FnLower<'_, '_> {
         let inside: FxHashSet<BlockId> = region.iter().copied().collect();
         let copies = self.blocks.len();
         let mut map = FxHashMap::default();
-        for &b in region {
+        for b in self.loop_rpo(h, &inside) {
             let c = self.new_block();
             self.live[c.0 as usize] = true;
             map.insert(b, c);
@@ -486,8 +524,14 @@ impl FnLower<'_, '_> {
                 proj: vec![Proj::Deref(*t)],
             };
             let is = self.proxy_tagged(Operand::Copy(super::operand::proj(&hdr, Proj::Field(0))));
+            let view = self.new_block();
             at = self.new_block();
-            self.branch(is, h, at);
+            self.branch(is, view, at);
+            // A view runs the original: `velt_rt_array_view_cold` marks that way as rare, so
+            // that the backend treats the copy as the loop (its constants, registers, layout).
+            self.switch_to(view);
+            self.call_rt(Rt::ArrayViewCold, vec![], None);
+            self.goto(h);
         }
         self.switch_to(at);
         self.goto(map[&h]);

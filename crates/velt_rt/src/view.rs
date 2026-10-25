@@ -111,6 +111,12 @@ pub extern "C" fn velt_rt_array_view_remove(arr: *const u8, ty: u64, object: *co
     });
 }
 
+/// Does nothing. The test before a versioned loop (velt_vir `lower/view_unswitch.rs`) calls it
+/// when it finds a view, on the way into the loop's original, so that the backend, which
+/// declares it `cold`, treats the plain array's copy of the loop as the hot one.
+#[no_mangle]
+pub extern "C" fn velt_rt_array_view_cold() {}
+
 #[cfg(test)]
 mod tests {
     use super::*;

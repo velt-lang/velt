@@ -70,3 +70,32 @@ fn other_array_types_are_unchanged() {
         calls(&alone, "__arrayViewSync")
     );
 }
+
+#[test]
+fn a_loop_runs_its_original_for_a_view_through_a_cold_call() {
+    // The loop of `sum` is versioned for the box of `xs` (a parameter the loop does not
+    // change): the test before it calls `velt_rt_array_view_cold` on the way into the original
+    // (for a view), once, and the copy for a plain array calls nothing.
+    let vir = vir_of(
+        "function sum(xs: string[]): number {
+  let n = 0;
+  for (let i = 0; i < xs.length; i++) {
+    n += xs[i].length;
+  }
+  return n;
+}
+const kids: any = [\"a\", \"bc\"];
+console.log(sum(kids as string[]), sum([\"x\"]));
+",
+    );
+    let sum: Vec<&str> = vir
+        .split("\nfn#")
+        .filter(|f| f.lines().next().is_some_and(|l| l.contains("sum(")))
+        .collect();
+    assert_eq!(sum.len(), 1, "no single `sum` in the VIR:\n{vir}");
+    let cold = sum[0]
+        .lines()
+        .filter(|l| l.contains("call extern#") && l.contains("velt_rt_array_view_cold"))
+        .count();
+    assert_eq!(cold, 1, "{}", sum[0]);
+}
