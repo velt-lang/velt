@@ -3,7 +3,7 @@
 //! object built from the record's entries (`{} as Pick<T, K>`, docs/internals/design/
 //! deferred-types.md, decision 5).
 
-use velt_sema::hir::{self, TyId, TyKind};
+use velt_sema::hir::{self, DynMemberKind, TyId, TyKind};
 
 use super::glue::VtableKey;
 use super::operand::proj;
@@ -172,6 +172,7 @@ impl FnLower<'_, '_> {
             }
         }
         self.record_fill = filling;
+        self.record_fill_order(&data, rec, &names);
         ops.extend(flags);
         self.drop_glue(p.clone(), from);
         let agg = match self.cx.boxed(ty) {
@@ -190,5 +191,37 @@ impl FnLower<'_, '_> {
         self.assign(out.clone(), Rvalue::Use(v));
         self.goto(done);
         self.switch_to(no);
+    }
+
+    /// The record `data` holds (of type `rec`) has a key the object type with fields `names`
+    /// lacks, or its keys in another order: Velt's object has its type's fields in their order,
+    /// where JavaScript's object would have the record's (decision 5 in
+    /// docs/internals/design/deferred-types.md), so it is a `TypeError` (`Record.__fills`).
+    fn record_fill_order(&mut self, data: &Operand, rec: TyId, names: &[String]) {
+        let fills = self.plain_adt(rec).and_then(|(d, _)| {
+            self.dyn_members_of(d)
+                .into_iter()
+                .find(|m| m.name == "__fills" && m.kind == DynMemberKind::Method)
+        });
+        let Some(r) = fills.and_then(|m| self.ready(rec, &m)) else {
+            return;
+        };
+        let dl = self.temp(Ty::Ptr);
+        self.assign(Place::local(dl), Rvalue::Use(data.clone()));
+        let this = self.any_this(dl, rec);
+        let str_ = self.cx.str_ty();
+        let joined: String = names.iter().map(|n| format!("{n}\0")).collect();
+        let lit = self.str_lit(&joined);
+        let arg = Place::local(self.temp(Ty::Agg(crate::vir::STR_AGG)));
+        self.assign(arg.clone(), Rvalue::Use(lit));
+        let ok = self.invoke_ready(&r, this, vec![(arg, str_)]);
+        let (yes, no) = (self.new_block(), self.new_block());
+        self.branch(ok, yes, no);
+        self.switch_to(no);
+        self.panic_msg(
+            "TypeError: the object built with `{} as` has keys of its type in another order, or keys its type lacks",
+        );
+        self.terminate(crate::vir::Terminator::Unreachable);
+        self.switch_to(yes);
     }
 }

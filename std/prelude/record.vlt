@@ -207,6 +207,29 @@ export class Record<K, V> {
     return out;
   }
 
+  /**
+   * An object built from this record (`{} as D`, filled by `x[k] = v`): are the record's keys,
+   * in JavaScript's order, exactly those of `fields` it holds, in that order? `fields` is `D`'s
+   * field names in its order, each ended by a NUL character.
+   */
+  __fills(fields: string): bool {
+    const keys = this.__keyNames();
+    let j: i64 = 0;
+    let start: i64 = 0;
+    const n = fields.length as i64;
+    for (let i: i64 = 0; i < n; i++) {
+      if (fields.charCodeAt(i) != 0) {
+        continue;
+      }
+      const name = fields.slice(start, i);
+      start = i + 1;
+      if (j < (keys.length as i64) && keys[j] == name) {
+        j++;
+      }
+    }
+    return j == (keys.length as i64);
+  }
+
   __values(): V[] {
     const values = this.entries.values();
     const at = this.__perm();
