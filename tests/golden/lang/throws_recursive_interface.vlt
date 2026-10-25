@@ -1,6 +1,6 @@
 // A recursive async method called through an interface value with an inferred error type (#193):
-// the error type at the inner calls is not known yet, and the `throws` clause it needs goes on
-// the interface method.
+// the error type at the inner calls is found only after they are checked, so the program is
+// checked again with it known, and the promises reject with `DivZero` as in Node.
 class DivZero extends Error {}
 
 interface Expr {

@@ -40,6 +40,12 @@ pub(crate) struct FnTypeSeeds {
     /// is checked, by `DefId` and declaration span: what a recursive call counts while the
     /// callee is still being checked ([`Ctx::recursion_hint`]).
     hints: FxHashMap<DefId, (Span, Vec<Portable>)>,
+    /// The error types the previous check inferred for interface method slots that a body read
+    /// before the implementations converted to the interface were found (an object literal
+    /// converted in code checked later), by interface `DefId` and slot, with the interface's
+    /// declaration span: a call through the slot counts them from the start
+    /// ([`Ctx::slot_hint`]).
+    slots: FxHashMap<(DefId, u32), (Span, Vec<Portable>)>,
     /// Check with the sets written in, without variables (`throws::vars`).
     no_vars: bool,
 }
@@ -413,6 +419,48 @@ impl Ctx<'_> {
     pub(crate) fn recursion_hint(&mut self, d: DefId) -> Option<TyId> {
         let (span, ms) = self.fn_sites.seeds.hints.get(&d)?.clone();
         if self.def_spans.get(d.0 as usize) != Some(&span) {
+            return None;
+        }
+        let ms: Vec<TyId> = ms.iter().filter_map(|p| self.unport(p)).collect();
+        self.error_union(&ms)
+    }
+
+    /// Keep `t`, what slot `slot` of `iface` throws in the final inference, for the next check
+    /// (see [`FnTypeSeeds::slots`]); true when the program is checked again for it.
+    pub(crate) fn record_slot_hint(&mut self, iface: DefId, slot: u32, t: TyId) -> bool {
+        if self.fn_sites.last || iface.0 as usize >= self.collected_defs {
+            return false;
+        }
+        let ms: Option<Vec<Portable>> = (self.error_members(t).into_iter())
+            .map(|m| self.port(m, 0))
+            .collect();
+        let Some(ms) = ms else {
+            return false;
+        };
+        let span = self.def_spans[iface.0 as usize];
+        let mut all = match self.fn_sites.found.slots.get(&(iface, slot)) {
+            Some((s, old)) if *s == span => old.clone(),
+            _ => vec![],
+        };
+        let before = all.len();
+        for m in ms {
+            if !all.contains(&m) {
+                all.push(m);
+            }
+        }
+        if all.len() == before {
+            return false;
+        }
+        self.fn_sites.found.slots.insert((iface, slot), (span, all));
+        self.fn_sites.grew = true;
+        true
+    }
+
+    /// What the previous check inferred a call through slot `slot` of `iface` throws (see
+    /// [`FnTypeSeeds::slots`]).
+    pub(crate) fn slot_hint(&mut self, iface: DefId, slot: u32) -> Option<TyId> {
+        let (span, ms) = self.fn_sites.seeds.slots.get(&(iface, slot))?.clone();
+        if self.def_spans.get(iface.0 as usize) != Some(&span) {
             return None;
         }
         let ms: Vec<TyId> = ms.iter().filter_map(|p| self.unport(p)).collect();

@@ -310,7 +310,7 @@ fn observed(cx: &mut Ctx, c: &ThrowCheck) {
     } else {
         cx.error_outside(obs, fin).is_none()
     };
-    if ok {
+    if ok || slots_found_late(cx, c) {
         return;
     }
     let fs = fin.map_or("nothing".to_string(), |t| {
@@ -318,17 +318,12 @@ fn observed(cx: &mut Ctx, c: &ThrowCheck) {
     });
     // A call through an interface value: its error type is the interface method's.
     let slot = c.srcs.iter().find_map(|s| match s {
-        ThrowSrc::Slot { iface, slot, .. } => {
-            let i = cx.iface(*iface)?;
-            let m = i.methods.get(*slot as usize)?;
-            Some((i.name.clone(), m.name.clone()))
-        }
+        ThrowSrc::Slot { iface, slot, .. } => Some((*iface, *slot)),
         _ => None,
     });
-    let note = match slot {
-        Some((i, m)) => {
-            let e = fin.map_or("E".to_string(), |t| shown_errors(cx, t));
-            format!("add a `throws` clause to interface method `{i}.{m}` (`{m}(): T throws {e};`)")
+    let note = match slot.and_then(|(i, s)| slot_signature(cx, i, s, fin)) {
+        Some((i, m, sig)) => {
+            format!("add a `throws` clause to interface method `{i}.{m}` (`{sig}`)")
         }
         None => {
             "add a `throws` clause to the functions in the recursion (`function f(): T throws E`)"
@@ -344,6 +339,55 @@ fn observed(cx: &mut Ctx, c: &ThrowCheck) {
         )
         .with_note(note),
     );
+}
+
+/// The slots `c` calls through, without a `throws` clause, whose implementations were found
+/// after the body was checked (an object literal converted to the interface by code checked
+/// later): when what they throw is new, the program is checked again with it known from the
+/// start (`FnTypeSeeds::slots`), and this check's diagnostics are dropped.
+fn slots_found_late(cx: &mut Ctx, c: &ThrowCheck) -> bool {
+    let mut again = false;
+    for s in &c.srcs {
+        let ThrowSrc::Slot { iface, slot, .. } = s else {
+            continue;
+        };
+        if super::slot_clause(cx, *iface, *slot).is_some() {
+            continue;
+        }
+        if let Some(t) = super::infer::slot_group_final(cx, *iface, *slot) {
+            again |= cx.record_slot_hint(*iface, *slot, t);
+        }
+    }
+    again
+}
+
+/// Interface `iface`'s name, slot `slot`'s name and its declaration with `throws fin` (`get
+/// value(): string throws TypeError;`), for a note.
+fn slot_signature(
+    cx: &mut Ctx,
+    iface: DefId,
+    slot: u32,
+    fin: Option<TyId>,
+) -> Option<(String, String, String)> {
+    let i = cx.iface(iface)?;
+    let m = i.methods.get(slot as usize)?;
+    let (iname, mname, getter) = (i.name.clone(), m.name.clone(), m.is_getter);
+    let (params, ret) = (m.params.clone(), m.ret);
+    let names = i.generics.names.clone();
+    let saved = std::mem::replace(&mut cx.display_params, names);
+    let params: Vec<String> = params
+        .iter()
+        .map(|p| format!("{}: {}", p.name, cx.display(p.ty)))
+        .collect();
+    let e = fin.map_or("E".to_string(), |t| shown_errors(cx, t));
+    let ret = cx.display(ret);
+    cx.display_params = saved;
+    let sig = match mname.strip_prefix("set ") {
+        Some(n) => format!("set {n}({}) throws {e};", params.join(", ")),
+        None if getter => format!("get {mname}(): {ret} throws {e};"),
+        None => format!("{mname}({}): {ret} throws {e};", params.join(", ")),
+    };
+    Some((iname, mname, sig))
 }
 
 /// How many members of an error union a message shows.

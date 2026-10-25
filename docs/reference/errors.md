@@ -192,8 +192,13 @@ A closure created inside a recursive function that it calls throws what the func
 throws before the closure (`if (d > max) throw new RangeError(…)` at the top, then
 `xs.map((x) => walk(x, d + 1))`); when the function throws more after it, such a closure, and a `catch` or promise whose
 error type depends on a function still being checked through recursion, may need a `throws`
-clause (``` the error type of this function is not known yet ```); when the recursion goes
-through an interface value, the `throws` clause goes on the interface method. Error types of
+clause (``` the error type of this function is not known yet ```). A call through an interface
+value whose method's error type is found only after the call is checked (the recursion goes
+through the interface, or an object literal is converted to the interface by code checked
+later) needs none: the program is checked again with that error type known, as in Node. Only
+when it holds a type the next check cannot carry over (an object type, `throw { code: 1 }`)
+does the `throws` clause go on the interface method (`get size(): string throws { code:
+string };`). Error types of
 overridden methods, and inferred error types of interface methods, cannot depend on type
 parameters; a written `throws` clause of a generic interface's method can name the interface's
 own parameters (`next(): IteratorResult<T> throws E` in `Iterator<T, E>`): an implementation
