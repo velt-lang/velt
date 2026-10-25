@@ -95,9 +95,11 @@ the middle of a request answers it first).
 Valid while the handler runs: the server reads the next request into the same buffer. The body
 is framed by `Content-Length` or `Transfer-Encoding: chunked` (decoded; extensions and trailers
 are skipped); an HTTP/1.1 client that sent `Expect: 100-continue` and waits with its body gets
-`100 Continue` when the handler first reads it. If the handler answers without reading, no 100
-is sent: the response goes out at once with `Connection: close`, and the body is not waited
-for (RFC 9110 §10.1.1). An HTTP/1.0 request's expectation is ignored.
+`100 Continue` when the handler first reads it, ahead of a response it wrote before reading. A
+streamed response (`stream`, `sse`, `sendStream`) sends the 100 just before its head, as Node
+does. If the handler answers at once and returns without reading, no 100 is sent: the response
+goes out with `Connection: close`, and the body is not waited for (RFC 9110 §10.1.1). An
+HTTP/1.0 request's expectation is ignored.
 
 - `isMethod(m: string): bool`, `pathIs(p: string): bool`: compare without making a string.
 - `method()`, `path()` (the target up to `?`), `query()` (after `?`, without it), `target()`.
