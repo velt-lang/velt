@@ -154,7 +154,16 @@ unsafe fn cell_of<'a>(c: &RawCell) -> Cell<'a> {
         INT => Cell::Int(c.int),
         FLOAT => Cell::Float(c.float),
         TEXT => Cell::Text(bytes()),
-        ASCII => Cell::Ascii(bytes()),
+        ASCII => {
+            let t = bytes();
+            // A driver that marks non-ASCII text `ASCII` would make the reader skip UTF-8
+            // checks: caught here in debug builds.
+            debug_assert!(
+                t.is_ascii(),
+                "ICE: a native driver sent non-ASCII text as ASCII"
+            );
+            Cell::Ascii(t)
+        }
         BLOB => Cell::Blob(bytes()),
         JSON => Cell::Json(bytes()),
         _ => Cell::Null,

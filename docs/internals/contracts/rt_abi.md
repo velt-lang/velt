@@ -137,8 +137,9 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
   and the byte at `i` is loaded inline (bounds-checked against the length); any other string
   calls `velt_rt_str_char_code_at`. The byte length (`Buffer.byteLength(s)`, intrinsic
   `StrByteLen`) is read inline too: `byte23 ≥ 0x80 ? byte23 & 0x1f : w1 & 0xffffffff`. Strings
-  are passed to the runtime by pointer for everything else. Test a form through byte 23: inline appends write single bytes
-  into `w2`, and reading `w2` as a word right after would stall on store forwarding.
+  are passed to the runtime by pointer for everything else. Test a form through byte 23: inline
+  appends write single bytes into `w2`, and reading `w2` as a word right after would stall on
+  store forwarding.
 - Invariants, checked by a **debug** runtime on every append (each appended piece is canonical
   WTF-8 with the unit and lone counts it is given, and the seam is canonical: O(piece), never a
   recount of the whole string) and in full after every operation by the runtime's own tests: the
