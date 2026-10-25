@@ -1182,7 +1182,11 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   side (`lower/view_unswitch.rs`): a test of a box in a local the loop does not change (by
   assignment or through its address) is false in the copy, entered after one test before the
   loop (a box never becomes a view); any other test that finds a view, and an `Index` past the
-  header's length, go on in the original loop at the same point. Array intrinsics that change
+  header's length, go on in the original loop at the same point, except an `Index` of a header
+  the copy knows is plain (`lower/view_unswitch_plain.rs`: one a test before found plain, with
+  nothing in between that may write memory), where it is a plain array's out-of-bounds error.
+  The copy's locals are its own, except those whose address the loop takes (a string buffer, a
+  captured `let`), which the copy and the original share. Array intrinsics that change
   the array, and assignments whose target goes through a view type, write the mirror back
   after the change, only the written element for an `Index` target and a swap
   (`__arrayViewFlushAt`), the new tail or length for `push` / `pop` / `truncate`

@@ -18,8 +18,9 @@
 //!   (`view_materialize`).
 //! - Any other test (a box in an object field, an element, a variable the loop or a closure may
 //!   assign) stays in the copy, but when it finds a view the copy goes on in the original loop
-//!   at the same point, its locals handed over. The copy then has no call on the view side, so
-//!   the backend keeps a plain array's header in registers there.
+//!   at the same point, its locals handed over (a local whose address the loop takes is not
+//!   copied but shared, so the pointers to it stay valid). The copy has no call on the view
+//!   side, so the backend keeps a plain array's header in registers there.
 //! - An element access whose index is not below the header's length (a view's is 0) goes on
 //!   in the original there too, whatever its box. So the copy reads only a plain array's
 //!   element, with no way on from the test where the index may be past the length: the index
@@ -433,8 +434,21 @@ impl FnLower<'_, '_> {
             map.insert(b, c);
         }
         // The copy's own locals: those only the loop mentions (not the parameters) are new in
-        // the copy, so that each temporary keeps its single assignment.
-        let mut outside = FxHashSet::default();
+        // the copy, so that each temporary keeps its single assignment. A local whose address
+        // the loop takes (a string buffer, a `let` a closure captures) is shared: the copy's
+        // pointers to it stay valid in the original when the copy goes on there.
+        let mut outside: FxHashSet<Local> = region
+            .iter()
+            .flat_map(|b| &self.blocks[b.0 as usize].0)
+            .filter_map(|s| match s {
+                vir::Stmt::Assign(_, Rvalue::AddrOf(p))
+                    if !matches!(p.proj.first(), Some(Proj::Deref(_))) =>
+                {
+                    Some(p.local)
+                }
+                _ => None,
+            })
+            .collect();
         for (i, (stmts, term)) in self.blocks.iter_mut().enumerate().take(copies) {
             if self.live[i] && !inside.contains(&BlockId(i as u32)) {
                 let mut note = |l: &mut Local| {

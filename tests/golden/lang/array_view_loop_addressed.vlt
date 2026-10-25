@@ -1,0 +1,132 @@
+// check: no leaks
+// Loops over rows of a view type (#1485) whose copy goes on in the original loop when a row is a
+// view, with locals reached through their address: the string buffer of a `+` chain, a `let` a
+// closure captures and changes, an array or object literal, a destructuring, an inner `for...of`
+// and a template literal. The original sees what the copy left in them.
+interface Cell {
+  n: number;
+  tag: string;
+}
+
+function view(): string[] {
+  const src: (string | number)[] = ["v0", "v1", "v2"];
+  const raw: any = src;
+  return raw as string[];
+}
+
+function concat(rows: string[][]): string {
+  let out = "";
+  for (let k = 0; k < rows.length; k++) out += "(" + rows[k].length + ")";
+  return out;
+}
+
+function concatAssign(rows: string[][]): string {
+  let out = "";
+  for (let k = 0; k < rows.length; k++) {
+    out = out + "{" + k + "," + rows[k].length + "}";
+  }
+  return out;
+}
+
+function grow(rows: string[][], tail: string): string {
+  let out = "";
+  for (let k = 0; k < rows.length; k++) {
+    let acc = "a" + k;
+    const add = (x: string): void => {
+      acc += x;
+    };
+    add("<");
+    const n = rows[k].length;
+    add(String(n) + tail);
+    add(">");
+    out += acc.length + ":" + acc.slice(0, 4) + ";";
+  }
+  return out;
+}
+
+function tags(rows: string[][]): string {
+  let out = "";
+  for (const row of rows) {
+    const tag = "[" + row.length + "]";
+    out += tag;
+  }
+  return out;
+}
+
+function counter(rows: string[][]): string {
+  let cnt = 0;
+  const next = (): number => ++cnt;
+  let out = "";
+  for (let k = 0; k < rows.length; k++) {
+    const n = rows[k].length;
+    out += "#" + next() + "=" + n + " ";
+  }
+  return out + "#" + cnt;
+}
+
+function counterInside(rows: string[][]): string {
+  let out = "";
+  for (let k = 0; k < rows.length; k++) {
+    let cnt = k * 10;
+    const bump = (): number => ++cnt;
+    bump();
+    const n = rows[k].length;
+    bump();
+    out += cnt + "/" + n + " ";
+  }
+  return out;
+}
+
+function show(c: Cell): string {
+  return c.tag + c.n;
+}
+
+function literals(rows: string[][]): string {
+  let out = "";
+  for (let k = 0; k < rows.length; k++) {
+    const pair = [k, rows[k].length];
+    const cell: Cell = { n: rows[k].length, tag: "c" + k };
+    const [a, b] = [rows[k].length, k];
+    out += pair[0] + pair[1] + "," + show(cell) + "," + a + b + `,${rows[k].length}-${k};`;
+  }
+  return out;
+}
+
+function inner(rows: string[][]): string {
+  let out = "";
+  for (let k = 0; k < rows.length; k++) {
+    let s = "";
+    for (const x of rows[k]) {
+      s += x + ".";
+    }
+    const parts = [...rows[k]];
+    out += s + "|" + parts.join("+") + " ";
+  }
+  return out;
+}
+
+function stored(rows: string[][]): string {
+  const fns: (() => string)[] = [];
+  for (let k = 0; k < rows.length; k++) {
+    let label = "r" + k;
+    fns.push(() => label);
+    label += ":" + rows[k].length;
+  }
+  return fns.map((f) => f()).join(" ");
+}
+
+const tail = "x".repeat(3000);
+for (let round = 0; round < 3; round++) {
+  const rows: string[][] = [["a", "bb"], view(), ["ccc"]];
+  console.log(concat(rows));
+  console.log(concatAssign(rows));
+  console.log(grow(rows, tail));
+  console.log(tags(rows));
+  console.log(counter(rows));
+  console.log(counterInside(rows));
+  console.log(literals(rows));
+  console.log(inner(rows));
+  console.log(stored(rows));
+}
+const first: string[][] = [view(), ["p"], view()];
+console.log(concat(first), tags(first), counter(first), grow(first, "yy"));

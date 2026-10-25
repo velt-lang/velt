@@ -2771,10 +2771,11 @@ converts that element (and, the first time, the ones before it), and a write of 
 `push`, `pop` or swap writes back only what changed; operations on the whole array (`slice`,
 spread, `sort`, `JSON.stringify`, `clone()`) bring every element up to date. So a loop over a
 view costs a plain loop plus a conversion of each element it reaches, and the elements after
-the last one read are never checked, as Node never checks them. `sort(cmp)` sorts a copy of the elements
-stably and writes them back. An object view whose field is an array of another element type
-(`(raw as any) as View` with `raw.items: string[]` and `View.items: Child[]`) shares that
-array as an array view. Array types that no conversion makes a view keep their layout and code.
+the last one read are never checked, as Node never checks them. `sort(cmp)` sorts a copy of
+the elements stably and writes them back. An object view whose field is an array of another
+element type (`(raw as any) as View` with `raw.items: string[]` and `View.items: Child[]`)
+shares that array as an array view. Array types that no conversion makes a view keep their
+layout and code.
 
 ```ts
 type VNode = { type: string };
