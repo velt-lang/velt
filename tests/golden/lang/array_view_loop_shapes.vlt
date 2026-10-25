@@ -1,0 +1,65 @@
+// check: no leaks
+// Versioned loops over a view type (#1485) in a generator, across await, with try/catch/finally,
+// and over a variable the outer loop assigns: each over a plain array and a view, as in Node.
+function* each(xs: string[]): Generator<string> {
+  for (let i = 0; i < xs.length; i++) {
+    yield xs[i] + i;
+  }
+  for (const s of xs) {
+    yield s;
+  }
+}
+
+async function slow(xs: string[]): Promise<number> {
+  let n = 0;
+  for (let i = 0; i < xs.length; i++) {
+    await Promise.resolve();
+    n += xs[i].length;
+    if (i === 1) {
+      xs.push("late");
+    }
+  }
+  return n;
+}
+
+function tryLoop(xs: string[]): string {
+  let out = "";
+  for (let i = 0; i < xs.length + 1; i++) {
+    try {
+      if (i === xs.length) {
+        throw new Error("end " + i);
+      }
+      out += xs[i];
+    } catch (e) {
+      out += "!" + (e as Error).message;
+    } finally {
+      out += ";";
+    }
+  }
+  return out;
+}
+
+function swapIn(xs: string[], ys: string[]): string {
+  let out = "";
+  let cur = xs;
+  for (let r = 0; r < 2; r++) {
+    for (let i = 0; i < cur.length; i++) {
+      out += cur[i];
+    }
+    cur = ys;
+  }
+  return out;
+}
+
+async function main() {
+  const plain: string[] = ["a", "b", "c"];
+  const raw: any[] = ["x", "y", "z"];
+  const view = raw as any as string[];
+  for (const xs of [plain, view]) {
+    console.log([...each(xs)].join(","));
+    console.log(await slow(xs), xs.length);
+    console.log(tryLoop(xs));
+  }
+  console.log(swapIn(plain, view), swapIn(view, plain));
+  console.log(raw.join(","));
+}

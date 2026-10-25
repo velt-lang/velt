@@ -27,7 +27,6 @@ use crate::body::{FnCx, Want};
 use crate::collect::forwarders::{synth_method, Host, Target};
 use crate::defs::ParamSig;
 use crate::hir::{self, DefId, ExprKind as H, ImplDef, PassMode, TyId, TyKind};
-use crate::iface_writes::SetterSrc;
 
 /// How a literal property is written.
 pub(super) enum Written<'e> {
@@ -40,13 +39,15 @@ pub(super) enum Written<'e> {
 }
 
 /// What fills an implementation slot.
-enum Slot {
+pub(super) enum Slot {
     /// The function in this field of the struct.
     Call(u32),
     /// The interface method's default body.
     Default,
     /// The value in this field of the struct (a field getter slot).
     Value(u32),
+    /// A setter writing this field of the struct (`{ v: 1 }` for `get v()` and `set v(x)`).
+    SetValue(u32),
 }
 
 /// One interface method, with the interface's type arguments substituted.
@@ -325,7 +326,18 @@ impl FnCx<'_, '_> {
             if slots[slot].is_some() {
                 continue;
             }
-            if m.default.is_some() {
+            // A plain value given for the getter: the setter writes it, as in JavaScript.
+            let getter = m.name.strip_prefix("set ").and_then(|n| {
+                (methods.iter().position(|g| g.is_getter && g.name == n)).and_then(|g| match slots
+                    [g]
+                {
+                    Some(Slot::Value(j)) => Some(j),
+                    _ => None,
+                })
+            });
+            if let Some(j) = getter {
+                slots[slot] = Some(Slot::SetValue(j));
+            } else if m.default.is_some() {
                 slots[slot] = Some(Slot::Default);
             } else if ok {
                 let (what, name) = match m.name.strip_prefix("set ") {
@@ -441,7 +453,7 @@ impl FnCx<'_, '_> {
         let dyn_self = self.cx.ty.intern(TyKind::Dyn(iface, niargs.clone()));
         let takes: Vec<bool> = values.iter().map(|v| v.2).collect();
         let this_of = |j: u32| takes[j as usize].then_some((dyn_self, impl_index));
-        let setters = literal_setters(
+        let setters = super::iface_object_setters::literal_setters(
             self.cx,
             (iface, methods.len()),
             &slots,
@@ -457,6 +469,14 @@ impl FnCx<'_, '_> {
                 (Slot::Value(j), _) => {
                     let ty = field_tys[j as usize].1;
                     crate::collect::getters::field_getter(self.cx, d, self_ty, j as usize, ty)
+                }
+                (Slot::SetValue(j), m) => {
+                    let ty = field_tys[j as usize].1;
+                    let borrowed = m
+                        .and_then(|m| m.params.first())
+                        .is_some_and(|p| p.mode == PassMode::Borrow);
+                    let setter = crate::collect::getters::field_setter_taking;
+                    setter(self.cx, d, self_ty, j as usize, ty, borrowed)
                 }
                 (s, Some(m)) => {
                     let params: Vec<ParamSig> = m
@@ -704,84 +724,5 @@ impl FnCx<'_, '_> {
         };
         let t = self.fn_type(params, ret, Some(throws));
         self.coerce(h, t)
-    }
-}
-
-/// How the literal stores each field of `iface` (`n_methods` methods), for the setter
-/// slots of `crate::iface_writes`: a plain value in its field of struct `d`, a `get f()` through
-/// the `set f(v)` stored next to it, or missing.
-fn literal_setters(
-    cx: &crate::ctx::Ctx,
-    (iface, n_methods): (DefId, usize),
-    slots: &[Option<Slot>],
-    field_tys: &[(String, TyId)],
-    (d, self_ty): (DefId, TyId),
-    this_of: &dyn Fn(u32) -> Option<(TyId, u32)>,
-    span: Span,
-) -> Vec<SetterSrc> {
-    let names: Vec<(String, bool)> = cx.iface(iface).map_or(vec![], |i| {
-        i.fields
-            .iter()
-            .map(|f| (f.name.clone(), f.readonly))
-            .collect()
-    });
-    let mut out = vec![];
-    for k in cx.setter_fields(iface) {
-        let (name, readonly) = &names[k];
-        out.push(match slots.get(n_methods + k) {
-            Some(Some(Slot::Value(j))) => SetterSrc::Field {
-                d,
-                self_ty,
-                index: *j as usize,
-                ty: field_tys[*j as usize].1,
-            },
-            _ => {
-                let set = format!("set {name}");
-                let found = field_tys.iter().position(|(n, _)| *n == set);
-                let param = found.and_then(|j| match cx.ty.kind(field_tys[j].1) {
-                    TyKind::FnPtr { params, .. } => params.last().copied(),
-                    _ => None,
-                });
-                match (found, param) {
-                    (Some(j), Some(param)) => SetterSrc::Call {
-                        d,
-                        self_ty,
-                        index: j as u32,
-                        fn_ty: field_tys[j].1,
-                        param,
-                        this: this_of(j as u32),
-                    },
-                    _ => match getter_ret(cx, slots.get(n_methods + k), field_tys) {
-                        Some(ty) if *readonly => SetterSrc::Unwritable {
-                            span,
-                            name: name.clone(),
-                            d,
-                            self_ty,
-                            ty,
-                        },
-                        _ => SetterSrc::Missing {
-                            span,
-                            name: name.clone(),
-                        },
-                    },
-                }
-            }
-        });
-    }
-    out
-}
-
-/// The type a `get f()` in getter slot `slot` gives.
-fn getter_ret(
-    cx: &crate::ctx::Ctx,
-    slot: Option<&Option<Slot>>,
-    field_tys: &[(String, TyId)],
-) -> Option<TyId> {
-    let Some(Some(Slot::Call(j))) = slot else {
-        return None;
-    };
-    match cx.ty.kind(field_tys.get(*j as usize)?.1) {
-        TyKind::FnPtr { ret, .. } => Some(*ret),
-        _ => None,
     }
 }

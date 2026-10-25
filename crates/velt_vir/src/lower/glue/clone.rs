@@ -144,7 +144,15 @@ impl FnLower<'_, '_> {
         self.switch_to(done);
     }
 
-    fn clone_array(&mut self, s: &Place, d: &Place, e: TyId) {
+    pub(in crate::lower) fn clone_array(&mut self, s: &Place, d: &Place, e: TyId) {
+        // A view copies its mirror, brought up to date: a plain array (array_view.rs).
+        let s = &match self.cx.array_view_of(e) {
+            true => {
+                let t = self.cx.intern(velt_sema::hir::TyKind::Array(e));
+                self.view_inline(s.clone(), t, super::super::array_view::ViewSync::All)
+            }
+            false => s.clone(),
+        };
         let len = self.rvalue_temp(Ty::U64, Rvalue::Use(Operand::Copy(proj(s, Proj::Field(1)))));
         let a = self.cx.array_agg();
         let empty = self.rvalue_temp(

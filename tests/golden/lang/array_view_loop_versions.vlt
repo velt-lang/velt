@@ -1,0 +1,92 @@
+// check: no leaks
+// Loops over a variable of a view type (#1485) run one way for a plain array and another for a
+// view: the same functions over both, with index reads, `v[i++]`, writes, pushes, `length`,
+// `for...of`, nested loops, `break` and `continue`, and a view that the loop reads past the
+// length it started with.
+function sumIndex(xs: string[]): number {
+  let total = 0;
+  for (let i = 0; i < xs.length; i++) {
+    total += xs[i].length;
+  }
+  return total;
+}
+
+function sumInc(xs: string[]): string {
+  let out = "";
+  let i = 0;
+  while (i < xs.length) {
+    out += xs[i++];
+  }
+  return out;
+}
+
+function sumOf(xs: string[]): string {
+  let out = "";
+  for (const s of xs) {
+    if (s === "skip") {
+      continue;
+    }
+    if (s === "stop") {
+      break;
+    }
+    out += s;
+  }
+  return out;
+}
+
+function grow(xs: string[], n: number): number {
+  for (let i = 0; i < n; i++) {
+    xs.push("p" + i);
+  }
+  return xs.length;
+}
+
+function upper(xs: string[]) {
+  for (let r = 0; r < 2; r++) {
+    for (let i = 0; i < xs.length; i++) {
+      xs[i] = xs[i] + (r === 0 ? "!" : "?");
+    }
+  }
+}
+
+function doubleWhileReading(xs: string[]): number {
+  // Pushes while it reads: the loop sees the new elements, as in Node.
+  let seen = 0;
+  for (let i = 0; i < xs.length && i < 6; i++) {
+    if (xs[i].length < 3) {
+      xs.push(xs[i] + "+");
+    }
+    seen++;
+  }
+  return seen;
+}
+
+function main() {
+  const plain: string[] = ["a", "bb", "skip", "ccc", "stop", "d"];
+  const raw: any[] = ["a", "bb", "skip", "ccc", "stop", "d"];
+  const view = raw as any as string[];
+  for (const xs of [plain, view]) {
+    console.log(sumIndex(xs), sumInc(xs), sumOf(xs));
+  }
+  console.log(grow(plain, 3), grow(view, 3), raw.length, raw[8]);
+  upper(plain);
+  upper(view);
+  console.log(plain.join(","));
+  console.log(raw.join(","));
+  const p2: string[] = ["x", "yy"];
+  const r2: any[] = ["x", "yy"];
+  const v2 = r2 as any as string[];
+  console.log(doubleWhileReading(p2), p2.join(","));
+  console.log(doubleWhileReading(v2), v2.join(","), r2.join(","));
+  // The original grows behind the view's back: the loop reads its new elements.
+  const r3: any[] = ["q"];
+  const v3 = r3 as any as string[];
+  let n = 0;
+  for (let i = 0; i < v3.length; i++) {
+    if (r3.length < 4) {
+      r3.push("r" + i);
+    }
+    n += v3[i].length;
+  }
+  console.log(n, v3.length, v3.join(","));
+}

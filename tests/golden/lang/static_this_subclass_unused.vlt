@@ -1,0 +1,15 @@
+// A static method writing `this.count`, inherited by a subclass the program never calls it
+// on: the write is the base class's, as in JavaScript (#1501).
+class Base {
+  static count: number = 0;
+  static inc(): number {
+    this.count += 1;
+    return this.count;
+  }
+  static twice(): number {
+    this.inc();
+    return this.inc();
+  }
+}
+class Sub extends Base {}
+console.log(Base.inc(), Base.twice(), Base.count, Sub.count);

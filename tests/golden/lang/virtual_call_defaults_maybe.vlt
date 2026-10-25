@@ -1,0 +1,25 @@
+// A virtual call passing a value that may be `undefined` (a call's result, a variable, an
+// optional field, `apply` with an empty list) takes the default of the override that runs
+// where the value is `undefined`, as in JavaScript (#1506).
+class B {
+  m(x: number = 1): string {
+    return "B" + x;
+  }
+}
+class D extends B {
+  override m(x: number = 2): string {
+    return "D" + x;
+  }
+}
+function pick(n: number): number | undefined {
+  return n > 0 ? n : undefined;
+}
+const xs: B[] = [new B(), new D()];
+for (const b of xs) {
+  const u = pick(0);
+  let w: number | undefined = undefined;
+  const o: { v?: number } = {};
+  console.log(b.m(u), b.m(w), b.m(o.v), b.m(pick(0)), b.m(pick(3)));
+  console.log(b.m.apply(b, []), b.m.call(b, undefined), b.m.apply(b, [7]));
+  console.log(b.m(pick(0) ?? 5), b.m((() => pick(0))()));
+}

@@ -303,6 +303,7 @@ impl FnLower<'_, '_> {
         body: &hir::Block,
         step: Option<&hir::Expr>,
     ) {
+        let first = self.loop_start();
         let cond_bb = self.new_block();
         let body_bb = self.new_block();
         let step_bb = if step.is_some() {
@@ -333,6 +334,7 @@ impl FnLower<'_, '_> {
             self.goto(cond_bb);
         }
         self.pop_scope();
+        self.note_loop(cond_bb, first);
         self.switch_to(exit);
     }
 

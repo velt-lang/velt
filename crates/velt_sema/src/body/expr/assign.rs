@@ -48,8 +48,8 @@ impl FnCx<'_, '_> {
                 prop,
                 optional: false,
             } => {
-                if self.static_field_target(object, prop) {
-                    return None;
+                if let Some(place) = self.static_field_target(object, prop) {
+                    return place.map(AssignTarget::Place);
                 }
                 let obj = self.assign_receiver(object);
                 let obj = match self.dynamic_write_receiver(obj) {

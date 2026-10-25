@@ -84,6 +84,7 @@ impl FnLower<'_, '_> {
                 .drops
                 .push(owner);
         }
+        let first = self.loop_start();
         let (cond_bb, body_bb, exit) = (self.new_block(), self.new_block(), self.new_block());
         self.goto(cond_bb);
         self.switch_to(cond_bb);
@@ -117,6 +118,7 @@ impl FnLower<'_, '_> {
         self.pop_scope();
         self.goto(cond_bb);
         self.pop_scope();
+        self.note_loop(cond_bb, first);
         self.switch_to(exit);
         if owner {
             self.pop_scope();

@@ -621,3 +621,171 @@ function __anyHoldsObject(v: any): boolean {
   const t = typeof v;
   return (t === "object" && v !== null) || t === "function";
 }
+
+// Array views (#1485; velt_vir lower/array_view.rs). An `any` holding an array of
+// another element type, converted to `T[]` (`kids as JSXChild[]`, or a cast `xs as T[]` of an
+// existing array, which sema writes through `any`), is a view of that one array, as in Node:
+// the `T[]` value's header points at an `__ArrayView<T>`, which holds the original array as an
+// `any` and a mirror of its elements converted to `T`. Lowering brings the mirror up to date
+// before each access to the view's contents (`__arrayViewSync`) and writes it back after each
+// change through the view (`__arrayViewFlush`), so reads see the original's current elements
+// and writes reach the original. Most accesses need only part of the mirror: `length` is the
+// original's, a read of element `i` (an index, a `for...of` step, a callback method's step)
+// brings only that element up to date (`__arrayViewSyncAt`), and a write of element `i` writes
+// back only that element (`__arrayViewFlushAt`). The mirror converts the original's elements
+// in order, up to the last one a read reaches, so the elements after it are never converted.
+// Nothing here is called in a program without views.
+
+/** The state of one view: the original array and the mirror of its elements as `T`. */
+class __ArrayView<T> {
+  __target: any;
+  __seen: T[];
+
+  constructor(target: any) {
+    this.__target = target;
+    this.__seen = [];
+  }
+}
+
+/** A view of the array `target` holds (moved in) as a `T[]`. */
+function __arrayViewNew<T>(target: any): __ArrayView<T> {
+  return new __ArrayView<T>(target);
+}
+
+/**
+ * The mirror brought up to date with the original: an element that is still the original's
+ * (`===` through `any`) is kept, so a borrow of it stays valid; any other is the original's
+ * element converted again (a `TypeError` when it is not a `T`). The mirror has the original's
+ * length afterwards.
+ */
+function __arrayViewSync<T>(v: __ArrayView<T>) {
+  const t = v.__target;
+  const seen = v.__seen;
+  const n = t.length as number;
+  for (let i = 0; i < n; i++) {
+    const cur: any = t[i];
+    if (i < seen.length) {
+      const had: any = seen[i];
+      if (had !== cur) {
+        seen[i] = cur as T;
+      }
+    } else {
+      seen.push(cur as T);
+    }
+  }
+  if (seen.length > n) {
+    seen.truncate(n as i64);
+  }
+}
+
+/**
+ * The mirror written back to the original after a change through the view: each element that
+ * is not the original's (`===` through `any`) is stored into it, converted to the original's
+ * element type (a `TypeError` when it cannot hold it), and a shorter mirror shortens it.
+ */
+function __arrayViewFlush<T>(v: __ArrayView<T>) {
+  __arrayViewFlushFrom(v, 0);
+}
+
+/**
+ * [`__arrayViewFlush`] of the mirror's elements from `from` on (the elements before it are
+ * the original's): after a `push` onto, or a shortening of, a mirror of the original's length.
+ */
+function __arrayViewFlushFrom<T>(v: __ArrayView<T>, from: usize) {
+  const t = v.__target;
+  const seen = v.__seen;
+  const n = seen.length;
+  for (let i: usize = from; i < n; i++) {
+    const now: any = seen[i];
+    const k = i as number;
+    if (k >= (t.length as number) || t[k] !== now) {
+      t[k] = now;
+    }
+  }
+  if ((t.length as number) > (n as number)) {
+    t.length = n as number;
+  }
+}
+
+/** The original's length, for `length` of a view: nothing is converted. */
+function __arrayViewLen<T>(v: __ArrayView<T>): usize {
+  return (v.__target.length as number) as usize;
+}
+
+/**
+ * Before a read of element `i` of a view: the mirror is no longer than the original, holds the
+ * original's elements up to `i` (each converted when first reached), and its element `i` is the
+ * original's current one. Nothing past `i` is converted.
+ */
+function __arrayViewSyncAt<T>(v: __ArrayView<T>, i: usize) {
+  const t = v.__target;
+  const seen = v.__seen;
+  const n = t.length as number;
+  if ((seen.length as number) > n) {
+    seen.truncate(n as i64);
+  }
+  const k = i as number;
+  if (k >= n) {
+    return;
+  }
+  const m = seen.length;
+  if (i < m) {
+    const cur: any = t[k];
+    const had: any = seen[i];
+    if (had !== cur) {
+      seen[i] = cur as T;
+    }
+    return;
+  }
+  for (let j = m as number; j <= k; j++) {
+    seen.push(t[j] as T);
+  }
+}
+
+/**
+ * Before a change of a view's length (`push`, `pop`, `truncate`): the mirror has the
+ * original's length, its new elements converted; with `last`, its last element is the
+ * original's current one.
+ */
+function __arrayViewSyncLen<T>(v: __ArrayView<T>, last: bool) {
+  const t = v.__target;
+  const seen = v.__seen;
+  const n = t.length as number;
+  if ((seen.length as number) > n) {
+    seen.truncate(n as i64);
+  }
+  for (let j = seen.length as number; j < n; j++) {
+    seen.push(t[j] as T);
+  }
+  if (last && n > 0) {
+    __arrayViewSyncAt(v, (n - 1) as usize);
+  }
+}
+
+/** After a write of element `i` of a view: that element written back to the original. */
+function __arrayViewFlushAt<T>(v: __ArrayView<T>, i: usize) {
+  const t = v.__target;
+  const seen = v.__seen;
+  if (i >= seen.length) {
+    return;
+  }
+  const now: any = seen[i];
+  const k = i as number;
+  if (k >= (t.length as number) || t[k] !== now) {
+    t[k] = now;
+  }
+}
+
+/**
+ * `sort(cmp)` of a view (`less(a, b)`: `cmp(a, b) < 0`): a copy of the mirror, brought up to
+ * date, sorted by the stable sort, becomes the mirror and is written back. The comparator may
+ * read the view meanwhile: it sees the unsorted elements, as the stable sort's own buffer
+ * gives no other view of them either.
+ */
+function __arrayViewSort<T, C>(v: __ArrayView<T>, cmp: (x: T, y: T) => C, neg: (c: C) => bool) {
+  __arrayViewSync(v);
+  const copy = v.__seen.slice();
+  copy.sort((a, b) => (neg(cmp(a, b)) ? -1 : 0));
+  v.__seen = copy;
+  __arrayViewFlush(v);
+}

@@ -307,44 +307,6 @@ impl FnCx<'_, '_> {
         self.mk(kind, ck.ret, span)
     }
 
-    /// A value of a type parameter bounded by a function type (`f: F`, `F extends (x: number)
-    /// => number`) as that function type: every call site makes `F` the bound itself
-    /// (`check_call`), so it is the same value (issue #1212). `Err(h)` for any other value.
-    pub(crate) fn fn_bound_value(&mut self, h: hir::Expr) -> Result<hir::Expr, hir::Expr> {
-        let TyKind::Param(p) = *self.cx.ty.kind(h.ty) else {
-            return Err(h);
-        };
-        let Some(b) = self.cx.constraint_of(p) else {
-            return Err(h);
-        };
-        if !self.cx.exact_fn_bound(b) {
-            return Err(h);
-        }
-        let span = h.span;
-        Ok(self.mk(H::Upcast(Box::new(h)), b, span))
-    }
-
-    /// A value of a type parameter bounded by an array type (`xs: T`, `T extends readonly
-    /// number[]`) as that array type, where the body needs it as one (`for...of`, an argument
-    /// of the bound's type; issue #1212): the value through an `any`, checked at run time as
-    /// `AnyTo` checks it (an instantiation at a tuple type stops with a `TypeError`).
-    /// `Err(h)` for any other value.
-    pub(crate) fn array_bound_value(&mut self, h: hir::Expr) -> Result<hir::Expr, hir::Expr> {
-        let TyKind::Param(p) = *self.cx.ty.kind(h.ty) else {
-            return Err(h);
-        };
-        let interface_bound = self.bounds.get(p as usize).is_some_and(|b| !b.is_empty());
-        let Some(b) = self.cx.constraint_of(p).filter(|_| !interface_bound) else {
-            return Err(h);
-        };
-        if !matches!(self.cx.ty.kind(b), TyKind::Array(_)) || self.cx.has_type_params(b) {
-            return Err(h);
-        }
-        let span = h.span;
-        let boxed = self.generic_as_any(h)?;
-        Ok(self.intrinsic(hir::Intrinsic::AnyTo, vec![boxed], b, span))
-    }
-
     /// Call through a function value (`TyKind::FnPtr`).
     pub(crate) fn call_value(&mut self, f: hir::Expr, args: &[ast::Expr], span: Span) -> hir::Expr {
         let f = match self.dynamic_apply(f, args, span) {
@@ -718,14 +680,18 @@ impl FnCx<'_, '_> {
 
     /// The function running static method `m` with `this` being class `this_class`: `m`, or its
     /// copy for that subclass when `m` uses `this` (`collect::static_this`).
-    pub(crate) fn static_def_for(&self, m: DefId, this_class: DefId) -> DefId {
+    /// A copy used is recorded (`Ctx::copy_uses`).
+    pub(crate) fn static_def_for(&mut self, m: DefId, this_class: DefId) -> DefId {
         match self.cx.static_this.get(&m) {
-            Some(&declaring) if declaring != this_class => self
-                .cx
-                .static_copies
-                .get(&(m, this_class))
-                .copied()
-                .unwrap_or(m),
+            Some(&declaring) if declaring != this_class => {
+                match self.cx.static_copies.get(&(m, this_class)).copied() {
+                    Some(copy) => {
+                        self.cx.copy_uses.push((self.body_def, copy));
+                        copy
+                    }
+                    None => m,
+                }
+            }
             _ => m,
         }
     }

@@ -1,0 +1,35 @@
+// `pick.vlt` written by hand: each override applies its own default to a value that may be
+// `undefined`, as the general fill entry does.
+class B {
+  m(a: number, b?: number): number {
+    const v = b === undefined ? 1 : b;
+    return a + v;
+  }
+}
+
+class D extends B {
+  override m(a: number, b?: number): number {
+    const v = b === undefined ? 2 : b;
+    return a - v;
+  }
+}
+
+class E extends D {
+  override m(a: number, b?: number): number {
+    const v = b === undefined ? 3 : b;
+    return a * 0.5 + v;
+  }
+}
+
+const ys: B[] = [new B(), new D(), new E()];
+
+function pick(i: number): number | undefined {
+  return (i & 1) === 0 ? undefined : i;
+}
+
+let s = 0;
+const t0 = Date.now();
+for (let i = 0; i < 200000000; i++) {
+  s += ys[i % 3].m(i, pick(i));
+}
+console.log(s, "ms", Date.now() - t0);

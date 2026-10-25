@@ -1,0 +1,1 @@
+error: cannot assign to `Sub.count`: `count` is a static field of `Base`, which `Sub` inherits

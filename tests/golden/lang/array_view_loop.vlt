@@ -1,0 +1,57 @@
+// check: no leaks
+// Loops over a large view (#1485) cost a plain loop plus each element's conversion: `length`
+// is the original's, and an index, a `for...of` step, a callback method's step, a write of
+// an element, a `push` and a swap bring only the elements they touch up to date. A view
+// converts only the elements a read reaches (and those before them), so an element nothing
+// reads is never checked, as Node never checks it.
+type Child = string | number | null;
+
+function main() {
+  const n = 10000;
+  const raw: number[] = [];
+  for (let i = 0; i < n; i++) {
+    raw.push(i);
+  }
+  const v = raw as any as Child[];
+  let sum = 0;
+  for (let i = 0; i < v.length; i++) {
+    const c = v[i];
+    if (typeof c === "number") {
+      sum += c;
+    }
+  }
+  for (const c of v) {
+    if (typeof c === "number") {
+      sum += c;
+    }
+  }
+  v.forEach((c) => {
+    if (typeof c === "number") {
+      sum += c;
+    }
+  });
+  console.log(sum, v.map((c) => (typeof c === "number" ? c * 2 : 0))[n - 1]);
+
+  // Writes of elements, pushes and a reverse (swaps) through the view reach the original.
+  for (let i = 0; i < n; i++) {
+    v[i] = i % 7;
+  }
+  for (let i = 0; i < n; i++) {
+    v.push(1);
+  }
+  v.reverse();
+  let total = 0;
+  for (const x of raw) {
+    total += x;
+  }
+  console.log(raw.length, total, raw[0], raw[n * 2 - 1]);
+  while (v.length > n) {
+    v.pop();
+  }
+  console.log(raw.length, raw[n - 1], v[n - 1]);
+
+  // Only what is read is converted: the string after the first element is never reached.
+  const mixed: any = [[1, 2], "not an array"];
+  const nested = mixed as Child[][];
+  console.log(nested.length, nested[0][1]);
+}

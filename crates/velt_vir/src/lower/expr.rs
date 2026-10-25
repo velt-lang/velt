@@ -146,8 +146,10 @@ impl FnLower<'_, '_> {
                 self.binop(*op, l, r, lhs.ty, e.ty)
             }
             K::Logical { op, lhs, rhs } => self.logical(*op, lhs, rhs),
-            K::Assign { place, value } => self.assign_expr(place, value),
-            K::CompoundAssign { op, place, value } => self.compound_assign(*op, place, value),
+            K::Assign { place, value } => self.with_view_writes(|lw| lw.assign_expr(place, value)),
+            K::CompoundAssign { op, place, value } => {
+                self.with_view_writes(|lw| lw.compound_assign(*op, place, value))
+            }
             K::Call {
                 callee: hir::Callee::Intrinsic(hir::Intrinsic::SourceLocation),
                 ..

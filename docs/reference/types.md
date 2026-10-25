@@ -213,12 +213,10 @@ usable and no copy method is needed.
   primitive (`+` asks for it before `toString()`, as in JS; a `Date` by its `toString()`), else
   by its `toString()`, and a value whose type is a type parameter as `String(x)` writes the
   type it is instantiated with (an `any` and a class instance with `+`'s order: `valueOf()`
-  first), also inside another type (`"v=" + t[k]` with `k: K extends keyof T`). A union of
-  strings, numbers and booleans (`"k:" + x` with `x: string | number`), or one with an array or
-  a type parameter among its members, is written by the member it holds, as `String(x)` writes
-  it. Any other value
-  next to a string is a compile error; build that text with a template literal
-  (`` `Total: ${m}` ``).
+  first), also inside another type (`"v=" + t[k]` with `k: K extends keyof T`). Any other
+  value next to a string is written as `String(x)` writes it: `"" + s` of a
+  `string | string[] | null` is `"k,l"`, `"x"` or `"null"`, an object without a `toString()` is
+  `[object Object]`, a map `[object Map]`. A function value there is a compile error.
 - `String(x)` converts any value that can be printed to its text, exactly as `` `${x}` ``
   writes it (`String(1.5)` is `"1.5"`, `String(null)` is `"null"`, `String([1, 2])` is
   `"1,2"`, also when the array is held by a union: `String(x)` of a `string | number[]` or a
@@ -1917,7 +1915,9 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   initializer or a default value for now. TypeScript also converts an existing array, which
   is unsound: storing a `Named` that is not a `C` through the `Named[]` would put it into the
   `C[]`. Velt reports that and
-  suggests a copy, `[...cs]` or `cs.map((x): Named => x)`. A generic class converts only when
+  suggests a copy, `[...cs]` or `cs.map((x): Named => x)`. An `as` cast of an existing array to
+  another element type (`cs as Named[]`) is allowed and gives a view of the array (see "any and
+  unknown" below), checked element by element as it is read and written. A generic class converts only when
   it has no base class, no subclasses and no `[Symbol.dispose]()`; the new object shares the
   old one's field values.
 
@@ -2518,9 +2518,25 @@ Where an interface with methods is expected (an annotation, a parameter, a retur
   parameter types may be left out: they come from the interface's method.
 - A field is a value, or a **getter** `get f() { … }`, which runs on each read. A getter
   method of the interface (`get f(): T`) takes a getter or a value (`f: 5`), and a setter method
-  (`set f(v: T)`) a setter `set f(v) { … }`, which runs on each `x.f = v`. A field of the
+  (`set f(v: T)`) a setter `set f(v) { … }`, which runs on each `x.f = v`; a value given for a
+  `get f()`/`set f(v)` pair (`{ f: 1 }`) is stored, and `x.f = v` writes it. A class implements
+  such a pair with a field of the same name and type, too (`class C implements T { f = 3 }`). A field of the
   interface can't be written through the interface value yet (`x.f = v` is an error), so a
   setter given for a field never runs: declare a setter method in the interface instead.
+  A type alias of an object type with accessors (`type Sized = { get size(): number }`) is
+  such an interface. An object type written in place (`x: { get size(): number }`) reads a
+  getter as a `readonly` field (and a setter as a field): it takes plain values (`{ size: 2 }`)
+  but not yet an object literal with accessors or a class instance. Such an alias is an
+  interface, not an object type: a value of an object type with the same members converts to it
+  (`const t: T = p` with `p: { v: number }`, or an interface `I { v: number }`, or a wider
+  object type, the same object, read and written through it). When its accessors come in pairs
+  of one type (`get v(): number` with `set v(x: number)`, or a getter alone), an object literal
+  of values for it (`{ v: 1 }`) is such an object, and a value of it converts back to that
+  object type (`const q: { v: number } = t`, also a `readonly` or field-only interface form of
+  it) as the object it holds. That conversion needs every value of the alias in the program to
+  hold such an object: a class implementing it, or a literal with accessors for it, makes it an
+  error, also when the value reaches the alias through another interface of the same members. `JSON.stringify`, object spread (`{ ...t }`), `keyof T` and `Partial<T>` do not take
+  the alias yet.
 - A method with a default body and an optional field may be left out (the field is `undefined`);
   every other member must be given, and a member the interface doesn't declare is an error.
 - The value is an interface value: its members are read and called through the interface.
@@ -2809,6 +2825,47 @@ function main(): void {
   console.log(p.price, item.name, tracked.hits); // 3 pen 0
   const back: any = item;
   console.log(back === a, item === (a as Item)); // true true
+}
+```
+
+An array of another element type converted to an array type is a *view* of that one array, in
+every program (#1485): an `any` holding an array converted to `T[]` (`kids as JSXChild[]` with
+`kids` holding `["a", 1]`, also as a union's array member: `kids as JSXChild`), and a cast of an
+existing array to another, comparable element type (`items as VNode[]` with `items:
+JSXElement[]`, `result as JSXChildren`), which sema writes as the conversion through `any`.
+Nothing is copied up front: each access sees the original's elements at that moment, each
+converted to `T` with the check above (an object element of another type is a view of it, in a
+program with views of objects), and a change through the view (an index assignment, `push`,
+`pop`, `reverse`, `splice`, ...) is written back to the original at once, converted to the
+original's element type, so a value the original's element type cannot hold (a `string` written
+into a view of a `VNode[]`) stops with a `TypeError` where Node stores it. Back in an `any` the
+view is the original array (`===`, `Array.isArray`, `WeakMap` keys). An array has one view of
+each element type at a time, so two conversions of one array to `T[]` are one value, as in
+Node: `===`, `indexOf`, `includes`, and `Set` and `Map` keys see one array. A view sent to
+another thread or `clone()`d is a plain array of its elements (a copy, as any array sent while
+it is still used here). An access brings only what it touches up to date: `length` is the
+original's, an index, a `for...of` step or a callback method's step (`forEach`, `map`, ...)
+converts that element (and, the first time, the ones before it), and a write of an element, a
+`push`, `pop` or swap writes back only what changed; operations on the whole array (`slice`,
+spread, `sort`, `JSON.stringify`, `clone()`) bring every element up to date. So a loop over a
+view costs a plain loop plus a conversion of each element it reaches, and the elements after
+the last one read are never checked, as Node never checks them. `sort(cmp)` sorts a copy of
+the elements stably and writes them back. An object view whose field is an array of another
+element type (`(raw as any) as View` with `raw.items: string[]` and `View.items: Child[]`)
+shares that array as an array view. Array types that no conversion makes a view keep their
+layout and code.
+
+```ts
+type VNode = { type: string };
+type JSXChild = VNode | string | number | boolean | null | undefined | JSXChild[];
+
+function main(): void {
+  const kids: any = ["a", 1];
+  const view = kids as JSXChild[]; // a view of the array `kids` holds
+  view.push("b");
+  console.log(kids.length, view[2]); // 3 b
+  const back: any = view;
+  console.log(back === kids); // true
 }
 ```
 

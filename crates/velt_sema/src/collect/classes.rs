@@ -9,6 +9,9 @@ use std::collections::BTreeSet;
 use velt_common::Diagnostic;
 use velt_syntax::ast;
 
+use super::fill_defaults::{
+    fill_key, fill_method, fill_positions, trailing_counts, Overrides, FILL,
+};
 use super::forwarders::{synth_method, Host, Target};
 use super::lookup::{lookup_method, Found};
 use crate::ctx::Ctx;
@@ -25,9 +28,9 @@ pub(super) fn check_classes(cx: &mut Ctx) {
     for &d in &adts {
         base_first(cx, d, &mut seen, &mut order);
     }
-    let overridden = overridden_methods(cx, &adts);
+    let (overridden, overrides) = overridden_methods(cx, &adts);
     for d in order {
-        layout_vtable(cx, d, &overridden);
+        layout_vtable(cx, d, &overridden, &overrides);
         inherit_ctor(cx, d);
         check_field_inits(cx, d);
     }
@@ -48,9 +51,11 @@ fn base_first(cx: &Ctx, d: DefId, seen: &mut FxHashSet<DefId>, order: &mut Vec<D
     order.push(d);
 }
 
-/// (class introducing the method, method name) for every method overridden somewhere.
-fn overridden_methods(cx: &mut Ctx, adts: &[DefId]) -> Overridden {
+/// (class introducing the method, method name) for every method overridden somewhere, and the
+/// overriding methods of each.
+fn overridden_methods(cx: &mut Ctx, adts: &[DefId]) -> (Overridden, Overrides) {
     let mut out = BTreeSet::new();
+    let mut overrides = Overrides::default();
     for &d in adts {
         let decl = cx.adt(d).and_then(|a| a.decl).expect("ICE: class decl");
         // `override #m` is reported by `own_methods`: private names are never inherited.
@@ -79,6 +84,13 @@ fn overridden_methods(cx: &mut Ctx, adts: &[DefId]) -> Overridden {
                             out.insert((o, set_key));
                         }
                     }
+                    if let Some(r) = cx.adt(d).and_then(|a| a.methods.get(&key)) {
+                        let def = r.def;
+                        overrides
+                            .entry((origin, key.clone()))
+                            .or_default()
+                            .push(def);
+                    }
                     out.insert((origin, key));
                 }
                 None => cx.err(
@@ -91,7 +103,7 @@ fn overridden_methods(cx: &mut Ctx, adts: &[DefId]) -> Overridden {
             }
         }
     }
-    out
+    (out, overrides)
 }
 
 /// Does `d`'s method `key` redefine one a std class declares (`Error.toString`)? TypeScript
@@ -162,9 +174,14 @@ impl Vtable {
 
 type Overridden = BTreeSet<(DefId, String)>;
 
-fn layout_vtable(cx: &mut Ctx, d: DefId, overridden: &Overridden) {
+fn layout_vtable(cx: &mut Ctx, d: DefId, overridden: &Overridden, overrides: &Overrides) {
     let a = cx.adt(d).expect("ICE: adt");
     let n = a.generics.len();
+    let base_vt = a
+        .base
+        .and_then(|b| cx.class_of(b))
+        .and_then(|(b, _)| cx.adt(b))
+        .map(|ba| (ba.vtable.clone(), ba.vslots.clone()));
     let mut vt = match a.base.and_then(|b| cx.class_of(b)) {
         Some((b, _)) => {
             let ba = cx.adt(b).expect("ICE: base");
@@ -194,10 +211,60 @@ fn layout_vtable(cx: &mut Ctx, d: DefId, overridden: &Overridden) {
             vt.push(name, fwd);
         }
     }
+    fill_slots(cx, d, base_vt, overrides, &mut vt);
     mark_dispatched(cx, &vt.entries);
     let a = cx.adt_mut(d);
     a.vtable = vt.entries;
     a.vslots = vt.slots;
+}
+
+/// The default-filling slots of `d`'s vtable (`fill_defaults`): an inherited one gets an entry
+/// of `d`'s own where `d` overrides its method; a method `d` introduces gets them when an
+/// override gives one of its parameters another default.
+fn fill_slots(
+    cx: &mut Ctx,
+    d: DefId,
+    base: Option<(Vec<DefId>, FxHashMap<String, u32>)>,
+    overrides: &Overrides,
+    vt: &mut Vtable,
+) {
+    let (base_entries, base_slots) = base.unwrap_or_default();
+    let mut inherited: Vec<u32> = (vt.slots.iter())
+        .filter(|(k, _)| k.starts_with(FILL))
+        .map(|(_, &s)| s)
+        .collect();
+    inherited.sort();
+    for fslot in inherited {
+        let entry = vt.entries[fslot as usize];
+        let Some(f) = cx.fills.get(&entry).cloned() else {
+            continue;
+        };
+        let Some(&mslot) = vt.slots.get(&f.key) else {
+            continue;
+        };
+        let m = vt.entries[mslot as usize];
+        if base_entries.get(mslot as usize) != Some(&m) {
+            let def = fill_method(cx, d, (m, &f.key), &f.positions, f.trailing);
+            vt.entries[fslot as usize] = def;
+        }
+    }
+    let mut own: Vec<(u32, String)> = (vt.slots.iter())
+        .filter(|(k, _)| !base_slots.contains_key(*k) && !k.starts_with(FILL))
+        .map(|(k, &s)| (s, k.clone()))
+        .collect();
+    own.sort();
+    for (mslot, key) in own {
+        let m = vt.entries[mslot as usize];
+        let positions = fill_positions(cx, overrides, d, &key, m);
+        if positions.is_empty() {
+            continue;
+        }
+        let trailing = trailing_counts(cx, m, &positions);
+        for t in std::iter::once(None).chain(trailing.into_iter().map(Some)) {
+            let def = fill_method(cx, d, (m, &key), &positions, t);
+            vt.push(fill_key(&key, t), def);
+        }
+    }
 }
 
 /// `override` rules for `d`'s own methods; overrides replace slots, overridden ones get one.

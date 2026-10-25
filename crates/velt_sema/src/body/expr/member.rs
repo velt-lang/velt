@@ -181,7 +181,7 @@ impl FnCx<'_, '_> {
                     if self.cx.enum_info(d).is_some() {
                         return self.variant_value(d, prop, &[], exp, span);
                     }
-                    if let Some(h) = self.static_field(d, prop, want, span) {
+                    if let Some(h) = self.inherited_static_field(d, prop, want, span) {
                         return h;
                     }
                     if let Some(h) = self.static_method_value(d, d, prop, exp, span) {
@@ -633,6 +633,7 @@ impl FnCx<'_, '_> {
             .or_else(|h| self.param_as_object_part(h, target))
             .or_else(|h| self.narrowing_assertion(h, target, span))
             .or_else(|h| self.union_view_cast(h, target, span))
+            .or_else(|h| self.array_view_cast(h, target, span))
             .or_else(|h| self.generic_assertion(h, target));
         match coerced {
             Ok(h) => h,

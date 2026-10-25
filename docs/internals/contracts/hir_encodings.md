@@ -1186,6 +1186,41 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   its traps (`JSON` as the `any` it converts to). The prelude's
   `__proxyKeysOf`, `__proxyHas`, `__proxyHasOwnOf` and `__proxyAny`, which sema calls behind
   `IsTypedProxy`, take such a value (no longer a proxy once in an `any`) as a plain one.
+- Array views (#1485, velt_vir `lower/array_view.rs`, std/prelude/zzz_adapt.vlt; additive): the
+  array types that `AnyTo` targets in the program's own code (also as a union's array member),
+  and the arrays their elements hold, are boxed *view types*. `AnyTo` to a view type of an `any`
+  holding an array (or tuple) that is no such value is a box whose header is
+  `{ data: view | 1, len: 0, cap: 0 }`, `view` the prelude's `__ArrayView<T>` (`__target`: the
+  original as an `any`, `__seen`: a mirror `T[]`). A view's own header has length 0, so an
+  `Index` read or target below the header's length, a `for...of` step below it and a `push`
+  with room are a plain array's, with no test; past the length (a view always is), for
+  `ArrayLen` when the header's length is 0, before a `push` grows the array, and for every other
+  access to the contents (`content`), bit 0 of `data` is tested. A view first syncs the mirror
+  as far as the access needs (`__arrayViewSyncAt` for an `Index` or a `for...of` step,
+  `__arrayViewSyncLen` before a `push` / `pop` / `truncate`, `__arrayViewSync` for the rest: an
+  element still `===` the original's is kept, others are converted again; elements are
+  converted in order as first reached) and the access runs on the mirror; `ArrayLen` is the
+  original's length (`__arrayViewLen`). A loop with such tests runs as a copy without the view
+  side (`lower/view_unswitch.rs`): a test of a box in a local the loop does not change (by
+  assignment or through its address) is false in the copy, entered after one test before the
+  loop (a box never becomes a view); any other test that finds a view, and an `Index` past the
+  header's length, go on in the original loop at the same point, except an `Index` of a header
+  the copy knows is plain (`lower/view_unswitch_plain.rs`: one a test before found plain, with
+  nothing in between that may write memory), where it is a plain array's out-of-bounds error.
+  The copy's locals are its own, except those whose address the loop takes (a string buffer, a
+  captured `let`), which the copy and the original share. Array intrinsics that change
+  the array, and assignments whose target goes through a view type, write the mirror back
+  after the change, only the written element for an `Index` target and a swap
+  (`__arrayViewFlushAt`), the new tail or length for `push` / `pop` / `truncate`
+  (`__arrayViewFlushFrom`), else all of it (`__arrayViewFlush`). A call of
+  `std/sort/stable::stableSort` on a view sorts a copy of the mirror instead
+  (`__arrayViewSort`); `ArrayMove` / `ArraySetLen` on a view stop with a `TypeError`. The
+  runtime's table of array views (rt_abi.md "Views") keeps one live view per (original, view
+  type), so two conversions give one box. A view converts to `any` as `__target`, drops by
+  leaving the table and releasing the view object, and deep-copies or transfers as a plain
+  array of the mirror (a transfer in place leaves the table first). Sema writes a cast
+  `xs as U[]` of an `S[]` with comparable element types (or to a union with one array member
+  `U[]`) as `AnyTo(U[], xs as any)`, upcast to the union.
 - Object conversions (#650, #651; sema `body/expr/object_copy.rs`): an object type converted to
   another object type whose fields it has (in another order, or only some of them) is an
   `AdtLit` of the expected type with `converted: Conversion::Copy`, whose fields each read the

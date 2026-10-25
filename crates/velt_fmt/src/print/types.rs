@@ -250,6 +250,9 @@ impl<'a> Printer<'a> {
         if let Some(sig) = self.method_sig_type(&f.name, f.optional, &f.ty) {
             return sig;
         }
+        if let Some(doc) = self.type_accessor(f) {
+            return doc;
+        }
         let key = self.prop_key(&f.name);
         let name = if f.readonly {
             cat!["readonly ", key]
@@ -536,4 +539,28 @@ pub(super) fn callable_members<'a>(
     out.extend(sigs.iter().map(IndexSigMember::Sig));
     out.sort_by_key(|m| m.range().0);
     out
+}
+
+impl Printer<'_> {
+    /// A field the parser made of accessors in an object type (`get v(): T`, `set v(x: T)`):
+    /// each accessor as written, in the written order.
+    fn type_accessor(&mut self, f: &ObjectTypeField) -> Option<Doc> {
+        if f.accessors.is_empty() {
+            return None;
+        }
+        let key = self.prop_key(&f.name);
+        let mut parts = vec![];
+        for a in &f.accessors {
+            let ty = self.ty(&a.ty);
+            parts.push(match &a.setter_param {
+                None => cat!["get ", key.clone(), "(): ", ty],
+                Some(p) => cat!["set ", key.clone(), "(", p.name.clone(), ": ", ty, ")"],
+            });
+        }
+        let mut doc = parts.remove(0);
+        for p in parts {
+            doc = cat![doc, "; ", p];
+        }
+        Some(doc)
+    }
 }

@@ -677,8 +677,10 @@ impl FnLower<'_, '_> {
             return Operand::Copy(out);
         }
         let (ok_bb, bad_bb, done) = (self.new_block(), self.new_block(), self.new_block());
-        if matches!(self.cx.kind(ty), TyKind::Adt(..)) {
-            self.cx.note_proxy_target(ty);
+        match self.cx.kind(ty) {
+            TyKind::Adt(..) => self.cx.note_proxy_target(ty),
+            TyKind::Array(_) => self.cx.note_array_view(ty),
+            _ => {}
         }
         // A class without type arguments: an instance of it or of a subclass. A generic class
         // (`Box<number>`, `Map<string, string>`): the table of that very instantiation, since
@@ -741,6 +743,10 @@ impl FnLower<'_, '_> {
             self.switch_to(err);
             // An object of another type: a view of it (any_view.rs).
             self.any_view(p, ty, &out, done);
+        }
+        if self.cx.array_view(ty) {
+            // An array of another element type: a view of it (array_view.rs).
+            self.array_view_make(p, desc.clone(), ty, &out, done);
         }
         self.any_type_error(desc, ty);
         self.switch_to(done);

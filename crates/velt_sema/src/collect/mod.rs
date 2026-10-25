@@ -27,6 +27,7 @@ pub(crate) mod exports;
 mod extend_shadow;
 pub(crate) mod extended_layouts;
 mod field_only;
+pub(crate) mod fill_defaults;
 pub(crate) mod forwarders;
 mod generator_sig;
 pub(crate) mod getters;

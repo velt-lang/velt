@@ -89,6 +89,9 @@ pub(super) struct Boxing {
     /// The types a `Proxy` object's target is traced as by weak maps (glue/trace.rs): the
     /// concrete `AnyTo` targets and `Proxy` itself. Others are opaque (a leak at worst).
     pub(super) proxy_traced: BTreeSet<TyId>,
+    /// Array views (#1485, array_view.rs): the boxed array types whose header may point at an
+    /// `__ArrayView`. Empty in a program that converts no `any` to an array type.
+    pub(super) array_views: FxHashSet<TyId>,
     /// The value types of the program's `RwLock`s, the lock set they reach (class hierarchies
     /// by root, other counted types), and those whose `read` is exclusive (locks.rs).
     pub(super) lock_values: FxHashSet<TyId>,
@@ -231,6 +234,8 @@ pub(super) struct Facts {
     pub(super) proxy_targets: FxHashSet<TyId>,
     /// `(from, to)` of the `Upcast`s lowered: a proxiable `from` makes `to` proxiable.
     pub(super) proxy_casts: FxHashSet<(TyId, TyId)>,
+    /// Array types an `any` is converted to in the program's own code (array_view.rs).
+    pub(super) array_view_targets: FxHashSet<TyId>,
     /// A share was lowered as a placeholder because its type was not counted yet: the output
     /// of this pass must not be used.
     pub(super) unmet: bool,
@@ -403,6 +408,7 @@ impl Cx<'_> {
         next.boxes
             .extend(self.facts.identity_borrows.iter().copied());
         self.close_proxies(&mut next);
+        self.close_array_views(&mut next);
         let mut work: Vec<TyId> = self.facts.shares.iter().copied().collect();
         // A weak key of type `object` (issue #926) is any dynamic value's object: each type
         // dynamic values hold is counted, so its data pointer is the object itself.

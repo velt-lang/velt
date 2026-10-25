@@ -315,6 +315,9 @@ impl FnCx<'_, '_> {
             Err(()) => return self.error_expr(span),
         };
         if let Some(target) = self.literal_iface(exp) {
+            if let Some(h) = self.plain_literal_as_iface(props, &target, span) {
+                return h;
+            }
             return self.iface_object(props, target, span);
         }
         if let Some(h) = self.accessor_literal(props, exp, span) {

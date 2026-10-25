@@ -157,6 +157,7 @@ impl FnLower<'_, '_> {
 
     pub(super) fn index_expr(&mut self, base: &hir::Expr, index: &hir::Expr) -> Operand {
         let bty = self.sub(base.ty);
+        let mut pre_i = None;
         // A table's header is the inline value, also where arrays of its type are boxes.
         let arr = match self.table_read(base) {
             Some(table) => table,
@@ -180,10 +181,15 @@ impl FnLower<'_, '_> {
                 };
                 let v = self.projection_base(base, hold);
                 let arr = self.place_of(v, bty);
-                self.content(&arr, bty)
+                if let Some(p) = self.view_index_elem(&arr, bty, index, None, None) {
+                    return Operand::Copy(p);
+                }
+                let (arr, i) = self.index_content(&arr, bty, index, None, None);
+                pre_i = i;
+                arr
             }
         };
-        let i = self.expr(index);
+        let i = pre_i.unwrap_or_else(|| self.expr(index));
         let ity = self.vty(index.ty);
         Operand::Copy(self.elem_place_checked(&arr, bty, i, ity))
     }
@@ -346,14 +352,6 @@ impl FnLower<'_, '_> {
         None
     }
 
-    /// About to write into the counted object of type `ty` whose pointer `p` holds, as part of
-    /// an assignment target (rc.rs `write_barrier`, the lock set).
-    pub(super) fn target_barrier(&mut self, p: &Place, ty: TyId) {
-        if !self.read_target && self.cx.lock_counted(ty) && !self.dead() {
-            self.write_barrier(Operand::Copy(p.clone()), ty);
-        }
-    }
-
     /// Evaluate a place expression (assignment target).
     pub(super) fn place_expr(&mut self, e: &hir::Expr) -> Place {
         self.place_expr_with(e, &mut VecDeque::new())
@@ -408,19 +406,11 @@ impl FnLower<'_, '_> {
             K::Index { base, index, .. } => {
                 let bty = self.sub(base.ty);
                 let arr = self.place_expr_with(base, pre);
+                let mark = self.view_writes_mark();
                 if !self.captured_root(base) {
                     self.target_barrier(&arr, bty);
                 }
-                let arr = self.content(&arr, bty);
-                let i = match pre.pop_front() {
-                    Some(i) => i,
-                    None => self.expr(index),
-                };
-                let ity = self.vty(index.ty);
-                let prev = self.enter_span(e.span);
-                let p = self.elem_place_checked(&arr, bty, i, ity);
-                self.restore_loc(prev);
-                p
+                self.index_target(&arr, bty, index, pre.pop_front(), mark, e.span)
             }
             K::UnwrapSome(inner, _) => {
                 let oty = self.sub(inner.ty);
