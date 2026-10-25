@@ -564,34 +564,14 @@ impl Ctx<'_> {
                 .any(|x| x == b || self.iface_ancestors(x).contains(b));
         }
         if let TyKind::Dyn(d, args) = self.ty.kind(ty).clone() {
-            // An interface value satisfies the interfaces its interface extends (#1368), unless
-            // the bound has a generic method: those have no slot in the value's table.
-            if self.extends_iface(&Bound { iface: d, args }, b) && !self.has_generic_method(b) {
+            // An interface value satisfies the interfaces its interface extends (#1368); a
+            // generic method of the bound is called through its table's instantiations (#943).
+            if self.extends_iface(&Bound { iface: d, args }, b) {
                 return true;
             }
         }
         self.impl_args(ty, b.iface)
             .is_some_and(|args| args == b.args)
-    }
-
-    /// Does interface `b`, or one it extends, declare a generic method?
-    pub(crate) fn has_generic_method(&mut self, b: &Bound) -> bool {
-        let mut todo = vec![b.clone()];
-        let mut seen = 0;
-        while let Some(x) = todo.pop() {
-            seen += 1;
-            if seen > 64 {
-                return true;
-            }
-            let generic = self
-                .iface(x.iface)
-                .is_some_and(|i| i.methods.iter().any(|m| m.generics.len() > 0));
-            if generic {
-                return true;
-            }
-            todo.extend(self.iface_ancestors(&x));
-        }
-        false
     }
 
     /// Does the interface `from` extend `to`, directly or through its parents (or is it `to`)?

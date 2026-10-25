@@ -55,6 +55,47 @@ impl FnCx<'_, '_> {
         );
     }
 
+    /// A value of class type `ty` (not a `new` of it, which is exactly that class) converted to
+    /// interface `iface` (at `span`): when a subclass of
+    /// the class overrides one of the interface's generic methods, the value may hold that
+    /// subclass, whose method JavaScript would run, and a generic method has no vtable slot to
+    /// find it by (issue #1132): reported, as a direct call of the method is
+    /// (`check_generic_override`). True when reported.
+    pub(super) fn check_generic_override_dyn(
+        &mut self,
+        ty: TyId,
+        iface: DefId,
+        span: Span,
+    ) -> bool {
+        let Some((d, _)) = self.cx.class_of(ty) else {
+            return false;
+        };
+        let Some(i) = self.cx.iface(iface) else {
+            return false;
+        };
+        let generic: Vec<String> = (i.methods.iter())
+            .filter(|m| !m.generics.names.is_empty())
+            .map(|m| m.name.clone())
+            .collect();
+        let found = (self.cx.generic_overrides.iter())
+            .find(|(c, key)| generic.contains(key) && *c != d && self.cx.class_extends(*c, d))
+            .cloned();
+        let Some((sub, key)) = found else {
+            return false;
+        };
+        let (cn, iname) = (self.cx.display(ty), i.name.clone());
+        let sn = self.cx.adt(sub).map(|a| a.name.clone()).unwrap_or_default();
+        self.cx.error(
+            Diagnostic::error(
+                format!("generic method `{key}` is overridden in `{sn}`, so a `{cn}` converted to `{iname}` would need dynamic dispatch"),
+                span,
+            )
+            .with_note(format!("a call through the interface value runs the method of the class it was converted from; convert the subclass itself (a `{sn}` as a `{iname}`), or make the method non-generic"))
+            .with_note(format!("generic methods are dispatched statically: `{cn}` may hold a `{sn}`, whose `{key}` would not run")),
+        );
+        true
+    }
+
     /// `recv.m<type_args>(args)` for an interface method.
     pub(super) fn iface_call(
         &mut self,
