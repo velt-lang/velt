@@ -28,6 +28,9 @@ impl FnLower<'_, '_> {
             }
             TyKind::Int(_) | TyKind::Float(_) => Some("__anyNum_"),
             TyKind::Bool => Some("__anyBool_"),
+            // A function has none here yet: `call`, `apply`, `bind` and `toString` are not
+            // supported, and any other name is not a function.
+            TyKind::FnPtr { .. } | TyKind::Closure(_) => Some("__anyFn_"),
             _ => None,
         }
     }
@@ -135,7 +138,8 @@ impl FnLower<'_, '_> {
     }
 }
 
-/// The methods of JavaScript's `String`, `Array`, `Number` and `Boolean` prototypes.
+/// The methods of JavaScript's `String`, `Array`, `Number`, `Boolean` and `Function`
+/// prototypes.
 fn js_methods(prefix: &str) -> &'static [&'static str] {
     match prefix {
         "__anyStr_" => &[
@@ -223,6 +227,7 @@ fn js_methods(prefix: &str) -> &'static [&'static str] {
             "toString",
             "valueOf",
         ],
+        "__anyFn_" => &["apply", "bind", "call", "toString", "valueOf"],
         _ => &["toString", "valueOf"],
     }
 }
