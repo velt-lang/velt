@@ -3,15 +3,16 @@
 //! functions for its kind (std/prelude/zzzz_any_methods.vlt: `__anyStr_<name>(s, args)`,
 //! `__anyArr_<name><T>(a, args)` instantiated at the element type, `__anyNum_<name>(n, args)`,
 //! `__anyBool_<name>(b, args)`) and calls the one named, with the value borrowed and the
-//! arguments packed into an `any[]`; its `any` result is the call's. Another name is a
-//! member not supported yet (`ST_UNSUPPORTED`, a `TypeError` naming #924). Only the names the
+//! arguments packed into an `any[]`; its `any` result is the call's. Another JavaScript
+//! built-in is a member not supported yet (`ST_UNSUPPORTED`, a `TypeError` naming #924), and any
+//! other name is not a function (`ST_NOT_FN`: Node's `x.foo is not a function`). Only the names the
 //! program calls through `any` are compared (`Boxing::any_call_keys`), so a program that calls
 //! none of them has the slots it had before.
 
 use velt_sema::hir::{self, DefId, PassMode, TyId, TyKind};
 
 use super::any_glue::Ready;
-use super::any_member::{ST_OK, ST_UNSUPPORTED};
+use super::any_member::{ST_NOT_FN, ST_OK, ST_UNSUPPORTED};
 use super::FnLower;
 use crate::vir::{self, Operand, Place, Ty};
 
@@ -65,11 +66,20 @@ impl FnLower<'_, '_> {
             .into_iter()
             .filter(|(name, _)| keys.contains("") || keys.contains(name))
             .collect();
-        if methods.is_empty() {
-            // No call through `any` names one of them: the slot as before.
+        if keys.is_empty() {
+            // No call through `any` names a member: the slot as before.
             self.any_drop_args(argv, 0, argc);
             return self.ret_status(ST_UNSUPPORTED);
         }
+        // The JavaScript built-ins of this kind the program may call that are not here yet:
+        // a `TypeError` naming #924; any other name is not a function, as in Node.
+        let missing: Vec<&str> = js_methods(prefix)
+            .iter()
+            .chain(OBJECT_METHODS)
+            .copied()
+            .filter(|n| keys.contains("") || keys.contains(*n))
+            .filter(|n| !methods.iter().any(|(m, _)| m == n))
+            .collect();
         let outp = self.any_out(out);
         let any = self.cx.any_ty();
         let rest = self.cx.intern(TyKind::Array(any));
@@ -114,7 +124,113 @@ impl FnLower<'_, '_> {
             self.ret_status(ST_OK);
             self.switch_to(next);
         }
+        for name in missing {
+            let next = self.on_key(key, name);
+            self.any_drop_args(argv, 0, argc);
+            self.ret_status(ST_UNSUPPORTED);
+            self.switch_to(next);
+        }
         self.any_drop_args(argv, 0, argc);
-        self.ret_status(ST_UNSUPPORTED);
+        self.ret_status(ST_NOT_FN);
     }
 }
+
+/// The methods of JavaScript's `String`, `Array`, `Number` and `Boolean` prototypes.
+fn js_methods(prefix: &str) -> &'static [&'static str] {
+    match prefix {
+        "__anyStr_" => &[
+            "at",
+            "charAt",
+            "charCodeAt",
+            "codePointAt",
+            "concat",
+            "endsWith",
+            "includes",
+            "indexOf",
+            "isWellFormed",
+            "lastIndexOf",
+            "localeCompare",
+            "match",
+            "matchAll",
+            "normalize",
+            "padEnd",
+            "padStart",
+            "repeat",
+            "replace",
+            "replaceAll",
+            "search",
+            "slice",
+            "split",
+            "startsWith",
+            "substr",
+            "substring",
+            "toLocaleLowerCase",
+            "toLocaleUpperCase",
+            "toLowerCase",
+            "toString",
+            "toUpperCase",
+            "toWellFormed",
+            "trim",
+            "trimEnd",
+            "trimLeft",
+            "trimRight",
+            "trimStart",
+            "valueOf",
+        ],
+        "__anyArr_" => &[
+            "at",
+            "concat",
+            "copyWithin",
+            "entries",
+            "every",
+            "fill",
+            "filter",
+            "find",
+            "findIndex",
+            "findLast",
+            "findLastIndex",
+            "flat",
+            "flatMap",
+            "forEach",
+            "includes",
+            "indexOf",
+            "join",
+            "keys",
+            "lastIndexOf",
+            "map",
+            "pop",
+            "push",
+            "reduce",
+            "reduceRight",
+            "reverse",
+            "shift",
+            "slice",
+            "some",
+            "sort",
+            "splice",
+            "toReversed",
+            "toSorted",
+            "toSpliced",
+            "toString",
+            "unshift",
+            "values",
+            "with",
+        ],
+        "__anyNum_" => &[
+            "toExponential",
+            "toFixed",
+            "toPrecision",
+            "toString",
+            "valueOf",
+        ],
+        _ => &["toString", "valueOf"],
+    }
+}
+
+/// The methods every value has from `Object.prototype`.
+const OBJECT_METHODS: &[&str] = &[
+    "hasOwnProperty",
+    "isPrototypeOf",
+    "propertyIsEnumerable",
+    "toLocaleString",
+];
