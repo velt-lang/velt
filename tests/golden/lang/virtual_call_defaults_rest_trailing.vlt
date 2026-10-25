@@ -1,0 +1,52 @@
+// Defaults before a rest parameter, left out at the end of a virtual call: the override that
+// runs applies its own defaults and gets an empty rest array. An `undefined` passed where the
+// rest parameter starts is an element of it, not a left-out argument (#1506).
+class A {
+  m(a: number = 1, b: number = 2, ...r: (number | undefined)[]): string {
+    return "A" + a + b + "|" + r.length;
+  }
+}
+class B extends A {
+  override m(a: number = 3, b: number = 4, ...r: (number | undefined)[]): string {
+    return "B" + a + b + "|" + r.length;
+  }
+}
+class C extends A {
+  override m(a: number = 1, b: number = 6, ...r: (number | undefined)[]): string {
+    return "C" + a + b + "|" + r.length;
+  }
+}
+const xs: A[] = [new A(), new B(), new C()];
+const us: (number | undefined)[] = [undefined];
+for (const x of xs) {
+  console.log(x.m(), x.m(7), x.m(7, undefined), x.m(undefined), x.m(1, 5, 6));
+  console.log(x.m(undefined, undefined, undefined), x.m(1, 2, undefined), x.m(1, 2, ...us));
+}
+
+// Only `b`'s default changes, and `a` has none.
+class P {
+  m(a: number, b: number = 2, ...r: number[]): string {
+    return "P" + a + b + "|" + r.length;
+  }
+}
+class Q extends P {
+  override m(a: number, b: number = 4, ...r: number[]): string {
+    return "Q" + a + b + "|" + r.length;
+  }
+}
+const p: P = new Q();
+console.log(p.m(1), p.m(1, 5, 6), p.m(1, undefined));
+
+// A single default before the rest parameter, with `undefined` elements after it.
+class E {
+  m(a: number = 1, ...r: (number | undefined)[]): string {
+    return "E" + a + "|" + r.length;
+  }
+}
+class F extends E {
+  override m(a: number = 2, ...r: (number | undefined)[]): string {
+    return "F" + a + "|" + r.length;
+  }
+}
+const e: E = new F();
+console.log(e.m(undefined, undefined), e.m(1, undefined), e.m(undefined, undefined, undefined), e.m());

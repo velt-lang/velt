@@ -718,14 +718,18 @@ impl FnCx<'_, '_> {
 
     /// The function running static method `m` with `this` being class `this_class`: `m`, or its
     /// copy for that subclass when `m` uses `this` (`collect::static_this`).
-    pub(crate) fn static_def_for(&self, m: DefId, this_class: DefId) -> DefId {
+    /// A copy used is recorded (`Ctx::copy_uses`).
+    pub(crate) fn static_def_for(&mut self, m: DefId, this_class: DefId) -> DefId {
         match self.cx.static_this.get(&m) {
-            Some(&declaring) if declaring != this_class => self
-                .cx
-                .static_copies
-                .get(&(m, this_class))
-                .copied()
-                .unwrap_or(m),
+            Some(&declaring) if declaring != this_class => {
+                match self.cx.static_copies.get(&(m, this_class)).copied() {
+                    Some(copy) => {
+                        self.cx.copy_uses.push((self.body_def, copy));
+                        copy
+                    }
+                    None => m,
+                }
+            }
             _ => m,
         }
     }

@@ -63,6 +63,12 @@ impl Cx<'_> {
         matches!(self.hir.def(d), hir::Def::Adt(a) if last.contains(&a.name.as_str()))
     }
 
+    /// Is `d` the prelude's `__ArrayView` (array_view.rs)? Numbered after every other class, so
+    /// that no other class's id moves for it.
+    fn view_class(&self, d: DefId) -> bool {
+        matches!(self.hir.def(d), hir::Def::Adt(a) if a.name == super::array_view::VIEW_CLASS)
+    }
+
     /// Pre-order ids of every class (from 1), with the last id of each subtree.
     fn number_classes(&self) -> FxHashMap<DefId, (u64, u64)> {
         let mut children: FxHashMap<Option<DefId>, Vec<DefId>> = FxHashMap::default();
@@ -86,7 +92,7 @@ impl Cx<'_> {
         // `Proxy` and `Reflect` (std/proxy.vlt) and the other classes of `numbered_last` are
         // numbered last, so the classes of programs that don't use them keep their ids.
         let mut roots: Vec<DefId> = children.get(&None).cloned().unwrap_or_default();
-        roots.sort_by_key(|&d| self.numbered_last(d));
+        roots.sort_by_key(|&d| (self.view_class(d), self.numbered_last(d)));
         for &root in roots.iter().rev() {
             stack.push((root, false));
         }

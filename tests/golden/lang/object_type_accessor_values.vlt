@@ -1,0 +1,23 @@
+// A `get`/`set` pair of an alias of an object type takes a plain value in an object literal,
+// which the setter writes, and a field of a class implementing it (#1501).
+type T = { get v(): number; set v(x: number) };
+const t: T = { v: 1 };
+t.v = 5;
+console.log(t.v);
+class C implements T { v = 3; }
+class D implements T { private _v = 4; get v(): number { return this._v; } set v(x: number) { this._v = x; } }
+const ts: T[] = [new C(), new D(), { v: 5 }, { get v() { return 6; }, set v(_x: number) {} }];
+for (const x of ts) { x.v = x.v + 10; console.log(x.v); }
+type G = { get v(): number };
+class E implements G { v = 3; }
+const g: G = new E();
+console.log(g.v);
+type N = { get name(): string; set name(s: string); count: number };
+const n: N = { name: "a", count: 1 };
+n.name = n.name + "b";
+n.count++;
+console.log(n.name, n.count);
+class F implements N { name = "f"; count = 0; }
+const nf: N = new F();
+nf.name = "g";
+console.log(nf.name, nf.count);

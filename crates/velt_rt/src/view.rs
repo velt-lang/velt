@@ -66,6 +66,57 @@ pub extern "C" fn velt_rt_view_remove(obj: *const u8, view: *const u8) {
     });
 }
 
+/// Array views (rt_abi.md "Views"; velt_vir `lower/array_view.rs`): the live view of each
+/// (array, view type), keyed by the array's data pointer and a number the compiler gives the
+/// view type. Kept as the object views' table is: the view's drop removes its entry.
+type ArrayTable = HashMap<(usize, u64), usize, BuildHasherDefault<AddrHasher>>;
+
+static ARRAY_VIEWS: Mutex<ArrayTable> = Mutex::new(HashMap::with_hasher(BuildHasherDefault::new()));
+
+fn with_arrays<R>(f: impl FnOnce(&mut ArrayTable) -> R) -> R {
+    f(&mut ARRAY_VIEWS.lock().unwrap_or_else(PoisonError::into_inner))
+}
+
+/// The live view of type `ty` of the array at `arr`, not counted (the caller retains it), or
+/// null.
+#[no_mangle]
+pub extern "C" fn velt_rt_array_view_get(arr: *const u8, ty: u64) -> *mut u8 {
+    with_arrays(|t| t.get(&(arr as usize, ty)).copied().unwrap_or(0) as *mut u8)
+}
+
+/// `view` (just made) is the live view of type `ty` of the array at `arr`, unless the array has
+/// one of that type already.
+#[no_mangle]
+pub extern "C" fn velt_rt_array_view_put(arr: *const u8, ty: u64, view: *const u8) {
+    with_arrays(|t| {
+        t.entry((arr as usize, ty)).or_insert(view as usize);
+    });
+}
+
+/// The view of type `ty` of the array at `arr` whose view object (untagged) is `object` is
+/// dropped or stops being a view: its entry goes, if it is still the entry, which is when the
+/// entry's header (`{ data, len, cap }`) holds `object | 1`. Every entry is a live view's box.
+#[no_mangle]
+pub extern "C" fn velt_rt_array_view_remove(arr: *const u8, ty: u64, object: *const u8) {
+    with_arrays(|t| {
+        let Some(&bx) = t.get(&(arr as usize, ty)) else {
+            return;
+        };
+        // SAFETY: an entry is the box of a live view (its drop removes it first), whose header
+        // starts with the tagged view object.
+        let data = unsafe { (bx as *const usize).read() };
+        if data == object as usize | 1 {
+            t.remove(&(arr as usize, ty));
+        }
+    });
+}
+
+/// Does nothing. The test before a versioned loop (velt_vir `lower/view_unswitch.rs`) calls it
+/// when it finds a view, on the way into the loop's original, so that the backend, which
+/// declares it `cold`, treats the plain array's copy of the loop as the hot one.
+#[no_mangle]
+pub extern "C" fn velt_rt_array_view_cold() {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -131,5 +182,30 @@ mod tests {
             assert_eq!(found, if i % 2 == 0 { 0 } else { o + 8 });
             velt_rt_view_remove(o as *const u8, (o + 8) as *const u8);
         }
+    }
+
+    #[test]
+    fn array_views_are_kept_per_view_type() {
+        // Two view boxes, whose headers hold their view objects (0x7100 and 0x7200) tagged.
+        let ha: [usize; 3] = [0x7101, 0, 0];
+        let hb: [usize; 3] = [0x7201, 0, 0];
+        let arr = 0x7000 as *const u8;
+        let (a, b) = (ha.as_ptr() as *const u8, hb.as_ptr() as *const u8);
+        let (oa, ob) = (0x7100 as *const u8, 0x7200 as *const u8);
+        assert!(velt_rt_array_view_get(arr, 1).is_null());
+        velt_rt_array_view_put(arr, 1, a);
+        velt_rt_array_view_put(arr, 2, b);
+        // A second view of one type is no second entry.
+        velt_rt_array_view_put(arr, 1, b);
+        assert_eq!(velt_rt_array_view_get(arr, 1) as usize, a as usize);
+        assert_eq!(velt_rt_array_view_get(arr, 2) as usize, b as usize);
+        // Another view's removal leaves the entry; object views are another table.
+        velt_rt_array_view_remove(arr, 1, ob);
+        assert_eq!(velt_rt_array_view_get(arr, 1) as usize, a as usize);
+        assert!(velt_rt_view_get(arr).is_null());
+        velt_rt_array_view_remove(arr, 1, oa);
+        velt_rt_array_view_remove(arr, 2, ob);
+        assert!(velt_rt_array_view_get(arr, 1).is_null());
+        assert!(velt_rt_array_view_get(arr, 2).is_null());
     }
 }

@@ -36,4 +36,18 @@ pub struct ObjectTypeField {
     /// `readonly name: T` — the field can't be assigned (docs/internals/design/shared-models.md).
     pub readonly: bool,
     pub span: Span,
+    /// A field written as accessors (`get v(): T`, `set v(x: T)` or both): each as written, for
+    /// tools that print the source (`velt fmt`). The field reads as the getter's type (else the
+    /// setter's), `readonly` without a setter.
+    pub accessors: Vec<TypeFieldAccessor>,
+}
+
+/// One accessor of an object type's field (`ObjectTypeField::accessors`).
+#[derive(Clone, Debug)]
+pub struct TypeFieldAccessor {
+    /// `set v(x: T)`: the parameter's name; `None` for a getter.
+    pub setter_param: Option<Ident>,
+    /// The getter's result type or the setter's parameter type.
+    pub ty: TypeExpr,
+    pub span: Span,
 }

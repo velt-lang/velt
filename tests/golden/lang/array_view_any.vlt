@@ -1,0 +1,61 @@
+// check: no leaks
+// An `any` holding an array of another element type, converted to `T[]` (#1485), is a view of
+// that one array, as in Node: reads see the original's current elements (converted), writes
+// and `push` reach the original, and the view back in an `any` is the original itself.
+type VNode = { type: string };
+type JSXChild = VNode | string | number | boolean | null | undefined | JSXChild[];
+
+const kids: any = ["a", 1];
+const k2 = kids as JSXChild[];
+console.log(k2.length, k2[0], k2[1]);
+for (const c of k2) {
+  console.log(typeof c, c);
+}
+console.log(k2);
+console.log(k2.map((c) => typeof c).join(","));
+
+// Writes through the view land on the original.
+k2[0] = "b";
+console.log(kids[0], kids);
+k2.push(7);
+console.log(kids.length, kids);
+
+// Changes to the original show through the view.
+kids[1] = 2;
+console.log(k2[1], k2.length);
+
+// The view in an `any` is the original array.
+const back: any = k2;
+console.log(back === kids, Array.isArray(back));
+
+// Through a function taking the view type, and twice.
+function total(xs: JSXChild[]): number {
+  let n = 0;
+  for (const x of xs) {
+    if (typeof x === "number") {
+      n += x;
+    }
+  }
+  return n;
+}
+console.log(total(kids as JSXChild[]), total(k2));
+
+// Nested arrays are views too.
+const nested: any = [["x", 1], ["y"]];
+const nv = nested as JSXChild[][];
+console.log(nv.length, nv[0].length, nv[0][0], nv[1]);
+nv[1].push("z");
+console.log(nested);
+
+// As a union member: `x as JSXChild` of an `any` holding an array.
+const one = kids as JSXChild;
+if (Array.isArray(one)) {
+  console.log("array of", one.length);
+}
+
+// `pop`, `reverse`, `slice`, `indexOf`, spreads.
+const nums: any = [3, 1, 2];
+const nv2 = nums as (number | string)[];
+console.log(nv2.pop(), nums.length);
+nv2.reverse();
+console.log(nums, nv2.slice(0, 1), nv2.indexOf(3), [...nv2]);

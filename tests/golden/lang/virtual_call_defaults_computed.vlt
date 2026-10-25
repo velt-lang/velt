@@ -1,0 +1,35 @@
+// Defaults computed in the override that runs (a field of `this`, an earlier parameter, a new
+// array), for classes used through an interface (counted references), passed `undefined` or
+// left out, in the middle and at the end (#1506).
+interface Named {
+  name(): string;
+}
+class B implements Named {
+  name(): string {
+    return "b";
+  }
+  base: number = 10;
+  m(a: number = this.base, b: number = a + 1): string {
+    return "B" + a + "," + b;
+  }
+  list(xs: number[] = [1]): number {
+    return xs.length;
+  }
+}
+class D extends B {
+  override m(a: number = this.base * 2, b: number = a * 3): string {
+    return "D" + a + "," + b;
+  }
+  override list(xs: number[] = [1, 2, 3]): number {
+    return xs.length;
+  }
+}
+const ys: B[] = [new B(), new D()];
+const ns: Named[] = [new B(), new D()];
+for (const y of ys) {
+  console.log(y.m(), y.m(1), y.m(undefined, 5), y.m(2, undefined), y.m(undefined, undefined));
+  console.log(y.list(), y.list(undefined), y.list([]));
+}
+for (const n of ns) {
+  console.log(n.name());
+}

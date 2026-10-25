@@ -1,0 +1,49 @@
+// check: no leaks
+// An object view (#1485) whose field is an array of another element type shares that array
+// as an array view, as Node shares it: sigx's VNodes with children made of other objects.
+interface VNode {
+  type: string;
+  children: JSXChild[];
+}
+type JSXChild = VNode | string | number | boolean | null | undefined | JSXChild[];
+type Child = string | number | null | Child[];
+
+class Raw {
+  name: string = "raw";
+  items: string[] = ["a", "b"];
+}
+type View = { name: string; items: Child[] };
+
+class RawNode {
+  type: string = "div";
+  children: string[] = ["a", "b"];
+}
+
+// The program makes proxies (sigx's signals do), so its object types can hold views.
+const state = new Proxy({ count: 1 }, {});
+
+function main() {
+  const r = new Raw();
+  const v = (r as any) as View;
+  console.log(v.name, v.items.length, v.items[1]);
+  v.items.push("c");
+  console.log(r.items);
+  r.items.push("d");
+  console.log(v.items.length, v.items.join("-"), (v.items as any) === r.items);
+
+  const node = new RawNode();
+  const vn = (node as any) as VNode;
+  vn.children.push("c");
+  for (const c of vn.children) {
+    console.log(c);
+  }
+  console.log(node.children);
+
+  // Elements that are objects of another type are views of them as the union's object member.
+  const lit: any = { type: "p", children: ["x", { type: "q", children: [] }] };
+  const vl = lit as VNode;
+  const kid = vl.children[1] as VNode;
+  console.log(vl.children.length, kid.type, kid.children.length);
+  kid.type = "Q";
+  console.log(lit.children[1].type, state.count);
+}

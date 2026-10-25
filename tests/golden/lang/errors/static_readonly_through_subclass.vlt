@@ -1,0 +1,8 @@
+// A `static readonly` field assigned through a subclass is read-only first (TypeScript's
+// TS2540).
+class C {
+  static readonly k = 1;
+}
+class D extends C {}
+D.k = 2;
+console.log(D.k);

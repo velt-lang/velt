@@ -20,6 +20,7 @@ use crate::hir::{self, ExprKind as H, PassMode, TyId, TyKind};
 const ARG: &str = "<arg>";
 
 /// A callable signature; `Param(i)` in its types are the callee's type parameters ("slots").
+#[derive(Clone)]
 pub(crate) struct Callable {
     /// For messages: "function `f`", "method `push`".
     pub what: String,

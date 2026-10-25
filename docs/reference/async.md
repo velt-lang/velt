@@ -21,7 +21,10 @@ callback, or `Promise<T> | null`) awaits a promise and gives any other value as 
 `await h(1)` where `h: (x: number) => Resp | Promise<Resp>` is a `Resp`. A promise that may be
 missing keeps its nothing: `await r["k"]` of a `Record<string, Promise<number>>` (or
 `await m.get(k)`) is a `number | undefined`, and so is `await x` with
-`x: number | Promise<void>`.
+`x: number | Promise<void>`. `await` on a value that is no promise at all (`await null`,
+`await 5`, `await obj`) takes one step, as an awaited settled promise does, and gives the value
+itself; `await null;` is a common way to let queued callbacks run first. A value of type `any`
+or with a `then` method (a thenable) cannot be awaited this way yet.
 
 An async function that returns a promise (`return Promise.resolve(x)`, `return load()`) or a value
 that may be one (`return fn()` with `fn: () => T | Promise<T>`) adopts it, as in JS: its own

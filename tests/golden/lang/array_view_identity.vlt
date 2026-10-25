@@ -1,0 +1,40 @@
+// check: no leaks
+// Two conversions of one array to the same element type are one view (#1485), as in Node,
+// where both are the array itself: `===`, `indexOf`, `includes` and `Set` / `Map` keys see one
+// value, and a change through either is seen through the other.
+type Child = string | number | null;
+
+function sameView(a: Child[], b: Child[]): boolean {
+  return a === b;
+}
+
+function main() {
+  const els: (string | number)[] = ["a", 1, "b"];
+  const ca = els as Child[];
+  const cb = els as Child[];
+  console.log(ca === cb, sameView(ca, cb), [ca].indexOf(cb), [ca].includes(cb));
+  console.log(new Set([ca, cb]).size);
+  const m = new Map<Child[], string>();
+  m.set(ca, "first");
+  m.set(cb, "second");
+  console.log(m.size, m.get(ca));
+  cb.push("c");
+  console.log(ca.length, ca[3], els.length);
+
+  // Through `any`, and from inside a function: still one view while one lives.
+  const raw: any = [1, "x"];
+  const va = raw as Child[];
+  const vb = raw as Child[];
+  console.log(va === vb, (va as any) === raw, (vb as any) === (va as any));
+  vb.push("y");
+  console.log(va.length, raw.length, va[2]);
+  const views: Child[][] = [];
+  for (let i = 0; i < 3; i++) {
+    views.push(raw as Child[]);
+  }
+  console.log(views[0] === views[2], views[1] === va);
+
+  // Another array with the same elements is another value.
+  const other: any = [1, "x", "y"];
+  console.log((other as Child[]) === va);
+}

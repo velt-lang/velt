@@ -422,6 +422,9 @@ impl FnCx<'_, '_> {
     /// A dynamic value as `exp`: checked at run time (`Intrinsic::AnyTo`).
     pub(super) fn unbox_dynamic(&mut self, h: hir::Expr, exp: TyId) -> hir::Expr {
         let span = h.span;
+        // An array of another element type becomes a view, which reads the array through `any`
+        // (array_view_cast.rs).
+        self.note_array_view_target(exp);
         let members = match self.cx.union_members(exp) {
             Some(ms) => Some(ms),
             None if self.cx.lit_value(exp).is_some() => Some(vec![exp]),

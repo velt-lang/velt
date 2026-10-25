@@ -278,6 +278,9 @@ fn impl_method(cx: &mut Ctx, p: &Pair, m: &IfaceMethod) -> Option<DefId> {
             })
         }
         _ => {
+            if let Some(def) = field_accessor(cx, p, m) {
+                return Some(def);
+            }
             if m.default.is_none() {
                 let (cname, iname) = (&p.cname, &p.iname);
                 cx.error(
@@ -294,6 +297,36 @@ fn impl_method(cx: &mut Ctx, p: &Pair, m: &IfaceMethod) -> Option<DefId> {
             m.default
         }
     }
+}
+
+/// The implementation of interface accessor `m` (`get v()` or `set v(x)`) by a field `v` of
+/// the class of its type, as TypeScript allows (`class C implements T { v = 3 }`): reads or
+/// writes the field.
+fn field_accessor(cx: &mut Ctx, p: &Pair, m: &IfaceMethod) -> Option<DefId> {
+    let (name, setter) = match m.name.strip_prefix("set ") {
+        Some(n) => (n, true),
+        None if m.is_getter => (m.name.as_str(), false),
+        None => return None,
+    };
+    let mut full_args = p.bound.args.clone();
+    full_args.push(p.self_ty);
+    let want = match setter {
+        true => cx.subst(m.params.first()?.ty, &full_args),
+        false => cx.subst(m.ret, &full_args),
+    };
+    let fields = &cx.adt(p.d)?.fields;
+    let i = fields.iter().position(|f| f.name == name)?;
+    let ty = fields[i].ty;
+    if !cx.same_ty(ty, want) {
+        return None;
+    }
+    Some(match setter {
+        true => {
+            let borrowed = m.params.first()?.mode == crate::hir::PassMode::Borrow;
+            super::getters::field_setter_taking(cx, p.d, p.self_ty, i, ty, borrowed)
+        }
+        false => super::getters::field_getter(cx, p.d, p.self_ty, i, ty),
+    })
 }
 
 /// Does method `def` always mutate `this` (setters, `[Symbol.dispose]`)? Other methods start borrowing

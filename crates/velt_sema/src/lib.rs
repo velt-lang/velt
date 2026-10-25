@@ -510,6 +510,9 @@ fn analyze_bodies(cx: &mut ctx::Ctx) {
     timings::pass("collect::collect", || collect::collect(cx));
     cx.collected_defs = cx.defs.len();
     timings::pass("global_this::declare", || global_this::declare(cx));
+    timings::pass("build_fill_bodies", || {
+        body::expr::virtual_defaults::build_fill_bodies(cx)
+    });
     timings::pass("body::check_bodies", || body::check_bodies(cx));
     timings::pass("global_this::check_sites", || global_this::check_sites(cx));
     timings::pass("module_scripts::declare", || module_scripts::declare(cx));

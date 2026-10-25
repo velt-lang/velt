@@ -1,0 +1,44 @@
+6 7
+507 502
+5009 5002
+5009 5002
+4 3
+3009
+mk
+1009
+yo s2 hi base!
+tick a 1
+tick B3 2
+B3 1 2 Bc
+tick arg 3
+tick B3 4
+B3 3 4 Bc
+B3 1 2 Bc
+tick a 5
+tick D3 6
+D3 5 60 Bc
+tick arg 7
+tick D3 8
+D3 7 80 Bc
+D3 1 2 Bc
+tick a 9
+E3 9 5 Ec
+tick arg 10
+E3 10 5 Ec
+E3 1 2 Ec
+tick a 11
+tick B3 12
+B3 11 12 Bc
+tick arg 13
+tick B3 14
+B3 13 14 Bc
+B3 1 2 Bc
+pick 2
+tick x 15
+E3 15 5 Ec
+22
+2
+12
+D4 1 7 D4 D4 1 7 z D4 1 2 D4 D4 1 7 D4
+1
+200

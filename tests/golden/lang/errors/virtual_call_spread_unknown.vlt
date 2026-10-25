@@ -1,0 +1,15 @@
+// A spread of an unknown length that may fill a parameter whose default an override changes:
+// which default applies is known only at run time (#1506).
+class B {
+  m(a: number = 1, ...r: number[]): string {
+    return "B" + a + r.length;
+  }
+}
+class D extends B {
+  override m(a: number = 2, ...r: number[]): string {
+    return "D" + a + r.length;
+  }
+}
+const x: B = new D();
+const arr = [1, 2];
+console.log(x.m(...arr));
