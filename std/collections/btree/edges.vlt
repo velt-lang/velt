@@ -70,8 +70,8 @@ export function noteEdges<K extends Comparable<K>, V>(p: Pool<K, V>, key: K, win
  */
 export function afterRemove<K extends Comparable<K>, V>(p: Pool<K, V>) {
   if (p.size == 0) {
-    __intrinsic_array_truncate(p.minKey, 0);
-    __intrinsic_array_truncate(p.maxKey, 0);
+    p.minKey.truncate(0);
+    p.maxKey.truncate(0);
     return;
   }
   if (!p.fill[0].hasInlineKey()) {
@@ -100,8 +100,8 @@ function setWindows<K extends Comparable<K>, V>(p: Pool<K, V>) {
 // Gives the nodes along the left (or right) edge their words for the range the smallest (or
 // largest) key now bounds: the path to the first (or last) leaf, recorded, each node refreshed.
 function refreshEdge<K extends Comparable<K>, V>(p: Pool<K, V>, right: bool) {
-  __intrinsic_array_truncate(p.pathNodes, 0);
-  __intrinsic_array_truncate(p.pathSlots, 0);
+  p.pathNodes.truncate(0);
+  p.pathSlots.truncate(0);
   let node = p.root;
   for (let h = p.height; h > 0; h--) {
     const slot = right ? p.innerCount(node) : 0;
@@ -109,10 +109,10 @@ function refreshEdge<K extends Comparable<K>, V>(p: Pool<K, V>, right: bool) {
     p.pathSlots.push(slot);
     node = p.innerKids[(node as usize) * F + slot];
   }
-  for (let d: usize = 0; d < p.pathNodes.length; d++) {
+  for (let d: usize = 0; d < (p.pathNodes.length as usize); d++) {
     p.refreshInner(p.pathNodes[d], p.fencesAt(d));
   }
-  p.refreshLeaf(node, p.fencesAt(p.pathNodes.length));
+  p.refreshLeaf(node, p.fencesAt(p.pathNodes.length as usize));
 }
 
 /** Whether `key` (window `win`) is the smallest or the largest key (windows first, then keys). */

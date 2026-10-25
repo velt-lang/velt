@@ -19,7 +19,7 @@
 // and one child index. Keys without an encoding are compared one by one.
 //
 // Unused key slots hold a share of `fill[0]`, the first key ever stored, so that the pools stay
-// arrays of plain `K`; value slots of types that own nothing likewise (`valPlain`), others are
+// arrays of plain `K`; value slots likewise (`vals`, with `valFill[0]`), others are
 // `V | null`; unused word slots are `EMPTY`.
 
 import { InlineKey } from "velt:collections/btree/inline_key";
@@ -67,14 +67,12 @@ export class Pool<K extends Comparable<K>, V> {
    */
   leafKeys: K[][] = [];
   /**
-   * The leaves' value slots, addressed like their keys. A value type that owns nothing (numbers,
-   * `bool`, structs of them) keeps its values in `valPlain`, its own size per slot, an unused
-   * slot holding `valFill[0]`, the first value stored: dropping such a value does nothing, so a
-   * filler is never told from a value. Other value types keep `valOpt`, so a removed value is
-   * dropped at once. Which one is a constant per instantiation (`plainVals`).
+   * The leaves' value slots, addressed like their keys, an unused slot holding a share of
+   * `valFill[0]`, the first value stored (as unused key slots hold one of `fill[0]`): a removed
+   * value is dropped when its slot gets the filler. Values that own nothing take their own size
+   * per slot, objects a pointer.
    */
-  valPlain: V[][] = [];
-  valOpt: (V | null)[][] = [];
+  vals: V[][] = [];
   valFill: V[] = [];
   /**
    * Each leaf's words and header (velt:collections/btree/line), 64 bytes: leaf `l`'s line is
@@ -119,8 +117,6 @@ export class Pool<K extends Comparable<K>, V> {
   /** The windows of a `getMany` batch (velt:collections/btree/leaf `descendMany`), two words each. */
   batchWindows: u64[] = new Array<u64>(32).fill(0);
   /** Two slots for `keySwap`'s (and `valSwap`'s) raw moves across chunks, empty between them. */
-  keyMoves: K[] = [];
-  valMoves: (V | null)[] = [];
   maxKey: K[] = [];
   minWindow: u64[] = [0, 0];
   maxWindow: u64[] = [0, 0];
@@ -173,13 +169,6 @@ export class Pool<K extends Comparable<K>, V> {
       }
     } else {
       hi = countOf(this.innerLines[i]);
-      if (!__intrinsic_needs_drop(t)) {
-        let c: usize = 0;
-        for (let k: usize = 0; k < hi; k++) {
-          c += t < this.innerKeys[base + k] ? 0 : 1;
-        }
-        return c;
-      }
     }
     // Ties (or keys without words): a binary search of the keys between.
     while (lo < hi) {
@@ -218,8 +207,8 @@ export class Pool<K extends Comparable<K>, V> {
    * `pathSlots`.
    */
   findLeaf(t: K, win: Window): u32 {
-    __intrinsic_array_truncate(this.pathNodes, 0);
-    __intrinsic_array_truncate(this.pathSlots, 0);
+    this.pathNodes.truncate(0);
+    this.pathSlots.truncate(0);
     let node = this.root;
     for (let h = this.height; h > 0; h--) {
       const slot = this.innerSlot(node, t, win);
@@ -442,19 +431,16 @@ export class Pool<K extends Comparable<K>, V> {
 
   /** Starts loading the cache line of key slot `s`. */
   keyPrefetch(s: usize) {
-    __intrinsic_array_prefetch(this.leafKeys[s >> SLOT_SHIFT], s & SLOT_MASK);
+    this.leafKeys[s >> SLOT_SHIFT].prefetch(s & SLOT_MASK);
   }
 
   /** Starts loading the line of `node`, an inner node when `inner`, else a leaf. */
   prefetchNode(node: u32, inner: bool) {
     if (inner) {
-      __intrinsic_array_prefetch(this.innerLines, (node as usize) << this.lineShift);
+      this.innerLines.prefetch((node as usize) << this.lineShift);
     } else {
       const c = (node >> LEAF_SHIFT) as usize;
-      __intrinsic_array_prefetch(
-        this.leafLines[c],
-        ((node & LEAF_MASK) as usize) << this.lineShift,
-      );
+      this.leafLines[c].prefetch(((node & LEAF_MASK) as usize) << this.lineShift);
     }
   }
 
@@ -465,8 +451,8 @@ export class Pool<K extends Comparable<K>, V> {
   prefetchLeaf(leaf: u32) {
     const c = (leaf >> LEAF_SHIFT) as usize;
     const at = (leaf & LEAF_MASK) as usize;
-    __intrinsic_array_prefetch(this.leafLines[c], at << this.lineShift);
-    __intrinsic_array_prefetch(this.leafOrder[c], at);
+    this.leafLines[c].prefetch(at << this.lineShift);
+    this.leafOrder[c].prefetch(at);
     const base = (leaf as usize) * F;
     for (let j: usize = 0; j < F; j += 8) {
       this.keyPrefetch(base + j);
@@ -482,92 +468,41 @@ export class Pool<K extends Comparable<K>, V> {
     const ca = a >> SLOT_SHIFT;
     const cb = b >> SLOT_SHIFT;
     if (ca == cb) {
-      __intrinsic_array_swap(this.leafKeys[ca], a & SLOT_MASK, b & SLOT_MASK);
-      return;
+      this.leafKeys[ca].swap(a & SLOT_MASK, b & SLOT_MASK);
+    } else {
+      this.leafKeys.swapIn(ca, a & SLOT_MASK, cb, b & SLOT_MASK);
     }
-    if (!__intrinsic_needs_drop(this.fill[0])) {
-      const k = this.leafKeys[ca][a & SLOT_MASK];
-      this.leafKeys[ca][a & SLOT_MASK] = this.leafKeys[cb][b & SLOT_MASK];
-      this.leafKeys[cb][b & SLOT_MASK] = k;
-      return;
-    }
-    // Raw moves through `keyMoves` (no share, no drop): each key stays owned once, and
-    // `keyMoves` holds none after.
-    __intrinsic_array_set_len(this.keyMoves, 2);
-    __intrinsic_array_move(this.keyMoves, 0, this.leafKeys[ca], a & SLOT_MASK, 1);
-    __intrinsic_array_move(this.keyMoves, 1, this.leafKeys[cb], b & SLOT_MASK, 1);
-    __intrinsic_array_move(this.leafKeys[ca], a & SLOT_MASK, this.keyMoves, 1, 1);
-    __intrinsic_array_move(this.leafKeys[cb], b & SLOT_MASK, this.keyMoves, 0, 1);
-    __intrinsic_array_set_len(this.keyMoves, 0);
-  }
-
-  /**
-   * Whether values live in `valPlain` (a constant: `valFill[0]` only gives the type). The
-   * value slots are chunked as the key slots are.
-   */
-  plainVals(): bool {
-    return !__intrinsic_needs_drop(this.valFill[0]);
   }
 
   /** The value in slot `s`, shared as `Map.get` gives it. */
   valAt(s: usize): V {
-    if (this.plainVals()) {
-      return this.valPlain[s >> SLOT_SHIFT][s & SLOT_MASK];
-    }
-    return valueOf(this.valOpt[s >> SLOT_SHIFT][s & SLOT_MASK]);
+    return this.vals[s >> SLOT_SHIFT][s & SLOT_MASK];
   }
 
   /** Stores `v` in slot `s`, dropping what it held. */
   valSet(s: usize, v: V) {
-    if (this.plainVals()) {
-      this.valPlain[s >> SLOT_SHIFT][s & SLOT_MASK] = v;
-    } else {
-      this.valOpt[s >> SLOT_SHIFT][s & SLOT_MASK] = v;
-    }
+    this.vals[s >> SLOT_SHIFT][s & SLOT_MASK] = v;
   }
 
-  /** Makes slot `s` unused, dropping its value (a plain one stays: dropping it is nothing). */
+  /** Empties slot `s`: the filler replaces (and drops) its value. */
   valClear(s: usize) {
-    if (!this.plainVals()) {
-      this.valOpt[s >> SLOT_SHIFT][s & SLOT_MASK] = null;
-    }
+    this.vals[s >> SLOT_SHIFT][s & SLOT_MASK] = this.valFill[0];
   }
 
-  /** Exchanges the values of slots `a` and `b`, as `keySwap` does keys. */
+  /** Exchanges the values in slots `a` and `b`, as `keySwap` the keys. */
   valSwap(a: usize, b: usize) {
     const ca = a >> SLOT_SHIFT;
     const cb = b >> SLOT_SHIFT;
-    const ia = a & SLOT_MASK;
-    const ib = b & SLOT_MASK;
-    if (this.plainVals()) {
-      if (ca == cb) {
-        __intrinsic_array_swap(this.valPlain[ca], ia, ib);
-        return;
-      }
-      const v = this.valPlain[ca][ia];
-      this.valPlain[ca][ia] = this.valPlain[cb][ib];
-      this.valPlain[cb][ib] = v;
-      return;
-    }
     if (ca == cb) {
-      __intrinsic_array_swap(this.valOpt[ca], ia, ib);
-      return;
+      this.vals[ca].swap(a & SLOT_MASK, b & SLOT_MASK);
+    } else {
+      this.vals.swapIn(ca, a & SLOT_MASK, cb, b & SLOT_MASK);
     }
-    // Raw moves, as `keySwap` does for keys.
-    __intrinsic_array_set_len(this.valMoves, 2);
-    __intrinsic_array_move(this.valMoves, 0, this.valOpt[ca], ia, 1);
-    __intrinsic_array_move(this.valMoves, 1, this.valOpt[cb], ib, 1);
-    __intrinsic_array_move(this.valOpt[ca], ia, this.valMoves, 1, 1);
-    __intrinsic_array_move(this.valOpt[cb], ib, this.valMoves, 0, 1);
-    __intrinsic_array_set_len(this.valMoves, 0);
   }
 
+  /** Starts loading the cache line of value slot `s`. */
   valPrefetch(s: usize) {
-    if (this.plainVals()) {
-      __intrinsic_array_prefetch(this.valPlain[s >> SLOT_SHIFT], s & SLOT_MASK);
-    } else {
-      __intrinsic_array_prefetch(this.valOpt[s >> SLOT_SHIFT], s & SLOT_MASK);
-    }
+    this.vals[s >> SLOT_SHIFT].prefetch(s & SLOT_MASK);
   }
 
   // ─────────────── nodes ───────────────
@@ -582,23 +517,11 @@ export class Pool<K extends Comparable<K>, V> {
       this.leafKeys.push([]);
       this.leafLines.push([]);
       this.leafOrder.push([]);
-      if (this.plainVals()) {
-        this.valPlain.push([]);
-      } else {
-        this.valOpt.push([]);
-      }
+      this.vals.push([]);
     }
     for (let i: usize = 0; i < F; i++) {
       this.leafKeys[c].push(this.fill[0]);
-    }
-    if (this.plainVals()) {
-      for (let i: usize = 0; i < F; i++) {
-        this.valPlain[c].push(this.valFill[0]);
-      }
-    } else {
-      for (let i: usize = 0; i < F; i++) {
-        this.valOpt[c].push(null);
-      }
+      this.vals[c].push(this.valFill[0]);
     }
     this.leafLines[c].push(emptyLine());
     if (this.lineShift == 1) {
@@ -614,7 +537,7 @@ export class Pool<K extends Comparable<K>, V> {
     if (this.freeInners.length > 0) {
       return this.freeInners.pop()!;
     }
-    const id = (this.innerLines.length >> this.lineShift) as u32;
+    const id = ((this.innerLines.length as usize) >> this.lineShift) as u32;
     for (let i: usize = 0; i < F; i++) {
       this.innerKeys.push(this.fill[0]);
       this.innerKids.push(0);
@@ -654,22 +577,21 @@ export class Pool<K extends Comparable<K>, V> {
 
   /** Drops every node; the next `insert` starts a new root. */
   clear() {
-    __intrinsic_array_truncate(this.leafKeys, 0);
-    __intrinsic_array_truncate(this.valPlain, 0);
-    __intrinsic_array_truncate(this.valOpt, 0);
-    __intrinsic_array_truncate(this.valFill, 0);
-    __intrinsic_array_truncate(this.leafLines, 0);
-    __intrinsic_array_truncate(this.leafOrder, 0);
-    __intrinsic_array_truncate(this.leafNext, 0);
-    __intrinsic_array_truncate(this.leafPrev, 0);
-    __intrinsic_array_truncate(this.innerKeys, 0);
-    __intrinsic_array_truncate(this.innerLines, 0);
-    __intrinsic_array_truncate(this.innerKids, 0);
-    __intrinsic_array_truncate(this.freeLeaves, 0);
-    __intrinsic_array_truncate(this.freeInners, 0);
-    __intrinsic_array_truncate(this.fill, 0);
-    __intrinsic_array_truncate(this.minKey, 0);
-    __intrinsic_array_truncate(this.maxKey, 0);
+    this.leafKeys.truncate(0);
+    this.vals.truncate(0);
+    this.valFill.truncate(0);
+    this.leafLines.truncate(0);
+    this.leafOrder.truncate(0);
+    this.leafNext.truncate(0);
+    this.leafPrev.truncate(0);
+    this.innerKeys.truncate(0);
+    this.innerLines.truncate(0);
+    this.innerKids.truncate(0);
+    this.freeLeaves.truncate(0);
+    this.freeInners.truncate(0);
+    this.fill.truncate(0);
+    this.minKey.truncate(0);
+    this.maxKey.truncate(0);
     this.root = 0;
     this.height = 0;
     this.size = 0;
@@ -749,40 +671,17 @@ export function commonPrefix<K extends InlineKey>(a: K, b: K): u32 {
   for (let off: usize = 0; off < MAX_PREFIX; off += 8) {
     const d = a.inlineKey(off) ^ b.inlineKey(off);
     if (d != 0) {
-      // The equal leading bytes: leading zero bits of `d`, by halves, over 8.
-      const high = (d >> 32) as i32;
-      const zeros = high != 0 ? velt_rt_math_clz32(high) : 32 + velt_rt_math_clz32(d as i32);
-      return (off + ((zeros as usize) >> 3)) as u32;
+      // The equal leading bytes: leading zero bits of `d`, over 8.
+      return (off + (d.leadingZeros() >> 3)) as u32;
     }
   }
   return MAX_PREFIX as u32;
 }
 
-// Leading zero bits of a 32-bit value (`Math.clz32`), one instruction.
-declare function velt_rt_math_clz32(x: i32): i32;
-
 /**
- * Moves `xs[from]` to `xs[to]`, whose value is about to be overwritten or is a filler: a swap
- * for values that own something, so moving a string or an object costs no count changes.
+ * Moves `xs[from]` to `xs[to]`, whose value is about to be overwritten or is a filler: a swap,
+ * so moving a string or an object costs no count changes.
  */
 export function moveSlot<T>(xs: T[], to: usize, from: usize) {
-  if (__intrinsic_needs_drop(xs[from])) {
-    __intrinsic_array_swap(xs, to, from);
-  } else {
-    xs[to] = xs[from];
-  }
-}
-
-/**
- * A value from a `valOpt` slot, shared. A slot of a live entry holds `null` only when `V` holds
- * `null`.
- */
-export function valueOf<V>(slot: V | null): V {
-  if (slot != null) {
-    return __intrinsic_share(slot);
-  }
-  if (__intrinsic_holds_null(__intrinsic_null_as<V>())) {
-    return __intrinsic_null_as<V>();
-  }
-  panic("ICE: BTreeMap entry without a value");
+  xs.swap(to, from);
 }

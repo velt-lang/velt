@@ -32,7 +32,7 @@ export function removeAt<K extends Comparable<K>, V>(p: Pool<K, V>, leaf: u32, s
 }
 
 function rebalanceLeaf<K extends Comparable<K>, V>(p: Pool<K, V>, leaf: u32) {
-  const depth = p.pathNodes.length - 1;
+  const depth = (p.pathNodes.length as usize) - 1;
   const parent = p.pathNodes[depth];
   const slot = p.pathSlots[depth];
   const pb = (parent as usize) * F;
@@ -122,8 +122,8 @@ function removeSeparator<K extends Comparable<K>, V>(p: Pool<K, V>, depth: usize
   const node = p.pathNodes[depth];
   const base = (node as usize) * F;
   const n = p.innerCount(node);
-  __intrinsic_array_rotate_left(p.innerKeys, base + sep, base + n - 1);
-  __intrinsic_array_rotate_left(p.innerKids, base + sep + 1, base + n);
+  p.innerKeys.rotateLeft(base + sep, base + n);
+  p.innerKids.rotateLeft(base + sep + 1, base + n + 1);
   const line = shiftDown(p.innerLineOf(node), sep, n, p.scratch);
   p.setInnerLine(node, line);
   if (p.wide()) {

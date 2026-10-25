@@ -1,0 +1,65 @@
+// The low-level public APIs a fast collection is written with, as any program uses them: array
+// swaps, rotations, prefetch hints and capacity; swaps across the arrays of a `T[][]`; bit counts
+// on every integer type; and a string's UTF-8 bytes read in place.
+import { isAscii, utf8ByteAt, utf8Length } from "velt:encoding";
+import { u8x16 } from "velt:simd";
+
+function arrays() {
+  const xs: string[] = ["a", "b", "c", "d", "e"];
+  xs.swap(0, 4);
+  console.log(xs.join(""));
+  xs.rotateLeft(1, 4);
+  console.log(xs.join(""));
+  xs.rotateRight(0, 5);
+  console.log(xs.join(""));
+  // Ranges of fewer than two elements are left as they are.
+  xs.rotateLeft(2, 3);
+  xs.rotateRight(3, 3);
+  console.log(xs.join(""));
+  xs.prefetch(2);
+  xs.prefetch(99);
+  const ys: u64[] = [];
+  ys.reserve(100);
+  ys.push(7);
+  console.log(ys.length, ys[0]);
+  const chunks: string[][] = [
+    ["x0", "x1"],
+    ["y0", "y1", "y2"],
+  ];
+  chunks.swapIn(0, 1, 1, 2);
+  chunks.swapIn(1, 0, 1, 1);
+  console.log(chunks[0].join(","), chunks[1].join(","));
+}
+
+function bits() {
+  const a: u64 = 40;
+  console.log(a.leadingZeros(), a.trailingZeros(), a.countOnes());
+  const z: u64 = 0;
+  console.log(z.leadingZeros(), z.trailingZeros(), z.countOnes());
+  const m: i32 = -1;
+  const b: u8 = 0;
+  const c: i16 = -32768;
+  console.log(m.leadingZeros(), m.countOnes(), b.leadingZeros(), b.trailingZeros());
+  console.log(c.leadingZeros(), c.trailingZeros(), c.countOnes());
+  // An integer result: it indexes an array as it is.
+  const names = ["zero", "one", "two", "three"];
+  const v: u32 = 8;
+  console.log(names[v.trailingZeros()]);
+}
+
+function bytes() {
+  for (const s of ["profile", "héllo", "🙂", String.fromCharCode(55357)]) {
+    const n = utf8Length(s);
+    const first = n > 0 ? utf8ByteAt(s, 0) : 0;
+    const v = u8x16.loadString(s, 0);
+    console.log(s.length, n, isAscii(s), first, v.lane(0), v.lane(n < 16 ? n : 15));
+  }
+  const long = "abcdefghijklmnopqrstuvwxyz";
+  console.log(u8x16.loadString(long, 10).lane(0), u8x16.loadString(long, 26).lane(0));
+}
+
+function main() {
+  arrays();
+  bits();
+  bytes();
+}

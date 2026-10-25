@@ -4,6 +4,7 @@
 use crate::lower::async_fn::BoxHold;
 use velt_sema::hir::{self, TyId};
 
+use crate::lower::array_view::{ViewFlush, ViewSync};
 use crate::lower::operand::proj;
 use crate::lower::rt::Rt;
 use crate::lower::{cint, ice, unit, FnLower, LkMode, Work};
@@ -216,6 +217,7 @@ impl FnLower<'_, '_> {
                 self.rotate(&arr, aty, (lv, hv), i == I::ArrayRotateRight);
                 unit()
             }
+            (I::ArraySwapNested, [a, i, b, j]) => self.swap_nested(&arr, aty, [a, i, b, j]),
             (I::ArrayPrefetch, [n]) => {
                 let (nv, nt) = (self.expr(n), self.vty(n.ty));
                 let nv = self.cast_to(nv, nt, Ty::U64);
@@ -298,6 +300,48 @@ impl FnLower<'_, '_> {
         let t = self.copy_to_temp(Operand::Copy(pa.clone()), vt);
         self.assign(pa, Rvalue::Use(Operand::Copy(pb.clone())));
         self.assign(pb, Rvalue::Use(Operand::Copy(Place::local(t))));
+        unit()
+    }
+
+    /// `__intrinsic_array_swap_nested(xs, a, i, b, j)` on the content `arr` of `xs` (`aty` =
+    /// `T[][]`): exchanges `xs[a][i]` and `xs[b][j]`, every index bounds-checked. Each inner
+    /// array is reached as an element of `xs`; an inner array of a view type (array_view.rs)
+    /// syncs and writes back just the one element, as `swap` does.
+    fn swap_nested(&mut self, arr: &Place, aty: TyId, idx: [&hir::Expr; 4]) -> Operand {
+        let inner = self.elem_ty(aty);
+        let elem = self.elem_ty(inner);
+        let mut ops = vec![];
+        for e in idx {
+            let v = self.expr(e);
+            let v = self.freeze(v, e.ty);
+            ops.push((v, self.vty(e.ty)));
+        }
+        let [(a, ta), (i, ti), (b, tb), (j, tj)] = <[_; 4]>::try_from(ops).expect("four indices");
+        let pa = self.elem_place_checked(arr, aty, a, ta);
+        let pb = self.elem_place_checked(arr, aty, b, tb);
+        let view = self.cx.array_view(inner);
+        let (ui, uj) = (
+            self.view_index(i.clone(), ti),
+            self.view_index(j.clone(), tj),
+        );
+        let side = |lw: &mut Self, p: &Place, u: &Operand| match view {
+            true => lw.content_with(p, inner, ViewSync::Slots(vec![u.clone()])),
+            false => lw.content(p, inner),
+        };
+        let ca = side(self, &pa, &ui);
+        let cb = side(self, &pb, &uj);
+        let ea = self.elem_place_checked(&ca, inner, i, ti);
+        let eb = self.elem_place_checked(&cb, inner, j, tj);
+        let vt = self.cx.ty(elem);
+        if vt != Ty::Unit {
+            let t = self.copy_to_temp(Operand::Copy(ea.clone()), vt);
+            self.assign(ea, Rvalue::Use(Operand::Copy(eb.clone())));
+            self.assign(eb, Rvalue::Use(Operand::Copy(Place::local(t))));
+        }
+        if view {
+            self.view_flush(Operand::Copy(pa), inner, ViewFlush::Slots(vec![ui]));
+            self.view_flush(Operand::Copy(pb), inner, ViewFlush::Slots(vec![uj]));
+        }
         unit()
     }
 

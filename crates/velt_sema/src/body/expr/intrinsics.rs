@@ -38,6 +38,7 @@ pub(super) fn intrinsic_named(name: &str) -> Option<Intrinsic> {
         "array_prefetch" => I::ArrayPrefetch,
         "array_rotate_right" => I::ArrayRotateRight,
         "array_rotate_left" => I::ArrayRotateLeft,
+        "array_swap_nested" => I::ArraySwapNested,
         "hash" => I::Hash,
         "eq" => I::Eq,
         "key_eq" => I::KeyEq,
@@ -187,6 +188,11 @@ impl FnCx<'_, '_> {
             ),
             I::ArraySwap | I::ArrayRotateRight | I::ArrayRotateLeft => {
                 (vec![(arr, M), (usize_, C), (usize_, C)], unit, true)
+            }
+            I::ArraySwapNested => {
+                let outer = ty.array(arr);
+                let at = (usize_, C);
+                (vec![(outer, M), at, at, at, at], unit, true)
             }
             I::ArrayRemove => (vec![(arr, M), (usize_, C)], t, true),
             I::ArrayTruncate | I::ArraySetLen | I::ArrayReserve => {

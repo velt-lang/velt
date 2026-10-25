@@ -345,6 +345,24 @@ extend u8x16 {
   }
 
   /**
+   * The bytes of `s` from byte `at`, up to 16, in the low lanes; the other lanes are 0. Read
+   * where the string keeps them, without a copy: its text as UTF-8 (a lone surrogate as its
+   * three-byte form), the bytes `TextEncoder` gives for well-formed text (velt:encoding
+   * `utf8Length` counts them). `at` may be the byte length (all 0); past it, panics with a
+   * RangeError.
+   */
+  static loadString(s: string, at: usize = 0): u8x16 {
+    const n = __intrinsic_str_byte_len(s);
+    if (at + 16 <= n) {
+      return __intrinsic_str_load_u8x16(s, at as u64);
+    }
+    if (at > n) {
+      panic("RangeError: u8x16.loadString: position is out of range");
+    }
+    return __intrinsic_str_load_partial_u8x16(s, at as u64, (n - at) as u64);
+  }
+
+  /**
    * The elements of `from` starting at `at` that exist, up to 16, in the low lanes; the other
    * lanes are 0. For the last elements of an array, after the steps that take 16 at a time.
    * `at` may be the length (no element left); past it, panics with a RangeError.

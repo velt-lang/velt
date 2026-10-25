@@ -6,15 +6,7 @@
 // leaves. Keys with an order-preserving encoding (`InlineKey`: numbers, `bool`, strings, and user
 // types that implement it) are searched by two bytes of it per key, eight keys per compare. Values are shared as `Map` shares them (objects are not copied); keys are shared too.
 
-import {
-  F,
-  NONE,
-  Pool,
-  SLOT_MASK,
-  SLOT_SHIFT,
-  valueOf,
-  windowOf,
-} from "velt:collections/btree/pool";
+import { F, NONE, Pool, SLOT_MASK, SLOT_SHIFT, windowOf } from "velt:collections/btree/pool";
 import { insert } from "velt:collections/btree/insert";
 import { removeAt } from "velt:collections/btree/remove";
 import { afterRemove, edgeOrder, isEdge } from "velt:collections/btree/edges";
@@ -78,17 +70,21 @@ export class BTreeMap<K extends Comparable<K>, V> implements Iterable<[K, V]> {
    * `get`s.
    */
   getMany(keys: K[]): (V | undefined)[] {
-    const out: (V | undefined)[] = __intrinsic_array_with_capacity(keys.length);
+    const out: (V | undefined)[] = [];
+    out.reserve(keys.length);
     if (this.p.size == 0) {
       for (let i: usize = 0; i < keys.length; i++) {
         out.push(undefined);
       }
       return out;
     }
-    const leaves: u32[] = __intrinsic_array_with_capacity(BATCH);
-    const slots: usize[] = __intrinsic_array_with_capacity(BATCH);
+    const leaves: u32[] = [];
+    leaves.reserve(BATCH);
+    const slots: usize[] = [];
+    slots.reserve(BATCH);
     for (let start: usize = 0; start < keys.length; start += BATCH) {
-      const m = keys.length - start < BATCH ? keys.length - start : BATCH;
+      const total = keys.length as usize;
+      const m = total - start < BATCH ? total - start : BATCH;
       descendMany(this.p, keys, start, m, leaves, slots);
       for (let j: usize = 0; j < m; j++) {
         const leaf = leaves[j];
@@ -134,7 +130,8 @@ export class BTreeMap<K extends Comparable<K>, V> implements Iterable<[K, V]> {
 
   /** The keys, ascending. */
   keys(): K[] {
-    const out: K[] = __intrinsic_array_with_capacity(this.p.size);
+    const out: K[] = [];
+    out.reserve(this.p.size);
     let leaf = this.firstLeaf();
     while (leaf != NONE) {
       const base = (leaf as usize) * F;
@@ -150,7 +147,8 @@ export class BTreeMap<K extends Comparable<K>, V> implements Iterable<[K, V]> {
 
   /** The values, in key order (shared). */
   values(): V[] {
-    const out: V[] = __intrinsic_array_with_capacity(this.p.size);
+    const out: V[] = [];
+    out.reserve(this.p.size);
     let leaf = this.firstLeaf();
     while (leaf != NONE) {
       const base = (leaf as usize) * F;
@@ -166,7 +164,8 @@ export class BTreeMap<K extends Comparable<K>, V> implements Iterable<[K, V]> {
 
   /** The `[key, value]` pairs, in key order. */
   entries(): [K, V][] {
-    const out: [K, V][] = __intrinsic_array_with_capacity(this.p.size);
+    const out: [K, V][] = [];
+    out.reserve(this.p.size);
     let leaf = this.firstLeaf();
     while (leaf != NONE) {
       this.pushEntries(out, leaf, 0, this.p.leafCount(leaf));
@@ -214,32 +213,17 @@ export class BTreeMap<K extends Comparable<K>, V> implements Iterable<[K, V]> {
       const keys = this.p.leafKeys[c];
       const edits = this.p.edits;
       let changed = false;
-      if (this.p.plainVals()) {
-        const vals = this.p.valPlain[c];
-        while (i < n) {
-          const s = off + (ranks[i] as usize);
-          const key = keys[s];
-          f(vals[s], key);
-          if (this.p.edits != edits) {
-            last = key;
-            changed = true;
-            break;
-          }
-          i++;
+      const vals = this.p.vals[c];
+      while (i < n) {
+        const s = off + (ranks[i] as usize);
+        const key = keys[s];
+        f(vals[s], key);
+        if (this.p.edits != edits) {
+          last = key;
+          changed = true;
+          break;
         }
-      } else {
-        const vals = this.p.valOpt[c];
-        while (i < n) {
-          const s = off + (ranks[i] as usize);
-          const key = keys[s];
-          f(valueOf(vals[s]), key);
-          if (this.p.edits != edits) {
-            last = key;
-            changed = true;
-            break;
-          }
-          i++;
-        }
+        i++;
       }
       if (!changed) {
         leaf = this.p.leafNext[leaf as usize];

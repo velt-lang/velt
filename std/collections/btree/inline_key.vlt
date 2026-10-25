@@ -9,6 +9,7 @@
 // their keys in full. A type with an order of its own implements `InlineKey` with an `extend`
 // block (or `implements InlineKey`) to get the fast search.
 
+import { isAscii, utf8ByteAt, utf8Length } from "velt:encoding";
 import { mask8x16, u8x16 } from "velt:simd";
 
 /** The bytes of a key that order as the keys do, for `BTreeMap`'s node search. */
@@ -175,8 +176,8 @@ extend string implements InlineKey {
     return true;
   }
   inlineKey(offset: usize): u64 {
-    const n = __intrinsic_str_byte_len(this);
-    if (__intrinsic_str_len(this) == n || !fourByteBefore(this, n, offset + 8)) {
+    const n = utf8Length(this);
+    if (isAscii(this) || !fourByteBefore(this, n, offset + 8)) {
       return bytesFrom(this, n, offset).asU64x2().reverseBytes().lane(0);
     }
     return cesuBytes(this, n, offset, 8);
@@ -185,18 +186,18 @@ extend string implements InlineKey {
     return (this.inlineQuad(offset) >> 16) as u16;
   }
   inlineWindow(): [u64, u64] {
-    const n = __intrinsic_str_byte_len(this);
+    const n = utf8Length(this);
     // Bytes 0 .. 16 in one load when they are the bytes as kept (as `inlineQuad` decides).
-    if (__intrinsic_str_len(this) == n || !fourByteBefore(this, n, 16)) {
+    if (isAscii(this) || !fourByteBefore(this, n, 16)) {
       const w = bytesFrom(this, n, 0).asU64x2().reverseBytes();
       return [w.lane(0), w.lane(1)];
     }
     return [cesuBytes(this, n, 0, 8), cesuBytes(this, n, 8, 8)];
   }
   inlineQuad(offset: usize): u32 {
-    const n = __intrinsic_str_byte_len(this);
+    const n = utf8Length(this);
     // ASCII (as many UTF-16 units as bytes) or no four-byte character before: the bytes as kept.
-    if (__intrinsic_str_len(this) == n || !fourByteBefore(this, n, offset + 4)) {
+    if (isAscii(this) || !fourByteBefore(this, n, offset + 4)) {
       return bytesFrom(this, n, offset).asU32x4().reverseBytes().lane(0);
     }
     return cesuBytes(this, n, offset, 4) as u32;
@@ -205,13 +206,7 @@ extend string implements InlineKey {
 
 // The 16 bytes of `s` (`n` bytes) from `offset` as kept, 0 past its end: one load.
 function bytesFrom(s: string, n: usize, offset: usize): u8x16 {
-  if (offset + 16 <= n) {
-    return __intrinsic_str_load_u8x16(s, offset as u64);
-  }
-  if (offset < n) {
-    return __intrinsic_str_load_partial_u8x16(s, offset as u64, (n - offset) as u64);
-  }
-  return u8x16.splat(0);
+  return offset <= n ? u8x16.loadString(s, offset) : u8x16.splat(0);
 }
 
 // Whether one of the first `upto` bytes of `s` (`n` bytes) starts a four-byte character: a byte
@@ -221,10 +216,7 @@ function fourByteBefore(s: string, n: usize, upto: usize): bool {
   const f0 = u8x16.splat(240);
   for (let i: usize = 0; i < end; i += 16) {
     const left = end - i;
-    const v =
-      i + 16 <= n
-        ? __intrinsic_str_load_u8x16(s, i as u64)
-        : __intrinsic_str_load_partial_u8x16(s, i as u64, (n - i) as u64);
+    const v = u8x16.loadString(s, i);
     if (v.ge(f0).and(mask8x16.prefix(left)).any()) {
       return true;
     }
@@ -241,7 +233,7 @@ function cesuBytes(s: string, n: usize, offset: usize, count: usize): u64 {
   let out: usize = 0;
   let i: usize = 0;
   while (got < count && i < n) {
-    const b = __intrinsic_str_byte_at(s, i as u64) as u32;
+    const b = utf8ByteAt(s, i) as u32;
     if (b < 240) {
       if (out >= offset) {
         w = (w << 8) | (b as u64);
@@ -254,9 +246,9 @@ function cesuBytes(s: string, n: usize, offset: usize, count: usize): u64 {
     // A four-byte character: its code point, then its surrogates' three bytes each.
     const cp =
       ((b & 7) << 18) |
-      (((__intrinsic_str_byte_at(s, (i + 1) as u64) as u32) & 63) << 12) |
-      (((__intrinsic_str_byte_at(s, (i + 2) as u64) as u32) & 63) << 6) |
-      ((__intrinsic_str_byte_at(s, (i + 3) as u64) as u32) & 63);
+      (((utf8ByteAt(s, i + 1) as u32) & 63) << 12) |
+      (((utf8ByteAt(s, i + 2) as u32) & 63) << 6) |
+      ((utf8ByteAt(s, i + 3) as u32) & 63);
     const v = cp - 65536;
     const units: u32[] = [55296 | (v >> 10), 56320 | (v & 1023)];
     for (const u of units) {

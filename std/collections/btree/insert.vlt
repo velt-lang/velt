@@ -22,9 +22,7 @@ export function insert<K extends Comparable<K>, V>(p: Pool<K, V>, key: K, value:
   if (p.fill.length == 0) {
     p.fill.push(key);
     p.lineShift = key.hasInlineKey() && key.inlineWide() ? 1 : 0;
-    if (p.plainVals()) {
-      p.valFill.push(value);
-    }
+    p.valFill.push(value);
     p.root = p.newLeaf();
   }
   // The key's encoding, once: every node's word for it comes from this.
@@ -76,7 +74,7 @@ export function insert<K extends Comparable<K>, V>(p: Pool<K, V>, key: K, value:
     appendEntry(p, right, pos - half, key, value, win);
   }
   const sep = p.keyAt(slotAtRank(p, right, 0));
-  const [low, high] = p.fencesAt(p.pathNodes.length);
+  const [low, high] = p.fencesAt(p.pathNodes.length as usize);
   p.refreshLeafIfChanged(leaf, [low, sep]);
   p.refreshLeafIfChanged(right, [sep, high]);
   addSeparator(p, sep, right);
@@ -86,7 +84,7 @@ export function insert<K extends Comparable<K>, V>(p: Pool<K, V>, key: K, value:
 function addSeparator<K extends Comparable<K>, V>(p: Pool<K, V>, sep0: K, right0: u32) {
   let sep = sep0;
   let right = right0;
-  let depth = p.pathNodes.length;
+  let depth = p.pathNodes.length as usize;
   while (depth > 0) {
     depth--;
     const node = p.pathNodes[depth];
@@ -94,8 +92,8 @@ function addSeparator<K extends Comparable<K>, V>(p: Pool<K, V>, sep0: K, right0
     const base = (node as usize) * F;
     const n = p.innerCount(node);
     if (n < CAP) {
-      __intrinsic_array_rotate_right(p.innerKeys, base + slot, base + n);
-      __intrinsic_array_rotate_right(p.innerKids, base + slot + 1, base + n + 1);
+      p.innerKeys.rotateRight(base + slot, base + n + 1);
+      p.innerKids.rotateRight(base + slot + 1, base + n + 2);
       const line = shiftUp(p.innerLineOf(node), slot, n, p.scratch);
       p.setInnerLine(node, line);
       if (p.wide()) {
@@ -112,8 +110,10 @@ function addSeparator<K extends Comparable<K>, V>(p: Pool<K, V>, sep0: K, right0
     }
     // Full: lay out the F separators and F + 1 children, keep the left half here, move the
     // right half to a new node and pass the middle separator up.
-    const keys: K[] = __intrinsic_array_with_capacity(F);
-    const kids: u32[] = __intrinsic_array_with_capacity(F + 1);
+    const keys: K[] = [];
+    keys.reserve(F);
+    const kids: u32[] = [];
+    kids.reserve(F + 1);
     for (let i: usize = 0; i < n; i++) {
       if (i == slot) {
         keys.push(sep);
@@ -177,7 +177,7 @@ function shiftToSibling<K extends Comparable<K>, V>(
   if (p.height == 0) {
     return [NONE, 0];
   }
-  const depth = p.pathNodes.length - 1;
+  const depth = (p.pathNodes.length as usize) - 1;
   const parent = p.pathNodes[depth];
   const slot = p.pathSlots[depth];
   const pb = (parent as usize) * F;

@@ -271,8 +271,8 @@ export function descendMany<K extends Comparable<K>, V>(
   leaves: u32[],
   slots: usize[],
 ) {
-  __intrinsic_array_truncate(leaves, 0);
-  __intrinsic_array_truncate(slots, 0);
+  leaves.truncate(0);
+  slots.truncate(0);
   for (let j: usize = 0; j < m; j++) {
     leaves.push(p.root);
   }
@@ -303,13 +303,10 @@ export function descendMany<K extends Comparable<K>, V>(
   }
 }
 
-// The index of the lowest set bit of `x` (not 0; below 32): one count of leading zeros.
+// The index of the lowest set bit of `x` (not 0): one count of trailing zeros.
 function lowestBit(x: u64): usize {
-  return (31 - velt_rt_math_clz32((x & (~x + 1)) as i32)) as usize;
+  return x.trailingZeros();
 }
-
-// Leading zero bits of a 32-bit value (`Math.clz32`), one instruction.
-declare function velt_rt_math_clz32(x: i32): i32;
 
 /**
  * Moves the entries of `from`'s ranks `lo .. lo + k` (its smallest when `lo` is 0, else its

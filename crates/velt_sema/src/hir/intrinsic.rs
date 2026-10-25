@@ -68,6 +68,11 @@ pub enum Intrinsic {
     /// std only: as `ArrayRotateRight`, one slot down: the element at `lo` moves to `hi`.
     /// Additive.
     ArrayRotateLeft,
+    /// std only (`xs.swapIn`, std/prelude/array_nested.vlt): `(xs: T[][] (modified), a: usize,
+    /// i: usize, b: usize, j: usize)`, exchanges `xs[a][i]` and `xs[b][j]` (all four
+    /// bounds-checked): the bits of two elements, nothing copied or dropped, also between two
+    /// inner arrays, which one call may not otherwise change both of. Additive.
+    ArraySwapNested,
     /// `(x: borrow T) -> u64` compiler-generated hash agreeing with `KeyEq` (`Map` and `Set`
     /// keys): numbers, bool and strings by value, objects by identity, unions, options and
     /// tuples part by part
