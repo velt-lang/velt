@@ -55,14 +55,11 @@ pub(super) type Overrides = FxHashMap<(DefId, String), Vec<DefId>>;
 
 /// The parameters of method `def` whose default may differ in an override: a default the
 /// caller places (not one the function applies itself, whose type allows `undefined`), on a
-/// parameter whose type holds no nothing.
+/// parameter whose type holds no nothing. A rest parameter after them is passed on as it is.
 fn fillable(cx: &Ctx, def: DefId) -> Vec<usize> {
     let f = cx.fn_info(def);
     let Some(src) = f.source else { return vec![] };
     let sig = crate::body::defaults::fn_sig_ast(src);
-    if sig.params.last().is_some_and(|p| p.rest) {
-        return vec![];
-    }
     (sig.params.iter().enumerate())
         .filter(|(k, p)| {
             let Some(ps) = f.params.get(*k) else {
@@ -70,6 +67,7 @@ fn fillable(cx: &Ctx, def: DefId) -> Vec<usize> {
             };
             p.default.is_some()
                 && !p.optional
+                && !p.rest
                 && cx.ty.nothing_of(ps.ty).is_none()
                 && cx.dynamic(ps.ty).is_none()
                 && !cx.ty.has_error(ps.ty)

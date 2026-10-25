@@ -223,7 +223,7 @@ impl FnCx<'_, '_> {
                 let spread = args
                     .iter()
                     .any(|a| matches!(a.kind, ast::ExprKind::Spread(_)));
-                let fill = match spread || c.rest {
+                let fill = match spread {
                     true => None,
                     false => self.fill_target(recv.ty, def, slot, args),
                 };
