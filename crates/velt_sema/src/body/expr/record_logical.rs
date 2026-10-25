@@ -69,7 +69,7 @@ impl FnCx<'_, '_> {
         );
         let key = match key {
             RecordKey::Index(e) if !(key.side_effect_free() && is_pure_value(value)) => {
-                let kh = self.expr(e, Some(k), Want::Move);
+                let kh = self.index_key_arg(k, e, Want::Move);
                 let kh = self.coerce(kh, k);
                 self.bind_temp(KEY, kh, &mut stmts);
                 RecordKey::Index(&key_ref)

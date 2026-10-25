@@ -188,7 +188,7 @@ impl FnCx<'_, '_> {
     /// The key `e` of `r[e]` for a record keyed by `k`: on a `string`-keyed record a number is
     /// converted to its string, as JavaScript converts a property key (`r[1]` is `r["1"]`;
     /// `Record<number, V>` is such a record, `crate::record_keys`).
-    fn index_key_arg(&mut self, k: TyId, e: &ast::Expr, want: Want) -> hir::Expr {
+    pub(super) fn index_key_arg(&mut self, k: TyId, e: &ast::Expr, want: Want) -> hir::Expr {
         let str_ = self.cx.ty.str_;
         let plain = matches!(
             e.kind,

@@ -2159,7 +2159,9 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   members, `{ [key: string]: V }`, is `Record<string, V>`, as in TypeScript where the two are
   interchangeable: a value converts between them and stays the same object, and everything
   above holds (any key may be read, written and deleted; keys are listed in JavaScript's
-  order, array-index keys such as `"2"` first). A generic
+  order, array-index keys such as `"2"` first). A `number` key, `{ [id: number]: V }`, is the
+  same record: JavaScript makes a number key its string, so `r[1]` is `r["1"]` (as for
+  `Record<number, V>`). A generic
   interface works too (`interface Groups<T> { [name: string]: T[] }`). Reading a key that is not
   there gives `undefined`, as in JavaScript, so a read is `V | undefined` (TypeScript types it
   `V`): `d.k === undefined` is `true` and `typeof d.k` is `"undefined"` for a missing key, and
@@ -2187,7 +2189,8 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   converts each key and value into the new record, in the spread record's key order; a value that
   doesn't convert is an error. Not supported yet (each is an error): named members next to an index
   signature of other values (`{ name?: string; [key: string]: string | undefined }`, which needs
-  `undefined`, #930), a `number` or `symbol` key, two index signatures in one type,
+  `undefined`, #930), a key of Velt's integer types (`i64`) or a `symbol` key, two index
+  signatures in one type,
   and an interface with an index signature that also has methods or `extends`. An object of a
   named object type does not convert to an index-signature type (TypeScript allows it for type
   aliases but not interfaces): build a record (`{ ...o }` with values of one type) instead.
