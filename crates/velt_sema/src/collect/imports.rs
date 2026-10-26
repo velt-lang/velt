@@ -179,6 +179,7 @@ fn import_name(cx: &mut Ctx, m: usize, t: usize, imp: &ast::Import, n: &ast::Imp
         cx.scopes[m].type_only.insert(local.name.clone());
     } else if let Some(ty) = ty.filter(|&ty| ty != it) {
         cx.scopes[m].items.insert(type_key(&local.name), ty);
+        cx.scopes[m].type_keys = true;
     }
 }
 
@@ -222,9 +223,9 @@ fn bind_namespace(cx: &mut Ctx, m: usize, t: usize, ns: &ast::Ident) {
     }
     cx.scopes[m].namespaces.insert(ns.name.clone(), t);
     for (name, it) in all_exports(cx, t).iter() {
-        cx.scopes[m]
-            .items
-            .insert(format!("{}.{name}", ns.name), *it);
+        let scope = &mut cx.scopes[m];
+        scope.type_keys |= crate::type_meanings::of_type_key(name).is_some();
+        scope.items.insert(format!("{}.{name}", ns.name), *it);
     }
     super::exports::namespace_bound(cx, m, &ns.name);
 }

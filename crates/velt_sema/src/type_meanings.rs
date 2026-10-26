@@ -116,10 +116,14 @@ impl Ctx<'_> {
                 }
             }
         }
-        let key = type_key(name);
-        let scopes = [&self.scopes[module].items, &self.prelude];
-        for items in scopes {
-            if let Some(&it) = items.get(&key) {
+        let scope = &self.scopes[module];
+        let key = (scope.type_keys || self.prelude_type_keys).then(|| type_key(name));
+        let scopes = [
+            (&scope.items, scope.type_keys),
+            (&self.prelude, self.prelude_type_keys),
+        ];
+        for (items, keyed) in scopes {
+            if let Some(&it) = key.as_ref().filter(|_| keyed).and_then(|k| items.get(k)) {
                 return Some(it);
             }
             match items.get(name) {
@@ -144,6 +148,9 @@ impl Ctx<'_> {
         match path {
             [name] => self.lookup_type_item_at(module, &name.name, at),
             _ => {
+                if !self.scopes[module].type_keys {
+                    return self.lookup_path_at(module, path, at);
+                }
                 let joined: Vec<&str> = path.iter().map(|i| i.name.as_str()).collect();
                 let key = type_key(&joined.join("."));
                 match self.scopes[module].items.get(&key) {

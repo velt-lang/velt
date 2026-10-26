@@ -254,6 +254,7 @@ fn split_meanings(cx: &mut Ctx, m: usize, item: &ast::Item, name: &ast::Ident, i
     let scope = &mut cx.scopes[m];
     scope.items.insert(name.name.clone(), value.0);
     scope.items.insert(key.clone(), ty.0);
+    scope.type_keys = true;
     scope.exports.remove(&name.name);
     if value.1 {
         scope.exports.insert(name.name.clone());
@@ -325,6 +326,7 @@ fn collect_prelude(cx: &mut Ctx) {
         // Re-exports included: a global module (`std/prelude/global/`) only re-exports.
         for (name, it) in super::exports::all_exports(cx, m).iter() {
             let it = *it;
+            cx.prelude_type_keys |= crate::type_meanings::of_type_key(name).is_some();
             if let Some(prev) = cx.prelude.insert(name.clone(), it) {
                 if prev != it {
                     let span = match it {

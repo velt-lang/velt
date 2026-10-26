@@ -30,6 +30,8 @@ pub(crate) struct ModuleScope {
     pub type_only: FxHashSet<String>,
     /// `std/...` module: may call `__intrinsic_*`.
     pub is_std: bool,
+    /// Some name has a type key (`crate::type_meanings`).
+    pub type_keys: bool,
 }
 
 /// The classes below a class, deepest first, each with the method its vtable calls at a slot
@@ -48,6 +50,8 @@ pub(crate) struct Ctx<'m> {
     pub scopes: Vec<ModuleScope>,
     /// Exports of `std/prelude/*` modules, visible everywhere.
     pub prelude: FxHashMap<String, Item>,
+    /// Some prelude name has a type key (`crate::type_meanings`).
+    pub prelude_type_keys: bool,
     pub aliases: Vec<AliasInfo<'m>>,
     /// The names of type aliases without parameters that are read-only array or collection types
     /// and number-keyed record types, directly or through other such aliases
@@ -418,6 +422,7 @@ impl<'m> Ctx<'m> {
                 })
                 .collect(),
             prelude: FxHashMap::default(),
+            prelude_type_keys: false,
             aliases: vec![],
             marked_aliases: Default::default(),
             bad_key_sites: vec![],
