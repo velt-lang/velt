@@ -115,9 +115,7 @@ impl FnLower<'_, '_> {
             iu.clone()
         };
         let f = self.cx.func(Work::Oob(signed));
-        let suffix = self.panic_suffix();
-        let at = self.cx.static_str_object(&suffix);
-        let at = vir::Operand::Const(vir::Const::Static(at), Ty::Ptr);
+        let at = self.panic_at();
         self.call(vir::Callee::Func(f), vec![len, shown, at], None, false);
         self.terminate(vir::Terminator::Unreachable);
         self.switch_to(ok_bb);

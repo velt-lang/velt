@@ -121,11 +121,10 @@ impl FnLower<'_, '_> {
             (I::Panic, [a]) => {
                 let v = self.expr(a);
                 let mut p = self.operand_addr(v, STR);
-                let suffix = self.panic_suffix();
-                if !suffix.is_empty() {
+                let tracked = self.panic_loc() == Some(super::srcloc::ARG_LOC);
+                if tracked || !self.panic_suffix().is_empty() {
                     // The process ends right after: the concatenation is never freed.
-                    let at = self.str_lit(&suffix);
-                    let at = self.operand_addr(at, STR);
+                    let at = self.panic_at();
                     let str_ty = self.cx.str_ty();
                     let msg = self.concat(p, at, str_ty);
                     p = self.operand_addr(msg, STR);

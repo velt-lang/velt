@@ -141,7 +141,8 @@ impl FnLower<'_, '_> {
         if !matches!(self.cx.hir.def(def), hir::Def::Fn(f) if f.name == STABLE_SORT) {
             return None;
         }
-        let ([e, c], [xs, cmp, neg]) = (targs, argv) else {
+        // A caller-tracking instance's location may follow (track_caller.rs).
+        let ([e, c], [xs, cmp, neg, ..]) = (targs, argv) else {
             ice("the stable sort's signature changed")
         };
         let t = self.cx.intern(TyKind::Array(*e));

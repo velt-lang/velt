@@ -860,6 +860,12 @@ extend<T> Array<T> {
 // `[start, end)` lies in an array of `len` elements, else a RangeError panic.
 function checkRange(start: usize, end: usize, len: usize) {
   if (start > end || end > len) {
-    panic(`RangeError: the range ${start}..${end} is not inside the array (length ${len})`);
+    rangeOutside(start, end, len);
   }
+}
+
+// The panic of `checkRange`, out of line: a function that never returns is not inlined, so the
+// message's formatting stays here instead of in every caller of a checked method.
+function rangeOutside(start: usize, end: usize, len: usize): never {
+  panic(`RangeError: the range ${start}..${end} is not inside the array (length ${len})`);
 }
