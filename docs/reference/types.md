@@ -2434,10 +2434,11 @@ call only evaluates its `value`. A Node global Velt has is that global
 When the asserted type lists its keys (an object type, or a mapped type over a union of string
 literals such as `{ [K in StampKey]?: Stamp }`, also through type aliases of the module), the key
 may be a variable: `(globalThis as Host)[key]` reads the property `key` holds, the statement
-`host[key] = v` (or `host[key] ??= v`, `host[key] += v`, …) assigns it, and
+`host[key] = v` (or `host[key] ??= v`, `host[key] += v`, `host[key]!++`, …) assigns it, and
 `Object.defineProperty(host, key, { value, … })` defines it. The key's type must be one of
 the listed keys (`key: StampKey`, `keyof Host`): a wider one, such as `string`, is an error, as
-in TypeScript (TS7053), also for `defineProperty`, which TypeScript allows.
+in TypeScript (TS7053), also for `defineProperty`, which TypeScript allows (Velt's message names
+no TypeScript error there). `delete` of a property of `globalThis` is not supported yet.
 
 ```ts
 interface Hook {

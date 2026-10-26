@@ -29,7 +29,7 @@
 mod keys;
 mod walk;
 
-pub(crate) use walk::{DEFINE_KEY_CHECK, KEY_CHECK};
+pub(crate) use walk::{DEFINE_KEY_CHECK, DELETE_KEY_CHECK, KEY_CHECK};
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use velt_common::{Diagnostic, Span};
@@ -328,6 +328,16 @@ pub(crate) fn check_sites(cx: &mut Ctx) {
 
 /// Drop the errors reported inside a site whose key was wrong, but the key's own.
 pub(crate) fn drop_site_errors(cx: &mut Ctx) {
+    if cx.global_props.sites.is_empty() {
+        return;
+    }
+    // The branches of a variable key's chain check the same source once per key: one error
+    // per place and message.
+    let mut seen = FxHashSet::default();
+    cx.diags.retain(|d| {
+        let at = d.labels.first().map(|l| l.span);
+        !d.is_error() || at.is_none() || seen.insert((at, d.message.clone()))
+    });
     if cx.bad_key_sites.is_empty() {
         return;
     }

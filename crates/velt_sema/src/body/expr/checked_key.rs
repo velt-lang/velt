@@ -8,7 +8,7 @@ use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
 use crate::body::{FnCx, Want};
-use crate::global_this::{DEFINE_KEY_CHECK, KEY_CHECK};
+use crate::global_this::{DEFINE_KEY_CHECK, DELETE_KEY_CHECK, KEY_CHECK};
 use crate::hir;
 
 impl FnCx<'_, '_> {
@@ -26,20 +26,30 @@ impl FnCx<'_, '_> {
         if !id.name.starts_with("globalThis.") {
             return None;
         }
-        let define = match id.name.as_str() {
-            KEY_CHECK => false,
-            DEFINE_KEY_CHECK => true,
+        let site = match id.name.as_str() {
+            KEY_CHECK => Site::Key,
+            DEFINE_KEY_CHECK => Site::Define,
+            DELETE_KEY_CHECK => Site::Delete,
             _ => return None,
         };
         let ([keys, host], [k]) = (type_args, args) else {
             return None;
         };
         let want = self.resolve(keys);
-        let h = self.expr(k, None, Want::Borrow);
+        // A written key (`delete (globalThis as T).K`) is its literal type.
+        let exp = matches!(k.kind, ast::ExprKind::Lit(_)).then_some(want);
+        let h = self.expr(k, exp, Want::Borrow);
         if self.cx.ty.is_bottom(h.ty) {
             return Some(h);
         }
         match self.try_coerce(h, want) {
+            Ok(_) if site == Site::Delete => {
+                self.cx.error(
+                    Diagnostic::error("`delete` of a property of `globalThis` is not supported yet", span)
+                        .with_note("Velt keeps each property of `globalThis` as a variable: assign it `undefined` instead"),
+                );
+                Some(self.error_expr(span))
+            }
             Ok(h) => Some(h),
             Err(h) => {
                 let found = self.cx.display(h.ty);
@@ -52,13 +62,18 @@ impl FnCx<'_, '_> {
                         self.cx.display(t)
                     }
                 };
-                let d = Diagnostic::error(
-                    format!("the key of `globalThis as {shown}` must be one of its keys `{}`, found `{found}` (TypeScript's TS7053)", listed(keys)),
-                    k.span,
-                );
-                let d = match define {
-                    true => d.with_note("TypeScript accepts any key in `Object.defineProperty`; Velt, which keeps each property of `globalThis` as a variable, needs one of the listed keys"),
-                    false => d.with_note(format!("give the key the type of the keys (`{}`)", listed(keys))),
+                let d = match site {
+                    // TypeScript accepts any key there: no TypeScript error to name.
+                    Site::Define => Diagnostic::error(
+                        format!("the key of `Object.defineProperty(globalThis as {shown}, …)` must be one of its keys `{}` in Velt, found `{found}`", listed(keys)),
+                        k.span,
+                    )
+                    .with_note("TypeScript accepts any key here; Velt keeps each property of `globalThis` as a variable, so it needs one of the listed keys"),
+                    _ => Diagnostic::error(
+                        format!("the key of `globalThis as {shown}` must be one of its keys `{}`, found `{found}` (TypeScript's TS7053)", listed(keys)),
+                        k.span,
+                    )
+                    .with_note(format!("give the key the type of the keys (`{}`)", listed(keys))),
                 };
                 self.cx.error(d);
                 self.cx.bad_key_sites.push((span, k.span));
@@ -66,6 +81,14 @@ impl FnCx<'_, '_> {
             }
         }
     }
+}
+
+/// What a key check is for.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Site {
+    Key,
+    Define,
+    Delete,
 }
 
 /// The keys of the union `t` of string literals, as written.

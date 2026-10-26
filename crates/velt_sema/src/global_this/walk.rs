@@ -372,7 +372,7 @@ impl<'a> Walk<'a> {
 
     /// Rewrite `e`; `stmt`: `e` is a statement of its own (its value is unused).
     fn expr(&mut self, e: &mut ast::Expr, stmt: bool) {
-        if self.property(e, false) || self.define_property(e, stmt) {
+        if self.property(e, false) || self.define_property(e, stmt) || self.delete_property(e) {
             return;
         }
         match &mut e.kind {
@@ -582,9 +582,17 @@ impl<'a> Walk<'a> {
     /// of keys and `k` a variable: `if (k === "a") g.a = v; else if ...`, each branch rewritten
     /// as an assignment of its key.
     fn assign_listed(&mut self, e: &ast::Expr) -> Option<S> {
-        let E::Assign { op, target, value } = &e.kind else {
-            return None;
+        let target = match &e.kind {
+            E::Assign { target, .. } | E::Update { target, .. } => target,
+            _ => return None,
         };
+        // `h[k]!++`: the assertion is kept for the branches (`h.a = h.a! + 1`).
+        let mut target = &**target;
+        let mut asserted = false;
+        while let E::NonNull(x) | E::Paren(x) = &target.kind {
+            asserted |= matches!(target.kind, E::NonNull(_));
+            target = x;
+        }
         let E::Index { object, index, .. } = &target.kind else {
             return None;
         };
@@ -619,14 +627,46 @@ impl<'a> Walk<'a> {
                 },
                 target.span,
             );
-            let mut assign = synth(
-                E::Assign {
+            let kind = match &e.kind {
+                E::Assign { op, value, .. } => E::Assign {
                     op: *op,
                     target: Box::new(member),
                     value: value.clone(),
                 },
-                span,
-            );
+                // A statement: its value is unused, so `x!++` is `x = x! + 1`.
+                E::Update { op, .. } if asserted => {
+                    let one = synth(
+                        E::Lit(ast::Lit::Int {
+                            value: 1,
+                            suffix: None,
+                        }),
+                        span,
+                    );
+                    let op = match op {
+                        ast::UpdateOp::Inc => ast::BinaryOp::Add,
+                        ast::UpdateOp::Dec => ast::BinaryOp::Sub,
+                    };
+                    E::Assign {
+                        op: None,
+                        target: Box::new(member.clone()),
+                        value: Box::new(synth(
+                            E::Binary {
+                                op,
+                                lhs: Box::new(synth(E::NonNull(Box::new(member)), span)),
+                                rhs: Box::new(one),
+                            },
+                            span,
+                        )),
+                    }
+                }
+                E::Update { op, prefix, .. } => E::Update {
+                    op: *op,
+                    prefix: *prefix,
+                    target: Box::new(member),
+                },
+                _ => return None,
+            };
+            let mut assign = synth(kind, span);
             self.expr(&mut assign, true);
             let then = ast::Block {
                 stmts: vec![ast::Stmt {
@@ -645,6 +685,68 @@ impl<'a> Walk<'a> {
             }));
         }
         els.map(|s| s.kind)
+    }
+
+    /// `delete (globalThis as T)[k]` (or `.K`, `[KEY]`): `globalThis.deleteKey<keys, T>(k)`,
+    /// which checks the key as a read does and reports that deleting is not supported yet.
+    fn delete_property(&mut self, e: &mut ast::Expr) -> bool {
+        let E::Unary {
+            op: ast::UnaryOp::Delete,
+            expr,
+        } = &e.kind
+        else {
+            return false;
+        };
+        let mut place = &**expr;
+        while let E::Paren(x) | E::NonNull(x) = &place.kind {
+            place = x;
+        }
+        let (object, key) = match &place.kind {
+            E::Member { object, prop, .. } => {
+                let k = synth(E::Lit(ast::Lit::Str(prop.name.clone())), prop.span);
+                (object, k)
+            }
+            E::Index { object, index, .. } => match self.key(index) {
+                Some(k) => (object, synth(E::Lit(ast::Lit::Str(k)), index.span)),
+                None => (object, (**index).clone()),
+            },
+            _ => return false,
+        };
+        let Some(Some(t)) = self.base(object) else {
+            return false;
+        };
+        let keys = match (&key.kind, listed_keys(&t, self.aliases)) {
+            (_, Some(ks)) => ks,
+            (E::Lit(ast::Lit::Str(k)), None) => vec![k.clone()],
+            _ => return false,
+        };
+        let span = e.span;
+        let lit = |s: &String| ast::TypeExpr {
+            kind: ast::TypeExprKind::Literal(ast::SignedLit {
+                lit: ast::Lit::Str(s.clone()),
+                negative: false,
+            }),
+            span,
+        };
+        let union = match &keys[..] {
+            [one] => lit(one),
+            _ => ast::TypeExpr {
+                kind: ast::TypeExprKind::Union(keys.iter().map(lit).collect()),
+                span,
+            },
+        };
+        let mut key = key;
+        self.expr(&mut key, false);
+        *e = synth(
+            E::Call {
+                callee: Box::new(ident(DELETE_KEY_CHECK, span)),
+                type_args: vec![union, t],
+                args: vec![key],
+                optional: false,
+            },
+            span,
+        );
+        true
     }
 
     /// `Object.defineProperty(g, KEY, d)` with `g` standing for `globalThis`: normalized to
@@ -737,6 +839,7 @@ struct ConstKey {
 /// or an assignment, and a definition.
 pub(crate) const KEY_CHECK: &str = "globalThis.key";
 pub(crate) const DEFINE_KEY_CHECK: &str = "globalThis.defineKey";
+pub(crate) const DELETE_KEY_CHECK: &str = "globalThis.deleteKey";
 
 /// The first test of a chain checks the key: the listed keys, the asserted type (for the
 /// message) and whether the site is a `defineProperty`.
