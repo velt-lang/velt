@@ -56,6 +56,47 @@ function gen<U>(b: Box, u: U): U[] {
   return b.wrap(u);
 }
 
+// An interface value at other type arguments, while another interface's generic method of the
+// same name is called through interface values.
+interface Holder<A> {
+  wrap<T>(x: T): T[];
+  get(): A;
+}
+
+class HC implements Holder<number> {
+  wrap<T>(x: T): T[] {
+    return [x];
+  }
+  get(): number {
+    return 4;
+  }
+}
+
+// A generic implementation made only where a generic function is instantiated, whose method
+// needs a deferred type over its own type parameter and its class's.
+interface Shower {
+  show<T>(x: T): string;
+}
+
+class TB<P> implements Shower {
+  p: P;
+  constructor(p: P) {
+    this.p = p;
+  }
+  show<T>(x: T): string {
+    const w: Tagged<[T, P]>[] = [];
+    return JSON.stringify(w) + String(x) + JSON.stringify(this.p);
+  }
+}
+
+function mk<X>(x: X): Shower {
+  return new TB<X[][]>([[x]]);
+}
+
+function twice<Y>(y: Y): Shower {
+  return mk<Y[]>([y]);
+}
+
 function main(): void {
   const bs: Box[] = [new A(), new B(7)];
   for (const b of bs) useBox(b);
@@ -64,4 +105,8 @@ function main(): void {
   console.log(m.pair("k", 3), m.pair("j", null));
   const t: Tagger = new T1();
   console.log(t.tag(3), t.tag("s"));
+  const h: Holder<unknown> = new HC();
+  console.log(h.get());
+  const sh = mk(1);
+  console.log(sh.show(2), sh.show("s"), twice(true).show(3));
 }
