@@ -87,6 +87,7 @@ impl FnCx<'_, '_> {
     ) {
         let span = s.span;
         self.unnarrow_assigned_in(s);
+        self.unnarrow_written_in(s);
         match &s.kind {
             ast::StmtKind::While { cond, body } => {
                 let (when_true, when_false) = self.narrowing(cond);
@@ -269,6 +270,7 @@ impl FnCx<'_, '_> {
             when_true.iter().for_each(|f| self.narrow(f));
             for s in &body.stmts {
                 self.unnarrow_assigned_in(s);
+                self.unnarrow_written_in(s);
             }
             let step = self.expr_stmt(u);
             self.pop_scope();

@@ -378,6 +378,19 @@ impl FnCx<'_, '_> {
         }
     }
 
+    /// A loop may run its body again after it writes a field path (`o.v = 5`, `delete r[k]`):
+    /// the narrowing of what `s` writes does not hold inside (or after) it (#1280).
+    pub(crate) fn unnarrow_written_in(&mut self, s: &ast::Stmt) {
+        if self.f.field_tokens.is_empty() {
+            return;
+        }
+        let mut paths = vec![];
+        super::assigned::written_paths(s, &mut paths);
+        for p in paths {
+            self.unnarrow_fields(p);
+        }
+    }
+
     /// The tokens of the field paths rooted at local `l`.
     pub(crate) fn field_tokens_of(&self, l: LocalId) -> Vec<LocalId> {
         let tokens = self.f.field_tokens.iter();

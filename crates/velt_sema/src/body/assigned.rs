@@ -17,6 +17,7 @@ pub(crate) fn assigned_in_stmt<'a>(s: &'a ast::Stmt, out: &mut Assigned<'a>) {
         out,
         direct: true,
         fields: false,
+        paths: None,
     }
     .stmt(s);
 }
@@ -27,8 +28,22 @@ pub(crate) fn assigned_in_expr<'a>(e: &'a ast::Expr, out: &mut Assigned<'a>) {
         out,
         direct: true,
         fields: false,
+        paths: None,
     }
     .expr(e);
+}
+
+/// The member and index targets `s` assigns or deletes outside closures (`o.v = 5`,
+/// `r[k] = x`, `delete r[k]`): a loop drops their narrowing (`field_narrow`).
+pub(crate) fn written_paths<'a>(s: &'a ast::Stmt, out: &mut Vec<&'a ast::Expr>) {
+    let mut names = Assigned::default();
+    Walk {
+        out: &mut names,
+        direct: true,
+        fields: false,
+        paths: Some(out),
+    }
+    .stmt(s);
 }
 
 /// Names that the closures (arrow functions, function expressions, object methods) created in
@@ -42,6 +57,7 @@ pub(crate) fn assigned_by_closures<'a>(
         out: &mut out,
         direct: false,
         fields: false,
+        paths: None,
     };
     stmts.iter().for_each(|s| w.stmt(s));
     exprs.into_iter().for_each(|e| w.expr(e));
@@ -56,6 +72,7 @@ pub(crate) fn this_fields_assigned(stmts: &[ast::Stmt]) -> Assigned<'_> {
         out: &mut out,
         direct: false,
         fields: true,
+        paths: None,
     };
     stmts.iter().for_each(|s| w.stmt(s));
     out
@@ -73,6 +90,8 @@ struct Walk<'a, 'o> {
     direct: bool,
     /// Record the fields of `this` assigned outside closures, not variables.
     fields: bool,
+    /// Also collect the member and index targets written outside closures.
+    paths: Option<&'o mut Vec<&'a ast::Expr>>,
 }
 
 impl<'a> Walk<'a, '_> {
@@ -171,7 +190,20 @@ impl<'a> Walk<'a, '_> {
                     }
                 }
             }
+            E::Unary {
+                op: ast::UnaryOp::Delete,
+                expr,
+            } if self.paths.is_some() => {
+                if let Some(paths) = self.paths.as_deref_mut() {
+                    paths.push(expr);
+                }
+            }
             E::Assign { target, .. } | E::Update { target, .. } => {
+                if let (Some(paths), E::Member { .. } | E::Index { .. }) =
+                    (self.paths.as_deref_mut(), &target.kind)
+                {
+                    paths.push(target);
+                }
                 if self.direct {
                     // Also every variable a destructuring target names (`[a, b] = [b, a]`).
                     let mut names = vec![];
