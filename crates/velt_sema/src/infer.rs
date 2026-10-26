@@ -7,7 +7,10 @@ use crate::ctx::Ctx;
 use crate::defs::Bound;
 use crate::hir::{DefId, ImplDef, TyId, TyKind, TyOp};
 
+mod ext_exists;
 mod ext_impls;
+
+pub(crate) use ext_exists::ExistsKey;
 
 /// A found impl: its index, the interface arguments and the type it is for (`Ctx::find_impl`).
 pub(crate) type FoundImpl = (u32, Vec<TyId>, TyId);

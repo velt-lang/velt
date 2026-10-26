@@ -760,8 +760,11 @@ does not count), and a method `I` gives a default for may be left out.
   blocks for `W` implementing `G<i64>` and `G<string>` conflict, and with `extend<T> Box<T>
   implements G<T>` and `extend<A> A implements G<i64>`, a `Box<string>` is a `G<string>` only.
 - **Blanket blocks chain**: with `extend<T extends K> T implements J` and `extend<T extends J>
-  T implements I`, a `T extends K` in generic code is an `I` too. A chain of bounds through
-  blocks is followed 64 levels deep.
+  T implements I`, a `T extends K` in generic code is an `I` too, through chains of any length.
+- **A block's bounds hold when the type meets them at all**, through its own implementation or
+  another block: with `extend<T extends Q> T implements P`, `extend<T> T implements P` and
+  `extend<T extends P> T implements Q`, every type is a `P` and a `Q`, and gets the bounded `P`
+  block. A type never meets a bound only through itself.
 - **The most specific block wins** for each other type, by the rule above: with the blanket block and
   `extend u64 implements Describe`, a `u64` uses the `u64` block everywhere, in generic code too
   (`f(5 as u64)` calls it through `K`), and every other comparable type uses the blanket one.
@@ -777,9 +780,9 @@ does not count), and a method `I` gives a default for may be left out.
   union's value has one member's type: implement the interface for each member); a blanket
   block bounded by the interface it implements (`extend<T extends I> T implements I`), which
   no type could get; a bound of `any`, `unknown`, `object` or `Function` on a block that lists
-  `implements` (leave out a bound every type meets). Blocks whose bounds lead back to each other (`extend<T extends I> T
-  implements J` with `extend<U extends J> U implements I`) give a type neither interface unless
-  it has one of its own.
+  `implements` (leave out a bound every type meets). Blocks whose bounds only lead to each other
+  (`extend<T extends I> T implements J` with `extend<U extends J> U implements I`) give a type
+  neither interface unless it has one of its own.
 - A value converted from `any` or `unknown` to `I` uses the implementation a direct conversion of
   the value would.
 - `extend X implements Comparable<X>` may be written out too; a block that only defines

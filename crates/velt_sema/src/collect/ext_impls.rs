@@ -109,7 +109,11 @@ fn bounds_ok(cx: &mut Ctx, e: usize, span: velt_common::Span) -> bool {
             format!("an `extend` block that lists `implements` cannot bound `{name}` by `{what}`"),
             span,
         )
-        .with_note("its bounds must be interfaces a type implements (`T extends Comparable<T>`); leave out a bound of `any` or `unknown`, which every type meets"),
+        .with_note(match what.as_str() {
+            "any" | "unknown" => format!("every type meets `{what}`: leave the bound out"),
+            "object" | "Function" => format!("its bounds must be interfaces a type implements (`T extends Comparable<T>`), and `{what}` is a test of the value at run time: implement the interface for the types you mean"),
+            _ => "its bounds must be interfaces a type implements (`T extends Comparable<T>`)".to_string(),
+        }),
     );
     false
 }
