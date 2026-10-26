@@ -45,7 +45,6 @@ const INVALID: u8 = 0xff;
 // `=`
 const PAD: u8 = 61;
 
-/** Thrown for malformed Base64, hex or UTF-8 input. */
 /**
  * The number of bytes `s` keeps its text in: UTF-8, a lone surrogate as its three-byte form
  * (`Buffer.byteLength(s)` for well-formed text). O(1).
@@ -67,6 +66,7 @@ export function isAscii(s: string): bool {
   return __intrinsic_str_len(s) == __intrinsic_str_byte_len(s);
 }
 
+/** Thrown for malformed Base64, hex or UTF-8 input. */
 export class EncodingError extends Error {
   constructor(message: string) {
     super(message);

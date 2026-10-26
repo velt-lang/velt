@@ -37,6 +37,9 @@ about 27 MB, and string keys of up to 23 bytes are kept in the map, not on the h
   so a string or an object is freed with its entry once nothing else holds it. Unused slots
   hold a blank value (velt:mem `Blank`: `""` for strings), or for a type without one a share
   of a live entry, which moves to another entry when that one goes.
+- The map is written in Velt on public APIs only. Its parts live in `velt:collections/btree/*`
+  modules, which are internal: they can be imported, but they are not API and change without
+  notice. Use `velt:collections/btree_map`.
 
 ```ts
 import { BTreeMap } from "velt:collections/btree_map";

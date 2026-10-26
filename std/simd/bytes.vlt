@@ -353,7 +353,7 @@ extend u8x16 {
    */
   static loadString(s: string, at: usize = 0): u8x16 {
     const n = __intrinsic_str_byte_len(s);
-    if (at + 16 <= n) {
+    if (at <= n && n - at >= 16) {
       return __intrinsic_str_load_u8x16(s, at as u64);
     }
     if (at > n) {

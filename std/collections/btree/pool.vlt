@@ -598,9 +598,12 @@ export class Pool<K extends Comparable<K>, V> {
     return !this.fill[0].hasBlank() || !this.valFill[0].hasBlank();
   }
 
-  /** Whether the key in slot `s` is the fillers' entry's (`liveFill` only). */
+  /**
+   * Whether the key in slot `s` is the fillers' entry's (`liveFill` only), by the map's own
+   * equality: `==` is false for a NaN key and itself.
+   */
   isFill(s: usize): bool {
-    return this.keyAt(s) == this.fillOwner[0];
+    return this.cmpKey(this.fillOwner[0], s) == 0;
   }
 
   /**

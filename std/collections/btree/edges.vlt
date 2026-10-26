@@ -31,10 +31,10 @@ export function edgeOrder<K extends Comparable<K>, V>(p: Pool<K, V>, t: K, win: 
     return 1;
   }
   if (a == p.minWindow[0] || a == p.maxWindow[0]) {
-    if (a == p.minWindow[0] && b <= p.minWindow[1] && t < p.minKey[0]) {
+    if (a == p.minWindow[0] && b <= p.minWindow[1] && t.compareTo(p.minKey[0]) < 0) {
       return -1;
     }
-    if (a == p.maxWindow[0] && b >= p.maxWindow[1] && p.maxKey[0] < t) {
+    if (a == p.maxWindow[0] && b >= p.maxWindow[1] && p.maxKey[0].compareTo(t) < 0) {
       return 1;
     }
   }

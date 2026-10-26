@@ -114,8 +114,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Ty::U64,
             Rvalue::Use(Operand::Copy(proj(&ap, Proj::Field(1)))),
         );
-        let et = self.cx.ty(elem);
-        let (stride, align) = self.cx.size_align(et);
+        // The buffer becomes a `T[]` (or is freed as a slot array), so it is laid out as one.
+        let (stride, align) = self.stride(elem);
         let buf = self.results_buffer(n.clone(), stride, align);
         let inner = self.temp(Ty::Ptr);
         let futs = Operand::Copy(proj(&ap, Proj::Field(0)));

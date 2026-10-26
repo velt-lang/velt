@@ -166,7 +166,7 @@ function firstKey<K extends Comparable<K>, V>(p: Pool<K, V>, node: u32, height: 
 function checkUnused<K extends Comparable<K>, V>(p: Pool<K, V>): string {
   for (let leaf: usize = 0; leaf < p.leafNext.length; leaf++) {
     for (let i = p.leafCount(leaf as u32); i < F; i++) {
-      if (!(p.keyAt(leaf * F + i) == p.fill[0]) || !(p.valAt(leaf * F + i) == p.valFill[0])) {
+      if (p.cmpKey(p.fill[0], leaf * F + i) != 0 || !(p.valAt(leaf * F + i) == p.valFill[0])) {
         return `leaf ${leaf}: unused slot ${i} holds an old entry`;
       }
     }
@@ -174,7 +174,7 @@ function checkUnused<K extends Comparable<K>, V>(p: Pool<K, V>): string {
   const inners: usize = p.innerKeys.length / F;
   for (let inner: usize = 0; inner < inners; inner++) {
     for (let i = p.innerCount(inner as u32); i < F; i++) {
-      if (!(p.innerKeys[inner * F + i] == p.fill[0])) {
+      if (p.fill[0].compareTo(p.innerKeys[inner * F + i]) != 0) {
         return `inner node ${inner}: unused slot ${i} holds an old key`;
       }
     }
