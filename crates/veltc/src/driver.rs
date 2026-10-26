@@ -38,7 +38,7 @@ pub struct BuildOptions {
     /// Target triple; `None` → host.
     pub target: Option<String>,
     /// The CPU to build for (`--cpu`, `$VELT_CPU` or the package's `build.cpu`, resolved by
-    /// `commands::build::resolve_cpu`); `None` → the target's default
+    /// `commands::cpu::resolve_cpu`); `None` → the target's default
     /// (`velt_codegen_cl::DEFAULT_X86_CPU` on x86_64).
     pub cpu: Option<String>,
     /// What to produce.
