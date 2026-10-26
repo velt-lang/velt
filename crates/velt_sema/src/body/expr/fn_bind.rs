@@ -76,10 +76,12 @@ impl FnCx<'_, '_> {
         // `f`: it takes `undefined`, which gives `f` its default.
         // Only a call of the declaration itself fills in defaults (a function value's call
         // doesn't): a bound function declaration with defaults calls it by its name.
-        let direct = expected.is_none() && defaults.iter().any(|d| *d) && names_fn_item(f);
-        let fty = match direct {
-            true => self.undefined_for_defaults(fty, &defaults),
-            false => fty,
+        // Where a function type is expected, the forwarder has that type (whose parameters may
+        // be optional, `(a?: number) => string`).
+        let direct = defaults.iter().any(|d| *d) && names_fn_item(f);
+        let fty = match (direct, expected) {
+            (true, None) => self.undefined_for_defaults(fty, &defaults),
+            _ => fty,
         };
         let TyKind::FnPtr { params, rest, .. } = self.cx.ty.kind(fty).clone() else {
             return self.error_expr(span);

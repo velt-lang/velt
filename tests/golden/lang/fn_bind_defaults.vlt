@@ -22,3 +22,5 @@ function sum(...xs: number[]): number {
 }
 
 console.log(sum.bind(null)(1, 2, 3), sum.bind(null)());
+const be: (a?: number) => string = def.bind(null);
+console.log(be(), be(9));
