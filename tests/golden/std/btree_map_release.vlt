@@ -1,0 +1,102 @@
+// check: no leaks
+// A deleted key is released (#1545 review): the filler of unused slots was the first key ever
+// stored and outlived its entry, and an inner node's separator could be a deleted key.
+import { BTreeMap } from "velt:collections/btree_map";
+
+class Key implements Comparable<Key> {
+  n: i64;
+  buf: u8[];
+  constructor(n: i64) {
+    this.n = n;
+    this.buf = [1, 2, 3];
+  }
+  compareTo(other: Key): i64 {
+    return this.n - other.n;
+  }
+}
+
+// Inserts `n` keys in `order`, keeping a weak reference to each.
+function fill(m: BTreeMap<Key, i64>, n: i64, order: (i: i64) => i64): WeakRef<Key>[] {
+  const refs: WeakRef<Key>[] = [];
+  for (let i = 0; i < n; i++) {
+    refs.push(new WeakRef<Key>(new Key(0)));
+  }
+  for (let i = 0; i < n; i++) {
+    const k = new Key(order(i));
+    refs[k.n] = new WeakRef<Key>(k);
+    m.set(k, i);
+  }
+  return refs;
+}
+
+function alive(refs: WeakRef<Key>[], from: i64, to: i64, step: i64): i64 {
+  let c = 0;
+  for (let i = from; i < to; i += step) {
+    if (refs[i].deref() !== undefined) {
+      c++;
+    }
+  }
+  return c;
+}
+
+// The reviewer's case: one key, then every key of a small map, deleted.
+function one() {
+  const m = new BTreeMap<Key, i64>();
+  const k0 = new Key(5);
+  const r = new WeakRef<Key>(k0);
+  m.set(k0, 1);
+  m.delete(new Key(5));
+  console.log(m.size, r.deref() === undefined);
+  m.set(new Key(7), 2);
+  console.log(m.size, m.get(new Key(7)), m.has(new Key(5)));
+}
+
+// A tree of several levels, drained in three orders: after each round the deleted keys are gone
+// and the others are alive.
+function drain(name: string, order: (i: i64) => i64) {
+  const n: i64 = 3000;
+  const m = new BTreeMap<Key, i64>();
+  const refs = fill(m, n, order);
+  // Every other key, then the rest in the same order.
+  for (let i = 0; i < n; i++) {
+    const k = order(i);
+    if (k % 2 == 0) {
+      m.delete(new Key(k));
+    }
+  }
+  console.log(name, m.size, alive(refs, 0, n, 2), alive(refs, 1, n, 2));
+  for (let i = 0; i < n; i++) {
+    m.delete(new Key(order(i)));
+  }
+  console.log(name, m.size, alive(refs, 0, n, 1));
+  m.set(new Key(1), 1);
+  console.log(name, m.size, m.first()!.n);
+}
+
+// Deleting the smallest keys one by one (a queue) keeps the map small and its keys released.
+function queue() {
+  const m = new BTreeMap<Key, i64>();
+  const refs = fill(m, 500, (i: i64): i64 => i);
+  for (let i: i64 = 0; i < 400; i++) {
+    m.delete(m.first()!);
+  }
+  console.log("queue", m.size, alive(refs, 0, 400, 1), alive(refs, 400, 500, 1), m.first()!.n);
+}
+
+function strings() {
+  const m = new BTreeMap<string, i64>();
+  for (let i = 0; i < 1000; i++) {
+    m.set(`k${i}`, i);
+  }
+  for (let i = 0; i < 1000; i += 3) {
+    m.delete(`k${i}`);
+  }
+  console.log("strings", m.size, m.get("k1"), m.get("k0"), m.first(), m.last());
+}
+
+one();
+drain("up", (i: i64): i64 => i);
+drain("down", (i: i64): i64 => 2999 - i);
+drain("mixed", (i: i64): i64 => (i * 1201) % 3000);
+queue();
+strings();

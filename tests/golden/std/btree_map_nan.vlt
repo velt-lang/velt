@@ -1,0 +1,65 @@
+// NaN keys in the ordered maps (#1545 review): NaN is its own key, after every other number and
+// equal to itself, as `f64.compareTo` orders it. `<` alone found NaN equal to the key in its slot,
+// so `set(NaN)` overwrote that key's value and `delete(NaN)` deleted it.
+import { BTreeMap } from "velt:collections/btree_map";
+import { SortedMap } from "velt:collections/sorted_map";
+
+function small() {
+  const m = new BTreeMap<f64, string>();
+  m.set(1.0, "one");
+  m.set(2.0, "two");
+  m.set(NaN, "nan");
+  console.log(m.size, m.get(1.0), m.get(NaN), m.keys());
+  m.set(NaN, "nan2");
+  console.log(m.size, m.get(NaN), m.has(NaN), m.last(), m.first());
+  console.log(m.floorKey(NaN), m.ceilingKey(3.0), m.floorKey(3.0), m.ceilingKey(NaN));
+  console.log(m.range(1.5, NaN), m.range(NaN, 5.0).length, m.range(NaN, NaN).length);
+  console.log(m.delete(NaN), m.delete(NaN), m.size, m.get(NaN), m.keys());
+}
+
+function big() {
+  const big = new BTreeMap<f64, i64>();
+  for (let i = 0; i < 1000; i++) {
+    big.set(i as f64, i);
+  }
+  big.set(NaN, -1);
+  console.log(big.size, big.get(NaN), big.last());
+  console.log(big.delete(NaN), big.size, big.has(NaN));
+  let sum = 0;
+  for (const v of big.values()) {
+    sum += v;
+  }
+  console.log(sum, big.get(999.0), big.get(0.0));
+  // NaN in the middle of an insertion order, and as a separator once the leaves split.
+  const m = new BTreeMap<f64, i64>();
+  for (let i = 0; i < 300; i++) {
+    if (i == 150) {
+      m.set(NaN, 1000);
+    }
+    m.set((300 - i) as f64, i);
+  }
+  console.log(m.size, m.get(NaN), m.get(1.0), m.get(300.0), m.last(), m.first());
+  for (let i = 1; i <= 300; i += 2) {
+    m.delete(i as f64);
+  }
+  console.log(m.size, m.get(NaN), m.has(1.0), m.get(2.0), m.keys().length);
+  const f32s = new BTreeMap<f32, string>();
+  f32s.set(1.0 as f32, "a");
+  f32s.set(NaN as f32, "n");
+  console.log(f32s.size, f32s.get(1.0 as f32), f32s.get(NaN as f32));
+}
+
+function sorted() {
+  const s = new SortedMap<f64, string>();
+  s.set(1.0, "one");
+  s.set(2.0, "two");
+  s.set(NaN, "nan");
+  console.log(s.size, s.get(1.0), s.get(NaN), s.keys());
+  s.set(NaN, "nan2");
+  console.log(s.size, s.get(NaN), s.last(), s.floorKey(NaN), s.ceilingKey(3.0));
+  console.log(s.range(1.5, NaN), s.delete(NaN), s.delete(NaN), s.size, s.keys());
+}
+
+small();
+big();
+sorted();
