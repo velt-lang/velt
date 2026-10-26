@@ -18,7 +18,11 @@ pub(super) fn intrinsic_named(name: &str) -> Option<Intrinsic> {
         "to_string" => I::ToString,
         "str_concat" => I::StrConcat,
         "str_len" => I::StrLen,
+        "str_byte_len" => I::StrByteLen,
         "str_char_code_at" => I::StrCharCodeAt,
+        "str_byte_at" => I::StrByteAt,
+        "str_load_u8x16" => I::StrLoadU8x16,
+        "str_load_partial_u8x16" => I::StrLoadPartialU8x16,
         "exit" => I::Exit,
         "panic" => I::Panic,
         "array_with_capacity" => I::ArrayWithCapacity,
@@ -57,10 +61,16 @@ pub(super) fn intrinsic_named(name: &str) -> Option<Intrinsic> {
         "json_stringify" => I::JsonStringify,
         "json_parse" => I::JsonParse,
         "json_parse_rows" => I::JsonParseRows,
+        "json_parse_cursor" => I::JsonParseCursor,
+        "db_bind" => I::DbBind,
+        "read_rows" => I::ReadRows,
+        "read_row" => I::ReadRow,
         "http_handler" => I::HttpHandler,
         "promise_any" => I::PromiseAny,
         "chan_send" => I::ChanSend,
         "any_delete" => I::AnyDelete,
+        "any_tag" => I::AnyTag,
+        "any_to_number" => I::AnyToNumber,
         "proxy_array_call" => I::ProxyArrayCall,
         "proxy_array_hole" => I::ProxyArrayHole,
         "chan_receive" => I::ChanReceive,
@@ -134,6 +144,9 @@ impl FnCx<'_, '_> {
                 | Intrinsic::GeneratorValue
                 | Intrinsic::GeneratorReturn,
             ) => vec!["T".into(), "E".into(), "N".into()],
+            (true, Intrinsic::ReadRows | Intrinsic::ReadRow) => {
+                vec!["T".into(), "S".into()]
+            }
             (true, _) => vec!["T".into()],
         };
         Callable {
@@ -208,8 +221,20 @@ impl FnCx<'_, '_> {
                 (vec![(f64_, C)], f64_, false)
             }
             I::StrConcat => (vec![(str_, B), (str_, B)], str_, false),
-            I::StrLen => (vec![(str_, B)], usize_, false),
+            I::StrLen | I::StrByteLen => (vec![(str_, B)], usize_, false),
             I::StrCharCodeAt => (vec![(str_, B), (ty.i64, C)], ty.i64, false),
+            I::StrByteAt => {
+                let u8_ = ty.intern(TyKind::Int(IntTy::U8));
+                (vec![(str_, B), (ty.u64, C)], u8_, false)
+            }
+            I::StrLoadU8x16 => {
+                let v = ty.intern(TyKind::Simd(crate::hir::SimdTy::U8x16));
+                (vec![(str_, B), (ty.u64, C)], v, false)
+            }
+            I::StrLoadPartialU8x16 => {
+                let v = ty.intern(TyKind::Simd(crate::hir::SimdTy::U8x16));
+                (vec![(str_, B), (ty.u64, C), (ty.u64, C)], v, false)
+            }
             I::Exit => (vec![(ty.i32, C)], ty.never, false),
             I::Panic => (vec![(str_, B)], ty.never, false),
             I::ArrayDataPtr => (vec![(arr, B)], ty.u64, true),
@@ -275,6 +300,8 @@ impl FnCx<'_, '_> {
             I::ChanTryReceive => (vec![(u64_, C)], ty.option(t), true),
             I::PerfNow => (vec![], ty.f64, false),
             I::AnyDelete => (vec![(any_ty, B), (str_, B)], ty.bool_, false),
+            I::AnyTag => (vec![(any_ty, B)], i64_, false),
+            I::AnyToNumber => (vec![(any_ty, B)], ty.f64, false),
             I::ProxyArrayCall => (vec![(any_ty, B), (i64_, C)], i64_, false),
             I::ProxyArrayHole => (vec![(any_ty, B), (i64_, C), (i64_, C)], i64_, false),
             I::SymbolStatic => {
@@ -304,6 +331,14 @@ impl FnCx<'_, '_> {
                 let bytes = ty.array(bytes);
                 (vec![(bytes, B), (ty.i64, C), (ty.i64, C)], t, true)
             }
+            I::JsonParseCursor => (vec![(u64_, C), (ty.i64, C), (ty.i64, C)], t, true),
+            I::DbBind => (vec![(u64_, C), (t, B)], ty.bool_, true),
+            // `<T, S>`: the row type and the source's type.
+            I::ReadRows => {
+                let rows = ty.array(t);
+                (vec![(e, B)], ty.option(rows), true)
+            }
+            I::ReadRow => (vec![(e, B)], ty.option(t), true),
             I::HttpHandler => {
                 let f = http_handler_fn(ty);
                 (vec![(f, O)], ty.intern(TyKind::Tuple(vec![u64_; 6])), false)

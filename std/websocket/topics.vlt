@@ -18,12 +18,13 @@ import { START } from "velt:websocket/queue";
 import { Tx, writeDirect } from "velt:websocket/writer";
 
 class Sub {
-  /** The connection's stream handle. */
-  id: u64;
+  /** The connection's stream, which the publishing task may write to. */
+  stream: TcpStream;
+  /** The connection's queue: also what tells connections apart (`===`). */
   tx: Tx;
 
-  constructor(id: u64, tx: Tx) {
-    this.id = id;
+  constructor(stream: TcpStream, tx: Tx) {
+    this.stream = stream;
     this.tx = tx;
   }
 }
@@ -32,19 +33,19 @@ class Topic {
   subs: Sub[] = [];
 
   // Adds the connection (again is a no-op).
-  join(id: u64, tx: Tx) {
+  join(stream: TcpStream, tx: Tx) {
     for (let i = 0; i < this.subs.length; i++) {
-      if (this.subs[i].id == id) {
+      if (this.subs[i].tx === tx) {
         return;
       }
     }
-    this.subs.push(new Sub(id, tx));
+    this.subs.push(new Sub(stream, tx));
   }
 
   // Removes the connection; whether the topic is empty now.
-  leave(id: u64): bool {
+  leave(tx: Tx): bool {
     for (let i = 0; i < this.subs.length; i++) {
-      if (this.subs[i].id == id) {
+      if (this.subs[i].tx === tx) {
         __intrinsic_array_remove(this.subs, i);
         break;
       }
@@ -76,8 +77,8 @@ function registry(): shared<Registry> {
   return value;
 }
 
-/** Subscribes connection `id` (queue `tx`) to `topic`; false if its handle was released. */
-export function subscribe(id: u64, tx: Tx, topic: string): bool {
+/** Subscribes the connection (`stream`, queue `tx`) to `topic`; false if its handle was released. */
+export function subscribe(stream: TcpStream, tx: Tx, topic: string): bool {
   const open = tx.with((q) => {
     if (q.released) {
       return false;
@@ -95,29 +96,29 @@ export function subscribe(id: u64, tx: Tx, topic: string): bool {
   registry().with((all) => {
     const found = all.get(topic);
     if (found != null) {
-      found.with((t) => t.join(id, tx.clone()));
+      found.with((t) => t.join(stream, tx.clone()));
       return;
     }
     const made = shared(new Mutex<Topic>(new Topic()));
-    made.with((t) => t.join(id, tx.clone()));
+    made.with((t) => t.join(stream, tx.clone()));
     all.set(topic, made);
   });
   // Closed meanwhile: `close()` may have left the topics before this joined.
   if (tx.with((q) => q.released)) {
-    leave(id, topic);
+    leave(tx, topic);
     return false;
   }
   return true;
 }
 
-/** Removes connection `id` from `topic`; an emptied topic goes away. */
-export function leave(id: u64, topic: string) {
+/** Removes the connection with queue `tx` from `topic`; an emptied topic goes away. */
+export function leave(tx: Tx, topic: string) {
   const all = registry();
   const t = all.with((m) => m.get(topic));
   if (t == null) {
     return;
   }
-  if (!t.with((s) => s.leave(id))) {
+  if (!t.with((s) => s.leave(tx))) {
     return;
   }
   // Someone may have subscribed in between: only remove the topic if it is still empty.
@@ -130,33 +131,34 @@ export function leave(id: u64, topic: string) {
 }
 
 /** `leave`, also taking `topic` off the connection's own list. */
-export function unsubscribe(id: u64, tx: Tx, topic: string) {
+export function unsubscribe(tx: Tx, topic: string) {
   tx.with((q) => {
     const at = q.topics.indexOf(topic);
     if (at >= 0) {
       __intrinsic_array_remove(q.topics, at as usize);
     }
   });
-  leave(id, topic);
+  leave(tx, topic);
 }
 
 /**
  * Queues `frame` (a whole unmasked frame whose payload starts at `payloadAt`) for every
- * subscriber of `topic` except connection `except` (0: none); the number of connections.
+ * subscriber of `topic` except the connection with queue `except` (null: none); the number of
+ * connections.
  */
-export function publish(topic: string, frame: u8[], payloadAt: i64, except: u64): i64 {
+export function publish(topic: string, frame: u8[], payloadAt: i64, except: Tx | null): i64 {
   const t = registry().with((m) => m.get(topic));
   if (t == null) {
     return 0;
   }
   // The idle connections it was queued for: written outside the locks.
-  const ids: u64[] = [];
+  const streams: TcpStream[] = [];
   const queues: Tx[] = [];
   const sent = t.with((s) => {
     let n: i64 = 0;
     for (let i = 0; i < s.subs.length; i++) {
       const sub = s.subs[i];
-      if (sub.id == except) {
+      if (except != null && sub.tx === except) {
         continue;
       }
       const r = sub.tx.with((q) => q.appendFrame(frame, payloadAt));
@@ -165,14 +167,14 @@ export function publish(topic: string, frame: u8[], payloadAt: i64, except: u64)
       }
       n++;
       if ((r & START) != 0) {
-        ids.push(sub.id);
+        streams.push(sub.stream);
         queues.push(sub.tx.clone());
       }
     }
     return n;
   });
-  for (let i = 0; i < ids.length; i++) {
-    writeDirect(TcpStream { handle: ids[i] }, queues[i]);
+  for (let i = 0; i < streams.length; i++) {
+    writeDirect(streams[i], queues[i]);
   }
   return sent;
 }

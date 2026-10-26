@@ -7,7 +7,7 @@
 // which writes everything queued in one write; an idle connection has no task and no buffer.
 
 import { Channel, channel } from "velt:channel";
-import { maskKey, setText } from "velt:websocket/bytes";
+import { MaskKeys, setText } from "velt:websocket/bytes";
 import { OP_CLOSE, OP_PONG, headSize, writeHead } from "velt:websocket/frame";
 import { BINARY, Reader, Step, TEXT } from "velt:websocket/reader";
 
@@ -46,8 +46,9 @@ export class SendQueue {
    */
   out: u8[] = [];
   cap: i64 = 0;
-  /** A client masks what it sends. */
+  /** A client masks what it sends, with keys from `keys` (made on its first frame). */
   client: bool;
+  keys: MaskKeys | null = null;
   /** A close frame is queued: nothing may follow it, and the flusher shuts down after it. */
   closing: bool = false;
   /** Why the flusher stopped for good ("": it has not): "EPIPE" after closing, else a failed write's code. */
@@ -179,13 +180,21 @@ export class SendQueue {
     }
     const first = this.out.length == 0;
     const len = Buffer.byteLength(text) as i64;
-    const mask = this.client ? maskKey() : 0u32;
+    const mask = this.client ? this.maskKey() : 0u32;
     const p = this.frame(op, len, mask);
     setText(this.out, text, p);
     if (this.client) {
       this.out.xorMask(mask, p, p + len);
     }
     return this.queued(first);
+  }
+
+  // A client's next masking key.
+  private maskKey(): u32 {
+    if (this.keys == null) {
+      this.keys = new MaskKeys();
+    }
+    return this.keys!.next();
   }
 
   /** Queues the answer to a ping (`pushBytes`); counted in `pongs` if it was queued. */
@@ -208,7 +217,7 @@ export class SendQueue {
     }
     const first = this.out.length == 0;
     const len = payload.length as i64;
-    const mask = this.client ? maskKey() : 0u32;
+    const mask = this.client ? this.maskKey() : 0u32;
     const p = this.frame(op, len, mask);
     this.out.set(payload, p as usize);
     if (this.client) {

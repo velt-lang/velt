@@ -332,6 +332,10 @@ impl FnCx<'_, '_> {
             let b = self.cx.ty.bool_;
             return self.mk(H::Lit(hir::Lit::Bool(false)), b, span);
         }
+        // A union with the traps' error-set variables is tested as written, the variables
+        // assumed empty: when one is not, the program is checked again with its set.
+        let s = self.without_trap_vars(s);
+        let sty = s.ty;
         let inner = self.cx.ty.core(sty).unwrap_or(sty);
         let candidates = self.cx.union_members(inner).unwrap_or_else(|| vec![inner]);
         let testable = |t: &TyId| {

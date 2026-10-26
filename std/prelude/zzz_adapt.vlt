@@ -295,7 +295,7 @@ export function __anyTextUnsupported(name: string, at: string): string {
 }
 
 /** Is `k` one of the own keys of the object `v`, holding a function? */
-function __anyOwnFn(v: any, k: string): boolean {
+export function __anyOwnFn(v: any, k: string): boolean {
   return Object.keys(v).includes(k) && typeof v[k] === "function";
 }
 

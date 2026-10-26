@@ -54,8 +54,10 @@ The root file's statements outside declarations run in order in a generated `mai
 one awaits), like a TS file. Top-level `const`/`let` declarations move into it unless a
 declaration refers to them (a scope-aware scan of free names, `parser::script_names`); those stay
 module constants. The parser builds the `main` (its name has an empty span); sema rejects
-statements in an imported module; `velt fmt` prints the statements back at the top level. A file
-cannot have both top-level statements and `function main()`.
+statements in an imported module; `velt fmt` prints the statements back at the top level. In a
+file that also declares `function main()` (#1567), the generated function is named
+`velt_syntax::SCRIPT_MAIN` (`#main`) and is the entry point, and `main` is an ordinary function,
+as in Node.
 
 ## 3. Functions
 

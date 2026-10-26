@@ -1,0 +1,4 @@
+{ a: 1, b: 'yes', c: 0 } { a: 2, b: 'hey', c: 3 } { a: 3, b: 'zz', c: 2 }
+{ k: 1, z: true } { z: true } [ 'z' ]
+{ p: 'p', q: 'q', r: 'r' } p,c,q,r
+{ x: 1 }

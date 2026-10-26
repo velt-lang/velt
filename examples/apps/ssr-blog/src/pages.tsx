@@ -3,7 +3,7 @@
 // renderToStream sends the markup above one while it still loads.
 
 import { Channel } from "velt:channel";
-import { CommentList, NotFound, PostBody, PostList, page } from "./shared/components";
+import { CommentList, NotFound, Page, PostBody, PostList } from "./shared/components";
 import type { Post } from "./shared/model";
 import { findPost, loadComments, loadPosts } from "./store";
 
@@ -47,16 +47,23 @@ export function render(r: Route, gate: Channel<i64> | null): JSX.Element {
   if (post != null) {
     const title = post.title;
     const slug = post.slug;
-    return page(
-      title,
-      <>
+    return (
+      <Page title={title}>
         <PostBody post={post} />
         <Comments slug={slug} gate={gate} />
-      </>,
+      </Page>
     );
   }
   if (r.status == 200) {
-    return page("Posts", <Posts tag={r.tag} />);
+    return (
+      <Page title="Posts">
+        <Posts tag={r.tag} />
+      </Page>
+    );
   }
-  return page("Not found", <NotFound path={r.path} />);
+  return (
+    <Page title="Not found">
+      <NotFound path={r.path} />
+    </Page>
+  );
 }

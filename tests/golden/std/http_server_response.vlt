@@ -1,0 +1,102 @@
+// check: no leaks
+// velt:http/server's response checks, as Node's: a header name must be a token and a value must
+// not hold CR, LF or NUL (TypeError: a value from the client cannot add a header), the status
+// must be 100–999 (RangeError) and gets Node's reason phrase. Content-Length and
+// Transfer-Encoding are the server's: a handler's are not sent, except a Content-Length for the
+// response to HEAD.
+import { connect } from "velt:net";
+import { HttpRequest, HttpResponse, serve } from "velt:http/server";
+
+async function exchange(port: number, raw: string): Promise<string> {
+  const c = await connect(`127.0.0.1:${port}`);
+  await c.write(raw);
+  c.shutdown();
+  let all = "";
+  while (true) {
+    const chunk = await c.readString();
+    if (chunk == "") {
+      break;
+    }
+    all += chunk;
+  }
+  c.close();
+  return all;
+}
+
+// The response's lines but Date and Server.
+function show(text: string): string {
+  return text
+    .split("\r\n")
+    .filter((l) => !l.startsWith("Date:") && !l.startsWith("Server:"))
+    .join(" / ");
+}
+
+function attempt(label: string, f: () => void throws Error): string {
+  try {
+    f();
+    return `${label}: ok`;
+  } catch (e) {
+    return `${label}: ${e.name}: ${e.message}`;
+  }
+}
+
+async function main() {
+  const server = await serve({ port: 0 }, async (req: HttpRequest, res: HttpResponse) => {
+    if (req.pathIs("/checks")) {
+      const out = [
+        attempt("CR LF in a value", () => res.header("X-A", "a\r\nX-Injected: 1")),
+        attempt("LF in a value", () => res.header("X-A", "a\nb")),
+        attempt("NUL in a value", () => res.header("X-A", "a\0b")),
+        attempt("space in a name", () => res.header("X A", "a")),
+        attempt("empty name", () => res.header("", "a")),
+        attempt("tab and UTF-8", () => res.header("X-Ok", "a\tb é")),
+        attempt("status 7", () => res.status(7)),
+        attempt("status -5", () => res.status(-5)),
+        attempt("status 1000", () => res.status(1000)),
+        attempt("status 200.5", () => res.status(200.5)),
+        attempt("bad Content-Length", () => res.header("Content-Length", "2x")),
+      ];
+      res.send(out.join("\n"));
+    } else if (req.pathIs("/length")) {
+      res.header("Content-Length", "2");
+      res.header("Transfer-Encoding", "chunked");
+      res.send("abcdef");
+    } else if (req.pathIs("/upgrade")) {
+      // A value from the request in an upgrade header: refused, and nothing of it is sent.
+      try {
+        res.upgrade("x", [["A", "b\r\nC: d"]]);
+      } catch (e) {
+        res.send(`refused: ${e.name}`);
+      }
+    } else if (req.pathIs("/head")) {
+      res.header("Content-Length", "1000");
+      res.send("");
+    } else {
+      res.status(parseInt(req.query(), 10));
+      res.send("");
+    }
+  });
+  const port = server.port;
+  const checks = await exchange(
+    port,
+    "GET /checks HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+  );
+  console.log(checks.substring(checks.indexOf("\r\n\r\n") + 4));
+  console.log(
+    show(await exchange(port, "GET /length HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")),
+  );
+  console.log(
+    show(await exchange(port, "HEAD /head HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")),
+  );
+  console.log(
+    show(await exchange(port, "GET /upgrade HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")),
+  );
+  for (const code of [418, 422, 429, 409, 410, 502, 504, 599]) {
+    const text = await exchange(
+      port,
+      `GET /s?${code} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`,
+    );
+    console.log(text.split("\r\n")[0]);
+  }
+  server.close();
+}

@@ -1,0 +1,3 @@
+// Both sides of `&&` compare an operand that may be `undefined` (TS18048).
+function g(x: number | undefined) { return x > 0 && x < 9; }
+console.log(g(1));

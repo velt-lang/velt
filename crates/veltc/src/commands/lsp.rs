@@ -134,12 +134,17 @@ impl ProgramLoader for CliLoader {
         sm: &mut SourceMap,
         diags: &mut Diagnostics,
     ) -> Result<LoadedProgram, String> {
-        let graph = self.graph(root);
+        let std_root = loader::std_root();
+        // A std file is checked as the std module it is, without a package: the std root's
+        // `package.vlt` is the manifest's type declarations, not a manifest to install.
+        let in_std = std_root.as_deref().is_some_and(|s| loader::in_std(root, s));
+        let graph = if in_std { None } else { self.graph(root) };
         let opts = LoadOptions {
-            std_root: loader::std_root(),
+            std_root,
             packages: graph.as_deref().map(|g| g as &dyn loader::PackageResolver),
             root_source: None,
             overlay: Some(overlay),
+            std_root_as_std: true,
         };
         let loaded = loader::load_program(sm, root, opts, diags)?;
         Ok(LoadedProgram {
@@ -750,3 +755,7 @@ async function main() {
         server.join().unwrap().unwrap();
     }
 }
+
+#[cfg(test)]
+#[path = "lsp_std_tests.rs"]
+mod std_tests;

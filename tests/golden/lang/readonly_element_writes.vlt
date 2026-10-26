@@ -1,0 +1,15 @@
+// Writes into an element of a read-only array whose elements may change: a member (`length`),
+// a method and an index of the element, as TypeScript accepts.
+function setLen(j: readonly number[][]): void { j[0].length = 1; }
+const j0 = [[1, 2]];
+setLen(j0);
+console.log(j0);
+function f(k: readonly Set<string>[], n: readonly (number[] | undefined)[]): void {
+  k[0].add("x");
+  n[0]?.push(3);
+  k[0].delete("y");
+}
+const s = [new Set<string>(["y"])];
+const n: (number[] | undefined)[] = [[1]];
+f(s, n);
+console.log([...s[0]], n);

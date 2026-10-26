@@ -13,7 +13,7 @@ use crate::body::{FnCx, LocalKind, Want};
 use crate::hir::{self, ExprKind as H, Intrinsic, Lit, UseMode};
 
 /// The key of a dynamic write.
-enum WriteKey {
+pub(super) enum WriteKey {
     /// `x.f` / `x["f"]`, or a `string` / `any` key.
     Str(hir::Expr),
     /// A number key.
@@ -68,18 +68,12 @@ impl FnCx<'_, '_> {
             op,
             Some(ast::BinaryOp::And | ast::BinaryOp::Or | ast::BinaryOp::Nullish)
         );
-        if op.is_some() && !logical {
-            self.cx.error(
-                Diagnostic::error(
-                    "a compound assignment to a member of an `any` is not supported yet (#924)",
-                    span,
-                )
-                .with_note(
-                    "convert the member first and assign the result: `x.n = (x.n as number) + 1`",
-                ),
+        if let Some(op) = op.filter(|_| !logical) {
+            let rmw = super::dynamic_arith::DynRmw::Assign(op, value);
+            return (
+                self.dynamic_member_rmw(obj, target, rmw, as_value, span),
+                as_value,
             );
-            self.expr(value, None, Want::Borrow);
-            return (self.error_expr(span), false);
         }
         let key = match &strip(target).kind {
             ast::ExprKind::Member { prop, .. } => {
@@ -164,21 +158,7 @@ impl FnCx<'_, '_> {
         let Some(any) = self.any_ty() else {
             return self.error_expr(span);
         };
-        let read = match &key {
-            WriteKey::Str(k) => {
-                self.intrinsic(Intrinsic::AnyGet, vec![obj.clone(), k.clone()], any, span)
-            }
-            WriteKey::Num(k) => {
-                self.intrinsic(Intrinsic::AnyIndex, vec![obj.clone(), k.clone()], any, span)
-            }
-            WriteKey::Sym(n, _) if !self.uses_proxy() => {
-                self.intrinsic(Intrinsic::AnyGet, vec![obj.clone(), n.clone()], any, span)
-            }
-            WriteKey::Sym(n, k) => {
-                let args = vec![obj.clone(), n.clone(), k.clone()];
-                self.prelude_hir_call("__anyGetSym", args, any, span)
-            }
-        };
+        let read = self.dynamic_member_read(&obj, &key, any, span);
         let cur = self.new_local("<current>", any, false, span, LocalKind::Temp);
         stmts.push(hir::Stmt {
             kind: hir::StmtKind::Let {
@@ -196,8 +176,15 @@ impl FnCx<'_, '_> {
             }
             _ => self.intrinsic(Intrinsic::AnyTruthy, vec![held], b, span),
         };
-        // The write: `{ const t = v; obj[key] = share(t); t }`.
-        let v = self.expr(value, Some(any), Want::Move);
+        // The write: `{ const t = v; obj[key] = share(t); t }`. A `new C()` takes its type
+        // arguments from what the position expects (`const s: Set<string> = (o.k ??= new
+        // Set())`), as nothing else gives them.
+        let hint = self.f.assign_hint.take();
+        let exp = match hint.filter(|t| self.new_of_class(value, *t)) {
+            Some(t) => t,
+            None => any,
+        };
+        let v = self.expr(value, Some(exp), Want::Move);
         if self.cx.ty.is_bottom(v.ty) {
             return self.error_expr(span);
         }
@@ -248,8 +235,33 @@ impl FnCx<'_, '_> {
         self.mk(H::Block(block), any, span)
     }
 
+    /// The read `obj[key]` of the member a dynamic write writes.
+    pub(super) fn dynamic_member_read(
+        &mut self,
+        obj: &hir::Expr,
+        key: &WriteKey,
+        any: hir::TyId,
+        span: Span,
+    ) -> hir::Expr {
+        match key {
+            WriteKey::Str(k) => {
+                self.any_op(Intrinsic::AnyGet, vec![obj.clone(), k.clone()], any, span)
+            }
+            WriteKey::Num(k) => {
+                self.any_op(Intrinsic::AnyIndex, vec![obj.clone(), k.clone()], any, span)
+            }
+            WriteKey::Sym(n, _) if !self.uses_proxy() => {
+                self.any_op(Intrinsic::AnyGet, vec![obj.clone(), n.clone()], any, span)
+            }
+            WriteKey::Sym(n, k) => {
+                let args = vec![obj.clone(), n.clone(), k.clone()];
+                self.prelude_hir_call("__anyGetSym", args, any, span)
+            }
+        }
+    }
+
     /// The write `obj[key] = v` (`v` boxed).
-    fn dynamic_set(
+    pub(super) fn dynamic_set(
         &mut self,
         obj: hir::Expr,
         key: WriteKey,
@@ -258,8 +270,8 @@ impl FnCx<'_, '_> {
     ) -> hir::Expr {
         let unit = self.cx.ty.unit;
         match key {
-            WriteKey::Str(k) => self.intrinsic(Intrinsic::AnySet, vec![obj, k, v], unit, span),
-            WriteKey::Num(k) => self.intrinsic(Intrinsic::AnySetIndex, vec![obj, k, v], unit, span),
+            WriteKey::Str(k) => self.any_op(Intrinsic::AnySet, vec![obj, k, v], unit, span),
+            WriteKey::Num(k) => self.any_op(Intrinsic::AnySetIndex, vec![obj, k, v], unit, span),
             WriteKey::Sym(n, k) => {
                 self.prelude_hir_call("__anySetSym", vec![obj, n, k, v], unit, span)
             }
@@ -302,7 +314,7 @@ impl FnCx<'_, '_> {
 
     /// The key of `x[index] = v` on an `any`: a string or `any` key names a member, a number
     /// key an element (`None` after reporting an error).
-    fn dynamic_write_key(&mut self, index: &ast::Expr) -> Option<WriteKey> {
+    pub(super) fn dynamic_write_key(&mut self, index: &ast::Expr) -> Option<WriteKey> {
         // A symbol constant (`o[KEY] = v`) names the member it keys.
         if let Some(name) = self.symbol_key_of(index) {
             self.note_dynamic_write(&name, index.span);
@@ -387,9 +399,26 @@ impl FnCx<'_, '_> {
     }
 }
 
-fn strip(e: &ast::Expr) -> &ast::Expr {
+pub(super) fn strip(e: &ast::Expr) -> &ast::Expr {
     match &e.kind {
         ast::ExprKind::Paren(inner) => strip(inner),
         _ => e,
+    }
+}
+
+impl FnCx<'_, '_> {
+    /// Is `value` a `new C(...)` without type arguments, and `t` an instance of the class `C`?
+    fn new_of_class(&mut self, value: &ast::Expr, t: hir::TyId) -> bool {
+        let ast::ExprKind::New { class, .. } = &strip(value).kind else {
+            return false;
+        };
+        let ast::TypeExprKind::Named { path, args } = &class.kind else {
+            return false;
+        };
+        let (Some(name), true) = (path.last(), args.is_empty()) else {
+            return false;
+        };
+        matches!(self.cx.ty.kind(t), hir::TyKind::Adt(..))
+            && self.cx.display(t).starts_with(&format!("{}<", name.name))
     }
 }

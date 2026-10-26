@@ -1,0 +1,1 @@
+module_const_closure_needs_type.vlt:3:7: error: type annotation needed for `handler`: a closure in its initializer uses it

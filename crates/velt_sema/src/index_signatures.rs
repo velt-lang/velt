@@ -6,7 +6,8 @@
 //! one the values have, and a named member reads as `any` (or `unknown`) like any other key.
 //! What Velt cannot represent exactly is an error saying it is not supported yet: named members
 //! next to another index signature (a read of `name` would be `V | null`, and an optional one
-//! needs `undefined`, #930) and a `number` key.
+//! needs `undefined`, #930) and a key of Velt's integer types. A `number` key is a string key, as
+//! in JavaScript (`[id: number]: V` is `Record<string, V>`; `r[1]` is `r["1"]`).
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
@@ -27,18 +28,20 @@ impl Ctx<'_> {
         let k = self.resolve_type(key, env);
         let v = self.resolve_type(value, env);
         let mut ok = k != self.ty.error && v != self.ty.error;
+        let num = self.ty.f64;
         match self.ty.kind(k) {
             TyKind::Str | TyKind::Error => {}
+            // `[key: number]`: JavaScript makes a number key its string, so this is the same
+            // record (`Record<number, V>`, `crate::record_keys`).
+            _ if k == num => {}
             TyKind::Int(_) | TyKind::Float(_) => {
                 ok = false;
                 self.error(
                     Diagnostic::error(
-                        "a `number` index signature is not supported yet (#937)",
+                        "an integer index signature is not supported yet (#937)",
                         key.span,
                     )
-                    .with_note(
-                        "use an array, a `Map<number, V>`, or a `string` key (`{ [key: string]: V }`)",
-                    ),
+                    .with_note("use a `number` key (`{ [key: number]: V }`), an array or a `Map`"),
                 );
             }
             _ => {

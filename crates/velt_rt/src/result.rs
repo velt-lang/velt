@@ -90,9 +90,26 @@ impl VeltErr {
     }
 }
 
+impl std::fmt::Display for VeltErr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // SAFETY: a `VeltErr`'s message is a valid string it owns (`VeltErr::new`).
+        f.write_str(&unsafe { self.message.text_lossy() })
+    }
+}
+
+/// An `io::Error` that carries a `VeltErr` keeps its code ([`code_of`]): runtime operations that
+/// report through `io::Result` can still fail with a code no `io::ErrorKind` has (`EBADF`).
+impl std::error::Error for VeltErr {}
+
 /// The [`code`] of an I/O error.
 pub(crate) fn code_of(e: &io::Error) -> i32 {
     use io::ErrorKind as K;
+    if let Some(v) = e
+        .get_ref()
+        .and_then(|inner| inner.downcast_ref::<VeltErr>())
+    {
+        return v.code;
+    }
     match e.kind() {
         K::NotFound => code::NOT_FOUND,
         K::PermissionDenied => code::PERMISSION_DENIED,

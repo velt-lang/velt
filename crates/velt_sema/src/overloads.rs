@@ -44,6 +44,8 @@ pub(crate) struct Rewritten {
     pub sig_spans: FxHashMap<Span, Span>,
     /// Names of overloaded methods (a method call with one of them may need resolving).
     pub methods: FxHashSet<String>,
+    /// The implementation parameters signatures pass adapters for (`crate::overload_adapter`).
+    pub adapted: FxHashSet<crate::overload_adapter::Adapted>,
 }
 
 /// The modules with their overload signatures made functions, or `None` when there are none
@@ -61,6 +63,7 @@ pub(crate) fn rewrite(modules: &[SourceModule]) -> Option<Rewritten> {
         modules: vec![],
         sig_spans: FxHashMap::default(),
         methods: FxHashSet::default(),
+        adapted: FxHashSet::default(),
     };
     for m in modules {
         let local: FxHashMap<String, usize> = m
@@ -81,6 +84,7 @@ pub(crate) fn rewrite(modules: &[SourceModule]) -> Option<Rewritten> {
                 ast::ItemKind::Function(f) if !f.overloads.is_empty() => {
                     for (k, sig) in std::mem::take(&mut f.overloads).into_iter().enumerate() {
                         out.sig_spans.insert(sig.span, sig.name.span);
+                        note_adapted(&mut out, &sig, &f.sig);
                         let decl = signature_fn(sig, k, &f.sig.name.name, false, &f.sig);
                         items.push(ast::Item {
                             kind: ast::ItemKind::Function(decl),
@@ -208,6 +212,7 @@ fn methods(
             .enumerate()
         {
             out.sig_spans.insert(sig.span, sig.name.span);
+            note_adapted(out, &sig, &m.decl.sig);
             let is_override =
                 m.is_override && base_has_signature(classes, base.as_deref(), &name, k);
             added.push(ast::Method {
@@ -378,8 +383,14 @@ fn signature_fn(
     let call = |n: usize| {
         let args = sig.params[..n]
             .iter()
-            .map(|p| {
+            .enumerate()
+            .map(|(i, p)| {
                 let read = expr(ast::ExprKind::Ident(ident(&p.name.name)));
+                let adapter = (imp.params.get(i))
+                    .and_then(|ip| crate::overload_adapter::rest_adapter(p, ip, name, span));
+                if let Some(arrow) = adapter {
+                    return arrow;
+                }
                 match p.rest {
                     true => expr(ast::ExprKind::Spread(Box::new(read))),
                     false => read,
@@ -437,6 +448,21 @@ fn signature_fn(
     }
 }
 
+/// Records the parameters of implementation `imp` that signature `sig` passes adapters for.
+fn note_adapted(out: &mut Rewritten, sig: &ast::FnSig, imp: &ast::FnSig) {
+    let name = &imp.name.name;
+    for (i, (p, ip)) in sig.params.iter().zip(&imp.params).enumerate() {
+        if crate::overload_adapter::rest_adapter(p, ip, name, sig.span).is_some() {
+            out.adapted.insert(crate::overload_adapter::Adapted {
+                imp: (imp.span, imp.name.span),
+                name: name.clone(),
+                param: i,
+                param_name: ip.name.name.clone(),
+            });
+        }
+    }
+}
+
 /// Is `t` the plain named type `name`?
 fn is_named(t: &ast::TypeExpr, name: &str) -> bool {
     matches!(&t.kind, ast::TypeExprKind::Named { path, args }
@@ -455,7 +481,7 @@ fn promised(t: Option<&ast::TypeExpr>) -> Option<&ast::TypeExpr> {
 
 /// Are `a` and `b` written alike (spans aside)? `false` for the kinds of type it doesn't
 /// compare, which only costs an `await`.
-fn same_type(a: &ast::TypeExpr, b: &ast::TypeExpr) -> bool {
+pub(crate) fn same_type(a: &ast::TypeExpr, b: &ast::TypeExpr) -> bool {
     use ast::TypeExprKind as T;
     let all = |x: &[ast::TypeExpr], y: &[ast::TypeExpr]| {
         x.len() == y.len() && x.iter().zip(y).all(|(x, y)| same_type(x, y))

@@ -1,0 +1,6 @@
+// Declares `globalThis.__XM__` for the program; never names `globalThis` itself.
+declare global {
+  var __XM__: number | undefined;
+}
+
+export const seen = 0;

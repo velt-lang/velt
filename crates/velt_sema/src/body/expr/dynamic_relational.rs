@@ -2,11 +2,12 @@
 //! Two strings compare by their UTF-16 code units; any other pair compares as numbers, each
 //! converted with `ToNumber` (`true` is 1, `null` is 0, `undefined` and a string that is not a
 //! number are `NaN`, and a comparison with `NaN` is `false`). A symbol stops the program with
-//! Node's `TypeError`; an object or a function (`ToPrimitive`, which calls `valueOf` /
-//! `toString`) stops it with a `TypeError` saying it is not supported yet, never a wrong answer.
+//! Node's `TypeError`; an object or a function is compared after `ToPrimitive` (which calls
+//! `valueOf` / `toString`) by the prelude's `__anyRelational`.
 
 use velt_common::Span;
 
+use super::dynamic_arith::TAG_FUNCTION;
 use crate::any::Dynamic;
 use crate::body::{FnCx, LocalKind};
 use crate::hir::{self, BinOp, ExprKind as H, Intrinsic, LocalId, TyId, UseMode};
@@ -75,6 +76,7 @@ impl FnCx<'_, '_> {
                 }
             }
         };
+        let result = self.rel_objects(op, a, b, result, span);
         let block = hir::Block {
             stmts,
             value: Some(Box::new(result)),
@@ -82,6 +84,60 @@ impl FnCx<'_, '_> {
         };
         let bool_ = self.cx.ty.bool_;
         self.mk(H::Block(block), bool_, span)
+    }
+
+    /// `result` unless an `any` operand holds an object or a function, which the prelude's
+    /// `__anyRelational` compares after `ToPrimitive` (hint `"number"`: `[2] < 10`, a `Date`
+    /// by its time).
+    fn rel_objects(
+        &mut self,
+        op: BinOp,
+        a: Side,
+        b: Side,
+        result: hir::Expr,
+        span: Span,
+    ) -> hir::Expr {
+        let bool_ = self.cx.ty.bool_;
+        let mut test: Option<hir::Expr> = None;
+        for s in [a, b] {
+            if let Side::Dyn(t, d) = s {
+                let c = self.tag_test(t, d, BinOp::GtEq, TAG_FUNCTION, span);
+                test = Some(match test {
+                    None => c,
+                    Some(p) => {
+                        let tr = self.mk(H::Lit(hir::Lit::Bool(true)), bool_, span);
+                        self.rel_choose(p, tr, c, bool_, span)
+                    }
+                });
+            }
+        }
+        let (Some(test), Some(any)) = (test, self.any_ty()) else {
+            return result;
+        };
+        let as_any = |s: &mut Self, side: Side| match side {
+            Side::Dyn(t, d) => s.mk(H::Local(t, UseMode::Borrow), d, span),
+            Side::Num(t) => {
+                let n = s.rel_num_read(t, span);
+                s.coerce(n, any)
+            }
+            Side::Str(t) => {
+                let v = s.rel_str_read(t, span);
+                s.coerce(v, any)
+            }
+        };
+        let (x, y) = (as_any(self, a), as_any(self, b));
+        let code = match op {
+            BinOp::Lt => 0,
+            BinOp::Gt => 1,
+            BinOp::LtEq => 2,
+            _ => 3,
+        };
+        let i64_ = self.cx.ty.i64;
+        let code = self.mk(H::Lit(hir::Lit::Int(code)), i64_, span);
+        let site = self.text_site(span);
+        let args = vec![x, y, code, site];
+        let slow = self.dyn_helper_call("__anyRelational", args, bool_, span);
+        self.rel_choose(test, slow, result, bool_, span)
     }
 
     /// Binds the operand `h` to a temporary (operands are evaluated left to right, once).
@@ -156,18 +212,17 @@ impl FnCx<'_, '_> {
         self.intrinsic(Intrinsic::Share, vec![read], str_, span)
     }
 
-    /// `typeof x === tag` of the `any` in `t`.
+    /// `typeof x === tag` of the `any` in `t`: a test of its descriptor's tag.
     fn rel_typeof_is(&mut self, t: LocalId, dty: TyId, tag: &str, span: Span) -> hir::Expr {
-        let (str_, bool_) = (self.cx.ty.str_, self.cx.ty.bool_);
-        let read = self.mk(H::Local(t, UseMode::Borrow), dty, span);
-        let of = self.intrinsic(Intrinsic::AnyTypeof, vec![read], str_, span);
-        let want = self.str_lit(tag, span);
-        let kind = H::Binary {
-            op: BinOp::Eq,
-            lhs: Box::new(of),
-            rhs: Box::new(want),
+        let k = match tag {
+            "undefined" => 0,
+            "boolean" => 2,
+            "number" => 3,
+            "string" => 4,
+            "symbol" => 5,
+            _ => unreachable!("ICE: no single tag for `typeof` {tag}"),
         };
-        self.mk(kind, bool_, span)
+        self.tag_test(t, dty, BinOp::Eq, k, span)
     }
 
     /// The value of the `any` in `t` as `ty` (its `typeof` was tested).
@@ -238,40 +293,10 @@ impl FnCx<'_, '_> {
         self.mk(kind, f64_, span)
     }
 
-    /// `ToNumber` of the `any` in `t`, tested by its `typeof`.
+    /// `ToNumber` of the primitive the `any` in `t` holds (an object was compared by
+    /// `rel_objects`).
     fn rel_any_number(&mut self, t: LocalId, d: TyId, span: Span) -> hir::Expr {
-        let (f64_, str_, bool_) = (self.cx.ty.f64, self.cx.ty.str_, self.cx.ty.bool_);
-        let never = self.cx.ty.never;
-        let msg = self.str_lit(
-            "TypeError: comparing an object or a function with `<`, `>`, `<=` or `>=` through `any` is not supported yet (#924); convert it to a number or a string first",
-            span,
-        );
-        let mut result = self.intrinsic(Intrinsic::Panic, vec![msg], never, span);
-        // Node's error for `Symbol() < 1`.
-        let test = self.rel_typeof_is(t, d, "symbol", span);
-        let msg = self.str_lit("TypeError: Cannot convert a Symbol value to a number", span);
-        let stop = self.intrinsic(Intrinsic::Panic, vec![msg], never, span);
-        result = self.rel_choose(test, stop, result, f64_, span);
-        let read = self.mk(H::Local(t, UseMode::Borrow), d, span);
-        let test = self.dynamic_null_compare(read, "null", true, true, span);
-        let zero = self.mk(H::Lit(hir::Lit::Float(0.0)), f64_, span);
-        result = self.rel_choose(test, zero, result, f64_, span);
-        let test = self.rel_typeof_is(t, d, "undefined", span);
-        let nan = self.mk(H::Lit(hir::Lit::Float(f64::NAN)), f64_, span);
-        result = self.rel_choose(test, nan, result, f64_, span);
-        let test = self.rel_typeof_is(t, d, "boolean", span);
-        let b = self.rel_any_as(t, d, bool_, span);
-        let one = self.mk(H::Lit(hir::Lit::Float(1.0)), f64_, span);
-        let zero = self.mk(H::Lit(hir::Lit::Float(0.0)), f64_, span);
-        let bit = self.rel_choose(b, one, zero, f64_, span);
-        result = self.rel_choose(test, bit, result, f64_, span);
-        let test = self.rel_typeof_is(t, d, "string", span);
-        let s = self.rel_any_as(t, d, str_, span);
-        let n = self.rel_str_number(s, span);
-        result = self.rel_choose(test, n, result, f64_, span);
-        let test = self.rel_typeof_is(t, d, "number", span);
-        let n = self.rel_any_as(t, d, f64_, span);
-        self.rel_choose(test, n, result, f64_, span)
+        self.op_prim_number(t, d, span)
     }
 
     fn rel_choose(

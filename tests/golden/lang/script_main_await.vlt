@@ -1,0 +1,8 @@
+// `await main();` among the top-level statements (#1567).
+async function main() {
+  await null;
+  console.log("main");
+}
+
+await main();
+console.log("done");

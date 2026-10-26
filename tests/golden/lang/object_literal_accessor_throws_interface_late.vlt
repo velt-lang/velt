@@ -1,0 +1,91 @@
+// A function catching what a call through an interface throws, declared before the module code
+// that converts throwing untyped object literals to that interface (`a as G`, or passing `a`
+// where a `G` is expected): the conversions add implementations after the function is
+// checked, and the `catch` sees what they throw, as in Node.
+
+let bad = true;
+
+// The literals' getters throw different errors; a bare `catch` too.
+interface G {
+  get value(): string;
+}
+function use(h: G): void {
+  try {
+    console.log(h.value);
+  } catch (e) {
+    console.log("caught", (e as Error).message);
+  }
+}
+function quiet(h: G): void {
+  try {
+    console.log(h.value);
+  } catch {
+    console.log("caught quietly");
+  }
+}
+const a = { get value(): string { if (bad) throw new TypeError("a failed"); return "a"; } };
+const b = { get value(): string { if (bad) throw new RangeError("b failed"); return "b"; } };
+use(a as G);
+use(b);
+quiet(a);
+
+// A generic interface, and a type parameter bounded by the interface.
+interface Gen<T> {
+  get value(): T;
+}
+function useGen<T>(h: Gen<T>): void {
+  try {
+    console.log(h.value);
+  } catch (e) {
+    console.log("caught", (e as Error).message);
+  }
+}
+interface Named {
+  get name(): string;
+}
+function useBound<T extends Named>(h: T): void {
+  try {
+    console.log(h.name);
+  } catch (e) {
+    console.log("caught", (e as Error).message);
+  }
+}
+const c = { get value(): string { if (bad) throw new TypeError("c failed"); return "c"; } };
+const d = { get name(): string { if (bad) throw new SyntaxError("d failed"); return "d"; } };
+useGen(c as Gen<string>);
+useBound(d as Named);
+
+// A class implementing the interface is used first; the function returns a value whose type
+// is inferred, so the call checks it before its argument.
+class Fixed implements G {
+  get value(): string {
+    if (bad) throw new EvalError("fixed failed");
+    return "fixed";
+  }
+}
+function count(h: G) {
+  try {
+    console.log(h.value);
+  } catch (e) {
+    console.log("caught", (e as Error).message);
+  }
+  return 1;
+}
+console.log(count(new Fixed()));
+const e = { get value(): string { if (bad) throw new URIError("e failed"); return "e"; } };
+console.log(count(e as G));
+
+// The literal stays a module constant (a function reads it), and one never throws.
+const f = { get value(): string { if (bad) throw new TypeError("f failed"); return "f"; } };
+const calm = { get value(): string { return "calm"; } };
+function kind(): string {
+  return typeof f;
+}
+use(f);
+use(calm);
+console.log(kind());
+
+bad = false;
+use(a);
+useGen(c as Gen<string>);
+console.log(count(e as G));

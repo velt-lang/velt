@@ -1,0 +1,9 @@
+// `"x" in o` leaves `o.x` possibly `undefined`, so `v * 2` is an error, as in tsc (TS18048).
+// invalid TS on purpose (tsc: possibly undefined); checks what Velt does at run time
+const a: { x?: number | null } = { x: undefined };
+const b: { x?: number | null } = {};
+const c: { x?: number | null } = { x: null };
+for (const o of [a, b, c]) {
+  console.log("x" in o, JSON.stringify(o), Object.keys(o).join(","));
+  if ("x" in o) { const v = o.x; if (v !== null) console.log("v*2", v * 2); else console.log("null"); }
+}

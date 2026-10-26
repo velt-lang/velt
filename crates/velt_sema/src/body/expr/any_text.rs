@@ -139,7 +139,7 @@ impl FnCx<'_, '_> {
 
     /// The call site a text helper's stops report: the helper's own `at` inside one, else the
     /// location of `span` (`Intrinsic::SourceLocation`, a string constant).
-    fn text_site(&mut self, span: Span) -> hir::Expr {
+    pub(crate) fn text_site(&mut self, span: Span) -> hir::Expr {
         if self.in_text_helper() {
             return self.expr(&site_param(span), None, Want::Borrow);
         }
@@ -348,7 +348,12 @@ impl FnCx<'_, '_> {
 
     /// The result type of class `c`'s instance method `name` (its own or inherited) and how
     /// many arguments it takes: 0 when every parameter has a default, else its parameter count.
-    fn callable_method(&mut self, c: DefId, params: &[TyId], name: &str) -> Option<(TyId, usize)> {
+    pub(super) fn callable_method(
+        &mut self,
+        c: DefId,
+        params: &[TyId],
+        name: &str,
+    ) -> Option<(TyId, usize)> {
         let Some(crate::collect::Found::Class { m, .. }) =
             crate::collect::lookup_method(self.cx, c, params, name)
         else {
@@ -447,7 +452,7 @@ impl FnCx<'_, '_> {
     }
 
     /// Is `t` a `string`, number or boolean (a `valueOf()` result `ToPrimitive` keeps)?
-    fn primitive_ty(&mut self, t: TyId) -> bool {
+    pub(super) fn primitive_ty(&mut self, t: TyId) -> bool {
         let w = self.cx.widened(t);
         let ty = &self.cx.ty;
         w == ty.str_ || w == ty.bool_ || ty.is_numeric(w)

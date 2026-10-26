@@ -1,0 +1,11 @@
+// Arithmetic on an `object` or a `Function` is a compile error, as in `tsc` (TS2362); only an
+// `any` operand converts with `ToNumber`.
+function main(): void {
+  const o: object = {};
+  console.log(o * 2);
+  const g: Function = () => 1;
+  console.log(g - 1);
+  console.log(o + 1);
+  const a: any = {};
+  console.log(a * 2);
+}

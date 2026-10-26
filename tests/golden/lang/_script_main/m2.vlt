@@ -1,0 +1,4 @@
+// Exports a function named `main` for `script_main_import`.
+export function main(): void {
+  console.log("imported main");
+}

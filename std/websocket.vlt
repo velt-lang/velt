@@ -22,6 +22,7 @@
 
 import { IoError, IoResult, ioError } from "velt:io";
 import { isUpgradeRequest, upgradeConnection } from "velt:http";
+import { HttpRequest, HttpResponse } from "velt:http/server";
 import { Request } from "velt:fetch/request";
 import { Response } from "velt:fetch/response";
 import { TcpStream } from "velt:net";
@@ -40,8 +41,6 @@ import { BINARY, CLOSED, READ, Reader, Step } from "velt:websocket/reader";
 import { READ_CHUNK, ReadTurn, other } from "velt:websocket/receive";
 import { leave, publish as publishFrame, subscribe, unsubscribe } from "velt:websocket/topics";
 import { Tx, closeDown, closedHandle, flush, settle, writeDirect } from "velt:websocket/writer";
-
-declare async function velt_rt_tcp_read(s: u64, max: u64): Promise<IoResult<u8[]>>;
 
 /** One received message: text, or binary data. */
 export class WsMessage {
@@ -79,11 +78,11 @@ function pushBytes(ws: WebSocket, data: u8[]): i64 {
 function begun(ws: WebSocket, r: i64): bool {
   if (r == DIRECT) {
     // Most likely a reply from the task that reads this connection: written here.
-    writeDirect(TcpStream { handle: ws.handle }, ws.tx!);
+    writeDirect(ws.handle, ws.tx!);
     return true;
   }
   if (r == START) {
-    spawn(flush(TcpStream { handle: ws.handle }, ws.tx!.clone()));
+    spawn(flush(ws.handle, ws.tx!.clone()));
     return true;
   }
   return false;
@@ -109,12 +108,8 @@ function firstStep(tx: Tx): Step {
 }
 
 // What the reading task read, handed to the reader; its next step. A failed read is thrown.
-function fedStep(tx: Tx, r: IoResult<u8[]>, turn: ReadTurn): Step {
-  if (r.code != 0) {
-    throw ioError(r.code, r.message);
-  }
+function fedStep(tx: Tx, chunk: u8[], turn: ReadTurn): Step {
   turn.done();
-  const chunk = r.value;
   return tx.with((q) => q.fed(chunk));
 }
 
@@ -148,13 +143,13 @@ function binaryFrame(data: u8[]): u8[] {
  */
 export struct WebSocket implements AsyncIterable<WsMessage, IoError> {
   // The connection's stream (std/net).
-  private handle: u64;
+  private handle: TcpStream;
   // The connection's send queue, which also holds its receiving side: one shared value, so a
   // copy of the handle costs one reference. Always there on a connection std made.
   private tx?: Tx;
 
   private stream(): TcpStream {
-    return TcpStream { handle: this.handle };
+    return this.handle;
   }
 
   private sending(): Tx {
@@ -195,7 +190,7 @@ export struct WebSocket implements AsyncIterable<WsMessage, IoError> {
     while (step.kind > BINARY) {
       if (step.kind == READ) {
         const turn = readTurn(tx);
-        const r = await velt_rt_tcp_read(this.handle, READ_CHUNK);
+        const r = await this.handle.read(READ_CHUNK);
         step = fedStep(tx, r, turn);
       } else {
         const handled = other(this.stream(), tx, step);
@@ -210,7 +205,8 @@ export struct WebSocket implements AsyncIterable<WsMessage, IoError> {
    * until `unsubscribe(topic)` or the connection closes. Subscribing twice is a no-op.
    */
   async subscribe(topic: string): Promise<void> {
-    if (!subscribe(this.handle, this.sending(), topic)) {
+    const tx = this.sending();
+    if (!subscribe(this.handle, tx, topic)) {
       throw closedHandle();
     }
   }
@@ -219,7 +215,7 @@ export struct WebSocket implements AsyncIterable<WsMessage, IoError> {
   unsubscribe(topic: string) {
     const tx = this.tx;
     if (tx != null) {
-      unsubscribe(this.handle, tx, topic);
+      unsubscribe(tx, topic);
     }
   }
 
@@ -232,13 +228,18 @@ export struct WebSocket implements AsyncIterable<WsMessage, IoError> {
       topic,
       textFrame(text),
       headSize(Buffer.byteLength(text) as i64, false),
-      this.handle,
+      this.tx ?? null,
     );
   }
 
   /** `publish` with a binary message. */
   publishBytes(topic: string, data: u8[]): i64 {
-    return publishFrame(topic, binaryFrame(data), headSize(data.length as i64, false), this.handle);
+    return publishFrame(
+      topic,
+      binaryFrame(data),
+      headSize(data.length as i64, false),
+      this.tx ?? null,
+    );
   }
 
   /**
@@ -280,7 +281,7 @@ export struct WebSocket implements AsyncIterable<WsMessage, IoError> {
       return;
     }
     for (const topic of topics) {
-      leave(this.handle, topic);
+      leave(tx, topic);
     }
     stream.close();
   }
@@ -293,12 +294,17 @@ export struct WebSocket implements AsyncIterable<WsMessage, IoError> {
  * was queued for.
  */
 export function publish(topic: string, text: string): i64 {
-  return publishFrame(topic, textFrame(text), headSize(Buffer.byteLength(text) as i64, false), 0);
+  return publishFrame(
+    topic,
+    textFrame(text),
+    headSize(Buffer.byteLength(text) as i64, false),
+    null,
+  );
 }
 
 /** `publish` with a binary message. */
 export function publishBytes(topic: string, data: u8[]): i64 {
-  return publishFrame(topic, binaryFrame(data), headSize(data.length as i64, false), 0);
+  return publishFrame(topic, binaryFrame(data), headSize(data.length as i64, false), null);
 }
 
 /** What `upgradeWebSocket` returns: the connection, and the response to return from the handler. */
@@ -315,7 +321,7 @@ export function isWebSocketRequest(req: Request): bool {
 // A connection over `stream`; `prefix`: bytes already read from it past the handshake.
 function connection(stream: TcpStream, client: bool, prefix: u8[]): WebSocket {
   return WebSocket {
-    handle: stream.handle,
+    handle: stream,
     tx: shared(new Mutex<SendQueue>(new SendQueue(client, new Reader(!client, prefix)))),
   };
 }
@@ -336,6 +342,53 @@ export function upgradeWebSocket(req: Request): WebSocketUpgrade {
   } catch (e) {
     throw new IoError("EINVAL", "not a WebSocket upgrade request");
   }
+}
+
+/**
+ * Accepts a WebSocket upgrade request on a `velt:http/server` server: answers `101 Switching
+ * Protocols` with the handshake's accept key and returns the socket (the connection is the
+ * socket's from then on). A request that is not a valid handshake (RFC 6455 §4.2.1: `GET`,
+ * HTTP/1.1, `Upgrade: websocket`, `Connection: upgrade`, `Sec-WebSocket-Version: 13`, a key of 16
+ * base64-encoded bytes) is answered here instead (RFC 6455 §4.2.2): 426 with
+ * `Sec-WebSocket-Version: 13` for another version or no upgrade, else 400; it then returns null.
+ * Throws `IoError` "EINVAL" if a response was started.
+ */
+export function acceptWebSocket(req: HttpRequest, res: HttpResponse): WebSocket | null {
+  if (res.sent()) {
+    throw new IoError("EINVAL", "a response was already started");
+  }
+  const version = req.header("sec-websocket-version");
+  if (!req.isUpgrade("websocket") || (version != null && version != "13")) {
+    res.status(426);
+    res.header("Upgrade", "websocket");
+    res.header("Sec-WebSocket-Version", "13");
+    res.send("a WebSocket handshake (version 13) is required");
+    return null;
+  }
+  const key = req.header("sec-websocket-key") ?? "";
+  if (!req.isMethod("GET") || version == null || !validKey(key)) {
+    res.status(400);
+    res.send("invalid WebSocket handshake");
+    return null;
+  }
+  const stream = res.upgrade("websocket", [["Sec-WebSocket-Accept", acceptKey(key)]]);
+  // What the client sent past the request (its first frames, if it did not wait for the 101).
+  return connection(stream, false, req.takeUnread());
+}
+
+// Whether `key` is 16 bytes in base64: 22 characters of its alphabet and `==`.
+function validKey(key: string): bool {
+  if (key.length != 24 || !key.endsWith("==")) {
+    return false;
+  }
+  for (let i = 0; i < 22; i++) {
+    const c = key.charCodeAt(i);
+    const letter = (c >= 65 && c <= 90) || (c >= 97 && c <= 122);
+    if (!letter && !(c >= 48 && c <= 57) && c != 43 && c != 47) {
+      return false;
+    }
+  }
+  return true;
 }
 
 export struct WsConnectOptions {

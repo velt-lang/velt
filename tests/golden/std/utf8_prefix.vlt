@@ -1,0 +1,128 @@
+// How much of a byte range is well-formed UTF-8 (std/encoding/utf8 `validPrefix`, the check the
+// WebSocket reader makes on text that arrives in pieces), against a byte-at-a-time reference:
+// every range in buffers up to 150 bytes around the 16- and 64-byte steps of the ASCII scan, with
+// a character placed in it whole, cut off by the range's end, or made invalid. The bytes outside
+// the range are 0xff, so a scan that reads past either end gives a wrong answer.
+import { validPrefix } from "velt:encoding/utf8";
+
+// Whether `b` may follow `lead` as continuation byte `k` (Unicode Table 3-7).
+function continues(lead: u8, k: usize, b: u8): bool {
+  if (k == 1 && lead == 0xe0) {
+    return b >= 0xa0 && b <= 0xbf;
+  }
+  if (k == 1 && lead == 0xed) {
+    return b >= 0x80 && b <= 0x9f;
+  }
+  if (k == 1 && lead == 0xf0) {
+    return b >= 0x90 && b <= 0xbf;
+  }
+  if (k == 1 && lead == 0xf4) {
+    return b >= 0x80 && b <= 0x8f;
+  }
+  return b >= 0x80 && b <= 0xbf;
+}
+
+// Continuation bytes after `lead`, or -1 if it cannot start a character.
+function needs(lead: u8): i64 {
+  if (lead < 0x80) {
+    return 0;
+  }
+  if (lead >= 0xc2 && lead <= 0xdf) {
+    return 1;
+  }
+  if (lead >= 0xe0 && lead <= 0xef) {
+    return 2;
+  }
+  if (lead >= 0xf0 && lead <= 0xf4) {
+    return 3;
+  }
+  return -1;
+}
+
+function reference(d: u8[], start: usize, end: usize): i64 {
+  let i = start;
+  while (i < end) {
+    const need = needs(d[i]);
+    if (need < 0) {
+      return -1;
+    }
+    for (let k: usize = 1; k <= (need as usize); k++) {
+      if (i + k >= end) {
+        return (i - start) as i64;
+      }
+      if (!continues(d[i], k, d[i + k])) {
+        return -1;
+      }
+    }
+    i += (need as usize) + 1;
+  }
+  return (end - start) as i64;
+}
+
+let failures = 0;
+
+function check(d: u8[], start: usize, end: usize, what: string) {
+  const got = validPrefix(d, start, end);
+  const want = reference(d, start, end);
+  if (got != want && failures < 20) {
+    console.log("FAIL", what, start, end, "got", got, "want", want, d.join(","));
+  }
+  if (got != want) {
+    failures++;
+  }
+}
+
+function main() {
+  const chars: u8[][] = [
+    [0xc3, 0xa9],
+    [0xe2, 0x82, 0xac],
+    [0xe0, 0xa0, 0x80],
+    [0xf0, 0x9f, 0x98, 0x80],
+    [0xf4, 0x8f, 0xbf, 0xbf],
+    [0xe0, 0x9f, 0x80],
+    [0xed, 0xa0, 0x80],
+    [0xf4, 0x90, 0x80, 0x80],
+    [0xc0, 0x80],
+    [0x80],
+    [0xff],
+  ];
+  let checks = 0;
+  for (const start of [0, 1, 7] as usize[]) {
+    for (let n: usize = start; n <= 150; n++) {
+      // ASCII from `start` to `n`, 0xff around it.
+      const d: u8[] = Buffer.alloc(n + 8);
+      for (let i: usize = 0; i < d.length; i++) {
+        d[i] = i >= start && i < n ? (97 + i % 26) as u8 : 0xff;
+      }
+      check(d, start, n, "ascii");
+      checks++;
+      for (const c of chars) {
+        const len = c.length as usize;
+        for (let at: usize = start; at + 1 <= n && at + len <= n + 8; at += at < start + 70 ? 1 : 3) {
+          const kept = d.slice(at as i64, (at + len) as i64);
+          for (let k: usize = 0; k < len; k++) {
+            d[at + k] = c[k];
+          }
+          // Whole, if it fits, and cut off after every byte by the range's end.
+          for (let cut: usize = 1; cut <= len; cut++) {
+            if (at + cut <= n) {
+              check(d, start, at + cut, "cut");
+              checks++;
+            }
+          }
+          if (at + len <= n) {
+            check(d, start, n, "placed");
+            checks++;
+          }
+          for (let k: usize = 0; k < len; k++) {
+            d[at + k] = kept[k];
+          }
+        }
+      }
+    }
+  }
+  // Ranges past the array's length count as its length; an empty or reversed range is empty.
+  const short: u8[] = [0x61, 0x62, 0xc3];
+  console.log(validPrefix(short, 0, 99), validPrefix(short, 2, 1), validPrefix(short, 3, 3));
+  console.log("checks", checks, "failures", failures);
+}

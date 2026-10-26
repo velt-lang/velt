@@ -1,0 +1,11 @@
+1 ada 2.5 true [ 1, 2 ] null
+2 bob 3 false [] hi
+1 first 1 true [ 1, 2 ] null
+200 small
+row does not match the requested type: expected u8 at $.n
+row does not match the requested type: expected u8 at $.n
+row does not match the requested type: expected u8 at $.n
+row does not match the requested type: expected i64 at $[0].id
+row does not match the requested type: expected field "name" at $[0]
+row does not match the requested type: expected i64 at $[0].id
+row does not match the requested type: expected string at $[0].name

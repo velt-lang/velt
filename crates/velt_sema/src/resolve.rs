@@ -464,6 +464,7 @@ impl Ctx<'_> {
             "Promise" if args.len() == 2 => 2,
             "Promise" => 1,
             "Result" => return Some(self.removed_result(t)),
+            "ReadonlyMap" => return Some(self.resolve_readonly_map(t, args, env)),
             "ReturnType" | "Parameters" => {
                 return Some(self.resolve_fn_operator(t, name, args, env))
             }
@@ -573,8 +574,12 @@ impl Ctx<'_> {
         }
         // `Record<K, V>`: a concrete `K` must be a key here; a type parameter is checked per
         // instantiation (`crate::record_keys`).
-        if Some(d) == self.prelude_adt("Record") && !self.check_record_key(args[0], t.span, None) {
-            return self.ty.error;
+        let mut args = args;
+        if Some(d) == self.prelude_adt("Record") {
+            args[0] = self.number_key_as_string(args[0]);
+            if !self.check_record_key(args[0], t.span, None) {
+                return self.ty.error;
+            }
         }
         if let Some(&object) = self.field_only.get(&d) {
             // A field-only interface is an object type (`collect::field_only`).

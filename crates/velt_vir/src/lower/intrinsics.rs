@@ -3,6 +3,7 @@
 use velt_sema::hir::{self, Intrinsic, TyId};
 
 use super::async_fn::BoxHold;
+use super::json::JsonSource;
 use super::operand::proj;
 use super::rt::Rt;
 use super::{ice, unit, FnLower};
@@ -79,6 +80,27 @@ impl FnLower<'_, '_> {
             (I::StrLen, [a]) => {
                 let v = self.projection_base(a, BoxHold::No);
                 self.str_len(v)
+            }
+            (I::StrByteLen, [a]) => {
+                let v = self.projection_base(a, BoxHold::No);
+                let p = self.operand_place(v, Ty::Agg(STR_AGG));
+                self.str_bytes(&p)
+            }
+            (I::StrByteAt, [s, i]) => {
+                let v = self.projection_base(s, BoxHold::No);
+                let i = self.expr(i);
+                self.str_byte_at(v, i)
+            }
+            (I::StrLoadU8x16, [s, at]) => {
+                let v = self.projection_base(s, BoxHold::No);
+                let at = self.expr(at);
+                self.str_load_u8x16(v, at, None)
+            }
+            (I::StrLoadPartialU8x16, [s, at, count]) => {
+                let v = self.projection_base(s, BoxHold::No);
+                let at = self.expr(at);
+                let count = self.expr(count);
+                self.str_load_u8x16(v, at, Some(count))
             }
             (I::StrCharCodeAt, [s, i]) => {
                 let hold = match self.may_write(i) {
@@ -183,6 +205,16 @@ impl FnLower<'_, '_> {
                 Operand::Const(crate::vir::Const::Bool(b), Ty::Bool)
             }
             (I::AnyTo, [a]) => self.any_to(a, ty),
+            (I::AnyTo, [a, text]) => {
+                let text = match &text.kind {
+                    hir::ExprKind::Lit(hir::Lit::Str(s)) => s.clone(),
+                    _ => super::ice("AnyTo text is not a string literal"),
+                };
+                let outer = self.any_context.replace(text);
+                let v = self.any_to(a, ty);
+                self.any_context = outer;
+                v
+            }
             (I::AnyTypeof, [a]) => self.any_typeof(a),
             (I::AnyGet, [o, k]) => self.any_get(o, k, ty),
             (I::AnyIndex, [o, i]) => self.any_index(o, i, ty),
@@ -217,6 +249,8 @@ impl FnLower<'_, '_> {
             (I::AnyIsArray, [a]) => self.any_is_array(a),
             (I::AnyKeys, [o]) => self.any_keys(o, ty),
             (I::AnyTruthy, [a]) => self.any_truthy(a),
+            (I::AnyTag, [a]) => self.any_tag_value(a),
+            (I::AnyToNumber, [a]) => self.any_to_number(a),
             (I::AnyStrictEq, [a, b]) => self.any_eq(a, b, false),
             (I::AnyLooseEq, [a, b]) => self.any_eq(a, b, true),
             (I::Share, [a]) => {
@@ -288,8 +322,18 @@ impl FnLower<'_, '_> {
                 _,
             ) => self.async_intrinsic(i, args, ty),
             (I::JsonStringify, [a]) => self.json_stringify(a, ty),
-            (I::JsonParse, [a, flags, depth]) => self.json_parse(a, flags, depth, false, ty),
-            (I::JsonParseRows, [a, flags, depth]) => self.json_parse(a, flags, depth, true, ty),
+            (I::JsonParse, [a, flags, depth]) => {
+                self.json_parse(a, flags, depth, JsonSource::Text, ty)
+            }
+            (I::JsonParseRows, [a, flags, depth]) => {
+                self.json_parse(a, flags, depth, JsonSource::Rows, ty)
+            }
+            (I::JsonParseCursor, [a, flags, depth]) => {
+                self.json_parse(a, flags, depth, JsonSource::Cursor, ty)
+            }
+            (I::DbBind, [sink, a]) => self.db_bind(sink, a),
+            (I::ReadRows, [a]) => self.read_rows(a, true, ty),
+            (I::ReadRow, [a]) => self.read_rows(a, false, ty),
             (I::HttpHandler, [f]) => self.http_handler(f, ty),
             (I::Attempt, [f]) => self.attempt(f, ty),
             (

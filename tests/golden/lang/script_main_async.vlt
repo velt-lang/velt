@@ -1,0 +1,10 @@
+// An `async function main` called with a plain `main();` (#1567): it runs once, to the end, and
+// the statement after it runs first, as in Node.
+async function main() {
+  console.log("start");
+  await Promise.resolve();
+  console.log("end");
+}
+
+main();
+console.log("after the call");

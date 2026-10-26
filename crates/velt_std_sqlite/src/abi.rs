@@ -6,7 +6,7 @@ use crate::connection::{self, DbHandle};
 use crate::error::{code_name, DbError};
 use crate::statement::{self, RunInfo, StmtHandle};
 use velt_native::handles::Key;
-use velt_native::{export, Array, Error, Str};
+use velt_native::{export, Error, Str};
 
 fn io<T>(r: Result<T, DbError>) -> Result<T, Error> {
     r.map_err(|e| e.to_error())
@@ -75,8 +75,8 @@ fn velt_std_sqlite__last_error(db_h: u64) -> Result<(), Error> {
 
 /// `db.prepare(sql)` → `IoResult<u64>`.
 #[export]
-fn velt_std_sqlite__prepare(db_h: u64, sql: &str) -> Result<u64, Error> {
-    io(statement::prepare(db(db_h), sql).map(|s| s.bits()))
+fn velt_std_sqlite__prepare(db_h: u64, sql: &Str) -> Result<u64, Error> {
+    io(statement::prepare(db(db_h), sql.as_bytes()).map(|s| s.bits()))
 }
 
 /// `stmt.run()` → `IoResult<RunSlot>`; `params` is JSON (empty: none), read as stored: it comes
@@ -86,16 +86,55 @@ fn velt_std_sqlite__run(stmt_h: u64, params: &Str) -> Result<RunInfo, Error> {
     io(statement::run(stmt(stmt_h), params.as_bytes()))
 }
 
-/// `stmt.all()` / `get()` → `IoResult<u8[]>`: binary rows ([`velt_text::rows`]) written into
-/// the Velt array itself, for `__intrinsic_json_parse_rows`; empty if `first_only` found no row.
+/// `stmt.all()` / `get()` → `IoResult<u64>`: a cursor over the rows
+/// (`velt_text::rows_cursor`) for `__intrinsic_json_parse_cursor`, given back to
+/// `velt_std_sqlite__close_rows`; 0 if `first_only` found no row. `params` is JSON, as for
+/// `run`.
 #[export]
-fn velt_std_sqlite__query(stmt_h: u64, params: &Str, first_only: bool) -> Result<Array<u8>, Error> {
-    io(statement::query(
+fn velt_std_sqlite__open_rows(stmt_h: u64, params: &Str, first_only: bool) -> Result<u64, Error> {
+    io(statement::open_rows(
         stmt(stmt_h),
         params.as_bytes(),
         first_only,
-        Array::new(),
     ))
+}
+
+/// Releases a cursor `velt_std_sqlite__open_rows` made (0: nothing); fails with what SQLite
+/// met while stepping its rows.
+#[export]
+fn velt_std_sqlite__close_rows(cursor: u64) -> Result<(), Error> {
+    // SAFETY: std gives back each cursor it was handed, once, after decoding.
+    io(unsafe { super::cursor::close(cursor) })
+}
+
+/// `runWith` / `getWith` / `allWith` → `IoResult<u64>`: a parameter sink
+/// (`velt_text::rows_cursor::RawSink`) for `__intrinsic_db_bind`, then handed on to
+/// `velt_std_sqlite__open_rows_bound` or `velt_std_sqlite__run_bound`, or given up with
+/// `velt_std_sqlite__bind_abort`.
+#[export]
+fn velt_std_sqlite__bind_begin(stmt_h: u64) -> Result<u64, Error> {
+    io(statement::bind_begin(stmt(stmt_h)))
+}
+
+/// `velt_std_sqlite__open_rows` with the parameters a sink bound.
+#[export]
+fn velt_std_sqlite__open_rows_bound(sink: u64, first_only: bool) -> Result<u64, Error> {
+    // SAFETY: std hands on each sink it was given, once.
+    io(unsafe { super::sink::rows(sink, first_only) })
+}
+
+/// `velt_std_sqlite__run` with the parameters a sink bound.
+#[export]
+fn velt_std_sqlite__run_bound(sink: u64) -> Result<RunInfo, Error> {
+    // SAFETY: as above.
+    io(unsafe { super::sink::run(sink) })
+}
+
+/// Gives up a sink std did not use.
+#[export]
+fn velt_std_sqlite__bind_abort(sink: u64) {
+    // SAFETY: as above.
+    unsafe { super::sink::abort(sink) }
 }
 
 /// Count a decode failure std found against the statement's connection.
