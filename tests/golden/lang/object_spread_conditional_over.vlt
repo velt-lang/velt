@@ -1,20 +1,14 @@
 // check: no leaks
-// Conditional spreads: a `null` or `undefined` branch value joins the other branch's type, an
-// earlier key or spread with another type gets the union, and a branch getter may read the
-// literal's plain properties through `this`.
+// Conditional spreads: a `null` or `undefined` branch value joins the other branch's type, and an
+// earlier key or spread with another type gets the union.
 function a(c: boolean) { return { ...(c ? { k: [1, 2] } : { k: null }) }; }
 console.log(a(true), a(false));
 function b(c: boolean) { return { k: false, ...(c ? { k: 1 } : {}) }; }
 console.log(b(true), b(false));
 function d(c: boolean, e: boolean) { return { ...(c ? { k: true } : {}), ...(e ? { k: "s" } : { k: 2 }) }; }
 console.log(d(true, true), d(false, false));
-function g(c: boolean) { return { a: 1, ...(c ? { v: 2, get g() { return this.v * 10; } } : {}) }; }
-console.log(JSON.stringify(g(true)), JSON.stringify(g(false)));
 const base = { k: "x", z: 1 };
 function m(c: boolean) { return { ...base, ...(c ? { k: 5 } : {}) }; }
 console.log(m(true), m(false));
 function u(c: boolean) { return { ...(c ? { k: undefined } : { k: 3 }) }; }
 console.log(u(true), u(false), "k" in u(true));
-const w = 4;
-function t(c: boolean) { return { ...(c ? { w, get g() { return this.w + 1; } } : { g: 0 }) }; }
-console.log(t(true), t(false));

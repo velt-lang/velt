@@ -132,6 +132,26 @@ impl FnCx<'_, '_> {
     }
 }
 
+/// Does a source read in spread value `v` declare `undefined` (a present field may hold it)?
+pub(super) fn undefined_held(v: &super::spread::Value) -> bool {
+    use super::spread::Value;
+    match v {
+        Value::Read(_, src) => src.undefined,
+        Value::Over(_, src, prev) => src.undefined || undefined_held(prev),
+        Value::Prop(..) | Value::Held(..) => true,
+    }
+}
+
+impl FnCx<'_, '_> {
+    /// Does the declared field type `t` (of a type with arguments `args`) hold `undefined`?
+    pub(super) fn declares_undefined(&mut self, t: TyId, args: &[TyId]) -> bool {
+        let t = self.cx.subst(t, args);
+        self.cx.dynamic(t).is_some()
+            || self.cx.has_type_params(t)
+            || self.cx.ty.nothing_of(t).is_some_and(|n| n.has_undefined())
+    }
+}
+
 /// Is `e` a conditional (in parentheses)?
 pub(super) fn is_cond(e: &ast::Expr) -> bool {
     matches!(strip(e).kind, ast::ExprKind::Cond { .. })
@@ -175,7 +195,8 @@ impl FnCx<'_, '_> {
 /// A conditional spread operand whose object literals have getters (`c ? { get g() { return
 /// 1; } } : {}`) with each getter called where it is written (`g: (() => { return 1; })()`):
 /// a spread reads a getter's value, in property order, as JavaScript does. `None` when there
-/// is none, or a getter uses `this` or the literal has a setter (kept as written).
+/// is none, a getter uses `this`, a value that is not a literal follows a getter, or the
+/// literal has a setter (kept as written).
 pub(super) fn called_getters(e: &ast::Expr) -> Option<ast::Expr> {
     if !matches!(strip(e).kind, ast::ExprKind::Cond { .. }) {
         return None;
@@ -195,6 +216,7 @@ fn call_getters(e: &ast::Expr, found: &mut bool) -> Option<ast::Expr> {
         },
         ast::ExprKind::Object(props) => {
             let mut out = vec![];
+            let mut getter_seen = false;
             for p in props {
                 let accessor = match p {
                     ast::ObjectProp::KeyValue(k, v) => match &v.kind {
@@ -213,21 +235,23 @@ fn call_getters(e: &ast::Expr, found: &mut bool) -> Option<ast::Expr> {
                     _ => None,
                 };
                 let Some((k, arrow, _)) = accessor else {
+                    // JavaScript builds the literal before the spread calls its getters: a
+                    // value written after a getter runs first, which a getter called in place
+                    // would not keep. Only a literal value may follow one.
+                    let literal = matches!(p, ast::ObjectProp::KeyValue(_, v)
+                        if matches!(v.kind, ast::ExprKind::Lit(_)));
+                    if getter_seen && !literal {
+                        return None;
+                    }
                     out.push(p.clone());
                     continue;
                 };
-                // A getter using `this` reads the literal's plain properties: `this` is an object
-                // of them (`{ v: 2, get g() { return this.v * 10; } }` reads `this.v` as `2`),
-                // when their values can be read twice (literals and variables).
-                let bound;
-                let arrow = match super::literal_this::takes_this(arrow) {
-                    true => {
-                        bound = this_bound(arrow, props)?;
-                        &bound
-                    }
-                    false if uses_this(arrow) => return None,
-                    false => arrow,
-                };
+                // A getter using `this` reads the object the literal built, which a spread does
+                // not keep: kept as written (an error).
+                if uses_this(arrow) {
+                    return None;
+                }
+                getter_seen = true;
                 *found = true;
                 let call = ast::ExprKind::Call {
                     callee: Box::new(ast::Expr {
@@ -254,78 +278,6 @@ fn call_getters(e: &ast::Expr, found: &mut bool) -> Option<ast::Expr> {
         id: e.id,
         kind,
         span: e.span,
-    })
-}
-
-/// Getter `arrow` (`(this) => { … }`) without its `this` parameter, which its body declares
-/// instead as the object of the literal's plain properties `props` (`let this = { v: 2 };`), or
-/// `None` when a property's value may have effects (it would run twice) or is an accessor.
-fn this_bound(arrow: &ast::Expr, props: &[ast::ObjectProp]) -> Option<ast::Expr> {
-    let ast::ExprKind::Arrow {
-        type_params,
-        params,
-        ret,
-        throws,
-        body,
-        is_async,
-    } = &arrow.kind
-    else {
-        return None;
-    };
-    let mut plain = vec![];
-    for p in props {
-        match p {
-            ast::ObjectProp::KeyValue(_, v) => match &v.kind {
-                ast::ExprKind::Lit(_) | ast::ExprKind::Ident(_) => plain.push(p.clone()),
-                ast::ExprKind::Call { callee, .. }
-                    if matches!(&callee.kind, ast::ExprKind::Ident(f)
-                        if f.name == ast::OBJECT_GET_FN || f.name == ast::OBJECT_SET_FN) => {}
-                _ => return None,
-            },
-            ast::ObjectProp::Shorthand(_) => plain.push(p.clone()),
-            _ => return None,
-        }
-    }
-    let span = arrow.span;
-    let this = params.first()?.name.clone();
-    let obj = ast::Expr {
-        id: ast::NodeId(u32::MAX),
-        kind: ast::ExprKind::Object(plain),
-        span,
-    };
-    let decl = ast::Stmt {
-        kind: ast::StmtKind::Var(ast::VarDecl {
-            kind: ast::VarKind::Const,
-            pattern: ast::Pattern {
-                id: ast::NodeId(u32::MAX),
-                kind: ast::PatternKind::Ident(this),
-                span,
-            },
-            ty: None,
-            init: Some(obj),
-            span,
-        }),
-        span,
-    };
-    let mut stmts = vec![decl];
-    match body {
-        ast::ArrowBody::Expr(e) => stmts.push(ast::Stmt {
-            kind: ast::StmtKind::Return(Some((**e).clone())),
-            span: e.span,
-        }),
-        ast::ArrowBody::Block(b) => stmts.extend(b.stmts.iter().cloned()),
-    }
-    Some(ast::Expr {
-        id: arrow.id,
-        kind: ast::ExprKind::Arrow {
-            type_params: type_params.clone(),
-            params: params[1..].to_vec(),
-            ret: ret.clone(),
-            throws: throws.clone(),
-            body: ast::ArrowBody::Block(ast::Block { stmts, span }),
-            is_async: *is_async,
-        },
-        span,
     })
 }
 
