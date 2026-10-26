@@ -109,6 +109,11 @@ pub(super) fn started() -> usize {
     STARTED.load(Ordering::SeqCst)
 }
 
+/// The workers whose threads have started.
+pub(super) fn started_workers() -> &'static [Shared] {
+    &workers()[..started()]
+}
+
 /// This thread's state when it is a worker.
 struct Local {
     index: usize,
@@ -343,7 +348,6 @@ fn fatal(e: impl std::fmt::Display) -> ! {
 }
 
 fn run(index: usize) {
-    crate::task::runtime::worker_thread_started();
     let _bridge = super::bridge::handle().enter();
     crate::task::runtime::set_worker(index);
     super::coop::drive();
@@ -356,7 +360,7 @@ fn run(index: usize) {
         take_inbox(me);
         let (next, queued, behind) = next_task(me);
         if let Some(task) = next {
-            poll_task(me, &local, task, behind);
+            poll_task(me, &local, task, behind, started_workers);
             local.polls.set(local.polls.get() + 1);
             tick = tick.wrapping_add(1);
             if tick.is_multiple_of(HELP_INTERVAL) {
@@ -431,17 +435,23 @@ fn may_park(me: &Shared, monitor: &MonitorSleep) -> bool {
 /// next here, see [`schedule`]), and queues it again if it was woken meanwhile. `behind`: the
 /// tasks of its second queue when this is the first poll of a spawned task with tasks never
 /// polled waiting behind it, else 0 (the monitor watches such a poll: see [`super::monitor`]).
+/// `workers`: the workers started, which a watch looks at ([`started_workers`] but in tests).
 #[inline]
-fn poll_task(me: &Shared, local: &Local, task: Arc<Task>, behind: usize) {
+fn poll_task(
+    me: &Shared,
+    local: &Local,
+    task: Arc<Task>,
+    behind: usize,
+    workers: impl FnOnce() -> &'static [Shared],
+) {
     me.progress
         .store(TICKS.load(Ordering::Relaxed), Ordering::Relaxed);
     local.running_home.set(task.home.load(Ordering::Relaxed));
-    if behind > 0 {
-        watch(me, local.polls.get(), behind, &MONITOR);
-    }
+    let watched = behind > 0 && watch(me, workers(), local.polls.get(), behind, &MONITOR);
     let ran = task.run();
-    if behind > 0 {
-        me.watch.store(0, Ordering::SeqCst);
+    if watched {
+        // Release: the monitor's compare-and-swap on it orders with it alone (same location).
+        me.watch.store(0, Ordering::Release);
     }
     local.running_home.set(usize::MAX);
     if let Ran::Again = ran {
@@ -521,7 +531,7 @@ fn maybe_help(index: usize, local: &Local) {
 
 /// The sleeping worker that did least: one with nothing to do, not a busy one between bursts.
 pub(super) fn sleeping_helper(index: usize) -> Option<usize> {
-    sleeping_helper_of(&workers()[..started()], index)
+    sleeping_helper_of(started_workers(), index)
 }
 
 /// [`sleeping_helper`] among the workers `ws` (those started).

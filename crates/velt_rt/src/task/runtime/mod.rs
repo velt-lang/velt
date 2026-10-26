@@ -137,21 +137,6 @@ fn quiet_parked() {
     super::quiet::parked(&QUIET);
 }
 
-/// Called by every worker thread (and the Velt backend's monitor) as it starts: on macOS, asks
-/// for the user-interactive quality of service, which the scheduler runs on the performance
-/// cores. A thread created without one gets the default class, and its busy work started on the
-/// efficiency cores (Apple M4: the same read loop on 4 of 10 workers took 16.8 ms, 6.6 ms on
-/// performance cores); the program's main thread already has this class. Elsewhere nothing
-/// changes.
-pub(super) fn worker_thread_started() {
-    #[cfg(target_os = "macos")]
-    // SAFETY: sets the calling thread's own class; no pointers involved.
-    unsafe {
-        let _ =
-            libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_USER_INTERACTIVE, 0);
-    }
-}
-
 /// Environment variable overriding the worker-thread count.
 pub const THREADS_ENV: &str = "VELT_THREADS";
 

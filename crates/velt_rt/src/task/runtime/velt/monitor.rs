@@ -14,7 +14,15 @@
 //! than a fast tick (a burst of connections, or of a broadcast's flushers, each starting with a
 //! read or a write) never move anything; the monitor checks that often only while such a poll
 //! runs and a worker sleeps.
+//!
+//! A watch is published only while another worker sleeps (never with one worker), and wakes the
+//! monitor from its whole-tick nap ([`MonitorSleep::hurry`]) only until [`HURRY_LIMIT`] such
+//! wakes in a row moved nothing; a pass that moves tasks allows them again. A program spawning
+//! small bursts back to back (`spawn` twice, then await both, 100k times) thus wakes the monitor
+//! a few times, not at every burst, and the next tick finds a long poll anyway: tasks behind it
+//! start within a tick of it at worst.
 
+use super::queue::RunQueue;
 use super::task::Task;
 use super::worker::{
     lock, sleeping_helper, sleeping_helper_of, start_spare, started, wake, workers, Reactor,
@@ -33,13 +41,39 @@ pub(super) const SEEN: u64 = 1 << 31;
 /// `Shared::watch`: the tasks queued before this poll.
 pub(super) const WATCHED: u64 = SEEN - 1;
 
-/// Publishes that this worker starts the first poll of a spawned task (its poll number `polls`)
-/// with `behind` tasks in its second queue, some never polled, and has the monitor check it soon.
-pub(super) fn watch(me: &Shared, polls: u64, behind: usize, monitor: &MonitorSleep) {
+/// Wakes of the monitor by a watch in a row that moved nothing, after which watches stop waking
+/// it until a pass moves tasks (see the module docs).
+pub(super) const HURRY_LIMIT: u32 = 4;
+
+/// Publishes that this worker (`me`, one of the workers started `ws`) starts the first poll of a
+/// spawned task (its poll number `polls`) with `behind` tasks in its second queue, some never
+/// polled, and has the monitor check it soon: whether it did. Not while no other worker sleeps
+/// (none could start them; never with one worker).
+pub(super) fn watch(
+    me: &Shared,
+    ws: &[Shared],
+    polls: u64,
+    behind: usize,
+    monitor: &MonitorSleep,
+) -> bool {
+    // Relaxed: a worker that parks just after this check only misses a quicker start (the
+    // stall rescue still moves the tasks).
+    if !ws
+        .iter()
+        .any(|w| !std::ptr::eq(w, me) && w.parked.load(Ordering::Relaxed))
+    {
+        return false;
+    }
     let behind = u64::try_from(behind).unwrap_or(WATCHED).min(WATCHED);
-    me.watch
-        .store((polls & 0xffff_ffff) << 32 | behind, Ordering::SeqCst);
-    monitor.hurry();
+    let word = (polls & 0xffff_ffff) << 32 | behind;
+    // Hurries stopped: no handshake with `fast` (the next tick finds the watch).
+    if monitor.calm.load(Ordering::Relaxed) {
+        me.watch.store(word, Ordering::Release);
+    } else {
+        me.watch.store(word, Ordering::SeqCst);
+        monitor.hurry();
+    }
+    true
 }
 
 /// The monitor's clock: ticks of [`TICK`] while some worker is awake.
@@ -59,6 +93,8 @@ pub(super) struct MonitorSleep {
     pub(super) fast: AtomicBool,
     /// A worker started a watched poll while the monitor napped for a whole tick.
     pub(super) hurry: AtomicBool,
+    /// [`HURRY_LIMIT`] hurries in a row moved nothing: watches do not hurry (module docs).
+    pub(super) calm: AtomicBool,
     pub(super) nap: Mutex<()>,
     pub(super) nap_cv: Condvar,
 }
@@ -73,6 +109,7 @@ impl MonitorSleep {
             cv: Condvar::new(),
             fast: AtomicBool::new(false),
             hurry: AtomicBool::new(false),
+            calm: AtomicBool::new(false),
             nap: Mutex::new(()),
             nap_cv: Condvar::new(),
         }
@@ -88,13 +125,31 @@ impl MonitorSleep {
         }
     }
 
-    /// Sleeps for `d` or until a worker hurries it.
-    pub(super) fn nap(&self, d: Duration) {
+    /// Sleeps for `d` or until a worker hurries it: whether one did.
+    #[cfg(not(windows))]
+    pub(super) fn nap(&self, d: Duration) -> bool {
         let nap = lock(&self.nap);
         let _ = self
             .nap_cv
             .wait_timeout_while(nap, d, |_| !self.hurry.load(Ordering::SeqCst));
-        self.hurry.store(false, Ordering::SeqCst);
+        self.hurry.swap(false, Ordering::SeqCst)
+    }
+
+    /// Sleeps for `d` or until a worker hurries it: whether one did. On Windows a condition
+    /// variable's timeout rounds up to the system timer's tick (about 15 ms) where
+    /// `thread::sleep` uses a high-resolution timer (1 ms takes about 1.5 ms, 50 µs about
+    /// 0.6 ms): sleeps in slices of a fast tick at most, looking for a hurry between them.
+    #[cfg(windows)]
+    pub(super) fn nap(&self, d: Duration) -> bool {
+        let end = Instant::now() + d;
+        while !self.hurry.load(Ordering::SeqCst) {
+            let left = end.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                break;
+            }
+            std::thread::sleep(left.min(FAST_TICK));
+        }
+        self.hurry.swap(false, Ordering::SeqCst)
     }
 
     /// Wakes the monitor if it sleeps (a worker woke up: its polls need watching).
@@ -125,10 +180,10 @@ impl MonitorSleep {
 }
 
 pub(super) fn run() {
-    // Its ticks time the rescues: the user-interactive class also keeps its naps short.
-    crate::task::runtime::worker_thread_started();
     let mut next_tick = Instant::now() + TICK;
     let mut last_pass = Instant::now();
+    // Hurried wakes in a row that moved nothing.
+    let mut idle_hurries: u32 = 0;
     loop {
         let ws = workers();
         if ws.iter().all(|w| w.parked.load(Ordering::SeqCst)) {
@@ -146,16 +201,25 @@ pub(super) fn run() {
             MONITOR.fast.store(true, Ordering::SeqCst);
         }
         let until_tick = next_tick.saturating_duration_since(Instant::now());
-        MONITOR.nap(if fast {
+        let hurried = MONITOR.nap(if fast {
             until_tick.min(FAST_TICK)
         } else {
             until_tick
         });
+        if hurried {
+            idle_hurries = idle_hurries.saturating_add(1);
+            if idle_hurries >= HURRY_LIMIT {
+                MONITOR.calm.store(true, Ordering::Relaxed);
+            }
+        }
         let now = Instant::now();
         // Passes a fast tick apart at least: a poll seen twice has lasted that long.
         if now.duration_since(last_pass) >= FAST_TICK {
             last_pass = now;
-            start_fresh(up);
+            if start_fresh(up) > 0 {
+                idle_hurries = 0;
+                MONITOR.calm.store(false, Ordering::Relaxed);
+            }
         }
         if now < next_tick {
             continue;
@@ -182,8 +246,9 @@ pub(super) fn watching(ws: &[Shared]) -> bool {
 /// The monitor's pass over the watches of the workers `ws` (those started), passes a
 /// [`FAST_TICK`] apart at least: marks a watched poll seen, and when it was seen at the last
 /// pass already (the same poll, on for a fast tick), hands the tasks never polled that waited
-/// behind it to sleeping workers, one each (see the module docs).
-pub(super) fn start_fresh(ws: &[Shared]) {
+/// behind it to sleeping workers, one each (see the module docs). How many it moved.
+pub(super) fn start_fresh(ws: &[Shared]) -> usize {
+    let mut moved = 0;
     for (i, w) in ws.iter().enumerate() {
         let watch = w.watch.load(Ordering::SeqCst);
         if watch == 0 || w.parked.load(Ordering::SeqCst) {
@@ -213,10 +278,9 @@ pub(super) fn start_fresh(ws: &[Shared]) {
             continue;
         }
         let within = usize::try_from(watch & WATCHED).unwrap_or(usize::MAX);
-        let fresh = queue.take_fresh(within, helpers);
+        let (_moving, fresh) = take_fresh(&mut queue, within, helpers);
         drop(queue);
-        // In no queue until they reach an inbox (the worker may count as idle meanwhile).
-        let _moving = crate::task::quiet::Moving::new();
+        moved += fresh.len();
         for task in fresh {
             match sleeping_helper_of(ws, i) {
                 Some(h) => hand_over(&ws[h], h, vec![task]),
@@ -224,6 +288,20 @@ pub(super) fn start_fresh(ws: &[Shared]) {
             }
         }
     }
+    moved
+}
+
+/// Takes up to `max` fresh tasks from the first `within` of `queue`'s second queue
+/// (`RunQueue::take_fresh`), with the guard that counts them as pending until they reach an
+/// inbox: taken first, so that no moment leaves them in no queue and uncounted (the worker may
+/// park meanwhile, the last one to, and the process would end with them never run).
+pub(super) fn take_fresh(
+    queue: &mut RunQueue,
+    within: usize,
+    max: usize,
+) -> (crate::task::quiet::Moving, Vec<Arc<Task>>) {
+    let moving = crate::task::quiet::Moving::new();
+    (moving, queue.take_fresh(within, max))
 }
 
 /// Awake and no task poll started for [`STALL_TICKS`] ticks up to tick `now`.

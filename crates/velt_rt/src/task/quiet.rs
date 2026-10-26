@@ -277,14 +277,30 @@ pub(crate) struct Moving(());
 impl Moving {
     pub(crate) fn new() -> Moving {
         COUNTERS.moving_begin();
+        #[cfg(test)]
+        MOVING_HERE.with(|n| n.set(n.get() + 1));
         Moving(())
     }
 }
 
 impl Drop for Moving {
     fn drop(&mut self) {
+        #[cfg(test)]
+        MOVING_HERE.with(|n| n.set(n.get() - 1));
         COUNTERS.moving_end();
     }
+}
+
+#[cfg(test)]
+thread_local! {
+    static MOVING_HERE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// The [`Moving`] guards this thread holds (tests: the counters themselves are shared by the
+/// tests that run at the same time).
+#[cfg(test)]
+pub(crate) fn moving_here() -> usize {
+    MOVING_HERE.with(std::cell::Cell::get)
 }
 
 /// What the process waits for besides the counters: keep-alive references and the runtime's

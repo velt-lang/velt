@@ -86,7 +86,7 @@ fn a_task_woken_by_a_task_runs_next_on_the_wakers_worker() {
             0,
             false,
         );
-        poll_task(local.me, local, waker, 0);
+        poll_task(local.me, local, waker, 0, || &[]);
         let mut q = lock(&local.me.queue);
         let order: Vec<_> = std::iter::from_fn(|| q.pop(Instant::now)).collect();
         let is = |t: &Arc<Task>| {
@@ -166,7 +166,10 @@ fn the_first_poll_of_a_spawned_task_with_fresh_tasks_behind_it_is_watched() {
         lock(&me.queue).push(idle_task(), Instant::now);
         let (task, _, behind) = next_task(me);
         assert_eq!(behind, 2);
-        poll_task(me, local, task.expect("a task"), behind);
+        // Watched only while another worker sleeps (one that could start them).
+        let other: &'static [Shared] = Box::leak(Box::new([new_shared()]));
+        other[0].parked.store(true, Ordering::SeqCst);
+        poll_task(me, local, task.expect("a task"), behind, || other);
         let watch = seen.load(Ordering::SeqCst);
         assert_eq!(watch & WATCHED, 2, "not watched during its poll");
         assert_eq!(watch & SEEN, 0);
@@ -178,6 +181,28 @@ fn the_first_poll_of_a_spawned_task_with_fresh_tasks_behind_it_is_watched() {
         lock(&me.queue).push(polled, Instant::now);
         lock(&me.queue).push(idle_task(), Instant::now);
         assert_eq!(next_task(me).2, 0);
+        // No other worker sleeps (one worker, or all busy): not published.
+        while next_task(me).0.is_some() {}
+        let seen = Arc::new(AtomicU64::new(u64::MAX));
+        let (first, _j) = {
+            let seen = seen.clone();
+            super::super::task::make(
+                async move { seen.store(me.watch.load(Ordering::SeqCst), Ordering::SeqCst) },
+                0,
+                false,
+            )
+        };
+        lock(&me.queue).push(first, Instant::now);
+        lock(&me.queue).push(idle_task(), Instant::now);
+        let (task, _, behind) = next_task(me);
+        assert_eq!(behind, 1);
+        other[0].parked.store(false, Ordering::SeqCst);
+        poll_task(me, local, task.expect("a task"), behind, || other);
+        assert_eq!(
+            seen.load(Ordering::SeqCst),
+            0,
+            "watched with no worker to help"
+        );
     });
 }
 
@@ -210,7 +235,12 @@ fn a_watched_poll_seen_twice_hands_the_fresh_tasks_to_sleeping_workers() {
     assert_eq!(ws[0].watch.load(Ordering::SeqCst), watch | SEEN);
     assert_eq!(lock(&ws[0].queue).len(), 4);
     // Seen again: the same poll has lasted; the fresh tasks start on sleeping workers, one each.
-    start_fresh(ws);
+    assert_eq!(start_fresh(ws), 2);
+    assert_eq!(
+        crate::task::quiet::moving_here(),
+        0,
+        "still counted as moving"
+    );
     assert_eq!(ws[0].watch.load(Ordering::SeqCst), 0);
     assert_eq!(
         lock(&ws[0].queue).len(),
@@ -231,19 +261,54 @@ fn a_watched_poll_seen_twice_hands_the_fresh_tasks_to_sleeping_workers() {
 }
 
 #[test]
+fn tasks_taken_to_start_elsewhere_count_as_pending_until_they_reach_an_inbox() {
+    // Out of their worker's queue and in no inbox yet: the guard that counts them as pending
+    // comes with them (else the worker, parking last, could end the process meanwhile).
+    let mut q = super::super::queue::RunQueue::new(Instant::now());
+    for _ in 0..3 {
+        q.push(super::super::task::make(async {}, 0, false).0, Instant::now);
+    }
+    assert_eq!(crate::task::quiet::moving_here(), 0);
+    let (moving, fresh) = take_fresh(&mut q, 3, 2);
+    assert_eq!(fresh.len(), 2);
+    assert_eq!(q.len(), 1);
+    assert_eq!(
+        crate::task::quiet::moving_here(),
+        1,
+        "taken and not counted"
+    );
+    drop(moving);
+    assert_eq!(crate::task::quiet::moving_here(), 0);
+}
+
+#[test]
 fn a_watch_hurries_the_monitor_only_while_it_naps_for_a_whole_tick() {
     let monitor = MonitorSleep::new();
-    let w = new_shared();
-    watch(&w, 1, 3, &monitor);
+    let ws: &'static [Shared] = Box::leak(Box::new([new_shared(), new_shared()]));
+    let w = &ws[0];
+    // No other worker sleeps: nothing published, no hurry.
+    assert!(!watch(w, ws, 1, 3, &monitor));
+    assert_eq!(w.watch.load(Ordering::SeqCst), 0);
+    assert!(!monitor.hurry.load(Ordering::SeqCst));
+    ws[1].parked.store(true, Ordering::SeqCst);
+    assert!(watch(w, ws, 1, 3, &monitor));
     assert_eq!(w.watch.load(Ordering::SeqCst), 1 << 32 | 3);
     assert!(monitor.hurry.load(Ordering::SeqCst));
     // Hurried: the nap returns at once (it would otherwise last a minute).
     let start = Instant::now();
-    monitor.nap(Duration::from_secs(60));
+    assert!(monitor.nap(Duration::from_secs(60)));
     assert!(start.elapsed() < Duration::from_secs(30));
     assert!(!monitor.hurry.load(Ordering::SeqCst));
+    // Hurries stopped (several in a row moved nothing): published, no hurry.
+    monitor.calm.store(true, Ordering::SeqCst);
+    assert!(watch(w, ws, 2, 3, &monitor));
+    assert_eq!(w.watch.load(Ordering::SeqCst), 2 << 32 | 3);
+    assert!(!monitor.hurry.load(Ordering::SeqCst));
+    monitor.calm.store(false, Ordering::SeqCst);
     // Checking often already: no hurry.
     monitor.fast.store(true, Ordering::SeqCst);
-    watch(&w, 2, 3, &monitor);
+    assert!(watch(w, ws, 4, 3, &monitor));
     assert!(!monitor.hurry.load(Ordering::SeqCst));
+    // Not hurried: the nap lasts its time and says so.
+    assert!(!monitor.nap(Duration::from_millis(1)));
 }

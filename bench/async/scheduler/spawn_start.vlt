@@ -1,0 +1,38 @@
+// How soon tasks spawned together that compute start (atomics step 1d): 4 spawned tasks of 20M
+// dependent multiplies each. Prints `spread` (when the last task started, after the first) and
+// `total` (from before the spawns until the last task ended), in ms. Not part of
+// bench/async/run.sh (its output is timings): build it with `velt build --release` and run it a
+// few times, with and without VELT_THREADS.
+const TASKS = 4;
+const N = 20000000;
+
+/** 20M dependent multiplies; returns its start and end time and the product's low bits. */
+async function compute(seed: i64): Promise<f64[]> {
+  const start = performance.now();
+  let x = seed;
+  for (let i = 0; i < N; i++) {
+    x = (x * 6364136223846793005 + 1442695040888963407) | 0;
+  }
+  const end = performance.now();
+  return [start, end, (x & 1) as f64];
+}
+
+async function main() {
+  const t0 = performance.now();
+  const ps: Promise<f64[]>[] = [];
+  for (let t = 0; t < TASKS; t++) {
+    ps.push(spawn(compute(t + 1)));
+  }
+  const rs = await Promise.all(ps);
+  let first = rs[0][0];
+  let last = rs[0][0];
+  let end = rs[0][1];
+  let bits = 0.0;
+  for (const r of rs) {
+    first = Math.min(first, r[0]);
+    last = Math.max(last, r[0]);
+    end = Math.max(end, r[1]);
+    bits += r[2];
+  }
+  console.log(`spread ${(last - first).toFixed(3)} ms total ${(end - t0).toFixed(3)} ms (${bits})`);
+}
