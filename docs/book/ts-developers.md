@@ -361,5 +361,5 @@ server-side rendering ([TSX](../reference/tsx.md), [`velt:jsx`](../std/jsx.md)).
 | object literals with methods: `{ *[Symbol.iterator]() { ... } }`, `{ m() { ... } }` | an object literal whose one member is an iterator method is an `Iterable<T>` (no `this`); other methods are errors | — |
 | an unreachable generator is never closed: its `finally` blocks never run | dropping the last reference to a suspended generator closes it: its `finally` blocks run and its `using` values are disposed then (there is no garbage collector to wait for) | — |
 | `next()` on a generator from inside its own body throws a catchable `TypeError` | it panics (`generator is already running`) | — |
-| (no equivalent) | `extend` adds members to any type | module-scoped extensions, retroactive `implements` |
+| (no equivalent) | `extend` adds members to any type, and `extend X implements I` makes any type implement an interface | module-scoped extensions |
 | JSX | server-side rendering through a `jsxImportSource` provider ([`velt:jsx`](../std/jsx.md)) | no client-side DOM; the differences are in [the reference](../reference/tsx.md#differences-from-typescript) |

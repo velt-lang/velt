@@ -1,0 +1,676 @@
+// A chain of 32 levels of blanket `extend … implements` blocks, each bounded by both
+// interfaces of the next level (`extend<T extends A{k+1} & B{k+1}> T implements A{k}`). Each
+// lookup checks both bounds, so without remembering finished lookups the work doubles per
+// level; with it, each `(type, interface)` is looked up once, in sema and in lowering.
+
+interface A0 {
+  a0(): string;
+}
+
+interface B0 {
+  b0(): string;
+}
+
+interface A1 {
+  a1(): string;
+}
+
+interface B1 {
+  b1(): string;
+}
+
+interface A2 {
+  a2(): string;
+}
+
+interface B2 {
+  b2(): string;
+}
+
+interface A3 {
+  a3(): string;
+}
+
+interface B3 {
+  b3(): string;
+}
+
+interface A4 {
+  a4(): string;
+}
+
+interface B4 {
+  b4(): string;
+}
+
+interface A5 {
+  a5(): string;
+}
+
+interface B5 {
+  b5(): string;
+}
+
+interface A6 {
+  a6(): string;
+}
+
+interface B6 {
+  b6(): string;
+}
+
+interface A7 {
+  a7(): string;
+}
+
+interface B7 {
+  b7(): string;
+}
+
+interface A8 {
+  a8(): string;
+}
+
+interface B8 {
+  b8(): string;
+}
+
+interface A9 {
+  a9(): string;
+}
+
+interface B9 {
+  b9(): string;
+}
+
+interface A10 {
+  a10(): string;
+}
+
+interface B10 {
+  b10(): string;
+}
+
+interface A11 {
+  a11(): string;
+}
+
+interface B11 {
+  b11(): string;
+}
+
+interface A12 {
+  a12(): string;
+}
+
+interface B12 {
+  b12(): string;
+}
+
+interface A13 {
+  a13(): string;
+}
+
+interface B13 {
+  b13(): string;
+}
+
+interface A14 {
+  a14(): string;
+}
+
+interface B14 {
+  b14(): string;
+}
+
+interface A15 {
+  a15(): string;
+}
+
+interface B15 {
+  b15(): string;
+}
+
+interface A16 {
+  a16(): string;
+}
+
+interface B16 {
+  b16(): string;
+}
+
+interface A17 {
+  a17(): string;
+}
+
+interface B17 {
+  b17(): string;
+}
+
+interface A18 {
+  a18(): string;
+}
+
+interface B18 {
+  b18(): string;
+}
+
+interface A19 {
+  a19(): string;
+}
+
+interface B19 {
+  b19(): string;
+}
+
+interface A20 {
+  a20(): string;
+}
+
+interface B20 {
+  b20(): string;
+}
+
+interface A21 {
+  a21(): string;
+}
+
+interface B21 {
+  b21(): string;
+}
+
+interface A22 {
+  a22(): string;
+}
+
+interface B22 {
+  b22(): string;
+}
+
+interface A23 {
+  a23(): string;
+}
+
+interface B23 {
+  b23(): string;
+}
+
+interface A24 {
+  a24(): string;
+}
+
+interface B24 {
+  b24(): string;
+}
+
+interface A25 {
+  a25(): string;
+}
+
+interface B25 {
+  b25(): string;
+}
+
+interface A26 {
+  a26(): string;
+}
+
+interface B26 {
+  b26(): string;
+}
+
+interface A27 {
+  a27(): string;
+}
+
+interface B27 {
+  b27(): string;
+}
+
+interface A28 {
+  a28(): string;
+}
+
+interface B28 {
+  b28(): string;
+}
+
+interface A29 {
+  a29(): string;
+}
+
+interface B29 {
+  b29(): string;
+}
+
+interface A30 {
+  a30(): string;
+}
+
+interface B30 {
+  b30(): string;
+}
+
+interface A31 {
+  a31(): string;
+}
+
+interface B31 {
+  b31(): string;
+}
+
+interface A32 {
+  a32(): string;
+}
+
+interface B32 {
+  b32(): string;
+}
+
+extend<T extends A1 & B1> T implements A0 {
+  a0(): string {
+    return `a0(${this.a1()})`.length > 0 ? "a0" : "";
+  }
+}
+
+extend<T extends A1 & B1> T implements B0 {
+  b0(): string {
+    return "b0";
+  }
+}
+
+extend<T extends A2 & B2> T implements A1 {
+  a1(): string {
+    return `a1(${this.a2()})`.length > 0 ? "a1" : "";
+  }
+}
+
+extend<T extends A2 & B2> T implements B1 {
+  b1(): string {
+    return "b1";
+  }
+}
+
+extend<T extends A3 & B3> T implements A2 {
+  a2(): string {
+    return `a2(${this.a3()})`.length > 0 ? "a2" : "";
+  }
+}
+
+extend<T extends A3 & B3> T implements B2 {
+  b2(): string {
+    return "b2";
+  }
+}
+
+extend<T extends A4 & B4> T implements A3 {
+  a3(): string {
+    return `a3(${this.a4()})`.length > 0 ? "a3" : "";
+  }
+}
+
+extend<T extends A4 & B4> T implements B3 {
+  b3(): string {
+    return "b3";
+  }
+}
+
+extend<T extends A5 & B5> T implements A4 {
+  a4(): string {
+    return `a4(${this.a5()})`.length > 0 ? "a4" : "";
+  }
+}
+
+extend<T extends A5 & B5> T implements B4 {
+  b4(): string {
+    return "b4";
+  }
+}
+
+extend<T extends A6 & B6> T implements A5 {
+  a5(): string {
+    return `a5(${this.a6()})`.length > 0 ? "a5" : "";
+  }
+}
+
+extend<T extends A6 & B6> T implements B5 {
+  b5(): string {
+    return "b5";
+  }
+}
+
+extend<T extends A7 & B7> T implements A6 {
+  a6(): string {
+    return `a6(${this.a7()})`.length > 0 ? "a6" : "";
+  }
+}
+
+extend<T extends A7 & B7> T implements B6 {
+  b6(): string {
+    return "b6";
+  }
+}
+
+extend<T extends A8 & B8> T implements A7 {
+  a7(): string {
+    return `a7(${this.a8()})`.length > 0 ? "a7" : "";
+  }
+}
+
+extend<T extends A8 & B8> T implements B7 {
+  b7(): string {
+    return "b7";
+  }
+}
+
+extend<T extends A9 & B9> T implements A8 {
+  a8(): string {
+    return `a8(${this.a9()})`.length > 0 ? "a8" : "";
+  }
+}
+
+extend<T extends A9 & B9> T implements B8 {
+  b8(): string {
+    return "b8";
+  }
+}
+
+extend<T extends A10 & B10> T implements A9 {
+  a9(): string {
+    return `a9(${this.a10()})`.length > 0 ? "a9" : "";
+  }
+}
+
+extend<T extends A10 & B10> T implements B9 {
+  b9(): string {
+    return "b9";
+  }
+}
+
+extend<T extends A11 & B11> T implements A10 {
+  a10(): string {
+    return `a10(${this.a11()})`.length > 0 ? "a10" : "";
+  }
+}
+
+extend<T extends A11 & B11> T implements B10 {
+  b10(): string {
+    return "b10";
+  }
+}
+
+extend<T extends A12 & B12> T implements A11 {
+  a11(): string {
+    return `a11(${this.a12()})`.length > 0 ? "a11" : "";
+  }
+}
+
+extend<T extends A12 & B12> T implements B11 {
+  b11(): string {
+    return "b11";
+  }
+}
+
+extend<T extends A13 & B13> T implements A12 {
+  a12(): string {
+    return `a12(${this.a13()})`.length > 0 ? "a12" : "";
+  }
+}
+
+extend<T extends A13 & B13> T implements B12 {
+  b12(): string {
+    return "b12";
+  }
+}
+
+extend<T extends A14 & B14> T implements A13 {
+  a13(): string {
+    return `a13(${this.a14()})`.length > 0 ? "a13" : "";
+  }
+}
+
+extend<T extends A14 & B14> T implements B13 {
+  b13(): string {
+    return "b13";
+  }
+}
+
+extend<T extends A15 & B15> T implements A14 {
+  a14(): string {
+    return `a14(${this.a15()})`.length > 0 ? "a14" : "";
+  }
+}
+
+extend<T extends A15 & B15> T implements B14 {
+  b14(): string {
+    return "b14";
+  }
+}
+
+extend<T extends A16 & B16> T implements A15 {
+  a15(): string {
+    return `a15(${this.a16()})`.length > 0 ? "a15" : "";
+  }
+}
+
+extend<T extends A16 & B16> T implements B15 {
+  b15(): string {
+    return "b15";
+  }
+}
+
+extend<T extends A17 & B17> T implements A16 {
+  a16(): string {
+    return `a16(${this.a17()})`.length > 0 ? "a16" : "";
+  }
+}
+
+extend<T extends A17 & B17> T implements B16 {
+  b16(): string {
+    return "b16";
+  }
+}
+
+extend<T extends A18 & B18> T implements A17 {
+  a17(): string {
+    return `a17(${this.a18()})`.length > 0 ? "a17" : "";
+  }
+}
+
+extend<T extends A18 & B18> T implements B17 {
+  b17(): string {
+    return "b17";
+  }
+}
+
+extend<T extends A19 & B19> T implements A18 {
+  a18(): string {
+    return `a18(${this.a19()})`.length > 0 ? "a18" : "";
+  }
+}
+
+extend<T extends A19 & B19> T implements B18 {
+  b18(): string {
+    return "b18";
+  }
+}
+
+extend<T extends A20 & B20> T implements A19 {
+  a19(): string {
+    return `a19(${this.a20()})`.length > 0 ? "a19" : "";
+  }
+}
+
+extend<T extends A20 & B20> T implements B19 {
+  b19(): string {
+    return "b19";
+  }
+}
+
+extend<T extends A21 & B21> T implements A20 {
+  a20(): string {
+    return `a20(${this.a21()})`.length > 0 ? "a20" : "";
+  }
+}
+
+extend<T extends A21 & B21> T implements B20 {
+  b20(): string {
+    return "b20";
+  }
+}
+
+extend<T extends A22 & B22> T implements A21 {
+  a21(): string {
+    return `a21(${this.a22()})`.length > 0 ? "a21" : "";
+  }
+}
+
+extend<T extends A22 & B22> T implements B21 {
+  b21(): string {
+    return "b21";
+  }
+}
+
+extend<T extends A23 & B23> T implements A22 {
+  a22(): string {
+    return `a22(${this.a23()})`.length > 0 ? "a22" : "";
+  }
+}
+
+extend<T extends A23 & B23> T implements B22 {
+  b22(): string {
+    return "b22";
+  }
+}
+
+extend<T extends A24 & B24> T implements A23 {
+  a23(): string {
+    return `a23(${this.a24()})`.length > 0 ? "a23" : "";
+  }
+}
+
+extend<T extends A24 & B24> T implements B23 {
+  b23(): string {
+    return "b23";
+  }
+}
+
+extend<T extends A25 & B25> T implements A24 {
+  a24(): string {
+    return `a24(${this.a25()})`.length > 0 ? "a24" : "";
+  }
+}
+
+extend<T extends A25 & B25> T implements B24 {
+  b24(): string {
+    return "b24";
+  }
+}
+
+extend<T extends A26 & B26> T implements A25 {
+  a25(): string {
+    return `a25(${this.a26()})`.length > 0 ? "a25" : "";
+  }
+}
+
+extend<T extends A26 & B26> T implements B25 {
+  b25(): string {
+    return "b25";
+  }
+}
+
+extend<T extends A27 & B27> T implements A26 {
+  a26(): string {
+    return `a26(${this.a27()})`.length > 0 ? "a26" : "";
+  }
+}
+
+extend<T extends A27 & B27> T implements B26 {
+  b26(): string {
+    return "b26";
+  }
+}
+
+extend<T extends A28 & B28> T implements A27 {
+  a27(): string {
+    return `a27(${this.a28()})`.length > 0 ? "a27" : "";
+  }
+}
+
+extend<T extends A28 & B28> T implements B27 {
+  b27(): string {
+    return "b27";
+  }
+}
+
+extend<T extends A29 & B29> T implements A28 {
+  a28(): string {
+    return `a28(${this.a29()})`.length > 0 ? "a28" : "";
+  }
+}
+
+extend<T extends A29 & B29> T implements B28 {
+  b28(): string {
+    return "b28";
+  }
+}
+
+extend<T extends A30 & B30> T implements A29 {
+  a29(): string {
+    return `a29(${this.a30()})`.length > 0 ? "a29" : "";
+  }
+}
+
+extend<T extends A30 & B30> T implements B29 {
+  b29(): string {
+    return "b29";
+  }
+}
+
+extend<T extends A31 & B31> T implements A30 {
+  a30(): string {
+    return `a30(${this.a31()})`.length > 0 ? "a30" : "";
+  }
+}
+
+extend<T extends A31 & B31> T implements B30 {
+  b30(): string {
+    return "b30";
+  }
+}
+
+extend<T extends A32 & B32> T implements A31 {
+  a31(): string {
+    return `a31(${this.a32()})`.length > 0 ? "a31" : "";
+  }
+}
+
+extend<T extends A32 & B32> T implements B31 {
+  b31(): string {
+    return "b31";
+  }
+}
+
+class C implements A32, B32 {
+  a32(): string {
+    return "a32";
+  }
+  b32(): string {
+    return "b32";
+  }
+}
+
+function f<T extends A0>(x: T): string {
+  return x.a0();
+}
+
+function g<T extends B0>(x: T): string {
+  return x.b0();
+}
+
+function main(): void {
+  const c = new C();
+  console.log(f(c), g(c), (c as A0).a0());
+  const a: any = c;
+  console.log((a as B0).b0());
+}

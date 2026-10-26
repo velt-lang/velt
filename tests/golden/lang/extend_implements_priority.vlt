@@ -1,0 +1,118 @@
+// `extend X implements I` next to a type's own implementations: a class's `implements` (or a
+// base class's) comes first, so a blanket block never replaces it, and a value converted from
+// `any` or `unknown` gets the same implementation as a direct conversion. Blocks whose bounds
+// lead back to each other end their lookups instead of looping.
+
+interface D {
+  d(): string;
+}
+
+class C implements D {
+  d(): string {
+    return "C";
+  }
+}
+
+// Inherits `C`'s implementation.
+class E extends C {}
+
+// Inherits it with its own override.
+class F extends C {
+  override d(): string {
+    return "F";
+  }
+}
+
+// Every other type.
+extend<T> T implements D {
+  d(): string {
+    return "blanket";
+  }
+}
+
+function show<T extends D>(x: T): string {
+  return x.d();
+}
+
+// A bounded block, an unbounded one and one for a single instance.
+class Box<T> {
+  constructor(public v: T) {}
+}
+
+class Plain {}
+
+extend<T extends Comparable<T>> Box<T> implements D {
+  d(): string {
+    return "comparable box";
+  }
+}
+
+extend<T> Box<T> implements D {
+  d(): string {
+    return "any box";
+  }
+}
+
+extend Box<i64> implements D {
+  d(): string {
+    return "i64 box";
+  }
+}
+
+// Each block's bound is the other's interface: a type gets both through `I` of its own.
+interface I {
+  i(): string;
+}
+
+interface J {
+  j(): string;
+}
+
+extend<T extends I> T implements J {
+  j(): string {
+    return `j of ${this.i()}`;
+  }
+}
+
+extend<U extends J> U implements I {
+  i(): string {
+    return "i";
+  }
+}
+
+extend u64 implements I {
+  i(): string {
+    return "u64";
+  }
+}
+
+function viaJ<T extends J>(x: T): string {
+  return x.j();
+}
+
+function main(): void {
+  const c = new C();
+  const e = new E();
+  const f = new F();
+  console.log(show(c), (c as D).d(), c.d());
+  console.log(show(e), (e as D).d(), e.d());
+  console.log(show(f), (f as D).d(), f.d());
+  console.log(show(true), show("s"));
+
+  const plain = new Box(new Plain());
+  const num = new Box(1 as i64);
+  const str = new Box("s");
+  console.log((plain as D).d(), (num as D).d(), (str as D).d());
+  const boxes: any[] = [plain, num, str];
+  for (const b of boxes) {
+    console.log("from any:", (b as D).d());
+  }
+  const u: unknown = num;
+  console.log("from unknown:", (u as D).d());
+  const a: any = e;
+  console.log("class from any:", (a as D).d());
+
+  console.log(viaJ(7 as u64));
+  const k: any = 8 as u64;
+  console.log((k as J).j());
+}

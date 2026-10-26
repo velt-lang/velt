@@ -1,5 +1,5 @@
-//! Builtin `Comparable<T>` (std/prelude/compare.vlt). `extend` blocks can't list
-//! `implements`, so an `extend X { compareTo(other: X): i64 }` block makes `X` implement the
+//! Builtin `Comparable<T>` (std/prelude/compare.vlt). Without an `implements` list
+//! (`ext_impls.rs`), an `extend X { compareTo(other: X): i64 }` block makes `X` implement the
 //! prelude's `Comparable<X>` (an entry in `Program::impls`, generic when the block is). That
 //! gives numbers, `string` and `bool` their ordering bound; classes and structs can also say
 //! `implements Comparable<X>` as usual.
