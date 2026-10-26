@@ -33,6 +33,7 @@ mod any;
 mod any_iface_sites;
 mod assigned_fields;
 mod ast_walk;
+mod atomic_copies;
 mod body;
 mod brands;
 mod call_sigs;
@@ -617,6 +618,7 @@ fn ownership_passes(cx: &mut ctx::Ctx) {
     timings::pass("ownership::clone_reused", || {
         ownership::clone_reused(cx, &moved.reused)
     });
+    timings::pass("atomic_copies::check", || atomic_copies::check(cx));
     timings::pass("ownership::box_cells", || {
         ownership::box_cells(cx, &moved.boxed, &moved.per_iteration)
     });

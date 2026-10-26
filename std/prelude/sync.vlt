@@ -1,4 +1,8 @@
-// Prelude: `Mutex<T>` and `RwLock<T>` for `shared(new Mutex<T>(x))` (docs/reference/async.md).
+// Prelude: `Mutex<T>` and `RwLock<T>` for `shared(new Mutex<T>(x))` (docs/reference/async.md),
+// and `Atomic<T>` (docs/std/sync.md, docs/internals/design/atomics.md). The compiler turns every
+// call of an `Atomic` method into the instruction with the ordering its call site names; the
+// bodies here, `seqcst` whatever the ordering (only ever stronger), run only through a
+// function value of a method.
 //
 // The compiler implements `new Mutex<T>(x)` (initializes the lock word) and `m.with((v) => ...)`
 // (lock, run the callback on the value, unlock) on a `Mutex<T>` or `shared<Mutex<T>>`, and
@@ -64,4 +68,116 @@ export struct RwLock<T> {
   private tail14: u64;
   private tail15: u64;
   private tail16: u64;
+}
+
+/**
+ * A number or `bool` that threads read and change at once, without a lock: `new Atomic<u64>(0)`
+ * (docs/std/sync.md). It is stored in place, as a plain `T`, in the object or array that holds
+ * it, and it is the one part of a `shared<T>` that changes: `s.hits.add(1)` changes the word in
+ * the `shared` value every thread reads. Each method is one instruction (or a short loop where
+ * the CPU has none). `T` is an integer type or `bool`.
+ *
+ * Every method takes a memory ordering, `"seqcst"` when left out, as JavaScript's `Atomics`:
+ * `"relaxed"` (only this word is atomic), `"acquire"` (later reads see what the thread that
+ * released saw), `"release"`, `"acqrel"` (both) or `"seqcst"` (also one order of all `seqcst`
+ * operations). It must be a string literal. An `Atomic` cannot be copied or shared, only used
+ * where it is: `a.load()` reads it.
+ */
+export struct Atomic<T> {
+  private v: T;
+
+  /** The value. */
+  load(order: "relaxed" | "acquire" | "seqcst" = "seqcst"): T {
+    return __intrinsic_atomic_load(this, 4);
+  }
+
+  /** Makes `v` the value. */
+  store(v: T, order: "relaxed" | "release" | "seqcst" = "seqcst"): void {
+    __intrinsic_atomic_store(this, v, 4);
+  }
+
+  /** Makes `v` the value; returns the previous one. */
+  exchange(v: T, order: "relaxed" | "acquire" | "release" | "acqrel" | "seqcst" = "seqcst"): T {
+    return __intrinsic_atomic_rmw(this, v, 0, 4);
+  }
+
+  /**
+   * Makes `v` the value if it is `expected`; returns the previous value, which is `expected`
+   * when it did. `failure` is the ordering of the read when it did not (by default `order`
+   * without its release part).
+   */
+  compareExchange(
+    expected: T,
+    v: T,
+    order: "relaxed" | "acquire" | "release" | "acqrel" | "seqcst" = "seqcst",
+    failure: "relaxed" | "acquire" | "seqcst" = "seqcst",
+  ): T {
+    return __intrinsic_atomic_cas(this, expected, v, 4, 4);
+  }
+
+  /**
+   * `compareExchange` that may fail even when the value is `expected` (call it in a loop), and
+   * that is cheaper on CPUs without a compare-and-swap instruction; returns whether it made `v`
+   * the value.
+   */
+  compareExchangeWeak(
+    expected: T,
+    v: T,
+    order: "relaxed" | "acquire" | "release" | "acqrel" | "seqcst" = "seqcst",
+    failure: "relaxed" | "acquire" | "seqcst" = "seqcst",
+  ): bool {
+    return __intrinsic_atomic_cas_weak(this, expected, v, 4, 4);
+  }
+
+  /** Adds `v` (wrapping around at the type's bounds); returns the previous value. */
+  add(v: T, order: "relaxed" | "acquire" | "release" | "acqrel" | "seqcst" = "seqcst"): T {
+    return __intrinsic_atomic_rmw(this, v, 1, 4);
+  }
+
+  /** Subtracts `v` (wrapping around at the type's bounds); returns the previous value. */
+  sub(v: T, order: "relaxed" | "acquire" | "release" | "acqrel" | "seqcst" = "seqcst"): T {
+    return __intrinsic_atomic_rmw(this, v, 2, 4);
+  }
+
+  /** Bitwise and (logical, for `bool`) with `v`; returns the previous value. */
+  and(v: T, order: "relaxed" | "acquire" | "release" | "acqrel" | "seqcst" = "seqcst"): T {
+    return __intrinsic_atomic_rmw(this, v, 3, 4);
+  }
+
+  /** Bitwise or (logical, for `bool`) with `v`; returns the previous value. */
+  or(v: T, order: "relaxed" | "acquire" | "release" | "acqrel" | "seqcst" = "seqcst"): T {
+    return __intrinsic_atomic_rmw(this, v, 4, 4);
+  }
+
+  /** Bitwise exclusive or (logical, for `bool`) with `v`; returns the previous value. */
+  xor(v: T, order: "relaxed" | "acquire" | "release" | "acqrel" | "seqcst" = "seqcst"): T {
+    return __intrinsic_atomic_rmw(this, v, 5, 4);
+  }
+
+  /** Makes the value the larger of it and `v`; returns the previous value. Integers only. */
+  max(v: T, order: "relaxed" | "acquire" | "release" | "acqrel" | "seqcst" = "seqcst"): T {
+    return __intrinsic_atomic_rmw(this, v, 6, 4);
+  }
+
+  /** Makes the value the smaller of it and `v`; returns the previous value. Integers only. */
+  min(v: T, order: "relaxed" | "acquire" | "release" | "acqrel" | "seqcst" = "seqcst"): T {
+    return __intrinsic_atomic_rmw(this, v, 7, 4);
+  }
+
+  /**
+   * A fence: with `"acquire"`, later reads and writes of this thread stay after the reads before
+   * it; with `"release"`, earlier ones stay before the writes after it; `"acqrel"` both;
+   * `"seqcst"` also in the one order of all `seqcst` operations.
+   */
+  static fence(order: "acquire" | "release" | "acqrel" | "seqcst" = "seqcst"): void {
+    __intrinsic_atomic_fence(4);
+  }
+
+  /**
+   * A hint for a loop that waits for another thread to change a value: the CPU spends less
+   * power and gives a sibling hardware thread its turn (`pause`, `isb`). It changes no memory.
+   */
+  static spinHint(): void {
+    __intrinsic_atomic_spin_hint();
+  }
 }

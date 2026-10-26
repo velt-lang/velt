@@ -17,25 +17,6 @@ pub unsafe extern "C" fn velt_rt_rc_dec(p: *mut u64) -> u8 {
     u8::from(*p == 0)
 }
 
-/// `shared<int>.add(delta)`: returns the new value (wrapping).
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_atomic_add_i64(p: *mut i64, delta: i64) -> i64 {
-    *p = (*p).wrapping_add(delta);
-    *p
-}
-
-/// `shared<int>.get()`.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_atomic_load_i64(p: *mut i64) -> i64 {
-    *p
-}
-
-/// `shared<int>.set(v)`.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_atomic_store_i64(p: *mut i64, v: i64) {
-    *p = v;
-}
-
 /// Initialize the 8-byte lock word at `p` (unlocked).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_mutex_init(p: *mut u64) {
@@ -184,15 +165,11 @@ mod tests {
     #[test]
     fn counts_atomics_and_locks() {
         let mut rc = 1u64;
-        let mut cell = 5i64;
         let mut lock = 7u64;
         unsafe {
             velt_rt_rc_inc(&mut rc);
             assert_eq!(velt_rt_rc_dec(&mut rc), 0);
             assert_eq!(velt_rt_rc_dec(&mut rc), 1);
-            assert_eq!(velt_rt_atomic_add_i64(&mut cell, 2), 7);
-            velt_rt_atomic_store_i64(&mut cell, -1);
-            assert_eq!(velt_rt_atomic_load_i64(&mut cell), -1);
             velt_rt_mutex_init(&mut lock);
             velt_rt_mutex_lock(&mut lock);
             assert_eq!(lock, 1);

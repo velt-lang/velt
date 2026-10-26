@@ -36,6 +36,13 @@ pub(super) fn intrinsic_named(name: &str) -> Option<Intrinsic> {
         "array_set_len" => I::ArraySetLen,
         "array_reserve" => I::ArrayReserve,
         "array_prefetch" => I::ArrayPrefetch,
+        "atomic_load" => I::AtomicLoad,
+        "atomic_store" => I::AtomicStore,
+        "atomic_rmw" => I::AtomicRmw,
+        "atomic_cas" => I::AtomicCas,
+        "atomic_cas_weak" => I::AtomicCasWeak,
+        "atomic_fence" => I::AtomicFence,
+        "atomic_spin_hint" => I::AtomicSpinHint,
         "array_rotate_right" => I::ArrayRotateRight,
         "array_rotate_left" => I::ArrayRotateLeft,
         "array_swap_nested" => I::ArraySwapNested,
@@ -280,6 +287,7 @@ impl FnCx<'_, '_> {
         use PassMode::{Borrow as B, Copy as C, Owned as O};
         let mutex = self.cx.mutex_ty();
         let rwlock = self.cx.rwlock_ty();
+        let atomic_def = self.cx.atomic_ty();
         let (t0, e0, n0) = (
             self.cx.ty.param(0),
             self.cx.ty.param(1),
@@ -293,6 +301,8 @@ impl FnCx<'_, '_> {
         let (unit, str_, i64_, u64_) = (ty.unit, ty.str_, ty.i64, ty.u64);
         let pt = ty.promise_rejecting(t, e);
         let shared = ty.intern(TyKind::Shared(t));
+        let u8_ = ty.intern(TyKind::Int(IntTy::U8));
+        let atomic = atomic_def.map_or(ty.error, |d| ty.intern(TyKind::Adt(d, vec![t])));
         match i {
             I::Spawn | I::SpawnHandled => (vec![(pt, O)], pt, true),
             I::Sleep => (vec![(i64_, C)], ty.promise(unit), false),
@@ -335,6 +345,21 @@ impl FnCx<'_, '_> {
                 let r = rwlock.map_or(ty.error, |d| ty.intern(TyKind::Adt(d, vec![t])));
                 (vec![(t, O)], r, true)
             }
+            I::AtomicLoad => (vec![(atomic, B), (u8_, C)], t, true),
+            I::AtomicStore => (vec![(atomic, B), (t, C), (u8_, C)], unit, true),
+            I::AtomicRmw => (vec![(atomic, B), (t, C), (u8_, C), (u8_, C)], t, true),
+            I::AtomicCas => (
+                vec![(atomic, B), (t, C), (t, C), (u8_, C), (u8_, C)],
+                t,
+                true,
+            ),
+            I::AtomicCasWeak => (
+                vec![(atomic, B), (t, C), (t, C), (u8_, C), (u8_, C)],
+                ty.bool_,
+                true,
+            ),
+            I::AtomicFence => (vec![(u8_, C)], unit, false),
+            I::AtomicSpinHint => (vec![], unit, false),
             I::JsonStringify => (vec![(t, B)], str_, true),
             // `(text, flags, max_depth)`: the options as std's `JSON.parse` encodes them.
             I::JsonParse => (vec![(str_, B), (ty.i64, C), (ty.i64, C)], t, true),

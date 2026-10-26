@@ -103,6 +103,7 @@ impl FnLower<'_, '_> {
         let ty = self.sub(a.ty);
         let v = self.frozen_read(a);
         if !self.frozen_args && self.cx.holds_counted(ty) {
+            self.note_frozen_copy(a);
             let v = self.clone_value(v, ty);
             return self.own_value(v, ty);
         }

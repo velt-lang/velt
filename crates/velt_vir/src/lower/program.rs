@@ -74,6 +74,7 @@ impl<'h> Cx<'h> {
             cur_mode: super::LkMode::Plain,
             cur_own: false,
             nothing_clashes: vec![],
+            atomic_copies: vec![],
             map_fields: 0,
         }
     }

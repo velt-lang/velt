@@ -1,0 +1,17 @@
+// An `Atomic` is used where it is: never copied or shared (a second reference to one word), so
+// that it stays a plain word in place in every program.
+class Node {
+  version: Atomic<u64> = new Atomic<u64>(0);
+}
+
+function keep(a: Atomic<u64>, into: Atomic<u64>[]) {
+  into.push(a);
+}
+
+const a = new Atomic<u64>(1);
+const b = a;
+console.log(a.load(), b.load());
+const n = new Node();
+const kept: Atomic<u64>[] = [];
+keep(n.version, kept);
+const x: any = new Node().version;

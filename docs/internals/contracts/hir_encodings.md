@@ -769,6 +769,22 @@ literal or named function `f` that modifies its parameter once modes are inferre
 (`ownership/locked/read_only.rs`). Lowering takes the lock shared and runs `f` in velt_rt's read
 mode (rt_abi_async.md §9.1).
 
+## `Atomic<T>` (docs/internals/design/atomics.md; additive)
+
+`new Atomic<T>(x)` is the prelude struct's `AdtLit` (`{ v: x }`), `T` an integer type or `bool`
+(sema rejects any other `T`, a type parameter too). A call of one of its methods is not a
+`Callee::Def` but an `Atomic*` intrinsic (hir/intrinsic.rs): `AtomicLoad`, `AtomicStore`,
+`AtomicRmw` (with the operation as a `u8` literal), `AtomicCas`, `AtomicCasWeak`, and the static
+`AtomicFence` and `AtomicSpinHint`. The receiver is the first argument, a `Borrow` place, which
+lowering reads and changes where it is, also inside a `shared` box (`SharedRead` roots go to the
+box, not a copy); every ordering is a `u8` literal (0 relaxed … 4 seqcst) that sema checked the
+operation may have, with defaults placed (a compare-and-swap's failure ordering derived from the
+ordering when not written). No `Share` of an `Atomic<T>` value survives sema (`atomic_copies.rs`
+reports it), nor a share of a part of a `shared` value that holds one; lowering reports the deep
+copies of frozen values holding one that sema cannot see, and an `Atomic` type that ends up
+counted. The method bodies in the prelude (`seqcst` intrinsics) are reached only through a
+function value of a method, which sema rejects too.
+
 ## Module state
 
 A module-level `let`, and a module `const` sema keeps instead of evaluating at each use (an

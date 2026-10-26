@@ -49,6 +49,7 @@ mod array_view_index;
 mod array_view_ops;
 mod assign_target;
 mod async_fn;
+mod atomic;
 mod attempt;
 mod boxes;
 mod boxing;
@@ -197,6 +198,8 @@ pub(crate) fn lower_program(
             }
             let mut diags = cx.nothing_clash_diagnostics();
             diags.extend(cx.fresh_fn_diagnostics());
+            diags.extend(cx.counted_atomic_diagnostics());
+            diags.extend(cx.atomic_copy_diagnostics());
             let types_now = cx.types.clone();
             let program = cx.finish();
             if !no_await_steps && async_fn::await_order::unobservable(&program) {
@@ -466,6 +469,8 @@ struct Cx<'h> {
     /// at `T = U | undefined`, or the reverse; types.rs `intern`), which this phase cannot
     /// represent (issue #930): reported, not lowered silently.
     nothing_clashes: Vec<Option<DefId>>,
+    /// Deep copies of frozen values holding an `Atomic` (atomic.rs `note_frozen_copy`).
+    atomic_copies: Vec<velt_common::Span>,
     /// Non-zero while the field types of a prelude `Map` are substituted (types.rs
     /// `keeps_nothings_apart`).
     map_fields: u32,

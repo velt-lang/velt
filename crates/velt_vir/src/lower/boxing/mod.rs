@@ -381,6 +381,25 @@ impl Cx<'_> {
         !self.counted(t) && !self.boxing.interior.contains(&t)
     }
 
+    /// Errors for the `Atomic<T>` types something shares: generic code instantiated with one
+    /// (`xs.slice()` of an `Atomic<u64>[]`), which sema's check of shares (`atomic_copies`)
+    /// cannot see. A counted `Atomic` would be a box, not the word in place every program's
+    /// atomics rely on (docs/internals/design/atomics.md).
+    pub(super) fn counted_atomic_diagnostics(&self) -> Vec<velt_common::Diagnostic> {
+        let mut names: Vec<String> = (self.boxing.boxes.iter())
+            .filter(|&&t| matches!(self.kind(t), TyKind::Adt(d, _) if super::atomic::is_atomic(self, d)))
+            .map(|&t| self.type_name(t))
+            .collect();
+        names.sort();
+        names.into_iter().map(|n| {
+            velt_common::Diagnostic::error(
+                format!("an `{n}` cannot be copied or shared, but this program shares one in generic code"),
+                velt_common::Span::DUMMY,
+            )
+            .with_note("a generic function or method that shares its values (`slice`, `filter`, `concat`, a `Map` of them) was called with `Atomic`s; keep them in place and read them with `.load()`")
+        }).collect()
+    }
+
     /// Display names of the counted types (`VELT_DEBUG_COUNTED=1`, bench/rc_stats.ps1).
     pub(super) fn counted_names(&self) -> Vec<String> {
         let roots = self.boxing.roots.iter().map(|d| match self.hir.def(*d) {

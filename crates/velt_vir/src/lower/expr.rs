@@ -32,11 +32,13 @@ impl FnLower<'_, '_> {
             args,
         } = &e.kind
         {
+            self.note_frozen_copy(e);
             return self.shared_read_owned(&args[0]);
         }
         // A frozen value or a part of one, consumed: other tasks still read it, so the consumer
         // gets a deep copy, read in place (frozen.rs).
         if self.frozen_root(e) {
+            self.note_frozen_copy(e);
             let v = self.frozen_read(e);
             let ty = self.sub(e.ty);
             return self.clone_value(v, ty);

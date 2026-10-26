@@ -19,7 +19,7 @@ Written in Velt. The compiler resolves `import { x } from "velt:<path>"` to `std
 | `prelude/error.vlt` | `Error { message }`, base class of std errors. |
 | `prelude/string.vlt` | `string` methods (`slice indexOf split trim replace padStart localeCompare …`), `String.fromCharCode`, `parseInt`, `parseFloat`, `Number`. |
 | `prelude/json.vlt` | `JSON.stringify/parse/parseValue`, `JsonError`, `JsonValue`. |
-| `prelude/sync.vlt` | `Mutex<T>` layout for `new Mutex(x)` / `.with(f)` (compiler-implemented). |
+| `prelude/sync.vlt` | `Mutex<T>` and `RwLock<T>` layouts for `new Mutex(x)` / `.with(f)` (compiler-implemented); `Atomic<T>`, whose method calls compile to one instruction each. |
 | `math.vlt` | `std/math`: integer helpers `clamp gcd lcm isPrime fib`. |
 | `mem.vlt` | `std/mem`: `needsDrop`, whether a type's values own memory (Rust's `std::mem::needs_drop`). |
 | `io.vlt` | `std/io`: `IoError`; std-internal `IoResult`/`IoStatus` plumbing over rt results. |

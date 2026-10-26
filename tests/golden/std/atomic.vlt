@@ -1,0 +1,131 @@
+// check: no leaks
+// `Atomic<T>` (docs/std/sync.md): every operation at every width, wrapping and signed / unsigned
+// `max` / `min`, the orderings, and an `Atomic` in a local, a class field, a struct, an array and
+// a `shared` value, changed in place.
+
+function widths() {
+  const a = new Atomic<i8>(127);
+  console.log("i8", a.add(1), a.load(), a.max(-1), a.min(-2), a.load());
+  const b = new Atomic<u8>(255);
+  console.log("u8", b.add(2), b.load(), b.max(200), b.min(7), b.load());
+  const c = new Atomic<i16>(-32768);
+  console.log("i16", c.sub(1, "relaxed"), c.load("acquire"));
+  const d = new Atomic<u16>(0);
+  console.log("u16", d.sub(1, "acqrel"), d.xor(65535), d.load());
+  const e = new Atomic<i32>(-5);
+  console.log("i32", e.max(3, "release"), e.min(-7, "seqcst"), e.load("relaxed"));
+  const f = new Atomic<u32>(4000000000);
+  console.log("u32", f.max(5), f.add(500000000), f.load());
+  const g = new Atomic<i64>(-9223372036854775807);
+  console.log("i64", g.sub(1), g.sub(1), g.load());
+  const h = new Atomic<u64>(18446744073709551615);
+  console.log("u64", h.add(1), h.load(), h.or(240), h.and(48), h.load());
+  const i = new Atomic<isize>(-1);
+  console.log("isize", i.exchange(-100), i.min(-101), i.load());
+  const j = new Atomic<usize>(10);
+  console.log("usize", j.min(3), j.max(30), j.load());
+}
+
+function bools() {
+  const b = new Atomic<bool>(false);
+  console.log("bool", b.exchange(true), b.and(false), b.or(true), b.xor(true), b.load());
+  console.log("bool cas", b.compareExchange(false, true), b.compareExchange(false, true), b.load());
+}
+
+function swaps() {
+  const a = new Atomic<u32>(1);
+  // Strong: the previous value, which is `expected` when it swapped.
+  console.log(
+    "cas",
+    a.compareExchange(1, 2, "acqrel"),
+    a.compareExchange(1, 3, "acquire", "relaxed"),
+    a.load(),
+  );
+  // Weak: may fail spuriously, so a loop.
+  while (!a.compareExchangeWeak(2, 9, "release", "relaxed")) {}
+  console.log("weak", a.load(), a.compareExchangeWeak(2, 10), a.load());
+  const o: "acquire" = "acquire";
+  console.log("literal-typed ordering", a.load(o));
+  a.store(4, "release");
+  Atomic.fence("acquire");
+  Atomic.fence("release");
+  Atomic.fence("acqrel");
+  Atomic.fence();
+  Atomic.spinHint();
+  console.log("store + fences", a.load("seqcst"));
+}
+
+class Counters {
+  hits: Atomic<u64> = new Atomic<u64>(0);
+  slots: Atomic<u32>[] = [];
+  pair: Pair = { lo: new Atomic<u16>(1), hi: new Atomic<u16>(2) };
+}
+
+struct Pair {
+  lo: Atomic<u16>;
+  hi: Atomic<u16>;
+}
+
+/** Changes the atomic it is given, where it is. */
+function bump(a: Atomic<u64>, n: u64): u64 {
+  return a.add(n, "relaxed");
+}
+
+function bumpAll(c: Counters) {
+  for (const s of c.slots) {
+    s.add(1);
+  }
+  c.pair.hi.add(10);
+}
+
+function places() {
+  const c = new Counters();
+  for (let i: u32 = 0; i < 4; i++) {
+    c.slots.push(new Atomic<u32>(i * 10));
+  }
+  bump(c.hits, 5);
+  c.slots[2].store(99);
+  bumpAll(c);
+  console.log(
+    "object",
+    c.hits.load(),
+    c.slots[0].load(),
+    c.slots[2].load(),
+    c.slots[3].load(),
+    c.pair.lo.load(),
+    c.pair.hi.load(),
+  );
+  const s = shared(c);
+  bump(s.hits, 1);
+  s.slots[1].add(100, "acqrel");
+  s.pair.lo.store(7, "release");
+  for (const x of s.slots) {
+    x.or(1);
+  }
+  bumpAll(s);
+  console.log(
+    "shared",
+    s.hits.load(),
+    s.slots[0].load(),
+    s.slots[1].load(),
+    s.slots[3].load(),
+    s.pair.lo.load(),
+    s.pair.hi.load(),
+  );
+  const n = shared(new Atomic<i32>(-3));
+  console.log("shared atomic", n.add(4), n.load());
+}
+
+function sharedInts() {
+  // `shared<int>`'s own atomics go through the same instructions; `add` gives the new value.
+  const s = shared(40 as i64);
+  console.log("shared<i64>", s.add(2), s.get());
+  s.set(-1);
+  console.log("shared<i64> set", s.get());
+}
+
+widths();
+bools();
+swaps();
+places();
+sharedInts();

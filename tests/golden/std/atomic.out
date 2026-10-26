@@ -1,0 +1,21 @@
+i8 127 -128 -128 -1 -2
+u8 255 1 1 200 7
+i16 -32768 32767
+u16 0 65535 0
+i32 -5 3 -7
+u32 4000000000 4000000000 205032704
+i64 -9223372036854775807 -9223372036854775808 9223372036854775807
+u64 18446744073709551615 0 0 240 48
+isize -1 -100 -101
+usize 10 3 30
+bool false true false true false
+bool cas false true true
+cas 1 2 2
+weak 9 false 9
+literal-typed ordering 9
+store + fences 4
+object 5 1 100 31 1 12
+shared 6 2 112 32 7 22
+shared atomic -3 1
+shared<i64> 42 42
+shared<i64> set -1
