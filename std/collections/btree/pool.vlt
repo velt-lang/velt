@@ -1,0 +1,737 @@
+// velt:collections/btree/pool: the nodes of `BTreeMap` (velt:collections/btree_map), internal.
+//
+// A B+tree whose nodes live in flat pools, a struct of arrays: node `n`'s keys are
+// `leafKeys[n * F .. n * F + F]`, its count `leafLen[n]`, and nodes link by `u32` index, not by
+// pointer, so a node is a few cache lines with no header to chase. Leaves hold the entries and
+// link to both neighbors; inner nodes hold up to `F - 1` separators and `F` children, every key
+// of child `i` at least separator `i - 1` and below separator `i`. A freed node goes on a free
+// list and is reused for the next node of its kind.
+//
+// Searching a node is a count, not a search: the number of keys below the target is the slot.
+// For keys that hold nothing on the heap (numbers, bool, plain structs) the count compares every
+// key, which compiles to branch-free code; for others (strings) it is a binary search, since
+// each comparison reads the key's bytes elsewhere in memory.
+//
+// Keys are ordered by `compareTo`, the order of `<` except that a float NaN sorts after every
+// other value and equals itself (`<` alone would find NaN equal to any key). Only floats can be
+// NaN (`isNaNKey`), and for other types the NaN tests fold away, so the count stays one `<` per
+// key.
+//
+// Keys that own something (strings, objects; `owns`) live in `leafRefs` / `innerRefs` as
+// `K | null`, and an unused slot holds `null`, so the pools keep no reference to a deleted key;
+// the separator that is the first key of a leaf follows it when it is deleted (`removeAt`).
+// Other keys live in `leafKeys` / `innerKeys` (the other pair stays empty), and their unused
+// slots keep whatever they held. `keyAt`, `setKey`, `clearKey` and `moveKey` pick the pair;
+// the choice is a constant per key type. Value slots are `V | null`.
+
+/** Slots per node. */
+export const F: usize = 32;
+/** The fewest entries a leaf other than the root keeps; below it, it borrows or merges. */
+const MIN_LEAF: usize = F / 4;
+/** The fewest separators an inner node other than the root keeps. */
+const MIN_INNER: usize = F / 4 - 1;
+/** No node: the ends of the leaf chain. */
+export const NONE: u32 = 4294967295;
+
+export class Pool<K extends Comparable<K>, V> {
+  leafKeys: K[] = [];
+  leafRefs: (K | null)[] = [];
+  leafVals: (V | null)[] = [];
+  leafLen: u32[] = [];
+  leafNext: u32[] = [];
+  leafPrev: u32[] = [];
+  innerKeys: K[] = [];
+  innerRefs: (K | null)[] = [];
+  innerKids: u32[] = [];
+  innerLen: u32[] = [];
+  freeLeaves: u32[] = [];
+  freeInners: u32[] = [];
+  /** For keys that own nothing: the value `newLeaf` / `newInner` put in new slots. */
+  fill: K[] = [];
+  root: u32 = 0;
+  /** 0 while the root is a leaf. */
+  height: u32 = 0;
+  size: usize = 0;
+  /** Counts changes to the set of keys: `forEach` seeks again when it moved. */
+  edits: u64 = 0;
+  /** The descent of the last `findLeaf`, root first: the inner nodes and the slot taken in each. */
+  pathNodes: u32[] = [];
+  pathSlots: usize[] = [];
+
+  // ─────────────── searching ───────────────
+
+  /** The key in leaf slot `i` (shared). */
+  leafKey(i: usize): K {
+    return keyAt(this.leafKeys, this.leafRefs, i);
+  }
+
+  /** How many of the `n` keys at `base` in `keys` / `refs` (`keyAt`) are below `t`. */
+  below(keys: K[], refs: (K | null)[], base: usize, n: usize, t: K): usize {
+    if (!__intrinsic_needs_drop(t)) {
+      let c: usize = 0;
+      if (isNaNKey(t)) {
+        // Every key but a NaN is below NaN.
+        for (let i: usize = 0; i < n; i++) {
+          c += isNaNKey(keys[base + i]) ? 0 : 1;
+        }
+        return c;
+      }
+      // A NaN key is not below `t`, and `<` says so.
+      for (let i: usize = 0; i < n; i++) {
+        c += keys[base + i] < t ? 1 : 0;
+      }
+      return c;
+    }
+    let lo: usize = 0;
+    let hi = n;
+    while (lo < hi) {
+      const mid = (lo + hi) / 2; // at most F: no overflow, and small enough to inline
+      if (refBelow(refs[base + mid], t)) {
+        lo = mid + 1;
+      } else {
+        hi = mid;
+      }
+    }
+    return lo;
+  }
+
+  /** How many of the `n` keys at `base` in `keys` / `refs` (`keyAt`) are at most `t`. */
+  atMost(keys: K[], refs: (K | null)[], base: usize, n: usize, t: K): usize {
+    if (!__intrinsic_needs_drop(t)) {
+      if (isNaNKey(t)) {
+        return n;
+      }
+      // `<=` is false for a NaN key, which sorts after `t`.
+      let c: usize = 0;
+      for (let i: usize = 0; i < n; i++) {
+        c += keys[base + i] <= t ? 1 : 0;
+      }
+      return c;
+    }
+    let lo: usize = 0;
+    let hi = n;
+    while (lo < hi) {
+      const mid = (lo + hi) / 2;
+      if (belowRef(t, refs[base + mid])) {
+        hi = mid;
+      } else {
+        lo = mid + 1;
+      }
+    }
+    return lo;
+  }
+
+  /** The leaf whose range holds `t`, recording the descent in `pathNodes` / `pathSlots`. */
+  findLeaf(t: K): u32 {
+    __intrinsic_array_truncate(this.pathNodes, 0);
+    __intrinsic_array_truncate(this.pathSlots, 0);
+    let node = this.root;
+    for (let h = this.height; h > 0; h--) {
+      const base = (node as usize) * F;
+      const slot = this.atMost(
+        this.innerKeys,
+        this.innerRefs,
+        base,
+        this.innerLen[node as usize] as usize,
+        t,
+      );
+      this.pathNodes.push(node);
+      this.pathSlots.push(slot);
+      node = this.innerKids[base + slot];
+    }
+    return node;
+  }
+
+  /** The leaf whose range holds `t`, without recording the descent. */
+  leafOf(t: K): u32 {
+    let node = this.root;
+    for (let h = this.height; h > 0; h--) {
+      const base = (node as usize) * F;
+      const slot = this.atMost(
+        this.innerKeys,
+        this.innerRefs,
+        base,
+        this.innerLen[node as usize] as usize,
+        t,
+      );
+      node = this.innerKids[base + slot];
+    }
+    return node;
+  }
+
+  /** The leftmost or rightmost leaf. */
+  edgeLeaf(right: bool): u32 {
+    let node = this.root;
+    for (let h = this.height; h > 0; h--) {
+      const slot = right ? (this.innerLen[node as usize] as usize) : 0;
+      node = this.innerKids[(node as usize) * F + slot];
+    }
+    return node;
+  }
+
+  /** The slot of `t` in `leaf`, or -1. */
+  slotIn(leaf: u32, t: K): i64 {
+    const base = (leaf as usize) * F;
+    const n = this.leafLen[leaf as usize] as usize;
+    const pos = this.below(this.leafKeys, this.leafRefs, base, n, t);
+    if (pos < n && slotIs(this.leafKeys, this.leafRefs, base + pos, t)) {
+      return pos as i64;
+    }
+    return -1;
+  }
+
+  // ─────────────── nodes ───────────────
+
+  newLeaf(): u32 {
+    if (this.freeLeaves.length > 0) {
+      return this.freeLeaves.pop()!;
+    }
+    const id = this.leafLen.length as u32;
+    for (let i: usize = 0; i < F; i++) {
+      pushSlot(this.leafKeys, this.leafRefs, this.fill);
+      this.leafVals.push(null);
+    }
+    this.leafLen.push(0);
+    this.leafNext.push(NONE);
+    this.leafPrev.push(NONE);
+    return id;
+  }
+
+  newInner(): u32 {
+    if (this.freeInners.length > 0) {
+      return this.freeInners.pop()!;
+    }
+    const id = this.innerLen.length as u32;
+    for (let i: usize = 0; i < F; i++) {
+      pushSlot(this.innerKeys, this.innerRefs, this.fill);
+      this.innerKids.push(0);
+    }
+    this.innerLen.push(0);
+    return id;
+  }
+
+  freeLeaf(leaf: u32) {
+    const base = (leaf as usize) * F;
+    for (let i: usize = 0; i < F; i++) {
+      clearKey(this.leafKeys, this.leafRefs, base + i);
+      this.leafVals[base + i] = null;
+    }
+    this.leafLen[leaf as usize] = 0;
+    this.freeLeaves.push(leaf);
+  }
+
+  freeInner(node: u32) {
+    const base = (node as usize) * F;
+    for (let i: usize = 0; i < F; i++) {
+      clearKey(this.innerKeys, this.innerRefs, base + i);
+    }
+    this.innerLen[node as usize] = 0;
+    this.freeInners.push(node);
+  }
+
+  /** Drops every node; the next `insert` starts a new root. */
+  clear() {
+    __intrinsic_array_truncate(this.leafKeys, 0);
+    __intrinsic_array_truncate(this.leafRefs, 0);
+    __intrinsic_array_truncate(this.leafVals, 0);
+    __intrinsic_array_truncate(this.leafLen, 0);
+    __intrinsic_array_truncate(this.leafNext, 0);
+    __intrinsic_array_truncate(this.leafPrev, 0);
+    __intrinsic_array_truncate(this.innerKeys, 0);
+    __intrinsic_array_truncate(this.innerRefs, 0);
+    __intrinsic_array_truncate(this.innerKids, 0);
+    __intrinsic_array_truncate(this.innerLen, 0);
+    __intrinsic_array_truncate(this.freeLeaves, 0);
+    __intrinsic_array_truncate(this.freeInners, 0);
+    __intrinsic_array_truncate(this.fill, 0);
+    this.root = 0;
+    this.height = 0;
+    this.size = 0;
+    this.edits++;
+  }
+
+  // ─────────────── insert ───────────────
+
+  /** Stores `value` under `key`, replacing the value already there. */
+  insert(key: K, value: V) {
+    if (this.leafLen.length == 0) {
+      if (!owns<K>() && this.fill.length == 0) {
+        this.fill.push(key);
+      }
+      this.root = this.newLeaf();
+    }
+    const leaf = this.findLeaf(key);
+    const base = (leaf as usize) * F;
+    const n = this.leafLen[leaf as usize] as usize;
+    const pos = this.below(this.leafKeys, this.leafRefs, base, n, key);
+    if (pos < n && slotIs(this.leafKeys, this.leafRefs, base + pos, key)) {
+      this.leafVals[base + pos] = value;
+      return;
+    }
+    this.size++;
+    this.edits++;
+    if (n < F) {
+      this.leafInsert(leaf, pos, key, value);
+      return;
+    }
+    // Split the full leaf in halves, then insert into the half the key belongs to.
+    const half = F / 2;
+    const right = this.newLeaf();
+    const rb = (right as usize) * F;
+    for (let i: usize = 0; i < half; i++) {
+      moveKey(this.leafKeys, this.leafRefs, rb + i, base + half + i);
+      moveSlot(this.leafVals, rb + i, base + half + i);
+      clearKey(this.leafKeys, this.leafRefs, base + half + i);
+      this.leafVals[base + half + i] = null;
+    }
+    this.leafLen[leaf as usize] = half as u32;
+    this.leafLen[right as usize] = half as u32;
+    const next = this.leafNext[leaf as usize];
+    this.leafNext[right as usize] = next;
+    this.leafPrev[right as usize] = leaf;
+    this.leafNext[leaf as usize] = right;
+    if (next != NONE) {
+      this.leafPrev[next as usize] = right;
+    }
+    if (pos <= half) {
+      this.leafInsert(leaf, pos, key, value);
+    } else {
+      this.leafInsert(right, pos - half, key, value);
+    }
+    this.addSeparator(keyAt(this.leafKeys, this.leafRefs, rb), right);
+  }
+
+  private leafInsert(leaf: u32, pos: usize, key: K, value: V) {
+    const base = (leaf as usize) * F;
+    const n = this.leafLen[leaf as usize] as usize;
+    for (let i = n; i > pos; i--) {
+      moveKey(this.leafKeys, this.leafRefs, base + i, base + i - 1);
+      moveSlot(this.leafVals, base + i, base + i - 1);
+    }
+    setKey(this.leafKeys, this.leafRefs, base + pos, key);
+    this.leafVals[base + pos] = value;
+    this.leafLen[leaf as usize] = (n + 1) as u32;
+  }
+
+  // The child at the end of the recorded path split: `right` goes right of it, under `sep`.
+  private addSeparator(sep0: K, right0: u32) {
+    let sep = sep0;
+    let right = right0;
+    let depth = this.pathNodes.length;
+    while (depth > 0) {
+      depth--;
+      const node = this.pathNodes[depth];
+      const slot = this.pathSlots[depth];
+      const base = (node as usize) * F;
+      const n = this.innerLen[node as usize] as usize;
+      if (n < F - 1) {
+        for (let i = n; i > slot; i--) {
+          moveKey(this.innerKeys, this.innerRefs, base + i, base + i - 1);
+        }
+        for (let i = n + 1; i > slot + 1; i--) {
+          this.innerKids[base + i] = this.innerKids[base + i - 1];
+        }
+        setKey(this.innerKeys, this.innerRefs, base + slot, sep);
+        this.innerKids[base + slot + 1] = right;
+        this.innerLen[node as usize] = (n + 1) as u32;
+        return;
+      }
+      // Full: lay out the F separators and F + 1 children, keep the left half here, move the
+      // right half to a new node and pass the middle separator up.
+      const keys: K[] = __intrinsic_array_with_capacity(F);
+      const kids: u32[] = __intrinsic_array_with_capacity(F + 1);
+      for (let i: usize = 0; i < n; i++) {
+        if (i == slot) {
+          keys.push(sep);
+        }
+        keys.push(keyAt(this.innerKeys, this.innerRefs, base + i));
+      }
+      if (slot == n) {
+        keys.push(sep);
+      }
+      for (let i: usize = 0; i <= n; i++) {
+        kids.push(this.innerKids[base + i]);
+        if (i == slot) {
+          kids.push(right);
+        }
+      }
+      const mid = F / 2;
+      const other = this.newInner();
+      const ob = (other as usize) * F;
+      for (let i: usize = 0; i < F; i++) {
+        if (i < mid) {
+          setKey(this.innerKeys, this.innerRefs, base + i, keys[i]);
+        } else {
+          clearKey(this.innerKeys, this.innerRefs, base + i);
+        }
+      }
+      for (let i: usize = 0; i <= mid; i++) {
+        this.innerKids[base + i] = kids[i];
+      }
+      this.innerLen[node as usize] = mid as u32;
+      const rn = F - mid - 1;
+      for (let i: usize = 0; i < rn; i++) {
+        setKey(this.innerKeys, this.innerRefs, ob + i, keys[mid + 1 + i]);
+      }
+      for (let i: usize = 0; i <= rn; i++) {
+        this.innerKids[ob + i] = kids[mid + 1 + i];
+      }
+      this.innerLen[other as usize] = rn as u32;
+      sep = keys[mid];
+      right = other;
+    }
+    const top = this.newInner();
+    const tb = (top as usize) * F;
+    setKey(this.innerKeys, this.innerRefs, tb, sep);
+    this.innerKids[tb] = this.root;
+    this.innerKids[tb + 1] = right;
+    this.innerLen[top as usize] = 1;
+    this.root = top;
+    this.height++;
+  }
+
+  // ─────────────── remove ───────────────
+
+  /** Removes the entry in `leaf` at `pos` (`findLeaf` recorded the path to it). */
+  removeAt(leaf: u32, pos: usize) {
+    const base = (leaf as usize) * F;
+    const n = this.leafLen[leaf as usize] as usize;
+    for (let i = pos; i + 1 < n; i++) {
+      moveKey(this.leafKeys, this.leafRefs, base + i, base + i + 1);
+      moveSlot(this.leafVals, base + i, base + i + 1);
+    }
+    clearKey(this.leafKeys, this.leafRefs, base + n - 1);
+    this.leafVals[base + n - 1] = null;
+    this.leafLen[leaf as usize] = (n - 1) as u32;
+    this.size--;
+    this.edits++;
+    if (owns<K>() && pos == 0 && this.height > 0) {
+      // The separator bounding this leaf on the left may be the deleted key: give it the
+      // leaf's new first key (a non-root leaf keeps entries, MIN_LEAF - 1 at least).
+      this.followFirstKey(base);
+    }
+    if (this.height > 0 && n - 1 < MIN_LEAF) {
+      this.rebalanceLeaf(leaf);
+    }
+  }
+
+  // The separator left of the leaf the recorded path ends at, in the deepest inner node where
+  // the path does not take the first child, bounds the leaf's subtree from below and is at most
+  // its first key (the one at `leafBase`); it is set to that key. Keys below it go left, so a
+  // separator that is a live key is the first key of the leaf this is.
+  private followFirstKey(leafBase: usize) {
+    let depth = this.pathNodes.length;
+    while (depth > 0) {
+      depth--;
+      const slot = this.pathSlots[depth];
+      if (slot > 0) {
+        const at = (this.pathNodes[depth] as usize) * F + slot - 1;
+        setKey(this.innerKeys, this.innerRefs, at, keyAt(this.leafKeys, this.leafRefs, leafBase));
+        return;
+      }
+    }
+  }
+
+  private rebalanceLeaf(leaf: u32) {
+    const depth = this.pathNodes.length - 1;
+    const parent = this.pathNodes[depth];
+    const slot = this.pathSlots[depth];
+    const pb = (parent as usize) * F;
+    const pn = this.innerLen[parent as usize] as usize;
+    if (slot > 0) {
+      const left = this.innerKids[pb + slot - 1];
+      if ((this.leafLen[left as usize] as usize) > MIN_LEAF) {
+        this.shiftLeafRight(left, leaf);
+        setKey(
+          this.innerKeys,
+          this.innerRefs,
+          pb + slot - 1,
+          keyAt(this.leafKeys, this.leafRefs, (leaf as usize) * F),
+        );
+        return;
+      }
+      this.mergeLeaves(left, leaf);
+      this.removeSeparator(depth, slot - 1);
+      return;
+    }
+    if (slot < pn) {
+      const right = this.innerKids[pb + slot + 1];
+      if ((this.leafLen[right as usize] as usize) > MIN_LEAF) {
+        this.shiftLeafLeft(leaf, right);
+        setKey(
+          this.innerKeys,
+          this.innerRefs,
+          pb + slot,
+          keyAt(this.leafKeys, this.leafRefs, (right as usize) * F),
+        );
+        return;
+      }
+      this.mergeLeaves(leaf, right);
+      this.removeSeparator(depth, slot);
+    }
+  }
+
+  // Moves the last entry of `left` to the front of `leaf`.
+  private shiftLeafRight(left: u32, leaf: u32) {
+    const lb = (left as usize) * F;
+    const ln = this.leafLen[left as usize] as usize;
+    const key = keyAt(this.leafKeys, this.leafRefs, lb + ln - 1);
+    const value = this.leafVals[lb + ln - 1];
+    clearKey(this.leafKeys, this.leafRefs, lb + ln - 1);
+    this.leafVals[lb + ln - 1] = null;
+    this.leafLen[left as usize] = (ln - 1) as u32;
+    const base = (leaf as usize) * F;
+    const n = this.leafLen[leaf as usize] as usize;
+    for (let i = n; i > 0; i--) {
+      moveKey(this.leafKeys, this.leafRefs, base + i, base + i - 1);
+      moveSlot(this.leafVals, base + i, base + i - 1);
+    }
+    setKey(this.leafKeys, this.leafRefs, base, key);
+    this.leafVals[base] = value;
+    this.leafLen[leaf as usize] = (n + 1) as u32;
+  }
+
+  // Moves the first entry of `right` to the end of `leaf`.
+  private shiftLeafLeft(leaf: u32, right: u32) {
+    const base = (leaf as usize) * F;
+    const n = this.leafLen[leaf as usize] as usize;
+    const rb = (right as usize) * F;
+    const rn = this.leafLen[right as usize] as usize;
+    moveKey(this.leafKeys, this.leafRefs, base + n, rb);
+    moveSlot(this.leafVals, base + n, rb);
+    this.leafLen[leaf as usize] = (n + 1) as u32;
+    for (let i: usize = 0; i + 1 < rn; i++) {
+      moveKey(this.leafKeys, this.leafRefs, rb + i, rb + i + 1);
+      moveSlot(this.leafVals, rb + i, rb + i + 1);
+    }
+    clearKey(this.leafKeys, this.leafRefs, rb + rn - 1);
+    this.leafVals[rb + rn - 1] = null;
+    this.leafLen[right as usize] = (rn - 1) as u32;
+  }
+
+  // Appends `right`'s entries to `left` and frees `right`.
+  private mergeLeaves(left: u32, right: u32) {
+    const lb = (left as usize) * F;
+    const ln = this.leafLen[left as usize] as usize;
+    const rb = (right as usize) * F;
+    const rn = this.leafLen[right as usize] as usize;
+    for (let i: usize = 0; i < rn; i++) {
+      moveKey(this.leafKeys, this.leafRefs, lb + ln + i, rb + i);
+      moveSlot(this.leafVals, lb + ln + i, rb + i);
+    }
+    this.leafLen[left as usize] = (ln + rn) as u32;
+    const next = this.leafNext[right as usize];
+    this.leafNext[left as usize] = next;
+    if (next != NONE) {
+      this.leafPrev[next as usize] = left;
+    }
+    this.freeLeaf(right);
+  }
+
+  // Removes separator `sep` and the child right of it from the inner node at `depth` of the
+  // recorded path, then rebalances that node.
+  private removeSeparator(depth: usize, sep: usize) {
+    const node = this.pathNodes[depth];
+    const base = (node as usize) * F;
+    const n = this.innerLen[node as usize] as usize;
+    for (let i = sep; i + 1 < n; i++) {
+      moveKey(this.innerKeys, this.innerRefs, base + i, base + i + 1);
+    }
+    for (let i = sep + 1; i < n; i++) {
+      this.innerKids[base + i] = this.innerKids[base + i + 1];
+    }
+    clearKey(this.innerKeys, this.innerRefs, base + n - 1);
+    this.innerLen[node as usize] = (n - 1) as u32;
+    if (depth == 0) {
+      if (n - 1 == 0) {
+        // The root kept one child: it becomes the root.
+        this.root = this.innerKids[base];
+        this.height--;
+        this.freeInner(node);
+      }
+      return;
+    }
+    if (n - 1 < MIN_INNER) {
+      this.rebalanceInner(depth);
+    }
+  }
+
+  private rebalanceInner(depth: usize) {
+    const node = this.pathNodes[depth];
+    const parent = this.pathNodes[depth - 1];
+    const slot = this.pathSlots[depth - 1];
+    const pb = (parent as usize) * F;
+    const pn = this.innerLen[parent as usize] as usize;
+    const base = (node as usize) * F;
+    const n = this.innerLen[node as usize] as usize;
+    if (slot > 0) {
+      const left = this.innerKids[pb + slot - 1];
+      const lb = (left as usize) * F;
+      const ln = this.innerLen[left as usize] as usize;
+      if (ln > MIN_INNER) {
+        // Rotate right: the parent's separator comes down, the left's last goes up.
+        for (let i = n; i > 0; i--) {
+          moveKey(this.innerKeys, this.innerRefs, base + i, base + i - 1);
+        }
+        for (let i = n + 1; i > 0; i--) {
+          this.innerKids[base + i] = this.innerKids[base + i - 1];
+        }
+        moveKey(this.innerKeys, this.innerRefs, base, pb + slot - 1);
+        this.innerKids[base] = this.innerKids[lb + ln];
+        moveKey(this.innerKeys, this.innerRefs, pb + slot - 1, lb + ln - 1);
+        clearKey(this.innerKeys, this.innerRefs, lb + ln - 1);
+        this.innerLen[left as usize] = (ln - 1) as u32;
+        this.innerLen[node as usize] = (n + 1) as u32;
+        return;
+      }
+      this.mergeInners(left, node, pb + slot - 1);
+      this.removeSeparator(depth - 1, slot - 1);
+      return;
+    }
+    if (slot < pn) {
+      const right = this.innerKids[pb + slot + 1];
+      const rb = (right as usize) * F;
+      const rn = this.innerLen[right as usize] as usize;
+      if (rn > MIN_INNER) {
+        // Rotate left: the parent's separator comes down, the right's first goes up.
+        moveKey(this.innerKeys, this.innerRefs, base + n, pb + slot);
+        this.innerKids[base + n + 1] = this.innerKids[rb];
+        moveKey(this.innerKeys, this.innerRefs, pb + slot, rb);
+        for (let i: usize = 0; i + 1 < rn; i++) {
+          moveKey(this.innerKeys, this.innerRefs, rb + i, rb + i + 1);
+        }
+        for (let i: usize = 0; i < rn; i++) {
+          this.innerKids[rb + i] = this.innerKids[rb + i + 1];
+        }
+        clearKey(this.innerKeys, this.innerRefs, rb + rn - 1);
+        this.innerLen[right as usize] = (rn - 1) as u32;
+        this.innerLen[node as usize] = (n + 1) as u32;
+        return;
+      }
+      this.mergeInners(node, right, pb + slot);
+      this.removeSeparator(depth - 1, slot);
+    }
+  }
+
+  // Appends the parent's separator at `sepAt` and `right`'s separators and children to `left`,
+  // and frees `right`.
+  private mergeInners(left: u32, right: u32, sepAt: usize) {
+    const lb = (left as usize) * F;
+    const ln = this.innerLen[left as usize] as usize;
+    const rb = (right as usize) * F;
+    const rn = this.innerLen[right as usize] as usize;
+    moveKey(this.innerKeys, this.innerRefs, lb + ln, sepAt);
+    for (let i: usize = 0; i < rn; i++) {
+      moveKey(this.innerKeys, this.innerRefs, lb + ln + 1 + i, rb + i);
+    }
+    for (let i: usize = 0; i <= rn; i++) {
+      this.innerKids[lb + ln + 1 + i] = this.innerKids[rb + i];
+    }
+    this.innerLen[left as usize] = (ln + 1 + rn) as u32;
+    this.freeInner(right);
+  }
+}
+
+/**
+ * Whether `t` is a float NaN. `t != t` holds for nothing else (a struct equals itself even with
+ * a NaN field), and folds to `false` for the other number types; strings and objects are not
+ * tested.
+ */
+export function isNaNKey<K extends Comparable<K>>(t: K): bool {
+  return !__intrinsic_needs_drop(t) && t != t;
+}
+
+/** `a < b` in the keys' order: NaN after every other value and equal to itself. */
+export function keyLess<K extends Comparable<K>>(a: K, b: K): bool {
+  return a < b || (isNaNKey(b) && !isNaNKey(a));
+}
+
+// Whether `k`, a key at least `t` (the first one not below it), is `t`.
+function isKey<K extends Comparable<K>>(k: K, t: K): bool {
+  if (isNaNKey(t)) {
+    // Every key but a NaN is below NaN: `k` is one.
+    return true;
+  }
+  return !(t < k) && !isNaNKey(k);
+}
+
+/** Whether keys of type `K` own something (strings, objects): they are kept as `K | null`. */
+function owns<K>(): bool {
+  return __intrinsic_needs_drop(__intrinsic_null_as<K>());
+}
+
+/** The key at slot `i` (shared). */
+function keyAt<K>(keys: K[], refs: (K | null)[], i: usize): K {
+  if (owns<K>()) {
+    return refs[i]!;
+  }
+  return keys[i];
+}
+
+function setKey<K>(keys: K[], refs: (K | null)[], i: usize, k: K) {
+  if (owns<K>()) {
+    refs[i] = k;
+  } else {
+    keys[i] = k;
+  }
+}
+
+// `r < t` for an owned key slot, read in place (`refs[i]!` would make a share of the key).
+function refBelow<K extends Comparable<K>>(r: K | null, t: K): bool {
+  if (r != null) {
+    return r < t;
+  }
+  return false;
+}
+
+// `t < r` for an owned key slot, read in place.
+function belowRef<K extends Comparable<K>>(t: K, r: K | null): bool {
+  if (r != null) {
+    return t < r;
+  }
+  return false;
+}
+
+// Whether the key at slot `i`, the first one not below `t`, is `t`.
+function slotIs<K extends Comparable<K>>(keys: K[], refs: (K | null)[], i: usize, t: K): bool {
+  if (owns<K>()) {
+    // Owned keys are never NaN.
+    return !belowRef(t, refs[i]);
+  }
+  return isKey(keys[i], t);
+}
+
+// Empties slot `i`, releasing the key it held.
+function clearKey<K>(keys: K[], refs: (K | null)[], i: usize) {
+  if (owns<K>()) {
+    refs[i] = null;
+  }
+}
+
+// Moves the key at `from` to `to`, whose key is about to be overwritten or cleared.
+function moveKey<K>(keys: K[], refs: (K | null)[], to: usize, from: usize) {
+  if (owns<K>()) {
+    __intrinsic_array_swap(refs, to, from);
+  } else {
+    keys[to] = keys[from];
+  }
+}
+
+// Adds a slot for a new node: empty, or a copy of `fill[0]` for keys that own nothing.
+function pushSlot<K>(keys: K[], refs: (K | null)[], fill: K[]) {
+  if (owns<K>()) {
+    refs.push(null);
+  } else {
+    keys.push(fill[0]);
+  }
+}
+
+// Moves `xs[from]` to `xs[to]`, whose value is about to be overwritten or is a filler: a swap
+// for values that own something, so moving a string or an object costs no count changes.
+function moveSlot<T>(xs: T[], to: usize, from: usize) {
+  if (__intrinsic_needs_drop(xs[from])) {
+    __intrinsic_array_swap(xs, to, from);
+  } else {
+    xs[to] = xs[from];
+  }
+}
