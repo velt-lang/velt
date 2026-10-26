@@ -10,7 +10,10 @@
 //! statement that uses a declaration below it directly (`velt_sema` `script_tdz`).
 //!
 //! The generated function's name has an empty span at the first statement; sema uses that to
-//! reject statements in an imported module (only the root file runs them).
+//! tell it from a declared function. When the file declares a `main` of its own (`function
+//! main() { … }` and then `main();`, as TypeScript programs end; #1567), the generated function
+//! is named [`crate::SCRIPT_MAIN`] instead, and the declared `main` is an ordinary function that
+//! the statements may call, as in Node.
 
 use super::Parser;
 use crate::ast::*;
@@ -49,13 +52,6 @@ impl Parser<'_> {
         let has_main = items
             .iter()
             .any(|i| matches!(&i.kind, ItemKind::Function(f) if f.sig.name.name == "main"));
-        if has_main {
-            self.error(
-                "top-level statements cannot be combined with `function main()`; move them into `main`",
-                first,
-            );
-            return;
-        }
         let keep = self.kept_vars(items, &stmts);
         let mut body = stmts;
         let mut rest = vec![];
@@ -74,7 +70,7 @@ impl Parser<'_> {
         let span = Span::new(self.file, first.lo, last);
         let sig = FnSig {
             name: Ident {
-                name: "main".into(),
+                name: if has_main { crate::SCRIPT_MAIN } else { "main" }.into(),
                 span: Span::new(self.file, first.lo, first.lo),
             },
             generics: vec![],

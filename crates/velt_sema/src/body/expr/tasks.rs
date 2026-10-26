@@ -277,7 +277,7 @@ impl FnCx<'_, '_> {
     /// exits, as a dropped promise does; `module_scripts::is_root_script`)?
     fn at_root_top_level(&self) -> bool {
         self.outer.is_empty()
-            && self.fn_name == "main"
+            && (self.fn_name == "main" || self.fn_name == velt_syntax::SCRIPT_MAIN)
             && self.body_def.is_some()
             && crate::module_scripts::is_root_script(self.cx, self.module)
     }

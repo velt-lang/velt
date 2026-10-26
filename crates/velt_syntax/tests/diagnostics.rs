@@ -19,14 +19,34 @@ fn diagnostic_wording() {
         "{:?}",
         e
     );
-    let e = errors("console.log(1);\nfunction main() {}");
-    assert!(
-        e[0].contains("cannot be combined with `function main()`"),
-        "{:?}",
-        e
-    );
     let e = errors("}");
     assert!(e[0].contains("unexpected `}`"), "{:?}", e);
+}
+
+/// A script that declares `main` itself (#1567): its statements go into a function named
+/// `SCRIPT_MAIN` (the entry point), and `main` stays an ordinary function.
+#[test]
+fn script_with_its_own_main() {
+    let m = parse_ok("function main(n: number) {}\nconsole.log(1);\nmain(2);");
+    let fns: Vec<_> = m
+        .items
+        .iter()
+        .filter_map(|i| match &i.kind {
+            ItemKind::Function(f) => Some(f),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(fns.len(), 2);
+    assert_eq!(fns[0].sig.name.name, "main");
+    assert!(!velt_syntax::is_script_main(&fns[0].sig.name));
+    assert_eq!(fns[1].sig.name.name, velt_syntax::SCRIPT_MAIN);
+    assert!(velt_syntax::is_script_main(&fns[1].sig.name));
+    assert_eq!(fns[1].body.stmts.len(), 2);
+    let m = parse_ok("console.log(1);");
+    assert!(m.items.iter().any(
+        |i| matches!(&i.kind, ItemKind::Function(f) if f.sig.name.name == "main"
+            && velt_syntax::is_script_main(&f.sig.name))
+    ));
 }
 
 #[test]

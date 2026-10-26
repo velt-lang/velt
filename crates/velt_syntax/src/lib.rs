@@ -32,6 +32,19 @@ pub const ARRAY_HOLE: &str = "";
 /// assigned to the target first thing in the body; no source can name it.
 pub const FOR_TARGET: &str = "#of";
 
+/// The name of the function the parser makes of a root file's top-level statements when the file
+/// declares a `main` of its own (`function main() { … }` then `main();`, as TypeScript programs
+/// end; #1567): the statements are the entry point, as in Node, and `main` is an ordinary
+/// function. Otherwise that function is named `main`; either way its name has an empty span
+/// ([`is_script_main`]).
+pub const SCRIPT_MAIN: &str = "#main";
+
+/// Is `name` the name of the function the parser made of a file's top-level statements (a
+/// generated `main`, or [`SCRIPT_MAIN`])?
+pub fn is_script_main(name: &ast::Ident) -> bool {
+    (name.name == "main" || name.name == SCRIPT_MAIN) && name.span.lo == name.span.hi
+}
+
 /// The key name of an object-pattern property whose computed key the parser reported (a key
 /// other than a name or a literal, `{ [f()]: v }`): its binding is checked as an error.
 pub const REPORTED_KEY: &str = "#reported-key";

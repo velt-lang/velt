@@ -620,7 +620,10 @@ fn check_main(
     require_main: bool,
 ) -> Option<hir::DefId> {
     let file_start = Span::new(root_mod.file, root_mod.ast.span.lo, root_mod.ast.span.lo);
-    let main = cx.scopes[root].items.get("main").copied();
+    // A script that declares `main` itself starts at its statements (`velt_syntax::SCRIPT_MAIN`).
+    let main = (cx.scopes[root].items.get(velt_syntax::SCRIPT_MAIN))
+        .or_else(|| cx.scopes[root].items.get("main"))
+        .copied();
     // A library module may use the name `main` for anything; only a `main` function is checked.
     let is_fn = |id: hir::DefId| matches!(cx.info[id.0 as usize], DefInfo::Fn(_));
     if !require_main && !matches!(main, Some(Item::Def(id)) if is_fn(id)) {

@@ -106,7 +106,22 @@ class Counter {
 console.log(Counter.first);
 ```
 
-A file with top-level statements cannot also declare `main`.
+A file with top-level statements may also declare a function named `main`, as TypeScript
+programs often do: then, as in Node, the statements are the program, and `main` is an ordinary
+function that runs when they call it, with any arguments (`main(process.argv.slice(2))`), as
+often as they call it, and its promise handled as they choose (`main().catch(…)`).
+
+```ts
+async function main(): Promise<void> {
+  await Promise.resolve();
+  console.log("hi");
+}
+
+main().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});
+```
 
 When the top-level statements wait at an `await` that nothing can settle any more, and nothing
 else can happen, the program ends as Node's does: `Warning: Detected unsettled top-level await
