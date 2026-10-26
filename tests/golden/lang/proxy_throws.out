@@ -1,0 +1,17 @@
+1 2 true a,b
+read: TrapError(get): get bad
+index: TrapError(get): get 7
+write: TrapError(set): set bad
+read before write: TrapError(get): get bad
+in: TrapError(has): has bad
+finally runs
+delete: TrapError(deleteProperty): deleteProperty bad
+Reflect.get: TrapError(get): get bad
+Reflect.set: TrapError(set): set bad
+Reflect.has: TrapError(has): has bad
+from a call: TrapError(get): get same true true true
+inner: TrapError(set): set bad
+outer: TrapError(set): set bad
+awaited: TrapError(get): get bad
+keys: TrapError(ownKeys): ownKeys all
+3 false b,c 2

@@ -1,0 +1,22 @@
+// Casts to mutable types through this. fields may change the value, as in TypeScript.
+class C {
+  readonly n: number = 1;
+  readonly items: ReadonlySet<string> = new Set<string>();
+  readonly xs: readonly string[] = [];
+  readonly ys: string[] = [];
+  fill(): void {
+    (this.items as Set<string>).add("t");
+    (this.xs as string[]).push("u");
+    this.ys.push("v");
+    const m = this.items as Set<string>;
+    m.add("w");
+  }
+}
+const c = new C();
+(c.items as Set<string>).add("a");
+(c.xs as string[]).push("b");
+c.ys.push("c");
+const ys2 = c.xs as string[];
+ys2.push("e");
+c.fill();
+console.log(c.n, [...c.items], c.xs, c.ys);

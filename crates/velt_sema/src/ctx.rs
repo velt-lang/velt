@@ -49,6 +49,13 @@ pub(crate) struct Ctx<'m> {
     /// Exports of `std/prelude/*` modules, visible everywhere.
     pub prelude: FxHashMap<String, Item>,
     pub aliases: Vec<AliasInfo<'m>>,
+    /// The names of type aliases without parameters that are read-only array or collection types
+    /// and number-keyed record types, directly or through other such aliases
+    /// ([`Ctx::marked_aliases`]).
+    pub marked_aliases: std::cell::OnceCell<(FxHashSet<String>, FxHashSet<String>)>,
+    /// Sites of `globalThis` whose variable key is not one of the listed keys, with the key
+    /// (`body::expr::checked_key`): the key's error is the site's only one.
+    pub bad_key_sites: Vec<(velt_common::Span, velt_common::Span)>,
     pub extensions: Vec<Extension>,
     /// The extensions declaring each method name, built for the first `extensions.len()`
     /// extensions (body/expr/method.rs `applicable_extensions`).
@@ -120,6 +127,8 @@ pub(crate) struct Ctx<'m> {
     pub laid_out: FxHashSet<DefId>,
     /// Canonical form of each type canonicalized so far (`crate::anon`, `Ctx::canon`).
     pub canon_memo: FxHashMap<TyId, TyId>,
+    /// The canonical error type of each error type canonicalized so far (`Ctx::canon_error`).
+    pub canon_errors: FxHashMap<TyId, Option<TyId>>,
     /// Object types `crate::replaced_holders` accepted assignments for because they are shared:
     /// lowering counts them from its first pass (`hir::Program::counted_objects`).
     pub counted_objects: Vec<TyId>,
@@ -392,6 +401,8 @@ impl<'m> Ctx<'m> {
                 .collect(),
             prelude: FxHashMap::default(),
             aliases: vec![],
+            marked_aliases: Default::default(),
+            bad_key_sites: vec![],
             extensions: vec![],
             extension_names: (0, FxHashMap::default()),
             impls: vec![],
@@ -423,6 +434,7 @@ impl<'m> Ctx<'m> {
             shaping: vec![],
             laid_out: FxHashSet::default(),
             canon_memo: FxHashMap::default(),
+            canon_errors: FxHashMap::default(),
             counted_objects: Vec::new(),
             replaced_unions: FxHashSet::default(),
             module_slots: Vec::new(),

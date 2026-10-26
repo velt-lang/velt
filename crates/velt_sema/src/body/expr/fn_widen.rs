@@ -303,7 +303,8 @@ impl FnCx<'_, '_> {
     }
 
     /// Are `from` and `to` function types of the same shape whose parameter or result types
-    /// differ, or is `from` one taking fewer parameters?
+    /// differ, or is `from` one taking fewer parameters, or a rest parameter for `to`'s fixed
+    /// ones?
     /// Whether each of `to`'s converts to `from`'s, and `from`'s result and errors to `to`'s,
     /// is what the wrapper's check finds (the conversions of arguments and results, object
     /// copies included).
@@ -327,7 +328,10 @@ impl FnCx<'_, '_> {
                 let same = fp.len() == tp.len() && frest == trest && (fp != tp || fr != tr);
                 // Fewer parameters: the wrapper passes the first ones (#943).
                 let fewer = !frest && fp.len() < tp.len() - usize::from(*trest);
-                (same || fewer) && !t.has_error(from) && !t.has_error(to)
+                // A rest parameter for fixed ones (`(...args: unknown[]) => R` as a `(p1: T1)
+                // => R`): the wrapper's call packs the arguments past `from`'s fixed ones.
+                let packs = *frest && !*trest && fp.len() <= tp.len() + 1;
+                (same || fewer || packs) && !t.has_error(from) && !t.has_error(to)
             }
             _ => false,
         }

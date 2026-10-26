@@ -81,6 +81,7 @@ pub(crate) mod recursion;
 pub(crate) mod returns;
 mod stmt;
 pub(crate) use readonly_arrays::is_readonly_array;
+pub(crate) use readonly_arrays::{is_readonly_type, NUMBER_RECORD};
 pub(crate) use stmt::closure_def;
 pub(crate) mod switch;
 mod untyped_let;
@@ -286,9 +287,19 @@ pub(crate) struct Frame {
     pub using_shares: Vec<(Span, LocalId)>,
     /// The `using` locals declared `await using`.
     pub await_using: rustc_hash::FxHashSet<LocalId>,
-    /// Locals declared with a read-only array type (`readonly T[]`, `ReadonlyArray<T>`), which
-    /// the body may not write to (`readonly_arrays.rs`).
-    pub readonly_arrays: rustc_hash::FxHashSet<LocalId>,
+    /// Marks of locals: [`READONLY`] for one declared with a read-only array or collection type,
+    /// which the body may not write to (`readonly_arrays.rs`), [`NUMBER_RECORD`] for one declared
+    /// with a number-keyed record type (`expr::number_records`).
+    pub local_marks: FxHashMap<LocalId, u8>,
+    /// What the position of an assignment used as a value expects (`assign_value`): a
+    /// `new C()` assigned through `any` with `??=`, `||=` or `&&=` takes its type arguments from
+    /// it (`dynamic_write`).
+    pub assign_hint: Option<TyId>,
+    /// The read-only local a method call written `(x as T).m()` may change (`T` not read-only;
+    /// `readonly_arrays.rs`).
+    pub readonly_exempt: Option<LocalId>,
+    /// A method call written `(x as T).m()` with `T` read-only (`readonly_arrays.rs`).
+    pub readonly_cast_recv: bool,
     /// `const c = [2, "y"] as const` (literals of different types): its elements, which an
     /// array pattern taking `c` apart reads as the literal (`literal_patterns`).
     pub as_const_tuples: FxHashMap<LocalId, Vec<velt_syntax::ast::Expr>>,
@@ -412,7 +423,10 @@ impl Frame {
             soft_moves: vec![],
             using_shares: vec![],
             await_using: Default::default(),
-            readonly_arrays: Default::default(),
+            local_marks: Default::default(),
+            assign_hint: None,
+            readonly_exempt: None,
+            readonly_cast_recv: false,
             as_const_tuples: Default::default(),
             closure_consts: Default::default(),
             callable_writes: None,

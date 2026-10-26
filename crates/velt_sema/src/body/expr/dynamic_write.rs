@@ -176,8 +176,15 @@ impl FnCx<'_, '_> {
             }
             _ => self.intrinsic(Intrinsic::AnyTruthy, vec![held], b, span),
         };
-        // The write: `{ const t = v; obj[key] = share(t); t }`.
-        let v = self.expr(value, Some(any), Want::Move);
+        // The write: `{ const t = v; obj[key] = share(t); t }`. A `new C()` takes its type
+        // arguments from what the position expects (`const s: Set<string> = (o.k ??= new
+        // Set())`), as nothing else gives them.
+        let hint = self.f.assign_hint.take();
+        let exp = match hint.filter(|t| self.new_of_class(value, *t)) {
+            Some(t) => t,
+            None => any,
+        };
+        let v = self.expr(value, Some(exp), Want::Move);
         if self.cx.ty.is_bottom(v.ty) {
             return self.error_expr(span);
         }
@@ -238,13 +245,13 @@ impl FnCx<'_, '_> {
     ) -> hir::Expr {
         match key {
             WriteKey::Str(k) => {
-                self.intrinsic(Intrinsic::AnyGet, vec![obj.clone(), k.clone()], any, span)
+                self.any_op(Intrinsic::AnyGet, vec![obj.clone(), k.clone()], any, span)
             }
             WriteKey::Num(k) => {
-                self.intrinsic(Intrinsic::AnyIndex, vec![obj.clone(), k.clone()], any, span)
+                self.any_op(Intrinsic::AnyIndex, vec![obj.clone(), k.clone()], any, span)
             }
             WriteKey::Sym(n, _) if !self.uses_proxy() => {
-                self.intrinsic(Intrinsic::AnyGet, vec![obj.clone(), n.clone()], any, span)
+                self.any_op(Intrinsic::AnyGet, vec![obj.clone(), n.clone()], any, span)
             }
             WriteKey::Sym(n, k) => {
                 let args = vec![obj.clone(), n.clone(), k.clone()];
@@ -263,8 +270,8 @@ impl FnCx<'_, '_> {
     ) -> hir::Expr {
         let unit = self.cx.ty.unit;
         match key {
-            WriteKey::Str(k) => self.intrinsic(Intrinsic::AnySet, vec![obj, k, v], unit, span),
-            WriteKey::Num(k) => self.intrinsic(Intrinsic::AnySetIndex, vec![obj, k, v], unit, span),
+            WriteKey::Str(k) => self.any_op(Intrinsic::AnySet, vec![obj, k, v], unit, span),
+            WriteKey::Num(k) => self.any_op(Intrinsic::AnySetIndex, vec![obj, k, v], unit, span),
             WriteKey::Sym(n, k) => {
                 self.prelude_hir_call("__anySetSym", vec![obj, n, k, v], unit, span)
             }
@@ -396,5 +403,22 @@ pub(super) fn strip(e: &ast::Expr) -> &ast::Expr {
     match &e.kind {
         ast::ExprKind::Paren(inner) => strip(inner),
         _ => e,
+    }
+}
+
+impl FnCx<'_, '_> {
+    /// Is `value` a `new C(...)` without type arguments, and `t` an instance of the class `C`?
+    fn new_of_class(&mut self, value: &ast::Expr, t: hir::TyId) -> bool {
+        let ast::ExprKind::New { class, .. } = &strip(value).kind else {
+            return false;
+        };
+        let ast::TypeExprKind::Named { path, args } = &class.kind else {
+            return false;
+        };
+        let (Some(name), true) = (path.last(), args.is_empty()) else {
+            return false;
+        };
+        matches!(self.cx.ty.kind(t), hir::TyKind::Adt(..))
+            && self.cx.display(t).starts_with(&format!("{}<", name.name))
     }
 }

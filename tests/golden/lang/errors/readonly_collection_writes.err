@@ -1,0 +1,5 @@
+readonly_collection_writes.vlt:4:5: error: property 'add' does not exist on type 'ReadonlySet<string>' (TypeScript's TS2339)
+readonly_collection_writes.vlt:5:5: error: property 'delete' does not exist on type 'ReadonlySet<string>' (TypeScript's TS2339)
+readonly_collection_writes.vlt:6:5: error: property 'set' does not exist on type 'ReadonlyMap<string, f64>' (TypeScript's TS2339)
+readonly_collection_writes.vlt:7:5: error: property 'clear' does not exist on type 'ReadonlyMap<string, f64>' (TypeScript's TS2339)
+readonly_collection_writes.vlt:11:4: error: property 'clear' does not exist on type 'ReadonlySet<f64>' (TypeScript's TS2339)

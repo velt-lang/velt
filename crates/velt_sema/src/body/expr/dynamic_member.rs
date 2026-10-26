@@ -155,7 +155,7 @@ impl FnCx<'_, '_> {
             return Ok(self.error_expr(span));
         }
         let key = self.key_lit(name, span);
-        Ok(self.intrinsic(Intrinsic::AnyGet, vec![obj, key], any, span))
+        Ok(self.any_op(Intrinsic::AnyGet, vec![obj, key], any, span))
     }
 
     /// `obj[index]` on an `any`: a string key reads the member it names, a number key the
@@ -194,7 +194,7 @@ impl FnCx<'_, '_> {
             }
             let key = self.key_lit(&name, index.span);
             if !self.uses_proxy() {
-                return Ok(self.intrinsic(Intrinsic::AnyGet, vec![obj, key], any, span));
+                return Ok(self.any_op(Intrinsic::AnyGet, vec![obj, key], any, span));
             }
             // A proxy's `get` trap sees the symbol itself (`__anyGetSym`).
             let sym = self.expr(index, None, Want::Borrow);
@@ -216,19 +216,19 @@ impl FnCx<'_, '_> {
         let kt = self.cx.widened(k.ty);
         if self.cx.dynamic(k.ty) == Some(Dynamic::Any) || kt == str_ {
             let k = if kt == str_ { self.coerce(k, str_) } else { k };
-            return Ok(self.intrinsic(Intrinsic::AnyGet, vec![obj, k], any, span));
+            return Ok(self.any_op(Intrinsic::AnyGet, vec![obj, k], any, span));
         }
         if self.cx.ty.is_numeric(kt) {
             let k = self.coerce_number(k, f64_);
-            return Ok(self.intrinsic(Intrinsic::AnyIndex, vec![obj, k], any, span));
+            return Ok(self.any_op(Intrinsic::AnyIndex, vec![obj, k], any, span));
         }
         if self.string_or_symbol(k.ty) {
             let k = self.coerce(k, any);
-            return Ok(self.intrinsic(Intrinsic::AnyGet, vec![obj, k], any, span));
+            return Ok(self.any_op(Intrinsic::AnyGet, vec![obj, k], any, span));
         }
         // A key of a type parameter's keys (`K extends keyof T`): its string.
         let k = match self.generic_key_string(k, str_) {
-            Ok(s) => return Ok(self.intrinsic(Intrinsic::AnyGet, vec![obj, s], any, span)),
+            Ok(s) => return Ok(self.any_op(Intrinsic::AnyGet, vec![obj, s], any, span)),
             Err(k) => k,
         };
         let tn = self.cx.display(k.ty);

@@ -48,6 +48,8 @@ pub(crate) const TS_GLOBALS: &[&str] = &[
     "RangeError",
     "ReferenceError",
     "Reflect",
+    // TypeScript's `ReadonlyMap<K, V>` is a type: Velt's is `Map<K, V>` seen through it.
+    "ReadonlyMap",
     // TypeScript's `Record<K, V>` is a type: as one it means the same.
     "Record",
     "String",

@@ -1,0 +1,7 @@
+{ value: 'a', done: false }
+closed
+{"done":true}
+{"done":true}
+{ value: 1, done: false } {"done":true} {"done":true}
+1
+undefined

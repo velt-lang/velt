@@ -1,0 +1,1 @@
+the implementation of `reg` uses its parameter `fn` other than by calling it

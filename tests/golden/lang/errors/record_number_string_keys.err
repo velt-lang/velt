@@ -1,0 +1,6 @@
+record_number_string_keys.vlt:15:21: error: an index of a number-keyed record must be a number (TypeScript's TS7015)
+record_number_string_keys.vlt:6:15: error: an index of a number-keyed record must be a number (TypeScript's TS7015)
+record_number_string_keys.vlt:7:3: error: an index of a number-keyed record must be a number (TypeScript's TS7015)
+record_number_string_keys.vlt:8:39: error: object literal may only specify known properties, and 'a' does not exist in type 'Record<number, ...>' (TypeScript's TS2353)
+record_number_string_keys.vlt:11:15: error: an index of a number-keyed record must be a number (TypeScript's TS7015)
+record_number_string_keys.vlt:13:15: error: property 'abc' does not exist on a number-keyed record (TypeScript's TS2339)

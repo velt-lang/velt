@@ -46,6 +46,52 @@ impl FnCx<'_, '_> {
         }
     }
 
+    /// The `Proxy` method an operation on `any` runs on a proxy, whose errors (its trap's) the
+    /// operation throws: `__get` for a read, `__set` for a write, `__has` for `in` and `__keys`
+    /// for `Object.keys`. `None` for another intrinsic.
+    pub(crate) fn proxy_method_of(i: hir::Intrinsic) -> Option<&'static str> {
+        use hir::Intrinsic as I;
+        Some(match i {
+            I::AnyGet | I::AnyIndex => "__get",
+            I::AnySet | I::AnySetIndex => "__set",
+            I::AnyHas => "__has",
+            I::AnyKeys => "__keys",
+            _ => return None,
+        })
+    }
+
+    /// Operation `i` on an `any` (`Intrinsic::AnyGet`, ...): in a user module (or std/proxy,
+    /// whose `Reflect` functions forward to a target that may be a proxy) of a program that has
+    /// loaded `Proxy`, it throws what the `Proxy` method it runs on a proxy throws
+    /// (`proxy_method_of`; what the handler's traps throw), as in JavaScript, where an error
+    /// thrown by a trap leaves the operation. velt_vir routes that error the same way
+    /// (`lower/proxy_throws.rs`). Elsewhere in the standard library, and for the operations
+    /// reached through glue, a trap's error ends the process as uncaught (hir_encodings.md
+    /// "Proxy and Reflect").
+    pub(crate) fn any_op(
+        &mut self,
+        i: hir::Intrinsic,
+        args: Vec<hir::Expr>,
+        ty: crate::hir::TyId,
+        span: Span,
+    ) -> hir::Expr {
+        let std = self.cx.scopes[self.module].is_std;
+        if !std || self.cx.modules[self.module].path == "std/proxy" {
+            let m = Self::proxy_method_of(i).and_then(|name| {
+                let p = self.cx.prelude_adt("Proxy")?;
+                let a = self.cx.adt(p)?;
+                a.methods.get(name).filter(|m| !m.is_static).map(|m| m.def)
+            });
+            // One source per method in each list: the operations of a body throw the same set.
+            let list = self.f.tries.last().unwrap_or(&self.f.uncaught);
+            let seen = |s: &crate::defs::ThrowSrc| matches!(s, crate::defs::ThrowSrc::Call(d, a, _) if Some(*d) == m && a.is_empty());
+            if let (Some(m), false) = (m, list.iter().any(seen)) {
+                self.throw_src(crate::defs::ThrowSrc::Call(m, vec![], span));
+            }
+        }
+        self.intrinsic(i, args, ty, span)
+    }
+
     /// Is `d` the prelude's `Proxy` class, used outside the standard library?
     fn user_proxy(&self, d: DefId) -> bool {
         Some(d) == self.cx.prelude_adt("Proxy") && !self.cx.scopes[self.module].is_std
@@ -468,6 +514,6 @@ impl FnCx<'_, '_> {
             return self.error_expr(span);
         };
         let b = self.cx.ty.bool_;
-        self.intrinsic(hir::Intrinsic::AnyHas, vec![obj, k], b, span)
+        self.any_op(hir::Intrinsic::AnyHas, vec![obj, k], b, span)
     }
 }
