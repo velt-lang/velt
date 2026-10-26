@@ -3,4 +3,7 @@
 0
 3
 [1,null,[f,s]]
+caught no
+{"a":1,"b":{"c":2,"d":null}}
+[ 1, [ true, 2 ] ]
 done

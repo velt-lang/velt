@@ -2,22 +2,24 @@
 // each instantiation is a union of its own, and a member may be a type argument, a
 // function type, or an alias that allows `null`. Unused recursive union aliases check too.
 type Elem = string | number | boolean | null;
-type SlotContent<TFill> =
-  | Elem
-  | undefined
-  | TFill
-  | readonly SlotContent<TFill>[];
+type SlotContent<TFill> = Elem | undefined | TFill | (readonly SlotContent<TFill>[]);
 
 type Fill = (n: number) => string;
 
 function count(c: SlotContent<Fill>): number {
-  if (c === undefined || c === null) return 0;
+  if (c === undefined || c === null) {
+    return 0;
+  }
   if (Array.isArray(c)) {
     let n = 0;
-    for (const x of c) n += count(x);
+    for (const x of c) {
+      n += count(x);
+    }
     return n;
   }
-  if (typeof c === "function") return c(2).length;
+  if (typeof c === "function") {
+    return c(2).length;
+  }
   return 1;
 }
 
@@ -30,21 +32,49 @@ console.log(count(undefined));
 function depth(c: SlotContent<boolean>): number {
   if (Array.isArray(c)) {
     let d = 0;
-    for (const x of c) d = Math.max(d, depth(x));
+    for (const x of c) {
+      d = Math.max(d, depth(x));
+    }
     return d + 1;
   }
   return 0;
 }
+
 console.log(depth([[true, [false]], "x"]));
 
 // A non-generic one whose `null` comes from a member alias, with a function member.
 type Tree = Elem | (() => string) | Tree[];
+
 function show(t: Tree): string {
-  if (Array.isArray(t)) return "[" + t.map(show).join(",") + "]";
-  if (typeof t === "function") return t();
+  if (Array.isArray(t)) {
+    return "[" + t.map(show).join(",") + "]";
+  }
+  if (typeof t === "function") {
+    return t();
+  }
   return String(t);
 }
+
 console.log(show([1, null, [() => "f", "s"]]));
+
+// A function member that throws.
+function bad(): string {
+  throw new Error("no");
+}
+
+try {
+  console.log(show([bad]));
+} catch (e) {
+  console.log("caught", (e as Error).message);
+}
+
+// Behind an index signature, and with two type parameters.
+type J<T> = T | null | { [k: string]: J<T> };
+const j: J<number> = { a: 1, b: { c: 2, d: null } };
+console.log(JSON.stringify(j));
+type Pair<A, B> = A | B | Pair<A, B>[];
+const p: Pair<number, boolean> = [1, [true, 2]];
+console.log(p);
 
 // Checked though nothing uses them.
 type Unused = string | Unused[];

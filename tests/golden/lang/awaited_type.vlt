@@ -3,6 +3,7 @@ type A1 = Awaited<Promise<number>>;
 type A2 = Awaited<Promise<Promise<string>>>;
 type A3 = Awaited<boolean>;
 type A4 = Awaited<Promise<number> | string | null>;
+type A5 = Awaited<string | Promise<number | null> | undefined>;
 
 async function get<R>(f: () => R | Promise<R>): Promise<Awaited<R>> {
   return (await f()) as Awaited<R>;
@@ -11,6 +12,11 @@ async function get<R>(f: () => R | Promise<R>): Promise<Awaited<R>> {
 interface State<T> {
   value: T;
 }
+
+function all<T>(p: Promise<T>): Promise<Awaited<T>[]> {
+  return p.then((v) => [v as Awaited<T>]);
+}
+
 function wrap<R>(v: Awaited<R>): State<Awaited<R>> {
   return { value: v };
 }
@@ -25,5 +31,12 @@ async function main() {
   console.log(await get(() => 5));
   console.log(await get(async () => "six"));
   console.log(wrap<Promise<number>>(7).value);
+  const f1: A5 = null;
+  const f2: A5 = undefined;
+  const f3: A5 = "s";
+  const x: Awaited<any> = 8;
+  console.log(f1, f2, f3, x);
+  console.log(await all(Promise.resolve("q")));
 }
+
 main();
