@@ -22,3 +22,4 @@ function pick(fast: bool): "relaxed" | "acquire" {
 }
 
 n.load(pick(true));
+const untyped = new Atomic(5);

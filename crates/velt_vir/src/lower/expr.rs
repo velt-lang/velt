@@ -126,8 +126,10 @@ impl FnLower<'_, '_> {
             return unit();
         }
         let prev = self.enter_span(e.span);
+        let site = self.enter_site(e.span);
         let v = self.expr_at(e);
         self.restore_loc(prev);
+        self.cx.user_site = site;
         v
     }
 

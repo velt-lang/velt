@@ -15,3 +15,8 @@ const n = new Node();
 const kept: Atomic<u64>[] = [];
 keep(n.version, kept);
 const x: any = new Node().version;
+const { version } = n;
+console.log(version.load());
+const held = new Atomic<u64>(2);
+const s = shared(held);
+console.log(held.load(), s.load());

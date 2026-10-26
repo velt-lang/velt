@@ -1,0 +1,29 @@
+// Generic code of the standard library instantiated with `Atomic`s that would copy or share
+// them (a `Map` of them, `slice`, `find` and `filter` of a `shared` value's parts holding them)
+// is reported at the user's call, not in the standard library.
+class Inner {
+  hits: Atomic<u64> = new Atomic<u64>(0);
+}
+
+interface Pair {
+  a: Atomic<u64>;
+}
+
+class Pool {
+  ps: Pair[] = [];
+  inners: Inner[] = [];
+}
+
+function main() {
+  const m = new Map<string, Atomic<u64>>();
+  m.set("a", new Atomic<u64>(0));
+  const x = m.get("a");
+  if (x !== undefined) {
+    x.add(1);
+  }
+  const s = shared(new Pool());
+  const copied = s.ps.slice();
+  const found = s.inners.find((i) => i.hits.load() > 0);
+  const kept = s.inners.filter((i) => i.hits.load() > 0);
+  console.log(copied.length, found === undefined, kept.length);
+}

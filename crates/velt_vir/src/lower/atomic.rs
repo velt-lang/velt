@@ -114,6 +114,10 @@ impl FnLower<'_, '_> {
                 callee: hir::Callee::Intrinsic(Intrinsic::SharedRead),
                 args,
             } => self.shared_value(&args[0], BoxHold::IfReplaceable).0,
+            K::Global(d) if self.slot_of(*d).is_some() => {
+                let slot = self.slot_of(*d).unwrap_or_default();
+                self.module_slot(slot)
+            }
             K::Field { base, index, .. } => {
                 let bty = self.sub(base.ty);
                 let bp = self.atomic_place(base);
@@ -151,7 +155,8 @@ impl FnLower<'_, '_> {
     pub(super) fn note_frozen_copy(&mut self, e: &hir::Expr) {
         let t = self.sub(e.ty);
         if self.cx.holds_atomic(t, &mut FxHashSet::default()) {
-            self.cx.atomic_copies.push(e.span);
+            let span = self.cx.user_span(e.span);
+            self.cx.atomic_copies.push(span);
         }
     }
 }
@@ -171,6 +176,15 @@ impl Cx<'_> {
                 parts.into_iter().any(|p| self.holds_atomic(p, seen))
             }
             _ => false,
+        }
+    }
+
+    /// `span`, or the user code being lowered when `span` is in the standard library (a copy
+    /// in `slice` is reported at the user's `s.items.slice()`).
+    pub(super) fn user_span(&self, span: velt_common::Span) -> velt_common::Span {
+        match self.locs.as_ref().is_some_and(|m| m.is_std(span)) {
+            true => self.user_site,
+            false => span,
         }
     }
 

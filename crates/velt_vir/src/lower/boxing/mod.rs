@@ -269,6 +269,14 @@ impl Cx<'_> {
     /// Record that a value of type `t` is shared.
     pub(super) fn note_share(&mut self, t: TyId) {
         self.facts.shares.insert(t);
+        self.note_share_site(t);
+    }
+
+    /// The user code sharing `t` now, if it is the first (`counted_atomic_diagnostics`).
+    fn note_share_site(&mut self, t: TyId) {
+        if self.user_site != velt_common::Span::DUMMY {
+            self.share_sites.entry(t).or_insert(self.user_site);
+        }
     }
 
     /// Record that values of the object type `t` are compared by identity.
@@ -367,6 +375,7 @@ impl Cx<'_> {
     /// Record a borrow of a `value`-typed place reached through a `container`-typed value.
     pub(super) fn note_projection(&mut self, container: TyId, value: TyId) {
         self.facts.projections.insert((container, value));
+        self.note_share_site(value);
     }
 
     /// Does a value of `t` carry a reference count?
@@ -382,22 +391,47 @@ impl Cx<'_> {
     }
 
     /// Errors for the `Atomic<T>` types something shares: generic code instantiated with one
-    /// (`xs.slice()` of an `Atomic<u64>[]`), which sema's check of shares (`atomic_copies`)
-    /// cannot see. A counted `Atomic` would be a box, not the word in place every program's
-    /// atomics rely on (docs/internals/design/atomics.md).
+    /// (`xs.slice()` of an `Atomic<u64>[]`, a `Map` of them), which sema's check of shares
+    /// (`atomic_copies`) cannot see. A counted `Atomic` would be a box, not the word in place
+    /// every program's atomics rely on (docs/internals/design/atomics.md). Each is reported at
+    /// the user code that first shared it, or the value holding it (`note_share_site`): the
+    /// call of the generic code, never the standard library's code itself.
     pub(super) fn counted_atomic_diagnostics(&self) -> Vec<velt_common::Diagnostic> {
-        let mut names: Vec<String> = (self.boxing.boxes.iter())
+        let mut found: Vec<(velt_common::Span, String)> = (self.boxing.boxes.iter())
             .filter(|&&t| matches!(self.kind(t), TyKind::Adt(d, _) if super::atomic::is_atomic(self, d)))
-            .map(|&t| self.type_name(t))
+            .map(|&t| {
+                let from = self.share_from.get(&t).copied().unwrap_or(t);
+                let site = (self.share_sites.get(&from))
+                    .or_else(|| self.share_sites.get(&t))
+                    .copied()
+                    .unwrap_or_default();
+                (site, self.atomic_name(t))
+            })
             .collect();
-        names.sort();
-        names.into_iter().map(|n| {
+        found.sort_by(|a, b| (a.0.file, a.0.lo, &a.1).cmp(&(b.0.file, b.0.lo, &b.1)));
+        found.into_iter().map(|(site, n)| {
             velt_common::Diagnostic::error(
-                format!("an `{n}` cannot be copied or shared, but this program shares one in generic code"),
-                velt_common::Span::DUMMY,
+                format!("an `{n}` cannot be copied or shared, but the generic code called here shares one"),
+                site,
             )
             .with_note("a generic function or method that shares its values (`slice`, `filter`, `concat`, a `Map` of them) was called with `Atomic`s; keep them in place and read them with `.load()`")
         }).collect()
+    }
+
+    /// `Atomic<u64>` for the type `t` of an `Atomic`.
+    fn atomic_name(&self, t: TyId) -> String {
+        let arg = match self.kind(t) {
+            TyKind::Adt(_, args) => args.first().map(|&a| match self.kind(a) {
+                TyKind::Int(i) => format!("{i:?}").to_lowercase(),
+                TyKind::Bool => "bool".to_string(),
+                _ => self.type_name(a),
+            }),
+            _ => None,
+        };
+        match arg {
+            Some(a) => format!("Atomic<{a}>"),
+            None => self.type_name(t),
+        }
     }
 
     /// Display names of the counted types (`VELT_DEBUG_COUNTED=1`, bench/rc_stats.ps1).
@@ -423,6 +457,7 @@ impl Cx<'_> {
     /// The counted types implied by this pass's facts (a superset of the current ones).
     pub(super) fn close_boxing(&mut self) -> Boxing {
         let mut next = self.boxing.clone();
+        self.share_from.clear();
         next.fn_identity |= self.facts.fn_compared;
         next.generic_any |= self.facts.generic_any;
         next.any_identity |= self.facts.any_identity;
@@ -515,7 +550,14 @@ impl Cx<'_> {
                     next.boxes.insert(t);
                 }
             },
-            ShareKind::Value => work.extend(self.part_types(t)),
+            ShareKind::Value => {
+                // Where each part's share comes from: the shared value that holds it.
+                let from = self.share_from.get(&t).copied().unwrap_or(t);
+                for p in self.part_types(t) {
+                    self.share_from.entry(p).or_insert(from);
+                    work.push(p);
+                }
+            }
             _ => {}
         }
     }

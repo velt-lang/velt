@@ -74,7 +74,17 @@ somewhere else are errors (``an `Atomic<u64>` cannot be copied or shared``). Rea
 its methods: the call passes the atomic itself, in place, also one inside a `shared` value
 (`bump(s.hits)`). Binding a part of a `shared` value that holds an `Atomic` to a variable is an
 error too, since that makes a copy and the changes would go to the copy: use the part in place
-(`s.items[i].count.add(1)`, `for (const x of s.items) x.count.add(1)`).
+(`s.items[i].count.add(1)`, `for (const x of s.items) x.count.add(1)`). So is destructuring
+one (`const { hits } = c`), and generic code that would copy or share atomics (a
+`Map<string, Atomic<u64>>`, `slice` or `filter` of a `shared` value's parts holding them),
+reported at the call.
+
+**Across tasks.** An object holding an `Atomic` that is not in a `shared` value stays on its
+task: awaiting a call that changes it is fine, but passing it to `spawn` (or capturing it in a
+spawned closure) while the program still uses it is an error, since the task would get a copy
+whose atomics take its changes. Share it (`const c = shared(new Hits())`), and every task
+changes the same atomics. A module-level `const` holding one is one atomic, made once, that
+every task changes: `const REQUESTS = new Atomic<u64>(0)`.
 
 ```ts
 function bump(counter: Atomic<u32>): u32 {

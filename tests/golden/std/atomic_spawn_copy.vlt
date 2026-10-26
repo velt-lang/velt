@@ -1,0 +1,26 @@
+// An object holding an `Atomic` that the program still uses would go to a spawned task as a
+// copy, whose atomics take the task's changes: an error, for an argument and for a capture.
+class Hits {
+  hits: Atomic<u64> = new Atomic<u64>(0);
+}
+
+async function work(c: Hits, k: i64) {
+  for (let i = 0; i < k; i++) {
+    c.hits.add(1);
+  }
+}
+
+async function main() {
+  const c = new Hits();
+  const ps: Promise<void>[] = [];
+  for (let t = 0; t < 4; t++) {
+    ps.push(spawn(work(c, 1000)));
+  }
+  for (let t = 0; t < 4; t++) {
+    ps.push(spawn((async () => {
+      c.hits.add(1);
+    })()));
+  }
+  await Promise.all(ps);
+  console.log("hits", c.hits.load());
+}

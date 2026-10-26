@@ -54,17 +54,21 @@ impl FnCx<'_, '_> {
     fn atomic_value_ty(&mut self, t: TyId, span: Span) -> bool {
         match self.cx.ty.kind(t) {
             TyKind::Int(_) | TyKind::Bool | TyKind::Error => true,
-            _ => {
+            k => {
+                let float = matches!(k, TyKind::Float(_));
                 let shown = self.cx.display(t);
-                self.cx.error(
-                    Diagnostic::error(
-                        format!("`Atomic<T>` needs an integer type or `bool`, found `{shown}`"),
-                        span,
-                    )
-                    .with_note(
-                        "the compiler picks the instruction by the type, so it must be known here; for other values, use a `Mutex<T>`",
-                    ),
+                let mut d = Diagnostic::error(
+                    format!("`Atomic<T>` needs an integer type or `bool`, found `{shown}`"),
+                    span,
+                )
+                .with_note(
+                    "the compiler picks the instruction by the type, so it must be known here; for other values, use a `Mutex<T>`",
                 );
+                // `new Atomic(5)`: a number literal is an `f64`.
+                if float {
+                    d = d.with_note("for an integer counter, write its type: `new Atomic<u64>(…)`");
+                }
+                self.cx.error(d);
                 false
             }
         }

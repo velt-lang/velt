@@ -1,0 +1,5 @@
+atomic_spawn_copy.vlt:17:24: error: `c` is still used after `spawn`, so the task would get a copy, but `Hits` holds an `Atomic`, and changes to the copy's atomics would not reach this one
+  = note: pass the last reference (don't use `c` after the `spawn`), read the values it needs (`.load()`) and pass those, or share it so every task changes the same atomics: `shared(new Hits(…))`
+
+atomic_spawn_copy.vlt:20:20: error: `c` is still used after `spawn`, so the task would get a copy, but `Hits` holds an `Atomic`, and changes to the copy's atomics would not reach this one
+  = note: pass the last reference (don't use `c` after the `spawn`), read the values it needs (`.load()`) and pass those, or share it so every task changes the same atomics: `shared(new Hits(…))`

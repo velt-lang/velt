@@ -153,12 +153,30 @@ attribute (vir.rs invariant 9, `param_attrs.rs`): its atomic writes go through t
 ## Diagnostics
 
 - ``an `Atomic<u64>` cannot be copied or shared: it is used where it is`` (note: read it with
-  `.load()`, or pass or keep the object that holds it), for a share of one in a body or a
-  capture (sema `atomic_copies.rs`); in generic code instantiated with one, lowering reports it
-  if the type would get a count.
+  `.load()`, or pass or keep the object that holds it; for `shared(a)` of one still used:
+  create it inside the `shared`), for a share of one in a body, a capture or a binding of a
+  destructuring declaration (`const { hits } = c`; sema `atomic_copies.rs`).
+- ``an `Atomic<u64>` cannot be copied or shared, but the generic code called here shares one``,
+  for generic code instantiated with one whose type would get a count (a `Map` of them,
+  `xs.slice()`): lowering (`boxing` `counted_atomic_diagnostics`). It is reported at the user
+  code that first shared it: each function instance remembers the user expression that first
+  requested it (`Cx::fn_sites`), lowering tracks the innermost user expression it is in
+  (`Cx::user_site`), and each shared type remembers the first such site, a part the shared
+  value it came from (`share_sites`, `share_from`). Never at the standard library's code.
 - ``this copies a part of a `shared` value that holds an `Atomic`: changes to the copy's atomics
   would not reach the shared value``, for `const xs = s.items` and every other deep copy of a
-  frozen value holding one (sema for the direct form, lowering for the rest).
+  frozen value holding one (sema for the direct form, lowering for the rest, at the user's
+  call when the copy is made in the standard library: `s.items.slice()`, `find`, `filter`).
+- ``` `c` is still used after `spawn`, so the task would get a copy, but `Hits` holds an
+  `Atomic`, and changes to the copy's atomics would not reach this one ``` (note: pass the last
+  reference, read the values it needs, or share it: `shared(new Hits(…))`), for a value holding
+  an `Atomic` outside a `shared` that crosses to another task while the program still uses it
+  (a `spawn` argument or capture, a channel send; sema `ownership/boundary.rs`, which reports
+  resources without `clone()` the same way). A value whose last reference goes to the task
+  moves there, and an awaited call on the same task changes it in place.
+- A module-level `const` whose type holds an `Atomic` is kept in the module state (made once),
+  as a non-constant initializer is: evaluated at each use, every use would change a new atomic.
+  Its methods act on the word in the state's slot.
 - ``` `Atomic<T>` needs an integer type or `bool`, found `string` ``` (a type parameter too: the
   instruction depends on the type).
 - `mismatched types` for an ordering the operation cannot have (``expected "relaxed" | "acquire"

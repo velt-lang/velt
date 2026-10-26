@@ -11,6 +11,11 @@
 //! too. Values that only turn out to be shared at run time (another reference made
 //! earlier) are checked by the transfer itself, which panics instead of releasing the
 //! resource twice.
+//!
+//! A value holding an `Atomic<T>` (outside a `shared`) crosses the same way and is an error
+//! for the same uses: the task's copy would get its own atomics, so the changes either side
+//! makes would never reach the other (docs/internals/design/atomics.md). An `Atomic` itself is
+//! reported as a share (`atomic_copies.rs`).
 
 use rustc_hash::FxHashMap;
 
@@ -44,6 +49,18 @@ enum Copied {
     Held(Option<String>),
     /// A call through a function value, an interface or an overridden method borrows it.
     Borrowed,
+}
+
+/// Can a value of `t` not be copied for another task: it owns a resource without `clone()`,
+/// or holds an `Atomic` (module docs)?
+fn copy_breaks(cx: &mut Ctx, t: TyId) -> bool {
+    cx.owns_uncopyable(t) || copies_atomic(cx, t)
+}
+
+/// Does a copy of `t` copy an `Atomic` in it (not an `Atomic` itself, a share `atomic_copies`
+/// reports)?
+fn copies_atomic(cx: &mut Ctx, t: TyId) -> bool {
+    cx.atomic_value(t).is_none() && cx.holds_atomic(t)
 }
 
 /// Report resources copied into spawned tasks (module docs).
@@ -191,7 +208,7 @@ fn crossing_copies(
             callee: Callee::Intrinsic(Intrinsic::Share),
             args: place,
         } => {
-            if cx.owns_uncopyable(a.ty) {
+            if copy_breaks(cx, a.ty) {
                 let why = match place.first().map(|x| &x.kind) {
                     Some(E::Local(l, _)) => Copied::UsedAgain(locals[l.0 as usize].name.clone()),
                     Some(_) => Copied::Held(Some(place_text(cx, locals, &place[0]))),
@@ -254,7 +271,7 @@ fn spawned_copies(
             args,
         } => {
             for a in args {
-                if cx.owns_uncopyable(a.ty) {
+                if copy_breaks(cx, a.ty) {
                     out.push((a.span, a.ty, Copied::Borrowed, Site::Spawn));
                 }
             }
@@ -271,7 +288,7 @@ fn spawned_copies(
                 .collect();
             for l in shared {
                 let local = &locals[l.0 as usize];
-                if cx.owns_uncopyable(local.ty) {
+                if copy_breaks(cx, local.ty) {
                     out.push((
                         p.span,
                         local.ty,
@@ -296,15 +313,29 @@ fn report(cx: &mut Ctx, span: Span, ty: TyId, why: Copied, site: Site) {
             (name.to_string(), "the receiving task")
         }
     };
-    let what = cx.uncopyable_why(ty);
-    let part = cx.uncopyable_part(ty).unwrap_or(ty);
-    let share = "or share it instead of copying: `shared(new Mutex(…))`";
-    let clone = match cx.ty.kind(part) {
-        TyKind::Promise(..) => "await the promise first".to_string(),
-        _ => format!(
-            "give `{}` a `clone()` method that duplicates the resource",
-            cx.display(part)
-        ),
+    let (what, clone, share) = match cx.owns_uncopyable(ty) {
+        true => {
+            let what = cx.uncopyable_why(ty);
+            let part = cx.uncopyable_part(ty).unwrap_or(ty);
+            let clone = match cx.ty.kind(part) {
+                TyKind::Promise(..) => "await the promise first".to_string(),
+                _ => format!(
+                    "give `{}` a `clone()` method that duplicates the resource",
+                    cx.display(part)
+                ),
+            };
+            let share = "or share it instead of copying: `shared(new Mutex(…))`".to_string();
+            (what, clone, share)
+        }
+        // An `Atomic` changed through a copy changes the copy's word.
+        false => {
+            let tn = cx.display(ty);
+            (
+                format!("`{tn}` holds an `Atomic`, and changes to the copy's atomics would not reach this one"),
+                "read the values it needs (`.load()`) and pass those".to_string(),
+                format!("or share it so every task changes the same atomics: `shared(new {tn}(…))`"),
+            )
+        }
     };
     let d = match why {
         Copied::Borrowed => Diagnostic::error(
@@ -387,9 +418,15 @@ fn shared_kept(cx: &Ctx, x: &Expr, locals: &[LocalDef], out: &mut Vec<(Span, Str
 }
 
 fn report_shared(cx: &mut Ctx, span: Span, name: &str, local: bool, ty: TyId) {
-    let msg = match local {
-        true => format!("`{name}` is still used after `shared(...)`; `shared` takes the value itself (move it in, or share a clone)"),
-        false => format!("`{name}` stays where it is held; `shared(...)` takes the value itself (share a clone)"),
+    // An `Atomic` itself: reported as a share (`atomic_copies.rs`).
+    if cx.atomic_value(ty).is_some() {
+        return;
+    }
+    let msg = match (local, cx.holds_atomic(ty)) {
+        (true, false) => format!("`{name}` is still used after `shared(...)`; `shared` takes the value itself (move it in, or share a clone)"),
+        (true, true) => format!("`{name}` is still used after `shared(...)`; `shared` takes the value itself (move it in)"),
+        (false, false) => format!("`{name}` stays where it is held; `shared(...)` takes the value itself (share a clone)"),
+        (false, true) => format!("`{name}` stays where it is held; `shared(...)` takes the value itself"),
     };
     let copy = match cx.owns_uncopyable(ty) {
         true => {
@@ -398,6 +435,10 @@ fn report_shared(cx: &mut Ctx, span: Span, name: &str, local: bool, ty: TyId) {
                 ", or give `{}` a `clone()` and pass `{name}.clone()`",
                 cx.display(part)
             )
+        }
+        // A copy of an `Atomic` is a new word: build the value inside the `shared` instead.
+        false if cx.holds_atomic(ty) => {
+            format!(", or build it inside: `shared(new {}(…))`", cx.display(ty))
         }
         false => format!(", or pass a copy: `{name}.clone()`"),
     };
