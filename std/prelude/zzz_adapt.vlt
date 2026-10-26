@@ -346,6 +346,10 @@ export function __anyText(v: any, at: string): string {
     }
     panic(`TypeError: Cannot convert object to primitive value at ${at}`);
   }
+  if (typeof v === "object" && !("__proto__" in v)) {
+    // `Object.create(null)`'s record has no `toString` or `valueOf` to call.
+    panic(`TypeError: Cannot convert object to primitive value at ${at}`);
+  }
   return Object.prototype.toString.call(v);
 }
 

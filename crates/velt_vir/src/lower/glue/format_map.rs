@@ -310,7 +310,7 @@ impl FnLower<'_, '_> {
     /// Is the prelude `Map` at `map` (of type `map_ty`) marked as a prototype-less record's
     /// entries (the top bit of its `edits`, std/prelude/map.vlt `__markNullProto`)? A Bool
     /// operand.
-    fn null_proto_mark(&mut self, map: &Place, map_ty: TyId) -> Operand {
+    pub(in crate::lower) fn null_proto_mark(&mut self, map: &Place, map_ty: TyId) -> Operand {
         let TyKind::Adt(d, _) = self.cx.kind(map_ty) else {
             crate::lower::ice("the prelude `Map` is a class");
         };
