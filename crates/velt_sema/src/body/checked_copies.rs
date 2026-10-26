@@ -193,9 +193,16 @@ impl FnCx<'_, '_> {
         while let ast::ExprKind::Paren(x) = &inner.kind {
             inner = x;
         }
+        // Only a name or a path reads a narrowed value (code a call is lowered to may reuse
+        // the call's span).
+        let path = matches!(
+            inner.kind,
+            ast::ExprKind::Ident(_) | ast::ExprKind::Member { .. } | ast::ExprKind::Index { .. }
+        );
         match as_is {
-            true => self.as_is_spans.push(inner.span),
-            false => self.payload_spans.push(inner.span),
+            true if path => self.as_is_spans.push(inner.span),
+            false if path => self.payload_spans.push(inner.span),
+            _ => {}
         }
         match &inner.kind {
             ast::ExprKind::Cond { then, els, .. } => {
