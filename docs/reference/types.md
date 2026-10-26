@@ -3598,9 +3598,13 @@ with TypeScript's rules:
   in JavaScript: one object per class (for every instantiation of a generic class), `typeof`
   `"function"`. Calling it stops with Node's `TypeError` (`Class constructor A cannot be
   invoked without 'new'`); `new` through it is not supported yet. A value that holds no class
-  instance (an object literal, an array, a primitive) gives a function equal to no class. A
-  class declared in a function has one object for every run of its declaration (in Node, each
-  run makes another class).
+  instance gives its kind's one object: an object literal or a record `Object`'s (so
+  `o.constructor === Object`), an array `Array`'s, a number, string, boolean or function
+  `Number`'s, `String`'s, `Boolean`'s or `Function`'s; a record made by `Object.create(null)`
+  has none (`undefined`). A class declared in a function is another class each time the
+  function runs in JavaScript: naming one as a plain value is an error, and `x.constructor` of
+  its instances a `TypeError`, saying it is not supported yet. Each class used this way adds a
+  small constant to the program (about 1 KB of code).
 
 ```ts
 class Point {
