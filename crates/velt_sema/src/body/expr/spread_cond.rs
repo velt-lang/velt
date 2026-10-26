@@ -5,6 +5,7 @@
 //! each branch converts to it, and the spread copies the field only while present
 //! (`spread.rs`), as JavaScript copies only the keys the chosen object has.
 
+use velt_common::Span;
 use velt_syntax::ast;
 
 use crate::anon::ShapeField;
@@ -132,23 +133,21 @@ impl FnCx<'_, '_> {
     }
 }
 
-/// Does a source read in spread value `v` declare `undefined` (a present field may hold it)?
-pub(super) fn undefined_held(v: &super::spread::Value) -> bool {
-    use super::spread::Value;
-    match v {
-        Value::Read(_, src) => src.undefined,
-        Value::Over(_, src, prev) => src.undefined || undefined_held(prev),
-        Value::Prop(..) | Value::Held(..) => true,
-    }
-}
-
 impl FnCx<'_, '_> {
-    /// Does the declared field type `t` (of a type with arguments `args`) hold `undefined`?
-    pub(super) fn declares_undefined(&mut self, t: TyId, args: &[TyId]) -> bool {
-        let t = self.cx.subst(t, args);
-        self.cx.dynamic(t).is_some()
-            || self.cx.has_type_params(t)
-            || self.cx.ty.nothing_of(t).is_some_and(|n| n.has_undefined())
+    /// [`called_getters`] of spread operand `e`; a getter not supported there is reported, and
+    /// the operand spreads nothing (`{}`) so that no other error follows.
+    pub(super) fn getters_called(&mut self, e: &ast::Expr) -> Option<ast::Expr> {
+        match called_getters(e) {
+            Ok(called) => called,
+            Err((msg, at)) => {
+                self.cx.err(msg, at);
+                Some(ast::Expr {
+                    id: ast::NodeId(u32::MAX),
+                    kind: ast::ExprKind::Object(vec![]),
+                    span: e.span,
+                })
+            }
+        }
     }
 }
 
@@ -196,27 +195,34 @@ impl FnCx<'_, '_> {
 /// 1; } } : {}`) with each getter called where it is written (`g: (() => { return 1; })()`):
 /// a spread reads a getter's value, in property order, as JavaScript does. `None` when there
 /// is none, a getter uses `this`, a value that is not a literal follows a getter, or the
-/// literal has a setter (kept as written).
-pub(super) fn called_getters(e: &ast::Expr) -> Option<ast::Expr> {
+/// literal has a setter (kept as written). `Err` with the message and its place for a getter
+/// that is not supported there yet (one using `this`, or one a value other than a literal
+/// follows).
+pub(super) fn called_getters(e: &ast::Expr) -> Result<Option<ast::Expr>, (String, Span)> {
     if !matches!(strip(e).kind, ast::ExprKind::Cond { .. }) {
-        return None;
+        return Ok(None);
     }
-    let mut found = false;
-    let out = call_getters(e, &mut found)?;
-    found.then_some(out)
+    let (mut found, mut why) = (false, None);
+    let out = call_getters(e, &mut found, &mut why);
+    if let Some(w) = why {
+        return Err(w);
+    }
+    Ok(out.filter(|_| found))
 }
 
-fn call_getters(e: &ast::Expr, found: &mut bool) -> Option<ast::Expr> {
+type Why = Option<(String, Span)>;
+
+fn call_getters(e: &ast::Expr, found: &mut bool, why: &mut Why) -> Option<ast::Expr> {
     let e = strip(e);
     let kind = match &e.kind {
         ast::ExprKind::Cond { cond, then, els } => ast::ExprKind::Cond {
             cond: cond.clone(),
-            then: Box::new(call_getters(then, found)?),
-            els: Box::new(call_getters(els, found)?),
+            then: Box::new(call_getters(then, found, why)?),
+            els: Box::new(call_getters(els, found, why)?),
         },
         ast::ExprKind::Object(props) => {
             let mut out = vec![];
-            let mut getter_seen = false;
+            let mut getter_seen: Option<Span> = None;
             for p in props {
                 let accessor = match p {
                     ast::ObjectProp::KeyValue(k, v) => match &v.kind {
@@ -240,18 +246,26 @@ fn call_getters(e: &ast::Expr, found: &mut bool) -> Option<ast::Expr> {
                     // would not keep. Only a literal value may follow one.
                     let literal = matches!(p, ast::ObjectProp::KeyValue(_, v)
                         if matches!(v.kind, ast::ExprKind::Lit(_)));
-                    if getter_seen && !literal {
+                    if let (Some(at), false) = (getter_seen, literal) {
+                        *why = Some((
+                            "a getter followed by a value other than a literal, in a conditional spread, is not supported yet".into(),
+                            at,
+                        ));
                         return None;
                     }
                     out.push(p.clone());
                     continue;
                 };
                 // A getter using `this` reads the object the literal built, which a spread does
-                // not keep: kept as written (an error).
+                // not keep.
                 if uses_this(arrow) {
+                    *why = Some((
+                        "a getter using `this` in a conditional spread is not supported yet".into(),
+                        k.span,
+                    ));
                     return None;
                 }
-                getter_seen = true;
+                getter_seen = Some(k.span);
                 *found = true;
                 let call = ast::ExprKind::Call {
                     callee: Box::new(ast::Expr {

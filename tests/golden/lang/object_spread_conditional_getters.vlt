@@ -1,18 +1,5 @@
 // check: no leaks
-// Conditional spreads: `"k" in o` narrows a key some branches write (with different types) to
-// its declared type, and getters run in property order after the values written before them.
-function n3(c: boolean, d: boolean) { return { a: 0, ...(c ? (d ? { k: 1 } : { k: null }) : {}) }; }
-for (const [c, d] of [[true, true], [true, false], [false, true]] as const) {
-    const r3 = n3(c, d);
-    if ("k" in r3) { const k = r3.k; if (k !== null) console.log(k * 2); else console.log("null"); }
-    else console.log("absent");
-}
-function n4(c: boolean, d: boolean) { return { a: 0, ...(c ? (d ? { k: 1 } : { k: "s" }) : {}) }; }
-for (const [c, d] of [[true, true], [true, false], [false, false]] as const) {
-    const r4 = n4(c, d);
-    if ("k" in r4) { const k = r4.k; console.log(typeof k === "string" ? k.toUpperCase() : k + 1); }
-    else console.log("absent");
-}
+// Conditional spreads: getters run in property order after the values before them.
 const log: string[] = [];
 const tr = (s: string) => { log.push(s); return s; };
 function g1(c: boolean) {

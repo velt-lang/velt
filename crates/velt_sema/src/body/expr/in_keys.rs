@@ -141,9 +141,6 @@ impl FnCx<'_, '_> {
         let Some(key) = self.in_key_of(lhs) else {
             return (vec![], vec![]);
         };
-        if let Some(fact) = self.present_field_fact(&key, rhs) {
-            return (vec![fact], vec![]);
-        }
         // A `U | null` local too, once a test proved it not null (`if (x === null) return;`).
         let Some((l, nullable, u)) = self.local_with_members(rhs) else {
             return (vec![], vec![]);
@@ -173,58 +170,6 @@ impl FnCx<'_, '_> {
             vec![crate::body::narrow::Fact::Members(l, yes)],
             vec![crate::body::narrow::Fact::Members(l, no)],
         )
-    }
-
-    /// `"k" in o` on an object of one type with an optional field `k` whose declared type has
-    /// no `undefined` (`k?: number | null`, as a conditional spread of `{ k: 1 } | { k: null }
-    /// | {}` gives): where it holds, the field is present, so `o.k` holds a value of its declared
-    /// type, as TypeScript narrows the union of object types. `None` for any other operand.
-    fn present_field_fact(
-        &mut self,
-        key: &InKey,
-        rhs: &ast::Expr,
-    ) -> Option<crate::body::narrow::Fact> {
-        let InKey::Str(name) = key else {
-            return None;
-        };
-        if !super::method_value::is_path(rhs) {
-            return None;
-        }
-        let t = self.peek_ty(rhs)?;
-        let (d, _) = self.adt_of(t)?;
-        let f = self
-            .cx
-            .adt(d)?
-            .fields
-            .iter()
-            .find(|f| f.name == *name)?
-            .clone();
-        let declared_undefined = self
-            .cx
-            .ty
-            .nothing_of(f.declared)
-            .is_some_and(|n| n.has_undefined());
-        if !f.optional || declared_undefined || self.cx.dynamic(f.declared).is_some() {
-            return None;
-        }
-        let read = ast::Expr {
-            id: ast::NodeId(u32::MAX),
-            kind: ast::ExprKind::Member {
-                object: Box::new(rhs.clone()),
-                prop: ast::Ident {
-                    name: name.clone(),
-                    span: rhs.span,
-                },
-                optional: false,
-            },
-            span: rhs.span,
-        };
-        let token = self.field_token(&read)?;
-        // `k?: T | null` reads as `T | null | undefined`: present, it is not `undefined`.
-        Some(match self.cx.ty.nothing_of(f.declared) {
-            Some(_) => crate::body::narrow::Fact::Excludes(token, hir::Nothing::Undefined),
-            None => crate::body::narrow::Fact::NonNull(token),
-        })
     }
 
     /// [`Self::key_presence`] for a symbol key, reported at `at` when unknown (if `report`).
