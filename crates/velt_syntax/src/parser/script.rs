@@ -105,9 +105,10 @@ impl Parser<'_> {
         }) else {
             return;
         };
-        let used = stmts
-            .iter()
-            .any(|s| super::script_names::stmt_free_names(s).contains("main"))
+        let used = export_listed(items).contains("main")
+            || stmts
+                .iter()
+                .any(|s| super::script_names::stmt_free_names(s).contains("main"))
             || items.iter().any(|i| {
                 !std::ptr::eq(i, main) && super::script_names::free_names(i).contains("main")
             });
@@ -126,17 +127,22 @@ impl Parser<'_> {
         self.diags.push(d);
     }
 
-    /// Per item: is it a top-level variable that stays at module level? Exported ones do, a
-    /// [`rest_arrow`] constant, a `const` a computed key `[NAME]` names anywhere in the file (sema resolves the key to the
-    /// symbol or string the module constant holds), and those a staying declaration refers to
-    /// (to a fixed point), and those code above them names (a statement in `stmts` or another
-    /// variable's initializer; module docs).
+    /// Per item: is it a top-level variable that stays at module level? Exported ones do (also by
+    /// an export list, `export { x };`), a [`rest_arrow`] constant, a `const` a computed key
+    /// `[NAME]` names anywhere in the file (sema resolves the key to the symbol or string the
+    /// module constant holds), and those a staying declaration refers to (to a fixed point), and
+    /// those code above them names (a statement in `stmts` or another variable's initializer;
+    /// module docs).
     fn kept_vars(&self, items: &[Item], stmts: &[Stmt]) -> Vec<bool> {
+        let listed = export_listed(items);
         let mut keep: Vec<bool> = items
             .iter()
             .map(|i| match &i.kind {
                 ItemKind::Var(v) => {
                     i.exported
+                        || bound_names(&v.pattern)
+                            .iter()
+                            .any(|n| listed.contains(n.as_str()))
                         || rest_arrow(v)
                         || (v.kind == VarKind::Const
                             && bound_names(&v.pattern)
@@ -210,6 +216,19 @@ impl Parser<'_> {
             !touching && before != Some('.') && !after.is_some_and(ident)
         })
     }
+}
+
+/// The local names an export list (`export { a, b as c };`) exports: the variables among them
+/// stay at module level, as an exported variable does.
+fn export_listed(items: &[Item]) -> rustc_hash::FxHashSet<&str> {
+    items
+        .iter()
+        .filter_map(|i| match &i.kind {
+            ItemKind::Import(imp) if imp.from.is_empty() => Some(imp),
+            _ => None,
+        })
+        .flat_map(|imp| imp.names.iter().map(|n| n.name.name.as_str()))
+        .collect()
 }
 
 /// Does the item declare something named `main` (a function, a variable, a class, an import, …)?

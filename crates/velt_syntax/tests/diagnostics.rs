@@ -88,6 +88,7 @@ fn script_with_an_uncalled_main_warns() {
         "function main() {}\nsetTimeout(main, 0);",
         "function main() {}\nfunction run() { main(); }\nrun();",
         "export function main() {}\nconsole.log(1);",
+        "function main() {}\nexport { main };\nconsole.log(1);",
         "function main() {}",
     ] {
         let (_, d) = parse(src);
