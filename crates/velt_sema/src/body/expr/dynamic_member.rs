@@ -286,7 +286,8 @@ impl FnCx<'_, '_> {
     /// has no `this` of its own to set (an arrow ignores it in JavaScript too), so another
     /// `thisArg` stops with a `TypeError` naming #926 rather than calling the function without
     /// it. `f` and `thisArg` are evaluated once, in order, before the arguments. `f.bind(thisArg)`
-    /// without arguments to fix is `f` itself under the same rule. `None` for other members.
+    /// without arguments to fix is a new function forwarding to `f`, under the same rule. `None`
+    /// for other members.
     fn function_call_apply(
         &mut self,
         f: &hir::Expr,
@@ -313,11 +314,9 @@ impl FnCx<'_, '_> {
             _ => return None,
         };
         let any = self.any_ty()?;
-        // `f.bind(thisArg)` without arguments to fix: `f` itself, an `any`.
-        let bound = |s: &mut Self, f: hir::Expr| {
-            let f = s.share_if_place(f);
-            s.coerce(f, any)
-        };
+        // `f.bind(thisArg)` without arguments to fix: a new function forwarding to `f`, an
+        // `any` (`fn_bind.rs`).
+        let bound = |s: &mut Self, f: hir::Expr| s.bound_dynamic(f, any, span);
         let Some(this) = this else {
             // `f.call()` / `f.apply()` / `f.bind()`: `this` is `undefined`.
             return match bind {

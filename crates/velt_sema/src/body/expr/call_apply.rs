@@ -130,10 +130,9 @@ impl FnCx<'_, '_> {
             });
         }
         if bind {
-            // The function itself: it ignores `this`, or keeps the object it was read from,
-            // which is `thisArg`.
-            let h = self.expr(f, exp, Want::Move);
-            return Some(self.with_lets(lets, h));
+            // A new function forwarding to `f`, which ignores `this` or keeps the object it was
+            // read from, which is `thisArg` (`fn_bind.rs`).
+            return Some(self.bound_fn(f, lets, exp, span));
         }
         let call = synth(
             ast::ExprKind::Call {
