@@ -85,6 +85,16 @@ impl FnCx<'_, '_> {
                         }
                         _ => None,
                     };
+                    // A conditional spread over earlier keys (`spread_cond.rs`).
+                    let called = super::spread_cond::called_getters(e);
+                    let e = called.as_ref().unwrap_or(e);
+                    let any = match any {
+                        None if super::spread_cond::is_cond(e) => {
+                            let earlier = self.entry_types(&entries);
+                            self.cond_spread_hint_over(e, &earlier)
+                        }
+                        any => any,
+                    };
                     let fields = self.spread_fields(e, any, &mut lets, false);
                     parts.push(self.spread_part(e.span, &lets[before..], lets.len()));
                     (fields.into_iter())
