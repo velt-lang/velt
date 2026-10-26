@@ -23,7 +23,12 @@ impl Ctx<'_> {
     /// The type alias `a` names inside its own body while it is expanded at `args`: its union,
     /// when it is a recursive union alias; for a generic one at type parameters (`SlotContent<T>`
     /// in its own body, or checked on its own), the alias deferred until they are known.
-    pub(crate) fn recursive_union_ref(&mut self, a: u32, args: &[TyId], span: Span) -> Option<TyId> {
+    pub(crate) fn recursive_union_ref(
+        &mut self,
+        a: u32,
+        args: &[TyId],
+        span: Span,
+    ) -> Option<TyId> {
         if self.aliases[a as usize].decl.generics.is_empty() {
             return self.recursive_unions.get(&a).copied().flatten();
         }
@@ -151,7 +156,10 @@ impl Ctx<'_> {
         let reported = self.diags.len();
         for m in members {
             if crate::recursive_aliases::names(m, &decl.name.name)
-                || matches!(m.kind, ast::TypeExprKind::Null | ast::TypeExprKind::Undefined)
+                || matches!(
+                    m.kind,
+                    ast::TypeExprKind::Null | ast::TypeExprKind::Undefined
+                )
             {
                 continue;
             }

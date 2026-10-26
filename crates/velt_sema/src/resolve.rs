@@ -736,41 +736,6 @@ impl Ctx<'_> {
     }
 }
 
-/// Resolve every type alias that nothing expanded, so its errors are reported too
-/// (`type X = Nope;` used nowhere is still an error, as in TypeScript). Aliases that are used
-/// were checked at their uses.
-pub(crate) fn check_unused_aliases(cx: &mut Ctx) {
-    cx.checking_unused_aliases = true;
-    for a in 0..cx.aliases.len() {
-        if cx.aliases[a].used {
-            continue;
-        }
-        let (module, decl) = (cx.aliases[a].module, cx.aliases[a].decl);
-        // A recursive union alias is checked as its union (`crate::recursive_unions`).
-        if decl.generics.is_empty() && cx.aliases[a].outer.is_empty() {
-            if cx.recursive_union(a as u32, vec![], decl.name.span).is_some() {
-                continue;
-            }
-        }
-        let mut names: Vec<String> = decl.generics.iter().map(|g| g.name.name.clone()).collect();
-        cx.aliases[a].used = true;
-        cx.aliases[a].expanding = true;
-        // An alias of a generic function type that nothing uses as a type is fine: constants
-        // of it are generic functions (`generic_arrows::typed`). Its function type is checked
-        // with the type parameters in scope; a use elsewhere reports the form.
-        let ty = match &decl.ty.kind {
-            ast::TypeExprKind::GenericFunction { type_params, ty } => {
-                names.extend(type_params.iter().map(|g| g.name.name.clone()));
-                &**ty
-            }
-            _ => &decl.ty,
-        };
-        cx.resolve_type(ty, &TyEnv::new(module, &names));
-        cx.aliases[a].expanding = false;
-    }
-    cx.checking_unused_aliases = false;
-}
-
 /// The type written for an optional field `name?: T`: `T`, without the `| undefined` the parser
 /// adds (`velt_syntax` `or_undefined`; the added `undefined` is the zero-width one at the end).
 /// A written type that already admits `undefined` (`name?: T | undefined`) is kept as written.

@@ -236,10 +236,12 @@ pub(crate) fn ensure_global(cx: &mut Ctx, d: DefId) {
             Some(fcx.expr(e, None, Want::Move))
         }
         // `let x: T | undefined;` starts as `undefined`, as in JavaScript.
-        (None, Some(t)) if mutable
+        (None, Some(t))
+            if mutable
                 && owner.is_none()
                 && (fcx.cx.ty.nothing_of(t).is_some_and(|n| n.has_undefined())
-                    || fcx.cx.dynamic(t).is_some()) => {
+                    || fcx.cx.dynamic(t).is_some()) =>
+        {
             let u = ast::Expr {
                 id: ast::NodeId(u32::MAX),
                 kind: ast::ExprKind::Lit(ast::Lit::Undefined),
