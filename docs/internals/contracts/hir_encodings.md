@@ -362,17 +362,27 @@ the module state per function and type, whose initializer is the `ToDyn` of the 
 calling it (a class value's encoding, "Classes as values"), so every use is one value; so is
 a generic function declared in a function body, which captures nothing.
 
-`Program::fresh_closures` (additive) lists, as `FreshClosure::New`, the closures each
-evaluation of which is a new function where JavaScript has one, with the function type of their
-values: the wrappers sema makes for a generic value converted to another function type and for
-a function asserted to a generic type, a generic function's value at a type over the caller's
-type parameters, and the constants of a generic function used as a value at more than one type
-(or also as a value of a fixed function type). Lowering reports one it makes when the program
-compares or hashes function values of the same type as instantiated, without what it throws
-(also as a member of a union, an option, a tuple or a result), or compares dynamic values while
-one is held as one. It also lists, as `FreshClosure::Converts { from, to }`, the closures sema makes to convert a
-function value of type `from` to type `to`: a fresh value converted by one counts as compared
-where values of `to` are.
+`Program::fresh_closures` (additive) maps closures to a `FreshClosure` (`hir/fresh.rs`), for
+the comparison of function values:
+- `New(ty)`: each evaluation is a new function where JavaScript has one, with the function type
+  of its values: the wrappers sema makes for a generic value converted to another function type
+  and for a function asserted to a generic type, and a generic function's value at a type over
+  the caller's type parameters. Lowering reports one it makes when the program compares or
+  hashes function values of the same type as instantiated, without what it throws (also as a
+  member of a union, an option, a tuple, a result or a declared struct), or compares dynamic
+  values while one is held as one.
+- `Several(ty)`: a generic function's module constant at the generic function type `ty` when the
+  function is also a value at another type (or also instantiated at a function type of fixed
+  types). Its values are one value at `ty`, so comparing them is fine; lowering reports one only
+  when the program compares dynamic values while one is held as one, where it would meet the
+  function's other values.
+- `Converts { from, to }`: a closure sema makes to convert a function value of type `from` to
+  type `to`. A `New` value converted by one counts as compared where values of `to` are.
+
+A `const` holding a named generic function (`const g: G = id`, also through a chain of
+constants) is not one of these where a function type of fixed types is expected: sema gives the
+function itself there, instantiated (`FnRef`), so the values compare equal to each other and to
+`id`.
 
 ## Union types
 - `A | B | C` (two or more distinct non-null members) is `TyKind::Adt(d, args)` where `d` is a

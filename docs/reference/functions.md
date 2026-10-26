@@ -1140,17 +1140,25 @@ A value is itself however it is copied, stored or converted between spellings of
 `===`, `includes`, `Map` and `Set` keys compare generic function values by identity, as
 JavaScript does. A module-level generic function used as such a value is one value per type
 (`id === id`, also through `const asA: A = id`, and for a generic function declared in a function
-body). Some values are made anew at each use, where JavaScript keeps one function: a generic
-value converted to another function type (to one of fixed types, or to a generic one taking more
-optional parameters), a function asserted to a generic type, a generic function used at a type
-that mentions the caller's type parameters (`P<U>` in `getP<U>`), and a generic function used as
-a value at more than one type (or also where a function of fixed types is expected). A program
-that makes such a value and compares function values of its type (the same parameter and result
-types, or the same generic function type, also as a member of a union or an option, or after
-a conversion to another function type; with `===`, `includes`, `indexOf`, a `Set` or `Map`
-key) is an error, rather than giving another answer than JavaScript, as is one that compares
-`unknown` or `any` values while one holds such a value; holding it as `unknown` alone is fine.
-The program's build reports it, as it needs every instantiation: `velt check`, which only
+body). A `const` holding a named generic function (`const g: G = id`, also through a chain of
+constants, local or module-level) is that function wherever a function of fixed types is
+expected (`const p: N = g`, an argument, a return, an element, `as N`, `N | null`), so those
+values compare equal to each other and to `id` itself, as in JavaScript; a generic arrow
+constant used only there is lifted to a function, with the same effect.
+
+Some values are made anew at each use, where JavaScript keeps one function: a generic value
+converted to another function type (a parameter of type `G` as `(x: number) => number`, or as a
+generic type taking more optional parameters), a function asserted to a generic type, and a
+generic function used at a type that mentions the caller's type parameters (`P<U>` in
+`getP<U>`). A program that makes such a value and compares function values of its type (the
+same parameter and result types, or the same generic function type, also as a member of a
+union, an option or a struct key, or after a conversion to another function type; with `===`,
+`includes`, `indexOf`, a `Set` or `Map` key) is an error, rather than giving another answer than
+JavaScript, as is one that compares `unknown` or `any` values while one holds such a value;
+holding it as `unknown` alone is fine. A generic function used as a value at more than one
+generic type (or at one and also at a fixed type) has one value per type: comparing those of one
+type is fine, and comparing `unknown` or `any` values while one is held is the error. The
+program's build reports these, as it needs every instantiation: `velt check`, which only
 type-checks, does not. Where a function type of fixed
 types is expected (`const p: (x: number) => number = f`, `[1, 2].map(f)`), a generic function
 value is instantiated at it, as TypeScript does. A function of fixed types is not a generic one
