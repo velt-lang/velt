@@ -136,7 +136,9 @@ impl FnCx<'_, '_> {
         let spread = args
             .iter()
             .any(|a| matches!(a.kind, ast::ExprKind::Spread(_)));
-        if getter || classes == 0 || spread || !live.iter().all(|&m| has(self, m)) {
+        // A getter only when every member is a class (`(s as Set<T> | Map<K, V>).size`).
+        let getter_ok = !getter || classes == live.len();
+        if !getter_ok || classes == 0 || spread || !live.iter().all(|&m| has(self, m)) {
             return Err(recv);
         }
         let mut stmts = vec![];
@@ -146,7 +148,12 @@ impl FnCx<'_, '_> {
         };
         let placeholder = self.cx.ty.error;
         let mut f = |s: &mut Self, value: hir::Expr| {
-            Some(s.method_call_at(value, prop, type_args, &args, exp, span, false))
+            let h = s.method_call_at(value, prop, type_args, &args, exp, span, getter);
+            // A `size` getter of the standard library: a number, as on one class (`member_of`).
+            Some(match getter {
+                true => s.std_number(h),
+                false => h,
+            })
         };
         let mut h = self.map_members_in(recv, placeholder, narrowed, &mut f)?;
         h.ty = self.join_arms(&mut h, span);

@@ -138,6 +138,14 @@ impl FnCx<'_, '_> {
         want: Want,
         span: Span,
     ) -> Result<hir::Expr, hir::Expr> {
+        // `x.constructor`: the object of the class `x` holds (`ctor_objects.rs`).
+        let obj = match name == "constructor" && want != Want::BorrowMut {
+            true => match self.dynamic_constructor(obj, span) {
+                Ok(h) => return Ok(h),
+                Err(obj) => obj,
+            },
+            false => obj,
+        };
         let (obj, any) = self.dynamic_receiver(obj, Some(Some(name)))?;
         let Some(any) = any else {
             return Ok(self.error_expr(span));
@@ -277,8 +285,9 @@ impl FnCx<'_, '_> {
     /// `f(...args)` when `thisArg` is `null` or `undefined` (or left out). A Velt function value
     /// has no `this` of its own to set (an arrow ignores it in JavaScript too), so another
     /// `thisArg` stops with a `TypeError` naming #926 rather than calling the function without
-    /// it. `f` and `thisArg` are evaluated once, in order, before the arguments. `None` for
-    /// other members.
+    /// it. `f` and `thisArg` are evaluated once, in order, before the arguments. `f.bind(thisArg)`
+    /// without arguments to fix is a new function forwarding to `f`, under the same rule. `None`
+    /// for other members.
     fn function_call_apply(
         &mut self,
         f: &hir::Expr,
@@ -286,9 +295,10 @@ impl FnCx<'_, '_> {
         args: &[ast::Expr],
         span: Span,
     ) -> Option<hir::Expr> {
-        if !matches!(prop.name.as_str(), "call" | "apply") {
+        if !matches!(prop.name.as_str(), "call" | "apply" | "bind") {
             return None;
         }
+        let bind = prop.name == "bind";
         let (this, rest) = match args.split_first() {
             Some((this, _)) if matches!(this.kind, ast::ExprKind::Spread(_)) => return None,
             Some((this, rest)) => (Some(this), rest),
@@ -296,18 +306,24 @@ impl FnCx<'_, '_> {
         };
         let rest = match (prop.name.as_str(), rest) {
             ("call", _) => rest.to_vec(),
-            ("apply", []) => vec![],
+            ("apply" | "bind", []) => vec![],
             ("apply", [list]) => {
                 let spread = ast::ExprKind::Spread(Box::new(list.clone()));
                 vec![super::setters::synth(spread, list.span)]
             }
             _ => return None,
         };
-        let Some(this) = this else {
-            // `f.call()` / `f.apply()`: `this` is `undefined`.
-            return self.dynamic_apply(f.clone(), &rest, span).ok();
-        };
         let any = self.any_ty()?;
+        // `f.bind(thisArg)` without arguments to fix: a new function forwarding to `f`, an
+        // `any` (`fn_bind.rs`).
+        let bound = |s: &mut Self, f: hir::Expr| s.bound_dynamic(f, any, span);
+        let Some(this) = this else {
+            // `f.call()` / `f.apply()` / `f.bind()`: `this` is `undefined`.
+            return match bind {
+                true => Some(bound(self, f.clone())),
+                false => self.dynamic_apply(f.clone(), &rest, span).ok(),
+            };
+        };
         let mut stmts = vec![];
         let f = self.hoist_dynamic(f.clone(), &mut stmts);
         let t = self.expr(this, Some(any), Want::Borrow);
@@ -317,7 +333,10 @@ impl FnCx<'_, '_> {
         let t = self.share_if_place(t);
         let t = self.coerce(t, any);
         let t = self.hoist_dynamic(t, &mut stmts);
-        let call = self.dynamic_apply(f, &rest, span).ok()?;
+        let call = match bind {
+            true => bound(self, f),
+            false => self.dynamic_apply(f, &rest, span).ok()?,
+        };
         let null = self.dynamic_nothing(Nothing::Null, any, span);
         let b = self.cx.ty.bool_;
         let nullish = self.intrinsic(Intrinsic::AnyLooseEq, vec![t, null], b, span);

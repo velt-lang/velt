@@ -350,6 +350,29 @@ export function __anyText(v: any, at: string): string {
 }
 
 /**
+ * `String(r)` of an `any` holding a record, in a program that calls `Object.create(null)` (sema
+ * dispatches records here): one without a prototype has no `toString` to inherit, so its own
+ * `valueOf`, else Node's `TypeError`.
+ */
+export function __anyRecordText(r: any, at: string): string {
+  if (!__anyOwnFn(r, "toString") && __anyNullProto(r)) {
+    if (__anyOwnFn(r, "valueOf")) {
+      return __anyPrimText(r.valueOf(), at);
+    }
+    panic(`TypeError: Cannot convert object to primitive value at ${at}`);
+  }
+  return __anyText(r, at);
+}
+
+/** `r + ""` of an `any` holding a record, as `__anyRecordText` for the `"default"` hint. */
+export function __anyRecordConcat(r: any, at: string): string {
+  if (!__anyOwnFn(r, "valueOf") && !__anyOwnFn(r, "toString") && __anyNullProto(r)) {
+    panic(`TypeError: Cannot convert object to primitive value at ${at}`);
+  }
+  return __anyConcatPlain(r, at);
+}
+
+/**
  * `xs.join(sep)` of an array (or tuple) of `any`, `unknown` or `object` values, and
  * `String(xs)`: each element as `String(x)` writes it, `null` and `undefined` as empty text, and
  * an array being joined already (one holding itself) as empty text, as in JavaScript.
