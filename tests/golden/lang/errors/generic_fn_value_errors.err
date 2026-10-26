@@ -3,5 +3,5 @@ generic_fn_value_errors.vlt:26:24: error: a generic function value (`<T>(T) => T
 generic_fn_value_errors.vlt:28:15: error: a function of fixed types (`(f64) => f64`) cannot be a `<T>(T) => T`
 generic_fn_value_errors.vlt:29:18: error: this arrow function has 1 type parameter(s), but `<A, B>(A, B) => A` has 2
 generic_fn_value_errors.vlt:30:24: error: function `two` needs 2 arguments, but a `<T>(T) => T` is called with 1
-generic_fn_value_errors.vlt:31:17: error: a function of fixed types (`(string | undefined) => symbol`) cannot be a `<T>(string) => InjectionToken<T>`
-generic_fn_value_errors.vlt:34:5: error: a generic method of an object literal implementing `Boxer` cannot use `this` yet
+generic_fn_value_errors.vlt:32:17: error: a function of fixed types (`(string | undefined) => symbol`) cannot be a `<T>(string) => InjectionToken<T>`
+generic_fn_value_errors.vlt:35:5: error: a generic method of an object literal implementing `Boxer` cannot use `this` yet

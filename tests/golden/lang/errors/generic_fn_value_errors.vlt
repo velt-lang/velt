@@ -28,6 +28,7 @@ function main(): void {
   const bad = plus as unknown as Id;
   const t: Two = <A,>(a: A, b: A): A => a;
   const needsTwo: Id = two;
+  const twoHeld: unknown = needsTwo;
   const token = Symbol as unknown as <T>(d: string) => InjectionToken<T>;
   const b: Boxer = {
     tag: "b",
@@ -36,5 +37,5 @@ function main(): void {
       return [x];
     },
   };
-  console.log(a, fn, bad(1), t(1, 2), b.box(1), token<number>("t"), needsTwo(1));
+  console.log(a, fn, bad(1), t(1, 2), b.box(1), token<number>("t"), needsTwo(1), twoHeld);
 }
