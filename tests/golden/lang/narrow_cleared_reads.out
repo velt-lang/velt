@@ -16,3 +16,16 @@ renewed undefined undefined
 4 6 true -3
 big
 3 3
+null null null
+null [ null ] null
+undefined
+null nullx anull
+5 5 5 5 false nullx
+1 A 2 [ 1, 2 ]
+[ 5 ] [ 5, null ] [ null, 5 ] [ null, null, 5 ]
+{ a: 5, b: null } { v: 5 }
+null null
+null 2 2 a number
+5nullnullnull L:null/5 nullnull
+5 5 number
+done

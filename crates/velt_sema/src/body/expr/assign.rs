@@ -442,8 +442,9 @@ impl FnCx<'_, '_> {
             let mut place = place;
             let mut stmts = Vec::new();
             self.hoist_indices(&mut place, &mut stmts);
-            // `s += n`: the number is appended as `String(n)` writes it (#740).
-            let v = self.expr(value, Some(lty), Want::Borrow);
+            // `s += n`: the number is appended as `String(n)` writes it (#740), and a narrowed
+            // value as it is (`checked_copies`).
+            let v = self.as_is_expr(value, Some(lty), Want::Borrow);
             // `s += a` with an `any` `a` appends `String(a)`, as `s + a` does (not a checked
             // conversion to `string`).
             let v = match self.any_to_source(v) {

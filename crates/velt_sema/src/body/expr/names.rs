@@ -103,6 +103,12 @@ impl FnCx<'_, '_> {
                 return self.downcast_narrowed(l, e);
             }
         }
+        if let (Some((variant, m)), None) = (member, payload) {
+            // A checked copy of a `typeof`-narrowed field (`checked_copies`).
+            if self.is_checked_copy(l) {
+                return self.checked_member_read(l, variant, m, span);
+            }
+        }
         if let Some((variant, m)) = member {
             if self.holds_assigned_member(l) {
                 self.cx.union_view_safe(span);

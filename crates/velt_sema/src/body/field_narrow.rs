@@ -98,6 +98,13 @@ impl FnCx<'_, '_> {
         if payload.is_some() && raw {
             return h;
         }
+        // A `typeof` narrowing to one member is not needed where the field fits as it is.
+        if payload.is_none()
+            && member.is_some()
+            && !self.needs_payload(span, exp, want, local_path, h.ty)
+        {
+            return h;
+        }
         let h = match payload {
             Some(payload) if self.is_narrowed(t) => {
                 let mode = match member {

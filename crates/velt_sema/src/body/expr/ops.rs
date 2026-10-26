@@ -242,6 +242,37 @@ impl FnCx<'_, '_> {
         }
     }
 
+    /// The operands of `lhs op rhs`, checked. Arithmetic and comparisons use the payload of a
+    /// narrowed operand (`checked_copies`), except that `+` with a string converts the other
+    /// operand as it is (`"a" + s` gives `"anull"` after a call cleared `s`). The string must
+    /// be one for sure: `s + t` with both narrowed reads both payloads.
+    fn checked_operands(
+        &mut self,
+        op: ast::BinaryOp,
+        lhs: &ast::Expr,
+        rhs: &ast::Expr,
+        hint: Option<TyId>,
+    ) -> (hir::Expr, hir::Expr) {
+        if !self.has_breakable_narrowing() {
+            return self.operands(lhs, rhs, hint, Want::Borrow);
+        }
+        let concat = op == ast::BinaryOp::Add;
+        let (lc, rc) = (self.may_read_cleared(lhs), self.may_read_cleared(rhs));
+        let lhs_as_is = concat && lc && !rc && self.string_operand(rhs);
+        let rhs_as_is = concat && rc && !lc && self.string_operand(lhs);
+        let marks = (self.as_is_spans.len(), self.payload_spans.len());
+        for (e, as_is) in [(lhs, lhs_as_is), (rhs, rhs_as_is)] {
+            match as_is {
+                true => self.as_is_spans.push(bare_span(e)),
+                false => self.payload_spans.push(bare_span(e)),
+            }
+        }
+        let r = self.operands(lhs, rhs, hint, Want::Borrow);
+        self.as_is_spans.truncate(marks.0);
+        self.payload_spans.truncate(marks.1);
+        r
+    }
+
     pub(crate) fn binary(
         &mut self,
         op: ast::BinaryOp,
@@ -294,11 +325,8 @@ impl FnCx<'_, '_> {
         let (l, r) = match lit_eq {
             Some(LitEq::Done(h)) => return h,
             Some(LitEq::Operands(l, r)) => (l, r),
-            // Arithmetic and comparisons use the payload of a narrowed operand
-            // (`checked_copies`); `==` compares the value as it is.
-            None if !matches!(op, B::Eq | B::NotEq) => self.with_payload(lhs, |s| {
-                s.with_payload(rhs, |s| s.operands(lhs, rhs, hint, Want::Borrow))
-            }),
+            // `==` compares the value as it is.
+            None if !matches!(op, B::Eq | B::NotEq) => self.checked_operands(op, lhs, rhs, hint),
             None => self.operands(lhs, rhs, hint, Want::Borrow),
         };
         // An `any` or `unknown` operand, by its checked type (a variable, a field, an element,
@@ -711,5 +739,13 @@ fn simd_method_note(op: ast::BinaryOp) -> String {
         )
     } else {
         format!("SIMD values have methods instead of operators: `a.{method}(b)`")
+    }
+}
+
+/// The span of `e` without its parentheses.
+fn bare_span(e: &ast::Expr) -> velt_common::Span {
+    match &e.kind {
+        ast::ExprKind::Paren(x) => bare_span(x),
+        _ => e.span,
     }
 }

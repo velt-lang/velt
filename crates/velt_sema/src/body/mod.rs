@@ -581,6 +581,8 @@ pub(crate) struct FnCx<'a, 'm> {
     /// Reads that need the payload of a narrowed module variable, field path or checked copy:
     /// receivers, callees, operands of arithmetic and comparisons, spreads (`global_narrow`).
     pub payload_spans: Vec<Span>,
+    /// Reads whose value is used as it is (`"a" + x`): not taken as a payload.
+    pub as_is_spans: Vec<Span>,
     /// A field read that is the operand of a type test (`typeof o.f`, `o.f instanceof C`,
     /// `o.f === lit`): it reads the field as narrowed, without converting it to the union of the
     /// members left (`field_narrow`).
@@ -654,6 +656,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             refused_reads: vec![],
             raw_read: None,
             payload_spans: vec![],
+            as_is_spans: vec![],
             field_test: None,
             field_retag: false,
             view_receiver: false,

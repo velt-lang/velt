@@ -849,13 +849,19 @@ console.log(update(v, { deletedAt: null })); // { name: 'bo', deletedAt: null }
   again, like a variable a closure assigns, and stops with a `TypeError` if it became `null`
   (`` `ctx` was checked, but it was set to null before this read ``). The variable (or field
   path) is read as its payload only where that is needed: as a receiver (`ctx.m()`, `ctx.n =
-  1`), a callee, an operand of arithmetic or a comparison (`n + 1`, `n > 2`, `-n`), a spread
-  (`...xs`), a value of a non-nullable type (`use(ctx)` with `c: Ctx`, `return ctx`) or an
-  untyped element (`[ctx]`). Elsewhere (`console.log(ctx)`, a template, `===`), and as the operand
-  of a test, `?.` or `??`, it is read as it is, so `if (ctx) { reset(); ctx?.name }` gives
-  `undefined`, as in JavaScript. An untyped copy (`let c = ctx`, `const c = state.next`) holds
-  what it read, `null` included, and keeps the narrowing: its reads follow the same rule
-  (`console.log(c)` prints `null`, `c.name` stops with a `TypeError`). An assignment in the function drops the narrowing (and
+  1`), a callee, an operand of a numeric operator or a comparison (`n + 1`, `n > 2`, `-n`,
+  `s + 1`, `s + t` with both narrowed), a spread (`...xs`), where the expected type does not
+  take the value as it is (`use(ctx)` with `c: Ctx`, `return ctx` from a function returning
+  `Ctx`, `len(st.v)` with `v: string` after `typeof st.v === "string"`) or an untyped element
+  (`[ctx]`). Elsewhere it is read as it is: `console.log(ctx)`, `JSON.stringify(ctx)`, a
+  template, a `+` with a string (`"a" + s`, `s + "!"`, `s += x`), `===`, and where the expected
+  type takes it (a parameter of type `Ctx | null | undefined` or `Base | null`, or `string |
+  number` for a field `typeof` narrowed to a `string`). So is the operand of a test, `?.` or
+  `??`, so `if (ctx) { reset(); ctx?.name }` gives `undefined`, as in JavaScript. An untyped
+  copy (`let c = ctx`, `const c = state.next`, `const s = st.v` after a `typeof` test, and a
+  copy of such a copy) holds what it read, `null` or a value of another member included, and
+  keeps the narrowing: its reads follow the same rule (`console.log(c)` prints `null`, `c.name`
+  stops with a `TypeError`). An assignment in the function drops the narrowing (and
   narrows to what it assigned), and so does a loop that assigns the variable. Closures don't
   see the narrowing of the function they are made in (TypeScript keeps it in one made after
   the variable's last assignment). `typeof`, `instanceof` and union-member tests do not narrow

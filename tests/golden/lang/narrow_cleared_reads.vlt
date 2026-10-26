@@ -104,3 +104,146 @@ function operands(): void {
   if (xs) console.log(sum(...xs), [...xs, 3].length);
 }
 operands();
+
+// Expected types that take the value as it is, string `+`, and `typeof`-narrowed fields.
+function pn(v: Box | null | undefined): string {
+  return String(v);
+}
+function ps(v: Box | string | null): string {
+  return String(v);
+}
+function wide(): Box | null | undefined {
+  if (x) {
+    clearX();
+    return x;
+  }
+  return undefined;
+}
+let sv: string | null = "a";
+let acc = "";
+function clearS(): void {
+  sv = null;
+}
+let st: { v: string | number; w: string | null } = { v: "s", w: "w" };
+function toNum(): void {
+  st.v = 5;
+  st.w = null;
+}
+function pv(q: string | number): string {
+  return String(q);
+}
+function wider(): void {
+  x = new Box();
+  if (x) {
+    clearX();
+    console.log(pn(x), ps(x), JSON.stringify(x));
+    let y: Box | null | undefined = undefined;
+    y = x;
+    const list: (Box | null | undefined)[] = [];
+    list.push(x);
+    const m = new Map<string, Box | null | undefined>();
+    m.set("k", x);
+    console.log(y, list, m.get("k"));
+  }
+  console.log(wide());
+  if (sv) {
+    clearS();
+    acc += sv;
+    console.log(acc, sv + "x", "a" + sv);
+  }
+  if (typeof st.v === "string" && st.w) {
+    toNum();
+    const c = st.v;
+    console.log(st.v, `${st.v}`, c, pv(st.v), st.v === "a", st.w + "x");
+  }
+}
+wider();
+
+// A nullable supertype takes the value as it is; concatenations with a string convert it; copies
+// of `typeof`-narrowed fields keep the member; copies of copies; a clear across `await`.
+class Base2 {
+  n = 1;
+}
+class Sub2 extends Base2 {
+  m = 2;
+}
+let sub: Sub2 | null = new Sub2();
+let s2: string | null = "s";
+const st2: { v: string | number; a: number[] | string; w: string | null } = {
+  v: "a",
+  a: [1],
+  w: "w",
+};
+function clear2(): void {
+  sub = null;
+  s2 = null;
+  st2.v = 5;
+  st2.w = null;
+}
+function pb(v: Base2 | null): string {
+  return v === null ? "null" : "base";
+}
+function members(): void {
+  if (typeof st2.v === "string" && typeof st2.a !== "string") {
+    const c = st2.v;
+    const arr = st2.a;
+    const xs = arr;
+    const up = (): string => c.toUpperCase();
+    xs.push(2);
+    console.log(c.length, up(), arr.length, st2.a);
+  }
+}
+members();
+async function tick(): Promise<void> {}
+async function later(): Promise<void> {
+  if (sub && s2 && typeof st2.v === "string" && st2.w) {
+    const c = sub;
+    const d = c;
+    const e = st2.v;
+    await tick();
+    clear2();
+    console.log(pb(sub), c.m, d.m, e, typeof st2.v);
+    let acc = "";
+    acc += st2.v;
+    acc += s2;
+    acc = acc + st2.w + s2;
+    console.log(acc, "L:" + s2 + "/" + st2.v, `${s2}${st2.w}`);
+    const f = st2.v;
+    const g = f;
+    console.log(f, g, typeof g);
+  }
+}
+later().then(() => console.log("done"));
+
+// Untyped arrays and objects of cleared values: the first element does not type the others.
+let s3: string | null = "s";
+const st3: { v: string | number; w: string | null } = { v: "a", w: "w" };
+function clear3(): void {
+  s3 = null;
+  st3.v = 5;
+  st3.w = null;
+}
+function mixed(): void {
+  if (s3 && typeof st3.v === "string" && st3.w) {
+    clear3();
+    console.log([st3.v], [st3.v, s3], [s3, st3.v], [s3, st3.w, st3.v]);
+    console.log({ a: st3.v, b: s3 }, { v: st3.v });
+  }
+}
+mixed();
+
+// A generic call infers its type argument from a cleared module variable as it is.
+let gx: Box | null = new Box();
+function clearG(): void {
+  gx = null;
+}
+function same<T>(v: T): T {
+  return v;
+}
+function generic(): void {
+  if (gx) {
+    clearG();
+    console.log(same(gx), JSON.stringify(gx));
+  }
+}
+generic();
