@@ -1,0 +1,23 @@
+// A direct write to a getter-only property of an untyped object literal stays an error when
+// `Object.defineProperty` gives it a setter (TypeScript's TS2540): the setter is reached
+// through a type that declares it.
+export function make(define: boolean): number {
+  let stored = 1;
+  const o = {
+    get value(): number {
+      return stored;
+    },
+  };
+  if (define) {
+    Object.defineProperty(o, "value", {
+      get(): number {
+        return stored;
+      },
+      set(v: number) {
+        stored = v;
+      },
+    });
+  }
+  o.value = 4;
+  return o.value;
+}

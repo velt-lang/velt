@@ -750,17 +750,31 @@ does not count), and a method `I` gives a default for may be left out.
 
 - **Blanket blocks** (`extend<T extends Comparable<T>> T implements Describe`) give the
   interface to every type that meets their bounds, type parameters included: in
-  `function f<K extends Comparable<K>>(k: K)`, `k.describe()` works and `k` may be passed where
-  a `Describe` is required.
-- **The most specific block wins** for each type, by the rule above: with the blanket block and
+  `function f<K extends Comparable<K>>(k: K)`, `k.describe()` works and `k` meets a
+  `T extends Describe` bound (`show(k)` with `function show<T extends Describe>(x: T)`). A value
+  of a type parameter does not convert to a `Describe` value, whatever its bounds.
+- **A type's own implementation comes first**: a class that says `implements Describe`, or
+  inherits it from a base class, keeps its own methods, and a blanket block applies to the
+  types without one. A block for a type that already implements the interface is an error.
+- **The most specific block wins** for each other type, by the rule above: with the blanket block and
   `extend u64 implements Describe`, a `u64` uses the `u64` block everywhere, in generic code too
   (`f(5 as u64)` calls it through `K`), and every other comparable type uses the blanket one.
   Generic code is compiled for each type it is used with, so the call is direct: specializing a
   generic function or class for some types costs nothing at run time.
-- **Errors**: a missing or mismatched method; two blocks for one interface that are equally
-  specific (``conflicting implementations of `I` ``), or a block for an interface the type
-  already implements (`` `P` already implements `I` ``); an interface with fields
-  (``cannot implement `I`: `I` declares fields``: an `extend` block cannot add fields).
+- **Errors**: a missing or mismatched method; two blocks for one interface that can both fit a
+  type where neither is more specific (``conflicting implementations of `I` ``, naming a type
+  both fit: `extend<A> Pair<A, i64>` and `extend<B> Pair<i64, B>` both fit `Pair<i64, i64>`),
+  in one module or in two; a block for an interface the type already implements
+  (`` `P` already implements `I` ``, also for an interface type and an interface it extends); an
+  interface with fields or optional methods (``cannot implement `I`: `I` declares fields``: an
+  `extend` block cannot add fields); a target that is `any`, `unknown`, `never` or a union (a
+  union's value has one member's type: implement the interface for each member); a blanket
+  block bounded by the interface it implements (`extend<T extends I> T implements I`), which
+  no type could get. Blocks whose bounds lead back to each other (`extend<T extends I> T
+  implements J` with `extend<U extends J> U implements I`) give a type neither interface unless
+  it has one of its own.
+- A value converted from `any` or `unknown` to `I` uses the implementation a direct conversion of
+  the value would.
 - `extend X implements Comparable<X>` may be written out too; a block that only defines
   `compareTo` or `[Symbol.iterator]()` implements `Comparable` or `Iterable` without it (above).
 

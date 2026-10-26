@@ -47,7 +47,12 @@ impl super::Cx<'_> {
         }
     }
 
-    fn match_all(&self, xs: &[TyId], ys: &[TyId], binds: &mut Vec<Option<TyId>>) -> bool {
+    pub(super) fn match_all(
+        &self,
+        xs: &[TyId],
+        ys: &[TyId],
+        binds: &mut Vec<Option<TyId>>,
+    ) -> bool {
         xs.len() == ys.len() && xs.iter().zip(ys).all(|(x, y)| self.match_ty(*x, *y, binds))
     }
 
@@ -76,7 +81,7 @@ impl super::Cx<'_> {
     }
 
     /// `ty` followed by its base classes (an impl for a base class also serves subclasses).
-    fn self_and_bases(&mut self, ty: TyId) -> Vec<TyId> {
+    pub(super) fn self_and_bases(&mut self, ty: TyId) -> Vec<TyId> {
         let mut out = vec![ty];
         let mut cur = ty;
         while let TyKind::Adt(d, args) = self.kind(cur) {
@@ -102,96 +107,6 @@ impl super::Cx<'_> {
             by_iface.into_iter().map(|(k, v)| (k, v.into())).collect()
         });
         index.get(&iface).cloned().unwrap_or_else(|| Rc::from([]))
-    }
-
-    /// The impl of `iface<iargs>` for concrete `ty` (or a base class of it): its index.
-    pub(super) fn find_impl(&mut self, iface: DefId, iargs: &[TyId], ty: TyId) -> u32 {
-        self.impl_for(iface, iargs, ty, 0).unwrap_or_else(|| {
-            ice(format_args!(
-                "no impl of interface for type `{}`",
-                self.type_name(ty)
-            ))
-        })
-    }
-
-    /// The first impl (in `impls` order) of `iface<iargs>` that fits `ty` or its nearest base
-    /// class; when that is an `extend … implements` block's, the most specific such block that
-    /// fits (`hir::Program::extension_impls`). `depth` guards bounds checked through impls.
-    fn impl_for(&mut self, iface: DefId, iargs: &[TyId], ty: TyId, depth: u32) -> Option<u32> {
-        if depth > 32 {
-            return None;
-        }
-        let impls = self.impls_of(iface);
-        for cand in self.self_and_bases(ty) {
-            for &i in impls.iter() {
-                if !self.impl_fits(i, iargs, cand, depth) {
-                    continue;
-                }
-                if !self.hir.extension_impls.contains_key(&i) {
-                    return Some(i);
-                }
-                let mut best = i;
-                for &j in impls.iter() {
-                    if j != best
-                        && self.hir.extension_impls.contains_key(&j)
-                        && self.ext_more_specific(j, best)
-                        && self.impl_fits(j, iargs, cand, depth)
-                    {
-                        best = j;
-                    }
-                }
-                return Some(best);
-            }
-        }
-        None
-    }
-
-    /// Does impl `i` implement `<iargs>` for `ty`, its bounds (an `extend` block's) holding?
-    fn impl_fits(&mut self, i: u32, iargs: &[TyId], ty: TyId, depth: u32) -> bool {
-        let imp = &self.hir.impls[i as usize];
-        let mut binds = vec![None; imp.generics as usize];
-        let fits = self.match_ty(imp.ty, ty, &mut binds)
-            && imp.iface_args.len() == iargs.len()
-            && self.match_all(&imp.iface_args, iargs, &mut binds);
-        if !fits {
-            return false;
-        }
-        let Some(bounds) = self.hir.extension_impls.get(&i).cloned() else {
-            return true;
-        };
-        let args: Vec<TyId> = binds
-            .into_iter()
-            .map(|b| b.unwrap_or_else(|| ice("impl type parameter left unbound")))
-            .collect();
-        bounds.iter().all(|b| {
-            let t = args[b.param as usize];
-            let bargs: Vec<TyId> = b.args.iter().map(|&a| self.subst(a, &args)).collect();
-            self.impl_for(b.iface, &bargs, t, depth + 1).is_some()
-        })
-    }
-
-    /// Is `extend` impl `a` strictly more specific than impl `b`: its target an instance of
-    /// `b`'s and not the reverse, or the same pattern where only `a` has bounds (sema's
-    /// `Ctx::ext_more_specific`)?
-    fn ext_more_specific(&self, a: u32, b: u32) -> bool {
-        let (pa, pb) = (&self.hir.impls[a as usize], &self.hir.impls[b as usize]);
-        let instance = |t: TyId, pat: TyId, n: u32| {
-            let mut binds = vec![None; n as usize];
-            self.match_ty(pat, t, &mut binds)
-        };
-        if !instance(pa.ty, pb.ty, pb.generics) {
-            return false;
-        }
-        if !instance(pb.ty, pa.ty, pa.generics) {
-            return true;
-        }
-        let bounded = |i: u32| {
-            self.hir
-                .extension_impls
-                .get(&i)
-                .is_some_and(|bs| !bs.is_empty())
-        };
-        bounded(a) && !bounded(b)
     }
 
     /// Method `slot` of impl `index` for concrete `ty`: the def and its type args. A default

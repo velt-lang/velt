@@ -170,3 +170,9 @@ export function __unknownSetOut(v: unknown, s: Set<unknown>): void {
     a.add(x);
   }
 }
+
+/**
+ * TypeScript's `ReadonlySet<T>`: a `Set<T>` that a variable or parameter declared with this
+ * type may not change (`add`, `delete` and `clear` are errors through it).
+ */
+export type ReadonlySet<T> = Set<T>;

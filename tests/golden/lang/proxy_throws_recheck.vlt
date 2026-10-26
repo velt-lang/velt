@@ -1,0 +1,31 @@
+// A `Proxy` trap that throws (#1174) in a program that is checked again, once for a function
+// type of the same shape written in the program that got the error, and once with sharing (a
+// closure held over an array that is changed, #1442): it compiles, and the trap's error that
+// nothing catches ends the process with Node's report.
+class Boom extends Error {}
+
+let keys: (t: any) => any = (t) => t;
+
+function install() {
+  keys = (t) => {
+    throw new Boom("user");
+  };
+}
+
+const p = new Proxy({} as any, {
+  ownKeys(t) {
+    throw new Boom("trap");
+  },
+});
+
+function held() {
+  const xs = [1, 2, 3];
+  const count = () => xs.length;
+  const ys = xs;
+  ys.push(4);
+  console.log(count(), xs.length);
+}
+
+install();
+held();
+console.log(Object.keys(p));

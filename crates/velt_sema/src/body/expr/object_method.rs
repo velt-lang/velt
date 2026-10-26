@@ -13,7 +13,10 @@
 //!
 //! An object literal is plain data in Velt (its type has fields only; the parser makes a plain
 //! method a field holding an arrow), so other generator methods, other members next to the
-//! iterator method, and `this` in it are errors that say what to write.
+//! iterator method, and `this` in it are errors that say what to write, except where the
+//! literal implements an interface with methods (`IterableIterator<T>`, `iface_object.rs`): there
+//! the iterator method is a member like the others ([`FnCx::methods_as_values`]), and `this` in
+//! it is the object.
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast::{self, SYMBOL_ASYNC_ITERATOR, SYMBOL_ITERATOR};
@@ -23,6 +26,25 @@ use crate::body::{FnCx, Want};
 use crate::hir::{self, TyId, TyKind};
 
 impl FnCx<'_, '_> {
+    /// An object literal with a method where `exp` is expected: with other members, or `this`
+    /// (the object), the method is one of the members of a literal implementing the expected
+    /// interface with methods; else an iterable object.
+    pub(super) fn method_object_for(
+        &mut self,
+        props: &[ast::ObjectProp],
+        exp: Option<TyId>,
+        span: Span,
+    ) -> hir::Expr {
+        if let Some(target) = self
+            .literal_iface(exp)
+            .filter(|_| Self::method_member(props))
+        {
+            let props = Self::methods_as_values(props);
+            return self.iface_object(&props, target, span);
+        }
+        self.method_object(props, span)
+    }
+
     /// An object literal with a method (see the module docs).
     pub(super) fn method_object(&mut self, props: &[ast::ObjectProp], span: Span) -> hir::Expr {
         let Some(d) = self.iterator_method(props, span) else {
@@ -57,6 +79,32 @@ impl FnCx<'_, '_> {
         let obj = self.expr(&new, None, Want::Move);
         self.pop_scope();
         self.with_lets(lets, obj)
+    }
+
+    /// `props` with each `[Symbol.iterator]()` / `[Symbol.asyncIterator]()` method (the only
+    /// methods the parser keeps as methods) as a property holding the function, as the parser
+    /// makes other methods: `[Symbol.iterator]: (this) => { … }`, or a generator function for
+    /// `*[Symbol.iterator]()`. For a literal implementing an interface (module docs).
+    fn methods_as_values(props: &[ast::ObjectProp]) -> Vec<ast::ObjectProp> {
+        props
+            .iter()
+            .map(|p| match p {
+                ast::ObjectProp::Method(d) => {
+                    ast::ObjectProp::KeyValue(d.sig.name.clone(), method_value(d))
+                }
+                p => p.clone(),
+            })
+            .collect()
+    }
+
+    /// Does a literal with `props` and an iterator method have other members, or use `this` in
+    /// the method?
+    fn method_member(props: &[ast::ObjectProp]) -> bool {
+        props.len() > 1
+            || props.iter().any(|p| match p {
+                ast::ObjectProp::Method(d) => this_in(&d.body).is_some(),
+                _ => false,
+            })
     }
 
     /// The literal's `[Symbol.iterator]()` / `[Symbol.asyncIterator]()` method, if it is its one
@@ -200,6 +248,69 @@ impl FnCx<'_, '_> {
         };
         let d = self.cx.prelude_iface(name)?;
         Some(self.cx.ty.intern(TyKind::Dyn(d, vec![t, e])))
+    }
+}
+
+/// Method `d` of an object literal as the function its property holds; with a `this`
+/// parameter (`ast::METHOD_THIS`) when its body uses `this`, as the parser gives other methods.
+fn method_value(d: &ast::FnDecl) -> ast::Expr {
+    let at = Span::new(d.sig.name.span.file, d.sig.name.span.lo, d.sig.name.span.lo);
+    let this = this_in(&d.body).map(|_| ast::Ident {
+        name: ast::METHOD_THIS.into(),
+        span: at,
+    });
+    if d.sig.is_generator {
+        let mut f = d.clone();
+        f.sig.name.name = String::new();
+        if let Some(name) = this {
+            let ty = ast::TypeExpr {
+                kind: ast::TypeExprKind::Infer(name.clone()),
+                span: at,
+            };
+            let param = ast::Param {
+                name,
+                pattern: None,
+                ty,
+                default: None,
+                optional: false,
+                rest: false,
+                span: at,
+            };
+            f.sig.params.insert(0, param);
+        }
+        return ast::Expr {
+            id: ast::NodeId(u32::MAX),
+            kind: ast::ExprKind::Function(Box::new(f)),
+            span: d.sig.span,
+        };
+    }
+    let own = d.sig.params.iter().map(|p| ast::ArrowParam {
+        name: p.name.clone(),
+        pattern: p.pattern.clone(),
+        ty: Some(p.ty.clone()),
+        default: p.default.clone(),
+        optional: p.optional,
+        rest: p.rest,
+    });
+    let this = this.map(|name| ast::ArrowParam {
+        name,
+        pattern: None,
+        ty: None,
+        default: None,
+        optional: false,
+        rest: false,
+    });
+    ast::Expr {
+        id: ast::NodeId(u32::MAX),
+        kind: ast::ExprKind::Arrow {
+            type_params: vec![],
+            params: this.into_iter().chain(own).collect(),
+            ret: d.sig.ret.clone(),
+            throws: d.sig.throws.clone(),
+            body: ast::ArrowBody::Block(d.body.clone()),
+            is_async: d.sig.is_async,
+        },
+        span: d.sig.span,
     }
 }
 

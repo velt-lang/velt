@@ -1,0 +1,26 @@
+// A recursion through an interface getter whose error type the next check cannot carry (an
+// object type): the note shows the getter declaration with the `throws` clause to write.
+interface Tree {
+  get size(): string;
+}
+class Leaf implements Tree {
+  get size(): string {
+    return "1";
+  }
+}
+class Pair implements Tree {
+  constructor(public left: Tree) {}
+  get size(): string {
+    let n = "";
+    try {
+      n = this.left.size;
+    } catch (e) {
+      console.log("inner");
+      throw e;
+    }
+    if (n === "") throw { code: "empty" };
+    return n + "+1";
+  }
+}
+const t: Tree = new Pair(new Pair(new Leaf()));
+console.log(t.size);

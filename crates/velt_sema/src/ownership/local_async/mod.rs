@@ -141,14 +141,19 @@ fn crossing_params(cx: &mut Ctx, g: &Graph, p: &mut Propagation) -> bool {
             };
             if p.flags[i] & CROSSES != 0 {
                 for ty in instances(cx, g, c, g.tys[n]) {
-                    found.push((ty, k, p.why[i][0]));
+                    found.push((ty, k, p.why[i][0], c));
                 }
             }
         }
     }
     let mut changed = false;
-    for (ty, k, why) in found {
-        for (callee, args, span, std) in &g.indirect {
+    for (ty, k, why, c) in found {
+        for (callee, args, span, std, only) in &g.indirect {
+            // A call through a variable holding only closures of one function
+            // (`crate::defined_accessors`) reaches no closure of another.
+            if only.is_some_and(|d| outermost(g, d) != outermost(g, c)) {
+                continue;
+            }
             if let Some(&a) = args.get(k) {
                 if p.flags[a] & CROSSES == 0 && types::may_be(cx, ty, *callee) {
                     p.set(a, CROSSES, why.map(|w| w.through(Some((*span, *std)))));
@@ -158,6 +163,17 @@ fn crossing_params(cx: &mut Ctx, g: &Graph, p: &mut Propagation) -> bool {
         }
     }
     changed
+}
+
+/// The function that closure `c` is written in, outside every closure (`c` itself if it is no
+/// closure).
+fn outermost(g: &Graph, mut c: DefId) -> DefId {
+    let mut hops = 0;
+    while let (Some(&p), true) = (g.parent.get(&c), hops < 64) {
+        c = p;
+        hops += 1;
+    }
+    c
 }
 
 /// The types closure literal `c` (of type `ty`) has in the instantiations of the generic

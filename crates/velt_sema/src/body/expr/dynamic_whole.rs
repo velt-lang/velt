@@ -63,4 +63,18 @@ impl FnCx<'_, '_> {
             false => self.coerce(value, exp),
         }
     }
+
+    /// The element type of an empty array literal expected as `exp`: `never`, but `any` when
+    /// it converts to an `any` or `unknown` in user code (`const xs: any = []` is an `any[]`,
+    /// which takes elements of every type, as TypeScript's evolving `any[]` does).
+    pub(super) fn empty_literal_elem(&mut self, exp: Option<TyId>) -> TyId {
+        let never = self.cx.ty.never;
+        let dynamic = exp.and_then(|t| self.cx.dynamic(t));
+        if !matches!(dynamic, Some(Dynamic::Any | Dynamic::Unknown))
+            || self.cx.scopes[self.module].is_std
+        {
+            return never;
+        }
+        self.any_ty().unwrap_or(never)
+    }
 }

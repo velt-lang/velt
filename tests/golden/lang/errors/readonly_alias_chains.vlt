@@ -1,0 +1,31 @@
+// Read-only collections through chains of aliases, `| null | undefined` on either side, unions
+// of union aliases, generic aliases of generic aliases, and a `let` declared with one and
+// assigned later: TypeScript's TS2339 for each write.
+type A0 = ReadonlySet<string>;
+type A1 = A0;
+type A2 = A1;
+type U1 = A2 | null | undefined;
+type U2 = undefined | A1;
+type U3 = U1 | null;
+type G<T> = ReadonlySet<T>;
+type GG<T> = G<T>;
+type GN<T> = G<T> | null;
+type GA<T> = ReadonlyArray<T>;
+type M2<K, V> = ReadonlyMap<K, V>;
+type M3 = M2<string, number> | undefined;
+function f(a: A2, b: U1, c: U2, d: U3, e: G<number>, g: GG<string>, h: GN<number>, i: GA<string>, m: M3): void {
+  a.add("x");
+  b?.add("x");
+  c?.add("x");
+  d?.add("x");
+  e.add(1);
+  g.add("x");
+  h?.add(1);
+  i.push("x");
+  m?.set("k", 1);
+  const local: U3 = new Set<string>();
+  local?.add("y");
+  let later: G<string> | undefined;
+  later = new Set<string>();
+  later.add("z");
+}

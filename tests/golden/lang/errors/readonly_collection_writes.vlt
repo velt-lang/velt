@@ -1,0 +1,11 @@
+// TypeScript's error for changing a `ReadonlySet` or `ReadonlyMap`: the methods that change
+// the collection don't exist on it (TS2339).
+function f(s: ReadonlySet<string>, m: ReadonlyMap<string, number>): void {
+  s.add("x");
+  s.delete("x");
+  m.set("a", 1);
+  m.clear();
+  console.log(s.has("x"), m.get("a"));
+}
+const ro: ReadonlySet<number> = new Set([1]);
+ro.clear();

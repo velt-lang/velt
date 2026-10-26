@@ -1,0 +1,16 @@
+// check: no leaks
+// An argument the implementation leaves out of a signature's adapted callback is `undefined`, as
+// in Node, where the callback's parameter type admits it.
+type Ctx = { n: number };
+function setup<R, T1>(fn: (ctx: Ctx, p1: T1) => R): R;
+function setup<R>(fn: (ctx: Ctx, ...args: unknown[]) => R): R { return fn({ n: 1 }); }
+console.log(setup((c: Ctx, p1: number | undefined) => `${c.n} ${p1 ?? "none"}`));
+function two<A, B>(fn: (x: A, y: B) => string): string;
+function two(fn: (...args: unknown[]) => string): string { return fn(1); }
+console.log(two((x: number | undefined, y: string | undefined) => `${x}/${y}`));
+function opt<T1>(fn: (p: T1) => string): string;
+function opt(fn: (...args: unknown[]) => string): string { return fn() + fn("given"); }
+console.log(opt((p: string | undefined) => `[${p}]`));
+// A parameter with a default takes it for a left-out argument, as in Node.
+console.log(setup((c: Ctx, p1: number = 5) => `${c.n} ${p1}`));
+console.log(setup((c: Ctx, p1: number = 5) => { const d = p1 * 2; return `${c.n} ${d}`; }));

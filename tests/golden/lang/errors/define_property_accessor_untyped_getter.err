@@ -1,0 +1,1 @@
+define_property_accessor_untyped_getter.vlt:9:3: error: `Object.defineProperty` of an accessor `value` on `o`, whose getter `value` has no written result type, is not supported yet

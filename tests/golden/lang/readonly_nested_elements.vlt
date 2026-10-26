@@ -1,0 +1,9 @@
+// An element of a read-only array may itself change (`j[0].push(x)` with `j: readonly T[][]`),
+// as in TypeScript; only assigning the element is an error.
+function f(j: readonly number[][]): void {
+  j[0].push(1);
+  j[0][0] = 5;
+}
+const a = [[0]];
+f(a);
+console.log(a);

@@ -1,1 +1,0 @@
-TypeError: comparing an object or a function with `<`, `>`, `<=` or `>=` through `any` is not supported yet (#924)
