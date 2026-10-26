@@ -113,10 +113,10 @@ function refreshEdge<K extends Comparable<K>, V>(p: Pool<K, V>, right: bool) {
     p.pathSlots.push(slot);
     node = p.innerKids[(node as usize) * F + slot];
   }
-  for (let d: usize = 0; d < (p.pathNodes.length as usize); d++) {
+  for (let d: usize = 0; d < p.pathNodes.length; d++) {
     p.refreshInner(p.pathNodes[d], p.fencesAt(d));
   }
-  p.refreshLeaf(node, p.fencesAt(p.pathNodes.length as usize));
+  p.refreshLeaf(node, p.fencesAt(p.pathNodes.length));
 }
 
 /** Whether `key` (window `win`) is the smallest or the largest key (windows first, then keys). */

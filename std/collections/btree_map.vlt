@@ -83,7 +83,7 @@ export class BTreeMap<K extends Comparable<K>, V> implements Iterable<[K, V]> {
     const slots: usize[] = [];
     slots.reserve(BATCH);
     for (let start: usize = 0; start < keys.length; start += BATCH) {
-      const total = keys.length as usize;
+      const total: usize = keys.length;
       const m = total - start < BATCH ? total - start : BATCH;
       descendMany(this.p, keys, start, m, leaves, slots);
       for (let j: usize = 0; j < m; j++) {

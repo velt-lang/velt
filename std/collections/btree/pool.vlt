@@ -537,7 +537,7 @@ export class Pool<K extends Comparable<K>, V> {
     if (this.freeInners.length > 0) {
       return this.freeInners.pop()!;
     }
-    const id = ((this.innerLines.length as usize) >> this.lineShift) as u32;
+    const id = (this.innerLines.length >> this.lineShift) as u32;
     for (let i: usize = 0; i < F; i++) {
       this.innerKeys.push(this.fill[0]);
       this.innerKids.push(0);

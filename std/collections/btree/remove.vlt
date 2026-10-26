@@ -32,7 +32,7 @@ export function removeAt<K extends Comparable<K>, V>(p: Pool<K, V>, leaf: u32, s
 }
 
 function rebalanceLeaf<K extends Comparable<K>, V>(p: Pool<K, V>, leaf: u32) {
-  const depth = (p.pathNodes.length as usize) - 1;
+  const depth: usize = p.pathNodes.length - 1;
   const parent = p.pathNodes[depth];
   const slot = p.pathSlots[depth];
   const pb = (parent as usize) * F;

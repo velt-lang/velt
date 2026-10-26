@@ -215,8 +215,9 @@ impl FnCx<'_, '_> {
         let h = self.with_lets(temps, h);
         // `Object.keys(r).sort()`: the temporary array it sorted (`in_place_chain`).
         let h = self.in_place_value(e, h);
-        // An integer from the standard library is a number in user code (`numbers`).
-        let h = self.std_number(h);
+        // An integer from the standard library is a number in user code (`numbers`), unless an
+        // integer type that holds it is expected.
+        let h = self.std_number(h, self.hint(exp));
         // An `any | null` (a generic `T | undefined` with `T = any`: `Map.get`, `find`, an
         // optional field) is an `any` in user code, as in TypeScript.
         let h = self.collapse_dynamic_option(h);

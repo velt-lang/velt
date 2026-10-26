@@ -92,7 +92,26 @@ and memory where you want a fixed width; code shared with TypeScript never names
   `entries()` and of array callbacks (inside the standard library they stay `usize`/`i64`).
   Velt's own modules (`velt:sqlite`, `velt:hash`, `velt:bigint`, …) and the methods JS has no
   counterpart of (`compareTo`, `leadingZeros`, `trailingZeros`, `countOnes`) keep the integer
-  types they declare, as do a program's and its packages' own functions and `extend` methods. A number passed to an integer parameter of a standard library
+  types they declare, as do a program's and its packages' own functions and `extend` methods.
+- **Where an integer type is expected, the standard library's integers convert by
+  themselves**: such a `number` is an integer below 2^53, so it converts implicitly to an
+  integer type that holds every value it can have, as the integer itself (no conversion
+  happens at run time). A length or a size goes into `usize`, `u64`, `i64` or `isize`, and an
+  index that can be `-1` (`indexOf`) into `i64` or `isize`. That covers a declared local, a
+  parameter, a field, a return value or an explicit type argument, and arithmetic or a shift
+  next to such an integer. With no integer type expected it stays a number, as in TypeScript:
+  ```ts
+  function at(xs: string[], i: usize): string {
+    return xs[i];
+  }
+  const xs = ["a", "b", "c"];
+  const n: usize = xs.length; // 3
+  let depth: usize = 1;
+  depth += xs.length; // 4
+  console.log(n, depth, at(xs, xs.length - 1)); // 3 4 c
+  console.log(xs.length / 2); // 1.5: a number
+  ```
+  Narrower types still need `as` (`xs.length as u32`), and so does `usize` for `indexOf`. A number passed to an integer parameter of a standard library
   function converts like JS's `ToIntegerOrInfinity` (truncated; `NaN` is 0):
   `xs.slice(0, xs.length / 2)` takes the first half. A callback that the standard library
   expects to return a number, such as a `sort` comparator, may return an integer of any type:

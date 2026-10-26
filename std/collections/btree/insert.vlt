@@ -74,7 +74,7 @@ export function insert<K extends Comparable<K>, V>(p: Pool<K, V>, key: K, value:
     appendEntry(p, right, pos - half, key, value, win);
   }
   const sep = p.keyAt(slotAtRank(p, right, 0));
-  const [low, high] = p.fencesAt(p.pathNodes.length as usize);
+  const [low, high] = p.fencesAt(p.pathNodes.length);
   p.refreshLeafIfChanged(leaf, [low, sep]);
   p.refreshLeafIfChanged(right, [sep, high]);
   addSeparator(p, sep, right);
@@ -84,7 +84,7 @@ export function insert<K extends Comparable<K>, V>(p: Pool<K, V>, key: K, value:
 function addSeparator<K extends Comparable<K>, V>(p: Pool<K, V>, sep0: K, right0: u32) {
   let sep = sep0;
   let right = right0;
-  let depth = p.pathNodes.length as usize;
+  let depth: usize = p.pathNodes.length;
   while (depth > 0) {
     depth--;
     const node = p.pathNodes[depth];
@@ -177,7 +177,7 @@ function shiftToSibling<K extends Comparable<K>, V>(
   if (p.height == 0) {
     return [NONE, 0];
   }
-  const depth = (p.pathNodes.length as usize) - 1;
+  const depth: usize = p.pathNodes.length - 1;
   const parent = p.pathNodes[depth];
   const slot = p.pathSlots[depth];
   const pb = (parent as usize) * F;

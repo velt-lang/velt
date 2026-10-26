@@ -234,7 +234,7 @@ impl FnCx<'_, '_> {
     ) -> hir::Expr {
         // `xs.length`, a `size` getter: a number in user code (`numbers`).
         let h = self.member_value(obj, prop, want, span);
-        self.std_number(h)
+        self.std_number(h, None)
     }
 
     fn member_value(
