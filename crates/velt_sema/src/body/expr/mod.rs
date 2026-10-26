@@ -328,7 +328,10 @@ impl FnCx<'_, '_> {
                 Some(h) => h,
                 None => match self.ctor_name_read(object, prop, span) {
                     Some(h) => h,
-                    None => self.member(object, prop, *optional, exp, want, span),
+                    None => match self.symbol_record_member(object, prop, span) {
+                        Some(h) => h,
+                        None => self.member(object, prop, *optional, exp, want, span),
+                    },
                 },
             },
             A::Index {

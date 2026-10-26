@@ -2135,7 +2135,9 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   `(v as Record<symbol, unknown>)[BRAND] === true` reads the member `BRAND` names, or
   `undefined`, as a value of the record's value type (`unknown` must be narrowed before use, as
   TypeScript's TS2322 says). A string key (`["a"]`, `.a`, TypeScript's TS2339) and any key that is not a symbol (a `string` or `symbol | string`
-  variable, TS7053) are errors, and so is any other use of the cast: writing through it and keeping it are not supported yet.
+  variable, TS7053) are errors; an `any` key reads as through `any`. A key computed by a call or a
+  condition and a well-known symbol (`[Symbol.iterator]`) are not supported yet, and neither is
+  any other use of the cast: writing through it and keeping it are not supported yet.
   With `string` keys a record is *open*: `r[k]` and `r.name` are `V | undefined`, `r[k] = v`
   inserts or replaces, `r[k] ??= v` sets a missing key, and `delete r[k]` removes. Because a
   key may be missing, `r[k] += 1`, `r[k]++` and the other compound assignments are errors on an

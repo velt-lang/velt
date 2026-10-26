@@ -32,14 +32,24 @@ impl FnCx<'_, '_> {
                 | ast::ExprKind::Template { .. }
                 | ast::ExprKind::Member { .. }
         );
-        let found = match simple {
-            true => {
-                let k = self.expr(index, None, Want::Borrow);
-                let bad =
-                    !matches!(self.cx.ty.kind(k.ty), TyKind::Symbol) && !self.cx.ty.is_bottom(k.ty);
-                bad.then(|| self.cx.display(k.ty))
-            }
-            false => Some("a computed value".to_string()),
+        if !simple {
+            // A call (`[mk()]`) would be evaluated twice to know its type first.
+            self.cx.error(
+                Diagnostic::error(
+                    "a computed key of a `Record<symbol, ...>` cast is not supported yet",
+                    index.span,
+                )
+                .with_note("hold the key in a variable first: `const k = mk(); (v as Record<symbol, unknown>)[k]`"),
+            );
+            self.expr(expr, None, Want::Borrow);
+            return Some(self.error_expr(span));
+        }
+        let found = {
+            let k = self.expr(index, None, Want::Borrow);
+            let ok = self.is_symbol_key(k.ty)
+                || self.cx.ty.is_bottom(k.ty)
+                || matches!(self.cx.dynamic(k.ty), Some(crate::any::Dynamic::Any));
+            (!ok).then(|| self.cx.display(k.ty))
         };
         if let Some(found) = found {
             self.cx.error(
@@ -80,6 +90,43 @@ impl FnCx<'_, '_> {
         let h = self.expr(&read, None, Want::Move);
         let v = self.resolve(value);
         Some(self.coerce(h, v))
+    }
+
+    /// Is `t` a symbol, or a union of symbols (`typeof S | typeof T`)?
+    fn is_symbol_key(&mut self, t: hir::TyId) -> bool {
+        if matches!(self.cx.ty.kind(t), TyKind::Symbol) {
+            return true;
+        }
+        match self.cx.union_members(t) {
+            Some(ms) => ms
+                .iter()
+                .all(|m| matches!(self.cx.ty.kind(*m), TyKind::Symbol)),
+            None => false,
+        }
+    }
+
+    /// `(v as Record<symbol, V>)[Symbol.iterator]` (a well-known symbol, which the parser gives
+    /// as a member): not supported yet, as reading one through `any` is not (#924).
+    pub(super) fn symbol_record_member(
+        &mut self,
+        object: &ast::Expr,
+        prop: &ast::Ident,
+        span: Span,
+    ) -> Option<hir::Expr> {
+        if !prop.name.starts_with("[Symbol.") {
+            return None;
+        }
+        let (expr, ty) = symbol_record_cast(object)?;
+        symbol_record_value(ty)?;
+        self.cx.error(Diagnostic::error(
+            format!(
+                "reading `{}` through a `Record<symbol, ...>` cast is not supported yet (#924)",
+                prop.name.trim_start_matches('[').trim_end_matches(']')
+            ),
+            prop.span,
+        ));
+        self.expr(expr, None, Want::Borrow);
+        Some(self.error_expr(span))
     }
 
     /// `v as Record<symbol, V>` anywhere but in the read above: an error.
