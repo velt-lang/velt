@@ -69,6 +69,9 @@ impl FnCx<'_, '_> {
         let Some(t) = self.find_token(root, &path) else {
             return h;
         };
+        // A field path of a local (not of a module variable, without a `r[k]` key).
+        let local_path =
+            self.token_global_ty(root).is_none() && !path.iter().any(|p| p.starts_with('\0'));
         let allowed = self.allowed_members(t);
         let member = match (&union, allowed.as_deref()) {
             (Some(ms), Some(&[v])) => Some((v, ms[v as usize])),
@@ -88,8 +91,11 @@ impl FnCx<'_, '_> {
             _ => hir::UseMode::Borrow,
         };
         let span = h.span;
-        // The operand of a null test reads the field as it is (`test_operand`).
-        if payload.is_some() && self.raw_read == Some(span) {
+        // A read that does not need the payload (`console.log(o.f)`, a test operand) reads the
+        // field as it is: a call may have cleared it (`checked_copies`).
+        let raw = self.raw_read == Some(span)
+            || (self.is_narrowed(t) && !self.needs_payload(span, exp, want, local_path, h.ty));
+        if payload.is_some() && raw {
             return h;
         }
         let h = match payload {
@@ -389,6 +395,15 @@ impl FnCx<'_, '_> {
         for p in paths {
             self.unnarrow_fields(p);
         }
+    }
+
+    /// The token of field path `e` if a test in this function made one.
+    pub(crate) fn existing_field_token(&mut self, e: &ast::Expr) -> Option<LocalId> {
+        if self.f.field_tokens.is_empty() {
+            return None;
+        }
+        let (root, path) = self.field_path(e, false)?;
+        self.find_token(root, &path)
     }
 
     /// The tokens of the field paths rooted at local `l`.

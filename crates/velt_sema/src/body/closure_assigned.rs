@@ -96,9 +96,15 @@ impl FnCx<'_, '_> {
             crate::hir::Nothing::Both => "null or undefined",
             n => n.word(),
         });
-        let msg = format!(
-            "TypeError: `{name}` was checked, but a closure set it to {what} before this use"
-        );
+        let msg = match self.is_checked_copy(l) {
+            // A copy of a checked module variable or field (`checked_copies`).
+            true => {
+                format!("TypeError: `{name}` was copied from a checked value, but it is {what}")
+            }
+            false => format!(
+                "TypeError: `{name}` was checked, but a closure set it to {what} before this use"
+            ),
+        };
         let mode = self.use_mode(ty, super::Want::Borrow);
         let h = self.mk(crate::hir::ExprKind::Local(l, mode), ty, span);
         self.checked_present(h, &msg, None, want != super::Want::Move, span)

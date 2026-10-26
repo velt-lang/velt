@@ -1,0 +1,106 @@
+// check: no leaks
+// A narrowed module variable, field path or `r[k]` that a call cleared reads as it is wherever
+// its payload is not needed, as in JavaScript (#1280): a log, a template, a test, `?.`, `??`,
+// `===`, an untyped copy (`let c = x`, which keeps the narrowing and checks it where needed).
+// Receivers, callees, operands, untyped elements and typed positions read the payload.
+class Box {
+  n: number = 1;
+  next: Box | null = null;
+  m(v: number): number {
+    return this.n + v;
+  }
+}
+let x: Box | null = new Box();
+function clearX(): number {
+  x = null;
+  return 0;
+}
+function vars(): void {
+  if (x) {
+    clearX();
+    console.log("log", x, `${x}`, x === null, x?.n, x ?? "none");
+    if (x) console.log("never");
+    let c = x;
+    const d = x;
+    console.log("copies", c, d, c?.n);
+    c = new Box();
+    console.log(c.n);
+  }
+  x = new Box();
+  if (x) console.log(x.m(clearX()), x);
+}
+vars();
+
+class O {
+  f: Box | null = new Box();
+}
+const o = new O();
+function clearF(): void {
+  o.f = null;
+}
+let state: { next: Box | null } = { next: new Box() };
+function reset(): number {
+  state.next = null;
+  return 0;
+}
+function fields(): void {
+  if (o.f) {
+    clearF();
+    console.log("log", o.f, `${o.f}`, o.f?.n, o.f ?? "none");
+  }
+  if (state.next) {
+    reset();
+    console.log(state.next);
+    console.log(state.next?.n);
+    const c = state.next;
+    console.log("copy", c);
+  }
+  state.next = new Box();
+  if (state.next) {
+    console.log(state.next.m(reset()));
+    console.log(state.next);
+  }
+  const local = new O();
+  if (local.f) {
+    const alias = local;
+    alias.f = null;
+    console.log("alias", local.f);
+  }
+}
+fields();
+
+let r: Record<string, number[]> = {};
+function zap(k: string): void {
+  delete r[k];
+}
+function renew(): void {
+  r = {};
+}
+function keyed(k: string): void {
+  const key = k;
+  if (!r[key]) r[key] = [];
+  r[key].push(1);
+  const r2 = r;
+  delete r2[key];
+  console.log("log", r[key]);
+  r[key] = [2];
+  zap(key);
+  console.log("after", r[key]);
+  console.log(r[key] ?? "none");
+  r[key] = [3];
+  renew();
+  console.log("renewed", r[key], r[key]?.length);
+}
+keyed("a");
+
+let n: number | null = 3;
+let xs: number[] | null = [1, 2];
+function sum(...v: number[]): number {
+  return v.reduce((a, b) => a + b, 0);
+}
+function operands(): void {
+  if (n !== null) console.log(n + 1, n * 2, n > 2, -n);
+  if (n !== null && n > 2) console.log("big");
+  if (xs) console.log(sum(...xs), [...xs, 3].length);
+}
+operands();

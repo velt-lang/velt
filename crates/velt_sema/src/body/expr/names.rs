@@ -26,7 +26,7 @@ impl FnCx<'_, '_> {
         let payload = self.present_payload(ty).filter(|_| self.is_narrowed(l));
         // A variable that a closure assigns is checked again where it is used, and read as it
         // is where a test checks it (`closure_assigned`).
-        let reassigned = self.closure_assignment(l).is_some();
+        let reassigned = self.closure_assignment(l).is_some() || self.is_checked_copy(l);
         if reassigned
             && want != Want::BorrowMut
             && self.raw_read != Some(span)
@@ -269,7 +269,10 @@ impl FnCx<'_, '_> {
             if exp.is_some_and(|x| self.view_union_expected(l, x)) {
                 self.view_receiver = true;
             }
-            let e = self.local_expr(l, want, id.span);
+            let e = match self.checked_copy_read(l, exp, want, id.span) {
+                Some(e) => e,
+                None => self.local_expr(l, want, id.span),
+            };
             self.view_receiver = false;
             return self.late_checked_read(e, checks);
         }

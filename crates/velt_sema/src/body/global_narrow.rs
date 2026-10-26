@@ -117,26 +117,9 @@ impl FnCx<'_, '_> {
         self.cx.global(d).map(|g| g.ty)
     }
 
-    /// `object` evaluated as the receiver of a member access or call (`narrow_use`, when it is
-    /// a name).
-    pub(crate) fn receiver_expr(&mut self, object: &ast::Expr) -> hir::Expr {
-        if !super::expr::member::is_name(object) {
-            return self.expr(object, None, Want::Borrow);
-        }
-        self.narrowing_use(|s| s.expr(object, None, Want::Borrow))
-    }
-
-    /// `f`, which reads one name, with that name taken as a receiver or callee (`narrow_use`).
-    pub(crate) fn narrowing_use(&mut self, f: impl FnOnce(&mut Self) -> hir::Expr) -> hir::Expr {
-        self.narrow_use = true;
-        let h = f(self);
-        self.narrow_use = false;
-        h
-    }
-
     /// A read of module variable `d` (named at `span`) that a null test narrowed: its payload,
-    /// read in place from the module state and checked again by lowering. `None` when it is not
-    /// narrowed here, or when this read is the operand of a test.
+    /// checked where it is read. `None` when it is not narrowed here, or when the read does not
+    /// need the payload (`needs_payload`).
     pub(crate) fn narrowed_global(
         &mut self,
         d: DefId,
@@ -144,21 +127,11 @@ impl FnCx<'_, '_> {
         want: Want,
         span: Span,
     ) -> Option<hir::Expr> {
-        let receiver = std::mem::take(&mut self.narrow_use);
-        if self.f.global_tokens.is_empty() || self.raw_read == Some(span) {
+        if self.f.global_tokens.is_empty() {
             return None;
         }
-        // Only where the payload is needed: a receiver, a callee, a position of a non-nullable
-        // type. Elsewhere (`console.log(x)`, `const c = x`) the value is read as it is, as
-        // JavaScript does, so a call that cleared it meanwhile gives `null` there.
-        let typed = exp.is_some_and(|t| {
-            self.cx.ty.opt_payload(t).is_none()
-                && self.cx.dynamic(t).is_none()
-                && !matches!(self.cx.ty.kind(t), hir::TyKind::Param(_))
-        });
-        // A value taken by an untyped `const c = x` is its payload too, as TypeScript types it.
-        let taken = exp.is_none() && want == Want::Move;
-        if !receiver && !typed && !taken {
+        let raw = self.cx.global(d)?.ty;
+        if !self.needs_payload(span, exp, want, false, raw) {
             return None;
         }
         let found = self.f.global_tokens.iter().find(|t| t.def == d);

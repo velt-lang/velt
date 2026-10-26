@@ -800,9 +800,12 @@ console.log(update(v, { deletedAt: null })); // { name: 'bo', deletedAt: null }
   own statements established (`if (x == null) { x = d; }` narrows `x` after it; `if (x ==
   null) return; else x = null;` does not; a `case` passes on what holds at its `break`; after a
   `while` loop without `break` its condition is false: `while (y === null) { y = next(); }`). A
-  narrowed field is re-checked when read, so a call that set it to `null` in between panics
-  instead of reading `null` (`a narrowed field was set to null before this read`, `undefined`
-  for an optional field). An optional member of function type can be called once a check
+  narrowed field is re-checked where its payload is read (see the module variables below for
+  where that is), so a call that set it to `null` in between stops the program with
+  ``TypeError: `node.left` was checked, but it was set to null before this read``
+  (`undefined` for an optional field) instead of reading `null`; elsewhere the field is read
+  as it is. Node's message for the same mistake is different (`Cannot read properties of null
+  (reading 'x')`), and Node throws a `TypeError` a program can catch, where Velt stops. An optional member of function type can be called once a check
   narrowed it (`if (o.onError) o.onError(e)`, `if (def?.transform) def.transform(v)`). Inside
   a closure, a variable narrowed where the closure is created stays narrowed when the function
   assigns it nowhere after that (nor in a loop around the closure), as in TypeScript: the
@@ -844,11 +847,15 @@ console.log(update(v, { deletedAt: null })); // { name: 'bo', deletedAt: null }
   that assigns it (a function of its module, a callback, a getter, another task across an
   `await`, a generator's caller across a `yield`), so each narrowed read checks the value
   again, like a variable a closure assigns, and stops with a `TypeError` if it became `null`
-  (`` `ctx` was checked, but it was set to null before this read ``). The variable is read as
-  its payload only where that is needed: as a receiver (`ctx.m()`), a callee, a value of a
-  non-nullable type, or an untyped `const c = ctx`. Elsewhere (`console.log(ctx)`), and as the
-  operand of a test, `?.` or `??`, the variable or field is read as it is, so
-  `if (ctx) { reset(); ctx?.name }` gives `undefined`, as in JavaScript. An assignment in the function drops the narrowing (and
+  (`` `ctx` was checked, but it was set to null before this read ``). The variable (or field
+  path) is read as its payload only where that is needed: as a receiver (`ctx.m()`, `ctx.n =
+  1`), a callee, an operand of arithmetic or a comparison (`n + 1`, `n > 2`, `-n`), a spread
+  (`...xs`), a value of a non-nullable type (`use(ctx)` with `c: Ctx`, `return ctx`) or an
+  untyped element (`[ctx]`). Elsewhere (`console.log(ctx)`, a template, `===`), and as the operand
+  of a test, `?.` or `??`, it is read as it is, so `if (ctx) { reset(); ctx?.name }` gives
+  `undefined`, as in JavaScript. An untyped copy (`let c = ctx`, `const c = state.next`) holds
+  what it read, `null` included, and keeps the narrowing: its reads follow the same rule
+  (`console.log(c)` prints `null`, `c.name` stops with a `TypeError`). An assignment in the function drops the narrowing (and
   narrows to what it assigned), and so does a loop that assigns the variable. Closures don't
   see the narrowing of the function they are made in (TypeScript keeps it in one made after
   the variable's last assignment). `typeof`, `instanceof` and union-member tests do not narrow
@@ -856,7 +863,8 @@ console.log(update(v, { deletedAt: null })); // { name: 'bo', deletedAt: null }
   into a `const` and test that.
 - `r[k]` on a `Record<string, V>` with a key that is a `const` narrows like `r.name`: after
   `if (!r[k]) r[k] = [];` it is a `V`, and so is `r[k]` in `for (const k in r)`. Assigning `r`
-  or `delete r[k]` drops the narrowing; a read is checked again, as a field's is.
+  or `delete r[k]` drops the narrowing; a read is checked again where its payload is needed,
+  as a field's is, so a call that deleted the key gives `undefined` in `console.log(r[k])`.
 
   ```ts
   let current: { name: string } | null = null;

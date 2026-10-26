@@ -181,7 +181,7 @@ impl FnCx<'_, '_> {
                     self.error_expr(span)
                 }
                 _ => {
-                    let f = self.narrowing_use(|s| s.ident_expr(id, None, Want::Borrow));
+                    let f = self.with_payload_at(id.span, |s| s.ident_expr(id, None, Want::Borrow));
                     self.call_value(f, args, span)
                 }
             },

@@ -336,7 +336,7 @@ impl FnCx<'_, '_> {
         if let Some(h) = self.generic_key_index(object, index, want, span) {
             return h;
         }
-        let obj = self.expr(object, None, Want::Borrow);
+        let obj = self.receiver_expr(object);
         if want != Want::BorrowMut {
             self.array_used_in_place(&obj);
         }

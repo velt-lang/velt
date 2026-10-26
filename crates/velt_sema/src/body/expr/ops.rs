@@ -156,7 +156,7 @@ impl FnCx<'_, '_> {
                     ast::ExprKind::Lit(l @ ast::Lit::Int { .. }) => {
                         self.lit(l, num_exp, operand.span, true)
                     }
-                    _ => self.expr(operand, num_exp, Want::Borrow),
+                    _ => self.payload_expr(operand, num_exp, Want::Borrow),
                 };
                 let inner = self.unbrand(inner);
                 if self.cx.maybe_dynamic(inner.ty) {
@@ -173,7 +173,7 @@ impl FnCx<'_, '_> {
                 (hir::UnOp::Neg, inner)
             }
             ast::UnaryOp::Plus => {
-                let mut inner = self.expr(operand, num_exp, Want::Borrow);
+                let mut inner = self.payload_expr(operand, num_exp, Want::Borrow);
                 inner = self.unbrand(inner);
                 if self.cx.maybe_dynamic(inner.ty) {
                     return self.dynamic_unary(op, inner, span);
@@ -187,7 +187,7 @@ impl FnCx<'_, '_> {
             ast::UnaryOp::Not => return self.not_expr(operand, span),
             ast::UnaryOp::BitNot => {
                 let int_exp = exp.filter(|t| self.cx.ty.is_int(*t));
-                let inner = self.expr(operand, int_exp, Want::Borrow);
+                let inner = self.payload_expr(operand, int_exp, Want::Borrow);
                 let inner = self.unbrand(inner);
                 if self.cx.maybe_dynamic(inner.ty) {
                     return self.dynamic_unary(op, inner, span);
@@ -294,6 +294,11 @@ impl FnCx<'_, '_> {
         let (l, r) = match lit_eq {
             Some(LitEq::Done(h)) => return h,
             Some(LitEq::Operands(l, r)) => (l, r),
+            // Arithmetic and comparisons use the payload of a narrowed operand
+            // (`checked_copies`); `==` compares the value as it is.
+            None if !matches!(op, B::Eq | B::NotEq) => self.with_payload(lhs, |s| {
+                s.with_payload(rhs, |s| s.operands(lhs, rhs, hint, Want::Borrow))
+            }),
             None => self.operands(lhs, rhs, hint, Want::Borrow),
         };
         // An `any` or `unknown` operand, by its checked type (a variable, a field, an element,
