@@ -171,16 +171,8 @@ pub(crate) fn run(env: &Env, func: &mut Function) -> bool {
     if changed {
         crate::simplify_cfg::run(func);
     }
-    // Arrays whose integers would only be converted back: retype a copy first, keep the
-    // groups the narrowing plan of that copy makes worth it.
-    let mut trial = func.clone();
-    if let Some(done) = arrays::retype(env, &mut trial, None) {
-        if let Some(flow) = analyse(env, &trial) {
-            let keep = done.worth(&narrow::plan(env, &flow, &trial));
-            if keep.contains(&true) && arrays::retype(env, func, Some(&keep)).is_some() {
-                changed = true;
-            }
-        }
+    if let Some(keep) = arrays::choose(env, func, |f| narrowed(env, f)) {
+        changed |= arrays::retype(env, func, Some(&keep)).is_some();
     }
     if let Some(flow) = analyse(env, func) {
         let plan = narrow::plan(env, &flow, func);
@@ -188,6 +180,15 @@ pub(crate) fn run(env: &Env, func: &mut Function) -> bool {
     }
     changed |= int32::guarded_sums(env, func);
     changed
+}
+
+/// `func` with its locals narrowed (the plan and rewrite of `run`), for comparing choices.
+fn narrowed(env: &Env, mut func: Function) -> Function {
+    if let Some(flow) = analyse(env, &func) {
+        let plan = narrow::plan(env, &flow, &func);
+        rewrite::apply(env, &mut func, &plan);
+    }
+    func
 }
 
 /// The `f64` locals of `func` inside loops that stay `f64`, each with the reason
