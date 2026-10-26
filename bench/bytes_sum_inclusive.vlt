@@ -1,0 +1,18 @@
+// The loop shape of a dynamic program over a byte string: an index from 1 to the length
+// inclusive (`i <= u.length`), reading `u[i - 1]`. The array length limit (2^52 - 1, enforced;
+// docs/reference/types.md "Length limit") keeps such an index below 2^53, so it counts in
+// integers rather than doubles.
+function main() {
+  const n = 1 << 20;
+  const u = new Uint8Array(n);
+  for (let i = 0; i < n; i++) {
+    u[i] = (i * 31 + 7) & 255;
+  }
+  let total = 0;
+  for (let round = 0; round < 100; round++) {
+    for (let i = 1; i <= u.length; i++) {
+      total += u[i - 1] ^ (i & 255);
+    }
+  }
+  console.log(total);
+}

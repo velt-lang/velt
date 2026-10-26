@@ -432,7 +432,10 @@ array adopted from native code, and the growth of an array of zero-sized element
 `panic: RangeError: Invalid array length: an array holds at most 2^52 - 1 elements, and its elements at most 2^52 - 1 bytes`
 (exit code 101). Optimizations may rely on it: `velt_opt`'s `numrep` takes an array's `len` to be
 at most 2^53 - 3 (all an index running to `len` inclusive needs). A typed array's byte length is
-below 2^52 for the same reason (its buffer is a `u8[]`).
+below 2^52 for the same reason (its buffer is a `u8[]`). `velt_rt_bytes_zeroed(n)` checks `n`
+against the limit too. A buffer within the limit that the target cannot allocate is out of
+memory (`velt_rt_alloc` above), never a smaller block: on wasm32 a byte size past 2^31 - 1
+stops the program there, in `velt_rt_realloc` and in `velt_rt_bytes_zeroed`.
 
 ## Array methods on a proxy [additive, #823]
 
@@ -524,7 +527,7 @@ never reads), so that it treats the loop's copy for a plain array as the one tha
 ## Memory [M1]
 | Symbol | Signature |
 |---|---|
-| `velt_rt_alloc` | `(uint64_t size, uint64_t align) -> void*` — aborts on OOM, never null for size > 0 |
+| `velt_rt_alloc` | `(uint64_t size, uint64_t align) -> void*` — never null for size > 0: a request it cannot satisfy stops the program with `panic: memory allocation of <size> bytes failed` (exit code 101; was an abort), as does `velt_rt_realloc`. On a 32-bit target (wasm32) a size past `isize::MAX` is such a request: the 64-bit size is never truncated |
 | `velt_rt_realloc` | `(void* p, uint64_t old_size, uint64_t align, uint64_t new_size) -> void*` |
 | `velt_rt_free` | `(void* p, uint64_t size, uint64_t align)` |
 

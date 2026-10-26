@@ -26,12 +26,26 @@ impl FnCx<'_, '_> {
         if prop.name != "fill" || args.len() != 1 {
             return None;
         }
-        let call = synthetic_call(
-            "__arrayFilled",
-            type_args,
-            vec![n.clone(), args[0].clone()],
-            span,
-        );
+        // `n` as a `number`, whatever its numeric type: the prelude checks it the way JS
+        // does (a whole number from 0 up, within the array length limit).
+        let n = ast::Expr {
+            id: ast::NodeId(u32::MAX),
+            kind: ast::ExprKind::Cast {
+                expr: Box::new(n.clone()),
+                ty: ast::TypeExpr {
+                    kind: ast::TypeExprKind::Named {
+                        path: vec![ast::Ident {
+                            name: "number".to_string(),
+                            span: n.span,
+                        }],
+                        args: vec![],
+                    },
+                    span: n.span,
+                },
+            },
+            span: n.span,
+        };
+        let call = synthetic_call("__arrayFilled", type_args, vec![n, args[0].clone()], span);
         Some(self.expr(&call, exp, Want::Move))
     }
 

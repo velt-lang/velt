@@ -2079,6 +2079,9 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   `xs[Symbol.iterator]()` returns an `Iterator<T>`.
 - `new Array<T>(n).fill(v)` and `Array.from({ length: n }, (_, i) => f(i))` build an array of
   `n` elements in one allocation. A bare `new Array<T>(n)` is an error: arrays have no holes.
+  As in JS, `new Array<T>(n)` takes `n` as `xs.length = n` does: a negative, fractional or `NaN`
+  `n` panics with `RangeError: Invalid array length`, while `Array.from` truncates its length
+  (and takes a negative one or `NaN` as 0).
   `Array.from(src)` and `Array.from(src, (v, i) => …)` copy (and map) anything `for...of` takes:
   an array, a string's characters, a map's entries, a generator, any iterable.
 - **Length limit.** An array holds at most 2^52 - 1 elements, and its elements take at most
@@ -2088,7 +2091,10 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   `xs.length = 2 ** 32` is a `RangeError` in Node but truncates a longer Velt array. Growing an
   array past the limit (`push`, `concat`, `splice`, spread, `Array.from`, `new Array<T>(n)`)
   panics with `RangeError: Invalid array length: an array holds at most 2^52 - 1 elements, and
-  its elements at most 2^52 - 1 bytes`, and so does `xs.length = n` with an `n` past 2^52 - 1. The
+  its elements at most 2^52 - 1 bytes`, and so does `xs.length = n` with an `n` past 2^52 - 1
+  (also through `any`). An array within the limit but larger than the machine's memory stops
+  the program with `memory allocation of <n> bytes failed`, on every target (on WebAssembly,
+  any buffer past 2^31 - 1 bytes). The
   bound is also what lets the compiler count a loop such as
   `for (let i = 0; i <= xs.length; i++)` in integers. Typed arrays hold at most 2^52 - 1 bytes.
 - **`readonly T[]`** and **`ReadonlyArray<T>`** (the same type) are array types, and

@@ -228,7 +228,9 @@ impl FnLower<'_, '_> {
     }
 
     /// `a.length = v` on an array: a shorter length drops the elements past it, as in Node; an
-    /// invalid length is Node's `RangeError`; a longer one (holes) is not supported yet.
+    /// invalid length is Node's `RangeError`, and so is one past the most elements an array
+    /// holds (`MAX_ARRAY_LEN`, with the limit's message, as the typed `length` setter); a longer
+    /// one within it (holes) is not supported yet.
     fn any_set_array_length(&mut self, data: vir::Local, v: vir::Local, ty: TyId, elem: TyId) {
         let f64_ = self.cx.intern(TyKind::Float(velt_sema::hir::FloatTy::F64));
         let n = self.any_set_value(v, f64_);
@@ -249,9 +251,17 @@ impl FnLower<'_, '_> {
         let (cut, grow) = (self.new_block(), self.new_block());
         self.branch(fits, cut, grow);
         self.switch_to(cut);
-        self.truncate(&arr, elem, idx);
+        self.truncate(&arr, elem, idx.clone());
         self.ret_status(ST_OK);
         self.switch_to(grow);
+        let limit = super::cint(i128::from(crate::MAX_ARRAY_LEN), Ty::U64);
+        let within = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Le, idx, limit));
+        let (holes, over) = (self.new_block(), self.new_block());
+        self.branch(within, holes, over);
+        self.switch_to(over);
+        self.panic_msg(crate::ARRAY_LEN_MESSAGE);
+        self.terminate(Terminator::Unreachable);
+        self.switch_to(holes);
         self.ret_status(ST_UNSUPPORTED);
     }
 
