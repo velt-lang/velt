@@ -56,5 +56,17 @@ const r = make(() => `s${stored}`);
 stored = 7;
 console.log(r.value, c.value, reads);
 console.log(c[BRAND], (c as any)[BRAND] === true);
+
+// Outside a generic function too: each read runs the getter.
+let n = 0;
+const lit = {
+  [BRAND]: true as const,
+  get value(): number {
+    return ++n;
+  },
+};
+const view = lit as Ro<number>;
+console.log(view.value, view.value, (view as any) === (lit as any), n);
+
 const p = new Proxy({ n: 1 }, {});
 console.log(p.n);

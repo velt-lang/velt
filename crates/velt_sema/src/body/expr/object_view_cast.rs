@@ -13,9 +13,9 @@ use crate::body::FnCx;
 use crate::hir::{self, TyId, TyKind};
 
 impl FnCx<'_, '_> {
-    /// `h as target` for an interface value `h` with a getter (module docs) and a fields-only
-    /// object type `target` each of whose fields `h`'s interface has, as a field or a getter of
-    /// a comparable type: a view of `h`'s object. `Err(h)` otherwise.
+    /// `h as target` for a value `h` of an object literal's own interface with a getter (module
+    /// docs) and a fields-only object type `target` each of whose fields that interface has, as
+    /// a field or a getter of a comparable type: a view of `h`'s object. `Err(h)` otherwise.
     pub(super) fn object_view_cast(
         &mut self,
         h: hir::Expr,
@@ -31,6 +31,11 @@ impl FnCx<'_, '_> {
         let TyKind::Dyn(id, iargs) = self.cx.ty.kind(h.ty).clone() else {
             return Err(h);
         };
+        // The literal's own interface (`literal_iface.rs`): only that literal makes its values,
+        // so no value of it is a `target` already (which `try_coerce` would give back).
+        if !self.cx.literal_ifaces.contains(&id) {
+            return Err(h);
+        }
         if self.record_args(target).is_some() || !self.may_be_typed_proxy(target) {
             return Err(h);
         }

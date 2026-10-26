@@ -638,13 +638,13 @@ impl FnCx<'_, '_> {
         }
         // `x as object` of an unbounded `T` (issue #926): checked at run time.
         let coerced = self
-            .try_coerce(inner, target)
+            .object_view_cast(inner, target, span)
+            .or_else(|h| self.try_coerce(h, target))
             .or_else(|h| self.param_as_object(h, target))
             .or_else(|h| self.param_as_object_part(h, target))
             .or_else(|h| self.narrowing_assertion(h, target, span))
             .or_else(|h| self.union_view_cast(h, target, span))
             .or_else(|h| self.array_view_cast(h, target, span))
-            .or_else(|h| self.object_view_cast(h, target, span))
             .or_else(|h| self.generic_assertion(h, target));
         match coerced {
             Ok(h) => h,
