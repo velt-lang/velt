@@ -1,0 +1,76 @@
+// `Atomic<T>` under contention on worker threads: a relaxed counter loses no increment, a spin
+// lock from `compareExchangeWeak` + acquire / release keeps a read-then-write sequence whole,
+// and optimistic readers of a `VersionLatch` never accept a pair a writer was changing.
+import { Backoff, VersionLatch } from "velt:sync";
+
+class State {
+  count: Atomic<u64> = new Atomic<u64>(0);
+  lock: Atomic<u32> = new Atomic<u32>(0);
+  guarded: Atomic<u64> = new Atomic<u64>(0);
+  latch: VersionLatch = VersionLatch.create();
+  a: Atomic<u64> = new Atomic<u64>(0);
+  b: Atomic<u64> = new Atomic<u64>(0);
+  torn: Atomic<u64> = new Atomic<u64>(0);
+  validated: Atomic<u64> = new Atomic<u64>(0);
+}
+
+async function counter(s: shared<State>, n: i64) {
+  for (let i = 0; i < n; i++) {
+    s.count.add(1, "relaxed");
+  }
+}
+
+async function locked(s: shared<State>, n: i64) {
+  for (let i = 0; i < n; i++) {
+    const b = Backoff.create();
+    while (!s.lock.compareExchangeWeak(0, 1, "acquire", "relaxed")) {
+      b.snooze();
+    }
+    const v = s.guarded.load("relaxed");
+    s.guarded.store(v + 1, "relaxed");
+    s.lock.store(0, "release");
+  }
+}
+
+async function writer(s: shared<State>, n: i64) {
+  for (let i = 0; i < n; i++) {
+    const v = s.latch.lockExclusive();
+    s.a.store(s.a.load("relaxed") + 1, "relaxed");
+    s.b.store(s.b.load("relaxed") + 1, "relaxed");
+    s.latch.unlockExclusive(v);
+  }
+}
+
+async function reader(s: shared<State>, n: i64) {
+  let ok: u64 = 0;
+  for (let i = 0; i < n; i++) {
+    const v = s.latch.readVersion();
+    const a = s.a.load("relaxed");
+    const b = s.b.load("relaxed");
+    if (s.latch.isUnchanged(v)) {
+      ok++;
+      if (a != b) {
+        s.torn.add(1);
+      }
+    }
+  }
+  s.validated.add(ok);
+}
+
+async function main() {
+  const s = shared(new State());
+  const ps: Promise<void>[] = [];
+  for (let t = 0; t < 4; t++) {
+    ps.push(spawn(counter(s, 100000)));
+    ps.push(spawn(locked(s, 20000)));
+    ps.push(spawn(reader(s, 50000)));
+  }
+  for (let t = 0; t < 2; t++) {
+    ps.push(spawn(writer(s, 20000)));
+  }
+  await Promise.all(ps);
+  console.log("count", s.count.load());
+  console.log("guarded", s.guarded.load());
+  console.log("a", s.a.load(), "b", s.b.load(), "torn", s.torn.load());
+  console.log("some reads validated", s.validated.load() > 0);
+}

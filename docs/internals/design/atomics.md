@@ -1,7 +1,7 @@
 # Design: atomics, the platform for lock-free data structures
 
 Status: **accepted** (owner, 2026-10-26: the model, JS `Atomics` names returning the previous
-value, string literal orderings, step 1 first); step 1 is in progress. Supersedes the
+value, string literal orderings, step 1 first); **step 1 implemented**. Supersedes the
 runtime-built `Atom<T>` of #708's design: `Atom<T>` becomes a std type written in Velt on the
 primitives below, like `BTreeMap` (#1543 step 2: "the map uses no std-only intrinsic or runtime
 declaration, only APIs every program has").
@@ -187,12 +187,12 @@ attribute (vir.rs invariant 9, `param_attrs.rs`): its atomic writes go through t
 
 ## Steps
 
-1. **`Atomic<T>`** (in progress): the type, the sema rules, the inline code in both backends,
+1. **`Atomic<T>`** (implemented): the type, the sema rules, the inline code in both backends,
    `shared<int>`'s atomics through the same path (their runtime functions are gone),
    `velt:sync`'s `Backoff` and `VersionLatch`, docs (docs/std/sync.md, reference async.md),
    goldens (`tests/golden/std/atomic*.vlt`, `sync_latch.vlt`: every operation at every width,
    the errors, a counter, a spin lock and latch-checked reads on worker threads), and
-   `bench/atomics` against Rust.
+   `bench/atomics` against Rust (results below).
 2. **`Once<T>`**: a slot set once with a `shared<T>` (CAS from empty), read by a frozen borrow
    for as long as its holder lives: no reclamation, since it is never replaced. Growing pools
    publish chunks through it. Then a concurrent `BTreeMap` for word keys and values (`u64`
@@ -204,6 +204,40 @@ attribute (vir.rs invariant 9, `param_attrs.rs`): its atomic writes go through t
    slot). `Atom<T>` (#708) is then a Velt struct in std, and so are generic keys and values for
    the concurrent map (a replaced key or value is retired, not freed, while a reader may hold
    it).
+
+## Results of step 1
+
+`bench/atomics/run.sh` (Apple M4, best of 7; Rust built with fat LTO and `target-cpu=native`,
+Velt for the generic target). A threaded workload's time runs from a start barrier to the last
+worker's end, so how fast tasks start does not count (see the runtime note below).
+
+| ms | Velt `Atomic<T>` | Rust `std::sync::atomic` | Velt / Rust |
+|---|---:|---:|---:|
+| relaxed `add`, 1 thread, 200M | 322.8 | 321.9 | 1.00 |
+| load + `compareExchangeWeak` loop, 1 thread, 50M | 82.4 | 82.5 | 1.00 |
+| relaxed `add` on one word, 4 threads × 10M | 248.8 | 196.1 | 1.27 |
+| relaxed `add`, a word per thread, 4 × 50M | 89.0 | 89.0 | 1.00 |
+| `VersionLatch` optimistic reads, 4 × 10M, one writer | 14.3 | 13.6 | 1.05 |
+| the same, no writer | 7.6 | 7.6 | 1.00 |
+| spin lock (`compareExchangeWeak` + `Backoff`), 4 × 2M | 20.6 | 25.6 | 0.80 |
+
+The single-threaded loops are the same instructions as Rust's (`ldadd`, `ldapr`, `stlr`, `casal`,
+`dmb ishld`). The contended rows move with where the OS puts the threads.
+
+Found on the way, for follow-ups:
+
+- **Reading a `shared` value in a loop reloads the box's value pointer.** `s.latch` and
+  `s.w[i]` of a `s: shared<Words>` load the object pointer out of the box on every iteration,
+  since LLVM cannot hoist a load across an acquire without knowing the box never changes:
+  1.35× on the latch read loop. Passing the object to a function (`readLoop(s, n)` with
+  `readLoop(s: Words, …)`) hoists it, which the benchmark does; lowering could load a frozen
+  root's value pointer once per function, or mark loads from `shared` boxes invariant.
+- **Runtime, macOS:** spawned tasks start about 1.5 ms apart (a chain of worker wake-ups), and
+  with the default worker count (one per core) busy workers begin on efficiency cores (the same
+  read loop took 16.8 ms on 4 of 10 workers, 6.6 ms with `VELT_THREADS=4`).
+- **Cranelift 0.132, arm64 without LSE:** its LL/SC loops compare whole registers, which breaks
+  8/16-bit `umax`/`umin` and 32-bit compare-and-swap of operands narrowed from wider values;
+  velt_codegen_cl works around it (`function/atomic.rs`).
 
 ## Not in this design
 

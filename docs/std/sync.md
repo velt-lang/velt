@@ -1,8 +1,10 @@
-# Atomics
+# Atomics and velt:sync
 
-Lock-free shared state: the prelude's `Atomic<T>`. It is for code that needs to be as fast as
-threads allow: counters, flags, statistics, and data structures that many threads read and
-change at once without a lock, such as a concurrent tree with a latch in every node. For ordinary shared state, a
+Lock-free shared state: the prelude's `Atomic<T>`, the primitive, and `velt:sync`
+(`import { Backoff, VersionLatch } from "velt:sync"`), building blocks written on it. They are
+for code that needs to be as fast as threads allow: counters, flags, statistics, and data
+structures that many threads read and change at once without a lock, such as a concurrent tree
+with a latch in every node. For ordinary shared state, a
 [`Mutex` or `RwLock`](../reference/async.md#thread-safety) is simpler. Design:
 [atomics.md](../internals/design/atomics.md).
 
@@ -116,3 +118,85 @@ function main() {
 An array of atomics inside a `shared` value never moves or shrinks while the value lives, so its
 words are memory every thread may read and write in place, which no thread can free under
 another: what a lock-free structure needs.
+
+## `Backoff`
+
+Waiting for another thread in a loop: `Backoff.create()`, then `snooze()` each time the loop
+finds it must wait again. The first rounds spin `2^round` CPU spin hints, twice as long each
+round, up to `2^SPIN_ROUNDS`; after that each round yields the thread to the OS. `spin()` only
+spins, and `completed` tells whether spinning stopped growing (a loop that waits longer should
+block instead).
+
+```ts
+import { Backoff } from "velt:sync";
+
+class Lock {
+  held: Atomic<bool> = new Atomic<bool>(false);
+}
+
+function withLock(l: Lock, f: () => void) {
+  const b = Backoff.create();
+  while (!l.held.compareExchangeWeak(false, true, "acquire", "relaxed")) {
+    b.snooze();
+  }
+  f();
+  l.held.store(false, "release");
+}
+
+function main() {
+  const l = new Lock();
+  withLock(l, () => console.log("held")); // held
+}
+```
+
+## `VersionLatch`
+
+The latch word of optimistic lock coupling, 8 bytes, kept in place in each node of a concurrent
+data structure (a field, or an element of a `VersionLatch[]`), as in
+[bbtree](https://github.com/XiangpengHao/bbtree)'s concurrent map. From the low bit: an exclusive
+bit, a count of shared holders, and a version that only grows.
+
+- **Optimistic reads:** `readVersion()` (it waits while a writer holds the node), read the node,
+  then `isUnchanged(v)`: when it is `false`, a writer changed the node meanwhile and the reader
+  starts over. A reader writes no shared memory, so readers on many cores never slow each other.
+- **Exclusive:** `tryLockAt(v)` takes the node at the version the thread read, failing at once
+  if anything changed it (then start over); `lockExclusive()` waits for it and returns the
+  version; `tryLockExclusive()` takes it only if nothing holds it. `unlockExclusive(v)` lets go
+  and moves the node to the next version, which fails every reader that read it meanwhile.
+- **Shared:** `lockShared()` / `unlockShared()` keep writers out without changing the version.
+- `tryReadVersion()`: the version, or `null` while a writer holds the node.
+
+```ts
+import { VersionLatch } from "velt:sync";
+
+class Point {
+  latch: VersionLatch = VersionLatch.create();
+  x: Atomic<i64> = new Atomic<i64>(0);
+  y: Atomic<i64> = new Atomic<i64>(0);
+}
+
+/** Moves the point; readers never see `x` and `y` from two different moves. */
+function move(p: Point, dx: i64, dy: i64) {
+  const v = p.latch.lockExclusive();
+  p.x.store(p.x.load("relaxed") + dx, "relaxed");
+  p.y.store(p.y.load("relaxed") + dy, "relaxed");
+  p.latch.unlockExclusive(v);
+}
+
+/** `x + y` of one consistent position, without taking the latch. */
+function sum(p: Point): i64 {
+  while (true) {
+    const v = p.latch.readVersion();
+    const s = p.x.load("relaxed") + p.y.load("relaxed");
+    if (p.latch.isUnchanged(v)) {
+      return s;
+    }
+  }
+}
+
+function main() {
+  const p = new Point();
+  move(p, 2, 3);
+  console.log(sum(p)); // 5
+}
+```

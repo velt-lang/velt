@@ -476,7 +476,7 @@ console.log(start.toISOString(), end.getUTCMonth(), start < end); // 2024-01-31T
 `PromiseWithResolvers<T, E>`), `Promise.resolve`, `Promise.reject`, the promise methods
 `then`, `catch` and `finally` with `queueMicrotask(f)`
 ([Async](../reference/async.md#then-catch-and-finally)), `shared(x)`, `Mutex<T>`, `RwLock<T>`,
-`Atomic<T>` (lock-free numbers and flags, [Atomics](sync.md)),
+`Atomic<T>` (lock-free numbers and flags, [Atomics and velt:sync](sync.md)),
 `performance.now()` and `Date.now()` ([Async](../reference/async.md)), and the timer
 functions `setTimeout`, `clearTimeout`, `setInterval`, `clearInterval`, `setImmediate` and
 `clearImmediate` with their `Timer` handle ([velt:timers](timers.md)).

@@ -421,7 +421,8 @@ read-modify-write calls an `__aarch64_*` helper (libgcc's or compiler-rt's, the 
 `velt_rt` included) that uses LSE when the CPU has it; `max` and `min` have no helper and stay
 LL/SC loops, as in Rust. Cranelift's
 atomics are all sequentially consistent, which is correct for every ordering. On wasm without
-threads they are plain loads and stores.
+threads they are plain loads and stores. `velt_rt_thread_yield()`
+(a real runtime function, rt_abi_async.md §9) is what `velt:sync`'s `Backoff` yields with.
 
 ## Module state [additive, #76]
 

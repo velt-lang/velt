@@ -22,6 +22,7 @@ Written in Velt. The compiler resolves `import { x } from "velt:<path>"` to `std
 | `prelude/sync.vlt` | `Mutex<T>` and `RwLock<T>` layouts for `new Mutex(x)` / `.with(f)` (compiler-implemented); `Atomic<T>`, whose method calls compile to one instruction each. |
 | `math.vlt` | `std/math`: integer helpers `clamp gcd lcm isPrime fib`. |
 | `mem.vlt` | `std/mem`: `needsDrop`, whether a type's values own memory (Rust's `std::mem::needs_drop`). |
+| `sync.vlt` | `std/sync`: `Backoff` and `VersionLatch` (optimistic lock coupling), lock-free building blocks on the prelude's `Atomic<T>`. |
 | `io.vlt` | `std/io`: `IoError`; std-internal `IoResult`/`IoStatus` plumbing over rt results. |
 | `fs.vlt` | `std/fs`: async + `*Sync` file system API. |
 | `fs_stream.vlt` | `std/fs_stream`: chunked/line `FileReader` (`openRead`) and buffered `FileWriter` (`openWrite`). |

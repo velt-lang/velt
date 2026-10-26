@@ -1,0 +1,213 @@
+// Atomics against Rust (bench/atomics/run.sh): each line is `name ms checksum`. The same
+// workloads are in rust/src/main.rs, on `std::sync::atomic` and `std::thread`. A threaded
+// workload's time runs from when every worker is ready (a start barrier, so that how fast
+// threads start does not count) to when the last one finishes.
+import { Backoff, VersionLatch } from "velt:sync";
+
+const THREADS = 4;
+/** Words per 128 bytes: a shard on a cache line of its own (128-byte lines on Apple). */
+const STRIDE = 16;
+
+class Words {
+  w: Atomic<u64>[] = [];
+  latch: VersionLatch = VersionLatch.create();
+  lock: Atomic<u32> = new Atomic<u32>(0);
+  stop: Atomic<bool> = new Atomic<bool>(false);
+  ready: Atomic<u32> = new Atomic<u32>(0);
+  go: Atomic<bool> = new Atomic<bool>(false);
+}
+
+function words(n: i64): shared<Words> {
+  const ws = new Words();
+  for (let i = 0; i < n; i++) {
+    ws.w.push(new Atomic<u64>(0));
+  }
+  return shared(ws);
+}
+
+function report(name: string, ms: f64, check: u64) {
+  console.log(`${name} ${ms.toFixed(1)} ${check}`);
+}
+
+/** A worker's start: check in, then wait for the others. */
+function arrive(s: Words) {
+  s.ready.add(1);
+  while (!s.go.load("acquire")) {
+    Atomic.spinHint();
+  }
+}
+
+/** Starts `n` workers' common clock once all are ready; the time it started. */
+async function release(s: shared<Words>, n: u32): Promise<f64> {
+  while (s.ready.load("acquire") < n) {
+    await yieldNow();
+  }
+  const start = performance.now();
+  s.go.store(true, "release");
+  return start;
+}
+
+/** Relaxed increments on one word, one thread. */
+function addOne(n: i64) {
+  const s = words(1);
+  const start = performance.now();
+  for (let i = 0; i < n; i++) {
+    s.w[0].add(1, "relaxed");
+  }
+  report("add_1t", performance.now() - start, s.w[0].load());
+}
+
+/** Increments by a load and a weak compare-and-swap loop, one thread. */
+function casOne(n: i64) {
+  const s = words(1);
+  const start = performance.now();
+  for (let i = 0; i < n; i++) {
+    let v = s.w[0].load("relaxed");
+    while (!s.w[0].compareExchangeWeak(v, v + 1, "acqrel", "relaxed")) {
+      v = s.w[0].load("relaxed");
+    }
+  }
+  report("cas_loop_1t", performance.now() - start, s.w[0].load());
+}
+
+function addLoop(s: Words, at: i64, n: i64): f64 {
+  arrive(s);
+  for (let i = 0; i < n; i++) {
+    s.w[at].add(1, "relaxed");
+  }
+  return performance.now();
+}
+
+async function adder(s: shared<Words>, at: i64, n: i64): Promise<f64> {
+  return addLoop(s, at, n);
+}
+
+/** The last of `ends`, less `start`. */
+function span(start: f64, ends: f64[]): f64 {
+  let last = start;
+  for (const e of ends) {
+    last = Math.max(last, e);
+  }
+  return last - start;
+}
+
+/** `THREADS` threads incrementing one word (`shard`: each its own word, on its own line). */
+async function addMany(name: string, n: i64, shard: bool) {
+  const s = words(THREADS * STRIDE);
+  const ps: Promise<f64>[] = [];
+  for (let t = 0; t < THREADS; t++) {
+    ps.push(spawn(adder(s, shard ? t * STRIDE : 0, n)));
+  }
+  const start = await release(s, THREADS as u32);
+  const ms = span(start, await Promise.all(ps));
+  let sum: u64 = 0;
+  for (let t = 0; t < THREADS; t++) {
+    sum += s.w[t * STRIDE].load();
+  }
+  report(name, ms, sum);
+}
+
+/** Optimistic reads of `s.w[0]` and `s.w[1]` under the latch; the reads that saw them differ. */
+function readLoop(s: Words, n: i64): u64 {
+  let torn: u64 = 0;
+  for (let i = 0; i < n; i++) {
+    while (true) {
+      const v = s.latch.readVersion();
+      const a = s.w[0].load("relaxed");
+      const b = s.w[1].load("relaxed");
+      if (s.latch.isUnchanged(v)) {
+        if (a != b) {
+          torn++;
+        }
+        break;
+      }
+    }
+  }
+  return torn;
+}
+
+async function latchReader(s: shared<Words>, n: i64): Promise<[f64, u64]> {
+  arrive(s);
+  const torn = readLoop(s, n);
+  return [performance.now(), torn];
+}
+
+function writeLoop(s: Words) {
+  while (!s.stop.load("relaxed")) {
+    const v = s.latch.lockExclusive();
+    s.w[0].store(s.w[0].load("relaxed") + 1, "relaxed");
+    s.w[1].store(s.w[1].load("relaxed") + 1, "relaxed");
+    s.latch.unlockExclusive(v);
+    for (let i = 0; i < 64; i++) {
+      Atomic.spinHint();
+    }
+  }
+}
+
+async function latchWriter(s: shared<Words>) {
+  arrive(s);
+  writeLoop(s);
+}
+
+/**
+ * Optimistic reads of two words under a `VersionLatch` on `THREADS` threads, bbtree's read path
+ * through an inner node: with one writer changing them (`writer`), or none.
+ */
+async function latchReads(name: string, n: i64, writer: bool) {
+  const s = words(2);
+  const w = writer ? spawn(latchWriter(s)) : null;
+  const ps: Promise<[f64, u64]>[] = [];
+  for (let t = 0; t < THREADS; t++) {
+    ps.push(spawn(latchReader(s, n)));
+  }
+  const start = await release(s, (THREADS + (writer ? 1 : 0)) as u32);
+  const ends: f64[] = [];
+  let torn: u64 = 0;
+  for (const [end, t] of await Promise.all(ps)) {
+    ends.push(end);
+    torn += t;
+  }
+  report(name, span(start, ends), torn);
+  s.stop.store(true, "relaxed");
+  if (w != null) {
+    await w;
+  }
+}
+
+function lockLoop(s: Words, n: i64): f64 {
+  arrive(s);
+  for (let i = 0; i < n; i++) {
+    const b = Backoff.create();
+    while (!s.lock.compareExchangeWeak(0, 1, "acquire", "relaxed")) {
+      b.snooze();
+    }
+    s.w[0].store(s.w[0].load("relaxed") + 1, "relaxed");
+    s.lock.store(0, "release");
+  }
+  return performance.now();
+}
+
+async function locker(s: shared<Words>, n: i64): Promise<f64> {
+  return lockLoop(s, n);
+}
+
+/** A spin lock from a weak compare-and-swap with `Backoff`, `THREADS` threads. */
+async function spinLock(n: i64) {
+  const s = words(1);
+  const ps: Promise<f64>[] = [];
+  for (let t = 0; t < THREADS; t++) {
+    ps.push(spawn(locker(s, n)));
+  }
+  const start = await release(s, THREADS as u32);
+  report("spinlock_4t", span(start, await Promise.all(ps)), s.w[0].load());
+}
+
+async function main() {
+  addOne(200000000);
+  casOne(50000000);
+  await addMany("add_contended_4t", 10000000, false);
+  await addMany("add_sharded_4t", 50000000, true);
+  await latchReads("latch_reads_4t", 10000000, true);
+  await latchReads("latch_reads_quiet_4t", 10000000, false);
+  await spinLock(2000000);
+}
