@@ -297,6 +297,10 @@ impl FnLower<'_, '_> {
                 let inner = proj(&proj(place, Proj::Deref(Ty::Agg(bx))), Proj::Field(1));
                 self.format_nested(buf, &inner, e, depth);
             }
+            TyKind::FnPtr { .. } if self.class_object_text(ty).is_some() => {
+                let text = self.class_object_text(ty).unwrap_or_default();
+                self.push_text(buf, &text)
+            }
             TyKind::FnPtr { .. } | TyKind::Closure(_) => {
                 self.push_text(buf, "[Function (anonymous)]")
             }
@@ -514,5 +518,54 @@ impl FnLower<'_, '_> {
             self.format_nested(&buf, &p, ty, &depth);
         }
         self.terminate(Terminator::Return(unit()));
+    }
+}
+
+impl FnLower<'_, '_> {
+    /// How Node prints the class or constructor object of function type `ty` (velt_sema's
+    /// `ctor_objects.rs`: its rest parameter is `__ClassMarker<T>[]`, `T` its class's instances
+    /// or its kind's values): `[class A]`, `[class B extends A]`, `[Function: Map]`,
+    /// `[Function: Number]`; `None` for other functions.
+    fn class_object_text(&self, ty: TyId) -> Option<String> {
+        let TyKind::FnPtr {
+            params, rest: true, ..
+        } = self.cx.kind(ty)
+        else {
+            return None;
+        };
+        let TyKind::Array(m) = self.cx.kind(*params.last()?) else {
+            return None;
+        };
+        let TyKind::Adt(d, args) = self.cx.kind(m) else {
+            return None;
+        };
+        if !self.cx.adt_def(d).name.ends_with("::__ClassMarker") {
+            return None;
+        }
+        let short = |n: &str| n.rsplit(['.', ':']).next().unwrap_or(n).to_string();
+        let tag = *args.first()?;
+        let kind = match self.cx.kind(tag) {
+            TyKind::Float(_) => "Number".to_string(),
+            TyKind::Str => "String".to_string(),
+            TyKind::Bool => "Boolean".to_string(),
+            TyKind::Array(_) => "Array".to_string(),
+            TyKind::Adt(c, _) => {
+                let a = self.cx.adt_def(c);
+                if a.name.starts_with("std/") {
+                    short(&a.name)
+                } else {
+                    let base = a.base.and_then(|b| match self.cx.kind(b) {
+                        TyKind::Adt(bd, _) => Some(short(&self.cx.adt_def(bd).name)),
+                        _ => None,
+                    });
+                    return Some(match base {
+                        Some(b) => format!("[class {} extends {b}]", short(&a.name)),
+                        None => format!("[class {}]", short(&a.name)),
+                    });
+                }
+            }
+            _ => "Function".to_string(),
+        };
+        Some(format!("[Function: {kind}]"))
     }
 }

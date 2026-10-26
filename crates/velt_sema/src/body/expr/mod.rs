@@ -261,7 +261,10 @@ impl FnCx<'_, '_> {
             }
             // A property already reported (`assign_pattern::reject_cover_inits`).
             A::Ident(id) if id.name == assign_pattern::REPORTED => self.error_expr(span),
-            A::Ident(id) => self.ident_expr(id, exp, want),
+            A::Ident(id) => match self.kind_name_value(id, exp, want) {
+                Some(h) => h,
+                None => self.ident_expr(id, exp, want),
+            },
             A::This => self.this_expr(want, span),
             A::Super => {
                 self.cx.err(

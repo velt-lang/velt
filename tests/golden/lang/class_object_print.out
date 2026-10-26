@@ -1,0 +1,13 @@
+[Function: Object]
+[Function: Array]
+[class A]
+[class B extends A]
+[Function: Number]
+[Function: String]
+[Function: Boolean]
+[Function: Map]
+[Function: Set]
+[class A] function
+true function 6 true
+true
+5 true

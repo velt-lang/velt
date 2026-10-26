@@ -1,0 +1,30 @@
+// Constructor objects print as in Node (`[class A]`, `[class B extends A]`, `[Function: Map]`,
+// `[Function: Object]`), and a number's is the value `Number` names where an `unknown` is
+// expected, which converts as `Number(s)` when called (#926). Node prints the same.
+class A {}
+
+class B extends A {}
+
+const vals: any[] = [
+  {},
+  [],
+  new A(),
+  new B(),
+  1,
+  "s",
+  true,
+  new Map<string, number>(),
+  new Set<number>(),
+];
+for (const v of vals) {
+  console.log(v.constructor);
+}
+const u: unknown = A;
+console.log(u, typeof u);
+const n: any = 1;
+const c = n.constructor;
+console.log(c === Number, typeof c, c("5") + 1, n.constructor === n.constructor);
+const seen = new Set<unknown>([Number]);
+console.log(seen.has(c));
+const own: any = { constructor: 5 };
+console.log(own.constructor, ({ a: 1 } as any).constructor === Object);

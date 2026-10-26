@@ -3597,14 +3597,19 @@ with TypeScript's rules:
   that object too, so `ctor === Set || ctor === Map` and `new Set<unknown>([Set, Map])` work as
   in JavaScript: one object per class (for every instantiation of a generic class), `typeof`
   `"function"`. Calling it stops with Node's `TypeError` (`Class constructor A cannot be
-  invoked without 'new'`); `new` through it is not supported yet. A value that holds no class
-  instance gives its kind's one object: an object literal or a record `Object`'s (so
-  `o.constructor === Object`), an array `Array`'s, a number, string, boolean or function
-  `Number`'s, `String`'s, `Boolean`'s or `Function`'s; a record made by `Object.create(null)`
-  has none (`undefined`). A class declared in a function is another class each time the
-  function runs in JavaScript: naming one as a plain value is an error, and `x.constructor` of
-  its instances a `TypeError`, saying it is not supported yet. Each class used this way adds a
-  small constant to the program (about 1 KB of code).
+  invoked without 'new'`); `new` through it is not supported yet. An own `constructor`
+  property comes first. A value that holds no class instance gives its kind's one object: an
+  object literal or a record `Object`'s (so `o.constructor === Object`), a string `String`'s, a
+  number `Number`'s (the value `Number` names where an `any` or `unknown` is expected, so
+  `n.constructor === Number`; called, it converts as `Number(s)` does), an array, a boolean or
+  a function an object of its own for each kind (`Array`, `Boolean` and `Function` are not
+  values in Velt yet, so `=== Array` is an error saying it can't find `Array`); a record made
+  by `Object.create(null)` has none (`undefined`). They print as in Node: `[class A]`,
+  `[class B extends A]`, `[Function: Map]`, `[Function: Array]`. A class declared in a function
+  or a block is another class each time its declaration runs in JavaScript: naming one as a
+  plain value is an error, and `x.constructor` of its instances a `TypeError`, saying it is not
+  supported yet. Each class used this way adds a small constant to the program (about 1 KB of
+  code).
 
 ```ts
 class Point {
