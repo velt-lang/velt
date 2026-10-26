@@ -68,5 +68,15 @@ const lit = {
 const view = lit as Ro<number>;
 console.log(view.value, view.value, (view as any) === (lit as any), n);
 
+
+// Printed and serialized as Node does: an accessor shows as `[Getter]` (or `[Getter/Setter]`)
+// without running, and `JSON.stringify` writes what the getter returns.
+const tagged = { tag: "t", get value(): number { return ++n; } };
+const tv = tagged as { readonly tag: string; readonly value: number };
+console.log(tv);
+console.log(JSON.stringify(tv), JSON.stringify(tagged as any), n);
+console.log(c);
+console.log(JSON.stringify(c), reads);
+
 const p = new Proxy({ n: 1 }, {});
 console.log(p.n);

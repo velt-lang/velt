@@ -1,0 +1,9 @@
+{
+  items: [ { tag: 't', value: [Getter] }, { tag: 't', value: [Getter] } ],
+  one: { base: 2, twice: [Getter/Setter] },
+  d: { inner: [Getter] }
+}
+{"items":[{"tag":"t","value":1},{"tag":"t","value":2}],"one":{"base":2,"twice":4},"d":{"inner":{"a":1,"b":"x"}}}
+5 10 base,twice
+{ base: 5, twice: [Getter/Setter] }
+[{"inner":{"a":1,"b":"x"}},{"base":5,"twice":10}]

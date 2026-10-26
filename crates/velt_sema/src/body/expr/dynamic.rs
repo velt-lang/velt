@@ -248,6 +248,7 @@ impl FnCx<'_, '_> {
         let Some(imp) = self.cx.any_impl() else {
             return Err(h);
         };
+        self.note_accessors_dynamic(h.ty);
         let mut h = h;
         self.force_move(&mut h);
         Ok(self.mk(

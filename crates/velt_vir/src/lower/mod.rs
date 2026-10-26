@@ -79,6 +79,7 @@ mod js_string;
 mod json;
 mod keys;
 mod layout;
+mod literal_accessors;
 mod match_switch;
 mod matching;
 mod module_state;

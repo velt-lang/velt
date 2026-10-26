@@ -1,0 +1,16 @@
+// Object literals with accessors through `any`, nested in objects and arrays (#1538): printed as
+// `[Getter]`, `[Setter]` or `[Getter/Setter]` without running them, serialized with what the
+// getter returns (with `this`), and listed by `Object.keys` once per property.
+let n = 0;
+const lit = { tag: "t", get value(): number { return ++n; } };
+const withThis = { base: 2, get twice(): number { return this.base * 2; }, set twice(v: number) { this.base = v / 2; } };
+const deep = { get inner(): { a: number; b: string } { return { a: 1, b: "x" }; } };
+const holder: any = { items: [lit, lit], one: withThis, d: deep };
+console.log(holder);
+console.log(JSON.stringify(holder));
+const w: any = withThis;
+w.twice = 10;
+console.log(withThis.base, w.twice, Object.keys(w).join(","));
+console.log(withThis as any);
+const arr: any[] = [deep, withThis];
+console.log(JSON.stringify(arr));
