@@ -17,7 +17,6 @@ use velt_syntax::ast;
 use crate::ctx::Ctx;
 use crate::defs::{DefInfo, EnumInfo, Generics};
 use crate::hir::{DefId, Nothing, TyId, TyKind};
-use crate::resolve::TyEnv;
 
 impl Ctx<'_> {
     /// The type alias `a` names inside its own body while it is expanded at `args`: its union,
@@ -86,32 +85,58 @@ impl Ctx<'_> {
         let ast::TypeExprKind::Union(members) = &decl.ty.kind else {
             return None;
         };
-        let nothing = self.members_nothing(a, members, &args);
-        let module = self.aliases[a as usize].module;
-        let mut qual_name = self.qualify(module, name);
-        if generic {
-            qual_name = format!("{qual_name}<{}>", self.recursive_union_insts.len());
+        // The `null` / `undefined` written among the members; when the resolved body allows
+        // more (a member alias such as `JSXElement` that includes `null`, or a type argument
+        // that allows it), it is resolved again with those. The diagnostics of the first pass
+        // stay (what it cached is not resolved again), the second pass's go.
+        let mut nothing = written_nothing(members);
+        let mut again = None;
+        let mut first = None;
+        let (d, core, body) = loop {
+            let (d, core, own) = self.new_recursive_union(a, &args, nothing);
+            first.get_or_insert(d);
+            self.remember_recursive(a, &args, own);
+            let body = self.alias_body(a, args.clone(), span);
+            if again.is_some() {
+                break (d, core, body);
+            }
+            let found = self.body_nothing(body);
+            let wider = match (nothing, found) {
+                (_, None) => None,
+                (None, Some(f)) => Some(f),
+                (Some(n), Some(f)) => (n.join(f) != n).then(|| n.join(f)),
+            };
+            match wider {
+                Some(w) => {
+                    nothing = Some(w);
+                    again = Some(self.diags.len());
+                }
+                None => break (d, core, body),
+            }
+        };
+        if let Some(n) = again {
+            self.diags.truncate(n);
+            // The first pass's union is not used: it keeps no name of the alias's.
+            if let Some(DefInfo::Enum(e)) = first.map(|f| &mut self.info[f.0 as usize]) {
+                e.qual_name.push_str("<unused>");
+            }
         }
-        let info = EnumInfo {
-            name: name.clone(),
-            qual_name,
-            span: decl.name.span,
-            generics: Generics::default(),
-            variants: vec![],
-            is_union: true,
-            decl: None,
-        };
-        let d = self.alloc_def(decl.name.span, DefInfo::Enum(Box::new(info)));
-        let core = self.ty.intern(TyKind::Adt(d, vec![]));
-        let own = match nothing {
-            Some(n) => self.ty.option_of(core, n),
-            None => core,
-        };
-        self.alias_names.insert(core, name.clone());
-        self.alias_names.insert(own, name.clone());
-        self.remember_recursive(a, &args, own);
-        let body = self.alias_body(a, args.clone(), span);
+        if let Some(other) = self.holds_expanding(a, members) {
+            let error = self.ty.error;
+            self.remember_recursive(a, &args, error);
+            let d = velt_common::Diagnostic::error(
+                format!("type alias `{name}` refers to itself"),
+                decl.name.span,
+            )
+            .with_note(format!("it holds `{other}` directly, and `{other}` refers back to it: give one of them a nominal member, such as an interface or a class"));
+            self.error(d);
+            return Some(self.ty.error);
+        }
         if self.adopt_members(d, core, body, nothing) {
+            let own = match nothing {
+                Some(n) => self.ty.option_of(core, n),
+                None => core,
+            };
             return Some(own);
         }
         let error = self.ty.error;
@@ -137,46 +162,77 @@ impl Ctx<'_> {
         }
     }
 
-    /// The `null` / `undefined` alias `a`'s union holds at `args`: those written among its
-    /// `members`, and those of the members that don't name it (an alias, or a type argument,
-    /// that allows `null`).
-    fn members_nothing(
-        &mut self,
-        a: u32,
-        members: &[ast::TypeExpr],
-        args: &[TyId],
-    ) -> Option<Nothing> {
-        let mut nothing = written_nothing(members);
-        let info = &self.aliases[a as usize];
-        let decl = info.decl;
-        let module = info.module;
-        let names: Vec<String> = (info.outer.iter().cloned())
-            .chain(decl.generics.iter().map(|g| g.name.name.clone()))
-            .collect();
-        let reported = self.diags.len();
-        for m in members {
-            if crate::recursive_aliases::names(m, &decl.name.name)
-                || matches!(
-                    m.kind,
-                    ast::TypeExprKind::Null | ast::TypeExprKind::Undefined
-                )
-            {
-                continue;
+    /// The name of another alias that one of alias `a`'s `members` is, written directly (not
+    /// behind an indirection), while that alias is itself being expanded: `B` in
+    /// `type A = number | B | A[]; type B = string | A | B[]` holds `A`, whose union has no
+    /// members yet.
+    fn holds_expanding(&self, a: u32, members: &[ast::TypeExpr]) -> Option<String> {
+        let module = self.aliases[a as usize].module;
+        members.iter().find_map(|m| match &m.kind {
+            ast::TypeExprKind::Named { path, .. } if path.len() == 1 => {
+                match self.lookup_item(module, &path[0].name) {
+                    Some(crate::ctx::Item::Alias(b))
+                        if b != a && self.aliases[b as usize].expanding =>
+                    {
+                        Some(path[0].name.clone())
+                    }
+                    _ => None,
+                }
             }
-            let mut env = TyEnv::new(module, &names);
-            env.args = args.to_vec();
-            let t = self.resolve_type(m, &env);
-            let t = match args.is_empty() {
-                true => t,
-                false => self.subst(t, args),
-            };
-            if let Some(n) = self.ty.nothing_of(t) {
-                nothing = Some(nothing.map_or(n, |x| x.join(n)));
+            _ => None,
+        })
+    }
+
+    /// The `null` / `undefined` a resolved alias body allows: its own, and those of the type
+    /// arguments of the generic union it is (`string | T0 | C[]` at a `T0` of `F | null`).
+    fn body_nothing(&self, body: TyId) -> Option<Nothing> {
+        let (inner, mut n) = match *self.ty.kind(body) {
+            TyKind::Option(p, n) => (p, Some(n)),
+            _ => (body, None),
+        };
+        if let Some((_, args)) = self.union_def(inner) {
+            for a in args {
+                if let Some(m) = self.ty.nothing_of(a) {
+                    n = Some(n.map_or(m, |x| x.join(m)));
+                }
             }
         }
-        // Reported where the body is resolved.
-        self.diags.truncate(reported);
-        nothing
+        n
+    }
+
+    /// A new union enum for alias `a` at `args`: its def, its type, and that type with
+    /// `nothing`.
+    fn new_recursive_union(
+        &mut self,
+        a: u32,
+        args: &[TyId],
+        nothing: Option<Nothing>,
+    ) -> (DefId, TyId, TyId) {
+        let decl = self.aliases[a as usize].decl;
+        let name = &decl.name.name;
+        let module = self.aliases[a as usize].module;
+        let mut qual_name = self.qualify(module, name);
+        if !args.is_empty() {
+            qual_name = format!("{qual_name}<{}>", self.info.len());
+        }
+        let info = EnumInfo {
+            name: name.clone(),
+            qual_name,
+            span: decl.name.span,
+            generics: Generics::default(),
+            variants: vec![],
+            is_union: true,
+            decl: None,
+        };
+        let d = self.alloc_def(decl.name.span, DefInfo::Enum(Box::new(info)));
+        let core = self.ty.intern(TyKind::Adt(d, vec![]));
+        let own = match nothing {
+            Some(n) => self.ty.option_of(core, n),
+            None => core,
+        };
+        self.alias_names.insert(core, name.clone());
+        self.alias_names.insert(own, name.clone());
+        (d, core, own)
     }
 
     /// Give union enum `d` the members of `body`, the resolved alias body, when it is a union
@@ -189,24 +245,36 @@ impl Ctx<'_> {
         body: TyId,
         nothing: Option<Nothing>,
     ) -> bool {
-        let (inner, n) = match *self.ty.kind(body) {
-            TyKind::Option(p, n) => (p, Some(n)),
-            _ => (body, None),
+        let inner = match *self.ty.kind(body) {
+            TyKind::Option(p, _) => p,
+            _ => body,
         };
+        let n = self.body_nothing(body);
         let Some((found, args)) = self.union_def(inner) else {
             return false;
         };
-        if n != nothing || !args.is_empty() {
+        if n != nothing {
             return false;
         }
         let Some(mut variants) = self.enum_info(found).map(|e| e.variants.clone()) else {
             return false;
         };
-        // A function type in a member is taken as written, throwing nothing: the error types a
-        // function type written without `throws` would infer (`crate::throws::vars`) cannot be
-        // solved through a type that holds itself.
+        // A union among the members (`C<C<boolean>>`'s `C<boolean>`) is the argument of a
+        // generic union: the members are its substituted ones. A function type in a member is
+        // taken as written, throwing nothing: the error types a function type written without
+        // `throws` would infer (`crate::throws::vars`) cannot be solved through a type that
+        // holds itself.
         for v in &mut variants {
-            v.payload[0] = self.plain_type(v.payload[0]);
+            let mut m = v.payload[0];
+            if !args.is_empty() {
+                m = self.subst(m, &args);
+                // A type argument that allows `null` adds its nothing to the union's.
+                if let TyKind::Option(p, _) = *self.ty.kind(m) {
+                    m = p;
+                }
+                v.name = self.display(m);
+            }
+            v.payload[0] = self.plain_type(m);
         }
         let members: Vec<TyId> = variants.iter().map(|v| v.payload[0]).collect();
         if members.iter().any(|&m| self.inline_in(m, core, 0)) {

@@ -76,6 +76,36 @@ type Pair<A, B> = A | B | Pair<A, B>[];
 const p: Pair<number, boolean> = [1, [true, 2]];
 console.log(p);
 
+// An instantiation at another one, through aliases of the alias, and with a default type
+// argument the self-reference relies on.
+type C<T> = string | T | C<T>[];
+type S<T> = C<T>;
+const cc: C<C<boolean>> = [true, ["x", [false]]];
+console.log(JSON.stringify(cc));
+const ss: S<S<number>> = ["a", 1, [2, ["b"]]];
+console.log(JSON.stringify(ss));
+type D<T = number> = string | T | D[];
+const dd: D = [1, ["a"]];
+console.log(JSON.stringify(dd));
+
+// A type argument that allows `null`.
+type MaybeFill = ((n: number) => string) | null;
+
+function fills(c: C<MaybeFill>): string {
+  if (c === null) {
+    return "null";
+  }
+  if (Array.isArray(c)) {
+    return "[" + c.map(fills).join(",") + "]";
+  }
+  if (typeof c === "function") {
+    return c(1);
+  }
+  return c;
+}
+
+console.log(fills(["a", null, [(n: number) => "x" + n]]));
+
 // Checked though nothing uses them.
 type Unused = string | Unused[];
 type UnusedOf<T> = T | UnusedOf<T>[];

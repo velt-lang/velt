@@ -6,4 +6,8 @@
 caught no
 {"a":1,"b":{"c":2,"d":null}}
 [ 1, [ true, 2 ] ]
+[true,["x",[false]]]
+["a",1,[2,["b"]]]
+[1,["a"]]
+[a,null,[x1]]
 done
