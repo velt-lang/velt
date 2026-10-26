@@ -362,14 +362,17 @@ the module state per function and type, whose initializer is the `ToDyn` of the 
 calling it (a class value's encoding, "Classes as values"), so every use is one value; so is
 a generic function declared in a function body, which captures nothing.
 
-`Program::fresh_closures` (additive) lists the closures each evaluation of which is a new
-function where JavaScript has one, with the function type of their values: the wrappers sema
-makes for a generic value converted to another function type and for a function asserted to a
-generic type, a generic function's value at a type over the caller's type parameters, and the
-constants of a generic function used as a value at more than one type (or also as a value of a
-fixed function type). Lowering reports one it makes when the program compares or hashes
-function values of a type with the same key (a fixed function type's number of parameters, a
-generic function type's interface), or compares dynamic values while one is held as one.
+`Program::fresh_closures` (additive) lists, as `FreshClosure::New`, the closures each
+evaluation of which is a new function where JavaScript has one, with the function type of their
+values: the wrappers sema makes for a generic value converted to another function type and for
+a function asserted to a generic type, a generic function's value at a type over the caller's
+type parameters, and the constants of a generic function used as a value at more than one type
+(or also as a value of a fixed function type). Lowering reports one it makes when the program
+compares or hashes function values of the same type as instantiated, without what it throws
+(also as a member of a union, an option, a tuple or a result), or compares dynamic values while
+one is held as one. It also lists, as `FreshClosure::Converts { from, to }`, the closures sema makes to convert a
+function value of type `from` to type `to`: a fresh value converted by one counts as compared
+where values of `to` are.
 
 ## Union types
 - `A | B | C` (two or more distinct non-null members) is `TyKind::Adt(d, args)` where `d` is a

@@ -286,7 +286,12 @@ impl FnCx<'_, '_> {
             }
             Wrap::Call | Wrap::Discard => {}
         }
-        let w = self.closure(&arrow, exp, true);
+        let mut w = self.closure(&arrow, exp, true);
+        // A function value converted to another function type (#943, `FreshClosure`).
+        if let (Some((_, v)), Some(to)) = (&bound, exp) {
+            let from = v.ty;
+            self.mark_converts(&mut w, from, to);
+        }
         self.pop_scope();
         let Some((local, value)) = bound else {
             return w;

@@ -13,6 +13,7 @@ mod locks;
 mod transfers;
 mod weak;
 
+use crate::lower::fresh_fns::FnKey;
 use rustc_hash::FxHashSet;
 use std::collections::BTreeSet;
 
@@ -206,12 +207,13 @@ pub(super) struct Facts {
     /// Function values are compared (or hashed) somewhere.
     fn_compared: bool,
     /// The types of the function values compared (fresh_fns.rs).
-    pub(in crate::lower) fn_compared_keys: FxHashSet<crate::lower::fresh_fns::FnKey>,
+    pub(in crate::lower) fn_compared_keys: FxHashSet<FnKey>,
     /// The generic function types whose values are held as `unknown` (fresh_fns.rs).
-    pub(in crate::lower) generic_any_keys: FxHashSet<crate::lower::fresh_fns::FnKey>,
+    pub(in crate::lower) generic_any_keys: FxHashSet<FnKey>,
+    /// The conversions of function values between function types (fresh_fns.rs).
+    pub(in crate::lower) fn_edges: FxHashSet<(FnKey, FnKey)>,
     /// The fresh closures made (fresh_fns.rs).
-    pub(in crate::lower) fresh_made:
-        FxHashSet<(velt_sema::hir::DefId, crate::lower::fresh_fns::FnKey)>,
+    pub(in crate::lower) fresh_made: FxHashSet<(velt_sema::hir::DefId, FnKey)>,
     /// A generic closure is held as `unknown` (`Boxing::generic_any`).
     pub(super) generic_any: bool,
     /// A member is written through `any`.

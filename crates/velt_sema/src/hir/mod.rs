@@ -29,6 +29,7 @@
 //! `docs/internals/contracts/hir_encodings.md` — part of this contract.
 
 mod fields;
+mod fresh;
 mod intrinsic;
 mod module_state;
 mod nothing;
@@ -41,6 +42,7 @@ use std::collections::{HashMap, HashSet};
 use velt_common::Span;
 
 pub use fields::{DynMember, DynMemberKind, FieldDef, FieldInit};
+pub use fresh::FreshClosure;
 pub use intrinsic::Intrinsic;
 pub use module_state::{GlobalDef, ModuleState};
 pub use nothing::Nothing;
@@ -205,12 +207,9 @@ pub struct Program {
     /// "Generic methods"). Additive.
     pub generic_dyn_methods: HashSet<String>,
     /// Closures each evaluation of which is a new function value where JavaScript has one
-    /// function (#943): a generic function value converted to another function type, a function
-    /// of fixed types asserted to a generic one, and a generic function's value at a type over
-    /// the caller's type parameters or at more than one type. With the function type of their
-    /// values: lowering reports one made in a program that compares function values of that
-    /// type (hir_encodings.md "Generic function values"). Additive.
-    pub fresh_closures: HashMap<DefId, TyId>,
+    /// function, and the conversions of function values to other function types (#943,
+    /// [`FreshClosure`], hir_encodings.md "Generic function values"). Additive.
+    pub fresh_closures: HashMap<DefId, FreshClosure>,
 }
 
 /// `ty` implements `iface<iface_args>` using `methods` (one per interface method, in order).

@@ -75,7 +75,21 @@ impl FnCx<'_, '_> {
     /// a new function where JavaScript has one (`hir::Program::fresh_closures`).
     pub(super) fn mark_fresh(&mut self, h: &mut hir::Expr, ty: TyId) {
         if let Some(c) = crate::generic_fns::closure_in(h) {
-            self.cx.generic_fns.fresh.insert(c, ty);
+            self.cx
+                .generic_fns
+                .fresh
+                .insert(c, hir::FreshClosure::New(ty));
+        }
+    }
+
+    /// Records the closure `h` makes as converting function values of type `from` to `to`
+    /// (`hir::FreshClosure::Converts`): a fresh value converted by it may be compared as a `to`.
+    pub(super) fn mark_converts(&mut self, h: &mut hir::Expr, from: TyId, to: TyId) {
+        if let Some(c) = crate::generic_fns::closure_in(h) {
+            let fresh = &mut self.cx.generic_fns.fresh;
+            fresh
+                .entry(c)
+                .or_insert(hir::FreshClosure::Converts { from, to });
         }
     }
 

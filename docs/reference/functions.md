@@ -1146,7 +1146,8 @@ optional parameters), a function asserted to a generic type, a generic function 
 that mentions the caller's type parameters (`P<U>` in `getP<U>`), and a generic function used as
 a value at more than one type (or also where a function of fixed types is expected). A program
 that makes such a value and compares function values of its type (the same parameter and result
-types, or the same generic function type; with `===`, `includes`, `indexOf`, a `Set` or `Map`
+types, or the same generic function type, also as a member of a union or an option, or after
+a conversion to another function type; with `===`, `includes`, `indexOf`, a `Set` or `Map`
 key) is an error, rather than giving another answer than JavaScript, as is one that compares
 `unknown` or `any` values while one holds such a value; holding it as `unknown` alone is fine.
 The program's build reports it, as it needs every instantiation: `velt check`, which only
@@ -1156,7 +1157,8 @@ value is instantiated at it, as TypeScript does. A function of fixed types is no
 (`(x: number) => number` is not a `<T>(x: T) => T`, as TypeScript reports), also not through
 `unknown` (`plus as unknown as Id` is an error), unless it takes the type's parameters at every
 type argument: `Symbol as unknown as <T>(d: string) => Token<T>` is the generic arrow calling
-`Symbol`, which is evaluated once (`f as unknown as …` keeps the function `f` held then; a
+`Symbol` (the type written out, or an alias of it declared in the module without type
+parameters), which is evaluated once (`f as unknown as …` keeps the function `f` held then; a
 function that doesn't take them at every type argument, `Symbol` as `<T>(d: string) =>
 Token<T>` with `Token<T>` an object type, is an error). Held as `unknown`, a generic function value's `typeof` is `"function"`, it compares
 with `===`, and `u as Id` gives it back; it can't be held as `any` or `Function` yet (an error),

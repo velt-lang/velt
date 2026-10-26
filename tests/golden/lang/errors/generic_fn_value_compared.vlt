@@ -2,12 +2,27 @@
 // comparing them would give another answer than Node, so a program that makes one and compares
 // function values of its type is an error. A generic value converted to a function of fixed
 // types, a function asserted to a generic type, a generic function used at a type over the
-// caller's type parameters, and one used as a value at two generic types.
+// caller's type parameters, and one used as a value at two generic types; also compared inside a
+// union, an option or a field, and after a conversion to a wider function type.
 type G = <T>(x: T) => T;
 type W = <T>(x: T) => unknown;
 type P<U> = <T>(x: T, u: U) => T;
 type Tok<T> = symbol & { __t?: T };
 type MkTok = <T>(d: string) => Tok<T>;
+type N = (x: number) => number;
+type Wide = (x: number) => number | string;
+
+interface Holder {
+  f: N | undefined;
+}
+
+function same<T>(x: T): T {
+  return x;
+}
+
+function other<T>(x: T): T {
+  return x;
+}
 
 function id<T>(x: T): T {
   return x;
@@ -32,4 +47,18 @@ function main(): void {
   console.log(getP(1) === getP(2));
   const w: W = id;
   console.log((g as unknown) === (w as unknown));
+  const s1: G = same;
+  const n1: N = s1;
+  const n2: N = s1;
+  const inUnion: (N | null)[] = [n1];
+  console.log(inUnion.includes(n2), new Set<N | undefined>([n1, n2]).size);
+  const h1: Holder = { f: s1 };
+  const h2: Holder = { f: s1 };
+  console.log(h1.f === h2.f);
+  const o1: G = other;
+  const m1: N = o1;
+  const m2: N = o1;
+  const wide1: Wide = m1;
+  const wide2: Wide = m2;
+  console.log(wide1 === wide2);
 }

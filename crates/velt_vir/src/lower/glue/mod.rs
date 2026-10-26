@@ -359,7 +359,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             g,
             Glue::Eq | Glue::Same | Glue::SameValue | Glue::KeyEq | Glue::KeySame | Glue::Hash
         ) {
-            self.note_fn_compared(ty);
+            self.note_fn_compared_in(ty);
         }
         let f = self.cx.func_direct(Work::Glue(g, ty), self.mode);
         match g.sig().1 {

@@ -54,7 +54,7 @@ pub(crate) struct GenericFns {
     /// The site of each one's error type: its first spelling, when in a user module.
     sites: FxHashMap<DefId, Span>,
     /// `hir::Program::fresh_closures`.
-    pub fresh: FxHashMap<DefId, TyId>,
+    pub fresh: FxHashMap<DefId, hir::FreshClosure>,
 }
 
 /// A generic function type's parts, over the type parameters in scope, the implementor and
@@ -510,7 +510,7 @@ pub(crate) fn mark_shared_values(cx: &mut Ctx) {
         }
         for (t, g) in values {
             if let Some(c) = global_closure(cx, g) {
-                cx.generic_fns.fresh.insert(c, t);
+                cx.generic_fns.fresh.insert(c, hir::FreshClosure::New(t));
             }
         }
     }
