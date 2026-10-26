@@ -852,6 +852,30 @@ console.log(update(v, { deletedAt: null })); // { name: 'bo', deletedAt: null }
   the variable's last assignment). `typeof`, `instanceof` and union-member tests do not narrow
   a module variable itself, and `instanceof` does not narrow its field paths: copy the value
   into a `const` and test that.
+- `r[k]` on a `Record<string, V>` with a key that is a `const` narrows like `r.name`: after
+  `if (!r[k]) r[k] = [];` it is a `V`, and so is `r[k]` in `for (const k in r)`. Assigning `r`
+  or `delete r[k]` drops the narrowing; a read is checked again, as a field's is.
+
+  ```ts
+  let current: { name: string } | null = null;
+
+  function group(words: string[]): Record<string, string[]> {
+    const out: Record<string, string[]> = {};
+    for (const w of words) {
+      const k = w.slice(0, 1);
+      if (!out[k]) out[k] = [];
+      out[k].push(w);
+    }
+    return out;
+  }
+
+  function main() {
+    current = { name: "ann" };
+    if (current) console.log(current.name);            // ann
+    const g = group(["ab", "ac", "b"]);
+    for (const k in g) console.log(k, g[k].length);    // a 2, then b 1
+  }
+  ```
 - `const x = node.left` / `const row = grid[i]` refers to the same object as the field or
   element (objects are references, [Memory model](memory.md#values-and-references)); when the
   rest of the block replaces `node.left`, `x` keeps referring to the old object, as in JS.

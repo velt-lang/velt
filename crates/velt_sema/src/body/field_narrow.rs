@@ -406,8 +406,12 @@ impl FnCx<'_, '_> {
         if let ast::ExprKind::Paren(inner) = &e.kind {
             return self.field_path(inner, create);
         }
-        // `x["a"]` (a constant key) is the same path as `x.a`.
-        let (object, prop) = super::expr::member::member_view(e)?;
+        // `x["a"]` (a constant key) is the same path as `x.a`; `x[k]` has `k` on it
+        // (`key_narrow`).
+        let (object, prop) = match super::expr::member::member_view(e) {
+            Some(found) => found,
+            None => self.keyed_view(e)?,
+        };
         self.member_path(object, &prop, create)
     }
 

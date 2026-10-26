@@ -189,7 +189,15 @@ impl FnCx<'_, '_> {
                 synth(kind, span)
             }
         };
-        self.record_call_keyed(obj, "__set", key, std::slice::from_ref(&value), span)
+        let set = self.record_call_keyed(obj, "__set", key, std::slice::from_ref(&value), span);
+        // The key holds a value now: `r[k]` reads it until the next change (`key_narrow`).
+        self.unnarrow_fields(target);
+        if op.is_none() && self.cx.ty.nothing_of(v).is_none() {
+            if let Some(t) = self.field_token(target) {
+                self.narrow(&crate::body::narrow::Fact::NonNull(t));
+            }
+        }
+        set
     }
 
     /// `r[k]++` / `--r.name` (not used as a value): `r.__set(k, r[k] + 1)`.
@@ -286,6 +294,7 @@ impl FnCx<'_, '_> {
         if !self.require_mutable(&obj, "delete a key of") {
             return self.error_expr(span);
         }
+        self.unnarrow_fields(operand);
         self.record_call_keyed(obj, "__delete", key, &[], span)
     }
 }
