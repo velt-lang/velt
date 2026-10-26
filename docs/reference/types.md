@@ -3038,7 +3038,9 @@ Members of an `any` are written as in JavaScript too: `x.f = v`, `x["f"] = v` an
 with a `string`, `number` or `any` key. The value is converted to the member's type with the
 same check as above (a value of another type stops with its `TypeError`, and the member keeps
 its old value) and stored in the object itself, so every other reference to it sees the write;
-a setter is called with it. A `Record<string, V>` takes any key, adding the ones it lacks, as
+a setter is called with it, also an object literal's (`set value(v)` written in it or added by
+`Object.defineProperty`; a read runs its getter), and `Reflect.set(o, "value", v)` does the
+same. A `Record<string, V>` takes any key, adding the ones it lacks, as
 in Node; an array takes its elements inside its length, an element at its length (it grows by
 one, as `a[a.length] = v` does in Node) and a shorter `length`, which drops the elements past it
 (a length that is not a whole number from 0 up is Node's `RangeError: Invalid array length`). The
