@@ -100,3 +100,20 @@ fn exact_extensions_win_and_generic_ones_need_their_bounds() {
     assert_ne!(targets[1], targets[0], "{targets:?}");
     assert_ne!(targets[2], targets[1], "{targets:?}");
 }
+
+#[test]
+fn velt_only_prelude_methods_keep_their_integer_results_in_user_code() {
+    // `compareTo` (std/prelude/compare.vlt) and the bit counts (std/prelude/bits.vlt) are Velt's
+    // own API: a `usize` or `i64` there, where a JS API integer (`indexOf`) is a `number`.
+    ok_src(
+        "function main() {
+           const x: u64 = 8;
+           const t: usize = x.trailingZeros();
+           const l: usize = x.leadingZeros();
+           const c: usize = x.countOnes();
+           const r: i64 = x.compareTo(9);
+           console.log(t, l, c, r);
+         }",
+    );
+    err_src("function main() { const i: i64 = \"ab\".indexOf(\"b\"); console.log(i); }");
+}

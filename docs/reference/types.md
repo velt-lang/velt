@@ -90,8 +90,9 @@ and memory where you want a fixed width; code shared with TypeScript never names
   `String`, `Map`, `Date`, `Math`, `fetch`, `URL`, …) gives numbers where JavaScript does:
   `xs.length`, `s.indexOf(t)`, `m.size`, `Date.now()`, `res.status` and the indexes of
   `entries()` and of array callbacks (inside the standard library they stay `usize`/`i64`).
-  Velt's own modules (`velt:sqlite`, `velt:hash`, `velt:bigint`, …) and `compareTo` keep the
-  integer types they declare. A number passed to an integer parameter of a standard library
+  Velt's own modules (`velt:sqlite`, `velt:hash`, `velt:bigint`, …) and the methods JS has no
+  counterpart of (`compareTo`, `leadingZeros`, `trailingZeros`, `countOnes`) keep the integer
+  types they declare, as do a program's and its packages' own functions and `extend` methods. A number passed to an integer parameter of a standard library
   function converts like JS's `ToIntegerOrInfinity` (truncated; `NaN` is 0):
   `xs.slice(0, xs.length / 2)` takes the first half. A callback that the standard library
   expects to return a number, such as a `sort` comparator, may return an integer of any type:

@@ -25,11 +25,6 @@ pub(super) fn is_simd_method(name: &str) -> bool {
     })
 }
 
-/// Prelude methods that are Velt's own, not JS's: their integer results stay integers in user
-/// code (`x.trailingZeros()` indexes an array as it is). `compareTo` is the ordering protocol
-/// (classes.md); the bit counts are std/prelude/bits.vlt.
-const VELT_METHODS: &[&str] = &["compareTo", "leadingZeros", "trailingZeros", "countOnes"];
-
 impl FnCx<'_, '_> {
     /// Does every value of type `t` convert to a `number` exactly (`i8`..`i32`, `u8`..`u32`,
     /// `f32`)? Those convert implicitly.
@@ -44,17 +39,12 @@ impl FnCx<'_, '_> {
     /// Is function `d` part of the JavaScript API the standard library provides (the prelude's
     /// globals: `Array`, `String`, `Map`, `Date`, `Math`, `fetch`, `URL`, …), called from user
     /// code? Its integers are numbers there. Velt's own modules (`velt:sqlite`, `velt:hash`, …),
-    /// the prelude methods JS has no counterpart of (`VELT_METHODS`: the ordering protocol, bit
-    /// counts) and the SIMD types keep their declared integer types.
+    /// the prelude modules JS has no counterpart of (`js_api::VELT_PRELUDE`: the ordering
+    /// protocol, bit counts) and the SIMD types keep their declared integer types.
     pub(crate) fn is_js_api(&self, d: DefId) -> bool {
         let f = self.cx.fn_info(d);
         !self.cx.scopes[self.module].is_std
             && self.cx.is_js_api_fn(f.module, &f.name)
-            && !f
-                .name
-                .rsplit(['.', ':'])
-                .next()
-                .is_some_and(|m| VELT_METHODS.contains(&m))
             && !is_simd_method(&f.name)
     }
 
