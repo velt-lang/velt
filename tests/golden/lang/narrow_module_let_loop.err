@@ -1,0 +1,2 @@
+narrow_module_let_loop.vlt:29:19: error: value of type `Ctx | null` may be null
+narrow_module_let_loop.vlt:36:24: error: no field `extra` on type `Base`

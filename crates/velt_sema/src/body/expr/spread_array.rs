@@ -81,7 +81,7 @@ impl FnCx<'_, '_> {
                 }
                 _ => None,
             };
-            let mut h = self.expr(inner, hint, Want::Borrow);
+            let mut h = self.payload_expr(inner, hint, Want::Borrow);
             h = self.read_shared(h);
             if self.cx.ty.array_elem(h.ty).is_none() {
                 match self.spread_iterable(h, inner) {

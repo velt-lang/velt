@@ -103,7 +103,7 @@ impl FnCx<'_, '_> {
             _ => {
                 let f = match &callee.kind {
                     ast::ExprKind::Paren(inner) => self.immediate_closure(inner),
-                    _ => self.expr(callee, None, Want::Borrow),
+                    _ => self.receiver_expr(callee),
                 };
                 self.call_value(f, args, span)
             }
@@ -184,7 +184,7 @@ impl FnCx<'_, '_> {
                     self.error_expr(span)
                 }
                 _ => {
-                    let f = self.ident_expr(id, None, Want::Borrow);
+                    let f = self.with_payload_at(id.span, |s| s.ident_expr(id, None, Want::Borrow));
                     self.call_value(f, args, span)
                 }
             },
@@ -472,7 +472,7 @@ impl FnCx<'_, '_> {
             _ => {
                 // A narrowed union that may hold a view stays the union (`union_view`).
                 self.view_receiver = super::member::is_name(object);
-                let recv = self.expr(object, None, Want::Borrow);
+                let recv = self.receiver_expr(object);
                 self.view_receiver = false;
                 recv
             }

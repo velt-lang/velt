@@ -96,16 +96,24 @@ impl FnCx<'_, '_> {
             crate::hir::Nothing::Both => "null or undefined",
             n => n.word(),
         });
-        let msg = format!(
-            "TypeError: `{name}` was checked, but a closure set it to {what} before this use"
-        );
+        let msg = match self.is_checked_copy(l) {
+            // A copy of a checked module variable or field (`checked_copies`).
+            true => {
+                format!("TypeError: `{name}` was copied from a checked value, but it is {what}")
+            }
+            false => format!(
+                "TypeError: `{name}` was checked, but a closure set it to {what} before this use"
+            ),
+        };
         let mode = self.use_mode(ty, super::Want::Borrow);
         let h = self.mk(crate::hir::ExprKind::Local(l, mode), ty, span);
         self.checked_present(h, &msg, None, want != super::Want::Move, span)
     }
 
-    /// `e` checked as the operand of a null or truthiness test: a variable that a closure
-    /// assigns is read as it is (the test is what checks it).
+    /// `e` checked as the operand of a null or truthiness test (or the object of `?.`): a
+    /// variable that a closure assigns, a module variable and a narrowed field path are read as
+    /// they are, not checked again (the test is what checks them: `state.next?.name` after a
+    /// call that set `state.next` to `null` reads `undefined`, as in JavaScript).
     pub(crate) fn test_operand(
         &mut self,
         e: &ast::Expr,
@@ -116,7 +124,18 @@ impl FnCx<'_, '_> {
         while let ast::ExprKind::Paren(x) = &inner.kind {
             inner = x;
         }
-        if matches!(inner.kind, ast::ExprKind::Ident(_)) {
+        if matches!(
+            inner.kind,
+            ast::ExprKind::Ident(_)
+                | ast::ExprKind::Member {
+                    optional: false,
+                    ..
+                }
+                | ast::ExprKind::Index {
+                    optional: false,
+                    ..
+                }
+        ) {
             self.raw_read = Some(inner.span);
         }
         let h = self.expr(e, exp, want);

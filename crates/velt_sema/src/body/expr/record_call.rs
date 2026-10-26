@@ -198,7 +198,7 @@ impl FnCx<'_, '_> {
         if k != str_ || plain {
             return self.expr(e, Some(k), want);
         }
-        let h = self.expr(e, None, want);
+        let h = self.payload_expr(e, None, want);
         if self.cx.ty.is_numeric(h.ty) {
             let span = h.span;
             return self.intrinsic(Intrinsic::ToString, vec![h], str_, span);
@@ -215,7 +215,7 @@ impl FnCx<'_, '_> {
         if k != str_ {
             return self.expr(e, Some(k), want);
         }
-        let h = self.expr(e, None, want);
+        let h = self.payload_expr(e, None, want);
         if self.cx.ty.is_numeric(h.ty) {
             let span = h.span;
             return self.intrinsic(Intrinsic::ToString, vec![h], str_, span);

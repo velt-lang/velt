@@ -1,0 +1,36 @@
+// check: no leaks
+// Untyped copies of a narrowed module variable or field: a closure that captures one reads
+// its payload checked, a plain read gives what it holds, `null` included; returns and
+// templates of a field cleared by an assignment read it as it is (#1280). As in Node.
+class Box {
+  n: number = 1;
+}
+let x: Box | null = new Box();
+function clear(): void {
+  x = null;
+}
+function copyInClosure(): () => string {
+  if (x) {
+    const c = x;
+    clear();
+    const f = () => String(c.n);
+    console.log("c", c.n, f());
+    let d = x;
+    const g = () => d;
+    console.log("d", d, g());
+    return f;
+  }
+  return () => "";
+}
+console.log(copyInClosure()());
+let o: { f: Box | null } = { f: new Box() };
+function ret(): Box | null {
+  if (o.f) {
+    const t = `${o.f.n}`;
+    o.f = null;
+    console.log(t, `${o.f}`);
+    return o.f;
+  }
+  return null;
+}
+console.log(ret());

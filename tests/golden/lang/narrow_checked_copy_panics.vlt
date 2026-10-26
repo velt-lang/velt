@@ -1,0 +1,19 @@
+// An untyped copy of a narrowed module variable that a call cleared holds `null`, as in
+// JavaScript; a read of it that needs the payload (`c.n`) stops with a `TypeError` where
+// JavaScript throws one. Velt names the copy; Node says "Cannot read properties of null".
+class Box {
+  n: number = 1;
+}
+let x: Box | null = new Box();
+function clear(): void {
+  x = null;
+}
+function f(): void {
+  if (x) {
+    clear();
+    const c = x;
+    console.log("copy", c);
+    console.log(c.n);
+  }
+}
+f();

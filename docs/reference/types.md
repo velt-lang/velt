@@ -816,15 +816,20 @@ console.log(update(v, { deletedAt: null })); // { name: 'bo', deletedAt: null }
   `T | null` gives `T | null | undefined`. Parentheses end a chain: `(x?.a).b` needs `x?.a` to
   be neither `null` nor `undefined`.
 - Narrowing applies to locals and to field paths of locals (`this.x`, `node.left`), like
-  TypeScript; assigning a non-null value narrows too (also in the declaration: `let x: string
+  TypeScript (module variables: see below); assigning a non-null value narrows too (also in the declaration: `let x: string
   | null = "a"`). After an `if` or a `switch`, what holds is what each way out ends with: the
   facts of the condition a branch started from unless it reassigned the variable, and what its
   own statements established (`if (x == null) { x = d; }` narrows `x` after it; `if (x ==
   null) return; else x = null;` does not; a `case` passes on what holds at its `break`; after a
   `while` loop without `break` its condition is false: `while (y === null) { y = next(); }`). A
-  narrowed field is re-checked when read, so a call that set it to `null` in between panics
-  instead of reading `null` (`a narrowed field was set to null before this read`, `undefined`
-  for an optional field). An optional member of function type can be called once a check
+  narrowed field is re-checked where its payload is read (see the module variables below for
+  where that is), so a call that set it to `null` in between stops the program with
+  ``TypeError: `node.left` was checked, but it was set to null before this read``
+  (`undefined` for an optional field) instead of reading `null`. A field path of a local is
+  read as its payload wherever no type is expected (`const { n } = o.f`, `"n" in o.f`,
+  `const c = o.f`), and as it is in a log argument, a template, a `+` with a string and a
+  test. Node's message for the same mistake is different (`Cannot read properties of null
+  (reading 'x')`), and Node throws a `TypeError` a program can catch, where Velt stops. An optional member of function type can be called once a check
   narrowed it (`if (o.onError) o.onError(e)`, `if (def?.transform) def.transform(v)`). Inside
   a closure, a variable narrowed where the closure is created stays narrowed when the function
   assigns it nowhere after that (nor in a loop around the closure), as in TypeScript: the
@@ -856,6 +861,70 @@ console.log(update(v, { deletedAt: null })); // { name: 'bo', deletedAt: null }
   if (c instanceof Conn) {
     close();
     console.log(c.send("bye"));   // sent bye
+  }
+  ```
+- A module-level `let` (or a module `const` kept as [module state](variables.md#module-state)),
+  also an imported one, is narrowed by a null check in the function that makes it, as in
+  TypeScript (`if (handler) handler();`, `if (!ctx) return; ctx.onMounted(fn)`,
+  `if (app?.provides.has(k)) return app.provides.get(k)`), and so are its field paths
+  (`if (state.next) state.next.name`, `typeof state.v === "string"`). Any call may run code
+  that assigns it (a function of its module, a callback, a getter, another task across an
+  `await`, a generator's caller across a `yield`), so each narrowed read checks the value
+  again, like a variable a closure assigns, and stops with a `TypeError` if it became `null`
+  (`` `ctx` was checked, but it was set to null before this read ``). The variable (or field
+  path) is read as its payload only where that is needed: as a receiver (`ctx.m()`, `ctx.n =
+  1`), a callee, an operand of a numeric operator or a comparison (`n + 1`, `n > 2`, `-n`,
+  `s + 1`, `s + t` with both narrowed), a spread (`...xs`), where the expected type does not
+  take the value as it is (`use(ctx)` with `c: Ctx`, `return ctx` from a function returning
+  `Ctx`, `len(st.v)` with `v: string` after `typeof st.v === "string"`) or what a
+  destructuring takes apart (`const { name } = ctx`). Elsewhere it is read
+  as it is: `console.log(ctx)`, `JSON.stringify(ctx)`, an element of an untyped array (unlike
+  TypeScript, `[x, y]` of two narrowed `Box | null` module variables, module fields or `r[k]`
+  is a `(Box | null)[]`, and holds `null` where a call cleared one), a template, a `+` with a string (`"a" +
+  s`, `s + "!"`, `s += x`, also a branch of a ternary there: `"a" + (c ? s : "z")`), `===`, and
+  where the expected type takes it (a parameter of type `Ctx | null | undefined`, or `Base |
+  null` for a `S1 | S2 | null` of subclasses, or `string | number` for a field `typeof`
+  narrowed to a `string`). So is the operand of a test, `?.` or
+  `??`, so `if (ctx) { reset(); ctx?.name }` gives `undefined`, as in JavaScript. An untyped
+  copy (`let c = ctx`, `const c = state.next`, `const s = st.v` after a `typeof` test, and a
+  copy of such a copy) holds what it read, `null` or a value of another member included, and
+  keeps the narrowing: its reads follow the same rule (`console.log(c)` prints `null`, `c.name`
+  stops with a `TypeError`), and assigning it back (`state.next = c`, `ctx = c`) narrows the
+  field or variable again, checked the same way. A write through a narrowed field path takes the object first, as
+  JavaScript does: `state.next.items[0] = f()` writes into the object `state.next` held before
+  `f()` ran, also when `f()` set `state.next` to `null`, and so do `state.next.ts[0][1] = f()`
+  (a tuple in an array), `state.next.p.x = f()` (a struct or object field) and `a.items[0] =
+  a.items[1] = f()`. A tuple right behind the narrowed field is a value, not an object, so
+  `state.t[0] = f()` stops with the `TypeError` when `f()` cleared `state.t`. An assignment in the function drops
+  the narrowing (and
+  narrows to what it assigned), and so does a loop that assigns the variable. Closures don't
+  see the narrowing of the function they are made in (TypeScript keeps it in one made after
+  the variable's last assignment). `typeof`, `instanceof` and union-member tests do not narrow
+  a module variable itself, and `instanceof` does not narrow its field paths: copy the value
+  into a `const` and test that.
+- `r[k]` on a `Record<string, V>` with a key that is a `const` narrows like `r.name`: after
+  `if (!r[k]) r[k] = [];` it is a `V`, and so is `r[k]` in `for (const k in r)`. Assigning `r`
+  or `delete r[k]` drops the narrowing; a read is checked again where its payload is needed,
+  as a field's is, so a call that deleted the key gives `undefined` in `console.log(r[k])`.
+
+  ```ts
+  let current: { name: string } | null = null;
+
+  function group(words: string[]): Record<string, string[]> {
+    const out: Record<string, string[]> = {};
+    for (const w of words) {
+      const k = w.slice(0, 1);
+      if (!out[k]) out[k] = [];
+      out[k].push(w);
+    }
+    return out;
+  }
+
+  function main() {
+    current = { name: "ann" };
+    if (current) console.log(current.name);            // ann
+    const g = group(["ab", "ac", "b"]);
+    for (const k in g) console.log(k, g[k].length);    // a 2, then b 1
   }
   ```
 - `const x = node.left` / `const row = grid[i]` refers to the same object as the field or

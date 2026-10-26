@@ -1,0 +1,20 @@
+// A module-level `let` narrowed by a null check, set to `null` by a callback before a read:
+// the read stops with a `TypeError`, where JavaScript reads through the `null` and throws one
+// (TypeScript keeps the narrowing across the call).
+class Ctx {
+  name = "c";
+  run(f: () => void): void {
+    f();
+  }
+}
+let cur: Ctx | null = new Ctx();
+function f(): void {
+  if (cur) {
+    cur.run(() => {
+      cur = null;
+    });
+    console.log("after run");
+    console.log(cur.name);
+  }
+}
+f();

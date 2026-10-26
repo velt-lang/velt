@@ -248,9 +248,8 @@ impl FnLower<'_, '_> {
             TyKind::Option(_, n) => n.word(),
             _ => "null",
         };
-        let a = self.panic_text(&format!(
-            "a narrowed field was set to {word} before this read"
-        ));
+        let msg = self.narrowed_read_error(inner, word);
+        let a = self.panic_text(&msg);
         self.call_rt(super::rt::Rt::Panic, vec![a], None);
         self.switch_to(ok);
     }
@@ -270,8 +269,8 @@ impl FnLower<'_, '_> {
         let ok = self.new_block();
         self.goto(ok);
         self.switch_to(fail);
-        let a =
-            self.panic_text("a narrowed field was set to a value of another type before this read");
+        let msg = self.narrowed_read_error(inner, "a value of another type");
+        let a = self.panic_text(&msg);
         self.call_rt(super::rt::Rt::Panic, vec![a], None);
         self.switch_to(ok);
     }

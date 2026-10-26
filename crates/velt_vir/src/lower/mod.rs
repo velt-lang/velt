@@ -84,6 +84,7 @@ mod layout;
 mod match_switch;
 mod matching;
 mod module_state;
+mod narrowed_paths;
 mod operand;
 mod ops;
 mod param_any;

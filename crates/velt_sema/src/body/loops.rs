@@ -10,7 +10,7 @@ use velt_syntax::ast;
 use super::for_iter::ForOfParts;
 use super::pattern::BindCtx;
 use super::places::{frozen_source, source_root};
-use super::{FnCx, LoopCx, Want};
+use super::{FnCx, LoopCx};
 use crate::hir::{self, ExprKind as H, StmtKind as S, TyId, TyKind};
 
 impl FnCx<'_, '_> {
@@ -87,6 +87,7 @@ impl FnCx<'_, '_> {
     ) {
         let span = s.span;
         self.unnarrow_assigned_in(s);
+        self.unnarrow_written_in(s);
         match &s.kind {
             ast::StmtKind::While { cond, body } => {
                 let (when_true, when_false) = self.narrowing(cond);
@@ -262,7 +263,19 @@ impl FnCx<'_, '_> {
         self.enter_loop(label, false);
         let b = self.block_narrowed(body, &when_true);
         let label = self.exit_loop().hir_label();
-        let step = update.map(|u| self.expr_stmt(u));
+        // The update runs after the body (or a `continue`), where the condition still holds
+        // for what the body does not assign: `for (c = head; c; c = c.next)`.
+        let step = update.map(|u| {
+            self.push_scope();
+            when_true.iter().for_each(|f| self.narrow(f));
+            for s in &body.stmts {
+                self.unnarrow_assigned_in(s);
+                self.unnarrow_written_in(s);
+            }
+            let step = self.expr_stmt(u);
+            self.pop_scope();
+            step
+        });
         self.pop_scope();
         let w = hir::Stmt {
             kind: S::While {
@@ -308,7 +321,7 @@ impl FnCx<'_, '_> {
     pub(super) fn for_of_source(&mut self, iter: &ast::Expr) -> hir::Expr {
         // Not an in-place use of an adapted array (`iface_field`): Node also visits an element
         // the body adds to the original.
-        let it = self.expr(iter, None, Want::Borrow);
+        let it = self.receiver_expr(iter);
         // `for (const x of s)` over a `shared<T>`: the value inside (#36), whatever it iterates
         // (an array, a string, a `Map`, a `Set`, a typed array).
         let it = match *self.cx.ty.kind(it.ty) {
