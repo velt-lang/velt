@@ -1,7 +1,8 @@
 // Generic methods called on interface values that Velt can't dispatch yet (#943): a class held
 // as a base class whose subclass overrides the generic method (also through `any`, `unknown`
-// and `object`, which keep the type the value had), and an interface value at other type
-// arguments (it would need a wrapper forwarding the call's type arguments).
+// and `object`, which keep the type the value had, in initializers and in generic code
+// instantiated with the interface too), and an interface value at other type arguments (it
+// would need a wrapper forwarding the call's type arguments).
 interface Box {
   wrap<T>(x: T): T[];
 }
@@ -35,6 +36,44 @@ class C implements H<number> {
   }
 }
 
+const dyn: any = new Sub() as Base;
+const fromModule: Box = dyn;
+
+class FieldInit {
+  b: Box = dyn;
+  static s: Box = dyn;
+}
+
+function conv<T>(u: unknown): T {
+  return u as T;
+}
+
+function convBound<T extends Box>(u: unknown): T {
+  return u as T;
+}
+
+function convArr<T>(u: unknown): T[] {
+  return [u as T];
+}
+
+function pass<T>(x: any): T {
+  return x;
+}
+
+class Conv<T> {
+  v: unknown;
+  constructor(v: unknown) {
+    this.v = v;
+  }
+  get(): T {
+    return this.v as T;
+  }
+}
+
+function outer<U>(u: unknown): U {
+  return conv<U>(u);
+}
+
 function main(): void {
   const xs: Base[] = [new Base(), new Sub()];
   for (const x of xs) console.log(use(x));
@@ -44,6 +83,10 @@ function main(): void {
   const u: unknown = s;
   const o: object = s;
   console.log(use(a), use(u as Box), use(o as Box), use(s as any as Box));
+  console.log(use(fromModule), use(new FieldInit().b), use(FieldInit.s));
+  console.log(use(conv<Box>(s)), use(convBound<Box>(s)), use(convArr<Box>(s)[0]));
+  const viaConv: Box = conv(u);
+  console.log(use(pass<Box>(s)), use(new Conv<Box>(s).get()), use(outer<Box>(s)), use(viaConv));
   const h: H<unknown> = new C();
   console.log(h.wrap(1, "s"));
 }

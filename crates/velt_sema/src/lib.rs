@@ -30,6 +30,7 @@ mod absent_fields;
 mod alias_expand;
 mod anon;
 mod any;
+mod any_iface_sites;
 mod assigned_fields;
 mod ast_walk;
 mod body;
@@ -532,7 +533,7 @@ fn analyze_bodies(cx: &mut ctx::Ctx) {
     timings::pass("fresh_returns::check", || fresh_returns::check(cx));
     timings::pass("generic_override_sites::check", || {
         generic_override_sites::check_adapters(cx);
-        generic_override_sites::check_any_ifaces(cx);
+        any_iface_sites::check_any_ifaces(cx);
         generic_override_sites::check(cx)
     });
     timings::pass("generic_fns::mark_shared_values", || {
