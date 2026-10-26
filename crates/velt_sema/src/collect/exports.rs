@@ -18,6 +18,7 @@ use velt_syntax::ast;
 use crate::check_work::add_export_work;
 use crate::ctx::{Ctx, Item};
 use crate::hir::{DefId, TyId, TyKind};
+use crate::type_meanings::{of_type_key, type_key};
 use crate::SourceModule;
 
 /// How many re-export steps are followed (a cycle of `export *` ends here).
@@ -127,7 +128,17 @@ fn build_table(cx: &Ctx, t: usize, depth: u32) -> Option<Rc<[(String, Item)]>> {
         for n in &imp.names {
             let bound = &bound_name(n).name;
             if !decided.contains_key(bound) {
-                decided.insert(bound.clone(), item_of(&n.name.name));
+                // Both meanings of a name that is a type and a value; `export type { x }`
+                // only the type (`crate::type_meanings`).
+                let ty = item_of(&type_key(&n.name.name));
+                let value = match ty {
+                    Some(ty) if n.type_only => Some(ty),
+                    _ => item_of(&n.name.name),
+                };
+                if !n.type_only && ty.is_some() && ty != value {
+                    decided.insert(type_key(bound), ty);
+                }
+                decided.insert(bound.clone(), value);
             }
             let (members, complete) = list_members(cx, t, imp, n, depth);
             if !complete {
@@ -342,6 +353,9 @@ fn renamed(n: &ast::ImportName, name: &str) -> Option<String> {
     if name == bound {
         return Some(n.name.name.clone());
     }
+    if of_type_key(name) == Some(bound.as_str()) {
+        return Some(type_key(&n.name.name));
+    }
     let rest = name.strip_prefix(bound.as_str())?.strip_prefix('.')?;
     Some(format!("{}.{rest}", n.name.name))
 }
@@ -443,6 +457,7 @@ fn export_names(
         for n in &imp.names {
             let bound = &bound_name(n).name;
             out.push(bound.clone());
+            out.push(type_key(bound));
             let (members, members_complete) = list_members(cx, t, imp, n, depth);
             complete &= members_complete;
             add_export_work(1 + members.len() as u64);

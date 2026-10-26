@@ -1,0 +1,36 @@
+// A name that is both a type and a value: each meaning is used only where it fits, and the
+// declarations TypeScript keeps apart are the only ones that may share a name.
+import type { guid as OnlyType } from "../_type_value_names_lib";
+
+type Id = string;
+const Id = 1;
+const a: Id = Id; // the constant is a number, the type a string
+
+function f(): void {}
+
+let b: f = f; // a function is not a type
+
+const c = OnlyType; // imported with `import type`
+
+enum Color {
+  Red,
+}
+
+export const Color = 2; // an enum is a type and a value already
+
+type Twice = string;
+const Twice = "x";
+
+interface Twice {
+  n: number;
+}
+
+interface Shape {
+  r: number;
+}
+
+class Shape {
+  r = 1;
+}
+
+console.log(a, b, c, Twice);

@@ -17,6 +17,7 @@ use super::exports::{
     all_exports, bound_name, export_of, import_target, imports_of, local_of, namespace_exports,
 };
 use crate::ctx::Ctx;
+use crate::type_meanings::type_key;
 
 /// Resolve every import and export list of module `m`.
 pub(super) fn resolve_imports(cx: &mut Ctx, m: usize) {
@@ -64,7 +65,8 @@ fn exported_item(
     imp: &ast::Import,
     n: &ast::ImportName,
 ) -> Option<crate::ctx::Item> {
-    if let Some(it) = export_of(cx, t, &n.name.name) {
+    let found = export_of(cx, t, &n.name.name);
+    if let Some(it) = found.or_else(|| export_of(cx, t, &type_key(&n.name.name))) {
         cx.rec_item(n.name.span, Some(it));
         return Some(it);
     }
@@ -155,8 +157,18 @@ fn import_name(cx: &mut Ctx, m: usize, t: usize, imp: &ast::Import, n: &ast::Imp
             return;
         }
     }
-    let Some(it) = exported_item(cx, m, t, imp, n) else {
-        return;
+    // A name that is both a type and a value in `t` (`crate::type_meanings`): both meanings,
+    // or with `import type` the type alone.
+    let ty = export_of(cx, t, &type_key(&n.name.name));
+    let it = match ty {
+        Some(ty) if n.type_only => {
+            cx.rec_item(n.name.span, Some(ty));
+            ty
+        }
+        _ => match exported_item(cx, m, t, imp, n) {
+            Some(it) => it,
+            None => return,
+        },
     };
     let local = bound_name(n);
     if !define(cx, m, local) {
@@ -165,6 +177,8 @@ fn import_name(cx: &mut Ctx, m: usize, t: usize, imp: &ast::Import, n: &ast::Imp
     cx.scopes[m].items.insert(local.name.clone(), it);
     if n.type_only {
         cx.scopes[m].type_only.insert(local.name.clone());
+    } else if let Some(ty) = ty.filter(|&ty| ty != it) {
+        cx.scopes[m].items.insert(type_key(&local.name), ty);
     }
 }
 

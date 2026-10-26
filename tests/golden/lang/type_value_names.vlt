@@ -1,0 +1,91 @@
+// A name may be both a type and a value, as in TypeScript: the type meaning is used in type
+// positions, the value in expressions, and `typeof` in a type position takes the value. Node
+// prints the same.
+import { guid, Point, Pair, labelled } from "./_type_value_names_lib";
+import type { guid as GuidType, Label } from "./_type_value_names_lib";
+import { guid as reGuid, Pt, type Pair as RePair } from "./_type_value_names_reexport";
+import * as star from "./_type_value_names_star";
+import { guid as relayed, Pair as RelayedPair } from "./_type_value_names_relay";
+
+const id: guid = guid();
+const id2: GuidType = reGuid();
+const p: Point = Point(1, 2);
+const q: Pt = Pt(3, 4);
+const pair: Pair = Pair(5, 6);
+const rp: RePair = { a: 7, b: 8 };
+const s: star.guid = star.guid();
+const sp: star.Point = star.Point(9, 10);
+const r: relayed = relayed();
+const rpair: RelayedPair = RelayedPair(11, 12);
+const l: Label = labelled("x");
+console.log(id, id2, p.x + p.y, q.x * q.y, pair.a + pair.b, rp.b);
+console.log(s, sp.y, r, rpair.a, l);
+
+// `typeof` in a type position names the value.
+type MakeId = typeof guid;
+const make: MakeId = guid;
+console.log(make(), typeof guid, typeof Point);
+
+// A function taking and returning the type, called through the value.
+function twice(g: guid): guid {
+  return g + g;
+}
+
+console.log(twice(guid()));
+
+// In a function body: a type and a constant, an interface and a function.
+function local(): void {
+  type Range = [number, number];
+  const Range = (lo: number, hi: number): Range => [lo, hi];
+  interface Box {
+    v: string;
+  }
+  function Box(v: string): Box {
+    return { v };
+  }
+  const r: Range = Range(1, 4);
+  const b: Box = Box("boxed");
+  console.log(r[1] - r[0], b.v);
+}
+
+local();
+
+// A local constant next to a module-level type of the same name: each in its own meaning.
+function shadow(): string {
+  const guid = "local";
+  const g: guid = "typed";
+  return guid + " " + g;
+}
+
+console.log(shadow());
+
+// A generic type alias and a function of its name.
+type Wrapped<T> = { value: T };
+
+function Wrapped(value: number): Wrapped<number> {
+  return { value };
+}
+
+const w: Wrapped<number> = Wrapped(42);
+console.log(w.value);
+
+// A module `let` next to a type, and a type in a function body that leaves an outer value of
+// its name visible.
+type Count = number;
+
+let Count = 0;
+
+function bump(): Count {
+  Count = Count + 1;
+  return Count;
+}
+
+const label = (): string => "v";
+
+function inner(): string {
+  type label = number;
+  const n: label = 2;
+  return label() + n;
+}
+
+console.log(bump(), bump(), inner());

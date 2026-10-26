@@ -709,18 +709,20 @@ impl<'m> Ctx<'m> {
 
     /// Name lookup at a source position of `module`: the innermost nested item whose block
     /// contains `at`, then module level.
+    /// A nested type that is only a type (an interface, a type alias) does not hide a value of
+    /// its name further out (`crate::type_meanings`).
     pub fn lookup_item_at(&self, module: usize, name: &str, at: Span) -> Option<Item> {
         let file = self.modules[module].file;
-        let nested = self
+        let mut nested = self
             .nested
             .iter()
             .filter(|n| n.module == module && n.name == name && at.file == file)
             .filter(|n| n.lo <= at.lo && at.hi <= n.hi)
-            .min_by_key(|n| n.hi - n.lo);
-        match nested {
-            Some(n) => Some(n.item),
-            None => self.lookup_item(module, name),
+            .peekable();
+        if nested.peek().is_none() {
+            return self.lookup_item(module, name);
         }
+        self.nested_value_item(nested.collect(), module, name)
     }
 
     /// A string or `string | null`: a value whose copy is a refcount increment at most, so moves

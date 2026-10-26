@@ -1,0 +1,11 @@
+type_value_names.vlt:19:14: error: the name `Color` is defined multiple times
+type_value_names.vlt:24:11: error: the name `Twice` is defined multiple times
+type_value_names.vlt:32:7: error: the name `Shape` is defined multiple times
+  = note: Velt merges an interface only with other interface declarations: give `Shape` another name, or name the combination with an intersection (`type More = Shape & { … }`)
+type_value_names.vlt:7:15: error: mismatched types
+  = note: expected string, found f64
+type_value_names.vlt:11:8: error: `f` is a value, not a type
+  = note: its type is `typeof f`
+type_value_names.vlt:13:11: error: `OnlyType` is imported with `import type` and cannot be used as a value
+  = note: import it as a value: `import { OnlyType } from …`
+type_value_names.vlt:13:11: error: `OnlyType` is a type, not a value
