@@ -88,7 +88,11 @@ impl FnCx<'_, '_> {
         self.coerce_as_written(h, exp, false)
     }
 
-    pub(super) fn try_coerce_typed(&mut self, h: hir::Expr, exp: TyId) -> Result<hir::Expr, hir::Expr> {
+    pub(super) fn try_coerce_typed(
+        &mut self,
+        h: hir::Expr,
+        exp: TyId,
+    ) -> Result<hir::Expr, hir::Expr> {
         let t = &self.cx.ty;
         if h.ty == exp
             || t.is_bottom(h.ty)
