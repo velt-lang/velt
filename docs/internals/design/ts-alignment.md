@@ -88,6 +88,54 @@ switch (s.kind) { case "circle": return s.r; case "rect": return s.w * s.h; }
 - A type's own member always wins over an extension. No new fields (the layout is fixed). No
   operator overloading.
 
+### Retroactive implements: the rules
+
+`extend X implements I` (#1546, PR #1548) gives `I` to types their authors did not write it for.
+The rules, and why:
+
+- **Own implementations first.** A type's own implementation (a class's `implements`, one it
+  inherits from a base class, or the implicit `Comparable`/`Iterable` of a `compareTo` or
+  `[Symbol.iterator]()` block) wins over every `extend` block, as a type's own member wins over
+  an extension method. A blanket block (`extend<T> T implements I`) applies only to the types
+  without one, so a subclass never loses its base class's or its own override. A block for a
+  type that already has one is refused (`` `P` already implements `I` ``).
+- **One most specific block.** Among the blocks that fit a type (target pattern matches,
+  bounds hold), the most specific wins, by the overlap rule above. Two blocks that can fit one
+  type where neither is more specific are refused where they are declared (``conflicting
+  implementations of `I` ``, naming a type both fit), not where a type is used: generic code is
+  checked once and instantiated with many types, so a check at the use (`Pair<A, i64>` in a
+  generic function) would miss the instance where both fit (`Pair<i64, i64>`), and the choice
+  would depend on declaration or import order. The check ignores bounds: two blocks with the
+  same target, both bounded, are refused even if no type meets both bounds.
+- **Coherence, without an orphan rule.** Any module may implement any interface for any type,
+  so two libraries that each write `extend u64 implements I` for the same `I` break every
+  program that loads both: the program gets the conflict error and does not build. The whole
+  program is compiled together, so this shows up at build time with both blocks named, never
+  as different behaviour in different places. The convention that avoids it is the orphan rule
+  as advice: a library implements its own interfaces for any type, or any interface for its own
+  types. A lint for it may come later.
+- **Scoping.** Today a block applies wherever its module is loaded. When extension methods
+  become module-scoped (above), `implements` blocks stay program-wide: a type must have the
+  same implementation of `I` everywhere, since generic code is instantiated per type, not per
+  importing module, and an `I` value made in one module is used in others. The block's methods
+  called as extension methods follow the scoping rule.
+- **`any` and other targets.** A block cannot target `any`, `unknown` (or `object`,
+  `Function`) or `never`: they have no implementation of their own, and an `any` holds a value
+  of another type. Converting an `any` to `I` uses the held value's implementation, by the same
+  lookup as a direct conversion. A union target is refused too: a union's value has one
+  member's type, which the block's target does not match. An interface type implementing an
+  interface it extends is refused as already implemented.
+- **Cycles.** A block's bounds are checked through implementations again, so blocks can lead
+  back to each other (`extend<T extends I> T implements J` and `extend<U extends J> U
+  implements I`). A lookup that comes back to itself does not fit, in sema and in lowering:
+  such a pair gives a type neither interface unless it has one of its own. A blanket block
+  bounded by the interface it implements could only apply to types that already have it, and
+  is refused.
+- **Diagnostics**: a missing or mismatched method (as for classes); `conflicting
+  implementations`; `already implements`; ``cannot implement `I` `` for an interface with
+  fields or optional methods (an `extend` block cannot add fields) and for the targets above;
+  ``implements `I` only for types that already implement it``.
+
 ## 5. Small TypeScript alignments (implemented)
 
 - `arr.sort(cmp?)` takes an optional comparator like TypeScript; `sortBy` is removed (one way).

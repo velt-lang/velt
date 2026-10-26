@@ -65,6 +65,11 @@ pub(crate) struct Ctx<'m> {
     /// (collect/ext_impls.rs). Their bounds must hold for an impl to fit a type, and among the
     /// fitting ones the most specific wins (`Ctx::find_impl`).
     pub ext_impls: FxHashMap<u32, usize>,
+    /// `ext_impls` by interface, in order.
+    pub ext_by_iface: FxHashMap<DefId, Vec<u32>>,
+    /// The `(type, interface)` lookups of `extend` impls in progress (infer/ext_impls.rs): one
+    /// that comes back to itself through a block's bounds does not fit.
+    pub impl_busy: FxHashSet<(TyId, DefId)>,
     /// Set while `Ctx::blanket_bounds` checks a blanket impl's bounds: the bounds a parameter
     /// has through blanket impls come from its declared bounds only, not from other blanket
     /// impls, so the check never recurses.
@@ -398,6 +403,8 @@ impl<'m> Ctx<'m> {
             any: None,
             impl_index: Default::default(),
             ext_impls: FxHashMap::default(),
+            ext_by_iface: FxHashMap::default(),
+            impl_busy: Default::default(),
             in_blanket: false,
             impl_scope: vec![],
             anon: FxHashMap::default(),

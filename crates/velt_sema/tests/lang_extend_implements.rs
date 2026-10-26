@@ -4,7 +4,7 @@
 mod common;
 
 use common::hir_walk::{calls, func};
-use common::programs::{err_src, ok_src};
+use common::programs::{err_src, load_file, ok_src};
 use velt_sema::hir::{Callee, Def};
 
 const DESCRIBE: &str = "interface Describe { describe(): string; }
@@ -157,4 +157,215 @@ fn interfaces_with_fields_and_non_interfaces_are_refused() {
     );
     let r = err_src("class C {} extend i64 implements C {} function main() {}");
     assert!(r.contains("`C` is not an interface"), "{r}");
+}
+
+#[test]
+fn blocks_whose_bounds_lead_back_to_them_end_the_lookup() {
+    // Each block's bound is the other's interface: a type with neither has neither (the
+    // lookup that comes back to itself does not fit) instead of overflowing the stack.
+    let r = err_src(
+        "interface I { i(): string; }
+         interface J { j(): string; }
+         extend<T extends I> T implements J { j(): string { return \"j\"; } }
+         extend<U extends J> U implements I { i(): string { return \"i\"; } }
+         class C {}
+         function f<T extends J>(x: T): string { return x.j(); }
+         function main() { console.log(f(new C())); }",
+    );
+    assert!(r.contains("the type `C` does not implement `J`"), "{r}");
+    // With an `I` of its own, a type gets `J` through the blanket block.
+    ok_src(
+        "interface I { i(): string; }
+         interface J { j(): string; }
+         extend<T extends I> T implements J { j(): string { return \"j\"; } }
+         extend<U extends J> U implements I { i(): string { return \"i\"; } }
+         extend u64 implements I { i(): string { return \"u\"; } }
+         function f<T extends J>(x: T): string { return x.j(); }
+         function main() { console.log(f(1 as u64)); }",
+    );
+}
+
+#[test]
+fn a_blanket_block_bounded_by_its_own_interface_is_refused() {
+    let r = err_src(
+        "interface I { i(): string; }
+         extend<T extends I> T implements I { i(): string { return \"i\"; } }
+         class C {}
+         function f<T extends I>(x: T): string { return x.i(); }
+         function main() { console.log(f(new C())); }",
+    );
+    assert!(
+        r.contains("`extend T` implements `I` only for types that already implement it"),
+        "{r}"
+    );
+    assert!(r.contains("the type `C` does not implement `I`"), "{r}");
+    let r = err_src(
+        "extend<T extends Comparable<T>> T implements Comparable<T> {
+           compareTo(o: T): i64 { return 0; }
+         }
+         class C {}
+         function f<T extends Comparable<T>>(x: T): i64 { return x.compareTo(x); }
+         function main() { console.log(f(new C())); }",
+    );
+    assert!(
+        r.contains("implements `Comparable` only for types that already implement it"),
+        "{r}"
+    );
+}
+
+#[test]
+fn a_class_implementation_comes_before_blocks() {
+    // `E` inherits `C`'s implementation: no conflict with the blanket block, and a block for
+    // a class that already has one (its own or a base class's) is refused.
+    let p = ok_src(
+        "interface D { d(): string; }
+         class C implements D { d(): string { return \"C\"; } }
+         class E extends C {}
+         extend<T> T implements D { d(): string { return \"blanket\"; } }
+         function main() {}",
+    );
+    assert_eq!(impl_count(&p, "D"), 2);
+    let r = err_src(
+        "interface D { d(): string; }
+         class C implements D { d(): string { return \"C\"; } }
+         class E extends C {}
+         extend E implements D { d(): string { return \"E\"; } }
+         function main() {}",
+    );
+    assert!(r.contains("`E` already implements `D`"), "{r}");
+    let r = err_src(
+        "interface D { d(): string; }
+         class Box<T> implements D { d(): string { return \"box\"; } }
+         extend Box<i64> implements D { d(): string { return \"i64\"; } }
+         function main() {}",
+    );
+    assert!(r.contains("`Box<i64>` already implements `D`"), "{r}");
+}
+
+const PAIR_FIRST: &str =
+    "extend<A> Pair<A, i64> implements D { d(): string { return \"first\"; } }";
+const PAIR_SECOND: &str =
+    "extend<B> Pair<i64, B> implements D { d(): string { return \"second\"; } }";
+
+#[test]
+fn overlapping_blocks_where_neither_is_more_specific_are_errors() {
+    // Both fit `Pair<i64, i64>`: an error in either order, not the first one.
+    for (x, y) in [(PAIR_FIRST, PAIR_SECOND), (PAIR_SECOND, PAIR_FIRST)] {
+        let r = err_src(&format!(
+            "interface D {{ d(): string; }}
+             struct Pair<A, B> {{ a: A; b: B; }}
+             {x}
+             {y}
+             function main() {{}}"
+        ));
+        assert!(
+            r.contains("conflicting implementations of `D`: neither block is more specific than the other (both fit `Pair<i64, i64>`)"),
+            "{r}"
+        );
+    }
+    // Disjoint targets and different interface arguments don't overlap.
+    ok_src(
+        "interface D { d(): string; }
+         interface Conv<U> { conv(): U; }
+         struct Pair<A, B> { a: A; b: B; }
+         extend<A> Pair<A, i64> implements D { d(): string { return \"i64\"; } }
+         extend<A> Pair<A, string> implements D { d(): string { return \"string\"; } }
+         extend<A> Pair<A, i64> implements Conv<string> { conv(): string { return \"s\"; } }
+         extend<B> Pair<i64, B> implements Conv<bool> { conv(): bool { return true; } }
+         function main() {}",
+    );
+}
+
+#[test]
+fn overlapping_blocks_in_two_modules_are_errors_whatever_the_import_order() {
+    let dir = std::env::temp_dir().join(format!("velt-ext-overlap-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let write = |name: &str, src: &str| std::fs::write(dir.join(name), src).unwrap();
+    write(
+        "d.vlt",
+        "export interface D { d(): string; }
+         export struct Pair<A, B> { a: A; b: B; }",
+    );
+    for (name, block) in [("first.vlt", PAIR_FIRST), ("second.vlt", PAIR_SECOND)] {
+        write(
+            name,
+            &format!("import {{ D, Pair }} from \"./d\"; {block} export const x = 1;"),
+        );
+    }
+    for order in [["first", "second"], ["second", "first"]] {
+        let main = dir.join(format!("main_{}.vlt", order[0]));
+        std::fs::write(
+            &main,
+            format!(
+                "import {{ x }} from \"./{}\";
+                 import {{ x as y }} from \"./{}\";
+                 function main() {{ console.log(x, y); }}",
+                order[0], order[1]
+            ),
+        )
+        .unwrap();
+        let l = load_file(&main);
+        let (p, d) = l.check();
+        let r = l.render(&d);
+        assert!(p.is_none(), "{r}");
+        assert!(r.contains("conflicting implementations of `D`"), "{r}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn dynamic_never_union_and_self_targets_are_refused() {
+    for target in ["any", "unknown", "never"] {
+        let r = err_src(&format!(
+            "interface D {{ d(): string; }}
+             extend {target} implements D {{ d(): string {{ return \"x\"; }} }}
+             function main() {{}}"
+        ));
+        assert!(
+            r.contains(&format!("`extend {target}` cannot implement `D`")),
+            "{r}"
+        );
+    }
+    let r = err_src(
+        "interface D { d(): string; }
+         interface D2 extends D { e(): string; }
+         extend D implements D { d(): string { return \"x\"; } }
+         extend D2 implements D { d(): string { return \"x\"; } }
+         function main() {}",
+    );
+    assert!(r.contains("`D` already implements `D`"), "{r}");
+    assert!(r.contains("`D2` already implements `D`"), "{r}");
+    let r = err_src(
+        "interface D { d(): string; }
+         type U = { kind: \"a\"; x: i64 } | { kind: \"b\"; y: string };
+         extend U implements D { d(): string { return this.kind; } }
+         type N = string | null;
+         extend N implements D { d(): string { return \"n\"; } }
+         function main() {}",
+    );
+    assert!(
+        r.contains("`extend U` cannot implement `D`: `U` is a union"),
+        "{r}"
+    );
+    assert!(r.contains("is a union, and a value of it has the type of one of its members"));
+    assert_eq!(r.matches("is a union").count(), 2, "{r}");
+}
+
+#[test]
+fn an_optional_method_is_named_as_such() {
+    let r = err_src(
+        "interface O { o?(): string; p(): string; }
+         extend i64 implements O { p(): string { return \"p\"; } }
+         function main() {}",
+    );
+    assert!(
+        r.contains("`O` declares optional method `o`, which is a field, and an `extend` block cannot add fields"),
+        "{r}"
+    );
+    let r = err_src(
+        "interface O { size?: i64; p(): string; }
+         extend i64 implements O { p(): string { return \"p\"; } }
+         function main() {}",
+    );
+    assert!(r.contains("`O` declares optional field `size`"), "{r}");
 }
