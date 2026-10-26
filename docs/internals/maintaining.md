@@ -195,7 +195,10 @@ not a reason for another round.
     only=bench -f bench_baseline=accept`; say on the issue which commits it was and why, then
     close it. More of `std/` to check is not a regression: `compile/check_all_std` is compared
     per code line of `std/` (blank and comment lines don't count, so added documentation can't
-    hide a slowdown).
+    hide a slowdown); `bench/compile/all_std.vlt` imports every std module so that all those
+    lines are checked (a test in `crates/veltc/tests/bench_programs.rs` names a missing one).
+    The bench job runs on a fixed runner image: the counts depend on its C library and valgrind,
+    so a new image is a pull request of its own, followed by accepting the new counts.
   - Any other job: find the commit (`gh run view <id> --log-failed`), fix it with a regression
     test or open an issue that says why it waits.
 - **Platform gaps** found by CI (e.g. a test that is skipped on one OS) get an issue, and any CI
