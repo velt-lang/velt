@@ -1,7 +1,8 @@
 // Generic methods called on interface values that Velt can't dispatch yet (#943): a class held
 // as a base class whose subclass overrides the generic method (also through `any`, `unknown`
 // and `object`, which keep the type the value had, in initializers and in generic code
-// instantiated with the interface too, also through interface values, bounds and `extends`), and
+// instantiated with the interface too, also through interface values, bounds, `extends`, methods
+// inherited from generic bases, and instances of generic classes called through tables), and
 // an interface value at other type arguments (it would need a wrapper forwarding the call's type
 // arguments).
 interface Box {
@@ -114,6 +115,55 @@ class Made<T> {
 
 class BoxMade extends Made<Box> {}
 
+class GetBase<T> {
+  get(u: unknown): T {
+    return u as T;
+  }
+}
+
+class GetBox extends GetBase<Box> implements Gt<Box> {}
+
+class GenericBase<Q> {
+  q: Q | undefined = undefined;
+  get<T>(u: unknown): T {
+    return u as T;
+  }
+}
+
+class GetterFromBase extends GenericBase<number> implements Getter {}
+
+class GetSecond<A, T> extends GetBase<T> implements Gt<T> {
+  a: A | undefined = undefined;
+}
+
+interface Wraps {
+  get(u: unknown): number[];
+}
+
+class WrapsVia<T extends Box> implements Wraps {
+  get(u: unknown): number[] {
+    return (u as T).wrap(1);
+  }
+}
+
+class WrapsBox extends WrapsVia<Box> {}
+
+class Virt<T> {
+  get(u: unknown): T {
+    return u as T;
+  }
+}
+
+class VirtSub<T> extends Virt<T> {
+  override get(u: unknown): T {
+    return u as T;
+  }
+}
+
+function runVirt<X>(v: Virt<X>, u: unknown): X {
+  return v.get(u);
+}
+
 function main(): void {
   const xs: Base[] = [new Base(), new Sub()];
   for (const x of xs) console.log(use(x));
@@ -131,6 +181,14 @@ function main(): void {
   console.log(use(getter.get<Box>(s)), use(viaBound(new GetterImpl(), s)));
   const gt: Gt<Box> = new GtImpl<Box>();
   console.log(use(gt.get(s)), use(new BoxHolder().v), use(new BoxMade(s).v));
+  const fromBase: Gt<Box> = new GetBox();
+  const viaBase: Getter = new GetterFromBase();
+  const second: Gt<Box> = new GetSecond<number, Box>();
+  console.log(use(fromBase.get(s)), use(viaBase.get<Box>(s)), use(second.get(s)));
+  const wraps: Wraps = new WrapsVia<Box>();
+  const wrapsBox: Wraps = new WrapsBox();
+  const virt: Virt<Box> = new VirtSub<Box>();
+  console.log(wraps.get(s), wrapsBox.get(s), use(virt.get(s)), use(runVirt(new Virt<Box>(), s)));
   const h: H<unknown> = new C();
   console.log(h.wrap(1, "s"));
 }
