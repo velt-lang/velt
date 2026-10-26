@@ -844,9 +844,11 @@ console.log(update(v, { deletedAt: null })); // { name: 'bo', deletedAt: null }
   that assigns it (a function of its module, a callback, a getter, another task across an
   `await`, a generator's caller across a `yield`), so each narrowed read checks the value
   again, like a variable a closure assigns, and stops with a `TypeError` if it became `null`
-  (`` `ctx` was checked, but it was set to null before this read ``). The operand of a test,
-  `?.` and `??` read the variable or field as it is, so `if (ctx) { reset(); ctx?.name }` gives
-  `undefined`, as in JavaScript. An assignment in the function drops the narrowing (and
+  (`` `ctx` was checked, but it was set to null before this read ``). The variable is read as
+  its payload only where that is needed: as a receiver (`ctx.m()`), a callee, a value of a
+  non-nullable type, or an untyped `const c = ctx`. Elsewhere (`console.log(ctx)`), and as the
+  operand of a test, `?.` or `??`, the variable or field is read as it is, so
+  `if (ctx) { reset(); ctx?.name }` gives `undefined`, as in JavaScript. An assignment in the function drops the narrowing (and
   narrows to what it assigned), and so does a loop that assigns the variable. Closures don't
   see the narrowing of the function they are made in (TypeScript keeps it in one made after
   the variable's last assignment). `typeof`, `instanceof` and union-member tests do not narrow
