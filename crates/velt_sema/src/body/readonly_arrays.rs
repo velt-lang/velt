@@ -168,6 +168,9 @@ impl FnCx<'_, '_> {
     /// Records the binding `l` of an optional chain on `object` as read-only when `object` is
     /// a read-only variable.
     pub(crate) fn note_readonly_binding(&mut self, l: LocalId, object: &ast::Expr, h: &hir::Expr) {
+        if self.f.local_marks.is_empty() && !matches!(object.kind, ast::ExprKind::Paren(_)) {
+            return;
+        }
         let marked = match &strip_parens(object).kind {
             // `(xs as string[] | undefined)?.push(x)`: the cast decides, as for a `const`.
             ast::ExprKind::Cast { ty, .. } => self.is_readonly_written(ty, 0),

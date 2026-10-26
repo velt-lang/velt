@@ -20,6 +20,10 @@ impl FnCx<'_, '_> {
         args: &[ast::Expr],
         span: Span,
     ) -> Option<hir::Expr> {
+        // Only the rewrite of a program naming `globalThis` writes these calls.
+        if self.cx.global_props.sites.is_empty() {
+            return None;
+        }
         let ast::ExprKind::Ident(id) = &callee.kind else {
             return None;
         };
