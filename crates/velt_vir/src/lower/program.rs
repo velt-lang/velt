@@ -22,6 +22,7 @@ impl<'h> Cx<'h> {
     ) -> Self {
         Cx {
             hir,
+            prelude_proxy: None,
             native_inits: vec![],
             view_fn: None,
             uses_placement: false,

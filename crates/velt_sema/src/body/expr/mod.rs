@@ -28,11 +28,13 @@ mod closure;
 mod closure_sig;
 mod coerce;
 mod coerce_generic;
+mod coerce_vars;
 mod constraints;
 mod construct;
 mod conversions;
 pub(crate) mod ctor_locals;
 mod ctor_name;
+mod ctor_objects;
 mod ctor_values;
 mod default_args;
 mod discriminated;
@@ -55,10 +57,12 @@ mod generic_dynamic;
 pub(crate) use env_globals::NODE_GLOBALS;
 mod array_view_cast;
 pub(crate) mod await_value;
+mod checked_key;
 mod error_slots;
 mod error_view;
 mod errors;
 mod eval_effects;
+mod fn_bind;
 mod fn_casts;
 mod fn_union_call;
 mod fn_widen;
@@ -101,12 +105,14 @@ mod member_errors;
 mod member_keys;
 mod method;
 mod method_call;
+mod method_optional_call;
 mod method_value;
 mod mixed_array;
 mod names;
 mod namespaces;
 mod narrowing_casts;
 mod never_null;
+mod number_records;
 mod numbers;
 mod object;
 mod object_assign;
@@ -120,6 +126,7 @@ mod object_prototypes;
 mod ops;
 mod optional_fn_call;
 mod ordering;
+mod overload_arg;
 mod overload_call;
 mod param_member;
 mod per_use;
@@ -143,12 +150,14 @@ pub(crate) mod spawn_promises;
 mod spread;
 mod spread_args;
 mod spread_array;
+mod spread_cond;
 mod spread_optional;
 pub(crate) mod static_copy;
 mod std_glue;
 mod structured_clone;
 mod supers;
 mod symbol_keys;
+mod symbol_record;
 mod sync;
 pub(crate) mod tasks;
 mod ternary;
@@ -176,7 +185,7 @@ use velt_syntax::ast;
 use super::{FnCx, Want};
 use crate::hir::{self, TyId, TyKind};
 pub(crate) use args::deferred;
-pub(crate) use call_apply::is_member_read;
+pub(crate) use call_apply::{is_member_read, read_root};
 pub(crate) use callables::{property_writes, PendingWrites};
 
 impl FnCx<'_, '_> {
@@ -259,7 +268,10 @@ impl FnCx<'_, '_> {
             }
             // A property already reported (`assign_pattern::reject_cover_inits`).
             A::Ident(id) if id.name == assign_pattern::REPORTED => self.error_expr(span),
-            A::Ident(id) => self.ident_expr(id, exp, want),
+            A::Ident(id) => match self.kind_name_value(id, exp, want) {
+                Some(h) => h,
+                None => self.ident_expr(id, exp, want),
+            },
             A::This => self.this_expr(want, span),
             A::Super => {
                 self.cx.err(
@@ -325,6 +337,12 @@ impl FnCx<'_, '_> {
                 Some(h) => h,
                 None => match self.ctor_name_read(object, prop, span) {
                     Some(h) => h,
+                    None if prop.name.starts_with("[Symbol.") => {
+                        match self.symbol_record_member(object, prop, span) {
+                            Some(h) => h,
+                            None => self.member(object, prop, *optional, exp, want, span),
+                        }
+                    }
                     None => self.member(object, prop, *optional, exp, want, span),
                 },
             },

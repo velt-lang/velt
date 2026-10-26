@@ -35,6 +35,15 @@ export class Error {
     this.#name = value;
   }
 
+  /**
+   * The error's stack as Node starts it: `toString()`'s text (with the `name` a subclass
+   * assigned in its constructor). Velt keeps no call frames, so the `    at …` lines Node adds
+   * after it are not there.
+   */
+  get stack(): string | undefined {
+    return errorText(this.name, this.message);
+  }
+
   /** `"<name>: <message>"`, just the name without a message, or just the message without a name. */
   toString(): string {
     return errorText(this.name, this.message);

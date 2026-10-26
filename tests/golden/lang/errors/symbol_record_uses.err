@@ -1,0 +1,8 @@
+symbol_record_uses.vlt:13:46: error: a `Record<symbol, ...>` is indexed by symbols, not by `"a" | "b"` (TypeScript's TS7053)
+symbol_record_uses.vlt:13:81: error: a `Record<symbol, ...>` is indexed by symbols, not by `string` (TypeScript's TS7053)
+symbol_record_uses.vlt:14:46: error: a `Record<symbol, ...>` is indexed by symbols, not by `string | symbol` (TypeScript's TS7053)
+symbol_record_uses.vlt:7:19: error: an `unknown` value must be narrowed before use
+symbol_record_uses.vlt:8:44: error: a `Record<symbol, ...>` is indexed by symbols, not by `string` (TypeScript's TS7053)
+symbol_record_uses.vlt:8:51: error: a `Record<symbol, ...>` is only supported to read a symbol-keyed member
+symbol_record_uses.vlt:9:11: error: a `Record<symbol, ...>` is only supported to read a symbol-keyed member
+symbol_record_uses.vlt:10:2: error: a `Record<symbol, ...>` is only supported to read a symbol-keyed member

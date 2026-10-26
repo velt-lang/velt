@@ -1,0 +1,10 @@
+global_this_key_tdz.vlt:11:31: error: block-scoped variable `K` used before its declaration (TypeScript's TS2448)
+global_this_key_tdz.vlt:17:33: error: block-scoped variable `J` used before its declaration (TypeScript's TS2448)
+global_this_key_tdz.vlt:29:37: error: cannot find `L` in this scope
+global_this_key_tdz.vlt:35:30: error: cannot find `K` in this scope
+global_this_key_tdz.vlt:41:52: error: block-scoped variable `SK` used before its declaration (TypeScript's TS2448)
+global_this_key_tdz.vlt:46:35: error: cannot find `L2` in this scope
+global_this_key_tdz.vlt:53:35: error: cannot find `L3` in this scope
+global_this_key_tdz.vlt:63:31: error: block-scoped variable `TOP` used before its declaration (TypeScript's TS2448)
+global_this_key_tdz.vlt:26:28: error: the key of `globalThis as H` must be one of its keys `"__KA__" | "__KB__"`, found `string` (TypeScript's TS7053)
+global_this_key_tdz.vlt:26:52: error: the key of `globalThis as H` must be one of its keys `"__KA__" | "__KB__"`, found `string` (TypeScript's TS7053)

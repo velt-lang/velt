@@ -525,8 +525,10 @@ fn check_fn(cx: &mut Ctx, def: DefId, src: FnSource) -> hir::FnDef {
     };
     let mut frame = Frame::new(f.kind, frame_ret);
     frame.is_async = f.is_async || f.is_async_gen;
-    frame.top_level =
-        f.is_async && f.module == cx.root && f.name == "main" && f.name_span.lo == f.name_span.hi;
+    frame.top_level = f.is_async
+        && f.module == cx.root
+        && (f.name == "main" || f.name == velt_syntax::SCRIPT_MAIN)
+        && f.name_span.lo == f.name_span.hi;
     frame.yield_ty = yield_ty;
     if yield_ty.is_some() {
         let n = cx.generator_next_ty(f.ret);
@@ -659,7 +661,7 @@ impl FnCx<'_, '_> {
             let l = self.new_local(&p.name, p.ty, false, p.span, LocalKind::Param);
             if let Some(crate::defs::FnSource::Decl(d)) = f.source {
                 let written = d.sig.params.iter().find(|q| q.name.name == p.name);
-                self.note_readonly_array(l, written.map(|q| &q.ty));
+                self.note_marks(l, written.map(|q| &q.ty), None);
             }
             self.f.scopes[0].names.entry(p.name.clone()).or_insert(l);
             self.rec_local_decl(l);

@@ -1,0 +1,13 @@
+// In a script (no imports or exports), a module-level string constant and a function-level one
+// are keys of `globalThis`, as in a module.
+type H = { __K7__?: number };
+const KEY = "__K7__";
+(globalThis as H)[KEY] = 5;
+function read(): number | undefined {
+  const LOCAL = "__K7__";
+  return (globalThis as H)[LOCAL];
+}
+function shadowed(KEY: "__K7__"): number | undefined {
+  return (globalThis as H)[KEY];
+}
+console.log((globalThis as H)[KEY], read(), shadowed("__K7__"), (globalThis as any)[KEY]);

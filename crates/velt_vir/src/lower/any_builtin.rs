@@ -122,6 +122,7 @@ impl FnLower<'_, '_> {
                 def,
                 targs: targs.clone(),
                 ret: any,
+                throws: None,
             };
             self.any_invoke(&r, this, args, &outp);
             self.ret_status(ST_OK);

@@ -1,0 +1,20 @@
+// The object of a class with static fields is printed by Node with them after its name
+// (`[class S] { items: [ 1 ], count: 2 }`), which Velt doesn't hold yet: printing it stops with
+// a `TypeError` saying it is not supported yet (#926). A class with static methods only prints
+// as Node prints it.
+class T {
+  static make(): T {
+    return new T();
+  }
+}
+
+class S {
+  static items = [1];
+  static count = 2;
+}
+
+const t: any = new T();
+console.log(t.constructor);
+const s: any = new S();
+console.log(s.constructor === S);
+console.log(s.constructor);

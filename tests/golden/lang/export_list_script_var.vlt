@@ -1,0 +1,6 @@
+// A top-level constant exported by an export list stays at module level, as `export const`
+// does, while the top-level statements use it.
+const twice = (n: number): number => n * 2;
+const label = "twice";
+export { twice, label as name };
+console.log(label, twice(21));

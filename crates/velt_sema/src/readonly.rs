@@ -92,7 +92,18 @@ pub(crate) fn erase(cx: &mut Ctx) -> HashMap<TyId, String> {
         }
     }
     let never = ty.never;
-    let mut e = |t: TyId| erase_ty(ty, &twins, &mut cache, t);
+    // Each type's erased form by id: the walk below looks most types up many times.
+    let mut memo: Vec<u32> = vec![u32::MAX; ty.table.len()];
+    let mut e = |t: TyId| {
+        if let Some(&m) = memo.get(t.0 as usize).filter(|m| **m != u32::MAX) {
+            return TyId(m);
+        }
+        let r = erase_ty(ty, &twins, &mut cache, t);
+        if let Some(m) = memo.get_mut(t.0 as usize) {
+            *m = r.0;
+        }
+        r
+    };
     // A twin must know a field is assigned if its readonly view's is (it never is today).
     let assigned: Vec<(DefId, bool)> = twins
         .iter()

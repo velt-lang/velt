@@ -186,7 +186,26 @@ function main() {
   A signature with fewer parameters, or an optional one left out of a call, leaves the
   implementation's parameters out, which then take their defaults. A signature's parameters
   have no defaults of their own (TS2371). A type parameter of the implementation that a
-  signature leaves open is `void` there (TypeScript's `unknown`).
+  signature leaves open is `void` there (TypeScript's `unknown`). A signature's function
+  parameter may take fixed parameters where the implementation's takes a rest parameter
+  (`setup: (ctx: Ctx, p1: T1) => R` for `setup: (ctx: Ctx, ...args: unknown[]) => R`), which
+  TypeScript relates loosely. The signature passes the implementation a function that converts
+  each rest argument to the callback's parameter type when the implementation calls it:
+  - an argument the implementation leaves out is `undefined`, as in Node, where the parameter's
+    type admits it (`p1: number | undefined`, or a type parameter instantiated with such a
+    type); a callback parameter with a default (`p1: number = 5`, which TypeScript types
+    `p1?: number`) takes its default;
+  - where it doesn't (`p1: number`), the program stops with a `TypeError` naming the callback
+    and the argument (``the callback `fn` of `setup` was called without its argument 2 (Node
+    would pass `undefined`): the value is not a number (it is undefined)``): Velt can't pass
+    `undefined` there. A `T | null` parameter admits `null`, not `undefined`, so it stops too;
+  - an argument of another type stops the same way (``… was called with a wrong argument 1:
+    the value is not a string (it is a number)``), where Node would pass it on.
+
+  That function is a new one for each call of the signature, so the implementation may only
+  call such a parameter: comparing it (`===`, a `Map` or `Set` key, `includes`), keeping it or
+  passing it on is a compile error (it would see that function, not the caller's). Declare the
+  signature's callback with the implementation's parameter types to keep the caller's function.
 - A signature may promise a narrower result than the implementation's: `T` out of `T | null`,
   one member of a union, a literal type out of its base (`"U"` out of `string`), a class out
   of a base class or an interface, or any of these in a `Promise` of an `async` implementation.
@@ -585,7 +604,9 @@ console.log(g.next(), g.next().value, g.next().done);  // { value: 1, done: fals
 - Not supported: a return value (TS's `TReturn`), `return(value)`, `await` in a (sync)
   generator (write an [async generator](#async-generators)), and `next(value)` / `throw()` on
   an async generator. `return()` returns `{ done: true }`, as in TS (where it may carry a
-  value). Arrow functions cannot be generators (as in TS).
+  value); `return(undefined)` is `return()`, and so is `g.return?.(undefined)` (a method is
+  never nullish, so an optional call of one is a plain call, as in JS). Arrow functions cannot
+  be generators (as in TS).
 - **Cost**: `for (const x of gen(a))` with a direct call (or over a class whose
   `[Symbol.iterator]` is a generator method) keeps the generator's state in the loop: no
   allocation, no `IteratorResult` objects, and the body is resumed by a direct call that the
@@ -812,7 +833,9 @@ async function main() {
   `double`, also a method value or a generic callback type (`xs.reduce(plus, 0)` and
   `xs.reduce(acc.add, 0)` with a two-parameter `plus` and `add`, where `reduce` passes
   `(acc, x, i)`). A function may also take more, when the extra ones are optional or have defaults
-  (`setTimeout(tick, 10)` with `function tick(n?: number)`): they are left out.
+  (`setTimeout(tick, 10)` with `function tick(n?: number)`): they are left out. A function with
+  a rest parameter takes fixed ones (`(...args: unknown[]) => R` as a `(p1: T1) => R`, also
+  returned from a call): the arguments past its fixed parameters become the rest array.
 - As in TS, a function whose **parameter types are wider** than the function type's is accepted
   where the function type is expected: `p.then((v: any) => …)` for a `Promise<number>`,
   `xs.forEach((x: unknown) => …)`, `const f: (x: number) => void = (v: number | string) => …`,
@@ -1191,9 +1214,18 @@ static functions of built-in namespaces read none, so any `thisArg` works for th
 (`Math.max.apply(Math, xs)`), except `Promise`'s, which take `Promise`. A method read as a value
 (`o.m`, `C.m`) keeps the object or class it was read from: `o.m.call(o, x)` works, and `null` or
 `undefined` works when the method doesn't use `this`. A variable holding a method read as a value
-(`const f = o.m`) takes no other `this`; other function values, such as parameters, take `null` or
-`undefined`, as `f(x)` calls them. Any other `this` is not supported yet (an error): Velt would
-run the function on the object it keeps, where Node uses the `this` given or throws.
+(`const f = o.m`) takes no other `this`; a `const` read from an object (`const f = (o as T).m`,
+cast to a function type where it is called: `(f as () => R).call(o)`) takes that variable `o`
+while nothing assigns it (a `const`, or a `let` or parameter never assigned); other
+function values, such as parameters, take `null` or `undefined`, as `f(x)` calls them. Any other
+`this` is not supported yet (an error): Velt would run the function on the object it keeps, where
+Node uses the `this` given or throws.
+
+`f.bind(thisArg)` without further arguments follows the same rules and makes a new function
+that forwards its arguments to `f`, which keeps the object it was read from
+(`(res as { dispose: () => void }).dispose.bind(res)`); as in JavaScript it is not `===` to `f`
+or to another `bind` of it. `bind` with arguments to fix is not supported yet (write an arrow
+function).
 
 ```ts
 function add(a: number, b: number): number {
@@ -1204,6 +1236,8 @@ const codes = [104, 105];
 const pair: [number, number] = [3, 4];
 console.log(String.fromCharCode.apply(null, codes)); // hi
 console.log(add.call(null, 1, 2), add.apply(null, pair)); // 3 7
+const sum = add.bind(null);
+console.log(sum(5, 6)); // 11
 ```
 
 ## Captures

@@ -424,7 +424,9 @@ pub enum Intrinsic {
     /// `(x: owned any) -> T` (`Expr::ty`): the value `x` holds, checked: a value of another
     /// type stops the program with a `TypeError` naming the expected and the found type. `T` is
     /// a concrete type, a class (an instance of it or of a subclass), `U | null` (`null` and
-    /// `undefined` give `null`) or `any` / `unknown` (the same value).
+    /// `undefined` give `null`) or `any` / `unknown` (the same value). An optional second
+    /// operand `text: string`, a string literal read while compiling, starts the `TypeError`
+    /// (`TypeError: <text>: the value is not …`; hir_encodings.md "any and unknown").
     AnyTo,
     /// `(x: borrow any) -> string`: JavaScript's `typeof x`.
     AnyTypeof,

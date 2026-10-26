@@ -19,17 +19,18 @@ use crate::defs::{BodyState, DefInfo, GlobalInfo, GlobalSrc};
 use crate::hir::{self, Callee, DefId, ExprKind as E};
 use crate::SourceModule;
 
-/// The functions holding module `m`'s top-level statements: the generated `main`, or the
-/// chunks `module_chunks` split it into (names with an empty span).
+/// The functions holding module `m`'s top-level statements: the generated `main` (or
+/// `velt_syntax::SCRIPT_MAIN`), or the chunks `module_chunks` split it into (names with an empty
+/// span).
 pub(crate) fn script_fns(m: &SourceModule) -> Vec<&ast::FnDecl> {
     m.ast
         .items
         .iter()
         .filter_map(|it| match &it.kind {
             ast::ItemKind::Function(f)
-                if (f.sig.name.name == "main"
-                    || f.sig.name.name.starts_with(crate::module_chunks::CHUNK))
-                    && f.sig.name.span.lo == f.sig.name.span.hi =>
+                if velt_syntax::is_script_main(&f.sig.name)
+                    || (f.sig.name.name.starts_with(crate::module_chunks::CHUNK)
+                        && f.sig.name.span.lo == f.sig.name.span.hi) =>
             {
                 Some(f)
             }
@@ -43,10 +44,11 @@ pub(crate) fn script_fns(m: &SourceModule) -> Vec<&ast::FnDecl> {
 /// program exits, as a dropped promise is (`body::expr::tasks::check_floating`).
 pub(crate) fn is_root_script(cx: &Ctx, m: usize) -> bool {
     m == cx.root
-        && cx
-            .modules
-            .get(m)
-            .is_some_and(|module| script_fns(module).iter().any(|f| f.sig.name.name == "main"))
+        && cx.modules.get(m).is_some_and(|module| {
+            script_fns(module)
+                .iter()
+                .any(|f| velt_syntax::is_script_main(&f.sig.name))
+        })
 }
 
 /// Give each imported module's top-level statements a module state slot (module docs); after
