@@ -135,7 +135,9 @@ impl FnCx<'_, '_> {
             }
             return;
         }
-        self.require_mutable(e, what);
+        // An element of a read-only array may itself be changed (`j[0].push(x)` with
+        // `j: readonly T[][]`): only an assignment to the element is TS2542 (`require_mutable`).
+        self.require_root_mutable(e, what);
         set_place_mode(e, UseMode::BorrowMut);
     }
 
