@@ -2103,10 +2103,12 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   `n` elements in one allocation. A bare `new Array<T>(n)` is an error: arrays have no holes.
   As in JS, `new Array<T>(n)` takes `n` as `xs.length = n` does: a negative, fractional or `NaN`
   `n` panics with `RangeError: Invalid array length`, while `Array.from` truncates its length
-  (and takes a negative one or `NaN` as 0). An argument that is no number makes an array of
+  (and takes a negative one or `NaN` as 0). A numeric enum's value is a length too. An
+  argument that is no number (a string, a string enum's value, an object) makes an array of
   that one element, as in JS (`new Array("3").fill("x")` is `["x"]`); one whose type may be
-  either (`number | string`) is an error, since JS decides between the two at run time: test
-  `typeof n === "number"` first.
+  either (`number | string`, an unbounded type parameter) is an error, since JS decides
+  between the two at run time: test `typeof n === "number"` first. `new Array(...args)` with a
+  one-element tuple takes its element.
   `Array.from(src)` and `Array.from(src, (v, i) => …)` copy (and map) anything `for...of` takes:
   an array, a string's characters, a map's entries, a generator, any iterable.
 - **Length limit.** An array holds at most 2^52 - 1 elements, and its elements take at most

@@ -1,0 +1,26 @@
+// `new Array(e)` with a value of a numeric enum: its number is the length, as in JS. A string
+// enum's value is no number, so the array holds that one element, which `fill` replaces.
+enum E {
+  A = 2,
+  B = 3,
+}
+
+enum S {
+  P = "p",
+  Q = "q",
+}
+
+function side(): E {
+  console.log("side");
+  return E.B;
+}
+
+function main() {
+  console.log(new Array<number>(E.B).fill(1));
+  const e: E = E.A;
+  console.log(new Array<number>(e).fill(3));
+  console.log(new Array(side()).fill("s"));
+  console.log(new Array<number>(S.Q).fill(5));
+}
+
+main();

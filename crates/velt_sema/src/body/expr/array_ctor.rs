@@ -26,10 +26,46 @@ impl FnCx<'_, '_> {
         if prop.name != "fill" || args.len() != 1 {
             return None;
         }
+        // `new Array(...args)`: a one-element tuple's element is the argument (`args[0]`, the
+        // tuple evaluated once); any other spread stays the call's arguments.
+        let elem;
+        let n = match &n.kind {
+            ast::ExprKind::Spread(inner) => {
+                let one = self.trial_type(inner).is_some_and(
+                    |t| matches!(self.cx.ty.kind(t), hir::TyKind::Tuple(elems) if elems.len() == 1),
+                );
+                if !one {
+                    let call_args = vec![n.clone(), args[0].clone()];
+                    let call = synthetic_call("__arrayFilled", type_args, call_args, span);
+                    return Some(self.expr(&call, exp, Want::Move));
+                }
+                elem = first_of(inner);
+                &elem
+            }
+            _ => n,
+        };
         let call = match self.trial_type(n).map(|t| (t, self.length_kind(t))) {
             // As in JS, an `n` that is no number makes an array of that one element.
             Some((_, LengthKind::Other)) => {
                 return Some(self.array_of_one(&type_args, n, &args[0], exp, span));
+            }
+            Some((_, LengthKind::Enum(def))) => {
+                return Some(self.array_filled_enum(&type_args, n, def, &args[0], exp, span));
+            }
+            Some((t, LengthKind::Unsupported)) => {
+                self.cx.error(
+                    velt_common::Diagnostic::error(
+                        format!(
+                            "`new Array(n)` with an `n` of type `{}`: converting such a value to a length is not supported yet",
+                            self.cx.display(t)
+                        ),
+                        n.span,
+                    )
+                    .with_note("give `n` the type `number` (or one enum) first"),
+                );
+                self.check_args_loose(std::slice::from_ref(n));
+                self.check_args_loose(args);
+                return Some(self.error_expr(span));
             }
             Some((t, LengthKind::Mixed)) => {
                 self.cx.error(
@@ -59,6 +95,45 @@ impl FnCx<'_, '_> {
             ),
         };
         Some(self.expr(&call, exp, Want::Move))
+    }
+
+    /// `new Array<T>(e).fill(v)` with `e` a value of the numeric enum `def`: its number is the
+    /// length (`__arrayFilled(<the member's number>, v)`), as in JS.
+    fn array_filled_enum(
+        &mut self,
+        type_args: &[ast::TypeExpr],
+        e: &ast::Expr,
+        def: hir::DefId,
+        v: &ast::Expr,
+        exp: Option<TyId>,
+        span: Span,
+    ) -> hir::Expr {
+        let elem_exp = match type_args {
+            [t] => Some(self.resolve(t)),
+            _ => exp.and_then(|t| match self.cx.ty.kind(t) {
+                hir::TyKind::Array(elem) => Some(*elem),
+                _ => None,
+            }),
+        };
+        let eh = self.expr(e, None, Want::Move);
+        let f64_ = self.cx.ty.f64;
+        let n = self.enum_to_dynamic(eh, def, f64_);
+        let vh = self.expr(v, elem_exp, Want::Move);
+        let vh = match elem_exp {
+            Some(t) => self.coerce(vh, t),
+            None => vh,
+        };
+        let elem = vh.ty;
+        let ty = self.cx.ty.intern(hir::TyKind::Array(elem));
+        let d = self
+            .cx
+            .prelude_fn("__arrayFilled")
+            .unwrap_or_else(|| panic!("ICE: the prelude without `__arrayFilled`"));
+        let kind = hir::ExprKind::Call {
+            callee: hir::Callee::Def(d, vec![elem]),
+            args: vec![n, vh],
+        };
+        self.mk(kind, ty, span)
     }
 
     /// `new Array<T>(x).fill(v)` with an `x` that is no number: as in JS, `x` is evaluated and
@@ -163,16 +238,22 @@ impl FnCx<'_, '_> {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum LengthKind {
     Number,
+    /// A numeric enum's value: its member's number.
+    Enum(hir::DefId),
     Other,
     Mixed,
+    /// A length Velt cannot convert to a `number` yet (a type parameter bounded by `number`,
+    /// a union holding an enum).
+    Unsupported,
 }
 
 impl LengthKind {
     fn join(self, other: LengthKind) -> LengthKind {
-        if self == other {
-            self
-        } else {
-            LengthKind::Mixed
+        use LengthKind::*;
+        match (self, other) {
+            (a, b) if a == b => a,
+            (Unsupported | Enum(_), _) | (_, Unsupported | Enum(_)) => Unsupported,
+            _ => Mixed,
         }
     }
 }
@@ -183,14 +264,35 @@ impl FnCx<'_, '_> {
             return LengthKind::Number;
         }
         match self.cx.ty.kind(t).clone() {
-            hir::TyKind::Param(_)
-            | hir::TyKind::Op(..)
-            | hir::TyKind::Error
-            | hir::TyKind::Never => return LengthKind::Number,
+            hir::TyKind::Op(..) | hir::TyKind::Error | hir::TyKind::Never => {
+                return LengthKind::Number
+            }
+            // A type parameter bounded by a number type would be a length, but its values do
+            // not convert to `number` yet; an unbounded one may be a number or not.
+            hir::TyKind::Param(i) => {
+                let bound = self.cx.constraint_of(i);
+                return match bound.map(|c| self.length_kind(c)) {
+                    Some(LengthKind::Number | LengthKind::Enum(_)) => LengthKind::Unsupported,
+                    _ => LengthKind::Mixed,
+                };
+            }
             hir::TyKind::Option(inner, _) => {
                 return self.length_kind(inner).join(LengthKind::Other);
             }
             _ => {}
+        }
+        // An enum: its members' values are numbers or strings (both in a heterogeneous one).
+        if let hir::TyKind::Adt(d, _) = self.cx.ty.kind(t).clone() {
+            let values = self.cx.enum_info(d).filter(|e| !e.is_union).map(|e| {
+                let strings = e.variants.iter().filter(|v| v.str_value.is_some()).count();
+                (strings, e.variants.len() - strings)
+            });
+            match values {
+                Some((0, _)) => return LengthKind::Enum(d),
+                Some((_, 0)) => return LengthKind::Other,
+                Some(_) => return LengthKind::Mixed,
+                None => {}
+            }
         }
         if let Some(members) = self.cx.union_members(t) {
             let mut kinds = members.into_iter().map(|m| self.length_kind(m));
@@ -202,6 +304,27 @@ impl FnCx<'_, '_> {
         } else {
             LengthKind::Other
         }
+    }
+}
+
+/// `e[0]`.
+fn first_of(e: &ast::Expr) -> ast::Expr {
+    let zero = ast::Expr {
+        id: ast::NodeId(u32::MAX),
+        kind: ast::ExprKind::Lit(ast::Lit::Int {
+            value: 0,
+            suffix: None,
+        }),
+        span: e.span,
+    };
+    ast::Expr {
+        id: ast::NodeId(u32::MAX),
+        kind: ast::ExprKind::Index {
+            object: Box::new(e.clone()),
+            index: Box::new(zero),
+            optional: false,
+        },
+        span: e.span,
     }
 }
 

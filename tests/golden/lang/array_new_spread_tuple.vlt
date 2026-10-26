@@ -1,0 +1,10 @@
+// `new Array(...args)` with a one-element tuple: its element is the argument, a length when it
+// is a number and the one element otherwise, as in JS.
+function main() {
+  const args: [number] = [3];
+  console.log(new Array(...args).fill(0));
+  const strs: [string] = ["z"];
+  console.log(new Array(...strs).fill("w"));
+}
+
+main();
