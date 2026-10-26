@@ -3749,11 +3749,14 @@ with TypeScript's rules:
   a function an object of its own for each kind (`Array`, `Boolean` and `Function` are not
   values in Velt yet, so `=== Array` is an error saying it can't find `Array`); a record made
   by `Object.create(null)` has none (`undefined`). They print as in Node: `[class A]`,
-  `[class B extends A]`, `[Function: Map]`, `[Function: Array]`. A class declared in a function
+  `[class B extends A]`, `[Function: Map]`, `[Function: Array]`; the object of a class with
+  static fields or accessors, which Node prints with them (`[class S] { count: 2 }`), stops
+  with a `TypeError` saying printing it is not supported yet. A class declared in a function
   or a block is another class each time its declaration runs in JavaScript: naming one as a
   plain value is an error, and `x.constructor` of its instances a `TypeError`, saying it is not
-  supported yet. Each class used this way adds a small constant to the program (about 1 KB of
-  code).
+  supported yet. A program that reads `x.constructor` gets one dispatch over its classes and
+  one small constant per class (all of one type): about 11,000 lines of intermediate code and
+  about 110 KB of binary for a two-line program.
 
 ```ts
 class Point {
