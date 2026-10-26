@@ -978,7 +978,8 @@ the nullable type; `void` cannot be a member.
 - A union alias may name itself behind an indirection: as an array's element, an index
   signature's or a `Map`'s value, or in a function type, as JSON-like types do; its members
   may include `null`, `undefined` or both (`type Child = Node | string | null | undefined |
-  Child[]`). Elsewhere
+  Child[]`). A generic one (`type Content<F> = string | F | Content<F>[]`) is a union of its
+  own at each type argument. Elsewhere
   (`type L = number | { next: L }`, a tuple) a value would contain itself, which is an error:
   give such a type a nominal member, such as an interface or a class.
 
@@ -1717,7 +1718,9 @@ the result is an ordinary object type, union or literal type.
   (`` K extends `model:${string}` ``, `` S extends `${infer F}${infer R}` ``). A `boolean` hole
   is `"true" | "false"`, and a hole of literal types each of them spelled out
   (`` `${boolean}x` `` is `"truex" | "falsex"`).
-- `NonNullable<T>`, `Exclude<T, U>` and `Extract<T, U>`; `string & K` with `K` a string literal
+- `NonNullable<T>`, `Exclude<T, U>` and `Extract<T, U>`; `Awaited<T>`, what `await` gives (the
+  value of a promise, of each member of a union, also over a type parameter; a thenable that
+  is not a `Promise` stays itself, as `await` takes only promises); `string & K` with `K` a string literal
   type is `K`; `keyof` of a union is the keys its members share.
 
 ```ts

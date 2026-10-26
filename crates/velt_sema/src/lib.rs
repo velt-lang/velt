@@ -500,7 +500,7 @@ fn analyze(
 ) -> Option<hir::DefId> {
     analyze_bodies(cx);
     let entry = check_main(cx, root, root_mod, opts.require_main);
-    resolve::check_unused_aliases(cx);
+    alias_expand::check_unused_aliases(cx);
     entry
 }
 

@@ -1,0 +1,18 @@
+// A module-level `let` declared without a value starts as `undefined` when its type allows it
+// (sigx's `let inertSignal: AbortSignal | undefined;`).
+let inert: string | undefined;
+let count: number | null | undefined;
+let anything: unknown;
+
+function getInert(): string {
+  const v = inert ?? "made";
+  inert = v;
+  return v;
+}
+
+console.log(inert, count, anything);
+console.log(getInert());
+console.log(inert);
+count = 3;
+anything = "x";
+console.log(count, anything);

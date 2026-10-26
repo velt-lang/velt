@@ -3,6 +3,7 @@
 //! types of the functions called in its `try`, which are only known once their bodies are.
 
 use velt_common::{Diagnostic, Span};
+use velt_syntax::ast;
 
 use super::{literal_locals, recheck, recursion, FnCx, Frame, LocalKind, Want};
 use crate::ctx::Ctx;
@@ -233,6 +234,20 @@ pub(crate) fn ensure_global(cx: &mut Ctx, d: DefId) {
         (Some(e), None) => {
             self_typed(&mut fcx, d, e);
             Some(fcx.expr(e, None, Want::Move))
+        }
+        // `let x: T | undefined;` starts as `undefined`, as in JavaScript.
+        (None, Some(t))
+            if mutable
+                && owner.is_none()
+                && (fcx.cx.ty.nothing_of(t).is_some_and(|n| n.has_undefined())
+                    || fcx.cx.dynamic(t).is_some()) =>
+        {
+            let u = ast::Expr {
+                id: ast::NodeId(u32::MAX),
+                kind: ast::ExprKind::Lit(ast::Lit::Undefined),
+                span: decl_span,
+            };
+            Some(fcx.expr_coerce(&u, t, Want::Move))
         }
         (None, _) => {
             let what = if owner.is_some() {

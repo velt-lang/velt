@@ -476,8 +476,17 @@ impl Ctx<'_> {
             n if crate::utility_types::OPERATORS.contains(&n) => {
                 return Some(self.resolve_utility(t, name, args, env))
             }
-            "NonNullable" | "Exclude" | "Extract" | "Uppercase" | "Lowercase" | "Capitalize"
-            | "Uncapitalize" => return self.resolve_type_level_builtin(t, name, args, env),
+            // In generic code, deferred until the type parameter is known (`Awaited<R>`).
+            "Awaited" if self.inline_deferrable(env) => {
+                return Some(self.resolve_inline(t, env, |cx| {
+                    let r = cx.resolve_type_level_builtin(t, name, args, env);
+                    r.unwrap_or(cx.ty.error)
+                }))
+            }
+            "NonNullable" | "Awaited" | "Exclude" | "Extract" | "Uppercase" | "Lowercase"
+            | "Capitalize" | "Uncapitalize" => {
+                return self.resolve_type_level_builtin(t, name, args, env)
+            }
             _ => return None,
         };
         let written = args;
@@ -725,35 +734,6 @@ impl Ctx<'_> {
             || matches!(self.ty.kind(t), TyKind::Adt(d, _)
                 if self.adt(*d).is_some_and(|a| a.kind == crate::hir::AdtKind::Anon))
     }
-}
-
-/// Resolve every type alias that nothing expanded, so its errors are reported too
-/// (`type X = Nope;` used nowhere is still an error, as in TypeScript). Aliases that are used
-/// were checked at their uses.
-pub(crate) fn check_unused_aliases(cx: &mut Ctx) {
-    cx.checking_unused_aliases = true;
-    for a in 0..cx.aliases.len() {
-        if cx.aliases[a].used {
-            continue;
-        }
-        let (module, decl) = (cx.aliases[a].module, cx.aliases[a].decl);
-        let mut names: Vec<String> = decl.generics.iter().map(|g| g.name.name.clone()).collect();
-        cx.aliases[a].used = true;
-        cx.aliases[a].expanding = true;
-        // An alias of a generic function type that nothing uses as a type is fine: constants
-        // of it are generic functions (`generic_arrows::typed`). Its function type is checked
-        // with the type parameters in scope; a use elsewhere reports the form.
-        let ty = match &decl.ty.kind {
-            ast::TypeExprKind::GenericFunction { type_params, ty } => {
-                names.extend(type_params.iter().map(|g| g.name.name.clone()));
-                &**ty
-            }
-            _ => &decl.ty,
-        };
-        cx.resolve_type(ty, &TyEnv::new(module, &names));
-        cx.aliases[a].expanding = false;
-    }
-    cx.checking_unused_aliases = false;
 }
 
 /// The type written for an optional field `name?: T`: `T`, without the `| undefined` the parser
