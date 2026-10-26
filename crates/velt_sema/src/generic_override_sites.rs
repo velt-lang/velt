@@ -323,7 +323,8 @@ pub(crate) fn check_adapters(cx: &mut Ctx) {
 pub(crate) struct GenericCalls {
     /// The interface and method of each call on an interface value.
     pub on: FxHashSet<(DefId, String)>,
-    /// The methods called through a type parameter, whose argument may be any interface value.
+    /// The methods called through a type parameter: a call reaches an interface table where
+    /// the parameter is given an interface value, which `any_iface_sites::check` adds to `on`.
     pub on_params: FxHashSet<String>,
     /// The conversions of an interface value to another interface that keep the object
     /// (`Upcast`): from, to.
@@ -332,11 +333,8 @@ pub(crate) struct GenericCalls {
 
 impl GenericCalls {
     /// Can a call reach generic method `name` of a value of `iface`: one on a value of
-    /// `iface`, of an interface its values are converted to, or through a type parameter?
+    /// `iface`, or of an interface its values are converted to?
     pub(crate) fn reaches(&self, iface: DefId, name: &str) -> bool {
-        if self.on_params.contains(name) {
-            return true;
-        }
         let mut seen = vec![iface];
         let mut i = 0;
         while let Some(&j) = seen.get(i) {
