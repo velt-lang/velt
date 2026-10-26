@@ -11,7 +11,6 @@ impl Ctx<'_> {
         self.display_in(t, &self.display_params)
     }
 
-    /// Display `t` with `Param(i)` named `names[i]`.
     /// Is `t` an error-set variable, or a union of them (what two sites' variables join to)?
     /// Shown as written: nothing (`throws::vars`).
     fn only_err_vars(&self, t: TyId) -> bool {
@@ -30,6 +29,7 @@ impl Ctx<'_> {
                 .all(|v| v.payload.first().is_some_and(|p| self.is_err_var(*p)))
     }
 
+    /// Display `t` with `Param(i)` named `names[i]`.
     pub(crate) fn display_in(&self, t: TyId, names: &[String]) -> String {
         let list = |s: &Self, ts: &[TyId]| {
             ts.iter()
