@@ -1,0 +1,22 @@
+// `e.stack` of an error (sigx's `new Error().stack`): a string starting with `toString()`'s text,
+// with the `name` a subclass assigns. Velt keeps no call frames, so only the first line is
+// printed (Node adds `    at …` lines after it). Node prints the same.
+class MyErr extends Error {
+  constructor(m: string) {
+    super(m);
+    this.name = "MyErr";
+  }
+}
+
+function site(): string | undefined {
+  const stack = new Error().stack;
+  if (!stack) {
+    return undefined;
+  }
+  return stack.split("\n")[0];
+}
+
+const e = new Error("boom");
+console.log(typeof e.stack, e.stack!.split("\n")[0]);
+console.log(new MyErr("bad").stack!.split("\n")[0], new TypeError("t").stack!.split("\n")[0]);
+console.log(site());

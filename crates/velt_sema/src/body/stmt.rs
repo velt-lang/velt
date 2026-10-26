@@ -598,6 +598,14 @@ impl FnCx<'_, '_> {
         if let (LocalKind::Const, Some(d)) = (kind, init.as_ref().and_then(closure_def)) {
             self.f.closure_consts.insert(local, d);
         }
+        let root = v.init.as_ref().and_then(super::expr::read_root);
+        if let (LocalKind::Const, Some(o)) = (kind, root.filter(|o| o.name != name.name)) {
+            if self.is_local_name(&o.name) {
+                if let Some(r) = self.lookup_local(&o.name, o.span) {
+                    self.f.member_reads.insert(local, r);
+                }
+            }
+        }
         if let (Some(e), Some(_)) = (&v.init, init.as_ref().and_then(closure_def)) {
             if super::expr::is_member_read(e) {
                 self.f.method_values.insert(local);

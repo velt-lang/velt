@@ -1,0 +1,47 @@
+// A block with bounds that wins over another block for the same types must implement the
+// interface with the same arguments: here `C` would be a `G<i64>` only if it is a `Q`, and a
+// `Q` only if it is a `G<string>`, which has no answer. Refused in either order (`_b`).
+
+interface G<A> {
+  g(): A;
+}
+
+interface Q {
+  q(): string;
+}
+
+extend<T extends Q> T implements G<i64> {
+  g(): i64 {
+    return 42;
+  }
+}
+
+extend<T> T implements G<string> {
+  g(): string {
+    return "str";
+  }
+}
+
+extend<T extends G<string>> T implements Q {
+  q(): string {
+    const s: string = this.g();
+    return "Q:" + s.toUpperCase();
+  }
+}
+
+class C {}
+
+function viaQ<T extends Q>(x: T): string {
+  return x.q();
+}
+
+function gi<T extends G<i64>>(x: T): i64 {
+  return x.g() + 1;
+}
+
+function main() {
+  const c = new C();
+  console.log(viaQ(c), gi(c));
+  const q: Q = c;
+  console.log(q.q());
+}

@@ -67,6 +67,7 @@ mod drops;
 mod entry;
 mod errors;
 mod expr;
+mod ext_exists;
 mod flags;
 mod for_of;
 mod for_of_shared;
@@ -76,6 +77,7 @@ mod fresh_fns;
 mod frozen;
 mod glue;
 mod hooks;
+mod impl_lookup;
 mod intrinsics;
 mod js_string;
 mod json;
@@ -430,6 +432,10 @@ struct Cx<'h> {
     facts: boxing::Facts,
     /// `Program::impls` indexes per interface (`impls_of`), built on first use.
     iface_impls: Option<FxHashMap<DefId, Rc<[u32]>>>,
+    /// Finished `extend` lookups by `(interface, arguments, type)` (impl_lookup.rs), and bound
+    /// checks through blocks (ext_exists.rs).
+    ext_memo: FxHashMap<impl_lookup::MemoKey, Option<impl_lookup::Fit>>,
+    exists_memo: FxHashMap<ext_exists::ExistsKey, bool>,
     /// Classes with a `clone()` of their own, and that method (`own_clone`, transfer.rs),
     /// found on first use.
     own_clones: Option<FxHashMap<DefId, DefId>>,

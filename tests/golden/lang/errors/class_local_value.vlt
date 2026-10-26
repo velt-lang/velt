@@ -1,0 +1,9 @@
+// A class declared in a function used as a plain value: JavaScript makes another class each time
+// the function runs, which one value can't stand for, so it is an error saying it is not
+// supported yet.
+function mk(): unknown {
+  class L {}
+  return L;
+}
+
+console.log(mk() === mk());

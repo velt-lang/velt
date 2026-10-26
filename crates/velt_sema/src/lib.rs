@@ -319,6 +319,9 @@ fn check_timed(
     let null_proto = modules
         .iter()
         .any(|m| !m.is_std && calls_object_create_null(&m.ast));
+    let ctor_reads = modules
+        .iter()
+        .any(|m| !m.is_std && reads_constructor(&m.ast));
     let new_cx = |round: &'static str,
                   held_borrows: bool,
                   seeds: &throws::FnTypeSeeds,
@@ -341,6 +344,7 @@ fn check_timed(
             cx.overloaded_methods = o.methods.clone();
         }
         cx.objects.null_proto_records = null_proto;
+        cx.objects.ctor_reads = ctor_reads;
         cx.objects.brands = brands.clone();
         cx.global_props = global_props.clone();
         cx.recovered = (recovered.iter())
@@ -423,6 +427,8 @@ fn check_timed(
     let union_shapes = anon::concrete_unions(&cx);
     let dyn_members = any::dyn_members(&mut cx);
     let (upcasts, upcast_impls) = cx.upcast_tables();
+    let extension_impls = collect::ext_impls::hir_bounds(&cx);
+    let dyn_bounds = collect::ext_impls::dyn_bounds(&mut cx);
     let ctx::Ctx {
         ty,
         defs,
@@ -468,6 +474,8 @@ fn check_timed(
         type_names,
         generic_dyn_methods: generic_called.names().collect(),
         fresh_closures: generic_fns.fresh.into_iter().collect(),
+        extension_impls: extension_impls.into_iter().collect(),
+        dyn_bounds: dyn_bounds.into_iter().collect(),
     };
     (Some(program), diags)
 }
@@ -753,6 +761,24 @@ fn calls_object_create_null(module: &velt_syntax::ast::Module) -> bool {
                 && matches!(&object.kind, E::Ident(o) if o.name == "Object")
                 && matches!(arg.kind, E::Lit(ast::Lit::Null))
             {
+                self.0 = true;
+            }
+        }
+    }
+    let mut f = Find(false);
+    velt_syntax::visit::walk_module(module, &mut f);
+    f.0
+}
+
+/// Does `module` read a `constructor` property (`x.constructor`)? Only then does the prelude's
+/// `__anyConstructor` hold the dispatch over the program's classes, whose objects are module
+/// state (`body::expr::ctor_objects`); other programs get none of it.
+fn reads_constructor(module: &velt_syntax::ast::Module) -> bool {
+    use velt_syntax::ast::{self, ExprKind as E};
+    struct Find(bool);
+    impl<'a> velt_syntax::visit::Visit<'a> for Find {
+        fn expr(&mut self, e: &'a ast::Expr) {
+            if matches!(&e.kind, E::Member { prop, .. } if prop.name == "constructor") {
                 self.0 = true;
             }
         }

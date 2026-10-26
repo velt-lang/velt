@@ -1,0 +1,10 @@
+// `x.constructor` of an instance of a class declared in a function: another class per run in
+// JavaScript, so a `TypeError` saying it is not supported yet.
+function mk(): unknown {
+  class L {}
+  return new L();
+}
+
+const a: any = mk();
+console.log(typeof a);
+console.log(a.constructor === a.constructor);

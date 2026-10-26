@@ -383,7 +383,7 @@ fn trampoline(
 
 /// Checks `def` against interface method `m`; returns `m`'s result type in the implementing
 /// type's context (`None` after a mismatch of the type parameters).
-fn check_method_sig(
+pub(super) fn check_method_sig(
     cx: &mut Ctx,
     def: DefId,
     owner_args: &[TyId],

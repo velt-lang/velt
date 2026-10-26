@@ -1,0 +1,19 @@
+// A hot loop over module-level `let`s, as an LCG seed and a counter are usually written in
+// TypeScript: a release build asks the runtime for the module state once per function call,
+// not at every access (#1571).
+let seed = 42;
+let calls = 0;
+
+function next(): number {
+  seed = (seed * 3877 + 29573) % 139968;
+  calls++;
+  return seed;
+}
+
+function main() {
+  let s = 0;
+  for (let i = 0; i < 5_000_000; i++) {
+    s += next() & 1;
+  }
+  console.log(s, seed, calls);
+}

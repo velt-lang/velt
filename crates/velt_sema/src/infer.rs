@@ -7,6 +7,14 @@ use crate::ctx::Ctx;
 use crate::defs::Bound;
 use crate::hir::{DefId, ImplDef, TyId, TyKind, TyOp};
 
+mod ext_exists;
+mod ext_impls;
+
+pub(crate) use ext_exists::ExistsKey;
+
+/// A found impl: its index, the interface arguments and the type it is for (`Ctx::find_impl`).
+pub(crate) type FoundImpl = (u32, Vec<TyId>, TyId);
+
 impl Ctx<'_> {
     /// [`match_ty`](Self::match_ty) against an expected type whose error types are unknown
     /// ([`without_error_types`](crate::types::Types::without_error_types)): a slot may then be a
@@ -478,17 +486,39 @@ impl Ctx<'_> {
             Some(false) => return None,
             None => {}
         }
+        if let Some(found) = self.own_impl(ty, iface) {
+            return Some(found);
+        }
+        if !self.ext_impls.is_empty() {
+            if let Some(found) = self.find_ext_impl(ty, iface) {
+                return Some(found);
+            }
+        }
+        if self.field_only.contains_key(&iface) {
+            return self.field_only_impl(ty, iface);
+        }
+        self.synth_impl(ty, iface)
+    }
+
+    /// The impl of `iface` declared for `ty` or its nearest base class implementing it (not an
+    /// `extend … implements` block's, infer/ext_impls.rs).
+    pub(crate) fn own_impl(&mut self, ty: TyId, iface: DefId) -> Option<(u32, Vec<TyId>, TyId)> {
         self.impl_index.extend(&self.impls);
+        let ext = !self.ext_impls.is_empty();
         let mut cur = Some(ty);
         let mut guard = 0;
         while let Some(t) = cur {
             // The first impl (in `impls` order) that fits wins: a non-generic impl fits exactly
             // its own type, so only generic impls before it need matching.
             let (exact, generic) = self.impl_index.candidates(iface, t);
+            let exact = exact.filter(|e| !ext || !self.ext_impls.contains_key(e));
             for i in generic
                 .into_iter()
                 .take_while(|&i| exact.is_none_or(|e| i < e))
             {
+                if ext && self.ext_impls.contains_key(&i) {
+                    continue;
+                }
                 if let Some(found) = self.try_impl(i, t) {
                     return Some(found);
                 }
@@ -499,10 +529,7 @@ impl Ctx<'_> {
             guard += 1;
             cur = if guard > 64 { None } else { self.base_of(t) };
         }
-        if self.field_only.contains_key(&iface) {
-            return self.field_only_impl(ty, iface);
-        }
-        self.synth_impl(ty, iface)
+        None
     }
 
     /// `(impl index, interface args, t)` if impl `i` is for type `t`.
@@ -559,7 +586,15 @@ impl Ctx<'_> {
         }
         if let TyKind::Param(n) = self.ty.kind(ty) {
             let declared = bounds.get(*n as usize).cloned().unwrap_or_default();
-            return declared
+            if declared
+                .iter()
+                .any(|x| x == b || self.iface_ancestors(x).contains(b))
+            {
+                return true;
+            }
+            // Through a blanket `extend<T extends …> T implements I` whose bounds it has.
+            return self
+                .blanket_bounds(ty, bounds)
                 .iter()
                 .any(|x| x == b || self.iface_ancestors(x).contains(b));
         }
@@ -570,12 +605,42 @@ impl Ctx<'_> {
                 return true;
             }
         }
-        self.impl_args(ty, b.iface)
-            .is_some_and(|args| args == b.args)
+        if self.ext_impls.is_empty() {
+            return self
+                .impl_args(ty, b.iface)
+                .is_some_and(|args| args == b.args);
+        }
+        // `extend` impls check their bounds in this scope (`fitting_impl`).
+        let saved = std::mem::replace(&mut self.impl_scope, bounds.to_vec());
+        let ok = self
+            .impl_args(ty, b.iface)
+            .is_some_and(|args| args == b.args);
+        self.impl_scope = saved;
+        ok
+    }
+
+    /// Does interface `b`, or one it extends, declare a generic method?
+    pub(crate) fn has_generic_method(&mut self, b: &Bound) -> bool {
+        let mut todo = vec![b.clone()];
+        let mut seen = 0;
+        while let Some(x) = todo.pop() {
+            seen += 1;
+            if seen > 64 {
+                return true;
+            }
+            let generic = self
+                .iface(x.iface)
+                .is_some_and(|i| i.methods.iter().any(|m| m.generics.len() > 0));
+            if generic {
+                return true;
+            }
+            todo.extend(self.iface_ancestors(&x));
+        }
+        false
     }
 
     /// Does the interface `from` extend `to`, directly or through its parents (or is it `to`)?
-    fn extends_iface(&mut self, from: &Bound, to: &Bound) -> bool {
+    pub(crate) fn extends_iface(&mut self, from: &Bound, to: &Bound) -> bool {
         let mut todo = vec![from.clone()];
         let mut seen = 0;
         while let Some(x) = todo.pop() {

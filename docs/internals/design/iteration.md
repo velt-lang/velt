@@ -483,8 +483,8 @@ two-argument `IteratorResult<T, TReturn>` exist.
 
 ### Mechanism: `extend` blocks implement `Iterable`
 
-`extend` blocks cannot list `implements` (retroactive `implements` is planned, classes.md
-"extend"), so, as `compareTo` makes a type `Comparable` (`collect/comparable.rs`), an `extend`
+Besides `extend X implements Iterable<T>` (classes.md "extend … implements"), as `compareTo`
+makes a type `Comparable` (`collect/comparable.rs`), an `extend`
 block defining `[Symbol.iterator](): Iterator<T, E>` makes its target implement `Iterable<T, E>`,
 and one defining `[Symbol.asyncIterator](): AsyncIterator<T, E>` makes it an `AsyncIterable<T,
 E>` (`collect/iterable.rs`: an entry in `Program::impls`, generic when the block is). The rule

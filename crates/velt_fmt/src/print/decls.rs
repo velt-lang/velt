@@ -93,9 +93,11 @@ impl<'a> Printer<'a> {
             "extend",
             self.generic_params(&decl.generics),
             " ",
-            self.ty_no_union(&decl.target)
+            self.ty_no_union(&decl.target),
+            self.type_list(" implements ", &decl.implements)
         ];
-        cat![head, " ", self.members(members, decl.target.span.hi)]
+        let after = decl.implements.last().unwrap_or(&decl.target).span.hi;
+        cat![head, " ", self.members(members, after)]
     }
 
     pub(super) fn enum_decl(&mut self, decl: &EnumDecl) -> Doc {

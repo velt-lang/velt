@@ -30,6 +30,7 @@
 
 mod fields;
 mod fresh;
+mod impl_bound;
 mod intrinsic;
 mod module_state;
 mod nothing;
@@ -43,6 +44,7 @@ use velt_common::Span;
 
 pub use fields::{DynMember, DynMemberKind, FieldDef, FieldInit};
 pub use fresh::FreshClosure;
+pub use impl_bound::{ImplBound, ImplDef};
 pub use intrinsic::Intrinsic;
 pub use module_state::{GlobalDef, ModuleState};
 pub use nothing::Nothing;
@@ -201,26 +203,20 @@ pub struct Program {
     pub cpu_targets: HashMap<DefId, CpuTarget>,
     /// Names of structural types for messages: aliases' and field-only interfaces'. Additive.
     pub type_names: HashMap<TyId, String>,
-    /// The names of the generic interface methods the program calls with type arguments of
-    /// their own (`Callee::Dyn`, or `Callee::ParamMethod`, which may be instantiated with an
-    /// interface value): only their vtable slots hold instantiation tables (hir_encodings.md
-    /// "Generic methods"). Additive.
+    /// The generic interface methods called with type arguments of their own through tables:
+    /// only their vtable slots hold instantiation tables (hir_encodings.md). Additive.
     pub generic_dyn_methods: HashSet<String>,
     /// Closures each evaluation of which is a new function value where JavaScript has one
     /// function, and the conversions of function values to other function types (#943,
     /// [`FreshClosure`], hir_encodings.md "Generic function values"). Additive.
     pub fresh_closures: HashMap<DefId, FreshClosure>,
-}
-
-/// `ty` implements `iface<iface_args>` using `methods` (one per interface method, in order).
-/// Generic impls use `TyKind::Param` in `ty`/`iface_args`; lowering instantiates them.
-#[derive(Clone, Debug)]
-pub struct ImplDef {
-    pub ty: TyId,
-    pub generics: u32,
-    pub iface: DefId,
-    pub iface_args: Vec<TyId>,
-    pub methods: Vec<DefId>,
+    /// The impls of `extend … implements I` blocks (by index into `impls`) with the bounds on
+    /// their type parameters: such an impl fits a type only where they hold, and a type without
+    /// an impl of its own (or a base class's) gets the most specific that fits (A over B when
+    /// A's target is an instance of B's and not the reverse, or only A has bounds). Additive.
+    pub extension_impls: HashMap<u32, Vec<ImplBound>>,
+    /// Per interface, the `extend` bounds its values meet themselves (hir_encodings.md). Additive.
+    pub dyn_bounds: HashMap<DefId, Vec<(DefId, Vec<TyId>)>>,
 }
 
 impl Program {

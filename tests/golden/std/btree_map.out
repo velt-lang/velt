@@ -1,0 +1,19 @@
+3 [ 'alice', 'bob', 'carol' ] [ 10, 4, 7 ] alice carol
+10 undefined true false
+bob carol [ [ 'bob', 4 ], [ 'carol', 7 ] ]
+undefined undefined []
+alice 10
+bob 4
+carol 7
+true false [ [ 'alice', 10 ], [ 'carol', 7 ] ]
+0 true undefined undefined
+[ [ 'again', 1 ] ]
+[ 'uno', 'two' ] true
+null x undefined true
+randomized 88172645463325252: 60000 ops, peak 9882, final 7462, ok
+randomized 12345: 40000 ops, peak 226, final 104, ok
+randomized 987654321: 20000 ops, peak 36, final 15, ok
+drain ok
+strings 1500 key-1-wi key-999-
+[ '0.9', '1.2', '1.10' ] b
+forEach 52 k0=0,k1=1,k3=3,z=300

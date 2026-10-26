@@ -79,6 +79,24 @@ pub(crate) struct Ctx<'m> {
     pub(crate) any: Option<crate::any::AnyDefs>,
     /// `impls` by interface (`Ctx::find_impl`).
     pub impl_index: crate::infer::ImplIndex,
+    /// Impls from `extend … implements I` blocks: impl index → extension index
+    /// (collect/ext_impls.rs). Their bounds must hold for an impl to fit a type, and among the
+    /// fitting ones the most specific wins (`Ctx::find_impl`).
+    pub ext_impls: FxHashMap<u32, usize>,
+    /// `ext_impls` by interface, in order.
+    pub ext_by_iface: FxHashMap<DefId, Vec<u32>>,
+    /// Finished `extend` lookups (infer/ext_impls.rs) and bound checks through blocks
+    /// (infer/ext_exists.rs), valid while `impls` has `ext_memo_impls` entries.
+    pub ext_memo: FxHashMap<(TyId, DefId), Option<crate::infer::FoundImpl>>,
+    pub ext_exists_memo: FxHashMap<crate::infer::ExistsKey, bool>,
+    pub ext_memo_impls: usize,
+    /// Set while `Ctx::blanket_bounds` checks a blanket impl's bounds: the bounds a parameter
+    /// has through blanket impls come from its declared bounds only, not from other blanket
+    /// impls, so the check never recurses.
+    pub in_blanket: bool,
+    /// The type-parameter bounds in scope of the `satisfies` call running `find_impl`: an
+    /// `extend` impl's bounds are checked in it (`Ctx::fitting_impl`).
+    pub impl_scope: Vec<Vec<crate::defs::Bound>>,
     /// Anonymous object defs by shape: field names, declared types and flags, in order.
     pub anon: FxHashMap<Vec<crate::anon::ShapeField>, DefId>,
     /// Object type defs replaced before lowering (`crate::readonly`): anonymous ones with
@@ -424,6 +442,13 @@ impl<'m> Ctx<'m> {
             union_views: Default::default(),
             any: None,
             impl_index: Default::default(),
+            ext_impls: FxHashMap::default(),
+            ext_by_iface: FxHashMap::default(),
+            ext_memo: Default::default(),
+            ext_exists_memo: Default::default(),
+            ext_memo_impls: 0,
+            in_blanket: false,
+            impl_scope: vec![],
             anon: FxHashMap::default(),
             readonly_twins: FxHashMap::default(),
             any_unknown_views: false,
