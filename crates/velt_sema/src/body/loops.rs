@@ -262,7 +262,18 @@ impl FnCx<'_, '_> {
         self.enter_loop(label, false);
         let b = self.block_narrowed(body, &when_true);
         let label = self.exit_loop().hir_label();
-        let step = update.map(|u| self.expr_stmt(u));
+        // The update runs after the body (or a `continue`), where the condition still holds
+        // for what the body does not assign: `for (c = head; c; c = c.next)`.
+        let step = update.map(|u| {
+            self.push_scope();
+            when_true.iter().for_each(|f| self.narrow(f));
+            for s in &body.stmts {
+                self.unnarrow_assigned_in(s);
+            }
+            let step = self.expr_stmt(u);
+            self.pop_scope();
+            step
+        });
         self.pop_scope();
         let w = hir::Stmt {
             kind: S::While {
