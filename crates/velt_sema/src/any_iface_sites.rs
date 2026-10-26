@@ -110,6 +110,8 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Unit)> {
     // method of each class implementing it: the interface, the slot, the interface arguments,
     // the method's own type arguments.
     let mut iface_calls: Vec<IfaceCall> = vec![];
+    // Each instance of a generic class or struct made (`new C<A>`, a literal), in unit `.0`.
+    let mut made: Vec<(usize, DefId, Vec<TyId>, Span)> = vec![];
     let tys = &cx.ty;
     let mut scan = |at: usize, u: &mut Unit, e: &mut Expr| match &e.kind {
         E::Call {
@@ -171,6 +173,7 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Unit)> {
             if let Some(c) = ctors.get(g) {
                 u.sites.push((*c, targs.clone(), e.span));
             }
+            made.push((at, *g, targs.clone(), e.span));
         }
         E::Call {
             callee: Callee::Def(g, targs),
@@ -225,28 +228,102 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Unit)> {
         u.sites
             .extend(sites.into_iter().map(|(m, targs)| (m, targs, span)));
     }
-    // A class extending a generic class instantiates its initializers and constructor (and
-    // what they call) with the `extends` clause's arguments.
+    // An instance made is what its methods run on, whichever way they are called (directly,
+    // through a vtable or an interface table): each method of the class and of its bases is
+    // instantiated with the instance's arguments, mapped to the method's class.
+    for (at, c, targs, span) in made {
+        let sites = class_method_sites(cx, c, &targs);
+        let u = &mut out[at].1;
+        u.sites
+            .extend(sites.into_iter().map(|(m, targs)| (m, targs, span)));
+    }
+    // A class extending a generic class instantiates its initializers, constructor and methods
+    // (and what they call) with the `extends` clause's arguments.
     for (d, u) in out.iter_mut() {
-        let Some(TyKind::Adt(h, hargs)) = cx.adt(*d).and_then(|a| a.base).map(|b| cx.ty.kind(b))
+        let d = *d;
+        let Some(TyKind::Adt(h, hargs)) = cx.adt(d).and_then(|a| a.base).map(|b| cx.ty.kind(b))
         else {
             continue;
         };
+        let (h, hargs) = (*h, hargs.clone());
         if hargs.is_empty() {
             continue;
         }
-        let span = cx.adt(*d).map_or(Span::DUMMY, |a| a.span);
-        u.sites.push((*h, hargs.clone(), span));
-        if let Some(c) = ctors.get(h) {
-            u.sites.push((*c, hargs.clone(), span));
+        let span = cx.adt(d).map_or(Span::DUMMY, |a| a.span);
+        let mut sites = vec![(h, hargs.clone())];
+        if let Some(c) = ctors.get(&h) {
+            sites.push((*c, hargs.clone()));
+        }
+        sites.extend(class_method_sites(cx, h, &hargs));
+        u.sites
+            .extend(sites.into_iter().map(|(m, targs)| (m, targs, span)));
+    }
+    out
+}
+
+/// The arguments of class `owner` that the class type `ty` is or extends: `ty`'s arguments mapped
+/// through the `extends` clauses up to it.
+fn args_at(cx: &mut Ctx, ty: TyId, owner: DefId) -> Option<Vec<TyId>> {
+    let mut cur = ty;
+    for _ in 0..64 {
+        let TyKind::Adt(d, args) = cx.ty.kind(cur).clone() else {
+            return None;
+        };
+        if d == owner {
+            return Some(args);
+        }
+        let base = cx.adt(d)?.base?;
+        cur = cx.subst(base, &args);
+    }
+    None
+}
+
+/// The type arguments method `m` runs with on an instance of class type `ty`: those of its class
+/// (`args_at`), then `own`, or `error` for its own type parameters without `own`.
+fn method_args(cx: &mut Ctx, ty: TyId, m: DefId, own: Option<&[TyId]>) -> Option<Vec<TyId>> {
+    let f = cx.try_fn(m)?;
+    let (owner, n) = (f.owner?, f.generics.len());
+    let mut targs = args_at(cx, ty, owner)?;
+    match own {
+        Some(own) => targs.extend(own.iter().copied()),
+        None => targs.resize(n.max(targs.len()), cx.ty.error),
+    }
+    Some(targs)
+}
+
+/// The methods of class `c` and of its bases, instantiated for an instance of `c<args>`.
+fn class_method_sites(cx: &mut Ctx, c: DefId, args: &[TyId]) -> Vec<(DefId, Vec<TyId>)> {
+    let ty = cx.ty.intern(TyKind::Adt(c, args.to_vec()));
+    let mut methods = vec![];
+    let mut cur = Some(c);
+    for _ in 0..64 {
+        let Some(d) = cur else { break };
+        let Some(a) = cx.adt(d) else { break };
+        let mut own: Vec<DefId> = (a.methods.values())
+            .filter(|m| !m.is_static)
+            .map(|m| m.def)
+            .collect();
+        own.sort_unstable_by_key(|m| m.0);
+        methods.extend(own);
+        cur = match a.base.map(|b| cx.ty.kind(b)) {
+            Some(TyKind::Adt(b, _)) => Some(*b),
+            _ => None,
+        };
+    }
+    methods.dedup();
+    let mut out = vec![];
+    for m in methods {
+        if let Some(targs) = method_args(cx, ty, m, None).filter(|t| !t.is_empty()) {
+            out.push((m, targs));
         }
     }
     out
 }
 
 /// The methods a call of generic slot `slot` of `iface<iargs>` with own type arguments `margs`
-/// may run: that of each class implementing the interface, with the class's type arguments the
-/// interface's arguments give (`error` for the others), then `margs`.
+/// may run: that of each class implementing the interface (which may be inherited from a base
+/// class), with the type arguments of the method's class the interface's arguments give
+/// (`error` for the others), then `margs`.
 fn iface_sites(
     cx: &mut Ctx,
     iface: DefId,
@@ -261,19 +338,25 @@ fn iface_sites(
                 i.methods.get(slot as usize).copied(),
                 i.generics,
                 i.iface_args.clone(),
+                i.ty,
             )
         })
         .collect();
     let mut out = vec![];
-    for (m, n, pattern) in impls {
+    for (m, n, pattern, pattern_ty) in impls {
         let Some(m) = m else { continue };
         let mut slots = vec![None; n as usize];
         for (p, a) in pattern.iter().zip(iargs) {
             cx.match_ty(*p, *a, &mut slots);
         }
         let error = cx.ty.error;
-        let mut targs: Vec<TyId> = slots.into_iter().map(|s| s.unwrap_or(error)).collect();
-        targs.extend(margs.iter().copied());
+        let targs: Vec<TyId> = slots.into_iter().map(|s| s.unwrap_or(error)).collect();
+        let ty = cx.subst(pattern_ty, &targs);
+        // Not a class's method (a generic closure's): its implementation's arguments.
+        let targs = match method_args(cx, ty, m, Some(margs)) {
+            Some(t) => t,
+            None => [targs.as_slice(), margs].concat(),
+        };
         if !targs.is_empty() {
             out.push((m, targs));
         }
