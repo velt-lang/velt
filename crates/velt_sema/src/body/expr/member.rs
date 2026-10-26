@@ -327,6 +327,9 @@ impl FnCx<'_, '_> {
         if let Some(h) = self.process_env_index(object, index, span) {
             return h;
         }
+        if let Some(h) = self.symbol_record_read(object, index, span) {
+            return h;
+        }
         if let Some(h) = self.keyed_read(object, index, want, span) {
             return h;
         }
@@ -556,6 +559,11 @@ impl FnCx<'_, '_> {
         want: Want,
         span: Span,
     ) -> hir::Expr {
+        // `(v as Record<symbol, unknown>)[KEY]` is `symbol_record_read`'s; nothing else is.
+        if self.symbol_record_elsewhere(ty, span) {
+            self.expr(expr, None, Want::Borrow);
+            return self.error_expr(span);
+        }
         let target = self.resolve(ty);
         if let Some(h) = self.callable_cast(expr, target, span) {
             return h;

@@ -1,0 +1,6 @@
+readonly_class_fields.vlt:12:10: error: cannot assign to `n`: it is a readonly field
+readonly_class_fields.vlt:14:3: error: cannot assign to `n`: it is a readonly field
+readonly_class_fields.vlt:15:29: error: property 'push' does not exist on type 'readonly string[]' (TypeScript's TS2339)
+readonly_class_fields.vlt:18:3: error: cannot assign to `xs`: it is a readonly field
+readonly_class_fields.vlt:19:10: error: cannot assign to `xs`: it is a readonly field
+readonly_class_fields.vlt:20:3: error: cannot assign to `ys`: it is a readonly field

@@ -56,6 +56,7 @@ mod generic_dynamic;
 pub(crate) use env_globals::NODE_GLOBALS;
 mod array_view_cast;
 pub(crate) mod await_value;
+mod checked_key;
 mod error_slots;
 mod error_view;
 mod errors;
@@ -109,6 +110,7 @@ mod names;
 mod namespaces;
 mod narrowing_casts;
 mod never_null;
+mod number_records;
 mod numbers;
 mod object;
 mod object_assign;
@@ -153,6 +155,7 @@ mod std_glue;
 mod structured_clone;
 mod supers;
 mod symbol_keys;
+mod symbol_record;
 mod sync;
 pub(crate) mod tasks;
 mod ternary;
@@ -329,6 +332,12 @@ impl FnCx<'_, '_> {
                 Some(h) => h,
                 None => match self.ctor_name_read(object, prop, span) {
                     Some(h) => h,
+                    None if prop.name.starts_with("[Symbol.") => {
+                        match self.symbol_record_member(object, prop, span) {
+                            Some(h) => h,
+                            None => self.member(object, prop, *optional, exp, want, span),
+                        }
+                    }
                     None => self.member(object, prop, *optional, exp, want, span),
                 },
             },

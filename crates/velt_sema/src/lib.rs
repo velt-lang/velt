@@ -352,6 +352,7 @@ fn check_timed(
             cx.set_closure_groups(&c.groups);
         }
         let entry = timings::pass(round, || analyze(&mut cx, root, root_mod, opts));
+        global_this::drop_site_errors(&mut cx);
         if let Some(o) = &overloaded {
             overloads::report_misfits(&mut cx.diags, &o.sig_spans);
             overload_adapter::check_identity(&mut cx, &o.adapted);

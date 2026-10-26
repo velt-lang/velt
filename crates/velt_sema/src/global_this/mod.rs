@@ -11,8 +11,16 @@
 //! - the same through a `const g = globalThis as T;` (the constant stands for `globalThis`);
 //! - `globalThis.K` and `globalThis[KEY]` without an assertion (or asserted `any` or
 //!   `unknown`), when another site asserts `K`'s type;
+//! - `(globalThis as T)[k]` with `k` a variable, when `T` lists a fixed set of keys (an object
+//!   type, or a mapped type over a union of string literals, `{ [K in "a" | "b"]?: V }`, also
+//!   through the module's type aliases): `k === "a" ? <a> : k === "b" ? <b> : undefined`
+//!   (and `Object.defineProperty(g, k, d)` an `if` over the keys);
 //! - `Object.defineProperty(globalThis, "K", { value, ... })`, which assigns it
-//!   (`body::expr::object_define`).
+//!   (`body::expr::object_define`). A property only ever defined, never read or assigned,
+//!   needs no type: nothing in the program can see it, so the call only evaluates `value`.
+//!
+//! A property no site asserts a type for has the type a `declare global { var K: T }` gives it
+//! (`T | undefined`; the loader passes it as an item, a type alias named `globalThis.K`).
 //!
 //! The asserted type at each site must give `K` the same type ([`check_sites`]). A Node global
 //! Velt has (`globalThis.setTimeout`) is that global. Programs that don't name `globalThis` are
@@ -20,6 +28,8 @@
 
 mod keys;
 mod walk;
+
+pub(crate) use walk::{DEFINE_KEY_CHECK, DELETE_KEY_CHECK, KEY_CHECK};
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use velt_common::{Diagnostic, Span};
@@ -43,6 +53,8 @@ pub(crate) struct Site {
     pub span: Span,
     /// The site is assigned (`=`, a compound assignment, `++`), not through `defineProperty`.
     pub written: bool,
+    /// The site is an `Object.defineProperty` call.
+    pub defined: bool,
 }
 
 /// The properties of `globalThis` a program uses.
@@ -56,6 +68,9 @@ pub(crate) struct GlobalProps {
     /// The `writable` and `configurable` the first `defineProperty` of each key gives, and
     /// where (`body::expr::object_define`).
     pub defined: FxHashMap<String, (bool, bool, Span)>,
+    /// Properties the program only defines (`Object.defineProperty`), with no type: no site
+    /// reads them, so a definition only evaluates its value.
+    pub write_only: FxHashSet<String>,
 }
 
 impl GlobalProps {
@@ -86,7 +101,8 @@ pub(crate) fn rewrite(
     let mut props = GlobalProps::default();
     let mut diags = vec![];
     let names = |m: &SourceModule| !m.is_std && keys::mentions(&m.ast);
-    if !modules.iter().any(names) {
+    let typed = |m: &SourceModule| m.ast.items.iter().any(|i| declared_type(i).is_some());
+    if !modules.iter().any(names) && !modules.iter().any(typed) {
         return (props, diags, None);
     }
     let consts: Vec<FxHashMap<String, String>> = modules
@@ -104,12 +120,24 @@ pub(crate) fn rewrite(
             jsx_runtime: m.jsx_runtime.clone(),
         })
         .collect();
+    // The types of `declare global { var K: T }`, which the loader gives as type aliases.
+    let mut globals: FxHashMap<String, (usize, ast::TypeExpr)> = FxHashMap::default();
+    for (i, m) in out.iter_mut().enumerate() {
+        m.ast.items.retain(|item| match declared_type(item) {
+            Some((k, t)) => {
+                globals.entry(k.to_string()).or_insert((i, t.clone()));
+                false
+            }
+            None => true,
+        });
+    }
     for (i, m) in out.iter_mut().enumerate() {
         if m.is_std || !keys::mentions(&m.ast) {
             continue;
         }
         let keys = keys::visible_consts(m, modules, &consts, i);
-        let mut w = walk::Walk::new(i, &keys);
+        let aliases = keys::type_aliases(&m.ast);
+        let mut w = walk::Walk::new(i, &keys, &aliases);
         w.module_items(&mut m.ast);
         props.sites.append(&mut w.sites);
         diags.append(&mut w.diags);
@@ -123,7 +151,22 @@ pub(crate) fn rewrite(
         }
         if let Some(t) = &s.ty {
             props.homes.insert(s.key.clone(), s.module);
-            declared.push((s.module, s.key.clone(), t.clone(), s.span));
+            declared.push((
+                s.module,
+                s.key.clone(),
+                member_type(&s.key, t.clone()),
+                s.span,
+            ));
+        }
+    }
+    // A property no site asserts a type for has the type a `declare global` gives it.
+    for s in &props.sites {
+        if props.homes.contains_key(&s.key) {
+            continue;
+        }
+        if let Some((m, t)) = globals.get(&s.key) {
+            props.homes.insert(s.key.clone(), *m);
+            declared.push((*m, s.key.clone(), maybe_undefined(t.clone()), t.span));
         }
     }
     let mut untyped = FxHashSet::default();
@@ -132,6 +175,11 @@ pub(crate) fn rewrite(
         .iter()
         .filter(|s| !props.homes.contains_key(&s.key))
     {
+        let key = &s.key;
+        if props.sites.iter().all(|o| o.key != *key || o.defined) {
+            props.write_only.insert(key.clone());
+            continue;
+        }
         if untyped.insert(s.key.clone()) {
             diags.push(
                 Diagnostic::error(
@@ -151,9 +199,16 @@ pub(crate) fn rewrite(
     (props, diags, Some(out))
 }
 
-/// `let globalThis.K: T["K"] | undefined = undefined;`
-fn slot_item(key: &str, asserted: ast::TypeExpr, span: Span) -> ast::Item {
-    let ty = member_type(key, asserted);
+/// The key and type of a `declare global { var K: T }` the loader gave as an item.
+fn declared_type(item: &ast::Item) -> Option<(&str, &ast::TypeExpr)> {
+    match &item.kind {
+        ast::ItemKind::TypeAlias(a) => Some((a.name.name.strip_prefix(PREFIX)?, &a.ty)),
+        _ => None,
+    }
+}
+
+/// `let globalThis.K: ty = undefined;` (`ty`: `T["K"] | undefined`).
+fn slot_item(key: &str, ty: ast::TypeExpr, span: Span) -> ast::Item {
     let decl = ast::VarDecl {
         kind: ast::VarKind::Let,
         pattern: ast::Pattern {
@@ -175,6 +230,19 @@ fn slot_item(key: &str, asserted: ast::TypeExpr, span: Span) -> ast::Item {
     ast::Item {
         kind: ast::ItemKind::Var(decl),
         exported: false,
+        span,
+    }
+}
+
+/// `t | undefined`: a property declared `t`, which may be unset.
+fn maybe_undefined(t: ast::TypeExpr) -> ast::TypeExpr {
+    let span = t.span;
+    let undefined = ast::TypeExpr {
+        kind: ast::TypeExprKind::Undefined,
+        span,
+    };
+    ast::TypeExpr {
+        kind: ast::TypeExprKind::Union(vec![t, undefined]),
         span,
     }
 }
@@ -256,4 +324,31 @@ pub(crate) fn check_sites(cx: &mut Ctx) {
         );
     }
     cx.global_props.sites = sites;
+}
+
+/// Drop the errors reported inside a site whose key was wrong, but the key's own.
+pub(crate) fn drop_site_errors(cx: &mut Ctx) {
+    if cx.global_props.sites.is_empty() {
+        return;
+    }
+    // The branches of a variable key's chain check the same source once per key: one error
+    // per place and message.
+    let mut seen = FxHashSet::default();
+    cx.diags.retain(|d| {
+        let at = d.labels.first().map(|l| l.span);
+        !d.is_error() || at.is_none() || seen.insert((at, d.message.clone()))
+    });
+    if cx.bad_key_sites.is_empty() {
+        return;
+    }
+    let sites = std::mem::take(&mut cx.bad_key_sites);
+    cx.diags.retain(|d| {
+        let Some(at) = d.labels.first().map(|l| l.span) else {
+            return true;
+        };
+        !d.is_error()
+            || !sites.iter().any(|(site, key)| {
+                at != *key && at.file == site.file && at.lo >= site.lo && at.hi <= site.hi
+            })
+    });
 }
