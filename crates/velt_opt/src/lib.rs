@@ -7,10 +7,13 @@
 //! Passes (one module each; every pass keeps the VIR invariants from `vir.rs`):
 //! - `gated_clones`: before the rounds, a gated function's calls of ordinary callees that check
 //!   its CPU extension go to clones gated on it, where the check is `true` (#1330).
-//! - `frozen`: before the rounds (so a callee's loads move with it into its callers) and with
-//!   `noalias` after them, scalar fields behind `frozen` params (borrowed values, also ones
-//!   holding atomics) that the function reads in a loop are loaded once on entry: nothing
-//!   changes them during the call, not even atomic operations, fences or calls.
+//! - `frozen`: before the rounds, from `inline` right after a function's callees are inlined
+//!   into it (their reads of its params are its own then, while it still has the params; the
+//!   loads then move with it into its own callers) and with `noalias` after the rounds, scalar
+//!   fields behind `frozen`
+//!   params (borrowed values, also ones holding atomics) that the function reads in a loop are
+//!   loaded once on entry: nothing changes them during the call, not even atomic operations,
+//!   fences or calls.
 //! - `inline`: bottom-up inlining of small / called-once direct callees.
 //! - `const_fields`: constant fields of aggregate locals (closure code pointers) propagated
 //!   into their reads, also through read-only pointers, plus cloning of callees that receive

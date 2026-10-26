@@ -20,7 +20,7 @@
 //! left alone when the function assigns it or takes its address.
 
 use velt_vir::vir::{
-    AggLayout, Function, Local, LocalDecl, Operand, Place, Proj, Rvalue, Stmt, Ty,
+    AggLayout, Function, Local, LocalDecl, Operand, Place, Proj, Rvalue, Stmt, Terminator, Ty,
 };
 
 use crate::noalias::fresh_entry;
@@ -36,12 +36,13 @@ pub(crate) fn run(aggs: &[AggLayout], func: &mut Function) -> bool {
             continue;
         }
         let p = Local(i as u32);
-        let fields = scan(aggs, func, p, attrs.dereferenceable);
+        let names = copies(func, p);
+        let fields = scan(aggs, func, &names, p, attrs.dereferenceable);
         if fields.is_empty() {
             continue;
         }
         fresh_entry(func);
-        promote(func, p, fields);
+        promote(func, &names, p, fields);
         changed = true;
     }
     changed
@@ -59,9 +60,67 @@ struct Field {
     in_loop: bool,
 }
 
+/// Per local: whether it names `p`'s pointee. `p` itself, and every local other than a param
+/// that is only ever assigned a copy of such a local and never has its address taken: the
+/// inliner binds a callee's params that way, so an inlined callee's reads count as `p`'s.
+/// Computed as the largest such set: start from every candidate and drop the ones with an
+/// assignment of another kind until nothing changes.
+fn copies(func: &Function, p: Local) -> Vec<bool> {
+    let n = func.locals.len();
+    let params = func.params.len();
+    let mut names: Vec<bool> = (0..n)
+        .map(|i| i == p.0 as usize || i >= params && func.locals[i].ty == Ty::Ptr)
+        .collect();
+    let mut assigned = vec![false; n];
+    let mut defs: Vec<(usize, Option<usize>)> = vec![];
+    for block in &func.blocks {
+        for s in &block.stmts {
+            let Stmt::Assign(place, rv) = s else { continue };
+            if let Rvalue::AddrOf(a) = rv {
+                if a.proj.is_empty() {
+                    names[a.local.0 as usize] = false;
+                }
+            }
+            if place.proj.is_empty() {
+                let from = match rv {
+                    Rvalue::Use(Operand::Copy(src)) if src.proj.is_empty() => {
+                        Some(src.local.0 as usize)
+                    }
+                    _ => None,
+                };
+                assigned[place.local.0 as usize] = true;
+                defs.push((place.local.0 as usize, from));
+            }
+        }
+        if let Terminator::Call { dest: Some(d), .. } = &block.term {
+            if d.proj.is_empty() {
+                names[d.local.0 as usize] = false;
+            }
+        }
+    }
+    for (i, a) in assigned.iter().enumerate() {
+        if !a && i != p.0 as usize {
+            names[i] = false;
+        }
+    }
+    loop {
+        let mut changed = false;
+        for &(l, from) in &defs {
+            if l != p.0 as usize && names[l] && !from.is_some_and(|f| names[f]) {
+                names[l] = false;
+                changed = true;
+            }
+        }
+        if !changed {
+            return names;
+        }
+    }
+}
+
 /// The fields of `*p` worth reading once: scalars read in a loop, within the dereferenceable
-/// bytes, overlapping no place whose address is taken or that is written.
-fn scan(aggs: &[AggLayout], func: &Function, p: Local, valid: u64) -> Vec<Field> {
+/// bytes, overlapping no place whose address is taken or that is written. `names`: the locals
+/// that name `p`'s pointee (`copies`).
+fn scan(aggs: &[AggLayout], func: &Function, names: &[bool], p: Local, valid: u64) -> Vec<Field> {
     let edges: Vec<Vec<usize>> = func
         .blocks
         .iter()
@@ -73,12 +132,13 @@ fn scan(aggs: &[AggLayout], func: &Function, p: Local, valid: u64) -> Vec<Field>
     let mut whole = false;
     for (bi, block) in func.blocks.iter().enumerate() {
         let mut visit = |pl: &Place, u: PlaceUse| {
-            if pl.local != p {
+            if !names[pl.local.0 as usize] {
                 return;
             }
             if pl.proj.is_empty() {
-                // `p = …` or `&p`: the param no longer names one pointee.
-                whole |= u != PlaceUse::Read;
+                // `p = …` or `&p`: the param no longer names one pointee (a copy's own
+                // assignments are copies, `copies` made sure).
+                whole |= pl.local == p && u != PlaceUse::Read;
                 return;
             }
             let Some(f) = walk(aggs, pl) else {
@@ -169,7 +229,7 @@ fn walk(aggs: &[AggLayout], pl: &Place) -> Option<Walk> {
     })
 }
 
-fn promote(func: &mut Function, p: Local, fields: Vec<Field>) {
+fn promote(func: &mut Function, names: &[bool], p: Local, fields: Vec<Field>) {
     let mut locals = vec![];
     for f in &fields {
         func.locals.push(LocalDecl::new(f.ty, None));
@@ -177,7 +237,7 @@ fn promote(func: &mut Function, p: Local, fields: Vec<Field>) {
     }
     // Rewrite the reads first: the loads added below must keep naming `*p`.
     places_mut(func, &mut |pl| {
-        if pl.local != p {
+        if !names.get(pl.local.0 as usize).copied().unwrap_or(false) {
             return;
         }
         let hit = fields.iter().position(|f| {

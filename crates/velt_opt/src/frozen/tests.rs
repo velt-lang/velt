@@ -5,7 +5,9 @@ use crate::interp::{Interp, RecordingHost};
 use crate::testkit::builder::*;
 use crate::testkit::validate::assert_valid;
 use crate::visit::stmt_operands;
-use velt_vir::vir::{AggId, BinOp, Callee, Const, ParamAttrs, Program};
+use velt_vir::vir::{
+    AggId, BasicBlock, BinOp, BlockId, Callee, Const, FuncId, ParamAttrs, Program, Terminator,
+};
 
 const FROZEN: ParamAttrs = ParamAttrs {
     noalias: false,
@@ -160,4 +162,95 @@ fn leaves_other_params_alone() {
         Rvalue::Use(copy_local(Local(0))),
     ));
     assert!(!run(&aggs, f));
+}
+
+/// `bound(p)` returns `(*p).0`; `sum(p)` is `program`'s `sum` with its loop bound read through
+/// a call of `bound` instead of directly.
+fn program_via_call() -> Program {
+    let mut p = program(FROZEN);
+    let pair = AggId(1);
+    let mut fb = FuncBuilder::internal("bound", &[Ty::Ptr], Ty::U64);
+    let q = fb.param(0);
+    let b = fb.block();
+    fb.ret(b, copy_place(through(q, pair, 0)));
+    let mut bound = fb.finish();
+    bound.param_attrs = vec![FROZEN];
+    let bound_id = FuncId(p.funcs.len() as u32);
+    p.funcs.push(bound);
+    // In `sum`'s loop head, `c = i < (*p).0` becomes `t = bound(p); c = i < t`.
+    let sum = &mut p.funcs[1];
+    let t = Local(sum.locals.len() as u32);
+    sum.locals.push(LocalDecl::new(Ty::U64, None));
+    let after = BlockId(sum.blocks.len() as u32);
+    let old = std::mem::replace(
+        &mut sum.blocks[1],
+        BasicBlock {
+            stmts: vec![],
+            term: Terminator::Call {
+                callee: Callee::Func(bound_id),
+                args: vec![copy_local(Local(0))],
+                dest: Some(Place::local(t)),
+                next: after,
+            },
+        },
+    );
+    let mut stmts = old.stmts;
+    if let Some(Stmt::Assign(_, Rvalue::Binary(_, _, rhs))) = stmts.first_mut() {
+        *rhs = copy_local(t);
+    }
+    sum.blocks.push(BasicBlock {
+        stmts,
+        term: old.term,
+    });
+    sum.locs.clear();
+    p
+}
+
+/// Reads of a `pair` field (through any local) in the blocks of `f` that lie on a cycle.
+fn loop_reads(f: &Function, pair: AggId) -> usize {
+    let edges: Vec<Vec<usize>> = f
+        .blocks
+        .iter()
+        .map(|b| {
+            crate::visit::successors(&b.term)
+                .iter()
+                .map(|t| t.0 as usize)
+                .collect()
+        })
+        .collect();
+    let cyclic = crate::scc::on_cycle(&edges);
+    let mut n = 0;
+    for (bi, b) in f.blocks.iter().enumerate().filter(|(bi, _)| cyclic[*bi]) {
+        let _ = bi;
+        for s in &b.stmts {
+            stmt_operands(s, &mut |op| {
+                n += usize::from(matches!(op, Operand::Copy(pl)
+                    if pl.proj.first() == Some(&Proj::Deref(Ty::Agg(pair)))));
+            });
+        }
+    }
+    n
+}
+
+/// A loop that reads a frozen field through a small callee: once the inliner has put the
+/// callee's body in the loop (reading through its copy of the param), the field is read once,
+/// before the loop, still in the caller, so the read moves with it into its own callers.
+#[test]
+fn reads_once_what_inlined_callees_read() {
+    let before = program_via_call();
+    assert_valid(&before);
+    let expected = run_main(&before, 7);
+    assert_eq!(expected, 35);
+    let mut after = before.clone();
+    let mut budget = crate::inline::Budget::for_program(&after);
+    assert!(crate::inline::run(&mut after, &mut budget));
+    assert_valid(&after);
+    assert_eq!(run_main(&after, 7), expected);
+    assert_eq!(run_main(&after, 0), 0);
+    let sum = after
+        .funcs
+        .iter()
+        .find(|f| f.symbol == "sum")
+        .expect("sum is kept");
+    assert_eq!(loop_reads(sum, AggId(1)), 0, "{sum:?}");
 }
