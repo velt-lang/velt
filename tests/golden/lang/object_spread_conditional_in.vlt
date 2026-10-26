@@ -1,0 +1,34 @@
+// check: no leaks
+// Conditional spreads: `"k" in o` narrows a key some branches write (with different types) to
+// its declared type, and getters run in property order after the values written before them.
+function n3(c: boolean, d: boolean) { return { a: 0, ...(c ? (d ? { k: 1 } : { k: null }) : {}) }; }
+for (const [c, d] of [[true, true], [true, false], [false, true]] as const) {
+    const r3 = n3(c, d);
+    if ("k" in r3) { const k = r3.k; if (k !== null) console.log(k * 2); else console.log("null"); }
+    else console.log("absent");
+}
+function n4(c: boolean, d: boolean) { return { a: 0, ...(c ? (d ? { k: 1 } : { k: "s" }) : {}) }; }
+for (const [c, d] of [[true, true], [true, false], [false, false]] as const) {
+    const r4 = n4(c, d);
+    if ("k" in r4) { const k = r4.k; console.log(typeof k === "string" ? k.toUpperCase() : k + 1); }
+    else console.log("absent");
+}
+const log: string[] = [];
+const tr = (s: string) => { log.push(s); return s; };
+function g1(c: boolean) {
+    return { a: tr("a"), ...(c ? { v: tr("v"), get g() { log.push("g"); return 1; }, w: 2 } : {}), b: tr("b") };
+}
+console.log(JSON.stringify(g1(true)), log.join(","));
+let x = 1;
+function g2(c: boolean) { return { ...(c ? { v: x, get h() { x = 9; return 0; }, get g() { return x; } } : {}) }; }
+console.log(JSON.stringify(g2(true)), x);
+function u2(c: boolean) { return { a: 1, ...(c ? { k: undefined as number | undefined } : { k: 3 }) }; }
+const r = u2(true);
+if ("k" in r) console.log(r.k === undefined ? "undef" : r.k + 1);
+const s = u2(false);
+if ("k" in s) console.log(s.k === undefined ? "undef" : s.k + 1);
+let calls = 0;
+function w(c: boolean) { return { ...(c ? { get g() { calls++; return calls; }, get h() { return calls * 10; } } : {}) }; }
+console.log(JSON.stringify(w(true)), calls);
+function p(c: boolean) { const o = { ...(c ? { k: 1 } : {}) }; o.k = 5; return "k" in o ? o.k : -1; }
+console.log(p(false), p(true));

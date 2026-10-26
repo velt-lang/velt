@@ -748,10 +748,12 @@ nothings alike:
   branches write with different types has their union (`c ? { k: 1 } : { k: "s" }` spreads `k:
   number | string`; `c ? { k: [1] } : { k: null }` spreads `k: number[] | null`), and so does
   a key an earlier property or spread gives another type (`{ k: false, ...(c ? { k: 1 } : {})
-  }` has `k: number | boolean`). A getter of a branch is read where the spread is written; one
-  using `this` reads the branch's other properties, when their values are literals or
-  variables (`c ? { v: 2, get g() { return this.v * 10; } } : {}`). A setter, or a getter
-  using `this` next to other values, keeps the literal's own rules.
+  }` has `k: number | boolean`). `"k" in o` on the result narrows `o.k` to the type the
+  branches write (`number | null` for `c ? (d ? { k: 1 } : { k: null }) : {}`), as TypeScript
+  narrows the union of object types, unless a branch writes `undefined` there. A getter of a
+  branch is called where the spread reads it, in property order, after the values written
+  before it; one that a value other than a literal follows, one using `this`, and a setter
+  keep the literal's own rules (an error).
 - An object literal may leave out an optional field (`{ port: i64; host?: string }` accepts
   `{ port: 80 }`). A field of an object type declared `a: T | null` may be left out too, and is
   then `null`.

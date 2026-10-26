@@ -597,6 +597,36 @@ impl FnCx<'_, '_> {
         }
         let t = if lt == self.cx.ty.never { rt } else { lt };
         if !self.compatible(t, rt) && !self.cx.same_ty(t, rt) {
+            // `o.k * 2` with `o.k: number | undefined`: the operand that may be a nothing is
+            // the problem, not the other one's type (TypeScript's TS18048).
+            let nothing = |s: &Self, a: TyId, b: TyId| {
+                (s.cx.ty.opt_payload(a) == Some(b))
+                    .then(|| s.cx.ty.nothing_of(a))
+                    .flatten()
+            };
+            if let Some((n, at, nt)) = (nothing(self, t, rt).map(|n| (n, span, t)))
+                .or_else(|| nothing(self, rt, t).map(|n| (n, r.span, rt)))
+                .filter(|_| !matches!(op, B::Eq | B::NotEq | B::StrictEq | B::StrictNotEq))
+            {
+                let (word, test) = match n.has_undefined() {
+                    true => (
+                        "undefined",
+                        "`!== undefined`, or `\"k\" in o` for an optional field",
+                    ),
+                    false => ("null", "`!== null`"),
+                };
+                let shown = self.cx.display(nt);
+                self.cx.error(
+                    Diagnostic::error(
+                        format!("an operand may be `{word}`: its type is `{shown}`"),
+                        at,
+                    )
+                    .with_note(format!(
+                        "check it first ({test}), or give a default with `??`"
+                    )),
+                );
+                return None;
+            }
             let (e, f) = (self.cx.display(t), self.cx.display(rt));
             let mut d = Diagnostic::error("mismatched types", r.span)
                 .with_note(format!("expected {e}, found {f}"));

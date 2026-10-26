@@ -81,6 +81,7 @@ impl FnCx<'_, '_> {
                 own: false,
                 place: None,
                 guard: Some(self.mk(guard, bool_, span)),
+                undefined: self.declares_undefined(f.declared, &args),
             };
             out.push((f.name.clone(), value, src));
         }

@@ -41,6 +41,8 @@ pub(super) struct Src {
     /// For a source that may be `undefined` or `null` itself (`...o` with `o: T | undefined`):
     /// whether the field is there (the source is present, and so is an optional field).
     pub(super) guard: Option<hir::Expr>,
+    /// The field's declared type holds `undefined` (absent apart, a present one may hold it).
+    pub(super) undefined: bool,
 }
 
 /// A field value of a spread object literal.
@@ -132,6 +134,7 @@ impl FnCx<'_, '_> {
                             own: false,
                             place: None,
                             guard: None,
+                            undefined: false,
                         };
                         let prev = std::mem::replace(
                             &mut slot.1,
@@ -333,6 +336,7 @@ impl FnCx<'_, '_> {
                 own: f.optional && kind == crate::hir::AdtKind::Class,
                 place,
                 guard: None,
+                undefined: self.declares_undefined(f.declared, &args),
             };
             out.push((f.name.clone(), read, src));
         }
@@ -399,6 +403,7 @@ impl FnCx<'_, '_> {
             // A field that may still be absent stays optional (`{ ...p }` with `p: Partial<T>`),
             // and keeps "absent" apart from `null` when a source does (`a?: T | null`).
             let (absent, presence) = (may_be_absent(&v), any_presence(&v));
+            let held = super::spread_cond::undefined_held(&v);
             let h = if absent && presence {
                 let rt = last_read_ty(&v).expect("ICE: an absent field is read");
                 posts.push((i as u32, v));
@@ -407,6 +412,8 @@ impl FnCx<'_, '_> {
                 self.spread_value(v, None, false, span, lets)
             };
             let (declared, optional) = match self.cx.ty.opt_payload(h.ty) {
+                // No source declares `undefined`: present, the field holds its payload.
+                Some(p) if absent && presence && !held => (p, true),
                 _ if absent && presence => (h.ty, true),
                 Some(p) if absent => (p, true),
                 // `q?: any`: the `any` holds the `undefined` itself.
