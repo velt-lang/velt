@@ -34,7 +34,8 @@
 //!   locals) and in debug builds, `f64` locals whose values are provably whole numbers within
 //!   ±2^53 (intervals, integrality, NaN and `-0` facts, branch refinement, widening) become
 //!   `i32`/`i64` locals computed with integer operations, and `i64` locals that only hold 32-bit
-//!   values become `i32` (design #525, steps 1 and 2).
+//!   values become `i32` (design #525, steps 1 and 2); a `number[]` that never leaves its
+//!   function and only holds such values stores its elements as `i64` (#1599, step 5).
 //! - `divisions`: after the rounds, signed divisions / remainders by constants whose dividend
 //!   is provably non-negative or a multiple of the divisor become shifts, masks or unsigned ops.
 //! - `frame_slots`: at the same point, scalar fields of an async frame that a poll function

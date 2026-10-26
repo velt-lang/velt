@@ -1,0 +1,90 @@
+// `number[]` arrays that must keep doubles (#1599): a fractional value, `-0`, values that grow
+// or shrink without a bound the compiler can prove, and values past 2^53. Each prints what
+// Node prints. `squares` and `triples` reach `total` and `join`, which are inlined: they may
+// hold integers, and print the same either way.
+
+function halves(): number {
+  const fractions: number[] = [];
+  for (let i = 0; i < 4; i++) fractions.push(i);
+  fractions[2] = 0.5;
+  return fractions[0] + fractions[1] + fractions[2] + fractions[3];
+}
+
+function negativeZero(): string {
+  const zeros: number[] = [];
+  zeros.push(0);
+  zeros.push(-0);
+  zeros[0] = zeros[1] * 1;
+  return `${1 / zeros[0]} ${1 / zeros[1]} ${Object.is(zeros[0], -0)}`;
+}
+
+function total(xs: number[]): number {
+  let s = 0;
+  for (const x of xs) s += x;
+  return s;
+}
+
+function passedOn(): number {
+  const squares: number[] = [];
+  for (let i = 0; i < 5; i++) squares.push(i * i);
+  return total(squares);
+}
+
+// Edit distance: each cell is a neighbour plus one, so no bound on the values is provable.
+function distance(a: string, b: string): number {
+  let prev: number[] = [];
+  let curr: number[] = [];
+  for (let i = 0; i <= a.length; i++) {
+    prev.push(i);
+    curr.push(0);
+  }
+  for (let j = 1; j <= b.length; j++) {
+    curr[0] = j;
+    for (let i = 1; i <= a.length; i++) {
+      const cost = a.charCodeAt(i - 1) === b.charCodeAt(j - 1) ? 0 : 1;
+      curr[i] = Math.min(prev[i] + 1, curr[i - 1] + 1, prev[i - 1] + cost);
+    }
+    const tmp = prev;
+    prev = curr;
+    curr = tmp;
+  }
+  return prev[a.length];
+}
+
+// A count down has no lower bound the compiler can prove (fannkuch-redux's `count`).
+function countDown(n: number): number {
+  const count: number[] = [];
+  for (let i = 0; i < n; i++) count.push(i);
+  let steps = 0;
+  for (let r = n - 1; r > 0; r--) {
+    while (count[r] > 0) {
+      count[r] = count[r] - 1;
+      steps++;
+    }
+  }
+  return steps;
+}
+
+// An array handed to `join`.
+function joined(): string {
+  const triples: number[] = [];
+  for (let i = 0; i < 4; i++) triples.push(i * 3);
+  return triples.join(",");
+}
+
+// Past 2^53 a double rounds where an integer would not.
+function large(): string {
+  const big: number[] = [];
+  big.push(9007199254740991);
+  big[0] = big[0] + 2;
+  return `${big[0]}`;
+}
+
+function main() {
+  console.log(halves());
+  console.log(negativeZero());
+  console.log(passedOn());
+  console.log(distance("kitten", "sitting"), distance("", "abc"), distance("flaw", "lawn"));
+  console.log(countDown(6), joined());
+  console.log(large());
+}
