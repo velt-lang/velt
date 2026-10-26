@@ -239,8 +239,8 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Unit)> {
     }
     // A class extending a generic class instantiates its initializers, constructor and methods
     // (and what they call) with the `extends` clause's arguments.
-    for k in 0..out.len() {
-        let d = out[k].0;
+    for (d, u) in out.iter_mut() {
+        let d = *d;
         let Some(TyKind::Adt(h, hargs)) = cx.adt(d).and_then(|a| a.base).map(|b| cx.ty.kind(b))
         else {
             continue;
@@ -255,7 +255,6 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Unit)> {
             sites.push((*c, hargs.clone()));
         }
         sites.extend(class_method_sites(cx, h, &hargs));
-        let u = &mut out[k].1;
         u.sites
             .extend(sites.into_iter().map(|(m, targs)| (m, targs, span)));
     }
