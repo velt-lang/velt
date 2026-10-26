@@ -1,0 +1,33 @@
+// A cast to a type that is not read-only is how TypeScript code gets past `readonly`: the cast
+// value may change, as a `const` or inline. So may a read-only collection narrowed by
+// `instanceof Set` or `Map`.
+function pushed(xs: readonly string[]): string[] {
+  const ys = xs as string[];
+  ys.push("d");
+  (xs as string[]).push("e");
+  return ys;
+}
+const base = ["a"];
+console.log(pushed(base), base);
+
+function added(s: ReadonlySet<string>, m: ReadonlyMap<string, number>): number {
+  const t = s as Set<string>;
+  t.add("x");
+  (s as Set<string>).add("y");
+  (m as Map<string, number>).set("k", 1);
+  return s.size + m.size;
+}
+const set = new Set<string>();
+const map = new Map<string, number>();
+console.log(added(set, map), [...set], [...map]);
+
+function narrowed(s: ReadonlySet<string>, m: ReadonlyMap<string, number> | null): void {
+  if (s instanceof Set) {
+    s.add("z");
+  }
+  if (m !== null && m instanceof Map) {
+    m.set("n", 2);
+  }
+}
+narrowed(set, map);
+console.log([...set], [...map]);

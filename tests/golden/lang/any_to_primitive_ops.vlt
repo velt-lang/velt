@@ -1,0 +1,52 @@
+// `ToPrimitive` through `any` in operators (#924): inherited and generic `valueOf`, an object result going on
+// to the next method, the `"string"` hint's order, arrays and plain objects, `null` and a `Date`.
+class Base {
+  valueOf(): number {
+    return 3;
+  }
+}
+class Derived extends Base {}
+const dv: any = new Derived();
+console.log(dv * 2, dv + 1, dv == 3, dv < 4);
+class ObjFirst {
+  valueOf(): any {
+    return {};
+  }
+  toString(): string {
+    return "9";
+  }
+}
+const of: any = new ObjFirst();
+console.log(of * 1, of + 1, of == 9, `${of}`);
+class StrOrder {
+  toString(): any {
+    return [];
+  }
+  valueOf(): number {
+    return 4;
+  }
+}
+const so: any = new StrOrder();
+console.log(so + 1, so * 1);
+class W<T> {
+  v: T;
+  constructor(v: T) {
+    this.v = v;
+  }
+  valueOf(): T {
+    return this.v;
+  }
+}
+const wn: any = new W<number>(6);
+console.log(wn + 1, wn * 2, wn == 6);
+const e1: any = [],
+  e2: any = [],
+  o1: any = {},
+  a1: any = [1],
+  a2: any = [2];
+console.log(e1 + e2, o1 + e1, a1 * a2, +e1, -o1, a1 < a2, o1 == "[object Object]");
+const nul: any = null,
+  und: any = undefined;
+console.log(nul == o1, und == o1, o1 == nul, o1 != und);
+const dd: any = new Date(0);
+console.log(dd == dd.toString(), dd > 0, dd + 0 === dd.toString() + "0");

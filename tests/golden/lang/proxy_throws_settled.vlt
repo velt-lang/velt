@@ -1,0 +1,44 @@
+// check: no leaks
+// A trap's error read through a union of error types: the reasons of `Promise.allSettled`,
+// a `catch` variable, and promise callbacks after `then` and `finally`.
+class E2 extends Error {}
+
+function hasOnly(): any {
+  return new Proxy({ a: 1 } as any, {
+    has(t, k) {
+      if (k === "bad") {
+        throw new E2("has");
+      }
+      return Reflect.has(t, k);
+    },
+  });
+}
+
+async function test(p: any, k: string): Promise<boolean> {
+  return k in p;
+}
+
+async function run(): Promise<void> {
+  const h = hasOnly();
+  const tests = await Promise.allSettled([test(h, "bad"), test(h, "a")]);
+  for (const x of tests) {
+    if (x.status === "rejected") {
+      console.log("reason", x.reason.message, x.reason instanceof E2, String(x.reason), x.reason.toString());
+      const r = x.reason;
+      console.log("local", r.message);
+    } else {
+      console.log("value", x.value);
+    }
+  }
+  try {
+    await test(h, "bad");
+  } catch (e) {
+    console.log("try", (e as Error).message, e instanceof E2);
+  }
+  const p = test(h, "bad");
+  const q = p.then((v) => !v);
+  await q.catch((e) => console.log("then-catch", e.message));
+  await test(h, "bad").finally(() => console.log("finally")).catch((e) => console.log("after finally", e.message));
+}
+
+run();

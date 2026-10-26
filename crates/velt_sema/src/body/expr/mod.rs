@@ -3,6 +3,7 @@
 
 mod access;
 mod accessor_rmw;
+mod any_prim;
 mod any_text;
 mod arg_order;
 mod args;
@@ -27,6 +28,7 @@ mod closure;
 mod closure_sig;
 mod coerce;
 mod coerce_generic;
+mod coerce_vars;
 mod constraints;
 mod construct;
 mod conversions;
@@ -39,12 +41,14 @@ mod dispose_call;
 mod division;
 pub(crate) mod downcast;
 mod dynamic;
+mod dynamic_arith;
 mod dynamic_concat;
 mod dynamic_enum;
 mod dynamic_member;
 mod dynamic_narrow;
 mod dynamic_optional;
 mod dynamic_relational;
+mod dynamic_rmw;
 mod dynamic_whole;
 mod dynamic_write;
 mod env_globals;
@@ -52,6 +56,7 @@ mod generic_dynamic;
 pub(crate) use env_globals::NODE_GLOBALS;
 mod array_view_cast;
 pub(crate) mod await_value;
+mod checked_key;
 mod error_slots;
 mod error_view;
 mod errors;
@@ -98,12 +103,14 @@ mod member_errors;
 mod member_keys;
 mod method;
 mod method_call;
+mod method_optional_call;
 mod method_value;
 mod mixed_array;
 mod names;
 mod namespaces;
 mod narrowing_casts;
 mod never_null;
+mod number_records;
 mod numbers;
 mod object;
 mod object_assign;
@@ -117,6 +124,7 @@ mod object_prototypes;
 mod ops;
 mod optional_fn_call;
 mod ordering;
+mod overload_arg;
 mod overload_call;
 mod param_member;
 mod per_use;
@@ -140,14 +148,17 @@ pub(crate) mod spawn_promises;
 mod spread;
 mod spread_args;
 mod spread_array;
+mod spread_cond;
 mod spread_optional;
 pub(crate) mod static_copy;
 mod std_glue;
 mod structured_clone;
 mod supers;
 mod symbol_keys;
+mod symbol_record;
 mod sync;
 pub(crate) mod tasks;
+mod ternary;
 mod this_param;
 mod this_type;
 mod three_state;
@@ -321,6 +332,12 @@ impl FnCx<'_, '_> {
                 Some(h) => h,
                 None => match self.ctor_name_read(object, prop, span) {
                     Some(h) => h,
+                    None if prop.name.starts_with("[Symbol.") => {
+                        match self.symbol_record_member(object, prop, span) {
+                            Some(h) => h,
+                            None => self.member(object, prop, *optional, exp, want, span),
+                        }
+                    }
                     None => self.member(object, prop, *optional, exp, want, span),
                 },
             },

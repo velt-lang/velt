@@ -1,0 +1,6 @@
+// An argument of another type than a signature's adapted callback takes: the program stops with
+// a `TypeError` naming the callback, the argument and both types (Node would print `number`).
+function one<T1>(fn: (p: T1) => string): string;
+function one(fn: (...args: unknown[]) => string): string { return fn(42); }
+console.log("before");
+console.log(one((p: string) => typeof p));

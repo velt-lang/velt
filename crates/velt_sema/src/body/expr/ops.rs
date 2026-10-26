@@ -159,6 +159,9 @@ impl FnCx<'_, '_> {
                     _ => self.expr(operand, num_exp, Want::Borrow),
                 };
                 let inner = self.unbrand(inner);
+                if self.cx.maybe_dynamic(inner.ty) {
+                    return self.dynamic_unary(op, inner, span);
+                }
                 self.literal_use_arith(&inner);
                 let t = inner.ty;
                 let ok = self.cx.ty.is_bottom(t)
@@ -172,6 +175,9 @@ impl FnCx<'_, '_> {
             ast::UnaryOp::Plus => {
                 let mut inner = self.expr(operand, num_exp, Want::Borrow);
                 inner = self.unbrand(inner);
+                if self.cx.maybe_dynamic(inner.ty) {
+                    return self.dynamic_unary(op, inner, span);
+                }
                 if !self.cx.ty.is_numeric(inner.ty) && !self.cx.ty.is_bottom(inner.ty) {
                     return self.unary_error("+", inner.ty, span);
                 }
@@ -183,6 +189,9 @@ impl FnCx<'_, '_> {
                 let int_exp = exp.filter(|t| self.cx.ty.is_int(*t));
                 let inner = self.expr(operand, int_exp, Want::Borrow);
                 let inner = self.unbrand(inner);
+                if self.cx.maybe_dynamic(inner.ty) {
+                    return self.dynamic_unary(op, inner, span);
+                }
                 self.literal_use_number(&inner);
                 // `~x` on a number is JS's: ToInt32, then a 32-bit not (`int32.rs`).
                 if self.js_bitnot_applies(&inner) {
@@ -297,6 +306,17 @@ impl FnCx<'_, '_> {
                     let bop = hir_binop(op).expect("ICE: a comparison is a binary op");
                     self.dynamic_relational(bop, l, r, span)
                 }
+                B::Sub
+                | B::Mul
+                | B::Div
+                | B::Rem
+                | B::Pow
+                | B::BitAnd
+                | B::BitOr
+                | B::BitXor
+                | B::Shl
+                | B::Shr
+                | B::UShr => self.dynamic_arith(op, l, r, span),
                 _ => self.dynamic_operator(op_str(op), &l, &r, span),
             };
         }
@@ -577,6 +597,39 @@ impl FnCx<'_, '_> {
         }
         let t = if lt == self.cx.ty.never { rt } else { lt };
         if !self.compatible(t, rt) && !self.cx.same_ty(t, rt) {
+            // `o.k * 2` with `o.k: number | undefined`: the operand that may be a nothing is
+            // the problem, not the other one's type (TypeScript's TS18048).
+            // `a` is `b` with `null`, `undefined` or both (`T | null | undefined`): which.
+            let nothing = |s: &Self, a: TyId, b: TyId| {
+                let (mut core, mut null, mut undefined) = (a, false, false);
+                while let Some(n) = s.cx.ty.nothing_of(core) {
+                    null |= n.has_null();
+                    undefined |= n.has_undefined();
+                    core = s.cx.ty.opt_payload(core)?;
+                }
+                (core == b && core != a).then_some((null, undefined))
+            };
+            if let Some((n, at, nt)) = (nothing(self, t, rt).map(|n| (n, span, t)))
+                .or_else(|| nothing(self, rt, t).map(|n| (n, r.span, rt)))
+                .filter(|_| !matches!(op, B::Eq | B::NotEq | B::StrictEq | B::StrictNotEq))
+            {
+                let (word, test) = match n {
+                    (true, true) => ("`null` or `undefined`", "`!= null`"),
+                    (false, _) => ("`undefined`", "`!== undefined`"),
+                    (true, false) => ("`null`", "`!== null`"),
+                };
+                let shown = self.cx.display(nt);
+                self.cx.error(
+                    Diagnostic::error(
+                        format!("an operand may be {word}: its type is `{shown}`"),
+                        at,
+                    )
+                    .with_note(format!(
+                        "check it first ({test}), or give a default with `??`"
+                    )),
+                );
+                return None;
+            }
             let (e, f) = (self.cx.display(t), self.cx.display(rt));
             let mut d = Diagnostic::error("mismatched types", r.span)
                 .with_note(format!("expected {e}, found {f}"));

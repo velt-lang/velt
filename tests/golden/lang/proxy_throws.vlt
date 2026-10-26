@@ -1,0 +1,171 @@
+// check: no leaks
+// A throw inside a proxy trap leaves the operation that ran it, as in Node (#1174): a `try`
+// around `p.k`, `p[i]`, `p.k = v`, `k in p`, `Object.keys(p)`, `delete p.k` and the
+// `Reflect` functions catches the trap's error itself; `finally` runs, a `catch` may rethrow,
+// and an error a function doesn't catch leaves it (also an `async` one, as a rejection).
+class TrapError extends Error {
+  op: string;
+  constructor(op: string, key: string) {
+    super(`${op} ${key}`);
+    this.op = op;
+  }
+}
+
+const log: string[] = [];
+let keysThrow = false;
+// The error the `get` trap throws for `same`: one object, caught as itself.
+const same = new TrapError("get", "same");
+
+function keyText(k: string | symbol): string {
+  return typeof k === "string" ? k : "symbol";
+}
+
+function makeProxy(): any {
+  const target: Record<string, number> = { a: 1, b: 2 };
+  return new Proxy(target, {
+    get(t, k, r) {
+      if (k === "bad" || k === "7") {
+        throw new TrapError("get", keyText(k));
+      }
+      if (k === "same") {
+        throw same;
+      }
+      return Reflect.get(t, k, r);
+    },
+    set(t, k, v, r) {
+      if (k === "bad") {
+        throw new TrapError("set", keyText(k));
+      }
+      return Reflect.set(t, k, v, r);
+    },
+    has(t, k) {
+      if (k === "bad") {
+        throw new TrapError("has", keyText(k));
+      }
+      return Reflect.has(t, k);
+    },
+    deleteProperty(t, k) {
+      if (k === "bad") {
+        throw new TrapError("deleteProperty", keyText(k));
+      }
+      return Reflect.deleteProperty(t, k);
+    },
+    ownKeys(t) {
+      if (keysThrow) {
+        throw new TrapError("ownKeys", "all");
+      }
+      log.push("ownKeys");
+      return Reflect.ownKeys(t);
+    },
+  });
+}
+
+function show(e: unknown): string {
+  if (e instanceof TrapError) {
+    return `TrapError(${e.op}): ${e.message}`;
+  }
+  return `other: ${String(e)}`;
+}
+
+// Not caught here: the error leaves the function.
+function readBad(p: any): number {
+  return p.same as number;
+}
+
+async function readLater(p: any): Promise<number> {
+  await Promise.resolve();
+  return p.bad as number;
+}
+
+async function main(): Promise<void> {
+  const p = makeProxy();
+  console.log(p.a, p.b, "a" in p, Object.keys(p).join(","));
+  try {
+    console.log(p.bad);
+  } catch (e) {
+    console.log("read:", show(e));
+  }
+  try {
+    console.log(p[7]);
+  } catch (e) {
+    console.log("index:", show(e));
+  }
+  try {
+    p.bad = 3;
+  } catch (e) {
+    console.log("write:", show(e));
+  }
+  try {
+    p.bad = (p.bad as number) + 1;
+  } catch (e) {
+    console.log("read before write:", show(e));
+  }
+  try {
+    console.log("bad" in p);
+  } catch (e) {
+    console.log("in:", show(e));
+  } finally {
+    console.log("finally runs");
+  }
+  try {
+    delete p.bad;
+  } catch (e) {
+    console.log("delete:", show(e));
+  }
+  try {
+    console.log(Reflect.get(p, "bad"));
+  } catch (e) {
+    console.log("Reflect.get:", show(e));
+  }
+  try {
+    Reflect.set(p, "bad", 1);
+  } catch (e) {
+    console.log("Reflect.set:", show(e));
+  }
+  try {
+    Reflect.has(p, "bad");
+  } catch (e) {
+    console.log("Reflect.has:", show(e));
+  }
+  // The error is the trap's own object.
+  let kept: unknown = null;
+  try {
+    readBad(p);
+  } catch (e) {
+    kept = e;
+  }
+  try {
+    readBad(p);
+  } catch (e) {
+    console.log("from a call:", show(e), e === kept, e === same, e instanceof Error);
+  }
+  // Rethrown from a `catch`, caught outside.
+  try {
+    try {
+      p.bad = 1;
+    } catch (e) {
+      console.log("inner:", show(e));
+      throw e;
+    }
+  } catch (e) {
+    console.log("outer:", show(e));
+  }
+  // An `async` function rejects with it.
+  try {
+    await readLater(p);
+  } catch (e) {
+    console.log("awaited:", show(e));
+  }
+  // `ownKeys` throws too.
+  keysThrow = true;
+  try {
+    Object.keys(p);
+  } catch (e) {
+    console.log("keys:", show(e));
+  }
+  keysThrow = false;
+  // Operations the traps let through still work after the errors.
+  p.c = 3;
+  delete p.a;
+  console.log(p.c, "a" in p, Object.keys(p).join(","), log.length);
+}

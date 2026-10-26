@@ -119,7 +119,15 @@ impl FnLower<'_, '_> {
         }
     }
 
-    /// Stop with `TypeError: the value is not <ty> (it is <found>)`.
+    /// The `AnyTo` text being lowered, followed by `: ` (empty without one).
+    pub(super) fn any_context_words(&self) -> String {
+        self.any_context
+            .as_ref()
+            .map_or(String::new(), |c| format!("{c}: "))
+    }
+
+    /// Stop with `TypeError: the value is not <ty> (it is <found>)`, after the `AnyTo` text
+    /// being lowered when there is one.
     pub(super) fn any_type_error(&mut self, desc: Operand, ty: TyId) {
         let want = self.any_target_name(ty);
         let an = article_of(&want);
@@ -159,14 +167,16 @@ impl FnLower<'_, '_> {
                 let same = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, have, want_id));
                 self.branch(same, yes, no);
                 self.switch_to(yes);
+                let words = self.any_context_words();
                 self.panic_msg(&format!(
-                    "TypeError: the value is not {an} {want} (it is {same_name})"
+                    "TypeError: {words}the value is not {an} {want} (it is {same_name})"
                 ));
                 self.terminate(Terminator::Unreachable);
                 self.switch_to(no);
             }
             let mut msg = format!(
-                "TypeError: the value is not {an} {want} (it is {})",
+                "TypeError: {}the value is not {an} {want} (it is {})",
+                self.any_context_words(),
                 FOUND[k]
             );
             if k == TAG_OBJECT as usize && self.prelude_record(ty).is_some() {

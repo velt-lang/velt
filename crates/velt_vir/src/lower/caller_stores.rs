@@ -22,6 +22,18 @@ use super::rt::Rt;
 use super::{FnLower, Glue, LkMode, Work};
 use crate::vir::{self, BinOp, Operand, Place, Proj, Rvalue, Ty};
 
+/// What a value a reader stores into the caller's container is made of (`held_of`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Held {
+    /// What the caller holds already and what the reader made (`held_by_caller`).
+    Caller,
+    /// A value sema transferred (`Intrinsic::Transfer`): a copy of what the reader did not
+    /// make, with what it made moved in.
+    Copied,
+    /// Anything else, which may be the store's.
+    Other,
+}
+
 impl FnLower<'_, '_> {
     /// The owned value of `value`, about to be stored into one of the caller's containers in a
     /// `read` callback (module docs).
@@ -30,16 +42,33 @@ impl FnLower<'_, '_> {
             return self.consume(value);
         }
         let ty = self.sub(value.ty);
-        let held = self.held_by_caller(value);
+        let held = self.held_of(value);
         let v = self.consume(value);
         self.keep_value(v, held, ty)
     }
 
-    /// `keep_for_caller` of the owned value `v` of type `ty`, already evaluated (`held`: its
-    /// expression was `held_by_caller`).
-    pub(super) fn keep_value(&mut self, v: Operand, held: bool, ty: TyId) -> Operand {
-        if !held {
-            return self.reader_copy(v, ty);
+    /// What the stored value `e` is made of, for `keep_value`.
+    pub(super) fn held_of(&mut self, e: &hir::Expr) -> Held {
+        match &e.kind {
+            K::Call {
+                callee: hir::Callee::Intrinsic(Intrinsic::Transfer),
+                ..
+            } => Held::Copied,
+            _ if self.held_by_caller(e) => Held::Caller,
+            _ => Held::Other,
+        }
+    }
+
+    /// `keep_for_caller` of the owned value `v` of type `ty`, already evaluated (`held`: what
+    /// its expression is made of, `held_of`).
+    pub(super) fn keep_value(&mut self, v: Operand, held: Held, ty: TyId) -> Operand {
+        match held {
+            // Sema's transfer copied what the reader did not make and moved what it made. A
+            // second transfer would take an object the first moved out (no longer `LOCAL`,
+            // counted once) for one of the store's: it would copy it and never release it.
+            Held::Copied => return v,
+            Held::Other => return self.reader_copy(v, ty),
+            Held::Caller => {}
         }
         if !self.cx.reaches_lock_set(ty) {
             return v;

@@ -1,0 +1,1 @@
+an operand may be `null`: its type is `f64 | null`

@@ -137,7 +137,7 @@ fn narrowing_by_null_tests() {
         );
     }
     let r = err_src("function f(x: i64 | null): i64 { return x + 1; } function main() {}");
-    assert!(r.contains("mismatched types"), "{r}");
+    assert!(r.contains("an operand may be `null`"), "{r}");
     let r = err_src("function f(x: string | null): usize { return x.length; } function main() {}");
     assert!(r.contains("may be null"), "{r}");
     let r = err_src("function f(x: i64 | null): i64 { if (x != null) { x = null; return x; } return 0; } function main() {}");

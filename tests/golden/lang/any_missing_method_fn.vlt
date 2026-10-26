@@ -1,0 +1,4 @@
+// A method a function does not have, called through `any`, is Node's "is not a function".
+const s: any = () => 1;
+console.log(s());
+s.foo();

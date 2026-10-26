@@ -660,6 +660,7 @@ impl FnCx<'_, '_> {
             return f(self, s);
         };
         let (l, mode) = self.option_binding(&s, payload, "<chain>", false);
+        self.note_readonly_binding(l, object, &s);
         // A moved-in payload (the object was a temporary) is owned by the binding, which drops
         // it after the rest: the rest uses it as a place, moving out of it only if it consumes it.
         let use_mode = match mode {

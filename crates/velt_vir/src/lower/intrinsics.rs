@@ -205,6 +205,16 @@ impl FnLower<'_, '_> {
                 Operand::Const(crate::vir::Const::Bool(b), Ty::Bool)
             }
             (I::AnyTo, [a]) => self.any_to(a, ty),
+            (I::AnyTo, [a, text]) => {
+                let text = match &text.kind {
+                    hir::ExprKind::Lit(hir::Lit::Str(s)) => s.clone(),
+                    _ => super::ice("AnyTo text is not a string literal"),
+                };
+                let outer = self.any_context.replace(text);
+                let v = self.any_to(a, ty);
+                self.any_context = outer;
+                v
+            }
             (I::AnyTypeof, [a]) => self.any_typeof(a),
             (I::AnyGet, [o, k]) => self.any_get(o, k, ty),
             (I::AnyIndex, [o, i]) => self.any_index(o, i, ty),
@@ -239,6 +249,8 @@ impl FnLower<'_, '_> {
             (I::AnyIsArray, [a]) => self.any_is_array(a),
             (I::AnyKeys, [o]) => self.any_keys(o, ty),
             (I::AnyTruthy, [a]) => self.any_truthy(a),
+            (I::AnyTag, [a]) => self.any_tag_value(a),
+            (I::AnyToNumber, [a]) => self.any_to_number(a),
             (I::AnyStrictEq, [a, b]) => self.any_eq(a, b, false),
             (I::AnyLooseEq, [a, b]) => self.any_eq(a, b, true),
             (I::Share, [a]) => {

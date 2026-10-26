@@ -1,0 +1,50 @@
+// The late conversion of `object_literal_accessor_throws_interface_late_async`, caught by
+// `try { await … } catch` in an `async` function, and through a second `async` function that
+// catches it before `.then(ok, err)`.
+
+interface G {
+  get value(): string;
+}
+
+async function useAsync(h: G): Promise<string> {
+  await null;
+  return h.value;
+}
+
+async function run(h: G): Promise<string> {
+  try {
+    return await useAsync(h);
+  } catch (e) {
+    return "inner " + (e as Error).message;
+  }
+}
+
+let bad = true;
+const a = {
+  get value(): string {
+    if (bad) {
+      throw new TypeError("a failed");
+    }
+    return "a";
+  },
+};
+
+async function start(): Promise<void> {
+  try {
+    console.log(await useAsync(a as G));
+  } catch (e) {
+    console.log("caught", (e as Error).message);
+  }
+  await run(a as G).then(
+    (v) => console.log("ok", v),
+    (e) => console.log("err", (e as Error).message),
+  );
+  bad = false;
+  try {
+    console.log(await useAsync(a as G));
+  } catch (e) {
+    console.log("caught", (e as Error).message);
+  }
+}
+
+start();

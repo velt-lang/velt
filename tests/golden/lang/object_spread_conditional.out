@@ -1,0 +1,4 @@
+{ phase: 'render', id: 3, boundaryId: 3 } { phase: 'render', id: 4 } true false
+{"phase":"render","id":3,"boundaryId":3} {"phase":"render","id":4} 2
+{ status: 200, headers: {} } { status: 302, headers: {}, redirect: { location: '/x', status: 302 } }
+{ a: 1, b: 7, c: 'x', d: 2 } { a: 1, c: 'y', d: 2 } 1

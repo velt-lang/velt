@@ -48,7 +48,7 @@ impl FnCx<'_, '_> {
         }
         if elems.is_empty() {
             // Nothing says what it holds (`JSON.stringify([])`, `[].length`): `never[]`, as in TS.
-            let e = exp_elem.unwrap_or(self.cx.ty.never);
+            let e = exp_elem.unwrap_or_else(|| self.empty_literal_elem(exp));
             let ty = self.cx.ty.array(e);
             return self.mk(H::ArrayLit(vec![]), ty, span);
         }
@@ -303,7 +303,7 @@ impl FnCx<'_, '_> {
             .iter()
             .any(|p| matches!(p, ast::ObjectProp::Method(_)))
         {
-            return self.method_object(props, span);
+            return self.method_object_for(props, exp, span);
         }
         // A union's member by the literal's discriminants or fields (`union_member_for`).
         let exp = match self.union_literal_member(props, exp) {

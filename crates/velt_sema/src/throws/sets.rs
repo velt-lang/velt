@@ -35,6 +35,22 @@ impl Ctx<'_> {
     /// throws nothing: written as an error type it is reported where it is written (`throws
     /// void`, `Promise<T, void>`), and substituted for a type parameter it drops out.
     pub(crate) fn error_union(&mut self, members: &[TyId]) -> Option<TyId> {
+        // One error type, canonical already or canonicalized before (inference does it often).
+        if let [t] = members {
+            if let Some(&r) = self.canon_errors.get(t) {
+                return r;
+            }
+            let r = self.error_union_of(members);
+            self.canon_errors.insert(*t, r);
+            if let Some(r) = r {
+                self.canon_errors.insert(r, Some(r));
+            }
+            return r;
+        }
+        self.error_union_of(members)
+    }
+
+    fn error_union_of(&mut self, members: &[TyId]) -> Option<TyId> {
         let mut flat = vec![];
         for &m in members {
             for x in self.error_members(m) {

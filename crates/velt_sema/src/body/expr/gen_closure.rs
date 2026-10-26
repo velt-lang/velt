@@ -156,7 +156,9 @@ impl FnCx<'_, '_> {
             ptys.push(ty);
         }
         let mut stmts = vec![];
+        self.cx.fn_value_depth += 1;
         self.stmts_into(&d.body.stmts, &mut stmts);
+        self.cx.fn_value_depth -= 1;
         let block = hir::Block {
             stmts,
             value: None,

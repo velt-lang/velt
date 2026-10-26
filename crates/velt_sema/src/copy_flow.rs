@@ -144,6 +144,8 @@ fn keeps_nothing(i: Intrinsic) -> bool {
             | Intrinsic::AnyLooseEq
             | Intrinsic::AnyTypeof
             | Intrinsic::AnyTruthy
+            | Intrinsic::AnyTag
+            | Intrinsic::AnyToNumber
     )
 }
 

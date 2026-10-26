@@ -1,0 +1,8 @@
+readonly_aliases.vlt:15:6: error: property 'add' does not exist on type 'ReadonlySet<string>' (TypeScript's TS2339)
+readonly_aliases.vlt:16:12: error: property 'delete' does not exist on type 'ReadonlySet<string>' (TypeScript's TS2339)
+readonly_aliases.vlt:17:6: error: property 'set' does not exist on type 'ReadonlyMap<string, f64>' (TypeScript's TS2339)
+readonly_aliases.vlt:18:12: error: property 'clear' does not exist on type 'ReadonlyMap<string, f64>' (TypeScript's TS2339)
+readonly_aliases.vlt:19:5: error: property 'add' does not exist on type 'ReadonlySet<f64>' (TypeScript's TS2339)
+readonly_aliases.vlt:20:5: error: property 'push' does not exist on type 'readonly string[]' (TypeScript's TS2339)
+readonly_aliases.vlt:21:6: error: property 'push' does not exist on type 'readonly f64[]' (TypeScript's TS2339)
+readonly_aliases.vlt:22:24: error: an index of a number-keyed record must be a number (TypeScript's TS7015)

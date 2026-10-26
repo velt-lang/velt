@@ -1,0 +1,16 @@
+// A number-keyed record's keys are numbers: a string key that is not a number's name is
+// TypeScript's TS7015 (`r["abc"]`), TS2339 (`r.abc`) or, in its object literal, TS2353.
+// `"1"` and `"1.5"` name numbers and are keys; `Record<string | number, V>` takes any string.
+const r: Record<number, string> = {};
+r[1] = "a";
+console.log(r["abc"], r["1"], r["1.5"]);
+r["x"] = "b";
+const lit: Record<number, string> = { a: "x", 2: "y", "3": "z" };
+type ById = { [id: number]: string };
+const b: ById = {};
+console.log(b["q"], lit);
+const mixed: Record<string | number, string> = { a: "x" };
+console.log(r.abc, mixed);
+function f(byId: ById): () => string | undefined {
+  return () => byId["name"];
+}

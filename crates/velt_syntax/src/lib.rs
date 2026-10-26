@@ -95,6 +95,9 @@ pub struct Ambient {
     pub span: velt_common::Span,
     /// Declared in `declare global { … }`.
     pub global: bool,
+    /// Declared with `var` (not `let` or `const`): in `declare global`, a property of
+    /// `globalThis`, as in TypeScript.
+    pub is_var: bool,
 }
 
 /// [`parse_with`]'s result.

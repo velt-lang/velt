@@ -50,6 +50,10 @@ impl FnLower<'_, '_> {
         self.switch_to(ok);
         let vt = self.cx.ty(sa);
         let out = self.temp(vt);
+        let done = self.proxy_branch("__keys", &data, &desc, |lw, obj, pty, r| {
+            let v = lw.proxy_keys_direct((obj, pty, r));
+            lw.assign(Place::local(out), Rvalue::Use(v));
+        });
         let oa = self.addr(Place::local(out));
         let st = self.any_slot(desc, SLOT_KEYS, vec![data, oa], vec![Ty::Ptr; 2]);
         let unsupported = self.rvalue_temp(
@@ -64,6 +68,7 @@ impl FnLower<'_, '_> {
         );
         self.terminate(Terminator::Unreachable);
         self.switch_to(yes);
+        self.proxy_join(done);
         self.owned_result(Some(out), sa)
     }
 
