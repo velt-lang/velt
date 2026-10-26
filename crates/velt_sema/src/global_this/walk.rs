@@ -40,9 +40,6 @@ pub(super) struct Walk<'a> {
     /// Where the module's own key constants are declared (module-level reads before them are
     /// TS2448).
     module_consts: FxHashMap<String, u32>,
-    /// How many instance field initializers the walk is in: they run when an instance is made,
-    /// after the declarations around the class (as Velt reads any constant there).
-    field_inits: usize,
     pub sites: Vec<Site>,
     pub diags: Vec<Diagnostic>,
 }
@@ -62,7 +59,6 @@ impl<'a> Walk<'a> {
             fn_depth: 0,
             early: Default::default(),
             module_consts: Default::default(),
-            field_inits: 0,
             sites: vec![],
             diags: vec![],
         }
@@ -192,7 +188,7 @@ impl<'a> Walk<'a> {
                 ),
                 id.span,
             )
-        } else if depth > 0 && self.field_inits == 0 {
+        } else if depth > 0 {
             Diagnostic::error(format!("cannot find `{}` in this scope", id.name), id.span)
                 .with_note("a closure or function that reads a constant declared after it in the same function is not supported yet")
         } else {
@@ -222,14 +218,13 @@ impl<'a> Walk<'a> {
             I::Function(f) => self.func(f),
             I::Struct(t) | I::Class(t) => {
                 // An instance field's initializer runs in the constructor: one function in, as
-                // a method's body is. A static one runs where the class is declared.
+                // a method's body is (at module level it may read a later constant; in a
+                // function it is the closure case). A static one runs where the class is declared.
                 for f in &mut t.fields {
                     let step = usize::from(!f.is_static);
                     if let Some(e) = f.default.as_mut() {
                         self.fn_depth += step;
-                        self.field_inits += step;
                         self.expr(e, false);
-                        self.field_inits -= step;
                         self.fn_depth -= step;
                     }
                 }

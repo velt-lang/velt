@@ -1,6 +1,7 @@
 // A `globalThis` key constant read before its declaration, in the function that declares it,
 // is TypeScript's TS2448 (a `ReferenceError` in Node), also in a block and over an outer
-// constant of the same name, at module level and in a static field initializer. A closure or nested function reading a key
+// constant of the same name, at module level and in a static field initializer. An instance field
+// initializer of a class declared in a function is the closure case. A closure or nested function reading a key
 // constant declared after it in the same function gets the error Velt gives any constant read
 // there (whether it runs before or after). A constant made a `string` by a cast is no key (TS7053).
 type H = { __KA__?: number; __KB__?: number };
@@ -40,6 +41,25 @@ class Early {
   static v: number | undefined = (globalThis as H)[SK];
 }
 const SK = "__KB__";
+function inFn(): number {
+  class D {
+    w: number = (globalThis as H)[L2]!;
+  }
+  const L2 = "__KB__";
+  return new D().w;
+}
+function f(): void {
+  class D {
+    w: number = (globalThis as H)[L3]!;
+  }
+  try {
+    console.log(new D().w);
+  } catch (e) {
+    console.log("caught", (e as Error).name);
+  }
+  const L3 = "__KB__";
+  console.log("end", L3);
+}
 const top = (globalThis as H)[TOP];
 const TOP = "__KB__";
-console.log(typeof Early, typeof direct, typeof inBlock, typeof casted, typeof later, typeof laterFn, top);
+console.log(typeof inFn, typeof f, typeof Early, typeof direct, typeof inBlock, typeof casted, typeof later, typeof laterFn, top);

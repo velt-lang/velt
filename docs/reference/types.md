@@ -2426,8 +2426,10 @@ a type, or with its own string as the type, and not cast to `string` (`satisfies
 it is TypeScript's TS2448, in the function declaring it and at module level; a closure or
 function reading it from before its declaration in the same function is an error, as for any
 constant there; a closure at module level that runs before the declaration reads the constant
-instead of throwing Node's `ReferenceError`; an instance field initializer runs when an instance
-is made, so it may read a constant declared after the class), the object a constant
+instead of throwing Node's `ReferenceError`; an instance field initializer of a
+module-level class runs when an instance is made, so it may read a constant declared after the
+class, and an instance made before the declaration reads the value instead of throwing Node's
+`ReferenceError`; in a function it is the closure case), the object a constant
 that stands for `globalThis` (`const g = globalThis as Seam;`), and
 `Object.defineProperty(globalThis, "K", { value, writable: true, configurable: true })`
 assigns it. The property's type is `T["K"] | undefined` with `T` the asserted type; the
