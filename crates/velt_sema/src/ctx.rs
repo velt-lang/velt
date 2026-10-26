@@ -60,8 +60,8 @@ pub(crate) struct Ctx<'m> {
     /// Interfaces made for intersections and `Pick`s of interfaces with methods.
     pub(crate) synth_ifaces: crate::synth_ifaces::SynthIfaces,
     pub(crate) generic_fns: crate::generic_fns::GenericFns,
-    /// `hir::Program::generic_dyn_methods`.
-    pub(crate) generic_called: FxHashSet<String>,
+    /// The generic methods called through interface values (`hir::Program::generic_dyn_methods`).
+    pub(crate) generic_called: crate::generic_override_sites::GenericCalls,
     /// While a generic closure's body is checked: the type bounds of the type parameters in
     /// scope, its own included (`Ctx::constraint_of`).
     pub(crate) closure_constraints: Option<Vec<Option<TyId>>>,

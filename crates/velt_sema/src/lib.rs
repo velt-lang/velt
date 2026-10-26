@@ -461,7 +461,7 @@ fn check_timed(
         upcast_impls,
         cpu_targets: cpu_targets.into_iter().collect(),
         type_names,
-        generic_dyn_methods: generic_called.into_iter().collect(),
+        generic_dyn_methods: generic_called.names().collect(),
     };
     (Some(program), diags)
 }
@@ -530,6 +530,7 @@ fn analyze_bodies(cx: &mut ctx::Ctx) {
     timings::pass("fresh_returns::check", || fresh_returns::check(cx));
     timings::pass("generic_override_sites::check", || {
         generic_override_sites::check_adapters(cx);
+        generic_override_sites::check_any_ifaces(cx);
         generic_override_sites::check(cx)
     });
     // Growing generic recursion has infinitely many instantiations: the passes below propagate

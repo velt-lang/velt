@@ -444,6 +444,7 @@ impl FnCx<'_, '_> {
             {
                 let mut h = h;
                 self.force_move(&mut h);
+                self.cx.generic_called.upcasts.insert((have, iface));
                 let span = h.span;
                 return Ok(self.mk(H::Upcast(Box::new(h)), exp, span));
             }

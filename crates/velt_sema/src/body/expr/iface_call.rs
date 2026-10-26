@@ -111,7 +111,11 @@ impl FnCx<'_, '_> {
     ) -> hir::Expr {
         let own = s.method.generics.len();
         if own > 0 {
-            self.cx.generic_called.insert(s.method.name.clone());
+            let calls = &mut self.cx.generic_called;
+            match s.on_param {
+                true => calls.on_params.insert(s.method.name.clone()),
+                false => calls.on.insert((s.iface, s.method.name.clone())),
+            };
         }
         let n = s.iface_args.len();
         let mut slots: Vec<Option<TyId>> = s.iface_args.iter().map(|t| Some(*t)).collect();

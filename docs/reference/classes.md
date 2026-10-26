@@ -543,9 +543,11 @@ console.log(p.len(), q.len());  // 4 4
   with a growing type argument (`r.go([x])` in `go<T>(x: T)`) has infinitely many
   instantiations and is an error, as for a direct call. Not supported yet: converting a class
   to such an interface where a subclass overrides the generic method (a `Base` that may hold a
-  `Sub` would run `Base`'s method; converting a `new Base()` or the `Sub` itself is fine), and
+  `Sub` would run `Base`'s method; converting a `new Base()` or the `Sub` itself is fine), also
+  when the value comes from `any`, `unknown` or `object` (which keep the type it had there), and
   converting an interface value with a generic method to other type arguments (`H<number>` as
-  `H<unknown>`). Both are errors. Generic interface methods cannot have default bodies yet.
+  `H<unknown>`). Both are errors where the program calls that generic method through interface
+  values. Generic interface methods cannot have default bodies yet.
   The method that runs is the one of the class the type parameter is given: when a subclass of that
   class overrides it, a value of the class may hold the subclass, so instantiating the generic
   with that class is the same error as calling the method on it directly (pass the concrete

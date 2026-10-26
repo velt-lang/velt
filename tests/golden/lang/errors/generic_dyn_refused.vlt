@@ -1,6 +1,7 @@
 // Generic methods called on interface values that Velt can't dispatch yet (#943): a class held
-// as a base class whose subclass overrides the generic method, and an interface value at other
-// type arguments (it would need a wrapper forwarding the call's type arguments).
+// as a base class whose subclass overrides the generic method (also through `any`, `unknown`
+// and `object`, which keep the type the value had), and an interface value at other type
+// arguments (it would need a wrapper forwarding the call's type arguments).
 interface Box {
   wrap<T>(x: T): T[];
 }
@@ -38,6 +39,11 @@ function main(): void {
   const xs: Base[] = [new Base(), new Sub()];
   for (const x of xs) console.log(use(x));
   console.log(use(new Sub()), use(new Base()), new Sub().run());
+  const s: Base = new Sub();
+  const a: any = s;
+  const u: unknown = s;
+  const o: object = s;
+  console.log(use(a), use(u as Box), use(o as Box), use(s as any as Box));
   const h: H<unknown> = new C();
   console.log(h.wrap(1, "s"));
 }

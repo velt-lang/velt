@@ -474,6 +474,15 @@ pub(crate) fn resolve_param_calls(
             rounds.read(at, m);
             stack.extend(method(cx, m, &args));
         }
+        // The call may run the method of an instance of a generic implementation found later
+        // (`type_level::instances`, which reports it as a change of the class).
+        if let TyKind::Dyn(i, _) = cx.ty.kind(p.recv).clone() {
+            for imp in cx.impls.iter().filter(|m| m.iface == i && m.generics > 0) {
+                if let TyKind::Adt(d, _) = cx.ty.kind(imp.ty) {
+                    rounds.read(at, *d);
+                }
+            }
+        }
     }
     generic
 }

@@ -48,11 +48,25 @@ pub(crate) fn reach(cx: &mut Ctx) {
     let mut pneeds: FxHashMap<DefId, Vec<ParamCall>> = FxHashMap::default();
     // Concrete deferred types reduced so far.
     let mut reduced: FxHashSet<TyId> = FxHashSet::default();
+    // The generic class types each function's instances construct (`new TB<X[][]>` in
+    // `mk<X>`), carried to concrete arguments like param calls: a concrete one is a type a
+    // generic method called on an interface value may run for (`ParamCall::targets`), so the
+    // functions making such calls are visited again once it is known.
+    let made_by = generic_impl_classes(cx);
+    let mut mneeds: FxHashMap<DefId, Vec<TyId>> = FxHashMap::default();
+    let mut made_seen: FxHashSet<TyId> = FxHashSet::default();
     while let Some(i) = rounds.pop() {
         let (f, u) = &uses[i];
         let mut found: Vec<(TyId, u64, Chain)> = vec![];
         let mut pending: Vec<ParamCall> = u.param_calls.iter().map(|(p, _)| p.clone()).collect();
+        let mut made: Vec<TyId> = vec![];
         for ((d, targs, call), site) in u.calls.iter().zip(&u.guards) {
+            if made_by.contains(d) {
+                made.push(cx.ty.intern(TyKind::Adt(*d, targs.clone())));
+            }
+            for t in mneeds.get(d).into_iter().flatten() {
+                made.push(cx.subst(*t, targs));
+            }
             for (k, need, chain) in needs.get(d).into_iter().flatten() {
                 if let Some(g) = carry_guard(cx, *need, targs, *site) {
                     let chain = through(cx, chain, (*d, targs.clone(), *call));
@@ -66,6 +80,7 @@ pub(crate) fn reach(cx: &mut Ctx) {
         for c in &u.closures {
             found.extend((needs.get(c).into_iter().flatten()).cloned());
             pending.extend(pneeds.get(c).into_iter().flatten().cloned());
+            made.extend(mneeds.get(c).into_iter().flatten().copied());
         }
         for (m, args, span) in &u.dyn_calls {
             for (k, need, chain) in needs.get(m).into_iter().flatten() {
@@ -79,6 +94,13 @@ pub(crate) fn reach(cx: &mut Ctx) {
             }
             for p in pneeds.get(m).into_iter().flatten() {
                 pending.extend(p.instantiate(cx, args));
+            }
+            for t in mneeds.get(m).into_iter().flatten() {
+                let mut ps = vec![];
+                collect_params(&cx.ty, *t, &mut ps);
+                if ps.iter().all(|p| (*p as usize) < args.len()) {
+                    made.push(cx.subst(*t, args));
+                }
             }
         }
         let generic = resolve_param_calls(cx, &mut rounds, i, pending, &mut |cx, m, args| {
@@ -94,6 +116,19 @@ pub(crate) fn reach(cx: &mut Ctx) {
             if !n.contains(&p) {
                 n.push(p);
                 grew = true;
+            }
+        }
+        for t in made {
+            if has_params(cx, t) {
+                let n = mneeds.entry(*f).or_default();
+                if !n.contains(&t) {
+                    n.push(t);
+                    grew = true;
+                }
+            } else if made_seen.insert(t) {
+                if let TyKind::Adt(d, _) = cx.ty.kind(t) {
+                    rounds.changed(*d);
+                }
             }
         }
         let mut walked = FxHashSet::default();
@@ -123,6 +158,22 @@ pub(crate) fn reach(cx: &mut Ctx) {
             rounds.changed(*f);
         }
     }
+}
+
+/// The classes with a generic implementation of an interface that has a generic method: what
+/// a call of that method on an interface value may run for each of their instances.
+fn generic_impl_classes(cx: &Ctx) -> FxHashSet<DefId> {
+    let mut out = FxHashSet::default();
+    for imp in &cx.impls {
+        let generic_method = (cx.iface(imp.iface))
+            .is_some_and(|i| i.methods.iter().any(|m| !m.generics.names.is_empty()));
+        if let (true, true, TyKind::Adt(d, _)) =
+            (imp.generics > 0, generic_method, cx.ty.kind(imp.ty))
+        {
+            out.insert(*d);
+        }
+    }
+    out
 }
 
 /// The instantiation a concrete deferred type comes from: the generic definition, its type

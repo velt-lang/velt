@@ -189,8 +189,9 @@ pub(crate) fn synth_method(
                     args,
                     span,
                 }];
+                let call = (iface, crate::generic_fns::CALL.to_string());
+                cx.generic_called.on.insert(call);
             }
-            cx.generic_called.insert(crate::generic_fns::CALL.into());
             recv = Some(hir::Expr {
                 kind: H::Field {
                     base: Box::new(this),
