@@ -602,7 +602,7 @@ pub(super) fn meet(a: Fact, b: Fact) -> Fact {
 }
 
 /// `new` (which holds `old`) with each bound that moved pushed out to the next threshold.
-pub(super) fn widened(old: Fact, new: Fact) -> Fact {
+fn widened(old: Fact, new: Fact) -> Fact {
     let mut f = new;
     if new.hi > old.hi {
         f.hi = THRESHOLDS

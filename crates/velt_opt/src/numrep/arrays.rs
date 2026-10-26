@@ -11,10 +11,12 @@
 //!   of the function (a read past the length is bounds-checked, never a read of fresh memory).
 //! - **Facts**: an element is any value some store writes. The facts are a fixpoint: loads
 //!   start as 0, `Flow` runs with them, the stored values are joined in, and the loop repeats
-//!   (widening like a loop head) until the stores add nothing. Any facts the stores stay
-//!   within are sound, by induction over a run: until the first store of a value outside the
-//!   facts, every load returns a value inside them, so the analysis holds up to that store
-//!   and has seen it.
+//!   until the stores add nothing. After two rounds a bound that still moves widens to the
+//!   largest whole number an `i64` element holds exactly, and a group whose facts can no
+//!   longer be stored as integers (a value grows past that, a fraction, NaN or `-0`) drops
+//!   out: its loads are unknown from then on. Any facts the stores stay within are sound, by
+//!   induction over a run: until the first store of a value outside the facts, every load
+//!   returns a value inside them, so the analysis holds up to that store and has seen it.
 //! - **Retyping**: an `f64` group whose facts are whole, never NaN, never `-0` and within
 //!   ±2^53 stores `cast v as i64` and loads `cast (*p as i64) as f64`, both exact. The element
 //!   size stays 8 bytes, so allocation, growth and freeing are unchanged, and zeroed memory is
@@ -26,8 +28,8 @@ use velt_vir::vir::{
     Terminator, Ty,
 };
 
-use super::fact::Fact;
-use super::flow::{widened, Flow, State};
+use super::fact::{Fact, TWO_53};
+use super::flow::{Flow, State};
 use super::Env;
 use crate::locals::Usage;
 use crate::srclocs::{push_stmt, rewrite_stmts};
@@ -41,10 +43,11 @@ const FREE: &str = "velt_rt_free";
 /// Fixpoint rounds before giving up on a group's facts.
 const MAX_ROUNDS: usize = 8;
 /// Rounds that join the stored values before later ones widen them.
-const JOIN_ROUNDS: usize = 3;
+const JOIN_ROUNDS: usize = 2;
+/// The largest whole number an `i64` element holds exactly (`Fact::exact_int`).
+const MAX_EXACT: f64 = TWO_53 - 1.0;
 
 /// The element pointer groups of one function.
-#[derive(PartialEq)]
 pub(super) struct Groups {
     /// Per local: its group, when it is a pointer of a qualifying group.
     of: Vec<Option<usize>>,
@@ -64,6 +67,16 @@ impl Groups {
     /// Per local: the facts of the elements its group points at.
     pub fn per_local(&self, facts: &[Option<Fact>]) -> Vec<Option<Fact>> {
         self.of.iter().map(|g| g.and_then(|g| facts[g])).collect()
+    }
+
+    /// The same groups of the same locals as `other` (locals added since, outside any group,
+    /// make no difference).
+    pub fn same(&self, other: &Groups) -> bool {
+        let members = |g: &Groups| {
+            let end = g.of.iter().rposition(Option::is_some).map_or(0, |i| i + 1);
+            g.of[..end].to_vec()
+        };
+        self.ty == other.ty && members(self) == members(other)
     }
 }
 
@@ -296,30 +309,34 @@ impl Elements {
         // Any facts the stores stay within are sound (module docs); starting from 0 rather
         // than from no value keeps `xs[i] + 5` from looking like NaN (an operand without
         // values) in the first round. Zeroed memory is 0 too.
-        let mut elems = vec![Fact::int(0, 0); k];
+        // `None`: the group dropped out, its elements unknown.
+        let mut elems = vec![Some(Fact::int(0, 0)); k];
         for round in 0..MAX_ROUNDS {
-            let current = elems.iter().copied().map(Some).collect::<Vec<_>>();
-            let Some(flow) = Flow::compute(func, env, tracked, groups.per_local(&current)) else {
+            let Some(flow) = Flow::compute(func, env, tracked, groups.per_local(&elems)) else {
                 return (Elements::unknown(groups), None);
             };
             let stored = stored(func, &flow, &groups);
-            if stored.iter().zip(&elems).all(|(s, e)| e.join(*s) == *e) {
+            let settled = |e: &Option<Fact>, s: &Fact| e.is_none_or(|e| e.join(*s) == e);
+            if elems.iter().zip(&stored).all(|(e, s)| settled(e, s)) {
                 // A group no reachable store writes has nothing to narrow.
                 let all_stored = stored.iter().all(|s| !s.is_empty());
                 let facts = elems
                     .into_iter()
                     .zip(stored)
-                    .map(|(e, s)| (!s.is_empty()).then_some(e))
+                    .map(|(e, s)| e.filter(|_| !s.is_empty()))
                     .collect();
                 return (Elements { groups, facts }, all_stored.then_some(flow));
             }
             for (e, s) in elems.iter_mut().zip(stored) {
-                let joined = e.join(s);
-                *e = if round < JOIN_ROUNDS {
+                let Some(old) = *e else { continue };
+                let joined = old.join(s);
+                let next = if round < JOIN_ROUNDS {
                     joined
                 } else {
-                    widened(*e, joined)
+                    widened(old, joined)
                 };
+                // Facts only grow: once they cannot be stored as integers, they never will.
+                *e = (next.exact_int() && !next.neg_zero).then_some(next);
             }
         }
         (Elements::unknown(groups), None)
@@ -339,6 +356,19 @@ impl Elements {
             .map(|(ty, f)| *ty == Ty::F64 && f.is_some_and(|f| f.exact_int() && !f.neg_zero))
             .collect()
     }
+}
+
+/// `new` (which holds `old`) with each bound that moved pushed out to `MAX_EXACT`, unless it
+/// is already past it.
+fn widened(old: Fact, new: Fact) -> Fact {
+    let mut f = new;
+    if new.hi > old.hi {
+        f.hi = f.hi.max(MAX_EXACT);
+    }
+    if new.lo < old.lo {
+        f.lo = f.lo.min(-MAX_EXACT);
+    }
+    f
 }
 
 /// Per group: the join of the values its stores write, under `flow`.

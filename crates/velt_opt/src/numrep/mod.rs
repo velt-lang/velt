@@ -173,7 +173,7 @@ pub(crate) fn run(env: &Env, func: &mut Function) -> bool {
         crate::simplify_cfg::run(func);
         // Simplifying keeps every value the function stores, so the elements' facts hold
         // while the groups stay the same.
-        if arrays::groups(env, func) != elements.groups {
+        if !arrays::groups(env, func).same(&elements.groups) {
             elements = analyse(env, func).1;
         }
     }
