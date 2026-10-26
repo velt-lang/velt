@@ -2152,8 +2152,11 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   Through a variable or parameter declared with one, a string key that is not a number's
   name is an error, as in TypeScript: `r["abc"]` (TS7015), `r.abc` (TS2339) and `{ a: v }` as
   its initializer (TS2353); `r["1"]` and `r["1.5"]` are keys. A number index works on any
-  `string`-keyed record. A type parameter given `number` as a
-  record key is not supported yet. A cast to `Record<symbol, unknown>` (or `Record<symbol,
+  `string`-keyed record. A `string | symbol` index on a `string`-keyed record (a proxy trap's
+  property, `(obj as Record<string, any>)[key]`) reads the entry for a string and `undefined`
+  for a symbol, which is never one of its keys (TypeScript accepts this read where narrowing
+  leaves `key` a `string`; Velt accepts it for any `string | symbol` key). A type parameter
+  given `number` as a record key is not supported yet. A cast to `Record<symbol, unknown>` (or `Record<symbol,
   any>`) looks at a value's symbol-keyed members, as through `any`:
   `(v as Record<symbol, unknown>)[BRAND] === true` reads the member `BRAND` names, or
   `undefined`, as a value of the record's value type (`unknown` must be narrowed before use, as
