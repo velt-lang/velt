@@ -258,6 +258,7 @@ impl Glue {
 impl<'c, 'h> FnLower<'c, 'h> {
     pub(super) fn build_glue(cx: &'c mut Cx<'h>, g: Glue, ty: TyId) -> Function {
         let mut lw = FnLower::bare(cx, vec![]);
+        lw.glue = true;
         let (params, ret) = g.sig();
         let args: Vec<vir::Local> = params.iter().map(|&t| lw.new_local(t, None)).collect();
         let a = |i: usize| Operand::Copy(Place::local(args[i]));
@@ -354,6 +355,12 @@ impl<'c, 'h> FnLower<'c, 'h> {
 
     /// Call glue `g` for `ty` with `args`, storing a non-Unit result in a fresh temp.
     pub(super) fn call_glue(&mut self, g: Glue, ty: TyId, args: Vec<Operand>) -> Operand {
+        if matches!(
+            g,
+            Glue::Eq | Glue::Same | Glue::SameValue | Glue::KeyEq | Glue::KeySame | Glue::Hash
+        ) {
+            self.note_fn_compared(ty);
+        }
         let f = self.cx.func_direct(Work::Glue(g, ty), self.mode);
         match g.sig().1 {
             Ty::Unit => {

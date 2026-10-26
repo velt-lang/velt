@@ -116,13 +116,15 @@ impl FnCx<'_, '_> {
     /// the generic arrow calling it, when that checks (`fn_as_generic`). `x` is evaluated once,
     /// into a local the arrow captures, unless it is the name of a function (or of a built-in
     /// one, `Symbol`), which no assignment changes. `None`, with nothing reported, when it
-    /// doesn't check (or the type is not written out here).
+    /// doesn't check (or the type is not written out, here or as an alias without type
+    /// parameters in this module).
     fn fixed_as_generic(
         &mut self,
         x: &ast::Expr,
         written: &ast::TypeExpr,
         target: TyId,
     ) -> Option<hir::Expr> {
+        let written = self.generic_fn_written(written)?;
         let ast::TypeExprKind::GenericFunction { type_params, ty } = &written.kind else {
             return None;
         };
@@ -229,6 +231,32 @@ impl FnCx<'_, '_> {
         mark.rollback(self.cx);
         self.restore_trial_frames(frames);
         None
+    }
+
+    /// The generic function type `written` spells: written out, or named by an alias of this
+    /// module without type parameters (`type MkTok = <T>(d: string) => Tok<T>`).
+    fn generic_fn_written(&mut self, written: &ast::TypeExpr) -> Option<ast::TypeExpr> {
+        if let ast::TypeExprKind::GenericFunction { .. } = &written.kind {
+            return Some(written.clone());
+        }
+        let ast::TypeExprKind::Named { path, args } = &written.kind else {
+            return None;
+        };
+        let ([name], true) = (path.as_slice(), args.is_empty()) else {
+            return None;
+        };
+        let Some(crate::ctx::Item::Alias(a)) = self.cx.lookup_item(self.module, &name.name) else {
+            return None;
+        };
+        let alias = &self.cx.aliases[a as usize];
+        let fits = alias.module == self.module
+            && alias.decl.generics.is_empty()
+            && alias.outer.is_empty()
+            && matches!(
+                alias.decl.ty.kind,
+                ast::TypeExprKind::GenericFunction { .. }
+            );
+        fits.then(|| alias.decl.ty.clone())
     }
 
     /// The type of `x`, checked as a trial and rolled back (it is checked again where it is

@@ -106,7 +106,7 @@ impl FnLower<'_, '_> {
         // A generic function value (glue/generic_slots.rs): copies box the same closure, whose
         // env is its identity (every closure has one in a program that compares functions).
         if self.cx.is_generic_fn_value(ty) {
-            self.cx.note_fn_compared(ty);
+            self.note_fn_compared(ty);
             let (x, y) = (self.boxed_env(a), self.boxed_env(b));
             return self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, x, y));
         }
@@ -115,7 +115,7 @@ impl FnLower<'_, '_> {
             let (a, b) = (self.through_adapters(a, ty), self.through_adapters(b, ty));
             return self.word_eq(&a, &b, 0);
         }
-        self.cx.note_fn_compared(ty);
+        self.note_fn_compared(ty);
         let code = self.word_eq(a, b, 0);
         let env = self.word_eq(a, b, 1);
         self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitAnd, code, env))

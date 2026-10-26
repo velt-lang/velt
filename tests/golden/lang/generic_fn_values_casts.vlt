@@ -1,11 +1,29 @@
 // Generic function values converted (#943): a function asserted to a generic function type is
 // evaluated once, whatever the expression; a generic function or value as a generic type taking
 // more optional parameters; a generic function declared in a function body is one value; and
-// conversions that make a new function at each use, in a program that compares only functions
-// of other types.
+// conversions that make a new function at each use, held as `unknown` (not compared) in a
+// program that compares only functions of other types; a type alias of a generic function type
+// asserted to; and functions declared in a module constant's arrow.
 type Tok<T> = symbol & { __t?: T };
 type G = <T>(x: T) => T;
 type B = <T>(x: T, y?: number) => T;
+type N = (x: number) => number;
+type MkTok = <T>(d: string) => Tok<T>;
+
+const viaAlias = Symbol as unknown as MkTok;
+
+const local = (): boolean => {
+  function inner<T>(x: T): T {
+    return x;
+  }
+  function plain(x: number): number {
+    return x;
+  }
+  const a: G = inner;
+  const b: G = inner;
+  const f = plain;
+  return a === b && f(2) === 2;
+};
 
 function other(d: string): symbol {
   console.log("other", d);
@@ -56,5 +74,11 @@ function main(): void {
   const q: (x: number) => number = g;
   const k = (): void => {};
   const ks = [k];
-  console.log(p(1) + q(2), ks.indexOf(k));
+  const l = (s: string): void => {};
+  console.log(p(1) + q(2), ks.indexOf(k), [l].includes(l));
+  const n: N = g;
+  const u: unknown = n;
+  const t: unknown = tok;
+  console.log((u as N)(5), typeof u, typeof t);
+  console.log(String(viaAlias<number>("v")), local());
 }

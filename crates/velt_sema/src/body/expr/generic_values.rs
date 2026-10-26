@@ -292,6 +292,9 @@ impl FnCx<'_, '_> {
     /// type (as a class's value is, `ctor_values`), so `===`, `Map` and `Set` keys see one
     /// value.
     pub(super) fn generic_fn_value(&mut self, d: DefId, id: &ast::Ident, exp: TyId) -> hir::Expr {
+        if let Some(e) = self.needs_more_params(d, id, exp) {
+            return e;
+        }
         if let Some(g) = self.generic_fn_global(d, exp) {
             let read = self.global_read(g, Want::Move, id.span);
             return self.coerce(read, exp);
@@ -301,6 +304,30 @@ impl FnCx<'_, '_> {
         let mut value = self.generic_closure(&arrow, Some(exp));
         self.mark_fresh(&mut value, exp);
         value
+    }
+
+    /// Function `d` needs more arguments than a call of generic function type `exp` passes (as
+    /// TypeScript, an error): reported, as the error expression.
+    fn needs_more_params(&mut self, d: DefId, id: &ast::Ident, exp: TyId) -> Option<hir::Expr> {
+        let g = self.cx.generic_sig(exp)?;
+        if g.rest || crate::body::defaults::has_rest(self.cx, d) {
+            return None;
+        }
+        let f = self.cx.fn_info(d);
+        let needs = f.params.iter().filter(|p| p.default.is_none()).count();
+        let gives = g.method.params.len();
+        if needs <= gives {
+            return None;
+        }
+        let shown = self.cx.display(exp);
+        self.cx.error(
+            Diagnostic::error(
+                format!("function `{}` needs {needs} arguments, but a `{shown}` is called with {gives}", id.name),
+                id.span,
+            )
+            .with_note("a function used as a value of a function type may take fewer parameters than the type gives, not more"),
+        );
+        Some(self.error_expr(id.span))
     }
 
     /// The module constant holding function `d` as a value of generic function type `exp`

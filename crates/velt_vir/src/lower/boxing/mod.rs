@@ -210,7 +210,8 @@ pub(super) struct Facts {
     /// The generic function types whose values are held as `unknown` (fresh_fns.rs).
     pub(in crate::lower) generic_any_keys: FxHashSet<crate::lower::fresh_fns::FnKey>,
     /// The fresh closures made (fresh_fns.rs).
-    pub(in crate::lower) fresh_made: FxHashSet<velt_sema::hir::DefId>,
+    pub(in crate::lower) fresh_made:
+        FxHashSet<(velt_sema::hir::DefId, crate::lower::fresh_fns::FnKey)>,
     /// A generic closure is held as `unknown` (`Boxing::generic_any`).
     pub(super) generic_any: bool,
     /// A member is written through `any`.

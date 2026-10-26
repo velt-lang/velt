@@ -250,7 +250,6 @@ impl Cx<'_> {
         self.facts.generic_any = true;
         let imp = &self.hir.impls[index as usize];
         let (ty, iface, iargs) = (imp.ty, imp.iface, imp.iface_args.clone());
-        (self.facts.generic_any_keys).insert(crate::lower::fresh_fns::FnKey::Generic(iface));
         let any = self.hir.any_impl.unwrap_or(0);
         let base = self.vtable(VtableKey::Impl(any, ty));
         let mut data = self.statics[base.0 as usize].clone();
@@ -258,6 +257,8 @@ impl Cx<'_> {
             ice("closure table without its type arguments")
         };
         let iargs: Vec<TyId> = iargs.iter().map(|&a| self.subst(a, &targs)).collect();
+        let key = crate::lower::fresh_fns::FnKey::Generic(iface, iargs.clone());
+        self.facts.generic_any_keys.insert(key);
         let dyn_ty = self.intern(TyKind::Dyn(iface, iargs));
         let at = (8 * (SLOT_GENERIC_TYPE + HIDDEN)) as usize;
         data.bytes.resize(data.bytes.len().max(at + 8), 0);

@@ -1145,9 +1145,12 @@ value converted to another function type (to one of fixed types, or to a generic
 optional parameters), a function asserted to a generic type, a generic function used at a type
 that mentions the caller's type parameters (`P<U>` in `getP<U>`), and a generic function used as
 a value at more than one type (or also where a function of fixed types is expected). A program
-that makes such a value and compares function values of its type (`===`, `includes`, `indexOf`,
-a `Set` or `Map` key, also through `unknown`) is an error, rather than giving another answer than
-JavaScript. Where a function type of fixed
+that makes such a value and compares function values of its type (the same parameter and result
+types, or the same generic function type; with `===`, `includes`, `indexOf`, a `Set` or `Map`
+key) is an error, rather than giving another answer than JavaScript, as is one that compares
+`unknown` or `any` values while one holds such a value; holding it as `unknown` alone is fine.
+The program's build reports it, as it needs every instantiation: `velt check`, which only
+type-checks, does not. Where a function type of fixed
 types is expected (`const p: (x: number) => number = f`, `[1, 2].map(f)`), a generic function
 value is instantiated at it, as TypeScript does. A function of fixed types is not a generic one
 (`(x: number) => number` is not a `<T>(x: T) => T`, as TypeScript reports), also not through

@@ -47,6 +47,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let mut lw = FnLower {
             cx,
             targs,
+            glue: false,
             locals: vec![],
             blocks: vec![],
             block_locs: vec![],
