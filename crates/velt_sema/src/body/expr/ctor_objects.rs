@@ -5,10 +5,11 @@
 //! A class's object is a function constant of the module state (made on first use, kept in
 //! `objects.class_values`, initialized before any module runs, as the construct-signature values
 //! of `ctor_values.rs` are), so `===`, `Map` keys and `Set` members see one object per class, and
-//! `typeof` is `"function"`. Its type is its own, `(...m: __ClassMarker<T>[]) => any` with `T`
-//! the class's instances (or the kind's values), by which velt_vir prints it as Node does
-//! (`[class A]`, `[Function: Map]`). Calling it stops with Node's `TypeError` for a class called
-//! without `new`; `new` through it is not supported yet.
+//! `typeof` is `"function"`. It is a closure of the prelude's `__classObject` (one closure, so one
+//! type and one `any` descriptor for every class), which keeps how Node prints it (`[class A]`,
+//! `[Function: Map]`) for velt_vir's `format.rs`; a class with static fields or accessors gets
+//! `__classObjectStatics`'s, which Node prints with them: printing it is not supported yet.
+//! Calling it stops with Node's `TypeError` for a class called
 //!
 //! `x.constructor` reads an own `constructor` property first, then picks the object of the class
 //! `x` holds (a subclass's when it was converted through its base). A value that holds no class
@@ -196,8 +197,8 @@ impl FnCx<'_, '_> {
         if let Some(d) = class {
             return self.class_object(d, Want::Move, span);
         }
-        // The kind's values' type: its key beside `Object`'s, and the tag it prints by
-        // (velt_vir's `format.rs`).
+        // A key of its own beside `Object`'s (whose key has an `any` result): the kind's
+        // values' type as the result.
         let any = self.any_ty()?;
         let tag = match kind {
             "Array" => self.cx.ty.array(any),
@@ -206,70 +207,17 @@ impl FnCx<'_, '_> {
             _ => self.cx.ty.unit,
         };
         let key = (object, self.cx.ty.fn_ptr(vec![], tag));
-        let (lead, body) = match kind {
-            "Number" => {
-                let call = call_ident("Number", vec![ident_expr("#a0", span)], span);
-                (vec![self.cx.ty.str_], call)
-            }
-            _ => (
-                vec![],
-                class_call(
-                    format!("TypeError: calling `{kind}` through the `constructor` of a value is not supported yet (#926)"),
-                    span,
-                ),
-            ),
-        };
-        self.ctor_global(key, object, (tag, lead), body, Want::Move, span)
-    }
-
-    /// A read of class `d`'s object, made on first use (module docs).
-    fn class_object(&mut self, d: DefId, want: Want, span: Span) -> Option<hir::Expr> {
-        let a = self.cx.adt(d).filter(|a| a.kind == AdtKind::Class)?;
-        let (module, name, n) = (a.module, a.name.clone(), a.generics.len());
-        let std = self.cx.scopes[module].is_std;
-        let any = self.any_ty()?;
-        let key = (d, self.cx.ty.fn_ptr(vec![], any));
-        let shown = name.rsplit('.').next().unwrap_or(&name).to_string();
-        let msg = match std {
-            // `Object(v)` and `String(v)` convert in JavaScript.
-            true if matches!(shown.as_str(), "Object" | "String") => format!(
-                "TypeError: calling `{shown}` through its class object is not supported yet (#926)"
-            ),
-            true => format!("TypeError: Constructor {shown} requires 'new'"),
-            false => {
-                format!("TypeError: Class constructor {shown} cannot be invoked without 'new'")
-            }
-        };
-        // The class's instances, which it prints by (`[class A]`, `[Function: Map]`).
-        let tag = self.cx.ty.intern(TyKind::Adt(d, vec![any; n]));
-        let body = class_call(msg, span);
-        self.ctor_global(key, d, (tag, vec![]), body, want, span)
-    }
-
-    /// The constant under `key` in `objects.class_values`, made on first use in the module of
-    /// class `owner`: the closure `(a0: lead0, …, ...m: __ClassMarker<tag>[]): any => body`,
-    /// whose type is its own and tells velt_vir how to print it (`format.rs`); read as `want`
-    /// says.
-    fn ctor_global(
-        &mut self,
-        key: (DefId, TyId),
-        owner: DefId,
-        (tag, lead): (TyId, Vec<TyId>),
-        body: ast::Expr,
-        want: Want,
-        span: Span,
-    ) -> Option<hir::Expr> {
-        if let Some((_, g)) = self.cx.objects.class_values.iter().find(|(k, _)| *k == key) {
-            let g = *g;
-            return Some(self.global_read(g, want, span));
+        if kind != "Number" {
+            let msg = format!("TypeError: calling `{kind}` through the `constructor` of a value is not supported yet (#926)");
+            let init =
+                class_object_call("__classObject", &format!("[Function: {kind}]"), msg, span);
+            return self.ctor_global(key, object, init, None, Want::Move, span);
         }
-        let a = self.cx.adt(owner)?;
-        let (module, qual, decl) = (a.module, a.qual_name.clone(), a.span);
+        // `(s: string, ...m: __ClassMarker<number>[]): any => Number(s)`: callable as `Number`,
+        // and its type tells velt_vir to print it as `[Function: Number]` (`format.rs`).
         let marker = self.cx.prelude_adt("__ClassMarker")?;
-        let any = self.any_ty()?;
         let mark = self.cx.ty.intern(TyKind::Adt(marker, vec![tag]));
-        let mut params = lead.clone();
-        params.push(self.cx.ty.array(mark));
+        let params = vec![self.cx.ty.str_, self.cx.ty.array(mark)];
         let never = self.cx.ty.never;
         let ty = self.cx.ty.intern(TyKind::FnPtr {
             params,
@@ -277,10 +225,11 @@ impl FnCx<'_, '_> {
             throws: never,
             rest: true,
         });
-        let mut ps: Vec<ast::ArrowParam> = (0..lead.len())
-            .map(|k| arrow_param(&format!("#a{k}"), false, span))
-            .collect();
-        ps.push(arrow_param("#m", true, span));
+        let ps = vec![
+            arrow_param("#a0", false, span),
+            arrow_param("#m", true, span),
+        ];
+        let body = call_ident("Number", vec![ident_expr("#a0", span)], span);
         let arrow = synth(
             ast::ExprKind::Arrow {
                 type_params: vec![],
@@ -292,18 +241,94 @@ impl FnCx<'_, '_> {
             },
             span,
         );
+        self.ctor_global(key, object, arrow, Some(ty), Want::Move, span)
+    }
+
+    /// A read of class `d`'s object, made on first use (module docs).
+    fn class_object(&mut self, d: DefId, want: Want, span: Span) -> Option<hir::Expr> {
+        let a = self.cx.adt(d).filter(|a| a.kind == AdtKind::Class)?;
+        let (module, name, base) = (a.module, a.name.clone(), a.base);
+        // Node prints a class's static fields and accessors after its name, which the class
+        // object doesn't hold (yet): printing such a class's object stops (`format.rs`).
+        let statics = a.decl.is_some_and(|t| {
+            t.fields
+                .iter()
+                .any(|f| f.is_static && !f.name.name.starts_with('#'))
+                || t.methods.iter().any(|m| {
+                    m.is_static
+                        && (m.is_getter || m.is_setter)
+                        && !m.decl.sig.name.name.starts_with('#')
+                })
+        });
+        let std = self.cx.scopes[module].is_std;
+        let any = self.any_ty()?;
+        let key = (d, self.cx.ty.fn_ptr(vec![], any));
+        let short = |n: &str| n.rsplit('.').next().unwrap_or(n).to_string();
+        let shown = short(&name);
+        let msg = match std {
+            // `Object(v)` and `String(v)` convert in JavaScript.
+            true if matches!(shown.as_str(), "Object" | "String") => format!(
+                "TypeError: calling `{shown}` through its class object is not supported yet (#926)"
+            ),
+            true => format!("TypeError: Constructor {shown} requires 'new'"),
+            false => {
+                format!("TypeError: Class constructor {shown} cannot be invoked without 'new'")
+            }
+        };
+        // How Node prints it.
+        let printed = match std {
+            true => format!("[Function: {shown}]"),
+            false => {
+                let base = base
+                    .and_then(|b| self.cx.class_of(b))
+                    .and_then(|(b, _)| self.cx.adt(b).map(|a| short(&a.name)));
+                match base {
+                    Some(b) => format!("[class {shown} extends {b}]"),
+                    None => format!("[class {shown}]"),
+                }
+            }
+        };
+        let maker = match statics && !std {
+            true => "__classObjectStatics",
+            false => "__classObject",
+        };
+        let init = class_object_call(maker, &printed, msg, span);
+        self.ctor_global(key, d, init, None, want, span)
+    }
+
+    /// The constant under `key` in `objects.class_values`, made on first use in the module of
+    /// class `owner` with initializer `init` (of type `ty`, when given); read as `want` says.
+    fn ctor_global(
+        &mut self,
+        key: (DefId, TyId),
+        owner: DefId,
+        init: ast::Expr,
+        ty: Option<TyId>,
+        want: Want,
+        span: Span,
+    ) -> Option<hir::Expr> {
+        if let Some((_, g)) = self.cx.objects.class_values.iter().find(|(k, _)| *k == key) {
+            let g = *g;
+            return Some(self.global_read(g, want, span));
+        }
+        let a = self.cx.adt(owner)?;
+        let (module, qual, decl) = (a.module, a.qual_name.clone(), a.span);
+        let n = self.cx.objects.class_values.len();
         let init = {
             let mut fcx = crate::body::driver::detached(self.cx, module, &[]);
-            fcx.fn_name = format!("{qual}#ctor");
-            let h = fcx.expr(&arrow, Some(ty), Want::Move);
-            fcx.coerce(h, ty)
+            fcx.fn_name = format!("{qual}#ctor{n}");
+            let h = fcx.expr(&init, ty, Want::Move);
+            match ty {
+                Some(t) => fcx.coerce(h, t),
+                None => h,
+            }
         };
         let info = GlobalInfo {
-            name: format!("{qual}#ctor"),
-            qual_name: format!("{qual}#ctor:{}", self.cx.display(tag)),
+            name: format!("{qual}#ctor{n}"),
+            qual_name: format!("{qual}#ctor{n}"),
             module,
             span: Span::DUMMY,
-            ty,
+            ty: init.ty,
             init: Some(init),
             state: BodyState::Done,
             src: GlobalSrc {
@@ -322,6 +347,14 @@ impl FnCx<'_, '_> {
         self.cx.objects.class_values.push((key, g));
         Some(self.global_read(g, want, span))
     }
+}
+
+/// `maker(printed, msg)` (the prelude's `__classObject` or `__classObjectStatics`): a class's
+/// (or kind's) object, printed as `printed` and stopping with `msg` when called. One closure
+/// for all, so one type and one `any` descriptor whatever the number of classes.
+fn class_object_call(maker: &str, printed: &str, msg: String, span: Span) -> ast::Expr {
+    let lit = |s: String| synth(ast::ExprKind::Lit(ast::Lit::Str(s)), span);
+    call_ident(maker, vec![lit(printed.to_string()), lit(msg)], span)
 }
 
 fn ident_expr(name: &str, span: Span) -> ast::Expr {
@@ -358,10 +391,4 @@ fn call_ident(f: &str, args: Vec<ast::Expr>, span: Span) -> ast::Expr {
         },
         span,
     )
-}
-
-/// `__classCall(msg)`.
-fn class_call(msg: String, span: Span) -> ast::Expr {
-    let lit = synth(ast::ExprKind::Lit(ast::Lit::Str(msg)), span);
-    call_ident("__classCall", vec![lit], span)
 }
