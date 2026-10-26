@@ -74,7 +74,7 @@ export type Jsx = {
 /// How a package's program is built (docs/tooling/platforms.md "CPU").
 export type Build = {
   /// The CPU the program is built for, as `velt build --cpu`: `"baseline"`, `"x86-64-v2"` (the
-  /// default on x86-64), `"x86-64-v3"`, `"x86-64-v4"`, `"native"` or an LLVM CPU name such as
+  /// default on x86-64), `"x86-64-v3"`, `"x86-64-v4"`, `"native"` or a CPU name such as
   /// `"znver4"`. `--cpu` and `VELT_CPU` take precedence; a CPU of another architecture does not
   /// apply to a build for this one.
   cpu?: string;

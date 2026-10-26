@@ -198,7 +198,7 @@ is for **x86-64-v2** unless `--cpu` names another:
 | `x86-64-v3` | Intel Core from Haswell (2013), Pentium, Celeron and Atom from about 2021 (Gracemont); AMD from Excavator (2015) and Zen (2017) | AVX, AVX2, BMI1, BMI2, FMA, LZCNT, MOVBE, F16C |
 | `x86-64-v4` | Intel Xeon from Skylake-SP (2017), Core from Ice Lake (2019) to Rocket Lake (2021) but not Alder Lake and its successors; AMD from Zen 4 (2022) | AVX-512 F, BW, CD, DQ, VL |
 | `native` | this machine's CPU: for programs that run where they are built | |
-| an LLVM CPU name (`znver4`, `skylake`, `neoverse-n1`, `apple-m2`) | that CPU and compatible ones | |
+| a CPU name (`znver4`, `skylake`, `neoverse-n1`, `apple-m2`) | that CPU and compatible ones | what clang enables for it |
 
 x86-64-v2 is what Windows 11 24H2 and RHEL 9 require; the baseline lacks the byte shuffles,
 `popcnt` and rounding instructions std's hot paths (SIMD, `velt:simd`, `Math.floor`) use, and
@@ -212,14 +212,20 @@ emulates them at several times the cost.
   there.
 - **Choosing.** `--cpu` comes first, then `$VELT_CPU`, then the package's `build.cpu`
   ([`package.vlt`](manifest.md#build)), then the target's default. A setting of another
-  architecture's (`VELT_CPU=x86-64-v3` in a build for arm64) does not apply, so one setting
-  serves every target of a package; the same name in `--cpu` is an error. `velt run`,
+  architecture's (`VELT_CPU=x86-64-v3` in a build for arm64, `neoverse-n1` in one for x86_64)
+  does not apply, so one setting serves every target of a package; the same name in `--cpu` is
+  an error. A name no architecture has (`skylkae`) is an error wherever it comes from, in debug
+  and release builds alike, and names the CPU it is closest to. The names are the ones clang 18
+  and later know for the target as `-march=` (x86_64) or `-mcpu=` (arm64); a name only a newer
+  clang knows needs that clang in release builds. `velt run`,
   `velt test` and `velt dev --exe` without `--release` build for this machine's CPU (`native`)
-  unless one is named, as `velt dev` compiles for it.
+  unless one is named, as `velt dev` compiles for it (and its JIT takes no `--cpu`).
 - **The backends.** LLVM (release builds) gets the name as `-march=` on x86_64 and `-mcpu=`
-  elsewhere, so any CPU clang knows works. Cranelift (debug builds) uses the levels, its own
-  settings for the x86 CPUs it knows by the same names (`skylake`, `znver3`) and `native`; for any
-  other name it builds the baseline.
+  elsewhere. Cranelift (debug builds) uses the levels, its own settings for the x86 CPUs it knows
+  by the same names (`skylake`, `znver3`) and `native`; for any other name it builds the
+  baseline. The two need not agree on what a name enables (Cranelift's `alderlake` has no AVX2,
+  clang's has), and each program is checked for what its own code uses. `--emit llvm` prints
+  the IR clang compiles for the CPU, the check included.
 - **The start-up check.** On x86_64, a program built for more than the baseline checks the CPU
   before `main` runs. On one without a feature it was built for, it exits with code 1 and a
   message that names the level to build for instead (the highest it has, or the baseline), not
@@ -229,8 +235,11 @@ emulates them at several times the cost.
   error: this program was built for x86-64-v2 (SSE3, SSSE3, SSE4.1, SSE4.2, POPCNT, CMPXCHG16B); this CPU lacks POPCNT; rebuild it with `--cpu baseline`
   ```
 
-  It checks the features in the table (and, for CPU names, AVX-512 VBMI and BITALG); an LLVM
-  CPU name Cranelift does not know is not checked. `VELT_CPU_DISABLE=popcnt` (a comma-separated
+  It checks the features in the table (and, for CPU names, AVX-512 VBMI and BITALG): for a
+  release build, those clang enables for the CPU (it learns them from `clang -dM -E
+  -march=<name>`); for a debug build, those Cranelift's setting of that name uses (none for a
+  name it has no setting for, as that code is for the baseline). Other features a CPU name
+  enables (AES, SHA, GFNI, AVX-512 VNNI) are not checked. `VELT_CPU_DISABLE=popcnt` (a comma-separated
   list of features) makes a program treat them as missing, to see the check on a CPU that has
   them.
 - **The runtime library** (Rust, and the C libraries it builds: mimalloc and SQLite) is one per

@@ -31,7 +31,7 @@ pub(crate) struct Target {
     pub os: Os,
     /// `--cpu` (`velt_codegen_cl::check_cpu`); `None`: the default ([`Target::cpu_arg`]).
     pub cpu: Option<String>,
-    /// The x86 features the code may use, as `velt_codegen_cl::required_features` (0 off x86_64).
+    /// The x86 features the code may use, as [`crate::required_features`] (0 off x86_64).
     pub x86_features: u32,
 }
 
@@ -145,10 +145,7 @@ impl Target {
         if self.is_wasm() {
             return Ok(self);
         }
-        self.x86_features = velt_codegen_cl::required_features(&self.triple, cpu)?;
-        if let Some(c) = cpu {
-            velt_codegen_cl::check_cpu(&self.triple, c)?;
-        }
+        self.x86_features = crate::required_features(&self.triple, cpu)?;
         self.cpu = cpu.map(str::to_string);
         Ok(self)
     }
@@ -174,8 +171,8 @@ impl Target {
 
     /// Whether `Math.floor`, `Math.ceil` and `Math.trunc` round through a conversion to `i64`
     /// (`rounding.rs`): an x86-64 CPU without SSE4.1 (`--cpu baseline`) has no rounding
-    /// instruction (`roundsd`), so `llvm.floor` & co. would be calls into the C runtime. So does
-    /// an LLVM CPU name the compiler cannot tell the features of.
+    /// instruction (`roundsd`), so `llvm.floor` & co. would be calls into the C runtime. A CPU name
+    /// has what clang gives it ([`crate::required_features`]).
     pub fn rounds_by_conversion(&self) -> bool {
         const SSE41: u32 = 1 << 2;
         self.triple.starts_with("x86_64") && self.x86_features & SSE41 == 0

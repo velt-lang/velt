@@ -330,6 +330,24 @@ fn x86_code_is_for_the_default_cpu_level_unless_asked() {
         Some("-mcpu=neoverse-n1")
     );
     assert!(arm(Some("x86-64-v2")).is_err());
+    assert!(
+        arm(Some("znver5")).is_err(),
+        "never reaches clang as -mcpu=znver5"
+    );
+    assert!(t(Some("skylkae")).is_err() && t(Some("neoverse-n1")).is_err());
+    if crate::available() {
+        // What clang enables for a CPU name, not Cranelift's preset of it (which has no AVX2).
+        const AVX2: u32 = 1 << 7;
+        for cpu in ["alderlake", "znver4"] {
+            let target = t(Some(cpu)).unwrap();
+            assert_ne!(target.x86_features & AVX2, 0, "{cpu}");
+            assert!(!target.rounds_by_conversion(), "{cpu}");
+            assert_eq!(
+                crate::required_features(&target.triple, Some(cpu)),
+                Ok(target.x86_features)
+            );
+        }
+    }
     let host = crate::target::normalize("")
         .unwrap()
         .with_cpu(Some("native"));

@@ -28,6 +28,7 @@ mod abi;
 #[cfg(unix)]
 mod c_symbols;
 mod cpu;
+mod cpu_names;
 mod debug_info;
 mod dev;
 mod entry;
@@ -40,7 +41,10 @@ mod unwind;
 #[cfg(test)]
 mod tests;
 
-pub use cpu::{check_cpu, is_x86_cpu, required_features, DEFAULT_X86_CPU, X86_FEATURES};
+pub use cpu::{
+    check_cpu, is_for_another_arch, level_features, required_features, x86_features_from_macros,
+    DEFAULT_X86_CPU, X86_FEATURES, X86_FEATURE_MACROS,
+};
 pub use dev::{DevSession, HandlerCode, JitProgram, Reload};
 
 /// Internal result type: errors are human-readable messages.

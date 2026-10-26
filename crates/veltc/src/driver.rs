@@ -423,28 +423,31 @@ fn build_on_current_thread(
 ) -> Result<Artifact, BuildError> {
     let target = opts.target();
     let mut program = compile_to_vir(sess, opts)?;
-    match opts.emit {
-        Emit::Vir => return Ok(Artifact::Vir(program.to_string())),
-        Emit::Llvm => {
-            return velt_codegen_llvm::emit_ir(&program, &target)
-                .map(Artifact::Llvm)
-                .map_err(|e| BuildError::Failed(format!("code generation failed: {e}")))
-        }
-        Emit::Obj | Emit::Exe => {}
+    if opts.emit == Emit::Vir {
+        return Ok(Artifact::Vir(program.to_string()));
     }
-
-    let required = velt_codegen_cl::required_features(&target, opts.cpu.as_deref())
-        .map_err(BuildError::Failed)?;
-    cpu_check::insert(&mut program, required);
-    let paths = OutputPaths::new(&opts.input, opts.output.as_deref(), opts.emit, &target);
-
-    let t = Instant::now();
     let cg = velt_codegen_cl::CodegenOptions {
         target: target.clone(),
         optimize: opts.release,
         cpu: opts.cpu.clone(),
     };
-    let (backend, _) = Backend::resolve(opts.backend, opts.release);
+    // `--emit llvm` prints what the LLVM backend compiles.
+    let backend = match opts.emit {
+        Emit::Llvm => Backend::Llvm,
+        _ => Backend::resolve(opts.backend, opts.release).0,
+    };
+    let required = backend
+        .required_features(&target, opts.cpu.as_deref())
+        .map_err(BuildError::Failed)?;
+    cpu_check::insert(&mut program, required);
+    if opts.emit == Emit::Llvm {
+        return velt_codegen_llvm::emit_ir_for(&program, &cg)
+            .map(Artifact::Llvm)
+            .map_err(|e| BuildError::Failed(format!("code generation failed: {e}")));
+    }
+    let paths = OutputPaths::new(&opts.input, opts.output.as_deref(), opts.emit, &target);
+
+    let t = Instant::now();
     if backend == Backend::Cranelift && velt_codegen_llvm::is_wasm(&target) {
         return Err(BuildError::Failed(format!(
             "`{target}` needs the LLVM backend (`--backend llvm`)"

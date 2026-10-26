@@ -4,15 +4,19 @@
 //! - `x86-64-v2`, `x86-64-v3`, `x86-64-v4`: the x86-64 psABI levels; `x86-64-v2` is the default
 //!   on x86_64 ([`DEFAULT_X86_CPU`]);
 //! - `native`: the machine the compiler runs on (only when it builds for its own architecture);
-//! - any other name is an LLVM CPU name (`znver4`, `skylake`, `neoverse-n1`): clang gets it as is,
-//!   Cranelift uses its preset of that name where it has one (x86) and the baseline otherwise.
+//! - any other name is a CPU name clang knows for the target (`znver4`, `skylake`, `neoverse-n1`;
+//!   the list is `cpu_names.rs`): clang gets it as is, Cranelift uses its preset of that name
+//!   where it has one (x86) and the baseline otherwise.
 //!
 //! Code for a CPU above the baseline checks at start-up that the CPU has what it was built for
-//! ([`required_features`], `velt_rt_check_cpu` in rt_abi.md "CPU check").
+//! ([`required_features`] for Cranelift's code, the LLVM backend's own for clang's;
+//! `velt_rt_check_cpu` in rt_abi.md "CPU check").
 
 use cranelift_codegen::isa::{self, Builder as IsaBuilder};
 use cranelift_codegen::settings::{self, Configurable};
 use target_lexicon::{Architecture, Triple};
+
+use crate::cpu_names;
 
 /// The x86_64 CPU code is for unless `--cpu` (or `VELT_CPU`, or the package's `build.cpu`) names
 /// another: x86-64-v2 (SSE4.2, POPCNT, SSSE3; every x86_64 CPU since about 2009, and what
@@ -46,6 +50,45 @@ pub const X86_FEATURES: [(&str, Option<&str>); 21] = [
     ("AVX512BITALG", Some("has_avx512bitalg")),
 ];
 
+/// The macro clang defines (`clang -dM -E -march=<cpu>`) for each feature of [`X86_FEATURES`], in
+/// its order: how the LLVM backend learns what a named CPU lets clang use.
+pub const X86_FEATURE_MACROS: [&str; 21] = [
+    "__SSE3__",
+    "__SSSE3__",
+    "__SSE4_1__",
+    "__SSE4_2__",
+    "__POPCNT__",
+    "__GCC_HAVE_SYNC_COMPARE_AND_SWAP_16",
+    "__AVX__",
+    "__AVX2__",
+    "__BMI__",
+    "__BMI2__",
+    "__FMA__",
+    "__LZCNT__",
+    "__MOVBE__",
+    "__F16C__",
+    "__AVX512F__",
+    "__AVX512BW__",
+    "__AVX512CD__",
+    "__AVX512DQ__",
+    "__AVX512VL__",
+    "__AVX512VBMI__",
+    "__AVX512BITALG__",
+];
+
+/// The features of [`X86_FEATURES`] whose macro `defines` (clang's `-dM -E` output) defines.
+pub fn x86_features_from_macros(defines: &str) -> u32 {
+    let defined: Vec<&str> = defines
+        .lines()
+        .filter_map(|l| l.strip_prefix("#define ")?.split_whitespace().next())
+        .collect();
+    X86_FEATURE_MACROS
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| defined.contains(m))
+        .fold(0, |mask, (bit, _)| mask | 1 << bit)
+}
+
 /// The psABI levels as feature masks over [`X86_FEATURES`].
 const X86_V2: u32 = 0b11_1111;
 const X86_V3: u32 = X86_V2 | 0b11_1111_1100_0000;
@@ -74,10 +117,38 @@ fn arch(target: &str) -> Architecture {
         .map_or(Architecture::Unknown, |t| t.architecture)
 }
 
-/// Whether `cpu` names an x86 CPU or level (`x86-64-v3`, `skylake`), which no other
-/// architecture can build for.
-pub fn is_x86_cpu(cpu: &str) -> bool {
-    cpu != "baseline" && (X86_LEVELS.iter().any(|(n, _)| *n == cpu) || cranelift_x86_preset(cpu))
+/// The CPU names of `arch` besides `native` and `baseline` (the levels are among x86_64's).
+fn names(arch: Architecture) -> &'static [&'static str] {
+    match arch {
+        Architecture::X86_64 => cpu_names::X86_64,
+        Architecture::Aarch64(_) => cpu_names::AARCH64,
+        _ => &[],
+    }
+}
+
+/// The architecture other than `arch` that `cpu` names a CPU of, if it is not one of `arch`'s:
+/// `x86_64` for `x86-64-v3` or `znver4` on arm64, `aarch64` for `neoverse-n1` on x86_64 (and
+/// `native` when `arch` is not the host's).
+fn other_arch(arch: Architecture, cpu: &str) -> Option<&'static str> {
+    if cpu == "baseline" || names(arch).contains(&cpu) {
+        return None;
+    }
+    if cpu == "native" {
+        return (arch != Triple::host().architecture).then_some("this machine's");
+    }
+    if cpu_names::X86_64.contains(&cpu) {
+        Some("x86_64")
+    } else if cpu_names::AARCH64.contains(&cpu) {
+        Some("aarch64")
+    } else {
+        None
+    }
+}
+
+/// Whether `cpu` is meant for an architecture other than `target`'s: a `$VELT_CPU` or
+/// `build.cpu` like that does not apply to a build for `target`.
+pub fn is_for_another_arch(target: &str, cpu: &str) -> bool {
+    other_arch(arch(target), cpu).is_some()
 }
 
 /// Whether Cranelift's x86 ISA has a CPU preset named `cpu`.
@@ -94,48 +165,96 @@ fn cranelift_x86_preset(cpu: &str) -> bool {
     builder.enable(cpu).is_ok()
 }
 
-/// Whether `cpu` can build for `target`: a CPU name made of lowercase letters, digits, `.` and
-/// `-`; `native` only for the host's architecture, an x86 CPU only for x86_64.
+/// Whether `cpu` can build for `target`: `baseline`, `native` (only for the host's
+/// architecture) or one of the target's CPU names (`cpu_names.rs`; the levels on x86_64).
 pub fn check_cpu(target: &str, cpu: &str) -> Result<(), String> {
-    let well_formed = !cpu.is_empty()
-        && cpu
-            .chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '.');
-    if !well_formed {
-        return Err(format!(
-            "invalid CPU `{cpu}` (expected baseline, x86-64-v2, x86-64-v3, x86-64-v4, native or \
-             an LLVM CPU name such as `znver4`)"
-        ));
-    }
     let arch = arch(target);
     if cpu == "native" && arch != Triple::host().architecture {
         return Err(format!(
             "`--cpu native` builds for this machine's CPU, which cannot run `{target}` code"
         ));
     }
-    if arch != Architecture::X86_64 && is_x86_cpu(cpu) {
-        return Err(format!(
-            "`--cpu {cpu}` is for x86_64 targets, not `{target}`"
-        ));
+    match other_arch(arch, cpu) {
+        Some(other) => {
+            return Err(format!(
+                "`--cpu {cpu}` is for {other} targets, not `{target}`"
+            ));
+        }
+        None if cpu == "baseline" || cpu == "native" || names(arch).contains(&cpu) => {
+            return Ok(());
+        }
+        None => {}
     }
-    Ok(())
+    let known = names(arch);
+    let examples = if arch == Architecture::X86_64 {
+        "baseline, x86-64-v2, x86-64-v3, x86-64-v4, native or a CPU name such as `znver4`"
+    } else {
+        "baseline, native or a CPU name such as `neoverse-n1`"
+    };
+    let hint = closest(cpu, known)
+        .map(|c| format!("; did you mean `{c}`?"))
+        .unwrap_or_default();
+    let target = if target.trim().is_empty() {
+        Triple::host().to_string()
+    } else {
+        target.trim().to_string()
+    };
+    Err(format!(
+        "unknown CPU `{cpu}` for `{target}` (expected {examples}){hint}"
+    ))
 }
 
-/// The x86 features code for `cpu` on `target` needs, as a mask over [`X86_FEATURES`] (`None`:
-/// the default): 0 off x86_64, for the baseline and for a CPU name Cranelift does not know (the
-/// start-up check then checks nothing).
-pub fn required_features(target: &str, cpu: Option<&str>) -> Result<u32, String> {
+/// The name of `known` closest to `cpu`, if close enough to be a typo of it.
+fn closest<'a>(cpu: &str, known: &[&'a str]) -> Option<&'a str> {
+    let distance = |a: &str, b: &str| {
+        let b: Vec<char> = b.chars().collect();
+        let mut row: Vec<usize> = (0..=b.len()).collect();
+        for (i, ca) in a.chars().enumerate() {
+            let mut prev = row[0];
+            row[0] = i + 1;
+            for (j, cb) in b.iter().enumerate() {
+                let cur = row[j + 1];
+                row[j + 1] = (prev + usize::from(ca != *cb)).min(row[j] + 1).min(cur + 1);
+                prev = cur;
+            }
+        }
+        row[b.len()]
+    };
+    let limit = (cpu.chars().count() / 3).max(1);
+    known
+        .iter()
+        .map(|k| (distance(cpu, k), *k))
+        .filter(|(d, _)| *d <= limit)
+        .min_by_key(|(d, _)| *d)
+        .map(|(_, k)| k)
+}
+
+/// The x86 features code for `cpu` on `target` needs whoever compiles it, as a mask over
+/// [`X86_FEATURES`] (`None`: the default): 0 off x86_64 and for the baseline, the level's for a
+/// level, the host's for `native`; `None` for a CPU name, whose features depend on the backend.
+pub fn level_features(target: &str, cpu: Option<&str>) -> Result<Option<u32>, String> {
+    if let Some(cpu) = cpu {
+        check_cpu(target, cpu)?;
+    }
     if arch(target) != Architecture::X86_64 {
-        return Ok(0);
+        return Ok(Some(0));
     }
     let cpu = cpu.unwrap_or(DEFAULT_X86_CPU);
-    check_cpu(target, cpu)?;
     if let Some((_, mask)) = X86_LEVELS.iter().find(|(n, _)| *n == cpu) {
-        return Ok(*mask);
+        return Ok(Some(*mask));
     }
-    if cpu == "native" {
-        return Ok(host_x86_features());
+    Ok((cpu == "native").then(host_x86_features))
+}
+
+/// The x86 features Cranelift's code for `cpu` on `target` needs, as a mask over
+/// [`X86_FEATURES`] (`None`: the default): [`level_features`], or for a CPU name what
+/// Cranelift's preset of that name enables (nothing for a CPU it has no preset for: such code is
+/// for the baseline, and the start-up check checks nothing).
+pub fn required_features(target: &str, cpu: Option<&str>) -> Result<u32, String> {
+    if let Some(mask) = level_features(target, cpu)? {
+        return Ok(mask);
     }
+    let cpu = cpu.unwrap_or(DEFAULT_X86_CPU);
     if !cranelift_x86_preset(cpu) {
         return Ok(0);
     }
@@ -283,8 +402,8 @@ mod tests {
         // A CPU Cranelift has a preset for: what the preset enables.
         assert_eq!(names(req(Some("nehalem"))), names(X86_V2));
         assert!(names(req(Some("skylake-avx512"))).contains(&"AVX512VL"));
-        // One it does not know is checked for nothing.
-        assert_eq!(req(Some("some-future-cpu")), 0);
+        // One clang knows and Cranelift has no preset for: baseline code, checked for nothing.
+        assert_eq!(req(Some("znver5")), 0);
         assert_eq!(required_features("aarch64-apple-darwin", None).unwrap(), 0);
         assert_eq!(
             required_features("aarch64-unknown-linux-gnu", Some("neoverse-n1")).unwrap(),
@@ -309,7 +428,7 @@ mod tests {
         assert!(!enabled(Some("baseline")).contains(&"has_popcnt".into()));
         assert!(enabled(Some("x86-64-v3")).contains(&"has_avx2".into()));
         assert!(enabled(Some("znver4")).contains(&"has_avx512vbmi".into()));
-        assert!(!enabled(Some("some-future-cpu")).contains(&"has_sse3".into()));
+        assert!(!enabled(Some("znver5")).contains(&"has_sse3".into()));
         let arm = crate::isa::make_isa(
             "aarch64-unknown-linux-gnu",
             Some("neoverse-n1"),
@@ -326,17 +445,48 @@ mod tests {
     fn names_are_checked_against_the_target() {
         let arm = "aarch64-unknown-linux-gnu";
         assert!(check_cpu(LINUX, "znver4").is_ok());
+        assert!(
+            check_cpu(LINUX, "znver5").is_ok(),
+            "known to clang, not to Cranelift"
+        );
         assert!(check_cpu(arm, "neoverse-n1").is_ok());
         assert!(check_cpu(arm, "baseline").is_ok());
         assert!(check_cpu(arm, "x86-64-v2")
             .unwrap_err()
             .contains("x86_64 targets"));
-        assert!(check_cpu(arm, "skylake")
+        assert!(check_cpu(arm, "znver5")
             .unwrap_err()
-            .contains("x86_64 targets"));
-        for bad in ["", "Skylake", "has_avx2", "a b", "x86-64-v2;"] {
+            .contains("for x86_64 targets"));
+        let n1 = check_cpu(LINUX, "neoverse-n1").unwrap_err();
+        assert_eq!(
+            n1,
+            format!("`--cpu neoverse-n1` is for aarch64 targets, not `{LINUX}`")
+        );
+        // A typo is an error, with the name it is closest to.
+        let typo = check_cpu(LINUX, "skylkae").unwrap_err();
+        assert!(
+            typo.starts_with("unknown CPU `skylkae` for `x86_64-unknown-linux-gnu`"),
+            "{typo}"
+        );
+        assert!(typo.ends_with("did you mean `skylake`?"), "{typo}");
+        assert!(check_cpu(LINUX, "Skylake")
+            .unwrap_err()
+            .contains("`skylake`"));
+        // 32-bit CPUs, Cranelift's feature sets and a file name are not x86_64 CPUs.
+        for bad in [
+            "",
+            "i686",
+            "pentium4",
+            "sse42",
+            "has_avx2",
+            "a b",
+            "x86-64-v2;",
+            "a.vlt",
+        ] {
             assert!(
-                check_cpu(LINUX, bad).unwrap_err().contains("invalid CPU"),
+                check_cpu(LINUX, bad)
+                    .unwrap_err()
+                    .starts_with("unknown CPU"),
                 "{bad}"
             );
         }
@@ -348,7 +498,38 @@ mod tests {
             .unwrap_err()
             .contains("this machine"));
         assert!(check_cpu("", "native").is_ok());
-        assert!(is_x86_cpu("x86-64-v3") && is_x86_cpu("znver3") && !is_x86_cpu("baseline"));
-        assert!(!is_x86_cpu("sse42") && !is_x86_cpu("neoverse-n1"));
+        assert!(is_for_another_arch(arm, "x86-64-v3") && is_for_another_arch(arm, "arrowlake"));
+        assert!(
+            is_for_another_arch(LINUX, "neoverse-n1") && is_for_another_arch(LINUX, "apple-m4")
+        );
+        assert!(!is_for_another_arch(LINUX, "baseline") && !is_for_another_arch(LINUX, "znver4"));
+        assert!(!is_for_another_arch(LINUX, "skylkae"), "unknown everywhere");
+        assert!(is_for_another_arch(foreign, "native"));
+    }
+
+    #[test]
+    fn features_from_clangs_macros() {
+        let defines = "#define __SSE3__ 1\n#define __AVX2__ 1\n#define __AVX2X__ 1\n\
+                       #define __GCC_HAVE_SYNC_COMPARE_AND_SWAP_16 1\n#define __x86_64__ 1\n";
+        assert_eq!(
+            names(x86_features_from_macros(defines)),
+            ["SSE3", "CMPXCHG16B", "AVX2"]
+        );
+        assert_eq!(X86_FEATURE_MACROS.len(), X86_FEATURES.len());
+    }
+
+    #[test]
+    fn level_features_leave_cpu_names_to_the_backend() {
+        assert_eq!(level_features(LINUX, None).unwrap(), Some(X86_V2));
+        assert_eq!(
+            level_features(LINUX, Some("x86-64-v3")).unwrap(),
+            Some(X86_V3)
+        );
+        assert_eq!(level_features(LINUX, Some("alderlake")).unwrap(), None);
+        assert_eq!(
+            level_features("aarch64-apple-darwin", Some("apple-m4")).unwrap(),
+            Some(0)
+        );
+        assert!(level_features(LINUX, Some("skylkae")).is_err());
     }
 }

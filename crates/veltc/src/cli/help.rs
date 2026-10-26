@@ -45,7 +45,7 @@ const TARGET: (&str, &str) = (
 );
 const CPU: (&str, &str) = (
     "--cpu <name>",
-    "baseline | x86-64-v2 (the x86_64 default) | x86-64-v3 | x86-64-v4 | native | an LLVM CPU name (else $VELT_CPU, then build.cpu in package.vlt)",
+    "baseline | x86-64-v2 (the x86_64 default) | x86-64-v3 | x86-64-v4 | native | a CPU name such as znver4 or neoverse-n1 (else $VELT_CPU, then build.cpu in package.vlt)",
 );
 const BACKEND: (&str, &str) = (
     "--backend <name>",
@@ -195,7 +195,7 @@ pub const COMMANDS: &[CommandHelp] = &[
     CommandHelp {
         name: "dev",
         summary: "Run, then rebuild and restart on every change",
-        usage: &["dev [<file.vlt>] [--exe] [--locked] [-v] [--timings] [-- <program args>...]"],
+        usage: &["dev [<file.vlt>] [--exe [--release] [-g] [--cpu <name>] [--backend <name>]] [--locked] [-v] [--timings] [-- <program args>...]"],
         about: "Runs the program like `velt run`, then rebuilds and restarts it whenever a file \
                 it imports (or package.vlt/velt.lock.json) changes; a failed build leaves the old \
                 version running. The program runs JIT-compiled inside `velt`, and listening \
@@ -204,6 +204,7 @@ pub const COMMANDS: &[CommandHelp] = &[
             ("--exe", "link an executable for each version instead of the JIT"),
             RELEASE,
             DEBUG_INFO,
+            CPU,
             BACKEND,
             LOCKED,
             VERBOSE,

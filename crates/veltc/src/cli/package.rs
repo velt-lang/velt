@@ -61,7 +61,9 @@ pub(super) fn parse(name: &str, rest: Vec<OsString>) -> Result<Command, String> 
             ("test", "--exact") => flags.exact = true,
             ("test", "--no-run") => flags.no_run = true,
             ("test", "--json") => flags.json = true,
-            ("test", "--cpu") => flags.cpu = Some(take_value(inline.as_deref(), &mut it, "--cpu")?),
+            ("test", "--cpu") => {
+                flags.cpu = Some(super::build::take_cpu(inline.as_deref(), &mut it)?)
+            }
             _ if s.starts_with('-') && s.len() > 1 => return Err(super::unknown_option(name, &s)),
             _ => positional.push(s),
         }

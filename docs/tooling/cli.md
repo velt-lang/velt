@@ -69,7 +69,8 @@ velt run   [<file.vlt>] [--release] [-g] [--target <triple>] [--cpu <name>]
   silicon.
 - `--cpu <name>` chooses the CPU the program is built for: `baseline`, `x86-64-v2` (the default
   on x86_64: every x86_64 CPU since about 2009), `x86-64-v3`, `x86-64-v4`, `native` (this
-  machine's CPU) or an LLVM CPU name such as `znver4` or `neoverse-n1`. Without it,
+  machine's CPU) or a CPU name clang knows for the target, such as `znver4` or `neoverse-n1`
+  (an unknown one is an error that names the closest). Without it,
   `$VELT_CPU` and then the package's `build.cpu` decide; `velt run` and `velt test` without
   `--release` build for this machine's CPU. A program built for x86-64-v2 or above checks the
   CPU when it starts and names what is missing instead of crashing. Levels, defaults per

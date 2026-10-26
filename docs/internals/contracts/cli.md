@@ -5,7 +5,7 @@ velt build [<file.vlt>] [-o <out>] [--release] [-g] [--backend cranelift|llvm] [
 velt run   [<file.vlt>] [--release] [-g] [--target <triple>] [--cpu <name>] [--backend cranelift|llvm] [--locked] [-- <program args>...]
 velt check [<file.vlt>] [--json] [--locked] [-v]
 velt check --ts-compat [<file|dir>...] [--json] [--locked] [-v]
-velt dev   [<file.vlt>] [--exe] [--locked] [-v] [--timings] [-- <program args>...]
+velt dev   [<file.vlt>] [--exe [--release] [-g] [--cpu <name>] [--backend <name>]] [--locked] [-v] [--timings] [-- <program args>...]
 velt test  [<file|dir>] [--filter <text> [--exact]] [--release] [--locked] [--watch]
 velt test  [<file|dir>] [--filter <text> [--exact]] [--release] [--locked] --no-run [--json]
 velt new   <name> [--template app|cli|api|websocket|lib] [--lib]
@@ -74,14 +74,18 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
 - **CPU** (additive): `--cpu <name>` (`velt build`, `run`, `test`, `dev --exe`), else
   `$VELT_CPU`, else the root package's `build.cpu`, reaches both backends as
   `CodegenOptions::cpu` (`commands::cpu::resolve_cpu`). Names: `baseline` (alias `x86-64`),
-  `x86-64-v2|v3|v4`, `native`, or an LLVM CPU name, checked by `velt_codegen_cl::check_cpu`
-  (an x86 CPU for another architecture, or `native` for one other than the host's, is an
-  error from `--cpu` and does not apply from the others; WebAssembly takes none). Unset, x86_64
+  `x86-64-v2|v3|v4`, `native`, or a CPU name of the target's architecture (clang's names,
+  `velt_codegen_cl/src/cpu_names.rs`), checked by `velt_codegen_cl::check_cpu` (a CPU of
+  another architecture, or `native` for one other than the host's, is an error from `--cpu`
+  and does not apply from the others; a name no architecture has is an error from all three;
+  WebAssembly takes none). `--cpu` without `--exe` is an error for `velt dev`. Unset, x86_64
   code is for `x86-64-v2` (`velt_codegen_cl::DEFAULT_X86_CPU`), other targets for their
   default; `velt run`/`velt test`/`velt dev --exe` without `--release` use `native`. LLVM gets
   `-march=<name>` (x86_64) or `-mcpu=<name>`; Cranelift the level's ISA flags, its preset of
   that name, or the baseline. x86_64 code above the baseline calls `velt_rt_check_cpu` first
-  in `velt_main` (rt_abi.md "CPU check"; added to the VIR by the driver). `velt dev`'s JIT
+  in `velt_main` (rt_abi.md "CPU check"; added to the VIR by the driver, `--emit llvm`
+  included) with the features that backend's code uses: for a CPU name, Cranelift's preset or
+  what clang defines for `-march=<name>` (`velt_codegen_llvm::required_features`). `velt dev`'s JIT
   always uses the host's features.
 - **WebAssembly** (additive): `--target wasm32-wasip1` (alias `wasm32-wasi`)
   and `--target wasm32-unknown-unknown` build `./target/velt/<stem>.wasm` (object `<stem>.o`) with

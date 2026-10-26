@@ -10,8 +10,8 @@ pub const CPU_VAR: &str = "VELT_CPU";
 /// `build.cpu` (`config`), checked against the target; `None`: the target's default.
 ///
 /// WebAssembly has no CPU choice: `--cpu` is an error there, the others do not apply. Likewise a
-/// `$VELT_CPU` or `build.cpu` meant for another architecture (`x86-64-v3` in a build for arm64)
-/// does not apply, so one setting serves a package built for several targets.
+/// `$VELT_CPU` or `build.cpu` meant for another architecture (`x86-64-v3` in a build for arm64,
+/// `neoverse-n1` in one for x86_64) does not apply, so one setting serves a package built for several targets.
 pub fn resolve_cpu(
     cli: Option<&str>,
     env: Option<&str>,
@@ -39,7 +39,7 @@ pub fn resolve_cpu(
         match velt_codegen_cl::check_cpu(target, cpu) {
             Ok(()) => return Ok(Some(cpu.to_string())),
             // Meant for another architecture: the target's default.
-            Err(_) if cpu == "native" || velt_codegen_cl::is_x86_cpu(cpu) => return Ok(None),
+            Err(_) if velt_codegen_cl::is_for_another_arch(target, cpu) => return Ok(None),
             Err(e) => return Err(format!("{source}: {e}")),
         }
     }
@@ -100,8 +100,28 @@ mod tests {
         assert_eq!(resolve_cpu(None, None, Some("znver4"), ARM).unwrap(), None);
         let flag = resolve_cpu(Some("x86-64-v3"), None, None, ARM).unwrap_err();
         assert!(flag.contains("x86_64 targets"), "{flag}");
-        let bad = resolve_cpu(None, Some("Skylake!"), None, X86).unwrap_err();
-        assert!(bad.starts_with("VELT_CPU: invalid CPU"), "{bad}");
+        assert_eq!(resolve_cpu(None, Some("znver5"), None, ARM).unwrap(), None);
+        // An arm64 name leaves x86_64 builds at their default (x86-64-v2, checked).
+        assert_eq!(
+            resolve_cpu(None, Some("neoverse-n1"), None, X86).unwrap(),
+            None
+        );
+        assert_eq!(
+            resolve_cpu(None, None, Some("apple-m4"), X86).unwrap(),
+            None
+        );
+        let n1 = resolve_cpu(Some("neoverse-n1"), None, None, X86).unwrap_err();
+        assert!(n1.contains("is for aarch64 targets"), "{n1}");
+        // A name no architecture has is an error wherever it comes from.
+        let bad = resolve_cpu(None, Some("skylkae"), None, X86).unwrap_err();
+        assert!(bad.starts_with("VELT_CPU: unknown CPU `skylkae`"), "{bad}");
+        assert!(bad.ends_with("did you mean `skylake`?"), "{bad}");
+        let bad = resolve_cpu(None, None, Some("skylkae"), ARM).unwrap_err();
+        assert!(
+            bad.starts_with("the package's `build.cpu`: unknown CPU"),
+            "{bad}"
+        );
+        assert!(resolve_cpu(Some("skylkae"), None, None, X86).is_err());
         let wasm = "wasm32-wasip1";
         assert_eq!(
             resolve_cpu(None, Some("x86-64-v3"), None, wasm).unwrap(),
