@@ -143,7 +143,11 @@ impl FnCx<'_, '_> {
 
     /// Can the value behind place `e` be modified? Reports an error if not.
     pub fn require_mutable(&mut self, e: &hir::Expr, what: &str) -> bool {
-        self.readonly_element_write(e);
+        // Only replacing the element is TS2542; a write into it (`j[0].length = 1`, a setter, a
+        // closure changing it) is checked by the root and the element's own type.
+        if what == ELEMENT_WRITE {
+            self.readonly_element_write(e);
+        }
         self.require_root_mutable(e, what)
     }
 
@@ -337,3 +341,6 @@ pub(crate) fn source_root(cx: &crate::ctx::Ctx, e: &hir::Expr) -> Option<LocalId
         _ => place_root(e),
     }
 }
+
+/// What [`FnCx::require_mutable`] is told for an assignment that replaces an element.
+pub(crate) const ELEMENT_WRITE: &str = "assign to an element of";

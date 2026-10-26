@@ -133,7 +133,7 @@ impl FnCx<'_, '_> {
                 if self.cx.ty.is_bottom(place.ty) || self.temp_tuple_write(&place, target.span) {
                     return None;
                 }
-                self.require_mutable(&place, "assign to an element of");
+                self.require_mutable(&place, crate::body::places::ELEMENT_WRITE);
                 Some(place)
             }
             ast::ExprKind::This => {

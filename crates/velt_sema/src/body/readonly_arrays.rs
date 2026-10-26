@@ -22,6 +22,9 @@ use crate::hir::{self, ExprKind as H, LitValue, LocalId, TyId, TyKind};
 pub(crate) const READONLY: u8 = 1;
 /// [`super::Frame::local_marks`]: a local declared with a number-keyed record type.
 pub(crate) const NUMBER_RECORD: u8 = 2;
+/// [`super::Frame::local_marks`]: a local of an array type whose elements are read-only
+/// (`readonly (readonly T[])[]`, `ReadonlySet<T>[]`).
+pub(crate) const READONLY_ELEMENTS: u8 = 4;
 
 impl FnCx<'_, '_> {
     /// Marks local `l` with `mark` ([`super::Frame::local_marks`]).
@@ -55,6 +58,9 @@ impl FnCx<'_, '_> {
         if self.is_readonly_written(t, 0) {
             self.mark_local(l, READONLY);
         }
+        if array_element(t).is_some_and(|e| self.is_readonly_written(e, 0)) {
+            self.mark_local(l, READONLY_ELEMENTS);
+        }
         self.note_number_record(l, t, init);
     }
 
@@ -64,12 +70,14 @@ impl FnCx<'_, '_> {
         match &t.kind {
             ast::TypeExprKind::Named { path, .. } => {
                 let name = &path[path.len() - 1].name;
-                name.starts_with('R') || {
+                name.starts_with('R') || name == "Array" || {
                     let (ro, num) = self.cx.marked_aliases();
                     !(ro.is_empty() && num.is_empty())
                 }
             }
-            ast::TypeExprKind::Union(_) | ast::TypeExprKind::IndexSig { .. } => true,
+            ast::TypeExprKind::Union(_)
+            | ast::TypeExprKind::IndexSig { .. }
+            | ast::TypeExprKind::Array(_) => true,
             _ => false,
         }
     }
@@ -81,7 +89,14 @@ impl FnCx<'_, '_> {
         // TypeScript code gets past `readonly`) it does not.
         let marked = match &strip_parens(init).kind {
             ast::ExprKind::Cast { ty, .. } => self.is_readonly_written(ty, 0),
-            _ => self.readonly_local(h).is_some(),
+            // `const e = k[0]` with `k: readonly (readonly T[])[]`.
+            ast::ExprKind::Index { object, .. } => match &strip_parens(object).kind {
+                ast::ExprKind::Ident(k) if !self.f.local_marks.is_empty() => self
+                    .lookup_local(&k.name, k.span)
+                    .is_some_and(|k| self.local_marked(k, READONLY_ELEMENTS)),
+                _ => false,
+            },
+            _ => self.readonly_local(h).is_some() || self.is_readonly_element(h),
         };
         if marked {
             self.mark_local(l, READONLY);
@@ -174,7 +189,7 @@ impl FnCx<'_, '_> {
         let marked = match &strip_parens(object).kind {
             // `(xs as string[] | undefined)?.push(x)`: the cast decides, as for a `const`.
             ast::ExprKind::Cast { ty, .. } => self.is_readonly_written(ty, 0),
-            _ => self.readonly_local(h).is_some(),
+            _ => self.readonly_local(h).is_some() || self.is_readonly_element(h),
         };
         if marked {
             self.mark_local(l, READONLY);
@@ -259,6 +274,36 @@ impl FnCx<'_, '_> {
         self.readonly_type_shown(h.ty)
     }
 
+    /// `h` as TypeScript shows its type when it is an element of a local whose elements are
+    /// read-only (`k[0]` with `k: readonly (readonly T[])[]`).
+    fn readonly_element_shown(&mut self, h: &hir::Expr) -> Option<String> {
+        if !self.is_readonly_element(h) {
+            return None;
+        }
+        self.readonly_type_shown(h.ty)
+    }
+
+    /// Does `h` read a local whose elements are read-only (through casts and narrowing)?
+    fn elements_local(&self, h: &hir::Expr) -> bool {
+        match &h.kind {
+            H::Local(l, _) => self.local_marked(*l, READONLY_ELEMENTS),
+            H::Cast(x) | H::UnwrapSome(x, _) | H::Upcast(x) => self.elements_local(x),
+            _ => false,
+        }
+    }
+
+    /// Is `h` an element of a local whose elements are read-only?
+    fn is_readonly_element(&self, h: &hir::Expr) -> bool {
+        if self.f.local_marks.is_empty() {
+            return false;
+        }
+        match &h.kind {
+            H::Index { base, .. } => self.elements_local(base),
+            H::Cast(x) | H::UnwrapSome(x, _) | H::Upcast(x) => self.is_readonly_element(x),
+            _ => false,
+        }
+    }
+
     /// The read-only type over `t` (`T[]`, `Set<T>`, `Map<K, V>`) as TypeScript shows it.
     fn readonly_type_shown(&mut self, t: TyId) -> Option<String> {
         let TyKind::Array(elem) = *self.cx.ty.kind(t) else {
@@ -280,7 +325,10 @@ impl FnCx<'_, '_> {
         let H::Index { base, .. } = &e.kind else {
             return;
         };
-        if let Some(shown) = self.readonly_shown(base) {
+        if let Some(shown) = self
+            .readonly_shown(base)
+            .or_else(|| self.readonly_element_shown(base))
+        {
             self.cx.error(Diagnostic::error(
                 format!(
                     "index signature in type '{shown}' only permits reading (TypeScript's TS2542)"
@@ -314,7 +362,9 @@ impl FnCx<'_, '_> {
         }
         let shown = match forced {
             true => self.readonly_type_shown(recv.ty),
-            false => self.readonly_shown(recv),
+            false => self
+                .readonly_shown(recv)
+                .or_else(|| self.readonly_element_shown(recv)),
         };
         if let Some(shown) = shown {
             if !array {
@@ -526,5 +576,33 @@ fn strip_parens(e: &ast::Expr) -> &ast::Expr {
     match &e.kind {
         ast::ExprKind::Paren(x) => strip_parens(x),
         _ => e,
+    }
+}
+
+/// The element type of an array type as written (`T[]`, `Array<T>`, `readonly T[]`,
+/// `ReadonlyArray<T>`), possibly `| null` / `| undefined`.
+fn array_element(t: &ast::TypeExpr) -> Option<&ast::TypeExpr> {
+    match &t.kind {
+        ast::TypeExprKind::Array(e) => Some(e),
+        ast::TypeExprKind::Named { path, args }
+            if path.len() == 1
+                && matches!(path[0].name.as_str(), "Array" | "ReadonlyArray")
+                && args.len() == 1 =>
+        {
+            Some(&args[0])
+        }
+        ast::TypeExprKind::Union(ms) => {
+            let mut rest = ms.iter().filter(|m| {
+                !matches!(
+                    m.kind,
+                    ast::TypeExprKind::Null | ast::TypeExprKind::Undefined
+                )
+            });
+            match (rest.next(), rest.next()) {
+                (Some(m), None) => array_element(m),
+                _ => None,
+            }
+        }
+        _ => None,
     }
 }

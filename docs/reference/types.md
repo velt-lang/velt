@@ -2087,8 +2087,13 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   with `?.`, or copied into a variable without a type (`const t = s`); the same holds for
   `readonly T[]`. A cast to a type that is not read-only (`xs as string[]`, `s as Set<string>`)
   may change the value, as a variable or inline, and so may a collection narrowed by `s instanceof
-  Set` (or `Map`) where the test holds. Not reported yet (TypeScript reports them): such a method called on a field,
-  an element, a destructured or returned value or a `for...of` variable of a read-only type, a
+  Set` (or `Map`) where the test holds. An element of an array whose elements are read-only
+  (`k: readonly (readonly T[])[]`, `Array<ReadonlySet<T>>`) is read-only too: `k[0].push(x)` is
+  TS2339 and `k[0][0] = x` TS2542, while writing into an element that may change (`j[0].push(x)`,
+  `j[0].length = 1` with `j: readonly T[][]`) is allowed, as in TypeScript; only replacing the
+  element of a read-only array (`j[0] = []`) is TS2542. Not reported yet (TypeScript reports
+  them): such a method called on a field, an element copied into a variable (`const e = k[0]`),
+  a destructured or returned value or a `for...of` variable of a read-only type, a
   method read as a value (`const add = s.add`), a read-only type given to an alias whose body is
   its parameter (`type Box<T> = T`, then `Box<ReadonlySet<string>>`), and passing or assigning a read-only
   collection where a `Set` or `Map` is expected (TS2345, TS2739).
