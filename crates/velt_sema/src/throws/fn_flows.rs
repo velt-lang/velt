@@ -209,7 +209,7 @@ impl crate::body::FnCx<'_, '_> {
 
     /// The site of parameter `p` of a function being called.
     pub(crate) fn param_site(&self, p: &crate::defs::ParamSig) -> Option<Span> {
-        if self.cx.fn_sites.by_file.is_empty() {
+        if !self.cx.fn_sites.by_file.contains_key(&p.span.file) {
             return None;
         }
         self.cx.decl_site(p.span, p.ty)

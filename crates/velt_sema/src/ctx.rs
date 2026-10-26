@@ -120,6 +120,8 @@ pub(crate) struct Ctx<'m> {
     pub laid_out: FxHashSet<DefId>,
     /// Canonical form of each type canonicalized so far (`crate::anon`, `Ctx::canon`).
     pub canon_memo: FxHashMap<TyId, TyId>,
+    /// The canonical error type of each error type canonicalized so far (`Ctx::canon_error`).
+    pub canon_errors: FxHashMap<TyId, Option<TyId>>,
     /// Object types `crate::replaced_holders` accepted assignments for because they are shared:
     /// lowering counts them from its first pass (`hir::Program::counted_objects`).
     pub counted_objects: Vec<TyId>,
@@ -423,6 +425,7 @@ impl<'m> Ctx<'m> {
             shaping: vec![],
             laid_out: FxHashSet::default(),
             canon_memo: FxHashMap::default(),
+            canon_errors: FxHashMap::default(),
             counted_objects: Vec::new(),
             replaced_unions: FxHashSet::default(),
             module_slots: Vec::new(),
