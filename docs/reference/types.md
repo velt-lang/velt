@@ -794,7 +794,7 @@ console.log(update(v, { deletedAt: null })); // { name: 'bo', deletedAt: null }
   `T | null` gives `T | null | undefined`. Parentheses end a chain: `(x?.a).b` needs `x?.a` to
   be neither `null` nor `undefined`.
 - Narrowing applies to locals and to field paths of locals (`this.x`, `node.left`), like
-  TypeScript; assigning a non-null value narrows too (also in the declaration: `let x: string
+  TypeScript (module variables: see below); assigning a non-null value narrows too (also in the declaration: `let x: string
   | null = "a"`). After an `if` or a `switch`, what holds is what each way out ends with: the
   facts of the condition a branch started from unless it reassigned the variable, and what its
   own statements established (`if (x == null) { x = d; }` narrows `x` after it; `if (x ==
@@ -836,6 +836,22 @@ console.log(update(v, { deletedAt: null })); // { name: 'bo', deletedAt: null }
     console.log(c.send("bye"));   // sent bye
   }
   ```
+- A module-level `let` (or a module `const` kept as [module state](variables.md#module-state)),
+  also an imported one, is narrowed by a null check in the function that makes it, as in
+  TypeScript (`if (handler) handler();`, `if (!ctx) return; ctx.onMounted(fn)`,
+  `if (app?.provides.has(k)) return app.provides.get(k)`), and so are its field paths
+  (`if (state.next) state.next.name`, `typeof state.v === "string"`). Any call may run code
+  that assigns it (a function of its module, a callback, a getter, another task across an
+  `await`, a generator's caller across a `yield`), so each narrowed read checks the value
+  again, like a variable a closure assigns, and stops with a `TypeError` if it became `null`
+  (`` `ctx` was checked, but it was set to null before this read ``). The operand of a test,
+  `?.` and `??` read the variable or field as it is, so `if (ctx) { reset(); ctx?.name }` gives
+  `undefined`, as in JavaScript. An assignment in the function drops the narrowing (and
+  narrows to what it assigned), and so does a loop that assigns the variable. Closures don't
+  see the narrowing of the function they are made in (TypeScript keeps it in one made after
+  the variable's last assignment). `typeof`, `instanceof` and union-member tests do not narrow
+  a module variable itself, and `instanceof` does not narrow its field paths: copy the value
+  into a `const` and test that.
 - `const x = node.left` / `const row = grid[i]` refers to the same object as the field or
   element (objects are references, [Memory model](memory.md#values-and-references)); when the
   rest of the block replaces `node.left`, `x` keeps referring to the old object, as in JS.

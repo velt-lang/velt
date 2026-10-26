@@ -53,6 +53,7 @@ mod for_iter;
 mod for_map;
 mod gated;
 mod generators;
+mod global_narrow;
 mod index_keys;
 mod late_consts;
 pub(crate) mod literal_hosts;
@@ -338,12 +339,15 @@ pub(crate) struct Frame {
     pub stmt_depth: u32,
     /// Field paths that conditions narrow (`field_narrow`).
     pub field_tokens: Vec<field_narrow::FieldToken>,
+    /// Module variables that conditions narrow (`global_narrow`).
+    pub global_tokens: Vec<global_narrow::GlobalToken>,
     /// `const`s bound by reference (`const_borrow`).
     pub const_refs: rustc_hash::FxHashSet<LocalId>,
     /// Tokens of field paths tested by `instanceof` that are not narrowed (a field on the path
     /// is not `readonly`), and the reads of them since (`field_narrow`, for error notes).
     pub mutable_tests: Vec<LocalId>,
-    pub unnarrowed_reads: Vec<Span>,
+    /// With whether the field is one of a module variable's (`global_narrow`).
+    pub unnarrowed_reads: Vec<(Span, bool)>,
     /// Names of the variables that closures created in this function's body assign, with
     /// where (`closure_assigned`): they are not narrowed.
     pub closure_assigned: FxHashMap<String, Span>,
@@ -438,6 +442,7 @@ impl Frame {
             before_super: false,
             stmt_depth: 0,
             field_tokens: vec![],
+            global_tokens: vec![],
             const_refs: Default::default(),
             mutable_tests: vec![],
             unnarrowed_reads: vec![],
@@ -567,6 +572,9 @@ pub(crate) struct FnCx<'a, 'm> {
     /// A variable read that a null or truthiness test makes (`if (x)`, `x == null`): it reads
     /// the variable as it is, without the check `checked_narrowed_read` adds.
     pub raw_read: Option<Span>,
+    /// The name being read is the receiver of a member access or call, or a callee: a
+    /// narrowed module variable reads as its payload there (`global_narrow`).
+    pub narrow_use: bool,
     /// A field read that is the operand of a type test (`typeof o.f`, `o.f instanceof C`,
     /// `o.f === lit`): it reads the field as narrowed, without converting it to the union of the
     /// members left (`field_narrow`).
@@ -639,6 +647,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             optional_slots: vec![],
             refused_reads: vec![],
             raw_read: None,
+            narrow_use: false,
             field_test: None,
             field_retag: false,
             view_receiver: false,

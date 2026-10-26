@@ -210,7 +210,7 @@ impl FnCx<'_, '_> {
         // A union local narrowed to one member is read as the union here, so that a view it may
         // hold is read through its getters (`union_view`).
         self.view_receiver = want != Want::BorrowMut && is_name(object);
-        let obj = self.expr(object, None, Want::Borrow);
+        let obj = self.receiver_expr(object);
         self.view_receiver = false;
         if want != Want::BorrowMut && self.is_method_value(obj.ty, &prop.name) {
             if self.stored_method_read(object, prop, obj.ty, span) {

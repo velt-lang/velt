@@ -239,6 +239,10 @@ impl FnCx<'_, '_> {
                 gone.push(l);
                 gone.extend(self.field_tokens_of(l));
             }
+            for t in self.global_tokens_named(name) {
+                gone.push(t);
+                gone.extend(self.field_tokens_of(t));
+            }
         }
         facts.retain(|f| {
             let l = match f {
@@ -600,6 +604,9 @@ impl FnCx<'_, '_> {
             if let Some(l) = found {
                 self.unnarrow(l);
             }
+            for t in self.global_tokens_named(name) {
+                self.unnarrow(t);
+            }
         }
     }
 
@@ -642,8 +649,12 @@ impl FnCx<'_, '_> {
         ty.is_some_and(|t| self.is_three_state(t))
     }
 
+    /// `x` naming a `T | null` local, or the token of such a module variable
+    /// (`global_narrow`).
     fn nullable_local(&mut self, e: &ast::Expr) -> Option<LocalId> {
-        let l = self.named_local(e)?;
+        let Some(l) = self.named_local(e) else {
+            return self.nullable_global(e);
+        };
         self.cx.ty.opt_payload(self.local_ty(l)).map(|_| l)
     }
 

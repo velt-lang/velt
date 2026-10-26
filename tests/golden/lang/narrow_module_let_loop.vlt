@@ -1,0 +1,39 @@
+// A loop that assigns a module-level `let` drops its narrowing inside the loop, where the
+// next iteration reads what the last one assigned (tsc: TS18047 "'cur' is possibly 'null'").
+// `instanceof` on a field path of a module variable does not narrow it: any call before the
+// read may replace the object (TypeScript keeps the narrowing).
+class Ctx {
+  name = "c";
+}
+class Base {
+  readonly k: number = 1;
+}
+class Sub extends Base {
+  readonly extra: string = "sub";
+}
+class Holder {
+  readonly left: Base;
+  constructor(b: Base) {
+    this.left = b;
+  }
+}
+let cur: Ctx | null = new Ctx();
+let h: Holder = new Holder(new Sub());
+function swap(): void {
+  h = new Holder(new Base());
+}
+function f(): void {
+  let i = 0;
+  if (cur) {
+    while (i < 2) {
+      console.log(cur.name);
+      cur = null;
+      i++;
+    }
+  }
+  if (h.left instanceof Sub) {
+    swap();
+    console.log(h.left.extra);
+  }
+}
+f();
