@@ -5,9 +5,15 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::ctx::Ctx;
 
+/// The prelude modules that are Velt's own API, JS having no counterpart: the ordering protocol
+/// (`compareTo`, classes.md) and the integer bit counts. Their integer results stay integers in
+/// user code (`x.trailingZeros()` indexes an array as it is). A Velt-only prelude method goes in
+/// one of them, or in a new module listed here.
+const VELT_PRELUDE: &[&str] = &["std/prelude/compare", "std/prelude/bits"];
+
 impl<'m> Ctx<'m> {
     /// Is the function `f` (fully qualified name, module) part of the JS API the standard
-    /// library provides? Everything in a prelude module is. In a module the prelude's globals
+    /// library provides? Everything in a prelude module is, but for `VELT_PRELUDE`. In a module the prelude's globals
     /// re-export from (`velt:fetch` and its submodules such as `std/fetch/response`, `velt:url`,
     /// `velt:task`), the methods are (of the re-exported classes and the classes they use), and
     /// the top-level functions the globals re-export (`fetch`), but not its other functions:
@@ -51,7 +57,9 @@ impl<'m> Ctx<'m> {
                     continue;
                 }
                 if m.path.starts_with("std/prelude/") {
-                    out.insert(i, None);
+                    if !VELT_PRELUDE.contains(&m.path.trim_end_matches(".vlt")) {
+                        out.insert(i, None);
+                    }
                     continue;
                 }
                 let names: FxHashSet<String> = reexported

@@ -186,3 +186,88 @@ fn gated_callee_stays_a_call_outside_its_target() {
     assert_eq!(calls_to(gated, arm), 0, "into the same target");
     assert_eq!(calls_to(gated, plain), 0, "ordinary into gated");
 }
+
+/// Exported `main` running a loop whose body calls each of `callees` twice.
+fn looping_caller(callees: &[FuncId]) -> Function {
+    let mut fb = FuncBuilder::export("main", &[], Ty::I64);
+    let acc = fb.local(Ty::I64);
+    let more = fb.local(Ty::Bool);
+    let entry = fb.block();
+    let head = fb.block();
+    let body = fb.block();
+    let exit = fb.block();
+    fb.assign(entry, acc, Rvalue::Use(int(0, Ty::I64)));
+    fb.goto(entry, head);
+    fb.assign(
+        head,
+        more,
+        bin(BinOp::Lt, copy_local(acc), int(100, Ty::I64)),
+    );
+    fb.branch(head, more, body, exit);
+    let mut b = body;
+    for &c in callees {
+        for _ in 0..2 {
+            b = fb.call(b, Callee::Func(c), vec![copy_local(acc)], Some(acc));
+        }
+    }
+    fb.goto(b, head);
+    fb.ret(exit, copy_local(acc));
+    fb.finish()
+}
+
+#[test]
+fn callees_in_a_loop_are_inlined_up_to_the_loop_limit() {
+    // Called twice, so neither small nor called once: in a loop, they are inlined up to
+    // `LOOP_COST`, outside one they stay calls.
+    let mut pb = ProgramBuilder::new();
+    let hot = pb.add(adder("hot", 500, Linkage::Internal));
+    let huge = pb.add(adder("huge", LOOP_COST as usize + 10, Linkage::Internal));
+    let cold = pb.add(adder("cold", 500, Linkage::Internal));
+    let looping = pb.add(looping_caller(&[hot, huge]));
+    pb.add(caller_named("cold_caller", &[cold], 2, Linkage::Export));
+    let mut p = pb.finish();
+    inline(&mut p);
+    let main = &p.funcs[looping.0 as usize];
+    assert_eq!(calls_to(main, hot), 0, "in a loop");
+    assert_eq!(calls_to(main, huge), 2, "past the loop limit");
+    assert_eq!(calls_to(&p.funcs[4], cold), 2, "outside a loop");
+}
+
+#[test]
+fn a_body_inlined_into_a_loop_has_its_calls_inlined_too() {
+    // `outer` calls `leaf` outside any loop of its own, and `leaf` has another caller, so
+    // `outer` keeps the call; inlined into `main`'s loop, the call is in the loop.
+    let mut pb = ProgramBuilder::new();
+    let leaf = pb.add(adder("leaf", 300, Linkage::Internal));
+    let outer = pb.add(caller_named("outer", &[leaf], 1, Linkage::Internal));
+    pb.add(caller_named("other", &[leaf], 1, Linkage::Export));
+    let looping = pb.add(looping_caller(&[outer]));
+    let mut p = pb.finish();
+    inline(&mut p);
+    let main = &p.funcs[looping.0 as usize];
+    assert_eq!(
+        calls_to(&p.funcs[outer.0 as usize], leaf),
+        1,
+        "outer keeps its call"
+    );
+    assert_eq!(calls_to(main, outer), 0);
+    assert_eq!(
+        calls_to(main, leaf),
+        0,
+        "the loop's copies of it are inlined"
+    );
+}
+
+/// `caller` with another name and linkage, taking one `i64`.
+fn caller_named(name: &str, callees: &[FuncId], times: usize, linkage: Linkage) -> Function {
+    let mut fb = FuncBuilder::new(name, &[Ty::I64], Ty::I64, linkage);
+    let acc = fb.param(0);
+    let mut b = fb.block();
+    for &c in callees {
+        for _ in 0..times {
+            b = fb.call(b, Callee::Func(c), vec![copy_local(acc)], Some(acc));
+        }
+    }
+    fb.ret(b, copy_local(acc));
+    fb.finish()
+}

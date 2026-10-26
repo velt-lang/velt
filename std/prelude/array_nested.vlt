@@ -4,6 +4,15 @@
 // than `extend<T> Array<T>` (array.vlt), so their `join` wins.
 
 extend<T> Array<T[]> {
+  /**
+   * Exchanges `this[a][i]` and `this[b][j]` (every index must be in range), also between two
+   * inner arrays, where `[x, y] = [y, x]` would count and drop the elements it copies: their
+   * bits change places, nothing is copied or dropped. For data kept in chunks (`T[][]`).
+   */
+  swapIn(a: usize, i: usize, b: usize, j: usize) {
+    __intrinsic_array_swap_nested(this, a, i, b, j);
+  }
+
   /** The inner arrays' elements, one level deep (JS `flat()`; deeper levels are not supported). */
   flat(): T[] {
     let total: usize = 0;

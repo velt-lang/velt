@@ -1,0 +1,43 @@
+// A `compareTo` call the program writes orders NaN last on every type, generic code included:
+// `keys[i].compareTo(k) < 0` was lowered as the float `<` of an ordering operator on a type
+// parameter, so NaN compared unordered and a binary search put it first. `a < b` on a float
+// type parameter still compares as JS's `<` does (NaN unordered).
+function countBelow<K extends Comparable<K>>(keys: K[], k: K): usize {
+  let c: usize = 0;
+  for (let i: usize = 0; i < keys.length; i++) {
+    if (keys[i].compareTo(k) < 0) {
+      c++;
+    }
+  }
+  return c;
+}
+
+function lowerBound<K extends Comparable<K>>(keys: K[], k: K): usize {
+  let lo: usize = 0;
+  let hi: usize = keys.length;
+  while (lo < hi) {
+    const mid = (lo + hi) / 2;
+    if (keys[mid].compareTo(k) < 0) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  return lo;
+}
+
+function lt<T extends Comparable<T>>(a: T, b: T): bool {
+  return a < b;
+}
+
+function geWritten<T extends Comparable<T>>(a: T, b: T): bool {
+  return a.compareTo(b) >= 0;
+}
+
+function main() {
+  const xs: f64[] = [1, 2, 3];
+  console.log(countBelow(xs, NaN), lowerBound(xs, NaN), lowerBound(xs, 2.5));
+  console.log(lt(1.0, NaN), lt(NaN, 1.0), geWritten(NaN, 1.0), geWritten(1.0, NaN));
+  const fs: f32[] = [0.5, 1.5];
+  console.log(countBelow(fs, NaN as f32), lowerBound(fs, 1.0 as f32));
+}

@@ -56,6 +56,12 @@ and the test tiers, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
      above, so the fields they turned into locals can become integers too, and once before the
      inlining rounds, while an array is still one value whose length (below 2^53) bounds the
      loops over it. A parameter that every call sets to a constant takes that constant's facts.
+     A `number[]` that never leaves its function (its data pointer, after `sroa`, is only
+     offset, compared, grown and freed) and whose stores only ever write whole numbers within
+     ±2^53, never `-0`, keeps its elements as `i64` (#1599): loads and stores convert exactly,
+     and the narrowed values use the integers directly. The element facts are a fixpoint over
+     the stores, so a permutation shuffled in place qualifies; a value that grows from the
+     elements themselves (`xs[i] = xs[i - 1] + 1`) has no provable bound and stays a double.
    - `dead_fills`, for the objects that stay on the heap, drops the zero fill of `new` when the
      code right after the allocation writes every field (padding aside) before anything can
      read the object: before a branch, and before the pointer is passed, stored or compared.

@@ -38,13 +38,13 @@ impl FnCx<'_, '_> {
 
     /// Is function `d` part of the JavaScript API the standard library provides (the prelude's
     /// globals: `Array`, `String`, `Map`, `Date`, `Math`, `fetch`, `URL`, …), called from user
-    /// code? Its integers are numbers there. Velt's own modules (`velt:sqlite`, `velt:hash`, …)
-    /// its ordering protocol (`compareTo`) and the SIMD types keep their declared integer types.
+    /// code? Its integers are numbers there. Velt's own modules (`velt:sqlite`, `velt:hash`, …),
+    /// the prelude modules JS has no counterpart of (`js_api::VELT_PRELUDE`: the ordering
+    /// protocol, bit counts) and the SIMD types keep their declared integer types.
     pub(crate) fn is_js_api(&self, d: DefId) -> bool {
         let f = self.cx.fn_info(d);
         !self.cx.scopes[self.module].is_std
             && self.cx.is_js_api_fn(f.module, &f.name)
-            && f.name.rsplit(['.', ':']).next() != Some("compareTo")
             && !is_simd_method(&f.name)
     }
 
@@ -72,13 +72,101 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// `h` as user code sees it: an integer from the standard library is a `number`.
+    /// `h` as user code sees it: an integer from the standard library is a `number` (where an
+    /// integer type that holds it is expected, `std_int_coerce` and `std_int_operands` take the
+    /// integer back out).
     pub(crate) fn std_number(&mut self, h: hir::Expr) -> hir::Expr {
         if !self.is_std_api_value(&h) {
             return h;
         }
         let (f64_, span) = (self.cx.ty.f64, h.span);
         self.mk(H::Cast(Box::new(h)), f64_, span)
+    }
+
+    /// Does integer type `target` hold every value a standard library integer of type `src`
+    /// hands to user code? Those are numbers, so exact below 2^53: a length or a size (`usize`)
+    /// fits `usize`, `u64`, `i64` and `isize`, an `i64` result (`indexOf`) the signed 64-bit
+    /// types. Such a number converts implicitly, as the integer itself, where it meets one of
+    /// those types: at a conversion site (`const n: usize = xs.length`, `f(xs.length - 1)` with
+    /// an `f(i: usize)`, `std_int_coerce`) and next to one (`depth + xs.length` with
+    /// `depth: usize`, `std_int_operands`). Until then it is a number, as in TypeScript.
+    pub(crate) fn std_int_fits(&self, src: TyId, target: TyId) -> bool {
+        let (Some(s), Some(t)) = (self.cx.ty.int_ty(src), self.cx.ty.int_ty(target)) else {
+            return false;
+        };
+        let value_bits = |signed: bool, bits: u32| if signed { bits - 1 } else { bits };
+        let src_bits = value_bits(s.is_signed(), s.bits()).min(53);
+        (t.is_signed() || !s.is_signed()) && value_bits(t.is_signed(), t.bits()) >= src_bits
+    }
+
+    /// `h`, a number computed from standard library integers, as integer arithmetic of type `t`
+    /// when every value it can have fits: a standard library integer made a number
+    /// (`std_number`) that fits `t` (`std_int_fits`), or `+`, `-` or `*` of such integers and
+    /// whole literals, with at least one such integer (`xs.length - 1`). The same operations on
+    /// the integers themselves, with no round trip through `f64`; `Err` gives `h` back.
+    pub(crate) fn std_int_as(&mut self, h: hir::Expr, t: TyId) -> Result<hir::Expr, hir::Expr> {
+        match self.std_int_tree(&h, t) {
+            Some(true) => Ok(self.std_int_rebuilt(h, t)),
+            _ => Err(h),
+        }
+    }
+
+    // Whether `h` is such a tree (`None`: it is not), and whether it holds a standard library
+    // integer (a tree of literals alone is a number as written).
+    fn std_int_tree(&self, h: &hir::Expr, t: TyId) -> Option<bool> {
+        match &h.kind {
+            H::Cast(x) if self.is_std_api_value(x) && self.std_int_fits(x.ty, t) => Some(true),
+            H::Lit(hir::Lit::Float(v)) if v.fract() == 0.0 && *v >= 0.0 && *v < 9.0e15 => {
+                Some(false)
+            }
+            H::Lit(hir::Lit::Int(n)) if *n < 9_000_000_000_000_000 => Some(false),
+            H::Binary {
+                op: hir::BinOp::Add | hir::BinOp::Sub | hir::BinOp::Mul,
+                lhs,
+                rhs,
+            } if h.ty == self.cx.ty.f64 => {
+                let l = self.std_int_tree(lhs, t)?;
+                let r = self.std_int_tree(rhs, t)?;
+                Some(l || r)
+            }
+            _ => None,
+        }
+    }
+
+    // `h`, a tree `std_int_tree` accepted, rebuilt in integer type `t`.
+    fn std_int_rebuilt(&mut self, h: hir::Expr, t: TyId) -> hir::Expr {
+        let span = h.span;
+        match h.kind {
+            H::Cast(x) => self.int_as(*x, t),
+            H::Lit(hir::Lit::Float(v)) => self.mk(H::Lit(hir::Lit::Int(v as u128)), t, span),
+            H::Lit(lit) => self.mk(H::Lit(lit), t, span),
+            H::Binary { op, lhs, rhs } => {
+                let lhs = Box::new(self.std_int_rebuilt(*lhs, t));
+                let rhs = Box::new(self.std_int_rebuilt(*rhs, t));
+                self.mk(H::Binary { op, lhs, rhs }, t, span)
+            }
+            kind => hir::Expr { kind, ..h },
+        }
+    }
+
+    /// Operands of a binary operator, a standard library integer next to an integer type that
+    /// holds it (`std_int_fits`) taken as that integer: `depth + xs.length` and
+    /// `xs.length >> shift` with `depth, shift: usize` are integer arithmetic.
+    pub(crate) fn std_int_operands(
+        &mut self,
+        l: hir::Expr,
+        r: hir::Expr,
+    ) -> (hir::Expr, hir::Expr) {
+        let f64_ = self.cx.ty.f64;
+        if l.ty == f64_ && self.cx.ty.is_int(r.ty) {
+            let t = r.ty;
+            return (self.std_int_as(l, t).unwrap_or_else(|l| l), r);
+        }
+        if r.ty == f64_ && self.cx.ty.is_int(l.ty) {
+            let t = l.ty;
+            return (l, self.std_int_as(r, t).unwrap_or_else(|r| r));
+        }
+        (l, r)
     }
 
     /// The declared (uninstantiated) result type of the JS API function or method `h` calls
@@ -213,9 +301,11 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// Operands of a binary operator: a value that converts to a number exactly, next to a
-    /// number, converts to it (`k * 0.5` with `k: i32`).
+    /// Operands of a binary operator: a standard library integer next to an integer type that
+    /// holds it is that integer (`std_int_fits`); else a value that converts to a number
+    /// exactly, next to a number, converts to it (`k * 0.5` with `k: i32`).
     pub(crate) fn mix_numbers(&mut self, l: hir::Expr, r: hir::Expr) -> (hir::Expr, hir::Expr) {
+        let (l, r) = self.std_int_operands(l, r);
         let f64_ = self.cx.ty.f64;
         if l.ty == f64_ && r.ty != f64_ && self.exact_in_number(r.ty) {
             let r = self.int_to_float(r, f64_);
@@ -263,6 +353,45 @@ impl FnCx<'_, '_> {
                 (n, self.mk(H::Cast(Box::new(i)), f64_, span))
             }
         }
+    }
+
+    /// `h`, a standard library integer made a number, as the integer itself where an integer
+    /// type `exp` that holds it is expected (`std_int_fits`); `Err` gives anything else back.
+    pub(crate) fn std_int_coerce(
+        &mut self,
+        h: hir::Expr,
+        exp: TyId,
+    ) -> Result<hir::Expr, hir::Expr> {
+        if !self.cx.ty.is_int(exp) || h.ty != self.cx.ty.f64 {
+            return Err(h);
+        }
+        self.std_int_as(h, exp)
+    }
+
+    /// The note for number `found` where `expected` is expected, or the other way around.
+    pub(crate) fn number_expr_note(&self, expected: TyId, found: &hir::Expr) -> Option<String> {
+        self.std_int_note(expected, found)
+            .or_else(|| self.number_note(expected, found.ty))
+    }
+
+    /// The note for a standard library integer made a number where an integer type that does
+    /// not hold all its values is expected (`std_int_fits`): which types it converts to.
+    pub(crate) fn std_int_note(&self, expected: TyId, found: &hir::Expr) -> Option<String> {
+        let H::Cast(x) = &found.kind else {
+            return None;
+        };
+        if !self.cx.ty.is_int(expected) || !self.is_std_api_value(x) {
+            return None;
+        }
+        let e = self.cx.display(expected);
+        let into = match self.cx.ty.int_ty(x.ty).is_some_and(|i| i.is_signed()) {
+            true => "`i64` and `isize` (it can be negative)",
+            false => "`usize`, `u64`, `i64` and `isize`",
+        };
+        Some(format!(
+            "this `number` is an integer from the standard library: it converts to {into} \
+             as it is, to `{e}` only with `as {e}`"
+        ))
     }
 
     /// The note for a number where a declared 64-bit integer is expected, or the other way
