@@ -223,6 +223,12 @@ impl FnCx<'_, '_> {
             self.check_args_loose(args);
             return self.error_expr(span);
         }
+        // The reason a callback gets, without the traps' error-set variables, assumed empty
+        // (`assume_trap_vars_empty`): a conversion of the reason is made for the type it has
+        // once they are solved. When one is not empty, the program is checked again with the
+        // solved sets.
+        let reason = self.cx.assume_trap_vars_empty(Some(e));
+        let reason = reason.unwrap_or(self.cx.ty.never);
         let mut callbacks = vec![];
         for (i, a) in args.iter().enumerate() {
             // What the callback gets: the value (`then`'s first), the reason (`then`'s second,
@@ -230,7 +236,7 @@ impl FnCx<'_, '_> {
             let params: Vec<TyId> = match (method, i) {
                 ("then", 0) => vec![t],
                 ("finally", _) => vec![],
-                _ => vec![e],
+                _ => vec![reason],
             };
             let error = self.cx.ty.error;
             let hint = self.cx.ty.intern(TyKind::FnPtr {
@@ -289,6 +295,9 @@ impl FnCx<'_, '_> {
         let parts: Vec<(TyId, Option<TyId>)> = callbacks
             .iter()
             .map(|(h, _)| self.callback_parts(h.ty))
+            .collect();
+        let parts: Vec<(TyId, Option<TyId>)> = (parts.into_iter())
+            .map(|(u, x)| (u, self.cx.assume_trap_vars_empty(x)))
             .collect();
         let never = self.cx.ty.never;
         // `then(f)` and `finally(h)` reject with what the promise rejects with and what the

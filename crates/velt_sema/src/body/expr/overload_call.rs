@@ -65,6 +65,9 @@ impl FnCx<'_, '_> {
         if sigs.is_empty() {
             return None;
         }
+        // A defaulted arrow parameter takes `undefined` (`crate::overload_adapter`).
+        let owned = crate::overload_adapter::optional_defaults(args);
+        let args = owned.as_deref().unwrap_or(args);
         let picked = self.pick_signature(&id.name, sigs.len(), |s, k| {
             s.named_call(&sigs[k], type_args, args, exp, span)
         });
@@ -150,6 +153,9 @@ impl FnCx<'_, '_> {
         if sigs.is_empty() {
             return Err(recv);
         }
+        // A defaulted arrow parameter takes `undefined` (`crate::overload_adapter`).
+        let owned = crate::overload_adapter::optional_defaults(args);
+        let args = owned.as_deref().unwrap_or(args);
         let picked = self.pick_signature(&prop.name, sigs.len(), |s, k| {
             s.method_call_at(recv.clone(), &sigs[k], type_args, args, exp, span, false)
         });
@@ -188,6 +194,9 @@ impl FnCx<'_, '_> {
         if sigs.is_empty() {
             return None;
         }
+        // A defaulted arrow parameter takes `undefined` (`crate::overload_adapter`).
+        let owned = crate::overload_adapter::optional_defaults(args);
+        let args = owned.as_deref().unwrap_or(args);
         let picked = self.pick_signature(&prop.name, sigs.len(), |s, k| {
             s.static_call_as(d, this_class, &sigs[k], type_args, args, exp, span)
         });

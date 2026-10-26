@@ -242,6 +242,9 @@ impl FnCx<'_, '_> {
         // in its parameters' defaults (`FnCx::call_value`).
         let closure = self.outer[j].closure_consts.get(&prev).copied();
         let method = self.outer[j].method_values.contains(&prev);
+        // A read-only array or collection (or a number-keyed record) is one in the closures that
+        // capture it too.
+        let marks = self.outer[j].local_marks.get(&prev).copied();
         for idx in j + 1..self.outer.len() {
             let f = &mut self.outer[idx];
             prev = add_narrowed_capture(f, name, prev, ty, span, narrowing);
@@ -250,6 +253,9 @@ impl FnCx<'_, '_> {
             }
             if method {
                 f.method_values.insert(prev);
+            }
+            if let Some(m) = marks {
+                f.local_marks.insert(prev, m);
             }
             ty = f.locals[prev.0 as usize].ty;
             narrowing = match assigned {
@@ -266,6 +272,9 @@ impl FnCx<'_, '_> {
         }
         if method {
             self.f.method_values.insert(inner);
+        }
+        if let Some(m) = marks {
+            self.f.local_marks.insert(inner, m);
         }
         self.late_lookup(Some(declared.0), declared.1, inner, name, span);
         Some(inner)

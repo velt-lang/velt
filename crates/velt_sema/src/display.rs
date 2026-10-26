@@ -11,6 +11,24 @@ impl Ctx<'_> {
         self.display_in(t, &self.display_params)
     }
 
+    /// Is `t` an error-set variable, or a union of them (what two sites' variables join to)?
+    /// Shown as written: nothing (`throws::vars`).
+    fn only_err_vars(&self, t: TyId) -> bool {
+        if self.is_err_var(t) {
+            return true;
+        }
+        let Some((d, args)) = self.union_def(t) else {
+            return false;
+        };
+        let Some(e) = self.enum_info(d) else {
+            return false;
+        };
+        args.is_empty()
+            && e.variants
+                .iter()
+                .all(|v| v.payload.first().is_some_and(|p| self.is_err_var(*p)))
+    }
+
     /// Display `t` with `Param(i)` named `names[i]`.
     pub(crate) fn display_in(&self, t: TyId, names: &[String]) -> String {
         let list = |s: &Self, ts: &[TyId]| {
@@ -64,7 +82,7 @@ impl Ctx<'_> {
             TyKind::Option(t, n) => format!("{}{}", self.display_in(*t, names), n.suffix()),
             TyKind::Result(a, b) => with_args(self, "Result", &[*a, *b]),
             // A variable is shown as written: nothing (`throws::vars`).
-            TyKind::Promise(t, e) if *e == self.ty.never || self.is_err_var(*e) => {
+            TyKind::Promise(t, e) if *e == self.ty.never || self.only_err_vars(*e) => {
                 with_args(self, "Promise", &[*t])
             }
             TyKind::Promise(t, e) => with_args(self, "Promise", &[*t, *e]),
@@ -82,8 +100,8 @@ impl Ctx<'_> {
                 }
                 // A function type written without `throws`, as written (`throws::fn_types`).
                 let promise_var =
-                    matches!(self.ty.kind(*ret), TyKind::Promise(_, e) if self.is_err_var(*e));
-                if self.ty.inferred_fns.contains(&t) || self.is_err_var(*throws) || promise_var {
+                    matches!(self.ty.kind(*ret), TyKind::Promise(_, e) if self.only_err_vars(*e));
+                if self.ty.inferred_fns.contains(&t) || self.only_err_vars(*throws) || promise_var {
                     let ret = match self.ty.kind(*ret) {
                         TyKind::Promise(v, _) => {
                             format!("Promise<{}>", self.display_in(*v, names))
@@ -208,7 +226,14 @@ impl Ctx<'_> {
             let params: Vec<String> = m
                 .params
                 .iter()
-                .map(|p| format!("{}: {}", p.name, ty(p.ty)))
+                .map(|p| {
+                    // The setter `Object.defineProperty` adds (`crate::defined_accessors`).
+                    let name = match p.name == crate::defined_accessors::ADDED_SETTER_PARAM {
+                        true => "v",
+                        false => &p.name,
+                    };
+                    format!("{name}: {}", ty(p.ty))
+                })
                 .collect();
             let s = match (m.is_getter, m.name.strip_prefix("set ")) {
                 (true, _) => format!("get {}(): {}", key(&m.name), ty(m.ret)),

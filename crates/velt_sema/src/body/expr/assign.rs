@@ -133,7 +133,7 @@ impl FnCx<'_, '_> {
                 if self.cx.ty.is_bottom(place.ty) || self.temp_tuple_write(&place, target.span) {
                     return None;
                 }
-                self.require_mutable(&place, "assign to an element of");
+                self.require_mutable(&place, crate::body::places::ELEMENT_WRITE);
                 Some(place)
             }
             ast::ExprKind::This => {
@@ -216,6 +216,22 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let wanted = exp != Some(self.cx.ty.unit);
+        let saved = std::mem::replace(&mut self.f.assign_hint, exp.filter(|_| wanted));
+        let r = self.assign_value_hinted(op, target, value, exp, wanted, span);
+        self.f.assign_hint = saved;
+        r
+    }
+
+    /// [`Self::assign_value`] with `f.assign_hint` set.
+    fn assign_value_hinted(
+        &mut self,
+        op: Option<ast::BinaryOp>,
+        target: &ast::Expr,
+        value: &ast::Expr,
+        exp: Option<TyId>,
+        wanted: bool,
+        span: Span,
+    ) -> hir::Expr {
         if wanted && !is_plain_path(target) {
             if let Some(h) = self.element_assign_value(op, target, value, span) {
                 return h;

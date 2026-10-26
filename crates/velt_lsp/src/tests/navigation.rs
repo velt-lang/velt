@@ -386,3 +386,37 @@ fn plain_clients_get_no_code_lenses() {
     assert!(r.response_result.is_err());
     client.shutdown();
 }
+
+/// A script that declares its own `main` (#1567): the function holding its top-level statements
+/// (`SCRIPT_MAIN`) is in neither the outline nor the workspace symbols; the declared `main` is.
+#[test]
+fn script_with_its_own_main_lists_main_once() {
+    let mut client = Client::start();
+    let app = uri("script_main.vlt");
+    client.open(
+        &app,
+        "function main(): void {\n  console.log(1);\n}\n\nmain();\n",
+    );
+    client.diagnostics(&app);
+    let symbols = client.request(
+        "textDocument/documentSymbol",
+        json!({ "textDocument": { "uri": app } }),
+    );
+    let names: Vec<&str> = symbols
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["main"]);
+    let found = client.request("workspace/symbol", json!({ "query": "main" }));
+    let names: Vec<&str> = found
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["name"].as_str().unwrap())
+        .collect();
+    assert!(!names.contains(&velt_syntax::SCRIPT_MAIN), "{names:?}");
+    assert!(names.contains(&"main"), "{names:?}");
+    client.shutdown();
+}

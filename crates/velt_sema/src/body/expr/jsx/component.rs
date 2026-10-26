@@ -20,7 +20,6 @@ use crate::ide::record::Target;
 pub(super) enum ComponentFn {
     /// A named function (`Card`, `ui.Card`), written as `callee`.
     Named {
-        def: DefId,
         callee: ast::Expr,
         takes_props: bool,
     },
@@ -108,7 +107,7 @@ impl FnCx<'_, '_> {
             self.not_component(&tag, name.span(), why);
             return self.error_expr(el.span);
         }
-        let Some(value) = self.component_value(c.func, expected, props.ty, el, &tag) else {
+        let Some(value) = self.component_value(c.func, expected, el, &tag) else {
             return self.error_expr(el.span);
         };
         let identity = self.str_lit(&c.identity, name.span());
@@ -377,7 +376,6 @@ impl FnCx<'_, '_> {
         };
         Some(Component {
             func: ComponentFn::Named {
-                def,
                 callee,
                 takes_props: c.params.len() == 1,
             },

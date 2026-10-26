@@ -1,0 +1,17 @@
+// A module constant whose initializer calls a function value that reads the constant: the read
+// runs before the constant is initialized, so it stops with Node's `ReferenceError` (#750).
+interface Node {
+  next(): Node;
+}
+
+function call(f: () => Node): Node {
+  console.log("calling");
+  return f();
+}
+
+export function peek(): Node {
+  return EARLY;
+}
+
+const EARLY: Node = call(() => EARLY);
+console.log("never", EARLY === peek());

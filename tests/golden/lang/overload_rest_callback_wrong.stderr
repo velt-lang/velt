@@ -1,0 +1,1 @@
+panic: TypeError: the callback `fn` of `one` was called with a wrong argument 1: the value is not a string (it is a number)

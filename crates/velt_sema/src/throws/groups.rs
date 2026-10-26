@@ -1,7 +1,10 @@
 //! Dispatch groups: functions that are called through one dynamic entry must agree on their
 //! error type (it is part of the ABI: a throwing function returns `Result<ret, E>`). A group is
 //! an interface method slot with its default and every implementation, and a class vtable slot
-//! with the base method and every override (linked when a method is in both).
+//! with the base method and every override (linked when a method is in both). A method slot of
+//! an interface whose values convert to another (`synth_ifaces` upcasts) is in the group of the
+//! other's method of that name: the target's table holds the same implementations, made only
+//! after this inference (`Ctx::upcast_tables`).
 //!
 //! A group's error type is the interface method's (or the base method's) `throws` clause when
 //! written — the implementations may throw only what it allows — else the union of what the
@@ -262,6 +265,17 @@ fn link_interfaces(cx: &mut Ctx, uf: &mut UnionFind, bounds: &mut Vec<(Node, Gro
                 let owner = format!("{}.{}", info.name, m.name);
                 let iface = Some(iface);
                 bounds.push((node, GroupBound { decl, owner, iface }));
+            }
+        }
+    }
+    // A method of `want` is filled by the method of that name of `have` (`upcast_impl`).
+    for (have, want) in cx.synth_ifaces.upcasts.clone() {
+        let (Some(h), Some(w)) = (cx.iface(have), cx.iface(want)) else {
+            continue;
+        };
+        for (j, m) in w.methods.iter().enumerate() {
+            if let Some(s) = h.methods.iter().position(|x| x.name == m.name) {
+                uf.union(Node::Slot(want, j as u32), Node::Slot(have, s as u32));
             }
         }
     }

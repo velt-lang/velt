@@ -1,0 +1,55 @@
+// A module constant read inside a function value of its own initializer: the methods of an
+// object literal that return the object itself, and a recursive component whose type comes
+// from the call (#750). The functions run once the constant is initialized, as in Node, and
+// see the one object.
+export interface Recorder {
+  status(code: number): Recorder;
+  redirect(location: string, status?: number): Recorder;
+  header(name: string, value: string): Recorder;
+}
+
+const INERT: Recorder = {
+  status() {
+    return INERT;
+  },
+  redirect() {
+    return INERT;
+  },
+  header() {
+    return INERT;
+  },
+};
+
+export function useResponse(): Recorder {
+  return INERT;
+}
+
+function component<P>(setup: (props: P) => () => string): (props: P) => string {
+  return (props) => setup(props)();
+}
+
+const Level = component<{ depth: number; branching: number }>((props) => {
+  const { depth, branching } = props;
+  return (): string =>
+    depth <= 1
+      ? "leaf"
+      : `[${Array.from({ length: branching }, (_, i): string => Level({ depth: depth - 1, branching }) + i).join(" ")}]`;
+});
+
+interface Counter {
+  calls: number;
+  sum(n: number): number;
+}
+
+const counter: Counter = {
+  calls: 0,
+  sum(n: number): number {
+    counter.calls++;
+    return n <= 0 ? 0 : n + counter.sum(n - 1);
+  },
+};
+
+const r = useResponse().status(404).redirect("/login").header("x", "y");
+console.log(r === INERT, useResponse() === INERT);
+console.log(Level({ depth: 3, branching: 2 }));
+console.log(counter.sum(4), counter.calls);

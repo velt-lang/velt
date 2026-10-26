@@ -5,24 +5,19 @@
 import type { Comment, Post } from "./model";
 import { excerpt, readingMinutes } from "./model";
 
-/**
- * The page around `content`. A function the pages call rather than a component with children:
- * the content holds async components, and std/jsx can't pass a pending async element in props yet
- * (docs/internals/contracts/jsx.md, "Known compatibility gaps"). This works the same in
- * TypeScript.
- */
-export function page(title: string, content: JSX.Element): JSX.Element {
+/** The page around its children (which may hold async components that are still loading). */
+export function Page(props: { title: string; children: JSX.Element | JSX.Element[] }): JSX.Element {
   return (
     <html lang="en">
       <head>
         <meta charset="utf-8" />
-        <title>{title} · Velt blog</title>
+        <title>{props.title} · Velt blog</title>
       </head>
       <body>
         <header>
           <a href="/">Velt blog</a>
         </header>
-        <main>{content}</main>
+        <main>{props.children}</main>
         <footer>Rendered on the server with TSX</footer>
       </body>
     </html>

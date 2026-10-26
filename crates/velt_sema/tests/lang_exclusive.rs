@@ -189,6 +189,30 @@ fn closure_params_may_alias_each_other() {
 }
 
 #[test]
+fn closure_params_of_unrelated_classes_are_separate() {
+    // A value is never an instance of two classes neither of which extends the other: such
+    // params of a closure (a request and a response) are separate places.
+    let classes = "class In { data: string[] = []; } class Out { data: string[] = []; }
+         function fill(o: Out, i: In): void { for (const s of i.data) { o.data.push(s.clone()); } }";
+    ok_src(&format!(
+        "{classes} function main() {{ const f = (i: In, o: Out) => {{ fill(o, i); }}; f(new In(), new Out()); }}"
+    ));
+    // Instances of one class may be the same object.
+    let r = err_src(&format!(
+        "{classes} function main() {{ const f = (a: Out, b: Out) => {{ fill(a, new In()); a.data.push(b.data[0].clone()); twice(a, b); }}; f(new Out(), new Out()); }}
+         function twice(a: Out, b: Out): void {{ a.data.push(\"x\"); console.log(b.data.length); }}"
+    ));
+    assert!(r.contains("cannot use `b` here"), "{r}");
+    // So may an instance of a subclass and one of its base.
+    let r = err_src(&format!(
+        "{classes} class Sub extends Out {{}}
+         function main() {{ const f = (o: Out, s: Sub, i: In) => {{ fill(o, i); grow(o, s); }}; f(new Out(), new Sub(), new In()); }}
+         function grow(o: Out, s: Sub): void {{ o.data.push(\"x\"); console.log(s.data.length); }}"
+    ));
+    assert!(r.contains("cannot use `s` here"), "{r}");
+}
+
+#[test]
 fn function_values_may_write_what_they_receive() {
     // `apply` hands `xs` to an unknown function: never read-only, but not a modified param for
     // its callers (the call supplying the function value accounts for it).

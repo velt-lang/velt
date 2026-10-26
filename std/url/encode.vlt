@@ -12,7 +12,6 @@ import { IoResult } from "velt:io";
 declare function velt_rt_bytes_from_str(s: string): u8[];
 declare function velt_rt_bytes_to_str(b: u8[]): IoResult<string>;
 declare function velt_rt_str_is_well_formed(s: string): bool;
-declare function velt_rt_str_byte_length(s: string): u64;
 
 /**
  * WHATWG percent-encode sets (url.spec.whatwg.org §1.3). Each set after `C0` up to `FORM`
@@ -38,7 +37,7 @@ const SPACE: u8 = 32;
  * scanners below and in std/url/record look unit by unit only at ASCII text.
  */
 export function isAscii(s: string): bool {
-  return velt_rt_str_byte_length(s) == (s.length as u64);
+  return __intrinsic_str_byte_len(s) == s.length;
 }
 
 /** The bytes of `s` (a copy). */

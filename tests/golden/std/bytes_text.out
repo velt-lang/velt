@@ -1,0 +1,19 @@
+6 2 1
+GET /a éx G
+true false true
+false true
+false true
+false true true
+abcd abcd true true
+4 abé 169
+0 0
+a��b 1 b
+4 7 Uint8Array(12) [
+    0,   0, 195, 169, 240,
+  159, 152, 128,  97,   0,
+    0,   0
+]
+4 [ 239, 191, 189, 120 ] 0
+[ 0, 97, 98, 0 ]
+0 6 42
+3 23 24

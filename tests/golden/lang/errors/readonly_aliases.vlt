@@ -1,0 +1,24 @@
+// A read-only type reached through aliases is read-only (TypeScript's TS2339): an alias of an
+// alias, an alias in a union with `null` or `undefined`, and a generic alias whose body is
+// read-only. So is a number-keyed record through such aliases (TS7015).
+type B = ReadonlySet<string>;
+type C = B | undefined;
+type RM = ReadonlyMap<string, number>;
+type RM2 = RM | null;
+type RO<T> = ReadonlySet<T>;
+type RA<T> = readonly T[];
+type Opt<T> = RA<T> | undefined;
+type NR = Record<number, string>;
+type NR2 = NR | null;
+
+function f(c: C, m: RM2, r: RO<number>, a: RA<string>, o: Opt<number>, n: NR2): void {
+  c?.add("x");
+  if (c) c.delete("x");
+  m?.set("k", 1);
+  if (m) m.clear();
+  r.add(1);
+  a.push("y");
+  o?.push(2);
+  if (n) console.log(n["abc"]);
+}
+console.log(typeof f);

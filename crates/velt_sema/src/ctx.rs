@@ -49,6 +49,13 @@ pub(crate) struct Ctx<'m> {
     /// Exports of `std/prelude/*` modules, visible everywhere.
     pub prelude: FxHashMap<String, Item>,
     pub aliases: Vec<AliasInfo<'m>>,
+    /// The names of type aliases without parameters that are read-only array or collection types
+    /// and number-keyed record types, directly or through other such aliases
+    /// ([`Ctx::marked_aliases`]).
+    pub marked_aliases: std::cell::OnceCell<(FxHashSet<String>, FxHashSet<String>)>,
+    /// Sites of `globalThis` whose variable key is not one of the listed keys, with the key
+    /// (`body::expr::checked_key`): the key's error is the site's only one.
+    pub bad_key_sites: Vec<(velt_common::Span, velt_common::Span)>,
     pub extensions: Vec<Extension>,
     /// The extensions declaring each method name, built for the first `extensions.len()`
     /// extensions (body/expr/method.rs `applicable_extensions`).
@@ -128,6 +135,8 @@ pub(crate) struct Ctx<'m> {
     pub laid_out: FxHashSet<DefId>,
     /// Canonical form of each type canonicalized so far (`crate::anon`, `Ctx::canon`).
     pub canon_memo: FxHashMap<TyId, TyId>,
+    /// The canonical error type of each error type canonicalized so far (`Ctx::canon_error`).
+    pub canon_errors: FxHashMap<TyId, Option<TyId>>,
     /// Object types `crate::replaced_holders` accepted assignments for because they are shared:
     /// lowering counts them from its first pass (`hir::Program::counted_objects`).
     pub counted_objects: Vec<TyId>,
@@ -140,6 +149,13 @@ pub(crate) struct Ctx<'m> {
     pub global_props: crate::global_this::GlobalProps,
     /// Module constants found to depend on themselves so far (`body::driver::ensure_global`).
     pub global_cycles: u32,
+    /// How many function values (arrows, function expressions, literal methods) are being
+    /// checked inside the module constant being checked: a read of the constant there runs
+    /// later, once it is initialized (`body::driver::ensure_global`).
+    pub fn_value_depth: u32,
+    /// Module constants whose initializer is being checked on trial for its type, while it
+    /// reads the constant inside a function value (`body::driver::ensure_global`).
+    pub typing_globals: Vec<DefId>,
     /// Union enums by canonical member list (`crate::unions`).
     pub unions: FxHashMap<Vec<TyId>, DefId>,
     pub recursive_unions: FxHashMap<u32, Option<TyId>>, // by alias (crate::recursive_unions)
@@ -150,6 +166,10 @@ pub(crate) struct Ctx<'m> {
     /// The throwing setters a getter-only override gets (`collect::classes`): a write through
     /// the class itself is a type error, as in TypeScript, one through a base class throws.
     pub getter_only_setters: FxHashSet<DefId>,
+    /// Setters of object literals' own interfaces that `Object.defineProperty` gives a
+    /// getter-only property (`crate::defined_accessors`), by interface and method name: a
+    /// write through the literal's own type is rejected, as TypeScript does (TS2540).
+    pub defined_setters: FxHashSet<(DefId, String)>,
     /// Names of `Param(i)` in the definition being checked (for messages).
     pub display_params: Vec<String>,
     /// Functions whose parameter defaults are checked (or being checked): they are checked on
@@ -273,8 +293,6 @@ pub(crate) struct Ctx<'m> {
     pub overloaded_methods: FxHashSet<String>,
     /// Each JSX module's runtime, resolved on first use (`None` after its errors).
     pub jsx_providers: FxHashMap<usize, Option<std::rc::Rc<crate::body::expr::jsx::Provider>>>,
-    /// JSX component adapters, checked after ownership inference.
-    pub jsx_adapters: Vec<crate::body::expr::jsx::Adapter>,
     /// Sync wrappers of async closures (`body/expr/callback.rs`) and the type of the async
     /// closure each one calls: the thread analysis (`ownership::local_async`) matches a wrapper
     /// stored on the heap by that type, the function the user wrote.
@@ -391,6 +409,8 @@ impl<'m> Ctx<'m> {
                 .collect(),
             prelude: FxHashMap::default(),
             aliases: vec![],
+            marked_aliases: Default::default(),
+            bad_key_sites: vec![],
             extensions: vec![],
             extension_names: (0, FxHashMap::default()),
             impls: vec![],
@@ -426,6 +446,7 @@ impl<'m> Ctx<'m> {
             shaping: vec![],
             laid_out: FxHashSet::default(),
             canon_memo: FxHashMap::default(),
+            canon_errors: FxHashMap::default(),
             counted_objects: Vec::new(),
             replaced_unions: FxHashSet::default(),
             module_slots: Vec::new(),
@@ -433,11 +454,14 @@ impl<'m> Ctx<'m> {
             promoted_consts: FxHashSet::default(),
             global_props: Default::default(),
             global_cycles: 0,
+            fn_value_depth: 0,
+            typing_globals: Vec::new(),
             unions: FxHashMap::default(),
             recursive_unions: FxHashMap::default(),
             alias_names: FxHashMap::default(),
             generic_overrides: vec![],
             getter_only_setters: FxHashSet::default(),
+            defined_setters: FxHashSet::default(),
             display_params: vec![],
             defaults_checked: FxHashSet::default(),
             classes_below: FxHashMap::default(),
@@ -488,7 +512,6 @@ impl<'m> Ctx<'m> {
             gen_throw: false,
             overloaded_methods: FxHashSet::default(),
             jsx_providers: FxHashMap::default(),
-            jsx_adapters: vec![],
             callback_wrappers: Default::default(),
             reported_captures: vec![],
             sync_handlers: vec![],

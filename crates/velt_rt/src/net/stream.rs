@@ -92,6 +92,9 @@ pub struct StreamObj {
     io: Io,
     pub(crate) utf8: Mutex<Utf8Decoder>,
     aborted: AtomicBool,
+    /// The handle was closed while an operation was in flight: waits for input end with
+    /// `EBADF` (a write in flight goes on). See [`StreamObj::close_reads`].
+    reads_closed: AtomicBool,
     abort: Notify,
     /// Writes that are still going on (not done at the call); while there are any, a new write
     /// is not written at the call, which would put its bytes before theirs.
@@ -104,6 +107,8 @@ pub struct StreamObj {
     /// [`try_read_into`](Self::try_read_into); `held_end` once that read found the end.
     held: Mutex<VecDeque<u8>>,
     held_end: AtomicBool,
+    /// Bytes written with `writeLater`, sent when the poll ends (net/later.rs).
+    pub(crate) later: super::later::Later,
 }
 
 /// A raw socket's turn to write ([`StreamObj::turn`]), held across the write.
@@ -187,11 +192,13 @@ impl StreamObj {
             io,
             utf8: Mutex::new(Utf8Decoder::default()),
             aborted: AtomicBool::new(false),
+            reads_closed: AtomicBool::new(false),
             abort: Notify::new(),
             writing: AtomicUsize::new(0),
             turn: std::sync::Arc::new(AsyncMutex::new(())),
             held: Mutex::new(VecDeque::new()),
             held_end: AtomicBool::new(false),
+            later: Default::default(),
         }
     }
 
@@ -217,14 +224,54 @@ impl StreamObj {
 
     /// `f`, or an error as soon as the stream is aborted.
     async fn until_abort<T>(&self, f: impl Future<Output = io::Result<T>>) -> io::Result<T> {
-        let mut abort = std::pin::pin!(self.abort.notified());
-        abort.as_mut().enable();
-        if self.aborted.load(Ordering::Acquire) {
-            return Err(aborted_error());
+        self.until_ended(f, false).await
+    }
+
+    /// [`until_abort`](Self::until_abort) for a read: it also ends once the handle was closed
+    /// ([`close_reads`](Self::close_reads)).
+    async fn until_read_ends<T>(&self, f: impl Future<Output = io::Result<T>>) -> io::Result<T> {
+        self.until_ended(f, true).await
+    }
+
+    async fn until_ended<T>(
+        &self,
+        f: impl Future<Output = io::Result<T>>,
+        reading: bool,
+    ) -> io::Result<T> {
+        let mut f = std::pin::pin!(f);
+        loop {
+            let mut woken = std::pin::pin!(self.abort.notified());
+            woken.as_mut().enable();
+            if self.aborted.load(Ordering::Acquire) {
+                return Err(aborted_error());
+            }
+            if reading && self.reads_closed.load(Ordering::Acquire) {
+                return Err(crate::registry::closed_io_error());
+            }
+            match futures_util::future::select(f.as_mut(), woken).await {
+                // A read that ended because the handle was closed (the socket's read side shut
+                // down) reports the close, not the end of the stream.
+                futures_util::future::Either::Left(_)
+                    if reading && self.reads_closed.load(Ordering::Acquire) =>
+                {
+                    return Err(crate::registry::closed_io_error());
+                }
+                futures_util::future::Either::Left((r, _)) => return r,
+                // Woken: an abort ends every operation, a close only reads.
+                futures_util::future::Either::Right(_) => {}
+            }
         }
-        match futures_util::future::select(std::pin::pin!(f), abort).await {
-            futures_util::future::Either::Left((r, _)) => r,
-            futures_util::future::Either::Right(_) => Err(aborted_error()),
+    }
+
+    /// The handle was closed while an operation was in flight (something still holds the
+    /// stream): no code can read what a wait for input would bring, so those waits end (the read
+    /// side of a socket is shut down, a TLS or upgraded stream's waits are woken); a write in
+    /// flight goes on.
+    pub(crate) fn close_reads(&self) {
+        self.reads_closed.store(true, Ordering::Release);
+        self.abort.notify_waiters();
+        if let Some(s) = self.socket() {
+            let _ = shutdown_socket(s, std::net::Shutdown::Read);
         }
     }
 
@@ -246,9 +293,10 @@ impl StreamObj {
     }
 
     /// `read_chunk` on this stream's raw socket: after `abort` (which shut the socket down, ending
-    /// the read) it fails as every other operation does, instead of reading the end of the stream.
+    /// the read) it fails as every other operation does, instead of reading the end of the stream,
+    /// and so after a close of the handle while it waited (`EBADF`).
     pub(crate) async fn read_raw(&self, stream: &TcpStream, max: u64) -> io::Result<Vec<u8>> {
-        let r = read_chunk(stream, max).await;
+        let r = self.until_read_ends(read_chunk(stream, max)).await;
         if self.aborted.load(Ordering::Acquire) {
             return Err(aborted_error());
         }
@@ -324,11 +372,12 @@ impl StreamObj {
     /// the stream or an error; a raw socket may also wake without data). A transport other than
     /// a raw socket reads its next chunk here, which the next `try_read_into` hands over.
     pub(crate) async fn readable(&self) -> io::Result<()> {
-        // A raw socket needs no abort watch: `abort` shuts it down, which makes it readable, and
-        // the next `try_read_into` reports the abort.
+        // `abort` shuts a raw socket down, which makes it readable (the next `try_read_into`
+        // reports the abort); a close while this waits wakes it (shutting down only the read side
+        // does not on every OS).
         let ready = match &self.io {
-            Io::Tcp(stream) => return stream.readable().await,
-            Io::Lazy(lazy) => self.until_abort(self.set_up(lazy)).await?,
+            Io::Tcp(stream) => return self.until_read_ends(stream.readable()).await,
+            Io::Lazy(lazy) => self.until_read_ends(self.set_up(lazy)).await?,
         };
         match ready {
             Ready::Tcp {
@@ -363,6 +412,14 @@ impl StreamObj {
         }
     }
 
+    /// An error once the stream was aborted.
+    pub(crate) fn check_open(&self) -> io::Result<()> {
+        match self.aborted.load(Ordering::Acquire) {
+            true => Err(aborted_error()),
+            false => Ok(()),
+        }
+    }
+
     /// The raw socket's turn now, if no write has it (for a write made at the call).
     pub(crate) fn try_turn(&self) -> Option<Turn> {
         self.turn.clone().try_lock_owned().ok()
@@ -379,7 +436,7 @@ impl StreamObj {
 
     /// `read` on a lazy stream.
     async fn read_lazy(&self, lazy: &Lazy, max: u64) -> io::Result<Vec<u8>> {
-        match self.until_abort(self.set_up(lazy)).await? {
+        match self.until_read_ends(self.set_up(lazy)).await? {
             Ready::Tcp {
                 stream,
                 prefix,
@@ -417,7 +474,7 @@ impl StreamObj {
                         return Ok(Vec::new());
                     }
                 }
-                self.until_abort(async {
+                self.until_read_ends(async {
                     let mut r = split.r.lock().await;
                     let mut buf = buffer(max);
                     r.read_buf(&mut buf).await?;
@@ -516,15 +573,27 @@ impl StreamObj {
         }
     }
 
-    /// Half-close: the peer reads end of stream. A raw socket is shut down at once; any other
-    /// stream in the background, once it is set up (TLS sends its close_notify).
+    /// Half-close: the peer reads end of stream, after every byte written or queued before
+    /// (`writeLater`). A raw socket with nothing pending is shut down at once; otherwise in the
+    /// background, once those bytes are written and (any other stream) it is set up (TLS sends
+    /// its close_notify).
     pub(crate) fn shutdown(self: &std::sync::Arc<Self>) -> io::Result<()> {
-        if let Some(s) = self.socket() {
+        let pending = self.later.active() || self.writing.load(Ordering::Acquire) > 0;
+        if let (Some(s), false) = (self.socket(), pending) {
             return shutdown_socket(s, std::net::Shutdown::Write);
         }
         let obj = self.clone();
         crate::task::runtime::spawn(async move {
-            let Io::Lazy(lazy) = &obj.io else { return };
+            // What was queued goes first, then what is being written (the socket's turn).
+            let _ = obj.clone().drained(0).await;
+            let _turn = obj.turn.clone().lock_owned().await;
+            let lazy = match &obj.io {
+                Io::Tcp(s) => {
+                    let _ = shutdown_socket(s, std::net::Shutdown::Write);
+                    return;
+                }
+                Io::Lazy(lazy) => lazy,
+            };
             let _ = tokio::time::timeout(SHUTDOWN, async {
                 match obj.until_abort(obj.set_up(lazy)).await {
                     Ok(Ready::Tcp { stream, .. }) => {

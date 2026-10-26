@@ -1,0 +1,38 @@
+// A `new C()` assigned through `any` with `??=` takes its type arguments from what the
+// expression is assigned to; a plain assignment to a typed variable takes them from the variable.
+interface DirectiveState {
+  n: number;
+}
+function stateOf(el: { states?: Map<string, DirectiveState> }): Map<string, DirectiveState> {
+  let map = el.states as Map<string, DirectiveState> | undefined;
+  if (!map) {
+    map = new Map();
+    el.states = map;
+  }
+  return map;
+}
+const el: { states?: Map<string, DirectiveState> } = {};
+stateOf(el).set("a", { n: 1 });
+console.log(stateOf(el).size, el.states);
+
+function keys(ctx: any): Set<string> {
+  const seen: Set<string> = (ctx._streamKeys ??= new Set());
+  return seen;
+}
+const bag: Record<string, unknown> = {};
+const ctx: any = bag;
+keys(ctx).add("k");
+console.log(keys(ctx).has("k"), keys(ctx).size);
+let s: Set<number> | null = null;
+s = new Set();
+s.add(1);
+console.log(s);
+
+function streamKeys(ctx: Record<string, unknown>): Set<string> {
+  const seen: Set<string> = ((ctx as any)._streamKeys ??= new Set());
+  return seen;
+}
+const reqCtx: Record<string, unknown> = {};
+streamKeys(reqCtx).add("a");
+streamKeys(reqCtx).add("b");
+console.log(streamKeys(reqCtx).size, Object.keys(reqCtx));

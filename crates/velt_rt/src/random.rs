@@ -21,28 +21,6 @@ pub extern "C" fn velt_rt_random_u64() -> u64 {
     u64::from_le_bytes(word)
 }
 
-/// A fresh WebSocket masking key (RFC 6455 §5.3, §10.3: unpredictable, from the OS random
-/// source), taken from a per-thread buffer refilled 64 keys at a time.
-#[no_mangle]
-pub extern "C" fn velt_rt_random_mask() -> u32 {
-    use std::cell::RefCell;
-    thread_local! {
-        static KEYS: RefCell<([u8; 256], usize)> = const { RefCell::new(([0; 256], 256)) };
-    }
-    KEYS.with(|k| {
-        let (buf, used) = &mut *k.borrow_mut();
-        if *used == buf.len() {
-            if let Err(e) = getrandom::fill(buf) {
-                crate::panic::fatal(&format!("the OS random number generator failed: {e}"));
-            }
-            *used = 0;
-        }
-        let key = u32::from_be_bytes([buf[*used], buf[*used + 1], buf[*used + 2], buf[*used + 3]]);
-        *used += 4;
-        key
-    })
-}
-
 fn random_vec(n: usize) -> Vec<u8> {
     let mut v = vec![0u8; n];
     if let Err(e) = getrandom::fill(&mut v) {
@@ -68,8 +46,5 @@ mod tests {
             assert_ne!(x, y, "two 256-bit draws collided");
         }
         assert_ne!(velt_rt_random_u64(), velt_rt_random_u64());
-        let keys: std::collections::HashSet<u32> =
-            (0..200).map(|_| velt_rt_random_mask()).collect();
-        assert!(keys.len() > 190, "{} distinct mask keys of 200", keys.len());
     }
 }

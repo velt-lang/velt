@@ -12,14 +12,16 @@
 //! that rolled back resets the count, so its failure only undoes its own savepoint.
 
 use super::error::DbError;
+use super::raw::RawStmt;
+use super::statement::Prepared;
 use parking_lot::Mutex;
 use rusqlite::{Connection, OpenFlags};
 use std::sync::Arc;
 use std::time::Duration;
 use velt_native::handles::{Key, Registry};
 
-/// Prepared statements kept per connection: `Statement` handles re-find theirs by SQL text on
-/// every call, so this bounds how many distinct statements stay compiled.
+/// The SQL texts a connection keeps compiled ([`DbObj::prepared`]) beyond those a statement
+/// handle uses.
 const STATEMENT_CACHE: usize = 256;
 
 /// A connection and its error bookkeeping (see the module docs).
@@ -28,6 +30,9 @@ pub struct DbObj {
 }
 
 struct ConnState {
+    /// The SQL compiled on this connection, by its text as given (trimmed). Dropped before the
+    /// connection: their statements are finalized first.
+    prepared: rustc_hash::FxHashMap<Box<[u8]>, Arc<Prepared>>,
     conn: Option<Connection>,
     errors: u64,
     last_error: Option<DbError>,
@@ -46,6 +51,7 @@ impl DbObj {
                 conn: Some(conn),
                 errors: 0,
                 last_error: None,
+                prepared: Default::default(),
             }),
         }
     }
@@ -64,9 +70,94 @@ impl DbObj {
         r
     }
 
+    /// The [`Prepared`] of `sql` (exactly one statement): the one made before for this text, or
+    /// a new one once SQLite compiled it (a syntax error fails here). Bytes that are not UTF-8
+    /// (a lone surrogate) become U+FFFD.
+    pub fn prepared(&self, sql: &[u8]) -> Result<Arc<Prepared>, DbError> {
+        let mut state = self.state.lock();
+        let state = &mut *state;
+        let Some(conn) = &state.conn else {
+            let e = DbError::closed("database connection");
+            state.note(e.clone());
+            return Err(e);
+        };
+        if let Some(p) = state.prepared.get(sql) {
+            return Ok(p.clone());
+        }
+        let text = String::from_utf8_lossy(sql);
+        let text = text.trim();
+        // rusqlite checks the SQL and words its errors (more than one statement, a syntax
+        // error's offset); the statement kept is compiled after.
+        let compiled = conn
+            .prepare(text)
+            .map(drop)
+            .map_err(DbError::from)
+            .and_then(|()| RawStmt::prepare(conn, text));
+        let stmt = match compiled {
+            Ok(stmt) => stmt,
+            Err(e) => {
+                state.note(e.clone());
+                return Err(e);
+            }
+        };
+        if state.prepared.len() >= STATEMENT_CACHE {
+            // Forget the SQL no handle uses (a handle keeps its own).
+            state.prepared.retain(|_, p| Arc::strong_count(p) > 1);
+        }
+        let p = Arc::new(Prepared::new(stmt));
+        state.prepared.insert(sql.into(), p.clone());
+        Ok(p)
+    }
+
+    /// The connection, locked until the result is dropped (a row cursor holds it while std
+    /// reads the rows).
+    pub(crate) fn lock_owned(self: &Arc<Self>) -> Locked {
+        let guard = self.state.lock();
+        Locked {
+            // SAFETY: the guard borrows `self.state`, which lives as long as the `Arc` the
+            // result keeps (and drops after the guard).
+            guard: unsafe {
+                std::mem::transmute::<
+                    parking_lot::MutexGuard<'_, ConnState>,
+                    parking_lot::MutexGuard<'static, ConnState>,
+                >(guard)
+            },
+            _db: self.clone(),
+        }
+    }
+
     /// Record a failure that happened outside the runtime (row decoding in std).
     pub fn note_error(&self, e: DbError) {
         self.state.lock().note(e);
+    }
+}
+
+/// A connection locked for as long as this lives ([`DbObj::lock_owned`]).
+pub(crate) struct Locked {
+    // Dropped first: it borrows the object `_db` keeps alive.
+    guard: parking_lot::MutexGuard<'static, ConnState>,
+    _db: Arc<DbObj>,
+}
+
+impl Locked {
+    /// The open connection, valid while this lives (`close` waits for the lock); a failure
+    /// ("not open") is counted.
+    pub(crate) fn conn(&mut self) -> Result<&'static Connection, DbError> {
+        match &self.guard.conn {
+            // SAFETY: the connection stays in place while the lock is held, which `self` does
+            // until it is dropped; the cursor using it drops what borrows it first.
+            Some(c) => Ok(unsafe { &*(c as *const Connection) }),
+            None => {
+                let e = DbError::closed("database connection");
+                self.guard.note(e.clone());
+                Err(e)
+            }
+        }
+    }
+
+    /// Count a failure against the connection.
+    pub(crate) fn note(&mut self, e: DbError) {
+        self.guard.note(e);
     }
 }
 
@@ -96,7 +187,6 @@ pub fn open(
     }
     let conn = Connection::open_with_flags(path, flags)?;
     conn.busy_timeout(Duration::from_millis(timeout_ms as u64))?;
-    conn.set_prepared_statement_cache_capacity(STATEMENT_CACHE);
     Ok(DATABASES.insert(DbObj::new(conn)))
 }
 
@@ -113,7 +203,16 @@ pub fn close(db: DbHandle) -> Result<(), DbError> {
     let Some(obj) = DATABASES.remove(db) else {
         return Ok(());
     };
-    let conn = obj.state.lock().conn.take();
+    let conn = {
+        let mut state = obj.state.lock();
+        // Handles may still hold some: their statements are finalized all the same, and they
+        // fail with "not open" from now on.
+        for p in state.prepared.values() {
+            p.stmt.finalize();
+        }
+        state.prepared.clear();
+        state.conn.take()
+    };
     match conn.map(Connection::close) {
         Some(Err((_, e))) => Err(DbError::from(e)),
         _ => Ok(()),

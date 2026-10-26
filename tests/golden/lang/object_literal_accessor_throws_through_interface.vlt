@@ -1,0 +1,37 @@
+// An error thrown by an accessor of an object literal without a type, reached through the
+// literal converted to a declared interface, is caught where the accessor is used.
+interface Reader {
+  get value(): number;
+}
+interface Writer {
+  get value(): number;
+  set value(v: number);
+}
+
+let bad = true;
+const lit = {
+  get value(): number {
+    if (bad) throw new TypeError("getter failed");
+    return 1;
+  },
+  set value(v: number) {
+    if (bad) throw new RangeError(`setter refused ${v}`);
+  },
+};
+const r = lit as Reader;
+const w = lit as Writer;
+try {
+  console.log("read:", r.value);
+} catch (e) {
+  console.log("caught:", (e as Error).message);
+}
+try {
+  w.value = 3;
+  console.log("wrote: 3");
+} catch (e) {
+  console.log("caught:", (e as Error).message);
+}
+bad = false;
+console.log("read:", r.value);
+w.value = 4;
+console.log("wrote: 4");

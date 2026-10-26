@@ -1,0 +1,6 @@
+caught: Cannot set property value of #<Object> which has only a getter
+still: 1
+set: 40
+set: 50
+caught: Cannot set property value of #<Object> which has only a getter
+set: 102

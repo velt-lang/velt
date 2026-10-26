@@ -88,6 +88,7 @@ mod moves;
 mod namespaces;
 mod nested_closures;
 mod object_copies;
+mod overload_adapter;
 mod overloads;
 mod ownership;
 mod promise_copies;
@@ -353,8 +354,10 @@ fn check_timed(
             cx.set_closure_groups(&c.groups);
         }
         let entry = timings::pass(round, || analyze(&mut cx, root, root_mod, opts));
+        global_this::drop_site_errors(&mut cx);
         if let Some(o) = &overloaded {
             overloads::report_misfits(&mut cx.diags, &o.sig_spans);
+            overload_adapter::check_identity(&mut cx, &o.adapted);
         }
         (cx, entry)
     };
@@ -580,9 +583,6 @@ fn ownership_passes(cx: &mut ctx::Ctx) {
         ownership::infer_local_async(cx)
     });
     timings::pass("ownership::infer_modes", || ownership::infer_modes(cx));
-    timings::pass("body::expr::jsx::check_prop_copies", || {
-        body::expr::jsx::check_prop_copies(cx)
-    });
     timings::pass("throws::infer_all", || throws::infer_all(cx));
     // The program is checked again with the error types of function types written without
     // `throws` that this check found (`throws::fn_types`): the rest would be redone.
@@ -632,7 +632,10 @@ fn check_main(
     require_main: bool,
 ) -> Option<hir::DefId> {
     let file_start = Span::new(root_mod.file, root_mod.ast.span.lo, root_mod.ast.span.lo);
-    let main = cx.scopes[root].items.get("main").copied();
+    // A script that declares `main` itself starts at its statements (`velt_syntax::SCRIPT_MAIN`).
+    let main = (cx.scopes[root].items.get(velt_syntax::SCRIPT_MAIN))
+        .or_else(|| cx.scopes[root].items.get("main"))
+        .copied();
     // A library module may use the name `main` for anything; only a `main` function is checked.
     let is_fn = |id: hir::DefId| matches!(cx.info[id.0 as usize], DefInfo::Fn(_));
     if !require_main && !matches!(main, Some(Item::Def(id)) if is_fn(id)) {

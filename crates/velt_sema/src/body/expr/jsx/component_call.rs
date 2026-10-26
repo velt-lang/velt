@@ -2,31 +2,20 @@
 //! `(props) => Name(props)` (or `Name()` when it takes no props): a function value borrows its
 //! argument, while a component may take ownership of its props (move `props.children`) or be
 //! `async` (async functions own their arguments). The adapter's argument is a soft move: where
-//! `Name` takes ownership, the adapter passes a copy of the props (until objects are shared
-//! references); where it borrows, nothing is copied. Props that cannot be copied (they hold a
-//! promise, e.g. a pending async element) are a compile error ([`check_prop_copies`]).
-//! Any other function value is passed as it is (a copy where its variable is used again).
+//! `Name` takes ownership, the adapter passes another reference to the props (a share: their
+//! objects and elements are not copied, a pending async element included); where it borrows,
+//! it passes them as they are. Any other function value is passed as it is (shared where its
+//! variable is used again).
 
-use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
 use super::component::{synthetic, ComponentFn};
 use crate::body::places::is_place;
 use crate::body::FnCx;
-use crate::ctx::Ctx;
-use crate::hir::{self, DefId, ExprKind as H, PassMode, TyId};
+use crate::hir::{self, ExprKind as H, TyId};
 
 /// Parameter name of the adapter closure.
 const PROPS_PARAM: &str = "props";
-
-/// An adapter passing props of type `props` to named component `component` (checked after
-/// ownership inference).
-pub(crate) struct Adapter {
-    component: DefId,
-    props: TyId,
-    tag: String,
-    span: Span,
-}
 
 impl FnCx<'_, '_> {
     /// The component as a value of the runtime's component type `expected`; `None` after a
@@ -35,16 +24,14 @@ impl FnCx<'_, '_> {
         &mut self,
         func: ComponentFn,
         expected: TyId,
-        props: TyId,
         el: &ast::JsxElement,
         tag: &str,
     ) -> Option<hir::Expr> {
         match func {
             ComponentFn::Named {
-                def,
                 callee,
                 takes_props,
-            } => Some(self.adapter(def, &callee, takes_props, expected, props, el, tag)),
+            } => Some(self.adapter(&callee, takes_props, expected, el)),
             ComponentFn::Value(v) => match self.try_coerce(v, expected) {
                 Ok(v) => {
                     // A runtime that keeps the component owns it: a variable still used
@@ -67,16 +54,12 @@ impl FnCx<'_, '_> {
     }
 
     /// `(props) => Name(props)` typed `expected`.
-    #[allow(clippy::too_many_arguments)] // the component, its call shape and the element
     fn adapter(
         &mut self,
-        def: DefId,
         callee: &ast::Expr,
         takes_props: bool,
         expected: TyId,
-        props: TyId,
         el: &ast::JsxElement,
-        tag: &str,
     ) -> hir::Expr {
         let span = callee.span;
         let param = ast::Ident {
@@ -118,41 +101,7 @@ impl FnCx<'_, '_> {
         let h = self.closure(&synthetic(arrow, span), Some(expected), false);
         if let (H::Closure(c), true) = (&h.kind, takes_props) {
             self.cx.fn_info_mut(*c).soft_moves.push(arg_span);
-            self.cx.jsx_adapters.push(Adapter {
-                component: def,
-                props,
-                tag: tag.to_string(),
-                span: el.name.as_ref().map_or(el.span, |n| n.span()),
-            });
         }
         h
-    }
-}
-
-/// After ownership inference: an adapter copies the props of a component that takes ownership
-/// of them, which is impossible when they own a promise or a `[Symbol.dispose]` resource.
-pub(crate) fn check_prop_copies(cx: &mut Ctx) {
-    for a in std::mem::take(&mut cx.jsx_adapters) {
-        let owned = cx
-            .fn_info(a.component)
-            .params
-            .first()
-            .is_some_and(|p| p.mode == PassMode::Owned);
-        if !owned || cx.is_copy(a.props) || !cx.owns_resource(a.props) {
-            continue;
-        }
-        let (name, shown) = (cx.fn_info(a.component).name.clone(), cx.display(a.props));
-        cx.error(
-            Diagnostic::error(
-                format!("the props of <{}> cannot be copied into the component", a.tag),
-                a.span,
-            )
-            .with_note(format!(
-                "`{name}` takes ownership of its props, so the JSX provider calls it with a copy (until objects are shared references)"
-            ))
-            .with_note(format!(
-                "`{shown}` holds a promise or a `[Symbol.dispose]` resource (e.g. a pending async element), which cannot be copied; read the props without moving fields out of them"
-            )),
-        );
     }
 }

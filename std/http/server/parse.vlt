@@ -1,0 +1,594 @@
+// std/http/server/parse: HTTP/1.1 request heads parsed in place (internal to std/http/server).
+//
+// A connection reads into one buffer of its own (`Parser`); a request's head is ranges of that
+// buffer (`Head`), valid until the connection reads the next one, so nothing is copied or
+// allocated per request unless the handler asks for a string. The body is not waited for: the
+// request's reader (http/server/request.vlt) reads it as the handler asks. The end of a head is
+// found 16 bytes at a time (`velt:simd`: lanes equal to LF), and the headers the server acts on
+// are recognised by their length and one vector compare, letters folded to lowercase. Every
+// header's ranges are kept (four numbers each) for `header(name)`.
+//
+// The byte strings the parser compares with are made per connection: module-level constants
+// that are not literals are module state, behind one process-wide lock (#1487).
+
+import { utf8Encode } from "velt:encoding";
+import { TcpStream } from "velt:net";
+import { u8x16, mask8x16 } from "velt:simd";
+
+const CR: u8 = 13;
+const LF: u8 = 10;
+const SP: u8 = 32;
+const TAB: u8 = 9;
+const COLON: u8 = 58;
+const COMMA: u8 = 44;
+const DEL: u8 = 127;
+/// Room past the data, so a 16-byte load at any byte of it stays inside the buffer.
+const SLACK: i64 = 16;
+/// The buffer a connection starts with; it grows for a request that does not fit.
+const INITIAL: i64 = 16384;
+/// Read at least this much at a time.
+const MIN_READ: i64 = 4096;
+
+/// Why input is not a request: the status the server answers with before it closes.
+export class BadRequest {
+  status: number;
+
+  constructor(status: number) {
+    this.status = status;
+  }
+}
+
+/// How a request's body is framed (`Head.bodyMode`).
+export const BODY_NONE: i64 = 0;
+/// The whole body is in the buffer already: `bodyStart..bodyEnd`.
+export const BODY_BUFFERED: i64 = 1;
+/// `bodyLength` bytes follow the head, not all read yet.
+export const BODY_LENGTH: i64 = 2;
+/// `Transfer-Encoding: chunked`.
+export const BODY_CHUNKED: i64 = 3;
+
+/// A request's head, parsed in place: ranges of the connection's buffer (`buf`), valid until
+/// the connection reads its next request.
+export class Head {
+  buf: u8[] = [];
+  methodStart: i64 = 0;
+  methodEnd: i64 = 0;
+  targetStart: i64 = 0;
+  targetEnd: i64 = 0;
+  /// Where the path ends (`?` or the target's end).
+  pathEnd: i64 = 0;
+  /// The headers, four numbers each: name start, name end, value start, value end.
+  heads: i64[] = [];
+  /// The connection stays open after the response (HTTP/1.1 unless `Connection: close`,
+  /// HTTP/1.0 with `Connection: keep-alive`).
+  keepAlive: bool = true;
+  /// `Expect: 100-continue` was sent with an HTTP/1.1 request whose body has not arrived yet
+  /// (the client waits for `100 Continue` before sending it), and whether that went out.
+  expectsContinue: bool = false;
+  continueSent: bool = false;
+  /// HTTP/1.1 (chunked responses can be sent).
+  http11: bool = true;
+  /// The body's framing (`BODY_*`), its range when buffered, its length when not all read.
+  bodyMode: i64 = BODY_NONE;
+  bodyStart: i64 = 0;
+  bodyEnd: i64 = 0;
+  bodyLength: i64 = 0;
+}
+
+/// Whether `c` may be in a token: a method, a header name (RFC 9110 §5.6.2).
+export function isTchar(c: u8): bool {
+  const l = c | 32;
+  if ((l >= 97 && l <= 122) || (c >= 48 && c <= 57)) {
+    return true;
+  }
+  // ! # $ % & ' * + - . ^ _ ` | ~
+  return c == 33 ||
+    (c >= 35 && c <= 39) ||
+    c == 42 ||
+    c == 43 ||
+    c == 45 ||
+    c == 46 ||
+    (c >= 94 && c <= 96) ||
+    c == 124 ||
+    c == 126;
+}
+
+/// What a head's Connection tokens said, and its Transfer-Encoding codings: one was seen, the
+/// last so far is `chunked`, another one is there.
+const CONN_CLOSE: i64 = 1;
+const CONN_KEEP_ALIVE: i64 = 2;
+const TE_SEEN: i64 = 1;
+const TE_LAST_CHUNKED: i64 = 2;
+const TE_OTHER: i64 = 4;
+
+/// Transfer-Encoding (RFC 9112 §6.1, §6.3): not with Content-Length (`length` >= 0), not in
+/// HTTP/1.0, and `chunked` last, else the body's end is unknown (400). The server decodes no
+/// other coding (501).
+function checkCodings(te: i64, length: i64, http11: bool) {
+  if (length >= 0 || !http11 || (te & TE_LAST_CHUNKED) == 0) {
+    throw new BadRequest(400);
+  }
+  if ((te & TE_OTHER) != 0) {
+    throw new BadRequest(501);
+  }
+}
+
+/// The bit of `byteClasses()` for a token character.
+const TOKEN: u8 = 1;
+
+/// For each byte value, its `TOKEN` bit: a method's and a header name's scan take one load a
+/// byte.
+function byteClasses(): u8[] {
+  const t: u8[] = Buffer.alloc(256);
+  for (let c: i64 = 0; c < 256; c++) {
+    t[c] = isTchar(c as u8) ? TOKEN : 0;
+  }
+  return t;
+}
+
+/// The lowercase name `s` (at most 16 bytes) as a vector, for [`Parser`]'s compares.
+function nameVector(s: string): u8x16 {
+  const b: u8[] = Buffer.alloc(16);
+  b.set(utf8Encode(s), 0);
+  return u8x16.load(b, 0);
+}
+
+/// A connection's read buffer and the requests in it.
+export class Parser {
+  buf: u8[] = Buffer.alloc((INITIAL + SLACK) as usize);
+  /// The first byte of the next request, and the bytes read.
+  pos: i64 = 0;
+  end: i64 = 0;
+  /// The head's end was searched for up to here.
+  private scanned: i64 = 0;
+  /// The request being answered points into `buf` (its `Head`): until `release()`, reads must
+  /// not move or overwrite what was read before them.
+  private held: bool = false;
+  /// The largest head and body accepted (431 and 413 past them), and the most headers (431).
+  private maxHead: i64;
+  private maxBody: i64;
+  private maxHeaders: i64;
+  // The list element `element` found.
+  private elementStart: i64 = 0;
+  private elementEnd: i64 = 0;
+  // The headers the server acts on, lowercase; vectors for one compare each.
+  private lf: u8x16 = u8x16.splat(LF);
+  private lower: u8x16 = u8x16.splat(32);
+  private contentLength: u8x16 = nameVector("content-length");
+  private connection: u8x16 = nameVector("connection");
+  private transfer: u8x16 = nameVector("transfer-encodin");
+  private expect: u8x16 = nameVector("expect");
+  private close: u8x16 = nameVector("close");
+  private keepAlive: u8x16 = nameVector("keep-alive");
+  private continue_: u8x16 = nameVector("100-continue");
+  private classes: u8[] = byteClasses();
+  private space: u8x16 = u8x16.splat(SP);
+  private del: u8x16 = u8x16.splat(DEL);
+  private question: u8x16 = u8x16.splat(63);
+  private chunked: u8x16 = nameVector("chunked");
+
+  constructor(maxHead: i64, maxBody: i64, maxHeaders: i64) {
+    this.maxHead = maxHead;
+    this.maxBody = maxBody;
+    this.maxHeaders = maxHeaders;
+  }
+
+  /// Reads what `conn` has into the buffer: the bytes read, 0 when nothing has arrived yet,
+  /// null at the end of the stream.
+  readFrom(conn: TcpStream): number | null {
+    if (this.pos == this.end && !this.held) {
+      this.pos = 0;
+      this.end = 0;
+      this.scanned = 0;
+    }
+    if (this.end + MIN_READ + SLACK > (this.buf.length as i64)) {
+      this.room(MIN_READ);
+    }
+    const limit = (this.buf.length as i64) - SLACK;
+    const n = conn.tryRead(this.buf, this.end as number, limit as number);
+    if (n != null && n > 0) {
+      this.end += n as i64;
+    }
+    return n;
+  }
+
+  /// Whether input is left that no request took yet (a pipelined request, or part of one).
+  pending(): bool {
+    return this.pos < this.end;
+  }
+
+  /// The request being answered is finished: its bytes in the buffer may be reused.
+  release() {
+    this.held = false;
+  }
+
+  /// Room for `n` more bytes while the request being answered holds the buffer: its head stays
+  /// where it is (its `Head` keeps the buffer), and what is left to parse moves to a new one.
+  private moveOut(n: i64) {
+    let size = this.buf.length as i64;
+    while (size < this.end - this.pos + n + SLACK) {
+      size *= 2;
+    }
+    const moved: u8[] = Buffer.alloc(size as usize);
+    moved.set(this.buf.slice(this.pos, this.end), 0);
+    this.buf = moved;
+    this.end -= this.pos;
+    this.scanned = this.scanned > this.pos ? this.scanned - this.pos : 0;
+    this.pos = 0;
+    this.held = false;
+  }
+
+  /// Room for `n` more bytes past the data: drops what was parsed, then grows by doubling.
+  private room(n: i64) {
+    if (this.held) {
+      this.moveOut(n);
+      return;
+    }
+    if (this.pos > 0) {
+      this.buf.copyWithin(0, this.pos, this.end);
+      this.end -= this.pos;
+      this.scanned = this.scanned > this.pos ? this.scanned - this.pos : 0;
+      this.pos = 0;
+    }
+    if (this.end + n + SLACK > (this.buf.length as i64)) {
+      let size = (this.buf.length as i64) * 2;
+      while (size < this.end + n + SLACK) {
+        size *= 2;
+      }
+      const grown: u8[] = Buffer.alloc(size as usize);
+      grown.set(this.buf.slice(0, this.end), 0);
+      this.buf = grown;
+    }
+  }
+
+  /// Whether `buf[at..at + len)` is the lowercase name in `want` (letters in any case).
+  private nameIs(at: i64, len: i64, want: u8x16): bool {
+    const v = u8x16.load(this.buf, at as usize).or(this.lower);
+    return v
+      .eq(want)
+      .or(mask8x16.prefix(len as usize).not())
+      .all();
+  }
+
+  /// The index past the CR LF CR LF that ends the head starting at `start`, or -1.
+  private headEnd(start: i64): i64 {
+    const b = this.buf;
+    let at = this.scanned > start ? this.scanned : start;
+    while (at < this.end) {
+      // 16 bytes without an LF are skipped at once.
+      if (
+        !u8x16
+          .load(b, at as usize)
+          .eq(this.lf)
+          .any()
+      ) {
+        at += 16;
+        continue;
+      }
+      const stop = at + 16 < this.end ? at + 16 : this.end;
+      for (let i = at; i < stop; i++) {
+        if (b[i] == LF && i - 3 >= start && b[i - 1] == CR && b[i - 2] == LF && b[i - 3] == CR) {
+          return i + 1;
+        }
+      }
+      at = stop;
+    }
+    // Searched up to the data's end; the last three bytes are searched again with more.
+    this.scanned = this.end - 3 > start ? this.end - 3 : start;
+    return -1;
+  }
+
+  /// The next request's head into `req`: true when there is one, false when more input is
+  /// needed. The body is not waited for: a body already read is `BODY_BUFFERED`, else the
+  /// request's reader reads it (`BODY_LENGTH`, `BODY_CHUNKED`). Throws `BadRequest` for input
+  /// that is not a request, framed as RFC 9112 asks (§2.2, §3, §5, §6): a proxy in front of the
+  /// server must not see a different request boundary than the server does.
+  next(req: Head): bool {
+    // Empty lines before a request are ignored (RFC 9112 §2.2).
+    while (this.pos + 1 < this.end && this.buf[this.pos] == CR && this.buf[this.pos + 1] == LF) {
+      this.pos += 2;
+    }
+    const headEnd = this.headEnd(this.pos);
+    if (headEnd < 0) {
+      if (this.end - this.pos > this.maxHead) {
+        throw new BadRequest(431);
+      }
+      return false;
+    }
+    if (headEnd - this.pos > this.maxHead) {
+      throw new BadRequest(431);
+    }
+    const b = this.buf;
+    const classes = this.classes;
+    // The request line: method SP target SP HTTP/1.x CR LF. The head ends in CR LF CR LF, so
+    // every scan below stops by then.
+    let p = this.pos;
+    req.buf = b;
+    req.methodStart = p;
+    while ((classes[b[p]] & TOKEN) != 0) {
+      p++;
+    }
+    req.methodEnd = p;
+    if (p == req.methodStart || b[p] != SP) {
+      throw new BadRequest(400);
+    }
+    p++;
+    req.targetStart = p;
+    // Visible characters (and bytes past ASCII): it ends at the first control, space or DEL,
+    // 16 bytes at a time; the path at the first `?` before that.
+    req.pathEnd = -1;
+    while (true) {
+      const v = u8x16.load(b, p as usize);
+      const stop = v.le(this.space).or(v.eq(this.del));
+      const query = v.eq(this.question);
+      if (req.pathEnd < 0 && query.any()) {
+        const q = query.first() as i64;
+        if (!stop.any() || q < (stop.first() as i64)) {
+          req.pathEnd = p + q;
+        }
+      }
+      if (stop.any()) {
+        p += stop.first() as i64;
+        break;
+      }
+      p += 16;
+    }
+    req.targetEnd = p;
+    if (req.pathEnd < 0) {
+      req.pathEnd = p;
+    }
+    if (req.targetEnd == req.targetStart || b[p] != SP) {
+      throw new BadRequest(400);
+    }
+    p++;
+    // Exactly `HTTP/1.0` or `HTTP/1.1`.
+    if (
+      b[p] != 72 ||
+      b[p + 1] != 84 ||
+      b[p + 2] != 84 ||
+      b[p + 3] != 80 ||
+      b[p + 4] != 47 ||
+      b[p + 5] != 49 ||
+      b[p + 6] != 46 ||
+      (b[p + 7] != 48 && b[p + 7] != 49)
+    ) {
+      throw new BadRequest(400);
+    }
+    req.http11 = b[p + 7] == 49;
+    req.expectsContinue = false;
+    req.continueSent = false;
+    p += 8;
+    if (b[p] != CR || b[p + 1] != LF) {
+      throw new BadRequest(400);
+    }
+    p += 2;
+    req.heads.length = 0;
+    // Content-Length (-1: none), the Host headers, and the Connection tokens and
+    // Transfer-Encoding codings seen (`CONN_*`, `TE_*` bits).
+    let length: i64 = -1;
+    let hosts = 0;
+    let conn: i64 = 0;
+    let te: i64 = 0;
+    while (p < headEnd - 2) {
+      // A name of token characters, then a colon: no space before it (RFC 9112 §5.1), no line
+      // folding (a line that starts with a space, §5.2).
+      const nameStart = p;
+      while ((classes[b[p]] & TOKEN) != 0) {
+        p++;
+      }
+      if (p == nameStart || b[p] != COLON) {
+        throw new BadRequest(400);
+      }
+      const nameEnd = p;
+      p++;
+      while (b[p] == SP || b[p] == TAB) {
+        p++;
+      }
+      // The value: no controls but TAB (no NUL, no CR or LF of its own, RFC 9110 §5.5). It ends
+      // at the first other control or DEL, found 16 bytes at a time: the CR of its line end.
+      const valueStart = p;
+      while (true) {
+        const v = u8x16.load(b, p as usize);
+        const stop = v.lt(this.space).or(v.eq(this.del));
+        if (!stop.any()) {
+          p += 16;
+          continue;
+        }
+        p += stop.first() as i64;
+        if (b[p] != TAB) {
+          break;
+        }
+        p++;
+      }
+      let valueEnd = p;
+      while (valueEnd > valueStart && (b[valueEnd - 1] == SP || b[valueEnd - 1] == TAB)) {
+        valueEnd--;
+      }
+      if (b[p] != CR || b[p + 1] != LF) {
+        throw new BadRequest(400);
+      }
+      p += 2;
+      if ((req.heads.length as i64) >= this.maxHeaders * 4) {
+        throw new BadRequest(431);
+      }
+      req.heads.push(nameStart, nameEnd, valueStart, valueEnd);
+      const len = nameEnd - nameStart;
+      if (
+        len == 4 &&
+        (b[nameStart] | 32) == 104 &&
+        (b[nameStart + 1] | 32) == 111 &&
+        (b[nameStart + 2] | 32) == 115 &&
+        (b[nameStart + 3] | 32) == 116
+      ) {
+        hosts++;
+      } else if (len == 14 && this.nameIs(nameStart, len, this.contentLength)) {
+        // Two of them, even equal, are refused: a proxy may have used the other (§6.3).
+        if (length >= 0) {
+          throw new BadRequest(400);
+        }
+        length = this.number(valueStart, valueEnd);
+      } else if (len == 10 && this.nameIs(nameStart, len, this.connection)) {
+        conn |= this.connectionTokens(valueStart, valueEnd);
+      } else if (
+        len == 17 && this.nameIs(nameStart, 16, this.transfer) && (b[nameStart + 16] | 32) == 103
+      ) {
+        te = this.transferCodings(valueStart, valueEnd, te);
+      } else if (len == 6 && this.nameIs(nameStart, len, this.expect)) {
+        const vl = valueEnd - valueStart;
+        // An HTTP/1.0 client does not wait for it (RFC 9110 §10.1.1).
+        req.expectsContinue = req.http11 && vl == 12 && this.nameIs(valueStart, vl, this.continue_);
+      }
+    }
+    // HTTP/1.1 needs exactly one Host; none may have two (RFC 9112 §3.2).
+    if (hosts > 1 || (hosts == 0 && req.http11)) {
+      throw new BadRequest(400);
+    }
+    // HTTP/1.1 keeps the connection open unless `close` is among the Connection tokens; HTTP/1.0
+    // only with `keep-alive`.
+    req.keepAlive = (conn & CONN_CLOSE) == 0 && (req.http11 || (conn & CONN_KEEP_ALIVE) != 0);
+    if (te != 0) {
+      checkCodings(te, length, req.http11);
+      req.bodyMode = BODY_CHUNKED;
+      this.pos = headEnd;
+    } else if (length <= 0) {
+      req.bodyMode = BODY_NONE;
+      this.pos = headEnd;
+    } else if (this.end - headEnd >= length) {
+      // Here already: the handler gets it without waiting.
+      req.bodyMode = BODY_BUFFERED;
+      req.bodyStart = headEnd;
+      req.bodyEnd = headEnd + length;
+      this.pos = headEnd + length;
+    } else {
+      req.bodyMode = BODY_LENGTH;
+      req.bodyLength = length;
+      this.pos = headEnd;
+    }
+    // A body that has arrived needs no `100 Continue`.
+    if (req.bodyMode == BODY_NONE || req.bodyMode == BODY_BUFFERED) {
+      req.expectsContinue = false;
+    }
+    this.scanned = this.pos;
+    this.held = true;
+    return true;
+  }
+
+  /// The end of the element of a comma-separated list starting at `at` (before `end`), and its
+  /// start, without the whitespace around it, in `this.elementStart`.
+  private element(at: i64, end: i64): i64 {
+    const b = this.buf;
+    let i = at;
+    while (i < end && (b[i] == SP || b[i] == TAB || b[i] == COMMA)) {
+      i++;
+    }
+    this.elementStart = i;
+    while (i < end && b[i] != COMMA) {
+      i++;
+    }
+    let e = i;
+    while (e > this.elementStart && (b[e - 1] == SP || b[e - 1] == TAB)) {
+      e--;
+    }
+    this.elementEnd = e;
+    return i;
+  }
+
+  /// The tokens of a Connection value: `CONN_CLOSE`, `CONN_KEEP_ALIVE` (others are ignored).
+  private connectionTokens(start: i64, end: i64): i64 {
+    let found: i64 = 0;
+    let at = start;
+    while (at < end) {
+      at = this.element(at, end);
+      const s = this.elementStart;
+      const n = this.elementEnd - s;
+      if (n == 5 && this.nameIs(s, n, this.close)) {
+        found |= CONN_CLOSE;
+      } else if (n == 10 && this.nameIs(s, n, this.keepAlive)) {
+        found |= CONN_KEEP_ALIVE;
+      }
+    }
+    return found;
+  }
+
+  /// `te` (`TE_*` bits) after the codings of a Transfer-Encoding value, in order: `chunked`
+  /// twice is refused.
+  private transferCodings(start: i64, end: i64, te: i64): i64 {
+    // A header without codings still counts: it is refused for not ending in `chunked`.
+    let state = te | TE_SEEN;
+    let at = start;
+    while (at < end) {
+      at = this.element(at, end);
+      const s = this.elementStart;
+      const n = this.elementEnd - s;
+      if (n == 0) {
+        continue;
+      }
+      if (n == 7 && this.nameIs(s, n, this.chunked)) {
+        if ((state & TE_LAST_CHUNKED) != 0) {
+          throw new BadRequest(400);
+        }
+        state |= TE_LAST_CHUNKED;
+      } else {
+        state = (state & ~TE_LAST_CHUNKED) | TE_OTHER;
+      }
+    }
+    return state;
+  }
+
+  /// The bytes read and not taken yet.
+  available(): i64 {
+    return this.end - this.pos;
+  }
+
+  /// The next `n` bytes read (`n <= available()`), copied, and taken.
+  take(n: i64): u8[] {
+    const out = this.buf.slice(this.pos, this.pos + n);
+    this.pos += n;
+    return out;
+  }
+
+  /// Drops the next `n` bytes read (`n <= available()`).
+  skip(n: i64) {
+    this.pos += n;
+  }
+
+  /// The index of the next LF in what was read, or -1.
+  lineEnd(): i64 {
+    for (let i = this.pos; i < this.end; i++) {
+      if (this.buf[i] == LF) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  /// The byte at index `i` of the buffer.
+  byteAt(i: i64): u8 {
+    return this.buf[i];
+  }
+
+  /// The largest body `body()` collects.
+  maxBodySize(): i64 {
+    return this.maxBody;
+  }
+
+  /// A Content-Length value: its digits only.
+  private number(start: i64, end: i64): i64 {
+    if (start == end) {
+      throw new BadRequest(400);
+    }
+    let n: i64 = 0;
+    for (let k = start; k < end; k++) {
+      const d = (this.buf[k] as i64) - 48;
+      if (d < 0 || d > 9) {
+        throw new BadRequest(400);
+      }
+      // Beyond the limit (or what an i64 holds, for a limit near it).
+      if (n > this.maxBody || n > 922337203685477579) {
+        throw new BadRequest(413);
+      }
+      n = n * 10 + d;
+    }
+    return n;
+  }
+}

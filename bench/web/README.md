@@ -9,6 +9,8 @@ predecessor (plaintext, JSON and an in-memory fortunes page).
 db/init.sql, db/db.sh   Postgres 17 in Docker (container velt-web-pg) with World + Fortune
 velt/server.vlt        std/http + std/postgres (createPool); the routes are in velt/app.ts
 velt-tsx/server.vlt    the same routes, the fortunes page in TSX (velt:jsx, precompiled)
+velt-native/server.vlt every route on velt:http/server, the HTTP/1.1 server written in Velt on std/net (not hyper);
+                       the database side shared with velt/ through velt/worlds.ts
 node/server.mjs         node:http + pg (Pool); CLUSTER=1: node:cluster, one worker per core
 bun/server.ts           Bun.serve + Bun.SQL (Bun's built-in Postgres client)
 go/main.go              net/http + pgx/v5 (pgxpool)
@@ -33,6 +35,13 @@ bench/web/db/db.sh down
 bench/web/linux.sh --platform linux/arm64          # everything in Docker, no local setup
 bench/web/summarize.py bench/web/results/<run>.jsonl
 ```
+
+The TechEmpower table in #1533 came from `linux.sh`'s setup (the bench image and a Postgres
+container with `db/db.sh`'s settings) on Apple silicon: `DURATION=10 WARMUP=3 bench/web/run.sh`
+once per server (`SERVERS=velt-native`, `SERVERS="velt rust go bun node"`), each cell the best
+level. Comparisons between two builds of one server were interleaved rounds of the same `wrk`
+runs, A then B, three times. `run.sh` warns when the database does not run with
+`synchronous_commit=off`, which makes `/updates` wait for the disk.
 
 **Use a release `velt`** (`cargo build --release -p veltc -p velt_rt`, then
 `VELT=target/release/velt`): `velt` links the runtime library that sits next to it, so a debug

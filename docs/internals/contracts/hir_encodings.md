@@ -1067,7 +1067,11 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   `U` with `| null`: a loose `=== null` test first, then per member as below). A mismatch
   stops the program with `TypeError: the value is not a <T> (it is <found>)`. Its operand is
   owned: a place is wrapped in `Intrinsic::Share` of the place read with `UseMode::Borrow`, so
-  the place keeps (and later drops) its value.
+  the place keeps (and later drops) its value. An optional second operand, a string literal
+  (`ExprKind::Lit(Lit::Str(text))`), says where the value comes from: a mismatch stops with
+  `TypeError: <text>: the value is not a <T> (it is <found>)` (additive; sema writes it for
+  the arguments of an overload signature's adapted callback, `crate::overload_adapter`).
+  Lowering reads the text while compiling; it is never evaluated.
 - A union with a dynamic member is that member (`any | null`, `any | string` are `any`; an
   `unknown` likewise unless `any` is also a member). An `any | null` / `unknown | null` that
   still arises (a generic `T | null` with `T = any`: `Map.get`, `find`, `Channel.receive`, a
@@ -1202,6 +1206,24 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   their qualified names (`std/proxy::Proxy`, `::Reflect`; a program's own class
   named `Proxy` is its own) and numbers them last among class ids, so programs without them
   keep theirs.
+- Traps that throw (#1174, stage 1): the function types of `ProxyHandler`'s traps
+  (std/proxy.vlt) are sites like the function types a user module writes without `throws`
+  (sema `throws/fn_types.rs`): a closure stored into one adds its errors (`Error` classes) to it,
+  so a call of a trap in `Proxy.__get` & co. throws them and the `Proxy` methods' error types are
+  inferred as any function's. `Intrinsic::AnyGet` / `AnyIndex` (`__get`), `AnySet` /
+  `AnySetIndex` (`__set`), `AnyHas` (`__has`) and `AnyKeys` (`__keys`) in a user module or in
+  std/proxy (whose `Reflect` functions reach a target that may be a proxy) of a program that has
+  loaded `Proxy` are a throw source `ThrowSrc::Call` of that `Proxy` method at the operation
+  (sema `any_op`): the operation throws what the method throws, empty when no trap throws. The
+  HIR encoding is unchanged. Lowering derives the same error type from the method's final
+  `throws` (velt_vir `lower/proxy_throws.rs`): when it is not empty, such an operation in a
+  function of a user module or of std/proxy tests whether the value's descriptor is the `Proxy`
+  class's table and then calls the method directly, as a call of a throwing function (its error
+  goes to the innermost handler or leaves the function, errors.rs); other values take the slot.
+  A program whose traps throw nothing lowers to the same VIR as before. Everywhere else a
+  `Proxy` method that throws is called from (descriptor slots, including `AnyCall`, typed
+  proxies, JSON, printing, the rest of the standard library) its error ends the process with
+  Node's `Uncaught …` report (`ScopeKind::Uncaught` around the call): stage 2.
 - Typed proxies (#823, velt_vir `lower/proxy_typed.rs`): in a program that lowers a `ToDyn` of
   a `Proxy`, the class hierarchies and object types that `AnyTo` in the program's own code
   converts to, and what values of those types are upcast to (`Upcast`), are *proxiable*
