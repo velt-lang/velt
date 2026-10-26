@@ -51,3 +51,6 @@ console.log(report(s1), "|", report(s2), "|", a.subs.size, b.subs.size);
 cleanup(s1);
 console.log(report(s1), "|", report(s2), "|", a.subs.size, b.subs.size, s1.deps.length);
 console.log(b.subs.has(s2), b.owners.get(s2), a.owners.has(s1));
+// Unlinking the last subscriber breaks the reference cycles, so everything is freed.
+cleanup(s2);
+console.log(b.subs.size, b.owners.size, s2.deps.length);
