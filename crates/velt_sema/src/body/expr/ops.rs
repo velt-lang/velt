@@ -231,30 +231,14 @@ impl FnCx<'_, '_> {
         };
         if untyped(lhs) && !untyped(rhs) {
             let r = self.expr(rhs, hint, want);
-            let r = self.std_int_beside_literal(r, hint);
             let h = pick(self, &r);
             let l = self.expr(lhs, h, want);
             (l, r)
         } else {
             let l = self.expr(lhs, hint, want);
-            let l = match untyped(rhs) {
-                true => self.std_int_beside_literal(l, hint),
-                false => l,
-            };
             let h = pick(self, &l);
             let r = self.expr(rhs, h, want);
             (l, r)
-        }
-    }
-
-    /// A standard library integer whose other operand is a literal, where an integer type that
-    /// holds it is expected (`at(xs, xs.length - 1)` with `at(xs, i: usize)`): that integer, and
-    /// the literal of its type (`numbers::std_int_fits`). Next to anything else it stays a number
-    /// until `std_int_operands` sees the other operand's type.
-    fn std_int_beside_literal(&mut self, h: hir::Expr, hint: Option<TyId>) -> hir::Expr {
-        match hint {
-            Some(t) if self.cx.ty.is_int(t) => self.std_int_coerce(h, t).unwrap_or_else(|h| h),
-            _ => h,
         }
     }
 

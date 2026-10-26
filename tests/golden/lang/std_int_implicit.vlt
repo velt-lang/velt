@@ -47,6 +47,18 @@ function main() {
     out[head.length + j] = head[j];
   }
   console.log(out);
+  // An index of a length minus a local (`nums.length - 1 - j`), and a sum with a number local
+  // passed on, stay number arithmetic; `+`, `-` and `*` of lengths and whole literals become
+  // integer arithmetic where they meet an integer type.
+  const rev: number[] = [];
+  for (let j = 0; j < xs.length; j++) {
+    rev.push(xs.length - 1 - j);
+  }
+  const extra = 2;
+  const room = new Array<u8>(1 + xs.length + extra).fill(0).length;
+  let base: usize = 1;
+  base = base + (xs.length - 1) * 2;
+  console.log(rev, room, base, at(xs, (xs.length - 1) * 1));
   // With no integer type expected it stays a number, as in TypeScript.
   const half = xs.length / 2;
   const third = (xs.length - 1) / 2;

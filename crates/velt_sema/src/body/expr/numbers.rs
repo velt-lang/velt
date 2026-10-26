@@ -86,9 +86,10 @@ impl FnCx<'_, '_> {
     /// Does integer type `target` hold every value a standard library integer of type `src`
     /// hands to user code? Those are numbers, so exact below 2^53: a length or a size (`usize`)
     /// fits `usize`, `u64`, `i64` and `isize`, an `i64` result (`indexOf`) the signed 64-bit
-    /// types. Where one is expected, the integer converts implicitly, as itself, without a
-    /// round trip through `f64` (`const n: usize = xs.length`, `f(xs.length - 1)` with an
-    /// `f(i: usize)`, `depth + xs.length` with `depth: usize`).
+    /// types. Such a number converts implicitly, as the integer itself, where it meets one of
+    /// those types: at a conversion site (`const n: usize = xs.length`, `f(xs.length - 1)` with
+    /// an `f(i: usize)`, `std_int_coerce`) and next to one (`depth + xs.length` with
+    /// `depth: usize`, `std_int_operands`). Until then it is a number, as in TypeScript.
     pub(crate) fn std_int_fits(&self, src: TyId, target: TyId) -> bool {
         let (Some(s), Some(t)) = (self.cx.ty.int_ty(src), self.cx.ty.int_ty(target)) else {
             return false;
@@ -98,14 +99,53 @@ impl FnCx<'_, '_> {
         (t.is_signed() || !s.is_signed()) && value_bits(t.is_signed(), t.bits()) >= src_bits
     }
 
-    /// The standard library integer inside `h`, a number made of one (`std_number`), when it
-    /// fits integer type `t`.
+    /// `h`, a number computed from standard library integers, as integer arithmetic of type `t`
+    /// when every value it can have fits: a standard library integer made a number
+    /// (`std_number`) that fits `t` (`std_int_fits`), or `+`, `-` or `*` of such integers and
+    /// whole literals, with at least one such integer (`xs.length - 1`). The same operations on
+    /// the integers themselves, with no round trip through `f64`; `Err` gives `h` back.
     pub(crate) fn std_int_as(&mut self, h: hir::Expr, t: TyId) -> Result<hir::Expr, hir::Expr> {
-        match h.kind {
-            H::Cast(x) if self.is_std_api_value(&x) && self.std_int_fits(x.ty, t) => {
-                Ok(self.int_as(*x, t))
+        match self.std_int_tree(&h, t) {
+            Some(true) => Ok(self.std_int_rebuilt(h, t)),
+            _ => Err(h),
+        }
+    }
+
+    // Whether `h` is such a tree (`None`: it is not), and whether it holds a standard library
+    // integer (a tree of literals alone is a number as written).
+    fn std_int_tree(&self, h: &hir::Expr, t: TyId) -> Option<bool> {
+        match &h.kind {
+            H::Cast(x) if self.is_std_api_value(x) && self.std_int_fits(x.ty, t) => Some(true),
+            H::Lit(hir::Lit::Float(v)) if v.fract() == 0.0 && *v >= 0.0 && *v < 9.0e15 => {
+                Some(false)
             }
-            kind => Err(hir::Expr { kind, ..h }),
+            H::Lit(hir::Lit::Int(n)) if *n < 9_000_000_000_000_000 => Some(false),
+            H::Binary {
+                op: hir::BinOp::Add | hir::BinOp::Sub | hir::BinOp::Mul,
+                lhs,
+                rhs,
+            } if h.ty == self.cx.ty.f64 => {
+                let l = self.std_int_tree(lhs, t)?;
+                let r = self.std_int_tree(rhs, t)?;
+                Some(l || r)
+            }
+            _ => None,
+        }
+    }
+
+    // `h`, a tree `std_int_tree` accepted, rebuilt in integer type `t`.
+    fn std_int_rebuilt(&mut self, h: hir::Expr, t: TyId) -> hir::Expr {
+        let span = h.span;
+        match h.kind {
+            H::Cast(x) => self.int_as(*x, t),
+            H::Lit(hir::Lit::Float(v)) => self.mk(H::Lit(hir::Lit::Int(v as u128)), t, span),
+            H::Lit(lit) => self.mk(H::Lit(lit), t, span),
+            H::Binary { op, lhs, rhs } => {
+                let lhs = Box::new(self.std_int_rebuilt(*lhs, t));
+                let rhs = Box::new(self.std_int_rebuilt(*rhs, t));
+                self.mk(H::Binary { op, lhs, rhs }, t, span)
+            }
+            kind => hir::Expr { kind, ..h },
         }
     }
 
