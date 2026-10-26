@@ -11,3 +11,6 @@ console.log(two((x: number | undefined, y: string | undefined) => `${x}/${y}`));
 function opt<T1>(fn: (p: T1) => string): string;
 function opt(fn: (...args: unknown[]) => string): string { return fn() + fn("given"); }
 console.log(opt((p: string | undefined) => `[${p}]`));
+// A parameter with a default takes it for a left-out argument, as in Node.
+console.log(setup((c: Ctx, p1: number = 5) => `${c.n} ${p1}`));
+console.log(setup((c: Ctx, p1: number = 5) => { const d = p1 * 2; return `${c.n} ${d}`; }));

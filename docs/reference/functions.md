@@ -193,7 +193,8 @@ function main() {
   each rest argument to the callback's parameter type when the implementation calls it:
   - an argument the implementation leaves out is `undefined`, as in Node, where the parameter's
     type admits it (`p1: number | undefined`, or a type parameter instantiated with such a
-    type);
+    type); a callback parameter with a default (`p1: number = 5`, which TypeScript types
+    `p1?: number`) takes its default;
   - where it doesn't (`p1: number`), the program stops with a `TypeError` naming the callback
     and the argument (``the callback `fn` of `setup` was called without its argument 2 (Node
     would pass `undefined`): the value is not a number (it is undefined)``): Velt can't pass

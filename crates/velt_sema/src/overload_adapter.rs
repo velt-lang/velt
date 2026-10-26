@@ -186,6 +186,139 @@ pub(crate) fn rest_adapter(
     }))
 }
 
+/// The arguments of a call of an overloaded function with each arrow parameter that has a
+/// default and a written type (`(c: Ctx, p1: number = 5) => …`) taking `T | undefined` and
+/// applying the default to `undefined`, as TypeScript types it (`p1?: number`): `(c: Ctx,
+/// p1#in: number | undefined) => { let p1: number = p1#in === undefined ? 5 : p1#in; … }`. A
+/// signature's adapted callback then passes `undefined` for an argument the implementation
+/// leaves out, and the default applies, as in Node. `None` when no argument has one.
+pub(crate) fn optional_defaults(args: &[ast::Expr]) -> Option<Vec<ast::Expr>> {
+    let has = |e: &ast::Expr| {
+        matches!(&e.kind, ast::ExprKind::Arrow { params, .. }
+            if params.iter().any(defaulted))
+    };
+    if !args.iter().any(has) {
+        return None;
+    }
+    Some(
+        args.iter()
+            .map(|a| match &a.kind {
+                ast::ExprKind::Arrow {
+                    type_params,
+                    params,
+                    ret,
+                    throws,
+                    body,
+                    is_async,
+                } if has(a) => {
+                    let span = a.span;
+                    let mut lets = vec![];
+                    let params = params
+                        .iter()
+                        .map(|p| {
+                            if !defaulted(p) {
+                                return p.clone();
+                            }
+                            let (Some(ty), Some(d)) = (&p.ty, &p.default) else {
+                                return p.clone();
+                            };
+                            let inner = format!("{}#in", p.name.name);
+                            lets.push(default_let(&p.name, &inner, ty, d, span));
+                            let undefined = ast::TypeExpr {
+                                kind: ast::TypeExprKind::Undefined,
+                                span,
+                            };
+                            ast::ArrowParam {
+                                name: ast::Ident {
+                                    name: inner,
+                                    span: p.name.span,
+                                },
+                                ty: Some(ast::TypeExpr {
+                                    kind: ast::TypeExprKind::Union(vec![ty.clone(), undefined]),
+                                    span: ty.span,
+                                }),
+                                default: None,
+                                ..p.clone()
+                            }
+                        })
+                        .collect();
+                    let mut stmts = lets;
+                    match body {
+                        ast::ArrowBody::Expr(e) => stmts.push(ast::Stmt {
+                            kind: ast::StmtKind::Return(Some((**e).clone())),
+                            span: e.span,
+                        }),
+                        ast::ArrowBody::Block(b) => stmts.extend(b.stmts.iter().cloned()),
+                    }
+                    ast::Expr {
+                        id: a.id,
+                        kind: ast::ExprKind::Arrow {
+                            type_params: type_params.clone(),
+                            params,
+                            ret: ret.clone(),
+                            throws: throws.clone(),
+                            body: ast::ArrowBody::Block(ast::Block { stmts, span }),
+                            is_async: *is_async,
+                        },
+                        span,
+                    }
+                }
+                _ => a.clone(),
+            })
+            .collect(),
+    )
+}
+
+/// A plain parameter with a written type and a default (not optional, rest or destructured).
+fn defaulted(p: &ast::ArrowParam) -> bool {
+    p.ty.is_some() && p.default.is_some() && !p.optional && !p.rest && p.pattern.is_none()
+}
+
+/// `let name: ty = inner === undefined ? d : inner;`
+fn default_let(
+    name: &ast::Ident,
+    inner: &str,
+    ty: &ast::TypeExpr,
+    d: &ast::Expr,
+    span: Span,
+) -> ast::Stmt {
+    let expr = |kind| ast::Expr {
+        id: ast::NodeId(u32::MAX),
+        kind,
+        span,
+    };
+    let read = || {
+        expr(ast::ExprKind::Ident(ast::Ident {
+            name: inner.to_string(),
+            span,
+        }))
+    };
+    let missing = expr(ast::ExprKind::Binary {
+        op: ast::BinaryOp::StrictEq,
+        lhs: Box::new(read()),
+        rhs: Box::new(expr(ast::ExprKind::Lit(ast::Lit::Undefined))),
+    });
+    let value = expr(ast::ExprKind::Cond {
+        cond: Box::new(missing),
+        then: Box::new(d.clone()),
+        els: Box::new(read()),
+    });
+    ast::Stmt {
+        kind: ast::StmtKind::Var(ast::VarDecl {
+            kind: ast::VarKind::Let,
+            pattern: ast::Pattern {
+                id: ast::NodeId(u32::MAX),
+                kind: ast::PatternKind::Ident(name.clone()),
+                span: name.span,
+            },
+            ty: Some(ty.clone()),
+            init: Some(value),
+            span,
+        }),
+        span,
+    }
+}
+
 /// Reports each use of an adapted implementation parameter other than calling it, in the
 /// implementation and the closures it captures the parameter in (module docs).
 pub(crate) fn check_identity(cx: &mut Ctx, adapted: &FxHashSet<Adapted>) {
