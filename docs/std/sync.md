@@ -127,6 +127,13 @@ round, up to `2^SPIN_ROUNDS`; after that each round yields the thread to the OS.
 spins, and `completed` tells whether spinning stopped growing (a loop that waits longer should
 block instead).
 
+**Never across `await`.** A `Backoff` loop never gives its worker thread back to the scheduler,
+so it can wait for another *thread*, not for a task: what a spin lock or latch guards must be
+taken and let go between two `await`s. A task holding one across an `await` can hang the program,
+when the task that waits for it runs on the same worker (and on wasm, where yielding does
+nothing). To wait for another task, use a `Mutex` (its callback cannot be async either) or a
+channel.
+
 ```ts
 import { Backoff } from "velt:sync";
 
@@ -158,13 +165,18 @@ bit, a count of shared holders, and a version that only grows.
 
 - **Optimistic reads:** `readVersion()` (it waits while a writer holds the node), read the node,
   then `isUnchanged(v)`: when it is `false`, a writer changed the node meanwhile and the reader
-  starts over. A reader writes no shared memory, so readers on many cores never slow each other.
+  starts over. Until then the values read may be torn (some from before a write, some from
+  after): code that could fail on such a value, like indexing an array with an index read under
+  the latch, runs only after the check (or clamps the value first). A reader writes no shared memory, so readers on many cores never slow each other.
 - **Exclusive:** `tryLockAt(v)` takes the node at the version the thread read, failing at once
   if anything changed it (then start over); `lockExclusive()` waits for it and returns the
   version; `tryLockExclusive()` takes it only if nothing holds it. `unlockExclusive(v)` lets go
   and moves the node to the next version, which fails every reader that read it meanwhile.
 - **Shared:** `lockShared()` / `unlockShared()` keep writers out without changing the version.
 - `tryReadVersion()`: the version, or `null` while a writer holds the node.
+
+As with `Backoff`, hold a latch only between `await`s: `readVersion()` and `lockExclusive()`
+wait by spinning, so a task waiting on a latch another task holds across an `await` can hang.
 
 ```ts
 import { VersionLatch } from "velt:sync";

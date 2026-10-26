@@ -10,6 +10,8 @@ declare function velt_rt_thread_yield(): void;
  * Waiting for another thread in a loop, twice as long each round: `snooze()` spins
  * `2^round` CPU spin hints up to `2^SPIN_ROUNDS`, then yields the thread to the OS each round.
  * Start a fresh one for each wait: `const b = Backoff.create(); while (!ready()) b.snooze();`.
+ * It waits for another thread, never for a task: whatever it waits for must be taken and let go
+ * between two `await`s (use a `Mutex` or a channel to wait for a task).
  */
 export struct Backoff {
   private round: u32;
@@ -69,6 +71,9 @@ const VERSION_UNIT: u64 = 2097152;
  *   waiting; start over when it fails), or with `lockExclusive()`, and lets go with
  *   `unlockExclusive(v)`, which moves it to the next version so readers see it changed.
  * - **Shared:** `lockShared()` / `unlockShared()` keep writers out without changing the version.
+ *
+ * Values read optimistically may be torn until `isUnchanged` says otherwise. Hold the latch only
+ * between `await`s: its waits spin, so a task holding it across an `await` can hang the others.
  */
 export struct VersionLatch {
   private word: Atomic<u64>;
