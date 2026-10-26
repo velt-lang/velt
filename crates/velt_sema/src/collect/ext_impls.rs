@@ -2,54 +2,134 @@
 //! `I` for every type its target matches, so `X` satisfies `I` as a bound and its values convert
 //! to `I` as a class's would. Each block and interface becomes an entry in `Program::impls`
 //! (generic when the block is), recorded in `Ctx::ext_impls`; its type parameters' bounds go to
-//! `Program::impl_bounds`, so an impl fits a type only where they hold.
+//! `Program::extension_impls`, so an impl fits a type only where they hold.
 //!
-//! Several blocks may implement one interface for overlapping targets: a type gets the most
-//! specific of those that fit it (`Ctx::find_impl`, velt_vir `find_impl`), by the rule that picks
-//! among extension methods (target instance of the other's, then bounds over none). A blanket
-//! block (`extend<T extends Comparable<T>> T implements InlineKey`) gives every type that meets
-//! its bounds an impl, type parameters included (`Ctx::blanket_bounds`), and a block for one type
-//! (`extend u64 implements InlineKey`) replaces it for that type. Two blocks that are equally
-//! specific are an error, as is a block for an interface the type already implements.
+//! A type's own implementation (its class's, or a base class's) comes first; a type without one
+//! gets the most specific block that fits it (`Ctx::find_impl`, infer/ext_impls.rs; velt_vir
+//! `impl_for`), by the rule that picks among extension methods (target an instance of the
+//! other's, then bounds over none). A blanket block (`extend<T extends Comparable<T>> T
+//! implements InlineKey`) gives every type that meets its bounds an impl, type parameters
+//! included (`Ctx::blanket_bounds`), and a block for one type (`extend u64 implements
+//! InlineKey`) replaces it for that type. So that the most specific block is unique, two blocks
+//! that can fit one type where neither is more specific are an error, as is a block for an
+//! interface its target already implements.
+//!
+//! Refused targets: `any`, `unknown` (and the other dynamic types) and `never`, which have no
+//! implementations of their own; unions, whose values have a member's type; an interface type
+//! implementing an interface it extends; and a blanket block bounded by the interface it
+//! implements, which no type could get.
 
 use velt_common::Diagnostic;
 
 use super::impls::check_method_sig;
 use crate::ctx::Ctx;
 use crate::defs::Bound;
-use crate::hir::{DefId, ImplBound, ImplDef, TyId};
+use crate::hir::{DefId, ImplBound, ImplDef, TyId, TyKind};
 
 pub(super) fn build(cx: &mut Ctx) {
     for e in 0..cx.extensions.len() {
         for (b, span) in cx.extensions[e].implements.clone() {
-            if let Some(imp) = check(cx, e, &b, span) {
-                if let Some((other, from_block)) = conflict(cx, e, &imp) {
-                    report_conflict(cx, e, &b, span, other, from_block);
-                    continue;
-                }
-                cx.impls.push(imp);
-                cx.ext_impls.insert(cx.impls.len() as u32 - 1, e);
+            if !target_ok(cx, e, &b, span) {
+                continue;
             }
+            let Some(imp) = check(cx, e, &b, span) else {
+                continue;
+            };
+            let (iface, i) = (imp.iface, cx.impls.len() as u32);
+            if let Some(other) = cx.own_impl(imp.ty, iface) {
+                let def = cx.impls[other.0 as usize].methods.first().copied();
+                report_conflict(cx, e, &b, span, def, None);
+                continue;
+            }
+            cx.impls.push(imp);
+            cx.ext_impls.insert(i, e);
+            if let Some((other, witness)) = overlapping(cx, i) {
+                let def = cx.impls[other as usize].methods.first().copied();
+                report_conflict(cx, e, &b, span, def, Some(witness));
+                cx.ext_impls.remove(&i);
+                cx.impls.pop();
+                continue;
+            }
+            cx.ext_by_iface.entry(iface).or_default().push(i);
         }
     }
+}
+
+/// Can extension `e` implement `b` for its target? Reports why not.
+fn target_ok(cx: &mut Ctx, e: usize, b: &Bound, span: velt_common::Span) -> bool {
+    let target = cx.extensions[e].target;
+    let tn = target_name(cx, e);
+    let iname = cx
+        .iface(b.iface)
+        .map(|i| i.name.clone())
+        .unwrap_or_default();
+    let why = if matches!(cx.ty.kind(target), TyKind::Never) {
+        Some("`never` has no values".to_string())
+    } else if cx.dynamic(target).is_some() {
+        Some(format!(
+            "`{tn}` has no implementations of its own: a value of it holds a value of another type, which implements `{iname}` or not"
+        ))
+    } else if cx.union_def(target).is_some() || matches!(cx.ty.kind(target), TyKind::Option(..)) {
+        Some(format!(
+            "`{tn}` is a union, and a value of it has the type of one of its members: implement `{iname}` for each member"
+        ))
+    } else {
+        None
+    };
+    if let Some(why) = why {
+        cx.err(
+            format!("`extend {tn}` cannot implement `{iname}`: {why}"),
+            span,
+        );
+        return false;
+    }
+    if let TyKind::Dyn(d, args) = cx.ty.kind(target).clone() {
+        if cx.extends_iface(&Bound { iface: d, args }, b) {
+            cx.err(format!("`{tn}` already implements `{iname}`"), span);
+            return false;
+        }
+    }
+    if let TyKind::Param(k) = *cx.ty.kind(target) {
+        let bounds = cx.extensions[e].generics.bounds[k as usize].clone();
+        if bounds.iter().any(|x| cx.extends_iface(x, b)) {
+            cx.error(
+                Diagnostic::error(
+                    format!("`extend {tn}` implements `{iname}` only for types that already implement it"),
+                    span,
+                )
+                .with_note(format!("`{tn}` is bounded by `{iname}`, and a type's own implementation comes first: this block never applies")),
+            );
+            return false;
+        }
+    }
+    true
 }
 
 /// The impl of `b` by extension `e`, after checking its methods against the interface's.
 fn check(cx: &mut Ctx, e: usize, b: &Bound, span: velt_common::Span) -> Option<ImplDef> {
     let (target, n) = (cx.extensions[e].target, cx.extensions[e].generics.len());
     let iface = cx.iface(b.iface)?;
-    let (iname, imethods, has_fields) = (
-        iface.name.clone(),
-        iface.methods.clone(),
-        !iface.fields.is_empty(),
-    );
+    let (iname, imethods) = (iface.name.clone(), iface.methods.clone());
+    let field = iface
+        .fields
+        .first()
+        .map(|f| (f.name.clone(), f.optional, f.declared, f.span));
     let tn = target_name(cx, e);
-    if has_fields {
-        cx.err(
-            format!(
-                "`extend {tn}` cannot implement `{iname}`: `{iname}` declares fields, and an `extend` block cannot add fields"
-            ),
-            span,
+    if let Some((name, optional, declared, at)) = field {
+        let declared = cx.ty.core(declared).unwrap_or(declared);
+        let what = match (optional, cx.ty.kind(declared)) {
+            (true, TyKind::FnPtr { .. }) => format!("optional method `{name}`, which is a field"),
+            (true, _) => format!("optional field `{name}`"),
+            _ => format!("fields (`{name}`)"),
+        };
+        cx.error(
+            Diagnostic::error(
+                format!(
+                    "`extend {tn}` cannot implement `{iname}`: `{iname}` declares {what}, and an `extend` block cannot add fields"
+                ),
+                span,
+            )
+            .with_label(at, "declared here"),
         );
         return None;
     }
@@ -100,52 +180,52 @@ fn check(cx: &mut Ctx, e: usize, b: &Bound, span: velt_common::Span) -> Option<I
     })
 }
 
-/// The impl `imp` (of extension `e`) clashes with, as its first method (`None` for an impl
-/// without methods) and whether it is an `extend` block's: an impl of the same interface for
-/// the same target from a class's `implements` (or an implicit `Comparable` / `Iterable` one),
-/// or an earlier block that is exactly as specific (the same target pattern, both with bounds or
-/// both without).
-fn conflict(cx: &mut Ctx, e: usize, imp: &ImplDef) -> Option<(Option<DefId>, bool)> {
-    let bounded = has_bounds(cx, e);
-    for (i, other) in cx.impls.iter().enumerate() {
-        if other.iface != imp.iface || other.iface_args.len() != imp.iface_args.len() {
+/// An earlier `extend` impl of the same interface that can fit a type the new impl `i` fits
+/// where neither is more specific, with that type (`None` when it names a type parameter).
+fn overlapping(cx: &mut Ctx, i: u32) -> Option<(u32, Option<TyId>)> {
+    let iface = cx.impls[i as usize].iface;
+    let earlier = cx.ext_by_iface.get(&iface).cloned().unwrap_or_default();
+    for j in earlier {
+        let Some(witness) = cx.ext_overlap(i, j) else {
             continue;
-        }
-        if other.ty != imp.ty || other.generics != imp.generics {
-            continue;
-        }
-        let (clashes, from_block) = match cx.ext_impls.get(&(i as u32)) {
-            Some(&o) => (has_bounds(cx, o) == bounded, true),
-            None => (true, false),
         };
-        if clashes {
-            return Some((other.methods.first().copied(), from_block));
+        if !cx.ext_more_specific(i, j) && !cx.ext_more_specific(j, i) {
+            return Some((j, witness));
         }
     }
     None
 }
 
+/// `overlap`: `None` for a type that already implements the interface, else the type two
+/// blocks fit, if it names no type parameter.
 fn report_conflict(
     cx: &mut Ctx,
     e: usize,
     b: &Bound,
     span: velt_common::Span,
     other: Option<DefId>,
-    from_block: bool,
+    overlap: Option<Option<TyId>>,
 ) {
     let iname = cx
         .iface(b.iface)
         .map(|i| i.name.clone())
         .unwrap_or_default();
-    let mut d = if from_block {
-        Diagnostic::error(
-            format!("conflicting implementations of `{iname}`: another one is exactly as specific"),
-            span,
-        )
-        .with_note("a type gets the most specific implementation that fits it: make one block's target or bounds narrower, or remove one")
-    } else {
-        let tn = target_name(cx, e);
-        Diagnostic::error(format!("`{tn}` already implements `{iname}`"), span)
+    let mut d = match overlap {
+        Some(witness) => {
+            let fits = match witness {
+                Some(t) => format!(" (both fit `{}`)", cx.display(t)),
+                None => String::new(),
+            };
+            Diagnostic::error(
+                format!("conflicting implementations of `{iname}`: neither block is more specific than the other{fits}"),
+                span,
+            )
+            .with_note("a type gets the most specific implementation that fits it: make one block's target or bounds narrower, or remove one")
+        }
+        None => {
+            let tn = target_name(cx, e);
+            Diagnostic::error(format!("`{tn}` already implements `{iname}`"), span)
+        }
     };
     if let Some(def) = other {
         d = d.with_label(cx.fn_info(def).name_span, "the other implementation");

@@ -895,11 +895,14 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   when the block is; a blanket block's `ty` is `Param(0)`), listed in `Program::extension_impls`
   (additive) with the bounds on its type parameters (`ImplBound`: parameter, interface, args in
   the impl's params). Lowering's impl lookup for `iface<args>` and a concrete type: the first
-  impl in `impls` order that fits (for an extension impl: its pattern matches and its bounds hold,
-  each bound looked up the same way); when that one is an extension impl, the most specific
-  extension impl that fits replaces it (A over B when A's `ty` is an instance of B's and not the
-  reverse, or the same pattern where only A has bounds). Sema reports equally specific ones, so
-  the choice is unique. Other impls keep first-fit.
+  impl that is not an extension impl, in `impls` order, that fits the type or else its nearest
+  base class (a type's own implementation comes first); else the most specific extension impl
+  that fits the type (its pattern matches and its bounds hold, each bound looked up the same
+  way), or else its nearest base class: A over B when A's `ty` is an instance of B's and not the
+  reverse, or the same pattern where only A has bounds. Sema refuses two extension impls that
+  can fit one type where neither is more specific, so the choice is unique. A lookup that comes
+  back to the same `(iface, type)` through bounds counts as not fitting. Converting an `any` to
+  `iface` uses the same lookup for the held value's type.
 - A call through a type parameter's bound that only a blanket block gives it (`k.m()` with
   `K extends Comparable<K>` and `extend<T extends Comparable<T>> T implements I`) is a
   `Callee::ParamMethod` of `I`, resolved by that lookup per instantiation.

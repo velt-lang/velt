@@ -61,6 +61,7 @@ impl<'h> Cx<'h> {
             boxing,
             facts: Default::default(),
             iface_impls: None,
+            impl_busy: Default::default(),
             own_clones: None,
             honoured_clones: FxHashMap::default(),
             dyn_modes_memo: FxHashMap::default(),

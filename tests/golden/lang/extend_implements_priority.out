@@ -1,0 +1,12 @@
+C C C
+C C C
+F F F
+blanket blanket
+any box i64 box comparable box
+from any: any box
+from any: i64 box
+from any: comparable box
+from unknown: i64 box
+class from any: C
+j of u64
+j of u64

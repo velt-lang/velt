@@ -72,6 +72,7 @@ mod frame_envs;
 mod frozen;
 mod glue;
 mod hooks;
+mod impl_lookup;
 mod intrinsics;
 mod js_string;
 mod json;
@@ -418,6 +419,8 @@ struct Cx<'h> {
     facts: boxing::Facts,
     /// `Program::impls` indexes per interface (`impls_of`), built on first use.
     iface_impls: Option<FxHashMap<DefId, Rc<[u32]>>>,
+    /// The `(interface, type)` lookups of `extend` impls in progress (impl_lookup.rs).
+    impl_busy: FxHashSet<(DefId, TyId)>,
     /// Classes with a `clone()` of their own, and that method (`own_clone`, transfer.rs),
     /// found on first use.
     own_clones: Option<FxHashMap<DefId, DefId>>,
