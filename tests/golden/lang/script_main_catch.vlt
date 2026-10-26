@@ -1,0 +1,11 @@
+// `main().catch(…)`, the usual end of a Node program (#1567): the handler runs when `main`
+// throws, and chooses the exit code.
+async function main(): Promise<void> {
+  await null;
+  throw new Error("boom");
+}
+
+main().catch((e) => {
+  console.log("caught", (e as Error).message);
+  process.exit(3);
+});

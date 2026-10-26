@@ -1,0 +1,23 @@
+// `Object.create(null)` where an `any` is expected (sigx's `const slots: SlotsObject<any> =
+// Object.create(null)`): a prototype-less `Record<string, any>`, so `in` sees no
+// `Object.prototype` keys. `Object.assign` skips a source that is `null` or `undefined`. Node
+// prints the same.
+const slots: any = Object.create(null);
+slots.default = () => "d";
+slots.title = "t";
+console.log(
+  typeof slots.default,
+  slots.title,
+  Object.keys(slots),
+  "toString" in slots,
+  "title" in slots,
+);
+
+const merged: Record<string, number> = {};
+const parts: (Record<string, number> | null)[] = [{ a: 1 }, null, { b: 2 }];
+for (const p of parts) {
+  Object.assign(merged, p);
+}
+const none: Record<string, number> | undefined = parts.length > 5 ? {} : undefined;
+const out = Object.assign(merged, none, { c: 3 });
+console.log(merged, out === merged);

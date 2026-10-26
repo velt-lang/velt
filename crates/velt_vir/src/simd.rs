@@ -427,12 +427,18 @@ pub enum SimdCall {
     /// `velt_simd_has_<ext>() -> bool`: whether the CPU has the extension (the runtime's flag;
     /// `false` on another architecture, on wasm and under Cranelift).
     Has(Ext),
+    /// `velt_simd_prefetch(addr)`: start loading the cache line at `addr` for a read soon
+    /// (`__intrinsic_array_prefetch`); never faults. Nothing under Cranelift and on wasm.
+    Prefetch,
 }
 
 impl SimdCall {
     /// The operation `symbol` names, if it is a SIMD extern for a supported combination.
     pub fn of_symbol(symbol: &str) -> Option<SimdCall> {
         let rest = symbol.strip_prefix("velt_simd_")?;
+        if rest == "prefetch" {
+            return Some(SimdCall::Prefetch);
+        }
         if let Some(ext) = rest.strip_prefix("has_") {
             return Ext::named(&ext.replace('_', "-")).map(SimdCall::Has);
         }
@@ -458,6 +464,7 @@ impl SimdCall {
         use Ty::{Bool, Ptr, Unit, U32, U64, V128};
         match self {
             SimdCall::Has(_) => (vec![], Bool),
+            SimdCall::Prefetch => (vec![Ptr], Unit),
             SimdCall::Sha(ShaOp::Sha1H) => (vec![U32], U32),
             SimdCall::Sha(op) => {
                 let mut params = vec![V128; op.vector_operands()];

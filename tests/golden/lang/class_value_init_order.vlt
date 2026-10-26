@@ -1,0 +1,20 @@
+// The classes' values exist before any of the root file's code runs (#926, #943): with top-level
+// statements, a class declared after a module `const` that its static method uses, read as a
+// value (a construct signature type, `x.constructor`) and called before its declaration's
+// position, sees the `const` initialized. Node prints the same.
+const probe: any = new Map<string, number>();
+const isMap = probe.constructor === Map;
+const registered = new Set<unknown>();
+registered.add(isMap);
+
+class Registry {
+  n = 1;
+  static add(s: string): void {
+    registered.add(s);
+  }
+}
+
+Registry.add("x");
+const k: new () => Registry = Registry;
+const r: any = new k();
+console.log(isMap, registered.size, new k().n, r.constructor === Registry);

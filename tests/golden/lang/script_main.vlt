@@ -1,0 +1,14 @@
+// check: no leaks
+// A root file that declares `main` and calls it, the usual end of a TypeScript program: as in
+// Node, the top-level statements are the program and `main` is an ordinary function, called once
+// here (#1567). An imported module's call runs its `main` when the module is evaluated.
+import { greeting } from "./_script_main/lib";
+
+function main(args: string[]): number {
+  console.log(greeting, "from main", args.length);
+  return args.length;
+}
+
+console.log("before");
+const n = main(process.argv.slice(2));
+console.log("after", n);

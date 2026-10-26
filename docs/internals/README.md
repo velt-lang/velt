@@ -32,12 +32,15 @@ and the test tiers, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
    and panic messages. VIR is a typed, MIR-like control-flow graph with a verifier.
 5. **Optimize** (`velt_opt`, release builds): inlining, constant folding, copy propagation,
    scalar replacement of aggregates, closure specialization, dead-code elimination, CFG
-   simplification, Map probe reuse (a `get` and `set` of the same key probe once), and `numrep`.
+   simplification, Map probe reuse (a `get` and `set` of the same key probe once), module state
+   lookups once per function call, and `numrep`.
    The passes and their order are in `crates/velt_opt/src/lib.rs`: `dead_funcs` first, then
    `gated_clones` (a gated function's calls of callees that check its CPU extension go to clones
    where the check is true), then up to three rounds of `inline`, `const_fields`, and per function `vtable_loads`,
    `constfold`, `copyprop`, `addr_forward`, `heap_sroa`, `sroa`, `dce` and `simplify_cfg`; then
-   `map_probe`, `numrep`, `divisions` and `dead_fills` once per function; then `noalias` and
+   `module_state` (a function asks the runtime for the module state block once per call, not
+   at every access to a module-level `let`), `map_probe`, `numrep`, `divisions` and
+   `dead_fills` once per function; then `noalias` and
    `frame_slots`, each followed by a cleanup; `dead_funcs` again at the end. Five change how objects and numbers are
    represented or reached:
    - `heap_sroa` keeps a class instance that never escapes its function (after inlining) in
@@ -53,6 +56,12 @@ and the test tiers, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
      above, so the fields they turned into locals can become integers too, and once before the
      inlining rounds, while an array is still one value whose length (below 2^53) bounds the
      loops over it. A parameter that every call sets to a constant takes that constant's facts.
+     A `number[]` that never leaves its function (its data pointer, after `sroa`, is only
+     offset, compared, grown and freed) and whose stores only ever write whole numbers within
+     ±2^53, never `-0`, keeps its elements as `i64` (#1599): loads and stores convert exactly,
+     and the narrowed values use the integers directly. The element facts are a fixpoint over
+     the stores, so a permutation shuffled in place qualifies; a value that grows from the
+     elements themselves (`xs[i] = xs[i - 1] + 1`) has no provable bound and stays a double.
    - `dead_fills`, for the objects that stay on the heap, drops the zero fill of `new` when the
      code right after the allocation writes every field (padding aside) before anything can
      read the object: before a branch, and before the pointer is passed, stored or compared.

@@ -1,0 +1,56 @@
+// check: no leaks
+// A NaN key's value is released when NaN is deleted or its value replaced, also when NaN is the
+// fillers' entry (the first key stored): the map finds that entry by its own equality, as
+// `compareTo` orders keys, where `NaN == NaN` is false.
+import { BTreeMap } from "velt:collections/btree_map";
+
+class Payload {
+  n: i64;
+  constructor(n: i64) {
+    this.n = n;
+  }
+}
+
+function alive(refs: WeakRef<Payload>[]): i64 {
+  let c = 0;
+  for (const r of refs) {
+    if (r.deref() !== undefined) {
+      c++;
+    }
+  }
+  return c;
+}
+
+function main() {
+  // NaN first, then 100 more keys; NaN deleted.
+  const m = new BTreeMap<f64, Payload>();
+  const refs: WeakRef<Payload>[] = [];
+  const nan = new Payload(-1);
+  refs.push(new WeakRef<Payload>(nan));
+  m.set(NaN, nan);
+  for (let i: i64 = 0; i < 100; i++) {
+    const v = new Payload(i);
+    refs.push(new WeakRef<Payload>(v));
+    m.set(i as f64, v);
+  }
+  m.delete(NaN);
+  console.log("deleted NaN:", m.size, m.has(NaN), refs[0].deref() === undefined, alive(refs));
+
+  // NaN first, its value replaced.
+  const r = new BTreeMap<f64, Payload>();
+  const old = new Payload(1);
+  const oldRef = new WeakRef<Payload>(old);
+  r.set(NaN, old);
+  r.set(2.5, new Payload(2));
+  r.set(NaN, new Payload(3));
+  console.log("replaced NaN:", r.size, r.get(NaN)!.n, oldRef.deref() === undefined);
+
+  // The same with -0 and 0, which are one key.
+  const z = new BTreeMap<f64, Payload>();
+  const zero = new Payload(4);
+  const zeroRef = new WeakRef<Payload>(zero);
+  z.set(-0, zero);
+  z.set(1, new Payload(5));
+  z.delete(0);
+  console.log("deleted -0:", z.size, zeroRef.deref() === undefined);
+}

@@ -38,16 +38,15 @@ impl FnLower<'_, '_> {
     }
 
     /// The `TypeError` of a narrowed read of `inner` that found `what` (`null`, `a value of
-    /// another type`) instead.
+    /// another type`) instead (`panic_text` adds where it happened).
     pub(super) fn narrowed_read_error(&mut self, inner: &hir::Expr, what: &str) -> String {
-        let suffix = self.panic_suffix();
         match self.narrowed_path_name(inner) {
-            Some(path) => format!(
-                "TypeError: `{path}` was checked, but it was set to {what} before this read{suffix}"
-            ),
-            None => {
-                format!("TypeError: a narrowed field was set to {what} before this read{suffix}")
+            Some(path) => {
+                format!(
+                    "TypeError: `{path}` was checked, but it was set to {what} before this read"
+                )
             }
+            None => format!("TypeError: a narrowed field was set to {what} before this read"),
         }
     }
 }

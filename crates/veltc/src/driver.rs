@@ -242,6 +242,7 @@ fn load_modules(
             .map(|g| g as &dyn loader::PackageResolver),
         root_source: opts.root_source.clone(),
         overlay: None,
+        std_root_as_std: false,
     };
     let loaded = loader::load_with_roots(
         &mut sess.sm,

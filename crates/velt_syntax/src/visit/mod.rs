@@ -70,6 +70,7 @@ pub(crate) fn walk_item<'a>(item: &'a ast::Item, v: &mut dyn Visit<'a>) {
         ast::ItemKind::Extend(ext) => {
             walk_generics(&ext.generics, v);
             walk_type(&ext.target, v);
+            ext.implements.iter().for_each(|i| walk_type(i, v));
             ext.methods.iter().for_each(|m| walk_fn(&m.decl, v));
         }
         ast::ItemKind::Enum(e) => {

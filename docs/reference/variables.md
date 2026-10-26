@@ -263,11 +263,13 @@ function main() {
   function uses is module state, and its initializer runs where it stands, after the statements
   above it, as in Node.
 - <a id="module-state-cost"></a>Cost: a program without module state pays nothing, and so does a
-  task that never uses it. Each read or write of a module-level `let`, or of a constant kept as
-  module state, is a call into the runtime that returns the state (a constant only read is not: one
-  use that keeps it makes every use of it pay that). A task takes the lock at its first use and at
-  the start of each later run between `await`s (one uncontended atomic operation when no other task
-  holds it). Tasks on other cores that use module state at the same moment wait for each other, so
+  task that never uses it. A read or write of a module-level `let`, or of a constant kept as
+  module state, asks the runtime for the state (a constant only read is not: one use that keeps
+  it makes every use of it pay that). A debug build asks at every access; a release build asks
+  once per function call, plus once for each later slot (in declaration order) that the call has
+  not checked yet, so a loop over module state does not call the runtime at each iteration. A
+  task takes the lock at its first use and at the start of each later run between `await`s (one
+  uncontended atomic operation when no other task holds it). Tasks on other cores that use module state at the same moment wait for each other, so
   keep long computations that many tasks run in parallel out of the code between their `await`s that
   uses module state, or give them `shared(...)` state instead. A task that blocks on a `Mutex` keeps
   the module lock while it waits (the `Mutex`'s holder never needs it, see above).

@@ -66,6 +66,7 @@ mod drops;
 mod entry;
 mod errors;
 mod expr;
+mod ext_exists;
 mod flags;
 mod for_of;
 mod for_of_shared;
@@ -74,6 +75,7 @@ mod frame_envs;
 mod frozen;
 mod glue;
 mod hooks;
+mod impl_lookup;
 mod intrinsics;
 mod js_string;
 mod json;
@@ -412,6 +414,8 @@ struct Cx<'h> {
     debug: Option<debug_vars::DebugTypes>,
     /// Memoized `tracks_caller` answers.
     tracked: FxHashMap<DefId, bool>,
+    /// HIR nodes of the standard-library functions `tracks_caller` scanned (track_caller.rs).
+    tracked_size: FxHashMap<DefId, usize>,
     /// Memoized `quiet` answers (quiet.rs).
     quiet: FxHashMap<DefId, bool>,
     /// Interned static `VeltStr` objects (`static_str_object`).
@@ -424,6 +428,10 @@ struct Cx<'h> {
     facts: boxing::Facts,
     /// `Program::impls` indexes per interface (`impls_of`), built on first use.
     iface_impls: Option<FxHashMap<DefId, Rc<[u32]>>>,
+    /// Finished `extend` lookups by `(interface, arguments, type)` (impl_lookup.rs), and bound
+    /// checks through blocks (ext_exists.rs).
+    ext_memo: FxHashMap<impl_lookup::MemoKey, Option<impl_lookup::Fit>>,
+    exists_memo: FxHashMap<ext_exists::ExistsKey, bool>,
     /// Classes with a `clone()` of their own, and that method (`own_clone`, transfer.rs),
     /// found on first use.
     own_clones: Option<FxHashMap<DefId, DefId>>,
@@ -552,8 +560,12 @@ struct FnLower<'c, 'h> {
     block_locs: Vec<(Vec<Option<SrcLoc>>, Option<SrcLoc>)>,
     /// Location recorded for statements emitted now (srcloc.rs).
     loc: Option<SrcLoc>,
-    /// In a caller-tracking instance: the call site its panics report.
+    /// In a caller-tracking instance: the call site its panics report (`srcloc::ARG_LOC`: the
+    /// one `caller_arg` points to).
     caller_loc: Option<SrcLoc>,
+    /// In a caller-tracking instance that takes its caller's location as a parameter: that
+    /// parameter, a pointer to the `Str` ` at <path>:<line>:<col>` (empty when unknown).
+    caller_arg: Option<vir::Local>,
     /// A block is live once a live block jumps to it; dead blocks are pruned in `finish`.
     live: Vec<bool>,
     cur: BlockId,

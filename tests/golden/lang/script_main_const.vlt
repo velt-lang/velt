@@ -1,0 +1,6 @@
+// A script whose `main` is an exported arrow constant (#1567).
+export const main = (): void => {
+  console.log("const main");
+};
+
+main();

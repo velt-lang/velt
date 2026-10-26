@@ -90,8 +90,30 @@ and memory where you want a fixed width; code shared with TypeScript never names
   `String`, `Map`, `Date`, `Math`, `fetch`, `URL`, …) gives numbers where JavaScript does:
   `xs.length`, `s.indexOf(t)`, `m.size`, `Date.now()`, `res.status` and the indexes of
   `entries()` and of array callbacks (inside the standard library they stay `usize`/`i64`).
-  Velt's own modules (`velt:sqlite`, `velt:hash`, `velt:bigint`, …) and `compareTo` keep the
-  integer types they declare. A number passed to an integer parameter of a standard library
+  Velt's own modules (`velt:sqlite`, `velt:hash`, `velt:bigint`, …) and the methods JS has no
+  counterpart of (`compareTo`, `leadingZeros`, `trailingZeros`, `countOnes`) keep the integer
+  types they declare, as do a program's and its packages' own functions and `extend` methods.
+- **Where an integer type is expected, the standard library's integers convert by
+  themselves**: such a `number` is an integer below 2^53, so it converts implicitly to an
+  integer type that holds every value it can have, as the integer itself (no conversion
+  happens at run time). A length or a size goes into `usize`, `u64`, `i64` or `isize`, and an
+  index that can be `-1` (`indexOf`) into `i64` or `isize`. That covers a declared local, a
+  parameter, a field, a return value or an explicit type argument, arithmetic, a shift or a
+  compound assignment next to such an integer, and arithmetic with a literal where such an
+  integer is expected (`at(xs, xs.length - 1)`). Otherwise it stays a number, as in
+  TypeScript, also next to a local declared without a type:
+  ```ts
+  function at(xs: string[], i: usize): string {
+    return xs[i];
+  }
+  const xs = ["a", "b", "c"];
+  const n: usize = xs.length; // 3
+  let depth: usize = 1;
+  depth += xs.length; // 4
+  console.log(n, depth, at(xs, xs.length - 1)); // 3 4 c
+  console.log(xs.length / 2); // 1.5: a number
+  ```
+  Narrower types still need `as` (`xs.length as u32`), and so does `usize` for `indexOf`. A number passed to an integer parameter of a standard library
   function converts like JS's `ToIntegerOrInfinity` (truncated; `NaN` is 0):
   `xs.slice(0, xs.length / 2)` takes the first half. A callback that the standard library
   expects to return a number, such as a `sort` comparator, may return an integer of any type:
@@ -667,9 +689,9 @@ arrays), the `value` of a finished iterator's result, `WeakMap.get`, `WeakRef.de
 target, `Symbol.keyFor` and `description` of a symbol without one, and an unset
 `process.env.X`. Each gives a `T | undefined` (a `T | null | undefined` when `T` holds `null`:
 `m.get("a")` of a `Map<string, number | null>` tells a stored `null` from a missing key).
-Velt's own collections follow the same rule (`Deque`, `PriorityQueue`, `SortedMap`). APIs whose
-lib.d.ts result is `null` keep it: `RegExp.exec`, `String.match`, `Headers.get`,
-`URLSearchParams.get`.
+Velt's own collections follow the same rule (`Deque`, `PriorityQueue`, `SortedMap`,
+`BTreeMap`). APIs whose lib.d.ts result is `null` keep it: `RegExp.exec`, `String.match`,
+`Headers.get`, `URLSearchParams.get`.
 
 ```ts
 const m = new Map<string, number | null>([["a", null]]);
@@ -1126,7 +1148,9 @@ for (const s of shapes) {
   may be classes too (`Circle | Sq` with `area()` on both, or a union of classes only): each
   member's own method runs on the value itself: the receiver first, then the arguments in order,
   each evaluated once. The call's type is the union of the members' results (`number | string`
-  when `scale()` returns a `number` on `Circle` and a `string` on `Sq`), as in TypeScript.
+  when `scale()` returns a `number` on `Circle` and a `string` on `Sq`), as in TypeScript. A
+  getter every class of a union of classes has reads the same way (`.size` of a
+  `Map<K, V> | Set<T>`).
 
 ```ts
 interface Base {
@@ -2370,7 +2394,9 @@ does is an error saying it is not supported yet, never a quiet difference.
   object, interface or class target only fields its type declares (adding one is not supported
   yet). `Object.assign(fn, { … })` onto a
   function makes a [function with properties](functions.md#functions-with-properties).
-  Assigning from a value that may hold another class is not supported yet.
+  Assigning from a value that may hold another class is not supported yet. A record source that
+  may be `null` or `undefined` (`Record<string, V> | null`) is skipped when it is, as in
+  JavaScript.
 - `Object.freeze({ ... })` of a new object literal returns it with every field readonly, so
   writing one is a compile error, as in TypeScript. Node throws a `TypeError` when a frozen
   object's field is written through any reference, so a frozen object converts only to types
@@ -2393,6 +2419,8 @@ does is an error saying it is not supported yet, never a quiet difference.
 - `Object.create(null)` makes an empty `Record<string, V>` without a prototype, where one is
   expected (`const d: Record<string, number> = Object.create(null)`): `"toString" in d` is
   `false`, `Object.getPrototypeOf(d)` is `null`, and it prints as `[Object: null prototype] {}`.
+  Where an `any` is expected (`const slots: any = Object.create(null)`), it is a
+  `Record<string, any>`.
   `{ ...d }` copies it into an ordinary object. `Object.create` with another prototype, and
   `structuredClone` of a record in a program that calls `Object.create(null)`, are not
   supported yet.
@@ -3766,7 +3794,8 @@ with TypeScript's rules:
   `f.apply(thisArg, [a, b])` are the call `f(a, b)` when `thisArg` is `null` or `undefined` (or
   left out: `f.call()`); `f` and `thisArg` are evaluated once, before the arguments. A Velt
   function value has no `this` to set, so another `thisArg` stops with a `TypeError` naming
-  #926 (Node would call the function with it).
+  #926 (Node would call the function with it). `f.bind(thisArg)` without arguments to fix is
+  a new function forwarding to `f` (an `any`) under the same rule.
 - `Set<object>` and `Map<object, V>` (and `Map<Function, V>`) key their entries by identity, as
   in JavaScript.
 - An `any` or `unknown` converts to `object` with `as object` (an `any` also without it),
@@ -3798,6 +3827,27 @@ with TypeScript's rules:
   library class that JavaScript has no constructor of the same name for, stops with a
   `TypeError` naming #926; `null` and `undefined` with Node's `TypeError: Cannot read
   properties of null (reading 'constructor')`.
+- `x.constructor` of an `object`, `any` or `Function` is the object of the class the value
+  holds, and a class named where an `any`, `unknown`, `object` or `Function` is expected is
+  that object too, so `ctor === Set || ctor === Map` and `new Set<unknown>([Set, Map])` work as
+  in JavaScript: one object per class (for every instantiation of a generic class), `typeof`
+  `"function"`. Calling it stops with Node's `TypeError` (`Class constructor A cannot be
+  invoked without 'new'`); `new` through it is not supported yet. An own `constructor`
+  property comes first. A value that holds no class instance gives its kind's one object: an
+  object literal or a record `Object`'s (so `o.constructor === Object`), a string `String`'s, a
+  number `Number`'s (the value `Number` names where an `any` or `unknown` is expected, so
+  `n.constructor === Number`; called, it converts as `Number(s)` does), an array, a boolean or
+  a function an object of its own for each kind (`Array`, `Boolean` and `Function` are not
+  values in Velt yet, so `=== Array` is an error saying it can't find `Array`); a record made
+  by `Object.create(null)` has none (`undefined`). They print as in Node: `[class A]`,
+  `[class B extends A]`, `[Function: Map]`, `[Function: Array]`; the object of a class with
+  static fields or accessors, which Node prints with them (`[class S] { count: 2 }`), stops
+  with a `TypeError` saying printing it is not supported yet. A class declared in a function
+  or a block is another class each time its declaration runs in JavaScript: naming one as a
+  plain value is an error, and `x.constructor` of its instances a `TypeError`, saying it is not
+  supported yet. A program that reads `x.constructor` gets one dispatch over its classes and
+  one small constant per class (all of one type): about 11,000 lines of intermediate code and
+  about 110 KB of binary for a two-line program.
 
 ```ts
 class Point {
@@ -3826,6 +3876,6 @@ function main(): void {
 ```
 
 **Not yet** (#926): `object` as a `WeakMap` key, a `WeakSet` member or a `WeakRef` target, the
-members every object has (`constructor` as a value, `toString`, `hasOwnProperty`) and a function has
-(`call` and `apply` with another `thisArg`, `bind`, `name`, `length`), and a type parameter without the `object` bound
+members every object has (`toString`, `hasOwnProperty`) and a function has (`call`, `apply` and
+`bind` with another `thisArg`, `name`, `length`), and a type parameter without the `object` bound
 converted with `as object`. Each is a compile error.

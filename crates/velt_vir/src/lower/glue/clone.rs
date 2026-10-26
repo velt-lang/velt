@@ -50,10 +50,7 @@ impl FnLower<'_, '_> {
             return self.clone_boxed(s, d, ty, |lw, sv, dv| lw.clone_inline(sv, dv, ty));
         }
         match self.cx.kind(ty) {
-            TyKind::Str => {
-                let (a, b) = (self.addr(s.clone()), self.addr(d.clone()));
-                self.call_rt(Rt::StrClone, vec![a, b], None);
-            }
+            TyKind::Str => self.str_share(s.clone(), d.clone()),
             TyKind::Adt(dd, _) if self.cx.is_class(ty) => {
                 let obj = self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(s.clone())));
                 self.assign(d.clone(), Rvalue::Use(obj.clone()));

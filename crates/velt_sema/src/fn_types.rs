@@ -150,11 +150,6 @@ impl Ctx<'_> {
         self.ctor_sig_own(self.ty.core(t).unwrap_or(t)).is_some()
     }
 
-    /// Is `d` the constant holding a class's value (`body::expr::ctor_values`)?
-    pub(crate) fn is_class_value(&self, d: DefId) -> bool {
-        self.objects.class_values.iter().any(|(_, g)| *g == d)
-    }
-
     /// Forgets class values made by a check that was undone (`body::recheck`): nothing reads
     /// their constants, which leave the module state as `()`; the next check makes them again.
     pub(crate) fn drop_class_values(&mut self, dropped: Vec<((DefId, TyId), DefId)>) {

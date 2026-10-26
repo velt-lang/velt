@@ -1,0 +1,758 @@
+// velt:collections/btree/pool: the nodes of `BTreeMap` (velt:collections/btree_map), internal.
+//
+// A B+tree whose nodes live in flat pools, a struct of arrays, nodes linked by `u32` index:
+// node `n`'s keys are slots `n * F .. n * F + F`. Leaves hold up to `CAP` entries and link to
+// both neighbors; inner nodes hold up to `CAP` separators and `CAP + 1` children, every key of
+// child `i` at least separator `i - 1` and below separator `i`. The leaf pools are in chunks of
+// 256 leaves, so they grow without copying (and hold at most a chunk unused). A freed node goes on
+// a free list. Leaf entries: velt:collections/btree/leaf; inserts: velt:collections/btree/insert;
+// deletes: velt:collections/btree/remove; the smallest and largest key:
+// velt:collections/btree/edges.
+//
+// A node's 32 `u16` words (`leafLines` / `innerLines`, 64 bytes, each in one cache line) are
+// what a search reads first: slot `HEAD` holds the node's count and prefix, and the slots below
+// it, for keys with an order-preserving encoding (velt:collections/btree/inline_key: numbers,
+// `bool`, strings), two bytes of each key's encoding past the prefix all of the node's keys
+// share (`prefixFor`); strings keep the next two in a second line next to it, a four-byte
+// word in all. Vector compares count the words below the target's, which is its rank unless
+// words tie with it; only those keys are compared in full. So a level of a lookup reads one line
+// and one child index. Keys without an encoding are compared one by one.
+//
+// Unused key slots hold `fill[0]`, so that the pools stay arrays of plain `K`; value slots
+// likewise (`vals`, with `valFill[0]`); unused word slots are `EMPTY`. A filler is the type's
+// blank value (velt:mem `Blank`: `""`, a number), which owns no memory, or for a type without
+// one a share of a live key or value. A deleted key or value is released: when a live
+// filler's entry is deleted or its value replaced, a live entry from the middle of the tree
+// gives new fillers (`refill`), a separator that is a deleted key that owns memory follows to
+// the next key, and the last delete drops the pools (velt:collections/btree/remove).
+
+import { Blank, needsDrop } from "velt:mem";
+import { InlineKey } from "velt:collections/btree/inline_key";
+import {
+  countOf,
+  EMPTY,
+  emptyLine,
+  fill,
+  identityOrder,
+  Line,
+  Order,
+  prefixOf,
+  rankRange,
+  rankRange2,
+  withCount,
+  withWord,
+} from "velt:collections/btree/line";
+
+/**
+ * A node's range: the separators on either side of it, `null` at the edge of the tree. An
+ * inline pair, so describing a range allocates nothing.
+ */
+export type Range<K> = [K | null, K | null];
+
+/** Slots per node: words, keys and children. */
+export const F: usize = 32;
+/** The most keys a node holds: the last word slot is its header. */
+export const CAP: usize = F - 1;
+/** Leaves per chunk of the leaf pools (`leafKeys`, values, `leafLines`), as a shift and mask. */
+export const LEAF_SHIFT: u32 = 8;
+export const LEAF_MASK: u32 = 255;
+/** Slots per chunk (`F` per leaf), as a shift and mask of a slot number. */
+export const SLOT_SHIFT: usize = 13;
+export const SLOT_MASK: usize = 8191;
+/** No node: the ends of the leaf chain. */
+export const NONE: u32 = 4294967295;
+/** The longest node prefix looked for, in bytes. */
+const MAX_PREFIX: usize = 2040;
+
+export class Pool<K extends Comparable<K>, V> {
+  /**
+   * The leaves' keys, `F` slots a leaf, in chunks of 256 leaves (`LEAF_SHIFT`): slot `s` (`leaf * F +
+   * i`) is `leafKeys[s >> SLOT_SHIFT][s & SLOT_MASK]`. A chunk grows only until it is full, so
+   * the pools never copy their whole contents to grow, and hold at most one chunk unused.
+   */
+  leafKeys: K[][] = [];
+  /**
+   * The leaves' value slots, addressed like their keys, an unused slot holding a share of
+   * `valFill[0]`, the first value stored (as unused key slots hold one of `fill[0]`): a removed
+   * value is dropped when its slot gets the filler. Values that own nothing take their own size
+   * per slot, objects a pointer.
+   */
+  vals: V[][] = [];
+  valFill: V[] = [];
+  /**
+   * Each leaf's words and header (velt:collections/btree/line), 64 bytes: leaf `l`'s line is
+   * `leafLines[l >> LEAF_SHIFT][(l & LEAF_MASK) << lineShift]`. Keys with wide words
+   * (`InlineKey.inlineWide`) keep the next two bytes of each key past the word in a second line
+   * right after it (`lineShift` 1), so a search loads both as one 128-byte block (arrays of whole
+   * lines are 128-byte aligned): one cache line on CPUs with 128-byte lines, an adjacent pair
+   * elsewhere.
+   */
+  leafLines: Line[][] = [];
+  /** 1 when nodes keep two lines (wide words), else 0: set with the first key. */
+  lineShift: usize = 0;
+  /**
+   * Each leaf's rank order (velt:collections/btree/line `Order`), chunked as the lines are. A
+   * leaf's keys and values sit in physical slots in the order they came; `leafOrder` gives the
+   * slot of each rank (velt:collections/btree/leaf).
+   */
+  leafOrder: Order[][] = [];
+  /** 32 bytes for reading an order by rank (velt:collections/btree_map `ranks`). */
+  orderScratch: u8[] = new Array<u8>(32).fill(0);
+  /** More lines' words for editing (velt:collections/btree/leaf `moveRanks`). */
+  scratch2: u16[] = new Array<u16>(32).fill(0);
+  scratch3: u16[] = new Array<u16>(32).fill(0);
+  scratch4: u16[] = new Array<u16>(32).fill(0);
+  leafNext: u32[] = [];
+  leafPrev: u32[] = [];
+  innerKeys: K[] = [];
+  /** Inner node `i`'s line is `innerLines[i << lineShift]`, a second as for leaves. */
+  innerLines: Line[] = [];
+  /** 32 words for editing a line (velt:collections/btree/line `spill` / `fill`). */
+  scratch: u16[] = new Array<u16>(32).fill(0);
+  innerKids: u32[] = [];
+  freeLeaves: u32[] = [];
+  freeInners: u32[] = [];
+  fill: K[] = [];
+  /**
+   * The smallest and the largest key (one each, or none while empty), the separators the edges
+   * of the tree lack (`prefixFor`), and the first 16 bytes of their encodings for a quick check
+   * that a key lies between them (velt:collections/btree/edges).
+   */
+  minKey: K[] = [];
+  /** The windows of a `getMany` batch (velt:collections/btree/leaf `descendMany`), two words each. */
+  batchWindows: u64[] = new Array<u64>(32).fill(0);
+  /** Two slots for `keySwap`'s (and `valSwap`'s) raw moves across chunks, empty between them. */
+  maxKey: K[] = [];
+  minWindow: u64[] = [0, 0];
+  maxWindow: u64[] = [0, 0];
+  root: u32 = 0;
+  /** 0 while the root is a leaf. */
+  height: u32 = 0;
+  size: usize = 0;
+  /** Counts changes to the set of keys: `forEach` seeks again when it moved. */
+  edits: u64 = 0;
+  /** The descent of the last `findLeaf`, root first: the inner nodes and the slot taken in each. */
+  pathNodes: u32[] = [];
+  pathSlots: usize[] = [];
+  // Last, so that the fields every operation reads keep their places.
+  /** The key of the entry a live filler is (`liveFill`), else empty. */
+  fillOwner: K[] = [];
+
+  // ─────────────── searching ───────────────
+
+  /** How many keys of the node at `keys[base..]` (its words `line`) are at most `t`. */
+  // The searches below compare words only for a target inside the node's range (between the
+  // separators on either side of it), the only targets that share the node's prefix: the ones
+  // a descent brings to the node.
+
+  /** The child slot of inner `node` whose range holds `t`: its separators at most `t`. */
+  innerSlot(node: u32, t: K, win: Window): usize {
+    const i = (node as usize) << this.lineShift;
+    const base = (node as usize) * F;
+    let lo: usize = 0;
+    let hi: usize = 0;
+    if (t.hasInlineKey()) {
+      // The word first, from the header alone, then the lines: nothing of them is live across
+      // `quadIn`, which may call out, so they stay in registers.
+      const pre = prefixOf(this.innerLines[i]) as usize;
+      if (t.inlineWide()) {
+        const q = quadIn(t, win, pre);
+        const r = rankRange2(
+          this.innerLines[i],
+          this.innerLines[i + 1],
+          countOf(this.innerLines[i]),
+          (q >> 16) as u16,
+          q as u16,
+        );
+        lo = r[0];
+        hi = r[1];
+      } else {
+        const w = wordIn(t, win, pre);
+        const r = rankRange(this.innerLines[i], countOf(this.innerLines[i]), w);
+        lo = r[0];
+        hi = r[1];
+      }
+      if (lo == hi) {
+        return lo;
+      }
+    } else {
+      hi = countOf(this.innerLines[i]);
+    }
+    // Ties (or keys without words): a binary search of the keys between.
+    while (lo < hi) {
+      const mid = lo + (hi - lo) / 2;
+      // Keys with an encoding (no NaN among them) by `<`, one compare; others by `compareTo`,
+      // which orders a float NaN.
+      const k = this.innerKeys[base + mid];
+      if (t.hasInlineKey() ? t < k : t.compareTo(k) < 0) {
+        hi = mid;
+      } else {
+        lo = mid + 1;
+      }
+    }
+    return lo;
+  }
+
+  // ─────────────── headers ───────────────
+
+  /** How many entries `leaf` holds. */
+  leafCount(leaf: u32): usize {
+    return countOf(this.lineOf(leaf));
+  }
+
+  setLeafCount(leaf: u32, n: usize) {
+    this.setLine(leaf, withCount(this.lineOf(leaf), n));
+  }
+
+  /** How many separators inner `node` holds. */
+  innerCount(node: u32): usize {
+    return countOf(this.innerLineOf(node));
+  }
+
+  setInnerCount(node: u32, n: usize) {
+    this.setInnerLine(node, withCount(this.innerLineOf(node), n));
+  }
+
+  /**
+   * The leaf whose range holds `t` (`win` its window), recording the descent in `pathNodes` /
+   * `pathSlots`.
+   */
+  findLeaf(t: K, win: Window): u32 {
+    this.pathNodes.truncate(0);
+    this.pathSlots.truncate(0);
+    let node = this.root;
+    for (let h = this.height; h > 0; h--) {
+      const slot = this.innerSlot(node, t, win);
+      this.pathNodes.push(node);
+      this.pathSlots.push(slot);
+      node = this.innerKids[(node as usize) * F + slot];
+    }
+    return node;
+  }
+
+  /** The leaf whose range holds `t` (`win` its window), without recording the descent. */
+  leafOf(t: K, win: Window): u32 {
+    let node = this.root;
+    for (let h = this.height; h > 0; h--) {
+      node = this.innerKids[(node as usize) * F + this.innerSlot(node, t, win)];
+    }
+    return node;
+  }
+
+  /** The leftmost or rightmost leaf. */
+  edgeLeaf(right: bool): u32 {
+    let node = this.root;
+    for (let h = this.height; h > 0; h--) {
+      const slot = right ? this.innerCount(node) : 0;
+      node = this.innerKids[(node as usize) * F + slot];
+    }
+    return node;
+  }
+
+  // ─────────────── words and prefixes ───────────────
+
+  /**
+   * The prefix of a node with range `fences`: the common prefix of the separators on either side
+   * of it, the smallest or the largest key standing in for one the tree's edge lacks. Every key
+   * between them has it, and so does every key a search brings to the node: a search first
+   * settles keys outside the smallest and the largest (velt:collections/btree/edges).
+   */
+  prefixFor(fences: Range<K>): u32 {
+    const [low, high] = fences;
+    if (this.minKey.length == 0) {
+      return 0;
+    }
+    const lo = low != null ? low : this.minKey[0];
+    const hi = high != null ? high : this.maxKey[0];
+    return commonPrefix(lo, hi);
+  }
+
+  /** Do this map's keys have words (an `InlineKey` encoding)? Only after the first insert. */
+  inline(): bool {
+    return this.fill.length > 0 && this.fill[0].hasInlineKey();
+  }
+
+  /** Whether nodes keep wide words (`InlineKey.inlineWide`). Only after the first insert. */
+  wide(): bool {
+    return this.fill.length > 0 && this.fill[0].inlineWide();
+  }
+
+  /** Sets the word of separator `i` of inner `node` from its key. */
+  innerWord(node: u32, i: usize) {
+    const n = node as usize;
+    const line = this.innerLineOf(node);
+    const pre = prefixOf(line);
+    if (this.wide()) {
+      const q = this.innerKeys[n * F + i].inlineQuad(pre as usize);
+      this.setInnerLine(node, withWord(line, i, (q >> 16) as u16));
+      this.setInnerLineB(node, withWord(this.innerLineBOf(node), i, q as u16));
+    } else {
+      this.setInnerLine(node, withWord(line, i, wordOf(this.innerKeys[n * F + i], pre)));
+    }
+  }
+
+  /** Gives `leaf` the prefix of its range `fences` and every key its word. */
+  refreshLeaf(leaf: u32, fences: Range<K>) {
+    if (this.inline()) {
+      this.refreshLeafAt(leaf, this.prefixFor(fences));
+    }
+  }
+
+  /**
+   * `refreshLeaf` only when the prefix of `fences` is not `leaf`'s: its words, kept by the
+   * edits that moved its entries at its present prefix, are then already right.
+   */
+  refreshLeafIfChanged(leaf: u32, fences: Range<K>) {
+    if (!this.inline()) {
+      return;
+    }
+    const pre = this.prefixFor(fences);
+    if (pre != prefixOf(this.lineOf(leaf))) {
+      this.refreshLeafAt(leaf, pre);
+    }
+  }
+
+  /** `leaf`'s words (and header) for prefix `pre`. */
+  refreshLeafAt(leaf: u32, pre: u32) {
+    const n = this.leafCount(leaf);
+    const c = (leaf >> LEAF_SHIFT) as usize;
+    const base = ((leaf & LEAF_MASK) as usize) * F;
+    const line = wordsOf(this.leafKeys[c], base, n, pre, this.scratch, false);
+    this.setLine(leaf, line);
+    if (this.wide()) {
+      const lineB = wordsOf(this.leafKeys[c], base, n, pre, this.scratch, true);
+      this.setLineB(leaf, lineB);
+    }
+  }
+
+  /** Gives inner `node` the prefix of its range `fences` and every separator its word. */
+  refreshInner(node: u32, fences: Range<K>) {
+    if (this.inline()) {
+      this.refreshInnerAt(node, this.prefixFor(fences));
+    }
+  }
+
+  /** Inner `node`'s words (and header) for prefix `pre`. */
+  refreshInnerAt(node: u32, pre: u32) {
+    const i = node as usize;
+    const n = this.innerCount(node);
+    const line = wordsOf(this.innerKeys, i * F, n, pre, this.scratch, false);
+    this.setInnerLine(node, line);
+    if (this.wide()) {
+      const lineB = wordsOf(this.innerKeys, i * F, n, pre, this.scratch, true);
+      this.setInnerLineB(node, lineB);
+    }
+  }
+
+  /**
+   * The range of the node at `depth` of the recorded path (0: the root; `pathNodes.length`: the
+   * leaf): the separators on either side of it, `null` at the edge of the tree.
+   */
+  fencesAt(depth: usize): Range<K> {
+    if (depth == 0) {
+      return [null, null];
+    }
+    return this.childFences(depth - 1, this.pathSlots[depth - 1]);
+  }
+
+  /** The range of child `slot` of the path's inner node at `depth`. */
+  childFences(depth: usize, slot: usize): Range<K> {
+    const node = this.pathNodes[depth];
+    const base = (node as usize) * F;
+    const n = this.innerCount(node);
+    if (slot > 0 && slot < n) {
+      return [this.innerKeys[base + slot - 1], this.innerKeys[base + slot]];
+    }
+    const [up, upHigh] = this.fencesAt(depth);
+    const low = slot > 0 ? this.innerKeys[base + slot - 1] : up;
+    const high = slot < n ? this.innerKeys[base + slot] : upHigh;
+    return [low, high];
+  }
+
+  // ─────────────── leaf slots ───────────────
+
+  /** The key in slot `s` (`leaf * F + i`). */
+  keyAt(s: usize): K {
+    return this.leafKeys[s >> SLOT_SHIFT][s & SLOT_MASK];
+  }
+
+  /** `t.compareTo` the key in slot `s`, read in place (no share of it). */
+  cmpKey(t: K, s: usize): i64 {
+    return t.compareTo(this.leafKeys[s >> SLOT_SHIFT][s & SLOT_MASK]);
+  }
+
+  /** The wide word (`inlineQuad`) of the key in slot `s` past prefix `pre`, read in place. */
+  slotQuad(s: usize, pre: u32): u32 {
+    return this.leafKeys[s >> SLOT_SHIFT][s & SLOT_MASK].inlineQuad(pre as usize);
+  }
+
+  /** The word of the key in slot `s` past prefix `pre`, read in place. */
+  slotWord(s: usize, pre: u32): u16 {
+    return this.leafKeys[s >> SLOT_SHIFT][s & SLOT_MASK].inlineWord(pre as usize);
+  }
+
+  /** Stores `k` in slot `s`, dropping what it held. */
+  setKey(s: usize, k: K) {
+    this.leafKeys[s >> SLOT_SHIFT][s & SLOT_MASK] = k;
+  }
+
+  /** `leaf`'s line. */
+  lineOf(leaf: u32): Line {
+    return this.leafLines[(leaf >> LEAF_SHIFT) as usize][((leaf & LEAF_MASK) as usize) <<
+      this.lineShift];
+  }
+
+  setLine(leaf: u32, line: Line) {
+    this.leafLines[(leaf >> LEAF_SHIFT) as usize][((leaf & LEAF_MASK) as usize) << this.lineShift] =
+      line;
+  }
+
+  /** `leaf`'s second line (wide words only). */
+  lineBOf(leaf: u32): Line {
+    return this.leafLines[(leaf >> LEAF_SHIFT) as usize][(((leaf & LEAF_MASK) as usize) << 1) + 1];
+  }
+
+  setLineB(leaf: u32, line: Line) {
+    this.leafLines[(leaf >> LEAF_SHIFT) as usize][(((leaf & LEAF_MASK) as usize) << 1) + 1] = line;
+  }
+
+  /** Inner `node`'s line. */
+  innerLineOf(node: u32): Line {
+    return this.innerLines[(node as usize) << this.lineShift];
+  }
+
+  setInnerLine(node: u32, line: Line) {
+    this.innerLines[(node as usize) << this.lineShift] = line;
+  }
+
+  /** Inner `node`'s second line (wide words only). */
+  innerLineBOf(node: u32): Line {
+    return this.innerLines[((node as usize) << 1) + 1];
+  }
+
+  setInnerLineB(node: u32, line: Line) {
+    this.innerLines[((node as usize) << 1) + 1] = line;
+  }
+
+  /** `leaf`'s rank order. */
+  orderOf(leaf: u32): Order {
+    return this.leafOrder[(leaf >> LEAF_SHIFT) as usize][(leaf & LEAF_MASK) as usize];
+  }
+
+  setOrder(leaf: u32, order: Order) {
+    this.leafOrder[(leaf >> LEAF_SHIFT) as usize][(leaf & LEAF_MASK) as usize] = order;
+  }
+
+  /** Starts loading the cache line of key slot `s`. */
+  keyPrefetch(s: usize) {
+    this.leafKeys[s >> SLOT_SHIFT].prefetch(s & SLOT_MASK);
+  }
+
+  /** Starts loading the line of `node`, an inner node when `inner`, else a leaf. */
+  prefetchNode(node: u32, inner: bool) {
+    if (inner) {
+      this.innerLines.prefetch((node as usize) << this.lineShift);
+    } else {
+      const c = (node >> LEAF_SHIFT) as usize;
+      this.leafLines[c].prefetch(((node & LEAF_MASK) as usize) << this.lineShift);
+    }
+  }
+
+  /**
+   * Starts loading all of `leaf`: its line, its order, and its key and value slots (four cache
+   * lines each at 8 bytes a slot, the ones a walk reads).
+   */
+  prefetchLeaf(leaf: u32) {
+    const c = (leaf >> LEAF_SHIFT) as usize;
+    const at = (leaf & LEAF_MASK) as usize;
+    this.leafLines[c].prefetch(at << this.lineShift);
+    this.leafOrder[c].prefetch(at);
+    const base = (leaf as usize) * F;
+    for (let j: usize = 0; j < F; j += 8) {
+      this.keyPrefetch(base + j);
+      this.valPrefetch(base + j);
+    }
+  }
+
+  /**
+   * Exchanges the keys of slots `a` and `b` (of two leaves, maybe in two chunks): a swap within
+   * a chunk; across chunks, through a local, since one call may not change two chunks.
+   */
+  keySwap(a: usize, b: usize) {
+    const ca = a >> SLOT_SHIFT;
+    const cb = b >> SLOT_SHIFT;
+    if (ca == cb) {
+      this.leafKeys[ca].swap(a & SLOT_MASK, b & SLOT_MASK);
+    } else {
+      this.leafKeys.swapIn(ca, a & SLOT_MASK, cb, b & SLOT_MASK);
+    }
+  }
+
+  /** The value in slot `s`, shared as `Map.get` gives it. */
+  valAt(s: usize): V {
+    return this.vals[s >> SLOT_SHIFT][s & SLOT_MASK];
+  }
+
+  /** Stores `v` in slot `s`, dropping what it held. */
+  valSet(s: usize, v: V) {
+    this.vals[s >> SLOT_SHIFT][s & SLOT_MASK] = v;
+  }
+
+  /** Empties slot `s`: the filler replaces (and drops) its value. */
+  valClear(s: usize) {
+    this.vals[s >> SLOT_SHIFT][s & SLOT_MASK] = this.valFill[0];
+  }
+
+  /** Exchanges the values in slots `a` and `b`, as `keySwap` the keys. */
+  valSwap(a: usize, b: usize) {
+    const ca = a >> SLOT_SHIFT;
+    const cb = b >> SLOT_SHIFT;
+    if (ca == cb) {
+      this.vals[ca].swap(a & SLOT_MASK, b & SLOT_MASK);
+    } else {
+      this.vals.swapIn(ca, a & SLOT_MASK, cb, b & SLOT_MASK);
+    }
+  }
+
+  /** Starts loading the cache line of value slot `s`. */
+  valPrefetch(s: usize) {
+    this.vals[s >> SLOT_SHIFT].prefetch(s & SLOT_MASK);
+  }
+
+  // ─────────────── nodes ───────────────
+
+  newLeaf(): u32 {
+    if (this.freeLeaves.length > 0) {
+      return this.freeLeaves.pop()!;
+    }
+    const id = this.leafNext.length as u32;
+    const c = (id >> LEAF_SHIFT) as usize;
+    if (c == this.leafKeys.length) {
+      this.leafKeys.push([]);
+      this.leafLines.push([]);
+      this.leafOrder.push([]);
+      this.vals.push([]);
+    }
+    for (let i: usize = 0; i < F; i++) {
+      this.leafKeys[c].push(this.fill[0]);
+      this.vals[c].push(this.valFill[0]);
+    }
+    this.leafLines[c].push(emptyLine());
+    if (this.lineShift == 1) {
+      this.leafLines[c].push(emptyLine());
+    }
+    this.leafOrder[c].push(identityOrder());
+    this.leafNext.push(NONE);
+    this.leafPrev.push(NONE);
+    return id;
+  }
+
+  newInner(): u32 {
+    if (this.freeInners.length > 0) {
+      return this.freeInners.pop()!;
+    }
+    const id = (this.innerLines.length >> this.lineShift) as u32;
+    for (let i: usize = 0; i < F; i++) {
+      this.innerKeys.push(this.fill[0]);
+      this.innerKids.push(0);
+    }
+    this.innerLines.push(emptyLine());
+    if (this.lineShift == 1) {
+      this.innerLines.push(emptyLine());
+    }
+    return id;
+  }
+
+  freeLeaf(leaf: u32) {
+    const base = (leaf as usize) * F;
+    for (let i: usize = 0; i < F; i++) {
+      this.setKey(base + i, this.fill[0]);
+      this.valClear(base + i);
+    }
+    this.setLine(leaf, emptyLine());
+    if (this.wide()) {
+      this.setLineB(leaf, emptyLine());
+    }
+    this.setOrder(leaf, identityOrder());
+    this.freeLeaves.push(leaf);
+  }
+
+  freeInner(node: u32) {
+    const base = (node as usize) * F;
+    for (let i: usize = 0; i < F; i++) {
+      this.innerKeys[base + i] = this.fill[0];
+    }
+    this.setInnerLine(node, emptyLine());
+    if (this.wide()) {
+      this.setInnerLineB(node, emptyLine());
+    }
+    this.freeInners.push(node);
+  }
+
+  /**
+   * Whether a filler is a live key or value (a type without a blank value, velt:mem `Blank`):
+   * then its entry (`fillOwner`) going, or its value being replaced, calls `refill`. The same
+   * for every map of the types: a constant where they are known.
+   */
+  liveFill(): bool {
+    return !this.fill[0].hasBlank() || !this.valFill[0].hasBlank();
+  }
+
+  /**
+   * Whether the key in slot `s` is the fillers' entry's (`liveFill` only), by the map's own
+   * equality: `==` is false for a NaN key and itself.
+   */
+  isFill(s: usize): bool {
+    return this.cmpKey(this.fillOwner[0], s) == 0;
+  }
+
+  /**
+   * New fillers from a live entry in the middle of the tree, written into every unused slot
+   * (free nodes' too) a live filler is in, so that the old one is released (`liveFill` only).
+   * The entry goes when about half of the keys have gone, whether they go from the front, from
+   * the back or at random, so a drain makes a few of these passes.
+   */
+  refill() {
+    let node = this.root;
+    for (let h = this.height; h > 0; h--) {
+      node = this.innerKids[(node as usize) * F + this.innerCount(node) / 2];
+    }
+    const mid = (node as usize) * F + this.leafCount(node) / 2;
+    this.fillOwner[0] = this.keyAt(mid);
+    const keys = !this.fill[0].hasBlank();
+    const vals = !this.valFill[0].hasBlank();
+    if (keys) {
+      this.fill[0] = this.keyAt(mid);
+    }
+    if (vals) {
+      this.valFill[0] = this.valAt(mid);
+    }
+    for (let leaf: usize = 0; leaf < this.leafNext.length; leaf++) {
+      for (let i = this.leafCount(leaf as u32); i < F; i++) {
+        if (keys) {
+          this.setKey(leaf * F + i, this.fill[0]);
+        }
+        if (vals) {
+          this.valClear(leaf * F + i);
+        }
+      }
+    }
+    const inners: usize = keys ? this.innerKeys.length / F : 0;
+    for (let inner: usize = 0; inner < inners; inner++) {
+      for (let i = this.innerCount(inner as u32); i < F; i++) {
+        this.innerKeys[inner * F + i] = this.fill[0];
+      }
+    }
+  }
+
+  /** Drops every node; the next `insert` starts a new root. */
+  clear() {
+    this.leafKeys.truncate(0);
+    this.vals.truncate(0);
+    this.valFill.truncate(0);
+    this.leafLines.truncate(0);
+    this.leafOrder.truncate(0);
+    this.leafNext.truncate(0);
+    this.leafPrev.truncate(0);
+    this.innerKeys.truncate(0);
+    this.innerLines.truncate(0);
+    this.innerKids.truncate(0);
+    this.freeLeaves.truncate(0);
+    this.freeInners.truncate(0);
+    this.fill.truncate(0);
+    this.fillOwner.truncate(0);
+    this.minKey.truncate(0);
+    this.maxKey.truncate(0);
+    this.root = 0;
+    this.height = 0;
+    this.size = 0;
+    this.edits++;
+  }
+}
+
+/** The word of `k` in a node with prefix `pre`: the two bytes of its encoding past it. */
+export function wordOf<T extends InlineKey>(k: T, pre: u32): u16 {
+  return k.inlineWord(pre as usize);
+}
+
+/**
+ * The first 16 bytes of `t`'s encoding (`inlineKey(0)`, `inlineKey(8)`), its "window": an
+ * operation computes it once, and every node's word for `t` is a shift of it (`quadIn`), where
+ * the prefix leaves it inside the 16 bytes. Zeros for keys without an encoding.
+ */
+export type Window = [u64, u64];
+
+/** `t`'s window. */
+export function windowOf<T extends InlineKey>(t: T): Window {
+  if (!t.hasInlineKey()) {
+    return [0, 0];
+  }
+  return t.inlineWindow();
+}
+
+/** Bytes `pre .. pre + 4` of `t`'s encoding (`inlineQuad`), from its window `win` up to byte 12. */
+export function quadIn<T extends InlineKey>(t: T, win: Window, pre: usize): u32 {
+  if (pre > 12) {
+    return t.inlineQuad(pre);
+  }
+  const [hi, lo] = win;
+  if (pre == 0) {
+    return (hi >> 32) as u32;
+  }
+  if (pre < 8) {
+    const s = (pre * 8) as u64;
+    return (((hi << s) | (lo >> (64 - s))) >> 32) as u32;
+  }
+  return ((lo << (((pre - 8) * 8) as u64)) >> 32) as u32;
+}
+
+/** Bytes `pre .. pre + 2` of `t`'s encoding (`inlineWord`), from its window as `quadIn`. */
+export function wordIn<T extends InlineKey>(t: T, win: Window, pre: usize): u16 {
+  if (pre > 12) {
+    return t.inlineWord(pre);
+  }
+  return (quadIn(t, win, pre) >> 16) as u16;
+}
+
+/** The second half of `k`'s wide word in a node with prefix `pre`: the two bytes after `wordOf`'s. */
+export function wordOfB<T extends InlineKey>(k: T, pre: u32): u16 {
+  return k.inlineWord((pre + 2) as usize);
+}
+
+// The line of a node whose `n` keys are at `keys[base..]` and whose prefix is `pre` (its second
+// line, `second`, for wide words).
+function wordsOf<K extends Comparable<K>>(
+  keys: K[],
+  base: usize,
+  n: usize,
+  pre: u32,
+  scratch: u16[],
+  second: bool,
+): Line {
+  for (let i: usize = 0; i < 31; i++) {
+    scratch[i] =
+      i >= n ? EMPTY : second ? wordOfB(keys[base + i], pre) : wordOf(keys[base + i], pre);
+  }
+  scratch[31] = ((pre as u16) << 5) | (n as u16);
+  return fill(scratch);
+}
+
+/** The number of leading bytes the encodings of `a` and `b` share, at most 2040. */
+export function commonPrefix<K extends InlineKey>(a: K, b: K): u32 {
+  for (let off: usize = 0; off < MAX_PREFIX; off += 8) {
+    const d = a.inlineKey(off) ^ b.inlineKey(off);
+    if (d != 0) {
+      // The equal leading bytes: leading zero bits of `d`, over 8.
+      return (off + (d.leadingZeros() >> 3)) as u32;
+    }
+  }
+  return MAX_PREFIX as u32;
+}
+
+/**
+ * Moves `xs[from]` to `xs[to]`, whose value is about to be overwritten or is a filler: a swap,
+ * so moving a string or an object costs no count changes.
+ */
+export function moveSlot<T>(xs: T[], to: usize, from: usize) {
+  xs.swap(to, from);
+}

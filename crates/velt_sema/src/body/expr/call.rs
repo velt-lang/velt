@@ -37,6 +37,9 @@ impl FnCx<'_, '_> {
         if let Some(h) = self.math_int32_call(callee, args, span) {
             return h;
         }
+        if let Some(h) = self.math_minmax_call(callee, args, span) {
+            return h;
+        }
         if let Some(h) = self.dynamic_is_array_call(callee, args, span) {
             return h;
         }

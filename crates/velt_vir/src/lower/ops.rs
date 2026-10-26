@@ -198,9 +198,9 @@ impl FnLower<'_, '_> {
 }
 
 impl FnLower<'_, '_> {
-    /// `a.compareTo(b) < 0` from an ordering on a `T extends Comparable<T>` (sema's
-    /// `compare_via`) with `T` a float: compared directly, so NaN is unordered as JS's `<` is
-    /// (`compareTo` orders NaN, for `sort()`).
+    /// `a < b` on a `T extends Comparable<T>` (sema's `compare_via`: `a.compareTo(b) < 0`, the
+    /// call marked `Intrinsic::ParamOrdering`) with `T` a float: compared directly, so NaN is
+    /// unordered as JS's `<` is. A `compareTo` call the program writes keeps NaN ordered.
     pub(super) fn float_param_ordering(
         &mut self,
         op: hir::BinOp,
@@ -213,9 +213,19 @@ impl FnLower<'_, '_> {
             return None;
         }
         let hir::ExprKind::Call {
+            callee: hir::Callee::Intrinsic(hir::Intrinsic::ParamOrdering),
+            args: marked,
+        } = &lhs.kind
+        else {
+            return None;
+        };
+        let [call] = marked.as_slice() else {
+            return None;
+        };
+        let hir::ExprKind::Call {
             callee: hir::Callee::ParamMethod { iface, slot, .. },
             args,
-        } = &lhs.kind
+        } = &call.kind
         else {
             return None;
         };

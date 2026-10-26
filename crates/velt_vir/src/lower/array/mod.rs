@@ -1,7 +1,9 @@
 //! Arrays `T[]` = `{ data: ptr, len: u64, cap: u64 }` with elements at `data + i * size(T)`
 //! (aggregate sizes are multiples of their alignment, so size is the stride). An empty array
 //! has a null buffer and `cap == 0`; buffers come from `velt_rt_alloc` and grow by amortized
-//! doubling (the shared `ArrayGrow` helper, starting at 4). `cap == 0` with elements is a
+//! doubling (the shared `ArrayGrow` helper, starting at 4). A buffer has its element's
+//! alignment, and `LINE_ALIGN` when the element's size is a multiple of 64 bytes, so each element
+//! of such an array is whole cache lines ([`FnLower::stride`]). `cap == 0` with elements is a
 //! buffer the array does not own: a module constant table's read-only data (`table_read` in
 //! `expr.rs`), seen only by the code that reads an element, the length or iterates. Indexing is
 //! bounds-checked
@@ -9,6 +11,21 @@
 
 mod builtins;
 mod ops;
+
+/// A cache line, in bytes, on most CPUs: elements whose size is a multiple of it are whole lines.
+const LINE: u32 = 64;
+/// The alignment of buffers of whole-line elements: Apple's CPUs have 128-byte lines, and other
+/// CPUs fetch 64-byte lines in aligned pairs, so a 128-byte element is one fetch either way.
+const LINE_ALIGN: u32 = 128;
+
+/// The alignment of an array buffer whose elements have this size and alignment.
+pub(crate) fn buffer_align(size: u32, align: u32) -> u32 {
+    if size >= LINE && size.is_multiple_of(LINE) {
+        align.max(LINE_ALIGN)
+    } else {
+        align
+    }
+}
 
 use velt_sema::hir::{self, TyId, TyKind};
 
@@ -26,14 +43,30 @@ impl FnLower<'_, '_> {
         }
     }
 
-    /// (size = stride, align) of an element type.
+    /// (size = stride, alignment of the buffer) of an element type: the element's alignment, or
+    /// a cache line's when the element is whole cache lines (a node of a B-tree, a `[u16x8,
+    /// u16x8, u16x8, u16x8]`), so that no element straddles a line it need not. Every
+    /// allocation, growth and free of an array buffer takes its alignment from here.
     pub(super) fn stride(&mut self, elem: TyId) -> (u32, u32) {
         let vt = self.cx.ty(elem);
-        self.cx.size_align(vt)
+        let (size, align) = self.cx.size_align(vt);
+        (size, buffer_align(size, align))
     }
 
     fn arr_field(arr: &Place, n: u32) -> Operand {
         Operand::Copy(proj(arr, Proj::Field(n)))
+    }
+
+    /// The address of element `i` (a `u64` operand) of the array at `arr`, for a prefetch: no
+    /// bounds check, and never dereferenced.
+    pub(super) fn elem_addr(&mut self, arr: &Place, i: Operand, elem: TyId) -> Operand {
+        let (stride, _) = self.stride(elem);
+        let off = self.rvalue_temp(
+            Ty::U64,
+            Rvalue::Binary(BinOp::Mul, i, cint(stride as i128, Ty::U64)),
+        );
+        let data = Self::arr_field(arr, 0);
+        self.rvalue_temp(Ty::Ptr, Rvalue::Binary(BinOp::PtrAdd, data, off))
     }
 
     /// Place of element `i` (a `u64` operand) of the array at `arr`; no bounds check.
@@ -82,9 +115,7 @@ impl FnLower<'_, '_> {
             iu.clone()
         };
         let f = self.cx.func(Work::Oob(signed));
-        let suffix = self.panic_suffix();
-        let at = self.cx.static_str_object(&suffix);
-        let at = vir::Operand::Const(vir::Const::Static(at), Ty::Ptr);
+        let at = self.panic_at();
         self.call(vir::Callee::Func(f), vec![len, shown, at], None, false);
         self.terminate(vir::Terminator::Unreachable);
         self.switch_to(ok_bb);
@@ -241,5 +272,22 @@ impl FnLower<'_, '_> {
         self.assign(Place::local(k), Rvalue::Use(next));
         self.goto(cond_bb);
         self.switch_to(exit);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::buffer_align;
+
+    #[test]
+    fn buffers_of_whole_cache_lines_are_line_aligned() {
+        // A `[u16x8, u16x8, u16x8, u16x8]` (64 bytes, align 16) and a 128-byte element.
+        assert_eq!(buffer_align(64, 16), 128);
+        assert_eq!(buffer_align(128, 8), 128);
+        // Anything else keeps its element's alignment.
+        assert_eq!(buffer_align(8, 8), 8);
+        assert_eq!(buffer_align(48, 16), 16);
+        assert_eq!(buffer_align(96, 16), 16);
+        assert_eq!(buffer_align(0, 1), 1);
     }
 }

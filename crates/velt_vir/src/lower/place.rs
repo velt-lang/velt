@@ -249,8 +249,7 @@ impl FnLower<'_, '_> {
             _ => "null",
         };
         let msg = self.narrowed_read_error(inner, word);
-        let msg = self.str_lit(&msg);
-        let a = self.operand_addr(msg, Ty::Agg(crate::vir::STR_AGG));
+        let a = self.panic_text(&msg);
         self.call_rt(super::rt::Rt::Panic, vec![a], None);
         self.switch_to(ok);
     }
@@ -271,8 +270,7 @@ impl FnLower<'_, '_> {
         self.goto(ok);
         self.switch_to(fail);
         let msg = self.narrowed_read_error(inner, "a value of another type");
-        let msg = self.str_lit(&msg);
-        let a = self.operand_addr(msg, Ty::Agg(crate::vir::STR_AGG));
+        let a = self.panic_text(&msg);
         self.call_rt(super::rt::Rt::Panic, vec![a], None);
         self.switch_to(ok);
     }

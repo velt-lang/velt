@@ -317,7 +317,7 @@ pub(crate) const TS_MEMBERS: &[(&str, &[&str])] = &[
             "valueOf",
         ],
     ),
-    ("Error", &["message", "name", "toString"]),
+    ("Error", &["message", "name", "stack", "toString"]),
     ("JSON", &["parse", "stringify"]),
     (
         "Map",
@@ -410,7 +410,22 @@ pub(crate) const VELT_MEMBERS: &[(&str, &[VeltOnly])] = &[
         "Array",
         &[
             ("isEmpty", "write `xs.length === 0`"),
+            ("prefetch", "leave it out: it is only a hint"),
+            ("reserve", "leave it out: arrays grow as needed"),
+            (
+                "rotateLeft",
+                "move the element with `xs.splice(end - 1, 0, ...xs.splice(start, 1))`",
+            ),
+            (
+                "rotateRight",
+                "move the element with `xs.splice(start, 0, ...xs.splice(end - 1, 1))`",
+            ),
             ("set", "assign the element: `xs[i] = v`"),
+            ("swap", "swap with `[xs[i], xs[j]] = [xs[j], xs[i]]`"),
+            (
+                "swapIn",
+                "swap with `[xss[a][i], xss[b][j]] = [xss[b][j], xss[a][i]]`",
+            ),
             ("truncate", "remove the tail with `xs.splice(n)`"),
             (
                 "utf8Equals",
@@ -547,7 +562,15 @@ pub(crate) const VELT_MEMBERS: &[(&str, &[VeltOnly])] = &[
         ],
     ),
     ("boolean", &[("compareTo", COMPARE)]),
-    ("number", &[("compareTo", COMPARE)]),
+    (
+        "number",
+        &[
+            ("compareTo", COMPARE),
+            ("countOnes", "count the set bits in a loop"),
+            ("leadingZeros", "use `Math.clz32(x)` (32 bits)"),
+            ("trailingZeros", "use `31 - Math.clz32(x & -x)` (32 bits)"),
+        ],
+    ),
     (
         "string",
         &[("compareTo", "compare with `<` or `a.localeCompare(b)`")],

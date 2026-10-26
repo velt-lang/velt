@@ -1,0 +1,211 @@
+// Arrays whose elements index another array (the shape where storing them as integers pays,
+// #1599): those whose stores can make `-0` or NaN (`doubles`) keep their doubles; the last
+// two shapes never make either, and store integers (`ints`). Each kernel is called through
+// a closure, so it is not inlined into `main` and stays small enough for numrep's analysis.
+// Each prints what Node prints.
+
+// `-0` from truncating -1/3
+function truncDiv(n: number): string {
+  const doubles: number[] = [];
+  for (let i = 0; i < n; i++) doubles.push(i - 4);
+  for (let i = 0; i < n; i++) doubles[i] = Math.trunc(doubles[i] / 3);
+  const hist: number[] = [];
+  for (let i = 0; i < 64; i++) hist.push(0);
+  for (let r = 0; r < 50; r++)
+    for (let i = 0; i < n; i++) {
+      const v = doubles[i];
+      if (v === v && v > -32 && v < 32) hist[v + 32] = hist[v + 32] + 1;
+    }
+  let s = "truncDiv:";
+  for (let i = 0; i < n; i++) s += ` ${1 / doubles[i]}`;
+  let h = 0;
+  for (let i = 0; i < 64; i++) h = (h * 31 + hist[i] * (i + 1)) % 1000003;
+  return `${s} h=${h}`;
+}
+
+// `-0` from rounding -1/4
+function roundQuarter(n: number): string {
+  const doubles: number[] = [];
+  for (let i = 0; i < n; i++) doubles.push(i - 4);
+  for (let i = 0; i < n; i++) doubles[i] = Math.round(doubles[i] / 4);
+  const hist: number[] = [];
+  for (let i = 0; i < 64; i++) hist.push(0);
+  for (let r = 0; r < 50; r++)
+    for (let i = 0; i < n; i++) {
+      const v = doubles[i];
+      if (v === v && v > -32 && v < 32) hist[v + 32] = hist[v + 32] + 1;
+    }
+  let s = "roundQuarter:";
+  for (let i = 0; i < n; i++) s += ` ${1 / doubles[i]}`;
+  let h = 0;
+  for (let i = 0; i < 64; i++) h = (h * 31 + hist[i] * (i + 1)) % 1000003;
+  return `${s} h=${h}`;
+}
+
+// `-0` from rounding -3/4 up
+function ceilQuarter(n: number): string {
+  const doubles: number[] = [];
+  for (let i = 0; i < n; i++) doubles.push(i - 4);
+  for (let i = 0; i < n; i++) doubles[i] = Math.ceil(doubles[i] / 4);
+  const hist: number[] = [];
+  for (let i = 0; i < 64; i++) hist.push(0);
+  for (let r = 0; r < 50; r++)
+    for (let i = 0; i < n; i++) {
+      const v = doubles[i];
+      if (v === v && v > -32 && v < 32) hist[v + 32] = hist[v + 32] + 1;
+    }
+  let s = "ceilQuarter:";
+  for (let i = 0; i < n; i++) s += ` ${1 / doubles[i]}`;
+  let h = 0;
+  for (let i = 0; i < 64; i++) h = (h * 31 + hist[i] * (i + 1)) % 1000003;
+  return `${s} h=${h}`;
+}
+
+// `-0` from -3 % 3
+function remainder(n: number): string {
+  const doubles: number[] = [];
+  for (let i = 0; i < n; i++) doubles.push(i - 4);
+  for (let i = 0; i < n; i++) doubles[i] = doubles[i] % 3;
+  const hist: number[] = [];
+  for (let i = 0; i < 64; i++) hist.push(0);
+  for (let r = 0; r < 50; r++)
+    for (let i = 0; i < n; i++) {
+      const v = doubles[i];
+      if (v === v && v > -32 && v < 32) hist[v + 32] = hist[v + 32] + 1;
+    }
+  let s = "remainder:";
+  for (let i = 0; i < n; i++) s += ` ${1 / doubles[i]}`;
+  let h = 0;
+  for (let i = 0; i < 64; i++) h = (h * 31 + hist[i] * (i + 1)) % 1000003;
+  return `${s} h=${h}`;
+}
+
+// `-0` from 0 * -1
+function timesMinusOne(n: number): string {
+  const doubles: number[] = [];
+  for (let i = 0; i < n; i++) doubles.push(i - 4);
+  for (let i = 0; i < n; i++) doubles[i] = doubles[i] * -1;
+  const hist: number[] = [];
+  for (let i = 0; i < 64; i++) hist.push(0);
+  for (let r = 0; r < 50; r++)
+    for (let i = 0; i < n; i++) {
+      const v = doubles[i];
+      if (v === v && v > -32 && v < 32) hist[v + 32] = hist[v + 32] + 1;
+    }
+  let s = "timesMinusOne:";
+  for (let i = 0; i < n; i++) s += ` ${1 / doubles[i]}`;
+  let h = 0;
+  for (let i = 0; i < 64; i++) h = (h * 31 + hist[i] * (i + 1)) % 1000003;
+  return `${s} h=${h}`;
+}
+
+// `-0` from -0
+function negated(n: number): string {
+  const doubles: number[] = [];
+  for (let i = 0; i < n; i++) doubles.push(i - 4);
+  for (let i = 0; i < n; i++) doubles[i] = -doubles[i];
+  const hist: number[] = [];
+  for (let i = 0; i < 64; i++) hist.push(0);
+  for (let r = 0; r < 50; r++)
+    for (let i = 0; i < n; i++) {
+      const v = doubles[i];
+      if (v === v && v > -32 && v < 32) hist[v + 32] = hist[v + 32] + 1;
+    }
+  let s = "negated:";
+  for (let i = 0; i < n; i++) s += ` ${1 / doubles[i]}`;
+  let h = 0;
+  for (let i = 0; i < 64; i++) h = (h * 31 + hist[i] * (i + 1)) % 1000003;
+  return `${s} h=${h}`;
+}
+
+// `-0` from the minimum of 0 and -0
+function minNegZero(n: number): string {
+  const doubles: number[] = [];
+  for (let i = 0; i < n; i++) doubles.push(i - 4);
+  for (let i = 0; i < n; i++) doubles[i] = Math.min(doubles[i], -0);
+  const hist: number[] = [];
+  for (let i = 0; i < 64; i++) hist.push(0);
+  for (let r = 0; r < 50; r++)
+    for (let i = 0; i < n; i++) {
+      const v = doubles[i];
+      if (v === v && v > -32 && v < 32) hist[v + 32] = hist[v + 32] + 1;
+    }
+  let s = "minNegZero:";
+  for (let i = 0; i < n; i++) s += ` ${1 / doubles[i]}`;
+  let h = 0;
+  for (let i = 0; i < 64; i++) h = (h * 31 + hist[i] * (i + 1)) % 1000003;
+  return `${s} h=${h}`;
+}
+
+// NaN
+function nanAtThree(n: number): string {
+  const doubles: number[] = [];
+  for (let i = 0; i < n; i++) doubles.push(i - 4);
+  for (let i = 0; i < n; i++) doubles[i] = doubles[i] === 3 ? NaN : doubles[i];
+  const hist: number[] = [];
+  for (let i = 0; i < 64; i++) hist.push(0);
+  for (let r = 0; r < 50; r++)
+    for (let i = 0; i < n; i++) {
+      const v = doubles[i];
+      if (v === v && v > -32 && v < 32) hist[v + 32] = hist[v + 32] + 1;
+    }
+  let s = "nanAtThree:";
+  for (let i = 0; i < n; i++) s += ` ${1 / doubles[i]}`;
+  let h = 0;
+  for (let i = 0; i < 64; i++) h = (h * 31 + hist[i] * (i + 1)) % 1000003;
+  return `${s} h=${h}`;
+}
+
+// never `-0`: stored as integers
+function subtracted(n: number): string {
+  const ints: number[] = [];
+  for (let i = 0; i < n; i++) ints.push(i - 4);
+  for (let i = 0; i < n; i++) ints[i] = 0 - ints[i];
+  const hist: number[] = [];
+  for (let i = 0; i < 64; i++) hist.push(0);
+  for (let r = 0; r < 50; r++)
+    for (let i = 0; i < n; i++) {
+      const v = ints[i];
+      if (v === v && v > -32 && v < 32) hist[v + 32] = hist[v + 32] + 1;
+    }
+  let s = "subtracted:";
+  for (let i = 0; i < n; i++) s += ` ${1 / ints[i]}`;
+  let h = 0;
+  for (let i = 0; i < 64; i++) h = (h * 31 + hist[i] * (i + 1)) % 1000003;
+  return `${s} h=${h}`;
+}
+
+// never `-0`: stored as integers
+function wrapped(n: number): string {
+  const ints: number[] = [];
+  for (let i = 0; i < n; i++) ints.push(i - 4);
+  for (let i = 0; i < n; i++) ints[i] = ((ints[i] % 4) + 4) % 4;
+  const hist: number[] = [];
+  for (let i = 0; i < 64; i++) hist.push(0);
+  for (let r = 0; r < 50; r++)
+    for (let i = 0; i < n; i++) {
+      const v = ints[i];
+      if (v === v && v > -32 && v < 32) hist[v + 32] = hist[v + 32] + 1;
+    }
+  let s = "wrapped:";
+  for (let i = 0; i < n; i++) s += ` ${1 / ints[i]}`;
+  let h = 0;
+  for (let i = 0; i < 64; i++) h = (h * 31 + hist[i] * (i + 1)) % 1000003;
+  return `${s} h=${h}`;
+}
+
+function main() {
+  const kernels: (() => string)[] = [
+    () => truncDiv(9),
+    () => roundQuarter(9),
+    () => ceilQuarter(9),
+    () => remainder(9),
+    () => timesMinusOne(9),
+    () => negated(9),
+    () => minNegZero(9),
+    () => nanAtThree(9),
+    () => subtracted(9),
+    () => wrapped(9),
+  ];
+  for (const k of kernels) console.log(k());
+}

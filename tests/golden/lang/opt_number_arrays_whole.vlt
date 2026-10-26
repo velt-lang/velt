@@ -1,0 +1,67 @@
+// `number[]` arrays that stay in their function and only ever hold whole numbers: a release
+// build stores their elements as integers (#1599). The output is the same as with doubles.
+// crates/veltc/tests/opt_number_arrays_vir.rs checks the integer accesses.
+
+// Pancake flips: reverse the first k + 1 elements until the first is 0. Every index is a
+// value read from the array.
+function flips(n: number, seed: number): number {
+  const perm: number[] = [];
+  for (let i = 0; i < n; i++) perm.push((i * seed + 3) % n);
+  let total = 0;
+  let k = perm[0];
+  while (k !== 0) {
+    let i = 0;
+    let j = k;
+    while (i < j) {
+      const t = perm[i];
+      perm[i] = perm[j];
+      perm[j] = t;
+      i++;
+      j--;
+    }
+    total++;
+    k = perm[0];
+  }
+  return total;
+}
+
+// Fannkuch-redux's permutation step: rotate a prefix, then copy into a second array.
+function rotations(n: number): number {
+  const perm1: number[] = [];
+  const perm: number[] = [];
+  for (let i = 0; i < n; i++) {
+    perm1.push(i);
+    perm.push(0);
+  }
+  let checksum = 0;
+  for (let step = 0; step < 20; step++) {
+    const r = (step % n) + 1;
+    const first = perm1[0];
+    for (let i = 0; i < r - 1; i++) perm1[i] = perm1[i + 1];
+    perm1[r - 1] = first;
+    for (let i = 0; i < n; i++) perm[i] = perm1[i];
+    checksum += perm[0] * (step + 1) - perm[n - 1];
+  }
+  return checksum;
+}
+
+// Negative values, values computed from elements within a bound, a fractional result of
+// reading them.
+function mixed(): string {
+  const xs: number[] = [];
+  for (let i = 0; i < 6; i++) xs.push(i - 3);
+  for (let i = 0; i < xs.length; i++) xs[i] = ((xs[i] + 5) % 4) - 1;
+  let s = 0;
+  let text = "";
+  for (let i = 0; i < xs.length; i++) {
+    s += xs[i];
+    text += `${xs[i]} `;
+  }
+  return `${text}${s} ${xs[0] / 4}`;
+}
+
+function main() {
+  console.log(flips(10, 7));
+  console.log(rotations(7));
+  console.log(mixed());
+}

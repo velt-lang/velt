@@ -299,11 +299,22 @@ impl FnCx<'_, '_> {
         prop: &ast::Ident,
         span: Span,
     ) -> Result<hir::Expr, hir::Expr> {
-        if !self.has_getter(obj.ty, &prop.name) {
+        if !self.has_getter(obj.ty, &prop.name) && !self.union_getter(obj.ty, &prop.name) {
             // A field read through an interface's getter slot (`iface_write`).
             return self.iface_field(obj, prop, crate::body::Want::Borrow, span);
         }
         Ok(self.method_call_at(obj, prop, &[], &[], None, span, true))
+    }
+
+    /// Is `t` a union of classes that each have getter `name` (`(c as Set<T> | Map<K, V>).size`,
+    /// read on each member by `union_member_call`)?
+    fn union_getter(&mut self, t: TyId, name: &str) -> bool {
+        let Some(members) = self.cx.union_members(t) else {
+            return false;
+        };
+        members
+            .iter()
+            .all(|&m| self.cx.class_of(m).is_some() && self.has_getter(m, name))
     }
 
     /// Assigning to a getter without a setter is an error.
