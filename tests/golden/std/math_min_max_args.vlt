@@ -1,4 +1,4 @@
-// `Math.min` / `Math.max` with two or more plain arguments compile to a chain of two-value
+// `Math.min` / `Math.max` with two or more plain arguments compile to a tree of two-value
 // comparisons (no rest array, #1570): the same results as JS for NaN, -0, infinities and
 // integers, arguments evaluated once each from left to right; spread, one and no arguments
 // take the ordinary call.

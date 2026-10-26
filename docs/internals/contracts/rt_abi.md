@@ -419,6 +419,12 @@ keeps the module lock while it blocks; taking the module lock while the thread h
 stops with an `ICE:` panic (sema rejects module state in a `with` callback). On WebAssembly (one
 thread) there is no lock.
 
+Within one call of a compiled function (until the poll ends, or until `velt_rt_block_on` or
+`main` returns), a successful `velt_rt_module_state(desc, s)` stays valid for every slot `<= s`:
+the same block, still initialized up to `s`, with the lock still held. The compiler reuses it
+instead of calling again (`velt_opt` `module_state`, #1571), so a runtime change must keep this
+[additive, #1571].
+
 ## Array methods on a proxy [additive, #823]
 
 ```c

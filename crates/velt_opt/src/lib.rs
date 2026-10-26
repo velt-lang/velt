@@ -24,11 +24,11 @@
 //! - `dce`: removes stores to never-read locals, then the locals themselves.
 //! - `simplify_cfg`: jump threading, unreachable-block removal, block merging, renumbering.
 //! - `dead_funcs`: drops internal functions unreachable from exported ones.
+//! - `module_state`: once the rounds are done, a function asks the runtime for the module state
+//!   block once per slot range rather than at every access to a module-level `let` (#1571).
 //! - `map_probe`: once the rounds are done, a `Map` probe (`lookup`, the key's string hash)
 //!   that repeats an earlier one on the same map and an equal key reuses its result, so an
 //!   inlined `m.set(k, (m.get(k) ?? 0) + 1)` probes once (#563).
-//! - `module_state`: once the rounds are done, a function asks the runtime for the module state
-//!   block once per slot range rather than at every access to a module-level `let` (#1571).
 //! - `noalias`: once the rounds are done, scalar fields behind `noalias` params (modified arrays
 //!   and structs) are kept in locals (loaded once, stored back around calls that receive the
 //!   param), followed by one scalar cleanup round.

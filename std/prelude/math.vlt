@@ -77,9 +77,9 @@ export class Math {
   }
 
   /**
-   * Any number of values, like JS (`Math.max()` is -Infinity). A call with two or more plain
-   * arguments compiles to a chain of `max2` (sema, `body/expr/math_minmax.rs`) and never builds
-   * the rest array; this body runs for spread calls and calls with fewer than two arguments.
+   * Any number of values, like JS (`Math.max()` is -Infinity). A call with 2 to 16 plain
+   * arguments compiles to a balanced tree of `max2` calls (sema, `body/expr/math_minmax.rs`)
+   * and never builds the rest array; this body runs for spread calls and the other counts.
    */
   static max(a: f64 = -Infinity, b: f64 = -Infinity, ...rest: f64[]): f64 {
     let m = max2(a, b);
@@ -91,8 +91,8 @@ export class Math {
 
   /**
    * Returns the smaller of a set of supplied numeric expressions: any number of values, like JS
-   * (`Math.min()` is Infinity). NaN if any value is NaN. Calls with two or more plain arguments
-   * compile to a chain of `min2`, as for `max`.
+   * (`Math.min()` is Infinity). NaN if any value is NaN. Calls with 2 to 16 plain arguments
+   * compile to a tree of `min2` calls, as for `max`.
    */
   static min(a: f64 = Infinity, b: f64 = Infinity, ...rest: f64[]): f64 {
     let m = min2(a, b);
