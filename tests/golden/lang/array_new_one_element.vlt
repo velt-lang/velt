@@ -1,0 +1,21 @@
+// `new Array(x)` with an `x` that is no number makes an array of that one element, as in JS,
+// and `fill` replaces it. `x` is still evaluated, before the fill value. A number (also a
+// numeric literal type, or one behind `!`) is a length.
+function side(): string {
+  console.log("side");
+  return "3";
+}
+
+function main() {
+  console.log(new Array("3").fill("x"));
+  console.log(new Array<boolean>(true).fill(false));
+  console.log(new Array<string>(side()).fill("y"));
+  const k: 1 | 2 = 2;
+  console.log(new Array<number>(k).fill(5));
+  const o = { a: 1 };
+  console.log(new Array(o).fill({ a: 2 }));
+  const u: number | undefined = 3;
+  console.log(new Array<number>(u!).fill(4));
+}
+
+main();

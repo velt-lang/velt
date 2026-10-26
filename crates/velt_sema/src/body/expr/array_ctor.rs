@@ -26,27 +26,75 @@ impl FnCx<'_, '_> {
         if prop.name != "fill" || args.len() != 1 {
             return None;
         }
-        // `n` as a `number`, whatever its numeric type: the prelude checks it the way JS
-        // does (a whole number from 0 up, within the array length limit).
-        let n = ast::Expr {
-            id: ast::NodeId(u32::MAX),
-            kind: ast::ExprKind::Cast {
-                expr: Box::new(n.clone()),
-                ty: ast::TypeExpr {
-                    kind: ast::TypeExprKind::Named {
-                        path: vec![ast::Ident {
-                            name: "number".to_string(),
-                            span: n.span,
-                        }],
-                        args: vec![],
-                    },
-                    span: n.span,
-                },
-            },
-            span: n.span,
+        let call = match self.trial_type(n).map(|t| (t, self.length_kind(t))) {
+            // As in JS, an `n` that is no number makes an array of that one element.
+            Some((_, LengthKind::Other)) => {
+                return Some(self.array_of_one(&type_args, n, &args[0], exp, span));
+            }
+            Some((t, LengthKind::Mixed)) => {
+                self.cx.error(
+                    velt_common::Diagnostic::error(
+                        format!(
+                            "`new Array(n)` with an `n` of type `{}`, which may or may not be a number: JS decides at run time between `n` elements and an array of the one element `n`, and Velt needs to know which",
+                            self.cx.display(t)
+                        ),
+                        n.span,
+                    )
+                    .with_note(
+                        "narrow `n` first: `typeof n === \"number\" ? new Array<T>(n).fill(v) : [v]`",
+                    ),
+                );
+                self.check_args_loose(std::slice::from_ref(n));
+                self.check_args_loose(args);
+                return Some(self.error_expr(span));
+            }
+            // A length of any numeric type (or `any`) as a `number`: the prelude checks it the
+            // way JS does (a whole number from 0 up, within the array length limit). An `n`
+            // with errors reports them here.
+            _ => synthetic_call(
+                "__arrayFilled",
+                type_args,
+                vec![as_number(n), args[0].clone()],
+                span,
+            ),
         };
-        let call = synthetic_call("__arrayFilled", type_args, vec![n, args[0].clone()], span);
         Some(self.expr(&call, exp, Want::Move))
+    }
+
+    /// `new Array<T>(x).fill(v)` with an `x` that is no number: as in JS, `x` is evaluated and
+    /// the array holds the one element `v` (`__arrayOne(x, [v])`, the literal typed `T[]`).
+    fn array_of_one(
+        &mut self,
+        type_args: &[ast::TypeExpr],
+        x: &ast::Expr,
+        v: &ast::Expr,
+        exp: Option<TyId>,
+        span: Span,
+    ) -> hir::Expr {
+        let lit_exp = match type_args {
+            [t] => {
+                let elem = self.resolve(t);
+                Some(self.cx.ty.intern(hir::TyKind::Array(elem)))
+            }
+            _ => exp,
+        };
+        let xh = self.expr(x, None, Want::Move);
+        let lit = ast::Expr {
+            id: ast::NodeId(u32::MAX),
+            kind: ast::ExprKind::Array(vec![v.clone()]),
+            span,
+        };
+        let arr = self.expr(&lit, lit_exp, Want::Move);
+        let d = self
+            .cx
+            .prelude_fn("__arrayOne")
+            .unwrap_or_else(|| panic!("ICE: the prelude without `__arrayOne`"));
+        let ty = arr.ty;
+        let kind = hir::ExprKind::Call {
+            callee: hir::Callee::Def(d, vec![xh.ty, ty]),
+            args: vec![xh, arr],
+        };
+        self.mk(kind, ty, span)
     }
 
     /// `new Array<T>(n)` not followed by `.fill(v)`: an error.
@@ -106,6 +154,75 @@ impl FnCx<'_, '_> {
         };
         let call = synthetic_call("__arrayFromLength", vec![], vec![n.clone(), f], span);
         self.expr(&call, exp, Want::Move)
+    }
+}
+
+/// What `new Array(n)` makes of an `n` of some type, as JS decides at run time: `n` elements
+/// (a number, or a value whose type is only known at run time), one element (any other value),
+/// or either (a union of both kinds).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LengthKind {
+    Number,
+    Other,
+    Mixed,
+}
+
+impl LengthKind {
+    fn join(self, other: LengthKind) -> LengthKind {
+        if self == other {
+            self
+        } else {
+            LengthKind::Mixed
+        }
+    }
+}
+
+impl FnCx<'_, '_> {
+    fn length_kind(&mut self, t: TyId) -> LengthKind {
+        if self.cx.dynamic(t).is_some() {
+            return LengthKind::Number;
+        }
+        match self.cx.ty.kind(t).clone() {
+            hir::TyKind::Param(_)
+            | hir::TyKind::Op(..)
+            | hir::TyKind::Error
+            | hir::TyKind::Never => return LengthKind::Number,
+            hir::TyKind::Option(inner, _) => {
+                return self.length_kind(inner).join(LengthKind::Other);
+            }
+            _ => {}
+        }
+        if let Some(members) = self.cx.union_members(t) {
+            let mut kinds = members.into_iter().map(|m| self.length_kind(m));
+            let first = kinds.next().unwrap_or(LengthKind::Other);
+            return kinds.fold(first, LengthKind::join);
+        }
+        if self.cx.typeof_tag(t) == "number" {
+            LengthKind::Number
+        } else {
+            LengthKind::Other
+        }
+    }
+}
+
+/// `e as number`.
+fn as_number(e: &ast::Expr) -> ast::Expr {
+    ast::Expr {
+        id: ast::NodeId(u32::MAX),
+        kind: ast::ExprKind::Cast {
+            expr: Box::new(e.clone()),
+            ty: ast::TypeExpr {
+                kind: ast::TypeExprKind::Named {
+                    path: vec![ast::Ident {
+                        name: "number".to_string(),
+                        span: e.span,
+                    }],
+                    args: vec![],
+                },
+                span: e.span,
+            },
+        },
+        span: e.span,
     }
 }
 

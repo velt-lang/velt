@@ -145,7 +145,9 @@ pub unsafe extern "C" fn velt_rt_bytes_slice(
     out.write(VeltBytes::from_vec(v));
 }
 
-/// `a` followed by `b`, as a new array (JS `concat`).
+/// `a` followed by `b`, as a new array (JS `concat`). Past the array length limit it is the
+/// limit's `RangeError`, and a size the target cannot allocate is out of memory, as in
+/// `velt_rt_bytes_zeroed`.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_bytes_concat(
     a: *const VeltBytes,
@@ -153,7 +155,16 @@ pub unsafe extern "C" fn velt_rt_bytes_concat(
     out: *mut VeltBytes,
 ) {
     let (a, b) = ((*a).as_bytes(), (*b).as_bytes());
-    let mut v = Vec::with_capacity(a.len() + b.len());
+    let total = a.len() as u64 + b.len() as u64;
+    if total > crate::bytes::MAX_ARRAY_LEN {
+        crate::bytes::array_too_long();
+    }
+    let mut v = Vec::new();
+    if v.try_reserve_exact(crate::mem::block_size(total, 1))
+        .is_err()
+    {
+        crate::mem::out_of_memory(total, 1);
+    }
     v.extend_from_slice(a);
     v.extend_from_slice(b);
     out.write(VeltBytes::from_vec(v));
