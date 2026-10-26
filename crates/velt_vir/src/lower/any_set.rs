@@ -161,9 +161,15 @@ impl FnLower<'_, '_> {
                         _ => self.any_set_refuse(v, ST_UNSUPPORTED),
                     }
                 }
-                (DynMemberKind::Getter, _) if self.cx.is_class(ty) => {
-                    // Class bodies are strict code: Node throws.
-                    let name = self.cx.type_name(ty);
+                (DynMemberKind::Getter, _)
+                    if self.cx.is_class(ty) || self.literal_accessor(ty, m) =>
+                {
+                    // Class bodies and modules are strict code: Node throws. An object
+                    // literal's getter (its struct may be a class) is `#<Object>`'s.
+                    let name = match self.literal_accessor(ty, m) {
+                        true => "Object".to_string(),
+                        false => self.cx.type_name(ty),
+                    };
                     self.panic_msg(&format!(
                         "TypeError: Cannot set property {} of #<{name}> which has only a getter",
                         m.name

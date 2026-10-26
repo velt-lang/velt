@@ -3049,7 +3049,14 @@ same check as above (a value of another type stops with its `TypeError`, and the
 its old value) and stored in the object itself, so every other reference to it sees the write;
 a setter is called with it, also an object literal's (`set value(v)` written in it or added by
 `Object.defineProperty`; a read runs its getter), and `Reflect.set(o, "value", v)` does the
-same. A `Record<string, V>` takes any key, adding the ones it lacks, as
+same. Such a literal held by an `any` prints its accessors as Node does (`value: [Getter]`,
+`[Setter]`, `[Getter/Setter]`), `JSON.stringify` writes what its getters return, and
+`Object.keys` and `for...in` list each property once. Writing a property that has only a getter
+stops with Node's `TypeError: Cannot set property value of #<Object> which has only a getter`.
+**Known differences:** these stops can't be caught (as for the other failed writes through
+`any`, #924), `Reflect.set` stops the same way where Node returns `false`, and an error the
+accessor itself throws ends the process as uncaught when the accessor runs through `any` or a
+view (as a trap's error does through a typed proxy, #1174). A `Record<string, V>` takes any key, adding the ones it lacks, as
 in Node; an array takes its elements inside its length, an element at its length (it grows by
 one, as `a[a.length] = v` does in Node) and a shorter `length`, which drops the elements past it
 (a length that is not a whole number from 0 up is Node's `RangeError: Invalid array length`). The

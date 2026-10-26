@@ -52,3 +52,20 @@ function box<T>(first: T) {
 const bx = box(1);
 (bx as any).value = 3;
 console.log(bx.value, Reflect.get(bx, "value"));
+
+// The setter's field is no property of its own: keys, `for...in`, printing and JSON see one
+// `value` (a setter alone is left out of JSON).
+const both: any = o;
+console.log(Object.keys(both).join(","), Object.keys(ro as any).join(","));
+for (const k in both) {
+  console.log("key", k);
+}
+const only = {
+  tag: "s",
+  set value(x: number) {
+    stored = x;
+  },
+};
+console.log(both, ro as any, only as any);
+console.log(JSON.stringify(both), JSON.stringify(ro as any), JSON.stringify(only as any));
+console.log(Object.keys(only as any).join(","), (only as any).value);

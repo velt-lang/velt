@@ -3,3 +3,8 @@ true 5
 70
 b! b! b!
 3 3
+value value
+key value
+{ value: [Getter/Setter] } { value: [Getter] } { tag: 's', value: [Setter] }
+{"value":7} {"value":70} {"tag":"s"}
+tag,value undefined
