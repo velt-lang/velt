@@ -35,6 +35,13 @@ pub(crate) fn order(cx: &mut Ctx) -> Vec<DefId> {
     if lets.is_empty() {
         return Vec::new();
     }
+    // The classes' values exist before any of their module's code runs (they read nothing,
+    // `body::expr::ctor_values`, `ctor_objects`): at its start, also when the root file's
+    // slots are initialized among its statements (`defer_root`), which go by these positions.
+    let lets: Vec<(usize, u32, DefId)> = lets
+        .into_iter()
+        .map(|(m, start, d)| (m, if cx.is_class_value(d) { 0 } else { start }, d))
+        .collect();
     let (modules, evaluated, reached) = module_order(cx);
     let rank: FxHashMap<usize, usize> = modules.iter().enumerate().map(|(i, m)| (*m, i)).collect();
     // A module no value import reaches is never evaluated: its top-level statements don't run,
@@ -270,7 +277,11 @@ fn defer_root(cx: &mut Ctx, entry: Option<DefId>, slots: &[DefId]) -> u32 {
     }
     let starts: Vec<u32> = slots[from..]
         .iter()
-        .map(|&d| cx.global(d).map_or(0, |g| g.src.span.lo))
+        .map(|&d| match cx.is_class_value(d) {
+            // Before the file's first statement (`order`).
+            true => 0,
+            false => cx.global(d).map_or(0, |g| g.src.span.lo),
+        })
         .collect();
     let unit = cx.ty.unit;
     let Some(Some(hir::Def::Fn(f))) = cx.defs.get_mut(main.0 as usize) else {
