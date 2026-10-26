@@ -82,7 +82,12 @@ impl FnCx<'_, '_> {
                 let a = self.cx.adt(p)?;
                 a.methods.get(name).filter(|m| !m.is_static).map(|m| m.def)
             });
-            if let Some(m) = m {
+            // One source per method in each list: the operations of a body throw the same set.
+            let list = self.f.tries.last().unwrap_or(&self.f.uncaught);
+            let seen = |s: &crate::defs::ThrowSrc| {
+                matches!(s, crate::defs::ThrowSrc::Call(d, a, _) if Some(*d) == m && a.is_empty())
+            };
+            if let (Some(m), false) = (m, list.iter().any(seen)) {
                 self.throw_src(crate::defs::ThrowSrc::Call(m, vec![], span));
             }
         }
