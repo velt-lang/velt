@@ -1,0 +1,12 @@
+// An instance field initializer runs when an instance is made: it reads a key constant declared
+// after the class (at module level or in the function declaring the class), as TypeScript allows.
+type H = { __KA__?: number; __KB__?: number };
+(globalThis as H).__KB__ = 2;
+class C { v: number = (globalThis as H)[K]!; }
+const K = "__KB__";
+function inFn(): number {
+  class D { w: number = (globalThis as H)[L]!; }
+  const L = "__KB__";
+  return new D().w;
+}
+console.log(new C().v, inFn());

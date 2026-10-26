@@ -2093,6 +2093,8 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   `j[0].length = 1` with `j: readonly T[][]`) is allowed, as in TypeScript; only replacing the
   element of a read-only array (`j[0] = []`) is TS2542. Not reported yet (TypeScript reports
   them): such a method called on a field, an element copied into a variable (`const e = k[0]`),
+  an element of an alias of the whole array type (`type Grid = readonly (readonly T[])[]`), an
+  element three levels deep, an element typed `| undefined` read with `?.` or `!`,
   a destructured or returned value or a `for...of` variable of a read-only type, a
   method read as a value (`const add = s.add`), a read-only type given to an alias whose body is
   its parameter (`type Box<T> = T`, then `Box<ReadonlySet<string>>`), and passing or assigning a read-only
@@ -2424,7 +2426,8 @@ a type, or with its own string as the type, and not cast to `string` (`satisfies
 it is TypeScript's TS2448, in the function declaring it and at module level; a closure or
 function reading it from before its declaration in the same function is an error, as for any
 constant there; a closure at module level that runs before the declaration reads the constant
-instead of throwing Node's `ReferenceError`), the object a constant
+instead of throwing Node's `ReferenceError`; an instance field initializer runs when an instance
+is made, so it may read a constant declared after the class), the object a constant
 that stands for `globalThis` (`const g = globalThis as Seam;`), and
 `Object.defineProperty(globalThis, "K", { value, writable: true, configurable: true })`
 assigns it. The property's type is `T["K"] | undefined` with `T` the asserted type; the
