@@ -148,8 +148,10 @@ impl FnCx<'_, '_> {
             TyKind::Param(n) => {
                 // Declared bounds first, then those of blanket `extend … implements` blocks.
                 let mut bs = self.bounds.get(*n as usize).cloned().unwrap_or_default();
-                let scope = self.bounds.clone();
-                bs.extend(self.cx.blanket_bounds(recv, &scope));
+                if !self.cx.ext_impls.is_empty() {
+                    let scope = self.bounds.clone();
+                    bs.extend(self.cx.blanket_bounds(recv, &scope));
+                }
                 (bs, true)
             }
             _ => return None,

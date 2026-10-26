@@ -263,15 +263,12 @@ fn overlapping_blocks_where_neither_is_more_specific_are_errors() {
             "{r}"
         );
     }
-    // Disjoint targets and different interface arguments don't overlap.
+    // Disjoint targets don't overlap.
     ok_src(
         "interface D { d(): string; }
-         interface Conv<U> { conv(): U; }
          struct Pair<A, B> { a: A; b: B; }
          extend<A> Pair<A, i64> implements D { d(): string { return \"i64\"; } }
          extend<A> Pair<A, string> implements D { d(): string { return \"string\"; } }
-         extend<A> Pair<A, i64> implements Conv<string> { conv(): string { return \"s\"; } }
-         extend<B> Pair<i64, B> implements Conv<bool> { conv(): bool { return true; } }
          function main() {}",
     );
 }
@@ -368,4 +365,136 @@ fn an_optional_method_is_named_as_such() {
          function main() {}",
     );
     assert!(r.contains("`O` declares optional field `size`"), "{r}");
+}
+
+#[test]
+fn interface_arguments_do_not_make_blocks_disjoint() {
+    // A type implements an interface once: two blocks for `W` with different arguments
+    // conflict, and the message shows the arguments.
+    let r = err_src(
+        "interface G<X> { g(): string; }
+         class W {}
+         extend W implements G<i64> { g(): string { return \"i64\"; } }
+         extend W implements G<string> { g(): string { return \"string\"; } }
+         function main() {}",
+    );
+    assert!(
+        r.contains("conflicting implementations of `G<string>` and `G<i64>`"),
+        "{r}"
+    );
+    // The more specific block decides the arguments: `Box<string>` is a `G<string>`.
+    let r = err_src(
+        "interface G<X> { g(): string; }
+         class Box<T> { constructor(public v: T) {} }
+         extend<T> Box<T> implements G<T> { g(): string { return \"box\"; } }
+         extend<A> A implements G<i64> { g(): string { return \"any\"; } }
+         function a<T extends G<i64>>(x: T): string { return x.g(); }
+         function main() { console.log(a(new Box(1 as i64)), a(new Box(\"s\"))); }",
+    );
+    assert!(
+        r.contains("`Box<string>` implements `G<string>`, not `G<i64>`"),
+        "{r}"
+    );
+    assert_eq!(r.matches("error:").count(), 1, "{r}");
+}
+
+#[test]
+fn dynamic_bounds_on_implementing_blocks_are_refused() {
+    for b in ["unknown", "object", "Function", "any"] {
+        let r = err_src(&format!(
+            "interface D {{ d(): string; }}
+             class Box<T> {{ constructor(public v: T) {{}} }}
+             extend<T extends {b}> Box<T> implements D {{ d(): string {{ return \"x\"; }} }}
+             extend<T extends {b}> T implements D {{ d(): string {{ return \"y\"; }} }}
+             function main() {{}}"
+        ));
+        assert_eq!(
+            r.matches(&format!("cannot bound `T` by `{b}`")).count(),
+            2,
+            "{r}"
+        );
+    }
+}
+
+/// `extend` chains: `n` levels of interfaces `A<k>`/`B<k>`, each block bounded by both
+/// interfaces of the next level, and a class implementing the last.
+fn ab_chain(n: usize) -> String {
+    let mut s = String::new();
+    for k in 0..=n {
+        s +=
+            &format!("interface A{k} {{ a{k}(): string; }} interface B{k} {{ b{k}(): string; }}\n");
+    }
+    for k in 0..n {
+        let j = k + 1;
+        s += &format!(
+            "extend<T extends A{j} & B{j}> T implements A{k} {{ a{k}(): string {{ return \"a\"; }} }}
+             extend<T extends A{j} & B{j}> T implements B{k} {{ b{k}(): string {{ return \"b\"; }} }}\n"
+        );
+    }
+    s + &format!("class C implements A{n}, B{n} {{ a{n}(): string {{ return \"a\"; }} b{n}(): string {{ return \"b\"; }} }}\n")
+}
+
+#[test]
+fn a_deep_chain_of_blocks_is_looked_up_once_per_type() {
+    // Each level checks both bounds of the next: without remembering finished lookups this
+    // takes 2^40 steps.
+    ok_src(&format!(
+        "{} function f<T extends A0>(x: T): string {{ return x.a0(); }}
+         function main() {{ console.log(f(new C())); }}",
+        ab_chain(40)
+    ));
+}
+
+#[test]
+fn blanket_blocks_chain_for_type_parameters() {
+    ok_src(
+        "interface K { k(): string; }
+         interface J { j(): string; }
+         interface I { i(): string; }
+         extend<T extends K> T implements J { j(): string { return \"j\"; } }
+         extend<T extends J> T implements I { i(): string { return \"i\" + this.j(); } }
+         class C implements K { k(): string { return \"k\"; } }
+         function needI<T extends I>(x: T): string { return x.i(); }
+         function fromK<T extends K>(x: T): string { return needI(x) + x.i(); }
+         function main() { console.log(needI(new C()), fromK(new C())); }",
+    );
+    // Ten levels, from a generic function bounded by the last one.
+    let n = 10;
+    let mut s = String::new();
+    for k in 0..=n {
+        s += &format!("interface I{k} {{ i{k}(): string; }}\n");
+    }
+    for k in 0..n {
+        let j = k + 1;
+        s += &format!(
+            "extend<T extends I{j}> T implements I{k} {{ i{k}(): string {{ return \"{k}\"; }} }}\n"
+        );
+    }
+    ok_src(&format!(
+        "{s} function f<T extends I0>(x: T): string {{ return x.i0(); }}
+         function g<T extends I{n}>(x: T): string {{ return f(x); }}
+         function main() {{}}"
+    ));
+}
+
+#[test]
+fn a_chain_past_the_nesting_limit_says_so() {
+    let n = 70;
+    let mut s = String::new();
+    for k in 0..=n {
+        s += &format!("interface I{k} {{ i{k}(): string; }}\n");
+    }
+    for k in 0..n {
+        let j = k + 1;
+        s += &format!(
+            "extend<T extends I{j}> T implements I{k} {{ i{k}(): string {{ return \"{k}\"; }} }}\n"
+        );
+    }
+    let r = err_src(&format!(
+        "{s} class C implements I{n} {{ i{n}(): string {{ return \"c\"; }} }}
+         function f<T extends I0>(x: T): string {{ return x.i0(); }}
+         function main() {{ console.log(f(new C())); }}"
+    ));
+    assert!(r.contains("the type `C` does not implement `I0`"), "{r}");
+    assert!(r.contains("more than 64 nested lookups"), "{r}");
 }
