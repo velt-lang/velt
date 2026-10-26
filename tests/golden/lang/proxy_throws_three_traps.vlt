@@ -1,0 +1,94 @@
+// check: no leaks
+// Three traps that throw, reached through `Promise.allSettled` (also nested), `Promise.all`,
+// `Promise.race` and `Promise.any`.
+class E1 extends Error {}
+class E2 extends Error {}
+class E3 extends Error {}
+
+function make(): any {
+  return new Proxy({ a: 1 } as any, {
+    get(t, k, r) {
+      if (k === "g") {
+        throw new E1("get");
+      }
+      return Reflect.get(t, k, r);
+    },
+    set(t, k, v, r) {
+      if (k === "s") {
+        throw new E2("set");
+      }
+      return Reflect.set(t, k, v, r);
+    },
+    has(t, k) {
+      if (k === "h") {
+        throw new E3("has");
+      }
+      return Reflect.has(t, k);
+    },
+  });
+}
+
+async function rd(p: any): Promise<number> {
+  return p.g;
+}
+async function wr(p: any): Promise<number> {
+  p.s = 1;
+  return 1;
+}
+async function hs(p: any): Promise<number> {
+  return "h" in p ? 1 : 0;
+}
+async function ok(p: any): Promise<number> {
+  return p.a;
+}
+async function own(p: any): Promise<number> {
+  if (p.a === 2) {
+    throw new E2("own");
+  }
+  return p.g;
+}
+
+function label(e: unknown): string {
+  return e instanceof E1 ? "E1" : e instanceof E2 ? "E2" : e instanceof E3 ? "E3" : "other";
+}
+
+async function run(): Promise<void> {
+  const p = make();
+  const rs = await Promise.allSettled([rd(p), wr(p), hs(p), ok(p)]);
+  for (const x of rs) {
+    if (x.status === "rejected") {
+      console.log("settled", label(x.reason), (x.reason as Error).message, x.reason instanceof E3);
+    } else {
+      console.log("value", x.value);
+    }
+  }
+  console.log(rs.map((x) => (x.status === "rejected" ? label(x.reason) : "ok")).join(" "));
+  const one = await Promise.allSettled([own(p)]);
+  for (const x of one) {
+    if (x.status === "rejected") {
+      console.log("own", x.reason instanceof E1, String(x.reason));
+    }
+  }
+  const nested = await Promise.allSettled([
+    Promise.allSettled([rd(p), hs(p)]).then((xs) => xs.length),
+    wr(p),
+  ]);
+  for (const x of nested) {
+    console.log("nested", x.status === "rejected" ? label(x.reason) : String(x.value));
+  }
+  try {
+    await Promise.all([ok(p), rd(p)]);
+  } catch (e) {
+    console.log("all", label(e));
+  }
+  try {
+    await Promise.race([hs(p), ok(p)]);
+  } catch (e) {
+    console.log("race", label(e), (e as Error).message);
+  }
+  const first = await Promise.any([rd(p), ok(p)]);
+  console.log("any", first);
+  await Promise.all([wr(p)]).catch((e) => console.log("all-catch", label(e)));
+}
+
+run();

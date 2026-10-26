@@ -109,6 +109,10 @@ impl FnCx<'_, '_> {
             h.ty = exp;
             return Ok(h);
         }
+        let h = match self.union_as_written(h, exp) {
+            Ok(h) => return Ok(h),
+            Err(h) => h,
+        };
         if self.cx.unfreezes(h.ty, exp) {
             return Err(h);
         }
@@ -261,10 +265,6 @@ impl FnCx<'_, '_> {
                 return Ok(self.mk(H::WrapSome(Box::new(inner_h)), exp, span));
             }
         }
-        let h = match self.union_as_written(h, exp) {
-            Ok(h) => return Ok(h),
-            Err(h) => h,
-        };
         if self.cx.union_def(exp).is_some() {
             return self.coerce_to_union(h, exp);
         }
