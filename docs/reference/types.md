@@ -1079,7 +1079,9 @@ for (const s of shapes) {
   may be classes too (`Circle | Sq` with `area()` on both, or a union of classes only): each
   member's own method runs on the value itself: the receiver first, then the arguments in order,
   each evaluated once. The call's type is the union of the members' results (`number | string`
-  when `scale()` returns a `number` on `Circle` and a `string` on `Sq`), as in TypeScript.
+  when `scale()` returns a `number` on `Circle` and a `string` on `Sq`), as in TypeScript. A
+  getter every class of a union of classes has reads the same way (`.size` of a
+  `Map<K, V> | Set<T>`).
 
 ```ts
 interface Base {
@@ -2323,7 +2325,9 @@ does is an error saying it is not supported yet, never a quiet difference.
   object, interface or class target only fields its type declares (adding one is not supported
   yet). `Object.assign(fn, { … })` onto a
   function makes a [function with properties](functions.md#functions-with-properties).
-  Assigning from a value that may hold another class is not supported yet.
+  Assigning from a value that may hold another class is not supported yet. A record source that
+  may be `null` or `undefined` (`Record<string, V> | null`) is skipped when it is, as in
+  JavaScript.
 - `Object.freeze({ ... })` of a new object literal returns it with every field readonly, so
   writing one is a compile error, as in TypeScript. Node throws a `TypeError` when a frozen
   object's field is written through any reference, so a frozen object converts only to types
@@ -2346,6 +2350,8 @@ does is an error saying it is not supported yet, never a quiet difference.
 - `Object.create(null)` makes an empty `Record<string, V>` without a prototype, where one is
   expected (`const d: Record<string, number> = Object.create(null)`): `"toString" in d` is
   `false`, `Object.getPrototypeOf(d)` is `null`, and it prints as `[Object: null prototype] {}`.
+  Where an `any` is expected (`const slots: any = Object.create(null)`), it is a
+  `Record<string, any>`.
   `{ ...d }` copies it into an ordinary object. `Object.create` with another prototype, and
   `structuredClone` of a record in a program that calls `Object.create(null)`, are not
   supported yet.
@@ -3719,7 +3725,8 @@ with TypeScript's rules:
   `f.apply(thisArg, [a, b])` are the call `f(a, b)` when `thisArg` is `null` or `undefined` (or
   left out: `f.call()`); `f` and `thisArg` are evaluated once, before the arguments. A Velt
   function value has no `this` to set, so another `thisArg` stops with a `TypeError` naming
-  #926 (Node would call the function with it).
+  #926 (Node would call the function with it). `f.bind(thisArg)` without arguments to fix is
+  a new function forwarding to `f` (an `any`) under the same rule.
 - `Set<object>` and `Map<object, V>` (and `Map<Function, V>`) key their entries by identity, as
   in JavaScript.
 - An `any` or `unknown` converts to `object` with `as object` (an `any` also without it),
@@ -3751,6 +3758,27 @@ with TypeScript's rules:
   library class that JavaScript has no constructor of the same name for, stops with a
   `TypeError` naming #926; `null` and `undefined` with Node's `TypeError: Cannot read
   properties of null (reading 'constructor')`.
+- `x.constructor` of an `object`, `any` or `Function` is the object of the class the value
+  holds, and a class named where an `any`, `unknown`, `object` or `Function` is expected is
+  that object too, so `ctor === Set || ctor === Map` and `new Set<unknown>([Set, Map])` work as
+  in JavaScript: one object per class (for every instantiation of a generic class), `typeof`
+  `"function"`. Calling it stops with Node's `TypeError` (`Class constructor A cannot be
+  invoked without 'new'`); `new` through it is not supported yet. An own `constructor`
+  property comes first. A value that holds no class instance gives its kind's one object: an
+  object literal or a record `Object`'s (so `o.constructor === Object`), a string `String`'s, a
+  number `Number`'s (the value `Number` names where an `any` or `unknown` is expected, so
+  `n.constructor === Number`; called, it converts as `Number(s)` does), an array, a boolean or
+  a function an object of its own for each kind (`Array`, `Boolean` and `Function` are not
+  values in Velt yet, so `=== Array` is an error saying it can't find `Array`); a record made
+  by `Object.create(null)` has none (`undefined`). They print as in Node: `[class A]`,
+  `[class B extends A]`, `[Function: Map]`, `[Function: Array]`; the object of a class with
+  static fields or accessors, which Node prints with them (`[class S] { count: 2 }`), stops
+  with a `TypeError` saying printing it is not supported yet. A class declared in a function
+  or a block is another class each time its declaration runs in JavaScript: naming one as a
+  plain value is an error, and `x.constructor` of its instances a `TypeError`, saying it is not
+  supported yet. A program that reads `x.constructor` gets one dispatch over its classes and
+  one small constant per class (all of one type): about 11,000 lines of intermediate code and
+  about 110 KB of binary for a two-line program.
 
 ```ts
 class Point {
@@ -3779,6 +3807,6 @@ function main(): void {
 ```
 
 **Not yet** (#926): `object` as a `WeakMap` key, a `WeakSet` member or a `WeakRef` target, the
-members every object has (`constructor` as a value, `toString`, `hasOwnProperty`) and a function has
-(`call` and `apply` with another `thisArg`, `bind`, `name`, `length`), and a type parameter without the `object` bound
+members every object has (`toString`, `hasOwnProperty`) and a function has (`call`, `apply` and
+`bind` with another `thisArg`, `name`, `length`), and a type parameter without the `object` bound
 converted with `as object`. Each is a compile error.

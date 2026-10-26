@@ -37,7 +37,7 @@ impl Generics {
 }
 
 /// `T extends Iface<args>`.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct Bound {
     pub iface: DefId,
     pub args: Vec<TyId>,

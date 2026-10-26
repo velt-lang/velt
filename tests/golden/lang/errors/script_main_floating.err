@@ -1,0 +1,1 @@
+script_main_floating.vlt:9:3: error: floating promise: this promise is neither awaited nor spawned

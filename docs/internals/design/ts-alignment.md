@@ -125,12 +125,18 @@ The rules, and why:
   lookup as a direct conversion. A union target is refused too: a union's value has one
   member's type, which the block's target does not match. An interface type implementing an
   interface it extends is refused as already implemented.
-- **Cycles.** A block's bounds are checked through implementations again, so blocks can lead
-  back to each other (`extend<T extends I> T implements J` and `extend<U extends J> U
-  implements I`). A lookup that comes back to itself does not fit, in sema and in lowering:
-  such a pair gives a type neither interface unless it has one of its own. A blanket block
-  bounded by the interface it implements could only apply to types that already have it, and
-  is refused.
+- **Bounds hold when they hold at all.** A block's bounds are checked through implementations
+  again, so blocks can lead back to each other (`extend<T extends Q> T implements P`, `extend<T>
+  T implements P` and `extend<T extends P> T implements Q`). A bound holds when the type meets
+  it through its own implementation or through a finite chain of blocks, whichever block that
+  is, never through itself: the least answer, which is the same in every context. (The first
+  rule, "a lookup that comes back to itself does not fit", made the answer depend on which
+  lookup ran first once lookups were remembered.) With the three blocks above, `C` is a `P`
+  through the unbounded block, hence a `Q`, hence the bounded `P` block fits and wins, in every
+  order. A pair that only leads to itself (`extend<T extends I> T implements J` with
+  `extend<U extends J> U implements I`) gives a type neither interface unless it has one of its
+  own. A blanket block bounded by the interface it implements could only apply to types that
+  already have it, and is refused.
 - **Interface arguments.** A type implements an interface once, as a class does: blocks that
   can fit one type conflict whatever their interface arguments (`extend W implements G<i64>`
   and `extend W implements G<string>`), and the block that wins decides the arguments. This
@@ -140,11 +146,11 @@ The rules, and why:
   would need the dynamic type tests of `any` in every impl lookup. Blanket blocks apply to
   type parameters through each other (a `T extends K` gets `J` from `extend<T extends K> T
   implements J`, then `I` from `extend<T extends J> T implements I`).
-- **Cost.** Each block's bounds are checked by lookups of their own, and a lookup that
-  finished is remembered per type and interface (per arguments in lowering), unless a cycle
-  through a lookup still running cut it short. A chain of blocks whose bounds share interfaces
-  is so looked up once per type, not once per path. Lookups nest at most 64 deep; a bound that
-  fails there says so.
+- **Cost.** A bound check is not a nested call: it collects every lookup the question reaches
+  (finitely many, since a bound is checked on a type argument of the type looked up) and
+  iterates to a fixed point, in sema (`infer/ext_exists.rs`) and in lowering
+  (`lower/ext_exists.rs`). There is no nesting limit, every answer is remembered, and a chain
+  of blocks whose bounds share interfaces is looked up once per type.
 - **Diagnostics**: a missing or mismatched method (as for classes); `conflicting
   implementations`; `already implements`; ``cannot implement `I` `` for an interface with
   fields or optional methods (an `extend` block cannot add fields) and for the targets above;

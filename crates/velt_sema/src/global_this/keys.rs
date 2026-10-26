@@ -40,9 +40,7 @@ pub(super) fn string_consts(module: &ast::Module) -> FxHashMap<String, String> {
     for item in &module.items {
         match &item.kind {
             I::Var(v) => add(v),
-            I::Function(f)
-                if f.sig.name.name == "main" && f.sig.name.span.lo == f.sig.name.span.hi =>
-            {
+            I::Function(f) if velt_syntax::is_script_main(&f.sig.name) => {
                 for s in &f.body.stmts {
                     if let S::Var(v) = &s.kind {
                         add(v);

@@ -1,0 +1,47 @@
+// `extend` blocks whose bounds lead to each other: P1 needs Q, Q1 needs P, and P2 gives every
+// type P. A type meets a block's bounds when it meets them at all, so `C` is a `P` (P2), hence
+// a `Q` (Q1), hence P1 fits too and, being bounded, wins over P2. The answer is the same in every
+// order of lookups and from `any`. (P looked up first; `_a` looks up Q first.)
+
+interface P {
+  p(): string;
+}
+
+interface Q {
+  q(): string;
+}
+
+extend<T extends Q> T implements P {
+  p(): string {
+    return "P1";
+  }
+}
+
+extend<T> T implements P {
+  p(): string {
+    return "P2";
+  }
+}
+
+extend<T extends P> T implements Q {
+  q(): string {
+    return "Q1";
+  }
+}
+
+class C {}
+
+function sp<T extends P>(x: T): string {
+  return x.p();
+}
+
+function sq<T extends Q>(x: T): string {
+  return x.q();
+}
+
+function main() {
+  const c = new C();
+  console.log(sp(c), sq(c), (c as Q).q(), (c as P).p());
+  const a: any = c;
+  console.log((a as Q).q(), (a as P).p());
+}

@@ -1,0 +1,5 @@
+// `String(o)` of an `any` holding a record made by `Object.create(null)`: it has no `toString`
+// or `valueOf`, so Node's `TypeError`.
+const o: any = Object.create(null);
+console.log(typeof o);
+console.log(String(o));

@@ -34,6 +34,7 @@ mod construct;
 mod conversions;
 pub(crate) mod ctor_locals;
 mod ctor_name;
+mod ctor_objects;
 mod ctor_values;
 mod default_args;
 mod discriminated;
@@ -61,6 +62,7 @@ mod error_slots;
 mod error_view;
 mod errors;
 mod eval_effects;
+mod fn_bind;
 mod fn_casts;
 mod fn_union_call;
 mod fn_widen;
@@ -183,7 +185,7 @@ use velt_syntax::ast;
 use super::{FnCx, Want};
 use crate::hir::{self, TyId, TyKind};
 pub(crate) use args::deferred;
-pub(crate) use call_apply::is_member_read;
+pub(crate) use call_apply::{is_member_read, read_root};
 pub(crate) use callables::{property_writes, PendingWrites};
 
 impl FnCx<'_, '_> {
@@ -266,7 +268,10 @@ impl FnCx<'_, '_> {
             }
             // A property already reported (`assign_pattern::reject_cover_inits`).
             A::Ident(id) if id.name == assign_pattern::REPORTED => self.error_expr(span),
-            A::Ident(id) => self.ident_expr(id, exp, want),
+            A::Ident(id) => match self.kind_name_value(id, exp, want) {
+                Some(h) => h,
+                None => self.ident_expr(id, exp, want),
+            },
             A::This => self.this_expr(want, span),
             A::Super => {
                 self.cx.err(

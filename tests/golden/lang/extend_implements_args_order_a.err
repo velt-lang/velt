@@ -1,0 +1,2 @@
+does not implement `G<string>`
+`C` implements `G<i64>`, not `G<string>`

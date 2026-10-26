@@ -65,7 +65,8 @@ fn unbounded_params_and_non_comparable_types_are_rejected() {
          function lt<T extends Comparable<T>>(a: T, b: T): bool { return a < b; }
          function main() { console.log(lt(P { x: 1 }, P { x: 2 })); }",
     );
-    assert!(r.contains("does not implement `Comparable`"), "{r}");
+    assert!(r.contains("does not implement `Comparable<P>`"), "{r}");
+    assert!(r.contains("required by `T extends Comparable<T>`"), "{r}");
 }
 
 #[test]

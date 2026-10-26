@@ -1,0 +1,6 @@
+// `String(d)` of a record made by `Object.create(null)`: it has no `toString` or `valueOf`, so
+// Node's `TypeError`.
+const d: Record<string, number> = Object.create(null);
+d.a = 1;
+console.log(Object.keys(d));
+console.log(String(d));

@@ -437,11 +437,11 @@ fn ab_chain(n: usize) -> String {
 #[test]
 fn a_deep_chain_of_blocks_is_looked_up_once_per_type() {
     // Each level checks both bounds of the next: without remembering finished lookups this
-    // takes 2^40 steps.
+    // takes 2^60 steps.
     ok_src(&format!(
         "{} function f<T extends A0>(x: T): string {{ return x.a0(); }}
          function main() {{ console.log(f(new C())); }}",
-        ab_chain(40)
+        ab_chain(60)
     ));
 }
 
@@ -478,8 +478,9 @@ fn blanket_blocks_chain_for_type_parameters() {
 }
 
 #[test]
-fn a_chain_past_the_nesting_limit_says_so() {
-    let n = 70;
+fn a_long_chain_has_no_nesting_limit() {
+    // Bound checks through blocks are one fixed-point computation, not nested calls.
+    let n = 200;
     let mut s = String::new();
     for k in 0..=n {
         s += &format!("interface I{k} {{ i{k}(): string; }}\n");
@@ -490,11 +491,35 @@ fn a_chain_past_the_nesting_limit_says_so() {
             "extend<T extends I{j}> T implements I{k} {{ i{k}(): string {{ return \"{k}\"; }} }}\n"
         );
     }
-    let r = err_src(&format!(
+    ok_src(&format!(
         "{s} class C implements I{n} {{ i{n}(): string {{ return \"c\"; }} }}
          function f<T extends I0>(x: T): string {{ return x.i0(); }}
+         function g<T extends I{n}>(x: T): string {{ return f(x); }}
          function main() {{ console.log(f(new C())); }}"
     ));
-    assert!(r.contains("the type `C` does not implement `I0`"), "{r}");
-    assert!(r.contains("more than 64 nested lookups"), "{r}");
+}
+
+#[test]
+fn bounds_hold_whatever_is_looked_up_first() {
+    // P1 needs Q, Q1 needs P, P2 gives every type P: `C` gets the bounded P1 in both orders.
+    let src = |calls: &str| {
+        format!(
+            "interface P {{ p(): string; }}
+             interface Q {{ q(): string; }}
+             extend<T extends Q> T implements P {{ p(): string {{ return \"P1\"; }} }}
+             extend<T> T implements P {{ p(): string {{ return \"P2\"; }} }}
+             extend<T extends P> T implements Q {{ q(): string {{ return \"Q1\"; }} }}
+             class C {{}}
+             function sp<T extends P>(x: T): string {{ return x.p(); }}
+             function sq<T extends Q>(x: T): string {{ return x.q(); }}
+             function main() {{ {calls} }}"
+        )
+    };
+    for calls in ["sq(new C()); sp(new C());", "sp(new C()); sq(new C());"] {
+        let p = ok_src(&src(calls));
+        // Both orders check (goldens `lang/extend_implements_cycle_order_a/_b` run them).
+        let mut bounded: Vec<usize> = p.extension_impls.values().map(|b| b.len()).collect();
+        bounded.sort_unstable();
+        assert_eq!(bounded, vec![0, 1, 1]);
+    }
 }

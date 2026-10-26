@@ -1,0 +1,1 @@
+TypeError: printing the object of a class with static fields or accessors is not supported yet (#926)

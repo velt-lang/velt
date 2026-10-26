@@ -128,11 +128,7 @@ fn hoist_keys(module: &mut ast::Module, keys: &[&str]) {
         return;
     }
     let Some(main) = module.items.iter_mut().find_map(|i| match &mut i.kind {
-        ast::ItemKind::Function(f)
-            if f.sig.name.name == "main" && f.sig.name.span.lo == f.sig.name.span.hi =>
-        {
-            Some(f)
-        }
+        ast::ItemKind::Function(f) if velt_syntax::is_script_main(&f.sig.name) => Some(f),
         _ => None,
     }) else {
         return;
@@ -424,9 +420,7 @@ fn module_consts(module: &ast::Module) -> FxHashSet<String> {
     for item in &module.items {
         match &item.kind {
             ast::ItemKind::Var(v) => add(v),
-            ast::ItemKind::Function(f)
-                if f.sig.name.name == "main" && f.sig.name.span.lo == f.sig.name.span.hi =>
-            {
+            ast::ItemKind::Function(f) if velt_syntax::is_script_main(&f.sig.name) => {
                 for s in &f.body.stmts {
                     if let ast::StmtKind::Var(v) = &s.kind {
                         add(v);
