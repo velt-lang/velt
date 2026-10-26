@@ -106,6 +106,7 @@ pub(super) fn const_key(v: &ast::VarDecl) -> Option<(String, String)> {
 fn casts_keep(e: &ast::Expr, s: &str) -> bool {
     match &e.kind {
         E::Paren(x) => casts_keep(x, s),
+        E::Call { args, .. } if is_satisfies(e) => casts_keep(&args[0], s),
         E::Cast { expr, ty } => {
             let keeps = match &ty.kind {
                 ast::TypeExprKind::Named { path, args } => {
@@ -129,6 +130,8 @@ pub(super) fn string_lit(e: &ast::Expr) -> Option<String> {
         E::Lit(ast::Lit::Str(s)) => Some(s.clone()),
         E::Template { quasis, exprs } if exprs.is_empty() => quasis.first().cloned(),
         E::Paren(x) | E::Cast { expr: x, .. } => string_lit(x),
+        // `"k" satisfies string`: the literal keeps its type.
+        E::Call { args, .. } if is_satisfies(e) => string_lit(&args[0]),
         _ => None,
     }
 }
@@ -233,4 +236,10 @@ fn literal_keys(
         }
         _ => None,
     }
+}
+
+/// `e satisfies T`, which the parser gives as a call of the prelude's `__satisfies<T>(e)`.
+fn is_satisfies(e: &ast::Expr) -> bool {
+    matches!(&e.kind, E::Call { callee, args, .. }
+        if args.len() == 1 && matches!(&callee.kind, E::Ident(id) if id.name == "__satisfies"))
 }

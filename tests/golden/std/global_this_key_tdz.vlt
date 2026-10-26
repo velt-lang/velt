@@ -1,6 +1,8 @@
 // A `globalThis` key constant read before its declaration, in the function that declares it,
 // is TypeScript's TS2448 (a `ReferenceError` in Node), also in a block and over an outer
-// constant of the same name. A constant made a `string` by a cast is no key (TS7053).
+// constant of the same name, and at module level. A closure or nested function reading a key
+// constant declared after it in the same function gets the error Velt gives any constant read
+// there (whether it runs before or after). A constant made a `string` by a cast is no key (TS7053).
 type H = { __KA__?: number; __KB__?: number };
 export const K = "__KA__";
 (globalThis as H).__KB__ = 2;
@@ -22,4 +24,18 @@ function casted(): number | undefined {
   const M = "__KB__" as string;
   return (globalThis as H)[C] ?? (globalThis as H)[M];
 }
-console.log(typeof direct, typeof inBlock, typeof casted);
+function later(): number | undefined {
+  const g = () => (globalThis as H)[L];
+  const L = "__KB__";
+  return g();
+}
+function laterFn(): number | undefined {
+  function inner(): number | undefined {
+    return (globalThis as H)[K];
+  }
+  const K = "__KB__";
+  return inner();
+}
+const top = (globalThis as H)[TOP];
+const TOP = "__KB__";
+console.log(typeof direct, typeof inBlock, typeof casted, typeof later, typeof laterFn, top);

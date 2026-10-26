@@ -37,6 +37,9 @@ pub(super) struct Walk<'a> {
     fn_depth: usize,
     /// Keys read before their constant's declaration (reported once the walk is done).
     early: std::cell::RefCell<Vec<Diagnostic>>,
+    /// Where the module's own key constants are declared (module-level reads before them are
+    /// TS2448).
+    module_consts: FxHashMap<String, u32>,
     pub sites: Vec<Site>,
     pub diags: Vec<Diagnostic>,
 }
@@ -55,6 +58,7 @@ impl<'a> Walk<'a> {
             const_scopes: vec![FxHashMap::default()],
             fn_depth: 0,
             early: Default::default(),
+            module_consts: Default::default(),
             sites: vec![],
             diags: vec![],
         }
@@ -63,6 +67,13 @@ impl<'a> Walk<'a> {
     /// Rewrite every item of the module, its constants standing for `globalThis` first (a
     /// function may use one declared after it).
     pub(super) fn module_items(&mut self, module: &mut ast::Module) {
+        for item in &module.items {
+            if let I::Var(v) = &item.kind {
+                if let Some((n, _)) = const_key(v) {
+                    self.module_consts.insert(n, v.span.lo);
+                }
+            }
+        }
         // Other module-level names are the module's constants (string keys), unless they hide
         // `globalThis` or `global`.
         for item in &module.items {
@@ -142,13 +153,8 @@ impl<'a> Walk<'a> {
         if let E::Ident(id) = &e.kind {
             for (names, consts) in self.scopes.iter().zip(&self.const_scopes).rev() {
                 if let Some(c) = consts.get(&id.name) {
-                    // Read before its declaration in the same function: the constant is not
-                    // initialized yet (TypeScript's TS2448, a `ReferenceError` in Node).
-                    if c.depth == self.fn_depth && e.span.lo < c.at {
-                        self.early.borrow_mut().push(Diagnostic::error(
-                            format!("block-scoped variable `{}` used before its declaration (TypeScript's TS2448)", id.name),
-                            id.span,
-                        ));
+                    if e.span.lo < c.at {
+                        self.read_before(id, c.depth);
                     }
                     return Some(c.key.clone());
                 }
@@ -156,9 +162,39 @@ impl<'a> Walk<'a> {
                     return None;
                 }
             }
-            return self.consts.get(&id.name).cloned();
+            let k = self.consts.get(&id.name).cloned();
+            // A module constant read at module level before its declaration.
+            if let (Some(_), Some(&at)) = (&k, self.module_consts.get(&id.name)) {
+                if e.span.lo < at {
+                    self.read_before(id, 0);
+                }
+            }
+            return k;
         }
         string_lit(e)
+    }
+
+    /// Key constant `id` read before its declaration, which is `depth` functions in. Directly
+    /// (in the same function, or at module level) it is not initialized yet: TypeScript's
+    /// TS2448, a `ReferenceError` in Node. From a closure or a nested function of the function
+    /// declaring it, Velt gives the error it gives for any constant read there. A closure at
+    /// module level may run after the declaration: it reads the constant (`types.md`).
+    fn read_before(&self, id: &ast::Ident, depth: usize) {
+        let d = if depth == self.fn_depth {
+            Diagnostic::error(
+                format!(
+                    "block-scoped variable `{}` used before its declaration (TypeScript's TS2448)",
+                    id.name
+                ),
+                id.span,
+            )
+        } else if depth > 0 {
+            Diagnostic::error(format!("cannot find `{}` in this scope", id.name), id.span)
+                .with_note("a closure or function that reads a constant declared after it in the same function is not supported yet")
+        } else {
+            return;
+        };
+        self.early.borrow_mut().push(d);
     }
 
     fn with_scope(&mut self, f: impl FnOnce(&mut Self)) {
@@ -213,7 +249,10 @@ impl<'a> Walk<'a> {
     }
 
     fn func(&mut self, f: &mut ast::FnDecl) {
-        self.fn_depth += 1;
+        // A script's generated `main` holds its module-level code: not a function of its own.
+        let main = f.sig.name.name == "main" && f.sig.name.span.lo == f.sig.name.span.hi;
+        let step = usize::from(!main);
+        self.fn_depth += step;
         self.with_scope(|w| {
             w.shadow(params_names(&f.sig.params));
             for e in f.sig.params.iter_mut().filter_map(|p| p.default.as_mut()) {
@@ -221,7 +260,7 @@ impl<'a> Walk<'a> {
             }
             w.block(&mut f.body);
         });
-        self.fn_depth -= 1;
+        self.fn_depth -= step;
     }
 
     fn block(&mut self, b: &mut ast::Block) {

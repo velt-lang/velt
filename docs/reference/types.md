@@ -2415,9 +2415,11 @@ console.log(Object.prototype.toString.call([1])); // [object Array]
 modules or copies of themselves: `(globalThis as { K?: T }).K` reads and writes a variable for
 the whole process, which starts out `undefined`, as an unset property of Node's `globalThis`
 does. The key may also be a string constant (`(globalThis as Seam)[KEY]`; a constant declared without
-a type, or with its own string as the type, and not cast to `string`; read before its declaration in
-the same function it is TypeScript's TS2448, but a closure that reads it and is called before the
-declaration reads the constant instead of throwing Node's `ReferenceError`), the object a constant
+a type, or with its own string as the type, and not cast to `string` (`satisfies string` keeps it); read before its declaration
+it is TypeScript's TS2448, in the function declaring it and at module level; a closure or
+function reading it from before its declaration in the same function is an error, as for any
+constant there; a closure at module level that runs before the declaration reads the constant
+instead of throwing Node's `ReferenceError`), the object a constant
 that stands for `globalThis` (`const g = globalThis as Seam;`), and
 `Object.defineProperty(globalThis, "K", { value, writable: true, configurable: true })`
 assigns it. The property's type is `T["K"] | undefined` with `T` the asserted type; the
