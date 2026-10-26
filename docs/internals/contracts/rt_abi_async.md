@@ -641,6 +641,11 @@ network access`), and the accessors of a fetched response are unreachable (fatal
 
 ## 9. Shared state and helpers (sync)
 
+**[non-additive, #1620]** `velt_rt_atomic_add_i64`, `velt_rt_atomic_load_i64` and
+`velt_rt_atomic_store_i64` (`shared<i64>`'s `add`, `get` and `set`) are gone from both runtimes:
+lowering emits those operations inline as `velt_atomic_*` externs (rt_abi.md "Atomics"). An
+object compiled against them no longer links.
+
 | Symbol | Signature | Notes |
 |---|---|---|
 | `velt_rt_rc_inc` | `(u64* rc)` | `shared.clone()`; Relaxed (like `Arc`); aborts on overflow |
