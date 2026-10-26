@@ -1,0 +1,33 @@
+// Constants holding a generic function used only where a function type of fixed types is
+// expected (#943): each use instantiates the function, as TypeScript keeps one function, so the
+// values compare equal. A local constant of a named function, a generic arrow, a typed arrow,
+// in a loop and as an async function's value; and module constants of a named function.
+type G = <T>(x: T) => T;
+type N = (x: number) => number;
+type A = <T>(f: () => T) => Promise<T>;
+function id<T>(x: T): T { return x; }
+async function go<T>(f: () => T): Promise<T> { return f(); }
+const gg: G = id;
+const P: N = gg;
+const Q: N = gg;
+async function main(): Promise<void> {
+  const g: G = id;
+  const p: N = g;
+  const q: N = g;
+  console.log(p === q, [p].includes(p), p(4), P === Q, new Set<N>([P, Q]).size, [P].indexOf(Q));
+  const ga = <T,>(x: T): T => x;
+  const pa: N = ga;
+  const qa: N = ga;
+  console.log(pa === qa);
+  const gt: G = (x) => x;
+  const pt: N = gt;
+  const qt: N = gt;
+  console.log(pt === qt);
+  const s = new Set<N>();
+  for (let i = 0; i < 3; i++) { const pi: N = g; s.add(pi); }
+  console.log(s.size);
+  const a: A = go;
+  const n: (f: () => number) => Promise<number> = a;
+  const m: (f: () => number) => Promise<number> = a;
+  console.log(await n(() => 3), n === m);
+}

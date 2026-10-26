@@ -89,6 +89,11 @@ impl Cx<'_> {
             TyKind::Result(a, b) => vec![a, b],
             TyKind::Tuple(ts) => ts,
             TyKind::Adt(d, args) => match self.hir.def(d) {
+                // A declared struct compares (and hashes) field by field as a key (same.rs).
+                hir::Def::Adt(a) if a.declared_struct => {
+                    let fs: Vec<TyId> = a.fields.iter().map(|f| f.ty).collect();
+                    fs.into_iter().map(|f| self.subst(f, &args)).collect()
+                }
                 hir::Def::Enum(e) => {
                     let ps: Vec<TyId> = e.variants.iter().flat_map(|v| v.payload.clone()).collect();
                     ps.into_iter().map(|p| self.subst(p, &args)).collect()
@@ -208,8 +213,8 @@ impl FnLower<'_, '_> {
     }
 
     /// Record that values of type `ty` are compared (or hashed) through glue here: the function
-    /// values it holds, also inside a union, an option, a tuple or a result (which the glue
-    /// compares member by member). Nothing for a type holding none, so closures keep a frame
+    /// values it holds, also inside a union, an option, a tuple, a result or a declared struct
+    /// (which the glue compares member by member). Nothing for a type holding none, so closures keep a frame
     /// environment in a program comparing only other values.
     pub(super) fn note_fn_compared_in(&mut self, ty: TyId) {
         let mut keys = vec![];

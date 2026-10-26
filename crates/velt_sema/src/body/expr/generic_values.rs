@@ -330,6 +330,39 @@ impl FnCx<'_, '_> {
         Some(self.error_expr(id.span))
     }
 
+    /// Module constant `g` initialized with a named generic function (`const gg: G = id`),
+    /// where a function type of fixed types `exp` is expected: that function instantiated at
+    /// `exp`, as TypeScript keeps the one function (`P === Q` for `const P: N = gg`, `const Q:
+    /// N = gg`), rather than a wrapper of the constant's value made at each use.
+    pub(super) fn named_generic_instance(
+        &mut self,
+        g: DefId,
+        exp: Option<TyId>,
+    ) -> Option<hir::Expr> {
+        let exp = self.hint(exp)?;
+        if !matches!(self.cx.ty.kind(exp), TyKind::FnPtr { .. }) {
+            return None;
+        }
+        let DefInfo::Global(info) = &self.cx.info[g.0 as usize] else {
+            return None;
+        };
+        let ast::ExprKind::Ident(name) = &info.src.init?.kind else {
+            return None;
+        };
+        if info.mutable || info.src.ann.is_none() {
+            return None;
+        }
+        let (module, name) = (info.module, name.clone());
+        let Some(Item::Def(d)) = self.cx.lookup_item_at(module, &name.name, name.span) else {
+            return None;
+        };
+        if !self.cx.try_fn(d).is_some_and(|f| f.generics.len() > 0) {
+            return None;
+        }
+        let h = self.fn_ref(d, &name, Some(exp));
+        Some(self.coerce(h, exp))
+    }
+
     /// The module constant holding function `d` as a value of generic function type `exp`
     /// (made once; `None` for a type over type parameters).
     fn generic_fn_global(&mut self, d: DefId, exp: TyId) -> Option<DefId> {

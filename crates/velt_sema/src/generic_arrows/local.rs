@@ -169,7 +169,8 @@ impl<'t, 'm> Rewriter<'t, 'm> {
             .map(|id| id.span)
             .collect();
         self.outer_free = Some(names);
-        self.values = value_uses(&root);
+        let (types, module) = (self.types, self.module);
+        self.values = value_uses(&root, &|t| types.fixed_fn(module, t));
         let out = f(self);
         self.outer_free = None;
         self.values.clear();
@@ -257,7 +258,7 @@ impl<'t, 'm> Rewriter<'t, 'm> {
             let typed = || {
                 self.types
                     .may_declare(v)
-                    .then(|| typed_function(v, self.module, self.types))
+                    .then(|| typed_function(v, (self.module, true), self.types))
                     .flatten()
             };
             let lifted = match self.captures(v) {
@@ -389,18 +390,16 @@ fn expr_of(f: ast::FnDecl) -> ast::Expr {
 
 /// The names `root` uses as values: those of identifiers that are not only callees of calls,
 /// or the initializers of constants of a function type of fixed types (`const asNumber: (x:
-/// number) => number = id`, which instantiates the function).
-fn value_uses(root: &ast::Expr) -> FxHashSet<String> {
-    struct Uses<'a> {
+/// number) => number = id`, also through an alias, which instantiates the function).
+fn value_uses(root: &ast::Expr, fixed: &dyn Fn(&ast::TypeExpr) -> bool) -> FxHashSet<String> {
+    struct Uses<'a, 'f> {
         all: rustc_hash::FxHashMap<&'a str, usize>,
         called: rustc_hash::FxHashMap<&'a str, usize>,
+        fixed: &'f dyn Fn(&ast::TypeExpr) -> bool,
     }
-    impl<'a> velt_syntax::visit::Visit<'a> for Uses<'a> {
+    impl<'a> velt_syntax::visit::Visit<'a> for Uses<'a, '_> {
         fn var_decl(&mut self, v: &'a ast::VarDecl) {
-            let fixed = matches!(
-                v.ty.as_ref().map(|t| &t.kind),
-                Some(ast::TypeExprKind::Function { .. })
-            );
+            let fixed = v.ty.as_ref().is_some_and(|t| (self.fixed)(t));
             if let (true, Some(ast::ExprKind::Ident(id))) =
                 (fixed, v.init.as_ref().map(|e| &e.kind))
             {
@@ -422,6 +421,7 @@ fn value_uses(root: &ast::Expr) -> FxHashSet<String> {
     let mut u = Uses {
         all: Default::default(),
         called: Default::default(),
+        fixed,
     };
     velt_syntax::visit::walk_expr(root, &mut u);
     (u.all.into_iter())

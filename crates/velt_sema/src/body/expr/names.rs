@@ -399,7 +399,10 @@ impl FnCx<'_, '_> {
                     false => lit,
                 }
             }
-            DefInfo::Global(_) => self.global_read(d, want, span),
+            DefInfo::Global(_) => match self.named_generic_instance(d, exp) {
+                Some(h) => h,
+                None => self.global_read(d, want, span),
+            },
             DefInfo::Adt(_)
                 if self
                     .cx
