@@ -1,0 +1,28 @@
+// `(f as () => R).call(o)` with `f` read from `o` (#1110) runs on `o` when `o` is a `const` or
+// a `let` or parameter nothing assigns. Node prints the same.
+interface T {
+  n: number;
+  m(): number;
+}
+
+function viaParam(o: T): number {
+  const f = (o as T).m;
+  return (f as () => number).call(o);
+}
+
+let held: T = {
+  n: 4,
+  m(): number {
+    return this.n;
+  },
+};
+const g = (held as T).m;
+console.log(
+  viaParam({
+    n: 1,
+    m(): number {
+      return this.n;
+    },
+  }),
+  (g as () => number).call(held),
+);

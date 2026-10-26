@@ -21,7 +21,7 @@ use velt_syntax::ast;
 
 use super::method::Resolved;
 use super::setters::synth;
-use crate::body::{FnCx, Want};
+use crate::body::{FnCx, LocalKind, Want};
 use crate::collect::static_this::uses_this;
 use crate::ctx::Item;
 use crate::defs::DefInfo;
@@ -45,12 +45,14 @@ impl FnCx<'_, '_> {
         else {
             return None;
         };
-        let apply = match prop.name.as_str() {
-            "call" => false,
-            "apply" => true,
+        let (apply, bind) = match prop.name.as_str() {
+            "call" => (false, false),
+            "apply" => (true, false),
+            "bind" => (false, true),
             _ => return None,
         };
-        if !type_args.is_empty() || !self.is_function_target(f) {
+        if !type_args.is_empty() || (bind && self.bind_of_method(f)) || !self.is_function_target(f)
+        {
             return None;
         }
         let what = format!("`{}`", prop.name);
@@ -58,6 +60,14 @@ impl FnCx<'_, '_> {
             Some((t, rest)) => (Some(t), rest),
             None => (None, args),
         };
+        if bind && (!rest.is_empty() || self.takes_this_fn(f)) {
+            self.cx.error(
+                Diagnostic::error("`bind` with arguments, or of a function with a `this` parameter, is not supported yet", span)
+                    .with_note("use an arrow function: `(...xs) => f(a, ...xs)`"),
+            );
+            self.check_args_loose(&typed_args(args));
+            return Some(self.error_expr(span));
+        }
         let call_args: Vec<ast::Expr> = match (apply, rest) {
             (false, _) => rest.to_vec(),
             (true, []) => vec![],
@@ -119,6 +129,11 @@ impl FnCx<'_, '_> {
                 kind: hir::StmtKind::Expr(h),
             });
         }
+        if bind {
+            // A new function forwarding to `f`, which ignores `this` or keeps the object it was
+            // read from, which is `thisArg` (`fn_bind.rs`).
+            return Some(self.bound_fn(f, lets, exp, span));
+        }
         let call = synth(
             ast::ExprKind::Call {
                 callee: f.clone(),
@@ -136,6 +151,7 @@ impl FnCx<'_, '_> {
     /// or arrow literal, a function's name, a static function of a class or namespace, or a
     /// value of a function type?
     fn is_function_target(&mut self, f: &ast::Expr) -> bool {
+        let written = f;
         let f = strip(f);
         match &f.kind {
             ast::ExprKind::Arrow { .. } | ast::ExprKind::Function(_) => true,
@@ -149,7 +165,38 @@ impl FnCx<'_, '_> {
                 Some(d) => self.find_static(d, &prop.name).is_ok() || self.is_fn_value(f),
                 None => true,
             },
-            _ => self.is_fn_value(f),
+            // `(f as () => T).call(o)`: the cast gives the function type.
+            _ => self.is_fn_value(f) || (!std::ptr::eq(written, f) && self.is_fn_value(written)),
+        }
+    }
+
+    /// Is `f` a method read as a value (`o.m`), whose `bind` `method_value.rs` checks?
+    fn bind_of_method(&mut self, f: &ast::Expr) -> bool {
+        let ast::ExprKind::Member {
+            object,
+            prop,
+            optional: false,
+        } = &strip(f).kind
+        else {
+            return false;
+        };
+        let Some(t) = self.peek_ty(object) else {
+            return false;
+        };
+        self.is_method_value(t, &prop.name)
+    }
+
+    /// Does `f` name a function declared with a `this` parameter its body uses?
+    fn takes_this_fn(&mut self, f: &ast::Expr) -> bool {
+        let ast::ExprKind::Ident(id) = &strip(f).kind else {
+            return false;
+        };
+        if !self.is_fn_item(id) {
+            return false;
+        }
+        match self.lookup_item(&id.name, id.span) {
+            Some(Item::Def(d)) => self.takes_this(d),
+            _ => false,
         }
     }
 
@@ -221,6 +268,8 @@ impl FnCx<'_, '_> {
                     false => Some("a method read as a value keeps the object it was read from"),
                 }
             }
+            // `const f = (o as T).m; f.call(o)`: `f` keeps the object it was read from.
+            ast::ExprKind::Ident(id) if self.read_from(&id.name, this_arg) => None,
             ast::ExprKind::Ident(id) if self.holds_method_value(&id.name) => {
                 Some("this variable holds a method read as a value, which keeps the object it was read from")
             }
@@ -262,6 +311,38 @@ impl FnCx<'_, '_> {
         }
     }
 
+    /// Is the visible local `name` a `const` read from the object `this_arg` names (`const f =
+    /// (o as T).m` and `this_arg` `o`)?
+    fn read_from(&mut self, name: &str, this_arg: &ast::Expr) -> bool {
+        if !self.is_local_name(name) {
+            return false;
+        }
+        let Some(l) = self.lookup_local(name, Span::default()) else {
+            return false;
+        };
+        let Some(&root) = self.f.member_reads.get(&l) else {
+            return false;
+        };
+        // `this_arg` names that variable, and nothing assigns it: it still holds the object.
+        let ast::ExprKind::Ident(t) = &strip(this_arg).kind else {
+            return false;
+        };
+        if !self.is_local_name(&t.name) || self.lookup_local(&t.name, t.span) != Some(root) {
+            return false;
+        }
+        let name = self.f.locals[root.0 as usize].name.clone();
+        match self.local_kind(root) {
+            LocalKind::Const | LocalKind::Using => true,
+            // A variable of this function's own (a capture's assignments are its declarer's).
+            LocalKind::Let | LocalKind::Param => {
+                !self.f.captures.iter().any(|c| c.inner == root)
+                    && !self.f.assign_ends.contains_key(&name)
+                    && !self.f.closure_assigned.contains_key(&name)
+            }
+            _ => false,
+        }
+    }
+
     /// Does the visible local `name` hold a method read as a value (`const f = o.m`)?
     fn holds_method_value(&mut self, name: &str) -> bool {
         self.is_local_name(name)
@@ -280,6 +361,21 @@ pub(crate) fn is_member_read(e: &ast::Expr) -> bool {
             ..
         }
     )
+}
+
+/// The variable the property read `e` reads from (`o` of `o.m`, `(o as T).m`), if `e` is one.
+pub(crate) fn read_root(e: &ast::Expr) -> Option<&ast::Ident> {
+    match &strip(e).kind {
+        ast::ExprKind::Member {
+            object,
+            optional: false,
+            ..
+        } => match &strip(object).kind {
+            ast::ExprKind::Ident(id) => Some(id),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 /// `e` without parentheses, `as` casts and `!`.

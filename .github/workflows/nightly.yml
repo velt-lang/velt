@@ -199,9 +199,12 @@ jobs:
   # "nightly benchmarks regressed"; the baseline then stays put, so the job keeps failing until the
   # slowdown is fixed or accepted (`gh workflow run nightly -f only=bench -f bench_baseline=accept`).
   # The cache key ends in the baseline's commit, so the issue names the commits since then.
+  # A fixed image: instruction counts depend on the C library and valgrind, so `ubuntu-latest`
+  # moving to a new release changes them without a commit (strings +3.9% from 24.04 to 26.04,
+  # #1534). Move to a new image in its own pull request and accept the new counts after it.
   bench:
     if: github.event.schedule != '7 5 * * *' && ((inputs.only || 'all') == 'all' || inputs.only == 'bench')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
     permissions:
       contents: read

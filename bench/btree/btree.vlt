@@ -1,0 +1,96 @@
+// Ordered maps: `BTreeMap` (velt:collections/btree_map) against Rust's std `BTreeMap`
+// (btree.rs). 1M random `u64` keys: inserts, lookups (half of them misses), an in-order walk,
+// then deletes of every key; and the same for 200k string keys. Each line: name, milliseconds,
+// checksum (run.sh checks that both programs print the same checksums).
+import { BTreeMap } from "velt:collections/btree_map";
+
+function next(x: u64): u64 {
+  let y = x ^ (x << 13);
+  y = y ^ (y >> 7);
+  return y ^ (y << 17);
+}
+
+function keysOf(n: usize, seed: u64): u64[] {
+  const out: u64[] = [];
+  let x = seed;
+  for (let i: usize = 0; i < n; i++) {
+    x = next(x);
+    out.push(x >> 1);
+  }
+  return out;
+}
+
+function report(name: string, start: f64, check: u64) {
+  console.log(`${name} ${Math.round(performance.now() - start)} ${check}`);
+}
+
+function ints(n: usize) {
+  const keys = keysOf(n, 88172645463325252);
+  const misses = keysOf(n / 2, 1234567);
+  let t = performance.now();
+  const m = new BTreeMap<u64, u64>();
+  for (let i: usize = 0; i < n; i++) {
+    m.set(keys[i], i as u64);
+  }
+  report("u64_insert", t, m.size as u64);
+  t = performance.now();
+  let sum: u64 = 0;
+  for (let i: usize = 0; i < n / 2; i++) {
+    const hit = m.get(keys[(i * 7919) % n]);
+    if (hit !== undefined) {
+      sum += hit;
+    }
+    const miss = m.get(misses[i]);
+    if (miss !== undefined) {
+      sum += miss;
+    }
+  }
+  report("u64_get", t, sum);
+  t = performance.now();
+  let walk: u64 = 0;
+  m.forEach((v, k) => {
+    walk = walk ^ (k + v);
+  });
+  report("u64_walk", t, walk);
+  t = performance.now();
+  let gone: u64 = 0;
+  for (let i: usize = 0; i < n; i++) {
+    gone += m.delete(keys[i]) ? 1 : 0;
+  }
+  report("u64_delete", t, gone + (m.size as u64));
+}
+
+function strings(n: usize) {
+  const keys: string[] = [];
+  let x: u64 = 42;
+  for (let i: usize = 0; i < n; i++) {
+    x = next(x);
+    keys.push(`user/${x % 1000000}/profile`);
+  }
+  let t = performance.now();
+  const m = new BTreeMap<string, u64>();
+  for (let i: usize = 0; i < n; i++) {
+    m.set(keys[i], i as u64);
+  }
+  report("str_insert", t, m.size as u64);
+  t = performance.now();
+  let sum: u64 = 0;
+  for (let i: usize = 0; i < n; i++) {
+    const v = m.get(keys[(i * 7919) % n]);
+    if (v !== undefined) {
+      sum += v;
+    }
+  }
+  report("str_get", t, sum);
+  t = performance.now();
+  let gone: u64 = 0;
+  for (let i: usize = 0; i < n; i++) {
+    gone += m.delete(keys[i]) ? 1 : 0;
+  }
+  report("str_delete", t, gone + (m.size as u64));
+}
+
+function main() {
+  ints(1000000);
+  strings(200000);
+}

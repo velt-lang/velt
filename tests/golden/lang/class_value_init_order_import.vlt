@@ -1,0 +1,7 @@
+// A module whose top level reads `x.constructor` and calls a static method of a class declared
+// after it (#926): its module state is in order when the importing file runs. Node prints the
+// same.
+import { counted, D } from "./_class_value_order_lib";
+
+const d: any = new D();
+console.log(counted.size, d.constructor === D);

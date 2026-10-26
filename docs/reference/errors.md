@@ -20,7 +20,12 @@ compiler knows exactly what each function and each `try` block can throw.
   (`AppError | TypeError`, a `catch` variable) and a nullable error have `e.name` and
   `e.toString()` too, and are written the same way in templates, by `String(e)` and by string
   concatenation (`null` for `null`, `undefined` for `undefined`); so is an error held by an `any`
-  or an `unknown` (`` `${e}` `` is `Error: boom`, or a subclass's own `toString()`). Arrays of errors are written as
+  or an `unknown` (`` `${e}` `` is `Error: boom`, or a subclass's own `toString()`). `e.stack` is
+  a string that starts as Node's does, with `"<name>: <message>"`; Velt keeps no call frames, so
+  the `    at …` lines Node adds after it are not there (assigning `stack` is not supported yet).
+  Node fixes the text the first time `stack` is read; Velt writes it on every read, so after
+  `e.name = "Renamed"` a later read gives `Renamed: …` in Velt and `Error: …` in Node.
+  Arrays of errors are written as
   JavaScript writes them (`` `${errors}` ``, `errors.join(", ")`: each element's `toString()`).
   `console.log(e)` and `JSON.stringify(e)` leave the name out. The standard error classes
   `TypeError`, `RangeError`, `SyntaxError`, `ReferenceError`, `EvalError` and `URIError` extend

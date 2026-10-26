@@ -64,6 +64,19 @@ impl FnLower<'_, '_> {
             TyKind::Adt(d, _) => self.cx.adt_def(d).name.starts_with("std/"),
             _ => false,
         };
+        if self.prelude_record(ty).is_some() && self.cx.hir.null_proto_records {
+            // A record made by `Object.create(null)` has no `toString` or `valueOf`: Node's
+            // `TypeError` (its map is marked, std/prelude/map.vlt `__markNullProto`).
+            let map_ty = self.cx.adt_field_tys(ty)[0];
+            let map = self.field_place(place, ty, 0);
+            let np = self.null_proto_mark(&map, map_ty);
+            let (bad, ok) = (self.new_block(), self.new_block());
+            self.branch(np, bad, ok);
+            self.switch_to(bad);
+            self.panic_msg("TypeError: Cannot convert object to primitive value");
+            self.goto(ok);
+            self.switch_to(ok);
+        }
         let tag = match self.prelude_record(ty).is_some() || !std {
             // A subclass of `Map` or `Set` keeps its base's `Symbol.toStringTag`.
             true => match self.collection_subclass(ty) {
