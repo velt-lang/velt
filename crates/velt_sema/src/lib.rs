@@ -426,6 +426,7 @@ fn check_timed(
     let dyn_members = any::dyn_members(&mut cx);
     let (upcasts, upcast_impls) = cx.upcast_tables();
     let extension_impls = collect::ext_impls::hir_bounds(&cx);
+    let dyn_bounds = collect::ext_impls::dyn_bounds(&mut cx);
     let ctx::Ctx {
         ty,
         defs,
@@ -468,6 +469,7 @@ fn check_timed(
         cpu_targets: cpu_targets.into_iter().collect(),
         type_names,
         extension_impls: extension_impls.into_iter().collect(),
+        dyn_bounds: dyn_bounds.into_iter().collect(),
     };
     (Some(program), diags)
 }

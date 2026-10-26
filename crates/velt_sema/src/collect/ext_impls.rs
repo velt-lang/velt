@@ -51,17 +51,19 @@ pub(super) fn build(cx: &mut Ctx) {
             }
             cx.impls.push(imp);
             cx.ext_impls.insert(i, e);
-            if let Some((other, witness)) = overlapping(cx, i) {
+            if let Some((other, how)) = overlapping(cx, i) {
                 let o = cx.impls[other as usize].clone();
                 let theirs = bound_name(cx, cx.ext_impls[&other], iface, &o.iface_args);
-                report_conflict(
-                    cx,
-                    e,
-                    &b,
-                    span,
-                    (o.methods.first().copied(), theirs),
-                    Some(witness),
-                );
+                let other = (o.methods.first().copied(), theirs);
+                match how {
+                    Overlap::Unordered(witness) => {
+                        report_conflict(cx, e, &b, span, other, Some(witness))
+                    }
+                    Overlap::Shadowed {
+                        bounded_is_new,
+                        base,
+                    } => report_shadowed(cx, e, &b, span, other, bounded_is_new, base),
+                }
                 cx.ext_impls.remove(&i);
                 cx.impls.pop();
                 continue;
@@ -243,20 +245,71 @@ fn check(cx: &mut Ctx, e: usize, b: &Bound, span: velt_common::Span) -> Option<I
     })
 }
 
-/// An earlier `extend` impl of the same interface that can fit a type the new impl `i` fits
-/// where neither is more specific, with that type (`None` when it names a type parameter).
-fn overlapping(cx: &mut Ctx, i: u32) -> Option<(u32, Option<TyId>)> {
+/// How a new `extend` impl conflicts with an earlier one of the same interface.
+enum Overlap {
+    /// Both fit a type (`None`: one naming a type parameter) and neither is more specific.
+    Unordered(Option<TyId>),
+    /// The one with bounds (the new one, or the earlier) takes precedence over the other for a
+    /// type both apply to (the other for its base class when `base`), with other interface
+    /// arguments (`Ctx::ext_shadowed`).
+    Shadowed { bounded_is_new: bool, base: bool },
+}
+
+/// An earlier `extend` impl of the same interface that the new impl `i` conflicts with.
+fn overlapping(cx: &mut Ctx, i: u32) -> Option<(u32, Overlap)> {
     let iface = cx.impls[i as usize].iface;
     let earlier = cx.ext_by_iface.get(&iface).cloned().unwrap_or_default();
     for j in earlier {
-        let Some(witness) = cx.ext_overlap(i, j) else {
-            continue;
-        };
-        if !cx.ext_more_specific(i, j) && !cx.ext_more_specific(j, i) {
-            return Some((j, witness));
+        if let Some(witness) = cx.ext_overlap(i, j) {
+            if !cx.ext_more_specific(i, j) && !cx.ext_more_specific(j, i) {
+                return Some((j, Overlap::Unordered(witness)));
+            }
+        }
+        if let Some((shadowed, base)) = cx.ext_shadowed(i, j) {
+            let bounded_is_new = shadowed == j;
+            return Some((
+                j,
+                Overlap::Shadowed {
+                    bounded_is_new,
+                    base,
+                },
+            ));
         }
     }
     None
+}
+
+/// A block with bounds that takes precedence over another implementing the interface with
+/// other arguments (`Overlap::Shadowed`).
+fn report_shadowed(
+    cx: &mut Ctx,
+    e: usize,
+    b: &Bound,
+    span: velt_common::Span,
+    (other, theirs): (Option<DefId>, String),
+    bounded_is_new: bool,
+    base: bool,
+) {
+    let ours = bound_name(cx, e, b.iface, &b.args);
+    let (bounded, plain) = match bounded_is_new {
+        true => (&ours, &theirs),
+        false => (&theirs, &ours),
+    };
+    let over = match base {
+        true => "a block for a base class of the types it fits",
+        false => "the other for the types both fit",
+    };
+    let mut d = Diagnostic::error(
+        format!("conflicting implementations of `{ours}` and `{theirs}`: the block for `{bounded}` has bounds and takes precedence over {over}"),
+        span,
+    )
+    .with_note(format!(
+        "a type implements an interface once, so whether it is a `{plain}` would depend on those bounds, which can depend on it in turn: a block with bounds must implement the interface with the same arguments as the blocks it takes precedence over"
+    ));
+    if let Some(def) = other {
+        d = d.with_label(cx.fn_info(def).name_span, "the other implementation");
+    }
+    cx.error(d);
 }
 
 /// `other`: the other implementation's first method and its interface with arguments.
@@ -352,4 +405,42 @@ pub(crate) fn hir_bounds(cx: &Ctx) -> rustc_hash::FxHashMap<u32, Vec<ImplBound>>
             (i, bounds)
         })
         .collect()
+}
+
+/// `Program::dyn_bounds`: per interface, the bounds of `extend` blocks its values meet as their
+/// own (sema's `own_bound` for a `Dyn`), so lowering decides them as sema does.
+pub(crate) fn dyn_bounds(cx: &mut Ctx) -> rustc_hash::FxHashMap<DefId, Vec<(DefId, Vec<TyId>)>> {
+    let mut out = rustc_hash::FxHashMap::default();
+    if cx.ext_impls.is_empty() {
+        return out;
+    }
+    let bound_ifaces: rustc_hash::FxHashSet<DefId> = (cx.ext_impls.values())
+        .flat_map(|&e| cx.extensions[e].generics.bounds.iter().flatten())
+        .map(|b| b.iface)
+        .collect();
+    for d in 0..cx.info.len() {
+        let d = DefId(d as u32);
+        let Some(n) = cx.iface(d).map(|i| i.generics.len()) else {
+            continue;
+        };
+        let args = (0..n as u32).map(|k| cx.ty.param(k)).collect();
+        let mut todo = vec![Bound { iface: d, args }];
+        let mut seen: Vec<Bound> = vec![];
+        while let Some(b) = todo.pop() {
+            if seen.contains(&b) || seen.len() > 64 {
+                continue;
+            }
+            todo.extend(cx.iface_ancestors(&b));
+            seen.push(b);
+        }
+        let meets: Vec<(DefId, Vec<TyId>)> = seen
+            .into_iter()
+            .filter(|b| bound_ifaces.contains(&b.iface) && !cx.has_generic_method(b))
+            .map(|b| (b.iface, b.args))
+            .collect();
+        if !meets.is_empty() {
+            out.insert(d, meets);
+        }
+    }
+    out
 }

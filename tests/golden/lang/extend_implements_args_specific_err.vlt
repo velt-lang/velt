@@ -1,0 +1,40 @@
+// A `Box<string>` is a `G<string>` (the more specific block), so not a `G<i64>`, and the block
+// bounded by `G<i64>` does not give it `Q` (`extend_implements_args_specific`).
+
+interface G<A> {
+  g(): string;
+}
+
+interface Q {
+  q(): string;
+}
+
+class Box<T> {
+  constructor(public v: T) {}
+}
+
+extend<T> Box<T> implements G<T> {
+  g(): string {
+    return "box";
+  }
+}
+
+extend<A> A implements G<i64> {
+  g(): string {
+    return "any";
+  }
+}
+
+extend<T extends G<i64>> T implements Q {
+  q(): string {
+    return "Q " + this.g();
+  }
+}
+
+function needQ<T extends Q>(x: T): string {
+  return x.q();
+}
+
+function main() {
+  console.log(needQ(new Box("s")));
+}

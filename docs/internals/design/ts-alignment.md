@@ -140,17 +140,34 @@ The rules, and why:
 - **Interface arguments.** A type implements an interface once, as a class does: blocks that
   can fit one type conflict whatever their interface arguments (`extend W implements G<i64>`
   and `extend W implements G<string>`), and the block that wins decides the arguments. This
-  keeps sema's lookup (by interface) and lowering's (by interface and arguments) the same.
+  keeps sema's lookup (by interface) and lowering's (by interface and arguments) the same. A
+  block with bounds must give the arguments of the blocks it takes precedence over: those it is
+  more specific than, for the types both fit, and those for a base class of a type it fits.
+  Otherwise whether a type is a `G<string>` would depend on the bounds of a `G<i64>` block,
+  and those can depend on `G<string>` in turn (`extend<T extends Q> T implements G<i64>`,
+  `extend<T> T implements G<string>`, `extend<T extends G<string>> T implements Q`): no answer
+  is consistent, and checking "some block for `G<string>` fits" would let one type have two
+  implementations. Such a pair is refused where it is declared. A more specific block
+  without bounds may give other arguments (`extend<T> Box<T> implements G<T>` over `extend<A>
+  A implements G<i64>`): it always wins for the types it fits, so a `Box<string>` meets a
+  `G<string>` bound and not a `G<i64>` one, and the blocks below it don't apply.
 - **Bounds.** A block that lists `implements` takes interface bounds only. `any`, `unknown`,
   `object` and `Function` bounds are refused: the first two add nothing, and the last two
   would need the dynamic type tests of `any` in every impl lookup. Blanket blocks apply to
   type parameters through each other (a `T extends K` gets `J` from `extend<T extends K> T
-  implements J`, then `I` from `extend<T extends J> T implements I`).
+  implements J`, then `I` from `extend<T extends J> T implements I`). An interface value meets
+  a bound on its interface or one it extends, as for a generic function, so `extend<T extends
+  P> T implements Q` gives a `P` value `Q`.
 - **Cost.** A bound check is not a nested call: it collects every lookup the question reaches
   (finitely many, since a bound is checked on a type argument of the type looked up) and
   iterates to a fixed point, in sema (`infer/ext_exists.rs`) and in lowering
   (`lower/ext_exists.rs`). There is no nesting limit, every answer is remembered, and a chain
-  of blocks whose bounds share interfaces is looked up once per type.
+  of blocks whose bounds share interfaces is looked up once per type. One computation starts
+  another only through a structural implementation (an intersection bound's), made at most
+  once per type and interface, so they nest finitely. What a type parameter gets from blanket
+  blocks is found with a worklist: a bound it gets looks again only at the blocks bounded by
+  that interface or one it extends, so a chain costs one look per block in any declaration
+  order (300 levels with calls through `this` in every body: 0.16 s to check).
 - **Diagnostics**: a missing or mismatched method (as for classes); `conflicting
   implementations`; `already implements`; ``cannot implement `I` `` for an interface with
   fields or optional methods (an `extend` block cannot add fields) and for the targets above;

@@ -10,6 +10,8 @@
 //! so the block chosen for a type is the same in every context, and lookups are remembered
 //! (`Ctx::ext_memo`). Lowering decides the same way.
 
+use rustc_hash::{FxHashMap, FxHashSet};
+
 use crate::ctx::Ctx;
 use crate::defs::Bound;
 use crate::hir::{DefId, TyId, TyKind};
@@ -156,21 +158,107 @@ impl Ctx<'_> {
     /// interface arguments are not considered: a type implements an interface once)? `Some`
     /// with that type, or with `None` when it still names a type parameter of the blocks.
     pub(crate) fn ext_overlap(&mut self, a: u32, b: u32) -> Option<Option<TyId>> {
+        let slots = self.ext_unify(a, b, None)?;
+        let w = self.resolve_slots(self.impls[a as usize].ty, &slots);
+        Some((!self.mentions_params(w)).then_some(w))
+    }
+
+    /// Unify `a`'s target (or `a_ty`, a type over `a`'s parameters) with `b`'s: the bindings of
+    /// `a`'s parameters followed by `b`'s.
+    fn ext_unify(&mut self, a: u32, b: u32, a_ty: Option<TyId>) -> Option<Vec<Option<TyId>>> {
         let (ia, ib) = (&self.impls[a as usize], &self.impls[b as usize]);
         let (na, nb) = (ia.generics, ib.generics);
-        let (ta, tb) = (ia.ty, ib.ty);
-        // `b`'s parameters after `a`'s.
-        let shift: Vec<TyId> = (0..nb).map(|k| self.ty.param(na + k)).collect();
-        let tb = self.subst(tb, &shift);
+        let (ta, tb) = (a_ty.unwrap_or(ia.ty), ib.ty);
+        let tb = self.shifted(tb, na, nb);
         let mut slots = vec![None; (na + nb) as usize];
-        if !self.unify(ta, tb, &mut slots, 0) {
-            return None;
-        }
-        let mut w = ta;
+        self.unify(ta, tb, &mut slots, 0).then_some(slots)
+    }
+
+    /// `t`, over `n` type parameters, with them renumbered after `by` others.
+    fn shifted(&mut self, t: TyId, by: u32, n: u32) -> TyId {
+        let shift: Vec<TyId> = (0..n).map(|k| self.ty.param(by + k)).collect();
+        self.subst(t, &shift)
+    }
+
+    /// `t` with the bound `slots` substituted (repeatedly: a binding can name other
+    /// parameters); unbound parameters stay.
+    fn resolve_slots(&mut self, t: TyId, slots: &[Option<TyId>]) -> TyId {
+        let full: Vec<TyId> = (slots.iter().enumerate())
+            .map(|(k, s)| s.unwrap_or_else(|| self.ty.param(k as u32)))
+            .collect();
+        let mut w = t;
         for _ in 0..8 {
-            w = self.subst_known(w, &slots);
+            let next = self.subst(w, &full);
+            if next == w {
+                break;
+            }
+            w = next;
         }
-        Some((!self.mentions_params(w)).then_some(w))
+        w
+    }
+
+    /// Do `extend` impls `a` and `b` implement their interface with the same arguments for
+    /// every type both apply to (`slots`: a unification of their parameters, `a`'s first)?
+    fn ext_args_agree(&mut self, a: u32, b: u32, slots: &[Option<TyId>]) -> bool {
+        let (ia, ib) = (&self.impls[a as usize], &self.impls[b as usize]);
+        let (na, nb) = (ia.generics, ib.generics);
+        let (xs, ys) = (ia.iface_args.clone(), ib.iface_args.clone());
+        xs.len() == ys.len()
+            && xs.iter().zip(&ys).all(|(&x, &y)| {
+                let y = self.shifted(y, na, nb);
+                self.resolve_slots(x, slots) == self.resolve_slots(y, slots)
+            })
+    }
+
+    /// An `extend` impl that a block with bounds, `i`, takes precedence over while giving the
+    /// interface other arguments, together with whether it is a base class's (`i` fits a type,
+    /// the other a base class of it). A type would then have one implementation or the other as
+    /// the bounds of `i` hold or not, which is no answer when they depend on the other block.
+    pub(crate) fn ext_shadowed(&mut self, i: u32, j: u32) -> Option<(u32, bool)> {
+        for (h, k) in [(i, j), (j, i)] {
+            if !self.ext_bounded(h) {
+                continue;
+            }
+            // `h` more specific than `k`, for a type both fit.
+            if self.ext_more_specific(h, k) {
+                if let Some(slots) = self.ext_unify(h, k, None) {
+                    if !self.ext_args_agree(h, k, &slots) {
+                        return Some((if h == i { j } else { i }, false));
+                    }
+                }
+            }
+            // `h` for a type, `k` for its base class.
+            if self.ext_over_base(h, k) {
+                return Some((if h == i { j } else { i }, true));
+            }
+        }
+        None
+    }
+
+    /// Can `extend` impl `h` fit a type whose base class `k` fits, with other interface
+    /// arguments?
+    fn ext_over_base(&mut self, h: u32, k: u32) -> bool {
+        let th = self.impls[h as usize].ty;
+        if matches!(self.ty.kind(th), TyKind::Param(_)) {
+            // A blanket block fits every subclass of a class `k` is for.
+            let tk = self.impls[k as usize].ty;
+            if self.class_of(tk).is_none() {
+                return false;
+            }
+            let n = self.impls[h as usize].generics + self.impls[k as usize].generics;
+            return !self.ext_args_agree(h, k, &vec![None; n as usize]);
+        }
+        let mut cur = self.base_of(th);
+        for _ in 0..64 {
+            let Some(b) = cur else { break };
+            if let Some(slots) = self.ext_unify(h, k, Some(b)) {
+                if !self.ext_args_agree(h, k, &slots) {
+                    return true;
+                }
+            }
+            cur = self.base_of(b);
+        }
+        false
     }
 
     /// Unify `x` and `y`, binding the parameters `slots` stands for. Conservative: a type it
@@ -255,21 +343,45 @@ impl Ctx<'_> {
         if let Some(n) = slot.filter(|&n| grown.len() <= n) {
             grown.resize(n + 1, vec![]);
         }
+        // The blocks to look at again when `ty` gets a bound: those bounded by it or by an
+        // interface it extends. A full pass ends the search, so a bound met another way is
+        // found too; a chain of blocks takes one look per block, in any declaration order.
+        let mut by_bound: FxHashMap<DefId, Vec<usize>> = FxHashMap::default();
+        for (k, &(_, e)) in blankets.iter().enumerate() {
+            for b in &self.extensions[e].generics.bounds[0] {
+                by_bound.entry(b.iface).or_default().push(k);
+            }
+        }
+        // What a type parameter meets: its bounds and the interfaces they extend (`satisfies`
+        // for a `Param`, without scanning its bounds per question).
+        let mut met: Option<FxHashSet<Bound>> = slot.map(|n| {
+            let mut met = FxHashSet::default();
+            for x in grown[n].clone() {
+                met.extend(self.iface_ancestors(&x));
+                met.insert(x);
+            }
+            met
+        });
         let mut out: Vec<Bound> = vec![];
         let mut taken = vec![false; blankets.len()];
+        let mut todo: Vec<usize> = (0..blankets.len()).rev().collect();
+        let mut full = true;
         loop {
-            let mut added = false;
-            for (k, &(i, e)) in blankets.iter().enumerate() {
+            while let Some(k) = todo.pop() {
                 if taken[k] {
                     continue;
                 }
+                let (i, e) = blankets[k];
                 let bounds = self.extensions[e].generics.bounds[0].clone();
                 let ok = bounds.iter().all(|b| {
                     let b = Bound {
                         iface: b.iface,
                         args: b.args.iter().map(|x| self.subst(*x, &[ty])).collect(),
                     };
-                    self.satisfies(ty, &b, &grown)
+                    match &met {
+                        Some(met) => met.contains(&b),
+                        None => self.satisfies(ty, &b, &grown),
+                    }
                 });
                 if !ok {
                     continue;
@@ -280,14 +392,22 @@ impl Ctx<'_> {
                 let args = iargs.iter().map(|x| self.subst(*x, &[ty])).collect();
                 let b = Bound { iface, args };
                 if let Some(n) = slot {
+                    let mut gets = vec![b.clone()];
+                    gets.extend(self.iface_ancestors(&b));
+                    for g in &gets {
+                        todo.extend(by_bound.get(&g.iface).into_iter().flatten());
+                    }
+                    met.get_or_insert_with(FxHashSet::default).extend(gets);
                     grown[n].push(b.clone());
-                    added = true;
+                    full = false;
                 }
                 out.push(b);
             }
-            if !added {
+            if full {
                 break;
             }
+            full = true;
+            todo = (0..blankets.len()).filter(|&k| !taken[k]).rev().collect();
         }
         self.in_blanket = false;
         out

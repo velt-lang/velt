@@ -523,3 +523,81 @@ fn bounds_hold_whatever_is_looked_up_first() {
         assert_eq!(bounded, vec![0, 1, 1]);
     }
 }
+
+#[test]
+fn a_bounded_block_cannot_take_precedence_with_other_arguments() {
+    // `C` would be a `G<i64>` only if it is a `Q`, and a `Q` only if it is a `G<string>`:
+    // refused whichever block for `G` comes first (goldens `lang/extend_implements_args_*`).
+    let gi = "extend<T extends Q> T implements G<i64> { g(): i64 { return 42; } }";
+    let gs = "extend<T> T implements G<string> { g(): string { return \"s\"; } }";
+    for (first, second) in [(gi, gs), (gs, gi)] {
+        let r = err_src(&format!(
+            "interface G<A> {{ g(): A; }}
+             interface Q {{ q(): string; }}
+             {first}
+             {second}
+             extend<T extends G<string>> T implements Q {{ q(): string {{ return \"q\"; }} }}
+             function main() {{}}"
+        ));
+        assert!(
+            r.contains("the block for `G<i64>` has bounds and takes precedence over the other"),
+            "{r}"
+        );
+        assert_eq!(r.matches("error:").count(), 1, "{r}");
+    }
+    // Over a block for a base class: a `Dog` would be a `G<string>` unless it is a `Q`.
+    let r = err_src(
+        "interface G<A> { g(): string; }
+         interface Q { q(): string; }
+         class Animal {}
+         class Dog extends Animal {}
+         extend Animal implements G<string> { g(): string { return \"a\"; } }
+         extend<T extends Q> T implements G<i64> { g(): string { return \"t\"; } }
+         function main() {}",
+    );
+    assert!(
+        r.contains("takes precedence over a block for a base class of the types it fits"),
+        "{r}"
+    );
+    assert_eq!(r.matches("error:").count(), 1, "{r}");
+    // The same arguments, or a more specific block without bounds, are fine.
+    ok_src(
+        "interface G<A> { g(): string; }
+         interface Q { q(): string; }
+         class Animal {}
+         class Dog extends Animal {}
+         extend Animal implements G<string> { g(): string { return \"a\"; } }
+         extend<T extends Q> T implements G<string> { g(): string { return \"t\"; } }
+         extend string implements G<i64> { g(): string { return \"s\"; } }
+         function main() {}",
+    );
+}
+
+#[test]
+fn a_chain_of_blanket_blocks_calling_through_this_is_checked_in_linear_time() {
+    // Each body calls the next level's method through `this`, which asks what the type
+    // parameter gets from blanket blocks. In declaration order, looking at every block again
+    // per bound found took n² checks per call: minutes for 300 levels.
+    let n = 300;
+    let mut blocks: Vec<String> = (0..n)
+        .map(|k| {
+            let j = k + 1;
+            format!(
+                "extend<T extends I{j}> T implements I{k} {{ i{k}(): string {{ return \"i\" + this.i{j}().length; }} }}\n"
+            )
+        })
+        .collect();
+    for _ in 0..2 {
+        let mut s = String::new();
+        for k in 0..=n {
+            s += &format!("interface I{k} {{ i{k}(): string; }}\n");
+        }
+        s += &blocks.concat();
+        ok_src(&format!(
+            "{s} class C implements I{n} {{ i{n}(): string {{ return \"c\"; }} }}
+             function needI<T extends I0>(x: T): string {{ return x.i0(); }}
+             function main() {{ console.log(needI(new C())); }}"
+        ));
+        blocks.reverse();
+    }
+}

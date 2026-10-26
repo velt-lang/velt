@@ -1,0 +1,30 @@
+// A block with bounds for every type would win over a block for a base class, with other
+// interface arguments: whether a `Dog` is a `G<string>` would depend on the bounds. Refused.
+
+interface G<A> {
+  g(): string;
+}
+
+interface Q {
+  q(): string;
+}
+
+class Animal {}
+
+class Dog extends Animal {}
+
+extend Animal implements G<string> {
+  g(): string {
+    return "animal";
+  }
+}
+
+extend<T extends Q> T implements G<i64> {
+  g(): string {
+    return "q";
+  }
+}
+
+function main() {
+  console.log("unreachable");
+}

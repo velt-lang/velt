@@ -759,8 +759,15 @@ does not count), and a method `I` gives a default for may be left out.
 - **A type implements an interface once**, with the arguments of the block that wins: two
   blocks for `W` implementing `G<i64>` and `G<string>` conflict, and with `extend<T> Box<T>
   implements G<T>` and `extend<A> A implements G<i64>`, a `Box<string>` is a `G<string>` only.
+  A block with bounds must give the same arguments as the blocks it wins over (those it is
+  more specific than, and those for a base class of a type it fits): with `extend<T extends
+  Q> T implements G<i64>` and `extend<T> T implements G<string>`, whether a type is a
+  `G<string>` would depend on whether it is a `Q`, so the pair is refused.
 - **Blanket blocks chain**: with `extend<T extends K> T implements J` and `extend<T extends J>
   T implements I`, a `T extends K` in generic code is an `I` too, through chains of any length.
+- **Interface values meet bounds** on their interface and the ones it extends: with
+  `extend<T extends P> T implements Q`, a `P` value (or a `P2` value, `interface P2 extends
+  P`) is a `Q`, and so is a `Box<P>` with `extend<T extends P> Box<T> implements Q`.
 - **A block's bounds hold when the type meets them at all**, through its own implementation or
   another block: with `extend<T extends Q> T implements P`, `extend<T> T implements P` and
   `extend<T extends P> T implements Q`, every type is a `P` and a `Q`, and gets the bounded `P`
@@ -773,7 +780,8 @@ does not count), and a method `I` gives a default for may be left out.
 - **Errors**: a missing or mismatched method; two blocks for one interface that can both fit a
   type where neither is more specific (``conflicting implementations of `I` ``, naming a type
   both fit: `extend<A> Pair<A, i64>` and `extend<B> Pair<i64, B>` both fit `Pair<i64, i64>`),
-  in one module or in two; a block for an interface the type already implements
+  in one module or in two; a block with bounds that wins over another with other interface
+  arguments (``the block for `G<i64>` has bounds and takes precedence over the other``); a block for an interface the type already implements
   (`` `P` already implements `I` ``, also for an interface type and an interface it extends); an
   interface with fields or optional methods (``cannot implement `I`: `I` declares fields``: an
   `extend` block cannot add fields); a target that is `any`, `unknown`, `never` or a union (a
