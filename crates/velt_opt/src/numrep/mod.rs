@@ -173,7 +173,7 @@ pub(crate) fn run(env: &Env, func: &mut Function) -> bool {
         crate::simplify_cfg::run(func);
         // Simplifying keeps every value the function stores, so the elements' facts hold
         // while the groups stay the same.
-        if !arrays::groups(env, func).same(&elements.groups) {
+        if !arrays::useful_groups(env, func).same(&elements.groups) {
             elements = analyse(env, func).1;
         }
     }
@@ -208,7 +208,7 @@ pub(crate) fn unnarrowed(env: &Env, func: &Function) -> Vec<Unnarrowed> {
 /// Facts for the locals of `func` that matter (`None`: nothing to narrow, or too big), and
 /// for the elements of its arrays.
 fn analyse(env: &Env, func: &Function) -> (Option<Flow>, arrays::Elements) {
-    let groups = arrays::groups(env, func);
+    let groups = arrays::useful_groups(env, func);
     let tracked = tracked(env, func, &groups);
     if tracked.is_empty() && !constant_to_int32(env, func) {
         return (None, arrays::Elements::unknown(groups));

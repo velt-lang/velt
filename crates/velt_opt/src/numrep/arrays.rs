@@ -69,6 +69,12 @@ impl Groups {
         self.of.iter().map(|g| g.and_then(|g| facts[g])).collect()
     }
 
+    /// How many groups there are.
+    #[cfg(test)]
+    pub fn len(&self) -> usize {
+        self.ty.len()
+    }
+
     /// The same groups of the same locals as `other` (locals added since, outside any group,
     /// make no difference).
     pub fn same(&self, other: &Groups) -> bool {
@@ -139,6 +145,100 @@ impl Seen {
             }
         }
     }
+}
+
+/// The groups of `func` worth their element facts: none unless storing some `f64` group's
+/// elements as integers could remove a conversion (`converts`). Without them, `numrep`
+/// analyses the function as if it had no arrays.
+pub(super) fn useful_groups(env: &Env, func: &Function) -> Groups {
+    let groups = groups(env, func);
+    if converts(env, func, &groups) {
+        groups
+    } else {
+        Groups {
+            of: vec![],
+            ty: vec![],
+        }
+    }
+}
+
+/// Could storing an `f64` group's elements as `i64` remove a conversion from `func`? A value
+/// loaded from one (or computed from such values, through any assignment or call) is
+/// converted to an integer, rounded, checked with ToInt32 or used as a float index; or an
+/// integer is converted to a float to store into one. Lowering computes numbers as doubles,
+/// so before narrowing, indexing with an element is such a conversion.
+fn converts(env: &Env, func: &Function, groups: &Groups) -> bool {
+    if !groups.ty.contains(&Ty::F64) {
+        return false;
+    }
+    let element = |p: &Place| {
+        groups
+            .of_element(p)
+            .is_some_and(|g| groups.ty[g] == Ty::F64)
+    };
+    let ty = |op: &Operand| super::flow::operand_ty(func, op);
+    let n = func.locals.len();
+    // Per local: computed from an element (a flow-insensitive closure); set from an integer.
+    let mut loaded = vec![false; n];
+    let mut from_int = vec![false; n];
+    let reads = |op: &Operand, loaded: &[bool]| match op {
+        Operand::Copy(p) if p.proj.is_empty() => loaded[p.local.0 as usize],
+        Operand::Copy(p) => element(p),
+        Operand::Const(..) => false,
+    };
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for b in &func.blocks {
+            for s in &b.stmts {
+                let Stmt::Assign(d, rv) = s else { continue };
+                if !d.proj.is_empty() || loaded[d.local.0 as usize] {
+                    continue;
+                }
+                let mut hit = false;
+                crate::visit::rvalue_operands(rv, &mut |op| hit |= reads(op, &loaded));
+                if hit {
+                    loaded[d.local.0 as usize] = true;
+                    changed = true;
+                }
+            }
+            if let Terminator::Call {
+                args,
+                dest: Some(d),
+                ..
+            } = &b.term
+            {
+                let i = d.local.0 as usize;
+                if d.proj.is_empty() && !loaded[i] && args.iter().any(|a| reads(a, &loaded)) {
+                    loaded[i] = true;
+                    changed = true;
+                }
+            }
+        }
+    }
+    for s in func.blocks.iter().flat_map(|b| &b.stmts) {
+        if let Stmt::Assign(d, Rvalue::Cast(op, to)) = s {
+            if d.proj.is_empty() && ty(op).is_int() && to.is_float() {
+                from_int[d.local.0 as usize] = true;
+            }
+        }
+    }
+    func.blocks.iter().any(|b| {
+        let stmts = b.stmts.iter().any(|s| {
+            let Stmt::Assign(d, rv) = s else { return false };
+            match rv {
+                Rvalue::Cast(op, to) if ty(op).is_float() && to.is_int() => reads(op, &loaded),
+                Rvalue::Cast(op, to) if element(d) => ty(op).is_int() && to.is_float(),
+                Rvalue::Use(Operand::Copy(p)) if element(d) && p.proj.is_empty() => {
+                    from_int[p.local.0 as usize]
+                }
+                _ => false,
+            }
+        });
+        stmts
+            || matches!(&b.term, Terminator::Call { callee, args, .. }
+                if float_call(env, callee) && args.iter().any(|a| reads(a, &loaded)))
+    })
 }
 
 /// The groups of `func` whose memory only the function's own loads and stores reach.

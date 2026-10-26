@@ -282,3 +282,22 @@ fn a_realloc_into_a_local_the_groups_do_not_follow_keeps_doubles() {
     assert_eq!(derefs(&q, Ty::I64), 0);
     assert_eq!(run(&q, 0.5), 3.0 + 0.5 + 0.5);
 }
+
+#[test]
+fn arrays_whose_elements_meet_no_conversion_get_no_facts() {
+    let p = program(Extra::None);
+    let env = Env::of(&p.externs, &p.funcs, &p.aggs, &p.statics);
+    // `xs[i] = i` stores an integer counter converted to a double.
+    assert_eq!(arrays::useful_groups(&env, &p.funcs[0]).len(), 1);
+    // Stored as a double constant instead, the elements are only added: no conversion to save.
+    let mut q = p.clone();
+    for b in &mut q.funcs[0].blocks {
+        for s in &mut b.stmts {
+            if let Stmt::Assign(_, rv @ Rvalue::Cast(..)) = s {
+                *rv = Rvalue::Use(float(1.0, Ty::F64));
+            }
+        }
+    }
+    assert_eq!(arrays::groups(&env, &q.funcs[0]).len(), 1);
+    assert_eq!(arrays::useful_groups(&env, &q.funcs[0]).len(), 0);
+}
