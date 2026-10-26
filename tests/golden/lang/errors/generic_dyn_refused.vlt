@@ -1,8 +1,9 @@
 // Generic methods called on interface values that Velt can't dispatch yet (#943): a class held
 // as a base class whose subclass overrides the generic method (also through `any`, `unknown`
 // and `object`, which keep the type the value had, in initializers and in generic code
-// instantiated with the interface too), and an interface value at other type arguments (it
-// would need a wrapper forwarding the call's type arguments).
+// instantiated with the interface too, also through interface values, bounds and `extends`), and
+// an interface value at other type arguments (it would need a wrapper forwarding the call's type
+// arguments).
 interface Box {
   wrap<T>(x: T): T[];
 }
@@ -74,6 +75,45 @@ function outer<U>(u: unknown): U {
   return conv<U>(u);
 }
 
+interface Getter {
+  get<T>(u: unknown): T;
+}
+
+class GetterImpl implements Getter {
+  get<T>(u: unknown): T {
+    return u as T;
+  }
+}
+
+function viaBound<C extends Getter>(c: C, u: unknown): Box {
+  return c.get<Box>(u);
+}
+
+interface Gt<T> {
+  get(u: unknown): T;
+}
+
+class GtImpl<T> implements Gt<T> {
+  get(u: unknown): T {
+    return u as T;
+  }
+}
+
+class Holder<T> {
+  v: T = dyn as T;
+}
+
+class BoxHolder extends Holder<Box> {}
+
+class Made<T> {
+  v: T;
+  constructor(u: unknown) {
+    this.v = u as T;
+  }
+}
+
+class BoxMade extends Made<Box> {}
+
 function main(): void {
   const xs: Base[] = [new Base(), new Sub()];
   for (const x of xs) console.log(use(x));
@@ -87,6 +127,10 @@ function main(): void {
   console.log(use(conv<Box>(s)), use(convBound<Box>(s)), use(convArr<Box>(s)[0]));
   const viaConv: Box = conv(u);
   console.log(use(pass<Box>(s)), use(new Conv<Box>(s).get()), use(outer<Box>(s)), use(viaConv));
+  const getter: Getter = new GetterImpl();
+  console.log(use(getter.get<Box>(s)), use(viaBound(new GetterImpl(), s)));
+  const gt: Gt<Box> = new GtImpl<Box>();
+  console.log(use(gt.get(s)), use(new BoxHolder().v), use(new BoxMade(s).v));
   const h: H<unknown> = new C();
   console.log(h.wrap(1, "s"));
 }

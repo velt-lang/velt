@@ -6,10 +6,14 @@
 //! (`body::expr::iface_call` `check_generic_override_dyn`).
 //!
 //! Conversions are found in function bodies, the initializers of module constants and static
-//! fields, and those of fields. One whose target is still a type parameter's (`u as T` in `conv<T>`) is carried, like
-//! `generic_override_sites::check` carries calls through type parameters, to every site that
-//! instantiates its definition (substituted, through the generic definitions in between, to a
-//! fixed point), and reported at a site where the target has become such an interface.
+//! fields, and those of fields. One whose target is still a type parameter's (`u as T` in
+//! `conv<T>`) is carried, like `generic_override_sites::check` carries calls through type
+//! parameters, to every site that instantiates its definition (substituted, through the generic
+//! definitions in between, with a worklist), and reported at a site where the target has become
+//! such an interface. The sites are calls, function values, `new` and literals (also of the
+//! constructor), closures, a class's `extends` clause (its base's initializers and constructor),
+//! and a generic interface method called through an interface value or a bound (the method of
+//! each implementing class).
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -19,6 +23,10 @@ use crate::ctx::Ctx;
 use crate::defs::DefInfo;
 use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E, Intrinsic, TyId, TyKind};
 use crate::visit;
+
+/// A generic interface method called through an interface value or a bound, in unit `.0`: the
+/// interface, the slot, the interface arguments, the method's own type arguments, where.
+type IfaceCall = (usize, DefId, u32, Vec<TyId>, Vec<TyId>, Span);
 
 /// A unit of code and what it holds: its conversions (target type, where) and the definitions it
 /// instantiates (with their type arguments, none for a closure, which shares the unit's).
@@ -35,44 +43,57 @@ pub(crate) fn check_any_ifaces(cx: &mut Ctx) {
     let units = collect(cx);
     let mut reported: FxHashSet<Span> = FxHashSet::default();
     let mut checked: FxHashSet<(TyId, Span)> = FxHashSet::default();
-    // The targets with type parameters each definition's instances convert to.
-    let mut needs: FxHashMap<DefId, Vec<TyId>> = FxHashMap::default();
-    for (d, u) in &units {
-        for (t, span) in &u.convs {
-            match cx.has_type_params(*t) {
-                true => needs.entry(*d).or_default().push(*t),
-                false => report(cx, *t, *span, &mut reported, &mut checked),
+    // The sites instantiating each definition: the unit they are in, the type arguments, where.
+    let mut callers: FxHashMap<DefId, Vec<(DefId, Vec<TyId>, Span)>> = FxHashMap::default();
+    // The targets with type parameters each definition's instances convert to, and a worklist
+    // of those not carried to the definition's callers yet.
+    let mut needs: FxHashMap<DefId, FxHashSet<TyId>> = FxHashMap::default();
+    let mut work: Vec<(DefId, TyId)> = vec![];
+    for (d, u) in units {
+        for (t, span) in u.convs {
+            match cx.has_type_params(t) {
+                true if needs.entry(d).or_default().insert(t) => work.push((d, t)),
+                true => {}
+                false => report(cx, t, span, &mut reported, &mut checked),
+            }
+        }
+        for (g, targs, span) in u.sites {
+            callers.entry(g).or_default().push((d, targs, span));
+        }
+    }
+    while let Some((g, t)) = work.pop() {
+        let Some(sites) = callers.get(&g) else {
+            continue;
+        };
+        for (me, targs, span) in sites.clone() {
+            let s = match targs.is_empty() {
+                true => t,
+                false => cx.subst(t, &targs),
+            };
+            if !cx.has_type_params(s) {
+                report(cx, s, span, &mut reported, &mut checked);
+            } else if depth(cx, s, 0) <= MAX_DEPTH && needs.entry(me).or_default().insert(s) {
+                // A target that grows at each instantiation (`conv<T[]>` in `conv<T>`) is the
+                // instantiation cycle `instantiation_cycles` reports: bounded here.
+                work.push((me, s));
             }
         }
     }
-    loop {
-        let mut grew = false;
-        for (me, u) in &units {
-            for (g, targs, span) in &u.sites {
-                let Some(ts) = needs.get(g).cloned() else {
-                    continue;
-                };
-                for t in ts {
-                    let s = match targs.is_empty() {
-                        true => t,
-                        false => cx.subst(t, targs),
-                    };
-                    if !cx.has_type_params(s) {
-                        report(cx, s, *span, &mut reported, &mut checked);
-                        continue;
-                    }
-                    let n = needs.entry(*me).or_default();
-                    if !n.contains(&s) {
-                        n.push(s);
-                        grew = true;
-                    }
-                }
-            }
-        }
-        if !grew {
-            break;
-        }
+}
+
+/// How deeply a carried target may nest types ([`check_any_ifaces`]).
+const MAX_DEPTH: u32 = 12;
+
+/// How deeply `t` nests types (bounded by `MAX_DEPTH + 1`).
+fn depth(cx: &Ctx, t: TyId, d: u32) -> u32 {
+    if d > MAX_DEPTH {
+        return d;
     }
+    let kids = crate::types::children(cx.ty.kind(t));
+    kids.into_iter()
+        .map(|c| depth(cx, c, d + 1))
+        .max()
+        .unwrap_or(d)
 }
 
 /// The units of the program: each function, each module constant's initializer and each type's
@@ -85,11 +106,56 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Unit)> {
             Some((d, ctor))
         })
         .collect();
-    let scan = |u: &mut Unit, e: &mut Expr| match &e.kind {
+    // A generic interface method called through an interface value or a bound may run the
+    // method of each class implementing it: the interface, the slot, the interface arguments,
+    // the method's own type arguments.
+    let mut iface_calls: Vec<IfaceCall> = vec![];
+    let tys = &cx.ty;
+    let mut scan = |at: usize, u: &mut Unit, e: &mut Expr| match &e.kind {
         E::Call {
             callee: Callee::Intrinsic(Intrinsic::AnyTo),
             ..
         } => u.convs.push((e.ty, e.span)),
+        E::Call {
+            callee:
+                Callee::Dyn {
+                    slot,
+                    method_type_args,
+                },
+            args,
+        } => {
+            if let Some(TyKind::Dyn(i, iargs)) = args.first().map(|a| tys.kind(a.ty)) {
+                let call = (
+                    at,
+                    *i,
+                    *slot,
+                    iargs.clone(),
+                    method_type_args.clone(),
+                    e.span,
+                );
+                iface_calls.push(call);
+            }
+        }
+        E::Call {
+            callee:
+                Callee::ParamMethod {
+                    iface,
+                    iface_args,
+                    slot,
+                    method_type_args,
+                },
+            ..
+        } => {
+            let call = (
+                at,
+                *iface,
+                *slot,
+                iface_args.clone(),
+                method_type_args.clone(),
+                e.span,
+            );
+            iface_calls.push(call);
+        }
         E::Closure(c) => u.sites.push((*c, vec![], e.span)),
         E::New {
             def: g,
@@ -121,20 +187,22 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Unit)> {
     let mut seen = FxHashSet::default();
     for (i, d) in cx.defs.iter_mut().enumerate() {
         let mut u = Unit::default();
+        let at = out.len();
         match d {
-            Some(Def::Fn(f)) => visit::exprs_mut(&mut f.body.block, &mut |e| scan(&mut u, e)),
-            Some(Def::Global(g)) => visit::exprs_in(&mut g.init, &mut |e| scan(&mut u, e)),
+            Some(Def::Fn(f)) => visit::exprs_mut(&mut f.body.block, &mut |e| scan(at, &mut u, e)),
+            Some(Def::Global(g)) => visit::exprs_in(&mut g.init, &mut |e| scan(at, &mut u, e)),
             _ => continue,
         }
         seen.insert(i);
         out.push((DefId(i as u32), u));
     }
     for (i, info) in cx.info.iter_mut().enumerate() {
+        let at = out.len();
         // A module constant (or a static field) whose initializer is not moved to `defs` yet.
         if let DefInfo::Global(g) = info {
             if let (Some(init), false) = (g.init.as_mut(), seen.contains(&i)) {
                 let mut u = Unit::default();
-                visit::exprs_in(init, &mut |e| scan(&mut u, e));
+                visit::exprs_in(init, &mut |e| scan(at, &mut u, e));
                 out.push((DefId(i as u32), u));
             }
             continue;
@@ -147,9 +215,68 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Unit)> {
             .filter_map(|x| x.default.as_mut());
         let redefined = a.redefined.iter_mut().filter_map(|r| r.init.as_mut());
         for e in own.chain(redefined) {
-            visit::exprs_in(e, &mut |e| scan(&mut u, e));
+            visit::exprs_in(e, &mut |e| scan(at, &mut u, e));
         }
         out.push((DefId(i as u32), u));
+    }
+    for (at, iface, slot, iargs, margs, span) in iface_calls {
+        let sites = iface_sites(cx, iface, slot, &iargs, &margs);
+        let u = &mut out[at].1;
+        u.sites
+            .extend(sites.into_iter().map(|(m, targs)| (m, targs, span)));
+    }
+    // A class extending a generic class instantiates its initializers and constructor (and
+    // what they call) with the `extends` clause's arguments.
+    for (d, u) in out.iter_mut() {
+        let Some(TyKind::Adt(h, hargs)) = cx.adt(*d).and_then(|a| a.base).map(|b| cx.ty.kind(b))
+        else {
+            continue;
+        };
+        if hargs.is_empty() {
+            continue;
+        }
+        let span = cx.adt(*d).map_or(Span::DUMMY, |a| a.span);
+        u.sites.push((*h, hargs.clone(), span));
+        if let Some(c) = ctors.get(h) {
+            u.sites.push((*c, hargs.clone(), span));
+        }
+    }
+    out
+}
+
+/// The methods a call of generic slot `slot` of `iface<iargs>` with own type arguments `margs`
+/// may run: that of each class implementing the interface, with the class's type arguments the
+/// interface's arguments give (`error` for the others), then `margs`.
+fn iface_sites(
+    cx: &mut Ctx,
+    iface: DefId,
+    slot: u32,
+    iargs: &[TyId],
+    margs: &[TyId],
+) -> Vec<(DefId, Vec<TyId>)> {
+    let impls: Vec<_> = (cx.impls.iter())
+        .filter(|i| i.iface == iface)
+        .map(|i| {
+            (
+                i.methods.get(slot as usize).copied(),
+                i.generics,
+                i.iface_args.clone(),
+            )
+        })
+        .collect();
+    let mut out = vec![];
+    for (m, n, pattern) in impls {
+        let Some(m) = m else { continue };
+        let mut slots = vec![None; n as usize];
+        for (p, a) in pattern.iter().zip(iargs) {
+            cx.match_ty(*p, *a, &mut slots);
+        }
+        let error = cx.ty.error;
+        let mut targs: Vec<TyId> = slots.into_iter().map(|s| s.unwrap_or(error)).collect();
+        targs.extend(margs.iter().copied());
+        if !targs.is_empty() {
+            out.push((m, targs));
+        }
     }
     out
 }
