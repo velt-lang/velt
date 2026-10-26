@@ -171,7 +171,17 @@ pub(crate) fn run(env: &Env, func: &mut Function) -> bool {
     if changed {
         crate::simplify_cfg::run(func);
     }
-    changed |= arrays::retype(env, func);
+    // Arrays whose integers would only be converted back: retype a copy first, keep the
+    // groups the narrowing plan of that copy makes worth it.
+    let mut trial = func.clone();
+    if let Some(done) = arrays::retype(env, &mut trial, None) {
+        if let Some(flow) = analyse(env, &trial) {
+            let keep = done.worth(&narrow::plan(env, &flow, &trial));
+            if keep.contains(&true) && arrays::retype(env, func, Some(&keep)).is_some() {
+                changed = true;
+            }
+        }
+    }
     if let Some(flow) = analyse(env, func) {
         let plan = narrow::plan(env, &flow, func);
         changed |= rewrite::apply(env, func, &plan);

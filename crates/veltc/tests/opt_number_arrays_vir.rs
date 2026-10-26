@@ -108,7 +108,7 @@ fn whole_number_arrays_hold_integers() {
 #[test]
 fn arrays_that_may_hold_other_numbers_keep_doubles() {
     let vir = release_vir("lang/opt_number_arrays_doubles.vlt");
-    let arrays = ["fractions", "zeros", "prev", "curr", "count", "big"];
+    let arrays = ["fractions", "zeros", "prev", "curr", "count", "big", "ints"];
     let fns = functions(&vir);
     let doubles: usize = fns
         .iter()

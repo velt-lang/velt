@@ -1,5 +1,6 @@
 // `number[]` arrays that must keep doubles (#1599): a fractional value, `-0`, values that grow
-// or shrink without a bound the compiler can prove, and values past 2^53. Each prints what
+// or shrink without a bound the compiler can prove, values past 2^53, and whole numbers that
+// are only copied into doubles. Each prints what
 // Node prints. `squares` and `triples` reach `total` and `join`, which are inlined: they may
 // hold integers, and print the same either way.
 
@@ -72,6 +73,19 @@ function joined(): string {
   return triples.join(",");
 }
 
+// Whole numbers only ever copied into an array of doubles: integers would add a conversion
+// per copy and remove none.
+function spreadInto(): number {
+  const ints: number[] = [];
+  for (let k = 0; k < 8; k++) ints.push(k);
+  let total = 0;
+  for (let i = 0; i < 3; i++) {
+    const mixed = [...ints, i + 0.5];
+    total += mixed[mixed.length - 1] + mixed[2];
+  }
+  return total;
+}
+
 // Past 2^53 a double rounds where an integer would not.
 function large(): string {
   const big: number[] = [];
@@ -85,6 +99,6 @@ function main() {
   console.log(negativeZero());
   console.log(passedOn());
   console.log(distance("kitten", "sitting"), distance("", "abc"), distance("flaw", "lawn"));
-  console.log(countDown(6), joined());
+  console.log(countDown(6), joined(), spreadInto());
   console.log(large());
 }

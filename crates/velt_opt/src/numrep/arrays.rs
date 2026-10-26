@@ -323,12 +323,35 @@ fn stored(func: &Function, flow: &Flow, groups: &Groups) -> Vec<Fact> {
     out
 }
 
-/// Store the elements of every `f64` group whose facts allow it as `i64`; returns whether any
-/// changed.
-pub(super) fn retype(env: &Env, func: &mut Function) -> bool {
+/// What `retype` did: per conversion it added between an element and a double, the `f64`
+/// local involved (`None`: a conversion nothing can remove) and its group.
+pub(super) struct Retyped {
+    conversions: Vec<(Option<Local>, usize)>,
+    groups: usize,
+}
+
+impl Retyped {
+    /// Per group: does storing it as integers pay, given the narrowing `plan` of the retyped
+    /// function? Each conversion counts for when its double is narrowed too (the integer is
+    /// used directly) and against when it stays (a conversion the doubles did not need: an
+    /// element copied into an array of doubles, or passed on as a double).
+    pub fn worth(&self, plan: &super::narrow::Plan) -> Vec<bool> {
+        let mut score = vec![0i64; self.groups];
+        for &(l, g) in &self.conversions {
+            let narrowed =
+                l.is_some_and(|l| plan.to.get(l.0 as usize).copied().flatten().is_some());
+            score[g] += if narrowed { 1 } else { -1 };
+        }
+        score.iter().map(|&s| s > 0).collect()
+    }
+}
+
+/// Store the elements of every `f64` group whose facts allow it (and that `only` keeps, when
+/// given) as `i64`; `None` when none changed.
+pub(super) fn retype(env: &Env, func: &mut Function, only: Option<&[bool]>) -> Option<Retyped> {
     let groups = groups(env, func);
     if !groups.ty.contains(&Ty::F64) {
-        return false;
+        return None;
     }
     let tracked = super::tracked(env, func, &groups);
     let facts = facts(env, func, &tracked, &groups);
@@ -336,16 +359,22 @@ pub(super) fn retype(env: &Env, func: &mut Function) -> bool {
         .ty
         .iter()
         .zip(&facts)
-        .map(|(ty, f)| *ty == Ty::F64 && f.is_some_and(|f| f.exact_int() && !f.neg_zero))
+        .enumerate()
+        .map(|(g, (ty, f))| {
+            *ty == Ty::F64
+                && f.is_some_and(|f| f.exact_int() && !f.neg_zero)
+                && only.is_none_or(|o| o.get(g) == Some(&true))
+        })
         .collect();
     if !chosen.contains(&true) {
-        return false;
+        return None;
     }
     let mut rt = Retyper {
         groups: &groups,
         chosen: &chosen,
         base: func.locals.len(),
         temps: vec![],
+        conversions: vec![],
     };
     for bi in 0..func.blocks.len() {
         rewrite_stmts(func, bi, |s, out| rt.stmt(s, out));
@@ -359,7 +388,10 @@ pub(super) fn retype(env: &Env, func: &mut Function) -> bool {
     }
     func.locals
         .extend(rt.temps.into_iter().map(|ty| LocalDecl::new(ty, None)));
-    true
+    Some(Retyped {
+        conversions: rt.conversions,
+        groups: groups.ty.len(),
+    })
 }
 
 struct Retyper<'g> {
@@ -369,6 +401,8 @@ struct Retyper<'g> {
     /// Index of the first temporary.
     base: usize,
     temps: Vec<Ty>,
+    /// The conversions added (`Retyped::conversions`).
+    conversions: Vec<(Option<Local>, usize)>,
 }
 
 impl Retyper<'_> {
@@ -395,10 +429,14 @@ impl Retyper<'_> {
     fn load(&mut self, op: &mut Operand, out: &mut Vec<Stmt>) {
         let Operand::Copy(p) = op else { return };
         let mut p = p.clone();
+        let Some(g) = self.groups.of_element(&p) else {
+            return;
+        };
         if !self.retype_place(&mut p) {
             return;
         }
         let t = self.temp(Ty::F64);
+        self.conversions.push((Some(t), g));
         out.push(Stmt::Assign(
             Place::local(t),
             Rvalue::Cast(Operand::Copy(p), Ty::F64),
@@ -409,6 +447,7 @@ impl Retyper<'_> {
     fn stmt(&mut self, s: Stmt, out: &mut Vec<Stmt>) {
         match s {
             Stmt::Assign(mut d, rv) if self.retyped(&d) => {
+                let g = self.groups.of_element(&d).unwrap_or(0);
                 self.retype_place(&mut d);
                 let v = match rv {
                     // A copy between retyped elements stays a copy.
@@ -424,12 +463,18 @@ impl Retyper<'_> {
                     }
                     Rvalue::Use(mut op) => {
                         self.load(&mut op, out);
+                        let v = match &op {
+                            Operand::Copy(p) if p.proj.is_empty() => Some(p.local),
+                            _ => None,
+                        };
+                        self.conversions.push((v, g));
                         self.as_int(op, out)
                     }
                     mut rv => {
                         crate::visit::rvalue_operands_mut(&mut rv, &mut |op| self.load(op, out));
                         let f = self.temp(Ty::F64);
                         out.push(Stmt::Assign(Place::local(f), rv));
+                        self.conversions.push((Some(f), g));
                         self.as_int(Operand::Copy(Place::local(f)), out)
                     }
                 };
