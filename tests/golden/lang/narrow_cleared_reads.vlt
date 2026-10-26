@@ -247,3 +247,49 @@ function generic(): void {
   }
 }
 generic();
+
+// A union of subclasses where a nullable base class is expected takes the value as it is, at
+// the top level too; a branch of a ternary that is a string `+` operand or a `+=` value is
+// converted as it is.
+class Base4 { n = 1; }
+class S41 extends Base4 { a = 1; }
+class S42 extends Base4 { b = 2; }
+let ux: S41 | S42 | null = new S41();
+const ust: { f: S41 | S42 | null } = { f: new S42() };
+let ur: Record<string, S41 | S42> = { k: new S41() };
+function clr4(): void { ux = null; ust.f = null; delete ur["k"]; }
+function pb4(v: Base4 | null): string { return v === null ? "null" : "base"; }
+function pbu4(v: Base4 | undefined): string { return String(v); }
+function pbn4(v: Base4 | null | undefined): string { return String(v); }
+function subclasses(): void {
+  if (ux && ust.f) { clr4(); console.log(pb4(ux), pb4(ust.f), pbn4(ux), pbn4(ust.f)); }
+  ux = new S42(); ur["k"] = new S42();
+  const k = "k";
+  if (ur[k]) { clr4(); console.log(pbu4(ur[k]), pbn4(ur[k])); }
+  ux = new S42();
+  if (ux) { const c = ux; clr4(); console.log(pb4(c), c.n); }
+}
+subclasses();
+ux = new S41(); ust.f = new S41(); ur["k"] = new S41();
+if (ux) { clr4(); console.log("top", pb4(ux)); }
+ust.f = new S41();
+if (ust.f) { clr4(); console.log("top", pb4(ust.f)); }
+ur["k"] = new S41();
+const kk = "k";
+if (ur[kk]) { clr4(); console.log("top", pbu4(ur[kk])); }
+let ts: string | null = "s";
+const tst: { w: string | null } = { w: "w" };
+function clrT(): void { ts = null; tst.w = null; }
+function ternaries(c: boolean): void {
+  if (ts && tst.w) {
+    clrT();
+    let acc = "";
+    acc += c ? ts : "z";
+    acc += c ? (c ? tst.w : "q") : "z";
+    console.log(acc, "a" + (c ? ts : "z"), "c" + (c ? tst.w : "z"), (c ? ts : "z") + "!");
+    console.log("d" + (ts || "y"), (ts ?? "n") + "e", `${c ? ts : "z"}`);
+  }
+}
+ternaries(true);
+ts = "s"; tst.w = "w";
+ternaries(false);

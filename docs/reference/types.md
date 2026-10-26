@@ -803,8 +803,10 @@ console.log(update(v, { deletedAt: null })); // { name: 'bo', deletedAt: null }
   narrowed field is re-checked where its payload is read (see the module variables below for
   where that is), so a call that set it to `null` in between stops the program with
   ``TypeError: `node.left` was checked, but it was set to null before this read``
-  (`undefined` for an optional field) instead of reading `null`; elsewhere the field is read
-  as it is. Node's message for the same mistake is different (`Cannot read properties of null
+  (`undefined` for an optional field) instead of reading `null`. A field path of a local is
+  read as its payload wherever no type is expected (`const { n } = o.f`, `"n" in o.f`,
+  `const c = o.f`), and as it is in a log argument, a template, a `+` with a string and a
+  test. Node's message for the same mistake is different (`Cannot read properties of null
   (reading 'x')`), and Node throws a `TypeError` a program can catch, where Velt stops. An optional member of function type can be called once a check
   narrowed it (`if (o.onError) o.onError(e)`, `if (def?.transform) def.transform(v)`). Inside
   a closure, a variable narrowed where the closure is created stays narrowed when the function
@@ -852,16 +854,21 @@ console.log(update(v, { deletedAt: null })); // { name: 'bo', deletedAt: null }
   1`), a callee, an operand of a numeric operator or a comparison (`n + 1`, `n > 2`, `-n`,
   `s + 1`, `s + t` with both narrowed), a spread (`...xs`), where the expected type does not
   take the value as it is (`use(ctx)` with `c: Ctx`, `return ctx` from a function returning
-  `Ctx`, `len(st.v)` with `v: string` after `typeof st.v === "string"`) or an untyped element
-  (`[ctx]`). Elsewhere it is read as it is: `console.log(ctx)`, `JSON.stringify(ctx)`, a
-  template, a `+` with a string (`"a" + s`, `s + "!"`, `s += x`), `===`, and where the expected
-  type takes it (a parameter of type `Ctx | null | undefined` or `Base | null`, or `string |
-  number` for a field `typeof` narrowed to a `string`). So is the operand of a test, `?.` or
+  `Ctx`, `len(st.v)` with `v: string` after `typeof st.v === "string"`), an untyped element
+  (`[ctx]`) or what a destructuring takes apart (`const { name } = ctx`). Elsewhere it is read
+  as it is: `console.log(ctx)`, `JSON.stringify(ctx)`, a template, a `+` with a string (`"a" +
+  s`, `s + "!"`, `s += x`, also a branch of a ternary there: `"a" + (c ? s : "z")`), `===`, and
+  where the expected type takes it (a parameter of type `Ctx | null | undefined`, or `Base |
+  null` for a `S1 | S2 | null` of subclasses, or `string | number` for a field `typeof`
+  narrowed to a `string`). So is the operand of a test, `?.` or
   `??`, so `if (ctx) { reset(); ctx?.name }` gives `undefined`, as in JavaScript. An untyped
   copy (`let c = ctx`, `const c = state.next`, `const s = st.v` after a `typeof` test, and a
   copy of such a copy) holds what it read, `null` or a value of another member included, and
   keeps the narrowing: its reads follow the same rule (`console.log(c)` prints `null`, `c.name`
-  stops with a `TypeError`). An assignment in the function drops the narrowing (and
+  stops with a `TypeError`). A write through a narrowed field path takes the object first, as
+  JavaScript does: `state.next.items[0] = f()` writes into the object `state.next` held before
+  `f()` ran, also when `f()` set `state.next` to `null`. An assignment in the function drops
+  the narrowing (and
   narrows to what it assigned), and so does a loop that assigns the variable. Closures don't
   see the narrowing of the function they are made in (TypeScript keeps it in one made after
   the variable's last assignment). `typeof`, `instanceof` and union-member tests do not narrow

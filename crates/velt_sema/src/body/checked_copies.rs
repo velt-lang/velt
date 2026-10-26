@@ -43,10 +43,11 @@ impl FnCx<'_, '_> {
         if want == Want::BorrowMut || self.payload_spans.contains(&span) {
             return true;
         }
-        // With `taken` (a field path of a local, which was always its payload before), a value
-        // taken where no type is expected (an untyped array or object element) is the payload,
-        // as TypeScript types it; an untyped `let c = x` is a checked copy instead.
-        if taken && want == Want::Move && exp.is_none() {
+        // With `taken` (a field path of a local, which was always its payload before), a read
+        // where no type is expected is the payload (`const { n } = o.f`, `"n" in o.f`), except
+        // in the positions that use the value as it is (`as_is_spans`: a log argument, a
+        // template, a string `+`; a test is a `raw_read`).
+        if taken && exp.is_none() {
             return true;
         }
         exp.is_some_and(|t| {
@@ -58,8 +59,8 @@ impl FnCx<'_, '_> {
 
     /// Does a value of type `raw` fit where a `t` is expected as it is: `t` has the nothings of
     /// `raw` (`Box | null` where a `Box | null | undefined` or a `Base | null` is expected) and
-    /// its value's members, when it is a union (`string | number` where a `string | number |
-    /// null` is)?
+    /// each of its value's members converts to `t`'s value (`string | number` where a `string |
+    /// number | null` is, `S1 | S2` subclasses where a `Base | null` is)?
     fn fits_as_is(&mut self, raw: TyId, t: TyId) -> bool {
         if raw == t {
             return true;
@@ -75,7 +76,11 @@ impl FnCx<'_, '_> {
         let rm = self.cx.union_members(rc).unwrap_or_else(|| vec![rc]);
         // A nullable value of one type converts as it is (`Box | null` as a `Base | null`).
         let one = self.cx.ty.nothing_of(raw).is_some() && self.cx.union_members(rc).is_none();
-        covered && (one || rm.iter().all(|m| tm.contains(m)))
+        covered
+            && (one
+                || rm
+                    .iter()
+                    .all(|m| tm.contains(m) || self.converts_to(*m, tc)))
     }
 
     /// Is `e` a string for `+` (a string literal or template, a concatenation with one, or an
@@ -94,9 +99,12 @@ impl FnCx<'_, '_> {
                 lhs,
                 rhs,
             } if self.string_operand(lhs) || self.string_operand(rhs) => true,
+            ast::ExprKind::Cond { then, els, .. } => {
+                self.string_operand(then) && self.string_operand(els)
+            }
             _ => self.peek_ty(inner).is_some_and(|t| {
                 let p = self.cx.ty.core(t).unwrap_or(t);
-                p == self.cx.ty.str_
+                self.cx.widened(p) == self.cx.ty.str_
             }),
         }
     }
@@ -162,15 +170,79 @@ impl FnCx<'_, '_> {
     }
 
     /// `e` checked where its value is used as it is (`s += x` on a string): a narrowed name or
-    /// path is not taken as its payload.
+    /// path is not taken as its payload, nor one that is a branch of it (`s += c ? x : "z"`).
     pub(crate) fn as_is_expr(&mut self, e: &ast::Expr, exp: Option<TyId>, want: Want) -> hir::Expr {
         let mut inner = e;
         while let ast::ExprKind::Paren(x) = &inner.kind {
             inner = x;
         }
         let outer = self.raw_read.replace(inner.span);
+        let mark = self.as_is_spans.len();
+        self.mark_value(e, true);
         let h = self.expr(e, exp, want);
+        self.as_is_spans.truncate(mark);
         self.raw_read = outer;
+        h
+    }
+
+    /// Mark the reads that give `e`'s value: `e` itself and the branches of `c ? a : b` (and,
+    /// with `as_is`, of `a || b` and `a ?? b`), as used as they are (`as_is_spans`) or as
+    /// payloads (`payload_spans`). The caller truncates the list.
+    pub(crate) fn mark_value(&mut self, e: &ast::Expr, as_is: bool) {
+        let mut inner = e;
+        while let ast::ExprKind::Paren(x) = &inner.kind {
+            inner = x;
+        }
+        match as_is {
+            true => self.as_is_spans.push(inner.span),
+            false => self.payload_spans.push(inner.span),
+        }
+        match &inner.kind {
+            ast::ExprKind::Cond { then, els, .. } => {
+                self.mark_value(then, as_is);
+                self.mark_value(els, as_is);
+            }
+            ast::ExprKind::Binary {
+                op: ast::BinaryOp::Or | ast::BinaryOp::Nullish,
+                lhs,
+                rhs,
+            } if as_is => {
+                self.mark_value(lhs, as_is);
+                self.mark_value(rhs, as_is);
+            }
+            _ => {}
+        }
+    }
+
+    /// May a read that gives `e`'s value (`mark_value`) read a narrowed value a call cleared?
+    pub(crate) fn value_may_read_cleared(&mut self, e: &ast::Expr) -> bool {
+        let mut inner = e;
+        while let ast::ExprKind::Paren(x) = &inner.kind {
+            inner = x;
+        }
+        match &inner.kind {
+            ast::ExprKind::Cond { then, els, .. } => {
+                self.value_may_read_cleared(then) || self.value_may_read_cleared(els)
+            }
+            ast::ExprKind::Binary {
+                op: ast::BinaryOp::Or | ast::BinaryOp::Nullish,
+                lhs,
+                rhs,
+            } => self.value_may_read_cleared(lhs) || self.value_may_read_cleared(rhs),
+            _ => self.may_read_cleared(inner),
+        }
+    }
+
+    /// `e` checked where its value is printed or written into a template as it is: a field
+    /// path of a local is not taken as its payload there either (`needs_payload`).
+    pub(crate) fn printed_expr(&mut self, e: &ast::Expr) -> hir::Expr {
+        if !self.has_breakable_narrowing() {
+            return self.expr(e, None, Want::Borrow);
+        }
+        let mark = self.as_is_spans.len();
+        self.mark_value(e, true);
+        let h = self.expr(e, None, Want::Borrow);
+        self.as_is_spans.truncate(mark);
         h
     }
 
@@ -206,9 +278,13 @@ impl FnCx<'_, '_> {
         self.payload_expr(object, None, Want::Borrow)
     }
 
-    /// The initializer `e` of an untyped `let` or `const`: a narrowed module variable or field
-    /// path is read as it is (the local is a checked copy, `note_checked_copy`).
-    pub(crate) fn copy_init(&mut self, e: &ast::Expr, want: Want) -> hir::Expr {
+    /// The initializer `e` of an untyped `let` or `const` `name`: a narrowed module variable or
+    /// field path is read as it is (the local is a checked copy, `note_checked_copy`). A hidden
+    /// `#dN` that a pattern takes apart (`pattern_defaults`) holds the payload.
+    pub(crate) fn copy_init(&mut self, e: &ast::Expr, name: &ast::Ident, want: Want) -> hir::Expr {
+        if name.name.starts_with('#') {
+            return self.payload_expr(e, None, want);
+        }
         let mut inner = e;
         while let ast::ExprKind::Paren(x) = &inner.kind {
             inner = x;
@@ -225,7 +301,8 @@ impl FnCx<'_, '_> {
                     ..
                 }
         );
-        if !path || self.narrowed_source(inner).is_none() {
+        // A field path of a local stays its payload, as before (`as_is_source`).
+        if !path || self.narrowed_source(inner).is_none() || !self.as_is_source(inner) {
             return self.expr(e, None, want);
         }
         // A function stays its payload (`const f = o.cb; f()`), as before.

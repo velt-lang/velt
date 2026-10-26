@@ -25,6 +25,16 @@ null nullx anull
 [ 5 ] [ 5, null ] [ null, 5 ] [ null, null, 5 ]
 { a: 5, b: null } { v: 5 }
 null null
+null null null null
+undefined undefined
+base 1
+top null
+top null
+top undefined
+nullnull anull cnull null!
+dy ne null
+zz az cz z!
+dy ne z
 null 2 2 a number
 5nullnullnull L:null/5 nullnull
 5 5 number

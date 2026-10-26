@@ -32,7 +32,7 @@ impl FnCx<'_, '_> {
         };
         let mut h = match ann {
             Some(t) => self.expr_coerce(e, t, Want::Borrow),
-            None => self.copy_init(e, Want::Borrow),
+            None => self.copy_init(e, name, Want::Borrow),
         };
         let ty = ann.unwrap_or(h.ty);
         let pinned = is_place(&h)

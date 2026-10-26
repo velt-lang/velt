@@ -72,6 +72,44 @@ impl FnCx<'_, '_> {
         self.mk(H::Local(tmp, UseMode::Move), ty, span)
     }
 
+    /// `st.b.items[0] = change()`: the object `place` writes into goes through a narrowed field
+    /// path, which lowering checks where it is read. JavaScript evaluates the object before the
+    /// value `v`, so a value that clears the field still writes into the object it held (#1280):
+    /// when `v` may change memory, the object (another reference to it) is bound first, then
+    /// the index (unless `stmts` binds the indices already: the object, which may use them,
+    /// goes after them).
+    pub(super) fn hoist_checked_object(
+        &mut self,
+        place: &mut hir::Expr,
+        v: &hir::Expr,
+        stmts: &mut Vec<hir::Stmt>,
+    ) {
+        let (H::Field { base, .. } | H::Index { base, .. }) = &mut place.kind else {
+            return;
+        };
+        // Only an object another reference shares (not a tuple, which is a value).
+        let shared = matches!(self.cx.ty.kind(base.ty), hir::TyKind::Array(_))
+            || self.cx.class_of(base.ty).is_some()
+            || self.cx.is_object_type(base.ty);
+        if !shared || !through_checked_path(base) || !crate::effects::may_change_memory(v) {
+            return;
+        }
+        let (ty, span) = (base.ty, base.span);
+        let tmp = self.new_local("<object>", ty, true, span, LocalKind::Temp);
+        let mode = self.use_mode(ty, Want::BorrowMut);
+        let init = std::mem::replace(&mut **base, self.mk(H::Local(tmp, mode), ty, span));
+        let init = self.intrinsic(hir::Intrinsic::Share, vec![init], ty, span);
+        let kind = hir::StmtKind::Let {
+            local: tmp,
+            init: Some(init),
+        };
+        let first = stmts.is_empty();
+        stmts.push(hir::Stmt { kind, span });
+        if first {
+            self.hoist_indices(place, stmts);
+        }
+    }
+
     /// `e` after the statements `stmts` (as a block when there are any).
     pub(super) fn with_temps(&mut self, mut stmts: Vec<hir::Stmt>, e: hir::Expr) -> hir::Expr {
         if stmts.is_empty() {
@@ -130,5 +168,19 @@ impl FnCx<'_, '_> {
             }
             _ => false,
         }
+    }
+}
+
+/// Does place `e` read a payload or member that lowering checks again: one of a narrowed field
+/// path, not of a local (`check_narrowed_field`)?
+fn through_checked_path(e: &hir::Expr) -> bool {
+    match &e.kind {
+        H::UnwrapSome(base, _) | H::UnwrapVariant { expr: base, .. } => {
+            !matches!(base.kind, H::Local(..)) || through_checked_path(base)
+        }
+        H::Field { base, .. } | H::Index { base, .. } | H::Downcast(base) => {
+            through_checked_path(base)
+        }
+        _ => false,
     }
 }

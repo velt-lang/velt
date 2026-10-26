@@ -424,11 +424,14 @@ impl FnCx<'_, '_> {
             if let Some(t) = token.filter(|_| !crate::body::assign_narrow::is_cast(value)) {
                 self.narrow_to_assigned(t, lty, &v);
             }
+            let (mut place, mut stmts) = (place, Vec::new());
+            self.hoist_checked_object(&mut place, &v, &mut stmts);
             let kind = H::Assign {
                 place: Box::new(place),
                 value: Box::new(self.held_rechecked(v)),
             };
-            return self.mk(kind, unit, span);
+            let assign = self.mk(kind, unit, span);
+            return self.with_temps(stmts, assign);
         };
         if self.cx.dynamic(lty) == Some(crate::any::Dynamic::Any) {
             return self.dynamic_place_rmw(place, DynRmw::Assign(op, value), false, span);
@@ -456,6 +459,7 @@ impl FnCx<'_, '_> {
             };
             let v = self.coerce(v, lty);
             let v = self.held_rechecked(v);
+            self.hoist_checked_object(&mut place, &v, &mut stmts);
             let mut cur = self.place_read(&place, Want::Borrow);
             if crate::effects::may_change_memory(&v) && Self::through_element(&place) {
                 // The right-hand side may change or move what holds the string (`rows[0].out +=
@@ -506,6 +510,7 @@ impl FnCx<'_, '_> {
         if Self::has_value_object(&place) {
             self.hoist_indices(&mut place, &mut stmts);
         }
+        self.hoist_checked_object(&mut place, &v, &mut stmts);
         let kind = H::CompoundAssign {
             op: bop,
             place: Box::new(place),
