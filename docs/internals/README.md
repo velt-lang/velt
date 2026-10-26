@@ -32,12 +32,15 @@ and the test tiers, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
    and panic messages. VIR is a typed, MIR-like control-flow graph with a verifier.
 5. **Optimize** (`velt_opt`, release builds): inlining, constant folding, copy propagation,
    scalar replacement of aggregates, closure specialization, dead-code elimination, CFG
-   simplification, Map probe reuse (a `get` and `set` of the same key probe once), and `numrep`.
+   simplification, Map probe reuse (a `get` and `set` of the same key probe once), module state
+   lookups once per function call, and `numrep`.
    The passes and their order are in `crates/velt_opt/src/lib.rs`: `dead_funcs` first, then
    `gated_clones` (a gated function's calls of callees that check its CPU extension go to clones
    where the check is true), then up to three rounds of `inline`, `const_fields`, and per function `vtable_loads`,
    `constfold`, `copyprop`, `addr_forward`, `heap_sroa`, `sroa`, `dce` and `simplify_cfg`; then
-   `map_probe`, `numrep`, `divisions` and `dead_fills` once per function; then `noalias` and
+   `module_state` (a function asks the runtime for the module state block once per call, not
+   at every access to a module-level `let`), `map_probe`, `numrep`, `divisions` and
+   `dead_fills` once per function; then `noalias` and
    `frame_slots`, each followed by a cleanup; `dead_funcs` again at the end. Five change how objects and numbers are
    represented or reached:
    - `heap_sroa` keeps a class instance that never escapes its function (after inlining) in
