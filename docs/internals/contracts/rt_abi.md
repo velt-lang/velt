@@ -333,6 +333,20 @@ first half of its 8-byte slot. Functions (`std/symbol.vlt`; `string` parameters 
 - `velt_rt_strbuf_push_symbol(buf: *mut VeltStrBuf, s)`: appends `Symbol(<description>)`
   (`console.log`, `String(s)`).
 
+## CPU check [additive]
+
+`velt_rt_check_cpu(required: u32)`: x86_64 code built for more than the baseline CPU
+(`--cpu`, docs/tooling/platforms.md "CPU") calls it first thing in `velt_main`, after the
+runtime's start-up (baseline code) and before any code that may use the features. `required` is
+a mask of features, by bit: 0 SSE3, 1 SSSE3, 2 SSE4.1, 3 SSE4.2, 4 POPCNT, 5 CMPXCHG16B, 6 AVX,
+7 AVX2, 8 BMI1, 9 BMI2, 10 FMA, 11 LZCNT, 12 MOVBE, 13 F16C, 14 AVX512F, 15 AVX512BW,
+16 AVX512CD, 17 AVX512DQ, 18 AVX512VL, 19 AVX512VBMI, 20 AVX512BITALG
+(`velt_codegen_cl::X86_FEATURES`; x86-64-v2 is bits 0–5, v3 0–13, v4 0–18). When the CPU lacks
+one, it prints to stderr ``error: this program was built for <level> (<features>); this CPU
+lacks <missing>; rebuild it with `--cpu <lower>` `` (`<lower>`: the highest level the CPU has,
+or `baseline`) and exits with code 1. `VELT_CPU_DISABLE` (comma-separated feature names, any case) removes features from what the CPU
+has, to test it.
+
 ## SIMD [additive]
 
 A SIMD value (HIR `TyKind::Simd`, the ten vector and four mask types) is a VIR `V128`: 16 bytes,

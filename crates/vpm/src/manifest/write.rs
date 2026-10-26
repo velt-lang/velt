@@ -75,6 +75,10 @@ pub(super) fn to_vlt(m: &Manifest) -> String {
         let dirs: Vec<String> = m.ts_compat.iter().map(|d| string_lit(d)).collect();
         fields.push(format!("tsCompat: [{}]", dirs.join(", ")));
     }
+    if let Some(build) = &m.build {
+        let cpu = build.cpu.iter().map(|c| format!("cpu: {}", string_lit(c)));
+        fields.push(format!("build: {}", inline_object(cpu)));
+    }
     let text = format!(
         "{TYPES_IMPORT}\n\nexport const pkg: Package = {};\n",
         multiline_object(fields.into_iter())
@@ -139,6 +143,13 @@ pub(super) fn to_json(m: &Manifest) -> Value {
     }
     if !m.ts_compat.is_empty() {
         out.insert("tsCompat".into(), json!(m.ts_compat));
+    }
+    if let Some(build) = &m.build {
+        let mut o = Map::new();
+        if let Some(cpu) = &build.cpu {
+            o.insert("cpu".into(), json!(cpu));
+        }
+        out.insert("build".into(), Value::Object(o));
     }
     Value::Object(out)
 }

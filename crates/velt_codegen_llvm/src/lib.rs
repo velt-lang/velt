@@ -74,7 +74,7 @@ pub fn emit_object_timed(
     opts: &CodegenOptions,
     timings: &mut Vec<(&'static str, Duration)>,
 ) -> Result<Vec<u8>, String> {
-    let triple = target::normalize(&opts.target)?;
+    let triple = target::normalize(&opts.target)?.with_cpu(opts.cpu.as_deref())?;
     let start = Instant::now();
     let ir = checked_ir(program, &triple, opts.optimize)?;
     timings.push(("ir", start.elapsed()));
@@ -98,7 +98,7 @@ pub fn emit_objects_timed(
     units: Option<usize>,
     timings: &mut Vec<(&'static str, Duration)>,
 ) -> Result<Vec<Vec<u8>>, String> {
-    let triple = target::normalize(&opts.target)?;
+    let triple = target::normalize(&opts.target)?.with_cpu(opts.cpu.as_deref())?;
     let count = if triple.is_wasm() {
         1
     } else {

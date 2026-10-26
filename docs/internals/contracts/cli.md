@@ -1,8 +1,8 @@
 # `velt` CLI — CONTRACT
 
 ```
-velt build [<file.vlt>] [-o <out>] [--release] [-g] [--backend cranelift|llvm] [--target <triple>] [--emit vir|llvm|obj|exe] [--locked] [--json] [-v] [--timings]
-velt run   [<file.vlt>] [--release] [-g] [--target <triple>] [--backend cranelift|llvm] [--locked] [-- <program args>...]
+velt build [<file.vlt>] [-o <out>] [--release] [-g] [--backend cranelift|llvm] [--target <triple>] [--cpu <name>] [--emit vir|llvm|obj|exe] [--locked] [--json] [-v] [--timings]
+velt run   [<file.vlt>] [--release] [-g] [--target <triple>] [--cpu <name>] [--backend cranelift|llvm] [--locked] [-- <program args>...]
 velt check [<file.vlt>] [--json] [--locked] [-v]
 velt check --ts-compat [<file|dir>...] [--json] [--locked] [-v]
 velt dev   [<file.vlt>] [--exe] [--locked] [-v] [--timings] [-- <program args>...]
@@ -71,6 +71,18 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   machine): one unit below 32 000 VIR statements, else one per 16 000, at most 4.
   `$VELT_CODEGEN_UNITS` = N overrides it (N units, at most the core count; `1`: no split).
   `--emit obj` always writes one object and removes none.
+- **CPU** (additive): `--cpu <name>` (`velt build`, `run`, `test`, `dev --exe`), else
+  `$VELT_CPU`, else the root package's `build.cpu`, reaches both backends as
+  `CodegenOptions::cpu` (`commands::cpu::resolve_cpu`). Names: `baseline` (alias `x86-64`),
+  `x86-64-v2|v3|v4`, `native`, or an LLVM CPU name, checked by `velt_codegen_cl::check_cpu`
+  (an x86 CPU for another architecture, or `native` for one other than the host's, is an
+  error from `--cpu` and does not apply from the others; WebAssembly takes none). Unset, x86_64
+  code is for `x86-64-v2` (`velt_codegen_cl::DEFAULT_X86_CPU`), other targets for their
+  default; `velt run`/`velt test`/`velt dev --exe` without `--release` use `native`. LLVM gets
+  `-march=<name>` (x86_64) or `-mcpu=<name>`; Cranelift the level's ISA flags, its preset of
+  that name, or the baseline. x86_64 code above the baseline calls `velt_rt_check_cpu` first
+  in `velt_main` (rt_abi.md "CPU check"; added to the VIR by the driver). `velt dev`'s JIT
+  always uses the host's features.
 - **WebAssembly** (additive): `--target wasm32-wasip1` (alias `wasm32-wasi`)
   and `--target wasm32-unknown-unknown` build `./target/velt/<stem>.wasm` (object `<stem>.o`) with
   the LLVM backend (always; `--backend cranelift` is an error) using LLVM's `opt`/`llc`

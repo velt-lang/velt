@@ -29,6 +29,10 @@ pub(crate) struct Target {
     /// The triple as given (or the host triple).
     pub triple: String,
     pub os: Os,
+    /// `--cpu` (`velt_codegen_cl::check_cpu`); `None`: the default ([`Target::cpu_arg`]).
+    pub cpu: Option<String>,
+    /// The x86 features the code may use, as `velt_codegen_cl::required_features` (0 off x86_64).
+    pub x86_features: u32,
 }
 
 /// Validate `target` (empty / `native` / `host` = the host triple).
@@ -40,7 +44,12 @@ pub(crate) fn normalize(target: &str) -> CodegenResult<Target> {
         target.to_string()
     };
     if let Some(os) = wasm_os(&triple) {
-        return Ok(Target { triple, os });
+        return Ok(Target {
+            triple,
+            os,
+            cpu: None,
+            x86_features: 0,
+        });
     }
     let mut parts = triple.split('-');
     let arch = parts.next().unwrap_or_default();
@@ -60,7 +69,12 @@ pub(crate) fn normalize(target: &str) -> CodegenResult<Target> {
     };
     let msvc_ok = os != Some(Os::Windows) || !rest.iter().any(|p| p.starts_with("gnu"));
     match os {
-        Some(os) if arch_ok && msvc_ok && !rest.is_empty() => Ok(Target { triple, os }),
+        Some(os) if arch_ok && msvc_ok && !rest.is_empty() => Ok(Target {
+            x86_features: velt_codegen_cl::required_features(&triple, None)?,
+            triple,
+            os,
+            cpu: None,
+        }),
         _ => Err(format!(
             "codegen: unsupported target `{triple}` (supported: x86_64/aarch64 × windows-msvc, \
              apple-darwin, unknown-linux-gnu; wasm32-wasip1, wasm32-unknown-unknown)"
@@ -125,11 +139,46 @@ impl Target {
         !matches!(self.os, Os::Windows | Os::Wasi | Os::WasmBrowser)
     }
 
+    /// `self` building for CPU `cpu` (`--cpu`), checked against the target. WebAssembly
+    /// targets have no CPU choice and ignore it.
+    pub fn with_cpu(mut self, cpu: Option<&str>) -> CodegenResult<Target> {
+        if self.is_wasm() {
+            return Ok(self);
+        }
+        self.x86_features = velt_codegen_cl::required_features(&self.triple, cpu)?;
+        if let Some(c) = cpu {
+            velt_codegen_cl::check_cpu(&self.triple, c)?;
+        }
+        self.cpu = cpu.map(str::to_string);
+        Ok(self)
+    }
+
+    /// clang's CPU flag: on x86_64 `-march=` the CPU (`velt_codegen_cl::DEFAULT_X86_CPU` unless
+    /// `--cpu` names one; `baseline` is clang's `x86-64`), elsewhere `-mcpu=` a CPU `--cpu` names
+    /// (none for the baseline, the target's default). WebAssembly takes none.
+    pub fn cpu_arg(&self) -> Option<String> {
+        let cpu = self.cpu.as_deref();
+        if self.is_wasm() {
+            None
+        } else if self.triple.starts_with("x86_64") {
+            let cpu = match cpu.unwrap_or(velt_codegen_cl::DEFAULT_X86_CPU) {
+                "baseline" => "x86-64",
+                c => c,
+            };
+            Some(format!("-march={cpu}"))
+        } else {
+            cpu.filter(|c| *c != "baseline")
+                .map(|c| format!("-mcpu={c}"))
+        }
+    }
+
     /// Whether `Math.floor`, `Math.ceil` and `Math.trunc` round through a conversion to `i64`
-    /// (`rounding.rs`): the baseline x86-64 CPU has no rounding instruction (`roundsd` is
-    /// SSE4.1), so `llvm.floor` & co. would be calls into the C runtime.
+    /// (`rounding.rs`): an x86-64 CPU without SSE4.1 (`--cpu baseline`) has no rounding
+    /// instruction (`roundsd`), so `llvm.floor` & co. would be calls into the C runtime. So does
+    /// an LLVM CPU name the compiler cannot tell the features of.
     pub fn rounds_by_conversion(&self) -> bool {
-        self.triple.starts_with("x86_64")
+        const SSE41: u32 = 1 << 2;
+        self.triple.starts_with("x86_64") && self.x86_features & SSE41 == 0
     }
 
     /// Whether the target has NEON (`simd.rs` counts mask lanes with its widening sum).

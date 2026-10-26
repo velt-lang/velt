@@ -39,6 +39,8 @@ pub struct TestOptions {
     pub no_run: bool,
     /// With `no_run`: list them as JSON on stdout.
     pub json: bool,
+    /// `--cpu`.
+    pub cpu: Option<String>,
 }
 
 /// Settings shared by every test file of one `velt test` run.
@@ -47,6 +49,8 @@ struct Run<'o> {
     /// Where test executables go (`<package or cwd>/target/velt/test`).
     out_dir: PathBuf,
     packages: Option<vpm::PackageGraph>,
+    /// The CPU the harnesses are built for (`super::cpu`).
+    cpu: Option<String>,
     passed: usize,
     failed: usize,
     /// Every file the builds read (for `--watch`).
@@ -142,9 +146,21 @@ pub fn run_all(path: Option<&Path>, opts: &TestOptions) -> Result<Outcome, Strin
         });
     }
     let out_dir = base.join("target").join("velt").join("test");
+    let host = velt_codegen_cl::host_triple();
+    let env = super::cpu::env_cpu();
+    let config = project
+        .as_ref()
+        .and_then(super::project::Project::build_cpu);
+    let cpu = super::cpu::resolve_cpu(
+        opts.cpu.as_deref(),
+        env.as_deref(),
+        config.as_deref(),
+        &host,
+    )?;
     let mut run = Run {
         opts,
         out_dir,
+        cpu: super::cpu::for_running_here(cpu, &host, opts.release),
         packages: project.map(|p| p.graph),
         passed: 0,
         failed: 0,
@@ -344,6 +360,7 @@ impl Run<'_> {
                 self.builds
             ))),
             release: self.opts.release,
+            cpu: self.cpu.clone(),
             // What `--no-run` builds is for a debugger.
             debug_vars: self.opts.no_run,
             ..Default::default()

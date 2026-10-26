@@ -50,6 +50,7 @@ pub(super) fn parse_build(
                 b.output = Some(PathBuf::from(take_value(inline.as_deref(), &mut it, flag)?))
             }
             "--target" => b.target = Some(take_value(inline.as_deref(), &mut it, flag)?),
+            "--cpu" => b.cpu = Some(take_value(inline.as_deref(), &mut it, flag)?),
             "--report" => match take_value(inline.as_deref(), &mut it, flag)?.as_str() {
                 "numbers" => b.report_numbers = true,
                 other => {
@@ -101,7 +102,7 @@ pub(super) fn run_options(args: &[OsString]) -> &[OsString] {
         match arg.to_str() {
             Some("--") => break,
             // An option that takes its value from the next argument.
-            Some("--target" | "--backend" | "--report") => i += 2,
+            Some("--target" | "--cpu" | "--backend" | "--report") => i += 2,
             Some(s) if s.starts_with('-') && s.len() > 1 => i += 1,
             _ => break,
         }
@@ -206,6 +207,12 @@ mod tests {
         assert!(
             p(&["run", "--json", "a.vlt"]).is_err(),
             "only `build` prints JSON"
+        );
+        let b = build(&["build", "a.vlt", "--cpu", "x86-64-v3"]);
+        assert_eq!(b.cpu.as_deref(), Some("x86-64-v3"));
+        assert_eq!(
+            build(&["build", "--cpu=native"]).cpu.as_deref(),
+            Some("native")
         );
         let b = build(&["build", "a.vlt", "--timings"]);
         assert!(b.timings && b.verbose, "--timings implies -v");

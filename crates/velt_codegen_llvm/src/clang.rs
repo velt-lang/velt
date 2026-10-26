@@ -180,6 +180,7 @@ pub(crate) fn compile(ir: &str, target: &Target, optimize: bool) -> CodegenResul
     cmd.arg(if optimize { opt_flag() } else { "-O0" })
         .args(["-c", "-x", "ir", "-Wno-override-module"])
         .arg(format!("--target={}", target.triple))
+        .args(target.cpu_arg())
         .args(target.deployment_target_arg());
     if target.pic() {
         cmd.arg("-fPIC");

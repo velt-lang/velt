@@ -2,7 +2,8 @@
 //! The public API below is a contract (maintainer-owned).
 //!
 //! Modules:
-//! - `isa`: target triple → configured Cranelift ISA (PIC, stack probes, frame pointers).
+//! - `isa`: target triple → configured Cranelift ISA (PIC, stack probes, frame pointers); `cpu`:
+//!   the CPU it is for (`--cpu`) and the features code for it needs.
 //! - `module`: `build_module<M: Module>` declares/defines a whole program in any Cranelift
 //!   module (the object backend and the JIT share the exact same path).
 //! - `dev`: [`DevSession`], the in-process JIT behind `velt dev`, with hot swap; `c_symbols`:
@@ -26,6 +27,7 @@ macro_rules! bail {
 mod abi;
 #[cfg(unix)]
 mod c_symbols;
+mod cpu;
 mod debug_info;
 mod dev;
 mod entry;
@@ -38,6 +40,7 @@ mod unwind;
 #[cfg(test)]
 mod tests;
 
+pub use cpu::{check_cpu, is_x86_cpu, required_features, DEFAULT_X86_CPU, X86_FEATURES};
 pub use dev::{DevSession, HandlerCode, JitProgram, Reload};
 
 /// Internal result type: errors are human-readable messages.
@@ -51,6 +54,9 @@ pub struct CodegenOptions {
     pub target: String,
     /// Enable Cranelift optimizations (`opt_level = "speed"`).
     pub optimize: bool,
+    /// `--cpu` (`baseline`, `x86-64-v2`, `native`, an LLVM CPU name; see `cpu`); `None`: the
+    /// default, [`DEFAULT_X86_CPU`] on x86_64 (`native` when `target` is empty or `native`).
+    pub cpu: Option<String>,
 }
 
 /// CONTRACT: emit a relocatable object file (COFF / Mach-O / ELF per target) for the program.
@@ -58,7 +64,7 @@ pub fn emit_object(program: &vir::Program, opts: &CodegenOptions) -> Result<Vec<
     if let Err(errs) = velt_vir::verify(program) {
         return Err(format!("invalid VIR:\n  {}", errs.join("\n  ")));
     }
-    let isa = isa::make_isa(&opts.target, opts.optimize, false)?;
+    let isa = isa::make_isa(&opts.target, opts.cpu.as_deref(), opts.optimize, false)?;
     let builder = ObjectBuilder::new(
         isa.clone(),
         "velt",

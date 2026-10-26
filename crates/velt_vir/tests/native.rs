@@ -81,6 +81,7 @@ fn build_native(name: &str, p: &hir::Program) -> PathBuf {
     let opts = velt_codegen_cl::CodegenOptions {
         target: target.clone(),
         optimize: false,
+        cpu: None,
     };
     let obj = velt_codegen_cl::emit_object(&v, &opts).unwrap_or_else(|e| panic!("codegen: {e}"));
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("vir_native");

@@ -61,6 +61,7 @@ pub(super) fn parse(name: &str, rest: Vec<OsString>) -> Result<Command, String> 
             ("test", "--exact") => flags.exact = true,
             ("test", "--no-run") => flags.no_run = true,
             ("test", "--json") => flags.json = true,
+            ("test", "--cpu") => flags.cpu = Some(take_value(inline.as_deref(), &mut it, "--cpu")?),
             _ if s.starts_with('-') && s.len() > 1 => return Err(super::unknown_option(name, &s)),
             _ => positional.push(s),
         }
@@ -78,6 +79,7 @@ struct Flags {
     locked: bool,
     release: bool,
     watch: bool,
+    cpu: Option<String>,
     filter: Option<String>,
     exact: bool,
     no_run: bool,
@@ -183,6 +185,7 @@ fn build_command(name: &str, positional: Vec<String>, flags: Flags) -> Result<Co
             exact: flags.exact,
             no_run: flags.no_run,
             json: flags.json,
+            cpu: flags.cpu,
         }),
         _ => unreachable!("ICE: `{name}` is not a package subcommand"),
     }
@@ -325,10 +328,19 @@ mod tests {
                 exact: false,
                 no_run: false,
                 json: false,
+                cpu: None,
             }
         );
         assert_eq!(
-            p(&["test", "tests", "--release", "--watch"]).unwrap(),
+            p(&[
+                "test",
+                "tests",
+                "--release",
+                "--watch",
+                "--cpu",
+                "x86-64-v3"
+            ])
+            .unwrap(),
             Command::Test {
                 path: Some(PathBuf::from("tests")),
                 release: true,
@@ -338,6 +350,7 @@ mod tests {
                 exact: false,
                 no_run: false,
                 json: false,
+                cpu: Some("x86-64-v3".into()),
             }
         );
         assert_eq!(
@@ -359,6 +372,7 @@ mod tests {
                 exact: false,
                 no_run: true,
                 json: true,
+                cpu: None,
             }
         );
         assert!(p(&["test", "--json"]).unwrap_err().contains("`--no-run`"));

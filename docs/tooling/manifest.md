@@ -179,6 +179,20 @@ whose functions its Velt code declares ([Packages with native code](packages.md#
   `aarch64-apple-darwin`, `x86_64-pc-windows-msvc`, `aarch64-pc-windows-msvc`.
 - `wasm`: must be `false` (the default); WebAssembly libraries are not supported yet.
 
+## `build`
+
+```ts ignore
+build: { cpu: "x86-64-v3" },
+```
+
+How the package's program is built. Only the root package's applies.
+
+- `cpu`: the CPU the program is built for, as `velt build --cpu`: `"baseline"`, `"x86-64-v2"`
+  (the default on x86_64), `"x86-64-v3"`, `"x86-64-v4"`, `"native"` or an LLVM CPU name such as
+  `"znver4"` ([CPU](platforms.md#cpu)). `--cpu` and `VELT_CPU` take precedence, and a CPU of
+  another architecture does not apply to a build for this one (`"x86-64-v3"` leaves arm64
+  builds at their default).
+
 ## `tsCompat`
 
 ```ts ignore

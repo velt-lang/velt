@@ -12,6 +12,9 @@
 | Linux musl (Alpine) | As a host, not an official target, but works: `velt doctor`, every end-to-end test and the HTTP example pass on Alpine 3.21 (aarch64). `velt dev`'s JIT host is unavailable there (use `velt dev --exe`). As a build target, every toolchain builds fully static executables with `--target <arch>-unknown-linux-musl` after `velt target add` ([Cross-compiling](#cross-compiling)). |
 | WebAssembly | `wasm32-wasip1` and `wasm32-unknown-unknown`, single-threaded, without networking ([WebAssembly](webassembly.md)). |
 
+x86_64 programs are built for x86-64-v2 CPUs (about 2009 and later) unless `--cpu` says
+otherwise; `--cpu baseline` builds for older ones ([CPU](#cpu)).
+
 Windows on arm64 has not been run yet. Its executables carry unwind information (`.pdata` and
 `.xdata`, as on x64), so debuggers and backtraces walk through Velt frames; `velt dev`'s JIT
 code does not register unwind information there yet.
@@ -182,6 +185,59 @@ velt target remove x86_64-pc-windows-msvc
   `velt build --target` fetches. Debug builds link it as a shared library from this machine's
   package cache, so for another machine build with `--release` (Linux and macOS link the
   library's object statically; Windows executables get its DLL beside them).
+
+## CPU
+
+Code is built for one generation of the target's CPU, and runs on it and later ones. x86_64 code
+is for **x86-64-v2** unless `--cpu` names another:
+
+| `--cpu` | x86_64 CPUs it runs on | Adds |
+|---|---|---|
+| `baseline` (or `x86-64`) | every one (AMD K8 and Intel Pentium 4, 2003) | (SSE2) |
+| `x86-64-v2` (default) | Intel Core from Nehalem (2008), Atom from Silvermont (2013); AMD from Bulldozer (2011) and Jaguar (2013) | SSE3, SSSE3, SSE4.1, SSE4.2, POPCNT, CMPXCHG16B |
+| `x86-64-v3` | Intel Core from Haswell (2013), Pentium, Celeron and Atom from about 2021 (Gracemont); AMD from Excavator (2015) and Zen (2017) | AVX, AVX2, BMI1, BMI2, FMA, LZCNT, MOVBE, F16C |
+| `x86-64-v4` | Intel Xeon from Skylake-SP (2017), Core from Ice Lake (2019) to Rocket Lake (2021) but not Alder Lake and its successors; AMD from Zen 4 (2022) | AVX-512 F, BW, CD, DQ, VL |
+| `native` | this machine's CPU: for programs that run where they are built | |
+| an LLVM CPU name (`znver4`, `skylake`, `neoverse-n1`, `apple-m2`) | that CPU and compatible ones | |
+
+x86-64-v2 is what Windows 11 24H2 and RHEL 9 require; the baseline lacks the byte shuffles,
+`popcnt` and rounding instructions std's hot paths (SIMD, `velt:simd`, `Math.floor`) use, and
+emulates them at several times the cost.
+
+- **Other targets.** aarch64 Linux code is for the baseline, armv8-a with NEON (the Raspberry Pi
+  3 and 4, AWS Graviton 1 and most single-board computers have no more); `--cpu neoverse-n1`
+  (Graviton 2, Ampere Altra) or `native` adds the LSE atomics and dot products of armv8.2-a.
+  Apple targets keep the toolchain's default (Apple M1 on arm64; x86-64-v2 on x86_64, so a Mac
+  older than 2010 needs `--cpu baseline`). WebAssembly has no CPU choice: `--cpu` is an error
+  there.
+- **Choosing.** `--cpu` comes first, then `$VELT_CPU`, then the package's `build.cpu`
+  ([`package.vlt`](manifest.md#build)), then the target's default. A setting of another
+  architecture's (`VELT_CPU=x86-64-v3` in a build for arm64) does not apply, so one setting
+  serves every target of a package; the same name in `--cpu` is an error. `velt run`,
+  `velt test` and `velt dev --exe` without `--release` build for this machine's CPU (`native`)
+  unless one is named, as `velt dev` compiles for it.
+- **The backends.** LLVM (release builds) gets the name as `-march=` on x86_64 and `-mcpu=`
+  elsewhere, so any CPU clang knows works. Cranelift (debug builds) uses the levels, its own
+  settings for the x86 CPUs it knows by the same names (`skylake`, `znver3`) and `native`; for any
+  other name it builds the baseline.
+- **The start-up check.** On x86_64, a program built for more than the baseline checks the CPU
+  before `main` runs. On one without a feature it was built for, it exits with code 1 and a
+  message that names the level to build for instead (the highest it has, or the baseline), not
+  an illegal instruction:
+
+  ```text
+  error: this program was built for x86-64-v2 (SSE3, SSSE3, SSE4.1, SSE4.2, POPCNT, CMPXCHG16B); this CPU lacks POPCNT; rebuild it with `--cpu baseline`
+  ```
+
+  It checks the features in the table (and, for CPU names, AVX-512 VBMI and BITALG); an LLVM
+  CPU name Cranelift does not know is not checked. `VELT_CPU_DISABLE=popcnt` (a comma-separated
+  list of features) makes a program treat them as missing, to see the check on a CPU that has
+  them.
+- **The runtime library** (Rust, and the C libraries it builds: mimalloc and SQLite) is one per
+  target, built for the baseline, so it serves programs built for every CPU, the baseline
+  included. What `--cpu` changes is the program's own code, std included.
+- Builds for different CPUs share no objects: every build generates its objects, and the link
+  is skipped only when they are unchanged.
 
 ## Installing a release
 
