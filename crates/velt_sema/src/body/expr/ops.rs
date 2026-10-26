@@ -599,26 +599,29 @@ impl FnCx<'_, '_> {
         if !self.compatible(t, rt) && !self.cx.same_ty(t, rt) {
             // `o.k * 2` with `o.k: number | undefined`: the operand that may be a nothing is
             // the problem, not the other one's type (TypeScript's TS18048).
+            // `a` is `b` with `null`, `undefined` or both (`T | null | undefined`): which.
             let nothing = |s: &Self, a: TyId, b: TyId| {
-                (s.cx.ty.opt_payload(a) == Some(b))
-                    .then(|| s.cx.ty.nothing_of(a))
-                    .flatten()
+                let (mut core, mut null, mut undefined) = (a, false, false);
+                while let Some(n) = s.cx.ty.nothing_of(core) {
+                    null |= n.has_null();
+                    undefined |= n.has_undefined();
+                    core = s.cx.ty.opt_payload(core)?;
+                }
+                (core == b && core != a).then_some((null, undefined))
             };
             if let Some((n, at, nt)) = (nothing(self, t, rt).map(|n| (n, span, t)))
                 .or_else(|| nothing(self, rt, t).map(|n| (n, r.span, rt)))
                 .filter(|_| !matches!(op, B::Eq | B::NotEq | B::StrictEq | B::StrictNotEq))
             {
-                let (word, test) = match n.has_undefined() {
-                    true => (
-                        "undefined",
-                        "`!== undefined`, or `\"k\" in o` for an optional field",
-                    ),
-                    false => ("null", "`!== null`"),
+                let (word, test) = match n {
+                    (true, true) => ("`null` or `undefined`", "`!= null`"),
+                    (false, _) => ("`undefined`", "`!== undefined`"),
+                    (true, false) => ("`null`", "`!== null`"),
                 };
                 let shown = self.cx.display(nt);
                 self.cx.error(
                     Diagnostic::error(
-                        format!("an operand may be `{word}`: its type is `{shown}`"),
+                        format!("an operand may be {word}: its type is `{shown}`"),
                         at,
                     )
                     .with_note(format!(
