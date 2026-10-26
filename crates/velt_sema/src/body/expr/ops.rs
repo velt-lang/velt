@@ -369,6 +369,7 @@ impl FnCx<'_, '_> {
             self.literal_operands(op, &l, &r);
             (l, r)
         };
+        let (l, r) = self.std_int_operands(l, r);
         // Bitwise operators on numbers: JS's 32-bit semantics (`int32.rs`).
         if let Some(bop) = self.js_bitwise_applies(op, &l, &r) {
             return self.js_bitwise(bop, l, r, span);

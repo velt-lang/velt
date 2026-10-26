@@ -413,6 +413,8 @@ struct Cx<'h> {
     debug: Option<debug_vars::DebugTypes>,
     /// Memoized `tracks_caller` answers.
     tracked: FxHashMap<DefId, bool>,
+    /// HIR nodes of the standard-library functions `tracks_caller` scanned (track_caller.rs).
+    tracked_size: FxHashMap<DefId, usize>,
     /// Memoized `quiet` answers (quiet.rs).
     quiet: FxHashMap<DefId, bool>,
     /// Interned static `VeltStr` objects (`static_str_object`).
@@ -557,8 +559,12 @@ struct FnLower<'c, 'h> {
     block_locs: Vec<(Vec<Option<SrcLoc>>, Option<SrcLoc>)>,
     /// Location recorded for statements emitted now (srcloc.rs).
     loc: Option<SrcLoc>,
-    /// In a caller-tracking instance: the call site its panics report.
+    /// In a caller-tracking instance: the call site its panics report (`srcloc::ARG_LOC`: the
+    /// one `caller_arg` points to).
     caller_loc: Option<SrcLoc>,
+    /// In a caller-tracking instance that takes its caller's location as a parameter: that
+    /// parameter, a pointer to the `Str` ` at <path>:<line>:<col>` (empty when unknown).
+    caller_arg: Option<vir::Local>,
     /// A block is live once a live block jumps to it; dead blocks are pruned in `finish`.
     live: Vec<bool>,
     cur: BlockId,

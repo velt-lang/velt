@@ -1,0 +1,8 @@
+// An error thrown inside a large standard-library function names the user's line: the typed
+// array constructor's layout check is one instance for all call sites, which takes the call
+// site as a hidden argument (velt_vir track_caller.rs), not a copy per call site.
+function main() {
+  const buf = new ArrayBuffer(8);
+  const view = new Uint32Array(buf, 2, 1);
+  console.log(view.length);
+}

@@ -7,7 +7,7 @@ use super::{ice, FnLower};
 use crate::vir::{
     self, BasicBlock, BlockId, Const, Function, Linkage, Local, LocalDecl, Operand, Place, Rvalue,
 };
-use crate::vir::{Terminator, Ty, STR_AGG};
+use crate::vir::{Terminator, Ty};
 
 /// Successor blocks of a terminator.
 pub(crate) fn successors(t: &Terminator) -> Vec<BlockId> {
@@ -204,11 +204,13 @@ impl FnLower<'_, '_> {
                 continue;
             }
             self.switch_to(bb);
-            // A caller-tracking instance called from glue has no caller location to point at.
-            self.loc = at.filter(|l| *l != super::srcloc::UNKNOWN_LOC);
-            let msg = format!("division by zero{}", self.panic_suffix());
-            let msg = self.str_lit(&msg);
-            let a = self.operand_addr(msg, Ty::Agg(STR_AGG));
+            // A caller-tracking instance called from glue has no caller location to point at,
+            // and one that takes its caller's location has it only at run time.
+            let known = |l: &crate::vir::SrcLoc| {
+                *l != super::srcloc::UNKNOWN_LOC && *l != super::srcloc::ARG_LOC
+            };
+            self.loc = at.filter(known);
+            let a = self.panic_text("division by zero");
             self.call_rt(Rt::Panic, vec![a], None);
         }
     }

@@ -182,6 +182,14 @@ impl<M: Module> Translator<'_, '_, M> {
         if symbol == "velt_rt_math_clz32" && params == [Ty::I32] && ret == Ty::I32 {
             return Some(self.builder.ins().clz(args[0]));
         }
+        if params == [Ty::U64] && ret == Ty::U64 {
+            match symbol {
+                "velt_rt_math_clz64" => return Some(self.builder.ins().clz(args[0])),
+                "velt_rt_math_ctz64" => return Some(self.builder.ins().ctz(args[0])),
+                "velt_rt_math_popcount64" => return Some(self.builder.ins().popcnt(args[0])),
+                _ => {}
+            }
+        }
         if symbol == "velt_rt_math_umulh" && params == [Ty::U64, Ty::U64] && ret == Ty::U64 {
             return Some(self.builder.ins().umulhi(args[0], args[1]));
         }

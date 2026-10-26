@@ -93,6 +93,25 @@ slow:
 /// The declaration `math_intrinsic` also emits for `Math.abs` (one line, so the two coincide).
 const FABS: &str = "declare double @llvm.fabs.f64(double)";
 
+/// `x.leadingZeros()` / `trailingZeros()` / `countOnes()` on 64 bits (`velt_rt_math_clz64`,
+/// `_ctz64`, `_popcount64`): `ctlz`, `cttz` (both defined for 0: 64) and `ctpop`.
+const CLZ64_DECL: &str = "declare i64 @llvm.ctlz.i64(i64, i1)";
+const CLZ64: &str = "define internal i64 @velt.clz64(i64 %x) alwaysinline nounwind {
+  %r = call i64 @llvm.ctlz.i64(i64 %x, i1 false)
+  ret i64 %r
+}";
+/// One line each, so that they coincide with the same declarations elsewhere (`mask.first()`).
+const CTZ64_DECL: &str = "declare i64 @llvm.cttz.i64(i64, i1)";
+const CTZ64: &str = "define internal i64 @velt.ctz64(i64 %x) alwaysinline nounwind {
+  %r = call i64 @llvm.cttz.i64(i64 %x, i1 false)
+  ret i64 %r
+}";
+const POPCOUNT64_DECL: &str = "declare i64 @llvm.ctpop.i64(i64)";
+const POPCOUNT64: &str = "define internal i64 @velt.popcount64(i64 %x) alwaysinline nounwind {
+  %r = call i64 @llvm.ctpop.i64(i64 %x)
+  ret i64 %r
+}";
+
 /// `Math.clz32` (`velt_rt_math_clz32`): `ctlz`, defined for 0 (32).
 const CLZ32: &str = "declare i32 @llvm.ctlz.i32(i32, i1)
 define internal i32 @velt.clz32(i32 %x) alwaysinline nounwind {
@@ -130,6 +149,14 @@ pub(crate) fn inline_helper(symbol: &str) -> Option<InlineHelper> {
             Ty::I32,
         ),
         "velt_rt_math_clz32" => ("@velt.clz32", &[CLZ32], &[Ty::I32], Ty::I32),
+        "velt_rt_math_clz64" => ("@velt.clz64", &[CLZ64_DECL, CLZ64], &[Ty::U64], Ty::U64),
+        "velt_rt_math_ctz64" => ("@velt.ctz64", &[CTZ64_DECL, CTZ64], &[Ty::U64], Ty::U64),
+        "velt_rt_math_popcount64" => (
+            "@velt.popcount64",
+            &[POPCOUNT64_DECL, POPCOUNT64],
+            &[Ty::U64],
+            Ty::U64,
+        ),
         "velt_rt_math_umulh" => ("@velt.umulh", &[UMULH], &[Ty::U64, Ty::U64], Ty::U64),
         _ => return None,
     })
@@ -168,6 +195,9 @@ pub(crate) fn effects(symbol: &str) -> Effects {
         | "velt_rt_pow_i64"
         | "velt_rt_math_to_int32"
         | "velt_rt_math_clz32"
+        | "velt_rt_math_clz64"
+        | "velt_rt_math_ctz64"
+        | "velt_rt_math_popcount64"
         | "velt_rt_math_umulh"
         | "velt_rt_math_mul_int32"
         | "velt_rt_math_add_int32" => Effects::None,

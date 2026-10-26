@@ -12,6 +12,10 @@ Base64 (RFC 4648 standard and URL-safe alphabets), lowercase hex, and UTF-8. Dec
 - `utf8Encode(s): u8[]` (a lone surrogate becomes U+FFFD; the length is
   `Buffer.byteLength(s)`, not `s.length`, which counts UTF-16 code units), `utf8Decode(data)`
   (strict), `utf8DecodeLossy(data)` (invalid sequences become U+FFFD), `utf8Valid(data): bool`.
+- A string's bytes without a copy: `utf8Length(s): usize` (the bytes it keeps its text in, O(1);
+  `Buffer.byteLength(s)` for well-formed text, a lone surrogate counting its three-byte form),
+  `utf8ByteAt(s, i): u8` (a RangeError past the end), `isAscii(s): bool` (O(1)). With
+  `u8x16.loadString` ([SIMD](simd.md)), 16 bytes at a time.
 - `TextEncoder` and `TextDecoder`, the WHATWG classes, are globals as in Node (no import).
   `new TextEncoder().encode(s)` gives the UTF-8 bytes in a `Uint8Array` ([typed
   arrays](typed_array.md)), and `encodeInto(s, dest)` writes as many whole characters as fit

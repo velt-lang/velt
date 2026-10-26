@@ -117,6 +117,14 @@ function randomized(seed: u64, ops: i64, range: u64) {
     if (op % 1000 == 0) {
       check("keys", deepEqual(m.keys(), keys));
       check("values", deepEqual(m.values(), vals));
+      // A range whose ends fall anywhere: inside a leaf, past it, between leaves.
+      const a = ((x >> 3) % range) as i64;
+      const b = a + (((x >> 23) % (range / 3 + 1)) as i64);
+      const want: [i64, i64][] = [];
+      for (let i = lowerBound(keys, a); i < (keys.length as usize) && keys[i] < b; i++) {
+        want.push([keys[i], vals[i]]);
+      }
+      check(`range ${a} ${b}`, deepEqual(m.range(a, b), want));
     }
   }
   check("final keys", deepEqual(m.keys(), keys));
@@ -200,6 +208,78 @@ function forEachChanges() {
   console.log("forEach", m.size, seen.join(","));
 }
 
+// `getMany` gives what `get` gives, key by key, across batch boundaries, for hits, misses and
+// keys repeated in a batch.
+function batches() {
+  const empty = new BTreeMap<i64, i64>();
+  console.log("getMany empty", empty.getMany([1, 2]));
+  const m = new BTreeMap<i64, i64>();
+  for (let i: i64 = 0; i < 20000; i++) {
+    m.set(i * 3, i);
+  }
+  const keys: i64[] = [];
+  let x: u64 = 7;
+  for (let i = 0; i < 1000; i++) {
+    x = next(x);
+    keys.push(((x >> 8) % 70000) as i64);
+  }
+  keys.push(keys[0]);
+  const got = m.getMany(keys);
+  check("getMany length", got.length == keys.length);
+  let hits = 0;
+  for (let i: usize = 0; i < (keys.length as usize); i++) {
+    check(`getMany ${keys[i]}`, got[i] === m.get(keys[i]));
+    hits += got[i] === undefined ? 0 : 1;
+  }
+  const words = new BTreeMap<string, i64>([
+    ["b", 2],
+    ["a", 1],
+    ["c", 3],
+  ]);
+  console.log("getMany", hits > 0, words.getMany(["c", "x", "a", "b", "a"]));
+}
+
+// String keys in UTF-16 order (`<`): Latin, CJK, characters past U+FFFF (written as surrogate
+// pairs, which sort before U+E000..U+FFFF) and lone surrogates, with shared prefixes long
+// enough for nodes to skip them.
+function unicode() {
+  const parts = [
+    "a",
+    "é",
+    "ß",
+    "中",
+    "文",
+    "😀",
+    "😎",
+    "\uE000",
+    "\uFFFD",
+    String.fromCharCode(0xd800),
+    String.fromCharCode(0xdc00),
+    "z",
+    "~",
+  ];
+  const m = new BTreeMap<string, i64>();
+  const keys: string[] = [];
+  let x: u64 = 99;
+  for (let i: i64 = 0; i < 4000; i++) {
+    let k = "prefix/shared/";
+    for (let j = 0; j < 4; j++) {
+      x = next(x);
+      k = k + parts[(x % 13) as usize];
+    }
+    if (!m.has(k)) {
+      keys.push(k);
+    }
+    m.set(k, i);
+  }
+  keys.sort();
+  check("unicode order", deepEqual(m.keys(), keys));
+  for (const k of keys) {
+    check("unicode find", m.has(k));
+  }
+  console.log("unicode", m.size, keys.length);
+}
+
 function main() {
   basics();
   randomized(88172645463325252, 60000, 20000);
@@ -209,6 +289,19 @@ function main() {
   strings();
   structs();
   forEachChanges();
+  batches();
+  unicode();
+  bools();
+}
+
+// Bool keys, `false` first (their one-byte encoding, and `compareTo` for ranges).
+function bools() {
+  const m = new BTreeMap<bool, string>();
+  m.set(true, "yes");
+  m.set(false, "no");
+  m.set(true, "still yes");
+  console.log("bools", m.keys(), m.get(true), m.floorKey(true), m.ceilingKey(false));
+  check("bools delete", m.delete(false) && !m.has(false) && m.size == 1);
 }
 
 // Struct keys order field by field.

@@ -1,0 +1,52 @@
+// check: no leaks
+// A replaced or deleted value is released: unused value slots hold a share of a live entry's
+// value (the fillers), which moves to another entry when its own is deleted or replaced.
+import { BTreeMap } from "velt:collections/btree_map";
+
+class Payload {
+  n: i64;
+  buf: u8[];
+  constructor(n: i64) {
+    this.n = n;
+    this.buf = [1, 2, 3];
+  }
+}
+
+function alive(refs: WeakRef<Payload>[]): i64 {
+  let c = 0;
+  for (const r of refs) {
+    if (r.deref() !== undefined) {
+      c++;
+    }
+  }
+  return c;
+}
+
+function main() {
+  const m = new BTreeMap<i64, Payload>();
+  const first: WeakRef<Payload>[] = [];
+  for (let i: i64 = 0; i < 2000; i++) {
+    const v = new Payload(i);
+    first.push(new WeakRef<Payload>(v));
+    m.set((i * 7919) % 2000, v);
+  }
+  // Every value replaced, the first one stored (the fillers' entry) included.
+  const second: WeakRef<Payload>[] = [];
+  for (let i: i64 = 0; i < 2000; i++) {
+    const v = new Payload(-i);
+    second.push(new WeakRef<Payload>(v));
+    m.set(i, v);
+  }
+  console.log("replaced", m.size, alive(first), alive(second));
+  // Half deleted, in an order that deletes the fillers' entry early.
+  for (let i: i64 = 0; i < 2000; i += 2) {
+    m.delete(i);
+  }
+  let gone = 0;
+  for (let i: usize = 0; i < 2000; i += 2) {
+    gone += second[i].deref() === undefined ? 1 : 0;
+  }
+  console.log("deleted", m.size, gone, alive(second));
+  m.set(0, new Payload(7));
+  console.log("again", m.size, m.get(0)!.n, m.get(1)!.n);
+}

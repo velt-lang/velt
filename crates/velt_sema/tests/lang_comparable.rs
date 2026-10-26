@@ -5,7 +5,7 @@ mod common;
 
 use common::hir_walk::{calls, exprs, func};
 use common::programs::{err_src, ok_src};
-use velt_sema::hir::{BinOp, Callee, Def, ExprKind as E, TyKind};
+use velt_sema::hir::{BinOp, Callee, Def, ExprKind as E, Intrinsic, TyKind};
 
 #[test]
 fn ordering_on_a_comparable_param_calls_compare_to() {
@@ -14,18 +14,25 @@ fn ordering_on_a_comparable_param_calls_compare_to() {
          function main() { console.log(less(1, 2), less(\"b\", \"a\")); }",
     );
     let f = func(&p, "less");
-    // `compareTo(a, b) < 0`
+    // `ParamOrdering(compareTo(a, b)) < 0`
     let found = exprs(f).into_iter().any(|e| match &e.kind {
         E::Binary {
             op: BinOp::Lt, lhs, ..
-        } => {
-            matches!(&lhs.kind, E::Call { callee: Callee::ParamMethod { iface, slot: 0, .. }, args }
+        } => match &lhs.kind {
+            E::Call {
+                callee: Callee::Intrinsic(Intrinsic::ParamOrdering),
+                args: marked,
+            } => matches!(&marked[0].kind, E::Call { callee: Callee::ParamMethod { iface, slot: 0, .. }, args }
             if args.len() == 2
-                && matches!(p.def(*iface), Def::Interface(i) if i.name.ends_with("Comparable")))
-        }
+                && matches!(p.def(*iface), Def::Interface(i) if i.name.ends_with("Comparable"))),
+            _ => false,
+        },
         _ => false,
     });
-    assert!(found, "`a < b` is not `a.compareTo(b) < 0` in `less`");
+    assert!(
+        found,
+        "`a < b` is not a marked `a.compareTo(b) < 0` in `less`"
+    );
 }
 
 #[test]
@@ -100,4 +107,26 @@ fn exact_extensions_win_and_generic_ones_need_their_bounds() {
     assert!(targets[0].contains("i64"), "{targets:?}");
     assert_ne!(targets[1], targets[0], "{targets:?}");
     assert_ne!(targets[2], targets[1], "{targets:?}");
+}
+
+#[test]
+fn velt_only_prelude_methods_keep_their_integer_results_in_user_code() {
+    // `compareTo` (std/prelude/compare.vlt) and the bit counts (std/prelude/bits.vlt) are Velt's
+    // own API: locals declared from them are a `usize` or `i64`, where a JS API integer
+    // (`indexOf`) makes a `number` local.
+    ok_src(
+        "function main() {
+           const x: u64 = 8;
+           const t = x.trailingZeros();
+           const l = x.leadingZeros();
+           const c = x.countOnes();
+           const r = x.compareTo(9);
+           const ints: usize = t + l + c;
+           const order: i64 = r;
+           console.log(ints, order);
+         }",
+    );
+    err_src(
+        "function main() { const i = \"ab\".indexOf(\"b\"); const j: i64 = i; console.log(j); }",
+    );
 }

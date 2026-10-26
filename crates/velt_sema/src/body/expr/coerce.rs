@@ -93,6 +93,11 @@ impl FnCx<'_, '_> {
         h: hir::Expr,
         exp: TyId,
     ) -> Result<hir::Expr, hir::Expr> {
+        // A standard library integer where an integer type that holds it is expected.
+        let h = match self.std_int_coerce(h, exp) {
+            Ok(i) => return Ok(i),
+            Err(h) => h,
+        };
         let t = &self.cx.ty;
         if h.ty == exp
             || t.is_bottom(h.ty)
@@ -551,7 +556,7 @@ impl FnCx<'_, '_> {
         {
             Some(note) => d = d.with_note(note),
             None => {
-                if let Some(note) = self.number_note(expected, found.ty) {
+                if let Some(note) = self.number_expr_note(expected, found) {
                     d = d.with_note(note);
                 }
             }
