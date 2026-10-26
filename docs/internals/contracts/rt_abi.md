@@ -206,9 +206,9 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
 | `velt_rt_str_from_u64` | `(uint64_t v, VeltStr* out)` | decimal (inline) |
 | `velt_rt_str_from_f64` | `(double v, VeltStr* out)` | JS `Number.prototype.toString` formatting (inline) |
 | `velt_rt_str_from_bool` | `(uint8_t v, VeltStr* out)` | `true`/`false` (static) |
-| `velt_rt_str_clone` | `(const VeltStr* s, VeltStr* out)` | a copy: bitwise, plus count +1 for heap strings (never a deep copy) |
+| `velt_rt_str_clone` | `(const VeltStr* s, VeltStr* out)` | a copy: bitwise, plus count +1 for heap strings (never a deep copy); generated code calls it for heap strings only (`(int64_t)w2 > 0`) and copies the three words of any other |
 | `velt_rt_str_own` | `(const VeltStr* s, VeltStr* out)` | like `str_clone`, but a static-form string (which may borrow memory, e.g. a JSON key pointing into the parsed text) is copied into an inline or heap string |
-| `velt_rt_str_drop` | `(VeltStr* s)` | count −1 for heap strings (frees at 0), then zeroes `*s` |
+| `velt_rt_str_drop` | `(VeltStr* s)` | count −1 for heap strings (frees at 0), then zeroes `*s`; generated code calls it for heap strings only and zeroes any other itself |
 | `velt_rt_str_cmp` | `(const VeltStr* a, const VeltStr* b) -> int32_t` | -1 / 0 / 1 in UTF-16 code-unit order (`<`, `sort()`; #377 phase 2b): `memcmp` for two ASCII strings, else byte order corrected where it differs from code-unit order (design/strings.md "The ordering rule") |
 | `velt_rt_str_char_code_at` | `(const VeltStr* s, int64_t i) -> int64_t` | the UTF-16 code unit at `i` (a supplementary character gives its high or low surrogate), -1 out of range; generated code calls it for non-ASCII strings only |
 | `velt_rt_str_byte_length` | `(const VeltStr* s) -> uint64_t` | the UTF-8 length: the stored byte length, O(1) (generated code reads it inline, above) |
@@ -349,6 +349,11 @@ inline. They never cross the C ABI, so no target's vector calling convention is 
 check it: the prelude's methods do. `load_partial` and `store_partial` take a count of elements
 too, below the lane count, and touch only those elements.
 
+`velt_simd_prefetch(void* addr)` (`-> void`, additive) starts loading the cache line at `addr`
+for a read soon, as a hint: LLVM emits `llvm.prefetch` (read, every cache level, data), which
+never faults; Cranelift emits nothing. Std reaches it through `__intrinsic_array_prefetch(xs, i)`
+(HIR `Intrinsic::ArrayPrefetch`, the address of element `i`, not bounds-checked).
+
 A shuffle is `velt_simd_<type>_shuffle_<i0>_<i1>…`, one lane index per lane spelled in the symbol
 (`velt_simd_u32x4_shuffle_1_0_7_6`; indices below twice the lane count, a lane of the first
 argument then of the second), so the mask is a constant wherever the call is: `(a, b) -> v`. No
@@ -419,6 +424,12 @@ keeps the module lock while it blocks; taking the module lock while the thread h
 stops with an `ICE:` panic (sema rejects module state in a `with` callback). On WebAssembly (one
 thread) there is no lock.
 
+Within one call of a compiled function (until the poll ends, or until `velt_rt_block_on` or
+`main` returns), a successful `velt_rt_module_state(desc, s)` stays valid for every slot `<= s`:
+the same block, still initialized up to `s`, with the lock still held. The compiler reuses it
+instead of calling again (`velt_opt` `module_state`, #1571), so a runtime change must keep this
+[additive, #1571].
+
 ## Array length limit [additive, #1572]
 
 An array (`{ data, len, cap }`) holds at most `MAX_ARRAY_LEN` = 2^52 - 1 elements, and its
@@ -435,7 +446,8 @@ at most 2^53 - 3 (all an index running to `len` inclusive needs). A typed array'
 below 2^52 for the same reason (its buffer is a `u8[]`). `velt_rt_bytes_zeroed(n)` checks `n`
 against the limit too. A buffer within the limit that the target cannot allocate is out of
 memory (`velt_rt_alloc` above), never a smaller block: on wasm32 a byte size past 2^31 - 1
-stops the program there, in `velt_rt_realloc` and in `velt_rt_bytes_zeroed`.
+stops the program there, in `velt_rt_realloc`, in `velt_rt_bytes_zeroed` and in
+`velt_rt_bytes_concat`.
 
 ## Array methods on a proxy [additive, #823]
 
@@ -530,6 +542,12 @@ never reads), so that it treats the loop's copy for a plain array as the one tha
 | `velt_rt_alloc` | `(uint64_t size, uint64_t align) -> void*` — never null for size > 0: a request it cannot satisfy stops the program with `panic: memory allocation of <size> bytes failed` (exit code 101; was an abort), as does `velt_rt_realloc`. On a 32-bit target (wasm32) a size past `isize::MAX` is such a request: the 64-bit size is never truncated |
 | `velt_rt_realloc` | `(void* p, uint64_t old_size, uint64_t align, uint64_t new_size) -> void*` |
 | `velt_rt_free` | `(void* p, uint64_t size, uint64_t align)` |
+
+An array buffer (generated code's `T[]`) has its element's alignment, or 128 bytes when the
+element's size is a multiple of 64 (`velt_vir` `buffer_align`): each element of such an array is
+then whole 64-byte lines, and an aligned pair of them one 128-byte block (one cache line on
+Apple's CPUs, an adjacent pair that others fetch together), as a B-tree node's two lines are.
+Every allocation, growth and free of one buffer passes the same alignment.
 
 `VELT_RT_DEBUG_ALLOC=1` with a **debug** runtime (programs linked against `<target>/debug/velt_rt`,
 e.g. every golden run) checks every allocation of the process (generated code and runtime alike):

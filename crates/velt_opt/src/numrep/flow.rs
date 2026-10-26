@@ -69,11 +69,19 @@ pub(super) struct Flow {
     caps: Vec<Option<Fact>>,
     /// Predecessors of each block.
     preds: Vec<Vec<usize>>,
+    /// Per local: facts about the array elements it points at (`arrays`).
+    elems: Vec<Option<Fact>>,
 }
 
 impl Flow {
-    /// Analyse `func`, tracking `tracked`. `None` when the function is too big.
-    pub fn compute(func: &Function, env: &Env, tracked: &[Local]) -> Option<Flow> {
+    /// Analyse `func`, tracking `tracked`, with `elems` the facts about the array elements each
+    /// pointer local reaches (`arrays`; may be empty). `None` when the function is too big.
+    pub fn compute(
+        func: &Function,
+        env: &Env,
+        tracked: &[Local],
+        elems: Vec<Option<Fact>>,
+    ) -> Option<Flow> {
         if tracked.len().saturating_mul(func.blocks.len()) > MAX_CELLS {
             return None;
         }
@@ -93,6 +101,7 @@ impl Flow {
             field_tys: env.field_tys.clone(),
             caps: vec![None; tracked.len()],
             preds: crate::map_probe::region::predecessors(func),
+            elems,
         };
         flow.solve(func, env);
         // Counters are bounded by the trip counts the first solution proves.
@@ -152,6 +161,17 @@ impl Flow {
                 })
             }
             Operand::Copy(p) if self.is_array_len(func, p) => Some(Fact::int(0, ARRAY_LEN_MAX)),
+            Operand::Copy(p)
+                if matches!(p.proj[..], [Proj::Deref(_)])
+                    && self
+                        .elems
+                        .get(p.local.0 as usize)
+                        .copied()
+                        .flatten()
+                        .is_some() =>
+            {
+                self.elems[p.local.0 as usize]
+            }
             Operand::Copy(p) => {
                 let ty = crate::visit::derefs(p).then(|| match p.proj.last() {
                     Some(velt_vir::vir::Proj::Deref(t)) => *t,

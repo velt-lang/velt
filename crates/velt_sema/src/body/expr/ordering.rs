@@ -2,7 +2,9 @@
 //! builtin ordering interface, directly or through an interface extending it), or a class or
 //! struct implementing it (`Date`, `DateTime`), `a < b` is `a.compareTo(b) < 0` — a
 //! `Callee::ParamMethod` call with both operands borrowed, compared with `0` (likewise `<=`, `>`,
-//! `>=`). No HIR node of its own.
+//! `>=`). On a type parameter the call is marked `Intrinsic::ParamOrdering`, so that lowering
+//! compares a float directly (NaN unordered, as JS's `<`), where a `compareTo` call the program
+//! writes orders NaN last.
 
 use velt_common::Span;
 
@@ -67,6 +69,14 @@ impl FnCx<'_, '_> {
             H::Call {
                 callee,
                 args: vec![recv, r],
+            },
+            i64_,
+            span,
+        );
+        let call = self.mk(
+            H::Call {
+                callee: Callee::Intrinsic(hir::Intrinsic::ParamOrdering),
+                args: vec![call],
             },
             i64_,
             span,

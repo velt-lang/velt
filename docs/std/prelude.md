@@ -93,6 +93,15 @@ surrogate pair its character),
   32-bit wrapping product, one multiply instruction) and `clz32` (leading zero bits) take the low
   32 bits of their operands like JS. `umulh(a, b)` (not in JS) is the high 64 bits of the
   128-bit product of two `u64`s, one multiply instruction as well.
+- Integers (not in JS): `x.leadingZeros()`, `x.trailingZeros()` and `x.countOnes()`, counted
+  over the type's own width (`(0 as u8).leadingZeros()` is 8, `(-1 as i32).countOnes()` is 32),
+  one instruction each. They return a `usize`, in user code too, so the result indexes an array
+  as it is:
+
+  ```ts
+  const bits: u64 = 40;
+  console.log(bits.leadingZeros(), bits.trailingZeros(), bits.countOnes()); // 58 3 2
+  ```
 - Every number type implements `Comparable` ([Comparable](../reference/classes.md#comparable)).
 
 ## Arrays
@@ -121,6 +130,9 @@ so elements pushed meanwhile are not visited. Elements removed meanwhile:
 | `toSorted(cmp?)`, `toReversed()`, `toSpliced(start, deleteCount?, ...items)`, `with(i, v)` | ES2023's copying forms: a new array, the receiver unchanged (the elements themselves are shared, as in JS); `toSorted()` without a comparator orders like `sort()`; `with` panics on an index out of range (JS's RangeError) |
 | `splice(start, deleteCount?, ...items): T[]` | removes and returns `deleteCount` elements (the rest when omitted) and inserts `items` there |
 | `shift(): T \| undefined`, `unshift(...items): i64` | take the first element (`undefined` when empty) / insert `items` at the front and return the new length, like JS; both O(length), as in V8 for large arrays: a queue that takes from the front belongs in a `Deque` ([velt:collections/deque](collections/deque.md)) |
+| `swap(i, j)`, `rotateLeft(start, end)`, `rotateRight(start, end)` | not in JS: exchange two elements, or move the elements of `[start, end)` one place down (the first to the end) or up (the last to the front), in place; each element's bits move, nothing is copied or dropped. A RangeError panic for an index or range outside the array |
+| `prefetch(i)`, `reserve(n)` | not in JS: a hint that element `i` is read soon, so the CPU starts loading it (it changes nothing; an index past the end does nothing); room for `n` more elements without growing again |
+| `xss.swapIn(a, i, b, j)` | not in JS, on `T[][]`: exchanges `xss[a][i]` and `xss[b][j]`, also between two inner arrays, which `[x, y] = [y, x]` does by copying (and counting) both elements. For data kept in chunks |
 | `xs.length = n`, `truncate(n)` | drop the elements from `n` on, as in JS (`xs.length = 0` empties the array; `xs.length -= k` works too). `n` is a `number`: one that is not a whole number from 0 to 2^32 - 1 (negative, fractional, `NaN`) panics with `RangeError: Invalid array length`, the error JS throws. Setting a larger `length` panics too: JS would add empty slots, which Velt has no value for (push the elements, or build the array with `new Array<T>(n).fill(v)`); `truncate(n)` leaves the array unchanged instead |
 | `flat()` | on `T[][]`: the inner elements, one level deep |
 | `isEmpty()`, `entries(): [usize, T][]` | the index is a JS number, like `length` |

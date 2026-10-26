@@ -217,14 +217,12 @@ impl FnLower<'_, '_> {
         if !self.cx.needs_drop(ty) {
             return;
         }
-        let a = self.addr(place);
-        match self.cx.kind(ty) {
-            TyKind::Str => self.call_rt(Rt::StrDrop, vec![a], None),
-            _ => {
-                let f = self.cx.func_direct(Work::Glue(Glue::Drop, ty), self.mode);
-                self.call(vir::Callee::Func(f), vec![a], None, false);
-            }
+        if self.cx.kind(ty) == TyKind::Str {
+            return self.str_drop(place);
         }
+        let a = self.addr(place);
+        let f = self.cx.func_direct(Work::Glue(Glue::Drop, ty), self.mode);
+        self.call(vir::Callee::Func(f), vec![a], None, false);
     }
 
     /// Drop the fields of a struct/class value except those moved out (a class object is freed).

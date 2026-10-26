@@ -370,6 +370,49 @@ extend<T> Array<T> {
     return out;
   }
 
+  /**
+   * Exchanges elements `i` and `j` (each must be below the length): their bits change places,
+   * nothing is copied or dropped.
+   */
+  swap(i: usize, j: usize) {
+    __intrinsic_array_swap(this, i, j);
+  }
+
+  /**
+   * Rotates the elements in `[start, end)` one place down: the one at `start` moves to `end - 1`
+   * and the others one place towards `start`, by one memory move (what `splice` would do with
+   * a removal and an insert). `end` must be at most the length, `start` at most `end`.
+   */
+  rotateLeft(start: usize, end: usize) {
+    checkRange(start, end, this.length);
+    if (end - start > 1) {
+      __intrinsic_array_rotate_left(this, start, end - 1);
+    }
+  }
+
+  /** As `rotateLeft`, one place up: the element at `end - 1` moves to `start`. */
+  rotateRight(start: usize, end: usize) {
+    checkRange(start, end, this.length);
+    if (end - start > 1) {
+      __intrinsic_array_rotate_right(this, start, end - 1);
+    }
+  }
+
+  /**
+   * A hint that element `i` is read soon: the CPU starts loading it, so that the read does not
+   * wait for memory (a hint only, it changes nothing; an index past the end does nothing).
+   */
+  prefetch(i: usize) {
+    if (i < this.length) {
+      __intrinsic_array_prefetch(this, i);
+    }
+  }
+
+  /** Makes room for `extra` more elements without growing again (the length stays). */
+  reserve(extra: usize) {
+    __intrinsic_array_reserve(this, extra);
+  }
+
   /** Reverses in place (JS also returns the array; here the result is `void`, see `fill`). */
   reverse() {
     reverseRange(this, 0, this.length);
@@ -835,4 +878,17 @@ extend<T> Array<T> {
     }
     return __intrinsic_share(this[i]);
   }
+}
+
+// `[start, end)` lies in an array of `len` elements, else a RangeError panic.
+function checkRange(start: usize, end: usize, len: usize) {
+  if (start > end || end > len) {
+    rangeOutside(start, end, len);
+  }
+}
+
+// The panic of `checkRange`, out of line: a function that never returns is not inlined, so the
+// message's formatting stays here instead of in every caller of a checked method.
+function rangeOutside(start: usize, end: usize, len: usize): never {
+  panic(`RangeError: the range ${start}..${end} is not inside the array (length ${len})`);
 }

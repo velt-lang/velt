@@ -1,0 +1,14 @@
+9 1,2,3,4,5,6,7,8,9
+-1 9,8,7,6,5,4,3,2,1,0,-1
+30 -2 3,30,-2,3,30,-2
+NaN/NaN NaN/NaN NaN/NaN NaN/NaN NaN/NaN NaN/NaN NaN/NaN
+0,-0,0,-0 0,-0,0,-0 0,-0,0,-0 0,-0,0,-0 0,-0,0,-0
+-0 0 -0 -0
+-Infinity Infinity
+1e+308 -Infinity
+Infinity -Infinity -0 NaN 4
+4181 -46
+3 -0 -Infinity 1,2
+5 4,9,6,5,8,1
+boom 1,2
+7 1,7,3,2,5

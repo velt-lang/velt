@@ -331,8 +331,13 @@ impl Source<'_> {
             ItemKind::Var(v) => self.constant(v, doc)?,
             ItemKind::Extend(e) => {
                 let target = p.ty(&e.target);
+                let implements: Vec<String> = e.implements.iter().map(|t| p.ty(t)).collect();
+                let implements = match implements.is_empty() {
+                    true => String::new(),
+                    false => format!(" implements {}", implements.join(", ")),
+                };
                 DocItem {
-                    signature: format!("extend{} {target}", p.generics(&e.generics)),
+                    signature: format!("extend{} {target}{implements}", p.generics(&e.generics)),
                     members: self.methods(&e.methods),
                     ..leaf(Kind::Extension, &target, &e.generics, doc)
                 }
