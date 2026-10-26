@@ -1,0 +1,7 @@
+true false 0 [ 'server' ]
+[ 'lazy', 'core:server' ]
+2 a false [ 2, 1 ] [ 'b', 'a' ]
+2 b
+1 a
+3 2 Map(2) { 2 => 'b', 1 => 'a' }
+true Set(2) { 1, 2 }

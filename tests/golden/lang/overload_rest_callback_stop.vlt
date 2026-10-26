@@ -1,0 +1,8 @@
+// An argument the implementation leaves out of a signature's adapted callback, where the
+// callback's parameter type does not admit `undefined`: the program stops with a `TypeError`
+// naming the callback and the argument (Node would pass `undefined` and print `1 undefined`).
+type Ctx = { n: number };
+function setup<R, T1>(fn: (ctx: Ctx, p1: T1) => R): R;
+function setup<R>(fn: (ctx: Ctx, ...args: unknown[]) => R): R { return fn({ n: 1 }); }
+console.log("before");
+console.log(setup((c: Ctx, p1: number) => `${c.n} ${p1}`));

@@ -279,7 +279,9 @@ impl FnCx<'_, '_> {
         if let Some(g) = guard {
             self.f.cpu_guards.push(g);
         }
+        let unmarked = self.instanceof_unmark(cond);
         let (t, then_facts) = self.block_narrowed_ending(then, &when_true);
+        self.restore_marks(unmarked);
         if guard.is_some() {
             self.f.cpu_guards.pop();
         }
@@ -568,7 +570,10 @@ impl FnCx<'_, '_> {
         if late {
             self.f.late_lets.insert(local);
         }
-        self.note_readonly_array(local, v.ty.as_ref());
+        self.note_marks(local, v.ty.as_ref(), v.init.as_ref());
+        if let (None, Some(e), Some(h)) = (&v.ty, &v.init, &init) {
+            self.note_readonly_init(local, e, h);
+        }
         self.note_as_const_array(local, v.init.as_ref());
         if v.kind == ast::VarKind::AwaitUsing {
             self.f.await_using.insert(local);
@@ -591,6 +596,14 @@ impl FnCx<'_, '_> {
         // A closure, or a method value (`const f = o.greet`, a block ending in its closure).
         if let (LocalKind::Const, Some(d)) = (kind, init.as_ref().and_then(closure_def)) {
             self.f.closure_consts.insert(local, d);
+        }
+        let root = v.init.as_ref().and_then(super::expr::read_root);
+        if let (LocalKind::Const, Some(o)) = (kind, root.filter(|o| o.name != name.name)) {
+            if self.is_local_name(&o.name) {
+                if let Some(r) = self.lookup_local(&o.name, o.span) {
+                    self.f.member_reads.insert(local, r);
+                }
+            }
         }
         if let (Some(e), Some(_)) = (&v.init, init.as_ref().and_then(closure_def)) {
             if super::expr::is_member_read(e) {

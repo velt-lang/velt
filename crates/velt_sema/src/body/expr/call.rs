@@ -22,8 +22,11 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
-        if optional {
+        if optional && !self.is_method_member(callee) {
             return self.optional_chain(callee, span, |s, f| s.call_value(f, args, span));
+        }
+        if let Some(h) = self.checked_key_call(callee, type_args, args, span) {
+            return h;
         }
         if let Some(callee) = self.without_namespace(callee) {
             return self.call(&callee, type_args, args, false, exp, span);
@@ -458,7 +461,10 @@ impl FnCx<'_, '_> {
                     s.check_args_loose(args);
                     return s.error_expr(span);
                 }
-                s.method_call_on(recv, prop, type_args, args, None, span)
+                s.exempt_cast_receiver(object, &recv);
+                let call = s.method_call_on(recv, prop, type_args, args, None, span);
+                s.clear_cast_receiver();
+                call
             });
         }
         let recv = match &object.kind {
@@ -481,7 +487,9 @@ impl FnCx<'_, '_> {
         };
         let recv = self.nullable_helper_receiver(recv, &prop.name);
         let r = self.in_place_receiver(object, recv);
+        self.exempt_cast_receiver(object, &r.recv);
         let call = self.method_call_on(r.recv, prop, type_args, args, exp, span);
+        self.clear_cast_receiver();
         self.after_receiver(r.before, call)
     }
 

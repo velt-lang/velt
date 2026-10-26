@@ -71,7 +71,7 @@ pub(crate) fn split(modules: &[SourceModule], root: usize) -> Split {
 fn split_module(module: &SourceModule, out: &mut Split) -> Option<Vec<ast::Item>> {
     let at = module.ast.items.iter().position(|it| {
         matches!(&it.kind, ast::ItemKind::Function(f)
-            if f.sig.name.name == "main" && f.sig.name.span.lo == f.sig.name.span.hi)
+            if velt_syntax::is_script_main(&f.sig.name))
     })?;
     let ast::ItemKind::Function(script) = &module.ast.items[at].kind else {
         return None;

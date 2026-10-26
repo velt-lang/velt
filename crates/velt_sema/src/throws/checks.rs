@@ -153,12 +153,21 @@ fn clause_violation(cx: &mut Ctx, d: DefId, m: TyId, allowed: Option<TyId>, clau
             Some(_) if !inferred => format!("add `{mn}` to the function type's `throws`"),
             _ => format!("write the function type with `throws {mn}`"),
         };
+        let used_ty = used_as;
         let used_as = cx.display(used_as);
         let mut diag = Diagnostic::error(
             format!("this function throws `{mn}`, but the function type it is used as {what}"),
             at,
         )
         .with_note(format!("it is used as `{used_as}`"));
+        // A `ProxyHandler` trap (std/proxy.vlt): its type can't be changed.
+        let trap = cx.is_trap_site(site, used_ty);
+        if trap && !cx.is_error_class(m) {
+            return cx.error(
+                diag.with_note("TypeScript lets a proxy trap throw any value; in Velt a trap may throw only `Error` classes, since its error type is inferred from what it throws (and a `catch` around the proxy operation gets that type)")
+                    .with_note(format!("throw an `Error` instead, such as `throw new Error(String(value))` for a `{mn}` value")),
+            );
+        }
         if matched && cx.fn_sites.is_last() {
             diag = diag.with_note(format!(
                 "the error types of function types written without `throws` are inferred from what is stored into them; that inference hit its limit ({} checks of the program) here",
@@ -186,7 +195,7 @@ fn clause_violation(cx: &mut Ctx, d: DefId, m: TyId, allowed: Option<TyId>, clau
 /// now: add their errors to the sites the type may come from (`fn_types`), so calls through
 /// those sites throw them in this inference too. True when a site's set grew.
 pub(super) fn seed_stored(cx: &mut Ctx, fns: &[DefId]) -> bool {
-    if cx.fn_sites.use_vars {
+    if cx.fn_sites.user_vars {
         return false;
     }
     let before = cx.fn_sites.added;

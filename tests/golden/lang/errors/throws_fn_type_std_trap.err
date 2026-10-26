@@ -1,4 +1,0 @@
-throws_fn_type_std_trap.vlt:17:5: error: this function throws `Boom`, but the function type it is used as does not allow throwing
-  = note: it is used as `(any) => any`
-  = note: the error types of function types written without `throws` are inferred from what is stored into them, which can't include `Boom`
-  = note: catch the error inside the function, or write the function type with `throws Boom`
