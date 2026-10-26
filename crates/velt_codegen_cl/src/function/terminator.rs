@@ -124,7 +124,10 @@ impl<M: Module> Translator<'_, '_, M> {
         };
         let result = match inline {
             Some(v) => Some(v),
-            None => match self.inline_simd(callee, args, &values, &params, ret) {
+            None => match self
+                .inline_simd(callee, args, &values, &params, ret)
+                .or_else(|| self.inline_atomic(callee, &values, &params, ret))
+            {
                 Some(Inlined::Value(v)) => Some(v),
                 Some(Inlined::Unit) => None,
                 None => {

@@ -26,6 +26,21 @@ fn check_simd_extern(i: usize, e: &ExternFn, errs: &mut Vec<String>) {
     }
 }
 
+/// A `velt_atomic_*` extern likewise (`crate::atomic`): an operation backends emit inline.
+fn check_atomic_extern(i: usize, e: &ExternFn, errs: &mut Vec<String>) {
+    if !e.symbol.starts_with("velt_atomic_") {
+        return;
+    }
+    match crate::atomic::AtomicCall::of_symbol(&e.symbol) {
+        None => errs.push(format!("extern#{i} {}: not an atomic operation", e.symbol)),
+        Some(call) if call.signature() != (e.params.clone(), e.ret) => errs.push(format!(
+            "extern#{i} {}: signature differs from the atomic operation's",
+            e.symbol
+        )),
+        Some(_) => {}
+    }
+}
+
 pub(crate) fn verify_program(p: &Program) -> Result<(), Vec<String>> {
     let mut errs = vec![];
     check_aggs(p, &mut errs);
@@ -37,6 +52,7 @@ pub(crate) fn verify_program(p: &Program) -> Result<(), Vec<String>> {
             ));
         }
         check_simd_extern(i, e, &mut errs);
+        check_atomic_extern(i, e, &mut errs);
     }
     check_symbols(p, &mut errs);
     check_statics(p, &mut errs);

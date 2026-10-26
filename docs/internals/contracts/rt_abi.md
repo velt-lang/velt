@@ -387,6 +387,36 @@ with the check `true`, so this holds whether or not they would be inlined. A gat
 gated on another target (`velt_opt`, and `noinline` on the call for LLVM); ordinary code may be
 inlined into a gated function.
 
+## Atomics [additive]
+
+`Atomic<T>` (std/prelude/sync.vlt, docs/internals/design/atomics.md) and `shared<int>`'s `add`,
+`get` and `set` are externs `velt_atomic_<op>_<bits>_<order>` on the address of a naturally
+aligned word: `load`, `store`, the read-modify-writes `xchg add sub and or xor max min umax
+umin` (`max`/`min` compare signed, `umax`/`umin` unsigned; `add`/`sub` wrap), and
+`cas`/`casweak` with a failure ordering after the ordering (`velt_atomic_cas_64_acqrel_acq`),
+with `bits` 8, 16, 32 or 64 and the orderings `rlx acq rel acqrel seqcst` (a load or a failure
+ordering never `rel`/`acqrel`, a store never `acq`/`acqrel`). Also `velt_atomic_fence_<order>`
+(never `rlx`) and `velt_atomic_spin_hint`. **No runtime defines them**, as for SIMD:
+`velt_vir::atomic` gives each symbol's operation and VIR signature (`AtomicCall`), the verifier
+rejects a `velt_atomic_*` extern that is not one, and both backends emit every call inline.
+Values are passed as unsigned integers of the word's width (`U8` … `U64`; a `bool` is a `U8`
+0 or 1); `load` and the read-modify-writes give the word (the *previous* value), `cas` the
+previous value and `casweak` a `Bool`, whether it swapped (it may fail spuriously).
+
+| Operation | VIR signature | LLVM | Cranelift |
+|---|---|---|---|
+| `load` | `(ptr) -> uN` | `load atomic iN, ptr, align N/8` with the ordering | `atomic_load` |
+| `store` | `(ptr, uN)` | `store atomic` | `atomic_store` |
+| `xchg` … `umin` | `(ptr, uN) -> uN` | `atomicrmw` | `atomic_rmw` |
+| `cas` / `casweak` | `(ptr, uN expected, uN v) -> uN` / `-> bool` | `cmpxchg [weak]` with both orderings | `atomic_cas` (+ a compare) |
+| `fence_<order>` | `()` | `fence` | `fence` |
+| `spin_hint` | `()` | `llvm.aarch64.isb(15)` / `llvm.x86.sse2.pause`, nothing elsewhere (Rust's `spin_loop`) | nothing |
+
+Orderings map one to one to LLVM's (`monotonic acquire release acq_rel seq_cst`), so release
+builds get the instructions Rust's `core::sync::atomic` gets (aarch64 with LSE: `ldapr`, `stlr`,
+`ldadd`, `casal`); Cranelift's atomics are all sequentially consistent, which is correct for
+every ordering. On wasm without threads they are plain loads and stores.
+
 ## Module state [additive, #76]
 
 ```c

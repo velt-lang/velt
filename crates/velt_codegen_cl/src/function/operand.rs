@@ -138,7 +138,8 @@ impl<M: Module> Translator<'_, '_, M> {
         match self.decls.externs.get(id.0 as usize) {
             Some(Some(x)) => Ok(*x),
             Some(None) => bail!(
-                "SIMD operation #{} is called with another signature, or its address is taken",
+                "inline operation #{} (SIMD or atomic) is called with another signature, or its \
+                 address is taken",
                 id.0
             ),
             None => bail!("unknown extern #{}", id.0),
