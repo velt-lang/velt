@@ -162,7 +162,8 @@ impl<M: Module> Translator<'_, '_, M> {
             Op::Lane => return Inlined::Value(self.simd_lane(lanes, &args[1], values)),
             Op::Splat => self.builder.ins().splat(ty, values[0]),
             Op::Index => self.simd_index(lanes),
-            Op::Load => {
+            // Cranelift has no `undef`: a racing load is just the bytes the CPU read.
+            Op::Load | Op::LoadOptimistic => {
                 let p = self.simd_element(lanes, values[0], values[1]);
                 self.builder.ins().load(ty, mem_flags(), p, 0)
             }

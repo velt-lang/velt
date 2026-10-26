@@ -347,7 +347,13 @@ verifier rejects a `velt_simd_*` extern that is not one, and both backends emit 
 inline. They never cross the C ABI, so no target's vector calling convention is involved.
 `load` and `store` take the array (a pointer to its header) and an element index, and do not
 check it: the prelude's methods do. `load_partial` and `store_partial` take a count of elements
-too, below the lane count, and touch only those elements.
+too, below the lane count, and touch only those elements. `load_optimistic` [additive] is `load`
+from an array of `Atomic` words other threads may be storing to (`T.loadOptimistic`): LLVM
+emits a plain vector load, without an alias tag, and `freeze`s it, so a lane read while a store
+raced it is some value rather than `undef` and nothing computed from it is undefined; Cranelift
+emits a plain load. On every target each 8-byte-aligned word of such a load is read in one access
+(arm64: per 64-bit element of a 128-bit load; x86-64 and wasm: no torn aligned word), so a lane
+no thread wrote during the load is the word.
 
 `velt_simd_prefetch(void* addr)` (`-> void`, additive) starts loading the cache line at `addr`
 for a read soon, as a hint: LLVM emits `llvm.prefetch` (read, every cache level, data), which

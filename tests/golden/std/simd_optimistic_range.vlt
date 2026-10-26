@@ -1,0 +1,11 @@
+// `loadOptimistic` needs the whole vector inside the array, as `load` does: the last two
+// words load, one position further panics.
+
+import { u64x2 } from "velt:simd";
+
+function main() {
+  const w: Atomic<u64>[] = [new Atomic<u64>(1), new Atomic<u64>(2), new Atomic<u64>(3)];
+  console.log(u64x2.loadOptimistic(w, 1).lane(1));
+  const at: usize = w.length as usize - 1;
+  console.log(u64x2.loadOptimistic(w, at).lane(0));
+}
