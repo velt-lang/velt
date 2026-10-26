@@ -1,0 +1,80 @@
+typeof object
+truthy
+not false true
+eq false false true
+opt get Error
+nullish Error: get
+members get Error Error: get
+instanceof true E1
+switch get
+template Error: get
+spread 1 get
+json {"m":"get"}
+index 1
+direct get object Error E1
+typeof object
+truthy
+not false true
+eq false false true
+opt plain Error
+nullish Error: plain
+members plain Error Error: plain
+instanceof true E2
+switch other
+template Error: plain
+spread 1 plain
+json {"m":"plain"}
+index 3
+direct plain object Error E2
+typeof object
+truthy
+not false true
+eq false false true
+opt get Error
+nullish Error: get
+members get Error Error: get
+instanceof true E1
+switch get
+template Error: get
+spread 1 get
+json {"m":"get"}
+index 1
+typeof object
+truthy
+not false true
+eq false false true
+opt get Error
+nullish Error: get
+members get Error Error: get
+instanceof true E1
+switch get
+template Error: get
+spread 1 get
+json {"m":"get"}
+index 1
+typeof object
+truthy
+not false true
+eq false false true
+opt plain Error
+nullish Error: plain
+members plain Error Error: plain
+instanceof true E2
+switch other
+template Error: plain
+spread 1 plain
+json {"m":"plain"}
+index 3
+typeof object
+truthy
+not false true
+eq false false true
+opt plain Error
+nullish Error: plain
+members plain Error Error: plain
+instanceof true E2
+switch other
+template Error: plain
+spread 1 plain
+json {"m":"plain"}
+index 3

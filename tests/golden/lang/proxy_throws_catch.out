@@ -1,0 +1,15 @@
+catch set
+any set
+instanceof true
+then2 set
+then-null set
+a 1
+block set
+finally
+has has
+result false
+result true
+rejected set
+fulfilled
+rejected has
+fulfilled true

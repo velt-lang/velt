@@ -266,7 +266,10 @@ impl FnCx<'_, '_> {
             callee: Callee::Def(d, ck.type_args),
             args: ck.args,
         };
-        self.mk(kind, ck.ret, span)
+        let h = self.mk(kind, ck.ret, span);
+        // The reasons `allSettled` reports are values: their type as written, without the
+        // traps' error-set variables (`coerce_vars.rs`).
+        self.written_trap_vars(h)
     }
 
     /// In the root file's top-level statements, outside any function (`renderAll();` there is

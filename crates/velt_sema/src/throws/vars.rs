@@ -558,9 +558,62 @@ impl Ctx<'_> {
         if self.union_def(t).is_some() {
             parts.extend(self.union_members(t).unwrap_or_default());
         }
+        // The fields of an anonymous object type, as `mentions_err_var` sees them.
+        if let Some((d, _)) = self.anon_of(t) {
+            parts.extend(self.anon_field_tys(d));
+        }
         for p in parts {
             self.vars_deep(p, seen);
         }
+    }
+
+    /// Does `t` hold error-set variables, all of them std/proxy's traps' (at any depth)?
+    pub(crate) fn only_trap_vars(&mut self, t: TyId) -> bool {
+        if self.fn_sites.trap_vars.is_empty() {
+            return false;
+        }
+        let mut seen = rustc_hash::FxHashSet::default();
+        let mut stack = vec![t];
+        while let Some(t) = stack.pop() {
+            if !seen.insert(t) || !self.mentions_err_var(t) {
+                continue;
+            }
+            if let Some(v) = self.err_var(t) {
+                if !self.fn_sites.trap_vars.contains(&v) {
+                    return false;
+                }
+                continue;
+            }
+            stack.extend(crate::types::children(self.ty.kind(t)));
+            if self.union_def(t).is_some() {
+                stack.extend(self.union_members(t).unwrap_or_default());
+            }
+            if let Some((d, _)) = self.anon_of(t) {
+                stack.extend(self.anon_field_tys(d));
+            }
+        }
+        true
+    }
+
+    /// `t` without the variables of std/proxy's traps, which a check assumes empty: a choice
+    /// made by what a callback throws (`promiseThen` or `promiseThenThrows`) is the one a
+    /// program whose traps throw nothing makes; when a trap does throw, the program is checked
+    /// again with the solved sets.
+    pub(crate) fn assume_trap_vars_empty(&mut self, t: Option<TyId>) -> Option<TyId> {
+        let t = t?;
+        if !self.mentions_err_var(t) {
+            return Some(t);
+        }
+        let mut keep = vec![];
+        for m in self.error_members(t) {
+            match self.err_var(m) {
+                Some(v) if self.fn_sites.trap_vars.contains(&v) => {
+                    self.fn_sites.var_sets.assumed_empty.push(v)
+                }
+                _ => keep.push(m),
+            }
+        }
+        self.error_union(&keep)
     }
 
     /// `t` without its variables, which a check assumes empty (a `catch` variable's type).

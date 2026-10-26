@@ -3492,6 +3492,46 @@ another task (`spawn`, a `shared` value or `Mutex`, a channel) is copied like an
 there: the proxy object together with its target and handler, so it is still a proxy on that
 task, and changes there don't reach the original.
 
+A trap may throw, as in JavaScript: its error leaves the operation that ran the trap. A `try`
+around `p.k`, `p[i]`, `p.k = v`, `k in p`, `delete p.k`, `Object.keys(p)` (and `Object.values`,
+`Object.entries`, `Object.hasOwn`, a spread, `for...in`, a symbol key) or a `Reflect` function
+called on an `any` proxy `p` catches the trap's own error object; a function that doesn't catch
+it throws it on (an `async` one rejects with it), and `finally` blocks run on the way out. Velt's
+[typed errors](errors.md) see it too: a trap's errors are inferred from the closures stored into
+the handler (`Error` classes, as for other function types written without `throws`), and in a
+program whose traps throw, an operation on `any` throws what the trap it runs throws (a read
+what `get` throws, a write what `set` throws), so a `throws` clause around one must allow it and a
+`catch` variable's type includes it. A program whose traps throw nothing compiles as before.
+Where Node lets a trap throw any value, Velt rejects a trap that throws something other than an
+`Error` (`throw "a string"`) at compile time, with a note saying to throw an `Error` instead
+(`throw new Error(String(value))`).
+
+```ts
+class ReadOnly extends Error {}
+
+function frozen(target: any): any {
+  return new Proxy(target, {
+    set(obj, key, value) {
+      if (key === "theme") {
+        throw new ReadOnly(`${String(key)} is read-only`);
+      }
+      return Reflect.set(obj, key, value);
+    },
+  });
+}
+
+function main(): void {
+  const settings = frozen({ theme: "dark", size: 1 });
+  try {
+    settings.theme = "light";
+  } catch (e) {
+    console.log(e instanceof ReadOnly, (e as Error).message); // true theme is read-only
+  }
+  settings.size = 2;
+  console.log(settings.theme, settings.size); // dark 2
+}
+```
+
 Only the types a proxy is converted to (and the classes related to them) check for one, and only
 in a program that creates a proxy, so other programs and other types pay nothing. `Proxy`,
 `Reflect`, `ProxyHandler` and `PropertyDescriptor` are globals that a program loads when one of
@@ -3524,6 +3564,11 @@ function main(): void {
   console.log("count" in state, "other" in state); // true false
 }
 ```
+
+**Planned** (#1174): a trap's error reaching a method call through an `any` proxy (`p.m()`),
+a read, write or method call through a typed proxy (`s.count` of a proxy converted to `State`),
+`JSON.stringify` of a proxy or an array method running on a proxy of an array is not caught by a
+`try` yet: it ends the process with Node's `Uncaught …` report, as an error nothing catches does.
 
 **Planned** (#823): a symbol known only at run time as the key of `o[k]` on an `any` (a trap
 answering one through `Reflect` works); a spread of a typed proxy (a `TypeError`); a completed

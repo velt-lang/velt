@@ -238,13 +238,13 @@ impl FnCx<'_, '_> {
     ) -> hir::Expr {
         match key {
             WriteKey::Str(k) => {
-                self.intrinsic(Intrinsic::AnyGet, vec![obj.clone(), k.clone()], any, span)
+                self.any_op(Intrinsic::AnyGet, vec![obj.clone(), k.clone()], any, span)
             }
             WriteKey::Num(k) => {
-                self.intrinsic(Intrinsic::AnyIndex, vec![obj.clone(), k.clone()], any, span)
+                self.any_op(Intrinsic::AnyIndex, vec![obj.clone(), k.clone()], any, span)
             }
             WriteKey::Sym(n, _) if !self.uses_proxy() => {
-                self.intrinsic(Intrinsic::AnyGet, vec![obj.clone(), n.clone()], any, span)
+                self.any_op(Intrinsic::AnyGet, vec![obj.clone(), n.clone()], any, span)
             }
             WriteKey::Sym(n, k) => {
                 let args = vec![obj.clone(), n.clone(), k.clone()];
@@ -263,8 +263,8 @@ impl FnCx<'_, '_> {
     ) -> hir::Expr {
         let unit = self.cx.ty.unit;
         match key {
-            WriteKey::Str(k) => self.intrinsic(Intrinsic::AnySet, vec![obj, k, v], unit, span),
-            WriteKey::Num(k) => self.intrinsic(Intrinsic::AnySetIndex, vec![obj, k, v], unit, span),
+            WriteKey::Str(k) => self.any_op(Intrinsic::AnySet, vec![obj, k, v], unit, span),
+            WriteKey::Num(k) => self.any_op(Intrinsic::AnySetIndex, vec![obj, k, v], unit, span),
             WriteKey::Sym(n, k) => {
                 self.prelude_hir_call("__anySetSym", vec![obj, n, k, v], unit, span)
             }

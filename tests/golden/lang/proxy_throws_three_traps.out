@@ -1,0 +1,12 @@
+settled E1 get false
+settled E2 set false
+settled E3 has true
+value 1
+E1 E2 E3 ok
+own true Error: get
+nested 2
+nested E2
+all E1
+race E3 has
+any 1
+all-catch E2

@@ -28,6 +28,7 @@ mod closure;
 mod closure_sig;
 mod coerce;
 mod coerce_generic;
+mod coerce_vars;
 mod constraints;
 mod construct;
 mod conversions;
