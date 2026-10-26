@@ -1026,7 +1026,11 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   `U` with `| null`: a loose `=== null` test first, then per member as below). A mismatch
   stops the program with `TypeError: the value is not a <T> (it is <found>)`. Its operand is
   owned: a place is wrapped in `Intrinsic::Share` of the place read with `UseMode::Borrow`, so
-  the place keeps (and later drops) its value.
+  the place keeps (and later drops) its value. An optional second operand, a string literal
+  (`ExprKind::Lit(Lit::Str(text))`), says where the value comes from: a mismatch stops with
+  `TypeError: <text>: the value is not a <T> (it is <found>)` (additive; sema writes it for
+  the arguments of an overload signature's adapted callback, `crate::overload_adapter`).
+  Lowering reads the text while compiling; it is never evaluated.
 - A union with a dynamic member is that member (`any | null`, `any | string` are `any`; an
   `unknown` likewise unless `any` is also a member). An `any | null` / `unknown | null` that
   still arises (a generic `T | null` with `T = any`: `Map.get`, `find`, `Channel.receive`, a
