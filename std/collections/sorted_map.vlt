@@ -4,8 +4,9 @@
 // Two parallel sorted arrays searched by binary search: O(log n) lookups, O(n) inserts and
 // deletes (element swaps, cache friendly), which beats a tree for small and read-mostly maps.
 // Ordered queries (`first`, `last`, `floorKey`, `ceilingKey`, `range`) are O(log n) plus the
-// output. `set` takes ownership; `get` / `keys` / `values` / `entries` return clones (unlike
-// `Map`, which shares stored objects).
+// output. Keys are ordered by `compareTo`: as `<`, with a float NaN after every other value and
+// equal to itself. `set` takes ownership; `get` / `keys` / `values` / `entries` return clones
+// (unlike `Map`, which shares stored objects).
 
 /** A map ordered by key. */
 export class SortedMap<K extends Comparable<K>, V> {
@@ -25,7 +26,7 @@ export class SortedMap<K extends Comparable<K>, V> {
   /** Inserts or replaces the value for `key`. */
   set(key: K, value: V) {
     const i = this.lowerBound(key);
-    if (i < this.sortedKeys.length && !(key < this.sortedKeys[i])) {
+    if (i < this.sortedKeys.length && !keyLess(key, this.sortedKeys[i])) {
       this.vals[i] = value;
       return;
     }
@@ -136,7 +137,7 @@ export class SortedMap<K extends Comparable<K>, V> {
   // Position of `key`, or -1.
   private indexOf(key: K): i64 {
     const i = this.lowerBound(key);
-    if (i < this.sortedKeys.length && !(key < this.sortedKeys[i])) {
+    if (i < this.sortedKeys.length && !keyLess(key, this.sortedKeys[i])) {
       return i as i64;
     }
     return -1;
@@ -148,7 +149,7 @@ export class SortedMap<K extends Comparable<K>, V> {
     let hi = this.sortedKeys.length;
     while (lo < hi) {
       const mid = lo + (hi - lo) / 2;
-      if (this.sortedKeys[mid] < key) {
+      if (keyLess(this.sortedKeys[mid], key)) {
         lo = mid + 1;
       } else {
         hi = mid;
@@ -163,7 +164,7 @@ export class SortedMap<K extends Comparable<K>, V> {
     let hi = this.sortedKeys.length;
     while (lo < hi) {
       const mid = lo + (hi - lo) / 2;
-      if (key < this.sortedKeys[mid]) {
+      if (keyLess(key, this.sortedKeys[mid])) {
         hi = mid;
       } else {
         lo = mid + 1;
@@ -180,4 +181,14 @@ export class SortedMap<K extends Comparable<K>, V> {
     }
     return out;
   }
+}
+
+// `a < b` in the keys' order: NaN after every other value and equal to itself. Only floats are
+// NaN (`x != x`); for the other types the test folds away and this is `<`.
+function keyLess<K extends Comparable<K>>(a: K, b: K): bool {
+  return a < b || (isNaNKey(b) && !isNaNKey(a));
+}
+
+function isNaNKey<K extends Comparable<K>>(t: K): bool {
+  return !__intrinsic_needs_drop(t) && t != t;
 }

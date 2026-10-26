@@ -14,6 +14,8 @@ and deletes are O(n). For maps of more than a few hundred keys, or that change o
 - Ordered queries: `first()`, `last()`, `floorKey(k)`, `ceilingKey(k)` (`undefined` when there
   is no such key), and `range(from, to)`,
   which returns the half-open range `from <= key < to`.
+- Keys are ordered by `compareTo`. For floats that is `<` with `NaN` after every other number
+  and equal to itself, so `NaN` is one key of its own, the last one.
 
 ```ts
 import { SortedMap } from "velt:collections/sorted_map";

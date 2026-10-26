@@ -5,7 +5,7 @@
 // deletes are O(log n) and touch a few cache lines per level; ordered walks follow the linked
 // leaves. Values are shared as `Map` shares them (objects are not copied); keys are shared too.
 
-import { F, NONE, Pool } from "velt:collections/btree/pool";
+import { F, keyLess, NONE, Pool } from "velt:collections/btree/pool";
 
 /** A map ordered by key, as a B+tree. */
 export class BTreeMap<K extends Comparable<K>, V> implements Iterable<[K, V]> {
@@ -214,7 +214,7 @@ export class BTreeMap<K extends Comparable<K>, V> implements Iterable<[K, V]> {
   /** The entries with `from <= key < to`, in key order. */
   range(from: K, to: K): [K, V][] {
     const out: [K, V][] = [];
-    if (this.p.size == 0 || !(from < to)) {
+    if (this.p.size == 0 || !keyLess(from, to)) {
       return out;
     }
     let leaf = this.p.leafOf(from);

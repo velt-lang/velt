@@ -12,8 +12,16 @@
 // key, which compiles to branch-free code; for others (strings) it is a binary search, since
 // each comparison reads the key's bytes elsewhere in memory.
 //
-// Unused key slots hold a share of `fill[0]`, the first key ever stored, so that the pools stay
-// arrays of plain `K`; value slots are `V | null`.
+// Keys are ordered by `compareTo`, the order of `<` except that a float NaN sorts after every
+// other value and equals itself (`<` alone would find NaN equal to any key). Only floats can be
+// NaN (`isNaNKey`), and for other types the NaN tests fold away, so the count stays one `<` per
+// key.
+//
+// Unused key slots hold a share of `fill[0]`, a live key, so that the pools stay arrays of plain
+// `K`; value slots are `V | null`. For keys that own something (strings, objects) a deleted key
+// is released: when the filler's key is deleted, every unused slot gets a new filler, a key
+// from the middle of the tree; when the last key goes, the pools are emptied; and a separator
+// that is the first key of a leaf follows it when it is deleted (`removeAt`).
 
 /** Slots per node. */
 export const F: usize = 32;
@@ -52,6 +60,14 @@ export class Pool<K extends Comparable<K>, V> {
   below(keys: K[], base: usize, n: usize, t: K): usize {
     if (!__intrinsic_needs_drop(t)) {
       let c: usize = 0;
+      if (isNaNKey(t)) {
+        // Every key but a NaN is below NaN.
+        for (let i: usize = 0; i < n; i++) {
+          c += isNaNKey(keys[base + i]) ? 0 : 1;
+        }
+        return c;
+      }
+      // A NaN key is not below `t`, and `<` says so.
       for (let i: usize = 0; i < n; i++) {
         c += keys[base + i] < t ? 1 : 0;
       }
@@ -73,9 +89,13 @@ export class Pool<K extends Comparable<K>, V> {
   /** How many of the `n` keys at `keys[base..]` are at most `t`. */
   atMost(keys: K[], base: usize, n: usize, t: K): usize {
     if (!__intrinsic_needs_drop(t)) {
+      if (isNaNKey(t)) {
+        return n;
+      }
+      // `<=` is false for a NaN key, which sorts after `t`.
       let c: usize = 0;
       for (let i: usize = 0; i < n; i++) {
-        c += t < keys[base + i] ? 0 : 1;
+        c += keys[base + i] <= t ? 1 : 0;
       }
       return c;
     }
@@ -133,7 +153,7 @@ export class Pool<K extends Comparable<K>, V> {
     const base = (leaf as usize) * F;
     const n = this.leafLen[leaf as usize] as usize;
     const pos = this.below(this.leafKeys, base, n, t);
-    if (pos < n && !(t < this.leafKeys[base + pos])) {
+    if (pos < n && isKey(this.leafKeys[base + pos], t)) {
       return pos as i64;
     }
     return -1;
@@ -219,7 +239,7 @@ export class Pool<K extends Comparable<K>, V> {
     const base = (leaf as usize) * F;
     const n = this.leafLen[leaf as usize] as usize;
     const pos = this.below(this.leafKeys, base, n, key);
-    if (pos < n && !(key < this.leafKeys[base + pos])) {
+    if (pos < n && isKey(this.leafKeys[base + pos], key)) {
       this.leafVals[base + pos] = value;
       return;
     }
@@ -347,6 +367,10 @@ export class Pool<K extends Comparable<K>, V> {
   removeAt(leaf: u32, pos: usize) {
     const base = (leaf as usize) * F;
     const n = this.leafLen[leaf as usize] as usize;
+    const owned = __intrinsic_needs_drop(this.fill[0]);
+    // Whether the key going is the filler (a share of a live key: the same object, or for a
+    // string the same text).
+    const wasFill = owned && this.leafKeys[base + pos] == this.fill[0];
     for (let i = pos; i + 1 < n; i++) {
       moveSlot(this.leafKeys, base + i, base + i + 1);
       moveSlot(this.leafVals, base + i, base + i + 1);
@@ -356,8 +380,60 @@ export class Pool<K extends Comparable<K>, V> {
     this.leafLen[leaf as usize] = (n - 1) as u32;
     this.size--;
     this.edits++;
+    if (owned && this.size == 0) {
+      // Nothing is left to fill with: drop the pools and the filler with them.
+      this.clear();
+      return;
+    }
+    if (owned && pos == 0 && this.height > 0) {
+      // The separator bounding this leaf on the left may be the deleted key: give it the
+      // leaf's new first key (a non-root leaf keeps entries, MIN_LEAF - 1 at least).
+      this.followFirstKey(base);
+    }
     if (this.height > 0 && n - 1 < MIN_LEAF) {
       this.rebalanceLeaf(leaf);
+    }
+    if (wasFill) {
+      this.refill();
+    }
+  }
+
+  // The separator left of the leaf the recorded path ends at, in the deepest inner node where
+  // the path does not take the first child, bounds the leaf's subtree from below and is at most
+  // its first key (the one at `leafBase`); it is set to that key. Keys below it go left, so a
+  // separator that is a live key is the first key of the leaf this is.
+  private followFirstKey(leafBase: usize) {
+    let depth = this.pathNodes.length;
+    while (depth > 0) {
+      depth--;
+      const slot = this.pathSlots[depth];
+      if (slot > 0) {
+        this.innerKeys[(this.pathNodes[depth] as usize) * F + slot - 1] = this.leafKeys[leafBase];
+        return;
+      }
+    }
+  }
+
+  // The filler's key was deleted: a key from the middle of the tree replaces it in every unused
+  // slot, so the deleted key is released. A middle key goes when about half of the keys have
+  // gone, whether they go from the front, from the back or at random, so this O(slots) pass
+  // runs a few times over a drain.
+  private refill() {
+    let node = this.root;
+    for (let h = this.height; h > 0; h--) {
+      const base = (node as usize) * F;
+      node = this.innerKids[base + (this.innerLen[node as usize] as usize) / 2];
+    }
+    this.fill[0] = this.leafKeys[(node as usize) * F + (this.leafLen[node as usize] as usize) / 2];
+    for (let leaf: usize = 0; leaf < this.leafLen.length; leaf++) {
+      for (let i = this.leafLen[leaf] as usize; i < F; i++) {
+        this.leafKeys[leaf * F + i] = this.fill[0];
+      }
+    }
+    for (let inner: usize = 0; inner < this.innerLen.length; inner++) {
+      for (let i = this.innerLen[inner] as usize; i < F; i++) {
+        this.innerKeys[inner * F + i] = this.fill[0];
+      }
     }
   }
 
@@ -549,6 +625,29 @@ export class Pool<K extends Comparable<K>, V> {
     this.innerLen[left as usize] = (ln + 1 + rn) as u32;
     this.freeInner(right);
   }
+}
+
+/**
+ * Whether `t` is a float NaN. `t != t` holds for nothing else (a struct equals itself even with
+ * a NaN field), and folds to `false` for the other number types; strings and objects are not
+ * tested.
+ */
+export function isNaNKey<K extends Comparable<K>>(t: K): bool {
+  return !__intrinsic_needs_drop(t) && t != t;
+}
+
+/** `a < b` in the keys' order: NaN after every other value and equal to itself. */
+export function keyLess<K extends Comparable<K>>(a: K, b: K): bool {
+  return a < b || (isNaNKey(b) && !isNaNKey(a));
+}
+
+// Whether `k`, a key at least `t` (the first one not below it), is `t`.
+function isKey<K extends Comparable<K>>(k: K, t: K): bool {
+  if (isNaNKey(t)) {
+    // Every key but a NaN is below NaN: `k` is one.
+    return true;
+  }
+  return !(t < k) && !isNaNKey(k);
 }
 
 // Moves `xs[from]` to `xs[to]`, whose value is about to be overwritten or is a filler: a swap
