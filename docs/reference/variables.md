@@ -134,7 +134,9 @@ A module-level `let` is module state, as in Node: functions, methods and closure
 assign it, and every module that imports it sees its current value (an ES live binding). Its
 initializer runs once, when the program starts, in Node's module evaluation order: a module
 after the modules it imports (depth first, in the order of the `import` statements), and the
-declarations of one module in source order.
+declarations of one module in source order. One declared without a value
+(`let signal: AbortSignal | undefined;`) starts as `undefined`, which its type must allow
+(`T | undefined`, `any` or `unknown`).
 
 ```ts
 let count = 0;
