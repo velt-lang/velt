@@ -359,7 +359,17 @@ are the same value when the closures they box have one env (`===`, keys): a prog
 compares them gives every closure an env, as for function values. A module-level generic
 function used as a value of a generic function type without type parameters is a `Global` of
 the module state per function and type, whose initializer is the `ToDyn` of the generic closure
-calling it (a class value's encoding, "Classes as values"), so every use is one value.
+calling it (a class value's encoding, "Classes as values"), so every use is one value; so is
+a generic function declared in a function body, which captures nothing.
+
+`Program::fresh_closures` (additive) lists the closures each evaluation of which is a new
+function where JavaScript has one, with the function type of their values: the wrappers sema
+makes for a generic value converted to another function type and for a function asserted to a
+generic type, a generic function's value at a type over the caller's type parameters, and the
+constants of a generic function used as a value at more than one type (or also as a value of a
+fixed function type). Lowering reports one it makes when the program compares or hashes
+function values of a type with the same key (a fixed function type's number of parameters, a
+generic function type's interface), or compares dynamic values while one is held as one.
 
 ## Union types
 - `A | B | C` (two or more distinct non-null members) is `TyKind::Adt(d, args)` where `d` is a

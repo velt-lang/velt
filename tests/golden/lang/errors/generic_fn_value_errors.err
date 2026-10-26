@@ -1,5 +1,6 @@
-generic_fn_value_errors.vlt:14:18: error: a generic function value (`<T>(T) => T`) cannot be held as `any` yet
-generic_fn_value_errors.vlt:15:24: error: a generic function value (`<T>(T) => T`) cannot be held as `Function` yet
-generic_fn_value_errors.vlt:17:15: error: a function of fixed types (`(f64) => f64`) cannot be a `<T>(T) => T`
-generic_fn_value_errors.vlt:18:18: error: this arrow function has 1 type parameter(s), but `<A, B>(A, B) => A` has 2
-generic_fn_value_errors.vlt:21:5: error: a generic method of an object literal implementing `Boxer` cannot use `this` yet
+generic_fn_value_errors.vlt:20:18: error: a generic function value (`<T>(T) => T`) cannot be held as `any` yet
+generic_fn_value_errors.vlt:21:24: error: a generic function value (`<T>(T) => T`) cannot be held as `Function` yet
+generic_fn_value_errors.vlt:23:15: error: a function of fixed types (`(f64) => f64`) cannot be a `<T>(T) => T`
+generic_fn_value_errors.vlt:24:18: error: this arrow function has 1 type parameter(s), but `<A, B>(A, B) => A` has 2
+generic_fn_value_errors.vlt:25:17: error: a function of fixed types (`(string | undefined) => symbol`) cannot be a `<T>(string) => InjectionToken<T>`
+generic_fn_value_errors.vlt:28:5: error: a generic method of an object literal implementing `Boxer` cannot use `this` yet

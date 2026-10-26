@@ -194,7 +194,7 @@ pub(super) struct Facts {
     /// Object types compared by identity (`==`, same.rs).
     identity: FxHashSet<TyId>,
     /// `any` values compared by identity (`Boxing::any_identity`).
-    any_identity: bool,
+    pub(in crate::lower) any_identity: bool,
     /// Interface upcasts made, `(from, to)` (upcast.rs): `from` values are compared by
     /// identity when `to` values are.
     upcasts: FxHashSet<(TyId, TyId)>,
@@ -205,6 +205,12 @@ pub(super) struct Facts {
     transfers: FxHashSet<TyId>,
     /// Function values are compared (or hashed) somewhere.
     fn_compared: bool,
+    /// The types of the function values compared (fresh_fns.rs).
+    pub(in crate::lower) fn_compared_keys: FxHashSet<crate::lower::fresh_fns::FnKey>,
+    /// The generic function types whose values are held as `unknown` (fresh_fns.rs).
+    pub(in crate::lower) generic_any_keys: FxHashSet<crate::lower::fresh_fns::FnKey>,
+    /// The fresh closures made (fresh_fns.rs).
+    pub(in crate::lower) fresh_made: FxHashSet<velt_sema::hir::DefId>,
     /// A generic closure is held as `unknown` (`Boxing::generic_any`).
     pub(super) generic_any: bool,
     /// A member is written through `any`.

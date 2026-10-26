@@ -1,0 +1,35 @@
+// Function values Velt makes anew at each use, where JavaScript keeps one function (#943):
+// comparing them would give another answer than Node, so a program that makes one and compares
+// function values of its type is an error. A generic value converted to a function of fixed
+// types, a function asserted to a generic type, a generic function used at a type over the
+// caller's type parameters, and one used as a value at two generic types.
+type G = <T>(x: T) => T;
+type W = <T>(x: T) => unknown;
+type P<U> = <T>(x: T, u: U) => T;
+type Tok<T> = symbol & { __t?: T };
+type MkTok = <T>(d: string) => Tok<T>;
+
+function id<T>(x: T): T {
+  return x;
+}
+
+function pick<T, U>(x: T, u: U): T {
+  return x;
+}
+
+function getP<U>(u: U): P<U> {
+  return pick;
+}
+
+function main(): void {
+  const g: G = id;
+  const p: (x: number) => number = g;
+  const q: (x: number) => number = g;
+  console.log(p === q, [p].includes(q));
+  const c1 = Symbol as unknown as <T>(d: string) => Tok<T>;
+  const c2 = Symbol as unknown as <T>(d: string) => Tok<T>;
+  console.log(new Set<MkTok>([c1, c2]).size);
+  console.log(getP(1) === getP(2));
+  const w: W = id;
+  console.log((g as unknown) === (w as unknown));
+}

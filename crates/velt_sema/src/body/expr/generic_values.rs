@@ -287,8 +287,8 @@ impl FnCx<'_, '_> {
     /// Named generic function `id` where generic function type `exp` is expected: the generic
     /// closure `(a0, …) => id(a0, …)`, each call of which instantiates `id`.
     ///
-    /// A module-level function has one value per type, as JavaScript has one function object: a
-    /// constant of the module state, made when the function is first used as a value of that
+    /// A module-level (or nested) function has one value per type, as JavaScript has one
+    /// function object: a constant of the module state, made when the function is first used as a value of that
     /// type (as a class's value is, `ctor_values`), so `===`, `Map` and `Set` keys see one
     /// value.
     pub(super) fn generic_fn_value(&mut self, d: DefId, id: &ast::Ident, exp: TyId) -> hir::Expr {
@@ -296,12 +296,15 @@ impl FnCx<'_, '_> {
             let read = self.global_read(g, Want::Move, id.span);
             return self.coerce(read, exp);
         }
-        let arrow = self.generic_fn_arrow(id, exp);
-        self.generic_closure(&arrow, Some(exp))
+        // At a type over the caller's type parameters: a new function at each evaluation.
+        let arrow = self.generic_fn_arrow(d, id, exp);
+        let mut value = self.generic_closure(&arrow, Some(exp));
+        self.mark_fresh(&mut value, exp);
+        value
     }
 
     /// The module constant holding function `d` as a value of generic function type `exp`
-    /// (made once; `None` for a local function or a type over type parameters).
+    /// (made once; `None` for a type over type parameters).
     fn generic_fn_global(&mut self, d: DefId, exp: TyId) -> Option<DefId> {
         if self.cx.has_type_params(exp) || self.cx.ty.has_error(exp) {
             return None;
@@ -309,7 +312,9 @@ impl FnCx<'_, '_> {
         let f = self.cx.fn_info(d);
         let (module, qual, span) = (f.module, f.name.clone(), f.name_span);
         let name = qual.rsplit([':', '.']).next().unwrap_or(&qual).to_string();
-        if !matches!(self.cx.lookup_item(module, &name), Some(Item::Def(x)) if x == d) {
+        // A function nested in another one captures nothing, so it has one value too; the
+        // closure calls it by name, found at its own declaration.
+        if !matches!(self.cx.lookup_item_at(module, &name, span), Some(Item::Def(x)) if x == d) {
             return None;
         }
         let key = (d, exp);
@@ -343,7 +348,7 @@ impl FnCx<'_, '_> {
         let init = {
             let mut fcx = crate::body::driver::detached(self.cx, module, &[]);
             fcx.fn_name = format!("{qual}#value");
-            let arrow = fcx.generic_fn_arrow(&id, exp);
+            let arrow = fcx.generic_fn_arrow(d, &id, exp);
             fcx.generic_closure(&arrow, Some(exp))
         };
         if let DefInfo::Global(info) = &mut self.cx.info[g.0 as usize] {
@@ -429,7 +434,7 @@ impl FnCx<'_, '_> {
     }
 
     /// `(a0, …) => id(a0, …)` for generic function type `exp`.
-    fn generic_fn_arrow(&mut self, id: &ast::Ident, exp: TyId) -> ast::Expr {
+    fn generic_fn_arrow(&mut self, d: DefId, id: &ast::Ident, exp: TyId) -> ast::Expr {
         let Some(g) = self.cx.generic_sig(exp) else {
             return ast::Expr {
                 id: ast::NodeId(u32::MAX),
@@ -437,7 +442,14 @@ impl FnCx<'_, '_> {
                 span: id.span,
             };
         };
+        // A function may take fewer parameters than the type gives (`y?: number`): those are
+        // not passed on.
+        let takes = match crate::body::defaults::has_rest(self.cx, d) {
+            true => usize::MAX,
+            false => self.cx.fn_info(d).params.len(),
+        };
         let n = g.method.params.len();
+        let passed = n.min(takes);
         let at = id.span;
         let mk = |kind| ast::Expr {
             id: ast::NodeId(u32::MAX),
@@ -458,7 +470,7 @@ impl FnCx<'_, '_> {
                 rest: g.rest && k + 1 == n,
             })
             .collect();
-        let args = (0..n)
+        let args = (0..passed)
             .map(|k| match g.rest && k + 1 == n {
                 true => mk(ast::ExprKind::Spread(Box::new(mk(ast::ExprKind::Ident(
                     name(k),

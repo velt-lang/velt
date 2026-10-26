@@ -72,6 +72,7 @@ mod for_of;
 mod for_of_shared;
 mod foreign;
 mod frame_envs;
+mod fresh_fns;
 mod frozen;
 mod glue;
 mod hooks;
@@ -189,7 +190,8 @@ pub(crate) fn lower_program(
             if std::env::var_os("VELT_DEBUG_PROXY").is_some() {
                 eprintln!("velt: proxiable types: {}", cx.proxiable_names().join(", "));
             }
-            let diags = cx.nothing_clash_diagnostics();
+            let mut diags = cx.nothing_clash_diagnostics();
+            diags.extend(cx.fresh_fn_diagnostics());
             let types_now = cx.types.clone();
             let program = cx.finish();
             if !no_await_steps && async_fn::await_order::unobservable(&program) {

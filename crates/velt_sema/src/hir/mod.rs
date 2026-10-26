@@ -204,6 +204,13 @@ pub struct Program {
     /// interface value): only their vtable slots hold instantiation tables (hir_encodings.md
     /// "Generic methods"). Additive.
     pub generic_dyn_methods: HashSet<String>,
+    /// Closures each evaluation of which is a new function value where JavaScript has one
+    /// function (#943): a generic function value converted to another function type, a function
+    /// of fixed types asserted to a generic one, and a generic function's value at a type over
+    /// the caller's type parameters or at more than one type. With the function type of their
+    /// values: lowering reports one made in a program that compares function values of that
+    /// type (hir_encodings.md "Generic function values"). Additive.
+    pub fresh_closures: HashMap<DefId, TyId>,
 }
 
 /// `ty` implements `iface<iface_args>` using `methods` (one per interface method, in order).

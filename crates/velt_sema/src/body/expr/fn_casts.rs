@@ -7,6 +7,9 @@ use velt_syntax::ast;
 use crate::body::{FnCx, Want};
 use crate::hir::{self, TyId, TyKind};
 
+/// The local `FnCx::fixed_as_generic` holds the converted value in: no source can name it.
+const HELD_FN: &str = "<fixed value>";
+
 impl FnCx<'_, '_> {
     /// `f as unknown as F` (or `as any as F`) for a function type `F` and a name `f` whose own
     /// function type converts to `F` as an assignment would (`Symbol as unknown as (d: string)
@@ -73,10 +76,13 @@ impl FnCx<'_, '_> {
         };
         let top = matches!(&ty.kind, ast::TypeExprKind::Named { path, args }
             if args.is_empty() && path.len() == 1 && matches!(path[0].name.as_str(), "unknown" | "any"));
-        if !top || !is_path(x) {
+        if !top {
             return None;
         }
-        let t = self.peek_ty(x)?;
+        let t = match is_path(x) {
+            true => self.peek_ty(x)?,
+            false => self.trial_ty(x)?,
+        };
         let t = self.cx.ty.core(t).unwrap_or(t);
         if self.cx.is_generic_fn(t) {
             let h = self.expr(x, Some(target), want);
@@ -107,8 +113,10 @@ impl FnCx<'_, '_> {
     }
 
     /// `x` (a function of fixed types) as generic function type `target`, written `written`:
-    /// the generic arrow calling it, when that checks (`fn_as_generic`). `None`, with nothing
-    /// reported, when it doesn't (or the type is not written out here).
+    /// the generic arrow calling it, when that checks (`fn_as_generic`). `x` is evaluated once,
+    /// into a local the arrow captures, unless it is the name of a function (or of a built-in
+    /// one, `Symbol`), which no assignment changes. `None`, with nothing reported, when it
+    /// doesn't check (or the type is not written out here).
     fn fixed_as_generic(
         &mut self,
         x: &ast::Expr,
@@ -154,8 +162,31 @@ impl FnCx<'_, '_> {
                 false => mk(ast::ExprKind::Ident(name(k))),
             })
             .collect();
+        let mark = crate::body::recheck::Mark::here(self.cx);
+        let frames = self.trial_frames();
+        let diags = self.cx.diags.len();
+        self.push_scope();
+        let held = match self.names_function(x) {
+            true => None,
+            false => {
+                let mut h = self.expr(x, None, Want::Move);
+                crate::body::places::set_place_mode(&mut h, hir::UseMode::Move);
+                let kind = crate::body::LocalKind::Temp;
+                let l = self.new_local(HELD_FN, h.ty, false, at, kind);
+                let scope = self.f.scopes.last_mut().expect("ICE: no scope");
+                scope.names.insert(HELD_FN.to_string(), l);
+                Some((l, h))
+            }
+        };
+        let callee = match held {
+            Some(_) => mk(ast::ExprKind::Ident(ast::Ident {
+                name: HELD_FN.into(),
+                span: at,
+            })),
+            None => x.clone(),
+        };
         let call = mk(ast::ExprKind::Call {
-            callee: Box::new(x.clone()),
+            callee: Box::new(callee),
             type_args: vec![],
             args,
             optional: false,
@@ -172,17 +203,60 @@ impl FnCx<'_, '_> {
             body: ast::ArrowBody::Expr(Box::new(body)),
             is_async: false,
         });
-        let mark = crate::body::recheck::Mark::here(self.cx);
-        let frames = self.trial_frames();
-        let diags = self.cx.diags.len();
         let h = self.expr(&arrow, Some(target), Want::Move);
+        self.pop_scope();
         if self.cx.diags.len() == diags {
-            return Some(self.coerce(h, target));
+            let mut value = self.coerce(h, target);
+            self.mark_fresh(&mut value, target);
+            let Some((l, init)) = held else {
+                return Some(value);
+            };
+            let stmts = vec![hir::Stmt {
+                kind: hir::StmtKind::Let {
+                    local: l,
+                    init: Some(init),
+                },
+                span: at,
+            }];
+            let block = hir::Block {
+                stmts,
+                value: Some(Box::new(value)),
+                span: at,
+            };
+            return Some(self.mk(hir::ExprKind::Block(block), target, at));
         }
         self.cx.diags.truncate(diags);
         mark.rollback(self.cx);
         self.restore_trial_frames(frames);
         None
+    }
+
+    /// The type of `x`, checked as a trial and rolled back (it is checked again where it is
+    /// used, which reports its errors).
+    fn trial_ty(&mut self, x: &ast::Expr) -> Option<TyId> {
+        let mark = crate::body::recheck::Mark::here(self.cx);
+        let frames = self.trial_frames();
+        let diags = self.cx.diags.len();
+        let t = self.expr(x, None, Want::Borrow).ty;
+        self.cx.diags.truncate(diags);
+        mark.rollback(self.cx);
+        self.restore_trial_frames(frames);
+        (!self.cx.ty.is_bottom(t)).then_some(t)
+    }
+
+    /// Is `x` the name of a function declaration or of a built-in function (not a variable)?
+    fn names_function(&mut self, x: &ast::Expr) -> bool {
+        let ast::ExprKind::Ident(id) = &strip_parens(x).kind else {
+            return false;
+        };
+        if self.is_local_name(&id.name) {
+            return false;
+        }
+        match self.cx.lookup_item_at(self.module, &id.name, id.span) {
+            Some(crate::ctx::Item::Def(d)) => self.cx.try_fn(d).is_some(),
+            Some(_) => false,
+            None => true,
+        }
     }
 
     /// Function type `t` with each branded parameter and result type its primitive.

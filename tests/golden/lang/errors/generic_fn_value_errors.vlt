@@ -1,8 +1,14 @@
-// What a generic function value can't be yet (#943): held as `any` or `Function`, made of a function of fixed
-// types through `unknown`, an arrow with another number of type parameters, and a generic
-// method using `this` in an object literal implementing an interface.
+// What a generic function value can't be yet (#943): held as `any` or `Function`, made of a
+// function of fixed types through `unknown` (also one returning a `symbol` asserted to return an
+// object type), an arrow with another number of type parameters, and a generic method using
+// `this` in an object literal implementing an interface.
 type Id = <T>(x: T) => T;
 type Two = <A, B>(a: A, b: B) => A;
+
+interface InjectionToken<T> {
+  description: string;
+  __t?: T;
+}
 
 interface Boxer {
   tag: string;
@@ -16,6 +22,7 @@ function main(): void {
   const plus = (x: number) => x + 1;
   const bad = plus as unknown as Id;
   const t: Two = <A,>(a: A, b: A): A => a;
+  const token = Symbol as unknown as <T>(d: string) => InjectionToken<T>;
   const b: Boxer = {
     tag: "b",
     box(x) {
@@ -23,5 +30,5 @@ function main(): void {
       return [x];
     },
   };
-  console.log(a, fn, bad(1), t(1, 2), b.box(1));
+  console.log(a, fn, bad(1), t(1, 2), b.box(1), token<number>("t"));
 }

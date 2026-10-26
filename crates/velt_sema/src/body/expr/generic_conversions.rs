@@ -31,13 +31,70 @@ impl FnCx<'_, '_> {
         let TyKind::FnPtr { params, rest, .. } = self.cx.ty.kind(exp).clone() else {
             return Err(h);
         };
-        // A function value may take fewer parameters than its type gives.
+        let mut g = self.forwarding(h, exp, (params.len(), rest), |s, arrow, exp| {
+            s.closure(arrow, Some(exp), true)
+        });
+        self.mark_fresh(&mut g, exp);
+        Ok(g)
+    }
+
+    /// Generic function value `h` as a value of another generic function type `exp` (one taking
+    /// more optional parameters, or giving a wider result: `<T>(x: T, y?: number) => T`): the
+    /// generic closure `(a0, …) => g(a0, …)` over `g`, a local holding `h`. A conversion between
+    /// the instances of one type (`I<A>` as `I<B>`) is not this. `Err` when it doesn't convert.
+    pub(super) fn generic_as_generic(
+        &mut self,
+        h: hir::Expr,
+        exp: TyId,
+    ) -> Result<hir::Expr, hir::Expr> {
+        let (Some(from), Some(to)) = (self.cx.generic_sig(h.ty), self.cx.generic_sig(exp)) else {
+            return Err(h);
+        };
+        if from.iface == to.iface {
+            return Err(h);
+        }
+        // Checked as a trial: a value that doesn't convert is the caller's mismatch.
+        let mark = crate::body::recheck::Mark::here(self.cx);
+        let frames = self.trial_frames();
+        let diags = self.cx.diags.len();
+        let shape = (to.method.params.len(), to.rest);
+        let mut g = self.forwarding(h.clone(), exp, shape, |s, arrow, exp| {
+            s.generic_closure(arrow, Some(exp))
+        });
+        if self.cx.diags.len() == diags {
+            self.mark_fresh(&mut g, exp);
+            return Ok(g);
+        }
+        self.cx.diags.truncate(diags);
+        mark.rollback(self.cx);
+        self.restore_trial_frames(frames);
+        Err(h)
+    }
+
+    /// Records the closure `h` makes as a fresh one, its values of type `ty`: each evaluation is
+    /// a new function where JavaScript has one (`hir::Program::fresh_closures`).
+    pub(super) fn mark_fresh(&mut self, h: &mut hir::Expr, ty: TyId) {
+        if let Some(c) = crate::generic_fns::closure_in(h) {
+            self.cx.generic_fns.fresh.insert(c, ty);
+        }
+    }
+
+    /// `{ const g = h; (a0, …) => g(a0, …) }` as a value of `exp`, the arrow made by `make`:
+    /// `n` parameters (the last a rest one if `rest`), as many of them passed as `h` takes (a
+    /// function value may take fewer parameters than its type gives).
+    fn forwarding(
+        &mut self,
+        h: hir::Expr,
+        exp: TyId,
+        (n, rest): (usize, bool),
+        make: impl FnOnce(&mut Self, &ast::Expr, TyId) -> hir::Expr,
+    ) -> hir::Expr {
         let takes = self
             .cx
             .generic_sig(h.ty)
             .map_or(0, |g| g.method.params.len());
-        let rest = rest && takes >= params.len();
-        let params = &params[..params.len().min(takes)];
+        let rest = rest && takes >= n;
+        let n = n.min(takes);
         let span = h.span;
         self.push_scope();
         let (ty, at) = (h.ty, h.span);
@@ -53,7 +110,6 @@ impl FnCx<'_, '_> {
             },
             span: at,
         }];
-        let n = params.len();
         let mk = |kind| ast::Expr {
             id: ast::NodeId(u32::MAX),
             kind,
@@ -99,7 +155,7 @@ impl FnCx<'_, '_> {
             body: ast::ArrowBody::Expr(Box::new(call)),
             is_async: false,
         });
-        let value = self.closure(&arrow, Some(exp), true);
+        let value = make(self, &arrow, exp);
         self.pop_scope();
         let value = self.coerce(value, exp);
         let block = hir::Block {
@@ -107,7 +163,7 @@ impl FnCx<'_, '_> {
             value: Some(Box::new(value)),
             span,
         };
-        Ok(self.mk(H::Block(block), exp, span))
+        self.mk(H::Block(block), exp, span)
     }
 
     /// A generic function value (of type `g`) passed for a parameter of function type `pat`

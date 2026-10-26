@@ -1,17 +1,19 @@
 //! Constants of a generic function type (#943): `const id: <T>(x: T) => T = (x) => x;`, also
 //! through a type alias (`type Id = <T>(x: T) => T; const id: Id = …`, an alias imported from
 //! another module, a generic alias `EmitFn<E>` at its arguments, or an interface with one
-//! generic call signature, which `crate::call_sigs` made such an alias), and a name asserted to
-//! one (`const createToken = Symbol as unknown as <T>(d: string) => Token<T>;`). TypeScript's
-//! value stays generic: each call instantiates it. Velt checks such a constant as the generic
-//! function it is, as it does a generic arrow constant (`super`), so each call instantiates it
-//! and nothing is boxed:
+//! generic call signature, which `crate::call_sigs` made such an alias). TypeScript's value
+//! stays generic: each call instantiates it. Velt checks such a constant as the generic function
+//! it is, as it does a generic arrow constant (`super`), so each call instantiates it and
+//! nothing is boxed:
 //! - an arrow initializer is the function's body, its parameters typed by the arrow where it
 //!   types them and by the function type elsewhere (parameters the arrow leaves out are hidden
 //!   ones, as TypeScript lets a function take fewer parameters than its type);
-//! - another initializer must be a name, or a name behind assertions; the function calls it,
-//!   `function createToken<T>(a0: string): Token<T> { return (Symbol as unknown as (d: string)
-//!   => Token<T>)(a0); }`, reading the name at each call, as reading a constant again does.
+//! - another initializer must be a property path (`const f: G = ns.f`); the function calls it,
+//!   `function f<T>(a0: T): T { return (ns.f as (x: T) => T)(a0); }`, reading it at each call.
+//!
+//! A name (`const asA: A = id`) stays a constant holding that value (the same value), and a value
+//! asserted to a generic function type (`const createToken = Symbol as unknown as <T>(d: string)
+//! => Token<T>`) is one made once (`body::expr::fn_casts`).
 //!
 //! A generic function type anywhere else (a parameter, a field, a variable that is not such a
 //! constant) is a value that stays generic, which Velt has no representation for yet: those
@@ -115,9 +117,6 @@ impl<'m> GenericFnTypes<'m> {
         };
         match (&v.ty, v.init.as_ref().map(|e| &e.kind)) {
             (Some(t), Some(_)) => named(t),
-            (None, Some(ast::ExprKind::Cast { ty, .. })) => {
-                matches!(ty.kind, K::GenericFunction { .. })
-            }
             _ => false,
         }
     }
@@ -272,16 +271,6 @@ pub(crate) fn typed_function(
             let g = table.generic_fn(module, t)?;
             calling(name, g, init, v.span)
         }
-        (None, ast::ExprKind::Cast { expr, ty }) => {
-            let g = table.generic_fn(module, ty)?;
-            // The function calls the name behind the outer assertion, asserted to the
-            // generic function type's function type.
-            let inner = strip(expr);
-            if !is_path(inner) {
-                return None;
-            }
-            calling(name, g, init, v.span)
-        }
         _ => None,
     }
 }
@@ -362,16 +351,10 @@ fn from_arrow(
     ))
 }
 
-/// `const f: <T>(p…) => R = x;` (or `const f = x as … as <T>(p…) => R;`) as `function f<T>(a…):
-/// R { return (x as (p…) => R)(a…); }`: the value called at the instantiated function type.
+/// `const f: <T>(p…) => R = x;` as `function f<T>(a…): R { return (x as (p…) => R)(a…); }`:
+/// the value called at the instantiated function type.
 fn calling(name: &ast::Ident, g: GenericFn, init: &ast::Expr, span: Span) -> Option<ast::FnDecl> {
-    let value = match &init.kind {
-        // `x as unknown as <T>(…) => R`: keep the assertions before the last one.
-        ast::ExprKind::Cast { expr, ty } if matches!(ty.kind, K::GenericFunction { .. }) => {
-            (**expr).clone()
-        }
-        _ => init.clone(),
-    };
+    let value = init.clone();
     if !is_path(strip(&value)) {
         return None;
     }

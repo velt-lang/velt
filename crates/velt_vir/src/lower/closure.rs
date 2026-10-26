@@ -115,6 +115,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
     /// `{ code, env }` of closure `def`; `borrowed`: only borrowed by a call (see
     /// [`borrowed_arg`](Self::borrowed_arg)), so value captures may stay in a frame env too.
     fn closure_value(&mut self, def: DefId, ty: TyId, borrowed: bool) -> Operand {
+        self.cx.note_closure_made(def);
         let f = self.cx.fn_def(def);
         let targs = self.targs.clone();
         let ca = self.cx.closure_agg();

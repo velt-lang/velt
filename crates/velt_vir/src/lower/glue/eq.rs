@@ -151,7 +151,7 @@ impl FnLower<'_, '_> {
             }
             // Agreeing with `ref_identity`: the boxed closure's env.
             TyKind::Dyn(..) if self.cx.is_generic_fn_value(ty) => {
-                self.cx.note_fn_identity();
+                self.cx.note_fn_compared(ty);
                 let env = self.boxed_env(place);
                 let env = self.cast_to(env, Ty::Ptr, Ty::U64);
                 self.fx_combine(cint(0, Ty::U64), env)
@@ -165,7 +165,7 @@ impl FnLower<'_, '_> {
                 self.fx_combine(cint(0, Ty::U64), x)
             }
             TyKind::FnPtr { .. } | TyKind::Closure(_) => {
-                self.cx.note_fn_identity();
+                self.cx.note_fn_compared(ty);
                 let code = Operand::Copy(proj(place, Proj::Field(0)));
                 let code = self.cast_to(code, Ty::Ptr, Ty::U64);
                 let h = self.fx_combine(cint(0, Ty::U64), code);

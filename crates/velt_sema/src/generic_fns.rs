@@ -14,14 +14,14 @@
 //! generic method of an object type, `{ run<T>(fn: () => T): T }`). A constant of such a type
 //! with an arrow or name initializer is a generic function instead (`generic_arrows::typed`).
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
 use crate::ctx::Ctx;
 use crate::defs::{Bound, DefInfo, Generics, IfaceInfo, IfaceMethod, ParamSig};
-use crate::hir::{DefId, TyId, TyKind};
+use crate::hir::{self, DefId, TyId, TyKind};
 use crate::resolve::TyEnv;
 
 /// The name of the one method of a generic function type's interface. Not a name source can
@@ -53,6 +53,8 @@ pub(crate) struct GenericFns {
     names: FxHashMap<DefId, Vec<String>>,
     /// The site of each one's error type: its first spelling, when in a user module.
     sites: FxHashMap<DefId, Span>,
+    /// `hir::Program::fresh_closures`.
+    pub fresh: FxHashMap<DefId, TyId>,
 }
 
 /// A generic function type's parts, over the type parameters in scope, the implementor and
@@ -473,4 +475,66 @@ impl Ctx<'_> {
             rest: self.generic_fn_rest(*d),
         })
     }
+}
+
+/// The generic functions used as values at more than one generic function type (`const a: A =
+/// id; const b: B = id`), or also as values of a function type of fixed types (`xs.map(id)`):
+/// each type has its constant (`body::expr::generic_values`), where JavaScript has one function,
+/// so their closures are fresh ones (`hir::Program::fresh_closures`).
+pub(crate) fn mark_shared_values(cx: &mut Ctx) {
+    let mut by_fn: FxHashMap<DefId, Vec<(TyId, DefId)>> = FxHashMap::default();
+    for ((d, t), g) in &cx.objects.class_values {
+        if cx.try_fn(*d).is_some() && cx.is_generic_fn(*t) {
+            by_fn.entry(*d).or_default().push((*t, *g));
+        }
+    }
+    if by_fn.is_empty() {
+        return;
+    }
+    let mut refs: FxHashSet<DefId> = FxHashSet::default();
+    let mut note = |e: &mut hir::Expr| {
+        if let hir::ExprKind::FnRef(x, _) = &e.kind {
+            refs.insert(*x);
+        }
+    };
+    for d in cx.defs.iter_mut() {
+        match d {
+            Some(hir::Def::Fn(f)) => crate::visit::exprs_mut(&mut f.body.block, &mut note),
+            Some(hir::Def::Global(g)) => crate::visit::exprs_in(&mut g.init, &mut note),
+            _ => {}
+        }
+    }
+    for (d, values) in by_fn {
+        if values.len() < 2 && !refs.contains(&d) {
+            continue;
+        }
+        for (t, g) in values {
+            if let Some(c) = global_closure(cx, g) {
+                cx.generic_fns.fresh.insert(c, t);
+            }
+        }
+    }
+}
+
+/// The closure the initializer of constant `g` makes.
+fn global_closure(cx: &mut Ctx, g: DefId) -> Option<DefId> {
+    let init = match cx.defs.get_mut(g.0 as usize) {
+        Some(Some(hir::Def::Global(gd))) => &mut gd.init,
+        _ => match cx.info.get_mut(g.0 as usize) {
+            Some(crate::defs::DefInfo::Global(info)) => info.init.as_mut()?,
+            _ => return None,
+        },
+    };
+    closure_in(init)
+}
+
+/// The first closure `e` makes.
+pub(crate) fn closure_in(e: &mut hir::Expr) -> Option<DefId> {
+    let mut found = None;
+    crate::visit::exprs_in(e, &mut |e| {
+        if let (None, hir::ExprKind::Closure(c)) = (found, &e.kind) {
+            found = Some(*c);
+        }
+    });
+    found
 }

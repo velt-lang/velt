@@ -1116,17 +1116,23 @@ Such a value is:
 A value is itself however it is copied, stored or converted between spellings of its type:
 `===`, `includes`, `Map` and `Set` keys compare generic function values by identity, as
 JavaScript does. A module-level generic function used as such a value is one value per type
-(`id === id`, also through `const asA: A = id`). Not yet the same value: a generic function
-declared in a function body used as a value twice, a generic value converted to a function of
-fixed types twice (each conversion is a new function), and a generic function used at a type
-that mentions the caller's type parameters (`P<U>` in `getP<U>`), which is a new value per
-use. Where a function type of fixed
+(`id === id`, also through `const asA: A = id`, and for a generic function declared in a function
+body). Some values are made anew at each use, where JavaScript keeps one function: a generic
+value converted to another function type (to one of fixed types, or to a generic one taking more
+optional parameters), a function asserted to a generic type, a generic function used at a type
+that mentions the caller's type parameters (`P<U>` in `getP<U>`), and a generic function used as
+a value at more than one type (or also where a function of fixed types is expected). A program
+that makes such a value and compares function values of its type (`===`, `includes`, `indexOf`,
+a `Set` or `Map` key, also through `unknown`) is an error, rather than giving another answer than
+JavaScript. Where a function type of fixed
 types is expected (`const p: (x: number) => number = f`, `[1, 2].map(f)`), a generic function
 value is instantiated at it, as TypeScript does. A function of fixed types is not a generic one
 (`(x: number) => number` is not a `<T>(x: T) => T`, as TypeScript reports), also not through
 `unknown` (`plus as unknown as Id` is an error), unless it takes the type's parameters at every
 type argument: `Symbol as unknown as <T>(d: string) => Token<T>` is the generic arrow calling
-`Symbol`. Held as `unknown`, a generic function value's `typeof` is `"function"`, it compares
+`Symbol`, which is evaluated once (`f as unknown as …` keeps the function `f` held then; a
+function that doesn't take them at every type argument, `Symbol` as `<T>(d: string) =>
+Token<T>` with `Token<T>` an object type, is an error). Held as `unknown`, a generic function value's `typeof` is `"function"`, it compares
 with `===`, and `u as Id` gives it back; it can't be held as `any` or `Function` yet (an error),
 since a call through those would need its type arguments, and calling one through an `any`
 reached otherwise (`(u as any)(1)`) stops the program with a `TypeError` (#924). An

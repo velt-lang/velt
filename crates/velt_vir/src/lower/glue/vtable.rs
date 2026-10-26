@@ -250,6 +250,7 @@ impl Cx<'_> {
         self.facts.generic_any = true;
         let imp = &self.hir.impls[index as usize];
         let (ty, iface, iargs) = (imp.ty, imp.iface, imp.iface_args.clone());
+        (self.facts.generic_any_keys).insert(crate::lower::fresh_fns::FnKey::Generic(iface));
         let any = self.hir.any_impl.unwrap_or(0);
         let base = self.vtable(VtableKey::Impl(any, ty));
         let mut data = self.statics[base.0 as usize].clone();

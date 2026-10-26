@@ -1,0 +1,6 @@
+generic_fn_value_compared.vlt:21:10: error: this function value can't be compared yet: each evaluation makes a new function, where JavaScript keeps one (#943)
+generic_fn_value_compared.vlt:12:10: error: this function value can't be compared yet: each evaluation makes a new function, where JavaScript keeps one (#943)
+generic_fn_value_compared.vlt:26:36: error: this function value can't be compared yet: each evaluation makes a new function, where JavaScript keeps one (#943)
+generic_fn_value_compared.vlt:27:36: error: this function value can't be compared yet: each evaluation makes a new function, where JavaScript keeps one (#943)
+generic_fn_value_compared.vlt:29:14: error: this function value can't be compared yet: each evaluation makes a new function, where JavaScript keeps one (#943)
+generic_fn_value_compared.vlt:30:14: error: this function value can't be compared yet: each evaluation makes a new function, where JavaScript keeps one (#943)
