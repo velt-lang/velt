@@ -740,6 +740,20 @@ nothings alike:
   `string` ``): Node would copy the `undefined`, which the field's type can't hold. Without a
   target type the field has the earlier part's type, as TypeScript types it (`{ ...u, ...p }`
   with `u.n: number` and `p.n?: number` has `n: number`), so the same holds there.
+- A spread of a conditional of object literals, `{ id, ...(c ? { boundaryId: id } : {}) }`, adds
+  the keys of the branch taken, as in Node: the conditional is an object type in which a field
+  only some branches write is optional (TypeScript's `{ boundaryId: number } | {}`, spread as
+  `{ boundaryId?: number }`), so the key is absent when the other branch is taken. Each branch is
+  checked under the narrowing of the condition (`r ? { redirect: { ...r } } : {}`); a key the
+  branches write with different types has their union (`c ? { k: 1 } : { k: "s" }` spreads `k:
+  number | string`; `c ? { k: [1] } : { k: null }` spreads `k: number[] | null`), and so does
+  a key an earlier property or spread gives another type (`{ k: false, ...(c ? { k: 1 } : {})
+  }` has `k: number | boolean`). The result is one object type, not TypeScript's union of
+  object types, so `"k" in o` does not narrow `o.k` (a present key may hold `undefined`): test
+  `o.k` itself. A getter of a branch is called where the spread reads it, in property order,
+  after the values written before it. A getter using `this`, or one that a value other than a
+  literal follows, is not supported there yet (an error), and a setter keeps the literal's own
+  rules.
 - An object literal may leave out an optional field (`{ port: i64; host?: string }` accepts
   `{ port: 80 }`). A field of an object type declared `a: T | null` may be left out too, and is
   then `null`.

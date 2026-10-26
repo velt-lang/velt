@@ -86,6 +86,7 @@ mod moves;
 mod namespaces;
 mod nested_closures;
 mod object_copies;
+mod overload_adapter;
 mod overloads;
 mod ownership;
 mod promise_copies;
@@ -353,6 +354,7 @@ fn check_timed(
         let entry = timings::pass(round, || analyze(&mut cx, root, root_mod, opts));
         if let Some(o) = &overloaded {
             overloads::report_misfits(&mut cx.diags, &o.sig_spans);
+            overload_adapter::check_identity(&mut cx, &o.adapted);
         }
         (cx, entry)
     };

@@ -1,0 +1,1 @@
+a getter using `this` in a conditional spread is not supported yet
