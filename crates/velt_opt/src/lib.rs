@@ -7,6 +7,10 @@
 //! Passes (one module each; every pass keeps the VIR invariants from `vir.rs`):
 //! - `gated_clones`: before the rounds, a gated function's calls of ordinary callees that check
 //!   its CPU extension go to clones gated on it, where the check is `true` (#1330).
+//! - `frozen`: before the rounds (so a callee's loads move with it into its callers) and with
+//!   `noalias` after them, scalar fields behind `frozen` params (borrowed values, also ones
+//!   holding atomics) that the function reads in a loop are loaded once on entry: nothing
+//!   changes them during the call, not even atomic operations, fences or calls.
 //! - `inline`: bottom-up inlining of small / called-once direct callees.
 //! - `const_fields`: constant fields of aggregate locals (closure code pointers) propagated
 //!   into their reads, also through read-only pointers, plus cloning of callees that receive
@@ -66,6 +70,7 @@ mod dead_funcs;
 mod divisions;
 mod frame_slots;
 mod fresh;
+mod frozen;
 mod gated_clones;
 mod heap_sroa;
 mod inline;
@@ -167,6 +172,7 @@ pub fn optimize_timed(program: &mut vir::Program, level: OptLevel, t: &mut PassT
                 if t.time("numrep", || numrep::run(&env, func)) {
                     numrep_cleanup(&program.aggs, func, t);
                 }
+                t.time("frozen", || frozen::run(&program.aggs, func));
             }
             let mut budget = inline::Budget::for_program(program);
             let mut specs = const_fields::Specializations::default();
@@ -217,12 +223,13 @@ fn numrep_cleanup(aggs: &[vir::AggLayout], func: &mut vir::Function, t: &mut Pas
     t.time("dce", || dce::run(aggs, func));
 }
 
-/// Promote `noalias` pointees and async frame slots (after inlining settled which bodies they
-/// live in), then clean up the loads and stores it moved.
+/// Promote `noalias` and `frozen` pointees and async frame slots (after inlining settled which
+/// bodies they live in), then clean up the loads and stores it moved.
 fn promote_memory(program: &mut vir::Program, t: &mut PassTimings) {
     let signatures = t.time("signatures", || callgraph::signatures(program));
     for func in &mut program.funcs {
         let mut changed = t.time("noalias", || noalias::run(&program.aggs, func));
+        changed |= t.time("frozen", || frozen::run(&program.aggs, func));
         changed |= t.time("frame_slots", || frame_slots::run(&program.aggs, func));
         if changed {
             t.time("constfold", || constfold::run(&signatures, func));

@@ -11,6 +11,10 @@
 //!   (`m.with(...)` writes its lock word through a shared borrow) or the body writes the param
 //!   (`LocalDef::mutable`: closure params, params handed to function values). Not `noalias`:
 //!   two `Borrow` params may point to the same value;
+//! - the same `Borrow` params → `frozen` also when the value holds an `Atomic` (but no `Mutex`
+//!   or `RwLock`): nothing writes the object during the call but `Atomic` methods, which change
+//!   only the atomic's word, so `velt_opt` reads the other fields once (`frozen` pass), even
+//!   around atomic operations, fences and calls (docs/internals/design/atomics.md);
 //! - the out-pointer of an aggregate / `Result` return → `noalias` (always a fresh caller temp);
 //! - every pointer to a value → `nonnull` + `dereferenceable(size)`;
 //! - a poll function's frame → `nonnull` + `dereferenceable(frame size)` ([`Cx::poll_param_attrs`]).
@@ -79,7 +83,9 @@ impl Cx<'_> {
             // A counted object may be written through a share of the param (`const o = p;
             // o.x = 1`), a pointer derived from it: not read-only then.
             Some(PassMode::Borrow) => {
-                attrs.readonly = !written && !self.holds_mutex(ty, 0) && self.unique_refs(ty)
+                let unchanged = !written && self.unique_refs(ty);
+                attrs.readonly = unchanged && !self.holds_mutex(ty, 0, true);
+                attrs.frozen = unchanged && !self.holds_mutex(ty, 0, false);
             }
             _ => {}
         }
@@ -106,21 +112,24 @@ impl Cx<'_> {
             nonnull: true,
             dereferenceable: u64::from(self.size_align(ty).0),
             readonly: false,
+            frozen: false,
         }
     }
 
     /// Does a value of `ty` (a class: its object) contain a `Mutex` or an `Atomic` (which a
     /// borrowed param's method changes, docs/internals/design/atomics.md) in its own memory? Values
     /// behind pointers (arrays, other objects, `shared`) don't count: writes to them are not
-    /// writes through the param. `depth` guards against pathological nesting.
-    pub(super) fn holds_mutex(&mut self, ty: TyId, depth: u32) -> bool {
+    /// writes through the param. `atomic` false: only a `Mutex` or `RwLock` counts. `depth`
+    /// guards against pathological nesting.
+    pub(super) fn holds_mutex(&mut self, ty: TyId, depth: u32, atomic: bool) -> bool {
         if depth > 32 {
             return true;
         }
         if let TyKind::Adt(d, _) = self.kind(ty) {
             if let hir::Def::Adt(a) = self.hir.def(d) {
+                let name = self.type_name(ty);
                 if a.kind != AdtKind::Class
-                    && matches!(self.type_name(ty).as_str(), "Mutex" | "RwLock" | "Atomic")
+                    && (matches!(name.as_str(), "Mutex" | "RwLock") || atomic && name == "Atomic")
                 {
                     return true;
                 }
@@ -131,6 +140,6 @@ impl Cx<'_> {
         }
         self.part_types(ty)
             .into_iter()
-            .any(|p| self.holds_mutex(p, depth + 1))
+            .any(|p| self.holds_mutex(p, depth + 1, atomic))
     }
 }

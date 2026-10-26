@@ -96,17 +96,19 @@ Diagnostics from any stage are rendered with `Diagnostic::render` to stderr; exi
 
 ## Parameter attributes (additive VIR extension)
 - `vir::Function::param_attrs: Vec<ParamAttrs>` — empty (no information) or one entry per param
-  (checked by `verify`); `ParamAttrs { noalias, readonly, nonnull, dereferenceable: u64 }`, only
-  on `Ptr` params. `Function::param_attr(i)` tolerates the empty list.
+  (checked by `verify`); `ParamAttrs` (`noalias`, `readonly`, `frozen`, `nonnull`,
+  `dereferenceable: u64`), only on `Ptr` params. `Function::param_attr(i)` tolerates the empty list.
 - Invariant (vir.rs 9): set only where sema's exclusivity guarantees hold, and every caller
   upholds them. Lowering sets them on user functions: `BorrowMut` (inferred-modified) aggregate
   (or class `this` borrowed mutably) → `noalias`; `Borrow` aggregate → `readonly` (not for
   values holding a `Mutex` inline, nor params the body modifies — `LocalDef::mutable`, e.g.
-  closure params); aggregate / `Result` out-pointer → `noalias`; all of these `nonnull` +
+  closure params); the same `Borrow` params → `frozen` also when the value holds an `Atomic`
+  (nothing changes the pointee during the call but atomics' words, which only `velt_atomic_*`
+  calls access); aggregate / `Result` out-pointer → `noalias`; all of these `nonnull` +
   `dereferenceable(size)`.
 - `velt_opt` keeps them on clones/specializations (inlined bodies simply lose them) and uses
-  `noalias` for redundant-load elimination; LLVM emits them as parameter attributes;
-  Cranelift ignores them.
+  `noalias` and `frozen` for redundant-load elimination; LLVM emits them as parameter
+  attributes (`frozen` has no LLVM counterpart); Cranelift ignores them.
 
 ## Debug variables (additive VIR extension)
 - `vir::Program::debug_types: Vec<DebugTy>` and `vir::LocalDecl::debug: Option<LocalDebug>`

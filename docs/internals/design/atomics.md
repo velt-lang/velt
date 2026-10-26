@@ -141,6 +141,9 @@ in Rust).
 
 A function whose borrowed parameter holds an `Atomic` in its own memory gets no `readonly`
 attribute (vir.rs invariant 9, `param_attrs.rs`): its atomic writes go through that pointer.
+It gets `frozen` instead: nothing changes the parameter's other bytes during the call. Velt's
+own optimizer (`velt_opt`'s `frozen` pass) uses that to read those fields once, on entry,
+where LLVM would reload them after every acquire, fence or call (see "Frozen fields" below).
 
 ## What it costs
 
@@ -230,14 +233,36 @@ Found on the way, for follow-ups:
   `s.w[i]` of a `s: shared<Words>` load the object pointer out of the box on every iteration,
   since LLVM cannot hoist a load across an acquire without knowing the box never changes:
   1.35× on the latch read loop. Passing the object to a function (`readLoop(s, n)` with
-  `readLoop(s: Words, …)`) hoists it, which the benchmark does; lowering could load a frozen
-  root's value pointer once per function, or mark loads from `shared` boxes invariant.
+  `readLoop(s: Words, …)`) hoists it, which the benchmark does, and the `frozen` pass (above)
+  then keeps the object's fields in registers too. A `shared` value read in place in a loop
+  could get the same treatment (its contents are frozen for as long as the box lives).
 - **Runtime, macOS:** spawned tasks start about 1.5 ms apart (a chain of worker wake-ups), and
   with the default worker count (one per core) busy workers begin on efficiency cores (the same
   read loop took 16.8 ms on 4 of 10 workers, 6.6 ms with `VELT_THREADS=4`).
 - **Cranelift 0.132, arm64 without LSE:** its LL/SC loops compare whole registers, which breaks
   8/16-bit `umax`/`umin` and 32-bit compare-and-swap of operands narrowed from wider values;
   velt_codegen_cl works around it (`function/atomic.rs`).
+
+## Frozen fields
+
+What Velt knows and Rust cannot say: during a call, nothing writes a borrowed value but its
+atomics' words (vir.rs invariant 9's `frozen`, set where `readonly` would be, and also for a
+value holding an `Atomic`). An atomic operation never reads or writes anything else, and no
+code reads an atomic's word as plain memory. So `velt_opt`'s `frozen` pass loads the scalar
+fields a function reads in a loop once, on entry: a node's array headers, its bounds, a pool's
+data pointer. The loop then keeps them in registers across acquires, fences and calls, and its
+bounds checks become loop-invariant, which LLVM moves out.
+
+LLVM cannot find this itself: an acquire or a fence may let it see any memory another thread
+wrote, unless the memory is private or invariant, and a struct holding an atomic gets neither
+`noalias` nor `readonly`. Rust has the same problem: a `&T` whose `T` holds an `UnsafeCell` (every
+atomic) loses `noalias`, so Rust reloads the headers after every acquire.
+
+Marking these loads `!invariant.load` for LLVM was considered and rejected. The marker promises
+the memory never changes anywhere in the program, but Velt objects are written before they are
+frozen. With a write through one pointer and an invariant read through another, LLVM folds
+`p[0] - old` to 0 (tested with clang 21). The pass needs no such promise: it relies only on the
+call's own guarantee, so it is sound under any inlining.
 
 ## Not in this design
 
