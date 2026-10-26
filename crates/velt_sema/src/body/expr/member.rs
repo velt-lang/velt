@@ -50,6 +50,7 @@ impl FnCx<'_, '_> {
         if self.cx.ty.is_bottom(obj.ty) {
             return None;
         }
+        let obj = self.without_trap_vars(obj);
         if self.cx.ty.opt_payload(obj.ty).is_some() {
             let tn = self.cx.display(obj.ty);
             // `null` for a `T | null`, `undefined` for a `T | undefined`.

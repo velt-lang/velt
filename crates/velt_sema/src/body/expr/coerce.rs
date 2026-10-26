@@ -81,13 +81,6 @@ impl FnCx<'_, '_> {
             },
             false => h,
         };
-        // A value whose types hold only the traps' error-set variables converts as written
-        // first: the conversion of the types themselves (a union with a variable member) would
-        // have the shape they lose once the variables are solved empty.
-        let h = match self.coerce_as_written(h, exp, true) {
-            Ok(h) => return Ok(h),
-            Err(h) => h,
-        };
         let h = match self.try_coerce_typed(h, exp) {
             Ok(h) => return Ok(h),
             Err(h) => h,
@@ -264,6 +257,10 @@ impl FnCx<'_, '_> {
                 return Ok(self.mk(H::WrapSome(Box::new(inner_h)), exp, span));
             }
         }
+        let h = match self.union_as_written(h, exp) {
+            Ok(h) => return Ok(h),
+            Err(h) => h,
+        };
         if self.cx.union_def(exp).is_some() {
             return self.coerce_to_union(h, exp);
         }

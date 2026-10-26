@@ -40,4 +40,29 @@ impl FnCx<'_, '_> {
             }
         }
     }
+
+    /// A conversion from or to a union whose types hold only the traps' error-set variables
+    /// (`E | <trap variables>`), made as the types are written: a conversion of the union
+    /// itself would have the shape it loses once the variables are solved empty.
+    pub(super) fn union_as_written(
+        &mut self,
+        h: hir::Expr,
+        exp: TyId,
+    ) -> Result<hir::Expr, hir::Expr> {
+        if self.cx.union_def(exp).is_none() && self.cx.union_def(h.ty).is_none() {
+            return Err(h);
+        }
+        self.coerce_as_written(h, exp, true)
+    }
+
+    /// `h` as its type is written, when it is a union whose types hold only the traps'
+    /// error-set variables (assumed empty): a member of `E | <trap variables>` is read as the
+    /// member of `E` it is once they are solved empty.
+    pub(crate) fn without_trap_vars(&mut self, h: hir::Expr) -> hir::Expr {
+        if self.cx.union_def(h.ty).is_none() || !self.cx.only_trap_vars(h.ty) {
+            return h;
+        }
+        let plain = self.cx.plain_type(h.ty);
+        self.coerce_as_written(h, plain, true).unwrap_or_else(|h| h)
+    }
 }
