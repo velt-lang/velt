@@ -64,7 +64,16 @@ impl FnCheck<'_> {
             Const::Unit => t == Ty::Unit,
             Const::Static(s) => in_range(s.0, self.p.statics.len(), "static")?,
             Const::Func(x) => in_range(x.0, self.p.funcs.len(), "function")?,
-            Const::Extern(x) => in_range(x.0, self.p.externs.len(), "extern")?,
+            Const::Extern(x) => {
+                let ok = in_range(x.0, self.p.externs.len(), "extern")?;
+                let symbol = &self.p.externs[x.0 as usize].symbol;
+                if super::inline_extern(symbol) {
+                    return Err(format!(
+                        "the address of `{symbol}` is taken, but it is an inline operation"
+                    ));
+                }
+                ok
+            }
         };
         if ok {
             Ok(t)

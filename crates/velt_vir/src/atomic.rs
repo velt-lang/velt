@@ -186,7 +186,7 @@ impl AtomicCall {
     }
 
     /// The call a `velt_atomic_*` symbol names, if it names a valid one (a load's ordering is
-    /// one a load may have, and so on).
+    /// one a load may have, and so on) in its canonical spelling ([`AtomicCall::symbol`]).
     pub fn of_symbol(symbol: &str) -> Option<AtomicCall> {
         let rest = symbol.strip_prefix("velt_atomic_")?;
         if rest == "spin_hint" {
@@ -226,7 +226,8 @@ impl AtomicCall {
                 AtomicCall::Rmw { op, bits, order }
             }
         };
-        parts.next().is_none().then_some(call)
+        // Only the canonical spelling: `load_08` and `load_+8` would name `load_8` too.
+        (parts.next().is_none() && call.symbol() == symbol).then_some(call)
     }
 
     /// The word's width in bits (0 for a fence or spin hint).
@@ -320,6 +321,8 @@ mod tests {
             "velt_atomic_add_64_acq_x",
             "velt_atomic_nand_64_acq",
             "velt_simd_prefetch",
+            "velt_atomic_load_08_acq",
+            "velt_atomic_load_+8_acq",
         ] {
             assert_eq!(AtomicCall::of_symbol(s), None, "{s}");
         }

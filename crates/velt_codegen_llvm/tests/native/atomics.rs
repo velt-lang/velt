@@ -12,7 +12,8 @@ use velt_vir::vir::Ty::*;
 use velt_vir::vir::{Callee, Const, Operand, Program, Rvalue, Terminator};
 
 /// Every operation at every width, with orderings cycling through the valid ones; the first
-/// three are what the threads and the assembly check use.
+/// three are what the threads and the assembly check use, and entries 5 to 7 (8-bit `load`,
+/// compare-and-swap and `umax`) what the threads use on bytes of one word.
 fn calls() -> Vec<AtomicCall> {
     use Order::*;
     let mut calls = vec![
@@ -40,6 +41,21 @@ fn calls() -> Vec<AtomicCall> {
             order: AcqRel,
             failure: Acquire,
             weak: false,
+        },
+        AtomicCall::Load {
+            bits: 8,
+            order: Relaxed,
+        },
+        AtomicCall::Cas {
+            bits: 8,
+            order: SeqCst,
+            failure: SeqCst,
+            weak: false,
+        },
+        AtomicCall::Rmw {
+            op: Rmw::UMax,
+            bits: 8,
+            order: Relaxed,
         },
     ];
     for bits in [8, 16, 32, 64] {
@@ -164,8 +180,11 @@ const VALUES: [u64; 10] = [
 const THREADS: u64 = 8;
 const ROUNDS: u64 = 100_000;
 
-/// Prints, per entry and inputs, `i w a b -> result cell`; then two counters incremented by
-/// `THREADS` threads `ROUNDS` times each, with `add` and with a `load` / weak CAS loop.
+/// Prints, per entry and inputs, `i w a b -> result cell`; then four words that `THREADS`
+/// threads change `ROUNDS` times each: a counter incremented with `add`, one with a `load` /
+/// weak CAS loop, and per thread its own byte of a third word incremented with an 8-bit CAS
+/// loop (operands with other bits above the byte) and its own byte of a fourth raised with an
+/// 8-bit `umax`: a lost update or a write to a neighbouring byte changes the totals.
 fn harness_source(calls: &[AtomicCall]) -> String {
     let mut s = String::from("extern \"C\" {\n    fn fences();\n");
     for i in 0..calls.len() {
@@ -201,23 +220,34 @@ fn main() {{
             }}
         }}
     }}
-    let counters = Box::leak(Box::new([0u64; 2]));
-    let (add, cas) = (Cell(&mut counters[0]), Cell(&mut counters[1]));
+    let counters = Box::leak(Box::new([0u64; 4]));
+    let base = counters.as_mut_ptr() as usize;
     std::thread::scope(|scope| {{
-        for _ in 0..{THREADS} {{
-            let (add, cas) = (&add, &cas);
+        for t in 0..{THREADS} {{
             scope.spawn(move || {{
-                for _ in 0..{ROUNDS} {{
-                    unsafe {{ entry_0(add.0, 1, 0) }};
-                    let mut seen = unsafe {{ entry_1(cas.0, 0, 0) }};
-                    while unsafe {{ entry_2(cas.0, seen, seen + 1) }} == 0 {{
-                        seen = unsafe {{ entry_1(cas.0, 0, 0) }};
+                let cell = |i: usize| (base + 8 * i) as *mut u64;
+                let byte = |i: usize| (base + 8 * i + t) as *mut u64;
+                for r in 0..{ROUNDS} {{
+                    unsafe {{ entry_0(cell(0), 1, 0) }};
+                    let mut seen = unsafe {{ entry_1(cell(1), 0, 0) }};
+                    while unsafe {{ entry_2(cell(1), seen, seen + 1) }} == 0 {{
+                        seen = unsafe {{ entry_1(cell(1), 0, 0) }};
                     }}
+                    let mut old = unsafe {{ entry_5(byte(2), 0, 0) }};
+                    loop {{
+                        let high = 0xDEAD_BEEF_0000_0000u64;
+                        let got = unsafe {{ entry_6(byte(2), old | high, (old + 1) | high) }};
+                        if got == old {{
+                            break;
+                        }}
+                        old = got;
+                    }}
+                    unsafe {{ entry_7(byte(3), (r % 200) | 0xFF00, 0) }};
                 }}
             }});
         }}
     }});
-    println!("counters {{}} {{}}", counters[0], counters[1]);
+    println!("counters {{}} {{}} {{:#x}} {{:#x}}", counters[0], counters[1], counters[2], counters[3]);
 }}
 "#
     );
@@ -240,7 +270,13 @@ fn expected(calls: &[AtomicCall]) -> String {
         }
     }
     let n = THREADS * ROUNDS;
-    let _ = writeln!(s, "counters {n} {n}");
+    let bytes = |v: u64| (0..THREADS).fold(0, |w, t| w | v << (8 * t));
+    let _ = writeln!(
+        s,
+        "counters {n} {n} {:#x} {:#x}",
+        bytes(ROUNDS % 256),
+        bytes(199)
+    );
     s
 }
 

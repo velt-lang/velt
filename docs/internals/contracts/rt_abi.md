@@ -389,9 +389,9 @@ inlined into a gated function.
 
 ## Atomics [additive]
 
-`Atomic<T>` (std/prelude/sync.vlt, docs/internals/design/atomics.md) and `shared<int>`'s `add`,
-`get` and `set` are externs `velt_atomic_<op>_<bits>_<order>` on the address of a naturally
-aligned word: `load`, `store`, the read-modify-writes `xchg add sub and or xor max min umax
+The atomic operations (docs/internals/design/atomics.md) are externs
+`velt_atomic_<op>_<bits>_<order>` on the address of a naturally aligned word, which lowering
+will call for `Atomic<T>` (#1620): `load`, `store`, the read-modify-writes `xchg add sub and or xor max min umax
 umin` (`max`/`min` compare signed, `umax`/`umin` unsigned; `add`/`sub` wrap), and
 `cas`/`casweak` with a failure ordering after the ordering (`velt_atomic_cas_64_acqrel_acq`),
 with `bits` 8, 16, 32 or 64 and the orderings `rlx acq rel acqrel seqcst` (a load or a failure
@@ -412,10 +412,13 @@ previous value and `casweak` a `Bool`, whether it swapped (it may fail spuriousl
 | `fence_<order>` | `()` | `fence` | `fence` |
 | `spin_hint` | `()` | `llvm.aarch64.isb(15)` / `llvm.x86.sse2.pause`, nothing elsewhere (Rust's `spin_loop`) | nothing |
 
-Orderings map one to one to LLVM's (`monotonic acquire release acq_rel seq_cst`), so release
-builds get the instructions Rust's `core::sync::atomic` gets (aarch64 with LSE: `ldapr`, `stlr`,
-`ldadd`, `casal`); Cranelift's atomics are all sequentially consistent, which is correct for
-every ordering. On wasm without threads they are plain loads and stores.
+Orderings map one to one to LLVM's (`monotonic acquire release acq_rel seq_cst`). On Apple
+arm64 (LSE and RCpc in every CPU) and x86-64, release builds get the instructions Rust's
+`core::sync::atomic` gets (`ldapr`, `stlr`, `ldadd`, `casal`; `mov`, `lock xadd`). On arm64
+Linux the IR is compiled for generic armv8-a, so the read-modify-writes are LL/SC loops
+(`ldaxr`/`stlxr`), where Rust's outline atomics pick LSE at run time (#1627). Cranelift's
+atomics are all sequentially consistent, which is correct for every ordering. On wasm without
+threads they are plain loads and stores.
 
 ## Module state [additive, #76]
 

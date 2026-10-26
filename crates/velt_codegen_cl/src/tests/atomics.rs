@@ -216,3 +216,121 @@ fn atomics_match_reference_at_every_width() {
         }
     }
 }
+
+/// Rounds per thread in [`threaded_totals`].
+const ROUNDS: u64 = 100_000;
+const THREADS: u64 = 8;
+
+/// Contended totals of the program compiled for `target`: 8 threads at once doing, `ROUNDS`
+/// times each, a 64-bit `add` on one word, a 32-bit compare-and-swap increment of another whose
+/// operands carry other bits above the 32 (the LL/SC loops must compare only the low 32), an
+/// 8-bit compare-and-swap increment of the thread's own byte of a third word, and an 8-bit
+/// `umax` on the thread's own byte of a fourth. Returns the four words.
+fn threaded_totals(target: &str, optimize: bool) -> [u64; 4] {
+    let calls = [
+        AtomicCall::Rmw {
+            op: Rmw::Add,
+            bits: 64,
+            order: Order::Relaxed,
+        },
+        AtomicCall::Load {
+            bits: 32,
+            order: Order::Acquire,
+        },
+        AtomicCall::Cas {
+            bits: 32,
+            order: Order::AcqRel,
+            failure: Order::Acquire,
+            weak: false,
+        },
+        AtomicCall::Load {
+            bits: 8,
+            order: Order::Relaxed,
+        },
+        AtomicCall::Cas {
+            bits: 8,
+            order: Order::SeqCst,
+            failure: Order::SeqCst,
+            weak: false,
+        },
+        AtomicCall::Rmw {
+            op: Rmw::UMax,
+            bits: 8,
+            order: Order::Relaxed,
+        },
+    ];
+    let isa = crate::isa::make_isa(target, optimize, true).expect("ISA");
+    let mut jb = JITBuilder::with_isa(isa, cranelift_module::default_libcall_names());
+    for (name, p) in super::jit::stub_symbols() {
+        jb.symbol(name, p);
+    }
+    let mut module = JITModule::new(jb);
+    let program = program(&calls);
+    let built = crate::module::build_module(&mut module, &program, &crate::module::Naming::Program)
+        .expect("build");
+    module.finalize_definitions().expect("finalize");
+    type Entry = extern "C" fn(*mut u64, u64, u64) -> u64;
+    let f: Vec<usize> = (0..calls.len())
+        .map(|i| module.get_finalized_function(built.funcs[i].expect("defined")) as usize)
+        .collect();
+    let at = |i: usize| -> Entry { unsafe { std::mem::transmute(f[i]) } };
+    let (add64, load32, cas32, load8, cas8, umax8) = (at(0), at(1), at(2), at(3), at(4), at(5));
+    // Bits above the 32-bit word that the arguments carry and the word's cell keeps.
+    const HIGH: u64 = 0xDEAD_BEEF_0000_0000;
+    let mut cells = [0u64, HIGH, 0, 0];
+    let base = cells.as_mut_ptr() as usize;
+    std::thread::scope(|s| {
+        for t in 0..THREADS {
+            s.spawn(move || {
+                let cell = |i: usize| (base + i * 8) as *mut u64;
+                let byte = |i: usize| (base + i * 8 + t as usize) as *mut u64;
+                for r in 0..ROUNDS {
+                    add64(cell(0), 1, 0);
+                    let mut old = load32(cell(1), 0, 0);
+                    loop {
+                        let got = cas32(cell(1), old | HIGH, (old + 1) | HIGH);
+                        if got == old {
+                            break;
+                        }
+                        old = got;
+                    }
+                    let mut old = load8(byte(2), 0, 0);
+                    loop {
+                        let got = cas8(byte(2), old | HIGH, (old + 1) | HIGH);
+                        if got == old {
+                            break;
+                        }
+                        old = got;
+                    }
+                    umax8(byte(3), (r % 200) | HIGH, 0);
+                }
+            });
+        }
+    });
+    unsafe { module.free_memory() };
+    cells
+}
+
+/// Lost updates and clobbered neighbours under contention, on the explicit host triple (arm64
+/// without LSE: the LL/SC loops and their workarounds) and on the host with its features.
+#[test]
+fn atomics_keep_every_update_under_contention() {
+    let per_byte = ROUNDS % 256;
+    let bytes = |v: u64| (0..THREADS).fold(0, |w, t| w | v << (8 * t));
+    for target in [crate::host_triple(), String::new()] {
+        for optimize in [false, true] {
+            let got = threaded_totals(&target, optimize);
+            let want = [
+                THREADS * ROUNDS,
+                0xDEAD_BEEF_0000_0000 | (THREADS * ROUNDS),
+                bytes(per_byte),
+                bytes(199),
+            ];
+            assert_eq!(
+                got.map(|w| format!("{w:#x}")),
+                want.map(|w| format!("{w:#x}")),
+                "target `{target}`, optimize={optimize}"
+            );
+        }
+    }
+}
