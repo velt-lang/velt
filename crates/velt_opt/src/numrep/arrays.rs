@@ -504,57 +504,68 @@ impl Retyper<'_> {
 /// Eligible groups beyond which `choose` does not try each group alone.
 const MAX_TRIALS: usize = 4;
 
-/// `func` narrowed (`narrowed`: `numrep`'s plan and rewrite, and whether it changed anything),
-/// with the eligible groups of `elements` retyped where that keeps fewer conversions between
-/// floats and integers than doubles do, each weighted by its loop depth: all of them when
-/// that pays; otherwise the groups that pay alone (with 2 to `MAX_TRIALS` eligible). An
-/// element only ever copied into an array of doubles, or added to a double, would need a
-/// conversion per read that the doubles did not (#1599). Retyping is only tried when the
-/// narrowed doubles convert an element where it is loaded or stored.
+/// Narrow `func` (`narrow`: `numrep`'s plan and rewrite; returns whether it changed
+/// anything), with the eligible groups of `elements` retyped where that keeps fewer
+/// conversions between floats and integers than doubles do, each weighted by its loop depth:
+/// all of them when that pays; otherwise the groups that pay alone (with 2 to `MAX_TRIALS`
+/// eligible). An element only ever copied into an array of doubles, or added to a double,
+/// would need a conversion per read that the doubles did not (#1599). Retyping is only tried
+/// when the narrowed doubles convert an element where it is loaded or stored. Returns whether
+/// anything changed.
 pub(super) fn choose(
     env: &Env,
-    func: &Function,
+    func: &mut Function,
     elements: &Elements,
-    narrowed: impl Fn(Function) -> (Function, bool),
-) -> (Function, bool) {
-    let base = narrowed(func.clone());
+    narrow: impl Fn(&mut Function) -> bool,
+) -> bool {
     let eligible = elements.eligible();
-    if !eligible.contains(&true) || !converts_elements(env, &base.0, &elements.groups, &eligible) {
-        return base;
+    if !eligible.contains(&true) {
+        return narrow(func);
     }
+    let original = func.clone();
+    let changed = narrow(func);
     let groups = &elements.groups;
-    let depth = loop_depths(func);
-    let base_cost = conversions(env, &base.0, &depth);
+    if !converts_elements(env, func, groups, &eligible) {
+        return changed;
+    }
+    let depth = loop_depths(&original);
+    let base_cost = conversions(env, func, &depth);
     let trial = |chosen: &[bool]| {
-        let mut f = func.clone();
+        let mut f = original.clone();
         retype(&mut f, groups, chosen);
-        let (f, _) = narrowed(f);
+        narrow(&mut f);
         let cost = conversions(env, &f, &depth);
         (f, cost)
     };
     let (all, cost) = trial(&eligible);
-    if cost < base_cost {
-        return (all, true);
-    }
     let count = eligible.iter().filter(|&&e| e).count();
-    if !(2..=MAX_TRIALS).contains(&count) {
-        return base;
-    }
-    let mut keep = vec![false; eligible.len()];
-    let mut last = None;
-    for g in (0..eligible.len()).filter(|&g| eligible[g]) {
-        let mut only = vec![false; eligible.len()];
-        only[g] = true;
-        let (one, cost) = trial(&only);
-        if cost < base_cost {
-            keep[g] = true;
-            last = Some(one);
+    let best = if cost < base_cost {
+        Some(all)
+    } else if (2..=MAX_TRIALS).contains(&count) {
+        let mut keep = vec![false; eligible.len()];
+        let mut last = None;
+        for g in (0..eligible.len()).filter(|&g| eligible[g]) {
+            let mut only = vec![false; eligible.len()];
+            only[g] = true;
+            let (one, cost) = trial(&only);
+            if cost < base_cost {
+                keep[g] = true;
+                last = Some(one);
+            }
         }
-    }
-    match keep.iter().filter(|&&k| k).count() {
-        0 => base,
-        1 => (last.unwrap_or(base.0), true),
-        _ => (trial(&keep).0, true),
+        match keep.iter().filter(|&&k| k).count() {
+            0 | 1 => last,
+            _ => Some(trial(&keep).0),
+        }
+    } else {
+        None
+    };
+    match best {
+        Some(f) => {
+            *func = f;
+            true
+        }
+        None => changed,
     }
 }
 

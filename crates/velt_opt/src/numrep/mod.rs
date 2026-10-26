@@ -177,26 +177,23 @@ pub(crate) fn run(env: &Env, func: &mut Function) -> bool {
             elements = analyse(env, func).1;
         }
     }
-    let (best, narrowed) = arrays::choose(env, func, &elements, |f| narrowed(env, f, &elements));
-    *func = best;
-    changed |= narrowed;
+    changed |= arrays::choose(env, func, &elements, |f| narrow_locals(env, f, &elements));
     changed |= int32::guarded_sums(env, func);
     changed
 }
 
-/// `func` with its locals narrowed (the plan and rewrite of `run`), its elements' facts
-/// `elements` (computed before `arrays` retyped any); and whether anything changed.
-fn narrowed(env: &Env, mut func: Function, elements: &arrays::Elements) -> (Function, bool) {
-    let tracked = tracked(env, &func, &elements.groups);
-    if tracked.is_empty() && !constant_to_int32(env, &func) {
-        return (func, false);
+/// Narrow the locals of `func` (the plan and rewrite of `run`), its elements' facts `elements`
+/// (computed before `arrays` retyped any); returns whether anything changed.
+fn narrow_locals(env: &Env, func: &mut Function, elements: &arrays::Elements) -> bool {
+    let tracked = tracked(env, func, &elements.groups);
+    if tracked.is_empty() && !constant_to_int32(env, func) {
+        return false;
     }
-    let Some(flow) = Flow::compute(&func, env, &tracked, elements.per_local()) else {
-        return (func, false);
+    let Some(flow) = Flow::compute(func, env, &tracked, elements.per_local()) else {
+        return false;
     };
-    let plan = narrow::plan(env, &flow, &func);
-    let changed = rewrite::apply(env, &mut func, &plan);
-    (func, changed)
+    let plan = narrow::plan(env, &flow, func);
+    rewrite::apply(env, func, &plan)
 }
 
 /// The `f64` locals of `func` inside loops that stay `f64`, each with the reason
