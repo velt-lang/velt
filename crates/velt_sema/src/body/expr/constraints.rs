@@ -282,6 +282,7 @@ impl FnCx<'_, '_> {
             let bounds = c.bounds.get(k).cloned().unwrap_or_default();
             let mut ok = true;
             for b in bounds {
+                let declared = b.clone();
                 let b = Bound {
                     iface: b.iface,
                     args: b
@@ -313,7 +314,11 @@ impl FnCx<'_, '_> {
                         format!("the type `{tn}` does not implement `{bn}`"),
                         span,
                     )
-                    .with_note(format!("required by `{name} extends {bn}` of {}", c.what));
+                    .with_note(format!(
+                        "required by `{name} extends {}` of {}",
+                        self.declared_bound_text(&declared, &c.slot_names),
+                        c.what
+                    ));
                     if let Some(i) = self
                         .cx
                         .iface(b.iface)
@@ -418,6 +423,15 @@ impl FnCx<'_, '_> {
                 self.cx.satisfies(p, &b, &bounds)
             })
             .collect()
+    }
+
+    /// Bound `b` as declared, its type parameters by name (`Comparable<T>`).
+    fn declared_bound_text(&mut self, b: &Bound, names: &[String]) -> String {
+        let bt = self.cx.ty.intern(TyKind::Dyn(b.iface, b.args.clone()));
+        let saved = std::mem::replace(&mut self.cx.display_params, names.to_vec());
+        let text = self.cx.display(bt);
+        self.cx.display_params = saved;
+        text
     }
 
     /// A note for type `t` failing bound `b`: the arguments with which `t` implements the
