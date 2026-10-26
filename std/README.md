@@ -21,6 +21,7 @@ Written in Velt. The compiler resolves `import { x } from "velt:<path>"` to `std
 | `prelude/json.vlt` | `JSON.stringify/parse/parseValue`, `JsonError`, `JsonValue`. |
 | `prelude/sync.vlt` | `Mutex<T>` layout for `new Mutex(x)` / `.with(f)` (compiler-implemented). |
 | `math.vlt` | `std/math`: integer helpers `clamp gcd lcm isPrime fib`. |
+| `mem.vlt` | `std/mem`: `needsDrop`, whether a type's values own memory (Rust's `std::mem::needs_drop`). |
 | `io.vlt` | `std/io`: `IoError`; std-internal `IoResult`/`IoStatus` plumbing over rt results. |
 | `fs.vlt` | `std/fs`: async + `*Sync` file system API. |
 | `fs_stream.vlt` | `std/fs_stream`: chunked/line `FileReader` (`openRead`) and buffered `FileWriter` (`openWrite`). |

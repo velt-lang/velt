@@ -308,7 +308,7 @@ export class BTreeMap<K extends Comparable<K>, V> implements Iterable<[K, V]> {
   /** The entries with `from <= key < to`, in key order. */
   range(from: K, to: K): [K, V][] {
     const out: [K, V][] = [];
-    if (this.p.size == 0 || !(from < to)) {
+    if (this.p.size == 0 || from.compareTo(to) >= 0) {
       return out;
     }
     const win = windowOf(from);
@@ -337,10 +337,10 @@ export class BTreeMap<K extends Comparable<K>, V> implements Iterable<[K, V]> {
   // compares the words of keys only with a target inside the range (pool.vlt), so a target past
   // the last key or before the first one is settled by comparing with that key.
   private endIn(leaf: u32, n: usize, to: K): usize {
-    if (n == 0 || this.p.keyAt(slotAtRank(this.p, leaf, n - 1)) < to) {
+    if (n == 0 || this.p.cmpKey(to, slotAtRank(this.p, leaf, n - 1)) > 0) {
       return n;
     }
-    if (!(this.p.keyAt(slotAtRank(this.p, leaf, 0)) < to)) {
+    if (this.p.cmpKey(to, slotAtRank(this.p, leaf, 0)) <= 0) {
       return 0;
     }
     return leafRank(this.p, leaf, to, false);

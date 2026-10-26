@@ -9,6 +9,7 @@
 // be. Inner nodes whose separators change get their prefix and words again (`refreshInner`); a
 // node that moves to another parent keeps its separators, so its words stay.
 
+import { needsDrop } from "velt:mem";
 import { F, NONE, Pool, Range, commonPrefix, moveSlot } from "velt:collections/btree/pool";
 import { prefixOf, shiftDown } from "velt:collections/btree/line";
 import { moveRanks, removeEntry, slotAtRank } from "velt:collections/btree/leaf";
@@ -23,12 +24,74 @@ const MIN_INNER: usize = F / 4 - 1;
  * velt:collections/btree/leaf `leafFind` gives the slot).
  */
 export function removeAt<K extends Comparable<K>, V>(p: Pool<K, V>, leaf: u32, s: usize) {
+  // A deleted key or value is released (pool.vlt). `liveFill` and `needsDrop` are constants
+  // for the map's types: for numbers and strings the filler work below folds away.
+  const live = p.liveFill();
+  const slot = (leaf as usize) * F + s;
+  const wasFill = live && p.isFill(slot);
+  const first = needsDrop(p.fill[0]) && p.height > 0 && slotAtRank(p, leaf, 0) == slot;
   removeEntry(p, leaf, s);
   p.size--;
   p.edits++;
+  if (live && p.size == 0) {
+    // Nothing is left to fill with: the pools go, and the fillers with them.
+    p.clear();
+    return;
+  }
+  if (first) {
+    followFirstKey(p, leaf);
+  }
   if (p.height > 0 && p.leafCount(leaf) < MIN_LEAF) {
     rebalanceLeaf(p, leaf);
   }
+  if (wasFill) {
+    p.refill();
+  }
+}
+
+// After `leaf` (non-root, still holding keys) lost its first key, for keys that own memory: the
+// separator that bounds it from below, in the deepest node of the recorded path not reached
+// through its first child, is that key (for such keys every separator is the first key of the
+// subtree right of it). It becomes the leaf's
+// new first key, so the deleted key is released. The subtree right of it narrows and keeps its
+// prefixes; the one left of it widens, so the nodes along its right edge, whose high end it is,
+// keep at most the bytes the old and the new separator share (`keepPrefix`).
+function followFirstKey<K extends Comparable<K>, V>(p: Pool<K, V>, leaf: u32) {
+  let depth: usize = p.pathNodes.length;
+  while (depth > 0) {
+    depth--;
+    const slot = p.pathSlots[depth];
+    if (slot > 0) {
+      const node = p.pathNodes[depth];
+      const at = (node as usize) * F + slot - 1;
+      const key = p.keyAt(slotAtRank(p, leaf, 0));
+      const shared = p.inline() ? commonPrefix(p.innerKeys[at], key) : 0;
+      p.innerKeys[at] = key;
+      if (p.inline()) {
+        p.innerWord(node, slot - 1);
+        keepRightEdge(p, p.innerKids[at], p.pathNodes.length - 1 - depth, shared);
+      }
+      return;
+    }
+  }
+}
+
+// The nodes along the right edge of the subtree at `kid` (`height` levels of inner nodes above
+// its leaves) keep at most `shared` bytes of prefix.
+function keepRightEdge<K extends Comparable<K>, V>(
+  p: Pool<K, V>,
+  kid: u32,
+  height: usize,
+  shared: u32,
+) {
+  let node = kid;
+  for (let h = height; h > 0; h--) {
+    if (shared < prefixOf(p.innerLineOf(node))) {
+      p.refreshInnerAt(node, shared);
+    }
+    node = p.innerKids[(node as usize) * F + p.innerCount(node)];
+  }
+  keepPrefix(p, node, shared);
 }
 
 function rebalanceLeaf<K extends Comparable<K>, V>(p: Pool<K, V>, leaf: u32) {

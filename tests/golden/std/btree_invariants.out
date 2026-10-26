@@ -1,6 +1,6 @@
 small ints: 12000 ops, peak 485, ok
 ints: 12000 ops, peak 4904, ok
 low bytes: 8000 ops, peak 1732, ok
-floats: 8000 ops, peak 1806, ok
+floats: 8000 ops, peak 1794, ok
 shared prefixes: 10000 ops, peak 849, ok
 long strings: 4000 ops, peak 526, ok

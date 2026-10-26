@@ -5,7 +5,7 @@ mod common;
 
 use common::hir_walk::{calls, exprs, func};
 use common::programs::{err_src, ok_src};
-use velt_sema::hir::{BinOp, Callee, Def, ExprKind as E, TyKind};
+use velt_sema::hir::{BinOp, Callee, Def, ExprKind as E, Intrinsic, TyKind};
 
 #[test]
 fn ordering_on_a_comparable_param_calls_compare_to() {
@@ -14,18 +14,25 @@ fn ordering_on_a_comparable_param_calls_compare_to() {
          function main() { console.log(less(1, 2), less(\"b\", \"a\")); }",
     );
     let f = func(&p, "less");
-    // `compareTo(a, b) < 0`
+    // `ParamOrdering(compareTo(a, b)) < 0`
     let found = exprs(f).into_iter().any(|e| match &e.kind {
         E::Binary {
             op: BinOp::Lt, lhs, ..
-        } => {
-            matches!(&lhs.kind, E::Call { callee: Callee::ParamMethod { iface, slot: 0, .. }, args }
+        } => match &lhs.kind {
+            E::Call {
+                callee: Callee::Intrinsic(Intrinsic::ParamOrdering),
+                args: marked,
+            } => matches!(&marked[0].kind, E::Call { callee: Callee::ParamMethod { iface, slot: 0, .. }, args }
             if args.len() == 2
-                && matches!(p.def(*iface), Def::Interface(i) if i.name.ends_with("Comparable")))
-        }
+                && matches!(p.def(*iface), Def::Interface(i) if i.name.ends_with("Comparable"))),
+            _ => false,
+        },
         _ => false,
     });
-    assert!(found, "`a < b` is not `a.compareTo(b) < 0` in `less`");
+    assert!(
+        found,
+        "`a < b` is not a marked `a.compareTo(b) < 0` in `less`"
+    );
 }
 
 #[test]

@@ -54,6 +54,7 @@ velt:http = ../std/http.md
 velt:io = ../std/io.md
 velt:json = ../std/json.md
 velt:math = ../std/math.md
+velt:mem = ../std/mem.md
 velt:net = ../std/net.md
 velt:os = ../std/os.md
 velt:package = ../std/package.md

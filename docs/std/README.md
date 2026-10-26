@@ -53,7 +53,7 @@ scope everywhere without an import, and so are Node's web globals: [`fetch`](fet
 | Concurrency | [channel](channel.md) · [task](task.md) (cancellation, timeouts, task scopes) |
 | Security and hashing | [crypto](crypto.md) · [uuid](uuid.md) · [hash](hash.md) (stable, non-cryptographic) |
 | Text | [regex](regex.md) |
-| Language | [symbol](symbol.md) (global `Symbol`) · [simd](simd.md) (`velt:simd`: the vector types and their methods) |
+| Language | [symbol](symbol.md) (global `Symbol`) · [simd](simd.md) (`velt:simd`: the vector types and their methods) · [mem](mem.md) (`needsDrop`, for containers) |
 | Programs and the system | [process](process.md) · [cli](cli.md) · [child_process](child_process.md) · [os](os.md) |
 | Packages | [package](package.md) (the type of `package.vlt`) |
 | Databases (moving to packages) | [sqlite](sqlite.md) · [postgres](postgres.md) · [redis](redis.md) |
@@ -85,7 +85,7 @@ what Velt can't do on its own:
 | `velt:postgres` | tokio-postgres connections, pool, statement cache, TLS and `COPY`; transactions and row decoding are Velt |
 | `velt:redis` | a RESP2 client over tokio and rustls: multiplexed connections, pipelines, pub/sub |
 
-Pure Velt: `velt:path`, `velt:math`, `velt:collections/*`, `velt:arena`, `velt:csv`, `velt:cli`,
+Pure Velt: `velt:path`, `velt:math`, `velt:mem`, `velt:collections/*`, `velt:arena`, `velt:csv`, `velt:cli`,
 `velt:timers` (built on `sleep`, `spawn` and `velt:task` signals) and `velt:json`; `velt:jsx`
 too (escaping through `velt:html`). `velt:encoding`, `velt:url` and `velt:io` use only the
 runtime's UTF-8 conversions and error-code names. The runtime ABI is documented in

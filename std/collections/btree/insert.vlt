@@ -6,6 +6,7 @@
 // to a sibling instead of splitting keeps leaves fuller (B*-trees): about 85% instead of 70%
 // for random keys, so fewer leaves, less memory and fewer cache lines per entry.
 
+import { Blank } from "velt:mem";
 import { CAP, F, NONE, Pool, commonPrefix, windowOf } from "velt:collections/btree/pool";
 import { noteEdges } from "velt:collections/btree/edges";
 import { prefixOf, shiftUp, withPrefix } from "velt:collections/btree/line";
@@ -20,9 +21,13 @@ import {
 /** Stores `value` under `key` in `p`, replacing the value already there. */
 export function insert<K extends Comparable<K>, V>(p: Pool<K, V>, key: K, value: V) {
   if (p.fill.length == 0) {
-    p.fill.push(key);
+    // The fillers: blank values, or this entry's key and value (pool.vlt).
+    p.fill.push(key.blank());
+    if (!key.hasBlank() || !value.hasBlank()) {
+      p.fillOwner.push(key);
+    }
     p.lineShift = key.hasInlineKey() && key.inlineWide() ? 1 : 0;
-    p.valFill.push(value);
+    p.valFill.push(value.blank());
     p.root = p.newLeaf();
   }
   // The key's encoding, once: every node's word for it comes from this.
@@ -34,6 +39,10 @@ export function insert<K extends Comparable<K>, V>(p: Pool<K, V>, key: K, value:
   const [found, pos] = leafLocate(p, leaf, key, win);
   if (found != NO_SLOT) {
     p.valSet(base + found, value);
+    if (!p.valFill[0].hasBlank() && p.isFill(base + found)) {
+      // The value filler is that entry's old value: release it.
+      p.refill();
+    }
     return;
   }
   if (n < CAP) {

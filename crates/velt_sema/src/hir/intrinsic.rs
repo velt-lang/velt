@@ -73,6 +73,11 @@ pub enum Intrinsic {
     /// bounds-checked): the bits of two elements, nothing copied or dropped, also between two
     /// inner arrays, which one call may not otherwise change both of. Additive.
     ArraySwapNested,
+    /// `(i64) -> i64`, the value itself: the `compareTo` call of an ordering operator on a type
+    /// parameter (`a < b` with `T extends Comparable<T>`, sema's `compare_via`), marked so that
+    /// lowering compares a float `T` directly (NaN unordered, as JS's `<`). A `compareTo` call
+    /// the program writes (`a.compareTo(b) < 0`) is not marked and keeps NaN ordered.
+    ParamOrdering,
     /// `(x: borrow T) -> u64` compiler-generated hash agreeing with `KeyEq` (`Map` and `Set`
     /// keys): numbers, bool and strings by value, objects by identity, unions, options and
     /// tuples part by part

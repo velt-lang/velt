@@ -1,7 +1,7 @@
 // std/collections/btree: the tree's invariants (velt:collections/btree/check `checkPool`) after
 // every insert and delete of seeded random runs, against a sorted array, for key kinds that take
 // different paths: small integers (many splits, merges and B* moves), integers that differ only
-// in their low bytes (long node prefixes), floats, and strings with long shared beginnings, keys
+// in their low bytes (long node prefixes), floats with NaN, and strings with long shared beginnings, keys
 // that are prefixes of others, and the empty string (wide words, edge prefixes, word ties).
 
 import { F, Pool, windowOf } from "velt:collections/btree/pool";
@@ -178,7 +178,8 @@ function main() {
   fuzz<i64>("ints", 2, 12000, 400, (x) => (x % 50000) as i64 - 25000);
   // Keys that agree in all but their lowest bytes: nodes with long prefixes.
   fuzz<u64>("low bytes", 3, 8000, 200, (x) => 0x7766554433000000 + (x % 4000));
-  fuzz<f64>("floats", 4, 8000, 200, (x) => ((x % 4000) as f64) / 7.0 - 250.0);
+  // NaN among them: its own key, after every other number (`f64.compareTo`).
+  fuzz<f64>("floats", 4, 8000, 200, (x) => (x % 97 == 0 ? NaN : ((x % 4000) as f64) / 7.0 - 250.0));
   // Long shared beginnings, keys that are prefixes of others, and "".
   fuzz<string>("shared prefixes", 5, 10000, 100, (x) => {
     let k = (x & 1) == 0 ? "" : "tenant/0042/users/";

@@ -3,8 +3,10 @@
 // broken invariant: keys in order and inside their node's range, node fill, the leaf chain, each
 // node's prefix (at most the one its range gives, `Pool.prefixFor`), each word (two bytes of its
 // key past the prefix, `EMPTY` in unused slots), and the smallest and the largest key with their
-// windows (velt:collections/btree/edges).
+// windows (velt:collections/btree/edges), separators that are live keys, and unused slots that
+// hold the fillers.
 
+import { needsDrop } from "velt:mem";
 import { CAP, F, NONE, Pool, Range, wordOf, wordOfB } from "velt:collections/btree/pool";
 import { EMPTY, prefixOf, wordAt } from "velt:collections/btree/line";
 import { slotAtRank } from "velt:collections/btree/leaf";
@@ -32,6 +34,10 @@ export function checkPool<K extends Comparable<K>, V>(p: Pool<K, V>): string {
   if (count != p.size) {
     return `size ${p.size}, ${count} entries`;
   }
+  const unused = checkUnused(p);
+  if (unused != "") {
+    return unused;
+  }
   return checkEdges(p, leaves);
 }
 
@@ -41,7 +47,7 @@ function checkEdges<K extends Comparable<K>, V>(p: Pool<K, V>, leaves: u32[]): s
     return p.minKey.length == 0 && p.maxKey.length == 0 ? "" : "edge keys in an empty map";
   }
   if (!p.inline()) {
-    return "";
+    return p.minKey.length == 0 && p.maxKey.length == 0 ? "" : "edge keys without an encoding";
   }
   const first = leaves[0];
   const last = leaves[leaves.length - 1];
@@ -80,10 +86,10 @@ function checkNode<K extends Comparable<K>, V>(
   }
   for (let i: usize = 0; i < n; i++) {
     const k = keyAt(i);
-    if (i > 0 && !(keyAt(i - 1) < k)) {
+    if (i > 0 && keyAt(i - 1).compareTo(k) >= 0) {
       return `${what}: keys out of order at ${i}`;
     }
-    if ((low != null && k < low) || (high != null && !(k < high))) {
+    if ((low != null && k.compareTo(low) < 0) || (high != null && k.compareTo(high) >= 0)) {
       return `${what}: key ${i} outside its range`;
     }
   }
@@ -127,6 +133,13 @@ function checkNode<K extends Comparable<K>, V>(
     leaves.push(node);
     return "";
   }
+  for (let i: usize = 0; i < n && needsDrop(p.fill[0]); i++) {
+    // For keys that own memory every separator is a live key, the first of the subtree right of
+    // it: none outlives its entry.
+    if (keyAt(i).compareTo(firstKey(p, p.innerKids[base + i + 1], height - 1)) != 0) {
+      return `${what}: separator ${i} is not the first key right of it`;
+    }
+  }
   for (let i: usize = 0; i <= n; i++) {
     const childLow = i > 0 ? keyAt(i - 1) : low;
     const childHigh = i < n ? keyAt(i) : high;
@@ -134,6 +147,36 @@ function checkNode<K extends Comparable<K>, V>(
     const problem = checkNode(p, kid, height - 1, [childLow, childHigh], leaves);
     if (problem != "") {
       return problem;
+    }
+  }
+  return "";
+}
+
+// The smallest key of the subtree at `node`, `height` levels of inner nodes above its leaves.
+function firstKey<K extends Comparable<K>, V>(p: Pool<K, V>, node: u32, height: u32): K {
+  let at = node;
+  for (let h = height; h > 0; h--) {
+    at = p.innerKids[(at as usize) * F];
+  }
+  return p.keyAt(slotAtRank(p, at, 0));
+}
+
+// Every unused key slot (free nodes' too) holds the filler and every unused value slot the
+// filler's value, so no deleted key or value lives on in one.
+function checkUnused<K extends Comparable<K>, V>(p: Pool<K, V>): string {
+  for (let leaf: usize = 0; leaf < p.leafNext.length; leaf++) {
+    for (let i = p.leafCount(leaf as u32); i < F; i++) {
+      if (!(p.keyAt(leaf * F + i) == p.fill[0]) || !(p.valAt(leaf * F + i) == p.valFill[0])) {
+        return `leaf ${leaf}: unused slot ${i} holds an old entry`;
+      }
+    }
+  }
+  const inners: usize = p.innerKeys.length / F;
+  for (let inner: usize = 0; inner < inners; inner++) {
+    for (let i = p.innerCount(inner as u32); i < F; i++) {
+      if (!(p.innerKeys[inner * F + i] == p.fill[0])) {
+        return `inner node ${inner}: unused slot ${i} holds an old key`;
+      }
     }
   }
   return "";

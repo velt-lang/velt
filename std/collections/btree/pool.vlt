@@ -18,10 +18,15 @@
 // words tie with it; only those keys are compared in full. So a level of a lookup reads one line
 // and one child index. Keys without an encoding are compared one by one.
 //
-// Unused key slots hold a share of `fill[0]`, the first key ever stored, so that the pools stay
-// arrays of plain `K`; value slots likewise (`vals`, with `valFill[0]`), others are
-// `V | null`; unused word slots are `EMPTY`.
+// Unused key slots hold `fill[0]`, so that the pools stay arrays of plain `K`; value slots
+// likewise (`vals`, with `valFill[0]`); unused word slots are `EMPTY`. A filler is the type's
+// blank value (velt:mem `Blank`: `""`, a number), which owns no memory, or for a type without
+// one a share of a live key or value. A deleted key or value is released: when a live
+// filler's entry is deleted or its value replaced, a live entry from the middle of the tree
+// gives new fillers (`refill`), a separator that is a deleted key that owns memory follows to
+// the next key, and the last delete drops the pools (velt:collections/btree/remove).
 
+import { Blank, needsDrop } from "velt:mem";
 import { InlineKey } from "velt:collections/btree/inline_key";
 import {
   countOf,
@@ -129,6 +134,9 @@ export class Pool<K extends Comparable<K>, V> {
   /** The descent of the last `findLeaf`, root first: the inner nodes and the slot taken in each. */
   pathNodes: u32[] = [];
   pathSlots: usize[] = [];
+  // Last, so that the fields every operation reads keep their places.
+  /** The key of the entry a live filler is (`liveFill`), else empty. */
+  fillOwner: K[] = [];
 
   // ─────────────── searching ───────────────
 
@@ -173,7 +181,10 @@ export class Pool<K extends Comparable<K>, V> {
     // Ties (or keys without words): a binary search of the keys between.
     while (lo < hi) {
       const mid = lo + (hi - lo) / 2;
-      if (t < this.innerKeys[base + mid]) {
+      // Keys with an encoding (no NaN among them) by `<`, one compare; others by `compareTo`,
+      // which orders a float NaN.
+      const k = this.innerKeys[base + mid];
+      if (t.hasInlineKey() ? t < k : t.compareTo(k) < 0) {
         hi = mid;
       } else {
         lo = mid + 1;
@@ -316,12 +327,15 @@ export class Pool<K extends Comparable<K>, V> {
 
   /** Gives inner `node` the prefix of its range `fences` and every separator its word. */
   refreshInner(node: u32, fences: Range<K>) {
-    if (!this.inline()) {
-      return;
+    if (this.inline()) {
+      this.refreshInnerAt(node, this.prefixFor(fences));
     }
+  }
+
+  /** Inner `node`'s words (and header) for prefix `pre`. */
+  refreshInnerAt(node: u32, pre: u32) {
     const i = node as usize;
     const n = this.innerCount(node);
-    const pre = this.prefixFor(fences);
     const line = wordsOf(this.innerKeys, i * F, n, pre, this.scratch, false);
     this.setInnerLine(node, line);
     if (this.wide()) {
@@ -575,6 +589,59 @@ export class Pool<K extends Comparable<K>, V> {
     this.freeInners.push(node);
   }
 
+  /**
+   * Whether a filler is a live key or value (a type without a blank value, velt:mem `Blank`):
+   * then its entry (`fillOwner`) going, or its value being replaced, calls `refill`. The same
+   * for every map of the types: a constant where they are known.
+   */
+  liveFill(): bool {
+    return !this.fill[0].hasBlank() || !this.valFill[0].hasBlank();
+  }
+
+  /** Whether the key in slot `s` is the fillers' entry's (`liveFill` only). */
+  isFill(s: usize): bool {
+    return this.keyAt(s) == this.fillOwner[0];
+  }
+
+  /**
+   * New fillers from a live entry in the middle of the tree, written into every unused slot
+   * (free nodes' too) a live filler is in, so that the old one is released (`liveFill` only).
+   * The entry goes when about half of the keys have gone, whether they go from the front, from
+   * the back or at random, so a drain makes a few of these passes.
+   */
+  refill() {
+    let node = this.root;
+    for (let h = this.height; h > 0; h--) {
+      node = this.innerKids[(node as usize) * F + this.innerCount(node) / 2];
+    }
+    const mid = (node as usize) * F + this.leafCount(node) / 2;
+    this.fillOwner[0] = this.keyAt(mid);
+    const keys = !this.fill[0].hasBlank();
+    const vals = !this.valFill[0].hasBlank();
+    if (keys) {
+      this.fill[0] = this.keyAt(mid);
+    }
+    if (vals) {
+      this.valFill[0] = this.valAt(mid);
+    }
+    for (let leaf: usize = 0; leaf < this.leafNext.length; leaf++) {
+      for (let i = this.leafCount(leaf as u32); i < F; i++) {
+        if (keys) {
+          this.setKey(leaf * F + i, this.fill[0]);
+        }
+        if (vals) {
+          this.valClear(leaf * F + i);
+        }
+      }
+    }
+    const inners: usize = keys ? this.innerKeys.length / F : 0;
+    for (let inner: usize = 0; inner < inners; inner++) {
+      for (let i = this.innerCount(inner as u32); i < F; i++) {
+        this.innerKeys[inner * F + i] = this.fill[0];
+      }
+    }
+  }
+
   /** Drops every node; the next `insert` starts a new root. */
   clear() {
     this.leafKeys.truncate(0);
@@ -590,6 +657,7 @@ export class Pool<K extends Comparable<K>, V> {
     this.freeLeaves.truncate(0);
     this.freeInners.truncate(0);
     this.fill.truncate(0);
+    this.fillOwner.truncate(0);
     this.minKey.truncate(0);
     this.maxKey.truncate(0);
     this.root = 0;

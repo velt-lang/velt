@@ -150,6 +150,8 @@ impl FnLower<'_, '_> {
                 | I::ArraySwapNested,
                 [_, ..],
             ) => self.array_intrinsic(i, args, ty),
+            // An ordering's `compareTo` call (`float_param_ordering` takes floats first).
+            (I::ParamOrdering, [a]) => self.expr(a),
             (I::Clone, [a]) => {
                 let v = self.expr(a);
                 let t = self.sub(a.ty);

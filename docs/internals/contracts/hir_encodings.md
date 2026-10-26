@@ -903,6 +903,11 @@ one; an error type that was only variables solved empty is no error type (`FnDef
 - A call through a type parameter's bound that only a blanket block gives it (`k.m()` with
   `K extends Comparable<K>` and `extend<T extends Comparable<T>> T implements I`) is a
   `Callee::ParamMethod` of `I`, resolved by that lookup per instantiation.
+- An ordering operator on `Comparable` values (`a < b`, `<=`, `>`, `>=`) is
+  `Binary { op, Call(Intrinsic::ParamOrdering, [Call(compareTo, [a, b])]), Lit::Int(0) }`. The
+  marker is the call's value; lowering compares a float `T` directly instead (NaN unordered, as
+  JS's `<`). A `compareTo` call the program writes is never marked, so `a.compareTo(b) < 0`
+  orders NaN last on every type.
 
 ## Canonical instances and optional fields (docs/internals/design/deferred-types.md, P1 and P2)
 - An instance of a generic object type is the object type it spells out: sema substitutes

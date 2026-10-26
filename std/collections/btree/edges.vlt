@@ -46,6 +46,10 @@ export function edgeOrder<K extends Comparable<K>, V>(p: Pool<K, V>, t: K, win: 
  * first key both), and gives the nodes along that edge their prefixes for the wider range.
  */
 export function noteEdges<K extends Comparable<K>, V>(p: Pool<K, V>, key: K, win: Window) {
+  if (!key.hasInlineKey()) {
+    // No prefixes to keep: no smallest and largest key (which would outlive their entries).
+    return;
+  }
   if (p.minKey.length == 0) {
     p.minKey.push(key);
     p.maxKey.push(key);
@@ -66,13 +70,15 @@ export function noteEdges<K extends Comparable<K>, V>(p: Pool<K, V>, key: K, win
 
 /**
  * After a delete: the smallest and the largest key again from the edge leaves (the prefixes
- * stay, see above); none when the map is empty, whose leaf then has no prefix.
+ * stay, see above); none when the map is empty.
  */
 export function afterRemove<K extends Comparable<K>, V>(p: Pool<K, V>) {
   if (p.size == 0) {
+    // Keys and values that own memory: the last delete dropped the pools
+    // (velt:collections/btree/remove `removeAt`). Others keep them, and the empty root leaf
+    // drops its prefix (the next key need not share it).
     p.minKey.truncate(0);
     p.maxKey.truncate(0);
-    // The empty root leaf drops its prefix: the next key need not share it.
     if (p.inline()) {
       p.refreshLeafAt(p.root, 0);
     }
