@@ -1,0 +1,4 @@
+lib main
+before
+hello from main 0
+after 0
