@@ -1,0 +1,24 @@
+// `bind` of a function with defaults, of a `const` closure with one, of a rest function, and of
+// a generic function where its type is expected (#1110): the bound function takes the same
+// calls. Node prints the same.
+function def(a = 5, b: number = 2): string {
+  return `${a} ${b}`;
+}
+
+const bd = def.bind(null);
+console.log(bd(), bd(1), bd(1, 3), def.bind(null)());
+
+function gen<T>(x: T): T {
+  return x;
+}
+
+const bg: (x: number) => number = gen.bind(null);
+console.log(bg(4));
+const f = (a: number = 1): number => a;
+console.log(f.bind(null)(), f.bind(null)(9));
+
+function sum(...xs: number[]): number {
+  return xs.reduce((s, x) => s + x, 0);
+}
+
+console.log(sum.bind(null)(1, 2, 3), sum.bind(null)());
