@@ -46,3 +46,33 @@ later().then(() => {
     console.log(o.f, `${o.f}`, "x" + o.s, o.s + "y");
   }
 });
+
+// Assigning a narrowed checked copy back narrows the field or module variable.
+class Box9 { n = 1; }
+const st9: { b: Box9 | null } = { b: new Box9() };
+let g9: Box9 | null = new Box9();
+function clr9(): void { st9.b = null; g9 = null; }
+function run9(): void {
+  if (st9.b && g9) { const b = st9.b; const c = g9; st9.b = b; g9 = c; st9.b.n = 3; g9.n = 4; console.log(st9.b, g9); }
+  st9.b = new Box9(); g9 = new Box9();
+  if (st9.b && g9) {
+    const b = st9.b; const c = g9;
+    clr9();
+    st9.b = b; g9 = c;
+    console.log(st9.b, g9, st9.b === null);
+  }
+}
+run9();
+class Box10 { n = 1; }
+const st10: { b: Box10 | null } = { b: new Box10() };
+function clr10(): void { st10.b = null; }
+function run10(): void {
+  if (st10.b) {
+    const b = st10.b;
+    clr10();
+    st10.b = b;
+    console.log(st10.b);
+    st10.b.n = 3;
+  }
+}
+run10();

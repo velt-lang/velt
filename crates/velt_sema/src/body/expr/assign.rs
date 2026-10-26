@@ -420,13 +420,19 @@ impl FnCx<'_, '_> {
             }
             // Assigning narrows the target like a check would (TS): to non-null, or to the
             // union member assigned (`assign_narrow`).
+            // A narrowed checked copy (`st.b = b` with `const b = st.b`) narrows a field path or
+            // a module variable, whose reads are checked, to non-null (`checked_copies`).
+            let copy = !matches!(place.kind, H::Local(..)) && self.narrowed_copy(value);
             let token = match place.kind {
                 H::Local(l, _) => Some(l),
-                _ if matches!(v.kind, H::WrapSome(_)) => self.field_token(target),
+                _ if copy || matches!(v.kind, H::WrapSome(_)) => self.field_token(target),
                 _ => None,
             };
             if let Some(t) = token.filter(|_| !crate::body::assign_narrow::is_cast(value)) {
-                self.narrow_to_assigned(t, lty, &v);
+                match copy {
+                    true => self.narrow(&crate::body::narrow::Fact::NonNull(t)),
+                    false => self.narrow_to_assigned(t, lty, &v),
+                }
             }
             let (mut place, mut stmts) = (place, Vec::new());
             self.hoist_checked_object(&mut place, &v, &mut stmts);

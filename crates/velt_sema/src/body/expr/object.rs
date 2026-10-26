@@ -60,9 +60,7 @@ impl FnCx<'_, '_> {
                     return self.nothings_array(elems, t, span);
                 }
                 let first = first_typed_elem(elems);
-                // A narrowed value is its payload, as TypeScript types it (`[ctx]` is a
-                // `Ctx[]`, `checked_copies`).
-                let h = self.payload_expr(&elems[first], first_hint, Want::Move);
+                let h = self.expr(&elems[first], first_hint, Want::Move);
                 // `[c.kind, "x"]` is a `string[]`: literal types widen for inference.
                 let t = self.cx.widened(h.ty);
                 out[first] = Some(h);

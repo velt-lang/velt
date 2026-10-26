@@ -51,3 +51,19 @@ function run4(): void {
   new Holder4().run4();
 }
 run4();
+
+// Assignments used as values, into a tuple in an array.
+class Box9 { ts: [number, number][] = [[1, 2]]; t2: [string, number][] = [["a", 1]]; }
+const st9: { b: Box9 | null } = { b: new Box9() };
+function change9(): number { st9.b = null; return 5; }
+function word9(): string { st9.b = null; return "w"; }
+function run9(): void {
+  if (st9.b) { const b = st9.b; const v = (st9.b.ts[0][1] = change9()); console.log(v, b.ts); }
+  st9.b = new Box9();
+  if (st9.b) { const b = st9.b; const v = (st9.b.t2[0][0] += word9()); console.log(v, b.t2); }
+  st9.b = new Box9();
+  if (st9.b) { const b = st9.b; console.log((st9.b.ts[0][1] += change9()), b.ts); }
+  st9.b = new Box9();
+  if (st9.b) { const b = st9.b; let i = 0; const v = (st9.b.ts[i++][0] *= change9()); console.log(v, i, b.ts); }
+}
+run9();

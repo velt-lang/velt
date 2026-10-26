@@ -535,16 +535,10 @@ impl FnCx<'_, '_> {
         else {
             return t;
         };
-        let narrowed = self.through_narrowed(object);
-        let shared = self.peek_ty(object).is_some_and(|ty| {
-            matches!(self.cx.ty.kind(ty), hir::TyKind::Array(_))
-                || (self.cx.union_def(ty).is_none()
-                    && matches!(self.cx.ty.kind(ty), hir::TyKind::Adt(..)))
-        });
-        if !narrowed || !shared {
+        let Some(bound) = self.bind_shared_in(object, stmts) else {
             return t;
-        }
-        let bound = Box::new(self.bind_hoisted(object, stmts));
+        };
+        let bound = Box::new(bound);
         let kind = match t.kind {
             ast::ExprKind::Member { prop, optional, .. } => ast::ExprKind::Member {
                 object: bound,
@@ -561,6 +555,50 @@ impl FnCx<'_, '_> {
             k => k,
         };
         ast::Expr { kind, ..t }
+    }
+
+    /// `e` with the nearest object in it that is shared by reference and goes through a
+    /// narrowed value bound to a temporary (`st.b.ts` of `st.b.ts[0]`, a tuple in an array, as
+    /// `hoist_checked_object` binds it); `None` when there is none.
+    fn bind_shared_in(&mut self, e: &ast::Expr, stmts: &mut Vec<hir::Stmt>) -> Option<ast::Expr> {
+        if !self.through_narrowed(e) {
+            return None;
+        }
+        let shared = self.peek_ty(e).is_some_and(|ty| {
+            matches!(self.cx.ty.kind(ty), hir::TyKind::Array(_))
+                || (self.cx.union_def(ty).is_none()
+                    && matches!(self.cx.ty.kind(ty), hir::TyKind::Adt(..)))
+        });
+        if shared {
+            return Some(self.bind_hoisted(e, stmts));
+        }
+        let b = bare(e);
+        let kind = match &b.kind {
+            ast::ExprKind::Member {
+                object,
+                prop,
+                optional,
+            } => ast::ExprKind::Member {
+                object: Box::new(self.bind_shared_in(object, stmts)?),
+                prop: prop.clone(),
+                optional: *optional,
+            },
+            ast::ExprKind::Index {
+                object,
+                index,
+                optional,
+            } => ast::ExprKind::Index {
+                object: Box::new(self.bind_shared_in(object, stmts)?),
+                index: index.clone(),
+                optional: *optional,
+            },
+            _ => return None,
+        };
+        Some(ast::Expr {
+            id: b.id,
+            kind,
+            span: b.span,
+        })
     }
 
     /// Does path `e` (or a path it is a member or element of) read a narrowed value a call may

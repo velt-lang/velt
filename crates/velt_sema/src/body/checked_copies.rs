@@ -463,6 +463,22 @@ impl FnCx<'_, '_> {
         }
     }
 
+    /// Is `value` a checked copy that a null test narrowed (`const b = st.b` after `if
+    /// (st.b)`)? Its reads where the payload is needed are checked.
+    pub(crate) fn narrowed_copy(&mut self, value: &ast::Expr) -> bool {
+        let mut inner = value;
+        while let ast::ExprKind::Paren(x) = &inner.kind {
+            inner = x;
+        }
+        if !matches!(inner.kind, ast::ExprKind::Ident(_)) {
+            return false;
+        }
+        match self.named_local(inner) {
+            Some(l) => self.is_checked_copy(l) && self.is_narrowed(l),
+            None => false,
+        }
+    }
+
     /// Is local `l` (of this frame, or the variable it captures) a checked copy?
     pub(crate) fn is_checked_copy(&self, l: LocalId) -> bool {
         let mut l = l;

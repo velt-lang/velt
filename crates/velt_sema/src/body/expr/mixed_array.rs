@@ -116,18 +116,9 @@ impl FnCx<'_, '_> {
     pub(super) fn mixed_elem(&mut self, e: &ast::Expr, elem: TyId) -> hir::Expr {
         let nested = matches!(&e.kind, ast::ExprKind::Array(xs) if !xs.is_empty());
         // `elem` is only what the first element suggests: a narrowed module variable or field
-        // whose payload is not an `elem` either is read as it is, so the array is of the union
-        // (`[s, st.v]` after a call made `st.v` a number); one whose payload is, as its payload
-        // (`[x, y]` is a `Box[]`, `checked_copies`).
+        // that a call may have cleared is read as it is (`checked_copies`).
         if !nested && self.as_is_source(e) {
-            let payload = self.with_payload(e, |s| s.peek_ty(e));
-            let fits = payload.is_some_and(|t| {
-                let t = self.cx.widened(t);
-                self.converts_to(t, elem)
-            });
-            if !fits {
-                return self.as_is_expr(e, Some(elem), Want::Move);
-            }
+            return self.as_is_expr(e, Some(elem), Want::Move);
         }
         if !nested {
             return self.expr(e, Some(elem), Want::Move);

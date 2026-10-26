@@ -215,8 +215,7 @@ async function later(): Promise<void> {
 }
 later().then(() => console.log("done"));
 
-// Untyped arrays and objects of cleared values: an element whose payload is not of the type the
-// first one set does not take that type.
+// Untyped arrays and objects of cleared values: the first element does not type the others.
 let s3: string | null = "s";
 const st3: { v: string | number; w: string | null } = { v: "a", w: "w" };
 function clear3(): void {
@@ -227,9 +226,7 @@ function clear3(): void {
 function mixed(): void {
   if (s3 && typeof st3.v === "string" && st3.w) {
     clear3();
-    let one = 1;
-    let yes = true;
-    console.log([one, st3.v], [one, s3], [yes, s3, st3.w, st3.v]);
+    console.log([st3.v], [st3.v, s3], [s3, st3.v], [s3, st3.w, st3.v]);
     console.log({ a: st3.v, b: s3 }, { v: st3.v });
   }
 }
@@ -297,17 +294,45 @@ ternaries(true);
 ts = "s"; tst.w = "w";
 ternaries(false);
 
-// Untyped arrays of narrowed module variables and fields are arrays of their payloads.
-class Box5 { n = 1; }
-let x5: Box5 | null = new Box5(); let y5: Box5 | null = new Box5();
-const st5: { f: Box5 | null; s: string | null } = { f: new Box5(), s: "s" };
-function run5(): void {
-  if (x5 && y5 && st5.f && st5.s) {
-    const a0 = [x5];
-    console.log(a0[0].n);
-    const arr = [x5, y5, st5.f];
-    console.log(arr[1].n, arr[2].n, [st5.s, st5.s][1].length);
-    for (const { n } of [x5, st5.f]) console.log(n);
+// Untyped arrays hold narrowed values as they are (`[x]` is a `(Box | null)[]`), so a cleared
+// value is `null` there, as in JavaScript; generic calls infer from the value as it is.
+class Box8 { n = 1; }
+let x8: Box8 | null = new Box8();
+function clr8(): void { x8 = null; }
+function apply8<T, R>(v: T, f: (t: T) => R): R { return f(v); }
+function wrap8<T>(v: T): T[] { return [v]; }
+function run8(): void {
+  if (x8) {
+    clr8();
+    console.log(wrap8(x8), apply8(x8, (b) => String(b)), [x8].length);
   }
 }
-run5();
+run8();
+let s38: string | null = "s";
+const st38: { v: string | number; w: string | null } = { v: "a", w: "w" };
+function clear38(): void { s38 = null; st38.v = 5; st38.w = null; }
+function mixed8(): void {
+  if (s38 && typeof st38.v === "string" && st38.w) {
+    clear38();
+    console.log([1, st38.v]);
+    console.log([true, st38.w]);
+    console.log([1, s38]);
+  }
+}
+mixed8();
+class Box9 { n = 1; next: Box9 | null = null; }
+let x9: Box9 | null = new Box9();
+const st9: { v: string | number; b: Box9 | null } = { v: "a", b: new Box9() };
+async function tick9(): Promise<void> {}
+function clr9(): void { x9 = null; st9.v = 3; st9.b = null; }
+async function run9(): Promise<void> {
+  if (x9 && typeof st9.v === "string" && st9.b) {
+    const c = st9.v;
+    await tick9();
+    clr9();
+    console.log(x9, st9.v, st9.b, c, `${c}`, x9 ?? "n", st9.b?.n);
+    const arr = [c, st9.v];
+    console.log(arr);
+  }
+}
+run9().then(() => console.log("done"));
