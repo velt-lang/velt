@@ -144,7 +144,11 @@ never wakes another thread.
   than a few milliseconds doesn't hold up the rest of its worker: its timers, sockets and woken
   tasks go to another worker meanwhile, except tasks pinned to that worker. When no other worker
   can take them (one worker, or every other one computing too), a spare worker starts and does,
-  up to four in all; `workerCount()` counts each from then on. `VELT_SCHEDULER=stealing` or
+  up to four in all; `workerCount()` counts each from then on. Tasks spawned together that
+  compute (`spawn` in a loop, then `await Promise.all(...)`) start on idle workers within about
+  a tenth of a millisecond: once the first has computed for 50 µs, the others, not started yet,
+  go to sleeping workers, one each. On macOS the workers ask for the user-interactive quality of
+  service, so busy workers run on the performance cores. `VELT_SCHEDULER=stealing` or
   `per-core` selects one of tokio's schedulers instead (for comparison;
   [`VELT_SCHEDULER`](../tooling/cli.md)); with `stealing`, `{ worker }` is checked but the task
   may run on any worker, and `currentWorker()` can change at any `await`.
