@@ -44,6 +44,10 @@ impl Ctx<'_> {
 
     /// The site of the parameter, field or variable declared at `name` with type `t`.
     pub(crate) fn decl_site(&self, name: Span, t: TyId) -> Option<Span> {
+        // A declaration's type is written in its own file, which must have sites.
+        if !self.fn_sites.by_file.contains_key(&name.file) {
+            return None;
+        }
         match self.fn_sites.written.get(&name) {
             Some(&w) => self.site_in(w, t),
             // `let f = () => {}`: the site is the name (`untyped_let_site`).

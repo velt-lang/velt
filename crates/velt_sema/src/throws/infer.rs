@@ -309,12 +309,16 @@ pub(super) fn own_final(cx: &mut Ctx, d: DefId) -> Option<TyId> {
 }
 
 pub(super) fn srcs_final(cx: &mut Ctx, srcs: &[ThrowSrc]) -> Option<TyId> {
-    let mut acc = None;
+    // The union of what the sources throw, made once: many sources throw the same set.
+    let mut all: Vec<TyId> = vec![];
     for s in srcs {
-        let t = src_final(cx, s);
-        acc = cx.join_errors(acc, t);
+        if let Some(t) = src_final(cx, s) {
+            if !all.contains(&t) {
+                all.push(t);
+            }
+        }
     }
-    acc
+    cx.error_union(&all)
 }
 
 /// What one throw source throws, with the current error types.
