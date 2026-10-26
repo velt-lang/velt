@@ -1,0 +1,63 @@
+// A generic method overridden in a subclass, called only through a bound instantiated with a
+// class (#943): no call goes through the interface's table, so converting a dynamic value to the
+// interface, and generic classes at the interface whose converting methods are never called
+// through a table, are fine.
+interface Box {
+  wrap<T>(x: T): T[];
+  name(): string;
+}
+
+class Base implements Box {
+  wrap<T>(x: T): T[] {
+    return [x];
+  }
+  name(): string {
+    return "base";
+  }
+}
+
+class Sub extends Base {
+  override wrap<T>(x: T): T[] {
+    return [x, x];
+  }
+  override name(): string {
+    return "sub";
+  }
+}
+
+function f<T extends Box>(b: T): number[] {
+  return b.wrap(1);
+}
+
+class Conv<T> {
+  v: unknown;
+  constructor(v: unknown) {
+    this.v = v;
+  }
+  get(): T {
+    return this.v as T;
+  }
+  tag(): string {
+    return "c";
+  }
+}
+
+class Holder<T> {
+  items: T[] = [];
+  add(u: unknown): void {
+    this.items.push(u as T);
+  }
+  size(): number {
+    return this.items.length;
+  }
+}
+
+function main(): void {
+  const h = new Holder<Box>();
+  console.log(h.size(), f(new Sub()));
+  console.log(new Conv<Box>(new Base()).tag(), f(new Sub()));
+  console.log(new Conv<Box>(new Sub() as Base).get().name(), f(new Sub()));
+  const x: any = new Sub() as Base;
+  const b: Box = x;
+  console.log(b.name(), f(new Sub()));
+}

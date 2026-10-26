@@ -535,7 +535,6 @@ fn analyze_bodies(cx: &mut ctx::Ctx) {
     timings::pass("absent_fields::check", || absent_fields::check(cx));
     timings::pass("fresh_returns::check", || fresh_returns::check(cx));
     timings::pass("generic_override_sites::check", || {
-        generic_override_sites::check_adapters(cx);
         generic_override_sites::check(cx)
     });
     timings::pass("generic_fns::mark_shared_values", || {
@@ -548,10 +547,8 @@ fn analyze_bodies(cx: &mut ctx::Ctx) {
     }) {
         return;
     }
-    // After the cycles: it carries conversions through instantiations too.
-    timings::pass("any_iface_sites::check_any_ifaces", || {
-        any_iface_sites::check_any_ifaces(cx)
-    });
+    // After the cycles: it carries calls and conversions through instantiations.
+    timings::pass("any_iface_sites::check", || any_iface_sites::check(cx));
     // Before the passes that read instantiated types: deferred types reduced per instance.
     timings::pass("type_level::instances::reach", || {
         type_level::instances::reach(cx)

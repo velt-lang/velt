@@ -28,54 +28,106 @@ use crate::visit;
 /// interface, the slot, the interface arguments, the method's own type arguments, where.
 type IfaceCall = (usize, DefId, u32, Vec<TyId>, Vec<TyId>, Span);
 
-/// A unit of code and what it holds: its conversions (target type, where) and the definitions it
-/// instantiates (with their type arguments, none for a closure, which shares the unit's).
+/// A unit of code and what it holds: its conversions (target type, where), the definitions it
+/// instantiates (with their type arguments, none for a closure, which shares the unit's), and
+/// its calls of generic interface methods through a bound (the receiver's type, the interface,
+/// the slot, where).
 #[derive(Default)]
 struct Unit {
     convs: Vec<(TyId, Span)>,
     sites: Vec<(DefId, Vec<TyId>, Span)>,
+    bounds: Vec<(TyId, DefId, u32, Span)>,
 }
 
-pub(crate) fn check_any_ifaces(cx: &mut Ctx) {
-    if cx.generic_overrides.is_empty() {
+/// The sites instantiating each definition: the unit they are in, the type arguments, where.
+type Callers = FxHashMap<DefId, Vec<(DefId, Vec<TyId>, Span)>>;
+
+/// The checks of generic methods reached through interface tables that need every
+/// instantiation: which interfaces a call through a bound reaches (module docs), the adapters
+/// (`generic_override_sites::check_adapters`), and the conversions of dynamic values.
+pub(crate) fn check(cx: &mut Ctx) {
+    let bound_calls = !cx.generic_called.on_params.is_empty();
+    let overrides = !cx.generic_overrides.is_empty();
+    if !bound_calls && !overrides {
+        crate::generic_override_sites::check_adapters(cx);
         return;
     }
     let units = collect(cx);
-    let mut reported: FxHashSet<Span> = FxHashSet::default();
-    let mut checked: FxHashSet<(TyId, Span)> = FxHashSet::default();
-    // The sites instantiating each definition: the unit they are in, the type arguments, where.
-    let mut callers: FxHashMap<DefId, Vec<(DefId, Vec<TyId>, Span)>> = FxHashMap::default();
-    // The targets with type parameters each definition's instances convert to, and a worklist
-    // of those not carried to the definition's callers yet.
-    let mut needs: FxHashMap<DefId, FxHashSet<TyId>> = FxHashMap::default();
-    let mut work: Vec<(DefId, TyId)> = vec![];
-    for (d, u) in units {
-        for (t, span) in u.convs {
-            match cx.has_type_params(t) {
-                true if needs.entry(d).or_default().insert(t) => work.push((d, t)),
-                true => {}
-                false => report(cx, t, span, &mut reported, &mut checked),
-            }
-        }
-        for (g, targs, span) in u.sites {
-            callers.entry(g).or_default().push((d, targs, span));
+    let mut callers: Callers = FxHashMap::default();
+    for (d, u) in &units {
+        for (g, targs, span) in &u.sites {
+            callers
+                .entry(*g)
+                .or_default()
+                .push((*d, targs.clone(), *span));
         }
     }
-    while let Some((g, t)) = work.pop() {
+    // A generic method called through a bound runs the method of the type the bound's parameter
+    // is given; it goes through the interface's table only where that is an interface value.
+    let mut names: Vec<String> = vec![];
+    let mut calls = vec![];
+    for (d, u) in &units {
+        for (recv, iface, slot, span) in &u.bounds {
+            let m = cx.iface(*iface).and_then(|i| i.methods.get(*slot as usize));
+            if let Some(m) = m.filter(|m| !m.generics.names.is_empty()) {
+                names.push(m.name.clone());
+                calls.push((*d, *recv, names.len() - 1, *span));
+            }
+        }
+    }
+    carry(cx, &callers, calls, &mut |cx, t, k, _| {
+        if let TyKind::Dyn(i, _) = cx.ty.kind(t) {
+            let call = (*i, names[k].clone());
+            cx.generic_called.on.insert(call);
+        }
+    });
+    crate::generic_override_sites::check_adapters(cx);
+    if !overrides {
+        return;
+    }
+    let mut reported: FxHashSet<Span> = FxHashSet::default();
+    let mut checked: FxHashSet<(TyId, Span)> = FxHashSet::default();
+    let convs = (units.iter())
+        .flat_map(|(d, u)| u.convs.iter().map(move |(t, span)| (*d, *t, 0, *span)))
+        .collect();
+    carry(cx, &callers, convs, &mut |cx, t, _, span| {
+        report(cx, t, span, &mut reported, &mut checked)
+    });
+}
+
+/// Carries each of `start` (a unit, a type in its terms, a tag, where) to the sites instantiating
+/// the unit, substituted, through the generic definitions in between, with a worklist; `done`
+/// gets each one once it has no type parameters, with the tag and the site.
+fn carry(
+    cx: &mut Ctx,
+    callers: &Callers,
+    start: Vec<(DefId, TyId, usize, Span)>,
+    done: &mut dyn FnMut(&mut Ctx, TyId, usize, Span),
+) {
+    let mut needs: FxHashMap<DefId, FxHashSet<(TyId, usize)>> = FxHashMap::default();
+    let mut work: Vec<(DefId, TyId, usize)> = vec![];
+    for (d, t, k, span) in start {
+        match cx.has_type_params(t) {
+            true if needs.entry(d).or_default().insert((t, k)) => work.push((d, t, k)),
+            true => {}
+            false => done(cx, t, k, span),
+        }
+    }
+    while let Some((g, t, k)) = work.pop() {
         let Some(sites) = callers.get(&g) else {
             continue;
         };
-        for (me, targs, span) in sites.clone() {
+        for (me, targs, span) in sites {
             let s = match targs.is_empty() {
                 true => t,
-                false => cx.subst(t, &targs),
+                false => cx.subst(t, targs),
             };
             if !cx.has_type_params(s) {
-                report(cx, s, span, &mut reported, &mut checked);
-            } else if depth(cx, s, 0) <= MAX_DEPTH && needs.entry(me).or_default().insert(s) {
+                done(cx, s, k, *span);
+            } else if depth(cx, s, 0) <= MAX_DEPTH && needs.entry(*me).or_default().insert((s, k)) {
                 // A target that grows at each instantiation (`conv<T[]>` in `conv<T>`) is the
                 // instantiation cycle `instantiation_cycles` reports: bounded here.
-                work.push((me, s));
+                work.push((*me, s, k));
             }
         }
     }
@@ -112,6 +164,8 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Unit)> {
     let mut iface_calls: Vec<IfaceCall> = vec![];
     // Each instance of a generic class or struct made (`new C<A>`, a literal), in unit `.0`.
     let mut made: Vec<(usize, DefId, Vec<TyId>, Span)> = vec![];
+    // The receivers and slots of the calls through class vtables.
+    let mut virtuals: Vec<(TyId, u32)> = vec![];
     let tys = &cx.ty;
     let mut scan = |at: usize, u: &mut Unit, e: &mut Expr| match &e.kind {
         E::Call {
@@ -146,7 +200,7 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Unit)> {
                     slot,
                     method_type_args,
                 },
-            ..
+            args,
         } => {
             let call = (
                 at,
@@ -157,6 +211,17 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Unit)> {
                 e.span,
             );
             iface_calls.push(call);
+            if let Some(recv) = args.first() {
+                u.bounds.push((recv.ty, *iface, *slot, e.span));
+            }
+        }
+        E::Call {
+            callee: Callee::Virtual { slot },
+            args,
+        } => {
+            if let Some(recv) = args.first() {
+                virtuals.push((recv.ty, *slot));
+            }
         }
         E::Closure(c) => u.sites.push((*c, vec![], e.span)),
         E::New {
@@ -222,6 +287,21 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Unit)> {
         }
         out.push((DefId(i as u32), u));
     }
+    // The names of the methods called through a vtable, an interface table or a bound: what an
+    // instance's methods may be called as later.
+    let mut dispatched: FxHashSet<String> = FxHashSet::default();
+    for (_, iface, slot, ..) in &iface_calls {
+        if let Some(m) = cx.iface(*iface).and_then(|i| i.methods.get(*slot as usize)) {
+            dispatched.insert(m.name.clone());
+        }
+    }
+    for (ty, slot) in virtuals {
+        let Some((c, _)) = cx.class_of(ty) else {
+            continue;
+        };
+        let names = cx.adt(c).map(|a| &a.vslots).into_iter().flatten();
+        dispatched.extend(names.filter(|(_, s)| **s == slot).map(|(n, _)| n.clone()));
+    }
     for (at, iface, slot, iargs, margs, span) in iface_calls {
         let sites = iface_sites(cx, iface, slot, &iargs, &margs);
         let u = &mut out[at].1;
@@ -232,7 +312,7 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Unit)> {
     // through a vtable or an interface table): each method of the class and of its bases is
     // instantiated with the instance's arguments, mapped to the method's class.
     for (at, c, targs, span) in made {
-        let sites = class_method_sites(cx, c, &targs);
+        let sites = class_method_sites(cx, c, &targs, &dispatched);
         let u = &mut out[at].1;
         u.sites
             .extend(sites.into_iter().map(|(m, targs)| (m, targs, span)));
@@ -254,7 +334,7 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Unit)> {
         if let Some(c) = ctors.get(&h) {
             sites.push((*c, hargs.clone()));
         }
-        sites.extend(class_method_sites(cx, h, &hargs));
+        sites.extend(class_method_sites(cx, h, &hargs, &dispatched));
         u.sites
             .extend(sites.into_iter().map(|(m, targs)| (m, targs, span)));
     }
@@ -291,17 +371,23 @@ fn method_args(cx: &mut Ctx, ty: TyId, m: DefId, own: Option<&[TyId]>) -> Option
     Some(targs)
 }
 
-/// The methods of class `c` and of its bases, instantiated for an instance of `c<args>`.
-fn class_method_sites(cx: &mut Ctx, c: DefId, args: &[TyId]) -> Vec<(DefId, Vec<TyId>)> {
+/// The methods of class `c` and of its bases named in `dispatched` (those called through a
+/// table, which direct calls don't instantiate), instantiated for an instance of `c<args>`.
+fn class_method_sites(
+    cx: &mut Ctx,
+    c: DefId,
+    args: &[TyId],
+    dispatched: &FxHashSet<String>,
+) -> Vec<(DefId, Vec<TyId>)> {
     let ty = cx.ty.intern(TyKind::Adt(c, args.to_vec()));
     let mut methods = vec![];
     let mut cur = Some(c);
     for _ in 0..64 {
         let Some(d) = cur else { break };
         let Some(a) = cx.adt(d) else { break };
-        let mut own: Vec<DefId> = (a.methods.values())
-            .filter(|m| !m.is_static)
-            .map(|m| m.def)
+        let mut own: Vec<DefId> = (a.methods.iter())
+            .filter(|(name, m)| !m.is_static && dispatched.contains(*name))
+            .map(|(_, m)| m.def)
             .collect();
         own.sort_unstable_by_key(|m| m.0);
         methods.extend(own);
