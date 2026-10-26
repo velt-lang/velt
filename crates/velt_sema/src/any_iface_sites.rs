@@ -24,6 +24,10 @@ use crate::defs::DefInfo;
 use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E, Intrinsic, TyId, TyKind};
 use crate::visit;
 
+/// A generic interface method called through an interface value or a bound, in unit `.0`: the
+/// interface, the slot, the interface arguments, the method's own type arguments, where.
+type IfaceCall = (usize, DefId, u32, Vec<TyId>, Vec<TyId>, Span);
+
 /// A unit of code and what it holds: its conversions (target type, where) and the definitions it
 /// instantiates (with their type arguments, none for a closure, which shares the unit's).
 #[derive(Default)]
@@ -105,7 +109,7 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Unit)> {
     // A generic interface method called through an interface value or a bound may run the
     // method of each class implementing it: the interface, the slot, the interface arguments,
     // the method's own type arguments.
-    let mut iface_calls: Vec<(usize, DefId, u32, Vec<TyId>, Vec<TyId>, Span)> = vec![];
+    let mut iface_calls: Vec<IfaceCall> = vec![];
     let tys = &cx.ty;
     let mut scan = |at: usize, u: &mut Unit, e: &mut Expr| match &e.kind {
         E::Call {
