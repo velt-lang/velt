@@ -1,5 +1,5 @@
-// An interface value does not satisfy a bound whose interface has a generic method: those are
-// called on the concrete type and have no slot in the value's table.
+// An interface value satisfies a bound whose interface has a generic method: the method is
+// called through the value's table of instantiations (#943).
 interface Mapper { apply<U>(f: (n: number) => U): U; }
 class A implements Mapper { apply<U>(f: (n: number) => U): U { return f(1); } }
 function run<T extends Mapper>(m: T): string { return String(m.apply((n) => n * 10)); }

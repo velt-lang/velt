@@ -1,0 +1,2 @@
+generic_dyn_recursion.vlt:10:25: error: instantiating `R.go<T[]>` from `R.go<T>` grows without end
+  = note: `R.go` calls itself with `T[]`: Velt compiles each instantiation separately, so this recursion never ends; use a non-generic helper or a `JsonValue`

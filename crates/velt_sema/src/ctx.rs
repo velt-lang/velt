@@ -66,6 +66,10 @@ pub(crate) struct Ctx<'m> {
     pub(crate) part_ifaces: crate::intersection_members::PartIfaces,
     /// Interfaces made for intersections and `Pick`s of interfaces with methods.
     pub(crate) synth_ifaces: crate::synth_ifaces::SynthIfaces,
+    /// The generic methods called through interface values (`hir::Program::generic_dyn_methods`).
+    pub(crate) generic_called: crate::generic_override_sites::GenericCalls,
+    /// Each conversion through an interface adapter: the interface and where.
+    pub(crate) adapter_uses: Vec<(DefId, Span)>,
     /// Views of unions of interfaces (`crate::union_views`).
     pub(crate) union_views: crate::union_views::UnionViews,
     pub(crate) any: Option<crate::any::AnyDefs>,
@@ -427,6 +431,8 @@ impl<'m> Ctx<'m> {
             iface_writes: Default::default(),
             part_ifaces: Default::default(),
             synth_ifaces: Default::default(),
+            generic_called: Default::default(),
+            adapter_uses: vec![],
             union_views: Default::default(),
             any: None,
             impl_index: Default::default(),

@@ -59,6 +59,10 @@ pub(super) struct Layouts {
     pub(super) value_wraps: FxHashMap<(DefId, Vec<TyId>), (AggId, u32)>,
     /// Vtable statics (glue/vtable.rs).
     pub(super) vtables: FxHashMap<super::VtableKey, crate::vir::StaticId>,
+    /// Instantiation tables of generic interface methods, per (impl, concrete type, slot), and
+    /// the type argument lists of each slot (glue/generic_slots.rs).
+    pub(super) slot_tables: FxHashMap<(u32, TyId, u32), crate::vir::StaticId>,
+    pub(super) generic_slots: FxHashMap<super::glue::SlotKey, super::glue::GenericSlot>,
     pub(super) drop_memo: FxHashMap<TyId, bool>,
     /// Foreign (runtime-facing) layouts of types containing boxed values (foreign.rs).
     pub(super) foreign: FxHashMap<TyId, Ty>,

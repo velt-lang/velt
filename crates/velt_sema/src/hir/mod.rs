@@ -29,6 +29,7 @@
 //! `docs/internals/contracts/hir_encodings.md` — part of this contract.
 
 mod fields;
+mod impl_bound;
 mod intrinsic;
 mod module_state;
 mod nothing;
@@ -41,6 +42,7 @@ use std::collections::{HashMap, HashSet};
 use velt_common::Span;
 
 pub use fields::{DynMember, DynMemberKind, FieldDef, FieldInit};
+pub use impl_bound::ImplBound;
 pub use intrinsic::Intrinsic;
 pub use module_state::{GlobalDef, ModuleState};
 pub use nothing::Nothing;
@@ -199,6 +201,9 @@ pub struct Program {
     pub cpu_targets: HashMap<DefId, CpuTarget>,
     /// Names of structural types for messages: aliases' and field-only interfaces'. Additive.
     pub type_names: HashMap<TyId, String>,
+    /// The generic interface methods called with type arguments of their own through tables:
+    /// only their vtable slots hold instantiation tables (hir_encodings.md). Additive.
+    pub generic_dyn_methods: HashSet<String>,
     /// The impls of `extend … implements I` blocks (by index into `impls`) with the bounds on
     /// their type parameters: such an impl fits a type only where they hold, and a type without
     /// an impl of its own (or a base class's) gets the most specific that fits (A over B when
@@ -206,15 +211,6 @@ pub struct Program {
     pub extension_impls: HashMap<u32, Vec<ImplBound>>,
     /// Per interface, the `extend` bounds its values meet themselves (hir_encodings.md). Additive.
     pub dyn_bounds: HashMap<DefId, Vec<(DefId, Vec<TyId>)>>,
-}
-
-/// A bound on type parameter `param` of a generic impl: the type bound to it implements
-/// `iface<args>` (`args` use the impl's `TyKind::Param`s).
-#[derive(Clone, Debug)]
-pub struct ImplBound {
-    pub param: u32,
-    pub iface: DefId,
-    pub args: Vec<TyId>,
 }
 
 /// `ty` implements `iface<iface_args>` using `methods` (one per interface method, in order).
@@ -619,6 +615,10 @@ pub enum Callee {
     /// Interface method call on a `Dyn` receiver `args[0]`; `slot` indexes `InterfaceDef::methods`.
     Dyn {
         slot: u32,
+        /// Type arguments of a generic interface method's own type params (empty for
+        /// non-generic methods): the table holds one entry per instantiation lowering reaches
+        /// (hir_encodings.md "Generic methods").
+        method_type_args: Vec<TyId>,
     },
     /// Method call on a receiver of type `TyKind::Param(n)` bounded by `iface` (`<T extends I>`);
     /// resolved statically via `Program::impls` after monomorphization. M2.

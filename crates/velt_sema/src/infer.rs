@@ -599,9 +599,9 @@ impl Ctx<'_> {
                 .any(|x| x == b || self.iface_ancestors(x).contains(b));
         }
         if let TyKind::Dyn(d, args) = self.ty.kind(ty).clone() {
-            // An interface value satisfies the interfaces its interface extends (#1368), unless
-            // the bound has a generic method: those have no slot in the value's table.
-            if self.extends_iface(&Bound { iface: d, args }, b) && !self.has_generic_method(b) {
+            // An interface value satisfies the interfaces its interface extends (#1368); a
+            // generic method of the bound is called through its table's instantiations (#943).
+            if self.extends_iface(&Bound { iface: d, args }, b) {
                 return true;
             }
         }

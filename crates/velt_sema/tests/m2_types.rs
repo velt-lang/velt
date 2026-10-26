@@ -459,7 +459,7 @@ fn interface_values_and_default_methods() {
     assert_eq!(adt(&p, "A").vtable, vec![def_id(&p, "A.greet")]);
     assert!(calls(func(&p, "all"))
         .iter()
-        .any(|(c, _)| matches!(c, Callee::Dyn { slot: 0 })));
+        .any(|(c, _)| matches!(c, Callee::Dyn { slot: 0, .. })));
     // `new A()` has no impl of its own: upcast to U, then ToDyn with U's impl.
     assert!(exprs(main)
         .iter()
@@ -626,7 +626,7 @@ fn interface_fields_through_values_and_generics() {
     );
     assert!(calls(func(&p, "viaDyn"))
         .iter()
-        .any(|(c, _)| matches!(c, Callee::Dyn { slot: 1 })));
+        .any(|(c, _)| matches!(c, Callee::Dyn { slot: 1, .. })));
     assert!(calls(func(&p, "viaGeneric"))
         .iter()
         .any(|(c, _)| matches!(c, Callee::ParamMethod { slot: 1, .. })));

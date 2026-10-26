@@ -92,7 +92,7 @@ impl Effects {
                     });
                     self.methods.push(name);
                 }
-                Callee::Dyn { slot } => {
+                Callee::Dyn { slot, .. } => {
                     self.callbacks(cx, scope, args, None);
                     let iface = args.first().and_then(|r| match cx.ty.kind(r.ty) {
                         TyKind::Dyn(i, _) => Some(*i),

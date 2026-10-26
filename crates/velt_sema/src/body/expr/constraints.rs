@@ -335,13 +335,6 @@ impl FnCx<'_, '_> {
                         ));
                     }
                     d = self.ext_bound_notes(d, t, &b);
-                    if matches!(self.cx.ty.kind(t), TyKind::Dyn(..))
-                        && self.cx.has_generic_method(&b)
-                    {
-                        d = d.with_note(format!(
-                            "an interface value cannot stand for `{name}`: `{bn}` has a generic method, which is called on the concrete type (generic methods are dispatched statically); pass the class instance itself"
-                        ));
-                    }
                     self.cx.error(d);
                 }
             }
