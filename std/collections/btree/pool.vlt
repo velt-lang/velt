@@ -17,11 +17,12 @@
 // NaN (`isNaNKey`), and for other types the NaN tests fold away, so the count stays one `<` per
 // key.
 //
-// Unused key slots hold a share of `fill[0]`, a live key, so that the pools stay arrays of plain
-// `K`; value slots are `V | null`. For keys that own something (strings, objects) a deleted key
-// is released: when the filler's key is deleted, every unused slot gets a new filler, a key
-// from the middle of the tree; when the last key goes, the pools are emptied; and a separator
-// that is the first key of a leaf follows it when it is deleted (`removeAt`).
+// Keys that own something (strings, objects; `owns`) live in `leafRefs` / `innerRefs` as
+// `K | null`, and an unused slot holds `null`, so the pools keep no reference to a deleted key;
+// the separator that is the first key of a leaf follows it when it is deleted (`removeAt`).
+// Other keys live in `leafKeys` / `innerKeys` (the other pair stays empty), and their unused
+// slots keep whatever they held. `keyAt`, `setKey`, `clearKey` and `moveKey` pick the pair;
+// the choice is a constant per key type. Value slots are `V | null`.
 
 /** Slots per node. */
 export const F: usize = 32;
@@ -34,15 +35,18 @@ export const NONE: u32 = 4294967295;
 
 export class Pool<K extends Comparable<K>, V> {
   leafKeys: K[] = [];
+  leafRefs: (K | null)[] = [];
   leafVals: (V | null)[] = [];
   leafLen: u32[] = [];
   leafNext: u32[] = [];
   leafPrev: u32[] = [];
   innerKeys: K[] = [];
+  innerRefs: (K | null)[] = [];
   innerKids: u32[] = [];
   innerLen: u32[] = [];
   freeLeaves: u32[] = [];
   freeInners: u32[] = [];
+  /** For keys that own nothing: the value `newLeaf` / `newInner` put in new slots. */
   fill: K[] = [];
   root: u32 = 0;
   /** 0 while the root is a leaf. */
@@ -56,8 +60,13 @@ export class Pool<K extends Comparable<K>, V> {
 
   // ─────────────── searching ───────────────
 
-  /** How many of the `n` keys at `keys[base..]` are below `t`. */
-  below(keys: K[], base: usize, n: usize, t: K): usize {
+  /** The key in leaf slot `i` (shared). */
+  leafKey(i: usize): K {
+    return keyAt(this.leafKeys, this.leafRefs, i);
+  }
+
+  /** How many of the `n` keys at `base` in `keys` / `refs` (`keyAt`) are below `t`. */
+  below(keys: K[], refs: (K | null)[], base: usize, n: usize, t: K): usize {
     if (!__intrinsic_needs_drop(t)) {
       let c: usize = 0;
       if (isNaNKey(t)) {
@@ -76,8 +85,8 @@ export class Pool<K extends Comparable<K>, V> {
     let lo: usize = 0;
     let hi = n;
     while (lo < hi) {
-      const mid = lo + (hi - lo) / 2;
-      if (keys[base + mid] < t) {
+      const mid = (lo + hi) / 2; // at most F: no overflow, and small enough to inline
+      if (refBelow(refs[base + mid], t)) {
         lo = mid + 1;
       } else {
         hi = mid;
@@ -86,8 +95,8 @@ export class Pool<K extends Comparable<K>, V> {
     return lo;
   }
 
-  /** How many of the `n` keys at `keys[base..]` are at most `t`. */
-  atMost(keys: K[], base: usize, n: usize, t: K): usize {
+  /** How many of the `n` keys at `base` in `keys` / `refs` (`keyAt`) are at most `t`. */
+  atMost(keys: K[], refs: (K | null)[], base: usize, n: usize, t: K): usize {
     if (!__intrinsic_needs_drop(t)) {
       if (isNaNKey(t)) {
         return n;
@@ -102,8 +111,8 @@ export class Pool<K extends Comparable<K>, V> {
     let lo: usize = 0;
     let hi = n;
     while (lo < hi) {
-      const mid = lo + (hi - lo) / 2;
-      if (t < keys[base + mid]) {
+      const mid = (lo + hi) / 2;
+      if (belowRef(t, refs[base + mid])) {
         hi = mid;
       } else {
         lo = mid + 1;
@@ -119,7 +128,13 @@ export class Pool<K extends Comparable<K>, V> {
     let node = this.root;
     for (let h = this.height; h > 0; h--) {
       const base = (node as usize) * F;
-      const slot = this.atMost(this.innerKeys, base, this.innerLen[node as usize] as usize, t);
+      const slot = this.atMost(
+        this.innerKeys,
+        this.innerRefs,
+        base,
+        this.innerLen[node as usize] as usize,
+        t,
+      );
       this.pathNodes.push(node);
       this.pathSlots.push(slot);
       node = this.innerKids[base + slot];
@@ -132,7 +147,13 @@ export class Pool<K extends Comparable<K>, V> {
     let node = this.root;
     for (let h = this.height; h > 0; h--) {
       const base = (node as usize) * F;
-      const slot = this.atMost(this.innerKeys, base, this.innerLen[node as usize] as usize, t);
+      const slot = this.atMost(
+        this.innerKeys,
+        this.innerRefs,
+        base,
+        this.innerLen[node as usize] as usize,
+        t,
+      );
       node = this.innerKids[base + slot];
     }
     return node;
@@ -152,8 +173,8 @@ export class Pool<K extends Comparable<K>, V> {
   slotIn(leaf: u32, t: K): i64 {
     const base = (leaf as usize) * F;
     const n = this.leafLen[leaf as usize] as usize;
-    const pos = this.below(this.leafKeys, base, n, t);
-    if (pos < n && isKey(this.leafKeys[base + pos], t)) {
+    const pos = this.below(this.leafKeys, this.leafRefs, base, n, t);
+    if (pos < n && slotIs(this.leafKeys, this.leafRefs, base + pos, t)) {
       return pos as i64;
     }
     return -1;
@@ -167,7 +188,7 @@ export class Pool<K extends Comparable<K>, V> {
     }
     const id = this.leafLen.length as u32;
     for (let i: usize = 0; i < F; i++) {
-      this.leafKeys.push(this.fill[0]);
+      pushSlot(this.leafKeys, this.leafRefs, this.fill);
       this.leafVals.push(null);
     }
     this.leafLen.push(0);
@@ -182,7 +203,7 @@ export class Pool<K extends Comparable<K>, V> {
     }
     const id = this.innerLen.length as u32;
     for (let i: usize = 0; i < F; i++) {
-      this.innerKeys.push(this.fill[0]);
+      pushSlot(this.innerKeys, this.innerRefs, this.fill);
       this.innerKids.push(0);
     }
     this.innerLen.push(0);
@@ -192,7 +213,7 @@ export class Pool<K extends Comparable<K>, V> {
   freeLeaf(leaf: u32) {
     const base = (leaf as usize) * F;
     for (let i: usize = 0; i < F; i++) {
-      this.leafKeys[base + i] = this.fill[0];
+      clearKey(this.leafKeys, this.leafRefs, base + i);
       this.leafVals[base + i] = null;
     }
     this.leafLen[leaf as usize] = 0;
@@ -202,7 +223,7 @@ export class Pool<K extends Comparable<K>, V> {
   freeInner(node: u32) {
     const base = (node as usize) * F;
     for (let i: usize = 0; i < F; i++) {
-      this.innerKeys[base + i] = this.fill[0];
+      clearKey(this.innerKeys, this.innerRefs, base + i);
     }
     this.innerLen[node as usize] = 0;
     this.freeInners.push(node);
@@ -211,11 +232,13 @@ export class Pool<K extends Comparable<K>, V> {
   /** Drops every node; the next `insert` starts a new root. */
   clear() {
     __intrinsic_array_truncate(this.leafKeys, 0);
+    __intrinsic_array_truncate(this.leafRefs, 0);
     __intrinsic_array_truncate(this.leafVals, 0);
     __intrinsic_array_truncate(this.leafLen, 0);
     __intrinsic_array_truncate(this.leafNext, 0);
     __intrinsic_array_truncate(this.leafPrev, 0);
     __intrinsic_array_truncate(this.innerKeys, 0);
+    __intrinsic_array_truncate(this.innerRefs, 0);
     __intrinsic_array_truncate(this.innerKids, 0);
     __intrinsic_array_truncate(this.innerLen, 0);
     __intrinsic_array_truncate(this.freeLeaves, 0);
@@ -231,15 +254,17 @@ export class Pool<K extends Comparable<K>, V> {
 
   /** Stores `value` under `key`, replacing the value already there. */
   insert(key: K, value: V) {
-    if (this.fill.length == 0) {
-      this.fill.push(key);
+    if (this.leafLen.length == 0) {
+      if (!owns<K>() && this.fill.length == 0) {
+        this.fill.push(key);
+      }
       this.root = this.newLeaf();
     }
     const leaf = this.findLeaf(key);
     const base = (leaf as usize) * F;
     const n = this.leafLen[leaf as usize] as usize;
-    const pos = this.below(this.leafKeys, base, n, key);
-    if (pos < n && isKey(this.leafKeys[base + pos], key)) {
+    const pos = this.below(this.leafKeys, this.leafRefs, base, n, key);
+    if (pos < n && slotIs(this.leafKeys, this.leafRefs, base + pos, key)) {
       this.leafVals[base + pos] = value;
       return;
     }
@@ -254,9 +279,9 @@ export class Pool<K extends Comparable<K>, V> {
     const right = this.newLeaf();
     const rb = (right as usize) * F;
     for (let i: usize = 0; i < half; i++) {
-      moveSlot(this.leafKeys, rb + i, base + half + i);
+      moveKey(this.leafKeys, this.leafRefs, rb + i, base + half + i);
       moveSlot(this.leafVals, rb + i, base + half + i);
-      this.leafKeys[base + half + i] = this.fill[0];
+      clearKey(this.leafKeys, this.leafRefs, base + half + i);
       this.leafVals[base + half + i] = null;
     }
     this.leafLen[leaf as usize] = half as u32;
@@ -273,17 +298,17 @@ export class Pool<K extends Comparable<K>, V> {
     } else {
       this.leafInsert(right, pos - half, key, value);
     }
-    this.addSeparator(this.leafKeys[rb], right);
+    this.addSeparator(keyAt(this.leafKeys, this.leafRefs, rb), right);
   }
 
   private leafInsert(leaf: u32, pos: usize, key: K, value: V) {
     const base = (leaf as usize) * F;
     const n = this.leafLen[leaf as usize] as usize;
     for (let i = n; i > pos; i--) {
-      moveSlot(this.leafKeys, base + i, base + i - 1);
+      moveKey(this.leafKeys, this.leafRefs, base + i, base + i - 1);
       moveSlot(this.leafVals, base + i, base + i - 1);
     }
-    this.leafKeys[base + pos] = key;
+    setKey(this.leafKeys, this.leafRefs, base + pos, key);
     this.leafVals[base + pos] = value;
     this.leafLen[leaf as usize] = (n + 1) as u32;
   }
@@ -301,12 +326,12 @@ export class Pool<K extends Comparable<K>, V> {
       const n = this.innerLen[node as usize] as usize;
       if (n < F - 1) {
         for (let i = n; i > slot; i--) {
-          moveSlot(this.innerKeys, base + i, base + i - 1);
+          moveKey(this.innerKeys, this.innerRefs, base + i, base + i - 1);
         }
         for (let i = n + 1; i > slot + 1; i--) {
           this.innerKids[base + i] = this.innerKids[base + i - 1];
         }
-        this.innerKeys[base + slot] = sep;
+        setKey(this.innerKeys, this.innerRefs, base + slot, sep);
         this.innerKids[base + slot + 1] = right;
         this.innerLen[node as usize] = (n + 1) as u32;
         return;
@@ -319,7 +344,7 @@ export class Pool<K extends Comparable<K>, V> {
         if (i == slot) {
           keys.push(sep);
         }
-        keys.push(this.innerKeys[base + i]);
+        keys.push(keyAt(this.innerKeys, this.innerRefs, base + i));
       }
       if (slot == n) {
         keys.push(sep);
@@ -334,7 +359,11 @@ export class Pool<K extends Comparable<K>, V> {
       const other = this.newInner();
       const ob = (other as usize) * F;
       for (let i: usize = 0; i < F; i++) {
-        this.innerKeys[base + i] = i < mid ? keys[i] : this.fill[0];
+        if (i < mid) {
+          setKey(this.innerKeys, this.innerRefs, base + i, keys[i]);
+        } else {
+          clearKey(this.innerKeys, this.innerRefs, base + i);
+        }
       }
       for (let i: usize = 0; i <= mid; i++) {
         this.innerKids[base + i] = kids[i];
@@ -342,7 +371,7 @@ export class Pool<K extends Comparable<K>, V> {
       this.innerLen[node as usize] = mid as u32;
       const rn = F - mid - 1;
       for (let i: usize = 0; i < rn; i++) {
-        this.innerKeys[ob + i] = keys[mid + 1 + i];
+        setKey(this.innerKeys, this.innerRefs, ob + i, keys[mid + 1 + i]);
       }
       for (let i: usize = 0; i <= rn; i++) {
         this.innerKids[ob + i] = kids[mid + 1 + i];
@@ -353,7 +382,7 @@ export class Pool<K extends Comparable<K>, V> {
     }
     const top = this.newInner();
     const tb = (top as usize) * F;
-    this.innerKeys[tb] = sep;
+    setKey(this.innerKeys, this.innerRefs, tb, sep);
     this.innerKids[tb] = this.root;
     this.innerKids[tb + 1] = right;
     this.innerLen[top as usize] = 1;
@@ -367,34 +396,22 @@ export class Pool<K extends Comparable<K>, V> {
   removeAt(leaf: u32, pos: usize) {
     const base = (leaf as usize) * F;
     const n = this.leafLen[leaf as usize] as usize;
-    const owned = __intrinsic_needs_drop(this.fill[0]);
-    // Whether the key going is the filler (a share of a live key: the same object, or for a
-    // string the same text).
-    const wasFill = owned && this.leafKeys[base + pos] == this.fill[0];
     for (let i = pos; i + 1 < n; i++) {
-      moveSlot(this.leafKeys, base + i, base + i + 1);
+      moveKey(this.leafKeys, this.leafRefs, base + i, base + i + 1);
       moveSlot(this.leafVals, base + i, base + i + 1);
     }
-    this.leafKeys[base + n - 1] = this.fill[0];
+    clearKey(this.leafKeys, this.leafRefs, base + n - 1);
     this.leafVals[base + n - 1] = null;
     this.leafLen[leaf as usize] = (n - 1) as u32;
     this.size--;
     this.edits++;
-    if (owned && this.size == 0) {
-      // Nothing is left to fill with: drop the pools and the filler with them.
-      this.clear();
-      return;
-    }
-    if (owned && pos == 0 && this.height > 0) {
+    if (owns<K>() && pos == 0 && this.height > 0) {
       // The separator bounding this leaf on the left may be the deleted key: give it the
       // leaf's new first key (a non-root leaf keeps entries, MIN_LEAF - 1 at least).
       this.followFirstKey(base);
     }
     if (this.height > 0 && n - 1 < MIN_LEAF) {
       this.rebalanceLeaf(leaf);
-    }
-    if (wasFill) {
-      this.refill();
     }
   }
 
@@ -408,31 +425,9 @@ export class Pool<K extends Comparable<K>, V> {
       depth--;
       const slot = this.pathSlots[depth];
       if (slot > 0) {
-        this.innerKeys[(this.pathNodes[depth] as usize) * F + slot - 1] = this.leafKeys[leafBase];
+        const at = (this.pathNodes[depth] as usize) * F + slot - 1;
+        setKey(this.innerKeys, this.innerRefs, at, keyAt(this.leafKeys, this.leafRefs, leafBase));
         return;
-      }
-    }
-  }
-
-  // The filler's key was deleted: a key from the middle of the tree replaces it in every unused
-  // slot, so the deleted key is released. A middle key goes when about half of the keys have
-  // gone, whether they go from the front, from the back or at random, so this O(slots) pass
-  // runs a few times over a drain.
-  private refill() {
-    let node = this.root;
-    for (let h = this.height; h > 0; h--) {
-      const base = (node as usize) * F;
-      node = this.innerKids[base + (this.innerLen[node as usize] as usize) / 2];
-    }
-    this.fill[0] = this.leafKeys[(node as usize) * F + (this.leafLen[node as usize] as usize) / 2];
-    for (let leaf: usize = 0; leaf < this.leafLen.length; leaf++) {
-      for (let i = this.leafLen[leaf] as usize; i < F; i++) {
-        this.leafKeys[leaf * F + i] = this.fill[0];
-      }
-    }
-    for (let inner: usize = 0; inner < this.innerLen.length; inner++) {
-      for (let i = this.innerLen[inner] as usize; i < F; i++) {
-        this.innerKeys[inner * F + i] = this.fill[0];
       }
     }
   }
@@ -447,7 +442,12 @@ export class Pool<K extends Comparable<K>, V> {
       const left = this.innerKids[pb + slot - 1];
       if ((this.leafLen[left as usize] as usize) > MIN_LEAF) {
         this.shiftLeafRight(left, leaf);
-        this.innerKeys[pb + slot - 1] = this.leafKeys[(leaf as usize) * F];
+        setKey(
+          this.innerKeys,
+          this.innerRefs,
+          pb + slot - 1,
+          keyAt(this.leafKeys, this.leafRefs, (leaf as usize) * F),
+        );
         return;
       }
       this.mergeLeaves(left, leaf);
@@ -458,7 +458,12 @@ export class Pool<K extends Comparable<K>, V> {
       const right = this.innerKids[pb + slot + 1];
       if ((this.leafLen[right as usize] as usize) > MIN_LEAF) {
         this.shiftLeafLeft(leaf, right);
-        this.innerKeys[pb + slot] = this.leafKeys[(right as usize) * F];
+        setKey(
+          this.innerKeys,
+          this.innerRefs,
+          pb + slot,
+          keyAt(this.leafKeys, this.leafRefs, (right as usize) * F),
+        );
         return;
       }
       this.mergeLeaves(leaf, right);
@@ -470,18 +475,18 @@ export class Pool<K extends Comparable<K>, V> {
   private shiftLeafRight(left: u32, leaf: u32) {
     const lb = (left as usize) * F;
     const ln = this.leafLen[left as usize] as usize;
-    const key = this.leafKeys[lb + ln - 1];
+    const key = keyAt(this.leafKeys, this.leafRefs, lb + ln - 1);
     const value = this.leafVals[lb + ln - 1];
-    this.leafKeys[lb + ln - 1] = this.fill[0];
+    clearKey(this.leafKeys, this.leafRefs, lb + ln - 1);
     this.leafVals[lb + ln - 1] = null;
     this.leafLen[left as usize] = (ln - 1) as u32;
     const base = (leaf as usize) * F;
     const n = this.leafLen[leaf as usize] as usize;
     for (let i = n; i > 0; i--) {
-      moveSlot(this.leafKeys, base + i, base + i - 1);
+      moveKey(this.leafKeys, this.leafRefs, base + i, base + i - 1);
       moveSlot(this.leafVals, base + i, base + i - 1);
     }
-    this.leafKeys[base] = key;
+    setKey(this.leafKeys, this.leafRefs, base, key);
     this.leafVals[base] = value;
     this.leafLen[leaf as usize] = (n + 1) as u32;
   }
@@ -492,14 +497,14 @@ export class Pool<K extends Comparable<K>, V> {
     const n = this.leafLen[leaf as usize] as usize;
     const rb = (right as usize) * F;
     const rn = this.leafLen[right as usize] as usize;
-    moveSlot(this.leafKeys, base + n, rb);
+    moveKey(this.leafKeys, this.leafRefs, base + n, rb);
     moveSlot(this.leafVals, base + n, rb);
     this.leafLen[leaf as usize] = (n + 1) as u32;
     for (let i: usize = 0; i + 1 < rn; i++) {
-      moveSlot(this.leafKeys, rb + i, rb + i + 1);
+      moveKey(this.leafKeys, this.leafRefs, rb + i, rb + i + 1);
       moveSlot(this.leafVals, rb + i, rb + i + 1);
     }
-    this.leafKeys[rb + rn - 1] = this.fill[0];
+    clearKey(this.leafKeys, this.leafRefs, rb + rn - 1);
     this.leafVals[rb + rn - 1] = null;
     this.leafLen[right as usize] = (rn - 1) as u32;
   }
@@ -511,7 +516,7 @@ export class Pool<K extends Comparable<K>, V> {
     const rb = (right as usize) * F;
     const rn = this.leafLen[right as usize] as usize;
     for (let i: usize = 0; i < rn; i++) {
-      moveSlot(this.leafKeys, lb + ln + i, rb + i);
+      moveKey(this.leafKeys, this.leafRefs, lb + ln + i, rb + i);
       moveSlot(this.leafVals, lb + ln + i, rb + i);
     }
     this.leafLen[left as usize] = (ln + rn) as u32;
@@ -530,12 +535,12 @@ export class Pool<K extends Comparable<K>, V> {
     const base = (node as usize) * F;
     const n = this.innerLen[node as usize] as usize;
     for (let i = sep; i + 1 < n; i++) {
-      moveSlot(this.innerKeys, base + i, base + i + 1);
+      moveKey(this.innerKeys, this.innerRefs, base + i, base + i + 1);
     }
     for (let i = sep + 1; i < n; i++) {
       this.innerKids[base + i] = this.innerKids[base + i + 1];
     }
-    this.innerKeys[base + n - 1] = this.fill[0];
+    clearKey(this.innerKeys, this.innerRefs, base + n - 1);
     this.innerLen[node as usize] = (n - 1) as u32;
     if (depth == 0) {
       if (n - 1 == 0) {
@@ -566,15 +571,15 @@ export class Pool<K extends Comparable<K>, V> {
       if (ln > MIN_INNER) {
         // Rotate right: the parent's separator comes down, the left's last goes up.
         for (let i = n; i > 0; i--) {
-          moveSlot(this.innerKeys, base + i, base + i - 1);
+          moveKey(this.innerKeys, this.innerRefs, base + i, base + i - 1);
         }
         for (let i = n + 1; i > 0; i--) {
           this.innerKids[base + i] = this.innerKids[base + i - 1];
         }
-        moveSlot(this.innerKeys, base, pb + slot - 1);
+        moveKey(this.innerKeys, this.innerRefs, base, pb + slot - 1);
         this.innerKids[base] = this.innerKids[lb + ln];
-        moveSlot(this.innerKeys, pb + slot - 1, lb + ln - 1);
-        this.innerKeys[lb + ln - 1] = this.fill[0];
+        moveKey(this.innerKeys, this.innerRefs, pb + slot - 1, lb + ln - 1);
+        clearKey(this.innerKeys, this.innerRefs, lb + ln - 1);
         this.innerLen[left as usize] = (ln - 1) as u32;
         this.innerLen[node as usize] = (n + 1) as u32;
         return;
@@ -589,16 +594,16 @@ export class Pool<K extends Comparable<K>, V> {
       const rn = this.innerLen[right as usize] as usize;
       if (rn > MIN_INNER) {
         // Rotate left: the parent's separator comes down, the right's first goes up.
-        moveSlot(this.innerKeys, base + n, pb + slot);
+        moveKey(this.innerKeys, this.innerRefs, base + n, pb + slot);
         this.innerKids[base + n + 1] = this.innerKids[rb];
-        moveSlot(this.innerKeys, pb + slot, rb);
+        moveKey(this.innerKeys, this.innerRefs, pb + slot, rb);
         for (let i: usize = 0; i + 1 < rn; i++) {
-          moveSlot(this.innerKeys, rb + i, rb + i + 1);
+          moveKey(this.innerKeys, this.innerRefs, rb + i, rb + i + 1);
         }
         for (let i: usize = 0; i < rn; i++) {
           this.innerKids[rb + i] = this.innerKids[rb + i + 1];
         }
-        this.innerKeys[rb + rn - 1] = this.fill[0];
+        clearKey(this.innerKeys, this.innerRefs, rb + rn - 1);
         this.innerLen[right as usize] = (rn - 1) as u32;
         this.innerLen[node as usize] = (n + 1) as u32;
         return;
@@ -615,9 +620,9 @@ export class Pool<K extends Comparable<K>, V> {
     const ln = this.innerLen[left as usize] as usize;
     const rb = (right as usize) * F;
     const rn = this.innerLen[right as usize] as usize;
-    moveSlot(this.innerKeys, lb + ln, sepAt);
+    moveKey(this.innerKeys, this.innerRefs, lb + ln, sepAt);
     for (let i: usize = 0; i < rn; i++) {
-      moveSlot(this.innerKeys, lb + ln + 1 + i, rb + i);
+      moveKey(this.innerKeys, this.innerRefs, lb + ln + 1 + i, rb + i);
     }
     for (let i: usize = 0; i <= rn; i++) {
       this.innerKids[lb + ln + 1 + i] = this.innerKids[rb + i];
@@ -648,6 +653,77 @@ function isKey<K extends Comparable<K>>(k: K, t: K): bool {
     return true;
   }
   return !(t < k) && !isNaNKey(k);
+}
+
+/** Whether keys of type `K` own something (strings, objects): they are kept as `K | null`. */
+function owns<K>(): bool {
+  return __intrinsic_needs_drop(__intrinsic_null_as<K>());
+}
+
+/** The key at slot `i` (shared). */
+function keyAt<K>(keys: K[], refs: (K | null)[], i: usize): K {
+  if (owns<K>()) {
+    return refs[i]!;
+  }
+  return keys[i];
+}
+
+function setKey<K>(keys: K[], refs: (K | null)[], i: usize, k: K) {
+  if (owns<K>()) {
+    refs[i] = k;
+  } else {
+    keys[i] = k;
+  }
+}
+
+// `r < t` for an owned key slot, read in place (`refs[i]!` would make a share of the key).
+function refBelow<K extends Comparable<K>>(r: K | null, t: K): bool {
+  if (r != null) {
+    return r < t;
+  }
+  return false;
+}
+
+// `t < r` for an owned key slot, read in place.
+function belowRef<K extends Comparable<K>>(t: K, r: K | null): bool {
+  if (r != null) {
+    return t < r;
+  }
+  return false;
+}
+
+// Whether the key at slot `i`, the first one not below `t`, is `t`.
+function slotIs<K extends Comparable<K>>(keys: K[], refs: (K | null)[], i: usize, t: K): bool {
+  if (owns<K>()) {
+    // Owned keys are never NaN.
+    return !belowRef(t, refs[i]);
+  }
+  return isKey(keys[i], t);
+}
+
+// Empties slot `i`, releasing the key it held.
+function clearKey<K>(keys: K[], refs: (K | null)[], i: usize) {
+  if (owns<K>()) {
+    refs[i] = null;
+  }
+}
+
+// Moves the key at `from` to `to`, whose key is about to be overwritten or cleared.
+function moveKey<K>(keys: K[], refs: (K | null)[], to: usize, from: usize) {
+  if (owns<K>()) {
+    __intrinsic_array_swap(refs, to, from);
+  } else {
+    keys[to] = keys[from];
+  }
+}
+
+// Adds a slot for a new node: empty, or a copy of `fill[0]` for keys that own nothing.
+function pushSlot<K>(keys: K[], refs: (K | null)[], fill: K[]) {
+  if (owns<K>()) {
+    refs.push(null);
+  } else {
+    keys.push(fill[0]);
+  }
 }
 
 // Moves `xs[from]` to `xs[to]`, whose value is about to be overwritten or is a filler: a swap

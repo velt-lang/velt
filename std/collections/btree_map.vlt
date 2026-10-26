@@ -79,7 +79,7 @@ export class BTreeMap<K extends Comparable<K>, V> implements Iterable<[K, V]> {
       const base = (leaf as usize) * F;
       const n = this.p.leafLen[leaf as usize] as usize;
       for (let i: usize = 0; i < n; i++) {
-        out.push(this.p.leafKeys[base + i]);
+        out.push(this.p.leafKey(base + i));
       }
       leaf = this.p.leafNext[leaf as usize];
     }
@@ -135,7 +135,7 @@ export class BTreeMap<K extends Comparable<K>, V> implements Iterable<[K, V]> {
         continue;
       }
       const at = (leaf as usize) * F + i;
-      const key = this.p.leafKeys[at];
+      const key = this.p.leafKey(at);
       const value = valueOf(this.p.leafVals[at]);
       const edits = this.p.edits;
       f(value, key);
@@ -150,6 +150,7 @@ export class BTreeMap<K extends Comparable<K>, V> implements Iterable<[K, V]> {
       leaf = this.p.leafOf(key);
       i = this.p.atMost(
         this.p.leafKeys,
+        this.p.leafRefs,
         (leaf as usize) * F,
         this.p.leafLen[leaf as usize] as usize,
         key,
@@ -162,7 +163,7 @@ export class BTreeMap<K extends Comparable<K>, V> implements Iterable<[K, V]> {
     if (this.p.size == 0) {
       return undefined;
     }
-    return this.p.leafKeys[(this.firstLeaf() as usize) * F];
+    return this.p.leafKey((this.firstLeaf() as usize) * F);
   }
 
   /** The largest key, or `undefined` if empty. */
@@ -171,7 +172,7 @@ export class BTreeMap<K extends Comparable<K>, V> implements Iterable<[K, V]> {
       return undefined;
     }
     const leaf = this.p.edgeLeaf(true);
-    return this.p.leafKeys[(leaf as usize) * F + (this.p.leafLen[leaf as usize] as usize) - 1];
+    return this.p.leafKey((leaf as usize) * F + (this.p.leafLen[leaf as usize] as usize) - 1);
   }
 
   /** The largest key <= `key`, or `undefined`. */
@@ -181,15 +182,21 @@ export class BTreeMap<K extends Comparable<K>, V> implements Iterable<[K, V]> {
     }
     let leaf = this.p.leafOf(key);
     const base = (leaf as usize) * F;
-    const i = this.p.atMost(this.p.leafKeys, base, this.p.leafLen[leaf as usize] as usize, key);
+    const i = this.p.atMost(
+      this.p.leafKeys,
+      this.p.leafRefs,
+      base,
+      this.p.leafLen[leaf as usize] as usize,
+      key,
+    );
     if (i > 0) {
-      return this.p.leafKeys[base + i - 1];
+      return this.p.leafKey(base + i - 1);
     }
     leaf = this.p.leafPrev[leaf as usize];
     if (leaf == NONE) {
       return undefined;
     }
-    return this.p.leafKeys[(leaf as usize) * F + (this.p.leafLen[leaf as usize] as usize) - 1];
+    return this.p.leafKey((leaf as usize) * F + (this.p.leafLen[leaf as usize] as usize) - 1);
   }
 
   /** The smallest key >= `key`, or `undefined`. */
@@ -200,15 +207,15 @@ export class BTreeMap<K extends Comparable<K>, V> implements Iterable<[K, V]> {
     let leaf = this.p.leafOf(key);
     const base = (leaf as usize) * F;
     const n = this.p.leafLen[leaf as usize] as usize;
-    const i = this.p.below(this.p.leafKeys, base, n, key);
+    const i = this.p.below(this.p.leafKeys, this.p.leafRefs, base, n, key);
     if (i < n) {
-      return this.p.leafKeys[base + i];
+      return this.p.leafKey(base + i);
     }
     leaf = this.p.leafNext[leaf as usize];
     if (leaf == NONE) {
       return undefined;
     }
-    return this.p.leafKeys[(leaf as usize) * F];
+    return this.p.leafKey((leaf as usize) * F);
   }
 
   /** The entries with `from <= key < to`, in key order. */
@@ -220,6 +227,7 @@ export class BTreeMap<K extends Comparable<K>, V> implements Iterable<[K, V]> {
     let leaf = this.p.leafOf(from);
     let i = this.p.below(
       this.p.leafKeys,
+      this.p.leafRefs,
       (leaf as usize) * F,
       this.p.leafLen[leaf as usize] as usize,
       from,
@@ -227,7 +235,7 @@ export class BTreeMap<K extends Comparable<K>, V> implements Iterable<[K, V]> {
     while (leaf != NONE) {
       const base = (leaf as usize) * F;
       const n = this.p.leafLen[leaf as usize] as usize;
-      const end = this.p.below(this.p.leafKeys, base, n, to);
+      const end = this.p.below(this.p.leafKeys, this.p.leafRefs, base, n, to);
       this.pushEntries(out, leaf, i, end);
       if (end < n) {
         break;
@@ -247,7 +255,7 @@ export class BTreeMap<K extends Comparable<K>, V> implements Iterable<[K, V]> {
   private pushEntries(out: [K, V][], leaf: u32, from: usize, to: usize) {
     const base = (leaf as usize) * F;
     for (let i = from; i < to; i++) {
-      const pair: [K, V] = [this.p.leafKeys[base + i], valueOf(this.p.leafVals[base + i])];
+      const pair: [K, V] = [this.p.leafKey(base + i), valueOf(this.p.leafVals[base + i])];
       out.push(pair);
     }
   }
