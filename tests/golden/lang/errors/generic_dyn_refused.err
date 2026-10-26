@@ -1,7 +1,17 @@
-generic_dyn_refused.vlt:40:39: error: generic method `wrap` is overridden in `Sub`, so a `Base` converted to `Box` would need dynamic dispatch
-generic_dyn_refused.vlt:18:16: error: generic method `wrap` is overridden in `Sub`, so a `Base` converted to `Box` would need dynamic dispatch
-generic_dyn_refused.vlt:47:25: error: an `H` at other type arguments can't be a value here yet: the program calls its generic method `wrap` through interface values
-generic_dyn_refused.vlt:46:19: error: generic method `wrap` is overridden in `Sub`, so a dynamic value converted to `Box` would need dynamic dispatch
-generic_dyn_refused.vlt:46:27: error: generic method `wrap` is overridden in `Sub`, so a dynamic value converted to `Box` would need dynamic dispatch
-generic_dyn_refused.vlt:46:42: error: generic method `wrap` is overridden in `Sub`, so a dynamic value converted to `Box` would need dynamic dispatch
-generic_dyn_refused.vlt:46:57: error: generic method `wrap` is overridden in `Sub`, so a dynamic value converted to `Box` would need dynamic dispatch
+generic_dyn_refused.vlt:79:39: error: generic method `wrap` is overridden in `Sub`, so a `Base` converted to `Box` would need dynamic dispatch
+generic_dyn_refused.vlt:19:16: error: generic method `wrap` is overridden in `Sub`, so a `Base` converted to `Box` would need dynamic dispatch
+generic_dyn_refused.vlt:90:25: error: an `H` at other type arguments can't be a value here yet: the program calls its generic method `wrap` through interface values
+generic_dyn_refused.vlt:85:19: error: generic method `wrap` is overridden in `Sub`, so a dynamic value converted to `Box` would need dynamic dispatch
+generic_dyn_refused.vlt:85:27: error: generic method `wrap` is overridden in `Sub`, so a dynamic value converted to `Box` would need dynamic dispatch
+generic_dyn_refused.vlt:85:42: error: generic method `wrap` is overridden in `Sub`, so a dynamic value converted to `Box` would need dynamic dispatch
+generic_dyn_refused.vlt:85:57: error: generic method `wrap` is overridden in `Sub`, so a dynamic value converted to `Box` would need dynamic dispatch
+generic_dyn_refused.vlt:40:25: error: generic method `wrap` is overridden in `Sub`, so a dynamic value converted to `Box` would need dynamic dispatch
+generic_dyn_refused.vlt:43:12: error: generic method `wrap` is overridden in `Sub`, so a dynamic value converted to `Box` would need dynamic dispatch
+generic_dyn_refused.vlt:44:19: error: generic method `wrap` is overridden in `Sub`, so a dynamic value converted to `Box` would need dynamic dispatch
+generic_dyn_refused.vlt:87:19: error: generic method `wrap` is overridden in `Sub`, so a dynamic value converted to `Box` would need dynamic dispatch
+generic_dyn_refused.vlt:87:38: error: generic method `wrap` is overridden in `Sub`, so a dynamic value converted to `Box` would need dynamic dispatch
+generic_dyn_refused.vlt:87:62: error: generic method `wrap` is overridden in `Sub`, so a dynamic value converted to `Box` would need dynamic dispatch
+generic_dyn_refused.vlt:88:24: error: generic method `wrap` is overridden in `Sub`, so a dynamic value converted to `Box` would need dynamic dispatch
+generic_dyn_refused.vlt:89:19: error: generic method `wrap` is overridden in `Sub`, so a dynamic value converted to `Box` would need dynamic dispatch
+generic_dyn_refused.vlt:89:38: error: generic method `wrap` is overridden in `Sub`, so a dynamic value converted to `Box` would need dynamic dispatch
+generic_dyn_refused.vlt:89:67: error: generic method `wrap` is overridden in `Sub`, so a dynamic value converted to `Box` would need dynamic dispatch

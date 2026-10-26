@@ -13,7 +13,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use velt_common::{Diagnostic, Span};
 
 use crate::ctx::Ctx;
-use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E, Intrinsic, LocalId, TyId, TyKind};
+use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E, LocalId, TyId, TyKind};
 use crate::visit;
 
 /// Type parameter `.1` of definition `.0` (a function, or a class for its methods).
@@ -315,74 +315,6 @@ pub(crate) fn check_adapters(cx: &mut Ctx) {
             .with_note("the value converts through a wrapper, which doesn't forward the type arguments of a generic method's call yet (#943); keep the interface's type arguments, or convert the class instance itself"),
         );
     }
-}
-
-/// Conversions of an `any`, `unknown` or `object` to an interface type (`Intrinsic::AnyTo`) whose
-/// generic method the program calls through interface values, when a subclass of a class
-/// implementing the interface overrides that method: the conversion uses the table of the type
-/// the value was given to the `any` as, so a `Base` holding a `Sub` would run `Base`'s method
-/// (#943). Reported at the conversion, as that of a class value is (`check_generic_override_dyn`).
-pub(crate) fn check_any_ifaces(cx: &mut Ctx) {
-    if cx.generic_overrides.is_empty() {
-        return;
-    }
-    let mut found: Vec<(TyId, Span)> = vec![];
-    for d in cx.defs.iter_mut() {
-        let Some(Def::Fn(f)) = d else { continue };
-        visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| {
-            if let E::Call {
-                callee: Callee::Intrinsic(Intrinsic::AnyTo),
-                ..
-            } = &e.kind
-            {
-                found.push((e.ty, e.span));
-            }
-        });
-    }
-    let mut reported = FxHashSet::default();
-    for (ty, span) in found {
-        let mut ifaces = vec![];
-        cx.ty.visit(ty, &mut |k| {
-            if let TyKind::Dyn(i, _) = k {
-                ifaces.push(*i);
-            }
-        });
-        if let Some(d) = ifaces.into_iter().find_map(|i| any_overridden(cx, i, span)) {
-            if reported.insert((span.file, span.lo)) {
-                cx.error(d);
-            }
-        }
-    }
-}
-
-/// The error for a conversion of a dynamic value to `iface` ([`check_any_ifaces`]), if one of
-/// its generic methods called through interface values is overridden below an implementing class.
-fn any_overridden(cx: &Ctx, iface: DefId, span: Span) -> Option<Diagnostic> {
-    let i = cx.iface(iface)?;
-    for m in i.methods.iter().filter(|m| !m.generics.names.is_empty()) {
-        if !cx.generic_called.reaches(iface, &m.name) {
-            continue;
-        }
-        for imp in cx.impls.iter().filter(|x| x.iface == iface) {
-            let Some((c, _)) = cx.class_of(imp.ty) else {
-                continue;
-            };
-            let below = (cx.generic_overrides.iter())
-                .find(|(s, key)| *key == m.name && *s != c && cx.class_extends(*s, c));
-            let Some((sub, _)) = below else { continue };
-            let name = |d: DefId| cx.adt(d).map(|a| a.name.clone()).unwrap_or_default();
-            let (cn, sn, iname, key) = (name(c), name(*sub), i.name.clone(), &m.name);
-            return Some(
-                Diagnostic::error(
-                    format!("generic method `{key}` is overridden in `{sn}`, so a dynamic value converted to `{iname}` would need dynamic dispatch"),
-                    span,
-                )
-                .with_note(format!("the conversion runs the methods of the type the value had when it became `any`, `unknown` or `object`: a `{cn}` holding a `{sn}` would run `{cn}`'s `{key}`"))
-                .with_note(format!("generic methods are dispatched statically: convert the class instance to `{iname}` before it becomes dynamic, or make the method non-generic")),
-            );
-        }
-    }
-    None
 }
 
 /// The generic interface methods the program calls with type arguments of their own through
