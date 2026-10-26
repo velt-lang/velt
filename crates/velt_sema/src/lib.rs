@@ -317,6 +317,9 @@ fn check_timed(
     let null_proto = modules
         .iter()
         .any(|m| !m.is_std && calls_object_create_null(&m.ast));
+    let ctor_reads = modules
+        .iter()
+        .any(|m| !m.is_std && reads_constructor(&m.ast));
     let new_cx = |round: &'static str,
                   held_borrows: bool,
                   seeds: &throws::FnTypeSeeds,
@@ -339,6 +342,7 @@ fn check_timed(
             cx.overloaded_methods = o.methods.clone();
         }
         cx.objects.null_proto_records = null_proto;
+        cx.objects.ctor_reads = ctor_reads;
         cx.objects.brands = brands.clone();
         cx.global_props = global_props.clone();
         cx.recovered = (recovered.iter())
@@ -744,6 +748,24 @@ fn calls_object_create_null(module: &velt_syntax::ast::Module) -> bool {
                 && matches!(&object.kind, E::Ident(o) if o.name == "Object")
                 && matches!(arg.kind, E::Lit(ast::Lit::Null))
             {
+                self.0 = true;
+            }
+        }
+    }
+    let mut f = Find(false);
+    velt_syntax::visit::walk_module(module, &mut f);
+    f.0
+}
+
+/// Does `module` read a `constructor` property (`x.constructor`)? Only then does the prelude's
+/// `__anyConstructor` hold the dispatch over the program's classes, whose objects are module
+/// state (`body::expr::ctor_objects`); other programs get none of it.
+fn reads_constructor(module: &velt_syntax::ast::Module) -> bool {
+    use velt_syntax::ast::{self, ExprKind as E};
+    struct Find(bool);
+    impl<'a> velt_syntax::visit::Visit<'a> for Find {
+        fn expr(&mut self, e: &'a ast::Expr) {
+            if matches!(&e.kind, E::Member { prop, .. } if prop.name == "constructor") {
                 self.0 = true;
             }
         }

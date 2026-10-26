@@ -1,0 +1,12 @@
+// The module `class_value_init_order_import.vlt` imports.
+export const counted = new Set<unknown>();
+const p: any = [1];
+counted.add(p.constructor);
+
+export class D {
+  static note(): void {
+    counted.add(D);
+  }
+}
+
+D.note();

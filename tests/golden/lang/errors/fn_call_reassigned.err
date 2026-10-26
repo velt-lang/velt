@@ -1,0 +1,4 @@
+fn_call_reassigned.vlt:22:38: error: `call` with this `this` is not supported yet: this variable holds a method read as a value, which keeps the object it was read from
+fn_call_reassigned.vlt:38:40: error: `call` with this `this` is not supported yet: this variable holds a method read as a value, which keeps the object it was read from
+fn_call_reassigned.vlt:49:35: error: `call` with this `this` is not supported yet: this variable holds a method read as a value, which keeps the object it was read from
+fn_call_reassigned.vlt:67:20: error: `call` with this `this` is not supported yet: this variable holds a method read as a value, which keeps the object it was read from
