@@ -2923,6 +2923,15 @@ one object type member (`VNode | string | null`) converts an object that is no `
 way. In a program without proxies, and into a class or an interface with methods, an object of
 another type stays a `TypeError`.
 
+An object literal with a getter (`{ get value() { … } }`, the value of its own interface)
+asserted to an object type that declares only fields (`obj as Computed<T>` with
+`interface Computed<T> { readonly value: T }`) is, in a program that makes proxies, a view of
+the literal too (#1510): each read of `value` runs the getter at that moment, and a write runs
+its setter (one written in the literal or added by `Object.defineProperty`), as Node's one
+object does. Each field of the type must be a field or a getter of the literal, of a type that
+converts to or from the field's. In a program without proxies such a cast is an error, since a
+copy would keep the getter's value once.
+
 ```ts
 type Item = { name: string; price: number };
 

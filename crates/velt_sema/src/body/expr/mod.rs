@@ -123,6 +123,7 @@ pub(crate) mod object_keys;
 mod object_method;
 mod object_own;
 mod object_prototypes;
+mod object_view_cast;
 mod ops;
 mod optional_fn_call;
 mod ordering;
