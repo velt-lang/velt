@@ -1,0 +1,67 @@
+// `(f as () => R).call(o)` where `o` may no longer hold the object `f` was read from: assigned
+// after the read, shadowed, or a parameter assigned in the function. Velt would run `f` on the
+// object it was read from, where Node uses the new `o`: an error saying it is not supported yet.
+interface T {
+  n: number;
+  m(): number;
+}
+
+let o: T = {
+  n: 1,
+  m(): number {
+    return this.n;
+  },
+};
+const f = (o as T).m;
+o = {
+  n: 2,
+  m(): number {
+    return this.n;
+  },
+};
+console.log((f as () => number).call(o));
+
+const k: T = {
+  n: 1,
+  m(): number {
+    return this.n;
+  },
+};
+const g = (k as T).m;
+{
+  const k: T = {
+    n: 2,
+    m(): number {
+      return this.n;
+    },
+  };
+  console.log((g as () => number).call(k));
+}
+
+function run(p: T): number {
+  const h = (p as T).m;
+  p = {
+    n: 5,
+    m(): number {
+      return this.n * 10;
+    },
+  };
+  return (h as () => number).call(p);
+}
+
+console.log(run(k));
+
+let q: T = {
+  n: 1,
+  m(): number {
+    return this.n;
+  },
+};
+const u = q.m;
+q = {
+  n: 2,
+  m(): number {
+    return this.n;
+  },
+};
+console.log(u.call(q));

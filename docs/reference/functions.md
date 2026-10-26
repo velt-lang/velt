@@ -1192,14 +1192,17 @@ static functions of built-in namespaces read none, so any `thisArg` works for th
 (`o.m`, `C.m`) keeps the object or class it was read from: `o.m.call(o, x)` works, and `null` or
 `undefined` works when the method doesn't use `this`. A variable holding a method read as a value
 (`const f = o.m`) takes no other `this`; a `const` read from an object (`const f = (o as T).m`,
-cast to a function type where it is called: `(f as () => R).call(o)`) takes that object; other
+cast to a function type where it is called: `(f as () => R).call(o)`) takes that variable `o`
+while nothing assigns it (a `const`, or a `let` or parameter never assigned); other
 function values, such as parameters, take `null` or `undefined`, as `f(x)` calls them. Any other
 `this` is not supported yet (an error): Velt would run the function on the object it keeps, where
 Node uses the `this` given or throws.
 
-`f.bind(thisArg)` without further arguments follows the same rules and is the function itself,
-which keeps the object it was read from (`(res as { dispose: () => void }).dispose.bind(res)`);
-`bind` with arguments to fix is not supported yet (write an arrow function).
+`f.bind(thisArg)` without further arguments follows the same rules and makes a new function
+that forwards its arguments to `f`, which keeps the object it was read from
+(`(res as { dispose: () => void }).dispose.bind(res)`); as in JavaScript it is not `===` to `f`
+or to another `bind` of it. `bind` with arguments to fix is not supported yet (write an arrow
+function).
 
 ```ts
 function add(a: number, b: number): number {

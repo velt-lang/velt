@@ -21,7 +21,7 @@ use velt_syntax::ast;
 
 use super::method::Resolved;
 use super::setters::synth;
-use crate::body::{FnCx, Want};
+use crate::body::{FnCx, LocalKind, Want};
 use crate::collect::static_this::uses_this;
 use crate::ctx::Item;
 use crate::defs::DefInfo;
@@ -320,10 +320,27 @@ impl FnCx<'_, '_> {
         let Some(l) = self.lookup_local(name, Span::default()) else {
             return false;
         };
-        self.f
-            .member_reads
-            .get(&l)
-            .is_some_and(|o| same_path(o, this_arg))
+        let Some(&root) = self.f.member_reads.get(&l) else {
+            return false;
+        };
+        // `this_arg` names that variable, and nothing assigns it: it still holds the object.
+        let ast::ExprKind::Ident(t) = &strip(this_arg).kind else {
+            return false;
+        };
+        if !self.is_local_name(&t.name) || self.lookup_local(&t.name, t.span) != Some(root) {
+            return false;
+        }
+        let name = self.f.locals[root.0 as usize].name.clone();
+        match self.local_kind(root) {
+            LocalKind::Const | LocalKind::Using => true,
+            // A variable of this function's own (a capture's assignments are its declarer's).
+            LocalKind::Let | LocalKind::Param => {
+                !self.f.captures.iter().any(|c| c.inner == root)
+                    && !self.f.assign_ends.contains_key(&name)
+                    && !self.f.closure_assigned.contains_key(&name)
+            }
+            _ => false,
+        }
     }
 
     /// Does the visible local `name` hold a method read as a value (`const f = o.m`)?
@@ -346,14 +363,17 @@ pub(crate) fn is_member_read(e: &ast::Expr) -> bool {
     )
 }
 
-/// The object of the property read `e` (`o` of `o.m`, `(o as T).m`), if `e` is one.
-pub(crate) fn read_object(e: &ast::Expr) -> Option<&ast::Expr> {
+/// The variable the property read `e` reads from (`o` of `o.m`, `(o as T).m`), if `e` is one.
+pub(crate) fn read_root(e: &ast::Expr) -> Option<&ast::Ident> {
     match &strip(e).kind {
         ast::ExprKind::Member {
             object,
             optional: false,
             ..
-        } => Some(object),
+        } => match &strip(object).kind {
+            ast::ExprKind::Ident(id) => Some(id),
+            _ => None,
+        },
         _ => None,
     }
 }
