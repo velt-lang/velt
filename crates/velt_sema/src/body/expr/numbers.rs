@@ -72,18 +72,12 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// `h` as user code sees it: an integer from the standard library is a `number`, unless an
-    /// integer type that holds it is expected (`std_int_fits`).
-    pub(crate) fn std_number(&mut self, h: hir::Expr, exp: Option<TyId>) -> hir::Expr {
+    /// `h` as user code sees it: an integer from the standard library is a `number` (where an
+    /// integer type that holds it is expected, `std_int_coerce` and `std_int_operands` take the
+    /// integer back out).
+    pub(crate) fn std_number(&mut self, h: hir::Expr) -> hir::Expr {
         if !self.is_std_api_value(&h) {
-            // One made a number already (`member_of`).
-            return match exp.filter(|t| self.cx.ty.is_int(*t) && h.ty == self.cx.ty.f64) {
-                Some(t) => self.std_int_as(h, t).unwrap_or_else(|h| h),
-                None => h,
-            };
-        }
-        if let Some(t) = exp.filter(|t| self.std_int_fits(h.ty, *t)) {
-            return self.int_as(h, t);
+            return h;
         }
         let (f64_, span) = (self.cx.ty.f64, h.span);
         self.mk(H::Cast(Box::new(h)), f64_, span)

@@ -39,6 +39,14 @@ function main() {
   const size: isize = m.size;
   const found: i64 = "abc".indexOf("z");
   console.log(size, found);
+  // A local declared without a type stays a number next to it, where an index expects an
+  // integer too (TypeScript-style code is unchanged).
+  const head = [1, 2];
+  const out = [0, 0, 0, 0];
+  for (let j = 0; j < head.length; j++) {
+    out[head.length + j] = head[j];
+  }
+  console.log(out);
   // With no integer type expected it stays a number, as in TypeScript.
   const half = xs.length / 2;
   const third = (xs.length - 1) / 2;

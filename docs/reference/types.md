@@ -98,8 +98,10 @@ and memory where you want a fixed width; code shared with TypeScript never names
   integer type that holds every value it can have, as the integer itself (no conversion
   happens at run time). A length or a size goes into `usize`, `u64`, `i64` or `isize`, and an
   index that can be `-1` (`indexOf`) into `i64` or `isize`. That covers a declared local, a
-  parameter, a field, a return value or an explicit type argument, and arithmetic or a shift
-  next to such an integer. With no integer type expected it stays a number, as in TypeScript:
+  parameter, a field, a return value or an explicit type argument, arithmetic, a shift or a
+  compound assignment next to such an integer, and arithmetic with a literal where such an
+  integer is expected (`at(xs, xs.length - 1)`). Otherwise it stays a number, as in
+  TypeScript, also next to a local declared without a type:
   ```ts
   function at(xs: string[], i: usize): string {
     return xs[i];
