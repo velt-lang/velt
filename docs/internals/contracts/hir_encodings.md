@@ -900,7 +900,9 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   that fits the type (its pattern matches and its bounds hold, each bound looked up the same
   way), or else its nearest base class: A over B when A's `ty` is an instance of B's and not the
   reverse, or the same pattern where only A has bounds. Sema refuses two extension impls that
-  can fit one type where neither is more specific, so the choice is unique. A lookup that comes
+  can fit one type where neither is more specific (whatever their interface arguments), so the
+  choice is unique; the bounds of extension impls are interfaces, never `any`, `unknown`,
+  `object` or `Function`. A lookup that comes
   back to the same `(iface, type)` through bounds counts as not fitting. Converting an `any` to
   `iface` uses the same lookup for the held value's type.
 - A call through a type parameter's bound that only a blanket block gives it (`k.m()` with

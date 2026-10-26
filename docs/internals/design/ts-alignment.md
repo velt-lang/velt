@@ -131,6 +131,20 @@ The rules, and why:
   such a pair gives a type neither interface unless it has one of its own. A blanket block
   bounded by the interface it implements could only apply to types that already have it, and
   is refused.
+- **Interface arguments.** A type implements an interface once, as a class does: blocks that
+  can fit one type conflict whatever their interface arguments (`extend W implements G<i64>`
+  and `extend W implements G<string>`), and the block that wins decides the arguments. This
+  keeps sema's lookup (by interface) and lowering's (by interface and arguments) the same.
+- **Bounds.** A block that lists `implements` takes interface bounds only. `any`, `unknown`,
+  `object` and `Function` bounds are refused: the first two add nothing, and the last two
+  would need the dynamic type tests of `any` in every impl lookup. Blanket blocks apply to
+  type parameters through each other (a `T extends K` gets `J` from `extend<T extends K> T
+  implements J`, then `I` from `extend<T extends J> T implements I`).
+- **Cost.** Each block's bounds are checked by lookups of their own, and a lookup that
+  finished is remembered per type and interface (per arguments in lowering), unless a cycle
+  through a lookup still running cut it short. A chain of blocks whose bounds share interfaces
+  is so looked up once per type, not once per path. Lookups nest at most 64 deep; a bound that
+  fails there says so.
 - **Diagnostics**: a missing or mismatched method (as for classes); `conflicting
   implementations`; `already implements`; ``cannot implement `I` `` for an interface with
   fields or optional methods (an `extend` block cannot add fields) and for the targets above;

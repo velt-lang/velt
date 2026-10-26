@@ -7,7 +7,9 @@
 //!
 //! A block's bounds are checked through impls again (`extend<T extends I> T implements J`), so
 //! a lookup can come back to itself. A `(type, interface)` lookup that is in progress counts as
-//! not fitting (`Ctx::impl_busy`), which ends every cycle; lowering does the same.
+//! not fitting (`Ctx::impl_busy`), which ends every cycle; lowering does the same. Finished
+//! lookups are remembered (`Ctx::ext_memo`) unless a lookup still running outside them cut them
+//! short, so a chain of blocks whose bounds share interfaces is looked up once per type.
 
 use crate::ctx::Ctx;
 use crate::defs::Bound;
@@ -25,9 +27,28 @@ impl Ctx<'_> {
         iface: DefId,
     ) -> Option<(u32, Vec<TyId>, TyId)> {
         let cands = self.ext_by_iface.get(&iface).cloned()?;
-        if self.impl_busy.len() >= MAX_NESTED || !self.impl_busy.insert((ty, iface)) {
+        // A finished lookup of a type without parameters (whose answer doesn't depend on the
+        // bounds in scope) is remembered while no impl is added.
+        if self.ext_memo_impls != self.impls.len() {
+            self.ext_memo.clear();
+            self.ext_memo_impls = self.impls.len();
+        }
+        let closed = !self.mentions_params(ty);
+        if let Some(found) = closed.then(|| self.ext_memo.get(&(ty, iface))).flatten() {
+            return found.clone();
+        }
+        if let Some(&at) = self.impl_busy.get(&(ty, iface)) {
+            self.ext_low_cut = self.ext_low_cut.min(at);
             return None;
         }
+        if self.impl_busy.len() >= MAX_NESTED {
+            self.ext_limit_hits += 1;
+            self.ext_low_cut = 0;
+            return None;
+        }
+        let depth = self.impl_busy.len();
+        self.impl_busy.insert((ty, iface), depth);
+        let outer_cut = std::mem::replace(&mut self.ext_low_cut, usize::MAX);
         let mut cur = Some(ty);
         let mut best = None;
         for _ in 0..64 {
@@ -39,6 +60,12 @@ impl Ctx<'_> {
             cur = self.base_of(t);
         }
         self.impl_busy.remove(&(ty, iface));
+        // Cut short only by itself or deeper lookups (not by one still running outside it):
+        // the answer is final.
+        if closed && self.ext_low_cut >= depth && self.ext_memo_impls == self.impls.len() {
+            self.ext_memo.insert((ty, iface), best.clone());
+        }
+        self.ext_low_cut = outer_cut.min(self.ext_low_cut);
         best
     }
 
@@ -123,29 +150,19 @@ impl Ctx<'_> {
         self.match_ty(pattern, t, &mut slots) && self.subst_known(pattern, &slots) == t
     }
 
-    /// Can one type fit both `extend` impls `a` and `b` (their targets and interface arguments
-    /// unify; bounds are not considered)? `Some` with that type, or with `None` when it still
-    /// names a type parameter of the blocks.
+    /// Can one type fit both `extend` impls `a` and `b` (their targets unify; bounds and
+    /// interface arguments are not considered: a type implements an interface once)? `Some`
+    /// with that type, or with `None` when it still names a type parameter of the blocks.
     pub(crate) fn ext_overlap(&mut self, a: u32, b: u32) -> Option<Option<TyId>> {
         let (ia, ib) = (&self.impls[a as usize], &self.impls[b as usize]);
         let (na, nb) = (ia.generics, ib.generics);
         let (ta, tb) = (ia.ty, ib.ty);
-        let (aa, ab) = (ia.iface_args.clone(), ib.iface_args.clone());
-        if aa.len() != ab.len() {
-            return None;
-        }
         // `b`'s parameters after `a`'s.
         let shift: Vec<TyId> = (0..nb).map(|k| self.ty.param(na + k)).collect();
         let tb = self.subst(tb, &shift);
         let mut slots = vec![None; (na + nb) as usize];
         if !self.unify(ta, tb, &mut slots, 0) {
             return None;
-        }
-        for (x, y) in aa.iter().zip(&ab) {
-            let y = self.subst(*y, &shift);
-            if !self.unify(*x, y, &mut slots, 0) {
-                return None;
-            }
         }
         let mut w = ta;
         for _ in 0..8 {
@@ -212,33 +229,62 @@ impl Ctx<'_> {
     }
 
     /// The bounds type parameter `ty` has through blanket impls (`extend<T extends B> T
-    /// implements I`) whose bounds it meets with its declared ones (`scope`): `I` for each.
+    /// implements I`) whose bounds it meets with its declared ones (`scope`) or with those it
+    /// gets from other blanket impls (a chain `K` → `J` → `I`): `I` for each.
     pub fn blanket_bounds(&mut self, ty: TyId, scope: &[Vec<Bound>]) -> Vec<Bound> {
         if self.in_blanket || self.ext_impls.is_empty() {
             return vec![];
         }
         self.in_blanket = true;
-        let mut blankets: Vec<(u32, usize)> =
-            self.ext_impls.iter().map(|(&i, &e)| (i, e)).collect();
+        let mut blankets: Vec<(u32, usize)> = (self.ext_impls.iter())
+            .map(|(&i, &e)| (i, e))
+            .filter(|&(i, _)| {
+                let imp = &self.impls[i as usize];
+                imp.generics == 1 && matches!(self.ty.kind(imp.ty), TyKind::Param(0))
+            })
+            .collect();
         blankets.sort_unstable();
-        let mut out = vec![];
-        for (i, e) in blankets {
-            let imp = &self.impls[i as usize];
-            if imp.generics != 1 || !matches!(self.ty.kind(imp.ty), TyKind::Param(0)) {
-                continue;
-            }
-            let (iface, iargs) = (imp.iface, imp.iface_args.clone());
-            let bounds = self.extensions[e].generics.bounds[0].clone();
-            let ok = bounds.iter().all(|b| {
-                let b = Bound {
-                    iface: b.iface,
-                    args: b.args.iter().map(|x| self.subst(*x, &[ty])).collect(),
-                };
-                self.satisfies(ty, &b, scope)
-            });
-            if ok {
+        // `scope` with what `ty` gets so far, so the next round sees it.
+        let mut grown = scope.to_vec();
+        let slot = match self.ty.kind(ty) {
+            TyKind::Param(n) => Some(*n as usize),
+            _ => None,
+        };
+        if let Some(n) = slot.filter(|&n| grown.len() <= n) {
+            grown.resize(n + 1, vec![]);
+        }
+        let mut out: Vec<Bound> = vec![];
+        let mut taken = vec![false; blankets.len()];
+        loop {
+            let mut added = false;
+            for (k, &(i, e)) in blankets.iter().enumerate() {
+                if taken[k] {
+                    continue;
+                }
+                let bounds = self.extensions[e].generics.bounds[0].clone();
+                let ok = bounds.iter().all(|b| {
+                    let b = Bound {
+                        iface: b.iface,
+                        args: b.args.iter().map(|x| self.subst(*x, &[ty])).collect(),
+                    };
+                    self.satisfies(ty, &b, &grown)
+                });
+                if !ok {
+                    continue;
+                }
+                taken[k] = true;
+                let imp = &self.impls[i as usize];
+                let (iface, iargs) = (imp.iface, imp.iface_args.clone());
                 let args = iargs.iter().map(|x| self.subst(*x, &[ty])).collect();
-                out.push(Bound { iface, args });
+                let b = Bound { iface, args };
+                if let Some(n) = slot {
+                    grown[n].push(b.clone());
+                    added = true;
+                }
+                out.push(b);
+            }
+            if !added {
+                break;
             }
         }
         self.in_blanket = false;
