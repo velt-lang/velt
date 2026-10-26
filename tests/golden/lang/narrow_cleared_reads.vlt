@@ -215,7 +215,8 @@ async function later(): Promise<void> {
 }
 later().then(() => console.log("done"));
 
-// Untyped arrays and objects of cleared values: the first element does not type the others.
+// Untyped arrays and objects of cleared values: an element whose payload is not of the type the
+// first one set does not take that type.
 let s3: string | null = "s";
 const st3: { v: string | number; w: string | null } = { v: "a", w: "w" };
 function clear3(): void {
@@ -226,7 +227,9 @@ function clear3(): void {
 function mixed(): void {
   if (s3 && typeof st3.v === "string" && st3.w) {
     clear3();
-    console.log([st3.v], [st3.v, s3], [s3, st3.v], [s3, st3.w, st3.v]);
+    let one = 1;
+    let yes = true;
+    console.log([one, st3.v], [one, s3], [yes, s3, st3.w, st3.v]);
     console.log({ a: st3.v, b: s3 }, { v: st3.v });
   }
 }
@@ -293,3 +296,18 @@ function ternaries(c: boolean): void {
 ternaries(true);
 ts = "s"; tst.w = "w";
 ternaries(false);
+
+// Untyped arrays of narrowed module variables and fields are arrays of their payloads.
+class Box5 { n = 1; }
+let x5: Box5 | null = new Box5(); let y5: Box5 | null = new Box5();
+const st5: { f: Box5 | null; s: string | null } = { f: new Box5(), s: "s" };
+function run5(): void {
+  if (x5 && y5 && st5.f && st5.s) {
+    const a0 = [x5];
+    console.log(a0[0].n);
+    const arr = [x5, y5, st5.f];
+    console.log(arr[1].n, arr[2].n, [st5.s, st5.s][1].length);
+    for (const { n } of [x5, st5.f]) console.log(n);
+  }
+}
+run5();

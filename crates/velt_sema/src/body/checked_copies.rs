@@ -290,7 +290,14 @@ impl FnCx<'_, '_> {
     /// `#dN` that a pattern takes apart (`pattern_defaults`) holds the payload.
     pub(crate) fn copy_init(&mut self, e: &ast::Expr, name: &ast::Ident, want: Want) -> hir::Expr {
         if name.name.starts_with('#') {
-            return self.payload_expr(e, None, want);
+            if !self.has_breakable_narrowing() || !self.may_read_cleared(e) {
+                return self.expr(e, None, want);
+            }
+            // Another reference to the payload, which stays where it is (a module variable's
+            // or a field's, not moved out of it).
+            let h = self.payload_expr(e, None, Want::Borrow);
+            let (ty, span) = (h.ty, h.span);
+            return self.intrinsic(hir::Intrinsic::Share, vec![h], ty, span);
         }
         let mut inner = e;
         while let ast::ExprKind::Paren(x) = &inner.kind {

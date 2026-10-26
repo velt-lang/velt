@@ -47,3 +47,21 @@ class Holder { s: string = "a"; }
 const hs: { h: Holder | null } = { h: new Holder() };
 function clrH(): string { hs.h = null; return "b"; }
 if (hs.h) { const h = hs.h; hs.h.s += clrH(); console.log(h.s); }
+
+// Rest and default patterns of narrowed values, and an untyped array of them in `for...of`.
+class Box6 { n = 1; m: number | undefined = undefined; }
+let x6: Box6 | null = new Box6();
+let xs6: number[] | null = [1, 2, 3];
+const st6: { f: Box6 | null } = { f: new Box6() };
+function run6(): void {
+  if (x6 && xs6 && st6.f) {
+    const { n, m = 7 } = x6;
+    const [a, ...rest] = xs6;
+    const { n: q, ...others } = st6.f;
+    let p = 0; let r: number[] = [];
+    [p, ...r] = xs6;
+    console.log(n, m, a, rest, q, others, p, r);
+    for (const { n: z } of [x6, st6.f]) console.log(z);
+  }
+}
+run6();

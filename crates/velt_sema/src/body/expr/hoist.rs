@@ -75,9 +75,11 @@ impl FnCx<'_, '_> {
     /// `st.b.items[0] = change()`: the object `place` writes into goes through a narrowed field
     /// path, which lowering checks where it is read. JavaScript evaluates the object before the
     /// value `v`, so a value that clears the field still writes into the object it held (#1280):
-    /// when `v` may change memory, the object (another reference to it) is bound first, then
-    /// the index (unless `stmts` binds the indices already: the object, which may use them,
-    /// goes after them).
+    /// when `v` may change memory, the nearest object that holds the written place and is shared
+    /// by reference (`st.b.ts` for `st.b.ts[0][1]`, a tuple in an array) is bound first (another
+    /// reference to it), then the indices (unless `stmts` binds them already: the object, which
+    /// may use them, goes after them). A tuple right behind the checked path is a value and
+    /// stays checked where it is written (`st.t[0] = change()`).
     pub(super) fn hoist_checked_object(
         &mut self,
         place: &mut hir::Expr,
@@ -87,26 +89,51 @@ impl FnCx<'_, '_> {
         let (H::Field { base, .. } | H::Index { base, .. }) = &mut place.kind else {
             return;
         };
-        // Only an object another reference shares (not a tuple, which is a value).
-        let shared = matches!(self.cx.ty.kind(base.ty), hir::TyKind::Array(_))
-            || self.cx.class_of(base.ty).is_some()
-            || self.cx.is_object_type(base.ty);
-        if !shared || !through_checked_path(base) || !crate::effects::may_change_memory(v) {
+        if !through_checked_path(base) || !crate::effects::may_change_memory(v) {
             return;
         }
-        let (ty, span) = (base.ty, base.span);
+        let first = stmts.is_empty();
+        if self.bind_shared_object(base, stmts) && first {
+            self.hoist_indices(place, stmts);
+        }
+    }
+
+    /// Bind the nearest object at or below `e` that is shared by reference and has the checked
+    /// path inside it (`hoist_checked_object`); `false` when there is none.
+    fn bind_shared_object(&mut self, e: &mut hir::Expr, stmts: &mut Vec<hir::Stmt>) -> bool {
+        if !through_checked_path(e) {
+            return false;
+        }
+        if !self.shared_object(e.ty) {
+            return match &mut e.kind {
+                H::Field { base, .. }
+                | H::Index { base, .. }
+                | H::UnwrapSome(base, _)
+                | H::UnwrapVariant { expr: base, .. }
+                | H::Downcast(base) => self.bind_shared_object(base, stmts),
+                _ => false,
+            };
+        }
+        let (ty, span) = (e.ty, e.span);
         let tmp = self.new_local("<object>", ty, true, span, LocalKind::Temp);
         let mode = self.use_mode(ty, Want::BorrowMut);
-        let init = std::mem::replace(&mut **base, self.mk(H::Local(tmp, mode), ty, span));
+        let init = std::mem::replace(e, self.mk(H::Local(tmp, mode), ty, span));
         let init = self.intrinsic(hir::Intrinsic::Share, vec![init], ty, span);
         let kind = hir::StmtKind::Let {
             local: tmp,
             init: Some(init),
         };
-        let first = stmts.is_empty();
         stmts.push(hir::Stmt { kind, span });
-        if first {
-            self.hoist_indices(place, stmts);
+        true
+    }
+
+    /// Is a value of type `t` an object another reference shares: an array, a class instance,
+    /// a struct or an object type (not a tuple, a union or a primitive)?
+    fn shared_object(&self, t: hir::TyId) -> bool {
+        match self.cx.ty.kind(t) {
+            hir::TyKind::Array(_) => true,
+            hir::TyKind::Adt(d, _) => self.cx.adt(*d).is_some() && self.cx.union_def(t).is_none(),
+            _ => false,
         }
     }
 

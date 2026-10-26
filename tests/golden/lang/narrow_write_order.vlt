@@ -1,0 +1,53 @@
+// check: no leaks
+// A write through a narrowed field path binds the nearest object that holds the written place
+// and is shared by reference first, as JavaScript evaluates the target before the value: a tuple
+// in an array, an object field, an element of an array of objects, a chained assignment (#1280).
+type P = { x: number; y: number };
+class Box {
+  ts: [number, number][] = [[1, 2]];
+  p: P = { x: 1, y: 2 };
+  pts: P[] = [{ x: 3, y: 4 }];
+  items: number[] = [7, 8, 9];
+}
+const st: { b: Box | null; t: [number, number] | null } = { b: new Box(), t: [1, 2] };
+function change(): number { st.b = null; return 9; }
+function five(): number { st.b = null; return 5; }
+function run(): void {
+  if (st.b) { const b = st.b; st.b.ts[0][1] = change(); console.log(b.ts); }
+  st.b = new Box();
+  if (st.b) { const b = st.b; st.b.p.x = change(); console.log(b.p); }
+  st.b = new Box();
+  if (st.b) { const b = st.b; st.b.p.y += change(); console.log(b.p); }
+  st.b = new Box();
+  if (st.b) { const b = st.b; st.b.pts[0].x = change(); console.log(b.pts); }
+  st.b = new Box();
+  if (st.b) { const b = st.b; st.b.items[0] = st.b.items[1] = five(); console.log(b.items); }
+  st.b = new Box();
+  if (st.b) { const b = st.b; let i = 0; st.b.ts[i++][0] += change(); console.log(b.ts, i); }
+}
+run();
+
+// Through a map value, as an assignment used as a value, and in methods through `this`.
+type P4 = { x: number; y: number };
+class Box4 { p: P4 = { x: 1, y: 2 }; ts: [number, string][] = [[1, "a"]]; m: Map<string, P4> = new Map([["k", { x: 5, y: 6 }]]); }
+const st4: { b: Box4 | null } = { b: new Box4() };
+function change4(): number { st4.b = null; return 9; }
+function word4(): string { st4.b = null; return "z"; }
+class Holder4 {
+  f: Box4 | null = new Box4();
+  clear(): number { this.f = null; return 7; }
+  run4(): void {
+    if (this.f) { const f = this.f; this.f.p.y = this.clear(); console.log(f.p); }
+    this.f = new Box4();
+    if (this.f) { const f = this.f; this.f.ts[0][1] += String(this.clear()); console.log(f.ts); }
+  }
+}
+function run4(): void {
+  if (st4.b) { const b = st4.b; st4.b.ts[0][1] += word4(); console.log(b.ts); }
+  st4.b = new Box4();
+  if (st4.b) { const b = st4.b; st4.b.m.get("k")!.x = change4(); console.log(b.m.get("k")); }
+  st4.b = new Box4();
+  if (st4.b) { const b = st4.b; const v = (st4.b.p.x = change4()); console.log(v, b.p); }
+  new Holder4().run4();
+}
+run4();

@@ -854,8 +854,10 @@ console.log(update(v, { deletedAt: null })); // { name: 'bo', deletedAt: null }
   1`), a callee, an operand of a numeric operator or a comparison (`n + 1`, `n > 2`, `-n`,
   `s + 1`, `s + t` with both narrowed), a spread (`...xs`), where the expected type does not
   take the value as it is (`use(ctx)` with `c: Ctx`, `return ctx` from a function returning
-  `Ctx`, `len(st.v)` with `v: string` after `typeof st.v === "string"`), an untyped element
-  (`[ctx]`) or what a destructuring takes apart (`const { name } = ctx`). Elsewhere it is read
+  `Ctx`, `len(st.v)` with `v: string` after `typeof st.v === "string"`), an untyped array
+  element (`[ctx, other]` is a `Ctx[]`; a later element whose payload is not of the type the
+  first one gives is read as it is, so `[1, s]` holds `null` when a call cleared `s`) or what a
+  destructuring takes apart (`const { name } = ctx`). Elsewhere it is read
   as it is: `console.log(ctx)`, `JSON.stringify(ctx)`, a template, a `+` with a string (`"a" +
   s`, `s + "!"`, `s += x`, also a branch of a ternary there: `"a" + (c ? s : "z")`), `===`, and
   where the expected type takes it (a parameter of type `Ctx | null | undefined`, or `Base |
@@ -867,7 +869,10 @@ console.log(update(v, { deletedAt: null })); // { name: 'bo', deletedAt: null }
   keeps the narrowing: its reads follow the same rule (`console.log(c)` prints `null`, `c.name`
   stops with a `TypeError`). A write through a narrowed field path takes the object first, as
   JavaScript does: `state.next.items[0] = f()` writes into the object `state.next` held before
-  `f()` ran, also when `f()` set `state.next` to `null`. An assignment in the function drops
+  `f()` ran, also when `f()` set `state.next` to `null`, and so do `state.next.ts[0][1] = f()`
+  (a tuple in an array), `state.next.p.x = f()` (a struct or object field) and `a.items[0] =
+  a.items[1] = f()`. A tuple right behind the narrowed field is a value, not an object, so
+  `state.t[0] = f()` stops with the `TypeError` when `f()` cleared `state.t`. An assignment in the function drops
   the narrowing (and
   narrows to what it assigned), and so does a loop that assigns the variable. Closures don't
   see the narrowing of the function they are made in (TypeScript keeps it in one made after

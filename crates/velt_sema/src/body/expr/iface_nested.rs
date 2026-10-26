@@ -498,7 +498,8 @@ impl FnCx<'_, '_> {
             all: !is_pure_value(value) || !pure_indexes(t),
             own: true,
         };
-        let t = self.hoist(t, true, h, &mut stmts);
+        let t = self.bind_narrowed_object(t.clone(), value, &mut stmts);
+        let t = self.hoist(&t, true, h, &mut stmts);
         let (a, valued) = self.assign_as(op, &t, value, true, span);
         let (unit, ty) = (self.cx.ty.unit, a.ty);
         let value = if valued || self.cx.ty.is_bottom(ty) || self.cx.ty.has_error(ty) {
@@ -515,6 +516,68 @@ impl FnCx<'_, '_> {
         self.pop_scope();
         let ty = if value.ty == unit { unit } else { value.ty };
         Some(self.mk(H::Block(block(stmts, Some(value), span)), ty, span))
+    }
+
+    /// Target `t` of an assignment used as a value, with its object bound first when it goes
+    /// through a narrowed value a call may clear and is shared by reference: the value
+    /// (`st.b.items[0] = st.b.items[1] = change()`) may clear it, and the target is read again
+    /// after the assignment (#1280).
+    fn bind_narrowed_object(
+        &mut self,
+        t: ast::Expr,
+        value: &ast::Expr,
+        stmts: &mut Vec<hir::Stmt>,
+    ) -> ast::Expr {
+        if is_pure_value(value) || !self.has_breakable_narrowing() {
+            return t;
+        }
+        let (ast::ExprKind::Member { object, .. } | ast::ExprKind::Index { object, .. }) = &t.kind
+        else {
+            return t;
+        };
+        let narrowed = self.through_narrowed(object);
+        let shared = self.peek_ty(object).is_some_and(|ty| {
+            matches!(self.cx.ty.kind(ty), hir::TyKind::Array(_))
+                || (self.cx.union_def(ty).is_none()
+                    && matches!(self.cx.ty.kind(ty), hir::TyKind::Adt(..)))
+        });
+        if !narrowed || !shared {
+            return t;
+        }
+        let bound = Box::new(self.bind_hoisted(object, stmts));
+        let kind = match t.kind {
+            ast::ExprKind::Member { prop, optional, .. } => ast::ExprKind::Member {
+                object: bound,
+                prop,
+                optional,
+            },
+            ast::ExprKind::Index {
+                index, optional, ..
+            } => ast::ExprKind::Index {
+                object: bound,
+                index,
+                optional,
+            },
+            k => k,
+        };
+        ast::Expr { kind, ..t }
+    }
+
+    /// Does path `e` (or a path it is a member or element of) read a narrowed value a call may
+    /// have cleared (`checked_copies`)?
+    pub(super) fn through_narrowed(&mut self, e: &ast::Expr) -> bool {
+        let mut cur = e;
+        loop {
+            if self.may_read_cleared(cur) {
+                return true;
+            }
+            match &bare(cur).kind {
+                ast::ExprKind::Member { object, .. } | ast::ExprKind::Index { object, .. } => {
+                    cur = object
+                }
+                _ => return false,
+            }
+        }
     }
 
     /// [`Self::hoist`] of the object of an element, seeing through `!` and `as` on a member or an

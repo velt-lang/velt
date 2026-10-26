@@ -232,7 +232,11 @@ impl FnCx<'_, '_> {
         wanted: bool,
         span: Span,
     ) -> hir::Expr {
-        if wanted && !is_plain_path(target) {
+        // A path through a narrowed value is not read back either: the value may clear it.
+        if wanted
+            && (!is_plain_path(target)
+                || (self.has_breakable_narrowing() && self.through_narrowed(target)))
+        {
             if let Some(h) = self.element_assign_value(op, target, value, span) {
                 return h;
             }
