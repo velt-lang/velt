@@ -580,7 +580,8 @@ impl Ctx<'_> {
         env: &TyEnv,
     ) -> Option<TyId> {
         let arity = match name {
-            "NonNullable" | "Uppercase" | "Lowercase" | "Capitalize" | "Uncapitalize" => 1,
+            "NonNullable" | "Awaited" | "Uppercase" | "Lowercase" | "Capitalize"
+            | "Uncapitalize" => 1,
             "Exclude" | "Extract" => 2,
             _ => return None,
         };
@@ -607,6 +608,33 @@ impl Ctx<'_> {
                 TyKind::Option(p, _) => p,
                 _ => a,
             },
+            // What `await` gives: the value of a promise (of a promise ...), for each member.
+            "Awaited" => {
+                let mut kept = vec![];
+                let mut nothing: Option<Nothing> = None;
+                for s in self.subjects_of(a) {
+                    match s {
+                        Subject::Ty(mut m) => {
+                            while let TyKind::Promise(v, _) = *self.ty.kind(m) {
+                                m = v;
+                            }
+                            match *self.ty.kind(m) {
+                                TyKind::Option(p, n) => {
+                                    kept.push(p);
+                                    nothing = Some(nothing.map_or(n, |x| x.join(n)));
+                                }
+                                _ => kept.push(m),
+                            }
+                        }
+                        Subject::Nothing(n) => nothing = Some(nothing.map_or(n, |m| m.join(n))),
+                    }
+                }
+                self.rejoin_booleans(&mut kept);
+                match (kept.as_slice(), nothing) {
+                    ([one], None) => *one,
+                    _ => self.union_with(&kept, nothing, t.span),
+                }
+            }
             "Exclude" | "Extract" => {
                 let keep_matching = name == "Extract";
                 let mut kept = vec![];

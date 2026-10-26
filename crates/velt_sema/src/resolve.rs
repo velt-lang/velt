@@ -476,8 +476,17 @@ impl Ctx<'_> {
             n if crate::utility_types::OPERATORS.contains(&n) => {
                 return Some(self.resolve_utility(t, name, args, env))
             }
-            "NonNullable" | "Exclude" | "Extract" | "Uppercase" | "Lowercase" | "Capitalize"
-            | "Uncapitalize" => return self.resolve_type_level_builtin(t, name, args, env),
+            // In generic code, deferred until the type parameter is known (`Awaited<R>`).
+            "Awaited" if self.inline_deferrable(env) => {
+                return Some(self.resolve_inline(t, env, |cx| {
+                    let r = cx.resolve_type_level_builtin(t, name, args, env);
+                    r.unwrap_or(cx.ty.error)
+                }))
+            }
+            "NonNullable" | "Awaited" | "Exclude" | "Extract" | "Uppercase" | "Lowercase"
+            | "Capitalize" | "Uncapitalize" => {
+                return self.resolve_type_level_builtin(t, name, args, env)
+            }
             _ => return None,
         };
         let written = args;

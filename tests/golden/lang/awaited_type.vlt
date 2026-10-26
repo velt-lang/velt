@@ -1,0 +1,29 @@
+// `Awaited<T>`: what `await` gives for a `T`, member by member, also over a type parameter.
+type A1 = Awaited<Promise<number>>;
+type A2 = Awaited<Promise<Promise<string>>>;
+type A3 = Awaited<boolean>;
+type A4 = Awaited<Promise<number> | string | null>;
+
+async function get<R>(f: () => R | Promise<R>): Promise<Awaited<R>> {
+  return (await f()) as Awaited<R>;
+}
+
+interface State<T> {
+  value: T;
+}
+function wrap<R>(v: Awaited<R>): State<Awaited<R>> {
+  return { value: v };
+}
+
+async function main() {
+  const a: A1 = 1;
+  const b: A2 = "two";
+  const c: A3 = true;
+  const d: A4 = null;
+  const e: A4 = 4;
+  console.log(a, b, c, d, e);
+  console.log(await get(() => 5));
+  console.log(await get(async () => "six"));
+  console.log(wrap<Promise<number>>(7).value);
+}
+main();
