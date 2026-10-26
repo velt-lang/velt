@@ -737,6 +737,12 @@ pub(crate) fn check_unused_aliases(cx: &mut Ctx) {
             continue;
         }
         let (module, decl) = (cx.aliases[a].module, cx.aliases[a].decl);
+        // A recursive union alias is checked as its union (`crate::recursive_unions`).
+        if decl.generics.is_empty() && cx.aliases[a].outer.is_empty() {
+            if cx.recursive_union(a as u32, vec![], decl.name.span).is_some() {
+                continue;
+            }
+        }
         let mut names: Vec<String> = decl.generics.iter().map(|g| g.name.name.clone()).collect();
         cx.aliases[a].used = true;
         cx.aliases[a].expanding = true;

@@ -28,13 +28,15 @@ impl Ctx<'_> {
     }
 
     pub(crate) fn expand_alias(&mut self, a: u32, mut args: Vec<TyId>, t: &ast::TypeExpr) -> TyId {
+        if self.aliases[a as usize].expanding {
+            if let Some(own) = self.recursive_union_ref(a, &args, t.span) {
+                return own;
+            }
+        }
         let info = &self.aliases[a as usize];
         let (module, decl) = (info.module, info.decl);
         let outer: Vec<TyId> = args.drain(..info.outer.len().min(args.len())).collect();
         if info.expanding {
-            if let Some(own) = self.recursive_union_ref(a) {
-                return own;
-            }
             let d =
                 crate::recursive_aliases::self_reference(&self.alias_blocked, &decl.name, t.span);
             self.error(d);
@@ -46,7 +48,7 @@ impl Ctx<'_> {
             return self.ty.error;
         }
         let args = [outer, args].concat();
-        if let Some(own) = self.recursive_union(a, t.span) {
+        if let Some(own) = self.recursive_union(a, args.clone(), t.span) {
             return own;
         }
         self.alias_body(a, args, t.span)

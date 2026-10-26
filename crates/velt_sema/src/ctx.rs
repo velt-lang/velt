@@ -151,6 +151,10 @@ pub(crate) struct Ctx<'m> {
     /// Union enums by canonical member list (`crate::unions`).
     pub unions: FxHashMap<Vec<TyId>, DefId>,
     pub recursive_unions: FxHashMap<u32, Option<TyId>>, // by alias (crate::recursive_unions)
+    /// Generic recursive union aliases (`crate::recursive_unions`): whether alias `a` is one,
+    /// and its union at each list of arguments.
+    pub generic_recursive: FxHashMap<u32, bool>,
+    pub recursive_union_insts: FxHashMap<(u32, Vec<TyId>), TyId>,
     /// Names of type aliases for structural types (`type Shape = A | B`), for messages.
     pub alias_names: FxHashMap<TyId, String>,
     /// (class, method key) of every `override` of a generic method (no vtable slot).
@@ -446,6 +450,8 @@ impl<'m> Ctx<'m> {
             typing_globals: Vec::new(),
             unions: FxHashMap::default(),
             recursive_unions: FxHashMap::default(),
+            generic_recursive: FxHashMap::default(),
+            recursive_union_insts: FxHashMap::default(),
             alias_names: FxHashMap::default(),
             generic_overrides: vec![],
             getter_only_setters: FxHashSet::default(),

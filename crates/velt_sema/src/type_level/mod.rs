@@ -204,7 +204,10 @@ impl Ctx<'_> {
             .alias_site
             .or_else(|| self.type_level.op_sites.get(&t).copied())
             .unwrap_or(self.aliases[a as usize].decl.name.span);
-        let r = self.alias_body(a, args, span);
+        let r = match self.recursive_union(a, args.clone(), span) {
+            Some(r) => r,
+            None => self.alias_body(a, args, span),
+        };
         self.type_level.reduced.insert(t, r);
         r
     }
