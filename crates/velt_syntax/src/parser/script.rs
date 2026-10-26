@@ -11,14 +11,15 @@
 //!
 //! The generated function's name has an empty span at the first statement; sema uses that to
 //! tell it from a declared function. When the file declares a `main` of its own (`function
-//! main() { … }` and then `main();`, as TypeScript programs end; #1567), the generated function
-//! is named [`crate::SCRIPT_MAIN`] instead, and the declared `main` is an ordinary function that
-//! the statements may call, as in Node.
+//! main() { … }` and then `main();`, as TypeScript programs end, or any other binding named
+//! `main`: a variable, a class, an import; #1567), the generated function is named
+//! [`crate::SCRIPT_MAIN`] instead, and the declared `main` is an ordinary binding that the
+//! statements may use, as in Node.
 
 use super::Parser;
 use crate::ast::*;
 use crate::lexer::{Kw, Tok};
-use velt_common::Span;
+use velt_common::{Diagnostic, Severity, Span};
 
 impl Parser<'_> {
     /// Does the cursor start a declaration (as opposed to a statement)?
@@ -49,9 +50,10 @@ impl Parser<'_> {
     /// Turn the root file's top-level `stmts` into a generated `main` (see the module docs).
     pub(super) fn finish_script(&mut self, items: &mut Vec<Item>, stmts: Vec<Stmt>) {
         let first = stmts[0].span;
-        let has_main = items
-            .iter()
-            .any(|i| matches!(&i.kind, ItemKind::Function(f) if f.sig.name.name == "main"));
+        let has_main = items.iter().any(binds_main);
+        if has_main {
+            self.warn_unused_main(items, &stmts);
+        }
         let keep = self.kept_vars(items, &stmts);
         let mut body = stmts;
         let mut rest = vec![];
@@ -92,6 +94,36 @@ impl Parser<'_> {
             span,
         });
         *items = rest;
+    }
+
+    /// A `function main` the statements never call: in a script, `main` is an ordinary function,
+    /// which runs only when called (as in Node; a file without statements starts at `main`), so
+    /// adding a statement to a program that declares `main` would stop `main` from running.
+    fn warn_unused_main(&mut self, items: &[Item], stmts: &[Stmt]) {
+        let Some(main) = items.iter().find(|i| {
+            !i.exported && matches!(&i.kind, ItemKind::Function(f) if f.sig.name.name == "main")
+        }) else {
+            return;
+        };
+        let used = stmts
+            .iter()
+            .any(|s| super::script_names::stmt_free_names(s).contains("main"))
+            || items.iter().any(|i| {
+                !std::ptr::eq(i, main) && super::script_names::free_names(i).contains("main")
+            });
+        if used {
+            return;
+        }
+        let ItemKind::Function(f) = &main.kind else {
+            return;
+        };
+        let mut d = Diagnostic::error(
+            "`main` is never called: in a file with top-level statements, the statements are the program and `main` is an ordinary function",
+            f.sig.name.span,
+        )
+        .with_note("call it from the statements (`main();`) to run it, as in Node");
+        d.severity = Severity::Warning;
+        self.diags.push(d);
     }
 
     /// Per item: is it a top-level variable that stays at module level? Exported ones do, a
@@ -177,6 +209,31 @@ impl Parser<'_> {
             let after = text[at + word.len()..].chars().next();
             !touching && before != Some('.') && !after.is_some_and(ident)
         })
+    }
+}
+
+/// Does the item declare something named `main` (a function, a variable, a class, an import, …)?
+/// Then the generated function can't be named `main` too (#1567).
+fn binds_main(item: &Item) -> bool {
+    let is_main = |i: &Ident| i.name == "main";
+    match &item.kind {
+        ItemKind::Function(f) => is_main(&f.sig.name),
+        ItemKind::ExternFn(sig) => is_main(&sig.name),
+        ItemKind::Struct(t) | ItemKind::Class(t) => is_main(&t.name),
+        ItemKind::Interface(i) => is_main(&i.name),
+        ItemKind::Enum(e) => is_main(&e.name),
+        ItemKind::TypeAlias(t) => is_main(&t.name),
+        ItemKind::Namespace(n) => is_main(&n.name),
+        ItemKind::Var(v) => bound_names(&v.pattern).iter().any(|n| n == "main"),
+        // An export list (`export { main };`, empty `from`) binds nothing.
+        ItemKind::Import(i) => {
+            !i.from.is_empty()
+                && (i.namespace.as_ref().is_some_and(is_main)
+                    || i.names
+                        .iter()
+                        .any(|n| is_main(n.alias.as_ref().unwrap_or(&n.name))))
+        }
+        ItemKind::Extend(_) | ItemKind::Augment(_) => false,
     }
 }
 

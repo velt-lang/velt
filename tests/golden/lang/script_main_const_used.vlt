@@ -1,0 +1,8 @@
+// A `const main` that a function uses, so it stays at module level (#1567).
+const main = (n: number): number => n * 2;
+
+function run(): void {
+  console.log("run", main(21));
+}
+
+run();

@@ -49,6 +49,52 @@ fn script_with_its_own_main() {
     ));
 }
 
+/// Any top-level binding named `main` makes the generated function `SCRIPT_MAIN` (#1567).
+#[test]
+fn script_with_another_binding_named_main() {
+    for src in [
+        "import { main } from \"./m\";\nmain();",
+        "import { run as main } from \"./m\";\nmain();",
+        "import * as main from \"./m\";\nmain.run();",
+        "export const main = (): void => {};\nmain();",
+        "const main = 1;\nfunction run() { return main; }\nrun();",
+        "class main { static run(): void {} }\nmain.run();",
+        "enum main { A }\nconsole.log(main.A);",
+    ] {
+        let m = parse_ok(src);
+        let generated: Vec<_> = m
+            .items
+            .iter()
+            .filter_map(|i| match &i.kind {
+                ItemKind::Function(f) if velt_syntax::is_script_main(&f.sig.name) => {
+                    Some(f.sig.name.name.as_str())
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(generated, [velt_syntax::SCRIPT_MAIN], "{src:?}");
+    }
+}
+
+/// A script's `function main` that nothing calls gets a warning: it would not run (#1567).
+#[test]
+fn script_with_an_uncalled_main_warns() {
+    let (_, d) = parse("function main() {}\nconsole.log(1);");
+    assert_eq!(d.len(), 1, "{d:?}");
+    assert_eq!(d[0].severity, velt_common::Severity::Warning);
+    assert!(d[0].message.contains("`main` is never called"), "{d:?}");
+    for src in [
+        "function main() {}\nmain();",
+        "function main() {}\nsetTimeout(main, 0);",
+        "function main() {}\nfunction run() { main(); }\nrun();",
+        "export function main() {}\nconsole.log(1);",
+        "function main() {}",
+    ] {
+        let (_, d) = parse(src);
+        assert!(d.is_empty(), "{src:?}: {d:?}");
+    }
+}
+
 #[test]
 fn expected_semicolon_points_at_offending_token() {
     let src = "function f() {\n  let x = 1 let y = 2;\n}";

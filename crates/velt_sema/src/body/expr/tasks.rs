@@ -10,7 +10,7 @@ use crate::body::places::is_place;
 use crate::body::switch::cases::source_text;
 use crate::body::{FnCx, LocalKind, Want};
 use crate::ctx::Item;
-use crate::defs::{FnKind, ThrowSrc};
+use crate::defs::{DefInfo, FnKind, ThrowSrc};
 use crate::hir::{self, Callee, DefId, ExprKind as H, Intrinsic, LocalId, PassMode, TyId, TyKind};
 use crate::throws::ThrowCheck;
 
@@ -274,11 +274,16 @@ impl FnCx<'_, '_> {
 
     /// In the root file's top-level statements, outside any function (`renderAll();` there is
     /// Node's way to start the program's async work: it runs to the end before the program
-    /// exits, as a dropped promise does; `module_scripts::is_root_script`)?
+    /// exits, as a dropped promise does; `module_scripts::is_root_script`)? The generated
+    /// function's name has an empty span; a `main` the file declares is an ordinary function.
     fn at_root_top_level(&self) -> bool {
+        let generated = self.body_def.is_some_and(|d| {
+            matches!(self.cx.info.get(d.0 as usize), Some(DefInfo::Fn(f))
+                if f.name_span.lo == f.name_span.hi)
+        });
         self.outer.is_empty()
             && (self.fn_name == "main" || self.fn_name == velt_syntax::SCRIPT_MAIN)
-            && self.body_def.is_some()
+            && generated
             && crate::module_scripts::is_root_script(self.cx, self.module)
     }
 

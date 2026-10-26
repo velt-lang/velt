@@ -27,8 +27,11 @@ The differences come from three rules:
 
 - A program starts at its root file's top-level statements, as a TS file does, or at
   `function main()` / `async function main()` (which may return an `i32` exit code) in a file
-  without top-level statements. In a file with them, `main` is an ordinary function, as in
-  Node: the usual trailing `main();` or `main().catch(…)` calls it. Top-level
+  without top-level statements. That is a difference from Node, where a `main` that nothing
+  calls never runs. In a file with top-level statements, `main` is an ordinary function, as in
+  Node: the usual trailing `main();` or `main().catch(…)` calls it, and adding a statement to a
+  file that relied on `main` running by itself stops it from running (the compiler warns that
+  `main` is never called). Top-level
   statements run in a generated `main`; an imported module's run once when it is evaluated,
   in Node's order ([Scripts](../reference/modules.md#scripts-top-level-statements)).
 - A module-level `let` works as in Node: one per process, which every task (spawned tasks,
