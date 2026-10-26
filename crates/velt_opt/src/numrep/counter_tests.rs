@@ -111,7 +111,8 @@ fn nest(start: f64, step: f64, levels: &[Level], every_path: bool) -> (Program, 
 fn cap_of(p: &Program, c: Local) -> Option<Fact> {
     let env = Env::of(&p.externs, &p.funcs, &p.aggs, &p.statics);
     let f = &p.funcs[0];
-    let flow = Flow::compute(f, &env, &tracked(&env, f))?;
+    let groups = crate::numrep::arrays::groups(&env, f);
+    let flow = Flow::compute(f, &env, &tracked(&env, f, &groups), vec![])?;
     caps(f, &flow)[flow.slot(c)?]
 }
 
