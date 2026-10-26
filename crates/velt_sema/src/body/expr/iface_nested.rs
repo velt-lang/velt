@@ -508,7 +508,7 @@ impl FnCx<'_, '_> {
             let read = self.assigned_read(&t);
             // The assignment checked the target: its errors are reported there.
             let mark = self.cx.diags.len();
-            let v = self.expr(&read, None, Want::Borrow);
+            let v = self.payload_expr(&read, None, Want::Borrow);
             self.cx.diags.truncate(mark);
             v
         };

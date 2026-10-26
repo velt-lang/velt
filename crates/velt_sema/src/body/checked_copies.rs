@@ -86,7 +86,7 @@ impl FnCx<'_, '_> {
 
     /// The initializer `e` of an untyped `let` or `const`: a narrowed module variable or field
     /// path is read as it is (the local is a checked copy, `note_checked_copy`).
-    pub(crate) fn copy_init(&mut self, e: &ast::Expr) -> hir::Expr {
+    pub(crate) fn copy_init(&mut self, e: &ast::Expr, want: Want) -> hir::Expr {
         let mut inner = e;
         while let ast::ExprKind::Paren(x) = &inner.kind {
             inner = x;
@@ -103,11 +103,24 @@ impl FnCx<'_, '_> {
                     ..
                 }
         );
-        if !path {
-            return self.expr(e, None, Want::Move);
+        if !path || self.narrowed_source(inner).is_none() {
+            return self.expr(e, None, want);
+        }
+        // A function stays its payload (`const f = o.cb; f()`), as before.
+        let callable = self
+            .peek_ty(inner)
+            .and_then(|t| self.cx.ty.opt_payload(t))
+            .is_some_and(|p| {
+                matches!(
+                    self.cx.ty.kind(p),
+                    hir::TyKind::Closure(_) | hir::TyKind::FnPtr { .. }
+                )
+            });
+        if callable {
+            return self.payload_expr(e, None, want);
         }
         let outer = self.raw_read.replace(inner.span);
-        let h = self.expr(e, None, Want::Move);
+        let h = self.expr(e, None, want);
         self.raw_read = outer;
         h
     }
@@ -130,6 +143,16 @@ impl FnCx<'_, '_> {
         if self.cx.ty.opt_payload(self.local_ty(local)).is_none() {
             return;
         }
+        let token = self.narrowed_source(inner);
+        if token.is_some() {
+            self.f.checked_copies.insert(local);
+            self.narrow(&Fact::NonNull(local));
+        }
+    }
+
+    /// The token of `inner` (a name or a field path) when a null test narrowed it and a call
+    /// may have changed it since: a module variable, a variable a closure assigns, a field path.
+    fn narrowed_source(&mut self, inner: &ast::Expr) -> Option<LocalId> {
         let token = match &inner.kind {
             // A variable a closure assigns is checked the same way (`closure_assigned`).
             ast::ExprKind::Ident(_) => match self.named_local(inner) {
@@ -145,10 +168,7 @@ impl FnCx<'_, '_> {
             } => self.existing_field_token(inner),
             _ => None,
         };
-        if token.is_some_and(|t| self.is_narrowed(t)) {
-            self.f.checked_copies.insert(local);
-            self.narrow(&Fact::NonNull(local));
-        }
+        token.filter(|t| self.is_narrowed(*t))
     }
 
     /// Is local `l` (of this frame, or the variable it captures) a checked copy?

@@ -10,7 +10,7 @@ use velt_syntax::ast;
 use super::for_iter::ForOfParts;
 use super::pattern::BindCtx;
 use super::places::{frozen_source, source_root};
-use super::{FnCx, LoopCx, Want};
+use super::{FnCx, LoopCx};
 use crate::hir::{self, ExprKind as H, StmtKind as S, TyId, TyKind};
 
 impl FnCx<'_, '_> {
@@ -321,7 +321,7 @@ impl FnCx<'_, '_> {
     pub(super) fn for_of_source(&mut self, iter: &ast::Expr) -> hir::Expr {
         // Not an in-place use of an adapted array (`iface_field`): Node also visits an element
         // the body adds to the original.
-        let it = self.expr(iter, None, Want::Borrow);
+        let it = self.receiver_expr(iter);
         // `for (const x of s)` over a `shared<T>`: the value inside (#36), whatever it iterates
         // (an array, a string, a `Map`, a `Set`, a typed array).
         let it = match *self.cx.ty.kind(it.ty) {

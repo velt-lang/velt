@@ -100,7 +100,7 @@ impl FnCx<'_, '_> {
             _ => {
                 let f = match &callee.kind {
                     ast::ExprKind::Paren(inner) => self.immediate_closure(inner),
-                    _ => self.expr(callee, None, Want::Borrow),
+                    _ => self.receiver_expr(callee),
                 };
                 self.call_value(f, args, span)
             }

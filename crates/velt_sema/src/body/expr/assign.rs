@@ -252,7 +252,7 @@ impl FnCx<'_, '_> {
         let v = match assigned_literal(op, value).filter(|_| exp.is_some()) {
             Some(lit) => self.expr(lit, exp, Want::Move),
             None => {
-                let v = self.expr(target, None, Want::Borrow);
+                let v = self.payload_expr(target, None, Want::Borrow);
                 self.nullish_assigned_read(op, &a, v, span)
             }
         };

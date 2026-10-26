@@ -32,7 +32,7 @@ impl FnCx<'_, '_> {
         };
         let mut h = match ann {
             Some(t) => self.expr_coerce(e, t, Want::Borrow),
-            None => self.expr(e, None, Want::Borrow),
+            None => self.copy_init(e, Want::Borrow),
         };
         let ty = ann.unwrap_or(h.ty);
         let pinned = is_place(&h)
@@ -58,6 +58,7 @@ impl FnCx<'_, '_> {
         }
         let local = self.declare_local_mut(name, ty, LocalKind::Bind, false);
         self.f.const_refs.insert(local);
+        self.note_checked_copy(local, ann.is_none(), Some(e));
         let pat = self.pat(P::Binding(local, UseMode::Borrow), ty, name.span);
         Self::push(out, S::LetPat { pat, init: h }, span);
         Ok(())
