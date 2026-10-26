@@ -28,3 +28,13 @@ const seen = new Set<unknown>([Number]);
 console.log(seen.has(c));
 const own: any = { constructor: 5 };
 console.log(own.constructor, ({ a: 1 } as any).constructor === Object);
+
+// A static block is no static field: the class prints by its name alone.
+class Blk {
+  static {
+    console.log("Blk block");
+  }
+}
+
+const blk: any = new Blk();
+console.log(blk.constructor);

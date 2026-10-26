@@ -251,14 +251,15 @@ impl FnCx<'_, '_> {
         // Node prints a class's static fields and accessors after its name, which the class
         // object doesn't hold (yet): printing such a class's object stops (`format.rs`).
         let statics = a.decl.is_some_and(|t| {
-            t.fields
-                .iter()
-                .any(|f| f.is_static && !f.name.name.starts_with('#'))
-                || t.methods.iter().any(|m| {
-                    m.is_static
-                        && (m.is_getter || m.is_setter)
-                        && !m.decl.sig.name.name.starts_with('#')
-                })
+            t.fields.iter().any(|f| {
+                f.is_static
+                    && !f.name.name.starts_with('#')
+                    && !f.name.name.starts_with("<static block ")
+            }) || t.methods.iter().any(|m| {
+                m.is_static
+                    && (m.is_getter || m.is_setter)
+                    && !m.decl.sig.name.name.starts_with('#')
+            })
         });
         let std = self.cx.scopes[module].is_std;
         let any = self.any_ty()?;
