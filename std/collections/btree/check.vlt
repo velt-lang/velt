@@ -1,8 +1,9 @@
 // velt:collections/btree/check: the invariants of a `Pool` (velt:collections/btree/pool), for
 // tests. Walks the tree from the root with the range each node covers and reports the first
 // broken invariant: keys in order and inside their node's range, node fill, the leaf chain, each
-// node's prefix (the one its range gives, pool.vlt `rangePrefix`) and each word (two bytes of its
-// key past the prefix, `EMPTY` in unused slots).
+// node's prefix (at most the one its range gives, `Pool.prefixFor`), each word (two bytes of its
+// key past the prefix, `EMPTY` in unused slots), and the smallest and the largest key with their
+// windows (velt:collections/btree/edges).
 
 import { CAP, F, NONE, Pool, Range, wordOf, wordOfB } from "velt:collections/btree/pool";
 import { EMPTY, prefixOf, wordAt } from "velt:collections/btree/line";
@@ -28,7 +29,34 @@ export function checkPool<K extends Comparable<K>, V>(p: Pool<K, V>): string {
       return `leaf ${leaf}: links out of order`;
     }
   }
-  return count == p.size ? "" : `size ${p.size}, ${count} entries`;
+  if (count != p.size) {
+    return `size ${p.size}, ${count} entries`;
+  }
+  return checkEdges(p, leaves);
+}
+
+// The smallest and the largest key are the first and the last leaf's ends, their windows cached.
+function checkEdges<K extends Comparable<K>, V>(p: Pool<K, V>, leaves: u32[]): string {
+  if (p.size == 0) {
+    return p.minKey.length == 0 && p.maxKey.length == 0 ? "" : "edge keys in an empty map";
+  }
+  if (!p.inline()) {
+    return "";
+  }
+  const first = leaves[0];
+  const last = leaves[leaves.length - 1];
+  if (p.minKey[0].compareTo(p.keyAt(slotAtRank(p, first, 0))) != 0) {
+    return "the smallest key is not the first leaf's first";
+  }
+  if (p.maxKey[0].compareTo(p.keyAt(slotAtRank(p, last, p.leafCount(last) - 1))) != 0) {
+    return "the largest key is not the last leaf's last";
+  }
+  const [a, b] = p.minKey[0].inlineWindow();
+  const [c, d] = p.maxKey[0].inlineWindow();
+  if (a != p.minWindow[0] || b != p.minWindow[1] || c != p.maxWindow[0] || d != p.maxWindow[1]) {
+    return "stale edge windows";
+  }
+  return "";
 }
 
 function checkNode<K extends Comparable<K>, V>(

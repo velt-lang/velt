@@ -61,7 +61,7 @@ const MAX_PREFIX: usize = 2040;
 
 export class Pool<K extends Comparable<K>, V> {
   /**
-   * The leaves' keys, `F` slots a leaf, in chunks of `CHUNK_LEAVES` leaves: slot `s` (`leaf * F +
+   * The leaves' keys, `F` slots a leaf, in chunks of 256 leaves (`LEAF_SHIFT`): slot `s` (`leaf * F +
    * i`) is `leafKeys[s >> SLOT_SHIFT][s & SLOT_MASK]`. A chunk grows only until it is full, so
    * the pools never copy their whole contents to grow, and hold at most one chunk unused.
    */

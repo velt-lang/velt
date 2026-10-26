@@ -66,12 +66,16 @@ export function noteEdges<K extends Comparable<K>, V>(p: Pool<K, V>, key: K, win
 
 /**
  * After a delete: the smallest and the largest key again from the edge leaves (the prefixes
- * stay, see above); none when the map is empty.
+ * stay, see above); none when the map is empty, whose leaf then has no prefix.
  */
 export function afterRemove<K extends Comparable<K>, V>(p: Pool<K, V>) {
   if (p.size == 0) {
     p.minKey.truncate(0);
     p.maxKey.truncate(0);
+    // The empty root leaf drops its prefix: the next key need not share it.
+    if (p.inline()) {
+      p.refreshLeafAt(p.root, 0);
+    }
     return;
   }
   if (!p.fill[0].hasInlineKey()) {
