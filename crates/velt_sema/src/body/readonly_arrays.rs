@@ -67,17 +67,21 @@ impl FnCx<'_, '_> {
     /// Can the written type `t` be a read-only or number-keyed record type? A cheap filter
     /// before the checks: most declared types are neither.
     pub(crate) fn may_be_marked(&self, t: &ast::TypeExpr) -> bool {
+        let aliases = || {
+            let (ro, num) = self.cx.marked_aliases();
+            !(ro.is_empty() && num.is_empty())
+        };
         match &t.kind {
-            ast::TypeExprKind::Named { path, .. } => {
+            ast::TypeExprKind::Named { path, args } => {
                 let name = &path[path.len() - 1].name;
-                name.starts_with('R') || name == "Array" || {
-                    let (ro, num) = self.cx.marked_aliases();
-                    !(ro.is_empty() && num.is_empty())
+                match name.as_str() {
+                    // `Array<T>`: only its elements may be read-only.
+                    "Array" => args.first().is_some_and(|e| self.may_be_marked(e)),
+                    _ => name.starts_with('R') || aliases(),
                 }
             }
-            ast::TypeExprKind::Union(_)
-            | ast::TypeExprKind::IndexSig { .. }
-            | ast::TypeExprKind::Array(_) => true,
+            ast::TypeExprKind::Array(e) => self.may_be_marked(e),
+            ast::TypeExprKind::Union(_) | ast::TypeExprKind::IndexSig { .. } => true,
             _ => false,
         }
     }
