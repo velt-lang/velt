@@ -1,0 +1,145 @@
+// `extend X implements I` (retroactive implements): an `extend` block's methods implement an
+// interface for its target, built-in types included. The type satisfies `I` as a bound and
+// converts to an `I` value; a blanket block (`extend<T extends B> T implements I`) gives every
+// type with `B` an implementation, type parameters included, and a block for one type replaces
+// it for that type, in generic code too (the most specific block that fits wins).
+
+interface Describe {
+  describe(): string;
+  /** A default, kept when a block leaves it out. */
+  loud(): string {
+    return `${this.describe()}!`;
+  }
+}
+
+// Every comparable type: the fallback.
+extend<T extends Comparable<T>> T implements Describe {
+  describe(): string {
+    return "comparable";
+  }
+}
+
+// Numbers and strings: their own, more specific blocks.
+extend u64 implements Describe {
+  describe(): string {
+    return `u64 ${this}`;
+  }
+}
+
+extend string implements Describe {
+  describe(): string {
+    return `string of ${this.length}`;
+  }
+  loud(): string {
+    return this.toUpperCase();
+  }
+}
+
+// Arrays: any array, and a more specific block for arrays of comparable elements.
+extend<T> Array<T> implements Describe {
+  describe(): string {
+    return `array of ${this.length}`;
+  }
+}
+
+extend<T extends Comparable<T>> Array<T> implements Describe {
+  describe(): string {
+    return `sortable array of ${this.length}`;
+  }
+}
+
+struct Version {
+  major: i64;
+  minor: i64;
+}
+
+extend Version {
+  compareTo(other: Version): i64 {
+    return this.major != other.major ? this.major - other.major : this.minor - other.minor;
+  }
+}
+
+class Point {
+  constructor(public x: i64) {}
+}
+
+// A generic interface, implemented for one instance.
+interface Convert<U> {
+  convert(): U;
+}
+
+extend i64 implements Convert<string> {
+  convert(): string {
+    return `#${this}`;
+  }
+}
+
+// An explicit `implements Comparable` on a built-in-like struct.
+struct Money {
+  cents: i64;
+}
+
+extend Money implements Comparable<Money> {
+  compareTo(other: Money): i64 {
+    return this.cents - other.cents;
+  }
+}
+
+function viaBound<T extends Describe>(x: T): string {
+  return `${x.describe()} / ${x.loud()}`;
+}
+
+// Only `Comparable` is declared: the blanket block gives `K` `Describe`, and each instance
+// calls its own type's block.
+function viaComparable<K extends Comparable<K>>(k: K): string {
+  return `${k.describe()} | ${viaBound(k)}`;
+}
+
+class Keyed<K extends Comparable<K>> {
+  constructor(public key: K) {}
+
+  label(): string {
+    return this.key.describe();
+  }
+}
+
+function convert<T extends Convert<string>>(x: T): string {
+  return x.convert();
+}
+
+function smallest<T extends Comparable<T>>(xs: T[]): T {
+  let best = xs[0];
+  for (const x of xs) {
+    if (x < best) {
+      best = x;
+    }
+  }
+  return best;
+}
+
+function main() {
+  console.log(viaBound(7 as u64), "-", viaBound("abc"), "-", viaBound(2.5), "-", viaBound(true));
+  console.log(viaComparable(9 as u64));
+  console.log(viaComparable("hey"));
+  console.log(viaComparable({ major: 1, minor: 2 } as Version));
+  console.log(
+    new Keyed<u64>(3).label(),
+    new Keyed<string>("ab").label(),
+    new Keyed<i64>(-1).label(),
+  );
+
+  // Arrays: the bounded block wins where its bound holds.
+  console.log(viaBound([1, 2, 3]), "-", viaBound([new Point(1)]));
+
+  // Interface values hold the block's implementation.
+  const all: Describe[] = [5 as u64, "xyz", 1.5, [3, 1], [new Point(2)]];
+  console.log(all.map((d) => d.describe()).join(", "));
+
+  // Direct calls pick the most specific block's method, as extension methods always do.
+  console.log((4 as u64).describe(), "x".loud(), (3 as i64).describe());
+
+  console.log(
+    convert(42 as i64),
+    smallest([{ cents: 30 }, { cents: 10 }, { cents: 20 }] as Money[]).cents,
+  );
+}

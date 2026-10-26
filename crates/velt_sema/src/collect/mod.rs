@@ -9,7 +9,8 @@
 //!    [`iface_extends`] flattens interface inheritance.
 //! 4. [`classes`]: `override` rules, vtable slots, inherited constructors, field-init rules;
 //!    [`static_this`]: copies of the static methods using `this` per subclass.
-//! 5. [`impls`]: `implements` checking and `Program::impls`; [`comparable`]: `extend` blocks
+//! 5. [`impls`]: `implements` checking and `Program::impls`; [`ext_impls`]: those of `extend …
+//!    implements` blocks; [`comparable`]: `extend` blocks
 //!    defining `compareTo` implement the builtin `Comparable<T>`; [`iterable`]: those defining
 //!    `[Symbol.iterator](): Iterator<T, E>` implement `Iterable<T, E>`.
 //!
@@ -24,6 +25,7 @@ mod comparable;
 mod constants;
 mod declare;
 pub(crate) mod exports;
+pub(crate) mod ext_impls;
 mod extend_shadow;
 pub(crate) mod extended_layouts;
 mod field_only;
@@ -75,6 +77,7 @@ pub(crate) fn collect(cx: &mut Ctx) -> ItemDefs {
     extend_shadow::check(cx);
     static_this::copy_statics(cx);
     impls::build_impls(cx);
+    ext_impls::build(cx);
     comparable::extension_impls(cx);
     iterable::extension_impls(cx);
     cx.bodies_ok = true;

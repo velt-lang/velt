@@ -22,6 +22,7 @@ impl<'h> Cx<'h> {
     ) -> Self {
         Cx {
             hir,
+            prelude_proxy: None,
             native_inits: vec![],
             view_fn: None,
             uses_placement: false,
@@ -61,6 +62,8 @@ impl<'h> Cx<'h> {
             boxing,
             facts: Default::default(),
             iface_impls: None,
+            ext_memo: Default::default(),
+            exists_memo: Default::default(),
             own_clones: None,
             honoured_clones: FxHashMap::default(),
             dyn_modes_memo: FxHashMap::default(),

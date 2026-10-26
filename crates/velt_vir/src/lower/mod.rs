@@ -66,6 +66,7 @@ mod drops;
 mod entry;
 mod errors;
 mod expr;
+mod ext_exists;
 mod flags;
 mod for_of;
 mod for_of_shared;
@@ -74,6 +75,7 @@ mod frame_envs;
 mod frozen;
 mod glue;
 mod hooks;
+mod impl_lookup;
 mod intrinsics;
 mod js_string;
 mod json;
@@ -91,6 +93,7 @@ mod place;
 mod program;
 mod proxy_call;
 mod proxy_method;
+mod proxy_throws;
 mod proxy_typed;
 mod proxy_write;
 mod quiet;
@@ -352,6 +355,8 @@ enum Work {
 /// Program-level lowering state.
 struct Cx<'h> {
     hir: &'h hir::Program,
+    /// The prelude's `Proxy` class type, once looked up (proxy_throws.rs).
+    prelude_proxy: Option<Option<TyId>>,
     /// Native library inits `velt_main` runs first (entry.rs).
     native_inits: Vec<crate::NativeInit>,
     /// The prelude's `Proxy.__view` (any_view.rs), once looked up.
@@ -420,6 +425,10 @@ struct Cx<'h> {
     facts: boxing::Facts,
     /// `Program::impls` indexes per interface (`impls_of`), built on first use.
     iface_impls: Option<FxHashMap<DefId, Rc<[u32]>>>,
+    /// Finished `extend` lookups by `(interface, arguments, type)` (impl_lookup.rs), and bound
+    /// checks through blocks (ext_exists.rs).
+    ext_memo: FxHashMap<impl_lookup::MemoKey, Option<impl_lookup::Fit>>,
+    exists_memo: FxHashMap<ext_exists::ExistsKey, bool>,
     /// Classes with a `clone()` of their own, and that method (`own_clone`, transfer.rs),
     /// found on first use.
     own_clones: Option<FxHashMap<DefId, DefId>>,
@@ -591,6 +600,9 @@ struct FnLower<'c, 'h> {
     view_writes: Option<Vec<(Operand, TyId, Option<Operand>)>>,
     /// The next array dropped is a view's mirror, never a view itself (`Glue::MirrorDrop`).
     mirror_drop: bool,
+    /// While an `AnyTo` with a text is lowered: the words its `TypeError` starts with
+    /// (any_errors.rs).
+    any_context: Option<String>,
     /// The view bit tests and loops lowered, for versioning (view_unswitch.rs).
     view_loops: view_unswitch::ViewLoops,
     /// This function's read mode, once asked (rc.rs `lk_mode`).
@@ -685,6 +697,9 @@ struct FnLower<'c, 'h> {
     /// Lowering a method of the prelude's `Reflect`, where a proxy's reads reach their target:
     /// a read `any` cannot do yet names #823 (any_member.rs `any_get_str`).
     in_reflect: bool,
+    /// The body of a function of a user module or of std/proxy: its operations on `any` throw
+    /// what a proxy's trap throws, as velt_sema counts them (proxy_throws.rs).
+    proxy_routes: bool,
     /// An object is being built from a record's entries (`any_record_fill`): its fields are
     /// converted without that path, so a type that contains itself ends.
     record_fill: bool,

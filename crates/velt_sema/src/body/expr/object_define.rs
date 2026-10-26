@@ -292,7 +292,17 @@ impl FnCx<'_, '_> {
             return self.error_expr(span);
         }
         if !self.cx.global_props.slots.contains_key(key) {
-            return self.error_expr(span); // reported by the rewrite: no type
+            if !self.cx.global_props.write_only.contains(key) {
+                return self.error_expr(span); // reported by the rewrite: no type
+            }
+            // Nothing reads it: the definition only evaluates its value.
+            let h = self.expr_stmt(value);
+            let stmt = hir::Stmt {
+                span,
+                kind: hir::StmtKind::Expr(h),
+            };
+            let unit = self.mk(hir::ExprKind::Lit(hir::Lit::Unit), self.cx.ty.unit, span);
+            return self.with_lets(vec![stmt], unit);
         }
         let slot = ast::Ident {
             name: crate::global_this::slot_name(key),

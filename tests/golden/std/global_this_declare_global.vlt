@@ -1,0 +1,30 @@
+// `declare global { var K: T }` types `globalThis.K` where no site asserts a type, as sigx's
+// devtools hook does with `globalThis[DEVTOOLS_HOOK_KEY]`.
+interface Hook {
+  events: string[];
+  emit(e: string): void;
+}
+
+declare global {
+  // eslint-disable-next-line no-var
+  var __APP_HOOK__: Hook | undefined;
+}
+
+export const HOOK_KEY = "__APP_HOOK__";
+
+function getHook(): Hook | null {
+  if (typeof globalThis === "undefined") return null;
+  return globalThis[HOOK_KEY] ?? null;
+}
+
+console.log(getHook() === null);
+const events: string[] = [];
+globalThis.__APP_HOOK__ = {
+  events,
+  emit(e: string): void {
+    events.push(e);
+  },
+};
+getHook()?.emit("mount");
+getHook()?.emit("update");
+console.log(getHook()?.events, globalThis.__APP_HOOK__ === getHook());

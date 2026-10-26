@@ -1,0 +1,219 @@
+// std/collections/btree_map: `BTreeMap` — the API on small maps, then randomized runs against a
+// sorted array large enough to split and merge nodes at every level (inserts, replacements,
+// deletes down to empty and back), with number, string and struct keys.
+
+import { BTreeMap } from "velt:collections/btree_map";
+
+struct Version {
+  major: i64;
+  minor: i64;
+}
+
+class Item {
+  constructor(public name: string) {}
+}
+
+function basics() {
+  const scores = new BTreeMap<string, i64>();
+  scores.set("carol", 7);
+  scores.set("alice", 9);
+  scores.set("bob", 4);
+  scores.set("alice", 10);
+  console.log(scores.size, scores.keys(), scores.values(), scores.first(), scores.last());
+  console.log(scores.get("alice"), scores.get("dave"), scores.has("bob"), scores.has("bz"));
+  console.log(scores.floorKey("bz"), scores.ceilingKey("bz"), scores.range("b", "d"));
+  console.log(scores.floorKey("a"), scores.ceilingKey("d"), scores.range("d", "b"));
+  for (const [name, score] of scores) {
+    console.log(name, score);
+  }
+  console.log(scores.delete("bob"), scores.delete("bob"), scores.entries());
+  scores.clear();
+  console.log(scores.size, scores.isEmpty(), scores.first(), scores.get("carol"));
+  scores.set("again", 1);
+  console.log(scores.entries());
+
+  // Values are shared as Map shares them.
+  const items = new BTreeMap<i64, Item>([
+    [2, new Item("two")],
+    [1, new Item("one")],
+  ]);
+  items.get(1)!.name = "uno";
+  console.log(items.values().map((i) => i.name), items.get(1) === items.get(1));
+
+  // Values that hold null.
+  const maybe = new BTreeMap<i64, string | null>();
+  maybe.set(1, null);
+  maybe.set(2, "x");
+  console.log(maybe.get(1), maybe.get(2), maybe.get(3), maybe.has(1));
+}
+
+// Next value of a 64-bit xorshift.
+function next(x: u64): u64 {
+  let y = x ^ (x << 13);
+  y = y ^ (y >> 7);
+  return y ^ (y << 17);
+}
+
+// Index where `k` is or would go in the sorted `keys`.
+function lowerBound(keys: i64[], k: i64): usize {
+  let lo: usize = 0;
+  let hi = keys.length as usize;
+  while (lo < hi) {
+    const mid = lo + (hi - lo) / 2;
+    if (keys[mid] < k) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  return lo;
+}
+
+function check(label: string, ok: bool) {
+  if (!ok) {
+    panic(`mismatch: ${label}`);
+  }
+}
+
+// `ops` random operations on keys below `range` against two sorted arrays.
+function randomized(seed: u64, ops: i64, range: u64) {
+  const m = new BTreeMap<i64, i64>();
+  const keys: i64[] = [];
+  const vals: i64[] = [];
+  let x = seed;
+  let maxSize: usize = 0;
+  for (let op = 0; op < ops; op++) {
+    x = next(x);
+    const k = ((x >> 8) % range) as i64;
+    const kind = x % 10;
+    const i = lowerBound(keys, k);
+    const present = i < (keys.length as usize) && keys[i] == k;
+    // Grow for the first half, shrink in the second.
+    const growing = op < ops / 2;
+    if (kind < (growing ? 6 : 3)) {
+      m.set(k, op);
+      if (present) {
+        vals[i] = op;
+      } else {
+        keys.splice(i as i64, 0, k);
+        vals.splice(i as i64, 0, op);
+      }
+    } else if (kind < 9) {
+      check(`delete ${k}`, m.delete(k) == present);
+      if (present) {
+        keys.splice(i as i64, 1);
+        vals.splice(i as i64, 1);
+      }
+    } else {
+      const got = m.get(k);
+      check(`get ${k}`, present ? got == vals[i] : got === undefined);
+      check(`floor ${k}`, m.floorKey(k) == (present ? k : i > 0 ? keys[i - 1] : undefined));
+      check(`ceiling ${k}`, m.ceilingKey(k) == (i < (keys.length as usize) ? keys[i] : undefined));
+    }
+    check("size", m.size == (keys.length as usize));
+    if (m.size > maxSize) {
+      maxSize = m.size;
+    }
+    if (op % 1000 == 0) {
+      check("keys", deepEqual(m.keys(), keys));
+      check("values", deepEqual(m.values(), vals));
+    }
+  }
+  check("final keys", deepEqual(m.keys(), keys));
+  const lo = range as i64 / 4;
+  const hi = range as i64 / 2;
+  const want: [i64, i64][] = [];
+  for (let i = lowerBound(keys, lo); i < (keys.length as usize) && keys[i] < hi; i++) {
+    want.push([keys[i], vals[i]]);
+  }
+  check("range", deepEqual(m.range(lo, hi), want));
+  console.log(`randomized ${seed}: ${ops} ops, peak ${maxSize}, final ${m.size}, ok`);
+}
+
+// Deletes everything in order, then in reverse, then from the middle out.
+function drain() {
+  const n: i64 = 40000;
+  for (let pass = 0; pass < 3; pass++) {
+    const m = new BTreeMap<i64, i64>();
+    for (let i: i64 = 0; i < n; i++) {
+      m.set(i * 7 % n, i);
+    }
+    for (let j: i64 = 0; j < n; j++) {
+      const k =
+        pass == 0 ? j : pass == 1 ? n - 1 - j : (j % 2 == 0 ? n / 2 + j / 2 : n / 2 - 1 - j / 2);
+      check(`drain ${k}`, m.delete(k));
+      if (j % 4000 == 0 && m.size > 0) {
+        check("drain first", m.first() == (pass == 0 ? j + 1 : 0));
+      }
+    }
+    check("drained", m.size == 0 && m.first() === undefined && m.keys().length == 0);
+  }
+  console.log("drain ok");
+}
+
+function strings() {
+  const m = new BTreeMap<string, i64>();
+  const keys: string[] = [];
+  for (let i: i64 = 0; i < 3000; i++) {
+    const k = `key-${(i * 7919) % 3000}-with-a-suffix-long-enough-to-live-on-the-heap`;
+    m.set(k, i);
+    keys.push(k);
+  }
+  keys.sort();
+  check("string keys", deepEqual(m.keys(), keys));
+  for (let i = 0; i < 3000; i += 2) {
+    check("string delete", m.delete(keys[i]));
+  }
+  check("string size", m.size == 1500);
+  console.log("strings", m.size, m.first()!.slice(0, 8), m.last()!.slice(0, 8));
+}
+
+function structs() {
+  const m = new BTreeMap<Version, string>();
+  m.set({ major: 1, minor: 2 }, "b");
+  m.set({ major: 0, minor: 9 }, "a");
+  m.set({ major: 1, minor: 10 }, "c");
+  console.log(m.keys().map((v) => `${v.major}.${v.minor}`), m.get({ major: 1, minor: 2 }));
+}
+
+function forEachChanges() {
+  const m = new BTreeMap<string, i64>();
+  for (let i = 0; i < 4; i++) {
+    m.set(`k${i}`, i);
+  }
+  const alias = m;
+  const seen: string[] = [];
+  m.forEach((v, k) => {
+    if (k == "k1") {
+      // Deletes the current and an earlier key, adds keys before and after it, and deletes a
+      // later one: the walk goes on at the first key after "k1".
+      alias.delete("k1");
+      alias.delete("k0");
+      for (let i = 0; i < 50; i++) {
+        alias.set(`a${i}`, 100 + i);
+      }
+      alias.set("z", 300);
+      alias.delete("k2");
+    }
+    seen.push(`${k}=${v}`);
+  });
+  console.log("forEach", m.size, seen.join(","));
+}
+
+function main() {
+  basics();
+  randomized(88172645463325252, 60000, 20000);
+  randomized(12345, 40000, 300);
+  randomized(987654321, 20000, 40);
+  drain();
+  strings();
+  structs();
+  forEachChanges();
+}
+
+// Struct keys order field by field.
+extend Version {
+  compareTo(other: Version): i64 {
+    return this.major != other.major ? this.major - other.major : this.minor - other.minor;
+  }
+}

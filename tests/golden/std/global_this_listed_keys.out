@@ -1,0 +1,6 @@
+undefined undefined
+{ version: '1.0', warned: false } undefined
+{ version: '2.0', warned: true } 3.0
+-1 7
+true
+2 1

@@ -1,0 +1,4 @@
+1 Map(1) { 'a' => { n: 1 } }
+true 1
+Set(1) { 1 }
+2 [ '_streamKeys' ]

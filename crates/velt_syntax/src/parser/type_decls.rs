@@ -292,6 +292,10 @@ impl<'a> Parser<'a> {
             );
         }
         let target = self.parse_type_no_union()?;
+        let mut implements = Vec::new();
+        if self.eat_kw(Kw::Implements) {
+            implements = self.parse_type_list()?;
+        }
         let mut methods = Vec::new();
         self.parse_members(|p| {
             let span = match p.parse_member()? {
@@ -309,6 +313,7 @@ impl<'a> Parser<'a> {
         Ok(ExtendDecl {
             generics,
             target,
+            implements,
             methods,
         })
     }

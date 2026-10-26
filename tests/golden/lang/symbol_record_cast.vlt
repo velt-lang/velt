@@ -1,0 +1,24 @@
+// `v as Record<symbol, unknown>` looks at an object's symbol-keyed members, as sigx's brand
+// checks do: `(v as Record<symbol, unknown>)[KEY]` reads the member, or `undefined`.
+const CELL: unique symbol = Symbol("cell");
+const OTHER: unique symbol = Symbol("other");
+
+interface Cell {
+  [CELL]: boolean;
+  value: number;
+}
+
+function isCell(v: unknown): boolean {
+  return !!v && (v as Record<symbol, unknown>)[CELL] === true;
+}
+
+function tag(v: unknown): unknown {
+  if (v !== null && typeof v === "object") {
+    return (v as Record<symbol, any>)[OTHER];
+  }
+  return "primitive";
+}
+
+const cell: Cell = { [CELL]: true, value: 1 };
+console.log(isCell(cell), isCell({ value: 2 }), isCell(null), isCell(0), isCell("x"));
+console.log(tag(cell), tag(5));

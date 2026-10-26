@@ -155,12 +155,32 @@ const s = <Section />;
   They are checked as `tsc` checks them, so a misspelled `client:lod` is an unknown property
   with a suggestion. The provider receives them separately from the props. See
   [the contract](../internals/contracts/jsx.md#attributes-of-every-component-optional-exports).
-- Until objects are shared references, a component that takes ownership of its props (one that
-  uses an element from them, such as `<main>{props.children}</main>`) is called with a copy of
-  them, and props holding an element can't be copied yet: an element may hold a pending async
-  component. A compile error says so. Pass such content through a plain function instead
-  (`page(title, content)`), as [`examples/apps/ssr-blog`](../../examples/apps/ssr-blog/README.md)
-  does; a component that only reads other props takes an element prop as it is.
+- A component gets its props as JavaScript passes them: the same objects, not copies. A layout
+  takes its content as `children`, async components still loading in it included, and streaming
+  sends the layout's top first, as
+  [`examples/apps/ssr-blog`](../../examples/apps/ssr-blog/README.md)'s `<Page>` does:
+
+```ts
+import { renderToString } from "velt:jsx";
+
+function Layout(props: { title: string; children: JSX.Element[] }): JSX.Element {
+  return (
+    <main>
+      <h1>{props.title}</h1>
+      {props.children}
+    </main>
+  );
+}
+
+async function Posts(): Promise<JSX.Element> {
+  return <ul><li>first</li></ul>;
+}
+
+async function main() {
+  console.log(await renderToString(<Layout title="News"><Posts /><p>more</p></Layout>));
+  // <main><h1>News</h1><ul><li>first</li></ul><p>more</p></main>
+}
+```
 
 ## How elements are compiled
 

@@ -71,7 +71,11 @@ switch (s.kind) { case "circle": return s.r; case "rect": return s.w * s.h; }
   `extend Shape { area(): f64 { switch … } }`.
 - **Blanket extensions** (implemented): `extend<T extends Comparable<T>> T { clamp(lo: T, hi: T):
   T { … } }`; extending through a bound adds the method to every implementor.
-- **Retroactive implements** (planned): `extend Point implements Comparable<Point> { … }`.
+- **Retroactive implements** (implemented, #1546): `extend Point implements Comparable<Point> { … }`,
+  for any type and interface without fields. Blanket blocks (`extend<T extends B> T implements I`)
+  give `I` to every type with `B`, type parameters included, and the most specific block that fits
+  a type is its implementation (the overlap rule below), so generic code can be specialized for
+  some types at no run-time cost (`velt_sema` `collect/ext_impls.rs`).
 - **Overlapping extensions** (implemented): among the applicable blocks (target matches,
   bounds hold) the most specific wins, A over B when A's target is an instance of B's and not
   the reverse (`extend Array<i64>` over `extend<T> Array<T[]>` over `extend<T> Array<T>`), or
@@ -83,6 +87,91 @@ switch (s.kind) { case "circle": return s.r; case "rect": return s.w * s.h; }
   wherever its module is loaded.
 - A type's own member always wins over an extension. No new fields (the layout is fixed). No
   operator overloading.
+
+### Retroactive implements: the rules
+
+`extend X implements I` (#1546, PR #1548) gives `I` to types their authors did not write it for.
+The rules, and why:
+
+- **Own implementations first.** A type's own implementation (a class's `implements`, one it
+  inherits from a base class, or the implicit `Comparable`/`Iterable` of a `compareTo` or
+  `[Symbol.iterator]()` block) wins over every `extend` block, as a type's own member wins over
+  an extension method. A blanket block (`extend<T> T implements I`) applies only to the types
+  without one, so a subclass never loses its base class's or its own override. A block for a
+  type that already has one is refused (`` `P` already implements `I` ``).
+- **One most specific block.** Among the blocks that fit a type (target pattern matches,
+  bounds hold), the most specific wins, by the overlap rule above. Two blocks that can fit one
+  type where neither is more specific are refused where they are declared (``conflicting
+  implementations of `I` ``, naming a type both fit), not where a type is used: generic code is
+  checked once and instantiated with many types, so a check at the use (`Pair<A, i64>` in a
+  generic function) would miss the instance where both fit (`Pair<i64, i64>`), and the choice
+  would depend on declaration or import order. The check ignores bounds: two blocks with the
+  same target, both bounded, are refused even if no type meets both bounds.
+- **Coherence, without an orphan rule.** Any module may implement any interface for any type,
+  so two libraries that each write `extend u64 implements I` for the same `I` break every
+  program that loads both: the program gets the conflict error and does not build. The whole
+  program is compiled together, so this shows up at build time with both blocks named, never
+  as different behaviour in different places. The convention that avoids it is the orphan rule
+  as advice: a library implements its own interfaces for any type, or any interface for its own
+  types. A lint for it may come later.
+- **Scoping.** Today a block applies wherever its module is loaded. When extension methods
+  become module-scoped (above), `implements` blocks stay program-wide: a type must have the
+  same implementation of `I` everywhere, since generic code is instantiated per type, not per
+  importing module, and an `I` value made in one module is used in others. The block's methods
+  called as extension methods follow the scoping rule.
+- **`any` and other targets.** A block cannot target `any`, `unknown` (or `object`,
+  `Function`) or `never`: they have no implementation of their own, and an `any` holds a value
+  of another type. Converting an `any` to `I` uses the held value's implementation, by the same
+  lookup as a direct conversion. A union target is refused too: a union's value has one
+  member's type, which the block's target does not match. An interface type implementing an
+  interface it extends is refused as already implemented.
+- **Bounds hold when they hold at all.** A block's bounds are checked through implementations
+  again, so blocks can lead back to each other (`extend<T extends Q> T implements P`, `extend<T>
+  T implements P` and `extend<T extends P> T implements Q`). A bound holds when the type meets
+  it through its own implementation or through a finite chain of blocks, whichever block that
+  is, never through itself: the least answer, which is the same in every context. (The first
+  rule, "a lookup that comes back to itself does not fit", made the answer depend on which
+  lookup ran first once lookups were remembered.) With the three blocks above, `C` is a `P`
+  through the unbounded block, hence a `Q`, hence the bounded `P` block fits and wins, in every
+  order. A pair that only leads to itself (`extend<T extends I> T implements J` with
+  `extend<U extends J> U implements I`) gives a type neither interface unless it has one of its
+  own. A blanket block bounded by the interface it implements could only apply to types that
+  already have it, and is refused.
+- **Interface arguments.** A type implements an interface once, as a class does: blocks that
+  can fit one type conflict whatever their interface arguments (`extend W implements G<i64>`
+  and `extend W implements G<string>`), and the block that wins decides the arguments. This
+  keeps sema's lookup (by interface) and lowering's (by interface and arguments) the same. A
+  block with bounds must give the arguments of the blocks it takes precedence over: those it is
+  more specific than, for the types both fit, and those for a base class of a type it fits.
+  Otherwise whether a type is a `G<string>` would depend on the bounds of a `G<i64>` block,
+  and those can depend on `G<string>` in turn (`extend<T extends Q> T implements G<i64>`,
+  `extend<T> T implements G<string>`, `extend<T extends G<string>> T implements Q`): no answer
+  is consistent, and checking "some block for `G<string>` fits" would let one type have two
+  implementations. Such a pair is refused where it is declared. A more specific block
+  without bounds may give other arguments (`extend<T> Box<T> implements G<T>` over `extend<A>
+  A implements G<i64>`): it always wins for the types it fits, so a `Box<string>` meets a
+  `G<string>` bound and not a `G<i64>` one, and the blocks below it don't apply.
+- **Bounds.** A block that lists `implements` takes interface bounds only. `any`, `unknown`,
+  `object` and `Function` bounds are refused: the first two add nothing, and the last two
+  would need the dynamic type tests of `any` in every impl lookup. Blanket blocks apply to
+  type parameters through each other (a `T extends K` gets `J` from `extend<T extends K> T
+  implements J`, then `I` from `extend<T extends J> T implements I`). An interface value meets
+  a bound on its interface or one it extends, as for a generic function, so `extend<T extends
+  P> T implements Q` gives a `P` value `Q`.
+- **Cost.** A bound check is not a nested call: it collects every lookup the question reaches
+  (finitely many, since a bound is checked on a type argument of the type looked up) and
+  iterates to a fixed point, in sema (`infer/ext_exists.rs`) and in lowering
+  (`lower/ext_exists.rs`). There is no nesting limit, every answer is remembered, and a chain
+  of blocks whose bounds share interfaces is looked up once per type. One computation starts
+  another only through a structural implementation (an intersection bound's), made at most
+  once per type and interface, so they nest finitely. What a type parameter gets from blanket
+  blocks is found with a worklist: a bound it gets looks again only at the blocks bounded by
+  that interface or one it extends, so a chain costs one look per block in any declaration
+  order (300 levels with calls through `this` in every body: 0.16 s to check).
+- **Diagnostics**: a missing or mismatched method (as for classes); `conflicting
+  implementations`; `already implements`; ``cannot implement `I` `` for an interface with
+  fields or optional methods (an `extend` block cannot add fields) and for the targets above;
+  ``implements `I` only for types that already implement it``.
 
 ## 5. Small TypeScript alignments (implemented)
 

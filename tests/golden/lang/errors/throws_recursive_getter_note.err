@@ -1,0 +1,2 @@
+throws_recursive_getter_note.vlt:15:5: error: the error type here is not known yet: it is `{ code: string }`, found through a recursive call
+  = note: add a `throws` clause to interface method `Tree.size` (`get size(): string throws { code: string };`)

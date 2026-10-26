@@ -106,7 +106,28 @@ class Counter {
 console.log(Counter.first);
 ```
 
-A file with top-level statements cannot also declare `main`.
+A file with top-level statements may also declare a function named `main`, as TypeScript
+programs often do (or anything else named `main`: a variable, a class, an import): then, as in
+Node, the statements are the program, and `main` is an ordinary function that runs when they
+call it, with any arguments (`main(process.argv.slice(2))`), as often as they call it, and its
+promise handled as they choose (`main().catch(…)`).
+
+This is where Velt differs from Node: a root file with `function main()` and **no** top-level
+statements runs `main` by itself, which Node does not. Adding a top-level statement to such a
+file makes `main` an ordinary function that runs only when called, so the compiler warns when a
+file with statements declares a `main` that nothing calls (`` `main` is never called ``).
+
+```ts
+async function main(): Promise<void> {
+  await Promise.resolve();
+  console.log("hi");
+}
+
+main().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});
+```
 
 When the top-level statements wait at an `await` that nothing can settle any more, and nothing
 else can happen, the program ends as Node's does: `Warning: Detected unsettled top-level await

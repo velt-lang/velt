@@ -135,9 +135,11 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
   lets LLVM vectorize index loops badly). `charCodeAt(i)` tests the form: an inline string with
   bit 0x40 of byte 23 clear, or a static/heap string whose halves of `w1` are equal, is ASCII,
   and the byte at `i` is loaded inline (bounds-checked against the length); any other string
-  calls `velt_rt_str_char_code_at`. Strings are passed to the runtime by pointer for everything
-  else. Test a form through byte 23: inline appends write single bytes
-  into `w2`, and reading `w2` as a word right after would stall on store forwarding.
+  calls `velt_rt_str_char_code_at`. The byte length (`Buffer.byteLength(s)`, intrinsic
+  `StrByteLen`) is read inline too: `byte23 ≥ 0x80 ? byte23 & 0x1f : w1 & 0xffffffff`. Strings
+  are passed to the runtime by pointer for everything else. Test a form through byte 23: inline
+  appends write single bytes into `w2`, and reading `w2` as a word right after would stall on
+  store forwarding.
 - Invariants, checked by a **debug** runtime on every append (each appended piece is canonical
   WTF-8 with the unit and lone counts it is given, and the seam is canonical: O(piece), never a
   recount of the whole string) and in full after every operation by the runtime's own tests: the
@@ -209,7 +211,7 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
 | `velt_rt_str_drop` | `(VeltStr* s)` | count −1 for heap strings (frees at 0), then zeroes `*s` |
 | `velt_rt_str_cmp` | `(const VeltStr* a, const VeltStr* b) -> int32_t` | -1 / 0 / 1 in UTF-16 code-unit order (`<`, `sort()`; #377 phase 2b): `memcmp` for two ASCII strings, else byte order corrected where it differs from code-unit order (design/strings.md "The ordering rule") |
 | `velt_rt_str_char_code_at` | `(const VeltStr* s, int64_t i) -> int64_t` | the UTF-16 code unit at `i` (a supplementary character gives its high or low surrogate), -1 out of range; generated code calls it for non-ASCII strings only |
-| `velt_rt_str_byte_length` | `(const VeltStr* s) -> uint64_t` | the UTF-8 length (`Buffer.byteLength(s)`): the stored byte length, O(1) |
+| `velt_rt_str_byte_length` | `(const VeltStr* s) -> uint64_t` | the UTF-8 length: the stored byte length, O(1) (generated code reads it inline, above) |
 | `velt_rt_str_hash` | `(const VeltStr* s) -> uint64_t` | hash of the bytes (`Map`/`Set` keys; fixed seed) |
 
 ## Counted objects [semantics stage 2]
@@ -417,6 +419,12 @@ keeps the module lock while it blocks; taking the module lock while the thread h
 stops with an `ICE:` panic (sema rejects module state in a `with` callback). On WebAssembly (one
 thread) there is no lock.
 
+Within one call of a compiled function (until the poll ends, or until `velt_rt_block_on` or
+`main` returns), a successful `velt_rt_module_state(desc, s)` stays valid for every slot `<= s`:
+the same block, still initialized up to `s`, with the lock still held. The compiler reuses it
+instead of calling again (`velt_opt` `module_state`, #1571), so a runtime change must keep this
+[additive, #1571].
+
 ## Array methods on a proxy [additive, #823]
 
 ```c
@@ -562,16 +570,16 @@ Declared in std (Velt signatures; `u8[]`/`string` are passed as in rt_abi_async.
   `velt_rt_bytes_copy_within(b: u8[], target: i64, start: i64, end: i64)`,
   `velt_rt_bytes_fill(b: u8[], byte: u8, start: i64, end: i64)`,
   `velt_rt_bytes_slice(b: u8[], start: i64, end: i64): u8[]`,
-  `velt_rt_bytes_concat(a: u8[], b: u8[]): u8[]`,
-  `velt_rt_bytes_xor_mask(b: u8[], mask: u32, start: i64, end: i64)` (relative indices).
-- UTF-8 (`std/encoding.vlt`): `velt_rt_bytes_utf8_valid(b: u8[]): bool`.
-- For protocols written in Velt (`std/websocket/bytes.vlt`), on a range `[start, end)` (relative
-  indices) so no slice is made: `velt_rt_bytes_set_str(dst: u8[], s: string, offset: u64): bool`
-  (the UTF-8 bytes of `s`, a lone surrogate as U+FFFD; false and nothing copied if they do not
-  fit), `velt_rt_bytes_range_to_str(b: u8[], start: i64, end: i64): IoResult<string>`
-  (`INVALID_DATA` if not UTF-8) and `velt_rt_bytes_utf8_prefix(b: u8[], start: i64, end: i64):
-  i64` (how many bytes are well-formed: all, fewer when the range ends inside a character, -1
-  when no continuation can make it valid).
+  `velt_rt_bytes_concat(a: u8[], b: u8[]): u8[]`. XOR masking (`xorMask`) is Velt code on SIMD
+  vectors there, and UTF-8 validation (`utf8Valid`, the WebSocket reader) in
+  `std/encoding/utf8.vlt`.
+- For protocols written in Velt (`u8[]`'s `utf8Slice` in `std/prelude/bytes.vlt`;
+  `std/websocket/bytes.vlt`), on a range `[start, end)` (relative indices) so no slice is made:
+  `velt_rt_bytes_range_to_str(b: u8[], start: i64, end: i64): IoResult<string>` (`INVALID_DATA` if
+  not UTF-8) and `velt_rt_bytes_range_to_str_lossy(b: u8[], start: i64, end: i64): string` (an
+  invalid sequence as U+FFFD, one per maximal invalid subpart): making a string is the runtime's.
+  Writing a string's bytes and comparing them (`write`, `utf8Equals`) is Velt code that reads the
+  string's bytes in place (intrinsics `StrByteAt`, `StrLoadU8x16`, `StrLoadPartialU8x16`).
 - BigInt (`std/bigint.vlt`, handle `u64`, freed by `velt_rt_bigint_free`): `from_i64`, `from_f64`,
   `parse(s, radix)`, `clone`, `assign(dst, a)`, `neg(dst, a)`, `op(dst, a, b, op: u32): bool` and
   `op_i64(dst, a, k: i64, op: u32): bool` (false: division by zero or a negative or huge shift; `dst` unchanged), `cmp`/`cmp_i64` (−1/0/1),

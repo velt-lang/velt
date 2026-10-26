@@ -1,0 +1,14 @@
+3 one nan [ 1, 2, NaN ]
+3 nan2 true NaN 1
+NaN NaN 2 NaN
+[ [ 2, 'two' ] ] 0 0
+true false 2 undefined [ 1, 2 ]
+1001 -1 NaN
+true 1000 false
+499500 999 0
+301 1000 299 0 NaN 1
+151 1000 false 298 151
+2 a n
+3 one nan [ 1, 2, NaN ]
+3 nan2 NaN NaN NaN
+[ [ 2, 'two' ] ] true false 2 [ 1, 2 ]

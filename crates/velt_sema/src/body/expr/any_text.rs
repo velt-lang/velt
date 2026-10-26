@@ -109,6 +109,10 @@ const TEXT_FNS: [&str; 6] = [
 enum TextMethod {
     /// A `Proxy`, whose traps the text would run (not yet).
     Proxy,
+    /// A record, in a program that calls `Object.create(null)`: the prelude function (hint's)
+    /// that stops with Node's `TypeError` for one without a prototype, else writes it as an
+    /// object.
+    Record(&'static str),
     /// Its `[Symbol.toPrimitive]`, with the hint when it takes one.
     ToPrimitive(Option<&'static str>),
     /// `OrdinaryToPrimitive`: the methods tried in order, each with whether its result type is
@@ -265,6 +269,7 @@ impl FnCx<'_, '_> {
                 let lit = synth(ast::ExprKind::Lit(ast::Lit::Str("Proxy".into())), span);
                 call_fn("__anyTextUnsupported", vec![lit, at()])
             }
+            TextMethod::Record(f) => call_fn(f, vec![read, at()]),
             TextMethod::ToPrimitive(hint) => {
                 let args = hint
                     .map(|h| synth(ast::ExprKind::Lit(ast::Lit::Str(h.into())), span))
@@ -311,6 +316,14 @@ impl FnCx<'_, '_> {
     fn text_method(&mut self, c: DefId, hint: Hint) -> Option<TextMethod> {
         if self.cx.prelude_adt("Proxy") == Some(c) {
             return Some(TextMethod::Proxy);
+        }
+        // Only a record can have no prototype, and only where `Object.create(null)` is called:
+        // other values never pay for the test.
+        if self.cx.objects.null_proto_records && self.cx.prelude_adt("Record") == Some(c) {
+            return Some(TextMethod::Record(match hint {
+                Hint::String => "__anyRecordText",
+                Hint::Default => "__anyRecordConcat",
+            }));
         }
         let n = self.cx.adt(c).map_or(0, |a| a.generics.len());
         let params: Vec<_> = (0..n as u32).map(|i| self.cx.ty.param(i)).collect();

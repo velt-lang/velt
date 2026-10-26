@@ -17,6 +17,7 @@
 //! [`BinRows`], which checks them. A buffer cut short reads as a mismatch, never out of bounds.
 
 use crate::json_escape::push_json_string;
+use crate::rows_cursor::Cell;
 use crate::Out;
 
 pub const NULL: u8 = 0;
@@ -28,11 +29,47 @@ pub const TEXT: u8 = 5;
 pub const BLOB: u8 = 6;
 /// [`TEXT`] that is all ASCII.
 pub const ASCII: u8 = 7;
+/// A nested value (an array or object a database column holds, such as a Postgres array or
+/// `jsonb`) as its JSON text, which the decoder reads as JSON.
+pub const JSON: u8 = 8;
 /// Set in a column name's length when the name is all ASCII.
 pub const ASCII_NAME: u32 = 0x8000_0000;
 
 /// 2^53: every integer below it in magnitude is exactly representable as an `f64`.
 const MAX_EXACT_INT: f64 = 9_007_199_254_740_992.0;
+
+/// The column-names part of a header (the count, then each name), for [`BinRows::with_names`].
+///
+/// # Panics
+/// As [`BinRows::with_out`].
+pub fn encode_names<'n, I>(columns: I) -> Vec<u8>
+where
+    I: IntoIterator<Item = &'n str>,
+    I::IntoIter: ExactSizeIterator,
+{
+    let mut out = Vec::new();
+    push_names(&mut out, columns);
+    out
+}
+
+fn push_names<'n, I>(out: &mut (impl Out + ?Sized), columns: I)
+where
+    I: IntoIterator<Item = &'n str>,
+    I::IntoIter: ExactSizeIterator,
+{
+    let columns = columns.into_iter();
+    let count = u16::try_from(columns.len()).expect("more database columns than 65,535");
+    out.extend(&count.to_le_bytes());
+    for name in columns {
+        assert!(
+            name.len() < ASCII_NAME as usize,
+            "database column name too long"
+        );
+        let ascii = if name.is_ascii() { ASCII_NAME } else { 0 };
+        out.extend(&(name.len() as u32 | ascii).to_le_bytes());
+        out.extend(name.as_bytes());
+    }
+}
 
 /// Builds a result set into `O` (a `Vec<u8>`, or a Velt `u8[]` itself, a native library's
 /// `velt_native::Array<u8>`: no copy): one value method per column, in column order, for every
@@ -64,20 +101,18 @@ impl<O: Out> BinRows<O> {
         I: IntoIterator<Item = &'n str>,
         I::IntoIter: ExactSizeIterator,
     {
-        let columns = columns.into_iter();
-        let count = u16::try_from(columns.len()).expect("more database columns than 65,535");
         out.reserve(256);
         out.push(single as u8);
-        out.extend(&count.to_le_bytes());
-        for name in columns {
-            assert!(
-                name.len() < ASCII_NAME as usize,
-                "database column name too long"
-            );
-            let ascii = if name.is_ascii() { ASCII_NAME } else { 0 };
-            out.extend(&(name.len() as u32 | ascii).to_le_bytes());
-            out.extend(name.as_bytes());
-        }
+        push_names(&mut out, columns);
+        BinRows { buf: out, rows: 0 }
+    }
+
+    /// [`BinRows::with_out`] with the column names encoded by [`encode_names`] (a driver keeps
+    /// them per statement rather than asking the database for them on every query).
+    pub fn with_names(mut out: O, names: &[u8], single: bool) -> BinRows<O> {
+        out.reserve(names.len() + 256);
+        out.push(single as u8);
+        out.extend(names);
         BinRows { buf: out, rows: 0 }
     }
 
@@ -127,6 +162,11 @@ impl<O: Out> BinRows<O> {
     }
 
     /// A byte array (a `u8[]`).
+    /// A nested value as JSON text (well-formed: the reader trusts it to be one value).
+    pub fn json(&mut self, v: &[u8]) {
+        self.sized(JSON, v);
+    }
+
     pub fn bytes(&mut self, v: &[u8]) {
         self.sized(BLOB, v);
     }
@@ -155,6 +195,8 @@ pub enum BinCell {
     /// The range and whether the text is all ASCII.
     Text(usize, usize, bool),
     Blob(usize, usize),
+    /// A nested value's JSON text.
+    Json(usize, usize),
 }
 
 /// The cell at `pos` and where the next one starts; `None` if the buffer ends early or the
@@ -177,7 +219,7 @@ pub fn cell_at(buf: &[u8], pos: usize) -> Option<(BinCell, usize)> {
                 at + 8,
             )
         }
-        tag @ (TEXT | ASCII | BLOB) => {
+        tag @ (TEXT | ASCII | BLOB | JSON) => {
             let b = buf.get(at..at + 4)?;
             let start = at + 4;
             let end = start.checked_add(u32::from_le_bytes(b.try_into().ok()?) as usize)?;
@@ -186,6 +228,8 @@ pub fn cell_at(buf: &[u8], pos: usize) -> Option<(BinCell, usize)> {
             }
             if tag == BLOB {
                 (BinCell::Blob(start, end), end)
+            } else if tag == JSON {
+                (BinCell::Json(start, end), end)
             } else {
                 (BinCell::Text(start, end, tag == ASCII), end)
             }
@@ -226,22 +270,44 @@ pub fn name_at(buf: &[u8], pos: usize) -> (usize, usize, bool) {
 /// Append one cell as a JSON value: a float in its shortest form that reads back the same, a
 /// blob as an array of byte values.
 pub fn push_cell_json(out: &mut Vec<u8>, buf: &[u8], cell: BinCell) {
+    push_cell(
+        out,
+        match cell {
+            BinCell::Null => Cell::Null,
+            BinCell::Bool(v) => Cell::Bool(v),
+            BinCell::Int(v) => Cell::Int(v),
+            BinCell::Float(v) => Cell::Float(v),
+            BinCell::Text(start, end, _) => Cell::Text(&buf[start..end]),
+            BinCell::Blob(start, end) => Cell::Blob(&buf[start..end]),
+            BinCell::Json(start, end) => Cell::Json(&buf[start..end]),
+        },
+    );
+}
+
+/// [`push_cell_json`] of a cell however it is held (a live cursor's,
+/// [`crate::rows_cursor`]); text that is not UTF-8 gets U+FFFD.
+pub fn push_cell(out: &mut Vec<u8>, cell: Cell<'_>) {
     match cell {
-        BinCell::Null => out.extend_from_slice(b"null"),
-        BinCell::Bool(v) => out.extend_from_slice(if v { b"true" } else { b"false" }),
-        BinCell::Int(v) => crate::fmt::push_i64(out, v),
-        BinCell::Float(v) if v.fract() == 0.0 && v.abs() < MAX_EXACT_INT => {
+        Cell::Null => out.extend_from_slice(b"null"),
+        Cell::Bool(v) => out.extend_from_slice(if v { b"true" } else { b"false" }),
+        Cell::Int(v) => crate::fmt::push_i64(out, v),
+        Cell::Float(v) if v.fract() == 0.0 && v.abs() < MAX_EXACT_INT => {
             crate::fmt::push_i64(out, v as i64)
         }
-        BinCell::Float(v) => crate::fmt::push_f64(out, v),
-        BinCell::Text(start, end, _) => push_json_string(out, &buf[start..end]),
-        BinCell::Blob(start, end) => {
+        Cell::Float(v) => crate::fmt::push_f64(out, v),
+        Cell::Ascii(t) => push_json_string(out, t),
+        Cell::Json(j) => out.extend_from_slice(j),
+        Cell::Text(t) => match std::str::from_utf8(t) {
+            Ok(_) => push_json_string(out, t),
+            Err(_) => push_json_string(out, String::from_utf8_lossy(t).as_bytes()),
+        },
+        Cell::Blob(b) => {
             out.push(b'[');
-            for (i, &b) in buf[start..end].iter().enumerate() {
+            for (i, &v) in b.iter().enumerate() {
                 if i > 0 {
                     out.push(b',');
                 }
-                crate::fmt::push_u64(out, b as u64);
+                crate::fmt::push_u64(out, v as u64);
             }
             out.push(b']');
         }

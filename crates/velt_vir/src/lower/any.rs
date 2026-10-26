@@ -585,7 +585,8 @@ impl FnLower<'_, '_> {
             None => self.cx.any_tag(t),
         };
         let msg = format!(
-            "TypeError: the value is not an {} (it is {})",
+            "TypeError: {}the value is not an {} (it is {})",
+            self.any_context_words(),
             self.any_target_name(ty),
             FOUND[tag as usize]
         );

@@ -1,0 +1,52 @@
+// The TechEmpower tests on velt:http/server, the HTTP/1.1 server written in Velt on std/net (not
+// std/http, which is hyper): bench/web/README.md, `velt-native`. Every route of velt/app.ts
+// (/plaintext, /json, /db, /queries, /fortunes, /updates, the database side shared through
+// velt/worlds.ts) and the TSX pages.
+// Usage: server [port]; env PORT, HOST (127.0.0.1), DATABASE_URL, DB_POOL (default 2 × cores).
+
+import { HttpRequest, HttpResponse, serve } from "velt:http/server";
+import { args } from "velt:process";
+import { renderToString, renderToStringSync, renderToStream } from "velt:jsx";
+import {
+  fortunesHtml,
+  fortunesPage,
+  loadWorlds,
+  Message,
+  queryCount,
+  updateWorlds,
+  worldPool,
+} from "../velt/worlds";
+import { asyncPage, page } from "./page";
+
+async function main() {
+  const argv = args();
+  const port = Number(argv.length > 0 ? argv[0] : process.env.PORT ?? "8080");
+  const host = process.env.HOST ?? "127.0.0.1";
+  const pool = worldPool();
+  await serve({ port: port, host: host }, async (req: HttpRequest, res: HttpResponse) => {
+    if (req.pathIs("/plaintext")) {
+      res.send("Hello, World!");
+    } else if (req.pathIs("/json")) {
+      // Serialized per request, as the rules ask.
+      res.json(JSON.stringify(new Message("Hello, World!")));
+    } else if (req.pathIs("/db")) {
+      const worlds = await loadWorlds(pool, 1);
+      res.json(JSON.stringify(worlds[0]));
+    } else if (req.pathIs("/queries")) {
+      res.json(JSON.stringify(await loadWorlds(pool, queryCount(req.query()))));
+    } else if (req.pathIs("/updates")) {
+      res.json(JSON.stringify(await updateWorlds(pool, queryCount(req.query()))));
+    } else if (req.pathIs("/fortunes")) {
+      res.html(await fortunesHtml(pool, fortunesPage));
+    } else if (req.pathIs("/tsx")) {
+      res.html(renderToStringSync(page()));
+    } else if (req.pathIs("/tsx-async")) {
+      res.html(await renderToString(asyncPage()));
+    } else if (req.pathIs("/tsx-stream")) {
+      await res.sendStream(renderToStream(asyncPage()));
+    } else {
+      res.status(404);
+      res.send("Not Found");
+    }
+  });
+}

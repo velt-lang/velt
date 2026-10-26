@@ -214,8 +214,8 @@ fn std_driver_records_reach_the_compiler() {
     let sigs = velt_rt_host::abi_symbols::driver_signatures();
     let get = |n: &str| sigs.iter().find(|(name, _)| *name == n).map(|(_, s)| *s);
     assert_eq!(
-        get("velt_std_postgres__query"),
-        Some("async (u64,string,string,bool)->IoResult<string>")
+        get("velt_std_postgres__query_rows"),
+        Some("async (u64,string,string,bool)->IoResult<u64>")
     );
     assert_eq!(get("velt_std_postgres__close"), Some("(u64)->void"));
     // And a program using std's driver compiles (its declarations match).

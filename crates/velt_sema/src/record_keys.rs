@@ -2,7 +2,8 @@
 //! union of string literal types or a string enum (a *closed* record, which has every key).
 //!
 //! A written `Record<K, V>` with a concrete `K` is checked where the type is resolved
-//! (`resolve.rs`). A key that comes from a type parameter is checked where the parameter meets a
+//! (`resolve.rs`); there `number` and `string | number` keys become `string`, as JavaScript
+//! makes a number key a string ([`Ctx::number_key_as_string`]). A key that comes from a type parameter is checked where the parameter meets a
 //! concrete type: after all bodies, [`check_instantiations`] collects the key types each function's
 //! types mention (through struct, class and union fields too), propagates the generic ones to every
 //! instantiation site (calls, function values, `new` and generic methods called through a type
@@ -15,6 +16,7 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::{Diagnostic, Span};
+use velt_syntax::ast;
 
 use crate::ctx::Ctx;
 use crate::defs::DefInfo;
@@ -59,6 +61,23 @@ impl Ctx<'_> {
         }
     }
 
+    /// The key type of a written `Record<k, V>`: `number` and `string | number` are `string`
+    /// (Velt's integer types stay errors).
+    /// JavaScript converts a number key to its string, so such a record holds string keys
+    /// (`Object.keys` lists them, in its order: array indices first) and a number index is
+    /// converted where it is used (`r[1]` is `r["1"]`, `body::expr::record_call`).
+    pub(crate) fn number_key_as_string(&mut self, k: TyId) -> TyId {
+        let str_ = self.ty.str_;
+        let num = self.ty.f64;
+        if k == num {
+            return str_;
+        }
+        match self.union_members(k) {
+            Some(ms) if ms.iter().all(|m| *m == str_ || *m == num) => str_,
+            _ => k,
+        }
+    }
+
     /// Does `k` mention a type parameter (a key only known per instantiation)?
     pub(crate) fn is_generic_key(&self, k: TyId) -> bool {
         let mut ps = vec![];
@@ -89,6 +108,73 @@ impl Ctx<'_> {
             None => d,
         });
         false
+    }
+}
+
+impl Ctx<'_> {
+    /// The names of the program's type aliases (not std's) that are read-only array or
+    /// collection types (whatever their type arguments), and of those that are number-keyed record types, directly or through other such
+    /// aliases: only a written type naming one of them needs looking up (`body::readonly_arrays`,
+    /// `body::expr::number_records`). Computed once, after the declarations are collected.
+    pub(crate) fn marked_aliases(&self) -> &(FxHashSet<String>, FxHashSet<String>) {
+        self.marked_aliases.get_or_init(|| {
+            let (mut ro, mut num) = (FxHashSet::default(), FxHashSet::default());
+            loop {
+                let before = ro.len() + num.len();
+                // The program's own aliases: std neither needs these errors nor pays for them.
+                let own = |a: &&crate::defs::AliasInfo| !self.scopes[a.module].is_std;
+                for a in self.aliases.iter().filter(own) {
+                    let t = &a.decl.ty;
+                    let names = |set: &FxHashSet<String>| names_marked(t, set);
+                    if crate::body::is_readonly_type(t) || names(&ro) {
+                        ro.insert(a.decl.name.name.clone());
+                    }
+                    if is_number_record_type(t) || names(&num) {
+                        num.insert(a.decl.name.name.clone());
+                    }
+                }
+                if ro.len() + num.len() == before {
+                    break;
+                }
+            }
+            (ro, num)
+        })
+    }
+}
+
+/// Does `t` name an alias in `set`, or is it `A | null` / `A | undefined` with `A` one?
+fn names_marked(t: &ast::TypeExpr, set: &FxHashSet<String>) -> bool {
+    match &t.kind {
+        ast::TypeExprKind::Named { path, .. } => path.len() == 1 && set.contains(&path[0].name),
+        ast::TypeExprKind::Union(ms) => {
+            let mut rest = ms.iter().filter(|m| {
+                !matches!(
+                    m.kind,
+                    ast::TypeExprKind::Null | ast::TypeExprKind::Undefined
+                )
+            });
+            matches!((rest.next(), rest.next()), (Some(m), None) if names_marked(m, set))
+        }
+        _ => false,
+    }
+}
+
+/// `Record<number, V>` or `{ [k: number]: V }` as written, possibly `| null` / `| undefined`.
+pub(crate) fn is_number_record_type(t: &ast::TypeExpr) -> bool {
+    use ast::TypeExprKind as T;
+    let number = |t: &ast::TypeExpr| matches!(&t.kind, T::Named { path, args } if args.is_empty() && path.len() == 1 && path[0].name == "number");
+    match &t.kind {
+        T::Named { path, args } if path.len() == 1 && path[0].name == "Record" => {
+            matches!(&args[..], [k, _] if number(k))
+        }
+        T::IndexSig { fields, key, .. } => fields.is_empty() && number(&key.ty),
+        T::Union(ms) => {
+            let mut rest = ms
+                .iter()
+                .filter(|m| !matches!(m.kind, T::Null | T::Undefined));
+            matches!((rest.next(), rest.next()), (Some(m), None) if is_number_record_type(m))
+        }
+        _ => false,
     }
 }
 

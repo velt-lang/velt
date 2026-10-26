@@ -33,11 +33,34 @@ impl Cx<'_> {
     /// The implementation of `iface` a value of the concrete type `t` converts through: that of
     /// `t` or of its nearest base class implementing it, as the implementation index, the type
     /// it is for, and the interface's arguments.
+    /// An `extend … implements` block's impl comes after those, as in a direct conversion
+    /// (impl_lookup.rs).
     fn iface_impl_of(&mut self, t: TyId, iface: DefId) -> Option<(u32, TyId, Vec<TyId>)> {
+        if let Some(found) = self.own_iface_impl_of(t, iface) {
+            return Some(found);
+        }
+        if self.hir.extension_impls.is_empty() {
+            return None;
+        }
+        let fit = self.ext_impl_for(iface, None, t)?;
+        let unknown = self.intern(TyKind::Error);
+        let xs: Vec<TyId> = fit.binds.iter().map(|b| b.unwrap_or(unknown)).collect();
+        let args = self.hir.impls[fit.index as usize].iface_args.clone();
+        let from: Vec<TyId> = args.iter().map(|a| self.subst(*a, &xs)).collect();
+        from.iter()
+            .all(|a| self.closed(*a, 0))
+            .then_some((fit.index, fit.ty, from))
+    }
+
+    /// [`Self::iface_impl_of`] among the impls of the type and its base classes.
+    fn own_iface_impl_of(&mut self, t: TyId, iface: DefId) -> Option<(u32, TyId, Vec<TyId>)> {
         let mut cur = t;
         let impls = self.impls_of(iface);
         for _ in 0..64 {
             for &j in impls.iter() {
+                if self.hir.extension_impls.contains_key(&j) {
+                    continue;
+                }
                 let j = j as usize;
                 let imp = &self.hir.impls[j];
                 if imp.iface != iface || self.is_adapter(imp.ty) || self.is_dynamic(imp.ty) {

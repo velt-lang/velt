@@ -1,0 +1,13 @@
+0 true
+1 2 false
+up 1500 0 1500
+up 0 0
+up 1 1
+down 1500 0 1500
+down 0 0
+down 1 1
+mixed 1500 0 1500
+mixed 0 0
+mixed 1 1
+queue 100 0 100 400
+strings 666 1 undefined k1 k998

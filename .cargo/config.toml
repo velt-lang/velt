@@ -1,3 +1,11 @@
 # `cargo xtask <command>`: the repository's tooling (crates/xtask), e.g. `cargo xtask check`.
 [alias]
 xtask = "run --quiet --package xtask --"
+
+# GCC 15 (the default compiler from Ubuntu 26.04 on) compiles C as C23, and glibc 2.38+ then
+# calls `strtol` and its kin by their C23 names (`__isoc23_strtol`), which the bundled linker's
+# glibc 2.31 stubs (crates/velt_link/kit) do not have: a program linked with the runtime would
+# fail to link, and need glibc 2.38 to run. The C dependencies (mimalloc) are compiled as C17.
+[env]
+CFLAGS_x86_64_unknown_linux_gnu = "-std=gnu17"
+CFLAGS_aarch64_unknown_linux_gnu = "-std=gnu17"

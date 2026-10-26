@@ -65,7 +65,8 @@ impl FnCx<'_, '_> {
     }
 
     /// Does type `t` have a setter `name` (and no field of that name)? Not the throwing one a
-    /// getter-only override gets: TypeScript rejects that write (TS2540).
+    /// getter-only override gets, nor the one a literal's getter-only property gets from
+    /// `Object.defineProperty`: TypeScript rejects that write (TS2540).
     pub(crate) fn has_setter(&mut self, t: TyId, name: &str) -> bool {
         if self.field_of(t, name).is_some() {
             return false;
@@ -73,6 +74,9 @@ impl FnCx<'_, '_> {
         match self.resolve_method(t, &member_key(name, true)) {
             Some(Resolved::Def { def, .. } | Resolved::Virtual { def, .. }) => {
                 !self.cx.getter_only_setters.contains(&def)
+            }
+            Some(Resolved::Iface { iface, method, .. }) => {
+                !(self.cx.defined_setters).contains(&(iface, method.name))
             }
             r => r.is_some(),
         }

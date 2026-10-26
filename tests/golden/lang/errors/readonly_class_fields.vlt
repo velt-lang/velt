@@ -1,0 +1,21 @@
+// Casts do not open readonly class fields: assigning them stays an error.
+class C {
+  readonly n: number = 1;
+  readonly items: ReadonlySet<string> = new Set<string>();
+  readonly xs: readonly string[] = [];
+  readonly ys: string[] = [];
+}
+const c = new C();
+(c.items as Set<string>).add("a");
+(c.xs as string[]).push("b");
+c.ys.push("c");
+(c as C).n = 2;
+const d = c as C;
+d.n = 3;
+(c.ys as readonly string[]).push("x");
+c.items.add("q");
+c.xs.push("q");
+c.xs = [];
+(c as C).xs = [];
+d.ys = [];
+console.log(c.n);

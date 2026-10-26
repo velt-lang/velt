@@ -1,0 +1,23 @@
+// A cast receiver is checked for its own call only: a call checked through another path
+// (`join`/`toString` on unknown values, `indexOf`) leaves the next call alone, and `?.` on a cast
+// to a mutable type may change the value.
+function leak2(xs: readonly unknown[], ys: unknown[]): void {
+  (xs as readonly unknown[]).join();
+  ys.push(1);
+  (xs as readonly unknown[]).toString();
+  ys.push(2);
+}
+function leak4(xs: readonly string[], ys: string[]): void {
+  console.log((xs as readonly string[]).length, (xs as readonly string[]).indexOf("a"));
+  ys.push("z");
+}
+function opt(xs: readonly string[] | undefined): void {
+  (xs as string[] | undefined)?.push("o");
+}
+const a: unknown[] = [];
+leak2([0], a);
+const b: string[] = [];
+leak4(["a"], b);
+const q = ["p"];
+opt(q);
+console.log(a, b, q);

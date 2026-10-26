@@ -77,6 +77,7 @@ impl FnCx<'_, '_> {
         }
         // Methods of a literal type are its base type's (`kind.toUpperCase()`).
         let recv = self.widen_literal_receiver(recv, &prop.name);
+        let recv = self.without_trap_vars(recv);
         // `xs.join()` / `xs.toString()` write each element as JS's `String(x)` (js_list.rs; a
         // list of `any`, `unknown` or `object` values: any_text.rs).
         let list_text = match prop.name.as_str() {

@@ -1,5 +1,5 @@
-//! Reading an executing SQLite statement's rows for std's `JSON.parse<T[]>`, in the binary
-//! form the JSON reader walks directly ([`velt_text::rows`]).
+//! What std's decoder needs of an executing statement's rows (`velt_text::rows_cursor`): the
+//! rows header and each cell.
 //!
 //! SQLite has no boolean type, so booleans come back as 0/1. A column whose declared type is
 //! `BOOL` or `BOOLEAN` (a table column read directly, not an expression) is written as
@@ -7,86 +7,92 @@
 //! stays a number.
 
 use super::error::DbError;
-use rusqlite::types::ValueRef;
-use rusqlite::Statement;
-use velt_text::rows::BinRows;
-use velt_text::Out;
+use super::raw::RawStmt;
+use parking_lot::Mutex;
+use rusqlite::ffi;
+use std::sync::Arc;
+use velt_text::rows::encode_names;
+use velt_text::rows_cursor::Cell;
 
-/// Step `stmt` (already bound) and encode its rows into `out`: every row, or with `first_only`
-/// the first row alone (nothing at all if there is none; the statement is not stepped further).
-pub fn read<O: Out>(stmt: &mut Statement<'_>, first_only: bool, out: O) -> Result<O, DbError> {
-    let count = stmt.column_count();
-    if first_only {
-        // Nothing written until there is a row: no row is an empty result.
-        let mut rows = stmt.raw_query();
-        let Some(row) = rows.next()? else {
-            return Ok(out);
-        };
-        let row_stmt = row.as_ref();
-        let names = (0..count).map(|i| row_stmt.column_name(i).unwrap_or(""));
-        let mut w = BinRows::with_out(out, names, true);
-        let mut bools: Option<Vec<bool>> = None;
-        write_row(&mut w, row, count, &mut bools)?;
-        return Ok(w.finish());
-    }
-    // A name SQLite cannot give (out of memory) is empty.
-    let names = (0..count).map(|i| stmt.column_name(i).unwrap_or(""));
-    let mut w = BinRows::with_out(out, names, false);
-    // Which columns are declared boolean: looked up when the first 0 or 1 turns up, since most
-    // results have none and the declared types cost a call per column.
-    let mut bools: Option<Vec<bool>> = None;
-    let mut rows = stmt.raw_query();
-    while let Some(row) = rows.next()? {
-        write_row(&mut w, row, count, &mut bools)?;
-    }
-    Ok(w.finish())
+/// What a prepared statement's rows look like: the rows header (with the column names) and
+/// which columns are declared boolean. Asking SQLite costs a call per column (each a UTF-8
+/// check of the name), so a statement keeps them until SQLite compiles it anew.
+pub struct Shape {
+    /// SQLite's count of recompilations (a schema change) when the shape was read.
+    reprepared: i32,
+    count: usize,
+    /// The rows header (`velt_text::rows`), for many rows and for a single one.
+    rows_header: Vec<u8>,
+    single_header: Vec<u8>,
+    bools: Vec<bool>,
 }
 
-/// One row's cells. SQLite has no booleans: a 0 or 1 in a column declared `BOOL`/`BOOLEAN` is
-/// written as a boolean (the declared types looked up at the first 0 or 1, since most results
-/// have none and they cost a call per column).
-fn write_row<O: Out>(
-    w: &mut BinRows<O>,
-    row: &rusqlite::Row<'_>,
-    count: usize,
-    bools: &mut Option<Vec<bool>>,
-) -> Result<(), DbError> {
-    for i in 0..count {
-        match row.get_ref(i)? {
-            ValueRef::Null => w.null(),
-            ValueRef::Integer(v @ (0 | 1)) => {
-                let bools = bools.get_or_insert_with(|| declared_bools(row.as_ref()));
-                if bools[i] {
-                    w.bool(v == 1);
-                } else {
-                    w.int(v);
-                }
-            }
-            ValueRef::Integer(v) => w.int(v),
-            ValueRef::Real(v) => w.float(v),
-            ValueRef::Text(t) => w.text(t),
-            ValueRef::Blob(b) => w.bytes(b),
+/// A statement's [`Shape`], once known.
+pub type ShapeCell = Mutex<Option<Arc<Shape>>>;
+
+impl Shape {
+    fn of(stmt: &RawStmt) -> Shape {
+        let count = stmt.column_count();
+        let names: Vec<String> = (0..count).map(|i| stmt.column_name(i)).collect();
+        let names = encode_names(names.iter().map(String::as_str));
+        let header = |single: u8| [&[single][..], &names].concat();
+        Shape {
+            reprepared: stmt.status(ffi::SQLITE_STMTSTATUS_REPREPARE),
+            count,
+            rows_header: header(0),
+            single_header: header(1),
+            bools: (0..count).map(|i| stmt.declared_bool(i)).collect(),
         }
     }
-    w.end_row();
-    Ok(())
+
+    /// The rows header: `single`, the column count and names.
+    pub fn header(&self, single: bool) -> &[u8] {
+        match single {
+            true => &self.single_header,
+            false => &self.rows_header,
+        }
+    }
+
+    /// Cell `col` of the row `stmt` is on. SQLite has no booleans: a 0 or 1 in a column
+    /// declared `BOOL`/`BOOLEAN` is a boolean.
+    ///
+    /// # Safety
+    /// `stmt` is on a row; the cell is valid until it steps.
+    #[inline]
+    pub unsafe fn cell<'s>(&self, stmt: &'s RawStmt, col: usize) -> Cell<'s> {
+        if col >= self.count {
+            return Cell::Null;
+        }
+        match stmt.cell(col) {
+            Cell::Int(v @ (0 | 1)) if self.bools[col] => Cell::Bool(v == 1),
+            c => c,
+        }
+    }
 }
 
-/// For every column of `stmt`, whether it is declared `BOOL` or `BOOLEAN`.
-fn declared_bools(stmt: &Statement<'_>) -> Vec<bool> {
-    stmt.columns()
-        .iter()
-        .map(|c| is_bool_type(c.decl_type()))
-        .collect()
-}
-
-fn is_bool_type(decl: Option<&str>) -> bool {
-    decl.is_some_and(|t| t.eq_ignore_ascii_case("BOOLEAN") || t.eq_ignore_ascii_case("BOOL"))
+/// The shape of `stmt`, which has stepped (so SQLite recompiled it if the schema changed),
+/// from `cell` while it still applies.
+pub fn shape(stmt: &RawStmt, cell: &ShapeCell) -> Arc<Shape> {
+    let mut kept = cell.lock();
+    match &*kept {
+        Some(s) if s.reprepared == stmt.status(ffi::SQLITE_STMTSTATUS_REPREPARE) => s.clone(),
+        _ => {
+            let s = Arc::new(Shape::of(stmt));
+            *kept = Some(s.clone());
+            s
+        }
+    }
 }
 
 /// Step `stmt` (already bound) to completion, discarding any rows.
-pub fn drain(stmt: &mut Statement<'_>) -> Result<(), DbError> {
-    let mut rows = stmt.raw_query();
-    while rows.next()?.is_some() {}
-    Ok(())
+pub fn drain(stmt: &RawStmt) -> Result<(), DbError> {
+    let r = loop {
+        match stmt.step() {
+            Ok(true) => continue,
+            Ok(false) => break Ok(()),
+            Err(e) => break Err(e),
+        }
+    };
+    stmt.finish();
+    r
 }

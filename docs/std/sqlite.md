@@ -19,7 +19,8 @@ pool and back would cost. Run a long query inside `spawn(...)`.
   `all<T>(): T[]`, plus `runWith(params)`, `getWith<T>(params)` and `allWith<T>(params)`, and
   `close()`. `T` is usually inferred from the annotation (`const u: User | null = s.getWith(…)`).
   A statement releases itself when dropped, and preparing the same SQL again is a cache hit.
-- **Parameters** are a value that std passes through `JSON.stringify`. An object binds
+- **Parameters** bind as their `JSON.stringify` text would (std hands numbers, strings, bools,
+  `null` and `u8[]` to SQLite directly, without making the text). An object binds
   `:name`/`@name`/`$name` by field name (extra fields are ignored; a missing one throws
   `SQLITE_RANGE`). An array, or a single number or string, binds `?` by position. Mapping:
   integer → INTEGER, float → REAL, string → TEXT, bool → 0/1, null → NULL, `u8[]` → BLOB.

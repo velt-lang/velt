@@ -113,3 +113,54 @@ fn bench_programs_compile() {
     println!("bench: {} programs checked", all.len());
     assert!(failures.is_empty(), "\n{}", failures.join("\n\n"));
 }
+
+/// The std modules under `dir` (`std/` paths without `.vlt`, as `velt:` names them), outside
+/// the prelude.
+fn std_modules(std: &Path, dir: &Path, out: &mut Vec<String>) {
+    let entries = std::fs::read_dir(dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display()));
+    for entry in entries {
+        let path = entry.expect("directory entry").path();
+        let rel = path
+            .strip_prefix(std)
+            .expect("under std/")
+            .to_string_lossy();
+        let rel = rel.replace('\\', "/");
+        if path.is_dir() {
+            if rel != "prelude" {
+                std_modules(std, &path, out);
+            }
+        } else if let Some(module) = rel.strip_suffix(".vlt") {
+            out.push(module.to_string());
+        }
+    }
+}
+
+/// `compile/check_all_std` (bench/nightly.sh) divides the instructions of `velt check
+/// bench/compile/all_std.vlt` by the code lines of all of `std/`: a cost per line only while
+/// that program loads every std module. A module it misses counts as lines nobody checks, and
+/// importing it later from a checked module shows as a slowdown per line.
+#[test]
+fn all_std_imports_every_std_module() {
+    let root = &root();
+    let src = std::fs::read_to_string(root.join("bench/compile/all_std.vlt")).expect("all_std");
+    let std = root.join("std");
+    let mut modules = vec![];
+    std_modules(&std, &std, &mut modules);
+    modules.sort();
+    assert!(!modules.is_empty(), "no modules under std/");
+    let missing: Vec<String> = modules
+        .into_iter()
+        .filter(|m| !src.contains(&format!("from \"velt:{m}\";")))
+        .map(|m| {
+            format!(
+                "import * as std_{} from \"velt:{m}\";",
+                m.replace(['/', '-'], "_")
+            )
+        })
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "bench/compile/all_std.vlt does not import every std module; add:\n{}",
+        missing.join("\n")
+    );
+}

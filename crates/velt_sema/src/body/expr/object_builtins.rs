@@ -513,6 +513,22 @@ impl FnCx<'_, '_> {
             return self.error_expr(span);
         }
         let want = self.hint(exp);
+        // The annotation's own error is reported where it is written.
+        if want.is_some_and(|t| self.cx.ty.has_error(t)) {
+            return self.error_expr(span);
+        }
+        // Where an `any` (or `unknown`, `object`) is expected: a `Record<string, any>`, which
+        // the dynamic value then holds.
+        let dynamic = want.filter(|t| self.cx.dynamic(*t).is_some());
+        if let (Some(t), Some(any)) = (dynamic, dynamic.and_then(|_| self.any_ty())) {
+            let str_ = self.cx.ty.str_;
+            let Some(d) = self.cx.prelude_adt("Record") else {
+                return self.error_expr(span);
+            };
+            let rec = self.cx.ty.intern(TyKind::Adt(d, vec![str_, any]));
+            let h = self.object_create(args, Some(rec), span);
+            return self.coerce(h, t);
+        }
         let record = want.filter(|t| {
             self.record_args(*t)
                 .is_some_and(|(k, _)| k == self.cx.ty.str_)

@@ -56,7 +56,7 @@ use velt_syntax::ast;
 pub use locate::{module_path, Origin, PackageResolver};
 pub use resolve::resolve_module;
 pub use spec::{resolve_spec, ModuleRef};
-pub use std_root::{prelude_files, std_root};
+pub use std_root::{in_std, prelude_files, std_root};
 
 /// Inputs of [`load_program`] besides the root path.
 #[derive(Default)]
@@ -70,6 +70,10 @@ pub struct LoadOptions<'a> {
     /// Unsaved file contents by path (the language server's open documents); consulted before
     /// the disk for every module, prelude included.
     pub overlay: Option<&'a HashMap<PathBuf, String>>,
+    /// A root inside [`LoadOptions::std_root`] is loaded as the std module it is (`velt:fs`), not
+    /// as `main`: the language server, for a std file opened in the editor, so it is checked like
+    /// std code (runtime declarations, std's own types) instead of as a user program.
+    pub std_root_as_std: bool,
 }
 
 /// Result of loading a program: the modules and the index of the root (`main`).
@@ -124,6 +128,7 @@ pub fn load_with_roots(
         globals: vec![],
         npm: vpm::npm::NpmResolver::default(),
         ambient: ambient::Ambients::new(opts.packages),
+        global_vars: vec![],
     };
     if let Some(std) = &opts.std_root {
         for file in prelude_files(std) {
@@ -139,7 +144,22 @@ pub fn load_with_roots(
     };
     let dir = root.parent().unwrap_or(Path::new("")).to_path_buf();
     let origin = Origin::Root(dir);
-    let root_index = loader.add(root, file_key(root), src, "main".into(), origin.clone());
+    let key = file_key(root);
+    let std_origin = match (&opts.std_root, &loader.std_key) {
+        (Some(std), Some(std_key)) if opts.std_root_as_std && key.starts_with(std_key) => {
+            Some(Origin::Std(std.clone()))
+        }
+        _ => None,
+    };
+    let root_index = match std_origin {
+        // A prelude file opened in the editor is already loaded.
+        Some(_) if loader.by_file.contains_key(&key) => loader.by_file[&key],
+        Some(std) => {
+            let canonical = std.canonical(root);
+            loader.add(root, key, src, canonical, std)
+        }
+        None => loader.add(root, key, src, "main".into(), origin.clone()),
+    };
     let mut queue: VecDeque<usize> = (0..loader.modules.len()).collect();
     loader.resolve_all(&mut queue);
     loader.extra_phase = true;
@@ -148,6 +168,7 @@ pub fn load_with_roots(
         loader.resolve_all(&mut queue);
     }
     loader.check_ambients();
+    loader.declare_global_types();
     Ok(Loaded {
         modules: loader.modules,
         root: root_index,
@@ -177,6 +198,9 @@ struct Loader<'a, 'o> {
     npm: vpm::npm::NpmResolver,
     /// Build-time constants and ambient declarations ([`ambient`]).
     ambient: ambient::Ambients,
+    /// The typed `var`s of each module's `declare global { … }`, by module index
+    /// ([`ambient::global_vars`]).
+    global_vars: Vec<(usize, Vec<velt_syntax::Ambient>)>,
 }
 
 impl Loader<'_, '_> {
@@ -265,6 +289,10 @@ impl Loader<'_, '_> {
             };
             let parsed = velt_syntax::parse_with(file, &self.sm.get(file).src, &opts);
             self.diags.extend(parsed.diags);
+            let typed = ambient::global_vars(&parsed.ambient);
+            if !typed.is_empty() {
+                self.global_vars.push((self.modules.len(), typed));
+            }
             self.ambient
                 .declared(parsed.ambient, file, parsed.is_module);
             parsed.module
@@ -350,6 +378,26 @@ impl Loader<'_, '_> {
                 let span = Span::new(self.sm.add(file, String::new()), 0, 0);
                 self.error(format!("cannot read `{shown}`: {e}"), vec![], span);
             }
+        }
+    }
+
+    /// Give the typed `var`s of every module's `declare global` to the rewrite of `globalThis`
+    /// ([`ambient::declare_global_types`]), when a module of the program names it (a program
+    /// that doesn't has no use for them).
+    fn declare_global_types(&mut self) {
+        let vars = std::mem::take(&mut self.global_vars);
+        let (modules, sm) = (&self.modules, &*self.sm);
+        let names = |m: &SourceModule| {
+            let src = &sm.get(m.file).src;
+            globals::mentions(src, "globalThis")
+                || src.contains("global.")
+                || src.contains("global[")
+        };
+        if vars.is_empty() || !modules.iter().any(|m| !m.is_std && names(m)) {
+            return;
+        }
+        for (i, vars) in vars {
+            ambient::declare_global_types(&mut self.modules[i].ast, &vars);
         }
     }
 

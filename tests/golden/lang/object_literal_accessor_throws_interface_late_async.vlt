@@ -1,0 +1,23 @@
+// An `async` function declared before the module code that converts a throwing untyped object
+// literal to an interface (`a as G`) reads the interface slot after an `await`: the promise
+// it returns rejects with what the literal's getter throws, and `.catch` sees it, as in Node.
+
+interface G {
+  get value(): string;
+}
+
+async function useAsync(h: G): Promise<string> {
+  await null;
+  return h.value;
+}
+
+let bad = true;
+const a = {
+  get value(): string {
+    if (bad) {
+      throw new TypeError("a failed");
+    }
+    return "a";
+  },
+};
+useAsync(a as G).catch((e) => console.log("caught", (e as Error).message));

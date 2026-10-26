@@ -37,7 +37,7 @@ impl Generics {
 }
 
 /// `T extends Iface<args>`.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct Bound {
     pub iface: DefId,
     pub args: Vec<TyId>,
@@ -478,6 +478,8 @@ pub(crate) struct Extension {
     /// Target type pattern (uses `Param(0..generics)`).
     pub target: TyId,
     pub methods: FxHashMap<String, MethodRef>,
+    /// `implements A, B`, each with the span of its entry (collect/ext_impls.rs).
+    pub implements: Vec<(Bound, velt_common::Span)>,
 }
 
 /// The member name of method-table key `key` (`set #v` names `#v`).

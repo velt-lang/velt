@@ -8,11 +8,16 @@ use velt_common::Diagnostic;
 use velt_syntax::ast::{self, ExprKind as E, ItemKind as I, StmtKind as S};
 
 use super::keys::{
-    names_global, params_names, pattern_names, says_nothing, string_lit, GLOBAL_THIS,
+    const_key, names_global, params_names, pattern_names, says_nothing, string_lit, GLOBAL_THIS,
 };
 use super::{slot_name, Site};
 use crate::ast_walk::children_mut;
 use crate::body::expr::NODE_GLOBALS;
+
+mod listed;
+
+use listed::is_key;
+pub(crate) use listed::{DEFINE_KEY_CHECK, DELETE_KEY_CHECK, KEY_CHECK};
 
 /// A name in scope: a constant standing for `globalThis` (with the type it asserts), or
 /// another declaration (`None`), which hides an outer one of the same name.
@@ -21,17 +26,39 @@ type Binding = Option<Option<ast::TypeExpr>>;
 pub(super) struct Walk<'a> {
     module: usize,
     consts: &'a FxHashMap<String, String>,
+    /// The module's type aliases, for the keys an asserted type lists.
+    aliases: &'a FxHashMap<String, ast::TypeExpr>,
     scopes: Vec<FxHashMap<String, Binding>>,
+    /// The string constants each scope declares (`const KEY = "k";`, also a script's
+    /// module-level ones, which the parser moved into its `main`): keys there.
+    const_scopes: Vec<FxHashMap<String, ConstKey>>,
+    /// How many functions (and arrow functions) the walk is inside: a read directly in the
+    /// function declaring a constant (not in a closure) may not come before it.
+    fn_depth: usize,
+    /// Keys read before their constant's declaration (reported once the walk is done).
+    early: std::cell::RefCell<Vec<Diagnostic>>,
+    /// Where the module's own key constants are declared (module-level reads before them are
+    /// TS2448).
+    module_consts: FxHashMap<String, u32>,
     pub sites: Vec<Site>,
     pub diags: Vec<Diagnostic>,
 }
 
 impl<'a> Walk<'a> {
-    pub(super) fn new(module: usize, consts: &'a FxHashMap<String, String>) -> Self {
+    pub(super) fn new(
+        module: usize,
+        consts: &'a FxHashMap<String, String>,
+        aliases: &'a FxHashMap<String, ast::TypeExpr>,
+    ) -> Self {
         Walk {
             module,
             consts,
+            aliases,
             scopes: vec![FxHashMap::default()],
+            const_scopes: vec![FxHashMap::default()],
+            fn_depth: 0,
+            early: Default::default(),
+            module_consts: Default::default(),
             sites: vec![],
             diags: vec![],
         }
@@ -40,6 +67,13 @@ impl<'a> Walk<'a> {
     /// Rewrite every item of the module, its constants standing for `globalThis` first (a
     /// function may use one declared after it).
     pub(super) fn module_items(&mut self, module: &mut ast::Module) {
+        for item in &module.items {
+            if let I::Var(v) = &item.kind {
+                if let Some((n, _)) = const_key(v) {
+                    self.module_consts.insert(n, v.span.lo);
+                }
+            }
+        }
         // Other module-level names are the module's constants (string keys), unless they hide
         // `globalThis` or `global`.
         for item in &module.items {
@@ -63,6 +97,8 @@ impl<'a> Walk<'a> {
         for item in &mut module.items {
             self.item(item);
         }
+        let early = self.early.take();
+        self.diags.extend(early);
     }
 
     /// Record what `v` binds in the innermost scope.
@@ -111,21 +147,62 @@ impl<'a> Walk<'a> {
         }
     }
 
-    /// The property key `e` names: a string literal or constant.
+    /// The property key `e` names: a string literal or constant (the innermost declaration of
+    /// the name decides).
     fn key(&self, e: &ast::Expr) -> Option<String> {
         if let E::Ident(id) = &e.kind {
-            if self.lookup(&id.name).is_some() {
-                return None;
+            for (names, consts) in self.scopes.iter().zip(&self.const_scopes).rev() {
+                if let Some(c) = consts.get(&id.name) {
+                    if e.span.lo < c.at {
+                        self.read_before(id, c.depth);
+                    }
+                    return Some(c.key.clone());
+                }
+                if names.contains_key(&id.name) {
+                    return None;
+                }
             }
-            return self.consts.get(&id.name).cloned();
+            let k = self.consts.get(&id.name).cloned();
+            // A module constant read at module level before its declaration.
+            if let (Some(_), Some(&at)) = (&k, self.module_consts.get(&id.name)) {
+                if e.span.lo < at {
+                    self.read_before(id, 0);
+                }
+            }
+            return k;
         }
         string_lit(e)
     }
 
+    /// Key constant `id` read before its declaration, which is `depth` functions in. Directly
+    /// (in the same function, or at module level) it is not initialized yet: TypeScript's
+    /// TS2448, a `ReferenceError` in Node. From a closure or a nested function of the function
+    /// declaring it, Velt gives the error it gives for any constant read there. A closure at
+    /// module level may run after the declaration: it reads the constant (`types.md`).
+    fn read_before(&self, id: &ast::Ident, depth: usize) {
+        let d = if depth == self.fn_depth {
+            Diagnostic::error(
+                format!(
+                    "block-scoped variable `{}` used before its declaration (TypeScript's TS2448)",
+                    id.name
+                ),
+                id.span,
+            )
+        } else if depth > 0 {
+            Diagnostic::error(format!("cannot find `{}` in this scope", id.name), id.span)
+                .with_note("a closure or function that reads a constant declared after it in the same function is not supported yet")
+        } else {
+            return;
+        };
+        self.early.borrow_mut().push(d);
+    }
+
     fn with_scope(&mut self, f: impl FnOnce(&mut Self)) {
         self.scopes.push(FxHashMap::default());
+        self.const_scopes.push(FxHashMap::default());
         f(self);
         self.scopes.pop();
+        self.const_scopes.pop();
     }
 
     /// Hide outer constants named like `names` in the innermost scope.
@@ -140,8 +217,16 @@ impl<'a> Walk<'a> {
         match &mut item.kind {
             I::Function(f) => self.func(f),
             I::Struct(t) | I::Class(t) => {
-                for e in t.fields.iter_mut().filter_map(|f| f.default.as_mut()) {
-                    self.expr(e, false);
+                // An instance field's initializer runs in the constructor: one function in, as
+                // a method's body is (at module level it may read a later constant; in a
+                // function it is the closure case). A static one runs where the class is declared.
+                for f in &mut t.fields {
+                    let step = usize::from(!f.is_static);
+                    if let Some(e) = f.default.as_mut() {
+                        self.fn_depth += step;
+                        self.expr(e, false);
+                        self.fn_depth -= step;
+                    }
                 }
                 if let Some(c) = &mut t.constructor {
                     self.func(c);
@@ -172,6 +257,10 @@ impl<'a> Walk<'a> {
     }
 
     fn func(&mut self, f: &mut ast::FnDecl) {
+        // A script's generated `main` holds its module-level code: not a function of its own.
+        let main = f.sig.name.name == "main" && f.sig.name.span.lo == f.sig.name.span.hi;
+        let step = usize::from(!main);
+        self.fn_depth += step;
         self.with_scope(|w| {
             w.shadow(params_names(&f.sig.params));
             for e in f.sig.params.iter_mut().filter_map(|p| p.default.as_mut()) {
@@ -179,6 +268,7 @@ impl<'a> Walk<'a> {
             }
             w.block(&mut f.body);
         });
+        self.fn_depth -= step;
     }
 
     fn block(&mut self, b: &mut ast::Block) {
@@ -187,6 +277,28 @@ impl<'a> Walk<'a> {
 
     /// Statements of one scope: a constant standing for `globalThis` is dropped.
     fn stmts(&mut self, stmts: &mut [ast::Stmt]) {
+        // The scope's declarations are block-scoped: a closure or function walked before one
+        // sees it (`const g = () => h[K]; const K = "b";`), so they are known first.
+        for s in stmts.iter() {
+            if let S::Var(v) = &s.kind {
+                if self.alias_of(v).is_none() {
+                    let mut names = vec![];
+                    pattern_names(&v.pattern, &mut names);
+                    self.shadow(names);
+                    if let Some((n, k)) = const_key(v) {
+                        let scope = self.const_scopes.last_mut().expect("ICE: no scope");
+                        scope.insert(
+                            n,
+                            ConstKey {
+                                key: k,
+                                at: v.span.lo,
+                                depth: self.fn_depth,
+                            },
+                        );
+                    }
+                }
+            }
+        }
         for s in stmts {
             if let S::Var(v) = &s.kind {
                 if self.alias_of(v).is_some() {
@@ -209,8 +321,22 @@ impl<'a> Walk<'a> {
                 let mut names = vec![];
                 pattern_names(&v.pattern, &mut names);
                 self.shadow(names);
+                if let Some((n, k)) = const_key(v) {
+                    let scope = self.const_scopes.last_mut().expect("ICE: no scope");
+                    scope.insert(
+                        n,
+                        ConstKey {
+                            key: k,
+                            at: v.span.lo,
+                            depth: self.fn_depth,
+                        },
+                    );
+                }
             }
-            S::Expr(e) => self.expr(e, true),
+            S::Expr(e) => match self.define_listed(e).or_else(|| self.assign_listed(e)) {
+                Some(chain) => s.kind = chain,
+                None => self.expr(e, true),
+            },
             S::Throw(e) | S::Return(Some(e)) => self.expr(e, false),
             S::If { cond, then, els } => {
                 self.expr(cond, false);
@@ -297,7 +423,7 @@ impl<'a> Walk<'a> {
 
     /// Rewrite `e`; `stmt`: `e` is a statement of its own (its value is unused).
     fn expr(&mut self, e: &mut ast::Expr, stmt: bool) {
-        if self.property(e, false) || self.define_property(e, stmt) {
+        if self.property(e, false) || self.define_property(e, stmt) || self.delete_property(e) {
             return;
         }
         match &mut e.kind {
@@ -331,6 +457,7 @@ impl<'a> Walk<'a> {
                 for p in params.iter().filter_map(|p| p.pattern.as_ref()) {
                     pattern_names(p, &mut names);
                 }
+                self.fn_depth += 1;
                 self.with_scope(|w| {
                     w.shadow(names);
                     for d in params.iter_mut().filter_map(|p| p.default.as_mut()) {
@@ -341,6 +468,7 @@ impl<'a> Walk<'a> {
                         ast::ArrowBody::Expr(x) => w.expr(x, false),
                     }
                 });
+                self.fn_depth -= 1;
                 return;
             }
             E::Function(d) => {
@@ -369,6 +497,52 @@ impl<'a> Walk<'a> {
             },
             E::Index { object, index, .. } => match (self.base(object), self.key(index)) {
                 (Some(t), Some(k)) => (t, k),
+                (Some(Some(t)), None) if !written => {
+                    let Some((k, keys)) = self.listed(&t, index) else {
+                        return false;
+                    };
+                    let span = e.span;
+                    let mut chain = synth(E::Lit(ast::Lit::Undefined), span);
+                    let all = keys.clone();
+                    for (i, key) in keys.into_iter().enumerate().rev() {
+                        let mut read = synth(
+                            E::Member {
+                                object: Box::new(synth(
+                                    E::Paren(Box::new(synth(
+                                        E::Cast {
+                                            expr: Box::new(ident(GLOBAL_THIS, span)),
+                                            ty: t.clone(),
+                                        },
+                                        span,
+                                    ))),
+                                    span,
+                                )),
+                                prop: ast::Ident {
+                                    name: key.clone(),
+                                    span,
+                                },
+                                optional: false,
+                            },
+                            span,
+                        );
+                        self.property(&mut read, false);
+                        chain = synth(
+                            E::Cond {
+                                cond: Box::new(is_key(
+                                    &k,
+                                    &key,
+                                    (i == 0).then_some((&all[..], &t, false)),
+                                    span,
+                                )),
+                                then: Box::new(read),
+                                els: Box::new(chain),
+                            },
+                            span,
+                        );
+                    }
+                    *e = synth(E::Paren(Box::new(chain)), span);
+                    return true;
+                }
                 _ => return false,
             },
             _ => return false,
@@ -384,6 +558,7 @@ impl<'a> Walk<'a> {
             ty,
             span,
             written,
+            defined: false,
         });
         e.kind = E::Ident(ast::Ident {
             name: slot_name(&key),
@@ -418,6 +593,7 @@ impl<'a> Walk<'a> {
             ty,
             span: args[0].span.to(args[1].span),
             written: false,
+            defined: stmt,
         };
         if !stmt {
             // Reported here; the checker sees the property.
@@ -445,4 +621,34 @@ impl<'a> Walk<'a> {
         self.expr(&mut args[2], false);
         true
     }
+}
+
+fn synth(kind: E, span: velt_common::Span) -> ast::Expr {
+    ast::Expr {
+        id: ast::NodeId(u32::MAX),
+        kind,
+        span,
+    }
+}
+
+fn ident(name: &str, span: velt_common::Span) -> ast::Expr {
+    synth(
+        E::Ident(ast::Ident {
+            name: name.to_string(),
+            span,
+        }),
+        span,
+    )
+}
+
+/// `(k as string) === "key"`: the cast keeps `k` from narrowing, so a test in a branch of
+/// another (a read in the value of an assignment) is not always false. The first test of a
+/// chain (`listed`: the keys) also checks that `k` is one of them, `__satisfies<"a" | "b">(k)`,
+/// as TypeScript requires (TS7053): a wider key is a type error, not a property the chain skips.
+/// A string constant of a scope that is a key of `globalThis`, where it is declared and in how
+/// many functions.
+struct ConstKey {
+    key: String,
+    at: u32,
+    depth: usize,
 }

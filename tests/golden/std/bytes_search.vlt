@@ -107,7 +107,8 @@ function masks(): number {
       const d: u8[] = Buffer.alloc(n);
       const want: u8[] = Buffer.alloc(n);
       for (let i = 0; i < n; i++) {
-        d[i] = (i * 37 + 11) as u8;
+        // `% 256`: a `number` cast to `u8` saturates instead of wrapping.
+        d[i] = ((i * 37 + 11) % 256) as u8;
         want[i] = d[i];
       }
       const lo = start < 0 ? (n + start < 0 ? 0 : n + start) : start < n ? start : n;
@@ -127,26 +128,31 @@ function masks(): number {
   return checks;
 }
 
-// Long frames with the default end, as WebSocket code calls it: several 64-byte steps, then
-// 16-byte ones and the overlapping last vector, with a different mask per length.
+// Long frames, as WebSocket code masks them: from 0 and from 3 (after a header) to the end,
+// through the 128- and 64-byte steps, then 16-byte ones and the overlapping last vector, with a
+// different mask per length.
 function frames(): number {
   let checks = 0;
-  for (let n = 180; n <= 330; n++) {
-    const mask = (0x9e3779b9 + n * 2654435761) as u32;
+  for (let n = 64; n <= 400; n++) {
+    // `%`: a `number` cast to an integer type saturates instead of wrapping.
+    const mask = ((0x9e3779b9 + n * 2654435761) % 4294967296) as u32;
     const key: u8[] = [(mask >> 24) as u8, (mask >> 16) as u8, (mask >> 8) as u8, mask as u8];
     const d: u8[] = Buffer.alloc(n);
     for (let i = 0; i < n; i++) {
-      d[i] = (i * 29 + n) as u8;
+      d[i] = ((i * 29 + n) % 256) as u8;
     }
     d.xorMask(mask);
     for (let i = 0; i < n; i++) {
-      if (d[i] != (((i * 29 + n) as u8) ^ key[i % 4])) {
+      if (d[i] != (((i * 29 + n) % 256) as u8 ^ key[i % 4])) {
         console.log("FAIL frame", n, i);
       }
     }
     d.xorMask(mask, 3);
-    if (d[0] != (((n as u8) ^ key[0]) as u8) || d[3] != (((87 + n) as u8) ^ key[3] ^ key[0])) {
-      console.log("FAIL frame from 3", n);
+    for (let i = 0; i < n; i++) {
+      const once = ((i * 29 + n) % 256) as u8 ^ key[i % 4];
+      if (d[i] != (i < 3 ? once : once ^ key[(i - 3) % 4])) {
+        console.log("FAIL frame from 3", n, i);
+      }
     }
     checks++;
   }

@@ -1,0 +1,6 @@
+// A `declare global { var K: T }` in another module types `globalThis.K` here.
+import { seen } from "./_global_this_declared_lib";
+
+globalThis.__XM__ = 1;
+globalThis.__XM__ = (globalThis.__XM__ ?? 0) + seen + 1;
+console.log(globalThis.__XM__);
