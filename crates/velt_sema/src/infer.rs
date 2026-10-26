@@ -9,6 +9,9 @@ use crate::hir::{DefId, ImplDef, TyId, TyKind, TyOp};
 
 mod ext_impls;
 
+/// A found impl: its index, the interface arguments and the type it is for (`Ctx::find_impl`).
+pub(crate) type FoundImpl = (u32, Vec<TyId>, TyId);
+
 impl Ctx<'_> {
     /// [`match_ty`](Self::match_ty) against an expected type whose error types are unknown
     /// ([`without_error_types`](crate::types::Types::without_error_types)): a slot may then be a

@@ -28,7 +28,14 @@ use crate::hir::{DefId, ImplBound, ImplDef, TyId, TyKind};
 
 pub(super) fn build(cx: &mut Ctx) {
     for e in 0..cx.extensions.len() {
-        for (b, span) in cx.extensions[e].implements.clone() {
+        let implements = cx.extensions[e].implements.clone();
+        if implements
+            .first()
+            .is_some_and(|&(_, span)| !bounds_ok(cx, e, span))
+        {
+            continue;
+        }
+        for (b, span) in implements {
             if !target_ok(cx, e, &b, span) {
                 continue;
             }
@@ -36,16 +43,25 @@ pub(super) fn build(cx: &mut Ctx) {
                 continue;
             };
             let (iface, i) = (imp.iface, cx.impls.len() as u32);
-            if let Some(other) = cx.own_impl(imp.ty, iface) {
-                let def = cx.impls[other.0 as usize].methods.first().copied();
-                report_conflict(cx, e, &b, span, def, None);
+            if let Some((other, args, _)) = cx.own_impl(imp.ty, iface) {
+                let def = cx.impls[other as usize].methods.first().copied();
+                let theirs = bound_name(cx, e, iface, &args);
+                report_conflict(cx, e, &b, span, (def, theirs), None);
                 continue;
             }
             cx.impls.push(imp);
             cx.ext_impls.insert(i, e);
             if let Some((other, witness)) = overlapping(cx, i) {
-                let def = cx.impls[other as usize].methods.first().copied();
-                report_conflict(cx, e, &b, span, def, Some(witness));
+                let o = cx.impls[other as usize].clone();
+                let theirs = bound_name(cx, cx.ext_impls[&other], iface, &o.iface_args);
+                report_conflict(
+                    cx,
+                    e,
+                    &b,
+                    span,
+                    (o.methods.first().copied(), theirs),
+                    Some(witness),
+                );
                 cx.ext_impls.remove(&i);
                 cx.impls.pop();
                 continue;
@@ -53,6 +69,49 @@ pub(super) fn build(cx: &mut Ctx) {
             cx.ext_by_iface.entry(iface).or_default().push(i);
         }
     }
+}
+
+/// Are the bounds of extension `e` (which lists `implements`, at `span`) interfaces an impl
+/// lookup can check? A dynamic one (`T extends unknown`, `object`, `Function`, `any`) or a type
+/// one (`T extends string`) is refused.
+fn bounds_ok(cx: &mut Ctx, e: usize, span: velt_common::Span) -> bool {
+    let g = &cx.extensions[e].generics;
+    let dynamic = cx.any.map(|d| [d.any, d.unknown, d.object, d.function]);
+    let bad = g.names.iter().enumerate().find_map(|(k, name)| {
+        let dyn_bound = g
+            .bounds
+            .get(k)
+            .into_iter()
+            .flatten()
+            .find(|b| dynamic.is_some_and(|ds| ds.contains(&b.iface)));
+        match (dyn_bound, g.constraints.get(k).copied().flatten()) {
+            (Some(b), _) => Some((name.clone(), Some(b.iface), None)),
+            (None, Some(t)) => Some((name.clone(), None, Some(t))),
+            _ => None,
+        }
+    });
+    let Some((name, iface, constraint)) = bad else {
+        return true;
+    };
+    let what = match (iface, constraint) {
+        (Some(d), _) => cx.iface(d).map(|i| i.name.clone()).unwrap_or_default(),
+        (None, Some(t)) => {
+            let names = cx.extensions[e].generics.names.clone();
+            let saved = std::mem::replace(&mut cx.display_params, names);
+            let tn = cx.display(t);
+            cx.display_params = saved;
+            tn
+        }
+        _ => String::new(),
+    };
+    cx.error(
+        Diagnostic::error(
+            format!("an `extend` block that lists `implements` cannot bound `{name}` by `{what}`"),
+            span,
+        )
+        .with_note("its bounds must be interfaces a type implements (`T extends Comparable<T>`); leave out a bound of `any` or `unknown`, which every type meets"),
+    );
+    false
 }
 
 /// Can extension `e` implement `b` for its target? Reports why not.
@@ -196,6 +255,7 @@ fn overlapping(cx: &mut Ctx, i: u32) -> Option<(u32, Option<TyId>)> {
     None
 }
 
+/// `other`: the other implementation's first method and its interface with arguments.
 /// `overlap`: `None` for a type that already implements the interface, else the type two
 /// blocks fit, if it names no type parameter.
 fn report_conflict(
@@ -203,34 +263,51 @@ fn report_conflict(
     e: usize,
     b: &Bound,
     span: velt_common::Span,
-    other: Option<DefId>,
+    (other, theirs): (Option<DefId>, String),
     overlap: Option<Option<TyId>>,
 ) {
-    let iname = cx
-        .iface(b.iface)
-        .map(|i| i.name.clone())
-        .unwrap_or_default();
+    let ours = bound_name(cx, e, b.iface, &b.args);
     let mut d = match overlap {
         Some(witness) => {
             let fits = match witness {
                 Some(t) => format!(" (both fit `{}`)", cx.display(t)),
                 None => String::new(),
             };
+            let both = match ours == theirs {
+                true => format!("`{ours}`"),
+                false => format!("`{ours}` and `{theirs}`"),
+            };
             Diagnostic::error(
-                format!("conflicting implementations of `{iname}`: neither block is more specific than the other{fits}"),
+                format!("conflicting implementations of {both}: neither block is more specific than the other{fits}"),
                 span,
             )
-            .with_note("a type gets the most specific implementation that fits it: make one block's target or bounds narrower, or remove one")
+            .with_note("a type gets the most specific implementation that fits it, with that block's interface arguments: make one block's target or bounds narrower, or remove one")
         }
         None => {
             let tn = target_name(cx, e);
-            Diagnostic::error(format!("`{tn}` already implements `{iname}`"), span)
+            let mut d = Diagnostic::error(format!("`{tn}` already implements `{theirs}`"), span);
+            if ours != theirs {
+                d = d.with_note(format!(
+                    "a type implements an interface once, so it cannot also implement `{ours}`"
+                ));
+            }
+            d
         }
     };
     if let Some(def) = other {
         d = d.with_label(cx.fn_info(def).name_span, "the other implementation");
     }
     cx.error(d);
+}
+
+/// `iface<args>` as written in extension `e` (its type parameters by name).
+fn bound_name(cx: &mut Ctx, e: usize, iface: DefId, args: &[TyId]) -> String {
+    let names = cx.extensions[e].generics.names.clone();
+    let saved = std::mem::replace(&mut cx.display_params, names);
+    let t = cx.ty.intern(TyKind::Dyn(iface, args.to_vec()));
+    let s = cx.display(t);
+    cx.display_params = saved;
+    s
 }
 
 /// Does extension `e` bound any of its type parameters?

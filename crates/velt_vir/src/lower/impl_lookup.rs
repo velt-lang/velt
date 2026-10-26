@@ -4,17 +4,22 @@
 //! fits the type (its bounds holding, `Program::extension_impls`), or else a base class.
 //!
 //! A block's bounds are checked through impls again, so a lookup can come back to itself: one
-//! that is in progress counts as not fitting (`Cx::impl_busy`), as in sema.
+//! that is in progress counts as not fitting (`Cx::impl_busy`), as in sema. Finished lookups
+//! are remembered (`Cx::ext_memo`) unless a lookup still running outside them cut them short.
 
 use velt_sema::hir::{DefId, TyId};
 
 use super::ice;
+
+/// An `extend` lookup: the interface, its arguments (`None`: any) and the type.
+pub(super) type MemoKey = (DefId, Option<Vec<TyId>>, TyId);
 
 /// How many `extend` lookups may nest.
 const MAX_NESTED: usize = 64;
 
 /// An impl that fits a type: its index, the type it is for (the type or a base class) and the
 /// bindings of its type parameters.
+#[derive(Clone)]
 pub(super) struct Fit {
     pub index: u32,
     pub ty: TyId,
@@ -65,9 +70,21 @@ impl super::Cx<'_> {
         iargs: Option<&[TyId]>,
         ty: TyId,
     ) -> Option<Fit> {
-        if self.impl_busy.len() >= MAX_NESTED || !self.impl_busy.insert((iface, ty)) {
+        let key: MemoKey = (iface, iargs.map(<[TyId]>::to_vec), ty);
+        if let Some(found) = self.ext_memo.get(&key) {
+            return found.clone();
+        }
+        if let Some(&at) = self.impl_busy.get(&(iface, ty)) {
+            self.ext_low_cut = self.ext_low_cut.min(at);
             return None;
         }
+        if self.impl_busy.len() >= MAX_NESTED {
+            self.ext_low_cut = 0;
+            return None;
+        }
+        let depth = self.impl_busy.len();
+        self.impl_busy.insert((iface, ty), depth);
+        let outer_cut = std::mem::replace(&mut self.ext_low_cut, usize::MAX);
         let impls = self.impls_of(iface);
         let mut best: Option<Fit> = None;
         for cand in self.self_and_bases(ty) {
@@ -96,6 +113,11 @@ impl super::Cx<'_> {
             }
         }
         self.impl_busy.remove(&(iface, ty));
+        // Cut short only by itself or deeper lookups: the answer is final.
+        if self.ext_low_cut >= depth {
+            self.ext_memo.insert(key, best.clone());
+        }
+        self.ext_low_cut = outer_cut.min(self.ext_low_cut);
         best
     }
 

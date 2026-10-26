@@ -420,7 +420,11 @@ struct Cx<'h> {
     /// `Program::impls` indexes per interface (`impls_of`), built on first use.
     iface_impls: Option<FxHashMap<DefId, Rc<[u32]>>>,
     /// The `(interface, type)` lookups of `extend` impls in progress (impl_lookup.rs).
-    impl_busy: FxHashSet<(DefId, TyId)>,
+    impl_busy: FxHashMap<(DefId, TyId), usize>,
+    /// Finished `extend` lookups by `(interface, arguments, type)`, and the shallowest
+    /// `impl_busy` depth a running lookup was cut short at (impl_lookup.rs).
+    ext_memo: FxHashMap<impl_lookup::MemoKey, Option<impl_lookup::Fit>>,
+    ext_low_cut: usize,
     /// Classes with a `clone()` of their own, and that method (`own_clone`, transfer.rs),
     /// found on first use.
     own_clones: Option<FxHashMap<DefId, DefId>>,

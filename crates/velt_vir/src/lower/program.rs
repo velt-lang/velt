@@ -62,6 +62,8 @@ impl<'h> Cx<'h> {
             facts: Default::default(),
             iface_impls: None,
             impl_busy: Default::default(),
+            ext_memo: Default::default(),
+            ext_low_cut: usize::MAX,
             own_clones: None,
             honoured_clones: FxHashMap::default(),
             dyn_modes_memo: FxHashMap::default(),
