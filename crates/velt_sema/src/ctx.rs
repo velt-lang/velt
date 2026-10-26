@@ -77,17 +77,13 @@ pub(crate) struct Ctx<'m> {
     pub ext_impls: FxHashMap<u32, usize>,
     /// `ext_impls` by interface, in order.
     pub ext_by_iface: FxHashMap<DefId, Vec<u32>>,
-    /// The `(type, interface)` lookups of `extend` impls in progress (infer/ext_impls.rs): one
-    /// that comes back to itself through a block's bounds does not fit.
-    pub impl_busy: FxHashMap<(TyId, DefId), usize>,
-    /// Finished `extend` lookups (infer/ext_impls.rs), valid while `impls` has
-    /// `ext_memo_impls` entries.
+    /// Finished `extend` lookups (infer/ext_impls.rs) and bound checks through blocks
+    /// (infer/ext_exists.rs), valid while `impls` has `ext_memo_impls` entries.
     pub ext_memo: FxHashMap<(TyId, DefId), Option<crate::infer::FoundImpl>>,
+    pub ext_exists_memo: FxHashMap<crate::infer::ExistsKey, bool>,
     pub ext_memo_impls: usize,
-    /// The shallowest `impl_busy` depth a running lookup was cut short at.
-    pub ext_low_cut: usize,
-    /// How often an `extend` lookup stopped at the nesting limit (for the bound's message).
-    pub ext_limit_hits: u32,
+    /// How deeply `ext_exists` computations are nested.
+    pub ext_reentry: u32,
     /// Set while `Ctx::blanket_bounds` checks a blanket impl's bounds: the bounds a parameter
     /// has through blanket impls come from its declared bounds only, not from other blanket
     /// impls, so the check never recurses.
@@ -438,11 +434,10 @@ impl<'m> Ctx<'m> {
             impl_index: Default::default(),
             ext_impls: FxHashMap::default(),
             ext_by_iface: FxHashMap::default(),
-            impl_busy: Default::default(),
             ext_memo: Default::default(),
+            ext_exists_memo: Default::default(),
             ext_memo_impls: 0,
-            ext_low_cut: usize::MAX,
-            ext_limit_hits: 0,
+            ext_reentry: 0,
             in_blanket: false,
             impl_scope: vec![],
             anon: FxHashMap::default(),

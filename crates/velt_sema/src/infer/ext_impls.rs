@@ -5,18 +5,14 @@
 //! looked for on the type and then on each base class. Collect refuses two blocks that can both
 //! fit one type where neither is more specific ([`Ctx::ext_overlap`]), so that block is unique.
 //!
-//! A block's bounds are checked through impls again (`extend<T extends I> T implements J`), so
-//! a lookup can come back to itself. A `(type, interface)` lookup that is in progress counts as
-//! not fitting (`Ctx::impl_busy`), which ends every cycle; lowering does the same. Finished
-//! lookups are remembered (`Ctx::ext_memo`) unless a lookup still running outside them cut them
-//! short, so a chain of blocks whose bounds share interfaces is looked up once per type.
+//! A block's bounds hold when the type meets them at all (infer/ext_exists.rs), whichever block
+//! or impl gives it the interface: that answer does not depend on which lookups are running,
+//! so the block chosen for a type is the same in every context, and lookups are remembered
+//! (`Ctx::ext_memo`). Lowering decides the same way.
 
 use crate::ctx::Ctx;
 use crate::defs::Bound;
 use crate::hir::{DefId, TyId, TyKind};
-
-/// How many `extend` lookups may nest (each checks a block's bounds through impls).
-const MAX_NESTED: usize = 64;
 
 impl Ctx<'_> {
     /// The most specific `extend … implements iface` impl that fits `ty`, or else its nearest
@@ -31,24 +27,13 @@ impl Ctx<'_> {
         // bounds in scope) is remembered while no impl is added.
         if self.ext_memo_impls != self.impls.len() {
             self.ext_memo.clear();
+            self.ext_exists_memo.clear();
             self.ext_memo_impls = self.impls.len();
         }
         let closed = !self.mentions_params(ty);
         if let Some(found) = closed.then(|| self.ext_memo.get(&(ty, iface))).flatten() {
             return found.clone();
         }
-        if let Some(&at) = self.impl_busy.get(&(ty, iface)) {
-            self.ext_low_cut = self.ext_low_cut.min(at);
-            return None;
-        }
-        if self.impl_busy.len() >= MAX_NESTED {
-            self.ext_limit_hits += 1;
-            self.ext_low_cut = 0;
-            return None;
-        }
-        let depth = self.impl_busy.len();
-        self.impl_busy.insert((ty, iface), depth);
-        let outer_cut = std::mem::replace(&mut self.ext_low_cut, usize::MAX);
         let mut cur = Some(ty);
         let mut best = None;
         for _ in 0..64 {
@@ -59,13 +44,9 @@ impl Ctx<'_> {
             }
             cur = self.base_of(t);
         }
-        self.impl_busy.remove(&(ty, iface));
-        // Cut short only by itself or deeper lookups (not by one still running outside it):
-        // the answer is final.
-        if closed && self.ext_low_cut >= depth && self.ext_memo_impls == self.impls.len() {
+        if closed && self.ext_memo_impls == self.impls.len() {
             self.ext_memo.insert((ty, iface), best.clone());
         }
-        self.ext_low_cut = outer_cut.min(self.ext_low_cut);
         best
     }
 
@@ -100,23 +81,44 @@ impl Ctx<'_> {
 
     /// Do the bounds of extension `e` hold for the type args with which its impl `i` fits `t`?
     fn ext_bounds_hold(&mut self, i: u32, e: usize, t: TyId) -> bool {
+        let Some(obligations) = self.ext_obligations(i, e, t) else {
+            return false;
+        };
+        let scope = self.impl_scope.clone();
+        obligations
+            .iter()
+            .all(|(a, b)| self.obligation_holds(*a, b, &scope))
+    }
+
+    /// The bounds of extension `e` (of impl `i`) for the type args with which it fits `t`:
+    /// each type arg with a bound it must meet.
+    pub(super) fn ext_obligations(
+        &mut self,
+        i: u32,
+        e: usize,
+        t: TyId,
+    ) -> Option<Vec<(TyId, Bound)>> {
         let imp = &self.impls[i as usize];
         let mut slots = vec![None; imp.generics as usize];
         if !self.match_ty(imp.ty, t, &mut slots) {
-            return false;
+            return None;
         }
         let args: Vec<TyId> = slots.iter().map(|s| s.unwrap_or(self.ty.error)).collect();
         let bounds = self.extensions[e].generics.bounds.clone();
-        let scope = self.impl_scope.clone();
-        bounds.iter().zip(&args).all(|(bs, &a)| {
-            bs.iter().all(|b| {
-                let b = Bound {
-                    iface: b.iface,
-                    args: b.args.iter().map(|x| self.subst(*x, &args)).collect(),
-                };
-                self.satisfies(a, &b, &scope)
-            })
-        })
+        let mut out = vec![];
+        for (bs, &a) in bounds.iter().zip(&args) {
+            for b in bs {
+                let args = b.args.iter().map(|x| self.subst(*x, &args)).collect();
+                out.push((
+                    a,
+                    Bound {
+                        iface: b.iface,
+                        args,
+                    },
+                ));
+            }
+        }
+        Some(out)
     }
 
     /// Is the `extend … implements` impl `a` strictly more specific than impl `b`: its target

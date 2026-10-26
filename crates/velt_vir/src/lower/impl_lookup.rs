@@ -3,9 +3,9 @@
 //! the first in `impls` order; else the most specific `extend … implements` block's impl that
 //! fits the type (its bounds holding, `Program::extension_impls`), or else a base class.
 //!
-//! A block's bounds are checked through impls again, so a lookup can come back to itself: one
-//! that is in progress counts as not fitting (`Cx::impl_busy`), as in sema. Finished lookups
-//! are remembered (`Cx::ext_memo`) unless a lookup still running outside them cut them short.
+//! A block's bounds hold when the type meets them at all (ext_exists.rs, the same answer as
+//! sema's), so a lookup's answer does not depend on which lookups are running and is
+//! remembered (`Cx::ext_memo`).
 
 use velt_sema::hir::{DefId, TyId};
 
@@ -13,9 +13,6 @@ use super::ice;
 
 /// An `extend` lookup: the interface, its arguments (`None`: any) and the type.
 pub(super) type MemoKey = (DefId, Option<Vec<TyId>>, TyId);
-
-/// How many `extend` lookups may nest.
-const MAX_NESTED: usize = 64;
 
 /// An impl that fits a type: its index, the type it is for (the type or a base class) and the
 /// bindings of its type parameters.
@@ -74,17 +71,6 @@ impl super::Cx<'_> {
         if let Some(found) = self.ext_memo.get(&key) {
             return found.clone();
         }
-        if let Some(&at) = self.impl_busy.get(&(iface, ty)) {
-            self.ext_low_cut = self.ext_low_cut.min(at);
-            return None;
-        }
-        if self.impl_busy.len() >= MAX_NESTED {
-            self.ext_low_cut = 0;
-            return None;
-        }
-        let depth = self.impl_busy.len();
-        self.impl_busy.insert((iface, ty), depth);
-        let outer_cut = std::mem::replace(&mut self.ext_low_cut, usize::MAX);
         let impls = self.impls_of(iface);
         let mut best: Option<Fit> = None;
         for cand in self.self_and_bases(ty) {
@@ -112,40 +98,79 @@ impl super::Cx<'_> {
                 break;
             }
         }
-        self.impl_busy.remove(&(iface, ty));
-        // Cut short only by itself or deeper lookups: the answer is final.
-        if self.ext_low_cut >= depth {
-            self.ext_memo.insert(key, best.clone());
-        }
-        self.ext_low_cut = outer_cut.min(self.ext_low_cut);
+        self.ext_memo.insert(key, best.clone());
         best
     }
 
     /// The bindings with which impl `i` implements `<iargs>` (or any arguments) for `ty`, its
     /// bounds (an `extend` block's) holding.
     fn impl_fits(&mut self, i: u32, iargs: Option<&[TyId]>, ty: TyId) -> Option<Vec<Option<TyId>>> {
+        let binds = self.impl_shape(i, iargs, ty)?;
+        if !self.hir.extension_impls.contains_key(&i) {
+            return Some(binds);
+        }
+        let obligations = self.ext_obligations(i, &binds);
+        let holds =
+            (obligations.into_iter()).all(|(iface, args, t)| self.bound_holds(iface, args, t));
+        holds.then_some(binds)
+    }
+
+    /// Does impl `i` fit `ty` with interface arguments `iargs` (or any), its bounds aside?
+    pub(super) fn impl_shape(
+        &mut self,
+        i: u32,
+        iargs: Option<&[TyId]>,
+        ty: TyId,
+    ) -> Option<Vec<Option<TyId>>> {
         let imp = &self.hir.impls[i as usize];
         let mut binds = vec![None; imp.generics as usize];
         let fits = self.match_ty(imp.ty, ty, &mut binds)
             && iargs.is_none_or(|a| {
                 imp.iface_args.len() == a.len() && self.match_all(&imp.iface_args, a, &mut binds)
             });
-        if !fits {
-            return None;
-        }
-        let Some(bounds) = self.hir.extension_impls.get(&i).cloned() else {
-            return Some(binds);
-        };
+        fits.then_some(binds)
+    }
+
+    /// The bounds of `extend` impl `i` with its type parameters bound to `binds`: per bound,
+    /// the interface, its arguments and the type that must implement it.
+    pub(super) fn ext_obligations(
+        &mut self,
+        i: u32,
+        binds: &[Option<TyId>],
+    ) -> Vec<(DefId, Vec<TyId>, TyId)> {
+        let bounds = self
+            .hir
+            .extension_impls
+            .get(&i)
+            .cloned()
+            .unwrap_or_default();
         let args: Vec<TyId> = binds
             .iter()
             .map(|b| b.unwrap_or_else(|| ice("impl type parameter left unbound")))
             .collect();
-        let holds = bounds.iter().all(|b| {
-            let t = args[b.param as usize];
-            let bargs: Vec<TyId> = b.args.iter().map(|&a| self.subst(a, &args)).collect();
-            self.impl_for(b.iface, Some(&bargs), t).is_some()
-        });
-        holds.then_some(binds)
+        (bounds.iter())
+            .map(|b| {
+                let bargs = b.args.iter().map(|&a| self.subst(a, &args)).collect();
+                (b.iface, bargs, args[b.param as usize])
+            })
+            .collect()
+    }
+
+    /// The first impl of `iface` (any arguments) of `ty` or its nearest base class implementing
+    /// it, not an `extend` block's: sema's `Ctx::own_impl`.
+    pub(super) fn own_impl(&mut self, iface: DefId, ty: TyId) -> Option<(u32, TyId)> {
+        let impls = self.impls_of(iface);
+        for cand in self.self_and_bases(ty) {
+            for &i in impls.iter() {
+                if self.hir.extension_impls.contains_key(&i) {
+                    continue;
+                }
+                if self.impl_shape(i, None, cand).is_some() {
+                    return Some((i, cand));
+                }
+            }
+        }
+        None
     }
 
     /// Is `extend` impl `a` strictly more specific than impl `b`: its target an instance of
