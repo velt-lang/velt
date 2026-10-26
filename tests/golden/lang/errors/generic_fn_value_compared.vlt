@@ -1,40 +1,33 @@
 // Function values Velt makes anew at each use, where JavaScript keeps one function (#943):
 // comparing them would give another answer than Node, so a program that makes one and compares
-// function values of its type is an error. A generic value converted to a function of fixed
-// types, a function asserted to a generic type, a generic function used at a type over the
-// caller's type parameters, and one used as a value at two generic types; also compared inside a
-// union, an option, a field or a struct key, and after a conversion to a wider function type.
+// function values of its type is an error. A generic value (here a parameter) converted to a
+// function of fixed types, compared directly, inside a union, a field or a struct key, and after
+// a conversion to a wider function type; a function asserted to a generic type; a generic
+// function used at a type over the caller's type parameters; and one used as a value at two
+// generic types, compared through `unknown`.
 type G = <T>(x: T) => T;
 type W = <T>(x: T) => unknown;
 type P<U> = <T>(x: T, u: U) => T;
 type Tok<T> = symbol & { __t?: T };
 type MkTok = <T>(d: string) => Tok<T>;
-type N = (x: number) => number;
-type Wide = (x: number) => number | string;
+type OnStr = (x: string) => string;
+type OnBool = (x: boolean) => boolean;
+type OnList = (x: number[]) => number[];
+type Wide = (x: number[]) => number[] | string;
+type OnKey = (x: string[]) => string[];
+type OnOr = (x: boolean[]) => boolean[];
 
 interface Holder {
-  f: N | undefined;
+  f: OnBool | undefined;
 }
 
 struct Key {
-  f: N;
+  f: OnKey;
   n: number;
 }
 
 struct KeyOr {
-  f: N | null;
-}
-
-function same<T>(x: T): T {
-  return x;
-}
-
-function other<T>(x: T): T {
-  return x;
-}
-
-function keyed<T>(x: T): T {
-  return x;
+  f: OnOr | null;
 }
 
 function id<T>(x: T): T {
@@ -49,39 +42,53 @@ function getP<U>(u: U): P<U> {
   return pick;
 }
 
-function main(): void {
-  const g: G = id;
+function direct(g: G): void {
   const p: (x: number) => number = g;
   const q: (x: number) => number = g;
   console.log(p === q, [p].includes(q));
+}
+
+function inUnion(g: G): void {
+  const p: OnStr = g;
+  const q: OnStr = g;
+  const xs: (OnStr | null)[] = [p];
+  console.log(xs.includes(q), new Set<OnStr | undefined>([p, q]).size);
+}
+
+function inField(g: G): void {
+  const a: Holder = { f: g };
+  const b: Holder = { f: g };
+  console.log(a.f === b.f);
+}
+
+function wider(g: G): void {
+  const p: OnList = g;
+  const q: OnList = g;
+  const a: Wide = p;
+  const b: Wide = q;
+  console.log(a === b);
+}
+
+function inKey(g: G): void {
+  const keys = new Set<Key>();
+  keys.add(Key { f: g, n: 1 });
+  keys.add(Key { f: g, n: 1 });
+  const byKey = new Map<KeyOr, number>();
+  byKey.set(KeyOr { f: g }, 1);
+  console.log(keys.size, byKey.get(KeyOr { f: g }));
+}
+
+function main(): void {
+  direct(id);
+  inUnion(id);
+  inField(id);
+  wider(id);
+  inKey(id);
   const c1 = Symbol as unknown as <T>(d: string) => Tok<T>;
   const c2 = Symbol as unknown as <T>(d: string) => Tok<T>;
   console.log(new Set<MkTok>([c1, c2]).size);
   console.log(getP(1) === getP(2));
+  const g: G = id;
   const w: W = id;
   console.log((g as unknown) === (w as unknown));
-  const s1: G = same;
-  const n1: N = s1;
-  const n2: N = s1;
-  const inUnion: (N | null)[] = [n1];
-  console.log(inUnion.includes(n2), new Set<N | undefined>([n1, n2]).size);
-  const h1: Holder = { f: s1 };
-  const h2: Holder = { f: s1 };
-  console.log(h1.f === h2.f);
-  const o1: G = other;
-  const held: unknown = o1;
-  const m1: N = o1;
-  const m2: N = o1;
-  const wide1: Wide = m1;
-  const wide2: Wide = m2;
-  console.log(wide1 === wide2, typeof held);
-  const k: G = keyed;
-  const k1: N = k;
-  const k2: N = k;
-  const keys = new Set<Key>();
-  keys.add(Key { f: k1, n: 1 });
-  keys.add(Key { f: k2, n: 1 });
-  const byKey = new Map<KeyOr, number>();
-  byKey.set(KeyOr { f: k }, 1);
-  console.log(keys.size, byKey.get(KeyOr { f: k }));
 }

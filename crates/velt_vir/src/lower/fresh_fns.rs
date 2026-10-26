@@ -109,11 +109,11 @@ impl Cx<'_> {
 
     /// Errors for the fresh closures made whose values may be compared (module docs).
     pub(super) fn fresh_fn_diagnostics(&self) -> Vec<Diagnostic> {
-        let mut made: Vec<(DefId, FnKey)> = self.facts.fresh_made.iter().cloned().collect();
-        made.sort_unstable_by_key(|(d, _)| d.0);
+        let mut made: Vec<(DefId, FnKey, bool)> = self.facts.fresh_made.iter().cloned().collect();
+        made.sort_unstable_by_key(|(d, _, _)| d.0);
         let mut out = vec![];
         let mut spans = rustc_hash::FxHashSet::default();
-        for (d, key) in made {
+        for (d, key, several) in made {
             // Its own type and those it is converted to (`FreshClosure::Converts`).
             let mut keys = vec![key];
             let mut i = 0;
@@ -125,7 +125,9 @@ impl Cx<'_> {
                     }
                 }
             }
-            let typed = keys.iter().any(|k| self.facts.fn_compared_keys.contains(k));
+            // One of several values of a function (`FreshClosure::Several`) is one value at its
+            // type: only a comparison of dynamic values meets the function's others.
+            let typed = !several && keys.iter().any(|k| self.facts.fn_compared_keys.contains(k));
             let held = |k: &FnKey| {
                 self.facts
                     .dyn_types
@@ -180,7 +182,12 @@ impl FnLower<'_, '_> {
         match self.cx.hir.fresh_closures.get(&def) {
             Some(&FreshClosure::New(t)) => {
                 if let Some(key) = self.instantiated_key(t) {
-                    self.cx.facts.fresh_made.insert((def, key));
+                    self.cx.facts.fresh_made.insert((def, key, false));
+                }
+            }
+            Some(&FreshClosure::Several(t)) => {
+                if let Some(key) = self.instantiated_key(t) {
+                    self.cx.facts.fresh_made.insert((def, key, true));
                 }
             }
             Some(&FreshClosure::Converts { from, to }) => {

@@ -510,7 +510,9 @@ pub(crate) fn mark_shared_values(cx: &mut Ctx) {
         }
         for (t, g) in values {
             if let Some(c) = global_closure(cx, g) {
-                cx.generic_fns.fresh.insert(c, hir::FreshClosure::New(t));
+                cx.generic_fns
+                    .fresh
+                    .insert(c, hir::FreshClosure::Several(t));
             }
         }
     }

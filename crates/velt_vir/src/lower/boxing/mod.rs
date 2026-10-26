@@ -213,7 +213,7 @@ pub(super) struct Facts {
     /// The conversions of function values between function types (fresh_fns.rs).
     pub(in crate::lower) fn_edges: FxHashSet<(FnKey, FnKey)>,
     /// The fresh closures made (fresh_fns.rs).
-    pub(in crate::lower) fresh_made: FxHashSet<(velt_sema::hir::DefId, FnKey)>,
+    pub(in crate::lower) fresh_made: FxHashSet<(velt_sema::hir::DefId, FnKey, bool)>,
     /// A generic closure is held as `unknown` (`Boxing::generic_any`).
     pub(super) generic_any: bool,
     /// A member is written through `any`.

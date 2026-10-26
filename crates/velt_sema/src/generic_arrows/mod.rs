@@ -107,7 +107,7 @@ fn as_function(
         .or_else(|| {
             types
                 .may_declare(v)
-                .then(|| typed::typed_function(v, (module, false), types))
+                .then(|| typed::typed_function(v, module, types))
                 .flatten()
         })
         .or_else(|| lifted_arrow(v, true))

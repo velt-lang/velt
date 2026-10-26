@@ -258,7 +258,7 @@ impl<'t, 'm> Rewriter<'t, 'm> {
             let typed = || {
                 self.types
                     .may_declare(v)
-                    .then(|| typed_function(v, (self.module, true), self.types))
+                    .then(|| typed_function(v, self.module, self.types))
                     .flatten()
             };
             let lifted = match self.captures(v) {

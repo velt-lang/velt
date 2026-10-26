@@ -8,6 +8,7 @@ use velt_syntax::ast;
 
 use crate::any::Dynamic;
 use crate::body::{FnCx, Want};
+use crate::defs::DefInfo;
 use crate::hir::{self, DefId, ExprKind as H, TyId, TyKind};
 
 /// The local a generic function value converted to a function type is held in
@@ -31,11 +32,84 @@ impl FnCx<'_, '_> {
         let TyKind::FnPtr { params, rest, .. } = self.cx.ty.kind(exp).clone() else {
             return Err(h);
         };
+        if let Some(d) = self.named_fn_of(&h) {
+            return Ok(self.named_fn_at(d, h.span, exp));
+        }
         let mut g = self.forwarding(h, exp, (params.len(), rest), |s, arrow, exp| {
             s.closure(arrow, Some(exp), true)
         });
         self.mark_fresh(&mut g, exp);
         Ok(g)
+    }
+
+    /// `const g = <name>` of a named generic function (`const g: G = id`), or of a constant
+    /// holding one: recorded, so a use of `g` as a function of fixed types is that function
+    /// (`named_fn_of`).
+    pub(in crate::body) fn note_named_fn(&mut self, v: &ast::VarDecl, name: &ast::Ident) {
+        let Some(ast::ExprKind::Ident(init)) = v.init.as_ref().map(|e| &e.kind) else {
+            return;
+        };
+        if v.kind != ast::VarKind::Const {
+            return;
+        }
+        let d = match self.lookup_local(&init.name, init.span) {
+            Some(l) => self.f.named_fns.get(&l).copied(),
+            None => match self.cx.lookup_item_at(self.module, &init.name, init.span) {
+                Some(crate::ctx::Item::Def(d)) => self.named_fn_def(d),
+                _ => None,
+            },
+        };
+        if let (Some(d), Some(l)) = (d, self.lookup_local(&name.name, name.span)) {
+            self.f.named_fns.insert(l, d);
+        }
+    }
+
+    /// The named generic function `h` (a read of a local or a module constant) holds
+    /// (`note_named_fn`, `named_fn_def`).
+    pub(super) fn named_fn_of(&mut self, h: &hir::Expr) -> Option<DefId> {
+        match &h.kind {
+            H::Local(l, _) => self.f.named_fns.get(l).copied(),
+            H::Global(g) => self.named_fn_def(*g),
+            H::Call {
+                callee: hir::Callee::Intrinsic(hir::Intrinsic::Share),
+                args,
+            } => args.first().and_then(|a| self.named_fn_of(a)),
+            _ => None,
+        }
+    }
+
+    /// Generic function `d` itself, or the one module constant `d` holds through a chain of
+    /// constants initialized with a name (`const gg: G = id; const hh: G = gg`).
+    pub(super) fn named_fn_def(&self, mut d: DefId) -> Option<DefId> {
+        for _ in 0..16 {
+            match &self.cx.info[d.0 as usize] {
+                DefInfo::Fn(f) if f.generics.len() > 0 => return Some(d),
+                DefInfo::Global(g) if !g.mutable => {
+                    let ast::ExprKind::Ident(name) = &g.src.init?.kind else {
+                        return None;
+                    };
+                    let item = self.cx.lookup_item_at(g.module, &name.name, name.span);
+                    let Some(crate::ctx::Item::Def(next)) = item else {
+                        return None;
+                    };
+                    d = next;
+                }
+                _ => return None,
+            }
+        }
+        None
+    }
+
+    /// Generic function `d` instantiated at the function type `exp`, as TypeScript keeps the one
+    /// function where a constant holding it is used (`P === Q`, `p === id`).
+    pub(super) fn named_fn_at(&mut self, d: DefId, span: Span, exp: TyId) -> hir::Expr {
+        let name = self.cx.fn_info(d).name.clone();
+        let id = ast::Ident {
+            name: name.rsplit([':', '.']).next().unwrap_or(&name).to_string(),
+            span,
+        };
+        let h = self.fn_ref(d, &id, Some(exp));
+        self.coerce(h, exp)
     }
 
     /// Generic function value `h` as a value of another generic function type `exp` (one taking

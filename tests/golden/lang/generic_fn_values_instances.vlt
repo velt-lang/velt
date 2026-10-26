@@ -1,7 +1,10 @@
 // Constants holding a generic function used only where a function type of fixed types is
 // expected (#943): each use instantiates the function, as TypeScript keeps one function, so the
 // values compare equal. A local constant of a named function, a generic arrow, a typed arrow,
-// in a loop and as an async function's value; and module constants of a named function.
+// in a loop and as an async function's value; module constants of a named function, also
+// through another constant; and a constant of a named function given where a function of
+// fixed types is expected (an argument, a return, an element, a field, `as`, an option), which
+// is that function itself.
 type G = <T>(x: T) => T;
 type N = (x: number) => number;
 type A = <T>(f: () => T) => Promise<T>;
@@ -10,6 +13,39 @@ async function go<T>(f: () => T): Promise<T> { return f(); }
 const gg: G = id;
 const P: N = gg;
 const Q: N = gg;
+const hh: G = gg;
+const PP: N = hh;
+const QQ: N = hh;
+
+interface Hold {
+  f: N | undefined;
+}
+
+class BoxC<T> {
+  f: T;
+  constructor(f: T) {
+    this.f = f;
+  }
+}
+
+function eq<T>(a: T, b: T): boolean {
+  return a === b;
+}
+
+function same(f: N, h: N): boolean {
+  return f === h;
+}
+
+function made(): N {
+  const g: G = id;
+  return g;
+}
+
+async function madeLater(): Promise<N> {
+  const g: G = id;
+  return g;
+}
+
 async function main(): Promise<void> {
   const g: G = id;
   const p: N = g;
@@ -30,4 +66,23 @@ async function main(): Promise<void> {
   const n: (f: () => number) => Promise<number> = a;
   const m: (f: () => number) => Promise<number> = a;
   console.log(await n(() => 3), n === m);
+  console.log(PP === QQ, new Set<N>([PP, QQ]).size);
+  const k: G = id;
+  const ks = new Set<N | undefined>();
+  ks.add(k);
+  ks.add(k);
+  const km = new Map<N | null, number>();
+  km.set(k, 1);
+  const h1: Hold = { f: k };
+  const h2: Hold = { f: k };
+  console.log(ks.size, km.get(k), h1.f === h2.f, new BoxC<N>(k).f === new BoxC<N>(k).f);
+  const o1: N | null = k;
+  const o2: N | null = k;
+  const arr: N[] = [k, k];
+  const asN = { p: k as N, q: k as N };
+  console.log(eq(o1, o2), Object.is(o1, o2), same(k, k), made() === made(), arr[0] === arr[1], asN.p === asN.q);
+  const k2: G = k;
+  const r: N = id;
+  const fromK2: N = k2;
+  console.log(fromK2 === r, [r].includes(fromK2), (await madeLater()) === (await madeLater()));
 }

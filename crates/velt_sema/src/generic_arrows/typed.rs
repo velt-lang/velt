@@ -270,7 +270,7 @@ impl<'m> GenericFnTypes<'m> {
 /// docs), or `None` when `v` is not one or has a form that stays an error.
 pub(crate) fn typed_function(
     v: &ast::VarDecl,
-    (module, named): (usize, bool),
+    module: usize,
     table: &GenericFnTypes<'_>,
 ) -> Option<ast::FnDecl> {
     let ast::PatternKind::Ident(name) = &v.pattern.kind else {
@@ -286,9 +286,9 @@ pub(crate) fn typed_function(
             from_arrow(name, g, init, v.span)
         }
         // A name (`const asA: A = id`) stays a constant holding that value, so it is the
-        // same value (`asA === id`, #943), unless `named`: no use of the local takes it as a
-        // value of the generic type (`local::value_uses`), so each use instantiates it.
-        (Some(_), ast::ExprKind::Ident(_)) if !named => None,
+        // same value (`asA === id`, #943); a use of it as a function of fixed types is that
+        // function (`body::expr::generic_conversions` `named_fn_of`).
+        (Some(_), ast::ExprKind::Ident(_)) => None,
         (Some(t), _) => {
             let g = table.generic_fn(module, t)?;
             calling(name, g, init, v.span)
