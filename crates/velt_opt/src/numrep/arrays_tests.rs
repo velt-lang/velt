@@ -8,13 +8,14 @@ use crate::testkit::builder::*;
 use crate::testkit::validate::assert_valid;
 use velt_vir::vir::{BinOp, BlockId, ExternFn, Place, Program, Proj, Stmt, Terminator};
 
-/// The allocator, and an opaque `keep(ptr)` and `num() -> f64`.
+/// The allocator (growing in place), and an opaque `keep(ptr)` and `num() -> f64`.
 struct HeapHost;
 
 impl Host for HeapHost {
     fn call(&mut self, ext: &ExternFn, args: &[u64], mem: &mut Memory) -> Result<u64, Trap> {
         match ext.symbol.as_str() {
             "velt_rt_alloc" => mem.alloc_heap(args[0], args[1]),
+            "velt_rt_realloc" => Ok(args[0]),
             "velt_rt_free" | "keep" => Ok(0),
             "num" => Ok(0.5f64.to_bits()),
             s => Err(Trap::Invalid(format!("unexpected call to {s}"))),
@@ -64,6 +65,9 @@ enum Extra {
     Grows,
     /// Stores `num()` into element 1 as a call destination.
     CallResult,
+    /// Reallocates the buffer into a local whose address is taken, and stores 0.5 into
+    /// element 1 through that pointer.
+    ReallocAside,
 }
 
 /// `f(x)`: four elements `xs[i] = i` (an `i64` counter), `xs[0]` and `xs[3]` swapped, the
@@ -79,6 +83,12 @@ fn program(extra: Extra) -> Program {
     );
     let keep = pb.ext("keep", &[Ty::Ptr], Ty::Unit, false);
     let num = pb.ext("num", &[], Ty::F64, false);
+    let realloc = pb.ext(
+        "velt_rt_realloc",
+        &[Ty::Ptr, Ty::U64, Ty::U64, Ty::U64],
+        Ty::Ptr,
+        false,
+    );
     let mut fb = FuncBuilder::export("f", &[Ty::F64], Ty::F64);
     let x = fb.param(0);
     let (p, i, c, off, q, v, j) = (
@@ -156,6 +166,28 @@ fn program(extra: Extra) -> Program {
             };
             fb.term(cont, call);
             cont = next;
+        }
+        Extra::ReallocAside => {
+            let (aside, addr, w, w1) = (
+                fb.local(Ty::Ptr),
+                fb.local(Ty::Ptr),
+                fb.local(Ty::Ptr),
+                fb.local(Ty::Ptr),
+            );
+            fb.assign(cont, addr, Rvalue::AddrOf(Place::local(aside)));
+            let args = vec![
+                copy_local(p),
+                int(32, Ty::U64),
+                int(8, Ty::U64),
+                int(32, Ty::U64),
+            ];
+            cont = fb.call(cont, Callee::Extern(realloc), args, Some(aside));
+            fb.assign(cont, w, Rvalue::Use(copy_local(aside)));
+            fb.assign(cont, w1, bin(BinOp::PtrAdd, copy_local(w), int(8, Ty::I64)));
+            fb.push(
+                cont,
+                Stmt::Assign(elem(w1), Rvalue::Use(float(0.5, Ty::F64))),
+            );
         }
         Extra::Grows => {
             let (k, kc, e) = (fb.local(Ty::I64), fb.local(Ty::Bool), fb.local(Ty::F64));
@@ -242,4 +274,11 @@ fn an_element_without_a_bound_keeps_doubles() {
 fn a_call_storing_into_an_element_keeps_doubles() {
     let (_, q) = narrowed(Extra::CallResult);
     assert_eq!(derefs(&q, Ty::I64), 0);
+}
+
+#[test]
+fn a_realloc_into_a_local_the_groups_do_not_follow_keeps_doubles() {
+    let (_, q) = narrowed(Extra::ReallocAside);
+    assert_eq!(derefs(&q, Ty::I64), 0);
+    assert_eq!(run(&q, 0.5), 3.0 + 0.5 + 0.5);
 }

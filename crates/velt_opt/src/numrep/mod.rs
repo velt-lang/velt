@@ -163,52 +163,62 @@ impl<'p> Env<'p> {
 /// Narrow the number locals of `func`; returns whether anything changed.
 pub(crate) fn run(env: &Env, func: &mut Function) -> bool {
     let mut changed = false;
-    if let Some(flow) = analyse(env, func) {
+    let (flow, mut elements) = analyse(env, func);
+    if let Some(flow) = flow {
         if simplify::run(env, &flow, func) {
             changed = true;
         }
     }
     if changed {
         crate::simplify_cfg::run(func);
+        // Simplifying keeps every value the function stores, so the elements' facts hold
+        // while the groups stay the same.
+        if arrays::groups(env, func) != elements.groups {
+            elements = analyse(env, func).1;
+        }
     }
-    if let Some(keep) = arrays::choose(env, func, |f| narrowed(env, f)) {
-        changed |= arrays::retype(env, func, Some(&keep)).is_some();
-    }
-    if let Some(flow) = analyse(env, func) {
-        let plan = narrow::plan(env, &flow, func);
-        changed |= rewrite::apply(env, func, &plan);
-    }
+    let (best, narrowed) = arrays::choose(env, func, &elements, |f| narrowed(env, f, &elements));
+    *func = best;
+    changed |= narrowed;
     changed |= int32::guarded_sums(env, func);
     changed
 }
 
-/// `func` with its locals narrowed (the plan and rewrite of `run`), for comparing choices.
-fn narrowed(env: &Env, mut func: Function) -> Function {
-    if let Some(flow) = analyse(env, &func) {
-        let plan = narrow::plan(env, &flow, &func);
-        rewrite::apply(env, &mut func, &plan);
+/// `func` with its locals narrowed (the plan and rewrite of `run`), its elements' facts
+/// `elements` (computed before `arrays` retyped any); and whether anything changed.
+fn narrowed(env: &Env, mut func: Function, elements: &arrays::Elements) -> (Function, bool) {
+    let tracked = tracked(env, &func, &elements.groups);
+    if tracked.is_empty() && !constant_to_int32(env, &func) {
+        return (func, false);
     }
-    func
+    let Some(flow) = Flow::compute(&func, env, &tracked, elements.per_local()) else {
+        return (func, false);
+    };
+    let plan = narrow::plan(env, &flow, &func);
+    let changed = rewrite::apply(env, &mut func, &plan);
+    (func, changed)
 }
 
 /// The `f64` locals of `func` inside loops that stay `f64`, each with the reason
 /// (`velt build --report numbers`).
 pub(crate) fn unnarrowed(env: &Env, func: &Function) -> Vec<Unnarrowed> {
-    match analyse(env, func) {
+    match analyse(env, func).0 {
         Some(flow) => report::unnarrowed(env, &flow, func),
         None => vec![],
     }
 }
 
-/// Facts for the locals of `func` that matter (`None`: nothing to narrow, or too big).
-fn analyse(env: &Env, func: &Function) -> Option<Flow> {
+/// Facts for the locals of `func` that matter (`None`: nothing to narrow, or too big), and
+/// for the elements of its arrays.
+fn analyse(env: &Env, func: &Function) -> (Option<Flow>, arrays::Elements) {
     let groups = arrays::groups(env, func);
     let tracked = tracked(env, func, &groups);
     if tracked.is_empty() && !constant_to_int32(env, func) {
-        return None;
+        return (None, arrays::Elements::unknown(groups));
     }
-    let elems = arrays::facts(env, func, &tracked, &groups);
-    Flow::compute(func, env, &tracked, groups.per_local(&elems))
+    let (elements, flow) = arrays::Elements::of(env, func, &tracked, groups);
+    let flow = flow.or_else(|| Flow::compute(func, env, &tracked, elements.per_local()));
+    (flow, elements)
 }
 
 /// Does `func` take ToInt32 of a constant (`simplify` folds it without tracking anything)?

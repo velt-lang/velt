@@ -1,6 +1,7 @@
-//! `tests/golden/lang/opt_number_arrays_whole.vlt` and `opt_number_arrays_doubles.vlt` check
-//! that the output stays Node's; this checks that a release build really stores the first
-//! file's arrays as integers (#1599) and keeps the second file's as doubles.
+//! `tests/golden/lang/opt_number_arrays_whole.vlt`, `opt_number_arrays_doubles.vlt` and
+//! `opt_number_arrays_index_traps.vlt` check that the output stays Node's; this checks that a
+//! release build really stores the first file's arrays as integers (#1599), keeps the second
+//! file's as doubles, and in the third, keeps doubles exactly where `-0` or NaN can be stored.
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -123,4 +124,19 @@ fn arrays_that_may_hold_other_numbers_keep_doubles() {
             body.join("\n")
         );
     }
+}
+
+#[test]
+fn index_tables_that_may_hold_negative_zero_or_nan_keep_doubles() {
+    let vir = release_vir("lang/opt_number_arrays_index_traps.vlt");
+    let fns = functions(&vir);
+    let count = |arrays: &[&str], ty: &str| -> usize {
+        fns.iter()
+            .map(|(_, b)| element_accesses(b, arrays, ty))
+            .sum()
+    };
+    assert_eq!(count(&["doubles"], "i64"), 0, "{vir}");
+    assert!(count(&["doubles"], "f64") > 0, "{vir}");
+    assert!(count(&["ints"], "i64") > 0, "{vir}");
+    assert_eq!(count(&["ints"], "f64"), 0, "{vir}");
 }

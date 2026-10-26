@@ -44,6 +44,7 @@ const MAX_ROUNDS: usize = 8;
 const JOIN_ROUNDS: usize = 3;
 
 /// The element pointer groups of one function.
+#[derive(PartialEq)]
 pub(super) struct Groups {
     /// Per local: its group, when it is a pointer of a qualifying group.
     of: Vec<Option<usize>>,
@@ -198,13 +199,15 @@ pub(super) fn groups(env: &Env, func: &Function) -> Groups {
                 let sym = env.symbol(*id);
                 for (k, a) in args.iter().enumerate() {
                     match whole(a) {
-                        Some(i) if k == 0 && sym != ALLOC => {
-                            if let (REALLOC, Some(d)) = (sym, dest) {
-                                if d.proj.is_empty() && ptr(d.local) {
-                                    sets.union(d.local.0 as usize, i);
-                                }
+                        Some(_) if k == 0 && sym == FREE => {}
+                        Some(i) if k == 0 && sym == REALLOC => match dest {
+                            Some(d) if d.proj.is_empty() && ptr(d.local) => {
+                                sets.union(d.local.0 as usize, i);
                             }
-                        }
+                            // The new pointer reaches the memory through a local the groups
+                            // do not follow.
+                            _ => seen.bad[i] = true,
+                        },
                         _ => seen.operand(a),
                     }
                 }
@@ -261,46 +264,81 @@ pub(super) fn groups(env: &Env, func: &Function) -> Groups {
     groups
 }
 
-/// The facts of each group's elements (`None` when they are not known: too big a function,
-/// no fixpoint, or no store at all), computed with `Flow` over `tracked`.
-pub(super) fn facts(
-    env: &Env,
-    func: &Function,
-    tracked: &[Local],
-    groups: &Groups,
-) -> Vec<Option<Fact>> {
-    let k = groups.ty.len();
-    if k == 0 {
-        return vec![];
+/// The groups of a function and the facts of their elements, computed once per `numrep` run:
+/// retyping a group keeps its pointers and the values it stores, so both stay true of the
+/// retyped function.
+pub(super) struct Elements {
+    pub groups: Groups,
+    /// Per group: the facts of its elements (`None` when they are not known: too big a
+    /// function, no fixpoint, or no store at all).
+    facts: Vec<Option<Fact>>,
+}
+
+impl Elements {
+    /// `groups` with nothing known of their elements.
+    pub fn unknown(groups: Groups) -> Elements {
+        let facts = vec![None; groups.ty.len()];
+        Elements { groups, facts }
     }
-    // Any facts the stores stay within are sound (module docs); starting from 0 rather than
-    // from no value keeps `xs[i] + 5` from looking like NaN (an operand without values) in
-    // the first round. Zeroed memory is 0 too.
-    let mut elems = vec![Fact::int(0, 0); k];
-    for round in 0..MAX_ROUNDS {
-        let current = elems.iter().copied().map(Some).collect::<Vec<_>>();
-        let Some(flow) = Flow::compute(func, env, tracked, groups.per_local(&current)) else {
-            return vec![None; k];
-        };
-        let stored = stored(func, &flow, groups);
-        if stored.iter().zip(&elems).all(|(s, e)| e.join(*s) == *e) {
-            // A group no reachable store writes has nothing to narrow.
-            return elems
-                .into_iter()
-                .zip(stored)
-                .map(|(e, s)| (!s.is_empty()).then_some(e))
-                .collect();
+
+    /// The facts of the elements of `groups`, computed with `Flow` over `tracked`; with the
+    /// last `Flow`, when it ran with exactly these facts.
+    pub fn of(
+        env: &Env,
+        func: &Function,
+        tracked: &[Local],
+        groups: Groups,
+    ) -> (Elements, Option<Flow>) {
+        let k = groups.ty.len();
+        if k == 0 {
+            return (Elements::unknown(groups), None);
         }
-        for (e, s) in elems.iter_mut().zip(stored) {
-            let joined = e.join(s);
-            *e = if round < JOIN_ROUNDS {
-                joined
-            } else {
-                widened(*e, joined)
+        // Any facts the stores stay within are sound (module docs); starting from 0 rather
+        // than from no value keeps `xs[i] + 5` from looking like NaN (an operand without
+        // values) in the first round. Zeroed memory is 0 too.
+        let mut elems = vec![Fact::int(0, 0); k];
+        for round in 0..MAX_ROUNDS {
+            let current = elems.iter().copied().map(Some).collect::<Vec<_>>();
+            let Some(flow) = Flow::compute(func, env, tracked, groups.per_local(&current)) else {
+                return (Elements::unknown(groups), None);
             };
+            let stored = stored(func, &flow, &groups);
+            if stored.iter().zip(&elems).all(|(s, e)| e.join(*s) == *e) {
+                // A group no reachable store writes has nothing to narrow.
+                let all_stored = stored.iter().all(|s| !s.is_empty());
+                let facts = elems
+                    .into_iter()
+                    .zip(stored)
+                    .map(|(e, s)| (!s.is_empty()).then_some(e))
+                    .collect();
+                return (Elements { groups, facts }, all_stored.then_some(flow));
+            }
+            for (e, s) in elems.iter_mut().zip(stored) {
+                let joined = e.join(s);
+                *e = if round < JOIN_ROUNDS {
+                    joined
+                } else {
+                    widened(*e, joined)
+                };
+            }
         }
+        (Elements::unknown(groups), None)
     }
-    vec![None; k]
+
+    /// Per local: the facts of the elements its group points at.
+    pub fn per_local(&self) -> Vec<Option<Fact>> {
+        self.groups.per_local(&self.facts)
+    }
+
+    /// Per group: may its elements be stored as `i64`?
+    fn eligible(&self) -> Vec<bool> {
+        self.groups
+            .ty
+            .iter()
+            .zip(&self.facts)
+            .map(|(ty, f)| *ty == Ty::F64 && f.is_some_and(|f| f.exact_int() && !f.neg_zero))
+            .collect()
+    }
 }
 
 /// Per group: the join of the values its stores write, under `flow`.
@@ -323,32 +361,11 @@ fn stored(func: &Function, flow: &Flow, groups: &Groups) -> Vec<Fact> {
     out
 }
 
-/// Store the elements of every `f64` group whose facts allow it (and that `only` keeps, when
-/// given) as `i64`; returns the groups it retyped (`None` when none).
-pub(super) fn retype(env: &Env, func: &mut Function, only: Option<&[bool]>) -> Option<Vec<bool>> {
-    let groups = groups(env, func);
-    if !groups.ty.contains(&Ty::F64) {
-        return None;
-    }
-    let tracked = super::tracked(env, func, &groups);
-    let facts = facts(env, func, &tracked, &groups);
-    let chosen: Vec<bool> = groups
-        .ty
-        .iter()
-        .zip(&facts)
-        .enumerate()
-        .map(|(g, (ty, f))| {
-            *ty == Ty::F64
-                && f.is_some_and(|f| f.exact_int() && !f.neg_zero)
-                && only.is_none_or(|o| o.get(g) == Some(&true))
-        })
-        .collect();
-    if !chosen.contains(&true) {
-        return None;
-    }
+/// Store the elements of the groups `chosen` (all eligible) as `i64`.
+fn retype(func: &mut Function, groups: &Groups, chosen: &[bool]) {
     let mut rt = Retyper {
-        groups: &groups,
-        chosen: &chosen,
+        groups,
+        chosen,
         base: func.locals.len(),
         temps: vec![],
     };
@@ -364,7 +381,6 @@ pub(super) fn retype(env: &Env, func: &mut Function, only: Option<&[bool]>) -> O
     }
     func.locals
         .extend(rt.temps.into_iter().map(|ty| LocalDecl::new(ty, None)));
-    Some(chosen)
 }
 
 struct Retyper<'g> {
@@ -455,35 +471,111 @@ impl Retyper<'_> {
     }
 }
 
-/// Which groups to retype: those for which `func` narrowed with them as integers (`narrowed`,
-/// `numrep`'s plan and rewrite) keeps fewer conversions between floats and integers than
-/// narrowed with doubles, each weighted by its loop depth. All of them when that pays; each
-/// alone otherwise. An element only ever copied into an array of doubles, or added to a
-/// double, would need a conversion per read that the doubles did not (#1599).
+/// Eligible groups beyond which `choose` does not try each group alone.
+const MAX_TRIALS: usize = 4;
+
+/// `func` narrowed (`narrowed`: `numrep`'s plan and rewrite, and whether it changed anything),
+/// with the eligible groups of `elements` retyped where that keeps fewer conversions between
+/// floats and integers than doubles do, each weighted by its loop depth: all of them when
+/// that pays; otherwise the groups that pay alone (with 2 to `MAX_TRIALS` eligible). An
+/// element only ever copied into an array of doubles, or added to a double, would need a
+/// conversion per read that the doubles did not (#1599). Retyping is only tried when the
+/// narrowed doubles convert an element where it is loaded or stored.
 pub(super) fn choose(
     env: &Env,
     func: &Function,
-    narrowed: impl Fn(Function) -> Function,
-) -> Option<Vec<bool>> {
-    let mut all = func.clone();
-    let eligible = retype(env, &mut all, None)?;
+    elements: &Elements,
+    narrowed: impl Fn(Function) -> (Function, bool),
+) -> (Function, bool) {
+    let base = narrowed(func.clone());
+    let eligible = elements.eligible();
+    if !eligible.contains(&true) || !converts_elements(env, &base.0, &elements.groups, &eligible) {
+        return base;
+    }
+    let groups = &elements.groups;
     let depth = loop_depths(func);
-    let base = conversions(env, &narrowed(func.clone()), &depth);
-    if conversions(env, &narrowed(all), &depth) < base {
-        return Some(eligible);
+    let base_cost = conversions(env, &base.0, &depth);
+    let trial = |chosen: &[bool]| {
+        let mut f = func.clone();
+        retype(&mut f, groups, chosen);
+        let (f, _) = narrowed(f);
+        let cost = conversions(env, &f, &depth);
+        (f, cost)
+    };
+    let (all, cost) = trial(&eligible);
+    if cost < base_cost {
+        return (all, true);
+    }
+    let count = eligible.iter().filter(|&&e| e).count();
+    if !(2..=MAX_TRIALS).contains(&count) {
+        return base;
     }
     let mut keep = vec![false; eligible.len()];
+    let mut last = None;
     for g in (0..eligible.len()).filter(|&g| eligible[g]) {
         let mut only = vec![false; eligible.len()];
         only[g] = true;
-        let mut one = func.clone();
-        if retype(env, &mut one, Some(&only)).is_some()
-            && conversions(env, &narrowed(one), &depth) < base
-        {
+        let (one, cost) = trial(&only);
+        if cost < base_cost {
             keep[g] = true;
+            last = Some(one);
         }
     }
-    keep.contains(&true).then_some(keep)
+    match keep.iter().filter(|&&k| k).count() {
+        0 => base,
+        1 => (last.unwrap_or(base.0), true),
+        _ => (trial(&keep).0, true),
+    }
+}
+
+/// Does `func` (narrowed with the elements as doubles) convert an element of an `eligible`
+/// group between float and integer, or round or check it, where it is loaded or stored? Only
+/// those conversions can retyping remove.
+fn converts_elements(env: &Env, func: &Function, groups: &Groups, eligible: &[bool]) -> bool {
+    let element = |p: &Place| groups.of_element(p).is_some_and(|g| eligible[g]);
+    // Locals loaded from such an element, and locals stored into one.
+    let mut loaded = vec![false; func.locals.len()];
+    let mut stored = vec![false; func.locals.len()];
+    for s in func.blocks.iter().flat_map(|b| &b.stmts) {
+        match s {
+            Stmt::Assign(d, Rvalue::Use(Operand::Copy(p))) if d.proj.is_empty() && element(p) => {
+                loaded[d.local.0 as usize] = true;
+            }
+            Stmt::Assign(d, Rvalue::Use(Operand::Copy(p))) if p.proj.is_empty() && element(d) => {
+                stored[p.local.0 as usize] = true;
+            }
+            _ => {}
+        }
+    }
+    let from_element = |op: &Operand| match op {
+        Operand::Copy(p) if p.proj.is_empty() => loaded[p.local.0 as usize],
+        Operand::Copy(p) => element(p),
+        Operand::Const(..) => false,
+    };
+    let ty = |op: &Operand| super::flow::operand_ty(func, op);
+    func.blocks.iter().any(|b| {
+        let casts = b.stmts.iter().any(|s| match s {
+            Stmt::Assign(d, Rvalue::Cast(op, to)) => {
+                let from = ty(op);
+                (from.is_float() && to.is_int() && from_element(op))
+                    || (from.is_int()
+                        && to.is_float()
+                        && (element(d) || (d.proj.is_empty() && stored[d.local.0 as usize])))
+            }
+            _ => false,
+        });
+        casts
+            || matches!(&b.term, Terminator::Call { callee, args, .. }
+                if float_call(env, callee) && args.iter().any(from_element))
+    })
+}
+
+/// Does `callee` round a float, take its ToInt32 or index with it?
+fn float_call(env: &Env, callee: &Callee) -> bool {
+    match callee {
+        Callee::Extern(id) => env.is_rounding(*id) || env.is_to_int32(callee),
+        c => env.is_float_index(c),
+    }
 }
 
 /// Loop levels a conversion is assumed to repeat: each multiplies its weight by `PER_LEVEL`.
@@ -506,14 +598,8 @@ fn conversions(env: &Env, func: &Function, depth: &[u32]) -> u64 {
                 }
             }
         }
-        if let Terminator::Call { callee, .. } = &b.term {
-            let float_call = match callee {
-                Callee::Extern(id) => env.is_rounding(*id),
-                c => env.is_to_int32(c) || env.is_float_index(c),
-            };
-            if float_call {
-                total += w;
-            }
+        if matches!(&b.term, Terminator::Call { callee, .. } if float_call(env, callee)) {
+            total += w;
         }
     }
     total
