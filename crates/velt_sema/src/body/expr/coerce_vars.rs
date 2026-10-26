@@ -55,11 +55,28 @@ impl FnCx<'_, '_> {
         self.coerce_as_written(h, exp, true)
     }
 
-    /// `h` as its type is written, when it is a union whose types hold only the traps'
-    /// error-set variables (assumed empty): a member of `E | <trap variables>` is read as the
-    /// member of `E` it is once they are solved empty.
+    /// `h` as its type is written, when that type holds only the traps' error-set variables
+    /// (assumed empty): a member of `E | <trap variables>` is read as the member of `E` it is
+    /// once they are solved empty, and a value typed by a trap's variable alone as `never`
+    /// until the program is checked again with the trap's set.
     pub(crate) fn without_trap_vars(&mut self, h: hir::Expr) -> hir::Expr {
-        if self.cx.union_def(h.ty).is_none() || !self.cx.only_trap_vars(h.ty) {
+        // Only where the variables are the value's own type or members of it (an error value),
+        // not inside it (a function type's or a promise's error type, which keeps them).
+        let own = self.cx.is_err_var(h.ty)
+            || (self.cx.union_members(h.ty))
+                .is_some_and(|ms| ms.iter().any(|m| self.cx.is_err_var(*m)));
+        if !own || !self.cx.only_trap_vars(h.ty) {
+            return h;
+        }
+        let plain = self.cx.plain_type(h.ty);
+        self.coerce_as_written(h, plain, true).unwrap_or_else(|h| h)
+    }
+
+    /// `h` as its type is written when that type holds only the traps' error-set variables, at
+    /// any depth: a value whose error types become values (the reasons `Promise.allSettled`
+    /// reports), converted once where it is made.
+    pub(crate) fn written_trap_vars(&mut self, h: hir::Expr) -> hir::Expr {
+        if !self.cx.only_trap_vars(h.ty) {
             return h;
         }
         let plain = self.cx.plain_type(h.ty);

@@ -287,6 +287,7 @@ impl FnCx<'_, '_> {
         if self.cx.frozen_reads && self.frozen_buffer_view(&obj, &prop.name, span) {
             return self.error_expr(span);
         }
+        let obj = self.without_trap_vars(obj);
         let obj = self.error_union_accessor(obj, &prop.name);
         let obj = match self.getter_read(obj, prop, span) {
             Ok(call) => return call,

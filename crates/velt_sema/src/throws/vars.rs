@@ -558,6 +558,10 @@ impl Ctx<'_> {
         if self.union_def(t).is_some() {
             parts.extend(self.union_members(t).unwrap_or_default());
         }
+        // The fields of an anonymous object type, as `mentions_err_var` sees them.
+        if let Some((d, _)) = self.anon_of(t) {
+            parts.extend(self.anon_field_tys(d));
+        }
         for p in parts {
             self.vars_deep(p, seen);
         }
