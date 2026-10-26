@@ -417,7 +417,16 @@ impl Checker<'_, '_> {
 
     /// `held`: the call runs a non-escaping closure held in a local, whose borrowed captures
     /// are passed along with the arguments (the first entry of the uses).
-    fn check_call(&mut self, args: &mut [Expr], mutex_with: bool, held: Option<(DefId, Span)>) {
+    ///
+    /// `key_only`: the call is a collection's `has`, `get` or `delete`, whose key argument (the
+    /// last) the callee only compares by identity ([`identity_key_call`]).
+    fn check_call(
+        &mut self,
+        args: &mut [Expr],
+        mutex_with: bool,
+        held: Option<(DefId, Span)>,
+        key_only: bool,
+    ) {
         let col = self.collector();
         let mut uses: ArgUses = vec![];
         if let Some((c, span)) = held {
@@ -444,6 +453,9 @@ impl Checker<'_, '_> {
                 u.access = Access::Unique;
             }
         }
+        if key_only && held.is_none() && uses.len() == 2 {
+            drop_key_through_receiver(&mut uses);
+        }
         let shared = share_borrowed_captures(&mut uses);
         if let Some(d) = first_conflict(&uses) {
             self.errors.push(d);
@@ -459,6 +471,57 @@ impl Checker<'_, '_> {
             }
         }
     }
+}
+
+/// Is `callee` a `has`, `get` or `delete` of `Map`, `Set`, `WeakMap` or `WeakSet`? Their key
+/// is compared by identity when it is an object (a number, `bool` or string is copied, so it is
+/// no use here): the callee reads its address, never what it points to.
+fn identity_key_call(cx: &Ctx, callee: &Callee) -> bool {
+    const METHODS: [&str; 4] = [
+        "std/prelude/map::Map.",
+        "std/collections/set::Set.",
+        "std/prelude/weak::WeakMap.",
+        "std/prelude/weak::WeakSet.",
+    ];
+    let Callee::Def(d, _) = callee else {
+        return false;
+    };
+    let Some(Def::Fn(f)) = &cx.defs[d.0 as usize] else {
+        return false;
+    };
+    METHODS.iter().any(|m| {
+        f.name
+            .strip_prefix(m)
+            .is_some_and(|n| matches!(n, "has" | "get" | "delete"))
+    })
+}
+
+/// Is a key of type `t` compared by identity (a class instance, an object, an interface value,
+/// an array or a function)? Not a value `struct`, whose fields are compared, nor a tuple.
+fn by_identity(cx: &Ctx, t: crate::hir::TyId) -> bool {
+    match cx.ty.kind(t) {
+        TyKind::Adt(d, _) => cx.adt(*d).is_some_and(|a| match a.kind {
+            crate::hir::AdtKind::Class | crate::hir::AdtKind::Anon => true,
+            // A fields-only interface; not a Velt `struct`, a value type.
+            crate::hir::AdtKind::Struct => a.decl.is_none(),
+        }),
+        TyKind::Dyn(..) | TyKind::Array(_) | TyKind::FnPtr { .. } => true,
+        _ => false,
+    }
+}
+
+/// `link.dep.subs.delete(effect)` with `link` an element of `effect.deps`: the receiver is
+/// reached through the borrowed key, but the callee reads only the key's address, so the
+/// key's borrow of the object (a strict prefix of the receiver's place) is no use of the
+/// receiver. A key inside the receiver (`for (const x of s) s.delete(x)`) keeps its use.
+fn drop_key_through_receiver(uses: &mut ArgUses) {
+    let receiver: Vec<Place> = uses[0].0.iter().map(|u| u.place.clone()).collect();
+    uses[1].0.retain(|k| {
+        let through = receiver
+            .iter()
+            .any(|r| k.place.proj.len() < r.proj.len() && k.place.overlaps(r));
+        !(k.access == Access::Shared && k.capture.is_none() && through)
+    });
 }
 
 /// A closure argument that takes over a variable another argument of the call only borrows
@@ -618,9 +681,12 @@ impl VisitMut for Checker<'_, '_> {
                     Callee::Intrinsic(Intrinsic::MutexWith | Intrinsic::LockRead)
                 );
                 let held = self.collector().held_call(callee).map(|c| (c, e.span));
-                self.check_call(args, mutex_with, held);
+                let key_only = args.len() == 2
+                    && by_identity(self.cx, args[1].ty)
+                    && identity_key_call(self.cx, callee);
+                self.check_call(args, mutex_with, held, key_only);
             }
-            E::New { args, .. } => self.check_call(args, false, None),
+            E::New { args, .. } => self.check_call(args, false, None, false),
             _ => {}
         }
     }
