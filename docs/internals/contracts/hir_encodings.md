@@ -904,7 +904,16 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   choice is unique; the bounds of extension impls are interfaces, never `any`, `unknown`,
   `object` or `Function`. A block's bound holds
   when the type meets it at all (its own impl, or through a finite chain of extension impls,
-  the least answer). Converting an `any` to
+  the least answer): per level (the type, then each base class), through each extension impl
+  for the bound's interface and arguments that fits, except that an impl without bounds that
+  fits decides the level's answer (the most specific such impl: its arguments are the bound's
+  or the bound fails) and no base class is looked at. Sema refuses an extension impl with
+  bounds that takes precedence over another with other interface arguments (more specific
+  than it for a type both fit, or fitting a type the other fits a base class of), so this
+  answer is the arguments of the impl the lookup picks. An interface value `Dyn(D, args)`
+  meets a bound `iface<bargs>` listed for `D` in `Program::dyn_bounds` (additive; `D` and the
+  interfaces it extends without generic methods, args in `D`'s params) when the listed args
+  with `args` substituted are `bargs`. Converting an `any` to
   `iface` uses the same lookup for the held value's type.
 - A call through a type parameter's bound that only a blanket block gives it (`k.m()` with
   `K extends Comparable<K>` and `extend<T extends Comparable<T>> T implements I`) is a

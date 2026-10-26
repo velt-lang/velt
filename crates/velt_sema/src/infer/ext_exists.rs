@@ -8,7 +8,12 @@
 //! the lookups a question reaches (finitely many: a bound is checked on a type argument of the
 //! type looked up) by iterating to a fixed point, without recursion, so no nesting limit is
 //! needed, and it is the same whatever else is being looked up: it is remembered
-//! (`Ctx::ext_exists_memo`). Lowering computes the same answer (velt_vir impl_lookup.rs).
+//! (`Ctx::ext_exists_memo`). Lowering computes the same answer (velt_vir lower/ext_exists.rs).
+//!
+//! A computation can start another only through a structural impl (`synth_impl`, for an
+//! intersection or `Pick` bound checked with `satisfies`, or as the last resort below), which is
+//! made at most once per type and interface (`synth_ifaces.tried`), for a type the question
+//! reaches: so computations nest finitely, without a limit, and each answer is complete.
 
 use rustc_hash::FxHashMap;
 
@@ -27,10 +32,6 @@ struct Node {
     alts: Vec<Vec<usize>>,
     fallback_checked: bool,
 }
-
-/// How deeply fixed-point computations may nest (a structural impl checked inside one can
-/// start another).
-const MAX_REENTRY: u32 = 16;
 
 impl Ctx<'_> {
     /// Does `ty` meet `b`, when `b`'s interface has `extend` impls (module docs)?
@@ -58,10 +59,6 @@ impl Ctx<'_> {
         if let Some(&v) = closed.then(|| self.ext_exists_memo.get(&root)).flatten() {
             return v;
         }
-        if self.ext_reentry >= MAX_REENTRY {
-            return false;
-        }
-        self.ext_reentry += 1;
         let mut nodes: Vec<Node> = vec![];
         let mut index: FxHashMap<ExistsKey, usize> = FxHashMap::default();
         self.exists_node(root.clone(), &mut nodes, &mut index);
@@ -98,7 +95,6 @@ impl Ctx<'_> {
                 break values;
             }
         };
-        self.ext_reentry -= 1;
         if closed && self.ext_memo_impls == self.impls.len() {
             for (n, v) in nodes.iter().zip(&values) {
                 self.ext_exists_memo.insert(n.key.clone(), *v);
@@ -148,7 +144,10 @@ impl Ctx<'_> {
 
     /// The ways `key`'s type meets its bound through blocks: per block for the bound's
     /// interface and arguments that fits the type (or, without one, a base class), the
-    /// lookups its own bounds need. A bound decided outright that fails drops the way.
+    /// lookups its own bounds need. A bound decided outright that fails drops the way. A block
+    /// without bounds that fits decides: the most specific one gives the interface arguments
+    /// (a block with bounds that would win over it has the same, `Ctx::ext_shadowed`), and
+    /// blocks for a base class don't apply.
     fn exists_alts(
         &mut self,
         key: &ExistsKey,
@@ -162,10 +161,26 @@ impl Ctx<'_> {
         let mut cur = Some(ty);
         for _ in 0..64 {
             let Some(t) = cur else { break };
+            let mut fits = vec![];
+            let mut plain: Option<(u32, Vec<TyId>)> = None;
             for &i in &cands {
                 let Some((_, iargs, _)) = self.try_impl(i, t) else {
                     continue;
                 };
+                if !self.ext_bounded(i)
+                    && (plain.as_ref()).is_none_or(|p| self.ext_more_specific(i, p.0))
+                {
+                    plain = Some((i, iargs.clone()));
+                }
+                fits.push((i, iargs));
+            }
+            if let Some((_, iargs)) = plain {
+                if iargs == b.args {
+                    alts.push(vec![]);
+                }
+                break;
+            }
+            for (i, iargs) in fits {
                 if iargs != b.args {
                     continue;
                 }

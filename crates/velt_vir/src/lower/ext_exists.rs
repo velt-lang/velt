@@ -6,7 +6,7 @@
 //! recursion or a nesting limit, and remembered (`Cx::exists_memo`).
 
 use rustc_hash::FxHashMap;
-use velt_sema::hir::{DefId, TyId};
+use velt_sema::hir::{DefId, TyId, TyKind};
 
 /// A bound lookup: the interface, its arguments and the type.
 pub(super) type ExistsKey = (DefId, Vec<TyId>, TyId);
@@ -21,6 +21,9 @@ struct Node {
 impl super::Cx<'_> {
     /// Does `ty` implement `iface<args>` (an `extend` block's bound)?
     pub(super) fn bound_holds(&mut self, iface: DefId, args: Vec<TyId>, ty: TyId) -> bool {
+        if self.dyn_meets(iface, &args, ty) {
+            return true;
+        }
         if !self.has_ext_impls(iface) {
             return self.impl_shape_any(iface, &args, ty);
         }
@@ -44,6 +47,24 @@ impl super::Cx<'_> {
             self.exists_memo.insert(n.key.clone(), *v);
         }
         values[0]
+    }
+
+    /// Is `ty` an interface value whose interface is or extends `iface<args>`
+    /// (`Program::dyn_bounds`, sema's `own_bound`)?
+    fn dyn_meets(&mut self, iface: DefId, args: &[TyId], ty: TyId) -> bool {
+        let TyKind::Dyn(d, dargs) = self.kind(ty) else {
+            return false;
+        };
+        let Some(meets) = self.hir.dyn_bounds.get(&d).cloned() else {
+            return false;
+        };
+        meets.iter().any(|(i, a)| {
+            *i == iface
+                && a.len() == args.len()
+                && a.iter()
+                    .zip(args)
+                    .all(|(&x, &y)| self.subst(x, &dargs) == y)
+        })
     }
 
     fn has_ext_impls(&mut self, iface: DefId) -> bool {
@@ -76,8 +97,9 @@ impl super::Cx<'_> {
         if let Some(&k) = index.get(&key) {
             return k;
         }
-        let fixed = match self.exists_memo.get(&key) {
-            Some(&v) => Some(v),
+        let fixed = match self.exists_memo.get(&key).copied() {
+            Some(v) => Some(v),
+            None if self.dyn_meets(key.0, &key.1, key.2) => Some(true),
             // The type's own impl decides, with its arguments.
             None => (self.own_impl(key.0, key.2))
                 .map(|(i, cand)| self.impl_shape(i, Some(&key.1), cand).is_some()),
@@ -93,7 +115,9 @@ impl super::Cx<'_> {
 
     /// Per block for the bound's interface and arguments that fits the type (or a base
     /// class), the lookups its own bounds need; a bound on an interface without blocks is
-    /// decided outright, and one that fails drops the way.
+    /// decided outright, and one that fails drops the way. A block without bounds that fits
+    /// decides, as in sema: the most specific one gives the arguments, and blocks for a base
+    /// class don't apply.
     fn exists_alts(
         &mut self,
         key: &ExistsKey,
@@ -104,6 +128,25 @@ impl super::Cx<'_> {
         let impls = self.impls_of(iface);
         let mut alts = vec![];
         for cand in self.self_and_bases(ty) {
+            let mut plain: Option<u32> = None;
+            for &i in impls.iter() {
+                let unbounded = match self.hir.extension_impls.get(&i) {
+                    Some(bs) => bs.is_empty(),
+                    None => continue,
+                };
+                if unbounded
+                    && self.impl_shape(i, None, cand).is_some()
+                    && plain.is_none_or(|p| self.ext_more_specific(i, p))
+                {
+                    plain = Some(i);
+                }
+            }
+            if let Some(p) = plain {
+                if self.impl_shape(p, Some(&args), cand).is_some() {
+                    alts.push(vec![]);
+                }
+                break;
+            }
             for &i in impls.iter() {
                 if !self.hir.extension_impls.contains_key(&i) {
                     continue;
@@ -116,7 +159,8 @@ impl super::Cx<'_> {
                 for (bi, bargs, t) in self.ext_obligations(i, &binds) {
                     if self.has_ext_impls(bi) {
                         needs.push(self.exists_node((bi, bargs, t), nodes, index));
-                    } else if !self.impl_shape_any(bi, &bargs, t) {
+                    } else if !self.dyn_meets(bi, &bargs, t) && !self.impl_shape_any(bi, &bargs, t)
+                    {
                         ok = false;
                         break;
                     }

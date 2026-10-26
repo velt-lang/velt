@@ -1,0 +1,42 @@
+// A more specific block without bounds may give other interface arguments: a `Box<T>` is a
+// `G<T>`, every other type a `G<i64>`. A bound on `G<i64>` holds for `Box<i64>` and `string`,
+// not for `Box<string>` (`extend_implements_args_specific_err`).
+
+interface G<A> {
+  g(): string;
+}
+
+interface Q {
+  q(): string;
+}
+
+class Box<T> {
+  constructor(public v: T) {}
+}
+
+extend<T> Box<T> implements G<T> {
+  g(): string {
+    return "box";
+  }
+}
+
+extend<A> A implements G<i64> {
+  g(): string {
+    return "any";
+  }
+}
+
+extend<T extends G<i64>> T implements Q {
+  q(): string {
+    return "Q " + this.g();
+  }
+}
+
+function needQ<T extends Q>(x: T): string {
+  return x.q();
+}
+
+function main() {
+  console.log(needQ(new Box(1 as i64)));
+  console.log(needQ("s"));
+}

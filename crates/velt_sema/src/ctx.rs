@@ -82,8 +82,6 @@ pub(crate) struct Ctx<'m> {
     pub ext_memo: FxHashMap<(TyId, DefId), Option<crate::infer::FoundImpl>>,
     pub ext_exists_memo: FxHashMap<crate::infer::ExistsKey, bool>,
     pub ext_memo_impls: usize,
-    /// How deeply `ext_exists` computations are nested.
-    pub ext_reentry: u32,
     /// Set while `Ctx::blanket_bounds` checks a blanket impl's bounds: the bounds a parameter
     /// has through blanket impls come from its declared bounds only, not from other blanket
     /// impls, so the check never recurses.
@@ -437,7 +435,6 @@ impl<'m> Ctx<'m> {
             ext_memo: Default::default(),
             ext_exists_memo: Default::default(),
             ext_memo_impls: 0,
-            ext_reentry: 0,
             in_blanket: false,
             impl_scope: vec![],
             anon: FxHashMap::default(),

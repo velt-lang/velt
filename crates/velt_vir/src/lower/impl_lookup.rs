@@ -176,7 +176,7 @@ impl super::Cx<'_> {
     /// Is `extend` impl `a` strictly more specific than impl `b`: its target an instance of
     /// `b`'s and not the reverse, or the same pattern where only `a` has bounds (sema's
     /// `Ctx::ext_more_specific`)?
-    fn ext_more_specific(&self, a: u32, b: u32) -> bool {
+    pub(super) fn ext_more_specific(&self, a: u32, b: u32) -> bool {
         let (pa, pb) = (&self.hir.impls[a as usize], &self.hir.impls[b as usize]);
         let instance = |t: TyId, pat: TyId, n: u32| {
             let mut binds = vec![None; n as usize];
