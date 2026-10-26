@@ -346,11 +346,30 @@ export function __anyText(v: any, at: string): string {
     }
     panic(`TypeError: Cannot convert object to primitive value at ${at}`);
   }
-  if (typeof v === "object" && !("__proto__" in v)) {
-    // `Object.create(null)`'s record has no `toString` or `valueOf` to call.
+  return Object.prototype.toString.call(v);
+}
+
+/**
+ * `String(r)` of an `any` holding a record, in a program that calls `Object.create(null)` (sema
+ * dispatches records here): one without a prototype has no `toString` to inherit, so its own
+ * `valueOf`, else Node's `TypeError`.
+ */
+export function __anyRecordText(r: any, at: string): string {
+  if (!__anyOwnFn(r, "toString") && __anyNullProto(r)) {
+    if (__anyOwnFn(r, "valueOf")) {
+      return __anyPrimText(r.valueOf(), at);
+    }
     panic(`TypeError: Cannot convert object to primitive value at ${at}`);
   }
-  return Object.prototype.toString.call(v);
+  return __anyText(r, at);
+}
+
+/** `r + ""` of an `any` holding a record, as `__anyRecordText` for the `"default"` hint. */
+export function __anyRecordConcat(r: any, at: string): string {
+  if (!__anyOwnFn(r, "valueOf") && !__anyOwnFn(r, "toString") && __anyNullProto(r)) {
+    panic(`TypeError: Cannot convert object to primitive value at ${at}`);
+  }
+  return __anyConcatPlain(r, at);
 }
 
 /**
