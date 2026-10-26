@@ -50,23 +50,7 @@ impl Ctx<'_> {
             "Awaited" => {
                 let mut kept = vec![];
                 let mut nothing: Option<Nothing> = None;
-                for s in self.subjects_of(a) {
-                    match s {
-                        Subject::Ty(mut m) => {
-                            while let TyKind::Promise(v, _) = *self.ty.kind(m) {
-                                m = v;
-                            }
-                            match *self.ty.kind(m) {
-                                TyKind::Option(p, n) => {
-                                    kept.push(p);
-                                    nothing = Some(nothing.map_or(n, |x| x.join(n)));
-                                }
-                                _ => kept.push(m),
-                            }
-                        }
-                        Subject::Nothing(n) => nothing = Some(nothing.map_or(n, |m| m.join(n))),
-                    }
-                }
+                self.awaited_members(a, &mut kept, &mut nothing, 0);
                 self.rejoin_booleans(&mut kept);
                 match (kept.as_slice(), nothing) {
                     ([one], None) => *one,
@@ -120,6 +104,34 @@ impl Ctx<'_> {
                 }
             }
         })
+    }
+
+    /// The members of `Awaited<t>` into `kept` and `nothing`: each member of `t`, a promise's
+    /// value in its place, unwrapped again member by member (`Promise<Promise<A> | B>` is
+    /// `A | B`).
+    fn awaited_members(
+        &mut self,
+        t: TyId,
+        kept: &mut Vec<TyId>,
+        nothing: &mut Option<Nothing>,
+        depth: u32,
+    ) {
+        for s in self.subjects_of(t) {
+            match s {
+                Subject::Ty(m) => match *self.ty.kind(m) {
+                    TyKind::Promise(v, _) if depth < 64 => {
+                        self.awaited_members(v, kept, nothing, depth + 1)
+                    }
+                    TyKind::Option(p, n) => {
+                        *nothing = Some(nothing.map_or(n, |x| x.join(n)));
+                        self.awaited_members(p, kept, nothing, depth + 1);
+                    }
+                    _ if !kept.contains(&m) => kept.push(m),
+                    _ => {}
+                },
+                Subject::Nothing(n) => *nothing = Some(nothing.map_or(n, |x| x.join(n))),
+            }
+        }
     }
 }
 

@@ -3,6 +3,9 @@ type A1 = Awaited<Promise<number>>;
 type A2 = Awaited<Promise<Promise<string>>>;
 type A3 = Awaited<boolean>;
 type A4 = Awaited<Promise<number> | string | null>;
+// A union inside a promise is unwrapped member by member too.
+type N1 = Awaited<Promise<Promise<number> | string>>;
+type PN = Awaited<Promise<number | Promise<boolean>> | null>;
 type A5 = Awaited<string | Promise<number | null> | undefined>;
 
 async function get<R>(f: () => R | Promise<R>): Promise<Awaited<R>> {
@@ -36,6 +39,11 @@ async function main() {
   const f3: A5 = "s";
   const x: Awaited<any> = 8;
   console.log(f1, f2, f3, x);
+  const n1: N1 = 3;
+  const n2: N1 = "s";
+  const pn: PN = true;
+  const pz: PN = null;
+  console.log(n1, n2, pn, pz);
   console.log(await all(Promise.resolve("q")));
 }
 

@@ -1697,7 +1697,8 @@ the result is an ordinary object type, union or literal type.
   is `"true" | "false"`, and a hole of literal types each of them spelled out
   (`` `${boolean}x` `` is `"truex" | "falsex"`).
 - `NonNullable<T>`, `Exclude<T, U>` and `Extract<T, U>`; `Awaited<T>`, what `await` gives (the
-  value of a promise, of each member of a union, also over a type parameter); `string & K` with `K` a string literal
+  value of a promise, of each member of a union, also over a type parameter; a thenable that
+  is not a `Promise` stays itself, as `await` takes only promises); `string & K` with `K` a string literal
   type is `K`; `keyof` of a union is the keys its members share.
 
 ```ts
