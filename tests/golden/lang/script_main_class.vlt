@@ -1,0 +1,8 @@
+// A class named `main` beside top-level statements (#1567).
+class main {
+  static run(): void {
+    console.log("class main");
+  }
+}
+
+main.run();

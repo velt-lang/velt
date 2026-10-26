@@ -56,7 +56,7 @@ use velt_syntax::ast;
 pub use locate::{module_path, Origin, PackageResolver};
 pub use resolve::resolve_module;
 pub use spec::{resolve_spec, ModuleRef};
-pub use std_root::{prelude_files, std_root};
+pub use std_root::{in_std, prelude_files, std_root};
 
 /// Inputs of [`load_program`] besides the root path.
 #[derive(Default)]
@@ -70,6 +70,10 @@ pub struct LoadOptions<'a> {
     /// Unsaved file contents by path (the language server's open documents); consulted before
     /// the disk for every module, prelude included.
     pub overlay: Option<&'a HashMap<PathBuf, String>>,
+    /// A root inside [`LoadOptions::std_root`] is loaded as the std module it is (`velt:fs`), not
+    /// as `main`: the language server, for a std file opened in the editor, so it is checked like
+    /// std code (runtime declarations, std's own types) instead of as a user program.
+    pub std_root_as_std: bool,
 }
 
 /// Result of loading a program: the modules and the index of the root (`main`).
@@ -140,7 +144,22 @@ pub fn load_with_roots(
     };
     let dir = root.parent().unwrap_or(Path::new("")).to_path_buf();
     let origin = Origin::Root(dir);
-    let root_index = loader.add(root, file_key(root), src, "main".into(), origin.clone());
+    let key = file_key(root);
+    let std_origin = match (&opts.std_root, &loader.std_key) {
+        (Some(std), Some(std_key)) if opts.std_root_as_std && key.starts_with(std_key) => {
+            Some(Origin::Std(std.clone()))
+        }
+        _ => None,
+    };
+    let root_index = match std_origin {
+        // A prelude file opened in the editor is already loaded.
+        Some(_) if loader.by_file.contains_key(&key) => loader.by_file[&key],
+        Some(std) => {
+            let canonical = std.canonical(root);
+            loader.add(root, key, src, canonical, std)
+        }
+        None => loader.add(root, key, src, "main".into(), origin.clone()),
+    };
     let mut queue: VecDeque<usize> = (0..loader.modules.len()).collect();
     loader.resolve_all(&mut queue);
     loader.extra_phase = true;

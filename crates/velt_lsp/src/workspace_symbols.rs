@@ -105,6 +105,8 @@ type Found = Vec<(String, SymbolKind, velt_common::Span, Option<String>)>;
 fn item_symbols(item: &ast::Item, out: &mut Found) {
     let mut top = |name: &ast::Ident, kind| out.push((name.name.clone(), kind, name.span, None));
     match &item.kind {
+        // The top-level statements of a file that declares its own `main` (#1567).
+        ast::ItemKind::Function(f) if f.sig.name.name == velt_syntax::SCRIPT_MAIN => {}
         ast::ItemKind::Function(f) => top(&f.sig.name, SymbolKind::FUNCTION),
         ast::ItemKind::ExternFn(sig) => top(&sig.name, SymbolKind::FUNCTION),
         ast::ItemKind::Interface(i) => top(&i.name, SymbolKind::INTERFACE),
