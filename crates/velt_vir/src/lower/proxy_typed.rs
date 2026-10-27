@@ -347,6 +347,39 @@ impl FnLower<'_, '_> {
         Operand::Copy(place)
     }
 
+    /// `base.f` of a field of no size (`void`: an interface at `T = void`) of the proxiable
+    /// `bty`: when `base` holds a proxy or a view, its `get` trap (a getter) runs all the same,
+    /// as in JavaScript, and its answer is dropped.
+    pub(super) fn proxy_unit_field_read(
+        &mut self,
+        base: &hir::Expr,
+        bty: TyId,
+        index: u32,
+    ) -> Operand {
+        let v = self.expr(base);
+        let (name, _) = self.proxy_field(bty, index);
+        if self.dead() || name.starts_with('#') {
+            return super::unit();
+        }
+        let bp = self.place_of(v, bty);
+        let ptr = self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(bp)));
+        let any = self.cx.any_ty();
+        self.proxy_split(
+            &ptr,
+            |lw, u| {
+                let avt = lw.cx.ty(any);
+                let slot = Place::local(lw.temp(avt));
+                let key = lw.proxy_key_addr(&name);
+                let out = lw.addr(slot.clone());
+                let f = lw.cx.func(Work::Glue(Glue::ProxyGet, any));
+                lw.call(Callee::Func(f), vec![u, key, out], None, false);
+                lw.drop_glue(slot, any);
+            },
+            |_| {},
+        );
+        super::unit()
+    }
+
     /// The value of field `index` of the `bty` value at `ptr`, in a temporary (borrowed; a
     /// proxy's answer is owned by a slot dropped with the statement's temporaries).
     pub(super) fn proxy_read_at(&mut self, ptr: &Operand, bty: TyId, index: u32) -> Place {

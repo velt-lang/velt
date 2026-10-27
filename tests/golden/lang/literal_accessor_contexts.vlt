@@ -1,0 +1,183 @@
+// check: no leaks
+// Getters and setters in object literals with no interface expected (#941), typed as
+// TypeScript types them: a literal passed where a type parameter is inferred, stored as an
+// `any`, or returned as a fields-only object type (sigx's `toSignal`, a view of the literal in
+// a program with typed proxies, as this one is). Each read runs the getter, each write the
+// setter; printing and JSON show the literal as Node does.
+
+const brand = new WeakSet<object>();
+
+function mark<T extends object>(handle: T): T {
+  brand.add(handle);
+  return handle;
+}
+
+type PropertySignal<T> = { value: T };
+
+function toSignal<T extends object, K extends keyof T>(source: T, key: K): PropertySignal<T[K]> {
+  return mark({
+    get value() {
+      return source[key];
+    },
+    set value(v: T[K]) {
+      if (!Reflect.set(source, key, v)) {
+        throw new Error("read-only " + String(key));
+      }
+    },
+  });
+}
+
+const state = { count: 1, name: "a" };
+const count = toSignal(state, "count");
+const name = toSignal(state, "name");
+console.log(count.value, name.value);
+count.value = 5;
+name.value += "b";
+console.log(state.count, state.name, count.value, name.value);
+state.count = 9;
+console.log(count.value);
+
+// A type parameter inferred from the literal: its own type, with the accessor.
+function id<T>(x: T): T {
+  return x;
+}
+
+let reads = 0;
+const counter = id({
+  step: 2,
+  get next(): number {
+    reads += this.step;
+    return reads;
+  },
+});
+console.log(counter.next, counter.next, reads);
+
+// Stored as an `any`: reads and writes through it run the accessors.
+let stored = 1;
+const box: any = {
+  get v(): number {
+    return stored * 10;
+  },
+  set v(n: number) {
+    stored = n;
+  },
+};
+box.v = 4;
+console.log(box.v, stored);
+
+// Printed and written as JSON as Node shows them.
+const lit = {
+  n: 2,
+  get double(): number {
+    return this.n * 2;
+  },
+  set only(v: number) {},
+};
+lit.n = 10;
+console.log(lit.double);
+console.log(lit);
+console.log(JSON.stringify(lit));
+
+// Nested in a type parameter, stored as `object` / `unknown`, returned as `any`, with methods
+// using `this`; printed and written as JSON inside arrays and objects.
+function same<T>(x: T): T {
+  return x;
+}
+
+let k = 0;
+const nested = same(
+  same({
+    get v(): number {
+      return ++k;
+    },
+  }),
+);
+console.log(nested.v, nested.v);
+const asObj: object = {
+  get w(): number {
+    return 7;
+  },
+};
+console.log((asObj as any).w);
+const asUnknown: unknown = {
+  get u(): string {
+    return "u";
+  },
+};
+console.log((asUnknown as any).u);
+
+function retAny(): any {
+  return {
+    get r(): number {
+      return 3;
+    },
+  };
+}
+
+console.log(retAny().r);
+const withMethod = same({
+  base: 2,
+  twice() {
+    return this.base * 2;
+  },
+  get thrice(): number {
+    return this.base * 3;
+  },
+});
+console.log(withMethod.twice(), withMethod.thrice);
+const lit2 = {
+  a: 1,
+  get b(): number {
+    return this.a + 1;
+  },
+};
+console.log([lit2]);
+console.log({ inner: lit2 });
+console.log(JSON.stringify([lit2]), JSON.stringify(lit2, null, 2));
+console.log(String(JSON.stringify(same(lit2))));
+
+// A proxy makes this a program whose object types may hold views.
+const p = new Proxy({ x: 1 }, {});
+console.log(p.x);
+
+// A type parameter whose bound declares fields (`T extends { v: number }`): the literal's
+// getter fills the field, and its setter takes a write.
+function bound<T extends { v: number }>(x: T): number {
+  return x.v + x.v;
+}
+
+let reads2 = 0;
+console.log(
+  bound({
+    get v() {
+      reads2++;
+      return 5;
+    },
+  }),
+  reads2,
+);
+
+function bump<T extends { n: number }>(x: T): T {
+  x.n = x.n + 1;
+  return x;
+}
+
+let stored2 = 1;
+const bumped = bump({
+  get n(): number {
+    return stored2;
+  },
+  set n(v: number) {
+    stored2 = v * 10;
+  },
+});
+console.log(bumped.n, stored2);
+
+// A literal with accessors as text: `[object Object]`, as Node writes it.
+const asText = {
+  a: 1,
+  get g() {
+    return this.a;
+  },
+};
+console.log(`${asText}`, String(asText), asText + "", "x" + asText);

@@ -68,6 +68,9 @@ impl FnCx<'_, '_> {
         if self.no_expected_type(exp) && self.wants_own_iface(props) {
             return Some(self.own_iface_object(props, span));
         }
+        if let Some(h) = self.accessor_literal_as(props, exp, span) {
+            return Some(h);
+        }
         let at = props.iter().find_map(super::iface_object::is_accessor)?;
         self.cx.error(
             Diagnostic::error(
@@ -77,6 +80,145 @@ impl FnCx<'_, '_> {
             .with_note("an object literal of an object type is plain data: its fields hold values; store the value in a field, annotate the literal with an interface that declares the member, or declare a class with the accessor"),
         );
         Some(self.error_expr(span))
+    }
+
+    /// A literal with getters or setters where `exp` is expected, typed as TypeScript types it
+    /// (#941): as its own interface where `exp` is a type parameter being inferred, converted
+    /// to an `any`, `unknown` or `object` expected there, and as a view of it where `exp` is a
+    /// fields-only object type each of whose fields it has (`toSignal`'s `{ value: T[K] }`,
+    /// in a program with typed proxies: `object_view_cast`). `None` otherwise.
+    fn accessor_literal_as(
+        &mut self,
+        props: &[ast::ObjectProp],
+        exp: Option<TyId>,
+        span: Span,
+    ) -> Option<hir::Expr> {
+        let t = self.hint(exp)?;
+        let param = matches!(self.cx.ty.kind(t), TyKind::Param(_));
+        let dynamic = self.cx.dynamic(t).is_some();
+        if !self.wants_own_iface(props) || !(param || dynamic || self.may_be_typed_proxy(t)) {
+            return None;
+        }
+        if !param && !dynamic && props.iter().all(|p| !is_getter(p)) {
+            // A view reads the fields through getters.
+            return None;
+        }
+        if !param && props.iter().any(is_this_method) {
+            // A method using `this` called through `any` or a view would not get the object:
+            // the error where the method is checked stays.
+            return None;
+        }
+        let h = self.own_iface_object(props, span);
+        if param || self.cx.ty.has_error(h.ty) {
+            return Some(h);
+        }
+        if dynamic {
+            return Some(self.coerce(h, t));
+        }
+        self.object_view_cast(h, t, span).ok()
+    }
+
+    /// `t`, a literal's own interface, as the bound `b` of a type parameter
+    /// (`T extends { v: number }`) that it does not satisfy as it is: the bound's interface,
+    /// when the literal has each of its members (a getter fills a field, a setter takes its
+    /// writes), as TypeScript lets the literal's type satisfy the bound. `None` otherwise.
+    pub(crate) fn literal_as_bound(
+        &mut self,
+        t: TyId,
+        b: &crate::defs::Bound,
+        in_scope: &[Vec<crate::defs::Bound>],
+    ) -> Option<TyId> {
+        let TyKind::Dyn(id, args) = self.cx.ty.kind(t).clone() else {
+            return None;
+        };
+        if !self.cx.literal_ifaces.contains(&id)
+            || self.cx.satisfies(t, b, in_scope)
+            || !self.cx.iface_upcast((id, &args), (b.iface, &b.args))
+        {
+            return None;
+        }
+        Some(self.cx.ty.intern(TyKind::Dyn(b.iface, b.args.clone())))
+    }
+
+    /// Is `t` the own interface of a literal with accessors or methods using `this`?
+    fn is_literal_iface(&self, t: TyId) -> bool {
+        matches!(self.cx.ty.kind(t), TyKind::Dyn(id, _) if self.cx.literal_ifaces.contains(id))
+    }
+
+    /// Does a value of `t` hold a value of a literal's own interface (`t` itself, or an element,
+    /// field or payload of it)?
+    fn holds_literal_iface(&mut self, t: TyId, depth: u32) -> bool {
+        if self.is_literal_iface(t) {
+            return true;
+        }
+        if depth > 8 {
+            return false;
+        }
+        let parts: Vec<TyId> = match self.cx.ty.kind(t).clone() {
+            TyKind::Adt(d, args) => match &self.cx.info[d.0 as usize] {
+                DefInfo::Adt(a) => a.fields.iter().map(|f| f.ty).collect(),
+                _ => vec![],
+            }
+            .into_iter()
+            .map(|f| self.cx.subst(f, &args))
+            .collect(),
+            TyKind::Dyn(..) | TyKind::FnPtr { .. } | TyKind::Closure(_) => vec![],
+            k => crate::types::children(&k),
+        };
+        parts
+            .into_iter()
+            .any(|p| self.holds_literal_iface(p, depth + 1))
+    }
+
+    /// `h`, a value that holds one of a literal's own interface (a literal with getters, or an
+    /// array or object of them), as an `any`: printed and written as JSON by the glue of the
+    /// values it holds, as Node does (`[Getter]`, the getters' results, a setter alone left
+    /// out). Any other `h` as it is.
+    pub(crate) fn literal_iface_as_any(&mut self, h: hir::Expr) -> hir::Expr {
+        if !self.holds_literal_iface(h.ty, 0) {
+            return h;
+        }
+        let Some(any) = self.any_ty() else {
+            return h;
+        };
+        self.try_coerce(h, any).unwrap_or_else(|h| h)
+    }
+
+    /// `JSON.stringify(x, …)` of a value `x` holding one of a literal's own interface: of `x as any`
+    /// (`literal_iface_as_any`). `None` for other calls.
+    pub(super) fn json_literal_iface(
+        &mut self,
+        callee: &ast::Expr,
+        type_args: &[ast::TypeExpr],
+        args: &[ast::Expr],
+        exp: Option<TyId>,
+        span: Span,
+    ) -> Option<hir::Expr> {
+        let ast::ExprKind::Member {
+            object,
+            prop,
+            optional: false,
+        } = &callee.kind
+        else {
+            return None;
+        };
+        let ast::ExprKind::Ident(o) = &object.kind else {
+            return None;
+        };
+        if prop.name != "stringify" || o.name != "JSON" || !type_args.is_empty() {
+            return None;
+        }
+        let first = args.first()?;
+        if matches!(first.kind, ast::ExprKind::Cast { .. }) || self.is_local_name("JSON") {
+            return None;
+        }
+        let t = self.trial_type(first)?;
+        if !self.holds_literal_iface(t, 0) {
+            return None;
+        }
+        let mut args = args.to_vec();
+        args[0] = as_any(first);
+        Some(self.call(callee, type_args, &args, false, exp, span))
     }
 
     /// The literal with `props` (no expected type) as the value of its own interface.
@@ -482,4 +624,31 @@ fn iface_mut<'c, 'm>(cx: &'c mut crate::ctx::Ctx<'m>, d: DefId) -> &'c mut Iface
         DefInfo::Iface(i) => i,
         _ => panic!("ICE: def {d:?} is not an interface"),
     }
+}
+
+/// Is `p` a getter (`get k() { … }`)?
+fn is_getter(p: &ast::ObjectProp) -> bool {
+    matches!(p, ast::ObjectProp::KeyValue(_, v) if matches!(written(Some(v)), Written::Get(_)))
+}
+
+/// `e as any`.
+fn as_any(e: &ast::Expr) -> ast::Expr {
+    let any = ast::Ident {
+        name: "any".to_string(),
+        span: e.span,
+    };
+    let ty = ast::TypeExpr {
+        kind: ast::TypeExprKind::Named {
+            path: vec![any],
+            args: vec![],
+        },
+        span: e.span,
+    };
+    let expr = Box::new(e.clone());
+    super::setters::synth(ast::ExprKind::Cast { expr, ty }, e.span)
+}
+
+/// Is `p` a method (not an accessor) that uses `this`?
+fn is_this_method(p: &ast::ObjectProp) -> bool {
+    matches!(p, ast::ObjectProp::KeyValue(_, v) if matches!(written(Some(v)), Written::Value(Some(v)) if takes_this(v)))
 }

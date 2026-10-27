@@ -231,6 +231,8 @@ impl FnCx<'_, '_> {
             // A `Date` prints as its ISO string, like Node.
             let h = self.own_to_string(h, "__inspect");
             let h = self.narrowed_for_print(h);
+            // A literal with accessors prints as Node shows it (`[Getter]`), through `any`.
+            let h = self.literal_iface_as_any(h);
             // A `void` variable (`then((v) => console.log(v))` on a `Promise<void>`) holds
             // `undefined`. A call returning nothing stays an error: Velt's `reverse()` returns
             // nothing where TypeScript's returns the array.

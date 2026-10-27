@@ -629,7 +629,7 @@ fn check_fn(cx: &mut Ctx, def: DefId, src: FnSource) -> hir::FnDef {
         Some(r) => r,
         None => fcx.inferred_fn_ret(def, &mut block),
     };
-    fcx.check_returns(&f.name, frame_ret, f.name_span, &mut block);
+    fcx.check_returns(&f.name, frame_ret, f.name_span, &mut block, false);
     fcx.wrap_adopted(&mut block);
     fcx.rec_frame_scopes();
     fcx.finish_using_shares();
@@ -719,6 +719,7 @@ impl FnCx<'_, '_> {
         ret: hir::TyId,
         span: Span,
         block: &mut hir::Block,
+        from_context: bool,
     ) {
         if ret != self.cx.ty.unit
             && !self.cx.ty.is_bottom(ret)
@@ -732,6 +733,29 @@ impl FnCx<'_, '_> {
             {
                 let end = Span::new(block.span.file, block.span.hi, block.span.hi);
                 let value = self.mk(hir::ExprKind::Lit(hir::Lit::Null), ret, end);
+                block.stmts.push(hir::Stmt {
+                    kind: hir::StmtKind::Return(Some(value)),
+                    span: end,
+                });
+                return;
+            }
+            // A function declared to return `any`, or an arrow typed by its context to return
+            // `any` or `unknown` (sigx's `WatchCallback` returns `any`), returns `undefined` at
+            // its end, as in TypeScript; a function declared `unknown` must return (TS2355).
+            let dynamic = match self.cx.dynamic(ret) {
+                Some(crate::any::Dynamic::Any) => true,
+                Some(crate::any::Dynamic::Unknown) => from_context,
+                _ => false,
+            };
+            if dynamic {
+                let end = Span::new(block.span.file, block.span.hi, block.span.hi);
+                let undefined = ast::Expr {
+                    id: ast::NodeId(u32::MAX),
+                    kind: ast::ExprKind::Lit(ast::Lit::Undefined),
+                    span: end,
+                };
+                let value = self.expr(&undefined, Some(ret), Want::Move);
+                let value = self.coerce(value, ret);
                 block.stmts.push(hir::Stmt {
                     kind: hir::StmtKind::Return(Some(value)),
                     span: end,

@@ -39,7 +39,7 @@ function __anyStrArg(args: any[], k: i64): string {
 }
 
 /** The function argument `k` of an array method, or Node's `TypeError`. */
-function __anyFnArg(args: any[], k: i64): any {
+export function __anyFnArg(args: any[], k: i64): any {
   const f = __anyArg(args, k);
   if (typeof f !== "function") {
     const t = typeof f;
@@ -488,4 +488,20 @@ export function __anyArr_reduce<T>(a: T[], args: any[]): any {
 export function __anyArr_toString<T>(a: T[], args: any[]): any {
   const v: any = a;
   return __anyJoin(v, ",", "");
+}
+
+// `Map` and `Set` methods whose own signature glue cannot call (a callback with a `throws` type
+// parameter): `__any<Class>_<name><type arguments>(value, args)` (velt_vir any_builtin.rs,
+// `any_class_call`); those of `Set` are in std/collections/set.vlt.
+
+/** `m.forEach(f)` through `any`: `f(value, key, m)` per entry, in insertion order. */
+export function __anyMap_forEach<K, V>(m: Map<K, V>, args: any[]): any {
+  const f = __anyFnArg(args, 0);
+  const whole: any = m;
+  m.forEach((v, k) => {
+    const value: any = v;
+    const key: any = k;
+    f(value, key, whole);
+  });
+  return undefined;
 }

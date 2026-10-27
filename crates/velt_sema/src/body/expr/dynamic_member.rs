@@ -331,6 +331,7 @@ impl FnCx<'_, '_> {
                 return Ok(h);
             }
         }
+        let typed_callbacks = self.narrowed_dynamic_instance(&recv);
         let (recv, any) = self.dynamic_receiver(recv, Some(Some(&prop.name)))?;
         let Some(any) = any else {
             self.check_args_loose(args);
@@ -350,11 +351,56 @@ impl FnCx<'_, '_> {
         let text = format!("{}.{}", self.callee_text(&recv), prop.name);
         let text = self.key_lit(&text, span);
         let mut all = vec![recv, key, text];
-        let Some(boxed) = self.dynamic_args(args, any) else {
+        let outer = self.any_callback;
+        let boxed = self.dynamic_args(args, any, typed_callbacks);
+        self.any_callback = outer;
+        let Some(boxed) = boxed else {
             return Ok(self.error_expr(span));
         };
         all.extend(boxed);
         Ok(self.intrinsic(Intrinsic::AnyCall, all, any, span))
+    }
+
+    /// Is `recv` a variable declared `object` or `unknown` that a test narrowed to an instance
+    /// of a generic class or to an array (`x instanceof Map`, `Array.isArray(x)`), which it is
+    /// read as an `any` for? TypeScript types it `Map<any, any>` / `any[]`, so an arrow passed
+    /// to its method takes `any` parameters there (`raw.forEach((v, k) => …)`), where on an
+    /// `any` it needs them written.
+    fn narrowed_dynamic_instance(&self, recv: &hir::Expr) -> bool {
+        // The read of a narrowed `object` / `unknown` is the value it holds, checked (`AnyTo`)
+        // of a share of the variable (`downcast_narrowed`). The result of an array method that
+        // returns an array (`u.filter(…)` in `u.filter(…).map(…)`) is TypeScript's `any[]`
+        // again when its receiver is one.
+        let mut inner = recv;
+        for _ in 0..16 {
+            inner = match &inner.kind {
+                H::Downcast(x) => x.as_ref(),
+                H::Call {
+                    callee: hir::Callee::Intrinsic(Intrinsic::AnyTo | Intrinsic::Share),
+                    args,
+                } if args.len() == 1 => &args[0],
+                H::Block(b) => match &b.value {
+                    Some(v) => v.as_ref(),
+                    None => return false,
+                },
+                H::Call {
+                    callee: hir::Callee::Intrinsic(Intrinsic::AnyCall),
+                    args,
+                } => match args.get(1).map(|k| &k.kind) {
+                    Some(H::Lit(Lit::Str(name))) if ARRAY_RESULTS.contains(&name.as_str()) => {
+                        &args[0]
+                    }
+                    _ => return false,
+                },
+                _ => break,
+            };
+        }
+        let H::Local(l, _) = &inner.kind else {
+            return false;
+        };
+        let declared = self.cx.dynamic(self.local_ty(*l));
+        matches!(declared, Some(Dynamic::Object | Dynamic::Unknown))
+            && (self.narrowed_class(*l)).is_some_and(|t| self.cx.dynamic(t) == Some(Dynamic::Any))
     }
 
     /// `f.call(thisArg, ...args)` and `f.apply(thisArg, list)` of a `Function` `f`: the call
@@ -447,7 +493,7 @@ impl FnCx<'_, '_> {
         let text = self.callee_text(&f);
         let text = self.key_lit(&text, span);
         let mut all = vec![f, text];
-        let Some(boxed) = self.dynamic_args(args, any) else {
+        let Some(boxed) = self.dynamic_args(args, any, false) else {
             return Ok(self.error_expr(span));
         };
         all.extend(boxed);
@@ -457,7 +503,12 @@ impl FnCx<'_, '_> {
     /// The arguments of a dynamic call, each boxed as an `any` (moved into the call). With a
     /// spread (`f(a, ...xs)`), the arguments are one `any[]` built as the array literal
     /// `[a, ...xs]`, whose elements the call takes (hir_encodings.md "any and unknown").
-    fn dynamic_args(&mut self, args: &[ast::Expr], any: TyId) -> Option<Vec<hir::Expr>> {
+    fn dynamic_args(
+        &mut self,
+        args: &[ast::Expr],
+        any: TyId,
+        typed_callbacks: bool,
+    ) -> Option<Vec<hir::Expr>> {
         if args
             .iter()
             .any(|a| matches!(a.kind, ast::ExprKind::Spread(_)))
@@ -473,6 +524,9 @@ impl FnCx<'_, '_> {
         }
         let mut out = vec![];
         for a in args {
+            if typed_callbacks && matches!(a.kind, ast::ExprKind::Arrow { .. }) {
+                self.any_callback = Some(a.span);
+            }
             let h = self.expr(a, Some(any), Want::Move);
             out.push(self.coerce(h, any));
         }
@@ -560,3 +614,22 @@ impl FnCx<'_, '_> {
         self.mk(hir::ExprKind::Cast(Box::new(h)), f64_, span)
     }
 }
+
+/// The array methods whose result is an array of the same kind (`any[]` on an `any[]`).
+const ARRAY_RESULTS: &[&str] = &[
+    "concat",
+    "copyWithin",
+    "fill",
+    "filter",
+    "flat",
+    "flatMap",
+    "map",
+    "reverse",
+    "slice",
+    "sort",
+    "splice",
+    "toReversed",
+    "toSorted",
+    "toSpliced",
+    "with",
+];

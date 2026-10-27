@@ -46,8 +46,11 @@ impl FnLower<'_, '_> {
     pub(super) fn field_expr(&mut self, base: &hir::Expr, index: u32, mode: UseMode) -> Operand {
         let bty = self.sub(base.ty);
         let write = std::mem::take(&mut self.owner_write);
-        if self.cx.proxiable(bty) && !self.is_unit_field(bty, index) {
-            return self.proxy_field_read(base, bty, index, mode);
+        if self.cx.proxiable(bty) {
+            return match self.is_unit_field(bty, index) {
+                true => self.proxy_unit_field_read(base, bty, index),
+                false => self.proxy_field_read(base, bty, index, mode),
+            };
         }
         if mode == UseMode::Move && (self.counted_part(base) || self.in_module_state(base)) {
             // Other owners still see the field (semantics stage 2): share it instead.
