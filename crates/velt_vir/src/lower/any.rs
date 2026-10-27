@@ -585,7 +585,8 @@ impl FnLower<'_, '_> {
             None => self.cx.any_tag(t),
         };
         let msg = format!(
-            "TypeError: the value is not an {} (it is {})",
+            "TypeError: {}the value is not an {} (it is {})",
+            self.any_context_words(),
             self.any_target_name(ty),
             FOUND[tag as usize]
         );
@@ -733,6 +734,8 @@ impl FnLower<'_, '_> {
         self.switch_to(bad_bb);
         // A record built by `{} as D` (sema's `empty_as_deferred`) where `D` is an object type.
         self.any_record_fill(p, from, ty, &out, done);
+        // A generic function value held as `unknown` (glue/vtable.rs `ClosureAny`).
+        self.any_to_generic_fn(p, ty, desc.clone(), &out, done);
         // An object implementing the interface, or the interface at other type arguments.
         self.any_to_iface(p, ty, &out, done);
         if self.cx.proxiable(ty) {

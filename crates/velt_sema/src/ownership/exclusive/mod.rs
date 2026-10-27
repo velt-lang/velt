@@ -15,7 +15,8 @@
 //! `xs[j]` always overlap, `a.f` and `a.g` never do); borrowing pattern bindings count as
 //! the place they borrow from. The non-Copy params of closures and of named functions used as
 //! values may alias each other (calls through a function value don't check their arguments
-//! against each other), so there they count as one place. Guarantees for code generation: during a call, memory reachable
+//! against each other), so there they count as one place, unless their types cannot be one
+//! value (instances of unrelated classes, an array and a class instance). Guarantees for code generation: during a call, memory reachable
 //! from a `BorrowMut` parameter is not reachable from any other parameter (including the
 //! captures of a closure argument), and `Borrow` parameters may alias each other but never a
 //! `BorrowMut` or `Owned` one.
@@ -324,15 +325,51 @@ fn aliasing_params(cx: &mut Ctx, d: DefId, f: &FnDef) -> Aliases {
         return out;
     }
     let first = f.captures.len() + usize::from(f.self_ty.is_some());
-    let mut shared: Option<LocalId> = None;
-    for p in &f.params[first..] {
-        if cx.is_copy(p.ty) {
-            continue;
+    // Params that may be the same value (directly or through another, `any`) are one place.
+    let params: Vec<(LocalId, crate::hir::TyId)> = f.params[first..]
+        .iter()
+        .filter(|p| !cx.is_copy(p.ty))
+        .map(|p| (p.local, p.ty))
+        .collect();
+    let mut set: Vec<usize> = (0..params.len()).collect();
+    fn find(set: &mut [usize], i: usize) -> usize {
+        let mut r = i;
+        while set[r] != r {
+            r = set[r];
         }
-        let root = *shared.get_or_insert(p.local);
-        out.insert(p.local, Place { root, proj: vec![] });
+        set[i] = r;
+        r
+    }
+    for i in 0..params.len() {
+        for j in 0..i {
+            if may_be_same_value(cx, params[i].1, params[j].1) {
+                let (ri, rj) = (find(&mut set, i), find(&mut set, j));
+                set[ri.max(rj)] = ri.min(rj);
+            }
+        }
+    }
+    for i in 0..params.len() {
+        let root = params[find(&mut set, i)].0;
+        out.insert(params[i].0, Place { root, proj: vec![] });
     }
     out
+}
+
+/// Can one value be of type `a` and of type `b` at once (so params of those types may be the
+/// same object)? Not instances of two classes neither of which extends the other, nor an array
+/// and a class instance; anything else (object types, which are structural, interfaces, `any`,
+/// type parameters, unions) may be.
+fn may_be_same_value(cx: &Ctx, a: crate::hir::TyId, b: crate::hir::TyId) -> bool {
+    if a == b {
+        return true;
+    }
+    let class = |t: crate::hir::TyId| cx.class_of(t).map(|(d, _)| d);
+    match (class(a), class(b)) {
+        (Some(x), Some(y)) => cx.class_extends(x, y) || cx.class_extends(y, x),
+        (Some(_), None) => !matches!(cx.ty.kind(b), TyKind::Array(_)),
+        (None, Some(_)) => !matches!(cx.ty.kind(a), TyKind::Array(_)),
+        (None, None) => true,
+    }
 }
 
 struct Checker<'a, 'm> {
@@ -380,7 +417,16 @@ impl Checker<'_, '_> {
 
     /// `held`: the call runs a non-escaping closure held in a local, whose borrowed captures
     /// are passed along with the arguments (the first entry of the uses).
-    fn check_call(&mut self, args: &mut [Expr], mutex_with: bool, held: Option<(DefId, Span)>) {
+    ///
+    /// `key_only`: the call is a collection's `has`, `get` or `delete`, whose key argument (the
+    /// last) the callee only compares by identity ([`identity_key_call`]).
+    fn check_call(
+        &mut self,
+        args: &mut [Expr],
+        mutex_with: bool,
+        held: Option<(DefId, Span)>,
+        key_only: bool,
+    ) {
         let col = self.collector();
         let mut uses: ArgUses = vec![];
         if let Some((c, span)) = held {
@@ -407,6 +453,9 @@ impl Checker<'_, '_> {
                 u.access = Access::Unique;
             }
         }
+        if key_only && held.is_none() && uses.len() == 2 {
+            drop_key_through_receiver(&mut uses);
+        }
         let shared = share_borrowed_captures(&mut uses);
         if let Some(d) = first_conflict(&uses) {
             self.errors.push(d);
@@ -422,6 +471,57 @@ impl Checker<'_, '_> {
             }
         }
     }
+}
+
+/// Is `callee` a `has`, `get` or `delete` of `Map`, `Set`, `WeakMap` or `WeakSet`? Their key
+/// is compared by identity when it is an object (a number, `bool` or string is copied, so it is
+/// no use here): the callee reads its address, never what it points to.
+fn identity_key_call(cx: &Ctx, callee: &Callee) -> bool {
+    const METHODS: [&str; 4] = [
+        "std/prelude/map::Map.",
+        "std/collections/set::Set.",
+        "std/prelude/weak::WeakMap.",
+        "std/prelude/weak::WeakSet.",
+    ];
+    let Callee::Def(d, _) = callee else {
+        return false;
+    };
+    let Some(Def::Fn(f)) = &cx.defs[d.0 as usize] else {
+        return false;
+    };
+    METHODS.iter().any(|m| {
+        f.name
+            .strip_prefix(m)
+            .is_some_and(|n| matches!(n, "has" | "get" | "delete"))
+    })
+}
+
+/// Is a key of type `t` compared by identity (a class instance, an object, an interface value,
+/// an array or a function)? Not a value `struct`, whose fields are compared, nor a tuple.
+fn by_identity(cx: &Ctx, t: crate::hir::TyId) -> bool {
+    match cx.ty.kind(t) {
+        TyKind::Adt(d, _) => cx.adt(*d).is_some_and(|a| match a.kind {
+            crate::hir::AdtKind::Class | crate::hir::AdtKind::Anon => true,
+            // A fields-only interface; not a Velt `struct`, a value type.
+            crate::hir::AdtKind::Struct => a.decl.is_none(),
+        }),
+        TyKind::Dyn(..) | TyKind::Array(_) | TyKind::FnPtr { .. } => true,
+        _ => false,
+    }
+}
+
+/// `link.dep.subs.delete(effect)` with `link` an element of `effect.deps`: the receiver is
+/// reached through the borrowed key, but the callee reads only the key's address, so the
+/// key's borrow of the object (a strict prefix of the receiver's place) is no use of the
+/// receiver. A key inside the receiver (`for (const x of s) s.delete(x)`) keeps its use.
+fn drop_key_through_receiver(uses: &mut ArgUses) {
+    let receiver: Vec<Place> = uses[0].0.iter().map(|u| u.place.clone()).collect();
+    uses[1].0.retain(|k| {
+        let through = receiver
+            .iter()
+            .any(|r| k.place.proj.len() < r.proj.len() && k.place.overlaps(r));
+        !(k.access == Access::Shared && k.capture.is_none() && through)
+    });
 }
 
 /// A closure argument that takes over a variable another argument of the call only borrows
@@ -581,9 +681,12 @@ impl VisitMut for Checker<'_, '_> {
                     Callee::Intrinsic(Intrinsic::MutexWith | Intrinsic::LockRead)
                 );
                 let held = self.collector().held_call(callee).map(|c| (c, e.span));
-                self.check_call(args, mutex_with, held);
+                let key_only = args.len() == 2
+                    && by_identity(self.cx, args[1].ty)
+                    && identity_key_call(self.cx, callee);
+                self.check_call(args, mutex_with, held, key_only);
             }
-            E::New { args, .. } => self.check_call(args, false, None),
+            E::New { args, .. } => self.check_call(args, false, None, false),
             _ => {}
         }
     }

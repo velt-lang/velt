@@ -68,10 +68,18 @@ pub fn segment(seg: &str) -> String {
     format!("{}{esc}", esc.len())
 }
 
+/// The HIR name of the function holding the top-level statements of a file that declares its own
+/// `main` (`velt_syntax::SCRIPT_MAIN`, #1567).
+const SCRIPT_MAIN: &str = "#main";
+
+/// What [`demangle`] calls [`SCRIPT_MAIN`].
+const TOP_LEVEL: &str = "<top level>";
+
 /// The readable name of a symbol for debuggers: a mangled `_V` prefix decoded back to the HIR
 /// name, type arguments in `<…>`, then any other suffix verbatim (`User.greet`, `id<i64>`,
-/// `main$poll`). Other symbols (glue, runtime, `velt_main`) and undecodable ones are returned
-/// unchanged.
+/// `main$poll`). The function holding the top-level statements of a file that declares its own
+/// `main` ([`SCRIPT_MAIN`]) reads as [`TOP_LEVEL`] (`<top level>::{closure#0}`). Other symbols
+/// (glue, runtime, `velt_main`) and undecodable ones are returned unchanged.
 pub fn demangle(symbol: &str) -> String {
     let Some(mut rest) = symbol.strip_prefix("_V") else {
         return symbol.to_string();
@@ -81,7 +89,11 @@ pub fn demangle(symbol: &str) -> String {
         let Some((seg, after)) = read_segment(rest) else {
             return symbol.to_string();
         };
-        name.extend(seg);
+        if seg == SCRIPT_MAIN.as_bytes() {
+            name.extend(TOP_LEVEL.bytes());
+        } else {
+            name.extend(seg);
+        }
         rest = after;
         let sep = match rest.as_bytes().first() {
             Some(b'N') => "::",
@@ -155,6 +167,12 @@ mod tests {
         assert_eq!(demangle("_V2id_T9broken"), "id_T9broken");
         assert_eq!(demangle("_V4main$poll"), "main$poll");
         assert_eq!(demangle("velt_main"), "velt_main");
+        assert_eq!(demangle(&mangle("#main")), "<top level>");
+        assert_eq!(
+            demangle(&mangle("#main::{closure#0}")),
+            "<top level>::{closure#0}"
+        );
+        assert_eq!(demangle(&mangle("lib/m::#main")), "lib/m::<top level>");
         assert_eq!(demangle("_V9broken"), "_V9broken");
     }
 

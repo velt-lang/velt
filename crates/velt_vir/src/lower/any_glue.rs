@@ -31,11 +31,12 @@ pub(super) const OBJECT_PROTO: [&str; 12] = [
     "__lookupSetter__",
 ];
 
-/// A method or getter ready to call: its def, type arguments and result type.
+/// A method or getter ready to call (only a `Proxy` method throws: proxy_throws.rs).
 pub(super) struct Ready {
     pub(super) def: DefId,
     pub(super) targs: Vec<TyId>,
     pub(super) ret: TyId,
+    pub(super) throws: Option<TyId>,
 }
 
 impl FnLower<'_, '_> {
@@ -163,9 +164,9 @@ impl FnLower<'_, '_> {
         if f.params.first().is_none_or(|p| p.mode == PassMode::Owned) {
             return None;
         }
-        if !f.is_async && self.cx.fn_throws(f, &targs).is_some() {
-            return None;
-        }
+        let throws = self.cx.fn_throws(f, &targs).filter(|_| !f.is_async);
+        (throws.is_none() || self.literal_accessor(owner, m) || self.is_proxy(owner))
+            .then_some(())?;
         let (ret, _) = self.cx.call_sig(f);
         let ret = self.cx.subst(ret, &targs);
         if !self.cx.any_boxable(ret) {
@@ -175,6 +176,7 @@ impl FnLower<'_, '_> {
             def: m.def,
             targs,
             ret,
+            throws,
         })
     }
 
@@ -237,7 +239,7 @@ impl FnLower<'_, '_> {
                 }
             }
         }
-        let v = self.finish_call(Callee::Func(fid), argv, r.ret, None);
+        let v = self.finish_ready_call(Callee::Func(fid), argv, r);
         for (p, t) in after {
             self.drop_glue(p, t);
         }
@@ -465,13 +467,7 @@ impl FnLower<'_, '_> {
         if let Some((d, _)) = self.plain_adt(ty) {
             self.any_subclass_dispatch(Glue::AnyGet, ty, d, &[data, key, out]);
             let vp = self.any_value_place(data, ty);
-            let fields: Vec<String> = self
-                .cx
-                .adt_def(d)
-                .fields
-                .iter()
-                .map(|f| f.name.clone())
-                .collect();
+            let fields = self.member_fields(d);
             for (i, name) in fields.iter().enumerate() {
                 if name.starts_with('#') {
                     continue;
@@ -690,13 +686,7 @@ impl FnLower<'_, '_> {
         };
         self.any_subclass_dispatch(Glue::AnyCall, ty, d, &[data, key, argv, argc, out]);
         let vp = self.any_value_place(data, ty);
-        let fields: Vec<String> = self
-            .cx
-            .adt_def(d)
-            .fields
-            .iter()
-            .map(|f| f.name.clone())
-            .collect();
+        let fields = self.member_fields(d);
         for (i, name) in fields.iter().enumerate() {
             if name.starts_with('#') {
                 continue;

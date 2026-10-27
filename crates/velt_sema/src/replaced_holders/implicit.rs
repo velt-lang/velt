@@ -528,6 +528,7 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::AnyStrictEq
         | I::AnyLooseEq
         | I::StrLen
+        | I::StrByteLen
         | I::Exit
         | I::Panic
         | I::ArrayWithCapacity
@@ -540,6 +541,18 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::ArrayMove
         | I::ArraySetLen
         | I::ArrayReserve
+        | I::ArrayPrefetch
+        | I::AtomicLoad
+        | I::AtomicStore
+        | I::AtomicRmw
+        | I::AtomicCas
+        | I::AtomicCasWeak
+        | I::AtomicFence
+        | I::AtomicSpinHint
+        | I::ArrayRotateRight
+        | I::ArrayRotateLeft
+        | I::ArraySwapNested
+        | I::ParamOrdering
         | I::Hash
         | I::Eq
         | I::KeyEq
@@ -590,8 +603,18 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::SharedRead
         | I::JsonParse
         | I::JsonParseRows
+        | I::JsonParseCursor
+        | I::DbBind
+        // The `RowSource` methods these call are not hooks; std/db calls the same methods
+        // itself on the path that reads rows as JSON, in the same function, so the analysis of
+        // `readRows` / `readRow` sees them.
+        | I::ReadRows
+        | I::ReadRow
         | I::HttpHandler
         | I::StrCharCodeAt
+        | I::StrByteAt
+        | I::StrLoadU8x16
+        | I::StrLoadPartialU8x16
         | I::ArrayDataPtr
         | I::Attempt
         | I::Yield

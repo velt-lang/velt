@@ -114,16 +114,11 @@ impl FnLower<'_, '_> {
         if self.cx.locs.is_none() || self.dead() {
             return;
         }
-        let suffix = if self.in_std() {
-            String::new()
-        } else {
-            self.panic_suffix()
-        };
-        let at = if suffix.is_empty() {
+        let tracked = self.panic_loc() == Some(super::srcloc::ARG_LOC);
+        let at = if self.in_std() || !tracked && self.panic_suffix().is_empty() {
             cint(0, Ty::Ptr)
         } else {
-            let id = self.cx.static_str_object(&suffix);
-            Operand::Const(vir::Const::Static(id), Ty::Ptr)
+            self.panic_at()
         };
         self.call_rt(Rt::SetThrowLoc, vec![at], None);
     }
@@ -162,8 +157,8 @@ impl FnLower<'_, '_> {
         if self.cx.locs.is_none() || self.dead() || self.in_std() {
             return;
         }
-        let suffix = self.panic_suffix();
-        if suffix.is_empty() {
+        let tracked = self.panic_loc() == Some(super::srcloc::ARG_LOC);
+        if !tracked && self.panic_suffix().is_empty() {
             return;
         }
         let p = self.temp(Ty::Ptr);
@@ -179,8 +174,7 @@ impl FnLower<'_, '_> {
         let (set_bb, done) = (self.new_block(), self.new_block());
         self.branch(unset, set_bb, done);
         self.switch_to(set_bb);
-        let id = self.cx.static_str_object(&suffix);
-        let at = Operand::Const(vir::Const::Static(id), Ty::Ptr);
+        let at = self.panic_at();
         self.call_rt(Rt::SetThrowLoc, vec![at], None);
         self.goto(done);
         self.switch_to(done);

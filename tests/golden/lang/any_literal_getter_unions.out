@@ -1,0 +1,11 @@
+1 t
+{"tag":"t","u":1,"mixed":1,"obj":{"a":1}}
+{"tag":"t","u":2,"mixed":[true,false],"opt":2,"obj":"s"}
+{
+  tag: 't',
+  u: [Getter],
+  mixed: [Getter],
+  opt: [Getter],
+  obj: [Getter]
+}
+done

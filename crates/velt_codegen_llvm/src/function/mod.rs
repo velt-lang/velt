@@ -6,6 +6,7 @@
 //! stored into their locals on entry. Submodules handle one concern each on the shared
 //! `Emitter`.
 
+mod atomic;
 mod cast;
 mod ops;
 mod place;

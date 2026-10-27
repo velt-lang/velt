@@ -325,6 +325,24 @@ impl FnLower<'_, '_> {
             if velt_sema::property_order::is_hidden_key(&name) {
                 continue;
             }
+            // An object literal's getter: what it returns, written as a dynamic member (a
+            // setter is a function field, left out below).
+            if self.holds_literal_getter(ty, &name) {
+                if !pending.is_empty() {
+                    self.push_text(buf, &pending);
+                    pending.clear();
+                }
+                // The call registers its result in a scope of its own (a typed value's
+                // writer has none).
+                self.push_scope(crate::lower::ScopeKind::Block);
+                if let Some(got) = self.run_literal_getter(place, ty, &name) {
+                    let any = self.cx.any_ty();
+                    sep = self.json_write_present(buf, &got, any, &name, sep);
+                    self.drop_glue(got, any);
+                }
+                self.pop_scope();
+                continue;
+            }
             // A member holding a function with properties is left out, as a function is.
             let payload = match self.cx.kind(fty) {
                 TyKind::Option(e, _) => e,
@@ -361,18 +379,7 @@ impl FnLower<'_, '_> {
                         self.push_text(buf, &pending);
                         pending.clear();
                     }
-                    let flag = self.json_sep_flag(sep);
-                    let present = self.json_present(&fp, fty);
-                    let (yes, done) = (self.new_block(), self.new_block());
-                    self.branch(present, yes, done);
-                    self.switch_to(yes);
-                    self.json_member_sep(buf, sep);
-                    self.assign(Place::local(flag), Rvalue::Use(Self::ctrue()));
-                    self.push_text(buf, &key);
-                    self.json_write_at(buf, &fp, fty, JsonKey::Text(&name));
-                    self.goto(done);
-                    self.switch_to(done);
-                    sep = Sep::Maybe(flag);
+                    sep = self.json_write_present(buf, &fp, fty, &name, sep);
                 }
                 (opt, TyKind::Option(e, n)) if opt || n == Nothing::Undefined => {
                     if !pending.is_empty() {
@@ -428,6 +435,31 @@ impl FnLower<'_, '_> {
         }
     }
 
+    /// Member `name` holding the dynamic value at `fp` (of type `fty`), written when it has a
+    /// JSON form (not `undefined`, a function or a symbol), after `sep`: the separator state
+    /// after it.
+    fn json_write_present(
+        &mut self,
+        buf: &Operand,
+        fp: &Place,
+        fty: TyId,
+        name: &str,
+        sep: Sep,
+    ) -> Sep {
+        let flag = self.json_sep_flag(sep);
+        let present = self.json_present(fp, fty);
+        let (yes, done) = (self.new_block(), self.new_block());
+        self.branch(present, yes, done);
+        self.switch_to(yes);
+        self.json_member_sep(buf, sep);
+        self.assign(Place::local(flag), Rvalue::Use(Self::ctrue()));
+        self.push_text(buf, &json_key(name));
+        self.json_write_at(buf, fp, fty, JsonKey::Text(name));
+        self.goto(done);
+        self.switch_to(done);
+        Sep::Maybe(flag)
+    }
+
     /// The flag telling whether a member was written, for members that may be left out.
     fn json_sep_flag(&mut self, sep: Sep) -> Local {
         match sep {
@@ -448,12 +480,9 @@ impl FnLower<'_, '_> {
         let (cycle, fine) = (self.new_block(), self.new_block());
         self.branch(ok, fine, cycle);
         self.switch_to(cycle);
-        let msg = format!(
-            "JSON.stringify: converting circular structure to JSON (an object contains itself){}",
-            self.panic_suffix()
+        let a = self.panic_text(
+            "JSON.stringify: converting circular structure to JSON (an object contains itself)",
         );
-        let msg = self.str_lit(&msg);
-        let a = self.operand_addr(msg, Ty::Agg(super::STR_AGG));
         self.call_rt(Rt::Panic, vec![a], None);
         self.switch_to(fine);
     }

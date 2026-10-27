@@ -179,6 +179,10 @@ variables that refer to the same object (`const ys = xs; append(xs, ys)`) are al
 as in JS: the type is then reference-counted, and the compiler makes no such assumption for it.
 So is a closure argument that takes over a variable another argument only borrows
 (`derive(parts, () => parts.length)` where `derive` keeps the closure): the closure shares it.
+The key of a `Map`'s or `Set`'s `has`, `get` or `delete` (and a `WeakMap`'s or `WeakSet`'s) is
+compared by identity, so it may be the object the collection is reached through: in
+`for (const link of sub.deps) link.dep.subs.delete(sub)` the call reads only `sub`'s address. A
+key inside the collection itself is still an error.
 `m.with(f)` gives `f` the locked value; when `m` is a `shared` handle, that value is not part of
 `m`'s place, so a callback may read what sits next to it (`this.m.with((v) => { v.n +=
 this.step; })`), while one that changes the object holding `m` is still an error.

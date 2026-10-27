@@ -1,0 +1,27 @@
+// `x.constructor` of an `any` holding no class instance (#926): one object per kind, shared by
+// every value of it, `=== Object` for an object literal or a record, and `undefined` for a
+// record made by `Object.create(null)`. Node prints the same.
+const arr: any = [];
+const arr2: any = [1];
+const o: any = {};
+const o2: any = { a: 1 };
+const p: any = 1;
+const q: any = 2;
+const s: any = "s";
+const t: any = true;
+const f: any = (x: number): number => x;
+console.log(arr.constructor === arr2.constructor, o.constructor === o2.constructor);
+console.log(
+  p.constructor === q.constructor,
+  s.constructor === String,
+  s.constructor === p.constructor,
+);
+console.log(o.constructor === Object, t.constructor === t.constructor, typeof f.constructor);
+const r: Record<string, number> = { k: 1 };
+const ra: any = r;
+console.log(ra.constructor === Object, ra.constructor === o.constructor);
+const seen = new Set<unknown>();
+seen.add(arr.constructor);
+console.log(seen.has(arr2.constructor), seen.has(o.constructor));
+const n: any = Object.create(null);
+console.log(n.constructor, typeof n.constructor);

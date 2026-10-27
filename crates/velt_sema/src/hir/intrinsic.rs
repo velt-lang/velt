@@ -16,6 +16,8 @@ pub enum Intrinsic {
     StrConcat,
     /// `s.length` → usize (byte length in POC).
     StrLen,
+    /// `Buffer.byteLength(s)` → usize: the UTF-8 length, which a string stores (no call).
+    StrByteLen,
     /// `process.exit(code: i32)` → Never.
     Exit,
     /// `panic(msg: string)` → Never.
@@ -51,6 +53,31 @@ pub enum Intrinsic {
     /// length and the elements stay. Emitted for an array spread whose length is known only
     /// where it is pushed (`[...xs, ...f()]`, spread_array.rs); not for a constant table.
     ArrayReserve,
+    /// std only (std/collections/btree): `(xs: borrow T[], i: usize)`, a hint that element `i`
+    /// is read soon, so the CPU starts loading its cache line. Not bounds-checked: a prefetch
+    /// never faults, and an index past the end only wastes the load. Lowered to the
+    /// `velt_simd_prefetch` extern of the element's address (rt_abi.md "SIMD"), which LLVM
+    /// emits as `llvm.prefetch` and Cranelift as nothing. Additive.
+    ArrayPrefetch,
+    /// std only (std/collections/btree): `(xs (modified), lo: usize, hi: usize)`, rotates the
+    /// elements `xs[lo..=hi]` one slot up: the element at `hi` moves to `lo` and the others
+    /// one slot up, by one `memmove` (`hi` bounds-checked; nothing when `lo >= hi`). A
+    /// permutation: every element stays owned once, so it moves elements of any type, where a
+    /// loop of moves would count or check each one. Additive.
+    ArrayRotateRight,
+    /// std only: as `ArrayRotateRight`, one slot down: the element at `lo` moves to `hi`.
+    /// Additive.
+    ArrayRotateLeft,
+    /// std only (`xs.swapIn`, std/prelude/array_nested.vlt): `(xs: T[][] (modified), a: usize,
+    /// i: usize, b: usize, j: usize)`, exchanges `xs[a][i]` and `xs[b][j]` (all four
+    /// bounds-checked): the bits of two elements, nothing copied or dropped, also between two
+    /// inner arrays, which one call may not otherwise change both of. Additive.
+    ArraySwapNested,
+    /// `(i64) -> i64`, the value itself: the `compareTo` call of an ordering operator on a type
+    /// parameter (`a < b` with `T extends Comparable<T>`, sema's `compare_via`), marked so that
+    /// lowering compares a float `T` directly (NaN unordered, as JS's `<`). A `compareTo` call
+    /// the program writes (`a.compareTo(b) < 0`) is not marked and keeps NaN ordered.
+    ParamOrdering,
     /// `(x: borrow T) -> u64` compiler-generated hash agreeing with `KeyEq` (`Map` and `Set`
     /// keys): numbers, bool and strings by value, objects by identity, unions, options and
     /// tuples part by part
@@ -275,6 +302,29 @@ pub enum Intrinsic {
     /// so readers run at once (in velt_rt's read mode); sema rejects a callback that modifies
     /// the value.
     LockRead,
+    /// `a.load(order)` on an `Atomic<T>` (docs/internals/design/atomics.md; T an integer or
+    /// `bool`): `(a: borrow Atomic<T>, order: u8) -> T`. Every ordering argument of the
+    /// `Atomic*` intrinsics is an integer literal: 0 relaxed, 1 acquire, 2 release, 3 acqrel,
+    /// 4 seqcst (sema checked that the operation may have it). The receiver is a place, read
+    /// and changed where it is (in a local, an object, an array or a `shared` box); nothing
+    /// else reads or writes an `Atomic`. Additive.
+    AtomicLoad,
+    /// `a.store(v, order)`: `(a: borrow Atomic<T>, v: T, order: u8)`. Additive.
+    AtomicStore,
+    /// A read-modify-write: `(a: borrow Atomic<T>, v: T, op: u8, order: u8) -> T`, the
+    /// previous value. `op` is an integer literal: 0 exchange, 1 add, 2 sub, 3 and, 4 or, 5 xor,
+    /// 6 max, 7 min (`max`/`min` compare as `T` does: signed for a signed `T`; integers only;
+    /// add and sub wrap). Additive.
+    AtomicRmw,
+    /// `a.compareExchange(expected, v, order, failure)`: `(a: borrow Atomic<T>, expected: T,
+    /// v: T, order: u8, failure: u8) -> T`, the previous value. Additive.
+    AtomicCas,
+    /// `a.compareExchangeWeak(…)`: as `AtomicCas`, `-> bool` (may fail spuriously). Additive.
+    AtomicCasWeak,
+    /// `Atomic.fence(order)`: `(order: u8)`, never relaxed. Additive.
+    AtomicFence,
+    /// `Atomic.spinHint()`: `()`. Additive.
+    AtomicSpinHint,
 
     // M4 JSON (compile-time generated glue over the rt JSON reader / string builder)
     /// `JSON.stringify(x: borrow T): string`
@@ -289,6 +339,25 @@ pub enum Intrinsic {
     /// text: the same generated decoder, the reader made with flag `FLAG_ROWS`
     /// (native_abi.md "Rows").
     JsonParseRows,
+    /// std only: `__intrinsic_json_parse_cursor<T>(cursor: u64, flags: i64, max_depth: i64): T`
+    /// — `JsonParseRows` over a driver's live rows (the address of a
+    /// `velt_text::rows_cursor::RawCursor`, which the caller keeps and releases afterwards): the
+    /// reader made with flag `FLAG_CURSOR` (native_abi.md "Row cursors").
+    JsonParseCursor,
+    /// std only: `__intrinsic_db_bind<P>(sink: u64, params: borrow P): bool` — hands `params`
+    /// to a driver's parameter sink (the address of a `velt_text::rows_cursor::RawSink`) value
+    /// by value, as their JSON text would bind; false (nothing done) for a type std binds as
+    /// JSON text (native_abi.md "Parameter sinks").
+    DbBind,
+    /// std only: `__intrinsic_read_rows<T, S>(src: borrow S): T[] | null` — every remaining row
+    /// of the std/db `RowSource` `src`, read by column when `T` is an object of plain fields
+    /// and `S` a class whose row methods do not throw; throws `JsonError { message }` for a row
+    /// that does not fit. `null` (nothing read) for any other `T` or `S`: std/db then reads
+    /// the rows as JSON.
+    ReadRows,
+    /// std only: `__intrinsic_read_row<T, S>(src: borrow S): T | null` — the current row of
+    /// `src` (`next()` returned true), as `ReadRows` reads each; `null` as for `ReadRows`.
+    ReadRow,
     /// std only: `__intrinsic_http_handler(f: (raw: u64) => Promise<u64>)` → `[u64; 6]` =
     /// `{init, poll, drop, state_size, state_align, env}` for `velt_rt_http_serve` (the closure's
     /// state machine is the per-request state; `init(env, req, state)` sets `raw = req`; the env
@@ -297,6 +366,15 @@ pub enum Intrinsic {
     /// std only: `__intrinsic_str_char_code_at(s: borrow string, i: i64) -> i64` — the byte at
     /// `i`, or -1 when out of range (`s.charCodeAt(i)`, POC byte model); inline code, no call.
     StrCharCodeAt,
+    /// `(s, i: u64)` → u8: byte `i` of the UTF-8 bytes of `s`, unchecked (std checks the
+    /// range against `StrByteLen`). The bytes are read where the string keeps them.
+    StrByteAt,
+    /// `(s, at: u64)` → u8x16: the 16 UTF-8 bytes of `s` from `at`, unchecked (a SIMD `load`
+    /// of the string's bytes, no copy).
+    StrLoadU8x16,
+    /// `(s, at: u64, count: u64)` → u8x16: `count` (below 16) bytes from `at` in the low lanes,
+    /// 0 in the others, unchecked (a SIMD `load_partial` of the string's bytes).
+    StrLoadPartialU8x16,
     /// std only: `__intrinsic_array_data_ptr(xs: borrow T[]) -> u64` — address of element 0.
     ArrayDataPtr,
     /// `attempt(f)`: call `f: () => T throws E` (borrowed) and return its result or error as a
@@ -394,7 +472,9 @@ pub enum Intrinsic {
     /// `(x: owned any) -> T` (`Expr::ty`): the value `x` holds, checked: a value of another
     /// type stops the program with a `TypeError` naming the expected and the found type. `T` is
     /// a concrete type, a class (an instance of it or of a subclass), `U | null` (`null` and
-    /// `undefined` give `null`) or `any` / `unknown` (the same value).
+    /// `undefined` give `null`) or `any` / `unknown` (the same value). An optional second
+    /// operand `text: string`, a string literal read while compiling, starts the `TypeError`
+    /// (`TypeError: <text>: the value is not …`; hir_encodings.md "any and unknown").
     AnyTo,
     /// `(x: borrow any) -> string`: JavaScript's `typeof x`.
     AnyTypeof,

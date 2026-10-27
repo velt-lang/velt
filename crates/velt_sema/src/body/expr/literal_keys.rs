@@ -124,7 +124,7 @@ impl FnCx<'_, '_> {
 
     /// The one key a computed index names: a written literal, or a key `literal_keys` knows
     /// (then checked as a value too, so a constant counts as used).
-    pub(super) fn single_key(&mut self, index: &ast::Expr) -> Option<String> {
+    pub(crate) fn single_key(&mut self, index: &ast::Expr) -> Option<String> {
         if let Some(k) = literal_key(index) {
             return Some(k);
         }

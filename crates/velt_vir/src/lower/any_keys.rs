@@ -50,6 +50,10 @@ impl FnLower<'_, '_> {
         self.switch_to(ok);
         let vt = self.cx.ty(sa);
         let out = self.temp(vt);
+        let done = self.proxy_branch("__keys", &data, &desc, |lw, obj, pty, r| {
+            let v = lw.proxy_keys_direct((obj, pty, r));
+            lw.assign(Place::local(out), Rvalue::Use(v));
+        });
         let oa = self.addr(Place::local(out));
         let st = self.any_slot(desc, SLOT_KEYS, vec![data, oa], vec![Ty::Ptr; 2]);
         let unsupported = self.rvalue_temp(
@@ -64,6 +68,7 @@ impl FnLower<'_, '_> {
         );
         self.terminate(Terminator::Unreachable);
         self.switch_to(yes);
+        self.proxy_join(done);
         self.owned_result(Some(out), sa)
     }
 
@@ -164,6 +169,14 @@ impl FnLower<'_, '_> {
         let fields: Vec<(String, bool)> = a.fields[std_prefix..]
             .iter()
             .map(|f| (f.name.clone(), f.optional && !class))
+            .collect();
+        // An object literal's accessor fields list the property each stands for, once (a
+        // setter next to its getter is no key of its own: `#` hides it, as a private field).
+        let fields: Vec<(String, bool)> = (fields.into_iter())
+            .map(|(n, o)| match self.field_prop(d, &n) {
+                Some(p) => (p, o),
+                None => (format!("#{n}"), o),
+            })
             .collect();
         let names: Vec<&str> = fields.iter().map(|(n, _)| n.as_str()).collect();
         let order = velt_sema::property_order::js_key_order(&names);

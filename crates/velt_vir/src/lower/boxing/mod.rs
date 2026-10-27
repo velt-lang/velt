@@ -13,6 +13,7 @@ mod locks;
 mod transfers;
 mod weak;
 
+use crate::lower::fresh_fns::FnKey;
 use rustc_hash::FxHashSet;
 use std::collections::BTreeSet;
 
@@ -42,6 +43,9 @@ pub(super) struct Boxing {
     /// The program compares function values: every evaluation of a closure without captures
     /// gets an environment of its own as its identity (closure.rs).
     fn_identity: bool,
+    /// The program holds a generic closure as `unknown` (glue/vtable.rs `ClosureAny`): every
+    /// function's `any` table has the slots that carry its table back.
+    pub(super) generic_any: bool,
     /// The program writes a member through `any` (`AnySet` / `AnySetIndex`): the `any` tables
     /// have the write slots (any_set.rs).
     pub(super) any_writes: bool,
@@ -191,7 +195,7 @@ pub(super) struct Facts {
     /// Object types compared by identity (`==`, same.rs).
     identity: FxHashSet<TyId>,
     /// `any` values compared by identity (`Boxing::any_identity`).
-    any_identity: bool,
+    pub(in crate::lower) any_identity: bool,
     /// Interface upcasts made, `(from, to)` (upcast.rs): `from` values are compared by
     /// identity when `to` values are.
     upcasts: FxHashSet<(TyId, TyId)>,
@@ -202,6 +206,16 @@ pub(super) struct Facts {
     transfers: FxHashSet<TyId>,
     /// Function values are compared (or hashed) somewhere.
     fn_compared: bool,
+    /// The types of the function values compared (fresh_fns.rs).
+    pub(in crate::lower) fn_compared_keys: FxHashSet<FnKey>,
+    /// The generic function types whose values are held as `unknown` (fresh_fns.rs).
+    pub(in crate::lower) generic_any_keys: FxHashSet<FnKey>,
+    /// The conversions of function values between function types (fresh_fns.rs).
+    pub(in crate::lower) fn_edges: FxHashSet<(FnKey, FnKey)>,
+    /// The fresh closures made (fresh_fns.rs).
+    pub(in crate::lower) fresh_made: FxHashSet<(velt_sema::hir::DefId, FnKey, bool)>,
+    /// A generic closure is held as `unknown` (`Boxing::generic_any`).
+    pub(super) generic_any: bool,
     /// A member is written through `any`.
     any_set: bool,
     /// `key in x` is tested on an `any`.
@@ -255,6 +269,14 @@ impl Cx<'_> {
     /// Record that a value of type `t` is shared.
     pub(super) fn note_share(&mut self, t: TyId) {
         self.facts.shares.insert(t);
+        self.note_share_site(t);
+    }
+
+    /// The user code sharing `t` now, if it is the first (`counted_atomic_diagnostics`).
+    fn note_share_site(&mut self, t: TyId) {
+        if self.user_site != velt_common::Span::DUMMY {
+            self.share_sites.entry(t).or_insert(self.user_site);
+        }
     }
 
     /// Record that values of the object type `t` are compared by identity.
@@ -353,6 +375,7 @@ impl Cx<'_> {
     /// Record a borrow of a `value`-typed place reached through a `container`-typed value.
     pub(super) fn note_projection(&mut self, container: TyId, value: TyId) {
         self.facts.projections.insert((container, value));
+        self.note_share_site(value);
     }
 
     /// Does a value of `t` carry a reference count?
@@ -365,6 +388,50 @@ impl Cx<'_> {
     /// Only then may a param of type `t` be `noalias` (vir.rs invariant 9).
     pub(super) fn unique_refs(&self, t: TyId) -> bool {
         !self.counted(t) && !self.boxing.interior.contains(&t)
+    }
+
+    /// Errors for the `Atomic<T>` types something shares: generic code instantiated with one
+    /// (`xs.slice()` of an `Atomic<u64>[]`, a `Map` of them), which sema's check of shares
+    /// (`atomic_copies`) cannot see. A counted `Atomic` would be a box, not the word in place
+    /// every program's atomics rely on (docs/internals/design/atomics.md). Each is reported at
+    /// the user code that first shared it, or the value holding it (`note_share_site`): the
+    /// call of the generic code, never the standard library's code itself.
+    pub(super) fn counted_atomic_diagnostics(&self) -> Vec<velt_common::Diagnostic> {
+        let mut found: Vec<(velt_common::Span, String)> = (self.boxing.boxes.iter())
+            .filter(|&&t| matches!(self.kind(t), TyKind::Adt(d, _) if super::atomic::is_atomic(self, d)))
+            .map(|&t| {
+                let from = self.share_from.get(&t).copied().unwrap_or(t);
+                let site = (self.share_sites.get(&from))
+                    .or_else(|| self.share_sites.get(&t))
+                    .copied()
+                    .unwrap_or_default();
+                (site, self.atomic_name(t))
+            })
+            .collect();
+        found.sort_by(|a, b| (a.0.file, a.0.lo, &a.1).cmp(&(b.0.file, b.0.lo, &b.1)));
+        found.into_iter().map(|(site, n)| {
+            velt_common::Diagnostic::error(
+                format!("an `{n}` cannot be copied or shared, but the generic code called here shares one"),
+                site,
+            )
+            .with_note("a generic function or method that shares its values (`slice`, `filter`, `concat`, a `Map` of them) was called with `Atomic`s; keep them in place and read them with `.load()`")
+        }).collect()
+    }
+
+    /// `Atomic<u64>` for the type `t` of an `Atomic`.
+    fn atomic_name(&self, t: TyId) -> String {
+        let arg = match self.kind(t) {
+            TyKind::Adt(_, args) => args.first().map(|&a| match self.kind(a) {
+                TyKind::Int(i) => format!("{i:?}").to_lowercase(),
+                TyKind::Bool => "bool".to_string(),
+                _ => self.type_name(a),
+            }),
+            _ => None,
+        };
+        match arg {
+            Some(a) => format!("Atomic<{a}>"),
+            None => self.type_name(t),
+        }
     }
 
     /// Display names of the counted types (`VELT_DEBUG_COUNTED=1`, bench/rc_stats.ps1).
@@ -390,7 +457,9 @@ impl Cx<'_> {
     /// The counted types implied by this pass's facts (a superset of the current ones).
     pub(super) fn close_boxing(&mut self) -> Boxing {
         let mut next = self.boxing.clone();
+        self.share_from.clear();
         next.fn_identity |= self.facts.fn_compared;
+        next.generic_any |= self.facts.generic_any;
         next.any_identity |= self.facts.any_identity;
         next.any_writes |= self.facts.any_set;
         next.any_has |= self.facts.any_has;
@@ -481,7 +550,14 @@ impl Cx<'_> {
                     next.boxes.insert(t);
                 }
             },
-            ShareKind::Value => work.extend(self.part_types(t)),
+            ShareKind::Value => {
+                // Where each part's share comes from: the shared value that holds it.
+                let from = self.share_from.get(&t).copied().unwrap_or(t);
+                for p in self.part_types(t) {
+                    self.share_from.entry(p).or_insert(from);
+                    work.push(p);
+                }
+            }
             _ => {}
         }
     }

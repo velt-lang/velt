@@ -479,6 +479,9 @@ impl FnCx<'_, '_> {
         generics: u32,
         span: Span,
     ) -> Adapter {
+        // A generic method called through the adapter would need the call's type arguments
+        // forwarded: checked once every body is (`generic_override_sites::check_adapters`).
+        self.cx.adapter_uses.push((iface, span));
         let key = (iface, from.to_vec(), to.to_vec());
         if let Some(&a) = self.cx.iface_adapters.get(&key) {
             if intact(self.cx, a) {
@@ -728,7 +731,8 @@ impl FnCx<'_, '_> {
                     span,
                 );
                 let arrow = undefined_after(arrow, undefined, span);
-                let w = self.closure(&arrow, Some(exp), false);
+                let mut w = self.closure(&arrow, Some(exp), false);
+                self.mark_converts(&mut w, self.local_ty(l), exp);
                 self.pop_scope();
                 return Ok(w);
             }
@@ -742,7 +746,8 @@ impl FnCx<'_, '_> {
             span,
         );
         let arrow = undefined_after(arrow, undefined, span);
-        let w = self.closure(&arrow, Some(exp), true);
+        let mut w = self.closure(&arrow, Some(exp), true);
+        self.mark_converts(&mut w, h.ty, exp);
         self.pop_scope();
         let mut h = h;
         self.force_move(&mut h);

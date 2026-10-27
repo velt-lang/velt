@@ -48,6 +48,8 @@ pub(crate) const TS_GLOBALS: &[&str] = &[
     "RangeError",
     "ReferenceError",
     "Reflect",
+    // TypeScript's `ReadonlyMap<K, V>` is a type: Velt's is `Map<K, V>` seen through it.
+    "ReadonlyMap",
     // TypeScript's `Record<K, V>` is a type: as one it means the same.
     "Record",
     "String",
@@ -118,6 +120,10 @@ pub(crate) const VELT_GLOBALS: &[VeltOnly] = &[
     ),
     (
         "RwLock",
+        "keep thread-shared state out of code shared with TypeScript",
+    ),
+    (
+        "Atomic",
         "keep thread-shared state out of code shared with TypeScript",
     ),
     ("NumberConstructor", "use `Number` (`Number.isInteger(x)`)"),
@@ -315,7 +321,7 @@ pub(crate) const TS_MEMBERS: &[(&str, &[&str])] = &[
             "valueOf",
         ],
     ),
-    ("Error", &["message", "name", "toString"]),
+    ("Error", &["message", "name", "stack", "toString"]),
     ("JSON", &["parse", "stringify"]),
     (
         "Map",
@@ -403,13 +409,60 @@ pub(crate) const TS_MEMBERS: &[(&str, &[&str])] = &[
 ];
 
 /// Velt-only members, by owner.
+/// The hint for every member of `Atomic`, which TypeScript has no counterpart of.
+const ATOMIC: &str = "keep thread-shared state out of code shared with TypeScript";
+
 pub(crate) const VELT_MEMBERS: &[(&str, &[VeltOnly])] = &[
+    (
+        "Atomic",
+        &[
+            ("add", ATOMIC),
+            ("and", ATOMIC),
+            ("compareExchange", ATOMIC),
+            ("compareExchangeWeak", ATOMIC),
+            ("exchange", ATOMIC),
+            ("fence", ATOMIC),
+            ("load", ATOMIC),
+            ("max", ATOMIC),
+            ("min", ATOMIC),
+            ("or", ATOMIC),
+            ("spinHint", ATOMIC),
+            ("store", ATOMIC),
+            ("sub", ATOMIC),
+            ("xor", ATOMIC),
+        ],
+    ),
     (
         "Array",
         &[
             ("isEmpty", "write `xs.length === 0`"),
+            ("prefetch", "leave it out: it is only a hint"),
+            ("reserve", "leave it out: arrays grow as needed"),
+            (
+                "rotateLeft",
+                "move the element with `xs.splice(end - 1, 0, ...xs.splice(start, 1))`",
+            ),
+            (
+                "rotateRight",
+                "move the element with `xs.splice(start, 0, ...xs.splice(end - 1, 1))`",
+            ),
             ("set", "assign the element: `xs[i] = v`"),
+            ("swap", "swap with `[xs[i], xs[j]] = [xs[j], xs[i]]`"),
+            (
+                "swapIn",
+                "swap with `[xss[a][i], xss[b][j]] = [xss[b][j], xss[a][i]]`",
+            ),
             ("truncate", "remove the tail with `xs.splice(n)`"),
+            (
+                "utf8Equals",
+                "compare `new TextDecoder().decode(bytes)` with the string",
+            ),
+            (
+                "utf8EqualsIgnoreCase",
+                "compare the decoded text's `toLowerCase()`",
+            ),
+            ("utf8Slice", "decode with `new TextDecoder().decode(bytes)`"),
+            ("write", "use `TextEncoder`'s `encodeInto(s, bytes)`"),
             ("xorMask", "XOR the bytes in a loop"),
             // Builtins.
             ("clone", "copy with `[...xs]` or `xs.slice()`"),
@@ -535,7 +588,15 @@ pub(crate) const VELT_MEMBERS: &[(&str, &[VeltOnly])] = &[
         ],
     ),
     ("boolean", &[("compareTo", COMPARE)]),
-    ("number", &[("compareTo", COMPARE)]),
+    (
+        "number",
+        &[
+            ("compareTo", COMPARE),
+            ("countOnes", "count the set bits in a loop"),
+            ("leadingZeros", "use `Math.clz32(x)` (32 bits)"),
+            ("trailingZeros", "use `31 - Math.clz32(x & -x)` (32 bits)"),
+        ],
+    ),
     (
         "string",
         &[("compareTo", "compare with `<` or `a.localeCompare(b)`")],

@@ -57,6 +57,64 @@ impl FnLower<'_, '_> {
         (w1, w2, inline)
     }
 
+    /// A new reference to the string at `src` in (uninitialized) `dst`. Only a heap string has a
+    /// count (`w2` above 0: not inline, whose top bit is set, nor static, whose `w2` is 0), raised
+    /// by the runtime; any other string is its three words, copied here without a call. Both go
+    /// through the places' addresses, as the runtime's out-pointer does (taking an address is
+    /// what initializes a local for verify/init.rs).
+    pub(super) fn str_share(&mut self, src: Place, dst: Place) {
+        let (s, d) = (self.addr(src), self.addr(dst));
+        let (sp, dp) = (Self::str_at(&s), Self::str_at(&d));
+        let heap = self.str_counted(&sp);
+        let (counted, copied, join) = (self.new_block(), self.new_block(), self.new_block());
+        self.branch(heap, counted, copied);
+        self.switch_to(counted);
+        self.call_rt(Rt::StrClone, vec![s, d], None);
+        self.goto(join);
+        self.switch_to(copied);
+        self.assign(dp, Rvalue::Use(Operand::Copy(sp)));
+        self.goto(join);
+        self.switch_to(join);
+    }
+
+    /// Drops the string at `place`: a heap string (`w2` above 0, slices too: rt_abi.md) through
+    /// the runtime, which gives up its count and zeroes it; any other owns nothing and is zeroed
+    /// here, as the runtime would, without a call.
+    pub(super) fn str_drop(&mut self, place: Place) {
+        let a = self.addr(place);
+        let p = Self::str_at(&a);
+        let heap = self.str_counted(&p);
+        let (counted, plain, join) = (self.new_block(), self.new_block(), self.new_block());
+        self.branch(heap, counted, plain);
+        self.switch_to(counted);
+        self.call_rt(Rt::StrDrop, vec![a], None);
+        self.goto(join);
+        self.switch_to(plain);
+        for i in 0..3 {
+            self.assign(proj(&p, Proj::Field(i)), Rvalue::Use(cint(0, Ty::U64)));
+        }
+        self.goto(join);
+        self.switch_to(join);
+    }
+
+    /// The string an address operand (from [`Self::addr`]) points to.
+    fn str_at(addr: &Operand) -> Place {
+        match addr {
+            Operand::Copy(p) => proj(p, Proj::Deref(Ty::Agg(STR_AGG))),
+            _ => ice("a string address that is not a place"),
+        }
+    }
+
+    /// Whether the string at `p` is counted (a heap string or a slice): `(int64_t)w2 > 0`.
+    fn str_counted(&mut self, p: &Place) -> Operand {
+        let w2 = Operand::Copy(proj(p, Proj::Field(2)));
+        let signed = self.rvalue_temp(Ty::I64, Rvalue::Cast(w2, Ty::I64));
+        self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(BinOp::Gt, signed, cint(0, Ty::I64)),
+        )
+    }
+
     /// The halves of `w1` as signed 32-bit numbers: `(units, bytes)` of a static or heap string
     /// (the high half as [`Self::str_high`] computes it).
     fn str_halves(&mut self, w1: Operand) -> (Operand, Operand) {
@@ -96,6 +154,63 @@ impl FnLower<'_, '_> {
         );
         let inline = self.rvalue_temp(Ty::U64, Rvalue::Cast(fill, Ty::U64));
         self.select(inline, inline_len, heap_len)
+    }
+
+    /// Where the UTF-8 bytes of the string at `p` are (a `Ptr`): inside the value for an inline
+    /// string, else its pointer. No branch.
+    fn str_data(&mut self, p: &Place) -> Operand {
+        let w2 = self.rvalue_temp(Ty::U64, Rvalue::Use(Operand::Copy(proj(p, Proj::Field(2)))));
+        let signed = self.rvalue_temp(Ty::I64, Rvalue::Cast(w2, Ty::I64));
+        let fill = self.rvalue_temp(
+            Ty::I64,
+            Rvalue::Binary(BinOp::Shr, signed, cint(63, Ty::I64)),
+        );
+        let inline = self.rvalue_temp(Ty::U64, Rvalue::Cast(fill, Ty::U64));
+        let here = self.addr(p.clone());
+        let here = self.rvalue_temp(Ty::U64, Rvalue::Cast(here, Ty::U64));
+        let ptr = Operand::Copy(proj(p, Proj::Field(0)));
+        let ptr = self.rvalue_temp(Ty::U64, Rvalue::Cast(ptr, Ty::U64));
+        let data = self.select(inline, here, ptr);
+        self.rvalue_temp(Ty::Ptr, Rvalue::Cast(data, Ty::Ptr))
+    }
+
+    /// Byte `i` of the UTF-8 bytes of string `v` (a `u8`), unchecked (`StrByteAt`).
+    pub(super) fn str_byte_at(&mut self, v: Operand, i: Operand) -> Operand {
+        let p = self.operand_place(v, Ty::Agg(STR_AGG));
+        let data = self.str_data(&p);
+        let Operand::Copy(bp) = self.rvalue_temp(Ty::Ptr, Rvalue::Binary(BinOp::PtrAdd, data, i))
+        else {
+            ice("rvalue_temp returns a place")
+        };
+        let byte = Operand::Copy(proj(&bp, Proj::Deref(Ty::U8)));
+        self.rvalue_temp(Ty::U8, Rvalue::Use(byte))
+    }
+
+    /// The SIMD `load` (or `load_partial` of `count` bytes) of string `v`'s UTF-8 bytes from
+    /// `at`, unchecked (`StrLoadU8x16`, `StrLoadPartialU8x16`): through a byte-array header on
+    /// the stack that views the bytes where the string keeps them. The header is no value of
+    /// the program (not owned, never dropped, gone after the load), so nothing can write
+    /// through it or keep it.
+    pub(super) fn str_load_u8x16(
+        &mut self,
+        v: Operand,
+        at: Operand,
+        count: Option<Operand>,
+    ) -> Operand {
+        let p = self.operand_place(v, Ty::Agg(STR_AGG));
+        let data = self.str_data(&p);
+        let len = self.str_bytes(&p);
+        let a = self.cx.array_agg();
+        let view = self.temp(Ty::Agg(a));
+        self.assign(
+            Place::local(view),
+            Rvalue::Aggregate(a, vec![data, len, cint(0, Ty::U64)]),
+        );
+        let addr = self.addr(Place::local(view));
+        match count {
+            None => self.simd_call("velt_simd_u8x16_load", vec![addr, at]),
+            Some(n) => self.simd_call("velt_simd_u8x16_load_partial", vec![addr, at, n]),
+        }
     }
 
     /// `s.length` (a `u64`): UTF-16 code units. Inline: byte 22 when bit 0x40 of byte 23 says

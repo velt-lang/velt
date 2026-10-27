@@ -1,6 +1,7 @@
 // A local declared from a literal and used both as an integer type and as a number stays a
 // number, and the use as the integer type says why (#525); a number needs `as` to become a
-// declared integer (#468).
+// declared integer (#468), but for an integer from the standard library where an integer type
+// that holds every value it can have is expected (`total += xs.length`, docs/reference/types.md).
 function takes(n: i64): i64 {
   return n * 2;
 }
@@ -14,5 +15,7 @@ function main() {
   total += xs.length;
   let n = xs.length;
   total = n;
-  console.log(total);
+  const narrow: u32 = xs.length;
+  const index: usize = "ab".indexOf("b");
+  console.log(total, narrow, index);
 }

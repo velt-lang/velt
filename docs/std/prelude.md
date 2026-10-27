@@ -93,6 +93,15 @@ surrogate pair its character),
   32-bit wrapping product, one multiply instruction) and `clz32` (leading zero bits) take the low
   32 bits of their operands like JS. `umulh(a, b)` (not in JS) is the high 64 bits of the
   128-bit product of two `u64`s, one multiply instruction as well.
+- Integers (not in JS): `x.leadingZeros()`, `x.trailingZeros()` and `x.countOnes()`, counted
+  over the type's own width (`(0 as u8).leadingZeros()` is 8, `(-1 as i32).countOnes()` is 32),
+  one instruction each. They return a `usize`, in user code too, so the result indexes an array
+  as it is:
+
+  ```ts
+  const bits: u64 = 40;
+  console.log(bits.leadingZeros(), bits.trailingZeros(), bits.countOnes()); // 58 3 2
+  ```
 - Every number type implements `Comparable` ([Comparable](../reference/classes.md#comparable)).
 
 ## Arrays
@@ -121,6 +130,9 @@ so elements pushed meanwhile are not visited. Elements removed meanwhile:
 | `toSorted(cmp?)`, `toReversed()`, `toSpliced(start, deleteCount?, ...items)`, `with(i, v)` | ES2023's copying forms: a new array, the receiver unchanged (the elements themselves are shared, as in JS); `toSorted()` without a comparator orders like `sort()`; `with` panics on an index out of range (JS's RangeError) |
 | `splice(start, deleteCount?, ...items): T[]` | removes and returns `deleteCount` elements (the rest when omitted) and inserts `items` there |
 | `shift(): T \| undefined`, `unshift(...items): i64` | take the first element (`undefined` when empty) / insert `items` at the front and return the new length, like JS; both O(length), as in V8 for large arrays: a queue that takes from the front belongs in a `Deque` ([velt:collections/deque](collections/deque.md)) |
+| `swap(i, j)`, `rotateLeft(start, end)`, `rotateRight(start, end)` | not in JS: exchange two elements, or move the elements of `[start, end)` one place down (the first to the end) or up (the last to the front), in place; each element's bits move, nothing is copied or dropped. A RangeError panic for an index or range outside the array |
+| `prefetch(i)`, `reserve(n)` | not in JS: a hint that element `i` is read soon, so the CPU starts loading it (it changes nothing; an index past the end does nothing); room for `n` more elements without growing again |
+| `xss.swapIn(a, i, b, j)` | not in JS, on `T[][]`: exchanges `xss[a][i]` and `xss[b][j]`, also between two inner arrays, which `[x, y] = [y, x]` does by copying (and counting) both elements. For data kept in chunks |
 | `xs.length = n`, `truncate(n)` | drop the elements from `n` on, as in JS (`xs.length = 0` empties the array; `xs.length -= k` works too). `n` is a `number`: one that is not a whole number from 0 to 2^32 - 1 (negative, fractional, `NaN`) panics with `RangeError: Invalid array length`, the error JS throws. Setting a larger `length` panics too: JS would add empty slots, which Velt has no value for (push the elements, or build the array with `new Array<T>(n).fill(v)`); `truncate(n)` leaves the array unchanged instead |
 | `flat()` | on `T[][]`: the inner elements, one level deep |
 | `isEmpty()`, `entries(): [usize, T][]` | the index is a JS number, like `length` |
@@ -133,6 +145,24 @@ Byte arrays are plain `u8[]` with faster versions of `indexOf`, `lastIndexOf`, `
 `fill`, `slice` and `concat`, plus `set(src, offset)` and `copyWithin(target, start, end)` like
 Node's `Buffer`, and `xorMask(mask: u32, start?, end?)`, which XORs the bytes with the four bytes
 of `mask` (most significant first) repeating from `start`: WebSocket masking (RFC 6455 §5.3).
+Text goes in and out of byte arrays without intermediate copies, as a server written in Velt
+needs on its read and write buffers: `write(s, offset = 0)` writes the UTF-8 bytes of `s` and
+returns how many it wrote (Node's `buf.write`: only whole characters that fit, the array does
+not grow), `utf8Slice(start?, end?)` decodes a range (Node's `buf.toString("utf8", start, end)`,
+an invalid sequence as U+FFFD), and `utf8Equals(s, start?, end?)` /
+`utf8EqualsIgnoreCase(s, start?, end?)` (Velt) tell whether a range holds the UTF-8 bytes of `s`,
+the second with ASCII letters in any case (a method, a path, a header name), without making a
+string. Their ranges are clamped as `toString` clamps them: a negative `start` is 0, an `end`
+past the array is its end (Node's `buf.utf8Slice` throws for both instead). `write` and the comparisons are Velt
+code in the prelude: they read the string's bytes where it keeps them, sixteen at a time with
+SIMD vectors, and are compiled into their caller.
+
+```ts
+const buf: u8[] = Buffer.alloc(16);
+const n = buf.write("GET /");
+console.log(buf.utf8Equals("GET", 0, 3), buf.utf8Slice(0, n)); // true GET /
+```
+
 `Buffer.alloc(n)` creates `n` zero bytes. `Buffer.byteLength(s, encoding = "utf8")` is the
 number of bytes `s` takes, as in Node: UTF-8 by default (O(1); a lone surrogate counts the 3
 bytes of U+FFFD), two per code unit for `utf16le`/`ucs2`, one for `latin1`/`binary`/`ascii`,
@@ -445,7 +475,8 @@ console.log(start.toISOString(), end.getUTCMonth(), start < end); // 2024-01-31T
 (with `PromiseSettledResult<T, E>`), `Promise.any`, `Promise.withResolvers` (with
 `PromiseWithResolvers<T, E>`), `Promise.resolve`, `Promise.reject`, the promise methods
 `then`, `catch` and `finally` with `queueMicrotask(f)`
-([Async](../reference/async.md#then-catch-and-finally)), `shared(x)`, `Mutex<T>`,
+([Async](../reference/async.md#then-catch-and-finally)), `shared(x)`, `Mutex<T>`, `RwLock<T>`,
+`Atomic<T>` (lock-free numbers and flags, [Atomics](sync.md)),
 `performance.now()` and `Date.now()` ([Async](../reference/async.md)), and the timer
 functions `setTimeout`, `clearTimeout`, `setInterval`, `clearInterval`, `setImmediate` and
 `clearImmediate` with their `Timer` handle ([velt:timers](timers.md)).

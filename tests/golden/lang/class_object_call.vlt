@@ -1,0 +1,10 @@
+// A class's object (`x.constructor`) called without `new` stops with Node's `TypeError`.
+class A {}
+
+function make(v: any): any {
+  const C = v.constructor;
+  console.log(typeof C);
+  return C();
+}
+
+console.log(make(new A()));

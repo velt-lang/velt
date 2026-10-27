@@ -1,0 +1,21 @@
+// A generic closure that throws, stored into a generic function type written without `throws`:
+// calls through the type throw what it throws, and `catch` sees it (#943).
+class Bad extends Error {}
+type Check = <T>(x: T, ok: boolean) => T;
+
+function run(c: Check): void {
+  try {
+    console.log(c(1, true));
+    console.log(c("s", false));
+  } catch (e) {
+    console.log("caught", e instanceof Bad, (e as Error).message);
+  }
+}
+
+function main(): void {
+  run(<T>(x: T, ok: boolean): T => {
+    if (!ok) throw new Bad("no " + String(x));
+    return x;
+  });
+  run((x, ok) => x);
+}

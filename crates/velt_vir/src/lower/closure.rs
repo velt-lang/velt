@@ -115,6 +115,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
     /// `{ code, env }` of closure `def`; `borrowed`: only borrowed by a call (see
     /// [`borrowed_arg`](Self::borrowed_arg)), so value captures may stay in a frame env too.
     fn closure_value(&mut self, def: DefId, ty: TyId, borrowed: bool) -> Operand {
+        self.note_closure_made(def);
         let f = self.cx.fn_def(def);
         let targs = self.targs.clone();
         let ca = self.cx.closure_agg();
@@ -143,19 +144,28 @@ impl<'c, 'h> FnLower<'c, 'h> {
             },
             _ => LkMode::Checked,
         };
+        // A generic closure (glue/generic_slots.rs) is only called through its interface
+        // value's table, which instantiates its code: the value has none of its own.
+        let generic = f.generics as usize > targs.len();
         if f.captures.is_empty() {
-            let thunk = Work::Thunk(ThunkKind::Env(None), def, targs);
-            let code = self.cx.func_direct(thunk, mode);
+            let code = match generic {
+                true => cint(0, Ty::Ptr),
+                false => {
+                    let thunk = Work::Thunk(ThunkKind::Env(None), def, targs);
+                    cfunc(self.cx.func_direct(thunk, mode))
+                }
+            };
             if self.cx.fn_identity() {
-                return self.identity_closure(def, ty, cfunc(code), borrowed || in_frame);
+                return self.identity_closure(def, ty, code, borrowed || in_frame);
             }
             return self.rvalue_temp(
                 Ty::Agg(ca),
-                Rvalue::Aggregate(ca, vec![cfunc(code), cint(0, Ty::Ptr)]),
+                Rvalue::Aggregate(ca, vec![code, cint(0, Ty::Ptr)]),
             );
         }
         let frozen = self.frozen_captures(def);
         let code = match frozen {
+            _ if generic => cint(0, Ty::Ptr),
             0 if own => cfunc(self.cx.func_read_own(Work::Fn(def, targs.clone()), deep)),
             // Code whose mode is asked: the thread's mode picks the callback's instance.
             0 if read_callback && self.mode == LkMode::Checked => self.read_callback_code(def),

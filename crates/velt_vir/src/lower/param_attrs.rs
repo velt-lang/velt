@@ -109,7 +109,8 @@ impl Cx<'_> {
         }
     }
 
-    /// Does a value of `ty` (a class: its object) contain a `Mutex` in its own memory? Values
+    /// Does a value of `ty` (a class: its object) contain a `Mutex` or an `Atomic` (which a
+    /// borrowed param's method changes, docs/internals/design/atomics.md) in its own memory? Values
     /// behind pointers (arrays, other objects, `shared`) don't count: writes to them are not
     /// writes through the param. `depth` guards against pathological nesting.
     pub(super) fn holds_mutex(&mut self, ty: TyId, depth: u32) -> bool {
@@ -119,7 +120,7 @@ impl Cx<'_> {
         if let TyKind::Adt(d, _) = self.kind(ty) {
             if let hir::Def::Adt(a) = self.hir.def(d) {
                 if a.kind != AdtKind::Class
-                    && matches!(self.type_name(ty).as_str(), "Mutex" | "RwLock")
+                    && matches!(self.type_name(ty).as_str(), "Mutex" | "RwLock" | "Atomic")
                 {
                     return true;
                 }

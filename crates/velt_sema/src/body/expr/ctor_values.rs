@@ -117,6 +117,9 @@ impl FnCx<'_, '_> {
         let a = self.cx.adt(d).filter(|a| a.kind == AdtKind::Class)?;
         let class = a.name.clone();
         let span = id.span;
+        if let Some(h) = self.class_object_value(d, exp, want, span) {
+            return Some(h);
+        }
         let target = exp
             .map(|t| self.cx.ty.core(t).unwrap_or(t))
             .filter(|t| self.cx.ctor_sig(*t).is_some());

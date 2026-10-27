@@ -85,6 +85,16 @@ impl FnCx<'_, '_> {
                         }
                         _ => None,
                     };
+                    // A conditional spread over earlier keys (`spread_cond.rs`).
+                    let called = self.getters_called(e);
+                    let e = called.as_ref().unwrap_or(e);
+                    let any = match any {
+                        None if super::spread_cond::is_cond(e) => {
+                            let earlier = self.entry_types(&entries);
+                            self.cond_spread_hint_over(e, &earlier)
+                        }
+                        any => any,
+                    };
                     let fields = self.spread_fields(e, any, &mut lets, false);
                     parts.push(self.spread_part(e.span, &lets[before..], lets.len()));
                     (fields.into_iter())
@@ -235,6 +245,9 @@ impl FnCx<'_, '_> {
         lets: &mut Vec<hir::Stmt>,
         record_ok: bool,
     ) -> Vec<(String, hir::Expr, Src)> {
+        let called = self.getters_called(e);
+        let e = called.as_ref().unwrap_or(e);
+        let hint = hint.or_else(|| self.cond_spread_hint(e));
         let h = self.expr(e, hint, Want::Borrow);
         if !record_ok && self.record_args(h.ty).is_some() {
             let tn = self.cx.display(h.ty);

@@ -127,7 +127,10 @@ fn declare_all<M: Module>(
     };
     let mut externs = Vec::with_capacity(program.externs.len());
     for e in &program.externs {
-        if velt_vir::simd::SimdCall::of_symbol(&e.symbol).is_some() {
+        // Operations emitted inline (function/simd.rs, function/atomic.rs): nothing to link.
+        if velt_vir::simd::SimdCall::of_symbol(&e.symbol).is_some()
+            || velt_vir::atomic::AtomicCall::of_symbol(&e.symbol).is_some()
+        {
             externs.push(None);
             continue;
         }

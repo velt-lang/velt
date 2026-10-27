@@ -1,0 +1,66 @@
+// An integer from the standard library (`xs.length`, `m.size`, `s.indexOf(t)`) is a `number` in
+// user code, and converts implicitly, as the integer itself, where an integer type that holds
+// every value it can have is expected (docs/reference/types.md "Numbers", #1602): a length into
+// `usize`, `u64`, `i64` or `isize`, an `indexOf` into `i64` or `isize`.
+function at(xs: string[], i: usize): string {
+  return xs[i];
+}
+
+class Stack<T> {
+  items: T[] = [];
+  depth: usize = 0;
+  push(x: T) {
+    this.items.push(x);
+    this.depth = this.items.length;
+  }
+}
+
+function pick<T>(n: T): T {
+  return n;
+}
+
+function main() {
+  const xs = ["a", "b", "c", "d"];
+  // Declared locals, parameters, fields and explicit type arguments.
+  const n: usize = xs.length;
+  const wide: i64 = xs.length;
+  console.log(n, wide, at(xs, xs.length - 1), pick<u64>(xs.length));
+  const s = new Stack<string>();
+  s.push("x");
+  s.push("y");
+  console.log(s.depth);
+  // Next to an integer: integer arithmetic, shifts included.
+  let depth: usize = 2;
+  depth = depth + xs.length;
+  depth += xs.length;
+  const shift: usize = 1;
+  console.log(depth, xs.length >> shift, xs.length * shift);
+  const m = new Map<string, i64>([["k", 1]]);
+  const size: isize = m.size;
+  const found: i64 = "abc".indexOf("z");
+  console.log(size, found);
+  // A local declared without a type stays a number next to it, where an index expects an
+  // integer too (TypeScript-style code is unchanged).
+  const head = [1, 2];
+  const out = [0, 0, 0, 0];
+  for (let j = 0; j < head.length; j++) {
+    out[head.length + j] = head[j];
+  }
+  console.log(out);
+  // An index of a length minus a local (`nums.length - 1 - j`), and a sum with a number local
+  // passed on, stay number arithmetic; `+`, `-` and `*` of lengths and whole literals become
+  // integer arithmetic where they meet an integer type.
+  const rev: number[] = [];
+  for (let j = 0; j < xs.length; j++) {
+    rev.push(xs.length - 1 - j);
+  }
+  const extra = 2;
+  const room = new Array<u8>(1 + xs.length + extra).fill(0).length;
+  let base: usize = 1;
+  base = base + (xs.length - 1) * 2;
+  console.log(rev, room, base, at(xs, (xs.length - 1) * 1));
+  // With no integer type expected it stays a number, as in TypeScript.
+  const half = xs.length / 2;
+  const third = (xs.length - 1) / 2;
+  console.log(half, third, typeof half);
+}

@@ -26,7 +26,12 @@ The differences come from three rules:
 ## Programs are compiled
 
 - A program starts at its root file's top-level statements, as a TS file does, or at
-  `function main()` / `async function main()` (which may return an `i32` exit code). Top-level
+  `function main()` / `async function main()` (which may return an `i32` exit code) in a file
+  without top-level statements. That is a difference from Node, where a `main` that nothing
+  calls never runs. In a file with top-level statements, `main` is an ordinary function, as in
+  Node: the usual trailing `main();` or `main().catch(…)` calls it, and adding a statement to a
+  file that relied on `main` running by itself stops it from running (the compiler warns that
+  `main` is never called). Top-level
   statements run in a generated `main`; an imported module's run once when it is evaluated,
   in Node's order ([Scripts](../reference/modules.md#scripts-top-level-statements)).
 - A module-level `let` works as in Node: one per process, which every task (spawned tasks,
@@ -356,5 +361,5 @@ server-side rendering ([TSX](../reference/tsx.md), [`velt:jsx`](../std/jsx.md)).
 | object literals with methods: `{ *[Symbol.iterator]() { ... } }`, `{ m() { ... } }` | an object literal whose one member is an iterator method is an `Iterable<T>` (no `this`); other methods are errors | — |
 | an unreachable generator is never closed: its `finally` blocks never run | dropping the last reference to a suspended generator closes it: its `finally` blocks run and its `using` values are disposed then (there is no garbage collector to wait for) | — |
 | `next()` on a generator from inside its own body throws a catchable `TypeError` | it panics (`generator is already running`) | — |
-| (no equivalent) | `extend` adds members to any type | module-scoped extensions, retroactive `implements` |
+| (no equivalent) | `extend` adds members to any type, and `extend X implements I` makes any type implement an interface | module-scoped extensions |
 | JSX | server-side rendering through a `jsxImportSource` provider ([`velt:jsx`](../std/jsx.md)) | no client-side DOM; the differences are in [the reference](../reference/tsx.md#differences-from-typescript) |

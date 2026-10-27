@@ -1,0 +1,4 @@
+readonly_direct_paths.vlt:5:8: error: property 'push' does not exist on type 'readonly string[]' (TypeScript's TS2339)
+readonly_direct_paths.vlt:6:8: error: property 'push' does not exist on type 'readonly f64[]' (TypeScript's TS2339)
+readonly_direct_paths.vlt:9:9: error: property 'add' does not exist on type 'ReadonlySet<string>' (TypeScript's TS2339)
+readonly_direct_paths.vlt:12:6: error: property 'add' does not exist on type 'ReadonlySet<string>' (TypeScript's TS2339)

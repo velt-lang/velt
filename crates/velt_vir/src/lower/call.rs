@@ -32,7 +32,10 @@ impl FnLower<'_, '_> {
             },
             hir::Callee::Indirect(f) => self.call_indirect(f, args, ty, transfer),
             hir::Callee::Virtual { slot } => self.call_virtual(*slot, args, ty, transfer),
-            hir::Callee::Dyn { slot } => self.call_dyn(*slot, args, ty, transfer),
+            hir::Callee::Dyn {
+                slot,
+                method_type_args,
+            } => self.call_dyn(*slot, method_type_args, args, ty, transfer),
             hir::Callee::ParamMethod {
                 iface,
                 iface_args,
@@ -43,12 +46,10 @@ impl FnLower<'_, '_> {
                     .first()
                     .unwrap_or_else(|| ice("method call without receiver"));
                 let recv_ty = self.sub(recv.ty);
-                if method_type_args.is_empty() {
-                    if let Some(slot) = self.dyn_slot_for(*iface, *slot, recv_ty) {
-                        // An interface value instantiating a type parameter bound by an
-                        // interface its interface is or extends (#1368): through its table.
-                        return self.call_dyn(slot, args, ty, transfer);
-                    }
+                if let Some(slot) = self.dyn_slot_for(*iface, *slot, recv_ty) {
+                    // An interface value instantiating a type parameter bound by an
+                    // interface its interface is or extends (#1368): through its table.
+                    return self.call_dyn(slot, method_type_args, args, ty, transfer);
                 }
                 let iargs: Vec<TyId> = iface_args.iter().map(|&t| self.sub(t)).collect();
                 let (def, mut targs) = self.resolve_param_method(*iface, &iargs, *slot, recv_ty);
@@ -73,6 +74,12 @@ impl FnLower<'_, '_> {
         // Frozen counted arguments go to an instance that neither changes nor counts them.
         let frozen = self.frozen_mask(&modes, args, pre.len());
         let at = self.panic_loc().filter(|_| self.cx.tracks_caller(def));
+        // A large caller-tracking callee, or any called from an instance that takes its own
+        // caller's location, takes the location as its last argument (track_caller.rs).
+        let arg_loc = super::srcloc::ARG_LOC;
+        let by_arg = at.is_some_and(|l| l == arg_loc || self.cx.tracks_by_arg(def));
+        let at = if by_arg { Some(arg_loc) } else { at };
+        let loc_arg = by_arg.then(|| self.panic_at());
         // A direct call: the callee runs in this function's mode (`Work::Checked`).
         let work = match (frozen, at) {
             (0, Some(at)) => Work::Tracked(def, targs.clone(), at),
@@ -129,6 +136,7 @@ impl FnLower<'_, '_> {
         let handed = std::mem::take(&mut self.kept_handed);
         let drops = std::mem::take(&mut self.kept_drops);
         argv.extend(self.lower_args(args, &modes, how));
+        argv.extend(loc_arg);
         let handed = std::mem::replace(&mut self.kept_handed, handed);
         let drops = std::mem::replace(&mut self.kept_drops, drops);
         self.kept_args = kept;

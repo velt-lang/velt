@@ -279,7 +279,9 @@ impl FnCx<'_, '_> {
         if let Some(g) = guard {
             self.f.cpu_guards.push(g);
         }
+        let unmarked = self.instanceof_unmark(cond);
         let (t, then_facts) = self.block_narrowed_ending(then, &when_true);
+        self.restore_marks(unmarked);
         if guard.is_some() {
             self.f.cpu_guards.pop();
         }
@@ -340,7 +342,8 @@ impl FnCx<'_, '_> {
             if let Some(t) = &v.ty {
                 self.cx.note_written_type(name.span, t.span);
             }
-            return self.simple_decl(v, name, ann, span, out);
+            self.simple_decl(v, name, ann, span, out);
+            return self.note_named_fn(v, name);
         }
         let Some(e) = &v.init else {
             self.cx.err(
@@ -380,7 +383,8 @@ impl FnCx<'_, '_> {
         }
         let init = match ann {
             Some(t) => self.expr_coerce(e, t, Want::Borrow),
-            None => self.expr(e, None, Want::Borrow),
+            // What is taken apart is the payload of a narrowed value (`checked_copies`).
+            None => self.payload_expr(e, None, Want::Borrow),
         };
         // `const [a, b] = v` of an `any`: read through it (`literal_patterns`).
         if self.cx.dynamic(init.ty).is_some()
@@ -485,7 +489,7 @@ impl FnCx<'_, '_> {
                     let site = v.ty.as_ref().and_then(|w| self.cx.site_in(w.span, t));
                     self.stored_into(site, |s| s.expr_coerce(e, t, Want::Move))
                 }
-                None => self.expr(e, None, Want::Move),
+                None => self.copy_init(e, name, Want::Move),
             }),
         };
         // `let x: T;` that a closure assigns: a `T | undefined` underneath (`late_let_read`).
@@ -568,7 +572,10 @@ impl FnCx<'_, '_> {
         if late {
             self.f.late_lets.insert(local);
         }
-        self.note_readonly_array(local, v.ty.as_ref());
+        self.note_marks(local, v.ty.as_ref(), v.init.as_ref());
+        if let (None, Some(e), Some(h)) = (&v.ty, &v.init, &init) {
+            self.note_readonly_init(local, e, h);
+        }
         self.note_as_const_array(local, v.init.as_ref());
         if v.kind == ast::VarKind::AwaitUsing {
             self.f.await_using.insert(local);
@@ -592,6 +599,14 @@ impl FnCx<'_, '_> {
         if let (LocalKind::Const, Some(d)) = (kind, init.as_ref().and_then(closure_def)) {
             self.f.closure_consts.insert(local, d);
         }
+        let root = v.init.as_ref().and_then(super::expr::read_root);
+        if let (LocalKind::Const, Some(o)) = (kind, root.filter(|o| o.name != name.name)) {
+            if self.is_local_name(&o.name) {
+                if let Some(r) = self.lookup_local(&o.name, o.span) {
+                    self.f.member_reads.insert(local, r);
+                }
+            }
+        }
         if let (Some(e), Some(_)) = (&v.init, init.as_ref().and_then(closure_def)) {
             if super::expr::is_member_read(e) {
                 self.f.method_values.insert(local);
@@ -605,6 +620,7 @@ impl FnCx<'_, '_> {
         if let (Some(_), Some(h), false) = (ann, &init, cast) {
             self.narrow_to_assigned(local, ty, h);
         }
+        self.note_checked_copy(local, v.ty.is_none(), v.init.as_ref());
         Self::push(out, S::Let { local, init }, span);
     }
 

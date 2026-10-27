@@ -133,7 +133,7 @@ impl FnCx<'_, '_> {
                 if self.cx.ty.is_bottom(place.ty) || self.temp_tuple_write(&place, target.span) {
                     return None;
                 }
-                self.require_mutable(&place, "assign to an element of");
+                self.require_mutable(&place, crate::body::places::ELEMENT_WRITE);
                 Some(place)
             }
             ast::ExprKind::This => {
@@ -216,7 +216,27 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let wanted = exp != Some(self.cx.ty.unit);
-        if wanted && !is_plain_path(target) {
+        let saved = std::mem::replace(&mut self.f.assign_hint, exp.filter(|_| wanted));
+        let r = self.assign_value_hinted(op, target, value, exp, wanted, span);
+        self.f.assign_hint = saved;
+        r
+    }
+
+    /// [`Self::assign_value`] with `f.assign_hint` set.
+    fn assign_value_hinted(
+        &mut self,
+        op: Option<ast::BinaryOp>,
+        target: &ast::Expr,
+        value: &ast::Expr,
+        exp: Option<TyId>,
+        wanted: bool,
+        span: Span,
+    ) -> hir::Expr {
+        // A path through a narrowed value is not read back either: the value may clear it.
+        if wanted
+            && (!is_plain_path(target)
+                || (self.has_breakable_narrowing() && self.through_narrowed(target)))
+        {
             if let Some(h) = self.element_assign_value(op, target, value, span) {
                 return h;
             }
@@ -236,7 +256,7 @@ impl FnCx<'_, '_> {
         let v = match assigned_literal(op, value).filter(|_| exp.is_some()) {
             Some(lit) => self.expr(lit, exp, Want::Move),
             None => {
-                let v = self.expr(target, None, Want::Borrow);
+                let v = self.payload_expr(target, None, Want::Borrow);
                 self.nullish_assigned_read(op, &a, v, span)
             }
         };
@@ -400,19 +420,28 @@ impl FnCx<'_, '_> {
             }
             // Assigning narrows the target like a check would (TS): to non-null, or to the
             // union member assigned (`assign_narrow`).
+            // A narrowed checked copy (`st.b = b` with `const b = st.b`) narrows a field path or
+            // a module variable, whose reads are checked, to non-null (`checked_copies`).
+            let copy = !matches!(place.kind, H::Local(..)) && self.narrowed_copy(value);
             let token = match place.kind {
                 H::Local(l, _) => Some(l),
-                _ if matches!(v.kind, H::WrapSome(_)) => self.field_token(target),
+                _ if copy || matches!(v.kind, H::WrapSome(_)) => self.field_token(target),
                 _ => None,
             };
             if let Some(t) = token.filter(|_| !crate::body::assign_narrow::is_cast(value)) {
-                self.narrow_to_assigned(t, lty, &v);
+                match copy {
+                    true => self.narrow(&crate::body::narrow::Fact::NonNull(t)),
+                    false => self.narrow_to_assigned(t, lty, &v),
+                }
             }
+            let (mut place, mut stmts) = (place, Vec::new());
+            self.hoist_checked_object(&mut place, &v, &mut stmts);
             let kind = H::Assign {
                 place: Box::new(place),
                 value: Box::new(self.held_rechecked(v)),
             };
-            return self.mk(kind, unit, span);
+            let assign = self.mk(kind, unit, span);
+            return self.with_temps(stmts, assign);
         };
         if self.cx.dynamic(lty) == Some(crate::any::Dynamic::Any) {
             return self.dynamic_place_rmw(place, DynRmw::Assign(op, value), false, span);
@@ -426,8 +455,9 @@ impl FnCx<'_, '_> {
             let mut place = place;
             let mut stmts = Vec::new();
             self.hoist_indices(&mut place, &mut stmts);
-            // `s += n`: the number is appended as `String(n)` writes it (#740).
-            let v = self.expr(value, Some(lty), Want::Borrow);
+            // `s += n`: the number is appended as `String(n)` writes it (#740), and a narrowed
+            // value as it is (`checked_copies`).
+            let v = self.as_is_expr(value, Some(lty), Want::Borrow);
             // `s += a` with an `any` `a` appends `String(a)`, as `s + a` does (not a checked
             // conversion to `string`).
             let v = match self.any_to_source(v) {
@@ -439,6 +469,7 @@ impl FnCx<'_, '_> {
             };
             let v = self.coerce(v, lty);
             let v = self.held_rechecked(v);
+            self.hoist_checked_object(&mut place, &v, &mut stmts);
             let mut cur = self.place_read(&place, Want::Borrow);
             if crate::effects::may_change_memory(&v) && Self::through_element(&place) {
                 // The right-hand side may change or move what holds the string (`rows[0].out +=
@@ -460,6 +491,8 @@ impl FnCx<'_, '_> {
         if self.cx.dynamic(v.ty) == Some(crate::any::Dynamic::Any) {
             return self.number_place_any_rmw(place, op, v, span);
         }
+        // `depth += xs.length` on an integer that holds it: the integer (`numbers::std_int_fits`).
+        let v = self.std_int_coerce(v, lty).unwrap_or_else(|v| v);
         self.literal_operands(op, &place, &v);
         // `x |= v` and the other bitwise assignments on numbers: `x = x | v` (`int32.rs`).
         let v = match self.js_bitwise_operands(op, &place, v) {
@@ -489,6 +522,7 @@ impl FnCx<'_, '_> {
         if Self::has_value_object(&place) {
             self.hoist_indices(&mut place, &mut stmts);
         }
+        self.hoist_checked_object(&mut place, &v, &mut stmts);
         let kind = H::CompoundAssign {
             op: bop,
             place: Box::new(place),

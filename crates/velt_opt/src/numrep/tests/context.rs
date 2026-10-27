@@ -8,6 +8,11 @@ use velt_vir::vir::{Const, Proj, StaticData};
 /// A loop `for (k = 0; k < bound; k++) s += k` over doubles, `bound` an operand, in new blocks
 /// (the first one is its entry); returns `k`.
 fn counting(fb: &mut FuncBuilder, bound: Operand) -> Local {
+    counting_by(fb, BinOp::Lt, bound)
+}
+
+/// [`counting`] with the loop test `k <op> bound`.
+fn counting_by(fb: &mut FuncBuilder, op: BinOp, bound: Operand) -> Local {
     let (s, k, c, t, u) = (
         fb.local(Ty::F64),
         fb.local(Ty::F64),
@@ -19,7 +24,7 @@ fn counting(fb: &mut FuncBuilder, bound: Operand) -> Local {
     fb.assign(entry, s, Rvalue::Use(float(0.0, Ty::F64)));
     fb.assign(entry, k, Rvalue::Use(float(0.0, Ty::F64)));
     fb.goto(entry, head);
-    fb.assign(head, c, bin(BinOp::Lt, copy_local(k), bound));
+    fb.assign(head, c, bin(op, copy_local(k), bound));
     fb.branch(head, c, body, exit);
     fb.assign(body, t, bin(BinOp::Add, copy_local(s), copy_local(k)));
     fb.assign(body, s, Rvalue::Use(copy_local(t)));
@@ -93,6 +98,11 @@ fn an_address_taken_function_has_no_parameter_facts() {
 
 /// `f(xs)`: `for (k = 0; k < xs.length; k++) s += k`, `xs` an array (field 1 its length).
 fn length_program(array_agg: &str) -> (Program, Local) {
+    length_loop(array_agg, BinOp::Lt, 0.0)
+}
+
+/// `f(xs)`: `for (k = 0; k <op> xs.length + extra; k++) s += k`.
+fn length_loop(array_agg: &str, op: BinOp, extra: f64) -> (Program, Local) {
     let mut pb = ProgramBuilder::new();
     let arr = pb.agg(
         array_agg,
@@ -108,7 +118,19 @@ fn length_program(array_agg: &str) -> (Program, Local) {
     p.proj.push(Proj::Field(1));
     fb.assign(pre, len, Rvalue::Use(copy_place(p)));
     fb.assign(pre, lenf, Rvalue::Cast(copy_local(len), Ty::F64));
-    let k = counting(&mut fb, copy_local(lenf));
+    let bound = match extra {
+        0.0 => lenf,
+        _ => {
+            let b = fb.local(Ty::F64);
+            fb.assign(
+                pre,
+                b,
+                bin(BinOp::Add, copy_local(lenf), float(extra, Ty::F64)),
+            );
+            b
+        }
+    };
+    let k = counting_by(&mut fb, op, copy_local(bound));
     fb.goto(pre, BlockId(1));
     pb.add(fb.finish());
     (pb.finish(), k)
@@ -125,6 +147,21 @@ fn an_array_length_bounds_its_index_loop() {
         assigned(&q.funcs[0], k),
         "field 1 of another aggregate bounds nothing"
     );
+}
+
+/// An array holds at most 2^52 - 1 elements (`velt_vir::MAX_ARRAY_LEN`, enforced where buffers
+/// are sized), so an index that runs to the length inclusive stays below 2^53 with room for
+/// its next step (#1572).
+#[test]
+fn an_index_up_to_the_length_inclusive_is_bounded_too() {
+    for (op, extra, what) in [
+        (BinOp::Le, 0.0, "k <= xs.length"),
+        (BinOp::Lt, 1.0, "k < xs.length + 1"),
+    ] {
+        let (p, k) = length_loop(velt_vir::ARRAY_AGG_NAME, op, extra);
+        let q = narrowed(&p);
+        assert!(!assigned(&q.funcs[0], k), "{what} narrows k");
+    }
 }
 
 #[test]

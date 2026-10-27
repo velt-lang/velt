@@ -1,0 +1,27 @@
+// A string-keyed record read with a `string | symbol` key (sigx's `detectAccessDev`,
+// `(obj as Record<string, any>)[key]` with `key` a proxy trap's property): the entry for a
+// string, `undefined` for a symbol, which is never one of the record's keys.
+
+const MARK: unique symbol = Symbol("mark");
+
+function differs(access: [any, string | symbol] | null, seen: any): boolean {
+  if (access && typeof access[1] === "string") {
+    const [obj, key] = access;
+    return !Object.is((obj as Record<string, any>)[key], seen);
+  }
+  return false;
+}
+
+function lookup(access: [any, string | symbol]): string {
+  if (typeof access[1] === "string") {
+    const [obj, key] = access;
+    const v = (obj as Record<string, any>)[key];
+    return v === undefined ? "undefined" : String(v);
+  }
+  return "symbol";
+}
+
+const one: Record<string, any> = { a: 1, b: "two" };
+console.log(differs([one, "a"], 1), differs([one, "a"], 2), differs(null, 0));
+console.log(differs([one, MARK], 1), differs([one, "zz"], undefined));
+console.log(lookup([one, "a"]), lookup([one, "b"]), lookup([one, "c"]), lookup([one, MARK]));

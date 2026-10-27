@@ -1,0 +1,25 @@
+// `Atomic<T>`'s type errors: what `T` can be, orderings (literal, and one the operation can
+// have), integer-only methods, and methods used as values.
+function first<T>(a: Atomic<T>): T {
+  return a.load();
+}
+
+const s = new Atomic<string>("x");
+const n = new Atomic<u64>(1);
+const o = "acquire";
+n.load(o);
+n.load("release");
+n.store(1, "acquire");
+n.compareExchange(1, 2, "acqrel", "release");
+Atomic.fence("relaxed");
+const b = new Atomic<bool>(true);
+b.add(true);
+b.max(false);
+const f = n.load;
+
+function pick(fast: bool): "relaxed" | "acquire" {
+  return fast ? "relaxed" : "acquire";
+}
+
+n.load(pick(true));
+const untyped = new Atomic(5);

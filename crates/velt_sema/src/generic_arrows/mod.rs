@@ -314,13 +314,8 @@ mod tests {
         let f = fn_of(src, 1).expect("lifted");
         assert_eq!(f.sig.params.len(), 2);
         assert_eq!(f.sig.params[1].name.name, "#arg1");
-        // A name asserted to the type is called.
-        let src = "const mk = Symbol as unknown as <T>(d: string) => T;";
-        let f = fn_of(src, 0).expect("lifted");
-        assert!(
-            matches!(&f.body.stmts[0].kind, ast::StmtKind::Return(Some(e))
-            if matches!(e.kind, ast::ExprKind::Call { .. }))
-        );
+        // A value asserted to the type is one made once (`body::expr::fn_casts`), not lifted.
+        assert!(fn_of("const mk = Symbol as unknown as <T>(d: string) => T;", 0).is_none());
         // Other initializers, `let`, and non-generic types stay as they are.
         assert!(fn_of("type Id = <T>(x: T) => T; const h: Id = [f][0];", 1).is_none());
         assert!(fn_of("type Id = <T>(x: T) => T; let g: Id = (x) => x;", 1).is_none());

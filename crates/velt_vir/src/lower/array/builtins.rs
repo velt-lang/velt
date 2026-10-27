@@ -64,6 +64,16 @@ impl<'c, 'h> FnLower<'c, 'h> {
         )
     }
 
+    /// `()`: `panic(ARRAY_LEN_MESSAGE)`, for an array past `MAX_ARRAY_LEN` (elements, or bytes
+    /// of them). It never returns, so the inliner leaves it out of line and each check is a
+    /// compare, a branch and a cold call.
+    pub(in crate::lower) fn build_array_too_long(cx: &'c mut Cx<'h>) -> Function {
+        let mut lw = FnLower::bare(cx, vec![]);
+        lw.panic_msg(crate::ARRAY_LEN_MESSAGE);
+        lw.terminate(vir::Terminator::Unreachable);
+        lw.finish("_Garray_too_long".into(), vec![], Ty::Unit)
+    }
+
     /// `(len: u64, index, at: ptr)`: `panic("index out of bounds: the len is {len} but the index
     /// is {i}{*at}")` (`*at` is the ` at <location>` suffix, possibly empty).
     pub(in crate::lower) fn build_oob(cx: &'c mut Cx<'h>, signed: bool) -> Function {

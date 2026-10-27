@@ -135,9 +135,11 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
   lets LLVM vectorize index loops badly). `charCodeAt(i)` tests the form: an inline string with
   bit 0x40 of byte 23 clear, or a static/heap string whose halves of `w1` are equal, is ASCII,
   and the byte at `i` is loaded inline (bounds-checked against the length); any other string
-  calls `velt_rt_str_char_code_at`. Strings are passed to the runtime by pointer for everything
-  else. Test a form through byte 23: inline appends write single bytes
-  into `w2`, and reading `w2` as a word right after would stall on store forwarding.
+  calls `velt_rt_str_char_code_at`. The byte length (`Buffer.byteLength(s)`, intrinsic
+  `StrByteLen`) is read inline too: `byte23 ≥ 0x80 ? byte23 & 0x1f : w1 & 0xffffffff`. Strings
+  are passed to the runtime by pointer for everything else. Test a form through byte 23: inline
+  appends write single bytes into `w2`, and reading `w2` as a word right after would stall on
+  store forwarding.
 - Invariants, checked by a **debug** runtime on every append (each appended piece is canonical
   WTF-8 with the unit and lone counts it is given, and the seam is canonical: O(piece), never a
   recount of the whole string) and in full after every operation by the runtime's own tests: the
@@ -204,12 +206,12 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
 | `velt_rt_str_from_u64` | `(uint64_t v, VeltStr* out)` | decimal (inline) |
 | `velt_rt_str_from_f64` | `(double v, VeltStr* out)` | JS `Number.prototype.toString` formatting (inline) |
 | `velt_rt_str_from_bool` | `(uint8_t v, VeltStr* out)` | `true`/`false` (static) |
-| `velt_rt_str_clone` | `(const VeltStr* s, VeltStr* out)` | a copy: bitwise, plus count +1 for heap strings (never a deep copy) |
+| `velt_rt_str_clone` | `(const VeltStr* s, VeltStr* out)` | a copy: bitwise, plus count +1 for heap strings (never a deep copy); generated code calls it for heap strings only (`(int64_t)w2 > 0`) and copies the three words of any other |
 | `velt_rt_str_own` | `(const VeltStr* s, VeltStr* out)` | like `str_clone`, but a static-form string (which may borrow memory, e.g. a JSON key pointing into the parsed text) is copied into an inline or heap string |
-| `velt_rt_str_drop` | `(VeltStr* s)` | count −1 for heap strings (frees at 0), then zeroes `*s` |
+| `velt_rt_str_drop` | `(VeltStr* s)` | count −1 for heap strings (frees at 0), then zeroes `*s`; generated code calls it for heap strings only and zeroes any other itself |
 | `velt_rt_str_cmp` | `(const VeltStr* a, const VeltStr* b) -> int32_t` | -1 / 0 / 1 in UTF-16 code-unit order (`<`, `sort()`; #377 phase 2b): `memcmp` for two ASCII strings, else byte order corrected where it differs from code-unit order (design/strings.md "The ordering rule") |
 | `velt_rt_str_char_code_at` | `(const VeltStr* s, int64_t i) -> int64_t` | the UTF-16 code unit at `i` (a supplementary character gives its high or low surrogate), -1 out of range; generated code calls it for non-ASCII strings only |
-| `velt_rt_str_byte_length` | `(const VeltStr* s) -> uint64_t` | the UTF-8 length (`Buffer.byteLength(s)`): the stored byte length, O(1) |
+| `velt_rt_str_byte_length` | `(const VeltStr* s) -> uint64_t` | the UTF-8 length: the stored byte length, O(1) (generated code reads it inline, above) |
 | `velt_rt_str_hash` | `(const VeltStr* s) -> uint64_t` | hash of the bytes (`Map`/`Set` keys; fixed seed) |
 
 ## Counted objects [semantics stage 2]
@@ -347,6 +349,11 @@ inline. They never cross the C ABI, so no target's vector calling convention is 
 check it: the prelude's methods do. `load_partial` and `store_partial` take a count of elements
 too, below the lane count, and touch only those elements.
 
+`velt_simd_prefetch(void* addr)` (`-> void`, additive) starts loading the cache line at `addr`
+for a read soon, as a hint: LLVM emits `llvm.prefetch` (read, every cache level, data), which
+never faults; Cranelift emits nothing. Std reaches it through `__intrinsic_array_prefetch(xs, i)`
+(HIR `Intrinsic::ArrayPrefetch`, the address of element `i`, not bounds-checked).
+
 A shuffle is `velt_simd_<type>_shuffle_<i0>_<i1>…`, one lane index per lane spelled in the symbol
 (`velt_simd_u32x4_shuffle_1_0_7_6`; indices below twice the lane count, a lane of the first
 argument then of the second), so the mask is a constant wherever the call is: `(a, b) -> v`. No
@@ -379,6 +386,42 @@ emulation behind it is dead code. The ordinary functions it calls that check tha
 with the check `true`, so this holds whether or not they would be inlined. A gated function is never inlined into an ordinary one or one
 gated on another target (`velt_opt`, and `noinline` on the call for LLVM); ordinary code may be
 inlined into a gated function.
+
+## Atomics [additive]
+
+The atomic operations (docs/internals/design/atomics.md) are externs
+`velt_atomic_<op>_<bits>_<order>` on the address of a naturally aligned word, which lowering
+calls for `Atomic<T>` (std/prelude/sync.vlt) and for `shared<int>`'s `add`, `get` and `set`
+(rt_abi_async.md §9): `load`, `store`, the read-modify-writes `xchg add sub and or xor max min umax
+umin` (`max`/`min` compare signed, `umax`/`umin` unsigned; `add`/`sub` wrap), and
+`cas`/`casweak` with a failure ordering after the ordering (`velt_atomic_cas_64_acqrel_acq`),
+with `bits` 8, 16, 32 or 64 and the orderings `rlx acq rel acqrel seqcst` (a load or a failure
+ordering never `rel`/`acqrel`, a store never `acq`/`acqrel`). Also `velt_atomic_fence_<order>`
+(never `rlx`) and `velt_atomic_spin_hint`. **No runtime defines them**, as for SIMD:
+`velt_vir::atomic` gives each symbol's operation and VIR signature (`AtomicCall`), the verifier
+rejects a `velt_atomic_*` extern that is not one, and both backends emit every call inline.
+Values are passed as unsigned integers of the word's width (`U8` … `U64`; a `bool` is a `U8`
+0 or 1); `load` and the read-modify-writes give the word (the *previous* value), `cas` the
+previous value and `casweak` a `Bool`, whether it swapped (it may fail spuriously).
+
+| Operation | VIR signature | LLVM | Cranelift |
+|---|---|---|---|
+| `load` | `(ptr) -> uN` | `load atomic iN, ptr, align N/8` with the ordering | `atomic_load` |
+| `store` | `(ptr, uN)` | `store atomic` | `atomic_store` |
+| `xchg` … `umin` | `(ptr, uN) -> uN` | `atomicrmw` | `atomic_rmw` |
+| `cas` / `casweak` | `(ptr, uN expected, uN v) -> uN` / `-> bool` | `cmpxchg [weak]` with both orderings | `atomic_cas` (+ a compare) |
+| `fence_<order>` | `()` | `fence` | `fence` |
+| `spin_hint` | `()` | `llvm.aarch64.isb(15)` / `llvm.x86.sse2.pause`, nothing elsewhere (Rust's `spin_loop`) | nothing |
+
+Orderings map one to one to LLVM's (`monotonic acquire release acq_rel seq_cst`). On Apple
+arm64 (LSE and RCpc in every CPU) and x86-64, release builds get the instructions Rust's
+`core::sync::atomic` gets (`ldapr`, `stlr`, `ldadd`, `casal`; `mov`, `lock xadd`). On arm64
+Linux (generic armv8-a) clang compiles with `-moutline-atomics`, as Rust does: a
+read-modify-write calls an `__aarch64_*` helper (libgcc's or compiler-rt's, the one in
+`velt_rt` included) that uses LSE when the CPU has it; `max` and `min` have no helper and stay
+LL/SC loops, as in Rust. Cranelift's
+atomics are all sequentially consistent, which is correct for every ordering. On wasm without
+threads they are plain loads and stores.
 
 ## Module state [additive, #76]
 
@@ -416,6 +459,31 @@ calls it pays nothing per task (a process-wide flag the first call sets). `velt_
 keeps the module lock while it blocks; taking the module lock while the thread holds a `Mutex`
 stops with an `ICE:` panic (sema rejects module state in a `with` callback). On WebAssembly (one
 thread) there is no lock.
+
+Within one call of a compiled function (until the poll ends, or until `velt_rt_block_on` or
+`main` returns), a successful `velt_rt_module_state(desc, s)` stays valid for every slot `<= s`:
+the same block, still initialized up to `s`, with the lock still held. The compiler reuses it
+instead of calling again (`velt_opt` `module_state`, #1571), so a runtime change must keep this
+[additive, #1571].
+
+## Array length limit [additive, #1572]
+
+An array (`{ data, len, cap }`) holds at most `MAX_ARRAY_LEN` = 2^52 - 1 elements, and its
+buffer at most 2^52 - 1 bytes (`cap * size(T)`), so a byte size never wraps. Generated code
+checks it where it chooses a length (`velt_vir` `lower/array`: `with_capacity`, `reserve`, an
+array adopted from native code, and the growth of an array of zero-sized elements);
+`velt_rt_realloc`, which generated code calls only to grow an array, refuses a `new_size` past it
+(`velt_rt_alloc` does not check: it is on every `new`); the runtime checks the length in
+`VeltBytes::from_vec`, `VeltArray::from_vec` and `VeltStrArray::from_vec` before handing a Rust
+`Vec` over. Past it, both stop with
+`panic: RangeError: Invalid array length: an array holds at most 2^52 - 1 elements, and its elements at most 2^52 - 1 bytes`
+(exit code 101). Optimizations may rely on it: `velt_opt`'s `numrep` takes an array's `len` to be
+at most 2^53 - 3 (all an index running to `len` inclusive needs). A typed array's byte length is
+below 2^52 for the same reason (its buffer is a `u8[]`). `velt_rt_bytes_zeroed(n)` checks `n`
+against the limit too. A buffer within the limit that the target cannot allocate is out of
+memory (`velt_rt_alloc` above), never a smaller block: on wasm32 a byte size past 2^31 - 1
+stops the program there, in `velt_rt_realloc`, in `velt_rt_bytes_zeroed` and in
+`velt_rt_bytes_concat`.
 
 ## Array methods on a proxy [additive, #823]
 
@@ -507,9 +575,15 @@ never reads), so that it treats the loop's copy for a plain array as the one tha
 ## Memory [M1]
 | Symbol | Signature |
 |---|---|
-| `velt_rt_alloc` | `(uint64_t size, uint64_t align) -> void*` — aborts on OOM, never null for size > 0 |
+| `velt_rt_alloc` | `(uint64_t size, uint64_t align) -> void*` — never null for size > 0: a request it cannot satisfy stops the program with `panic: memory allocation of <size> bytes failed` (exit code 101; was an abort), as does `velt_rt_realloc`. On a 32-bit target (wasm32) a size past `isize::MAX` is such a request: the 64-bit size is never truncated |
 | `velt_rt_realloc` | `(void* p, uint64_t old_size, uint64_t align, uint64_t new_size) -> void*` |
 | `velt_rt_free` | `(void* p, uint64_t size, uint64_t align)` |
+
+An array buffer (generated code's `T[]`) has its element's alignment, or 128 bytes when the
+element's size is a multiple of 64 (`velt_vir` `buffer_align`): each element of such an array is
+then whole 64-byte lines, and an aligned pair of them one 128-byte block (one cache line on
+Apple's CPUs, an adjacent pair that others fetch together), as a B-tree node's two lines are.
+Every allocation, growth and free of one buffer passes the same alignment.
 
 `VELT_RT_DEBUG_ALLOC=1` with a **debug** runtime (programs linked against `<target>/debug/velt_rt`,
 e.g. every golden run) checks every allocation of the process (generated code and runtime alike):
@@ -562,16 +636,16 @@ Declared in std (Velt signatures; `u8[]`/`string` are passed as in rt_abi_async.
   `velt_rt_bytes_copy_within(b: u8[], target: i64, start: i64, end: i64)`,
   `velt_rt_bytes_fill(b: u8[], byte: u8, start: i64, end: i64)`,
   `velt_rt_bytes_slice(b: u8[], start: i64, end: i64): u8[]`,
-  `velt_rt_bytes_concat(a: u8[], b: u8[]): u8[]`,
-  `velt_rt_bytes_xor_mask(b: u8[], mask: u32, start: i64, end: i64)` (relative indices).
-- UTF-8 (`std/encoding.vlt`): `velt_rt_bytes_utf8_valid(b: u8[]): bool`.
-- For protocols written in Velt (`std/websocket/bytes.vlt`), on a range `[start, end)` (relative
-  indices) so no slice is made: `velt_rt_bytes_set_str(dst: u8[], s: string, offset: u64): bool`
-  (the UTF-8 bytes of `s`, a lone surrogate as U+FFFD; false and nothing copied if they do not
-  fit), `velt_rt_bytes_range_to_str(b: u8[], start: i64, end: i64): IoResult<string>`
-  (`INVALID_DATA` if not UTF-8) and `velt_rt_bytes_utf8_prefix(b: u8[], start: i64, end: i64):
-  i64` (how many bytes are well-formed: all, fewer when the range ends inside a character, -1
-  when no continuation can make it valid).
+  `velt_rt_bytes_concat(a: u8[], b: u8[]): u8[]`. XOR masking (`xorMask`) is Velt code on SIMD
+  vectors there, and UTF-8 validation (`utf8Valid`, the WebSocket reader) in
+  `std/encoding/utf8.vlt`.
+- For protocols written in Velt (`u8[]`'s `utf8Slice` in `std/prelude/bytes.vlt`;
+  `std/websocket/bytes.vlt`), on a range `[start, end)` (relative indices) so no slice is made:
+  `velt_rt_bytes_range_to_str(b: u8[], start: i64, end: i64): IoResult<string>` (`INVALID_DATA` if
+  not UTF-8) and `velt_rt_bytes_range_to_str_lossy(b: u8[], start: i64, end: i64): string` (an
+  invalid sequence as U+FFFD, one per maximal invalid subpart): making a string is the runtime's.
+  Writing a string's bytes and comparing them (`write`, `utf8Equals`) is Velt code that reads the
+  string's bytes in place (intrinsics `StrByteAt`, `StrLoadU8x16`, `StrLoadPartialU8x16`).
 - BigInt (`std/bigint.vlt`, handle `u64`, freed by `velt_rt_bigint_free`): `from_i64`, `from_f64`,
   `parse(s, radix)`, `clone`, `assign(dst, a)`, `neg(dst, a)`, `op(dst, a, b, op: u32): bool` and
   `op_i64(dst, a, k: i64, op: u32): bool` (false: division by zero or a negative or huge shift; `dst` unchanged), `cmp`/`cmp_i64` (−1/0/1),

@@ -1,0 +1,46 @@
+// check: no leaks
+// velt:http/server over TLS (`tls` in the options): requests, a request body, pipelining and a
+// streamed response, as over plain TCP.
+import { connectTls, TcpStream } from "velt:net";
+import { HttpRequest, HttpResponse, serve } from "velt:http/server";
+import { TEST_CA, TEST_CERT, TEST_KEY } from "./_tls";
+
+async function readAll(conn: TcpStream): Promise<string> {
+  let out = "";
+  while (true) {
+    const text = await conn.readString();
+    if (text == "") {
+      return out;
+    }
+    out += text;
+  }
+}
+
+async function main() {
+  const server = await serve({ port: 0, tls: { cert: TEST_CERT, key: TEST_KEY } }, async (
+    req: HttpRequest,
+    res: HttpResponse,
+  ) => {
+    if (req.pathIs("/echo")) {
+      const body = await req.bodyText();
+      res.send(`got ${body}`);
+    } else if (req.pathIs("/stream")) {
+      const s = await res.stream();
+      await s.write("a");
+      await s.write("b");
+      await s.end();
+    } else {
+      res.send(`hello ${req.path()}`);
+    }
+  });
+  const c = await connectTls(`localhost:${server.port}`, { ca: TEST_CA });
+  await c.write(
+    "GET /x HTTP/1.1\r\nHost: x\r\n\r\n" +
+      "POST /echo HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\n\r\nping" +
+      "GET /stream HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+  );
+  const text = await readAll(c);
+  c.close();
+  console.log(text.replace(/Date: [^\r]*\r\n/g, "").replaceAll("\r\n", "|"));
+  server.close();
+}

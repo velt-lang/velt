@@ -1,0 +1,56 @@
+// check: no leaks
+// A collection's `has`, `get` or `delete` compares its key by identity, so the key may be the
+// object the collection is reached through (#1383): sigx's effect `cleanup` deletes the
+// subscriber from each dependency it links to, `link.dep.subs.delete(effect)` with `link` an
+// element of `effect.deps`.
+
+interface Dep {
+  subs: Set<Sub>;
+  owners: Map<Sub, number>;
+  version: number;
+}
+interface Link {
+  dep: Dep;
+  version: number;
+}
+interface Sub {
+  name: string;
+  deps: Link[];
+}
+
+function link(s: Sub, d: Dep): void {
+  s.deps.push({ dep: d, version: d.version });
+  d.subs.add(s);
+  d.owners.set(s, s.deps.length);
+}
+
+function report(s: Sub): string {
+  const parts: string[] = [];
+  for (const l of s.deps) {
+    parts.push(`${l.dep.subs.has(s)}:${l.dep.owners.get(s) ?? "-"}`);
+  }
+  return `${s.name} ${parts.join(" ")}`;
+}
+
+function cleanup(effect: Sub): void {
+  for (const l of effect.deps) {
+    l.dep.subs.delete(effect);
+    l.dep.owners.delete(effect);
+  }
+  effect.deps.length = 0;
+}
+
+const a: Dep = { subs: new Set<Sub>(), owners: new Map<Sub, number>(), version: 0 };
+const b: Dep = { subs: new Set<Sub>(), owners: new Map<Sub, number>(), version: 3 };
+const s1: Sub = { name: "s1", deps: [] };
+const s2: Sub = { name: "s2", deps: [] };
+link(s1, a);
+link(s1, b);
+link(s2, b);
+console.log(report(s1), "|", report(s2), "|", a.subs.size, b.subs.size);
+cleanup(s1);
+console.log(report(s1), "|", report(s2), "|", a.subs.size, b.subs.size, s1.deps.length);
+console.log(b.subs.has(s2), b.owners.get(s2), a.owners.has(s1));
+// Unlinking the last subscriber breaks the reference cycles, so everything is freed.
+cleanup(s2);
+console.log(b.subs.size, b.owners.size, s2.deps.length);

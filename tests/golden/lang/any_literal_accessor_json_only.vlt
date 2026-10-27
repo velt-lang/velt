@@ -1,0 +1,11 @@
+// check: no leaks
+// A program that reads no member through `any` still prints and serializes an object literal's
+// accessors as Node does (#1538): a setter alone is left out of JSON, and a literal with a getter
+// held in another object's field is written with the getter called.
+const setOnly = { tag: "t", set only(v: number) {} };
+const nest = { tag: "t", nested: { k: [1, 2], get double(): number { return this.k.length * 2; } } };
+const a: any = setOnly;
+const b: any = nest;
+console.log(JSON.stringify(a), JSON.stringify(b));
+console.log(a, b);
+console.log(Object.keys(a).join(","), Object.keys(b).join(","));

@@ -77,6 +77,7 @@ impl FnCx<'_, '_> {
         }
         // Methods of a literal type are its base type's (`kind.toUpperCase()`).
         let recv = self.widen_literal_receiver(recv, &prop.name);
+        let recv = self.without_trap_vars(recv);
         // `xs.join()` / `xs.toString()` write each element as JS's `String(x)` (js_list.rs; a
         // list of `any`, `unknown` or `object` values: any_text.rs).
         let list_text = match prop.name.as_str() {
@@ -255,6 +256,7 @@ impl FnCx<'_, '_> {
                     iface_args,
                     slot,
                     method,
+                    rest: false,
                 };
                 self.iface_call(recv, s, type_args, args, exp, span)
             }
@@ -307,6 +309,9 @@ impl FnCx<'_, '_> {
         );
         let mut all = vec![recv];
         all.extend(ck.args);
+        if let Some(h) = self.atomic_call(def, &mut all, ck.ret, span) {
+            return h;
+        }
         self.call_throws(def, &ck.type_args, ck.ret, span);
         let kind = H::Call {
             callee: Callee::Def(def, ck.type_args),
@@ -367,6 +372,7 @@ impl FnCx<'_, '_> {
             // A field holding a function value, or a `Function` / `any` (issue #926): a dynamic
             // call of the value it holds.
             if matches!(self.cx.ty.kind(fty), TyKind::FnPtr { .. })
+                || self.cx.generic_sig(fty).is_some()
                 || self.cx.is_callable_object(fty)
                 || matches!(
                     self.cx.dynamic(fty),
@@ -399,9 +405,12 @@ impl FnCx<'_, '_> {
                 return self.call_value(f, args, span);
             }
         }
-        // A function in an object part of `T & { … }` (`s.$set(v)`), read through its slot.
+        // A function in an object part of `T & { … }` (`s.$set(v)`), read through its slot;
+        // also a generic function value in an interface field.
         if let Some(f) = self.iface_field_of(recv.ty, &prop.name) {
-            if matches!(self.cx.ty.kind(f.ty), TyKind::FnPtr { .. }) {
+            if matches!(self.cx.ty.kind(f.ty), TyKind::FnPtr { .. })
+                || self.cx.generic_sig(f.ty).is_some()
+            {
                 return match self.field_access(recv, prop, Want::Borrow, span) {
                     Some(f) => self.call_value(f, args, span),
                     None => self.error_expr(span),

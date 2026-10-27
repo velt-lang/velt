@@ -1,0 +1,36 @@
+// `switch (v.constructor)` with classes as cases, `x?.constructor` of an `any`, and a class
+// object held by an `unknown` compared with class names (#926). Node prints the same.
+class Box<T> {
+  v: T;
+  constructor(v: T) {
+    this.v = v;
+  }
+}
+
+function tag(v: unknown): string {
+  if (!v || typeof v !== "object") {
+    return "none";
+  }
+  switch (v.constructor) {
+    case Set:
+      return "set";
+    case Map:
+      return "map";
+    case Box:
+      return "box";
+    default:
+      return "other";
+  }
+}
+
+console.log(
+  tag(new Set<number>()),
+  tag(new Map<number, number>()),
+  tag(new Box<string>("a")),
+  tag([]),
+);
+const maybe: any = null;
+const some: any = new Box<number>(1);
+console.log(maybe?.constructor, some?.constructor === Box);
+const c: unknown = some.constructor;
+console.log(c === Box, c !== Set);

@@ -263,7 +263,8 @@ impl FnLower<'_, '_> {
             }
             TyKind::Adt(..) if self.is_enum(ty) => self.format_variant(buf, place, ty, depth),
             TyKind::Adt(d, _) => {
-                let anon = self.cx.adt_def(d).kind == AdtKind::Anon;
+                // An object literal's struct (with accessors) prints as the literal it is.
+                let anon = self.cx.adt_def(d).kind == AdtKind::Anon || self.has_accessor_fields(d);
                 let name = (!anon).then(|| self.cx.type_name(ty));
                 // A recursive object is a box (its pointer is the value) and may be part of a
                 // cycle.
@@ -296,6 +297,9 @@ impl FnLower<'_, '_> {
                 let bx = self.cx.shared_box(e);
                 let inner = proj(&proj(place, Proj::Deref(Ty::Agg(bx))), Proj::Field(1));
                 self.format_nested(buf, &inner, e, depth);
+            }
+            TyKind::FnPtr { .. } if self.class_object_tag(ty).is_some() => {
+                self.format_class_object(buf, place, ty)
             }
             TyKind::FnPtr { .. } | TyKind::Closure(_) => {
                 self.push_text(buf, "[Function (anonymous)]")
@@ -417,7 +421,9 @@ impl FnLower<'_, '_> {
         if let Some(m) = self.hook(ty, Hook::Inspect) {
             self.format_inspect(&buf, p, ty, m, &depth);
         } else if !self.format_collection(&buf, &place, ty, &depth) {
-            let name = Some(self.cx.type_name(ty));
+            let literal =
+                matches!(self.cx.kind(ty), TyKind::Adt(d, _) if self.has_accessor_fields(d));
+            let name = (!literal).then(|| self.cx.type_name(ty));
             self.format_object(&buf, name, &place, ty, Some(p), &depth);
         }
         self.terminate(Terminator::Return(unit()));
@@ -514,5 +520,64 @@ impl FnLower<'_, '_> {
             self.format_nested(&buf, &p, ty, &depth);
         }
         self.terminate(Terminator::Return(unit()));
+    }
+}
+
+impl FnLower<'_, '_> {
+    /// The tag of a class object's function type (velt_sema's `ctor_objects.rs`): its rest
+    /// parameter is `__ClassMarker<T>[]`, `T` the tag (std/prelude/zzz_adapt_ctor.vlt).
+    fn class_object_tag(&self, ty: TyId) -> Option<TyId> {
+        let TyKind::FnPtr {
+            params, rest: true, ..
+        } = self.cx.kind(ty)
+        else {
+            return None;
+        };
+        let TyKind::Array(m) = self.cx.kind(*params.last()?) else {
+            return None;
+        };
+        let TyKind::Adt(d, args) = self.cx.kind(m) else {
+            return None;
+        };
+        if !self.cx.adt_def(d).name.ends_with("::__ClassMarker") {
+            return None;
+        }
+        args.first().copied()
+    }
+
+    /// The class object at `place`, of type `ty`, as Node prints it: the `Number` kind's
+    /// `[Function: Number]`; one the prelude's `__classObject` made by the text it keeps (its
+    /// closure's first capture: `[class A]`, `[Function: Map]`); one `__classObjectStatics` made
+    /// stops, as its static fields are not supported yet.
+    fn format_class_object(&mut self, buf: &Operand, place: &Place, ty: TyId) {
+        let Some(tag) = self.class_object_tag(ty) else {
+            return;
+        };
+        match self.cx.kind(tag) {
+            TyKind::Float(_) => self.push_text(buf, "[Function: Number]"),
+            TyKind::Bool => self.panic_msg(
+                "TypeError: printing the object of a class with static fields or accessors is not supported yet (#926)",
+            ),
+            _ => {
+                let Some(def) = self.prelude_closure("__classObject") else {
+                    return self.push_text(buf, "[Function (anonymous)]");
+                };
+                let ea = self.cx.env_agg(def, &[]);
+                let env = proj(place, Proj::Field(1));
+                let printed = proj(&proj(&env, Proj::Deref(Ty::Agg(ea))), Proj::Field(3));
+                let a = self.addr(printed);
+                self.call_rt(Rt::StrbufPushStr, vec![buf.clone(), a], None);
+            }
+        }
+    }
+
+    /// The closure the prelude function `f` returns (its only one).
+    fn prelude_closure(&self, f: &str) -> Option<DefId> {
+        let name = format!("::{f}::{{closure#0}}");
+        let at =
+            self.cx.hir.defs.iter().position(
+                |d| matches!(d, velt_sema::hir::Def::Fn(def) if def.name.ends_with(&name)),
+            )?;
+        Some(DefId(at as u32))
     }
 }

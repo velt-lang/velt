@@ -10,7 +10,6 @@ use velt_sema::hir::{TyId, TyKind};
 use super::boxing::ShareKind;
 use super::glue::SLOT_SHARE;
 use super::operand::proj;
-use super::rt::Rt;
 use super::{unit, FnLower, Glue, Work};
 use crate::vir::{self, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
@@ -37,10 +36,7 @@ impl FnLower<'_, '_> {
                     self.assign(dst, Rvalue::Use(Operand::Copy(src)));
                 }
             }
-            ShareKind::Str => {
-                let (s, d) = (self.addr(src), self.addr(dst));
-                self.call_rt(Rt::StrClone, vec![s, d], None);
-            }
+            ShareKind::Str => self.str_share(src, dst),
             ShareKind::Object => self.share_object(src, dst, ty),
             ShareKind::Value => {
                 let (s, d) = (self.addr(src), self.addr(dst));

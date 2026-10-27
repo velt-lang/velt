@@ -1,0 +1,60 @@
+// Module-level `let`s read and written in loops, in functions the loops call, in an async
+// function across awaits and in a generator: every access sees the current value. (A release
+// build asks the runtime for the module state once per function call, `velt_opt`
+// `module_state`, #1571.)
+let seed = 42;
+let total = 0;
+let names: string[] = [];
+let log = "";
+
+function next(): number {
+  seed = (seed * 3877 + 29573) % 139968;
+  return seed;
+}
+
+function sumNext(n: number): number {
+  let s = 0;
+  for (let i = 0; i < n; i++) {
+    s += next() % 10;
+    total += 1;
+  }
+  return s;
+}
+
+async function tick(label: string, n: number): Promise<number> {
+  for (let i = 0; i < n; i++) {
+    log += label;
+    await Promise.resolve(0);
+    total += 1;
+  }
+  return total;
+}
+
+function* counts(n: number): Generator<number> {
+  for (let i = 0; i < n; i++) {
+    total += 1;
+    yield total;
+  }
+}
+
+async function main() {
+  console.log(sumNext(5), seed, total);
+  for (let i = 0; i < 3; i++) {
+    names.push(`n${i}`);
+    seed += names.length;
+  }
+  console.log(names.join(","), seed);
+  const a = await tick("a", 3);
+  const b = await tick("b", 2);
+  console.log(log, a, b, total);
+  const seen: number[] = [];
+  for (const c of counts(3)) {
+    seen.push(c);
+    total += 100;
+  }
+  console.log(seen.join(","), total);
+  names = ["fresh"];
+  let len = 0;
+  for (let i = 0; i < 4; i++) len += names.length + names[0]!.length;
+  console.log(len);
+}

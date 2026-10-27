@@ -509,6 +509,9 @@ impl<'h> Cx<'h> {
             TyKind::Shared(_) | TyKind::Promise(..) => Ty::Ptr,
             TyKind::FnPtr { .. } | TyKind::Closure(_) => Ty::Agg(self.closure_agg()),
             TyKind::Dyn(..) => Ty::Agg(self.dyn_agg()),
+            TyKind::Op(hir::TyOp::ErrSite(_), _) => {
+                ice("an error-set variable reached lowering: sema replaces every one by its set")
+            }
             k => ice(format_args!("type {k:?} cannot be lowered")),
         }
     }
@@ -528,7 +531,9 @@ impl<'h> Cx<'h> {
             | TyKind::Promise(..)
             | TyKind::FnPtr { .. }
             | TyKind::Dyn(..) => true,
-            TyKind::Closure(d) => self.closure_env_is_heap(d),
+            // A closure without captures has a counted env too in a program that compares
+            // functions (closure.rs `identity_closure`): a generic closure's boxed value does.
+            TyKind::Closure(d) => self.closure_env_is_heap(d) || self.fn_identity(),
             TyKind::Adt(..) if self.is_class(t) => true,
             TyKind::Adt(d, _) if self.dispose_of(d).is_some() => true,
             TyKind::Adt(..) | TyKind::Tuple(_) | TyKind::Result(..) => {
@@ -618,7 +623,10 @@ impl<'h> Cx<'h> {
     pub(super) fn variant_tys(&mut self, t: TyId, v: u32) -> Vec<TyId> {
         match self.kind(t) {
             TyKind::Adt(d, args) => {
-                let tys = self.enum_def(d).variants[v as usize].payload.clone();
+                let Some(var) = self.enum_def(d).variants.get(v as usize) else {
+                    ice(format_args!("variant {v} of a union with fewer: a pattern made for another shape of the type (an error-set variable left in it?)"))
+                };
+                let tys = var.payload.clone();
                 tys.into_iter().map(|p| self.subst(p, &args)).collect()
             }
             TyKind::Result(a, b) => vec![if v == 0 { a } else { b }],

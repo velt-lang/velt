@@ -22,6 +22,7 @@ impl<'h> Cx<'h> {
     ) -> Self {
         Cx {
             hir,
+            prelude_proxy: None,
             native_inits: vec![],
             view_fn: None,
             uses_placement: false,
@@ -55,12 +56,15 @@ impl<'h> Cx<'h> {
             locs: None,
             debug: None,
             tracked: FxHashMap::default(),
+            tracked_size: FxHashMap::default(),
             quiet: FxHashMap::default(),
             str_objects: FxHashMap::default(),
             symbol_records: Default::default(),
             boxing,
             facts: Default::default(),
             iface_impls: None,
+            ext_memo: Default::default(),
+            exists_memo: Default::default(),
             own_clones: None,
             honoured_clones: FxHashMap::default(),
             dyn_modes_memo: FxHashMap::default(),
@@ -72,6 +76,11 @@ impl<'h> Cx<'h> {
             cur_own_deep: false,
             closure_parents: FxHashMap::default(),
             nothing_clashes: vec![],
+            atomic_copies: vec![],
+            user_site: velt_common::Span::DUMMY,
+            fn_sites: Default::default(),
+            share_sites: Default::default(),
+            share_from: Default::default(),
             map_fields: 0,
         }
     }
@@ -167,6 +176,7 @@ impl<'h> Cx<'h> {
                 | Work::Main
                 | Work::ModuleInit(..)
                 | Work::ArrayGrow
+                | Work::ArrayTooLong
                 | Work::Oob(_)
         ) || !self.has_lock_set();
         let work = match (fixed, mode) {
@@ -181,6 +191,9 @@ impl<'h> Cx<'h> {
         let id = FuncId(self.funcs.len() as u32);
         self.funcs.push(None);
         self.work_map.insert(work.clone(), id);
+        if self.user_site != velt_common::Span::DUMMY {
+            self.fn_sites.insert(id, self.user_site);
+        }
         self.queue.push_back((id, work));
         id
     }
@@ -193,6 +206,8 @@ impl<'h> Cx<'h> {
         }
         let outer = self.cur_def;
         self.cur_def = work_def(work).or(outer);
+        let site = self.fn_sites.get(&fid).copied();
+        let outer_site = std::mem::replace(&mut self.user_site, site.unwrap_or_default());
         let outer_mode = std::mem::take(&mut self.cur_mode);
         let func = match work {
             Work::Checked(w) | Work::Read(w) | Work::ReadOwn(w) | Work::Deferred(w) => {
@@ -218,6 +233,7 @@ impl<'h> Cx<'h> {
         };
         self.cur_mode = outer_mode;
         self.cur_def = outer;
+        self.user_site = outer_site;
         self.funcs[fid.0 as usize] = Some(func);
         self.building.remove(&fid);
     }

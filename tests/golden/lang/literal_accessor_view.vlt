@@ -1,0 +1,82 @@
+// check: no leaks
+// A literal with a getter, cast to an interface that declares only fields, is a view of the
+// literal (#1510): each read of the field runs the getter, and a write runs the setter, as
+// sigx's `computed()` returns its getter object as `Computed<T>` / `WritableComputed<T>`. The
+// setter here is the one `Object.defineProperty` adds (#1538). Views exist in programs with
+// typed proxies (#823), as this one is.
+
+const BRAND: unique symbol = Symbol("brand");
+interface Ro<T> {
+  readonly value: T;
+  readonly [BRAND]: true;
+}
+interface Rw<T> {
+  value: T;
+  readonly [BRAND]: true;
+}
+
+let stored = 1;
+let reads = 0;
+
+function make<T>(get: () => T, set?: (v: T) => void): Ro<T> | Rw<T> {
+  const obj = {
+    [BRAND]: true as const,
+    get value(): T {
+      reads++;
+      return get();
+    },
+  };
+  if (set) {
+    Object.defineProperty(obj, "value", {
+      get(): T {
+        reads++;
+        return get();
+      },
+      set(v: T) {
+        set(v);
+      },
+      enumerable: true,
+      configurable: false,
+    });
+    return obj as Rw<T>;
+  }
+  return obj as Ro<T>;
+}
+
+const c = make(
+  () => stored * 2,
+  (v) => {
+    stored = v;
+  },
+) as Rw<number>;
+console.log(c.value, reads);
+c.value = 5;
+console.log(c.value, reads, stored);
+const r = make(() => `s${stored}`);
+stored = 7;
+console.log(r.value, c.value, reads);
+console.log(c[BRAND], (c as any)[BRAND] === true);
+
+// Outside a generic function too: each read runs the getter.
+let n = 0;
+const lit = {
+  [BRAND]: true as const,
+  get value(): number {
+    return ++n;
+  },
+};
+const view = lit as Ro<number>;
+console.log(view.value, view.value, (view as any) === (lit as any), n);
+
+
+// Printed and serialized as Node does: an accessor shows as `[Getter]` (or `[Getter/Setter]`)
+// without running, and `JSON.stringify` writes what the getter returns.
+const tagged = { tag: "t", get value(): number { return ++n; } };
+const tv = tagged as { readonly tag: string; readonly value: number };
+console.log(tv);
+console.log(JSON.stringify(tv), JSON.stringify(tagged as any), n);
+console.log(c);
+console.log(JSON.stringify(c), reads);
+
+const p = new Proxy({ n: 1 }, {});
+console.log(p.n);

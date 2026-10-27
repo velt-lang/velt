@@ -19,7 +19,7 @@
 //! `Record<string, V>` (added when missing, as in Node), and elements of an array inside its
 //! length or just past it (the array grows by one), and an array's `length` made shorter.
 
-use velt_sema::hir::{DynMemberKind, LitValue, TyId, TyKind};
+use velt_sema::hir::{DynMember, DynMemberKind, LitValue, TyId, TyKind};
 
 use super::any_glue::OBJECT_PROTO;
 use super::any_member::{ST_OK, ST_UNSUPPORTED};
@@ -100,13 +100,7 @@ impl FnLower<'_, '_> {
             .filter(|m| m.kind == DynMemberKind::ReadonlyField)
             .map(|m| m.name.clone())
             .collect();
-        let fields: Vec<String> = self
-            .cx
-            .adt_def(d)
-            .fields
-            .iter()
-            .map(|f| f.name.clone())
-            .collect();
+        let fields = self.member_fields(d);
         let vp = self.any_value_place(data, ty);
         for (i, name) in fields.iter().enumerate() {
             if name.starts_with('#') {
@@ -167,9 +161,15 @@ impl FnLower<'_, '_> {
                         _ => self.any_set_refuse(v, ST_UNSUPPORTED),
                     }
                 }
-                (DynMemberKind::Getter, _) if self.cx.is_class(ty) => {
-                    // Class bodies are strict code: Node throws.
-                    let name = self.cx.type_name(ty);
+                (DynMemberKind::Getter, _)
+                    if self.cx.is_class(ty) || self.literal_accessor(ty, m) =>
+                {
+                    // Class bodies and modules are strict code: Node throws. An object
+                    // literal's getter (its struct may be a class) is `#<Object>`'s.
+                    let name = match self.literal_accessor(ty, m) {
+                        true => "Object".to_string(),
+                        false => self.cx.type_name(ty),
+                    };
                     self.panic_msg(&format!(
                         "TypeError: Cannot set property {} of #<{name}> which has only a getter",
                         m.name
@@ -187,6 +187,52 @@ impl FnLower<'_, '_> {
             self.switch_to(next);
         }
         self.any_set_refuse(v, ST_MISSING);
+    }
+
+    /// The fields of struct `d` that hold an object literal's accessors as functions (the
+    /// getter `get k()` in field `k`, the setter in field `set k`), which sema lists as its
+    /// getters and setters (`Program::dyn_members`): through `any` the accessor runs, and the
+    /// field is no member of its own (#1538).
+    pub(super) fn accessor_fields(&mut self, d: velt_sema::hir::DefId) -> Vec<String> {
+        let mut out = vec![];
+        for m in self.dyn_members_of(d) {
+            match m.kind {
+                DynMemberKind::Getter => out.push(m.name),
+                DynMemberKind::Setter => out.push(format!("set {}", m.name)),
+                _ => {}
+            }
+        }
+        out
+    }
+
+    /// Is `m` a getter or setter of an object literal, held as a function in a field of its
+    /// struct `owner` (`accessor_fields`)? Such an accessor may throw (the setter
+    /// `Object.defineProperty` adds, before the call has run): its error then ends the process
+    /// as uncaught (proxy_throws.rs).
+    pub(super) fn literal_accessor(&self, owner: TyId, m: &DynMember) -> bool {
+        let TyKind::Adt(d, _) = self.cx.kind(owner) else {
+            return false;
+        };
+        let held = match m.kind {
+            DynMemberKind::Getter => m.name.clone(),
+            DynMemberKind::Setter => format!("set {}", m.name),
+            _ => return false,
+        };
+        self.cx.adt_def(d).fields.iter().any(|f| f.name == held)
+    }
+
+    /// The names of struct `d`'s fields as members through `any`, in order: a field holding an
+    /// accessor (`accessor_fields`) is named `#` first, as a private field is, so it is no member
+    /// of its own and the accessor is found instead.
+    pub(super) fn member_fields(&mut self, d: velt_sema::hir::DefId) -> Vec<String> {
+        let shadowed = self.accessor_fields(d);
+        let fields = self.cx.adt_def(d).fields.iter().map(|f| f.name.clone());
+        fields
+            .map(|n| match shadowed.contains(&n) {
+                true => format!("#{n}"),
+                false => n,
+            })
+            .collect()
     }
 
     /// `r[key] = v` on a `Record<string, V>`: its `__set`.
@@ -228,7 +274,9 @@ impl FnLower<'_, '_> {
     }
 
     /// `a.length = v` on an array: a shorter length drops the elements past it, as in Node; an
-    /// invalid length is Node's `RangeError`; a longer one (holes) is not supported yet.
+    /// invalid length is Node's `RangeError`, and so is one past the most elements an array
+    /// holds (`MAX_ARRAY_LEN`, with the limit's message, as the typed `length` setter); a longer
+    /// one within it (holes) is not supported yet.
     fn any_set_array_length(&mut self, data: vir::Local, v: vir::Local, ty: TyId, elem: TyId) {
         let f64_ = self.cx.intern(TyKind::Float(velt_sema::hir::FloatTy::F64));
         let n = self.any_set_value(v, f64_);
@@ -249,9 +297,17 @@ impl FnLower<'_, '_> {
         let (cut, grow) = (self.new_block(), self.new_block());
         self.branch(fits, cut, grow);
         self.switch_to(cut);
-        self.truncate(&arr, elem, idx);
+        self.truncate(&arr, elem, idx.clone());
         self.ret_status(ST_OK);
         self.switch_to(grow);
+        let limit = super::cint(i128::from(crate::MAX_ARRAY_LEN), Ty::U64);
+        let within = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Le, idx, limit));
+        let (holes, over) = (self.new_block(), self.new_block());
+        self.branch(within, holes, over);
+        self.switch_to(over);
+        self.panic_msg(crate::ARRAY_LEN_MESSAGE);
+        self.terminate(Terminator::Unreachable);
+        self.switch_to(holes);
         self.ret_status(ST_UNSUPPORTED);
     }
 

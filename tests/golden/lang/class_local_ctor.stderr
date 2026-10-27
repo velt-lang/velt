@@ -1,0 +1,1 @@
+TypeError: `constructor` of an instance of `L`, a class declared in a function, is not supported yet (#926)

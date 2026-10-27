@@ -20,6 +20,7 @@
 //! assignment in that order (or a second assignment the count missed) is recorded, and the
 //! function is translated again with those locals as variables.
 
+mod atomic;
 mod binary;
 mod cast;
 mod operand;

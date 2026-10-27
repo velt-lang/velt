@@ -492,6 +492,7 @@ impl FnCx<'_, '_> {
             // A closure created for the parameter throws into its site (`throws::fn_flows`).
             let site = self.param_site(p);
             let outer_target = self.set_target(site);
+            let want = want_of(p.mode);
             let h = match (adapted, bound, arrow) {
                 (Some(h), _, _) => h,
                 (None, Some((a, fn_ty)), _) => self.bound_closure(&a, fn_ty, Some(owned)),
@@ -505,7 +506,10 @@ impl FnCx<'_, '_> {
                     ast::ExprKind::NonNull(inner) if want_of(p.mode) == Want::Borrow => {
                         self.non_null_arg(inner, Some(expected), args[i].span)
                     }
-                    _ => self.expr(&args[i], Some(expected), want_of(p.mode)),
+                    // A value of a type parameter may be passed as it is (`checked_copies`).
+                    _ => {
+                        self.param_arg(&args[i], (p.ty, c.ret), (&given, context), (expected, want))
+                    }
                 },
             };
             self.set_target(outer_target);
@@ -525,6 +529,7 @@ impl FnCx<'_, '_> {
                 self.add_literal_key(k, h.ty, slots);
             }
             self.cx.match_ty(p.ty, h.ty, slots);
+            self.infer_from_generic(p.ty, h.ty, slots);
             out[i] = Some(h);
         }
         out.into_iter()

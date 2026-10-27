@@ -627,17 +627,19 @@ fn type_arguments_are_inferred_from_children() {
 }
 
 #[test]
-fn props_that_cannot_be_copied_are_an_error() {
-    let r = err(&format!(
+fn props_holding_elements_and_promises_are_shared_into_the_component() {
+    // A component that takes its props over (moves a field out) gets another reference to them:
+    // nothing is copied, so props holding a promise or a pending async element are fine (#74).
+    ok(&format!(
         "{GENERIC}function W(props: {{ p: Promise<i64> }}): JSX.Element {{ const p = props.p; return <p></p>; }}
         async function v(): Promise<i64> {{ return 1; }}
         function main() {{ const e = <W p={{v()}} />; }}"
     ));
-    assert!(
-        r.contains("the props of <W> cannot be copied into the component"),
-        "{r}"
-    );
-    assert!(!r.contains("ICE"), "{r}");
+    ok(&format!(
+        "{GENERIC}function Card(props: {{ title: string; children: JSX.Element[] }}): JSX.Element {{ return <div>{{props.children}}</div>; }}
+        async function Posts(): Promise<JSX.Element> {{ return <ul></ul>; }}
+        async function main() {{ const e = <Card title=\"x\"><Posts /><p>after</p></Card>; }}"
+    ));
 }
 
 #[test]
@@ -720,16 +722,19 @@ fn local_generic_arrows_are_nested_generic_functions() {
 
 #[test]
 fn other_generic_arrows_are_reported() {
-    let r = err("function main() { const f = [<T,>(x: T): T => x]; console.log(1); }");
+    // Without a generic function type where it is used, a generic arrow needs typed parameters.
+    let r = err("function main() { const f = [<T,>(x) => x]; console.log(1); }");
     assert!(
-        r.contains("a generic arrow function must be the value of a `const`"),
+        r.contains("a generic arrow function needs typed parameters"),
         "{r}"
     );
     assert!(!r.contains("unknown type"), "{r}");
-    let r =
-        err("function main() { const k = 1; const f = <T,>(x: T): i64 => k; console.log(f(1)); }");
-    assert!(
-        r.contains("`k` cannot be captured by a generic arrow function"),
-        "{r}"
-    );
+}
+
+#[test]
+fn generic_arrows_are_generic_function_values() {
+    // With typed parameters, an element or a local arrow capturing a variable is a generic
+    // function value (#943).
+    ok("function main() { const f = [<T,>(x: T): T => x]; console.log(f[0](1)); }");
+    ok("function main() { const k = 1; const f = <T,>(x: T): i64 => k; console.log(f(1)); }");
 }

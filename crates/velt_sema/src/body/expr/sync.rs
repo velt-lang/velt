@@ -37,6 +37,9 @@ impl FnCx<'_, '_> {
             Some(Item::Def(d)) if Some(d) == self.cx.rwlock_ty() => {
                 (Intrinsic::RwLockNew, "RwLock")
             }
+            Some(Item::Def(d)) if Some(d) == self.cx.atomic_ty() => {
+                return Some(self.atomic_new(d, class, targs, args, exp, span));
+            }
             _ => return None,
         };
         let c = self.intrinsic_sig(new, span);

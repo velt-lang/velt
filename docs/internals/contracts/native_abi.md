@@ -270,9 +270,45 @@ cell per column: a tag byte and its payload, `NULL` 0, `FALSE` 1, `TRUE` 2, `INT
 `FLOAT` 4 + `f64`, `TEXT` 5 or `ASCII` 7 + `u32` length + UTF-8, `BLOB` 6 + `u32` length +
 bytes (integers little-endian); bit 31 of a name's length says the name is ASCII. The reader
 trusts what the tags say about text (UTF-8, ASCII; `BinRows` checks), and a buffer cut short
-reads as a type mismatch, never out of bounds. std/sqlite uses it; std/postgres still writes
-JSON text (its arrays and json/jsonb columns are nested values, which the format has no cell
-for yet).
+reads as a type mismatch, never out of bounds. std/postgres still writes JSON text (its arrays
+and json/jsonb columns are nested values, which the format has no cell for yet); std/sqlite
+hands std a row cursor instead (below).
+
+## Row cursors
+
+A driver can also let the decoder read its rows where it has them, without writing them into a
+buffer first (`velt_text::rows_cursor`): it implements `RowCursor` — `header()` (the header of
+the binary rows: `single`, the column names), `step()` (to the next row, the first on the first
+call; false at the end and after a failure, which the driver keeps) and `cell(col)` (a `Cell`
+of the current row: null, bool, int, float, text, ascii text, blob, or a nested value as JSON
+text, borrowed until the next step) — and hands std the address of a `RawCursor`
+(`RawCursor::new`: the data pointer and a `#[repr(C)]` table of those three functions). std
+decodes with the std-only intrinsic `__intrinsic_json_parse_cursor<T>(cursor, flags, max_depth)`
+(reader flag 8, rt_abi_async.md) and gives the cursor back to the driver afterwards, which
+releases what it held (std/sqlite: the connection's lock) and reports a failure met while
+stepping. The decoder reads cells between two steps; a decoder that looks ahead across rows (a
+union of whole results) gets the remaining rows copied into binary form once, and a nested value
+is read with a JSON reader over its text.
+
+When the row type is an object of plain fields (numbers, bools, strings, `T | null` of those,
+`u8[]`), the compiler reads the rows by column instead of through the JSON reader
+(`Glue::RowsRead`, rt_abi_async.md), with the same results and messages. std/sqlite and
+std/postgres use cursors. A driver written in Velt offers its rows as std/db' `RowSource`
+instead ([velt:db](../../std/db.md)), read the same way through its own methods.
+
+## Parameter sinks
+
+The other way, a driver can take a statement's parameters as typed values instead of the JSON
+text of `JSON.stringify(params)`: it implements `ParamSink` — `object()` (the parameters are an
+object's members), `name(bytes)` (the next value is the member of that name) and `value(Cell)`
+— and hands std a `RawSink`. The std-only intrinsic `__intrinsic_db_bind<P>(sink, params)`
+calls them from code generated for `P` (`Glue::DbBind`): values in order for an array, a tuple
+or a lone value, `object()` and then names and values for an object, each value as its JSON
+text would read back (an integral number below 1e21 an int, NaN null, a `u8[]` member a blob).
+It does so for numbers, bools, strings, `T | null` of those, `u8[]` members and objects of such
+fields, and returns false, doing nothing, for any other type: std then sends the JSON text, so
+the binding never depends on which way the parameters went (std/sqlite: `bind_begin` …
+`open_rows_bound`, rt_abi_async.md §14.11).
 
 ## Drivers in the runtime
 

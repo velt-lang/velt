@@ -1,0 +1,285 @@
+// velt:collections/btree/line: `Line`, the 32 `u16` words of a B-tree node, internal.
+//
+// A line is 64 bytes, four `u16x8` vectors: slots 0 to 30 hold a word per key (two bytes of the
+// key's encoding past the node's prefix, `EMPTY` past the last key) and slot 31 (`HEAD`) the
+// node's header, its count in the low 5 bits and its prefix (in bytes) above them. An array of lines
+// keeps each one in one cache line (an array buffer of elements that are whole lines is
+// line-aligned), so a node's search reads one line.
+
+import { mask8x16, mask16x8, u16x8, u8x16 } from "velt:simd";
+
+/** A node's words and header. */
+export type Line = [u16x8, u16x8, u16x8, u16x8];
+
+/** The word of an unused slot: no target's word is above it, so counts below skip it. */
+export const EMPTY: u16 = 65535;
+/** The slot of the header. */
+export const HEAD: usize = 31;
+
+/** The line of an empty node: every word `EMPTY`, count and prefix 0. */
+export function emptyLine(): Line {
+  const e = u16x8.splat(EMPTY);
+  return [e, e, e, e.withLane(7, 0)];
+}
+
+/** The number of keys of the node. */
+export function countOf(line: Line): usize {
+  return (line[3].lane(7) & 31) as usize;
+}
+
+/** The node's prefix, in bytes (at most 2047). */
+export function prefixOf(line: Line): u32 {
+  return (line[3].lane(7) >> 5) as u32;
+}
+
+/** `line` with count `n`. */
+export function withCount(line: Line, n: usize): Line {
+  const head = (line[3].lane(7) & 65504) | (n as u16);
+  return [line[0], line[1], line[2], line[3].withLane(7, head)];
+}
+
+/** `line` with prefix `pre` (at most 2047 bytes). */
+export function withPrefix(line: Line, pre: u32): Line {
+  const head = (line[3].lane(7) & 31) | ((pre << 5) as u16);
+  return [line[0], line[1], line[2], line[3].withLane(7, head)];
+}
+
+/** The word in slot `i` (below `HEAD`). */
+export function wordAt(line: Line, i: usize): u16 {
+  if (i < 8) {
+    return line[0].lane(i);
+  }
+  if (i < 16) {
+    return line[1].lane(i - 8);
+  }
+  if (i < 24) {
+    return line[2].lane(i - 16);
+  }
+  return line[3].lane(i - 24);
+}
+
+/** `line` with word `w` in slot `i` (below `HEAD`): a select per vector, no lane read at `i`. */
+export function withWord(line: Line, i: usize, w: u16): Line {
+  const v = u16x8.splat(w);
+  const at = u16x8.splat(i as u16);
+  const ix = u16x8.index();
+  const eight = u16x8.splat(8);
+  const ix1 = ix.add(eight);
+  const ix2 = ix1.add(eight);
+  const ix3 = ix2.add(eight);
+  return [
+    u16x8.select(ix.eq(at), v, line[0]),
+    u16x8.select(ix1.eq(at), v, line[1]),
+    u16x8.select(ix2.eq(at), v, line[2]),
+    u16x8.select(ix3.eq(at), v, line[3]),
+  ];
+}
+
+/** How many word slots hold words below `w` (unused slots and the header never count). */
+export function wordsBelow(line: Line, w: u16): usize {
+  const v = u16x8.splat(w);
+  return (
+    line[0].lt(v).count() +
+    line[1].lt(v).count() +
+    line[2].lt(v).count() +
+    line[3].lt(v).and(mask16x8.prefix(7)).count()
+  );
+}
+
+/**
+ * Where `w` falls among an inner node's `n` words (in key order): how many are below it and how
+ * many at most it, from one pass of compares.
+ */
+export function rankRange(line: Line, n: usize, w: u16): [usize, usize] {
+  const v = u16x8.splat(w);
+  const head = mask16x8.prefix(7);
+  const lo =
+    line[0].lt(v).count() +
+    line[1].lt(v).count() +
+    line[2].lt(v).count() +
+    line[3].lt(v).and(head).count();
+  const ties =
+    line[0].eq(v).count() +
+    line[1].eq(v).count() +
+    line[2].eq(v).count() +
+    line[3].eq(v).and(head).count();
+  // Unused slots (`EMPTY`, after the words) tie only with an `EMPTY` target: cut them off.
+  const hi = lo + ties;
+  return [lo, hi < n ? hi : n];
+}
+
+// Edits of several slots go through a scratch array of 32 words (`scratch` arguments): four
+// stores, the moves in memory, four loads.
+
+/** Stores `line`'s 32 slots in `scratch`. */
+export function spill(line: Line, scratch: u16[]) {
+  line[0].store(scratch, 0);
+  line[1].store(scratch, 8);
+  line[2].store(scratch, 16);
+  line[3].store(scratch, 24);
+}
+
+/** The line `scratch`'s 32 slots hold. */
+export function fill(scratch: u16[]): Line {
+  return [
+    u16x8.load(scratch, 0),
+    u16x8.load(scratch, 8),
+    u16x8.load(scratch, 16),
+    u16x8.load(scratch, 24),
+  ];
+}
+
+/** `line` with the words of slots `from .. n` moved one slot up (slot `from` keeps its word). */
+export function shiftUp(line: Line, from: usize, n: usize, scratch: u16[]): Line {
+  spill(line, scratch);
+  for (let i = n; i > from; i--) {
+    scratch[i] = scratch[i - 1];
+  }
+  return fill(scratch);
+}
+
+/** `line` with the words of slots `at + 1 .. n` moved one slot down and slot `n - 1` `EMPTY`. */
+export function shiftDown(line: Line, at: usize, n: usize, scratch: u16[]): Line {
+  spill(line, scratch);
+  for (let i = at; i + 1 < n; i++) {
+    scratch[i] = scratch[i + 1];
+  }
+  scratch[n - 1] = EMPTY;
+  return fill(scratch);
+}
+
+/**
+ * A leaf's rank order: byte `r` is the physical slot of its `r`-th smallest key (32 bytes, slots
+ * 0 to 30). A leaf appends a new entry at the next physical slot and inserts its slot here, so
+ * its keys and values never move on an insert (velt:collections/btree/pool).
+ */
+export type Order = [u8x16, u8x16];
+
+/** The order of a leaf whose physical slots are in rank order. */
+export function identityOrder(): Order {
+  const ix = u8x16.index();
+  return [ix, ix.add(u8x16.splat(16))];
+}
+
+/** The physical slot of rank `r`. */
+export function slotOfRank(order: Order, r: usize): usize {
+  return (r < 16 ? order[0].lane(r) : order[1].lane(r - 16)) as usize;
+}
+
+/** The rank of physical slot `s` among the first `n` ranks. */
+export function rankOfSlot(order: Order, s: usize, n: usize): usize {
+  const v = u8x16.splat(s as u8);
+  const low = order[0].eq(v).and(mask8x16.prefix(n));
+  if (low.any()) {
+    return low.first();
+  }
+  return 16 +
+    order[1]
+      .eq(v)
+      .and(mask8x16.prefix(n > 16 ? n - 16 : 0))
+      .first();
+}
+
+/**
+ * `order` with physical slot `s` inserted at rank `r` (ranks `r ..` move up one): the bytes
+ * shifted up by a shuffle, and each lane chosen by its index against `r`. Branch-free.
+ */
+export function orderInsert(order: Order, r: usize, s: usize): Order {
+  const [a, b] = order;
+  // Every byte one lane up (lane 0 of the low half is unused).
+  const upA = u8x16.shuffle(a, a, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14);
+  const upB = u8x16.shuffle(a, b, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30);
+  const at = u8x16.splat(r as u8);
+  const slot = u8x16.splat(s as u8);
+  const ixA = u8x16.index();
+  const ixB = ixA.add(u8x16.splat(16));
+  return [
+    u8x16.select(ixA.gt(at), upA, u8x16.select(ixA.eq(at), slot, a)),
+    u8x16.select(ixB.gt(at), upB, u8x16.select(ixB.eq(at), slot, b)),
+  ];
+}
+
+/** `order` without rank `r` (ranks `r + 1 ..` move down one), branch-free as `orderInsert`. */
+export function orderRemove(order: Order, r: usize): Order {
+  const [a, b] = order;
+  const downA = u8x16.shuffle(a, b, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16);
+  const downB = u8x16.shuffle(b, b, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 15);
+  const at = u8x16.splat(r as u8);
+  const ixA = u8x16.index();
+  const ixB = ixA.add(u8x16.splat(16));
+  return [u8x16.select(ixA.lt(at), a, downA), u8x16.select(ixB.lt(at), b, downB)];
+}
+
+/** `order` with the rank that holds physical slot `from` (among `n`) holding `to` instead. */
+export function orderMove(order: Order, from: usize, to: usize, n: usize): Order {
+  const f = u8x16.splat(from as u8);
+  const t = u8x16.splat(to as u8);
+  const inA = mask8x16.prefix(n);
+  const inB = mask8x16.prefix(n > 16 ? n - 16 : 0);
+  return [
+    u8x16.select(order[0].eq(f).and(inA), t, order[0]),
+    u8x16.select(order[1].eq(f).and(inB), t, order[1]),
+  ];
+}
+
+/** The physical slots below `n` whose words equal `w`, as a bit mask (bit `i`: slot `i`). */
+export function slotsWithWord(line: Line, n: usize, w: u16): u64 {
+  const v = u16x8.splat(w);
+  const bits =
+    line[0].eq(v).bitmask() |
+    (line[1].eq(v).bitmask() << 8) |
+    (line[2].eq(v).bitmask() << 16) |
+    (line[3].eq(v).bitmask() << 24);
+  return bits & (((1 as u64) << (n as u64)) - 1);
+}
+
+// Wide words (velt:collections/btree/inline_key `inlineWide`): a node keeps a second line, `b`,
+// with the next two bytes of each key's encoding, so that a word is four bytes, compared as two
+// halves. The ones below are the ones above over such a pair.
+
+/** `rankRange` over wide words `(wa, wb)`: the compares of each half shared by both counts. */
+export function rankRange2(a: Line, b: Line, n: usize, wa: u16, wb: u16): [usize, usize] {
+  const va = u16x8.splat(wa);
+  const vb = u16x8.splat(wb);
+  const head = mask16x8.prefix(7);
+  const e0 = a[0].eq(va);
+  const e1 = a[1].eq(va);
+  const e2 = a[2].eq(va);
+  const e3 = a[3].eq(va).and(head);
+  const lo =
+    a[0].lt(va).or(e0.and(b[0].lt(vb))).count() +
+    a[1].lt(va).or(e1.and(b[1].lt(vb))).count() +
+    a[2].lt(va).or(e2.and(b[2].lt(vb))).count() +
+    a[3].lt(va).and(head).or(e3.and(b[3].lt(vb))).count();
+  const ties =
+    e0.and(b[0].eq(vb)).count() +
+    e1.and(b[1].eq(vb)).count() +
+    e2.and(b[2].eq(vb)).count() +
+    e3.and(b[3].eq(vb)).count();
+  const hi = lo + ties;
+  return [lo, hi < n ? hi : n];
+}
+
+/** How many word slots hold wide words below `(wa, wb)`. */
+export function wordsBelow2(a: Line, b: Line, wa: u16, wb: u16): usize {
+  const va = u16x8.splat(wa);
+  const vb = u16x8.splat(wb);
+  return (
+    a[0].lt(va).or(a[0].eq(va).and(b[0].lt(vb))).count() +
+    a[1].lt(va).or(a[1].eq(va).and(b[1].lt(vb))).count() +
+    a[2].lt(va).or(a[2].eq(va).and(b[2].lt(vb))).count() +
+    a[3].lt(va).or(a[3].eq(va).and(b[3].lt(vb))).and(mask16x8.prefix(7)).count()
+  );
+}
+
+/** The physical slots below `n` whose wide words equal `(wa, wb)`, as a bit mask. */
+export function slotsWithWord2(a: Line, b: Line, n: usize, wa: u16, wb: u16): u64 {
+  const va = u16x8.splat(wa);
+  const vb = u16x8.splat(wb);
+  const bits =
+    a[0].eq(va).and(b[0].eq(vb)).bitmask() |
+    (a[1].eq(va).and(b[1].eq(vb)).bitmask() << 8) |
+    (a[2].eq(va).and(b[2].eq(vb)).bitmask() << 16) |
+    (a[3].eq(va).and(b[3].eq(vb)).bitmask() << 24);
+  return bits & (((1 as u64) << (n as u64)) - 1);
+}

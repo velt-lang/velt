@@ -1,0 +1,9 @@
+// `new Array(n)` takes `n` as `xs.length = n` does: a whole number from 0 up, else Node's
+// `RangeError: Invalid array length` (array_new_length_invalid_*.vlt: negative, a fraction,
+// `NaN`).
+function main() {
+  const n: number = -1;
+  console.log("before");
+  const xs = new Array<number>(n).fill(0);
+  console.log(xs.length);
+}

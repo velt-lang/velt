@@ -1,0 +1,18 @@
+// `f.bind(thisArg)` makes a new function that forwards its arguments (#1110): it is not `===`
+// to `f` or to another `bind` of `f`, as in JavaScript, also on a `Function` value. Node prints
+// the same.
+function add(a: number, b: number): number {
+  return a + b;
+}
+
+const b1 = add.bind(null);
+const b2 = add.bind(null);
+console.log(b1 === b2, b1 === add, b1(1, 2), b2(3, 4));
+const o = { n: 3, get: (k: number): number => k * 2 };
+const h = o.get.bind(o);
+console.log(h(5), h === o.get);
+const fn: Function = (x: number): number => x + 1;
+const g = fn.bind(null);
+console.log(g === fn, g(1), fn.bind(undefined)(2));
+const keys = new Set<unknown>([b1, b2, add]);
+console.log(keys.size);

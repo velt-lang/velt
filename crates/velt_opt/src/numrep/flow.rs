@@ -41,8 +41,14 @@ const THRESHOLDS: [f64; 9] = [
 /// `s.charCodeAt(i)` past the inline ASCII path (`velt_rt_str_char_code_at`).
 const CHAR_CODE_AT: &str = "velt_rt_str_char_code_at";
 
-/// The largest array length: an array of 2^53 elements would not fit in memory.
-const ARRAY_LEN_MAX: i128 = (1 << 53) - 1;
+/// The largest array length `numrep` assumes: 2^53 - 3. Arrays are enforced to hold at most
+/// `velt_vir::MAX_ARRAY_LEN` (2^52 - 1) elements wherever a buffer is sized, so this holds; it is
+/// just low enough that an index running to the length inclusive (`i <= xs.length`,
+/// `i < xs.length + 1`) stays below 2^53 with room for its next step, and no lower, so the sum
+/// of two indexes may still pass 2^53 and keeps the representation it had (a tighter bound
+/// would narrow `i + j` used only as a double, which adds conversions: spectral-norm).
+const ARRAY_LEN_MAX: i128 = (1 << 53) - 3;
+const _: () = assert!(velt_vir::MAX_ARRAY_LEN as i128 <= ARRAY_LEN_MAX);
 
 /// A fact per tracked local.
 pub(super) type State = Vec<Fact>;
@@ -63,11 +69,19 @@ pub(super) struct Flow {
     caps: Vec<Option<Fact>>,
     /// Predecessors of each block.
     preds: Vec<Vec<usize>>,
+    /// Per local: facts about the array elements it points at (`arrays`).
+    elems: Vec<Option<Fact>>,
 }
 
 impl Flow {
-    /// Analyse `func`, tracking `tracked`. `None` when the function is too big.
-    pub fn compute(func: &Function, env: &Env, tracked: &[Local]) -> Option<Flow> {
+    /// Analyse `func`, tracking `tracked`, with `elems` the facts about the array elements each
+    /// pointer local reaches (`arrays`; may be empty). `None` when the function is too big.
+    pub fn compute(
+        func: &Function,
+        env: &Env,
+        tracked: &[Local],
+        elems: Vec<Option<Fact>>,
+    ) -> Option<Flow> {
         if tracked.len().saturating_mul(func.blocks.len()) > MAX_CELLS {
             return None;
         }
@@ -87,6 +101,7 @@ impl Flow {
             field_tys: env.field_tys.clone(),
             caps: vec![None; tracked.len()],
             preds: crate::map_probe::region::predecessors(func),
+            elems,
         };
         flow.solve(func, env);
         // Counters are bounded by the trip counts the first solution proves.
@@ -146,6 +161,17 @@ impl Flow {
                 })
             }
             Operand::Copy(p) if self.is_array_len(func, p) => Some(Fact::int(0, ARRAY_LEN_MAX)),
+            Operand::Copy(p)
+                if matches!(p.proj[..], [Proj::Deref(_)])
+                    && self
+                        .elems
+                        .get(p.local.0 as usize)
+                        .copied()
+                        .flatten()
+                        .is_some() =>
+            {
+                self.elems[p.local.0 as usize]
+            }
             Operand::Copy(p) => {
                 let ty = crate::visit::derefs(p).then(|| match p.proj.last() {
                     Some(velt_vir::vir::Proj::Deref(t)) => *t,

@@ -34,7 +34,7 @@ impl FnCx<'_, '_> {
         let H::Variant { def, variant, .. } = &inner.kind else {
             return;
         };
-        if self.token_path(token).is_some() {
+        if self.token_path(token).is_some() || self.token_global_ty(token).is_some() {
             return;
         }
         let union = self.cx.ty.core(ty).unwrap_or(ty);

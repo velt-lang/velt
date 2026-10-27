@@ -3,6 +3,7 @@
 use velt_sema::hir::{self, Intrinsic, TyId};
 
 use super::async_fn::BoxHold;
+use super::json::JsonSource;
 use super::operand::proj;
 use super::rt::Rt;
 use super::{ice, unit, FnLower};
@@ -16,6 +17,16 @@ impl FnLower<'_, '_> {
         match (i, args) {
             (I::Yield, [a, rest @ ..]) => self.yield_value(a, rest.first(), ty),
             (I::GeneratorResume, [g]) => self.gen_resume(g),
+            (
+                I::AtomicLoad
+                | I::AtomicStore
+                | I::AtomicRmw
+                | I::AtomicCas
+                | I::AtomicCasWeak
+                | I::AtomicFence
+                | I::AtomicSpinHint,
+                _,
+            ) => self.atomic_intrinsic(i, args),
             (I::GeneratorResumeWith, [g, v]) => self.gen_resume_with(g, v),
             (I::GeneratorThrow, [g, e]) => self.gen_throw(g, e),
             (I::YieldDelegate, [g]) => self.yield_delegate(g),
@@ -80,6 +91,27 @@ impl FnLower<'_, '_> {
                 let v = self.projection_base(a, BoxHold::No);
                 self.str_len(v)
             }
+            (I::StrByteLen, [a]) => {
+                let v = self.projection_base(a, BoxHold::No);
+                let p = self.operand_place(v, Ty::Agg(STR_AGG));
+                self.str_bytes(&p)
+            }
+            (I::StrByteAt, [s, i]) => {
+                let v = self.projection_base(s, BoxHold::No);
+                let i = self.expr(i);
+                self.str_byte_at(v, i)
+            }
+            (I::StrLoadU8x16, [s, at]) => {
+                let v = self.projection_base(s, BoxHold::No);
+                let at = self.expr(at);
+                self.str_load_u8x16(v, at, None)
+            }
+            (I::StrLoadPartialU8x16, [s, at, count]) => {
+                let v = self.projection_base(s, BoxHold::No);
+                let at = self.expr(at);
+                let count = self.expr(count);
+                self.str_load_u8x16(v, at, Some(count))
+            }
             (I::StrCharCodeAt, [s, i]) => {
                 let hold = match self.may_write(i) {
                     true => BoxHold::Yes,
@@ -99,11 +131,10 @@ impl FnLower<'_, '_> {
             (I::Panic, [a]) => {
                 let v = self.expr(a);
                 let mut p = self.operand_addr(v, STR);
-                let suffix = self.panic_suffix();
-                if !suffix.is_empty() {
+                let tracked = self.panic_loc() == Some(super::srcloc::ARG_LOC);
+                if tracked || !self.panic_suffix().is_empty() {
                     // The process ends right after: the concatenation is never freed.
-                    let at = self.str_lit(&suffix);
-                    let at = self.operand_addr(at, STR);
+                    let at = self.panic_at();
                     let str_ty = self.cx.str_ty();
                     let msg = self.concat(p, at, str_ty);
                     p = self.operand_addr(msg, STR);
@@ -121,9 +152,15 @@ impl FnLower<'_, '_> {
                 | I::ArrayTruncate
                 | I::ArrayMove
                 | I::ArraySetLen
-                | I::ArrayReserve,
+                | I::ArrayReserve
+                | I::ArrayPrefetch
+                | I::ArrayRotateRight
+                | I::ArrayRotateLeft
+                | I::ArraySwapNested,
                 [_, ..],
             ) => self.array_intrinsic(i, args, ty),
+            // An ordering's `compareTo` call (`float_param_ordering` takes floats first).
+            (I::ParamOrdering, [a]) => self.expr(a),
             (I::Clone, [a]) => {
                 let v = self.expr(a);
                 let t = self.sub(a.ty);
@@ -191,6 +228,16 @@ impl FnLower<'_, '_> {
                 Operand::Const(crate::vir::Const::Bool(b), Ty::Bool)
             }
             (I::AnyTo, [a]) => self.any_to(a, ty),
+            (I::AnyTo, [a, text]) => {
+                let text = match &text.kind {
+                    hir::ExprKind::Lit(hir::Lit::Str(s)) => s.clone(),
+                    _ => super::ice("AnyTo text is not a string literal"),
+                };
+                let outer = self.any_context.replace(text);
+                let v = self.any_to(a, ty);
+                self.any_context = outer;
+                v
+            }
             (I::AnyTypeof, [a]) => self.any_typeof(a),
             (I::AnyGet, [o, k]) => self.any_get(o, k, ty),
             (I::AnyIndex, [o, i]) => self.any_index(o, i, ty),
@@ -234,7 +281,10 @@ impl FnLower<'_, '_> {
                 let t = self.sub(a.ty);
                 // Another reference to a frozen value would count it: a copy (frozen.rs).
                 let c = match self.frozen_root(a) {
-                    true => self.clone_value(v, t),
+                    true => {
+                        self.note_frozen_copy(a);
+                        self.clone_value(v, t)
+                    }
                     false => self.share_value(v, t),
                 };
                 self.own_value(c, t)
@@ -298,8 +348,18 @@ impl FnLower<'_, '_> {
                 _,
             ) => self.async_intrinsic(i, args, ty),
             (I::JsonStringify, [a]) => self.json_stringify(a, ty),
-            (I::JsonParse, [a, flags, depth]) => self.json_parse(a, flags, depth, false, ty),
-            (I::JsonParseRows, [a, flags, depth]) => self.json_parse(a, flags, depth, true, ty),
+            (I::JsonParse, [a, flags, depth]) => {
+                self.json_parse(a, flags, depth, JsonSource::Text, ty)
+            }
+            (I::JsonParseRows, [a, flags, depth]) => {
+                self.json_parse(a, flags, depth, JsonSource::Rows, ty)
+            }
+            (I::JsonParseCursor, [a, flags, depth]) => {
+                self.json_parse(a, flags, depth, JsonSource::Cursor, ty)
+            }
+            (I::DbBind, [sink, a]) => self.db_bind(sink, a),
+            (I::ReadRows, [a]) => self.read_rows(a, true, ty),
+            (I::ReadRow, [a]) => self.read_rows(a, false, ty),
             (I::HttpHandler, [f]) => self.http_handler(f, ty),
             (I::Attempt, [f]) => self.attempt(f, ty),
             (

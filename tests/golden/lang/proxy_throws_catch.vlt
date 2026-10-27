@@ -1,0 +1,83 @@
+// check: no leaks
+// A trap's error reaches a promise's `catch` / `then` callbacks: proxies with only a `set` trap
+// or only a `has` trap, and callbacks taking the reason untyped, as `any` or as an error class.
+class E1 extends Error {}
+class E2 extends Error {}
+
+function setOnly(): any {
+  return new Proxy({ a: 1 } as any, {
+    set(t, k, v, r) {
+      if (k === "bad") {
+        throw new E1("set");
+      }
+      return Reflect.set(t, k, v, r);
+    },
+  });
+}
+
+function hasOnly(): any {
+  return new Proxy({ a: 1 } as any, {
+    has(t, k) {
+      if (k === "bad") {
+        throw new E2("has");
+      }
+      return Reflect.has(t, k);
+    },
+  });
+}
+
+async function write(p: any, k: string): Promise<void> {
+  p[k] = 1;
+}
+
+async function test(p: any, k: string): Promise<boolean> {
+  return k in p;
+}
+
+async function run(): Promise<void> {
+  const s = setOnly();
+  const h = hasOnly();
+  await write(s, "bad").catch((e) => console.log("catch", (e as Error).message));
+  await write(s, "bad").catch((e: any) => console.log("any", e.message));
+  await write(s, "bad").catch((e) => console.log("instanceof", e instanceof E1));
+  await write(s, "bad").then(
+    () => console.log("not reached"),
+    (e) => console.log("then2", (e as Error).message),
+  );
+  await write(s, "bad").then(null, (e: any) => console.log("then-null", e.message));
+  await write(s, "a").catch((e: any) => console.log("not reached", e.message));
+  console.log("a", s.a);
+  await write(s, "bad")
+    .catch((e) => {
+      console.log("block", (e as Error).message);
+    })
+    .finally(() => console.log("finally"));
+  const r = await test(h, "bad").catch((e) => {
+    console.log("has", (e as Error).message);
+    return false;
+  });
+  console.log("result", r);
+  const r2 = await test(h, "a").catch((e: any) => {
+    console.log("not reached", e.message);
+    return false;
+  });
+  console.log("result", r2);
+  const writes = await Promise.allSettled([write(s, "bad"), write(s, "a")]);
+  for (const x of writes) {
+    if (x.status === "rejected") {
+      console.log("rejected", (x.reason as Error).message);
+    } else {
+      console.log("fulfilled");
+    }
+  }
+  const tests = await Promise.allSettled([test(h, "bad"), test(h, "a")]);
+  for (const x of tests) {
+    if (x.status === "rejected") {
+      console.log("rejected", (x.reason as Error).message);
+    } else {
+      console.log("fulfilled", x.value);
+    }
+  }
+}
+
+run();

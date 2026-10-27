@@ -20,6 +20,11 @@ use crate::hir::{
     StmtKind as S, TyId,
 };
 
+/// A call through a function value: the callee's type, the argument nodes, the call's span,
+/// whether it is in the standard library, and the function whose closures alone the callee
+/// may be (a variable of `crate::defined_accessors`), if known.
+pub(super) type Indirect = (TyId, Vec<usize>, Span, bool, Option<DefId>);
+
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(super) enum Node {
     /// The closure literal `def` (its value where it is created).
@@ -110,7 +115,7 @@ pub(super) struct Graph {
     pub inflows: Vec<Vec<(TyId, Site)>>,
     /// Calls through a function value: the callee's type, the argument nodes, and the call
     /// (span, in std). A closure whose parameter crosses makes the matching argument cross.
-    pub indirect: Vec<(TyId, Vec<usize>, Span, bool)>,
+    pub indirect: Vec<Indirect>,
     /// The function creating each closure literal.
     pub parent: FxHashMap<DefId, DefId>,
     /// The type arguments of every direct call of each generic function, with the function
@@ -479,6 +484,21 @@ impl Walk<'_, '_> {
         }
     }
 
+    /// Is `f` a read of a variable holding an accessor that `Object.defineProperty` replaces
+    /// (`crate::defined_accessors::is_accessor_cell`)?
+    fn accessor_cell(&self, mut f: &Expr) -> bool {
+        loop {
+            match &f.kind {
+                E::UnwrapSome(x, _) | E::Cast(x) | E::UnwrapVariant { expr: x, .. } => f = x,
+                E::Local(l, _) => {
+                    let name = &self.f.body.locals[l.0 as usize].name;
+                    return crate::defined_accessors::is_accessor_cell(name);
+                }
+                _ => return false,
+            }
+        }
+    }
+
     fn call(&mut self, e: &Expr, callee: &Callee, args: &[Expr], to: To) {
         match callee {
             Callee::Def(g, targs) => {
@@ -497,16 +517,22 @@ impl Walk<'_, '_> {
             }
             Callee::Indirect(f) => {
                 self.value(f, To::Drop);
+                // A variable of `Object.defineProperty`'s rewrite holds only closures of this
+                // function, which keep nothing as a function value might.
+                let cell = self.accessor_cell(f);
                 let why = self.why(e.span, Boundary::FnValue);
                 let call = self.g.indirect.len() as u32;
                 let mut nodes = vec![];
                 for (i, a) in args.iter().enumerate() {
                     let n = self.g.node(Node::Arg(call, i as u32), a.ty);
                     self.value(a, To::Node(n, None));
-                    self.g.seeds.push((n, INDIRECT, why));
+                    if !cell {
+                        self.g.seeds.push((n, INDIRECT, why));
+                    }
                     nodes.push(n);
                 }
-                self.g.indirect.push((f.ty, nodes, e.span, self.std));
+                let only = cell.then_some(self.d);
+                self.g.indirect.push((f.ty, nodes, e.span, self.std, only));
                 self.unknown(e, to);
             }
             Callee::Virtual { .. } | Callee::Dyn { .. } | Callee::ParamMethod { .. } => {

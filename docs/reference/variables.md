@@ -134,7 +134,9 @@ A module-level `let` is module state, as in Node: functions, methods and closure
 assign it, and every module that imports it sees its current value (an ES live binding). Its
 initializer runs once, when the program starts, in Node's module evaluation order: a module
 after the modules it imports (depth first, in the order of the `import` statements), and the
-declarations of one module in source order.
+declarations of one module in source order. One declared without a value
+(`let signal: AbortSignal | undefined;`) starts as `undefined`, which its type must allow
+(`T | undefined`, `any` or `unknown`).
 
 ```ts
 let count = 0;
@@ -263,11 +265,13 @@ function main() {
   function uses is module state, and its initializer runs where it stands, after the statements
   above it, as in Node.
 - <a id="module-state-cost"></a>Cost: a program without module state pays nothing, and so does a
-  task that never uses it. Each read or write of a module-level `let`, or of a constant kept as
-  module state, is a call into the runtime that returns the state (a constant only read is not: one
-  use that keeps it makes every use of it pay that). A task takes the lock at its first use and at
-  the start of each later run between `await`s (one uncontended atomic operation when no other task
-  holds it). Tasks on other cores that use module state at the same moment wait for each other, so
+  task that never uses it. A read or write of a module-level `let`, or of a constant kept as
+  module state, asks the runtime for the state (a constant only read is not: one use that keeps
+  it makes every use of it pay that). A debug build asks at every access; a release build asks
+  once per function call, plus once for each later slot (in declaration order) that the call has
+  not checked yet, so a loop over module state does not call the runtime at each iteration. A
+  task takes the lock at its first use and at the start of each later run between `await`s (one
+  uncontended atomic operation when no other task holds it). Tasks on other cores that use module state at the same moment wait for each other, so
   keep long computations that many tasks run in parallel out of the code between their `await`s that
   uses module state, or give them `shared(...)` state instead. A task that blocks on a `Mutex` keeps
   the module lock while it waits (the `Mutex`'s holder never needs it, see above).

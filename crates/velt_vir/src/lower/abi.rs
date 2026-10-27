@@ -47,11 +47,13 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let mut lw = FnLower {
             cx,
             targs,
+            glue: false,
             locals: vec![],
             blocks: vec![],
             block_locs: vec![],
             loc: None,
             caller_loc: None,
+            caller_arg: None,
             live: vec![],
             cur: BlockId(0),
             info: vec![],
@@ -71,6 +73,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             owner_write: false,
             view_writes: None,
             mirror_drop: false,
+            any_context: None,
             view_loops: Default::default(),
             lk_mode: None,
             rw_reader: None,
@@ -107,6 +110,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             direct_siblings: FxHashMap::default(),
             self_env: None,
             in_reflect: false,
+            proxy_routes: false,
             record_fill: false,
         };
         lw.mode = lw.cx.cur_mode;
@@ -136,6 +140,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Work::EnvTransfer(def, targs) => Self::build_env_transfer(cx, *def, targs),
             Work::Oob(signed) => Self::build_oob(cx, *signed),
             Work::ArrayGrow => Self::build_array_grow(cx),
+            Work::ArrayTooLong => Self::build_array_too_long(cx),
             Work::Main => Self::build_main(cx),
             Work::SyncMainRoot => Self::build_sync_main_root(cx),
             Work::Poll(def, targs) => Self::build_poll(cx, *def, targs),
@@ -253,9 +258,11 @@ impl<'c, 'h> FnLower<'c, 'h> {
         lw.lower_body(f);
         lw.describe_locals(f, f.params.len());
         let mut symbol = lw.cx.instance_symbol(&f.name, targs);
-        if let Some(at) = caller {
+        match caller {
             // `_L` never follows a mangled name or `_T` list, so instances stay distinct.
-            symbol.push_str(&format!("_L{}_{}_{}", at.file, at.line, at.col));
+            Some(super::srcloc::ARG_LOC) => symbol.push_str("_LA"),
+            Some(at) => symbol.push_str(&format!("_L{}_{}_{}", at.file, at.line, at.col)),
+            None => {}
         }
         if frozen != 0 {
             // `_Z` follows no mangled name, list or `_L` suffix either.
@@ -322,6 +329,12 @@ impl<'c, 'h> FnLower<'c, 'h> {
             let droppable = p.mode == PassMode::Owned && self.cx.needs_drop(ty);
             info[p.local.0 as usize] = Some(LInfo::new(vir, ty, indirect, droppable, LState::Init));
         }
+        // An instance that takes its caller's location: the pointer to it (track_caller.rs).
+        if self.caller_loc == Some(super::srcloc::ARG_LOC) {
+            params.push(Ty::Ptr);
+            attrs.push(ParamAttrs::default());
+            self.caller_arg = Some(self.new_local(Ty::Ptr, Some("caller.at".into())));
+        }
         let abi = self
             .cx
             .ret_abi(self.ret_ty.unwrap_or_else(|| ice("ret")), self.throws);
@@ -386,6 +399,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
     }
 
     pub(super) fn lower_body(&mut self, f: &FnDef) {
+        self.proxy_routes = !f.name.starts_with("std/") || f.name.starts_with("std/proxy::");
         // Outermost scope: owned params, dropped on every return.
         self.push_scope(ScopeKind::Block);
         for p in &f.params[f.captures.len()..] {

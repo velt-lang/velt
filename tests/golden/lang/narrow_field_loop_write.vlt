@@ -1,0 +1,29 @@
+// A loop that writes a narrowed field path drops its narrowing inside the loop, where the next
+// iteration reads what the last one wrote (#1280; tsc reports the first two, TS2339 and
+// TS18047, and JavaScript reads `undefined` from `r[key]` after the `delete`). Before, these
+// compiled and stopped at the second read.
+type O = { v: string | number; n: { k: number } | null };
+function f(o: O): void {
+  if (typeof o.v === "string") {
+    for (let i = 0; i < 2; i++) {
+      console.log(o.v.length);
+      o.v = 5;
+    }
+  }
+  if (o.n !== null) {
+    for (let i = 0; i < 2; i++) {
+      console.log(o.n.k);
+      o.n = null;
+    }
+  }
+}
+function g(r: Record<string, number[]>, k: string): void {
+  const key = k;
+  if (!r[key]) r[key] = [];
+  while (r.x === undefined) {
+    r[key].push(1);
+    delete r[key];
+  }
+}
+f({ v: "ab", n: { k: 1 } });
+g({}, "a");

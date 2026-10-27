@@ -1,0 +1,194 @@
+// Generic methods called on interface values that Velt can't dispatch yet (#943): a class held
+// as a base class whose subclass overrides the generic method (also through `any`, `unknown`
+// and `object`, which keep the type the value had, in initializers and in generic code
+// instantiated with the interface too, also through interface values, bounds, `extends`, methods
+// inherited from generic bases, and instances of generic classes called through tables), and
+// an interface value at other type arguments (it would need a wrapper forwarding the call's type
+// arguments).
+interface Box {
+  wrap<T>(x: T): T[];
+}
+
+function use(b: Box): number[] {
+  return b.wrap(1);
+}
+
+class Base implements Box {
+  wrap<T>(x: T): T[] {
+    return [x];
+  }
+  run(): number[] {
+    return use(this);
+  }
+}
+
+class Sub extends Base {
+  override wrap<T>(x: T): T[] {
+    return [x, x];
+  }
+}
+
+interface H<A> {
+  wrap<T>(a: A, x: T): T[];
+}
+
+class C implements H<number> {
+  wrap<T>(a: number, x: T): T[] {
+    return [x];
+  }
+}
+
+const dyn: any = new Sub() as Base;
+const fromModule: Box = dyn;
+
+class FieldInit {
+  b: Box = dyn;
+  static s: Box = dyn;
+}
+
+function conv<T>(u: unknown): T {
+  return u as T;
+}
+
+function convBound<T extends Box>(u: unknown): T {
+  return u as T;
+}
+
+function convArr<T>(u: unknown): T[] {
+  return [u as T];
+}
+
+function pass<T>(x: any): T {
+  return x;
+}
+
+class Conv<T> {
+  v: unknown;
+  constructor(v: unknown) {
+    this.v = v;
+  }
+  get(): T {
+    return this.v as T;
+  }
+}
+
+function outer<U>(u: unknown): U {
+  return conv<U>(u);
+}
+
+interface Getter {
+  get<T>(u: unknown): T;
+}
+
+class GetterImpl implements Getter {
+  get<T>(u: unknown): T {
+    return u as T;
+  }
+}
+
+function viaBound<C extends Getter>(c: C, u: unknown): Box {
+  return c.get<Box>(u);
+}
+
+interface Gt<T> {
+  get(u: unknown): T;
+}
+
+class GtImpl<T> implements Gt<T> {
+  get(u: unknown): T {
+    return u as T;
+  }
+}
+
+class Holder<T> {
+  v: T = dyn as T;
+}
+
+class BoxHolder extends Holder<Box> {}
+
+class Made<T> {
+  v: T;
+  constructor(u: unknown) {
+    this.v = u as T;
+  }
+}
+
+class BoxMade extends Made<Box> {}
+
+class GetBase<T> {
+  get(u: unknown): T {
+    return u as T;
+  }
+}
+
+class GetBox extends GetBase<Box> implements Gt<Box> {}
+
+class GenericBase<Q> {
+  q: Q | undefined = undefined;
+  get<T>(u: unknown): T {
+    return u as T;
+  }
+}
+
+class GetterFromBase extends GenericBase<number> implements Getter {}
+
+class GetSecond<A, T> extends GetBase<T> implements Gt<T> {
+  a: A | undefined = undefined;
+}
+
+interface Wraps {
+  get(u: unknown): number[];
+}
+
+class WrapsVia<T extends Box> implements Wraps {
+  get(u: unknown): number[] {
+    return (u as T).wrap(1);
+  }
+}
+
+class WrapsBox extends WrapsVia<Box> {}
+
+class Virt<T> {
+  get(u: unknown): T {
+    return u as T;
+  }
+}
+
+class VirtSub<T> extends Virt<T> {
+  override get(u: unknown): T {
+    return u as T;
+  }
+}
+
+function runVirt<X>(v: Virt<X>, u: unknown): X {
+  return v.get(u);
+}
+
+function main(): void {
+  const xs: Base[] = [new Base(), new Sub()];
+  for (const x of xs) console.log(use(x));
+  console.log(use(new Sub()), use(new Base()), new Sub().run());
+  const s: Base = new Sub();
+  const a: any = s;
+  const u: unknown = s;
+  const o: object = s;
+  console.log(use(a), use(u as Box), use(o as Box), use(s as any as Box));
+  console.log(use(fromModule), use(new FieldInit().b), use(FieldInit.s));
+  console.log(use(conv<Box>(s)), use(convBound<Box>(s)), use(convArr<Box>(s)[0]));
+  const viaConv: Box = conv(u);
+  console.log(use(pass<Box>(s)), use(new Conv<Box>(s).get()), use(outer<Box>(s)), use(viaConv));
+  const getter: Getter = new GetterImpl();
+  console.log(use(getter.get<Box>(s)), use(viaBound(new GetterImpl(), s)));
+  const gt: Gt<Box> = new GtImpl<Box>();
+  console.log(use(gt.get(s)), use(new BoxHolder().v), use(new BoxMade(s).v));
+  const fromBase: Gt<Box> = new GetBox();
+  const viaBase: Getter = new GetterFromBase();
+  const second: Gt<Box> = new GetSecond<number, Box>();
+  console.log(use(fromBase.get(s)), use(viaBase.get<Box>(s)), use(second.get(s)));
+  const wraps: Wraps = new WrapsVia<Box>();
+  const wrapsBox: Wraps = new WrapsBox();
+  const virt: Virt<Box> = new VirtSub<Box>();
+  console.log(wraps.get(s), wrapsBox.get(s), use(virt.get(s)), use(runVirt(new Virt<Box>(), s)));
+  const h: H<unknown> = new C();
+  console.log(h.wrap(1, "s"));
+}

@@ -117,6 +117,7 @@ fn analyze(modules: &[SourceModule], root: usize, stack_budget: usize) -> (Analy
         cx.ide = Some(Box::default());
         if !modules.is_empty() {
             crate::analyze_bodies(&mut cx);
+            crate::global_this::drop_site_errors(&mut cx);
         }
         if let Some(o) = &overloaded {
             crate::overloads::report_misfits(&mut cx.diags, &o.sig_spans);

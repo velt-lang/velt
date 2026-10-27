@@ -6,6 +6,7 @@ use velt_syntax::ast;
 use super::any_text::Hint;
 use crate::any::Dynamic;
 use crate::body::{FnCx, Want};
+use crate::defs::{BodyState, DefInfo};
 use crate::hir::{self, Callee, ExprKind as H, Intrinsic, Nothing, TyId, TyKind};
 use crate::types::{int_max, int_name, int_range};
 
@@ -361,7 +362,30 @@ impl FnCx<'_, '_> {
     }
 
     pub(crate) fn concat(&self, a: hir::Expr, b: hir::Expr, span: Span) -> hir::Expr {
+        // Constant text on both sides (`${BASE}/users`, `PREFIX + ":"`): one literal, so a
+        // module constant built from others costs nothing at each use.
+        if let (Some(x), Some(y)) = (self.const_text(&a), self.const_text(&b)) {
+            return self.str_lit(&format!("{x}{y}"), span);
+        }
         self.intrinsic(Intrinsic::StrConcat, vec![a, b], self.cx.ty.str_, span)
+    }
+
+    /// The text of `e` when it is known: a string literal, or a module constant whose
+    /// initializer is one (once checked; a module-level `let` never is).
+    fn const_text<'e>(&'e self, e: &'e hir::Expr) -> Option<&'e str> {
+        match &e.kind {
+            H::Lit(hir::Lit::Str(s)) => Some(s),
+            H::Global(d) => match &self.cx.info[d.0 as usize] {
+                DefInfo::Global(g) if !g.mutable && !g.stored && g.state == BodyState::Done => {
+                    match g.init.as_ref().map(|i| &i.kind) {
+                        Some(H::Lit(hir::Lit::Str(s))) => Some(s),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            },
+            _ => None,
+        }
     }
 
     /// The operands of `a + b` when one is a string (#740): a number or boolean on the other
@@ -523,7 +547,7 @@ impl FnCx<'_, '_> {
                 parts.push(self.str_lit(q, span));
             }
             if let Some(e) = exprs.get(i) {
-                let h = self.expr(e, None, Want::Borrow);
+                let h = self.printed_expr(e);
                 if self.reject_symbol_text(&h) {
                     parts.push(self.error_expr(h.span));
                     continue;

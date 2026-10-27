@@ -1,0 +1,159 @@
+// Prelude: bit counts on integers, `x.leadingZeros()`, `x.trailingZeros()` and `x.countOnes()`,
+// each one instruction (velt_rt_math_clz64, _ctz64, _popcount64 are compiled inline). Counted
+// over the type's own width, a signed type's by its two's-complement bits: `(0 as u8)
+// .leadingZeros()` is 8, `(-1 as i32).countOnes()` 32.
+
+// 64-bit counts (64 for 0 where it counts zeros).
+declare function velt_rt_math_clz64(x: u64): u64;
+declare function velt_rt_math_ctz64(x: u64): u64;
+declare function velt_rt_math_popcount64(x: u64): u64;
+
+extend u64 {
+  /** The zero bits above the highest set bit (64 for 0). */
+  leadingZeros(): usize {
+    return (velt_rt_math_clz64(this)) as usize;
+  }
+  /** The zero bits below the lowest set bit (64 for 0). */
+  trailingZeros(): usize {
+    return velt_rt_math_ctz64(this) as usize;
+  }
+  /** The set bits. */
+  countOnes(): usize {
+    return velt_rt_math_popcount64(this) as usize;
+  }
+}
+
+extend usize {
+  /** The zero bits above the highest set bit (64 for 0). */
+  leadingZeros(): usize {
+    return (velt_rt_math_clz64(this as u64)) as usize;
+  }
+  /** The zero bits below the lowest set bit (64 for 0). */
+  trailingZeros(): usize {
+    return velt_rt_math_ctz64(this as u64) as usize;
+  }
+  /** The set bits. */
+  countOnes(): usize {
+    return velt_rt_math_popcount64(this as u64) as usize;
+  }
+}
+
+extend i64 {
+  /** The zero bits above the highest set bit (64 for 0). */
+  leadingZeros(): usize {
+    return (velt_rt_math_clz64(this as u64)) as usize;
+  }
+  /** The zero bits below the lowest set bit (64 for 0). */
+  trailingZeros(): usize {
+    return velt_rt_math_ctz64(this as u64) as usize;
+  }
+  /** The set bits. */
+  countOnes(): usize {
+    return velt_rt_math_popcount64(this as u64) as usize;
+  }
+}
+
+extend isize {
+  /** The zero bits above the highest set bit (64 for 0). */
+  leadingZeros(): usize {
+    return (velt_rt_math_clz64(this as u64)) as usize;
+  }
+  /** The zero bits below the lowest set bit (64 for 0). */
+  trailingZeros(): usize {
+    return velt_rt_math_ctz64(this as u64) as usize;
+  }
+  /** The set bits. */
+  countOnes(): usize {
+    return velt_rt_math_popcount64(this as u64) as usize;
+  }
+}
+
+extend u32 {
+  /** The zero bits above the highest set bit (32 for 0). */
+  leadingZeros(): usize {
+    return (velt_rt_math_clz64(this as u64) - 32) as usize;
+  }
+  /** The zero bits below the lowest set bit (32 for 0). */
+  trailingZeros(): usize {
+    return velt_rt_math_ctz64((this as u64) | 4294967296) as usize;
+  }
+  /** The set bits. */
+  countOnes(): usize {
+    return velt_rt_math_popcount64(this as u64) as usize;
+  }
+}
+
+extend i32 {
+  /** The zero bits above the highest set bit (32 for 0). */
+  leadingZeros(): usize {
+    return (velt_rt_math_clz64((this as u32) as u64) - 32) as usize;
+  }
+  /** The zero bits below the lowest set bit (32 for 0). */
+  trailingZeros(): usize {
+    return velt_rt_math_ctz64(((this as u32) as u64) | 4294967296) as usize;
+  }
+  /** The set bits. */
+  countOnes(): usize {
+    return velt_rt_math_popcount64((this as u32) as u64) as usize;
+  }
+}
+
+extend u16 {
+  /** The zero bits above the highest set bit (16 for 0). */
+  leadingZeros(): usize {
+    return (velt_rt_math_clz64(this as u64) - 48) as usize;
+  }
+  /** The zero bits below the lowest set bit (16 for 0). */
+  trailingZeros(): usize {
+    return velt_rt_math_ctz64((this as u64) | 65536) as usize;
+  }
+  /** The set bits. */
+  countOnes(): usize {
+    return velt_rt_math_popcount64(this as u64) as usize;
+  }
+}
+
+extend i16 {
+  /** The zero bits above the highest set bit (16 for 0). */
+  leadingZeros(): usize {
+    return (velt_rt_math_clz64((this as u16) as u64) - 48) as usize;
+  }
+  /** The zero bits below the lowest set bit (16 for 0). */
+  trailingZeros(): usize {
+    return velt_rt_math_ctz64(((this as u16) as u64) | 65536) as usize;
+  }
+  /** The set bits. */
+  countOnes(): usize {
+    return velt_rt_math_popcount64((this as u16) as u64) as usize;
+  }
+}
+
+extend u8 {
+  /** The zero bits above the highest set bit (8 for 0). */
+  leadingZeros(): usize {
+    return (velt_rt_math_clz64(this as u64) - 56) as usize;
+  }
+  /** The zero bits below the lowest set bit (8 for 0). */
+  trailingZeros(): usize {
+    return velt_rt_math_ctz64((this as u64) | 256) as usize;
+  }
+  /** The set bits. */
+  countOnes(): usize {
+    return velt_rt_math_popcount64(this as u64) as usize;
+  }
+}
+
+extend i8 {
+  /** The zero bits above the highest set bit (8 for 0). */
+  leadingZeros(): usize {
+    return (velt_rt_math_clz64((this as u8) as u64) - 56) as usize;
+  }
+  /** The zero bits below the lowest set bit (8 for 0). */
+  trailingZeros(): usize {
+    return velt_rt_math_ctz64(((this as u8) as u64) | 256) as usize;
+  }
+  /** The set bits. */
+  countOnes(): usize {
+    return velt_rt_math_popcount64((this as u8) as u64) as usize;
+  }
+}

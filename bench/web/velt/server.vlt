@@ -2,21 +2,9 @@
 // a template literal per row.
 // Usage: server [port]; env PORT, HOST (127.0.0.1), DATABASE_URL, DB_POOL (default 2 × cores).
 
-import { escapeHtml } from "velt:html";
-import { Fortune, startApp } from "./app";
-
-const FORTUNES_HEAD =
-  "<!DOCTYPE html><html><head><title>Fortunes</title></head><body><table><tr><th>id</th><th>message</th></tr>";
-
-function fortunesHtml(fortunes: Fortune[]): string {
-  const parts: string[] = [FORTUNES_HEAD];
-  for (const f of fortunes) {
-    parts.push(`<tr><td>${f.id}</td><td>${escapeHtml(f.message)}</td></tr>`);
-  }
-  parts.push("</table></body></html>");
-  return parts.join("");
-}
+import { startApp } from "./app";
+import { fortunesPage } from "./worlds";
 
 async function main() {
-  await startApp(fortunesHtml);
+  await startApp(fortunesPage);
 }

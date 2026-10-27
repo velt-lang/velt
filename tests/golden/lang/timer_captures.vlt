@@ -22,13 +22,15 @@ async function main() {
   setTimeout(() => {
     k.inc();
   }, 1);
-  setTimeout(() => console.log("count", k.get()), 5);
   const xs = [1];
   setTimeout(() => console.log("length", xs.length), 1);
   xs.push(2);
   let s = "abc".repeat(2);
   setTimeout(() => console.log("timeout " + s + s.length), 1);
   s = "changed";
+  // Created after the 1 ms timers and with a longer delay, so its deadline is later whatever
+  // the time between the calls (a slow run must not reorder it before the last 1 ms timer).
+  setTimeout(() => console.log("count", k.get()), 5);
   const every = setInterval(() => {
     xs.push(xs.length + 1);
     if (xs.length == 4) {

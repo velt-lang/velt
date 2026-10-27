@@ -114,7 +114,7 @@ fn parent_iface(cx: &Ctx, module: usize, t: &ast::TypeExpr) -> Option<DefId> {
     let [name] = path.as_slice() else {
         return None;
     };
-    match cx.lookup_item_at(module, &name.name, name.span)? {
+    match cx.lookup_type_item_at(module, &name.name, name.span)? {
         Item::Def(p) if cx.iface(p).is_some() => Some(p),
         _ => None,
     }

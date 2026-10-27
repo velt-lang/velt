@@ -1,10 +1,10 @@
 //! Calls of interface methods: on interface values (`Callee::Dyn`, through the vtable) and on
 //! bounded generics (`Callee::ParamMethod`, static after monomorphization).
 //!
-//! Generic interface methods (`m<U>(...)`) have no vtable slot (a table cannot hold every
-//! instantiation), so they can only be called on a `T extends I` receiver, where the call is
-//! resolved statically; calling one on an interface value is an error. The method's own type
-//! arguments (inferred or explicit) go into `ParamMethod::method_type_args`.
+//! A generic interface method (`m<U>(...)`) is called with its own type arguments (inferred or
+//! explicit) in `method_type_args`: on a `T extends I` receiver the call is resolved statically;
+//! on an interface value, the method's vtable slot holds a table with one entry per
+//! instantiation that lowering reaches (#943).
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
@@ -22,6 +22,9 @@ pub(crate) struct IfaceSlot {
     pub iface_args: Vec<TyId>,
     pub slot: u32,
     pub method: IfaceMethod,
+    /// The method's last parameter is a rest parameter (a generic function type's,
+    /// `crate::generic_fns`).
+    pub rest: bool,
 }
 
 impl FnCx<'_, '_> {
@@ -55,6 +58,47 @@ impl FnCx<'_, '_> {
         );
     }
 
+    /// A value of class type `ty` (not a `new` of it, which is exactly that class) converted to
+    /// interface `iface` (at `span`): when a subclass of
+    /// the class overrides one of the interface's generic methods, the value may hold that
+    /// subclass, whose method JavaScript would run, and a generic method has no vtable slot to
+    /// find it by (issue #1132): reported, as a direct call of the method is
+    /// (`check_generic_override`). True when reported.
+    pub(super) fn check_generic_override_dyn(
+        &mut self,
+        ty: TyId,
+        iface: DefId,
+        span: Span,
+    ) -> bool {
+        let Some((d, _)) = self.cx.class_of(ty) else {
+            return false;
+        };
+        let Some(i) = self.cx.iface(iface) else {
+            return false;
+        };
+        let generic: Vec<String> = (i.methods.iter())
+            .filter(|m| !m.generics.names.is_empty())
+            .map(|m| m.name.clone())
+            .collect();
+        let found = (self.cx.generic_overrides.iter())
+            .find(|(c, key)| generic.contains(key) && *c != d && self.cx.class_extends(*c, d))
+            .cloned();
+        let Some((sub, key)) = found else {
+            return false;
+        };
+        let (cn, iname) = (self.cx.display(ty), i.name.clone());
+        let sn = self.cx.adt(sub).map(|a| a.name.clone()).unwrap_or_default();
+        self.cx.error(
+            Diagnostic::error(
+                format!("generic method `{key}` is overridden in `{sn}`, so a `{cn}` converted to `{iname}` would need dynamic dispatch"),
+                span,
+            )
+            .with_note(format!("a call through the interface value runs the method of the class it was converted from; convert the subclass itself (a `{sn}` as a `{iname}`), or make the method non-generic"))
+            .with_note(format!("generic methods are dispatched statically: `{cn}` may hold a `{sn}`, whose `{key}` would not run")),
+        );
+        true
+    }
+
     /// `recv.m<type_args>(args)` for an interface method.
     pub(super) fn iface_call(
         &mut self,
@@ -66,27 +110,12 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let own = s.method.generics.len();
-        if own > 0 && !s.on_param {
-            let tn = self.cx.display(recv.ty);
-            let iface = self
-                .cx
-                .iface(s.iface)
-                .map_or(tn.clone(), |i| i.name.clone());
-            self.cx.error(
-                Diagnostic::error(
-                    format!(
-                        "generic method `{}` cannot be called on an interface value (`{tn}`)",
-                        s.method.name
-                    ),
-                    span,
-                )
-                .with_note("an interface value calls its methods through a table with one entry per method, but a generic method is compiled once for each type argument")
-                .with_note(format!(
-                    "make the calling function generic over the receiver, `<T extends {iface}>(x: T)` instead of `(x: {iface})`, so the call is resolved for each concrete type; or call a method of `{iface}` that is not generic"
-                )),
-            );
-            self.check_args_loose(args);
-            return self.error_expr(span);
+        if own > 0 {
+            let calls = &mut self.cx.generic_called;
+            match s.on_param {
+                true => calls.on_params.insert(s.method.name.clone()),
+                false => calls.on.insert((s.iface, s.method.name.clone())),
+            };
         }
         let n = s.iface_args.len();
         let mut slots: Vec<Option<TyId>> = s.iface_args.iter().map(|t| Some(*t)).collect();
@@ -98,7 +127,11 @@ impl FnCx<'_, '_> {
         let mut bounds = vec![vec![]; n + 1];
         bounds.extend(s.method.generics.bounds.iter().cloned());
         let c = Callable {
-            what: format!("method `{}`", s.method.name),
+            what: match s.method.name == crate::generic_fns::CALL {
+                // A generic function value's call (`crate::generic_fns`).
+                true => "this function".into(),
+                false => format!("method `{}`", s.method.name),
+            },
             params: s.method.params.clone(),
             ret: s.method.ret,
             slot_names,
@@ -107,7 +140,7 @@ impl FnCx<'_, '_> {
             js_numbers: false,
             positions: false,
             js_api: false,
-            rest: false,
+            rest: s.rest,
             defaults: vec![],
         };
         let ck = self.check_call(&c, slots, args, exp.filter(|_| own > 0), span);
@@ -128,15 +161,19 @@ impl FnCx<'_, '_> {
         let ret = self.slot_call_throws(&s, src, ck.ret, span);
         let what = format!("`{}()` called", s.method.name);
         self.note_iface_array_read(s.iface, &s.iface_args, (s.slot, what), ret, span);
+        let method_type_args = ck.type_args.get(n + 1..).unwrap_or_default().to_vec();
         let callee = if s.on_param {
             Callee::ParamMethod {
                 iface: s.iface,
                 iface_args: s.iface_args,
                 slot: s.slot,
-                method_type_args: ck.type_args.get(n + 1..).unwrap_or_default().to_vec(),
+                method_type_args,
             }
         } else {
-            Callee::Dyn { slot: s.slot }
+            Callee::Dyn {
+                slot: s.slot,
+                method_type_args,
+            }
         };
         let kind = H::Call { callee, args: all };
         self.mk(kind, ret, span)

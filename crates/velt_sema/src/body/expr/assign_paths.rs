@@ -144,7 +144,7 @@ impl crate::body::FnCx<'_, '_> {
         let (inner, cast) = match &b.kind {
             ast::ExprKind::NonNull(inner) => (inner, None),
             ast::ExprKind::Cast { expr, ty } => (expr, Some(ty)),
-            _ => return self.expr(object, None, Want::Borrow),
+            _ => return self.receiver_expr(object),
         };
         if !held_shape(inner) {
             return self.expr(object, None, Want::Borrow);

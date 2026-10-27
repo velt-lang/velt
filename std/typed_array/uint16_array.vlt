@@ -99,10 +99,10 @@ export class Uint16Array extends TypedArray implements Iterable<number> {
     return 2;
   }
 
-  // The number of elements, below 2^53 (`layout` rejects longer views): the mask says so to
+  // The number of elements, below 2^52 (`layout` rejects longer views): the mask says so to
   // the compiler, which then counts an index up to it in integers.
   private count(): number {
-    return (this.len & 0x1fffffffffffff) as number;
+    return (this.len & 0xfffffffffffff) as number;
   }
 
   /** `xs[i]`: element `i`; panics out of range, like an array index (JS reads `undefined`). */

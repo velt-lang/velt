@@ -148,6 +148,12 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         escaping: bool,
     ) -> hir::Expr {
+        if let Some(h) = self.instantiated_arrow(e, exp, escaping) {
+            return h;
+        }
+        if self.is_generic_closure(e, exp) {
+            return self.generic_closure(e, exp);
+        }
         // Stored into a site, it throws into that one (`throws::fn_flows`); its body stores
         // nothing there.
         self.cx.note_closure_site(e.span, exp);
@@ -159,12 +165,12 @@ impl FnCx<'_, '_> {
 
     fn closure_in(&mut self, e: &ast::Expr, exp: Option<TyId>, escaping: bool) -> hir::Expr {
         let ast::ExprKind::Arrow {
-            type_params,
             params,
             ret,
             throws,
             body,
             is_async,
+            ..
         } = &e.kind
         else {
             unreachable!("ICE: closure of a non-arrow expression")
@@ -172,16 +178,6 @@ impl FnCx<'_, '_> {
         crate::check_work::add_closure_check();
         // A member of a recursive closure group (`closure_group`).
         let member = self.pending_member.take();
-        if !type_params.is_empty() {
-            self.cx.error(
-                velt_common::Diagnostic::error(
-                    "a generic arrow function must be the value of a `const` with typed parameters",
-                    e.span,
-                )
-                .with_note("a function value has one type; declare it as `const id = <T>(x: T) => x;` and call it, or write a generic `function`"),
-            );
-            return self.error_expr(e.span);
-        }
         // An object-literal method using `this` (`literal_this.rs`).
         if super::literal_this::takes_this(e) {
             let at = super::literal_this::first_this(e);
@@ -361,11 +357,14 @@ impl FnCx<'_, '_> {
         for (t, w) in ptys.iter_mut().zip(&wide) {
             *t = w.unwrap_or(*t);
         }
+        // A module constant read in the body runs once the constant is initialized.
+        self.cx.fn_value_depth += 1;
         let mut block = match body {
             ast::ArrowBody::Expr(x) if void_task => self.void_task_body(x),
             ast::ArrowBody::Expr(x) if await_body => self.awaited_body(x),
             _ => self.closure_body(body, span),
         };
+        self.cx.fn_value_depth -= 1;
         block.stmts.splice(0..0, locals);
         let ptys: Vec<TyId> = ptys
             .iter()

@@ -186,7 +186,26 @@ function main() {
   A signature with fewer parameters, or an optional one left out of a call, leaves the
   implementation's parameters out, which then take their defaults. A signature's parameters
   have no defaults of their own (TS2371). A type parameter of the implementation that a
-  signature leaves open is `void` there (TypeScript's `unknown`).
+  signature leaves open is `void` there (TypeScript's `unknown`). A signature's function
+  parameter may take fixed parameters where the implementation's takes a rest parameter
+  (`setup: (ctx: Ctx, p1: T1) => R` for `setup: (ctx: Ctx, ...args: unknown[]) => R`), which
+  TypeScript relates loosely. The signature passes the implementation a function that converts
+  each rest argument to the callback's parameter type when the implementation calls it:
+  - an argument the implementation leaves out is `undefined`, as in Node, where the parameter's
+    type admits it (`p1: number | undefined`, or a type parameter instantiated with such a
+    type); a callback parameter with a default (`p1: number = 5`, which TypeScript types
+    `p1?: number`) takes its default;
+  - where it doesn't (`p1: number`), the program stops with a `TypeError` naming the callback
+    and the argument (``the callback `fn` of `setup` was called without its argument 2 (Node
+    would pass `undefined`): the value is not a number (it is undefined)``): Velt can't pass
+    `undefined` there. A `T | null` parameter admits `null`, not `undefined`, so it stops too;
+  - an argument of another type stops the same way (``… was called with a wrong argument 1:
+    the value is not a string (it is a number)``), where Node would pass it on.
+
+  That function is a new one for each call of the signature, so the implementation may only
+  call such a parameter: comparing it (`===`, a `Map` or `Set` key, `includes`), keeping it or
+  passing it on is a compile error (it would see that function, not the caller's). Declare the
+  signature's callback with the implementation's parameter types to keep the caller's function.
 - A signature may promise a narrower result than the implementation's: `T` out of `T | null`,
   one member of a union, a literal type out of its base (`"U"` out of `string`), a class out
   of a base class or an interface, or any of these in a `Promise` of an `async` implementation.
@@ -585,7 +604,9 @@ console.log(g.next(), g.next().value, g.next().done);  // { value: 1, done: fals
 - Not supported: a return value (TS's `TReturn`), `return(value)`, `await` in a (sync)
   generator (write an [async generator](#async-generators)), and `next(value)` / `throw()` on
   an async generator. `return()` returns `{ done: true }`, as in TS (where it may carry a
-  value). Arrow functions cannot be generators (as in TS).
+  value); `return(undefined)` is `return()`, and so is `g.return?.(undefined)` (a method is
+  never nullish, so an optional call of one is a plain call, as in JS). Arrow functions cannot
+  be generators (as in TS).
 - **Cost**: `for (const x of gen(a))` with a direct call (or over a class whose
   `[Symbol.iterator]` is a generator method) keeps the generator's state in the loop: no
   allocation, no `IteratorResult` objects, and the body is resumed by a direct call that the
@@ -812,7 +833,9 @@ async function main() {
   `double`, also a method value or a generic callback type (`xs.reduce(plus, 0)` and
   `xs.reduce(acc.add, 0)` with a two-parameter `plus` and `add`, where `reduce` passes
   `(acc, x, i)`). A function may also take more, when the extra ones are optional or have defaults
-  (`setTimeout(tick, 10)` with `function tick(n?: number)`): they are left out.
+  (`setTimeout(tick, 10)` with `function tick(n?: number)`): they are left out. A function with
+  a rest parameter takes fixed ones (`(...args: unknown[]) => R` as a `(p1: T1) => R`, also
+  returned from a call): the arguments past its fixed parameters become the rest array.
 - As in TS, a function whose **parameter types are wider** than the function type's is accepted
   where the function type is expected: `p.then((v: any) => …)` for a `Promise<number>`,
   `xs.forEach((x: unknown) => …)`, `const f: (x: number) => void = (v: number | string) => …`,
@@ -888,15 +911,20 @@ async function main() {
   }
   ```
 - **Generic arrow functions** are written as in `.ts` files, `<T>(x: T): T => x` (the `.tsx`
-  spelling `<T,>` works too, and JSX is allowed alongside). One must be the value of a `const`
-  with typed parameters; it is then a generic function. Without a return type it returns the
+  spelling `<T,>` works too, and JSX is allowed alongside). As the value of a `const` with
+  typed parameters it is a generic function. Without a return type it returns the
   type of its body or its `return`s, by the rules of [Return types](#return-types)
   (`const id = <T>(x: T) => x` returns `T`; an `async` one returns `Promise<T>`). At module
   level it is an ordinary generic function; in a function body it is a generic function nested
-  there, so each call instantiates it, and like any generic [nested function](#declarations) it
-  cannot use the local variables around it (nor `this` in a method). A function value has one type, so using one as a value needs
-  a function type to instantiate it at (`const f: (x: i64) => i64 = id;`), and a generic arrow
-  anywhere else (an argument, a `let`) is an error:
+  there, so each call instantiates it, unless it uses the local variables around it or is used
+  as a value: then it is a [generic function value](#generic-function-values) (one using `this`
+  in a method is not supported yet). A generic function used as a value is instantiated where
+  a function type is expected (`const f: (x: i64) => i64 = id;`), and is a generic function
+  value elsewhere. A generic
+  arrow elsewhere (an argument, a `let`) is a generic function value where a generic function
+  type is expected, and is instantiated where a function type is (`apply(<T>(x: T): T => x)`
+  with `apply(f: (x: i64) => i64)` gives `T` the type `i64`); without either it needs typed
+  parameters:
 
   ```ts
   const firstOr = <T>(xs: T[], fallback: T): T => (xs.length > 0 ? xs[0].clone() : fallback);
@@ -1061,9 +1089,9 @@ async function main() {
   function converts to the instantiated type directly, a branded result such as
   `symbol & { __t?: T }` taking the value as it is. Like a local generic arrow, a local constant
   of such a type cannot use the local variables around it. A generic function type anywhere
-  else (a parameter, a field, a `let`, a constant with another initializer) is a value that
-  stays generic, which is not supported yet: using one is an error saying so, as are generic
-  construct signatures (`new <T>(x: T) => Box<T>`).
+  else (a parameter, a field, a `let`, a constant with another initializer) is a
+  [generic function value](#generic-function-values). Generic construct signatures
+  (`new <T>(x: T) => Box<T>`) are not supported yet.
 
   ```ts
   type Id = <T>(x: T) => T;
@@ -1087,6 +1115,99 @@ async function main() {
   cannot follow it (TypeScript's TS1016). A call through such a value may leave it out
   (`install(app)`), which passes `undefined`; so may a call of a parameter typed
   `T | undefined`, which TypeScript requires to be passed.
+
+### Generic function values
+
+A value of a generic function type (`<T>(x: T) => T[]`) stays generic: each call through it
+instantiates it, as in TypeScript (#943). It may be a parameter (also optional, `f?: Id` or
+`Id | undefined`), a field (also `static`), a variable, an element or a result, written as a
+function type with type parameters (also with optional and rest parameters, `<K extends
+string>(name: K, ...args: unknown[]) => void`), as a type alias of one, an interface with one
+generic call signature, or a generic method of an object type (`{ run<T>(fn: () => T): T }`).
+Such a value is:
+
+- a generic arrow (`<T>(x: T): T[] => [x]`), which may use the local variables around it;
+- an arrow without type parameters where the type is expected (`(x) => [x]`): its parameters
+  take the type's types, its type parameters included;
+- a generic method of an object literal (`{ run<T>(fn: () => T): T { … } }`);
+- a generic function (`apply(id)`), also where no function type is expected (`const f = id`,
+  `[id]`: the value of its own generic type), each call of the value calling it at the
+  instantiated types; a module-level one is one value per type, so `id === id`;
+- a generic method of an object (`apply(k.id)`), bound to it as other method values are;
+- another value of the same type, or of the same type written with other names (`<U>(y: U) => U`).
+
+A value is itself however it is copied, stored or converted between spellings of its type:
+`===`, `includes`, `Map` and `Set` keys compare generic function values by identity, as
+JavaScript does. A module-level generic function used as such a value is one value per type
+(`id === id`, also through `const asA: A = id`, and for a generic function declared in a function
+body). A `const` holding a named generic function (`const g: G = id`, also through a chain of
+constants, local or module-level) is that function wherever a function of fixed types is
+expected (`const p: N = g`, an argument, a return, an element, `as N`, `N | null`), so those
+values compare equal to each other and to `id` itself, as in JavaScript; a generic arrow
+constant used only there is lifted to a function, with the same effect.
+
+Some values are made anew at each use, where JavaScript keeps one function: a generic value
+converted to another function type (a parameter of type `G` as `(x: number) => number`, or as a
+generic type taking more optional parameters), a function asserted to a generic type, and a
+generic function used at a type that mentions the caller's type parameters (`P<U>` in
+`getP<U>`). A program that makes such a value and compares function values of its type (the
+same parameter and result types, or the same generic function type, also as a member of a
+union, an option or a struct key, or after a conversion to another function type; with `===`,
+`includes`, `indexOf`, a `Set` or `Map` key) is an error, rather than giving another answer than
+JavaScript, as is one that compares `unknown` or `any` values while one holds such a value;
+holding it as `unknown` alone is fine. A generic function used as a value at more than one
+generic type (or at one and also at a fixed type) has one value per type: comparing those of one
+type is fine, and comparing `unknown` or `any` values while one is held is the error. The
+program's build reports these, as it needs every instantiation: `velt check`, which only
+type-checks, does not. Where a function type of fixed
+types is expected (`const p: (x: number) => number = f`, `[1, 2].map(f)`), a generic function
+value is instantiated at it, as TypeScript does. A function of fixed types is not a generic one
+(`(x: number) => number` is not a `<T>(x: T) => T`, as TypeScript reports), also not through
+`unknown` (`plus as unknown as Id` is an error), unless it takes the type's parameters at every
+type argument: `Symbol as unknown as <T>(d: string) => Token<T>` is the generic arrow calling
+`Symbol` (the type written out, or an alias of it declared in the module without type
+parameters), which is evaluated once (`f as unknown as …` keeps the function `f` held then; a
+function that doesn't take them at every type argument, `Symbol` as `<T>(d: string) =>
+Token<T>` with `Token<T>` an object type, is an error). Held as `unknown`, a generic function value's `typeof` is `"function"`, it compares
+with `===`, and `u as Id` gives it back; it can't be held as `any` or `Function` yet (an error),
+since a call through those would need its type arguments, and calling one through an `any`
+reached otherwise (`(u as any)(1)`) stops the program with a `TypeError` (#924). An
+overloaded generic function is its implementation as a value (as for any overloaded
+function): where a generic function type is expected it is called through its signatures.
+
+Velt compiles the value's code once per list of type arguments the program calls such values
+with, and a call picks its entry from a table, so nothing is boxed (no `any`). Without a
+`throws` clause the type throws what the values stored into it throw (a generic arrow throwing
+`NotFound` makes calls through the type throw it), found as for
+[dynamic calls](errors.md#dynamic-calls). Not supported yet: a function of fixed types adapted
+to a generic type (TypeScript accepts `(event: string) => void` as a `<K extends string>(event:
+K) => void`), overloaded generic call signatures (an interface with several), rest parameters
+typed by a type parameter or a conditional tuple type (`...args: A`), generic construct
+signatures, and `this` in a generic method of an object literal that implements an interface.
+Generic function values, like other function values, can't be printed.
+
+```ts
+type Wrap = <T>(x: T) => T[];
+
+function twice(n: number): Wrap {
+  let calls = 0;
+  return <T>(x: T): T[] => {
+    calls++;
+    const out: T[] = [];
+    for (let i = 0; i < n * calls; i++) out.push(x);
+    return out;
+  };
+}
+
+function show(f: Wrap): void {
+  console.log(f(1), f("a"));
+}
+
+function main() {
+  show(twice(1)); // [ 1 ] [ 'a', 'a' ]
+  show((x) => [x]); // [ 1 ] [ 'a' ]
+}
+```
 
 ### `this` parameters
 
@@ -1191,9 +1312,18 @@ static functions of built-in namespaces read none, so any `thisArg` works for th
 (`Math.max.apply(Math, xs)`), except `Promise`'s, which take `Promise`. A method read as a value
 (`o.m`, `C.m`) keeps the object or class it was read from: `o.m.call(o, x)` works, and `null` or
 `undefined` works when the method doesn't use `this`. A variable holding a method read as a value
-(`const f = o.m`) takes no other `this`; other function values, such as parameters, take `null` or
-`undefined`, as `f(x)` calls them. Any other `this` is not supported yet (an error): Velt would
-run the function on the object it keeps, where Node uses the `this` given or throws.
+(`const f = o.m`) takes no other `this`; a `const` read from an object (`const f = (o as T).m`,
+cast to a function type where it is called: `(f as () => R).call(o)`) takes that variable `o`
+while nothing assigns it (a `const`, or a `let` or parameter never assigned); other
+function values, such as parameters, take `null` or `undefined`, as `f(x)` calls them. Any other
+`this` is not supported yet (an error): Velt would run the function on the object it keeps, where
+Node uses the `this` given or throws.
+
+`f.bind(thisArg)` without further arguments follows the same rules and makes a new function
+that forwards its arguments to `f`, which keeps the object it was read from
+(`(res as { dispose: () => void }).dispose.bind(res)`); as in JavaScript it is not `===` to `f`
+or to another `bind` of it. `bind` with arguments to fix is not supported yet (write an arrow
+function).
 
 ```ts
 function add(a: number, b: number): number {
@@ -1204,6 +1334,8 @@ const codes = [104, 105];
 const pair: [number, number] = [3, 4];
 console.log(String.fromCharCode.apply(null, codes)); // hi
 console.log(add.call(null, 1, 2), add.apply(null, pair)); // 3 7
+const sum = add.bind(null);
+console.log(sum(5, 6)); // 11
 ```
 
 ## Captures
@@ -1422,6 +1554,12 @@ show();
   method yourself. A recursive arrow constant (above) holds no cycle.
 - Not supported yet: a closure that runs on another task (a timer callback, a spawned
   closure) using the constant it initializes (`const t = setInterval(() => clearInterval(t),
-  5)` reports ``…is used by a closure in its own initializer, which cannot share it``), and a
-  module-level constant other than a recursive arrow whose closures use it
-  (``module-level constant refers to itself``) (#1292). The cycle is tracked in #1291.
+  5)` reports ``…is used by a closure in its own initializer, which cannot share it``)
+  (#1292). The cycle is tracked in #1291.
+- A module-level constant read by a closure in its own initializer
+  (`const INERT: Recorder = { status() { return INERT; } }`) is kept in the module state: the
+  closures read the one object once it is initialized, and a read while the initializer still
+  runs stops the program with `Uncaught ReferenceError: Cannot access 'INERT' before
+  initialization` (exit code 1). Without an annotation, its type is the initializer's, checked
+  with those reads first (`const Level = component<P>(() => … Level(…) …)`); when that type
+  depends on the constant itself, write it, as above.

@@ -81,3 +81,35 @@ fn debug_builds_keep_bounded_number_counters_in_integers() {
     // Indexing with it needs no `__floatIndex` call.
     assert!(!main.contains("floatIndex"), "{main}");
 }
+
+/// Loops that run their index to a length inclusive (`i <= xs.length`, `i < xs.length + 1`, the
+/// shape of a DP table's rows) over an array, two typed arrays and a string. Every length is
+/// enforced below 2^52 (arrays and typed arrays) or 2^31 (strings), so each index counts in
+/// integers (#1572). The lengths are only known at run time.
+const INCLUSIVE: &str = "
+function sums(xs: number[], b: Uint8Array, f: Float64Array, s: string): number {
+  let t = 0;
+  for (let i = 0; i <= xs.length; i++) { t = t + (i & 1); }
+  for (let j = 1; j < b.length + 1; j++) { t = t + (j & 1); }
+  for (let k = 0; k <= f.length; k++) { t = t + (k & 1); }
+  for (let m = 0; m <= s.length; m++) { t = t + (m & 1); }
+  return t;
+}
+function main() {
+  const n = process.argv.length * 10;
+  const xs: number[] = [];
+  for (let q = 0; q < 3; q++) { xs.push(q); }
+  console.log(sums(xs, new Uint8Array(n), new Float64Array(n), \"ab\".repeat(n)));
+}
+";
+
+#[test]
+fn an_index_up_to_a_length_inclusive_counts_in_integers() {
+    let (_, stderr) = build(
+        INCLUSIVE,
+        &["--release", "--report", "numbers", "--emit", "vir"],
+    );
+    for index in ["`i`", "`j`", "`k`", "`m`"] {
+        assert!(!stderr.contains(index), "{index} stays a double: {stderr}");
+    }
+}

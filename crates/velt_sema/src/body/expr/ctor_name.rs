@@ -122,7 +122,7 @@ impl FnCx<'_, '_> {
 
     /// The name JavaScript gives the constructor of class `c`'s instances (`None`: a class of
     /// the standard library Velt has no JavaScript name for).
-    fn class_ctor_name(&mut self, c: DefId) -> Option<String> {
+    pub(super) fn class_ctor_name(&mut self, c: DefId) -> Option<String> {
         let a = self.cx.adt(c)?;
         if a.kind != AdtKind::Class {
             return None;

@@ -30,6 +30,7 @@ impl<T: Copy> VeltArray<T> {
                 cap: 0,
             };
         }
+        crate::bytes::check_array_len(v.len());
         let mut v = std::mem::ManuallyDrop::new(v);
         // Generated code frees the buffer like one of its own blocks (leak counters).
         crate::str::stats::block_alloc();

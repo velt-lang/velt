@@ -1,0 +1,9 @@
+1 ada 2.5 true null [ 65, 66 ]
+2 bob 3 false hi []
+3 cy 1
+null
+7 [ 1, 2, 3 ]
+expected i64 at $[0].id
+expected string at $[0].name
+expected boolean at $[0].admin
+expected field "name" at $[0]

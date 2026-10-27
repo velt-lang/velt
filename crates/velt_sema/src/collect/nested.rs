@@ -26,6 +26,13 @@ pub(crate) struct NestedItem {
     pub item: Item,
 }
 
+/// A body walked for nested items: a function's, or a module constant's initializer.
+#[derive(Clone, Copy)]
+enum Body<'m> {
+    Block(&'m ast::Block),
+    Expr(&'m ast::Expr),
+}
+
 /// Something found while walking a body (without descending into nested items).
 enum Found<'m> {
     Item(&'m ast::Item, Span),
@@ -58,6 +65,11 @@ fn item_name(item: &ast::Item) -> Option<&str> {
         ast::ItemKind::Struct(t) | ast::ItemKind::Class(t) => &t.name.name,
         ast::ItemKind::Interface(i) => &i.name.name,
         ast::ItemKind::Extend(_) => "extend",
+        // Its initializer's arrows may declare items too (`const g = () => { function f() {} }`).
+        ast::ItemKind::Var(v) => match &v.pattern.kind {
+            ast::PatternKind::Ident(id) => &id.name,
+            _ => "const",
+        },
         _ => return None,
     })
 }
@@ -76,7 +88,7 @@ fn item_bodies<'m>(
     defs: &mut Vec<DefId>,
     used: &mut FxHashSet<String>,
 ) {
-    let mut bodies: Vec<(String, &'m [ast::Param], &'m ast::Block, Vec<String>)> = vec![];
+    let mut bodies: Vec<(String, &'m [ast::Param], Body<'m>, Vec<String>)> = vec![];
     let names = |gs: &[&'m [ast::GenericParam]]| -> Vec<String> {
         let own = gs
             .iter()
@@ -88,9 +100,14 @@ fn item_bodies<'m>(
         ast::ItemKind::Function(f) => bodies.push((
             qual.to_string(),
             &f.sig.params,
-            &f.body,
+            Body::Block(&f.body),
             names(&[&f.sig.generics]),
         )),
+        ast::ItemKind::Var(v) => {
+            if let Some(init) = &v.init {
+                bodies.push((qual.to_string(), &[], Body::Expr(init), names(&[])));
+            }
+        }
         ast::ItemKind::Struct(t) | ast::ItemKind::Class(t) => {
             for meth in &t.methods {
                 let q = format!(
@@ -98,11 +115,12 @@ fn item_bodies<'m>(
                     cx.method_key(m, &meth.decl.sig.name, meth.is_setter)
                 );
                 let gs = names(&[&t.generics, &meth.decl.sig.generics]);
-                bodies.push((q, &meth.decl.sig.params, &meth.decl.body, gs));
+                bodies.push((q, &meth.decl.sig.params, Body::Block(&meth.decl.body), gs));
             }
             if let Some(c) = &t.constructor {
                 let gs = names(&[&t.generics]);
-                bodies.push((format!("{qual}.constructor"), &c.sig.params, &c.body, gs));
+                let body = Body::Block(&c.body);
+                bodies.push((format!("{qual}.constructor"), &c.sig.params, body, gs));
             }
         }
         ast::ItemKind::Extend(e) => {
@@ -112,7 +130,7 @@ fn item_bodies<'m>(
                     cx.method_key(m, &meth.decl.sig.name, meth.is_setter)
                 );
                 let gs = names(&[&meth.decl.sig.generics]);
-                bodies.push((q, &meth.decl.sig.params, &meth.decl.body, gs));
+                bodies.push((q, &meth.decl.sig.params, Body::Block(&meth.decl.body), gs));
             }
         }
         ast::ItemKind::Interface(i) => {
@@ -124,7 +142,7 @@ fn item_bodies<'m>(
                             cx.method_key(m, &meth.sig.name, meth.is_setter)
                         ),
                         &meth.sig.params,
-                        b,
+                        Body::Block(b),
                         names(&[&meth.sig.generics]),
                     ));
                 }
@@ -143,14 +161,17 @@ fn fn_body<'m>(
     m: usize,
     qual: &str,
     params: &'m [ast::Param],
-    body: &'m ast::Block,
+    body: Body<'m>,
     (outer, tparams): (&[String], &[String]),
     class: Option<DefId>,
     defs: &mut Vec<DefId>,
     used: &mut FxHashSet<String>,
 ) {
     let mut found = vec![];
-    walk_block(body, &mut |f| found.push(f));
+    match body {
+        Body::Block(b) => walk_block(b, &mut |f| found.push(f)),
+        Body::Expr(e) => walk_expr(e, &mut |f| found.push(f)),
+    }
     if !found.iter().any(|f| matches!(f, Found::Item(..))) {
         return;
     }
@@ -167,6 +188,7 @@ fn fn_body<'m>(
             locals.push(n.to_string());
         }
     }
+    let block_start = cx.nested.len();
     for f in found {
         let Found::Item(item, scope) = f else {
             continue;
@@ -203,6 +225,7 @@ fn fn_body<'m>(
                 inner_class = Some(d);
             }
         }
+        cx.nested_clash(block_start, (m, scope), ident, it);
         cx.nested.push(NestedItem {
             module: m,
             lo: scope.lo,

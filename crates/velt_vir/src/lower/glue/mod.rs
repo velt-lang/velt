@@ -50,6 +50,7 @@ mod format_array;
 mod format_map;
 mod format_object;
 mod format_promise;
+mod generic_slots;
 mod literals;
 mod many;
 mod thunk;
@@ -58,9 +59,10 @@ mod transfer;
 mod transfer_env;
 mod vtable;
 
+pub(super) use generic_slots::{GenericSlot, SlotKey};
 #[cfg(test)]
 pub(crate) use literals::{inspect_key, inspect_quote};
-pub(super) use vtable::VtableKey;
+pub(super) use vtable::{VtableKey, SLOT_GENERIC_TABLE, SLOT_GENERIC_TYPE};
 
 use velt_sema::hir::{TyId, TyKind};
 
@@ -101,6 +103,8 @@ pub(crate) enum Glue {
     JsonWriteKey,
     JsonRead,
     JsonParse,
+    DbBind,
+    RowsRead,
     Trace,
     TraceIn,
     WeakRetain,
@@ -171,6 +175,8 @@ impl Glue {
             Glue::JsonWriteKey => "jsonwritekey",
             Glue::JsonRead => "jsonread",
             Glue::JsonParse => "jsonparse",
+            Glue::DbBind => "dbbind",
+            Glue::RowsRead => "rowsread",
             Glue::Trace => "trace",
             Glue::TraceIn => "tracein",
             Glue::WeakRetain => "weakretain",
@@ -227,6 +233,8 @@ impl Glue {
             Glue::JsonWriteKey => (vec![Ptr, Ptr, Ptr], Unit),
             Glue::JsonRead => (vec![Ptr, Ptr, Ptr], Bool),
             Glue::JsonParse => (vec![Ptr, U32, U32, Ptr, Ptr], Bool),
+            Glue::DbBind => (vec![Ptr, Ptr], Unit),
+            Glue::RowsRead => (vec![Ptr, Ptr, Ptr], Bool),
             Glue::Trace | Glue::TraceIn | Glue::WeakBoxTrace => (vec![Ptr, Ptr, Ptr], Unit),
             Glue::WeakRetain | Glue::WeakRelease => (vec![U64], Unit),
             Glue::AnyTruthy => (vec![Ptr], Bool),
@@ -250,6 +258,7 @@ impl Glue {
 impl<'c, 'h> FnLower<'c, 'h> {
     pub(super) fn build_glue(cx: &'c mut Cx<'h>, g: Glue, ty: TyId) -> Function {
         let mut lw = FnLower::bare(cx, vec![]);
+        lw.glue = true;
         let (params, ret) = g.sig();
         let args: Vec<vir::Local> = params.iter().map(|&t| lw.new_local(t, None)).collect();
         let a = |i: usize| Operand::Copy(Place::local(args[i]));
@@ -284,6 +293,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Glue::JsonParse => {
                 lw.json_parse_body(args[0], (args[1], args[2]), args[3], args[4], ty)
             }
+            Glue::DbBind => lw.db_bind_body(a(0), args[1], ty),
+            Glue::RowsRead => lw.rows_read_body(a(0), args[1], args[2], ty),
             Glue::Trace => lw.trace_body(args[0], args[1], args[2], ty),
             Glue::TraceIn => lw.trace_in_body(args[0], args[1], args[2], ty),
             Glue::WeakBoxTrace => lw.weak_box_trace_body(args[0], args[1], args[2], ty),
@@ -344,6 +355,12 @@ impl<'c, 'h> FnLower<'c, 'h> {
 
     /// Call glue `g` for `ty` with `args`, storing a non-Unit result in a fresh temp.
     pub(super) fn call_glue(&mut self, g: Glue, ty: TyId, args: Vec<Operand>) -> Operand {
+        if matches!(
+            g,
+            Glue::Eq | Glue::Same | Glue::SameValue | Glue::KeyEq | Glue::KeySame | Glue::Hash
+        ) {
+            self.note_fn_compared_in(ty);
+        }
         let f = self.cx.func_direct(Work::Glue(g, ty), self.mode);
         match g.sig().1 {
             Ty::Unit => {

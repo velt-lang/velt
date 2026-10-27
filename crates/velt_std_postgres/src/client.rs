@@ -20,7 +20,8 @@ use std::future::Future;
 use std::sync::Arc;
 use tokio::sync::OwnedSemaphorePermit;
 use velt_native::handles::{Key, Registry};
-use velt_native::{export, Error, Str, StrBuf};
+use velt_native::{export, Error, Str};
+use velt_text::db_json::parse_params;
 
 /// Failures remembered for `transaction` (older ones are dropped).
 const RECENT_ERRORS: usize = 32;
@@ -150,23 +151,71 @@ async fn velt_std_postgres__connect(url: String) -> Result<u64, Error> {
     io_result(r.await)
 }
 
-/// `client.query(sql, params)` → `IoResult<string>`: rows as a JSON array, or with
-/// `first_only` the first row's object (`""` if none).
+/// `client.query(sql, params)` → `IoResult<u64>`: the rows as a row cursor (`super::cursor`)
+/// for `__intrinsic_json_parse_cursor`, given back to `velt_std_postgres__close_rows`; with
+/// `first_only` the first row alone, 0 if there is none. `params` is JSON.
 #[export(async)]
-async fn velt_std_postgres__query(
+async fn velt_std_postgres__query_rows(
     client: u64,
     sql: Str,
     params: Str,
     first_only: bool,
-) -> Result<Str, Error> {
+) -> Result<u64, Error> {
     client_op(client, move |c| async move {
-        let out = StrBuf::new();
-        let json = c
-            .query(&sql.to_str(), params.as_bytes(), first_only, out)
-            .await?;
-        Ok(json.finish())
+        let parsed = parse_params(params.as_bytes()).map_err(PgError::invalid)?;
+        let (statement, rows) = c.query_params(&sql.to_str(), parsed).await?;
+        Ok(super::cursor::open(statement, rows, first_only))
     })
     .await
+}
+
+/// `velt_std_postgres__query_rows` with the parameters a sink took (`velt_std_postgres__bind_begin`).
+#[export(async)]
+async fn velt_std_postgres__query_bound(
+    client: u64,
+    sql: Str,
+    sink: u64,
+    first_only: bool,
+) -> Result<u64, Error> {
+    // SAFETY: std hands on each sink it was given, once.
+    let parsed = unsafe { super::sink::take(sink) };
+    client_op(client, move |c| async move {
+        let (statement, rows) = c.query_params(&sql.to_str(), parsed).await?;
+        Ok(super::cursor::open(statement, rows, first_only))
+    })
+    .await
+}
+
+/// `velt_std_postgres__execute` with the parameters a sink took.
+#[export(async)]
+async fn velt_std_postgres__execute_bound(client: u64, sql: Str, sink: u64) -> Result<i64, Error> {
+    // SAFETY: as above.
+    let parsed = unsafe { super::sink::take(sink) };
+    client_op(client, move |c| async move {
+        Ok(c.execute_params(&sql.to_str(), parsed).await? as i64)
+    })
+    .await
+}
+
+/// A parameter sink (`velt_text::rows_cursor::RawSink`) for `__intrinsic_db_bind`, handed on to
+/// a `…_bound` call or given up with `velt_std_postgres__bind_abort`.
+#[export]
+fn velt_std_postgres__bind_begin() -> u64 {
+    super::sink::begin()
+}
+
+/// Gives up a sink std did not use.
+#[export]
+fn velt_std_postgres__bind_abort(sink: u64) {
+    // SAFETY: as above.
+    drop(unsafe { super::sink::take(sink) });
+}
+
+/// Releases a row cursor (0: nothing); fails if a value could not be read.
+#[export]
+fn velt_std_postgres__close_rows(cursor: u64) -> Result<(), Error> {
+    // SAFETY: std gives back each cursor it was handed, once, after decoding.
+    io_result(unsafe { super::cursor::close(cursor) })
 }
 
 /// `client.execute(sql, params)` → `IoResult<i64>`: rows affected.

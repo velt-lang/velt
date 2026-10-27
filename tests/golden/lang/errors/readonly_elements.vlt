@@ -1,0 +1,13 @@
+// Methods that change an element of an array whose elements are read-only are TypeScript's TS2339,
+// assigning into such an element TS2542, as through a read-only variable (also through `Array<…>`,
+// a narrowed or optional element and a closure).
+function f(k: readonly (readonly number[])[]): void { k[0].push(1); }
+function g(k: ReadonlyArray<ReadonlyArray<number>>): void { k[0].push(1); }
+function h(k: readonly (readonly number[])[]): void { k[0].sort(); }
+function m(k: readonly ReadonlySet<string>[]): void { k[0].add("x"); }
+function n(k: (readonly number[])[]): void { k[0].push(1); k[0][0] = 2; k[0] = [1]; }
+function o(k: readonly (readonly number[])[] | null): void { if (k) k[0].push(1); }
+function q(k: readonly (readonly number[])[]): void { k[0][0] = 3; }
+function r(j: readonly number[][]): void { j[0].length = 1; j[0].push(1); j[0][0] = 1; j[0] = []; }
+function s(j: number[][]): void { j[0].length = 0; }
+function t(j: readonly number[]): void { j[0] = 1; j[0] += 1; j[0]++; }

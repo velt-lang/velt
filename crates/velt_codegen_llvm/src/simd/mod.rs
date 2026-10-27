@@ -67,6 +67,15 @@ pub(crate) fn helper(symbol: &str, arch: Arch) -> Option<(String, Vec<String>, V
         SimdCall::Mask(bits, op) => mask(&mut body, bits, op, arch == Arch::Neon),
         SimdCall::Has(ext) => Some(sha::has(&mut body, arch, ext)),
         SimdCall::Sha(op) => Some(sha::op(&mut body, arch, op)),
+        SimdCall::Prefetch => {
+            // A read, kept in every cache level (`locality` 3), of data (cache type 1).
+            body.declarations.push(
+                "declare void @llvm.prefetch.p0(ptr, i32 immarg, i32 immarg, i32 immarg)".into(),
+            );
+            body.lines
+                .push_str("  call void @llvm.prefetch.p0(ptr %a0, i32 0, i32 3, i32 1)\n");
+            None
+        }
     };
     let args: Vec<String> = params
         .iter()

@@ -242,6 +242,9 @@ impl FnCx<'_, '_> {
         // in its parameters' defaults (`FnCx::call_value`).
         let closure = self.outer[j].closure_consts.get(&prev).copied();
         let method = self.outer[j].method_values.contains(&prev);
+        // A read-only array or collection (or a number-keyed record) is one in the closures that
+        // capture it too.
+        let marks = self.outer[j].local_marks.get(&prev).copied();
         for idx in j + 1..self.outer.len() {
             let f = &mut self.outer[idx];
             prev = add_narrowed_capture(f, name, prev, ty, span, narrowing);
@@ -250,6 +253,9 @@ impl FnCx<'_, '_> {
             }
             if method {
                 f.method_values.insert(prev);
+            }
+            if let Some(m) = marks {
+                f.local_marks.insert(prev, m);
             }
             ty = f.locals[prev.0 as usize].ty;
             narrowing = match assigned {
@@ -266,6 +272,9 @@ impl FnCx<'_, '_> {
         }
         if method {
             self.f.method_values.insert(inner);
+        }
+        if let Some(m) = marks {
+            self.f.local_marks.insert(inner, m);
         }
         self.late_lookup(Some(declared.0), declared.1, inner, name, span);
         Some(inner)
@@ -382,25 +391,42 @@ impl FnCx<'_, '_> {
     pub fn lookup_item(&mut self, name: &str, at: Span) -> Option<Item> {
         let item = self.cx.lookup_item_at(self.module, name, at);
         self.cx.rec_item(at, item);
-        if item.is_some() && self.cx.scopes[self.module].type_only.contains(name) {
+        let scope = &self.cx.scopes[self.module];
+        if item.is_some() && scope.type_only.contains(name) {
+            // The value meaning of a name that is a type too, if any, after the error
+            // (`crate::type_meanings`): no second error for the same use.
+            let value = (scope.items.get(&crate::type_meanings::type_only_key(name))).copied();
             self.type_only_value(name, at);
+            return value.or(item);
         }
         item
     }
 
     /// "`T` is imported with `import type`", once per use.
     fn type_only_value(&mut self, name: &str, at: Span) {
-        let msg = format!("`{name}` is imported with `import type` and cannot be used as a value");
+        let msg = match self.cx.scopes[self.module].via_export_type.contains(name) {
+            true => format!(
+                "`{name}` is exported only as a type by the module it is imported from and cannot \
+                 be used as a value"
+            ),
+            false => {
+                format!("`{name}` is imported with `import type` and cannot be used as a value")
+            }
+        };
         let reported = self
             .cx
             .diags
             .iter()
             .any(|d| d.message == msg && d.labels.first().is_some_and(|l| l.span == at));
         if !reported {
+            let note = match self.cx.scopes[self.module].via_export_type.contains(name) {
+                true => "that module exports it with `export type`, or exports again a name it \
+                         imports with `import type`"
+                    .to_string(),
+                false => format!("import it as a value: `import {{ {name} }} from …`"),
+            };
             self.cx
-                .error(velt_common::Diagnostic::error(msg, at).with_note(format!(
-                    "import it as a value: `import {{ {name} }} from …`"
-                )));
+                .error(velt_common::Diagnostic::error(msg, at).with_note(note));
         }
     }
 

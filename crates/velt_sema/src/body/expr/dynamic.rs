@@ -44,7 +44,7 @@ impl FnCx<'_, '_> {
         }
         match (from, to) {
             (None, None) => Err(h),
-            (None, Some(d)) if !self.dynamic_takes_static(d, h.ty) => Err(h),
+            (None, Some(d)) if !self.takes_static(d, h.ty) => Err(h),
             // A lock's value is read only under its lock, and what `any` holds is read (printed,
             // compared, written as JSON) without it.
             (None, Some(d)) if self.cx.holds_lock(h.ty) => {
@@ -58,7 +58,7 @@ impl FnCx<'_, '_> {
                 );
                 Ok(self.error_expr(h.span))
             }
-            (None, Some(_)) => self.box_dynamic(h, exp),
+            (None, Some(d)) => self.box_value_dynamic(h, exp, d),
             (Some(f), Some(t)) if !dynamic_converts(f, t, checked_from_unknown) => Err(h),
             (Some(Dynamic::Any), _) | (Some(_), Some(_)) => Ok(self.unbox_dynamic(h, exp)),
             (Some(_), None) if self.takes_dynamic_whole(exp, h.ty) => {
@@ -85,7 +85,7 @@ impl FnCx<'_, '_> {
     /// Does the dynamic type `d` take a value of the static type `t`? `object` takes
     /// non-primitive types (a type parameter through its bound, `T extends object`), `Function`
     /// function types; `any` and `unknown` take every type.
-    fn dynamic_takes_static(&mut self, d: Dynamic, t: TyId) -> bool {
+    pub(super) fn dynamic_takes_static(&mut self, d: Dynamic, t: TyId) -> bool {
         let Some(defs) = self.cx.any else {
             return false;
         };
@@ -714,7 +714,7 @@ impl FnCx<'_, '_> {
 
     /// An operand of a dynamic comparison: an `any` or `unknown` as it is (the comparison
     /// only reads it), anything else boxed.
-    fn dynamic_operand(&mut self, h: hir::Expr, any: TyId) -> hir::Expr {
+    pub(super) fn dynamic_operand(&mut self, h: hir::Expr, any: TyId) -> hir::Expr {
         if self.cx.dynamic(h.ty).is_some() {
             h
         } else {
@@ -736,8 +736,8 @@ impl FnCx<'_, '_> {
         let Some(any) = self.any_ty() else {
             return self.error_expr(span);
         };
-        let l = self.dynamic_operand(l, any);
-        let r = self.dynamic_operand(r, any);
+        let l = self.compared_operand(l, any);
+        let r = self.compared_operand(r, any);
         if !strict {
             // An object against a primitive is the prelude's `__anyLooseEq` (velt_vir
             // any_eq.rs), which reads its members through `any`.

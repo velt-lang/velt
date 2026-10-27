@@ -3,7 +3,14 @@
 //! parameter declared with one of them may not be written through: a mutating method
 //! (`push`, `sort`, …) is TypeScript's TS2339 and an element assignment TS2542. The check
 //! follows the variable, not the value: a copy into a `T[]` variable is not checked (TypeScript
-//! rejects that assignment, TS4104).
+//! rejects that assignment, TS4104). `ReadonlySet<T>` and `ReadonlyMap<K, V>` are `Set<T>` and
+//! `Map<K, V>` (prelude aliases), checked the same way: through a variable declared with one,
+//! the methods that change the collection (`add`, `set`, `delete`, `clear`, ...) are TS2339.
+//!
+//! The variable may also be declared through a type alias (`type Tags = ReadonlySet<string>`)
+//! or initialized with a cast to one (`new Set() as ReadonlySet<string>`), and the check follows
+//! it into closures that capture it, through narrowing (`if (s)`, `s!`), optional chains
+//! (`s?.add(x)`) and into a `const` (or `let`) it is copied to without a type (`const t = s`).
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
@@ -11,25 +18,303 @@ use velt_syntax::ast;
 use super::FnCx;
 use crate::hir::{self, ExprKind as H, LitValue, LocalId, TyId, TyKind};
 
+/// [`super::Frame::local_marks`]: a local declared with a read-only type.
+pub(crate) const READONLY: u8 = 1;
+/// [`super::Frame::local_marks`]: a local declared with a number-keyed record type.
+pub(crate) const NUMBER_RECORD: u8 = 2;
+/// [`super::Frame::local_marks`]: a local of an array type whose elements are read-only
+/// (`readonly (readonly T[])[]`, `ReadonlySet<T>[]`).
+pub(crate) const READONLY_ELEMENTS: u8 = 4;
+
 impl FnCx<'_, '_> {
+    /// Marks local `l` with `mark` ([`super::Frame::local_marks`]).
+    pub(crate) fn mark_local(&mut self, l: LocalId, mark: u8) {
+        *self.f.local_marks.entry(l).or_default() |= mark;
+    }
+
+    /// Does local `l` have `mark`?
+    pub(crate) fn local_marked(&self, l: LocalId, mark: u8) -> bool {
+        self.f.local_marks.get(&l).is_some_and(|m| m & mark != 0)
+    }
+
     /// Records local `l` declared with the written type `ty` when that is a read-only array.
     pub(super) fn note_readonly_array(&mut self, l: LocalId, ty: Option<&ast::TypeExpr>) {
-        if ty.is_some_and(is_readonly_array) {
-            self.f.readonly_arrays.insert(l);
+        if ty.is_some_and(|t| self.may_be_marked(t) && self.is_readonly_written(t, 0)) {
+            self.mark_local(l, READONLY);
+        }
+    }
+
+    /// [`Self::note_readonly_array`] and `note_number_record` for local `l` declared with the
+    /// written type `ty` (and initialized with `init`), behind one cheap filter.
+    pub(super) fn note_marks(
+        &mut self,
+        l: LocalId,
+        ty: Option<&ast::TypeExpr>,
+        init: Option<&ast::Expr>,
+    ) {
+        let Some(t) = ty.filter(|t| self.may_be_marked(t)) else {
+            return;
+        };
+        if self.is_readonly_written(t, 0) {
+            self.mark_local(l, READONLY);
+        }
+        if array_element(t).is_some_and(|e| self.is_readonly_written(e, 0)) {
+            self.mark_local(l, READONLY_ELEMENTS);
+        }
+        self.note_number_record(l, t, init);
+    }
+
+    /// Can the written type `t` be a read-only or number-keyed record type? A cheap filter
+    /// before the checks: most declared types are neither.
+    pub(crate) fn may_be_marked(&self, t: &ast::TypeExpr) -> bool {
+        let aliases = || {
+            let (ro, num) = self.cx.marked_aliases();
+            !(ro.is_empty() && num.is_empty())
+        };
+        match &t.kind {
+            ast::TypeExprKind::Named { path, args } => {
+                let name = &path[path.len() - 1].name;
+                match name.as_str() {
+                    // `Array<T>`: only its elements may be read-only.
+                    "Array" => args.first().is_some_and(|e| self.may_be_marked(e)),
+                    _ => name.starts_with('R') || aliases(),
+                }
+            }
+            ast::TypeExprKind::Array(e) => self.may_be_marked(e),
+            ast::TypeExprKind::Union(_) | ast::TypeExprKind::IndexSig { .. } => true,
+            _ => false,
+        }
+    }
+
+    /// Records local `l`, declared without a type, as read-only when its initializer `init`
+    /// (`ast`, checked as `h`) is a cast to a read-only type or a read-only variable.
+    pub(super) fn note_readonly_init(&mut self, l: LocalId, init: &ast::Expr, h: &hir::Expr) {
+        // A cast decides: to a read-only type it marks, to another (`xs as string[]`, how
+        // TypeScript code gets past `readonly`) it does not.
+        let marked = match &strip_parens(init).kind {
+            ast::ExprKind::Cast { ty, .. } => self.is_readonly_written(ty, 0),
+            // `const e = k[0]` with `k: readonly (readonly T[])[]`.
+            ast::ExprKind::Index { object, .. } => match &strip_parens(object).kind {
+                ast::ExprKind::Ident(k) if !self.f.local_marks.is_empty() => self
+                    .lookup_local(&k.name, k.span)
+                    .is_some_and(|k| self.local_marked(k, READONLY_ELEMENTS)),
+                _ => false,
+            },
+            _ => self.readonly_local(h).is_some() || self.is_readonly_element(h),
+        };
+        if marked {
+            self.mark_local(l, READONLY);
+        }
+    }
+
+    /// The receiver `recv` of a method call written `(x as T).m()`: with `T` not read-only the
+    /// call may change it, with `T` read-only it may not ([`Frame::readonly_exempt`](super::Frame)
+    /// and `readonly_cast_recv`, taken by the check).
+    pub(crate) fn exempt_cast_receiver(&mut self, object: &ast::Expr, recv: &hir::Expr) {
+        self.clear_cast_receiver();
+        if let ast::ExprKind::Cast { ty, .. } = &strip_parens(object).kind {
+            match self.is_readonly_written(ty, 0) {
+                // `(xs as readonly string[]).push(x)`: TS2339 as through a variable.
+                true => self.f.readonly_cast_recv = true,
+                false => self.f.readonly_exempt = self.readonly_local(recv),
+            }
+        }
+    }
+
+    /// Forget what [`Self::exempt_cast_receiver`] noted, once the call it was for is checked
+    /// (whichever path checked it).
+    pub(crate) fn clear_cast_receiver(&mut self) {
+        self.f.readonly_exempt = None;
+        self.f.readonly_cast_recv = false;
+    }
+
+    /// The read-only locals `cond` tests with `x instanceof Set` (`Map`, `Array`), alone or in an
+    /// `&&` chain: TypeScript narrows them to the mutable class there, so their mark is lifted
+    /// for the branch where `cond` holds. What to give [`Self::restore_marks`] after it.
+    pub(super) fn instanceof_unmark(&mut self, cond: &ast::Expr) -> Vec<(LocalId, u8)> {
+        let mut out = vec![];
+        if self.f.local_marks.is_empty() {
+            return out;
+        }
+        self.instanceof_unmark_into(cond, &mut out);
+        out
+    }
+
+    fn instanceof_unmark_into(&mut self, cond: &ast::Expr, out: &mut Vec<(LocalId, u8)>) {
+        match &cond.kind {
+            ast::ExprKind::Paren(x) => self.instanceof_unmark_into(x, out),
+            ast::ExprKind::Binary {
+                op: ast::BinaryOp::And,
+                lhs,
+                rhs,
+            } => {
+                self.instanceof_unmark_into(lhs, out);
+                self.instanceof_unmark_into(rhs, out);
+            }
+            ast::ExprKind::InstanceOf { expr, ty } => {
+                let ast::ExprKind::Ident(x) = &strip_parens(expr).kind else {
+                    return;
+                };
+                let mutable_class = matches!(&ty.kind, ast::TypeExprKind::Named { path, .. }
+                    if path.len() == 1 && matches!(path[0].name.as_str(), "Set" | "Map" | "Array"));
+                if self.f.local_marks.is_empty() || !mutable_class {
+                    return;
+                }
+                let Some(l) = self.lookup_local(&x.name, x.span) else {
+                    return;
+                };
+                if let Some(m) = self
+                    .f
+                    .local_marks
+                    .get_mut(&l)
+                    .filter(|m| **m & READONLY != 0)
+                {
+                    out.push((l, *m));
+                    *m &= !READONLY;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Put back the marks [`Self::instanceof_unmark`] lifted.
+    pub(super) fn restore_marks(&mut self, marks: Vec<(LocalId, u8)>) {
+        for (l, m) in marks {
+            self.f.local_marks.insert(l, m);
+        }
+    }
+
+    /// Records the binding `l` of an optional chain on `object` as read-only when `object` is
+    /// a read-only variable.
+    pub(crate) fn note_readonly_binding(&mut self, l: LocalId, object: &ast::Expr, h: &hir::Expr) {
+        if self.f.local_marks.is_empty() && !matches!(object.kind, ast::ExprKind::Paren(_)) {
+            return;
+        }
+        let marked = match &strip_parens(object).kind {
+            // `(xs as string[] | undefined)?.push(x)`: the cast decides, as for a `const`.
+            ast::ExprKind::Cast { ty, .. } => self.is_readonly_written(ty, 0),
+            _ => self.readonly_local(h).is_some() || self.is_readonly_element(h),
+        };
+        if marked {
+            self.mark_local(l, READONLY);
+        }
+    }
+
+    /// The read-only variable `h` reads (through casts, narrowing and upcasts).
+    fn readonly_local(&self, h: &hir::Expr) -> Option<LocalId> {
+        if self.f.local_marks.is_empty() {
+            return None;
+        }
+        match &h.kind {
+            H::Local(l, _) => self.local_marked(*l, READONLY).then_some(*l),
+            H::Cast(x) | H::UnwrapSome(x, _) | H::Upcast(x) | H::Downcast(x) => {
+                self.readonly_local(x)
+            }
+            // `s!`: a match on `s` that gives its payload.
+            H::Match { scrutinee, .. } => self.readonly_local(scrutinee),
+            _ => None,
+        }
+    }
+
+    /// Is `t` a read-only array or collection type, also through type aliases of the module?
+    fn is_readonly_written(&self, t: &ast::TypeExpr, depth: usize) -> bool {
+        if is_readonly_array(t) || is_readonly_collection(t) {
+            return true;
+        }
+        self.through_alias(t, depth, 0, &|cx, t, d| cx.is_readonly_written(t, d))
+    }
+
+    /// `test` of what `t` names when it is one of the program's aliases in `marked_aliases()`
+    /// set `set` (generic or not: the body decides, whatever the arguments), or of the one
+    /// member of `t | null` / `t | undefined`.
+    pub(crate) fn through_alias(
+        &self,
+        t: &ast::TypeExpr,
+        depth: usize,
+        set: usize,
+        test: &dyn Fn(&Self, &ast::TypeExpr, usize) -> bool,
+    ) -> bool {
+        if depth > 8 {
+            return false;
+        }
+        let path = match &t.kind {
+            ast::TypeExprKind::Named { path, .. } => path,
+            ast::TypeExprKind::Union(ms) => {
+                let mut rest = ms.iter().filter(|m| {
+                    !matches!(
+                        m.kind,
+                        ast::TypeExprKind::Null | ast::TypeExprKind::Undefined
+                    )
+                });
+                return match (rest.next(), rest.next()) {
+                    (Some(m), None) => test(self, m, depth + 1),
+                    _ => false,
+                };
+            }
+            _ => return false,
+        };
+        let marked = match set {
+            0 => &self.cx.marked_aliases().0,
+            _ => &self.cx.marked_aliases().1,
+        };
+        if path.len() != 1 || marked.is_empty() || !marked.contains(&path[0].name) {
+            return false;
+        }
+        match self
+            .cx
+            .lookup_type_item_at(self.module, &path[0].name, path[0].span)
+        {
+            Some(crate::ctx::Item::Alias(a)) => {
+                test(self, &self.cx.aliases[a as usize].decl.ty, depth + 1)
+            }
+            _ => false,
         }
     }
 
     /// The readonly array type local `l` (of type `ty`) is declared with, as TypeScript shows
     /// it (`readonly number[]`).
     fn readonly_shown(&mut self, h: &hir::Expr) -> Option<String> {
-        let H::Local(l, _) = h.kind else {
-            return None;
-        };
-        if !self.f.readonly_arrays.contains(&l) {
+        self.readonly_local(h)?;
+        self.readonly_type_shown(h.ty)
+    }
+
+    /// `h` as TypeScript shows its type when it is an element of a local whose elements are
+    /// read-only (`k[0]` with `k: readonly (readonly T[])[]`).
+    fn readonly_element_shown(&mut self, h: &hir::Expr) -> Option<String> {
+        if !self.is_readonly_element(h) {
             return None;
         }
-        let TyKind::Array(elem) = *self.cx.ty.kind(h.ty) else {
-            return None;
+        self.readonly_type_shown(h.ty)
+    }
+
+    /// Does `h` read a local whose elements are read-only (through casts and narrowing)?
+    fn elements_local(&self, h: &hir::Expr) -> bool {
+        match &h.kind {
+            H::Local(l, _) => self.local_marked(*l, READONLY_ELEMENTS),
+            H::Cast(x) | H::UnwrapSome(x, _) | H::Upcast(x) => self.elements_local(x),
+            _ => false,
+        }
+    }
+
+    /// Is `h` an element of a local whose elements are read-only?
+    fn is_readonly_element(&self, h: &hir::Expr) -> bool {
+        if self.f.local_marks.is_empty() {
+            return false;
+        }
+        match &h.kind {
+            H::Index { base, .. } => self.elements_local(base),
+            H::Cast(x) | H::UnwrapSome(x, _) | H::Upcast(x) => self.is_readonly_element(x),
+            _ => false,
+        }
+    }
+
+    /// The read-only type over `t` (`T[]`, `Set<T>`, `Map<K, V>`) as TypeScript shows it.
+    fn readonly_type_shown(&mut self, t: TyId) -> Option<String> {
+        let TyKind::Array(elem) = *self.cx.ty.kind(t) else {
+            // `ReadonlySet<T>` / `ReadonlyMap<K, V>`, shown as TypeScript does.
+            let shown = self.cx.display(t);
+            let col = shown.starts_with("Set<") || shown.starts_with("Map<");
+            return col.then(|| format!("Readonly{shown}"));
         };
         let shown = self.cx.display(elem);
         match self.cx.union_members(elem) {
@@ -44,7 +329,10 @@ impl FnCx<'_, '_> {
         let H::Index { base, .. } = &e.kind else {
             return;
         };
-        if let Some(shown) = self.readonly_shown(base) {
+        if let Some(shown) = self
+            .readonly_shown(base)
+            .or_else(|| self.readonly_element_shown(base))
+        {
             self.cx.error(Diagnostic::error(
                 format!(
                     "index signature in type '{shown}' only permits reading (TypeScript's TS2542)"
@@ -63,13 +351,36 @@ impl FnCx<'_, '_> {
         args: &[ast::Expr],
         span: Span,
     ) {
-        if !MUTATING.contains(&name) {
-            if matches!(self.cx.ty.kind(recv.ty), TyKind::Array(_)) {
-                self.array_method_in_place(recv, name, args);
-            }
+        let exempt = self.f.readonly_exempt.take();
+        let forced = std::mem::take(&mut self.f.readonly_cast_recv);
+        if exempt.is_some() && exempt == self.readonly_local(recv) {
             return;
         }
-        if let Some(shown) = self.readonly_shown(recv) {
+        let array = matches!(self.cx.ty.kind(recv.ty), TyKind::Array(_));
+        if array && !MUTATING.contains(&name) {
+            self.array_method_in_place(recv, name, args);
+            return;
+        }
+        if !array && !COLLECTION_MUTATING.contains(&name) {
+            return;
+        }
+        let shown = match forced {
+            true => self.readonly_type_shown(recv.ty),
+            false => self
+                .readonly_shown(recv)
+                .or_else(|| self.readonly_element_shown(recv)),
+        };
+        if let Some(shown) = shown {
+            if !array {
+                self.cx.error(
+                    Diagnostic::error(
+                        format!("property '{name}' does not exist on type '{shown}' (TypeScript's TS2339)"),
+                        span,
+                    )
+                    .with_note("a read-only collection has no methods that change it; copy it first (`new Set(s)`, `new Map(m)`) to get one you may change"),
+                );
+                return;
+            }
             self.cx.error(
                 Diagnostic::error(
                     format!("property '{name}' does not exist on type '{shown}' (TypeScript's TS2339)"),
@@ -78,6 +389,24 @@ impl FnCx<'_, '_> {
                 .with_note("a read-only array has no methods that change it; copy it first (`[...xs]`) to get an array you may change"),
             );
         }
+    }
+}
+
+impl crate::ctx::Ctx<'_> {
+    /// `ReadonlyMap<K, V>` (unless an item of that name is in scope): `Map<K, V>`. It is a built-in
+    /// name rather than a prelude alias, which every program would pay for.
+    pub(crate) fn resolve_readonly_map(
+        &mut self,
+        t: &ast::TypeExpr,
+        args: &[ast::TypeExpr],
+        env: &crate::resolve::TyEnv,
+    ) -> TyId {
+        let args: Vec<TyId> = args.iter().map(|a| self.resolve_type(a, env)).collect();
+        let Some(map) = self.prelude_adt("Map").filter(|_| args.len() == 2) else {
+            self.arity_error("ReadonlyMap", 2, args.len(), t);
+            return self.ty.error;
+        };
+        self.ty.intern(TyKind::Adt(map, args))
     }
 }
 
@@ -128,7 +457,7 @@ impl FnCx<'_, '_> {
             }
         }
         if super::expr::member::is_as_const(ty) && as_const_strings(expr).is_some() {
-            self.f.readonly_arrays.insert(l);
+            self.mark_local(l, READONLY);
         }
     }
 }
@@ -187,6 +516,46 @@ const MUTATING: [&str; 9] = [
     "copyWithin",
 ];
 
+/// The methods of `Set<T>` and `Map<K, V>` that `ReadonlySet<T>` and `ReadonlyMap<K, V>` don't
+/// have.
+const COLLECTION_MUTATING: [&str; 7] = [
+    "add",
+    "set",
+    "delete",
+    "clear",
+    "upsert",
+    "update",
+    "getOrInsert",
+];
+
+/// A read-only array or collection type as written (not through aliases).
+pub(crate) fn is_readonly_type(t: &ast::TypeExpr) -> bool {
+    is_readonly_array(t) || is_readonly_collection(t)
+}
+
+/// `ReadonlySet<T>` or `ReadonlyMap<K, V>`, possibly `| null`.
+fn is_readonly_collection(t: &ast::TypeExpr) -> bool {
+    match &t.kind {
+        ast::TypeExprKind::Named { path, args } => {
+            path.len() == 1
+                && matches!(
+                    (path[0].name.as_str(), args.len()),
+                    ("ReadonlySet", 1) | ("ReadonlyMap", 2)
+                )
+        }
+        ast::TypeExprKind::Union(ms) => {
+            let mut non_null = ms.iter().filter(|m| {
+                !matches!(
+                    m.kind,
+                    ast::TypeExprKind::Null | ast::TypeExprKind::Undefined
+                )
+            });
+            matches!((non_null.next(), non_null.next()), (Some(m), None) if is_readonly_collection(m))
+        }
+        _ => false,
+    }
+}
+
 /// `readonly T[]` (parsed as `ReadonlyArray<T>`) or `ReadonlyArray<T>`, possibly `| null`.
 pub(crate) fn is_readonly_array(t: &ast::TypeExpr) -> bool {
     match &t.kind {
@@ -203,5 +572,41 @@ pub(crate) fn is_readonly_array(t: &ast::TypeExpr) -> bool {
             matches!((non_null.next(), non_null.next()), (Some(m), None) if is_readonly_array(m))
         }
         _ => false,
+    }
+}
+
+/// `e` without the parentheses around it.
+fn strip_parens(e: &ast::Expr) -> &ast::Expr {
+    match &e.kind {
+        ast::ExprKind::Paren(x) => strip_parens(x),
+        _ => e,
+    }
+}
+
+/// The element type of an array type as written (`T[]`, `Array<T>`, `readonly T[]`,
+/// `ReadonlyArray<T>`), possibly `| null` / `| undefined`.
+fn array_element(t: &ast::TypeExpr) -> Option<&ast::TypeExpr> {
+    match &t.kind {
+        ast::TypeExprKind::Array(e) => Some(e),
+        ast::TypeExprKind::Named { path, args }
+            if path.len() == 1
+                && matches!(path[0].name.as_str(), "Array" | "ReadonlyArray")
+                && args.len() == 1 =>
+        {
+            Some(&args[0])
+        }
+        ast::TypeExprKind::Union(ms) => {
+            let mut rest = ms.iter().filter(|m| {
+                !matches!(
+                    m.kind,
+                    ast::TypeExprKind::Null | ast::TypeExprKind::Undefined
+                )
+            });
+            match (rest.next(), rest.next()) {
+                (Some(m), None) => array_element(m),
+                _ => None,
+            }
+        }
+        _ => None,
     }
 }

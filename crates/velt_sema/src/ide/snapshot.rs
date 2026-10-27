@@ -161,7 +161,11 @@ fn sorted_items<'a>(
     items: impl Iterator<Item = (&'a String, &'a Item)>,
     resolve: &mut impl FnMut(&Target) -> Option<DefRef>,
 ) -> Vec<(String, DefRef)> {
+    // The type meaning of a name that is a value too, and the value of a name exported only
+    // as a type (`crate::type_meanings`), are listed by the name itself; uses resolve to them
+    // through `refs`.
     let mut out: Vec<(String, DefRef)> = items
+        .filter(|(n, _)| !crate::type_meanings::is_marked_key(n))
         .filter_map(|(n, it)| Some((n.clone(), resolve(&Target::of_item(*it))?)))
         .collect();
     out.sort_by(|a, b| a.0.cmp(&b.0));

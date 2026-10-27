@@ -289,3 +289,71 @@ fn collect(cx: &mut Ctx) -> Collected {
     }
     (uses, edges, sites)
 }
+
+/// Conversions through an interface adapter (`body::expr::iface_adapt`) of an interface whose
+/// generic method the program calls with type arguments of its own (#943): the adapter doesn't
+/// forward them to the wrapped value's table yet, so such a call could reach it. Reported at
+/// the conversion.
+pub(crate) fn check_adapters(cx: &mut Ctx) {
+    let uses = std::mem::take(&mut cx.adapter_uses);
+    let mut reported = FxHashSet::default();
+    for (iface, span) in uses {
+        let Some(i) = cx.iface(iface) else { continue };
+        let called = (i.methods.iter())
+            .find(|m| !m.generics.names.is_empty() && cx.generic_called.reaches(iface, &m.name))
+            .map(|m| m.name.clone());
+        let Some(m) = called else { continue };
+        if !reported.insert((span.file, span.lo)) {
+            continue;
+        }
+        let iname = i.name.clone();
+        cx.error(
+            Diagnostic::error(
+                format!("an `{iname}` at other type arguments can't be a value here yet: the program calls its generic method `{m}` through interface values"),
+                span,
+            )
+            .with_note("the value converts through a wrapper, which doesn't forward the type arguments of a generic method's call yet (#943); keep the interface's type arguments, or convert the class instance itself"),
+        );
+    }
+}
+
+/// The generic interface methods the program calls with type arguments of their own through
+/// interface values (#943), for the checks above and `hir::Program::generic_dyn_methods`.
+#[derive(Default)]
+pub(crate) struct GenericCalls {
+    /// The interface and method of each call on an interface value.
+    pub on: FxHashSet<(DefId, String)>,
+    /// The methods called through a type parameter: a call reaches an interface table where
+    /// the parameter is given an interface value, which `any_iface_sites::check` adds to `on`.
+    pub on_params: FxHashSet<String>,
+    /// The conversions of an interface value to another interface that keep the object
+    /// (`Upcast`): from, to.
+    pub upcasts: FxHashSet<(DefId, DefId)>,
+}
+
+impl GenericCalls {
+    /// Can a call reach generic method `name` of a value of `iface`: one on a value of
+    /// `iface`, or of an interface its values are converted to?
+    pub(crate) fn reaches(&self, iface: DefId, name: &str) -> bool {
+        let mut seen = vec![iface];
+        let mut i = 0;
+        while let Some(&j) = seen.get(i) {
+            i += 1;
+            if self.on.contains(&(j, name.to_string())) {
+                return true;
+            }
+            for (a, b) in &self.upcasts {
+                if *a == j && !seen.contains(b) {
+                    seen.push(*b);
+                }
+            }
+        }
+        false
+    }
+
+    /// The names of the methods called (`hir::Program::generic_dyn_methods`).
+    pub(crate) fn names(self) -> impl Iterator<Item = String> {
+        let on = self.on.into_iter().map(|(_, m)| m);
+        on.chain(self.on_params)
+    }
+}

@@ -14,11 +14,16 @@ use crate::vir::{Callee, Operand, Place, Ty};
 
 impl FnLower<'_, '_> {
     /// Call the SIMD extern `symbol` and give its result.
-    fn simd_call(&mut self, symbol: &str, args: Vec<Operand>) -> Operand {
+    pub(super) fn simd_call(&mut self, symbol: &str, args: Vec<Operand>) -> Operand {
         let call = SimdCall::of_symbol(symbol)
             .unwrap_or_else(|| super::ice(format_args!("`{symbol}` is not a SIMD operation")));
         let (params, ret) = call.signature();
         let id = self.cx.extern_sym(symbol, params, ret, false);
+        if ret == Ty::Unit {
+            // `velt_simd_prefetch`: nothing to give.
+            self.call(Callee::Extern(id), args, None, false);
+            return super::unit();
+        }
         let out = self.temp(ret);
         self.call(Callee::Extern(id), args, Some(Place::local(out)), false);
         Operand::Copy(Place::local(out))

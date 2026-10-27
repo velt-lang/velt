@@ -35,6 +35,10 @@ impl FnCx<'_, '_> {
                 return self.record_member_read(obj, &prop, span);
             }
         }
+        let obj = match self.record_symbol_key_read(obj, index, span) {
+            Ok(h) => return h,
+            Err(obj) => obj,
+        };
         self.record_read(obj, RecordKey::Index(index), span)
     }
 

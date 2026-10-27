@@ -1,0 +1,11 @@
+// `new Array(n)` with an `n` that may be `undefined`: JS makes one element for `undefined`
+// and `n` elements for a number, so Velt asks for the test to be written.
+enum E {
+  A = 2,
+}
+
+function f(e: E | undefined, n: number | undefined): number {
+  return new Array<number>(e).fill(1).length + new Array<number>(n).fill(1).length;
+}
+
+console.log(f(E.A, 3));

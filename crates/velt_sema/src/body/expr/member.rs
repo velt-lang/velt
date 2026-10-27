@@ -50,6 +50,7 @@ impl FnCx<'_, '_> {
         if self.cx.ty.is_bottom(obj.ty) {
             return None;
         }
+        let obj = self.without_trap_vars(obj);
         if self.cx.ty.opt_payload(obj.ty).is_some() {
             let tn = self.cx.display(obj.ty);
             // `null` for a `T | null`, `undefined` for a `T | undefined`.
@@ -209,7 +210,7 @@ impl FnCx<'_, '_> {
         // A union local narrowed to one member is read as the union here, so that a view it may
         // hold is read through its getters (`union_view`).
         self.view_receiver = want != Want::BorrowMut && is_name(object);
-        let obj = self.expr(object, None, Want::Borrow);
+        let obj = self.receiver_expr(object);
         self.view_receiver = false;
         if want != Want::BorrowMut && self.is_method_value(obj.ty, &prop.name) {
             if self.stored_method_read(object, prop, obj.ty, span) {
@@ -286,6 +287,7 @@ impl FnCx<'_, '_> {
         if self.cx.frozen_reads && self.frozen_buffer_view(&obj, &prop.name, span) {
             return self.error_expr(span);
         }
+        let obj = self.without_trap_vars(obj);
         let obj = self.error_union_accessor(obj, &prop.name);
         let obj = match self.getter_read(obj, prop, span) {
             Ok(call) => return call,
@@ -325,13 +327,16 @@ impl FnCx<'_, '_> {
         if let Some(h) = self.process_env_index(object, index, span) {
             return h;
         }
+        if let Some(h) = self.symbol_record_read(object, index, span) {
+            return h;
+        }
         if let Some(h) = self.keyed_read(object, index, want, span) {
             return h;
         }
         if let Some(h) = self.generic_key_index(object, index, want, span) {
             return h;
         }
-        let obj = self.expr(object, None, Want::Borrow);
+        let obj = self.receiver_expr(object);
         if want != Want::BorrowMut {
             self.array_used_in_place(&obj);
         }
@@ -351,6 +356,11 @@ impl FnCx<'_, '_> {
                 let h = self.narrowed_field(object, &prop, h, want, exp);
                 self.downcast_field(object, &prop, h)
             }
+            // `r[k]` with a `const` key (`key_narrow`).
+            None if !self.f.field_tokens.is_empty() => match self.key_prop(index) {
+                Some(prop) => self.narrowed_field(object, &prop, h, want, exp),
+                None => h,
+            },
             None => h,
         }
     }
@@ -554,8 +564,16 @@ impl FnCx<'_, '_> {
         want: Want,
         span: Span,
     ) -> hir::Expr {
+        // `(v as Record<symbol, unknown>)[KEY]` is `symbol_record_read`'s; nothing else is.
+        if self.symbol_record_elsewhere(ty, span) {
+            self.expr(expr, None, Want::Borrow);
+            return self.error_expr(span);
+        }
         let target = self.resolve(ty);
         if let Some(h) = self.callable_cast(expr, target, span) {
+            return h;
+        }
+        if let Some(h) = self.fn_as_generic(expr, (target, ty), want, span) {
             return h;
         }
         if let Some(base) = self.cx.brand_base(target) {
@@ -628,7 +646,8 @@ impl FnCx<'_, '_> {
         }
         // `x as object` of an unbounded `T` (issue #926): checked at run time.
         let coerced = self
-            .try_coerce(inner, target)
+            .object_view_cast(inner, target, span)
+            .or_else(|h| self.try_coerce(h, target))
             .or_else(|h| self.param_as_object(h, target))
             .or_else(|h| self.param_as_object_part(h, target))
             .or_else(|h| self.narrowing_assertion(h, target, span))

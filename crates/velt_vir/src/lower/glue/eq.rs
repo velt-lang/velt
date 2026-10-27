@@ -149,6 +149,13 @@ impl FnLower<'_, '_> {
             _ if self.cx.is_object(ty) && !self.cx.is_fn_or_dyn(ty) => {
                 self.identity_hash(place, ty)
             }
+            // Agreeing with `ref_identity`: the boxed closure's env.
+            TyKind::Dyn(..) if self.cx.is_generic_fn_value(ty) => {
+                self.note_fn_compared(ty);
+                let env = self.boxed_env(place);
+                let env = self.cast_to(env, Ty::Ptr, Ty::U64);
+                self.fx_combine(cint(0, Ty::U64), env)
+            }
             TyKind::Dyn(..) => {
                 self.cx.note_identity(ty);
                 // Agreeing with `ref_identity`: the object an adapter wraps (adapters.rs).
@@ -158,7 +165,7 @@ impl FnLower<'_, '_> {
                 self.fx_combine(cint(0, Ty::U64), x)
             }
             TyKind::FnPtr { .. } | TyKind::Closure(_) => {
-                self.cx.note_fn_identity();
+                self.note_fn_compared(ty);
                 let code = Operand::Copy(proj(place, Proj::Field(0)));
                 let code = self.cast_to(code, Ty::Ptr, Ty::U64);
                 let h = self.fx_combine(cint(0, Ty::U64), code);

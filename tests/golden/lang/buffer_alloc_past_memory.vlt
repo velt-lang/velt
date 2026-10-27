@@ -1,0 +1,8 @@
+// `Buffer.alloc(n)` larger than memory (2^48 + 16 bytes): the allocator's error, on every
+// target (wasm32 never truncates the size to 16 bytes). Node fails here too, with
+// `RangeError: Array buffer allocation failed`.
+function main() {
+  console.log("before");
+  const b = Buffer.alloc(2 ** 48 + 16);
+  console.log(b.length);
+}

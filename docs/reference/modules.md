@@ -106,7 +106,28 @@ class Counter {
 console.log(Counter.first);
 ```
 
-A file with top-level statements cannot also declare `main`.
+A file with top-level statements may also declare a function named `main`, as TypeScript
+programs often do (or anything else named `main`: a variable, a class, an import): then, as in
+Node, the statements are the program, and `main` is an ordinary function that runs when they
+call it, with any arguments (`main(process.argv.slice(2))`), as often as they call it, and its
+promise handled as they choose (`main().catch(…)`).
+
+This is where Velt differs from Node: a root file with `function main()` and **no** top-level
+statements runs `main` by itself, which Node does not. Adding a top-level statement to such a
+file makes `main` an ordinary function that runs only when called, so the compiler warns when a
+file with statements declares a `main` that nothing calls (`` `main` is never called ``).
+
+```ts
+async function main(): Promise<void> {
+  await Promise.resolve();
+  console.log("hi");
+}
+
+main().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});
+```
 
 When the top-level statements wait at an `await` that nothing can settle any more, and nothing
 else can happen, the program ends as Node's does: `Warning: Detected unsettled top-level await
@@ -144,6 +165,51 @@ Re-exports make one module the public face of others: `export { x, y as z } from
 `export type { T } from "…"`, and `export * from "…"` (every export of that module; a name the
 module exports itself or lists by name wins). Re-exports bind nothing in the re-exporting
 module; importers get the original declaration, and go-to-definition lands there too.
+
+## Types and values of one name
+
+A name may be a type and a value at once, as in TypeScript, which keeps types and values in
+separate namespaces: a type alias or an interface next to a constant, a `let` or a function of
+the same name. A type position uses the type, an expression the value, and `typeof` in a type
+position the value.
+
+```ts
+type guid = string;
+const guid = (): guid => "id-1";
+
+interface Point {
+  x: number;
+  y: number;
+}
+function Point(x: number, y: number): Point {
+  return { x, y };
+}
+
+const id: guid = guid();
+const p: Point = Point(1, 2);
+const make: typeof guid = guid;
+console.log(id, p.x + p.y, make()); // id-1 3 id-1
+```
+
+- `export` marks each declaration on its own (`export type guid = string` with a `const guid`
+  that stays private exports only the type). `import { guid }`, `export { guid }`,
+  `export { guid } from "…"`, `export * from "…"` and `import * as m` (`m.guid` as a type and as
+  a value) carry both meanings; `import type { guid }` and `export type { guid }` only the type.
+  A name a module exports only as a type (with `export type { x }`, or `export { x }` of a name
+  it imports with `import type`) is a type for its importers too: using it as a value is an
+  error, as in TypeScript (TS1361, TS1362).
+- The same holds in a function body (`type Range = [number, number]` next to `const Range =
+  …`), and a value does not hide a type of the same name declared further out (a local `const
+  guid` in a function with `const g: guid` still means the module's type), nor a type a value
+  (a module's `type Map = …` leaves the global `Map` visible to `new Map()`).
+- A type used as a value is ``` `T` is a type, not a value ```, and a value used as a type
+  ``` `f` is a value, not a type ``` (TypeScript's TS2749) with the hint `typeof f`.
+- Classes, structs and enums are a type and a value already: another declaration of their name
+  is an error (as TypeScript's TS2567 for enums; TypeScript merges an interface into a class of
+  its name, Velt doesn't, [Interfaces](classes.md#interfaces)). Two type declarations (an alias
+  and an interface) or two values of one name are an error too, in a function body as at the
+  top level (two functions of one name in one block included: TypeScript's TS2393, where Node
+  would run the last one).
 
 ## Namespaces
 

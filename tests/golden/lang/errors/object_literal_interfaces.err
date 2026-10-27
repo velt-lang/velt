@@ -2,5 +2,3 @@ object_literal_interfaces.vlt:14:22: error: missing method `next` of `Counter` i
 object_literal_interfaces.vlt:17:49: error: `Counter` has no member `extra`: an object literal implementing it may only give its members
 object_literal_interfaces.vlt:23:14: error: mismatched types
   = note: expected f64, found string
-object_literal_interfaces.vlt:29:5: error: an object literal cannot implement the generic method `map` of `Mapper`
-  = note: a function value is not generic; declare a class that implements the interface

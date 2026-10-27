@@ -1,0 +1,3 @@
+narrow_field_loop_write.vlt:9:23: error: no field `length` on type `string | f64`
+narrow_field_loop_write.vlt:15:19: error: value of type `{ k: f64 } | null` may be null
+narrow_field_loop_write.vlt:24:12: error: no method named `push` found for type `f64[] | undefined`

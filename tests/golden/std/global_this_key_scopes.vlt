@@ -1,0 +1,52 @@
+// String-constant keys of globalThis in nested scopes: each read takes the innermost declaration,
+// also from closures (a closure before the declaration is an error: global_this_key_tdz).
+type H = { __KA__?: number; __KB__?: number };
+export const K = "__KA__";
+(globalThis as H).__KA__ = 1;
+(globalThis as H).__KB__ = 2;
+function blockInner(): number | undefined {
+  {
+    const K = "__KB__";
+    console.log((globalThis as H)[K]);
+  }
+  return (globalThis as H)[K];
+}
+function ifInner(c: boolean): number | undefined {
+  if (c) {
+    const K = "__KB__";
+    const g = () => (globalThis as H)[K];
+    return g();
+  }
+  return (globalThis as H)[K];
+}
+function nested(): number | undefined {
+  const K = "__KB__";
+  const outer = () => {
+    const inner = () => (globalThis as H)[K];
+    return inner();
+  };
+  return outer();
+}
+function loop(): number {
+  let s = 0;
+  for (const K of ["__KB__", "__KA__"] as const) {
+    s += (globalThis as H)[K] ?? 0;
+  }
+  return s;
+}
+function sw(n: number): number | undefined {
+  switch (n) {
+    case 1: {
+      const K = "__KB__";
+      return (globalThis as H)[K];
+    }
+    default:
+      return (globalThis as H)[K];
+  }
+}
+const arrow = (): number | undefined => {
+  const K = "__KB__";
+  const g = () => (globalThis as H)[K];
+  return g();
+};
+console.log(blockInner(), ifInner(true), ifInner(false), nested(), loop(), sw(1), sw(2), arrow(), (globalThis as H)[K]);

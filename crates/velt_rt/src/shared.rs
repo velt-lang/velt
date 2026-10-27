@@ -1,13 +1,13 @@
-//! Primitives behind `shared<T>`: reference counts (`velt_rt_rc_*`), atomic integers
-//! (`velt_rt_atomic_*`) and the `RwLock<T>` lock (`velt_rt_rwlock_*`); the `Mutex<T>` lock is
-//! in [`crate::mutex`].
+//! Primitives behind `shared<T>`: reference counts (`velt_rt_rc_*`) and the `RwLock<T>` lock
+//! (`velt_rt_rwlock_*`); the `Mutex<T>` lock is in [`crate::mutex`]. Atomics (`Atomic<T>`, `shared<int>`'s `add`/`get`/`set`) are instructions
+//! the backends emit inline (rt_abi.md "Atomics").
 //!
-//! All operate on memory owned by generated code (a refcount word, an `i64` cell, an 8-byte lock
-//! word inside the shared object), so none of them allocates.
+//! All operate on memory owned by generated code (a refcount word, an 8-byte lock word inside
+//! the shared object), so none of them allocates.
 
 use lock_api::{RawRwLock as _, RawRwLockRecursive as _};
 use parking_lot::RawRwLock;
-use std::sync::atomic::{fence, AtomicI64, AtomicU64, Ordering};
+use std::sync::atomic::{fence, AtomicU64, Ordering};
 
 /// Refcounts above this abort (a leak of `isize::MAX` clones is a bug, as in `Arc`).
 const MAX_REFCOUNT: u64 = isize::MAX as u64;
@@ -30,26 +30,6 @@ pub unsafe extern "C" fn velt_rt_rc_dec(p: *mut u64) -> u8 {
     }
     fence(Ordering::Acquire);
     1
-}
-
-/// `shared<int>.add(delta)`: returns the new value (wrapping).
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_atomic_add_i64(p: *mut i64, delta: i64) -> i64 {
-    AtomicI64::from_ptr(p)
-        .fetch_add(delta, Ordering::SeqCst)
-        .wrapping_add(delta)
-}
-
-/// `shared<int>.get()`.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_atomic_load_i64(p: *mut i64) -> i64 {
-    AtomicI64::from_ptr(p).load(Ordering::SeqCst)
-}
-
-/// `shared<int>.set(v)`.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_atomic_store_i64(p: *mut i64, v: i64) {
-    AtomicI64::from_ptr(p).store(v, Ordering::SeqCst)
 }
 
 /// The words generated code reserves at the start of an `RwLock<T>` (`lock`, padding, then
@@ -619,18 +599,12 @@ mod tests {
     }
 
     #[test]
-    fn refcount_and_atomics() {
+    fn refcounts() {
         let mut rc = 1u64;
         unsafe {
             velt_rt_rc_inc(&mut rc);
             assert_eq!(velt_rt_rc_dec(&mut rc), 0);
             assert_eq!(velt_rt_rc_dec(&mut rc), 1);
-        }
-        let mut v = 5i64;
-        unsafe {
-            assert_eq!(velt_rt_atomic_add_i64(&mut v, 3), 8);
-            velt_rt_atomic_store_i64(&mut v, -1);
-            assert_eq!(velt_rt_atomic_load_i64(&mut v), -1);
         }
     }
 

@@ -1,0 +1,43 @@
+// check: no leaks
+// `r[k]` with a `const` key narrows like `r.name`: after `if (!r[k]) r[k] = [];`, and in
+// `for (const k in r)`, it is not `undefined` (#930). `delete r[k]` drops the narrowing.
+function group(items: string[]): Record<string, string[]> {
+  const named: Record<string, string[]> = {};
+  for (const it of items) {
+    const k = it.slice(0, 1);
+    if (!named[k]) {
+      named[k] = [];
+    }
+    named[k].push(it);
+  }
+  return named;
+}
+const g = group(["ab", "ac", "bd"]);
+for (const name in g) {
+  const list = g[name];
+  const copy = () => list.slice();
+  console.log(name, copy().join(","));
+}
+function del(r: Record<string, number[]>): void {
+  for (const k in r) {
+    delete r[k];
+    console.log(r[k]?.length);
+    const v = r[k];
+    console.log(v === undefined);
+  }
+}
+del({ a: [1] });
+function viaCheck(r: Record<string, number[]>, k: string): void {
+  const key = k;
+  if (r[key] === undefined) r[key] = [0];
+  r[key].push(1);
+  console.log(r[key].length);
+  if (r[key] !== undefined) console.log(r[key][0]);
+}
+viaCheck({}, "z");
+function literalKey(r: Record<string, number[]>): void {
+  const key = "q";
+  r[key] = [5];
+  console.log(r[key].length, r.q.length);
+}
+literalKey({});

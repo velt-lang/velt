@@ -1,0 +1,56 @@
+// Generic interface methods through interface values (#943): an interface value standing for a
+// type parameter bound by the interface (or one it extends), and a generic implementation made
+// only where a generic function is instantiated, whose method uses a deferred type in its body.
+interface Sq {
+  sq<T>(x: T, n: number): T[];
+}
+
+interface Named extends Sq {
+  name(): string;
+}
+
+class A implements Named {
+  sq<T>(x: T, n: number): T[] {
+    const o: T[] = [];
+    for (let i = 0; i < n; i++) o.push(x);
+    return o;
+  }
+  name(): string {
+    return "a";
+  }
+}
+
+function viaParam<X extends Sq>(x: X): void {
+  console.log("param", x.sq(2.25, 3), x.sq(null, 2));
+}
+
+type Inner<T> = T extends string ? { s: T } : { v: T };
+
+interface Tagger {
+  tag<T>(x: T): string;
+}
+
+class TG<P> implements Tagger {
+  p: P;
+  constructor(p: P) {
+    this.p = p;
+  }
+  tag<T>(x: T): string {
+    const w = (typeof x === "string" ? { s: x } : { v: x }) as unknown as Inner<T>;
+    return JSON.stringify(w);
+  }
+}
+
+function mk<X>(x: X): Tagger {
+  return new TG<X[]>([x]);
+}
+
+function main(): void {
+  const b: Sq = new A();
+  viaParam<Sq>(b);
+  viaParam(b);
+  const n: Named = new A();
+  viaParam(n);
+  const u = mk("q");
+  console.log(u.tag(4), u.tag("w"));
+}

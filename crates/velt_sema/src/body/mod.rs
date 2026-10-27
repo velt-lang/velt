@@ -37,6 +37,7 @@ mod arrow_scans;
 mod assign_ends;
 mod assign_narrow;
 pub(crate) mod assigned;
+mod checked_copies;
 mod closure_assigned;
 pub(crate) mod closure_group;
 mod const_borrow;
@@ -53,7 +54,9 @@ mod for_iter;
 mod for_map;
 mod gated;
 mod generators;
+mod global_narrow;
 mod index_keys;
+mod key_narrow;
 mod late_consts;
 pub(crate) mod literal_hosts;
 pub(crate) mod literal_locals;
@@ -81,6 +84,7 @@ pub(crate) mod recursion;
 pub(crate) mod returns;
 mod stmt;
 pub(crate) use readonly_arrays::is_readonly_array;
+pub(crate) use readonly_arrays::{is_readonly_type, NUMBER_RECORD};
 pub(crate) use stmt::closure_def;
 pub(crate) mod switch;
 mod untyped_let;
@@ -286,15 +290,28 @@ pub(crate) struct Frame {
     pub using_shares: Vec<(Span, LocalId)>,
     /// The `using` locals declared `await using`.
     pub await_using: rustc_hash::FxHashSet<LocalId>,
-    /// Locals declared with a read-only array type (`readonly T[]`, `ReadonlyArray<T>`), which
-    /// the body may not write to (`readonly_arrays.rs`).
-    pub readonly_arrays: rustc_hash::FxHashSet<LocalId>,
+    /// Marks of locals: [`READONLY`] for one declared with a read-only array or collection type,
+    /// which the body may not write to (`readonly_arrays.rs`), [`NUMBER_RECORD`] for one declared
+    /// with a number-keyed record type (`expr::number_records`).
+    pub local_marks: FxHashMap<LocalId, u8>,
+    /// What the position of an assignment used as a value expects (`assign_value`): a
+    /// `new C()` assigned through `any` with `??=`, `||=` or `&&=` takes its type arguments from
+    /// it (`dynamic_write`).
+    pub assign_hint: Option<TyId>,
+    /// The read-only local a method call written `(x as T).m()` may change (`T` not read-only;
+    /// `readonly_arrays.rs`).
+    pub readonly_exempt: Option<LocalId>,
+    /// A method call written `(x as T).m()` with `T` read-only (`readonly_arrays.rs`).
+    pub readonly_cast_recv: bool,
     /// `const c = [2, "y"] as const` (literals of different types): its elements, which an
     /// array pattern taking `c` apart reads as the literal (`literal_patterns`).
     pub as_const_tuples: FxHashMap<LocalId, Vec<velt_syntax::ast::Expr>>,
     /// `const f = (…) => …`: the closure each such local holds, whose parameter defaults a
     /// call `f(…)` fills in.
     pub closure_consts: rustc_hash::FxHashMap<LocalId, DefId>,
+    /// `const g: G = id`: the named generic function each such local holds, instantiated where
+    /// the local is used as a function of fixed types (`expr::generic_conversions`).
+    pub named_fns: rustc_hash::FxHashMap<LocalId, DefId>,
     /// The property writes after the declaration being checked, which a cast of a function to
     /// a callable object type there takes as members (`expr::callables`, #921).
     pub callable_writes: Option<expr::PendingWrites>,
@@ -304,6 +321,10 @@ pub(crate) struct Frame {
     /// Locals declared with a method read as a value (`const f = o.m`): a call that passes
     /// them another `this` is not supported yet (`call_apply`).
     pub method_values: rustc_hash::FxHashSet<LocalId>,
+    /// `const` locals declared with a property read of a variable (`const f = (o as T).m`), with
+    /// that variable: `f.call(o)` runs `f` on the object it keeps while nothing assigns `o`
+    /// (`call_apply`).
+    pub member_reads: rustc_hash::FxHashMap<LocalId, LocalId>,
     /// Throw sources of the enclosing `try` bodies (innermost last).
     pub tries: Vec<Vec<ThrowSrc>>,
     /// Each `catch` variable used only as `throw e`, with the throw sources of its `try` body:
@@ -327,15 +348,21 @@ pub(crate) struct Frame {
     pub stmt_depth: u32,
     /// Field paths that conditions narrow (`field_narrow`).
     pub field_tokens: Vec<field_narrow::FieldToken>,
+    /// Module variables that conditions narrow (`global_narrow`).
+    pub global_tokens: Vec<global_narrow::GlobalToken>,
     /// `const`s bound by reference (`const_borrow`).
     pub const_refs: rustc_hash::FxHashSet<LocalId>,
     /// Tokens of field paths tested by `instanceof` that are not narrowed (a field on the path
     /// is not `readonly`), and the reads of them since (`field_narrow`, for error notes).
     pub mutable_tests: Vec<LocalId>,
-    pub unnarrowed_reads: Vec<Span>,
+    /// With whether the field is one of a module variable's (`global_narrow`).
+    pub unnarrowed_reads: Vec<(Span, bool)>,
     /// Names of the variables that closures created in this function's body assign, with
     /// where (`closure_assigned`): they are not narrowed.
     pub closure_assigned: FxHashMap<String, Span>,
+    /// Untyped locals initialized from a narrowed module variable or field path: nullable,
+    /// with a null check fact whose reads are checked (`checked_copies`).
+    pub checked_copies: rustc_hash::FxHashSet<LocalId>,
     /// Where this function's own code last assigns each variable (`assign_ends`): closures
     /// created before that do not see the variable's narrowing.
     pub assign_ends: FxHashMap<String, u32>,
@@ -408,12 +435,17 @@ impl Frame {
             soft_moves: vec![],
             using_shares: vec![],
             await_using: Default::default(),
-            readonly_arrays: Default::default(),
+            local_marks: Default::default(),
+            assign_hint: None,
+            readonly_exempt: None,
+            readonly_cast_recv: false,
             as_const_tuples: Default::default(),
             closure_consts: Default::default(),
+            named_fns: Default::default(),
             callable_writes: None,
             assign_targets: vec![],
             method_values: Default::default(),
+            member_reads: Default::default(),
             tries: vec![],
             caught: vec![],
             uncaught: vec![],
@@ -424,10 +456,12 @@ impl Frame {
             before_super: false,
             stmt_depth: 0,
             field_tokens: vec![],
+            global_tokens: vec![],
             const_refs: Default::default(),
             mutable_tests: vec![],
             unnarrowed_reads: vec![],
             closure_assigned: FxHashMap::default(),
+            checked_copies: Default::default(),
             assign_ends: FxHashMap::default(),
             int_returns_number: false,
             checked_predicates: FxHashMap::default(),
@@ -553,6 +587,11 @@ pub(crate) struct FnCx<'a, 'm> {
     /// A variable read that a null or truthiness test makes (`if (x)`, `x == null`): it reads
     /// the variable as it is, without the check `checked_narrowed_read` adds.
     pub raw_read: Option<Span>,
+    /// Reads that need the payload of a narrowed module variable, field path or checked copy:
+    /// receivers, callees, operands of arithmetic and comparisons, spreads (`global_narrow`).
+    pub payload_spans: Vec<Span>,
+    /// Reads whose value is used as it is (`"a" + x`): not taken as a payload.
+    pub as_is_spans: Vec<Span>,
     /// A field read that is the operand of a type test (`typeof o.f`, `o.f instanceof C`,
     /// `o.f === lit`): it reads the field as narrowed, without converting it to the union of the
     /// members left (`field_narrow`).
@@ -625,6 +664,8 @@ impl<'a, 'm> FnCx<'a, 'm> {
             optional_slots: vec![],
             refused_reads: vec![],
             raw_read: None,
+            payload_spans: vec![],
+            as_is_spans: vec![],
             field_test: None,
             field_retag: false,
             view_receiver: false,

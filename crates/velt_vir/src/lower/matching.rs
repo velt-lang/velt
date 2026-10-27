@@ -273,12 +273,7 @@ impl FnLower<'_, '_> {
 
     /// A panic for a union view that reached a match with no arm for it.
     fn view_panic(&mut self) {
-        let msg = format!(
-            "TypeError: a union view reached a use that needs its member{}",
-            self.panic_suffix()
-        );
-        let msg = self.str_lit(&msg);
-        let a = self.operand_addr(msg, Ty::Agg(crate::vir::STR_AGG));
+        let a = self.panic_text("TypeError: a union view reached a use that needs its member");
         self.call_rt(super::rt::Rt::Panic, vec![a], None);
     }
 }

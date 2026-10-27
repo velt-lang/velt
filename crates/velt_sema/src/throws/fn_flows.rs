@@ -44,6 +44,10 @@ impl Ctx<'_> {
 
     /// The site of the parameter, field or variable declared at `name` with type `t`.
     pub(crate) fn decl_site(&self, name: Span, t: TyId) -> Option<Span> {
+        // A declaration's type is written in its own file, which must have sites.
+        if !self.fn_sites.by_file.contains_key(&name.file) {
+            return None;
+        }
         match self.fn_sites.written.get(&name) {
             Some(&w) => self.site_in(w, t),
             // `let f = () => {}`: the site is the name (`untyped_let_site`).
@@ -92,6 +96,39 @@ impl Ctx<'_> {
     }
 
     /// Add `members` to what site `s` throws, and to the sites its values flow to.
+    /// A generic closure throwing `err` is stored into a generic function type written without
+    /// `throws` at `spans` (`crate::generic_fns`), which does not allow it: add `err` to those
+    /// sites, as [`Ctx::seed_fn_sites`] does for a function type. False when `err` can't be
+    /// kept (then the use is reported).
+    pub(crate) fn seed_generic_sites(&mut self, spans: &[Span], err: TyId) -> bool {
+        // An error-set variable (a call of a function-typed parameter) is only solved after
+        // the bodies: check again with the sets written in, where it is a set.
+        if self.mentions_err_var(err) {
+            if self.fn_sites.is_last() {
+                return false;
+            }
+            self.fn_sites.fallback();
+            return true;
+        }
+        let mut members = vec![];
+        for m in self.error_members(err) {
+            if !self.is_error_class(m) {
+                return false;
+            }
+            match self.port(m, 0) {
+                Some(p) => members.push(p),
+                None => return false,
+            }
+        }
+        if spans.is_empty() || self.fn_sites.is_last() {
+            return false;
+        }
+        for &s in spans {
+            self.add_to_site(s, &members);
+        }
+        true
+    }
+
     pub(super) fn add_to_site(&mut self, s: Span, members: &[Portable]) {
         let mut work = vec![s];
         while let Some(s) = work.pop() {
@@ -205,7 +242,7 @@ impl crate::body::FnCx<'_, '_> {
 
     /// The site of parameter `p` of a function being called.
     pub(crate) fn param_site(&self, p: &crate::defs::ParamSig) -> Option<Span> {
-        if self.cx.fn_sites.by_file.is_empty() {
+        if !self.cx.fn_sites.by_file.contains_key(&p.span.file) {
             return None;
         }
         self.cx.decl_site(p.span, p.ty)

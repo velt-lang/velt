@@ -230,3 +230,33 @@ fn verify_rejects_dangling_debug_descriptions() {
     });
     expect_err(&p, "bad field `x` of agg#0");
 }
+
+/// An atomic operation's extern: its symbol must be canonical, it returns, and no code takes
+/// its address (no function exists behind it).
+#[test]
+fn verify_rejects_misused_atomic_externs() {
+    let atomic = |symbol: &str, noreturn| ExternFn {
+        symbol: symbol.into(),
+        params: vec![Ty::Ptr],
+        ret: Ty::U8,
+        noreturn,
+    };
+    let mut p = base_program();
+    p.externs.push(atomic("velt_atomic_load_08_acq", false));
+    expect_err(&p, "velt_atomic_load_08_acq: not an atomic operation");
+
+    let mut p = base_program();
+    p.externs.push(atomic("velt_atomic_load_8_acq", true));
+    expect_err(&p, "velt_atomic_load_8_acq: an atomic operation returns");
+
+    let mut p = with_test_fn(vec![block(vec![set_x(0)], ret_x())]);
+    let ext = ExternId(p.externs.len() as u32);
+    p.externs.push(atomic("velt_atomic_load_8_acq", false));
+    let f = p.funcs.last_mut().expect("test fn");
+    f.locals.push(LocalDecl::new(Ty::Ptr, None));
+    f.blocks[0].stmts.push(Stmt::Assign(
+        Place::local(Local(2)),
+        Rvalue::Use(Operand::Const(Const::Extern(ext), Ty::Ptr)),
+    ));
+    expect_err(&p, "the address of `velt_atomic_load_8_acq` is taken");
+}

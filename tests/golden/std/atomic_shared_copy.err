@@ -1,0 +1,5 @@
+atomic_shared_copy.vlt:19:14: error: this copies a part of a `shared` value that holds an `Atomic`: changes to the copy's atomics would not reach the shared value
+  = note: use it in place (`s.items[i].count.add(1)`, `for (const x of s.items)`), or pass it to a function that only reads or calls its methods
+
+atomic_shared_copy.vlt:21:17: error: this copies a part of a `shared` value that holds an `Atomic`: changes to the copy's atomics would not reach the shared value
+  = note: use it in place (`s.items[i].count.add(1)`, `for (const x of s.items)`), or pass it to a function that only reads or calls its methods

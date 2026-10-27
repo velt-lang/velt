@@ -18,7 +18,11 @@ pub(super) fn intrinsic_named(name: &str) -> Option<Intrinsic> {
         "to_string" => I::ToString,
         "str_concat" => I::StrConcat,
         "str_len" => I::StrLen,
+        "str_byte_len" => I::StrByteLen,
         "str_char_code_at" => I::StrCharCodeAt,
+        "str_byte_at" => I::StrByteAt,
+        "str_load_u8x16" => I::StrLoadU8x16,
+        "str_load_partial_u8x16" => I::StrLoadPartialU8x16,
         "exit" => I::Exit,
         "panic" => I::Panic,
         "array_with_capacity" => I::ArrayWithCapacity,
@@ -31,6 +35,17 @@ pub(super) fn intrinsic_named(name: &str) -> Option<Intrinsic> {
         "array_move" => I::ArrayMove,
         "array_set_len" => I::ArraySetLen,
         "array_reserve" => I::ArrayReserve,
+        "array_prefetch" => I::ArrayPrefetch,
+        "atomic_load" => I::AtomicLoad,
+        "atomic_store" => I::AtomicStore,
+        "atomic_rmw" => I::AtomicRmw,
+        "atomic_cas" => I::AtomicCas,
+        "atomic_cas_weak" => I::AtomicCasWeak,
+        "atomic_fence" => I::AtomicFence,
+        "atomic_spin_hint" => I::AtomicSpinHint,
+        "array_rotate_right" => I::ArrayRotateRight,
+        "array_rotate_left" => I::ArrayRotateLeft,
+        "array_swap_nested" => I::ArraySwapNested,
         "hash" => I::Hash,
         "eq" => I::Eq,
         "key_eq" => I::KeyEq,
@@ -57,6 +72,10 @@ pub(super) fn intrinsic_named(name: &str) -> Option<Intrinsic> {
         "json_stringify" => I::JsonStringify,
         "json_parse" => I::JsonParse,
         "json_parse_rows" => I::JsonParseRows,
+        "json_parse_cursor" => I::JsonParseCursor,
+        "db_bind" => I::DbBind,
+        "read_rows" => I::ReadRows,
+        "read_row" => I::ReadRow,
         "http_handler" => I::HttpHandler,
         "promise_any" => I::PromiseAny,
         "chan_send" => I::ChanSend,
@@ -136,6 +155,9 @@ impl FnCx<'_, '_> {
                 | Intrinsic::GeneratorValue
                 | Intrinsic::GeneratorReturn,
             ) => vec!["T".into(), "E".into(), "N".into()],
+            (true, Intrinsic::ReadRows | Intrinsic::ReadRow) => {
+                vec!["T".into(), "S".into()]
+            }
             (true, _) => vec!["T".into()],
         };
         Callable {
@@ -173,11 +195,19 @@ impl FnCx<'_, '_> {
                 ty.option_of(t, crate::hir::Nothing::Undefined),
                 true,
             ),
-            I::ArraySwap => (vec![(arr, M), (usize_, C), (usize_, C)], unit, true),
+            I::ArraySwap | I::ArrayRotateRight | I::ArrayRotateLeft => {
+                (vec![(arr, M), (usize_, C), (usize_, C)], unit, true)
+            }
+            I::ArraySwapNested => {
+                let outer = ty.array(arr);
+                let at = (usize_, C);
+                (vec![(outer, M), at, at, at, at], unit, true)
+            }
             I::ArrayRemove => (vec![(arr, M), (usize_, C)], t, true),
             I::ArrayTruncate | I::ArraySetLen | I::ArrayReserve => {
                 (vec![(arr, M), (usize_, C)], unit, true)
             }
+            I::ArrayPrefetch => (vec![(arr, B), (usize_, C)], unit, true),
             I::ArrayMove => (
                 vec![(arr, M), (usize_, C), (arr, B), (usize_, C), (usize_, C)],
                 unit,
@@ -210,8 +240,20 @@ impl FnCx<'_, '_> {
                 (vec![(f64_, C)], f64_, false)
             }
             I::StrConcat => (vec![(str_, B), (str_, B)], str_, false),
-            I::StrLen => (vec![(str_, B)], usize_, false),
+            I::StrLen | I::StrByteLen => (vec![(str_, B)], usize_, false),
             I::StrCharCodeAt => (vec![(str_, B), (ty.i64, C)], ty.i64, false),
+            I::StrByteAt => {
+                let u8_ = ty.intern(TyKind::Int(IntTy::U8));
+                (vec![(str_, B), (ty.u64, C)], u8_, false)
+            }
+            I::StrLoadU8x16 => {
+                let v = ty.intern(TyKind::Simd(crate::hir::SimdTy::U8x16));
+                (vec![(str_, B), (ty.u64, C)], v, false)
+            }
+            I::StrLoadPartialU8x16 => {
+                let v = ty.intern(TyKind::Simd(crate::hir::SimdTy::U8x16));
+                (vec![(str_, B), (ty.u64, C), (ty.u64, C)], v, false)
+            }
             I::Exit => (vec![(ty.i32, C)], ty.never, false),
             I::Panic => (vec![(str_, B)], ty.never, false),
             I::ArrayDataPtr => (vec![(arr, B)], ty.u64, true),
@@ -245,6 +287,7 @@ impl FnCx<'_, '_> {
         use PassMode::{Borrow as B, Copy as C, Owned as O};
         let mutex = self.cx.mutex_ty();
         let rwlock = self.cx.rwlock_ty();
+        let atomic_def = self.cx.atomic_ty();
         let (t0, e0, n0) = (
             self.cx.ty.param(0),
             self.cx.ty.param(1),
@@ -258,6 +301,8 @@ impl FnCx<'_, '_> {
         let (unit, str_, i64_, u64_) = (ty.unit, ty.str_, ty.i64, ty.u64);
         let pt = ty.promise_rejecting(t, e);
         let shared = ty.intern(TyKind::Shared(t));
+        let u8_ = ty.intern(TyKind::Int(IntTy::U8));
+        let atomic = atomic_def.map_or(ty.error, |d| ty.intern(TyKind::Adt(d, vec![t])));
         match i {
             I::Spawn | I::SpawnHandled => (vec![(pt, O)], pt, true),
             I::Sleep => (vec![(i64_, C)], ty.promise(unit), false),
@@ -300,6 +345,21 @@ impl FnCx<'_, '_> {
                 let r = rwlock.map_or(ty.error, |d| ty.intern(TyKind::Adt(d, vec![t])));
                 (vec![(t, O)], r, true)
             }
+            I::AtomicLoad => (vec![(atomic, B), (u8_, C)], t, true),
+            I::AtomicStore => (vec![(atomic, B), (t, C), (u8_, C)], unit, true),
+            I::AtomicRmw => (vec![(atomic, B), (t, C), (u8_, C), (u8_, C)], t, true),
+            I::AtomicCas => (
+                vec![(atomic, B), (t, C), (t, C), (u8_, C), (u8_, C)],
+                t,
+                true,
+            ),
+            I::AtomicCasWeak => (
+                vec![(atomic, B), (t, C), (t, C), (u8_, C), (u8_, C)],
+                ty.bool_,
+                true,
+            ),
+            I::AtomicFence => (vec![(u8_, C)], unit, false),
+            I::AtomicSpinHint => (vec![], unit, false),
             I::JsonStringify => (vec![(t, B)], str_, true),
             // `(text, flags, max_depth)`: the options as std's `JSON.parse` encodes them.
             I::JsonParse => (vec![(str_, B), (ty.i64, C), (ty.i64, C)], t, true),
@@ -308,6 +368,14 @@ impl FnCx<'_, '_> {
                 let bytes = ty.array(bytes);
                 (vec![(bytes, B), (ty.i64, C), (ty.i64, C)], t, true)
             }
+            I::JsonParseCursor => (vec![(u64_, C), (ty.i64, C), (ty.i64, C)], t, true),
+            I::DbBind => (vec![(u64_, C), (t, B)], ty.bool_, true),
+            // `<T, S>`: the row type and the source's type.
+            I::ReadRows => {
+                let rows = ty.array(t);
+                (vec![(e, B)], ty.option(rows), true)
+            }
+            I::ReadRow => (vec![(e, B)], ty.option(t), true),
             I::HttpHandler => {
                 let f = http_handler_fn(ty);
                 (vec![(f, O)], ty.intern(TyKind::Tuple(vec![u64_; 6])), false)

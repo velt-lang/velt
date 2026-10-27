@@ -82,6 +82,12 @@ impl FnLower<'_, '_> {
             self.addr(kp)
         };
         self.any_in_nullish_check(&desc, &ka);
+        let done = self.proxy_branch("__has", &data, &desc, |lw, obj, pty, r| {
+            let v = lw.proxy_has_direct((obj, pty, r), ka.clone());
+            let res = Place::local(lw.temp(Ty::Bool));
+            lw.assign(res.clone(), Rvalue::Use(v));
+            res
+        });
         let args = vec![data, ka];
         let st = self.any_slot(desc, SLOT_HAS, args, vec![Ty::Ptr; 2]);
         let bad = self.rvalue_temp(
@@ -94,10 +100,17 @@ impl FnLower<'_, '_> {
         self.panic_msg("TypeError: `in` through `any` is not supported for this value yet (#823)");
         self.terminate(Terminator::Unreachable);
         self.switch_to(ok);
-        self.rvalue_temp(
+        let yes = self.rvalue_temp(
             Ty::Bool,
             Rvalue::Binary(BinOp::Eq, st, cint(HAS_YES, Ty::U8)),
-        )
+        );
+        let Some((_, res)) = &done else {
+            return yes;
+        };
+        let res = res.clone();
+        self.assign(res.clone(), Rvalue::Use(yes));
+        self.proxy_join(done);
+        Operand::Copy(res)
     }
 
     /// Node's `TypeError: Cannot use 'in' operator to search for 'k' in undefined` (or `null`).

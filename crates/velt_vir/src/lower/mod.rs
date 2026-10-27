@@ -28,6 +28,7 @@ mod any_checks;
 mod any_delete;
 mod any_eq;
 mod any_errors;
+mod any_generic_fn;
 mod any_glue;
 mod any_has;
 mod any_iface;
@@ -48,6 +49,7 @@ mod array_view_index;
 mod array_view_ops;
 mod assign_target;
 mod async_fn;
+mod atomic;
 mod attempt;
 mod boxes;
 mod boxing;
@@ -67,24 +69,29 @@ mod drops;
 mod entry;
 mod errors;
 mod expr;
+mod ext_exists;
 mod flags;
 mod for_of;
 mod for_of_shared;
 mod foreign;
 mod frame_envs;
+mod fresh_fns;
 mod frozen;
 mod glue;
 mod hand_result;
 mod hooks;
+mod impl_lookup;
 mod intrinsics;
 mod js_string;
 mod json;
 mod keys;
 mod layout;
 mod leave_levels;
+mod literal_accessors;
 mod match_switch;
 mod matching;
 mod module_state;
+mod narrowed_paths;
 mod operand;
 mod ops;
 mod param_any;
@@ -94,6 +101,7 @@ mod place;
 mod program;
 mod proxy_call;
 mod proxy_method;
+mod proxy_throws;
 mod proxy_typed;
 mod proxy_write;
 mod quiet;
@@ -191,7 +199,10 @@ pub(crate) fn lower_program(
             if std::env::var_os("VELT_DEBUG_PROXY").is_some() {
                 eprintln!("velt: proxiable types: {}", cx.proxiable_names().join(", "));
             }
-            let diags = cx.nothing_clash_diagnostics();
+            let mut diags = cx.nothing_clash_diagnostics();
+            diags.extend(cx.fresh_fn_diagnostics());
+            diags.extend(cx.counted_atomic_diagnostics());
+            diags.extend(cx.atomic_copy_diagnostics());
             let types_now = cx.types.clone();
             let program = cx.finish();
             if !no_await_steps && async_fn::await_order::unobservable(&program) {
@@ -234,6 +245,10 @@ enum ThunkKind {
     Env(Option<TyId>),
     /// First param is the receiver's data pointer (Dyn data / class object) → target's `this`.
     SelfData,
+    /// First param is the data pointer of an interface value holding a closure (a generic
+    /// closure as a generic function value, glue/generic_slots.rs): the closure's code runs
+    /// with the closure's env.
+    BoxedClosure,
     /// The code of a method read as a value through `any` (a typed proxy's `get` trap answers
     /// a method call with it, proxy_method.rs): the method's parameters after a closure env;
     /// called on its own (without the proxy as `this`) it throws a `TypeError`.
@@ -299,8 +314,12 @@ enum Work {
     /// the call site when it is given, and given closure literals for some function params:
     /// it calls their code directly (frozen.rs `KnownFn`).
     Frozen(DefId, Vec<TyId>, u64, Option<SrcLoc>, Vec<frozen::KnownFn>),
-    /// `(arr: ptr, stride: u64, align: u64)`: grow an array's buffer (amortized doubling).
+    /// `(arr: ptr, stride: u64, align: u64)`: grow an array's buffer (amortized doubling;
+    /// `velt_rt_realloc` refuses a buffer past the array length limit).
     ArrayGrow,
+    /// `()`: the panic of an array that would grow past `MAX_ARRAY_LEN` (never returns, so its
+    /// calls stay cold and small).
+    ArrayTooLong,
     /// The exported `velt_main() -> i32` entry (entry.rs).
     Main,
     /// `(state: ptr, cx: ptr) -> u32`: the task root that runs a synchronous `main` which reaches
@@ -355,6 +374,8 @@ enum Work {
 /// Program-level lowering state.
 struct Cx<'h> {
     hir: &'h hir::Program,
+    /// The prelude's `Proxy` class type, once looked up (proxy_throws.rs).
+    prelude_proxy: Option<Option<TyId>>,
     /// Native library inits `velt_main` runs first (entry.rs).
     native_inits: Vec<crate::NativeInit>,
     /// The prelude's `Proxy.__view` (any_view.rs), once looked up.
@@ -411,6 +432,8 @@ struct Cx<'h> {
     debug: Option<debug_vars::DebugTypes>,
     /// Memoized `tracks_caller` answers.
     tracked: FxHashMap<DefId, bool>,
+    /// HIR nodes of the standard-library functions `tracks_caller` scanned (track_caller.rs).
+    tracked_size: FxHashMap<DefId, usize>,
     /// Memoized `quiet` answers (quiet.rs).
     quiet: FxHashMap<DefId, bool>,
     /// Interned static `VeltStr` objects (`static_str_object`).
@@ -423,6 +446,10 @@ struct Cx<'h> {
     facts: boxing::Facts,
     /// `Program::impls` indexes per interface (`impls_of`), built on first use.
     iface_impls: Option<FxHashMap<DefId, Rc<[u32]>>>,
+    /// Finished `extend` lookups by `(interface, arguments, type)` (impl_lookup.rs), and bound
+    /// checks through blocks (ext_exists.rs).
+    ext_memo: FxHashMap<impl_lookup::MemoKey, Option<impl_lookup::Fit>>,
+    exists_memo: FxHashMap<ext_exists::ExistsKey, bool>,
     /// Classes with a `clone()` of their own, and that method (`own_clone`, transfer.rs),
     /// found on first use.
     own_clones: Option<FxHashMap<DefId, DefId>>,
@@ -450,6 +477,19 @@ struct Cx<'h> {
     /// at `T = U | undefined`, or the reverse; types.rs `intern`), which this phase cannot
     /// represent (issue #930): reported, not lowered silently.
     nothing_clashes: Vec<Option<DefId>>,
+    /// Deep copies of frozen values holding an `Atomic` (atomic.rs `note_frozen_copy`).
+    atomic_copies: Vec<velt_common::Span>,
+    /// The user code being lowered (atomic.rs `user_span`), for errors found in a standard
+    /// library instance: the innermost expression of a user file, or else the user code that
+    /// first requested the function being built.
+    user_site: velt_common::Span,
+    /// Per function, the `user_site` that first requested it.
+    fn_sites: rustc_hash::FxHashMap<FuncId, velt_common::Span>,
+    /// The first `user_site` that shared each type, or borrowed it through a container
+    /// (boxing `note_share`, `note_projection`): where a counted `Atomic` is reported.
+    share_sites: rustc_hash::FxHashMap<TyId, velt_common::Span>,
+    /// The shared type each type `close_boxing` reached through shared values came from.
+    share_from: rustc_hash::FxHashMap<TyId, TyId>,
     /// Non-zero while the field types of a prelude `Map` are substituted (types.rs
     /// `keeps_nothings_apart`).
     map_fields: u32,
@@ -550,14 +590,20 @@ struct FnLower<'c, 'h> {
     cx: &'c mut Cx<'h>,
     /// Type arguments substituted for `TyKind::Param` in the HIR being lowered.
     targs: Vec<TyId>,
+    /// Building a glue function: its comparisons are counted where it is called (fresh_fns.rs).
+    glue: bool,
     locals: Vec<LocalDecl>,
     blocks: Vec<(Vec<vir::Stmt>, Option<Terminator>)>,
     /// Source locations parallel to `blocks`: per statement, and of the terminator.
     block_locs: Vec<(Vec<Option<SrcLoc>>, Option<SrcLoc>)>,
     /// Location recorded for statements emitted now (srcloc.rs).
     loc: Option<SrcLoc>,
-    /// In a caller-tracking instance: the call site its panics report.
+    /// In a caller-tracking instance: the call site its panics report (`srcloc::ARG_LOC`: the
+    /// one `caller_arg` points to).
     caller_loc: Option<SrcLoc>,
+    /// In a caller-tracking instance that takes its caller's location as a parameter: that
+    /// parameter, a pointer to the `Str` ` at <path>:<line>:<col>` (empty when unknown).
+    caller_arg: Option<vir::Local>,
     /// A block is live once a live block jumps to it; dead blocks are pruned in `finish`.
     live: Vec<bool>,
     cur: BlockId,
@@ -599,6 +645,9 @@ struct FnLower<'c, 'h> {
     view_writes: Option<Vec<(Operand, TyId, Option<Operand>)>>,
     /// The next array dropped is a view's mirror, never a view itself (`Glue::MirrorDrop`).
     mirror_drop: bool,
+    /// While an `AnyTo` with a text is lowered: the words its `TypeError` starts with
+    /// (any_errors.rs).
+    any_context: Option<String>,
     /// The view bit tests and loops lowered, for versioning (view_unswitch.rs).
     view_loops: view_unswitch::ViewLoops,
     /// This function's read mode, once asked (rc.rs `lk_mode`).
@@ -704,6 +753,9 @@ struct FnLower<'c, 'h> {
     /// Lowering a method of the prelude's `Reflect`, where a proxy's reads reach their target:
     /// a read `any` cannot do yet names #823 (any_member.rs `any_get_str`).
     in_reflect: bool,
+    /// The body of a function of a user module or of std/proxy: its operations on `any` throw
+    /// what a proxy's trap throws, as velt_sema counts them (proxy_throws.rs).
+    proxy_routes: bool,
     /// An object is being built from a record's entries (`any_record_fill`): its fields are
     /// converted without that path, so a type that contains itself ends.
     record_fill: bool,

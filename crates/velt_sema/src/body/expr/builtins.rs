@@ -27,6 +27,7 @@ impl FnCx<'_, '_> {
             return self.intrinsic_call(id, rest, type_args, args, exp, span);
         }
         match name {
+            super::overload_arg::OVERLOAD_ARG => self.overload_arg(type_args, args, span),
             "panic" => self.simple_intrinsic(Intrinsic::Panic, "`panic`", args, exp, span),
             "shared" => {
                 // `shared<i64>(0)`: the written type argument types the value. Without one, an
@@ -139,7 +140,14 @@ impl FnCx<'_, '_> {
             }
         }
         let ck = self.check_call(&c, slots, args, exp, span);
-        if matches!(i, Intrinsic::JsonParse | Intrinsic::JsonParseRows) {
+        if matches!(
+            i,
+            Intrinsic::JsonParse
+                | Intrinsic::JsonParseRows
+                | Intrinsic::JsonParseCursor
+                | Intrinsic::ReadRows
+                | Intrinsic::ReadRow
+        ) {
             self.json_parse_throws(span);
         }
         if matches!(
@@ -218,7 +226,7 @@ impl FnCx<'_, '_> {
     fn print(&mut self, intr: Intrinsic, args: &[ast::Expr], span: Span) -> hir::Expr {
         let mut out = vec![];
         for a in args {
-            let h = self.expr(a, None, Want::Borrow);
+            let h = self.printed_expr(a);
             let h = self.read_shared(h);
             // A `Date` prints as its ISO string, like Node.
             let h = self.own_to_string(h, "__inspect");

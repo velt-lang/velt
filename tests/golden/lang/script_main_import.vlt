@@ -1,0 +1,5 @@
+// A script that imports a function named `main` and calls it (#1567): the statements are the
+// program, so the generated entry point is not named `main` and does not clash with the import.
+import { main } from "./_script_main/m2";
+
+main();

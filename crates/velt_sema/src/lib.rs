@@ -30,8 +30,10 @@ mod absent_fields;
 mod alias_expand;
 mod anon;
 mod any;
+mod any_iface_sites;
 mod assigned_fields;
 mod ast_walk;
+mod atomic_copies;
 mod body;
 mod brands;
 mod call_sigs;
@@ -55,6 +57,7 @@ mod flow;
 mod fn_types;
 mod fresh_returns;
 mod generic_arrows;
+mod generic_fns;
 mod generic_override_sites;
 mod generic_spread;
 mod global_this;
@@ -86,6 +89,7 @@ mod moves;
 mod namespaces;
 mod nested_closures;
 mod object_copies;
+mod overload_adapter;
 mod overloads;
 mod ownership;
 mod promise_copies;
@@ -105,6 +109,7 @@ mod timings;
 mod ts_protocol;
 mod type_defaults;
 mod type_level;
+mod type_meanings;
 mod type_queries;
 mod type_reach;
 mod types;
@@ -316,6 +321,9 @@ fn check_timed(
     let null_proto = modules
         .iter()
         .any(|m| !m.is_std && calls_object_create_null(&m.ast));
+    let ctor_reads = modules
+        .iter()
+        .any(|m| !m.is_std && reads_constructor(&m.ast));
     let new_cx = |round: &'static str,
                   held_borrows: bool,
                   seeds: &throws::FnTypeSeeds,
@@ -338,6 +346,7 @@ fn check_timed(
             cx.overloaded_methods = o.methods.clone();
         }
         cx.objects.null_proto_records = null_proto;
+        cx.objects.ctor_reads = ctor_reads;
         cx.objects.brands = brands.clone();
         cx.global_props = global_props.clone();
         cx.recovered = (recovered.iter())
@@ -351,8 +360,10 @@ fn check_timed(
             cx.set_closure_groups(&c.groups);
         }
         let entry = timings::pass(round, || analyze(&mut cx, root, root_mod, opts));
+        global_this::drop_site_errors(&mut cx);
         if let Some(o) = &overloaded {
             overloads::report_misfits(&mut cx.diags, &o.sig_spans);
+            overload_adapter::check_identity(&mut cx, &o.adapted);
         }
         (cx, entry)
     };
@@ -418,6 +429,8 @@ fn check_timed(
     let union_shapes = anon::concrete_unions(&cx);
     let dyn_members = any::dyn_members(&mut cx);
     let (upcasts, upcast_impls) = cx.upcast_tables();
+    let extension_impls = collect::ext_impls::hir_bounds(&cx);
+    let dyn_bounds = collect::ext_impls::dyn_bounds(&mut cx);
     let ctx::Ctx {
         ty,
         defs,
@@ -429,6 +442,8 @@ fn check_timed(
         gen_throw,
         super_calls,
         cpu_targets,
+        generic_called,
+        generic_fns,
         ..
     } = cx;
     let defs = defs
@@ -459,6 +474,10 @@ fn check_timed(
         upcast_impls,
         cpu_targets: cpu_targets.into_iter().collect(),
         type_names,
+        generic_dyn_methods: generic_called.names().collect(),
+        fresh_closures: generic_fns.fresh.into_iter().collect(),
+        extension_impls: extension_impls.into_iter().collect(),
+        dyn_bounds: dyn_bounds.into_iter().collect(),
     };
     (Some(program), diags)
 }
@@ -486,7 +505,7 @@ fn analyze(
 ) -> Option<hir::DefId> {
     analyze_bodies(cx);
     let entry = check_main(cx, root, root_mod, opts.require_main);
-    resolve::check_unused_aliases(cx);
+    alias_expand::check_unused_aliases(cx);
     entry
 }
 
@@ -528,6 +547,9 @@ fn analyze_bodies(cx: &mut ctx::Ctx) {
     timings::pass("generic_override_sites::check", || {
         generic_override_sites::check(cx)
     });
+    timings::pass("generic_fns::mark_shared_values", || {
+        generic_fns::mark_shared_values(cx)
+    });
     // Growing generic recursion has infinitely many instantiations: the passes below propagate
     // requirements per instantiation and would never finish.
     if timings::pass("instantiation_cycles::check", || {
@@ -535,6 +557,8 @@ fn analyze_bodies(cx: &mut ctx::Ctx) {
     }) {
         return;
     }
+    // After the cycles: it carries calls and conversions through instantiations.
+    timings::pass("any_iface_sites::check", || any_iface_sites::check(cx));
     // Before the passes that read instantiated types: deferred types reduced per instance.
     timings::pass("type_level::instances::reach", || {
         type_level::instances::reach(cx)
@@ -569,9 +593,6 @@ fn ownership_passes(cx: &mut ctx::Ctx) {
         ownership::infer_local_async(cx)
     });
     timings::pass("ownership::infer_modes", || ownership::infer_modes(cx));
-    timings::pass("body::expr::jsx::check_prop_copies", || {
-        body::expr::jsx::check_prop_copies(cx)
-    });
     timings::pass("throws::infer_all", || throws::infer_all(cx));
     // The program is checked again with the error types of function types written without
     // `throws` that this check found (`throws::fn_types`): the rest would be redone.
@@ -597,6 +618,7 @@ fn ownership_passes(cx: &mut ctx::Ctx) {
     timings::pass("ownership::clone_reused", || {
         ownership::clone_reused(cx, &moved.reused)
     });
+    timings::pass("atomic_copies::check", || atomic_copies::check(cx));
     timings::pass("ownership::box_cells", || {
         ownership::box_cells(cx, &moved.boxed, &moved.per_iteration)
     });
@@ -621,7 +643,10 @@ fn check_main(
     require_main: bool,
 ) -> Option<hir::DefId> {
     let file_start = Span::new(root_mod.file, root_mod.ast.span.lo, root_mod.ast.span.lo);
-    let main = cx.scopes[root].items.get("main").copied();
+    // A script that declares `main` itself starts at its statements (`velt_syntax::SCRIPT_MAIN`).
+    let main = (cx.scopes[root].items.get(velt_syntax::SCRIPT_MAIN))
+        .or_else(|| cx.scopes[root].items.get("main"))
+        .copied();
     // A library module may use the name `main` for anything; only a `main` function is checked.
     let is_fn = |id: hir::DefId| matches!(cx.info[id.0 as usize], DefInfo::Fn(_));
     if !require_main && !matches!(main, Some(Item::Def(id)) if is_fn(id)) {
@@ -739,6 +764,24 @@ fn calls_object_create_null(module: &velt_syntax::ast::Module) -> bool {
                 && matches!(&object.kind, E::Ident(o) if o.name == "Object")
                 && matches!(arg.kind, E::Lit(ast::Lit::Null))
             {
+                self.0 = true;
+            }
+        }
+    }
+    let mut f = Find(false);
+    velt_syntax::visit::walk_module(module, &mut f);
+    f.0
+}
+
+/// Does `module` read a `constructor` property (`x.constructor`)? Only then does the prelude's
+/// `__anyConstructor` hold the dispatch over the program's classes, whose objects are module
+/// state (`body::expr::ctor_objects`); other programs get none of it.
+fn reads_constructor(module: &velt_syntax::ast::Module) -> bool {
+    use velt_syntax::ast::{self, ExprKind as E};
+    struct Find(bool);
+    impl<'a> velt_syntax::visit::Visit<'a> for Find {
+        fn expr(&mut self, e: &'a ast::Expr) {
+            if matches!(&e.kind, E::Member { prop, .. } if prop.name == "constructor") {
                 self.0 = true;
             }
         }

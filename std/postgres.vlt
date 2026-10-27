@@ -33,18 +33,51 @@
 import { IoResult, IoStatus } from "velt:io";
 
 declare async function velt_std_postgres__connect(url: string): Promise<IoResult<u64>>;
-declare async function velt_std_postgres__query(
-  client: u64,
-  sql: string,
-  params: string,
-  firstOnly: bool,
-): Promise<IoResult<string>>;
 declare async function velt_std_postgres__execute(
   client: u64,
   sql: string,
   params: string,
 ): Promise<IoResult<i64>>;
 declare async function velt_std_postgres__batch(client: u64, sql: string): Promise<IoStatus>;
+// Rows as a row cursor (`velt_text::rows_cursor`), decoded where the driver has them, and
+// parameters handed to a sink value by value for the types `__intrinsic_db_bind` takes.
+declare async function velt_std_postgres__query_rows(
+  client: u64,
+  sql: string,
+  params: string,
+  firstOnly: bool,
+): Promise<IoResult<u64>>;
+declare async function velt_std_postgres__query_bound(
+  client: u64,
+  sql: string,
+  sink: u64,
+  firstOnly: bool,
+): Promise<IoResult<u64>>;
+declare async function velt_std_postgres__execute_bound(
+  client: u64,
+  sql: string,
+  sink: u64,
+): Promise<IoResult<i64>>;
+declare async function velt_std_postgres__pool_query_rows(
+  pool: u64,
+  sql: string,
+  params: string,
+  firstOnly: bool,
+): Promise<IoResult<u64>>;
+declare async function velt_std_postgres__pool_query_bound(
+  pool: u64,
+  sql: string,
+  sink: u64,
+  firstOnly: bool,
+): Promise<IoResult<u64>>;
+declare async function velt_std_postgres__pool_execute_bound(
+  pool: u64,
+  sql: string,
+  sink: u64,
+): Promise<IoResult<i64>>;
+declare function velt_std_postgres__bind_begin(): u64;
+declare function velt_std_postgres__bind_abort(sink: u64);
+declare function velt_std_postgres__close_rows(cursor: u64): IoStatus;
 declare async function velt_std_postgres__query_batch(
   client: u64,
   sql: string,
@@ -65,12 +98,6 @@ declare function velt_std_postgres__note_error(client: u64, code: string, messag
 declare function velt_std_postgres__close(client: u64);
 declare function velt_std_postgres__pool_new(url: string, max: u32): IoResult<u64>;
 declare async function velt_std_postgres__pool_connect(pool: u64): Promise<IoResult<u64>>;
-declare async function velt_std_postgres__pool_query(
-  pool: u64,
-  sql: string,
-  params: string,
-  firstOnly: bool,
-): Promise<IoResult<string>>;
 declare async function velt_std_postgres__pool_execute(
   pool: u64,
   sql: string,
@@ -164,23 +191,39 @@ function mismatch(client: u64, detail: string): PgError {
   return new PgError("EMISMATCH", message);
 }
 
-function rows<T>(client: u64, json: string): T[] {
+// The decoder reads the rows from the cursor, which is given back once, whatever happens: a
+// value the driver could not read comes first, then a row that does not fit.
+function cursorRows<T>(client: u64, cursor: u64): T[] {
+  let out: T[] = [];
+  let failure: string | null = null;
   try {
-    return JSON.parse<T[]>(json);
+    out = __intrinsic_json_parse_cursor<T[]>(cursor, 0, 0);
   } catch (e) {
-    throw mismatch(client, e.message);
+    failure = e.message;
   }
+  check(velt_std_postgres__close_rows(cursor));
+  if (failure != null) {
+    throw mismatch(client, failure);
+  }
+  return out;
 }
 
-function firstRow<T>(client: u64, json: string): T | null {
-  if (json == "") {
+function cursorRow<T>(client: u64, cursor: u64): T | null {
+  if (cursor == 0) {
     return null;
   }
+  let out: T | null = null;
+  let failure: string | null = null;
   try {
-    return JSON.parse<T>(json);
+    out = __intrinsic_json_parse_cursor<T>(cursor, 0, 0);
   } catch (e) {
-    throw mismatch(client, e.message);
+    failure = e.message;
   }
+  check(velt_std_postgres__close_rows(cursor));
+  if (failure != null) {
+    throw mismatch(client, failure);
+  }
+  return out;
 }
 
 // Batch results (`velt_std_postgres__query_batch` modes 0 and 1): every execution's rows, or its first
@@ -215,39 +258,46 @@ export struct Client {
 
   /** Every row of `sql` (any statement that returns rows). */
   async query<T, P>(sql: string, params: P): Promise<T[]> {
-    const json = unwrap(
-      await velt_std_postgres__query(this.handle, sql, JSON.stringify(params), false),
-    );
-    return rows<T>(this.handle, json);
+    return cursorRows<T>(this.handle, await this.open(sql, params, false));
   }
 
   /** The first row, or null if there is none. */
   async queryOne<T, P>(sql: string, params: P): Promise<T | null> {
-    const json = unwrap(
-      await velt_std_postgres__query(this.handle, sql, JSON.stringify(params), true),
-    );
-    return firstRow<T>(this.handle, json);
+    return cursorRow<T>(this.handle, await this.open(sql, params, true));
   }
 
   /** Runs `sql`; the number of rows it inserted, updated, deleted or returned. */
   async execute<P>(sql: string, params: P): Promise<i64> {
+    const sink = velt_std_postgres__bind_begin();
+    if (__intrinsic_db_bind<P>(sink, params)) {
+      return unwrap(await velt_std_postgres__execute_bound(this.handle, sql, sink));
+    }
+    velt_std_postgres__bind_abort(sink);
     return unwrap(await velt_std_postgres__execute(this.handle, sql, JSON.stringify(params)));
   }
 
   /** `query` without parameters. */
   async select<T>(sql: string): Promise<T[]> {
-    return rows<T>(
-      this.handle,
-      unwrap(await velt_std_postgres__query(this.handle, sql, "", false)),
-    );
+    const cursor = unwrap(await velt_std_postgres__query_rows(this.handle, sql, "", false));
+    return cursorRows<T>(this.handle, cursor);
   }
 
   /** `queryOne` without parameters. */
   async selectOne<T>(sql: string): Promise<T | null> {
-    return firstRow<T>(
-      this.handle,
-      unwrap(await velt_std_postgres__query(this.handle, sql, "", true)),
-    );
+    const cursor = unwrap(await velt_std_postgres__query_rows(this.handle, sql, "", true));
+    return cursorRow<T>(this.handle, cursor);
+  }
+
+  // A cursor over the rows of `sql` with `params`, handed to the driver value by value when
+  // the type allows (the same binding as their JSON text), else as JSON text.
+  private async open<P>(sql: string, params: P, firstOnly: bool): Promise<u64> {
+    const sink = velt_std_postgres__bind_begin();
+    if (__intrinsic_db_bind<P>(sink, params)) {
+      return unwrap(await velt_std_postgres__query_bound(this.handle, sql, sink, firstOnly));
+    }
+    velt_std_postgres__bind_abort(sink);
+    const text = JSON.stringify(params);
+    return unwrap(await velt_std_postgres__query_rows(this.handle, sql, text, firstOnly));
   }
 
   /** `execute` without parameters. */
@@ -466,25 +516,41 @@ export struct Pool {
   private handle: u64;
 
   async query<T, P>(sql: string, params: P): Promise<T[]> {
-    const r = await velt_std_postgres__pool_query(this.handle, sql, JSON.stringify(params), false);
-    return rows<T>(0, unwrap(r));
+    return cursorRows<T>(0, await this.open(sql, params, false));
   }
 
   async queryOne<T, P>(sql: string, params: P): Promise<T | null> {
-    const r = await velt_std_postgres__pool_query(this.handle, sql, JSON.stringify(params), true);
-    return firstRow<T>(0, unwrap(r));
+    return cursorRow<T>(0, await this.open(sql, params, true));
   }
 
   async execute<P>(sql: string, params: P): Promise<i64> {
+    const sink = velt_std_postgres__bind_begin();
+    if (__intrinsic_db_bind<P>(sink, params)) {
+      return unwrap(await velt_std_postgres__pool_execute_bound(this.handle, sql, sink));
+    }
+    velt_std_postgres__bind_abort(sink);
     return unwrap(await velt_std_postgres__pool_execute(this.handle, sql, JSON.stringify(params)));
   }
 
   async select<T>(sql: string): Promise<T[]> {
-    return rows<T>(0, unwrap(await velt_std_postgres__pool_query(this.handle, sql, "", false)));
+    const cursor = unwrap(await velt_std_postgres__pool_query_rows(this.handle, sql, "", false));
+    return cursorRows<T>(0, cursor);
   }
 
   async selectOne<T>(sql: string): Promise<T | null> {
-    return firstRow<T>(0, unwrap(await velt_std_postgres__pool_query(this.handle, sql, "", true)));
+    const cursor = unwrap(await velt_std_postgres__pool_query_rows(this.handle, sql, "", true));
+    return cursorRow<T>(0, cursor);
+  }
+
+  // As `Client.open`, on one of the pool's connections.
+  private async open<P>(sql: string, params: P, firstOnly: bool): Promise<u64> {
+    const sink = velt_std_postgres__bind_begin();
+    if (__intrinsic_db_bind<P>(sink, params)) {
+      return unwrap(await velt_std_postgres__pool_query_bound(this.handle, sql, sink, firstOnly));
+    }
+    velt_std_postgres__bind_abort(sink);
+    const text = JSON.stringify(params);
+    return unwrap(await velt_std_postgres__pool_query_rows(this.handle, sql, text, firstOnly));
   }
 
   async run(sql: string): Promise<i64> {

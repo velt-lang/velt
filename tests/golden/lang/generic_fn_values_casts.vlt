@@ -1,0 +1,84 @@
+// Generic function values converted (#943): a function asserted to a generic function type is
+// evaluated once, whatever the expression; a generic function or value as a generic type taking
+// more optional parameters; a generic function declared in a function body is one value; and
+// conversions that make a new function at each use, held as `unknown` (not compared) in a
+// program that compares only functions of other types; a type alias of a generic function type
+// asserted to; and functions declared in a module constant's arrow.
+type Tok<T> = symbol & { __t?: T };
+type G = <T>(x: T) => T;
+type B = <T>(x: T, y?: number) => T;
+type N = (x: number) => number;
+type MkTok = <T>(d: string) => Tok<T>;
+
+const viaAlias = Symbol as unknown as MkTok;
+
+const local = (): boolean => {
+  function inner<T>(x: T): T {
+    return x;
+  }
+  function plain(x: number): number {
+    return x;
+  }
+  const a: G = inner;
+  const b: G = inner;
+  const f = plain;
+  return a === b && f(2) === 2;
+};
+
+function other(d: string): symbol {
+  console.log("other", d);
+  return Symbol(d);
+}
+
+function maker(): (d: string) => symbol {
+  console.log("made");
+  return (d: string) => Symbol(d);
+}
+
+function id<T>(x: T): T {
+  return x;
+}
+
+function same<T>(x: T): T {
+  return x;
+}
+
+function main(): void {
+  let f = (d: string): symbol => {
+    console.log("first", d);
+    return Symbol(d);
+  };
+  const tok = f as unknown as <T>(d: string) => Tok<T>;
+  f = other;
+  console.log(String(tok<number>("z")), String(f("w")));
+  const mk = maker() as unknown as <T>(d: string) => Tok<T>;
+  console.log(String(mk<string>("y")), String(mk<boolean>("x")));
+
+  const b: B = same;
+  console.log(b(1, 2), b("s"));
+  const g: G = id;
+  const b2: B = g;
+  console.log(b2(3, 4), b2([true]));
+
+  function inner<T>(x: T): T {
+    return x;
+  }
+  const i1: G = inner;
+  const i2: G = inner;
+  const m = new Map<G, number>();
+  m.set(i1, 1);
+  m.set(i2, 2);
+  console.log(i1 === i2, [i1].includes(i2), new Set([i1, i2]).size, m.get(inner), m.size);
+
+  const p: (x: number) => number = g;
+  const q: (x: number) => number = g;
+  const k = (): void => {};
+  const ks = [k];
+  const l = (s: string): void => {};
+  console.log(p(1) + q(2), ks.indexOf(k), [l].includes(l));
+  const n: N = g;
+  const u: unknown = n;
+  const t: unknown = tok;
+  console.log((u as N)(5), typeof u, typeof t);
+  console.log(String(viaAlias<number>("v")), local());
+}

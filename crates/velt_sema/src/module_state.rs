@@ -35,6 +35,14 @@ pub(crate) fn order(cx: &mut Ctx) -> Vec<DefId> {
     if lets.is_empty() {
         return Vec::new();
     }
+    let class_values = class_value_set(cx);
+    // The classes' values exist before any of their module's code runs (they read nothing,
+    // `body::expr::ctor_values`, `ctor_objects`): at its start, also when the root file's
+    // slots are initialized among its statements (`defer_root`), which go by these positions.
+    let lets: Vec<(usize, u32, DefId)> = lets
+        .into_iter()
+        .map(|(m, start, d)| (m, if class_values.contains(&d) { 0 } else { start }, d))
+        .collect();
     let (modules, evaluated, reached) = module_order(cx);
     let rank: FxHashMap<usize, usize> = modules.iter().enumerate().map(|(i, m)| (*m, i)).collect();
     // A module no value import reaches is never evaluated: its top-level statements don't run,
@@ -58,7 +66,7 @@ pub(crate) fn order(cx: &mut Ctx) -> Vec<DefId> {
     // so do the classes' values, which read nothing (`body::expr::ctor_values`).
     sorted.sort_by_key(|(m, start, d)| {
         let rank = rank.get(m).copied().unwrap_or(usize::MAX);
-        let first = cx.global_props.is_slot(*d) || cx.is_class_value(*d);
+        let first = cx.global_props.is_slot(*d) || class_values.contains(d);
         (!first, rank, *start)
     });
     let order: Vec<DefId> = sorted.into_iter().map(|(_, _, d)| d).collect();
@@ -268,9 +276,14 @@ fn defer_root(cx: &mut Ctx, entry: Option<DefId>, slots: &[DefId]) -> u32 {
     if !slots[from..].iter().all(|&d| is_root(d)) {
         return none;
     }
+    let class_values = class_value_set(cx);
     let starts: Vec<u32> = slots[from..]
         .iter()
-        .map(|&d| cx.global(d).map_or(0, |g| g.src.span.lo))
+        .map(|&d| match class_values.contains(&d) {
+            // Before the file's first statement (`order`).
+            true => 0,
+            false => cx.global(d).map_or(0, |g| g.src.span.lo),
+        })
         .collect();
     let unit = cx.ty.unit;
     let Some(Some(hir::Def::Fn(f))) = cx.defs.get_mut(main.0 as usize) else {
@@ -690,7 +703,7 @@ impl crate::visit::VisitMut for FactsOf<'_, '_> {
                         None => self.unknown("calls a function value"),
                     }
                 }
-                hir::Callee::Dyn { slot } => {
+                hir::Callee::Dyn { slot, .. } => {
                     self.passed(args);
                     let recv = args.first().map(|a| self.cx.ty.kind(a.ty).clone());
                     match recv {
@@ -723,4 +736,9 @@ impl crate::visit::VisitMut for FactsOf<'_, '_> {
             _ => {}
         }
     }
+}
+
+/// The constants holding classes' values (`body::expr::ctor_values`, `ctor_objects`).
+fn class_value_set(cx: &Ctx) -> FxHashSet<DefId> {
+    cx.objects.class_values.iter().map(|(_, g)| *g).collect()
 }

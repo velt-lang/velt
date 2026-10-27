@@ -1,0 +1,7 @@
+symbol_record_keys.vlt:10:46: error: a `Record<symbol, ...>` is indexed by symbols, not by `0` (TypeScript's TS7053)
+symbol_record_keys.vlt:11:46: error: a `Record<symbol, ...>` is indexed by symbols, not by `f64` (TypeScript's TS7053)
+symbol_record_keys.vlt:12:46: error: a `Record<symbol, ...>` is indexed by symbols, not by `f64` (TypeScript's TS7053)
+symbol_record_keys.vlt:13:46: error: a `Record<symbol, ...>` is indexed by symbols, not by `string` (TypeScript's TS7053)
+symbol_record_keys.vlt:14:46: error: a computed key of a `Record<symbol, ...>` cast is not supported yet
+symbol_record_keys.vlt:15:46: error: a computed key of a `Record<symbol, ...>` cast is not supported yet
+symbol_record_keys.vlt:17:53: error: reading `Symbol.iterator` through a `Record<symbol, ...>` cast is not supported yet (#924)

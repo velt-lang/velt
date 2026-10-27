@@ -1,0 +1,2 @@
+readonly_cast_leaks.vlt:5:6: error: property 'push' does not exist on type 'readonly unknown[]' (TypeScript's TS2339)
+readonly_cast_leaks.vlt:9:5: error: property 'add' does not exist on type 'ReadonlySet<string>' (TypeScript's TS2339)

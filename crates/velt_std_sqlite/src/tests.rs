@@ -18,7 +18,7 @@ fn exec(db: DbHandle, sql: &str) -> Result<(), String> {
 }
 
 fn prepare(db: DbHandle, sql: &str) -> Result<StmtHandle, String> {
-    statement::prepare(db, sql).map_err(text)
+    statement::prepare(db, sql.as_bytes()).map_err(text)
 }
 
 fn run(stmt: StmtHandle, params: &str) -> Result<(i64, i64), String> {
@@ -27,13 +27,50 @@ fn run(stmt: StmtHandle, params: &str) -> Result<(i64, i64), String> {
         .map_err(text)
 }
 
-/// The rows as the JSON text they stand for (`""` for no row with `first_only`).
+/// The rows as the JSON text they stand for (`""` for no row with `first_only`), read through
+/// the cursor std's decoder reads.
 fn query(stmt: StmtHandle, params: &str, first_only: bool) -> Result<String, String> {
-    let rows = statement::query(stmt, params.as_bytes(), first_only, Vec::new()).map_err(text)?;
-    if rows.is_empty() {
+    use velt_text::rows::{header_end, name_at, push_cell, NAMES};
+    use velt_text::rows_cursor::RawCursor;
+    let handle = statement::open_rows(stmt, params.as_bytes(), first_only).map_err(text)?;
+    if handle == 0 {
         return Ok(String::new());
     }
-    Ok(String::from_utf8(velt_text::rows::to_json(&rows).unwrap()).unwrap())
+    let mut out = Vec::new();
+    // SAFETY: a cursor `open_rows` just made, given back once.
+    unsafe {
+        let raw = &*(handle as *const RawCursor);
+        let header = raw.header();
+        let (single, columns, _) = header_end(header).unwrap();
+        if !single {
+            out.push(b'[');
+        }
+        let mut rows = 0;
+        while (!single || rows == 0) && raw.step() {
+            if rows > 0 {
+                out.push(b',');
+            }
+            rows += 1;
+            out.push(b'{');
+            let mut name = NAMES;
+            for col in 0..columns {
+                if col > 0 {
+                    out.push(b',');
+                }
+                let (start, end, _) = name_at(header, name);
+                name = end;
+                velt_text::json_escape::push_json_string(&mut out, &header[start..end]);
+                out.push(b':');
+                push_cell(&mut out, raw.cell(col));
+            }
+            out.push(b'}');
+        }
+        if !single {
+            out.push(b']');
+        }
+        super::cursor::close(handle).map_err(text)?;
+    }
+    Ok(String::from_utf8(out).unwrap())
 }
 
 fn sql_query(db: DbHandle, sql: &str, params: &str) -> Result<String, String> {
@@ -225,4 +262,60 @@ fn open_reports_missing_files() {
     let path = std::env::temp_dir().join("velt-sqlite-missing-dir/none.db");
     let e = text(open(&path.to_string_lossy(), false, false, 0).unwrap_err());
     assert!(e.starts_with("SQLITE_CANTOPEN"), "{e}");
+}
+
+#[test]
+fn rows_follow_schema_changes_with_shapes_kept_per_statement() {
+    let db = open_memory();
+    exec(
+        db,
+        "CREATE TABLE t (a INTEGER, ok BOOLEAN); INSERT INTO t VALUES (1, 1)",
+    )
+    .unwrap();
+    let all = prepare(db, "SELECT * FROM t").unwrap();
+    assert_eq!(query(all, "", false).unwrap(), r#"[{"a":1,"ok":true}]"#);
+    // Preparing the same SQL again shares what the first handle read.
+    let again = prepare(db, "  SELECT * FROM t").unwrap();
+    assert_eq!(query(again, "", true).unwrap(), r#"{"a":1,"ok":true}"#);
+
+    // SQLite recompiles the statement after a schema change: the new column shows.
+    exec(db, "ALTER TABLE t ADD COLUMN b TEXT").unwrap();
+    assert_eq!(
+        query(all, "", false).unwrap(),
+        r#"[{"a":1,"ok":true,"b":null}]"#
+    );
+
+    // The connection's cache lets the compiled statement go (more distinct statements than it
+    // keeps); compiled anew after another schema change, it is read anew too.
+    for i in 0..300 {
+        let other = prepare(db, &format!("SELECT {i} AS n")).unwrap();
+        assert_eq!(query(other, "", true).unwrap(), format!(r#"{{"n":{i}}}"#));
+        unsafe { statement::free(other) };
+    }
+    exec(db, "ALTER TABLE t ADD COLUMN c INTEGER").unwrap();
+    assert_eq!(
+        query(all, "", false).unwrap(),
+        r#"[{"a":1,"ok":true,"b":null,"c":null}]"#
+    );
+    // Also when a `run` compiled it first.
+    for i in 0..300 {
+        let other = prepare(db, &format!("SELECT {i} AS m")).unwrap();
+        run(other, "").unwrap();
+        unsafe { statement::free(other) };
+    }
+    exec(db, "ALTER TABLE t ADD COLUMN d INTEGER").unwrap();
+    run(again, "").unwrap();
+    assert_eq!(
+        query(all, "", false).unwrap(),
+        r#"[{"a":1,"ok":true,"b":null,"c":null,"d":null}]"#
+    );
+    // No rows: the header alone, with the current names.
+    exec(db, "DELETE FROM t").unwrap();
+    assert_eq!(query(all, "", false).unwrap(), "[]");
+    assert_eq!(query(all, "", true).unwrap(), "");
+    unsafe {
+        statement::free(all);
+        statement::free(again);
+    }
+    close(db);
 }

@@ -352,7 +352,13 @@ fn join_iface_slot(cx: &mut Ctx, iface: DefId, slot: usize, methods: &[DefId]) -
     .chain(m.params.iter().map(|p| p.mode))
     .collect();
     for &method in methods {
-        join_into(&mut join, &modes_of(cx, method));
+        let mut modes = modes_of(cx, method);
+        // A generic closure implementing a generic function type (`crate::generic_fns`): its
+        // environment stands for `this`.
+        if cx.fn_info(method).kind == crate::defs::FnKind::Closure {
+            modes.insert(0, PassMode::Borrow);
+        }
+        join_into(&mut join, &modes);
     }
     let DefInfo::Iface(info) = &mut cx.info[iface.0 as usize] else {
         unreachable!("ICE: iface")
