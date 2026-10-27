@@ -172,6 +172,9 @@ Decisions and their rationale, including what is still planned:
 - [Weak references without a collector](design/weak-refs.md): the weak flag, the per-thread
   side table and the ephemeron rule under `WeakMap`, `WeakSet`, `WeakRef` and `weak T` (runtime
   prototype, issues #823 and #11).
+- [The JSON engine](design/json-engine.md): key matching, a SIMD scanner, a tape for
+  `JsonValue`, bytes and streams, and compile-time `@json.*` decorators borrowed from
+  System.Text.Json (proposed, issue #1655).
 
 ## Testing
 
