@@ -1,0 +1,60 @@
+// Every member call passes its object to a function expression taking `this: any`, as in Node:
+// computed and optional calls through `any` and proxies, elements of an `any[]`, typed objects
+// with a `Function` member; `bind` and `apply` on a `Function`; `arguments` without `this`;
+// typed rest parameters.
+const g = function (this: any, x: string) {
+  return this.s + x;
+};
+const og: any = { s: "!", g };
+const k = "g";
+console.log(og["g"]("hi"), og[k]("ho"), og.g?.("oc"), og.missing?.("never"));
+// `arr[0](x)` passes the array.
+const isArray = function (this: any, x: string) {
+  return String(Array.isArray(this)) + x;
+};
+const arr: any[] = [isArray];
+console.log(arr[0]("x"));
+const p: any = new Proxy({ s: "proxy", g }, {});
+console.log(p["g"]("pp"), p.g?.("po"));
+
+// A typed object whose member is a `Function`.
+const o: { n: number; f: Function } = {
+  n: 1,
+  f: function (this: any): any {
+    if (this === undefined) {
+      return "undef";
+    }
+    return this.n;
+  },
+};
+console.log(o.f());
+const table: Record<string, Function> = { n: 5 as any, f: o.f };
+console.log(table.f());
+
+// `bind` with arguments and `apply` with `null` on a `Function`.
+const tf: Function = function (this: any, a: number, b: number) {
+  return this.n * 100 + a * 10 + b;
+};
+const bound = tf.bind({ n: 1 }, 7);
+console.log(bound(8), tf.apply({ n: 2 }, [3, 4]));
+const count: Function = function (this: any) {
+  return arguments.length + (this === null || this === undefined ? 0 : this.n);
+};
+console.log(count.apply({ n: 10 }, null), count.apply({ n: 20 }, undefined));
+
+// `arguments` in a body that doesn't use `this`.
+const m: Record<string, Function> = {};
+m.a = function (this: any, x: number) {
+  return typeof x + arguments.length;
+};
+console.log(m.a(1, 2, 3));
+
+// A typed rest parameter converts each element.
+m.r = function (this: any, first: string, ...more: number[]) {
+  let sum = 0;
+  for (const v of more) {
+    sum += v;
+  }
+  return first + sum;
+};
+console.log(m.r("s", 1, 2, 3));

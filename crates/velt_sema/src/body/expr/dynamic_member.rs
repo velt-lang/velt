@@ -375,11 +375,34 @@ impl FnCx<'_, '_> {
             return None;
         }
         let bind = prop.name == "bind";
+        // `f.bind(thisArg, ...args)` in a program with function expressions taking `this`:
+        // the member call through `any`, which such a function answers (std/this_fn.vlt).
+        if bind && args.len() > 1 && self.cx.prelude_adt("__ThisFn").is_some() {
+            let any = self.any_ty()?;
+            let key = self.key_lit(&prop.name, prop.span);
+            let text = format!("{}.{}", self.callee_text(f), prop.name);
+            let text = self.key_lit(&text, span);
+            let mut all = vec![f.clone(), key, text];
+            all.extend(self.dynamic_args(args, any)?);
+            return Some(self.intrinsic(Intrinsic::AnyCall, all, any, span));
+        }
         let (this, rest) = match args.split_first() {
             Some((this, _)) if matches!(this.kind, ast::ExprKind::Spread(_)) => return None,
             Some((this, rest)) => (Some(this), rest),
             None => (None, args),
         };
+        // `f.apply(thisArg, null)` / `undefined`: no arguments, as in JavaScript.
+        let no_list = |l: &ast::Expr| {
+            matches!(
+                l.kind,
+                ast::ExprKind::Lit(ast::Lit::Null | ast::Lit::Undefined)
+            )
+        };
+        let rest = match (prop.name.as_str(), rest) {
+            ("apply", [l]) if no_list(l) => &[],
+            _ => rest,
+        };
+        let given = rest;
         let rest = match (prop.name.as_str(), rest) {
             ("call", _) => rest.to_vec(),
             ("apply" | "bind", []) => vec![],
@@ -430,8 +453,7 @@ impl FnCx<'_, '_> {
                 let key = self.key_lit(&prop.name, prop.span);
                 let text =
                     self.key_lit(&format!("{}.{}", self.callee_text(&held), prop.name), span);
-                let (_, list) = args.split_first()?;
-                let boxed = self.dynamic_args(list, any)?;
+                let boxed = self.dynamic_args(given, any)?;
                 let mut all = vec![held, key, text, t.clone()];
                 all.extend(boxed);
                 self.intrinsic(Intrinsic::AnyCall, all, any, span)

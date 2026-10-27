@@ -443,7 +443,13 @@ impl FnLower<'_, '_> {
         self.proxy_join(done);
     }
 
-    fn any_index_at(&mut self, data: &Operand, desc: &Operand, i: Operand, out: Operand) {
+    pub(super) fn any_index_at(
+        &mut self,
+        data: &Operand,
+        desc: &Operand,
+        i: Operand,
+        out: Operand,
+    ) {
         self.any_nullish_check(desc, NullKey::Num(&i));
         let done = self.proxy_branch("__get", data, desc, |lw, obj, pty, r| {
             let n = lw.copy_to_temp(i.clone(), Ty::F64);

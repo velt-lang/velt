@@ -17,7 +17,7 @@ pub(super) const ARRAY_ID: u64 = u64::MAX - 1;
 
 /// How a write's key reaches the slot.
 #[derive(Clone)]
-enum SetKey {
+pub(super) enum SetKey {
     /// The address of a string.
     Str(Operand),
     /// An `f64`.
@@ -100,13 +100,13 @@ impl FnLower<'_, '_> {
         unit
     }
 
-    /// `o[k] = v` where the receiver `(data, desc)` and the key (the address of a string) are
+    /// `o[k] = v` where the receiver `(data, desc)` and the key (a string's address or a number) are
     /// evaluated already (a key write of a generic body on `any`, key_any.rs).
     pub(super) fn any_set_named(
         &mut self,
         data: &Operand,
         desc: &Operand,
-        key: Operand,
+        key: SetKey,
         v: &hir::Expr,
     ) -> Operand {
         let unit = Operand::Const(crate::vir::Const::Unit, Ty::Unit);
@@ -122,7 +122,7 @@ impl FnLower<'_, '_> {
         let buf = Place::local(self.temp(avt));
         self.assign(buf.clone(), Rvalue::Use(vv));
         let va = self.addr(buf);
-        self.any_set_at(data, desc, SetKey::Str(key), va);
+        self.any_set_at(data, desc, key, va);
         unit
     }
 

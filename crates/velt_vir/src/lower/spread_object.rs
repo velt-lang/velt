@@ -192,8 +192,24 @@ impl FnLower<'_, '_> {
     /// The property names the key `key` of `object[key]` may hold at this instantiation: one
     /// per string literal of its type, with the value of the key's tag that selects each.
     pub(super) fn key_names(&mut self, key: &hir::Expr) -> Vec<(i128, String)> {
+        let Some(lits) = self.key_literals(key) else {
+            let kty = self.sub(key.ty);
+            ice(format_args!("a key access by {kty:?}"))
+        };
+        lits.into_iter()
+            .map(|(at, lit)| match lit {
+                LitValue::Str(name) => (at, name),
+                other => ice(format_args!("a key access by {other:?}")),
+            })
+            .collect()
+    }
+
+    /// The literals the key `key` may hold at this instantiation (its literal type, or each
+    /// member of a union of them), with the value of the key's tag that selects each; `None`
+    /// for another key type.
+    pub(super) fn key_literals(&mut self, key: &hir::Expr) -> Option<Vec<(i128, LitValue)>> {
         let kty = self.sub(key.ty);
-        let names: Vec<(i128, TyId)> = match self.cx.kind(kty) {
+        let tys: Vec<(i128, TyId)> = match self.cx.kind(kty) {
             TyKind::Literal(_) => vec![(0, kty)],
             TyKind::Adt(e, _) if matches!(self.cx.hir.def(e), hir::Def::Enum(_)) => {
                 let c_like = self.cx.is_c_like_enum(e);
@@ -209,13 +225,12 @@ impl FnLower<'_, '_> {
                     })
                     .collect()
             }
-            _ => ice(format_args!("a key access by {kty:?}")),
+            _ => return None,
         };
-        names
-            .into_iter()
+        tys.into_iter()
             .map(|(at, lit)| match self.cx.kind(lit) {
-                TyKind::Literal(LitValue::Str(name)) => (at, name),
-                _ => ice(format_args!("a key access by {lit:?}")),
+                TyKind::Literal(l) => Some((at, l)),
+                _ => None,
             })
             .collect()
     }

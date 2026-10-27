@@ -1,12 +1,13 @@
 //! Function expressions with a `this: any` parameter whose body uses `this` (docs/reference/
 //! functions.md "Function expressions"): `this` is the object the function is called on, as in
-//! JavaScript. The value is the prelude's `__ThisFn` (std/prelude/this_fn.vlt) held as a
-//! `Function`:
+//! JavaScript. The value is `__ThisFn` (std/this_fn.vlt, a global loaded on demand by
+//! std/prelude/global/this_fn.vlt) held as a `Function`:
 //!
 //! ```text
 //! function (this: any, a: A, ...rest: R[]) { body }
 //!   ==> new __ThisFn((this: any, arguments: any[]) => {
-//!         let a: A = arguments[0]; let rest: R[] = arguments.slice(1); body
+//!         let a: A = arguments.length > 0 ? arguments[0] : undefined;
+//!         let rest: R[] = arguments.slice(1).map((x: any): R => x); body
 //!       }) as Function
 //! ```
 //!
@@ -147,7 +148,7 @@ impl FnCx<'_, '_> {
                     },
                     p.span,
                 );
-                synth(
+                let sliced = synth(
                     ast::ExprKind::Call {
                         callee: Box::new(slice),
                         type_args: vec![],
@@ -155,7 +156,53 @@ impl FnCx<'_, '_> {
                         optional: false,
                     },
                     p.span,
-                )
+                );
+                // Elements of another type than `any`: each converted, checked
+                // (`.map((x: any): E => x)`), as `let a: A = arguments[i]` converts one.
+                match rest_elem(&p.ty) {
+                    Some(elem) => {
+                        let x = ident("<rest>", p.span);
+                        let conv = synth(
+                            ast::ExprKind::Arrow {
+                                type_params: vec![],
+                                params: vec![ast::ArrowParam {
+                                    name: x.clone(),
+                                    pattern: None,
+                                    ty: Some(named_ty("any", p.span)),
+                                    default: None,
+                                    optional: false,
+                                    rest: false,
+                                }],
+                                ret: Some(elem.clone()),
+                                throws: None,
+                                body: ast::ArrowBody::Expr(Box::new(synth(
+                                    ast::ExprKind::Ident(x),
+                                    p.span,
+                                ))),
+                                is_async: false,
+                            },
+                            p.span,
+                        );
+                        let map = synth(
+                            ast::ExprKind::Member {
+                                object: Box::new(sliced),
+                                prop: ident("map", p.span),
+                                optional: false,
+                            },
+                            p.span,
+                        );
+                        synth(
+                            ast::ExprKind::Call {
+                                callee: Box::new(map),
+                                type_args: vec![],
+                                args: vec![conv],
+                                optional: false,
+                            },
+                            p.span,
+                        )
+                    }
+                    None => sliced,
+                }
             } else {
                 // `arguments.length > i ? arguments[i] : undefined`: a left-out argument is
                 // `undefined`.
@@ -296,4 +343,20 @@ fn named_ty(name: &str, span: Span) -> ast::TypeExpr {
         },
         span,
     }
+}
+
+/// The element type of a rest parameter's type `T[]` / `Array<T>` when it is not `any` (whose
+/// elements need no conversion).
+fn rest_elem(t: &ast::TypeExpr) -> Option<&ast::TypeExpr> {
+    let elem = match &t.kind {
+        ast::TypeExprKind::Array(e) => &**e,
+        ast::TypeExprKind::Named { path, args } => match (path.as_slice(), args.as_slice()) {
+            ([p], [e]) if p.name == "Array" => e,
+            _ => return None,
+        },
+        _ => return None,
+    };
+    let any = matches!(&elem.kind, ast::TypeExprKind::Named { path, args }
+        if args.is_empty() && matches!(path.as_slice(), [p] if p.name == "any"));
+    (!any).then_some(elem)
 }

@@ -24,3 +24,7 @@ set count=7
 get count
 get name
 get on
+get symbol
+from the trap
+get 1
+20

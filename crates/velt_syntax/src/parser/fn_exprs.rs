@@ -12,7 +12,7 @@
 //!
 //! A `this: T` parameter declares the type of `this` and is no parameter: callers pass the
 //! receiver. A function declaration keeps `T` in `FnSig::this_param` (unless it is `void`); so
-//! does a function expression whose body uses `this`, which is then an `ExprKind::Function`
+//! does a function expression whose body uses `this` or `arguments`, which is then an `ExprKind::Function`
 //! (its parameters must have written types). `first_this_param` remembers where the first
 //! `this` parameter is, for `velt fmt`.
 
@@ -62,12 +62,12 @@ impl<'a> Parser<'a> {
         if !name.name.is_empty() {
             self.no_own_name(&name, &body);
         }
-        // With a `this` parameter that the body uses, the function keeps its `this` type, so
-        // its parameters must be written (sema checks it).
+        // With a `this` parameter and a body that uses `this` or `arguments`, the function keeps
+        // its `this` type, so its parameters must be written (sema checks it).
         if let Some((p, ty)) = &this_param {
             let typed: Option<Vec<Param>> = params.iter().map(|a| typed_param(a, p)).collect();
             if let (false, Some(typed)) = (is_void(ty), typed) {
-                if own_this(&body).is_some() {
+                if own_this(&body).is_some() || own_arguments(&body) {
                     let sig = FnSig {
                         name,
                         generics: type_params,
@@ -255,4 +255,33 @@ pub(super) fn own_this(body: &Block) -> Option<Span> {
     }
     let inside = |at: &Span| f.items.iter().any(|i| i.lo <= at.lo && at.hi <= i.hi);
     f.this.iter().copied().find(|at| !inside(at))
+}
+
+/// Does `body` read `arguments` outside the classes and functions declared in it?
+pub(super) fn own_arguments(body: &Block) -> bool {
+    #[derive(Default)]
+    struct Find {
+        uses: Vec<Span>,
+        items: Vec<Span>,
+    }
+    impl<'a> crate::visit::Visit<'a> for Find {
+        fn stmt(&mut self, s: &'a Stmt) {
+            if let StmtKind::Item(_) = s.kind {
+                self.items.push(s.span);
+            }
+        }
+        fn expr(&mut self, e: &'a Expr) {
+            match &e.kind {
+                ExprKind::Ident(i) if i.name == "arguments" => self.uses.push(e.span),
+                ExprKind::Function(_) => self.items.push(e.span),
+                _ => {}
+            }
+        }
+    }
+    let mut f = Find::default();
+    for s in &body.stmts {
+        crate::visit::walk_stmt(s, &mut f);
+    }
+    let inside = |at: &Span| f.items.iter().any(|i| i.lo <= at.lo && at.hi <= i.hi);
+    f.uses.iter().any(|at| !inside(at))
 }

@@ -61,3 +61,21 @@ const plain = { count: 9, name: "z" };
 put(plain, "name", "y");
 console.log(get(plain, "count"), get(plain, "name"));
 console.log(log.join("\n"));
+
+// Symbol and number keys reach the traps too.
+const sym = Symbol("k");
+const keyed = new Proxy({ [sym]: 1, a: 2 }, {
+  get(t: any, k: any) {
+    // The trap sees the symbol itself.
+    console.log("get", typeof k === "symbol" ? "symbol" : k);
+    return typeof k === "symbol" ? "from the trap" : t[k];
+  },
+});
+console.log(get(keyed, sym));
+const listed = new Proxy([10, 20, 30], {
+  get(t: any, k: any, r: any) {
+    console.log("get", String(k));
+    return Reflect.get(t, k, r);
+  },
+});
+console.log(get(listed, 1));

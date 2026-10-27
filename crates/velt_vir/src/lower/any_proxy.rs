@@ -42,6 +42,8 @@ pub(super) enum ProxyKey {
     Str(vir::Local),
     /// The slot's parameter: an `f64`.
     Num(vir::Local),
+    /// A local holding a `symbol` (a generic key access, key_any.rs).
+    Sym(vir::Local),
 }
 
 impl FnLower<'_, '_> {
@@ -71,6 +73,10 @@ impl FnLower<'_, '_> {
                 let iv = Operand::Copy(Place::local(i));
                 self.call_rt(Rt::StrFromF64, vec![iv, ka], None);
                 self.any_box_into(Operand::Copy(Place::local(ks)), s, &out);
+            }
+            ProxyKey::Sym(k) => {
+                let sym = self.cx.intern(TyKind::Symbol);
+                self.any_box_into(Operand::Copy(Place::local(k)), sym, &out);
             }
         }
         out

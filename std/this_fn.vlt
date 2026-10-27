@@ -1,10 +1,11 @@
-// std/this_fn: the value of a function expression with a `this: any` parameter
+// std/this_fn (std-internal): the value of a function expression with a `this: any` parameter
 // (docs/reference/functions.md "Function expressions"), whose `this` is the object it is called
 // on, as in JavaScript. Sema makes `function (this: any, a: A) { body }` a `__ThisFn` holding the
 // closure `(this, arguments) => { let a: A = arguments[0]; body }`, held as a `Function`. A call
-// passes the receiver: a method call through a proxy or an `any` (velt_vir's call slots), and
-// `call` (`__apply`), `apply` and `bind` (`__bind`) below; a plain call `f(x)` passes `undefined`. `typeof` is
-// `"function"`.
+// passes the receiver: a method call through a proxy or an `any` (velt_vir's call slots), a call
+// of a member read some other way (`o[k](x)`, `o.f?.(x)`, `o.f(x)` with `f: Function`) through
+// `__callOn`, and `call` (`__apply`), `apply` and `bind` (`__bind`) below; a plain call `f(x)`
+// passes `undefined`. `typeof` is `"function"`.
 
 /** A function value whose `this` is bound at the call (module docs). */
 export class __ThisFn {
@@ -20,12 +21,13 @@ export class __ThisFn {
     return f(self, args);
   }
 
-  /** `f.apply(thisArg, args)`. */
-  apply(self: any, args?: any[]): any {
-    if (args === undefined) {
+  /** `f.apply(thisArg, args)`: `null` or `undefined` passes no arguments. */
+  apply(self: any, args?: any): any {
+    if (args == null) {
       return this.__apply(self, []);
     }
-    return this.__apply(self, args);
+    const list: any[] = args;
+    return this.__apply(self, list);
   }
 
   /**
@@ -48,4 +50,24 @@ export class __ThisFn {
     const out: any = new __ThisFn(g);
     return out;
   }
+}
+
+/**
+ * `o.m(...args)` where sema read the member `f` some other way than a slot call through `any`
+ * (`o[k](...)`, `o.m?.(...)`, a typed `o` with `m: Function`): a `__ThisFn` gets `self` as
+ * `this`, any other function the plain call.
+ */
+export function __callOn(f: any, self: any, args: any[]): any {
+  if (f instanceof __ThisFn) {
+    return f.__apply(self, args);
+  }
+  return f(...args);
+}
+
+/** `o.m?.(...args)`: `undefined` when `f` is `null` or `undefined`, without evaluating `args`. */
+export function __callOptOn(f: any, self: any, args: () => any[]): any {
+  if (f == null) {
+    return undefined;
+  }
+  return __callOn(f, self, args());
 }
