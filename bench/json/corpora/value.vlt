@@ -1,0 +1,15 @@
+// JSON.parseValue of a corpus (bench/json/corpora/data/<name>.json), `rounds` times; prints the
+// top-level member count. Usage: value <file> <rounds>
+import { readFileSync } from "velt:fs";
+import { args } from "velt:process";
+
+function main() {
+  const argv = args();
+  const text = readFileSync(argv[0]);
+  const rounds = parseInt(argv[1], 10) as i64;
+  let n: i64 = 0;
+  for (let r: i64 = 0; r < rounds; r++) {
+    n = JSON.parseValue(text).len();
+  }
+  console.log(n);
+}

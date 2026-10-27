@@ -1,0 +1,16 @@
+[package]
+name = "json_corpora_bench"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Standalone: not a member of the Velt workspace (it only exists to be benchmarked).
+[workspace]
+
+[dependencies]
+serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
+sonic-rs = "0.3"
+simd-json = "0.14"
+
+[profile.release]
+codegen-units = 1
