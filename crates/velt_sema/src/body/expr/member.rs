@@ -400,9 +400,10 @@ impl FnCx<'_, '_> {
             false => obj,
         };
         let t = obj.ty;
-        // `o[KEY]` with a symbol constant: the member the symbol names.
+        // `o[KEY]` with a symbol constant: the member the symbol names (a record's symbol
+        // table, `record_index_read`, holds its symbol keys).
         if let Some(key) = self.symbol_key_of(index) {
-            if self.has_fields(t, &key) {
+            if self.has_fields(t, &key) && self.record_args(t).is_none() {
                 return self.symbol_index(obj, key, index, want, span);
             }
         }

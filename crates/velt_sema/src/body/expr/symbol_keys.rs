@@ -203,6 +203,14 @@ impl FnCx<'_, '_> {
         let Some(key) = self.in_key_of(lhs) else {
             return self.dynamic_key_in(lhs, rhs, span);
         };
+        if matches!(key, InKey::Symbol(_)) {
+            // `KEY in r` on a string-keyed record: its symbol table, tested at run time.
+            let str_ = self.cx.ty.str_;
+            let t = self.trial_expr(rhs).ty;
+            if self.record_args(t).is_some_and(|(k, _)| k == str_) {
+                return self.dynamic_key_in(lhs, rhs, span);
+            }
+        }
         if matches!(key, InKey::Str(_)) {
             if self.typed_proxy_once(rhs) {
                 // `"k" in f()` of a typed proxy: the operand once, then as below.

@@ -317,6 +317,14 @@ impl FnCx<'_, '_> {
             // `k in Object.prototype` (a proxy's `get` trap telling protocol keys apart).
             return self.prelude_fn_call("__prototypeIn", vec![lhs.clone(), rhs.clone()], span);
         }
+        // A symbol or `string | symbol` key: the symbol table too (std/prelude/record.vlt).
+        let symbolic = kind == KeyKind::Symbol
+            && self.symbolic_key_type(key_ty);
+        if open && symbolic {
+            let syn = Synth::new(span, self.f.locals.len());
+            let test = syn.call(syn.name("__recordInKeyed"), vec![lhs.clone(), rhs.clone()]);
+            return self.expr(&test, None, Want::Move);
+        }
         if !open || !matches!(kind, KeyKind::Str | KeyKind::Converted) {
             let k = self.expr(lhs, None, Want::Borrow);
             self.expr(rhs, None, Want::Borrow);

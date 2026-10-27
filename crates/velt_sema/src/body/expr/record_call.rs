@@ -138,21 +138,23 @@ impl FnCx<'_, '_> {
     ) -> hir::Expr {
         self.number_record_key(&obj, &key);
         let obj = self.unview(obj);
-        let (def, slots, recv_ty, vslot) = match self.resolve_method(obj.ty, method) {
-            Some(Resolved::Def {
-                def,
-                slots,
-                recv_ty,
-                ..
-            }) => (def, slots, Some(recv_ty), None),
-            Some(Resolved::Virtual { def, slot, slots }) => (def, slots, None, Some(slot)),
-            _ => panic!("ICE: `Record` has no method `{method}`"),
-        };
+        let (mut def, mut slots, mut recv_ty, mut vslot) = self.record_method(obj.ty, method);
         let mut c = self.fn_callable(def, format!("method `{method}`"), span);
-        let kp = c.params.remove(0);
+        let mut kp = c.params.remove(0);
+        let mut kty = self.cx.subst_known(kp.ty, &slots);
+        let key = match self.symbolic_key(kty, method, &key, want_of(kp.mode)) {
+            // A symbol or `string | symbol` key: the method that also reaches the symbol table.
+            Ok((h, keyed)) => {
+                (def, slots, recv_ty, vslot) = self.record_method(obj.ty, keyed);
+                c = self.fn_callable(def, format!("method `{keyed}`"), span);
+                kp = c.params.remove(0);
+                kty = self.cx.subst_known(kp.ty, &slots);
+                self.coerce(h, kty)
+            }
+            Err(Some(h)) => self.string_key_of(kty, h),
+            Err(None) => self.record_key_arg(kty, &key, want_of(kp.mode)),
+        };
         let vp = checked.as_ref().map(|_| c.params.remove(0));
-        let kty = self.cx.subst_known(kp.ty, &slots);
-        let key = self.record_key_arg(kty, &key, want_of(kp.mode));
         let ck = self.check_call(&c, slots, rest, None, span);
         let kty = self.cx.subst(kp.ty, &ck.type_args);
         let key = self.coerce(key, kty);
@@ -169,6 +171,63 @@ impl FnCx<'_, '_> {
             None => Callee::Def(def, ck.type_args),
         };
         self.mk(H::Call { callee, args }, ck.ret, span)
+    }
+
+    /// The `Record` method `method` as resolved on `ty`.
+    #[allow(clippy::type_complexity)] // the parts of `Resolved` a keyed call uses
+    fn record_method(
+        &mut self,
+        ty: TyId,
+        method: &str,
+    ) -> (hir::DefId, Vec<Option<TyId>>, Option<TyId>, Option<u32>) {
+        match self.resolve_method(ty, method) {
+            Some(Resolved::Def {
+                def,
+                slots,
+                recv_ty,
+                ..
+            }) => (def, slots, Some(recv_ty), None),
+            Some(Resolved::Virtual { def, slot, slots }) => (def, slots, None, Some(slot)),
+            _ => panic!("ICE: `Record` has no method `{method}`"),
+        }
+    }
+
+    /// The key of a string-keyed record's index `r[e]` (or computed literal key `{ [e]: v }`)
+    /// checked once: `Ok` with the method that takes a `string | symbol` key when its type is a
+    /// symbol or `string | symbol`; `Err(Some(h))` for another key of a type to be converted
+    /// (`string_key_of`); `Err(None)` for a key checked against the key type as written (a
+    /// name, a string literal or template, or a key of another record).
+    fn symbolic_key(
+        &mut self,
+        k: TyId,
+        method: &str,
+        key: &RecordKey<'_>,
+        want: Want,
+    ) -> Result<(hir::Expr, &'static str), Option<hir::Expr>> {
+        let (RecordKey::Index(e) | RecordKey::Computed(e)) = key else {
+            return Err(None);
+        };
+        let plain = matches!(
+            e.kind,
+            ast::ExprKind::Lit(ast::Lit::Str(_)) | ast::ExprKind::Template { .. }
+        );
+        if k != self.cx.ty.str_ || plain {
+            return Err(None);
+        }
+        let keyed = match method {
+            "__get" => Some("__getKeyed"),
+            "__set" => Some("__setKeyed"),
+            "__delete" => Some("__deleteKeyed"),
+            "__has" => Some("__hasKeyed"),
+            _ => None,
+        };
+        let h = self.expr(e, None, want);
+        let symbolic = self.symbolic_key_type(h.ty);
+        match keyed {
+            Some(m) if symbolic => Ok((h, m)),
+            _ if matches!(key, RecordKey::Computed(_)) => Err(Some(self.computed_key_of(k, h, e))),
+            _ => Err(Some(h)),
+        }
     }
 
     /// The key argument of type `k`: an index expression as written; a name as its string, or
@@ -199,9 +258,15 @@ impl FnCx<'_, '_> {
             return self.expr(e, Some(k), want);
         }
         let h = self.expr(e, None, want);
+        self.string_key_of(k, h)
+    }
+
+    /// The checked key `h` of `r[e]` on a record keyed by `k` (`string`): a number converted to
+    /// its string.
+    fn string_key_of(&mut self, k: TyId, h: hir::Expr) -> hir::Expr {
         if self.cx.ty.is_numeric(h.ty) {
             let span = h.span;
-            return self.intrinsic(Intrinsic::ToString, vec![h], str_, span);
+            return self.intrinsic(Intrinsic::ToString, vec![h], self.cx.ty.str_, span);
         }
         self.coerce(h, k)
     }
@@ -211,11 +276,16 @@ impl FnCx<'_, '_> {
     /// is an error, as a symbol made at run time cannot name a member; so is any other type
     /// (TypeScript's TS2464).
     fn computed_key_arg(&mut self, k: TyId, e: &ast::Expr, want: Want) -> hir::Expr {
-        let str_ = self.cx.ty.str_;
-        if k != str_ {
+        if k != self.cx.ty.str_ {
             return self.expr(e, Some(k), want);
         }
         let h = self.expr(e, None, want);
+        self.computed_key_of(k, h, e)
+    }
+
+    /// The checked key `h` of `{ [e]: value }` (see `computed_key_arg`).
+    fn computed_key_of(&mut self, k: TyId, h: hir::Expr, e: &ast::Expr) -> hir::Expr {
+        let str_ = self.cx.ty.str_;
         if self.cx.ty.is_numeric(h.ty) {
             let span = h.span;
             return self.intrinsic(Intrinsic::ToString, vec![h], str_, span);

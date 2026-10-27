@@ -47,6 +47,114 @@ export class Record<K, V> {
   // Field 1: a key that is an array index was added (or decoded), so the entries may not be in
   // JavaScript's order (`__perm`).
   private unordered: bool = false;
+  // Field 2: the symbol-keyed entries, a table of their own as in Node, made when the first
+  // symbol key is written (`null` until then: the string-key methods never read it).
+  private symbols: Map<symbol, V> | null = null;
+
+  /** `r[s]` with a symbol `s`: its entry in the symbol table. */
+  __getSym(key: symbol): V | undefined {
+    const t = this.symbols;
+    if (t == null) {
+      return undefined;
+    }
+    return t.get(key);
+  }
+
+  /** `r[s] = v` with a symbol `s`: the symbol table is made by the first write. */
+  __setSym(key: symbol, value: V) {
+    const t = this.symbols;
+    if (t == null) {
+      const made: Map<symbol, V> = new Map();
+      made.set(key, value);
+      this.symbols = made;
+    } else {
+      t.set(key, value);
+    }
+  }
+
+  /** `delete r[s]` with a symbol `s`. */
+  __deleteSym(key: symbol): bool {
+    const t = this.symbols;
+    return t != null && t.delete(key);
+  }
+
+  /** `s in r` / `Object.hasOwn(r, s)` with a symbol `s`. */
+  __hasSym(key: symbol): bool {
+    const t = this.symbols;
+    return t != null && t.has(key);
+  }
+
+  /** `r[k]` with a `string | symbol` key. */
+  __getKeyed(key: K | symbol): V | undefined {
+    if (typeof key === "symbol") {
+      return this.__getSym(key as symbol);
+    }
+    return this.entries.get(key as K);
+  }
+
+  /** `r[k] = v` with a `string | symbol` key. */
+  __setKeyed(key: K | symbol, value: V) {
+    if (typeof key === "symbol") {
+      this.__setSym(key as symbol, value);
+    } else {
+      this.__set(key as K, value);
+    }
+  }
+
+  /** `delete r[k]` with a `string | symbol` key. */
+  __deleteKeyed(key: K | symbol): bool {
+    if (typeof key === "symbol") {
+      return this.__deleteSym(key as symbol);
+    }
+    return this.entries.delete(key as K);
+  }
+
+  /** `k in r` / `Object.hasOwn(r, k)` with a `string | symbol` key (own entries only). */
+  __hasKeyed(key: K | symbol): bool {
+    if (typeof key === "symbol") {
+      return this.__hasSym(key as symbol);
+    }
+    return this.entries.has(key as K);
+  }
+
+  /** `Object.getOwnPropertySymbols(r)`: the symbol keys, in insertion order. */
+  __symbolKeys(): symbol[] {
+    const t = this.symbols;
+    if (t == null) {
+      return [];
+    }
+    return t.keys();
+  }
+
+  /**
+   * `Reflect.ownKeys(r)`: the string keys in `Object.keys` order (array indices first,
+   * ascending, then insertion order), then the symbol keys in insertion order.
+   */
+  __ownKeys(): (string | symbol)[] {
+    const out: (string | symbol)[] = [];
+    for (const k of this.__keyNames()) {
+      out.push(k);
+    }
+    for (const s of this.__symbolKeys()) {
+      out.push(s);
+    }
+    return out;
+  }
+
+  /** Does this record hold a symbol key (`console.log` and spreads list the symbol table)? */
+  __hasSymbols(): bool {
+    const t = this.symbols;
+    return t != null && t.size > 0;
+  }
+
+  /** The symbol-keyed entries, in insertion order. */
+  __symbolEntries(): [symbol, V][] {
+    const t = this.symbols;
+    if (t == null) {
+      return [];
+    }
+    return t.entries();
+  }
 
   __get(key: K): V | undefined {
     return this.entries.get(key);
@@ -149,6 +257,12 @@ export class Record<K, V> {
     for (const [k, v] of other.__entries()) {
       this.__set(k, v);
     }
+    // A spread copies the symbol keys too, as in Node.
+    if (other.symbols != null) {
+      for (const [s, v] of other.__symbolEntries()) {
+        this.__setSym(s, v);
+      }
+    }
   }
 
   /** `{ ...other }` of a record that may be `null` or `undefined`: nothing when it is. */
@@ -169,6 +283,9 @@ export class Record<K, V> {
     if (other != null) {
       for (const [k, v] of other.__entries()) {
         this.__set(key(k), convert(v));
+      }
+      for (const [s, v] of other.__symbolEntries()) {
+        this.__setSym(s, convert(v));
       }
     }
   }
@@ -391,14 +508,14 @@ export function __objectPrototypeKey(key: string): bool {
 }
 
 /**
- * `r[k]` of a string-keyed record with a `string | symbol` key (sema calls this): the entry for a
- * string, `undefined` for a symbol, which is never one of the record's keys.
+ * `k in r` with a `string | symbol` key (sema calls this): the record's own entry, or for a
+ * string a member every object inherits from `Object.prototype`.
  */
-export function __recordGetKeyed<V>(r: Record<string, V>, key: string | symbol): V | undefined {
-  if (typeof key === "string") {
-    return r.__get(key);
+export function __recordInKeyed<V>(key: string | symbol, r: Record<string, V>): bool {
+  if (r.__hasKeyed(key)) {
+    return true;
   }
-  return undefined;
+  return typeof key === "string" && !r.__isNullProto() && __objectPrototypeKey(key);
 }
 
 /**

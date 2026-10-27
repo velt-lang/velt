@@ -129,8 +129,13 @@ impl FnCx<'_, '_> {
         };
         if let Some((key, _)) = self.record_args(ot) {
             if key == self.cx.ty.str_ {
+                // A symbol or `string | symbol` key: the symbol table too.
+                let symbolic = self
+                    .trial_type(k)
+                    .is_some_and(|t| self.symbolic_key_type(t));
+                let method = if symbolic { "__hasKeyed" } else { "__has" };
                 let obj = self.expr(o, None, Want::Borrow);
-                return self.record_call(obj, "__has", std::slice::from_ref(k), span);
+                return self.record_call(obj, method, std::slice::from_ref(k), span);
             }
         }
         let object = match self.cx.ty.kind(ot) {
