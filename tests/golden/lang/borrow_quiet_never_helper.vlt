@@ -1,0 +1,68 @@
+// A callee quiet for borrows (velt_vir lower/quiet.rs) gets a borrow through a counted object
+// without a share, also when it pushes onto an array and throws through a `never` helper whose
+// error's constructor replaces (and frees) what the borrow went through: the callee reads the
+// borrow no more once the helper runs. A helper lent the borrow itself gets it shared.
+class Holder {
+  bytes: u8[];
+  constructor(b: u8[]) {
+    this.bytes = b;
+  }
+}
+
+const holders: Holder[] = [];
+
+class BadInput extends Error {
+  constructor(what: string) {
+    super(`bad input: ${what}`);
+    // Replace the bytes the caller lent, and reuse their memory.
+    holders[0].bytes = [];
+    const keep: u8[][] = [];
+    for (let i = 0; i < 8; i++) {
+      keep.push([9, 9, 9, 9]);
+    }
+  }
+}
+
+function fail(what: string): never {
+  throw new BadInput(what);
+}
+
+function failWith(b: u8[]): never {
+  // `b` is read after the error's constructor replaced the holder's bytes.
+  const what = `${b.length} bytes`;
+  const e = new BadInput(what);
+  throw new BadInput(`${what}, first ${b[0]}`);
+}
+
+function decode(b: u8[], out: u32[]) {
+  for (let i: usize = 0; i < b.length; i++) {
+    if (b[i] == 255) {
+      fail("byte 255");
+    }
+    out.push(b[i] as u32);
+  }
+}
+
+function decodeLending(b: u8[], out: u32[]) {
+  if (b[0] == 255) {
+    failWith(b);
+  }
+  out.push(b[0] as u32);
+}
+
+function main() {
+  const h = new Holder([1, 2, 255, 4]);
+  holders.push(h);
+  const out: u32[] = [];
+  try {
+    decode(h.bytes, out);
+  } catch (e) {
+    console.log((e as Error).message, out.join(","), h.bytes.length);
+  }
+  h.bytes = [255, 7];
+  try {
+    decodeLending(h.bytes, out);
+  } catch (e) {
+    console.log((e as Error).message, h.bytes.length);
+  }
+}

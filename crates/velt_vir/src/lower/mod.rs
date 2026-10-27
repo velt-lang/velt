@@ -473,8 +473,8 @@ struct Cx<'h> {
     tracked: FxHashMap<DefId, bool>,
     /// HIR nodes of the standard-library functions `tracks_caller` scanned (track_caller.rs).
     tracked_size: FxHashMap<DefId, usize>,
-    /// Memoized `quiet` answers (quiet.rs).
-    quiet: FxHashMap<DefId, bool>,
+    /// Memoized `quiet` answers, per level (quiet.rs).
+    quiet: FxHashMap<(DefId, quiet::Quiet), bool>,
     /// Interned static `VeltStr` objects (`static_str_object`).
     str_objects: FxHashMap<String, StaticId>,
     /// The records of the compiler's symbols (`Intrinsic::SymbolStatic`, symbols.rs).

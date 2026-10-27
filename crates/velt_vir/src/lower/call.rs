@@ -135,13 +135,18 @@ impl FnLower<'_, '_> {
             }
         }
         let mut argv = pre;
-        // A quiet callee (quiet.rs) cannot reach what a borrow goes through: no shares.
-        let how = match self.cx.quiet(def) {
+        // A quiet callee (quiet.rs) cannot reach what a borrow goes through: no shares. Nor can
+        // one quiet for borrows, except that it may move the buffer of an array it pushes onto:
+        // an argument in an array's buffer is shared then.
+        let quiet = self.cx.quiet(def);
+        let how = match quiet
+            || self.cx.quiet_for_borrows(def) && !args.iter().any(|a| self.in_array_buffer(a))
+        {
             true => Stabilize::Facts,
             false => Stabilize::Share,
         };
         // An index's conversion (`xs[i]` with a number `i`) reads only the number it is given.
-        if how == Stabilize::Facts || f.name == FLOAT_INDEX {
+        if quiet || f.name == FLOAT_INDEX {
             self.note_quiet_call(fid, def);
         }
         let outer = std::mem::replace(&mut self.frozen_args, frozen != 0);
