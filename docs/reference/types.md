@@ -2317,7 +2317,8 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   condition and a well-known symbol (`[Symbol.iterator]`) are not supported yet, and neither is
   any other use of the cast: writing through it and keeping it are not supported yet.
   On an `any` `x`, `(x as Record<K, V>)[k]` and `(x as Record<K, V>).k` read and write `x`
-  itself, as the assertion converts nothing in TypeScript: a read is a `V | undefined`, and a
+  itself, as the assertion converts nothing in TypeScript: a read is a `V | undefined` (a `V`
+  where one is expected, a missing key then a `TypeError`), and a
   value written is checked as a `V` (sigx's `toSignals` fills `{} as ToSignals<T>`, the record
   of `any` values a deferred `{} as D` is, this way).
   With `string` keys a record is *open*: `r[k]` and `r.name` are `V | undefined`, `r[k] = v`

@@ -129,7 +129,7 @@ impl FnCx<'_, '_> {
             return self.member(&object, prop, optional, exp, want, span);
         }
         let key = super::any_record_cast::AnyRecordKey::Name(prop);
-        if let Some(h) = self.any_as_record_read(object, key, optional, want, span) {
+        if let Some(h) = self.any_as_record_read(object, key, optional, exp, want, span) {
             return h;
         }
         if let (ast::ExprKind::This, Some((this, declaring))) = (&object.kind, self.static_this) {
@@ -335,7 +335,7 @@ impl FnCx<'_, '_> {
             return h;
         }
         let key = super::any_record_cast::AnyRecordKey::Index(index);
-        if let Some(h) = self.any_as_record_read(object, key, false, want, span) {
+        if let Some(h) = self.any_as_record_read(object, key, false, exp, want, span) {
             return h;
         }
         if let Some(h) = self.symbol_record_read(object, index, span) {

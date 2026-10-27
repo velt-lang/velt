@@ -31,3 +31,7 @@ console.log(n, Object.keys(o).join(","));
 const none: any = null;
 console.log((o as Record<string, number>)?.a, (none as Record<string, number>)?.a);
 console.log((o as Record<string, number>)["a"]?.toFixed(1));
+function read<T>(x: any, k: string): T {
+  return (x as Record<string, T>)[k];
+}
+console.log(read<number>(o, "b"));

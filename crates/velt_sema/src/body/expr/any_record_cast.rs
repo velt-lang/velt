@@ -3,7 +3,8 @@
 //! reads and writes it through `x` as an `any` (`dynamic_write`, `dynamic_member`), so a write
 //! reaches the object `x` holds, as in Node, where converting `x` to the record first would
 //! check its type (a `Record<string, any>` is not a `Record<string, V>`) and write into a copy.
-//! The value written is checked as a `V`; a read is a `V | undefined`, as a record's key is.
+//! The value written is checked as a `V`; a read is a `V | undefined`, as a record's key is, or
+//! a `V` where one is expected.
 //! The standard `{} as D` of a deferred `D` (generic_member.rs) is such an `any`: sigx fills
 //! `{} as ToSignals<T>` through `(result as Record<string, PropertySignal<unknown>>)[key] = v`.
 
@@ -59,6 +60,7 @@ impl FnCx<'_, '_> {
         object: &ast::Expr,
         key: AnyRecordKey<'_>,
         optional: bool,
+        exp: Option<TyId>,
         want: Want,
         span: Span,
     ) -> Option<hir::Expr> {
@@ -86,8 +88,12 @@ impl FnCx<'_, '_> {
         if self.cx.ty.is_bottom(read.ty) || self.cx.dynamic(read.ty).is_none() {
             return Some(read);
         }
+        // A `V` where one is expected (`return (o as Record<string, T>)[k]` in a function
+        // returning `T`, as TypeScript types the read): a missing key is then a `TypeError` at
+        // the read.
         let ty = match self.cx.dynamic(v) {
             Some(_) => v,
+            None if exp == Some(v) => v,
             None => self.cx.ty.option_of(v, hir::Nothing::Undefined),
         };
         Some(self.intrinsic(Intrinsic::AnyTo, vec![read], ty, span))
