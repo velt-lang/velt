@@ -225,14 +225,10 @@ impl crate::body::FnCx<'_, '_> {
     pub(crate) fn flow_into(&mut self, h: &crate::hir::Expr, to: Option<Span>) {
         if let (Some(to), Some(from)) = (to, self.site_of_value(h)) {
             self.cx.site_flow(from, to);
-            // An array is shared: what is pushed through either name is in both (an array of
-            // promises, `promise_sites`).
-            if self
-                .cx
-                .ty
-                .array_elem(self.cx.ty.core(h.ty).unwrap_or(h.ty))
-                .is_some()
-            {
+            // An array, `Set` or `Map` of promises is shared: what is stored through either name
+            // is in both (`promise_sites`).
+            let t = self.cx.ty.core(h.ty).unwrap_or(h.ty);
+            if self.cx.site_core(t) != t {
                 self.cx.site_flow(to, from);
             }
         }

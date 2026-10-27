@@ -1,0 +1,8 @@
+ok
+impl: no bad-impl
+loaded
+holder: step bad-alias
+/x
+scope: TypeError
+true false 1
+tracked: no bad-tracked

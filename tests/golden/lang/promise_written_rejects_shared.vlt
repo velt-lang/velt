@@ -1,0 +1,78 @@
+// A `Promise<T>` written without an error type shares its rejections with the types it is
+// stored through: an interface method and its synchronous implementation, an object literal's
+// asserted field and a `const` alias of it, a `Set` of promises, and the `Promise<T>` member of
+// a callback's result (sigx: server-renderer serverfn-scope.ts, runtime-core defer.ts).
+
+class LoadError extends Error {}
+
+async function fetchName(n: string): Promise<string> {
+  if (n.startsWith("bad")) throw new LoadError("no " + n);
+  return n;
+}
+
+async function step(n: string): Promise<void> {
+  if (n.startsWith("bad")) throw new LoadError("step " + n);
+}
+
+interface Svc {
+  load(n: string): Promise<string>;
+}
+
+class Impl implements Svc {
+  load(n: string): Promise<string> {
+    return fetchName(n);
+  }
+}
+
+async function withScope<T>(fn: () => T | Promise<T>): Promise<T> {
+  return fn();
+}
+
+function track(tracked: Set<Promise<unknown>>, p: Promise<unknown>): boolean {
+  if (tracked.has(p)) return false;
+  tracked.add(p);
+  return true;
+}
+
+async function main() {
+  const s: Svc = new Impl();
+  console.log(await s.load("ok"));
+  try {
+    await s.load("bad-impl");
+  } catch (e) {
+    console.log("impl:", (e as Error).message);
+  }
+
+  const holder = { list: [] as Promise<void>[] };
+  const alias: Promise<void>[] = holder.list;
+  alias.push(step("fine"));
+  alias.push(step("bad-alias"));
+  for (const p of holder.list) {
+    try {
+      await p;
+      console.log("loaded");
+    } catch (e) {
+      console.log("holder:", (e as Error).message);
+    }
+  }
+
+  console.log(await withScope(async function scoped(): Promise<string> {
+    return new URL("https://example.com/x").pathname;
+  }));
+  try {
+    await withScope(async (): Promise<string> => new URL("not a url").pathname);
+  } catch (e) {
+    console.log("scope:", (e as Error).name);
+  }
+
+  const tracked = new Set<Promise<unknown>>();
+  const p = fetchName("bad-tracked");
+  console.log(track(tracked, p), track(tracked, p), tracked.size);
+  try {
+    await p;
+  } catch (e) {
+    console.log("tracked:", (e as Error).message);
+  }
+}
+
+main();
