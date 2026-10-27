@@ -5,6 +5,7 @@
 mod bridge;
 pub(crate) mod coop;
 pub(crate) mod io;
+mod monitor;
 mod queue;
 mod spread;
 mod task;
