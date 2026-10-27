@@ -333,7 +333,11 @@ fn report(cx: &mut Ctx, span: Span, ty: TyId, why: Copied, site: Site) {
             (
                 format!("`{tn}` holds an `Atomic`, and changes to the copy's atomics would not reach this one"),
                 "read the values it needs (`.load()`) and pass those".to_string(),
-                format!("or share it so every task changes the same atomics: `shared(new {tn}(…))`"),
+                match cx.ty.kind(ty) {
+                    // An array has no constructor to call inside the `shared`.
+                    TyKind::Array(_) => "or share it so every task changes the same atomics: `shared(xs)` with its last reference, or keep it in a class and share that".to_string(),
+                    _ => format!("or share it so every task changes the same atomics: `shared(new {tn}(…))`"),
+                },
             )
         }
     };
