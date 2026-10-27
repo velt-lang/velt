@@ -322,3 +322,31 @@ fn an_or_lowered_through_a_bool_join_is_threaded() {
         assert_eq!(call(&p, len, b), call(&orig, len, b), "len {len}, b {b}");
     }
 }
+
+/// A product of two values near 2^64 (here constants, whose interval is exact) overflows
+/// `i128` in its low bound too: the value is unknown, not a panic or a wrapped interval, and a
+/// range check on it stays.
+#[test]
+fn a_product_past_i128_is_unknown() {
+    let mut pb = ProgramBuilder::new();
+    let mut fb = FuncBuilder::export("check", &[Ty::U64, Ty::U64], Ty::U64);
+    let (len, _b) = (fb.param(0), fb.param(1));
+    let (m, lm, t) = (fb.local(Ty::U64), fb.local(Ty::U64), fb.local(Ty::Bool));
+    let (b0, out, ok) = (fb.block(), fb.block(), fb.block());
+    let big = u64::MAX as i128;
+    fb.assign(b0, m, bin(BinOp::Mul, int(big, Ty::U64), int(big, Ty::U64)));
+    fb.assign(b0, lm, bin(BinOp::Sub, copy_local(len), int(2, Ty::U64)));
+    fb.assign(b0, t, bin(BinOp::Gt, copy_local(m), copy_local(lm)));
+    fb.branch(b0, t, out, ok);
+    fb.ret(out, int(2, Ty::U64));
+    fb.ret(ok, int(0, Ty::U64));
+    pb.add(fb.finish());
+    let mut p = pb.finish();
+    let orig = p.clone();
+    run(&[], &mut p.funcs[0]);
+    assert_valid(&p);
+    assert_eq!(decided(&p.funcs[0], BlockId(0)), None);
+    for len in [0, 3, u64::MAX] {
+        assert_eq!(run_check(&p, len, 0), run_check(&orig, len, 0), "len {len}");
+    }
+}

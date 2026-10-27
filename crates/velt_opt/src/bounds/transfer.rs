@@ -240,7 +240,6 @@ pub(super) fn operand_unsigned(cx: &Cx, op: &Operand) -> bool {
     }
 }
 
-/// The value of an operand; `None` for one that is not a tracked integer.
 /// The term of an unsigned operand.
 pub(super) fn term_of(cx: &Cx, op: &Operand) -> Option<Term> {
     match op {
@@ -331,12 +330,17 @@ pub(super) fn eval(cx: &Cx, st: &State, rv: &Rvalue, ty: Ty) -> Option<Val> {
                     (None, None) if x.lo >= y.hi => exact(x.lo - y.hi, x.hi - y.lo, ty),
                     _ => None,
                 },
+                // Bounds below 2^64 can multiply past `i128`: both products checked.
                 BinOp::Mul if x.base.is_none() && y.base.is_none() => {
-                    exact(x.lo * y.lo, x.hi.checked_mul(y.hi)?, ty)
+                    exact(x.lo.checked_mul(y.lo)?, x.hi.checked_mul(y.hi)?, ty)
                 }
-                BinOp::Shl if x.base.is_none() && y.base.is_none() && y.hi < 64 => {
-                    exact(x.lo << y.lo, x.hi.checked_shl(y.hi as u32)?, ty)
-                }
+                // A shift as a multiplication: `checked_shl` checks only the count, not bits
+                // shifted into the sign.
+                BinOp::Shl if x.base.is_none() && y.base.is_none() && y.hi < 64 => exact(
+                    x.lo.checked_mul(1 << y.lo)?,
+                    x.hi.checked_mul(1 << y.hi)?,
+                    ty,
+                ),
                 BinOp::UShr | BinOp::Shr if x.base.is_none() && y.base.is_none() && y.hi < 64 => {
                     exact(x.lo >> y.hi, x.hi >> y.lo, ty)
                 }
