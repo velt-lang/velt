@@ -52,6 +52,7 @@ const UNSUPPORTED: &[&str] = &[
     // System functions: WebAssembly has none (calling one is a compile error there).
     "system_functions",
     "system_function_guard",
+    "system_function_interior_nul",
     "system_function_range",
     "system_function_unterminated",
 ];
