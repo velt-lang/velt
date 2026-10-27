@@ -13,9 +13,43 @@ use crate::body::{FnCx, Want};
 use crate::hir::{self, Intrinsic, TyId};
 
 impl FnCx<'_, '_> {
+    /// Check `e` as the operand of a reflective operation (`Object.keys`, `for...in`, `in`,
+    /// `Object.hasOwn`, `Object.assign`, an object spread): a class instance brand is its class
+    /// there, whose fields the operation lists or tests (`FnCx::expr`).
+    pub(crate) fn instance_arg(&mut self, e: &ast::Expr) {
+        let e = super::object_builtins::strip_parens(e);
+        // A node the compiler made has no id of its own.
+        if e.id != ast::NodeId(u32::MAX) {
+            self.instance_args.insert(e.id);
+        }
+    }
+
+    /// The spread sources of an object literal as reflective operands (`instance_arg`).
+    pub(super) fn instance_spreads(&mut self, props: &[ast::ObjectProp]) {
+        for p in props {
+            if let ast::ObjectProp::Spread(e) = p {
+                self.instance_arg(e);
+            }
+        }
+    }
+
+    /// The class of `exp`, a class instance brand whose object part every instance of the
+    /// class has (`Ctx::instance_has_tag`): a plain instance converts to it.
+    pub(super) fn instance_brand_target(&mut self, exp: TyId) -> Option<TyId> {
+        if self.cx.brands.is_empty() {
+            return None;
+        }
+        let base = self.cx.brand_base(exp)?;
+        if !self.cx.brand_operand(base) || self.cx.brandable(base) {
+            return None;
+        }
+        let tag = self.cx.brand_tag(exp)?;
+        self.cx.instance_has_tag(base, tag).then_some(base)
+    }
+
     /// `h` as its class instance when its type brands one (not a record's view by its named
     /// members, `crate::index_signatures`, whose members keep their types); `h` otherwise.
-    pub(super) fn unbrand_instance(&mut self, h: hir::Expr) -> hir::Expr {
+    pub(crate) fn unbrand_instance(&mut self, h: hir::Expr) -> hir::Expr {
         match self.cx.brand_base(h.ty) {
             Some(base) if self.cx.brand_operand(base) && !self.cx.brandable(base) => {
                 self.unbrand(h)

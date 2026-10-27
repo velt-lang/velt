@@ -112,6 +112,60 @@ impl Ctx<'_> {
         })
     }
 
+    /// Does every instance of the class `base` have the members of `tag` (`C & { y?: number }`,
+    /// `C & { inc(): number }` where `C` has `inc(): number`)? Then a plain instance converts to
+    /// the brand, as TypeScript accepts: each member is optional, or a field, method or getter
+    /// of the class of the same type.
+    pub(crate) fn instance_has_tag(&mut self, base: TyId, tag: TyId) -> bool {
+        let Some((d, args)) = self.class_of(base) else {
+            return false;
+        };
+        let have = self.public_fields(base);
+        for f in self.public_fields(tag) {
+            if let Some(h) = have.iter().find(|h| h.name == f.name) {
+                if h.ty != f.ty || (h.optional && !f.optional) {
+                    return false;
+                }
+                continue;
+            }
+            let member = match crate::collect::lookup_method(self, d, &args, &f.name) {
+                Some(crate::collect::Found::Class { m, args, .. }) if !m.is_static => {
+                    Some((m.def, args))
+                }
+                _ => None,
+            };
+            let Some((def, margs)) = member else {
+                if f.optional {
+                    continue;
+                }
+                return false;
+            };
+            let info = self.fn_info(def);
+            let (getter, ret) = (info.is_getter, info.ret);
+            let params: Vec<TyId> = info.params.iter().map(|p| p.ty).collect();
+            let ret = self.subst(ret, &margs);
+            let fits = match getter {
+                true => ret == f.ty,
+                false => match self.ty.kind(f.ty).clone() {
+                    TyKind::FnPtr {
+                        params: want,
+                        ret: r,
+                        ..
+                    } => {
+                        r == ret
+                            && want.len() == params.len()
+                            && (want.iter().zip(&params)).all(|(&w, &p)| self.subst(p, &margs) == w)
+                    }
+                    _ => false,
+                },
+            };
+            if !fits {
+                return false;
+            }
+        }
+        true
+    }
+
     /// The brand of primitive `base` by object type `tag` (one per pair).
     pub(crate) fn brand_type(&mut self, base: TyId, tag: TyId, module: usize, span: Span) -> TyId {
         if let Some(&d) = self.brand_keys.get(&(base, tag)) {

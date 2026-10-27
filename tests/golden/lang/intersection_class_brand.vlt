@@ -84,3 +84,48 @@ function reset<T extends object>(s: S<T>, v: T): void {
 reset(box, new Counter());
 const maybe: S<Counter> | null = Math.random() > 2 ? null : box;
 console.log(maybe?.inc(), maybe === box);
+
+// Reflective operations see the instance's fields: `Object.keys`, `for...in`, `in`,
+// `Object.hasOwn`, `Object.assign`, a spread and `JSON.stringify`.
+class Pt {
+  x = 1;
+  y = "s";
+}
+const pt = new Pt() as S<Pt>;
+const ks: string[] = [];
+for (const k in pt) {
+  ks.push(k);
+}
+console.log(Object.keys(pt).join(","), ks.join(","), "x" in pt, Object.hasOwn(pt, "y"));
+const tgt = { x: 0, y: "" };
+console.log(JSON.stringify(Object.assign(tgt, pt)));
+const copy = { ...pt };
+console.log(copy.x, copy.y, JSON.stringify(pt));
+
+// A class getter read through a proxy runs the `get` trap, which answers the getter's value.
+class Twice {
+  v = 1;
+  get twice(): number {
+    return this.v * 2;
+  }
+}
+const tp = sig(new Twice());
+console.log(tp.v, tp.twice);
+tp.v = 4;
+console.log(tp.twice);
+
+// A plain instance converts to a brand whose object part every instance has: an optional
+// member, or a method or getter the class has with that type.
+class Cn {
+  x = 1;
+  inc(): number {
+    return ++this.x;
+  }
+  get dbl(): number {
+    return this.x * 2;
+  }
+}
+const b1: Cn & { y?: number } = new Cn();
+const b2: Cn & { inc(): number } = new Cn();
+const b3: Cn & { readonly dbl: number } = new Cn();
+console.log(b1.x, b1.y, b2.inc(), b3.dbl);

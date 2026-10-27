@@ -117,6 +117,7 @@ impl FnCx<'_, '_> {
         let [o, k] = args else {
             return self.arity_error(what, 2, args, span);
         };
+        self.instance_arg(o);
         if self.typed_proxy_once(o) {
             // `Object.hasOwn(f(), k)` of a typed proxy: the operand once, then as below.
             return self.operand_once(o, span, |cx, t| {

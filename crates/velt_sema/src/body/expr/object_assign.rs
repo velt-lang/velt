@@ -102,6 +102,9 @@ impl FnCx<'_, '_> {
             self.cx
                 .err("`Object.assign` takes no type arguments".to_string(), span);
         }
+        for a in args {
+            self.instance_arg(a);
+        }
         if let Some(h) = self.reject_dynamic_args("Object.assign", args, span) {
             return h;
         }

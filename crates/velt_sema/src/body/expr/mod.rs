@@ -58,6 +58,7 @@ mod dynamic_whole;
 mod dynamic_write;
 mod env_globals;
 mod generic_dynamic;
+mod proxy_getters;
 mod static_call;
 pub(crate) use env_globals::NODE_GLOBALS;
 pub(crate) use primitive_statics::primitive_this;
@@ -248,6 +249,11 @@ impl FnCx<'_, '_> {
         let h = self.collapse_dynamic_option(h);
         // A generic union holding `null` / `undefined` through a member, in its written form.
         let h = self.flatten_hidden_nothings(h);
+        // The operand of a reflective operation sees a class instance brand's class.
+        let h = match self.instance_args.contains(&e.id) {
+            true => self.unbrand_instance(h),
+            false => h,
+        };
         if want == Want::Move {
             // `const t = (K ?? d)!`, `K!.a`, `N.a`: what a module constant gives taken over.
             self.per_use_taken(e, h.ty);
