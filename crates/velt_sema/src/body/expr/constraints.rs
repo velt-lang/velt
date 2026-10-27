@@ -126,10 +126,6 @@ impl FnCx<'_, '_> {
                         .collect(),
                 };
                 let in_scope = self.bounds.clone();
-                if let Some(up) = self.literal_as_bound(t, &b, &in_scope) {
-                    *s = Some(up);
-                    break;
-                }
                 if !self.cx.satisfies(t, &b, &in_scope) {
                     *s = Some(self.cx.ty.error);
                     break;
@@ -279,7 +275,7 @@ impl FnCx<'_, '_> {
                 .get(k)
                 .cloned()
                 .unwrap_or_else(|| format!("T{k}"));
-            let Some(mut t) = s else {
+            let Some(t) = s else {
                 out.push(self.cx.ty.error);
                 continue;
             };
@@ -296,10 +292,6 @@ impl FnCx<'_, '_> {
                         .collect(),
                 };
                 let in_scope = self.bounds.clone();
-                if let Some(up) = self.literal_as_bound(t, &b, &in_scope) {
-                    t = up;
-                    continue;
-                }
                 if !self.cx.satisfies(t, &b, &in_scope) {
                     ok = false;
                     // At the first argument (or explicit type argument) of the slot that
