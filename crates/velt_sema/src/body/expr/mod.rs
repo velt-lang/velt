@@ -250,7 +250,7 @@ impl FnCx<'_, '_> {
         // A generic union holding `null` / `undefined` through a member, in its written form.
         let h = self.flatten_hidden_nothings(h);
         // The operand of a reflective operation sees a class instance brand's class.
-        let h = match self.instance_args.contains(&e.id) {
+        let h = match !self.instance_args.is_empty() && self.instance_args.contains(&e.id) {
             true => self.unbrand_instance(h),
             false => h,
         };
