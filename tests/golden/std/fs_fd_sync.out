@@ -1,0 +1,32 @@
+Error ENOENT: no such file or directory, open 'velt_fs_fd_sync_missing/nope.txt'
+number true
+11
+5
+11 world world
+4 "woworlworld"
+0
+RangeError The value of "length" is out of range. It must be <= 16. Received 17
+0
+RangeError The value of "offset" is out of range. It must be >= 0 && <= 9007199254740991. Received -1
+RangeError The value of "position" is out of range. It must be an integer. Received 1.5
+RangeError The value of "offset" is out of range. It must be <= 11. Received 12
+RangeError The value of "length" is out of range. It must be <= 7. Received 8
+2 wo
+2 rl
+1 rd
+4 true false true
+0
+Error EBADF: bad file descriptor, close
+Error EBADF: bad file descriptor, read
+Error EBADF: bad file descriptor, fstat
+Error EISDIR: illegal operation on a directory, open '.'
+Error EEXIST: file already exists, open 'velt_fs_fd_sync_tmp.bin'
+TypeError The argument 'flags' is invalid. Received 'zz'
+Error EISDIR: illegal operation on a directory, read
+true
+2 2
+4 6
+6 ABcdé
+RangeError The value of "fd" is out of range. It must be an integer. Received 1.5
+RangeError The value of "fd" is out of range. It must be >= 0 && <= 2147483647. Received -1
+Error ENOENT: no such file or directory, unlink 'velt_fs_fd_sync_tmp.bin'

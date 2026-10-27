@@ -72,3 +72,55 @@ function main() {
   console.log(files.length > 0); // true
 }
 ```
+
+## File descriptors
+
+Node's file-descriptor API, written in Velt over [system functions](../reference/system-functions.md):
+each call is one call of the C library, with no runtime in between. On macOS and Linux; for
+Windows and WebAssembly, a call of one of them is a compile error that names the system
+function the target lacks (planned: Windows over its kernel32 functions, and `fs.promises`'
+`FileHandle`).
+
+- `openSync(path, flags = "r", mode = 0o666): number`: a file descriptor. `flags` is one of
+  Node's strings (`"r"`, `"r+"`, `"rs"`, `"rs+"`, `"w"`, `"wx"`, `"w+"`, `"wx+"`, `"a"`, `"ax"`,
+  `"as"`, `"a+"`, `"ax+"`, `"as+"`) or the system's `O_*` bits as a number; the descriptor is
+  closed on `exec`, as in Node.
+- `readSync(fd, buffer: u8[], offset = 0, length?, position?): number`: reads up to `length`
+  bytes (default: the rest of the buffer) into `buffer` from `offset` on, at `position` in the
+  file (`pread`), or at the file's own position, which advances, when `position` is `null` or
+  -1. Returns the bytes read, 0 at the end of the file.
+- `writeSync(fd, buffer: u8[] | string, offset?, length?, position?): number`: writes the bytes
+  (a string as UTF-8; its third argument is then the position), at `position` or at the file's
+  own position (at the end for a file opened to append). Returns the bytes written.
+- `fsyncSync(fd)`, `fdatasyncSync(fd)`: flush the file to the disk (on macOS with
+  `F_FULLFSYNC`, falling back as Node does). `ftruncateSync(fd, len = 0)`. `closeSync(fd)`.
+- `fstatSync(fd): Stats`: the `Stats` of `stat`, from `fstat`. `unlinkSync(path)` removes a file.
+
+Errors are Node's, message for message: an `IoError` with the errno's name as `code` (`ENOENT:
+no such file or directory, open 'a.txt'`, `EBADF: bad file descriptor, read`), a `RangeError`
+for an offset, length, position or descriptor out of range, and a `TypeError` for unknown
+flags. `EINTR` is retried.
+
+```ts
+import { openSync, readSync, writeSync, fsyncSync, fstatSync, closeSync, unlinkSync } from "velt:fs";
+import { tmpdir } from "velt:os";
+
+function main() {
+  const path = `${tmpdir()}/velt-doc-fd.bin`;
+  const fd = openSync(path, "w+");
+  const page: u8[] = Buffer.alloc(4096);
+  page.write("page one");
+  writeSync(fd, page, 0, 4096, 0);
+  writeSync(fd, page, 0, 4096, 8192); // a hole of zeros in between
+  fsyncSync(fd);
+  const back: u8[] = Buffer.alloc(8);
+  console.log(readSync(fd, back, 0, 8, 8192), back.utf8Slice(0, 8)); // 8 page one
+  console.log(fstatSync(fd).size); // 12288
+  closeSync(fd);
+  unlinkSync(path);
+}
+```
+
+Positioned reads run at the speed of the system call: random 4 KiB reads of a cached file take
+about as long as Rust's `FileExt::read_at` and half as long as Node's `fs.readSync`
+(`bench/fs/pread`).

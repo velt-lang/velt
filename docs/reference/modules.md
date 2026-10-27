@@ -324,6 +324,12 @@ library of its own package, and must match that export exactly
 program or a package without native code can't declare C functions such as `free` or `memcpy`. Compiler intrinsics (`__intrinsic_*`) are reserved for
 the standard library too.
 
+`declare system function` is the exception every module has: it binds a function of the
+platform's C library from the compiler's table of the ones it can call safely (`pread`, `fsync`,
+`fcntl`, ...), checked against the table's C signature for the target
+([System functions](system-functions.md)). The standard library uses no other way to reach
+them, so a package can do everything std does.
+
 Whether a module belongs to the standard library depends on where it was loaded from (the std
 root), never on its name: a user module whose path would start with `std/` (a `./std/`
 directory) is an error, and no package may be named `std`.

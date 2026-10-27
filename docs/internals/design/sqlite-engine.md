@@ -97,6 +97,27 @@ declare system function fcntl(fd: i32, cmd: i32, lock: mut Flock): i32;   // a #
 This replaces the Rust in `std/fs` (`velt_rt_fs_*`) over time; std's file API is rewritten on
 it, starting with positioned I/O for the pager.
 
+**Built** (#1716, docs/reference/system-functions.md), with these decisions:
+
+- The written/read distinction is spelled with TypeScript's own `readonly` array type instead of
+  a new `mut` modifier: `buf: u8[]` is a buffer the C function writes, `buf: readonly u8[]` one
+  it only reads (the default of a TypeScript array is mutable; `readonly T[]` already parses,
+  and only `declare system function` gives it a meaning beyond `T[]`). The table says which each
+  function's buffer is, and a declaration must agree.
+- The table is Rust data in velt_vir (`system/posix.rs`, `system/windows.rs`): per target, each
+  function's link symbol, its C parameters (integer, buffer, C string, struct, `NULL`), where
+  its variadic arguments start, argument guards, and each C struct's layout by field name. A
+  Velt struct names the fields it uses (any order, any subset); lowering copies through a
+  temporary of the target's layout, so one Velt struct fits `struct flock` on macOS and Linux.
+- Until byte views (feature 3) exist, a range of a buffer is spelled `buf: u8[], start: usize,
+  end: usize` (checked at the call).
+- `fcntl`'s forms are overloads in the table, chosen by the declaration's types; `fcntl$lock`
+  names a second form in one module (the `$suffix` is ignored). Each form checks its commands.
+- Paths are `readonly u8[]` ending in 0 (checked at the call), not `string`: no allocation or
+  conversion is hidden in a call.
+- A target without a function accepts its declaration; calling it there is a compile error
+  (`velt:fs`'s fd API on Windows and WebAssembly for now).
+
 ## Steps
 
 1. **Reading the file format** (`velt:sqlite/format`, `velt:sqlite/btree`): header, table and

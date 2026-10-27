@@ -6,6 +6,13 @@ declare function velt_rt_os_cpu_count(): u64;
 declare function velt_rt_os_tmpdir(): string;
 declare function velt_rt_os_hostname(): string;
 
+/**
+ * The error number the last failed system function call on this thread left (`errno`;
+ * `GetLastError()` on Windows), for code that calls system functions itself
+ * (docs/reference/system-functions.md). Read it right after the call that failed.
+ */
+export declare system function lastOsError(): i32;
+
 /** "darwin", "linux" or "win32" (Node's `process.platform` names). */
 export function platform(): string {
   return velt_rt_os_platform();

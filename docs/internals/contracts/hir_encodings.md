@@ -312,6 +312,9 @@ Maintainer-owned, like `hir/mod.rs`, `hir/intrinsic.rs` and `hir/module_state.rs
   A rest parameter typed by a tuple is never interned: `Types::intern` spreads the tuple into
   `params` and clears `rest` (`(...a: [A, B]) => R` is `(a: A, b: B) => R`).
 - `declare function` params are never inferred modified: std passes out-parameters as fresh locals.
+  A `declare system function` (`ExternFnDef::system`, per param whether it was written
+  `readonly`) writes every non-Copy param not written `readonly` (its `u8[]` buffers and its
+  structs): callers pass those `BorrowMut`.
 
 ## Generic methods
 - Generic interface methods: `InterfaceDef::methods[slot]` as usual; the method's own type

@@ -1,0 +1,88 @@
+// requires: unix
+// Node's file-descriptor API (`openSync`, `readSync`, `writeSync`, `fstatSync`, ...), which
+// velt:fs writes in Velt over system functions: the same results, errors and messages as Node
+// (this program prints what `node` prints for it with `fs` from "node:fs").
+import * as fs from "velt:fs";
+
+function attempt(f: () => string) {
+  try {
+    console.log(f());
+  } catch (e) {
+    console.log(e.name, e.message);
+  }
+}
+
+function main() {
+  const path = "velt_fs_fd_sync_tmp.bin";
+  attempt(() => `${fs.openSync("velt_fs_fd_sync_missing/nope.txt")}`);
+  const fd = fs.openSync(path, "w+", 0o644);
+  console.log(typeof fd, fd > 2);
+  const b: u8[] = Buffer.alloc(11);
+  b.write("hello world");
+  console.log(fs.writeSync(fd, b));
+  console.log(fs.writeSync(fd, b, 6, 5, 0));
+  const r: u8[] = Buffer.alloc(16);
+  console.log(fs.readSync(fd, r, 0, 16, 0), r.utf8Slice(0, 11));
+  console.log(fs.readSync(fd, r, 2, 4, 0), JSON.stringify(r.utf8Slice(0, 11)));
+  console.log(fs.readSync(fd, r, 0, 16, 100));
+  attempt(() => `${fs.readSync(fd, r, 0, 17, 0)}`);
+  attempt(() => `${fs.readSync(fd, r, 17, 0, 0)}`);
+  attempt(() => `${fs.readSync(fd, r, -1, 0, 0)}`);
+  attempt(() => `${fs.readSync(fd, r, 0, 4, 1.5)}`);
+  attempt(() => `${fs.writeSync(fd, b, 12)}`);
+  attempt(() => `${fs.writeSync(fd, b, 4, 8)}`);
+
+  // Without a position: the file's own, which each call advances.
+  const seq = fs.openSync(path, "r");
+  const two: u8[] = Buffer.alloc(2);
+  console.log(fs.readSync(seq, two), two.utf8Slice(0, 2));
+  console.log(fs.readSync(seq, two, 0, 2, null), two.utf8Slice(0, 2));
+  console.log(fs.readSync(seq, two, 1, 1, -1), two.utf8Slice(0, 2));
+  fs.closeSync(seq);
+
+  fs.ftruncateSync(fd, 4);
+  const st = fs.fstatSync(fd);
+  console.log(st.size, st.isFile(), st.isDirectory(), st.mtimeMs > 0);
+  fs.ftruncateSync(fd);
+  console.log(fs.fstatSync(fd).size);
+  fs.fsyncSync(fd);
+  fs.fdatasyncSync(fd);
+  fs.closeSync(fd);
+  attempt(() => {
+    fs.closeSync(fd);
+    return "closed twice";
+  });
+  attempt(() => `${fs.readSync(fd, r, 0, 1, 0)}`);
+  attempt(() => `${fs.fstatSync(fd).size}`);
+  attempt(() => `${fs.openSync(".", "w")}`);
+  attempt(() => `${fs.openSync(path, "wx")}`);
+  attempt(() => `${fs.openSync(path, "zz")}`);
+
+  const dir = fs.openSync(".", "r");
+  attempt(() => `${fs.readSync(dir, r, 0, 1, 0)}`);
+  console.log(fs.fstatSync(dir).isDirectory());
+  fs.closeSync(dir);
+
+  // Appending: every write goes to the end, whatever the position says.
+  const a = fs.openSync(path, "a");
+  const ab: u8[] = Buffer.alloc(2);
+  ab.write("AB");
+  console.log(fs.writeSync(a, ab), fs.fstatSync(a).size);
+  console.log(fs.writeSync(a, "cdé"), fs.fstatSync(a).size);
+  fs.closeSync(a);
+  const all: u8[] = Buffer.alloc(8);
+  const back = fs.openSync(path, "r");
+  console.log(fs.readSync(back, all), all.utf8Slice(0, 6));
+  fs.closeSync(back);
+
+  attempt(() => `${fs.writeSync(1.5, b)}`);
+  attempt(() => {
+    fs.closeSync(-1);
+    return "";
+  });
+  fs.unlinkSync(path);
+  attempt(() => {
+    fs.unlinkSync(path);
+    return "removed twice";
+  });
+}

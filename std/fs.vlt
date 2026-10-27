@@ -9,6 +9,18 @@
 // runtime function returns nothing.
 
 import { IoResult, IoStatus, unwrapIo, checkIo } from "velt:io";
+import { fstatOf } from "velt:fs/fd";
+
+export {
+  openSync,
+  closeSync,
+  readSync,
+  writeSync,
+  fsyncSync,
+  fdatasyncSync,
+  ftruncateSync,
+  unlinkSync,
+} from "velt:fs/fd";
 
 declare async function velt_rt_fs_read_file(path: string): Promise<IoResult<string>>;
 declare async function velt_rt_fs_read_file_bytes(path: string): Promise<IoResult<u8[]>>;
@@ -263,4 +275,21 @@ export function copyFileSync(from: string, to: string) {
 
 export function existsSync(path: string): bool {
   return velt_rt_fs_exists_sync(path);
+}
+
+/**
+ * The metadata of the open file `fd` (Node's `fs.fstatSync`): its size, modification time and
+ * type, from the system's `fstat`.
+ */
+export function fstatSync(fd: number): Stats {
+  const st = fstatOf(fd);
+  const kind = st.st_mode & 0o170000;
+  return {
+    size: st.st_size as u64,
+    mtimeMs:
+      (st.st_mtime as number) * 1000 + Math.floor((st.st_mtime_nsec as number) / 1000) / 1000,
+    file: kind == 0o100000,
+    dir: kind == 0o040000,
+    symlink: kind == 0o120000,
+  };
 }
