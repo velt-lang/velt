@@ -1,0 +1,63 @@
+// check: no leaks
+// velt:collections/concurrent_map on one thread: every operation against the built-in `Map`
+// on a random mix of sets, deletes and lookups that splits leaves and inner nodes many times,
+// plus edge keys and `getManyInto`.
+
+import { ConcurrentMap } from "velt:collections/concurrent_map";
+
+function mix(x: u64): u64 {
+  let z = x + 0x9E3779B97F4A7C15;
+  z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9;
+  z = (z ^ (z >> 27)) * 0x94D049BB133111EB;
+  return z ^ (z >> 31);
+}
+
+function main() {
+  const m = ConcurrentMap.create(100000);
+  const model = new Map<u64, u64>();
+  let s: u64 = 7;
+  let wrong = 0;
+  for (let i: u64 = 0; i < 200000; i++) {
+    s = mix(s);
+    // Keys from a small range (many updates and deletes of present keys) or a large one.
+    const k = (s & 1) == 0 ? (s >> 8) % 30000 : s >> 1;
+    const op = (s >> 4) % 10;
+    if (op < 5) {
+      m.set(k, i);
+      model.set(k, i);
+    } else if (op < 7) {
+      if (m.delete(k) != model.delete(k)) wrong++;
+    } else {
+      const want = model.get(k);
+      const got = m.get(k);
+      if ((want == undefined) != (got == undefined) || (got != undefined && got != want)) wrong++;
+      if (m.has(k) != model.has(k)) wrong++;
+    }
+  }
+  for (const [k, v] of model) {
+    if (m.get(k) != v) wrong++;
+  }
+  console.log("entries", model.size, "wrong", wrong);
+
+  // Edge keys: 0 and the largest a map holds.
+  const e = ConcurrentMap.create(10);
+  e.set(0, 1);
+  e.set(18446744073709551614, 2);
+  console.log(e.get(0), e.get(18446744073709551614), e.get(1), e.delete(0), e.get(0));
+
+  // `getManyInto`: present and absent keys together, `values` grown to fit.
+  const keys: u64[] = [];
+  for (let i: u64 = 0; i < 64; i++) {
+    keys.push(i % 2 == 0 ? i : 1000000 + i);
+    m.set(i, i * 10);
+  }
+  const values: u64[] = [];
+  const found = m.getManyInto(keys, values);
+  let sum: u64 = 0;
+  for (let i: u64 = 0; i < 64; i++) {
+    if (((found >> i) & 1) != 0) {
+      sum += values[i];
+    }
+  }
+  console.log("found", found.countOnes(), "sum", sum, "values", values.length);
+}

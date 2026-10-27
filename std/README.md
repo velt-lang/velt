@@ -39,6 +39,7 @@ Written in Velt. The compiler resolves `import { x } from "velt:<path>"` to `std
 | `collections/priority_queue.vlt` | `std/collections/priority_queue`: `PriorityQueue<T>`, binary heap ordered by a comparator. |
 | `collections/sorted_map.vlt` | `std/collections/sorted_map`: `SortedMap<K, V>`, key-ordered map (sorted arrays) with `floorKey ceilingKey range`. |
 | `collections/btree_map.vlt` | `std/collections/btree_map`: `BTreeMap<K, V>`, key-ordered B+tree map with `floorKey ceilingKey range` (internal: `collections/btree/pool.vlt` the node pools and inner search, `leaf.vlt` leaf entries, `insert.vlt` inserts, `remove.vlt` deletes, `edges.vlt` the smallest and largest key, `line.vlt` a node's 64-byte words and rank order, `inline_key.vlt` `InlineKey` and the built-in encodings, `check.vlt` the invariants for tests). |
+| `collections/concurrent_map.vlt` | `std/collections/concurrent_map`: `ConcurrentMap`, a `u64` → `u64` map many threads read and write at once (a B+ tree with optimistic lock coupling on one `Atomic<u64>[]` arena, read with velt:simd `loadOptimistic`). |
 | `encoding.vlt` | `std/encoding`: Base64 (std + URL-safe), hex, UTF-8 encode/decode/validate; `EncodingError`. |
 | `encoding/utf8.vlt` | Internal: UTF-8 validation of a byte range with SIMD over ASCII runs, behind `utf8Valid` and the WebSocket reader's check of text that arrives in pieces. |
 | `encoding/binary_string.vlt` | `std/encoding/binary_string`: the globals `btoa atob` (Node's Base64 of binary strings, forgiving decoding). |
