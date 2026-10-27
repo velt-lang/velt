@@ -6,9 +6,9 @@ Status: proposed (#1728, part of the JSON engine, #1655). Nothing here is implem
 
 Std code written in Velt is compiled again inside every program that uses it. Code that lived in
 the Rust runtime was compiled once, when Velt was built, and only linked (`libvelt_rt.a`,
-[Linking](../linking.md)). Each move of std code from Rust to Velt
-([json-engine.md](json-engine.md), "the engine is written in Velt") so adds compile time to
-every program that reaches it.
+[Linking](../linking.md)). So each move of std code from Rust to Velt
+([json-engine.md](json-engine.md), "the engine is written in Velt") adds compile time to every
+program that reaches it.
 
 The issue's example is number formatting: the JSON engine moves Ryu and JavaScript's layout
 rules from the runtime into Velt (#1658). A release build of
