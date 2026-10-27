@@ -13,6 +13,7 @@ import { utf8DecodeLossy } from "velt:encoding";
 
 declare module "wasm:velt_workers" {
   async function fetch_send(
+    via: u32,
     method: string,
     url: string,
     headers: string,
@@ -50,7 +51,33 @@ export async function velt_rt_http_fetch_send(
   signal: u64,
   ca: string,
 ): Promise<IoResult<u64>> {
-  const h = await fetch_send(method, url, headers.join("\n"), kind, text, bytes, redirect);
+  return await sendVia(0, method, url, headers, kind, text, bytes, redirect);
+}
+
+/**
+ * Sends a request through `fetcher` (the glue's handle for a Durable Object stub or a service
+ * binding; 0: the Worker's own `fetch`).
+ */
+export async function sendVia(
+  fetcher: u64,
+  method: string,
+  url: string,
+  headers: string[],
+  kind: u32,
+  text: string,
+  bytes: u8[],
+  redirect: u32,
+): Promise<IoResult<u64>> {
+  const h = await fetch_send(
+    fetcher as u32,
+    method,
+    url,
+    headers.join("\n"),
+    kind,
+    text,
+    bytes,
+    redirect,
+  );
   const err = fetch_error(h);
   if (err != "") {
     resp_drop(h);

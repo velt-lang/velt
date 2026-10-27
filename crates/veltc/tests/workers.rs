@@ -94,6 +94,11 @@ fn check(root: &Path, file: &Path, release: bool, out: &Path) -> Result<(), Stri
         .output()
         .expect("run node");
     let got = String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n");
+    // The scenario can't run with this node (it says why).
+    if run.status.code() == Some(3) {
+        println!("workers: {} {}", file.display(), got.trim());
+        return Ok(());
+    }
     let want = std::fs::read_to_string(file.with_extension("out"))
         .expect(".out")
         .replace("\r\n", "\n");

@@ -18,6 +18,7 @@ import * as std_bigint from "velt:bigint";
 import * as std_channel from "velt:channel";
 import * as std_child_process from "velt:child_process";
 import * as std_cli from "velt:cli";
+import * as std_cloudflare from "velt:cloudflare";
 import * as std_collections_btree_check from "velt:collections/btree/check";
 import * as std_collections_btree_edges from "velt:collections/btree/edges";
 import * as std_collections_btree_inline_key from "velt:collections/btree/inline_key";

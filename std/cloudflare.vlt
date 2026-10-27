@@ -1,0 +1,449 @@
+// std/cloudflare: the bindings of a Cloudflare Worker (`velt build --host workers`,
+// docs/std/cloudflare.md): R2 buckets, D1 databases, KV namespaces, Durable Object namespaces
+// and the cache, written in Velt over the functions the Worker glue (velt_worker.mjs) provides
+// (docs/internals/design/cloudflare-workers.md §6).
+//
+// A binding is looked up by its name in the Worker's `env` (`wrangler.toml`). Every operation is
+// one asynchronous host call that settles with a result handle; its outcome is read from the
+// handle (`op_error`, then `op_text`, a JSON document, or `op_bytes`) and the handle released.
+// Rows and metadata cross as JSON and are decoded with `parse<T>`.
+
+import { IoError } from "velt:io";
+import { AbortError } from "velt:task";
+import { utf8DecodeLossy } from "velt:encoding";
+import { fetchVia, RequestInit } from "velt:fetch";
+
+declare module "wasm:velt_cloudflare" {
+  function binding(name: string): u32;
+  function op_error(h: u32): string;
+  function op_text(h: u32): string;
+  function op_bytes(h: u32): u8[];
+  function op_drop(h: u32);
+  async function r2_get(b: u32, key: string, head: bool): Promise<u32>;
+  async function r2_put(
+    b: u32,
+    key: string,
+    kind: u32,
+    text: string,
+    bytes: u8[],
+    contentType: string,
+    onlyIfAbsent: bool,
+  ): Promise<u32>;
+  async function r2_delete(b: u32, key: string): Promise<u32>;
+  async function r2_list(b: u32, prefix: string, cursor: string, limit: u32): Promise<u32>;
+  async function d1_query(db: u32, sql: string, args: string, mode: u32): Promise<u32>;
+  async function d1_batch(db: u32, statements: string): Promise<u32>;
+  async function kv_get(ns: u32, key: string): Promise<u32>;
+  async function kv_put(ns: u32, key: string, value: string, ttl: f64): Promise<u32>;
+  async function kv_delete(ns: u32, key: string): Promise<u32>;
+  async function kv_list(ns: u32, prefix: string): Promise<u32>;
+  function do_stub(ns: u32, name: string): u32;
+  async function cache_delete(url: string): Promise<u32>;
+}
+
+/** An operation on a binding failed (the message is the host's). */
+export class CloudflareError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CloudflareError";
+  }
+}
+
+// The handle of binding `name`; throws if the Worker has none of that name.
+function lookup(name: string, what: string): u32 throws CloudflareError {
+  const h = binding(name);
+  if (h == 0) {
+    throw new CloudflareError(
+      `the Worker has no ${what} binding \`${name}\` (add it to wrangler.toml)`,
+    );
+  }
+  return h;
+}
+
+// The JSON text of result `h` (released); throws the operation's error.
+function text(h: u32): string throws CloudflareError {
+  const err = op_error(h);
+  if (err != "") {
+    op_drop(h);
+    throw new CloudflareError(err);
+  }
+  const t = op_text(h);
+  op_drop(h);
+  return t;
+}
+
+// `JSON.parse<T>` of a result: a result that doesn't fit `T` (a D1 row without a field `T`
+// has, say) is a `CloudflareError` that says why.
+function parse<T>(json: string): T throws CloudflareError {
+  try {
+    return JSON.parse<T>(json);
+  } catch (e) {
+    throw new CloudflareError(`the result doesn't fit the type asked for: ${e.message}`);
+  }
+}
+
+/** What R2 knows about an object. */
+export struct R2Meta {
+  key: string;
+  /** Bytes. */
+  size: number;
+  etag: string;
+  /** The etag quoted, for an `ETag` header. */
+  httpEtag: string;
+  /** When it was uploaded, in milliseconds since the epoch. */
+  uploaded: number;
+  /** "" when none was stored. */
+  contentType: string;
+}
+
+/** An object of an R2 bucket, from `get` (with its body) or `head` (without). */
+export class R2Object {
+  readonly meta: R2Meta;
+  #h: u32;
+
+  constructor(meta: R2Meta, h: u32) {
+    this.meta = meta;
+    this.#h = h;
+  }
+
+  get key(): string {
+    return this.meta.key;
+  }
+
+  get size(): number {
+    return this.meta.size;
+  }
+
+  /** The body; read once. Throws for an object from `head`, which has none. */
+  bytes(): u8[] throws CloudflareError {
+    const h = this.#h;
+    if (h == 0) {
+      throw new CloudflareError(
+        `the object \`${this.meta.key}\` was read already, or came from head()`,
+      );
+    }
+    this.#h = 0;
+    const err = op_error(h);
+    if (err != "") {
+      op_drop(h);
+      throw new CloudflareError(err);
+    }
+    const b = op_bytes(h);
+    op_drop(h);
+    return b;
+  }
+
+  /** The body as UTF-8 text. */
+  text(): string throws CloudflareError {
+    return utf8DecodeLossy(this.bytes());
+  }
+
+  [Symbol.dispose]() {
+    if (this.#h != 0) {
+      op_drop(this.#h);
+      this.#h = 0;
+    }
+  }
+}
+
+/** One page of `R2Bucket.list`. */
+export struct R2Listing {
+  objects: R2Meta[];
+  /** More objects follow: pass `cursor` to the next `list`. */
+  truncated: bool;
+  cursor: string;
+}
+
+/** `put`'s options. */
+export struct R2PutOptions {
+  /** Store it only if no object has this key; `put` returns null if one has. */
+  onlyIfAbsent?: bool;
+  contentType?: string;
+}
+
+/** `list`'s options. */
+export struct R2ListOptions {
+  prefix?: string;
+  cursor?: string;
+  /** At most this many objects (R2's default and maximum: 1000). */
+  limit?: number;
+}
+
+/** An R2 bucket binding. */
+export class R2Bucket {
+  #h: u32;
+
+  private constructor(h: u32) {
+    this.#h = h;
+  }
+
+  /** The bucket bound as `name` in the Worker's `env`. */
+  static binding(name: string): R2Bucket throws CloudflareError {
+    return new R2Bucket(lookup(name, "R2"));
+  }
+
+  /** The object `key` with its body, or null. */
+  async get(key: string): Promise<R2Object | null, CloudflareError> {
+    return object(await r2_get(this.#h, key, false), true);
+  }
+
+  /** What R2 knows about object `key` (no body), or null. */
+  async head(key: string): Promise<R2Meta | null, CloudflareError> {
+    const o = object(await r2_get(this.#h, key, true), false);
+    return o == null ? null : o.meta;
+  }
+
+  /** Stores `value` as `key`: the stored object's metadata, or null when `onlyIfAbsent` and the key existed. */
+  async put(
+    key: string,
+    value: string | u8[],
+    options: R2PutOptions = {},
+  ): Promise<R2Meta | null, CloudflareError> {
+    const empty: u8[] = [];
+    const h =
+      typeof value == "string"
+        ? await r2_put(
+          this.#h,
+          key,
+          1,
+          value,
+          empty,
+          options.contentType ?? "",
+          options.onlyIfAbsent ?? false,
+        )
+        : await r2_put(
+          this.#h,
+          key,
+          2,
+          "",
+          value,
+          options.contentType ?? "",
+          options.onlyIfAbsent ?? false,
+        );
+    return parse<R2Meta | null>(text(h));
+  }
+
+  /** Deletes object `key` (nothing happens if there is none). */
+  async delete(key: string): Promise<void, CloudflareError> {
+    text(await r2_delete(this.#h, key));
+  }
+
+  /** The objects whose keys start with `prefix`, a page at a time. */
+  async list(options: R2ListOptions = {}): Promise<R2Listing, CloudflareError> {
+    const limit = (options.limit ?? 0) as u32;
+    const h = await r2_list(this.#h, options.prefix ?? "", options.cursor ?? "", limit);
+    return parse<R2Listing>(text(h));
+  }
+}
+
+// The object of a `get`/`head` result: null for a missing key. With `body`, the handle stays
+// with the object for its body.
+function object(h: u32, body: bool): R2Object | null throws CloudflareError {
+  const err = op_error(h);
+  if (err != "") {
+    op_drop(h);
+    throw new CloudflareError(err);
+  }
+  const meta = parse<R2Meta | null>(op_text(h));
+  if (meta == null) {
+    op_drop(h);
+    return null;
+  }
+  if (!body) {
+    op_drop(h);
+    return new R2Object(meta, 0);
+  }
+  return new R2Object(meta, h);
+}
+
+/** A value `bind` takes. */
+export type D1Value = string | number | bool | null;
+
+/** What `run` reports. */
+export struct D1RunResult {
+  /** Rows written. */
+  changes: number;
+  /** The rowid of the last row inserted. */
+  lastRowId: number;
+}
+
+// The JSON array of `values`, for the glue to bind.
+function encode(values: D1Value[]): string {
+  let out = "[";
+  for (let i = 0; i < values.length; i++) {
+    const v = values[i];
+    if (i > 0) {
+      out += ",";
+    }
+    if (v == null) {
+      out += "null";
+    } else if (typeof v == "string") {
+      out += JSON.stringify(v);
+    } else if (typeof v == "boolean") {
+      out += v ? "true" : "false";
+    } else {
+      out += JSON.stringify(v);
+    }
+  }
+  return out + "]";
+}
+
+/** A D1 database binding. */
+export class D1Database {
+  #h: u32;
+
+  private constructor(h: u32) {
+    this.#h = h;
+  }
+
+  /** The database bound as `name` in the Worker's `env`. */
+  static binding(name: string): D1Database throws CloudflareError {
+    return new D1Database(lookup(name, "D1"));
+  }
+
+  /** A statement; `?` placeholders take the values of `bind`. */
+  prepare(sql: string): D1Statement {
+    return new D1Statement(this.#h, sql, []);
+  }
+
+  /** Runs `sql`, one or more statements without placeholders (a schema, say). */
+  async exec(sql: string): Promise<void, CloudflareError> {
+    text(await d1_query(this.#h, sql, "[]", 3));
+  }
+
+  /** Runs `statements` in one transaction: all of them take effect, or none. */
+  async batch(statements: D1Statement[]): Promise<void, CloudflareError> {
+    let out = "[";
+    for (let i = 0; i < statements.length; i++) {
+      if (i > 0) {
+        out += ",";
+      }
+      out += statements[i].json();
+    }
+    text(await d1_batch(this.#h, out + "]"));
+  }
+}
+
+/** A prepared D1 statement with its bound values. */
+export class D1Statement {
+  #db: u32;
+  #sql: string;
+  #values: D1Value[];
+
+  constructor(db: u32, sql: string, values: D1Value[]) {
+    this.#db = db;
+    this.#sql = sql;
+    this.#values = values;
+  }
+
+  /** This statement with `values` for its placeholders, in order. */
+  bind(...values: D1Value[]): D1Statement {
+    return new D1Statement(this.#db, this.#sql, values);
+  }
+
+  /** The first row as a `T` (columns by name), or null when there is none. */
+  async first<T>(): Promise<T | null, CloudflareError> {
+    return parse<T | null>(text(await d1_query(this.#db, this.#sql, encode(this.#values), 0)));
+  }
+
+  /** Every row, each a `T`. */
+  async all<T>(): Promise<T[], CloudflareError> {
+    return parse<T[]>(text(await d1_query(this.#db, this.#sql, encode(this.#values), 1)));
+  }
+
+  /** Runs the statement for what it changes. */
+  async run(): Promise<D1RunResult, CloudflareError> {
+    return parse<D1RunResult>(text(await d1_query(this.#db, this.#sql, encode(this.#values), 2)));
+  }
+
+  // `{"sql": …, "args": […]}` for `batch` (std only).
+  private json(): string {
+    return `{"sql":${JSON.stringify(this.#sql)},"args":${encode(this.#values)}}`;
+  }
+}
+
+/** `KVNamespace.put`'s options. */
+export struct KVPutOptions {
+  /** Seconds until the value expires (at least 60). */
+  expirationTtl?: number;
+}
+
+/** A KV namespace binding. */
+export class KVNamespace {
+  #h: u32;
+
+  private constructor(h: u32) {
+    this.#h = h;
+  }
+
+  /** The namespace bound as `name` in the Worker's `env`. */
+  static binding(name: string): KVNamespace throws CloudflareError {
+    return new KVNamespace(lookup(name, "KV"));
+  }
+
+  /** The value of `key`, or null. */
+  async get(key: string): Promise<string | null, CloudflareError> {
+    return parse<string | null>(text(await kv_get(this.#h, key)));
+  }
+
+  async put(
+    key: string,
+    value: string,
+    options: KVPutOptions = {},
+  ): Promise<void, CloudflareError> {
+    text(await kv_put(this.#h, key, value, options.expirationTtl ?? 0));
+  }
+
+  async delete(key: string): Promise<void, CloudflareError> {
+    text(await kv_delete(this.#h, key));
+  }
+
+  /** The keys that start with `prefix`. */
+  async list(prefix: string = ""): Promise<string[], CloudflareError> {
+    return parse<string[]>(text(await kv_list(this.#h, prefix)));
+  }
+}
+
+/** A Durable Object namespace binding. */
+export class DurableObjectNamespace {
+  #h: u32;
+
+  private constructor(h: u32) {
+    this.#h = h;
+  }
+
+  /** The namespace bound as `name` in the Worker's `env`. */
+  static binding(name: string): DurableObjectNamespace throws CloudflareError {
+    return new DurableObjectNamespace(lookup(name, "Durable Object"));
+  }
+
+  /** The stub of the object named `name` (`idFromName`): one object per name, worldwide. */
+  get(name: string): DurableObjectStub {
+    return new DurableObjectStub(do_stub(this.#h, name));
+  }
+}
+
+/** A Durable Object, reached through `fetch`. */
+export class DurableObjectStub {
+  #h: u32;
+
+  constructor(h: u32) {
+    this.#h = h;
+  }
+
+  /** Sends a request to the object (any host in the URL reaches it). */
+  async fetch(
+    input: string | URL | Request,
+    init: RequestInit = {},
+  ): Promise<Response, IoError | AbortError> {
+    return await fetchVia(this.#h as u64, input, init);
+  }
+}
+
+/** The Worker's cache (`caches.default`). */
+export class Cache {
+  /** Removes the cached response for `url`; false if there was none. */
+  static async delete(url: string): Promise<bool, CloudflareError> {
+    return parse<bool>(text(await cache_delete(url)));
+  }
+}

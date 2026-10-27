@@ -23,6 +23,21 @@ export declare async function velt_rt_http_fetch_send(
   ca: string,
 ): Promise<IoResult<u64>>;
 
+/** `velt_rt_http_fetch_send` through a host's fetcher: there are none natively (`ENOTSUP`). */
+export async function sendVia(
+  fetcher: u64,
+  method: string,
+  url: string,
+  headers: string[],
+  kind: u32,
+  text: string,
+  bytes: u8[],
+  redirect: u32,
+): Promise<IoResult<u64>> {
+  const none: u64 = 0;
+  return IoResult { code: 12, message: "this program's host has no fetchers", value: none };
+}
+
 export declare function velt_rt_http_fetch_resp_status(r: u64): u32;
 export declare function velt_rt_http_fetch_resp_status_text(r: u64): string;
 export declare function velt_rt_http_fetch_resp_url(r: u64): string;

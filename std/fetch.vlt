@@ -20,7 +20,7 @@ export { Headers, HeadersInit } from "velt:fetch/headers";
 export { Request, RequestInit, RequestRedirect } from "velt:fetch/request";
 export { Response, ResponseInit } from "velt:fetch/response";
 
-import { velt_rt_http_fetch_send } from "velt:fetch/client_io";
+import { sendVia, velt_rt_http_fetch_send } from "velt:fetch/client_io";
 
 function redirectMode(r: RequestRedirect): u32 {
   if (r == "error") {
@@ -68,6 +68,38 @@ export async function fetch(
     signal.throwIfAborted();
   }
   return Response.adopt(unwrapIo(r), signal, o.method == "HEAD");
+}
+
+/**
+ * `fetch` through `fetcher`, a host's own fetcher (std only: a Durable Object stub or a service
+ * binding of `velt:cloudflare`, the glue's handle for it). Natively there are none: it rejects
+ * with `IoError` `ENOTSUP`.
+ */
+export async function fetchVia(
+  fetcher: u64,
+  input: string | URL | Request,
+  init: RequestInit = {},
+): Promise<Response, IoError | AbortError> {
+  const o = outgoing(input, init);
+  let text = o.text;
+  let bytes = o.bytes;
+  let kind = o.kind;
+  const stream = o.stream;
+  if (stream != null) {
+    bytes = await collect(stream);
+    kind = 2;
+  }
+  const r = await sendVia(
+    fetcher,
+    o.method,
+    o.url,
+    o.headers,
+    kind,
+    text,
+    bytes,
+    redirectMode(o.redirect),
+  );
+  return Response.adopt(unwrapIo(r), null, o.method == "HEAD");
 }
 
 // What `fetch` sends.

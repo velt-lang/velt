@@ -1,0 +1,7 @@
+200 content-type=text/plain;charset=UTF-8 | 3 true one 3 true 2 1 text/plain
+200 content-type=text/plain;charset=UTF-8 | 1 2.1.0 true json@0.3.1,sqlite@2.1.0,textkit@1.0.0
+200 content-type=text/plain;charset=UTF-8 | v1 true k true
+200 content-type=text/plain;charset=UTF-8 | visits=1 POST /increment visits=2 POST /increment
+200 content-type=text/plain;charset=UTF-8 | true false
+500 content-type=text/plain;charset=UTF-8 | CloudflareError: the Worker has no R2 binding `NOPE` (add it to wrangler.toml)
+404 content-type=text/plain;charset=UTF-8 | not found

@@ -1,0 +1,72 @@
+// A Worker using its bindings through velt:cloudflare: an R2 bucket, a D1 database, a KV
+// namespace, a Durable Object and the cache, all faked by bindings.mjs.
+import { serve } from "velt:http";
+import { Cache, CloudflareError, D1Database, DurableObjectNamespace, KVNamespace, R2Bucket } from "velt:cloudflare";
+
+struct Pkg {
+  name: string;
+  version: string;
+}
+
+async function main() {
+  await serve({ port: 8080 }, async (req: Request): Promise<Response> => {
+    const url = new URL(req.url);
+    const blobs = R2Bucket.binding("BLOBS");
+    const db = D1Database.binding("DB");
+    const kv = KVNamespace.binding("KV");
+    if (url.pathname == "/r2") {
+      const first = await blobs.put("a/1", "one", { contentType: "text/plain", onlyIfAbsent: true });
+      const again = await blobs.put("a/1", "uno", { onlyIfAbsent: true });
+      const data: u8[] = [1, 2, 3];
+      await blobs.put("a/2", data);
+      const got = await blobs.get("a/1");
+      const head = await blobs.head("a/2");
+      const missing = await blobs.get("nope");
+      const page = await blobs.list({ prefix: "a/" });
+      await blobs.delete("a/2");
+      const after = await blobs.list({ prefix: "a/" });
+      return new Response(
+        `${first?.size} ${again == null} ${got?.text()} ${head?.size} ${missing == null} ${page.objects.length} ${after.objects.length} ${first?.contentType}`,
+      );
+    }
+    if (url.pathname == "/d1") {
+      await db.exec("CREATE TABLE pkg (name TEXT, version TEXT)");
+      const run = await db.prepare("INSERT INTO pkg VALUES (?, ?)").bind("textkit", "1.0.0").run();
+      await db.batch([
+        db.prepare("INSERT INTO pkg VALUES (?, ?)").bind("sqlite", "2.1.0"),
+        db.prepare("INSERT INTO pkg VALUES (?, ?)").bind("json", "0.3.1"),
+      ]);
+      const one = await db.prepare("SELECT name, version FROM pkg WHERE name = ?").bind("sqlite").first<Pkg>();
+      const none = await db.prepare("SELECT name, version FROM pkg WHERE name = ?").bind("x").first<Pkg>();
+      const all = await db.prepare("SELECT name, version FROM pkg ORDER BY name").all<Pkg>();
+      const names = all.map((p) => `${p.name}@${p.version}`).join(",");
+      return new Response(`${run.changes} ${one?.version} ${none == null} ${names}`);
+    }
+    if (url.pathname == "/kv") {
+      await kv.put("k", "v1");
+      const v = await kv.get("k");
+      const missing = await kv.get("nope");
+      const keys = await kv.list("k");
+      await kv.delete("k");
+      return new Response(`${v} ${missing == null} ${keys.join(",")} ${(await kv.get("k")) == null}`);
+    }
+    if (url.pathname == "/do") {
+      const counter = DurableObjectNamespace.binding("COUNTER").get("visits");
+      const a = await (await counter.fetch("https://do/increment", { method: "POST" })).text();
+      const b = await (await counter.fetch("https://do/increment", { method: "POST" })).text();
+      return new Response(`${a} ${b}`);
+    }
+    if (url.pathname == "/cache") {
+      return new Response(`${await Cache.delete("https://example.com/cached")} ${await Cache.delete("https://example.com/other")}`);
+    }
+    if (url.pathname == "/missing") {
+      try {
+        R2Bucket.binding("NOPE");
+        return new Response("unexpected");
+      } catch (e) {
+        return new Response(`${e}`, { status: 500 });
+      }
+    }
+    return new Response("not found", { status: 404 });
+  });
+}

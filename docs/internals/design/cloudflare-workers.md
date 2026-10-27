@@ -395,6 +395,14 @@ The first slice (host imports, the target and glue, `serve()`) differs from the 
   result (above 1), written through `stream_write`/`stream_ready`/`stream_close` (the stream
   calls moved from std/http/stream.vlt to server_io.vlt). An `AbortSignal` doesn't cancel a
   host `fetch` yet.
+- **Section 6 as built** (std/cloudflare.vlt): bindings by name as proposed; every operation is
+  one `Promise<u32>` host import that settles with a result handle, whose `op_error`, `op_text`
+  (JSON, decoded with `JSON.parse<T>`; a misfit is a `CloudflareError`) and `op_bytes` the
+  Velt code reads. An R2 body is read whole when `get` settles. D1 values cross as a JSON array.
+  Durable Object stubs send through `fetchVia` (std/fetch.vlt), the global `fetch` with a
+  fetcher handle (`client_io`'s `sendVia`). Durable Objects written in Velt remain open.
+  Checked against fakes under node (tests/workers/bindings.mjs) and by hand against workerd's
+  local R2, D1 and KV (`wrangler dev`), with the same results.
 - **The Rust added**: the stored handler, `velt_fetch` (a task per request, as the native
   server starts), `fetch_done`, `velt_turn`, the executor's `run_turn`, the string helpers
   above, and `velt_rt_http_serve`/`_server_*` on wasm (workers.rs, about 200 lines).

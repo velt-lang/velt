@@ -28,8 +28,9 @@ class VeltExit extends Error {
  * @param {{
  *   write?: (stream: number, bytes: Uint8Array) => void,
  *   fetch?: typeof fetch,
- * }} host output sink (default: console.log / console.error, a line at a time) and the `fetch`
- *   the program's own requests go to (default: the global one)
+ *   caches?: CacheStorage,
+ * }} host output sink (default: console.log / console.error, a line at a time), the `fetch`
+ *   the program's own requests go to and the caches (default: the global ones)
  */
 export function createWorker(module, host = {}) {
   let rt = null;
@@ -37,7 +38,12 @@ export function createWorker(module, host = {}) {
     async fetch(request, env, ctx) {
       try {
         if (rt === null || rt.dead) {
-          rt = start(module, host.write ?? consoleWrite(), host.fetch ?? globalThis.fetch, env);
+          rt = start(module, {
+            write: host.write ?? consoleWrite(),
+            outbound: host.fetch ?? globalThis.fetch,
+            caches: host.caches ?? globalThis.caches,
+            env,
+          });
         }
         return await rt.handle(request, env, ctx);
       } catch (e) {
@@ -48,7 +54,7 @@ export function createWorker(module, host = {}) {
   };
 }
 
-function start(module, write, outbound, env) {
+function start(module, { write, outbound, caches, env }) {
   const requests = new Map();
   // Fetched responses and streamed responses, by handle (above 1: a handler's result of 1
   // means "responded", 0 "failed").
@@ -105,6 +111,41 @@ function start(module, write, outbound, env) {
     return v;
   };
   const message = (e) => String(e?.message ?? e);
+  // Binding handles by name: a binding is the same object for every request of an isolate.
+  const bindings = new Map();
+  // An operation on a binding (std/cloudflare.vlt): settles with a result handle whose `error`,
+  // `text` (JSON) and `bytes` the program reads.
+  const op = (run) => {
+    const h = nextHandle++;
+    const r = { error: "", text: "null", bytes: null };
+    handles.set(h, r);
+    return promise(
+      Promise.resolve()
+        .then(() => run(r))
+        .then(
+          (v) => {
+            if (v !== undefined) r.text = JSON.stringify(v);
+            return h;
+          },
+          (e) => {
+            r.error = message(e);
+            return h;
+          },
+        ),
+    );
+  };
+  const bound = (h) => handle(h).binding;
+  const r2meta = (o) =>
+    o === null
+      ? null
+      : {
+          key: o.key,
+          size: o.size,
+          etag: o.etag,
+          httpEtag: o.httpEtag,
+          uploaded: o.uploaded.getTime(),
+          contentType: o.httpMetadata?.contentType ?? "",
+        };
 
   // A panic, an exit or a trap: every request in flight fails and the instance is not used again.
   const fail = (e) => {
@@ -242,7 +283,8 @@ function start(module, write, outbound, env) {
         handles.delete(w);
       },
       // The program's own requests (std/fetch/client_io.workers.vlt).
-      fetch_send(method, url, headers, kind, text, body, redirect) {
+      fetch_send(via, method, url, headers, kind, text, body, redirect) {
+        const send = via === 0 ? outbound : (u, i) => handle(via).fetcher.fetch(u, i);
         const h = nextHandle++;
         const r = { response: null, error: "", reader: null, chunk: null };
         handles.set(h, r);
@@ -256,7 +298,7 @@ function start(module, write, outbound, env) {
         const target = str(url);
         let sent;
         try {
-          sent = outbound(target, init);
+          sent = send(target, init);
         } catch (e) {
           sent = Promise.reject(e);
         }
@@ -312,6 +354,129 @@ function start(module, write, outbound, env) {
         const r = handles.get(h);
         handles.delete(h);
         r?.reader?.cancel().catch(() => {});
+      },
+    },
+    velt_cloudflare: {
+      binding(name) {
+        const key = str(name);
+        if (bindings.has(key)) return bindings.get(key);
+        const b = env?.[key];
+        if (b === undefined || b === null) return 0;
+        const h = nextHandle++;
+        handles.set(h, { binding: b });
+        bindings.set(key, h);
+        return h;
+      },
+      op_error: (h, out) => setStr(out, handle(h).error),
+      op_text: (h, out) => setStr(out, handle(h).text),
+      op_bytes: (h, out) => setBytes(out, handle(h).bytes ?? new Uint8Array(0)),
+      op_drop(h) {
+        handles.delete(h);
+      },
+      r2_get(b, key, head) {
+        const bucket = bound(b);
+        const k = str(key);
+        return op(async (r) => {
+          const o = head ? await bucket.head(k) : await bucket.get(k);
+          if (o !== null && !head) r.bytes = new Uint8Array(await o.arrayBuffer());
+          return r2meta(o);
+        });
+      },
+      r2_put(b, key, kind, text, data, contentType, onlyIfAbsent) {
+        const bucket = bound(b);
+        const k = str(key);
+        const value = kind === 1 ? str(text) : bytes(data);
+        const options = {};
+        const type = str(contentType);
+        if (type !== "") options.httpMetadata = { contentType: type };
+        if (onlyIfAbsent) options.onlyIf = new Headers({ "if-none-match": "*" });
+        return op(async () => r2meta(await bucket.put(k, value, options)));
+      },
+      r2_delete(b, key) {
+        const bucket = bound(b);
+        const k = str(key);
+        return op(async () => {
+          await bucket.delete(k);
+        });
+      },
+      r2_list(b, prefix, cursor, limit) {
+        const bucket = bound(b);
+        const options = {};
+        const p = str(prefix);
+        const c = str(cursor);
+        if (p !== "") options.prefix = p;
+        if (c !== "") options.cursor = c;
+        if (limit > 0) options.limit = limit;
+        return op(async () => {
+          const page = await bucket.list(options);
+          return {
+            objects: page.objects.map(r2meta),
+            truncated: page.truncated,
+            cursor: page.truncated ? page.cursor : "",
+          };
+        });
+      },
+      d1_query(d, sql, args, mode) {
+        const db = bound(d);
+        const query = str(sql);
+        const values = JSON.parse(str(args));
+        return op(async () => {
+          if (mode === 3) {
+            await db.exec(query);
+            return null;
+          }
+          const statement = db.prepare(query).bind(...values);
+          if (mode === 0) return (await statement.first()) ?? null;
+          if (mode === 1) return (await statement.all()).results;
+          const { meta } = await statement.run();
+          return { changes: meta.changes, lastRowId: meta.last_row_id };
+        });
+      },
+      d1_batch(d, statements) {
+        const db = bound(d);
+        const list = JSON.parse(str(statements));
+        return op(async () => {
+          await db.batch(list.map((s) => db.prepare(s.sql).bind(...s.args)));
+          return null;
+        });
+      },
+      kv_get(n, key) {
+        const ns = bound(n);
+        const k = str(key);
+        return op(async () => (await ns.get(k)) ?? null);
+      },
+      kv_put(n, key, value, ttl) {
+        const ns = bound(n);
+        const k = str(key);
+        const v = str(value);
+        return op(async () => {
+          await ns.put(k, v, ttl > 0 ? { expirationTtl: ttl } : undefined);
+        });
+      },
+      kv_delete(n, key) {
+        const ns = bound(n);
+        const k = str(key);
+        return op(async () => {
+          await ns.delete(k);
+        });
+      },
+      kv_list(n, prefix) {
+        const ns = bound(n);
+        const p = str(prefix);
+        return op(async () => (await ns.list(p === "" ? {} : { prefix: p })).keys.map((k) => k.name));
+      },
+      do_stub(n, name) {
+        const ns = bound(n);
+        const h = nextHandle++;
+        handles.set(h, { fetcher: ns.get(ns.idFromName(str(name))) });
+        return h;
+      },
+      cache_delete(url) {
+        const u = str(url);
+        return op(async () => {
+          if (caches === undefined) throw new Error("this host has no cache");
+          return await caches.default.delete(u);
+        });
       },
     },
   };
