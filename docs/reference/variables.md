@@ -274,9 +274,12 @@ function main() {
   uncontended atomic operation when no other task holds it). Tasks on other cores that use module state at the same moment wait for each other, so
   keep long computations that many tasks run in parallel out of the code between their `await`s that
   uses module state, or give them `shared(...)` state instead. A task that blocks on a `Mutex` keeps
-  the module lock while it waits (the `Mutex`'s holder never needs it, see above).
+  the module lock while it waits (the `Mutex`'s holder never needs it, see above). A
+  `const X = new Atomic<T>(literal)` is not module state: it takes no lock and costs no runtime
+  call ([sync](../std/sync.md)).
 - `velt dev`: code swapped into a running program starts its module state over, as after a
-  restart ([hot reload](../tooling/dev.md)).
+  restart ([hot reload](../tooling/dev.md)). A `const X = new Atomic<T>(literal)` keeps its
+  value (a new one if the edit changes its type).
 
 ```ts error
 let a = b + 1;                          // error: `b` is read before its initializer runs

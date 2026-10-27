@@ -100,3 +100,37 @@ fn std_constants_with_literal_and_computed_starts() {
         assert_eq!(stdout, "1 2 11\n", "release={release}: {stderr}");
     }
 }
+
+/// The `mutable=<id>` of each writable static in the VIR of `src`.
+fn word_ids(src: &str) -> Vec<String> {
+    vir(src)
+        .lines()
+        .filter_map(|l| l.split(" mutable=").nth(1).map(str::to_string))
+        .collect()
+}
+
+const COUNTER: &str = "
+const HITS = new Atomic<u64>(0);
+
+function main() {
+  HITS.add(1);
+  console.log(HITS.load());
+}
+";
+
+/// A `velt dev` session keeps one word per id: the id stays when declarations come and go, and
+/// changes with the type, so code of a version where the type changed never reads the old
+/// word as the new type.
+#[test]
+fn word_ids_follow_name_and_type() {
+    let before = word_ids(COUNTER);
+    assert_eq!(before.len(), 1, "{before:?}");
+    let more =
+        format!("const limit: u64 = 3;\nfunction helper(): u64 {{ return limit; }}\n{COUNTER}");
+    assert_eq!(before, word_ids(&more));
+    for other in ["Atomic<u32>(0)", "Atomic<f64>(0)", "Atomic<i64>(0)"] {
+        let changed = COUNTER.replace("Atomic<u64>(0)", other);
+        assert_ne!(before, word_ids(&changed), "{other}");
+    }
+    assert_ne!(before, word_ids(&COUNTER.replace("HITS", "MISSES")));
+}

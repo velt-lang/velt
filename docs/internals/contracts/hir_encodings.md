@@ -804,7 +804,7 @@ function value of a method, which sema rejects too.
 `new Atomic<T>(literal)` (a number literal, negated or not, or `true`/`false`), in the program
 or in std, has no slot: it is a `GlobalDef` with `slot: None` and that `AdtLit` as `init`.
 Lowering gives it one writable 8-byte-or-smaller `StaticData` (`mutable: Some(id)`, `id` the
-`tls::stable_id` of its qualified name) starting as the literal, made once, and its `Global` is
+`tls::stable_id` of its qualified name and value type) starting as the literal, made once, and its `Global` is
 the place of that word wherever it is used: no `velt_rt_module_state`, so no module lock.
 
 ## Module state

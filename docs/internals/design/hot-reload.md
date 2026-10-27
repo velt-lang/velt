@@ -124,7 +124,10 @@ changed modules. Sema is now most of a reload's time (see "Measured"), so this i
    runtime keys by the program's module descriptor; swapped-in code has a new descriptor and gets a
    fresh block from its own initializers, so nothing is migrated
    ([the Reference](../../reference/variables.md#module-state)). State in `shared(...)` or
-   class instances owned by `main` or handlers carries over.
+   class instances owned by `main` or handlers carries over. So does a static atomic
+   (`const X = new Atomic<T>(literal)`, not module state) and a `ThreadLocal`'s key: the
+   session owns one word or key per constant, named by its qualified name and type, which every
+   version imports (velt_codegen_cl `dev/mod.rs`); an edit changing the type gets a new one.
 3. **Runtime rule: no cached code pointers.** Only vtables (through relocations) and future
    headers store code addresses; the HTTP handler descriptor is replaced per server on a swap,
    and every runtime API that takes callbacks must follow the same pattern.

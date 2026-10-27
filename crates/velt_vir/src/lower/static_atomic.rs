@@ -63,7 +63,8 @@ impl FnLower<'_, '_> {
                 align: bits / 8,
                 bytes,
                 relocs: vec![],
-                mutable: Some(crate::tls::stable_id(&name)),
+                // The type is part of it: an edit changing it gets a new word (`velt dev`).
+                mutable: Some(crate::tls::stable_id(&format!("{name}:{vt:?}"))),
             });
             id
         });

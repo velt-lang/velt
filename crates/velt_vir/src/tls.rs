@@ -4,8 +4,8 @@
 //! A module constant `new ThreadLocal<T>(init)` is one value per thread, of a number type or
 //! `bool`, which starts as `init` on every thread. Lowering calls `velt_tls_get_<id>_<bits>_<init>`
 //! to read this thread's value and `velt_tls_set_<id>_<bits>_<init>` to write it: `id` names the
-//! constant ([`stable_id`] of its qualified name, so it stays the same across edits of other
-//! declarations, which `velt dev` relies on), `bits` is the value's width and `init` its starting
+//! constant ([`stable_id`] of its qualified name and value type, so it stays the same across
+//! edits of other declarations, which `velt dev` relies on, and changes with the type), `bits` is the value's width and `init` its starting
 //! word in hex. Values are passed as unsigned integers of that width, as the atomics' are. No runtime
 //! function exists behind these symbols: a backend emits each call inline on thread-local storage
 //! it defines from the symbol (`velt_tls_data_<id>`, `bits` wide, starting as `init`), or, where it
@@ -60,7 +60,7 @@ impl TlsCall {
         (call.symbol() == symbol).then_some(call)
     }
 
-    /// The constant's number: [`stable_id`] of its qualified name.
+    /// The constant's number: [`stable_id`] of its qualified name and value type.
     pub fn id(self) -> u64 {
         self.parts().1
     }

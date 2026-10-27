@@ -215,6 +215,13 @@ fn check_statics(p: &Program, errs: &mut Vec<String>) {
         if s.mutable.is_some() && !s.relocs.is_empty() {
             errs.push(format!("static#{i}: writable data with relocations"));
         }
+        // One word: `velt dev` keeps each in an 8-byte cell (velt_codegen_cl dev/mod.rs).
+        let word = matches!(s.bytes.len(), 1 | 2 | 4 | 8) && s.align as usize == s.bytes.len();
+        if s.mutable.is_some() && !word {
+            errs.push(format!(
+                "static#{i}: writable data that is not one aligned word"
+            ));
+        }
         let mut offsets: Vec<u32> = s.relocs.iter().map(|(off, _)| *off).collect();
         offsets.sort_unstable();
         if offsets.windows(2).any(|w| w[1] - w[0] < 8) {
