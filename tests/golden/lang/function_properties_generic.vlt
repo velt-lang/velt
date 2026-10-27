@@ -1,0 +1,38 @@
+// check: no leaks
+// A function with properties built in a generic function (#921): the alias's call signature
+// takes a parameter type known only per instantiation, the members are written right after
+// the cast, a module's own copy of an alias is the imported one, and the value is accepted
+// where a `Function` is expected.
+import { type Ctx, type Factory } from "./_function_properties_generic_types";
+
+// The same alias as the imported module's (sigx's component.ts does this).
+type Strip<T> = { [K in keyof T as K extends "__brand" ? never : K]: T[K] };
+
+const registry = new Map<Function, string>();
+
+function announce(name: string, factory: Function): void {
+  console.log("defined", name, typeof factory);
+}
+
+function define<T extends Record<string, any>>(
+  setup: (ctx: Ctx<Strip<T>>) => string,
+  name?: string,
+): Factory<T> {
+  const factory = function (props: any) {
+    return "render " + JSON.stringify(props);
+  } as unknown as Factory<T>;
+  factory.__setup = setup;
+  factory.__name = name;
+  factory.__kind = "component";
+  registry.set(factory, name ?? "anonymous");
+  announce(name ?? "anonymous", factory);
+  return factory;
+}
+
+const Card = define<{ title: string; __brand: number }>((ctx) => "card " + ctx.props.title, "Card");
+const Plain = define<{ n: number }>((ctx) => "plain " + ctx.props.n);
+
+console.log(Card({ title: "hi" }));
+console.log(Card.__setup({ props: { title: "x" } }), Card.__name, Card.__kind);
+console.log(Plain({ n: 2, key: "k" }), Plain.__setup({ props: { n: 3 } }), Plain.__name);
+console.log(registry.get(Card), registry.get(Plain), registry.size, typeof Card);

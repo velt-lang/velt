@@ -1261,7 +1261,7 @@ A function can carry properties, as in JavaScript: an interface or object type w
 signature and members (`interface Runner { (): number; stop(): void }`, or
 `(() => number) & { stop(): void }`) types such a value. It is called like a function, its
 members are read and written like an object's fields, `typeof` is `"function"`, and it is
-accepted where its plain function type is expected. An interface extending a function type
+accepted where its plain function type or `Function` is expected. An interface extending a function type
 (`interface Subscriber extends EffectFn { deps: string[] }`) is one too. It is built in one of
 two ways:
 
@@ -1272,6 +1272,9 @@ two ways:
   members their values (declarations of other functions may come between them, since they run
   nothing); a required member with no write there is an error (Node would read `undefined`
   before the write).
+
+Both work in generic code too, including with a type whose call signature takes a parameter
+known only once the type arguments are (`((props: Partial<T>) => R) & { name?: string }`).
 
 ```ts
 interface Runner {

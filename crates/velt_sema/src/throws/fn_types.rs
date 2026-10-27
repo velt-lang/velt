@@ -213,7 +213,12 @@ impl Ctx<'_> {
         env: &crate::resolve::TyEnv,
         span: Span,
     ) -> TyId {
-        let params: Vec<TyId> = written.iter().map(|t| self.resolve_type(t, env)).collect();
+        let params: Vec<TyId> = match self.type_level.callable_params.contains(&span) {
+            true => (written.iter())
+                .map(|t| self.resolve_param_form(t, env))
+                .collect(),
+            false => written.iter().map(|t| self.resolve_type(t, env)).collect(),
+        };
         if let (true, Some(&last), Some(w)) = (rest, params.last(), written.last()) {
             // A tuple is its elements (`Types::intern`); a type parameter or `infer` slot is
             // one once it is known.

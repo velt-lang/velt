@@ -1,0 +1,15 @@
+// Types imported by function_properties_generic.vlt: a callable alias whose call signature's
+// parameter needs the type arguments, and its members' types.
+export type Strip<T> = { [K in keyof T as K extends "__brand" ? never : K]: T[K] };
+
+export interface Ctx<P extends Record<string, any> = {}> {
+  props: P;
+}
+
+export type Setup<P extends Record<string, any> = {}> = (ctx: Ctx<P>) => string;
+
+export type Factory<T extends Record<string, any>> = ((props: Partial<T> & { key?: string }) => string) & {
+  __setup: Setup<Strip<T>>;
+  __name?: string;
+  __kind: string;
+};

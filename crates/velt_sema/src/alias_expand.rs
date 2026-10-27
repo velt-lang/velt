@@ -78,8 +78,20 @@ impl Ctx<'_> {
         }
         let outer_stuck = std::mem::replace(&mut self.type_level.stuck, false);
         let reported = self.diags.len();
-        let body = self.resolve_type(&decl.ty, &env);
-        let stuck = std::mem::replace(&mut self.type_level.stuck, outer_stuck);
+        let mut body = self.resolve_type(&decl.ty, &env);
+        let mut stuck = std::mem::replace(&mut self.type_level.stuck, outer_stuck);
+        let calls = call_parts(&decl.ty);
+        if stuck && defer && !calls.is_empty() {
+            // `((props: F<T>) => R) & { __setup: S<T> }` (a function with properties, #921):
+            // only its call signature's parameter types wait for the arguments, so a generic
+            // body can build and use the value (`const f = fn as A<T>; f.__setup = …`).
+            self.diags.truncate(reported);
+            self.type_level.stuck = false;
+            let outer = std::mem::replace(&mut self.type_level.callable_params, calls);
+            body = self.resolve_type(&decl.ty, &env);
+            self.type_level.callable_params = outer;
+            stuck = std::mem::replace(&mut self.type_level.stuck, outer_stuck);
+        }
         if defer {
             self.type_level.deferring -= 1;
         }
@@ -107,6 +119,68 @@ impl Ctx<'_> {
         }
         let t = self.subst(body, &args);
         self.reduce_known_intersection(t)
+    }
+}
+
+impl Ctx<'_> {
+    /// The first alias declared exactly like alias `a` (same name, parameters and body, the
+    /// names in them bound to the same items), else `a`: a module's own copy of another's
+    /// alias (`type Strip<T> = …` written in both) is one type when deferred, as TypeScript
+    /// compares the two structurally.
+    pub(crate) fn alias_twin(&mut self, a: u32) -> u32 {
+        if let Some(&t) = self.type_level.twins.get(&a) {
+            return t;
+        }
+        let twin = (0..a).find(|&b| self.alias_twins(a, b)).unwrap_or(a);
+        self.type_level.twins.insert(a, twin);
+        twin
+    }
+
+    fn alias_twins(&self, a: u32, b: u32) -> bool {
+        let (x, y) = (&self.aliases[a as usize], &self.aliases[b as usize]);
+        if x.decl.name.name != y.decl.name.name || !x.outer.is_empty() || !y.outer.is_empty() {
+            return false;
+        }
+        if x.module == y.module {
+            return false;
+        }
+        let gx = crate::type_level::inline::debug_key(&x.decl.generics);
+        let gy = crate::type_level::inline::debug_key(&y.decl.generics);
+        if gx != gy
+            || crate::type_level::inline::debug_key(&x.decl.ty.kind)
+                != crate::type_level::inline::debug_key(&y.decl.ty.kind)
+        {
+            return false;
+        }
+        let mut names = vec![];
+        crate::type_level::inline::names_in(&x.decl.ty, &mut names);
+        for g in &x.decl.generics {
+            for t in g.bounds.iter().chain(g.default.iter()) {
+                crate::type_level::inline::names_in(t, &mut names);
+            }
+        }
+        let (sx, sy) = (&self.scopes[x.module], &self.scopes[y.module]);
+        names.iter().all(|n| {
+            *n != "*"
+                && (sx.items.get(*n) == sy.items.get(*n)
+                    || x.decl.generics.iter().any(|g| g.name.name == *n))
+        })
+    }
+}
+
+/// The spans of the function types among the parts of `t` when it is an intersection of them
+/// with other parts (a callable object type: `((p: P) => R) & { x: X }`); empty otherwise.
+fn call_parts(t: &ast::TypeExpr) -> Vec<Span> {
+    let ast::TypeExprKind::Intersection(parts) = &t.kind else {
+        return vec![];
+    };
+    let calls: Vec<Span> = (parts.iter())
+        .filter(|p| matches!(p.kind, ast::TypeExprKind::Function { .. }))
+        .map(|p| p.span)
+        .collect();
+    match calls.len() < parts.len() {
+        true => calls,
+        false => vec![],
     }
 }
 

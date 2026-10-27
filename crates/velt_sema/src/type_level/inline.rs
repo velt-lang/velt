@@ -103,6 +103,21 @@ impl Ctx<'_> {
         self.inline_op(t, env, None)
     }
 
+    /// Parameter type `t` of a callable alias's call signature, resolved in the alias's `env`
+    /// (`Ctx::alias_body`): when it needs an argument that is still a type parameter, the form
+    /// deferred on its own (`TyOp::Inline` over the alias's parameters).
+    pub(crate) fn resolve_param_form(&mut self, t: &ast::TypeExpr, env: &TyEnv) -> TyId {
+        let outer_stuck = std::mem::replace(&mut self.type_level.stuck, false);
+        let reported = self.diags.len();
+        let r = self.resolve_type(t, env);
+        let stuck = std::mem::replace(&mut self.type_level.stuck, outer_stuck);
+        if !stuck {
+            return r;
+        }
+        self.diags.truncate(reported);
+        self.inline_op(t, env, None)
+    }
+
     /// The requirement that the read (or `write`) `x[k]` of the form `t` (`T[K]`) names one
     /// key at every instantiation (`Form::read`), written at `span`.
     pub(crate) fn key_read_requirement(
@@ -245,7 +260,7 @@ impl Ctx<'_> {
 }
 
 /// The single names `t` mentions (type parameters among them, perhaps shadowed).
-fn names_in<'t>(t: &'t ast::TypeExpr, out: &mut Vec<&'t str>) {
+pub(crate) fn names_in<'t>(t: &'t ast::TypeExpr, out: &mut Vec<&'t str>) {
     let mut add = |x: &'t ast::TypeExpr| names_in(x, out);
     use ast::TypeExprKind as K;
     match &t.kind {
@@ -307,7 +322,12 @@ fn names_in<'t>(t: &'t ast::TypeExpr, out: &mut Vec<&'t str>) {
 
 /// `t` as written, without its positions: forms written alike have one key.
 fn shape_key(t: &ast::TypeExpr) -> String {
-    let full = format!("{:?}", t.kind);
+    debug_key(&t.kind)
+}
+
+/// `x`'s debug form without its positions.
+pub(crate) fn debug_key(x: &impl std::fmt::Debug) -> String {
+    let full = format!("{x:?}");
     let mut out = String::with_capacity(full.len());
     let mut rest = full.as_str();
     while let Some(i) = rest.find("Span {") {
