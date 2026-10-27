@@ -1,7 +1,7 @@
 //! Calls of a function whose `this` is bound at the call: std/this_fn.vlt's `__ThisFn`, the
 //! value of a function expression with a `this: any` parameter (sema `this_fn_expr.rs`). Held
 //! as an `any` (a `Function`), it is a function: `typeof` is `"function"` (`Cx::is_function_object`),
-//! a plain call `f(x)` (its `AnyApply` slot) is `__apply(undefined, [x])`, and a method call
+//! a plain call `f(x)` (its `AnyApply` slot, any_glue.rs) is `__apply(undefined, [x])`, and a method call
 //! through a proxy or an `any` object (`proxy_call_body`, `any_call_body`) is
 //! `__apply(receiver, args)` with that object as `this`.
 //! Its `call`, `apply` and `bind` are methods of the class. A program without such a function
@@ -82,7 +82,7 @@ impl FnLower<'_, '_> {
         }
     }
 
-    /// In the `AnyCall` slot of `__ThisFn` (`ty`): `f.call(thisArg, ...args)` is
+    /// In the `AnyCall` slot of a type `ty`, when it is `__ThisFn`: `f.call(thisArg, ...args)` is
     /// `__apply(thisArg, args)` and `f.bind(thisArg, ...args)` is `__bind(thisArg, args)` (a
     /// method's rest parameter is not packed through `any`). Continues in the block for the
     /// other keys.
@@ -91,6 +91,9 @@ impl FnLower<'_, '_> {
         (data, key, argv, argc, out): (vir::Local, vir::Local, vir::Local, vir::Local, vir::Local),
         ty: TyId,
     ) {
+        if !self.cx.is_this_fn(ty) {
+            return;
+        }
         let any = self.cx.any_ty();
         let avt = self.cx.ty(any);
         let arr_ty = self.cx.intern(TyKind::Array(any));

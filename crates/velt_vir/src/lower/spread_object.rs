@@ -362,11 +362,13 @@ impl FnLower<'_, '_> {
         for ((_, k), b) in fields.iter().zip(blocks) {
             self.switch_to(b);
             let fi = ftys[*k as usize];
+            let proxiable = self.cx.proxiable(oty);
+            let fp = (!proxiable).then(|| self.field_place(&place, oty, *k));
             let name = names.get(*k as usize).cloned().unwrap_or_default();
             // The field as the `TypeError`s name it, with its type as written.
             let field = format!("`{name}` ({})", self.field_type_name(fi));
             let stored = self.key_store_value(&Place::local(tmp), vty, fi, &field);
-            if self.cx.proxiable(oty) {
+            let Some(fp) = fp else {
                 // A proxy's `set` trap takes the value (`proxy_write`).
                 let target = hir::Expr {
                     kind: hir::ExprKind::Field {
@@ -380,8 +382,7 @@ impl FnLower<'_, '_> {
                 self.proxy_store(&place, oty, *k, &target, stored);
                 self.goto(join);
                 continue;
-            }
-            let fp = self.field_place(&place, oty, *k);
+            };
             if !self.cx.is_unit(fi) {
                 self.drop_glue(fp.clone(), fi);
                 self.assign(fp.clone(), Rvalue::Use(stored));

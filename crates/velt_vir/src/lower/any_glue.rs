@@ -675,9 +675,7 @@ impl FnLower<'_, '_> {
         if let Some(prefix) = self.builtin_prefix(ty) {
             return self.any_builtin_call(prefix, (data, key, argv, argc, out), ty);
         }
-        if self.cx.is_this_fn(ty) {
-            self.this_fn_call_keys((data, key, argv, argc, out), ty);
-        }
+        self.this_fn_call_keys((data, key, argv, argc, out), ty);
         if self.prelude_record(ty).is_some() {
             // The prelude's `__anyRec_` functions (std/record/reflect.vlt: what
             // `Reflect` does to a record's symbol keys); a record's function values come later.
@@ -713,7 +711,6 @@ impl FnLower<'_, '_> {
                 let vt = self.cx.ty(fty);
                 let held = Place::local(self.copy_to_temp(v, vt));
                 let (fd, fdesc) = self.any_parts(Operand::Copy(held.clone()), fty);
-                // A function whose `this` is bound at the call gets the object (this_fn.rs).
                 self.this_fn_method_call((&held, fty, &fd, &fdesc), (data, argv, argc, out), ty);
                 let a = [argv, argc, out].map(|l| Operand::Copy(Place::local(l)));
                 let a = vec![fd, a[0].clone(), a[1].clone(), a[2].clone()];
@@ -784,9 +781,8 @@ impl FnLower<'_, '_> {
                 self.any_drop_args(argv, 0, argc);
                 self.ret_status(ST_UNSUPPORTED);
             }
-            // A function whose `this` is bound at the call (this_fn.rs).
             TyKind::Adt(..) if self.cx.is_this_fn(ty) => {
-                self.this_fn_apply_body((data, argv, argc, out), ty);
+                self.this_fn_apply_body((data, argv, argc, out), ty)
             }
             // An array method (`Reflect.get(array, "push")`) runs only when called on a proxy.
             TyKind::Adt(..) if self.cx.is_array_method(ty) => {
