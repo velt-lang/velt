@@ -298,6 +298,12 @@ pub struct ExternFnDef {
     /// M3: `declare async function f(...): Promise<T>` — the symbol returns an rt leaf future
     /// (`VeltFut*`, result slot at offset 16; see rt_abi_async.md); `ret` is `Promise<T>`.
     pub is_async: bool,
+    /// `declare system function` (docs/reference/system-functions.md): a function of the
+    /// platform's C library, which lowering calls through the compiler's table of system
+    /// functions. Per parameter, whether its type was written `readonly` (`readonly u8[]`: a
+    /// buffer the C function only reads; the type in `params` is `u8[]` either way). `None` for
+    /// runtime and native-package functions.
+    pub system: Option<Vec<bool>>,
     pub span: Span,
 }
 

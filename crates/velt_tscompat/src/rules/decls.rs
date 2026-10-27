@@ -39,7 +39,8 @@ pub(super) fn item(item: &ast::Item, cx: &mut Cx) {
             "declare-fn",
             cx.keyword(item.span, "declare"),
             format!(
-                "`declare function {}` binds native code, which JavaScript doesn't have",
+                "`declare {}function {}` binds native code, which JavaScript doesn't have",
+                if sig.is_system { "system " } else { "" },
                 sig.name.name
             ),
             &[

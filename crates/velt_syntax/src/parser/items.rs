@@ -168,11 +168,17 @@ impl<'a> Parser<'a> {
         Ok(kind)
     }
 
-    /// `declare [async] function name(...): R;`
+    /// `declare [async] function name(...): R;` or `declare system function name(...): R;`
+    /// (`system` is a word only there: a function of the platform's C library).
     fn parse_declare(&mut self, lo: u32) -> PResult<FnSig> {
         self.bump(); // declare
+        let is_system = self.at_word("system") && self.nth(1) == Tok::Kw(Kw::Function);
+        if is_system {
+            self.bump(); // system
+        }
         let is_async = self.eat_kw(Kw::Async);
-        let sig = self.parse_fn_sig(lo, is_async)?;
+        let mut sig = self.parse_fn_sig(lo, is_async)?;
+        sig.is_system = is_system;
         if sig.is_generator {
             self.error("a `declare function` cannot be a generator", sig.name.span);
         }
@@ -348,6 +354,7 @@ impl<'a> Parser<'a> {
             ret,
             throws,
             is_async,
+            is_system: false,
             is_generator,
             this_param,
             span: self.span_from(lo),

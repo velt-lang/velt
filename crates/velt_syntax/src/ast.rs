@@ -83,7 +83,8 @@ pub enum ItemKind {
     Var(VarDecl),
     /// `extend<T> Array<T> { methods }` — add methods to an existing type (used by std/prelude).
     Extend(ExtendDecl),
-    /// `declare function name(a: i64): void;` — external C-ABI symbol (used by std for rt FFI).
+    /// `declare function name(a: i64): void;` — external C-ABI symbol (used by std for rt FFI);
+    /// `declare system function pread(...)` (`FnSig::is_system`) binds the platform's C library.
     ExternFn(FnSig),
     /// `declare global { … }` / `declare module "spec" { … }`: declarations that augment the
     /// global scope or another module (TypeScript's augmentation; interfaces merge into the
@@ -156,6 +157,10 @@ pub struct FnSig {
     /// `throws A | B` after the return type; `None`: the thrown types are inferred.
     pub throws: Option<TypeExpr>,
     pub is_async: bool,
+    /// `declare system function`: a function of the platform's C library, checked against the
+    /// compiler's table of system functions (docs/reference/system-functions.md). Always `false`
+    /// for anything but a `declare` item.
+    pub is_system: bool,
     /// `function*` / `*name()`: a generator (`yield` is allowed in its body).
     pub is_generator: bool,
     /// `function f(this: T, ...)`: the type of `this` in the body, when it is not `void` (a

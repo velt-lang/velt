@@ -420,6 +420,7 @@ impl<'a> Parser<'a> {
             ret: None,
             throws,
             is_async: false,
+            is_system: false,
             is_generator: false,
             this_param: None,
             span: self.span_from(lo),
