@@ -108,9 +108,11 @@ impl FnLower<'_, '_> {
         let any = self.cx.any_ty();
         let avt = self.cx.ty(any);
         let out = Place::local(self.temp(avt));
-        // `undefined` first: boxing a union result assigns it per member, and the verifier
-        // sees no member for the paths a union's switch never takes.
+        // Boxing a union result assigns `out` per member, and the verifier sees no member for
+        // the paths a union's switch never takes: `out` holds `undefined` (released at once, so
+        // nothing is kept) before the result goes in.
         self.any_nothing_into(Nothing::Undefined, &out);
+        self.drop_glue(out.clone(), any);
         let this = match self.cx.ty(ty) {
             Ty::Agg(_) => self.addr(place.clone()),
             _ => Operand::Copy(place.clone()),
