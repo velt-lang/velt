@@ -116,10 +116,15 @@ impl FnCx<'_, '_> {
             };
             if let Some(needs) = wrong {
                 let shown = self.cx.display(args[0].ty);
-                self.cx.err(
+                let mut d = Diagnostic::error(
                     format!("`{name}` needs an `Atomic` of {needs}, found `{shown}`"),
                     span,
                 );
+                // `new Atomic(0)`: a number literal makes an `Atomic<f64>`.
+                if float {
+                    d = d.with_note("for an integer counter, write its type: `new Atomic<u64>(…)`");
+                }
+                self.cx.error(d);
                 return Some(self.error_expr(span));
             }
         }

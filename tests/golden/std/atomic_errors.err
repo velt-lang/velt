@@ -30,3 +30,4 @@ atomic_errors.vlt:24:8: error: an ordering must be a string literal
   = note: the compiler picks the instruction for it: write "relaxed", "acquire", "release", "acqrel" or "seqcst"
 
 atomic_errors.vlt:27:1: error: `or` needs an `Atomic` of an integer or `bool`, found `Atomic<f64>`
+  = note: for an integer counter, write its type: `new Atomic<u64>(…)`
