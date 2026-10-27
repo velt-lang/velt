@@ -241,10 +241,11 @@ pub struct ParamAttrs {
     /// The callee never writes through this pointer (or pointers derived from it).
     pub readonly: bool,
     /// Nothing changes the pointee's bytes during the call, through this pointer or any other,
-    /// except the words of `Atomic`s, which are only accessed through `velt_atomic_*` calls
-    /// (never read as plain memory): a plain read of the pointee gives the same value anywhere
-    /// in the call, so it may be done once on entry. Implied by nothing else: a `readonly`
-    /// pointee may still change through other pointers.
+    /// except the words of `Atomic`s (changed through `velt_atomic_*` calls; inspecting a value
+    /// also reads them as plain memory): a plain read of the pointee outside an `Atomic` gives
+    /// the same value anywhere in the call, so it may be done once on entry. An `Atomic` is the
+    /// aggregate lowering names `Atomic`. Implied by nothing else: a `readonly` pointee may still
+    /// change through other pointers.
     pub frozen: bool,
     /// The pointer is never null.
     pub nonnull: bool,

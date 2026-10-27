@@ -445,7 +445,7 @@ impl FnLower<'_, '_> {
     }
 
     /// `Some(v)` of option type `opt` (not registered as a temporary).
-    fn some_of(&mut self, opt: TyId, v: Operand) -> Operand {
+    pub(super) fn some_of(&mut self, opt: TyId, v: Operand) -> Operand {
         match self.cx.ty(opt) {
             Ty::Ptr => v,
             Ty::Bool => Operand::Const(crate::vir::Const::Bool(true), Ty::Bool),

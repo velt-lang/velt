@@ -1,0 +1,35 @@
+// The one key a ConcurrentMap cannot hold, 2^64 - 1: every lookup of it answers absent, also in a
+// tree of several levels whose values are large (inner nodes pad their keys with it, so a descent
+// for it would follow a slot no separator covers), and `set` of it is a RangeError.
+
+import { ConcurrentMap } from "velt:collections/concurrent_map";
+
+const MAXK: u64 = 18446744073709551615;
+
+function mix(x: u64): u64 {
+  let z = x + 0x9E3779B97F4A7C15;
+  z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9;
+  z = (z ^ (z >> 27)) * 0x94D049BB133111EB;
+  return z ^ (z >> 31);
+}
+
+function main() {
+  const e = ConcurrentMap.create(10);
+  console.log(e.get(MAXK), e.has(MAXK), e.add(MAXK, 1), e.delete(MAXK));
+  const n: u64 = 50000;
+  const m = ConcurrentMap.create((n + 10) as usize);
+  for (let i: u64 = 0; i < n; i++) {
+    m.set(mix(i) >> 1, MAXK - 7 - i);
+  }
+  const values: u64[] = [];
+  const found = m.getManyInto([MAXK, mix(3) >> 1, MAXK], values);
+  console.log(
+    m.get(MAXK),
+    m.has(MAXK),
+    m.add(MAXK, 1),
+    m.delete(MAXK),
+    found,
+    values[1] == MAXK - 10,
+  );
+  m.set(MAXK, 1);
+}

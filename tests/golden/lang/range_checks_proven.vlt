@@ -1,0 +1,31 @@
+// Element accesses at constant offsets in a range one check proved: release builds decide
+// their own checks at compile time (velt_opt `bounds`), with the same answers. Bases near
+// u64's end take the check's rejecting branch, as the arithmetic must not wrap into range.
+
+function node(xs: u64[], b: u64): u64 {
+  if (xs.length < 8 || b > (xs.length as u64) - 8) {
+    return 999;
+  }
+  return xs[b] + xs[b + 3] + xs[b + 7];
+}
+
+function pairs(xs: u64[], b: u64): u64 {
+  if (xs.length < 8 || b > (xs.length as u64) - 8) {
+    return 999;
+  }
+  let s: u64 = 0;
+  for (let j: u64 = 0; j < 8; j += 2) {
+    s += xs[b + j] * xs[b + j + 1];
+  }
+  return s;
+}
+
+function main() {
+  const xs: u64[] = [];
+  for (let i: u64 = 0; i < 20; i++) {
+    xs.push(i);
+  }
+  console.log(node(xs, 0), node(xs, 12), node(xs, 13), node(xs, 18446744073709551615));
+  console.log(pairs(xs, 0), pairs(xs, 12), pairs(xs, 13), pairs(xs, 18446744073709551608));
+  console.log(node([], 0), pairs([1, 2, 3], 0));
+}

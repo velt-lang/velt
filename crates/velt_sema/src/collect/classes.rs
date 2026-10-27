@@ -530,7 +530,15 @@ fn check_override_sig(cx: &mut Ctx, m: MethodRef, base: &Found, name: &velt_synt
         }
         false => mr,
     };
-    let ret_ok = super::ret_infer::override_ret(cx, (m.def, base.def()), &args, (mr, br), at);
+    // `Promise<T>` results written without error types reject with what either is given
+    // (`throws::promise_sites`).
+    let site = |cx: &Ctx, d: DefId| {
+        let f = cx.fn_info(d);
+        f.ret_span.and_then(|s| cx.site_in(s, f.ret))
+    };
+    let (ms, bs) = (site(cx, m.def), site(cx, base.def()));
+    let ret_ok = cx.unify_promise_results((mr, ms), (br, bs))
+        || super::ret_infer::override_ret(cx, (m.def, base.def()), &args, (mr, br), at);
     if !cx.same_tys(&mp, &bp) || !ret_ok || mg != bg {
         let mut d = Diagnostic::error(message, name.span);
         if let Some(note) = crate::body::defaults::applied_default_note(

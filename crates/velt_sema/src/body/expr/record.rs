@@ -189,7 +189,11 @@ impl FnCx<'_, '_> {
                 synth(kind, span)
             }
         };
+        // A promise stored as the value of a `Record` of promises (`throws::promise_sites`).
+        let pushed = self.site_of_value(&obj).map(|s| (value.span, s));
+        let outer = std::mem::replace(&mut self.cx.fn_sites.push, pushed);
         let set = self.record_call_keyed(obj, "__set", key, std::slice::from_ref(&value), span);
+        self.cx.fn_sites.push = outer;
         // The key holds a value now: `r[k]` reads it until the next change (`key_narrow`).
         self.unnarrow_fields(target);
         if op.is_none() && self.cx.ty.nothing_of(v).is_none() {

@@ -27,6 +27,7 @@ import * as std_collections_btree_line from "velt:collections/btree/line";
 import * as std_collections_btree_pool from "velt:collections/btree/pool";
 import * as std_collections_btree_remove from "velt:collections/btree/remove";
 import * as std_collections_btree_map from "velt:collections/btree_map";
+import * as std_collections_concurrent_map from "velt:collections/concurrent_map";
 import * as std_collections_deque from "velt:collections/deque";
 import * as std_collections_priority_queue from "velt:collections/priority_queue";
 import * as std_collections_set from "velt:collections/set";

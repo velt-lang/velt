@@ -725,7 +725,22 @@ builtins included, at zero cost (the calls are direct):
 - **Generic and blanket** extensions: `extend<T> Array<T> { … }`,
   `extend<T extends Named> T { … }` (every implementor gets the method).
 - **Static methods**: `extend Point { static origin(): Point { … } }` is called as
-  `Point.origin()`.
+  `Point.origin()`. A static method of a primitive type (`i8` … `u64`, `isize`, `usize`, `f32`,
+  `f64`, `bool`, `string`) is called through the type's name, `f64.half(3)`, unless the program
+  declares a value of that name. As for a class, the static is a value too (`const h =
+  f64.half;`, `f64.half?.(2)`), and `this` in such a static is the type (`this.half(x)` is
+  `f64.half(x)`). The name is no value otherwise (`const t = f64;` is an error), and `f64.m()`
+  of a method that is not static is an error naming it. Blanket extensions (`extend<T extends
+  I> T { static … }`) give no statics to primitive types, as they give none to classes.
+
+  ```ts
+  extend f64 {
+    static half(x: f64): f64 {
+      return x / 2;
+    }
+  }
+  console.log(f64.half(3)); // 1.5
+  ```
 - A type's own member wins over an extension. Among the extensions that apply (target matches,
   bounds hold), the most specific wins: block A is more specific than block B when A's target
   is an instance of B's and not the other way round, so `extend Array<string>` wins over

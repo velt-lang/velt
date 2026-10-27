@@ -182,6 +182,7 @@ impl Ctx<'_> {
                 readonly: f.readonly,
                 optional: f.optional,
             });
+            self.note_written_type(f.name.span, f.ty.span);
             spans.push(f.name.span);
         }
         if out.iter().any(|f| f.ty == self.ty.error) {
@@ -495,6 +496,10 @@ impl Ctx<'_> {
         }
         let k = match name {
             "Array" | "ReadonlyArray" => TyKind::Array(args[0]),
+            // TypeScript's `Promise<T>` may reject: what with is inferred (`throws::promise_sites`).
+            "Promise" if args.len() == 1 => {
+                return Some(self.promise_site(args[0], t.span, env.module))
+            }
             "Promise" => {
                 let e = args.get(1).copied().unwrap_or(self.ty.never);
                 if let Some(w) = written.get(1) {

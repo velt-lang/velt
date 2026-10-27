@@ -1,0 +1,51 @@
+// `ConcurrentMap.add` from many threads at once, while another thread inserts keys that split
+// the leaves the counters live in: no add is lost, and none lands on a moved slot.
+
+import { ConcurrentMap } from "velt:collections/concurrent_map";
+
+const COUNTERS: u64 = 200;
+const ROUNDS: u64 = 1000;
+
+function mix(x: u64): u64 {
+  let z = x + 0x9E3779B97F4A7C15;
+  z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9;
+  z = (z ^ (z >> 27)) * 0x94D049BB133111EB;
+  return z ^ (z >> 31);
+}
+
+async function adder(m: shared<ConcurrentMap>) {
+  for (let r: u64 = 0; r < ROUNDS; r++) {
+    for (let c: u64 = 0; c < COUNTERS; c++) {
+      m.add(mix(c), 1);
+    }
+  }
+}
+
+async function inserter(m: shared<ConcurrentMap>) {
+  for (let i: u64 = 0; i < 30000; i++) {
+    m.set(mix(1000000 + i), i);
+  }
+}
+
+async function main() {
+  const m = ConcurrentMap.create(100000);
+  for (let c: u64 = 0; c < COUNTERS; c++) {
+    m.set(mix(c), 0);
+  }
+  console.log("absent", m.add(12345, 1), m.get(12345));
+  const s = shared(m);
+  const ps: Promise<void>[] = [spawn(inserter(s))];
+  for (let t = 0; t < 4; t++) {
+    ps.push(spawn(adder(s)));
+  }
+  await Promise.all(ps);
+  let wrong: u64 = 0;
+  for (let c: u64 = 0; c < COUNTERS; c++) {
+    if (s.get(mix(c)) != 4 * ROUNDS) wrong++;
+  }
+  let lost: u64 = 0;
+  for (let i: u64 = 0; i < 30000; i++) {
+    if (s.get(mix(1000000 + i)) != i) lost++;
+  }
+  console.log("wrong", wrong, "lost", lost, "before", s.add(mix(7), 10), s.get(mix(7)));
+}

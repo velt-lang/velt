@@ -163,6 +163,7 @@ impl FnCx<'_, '_> {
                 // With the sets written in: the source's errors are added to the sites of the
                 // element type, and the program is checked again with them.
                 self.cx.fn_throws_differ(et, elem);
+                self.cx.seed_promise_site(et, elem);
             }
             if !fits && !self.cx.ty.has_error(et) {
                 let (from, to) = (self.cx.display(et), self.cx.display(elem));

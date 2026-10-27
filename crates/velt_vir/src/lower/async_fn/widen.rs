@@ -158,7 +158,15 @@ impl<'c, 'h> FnLower<'c, 'h> {
         self.switch_to(err_bb);
         let ferr = self.cx.view(from_slot, 1);
         let e = Operand::Copy(proj(&proj(&inner, Proj::Cast(ferr)), Proj::Field(1)));
+        // Boxing into `unknown` makes temporaries: this function has no scope of its own.
+        let scoped = self.scopes.is_empty();
+        if scoped {
+            self.push_scope(crate::lower::ScopeKind::Temps);
+        }
         let widened = self.widen_error(e, e1, e2);
+        if scoped {
+            self.pop_scope();
+        }
         if self.cx.ty(e2) != Ty::Unit {
             let dst = proj(&proj(out, Proj::Cast(err_view)), Proj::Field(1));
             self.assign(dst, Rvalue::Use(widened));
