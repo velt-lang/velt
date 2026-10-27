@@ -11,6 +11,7 @@ mod jit_relocs;
 mod link;
 mod objects;
 mod rounding;
+mod tls;
 
 use velt_vir::vir::*;
 

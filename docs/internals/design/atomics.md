@@ -214,11 +214,22 @@ reason to spin. `max` and `min` are the prelude's `max2` and `min2` (`Math.max`,
    → `u64`, bbtree's benchmark) in pure Velt: optimistic coupling through inner nodes, leaves
    latched, `Atomic<u64>` slots, the step-2 map's nodes and inline keys. Benchmarked against
    bbtree's `BBTreeMap` (sync) on 1–N threads.
-3. **Reclamation**: an atomic slot of `shared<T>` that can be replaced (`swap`, `compareExchange`)
-   with a protected `load()` (the hazard pointers of the `atom` branch's runtime, exposed per
-   slot). `Atom<T>` (#708) is then a Velt struct in std, and so are generic keys and values for
-   the concurrent map (a replaced key or value is retired, not freed, while a reader may hold
-   it).
+3. **Reclamation, in Velt** (approved on #1696, 2026-10-27; replaces the `atom` branch's runtime
+   hazard pointers: nothing of it is in Rust). Three language features, then std code on them:
+   - **`ThreadLocal<T>`** (implemented): a module constant with one value per thread, a number
+     or `bool`, emitted as the platform's thread-local storage by both backends (OS thread keys
+     where Cranelift has none: `velt dev`, arm64 Windows). Contracts: hir_encodings.md,
+     rt_abi.md "Thread-local values".
+   - **`Atomic<shared<T>>` and `Atomic<string>`**: a word owning one reference to an immutable
+     value. `store`/`exchange`/`compareExchange` move references; `load()` is a frozen borrow
+     (#36's rules) that counts nothing; a replaced value is retired, not released.
+   - **Read sections placed by the compiler**: opened at the first protected `load`, closed
+     before each `await`, `yield`, return and at loop back edges; a borrow live at a close is
+     counted there (one atomic increment). No new rule for users.
+   - **`velt:sync/epoch`**: epoch-based reclamation (one store and fence per section) on
+     `Atomic<u64>` and `ThreadLocal`, with per-thread retire lists. Then `Atom<T>` (#708's API)
+     as a std struct, and `ConcurrentMap<K, V>` with string keys (inline prefix and tag, keys
+     compared 16 bytes at a time in Velt, #1697) and retired values.
 
 ## Results of step 1
 

@@ -11,6 +11,7 @@ use cranelift_codegen::isa::CallConv;
 use cranelift_codegen::{CodegenError, Context};
 use cranelift_frontend::FunctionBuilderContext;
 use cranelift_module::{DataDescription, DataId, FuncId, Linkage, Module, ModuleError};
+use rustc_hash::FxHashMap;
 use target_lexicon::BinaryFormat;
 use velt_vir::vir;
 
@@ -43,6 +44,9 @@ pub(crate) struct Declarations {
     /// import nothing defines must not reach the linker, even unreferenced).
     pub externs: Vec<Option<FuncId>>,
     pub statics: Vec<DataId>,
+    /// The thread-local data object of each `ThreadLocal` constant, by its id, where the ISA
+    /// has thread-local storage (tls.rs).
+    pub tls: FxHashMap<u32, DataId>,
     pub call_conv: CallConv,
 }
 
@@ -126,7 +130,33 @@ fn declare_all<M: Module>(
         Naming::Dev(names) => declare_dev_functions(module, program, call_conv, names)?,
     };
     let mut externs = Vec::with_capacity(program.externs.len());
+    let (mut tls, mut tls_keys) = (FxHashMap::default(), FxHashMap::default());
     for e in &program.externs {
+        // A thread-local value: inline on thread-local storage, or a function this module
+        // defines on the operating system's thread keys (tls.rs).
+        if let Some(call) = velt_vir::tls::TlsCall::of_symbol(&e.symbol) {
+            let (params, ret) = call.signature();
+            if e.params != params || e.ret != ret {
+                bail!("ICE: `{}` declared with another signature", e.symbol);
+            }
+            if crate::tls::native(module) {
+                crate::tls::data(module, &mut tls, call)?;
+                externs.push(None);
+                continue;
+            }
+            let sig = make_signature(call_conv, &e.params, e.ret)?;
+            let id = declare_function(
+                module,
+                call_conv,
+                &e.symbol,
+                &e.params,
+                e.ret,
+                Linkage::Local,
+            )?;
+            crate::tls::define_on_keys(module, call_conv, &mut tls_keys, call, id, sig)?;
+            externs.push(Some(id));
+            continue;
+        }
         // Operations emitted inline (function/simd.rs, function/atomic.rs): nothing to link.
         if velt_vir::simd::SimdCall::of_symbol(&e.symbol).is_some()
             || velt_vir::atomic::AtomicCall::of_symbol(&e.symbol).is_some()
@@ -164,6 +194,7 @@ fn declare_all<M: Module>(
         funcs,
         externs,
         statics,
+        tls,
         call_conv,
     };
     Ok((decls, defs))

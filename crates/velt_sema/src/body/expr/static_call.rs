@@ -153,7 +153,7 @@ impl FnCx<'_, '_> {
         }
         self.explicit_type_args(&mut slots, own, type_args, &c.defaults, span);
         let mut ck = self.check_call(&c, slots, args, exp, span);
-        if let Some(h) = self.atomic_call(def, &mut ck.args, ck.ret, span) {
+        if let Some(h) = self.sync_call(def, &mut ck.args, ck.ret, span) {
             return h;
         }
         self.note_async_args(def, &ck.args);

@@ -1,0 +1,40 @@
+// `ThreadLocal<T>`: one value per thread, starting as the literal it was made with. Tasks on
+// worker threads each set their own and change it many times with no `await` in between: their
+// values stay their own (a value shared between threads would lose or mix their changes).
+
+const counter = new ThreadLocal<u64>(7);
+const offset = new ThreadLocal<i32>(-3);
+const scale = new ThreadLocal<f64>(0.5);
+const busy = new ThreadLocal<bool>(true);
+
+function bump(n: u64) {
+  for (let i: u64 = 0; i < n; i++) {
+    counter.set(counter.get() + 1);
+  }
+}
+
+async function worker(id: u64): Promise<u64> {
+  // Not awaited from here on: the task stays on one thread.
+  counter.set(id);
+  bump(100000);
+  return counter.get() == id + 100000 ? 0 : 1;
+}
+
+async function main() {
+  console.log(counter.get(), offset.get(), scale.get(), busy.get());
+  counter.set(9);
+  offset.set(offset.get() * 2);
+  scale.set(scale.get() * 3);
+  busy.set(false);
+  console.log(counter.get(), offset.get(), scale.get(), busy.get());
+
+  const ps: Promise<u64>[] = [];
+  for (let t: u64 = 0; t < 8; t++) {
+    ps.push(spawn(worker(1000000 * (t + 1))));
+  }
+  let wrong: u64 = 0;
+  for (const w of await Promise.all(ps)) {
+    wrong += w;
+  }
+  console.log("wrong", wrong);
+}

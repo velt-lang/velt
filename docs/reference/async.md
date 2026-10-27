@@ -578,7 +578,7 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
   An `Atomic` is used where it is, never copied or shared, and binding a part of a `shared`
   value that holds one to a variable is an error. See [Atomics and velt:sync](../std/sync.md),
   which also has `Backoff` and `VersionLatch` (optimistic lock coupling) for lock-free data
-  structures.
+  structures, and `ThreadLocal<T>`, a module constant with one value per thread.
 - `shared(new RwLock<T>(x))` for state read far more often than written: `rw.read((v) => …)`
   runs the callback while other tasks run theirs on other threads, and `rw.write((v) => …)`
   runs it alone, exactly as `with` does (a writer that has waited a while holds new readers

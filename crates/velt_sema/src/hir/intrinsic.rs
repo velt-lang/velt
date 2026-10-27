@@ -330,6 +330,14 @@ pub enum Intrinsic {
     AtomicFence,
     /// `Atomic.spinHint()`: `()`. Additive.
     AtomicSpinHint,
+    /// `tl.get()` on a `ThreadLocal<T>` (T a number type or `bool`): `(tl: borrow ThreadLocal<T>)
+    /// -> T`, this thread's value. The receiver is always `Global(d)` of the module `const` whose
+    /// initializer is `new ThreadLocal<T>(literal)` (sema checks it); lowering never evaluates
+    /// it, but names the value by `d` and reads the starting value from that literal. Additive.
+    ThreadLocalGet,
+    /// `tl.set(v)`: `(tl: borrow ThreadLocal<T>, v: T)`, this thread's value becomes `v`; the
+    /// receiver as for `ThreadLocalGet`. Additive.
+    ThreadLocalSet,
 
     // M4 JSON (compile-time generated glue over the rt JSON reader / string builder)
     /// `JSON.stringify(x: borrow T): string`

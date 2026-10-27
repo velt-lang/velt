@@ -7,6 +7,8 @@
 //! `Emitter`.
 
 mod atomic;
+mod tls;
+pub(crate) use tls::tls_globals;
 mod cast;
 mod ops;
 mod place;

@@ -117,6 +117,7 @@ mod strbuf;
 mod strings;
 mod symbols;
 mod template;
+mod thread_local;
 mod track_caller;
 mod transfer;
 mod truthy;
