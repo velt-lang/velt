@@ -17,6 +17,10 @@ pub unsafe extern "C" fn velt_rt_rc_dec(p: *mut u64) -> u8 {
     u8::from(*p == 0)
 }
 
+/// `velt_rt_thread_yield`: one thread, nothing to yield to.
+#[no_mangle]
+pub extern "C" fn velt_rt_thread_yield() {}
+
 /// Initialize the 8-byte lock word at `p` (unlocked).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_mutex_init(p: *mut u64) {

@@ -1,5 +1,6 @@
-//! Primitives behind `shared<T>`: reference counts (`velt_rt_rc_*`) and the `RwLock<T>` lock
-//! (`velt_rt_rwlock_*`); the `Mutex<T>` lock is in [`crate::mutex`]. Atomics (`Atomic<T>`, `shared<int>`'s `add`/`get`/`set`) are instructions
+//! Primitives behind `shared<T>`: reference counts (`velt_rt_rc_*`), the thread yield of
+//! `velt:sync` and the `RwLock<T>` lock (`velt_rt_rwlock_*`); the `Mutex<T>` lock is in
+//! [`crate::mutex`]. Atomics (`Atomic<T>`, `shared<int>`'s `add`/`get`/`set`) are instructions
 //! the backends emit inline (rt_abi.md "Atomics").
 //!
 //! All operate on memory owned by generated code (a refcount word, an 8-byte lock word inside
@@ -30,6 +31,14 @@ pub unsafe extern "C" fn velt_rt_rc_dec(p: *mut u64) -> u8 {
     }
     fence(Ordering::Acquire);
     1
+}
+
+/// Let another thread run on this core (`velt:sync` `Backoff.snooze` once spinning stops
+/// paying off): `sched_yield` / `SwitchToThread`. The `Atomic<T>` operations themselves are
+/// emitted inline by the backends (`velt_atomic_*`, rt_abi.md "Atomics").
+#[no_mangle]
+pub extern "C" fn velt_rt_thread_yield() {
+    std::thread::yield_now();
 }
 
 /// The words generated code reserves at the start of an `RwLock<T>` (`lock`, padding, then
