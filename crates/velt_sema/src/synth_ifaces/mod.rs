@@ -59,6 +59,10 @@ pub(crate) struct SynthIfaces {
     flattened: bool,
     /// The interface conversions the program makes, `(from, to)`, in order.
     pub upcasts: Vec<(DefId, DefId)>,
+    /// Of `upcasts`, those only a type parameter's bound made (a literal with getters passed for
+    /// `T extends { v: number }`, `Ctx::satisfies`): the value keeps its own type, so writes
+    /// through the bound's interface elsewhere are not writes to it (`upcast_writes`).
+    pub bound_upcasts: Vec<(DefId, DefId)>,
     /// Where the intersection being made is written (for its errors).
     pub span: Span,
     /// (type, interface) pairs [`Ctx::synth_impl`] tried.

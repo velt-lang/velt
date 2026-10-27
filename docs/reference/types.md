@@ -2849,7 +2849,18 @@ on, as in TypeScript, where Velt knows the literal's type:
 - in a literal with no expected type (`const o = { … }`, or one returned from a function
   without a result type), `this` has the literal's own type, which TypeScript shows as
   `{ count: number; inc(): void }`. Such a literal, and one with getters or setters, is a value
-  of an interface Velt makes from its members.
+  of an interface Velt makes from its members. So is a literal with getters or setters passed
+  where a type parameter is inferred (`mark({ get value() { … } })` with
+  `mark<T>(x: T): T`), and one stored as an `any`, `unknown` or `object` is converted to it from
+  there; one where an object type is expected that declares only fields
+  (`{ value: T }`, sigx's `toSignal`) is a view of the literal in a program that makes proxies
+  ([views](#any-and-unknown)), as `obj as Computed<T>` is. Passed for a type parameter whose
+  bound declares fields (`T extends { v: number }`), the literal satisfies the bound, its
+  getters filling the fields, and `T` is the literal's own type; writing a field it has only a
+  getter for is a `TypeError`. Each read runs the getter at that moment and each write runs the
+  setter. As text (`` `${o}` ``, `String(o)`, `o + ""`) it is `[object Object]`, as in Node. `console.log` and `JSON.stringify` show such a
+  literal as Node does: `{ n: 10, double: [Getter], only: [Setter] }`, and the getters' results
+  in JSON (a setter alone is left out).
 
 ```ts
 const counter = {
@@ -3221,7 +3232,14 @@ operator does (below) and write the result back.
 `Map` and `Set`) and `typeof x === "function"` narrow an `unknown` to an `any` (and leave an
 `any` one): the value stays as it is, and its members are read, called and written as above.
 `typeof` tests for `number`, `string` and `boolean` and `instanceof` of a class without type
-parameters narrow to that type itself, so member access after them is typed and direct.
+parameters narrow to that type itself, so member access after them is typed and direct. An
+arrow passed to a method of an `unknown` or `object` narrowed by `Array.isArray` or by
+`instanceof` of a generic class takes `any` parameters without annotations, as the methods of
+TypeScript's `any[]` and `Map<any, any>` give them (`raw.forEach((v, k) => …)`), also on the
+result of an array method returning an array (`u.filter((x) => …).map((x) => …)`); on a variable
+declared `any`, TypeScript asks for them to be written, and so does Velt. `forEach` of a `Map`
+or `Set` (or of a class extending one) called through `any` passes JavaScript's arguments:
+value, key (a `Set`'s value again) and the collection.
 
 ```ts
 class Box<T> {

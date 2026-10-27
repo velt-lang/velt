@@ -367,8 +367,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let mut out = vec![];
         for (k, c) in f.captures.iter().enumerate() {
             let cell = f.body.locals[c.inner.0 as usize].boxed;
-            if c.mode == PassMode::Owned && !c.share && !cell {
-                let ty = self.sub(f.body.locals[c.inner.0 as usize].ty);
+            let ty = self.sub(f.body.locals[c.inner.0 as usize].ty);
+            if c.mode == PassMode::Owned && !c.share && !cell && self.cx.ty(ty) != Ty::Unit {
                 out.push((ENV_HEADER + k as u32, ty));
             }
         }
@@ -382,8 +382,11 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let mut out = vec![];
         for (k, c) in f.captures.iter().enumerate() {
             let cell = f.body.locals[c.inner.0 as usize].boxed;
-            if matches!(c.mode, PassMode::Copy | PassMode::Owned) && !cell {
-                let ty = self.sub(f.body.locals[c.inner.0 as usize].ty);
+            let ty = self.sub(f.body.locals[c.inner.0 as usize].ty);
+            if matches!(c.mode, PassMode::Copy | PassMode::Owned)
+                && !cell
+                && self.cx.ty(ty) != Ty::Unit
+            {
                 out.push((ENV_HEADER + k as u32, c.mode, ty));
             }
         }

@@ -216,6 +216,8 @@ impl FnLower<'_, '_> {
             // note their members (`object_leaf`).
             match self.cx.kind(cty) {
                 TyKind::Dyn(..) => self.cx.note_to_object(None),
+                // A typed proxy or a view (#823) holds an object of any type.
+                _ if self.cx.proxiable(cty) => self.cx.note_to_object(None),
                 _ if !self.object_unpacks(cty) => self.cx.note_to_object(Some(cty)),
                 _ => {}
             }

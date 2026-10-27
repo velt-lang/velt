@@ -1,0 +1,36 @@
+map a 1 2
+map b Set(2) { 2, 3 } 2
+  set 2 true 2
+  set 3 true 2
+set x true 1
+array 0 10
+array 1 20
+other k
+7 3 0
+grow 1 1
+grow 2 2
+grow 3 4
+captured a [ 1, 2 ]
+destructured 1 2 a
+[ '10', '21', '32' ]
+2 true
+default 1 0
+default 2 1
+default 3 2
+count 2
+nested 1 1
+nested 1 2
+nested 2 1
+nested 2 2
+sub a 1
+sub b 2
+narrowed sub a 1
+narrowed sub b 2
+narrowed set sub z
+[ 20, 30 ]
+[ 3, 2, 1 ]
+[ 4, 4, 4, 4 ]
+S1 true s1 1 Ls1
+M2 true m2 1 Lm2
+Bag a true bag 2 Lbag
+Bag b true bag 2 Lbag

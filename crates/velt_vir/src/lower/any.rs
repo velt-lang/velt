@@ -626,6 +626,11 @@ impl FnLower<'_, '_> {
             return self.any_unbox_str_literal(p, from, ty, &lit);
         }
         let vt = self.cx.ty(ty);
+        if vt == Ty::Unit {
+            // A `void` (a field of `{ value: T }` at `T = void`): nothing to keep.
+            self.drop_glue(p.clone(), from);
+            return super::unit();
+        }
         let out = Place::local(self.temp(vt));
         let data = Operand::Copy(proj(p, Proj::Field(0)));
         let desc = Operand::Copy(proj(p, Proj::Field(1)));
