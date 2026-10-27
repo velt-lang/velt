@@ -39,7 +39,12 @@ WORK=$(cd "$WORK" && pwd)
 
 BASE_SHA=$(git -C "$ROOT" rev-parse "$BASE^{commit}")
 echo "A: runtime of $BASE ($BASE_SHA)" >&2
-echo "B: runtime of this checkout ($(git -C "$ROOT" rev-parse HEAD)$(git -C "$ROOT" diff --quiet HEAD -- crates || echo ', with uncommitted changes'))" >&2
+# A tree exported with `git archive` (GIT_DIR naming a mirror) is not that repository's HEAD.
+if [ -z "${GIT_DIR:-}" ] && [ "$(git -C "$ROOT" rev-parse --show-toplevel 2> /dev/null)" = "$(cd "$ROOT" && pwd -P)" ]; then
+  echo "B: runtime of this checkout ($(git -C "$ROOT" rev-parse HEAD)$(git -C "$ROOT" diff --quiet HEAD -- crates || echo ', with uncommitted changes'))" >&2
+else
+  echo "B: runtime of the files in $ROOT (not a git checkout)" >&2
+fi
 
 rm -rf "$WORK/base-src"
 mkdir -p "$WORK/base-src"
