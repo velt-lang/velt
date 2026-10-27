@@ -385,6 +385,13 @@ impl FnLower<'_, '_> {
                 let r = self.eq_values(&inner(&a), &inner(&b), e);
                 self.when(r, no);
             }
+            // A literal type or `void` in `any` (the `same` slot of its table, any.rs): one value.
+            TyKind::Unit | TyKind::Literal(_) => {}
+            // A promise in `any` (the `same` slot of its table): the promise it holds.
+            TyKind::Promise(..) => {
+                let e = self.promise_identity(&a, &b);
+                self.when(e, no);
+            }
             // No value has type `never` (the payload of `null`'s type, `T & object` at
             // `T = null`): the glue is never called with one.
             TyKind::Never => {}
