@@ -6,9 +6,10 @@ target/
 *.o
 *.exe
 /tests/golden/**/*.actual
-# Local Claude Code state; shared slash commands are committed.
+# Local Claude Code state; shared slash commands and their scripts are committed.
 /.claude/*
 !/.claude/commands/
+!/.claude/scripts/
 *.stackdump
 /dist/
 # `cargo xtask check --part golden --pack golden.tar` (the merge queue)
