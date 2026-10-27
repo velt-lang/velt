@@ -28,11 +28,13 @@ was measured on a slightly earlier version of the map, before its leaf splits go
 
 - `ConcurrentMap.create(capacity)`: an empty map with room for `capacity` entries, about 40
   bytes an entry, taken when it is created. A `set` past its room panics with a RangeError.
-  Room is not given back: a deleted entry frees a slot in its own leaf only, and leaves are
-  never merged or reused (#1689). So keys that keep moving to new ranges (ids or timestamps
-  that only grow, old ones deleted) use up the capacity over the map's life, even with few
-  entries present at once. A `set` of a key the map holds can need room too, when its leaf is full and splits
-  first.
+  A deleted entry frees a slot in its leaf, and a leaf whose last entry is deleted is reused.
+  So keys that keep moving to new ranges (ids or timestamps that only grow, old ones deleted)
+  fit for as long as the entries present at once do. Leaves are not merged, though: entries
+  spread thinly over many leaves (most of a large map's keys deleted at random) can hold a node
+  each and need more room than their number. A `set` of a key the map holds can need room too,
+  when its leaf is full and splits first. `create` panics with a RangeError above 10^11
+  entries.
 - `get(key): u64 | undefined`, `has(key)`.
 - `set(key, value)`: adds `key` or replaces its value. The key `2^64 - 1` cannot be held (a
   RangeError); every lookup of it answers absent.

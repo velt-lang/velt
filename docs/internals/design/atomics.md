@@ -449,10 +449,18 @@ with one `or` and adds to the home pair before reading its key, and that took up
 slower to the numbers above. Second, putting home-slot checks into lookups made them slower: an
 unpredictable branch, and an extra line read for an absent key.
 
+Room comes back when a leaf empties (#1689). The delete of a leaf's last key takes every node
+from the lowest ancestor with another child down to the leaf, at the versions read on the way
+down. It removes that ancestor's child and a key next to it, so a neighbour covers the empty
+range, and pushes the leaf and the inner nodes in between (each left with one child) on a free
+list. The list is a stack of node indices in one `Atomic<u64>`, with a count of changes in its
+high half against ABA, linked through the free nodes' meta words. A node's version only grows,
+through being freed and reused too, so a reader holding a stale index fails its check as with
+a split. A split's new node may be initialized without its latch: it is reachable only through
+its new parent, which is unlocked after. Leaves are not merged, and the root never shrinks.
+
 What the map does not do yet: an ordered walk (`range`, iteration, `size`; leaves are unsorted
-and unlinked), and giving room back (an emptied leaf is never reused, so keys moving to new
-ranges use up the capacity over the map's life). A leaf split sorts its 56 pairs with an
-insertion sort into two small arrays.
+and unlinked). A leaf split sorts its 56 pairs with an insertion sort into two small arrays.
 
 ## Not in this design
 

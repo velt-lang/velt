@@ -1,0 +1,11 @@
+// A ConcurrentMap holds at most 10^11 entries: a larger capacity is a RangeError when it is
+// created (node indices are 32 bits wide in its free list).
+
+import { ConcurrentMap } from "velt:collections/concurrent_map";
+
+function main() {
+  const m = ConcurrentMap.create(10);
+  m.set(1, 2);
+  console.log(m.get(1));
+  ConcurrentMap.create(100000000001);
+}
