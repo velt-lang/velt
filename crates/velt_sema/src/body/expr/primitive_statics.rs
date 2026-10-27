@@ -8,9 +8,12 @@
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
+use rustc_hash::FxHashMap;
+
 use crate::body::FnCx;
+use crate::ctx::Ctx;
 use crate::defs::{static_key, MethodRef};
-use crate::hir::{self, Callee, ExprKind as H, TyId};
+use crate::hir::{self, Callee, DefId, ExprKind as H, TyId};
 
 /// A primitive type named in an expression: its name as written and the type.
 pub(super) type Prim<'n> = (&'n str, TyId);
@@ -20,6 +23,26 @@ const NAMES: [&str; 13] = [
     "i8", "i16", "i32", "i64", "isize", "u8", "u16", "u32", "u64", "usize", "f32", "f64", "bool",
 ];
 
+/// In the body of `def`, a static method of an `extend` block of a primitive type: that type's
+/// name and the type, what `this` is there. The statics are found once per program.
+pub(crate) fn primitive_this(cx: &mut Ctx, def: DefId) -> Option<(&'static str, TyId)> {
+    if cx.primitive_statics.is_none() {
+        let mut map = FxHashMap::default();
+        for x in &cx.extensions {
+            for m in x.methods.values().filter(|m| m.is_static) {
+                map.insert(m.def, x.target);
+            }
+        }
+        cx.primitive_statics = Some(map);
+    }
+    let ty = *cx.primitive_statics.as_ref()?.get(&def)?;
+    let name = NAMES
+        .into_iter()
+        .chain(["string"])
+        .find(|n| cx.ty.primitive(n) == Some(ty))?;
+    Some((name, ty))
+}
+
 impl FnCx<'_, '_> {
     /// The primitive type a name the program does not declare stands for in `T.name` (`i8` …
     /// `u64`, `isize`, `usize`, `f32`, `f64`, `bool`, `string`).
@@ -28,20 +51,6 @@ impl FnCx<'_, '_> {
             return None;
         }
         self.cx.ty.primitive(name)
-    }
-
-    /// In a static method of an `extend` block of a primitive type, that type (for `this`).
-    pub(super) fn this_primitive(&mut self) -> Option<(String, TyId)> {
-        let def = self.body_def?;
-        let ty = self.cx.extensions.iter().find_map(|x| {
-            let own = x.methods.values().any(|m| m.is_static && m.def == def);
-            own.then_some(x.target)
-        })?;
-        let name = NAMES
-            .into_iter()
-            .chain(["string"])
-            .find(|n| self.cx.ty.primitive(n) == Some(ty))?;
-        Some((name.to_string(), ty))
     }
 
     /// `T.name(args)` for a primitive type name `T` (one the program doesn't declare), or
@@ -56,17 +65,17 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> Option<hir::Expr> {
         let (name, ty) = match &object.kind {
-            ast::ExprKind::This => self.this_primitive()?,
+            ast::ExprKind::This => self.this_primitive?,
             ast::ExprKind::Ident(id) if !self.is_local_name(&id.name) => {
                 let ty = self.primitive_named(&id.name)?;
                 if self.lookup_item(&id.name, id.span).is_some() {
                     return None;
                 }
-                (id.name.clone(), ty)
+                (id.name.as_str(), ty)
             }
             _ => return None,
         };
-        let prim = (name.as_str(), ty);
+        let prim = (name, ty);
         Some(self.primitive_static_call(prim, prop, type_args, args, exp, span))
     }
 

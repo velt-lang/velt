@@ -147,9 +147,9 @@ impl FnCx<'_, '_> {
             );
             return self.error_expr(span);
         }
-        if let (ast::ExprKind::This, Some((name, ty))) = (&object.kind, self.this_primitive()) {
+        if let (ast::ExprKind::This, Some(prim)) = (&object.kind, self.this_primitive) {
             // `this.f` in a static of `extend f64`: `f64.f`.
-            return self.primitive_static_value((name.as_str(), ty), prop, exp, span);
+            return self.primitive_static_value(prim, prop, exp, span);
         }
         if let ast::ExprKind::Ident(id) = &object.kind {
             if !self.is_local_name(&id.name) {

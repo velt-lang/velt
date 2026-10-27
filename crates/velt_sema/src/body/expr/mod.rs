@@ -56,6 +56,7 @@ mod dynamic_write;
 mod env_globals;
 mod generic_dynamic;
 pub(crate) use env_globals::NODE_GLOBALS;
+pub(crate) use primitive_statics::primitive_this;
 mod array_view_cast;
 pub(crate) mod await_value;
 mod checked_key;

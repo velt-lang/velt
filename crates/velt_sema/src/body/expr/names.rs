@@ -252,7 +252,7 @@ impl FnCx<'_, '_> {
                 self.error_expr(span)
             }
             None => {
-                if let Some((t, _)) = self.this_primitive() {
+                if let Some((t, _)) = self.this_primitive {
                     // In a static of `extend f64`: only `this.f()` / `this.f` (`primitive_statics`).
                     self.cx.error(
                         Diagnostic::error(
