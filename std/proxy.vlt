@@ -92,6 +92,31 @@ function proxyReceiverUnsupported(op: string): never {
   );
 }
 
+/**
+ * `Reflect.get(target, key, receiver)` of a class getter with a proxy receiver: Node runs the
+ * getter with `this` = the receiver, so the getter's own reads go through the proxy's traps.
+ * Velt runs it on the target, which could give another value, so it stops instead (#823).
+ */
+function proxyGetterReceiverUnsupported(key: any): never {
+  panic(
+    `TypeError: Reflect.get of the getter '${String(key)}' with a proxy as the receiver is not supported yet (#823): forward with Reflect.get(target, key)`,
+  );
+}
+
+// Is `value`, read as `target[key]`, what a class getter gave: a string key that is not an own
+// property of a class instance (a method's value is a function, which a call runs with `this`
+// the proxy already).
+function classGetterValue(target: any, key: any, value: any): bool {
+  return (
+    typeof key === "string" &&
+    value !== undefined &&
+    typeof value !== "function" &&
+    !Array.isArray(target) &&
+    !(target instanceof Record) &&
+    !Object.hasOwn(target, key)
+  );
+}
+
 /** JavaScript's `ToPropertyKey` of a key a trap or a `Reflect` function receives. */
 function proxyKey(key: any): string | symbol {
   if (typeof key === "string") {
@@ -642,7 +667,12 @@ export class Reflect {
       }
       return target[plainKey(key)];
     }
-    return target[key];
+    const value = target[key];
+    if (receiver != null && receiver !== target && classGetterValue(target, key, value)) {
+      // Node runs the getter with `this` = the receiver (the proxy): not supported yet.
+      proxyGetterReceiverUnsupported(key);
+    }
+    return value;
   }
 
   /** `target[key] = value`; whether it was written. */

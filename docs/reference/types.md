@@ -3762,6 +3762,10 @@ target whose `get` trap answers every key). A method called through a typed prox
 trap that forwards with `Reflect.get(target, key)` or `Reflect.get(target, key, receiver)` gives
 the target's method, which then runs with `this` the proxy. A class getter read through a typed
 proxy (`s.twice`) is the `get` trap's answer, checked as the getter's type, as for a field. A
+trap that forwards it with `Reflect.get(target, key)` runs the getter on the target, as Node does;
+one that forwards with `Reflect.get(target, key, receiver)` stops with a `TypeError` naming #823 (#1732),
+since Node would run the getter with `this` the proxy (its reads through the traps) and Velt
+doesn't yet. A
 typed proxy passed where an object
 type with fewer fields is expected (a `State & { $set(v: State): void }` passed as a `State`)
 stays the same proxy, so writes through the `State` run the `set` trap and reach the target.
