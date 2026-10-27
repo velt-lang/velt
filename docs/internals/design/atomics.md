@@ -181,13 +181,24 @@ where LLVM would reload them after every acquire, fence or call (see "Frozen fie
 - A module-level `const` whose type holds an `Atomic` is kept in the module state (made once),
   as a non-constant initializer is: evaluated at each use, every use would change a new atomic.
   Its methods act on the word in the state's slot.
-- ``` `Atomic<T>` needs an integer type or `bool`, found `string` ``` (a type parameter too: the
+- ``` `Atomic<T>` needs a number type or `bool`, found `string` ``` (a type parameter too: the
   instruction depends on the type).
 - `mismatched types` for an ordering the operation cannot have (``expected "relaxed" | "acquire"
   | "seqcst", found "release"``), and `an ordering must be a string literal` for a value whose
   ordering is not known at compile time.
-- ``` `add` needs an integer `Atomic` ``` (also `sub`, `max`, `min` on `Atomic<bool>`).
+- ``` `add` needs an `Atomic` of a number ``` (also `sub`, `max`, `min` on `Atomic<bool>`), and
+  ``` `or` needs an `Atomic` of an integer or `bool` ``` (also `and`, `xor` on a float).
 - ``` `Atomic`'s method `load` cannot be used as a function value ```.
+
+**Floats.** `Atomic<f64>` and `Atomic<f32>` are the words of their bits (`u64`, `u32`):
+lowering reinterprets the value through a one-field aggregate (`Proj::Cast`, as float hashing
+does), so backends see only integer externs. `load`, `store`, `exchange` and the
+compare-and-swaps are the word's. `add`, `sub`, `max` and `min` are a strong compare-and-swap
+loop in VIR (`lower/atomic.rs` `float_rmw`): a relaxed load, the operation on the float, and a
+swap with the call's ordering whose failure is relaxed and feeds the next try, as Rust's
+`fetch_update` and the atomic float crates do. The loop compares words, so a NaN value is no
+reason to spin. `max` and `min` are the prelude's `max2` and `min2` (`Math.max`, `Math.min`).
+`and`, `or` and `xor` on a float are errors.
 
 ## Steps
 
@@ -442,4 +453,3 @@ insertion sort into two small arrays.
 - `Atomics.wait` / `notify` (futex): blocking a worker thread stalls its tasks; an async-aware
   wait needs the scheduler (#709).
 - JS `Atomics` on typed arrays: Velt has no `SharedArrayBuffer`.
-- `Atomic<f64>`: an `Atomic<u64>` holding the bits, once Velt has `f64` bit casts.

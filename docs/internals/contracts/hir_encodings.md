@@ -771,7 +771,7 @@ mode (rt_abi_async.md §9.1).
 
 ## `Atomic<T>` (docs/internals/design/atomics.md; additive)
 
-`new Atomic<T>(x)` is the prelude struct's `AdtLit` (`{ v: x }`), `T` an integer type or `bool`
+`new Atomic<T>(x)` is the prelude struct's `AdtLit` (`{ v: x }`), `T` an integer type, `f32`, `f64` or `bool`
 (sema rejects any other `T`, a type parameter too). A call of one of its methods is not a
 `Callee::Def` but an `Atomic*` intrinsic (hir/intrinsic.rs): `AtomicLoad`, `AtomicStore`,
 `AtomicRmw` (with the operation as a `u8` literal), `AtomicCas`, `AtomicCasWeak`, and the static

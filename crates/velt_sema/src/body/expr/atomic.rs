@@ -53,21 +53,16 @@ impl FnCx<'_, '_> {
     /// Reports a `T` an `Atomic<T>` cannot hold; whether it can.
     fn atomic_value_ty(&mut self, t: TyId, span: Span) -> bool {
         match self.cx.ty.kind(t) {
-            TyKind::Int(_) | TyKind::Bool | TyKind::Error => true,
-            k => {
-                let float = matches!(k, TyKind::Float(_));
+            TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Error => true,
+            _ => {
                 let shown = self.cx.display(t);
-                let mut d = Diagnostic::error(
-                    format!("`Atomic<T>` needs an integer type or `bool`, found `{shown}`"),
+                let d = Diagnostic::error(
+                    format!("`Atomic<T>` needs a number type or `bool`, found `{shown}`"),
                     span,
                 )
                 .with_note(
                     "the compiler picks the instruction by the type, so it must be known here; for other values, use a `Mutex<T>`",
                 );
-                // `new Atomic(5)`: a number literal is an `f64`.
-                if float {
-                    d = d.with_note("for an integer counter, write its type: `new Atomic<u64>(…)`");
-                }
                 self.cx.error(d);
                 false
             }
@@ -111,12 +106,18 @@ impl FnCx<'_, '_> {
             if !self.atomic_value_ty(t, span) {
                 return Some(self.error_expr(span));
             }
-            let int = matches!(self.cx.ty.kind(t), TyKind::Int(_));
-            if op.is_some_and(|o| matches!(RMW[o as usize], "add" | "sub" | "max" | "min")) && !int
-            {
+            let kind = self.cx.ty.kind(t);
+            let int = matches!(kind, TyKind::Int(_));
+            let float = matches!(kind, TyKind::Float(_));
+            let wrong = match op.map(|o| RMW[o as usize]) {
+                Some("add" | "sub" | "max" | "min") => (!int && !float).then_some("a number"),
+                Some("and" | "or" | "xor") => float.then_some("an integer or `bool`"),
+                _ => None,
+            };
+            if let Some(needs) = wrong {
                 let shown = self.cx.display(args[0].ty);
                 self.cx.err(
-                    format!("`{name}` needs an integer `Atomic`, found `{shown}`"),
+                    format!("`{name}` needs an `Atomic` of {needs}, found `{shown}`"),
                     span,
                 );
                 return Some(self.error_expr(span));
