@@ -1,7 +1,8 @@
 //! Reference counts a borrow does not need: a typed array element write on a `const` receiver
 //! (no `<receiver>` temporary, sema `accessor_rmw.rs`), and a borrow through a counted object
 //! passed to a quiet callee (no stabilizing share, velt_vir `lower/quiet.rs`), while a callee
-//! that may replace what the borrow goes through still gets one.
+//! that may replace what the borrow goes through still gets one. A call of a `never` function
+//! that throws has no Ok path after it (`Function::cold`).
 
 use std::path::Path;
 
@@ -55,4 +56,12 @@ fn quiet_callees_get_borrows_without_counts() {
     );
     let callback = function(&vir, "viaCallback");
     assert!(callback.contains("_Gdrop_8u8_5b_5d"), "{callback}");
+}
+
+#[test]
+fn a_throwing_never_call_has_no_ok_path() {
+    let vir = vir("never");
+    let check = function(&vir, "_V5check(");
+    // The branch on the result's tag: the error goes on, the Ok side is unreachable.
+    assert!(check.contains("unreachable"), "{check}");
 }
