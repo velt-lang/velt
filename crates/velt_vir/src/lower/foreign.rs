@@ -316,6 +316,9 @@ impl FnLower<'_, '_> {
             Ty::U64,
             Rvalue::Use(Operand::Copy(proj(src, Proj::Field(1)))),
         );
+        // Native code's length: the one array length that comes from outside (MAX_ARRAY_LEN).
+        let (stride, _) = self.stride(e);
+        self.check_len(len.clone(), stride);
         let nat = self.inline_array_with_len(len.clone(), e);
         let k = self.temp(Ty::U64);
         self.assign(Place::local(k), Rvalue::Use(cint(0, Ty::U64)));

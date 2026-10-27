@@ -1,0 +1,48 @@
+// Generic function values (#943): a closure made in a generic function held as `unknown`, a
+// module constant naming a generic function (one value with it), an overloaded generic function
+// where a generic function type is expected, a function of fixed types that takes the type's
+// parameters at every type argument (`createToken`), explicit type arguments, comparisons with
+// `unknown`, and a `then` callback.
+type A = <T>(x: T) => T;
+type InjectionToken<T> = symbol & { readonly __type?: T };
+
+function id<T>(x: T): T {
+  return x;
+}
+
+const asA: A = id;
+const fromId: A[] = [id];
+
+function isId(f: A): boolean {
+  return f === id;
+}
+
+function mk<U>(u: U): A {
+  return (x) => x;
+}
+
+function g<T>(x: T): T;
+function g<T>(x: T, y?: number): T {
+  return x;
+}
+
+function use(f: A): void {
+  console.log(f(1), f("s"));
+}
+
+function main(): void {
+  const a: A = id;
+  console.log(asA === a, isId(asA), fromId.indexOf(a), asA(3));
+  const u: unknown = mk(1);
+  const back = u as A;
+  console.log(back(3), back === back);
+  use(g);
+  const createToken = Symbol as unknown as <T>(description: string) => InjectionToken<T>;
+  const t = createToken<number>("port");
+  console.log(typeof t, t.description, [createToken].length);
+  const pick: A = (x) => x;
+  console.log(pick<string>("z"));
+  const ua: unknown = pick;
+  console.log(ua === pick, ua === a);
+  Promise.resolve(4).then(pick).then((v) => console.log("then", v));
+}

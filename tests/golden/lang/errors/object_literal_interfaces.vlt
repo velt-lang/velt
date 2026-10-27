@@ -23,11 +23,4 @@ function main(): void {
       return "many";
     },
   };
-
-  // A generic method can't be a function value.
-  const d: Mapper = {
-    map(f) {
-      return f(1);
-    },
-  };
 }

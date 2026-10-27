@@ -39,7 +39,15 @@ impl super::Cx<'_> {
         );
         let mut join: Option<Vec<PassMode>> = None;
         for m in methods {
-            let modes = method_modes(self.fn_def(m));
+            let f = self.fn_def(m);
+            let modes = match f.self_ty {
+                Some(_) => method_modes(f),
+                // A generic closure (glue/generic_slots.rs): the receiver is the boxed closure,
+                // then its declared params.
+                None => std::iter::once(PassMode::Borrow)
+                    .chain(f.params[f.captures.len()..].iter().map(|p| p.mode))
+                    .collect(),
+            };
             match &mut join {
                 None => join = Some(modes),
                 Some(j) => {
@@ -178,6 +186,7 @@ impl FnLower<'_, '_> {
     pub(super) fn call_dyn(
         &mut self,
         slot: u32,
+        method_type_args: &[TyId],
         args: &[hir::Expr],
         ty: TyId,
         transfer: bool,
@@ -186,10 +195,12 @@ impl FnLower<'_, '_> {
             .first()
             .unwrap_or_else(|| ice("interface call without receiver"));
         let dty = self.sub(recv.ty);
-        let (modes, throws) = match self.cx.kind(dty) {
-            TyKind::Dyn(iface, args) => (
+        let margs: Vec<TyId> = method_type_args.iter().map(|&t| self.sub(t)).collect();
+        let (modes, throws, generic) = match self.cx.kind(dty) {
+            TyKind::Dyn(iface, iargs) => (
                 self.cx.dyn_modes(iface, slot),
-                self.cx.slot_throws(iface, slot, &args),
+                self.cx.slot_throws(iface, slot, &iargs),
+                (!margs.is_empty()).then_some((iface, iargs, slot)),
             ),
             _ => ice("interface call on a non-interface receiver"),
         };
@@ -214,7 +225,10 @@ impl FnLower<'_, '_> {
             // a direct call through the proxy.
             self.proxy_method_check(&data);
         }
-        let entry = self.dispatch(vt, slot as i128);
+        let entry = match generic {
+            Some(key) => self.dispatch_generic(vt, key, margs),
+            None => self.dispatch(vt, slot as i128),
+        };
         let ret = self.sub(ty);
         self.call_ptr(
             entry,

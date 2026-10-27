@@ -1,0 +1,35 @@
+// Edit distance with the usual two-row DP: a three-value `Math.min` per cell, in a function the
+// inliner leaves alone. `Math.min` / `Math.max` with plain arguments build no rest array (#1570).
+function lev(a: Uint8Array, b: Uint8Array): number {
+  const m = a.length;
+  const n = b.length;
+  let prev: number[] = [];
+  let curr: number[] = [];
+  for (let i = 0; i <= m; i++) {
+    prev.push(i);
+    curr.push(0);
+  }
+  for (let j = 1; j <= n; j++) {
+    curr[0] = j;
+    const bj = b[j - 1]!;
+    for (let i = 1; i <= m; i++) {
+      const cost = a[i - 1]! === bj ? 0 : 1;
+      curr[i] = Math.min(prev[i]! + 1, curr[i - 1]! + 1, prev[i - 1]! + cost);
+    }
+    const tmp = prev;
+    prev = curr;
+    curr = tmp;
+  }
+  return prev[m]!;
+}
+
+function main() {
+  const enc = new TextEncoder();
+  const x = enc.encode("kitten sitting on the mat with a hat");
+  const y = enc.encode("sitting kitten on a mat without the hat");
+  let s = 0;
+  for (let r = 0; r < 10_000; r++) {
+    s += lev(x, y);
+  }
+  console.log(s);
+}

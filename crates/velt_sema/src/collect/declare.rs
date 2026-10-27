@@ -192,14 +192,28 @@ pub(super) fn new_def<'m>(
 }
 
 fn bind(cx: &mut Ctx, m: usize, item: &ast::Item, name: &ast::Ident, it: Item) {
+    if split_meanings(cx, m, item, name, it) {
+        return;
+    }
     if cx.scopes[m].items.contains_key(&name.name) {
         let mut d = Diagnostic::error(
             format!("the name `{}` is defined multiple times", name.name),
             name.span,
         );
-        let earlier_iface = matches!(cx.scopes[m].items.get(&name.name), Some(Item::Def(d)) if matches!(cx.info[d.0 as usize], DefInfo::Iface(_)));
-        if matches!(item.kind, ast::ItemKind::Interface(_)) || earlier_iface {
-            // TypeScript also merges an interface with a class, function or namespace (#384).
+        let earlier = match cx.scopes[m].items.get(&name.name) {
+            Some(Item::Def(d)) => Some(&cx.info[d.0 as usize]),
+            _ => None,
+        };
+        let earlier_iface = matches!(earlier, Some(DefInfo::Iface(_)));
+        let earlier_class = matches!(earlier, Some(DefInfo::Adt(_)));
+        let class = matches!(
+            item.kind,
+            ast::ItemKind::Class(_) | ast::ItemKind::Struct(_)
+        );
+        let iface = matches!(item.kind, ast::ItemKind::Interface(_));
+        if (iface && earlier_class) || (class && earlier_iface) {
+            // TypeScript also merges an interface with a class (#384); with a function or a
+            // variable it is a separate meaning (`split_meanings`).
             d = d.with_note(format!(
                 "Velt merges an interface only with other interface declarations: give `{0}` another name, or name the combination with an intersection (`type More = {0} & {{ … }}`)",
                 name.name
@@ -218,6 +232,37 @@ fn bind(cx: &mut Ctx, m: usize, item: &ast::Item, name: &ast::Ident, it: Item) {
     if item.exported {
         cx.scopes[m].exports.insert(name.name.clone());
     }
+}
+
+/// `name` is declared as a type and as a value (`type guid = string` and `const guid = …`, as
+/// TypeScript allows): the value keeps the name, the type moves to its type key
+/// ([`crate::type_meanings`]), each exported if its own declaration is.
+fn split_meanings(cx: &mut Ctx, m: usize, item: &ast::Item, name: &ast::Ident, it: Item) -> bool {
+    let key = crate::type_meanings::type_key(&name.name);
+    let scope = &cx.scopes[m];
+    let Some(&earlier) = scope.items.get(&name.name) else {
+        return false;
+    };
+    if scope.items.contains_key(&key) || !cx.separate_meanings(earlier, it) {
+        return false;
+    }
+    let earlier_exported = scope.exports.contains(&name.name);
+    let (ty, value) = match cx.meaning(it) {
+        crate::type_meanings::Meaning::Type => ((it, item.exported), (earlier, earlier_exported)),
+        _ => ((earlier, earlier_exported), (it, item.exported)),
+    };
+    let scope = &mut cx.scopes[m];
+    scope.items.insert(name.name.clone(), value.0);
+    scope.items.insert(key.clone(), ty.0);
+    scope.type_keys = true;
+    scope.exports.remove(&name.name);
+    if value.1 {
+        scope.exports.insert(name.name.clone());
+    }
+    if ty.1 {
+        scope.exports.insert(key);
+    }
+    true
 }
 
 fn adt_info(m: usize, t: &ast::TypeDecl, kind: AdtKind, qual: String) -> DefInfo<'_> {
@@ -281,6 +326,7 @@ fn collect_prelude(cx: &mut Ctx) {
         // Re-exports included: a global module (`std/prelude/global/`) only re-exports.
         for (name, it) in super::exports::all_exports(cx, m).iter() {
             let it = *it;
+            cx.prelude_type_keys |= crate::type_meanings::of_type_key(name).is_some();
             if let Some(prev) = cx.prelude.insert(name.clone(), it) {
                 if prev != it {
                     let span = match it {

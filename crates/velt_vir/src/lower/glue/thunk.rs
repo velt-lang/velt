@@ -94,6 +94,18 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let skip = match kind {
             ThunkKind::Env(_) => 0,
             ThunkKind::SelfData | ThunkKind::Unbound => 1,
+            // The closure's code takes its env (when it captures anything), then the declared
+            // params.
+            ThunkKind::BoxedClosure => {
+                if !f.captures.is_empty() {
+                    let agg = lw.cx.closure_agg();
+                    args.push(Operand::Copy(Place {
+                        local: first,
+                        proj: vec![Proj::Deref(Ty::Agg(agg)), Proj::Field(1)],
+                    }));
+                }
+                f.captures.len()
+            }
         };
         // An owned receiver is copied once the params are declared (they come first).
         let mut owned_this = None;
@@ -169,6 +181,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             ThunkKind::Env(Some(e)) => format!("env_E{}", e.0),
             ThunkKind::Env(None) => "env".into(),
             ThunkKind::SelfData => "self".into(),
+            ThunkKind::BoxedClosure => "boxfn".into(),
             ThunkKind::Unbound => "unbound".into(),
         };
         let sym = format!("_Gthunk_{tag}_{}", lw.cx.instance_symbol(&f.name, targs));

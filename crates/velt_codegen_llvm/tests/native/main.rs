@@ -4,6 +4,7 @@
 //! after `velt_opt`. Also checks that the IR compiles for every supported target triple.
 //! Skipped (with a note) when clang or rustc is unavailable.
 
+mod atomics;
 #[path = "../../../velt_opt/tests/common/mod.rs"]
 mod common;
 #[path = "../../../velt_opt/tests/corpus/mod.rs"]

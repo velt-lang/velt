@@ -1,17 +1,7 @@
-// TypeScript that parses but is not supported yet: generic methods in object literals and in
-// object types (#941, #931), variadic tuple types (#943) and optional tuple elements (#938).
-type MatchArms<T, R> = { ok: (v: T) => R; err: () => R };
-
-const cell = {
-    match<R>(arms: MatchArms<number, R>): R {
-        return arms.ok(1);
-    },
-};
-
-type EffectScope = { run<T>(fn: () => T): T | undefined; stop(): void };
-
+// TypeScript that parses but is not supported yet: variadic tuple types (#943) and optional
+// tuple elements (#938).
 type Key<A extends unknown[]> = () => readonly [string, ...A];
 
 type Wire = [kind: string, platform?: string];
 
-console.log(cell);
+console.log(1);

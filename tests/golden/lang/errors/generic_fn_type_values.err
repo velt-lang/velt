@@ -1,4 +1,2 @@
-generic_fn_type_values.vlt:5:19: error: generic function types (`<T>(x: T) => R`) are not supported yet
-generic_fn_type_values.vlt:8:8: error: generic function types (`<T>(x: T) => R`) are not supported yet
-generic_fn_type_values.vlt:4:11: error: generic function types (`<T>(x: T) => R`) are not supported yet
-  = note: a value of this type stays generic, which only a `const` initialized with an arrow function or a name can be (`const id: Id = (x) => x;`, #943); elsewhere declare a generic `function` and call it, or give the type parameters values (`(x: string) => R`)
+generic_fn_type_values.vlt:7:15: error: mismatched types
+  = note: a value of `<T>(T) => T` takes any type arguments at each call; a function of fixed types (`(f64) => f64`) is not one: pass a generic function, or a closure that works for every type

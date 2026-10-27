@@ -28,6 +28,7 @@ mod any_checks;
 mod any_delete;
 mod any_eq;
 mod any_errors;
+mod any_generic_fn;
 mod any_glue;
 mod any_has;
 mod any_iface;
@@ -66,22 +67,27 @@ mod drops;
 mod entry;
 mod errors;
 mod expr;
+mod ext_exists;
 mod flags;
 mod for_of;
 mod for_of_shared;
 mod foreign;
 mod frame_envs;
+mod fresh_fns;
 mod frozen;
 mod glue;
 mod hooks;
+mod impl_lookup;
 mod intrinsics;
 mod js_string;
 mod json;
 mod keys;
 mod layout;
+mod literal_accessors;
 mod match_switch;
 mod matching;
 mod module_state;
+mod narrowed_paths;
 mod operand;
 mod ops;
 mod param_any;
@@ -189,7 +195,8 @@ pub(crate) fn lower_program(
             if std::env::var_os("VELT_DEBUG_PROXY").is_some() {
                 eprintln!("velt: proxiable types: {}", cx.proxiable_names().join(", "));
             }
-            let diags = cx.nothing_clash_diagnostics();
+            let mut diags = cx.nothing_clash_diagnostics();
+            diags.extend(cx.fresh_fn_diagnostics());
             let types_now = cx.types.clone();
             let program = cx.finish();
             if !no_await_steps && async_fn::await_order::unobservable(&program) {
@@ -232,6 +239,10 @@ enum ThunkKind {
     Env(Option<TyId>),
     /// First param is the receiver's data pointer (Dyn data / class object) → target's `this`.
     SelfData,
+    /// First param is the data pointer of an interface value holding a closure (a generic
+    /// closure as a generic function value, glue/generic_slots.rs): the closure's code runs
+    /// with the closure's env.
+    BoxedClosure,
     /// The code of a method read as a value through `any` (a typed proxy's `get` trap answers
     /// a method call with it, proxy_method.rs): the method's parameters after a closure env;
     /// called on its own (without the proxy as `this`) it throws a `TypeError`.
@@ -297,8 +308,12 @@ enum Work {
     /// the call site when it is given, and given closure literals for some function params:
     /// it calls their code directly (frozen.rs `KnownFn`).
     Frozen(DefId, Vec<TyId>, u64, Option<SrcLoc>, Vec<frozen::KnownFn>),
-    /// `(arr: ptr, stride: u64, align: u64)`: grow an array's buffer (amortized doubling).
+    /// `(arr: ptr, stride: u64, align: u64)`: grow an array's buffer (amortized doubling;
+    /// `velt_rt_realloc` refuses a buffer past the array length limit).
     ArrayGrow,
+    /// `()`: the panic of an array that would grow past `MAX_ARRAY_LEN` (never returns, so its
+    /// calls stay cold and small).
+    ArrayTooLong,
     /// The exported `velt_main() -> i32` entry (entry.rs).
     Main,
     /// `(state: ptr, cx: ptr) -> u32`: the task root that runs a synchronous `main` which reaches
@@ -411,6 +426,8 @@ struct Cx<'h> {
     debug: Option<debug_vars::DebugTypes>,
     /// Memoized `tracks_caller` answers.
     tracked: FxHashMap<DefId, bool>,
+    /// HIR nodes of the standard-library functions `tracks_caller` scanned (track_caller.rs).
+    tracked_size: FxHashMap<DefId, usize>,
     /// Memoized `quiet` answers (quiet.rs).
     quiet: FxHashMap<DefId, bool>,
     /// Interned static `VeltStr` objects (`static_str_object`).
@@ -423,6 +440,10 @@ struct Cx<'h> {
     facts: boxing::Facts,
     /// `Program::impls` indexes per interface (`impls_of`), built on first use.
     iface_impls: Option<FxHashMap<DefId, Rc<[u32]>>>,
+    /// Finished `extend` lookups by `(interface, arguments, type)` (impl_lookup.rs), and bound
+    /// checks through blocks (ext_exists.rs).
+    ext_memo: FxHashMap<impl_lookup::MemoKey, Option<impl_lookup::Fit>>,
+    exists_memo: FxHashMap<ext_exists::ExistsKey, bool>,
     /// Classes with a `clone()` of their own, and that method (`own_clone`, transfer.rs),
     /// found on first use.
     own_clones: Option<FxHashMap<DefId, DefId>>,
@@ -545,14 +566,20 @@ struct FnLower<'c, 'h> {
     cx: &'c mut Cx<'h>,
     /// Type arguments substituted for `TyKind::Param` in the HIR being lowered.
     targs: Vec<TyId>,
+    /// Building a glue function: its comparisons are counted where it is called (fresh_fns.rs).
+    glue: bool,
     locals: Vec<LocalDecl>,
     blocks: Vec<(Vec<vir::Stmt>, Option<Terminator>)>,
     /// Source locations parallel to `blocks`: per statement, and of the terminator.
     block_locs: Vec<(Vec<Option<SrcLoc>>, Option<SrcLoc>)>,
     /// Location recorded for statements emitted now (srcloc.rs).
     loc: Option<SrcLoc>,
-    /// In a caller-tracking instance: the call site its panics report.
+    /// In a caller-tracking instance: the call site its panics report (`srcloc::ARG_LOC`: the
+    /// one `caller_arg` points to).
     caller_loc: Option<SrcLoc>,
+    /// In a caller-tracking instance that takes its caller's location as a parameter: that
+    /// parameter, a pointer to the `Str` ` at <path>:<line>:<col>` (empty when unknown).
+    caller_arg: Option<vir::Local>,
     /// A block is live once a live block jumps to it; dead blocks are pruned in `finish`.
     live: Vec<bool>,
     cur: BlockId,

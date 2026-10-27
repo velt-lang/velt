@@ -22,3 +22,4 @@ mod quoted_keys;
 mod refactor;
 mod server_features;
 mod ts_compat;
+mod type_value_names;

@@ -1,0 +1,133 @@
+// check: no leaks
+// A null check narrows a module-level `let` like a local (#1280): `if (handler) handler();`,
+// `if (!ctx) return; ctx.m()`, `a?.b.has(k)`, an assignment. Each narrowed read checks the
+// variable again (a call may have set it to `null`); these shapes never do, and run as in Node.
+import { cur as shared, setCur, Box } from "./_narrow_module_let/state";
+
+let handler: (() => void) | null = null;
+function setH(f: (() => void) | null): void {
+  handler = f;
+}
+function run(): void {
+  if (handler) handler();
+}
+run();
+setH(() => console.log("h"));
+run();
+
+class Ctx {
+  name = "c";
+  count = 0;
+  hook(f: () => void): void {
+    f();
+    console.log(this.name);
+  }
+}
+let cur: Ctx | null = null;
+function onM(f: () => void): void {
+  if (cur) {
+    cur.hook(f);
+  } else {
+    console.log("no ctx");
+  }
+}
+onM(() => console.log("a"));
+cur = new Ctx();
+onM(() => console.log("b"));
+
+let obs: ((t: number, k: string) => void) | null = null;
+function get(t: number, k: string): number {
+  if (obs) {
+    obs(t, k);
+  }
+  return t;
+}
+get(1, "x");
+obs = (t, k) => console.log("obs", t, k);
+get(2, "y");
+
+interface App {
+  provides: Map<symbol, string>;
+}
+let app: App | null = null;
+const S = Symbol("s");
+function look(s: symbol): string {
+  if (app?.provides.has(s)) {
+    return app.provides.get(s) ?? "u";
+  }
+  return "none";
+}
+console.log(look(S));
+app = { provides: new Map([[S, "found"]]) };
+console.log(look(S));
+
+function early(): string {
+  if (!cur) return "none";
+  return cur.name;
+}
+console.log(early());
+function forms(): void {
+  console.log(cur && cur.name);
+  console.log(cur ? cur.name : "-");
+  if (cur != null) console.log(cur.name);
+  if (cur !== null) console.log(cur.name);
+  if (null !== cur) cur.count++;
+  if (cur) cur.count += 2;
+  if (cur) cur.name = "renamed";
+  console.log(cur?.count, cur?.name);
+}
+forms();
+function assignNarrows(): void {
+  cur = new Ctx();
+  console.log(cur.name);
+  if ((cur = new Ctx()) !== null) console.log(cur.count);
+}
+assignNarrows();
+function moved(): Ctx | null {
+  if (cur) {
+    const c: Ctx = cur;
+    c.count = 9;
+    return c;
+  }
+  return null;
+}
+console.log(moved()?.count, cur?.count);
+let u: Ctx | null | undefined = undefined;
+function three(): void {
+  if (u != null) console.log(u.name);
+  else console.log("nothing");
+  if (u !== undefined && u !== null) console.log(u.count);
+}
+three();
+u = new Ctx();
+three();
+function shadow(): void {
+  const cur: Ctx | null = null;
+  if (cur) console.log("never");
+  else console.log("local shadow");
+}
+shadow();
+
+// After a call that set it to `null`, a test or `?.` reads the variable as it is.
+function reset(): void {
+  cur = null;
+}
+function guarded(): void {
+  if (cur) {
+    reset();
+    console.log(cur?.name ?? "gone");
+    if (cur) console.log("still");
+    else console.log("cleared");
+  }
+}
+cur = new Ctx();
+guarded();
+
+// An imported `let` narrows too: the module that declares it assigns it.
+function showShared(): void {
+  if (shared) console.log("shared", shared.v);
+  else console.log("no shared");
+}
+showShared();
+setCur(new Box(4));
+showShared();

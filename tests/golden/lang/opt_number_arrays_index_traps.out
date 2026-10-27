@@ -1,0 +1,10 @@
+truncDiv: -1 -1 -Infinity -Infinity Infinity Infinity Infinity 1 1 h=707481
+roundQuarter: -1 -1 -Infinity -Infinity Infinity Infinity 1 1 1 h=388112
+ceilQuarter: -1 -Infinity -Infinity -Infinity Infinity 1 1 1 1 h=60156
+remainder: -1 -Infinity -0.5 -1 Infinity 1 0.5 Infinity 1 h=899035
+timesMinusOne: 0.25 0.3333333333333333 0.5 1 -Infinity -1 -0.5 -0.3333333333333333 -0.25 h=724228
+negated: 0.25 0.3333333333333333 0.5 1 -Infinity -1 -0.5 -0.3333333333333333 -0.25 h=724228
+minNegZero: -0.25 -0.3333333333333333 -0.5 -1 -Infinity -Infinity -Infinity -Infinity -Infinity h=539591
+nanAtThree: -0.25 -0.3333333333333333 -0.5 -1 Infinity 1 0.5 NaN 0.25 h=578980
+subtracted: 0.25 0.3333333333333333 0.5 1 Infinity -1 -0.5 -0.3333333333333333 -0.25 h=724228
+wrapped: Infinity 1 0.5 0.3333333333333333 Infinity 1 0.5 0.3333333333333333 Infinity h=145316

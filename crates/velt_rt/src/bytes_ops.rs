@@ -31,9 +31,28 @@ fn relative(i: i64, len: usize) -> usize {
 }
 
 /// A zeroed array of `n` bytes (`Buffer.alloc(n)`): calloc, so large arrays cost no memset.
+/// Past the array length limit it is the limit's `RangeError`; a size the target cannot
+/// allocate (on wasm32, any past 2^31 - 1, never truncated) stops the program as
+/// `velt_rt_alloc` does.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_bytes_zeroed(n: u64, out: *mut VeltBytes) {
-    out.write(VeltBytes::from_vec(vec![0; n as usize]));
+    if n > crate::bytes::MAX_ARRAY_LEN {
+        crate::bytes::array_too_long();
+    }
+    let len = crate::mem::block_size(n, 1);
+    if len == 0 {
+        out.write(VeltBytes::from_vec(Vec::new()));
+        return;
+    }
+    let p = match std::alloc::Layout::array::<u8>(len) {
+        Ok(layout) => std::alloc::alloc_zeroed(layout),
+        Err(_) => std::ptr::null_mut(),
+    };
+    if p.is_null() {
+        crate::mem::out_of_memory(n, 1);
+    }
+    // SAFETY: `p` is a zeroed block of `len` bytes from the global allocator.
+    out.write(VeltBytes::from_vec(Vec::from_raw_parts(p, len, len)));
 }
 
 /// First position at or after `from` (relative) holding `byte`, or -1.
@@ -126,7 +145,9 @@ pub unsafe extern "C" fn velt_rt_bytes_slice(
     out.write(VeltBytes::from_vec(v));
 }
 
-/// `a` followed by `b`, as a new array (JS `concat`).
+/// `a` followed by `b`, as a new array (JS `concat`). Past the array length limit it is the
+/// limit's `RangeError`, and a size the target cannot allocate is out of memory, as in
+/// `velt_rt_bytes_zeroed`.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_bytes_concat(
     a: *const VeltBytes,
@@ -134,7 +155,16 @@ pub unsafe extern "C" fn velt_rt_bytes_concat(
     out: *mut VeltBytes,
 ) {
     let (a, b) = ((*a).as_bytes(), (*b).as_bytes());
-    let mut v = Vec::with_capacity(a.len() + b.len());
+    let total = a.len() as u64 + b.len() as u64;
+    if total > crate::bytes::MAX_ARRAY_LEN {
+        crate::bytes::array_too_long();
+    }
+    let mut v = Vec::new();
+    if v.try_reserve_exact(crate::mem::block_size(total, 1))
+        .is_err()
+    {
+        crate::mem::out_of_memory(total, 1);
+    }
     v.extend_from_slice(a);
     v.extend_from_slice(b);
     out.write(VeltBytes::from_vec(v));

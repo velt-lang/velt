@@ -13,6 +13,7 @@ mod locks;
 mod transfers;
 mod weak;
 
+use crate::lower::fresh_fns::FnKey;
 use rustc_hash::FxHashSet;
 use std::collections::BTreeSet;
 
@@ -42,6 +43,9 @@ pub(super) struct Boxing {
     /// The program compares function values: every evaluation of a closure without captures
     /// gets an environment of its own as its identity (closure.rs).
     fn_identity: bool,
+    /// The program holds a generic closure as `unknown` (glue/vtable.rs `ClosureAny`): every
+    /// function's `any` table has the slots that carry its table back.
+    pub(super) generic_any: bool,
     /// The program writes a member through `any` (`AnySet` / `AnySetIndex`): the `any` tables
     /// have the write slots (any_set.rs).
     pub(super) any_writes: bool,
@@ -191,7 +195,7 @@ pub(super) struct Facts {
     /// Object types compared by identity (`==`, same.rs).
     identity: FxHashSet<TyId>,
     /// `any` values compared by identity (`Boxing::any_identity`).
-    any_identity: bool,
+    pub(in crate::lower) any_identity: bool,
     /// Interface upcasts made, `(from, to)` (upcast.rs): `from` values are compared by
     /// identity when `to` values are.
     upcasts: FxHashSet<(TyId, TyId)>,
@@ -202,6 +206,16 @@ pub(super) struct Facts {
     transfers: FxHashSet<TyId>,
     /// Function values are compared (or hashed) somewhere.
     fn_compared: bool,
+    /// The types of the function values compared (fresh_fns.rs).
+    pub(in crate::lower) fn_compared_keys: FxHashSet<FnKey>,
+    /// The generic function types whose values are held as `unknown` (fresh_fns.rs).
+    pub(in crate::lower) generic_any_keys: FxHashSet<FnKey>,
+    /// The conversions of function values between function types (fresh_fns.rs).
+    pub(in crate::lower) fn_edges: FxHashSet<(FnKey, FnKey)>,
+    /// The fresh closures made (fresh_fns.rs).
+    pub(in crate::lower) fresh_made: FxHashSet<(velt_sema::hir::DefId, FnKey, bool)>,
+    /// A generic closure is held as `unknown` (`Boxing::generic_any`).
+    pub(super) generic_any: bool,
     /// A member is written through `any`.
     any_set: bool,
     /// `key in x` is tested on an `any`.
@@ -391,6 +405,7 @@ impl Cx<'_> {
     pub(super) fn close_boxing(&mut self) -> Boxing {
         let mut next = self.boxing.clone();
         next.fn_identity |= self.facts.fn_compared;
+        next.generic_any |= self.facts.generic_any;
         next.any_identity |= self.facts.any_identity;
         next.any_writes |= self.facts.any_set;
         next.any_has |= self.facts.any_has;

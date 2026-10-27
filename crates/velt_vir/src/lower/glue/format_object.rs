@@ -108,12 +108,13 @@ impl FnLower<'_, '_> {
             .filter(|(_, ((_, _, hidden), _))| !hidden)
             .map(|(i, ((n, private, _), t))| (i as u32, n, t, private))
             .collect();
+        // An object literal's accessor fields show as the property each stands for.
         let shown: Vec<(u32, String, TyId)> = all
             .into_iter()
             .filter(|(_, n, t, private)| {
                 !n.starts_with('#') && !(*private && self.is_empty_struct(*t))
             })
-            .map(|(i, n, t, _)| (i, n, t))
+            .filter_map(|(i, n, t, _)| self.field_prop(d, &n).map(|p| (i, p, t)))
             .collect();
         // JavaScript's order: array-index names (`'404'`) first, ascending (#756).
         let names: Vec<&str> = shown.iter().map(|(_, n, _)| n.as_str()).collect();
@@ -150,8 +151,13 @@ impl FnLower<'_, '_> {
             pending.push_str(&format!("{sep}{n}: "));
             self.push_text(buf, &pending);
             pending.clear();
-            let fp = self.field_place(place, ty, *index);
-            self.format_nested(buf, &fp, *t, child);
+            match self.accessor_label(ty, *index) {
+                Some(label) => self.push_text(buf, label),
+                None => {
+                    let fp = self.field_place(place, ty, *index);
+                    self.format_nested(buf, &fp, *t, child);
+                }
+            }
         }
         self.push_text(buf, " }");
     }
@@ -196,7 +202,10 @@ impl FnLower<'_, '_> {
             self.goto(join);
             self.switch_to(join);
             self.assign(Place::local(written), Rvalue::Use(FnLower::ctrue()));
-            self.format_nested(buf, &fp, *t, child);
+            match self.accessor_label(ty, *index) {
+                Some(label) => self.push_text(buf, label),
+                None => self.format_nested(buf, &fp, *t, child),
+            }
             self.goto(skip);
             self.switch_to(skip);
         }

@@ -56,12 +56,15 @@ impl<'h> Cx<'h> {
             locs: None,
             debug: None,
             tracked: FxHashMap::default(),
+            tracked_size: FxHashMap::default(),
             quiet: FxHashMap::default(),
             str_objects: FxHashMap::default(),
             symbol_records: Default::default(),
             boxing,
             facts: Default::default(),
             iface_impls: None,
+            ext_memo: Default::default(),
+            exists_memo: Default::default(),
             own_clones: None,
             honoured_clones: FxHashMap::default(),
             dyn_modes_memo: FxHashMap::default(),
@@ -161,6 +164,7 @@ impl<'h> Cx<'h> {
                 | Work::Main
                 | Work::ModuleInit(..)
                 | Work::ArrayGrow
+                | Work::ArrayTooLong
                 | Work::Oob(_)
         ) || !self.has_lock_set();
         let work = match (fixed, mode) {

@@ -535,11 +535,19 @@ console.log(p.len(), q.len());  // 4 4
 - An **optional method** `m?(x: T): R` is an optional field of function type
   (`m?: (x: T) => R`): an implementing class declares the field as `m?: (x: T) => R` or
   `m: ((x: T) => R) | undefined = undefined`, and a caller writes `o.m?.(x)`.
-- **Generic methods** (`apply<U>(f: (x: i64) => U): U[]`) are dispatched statically only: call
-  them on a concrete class or on a `T extends I` generic, not on an interface value
-  (``generic method `apply` cannot be called on an interface value``): make the calling
-  function generic over the receiver (`<T extends Mapper>(m: T)` instead of `(m: Mapper)`), or
-  call a method that is not generic. Generic interface methods cannot have default bodies yet.
+- **Generic methods** (`apply<U>(f: (x: i64) => U): U[]`) are called on a concrete class, on a
+  `T extends I` generic (resolved for each instantiation, also when an interface value stands
+  for `T`), or on an interface value: there the method's table entry is itself a table, with
+  one entry per list of type arguments the program calls it with, compiled for every class
+  implementing the interface (#943). A generic method calling itself through an interface value
+  with a growing type argument (`r.go([x])` in `go<T>(x: T)`) has infinitely many
+  instantiations and is an error, as for a direct call. Not supported yet: converting a class
+  to such an interface where a subclass overrides the generic method (a `Base` that may hold a
+  `Sub` would run `Base`'s method; converting a `new Base()` or the `Sub` itself is fine), also
+  when the value comes from `any`, `unknown` or `object` (which keep the type it had there), and
+  converting an interface value with a generic method to other type arguments (`H<number>` as
+  `H<unknown>`). Both are errors where the program calls that generic method through interface
+  values. Generic interface methods cannot have default bodies yet.
   The method that runs is the one of the class the type parameter is given: when a subclass of that
   class overrides it, a value of the class may hold the subclass, so instantiating the generic
   with that class is the same error as calling the method on it directly (pass the concrete
@@ -656,7 +664,9 @@ console.log(p.x + p.y); // 3
   them are exported or none (TS2395), and their `extends` lists are joined.
 - A member declared in two declarations is an error. TypeScript allows a repeated field of the
   same type, and makes a repeated method an overload.
-- An interface merges only with interfaces, not with a class, function or enum of its name.
+- An interface merges only with interfaces, not with a class or enum of its name. Next to a
+  function or constant of its name it is that name's type, the function its value
+  ([Types and values of one name](modules.md#types-and-values-of-one-name)).
 - `var NAME: T;` in `declare global` declares a build-time constant (see
   [`define`](../tooling/manifest.md#define)).
 - A namespace of types in `declare global` is declared in its module, as a `declare namespace`
@@ -737,9 +747,90 @@ builtins included, at zero cost (the calls are direct):
 - Scope today: an extension applies wherever its module is loaded; `extend` blocks cannot be
   exported.
 - **Planned** ([TypeScript alignment §4](../internals/design/ts-alignment.md#4-extend--full-power-zero-cost-module-scoped)):
-  `static readonly` constants in `extend`; retroactive
-  `extend Point implements Comparable<Point>`; module scoping (an extension is visible where it
-  is imported) with ambiguity errors.
+  `static readonly` constants in `extend`; module scoping (an extension is visible where it is
+  imported) with ambiguity errors.
+
+### `extend … implements`
+
+`extend Target implements I, J { … }` makes the block's methods implement interfaces for every
+type the target matches, built-in types included: the type then satisfies `I` as a bound and
+converts to an `I` value, as a class with `implements I` does. The block is checked as a class
+is: each method of `I` must be in it with the same parameter and result types (a static method
+does not count), and a method `I` gives a default for may be left out.
+
+- **Blanket blocks** (`extend<T extends Comparable<T>> T implements Describe`) give the
+  interface to every type that meets their bounds, type parameters included: in
+  `function f<K extends Comparable<K>>(k: K)`, `k.describe()` works and `k` meets a
+  `T extends Describe` bound (`show(k)` with `function show<T extends Describe>(x: T)`). A value
+  of a type parameter does not convert to a `Describe` value, whatever its bounds.
+- **A type's own implementation comes first**: a class that says `implements Describe`, or
+  inherits it from a base class, keeps its own methods, and a blanket block applies to the
+  types without one. A block for a type that already implements the interface is an error.
+- **A type implements an interface once**, with the arguments of the block that wins: two
+  blocks for `W` implementing `G<i64>` and `G<string>` conflict, and with `extend<T> Box<T>
+  implements G<T>` and `extend<A> A implements G<i64>`, a `Box<string>` is a `G<string>` only.
+  A block with bounds must give the same arguments as the blocks it wins over (those it is
+  more specific than, and those for a base class of a type it fits): with `extend<T extends
+  Q> T implements G<i64>` and `extend<T> T implements G<string>`, whether a type is a
+  `G<string>` would depend on whether it is a `Q`, so the pair is refused.
+- **Blanket blocks chain**: with `extend<T extends K> T implements J` and `extend<T extends J>
+  T implements I`, a `T extends K` in generic code is an `I` too, through chains of any length.
+- **Interface values meet bounds** on their interface and the ones it extends: with
+  `extend<T extends P> T implements Q`, a `P` value (or a `P2` value, `interface P2 extends
+  P`) is a `Q`, and so is a `Box<P>` with `extend<T extends P> Box<T> implements Q`.
+- **A block's bounds hold when the type meets them at all**, through its own implementation or
+  another block: with `extend<T extends Q> T implements P`, `extend<T> T implements P` and
+  `extend<T extends P> T implements Q`, every type is a `P` and a `Q`, and gets the bounded `P`
+  block. A type never meets a bound only through itself.
+- **The most specific block wins** for each other type, by the rule above: with the blanket block and
+  `extend u64 implements Describe`, a `u64` uses the `u64` block everywhere, in generic code too
+  (`f(5 as u64)` calls it through `K`), and every other comparable type uses the blanket one.
+  Generic code is compiled for each type it is used with, so the call is direct: specializing a
+  generic function or class for some types costs nothing at run time.
+- **Errors**: a missing or mismatched method; two blocks for one interface that can both fit a
+  type where neither is more specific (``conflicting implementations of `I` ``, naming a type
+  both fit: `extend<A> Pair<A, i64>` and `extend<B> Pair<i64, B>` both fit `Pair<i64, i64>`),
+  in one module or in two; a block with bounds that wins over another with other interface
+  arguments (``the block for `G<i64>` has bounds and takes precedence over the other``); a block for an interface the type already implements
+  (`` `P` already implements `I` ``, also for an interface type and an interface it extends); an
+  interface with fields or optional methods (``cannot implement `I`: `I` declares fields``: an
+  `extend` block cannot add fields); a target that is `any`, `unknown`, `never` or a union (a
+  union's value has one member's type: implement the interface for each member); a blanket
+  block bounded by the interface it implements (`extend<T extends I> T implements I`), which
+  no type could get; a bound of `any`, `unknown`, `object` or `Function` on a block that lists
+  `implements` (leave out a bound every type meets). Blocks whose bounds only lead to each other
+  (`extend<T extends I> T implements J` with `extend<U extends J> U implements I`) give a type
+  neither interface unless it has one of its own.
+- A value converted from `any` or `unknown` to `I` uses the implementation a direct conversion of
+  the value would.
+- `extend X implements Comparable<X>` may be written out too; a block that only defines
+  `compareTo` or `[Symbol.iterator]()` implements `Comparable` or `Iterable` without it (above).
+
+```ts
+interface Describe {
+  describe(): string;
+}
+
+extend<T extends Comparable<T>> T implements Describe {
+  describe(): string {
+    return "a comparable value";
+  }
+}
+
+extend u64 implements Describe {
+  describe(): string {
+    return `the u64 ${this}`;
+  }
+}
+
+function label<K extends Comparable<K>>(k: K): string {
+  return k.describe();
+}
+
+const items: Describe[] = [7 as u64, "x"];
+console.log(label(5 as u64), label("abc"), items.map((d) => d.describe()));
+// the u64 5 a comparable value [ 'the u64 7', 'a comparable value' ]
+```
 
 ```ts
 type Shape = { kind: "circle"; r: f64 } | { kind: "square"; side: f64 };

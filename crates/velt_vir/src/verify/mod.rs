@@ -26,6 +26,33 @@ fn check_simd_extern(i: usize, e: &ExternFn, errs: &mut Vec<String>) {
     }
 }
 
+/// Whether a symbol names an operation backends emit inline (SIMD, atomics): no function
+/// exists behind it, so it is only ever called directly.
+pub(crate) fn inline_extern(symbol: &str) -> bool {
+    symbol.starts_with("velt_atomic_") || symbol.starts_with("velt_simd_")
+}
+
+/// A `velt_atomic_*` extern likewise (`crate::atomic`): an operation backends emit inline.
+fn check_atomic_extern(i: usize, e: &ExternFn, errs: &mut Vec<String>) {
+    if !e.symbol.starts_with("velt_atomic_") {
+        return;
+    }
+    if e.noreturn {
+        errs.push(format!(
+            "extern#{i} {}: an atomic operation returns",
+            e.symbol
+        ));
+    }
+    match crate::atomic::AtomicCall::of_symbol(&e.symbol) {
+        None => errs.push(format!("extern#{i} {}: not an atomic operation", e.symbol)),
+        Some(call) if call.signature() != (e.params.clone(), e.ret) => errs.push(format!(
+            "extern#{i} {}: signature differs from the atomic operation's",
+            e.symbol
+        )),
+        Some(_) => {}
+    }
+}
+
 pub(crate) fn verify_program(p: &Program) -> Result<(), Vec<String>> {
     let mut errs = vec![];
     check_aggs(p, &mut errs);
@@ -37,6 +64,7 @@ pub(crate) fn verify_program(p: &Program) -> Result<(), Vec<String>> {
             ));
         }
         check_simd_extern(i, e, &mut errs);
+        check_atomic_extern(i, e, &mut errs);
     }
     check_symbols(p, &mut errs);
     check_statics(p, &mut errs);
@@ -209,6 +237,13 @@ fn check_reloc(p: &Program, bytes: &[u8], off: u32, target: &Const) -> Result<()
     }
     let (id, len, what) = match target {
         Const::Func(x) => (x.0, p.funcs.len(), "function"),
+        Const::Extern(x)
+            if p.externs
+                .get(x.0 as usize)
+                .is_some_and(|e| inline_extern(&e.symbol)) =>
+        {
+            return Err("target is an inline operation, which has no address".into())
+        }
         Const::Extern(x) => (x.0, p.externs.len(), "extern"),
         Const::Static(x) => (x.0, p.statics.len(), "static"),
         c => return Err(format!("target {c:?} is not an address")),

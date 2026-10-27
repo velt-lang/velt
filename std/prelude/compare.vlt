@@ -131,7 +131,8 @@ extend string {
    * (not locale-aware; see `localeCompare`).
    */
   compareTo(other: string): i64 {
-    return this < other ? -1 : this > other ? 1 : 0;
+    // One comparison: the runtime's gives -1, 0 or 1 (`<` is it against 0).
+    return velt_rt_str_cmp(this, other) as i64;
   }
 }
 
@@ -141,3 +142,6 @@ extend bool {
     return this == other ? 0 : this ? 1 : -1;
   }
 }
+
+// The order of two strings by UTF-16 code units: -1, 0 or 1 (what `<` on strings calls).
+declare function velt_rt_str_cmp(a: string, b: string): i32;

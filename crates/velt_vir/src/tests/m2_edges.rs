@@ -144,7 +144,14 @@ fn classes_as_interface_values_and_owned_virtual_args() {
         let_(d, to_dyn(f.mv(b), 0, dy)),
         se(print(
             vec![
-                callee(Callee::Dyn { slot: 0 }, vec![f.bw(d)], t.str),
+                callee(
+                    Callee::Dyn {
+                        slot: 0,
+                        method_type_args: vec![],
+                    },
+                    vec![f.bw(d)],
+                    t.str,
+                ),
                 f.bw(d),
             ],
             t,

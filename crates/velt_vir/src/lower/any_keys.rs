@@ -170,6 +170,14 @@ impl FnLower<'_, '_> {
             .iter()
             .map(|f| (f.name.clone(), f.optional && !class))
             .collect();
+        // An object literal's accessor fields list the property each stands for, once (a
+        // setter next to its getter is no key of its own: `#` hides it, as a private field).
+        let fields: Vec<(String, bool)> = (fields.into_iter())
+            .map(|(n, o)| match self.field_prop(d, &n) {
+                Some(p) => (p, o),
+                None => (format!("#{n}"), o),
+            })
+            .collect();
         let names: Vec<&str> = fields.iter().map(|(n, _)| n.as_str()).collect();
         let order = velt_sema::property_order::js_key_order(&names);
         let str_ = self.cx.str_ty();

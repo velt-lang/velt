@@ -15,7 +15,7 @@
 //! parameter (`s.area<V>(…)`, `s: S`): those run the implementing method of whatever type `S`
 //! becomes, so they instantiate the method of every implementation of the interface (its
 //! owner's parameters come from inside `S`, which does not grow them; its own from the call's
-//! type arguments).
+//! type arguments). A generic method called on an interface value does the same.
 //!
 //! A growing edge is allowed when its call lies in the `then` block of an `if` whose type
 //! predicate rules out objects for the edge's own source parameter (`if (isPrimitive(x))`,
@@ -136,6 +136,27 @@ fn collect(cx: &mut Ctx) -> Sites {
                         margs: method_type_args.clone(),
                     })
                 }
+                // A generic method called on an interface value runs the method of every
+                // implementation, as a call through a type parameter may.
+                E::Call {
+                    callee:
+                        Callee::Dyn {
+                            slot,
+                            method_type_args,
+                        },
+                    args,
+                } if !method_type_args.is_empty() => {
+                    let Some(recv) = args.first() else { return };
+                    let TyKind::Dyn(iface, _) = tys.kind(recv.ty) else {
+                        return;
+                    };
+                    Site::Param(ParamCall {
+                        recv: recv.ty,
+                        iface: *iface,
+                        slot: *slot,
+                        margs: method_type_args.clone(),
+                    })
+                }
                 _ => return,
             };
             sites.push((site, e.span, guard));
@@ -196,6 +217,16 @@ fn param_calls(cx: &mut Ctx, p: &ParamCall) -> Vec<(DefId, Vec<TyId>)> {
             .iface(p.iface)
             .and_then(|i| i.methods.get(p.slot as usize))
             .is_some_and(|d| d.default == Some(m));
+        // A generic closure (`body::expr::generic_values`) runs at the type arguments of the
+        // function that made it, which reach it where it is made (`Site::Closure`), then the
+        // call's: those stand for nothing here.
+        if let TyKind::Closure(c) = *cx.ty.kind(imp.ty) {
+            let own = generics(cx, c).saturating_sub(p.margs.len() as u32) as usize;
+            let mut targs = vec![cx.ty.error; own];
+            targs.extend(p.margs.iter().copied());
+            out.push((m, targs));
+            continue;
+        }
         let owner = if is_default {
             imp.iface_args.len() + 1
         } else {
@@ -367,7 +398,29 @@ fn report(cx: &mut Ctx, edges: &[Edge], i: usize, back: &[usize]) {
     let names = generic_names(cx, caller);
     let args: Vec<String> = e.targs.iter().map(|t| cx.display_in(*t, &names)).collect();
     let grown = cx.display_in(e.targs[e.to.1 as usize], &names);
-    let (f, g) = (fn_name(cx, caller), fn_name(cx, callee));
+    let (f, mut g) = (fn_name(cx, caller), fn_name(cx, callee));
+    // A generic closure called through a generic function value (`param_calls`): its own type
+    // arguments, the ones the call gives.
+    let own = (cx.impls.iter())
+        .find(|i| *cx.ty.kind(i.ty) == TyKind::Closure(callee))
+        .and_then(|i| cx.iface(i.iface))
+        .and_then(|i| i.methods.first())
+        .map(|m| m.generics.len());
+    let value = own.is_some();
+    let args: Vec<String> = match own {
+        Some(n) => {
+            g = format!("a generic function value made in `{g}`");
+            let k = e.targs.len().saturating_sub(n);
+            (e.targs[k..].iter())
+                .map(|t| cx.display_in(*t, &names))
+                .collect()
+        }
+        None => args,
+    };
+    let g_called = match value {
+        true => g.clone(),
+        false => format!("`{g}`"),
+    };
     let own = format!("{f}<{}>", names.join(", "));
     // A call from a closure is its enclosing function calling.
     let (fq, gq) = (enclosing_fn(cx, caller), enclosing_fn(cx, callee));
@@ -388,14 +441,20 @@ fn report(cx: &mut Ctx, edges: &[Edge], i: usize, back: &[usize]) {
             [] => String::new(),
             ts => format!(" through `{}`", ts.join("`, `")),
         };
-        format!("`{f}` calls `{g}` with `{grown}`, which calls `{f}` again{via}")
+        format!("`{f}` calls {g_called} with `{grown}`, which calls `{f}` again{via}")
     };
     cx.error(
         Diagnostic::error(
-            format!(
-                "instantiating `{g}<{}>` from `{own}` grows without end",
-                args.join(", ")
-            ),
+            match value {
+                true => format!(
+                    "instantiating {g} at `<{}>` from `{own}` grows without end",
+                    args.join(", ")
+                ),
+                false => format!(
+                    "instantiating `{g}<{}>` from `{own}` grows without end",
+                    args.join(", ")
+                ),
+            },
             e.span,
         )
         .with_note(format!(

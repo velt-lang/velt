@@ -230,7 +230,7 @@ pub(super) fn call_target(cx: &Ctx, callee: &Callee, args: &[Expr]) -> Option<Ta
             let m = *cx.adt(class)?.vtable.get(*slot as usize)?;
             Some(Target::Fn(m))
         }
-        Callee::Dyn { slot } => match cx.ty.kind(args.first()?.ty) {
+        Callee::Dyn { slot, .. } => match cx.ty.kind(args.first()?.ty) {
             TyKind::Dyn(iface, _) => Some(Target::Iface(*iface, *slot)),
             _ => None,
         },

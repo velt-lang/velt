@@ -289,7 +289,7 @@ impl Ctx<'_> {
 /// (own ones first, then each base class's that are not overridden), then its `readonly`
 /// fields, when a member of an `any` is read, called or written; `None` otherwise.
 pub(crate) fn dyn_members(cx: &mut Ctx) -> Option<FxHashMap<DefId, Vec<DynMember>>> {
-    if !cx.any.is_some_and(|a| a.members) {
+    if !cx.any.is_some_and(|a| a.members) && !accessor_literals_dynamic(cx) {
         return None;
     }
     let mut out = FxHashMap::default();
@@ -341,6 +341,9 @@ pub(crate) fn dyn_members(cx: &mut Ctx) -> Option<FxHashMap<DefId, Vec<DynMember
             let Some(next) = cx.class_of(base) else { break };
             (cur, cur_args) = next;
         }
+        if cx.literal_structs.contains(&d) {
+            literal_accessors(cx, d, &mut members);
+        }
         let readonly: Vec<String> = cx
             .adt(d)
             .map(|a| {
@@ -366,6 +369,78 @@ pub(crate) fn dyn_members(cx: &mut Ctx) -> Option<FxHashMap<DefId, Vec<DynMember
         }
     }
     Some(out)
+}
+
+/// Does the program convert values to `any` and make object literals with accessors in its own
+/// modules (the standard library's are not printed or serialized through `any`)? Then
+/// printing, `JSON.stringify` and `Object.keys` of an `any` that holds one (also inside
+/// another object) need its accessors listed, even where no member is read through `any`.
+fn accessor_literals_dynamic(cx: &Ctx) -> bool {
+    if !cx.any.is_some_and(|a| a.imp.is_some()) {
+        return false;
+    }
+    cx.literal_structs.iter().any(|&d| {
+        cx.adt(d).is_some_and(|a| {
+            !cx.scopes[a.module].is_std
+                && (a.implements.iter()).any(|b| {
+                    cx.iface(b.iface).is_some_and(|i| {
+                        (i.methods.iter()).any(|m| m.is_getter || m.name.starts_with("set "))
+                    })
+                })
+        })
+    })
+}
+
+/// The getters and setters of an object literal that implements an interface
+/// (`body::expr::iface_object`), whose struct `d` holds them as functions in its fields: the
+/// implementation's slots for them, so a read or write through `any` (or a view of the
+/// literal, #1510) runs the accessor rather than reaching the function in the field (#1538).
+fn literal_accessors(cx: &mut Ctx, d: DefId, members: &mut Vec<DynMember>) {
+    let own = args_of(cx, d);
+    let owner = cx.ty.intern(TyKind::Adt(d, own));
+    let found = cx.impls.iter().find(|i| i.ty == owner);
+    let Some((iface, defs)) = found.map(|i| (i.iface, i.methods.clone())) else {
+        return;
+    };
+    let Some(i) = cx.iface(iface) else {
+        return;
+    };
+    let slots: Vec<(String, bool, TyId)> = (i.methods.iter())
+        .map(|m| (m.name.clone(), m.is_getter, m.ret))
+        .collect();
+    // The struct's fields: a getter written `get k() { … }` is a function in field `k` (a
+    // value `k: v` filling a getter slot stays a field), a setter one in field `set k`.
+    let fields: Vec<(String, TyId)> = (cx.adt(d).into_iter())
+        .flat_map(|a| a.fields.iter().map(|f| (f.name.clone(), f.ty)))
+        .collect();
+    let has_field = |n: &str| fields.iter().any(|(f, _)| f == n);
+    for ((name, getter, ret), def) in slots.into_iter().zip(defs) {
+        let (kind, name) = match name.strip_prefix("set ") {
+            Some(n) if has_field(&name) => (DynMemberKind::Setter, n.to_string()),
+            None if getter => {
+                let held = fields.iter().find(|(f, _)| *f == name).map(|(_, t)| *t);
+                let is_fn = |t: TyId| matches!(cx.ty.kind(t), TyKind::FnPtr { .. });
+                match held {
+                    Some(t) if is_fn(t) && t != ret => (DynMemberKind::Getter, name),
+                    _ => continue,
+                }
+            }
+            _ => continue,
+        };
+        let setter = kind == DynMemberKind::Setter;
+        if members
+            .iter()
+            .any(|m| m.name == name && (m.kind == DynMemberKind::Setter) == setter)
+        {
+            continue;
+        }
+        members.push(DynMember {
+            name,
+            kind,
+            def,
+            owner,
+        });
+    }
 }
 
 /// The type parameters of `d` as types (`Param(0)`, ...).

@@ -40,9 +40,9 @@ impl AdapterParts {
 /// value, converting the arguments and the result. A `setter` slot takes `this` mutably and its
 /// value by move, as the setters of `iface_writes` do.
 /// The entry of a generic method's slot `s` (with `own` type parameters of its own) in an
-/// adapter: a method generic over the adapter's and its own type parameters, so it has no table
-/// entry (lowering's `impl_entries`); a generic method is only called statically, on a type
-/// parameter, and an adapter is never one. It stops the program if ever reached.
+/// adapter: a method generic over the adapter's and its own type parameters. Sema makes no
+/// adapter of an interface with a generic method for a conversion (`adaptable`), so it is never
+/// called; it stops the program if ever reached.
 pub(super) fn adapter_stub(cx: &mut Ctx, p: &AdapterParts, s: &SlotSig, own: u32) -> DefId {
     let span = p.span;
     let name = format!("{} adapter.{}", p.iname, s.name);
@@ -305,7 +305,10 @@ pub(super) fn adapter_method(
     }
     let call = g.mk(
         H::Call {
-            callee: Callee::Dyn { slot },
+            callee: Callee::Dyn {
+                slot,
+                method_type_args: vec![],
+            },
             args,
         },
         ret_from,

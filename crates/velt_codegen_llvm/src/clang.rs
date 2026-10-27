@@ -186,6 +186,9 @@ pub(crate) fn compile(ir: &str, target: &Target, optimize: bool) -> CodegenResul
     if target.pic() {
         cmd.arg("-fPIC");
     }
+    if target.outline_atomics() {
+        cmd.arg("-moutline-atomics");
+    }
     cmd.args(["-", "-o", "-"]);
     run_piped(cmd, ir.as_bytes(), "clang").map_err(|e| unknown_cpu(e, target.cpu.as_deref()))
 }

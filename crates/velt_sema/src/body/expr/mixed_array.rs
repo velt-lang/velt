@@ -115,6 +115,11 @@ impl FnCx<'_, '_> {
     /// `(number[] | string[])[]`).
     pub(super) fn mixed_elem(&mut self, e: &ast::Expr, elem: TyId) -> hir::Expr {
         let nested = matches!(&e.kind, ast::ExprKind::Array(xs) if !xs.is_empty());
+        // `elem` is only what the first element suggests: a narrowed module variable or field
+        // that a call may have cleared is read as it is (`checked_copies`).
+        if !nested && self.as_is_source(e) {
+            return self.as_is_expr(e, Some(elem), Want::Move);
+        }
         if !nested {
             return self.expr(e, Some(elem), Want::Move);
         }

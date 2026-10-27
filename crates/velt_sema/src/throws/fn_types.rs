@@ -320,7 +320,7 @@ impl Ctx<'_> {
     /// A function type without `throws` written at `span` in module `module`, resolved to
     /// `params => ret`: what it throws (`never` when nothing was stored into it that throws),
     /// recording the site.
-    fn site_error(&mut self, span: Span, module: usize) -> Option<TyId> {
+    pub(crate) fn site_error(&mut self, span: Span, module: usize) -> Option<TyId> {
         if !self.site_module(module) {
             return None;
         }
@@ -565,7 +565,7 @@ impl Ctx<'_> {
     }
 
     /// `t` as a [`Portable`] type (`None`: it has parts that only exist in this check).
-    fn port(&self, t: TyId, depth: u32) -> Option<Portable> {
+    pub(super) fn port(&self, t: TyId, depth: u32) -> Option<Portable> {
         if depth > 16 {
             return None;
         }

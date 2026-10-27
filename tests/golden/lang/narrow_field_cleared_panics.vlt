@@ -1,0 +1,17 @@
+// A narrowed field path of a module variable that a call cleared, read as a receiver: a
+// `TypeError` naming the path, where Node throws "Cannot read properties of null".
+class Box {
+  n: number = 1;
+}
+let state: { next: Box | null } = { next: new Box() };
+function reset(): void {
+  state.next = null;
+}
+function f(): void {
+  if (state.next) {
+    reset();
+    console.log("cleared", state.next);
+    console.log(state.next.n);
+  }
+}
+f();

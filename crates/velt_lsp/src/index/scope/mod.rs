@@ -206,6 +206,9 @@ impl<'a> Walker<'a> {
             }
             ast::ItemKind::Extend(ext) => {
                 self.ty(&ext.target);
+                for t in &ext.implements {
+                    self.ty(t);
+                }
                 for m in &ext.methods {
                     self.function(&m.decl.sig, Some(&m.decl.body));
                 }

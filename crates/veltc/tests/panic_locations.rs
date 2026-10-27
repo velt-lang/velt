@@ -78,6 +78,12 @@ const CASES: &[(&str, i32, &str)] = &[
         1,
         "Uncaught Failed [Error]: rejected before the handle was dropped at tests/golden/lang/spawn_handle_dropped_after_reject.vlt:13:3",
     ),
+    // Through a large standard-library function, which takes the call site as an argument.
+    (
+        "panic_uncaught_shared_std",
+        1,
+        "Uncaught RangeError: start offset of Uint32Array should be a multiple of 4 at tests/golden/lang/panic_uncaught_shared_std.vlt:6:16",
+    ),
     (
         "panic_uncaught_std",
         1,

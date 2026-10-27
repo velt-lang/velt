@@ -110,10 +110,8 @@ impl Ctx<'_> {
                 self.ty.error
             }
             ast::TypeExprKind::Construct(inner) => self.resolve_construct(inner, t, env),
-            ast::TypeExprKind::GenericFunction { .. } => {
-                let (msg, note) = crate::fn_types::unsupported_fn_type(&t.kind);
-                self.error(velt_common::Diagnostic::error(msg, t.span).with_note(note));
-                self.ty.error
+            ast::TypeExprKind::GenericFunction { type_params, ty } => {
+                self.resolve_generic_fn(type_params, ty, env, t.span)
             }
             ast::TypeExprKind::Union(parts) => self.resolve_union(t, parts, env),
             ast::TypeExprKind::Intersection(parts) => self.resolve_intersection(t, parts, env),
@@ -230,7 +228,7 @@ impl Ctx<'_> {
         if path.len() != 1 {
             let name: Vec<&str> = path.iter().map(|i| i.name.as_str()).collect();
             let name = name.join(".");
-            let item = self.lookup_path_at(env.module, path, t.span);
+            let item = self.lookup_type_path_at(env.module, path, t.span);
             if let (Some(item), Some(last)) = (item, path.last()) {
                 self.rec_item(last.span, Some(item));
                 return self.item_type(item, &name, args, t, env);
@@ -305,7 +303,7 @@ impl Ctx<'_> {
         // `string`, …) cannot be declared.
         let shadowed = crate::types::velt_only_type_name(name)
             && self
-                .lookup_item_at(env.module, name, t.span)
+                .lookup_type_item_at(env.module, name, t.span)
                 .is_some_and(|item| self.is_type_item(item));
         // `bigint` has no values until `BigInt` exists (#1088): `never`, so `string | bigint` is
         // `string` and `T extends bigint ? …` is never taken, as for every Velt value in TS.
@@ -324,7 +322,7 @@ impl Ctx<'_> {
             }
             return p;
         }
-        let item = self.lookup_item_at(env.module, name, t.span);
+        let item = self.lookup_type_item_at(env.module, name, t.span);
         self.rec_item(path[0].span, item);
         if item.is_none() {
             if let Some(b) = self.resolve_builtin(t, name, args, env) {
@@ -476,8 +474,17 @@ impl Ctx<'_> {
             n if crate::utility_types::OPERATORS.contains(&n) => {
                 return Some(self.resolve_utility(t, name, args, env))
             }
-            "NonNullable" | "Exclude" | "Extract" | "Uppercase" | "Lowercase" | "Capitalize"
-            | "Uncapitalize" => return self.resolve_type_level_builtin(t, name, args, env),
+            // In generic code, deferred until the type parameter is known (`Awaited<R>`).
+            "Awaited" if self.inline_deferrable(env) => {
+                return Some(self.resolve_inline(t, env, |cx| {
+                    let r = cx.resolve_type_level_builtin(t, name, args, env);
+                    r.unwrap_or(cx.ty.error)
+                }))
+            }
+            "NonNullable" | "Awaited" | "Exclude" | "Extract" | "Uppercase" | "Lowercase"
+            | "Capitalize" | "Uncapitalize" => {
+                return self.resolve_type_level_builtin(t, name, args, env)
+            }
             _ => return None,
         };
         let written = args;
@@ -560,7 +567,7 @@ impl Ctx<'_> {
                 i.decl.map(|x| (i.module, &x.generics[..])),
             ),
             _ => {
-                self.err(format!("`{name}` is not a type"), t.span);
+                self.value_as_type(name, t.span);
                 return self.ty.error;
             }
         };
@@ -725,35 +732,6 @@ impl Ctx<'_> {
             || matches!(self.ty.kind(t), TyKind::Adt(d, _)
                 if self.adt(*d).is_some_and(|a| a.kind == crate::hir::AdtKind::Anon))
     }
-}
-
-/// Resolve every type alias that nothing expanded, so its errors are reported too
-/// (`type X = Nope;` used nowhere is still an error, as in TypeScript). Aliases that are used
-/// were checked at their uses.
-pub(crate) fn check_unused_aliases(cx: &mut Ctx) {
-    cx.checking_unused_aliases = true;
-    for a in 0..cx.aliases.len() {
-        if cx.aliases[a].used {
-            continue;
-        }
-        let (module, decl) = (cx.aliases[a].module, cx.aliases[a].decl);
-        let mut names: Vec<String> = decl.generics.iter().map(|g| g.name.name.clone()).collect();
-        cx.aliases[a].used = true;
-        cx.aliases[a].expanding = true;
-        // An alias of a generic function type that nothing uses as a type is fine: constants
-        // of it are generic functions (`generic_arrows::typed`). Its function type is checked
-        // with the type parameters in scope; a use elsewhere reports the form.
-        let ty = match &decl.ty.kind {
-            ast::TypeExprKind::GenericFunction { type_params, ty } => {
-                names.extend(type_params.iter().map(|g| g.name.name.clone()));
-                &**ty
-            }
-            _ => &decl.ty,
-        };
-        cx.resolve_type(ty, &TyEnv::new(module, &names));
-        cx.aliases[a].expanding = false;
-    }
-    cx.checking_unused_aliases = false;
 }
 
 /// The type written for an optional field `name?: T`: `T`, without the `| undefined` the parser

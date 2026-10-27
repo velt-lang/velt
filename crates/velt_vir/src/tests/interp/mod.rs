@@ -7,6 +7,7 @@
 
 mod arith;
 mod async_rt;
+mod atomic;
 mod cancel;
 mod drops;
 mod http;

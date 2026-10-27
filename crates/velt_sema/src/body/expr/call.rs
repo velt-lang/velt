@@ -37,6 +37,9 @@ impl FnCx<'_, '_> {
         if let Some(h) = self.math_int32_call(callee, args, span) {
             return h;
         }
+        if let Some(h) = self.math_minmax_call(callee, args, span) {
+            return h;
+        }
         if let Some(h) = self.dynamic_is_array_call(callee, args, span) {
             return h;
         }
@@ -100,9 +103,9 @@ impl FnCx<'_, '_> {
             _ => {
                 let f = match &callee.kind {
                     ast::ExprKind::Paren(inner) => self.immediate_closure(inner),
-                    _ => self.expr(callee, None, Want::Borrow),
+                    _ => self.receiver_expr(callee),
                 };
-                self.call_value(f, args, span)
+                self.call_value_with(f, type_args, args, exp, span)
             }
         }
     }
@@ -181,8 +184,8 @@ impl FnCx<'_, '_> {
                     self.error_expr(span)
                 }
                 _ => {
-                    let f = self.ident_expr(id, None, Want::Borrow);
-                    self.call_value(f, args, span)
+                    let f = self.with_payload_at(id.span, |s| s.ident_expr(id, None, Want::Borrow));
+                    self.call_value_with(f, type_args, args, exp, span)
                 }
             },
             _ => self.builtin_call(id, type_args, args, exp, span),
@@ -317,6 +320,18 @@ impl FnCx<'_, '_> {
             Err(f) => f,
         };
         let f = self.fn_bound_value(f).unwrap_or_else(|f| f);
+        // A generic function value: a call of its interface's one method (`crate::generic_fns`).
+        if let Some(g) = self.cx.generic_sig(f.ty) {
+            let s = super::iface_call::IfaceSlot {
+                on_param: false,
+                iface: g.iface,
+                iface_args: g.args,
+                slot: 0,
+                method: g.method,
+                rest: g.rest,
+            };
+            return self.iface_call(f, s, &[], args, None, span);
+        }
         // A function with properties (#921): a call of the function it holds.
         if self.cx.is_callable_object(f.ty) {
             return match self.call_of_callable(f, span) {
@@ -469,7 +484,7 @@ impl FnCx<'_, '_> {
             _ => {
                 // A narrowed union that may hold a view stays the union (`union_view`).
                 self.view_receiver = super::member::is_name(object);
-                let recv = self.expr(object, None, Want::Borrow);
+                let recv = self.receiver_expr(object);
                 self.view_receiver = false;
                 recv
             }
@@ -592,6 +607,10 @@ impl FnCx<'_, '_> {
         };
         let (m, owner_generics, owner_args) = match self.find_static(d, lookup) {
             Ok(found) => found,
+            // A static field holding a function value: a call of what it holds.
+            Err(false) if self.static_fn_field(d, prop) => {
+                return self.static_field_call(d, prop, args, span);
+            }
             Err(instance) => {
                 let what = match instance {
                     true => "an instance method",

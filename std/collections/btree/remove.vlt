@@ -1,0 +1,335 @@
+// velt:collections/btree/remove: deletes from a `Pool` (velt:collections/btree/pool), internal.
+//
+// A leaf below `MIN_LEAF` entries takes entries from a sibling that has more, or merges with it,
+// by rank (velt:collections/btree/leaf `moveRanks`, no leaf is sorted), and the parent loses a
+// separator, which may leave it short in turn (an inner node below `MIN_INNER` separators
+// borrows one or merges), up to the root; a root left with one child gives way to it. A leaf
+// whose range widens keeps its prefix when that still holds (`keepPrefix`, `mergeInto`), else
+// gets its words again; one whose range narrows keeps its prefix, true if shorter than it could
+// be. Inner nodes whose separators change get their prefix and words again (`refreshInner`); a
+// node that moves to another parent keeps its separators, so its words stay.
+
+import { needsDrop } from "velt:mem";
+import { F, NONE, Pool, Range, commonPrefix, moveSlot } from "velt:collections/btree/pool";
+import { prefixOf, shiftDown } from "velt:collections/btree/line";
+import { moveRanks, removeEntry, slotAtRank } from "velt:collections/btree/leaf";
+
+/** The fewest entries a leaf other than the root keeps; below it, it borrows or merges. */
+const MIN_LEAF: usize = F / 4;
+/** The fewest separators an inner node other than the root keeps. */
+const MIN_INNER: usize = F / 4 - 1;
+
+/**
+ * Removes the entry in physical slot `s` of `leaf` (`findLeaf` recorded the path to it;
+ * velt:collections/btree/leaf `leafFind` gives the slot).
+ */
+export function removeAt<K extends Comparable<K>, V>(p: Pool<K, V>, leaf: u32, s: usize) {
+  // A deleted key or value is released (pool.vlt). `liveFill` and `needsDrop` are constants
+  // for the map's types: for numbers and strings the filler work below folds away.
+  const live = p.liveFill();
+  const slot = (leaf as usize) * F + s;
+  const wasFill = live && p.isFill(slot);
+  const first = needsDrop(p.fill[0]) && p.height > 0 && slotAtRank(p, leaf, 0) == slot;
+  removeEntry(p, leaf, s);
+  p.size--;
+  p.edits++;
+  if (live && p.size == 0) {
+    // Nothing is left to fill with: the pools go, and the fillers with them.
+    p.clear();
+    return;
+  }
+  if (first) {
+    followFirstKey(p, leaf);
+  }
+  if (p.height > 0 && p.leafCount(leaf) < MIN_LEAF) {
+    rebalanceLeaf(p, leaf);
+  }
+  if (wasFill) {
+    p.refill();
+  }
+}
+
+// After `leaf` (non-root, still holding keys) lost its first key, for keys that own memory: the
+// separator that bounds it from below, in the deepest node of the recorded path not reached
+// through its first child, is that key (for such keys every separator is the first key of the
+// subtree right of it). It becomes the leaf's
+// new first key, so the deleted key is released. The subtree right of it narrows and keeps its
+// prefixes; the one left of it widens, so the nodes along its right edge, whose high end it is,
+// keep at most the bytes the old and the new separator share (`keepPrefix`).
+function followFirstKey<K extends Comparable<K>, V>(p: Pool<K, V>, leaf: u32) {
+  let depth: usize = p.pathNodes.length;
+  while (depth > 0) {
+    depth--;
+    const slot = p.pathSlots[depth];
+    if (slot > 0) {
+      const node = p.pathNodes[depth];
+      const at = (node as usize) * F + slot - 1;
+      const key = p.keyAt(slotAtRank(p, leaf, 0));
+      const shared = p.inline() ? commonPrefix(p.innerKeys[at], key) : 0;
+      p.innerKeys[at] = key;
+      if (p.inline()) {
+        p.innerWord(node, slot - 1);
+        keepRightEdge(p, p.innerKids[at], p.pathNodes.length - 1 - depth, shared);
+      }
+      return;
+    }
+  }
+}
+
+// The nodes along the right edge of the subtree at `kid` (`height` levels of inner nodes above
+// its leaves) keep at most `shared` bytes of prefix.
+function keepRightEdge<K extends Comparable<K>, V>(
+  p: Pool<K, V>,
+  kid: u32,
+  height: usize,
+  shared: u32,
+) {
+  let node = kid;
+  for (let h = height; h > 0; h--) {
+    if (shared < prefixOf(p.innerLineOf(node))) {
+      p.refreshInnerAt(node, shared);
+    }
+    node = p.innerKids[(node as usize) * F + p.innerCount(node)];
+  }
+  keepPrefix(p, node, shared);
+}
+
+function rebalanceLeaf<K extends Comparable<K>, V>(p: Pool<K, V>, leaf: u32) {
+  const depth: usize = p.pathNodes.length - 1;
+  const parent = p.pathNodes[depth];
+  const slot = p.pathSlots[depth];
+  const pb = (parent as usize) * F;
+  const pn = p.innerCount(parent);
+  const n = p.leafCount(leaf);
+  // A sibling with more than `MIN_LEAF` gives half the difference (so the leaf is not short
+  // again a delete later), by rank (velt:collections/btree/leaf `moveRanks`): no leaf is sorted.
+  if (slot > 0) {
+    const left = p.innerKids[pb + slot - 1];
+    const ln = p.leafCount(left);
+    if (ln > MIN_LEAF) {
+      const k = (ln - n) / 2;
+      const sep = p.keyAt(slotAtRank(p, left, ln - k));
+      const shared = p.inline() ? commonPrefix(sep, p.innerKeys[pb + slot - 1]) : 0;
+      keepPrefix(p, leaf, shared);
+      moveRanks(p, left, ln - k, k, leaf, true);
+      setSeparator(p, parent, slot - 1, sep);
+      return;
+    }
+    mergeInto(p, left, leaf);
+    removeSeparator(p, depth, slot - 1);
+    return;
+  }
+  if (slot < pn) {
+    const right = p.innerKids[pb + slot + 1];
+    const rn = p.leafCount(right);
+    if (rn > MIN_LEAF) {
+      const k = (rn - n) / 2;
+      const sep = p.keyAt(slotAtRank(p, right, k));
+      const shared = p.inline() ? commonPrefix(sep, p.innerKeys[pb + slot]) : 0;
+      keepPrefix(p, leaf, shared);
+      moveRanks(p, right, 0, k, leaf, false);
+      setSeparator(p, parent, slot, sep);
+      return;
+    }
+    mergeInto(p, leaf, right);
+    removeSeparator(p, depth, slot);
+  }
+}
+
+// Before one of `leaf`'s fences (a separator) moves out to a new one, widening its range, with
+// `shared` the bytes the old and the new separator share: its prefix holds for the wider range
+// when they share it (for keys a < b < c the bytes a and c share are the fewer of those a and b,
+// and b and c share), else `shared` does, and its words are rewritten for that first. The
+// sibling whose range narrows keeps its prefix.
+function keepPrefix<K extends Comparable<K>, V>(p: Pool<K, V>, leaf: u32, shared: u32) {
+  if (p.inline() && shared < prefixOf(p.lineOf(leaf))) {
+    p.refreshLeafAt(leaf, shared);
+  }
+}
+
+// Moves all of `right`'s entries to `left` (its left neighbor) and frees `right`. The range of
+// both together has the shorter of their prefixes (each holds for its half, and the separator
+// between them is in both), which `left` takes first when its own is longer.
+function mergeInto<K extends Comparable<K>, V>(p: Pool<K, V>, left: u32, right: u32) {
+  if (p.inline()) {
+    const pr = prefixOf(p.lineOf(right));
+    if (pr < prefixOf(p.lineOf(left))) {
+      p.refreshLeafAt(left, pr);
+    }
+  }
+  moveRanks(p, right, 0, p.leafCount(right), left, false);
+  const next = p.leafNext[right as usize];
+  p.leafNext[left as usize] = next;
+  if (next != NONE) {
+    p.leafPrev[next as usize] = left;
+  }
+  p.freeLeaf(right);
+}
+
+// The range of two neighboring nodes together: the left one's low end, the right one's high end.
+function merged<K>(left: Range<K>, right: Range<K>): Range<K> {
+  return [left[0], right[1]];
+}
+
+// Separator `i` of inner `node` becomes `key` (a share of it), with its word.
+function setSeparator<K extends Comparable<K>, V>(p: Pool<K, V>, node: u32, i: usize, key: K) {
+  p.innerKeys[(node as usize) * F + i] = key;
+  if (p.inline()) {
+    p.innerWord(node, i);
+  }
+}
+
+// Removes separator `sep` and the child right of it from the inner node at `depth` of the
+// recorded path, then rebalances that node.
+function removeSeparator<K extends Comparable<K>, V>(p: Pool<K, V>, depth: usize, sep: usize) {
+  const node = p.pathNodes[depth];
+  const base = (node as usize) * F;
+  const n = p.innerCount(node);
+  p.innerKeys.rotateLeft(base + sep, base + n);
+  p.innerKids.rotateLeft(base + sep + 1, base + n + 1);
+  const line = shiftDown(p.innerLineOf(node), sep, n, p.scratch);
+  p.setInnerLine(node, line);
+  if (p.wide()) {
+    const lineB = shiftDown(p.innerLineBOf(node), sep, n, p.scratch);
+    p.setInnerLineB(node, lineB);
+  }
+  p.innerKeys[base + n - 1] = p.fill[0];
+  p.setInnerCount(node, n - 1);
+  if (depth == 0) {
+    if (n - 1 == 0) {
+      // The root kept one child: it becomes the root, at the edge of the tree on both sides.
+      p.root = p.innerKids[base];
+      p.height--;
+      p.freeInner(node);
+      if (p.height == 0) {
+        p.refreshLeaf(p.root, [null, null]);
+      } else {
+        p.refreshInner(p.root, [null, null]);
+      }
+    }
+    return;
+  }
+  if (n - 1 < MIN_INNER) {
+    rebalanceInner(p, depth);
+  }
+}
+
+function rebalanceInner<K extends Comparable<K>, V>(p: Pool<K, V>, depth: usize) {
+  const node = p.pathNodes[depth];
+  const parent = p.pathNodes[depth - 1];
+  const slot = p.pathSlots[depth - 1];
+  const pb = (parent as usize) * F;
+  const pn = p.innerCount(parent);
+  if (slot > 0) {
+    const left = p.innerKids[pb + slot - 1];
+    if (p.innerCount(left) > MIN_INNER) {
+      rotateRight(p, parent, slot, left, node);
+      p.refreshInner(left, p.childFences(depth - 1, slot - 1));
+      p.refreshInner(node, p.childFences(depth - 1, slot));
+      return;
+    }
+    const range = merged(p.childFences(depth - 1, slot - 1), p.childFences(depth - 1, slot));
+    mergeInners(p, left, node, pb + slot - 1);
+    p.refreshInner(left, range);
+    removeSeparator(p, depth - 1, slot - 1);
+    return;
+  }
+  if (slot < pn) {
+    const right = p.innerKids[pb + slot + 1];
+    if (p.innerCount(right) > MIN_INNER) {
+      rotateLeft(p, parent, slot, node, right);
+      p.refreshInner(node, p.childFences(depth - 1, slot));
+      p.refreshInner(right, p.childFences(depth - 1, slot + 1));
+      return;
+    }
+    const range = merged(p.childFences(depth - 1, slot), p.childFences(depth - 1, slot + 1));
+    mergeInners(p, node, right, pb + slot);
+    p.refreshInner(node, range);
+    removeSeparator(p, depth - 1, slot);
+  }
+}
+
+// The parent's separator left of `node` (child `slot`) comes down to the front of `node`, and
+// `left`'s last separator goes up in its place, with `left`'s last child.
+function rotateRight<K extends Comparable<K>, V>(
+  p: Pool<K, V>,
+  parent: u32,
+  slot: usize,
+  left: u32,
+  node: u32,
+) {
+  const pb = (parent as usize) * F;
+  const lb = (left as usize) * F;
+  const ln = p.innerCount(left);
+  const base = (node as usize) * F;
+  const n = p.innerCount(node);
+  for (let i = n; i > 0; i--) {
+    moveSlot(p.innerKeys, base + i, base + i - 1);
+  }
+  for (let i = n + 1; i > 0; i--) {
+    p.innerKids[base + i] = p.innerKids[base + i - 1];
+  }
+  moveSlot(p.innerKeys, base, pb + slot - 1);
+  p.innerKids[base] = p.innerKids[lb + ln];
+  moveSlot(p.innerKeys, pb + slot - 1, lb + ln - 1);
+  p.innerKeys[lb + ln - 1] = p.fill[0];
+  p.setInnerCount(left, ln - 1);
+  p.setInnerCount(node, n + 1);
+  if (p.inline()) {
+    p.innerWord(parent, slot - 1);
+  }
+}
+
+// The parent's separator right of `node` (child `slot`) comes down to the end of `node`, and
+// `right`'s first separator goes up in its place, with `right`'s first child.
+function rotateLeft<K extends Comparable<K>, V>(
+  p: Pool<K, V>,
+  parent: u32,
+  slot: usize,
+  node: u32,
+  right: u32,
+) {
+  const pb = (parent as usize) * F;
+  const base = (node as usize) * F;
+  const n = p.innerCount(node);
+  const rb = (right as usize) * F;
+  const rn = p.innerCount(right);
+  moveSlot(p.innerKeys, base + n, pb + slot);
+  p.innerKids[base + n + 1] = p.innerKids[rb];
+  moveSlot(p.innerKeys, pb + slot, rb);
+  for (let i: usize = 0; i + 1 < rn; i++) {
+    moveSlot(p.innerKeys, rb + i, rb + i + 1);
+  }
+  for (let i: usize = 0; i < rn; i++) {
+    p.innerKids[rb + i] = p.innerKids[rb + i + 1];
+  }
+  p.innerKeys[rb + rn - 1] = p.fill[0];
+  p.setInnerCount(right, rn - 1);
+  p.setInnerCount(node, n + 1);
+  if (p.inline()) {
+    p.innerWord(parent, slot);
+  }
+}
+
+// Appends the parent's separator at `sepAt` and `right`'s separators and children to `left`,
+// and frees `right`.
+function mergeInners<K extends Comparable<K>, V>(
+  p: Pool<K, V>,
+  left: u32,
+  right: u32,
+  sepAt: usize,
+) {
+  const lb = (left as usize) * F;
+  const ln = p.innerCount(left);
+  const rb = (right as usize) * F;
+  const rn = p.innerCount(right);
+  moveSlot(p.innerKeys, lb + ln, sepAt);
+  for (let i: usize = 0; i < rn; i++) {
+    moveSlot(p.innerKeys, lb + ln + 1 + i, rb + i);
+  }
+  for (let i: usize = 0; i <= rn; i++) {
+    p.innerKids[lb + ln + 1 + i] = p.innerKids[rb + i];
+  }
+  p.setInnerCount(left, ln + 1 + rn);
+  p.freeInner(right);
+}

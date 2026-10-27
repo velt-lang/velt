@@ -57,6 +57,64 @@ impl FnLower<'_, '_> {
         (w1, w2, inline)
     }
 
+    /// A new reference to the string at `src` in (uninitialized) `dst`. Only a heap string has a
+    /// count (`w2` above 0: not inline, whose top bit is set, nor static, whose `w2` is 0), raised
+    /// by the runtime; any other string is its three words, copied here without a call. Both go
+    /// through the places' addresses, as the runtime's out-pointer does (taking an address is
+    /// what initializes a local for verify/init.rs).
+    pub(super) fn str_share(&mut self, src: Place, dst: Place) {
+        let (s, d) = (self.addr(src), self.addr(dst));
+        let (sp, dp) = (Self::str_at(&s), Self::str_at(&d));
+        let heap = self.str_counted(&sp);
+        let (counted, copied, join) = (self.new_block(), self.new_block(), self.new_block());
+        self.branch(heap, counted, copied);
+        self.switch_to(counted);
+        self.call_rt(Rt::StrClone, vec![s, d], None);
+        self.goto(join);
+        self.switch_to(copied);
+        self.assign(dp, Rvalue::Use(Operand::Copy(sp)));
+        self.goto(join);
+        self.switch_to(join);
+    }
+
+    /// Drops the string at `place`: a heap string (`w2` above 0, slices too: rt_abi.md) through
+    /// the runtime, which gives up its count and zeroes it; any other owns nothing and is zeroed
+    /// here, as the runtime would, without a call.
+    pub(super) fn str_drop(&mut self, place: Place) {
+        let a = self.addr(place);
+        let p = Self::str_at(&a);
+        let heap = self.str_counted(&p);
+        let (counted, plain, join) = (self.new_block(), self.new_block(), self.new_block());
+        self.branch(heap, counted, plain);
+        self.switch_to(counted);
+        self.call_rt(Rt::StrDrop, vec![a], None);
+        self.goto(join);
+        self.switch_to(plain);
+        for i in 0..3 {
+            self.assign(proj(&p, Proj::Field(i)), Rvalue::Use(cint(0, Ty::U64)));
+        }
+        self.goto(join);
+        self.switch_to(join);
+    }
+
+    /// The string an address operand (from [`Self::addr`]) points to.
+    fn str_at(addr: &Operand) -> Place {
+        match addr {
+            Operand::Copy(p) => proj(p, Proj::Deref(Ty::Agg(STR_AGG))),
+            _ => ice("a string address that is not a place"),
+        }
+    }
+
+    /// Whether the string at `p` is counted (a heap string or a slice): `(int64_t)w2 > 0`.
+    fn str_counted(&mut self, p: &Place) -> Operand {
+        let w2 = Operand::Copy(proj(p, Proj::Field(2)));
+        let signed = self.rvalue_temp(Ty::I64, Rvalue::Cast(w2, Ty::I64));
+        self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(BinOp::Gt, signed, cint(0, Ty::I64)),
+        )
+    }
+
     /// The halves of `w1` as signed 32-bit numbers: `(units, bytes)` of a static or heap string
     /// (the high half as [`Self::str_high`] computes it).
     fn str_halves(&mut self, w1: Operand) -> (Operand, Operand) {

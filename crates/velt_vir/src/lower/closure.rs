@@ -115,6 +115,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
     /// `{ code, env }` of closure `def`; `borrowed`: only borrowed by a call (see
     /// [`borrowed_arg`](Self::borrowed_arg)), so value captures may stay in a frame env too.
     fn closure_value(&mut self, def: DefId, ty: TyId, borrowed: bool) -> Operand {
+        self.note_closure_made(def);
         let f = self.cx.fn_def(def);
         let targs = self.targs.clone();
         let ca = self.cx.closure_agg();
@@ -137,24 +138,34 @@ impl<'c, 'h> FnLower<'c, 'h> {
             },
             _ => LkMode::Checked,
         };
+        // A generic closure (glue/generic_slots.rs) is only called through its interface
+        // value's table, which instantiates its code: the value has none of its own.
+        let generic = f.generics as usize > targs.len();
         if f.captures.is_empty() {
-            let thunk = Work::Thunk(ThunkKind::Env(None), def, targs);
-            let code = self.cx.func_direct(thunk, mode);
+            let code = match generic {
+                true => cint(0, Ty::Ptr),
+                false => {
+                    let thunk = Work::Thunk(ThunkKind::Env(None), def, targs);
+                    cfunc(self.cx.func_direct(thunk, mode))
+                }
+            };
             if self.cx.fn_identity() {
-                return self.identity_closure(def, ty, cfunc(code), borrowed || in_frame);
+                return self.identity_closure(def, ty, code, borrowed || in_frame);
             }
             return self.rvalue_temp(
                 Ty::Agg(ca),
-                Rvalue::Aggregate(ca, vec![cfunc(code), cint(0, Ty::Ptr)]),
+                Rvalue::Aggregate(ca, vec![code, cint(0, Ty::Ptr)]),
             );
         }
         let frozen = self.frozen_captures(def);
         let code = match frozen {
-            0 if own => self.cx.func_read_own(Work::Fn(def, targs.clone())),
-            0 => self.cx.func_direct(Work::Fn(def, targs.clone()), mode),
-            mask => self
-                .cx
-                .func(Work::Frozen(def, targs.clone(), mask, None, vec![])),
+            _ if generic => cint(0, Ty::Ptr),
+            0 if own => cfunc(self.cx.func_read_own(Work::Fn(def, targs.clone()))),
+            0 => cfunc(self.cx.func_direct(Work::Fn(def, targs.clone()), mode)),
+            mask => cfunc(
+                self.cx
+                    .func(Work::Frozen(def, targs.clone(), mask, None, vec![])),
+            ),
         };
         let ea = self.cx.env_agg(def, &targs);
         // A closure holding shared cells owns references too: a frame env of one would have a
@@ -191,10 +202,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         };
         self.fill_env(def, env.clone(), drop_fn, clone_fn);
         let t = self.temp(Ty::Agg(ca));
-        self.assign(
-            Place::local(t),
-            Rvalue::Aggregate(ca, vec![cfunc(code), env]),
-        );
+        self.assign(Place::local(t), Rvalue::Aggregate(ca, vec![code, env]));
         let ty = self.sub(ty);
         self.own_temp(t, ty);
         Operand::Copy(Place::local(t))

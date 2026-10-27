@@ -391,6 +391,17 @@ export function __objectPrototypeKey(key: string): bool {
 }
 
 /**
+ * `r[k]` of a string-keyed record with a `string | symbol` key (sema calls this): the entry for a
+ * string, `undefined` for a symbol, which is never one of the record's keys.
+ */
+export function __recordGetKeyed<V>(r: Record<string, V>, key: string | symbol): V | undefined {
+  if (typeof key === "string") {
+    return r.__get(key);
+  }
+  return undefined;
+}
+
+/**
  * `k in r` for a key known only at run time (sema calls this): whether the record has the entry
  * `key`, or `key` names a member every object inherits from `Object.prototype`.
  */

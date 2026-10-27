@@ -28,8 +28,12 @@ pub(crate) struct ModuleScope {
     pub namespaces: FxHashMap<String, usize>,
     /// Names bound by `import type` (types only: using one as a value is an error).
     pub type_only: FxHashSet<String>,
+    /// Of those, the names their module exports only as types (`export type { x }`).
+    pub via_export_type: FxHashSet<String>,
     /// `std/...` module: may call `__intrinsic_*`.
     pub is_std: bool,
+    /// Some name has a type key (`crate::type_meanings`).
+    pub type_keys: bool,
 }
 
 /// The classes below a class, deepest first, each with the method its vtable calls at a slot
@@ -48,6 +52,8 @@ pub(crate) struct Ctx<'m> {
     pub scopes: Vec<ModuleScope>,
     /// Exports of `std/prelude/*` modules, visible everywhere.
     pub prelude: FxHashMap<String, Item>,
+    /// Some prelude name has a type key (`crate::type_meanings`).
+    pub prelude_type_keys: bool,
     pub aliases: Vec<AliasInfo<'m>>,
     /// The names of type aliases without parameters that are read-only array or collection types
     /// and number-keyed record types, directly or through other such aliases
@@ -66,11 +72,37 @@ pub(crate) struct Ctx<'m> {
     pub(crate) part_ifaces: crate::intersection_members::PartIfaces,
     /// Interfaces made for intersections and `Pick`s of interfaces with methods.
     pub(crate) synth_ifaces: crate::synth_ifaces::SynthIfaces,
+    pub(crate) generic_fns: crate::generic_fns::GenericFns,
+    /// The generic methods called through interface values (`hir::Program::generic_dyn_methods`).
+    pub(crate) generic_called: crate::generic_override_sites::GenericCalls,
+    /// While a generic closure's body is checked: the type bounds of the type parameters in
+    /// scope, its own included (`Ctx::constraint_of`).
+    pub(crate) closure_constraints: Option<Vec<Option<TyId>>>,
+    /// Each conversion through an interface adapter: the interface and where.
+    pub(crate) adapter_uses: Vec<(DefId, Span)>,
     /// Views of unions of interfaces (`crate::union_views`).
     pub(crate) union_views: crate::union_views::UnionViews,
     pub(crate) any: Option<crate::any::AnyDefs>,
     /// `impls` by interface (`Ctx::find_impl`).
     pub impl_index: crate::infer::ImplIndex,
+    /// Impls from `extend … implements I` blocks: impl index → extension index
+    /// (collect/ext_impls.rs). Their bounds must hold for an impl to fit a type, and among the
+    /// fitting ones the most specific wins (`Ctx::find_impl`).
+    pub ext_impls: FxHashMap<u32, usize>,
+    /// `ext_impls` by interface, in order.
+    pub ext_by_iface: FxHashMap<DefId, Vec<u32>>,
+    /// Finished `extend` lookups (infer/ext_impls.rs) and bound checks through blocks
+    /// (infer/ext_exists.rs), valid while `impls` has `ext_memo_impls` entries.
+    pub ext_memo: FxHashMap<(TyId, DefId), Option<crate::infer::FoundImpl>>,
+    pub ext_exists_memo: FxHashMap<crate::infer::ExistsKey, bool>,
+    pub ext_memo_impls: usize,
+    /// Set while `Ctx::blanket_bounds` checks a blanket impl's bounds: the bounds a parameter
+    /// has through blanket impls come from its declared bounds only, not from other blanket
+    /// impls, so the check never recurses.
+    pub in_blanket: bool,
+    /// The type-parameter bounds in scope of the `satisfies` call running `find_impl`: an
+    /// `extend` impl's bounds are checked in it (`Ctx::fitting_impl`).
+    pub impl_scope: Vec<Vec<crate::defs::Bound>>,
     /// Anonymous object defs by shape: field names, declared types and flags, in order.
     pub anon: FxHashMap<Vec<crate::anon::ShapeField>, DefId>,
     /// Object type defs replaced before lowering (`crate::readonly`): anonymous ones with
@@ -151,6 +183,10 @@ pub(crate) struct Ctx<'m> {
     /// Union enums by canonical member list (`crate::unions`).
     pub unions: FxHashMap<Vec<TyId>, DefId>,
     pub recursive_unions: FxHashMap<u32, Option<TyId>>, // by alias (crate::recursive_unions)
+    /// Generic recursive union aliases (`crate::recursive_unions`): whether alias `a` is one,
+    /// and its union at each list of arguments.
+    pub generic_recursive: FxHashMap<u32, bool>,
+    pub recursive_union_insts: FxHashMap<(u32, Vec<TyId>), TyId>,
     /// Names of type aliases for structural types (`type Shape = A | B`), for messages.
     pub alias_names: FxHashMap<TyId, String>,
     /// (class, method key) of every `override` of a generic method (no vtable slot).
@@ -400,6 +436,7 @@ impl<'m> Ctx<'m> {
                 })
                 .collect(),
             prelude: FxHashMap::default(),
+            prelude_type_keys: false,
             aliases: vec![],
             marked_aliases: Default::default(),
             bad_key_sites: vec![],
@@ -409,9 +446,20 @@ impl<'m> Ctx<'m> {
             iface_writes: Default::default(),
             part_ifaces: Default::default(),
             synth_ifaces: Default::default(),
+            generic_fns: Default::default(),
+            generic_called: Default::default(),
+            closure_constraints: None,
+            adapter_uses: vec![],
             union_views: Default::default(),
             any: None,
             impl_index: Default::default(),
+            ext_impls: FxHashMap::default(),
+            ext_by_iface: FxHashMap::default(),
+            ext_memo: Default::default(),
+            ext_exists_memo: Default::default(),
+            ext_memo_impls: 0,
+            in_blanket: false,
+            impl_scope: vec![],
             anon: FxHashMap::default(),
             readonly_twins: FxHashMap::default(),
             any_unknown_views: false,
@@ -446,6 +494,8 @@ impl<'m> Ctx<'m> {
             typing_globals: Vec::new(),
             unions: FxHashMap::default(),
             recursive_unions: FxHashMap::default(),
+            generic_recursive: FxHashMap::default(),
+            recursive_union_insts: FxHashMap::default(),
             alias_names: FxHashMap::default(),
             generic_overrides: vec![],
             getter_only_setters: FxHashSet::default(),
@@ -674,28 +724,35 @@ impl<'m> Ctx<'m> {
     }
 
     /// Name lookup at module level: own items and imports, then the prelude.
+    /// A module-level name that is only a type does not hide a prelude value of its name
+    /// (`type Map = …` next to `new Map()`, `crate::type_meanings`).
     pub fn lookup_item(&self, module: usize, name: &str) -> Option<Item> {
-        self.scopes[module]
-            .items
-            .get(name)
-            .or_else(|| self.prelude.get(name))
-            .copied()
+        let own = self.scopes[module].items.get(name).copied();
+        let Some(it) = own else {
+            return self.prelude.get(name).copied();
+        };
+        match self.meaning(it) {
+            crate::type_meanings::Meaning::Type => self.global_value(name).unwrap_or(own),
+            _ => own,
+        }
     }
 
     /// Name lookup at a source position of `module`: the innermost nested item whose block
     /// contains `at`, then module level.
+    /// A nested type that is only a type (an interface, a type alias) does not hide a value of
+    /// its name further out (`crate::type_meanings`).
     pub fn lookup_item_at(&self, module: usize, name: &str, at: Span) -> Option<Item> {
         let file = self.modules[module].file;
-        let nested = self
+        let mut nested = self
             .nested
             .iter()
             .filter(|n| n.module == module && n.name == name && at.file == file)
             .filter(|n| n.lo <= at.lo && at.hi <= n.hi)
-            .min_by_key(|n| n.hi - n.lo);
-        match nested {
-            Some(n) => Some(n.item),
-            None => self.lookup_item(module, name),
+            .peekable();
+        if nested.peek().is_none() {
+            return self.lookup_item(module, name);
         }
+        self.nested_value_item(nested.collect(), module, name)
     }
 
     /// A string or `string | null`: a value whose copy is a refcount increment at most, so moves

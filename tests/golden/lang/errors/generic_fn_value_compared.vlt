@@ -1,0 +1,94 @@
+// Function values Velt makes anew at each use, where JavaScript keeps one function (#943):
+// comparing them would give another answer than Node, so a program that makes one and compares
+// function values of its type is an error. A generic value (here a parameter) converted to a
+// function of fixed types, compared directly, inside a union, a field or a struct key, and after
+// a conversion to a wider function type; a function asserted to a generic type; a generic
+// function used at a type over the caller's type parameters; and one used as a value at two
+// generic types, compared through `unknown`.
+type G = <T>(x: T) => T;
+type W = <T>(x: T) => unknown;
+type P<U> = <T>(x: T, u: U) => T;
+type Tok<T> = symbol & { __t?: T };
+type MkTok = <T>(d: string) => Tok<T>;
+type OnStr = (x: string) => string;
+type OnBool = (x: boolean) => boolean;
+type OnList = (x: number[]) => number[];
+type Wide = (x: number[]) => number[] | string;
+type OnKey = (x: string[]) => string[];
+type OnOr = (x: boolean[]) => boolean[];
+
+interface Holder {
+  f: OnBool | undefined;
+}
+
+struct Key {
+  f: OnKey;
+  n: number;
+}
+
+struct KeyOr {
+  f: OnOr | null;
+}
+
+function id<T>(x: T): T {
+  return x;
+}
+
+function pick<T, U>(x: T, u: U): T {
+  return x;
+}
+
+function getP<U>(u: U): P<U> {
+  return pick;
+}
+
+function direct(g: G): void {
+  const p: (x: number) => number = g;
+  const q: (x: number) => number = g;
+  console.log(p === q, [p].includes(q));
+}
+
+function inUnion(g: G): void {
+  const p: OnStr = g;
+  const q: OnStr = g;
+  const xs: (OnStr | null)[] = [p];
+  console.log(xs.includes(q), new Set<OnStr | undefined>([p, q]).size);
+}
+
+function inField(g: G): void {
+  const a: Holder = { f: g };
+  const b: Holder = { f: g };
+  console.log(a.f === b.f);
+}
+
+function wider(g: G): void {
+  const p: OnList = g;
+  const q: OnList = g;
+  const a: Wide = p;
+  const b: Wide = q;
+  console.log(a === b);
+}
+
+function inKey(g: G): void {
+  const keys = new Set<Key>();
+  keys.add(Key { f: g, n: 1 });
+  keys.add(Key { f: g, n: 1 });
+  const byKey = new Map<KeyOr, number>();
+  byKey.set(KeyOr { f: g }, 1);
+  console.log(keys.size, byKey.get(KeyOr { f: g }));
+}
+
+function main(): void {
+  direct(id);
+  inUnion(id);
+  inField(id);
+  wider(id);
+  inKey(id);
+  const c1 = Symbol as unknown as <T>(d: string) => Tok<T>;
+  const c2 = Symbol as unknown as <T>(d: string) => Tok<T>;
+  console.log(new Set<MkTok>([c1, c2]).size);
+  console.log(getP(1) === getP(2));
+  const g: G = id;
+  const w: W = id;
+  console.log((g as unknown) === (w as unknown));
+}

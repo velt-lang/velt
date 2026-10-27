@@ -703,7 +703,7 @@ impl crate::visit::VisitMut for FactsOf<'_, '_> {
                         None => self.unknown("calls a function value"),
                     }
                 }
-                hir::Callee::Dyn { slot } => {
+                hir::Callee::Dyn { slot, .. } => {
                     self.passed(args);
                     let recv = args.first().map(|a| self.cx.ty.kind(a.ty).clone());
                     match recv {

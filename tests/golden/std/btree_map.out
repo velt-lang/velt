@@ -17,3 +17,7 @@ drain ok
 strings 1500 key-1-wi key-999-
 [ '0.9', '1.2', '1.10' ] b
 forEach 52 k0=0,k1=1,k3=3,z=300
+getMany empty [ undefined, undefined ]
+getMany true [ 3, undefined, 1, 2, 1 ]
+unicode 3758 3758
+bools [ false, true ] still yes true false

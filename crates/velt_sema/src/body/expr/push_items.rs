@@ -118,7 +118,7 @@ impl FnCx<'_, '_> {
         copy: bool,
         stmts: &mut Vec<hir::Stmt>,
     ) -> Option<Item> {
-        let h = self.expr(inner, None, Want::Borrow);
+        let h = self.payload_expr(inner, None, Want::Borrow);
         let Some(et) = self.cx.ty.array_elem(h.ty) else {
             if !self.cx.ty.is_bottom(h.ty) {
                 let t = self.cx.display(h.ty);

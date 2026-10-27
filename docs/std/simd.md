@@ -20,6 +20,7 @@ browser, Node.js, wasmtime and wasmer do).
 | `T.fits(xs, at = 0)` | whether the `n` elements of the `L[]` from `at` are inside it: what `load` and `store` check |
 | `T.load(xs, at = 0)` | the `n` elements of the `L[]` from `at`; a RangeError panic unless all are inside the array |
 | `v.store(xs, at = 0)` | writes the lanes to the `L[]` from `at`; a RangeError panic unless they fit (the array does not grow) |
+| `u8x16.loadString(s, at = 0)` | the bytes of string `s` from byte `at`, up to 16, in the low lanes, 0 in the others: read where the string keeps them, without a copy (its UTF-8, a lone surrogate as its three-byte form; velt:encoding `utf8Length` counts them); `at` may be the byte length (all 0), a RangeError panic past it |
 | `T.loadPartial(xs, at = 0)` | the elements from `at` that exist, up to `n`, in the low lanes, 0 in the others; `at` may be the length (all 0), a RangeError panic past it |
 | `v.storePartial(xs, at = 0)` | writes the low lanes to the elements from `at` that exist; `at` may be the length (nothing written), a RangeError panic past it |
 | `T.index()` | each lane its own index: 0, 1, 2, … |

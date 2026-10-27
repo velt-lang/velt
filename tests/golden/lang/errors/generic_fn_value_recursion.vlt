@@ -1,0 +1,12 @@
+// A generic function value called again with a growing type argument has infinitely many
+// instantiations (#943), as a generic function calling itself so would.
+type Nest = <T>(x: T, n: number) => unknown;
+
+function wrap<T>(f: Nest, x: T, n: number): unknown {
+  return n === 0 ? x : f([x], n - 1);
+}
+
+function main(): void {
+  const f: Nest = (x, n) => wrap(f, x, n);
+  console.log(JSON.stringify(f(1, 2)));
+}

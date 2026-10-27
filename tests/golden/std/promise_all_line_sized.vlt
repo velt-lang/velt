@@ -1,0 +1,57 @@
+// check: no leaks
+// `Promise.all` of structs whose size is a multiple of a cache line: the results buffer becomes
+// the returned array, so it is allocated as an array of them is (aligned to 128 bytes), and grows
+// and is freed with the same alignment.
+
+struct P {
+  a: f64;
+  b: f64;
+  c: f64;
+  d: f64;
+  e: f64;
+  f: f64;
+  g: f64;
+  h: f64;
+}
+
+function p(x: f64): P {
+  return { a: x, b: x + 1, c: x + 2, d: x + 3, e: x + 4, f: x + 5, g: x + 6, h: x + 7 };
+}
+
+async function make(i: i64): Promise<P> {
+  return p(i as f64);
+}
+
+async function fail(i: i64): Promise<P, Error> {
+  if (i < 0) {
+    throw new Error("negative");
+  }
+  return make(i);
+}
+
+async function main() {
+  const ps: Promise<P>[] = [];
+  for (let i: i64 = 0; i < 5; i++) {
+    ps.push(make(i));
+  }
+  const xs = await Promise.all(ps);
+  for (let i: i64 = 0; i < 40; i++) {
+    xs.push(p(i as f64));
+  }
+  let sum = 0.0;
+  for (const x of xs) {
+    sum += x.a + x.h;
+  }
+  console.log(xs.length, sum);
+
+  // Promises that can reject: the results are kept in slots first.
+  const qs: Promise<P, Error>[] = [];
+  for (let i: i64 = 0; i < 3; i++) {
+    qs.push(fail(i));
+  }
+  const ys = await Promise.all(qs);
+  ys.push(p(1));
+  console.log(ys.length, ys[2].h);
+  const settled = await Promise.allSettled([fail(1), fail(-1)]);
+  console.log(settled.length, settled[0].status, settled[1].status);
+}

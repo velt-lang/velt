@@ -182,13 +182,17 @@ pub(crate) fn emit_unit(
     Ok(out)
 }
 
-/// One `declare` per distinct extern symbol not defined in this module.
+/// One `declare` per distinct extern symbol not defined in this module, except the atomic
+/// operations, which are instructions (function/atomic.rs) with no function behind them.
 fn extern_declarations(program: &vir::Program) -> CodegenResult<String> {
     let defined: FxHashSet<&str> = program.funcs.iter().map(|f| f.symbol.as_str()).collect();
     let mut declared = FxHashSet::default();
     let mut out = String::new();
     for e in &program.externs {
-        if defined.contains(e.symbol.as_str()) || !declared.insert(e.symbol.as_str()) {
+        if defined.contains(e.symbol.as_str())
+            || !declared.insert(e.symbol.as_str())
+            || velt_vir::atomic::AtomicCall::of_symbol(&e.symbol).is_some()
+        {
             continue;
         }
         let decl = match Allocator::of(&e.symbol, &e.params, e.ret) {

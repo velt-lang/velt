@@ -282,6 +282,7 @@ impl FnCx<'_, '_> {
             let bounds = c.bounds.get(k).cloned().unwrap_or_default();
             let mut ok = true;
             for b in bounds {
+                let declared = b.clone();
                 let b = Bound {
                     iface: b.iface,
                     args: b
@@ -300,16 +301,24 @@ impl FnCx<'_, '_> {
                     });
                     let (t, span) = at.map_or((t, span), |&(_, a, s)| (a, s));
                     let tn = self.cx.display(t);
-                    let bn = self
-                        .cx
-                        .iface(b.iface)
-                        .map(|i| i.name.clone())
-                        .unwrap_or_default();
+                    let bn = match b.args.is_empty() {
+                        true => (self.cx.iface(b.iface))
+                            .map(|i| i.name.clone())
+                            .unwrap_or_default(),
+                        false => {
+                            let bt = self.cx.ty.intern(TyKind::Dyn(b.iface, b.args.clone()));
+                            self.cx.display(bt)
+                        }
+                    };
                     let mut d = Diagnostic::error(
                         format!("the type `{tn}` does not implement `{bn}`"),
                         span,
                     )
-                    .with_note(format!("required by `{name} extends {bn}` of {}", c.what));
+                    .with_note(format!(
+                        "required by `{name} extends {}` of {}",
+                        self.declared_bound_text(&declared, &c.slot_names),
+                        c.what
+                    ));
                     if let Some(i) = self
                         .cx
                         .iface(b.iface)
@@ -325,13 +334,7 @@ impl FnCx<'_, '_> {
                             fields.join(", ")
                         ));
                     }
-                    if matches!(self.cx.ty.kind(t), TyKind::Dyn(..))
-                        && self.cx.has_generic_method(&b)
-                    {
-                        d = d.with_note(format!(
-                            "an interface value cannot stand for `{name}`: `{bn}` has a generic method, which is called on the concrete type (generic methods are dispatched statically); pass the class instance itself"
-                        ));
-                    }
+                    d = self.ext_bound_notes(d, t, &b);
                     self.cx.error(d);
                 }
             }
@@ -413,6 +416,33 @@ impl FnCx<'_, '_> {
                 self.cx.satisfies(p, &b, &bounds)
             })
             .collect()
+    }
+
+    /// Bound `b` as declared, its type parameters by name (`Comparable<T>`).
+    fn declared_bound_text(&mut self, b: &Bound, names: &[String]) -> String {
+        let bt = self.cx.ty.intern(TyKind::Dyn(b.iface, b.args.clone()));
+        let saved = std::mem::replace(&mut self.cx.display_params, names.to_vec());
+        let text = self.cx.display(bt);
+        self.cx.display_params = saved;
+        text
+    }
+
+    /// A note for type `t` failing bound `b`: the arguments with which `t` implements the
+    /// interface instead.
+    fn ext_bound_notes(&mut self, mut d: Diagnostic, t: TyId, b: &Bound) -> Diagnostic {
+        if !b.args.is_empty() {
+            if let Some(args) = self.cx.impl_args(t, b.iface).filter(|a| *a != b.args) {
+                let have = self.cx.ty.intern(TyKind::Dyn(b.iface, args));
+                let want = self.cx.ty.intern(TyKind::Dyn(b.iface, b.args.clone()));
+                let (tn, hn, wn) = (
+                    self.cx.display(t),
+                    self.cx.display(have),
+                    self.cx.display(want),
+                );
+                d = d.with_note(format!("`{tn}` implements `{hn}`, not `{wn}`"));
+            }
+        }
+        d
     }
 }
 

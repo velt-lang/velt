@@ -191,6 +191,12 @@ impl VisitMut for TypeMap<'_> {
                 .iter_mut()
                 .chain(method_type_args.iter_mut())
                 .for_each(|t| *t = (self.0)(*t)),
+            E::Call {
+                callee: Callee::Dyn {
+                    method_type_args, ..
+                },
+                ..
+            } => method_type_args.iter_mut().for_each(|t| *t = (self.0)(*t)),
             _ => {}
         }
     }
