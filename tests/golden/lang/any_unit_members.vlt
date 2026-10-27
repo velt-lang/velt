@@ -1,0 +1,28 @@
+// Zero-sized types through `any` (#379): a `void` parameter of a function called through `any`
+// (its argument is dropped, a missing one is fine), and a union of string literals written
+// through a typed proxy (the member boxed as the string its type names). Both were ICEs.
+type C = { run(x: void): number; name: string };
+const c: any = { run: (x: void): number => 5, name: "c" } as C;
+console.log(c.run(), c.name);
+const f: any = (x: void): string => "f";
+console.log(f(), f(1));
+
+type Mode = "stream" | "inline" | "skip";
+type S = { mode: Mode; n: number };
+function reactive<T extends object>(t: T, log: string[]): T {
+    return new Proxy(t, {
+        set(o: any, k: string | symbol, v: any): boolean {
+            log.push(String(k) + "=" + String(v));
+            o[k] = v;
+            return true;
+        },
+    }) as T;
+}
+const log: string[] = [];
+const target: S = { mode: "skip", n: 1 };
+const p = reactive(target, log);
+if (Math.random() > 2) {
+    // Writing a member of a typed proxy through `any` is not supported yet (#924).
+    p.mode = "inline";
+}
+console.log(target.mode, log.length);

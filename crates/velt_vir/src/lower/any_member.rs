@@ -168,8 +168,17 @@ impl FnLower<'_, '_> {
                 // A union (`Cx::any_boxable`): the member it holds.
                 let vt = self.cx.ty(t);
                 let p = Place::local(self.copy_to_temp(v, vt));
-                self.for_each_variant(&p, t, |lw, _, parts| match parts.as_slice() {
+                self.for_each_variant(&p, t, |lw, v, parts| match parts.as_slice() {
                     [(pp, pt)] => lw.any_box_into(Operand::Copy(pp.clone()), *pt, out),
+                    // A zero-sized member (`undefined`, a literal type such as `"a"`): the value
+                    // its type names.
+                    [] => match lw.cx.variant_tys(t, v).as_slice() {
+                        [m] => match lw.cx.kind(*m) {
+                            TyKind::Literal(l) => lw.any_literal_into(&l, out),
+                            _ => lw.any_box_into(super::unit(), *m, out),
+                        },
+                        _ => ice(format_args!("a union member without one payload boxed")),
+                    },
                     _ => ice(format_args!("a union member without one payload boxed")),
                 });
             }
