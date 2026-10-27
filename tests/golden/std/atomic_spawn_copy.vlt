@@ -1,0 +1,44 @@
+// An object holding an `Atomic` that the program still uses would go to a spawned task as a
+// copy, whose atomics take the task's changes: an error, for an argument and for a capture, also
+// of a named closure spawned through a call, of an object holding such an object, and of a plain
+// closure whose promise is spawned.
+class Hits {
+  hits: Atomic<u64> = new Atomic<u64>(0);
+}
+
+class Holder {
+  c: Hits = new Hits();
+}
+
+async function work(c: Hits, k: i64) {
+  for (let i = 0; i < k; i++) {
+    c.hits.add(1);
+  }
+}
+
+async function main() {
+  const c = new Hits();
+  const ps: Promise<void>[] = [];
+  for (let t = 0; t < 4; t++) {
+    ps.push(spawn(work(c, 1000)));
+  }
+  for (let t = 0; t < 4; t++) {
+    ps.push(spawn((async () => {
+      c.hits.add(1);
+    })()));
+  }
+  await Promise.all(ps);
+  const go = async () => {
+    c.hits.add(1);
+  };
+  await spawn(go());
+  await spawn(go());
+  const o = new Holder();
+  const nested = async () => {
+    o.c.hits.add(1);
+  };
+  await spawn(nested());
+  const plain = () => work(c, 1000);
+  await spawn(plain());
+  console.log("hits", c.hits.load(), o.c.hits.load());
+}

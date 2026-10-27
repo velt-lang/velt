@@ -178,19 +178,9 @@ impl Interp<'_> {
         }))
     }
 
-    /// Atomics and mutexes (single-threaded: a second lock is a deadlock bug).
+    /// Mutexes (single-threaded: a second lock is a deadlock bug).
     fn rt_sync_shared(&mut self, sym: &str, a: &[u64]) -> Option<Result<u64, i32>> {
         Some(Ok(match sym {
-            "velt_rt_atomic_add_i64" => {
-                let v = (self.read_u64(a[0]) as i64).wrapping_add(a[1] as i64) as u64;
-                self.write_bytes(a[0], &v.to_le_bytes());
-                v
-            }
-            "velt_rt_atomic_load_i64" => self.read_u64(a[0]),
-            "velt_rt_atomic_store_i64" => {
-                self.write_bytes(a[0], &a[1].to_le_bytes());
-                0
-            }
             "velt_rt_mutex_init" => {
                 self.write_bytes(a[0], &0u64.to_le_bytes());
                 0

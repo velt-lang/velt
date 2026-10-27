@@ -30,7 +30,8 @@
 //!    one. Lowering sets them for user functions from `PassMode` (`BorrowMut` aggregate or
 //!    class object → `noalias`, only when values of the type have no other owners: not counted
 //!    and never borrowed inside a counted object, docs/design/semantics-stage2.md §3.4;
-//!    `Borrow` aggregate or class object → `readonly` unless the value holds a `Mutex` or the
+//!    `Borrow` aggregate or class object → `readonly` unless the value holds a `Mutex` or an
+//!    `Atomic` in its own memory, or the
 //!    param is written (`LocalDef::mutable`); aggregate-return out-pointer → `noalias`;
 //!    `nonnull` + `dereferenceable(size)` on all of them; the frame of a poll function
 //!    (`Function::is_poll`) → `nonnull` + `dereferenceable(frame size)`, plus `noalias` from

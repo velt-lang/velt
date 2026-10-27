@@ -1,0 +1,23 @@
+// Binding a part of a `shared` value copies it (other threads read the original): a copy that
+// holds an `Atomic` would take the changes made through it, which would never reach the shared
+// value. Using the part in place is fine.
+class Pool {
+  latches: Atomic<u64>[] = [];
+  inner: Inner = new Inner();
+}
+
+class Inner {
+  hits: Atomic<u64> = new Atomic<u64>(0);
+}
+
+function main() {
+  const s = shared(new Pool());
+  s.inner.hits.add(1);
+  for (const l of s.latches) {
+    l.add(1);
+  }
+  const ls = s.latches;
+  ls.length;
+  const inner = s.inner;
+  inner.hits.add(5);
+}

@@ -481,6 +481,54 @@ impl Ctx<'_> {
         self.prelude_adt("RwLock")
     }
 
+    /// `struct Atomic<T> { v: T }` from the prelude (docs/internals/design/atomics.md).
+    pub fn atomic_ty(&self) -> Option<DefId> {
+        self.prelude_adt("Atomic")
+    }
+
+    /// Does a deep copy of a value of `t` copy an `Atomic` (in the value, its arrays, payloads
+    /// or the objects it holds; not behind a `shared`, nor in a function, interface or `any`
+    /// value)?
+    pub fn holds_atomic(&mut self, t: TyId) -> bool {
+        self.holds_atomic_in(t, &mut rustc_hash::FxHashSet::default())
+    }
+
+    fn holds_atomic_in(&mut self, t: TyId, seen: &mut rustc_hash::FxHashSet<TyId>) -> bool {
+        if !seen.insert(t) || self.dynamic(t).is_some() {
+            return false;
+        }
+        let parts: Vec<TyId> = match self.ty.kind(t).clone() {
+            TyKind::Shared(_)
+            | TyKind::Dyn(..)
+            | TyKind::FnPtr { .. }
+            | TyKind::Closure(_)
+            | TyKind::Param(_) => return false,
+            TyKind::Adt(d, _) if Some(d) == self.atomic_ty() => return true,
+            TyKind::Adt(d, args) => {
+                let tys: Vec<TyId> = match &self.info[d.0 as usize] {
+                    DefInfo::Adt(a) => a.fields.iter().map(|f| f.ty).collect(),
+                    DefInfo::Enum(e) => e
+                        .variants
+                        .iter()
+                        .flat_map(|v| v.payload.iter().copied())
+                        .collect(),
+                    _ => vec![],
+                };
+                tys.into_iter().map(|f| self.subst(f, &args)).collect()
+            }
+            k => crate::types::children(&k),
+        };
+        parts.into_iter().any(|p| self.holds_atomic_in(p, seen))
+    }
+
+    /// `T` of an `Atomic<T>`.
+    pub fn atomic_value(&self, t: TyId) -> Option<TyId> {
+        match self.ty.kind(t) {
+            TyKind::Adt(d, args) if Some(*d) == self.atomic_ty() => args.first().copied(),
+            _ => None,
+        }
+    }
+
     /// `T` of a `Mutex<T>` or `RwLock<T>` receiver, or a `shared` one: a lock word and a value,
     /// reached only through the lock.
     pub fn mutex_value(&self, t: TyId) -> Option<TyId> {

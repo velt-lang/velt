@@ -122,6 +122,10 @@ pub(crate) const VELT_GLOBALS: &[VeltOnly] = &[
         "RwLock",
         "keep thread-shared state out of code shared with TypeScript",
     ),
+    (
+        "Atomic",
+        "keep thread-shared state out of code shared with TypeScript",
+    ),
     ("NumberConstructor", "use `Number` (`Number.isInteger(x)`)"),
     // TypeScript's has one type argument; Velt's two.
     (
@@ -405,7 +409,29 @@ pub(crate) const TS_MEMBERS: &[(&str, &[&str])] = &[
 ];
 
 /// Velt-only members, by owner.
+/// The hint for every member of `Atomic`, which TypeScript has no counterpart of.
+const ATOMIC: &str = "keep thread-shared state out of code shared with TypeScript";
+
 pub(crate) const VELT_MEMBERS: &[(&str, &[VeltOnly])] = &[
+    (
+        "Atomic",
+        &[
+            ("add", ATOMIC),
+            ("and", ATOMIC),
+            ("compareExchange", ATOMIC),
+            ("compareExchangeWeak", ATOMIC),
+            ("exchange", ATOMIC),
+            ("fence", ATOMIC),
+            ("load", ATOMIC),
+            ("max", ATOMIC),
+            ("min", ATOMIC),
+            ("or", ATOMIC),
+            ("spinHint", ATOMIC),
+            ("store", ATOMIC),
+            ("sub", ATOMIC),
+            ("xor", ATOMIC),
+        ],
+    ),
     (
         "Array",
         &[

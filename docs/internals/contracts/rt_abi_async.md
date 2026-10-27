@@ -641,13 +641,15 @@ network access`), and the accessors of a fetched response are unreachable (fatal
 
 ## 9. Shared state and helpers (sync)
 
+**[non-additive, #1620]** `velt_rt_atomic_add_i64`, `velt_rt_atomic_load_i64` and
+`velt_rt_atomic_store_i64` (`shared<i64>`'s `add`, `get` and `set`) are gone from both runtimes:
+lowering emits those operations inline as `velt_atomic_*` externs (rt_abi.md "Atomics"). An
+object compiled against them no longer links.
+
 | Symbol | Signature | Notes |
 |---|---|---|
 | `velt_rt_rc_inc` | `(u64* rc)` | `shared.clone()`; Relaxed (like `Arc`); aborts on overflow |
 | `velt_rt_rc_dec` | `(u64* rc) -> u8` | Release; returns 1 (after an Acquire fence) when it reached zero: caller drops + frees |
-| `velt_rt_atomic_add_i64` | `(i64* p, i64 delta) -> i64` | returns the **new** value; SeqCst |
-| `velt_rt_atomic_load_i64` | `(i64* p) -> i64` | |
-| `velt_rt_atomic_store_i64` | `(i64* p, i64 v)` | |
 | `velt_rt_mutex_init` | `(u64* lock)` | the `Mutex<T>` lock word: 8 bytes, align 8, inside the shared object; no destroy needed |
 | `velt_rt_mutex_lock` / `velt_rt_mutex_unlock` | `(u64* lock)` | `m.with(f)` = lock; call f; unlock. Blocks the thread; bodies must not await. |
 | `velt_rt_mutex_lock_checked` | `(u64* lock)` | `velt_rt_mutex_lock` from code that may run in read mode (§9.1): there it stops the program before locking [additive, #708] |
