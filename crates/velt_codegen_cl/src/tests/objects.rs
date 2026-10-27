@@ -101,6 +101,7 @@ fn objects_for_all_targets() {
                 let opts = CodegenOptions {
                     target: triple.into(),
                     optimize,
+                    cpu: None,
                 };
                 let bytes =
                     emit_object(&tp.program, &opts).unwrap_or_else(|e| panic!("{ctx}: {e}"));
@@ -116,6 +117,7 @@ fn host_object() {
     let opts = CodegenOptions {
         target: crate::host_triple(),
         optimize: true,
+        cpu: None,
     };
     let bytes = emit_object(&tp.program, &opts).unwrap();
     let file = object::File::parse(&*bytes).unwrap();
@@ -144,6 +146,7 @@ fn macho_build_version() {
         let opts = CodegenOptions {
             target: triple.into(),
             optimize: false,
+            cpu: None,
         };
         let bytes = emit_object(&programs::fib().program, &opts).unwrap();
         let header = MachHeader64::<LittleEndian>::parse(&*bytes, 0).unwrap();
@@ -254,6 +257,7 @@ fn rt_abi_calls() {
             &CodegenOptions {
                 target: triple.into(),
                 optimize: false,
+                cpu: None,
             },
         )
         .unwrap();
@@ -276,6 +280,7 @@ fn errors_are_reported_not_panics() {
         &CodegenOptions {
             target: "riscv64gc-unknown-linux-gnu".into(),
             optimize: false,
+            cpu: None,
         },
     );
     assert!(bad_target.unwrap_err().contains("unsupported target"));
@@ -284,6 +289,7 @@ fn errors_are_reported_not_panics() {
         &CodegenOptions {
             target: "not a triple".into(),
             optimize: false,
+            cpu: None,
         },
     );
     assert!(garbage.is_err());
@@ -291,6 +297,7 @@ fn errors_are_reported_not_panics() {
     let opts = CodegenOptions {
         target: "x86_64-unknown-linux-gnu".into(),
         optimize: false,
+        cpu: None,
     };
     let mk = |f: &dyn Fn(&mut FuncBuilder, BlockId)| {
         let (pb, _rt) = ProgramBuilder::new();
@@ -386,6 +393,7 @@ fn windows_unwind_tables() {
             &CodegenOptions {
                 target: triple.into(),
                 optimize: true,
+                cpu: None,
             },
         )
         .unwrap();
@@ -442,6 +450,7 @@ fn eh_frame_for_elf_and_macho() {
             &CodegenOptions {
                 target: triple.into(),
                 optimize: false,
+                cpu: None,
             },
         )
         .unwrap();
@@ -520,6 +529,7 @@ fn data_relocations_for_all_targets() {
             let opts = CodegenOptions {
                 target: triple.into(),
                 optimize,
+                cpu: None,
             };
             let bytes = emit_object(&tp.program, &opts).unwrap_or_else(|e| panic!("{ctx}: {e}"));
             let file = object::File::parse(&*bytes).unwrap();

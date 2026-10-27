@@ -48,6 +48,8 @@ export type Package = {
   /// `/`-separated paths relative to the package root. `velt check --ts-compat` and the editor
   /// lint them.
   tsCompat?: string[];
+  /// How the package's program is built. Only the root package's applies.
+  build?: Build;
 };
 
 /// A dependency: a semver requirement such as `"^1.2"`, or where to get it.
@@ -67,6 +69,15 @@ export type Jsx = {
   /// `paths` alias, or `./dir` relative to the package root. A `// @jsxImportSource` comment in
   /// a file wins.
   importSource?: string;
+};
+
+/// How a package's program is built (docs/tooling/platforms.md "CPU").
+export type Build = {
+  /// The CPU the program is built for, as `velt build --cpu`: `"baseline"`, `"x86-64-v2"` (the
+  /// default on x86-64), `"x86-64-v3"`, `"x86-64-v4"`, `"native"` or a CPU name such as
+  /// `"znver4"`. `--cpu` and `VELT_CPU` take precedence; a CPU of another architecture does not
+  /// apply to a build for this one.
+  cpu?: string;
 };
 
 /// A package's native library (docs/book/native-packages.md).

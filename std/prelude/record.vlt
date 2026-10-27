@@ -47,9 +47,32 @@ export class Record<K, V> {
   // Field 1: a key that is an array index was added (or decoded), so the entries may not be in
   // JavaScript's order (`__perm`).
   private unordered: bool = false;
+  // Field 2: the symbol-keyed entries, a table of their own as in Node, made when the first
+  // symbol key is written (`null` until then: the string-key methods never read it).
+  private symbols: Map<symbol, V> | null = null;
+  // Field 3: the accessors `Object.defineProperty` defined (`__defineAccessor`), by key. They
+  // are not enumerable, so `Object.keys`, `JSON.stringify`, spreads and `console.log` skip
+  // them, as in Node. Only a program that defines accessors reads this field: sema calls the
+  // `Keyed` methods there for every key (`hir::Program::record_accessors`).
+  private accessors: Map<K | symbol, [(() => V) | null, ((value: V) => void) | null, bool]> | null =
+    null;
+  // The methods that read fields 2 and 3 are in std/record/symbols.vlt, which a
+  // program loads only when it mentions symbols or property definitions.
 
   __get(key: K): V | undefined {
     return this.entries.get(key);
+  }
+
+  /** The symbol key `key` set to `value` (a spread's copy; the table made by the first). */
+  private __putSym(key: symbol, value: V) {
+    const t = this.symbols;
+    if (t == null) {
+      const made: Map<symbol, V> = new Map();
+      made.set(key, value);
+      this.symbols = made;
+    } else {
+      t.set(key, value);
+    }
   }
 
   /** A literal-key record holds every key (sema checks literals; JSON checks documents). */
@@ -128,8 +151,10 @@ export class Record<K, V> {
     return out;
   }
 
+  /** `delete r[k]`: `true`, as JavaScript's `delete` of an entry or of a missing key is. */
   __delete(key: K): bool {
-    return this.entries.delete(key);
+    this.entries.delete(key);
+    return true;
   }
 
   __has(key: K): bool {
@@ -148,6 +173,13 @@ export class Record<K, V> {
   __extend(other: Record<K, V>) {
     for (const [k, v] of other.__entries()) {
       this.__set(k, v);
+    }
+    // A spread copies the symbol keys too, as in Node.
+    const t = other.symbols;
+    if (t != null) {
+      for (const [s, v] of t.entries()) {
+        this.__putSym(s, v);
+      }
     }
   }
 
@@ -169,6 +201,12 @@ export class Record<K, V> {
     if (other != null) {
       for (const [k, v] of other.__entries()) {
         this.__set(key(k), convert(v));
+      }
+      const t = other.symbols;
+      if (t != null) {
+        for (const [s, v] of t.entries()) {
+          this.__putSym(s, convert(v));
+        }
       }
     }
   }
@@ -388,17 +426,6 @@ export function __objectPrototypeKey(key: string): bool {
     default:
       return false;
   }
-}
-
-/**
- * `r[k]` of a string-keyed record with a `string | symbol` key (sema calls this): the entry for a
- * string, `undefined` for a symbol, which is never one of the record's keys.
- */
-export function __recordGetKeyed<V>(r: Record<string, V>, key: string | symbol): V | undefined {
-  if (typeof key === "string") {
-    return r.__get(key);
-  }
-  return undefined;
 }
 
 /**

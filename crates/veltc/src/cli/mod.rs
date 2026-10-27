@@ -74,6 +74,8 @@ pub struct BuildArgs {
     pub debug_info: bool,
     /// `--target`.
     pub target: Option<String>,
+    /// `--cpu`.
+    pub cpu: Option<String>,
     /// `--emit`.
     pub emit: Emit,
     /// `--backend`; `None` → chosen by [`Backend::resolve`].
@@ -142,6 +144,8 @@ pub enum Command {
         no_run: bool,
         /// `--json` (with `--no-run`): report the harnesses as JSON.
         json: bool,
+        /// `--cpu`.
+        cpu: Option<String>,
     },
     /// `velt fmt [paths...] [--check]`: no paths → the current package's `src/` (or the cwd).
     Fmt { paths: Vec<PathBuf>, check: bool },

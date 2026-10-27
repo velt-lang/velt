@@ -255,7 +255,7 @@ types. The default (`VELT_SCHEDULER` unset or `velt`; `stealing` and `per-core` 
 own queue and `mio` poll; a task woken by I/O, a timer or another thread queues on its home
 worker, one woken by a running task runs next on the waker's worker (a one-task slot, at most 3
 in a row; it keeps its home), and a spawn stays on the spawning worker (from outside the
-workers: worker 0). Each worker's run queue (`velt/queue.rs`) runs input (data to read, timers,
+workers: worker 0) unless the monitor starts it elsewhere (the 50 µs rule below). Each worker's run queue (`velt/queue.rs`) runs input (data to read, timers,
 other threads) before output and the work tasks made (room to write, spawns, budget yields),
 each in order; every 61st task comes from the second
 queue, and once it has waited 10 ms a fair pass runs all of it. A worker whose input has a
@@ -266,7 +266,12 @@ queue to a sleeping worker, which becomes the tasks' home (`velt/spread.rs`). A 
 out of work, before it sleeps, runs half of the input waiting on another awake worker without
 taking it over (the tasks keep their home). The monitor does the duties of a worker that has
 started no poll for 2 ms while awake: a turn of its reactor and timers, and its inbox and half
-of its queue to another worker, each 1 ms tick while the stall lasts. A connection's socket
+of its queue to another worker, each 1 ms tick while the stall lasts. It also starts spawned
+tasks that wait behind a sibling that computes (`velt/monitor.rs`): a worker that starts the
+first poll of a spawned task with tasks never polled behind it, while another started worker
+sleeps, publishes it, and once that one poll has lasted 50 µs the tasks never polled (not pinned)
+that were queued behind it go to sleeping workers, one each, which become their home. Shorter
+polls move nothing. A connection's socket
 moves its registration to its task's home worker when the task reads there (Unix). A Postgres
 pool hands a task an idle connection whose protocol task last ran on the task's worker first. A worker
 with 256 or more queued tasks polls its reactor every 4 tasks.

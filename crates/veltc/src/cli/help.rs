@@ -43,6 +43,10 @@ const TARGET: (&str, &str) = (
     "--target <triple>",
     "target triple (default: the host); wasm32-wasip1 and wasm32-unknown-unknown build WebAssembly",
 );
+const CPU: (&str, &str) = (
+    "--cpu <name>",
+    "baseline | x86-64-v2 (the x86_64 default) | x86-64-v3 | x86-64-v4 | native | a CPU name such as znver4 or neoverse-n1 (else $VELT_CPU, then build.cpu in package.vlt)",
+);
 const BACKEND: (&str, &str) = (
     "--backend <name>",
     "cranelift | llvm (default: llvm for --release when clang is found)",
@@ -108,7 +112,7 @@ pub const COMMANDS: &[CommandHelp] = &[
     CommandHelp {
         name: "build",
         summary: "Compile a file or the current package",
-        usage: &["build [<file.vlt>] [-o <out>] [--release] [-g] [--target <triple>] [--backend <name>] [--emit <kind>] [--locked] [--json] [-v] [--timings] [--report numbers]"],
+        usage: &["build [<file.vlt>] [-o <out>] [--release] [-g] [--target <triple>] [--cpu <name>] [--backend <name>] [--emit <kind>] [--locked] [--json] [-v] [--timings] [--report numbers]"],
         about: "Without a file, builds the package found by searching upward for package.vlt \
                 (output: <package>/target/velt/<name>[.exe]). A single file builds to \
                 ./target/velt/<stem>[.exe].",
@@ -117,6 +121,7 @@ pub const COMMANDS: &[CommandHelp] = &[
             RELEASE,
             DEBUG_INFO,
             TARGET,
+            CPU,
             BACKEND,
             ("--emit <kind>", "vir | llvm (print VIR / LLVM IR and stop) | obj (object file only) | exe"),
             LOCKED,
@@ -141,12 +146,12 @@ pub const COMMANDS: &[CommandHelp] = &[
         name: "run",
         summary: "Build and run a file or the current package",
         usage: &[
-            "run [--release] [-g] [--target <triple>] [--backend <name>] [--locked] [-v] <file.vlt> [<program args>...]",
-            "run [--release] [-g] [--target <triple>] [--backend <name>] [--locked] [-v] [-- <program args>...]",
+            "run [--release] [-g] [--target <triple>] [--cpu <name>] [--backend <name>] [--locked] [-v] <file.vlt> [<program args>...]",
+            "run [--release] [-g] [--target <triple>] [--cpu <name>] [--backend <name>] [--locked] [-v] [-- <program args>...]",
         ],
         about: "Exits with the program's exit code. Arguments after the file (or after `--`) go \
                 to the program; Velt's options come before the file.",
-        options: &[RELEASE, DEBUG_INFO, TARGET, BACKEND, LOCKED, VERBOSE],
+        options: &[RELEASE, DEBUG_INFO, TARGET, CPU, BACKEND, LOCKED, VERBOSE],
         examples: &[
             ("velt run", "run the current package"),
             ("velt run hello.vlt", "run one file"),
@@ -190,7 +195,7 @@ pub const COMMANDS: &[CommandHelp] = &[
     CommandHelp {
         name: "dev",
         summary: "Run, then rebuild and restart on every change",
-        usage: &["dev [<file.vlt>] [--exe] [--locked] [-v] [--timings] [-- <program args>...]"],
+        usage: &["dev [<file.vlt>] [--exe [--release] [-g] [--cpu <name>] [--backend <name>]] [--locked] [-v] [--timings] [-- <program args>...]"],
         about: "Runs the program like `velt run`, then rebuilds and restarts it whenever a file \
                 it imports (or package.vlt/velt.lock.json) changes; a failed build leaves the old \
                 version running. The program runs JIT-compiled inside `velt`, and listening \
@@ -199,6 +204,7 @@ pub const COMMANDS: &[CommandHelp] = &[
             ("--exe", "link an executable for each version instead of the JIT"),
             RELEASE,
             DEBUG_INFO,
+            CPU,
             BACKEND,
             LOCKED,
             VERBOSE,
@@ -213,8 +219,8 @@ pub const COMMANDS: &[CommandHelp] = &[
         name: "test",
         summary: "Run the tests (`export function test_*` in *.test.vlt, .ts, .tsx)",
         usage: &[
-            "test [<file|dir>] [--filter <text> [--exact]] [--release] [--locked] [--watch]",
-            "test [<file|dir>] [--filter <text> [--exact]] [--release] [--locked] --no-run [--json]",
+            "test [<file|dir>] [--filter <text> [--exact]] [--release] [--cpu <name>] [--locked] [--watch]",
+            "test [<file|dir>] [--filter <text> [--exact]] [--release] [--cpu <name>] [--locked] --no-run [--json]",
         ],
         about: "Every `export function test_*()` (or `export async function test_*()`) in a \
                 *.test.vlt (or .test.ts, .test.tsx) file is a test. Prints `ok <name>` / `FAILED <name>` and exits \
@@ -223,6 +229,7 @@ pub const COMMANDS: &[CommandHelp] = &[
             ("--filter <text>", "only the tests whose name contains <text>"),
             ("--exact", "with --filter: only the test named <text>"),
             ("--release", "build the tests optimized"),
+            CPU,
             LOCKED,
             ("--watch", "rerun on every change"),
             (

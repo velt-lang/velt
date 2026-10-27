@@ -90,6 +90,8 @@ import * as std_proxy from "velt:proxy";
 import * as std_proxy_array from "velt:proxy/array";
 import * as std_proxy_ops from "velt:proxy/ops";
 import * as std_random from "velt:random";
+import * as std_record_reflect from "velt:record/reflect";
+import * as std_record_symbols from "velt:record/symbols";
 import * as std_redis from "velt:redis";
 import * as std_redis_args from "velt:redis/args";
 import * as std_redis_pipeline from "velt:redis/pipeline";

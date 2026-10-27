@@ -41,6 +41,7 @@ fn hot_loop_is_call_free_after_optimization() {
         let opts = CodegenOptions {
             target: host_triple(),
             optimize: true,
+            cpu: None,
         };
         emit_object(p, &opts).expect("codegen");
     }
@@ -83,6 +84,7 @@ fn build_and_run(rustc: &str, dir: &Path, tag: &str, program: &Program) -> (i32,
     let opts = CodegenOptions {
         target: host_triple(),
         optimize: true,
+        cpu: None,
     };
     std::fs::write(&obj, emit_object(program, &opts).expect("codegen")).expect("write object");
     let out = command(rustc)

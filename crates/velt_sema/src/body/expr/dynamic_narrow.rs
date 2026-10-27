@@ -123,6 +123,54 @@ impl FnCx<'_, '_> {
         }
     }
 
+    /// Facts of `typeof x.f === tag` on field path `x.f` (its token `token`) of type `u`, when
+    /// that is `any` or `unknown`: the path reads as the type the tag names where the test
+    /// holds, as a variable does (`typeof_split`; reads: `FnCx::narrowed_field`). `None`
+    /// when `u` is no dynamic type.
+    pub(crate) fn dynamic_field_typeof(
+        &mut self,
+        token: hir::LocalId,
+        u: TyId,
+        tag: &str,
+    ) -> Option<(Vec<Fact>, Vec<Fact>)> {
+        let kind = self.cx.dynamic(u)?;
+        let defs = self.cx.any?;
+        let t = match (tag, kind) {
+            ("number", _) => self.cx.ty.f64,
+            ("string", _) => self.cx.ty.str_,
+            ("boolean", _) => self.cx.ty.bool_,
+            ("function", Dynamic::Unknown) => {
+                self.cx.ty.intern(hir::TyKind::Dyn(defs.function, vec![]))
+            }
+            ("object", Dynamic::Unknown) => {
+                self.cx.ty.intern(hir::TyKind::Dyn(defs.object, vec![]))
+            }
+            _ => return Some((vec![], vec![])),
+        };
+        Some((vec![Fact::Class(token, t)], vec![]))
+    }
+
+    /// Facts of a call `f(x)` of a type predicate `v is T` (`target`) whose argument `x` is a
+    /// variable or field path of type `unknown` (`object`, `Function`; not `any`): `x` reads as a `T` where the call
+    /// returned `true`, converted from the value held, which checks it (`downcast_narrowed`).
+    pub(crate) fn dynamic_predicate_facts(
+        &mut self,
+        arg: &ast::Expr,
+        target: TyId,
+    ) -> Option<(Vec<Fact>, Vec<Fact>)> {
+        // An `any` reads its members as it is (it needs no narrowing to use them).
+        let typed = |s: &Self, t: TyId| s.cx.dynamic(t).is_some_and(|d| d != Dynamic::Any);
+        if let Some(l) = self.own_dynamic_local(arg) {
+            let ok = typed(self, self.local_ty(l));
+            return ok.then(|| (vec![Fact::Class(l, target)], vec![]));
+        }
+        if !matches!(arg.kind, ast::ExprKind::Member { .. }) {
+            return None;
+        }
+        let (token, _, u, _) = self.field_with_members(arg)?;
+        typed(self, u).then(|| (vec![Fact::Class(token, target)], vec![]))
+    }
+
     /// The type an `any` / `unknown` value `t` narrows to by `instanceof` of the generic class
     /// `class`: `any` (TypeScript's `C<any>`), since the type arguments of the instance held are
     /// known only at run time.
@@ -209,5 +257,74 @@ impl FnCx<'_, '_> {
             );
             lw.expr(&both, None, Want::Move)
         }))
+    }
+
+    /// The variable of this function `e` names, when its type is `any` or `unknown`.
+    pub(crate) fn own_dynamic_local(&mut self, e: &ast::Expr) -> Option<hir::LocalId> {
+        use ast::ExprKind as A;
+        let name = match &e.kind {
+            A::Paren(x) => return self.own_dynamic_local(x),
+            A::Ident(i) => i.name.as_str(),
+            _ => return None,
+        };
+        let l = self
+            .f
+            .scopes
+            .iter()
+            .rev()
+            .find_map(|s| s.names.get(name).copied())?;
+        self.cx.dynamic(self.local_ty(l)).map(|_| l)
+    }
+
+    /// `x.prop` where `x`, a variable or field path of type `unknown`, is narrowed to an object
+    /// type `T` (a type predicate): the member read from the value held, as an `any` reads it,
+    /// converted to the type `T` gives it. The value itself is not converted to `T`, so a
+    /// function with properties held there (`isComponent(t)`, then `t.__setup`) reads too.
+    /// `None` for any other read.
+    pub(crate) fn narrowed_dynamic_member(
+        &mut self,
+        object: &ast::Expr,
+        prop: &ast::Ident,
+        want: Want,
+        span: Span,
+    ) -> Option<hir::Expr> {
+        // Most reads are in scopes no test narrowed to a type.
+        if want == Want::BorrowMut || self.f.scopes.iter().all(|s| s.classes.is_empty()) {
+            return None;
+        }
+        let (token, path) = match &object.kind {
+            ast::ExprKind::Ident(_) => (self.own_dynamic_local(object)?, false),
+            ast::ExprKind::Member { .. } => (self.existing_field_token(object)?, true),
+            _ => return None,
+        };
+        let target = self.narrowed_class(token)?;
+        let plain = self.cx.class_of(target).is_none() && self.cx.dynamic(target).is_none();
+        if !plain || !self.cx.is_object_type(target) {
+            return None;
+        }
+        if path {
+            // The field's own type, read as it is (`dynamic_raw`).
+            let saved = self.dynamic_raw.replace(object.span);
+            let declared = self.peek_ty(object);
+            self.dynamic_raw = saved;
+            declared.and_then(|t| self.cx.dynamic(t))?;
+        }
+        let fields = self.cx.public_fields(target);
+        let f = fields.into_iter().find(|f| f.name == prop.name)?;
+        let fty = match f.optional && self.cx.dynamic(f.ty).is_none() {
+            true => self.cx.ty.option_of(f.ty, hir::Nothing::Undefined),
+            false => f.ty,
+        };
+        let any = self.any_ty()?;
+        let saved = self.dynamic_raw.replace(object.span);
+        let obj = self.expr(object, None, Want::Borrow);
+        self.dynamic_raw = saved;
+        let boxed = match self.coerce_dynamic(obj, any, true) {
+            Ok(h) | Err(h) => h,
+        };
+        match self.dynamic_get(boxed, &prop.name, want, span) {
+            Ok(read) => Some(self.cast_dynamic(read, fty)),
+            Err(_) => Some(self.error_expr(span)),
+        }
     }
 }

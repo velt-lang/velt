@@ -237,9 +237,9 @@ Found on the way, for follow-ups:
   `readLoop(s: Words, …)`) hoists it, which the benchmark does, and the `frozen` pass (above)
   then keeps the object's fields in registers too. A `shared` value read in place in a loop
   could get the same treatment (its contents are frozen for as long as the box lives).
-- **Runtime, macOS:** spawned tasks start about 1.5 ms apart (a chain of worker wake-ups), and
-  with the default worker count (one per core) busy workers begin on efficiency cores (the same
-  read loop took 16.8 ms on 4 of 10 workers, 6.6 ms with `VELT_THREADS=4`).
+- **Runtime, macOS:** spawned tasks started about 1.5 ms apart, and with the default worker
+  count busy workers seemed to begin on efficiency cores (the same read loop took 16.8 ms on 4
+  of 10 workers, 6.6 ms with `VELT_THREADS=4`). Step 1d below.
 - **Cranelift 0.132, arm64 without LSE:** its LL/SC loops compare whole registers, which breaks
   8/16-bit `umax`/`umin` and 32-bit compare-and-swap of operands narrowed from wider values;
   velt_codegen_cl works around it (`function/atomic.rs`).
@@ -304,6 +304,82 @@ Alder Lake i9-12900HK (WSL), medians of interleaved runs, ms:
 | `cas_loop_1t` alone (30 runs) | 469.6 | 466.5 | 474.1 |
 | `latch_reads_4t` (bench/atomics, 16 runs) | 18.6 | 13.4 | 13.8 |
 | `latch_reads_quiet_4t` (bench/atomics, 16 runs) | 19.4 | 13.1 | 15.8 |
+
+## Step 1d: spawned tasks start at once
+
+The cause was the Velt scheduler's placement, not slow wake-ups: a spawn stays on the spawning
+worker, and nothing else wakes for it. The first of the tasks spawned in a loop then computes
+without returning, its siblings wait behind it, and only the monitor's rescue of a stalled
+worker (2 ticks of 1 ms, half of the waiting tasks each time) moved them: 4 tasks started at 0,
+2.3, 3.6 and 4.9 ms. Now a worker that starts the first poll of a spawned task with tasks never
+polled waiting behind it says so, the monitor checks it every 50 µs while it does, and once that
+poll has lasted 50 µs the waiting tasks never polled go to sleeping workers, one each
+(`velt_rt` `task/runtime/velt/monitor.rs`). Shorter polls (a burst of connections, a broadcast's
+flushers) move nothing, and the monitor checks that often only while such a poll runs and some
+worker sleeps: a program waiting on a 2 s timer, before or after a hundred bursts of 8 short
+spawns, used 0.00 s of CPU. The efficiency-core effect above did not reproduce on the
+measurement day; asking macOS for the user-interactive quality of service for the workers made
+no measurable difference, and Apple reserves that class for UI work, so the workers keep the
+default.
+
+A watch is published only while another started worker sleeps (never with `VELT_THREADS=1`).
+It hurries the monitor out of its whole-tick nap only until 4 hurried wakes in a row have moved
+nothing; a pass that moves tasks allows them again, and until then the next 1 ms tick finds a
+long poll anyway. The monitor holds its `quiet::Moving` guard before it takes the tasks from the
+queue, as the stall rescue does: between the two the tasks were in no queue and uncounted, and a
+worker parking last in that window ended the process with `main` pending (the review reproduced
+it with a sleep in the window). On Windows the monitor naps with `thread::sleep` in slices of
+50 µs at most, looking for a hurry between them: a condition variable's timeout there rounds up
+to the 15 ms timer tick, where `thread::sleep` takes about 0.6 ms for 50 µs and 1.5 ms for 1 ms
+(Windows 11, a probe of this `nap`, medians of 400: 1.11 ms for a 1 ms nap and
+0.56 ms for a 50 µs one, against 15.4 ms with the condition variable; a hurry from another
+thread ends a nap in 49 µs, so the stall rescue takes about 2–3 ms there).
+
+`bench/async/scheduler/spawn_start.vlt` is the start probe below; `spawn_burst.vlt` is 100k
+rounds of 2 tiny spawned tasks awaited together, whose first polls are all watched. Apple M4,
+a loaded machine (load average 10–30 from another build), medians of interleaved runs:
+
+| `spawn_burst`, workers | wall, before | wall, after | CPU, before | CPU, after |
+|---|---:|---:|---:|---:|
+| 1 | 115.0 ms | 115.5 ms | 43.0 ms | 43.5 ms |
+| 4 | 115.2 ms | 114.5 ms | 42.6 ms | 42.7 ms |
+| default (10) | 114.0 ms | 114.1 ms | 42.8 ms | 42.6 ms |
+
+With a hurry at every watch (the first version of this step) the same runs took 129–134 ms and
+78–88 ms of CPU, with 2.6–3× the context switches. Starts of the 4 tasks of `spawn_start`
+(spread from the first start to the last, 21 interleaved runs):
+
+| workers | spread, before | spread, after | total, before | total, after |
+|---|---:|---:|---:|---:|
+| default (10) | 6.03 ms | 0.12 ms | 27.6 ms | 22.2 ms |
+| 4 | 7.62 ms | 0.11 ms | 28.2 ms | 20.9 ms |
+| 2 | 9.22 ms | 5.96 ms | 29.8 ms | 26.7 ms |
+| 1 | 9.23 ms | 9.04 ms | 29.9 ms | 29.7 ms |
+
+After 20k tiny bursts (hurries stopped), the first group of 4 started 0.4–1.3 ms apart and the
+next 0.10–0.17 ms. Still open: a task that spawns a child and then spins on it without awaiting
+waits for the stall rescue (about 2 ms), as before.
+
+A probe spawning 4 tasks of 20M dependent multiplies each (Apple M4, a quiet machine, 5 rounds):
+before, starts 0 / 2.2–3.1 / 3.7–4.8 / 5.3–6.3 ms after the first and 39–46 ms in all; after,
+the last start 0.11–0.25 ms after the first (sometimes one at 0.5–2 ms) and 31–36 ms in all;
+Rust's `thread::scope`, 0.02 ms and 39–42 ms. `bench/atomics` without its start barrier (the
+clock runs from before the spawns, on both sides; best of 7):
+
+| ms | Velt before | Velt after | Rust |
+|---|---:|---:|---:|
+| relaxed `add` on one word, 4 threads | 320.2 | 315.7 | 308.9 |
+| relaxed `add`, a word per thread | 96.8 | 92.3 | 92.1 |
+| `VersionLatch` reads, one writer | 18.6 | 14.3 | 13.9 |
+| the same, no writer | 13.6 | 11.1 | 10.7 |
+| spin lock | 9.6 | 27.2 | 25.8 |
+
+(The spin lock was faster before because its threads started one by one and contended less.)
+How fast tasks start no longer shows outside the noise; the benchmark keeps its barrier, which
+measures the atomics alone. `bench/atomics/run.sh 7` the same day, with the barrier (the machine
+ran about 10% slower than for the step 1 table): 354.6 / 352.0 (1.01), 90.1 / 90.1 (1.00),
+356.1 / 316.9 (1.12), 92.0 / 91.8 (1.00), 13.4 / 13.8 (0.97), 11.0 / 10.4 (1.06), 25.3 / 24.0
+(1.05). The contended rows move with where the OS puts the threads, as before.
 
 ## Not in this design
 

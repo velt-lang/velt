@@ -12,6 +12,7 @@
 //!   jsx: { importSource: "sigx" },
 //!   native: { targets: ["x86_64-unknown-linux-gnu"] },
 //!   tsCompat: ["src/models"],
+//!   build: { cpu: "x86-64-v3" },
 //! };
 //! ```
 //!
@@ -27,9 +28,10 @@ use velt_common::{Diagnostic, Diagnostics, FileId, Span};
 use velt_syntax::ast::{self, ExprKind, ItemKind, Lit, ObjectProp, PatternKind, TypeExprKind};
 
 use super::{
-    check_dependency, check_dependency_name, check_description, check_entry, check_import_source,
-    check_keyword, check_name, check_registry, check_toolchain, check_version, default_entry,
-    schema, Dependency, DetailedDependency, JsxConfig, Manifest, Package, MAX_KEYWORDS,
+    check_cpu, check_dependency, check_dependency_name, check_description, check_entry,
+    check_import_source, check_keyword, check_name, check_registry, check_toolchain, check_version,
+    default_entry, schema, BuildConfig, Dependency, DetailedDependency, JsxConfig, Manifest,
+    Package, MAX_KEYWORDS,
 };
 
 /// File name of the manifest written in Velt.
@@ -281,6 +283,7 @@ impl Reader<'_> {
             jsx: None,
             define: BTreeMap::new(),
             ts_compat: vec![],
+            build: None,
         };
         let Some(fields) = self.object(value, "the manifest") else {
             return manifest;
@@ -333,6 +336,7 @@ impl Reader<'_> {
                 "define" => manifest.define = self.define(v),
                 "native" => manifest.native = self.native(v),
                 "tsCompat" => manifest.ts_compat = self.ts_compat(v),
+                "build" => manifest.build = self.build(v),
                 _ => self.unknown_key(key, schema::PACKAGE),
             }
         }
@@ -475,6 +479,21 @@ impl Reader<'_> {
             if let Some(s) = self.string(v, "importSource") {
                 self.check(check_import_source(s), v.span);
                 config.import_source = Some(s.to_string());
+            }
+        }
+        Some(config)
+    }
+
+    fn build(&mut self, value: &Value) -> Option<BuildConfig> {
+        let mut config = BuildConfig::default();
+        for (key, v) in self.object(value, "`build`")? {
+            if key.name != "cpu" {
+                self.unknown_key(key, schema::BUILD);
+                continue;
+            }
+            if let Some(s) = self.string(v, "cpu") {
+                self.check(check_cpu(s), v.span);
+                config.cpu = Some(s.to_string());
             }
         }
         Some(config)

@@ -1285,7 +1285,12 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   function of a user module or of std/proxy tests whether the value's descriptor is the `Proxy`
   class's table and then calls the method directly, as a call of a throwing function (its error
   goes to the innermost handler or leaves the function, errors.rs); other values take the slot.
-  A program whose traps throw nothing lowers to the same VIR as before. Everywhere else a
+  A program whose traps throw nothing lowers to the same VIR as before. An operation sema
+  writes as a call of a prelude helper instead (`x.constructor` as `__anyConstructor`, a symbol
+  key as `__anyGetSym` / `__anySetSym`, `__anyIsArrayProxy`, the text and operator helpers of an
+  `any`) is a throw source `ThrowSrc::Call` of that helper, as a written call is: its caller
+  throws what the helper's body (the class dispatch of `__anyConstructor`, say) is inferred to
+  throw. Everywhere else a
   `Proxy` method that throws is called from (descriptor slots, including `AnyCall`, typed
   proxies, JSON, printing, the rest of the standard library) its error ends the process with
   Node's `Uncaught …` report (`ScopeKind::Uncaught` around the call): stage 2.

@@ -676,6 +676,13 @@ fn extension<'m>(cx: &mut Ctx<'m>, m: usize, e: &'m ast::ExtendDecl, used: &mut 
         info.is_getter = meth.is_getter;
         let resumable = meth.decl.sig.is_async || meth.decl.sig.is_generator;
         info.this = (!meth.is_static).then(|| method_this(target, always_mutates(meth), resumable));
+        // std's extension of the prelude `Record` (std/record/symbols.vlt) holds
+        // methods of its own, which read its fields.
+        if let TyKind::Adt(d, _) = cx.ty.kind(target) {
+            if cx.scopes[m].is_std && Some(*d) == cx.prelude_adt("Record") {
+                info.owner = Some(*d);
+            }
+        }
         let def = cx.alloc_def(name.span, DefInfo::Fn(Box::new(info)));
         fill_sig(cx, def, &meth.decl.sig, &generics, m);
         if methods.contains_key(&key) {

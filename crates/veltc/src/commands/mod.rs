@@ -2,13 +2,14 @@
 //! TypeScript-compatibility lint [`ts_compat`]), [`create`] (new/init from templates),
 //! [`package`] (add/install/update/publish), [`clean`], [`test`] (the test runner), [`fmt`] (the
 //! formatter), [`lsp`] (the language server), [`doctor`] (installation checks), [`version`]
-//! (`--version`); [`project`] finds and installs the enclosing package; [`wasm`] runs
+//! (`--version`); [`cpu`] picks the CPU a build is for; [`project`] finds and installs the enclosing package; [`wasm`] runs
 //! WebAssembly builds. `velt dev` lives in [`crate::dev`]; help and completions come from
 //! [`crate::cli`].
 
 mod build;
 mod check;
 mod clean;
+pub mod cpu;
 mod create;
 mod doc;
 mod doctor;
@@ -68,6 +69,7 @@ pub fn execute(cmd: Command) -> ExitCode {
             exact,
             no_run,
             json,
+            cpu,
         } => {
             let opts = test::TestOptions {
                 release,
@@ -76,6 +78,7 @@ pub fn execute(cmd: Command) -> ExitCode {
                 exact,
                 no_run,
                 json,
+                cpu,
             };
             return test::test_command(path.as_deref(), &opts, watch);
         }

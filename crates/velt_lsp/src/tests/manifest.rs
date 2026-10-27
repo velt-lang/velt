@@ -72,7 +72,8 @@ fn completion_and_hover_come_from_the_schema() {
             "paths",
             "jsx",
             "define",
-            "tsCompat"
+            "tsCompat",
+            "build"
         ]
     );
 

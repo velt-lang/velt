@@ -92,6 +92,7 @@ fn build_and_run(
         &CodegenOptions {
             target: host_triple(),
             optimize,
+            cpu: None,
         },
     )
     .unwrap();

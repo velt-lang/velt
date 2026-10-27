@@ -108,7 +108,7 @@ fn values() -> Vec<f64> {
 
 /// The mismatches of the program compiled for `target` (`""`: the host with its features).
 fn mismatches(target: &str, optimize: bool) -> Vec<String> {
-    let isa = crate::isa::make_isa(target, optimize, true).expect("ISA");
+    let isa = crate::isa::make_isa(target, None, optimize, true).expect("ISA");
     let mut jb = JITBuilder::with_isa(isa, cranelift_module::default_libcall_names());
     for (name, p) in super::jit::stub_symbols() {
         jb.symbol(name, p);

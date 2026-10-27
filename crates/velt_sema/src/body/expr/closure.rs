@@ -286,6 +286,7 @@ impl FnCx<'_, '_> {
         // A future owns everything it uses: async closures always capture by value.
         frame.escaping = escaping || is_async;
         frame.discards_value = ret.is_none() && !is_async && ret_ty == Some(self.cx.ty.unit);
+        frame.asserted_ret = ret.is_none() && self.asserted_fn == Some(e.span);
         frame.never_end = ret.is_none() && (exp.is_none() || promise_callback);
         frame.is_async = is_async;
         // A JS API callback returning a number (a comparator) may return any integer.
@@ -554,7 +555,7 @@ impl FnCx<'_, '_> {
             // A `const` captured while its initializer runs, and its flag: the cell itself,
             // which closures created inside this one share too (`late_consts`).
             let late = frame.late.caps.contains_key(&c.inner)
-                || frame.late.caps.values().any(|r| *r == c.inner);
+                || frame.late.caps.values().any(|r| *r == Some(c.inner));
             let escaping = escaping || late && !c.mutated;
             let mode = match (escaping, c.mutated, copy) {
                 (false, true, _) => PassMode::BorrowMut,

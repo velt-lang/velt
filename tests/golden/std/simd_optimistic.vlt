@@ -1,0 +1,90 @@
+// check: no leaks
+// `loadOptimistic`: a vector of `Atomic` words read in one load, for optimistic reads under a
+// `VersionLatch`. Every integer vector type on its atomics, the last position that fits, and
+// readers on other threads that only trust what a latch check confirms: they never see a pair
+// a writer was changing.
+
+import { i8x16, u8x16, i16x8, u16x8, i32x4, u32x4, i64x2, u64x2 } from "velt:simd";
+import { VersionLatch } from "velt:sync";
+
+function words(n: i64): Atomic<u64>[] {
+  const w: Atomic<u64>[] = [];
+  for (let i = 0; i < n; i++) {
+    w.push(new Atomic<u64>((i as u64) * 3));
+  }
+  return w;
+}
+
+class Pair {
+  latch: VersionLatch = VersionLatch.create();
+  w: Atomic<u64>[] = words(2);
+  torn: Atomic<u64> = new Atomic<u64>(0);
+  seen: Atomic<u64> = new Atomic<u64>(0);
+}
+
+function read(p: Pair, n: i64) {
+  for (let i = 0; i < n; i++) {
+    while (true) {
+      const v = p.latch.readVersion();
+      const pair = u64x2.loadOptimistic(p.w);
+      if (p.latch.isUnchanged(v)) {
+        if (pair.lane(0) + 1 != pair.lane(1)) {
+          p.torn.add(1, "relaxed");
+        }
+        p.seen.add(1, "relaxed");
+        break;
+      }
+    }
+  }
+}
+
+async function reader(p: shared<Pair>, n: i64) {
+  read(p, n);
+}
+
+async function writer(p: shared<Pair>, n: i64) {
+  for (let i: u64 = 1; i <= (n as u64); i++) {
+    const v = p.latch.lockExclusive();
+    p.w[0].store(i * 10, "relaxed");
+    p.w[1].store(i * 10 + 1, "relaxed");
+    p.latch.unlockExclusive(v);
+  }
+}
+
+async function main() {
+  const w = words(5);
+  const v = u64x2.loadOptimistic(w, 3);
+  console.log("u64", v.lane(0), v.lane(1), v.le(u64x2.splat(10)).count());
+  console.log("i64", i64x2.loadOptimistic([new Atomic<i64>(-1), new Atomic<i64>(2)]).lane(0));
+  const w32: Atomic<u32>[] = [];
+  const s32: Atomic<i32>[] = [];
+  const w16: Atomic<u16>[] = [];
+  const s16: Atomic<i16>[] = [];
+  const w8: Atomic<u8>[] = [];
+  const s8: Atomic<i8>[] = [];
+  for (let i = 0; i < 20; i++) {
+    w32.push(new Atomic<u32>(i as u32));
+    s32.push(new Atomic<i32>(-i as i32));
+    w16.push(new Atomic<u16>(i as u16));
+    s16.push(new Atomic<i16>(-i as i16));
+    w8.push(new Atomic<u8>(i as u8));
+    s8.push(new Atomic<i8>(-i as i8));
+  }
+  console.log("32", u32x4.loadOptimistic(w32, 16).lane(3), i32x4.loadOptimistic(s32, 1).lane(0));
+  console.log("16", u16x8.loadOptimistic(w16, 12).lane(7), i16x8.loadOptimistic(s16).lane(5));
+  console.log("8", u8x16.loadOptimistic(w8, 4).lane(15), i8x16.loadOptimistic(s8, 2).lane(0));
+  // The words as an array of u16 lanes: tags compared 8 at a time.
+  w[0].store(0x0004000300020001, "relaxed");
+  console.log("tags", u64x2.loadOptimistic(w).asU8x16().asU16x8().eq(u16x8.splat(3)).bitmask());
+
+  const p = new Pair();
+  p.w[0].store(0, "relaxed");
+  p.w[1].store(1, "relaxed");
+  const s = shared(p);
+  const ps: Promise<void>[] = [spawn(writer(s, 20000))];
+  for (let t = 0; t < 3; t++) {
+    ps.push(spawn(reader(s, 20000)));
+  }
+  await Promise.all(ps);
+  console.log("torn", s.torn.load(), "seen", s.seen.load());
+}

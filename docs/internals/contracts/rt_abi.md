@@ -333,6 +333,20 @@ first half of its 8-byte slot. Functions (`std/symbol.vlt`; `string` parameters 
 - `velt_rt_strbuf_push_symbol(buf: *mut VeltStrBuf, s)`: appends `Symbol(<description>)`
   (`console.log`, `String(s)`).
 
+## CPU check [additive]
+
+`velt_rt_check_cpu(required: u32)`: x86_64 code built for more than the baseline CPU
+(`--cpu`, docs/tooling/platforms.md "CPU") calls it first thing in `velt_main`, after the
+runtime's start-up (baseline code) and before any code that may use the features. `required` is
+a mask of features, by bit: 0 SSE3, 1 SSSE3, 2 SSE4.1, 3 SSE4.2, 4 POPCNT, 5 CMPXCHG16B, 6 AVX,
+7 AVX2, 8 BMI1, 9 BMI2, 10 FMA, 11 LZCNT, 12 MOVBE, 13 F16C, 14 AVX512F, 15 AVX512BW,
+16 AVX512CD, 17 AVX512DQ, 18 AVX512VL, 19 AVX512VBMI, 20 AVX512BITALG
+(`velt_codegen_cl::X86_FEATURES`; x86-64-v2 is bits 0–5, v3 0–13, v4 0–18). When the CPU lacks
+one, it prints to stderr ``error: this program was built for <level> (<features>); this CPU
+lacks <missing>; rebuild it with `--cpu <lower>` `` (`<lower>`: the highest level the CPU has,
+or `baseline`) and exits with code 1. `VELT_CPU_DISABLE` (comma-separated feature names, any case) removes features from what the CPU
+has, to test it.
+
 ## SIMD [additive]
 
 A SIMD value (HIR `TyKind::Simd`, the ten vector and four mask types) is a VIR `V128`: 16 bytes,
@@ -347,7 +361,24 @@ verifier rejects a `velt_simd_*` extern that is not one, and both backends emit 
 inline. They never cross the C ABI, so no target's vector calling convention is involved.
 `load` and `store` take the array (a pointer to its header) and an element index, and do not
 check it: the prelude's methods do. `load_partial` and `store_partial` take a count of elements
-too, below the lane count, and touch only those elements.
+too, below the lane count, and touch only those elements. `load_optimistic` [additive] is `load`
+from an array of `Atomic` words other threads may be storing to (`T.loadOptimistic`): LLVM
+emits a plain vector load, without an alias tag, and `freeze`s it, so a lane read while a store
+raced it is some value rather than `undef` and nothing computed from it is undefined; Cranelift
+emits a plain load. Correctness does not depend on how the hardware splits the load: a lane no
+thread wrote during the load is the word, whatever the width of the accesses, and a lane a store
+raced is rejected by the latch check whatever its bytes are (arm64 happens to read a 128-bit load
+as two single-copy-atomic 64-bit reads; x86-64 documents no such guarantee for a 16-byte SSE
+load; Velt's wasm targets have no threads).
+
+What the latch check relies on: a racing plain load reads from no store, so in LLVM's model
+nothing makes the version re-read see the writer's lock. It works, as Linux's seqlock and
+crossbeam's `AtomicCell` do, because the load stays where the source puts it, between the
+latch's acquire load and its acquire fence, and the hardware keeps that order (x86-64 TSO; on
+arm64 the fence is `dmb ishld`, before the re-read). So no backend or VIR pass may hoist a
+`load_optimistic` out of a loop, merge two of them, or move one across an atomic operation or a
+fence. LLVM and Cranelift treat acquire loads and fences as clobbers of all memory, and velt_opt
+moves no call.
 
 `velt_simd_prefetch(void* addr)` (`-> void`, additive) starts loading the cache line at `addr`
 for a read soon, as a hint: LLVM emits `llvm.prefetch` (read, every cache level, data), which

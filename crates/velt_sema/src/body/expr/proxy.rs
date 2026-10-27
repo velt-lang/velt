@@ -371,6 +371,8 @@ impl FnCx<'_, '_> {
     }
 
     /// A call of the prelude function `name` with the checked arguments `args`, of type `ret`.
+    /// It throws what `name` throws, as any call does (`__anyConstructor`'s dispatch, for one,
+    /// throws what a proxy's traps throw).
     pub(crate) fn prelude_hir_call(
         &mut self,
         name: &str,
@@ -382,6 +384,7 @@ impl FnCx<'_, '_> {
             .cx
             .prelude_fn(name)
             .unwrap_or_else(|| panic!("ICE: the prelude without `{name}`"));
+        self.call_throws(d, &[], ret, span);
         let kind = H::Call {
             callee: hir::Callee::Def(d, vec![]),
             args,
@@ -495,11 +498,13 @@ impl FnCx<'_, '_> {
         self.note_dyn_members();
         let str_ = self.cx.ty.str_;
         let kt = self.cx.widened(k.ty);
+        let kty_of_key = k.ty;
         let k = if kt == str_ {
             self.coerce(k, str_)
         } else if self.cx.dynamic(k.ty).is_some()
             || self.cx.ty.is_numeric(kt)
             || self.string_or_symbol(k.ty)
+            || (self.uses_proxy() && self.symbolic_key_type(k.ty))
         {
             self.coerce(k, obj.ty)
         } else {
@@ -514,6 +519,9 @@ impl FnCx<'_, '_> {
             return self.error_expr(span);
         };
         let b = self.cx.ty.bool_;
+        if self.uses_proxy() && self.symbolic_key_type(kty_of_key) {
+            return self.prelude_hir_call("__anyHasKey", vec![obj, k], b, span);
+        }
         self.any_op(hir::Intrinsic::AnyHas, vec![obj, k], b, span)
     }
 }

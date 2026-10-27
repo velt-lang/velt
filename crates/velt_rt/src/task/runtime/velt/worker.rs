@@ -10,7 +10,7 @@
 //! A worker that makes no progress holds back everything queued on it: a task that runs on
 //! without returning from its poll (a long computation, a busy loop), or a worker the OS took
 //! off its core (a loaded machine; the load generator beside the server). The monitor thread
-//! ([`monitor`]) notices a worker that has started no poll for [`STALL_TICKS`] ticks while
+//! ([`super::monitor`]) notices a worker that has started no poll for `STALL_TICKS` ticks while
 //! work waits, and does its duties for it: a turn of its reactor (its sockets' events and its
 //! due timers), then its inbox and half of its queue to another worker, a sleeping one if
 //! there is one, which becomes their home; each tick again while the stall lasts. When every
@@ -22,6 +22,11 @@
 //! stores per poll and a lock of its own queue; while every worker sleeps, so does the
 //! monitor.
 
+//!
+//! The monitor also starts spawned tasks that wait behind a sibling that computes: see
+//! [`super::monitor`].
+
+use super::monitor::{watch, MonitorSleep, MONITOR, TICKS};
 use super::queue::RunQueue;
 use super::spread;
 use super::task::{Ran, Task};
@@ -29,7 +34,7 @@ use super::timer::Timers;
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 /// The token of each worker's wake-up event (I/O registrations use the others).
@@ -49,37 +54,41 @@ const BACKLOG: usize = 256;
 const HELP_INTERVAL: u32 = 16;
 
 /// A worker's reactor: its `mio` poll and the buffer events are read into.
-struct Reactor {
-    poll: mio::Poll,
-    events: mio::Events,
+pub(super) struct Reactor {
+    pub(super) poll: mio::Poll,
+    pub(super) events: mio::Events,
 }
 
 /// A worker as other threads see it.
 pub(super) struct Shared {
     /// Its run queue: used by the worker, and by the monitor while the worker is stalled.
-    queue: Mutex<RunQueue>,
+    pub(super) queue: Mutex<RunQueue>,
     /// Tasks woken or spawned from other threads.
-    inbox: Mutex<VecDeque<Arc<Task>>>,
-    inbox_len: AtomicUsize,
+    pub(super) inbox: Mutex<VecDeque<Arc<Task>>>,
+    pub(super) inbox_len: AtomicUsize,
     /// Tasks this worker offers to a helper.
-    offered: Mutex<VecDeque<Arc<Task>>>,
-    offered_len: AtomicUsize,
+    pub(super) offered: Mutex<VecDeque<Arc<Task>>>,
+    pub(super) offered_len: AtomicUsize,
     /// Asleep in its poll (or about to be): a push must wake it.
     pub(super) parked: AtomicBool,
-    waker: mio::Waker,
+    pub(super) waker: mio::Waker,
     pub(super) registry: mio::Registry,
     /// Its task polls plus the bytes its sockets moved, published every few polls: the sleeping
     /// worker that did least becomes a helper.
-    work: AtomicU64,
+    pub(super) work: AtomicU64,
     /// Its reactor: locked by the worker for a turn, and by the monitor while the worker is
     /// stalled.
-    reactor: Mutex<Reactor>,
+    pub(super) reactor: Mutex<Reactor>,
     /// Its timers (see [`with_timers`]).
-    timers: Mutex<Timers>,
+    pub(super) timers: Mutex<Timers>,
     /// The monitor's tick when the worker last started a task poll.
-    progress: AtomicU64,
+    pub(super) progress: AtomicU64,
     /// Its queue's length as last published.
-    queued: AtomicUsize,
+    pub(super) queued: AtomicUsize,
+    /// 0, or while it runs the first poll of a spawned task with tasks never polled waiting
+    /// behind it: its poll count (high 32 bits) and how many tasks its second queue held when
+    /// the poll began (`WATCHED`), plus `SEEN` once the monitor saw it (see [`super::monitor`]).
+    pub(super) watch: AtomicU64,
 }
 
 /// Workers beyond the configured ones that start when the monitor finds every worker stalled
@@ -98,6 +107,11 @@ pub(super) fn workers() -> &'static [Shared] {
 static STARTED: AtomicUsize = AtomicUsize::new(0);
 pub(super) fn started() -> usize {
     STARTED.load(Ordering::SeqCst)
+}
+
+/// The workers whose threads have started.
+pub(super) fn started_workers() -> &'static [Shared] {
+    &workers()[..started()]
 }
 
 /// This thread's state when it is a worker.
@@ -179,7 +193,7 @@ pub(super) fn with_timers<R>(f: impl FnOnce(Option<&mut Timers>) -> R) -> R {
     }
 }
 
-fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+pub(super) fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
@@ -238,7 +252,7 @@ fn queue(task: Arc<Task>, made: bool) {
     wake(w);
 }
 
-fn wake(w: &Shared) {
+pub(super) fn wake(w: &Shared) {
     if w.parked.swap(false, Ordering::SeqCst) {
         // Woken is not stalled: the monitor counts from now, so a worker the OS has not run
         // yet keeps its tasks.
@@ -249,7 +263,7 @@ fn wake(w: &Shared) {
 }
 
 /// A worker's shared state, with its own poll and waker.
-fn new_shared() -> Shared {
+pub(super) fn new_shared() -> Shared {
     let poll = mio::Poll::new().unwrap_or_else(|e| fatal(e));
     let waker = mio::Waker::new(poll.registry(), WAKE).unwrap_or_else(|e| fatal(e));
     let registry = poll.registry().try_clone().unwrap_or_else(|e| fatal(e));
@@ -270,6 +284,7 @@ fn new_shared() -> Shared {
         timers: Mutex::new(Timers::default()),
         progress: AtomicU64::new(0),
         queued: AtomicUsize::new(0),
+        watch: AtomicU64::new(0),
     }
 }
 
@@ -297,7 +312,7 @@ pub(super) fn start(n: usize) {
     }
     let started = std::thread::Builder::new()
         .name("velt-monitor".into())
-        .spawn(monitor);
+        .spawn(super::monitor::run);
     if let Err(e) = started {
         fatal(e);
     }
@@ -314,7 +329,7 @@ fn start_thread(index: usize) {
 
 /// Starts the next spare worker (the monitor's thread only); its index, or `None` once all
 /// have started.
-fn start_spare() -> Option<usize> {
+pub(super) fn start_spare() -> Option<usize> {
     let ws = workers();
     let index = started();
     let w = ws.get(index)?;
@@ -343,13 +358,9 @@ fn run(index: usize) {
     let mut since_io: u32 = 0;
     loop {
         take_inbox(me);
-        let (next, queued) = {
-            let mut q = lock(&me.queue);
-            let next = q.pop(Instant::now);
-            (next, q.len())
-        };
+        let (next, queued, behind) = next_task(me);
         if let Some(task) = next {
-            poll_task(me, &local, task);
+            poll_task(me, &local, task, behind, started_workers);
             local.polls.set(local.polls.get() + 1);
             tick = tick.wrapping_add(1);
             if tick.is_multiple_of(HELP_INTERVAL) {
@@ -393,6 +404,19 @@ fn run(index: usize) {
     }
 }
 
+/// Takes the next task from this worker's queue, with the queue's length after it and, when it
+/// is a spawned task never polled with tasks never polled behind it, the length of the second
+/// queue (see [`poll_task`]; else 0).
+fn next_task(me: &Shared) -> (Option<Arc<Task>>, usize, usize) {
+    let mut q = lock(&me.queue);
+    let next = q.pop(Instant::now);
+    let behind = match &next {
+        Some(t) if t.fresh() => q.fresh_behind(),
+        _ => 0,
+    };
+    (next, q.len(), behind)
+}
+
 /// Marks this worker parked (from now on a push wakes it), unless tasks came to its inbox before
 /// that: whether it may sleep. Not parking after all, it wakes the monitor, which may have seen
 /// every worker parked meanwhile and gone to sleep: this worker's polls need watching again (a
@@ -408,13 +432,27 @@ fn may_park(me: &Shared, monitor: &MonitorSleep) -> bool {
 }
 
 /// Polls `task`, taken from this worker's queue, as the task running (the wakes it makes run
-/// next here, see [`schedule`]), and queues it again if it was woken meanwhile.
+/// next here, see [`schedule`]), and queues it again if it was woken meanwhile. `behind`: the
+/// tasks of its second queue when this is the first poll of a spawned task with tasks never
+/// polled waiting behind it, else 0 (the monitor watches such a poll: see [`super::monitor`]).
+/// `workers`: the workers started, which a watch looks at ([`started_workers`] but in tests).
 #[inline]
-fn poll_task(me: &Shared, local: &Local, task: Arc<Task>) {
+fn poll_task(
+    me: &Shared,
+    local: &Local,
+    task: Arc<Task>,
+    behind: usize,
+    workers: impl FnOnce() -> &'static [Shared],
+) {
     me.progress
         .store(TICKS.load(Ordering::Relaxed), Ordering::Relaxed);
     local.running_home.set(task.home.load(Ordering::Relaxed));
+    let watched = behind > 0 && watch(me, workers(), local.polls.get(), behind, &MONITOR);
     let ran = task.run();
+    if watched {
+        // Release: the monitor's compare-and-swap on it orders with it alone (same location).
+        me.watch.store(0, Ordering::Release);
+    }
     local.running_home.set(usize::MAX);
     if let Ran::Again = ran {
         lock(&me.queue).push(task, Instant::now);
@@ -492,9 +530,13 @@ fn maybe_help(index: usize, local: &Local) {
 }
 
 /// The sleeping worker that did least: one with nothing to do, not a busy one between bursts.
-fn sleeping_helper(index: usize) -> Option<usize> {
-    let ws = workers();
-    (0..started())
+pub(super) fn sleeping_helper(index: usize) -> Option<usize> {
+    sleeping_helper_of(started_workers(), index)
+}
+
+/// [`sleeping_helper`] among the workers `ws` (those started).
+pub(super) fn sleeping_helper_of(ws: &[Shared], index: usize) -> Option<usize> {
+    (0..ws.len())
         .filter(|&i| i != index && ws[i].parked.load(Ordering::SeqCst))
         .min_by_key(|&i| ws[i].work.load(Ordering::Relaxed))
 }
@@ -577,177 +619,6 @@ fn borrow(index: usize) -> bool {
         return true;
     }
     false
-}
-
-/// The monitor's clock: ticks of [`TICK`] while some worker is awake.
-static TICKS: AtomicU64 = AtomicU64::new(0);
-/// The monitor's tick.
-const TICK: Duration = Duration::from_millis(1);
-/// Ticks without a new task poll after which the monitor does a worker's duties (see the module
-/// docs): one full tick at least, which ordinary polls never take.
-const STALL_TICKS: u64 = 2;
-
-/// The monitor's sleep while every worker sleeps, until a worker wakes it ([`MonitorSleep::kick`]).
-struct MonitorSleep {
-    asleep: AtomicBool,
-    woken: Mutex<bool>,
-    cv: Condvar,
-}
-
-static MONITOR: MonitorSleep = MonitorSleep::new();
-
-impl MonitorSleep {
-    const fn new() -> MonitorSleep {
-        MonitorSleep {
-            asleep: AtomicBool::new(false),
-            woken: Mutex::new(false),
-            cv: Condvar::new(),
-        }
-    }
-
-    /// Wakes the monitor if it sleeps (a worker woke up: its polls need watching).
-    fn kick(&self) {
-        // SeqCst: ordered after the caller's store to `parked`, which the monitor checks after
-        // its own store here (on ARM a relaxed load could come first and both would miss the
-        // other).
-        if self.asleep.load(Ordering::SeqCst) {
-            *lock(&self.woken) = true;
-            self.cv.notify_one();
-        }
-    }
-
-    /// Sleeps while every worker of `ws` is parked, until a worker kicks.
-    fn sleep_while_parked(&self, ws: &[Shared]) {
-        let all_parked = || ws.iter().all(|w| w.parked.load(Ordering::SeqCst));
-        let mut woken = lock(&self.woken);
-        self.asleep.store(true, Ordering::SeqCst);
-        // A worker that woke between the caller's check and here kicks after this store.
-        if all_parked() {
-            while !*woken {
-                woken = self.cv.wait(woken).unwrap_or_else(|e| e.into_inner());
-            }
-        }
-        *woken = false;
-        self.asleep.store(false, Ordering::SeqCst);
-    }
-}
-
-fn monitor() {
-    loop {
-        let ws = workers();
-        if ws.iter().all(|w| w.parked.load(Ordering::SeqCst)) {
-            MONITOR.sleep_while_parked(ws);
-            continue;
-        }
-        std::thread::sleep(TICK);
-        let now = TICKS.fetch_add(1, Ordering::Relaxed) + 1;
-        for (i, w) in ws.iter().enumerate().take(started()) {
-            if stalled(w, now) {
-                rescue(i, now);
-            }
-        }
-    }
-}
-
-/// Awake and no task poll started for [`STALL_TICKS`] ticks up to tick `now`.
-fn stalled(w: &Shared, now: u64) -> bool {
-    !w.parked.load(Ordering::SeqCst)
-        && now.saturating_sub(w.progress.load(Ordering::Relaxed)) >= STALL_TICKS
-}
-
-/// Does the duties of worker `i`, stalled: a turn of its reactor (I/O and due timers), then its
-/// inbox (the tasks that woke) and half of its queue to another worker, which becomes their
-/// home. Pinned tasks stay.
-fn rescue(i: usize, now: u64) {
-    let ws = workers();
-    let w = &ws[i];
-    turn_for(w, i);
-    lock(&w.timers).fire(Instant::now());
-    // The tasks taken below are in no queue until they reach one again: counted meanwhile, as
-    // the worker may count as idle (woken, not yet running).
-    let _moving = crate::task::quiet::Moving::new();
-    let mut moved: Vec<Arc<Task>> = Vec::new();
-    if w.inbox_len.load(Ordering::Acquire) > 0 {
-        let mut inbox = lock(&w.inbox);
-        moved.extend(inbox.drain(..));
-        w.inbox_len.store(0, Ordering::SeqCst);
-    }
-    // Not waiting on the worker: one that holds its queue is running.
-    if let Ok(mut queue) = w.queue.try_lock() {
-        moved.extend(queue.take_half_up());
-    }
-    if moved.is_empty() {
-        return;
-    }
-    let (pinned, moved): (Vec<_>, Vec<_>) = moved.into_iter().partition(|t| t.pinned);
-    // Back through the inbox with a wake: the worker may have parked since the drain above.
-    if !pinned.is_empty() {
-        send_back(w, pinned);
-    }
-    let others = || (0..started()).filter(|&j| j != i);
-    let least_queued = |j: &usize| ws[*j].queued.load(Ordering::Relaxed);
-    let helper = sleeping_helper(i)
-        .or_else(|| {
-            others()
-                .filter(|&j| !stalled(&ws[j], now))
-                .min_by_key(least_queued)
-        })
-        .or_else(start_spare)
-        .or_else(|| others().min_by_key(least_queued));
-    let Some(helper) = helper else {
-        send_back(w, moved);
-        return;
-    };
-    if moved.is_empty() {
-        return;
-    }
-    let h = &ws[helper];
-    {
-        let mut inbox = lock(&h.inbox);
-        for task in moved {
-            task.home.store(helper, Ordering::Relaxed);
-            inbox.push_back(task);
-        }
-        h.inbox_len.store(inbox.len(), Ordering::SeqCst);
-    }
-    wake(h);
-}
-
-/// A non-blocking turn of the reactor of worker `i` (`w`), stalled, for it: the events of its
-/// sockets. Its own wake-up event is posted again for it: a worker woken as it parks and then
-/// taken off its core before its own poll counts as stalled, and with the event taken here its
-/// poll would sleep on with tasks in its inbox, the wake spent (`parked` already cleared, so
-/// later pushes and the monitor's hand-back post none).
-fn turn_for(w: &Shared, i: usize) {
-    let Ok(mut r) = w.reactor.try_lock() else {
-        return;
-    };
-    let Reactor { poll, events } = &mut *r;
-    if poll.poll(events, Some(Duration::ZERO)).is_err() {
-        events.clear();
-    }
-    let mut woken = false;
-    for ev in events.iter() {
-        if ev.token() == WAKE {
-            woken = true;
-        } else {
-            super::io::dispatch(i, ev);
-        }
-    }
-    drop(r);
-    if woken {
-        let _ = w.waker.wake();
-    }
-}
-
-/// Returns tasks the monitor took from `w` to its inbox and wakes it.
-fn send_back(w: &Shared, tasks: Vec<Arc<Task>>) {
-    {
-        let mut inbox = lock(&w.inbox);
-        inbox.extend(tasks);
-        w.inbox_len.store(inbox.len(), Ordering::SeqCst);
-    }
-    wake(w);
 }
 
 /// Tasks other threads queued for the workers that none has taken yet (in an inbox or offered).

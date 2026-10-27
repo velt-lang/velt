@@ -33,7 +33,8 @@ fn top_level_keys_not_yet_written() {
             "jsx",
             "define",
             "native",
-            "tsCompat"
+            "tsCompat",
+            "build"
         ]
     );
     // While typing a key, including when the file does not parse.

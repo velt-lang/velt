@@ -166,6 +166,9 @@ impl FnCx<'_, '_> {
         let Some(target) = self.narrowed_class(l) else {
             return e;
         };
+        if self.dynamic_raw == Some(e.span) && self.cx.dynamic(e.ty).is_some() {
+            return e; // `x as T` converts the value held (`member::type_assertion`)
+        }
         if self.cx.dynamic(target) == Some(crate::any::Dynamic::Any) && self.per_instance(e.ty) {
             // `Array.isArray(x)` on a value of a type parameter: the value, as an `any`.
             return self.generic_as_any(e).unwrap_or_else(|e| e);
