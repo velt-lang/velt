@@ -62,7 +62,15 @@ impl Ctx<'_> {
         let to = self.site_core(to);
         let typed = (self.fn_sites.by_file.get(&s.file).into_iter().flatten())
             .any(|&i| self.fn_sites.sites[i] == (s, to));
-        typed.then_some(s)
+        if typed {
+            return Some(s);
+        }
+        // A `Promise<T>` written within the target's type: a generic parameter's, a tuple
+        // element's, a union member (`promise_sites`).
+        match self.ty.kind(to) {
+            TyKind::Promise(..) => self.promise_site_in(s, to),
+            _ => None,
+        }
     }
 
     /// A closure created at `span` where a value of type `exp` is stored into the current
@@ -178,8 +186,12 @@ impl crate::body::FnCx<'_, '_> {
                 };
                 let f = self.cx.adt(*d)?.fields.get(*index as usize)?;
                 let anon = self.cx.fn_sites.anon_written.get(&(*d, *index)).copied();
-                (self.cx.decl_site(f.span, f.declared)).or_else(|| self.cx.site_in(anon?, h.ty))
+                (self.cx.decl_site(f.span, f.declared))
+                    .or_else(|| self.cx.decl_site(f.span, h.ty))
+                    .or_else(|| self.cx.site_in(anon?, h.ty))
             }
+            // An element of an array, `Map` or `Record` of promises: the container's site.
+            H::Index { base, .. } => self.site_of_value(base),
             H::Call {
                 callee: crate::hir::Callee::Def(g, _),
                 ..
@@ -201,7 +213,7 @@ impl crate::body::FnCx<'_, '_> {
             true => self.cx.fn_info(self.body_def?).ret_span?,
             false => self.f.ret_span?,
         };
-        self.cx.site_in(rs, ret)
+        self.cx.site_in(rs, ret).or(Some(rs))
     }
 
     /// The site of local `l` (through the captures of the enclosing closures).
@@ -223,6 +235,13 @@ impl crate::body::FnCx<'_, '_> {
 
     /// Store `h` (already checked) into site `to`: values read from its own site flow there.
     pub(crate) fn flow_into(&mut self, h: &crate::hir::Expr, to: Option<Span>) {
+        if let Some(to) = to {
+            let at = match &h.kind {
+                crate::hir::ExprKind::Closure(c) => Some(self.cx.fn_info(*c).span),
+                _ => None,
+            };
+            self.cx.bind_stored_fn(at, h.ty, to);
+        }
         if let (Some(to), Some(from)) = (to, self.site_of_value(h)) {
             self.cx.site_flow(from, to);
             // An array, `Set` or `Map` of promises is shared: what is stored through either name
@@ -257,7 +276,12 @@ impl crate::body::FnCx<'_, '_> {
     /// for the value of a `push`, the site of its array's element type.
     pub(crate) fn arg_site(&mut self, p: &crate::defs::ParamSig, arg: Span) -> Option<Span> {
         let pushed = (self.cx.fn_sites.push).filter(|(a, _)| *a == arg);
-        let site = self.param_site(p).or(pushed.map(|(_, s)| s));
+        // The parameter's own site, else the receiver's (a parameter typed by its class's type
+        // argument), else where the parameter's type is written.
+        let exact = (self.cx.fn_sites.by_file.contains_key(&p.span.file))
+            .then(|| self.cx.decl_site(p.span, p.ty))
+            .flatten();
+        let site = (exact.or(pushed.map(|(_, s)| s))).or_else(|| self.param_site(p));
         if let Some(s) = site {
             self.cx.bind_async_arg(arg, s);
         }
@@ -269,6 +293,6 @@ impl crate::body::FnCx<'_, '_> {
         if !self.cx.fn_sites.by_file.contains_key(&p.span.file) {
             return None;
         }
-        self.cx.decl_site(p.span, p.ty)
+        (self.cx.decl_site(p.span, p.ty)).or_else(|| self.cx.written_range(p.span))
     }
 }

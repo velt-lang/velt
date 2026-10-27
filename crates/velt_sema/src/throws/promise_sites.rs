@@ -64,14 +64,29 @@ impl Ctx<'_> {
     /// it, so the program is checked again with them. False when the store is reported instead
     /// (no site, the last check, or an error type that can't be kept).
     pub(crate) fn seed_promise_site(&mut self, from: TyId, to: TyId) -> bool {
-        let (&TyKind::Promise(_, e), &TyKind::Promise(..)) = (self.ty.kind(from), self.ty.kind(to))
+        if self.fn_sites.target.is_none() && self.fn_sites.closure_return.is_none() {
+            return false;
+        }
+        let (Some(from), Some(to)) = (self.promise_part(from), self.promise_part(to)) else {
+            return false;
+        };
+        let (&TyKind::Promise(_, e), &TyKind::Promise(_, f)) =
+            (self.ty.kind(from), self.ty.kind(to))
         else {
             return false;
         };
-        match self.target_site(to) {
-            Some(site) => self.seed_site_with(site, e),
-            None => false,
+        if self.error_outside(Some(f), Some(e)).is_none() {
+            return false;
         }
+        if let Some(site) = self.target_site(to) {
+            return self.seed_site_with(site, e);
+        }
+        // A closure's `return` without a written result: its errors go where the closure is
+        // stored, once that is known ([`Ctx::bind_stored_fn`]).
+        if let Some(at) = self.fn_sites.closure_return {
+            self.fn_sites.closure_rejects.push((at, e));
+        }
+        false
     }
 
     /// Add what `e` holds to site `site` (the program is checked again with it); false when the
@@ -148,20 +163,43 @@ impl Ctx<'_> {
     /// the type of the site a value of type `t` is stored into or read from.
     pub(super) fn site_core(&self, t: TyId) -> TyId {
         let t = self.ty.core(t).unwrap_or(t);
-        let inner = match self.ty.kind(t) {
-            TyKind::Array(e) => *e,
-            TyKind::Adt(d, args) if args.len() == 2 && Some(*d) == self.prelude_adt("Map") => {
-                args[1]
+        let mut cur = t;
+        for _ in 0..8 {
+            let inner = match self.ty.kind(cur) {
+                TyKind::Array(e) => *e,
+                TyKind::Adt(d, args)
+                    if args.len() == 2
+                        && (Some(*d) == self.prelude_adt("Map")
+                            || Some(*d) == self.prelude_adt("Record")) =>
+                {
+                    args[1]
+                }
+                TyKind::Adt(d, args) if args.len() == 1 && Some(*d) == self.prelude_adt("Set") => {
+                    args[0]
+                }
+                _ => return t,
+            };
+            cur = self.ty.core(inner).unwrap_or(inner);
+            if matches!(self.ty.kind(cur), TyKind::Promise(..)) {
+                return cur;
             }
-            TyKind::Adt(d, args) if args.len() == 1 && Some(*d) == self.prelude_adt("Set") => {
-                args[0]
-            }
-            _ => return t,
-        };
-        let inner = self.ty.core(inner).unwrap_or(inner);
-        match self.ty.kind(inner) {
-            TyKind::Promise(..) => inner,
-            _ => t,
+        }
+        t
+    }
+
+    /// The promise type `t` is or holds as its one promise member (`T | Promise<T>`).
+    fn promise_part(&mut self, t: TyId) -> Option<TyId> {
+        let t = self.ty.core(t).unwrap_or(t);
+        if matches!(self.ty.kind(t), TyKind::Promise(..)) {
+            return Some(t);
+        }
+        let ms = self.union_members(t)?;
+        let mut ps = ms
+            .into_iter()
+            .filter(|m| matches!(self.ty.kind(*m), TyKind::Promise(..)));
+        match (ps.next(), ps.next()) {
+            (Some(p), None) => Some(p),
+            _ => None,
         }
     }
 }
@@ -176,11 +214,18 @@ impl crate::body::FnCx<'_, '_> {
         args: &[ast::Expr],
     ) -> Option<(Span, Span)> {
         let arg = match (name, args) {
-            ("push" | "unshift" | "add" | "has" | "delete" | "includes" | "indexOf", [v])
-            | ("set", [_, v]) => v,
+            ("set", [_, v]) | (_, [v]) => v,
             _ => return None,
         };
-        let site = self.site_of_value(recv)?;
+        // The receiver's site, or where its type is written (`new Box<Promise<T>>()`: a
+        // parameter typed by a type argument of the receiver's class).
+        let site = self.site_of_value(recv).or_else(|| match &recv.kind {
+            crate::hir::ExprKind::Local(l, _) => {
+                let def = self.f.locals.get(l.0 as usize)?;
+                self.cx.written_range(def.span)
+            }
+            _ => None,
+        })?;
         Some((arg.span, site))
     }
 
@@ -259,5 +304,52 @@ impl Ctx<'_> {
     pub(crate) fn written_promise_site(&self, name: Span, promise: TyId) -> Option<Span> {
         let range = *self.fn_sites.written.get(&name)?;
         self.promise_site_in(range, promise)
+    }
+}
+
+impl Ctx<'_> {
+    /// A function value of type `ty` (the closure created at `closure`, when it is one) is
+    /// stored where the type written at `to` is expected: what its promises reject with that
+    /// its type couldn't say (a closure's `return` into no site, a named async function's
+    /// result) goes into the `Promise<T>` written there (`() => T | Promise<T>`).
+    pub(crate) fn bind_stored_fn(&mut self, closure: Option<Span>, ty: TyId, to: Span) {
+        let mut errs: Vec<TyId> = match closure {
+            Some(at) => (self.fn_sites.closure_rejects.iter())
+                .filter(|(c, _)| *c == at)
+                .map(|(_, e)| *e)
+                .collect(),
+            None => vec![],
+        };
+        if let TyKind::FnPtr { ret, .. } = self.ty.kind(ty).clone() {
+            if let Some(p) = self.promise_part(ret) {
+                if let TyKind::Promise(_, e) = *self.ty.kind(p) {
+                    if e != self.ty.never {
+                        errs.push(e);
+                    }
+                }
+            }
+        }
+        if errs.is_empty() {
+            return;
+        }
+        let Some(ids) = self.fn_sites.by_file.get(&to.file) else {
+            return;
+        };
+        let site = (ids.iter().map(|&i| self.fn_sites.sites[i]))
+            .filter(|(s, g)| {
+                s.lo >= to.lo && s.hi <= to.hi && matches!(self.ty.kind(*g), TyKind::Promise(..))
+            })
+            .max_by_key(|(s, _)| s.lo)
+            .map(|(s, _)| s);
+        if let Some(site) = site {
+            for e in errs {
+                self.seed_site_with(site, e);
+            }
+        }
+    }
+
+    /// Where the type of the declaration named at `name` is written.
+    pub(crate) fn written_range(&self, name: Span) -> Option<Span> {
+        self.fn_sites.written.get(&name).copied()
     }
 }

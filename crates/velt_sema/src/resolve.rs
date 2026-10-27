@@ -182,6 +182,7 @@ impl Ctx<'_> {
                 readonly: f.readonly,
                 optional: f.optional,
             });
+            self.note_written_type(f.name.span, f.ty.span);
             spans.push(f.name.span);
         }
         if out.iter().any(|f| f.ty == self.ty.error) {

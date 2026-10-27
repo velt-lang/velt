@@ -104,6 +104,10 @@ pub(crate) struct FnSites {
     /// Async closures checked for a function type with a promise member in its result: the
     /// argument's span and the closure's (`promise_sites`).
     pub async_args: Vec<(Span, Span)>,
+    /// The closure (by its span) whose `return` without a site is being checked, and what the
+    /// promises returned there reject with that its type didn't allow (`promise_sites`).
+    pub closure_return: Option<Span>,
+    pub closure_rejects: Vec<(Span, TyId)>,
     /// The site each closure (by its span) was created for.
     pub(super) closure_sites: FxHashMap<Span, Span>,
     /// The closures that end in a rest parameter (`(...args) => …`): their function types do.

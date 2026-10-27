@@ -158,9 +158,14 @@ impl FnCx<'_, '_> {
         if self.f.is_async && self.f.yield_ty.is_none() && self.adopts_promise(ret) {
             return self.async_returned(e, ret);
         }
-        // Stored into the site of the written result type (`throws::fn_flows`).
+        // Stored into the site of the written result type (`throws::fn_flows`); a closure's
+        // without one goes where the closure is stored (`throws::promise_sites`).
         let site = self.return_site(ret);
-        self.stored_into(site, |s| s.expr_coerce(e, ret, Want::Move))
+        let at = site.is_none().then_some(self.f.closure_at).flatten();
+        let outer = std::mem::replace(&mut self.cx.fn_sites.closure_return, at);
+        let h = self.stored_into(site, |s| s.expr_coerce(e, ret, Want::Move));
+        self.cx.fn_sites.closure_return = outer;
+        h
     }
 
     /// Can an async function returning `ret` adopt a returned promise? Not when `ret` is itself

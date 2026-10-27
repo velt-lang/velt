@@ -534,7 +534,11 @@ fn iface_methods(cx: &mut Ctx, d: DefId) {
                 gp.name.span,
             );
         }
+        // No promise sites in an interface method's parameters: what a call stores there would
+        // not reach the implementations' own parameter types (`throws::promise_sites`).
+        let outer = std::mem::replace(&mut cx.fn_sites.async_ret, true);
         let ps = params(cx, &m.sig.params, &env);
+        cx.fn_sites.async_ret = outer;
         // Where its result is written, for the site there (`throws::promise_sites`).
         if let Some(t) = &m.sig.ret {
             cx.note_written_type(name.span, t.span);

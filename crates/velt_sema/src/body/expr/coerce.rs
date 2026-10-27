@@ -23,9 +23,6 @@ impl FnCx<'_, '_> {
         match self.try_coerce(h, exp) {
             Ok(h) => h,
             Err(h) => {
-                // `reject(v)` of a promise without a written error type: the program is checked
-                // again with `v`'s type in it, which drops this report (`throws::promise_sites`).
-                self.cx.seed_reject(h.ty, exp);
                 self.report_mismatch(exp, &h);
                 h
             }
@@ -509,6 +506,11 @@ impl FnCx<'_, '_> {
     }
 
     pub fn report_mismatch(&mut self, expected: TyId, found: &hir::Expr) {
+        // `reject(v)` of a promise without a written error type, a union with a `Promise<T>`
+        // member or a closure's `return`: the program is checked again with what was stored
+        // there, which drops this report (`throws::promise_sites`).
+        self.cx.seed_reject(found.ty, expected);
+        self.cx.seed_promise_site(found.ty, expected);
         // The comparisons don't see variables in the fields of anonymous object types yet
         // (`throws::vars`): such a mismatch may come from them.
         if self.cx.anon_vars_may_mismatch(expected, found.ty) {

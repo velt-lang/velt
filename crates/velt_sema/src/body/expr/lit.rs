@@ -184,6 +184,8 @@ impl FnCx<'_, '_> {
                 self.mk(H::Lit(hir::Lit::Null), t, span)
             }
             Some(t) if !self.cx.ty.has_error(t) => {
+                let null = self.cx.ty.null_alone();
+                self.cx.seed_reject(null, t);
                 let tn = self.cx.display(t);
                 self.cx.error(
                     Diagnostic::error("mismatched types", span)
@@ -301,6 +303,12 @@ impl FnCx<'_, '_> {
 
     /// `null` / `undefined` (`what`) where `t` does not allow it (TS2322).
     fn nothing_mismatch(&mut self, what: &str, t: TyId, span: Span) -> hir::Expr {
+        // `reject(null)` of a promise without a written error type (`throws::promise_sites`).
+        let nothing = match what {
+            "null" => self.cx.ty.null_alone(),
+            _ => self.cx.ty.undefined(),
+        };
+        self.cx.seed_reject(nothing, t);
         let param = |s: &Self| {
             s.optional_slots
                 .iter()

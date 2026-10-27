@@ -33,7 +33,8 @@ impl FnCx<'_, '_> {
         let mut h = match ann {
             // Stored into the variable's site (`throws::fn_flows`).
             Some(t) => {
-                let site = v.ty.as_ref().and_then(|w| self.cx.site_in(w.span, t));
+                let site =
+                    (v.ty.as_ref()).and_then(|w| self.cx.site_in(w.span, t).or(Some(w.span)));
                 self.stored_into(site, |s| s.expr_coerce(e, t, Want::Borrow))
             }
             None => self.copy_init(e, name, Want::Borrow),

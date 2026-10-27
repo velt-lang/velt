@@ -490,7 +490,8 @@ impl FnCx<'_, '_> {
                 }
                 Some(t) => {
                     // Stored into the variable's site (`throws::fn_flows`).
-                    let site = v.ty.as_ref().and_then(|w| self.cx.site_in(w.span, t));
+                    let site =
+                        (v.ty.as_ref()).and_then(|w| self.cx.site_in(w.span, t).or(Some(w.span)));
                     self.stored_into(site, |s| s.expr_coerce(e, t, Want::Move))
                 }
                 None => self.copy_init(e, name, Want::Move),

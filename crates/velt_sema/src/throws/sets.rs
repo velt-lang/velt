@@ -73,6 +73,20 @@ impl Ctx<'_> {
         if flat.is_empty() {
             return None;
         }
+        // `null` and `undefined` and nothing else can't form a type yet: any thrown value.
+        let nothings =
+            |cx: &Self, t: TyId| matches!(cx.ty.kind(t), TyKind::Option(p, _) if *p == cx.ty.never);
+        let kinds: Vec<_> = (flat.iter())
+            .filter_map(|t| match self.ty.kind(*t) {
+                TyKind::Option(p, n) if *p == self.ty.never => Some(*n),
+                _ => None,
+            })
+            .collect();
+        if flat.iter().all(|t| nothings(self, *t)) && kinds.windows(2).any(|w| w[0] != w[1]) {
+            if let Some(defs) = self.any {
+                return Some(self.ty.intern(TyKind::Dyn(defs.unknown, vec![])));
+            }
+        }
         Some(self.union_of(&flat, false, Span::DUMMY))
     }
 

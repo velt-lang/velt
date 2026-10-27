@@ -175,10 +175,24 @@ impl FnLower<'_, '_> {
 }
 
 impl FnLower<'_, '_> {
+    /// The `null` (`nothing` is `Null`) or `undefined` of option type `to`: its own nothing, or
+    /// (`T | null | undefined`, an option of a `T | null`) its payload's.
+    fn nothing_into(&mut self, to: TyId, nothing: velt_sema::hir::Nothing) -> Operand {
+        match self.cx.kind(to) {
+            TyKind::Option(mid, own)
+                if own != nothing && matches!(self.cx.kind(mid), TyKind::Option(..)) =>
+            {
+                let inner = self.nothing_into(mid, nothing);
+                self.some_of(to, inner)
+            }
+            _ => self.none_value(to),
+        }
+    }
+
     /// [`FnLower::widen_error`] into the option type `to` (payload `tb`): an option `from` is
     /// branched on (its `null` is `to`'s), any other value is widened into the payload.
     fn widen_into_option(&mut self, v: Operand, from: TyId, to: TyId, tb: TyId) -> Operand {
-        let TyKind::Option(fa, _) = self.cx.kind(from) else {
+        let TyKind::Option(fa, nothing) = self.cx.kind(from) else {
             let w = self.widen_error(v, from, tb);
             return self.some_of(to, w);
         };
@@ -199,7 +213,7 @@ impl FnLower<'_, '_> {
             self.goto(join);
         }
         self.switch_to(none);
-        let n = self.none_value(to);
+        let n = self.nothing_into(to, nothing);
         self.assign(Place::local(dst), Rvalue::Use(n));
         self.goto(join);
         self.switch_to(join);
