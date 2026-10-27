@@ -1,0 +1,55 @@
+// velt:collections/concurrent_map reusing emptied leaves while writers race in one hot range:
+// 16 writers interleave their keys, and each sets a burst of 40 (checking each with `get`), then
+// deletes them (checking with `has`). Their leaves split, empty, go to the free list and come back
+// all the time. A writer that reached a leaf before it was freed must fail to take it once it is
+// reused for another range (the version the free adds): otherwise its key lands in the wrong
+// leaf, and its own `get` misses it. At the end the range is empty.
+
+import { ConcurrentMap } from "velt:collections/concurrent_map";
+
+const WRITERS: u64 = 16;
+const BURST: u64 = 40;
+const CYCLES: u64 = 30000;
+
+async function writer(m: shared<ConcurrentMap>, t: u64): Promise<u64> {
+  let wrong: u64 = 0;
+  for (let c: u64 = 0; c < CYCLES; c++) {
+    for (let j: u64 = 0; j < BURST; j++) {
+      const k = j * WRITERS + t + 1;
+      m.set(k, k + c);
+      if (m.get(k) != k + c) {
+        wrong++;
+      }
+    }
+    for (let j: u64 = 0; j < BURST; j++) {
+      const k = j * WRITERS + t + 1;
+      if (m.add(k, 0) != k + c) {
+        wrong++;
+      }
+      if (!m.delete(k) || m.has(k)) {
+        wrong++;
+      }
+    }
+  }
+  return wrong;
+}
+
+async function main() {
+  // Room for a few times the 640 keys present at most: splits run on reused nodes.
+  const s = shared(ConcurrentMap.create(2000));
+  const ws: Promise<u64>[] = [];
+  for (let t: u64 = 0; t < WRITERS; t++) {
+    ws.push(spawn(writer(s, t)));
+  }
+  let wrong: u64 = 0;
+  for (const w of await Promise.all(ws)) {
+    wrong += w;
+  }
+  let left: u64 = 0;
+  for (let k: u64 = 0; k <= BURST * WRITERS + 1; k++) {
+    if (s.has(k)) {
+      left++;
+    }
+  }
+  console.log("wrong", wrong, "left", left);
+}

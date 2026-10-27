@@ -456,8 +456,12 @@ range, and pushes the leaf and the inner nodes in between (each left with one ch
 list. The list is a stack of node indices in one `Atomic<u64>`, with a count of changes in its
 high half against ABA, linked through the free nodes' meta words. A node's version only grows,
 through being freed and reused too, so a reader holding a stale index fails its check as with
-a split. A split's new node may be initialized without its latch: it is reachable only through
-its new parent, which is unlocked after. Leaves are not merged, and the root never shrinks.
+a split. The bump on free is what keeps writers out of reused nodes: a `set` that stopped at a
+leaf after validating its parent takes it with `tryLockAt` at the version it read, and without
+the bump would put its key into a leaf of another range (readers would be safe without it, since
+a freed node's range was empty). A split's new node may be initialized without its latch: it is
+reachable only through its new parent, which is unlocked after, and anyone still holding it
+from before the free holds an older version. Leaves are not merged, and the root never shrinks.
 
 What the map does not do yet: an ordered walk (`range`, iteration, `size`; leaves are unsorted
 and unlinked). A leaf split sorts its 56 pairs with an insertion sort into two small arrays.

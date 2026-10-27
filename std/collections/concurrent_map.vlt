@@ -759,7 +759,13 @@ export class ConcurrentMap {
         continue;
       }
       if (depth > 0 && (meta & LEN_MASK) == 1) {
-        return DEL_LAST;
+        // Only for a key the leaf holds: `tryDeleteLast` takes the whole path and bumps every
+        // version, which an absent key needs not cost concurrent readers.
+        const i = this.findSlot(base, k);
+        if (!this.isUnchanged(base, v)) {
+          return DEL_RETRY;
+        }
+        return i < LEAF_CAP ? DEL_LAST : DEL_ABSENT;
       }
       return this.deleteIn(base, v, meta, k);
     }
@@ -840,6 +846,12 @@ export class ConcurrentMap {
       this.w[leaf + 1].store(meta - 1, "relaxed");
       this.removeChild(path[top], k);
     }
+    // Every node is unlocked with its version bumped, the freed ones too, before `release`. A
+    // reused node is not locked or bumped again: its version is already newer than any a stale
+    // holder read before the free. That keeps writers out of reused nodes: a `set` that stopped
+    // at a freed leaf after validating its parent fails `tryLockAt` at the version it read, where
+    // it would otherwise put its key into a leaf of another range (or an unlinked one). Readers
+    // would be safe without it, since a freed node's range was empty.
     for (let j = top; j < end; j += 2) {
       this.unlock(path[j] * NODE, path[j + 1]);
     }
