@@ -1,0 +1,22 @@
+1 a
+5
+3
+1 a false
+count 2
+name a
+7 a true
+9 y
+any get count
+any get name
+any get count
+get count
+get name
+get on
+set count=2
+set on=true
+get count
+get name
+set count=7
+get count
+get name
+get on
