@@ -86,7 +86,8 @@ fn velt_class(ty: &str) -> String {
     }
 }
 
-/// `symbol -> (params, result)` of every `declare function` under `std/`.
+/// `symbol -> (params, result)` of every `declare function` under `std/` (not `declare system
+/// function`).
 fn velt_declarations() -> BTreeMap<String, (Sig, PathBuf)> {
     let mut paths = vec![];
     files(&repo().join("std"), "vlt", &mut paths);
@@ -105,6 +106,11 @@ fn velt_declarations() -> BTreeMap<String, (Sig, PathBuf)> {
             let end = decl.find(';').expect("declaration ends with `;`");
             rest = &decl[end..];
             let decl = &decl[..end];
+            // A system function binds the C library, not the runtime
+            // (docs/reference/system-functions.md).
+            if decl.starts_with("declare system ") {
+                continue;
+            }
             let Some(f) = decl.find("function ") else {
                 continue;
             };
