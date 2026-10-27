@@ -7,6 +7,7 @@ function show(s: string) {
   }
   console.log(s.length, parts.join(","));
 }
+
 function main() {
   show("a😀b");
   show("é日");
@@ -17,6 +18,23 @@ function main() {
   show(String.fromCodePoint());
   show(String.fromCodePoint(0, 0x10ffff));
   console.log(String.fromCodePoint(0x1f600) == "😀", String.fromCodePoint(0xd83d, 0xde00) == "😀");
-  console.log(JSON.stringify(String.fromCodePoint(0xd800)), JSON.stringify(String.fromCodePoint(0xdfff, 0x61)));
+  console.log(
+    JSON.stringify(String.fromCodePoint(0xd800)),
+    JSON.stringify(String.fromCodePoint(0xdfff, 0x61)),
+  );
+  // The result is a `number | undefined`, as in TypeScript.
+  const b: number = "😀".codePointAt(0) ?? 0;
+  const c: number = "x".codePointAt(0)!;
+  let d: number | undefined;
+  d = "y".codePointAt(0);
+  const m = new Map<string, number | undefined>();
+  m.set("k", "z".codePointAt(0));
+  console.log(b, c, d, m.get("k"), Math.max("a".codePointAt(0) ?? 0, 1.5), at("A", 0));
+  // Through `any`.
+  const a: any = "a😀";
+  console.log(a.codePointAt(1), a.codePointAt(), a.codePointAt(9));
 }
 
+function at(s: string, i: i64): number | undefined {
+  return s.codePointAt(i);
+}
