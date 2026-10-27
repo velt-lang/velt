@@ -6,7 +6,7 @@
 //! `Object.keys` and `for...in` list `k` once, and `JSON.stringify` writes what the getter
 //! returns (a property with only a setter is left out).
 
-use velt_sema::hir::{DefId, DynMemberKind, TyId, TyKind};
+use velt_sema::hir::{DefId, DynMemberKind, Nothing, TyId, TyKind};
 
 use super::FnLower;
 use crate::vir::{Operand, Place, Ty};
@@ -108,6 +108,9 @@ impl FnLower<'_, '_> {
         let any = self.cx.any_ty();
         let avt = self.cx.ty(any);
         let out = Place::local(self.temp(avt));
+        // `undefined` first: boxing a union result assigns it per member, and the verifier
+        // sees no member for the paths a union's switch never takes.
+        self.any_nothing_into(Nothing::Undefined, &out);
         let this = match self.cx.ty(ty) {
             Ty::Agg(_) => self.addr(place.clone()),
             _ => Operand::Copy(place.clone()),

@@ -289,7 +289,7 @@ impl Ctx<'_> {
 /// (own ones first, then each base class's that are not overridden), then its `readonly`
 /// fields, when a member of an `any` is read, called or written; `None` otherwise.
 pub(crate) fn dyn_members(cx: &mut Ctx) -> Option<FxHashMap<DefId, Vec<DynMember>>> {
-    if !cx.any.is_some_and(|a| a.members) {
+    if !cx.any.is_some_and(|a| a.members) && !accessor_literals_dynamic(cx) {
         return None;
     }
     let mut out = FxHashMap::default();
@@ -369,6 +369,24 @@ pub(crate) fn dyn_members(cx: &mut Ctx) -> Option<FxHashMap<DefId, Vec<DynMember
         }
     }
     Some(out)
+}
+
+/// Does the program convert values to `any` and make object literals with accessors? Then
+/// printing, `JSON.stringify` and `Object.keys` of an `any` that holds one (also inside
+/// another object) need its accessors listed, even where no member is read through `any`.
+fn accessor_literals_dynamic(cx: &Ctx) -> bool {
+    if !cx.any.is_some_and(|a| a.imp.is_some()) {
+        return false;
+    }
+    cx.literal_structs.iter().any(|&d| {
+        cx.adt(d).is_some_and(|a| {
+            (a.implements.iter()).any(|b| {
+                cx.iface(b.iface).is_some_and(|i| {
+                    (i.methods.iter()).any(|m| m.is_getter || m.name.starts_with("set "))
+                })
+            })
+        })
+    })
 }
 
 /// The getters and setters of an object literal that implements an interface

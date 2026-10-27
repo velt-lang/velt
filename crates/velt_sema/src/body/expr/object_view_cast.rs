@@ -95,20 +95,4 @@ impl FnCx<'_, '_> {
         let (a, b) = (self.cx.widened(a), self.cx.widened(b));
         probe(self, a, b) || probe(self, b, a)
     }
-
-    /// A value of type `t` becomes dynamic: when it is an interface value with getters (an
-    /// object literal's, whose struct holds them as functions), printing, `JSON.stringify` and
-    /// `Object.keys` of the `any` need its accessors listed (`Program::dyn_members`, #1538).
-    pub(super) fn note_accessors_dynamic(&mut self, t: TyId) {
-        let TyKind::Dyn(d, _) = self.cx.ty.kind(t) else {
-            return;
-        };
-        let getters = self
-            .cx
-            .iface(*d)
-            .is_some_and(|i| i.methods.iter().any(|m| m.is_getter));
-        if getters {
-            self.cx.note_dyn_members();
-        }
-    }
 }
