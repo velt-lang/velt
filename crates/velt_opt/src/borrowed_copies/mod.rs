@@ -329,12 +329,14 @@ impl Cx<'_> {
                     return false;
                 }
                 // Read through a family pointer: a member's data word, or any part of one
-                // (text is read a byte at a time), may be one.
+                // wider than two bytes, may be one; text is read a byte at a time (`u8`, or a
+                // field of `velt_vir::STR_TEXT_AGG_NAME`).
                 match (t, &p.proj[1..]) {
                     (Ty::Agg(a), [Proj::Field(0)]) if *a == STR_AGG => true,
                     (Ty::Agg(a), [Proj::Field(_)]) if *a == STR_AGG => false,
-                    (t, []) => !matches!(t, Ty::U8 | Ty::I8 | Ty::U16 | Ty::I16 | Ty::Bool),
-                    _ => true,
+                    _ => !crate::locals::place_ty(self.aggs, self.func, p).is_some_and(|t| {
+                        matches!(t, Ty::U8 | Ty::I8 | Ty::U16 | Ty::I16 | Ty::Bool)
+                    }),
                 }
             }
             Some(Proj::Cast(_)) => f.members.contains(&p.local),
