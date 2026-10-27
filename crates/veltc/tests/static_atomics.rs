@@ -2,8 +2,22 @@
 //! `lower/static_atomic.rs`): its uses reach no module state, so they never take the module lock
 //! (rt_abi.md `velt_rt_module_state`), which would serialize every task that uses the atomic.
 
+use std::path::Path;
+
 mod no_window;
 mod test_dir;
+
+fn copy_tree(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for entry in std::fs::read_dir(from).unwrap().flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            copy_tree(&path, &to.join(entry.file_name()));
+        } else {
+            std::fs::copy(&path, to.join(entry.file_name())).unwrap();
+        }
+    }
+}
 
 /// The VIR of `src`, compiled as `main.vlt`.
 fn vir(src: &str) -> String {
@@ -50,4 +64,39 @@ fn a_computed_starting_value_is_kept_in_the_module_state() {
     );
     let v = vir(&src);
     assert!(v.contains("velt_rt_module_state"), "{v}");
+}
+
+/// A std module (std is copied with a probe added, used through `$VELT_STD`, as
+/// gated_functions.rs does): its literal-start atomic is one word every call changes, and a
+/// computed start, which std evaluates at each use, compiles too (it reached lowering's
+/// static-atomic path and stopped with an `ICE:`).
+#[test]
+fn std_constants_with_literal_and_computed_starts() {
+    let dir = test_dir::TestDir::new();
+    let std = dir.path().join("std");
+    copy_tree(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std"),
+        &std,
+    );
+    let probe = "function start(): u64 {\n  return 10;\n}\nconst ONE = new Atomic<u64>(0);\nconst EACH = new Atomic<u64>(start());\n\nexport function bump(): u64 {\n  return ONE.add(1) + 1;\n}\n\nexport function each(): u64 {\n  return EACH.add(1) + 1;\n}\n";
+    std::fs::write(std.join("zz_static_atomic.vlt"), probe).unwrap();
+    let main = "import { bump, each } from \"velt:zz_static_atomic\";\n\nfunction main() {\n  console.log(bump(), bump(), each());\n}\n";
+    std::fs::write(dir.path().join("main.vlt"), main).unwrap();
+    for release in [false, true] {
+        let mut args = vec!["run"];
+        if release {
+            args.push("--release");
+        }
+        args.push("main.vlt");
+        let out = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
+            .args(&args)
+            .env("VELT_STD", &std)
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(out.status.success(), "release={release}: {stderr}");
+        assert_eq!(stdout, "1 2 11\n", "release={release}: {stderr}");
+    }
 }

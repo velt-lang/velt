@@ -36,7 +36,11 @@ impl FnLower<'_, '_> {
         }
         let found = match self.cx.hir.def(d) {
             hir::Def::Global(g) if g.slot.is_none() => match &g.init.kind {
-                K::AdtLit { def, fields, .. } if is_atomic(self.cx, *def) && fields.len() == 1 => {
+                // A computed starting value in std, whose constants are not kept in the module
+                // state, stays evaluated at each use (sema `static_atomic_init`).
+                K::AdtLit { def, fields, .. }
+                    if is_atomic(self.cx, *def) && fields.len() == 1 && literal(&fields[0]) =>
+                {
                     Some((g.name.clone(), g.ty, fields[0].clone()))
                 }
                 _ => None,
@@ -65,5 +69,17 @@ impl FnLower<'_, '_> {
         });
         self.cx.static_atomics.insert(d, id);
         id
+    }
+}
+
+/// A literal, or a negated number literal (sema's `is_literal`).
+fn literal(e: &hir::Expr) -> bool {
+    match &e.kind {
+        K::Lit(_) => true,
+        K::Unary {
+            op: hir::UnOp::Neg,
+            expr,
+        } => matches!(expr.kind, K::Lit(_)),
+        _ => false,
     }
 }
