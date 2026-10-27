@@ -116,9 +116,22 @@ fn copies(func: &Function, p: Local) -> Vec<Option<Vec<Proj>>> {
             cand[i] = false;
         }
     }
-    // Each candidate's prefix: every assignment of it must give the same one.
+    // Each candidate's prefix: every assignment of it must give the same one. A copy of a
+    // candidate not yet resolved waits for it (definitions are in block order, not dataflow
+    // order); once nothing changes, every name is checked against all its assignments again.
     let mut names: Vec<Option<Vec<Proj>>> = vec![None; n];
     names[p.0 as usize] = Some(vec![]);
+    let prefix_of = |names: &[Option<Vec<Proj>>], from: &Option<Source>| {
+        from.as_ref().and_then(|(src, proj)| {
+            let base = names[*src].as_ref()?;
+            if proj.is_empty() {
+                return Some(base.clone());
+            }
+            // `&(*src as T).f…`: only through a plain name of `p` (a prefix of a prefix would
+            // need its types checked twice).
+            base.is_empty().then(|| proj.clone())
+        })
+    };
     loop {
         let mut changed = false;
         for (l, from) in &defs {
@@ -126,16 +139,10 @@ fn copies(func: &Function, p: Local) -> Vec<Option<Vec<Proj>>> {
             if l == p.0 as usize || !cand[l] {
                 continue;
             }
-            let got = from.as_ref().and_then(|(src, proj)| {
-                let base = names[*src].as_ref()?;
-                if proj.is_empty() {
-                    return Some(base.clone());
-                }
-                // `&(*src as T).f…`: only through a plain name of `p` (a prefix of a prefix
-                // would need its types checked twice).
-                base.is_empty().then(|| proj.clone())
-            });
-            match (got, &names[l]) {
+            if matches!(from, Some((src, _)) if names[*src].is_none() && cand[*src]) {
+                continue;
+            }
+            match (prefix_of(&names, from), &names[l]) {
                 (Some(g), None) => {
                     names[l] = Some(g);
                     changed = true;
@@ -143,12 +150,23 @@ fn copies(func: &Function, p: Local) -> Vec<Option<Vec<Proj>>> {
                 (Some(g), Some(cur)) if g == *cur => {}
                 _ => {
                     // Another kind of assignment, or two different parts: not a name.
-                    if names[l].is_some() || cand[l] {
-                        names[l] = None;
-                        cand[l] = false;
-                        changed = true;
-                    }
+                    names[l] = None;
+                    cand[l] = false;
+                    changed = true;
                 }
+            }
+        }
+        if changed {
+            continue;
+        }
+        // Settled: a name with an assignment that still gives no prefix (a copy of a candidate
+        // that never resolved, as in a cycle of copies) or another one is no name.
+        for (l, from) in &defs {
+            let l = *l;
+            if l != p.0 as usize && names[l].is_some() && prefix_of(&names, from) != names[l] {
+                names[l] = None;
+                cand[l] = false;
+                changed = true;
             }
         }
         if !changed {
@@ -192,7 +210,8 @@ fn canon(aggs: &[AggLayout], names: &[Option<Vec<Proj>>], p: Local, pl: &Place) 
 }
 
 /// The fields of `*p` worth reading once: scalars read in a loop, within the dereferenceable
-/// bytes, overlapping no place whose address is taken or that is written. `names`: the locals
+/// bytes, overlapping no place that is written (a taken address does not stop it: `frozen`
+/// holds through every pointer, module docs). `names`: the locals
 /// that name `p`'s pointee (`copies`).
 fn scan(
     aggs: &[AggLayout],

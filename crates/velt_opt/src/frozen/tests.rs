@@ -334,3 +334,94 @@ fn reads_through_a_field_pointer_once() {
     );
     assert!(still_addr, "{f:?}");
 }
+
+/// `q2 = q` sits in a block before the one assigning `q = &(*p).0` (blocks are not in dataflow
+/// order): `q2` still names the field, so the loop's bound read through it is read once.
+#[test]
+fn a_copy_before_its_source_in_block_order_still_names_the_field() {
+    let mut pb = ProgramBuilder::new();
+    let pair = pb.agg("pair", 16, 8, &[(Ty::U64, 0), (Ty::U64, 8)]);
+    let holder = pb.agg("holder", 16, 8, &[(Ty::Agg(pair), 0)]);
+    let mut fb = FuncBuilder::internal("sum2", &[Ty::Ptr], Ty::U64);
+    let p = fb.param(0);
+    let (q, q2, i, c) = (
+        fb.local(Ty::Ptr),
+        fb.local(Ty::Ptr),
+        fb.local(Ty::U64),
+        fb.local(Ty::Bool),
+    );
+    let (entry, copy, def, head, body, exit) = (
+        fb.block(),
+        fb.block(),
+        fb.block(),
+        fb.block(),
+        fb.block(),
+        fb.block(),
+    );
+    fb.assign(entry, i, Rvalue::Use(int(0, Ty::U64)));
+    fb.goto(entry, def);
+    fb.assign(copy, q2, Rvalue::Use(copy_local(q)));
+    fb.goto(copy, head);
+    fb.assign(
+        def,
+        q,
+        Rvalue::AddrOf(Place {
+            local: p,
+            proj: vec![Proj::Deref(Ty::Agg(holder)), Proj::Field(0)],
+        }),
+    );
+    fb.goto(def, copy);
+    fb.assign(
+        head,
+        c,
+        bin(BinOp::Lt, copy_local(i), copy_place(through(q2, pair, 0))),
+    );
+    fb.branch(head, c, body, exit);
+    fb.assign(body, i, bin(BinOp::Add, copy_local(i), int(1, Ty::U64)));
+    fb.goto(body, head);
+    fb.ret(exit, copy_local(i));
+    let mut f = fb.finish();
+    f.param_attrs = vec![FROZEN];
+    pb.add(f);
+    let mut fb = FuncBuilder::export("main", &[Ty::U64], Ty::U64);
+    let n = fb.param(0);
+    let (h, ph, r) = (
+        fb.local(Ty::Agg(holder)),
+        fb.local(Ty::Ptr),
+        fb.local(Ty::U64),
+    );
+    let b = fb.block();
+    fb.push(
+        b,
+        Stmt::Assign(
+            Place {
+                local: h,
+                proj: vec![Proj::Field(0), Proj::Field(0)],
+            },
+            Rvalue::Use(copy_local(n)),
+        ),
+    );
+    fb.assign(b, ph, Rvalue::AddrOf(Place::local(h)));
+    let b = fb.call(b, Callee::Func(FuncId(0)), vec![copy_local(ph)], Some(r));
+    fb.ret(b, copy_local(r));
+    pb.add(fb.finish());
+    let before = pb.finish();
+    let mut after = before.clone();
+    let aggs = after.aggs.clone();
+    assert!(run(&aggs, &mut after.funcs[0]));
+    assert_valid(&after);
+    assert_eq!(run_main(&after, 7), run_main(&before, 7));
+    // The loop (head and body) no longer reads through a pointer.
+    let f = &after.funcs[0];
+    let reads_in_loop = [3usize, 4]
+        .iter()
+        .flat_map(|&b| &f.blocks[b].stmts)
+        .any(|s| {
+            let mut hit = false;
+            stmt_operands(s, &mut |op| {
+                hit |= matches!(op, Operand::Copy(pl) if !pl.proj.is_empty());
+            });
+            hit
+        });
+    assert!(!reads_in_loop, "{f:?}");
+}
