@@ -1,0 +1,34 @@
+// console.log of a string-keyed record with symbol keys (#1629): Node 26 writes them after the
+// string keys as `Symbol(d): v`; a record literal takes well-known symbol keys too.
+
+const KEY: unique symbol = Symbol("key");
+function show() {
+  const r: Record<string | symbol, number> = { a: 1 };
+  r[KEY] = 2;
+  r[Symbol("x y")] = 3;
+  r[Symbol()] = 4;
+  console.log(r);
+  const only: Record<string | symbol, string> = {};
+  only[KEY] = "v";
+  console.log(only);
+  console.log([only]);
+  console.log({ nested: only });
+  const empty: Record<string, number> = {};
+  console.log(empty, { ...r });
+  const nul: Record<string | symbol, any> = Object.create(null);
+  nul[KEY] = { deep: [1, 2] };
+  nul.z = true;
+  console.log(nul);
+  delete r[KEY];
+  console.log(r);
+}
+
+function literal() {
+  const r: Record<string | symbol, number> = { a: 1, [Symbol.iterator]: 4, [Symbol.toStringTag]: 5 };
+  console.log(r[Symbol.iterator], Object.keys(r), Object.getOwnPropertySymbols(r));
+  const q: Record<string, string> = { "[Symbol.foo]": "x" };
+  console.log(q, Object.keys(q));
+}
+
+show();
+literal();

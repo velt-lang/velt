@@ -135,6 +135,7 @@ impl FnCx<'_, '_> {
         let on_record = match name {
             "defineProperty" => self.record_define_property(args, span),
             "getOwnPropertySymbols" => self.record_own_keys(args, "__ownSymbols", span),
+            "getOwnPropertyDescriptor" => self.record_descriptor(args, span),
             _ => None,
         };
         if on_record.is_some() {

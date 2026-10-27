@@ -4,16 +4,20 @@
 // never names it neither checks nor runs a test for a proxy.
 export { PropertyDescriptor, Proxy, ProxyHandler, Reflect } from "velt:proxy";
 export {
+  __anyDeleteKey,
   __anyDeleteProxy,
   __anyDeleteSym,
   __anyEntriesProxy,
   __anyForInHas,
   __anyForInKeys,
+  __anyGetKey,
   __anyGetSym,
   __anyHasOwnProxy,
   __anyIsArrayProxy,
   __anyHasOwnSym,
+  __anyHasKey,
   __anyHasSym,
+  __anySetKey,
   __anySetSym,
   __anyValuesProxy,
   __HasOwnPropertyProxy,

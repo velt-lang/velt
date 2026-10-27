@@ -242,7 +242,7 @@ impl FnCx<'_, '_> {
         if k != self.cx.ty.str_ || plain {
             return Err(None);
         }
-        // The methods of std/prelude/global/record_symbols.vlt, which a program loads when it
+        // The methods of std/record/symbols.vlt, which a program loads when it
         // mentions symbols: without them, a symbol key is the type error it was.
         let keyed = keyed_method(method).filter(|m| self.has_record_method(m));
         let h = self.payload_expr(e, None, want);
@@ -407,7 +407,7 @@ fn well_known_symbol(id: &ast::Ident) -> Option<ast::Expr> {
 }
 
 impl FnCx<'_, '_> {
-    /// Does the prelude's `Record` have the method `name` (std/prelude/global/record_symbols.vlt
+    /// Does the prelude's `Record` have the method `name` (std/record/symbols.vlt
     /// adds the `Keyed` ones when the program loads it)?
     pub(super) fn has_record_method(&mut self, name: &str) -> bool {
         let Some(d) = self.cx.prelude_adt("Record") else {

@@ -21,6 +21,9 @@ pub(super) enum WriteKey {
     /// A symbol constant: the name of the member it keys and the symbol (`__anySetSym`, so a
     /// proxy's `set` trap sees the symbol).
     Sym(hir::Expr, hir::Expr),
+    /// A key that is a symbol or `string | symbol` at run time, as an `any`, in a program with
+    /// proxies (`__anySetKey`, velt:proxy/ops: a proxy's traps and a record see the symbol).
+    Keyed(hir::Expr),
 }
 
 impl FnCx<'_, '_> {
@@ -99,6 +102,7 @@ impl FnCx<'_, '_> {
                 WriteKey::Str(k) => WriteKey::Str(self.hoist_dynamic(k, &mut stmts)),
                 WriteKey::Num(k) => WriteKey::Num(self.hoist_dynamic(k, &mut stmts)),
                 WriteKey::Sym(n, k) => WriteKey::Sym(n, self.hoist_dynamic(k, &mut stmts)),
+                WriteKey::Keyed(k) => WriteKey::Keyed(self.hoist_dynamic(k, &mut stmts)),
             };
             (obj, key)
         } else {
@@ -257,6 +261,10 @@ impl FnCx<'_, '_> {
                 let args = vec![obj.clone(), n.clone(), k.clone()];
                 self.prelude_hir_call("__anyGetSym", args, any, span)
             }
+            WriteKey::Keyed(k) => {
+                let args = vec![obj.clone(), k.clone()];
+                self.prelude_hir_call("__anyGetKey", args, any, span)
+            }
         }
     }
 
@@ -275,6 +283,7 @@ impl FnCx<'_, '_> {
             WriteKey::Sym(n, k) => {
                 self.prelude_hir_call("__anySetSym", vec![obj, n, k, v], unit, span)
             }
+            WriteKey::Keyed(k) => self.prelude_hir_call("__anySetKey", vec![obj, k, v], unit, span),
         }
     }
 
@@ -347,9 +356,13 @@ impl FnCx<'_, '_> {
         if self.cx.ty.is_numeric(kt) {
             return Some(WriteKey::Num(self.coerce_number(k, f64_)));
         }
-        if self.string_or_symbol(k.ty) {
+        if self.symbolic_key_type(k.ty) {
             let any = self.any_ty()?;
-            return Some(WriteKey::Str(self.coerce(k, any)));
+            let k = self.coerce(k, any);
+            if self.uses_proxy() {
+                return Some(WriteKey::Keyed(k));
+            }
+            return Some(WriteKey::Str(k));
         }
         // A key of a type parameter's keys (`r[k] = o[k]` with `K extends keyof T`): its string.
         let k = match self.generic_key_string(k, str_) {

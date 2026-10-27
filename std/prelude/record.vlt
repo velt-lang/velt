@@ -56,7 +56,7 @@ export class Record<K, V> {
   // `Keyed` methods there for every key (`hir::Program::record_accessors`).
   private accessors: Map<K | symbol, [(() => V) | null, ((value: V) => void) | null, bool]> | null =
     null;
-  // The methods that read fields 2 and 3 are in std/prelude/global/record_symbols.vlt, which a
+  // The methods that read fields 2 and 3 are in std/record/symbols.vlt, which a
   // program loads only when it mentions symbols or property definitions.
 
   __get(key: K): V | undefined {

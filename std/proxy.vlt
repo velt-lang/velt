@@ -636,6 +636,10 @@ export class Reflect {
       if (target instanceof Proxy) {
         return target.__get(key, self);
       }
+      if (target instanceof Record) {
+        // A record's symbol table (std/record/reflect.vlt).
+        return target.__symGet(key);
+      }
       return target[plainKey(key)];
     }
     return target[key];
@@ -693,6 +697,10 @@ export class Reflect {
       if (target instanceof Proxy) {
         return target.__set(key, value, self);
       }
+      if (target instanceof Record) {
+        target.__symSet(key, value);
+        return true;
+      }
       target[plainKey(key)] = value;
       return true;
     }
@@ -705,6 +713,9 @@ export class Reflect {
     if (typeof key === "symbol") {
       if (target instanceof Proxy) {
         return target.__has(key);
+      }
+      if (target instanceof Record) {
+        return target.__symHas(key) as boolean;
       }
       return plainKey(key) in target;
     }
@@ -736,6 +747,20 @@ export class Reflect {
       out.push("length");
       return out;
     }
+    if (target instanceof Record) {
+      // The string keys, then the symbol keys (std/record/reflect.vlt).
+      const ks: any = target.__ownKeys();
+      const n = ks.length as number;
+      for (let i = 0; i < n; i++) {
+        const k = ks[i];
+        if (typeof k === "symbol") {
+          out.push(k as symbol);
+        } else {
+          out.push(k as string);
+        }
+      }
+      return out;
+    }
     for (const k of Object.keys(target)) {
       out.push(k);
     }
@@ -762,6 +787,9 @@ export class Reflect {
         return true;
       }
     }
+    if (typeof key === "symbol" && target instanceof Record) {
+      return target.__symDelete(key) as boolean;
+    }
     return __anyDeletePlain(target, proxyKey(key));
   }
 
@@ -776,6 +804,17 @@ export class Reflect {
       return target.__getOwnPropertyDescriptor(key);
     }
     const k = proxyKey(key);
+    if (target instanceof Record) {
+      // A record's entries, symbol keys and accessors (std/record/reflect.vlt).
+      const d: any = target.__descriptor(k);
+      if (d === undefined) {
+        return undefined;
+      }
+      if (d.get !== undefined || d.set !== undefined || d.writable === undefined) {
+        return { get: d.get, set: d.set, enumerable: false, configurable: d.configurable === true };
+      }
+      return { value: d.value, writable: true, enumerable: true, configurable: true };
+    }
     if (typeof k !== "string") {
       return undefined;
     }

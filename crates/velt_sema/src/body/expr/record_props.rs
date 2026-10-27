@@ -136,6 +136,19 @@ impl FnCx<'_, '_> {
         Some(call)
     }
 
+    /// `Object.getOwnPropertyDescriptor(r, k)` on a string-keyed record: its property `k` as
+    /// Node describes it (std/record/reflect.vlt), or `undefined`.
+    pub(super) fn record_descriptor(&mut self, args: &[ast::Expr], span: Span) -> Option<hir::Expr> {
+        let [r, k] = args else {
+            return None;
+        };
+        if !self.has_record_method("__descriptor") || !self.string_record(r) {
+            return None;
+        }
+        let obj = self.expr(r, None, Want::Borrow);
+        Some(self.record_call(obj, "__descriptor", std::slice::from_ref(k), span))
+    }
+
     /// `Object.getOwnPropertySymbols(r)` / `Reflect.ownKeys(r)` (`method`: `__ownSymbols`,
     /// `__ownKeys`) on a string-keyed record (`None`: another argument).
     pub(super) fn record_own_keys(

@@ -2263,10 +2263,15 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   the entries of its kind); reads, writes, `in` and `delete` run or test it, a write without a
   setter and a `delete` or redefinition of an accessor that is not configurable are Node's
   `TypeError`. `Object.defineProperty(r, k, { value, enumerable: true, writable: true,
-  configurable: true })` writes an entry; other attributes are not supported yet. Not
-  supported yet: `console.log` of a record shows only its string keys (Node also shows
-  `[Symbol(d)]: v`), and a record reached through `any` (also a proxy's target, through
-  `Reflect`) does not see its symbol keys. A type parameter
+  configurable: true })` writes an entry; an enumerable accessor and other attributes are not
+  supported yet. `Object.getOwnPropertyDescriptor(r, k)` describes an entry (`{ value,
+  writable: true, enumerable: true, configurable: true }`) or an accessor (`{ get, set,
+  enumerable: false, configurable }`), or is `undefined`. `console.log` writes the symbol keys
+  after the string keys as Node 26 does (`{ a: 1, Symbol(k): 2 }`). In a program with proxies,
+  a proxy whose target is a record forwards symbol keys to its symbol table through `Reflect`,
+  and indexing an `any` with a `symbol` key reads, writes and tests it there. The methods for
+  symbol keys and accessors are loaded only by a program that mentions symbols, property
+  definitions, `Proxy` or `Reflect` (std/record/symbols.vlt). A type parameter
   given `number` as a record key is not supported yet. A cast to `Record<symbol, unknown>` (or `Record<symbol,
   any>`) looks at a value's symbol-keyed members, as through `any`:
   `(v as Record<symbol, unknown>)[BRAND] === true` reads the member `BRAND` names, or

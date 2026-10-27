@@ -33,6 +33,8 @@ enum Entries {
     Record,
     /// `k`, the first 100.
     Set,
+    /// `Symbol(d): v`, all of them (a record's symbol table, after its string keys).
+    Symbols,
 }
 
 impl FnLower<'_, '_> {
@@ -189,7 +191,7 @@ impl FnLower<'_, '_> {
         };
         let (name, cut) = match entries {
             Entries::Map => (Some("Map"), "[Map]"),
-            Entries::Record => (None, "[Object]"),
+            Entries::Record | Entries::Symbols => (None, "[Object]"),
             Entries::Set => (Some("Set"), "[Set]"),
         };
         let parts = (map, map_ty, kt, vt, entries);
@@ -283,13 +285,13 @@ impl FnLower<'_, '_> {
                 lw.push_text(buf, "{ ");
                 let types = (map_ty, kt, vt);
                 if own.is_empty() {
-                    lw.format_map_entries(buf, &map, types, (entries, None), size, &child);
+                    lw.format_map_entries(buf, &map, types, (entries, None), size, &child, None);
                 } else {
                     // The entries, if any, then each field after a comma.
                     let (some, none) = (lw.new_block(), lw.new_block());
                     lw.branch(empty, none, some);
                     lw.switch_to(some);
-                    lw.format_map_entries(buf, &map, types, (entries, None), size, &child);
+                    lw.format_map_entries(buf, &map, types, (entries, None), size, &child, None);
                     lw.push_text(buf, ", ");
                     lw.goto(none);
                     lw.switch_to(none);
@@ -347,10 +349,21 @@ impl FnLower<'_, '_> {
         let size_ty = mtys[SIZE as usize];
         let size = Operand::Copy(self.field_place(&map, map_ty, SIZE));
         let size_t = self.cx.ty(size_ty);
-        let empty = self.rvalue_temp(
+        let mut empty = self.rvalue_temp(
             Ty::Bool,
             Rvalue::Binary(BinOp::Eq, size.clone(), cint(0, size_t)),
         );
+        // A record's symbol keys (field 2, `null` until the first is written).
+        let symbols = (entries == Entries::Record)
+            .then(|| self.record_symbols(obj, ty))
+            .flatten();
+        if let Some((_, _, n)) = &symbols {
+            let none = self.rvalue_temp(
+                Ty::Bool,
+                Rvalue::Binary(BinOp::Eq, n.clone(), cint(0, Ty::U64)),
+            );
+            empty = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitAnd, empty, none));
+        }
         let (empty_bb, full_bb, done) = (self.new_block(), self.new_block(), self.new_block());
         self.branch(empty, empty_bb, full_bb);
         self.switch_to(empty_bb);
@@ -373,9 +386,25 @@ impl FnLower<'_, '_> {
                 let types = (map_ty, kt, vt);
                 let order = (entries == Entries::Record).then(|| lw.record_order(obj, ty));
                 let ord = order.as_ref();
-                lw.format_map_entries(buf, &map, types, (entries, ord), size, &child);
+                let shown =
+                    lw.format_map_entries(buf, &map, types, (entries, ord), size, &child, None);
                 if let Some(o) = order {
                     lw.drop_record_order(o);
+                }
+                if let Some((sym_map, sym_ty, n)) = symbols {
+                    let (some, after) = (lw.new_block(), lw.new_block());
+                    let any = lw.rvalue_temp(
+                        Ty::Bool,
+                        Rvalue::Binary(BinOp::Ne, n.clone(), cint(0, Ty::U64)),
+                    );
+                    lw.branch(any, some, after);
+                    lw.switch_to(some);
+                    let symbol = lw.cx.intern(TyKind::Symbol);
+                    let types = (sym_ty, symbol, vt);
+                    let start = Some(Operand::Copy(Place::local(shown)));
+                    lw.format_map_entries(buf, &sym_map, types, (Entries::Symbols, None), n, &child, start);
+                    lw.goto(after);
+                    lw.switch_to(after);
                 }
                 lw.push_text(buf, " }");
             })
@@ -440,7 +469,8 @@ impl FnLower<'_, '_> {
         (entries, order): (Entries, Option<&RecordOrder>),
         size: Operand,
         child: &Operand,
-    ) {
+        start: Option<Operand>,
+    ) -> vir::Local {
         let tys = self.cx.adt_field_tys(ty);
         let keys = self.field_place(obj, ty, KEYS);
         let keys = self.content(&keys, tys[KEYS as usize]);
@@ -449,10 +479,12 @@ impl FnLower<'_, '_> {
         let TyKind::Array(slot_t) = self.cx.kind(tys[VALUES as usize]) else {
             crate::lower::ice("Map.entryValues is not an array")
         };
-        let limited = entries != Entries::Record;
-        // Entries shown so far; the loop ends early (`stop` set to 0) once the limit is reached.
+        let limited = !matches!(entries, Entries::Record | Entries::Symbols);
+        // Entries shown so far (`start`: those shown before, a record's string keys before its
+        // symbols); the loop ends early (`stop` set to 0) once the limit is reached.
         let shown = self.temp(Ty::U64);
-        self.assign(Place::local(shown), Rvalue::Use(cint(0, Ty::U64)));
+        let first = start.unwrap_or(cint(0, Ty::U64));
+        self.assign(Place::local(shown), Rvalue::Use(first));
         let stop = self.temp(Ty::U64);
         let len = Operand::Copy(proj(&keys, Proj::Field(1)));
         let len = self.order_len(order, len);
@@ -495,6 +527,11 @@ impl FnLower<'_, '_> {
                     lw.format_record_key(buf, &kp, kt);
                     lw.push_text(buf, ": ");
                 }
+                Entries::Symbols => {
+                    // Node 26 writes a symbol key as `Symbol(d): v`.
+                    lw.format_nested(buf, &kp, kt, child);
+                    lw.push_text(buf, ": ");
+                }
                 Entries::Map | Entries::Set => lw.format_nested(buf, &kp, kt, child),
             }
             if entries != Entries::Set {
@@ -509,6 +546,36 @@ impl FnLower<'_, '_> {
         if limited {
             self.format_more_entries(buf, size, tys[SIZE as usize]);
         }
+        shown
+    }
+
+    /// The symbol table of the prelude `Record` at `obj` (field 2, a `Map<symbol, V> | null`):
+    /// the map's place and type, and its size (0 when there is none) as a `u64`. `None` for a
+    /// record without the field.
+    fn record_symbols(&mut self, obj: &Place, ty: TyId) -> Option<(Place, TyId, Operand)> {
+        let tys = self.cx.adt_field_tys(ty);
+        let opt = *tys.get(2)?;
+        let TyKind::Option(map_ty, _) = self.cx.kind(opt) else {
+            return None;
+        };
+        self.prelude_map(map_ty)?;
+        let fp = self.field_place(obj, ty, 2);
+        let some = self.option_is_some(&fp, opt);
+        let n = self.temp(Ty::U64);
+        self.assign(Place::local(n), Rvalue::Use(cint(0, Ty::U64)));
+        let (yes, done) = (self.new_block(), self.new_block());
+        self.branch(some, yes, done);
+        self.switch_to(yes);
+        let map = self.some_payload(&fp, opt);
+        let mtys = self.cx.adt_field_tys(map_ty);
+        let size_ty = mtys[SIZE as usize];
+        let size = Operand::Copy(self.field_place(&map, map_ty, SIZE));
+        let from = self.cx.ty(size_ty);
+        let size = self.cast_to(size, from, Ty::U64);
+        self.assign(Place::local(n), Rvalue::Use(size));
+        self.goto(done);
+        self.switch_to(done);
+        Some((map, map_ty, Operand::Copy(Place::local(n))))
     }
 
     /// Node's `... n more items` after the first 100 of `size` entries (of type `size_ty`).

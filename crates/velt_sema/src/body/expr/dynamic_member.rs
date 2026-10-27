@@ -229,8 +229,12 @@ impl FnCx<'_, '_> {
             let k = self.coerce_number(k, f64_);
             return Ok(self.any_op(Intrinsic::AnyIndex, vec![obj, k], any, span));
         }
-        if self.string_or_symbol(k.ty) {
+        if self.symbolic_key_type(k.ty) {
             let k = self.coerce(k, any);
+            if self.uses_proxy() {
+                // A proxy's `get` trap and a record's symbol table see the symbol.
+                return Ok(self.prelude_hir_call("__anyGetKey", vec![obj, k], any, span));
+            }
             return Ok(self.any_op(Intrinsic::AnyGet, vec![obj, k], any, span));
         }
         // A key of a type parameter's keys (`K extends keyof T`): its string.

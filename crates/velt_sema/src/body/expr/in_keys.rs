@@ -320,10 +320,11 @@ impl FnCx<'_, '_> {
         // A symbol or `string | symbol` key: the symbol table too (std/prelude/record.vlt).
         let symbolic = kind == KeyKind::Symbol && self.symbolic_key_type(key_ty);
         let accessors = self.cx.objects.record_accessors && kind == KeyKind::Str;
-        if open && (symbolic || accessors) && self.has_record_method("__hasKeyed") {
-            let syn = Synth::new(span, self.f.locals.len());
-            let test = syn.call(syn.name("__recordInKeyed"), vec![lhs.clone(), rhs.clone()]);
-            return self.expr(&test, None, Want::Move);
+        if open && (symbolic || accessors) && self.has_record_method("__inKeyed") {
+            // `r.__inKeyed(k)` (velt:record/symbols). The record is evaluated before the key,
+            // which only a key and a record that both have effects could tell apart.
+            let obj = self.expr(rhs, None, Want::Borrow);
+            return self.record_call(obj, "__inKeyed", std::slice::from_ref(lhs), span);
         }
         if !open || !matches!(kind, KeyKind::Str | KeyKind::Converted) {
             let k = self.expr(lhs, None, Want::Borrow);
