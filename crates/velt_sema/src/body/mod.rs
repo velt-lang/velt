@@ -522,9 +522,7 @@ pub(crate) struct FnCx<'a, 'm> {
     /// (`numbers::is_js_api`): per parameter, whether the signature declares it an integer (an
     /// index), which makes it a number in the arrow's body when unannotated.
     pub std_callback: Option<Vec<bool>>,
-    /// The arrow at this span is passed to a method of an `object` / `unknown` narrowed to an
-    /// instance of a generic class or an array (TypeScript's `Map<any, any>`, `any[]`): its
-    /// parameters without a type are `any` (`dynamic_member.rs`).
+    /// An arrow whose parameters without a type are `any` (`dynamic_member.rs`).
     pub any_callback: Option<Span>,
     /// The arrow checked next is a `then` / `catch` / `finally` callback: its result type is
     /// its own (`FnState::never_end`).
