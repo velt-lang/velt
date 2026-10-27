@@ -36,7 +36,11 @@ and the test tiers, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
    lookups once per function call, borrowed string copies, and `numrep`.
    The passes and their order are in `crates/velt_opt/src/lib.rs`: `dead_funcs` first, then
    `gated_clones` (a gated function's calls of callees that check its CPU extension go to clones
-   where the check is true), then up to three rounds of `inline`, `const_fields`, and per function `vtable_loads`,
+   where the check is true), then up to three rounds of `inline` (bottom-up; a small member of
+   a cycle that does not call itself is inlined into the loops of callers outside its cycle
+   once, its calls back into the cycle staying calls, so a rarely taken recursion such as
+   `Cursor.int` ⇄ `Cursor.real` does not keep its entry out of the loops that call it),
+   `const_fields`, and per function `vtable_loads`,
    `constfold`, `copyprop`, `addr_forward`, `heap_sroa`, `sroa`, `dce`, `thread_tags` (a jump
    into the test of an inlined callee's `Result` tag that the jumping block just set goes where
    the tag sends it) and `simplify_cfg`; then
