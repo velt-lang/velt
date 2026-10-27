@@ -13,11 +13,25 @@ use crate::body::{FnCx, Want};
 use crate::hir::{self, Intrinsic, TyId};
 
 impl FnCx<'_, '_> {
+    /// `h` as its class instance when its type brands one (not a record's view by its named
+    /// members, `crate::index_signatures`, whose members keep their types); `h` otherwise.
+    pub(super) fn unbrand_instance(&mut self, h: hir::Expr) -> hir::Expr {
+        match self.cx.brand_base(h.ty) {
+            Some(base) if self.cx.brand_operand(base) && !self.cx.brandable(base) => {
+                self.unbrand(h)
+            }
+            _ => h,
+        }
+    }
+
     /// The type of member `name` of `t`'s object part, when `t` brands a class instance whose
     /// class has no member `name` (module docs).
     fn brand_tag_member_ty(&mut self, t: TyId, name: &str) -> Option<TyId> {
         let base = self.cx.brand_base(t)?;
-        self.cx.class_of(base)?;
+        // A class instance's brand, not a record's view by its named members.
+        if !self.cx.brand_operand(base) || self.cx.brandable(base) {
+            return None;
+        }
         let tag = self.cx.brand_tag(t)?;
         let f = (self.cx.public_fields(tag).into_iter()).find(|f| f.name == name)?;
         if self.field_of(base, name).is_some()

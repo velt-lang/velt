@@ -25,6 +25,10 @@ impl Ctx<'_> {
         let (Some(base), Some(tag)) = (self.brand_base(r), self.brand_tag(r)) else {
             return false;
         };
+        // A record's view by its named members (`crate::index_signatures`) is no instance.
+        if !self.brand_operand(base) || self.brandable(base) {
+            return false;
+        }
         let Some((class, _)) = self.class_of(base) else {
             return false;
         };
