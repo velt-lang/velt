@@ -415,8 +415,10 @@ previous value and `casweak` a `Bool`, whether it swapped (it may fail spuriousl
 Orderings map one to one to LLVM's (`monotonic acquire release acq_rel seq_cst`). On Apple
 arm64 (LSE and RCpc in every CPU) and x86-64, release builds get the instructions Rust's
 `core::sync::atomic` gets (`ldapr`, `stlr`, `ldadd`, `casal`; `mov`, `lock xadd`). On arm64
-Linux the IR is compiled for generic armv8-a, so the read-modify-writes are LL/SC loops
-(`ldaxr`/`stlxr`), where Rust's outline atomics pick LSE at run time (#1627). Cranelift's
+Linux (generic armv8-a) clang compiles with `-moutline-atomics`, as Rust does: a
+read-modify-write calls an `__aarch64_*` helper (libgcc's or compiler-rt's, the one in
+`velt_rt` included) that uses LSE when the CPU has it; `max` and `min` have no helper and stay
+LL/SC loops, as in Rust. Cranelift's
 atomics are all sequentially consistent, which is correct for every ordering. On wasm without
 threads they are plain loads and stores.
 

@@ -26,13 +26,13 @@ fn check_simd_extern(i: usize, e: &ExternFn, errs: &mut Vec<String>) {
     }
 }
 
-/// A `velt_atomic_*` extern likewise (`crate::atomic`): an operation backends emit inline.
 /// Whether a symbol names an operation backends emit inline (SIMD, atomics): no function
 /// exists behind it, so it is only ever called directly.
 pub(crate) fn inline_extern(symbol: &str) -> bool {
     symbol.starts_with("velt_atomic_") || symbol.starts_with("velt_simd_")
 }
 
+/// A `velt_atomic_*` extern likewise (`crate::atomic`): an operation backends emit inline.
 fn check_atomic_extern(i: usize, e: &ExternFn, errs: &mut Vec<String>) {
     if !e.symbol.starts_with("velt_atomic_") {
         return;

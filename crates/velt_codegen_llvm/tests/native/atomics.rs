@@ -363,3 +363,24 @@ fn orderings_reach_arm64_assembly() {
     }
     assert!(body(2).contains("casal\t"), "{}", body(2));
 }
+
+/// On arm64 Linux (generic armv8-a, maybe without LSE) the read-modify-writes call the
+/// `__aarch64_*` outline helpers, which pick LSE at run time, as Rust's do: the 64-bit relaxed
+/// `add` (entry 0) and the acq_rel compare-and-swap (entry 4) reference theirs.
+#[test]
+fn arm64_linux_read_modify_writes_call_outline_helpers() {
+    if velt_codegen_llvm::find_clang().is_none() {
+        eprintln!("note: clang not available; skipping");
+        return;
+    }
+    let calls = calls();
+    let opts = velt_codegen_llvm::CodegenOptions {
+        target: "aarch64-unknown-linux-gnu".into(),
+        optimize: true,
+    };
+    let object = velt_codegen_llvm::emit_object(&program(&calls[..5]), &opts).expect("object");
+    let has = |name: &str| object.windows(name.len()).any(|w| w == name.as_bytes());
+    for helper in ["__aarch64_ldadd8_relax", "__aarch64_cas8_acq_rel"] {
+        assert!(has(helper), "no reference to `{helper}`");
+    }
+}

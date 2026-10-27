@@ -135,9 +135,9 @@ stronger), and fine for debug builds. LLVM gets the exact orderings, so on Apple
 x86-64 release builds match Rust's code instruction for instruction: on aarch64 with LSE (every
 Apple target) a relaxed or acquire load is `ldr`/`ldapr`, a release store `stlr`, `add` `ldadd`,
 a compare-and-swap `casal`; on x86 loads and stores are `mov`, `add` is `lock xadd`. On arm64
-Linux the IR is compiled for generic armv8-a, so read-modify-writes are LL/SC loops, while
-Rust's outline atomics choose LSE at run time; matching that (`+outline-atomics`, with the
-`__aarch64_*` helpers resolved at link time) needs measuring on arm64 Linux hardware (#1627).
+Linux (generic armv8-a) clang gets `-moutline-atomics`, as Rust's targets do: read-modify-writes
+call the `__aarch64_*` helpers, which choose LSE at run time (`max`/`min` stay LL/SC loops, as
+in Rust).
 
 A function whose borrowed parameter holds an `Atomic` in its own memory gets no `readonly`
 attribute (vir.rs invariant 9, `param_attrs.rs`): its atomic writes go through that pointer.
