@@ -76,3 +76,11 @@ console.log(box.n, box.inc());
 box.$set(new Counter());
 const set = box.$set;
 set(new Counter());
+
+// Generic code calls the object part's member through the instance too.
+function reset<T extends object>(s: S<T>, v: T): void {
+  s.$set(v);
+}
+reset(box, new Counter());
+const maybe: S<Counter> | null = Math.random() > 2 ? null : box;
+console.log(maybe?.inc(), maybe === box);

@@ -27,3 +27,7 @@ const k = "c";
 console.log(JSON.stringify(o), (o as Record<string, number>).b, (o as Record<string, number>)["zz"]);
 const n: number | undefined = (o as Record<string, number>)[k];
 console.log(n, Object.keys(o).join(","));
+(o as Record<string, number>)["a"] += 2;
+const none: any = null;
+console.log((o as Record<string, number>)?.a, (none as Record<string, number>)?.a);
+console.log((o as Record<string, number>)["a"]?.toFixed(1));

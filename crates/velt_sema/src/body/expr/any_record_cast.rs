@@ -62,17 +62,26 @@ impl FnCx<'_, '_> {
         want: Want,
         span: Span,
     ) -> Option<hir::Expr> {
-        if want == Want::BorrowMut || optional {
+        if want == Want::BorrowMut {
             return None;
         }
         let (x, v) = self.any_as_record(object)?;
-        let obj = self.expr(x, None, Want::Borrow);
-        let read = match key {
-            AnyRecordKey::Index(index) => self.dynamic_index(obj, index, want, span),
-            AnyRecordKey::Name(prop) => self.dynamic_get(obj, &prop.name, want, span),
-        };
-        let read = match read {
-            Ok(h) | Err(h) => h,
+        let read = match (key, optional) {
+            // `(x as Record<K, V>)?.name`: `x?.name` on the `any`.
+            (AnyRecordKey::Name(prop), true) => self.member(x, prop, true, None, want, span),
+            (_, true) => return None,
+            (AnyRecordKey::Index(index), false) => {
+                let obj = self.expr(x, None, Want::Borrow);
+                match self.dynamic_index(obj, index, want, span) {
+                    Ok(h) | Err(h) => h,
+                }
+            }
+            (AnyRecordKey::Name(prop), false) => {
+                let obj = self.expr(x, None, Want::Borrow);
+                match self.dynamic_get(obj, &prop.name, want, span) {
+                    Ok(h) | Err(h) => h,
+                }
+            }
         };
         if self.cx.ty.is_bottom(read.ty) || self.cx.dynamic(read.ty).is_none() {
             return Some(read);

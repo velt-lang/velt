@@ -157,6 +157,11 @@ impl crate::body::FnCx<'_, '_> {
     pub(crate) fn unbrand(&mut self, mut h: hir::Expr) -> hir::Expr {
         if let Some(base) = self.cx.brand_base(h.ty) {
             h.ty = base;
+        } else if let TyKind::Option(p, n) = *self.cx.ty.kind(h.ty) {
+            // `B | null` of a brand `B` is its base's `| null`: the same value and layout.
+            if let Some(base) = self.cx.brand_base(p) {
+                h.ty = self.cx.ty.option_of(base, n);
+            }
         }
         h
     }
