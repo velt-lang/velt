@@ -371,6 +371,8 @@ impl FnCx<'_, '_> {
     }
 
     /// A call of the prelude function `name` with the checked arguments `args`, of type `ret`.
+    /// It throws what `name` throws, as any call does (`__anyConstructor`'s dispatch, for one,
+    /// throws what a proxy's traps throw).
     pub(crate) fn prelude_hir_call(
         &mut self,
         name: &str,
@@ -382,6 +384,7 @@ impl FnCx<'_, '_> {
             .cx
             .prelude_fn(name)
             .unwrap_or_else(|| panic!("ICE: the prelude without `{name}`"));
+        self.call_throws(d, &[], ret, span);
         let kind = H::Call {
             callee: hir::Callee::Def(d, vec![]),
             args,

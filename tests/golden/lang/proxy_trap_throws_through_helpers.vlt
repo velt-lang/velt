@@ -1,0 +1,77 @@
+// Operations on `any` and narrowed `unknown` values that sema turns into calls of prelude
+// helpers (`x.constructor`, symbol keys, `Array.isArray`, text and arithmetic of an `any`)
+// throw what the program's proxy traps throw, in functions that throw nothing of their own.
+// The shape of sigx's `isCollection`, reached from a generic `signal()`.
+
+const KEY = Symbol("key");
+
+function isCollection(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  const ctor = value.constructor;
+  return ctor === Set || ctor === Map || ctor === WeakSet || ctor === WeakMap;
+}
+
+class Box {
+  n = 1;
+}
+
+function wrap<T>(target: T): string {
+  if (typeof target !== "object") return "primitive";
+  const objectTarget = target as T & object;
+  return isCollection(objectTarget) ? "collection" : "object";
+}
+
+function readSym(o: any): any {
+  return o[KEY];
+}
+
+function writeSym(o: any, v: number): void {
+  o[KEY] = v;
+}
+
+function isArr(o: any): boolean {
+  return Array.isArray(o);
+}
+
+function text(o: any): string {
+  return `${o}`;
+}
+
+function plus(o: any): any {
+  return o + 1;
+}
+
+let armed = false;
+const p = new Proxy({} as any, {
+  get(t: any, k: string | symbol): any {
+    if (armed) throw new Error("get " + String(k));
+    return 7;
+  },
+  set(t: any, k: string | symbol, v: any): boolean {
+    if (armed) throw new Error("set " + String(k));
+    return true;
+  },
+});
+
+console.log(isCollection(new Map<string, number>()), isCollection(new Set<number>()));
+console.log(isCollection({ a: 1 }), isCollection(new Box()), isCollection(1), isCollection(null));
+console.log(wrap(new Map<string, number>()), wrap({ a: 1 }), wrap(3));
+writeSym(p, 2);
+console.log(readSym(p), isArr(p), isArr([1]), text([1, 2]), plus(2));
+
+armed = true;
+try {
+  readSym(p);
+} catch (e) {
+  console.log("caught", (e as Error).message);
+}
+try {
+  writeSym(p, 3);
+} catch (e) {
+  console.log("caught", (e as Error).message);
+}
+try {
+  p.other;
+} catch (e) {
+  console.log("caught", (e as Error).message);
+}
