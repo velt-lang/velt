@@ -1,0 +1,1 @@
+panic: TypeError: `state.next` was checked, but it was set to null before this read

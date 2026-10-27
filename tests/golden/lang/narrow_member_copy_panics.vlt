@@ -1,0 +1,20 @@
+// An untyped copy of a field that `typeof` narrowed holds what it read. After a call changed the
+// field to a number, the copy holds the number: logging it prints it, as in JavaScript, and a
+// read that needs the string (`d.toUpperCase()`) stops with a `TypeError` where JavaScript
+// throws one. Velt names the copy; Node says "d.toUpperCase is not a function".
+const st: { v: string | number } = { v: "s" };
+function toNum(): void {
+  st.v = 5;
+}
+function f(): void {
+  if (typeof st.v === "string") {
+    const c = st.v;
+    const up = (): string => c.toUpperCase();
+    console.log("before", up());
+    toNum();
+    const d = st.v;
+    console.log("copy", d, typeof d);
+    console.log(d.toUpperCase());
+  }
+}
+f();

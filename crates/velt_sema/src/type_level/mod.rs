@@ -26,6 +26,7 @@ use crate::hir::{LitValue, Nothing, TyId, TyKind, TyOp};
 use crate::resolve::TyEnv;
 use crate::types::collect_params;
 
+mod builtins;
 pub(crate) mod inline;
 pub(crate) mod instances;
 pub(crate) mod key_kinds;
@@ -204,7 +205,10 @@ impl Ctx<'_> {
             .alias_site
             .or_else(|| self.type_level.op_sites.get(&t).copied())
             .unwrap_or(self.aliases[a as usize].decl.name.span);
-        let r = self.alias_body(a, args, span);
+        let r = match self.recursive_union(a, args.clone(), span) {
+            Some(r) => r,
+            None => self.alias_body(a, args, span),
+        };
         self.type_level.reduced.insert(t, r);
         r
     }
@@ -567,114 +571,12 @@ impl Ctx<'_> {
             _ => t,
         }
     }
-
-    /// The built-in type-level operators of this module, `None` for other names.
-    pub(crate) fn resolve_type_level_builtin(
-        &mut self,
-        t: &ast::TypeExpr,
-        name: &str,
-        args: &[ast::TypeExpr],
-        env: &TyEnv,
-    ) -> Option<TyId> {
-        let arity = match name {
-            "NonNullable" | "Uppercase" | "Lowercase" | "Capitalize" | "Uncapitalize" => 1,
-            "Exclude" | "Extract" => 2,
-            _ => return None,
-        };
-        if args.len() != arity {
-            self.err(
-                format!(
-                    "type `{name}` takes {arity} type argument(s) but {} were supplied",
-                    args.len()
-                ),
-                t.span,
-            );
-            return Some(self.ty.error);
-        }
-        // `NonNullable<M>` of an `infer M` that found nothing (`unknown`) is `{}`.
-        if name == "NonNullable" && unknown_name(&args[0], env) {
-            return Some(self.anon_type_with(&[], env.module));
-        }
-        let a = self.resolve_type(&args[0], env);
-        let Some(a) = self.known_type(a, env, &format!("`{name}`"), args[0].span) else {
-            return Some(self.ty.error);
-        };
-        Some(match name {
-            "NonNullable" => match *self.ty.kind(a) {
-                TyKind::Option(p, _) => p,
-                _ => a,
-            },
-            "Exclude" | "Extract" => {
-                let keep_matching = name == "Extract";
-                let mut kept = vec![];
-                let mut nothing: Option<Nothing> = None;
-                for s in self.subjects_of(a) {
-                    let Ok(found) = self.match_pattern(s, &args[1], env) else {
-                        return Some(self.ty.error);
-                    };
-                    if found.is_some() != keep_matching {
-                        continue;
-                    }
-                    match s {
-                        Subject::Ty(m) => kept.push(m),
-                        Subject::Nothing(n) => nothing = Some(nothing.map_or(n, |m| m.join(n))),
-                    }
-                }
-                self.rejoin_booleans(&mut kept);
-                match (kept.as_slice(), nothing) {
-                    ([one], None) => *one,
-                    _ => self.union_with(&kept, nothing, t.span),
-                }
-            }
-            _ => {
-                if a == self.ty.str_ {
-                    return Some(a);
-                }
-                let Some(strs) = self.literal_strings(a) else {
-                    let shown = self.display(a);
-                    self.err(
-                        format!("`{name}` needs a string literal type; found `{shown}`"),
-                        args[0].span,
-                    );
-                    return Some(self.ty.error);
-                };
-                let lits: Vec<TyId> = strs
-                    .iter()
-                    .map(|s| {
-                        let s = string_intrinsic(name, s);
-                        self.lit_type(LitValue::Str(s))
-                    })
-                    .collect();
-                match lits.as_slice() {
-                    [one] => *one,
-                    _ => self.union_of(&lits, false, t.span),
-                }
-            }
-        })
-    }
 }
 
 /// `s` as an array index (a canonical integer below 2^32 - 1), the keys JavaScript orders first.
 fn array_index(s: &str) -> Option<u32> {
     let i: u32 = s.parse().ok()?;
     (i < u32::MAX && i.to_string() == s).then_some(i)
-}
-
-/// `Uppercase`, `Lowercase`, `Capitalize`, `Uncapitalize` of `s`.
-fn string_intrinsic(name: &str, s: &str) -> String {
-    let mut cs = s.chars();
-    match name {
-        "Uppercase" => s.to_uppercase(),
-        "Lowercase" => s.to_lowercase(),
-        "Capitalize" => match cs.next() {
-            Some(c) => c.to_uppercase().chain(cs).collect(),
-            None => String::new(),
-        },
-        _ => match cs.next() {
-            Some(c) => c.to_lowercase().chain(cs).collect(),
-            None => String::new(),
-        },
-    }
 }
 
 /// The name of `t` when it is a naked type parameter (an alias's parameter, or a name a mapped

@@ -383,7 +383,8 @@ impl FnCx<'_, '_> {
         }
         let init = match ann {
             Some(t) => self.expr_coerce(e, t, Want::Borrow),
-            None => self.expr(e, None, Want::Borrow),
+            // What is taken apart is the payload of a narrowed value (`checked_copies`).
+            None => self.payload_expr(e, None, Want::Borrow),
         };
         // `const [a, b] = v` of an `any`: read through it (`literal_patterns`).
         if self.cx.dynamic(init.ty).is_some()
@@ -488,7 +489,7 @@ impl FnCx<'_, '_> {
                     let site = v.ty.as_ref().and_then(|w| self.cx.site_in(w.span, t));
                     self.stored_into(site, |s| s.expr_coerce(e, t, Want::Move))
                 }
-                None => self.expr(e, None, Want::Move),
+                None => self.copy_init(e, name, Want::Move),
             }),
         };
         // `let x: T;` that a closure assigns: a `T | undefined` underneath (`late_let_read`).
@@ -619,6 +620,7 @@ impl FnCx<'_, '_> {
         if let (Some(_), Some(h), false) = (ann, &init, cast) {
             self.narrow_to_assigned(local, ty, h);
         }
+        self.note_checked_copy(local, v.ty.is_none(), v.init.as_ref());
         Self::push(out, S::Let { local, init }, span);
     }
 

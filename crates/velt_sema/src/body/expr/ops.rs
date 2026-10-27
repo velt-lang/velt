@@ -156,7 +156,7 @@ impl FnCx<'_, '_> {
                     ast::ExprKind::Lit(l @ ast::Lit::Int { .. }) => {
                         self.lit(l, num_exp, operand.span, true)
                     }
-                    _ => self.expr(operand, num_exp, Want::Borrow),
+                    _ => self.payload_expr(operand, num_exp, Want::Borrow),
                 };
                 let inner = self.unbrand(inner);
                 if self.cx.maybe_dynamic(inner.ty) {
@@ -173,7 +173,7 @@ impl FnCx<'_, '_> {
                 (hir::UnOp::Neg, inner)
             }
             ast::UnaryOp::Plus => {
-                let mut inner = self.expr(operand, num_exp, Want::Borrow);
+                let mut inner = self.payload_expr(operand, num_exp, Want::Borrow);
                 inner = self.unbrand(inner);
                 if self.cx.maybe_dynamic(inner.ty) {
                     return self.dynamic_unary(op, inner, span);
@@ -187,7 +187,7 @@ impl FnCx<'_, '_> {
             ast::UnaryOp::Not => return self.not_expr(operand, span),
             ast::UnaryOp::BitNot => {
                 let int_exp = exp.filter(|t| self.cx.ty.is_int(*t));
-                let inner = self.expr(operand, int_exp, Want::Borrow);
+                let inner = self.payload_expr(operand, int_exp, Want::Borrow);
                 let inner = self.unbrand(inner);
                 if self.cx.maybe_dynamic(inner.ty) {
                     return self.dynamic_unary(op, inner, span);
@@ -242,6 +242,35 @@ impl FnCx<'_, '_> {
         }
     }
 
+    /// The operands of `lhs op rhs`, checked. Arithmetic and comparisons use the payload of a
+    /// narrowed operand (`checked_copies`), except that `+` with a string converts the other
+    /// operand as it is (`"a" + s` gives `"anull"` after a call cleared `s`). The string must
+    /// be one for sure: `s + t` with both narrowed reads both payloads. A branch of a ternary
+    /// operand is one too (`"a" + (c ? s : "z")`).
+    fn checked_operands(
+        &mut self,
+        op: ast::BinaryOp,
+        lhs: &ast::Expr,
+        rhs: &ast::Expr,
+        hint: Option<TyId>,
+    ) -> (hir::Expr, hir::Expr) {
+        if !self.has_breakable_narrowing() {
+            return self.operands(lhs, rhs, hint, Want::Borrow);
+        }
+        let concat = op == ast::BinaryOp::Add;
+        let lc = self.value_may_read_cleared(lhs);
+        let rc = self.value_may_read_cleared(rhs);
+        let lhs_as_is = concat && lc && !rc && self.string_operand(rhs);
+        let rhs_as_is = concat && rc && !lc && self.string_operand(lhs);
+        let marks = (self.as_is_spans.len(), self.payload_spans.len());
+        self.mark_value(lhs, lhs_as_is);
+        self.mark_value(rhs, rhs_as_is);
+        let r = self.operands(lhs, rhs, hint, Want::Borrow);
+        self.as_is_spans.truncate(marks.0);
+        self.payload_spans.truncate(marks.1);
+        r
+    }
+
     pub(crate) fn binary(
         &mut self,
         op: ast::BinaryOp,
@@ -294,6 +323,8 @@ impl FnCx<'_, '_> {
         let (l, r) = match lit_eq {
             Some(LitEq::Done(h)) => return h,
             Some(LitEq::Operands(l, r)) => (l, r),
+            // `==` compares the value as it is.
+            None if !matches!(op, B::Eq | B::NotEq) => self.checked_operands(op, lhs, rhs, hint),
             None => self.operands(lhs, rhs, hint, Want::Borrow),
         };
         // An `any` or `unknown` operand, by its checked type (a variable, a field, an element,
