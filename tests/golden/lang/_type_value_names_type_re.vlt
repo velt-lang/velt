@@ -1,0 +1,2 @@
+// Helper of `errors/type_value_names`: `export type` re-exports only the type.
+export type { guid } from "./_type_value_names_lib";

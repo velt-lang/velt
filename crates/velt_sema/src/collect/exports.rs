@@ -18,7 +18,7 @@ use velt_syntax::ast;
 use crate::check_work::add_export_work;
 use crate::ctx::{Ctx, Item};
 use crate::hir::{DefId, TyId, TyKind};
-use crate::type_meanings::{of_type_key, type_key};
+use crate::type_meanings::{of_type_key, type_key, type_only_key, Meaning};
 use crate::SourceModule;
 
 /// How many re-export steps are followed (a cycle of `export *` ends here).
@@ -128,17 +128,24 @@ fn build_table(cx: &Ctx, t: usize, depth: u32) -> Option<Rc<[(String, Item)]>> {
         for n in &imp.names {
             let bound = &bound_name(n).name;
             if !decided.contains_key(bound) {
-                // Both meanings of a name that is a type and a value; `export type { x }`
-                // only the type (`crate::type_meanings`).
+                // Both meanings of a name that is a type and a value; `export type { x }` and
+                // `export { x }` of an `import type` only the type, the value under its
+                // type-only key (`crate::type_meanings`).
+                let type_only =
+                    n.type_only || (target.is_none() && imported_type_only(cx, t, &n.name.name));
                 let ty = item_of(&type_key(&n.name.name));
-                let value = match ty {
-                    Some(ty) if n.type_only => Some(ty),
-                    _ => item_of(&n.name.name),
-                };
-                if !n.type_only && ty.is_some() && ty != value {
-                    decided.insert(type_key(bound), ty);
+                let value = item_of(&n.name.name);
+                if type_only {
+                    let as_type = ty.or(value.filter(|&v| cx.meaning(v) != Meaning::Value));
+                    let as_value = value.filter(|&v| cx.meaning(v) != Meaning::Type);
+                    decided.insert(type_only_key(bound), as_value);
+                    decided.insert(bound.clone(), as_type);
+                } else {
+                    if ty.is_some() && ty != value {
+                        decided.insert(type_key(bound), ty);
+                    }
+                    decided.insert(bound.clone(), value);
                 }
-                decided.insert(bound.clone(), value);
             }
             let (members, complete) = list_members(cx, t, imp, n, depth);
             if !complete {
@@ -343,6 +350,14 @@ fn local_at(cx: &Ctx, t: usize, name: &str, depth: u32) -> Option<Item> {
         Some((imp, source)) => export_at(cx, import_target(cx, t, &imp.from)?, &source, depth),
         None => cx.scopes[t].items.get(name).copied(),
     }
+}
+
+/// Whether module `t` binds `name` with a type-only import (`import type { name }`).
+fn imported_type_only(cx: &Ctx, t: usize, name: &str) -> bool {
+    imports_of(cx, t)
+        .filter(|(imp, exported)| !exported && !imp.from.is_empty())
+        .flat_map(|(imp, _)| imp.names.iter())
+        .any(|n| n.type_only && bound_name(n).name == name)
 }
 
 /// The name in the source module of the name `name` that import or export list entry `n`

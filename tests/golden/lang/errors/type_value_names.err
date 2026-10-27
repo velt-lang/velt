@@ -2,10 +2,19 @@ type_value_names.vlt:19:14: error: the name `Color` is defined multiple times
 type_value_names.vlt:24:11: error: the name `Twice` is defined multiple times
 type_value_names.vlt:32:7: error: the name `Shape` is defined multiple times
   = note: Velt merges an interface only with other interface declarations: give `Shape` another name, or name the combination with an intersection (`type More = Shape & { … }`)
+type_value_names.vlt:50:8: error: the name `A` is defined multiple times
+type_value_names.vlt:52:8: error: the name `B` is defined multiple times
+type_value_names.vlt:56:8: error: the name `C` is defined multiple times
+type_value_names.vlt:60:12: error: the name `D` is defined multiple times
 type_value_names.vlt:7:15: error: mismatched types
   = note: expected string, found f64
 type_value_names.vlt:11:8: error: `f` is a value, not a type
   = note: its type is `typeof f`
 type_value_names.vlt:13:11: error: `OnlyType` is imported with `import type` and cannot be used as a value
   = note: import it as a value: `import { OnlyType } from …`
-type_value_names.vlt:13:11: error: `OnlyType` is a type, not a value
+type_value_names.vlt:44:19: error: `relayed` is exported only as a type by the module it is imported from and cannot be used as a value
+  = note: that module exports it with `export type`, or exports again a name it imports with `import type`
+type_value_names.vlt:44:30: error: `relayedFn` is exported only as a type by the module it is imported from and cannot be used as a value
+  = note: that module exports it with `export type`, or exports again a name it imports with `import type`
+type_value_names.vlt:44:46: error: `typeOnly` is exported only as a type by the module it is imported from and cannot be used as a value
+  = note: that module exports it with `export type`, or exports again a name it imports with `import type`

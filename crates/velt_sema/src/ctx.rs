@@ -28,6 +28,8 @@ pub(crate) struct ModuleScope {
     pub namespaces: FxHashMap<String, usize>,
     /// Names bound by `import type` (types only: using one as a value is an error).
     pub type_only: FxHashSet<String>,
+    /// Of those, the names their module exports only as types (`export type { x }`).
+    pub via_export_type: FxHashSet<String>,
     /// `std/...` module: may call `__intrinsic_*`.
     pub is_std: bool,
     /// Some name has a type key (`crate::type_meanings`).
@@ -704,12 +706,17 @@ impl<'m> Ctx<'m> {
     }
 
     /// Name lookup at module level: own items and imports, then the prelude.
+    /// A module-level name that is only a type does not hide a prelude value of its name
+    /// (`type Map = …` next to `new Map()`, `crate::type_meanings`).
     pub fn lookup_item(&self, module: usize, name: &str) -> Option<Item> {
-        self.scopes[module]
-            .items
-            .get(name)
-            .or_else(|| self.prelude.get(name))
-            .copied()
+        let own = self.scopes[module].items.get(name).copied();
+        let Some(it) = own else {
+            return self.prelude.get(name).copied();
+        };
+        match self.meaning(it) {
+            crate::type_meanings::Meaning::Type => self.global_value(name).unwrap_or(own),
+            _ => own,
+        }
     }
 
     /// Name lookup at a source position of `module`: the innermost nested item whose block

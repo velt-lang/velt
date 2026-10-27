@@ -29,6 +29,19 @@ pub(crate) fn type_key(name: &str) -> String {
     key
 }
 
+/// Appended to a name in an export table for the value meaning of a name exported only as a
+/// type (`export type { x }`, or `export { x }` of an `import type`): importers bind it as
+/// `import type` binds a name, so a value use is an error.
+pub(crate) const TYPE_ONLY_MARK: char = '\u{2}';
+
+/// The key of a value exported only as a type ([`TYPE_ONLY_MARK`]).
+pub(crate) fn type_only_key(name: &str) -> String {
+    let mut key = String::with_capacity(name.len() + 1);
+    key.push_str(name);
+    key.push(TYPE_ONLY_MARK);
+    key
+}
+
 /// The name a type key is for (`None` for any other key).
 pub(crate) fn of_type_key(key: &str) -> Option<&str> {
     key.strip_suffix(TYPE_MARK)
@@ -66,6 +79,32 @@ impl Ctx<'_> {
         )
     }
 
+    /// A nested item `it` named `ident`, declared in block `scope` of module `m`, next to the
+    /// items of the block declared so far (`self.nested[from..]`): another declaration of its
+    /// name is an error unless one is only a type and the other only a value, or both are
+    /// interfaces (which merge), as at module level.
+    pub(crate) fn nested_clash(
+        &mut self,
+        from: usize,
+        (m, scope): (usize, Span),
+        ident: &velt_syntax::ast::Ident,
+        it: Item,
+    ) {
+        let iface = |cx: &Self, i: Item| matches!(i, Item::Def(d) if cx.iface(d).is_some());
+        let clash = (self.nested[from..].iter())
+            .filter(|n| n.module == m && n.lo == scope.lo && n.hi == scope.hi)
+            .filter(|n| n.name == ident.name)
+            .any(|n| {
+                !self.separate_meanings(n.item, it) && !(iface(self, n.item) && iface(self, it))
+            });
+        if clash {
+            self.err(
+                format!("the name `{}` is defined multiple times", ident.name),
+                ident.span,
+            );
+        }
+    }
+
     /// A function or a variable `name` written where a type is expected (TypeScript's TS2749).
     pub(crate) fn value_as_type(&mut self, name: &str, at: Span) {
         let d = velt_common::Diagnostic::error(format!("`{name}` is a value, not a type"), at)
@@ -92,6 +131,19 @@ impl Ctx<'_> {
                 .lookup_item(module, name)
                 .or_else(|| nested.first().map(|n| n.item)),
         }
+    }
+
+    /// The global value a module-level type `name` leaves visible: the prelude's value, or
+    /// `Some(None)` for a built-in global the checker knows by name (`Set`, `Promise`).
+    pub(crate) fn global_value(&self, name: &str) -> Option<Option<Item>> {
+        let prelude = self.prelude.get(name).copied();
+        if let Some(p) = prelude.filter(|&p| self.meaning(p) != Meaning::Type) {
+            return Some(Some(p));
+        }
+        let builtin = crate::body::expr::NODE_GLOBALS
+            .iter()
+            .any(|(n, _)| *n == name);
+        (prelude.is_none() && builtin).then_some(None)
     }
 
     /// Name lookup in a type position of `module` at `at`: the type meaning of the innermost

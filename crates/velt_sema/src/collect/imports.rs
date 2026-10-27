@@ -17,7 +17,7 @@ use super::exports::{
     all_exports, bound_name, export_of, import_target, imports_of, local_of, namespace_exports,
 };
 use crate::ctx::Ctx;
-use crate::type_meanings::type_key;
+use crate::type_meanings::{type_key, type_only_key};
 
 /// Resolve every import and export list of module `m`.
 pub(super) fn resolve_imports(cx: &mut Ctx, m: usize) {
@@ -159,27 +159,39 @@ fn import_name(cx: &mut Ctx, m: usize, t: usize, imp: &ast::Import, n: &ast::Imp
     }
     // A name that is both a type and a value in `t` (`crate::type_meanings`): both meanings,
     // or with `import type` the type alone.
+    // A name `t` exports only as a type (`export type { x }`) binds as with `import type`; the
+    // value meaning, if any, is kept under the local's type-only key for the error.
     let ty = export_of(cx, t, &type_key(&n.name.name));
-    let it = match ty {
-        Some(ty) if n.type_only => {
-            cx.rec_item(n.name.span, Some(ty));
-            ty
-        }
+    let value_only = export_of(cx, t, &type_only_key(&n.name.name));
+    let plain = export_of(cx, t, &n.name.name);
+    let type_only = n.type_only || value_only.is_some();
+    let it = match (ty, plain, value_only) {
+        (Some(ty), _, _) if n.type_only => ty,
+        (_, None, Some(v)) => v,
         _ => match exported_item(cx, m, t, imp, n) {
             Some(it) => it,
             None => return,
         },
     };
+    cx.rec_item(n.name.span, Some(it));
     let local = bound_name(n);
     if !define(cx, m, local) {
         return;
     }
-    cx.scopes[m].items.insert(local.name.clone(), it);
-    if n.type_only {
-        cx.scopes[m].type_only.insert(local.name.clone());
+    let scope = &mut cx.scopes[m];
+    scope.items.insert(local.name.clone(), it);
+    if type_only {
+        scope.type_only.insert(local.name.clone());
+        if !n.type_only {
+            scope.via_export_type.insert(local.name.clone());
+        }
+        let value = value_only.or(plain.filter(|_| ty.is_some()));
+        if let Some(v) = value.filter(|&v| v != it) {
+            scope.items.insert(type_only_key(&local.name), v);
+        }
     } else if let Some(ty) = ty.filter(|&ty| ty != it) {
-        cx.scopes[m].items.insert(type_key(&local.name), ty);
-        cx.scopes[m].type_keys = true;
+        scope.items.insert(type_key(&local.name), ty);
+        scope.type_keys = true;
     }
 }
 
