@@ -647,10 +647,12 @@ export class Reflect {
 
   /** `target[key] = value`; whether it was written. */
   static set(target: any, key: any, value: any, receiver?: any): boolean {
+    if (target instanceof Proxy) {
+      // The `set` trap's answer, `false` included (a write `p.k = v` throws on it instead).
+      const self: any = target;
+      return target.__set(key, value, receiver != null ? receiver : self);
+    }
     if (receiver != null) {
-      if (target instanceof Proxy) {
-        return target.__set(key, value, receiver);
-      }
       if (receiver instanceof Proxy) {
         // JavaScript's OrdinarySet: the property is defined on a proxy receiver, whose traps
         // see that when it has them.
@@ -693,10 +695,6 @@ export class Reflect {
       }
     }
     if (typeof key === "symbol") {
-      const self: any = target;
-      if (target instanceof Proxy) {
-        return target.__set(key, value, self);
-      }
       if (target instanceof Record) {
         target.__symSet(key, value);
         return true;

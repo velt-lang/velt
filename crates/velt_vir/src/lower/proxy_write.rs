@@ -34,6 +34,21 @@ impl FnLower<'_, '_> {
         v
     }
 
+    /// Store the owned `v` into field `index` of the proxiable `bty` value at `base`, through
+    /// the `set` trap when it holds a proxy (a key write in a generic body, spread_object.rs).
+    pub(super) fn proxy_store(
+        &mut self,
+        base: &Place,
+        bty: TyId,
+        index: u32,
+        place: &hir::Expr,
+        v: Operand,
+    ) {
+        let hop = self.retained_hop(base, bty);
+        let ptr = self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(hop)));
+        self.proxy_write_at(&ptr, bty, index, place, v);
+    }
+
     /// Store the owned `v` into field `index` of the `bty` value at `ptr`, through the `set`
     /// trap when it holds a proxy. `place` is the HIR target (for a presence flag).
     fn proxy_write_at(

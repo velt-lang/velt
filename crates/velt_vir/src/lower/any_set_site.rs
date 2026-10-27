@@ -100,6 +100,32 @@ impl FnLower<'_, '_> {
         unit
     }
 
+    /// `o[k] = v` where the receiver `(data, desc)` and the key (the address of a string) are
+    /// evaluated already (a key write of a generic body on `any`, key_any.rs).
+    pub(super) fn any_set_named(
+        &mut self,
+        data: &Operand,
+        desc: &Operand,
+        key: Operand,
+        v: &hir::Expr,
+    ) -> Operand {
+        let unit = Operand::Const(crate::vir::Const::Unit, Ty::Unit);
+        let any = self.cx.any_ty();
+        self.cx.note_identity(any);
+        self.cx.note_any_set();
+        let vt = self.sub(v.ty);
+        let vv = self.consume(v);
+        if self.dead() {
+            return unit;
+        }
+        let avt = self.cx.ty(vt);
+        let buf = Place::local(self.temp(avt));
+        self.assign(buf.clone(), Rvalue::Use(vv));
+        let va = self.addr(buf);
+        self.any_set_at(data, desc, SetKey::Str(key), va);
+        unit
+    }
+
     /// The null check, the slot call and the status check of a write with key `key`.
     fn any_set_at(&mut self, data: &Operand, desc: &Operand, key: SetKey, v: Operand) {
         let done = self.proxy_branch("__set", data, desc, |lw, obj, pty, r| {
