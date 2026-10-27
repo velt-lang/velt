@@ -13,9 +13,17 @@ use crate::visit::successors;
 pub(super) struct Cx<'a> {
     pub(super) func: &'a Function,
     pub(super) frozen: Vec<(u32, Vec<Proj>)>,
+    /// The locals the analysis may name (`tracked_locals`): never one whose address is taken,
+    /// which writes through the pointer, copies and calls change unseen.
+    pub(super) tracked: Vec<bool>,
 }
 
 impl Cx<'_> {
+    /// Whether the analysis may name local `l`.
+    pub(super) fn tracks(&self, l: u32) -> bool {
+        self.tracked.get(l as usize).copied().unwrap_or(false)
+    }
+
     /// The term of a read of a frozen param's scalar field.
     pub(super) fn frozen_term(&self, pl: &Place) -> Option<u32> {
         let i = self
@@ -116,8 +124,9 @@ pub(super) fn transfer_stmt(cx: &Cx, tracked: &[bool], st: &mut State, s: &Stmt)
         return;
     }
     if !tracked.get(v as usize).copied().unwrap_or(false) {
-        // Nothing in a state names an untracked local: values are based on tracked locals,
-        // and facts and conditions name only them (and frozen fields).
+        // Nothing in a state names an untracked local (`term_of`, `val_of` and `assume` never
+        // do); killing it anyway keeps that true should one slip in.
+        kill(st, v);
         return;
     }
     let ty = cx.func.locals[v as usize].ty;
@@ -213,7 +222,9 @@ pub(super) fn transfer_stmt(cx: &Cx, tracked: &[bool], st: &mut State, s: &Stmt)
             for f in copied {
                 add_fact(st, f);
             }
-            if sv.base != Some(s) {
+            // Not when the source's value is based on `v` itself, just killed (`s = v + 3;
+            // v = s`): a value names only live locals.
+            if sv.base != Some(s) && sv.base != Some(v) {
                 st.vals.insert(v, sv);
             }
             return;
@@ -248,7 +259,7 @@ pub(super) fn term_of(cx: &Cx, op: &Operand) -> Option<Term> {
         }
         Operand::Copy(p) if p.proj.is_empty() => {
             let l = cx.func.locals.get(p.local.0 as usize)?;
-            unsigned(l.ty).then_some(Term::Local(p.local.0))
+            (unsigned(l.ty) && cx.tracks(p.local.0)).then_some(Term::Local(p.local.0))
         }
         Operand::Copy(p) => cx.frozen_term(p).map(Term::Local),
         _ => None,
@@ -268,7 +279,7 @@ pub(super) fn val_of(cx: &Cx, st: &State, op: &Operand) -> Option<Val> {
         }
         Operand::Copy(p) if p.proj.is_empty() => {
             let l = cx.func.locals.get(p.local.0 as usize)?;
-            unsigned(l.ty).then(|| val_of_local(st, p.local.0))
+            (unsigned(l.ty) && cx.tracks(p.local.0)).then(|| val_of_local(st, p.local.0))
         }
         Operand::Copy(p) => cx.frozen_term(p).map(|t| Val {
             base: Some(t),
@@ -277,6 +288,11 @@ pub(super) fn val_of(cx: &Cx, st: &State, op: &Operand) -> Option<Val> {
         }),
         _ => None,
     }
+}
+
+/// The width of integer type `ty` in bits (64 when unknown, which no count reaches anyway).
+fn bits(ty: Ty) -> i128 {
+    ty.scalar_size().map_or(64, |b| i128::from(b) * 8)
 }
 
 pub(super) fn exact(lo: i128, hi: i128, ty: Ty) -> Option<Val> {
@@ -336,12 +352,16 @@ pub(super) fn eval(cx: &Cx, st: &State, rv: &Rvalue, ty: Ty) -> Option<Val> {
                 }
                 // A shift as a multiplication: `checked_shl` checks only the count, not bits
                 // shifted into the sign.
-                BinOp::Shl if x.base.is_none() && y.base.is_none() && y.hi < 64 => exact(
+                // The backends take the count modulo the type's width (`u32 >> 33` shifts by
+                // 1): only a count known to be below it is shifted as is.
+                BinOp::Shl if x.base.is_none() && y.base.is_none() && y.hi < bits(ty) => exact(
                     x.lo.checked_mul(1 << y.lo)?,
                     x.hi.checked_mul(1 << y.hi)?,
                     ty,
                 ),
-                BinOp::UShr | BinOp::Shr if x.base.is_none() && y.base.is_none() && y.hi < 64 => {
+                BinOp::UShr | BinOp::Shr
+                    if x.base.is_none() && y.base.is_none() && y.hi < bits(ty) =>
+                {
                     exact(x.lo >> y.hi, x.hi >> y.lo, ty)
                 }
                 BinOp::BitAnd => {

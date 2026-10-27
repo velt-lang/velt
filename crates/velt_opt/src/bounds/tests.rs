@@ -4,7 +4,7 @@ use super::*;
 use crate::interp::{Interp, RecordingHost};
 use crate::testkit::builder::*;
 use crate::testkit::validate::assert_valid;
-use velt_vir::vir::{BinOp, BlockId, Local, Program};
+use velt_vir::vir::{BinOp, BlockId, Local, Place, Program};
 
 /// The constant a block's branch was decided to, if it was.
 fn decided(f: &Function, b: BlockId) -> Option<bool> {
@@ -349,4 +349,81 @@ fn a_product_past_i128_is_unknown() {
     for len in [0, 3, u64::MAX] {
         assert_eq!(run_check(&p, len, 0), run_check(&orig, len, 0), "len {len}");
     }
+}
+
+/// `check(len)`: 1 unless `len >= 8`; then `y = 0xFFFF_FFFF_u32 >> 33`, which the backends take
+/// modulo 32 (a shift by 1, 2^31 - 1), and 2 if `y > len - 8`, else 0. The count is past the
+/// width, so `y` is not known to be 0 and the check stays.
+#[test]
+fn a_u32_shift_by_32_or_more_is_unknown() {
+    let mut pb = ProgramBuilder::new();
+    let mut fb = FuncBuilder::export("check", &[Ty::U64, Ty::U64], Ty::U64);
+    let len = fb.param(0);
+    let (t0, lm, y, yy, t1) = (
+        fb.local(Ty::Bool),
+        fb.local(Ty::U64),
+        fb.local(Ty::U32),
+        fb.local(Ty::U64),
+        fb.local(Ty::Bool),
+    );
+    let (b0, b1, fail, out, ok) = (fb.block(), fb.block(), fb.block(), fb.block(), fb.block());
+    fb.assign(b0, t0, bin(BinOp::Lt, copy_local(len), int(8, Ty::U64)));
+    fb.branch(b0, t0, fail, b1);
+    fb.assign(b1, lm, bin(BinOp::Sub, copy_local(len), int(8, Ty::U64)));
+    fb.assign(
+        b1,
+        y,
+        bin(BinOp::UShr, int(0xFFFF_FFFF, Ty::U32), int(33, Ty::U32)),
+    );
+    fb.assign(b1, yy, Rvalue::Cast(copy_local(y), Ty::U64));
+    fb.assign(b1, t1, bin(BinOp::Gt, copy_local(yy), copy_local(lm)));
+    fb.branch(b1, t1, out, ok);
+    fb.ret(fail, int(1, Ty::U64));
+    fb.ret(out, int(2, Ty::U64));
+    fb.ret(ok, int(0, Ty::U64));
+    pb.add(fb.finish());
+    let mut p = pb.finish();
+    let orig = p.clone();
+    run(&[], &mut p.funcs[0]);
+    assert_valid(&p);
+    assert_eq!(decided(&p.funcs[0], BlockId(1)), None);
+    for len in [8, 1000] {
+        assert_eq!(run_check(&p, len, 0), run_check(&orig, len, 0), "len {len}");
+    }
+}
+
+/// `check(len, b)`: `i = b` with `&i` taken, then `i < len` and `i = 3_000_000_000`, and 2 if
+/// `i > len - 1`. The comparison proves nothing after the reassignment: an address-taken local is
+/// never named by a fact, so the check stays.
+#[test]
+fn an_address_taken_local_proves_nothing() {
+    let mut pb = ProgramBuilder::new();
+    let mut fb = FuncBuilder::export("check", &[Ty::U64, Ty::U64], Ty::U64);
+    let (len, b) = (fb.param(0), fb.param(1));
+    let (pi, i, t0, lm, t1) = (
+        fb.local(Ty::Ptr),
+        fb.local(Ty::U64),
+        fb.local(Ty::Bool),
+        fb.local(Ty::U64),
+        fb.local(Ty::Bool),
+    );
+    let (b0, b1, out, ok, other) = (fb.block(), fb.block(), fb.block(), fb.block(), fb.block());
+    fb.assign(b0, i, Rvalue::Use(copy_local(b)));
+    fb.assign(b0, pi, Rvalue::AddrOf(Place::local(i)));
+    fb.assign(b0, t0, bin(BinOp::Lt, copy_local(i), copy_local(len)));
+    fb.branch(b0, t0, b1, other);
+    fb.assign(b1, i, Rvalue::Use(int(3_000_000_000, Ty::U64)));
+    fb.assign(b1, lm, bin(BinOp::Sub, copy_local(len), int(1, Ty::U64)));
+    fb.assign(b1, t1, bin(BinOp::Gt, copy_local(i), copy_local(lm)));
+    fb.branch(b1, t1, out, ok);
+    fb.ret(out, int(2, Ty::U64));
+    fb.ret(ok, int(0, Ty::U64));
+    fb.ret(other, int(7, Ty::U64));
+    pb.add(fb.finish());
+    let mut p = pb.finish();
+    let orig = p.clone();
+    run(&[], &mut p.funcs[0]);
+    assert_valid(&p);
+    assert_eq!(decided(&p.funcs[0], BlockId(1)), None);
+    assert_eq!(run_check(&p, 8, 0), run_check(&orig, 8, 0));
 }

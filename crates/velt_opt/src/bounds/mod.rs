@@ -85,6 +85,17 @@ fn has_range_check(func: &Function) -> bool {
 /// keeps its assignments for any other use. Returns whether anything was threaded.
 fn thread_bool_copies(func: &mut Function) -> bool {
     let mut changed = false;
+    // A bool whose address is taken anywhere may change through the pointer: never threaded.
+    let mut addressed = vec![false; func.locals.len()];
+    for b in &func.blocks {
+        for s in &b.stmts {
+            if let Stmt::Assign(_, Rvalue::AddrOf(p)) = s {
+                if let Some(a) = addressed.get_mut(p.local.0 as usize) {
+                    *a = true;
+                }
+            }
+        }
+    }
     for bi in 0..func.blocks.len() {
         // The block `bi` jumps into, when it is an empty branch on a bool local.
         let targets = successors(&func.blocks[bi].term);
@@ -114,7 +125,11 @@ fn thread_bool_copies(func: &mut Function) -> bool {
             let Stmt::Assign(_, Rvalue::Use(Operand::Copy(y))) = &stmts[at] else {
                 continue;
             };
-            if !y.proj.is_empty() || y.local == x.local {
+            if !y.proj.is_empty()
+                || y.local == x.local
+                || addressed[y.local.0 as usize]
+                || addressed[x.local.0 as usize]
+            {
                 continue;
             }
             let y = y.local;
@@ -161,11 +176,12 @@ fn thread_bool_copies(func: &mut Function) -> bool {
 /// The branches whose comparison is decided, and to what.
 fn analyse(aggs: &[AggLayout], func: &Function) -> Vec<(usize, bool)> {
     let n = func.blocks.len();
+    let tracked = tracked_locals(func);
     let cx = Cx {
         func,
         frozen: frozen_fields(aggs, func),
+        tracked: tracked.clone(),
     };
-    let tracked = tracked_locals(func);
     let preds = predecessors(func);
     let mut ins: Vec<Option<State>> = vec![None; n];
     let mut arrivals = vec![0u32; n];
