@@ -194,6 +194,9 @@ pub(crate) struct Ctx<'m> {
     /// The throwing setters a getter-only override gets (`collect::classes`): a write through
     /// the class itself is a type error, as in TypeScript, one through a base class throws.
     pub getter_only_setters: FxHashSet<DefId>,
+    /// The static methods of `extend` blocks of primitive types, with the type's name and the
+    /// type, made on first use (`body::expr::primitive_statics`): what `this` is in their bodies.
+    pub(crate) primitive_statics: Option<FxHashMap<DefId, (&'static str, TyId)>>,
     /// Setters of object literals' own interfaces that `Object.defineProperty` gives a
     /// getter-only property (`crate::defined_accessors`), by interface and method name: a
     /// write through the literal's own type is rejected, as TypeScript does (TS2540).
@@ -499,6 +502,7 @@ impl<'m> Ctx<'m> {
             alias_names: FxHashMap::default(),
             generic_overrides: vec![],
             getter_only_setters: FxHashSet::default(),
+            primitive_statics: None,
             defined_setters: FxHashSet::default(),
             display_params: vec![],
             defaults_checked: FxHashSet::default(),
