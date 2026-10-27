@@ -291,6 +291,12 @@ fn finish(cx: &mut Ctx, c: DefId, local: bool, why: Option<Why>) {
         return;
     };
     if !f.is_async || f.is_generator {
+        // A plain closure whose promise leaves its task (`const go = () => work(c)` with
+        // `spawn(go())`): the promise holds what the closure passed on from its captures.
+        let (generator, ret) = (f.is_generator, f.ret);
+        if !local && !generator && matches!(cx.ty.kind(ret), TyKind::Promise(..)) {
+            report_atomics(cx, c, why, true);
+        }
         return;
     }
     if local {
@@ -299,14 +305,14 @@ fn finish(cx: &mut Ctx, c: DefId, local: bool, why: Option<Why>) {
     }
     report_mutated(cx, c, why, "async closure");
     report_generators(cx, c, why);
-    report_atomics(cx, c, why);
+    report_atomics(cx, c, why, false);
 }
 
-/// A non-local async closure copies what it captured for each call, so a captured value holding
-/// an `Atomic` (outside a `shared`) would be changed in a copy the task that created it never
-/// sees: report it. A closure literal spawned where it is written is reported by the boundary
+/// A non-local async closure copies what it captured for each call (and a plain closure's
+/// promise carries what the closure passed on), so a captured value holding an `Atomic` (outside
+/// a `shared`) would be changed in a copy the task that created it never sees: report it. A closure literal spawned where it is written is reported by the boundary
 /// check instead, which names the variable used again (`boundary.rs`).
-fn report_atomics(cx: &mut Ctx, c: DefId, why: Option<Why>) {
+fn report_atomics(cx: &mut Ctx, c: DefId, why: Option<Why>, plain: bool) {
     let closure = cx.def_spans.get(c.0 as usize).copied();
     if let (Some(at), Some(w)) = (closure, why) {
         if w.boundary == Boundary::Spawn
@@ -332,7 +338,10 @@ fn report_atomics(cx: &mut Ctx, c: DefId, why: Option<Why>) {
         }
         let tn = cx.display(ty);
         let mut d = Diagnostic::error(
-            format!("an async closure that may run on another thread captures `{name}`, whose `{tn}` holds an `Atomic`"),
+            match plain {
+                true => format!("a closure whose promise may run on another thread captures `{name}`, whose `{tn}` holds an `Atomic`"),
+                false => format!("an async closure that may run on another thread captures `{name}`, whose `{tn}` holds an `Atomic`"),
+            },
             at,
         );
         if let Some(w) = why {
@@ -340,7 +349,11 @@ fn report_atomics(cx: &mut Ctx, c: DefId, why: Option<Why>) {
             d = d.with_label(w.span, label);
         }
         cx.error(d.with_note(format!(
-            "such a closure copies what it captured for each call, and changes to the copy's atomics would not reach `{name}`: share it so every task changes the same atomics: `const {name} = shared(new {tn}(…))`"
+            "{}, and changes to the copy's atomics would not reach `{name}`: share it so every task changes the same atomics: `const {name} = shared(new {tn}(…))`",
+            match plain {
+                true => "the promise it returns goes to the other task with a copy of what the closure passed on",
+                false => "such a closure copies what it captured for each call",
+            }
         )));
     }
 }

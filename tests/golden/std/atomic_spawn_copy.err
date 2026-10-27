@@ -1,11 +1,14 @@
-atomic_spawn_copy.vlt:31:5: error: an async closure that may run on another thread captures `c`, whose `Hits` holds an `Atomic`
+atomic_spawn_copy.vlt:32:5: error: an async closure that may run on another thread captures `c`, whose `Hits` holds an `Atomic`
   = note: such a closure copies what it captured for each call, and changes to the copy's atomics would not reach `c`: share it so every task changes the same atomics: `const c = shared(new Hits(…))`
 
-atomic_spawn_copy.vlt:37:5: error: an async closure that may run on another thread captures `o`, whose `Holder` holds an `Atomic`
+atomic_spawn_copy.vlt:38:5: error: an async closure that may run on another thread captures `o`, whose `Holder` holds an `Atomic`
   = note: such a closure copies what it captured for each call, and changes to the copy's atomics would not reach `o`: share it so every task changes the same atomics: `const o = shared(new Holder(…))`
 
-atomic_spawn_copy.vlt:22:24: error: `c` is still used after `spawn`, so the task would get a copy, but `Hits` holds an `Atomic`, and changes to the copy's atomics would not reach this one
+atomic_spawn_copy.vlt:41:28: error: a closure whose promise may run on another thread captures `c`, whose `Hits` holds an `Atomic`
+  = note: the promise it returns goes to the other task with a copy of what the closure passed on, and changes to the copy's atomics would not reach `c`: share it so every task changes the same atomics: `const c = shared(new Hits(…))`
+
+atomic_spawn_copy.vlt:23:24: error: `c` is still used after `spawn`, so the task would get a copy, but `Hits` holds an `Atomic`, and changes to the copy's atomics would not reach this one
   = note: pass the last reference (don't use `c` after the `spawn`), read the values it needs (`.load()`) and pass those, or share it so every task changes the same atomics: `shared(new Hits(…))`
 
-atomic_spawn_copy.vlt:25:20: error: `c` is still used after `spawn`, so the task would get a copy, but `Hits` holds an `Atomic`, and changes to the copy's atomics would not reach this one
+atomic_spawn_copy.vlt:26:20: error: `c` is still used after `spawn`, so the task would get a copy, but `Hits` holds an `Atomic`, and changes to the copy's atomics would not reach this one
   = note: pass the last reference (don't use `c` after the `spawn`), read the values it needs (`.load()`) and pass those, or share it so every task changes the same atomics: `shared(new Hits(…))`

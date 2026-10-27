@@ -84,7 +84,8 @@ task: awaiting a call that changes it is fine, but passing it to `spawn` (or cap
 spawned closure) while the program still uses it is an error, since the task would get a copy
 whose atomics take its changes. So is capturing it in any async closure whose calls may run on
 another thread (`const go = async () => …` with `spawn(go())`): such a closure copies what it
-captured for each call. Share it (`const c = shared(new Hits())`), and every task
+captured for each call. The same holds for a plain closure whose promise goes to another task
+(`const go = () => work(c)` with `spawn(go())`). Share it (`const c = shared(new Hits())`), and every task
 changes the same atomics. A module-level `const` holding one is one atomic, made once, that
 every task changes: `const REQUESTS = new Atomic<u64>(0)`.
 
