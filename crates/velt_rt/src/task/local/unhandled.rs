@@ -100,16 +100,29 @@ pub(super) unsafe fn waiting(set: *mut LocalSet) -> bool {
 pub(super) unsafe fn flush(set: *mut LocalSet) {
     while !(*set).unhandled.is_empty() {
         let f = (*set).unhandled.remove(0);
+        handled_elsewhere(f);
         // The deferred node holds a reference; its result is still in the slot.
         node::drop_result_now(f);
         node::release(f);
     }
     while !(*set).rejections.is_empty() {
         let f = (*set).rejections.remove(0);
+        handled_elsewhere(f);
         if node::rejection_unclaimed(f) {
             // Reports the rejection and ends the process.
             node::drop_result_now(f);
         }
         node::release(f);
+    }
+}
+
+/// A converted promise's rejection that another holder of the promise it stands for handled is
+/// dropped quietly (task/identity.rs).
+unsafe fn handled_elsewhere(f: *mut VeltFut) {
+    if !node::is_aliased(f) {
+        return;
+    }
+    if let Some(quiet) = crate::task::identity::handled_elsewhere(f) {
+        node::mark_handled(f, quiet);
     }
 }

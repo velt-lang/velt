@@ -495,6 +495,12 @@ pub unsafe extern "C" fn velt_rt_fut_peek(f: *mut VeltFut) -> u8 {
     node::peek(f) as u8
 }
 
+/// Mark node `f` as standing for another promise (task/identity.rs); false when `f` is not a
+/// node (a runtime leaf), which then cannot.
+pub(crate) unsafe fn mark_aliased(f: *mut VeltFut) -> bool {
+    node::mark_aliased(f)
+}
+
 /// Is `f` a started promise (driven by its task's set)?
 pub(crate) unsafe fn is_started_node(f: *mut VeltFut) -> bool {
     node::is_started(f)

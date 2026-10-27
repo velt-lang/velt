@@ -60,7 +60,10 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let wa = self.cx.widen_agg(to);
         let w = self.temp(Ty::Agg(wa));
         let inner = Operand::Copy(Place::local(inner));
-        self.assign(proj(&Place::local(w), Proj::Field(1)), Rvalue::Use(inner));
+        self.assign(
+            proj(&Place::local(w), Proj::Field(1)),
+            Rvalue::Use(inner.clone()),
+        );
         let unpolled = Rvalue::Use(cint(0, Ty::U8));
         self.assign(proj(&Place::local(w), Proj::Field(2)), unpolled);
         let (size, align) = self.cx.size_align(Ty::Agg(wa));
@@ -76,6 +79,13 @@ impl<'c, 'h> FnLower<'c, 'h> {
         ];
         let d = self.temp(Ty::Ptr);
         self.call_rt(Rt::FutBox, args, Some(Place::local(d)));
+        // In JS it is the same promise (`===`, `Set` keys; #1682).
+        let to_slot = self.cx.promise_slot(to);
+        let quiet = self
+            .result_drop_fn(to_slot)
+            .unwrap_or_else(|| cint(0, Ty::Ptr));
+        let alias = vec![Operand::Copy(Place::local(d)), inner, quiet];
+        self.call_rt(Rt::FutAlias, alias, None);
         self.owned_result(Some(d), to)
     }
 

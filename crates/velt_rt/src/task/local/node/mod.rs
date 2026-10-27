@@ -74,6 +74,9 @@ const LOC: u32 = 512;
 /// Its owner handed it to another task (`velt_rt_fut_transfer`): the task driving it no longer
 /// reports its rejection at a checkpoint, the task holding it now awaits it or gives it up.
 const HANDED_OVER: u32 = 1024;
+/// It stands for another promise (a converted one, `velt_rt_fut_alias`): its owner's drop ends
+/// that (task/identity.rs).
+const ALIASED: u32 = 2048;
 
 /// `owner` bit of a lazy node: its state finished (it is polled by its owner only).
 const OWNER_DONE: u32 = 1;
@@ -191,6 +194,9 @@ unsafe fn free(f: *mut VeltFut) {
         drop(Arc::from_raw(h.set));
     }
     loc::forget(f, fl);
+    if fl & ALIASED != 0 {
+        crate::task::identity::release(f);
+    }
     let l = layout(h.state_size);
     std::ptr::drop_in_place(&mut h.awaiter);
     std::alloc::dealloc((f as *mut u8).sub(HEAD), l);
@@ -243,10 +249,32 @@ unsafe extern "C" fn lazy_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
 
 unsafe extern "C" fn lazy_drop(f: *mut VeltFut) {
     let h = head(f);
+    forget_alias(f);
     if h.owner.get() & OWNER_DONE == 0 {
         (h.drop)(state(f));
     }
     free(f);
+}
+
+/// Node `f` stands for another promise ([`ALIASED`]); false when `f` is not a node.
+pub(super) unsafe fn mark_aliased(f: *mut VeltFut) -> bool {
+    if !is_lazy(f) && !is_started(f) {
+        return false;
+    }
+    head(f).flags.fetch_or(ALIASED, Ordering::Relaxed);
+    true
+}
+
+/// Does node `f` stand for another promise?
+pub(super) unsafe fn is_aliased(f: *mut VeltFut) -> bool {
+    head(f).flags.load(Ordering::Relaxed) & ALIASED != 0
+}
+
+/// The owner of node `f` drops it: it no longer stands for another promise.
+pub(super) unsafe fn forget_alias(f: *mut VeltFut) {
+    if head(f).flags.load(Ordering::Relaxed) & ALIASED != 0 {
+        crate::task::identity::forget(f);
+    }
 }
 
 /// Turn lazy node `f` into a started node driven by the set `shared` (not counted yet: see
@@ -259,7 +287,8 @@ pub(super) unsafe fn mark_started(
     let h = head_mut(f);
     h.set = Arc::as_ptr(shared);
     h.result_drop = AtomicPtr::new(drop_fn_ptr(result_drop));
-    h.flags.store(STARTED, Ordering::Relaxed);
+    let aliased = h.flags.load(Ordering::Relaxed) & ALIASED;
+    h.flags.store(STARTED | aliased, Ordering::Relaxed);
     (*f).poll = started_poll;
     (*f).drop = started_drop;
 }

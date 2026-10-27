@@ -62,6 +62,12 @@ pub(super) enum Rt {
     FutPeek,
     /// Another holder of a promise (shared promises, #212).
     FutShare,
+    /// The identity of a promise (`===`, keys; #1682).
+    FutId,
+    /// A converted promise stands for the promise it wraps (#1682).
+    FutAlias,
+    /// The holders shared meanwhile are a converted promise's views (#1682).
+    FutViews,
     FutBox,
     FutStart,
     FutStartRejecting,
@@ -278,6 +284,9 @@ impl Rt {
             Rt::FutDrop => f("velt_rt_fut_drop", vec![Ptr], Unit),
             Rt::FutPeek => f("velt_rt_fut_peek", vec![Ptr], U8),
             Rt::FutShare => f("velt_rt_fut_share", vec![Ptr, U64, Ptr, Ptr], Ptr),
+            Rt::FutId => f("velt_rt_fut_id", vec![Ptr], U64),
+            Rt::FutAlias => f("velt_rt_fut_alias", vec![Ptr, Ptr, Ptr], Unit),
+            Rt::FutViews => f("velt_rt_fut_views", vec![U8], Unit),
             Rt::FutBox => f("velt_rt_fut_box", vec![Ptr, Ptr, Ptr, U64, U64], Ptr),
             Rt::FutStart => f("velt_rt_fut_start", vec![Ptr, Ptr], Unit),
             Rt::FutStartRejecting => f("velt_rt_fut_start_rejecting", vec![Ptr, Ptr], Unit),

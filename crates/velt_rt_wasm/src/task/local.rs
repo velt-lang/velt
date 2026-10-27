@@ -285,6 +285,7 @@ unsafe extern "C" fn started_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
 }
 
 unsafe extern "C" fn started_drop(f: *mut VeltFut) {
+    super::identity::forget(f);
     // An error a timer or microtask callback threw (`velt_rt_uncaught_now`) is reported now.
     let now = NOW.with(|c| c.get().is_some());
     let (done, delivered, result_drop) = {

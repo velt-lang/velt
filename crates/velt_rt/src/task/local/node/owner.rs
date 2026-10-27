@@ -119,6 +119,7 @@ unsafe fn wait(f: *mut VeltFut, cx: *mut c_void, fl: u32) -> bool {
 /// drives it to completion and drops the result); a finished, unclaimed result is dropped here.
 pub(super) unsafe extern "C" fn started_drop(f: *mut VeltFut) {
     let h = head(f);
+    super::forget_alias(f);
     // Finished: the set is done with the result, no need to tell it the owner is gone.
     let fl = h.flags.load(Ordering::Acquire);
     if fl & (ADOPTED | DONE) == ADOPTED {

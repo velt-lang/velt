@@ -277,6 +277,11 @@ pub enum Intrinsic {
     /// set contains `E1`'s (an implicit conversion, `coerce.rs`): a lazy wrapper that widens
     /// the rejection.
     PromiseWiden,
+    /// Compiler-internal (no source syntax): `(q: Promise<U, E>, p: Promise<T, E>) ->
+    /// Promise<U, E>`, both owned: `q`, a `then` of `p` converting its value (a `Promise<T>`
+    /// used as a `Promise<unknown>`, `coerce_generic.rs`), is `p` in JS: it compares and hashes
+    /// as `p` (`===`, `Set` keys; #1682), and its rejection is `p`'s, reported through `p`.
+    PromiseSame,
     /// `performance.now(): f64`
     PerfNow,
     /// `Date.now(): i64`
