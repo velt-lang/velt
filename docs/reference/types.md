@@ -3868,6 +3868,25 @@ with TypeScript's rules:
   `undefined` included, and `unknown` otherwise (`string | Function`). `f?.(x)` on a
   `Function | undefined` (an optional `onClick?: Function` field) skips the call when it holds
   `null` or `undefined`, as in JavaScript.
+- A field path of type `any` or `unknown` (or a union that is `unknown`, `string | Function`)
+  narrows as a variable does: after `typeof vnode.type === "string"`, `vnode.type` is a
+  `string` there. A type predicate (`isRef(x): x is Ref`) narrows an `unknown` variable or
+  field path to its type where it returned `true` (an `any` reads its members as it is); the
+  read converts the value held, checked at run time as `x as Ref` is. A member of it
+  (`x.__key`) is read from the value held, as an `any` reads it, and converted to the
+  member's type, so a function with properties held there reads too; an assertion (`x as
+  Function`) converts the value held, not the narrowed type. A method
+  of it called in place (`x.run()`) is read the same way. A predicate that returns `true` for a
+  value that is not a `Ref` stops with a `TypeError` where the value is read (TypeScript reads
+  what is there, `undefined` for a missing field).
+- A `T | null` or `T | undefined` at `T = unknown` (or `any`) takes an `unknown` as it is, as
+  TypeScript reads it as `unknown`: a getter `get value() { return read(); }` of an
+  `Impl<unknown>` whose `value` is `T | null` returns what `read()` returns, `undefined`
+  included.
+- An arrow without a written result type asserted to a function type (`(() => { … return
+  cache.get(key); }) as Use<T>`) may return an `any` or `unknown`: TypeScript compares the
+  result it infers with the asserted one, and Velt converts the value as `cache.get(key) as T`
+  does, checked at run time.
 - `x.constructor.name` and `x.constructor?.name` of an `object`, `any` or `Function` give the
   name of the constructor of the value held, as in JavaScript: its class's (a subclass's when
   converted through its base), `"Object"` for an object literal or a record, `"Array"`,
