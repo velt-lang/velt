@@ -61,7 +61,47 @@ abstract class Fancy extends Plain {
 
 class Tin extends Fancy {}
 
+// Abstract properties: the constructor of their class can't use them (TS2715), and a subclass
+// implements each with a field of its type or accessors (TS2515, TS2416).
+abstract class Item {
+  abstract readonly title: string;
+  abstract count: number;
+  constructor() {
+    console.log(this.title);
+    this.count = 1;
+    // Not in a closure: it runs later.
+    const later = () => this.title;
+  }
+}
+
+class NoCount extends Item {
+  readonly title = "n";
+}
+
+class WrongCount extends Item {
+  readonly title = "w";
+  count: string = "x";
+}
+
+class GetterOnly extends Item {
+  readonly title = "g";
+  get count(): number {
+    return 1;
+  }
+}
+
+// Abstract construct signatures: no `new` through one (TS2511), and an abstract class is not a
+// plain construct signature (TS2345).
+function make(c: abstract new () => Shape): Shape {
+  return new c();
+}
+
+function plain(c: new () => Shape): string {
+  return c.name;
+}
+
 function main() {
+  plain(Shape);
   const s = new Shape();
   const p = new Half();
   console.log(new Done().describe());

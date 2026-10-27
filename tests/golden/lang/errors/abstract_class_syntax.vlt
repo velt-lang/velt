@@ -1,7 +1,9 @@
-// Abstract members (issue #1568): only in an abstract class, without a body, with a return type,
-// and not `static`, `private`, `async` or `override`; abstract properties are not supported yet.
+// Abstract members (issue #1568): only in an abstract class, without a body or initializer,
+// with a return type, not `static`, `private` or `async`, and `abstract` once.
 abstract class A {
-  abstract x: number;
+  abstract x: number = 1;
+  abstract get h();
+  abstract abstract n(): void;
   abstract static s(): void;
   private abstract p(): void;
   abstract f(): number {

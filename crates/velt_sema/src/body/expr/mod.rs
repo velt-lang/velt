@@ -1,6 +1,7 @@
 //! Expression checking (bidirectional: `exp` is the type demanded by context, if any).
 //! One submodule per concern.
 
+mod abstract_ctor;
 mod access;
 mod accessor_rmw;
 mod any_prim;

@@ -278,3 +278,33 @@ fn abstract_is_still_a_name() {
     assert_eq!(c.fields[0].name.name, "abstract");
     assert!(!c.is_abstract && !c.methods[0].is_abstract);
 }
+
+#[test]
+fn abstract_properties_are_accessors() {
+    let m = parse_ok(
+        "abstract class P {
+           abstract readonly name: string;
+           abstract count: number;
+         }
+         type C = abstract new () => P;",
+    );
+    let c = class(&m, 0);
+    let shape: Vec<(&str, bool, bool, bool)> = (c.methods.iter())
+        .map(|m| {
+            let n = m.decl.sig.name.name.as_str();
+            (n, m.is_abstract, m.is_getter, m.is_setter)
+        })
+        .collect();
+    assert_eq!(
+        shape,
+        [
+            ("name", true, true, false),
+            ("count", true, true, false),
+            ("count", true, false, true)
+        ]
+    );
+    let ItemKind::TypeAlias(a) = &m.items[1].kind else {
+        panic!("expected a type alias")
+    };
+    assert_eq!(ty(&a.ty), "abstract new fn() => P");
+}

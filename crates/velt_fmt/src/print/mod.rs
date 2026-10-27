@@ -47,6 +47,9 @@ pub(crate) struct Printer<'a> {
     /// further declarator right after one (`var a = 1, b = 2`, printed as its own declaration)
     /// keeps `var`. Keyed by position, so nested declarations printed in between don't matter.
     var_ends: HashSet<u32>,
+    /// Name offsets of the `readonly` abstract properties of the class being printed (getters
+    /// without a setter, `decls::abstract_property`).
+    readonly_properties: HashSet<u32>,
 }
 
 impl<'a> Printer<'a> {
@@ -56,6 +59,7 @@ impl<'a> Printer<'a> {
             comments: Comments::new(src),
             broken_jsx_bodies: HashSet::new(),
             var_ends: HashSet::new(),
+            readonly_properties: HashSet::new(),
         }
     }
 

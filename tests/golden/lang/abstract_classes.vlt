@@ -199,6 +199,92 @@ abstract class Base {}
 class Leaf extends Base {}
 console.log(new Leaf() instanceof Base);
 
+// Abstract properties: implemented by fields or by accessors, read and written through the
+// base class. A field holding a function implements an abstract method.
+abstract class Item {
+  abstract readonly title: string;
+  abstract count: number;
+  label(): string {
+    return `${this.title} x${this.count}`;
+  }
+  add(): void {
+    this.count = this.count + 1;
+  }
+}
+
+class Plainly extends Item {
+  readonly title = "plain";
+  count = 3;
+}
+
+class Doubled extends Item {
+  n: number = 10;
+  get title(): string {
+    return "doubled";
+  }
+  get count(): number {
+    return this.n;
+  }
+  set count(v: number) {
+    this.n = v * 2;
+  }
+}
+
+const items: Item[] = [new Plainly(), new Doubled()];
+for (const it of items) {
+  it.add();
+  console.log(it.label(), it.count);
+}
+
+abstract class Task {
+  abstract run(x: number): number;
+  twice(x: number): number {
+    return this.run(this.run(x));
+  }
+}
+
+class Inc extends Task {
+  run: (x: number) => number = (x) => x + 1;
+}
+
+const t: Task = new Inc();
+console.log(t.twice(1));
+
+// Abstract construct signatures: abstract and concrete classes as values, with `.name` and
+// `instanceof` through them.
+type ShapeClass = abstract new () => Fig;
+
+abstract class Fig {
+  abstract corners(): number;
+}
+
+class Tri extends Fig {
+  corners(): number {
+    return 3;
+  }
+}
+
+class Quad extends Fig {
+  corners(): number {
+    return 4;
+  }
+}
+
+function nameOf(c: abstract new () => Fig): string {
+  return c.name;
+}
+console.log(nameOf(Fig), nameOf(Tri));
+
+const kinds: ShapeClass[] = [Fig, Tri, Quad];
+const someFig: Fig = new Quad();
+for (const k of kinds) console.log(k.name, someFig instanceof k);
+
+function cornersIf(v: unknown, c: ShapeClass): number {
+  if (v instanceof c) return v.corners();
+  return 0;
+}
+console.log(cornersIf(new Tri(), Tri), cornersIf(new Tri(), Quad), cornersIf("x", Fig));
+
 // An abstract class declared in a function; `abstract` is still an ordinary name.
 function local(): string {
   abstract class Step {

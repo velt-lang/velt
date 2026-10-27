@@ -119,6 +119,9 @@ impl<'a> Parser<'a> {
                 }
             }
             p.add_type_member(&mut decl, member);
+            if let Some(setter) = p.abstract_setter.take() {
+                p.add_type_member(&mut decl, Member::Method(setter));
+            }
             Ok(())
         })?;
         Ok(decl)
@@ -326,7 +329,9 @@ impl<'a> Parser<'a> {
         }
         let mut methods = Vec::new();
         self.parse_members(|p| {
-            let span = match p.parse_member()? {
+            let member = p.parse_member()?;
+            p.abstract_setter = None;
+            let span = match member {
                 Member::Method(m) => {
                     p.reject_private_name(&m.decl.sig.name);
                     if m.is_abstract {

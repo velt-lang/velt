@@ -8,6 +8,8 @@ use super::{Fail, PResult, Parser};
 use crate::ast::*;
 use crate::lexer::{Kw, Tok};
 
+mod abstracts;
+
 /// Modifiers seen before a member name.
 #[derive(Default)]
 pub(super) struct Modifiers {
@@ -113,7 +115,16 @@ impl<'a> Parser<'a> {
                 _ => break,
             };
             if *flag {
-                break;
+                // `abstract abstract m()`: a name follows (the loop's condition), so this is
+                // the modifier again, not the member's name (TypeScript's TS1030).
+                let span = self.cur_span();
+                let word = self.text(span.lo, span.hi).to_string();
+                self.error(
+                    format!("`{word}` modifier already seen (TypeScript's TS1030)"),
+                    span,
+                );
+                self.bump();
+                continue;
             }
             *flag = true;
             self.bump();
@@ -162,7 +173,7 @@ impl<'a> Parser<'a> {
                 self.error("`*` marks a generator method: expected `(`", s);
             }
             if mods.is_abstract {
-                self.reject_abstract_field(&name);
+                return self.abstract_property(lo, name, &mods);
             }
             return Ok(Member::Field(self.parse_field_rest(lo, name, &mods)?));
         }
@@ -197,115 +208,6 @@ impl<'a> Parser<'a> {
             is_override: mods.is_override,
             is_abstract: false,
         }))
-    }
-
-    /// `abstract name(): T;` after the signature: no body (one written is reported and
-    /// dropped). The method's body is a `panic` that never runs (`Method::is_abstract`).
-    fn abstract_method(&mut self, sig: FnSig, mods: &Modifiers) -> PResult<Member> {
-        let name = &sig.name;
-        let conflict = [
-            (mods.is_static, "static"),
-            (mods.is_private, "private"),
-            (sig.is_async, "async"),
-        ]
-        .into_iter()
-        .find_map(|(on, word)| on.then_some(word));
-        if let Some(word) = conflict {
-            self.error(
-                format!("`{word}` cannot be used with `abstract` (TypeScript's TS1243)"),
-                name.span,
-            );
-        }
-        if sig.is_generator {
-            self.error("an abstract method cannot be a generator", name.span);
-        }
-        if !sig.generics.is_empty() {
-            self.error(
-                "abstract methods cannot have type parameters yet: make the class generic instead",
-                name.span,
-            );
-        }
-        if sig.ret.is_none() && !mods.is_setter {
-            // TypeScript infers `any` (TS7010 under `noImplicitAny`); there is no body to infer from.
-            self.error(
-                format!(
-                    "abstract method `{}` must declare its return type (`{}(): void` if it returns nothing; TypeScript's TS7010)",
-                    name.name, name.name
-                ),
-                name.span,
-            );
-        }
-        if self.at(Tok::LBrace) {
-            let span = self.cur_span();
-            self.error(
-                format!(
-                    "abstract method `{}` cannot have an implementation (TypeScript's TS1245): remove `abstract`, or the body",
-                    name.name
-                ),
-                span,
-            );
-            self.parse_fn_body()?;
-        } else {
-            self.expect_member_end()?;
-        }
-        let body = self.abstract_body(&sig);
-        Ok(Member::Method(Method {
-            decl: FnDecl {
-                sig,
-                body,
-                overloads: vec![],
-            },
-            is_static: mods.is_static,
-            is_private: mods.is_private,
-            is_getter: mods.is_getter,
-            is_setter: mods.is_setter,
-            // `abstract override m()`: makes an inherited method abstract again.
-            is_override: mods.is_override,
-            is_abstract: true,
-        }))
-    }
-
-    /// The placeholder body of the abstract method `sig`: `return panic("…")`. Never run:
-    /// only instances of concrete subclasses exist, and those implement the method.
-    fn abstract_body(&mut self, sig: &FnSig) -> Block {
-        let span = sig.name.span;
-        let msg = format!("ICE: abstract method `{}` called", sig.name.name);
-        let msg = self.mk_expr(ExprKind::Lit(Lit::Str(msg)), span);
-        let callee = self.mk_expr(
-            ExprKind::Ident(Ident {
-                name: "panic".into(),
-                span,
-            }),
-            span,
-        );
-        let call = ExprKind::Call {
-            callee: Box::new(callee),
-            type_args: vec![],
-            args: vec![msg],
-            optional: false,
-        };
-        let call = self.mk_expr(call, span);
-        Block {
-            stmts: vec![Stmt {
-                kind: StmtKind::Return(Some(call)),
-                span,
-            }],
-            span,
-        }
-    }
-
-    /// `abstract name: T;`: abstract properties are not supported yet.
-    fn reject_abstract_field(&mut self, name: &Ident) {
-        self.report(
-            velt_common::Diagnostic::error(
-                format!("abstract properties are not supported yet (`{}`)", name.name),
-                name.span,
-            )
-            .with_note(format!(
-                "declare an abstract getter, `abstract get {}(): T`, and implement it in each subclass (`get {}(): T {{ ... }}`)",
-                name.name, name.name
-            )),
-        );
     }
 
     /// After a method signature ending in `;` or a line break: a TypeScript-form overload, attached to the

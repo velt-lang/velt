@@ -61,6 +61,12 @@ fn overridden_methods(cx: &mut Ctx, adts: &[DefId]) -> (Overridden, Overrides) {
     let mut out = BTreeSet::new();
     let mut overrides = Overrides::default();
     for &d in adts {
+        // Fields implementing abstract members fill their slots (`abstract_fields`).
+        for (key, _) in super::abstract_fields::field_impls(cx, d) {
+            if let Some(origin) = introducer(cx, d, &key) {
+                out.insert((origin, key));
+            }
+        }
         let decl = cx.adt(d).and_then(|a| a.decl).expect("ICE: class decl");
         // `override #m` is reported by `own_methods`: private names are never inherited.
         for m in decl
@@ -201,6 +207,11 @@ fn layout_vtable(cx: &mut Ctx, d: DefId, overridden: &Overridden, overrides: &Ov
         },
     };
     own_methods(cx, d, overridden, &mut vt);
+    for (key, def) in super::abstract_fields::field_methods(cx, d) {
+        if let Some(&slot) = vt.slots.get(&key) {
+            vt.entries[slot as usize] = def;
+        }
+    }
     getter_only_overrides(cx, d, &mut vt);
     // Interface default methods this class introduces and a subclass overrides.
     let self_args: Vec<TyId> = (0..n as u32).map(|i| cx.ty.param(i)).collect();

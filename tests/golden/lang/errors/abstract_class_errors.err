@@ -7,8 +7,17 @@ implement it in `NoName`, or declare `abstract class NoName`
 abstract_class_errors.vlt:44:3: error: method `area` does not have the same signature as the base class method it overrides
 abstract_class_errors.vlt:62:7: error: class `Tin` does not implement the abstract member `tag` (from `Fancy`) (TypeScript's TS2515)
 implement it in `Tin`, or declare `abstract class Tin`
-abstract_class_errors.vlt:65:17: error: cannot create an instance of abstract class `Shape` (TypeScript's TS2511)
+abstract_class_errors.vlt:77:7: error: class `NoCount` does not implement the abstract member `count` (from `Item`) (TypeScript's TS2515)
+implement it in `NoCount`, or declare `abstract class NoCount`
+abstract_class_errors.vlt:83:3: error: field `count` does not have the type of the abstract property it implements, `f64` (TypeScript's TS2416)
+abstract_class_errors.vlt:96:14: error: cannot create an instance through a value of type `abstract new () => Shape`: it may hold an abstract class (TypeScript's TS2511)
+declare the value's type without `abstract` (`new (...) => T`) to create instances through it
+abstract_class_errors.vlt:104:9: error: abstract class `Shape` is not a `new () => Shape`: `new` through that type would create an instance of it (TypeScript's TS2345)
+declare the type `abstract new () => Shape` to take abstract classes, or pass a subclass
+abstract_class_errors.vlt:105:17: error: cannot create an instance of abstract class `Shape` (TypeScript's TS2511)
 create an instance of a subclass that implements its abstract members
-abstract_class_errors.vlt:66:17: error: cannot create an instance of abstract class `Half` (TypeScript's TS2511)
+abstract_class_errors.vlt:106:17: error: cannot create an instance of abstract class `Half` (TypeScript's TS2511)
 create an instance of a subclass that implements its abstract members
 abstract_class_errors.vlt:36:18: error: abstract method `area` cannot be called through `super`: it has no implementation (TypeScript's TS2513)
+abstract_class_errors.vlt:70:22: error: abstract property `title` of `Item` cannot be used in its constructor (TypeScript's TS2715)
+abstract_class_errors.vlt:71:10: error: abstract property `count` of `Item` cannot be used in its constructor (TypeScript's TS2715)

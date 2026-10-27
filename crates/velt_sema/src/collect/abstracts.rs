@@ -74,7 +74,10 @@ pub(super) fn check_implemented(cx: &mut Ctx, d: DefId) {
                 .filter(|r| !r.is_static)
                 .map(|r| r.def);
             let resolved = own.or_else(|| inherited(cx, d, &key));
-            if resolved.is_none_or(|r| cx.abstract_methods.contains(&r)) {
+            // A field of the name that doesn't fit was reported (`abstract_fields`).
+            let field = (cx.adt(d).expect("ICE: adt").fields.iter())
+                .any(|f| f.name == m.decl.sig.name.name);
+            if !field && resolved.is_none_or(|r| cx.abstract_methods.contains(&r)) {
                 // An accessor pair is one member, named as TypeScript names it.
                 let what = m.decl.sig.name.name.clone();
                 if !missing.iter().any(|(_, w)| *w == what) {
