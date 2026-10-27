@@ -1,0 +1,46 @@
+// `x.toBits()` and `f64.fromBits(b)`: IEEE 754 bit casts, inline in both backends (one move).
+function main() {
+  const xs: f64[] = [0, -0, 1, -1.5, 0.1, 5e-324, 1.7976931348623157e308, Infinity, -Infinity];
+  for (const x of xs) {
+    const b = x.toBits();
+    console.log(x, b.toString(16), f64.fromBits(b) == x, Object.is(f64.fromBits(b), x));
+  }
+  const nan = f64.fromBits(0x7ff8000000000000);
+  console.log(nan != nan, nan.toBits().toString(16));
+  // The high word, as fdlibm-style code reads it.
+  console.log(((2.0).toBits() >> 32).toString(16));
+  // Every bit pattern comes back exactly, NaN payloads included: signalling, payload, negative
+  // and all-ones NaNs, the largest subnormal and the smallest normal, through a function
+  // parameter, an array element and a class field.
+  const bits: u64[] = [
+    0x7ff0000000000001,
+    0x7ff4000000000000,
+    0x7ff8000000000123,
+    0xfff8000000000000,
+    0xffffffffffffffff,
+    0x7fffffffffffffff,
+    0x000fffffffffffff,
+    0x0010000000000000,
+    0x8000000000000001,
+    0x8000000000000000,
+    0xfff0000000000001,
+  ];
+  const values: f64[] = [];
+  for (const b of bits) {
+    values.push(f64.fromBits(b));
+  }
+  const box = new Box();
+  for (let i = 0; i < bits.length; i++) {
+    box.x = values[i];
+    const back = box.x.toBits();
+    console.log(bits[i].toString(16), roundTrip(bits[i]) == bits[i], back == bits[i]);
+  }
+}
+
+class Box {
+  x: f64 = 0;
+}
+
+function roundTrip(b: u64): u64 {
+  return f64.fromBits(b).toBits();
+}
