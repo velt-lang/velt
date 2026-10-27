@@ -1,0 +1,9 @@
+1 a
+5 ab 5 ab
+9
+2 4 4
+40 4
+20
+{ n: 10, double: [Getter], only: [Setter] }
+{"n":10,"double":20}
+1
