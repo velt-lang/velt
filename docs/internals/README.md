@@ -175,6 +175,8 @@ Decisions and their rationale, including what is still planned:
 - [The JSON engine](design/json-engine.md): key matching, a SIMD scanner, a tape for
   `JsonValue`, bytes and streams, and compile-time `@json.*` decorators borrowed from
   System.Text.Json (proposed, issue #1655).
+- [Building strings fast](design/string-building.md): builder appends compiled inline, a Velt
+  `StringBuilder`, and byte views of strings (proposed, issue #1677).
 
 ## Testing
 
