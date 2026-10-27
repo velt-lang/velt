@@ -811,7 +811,7 @@ async function main() {
   function) passes the object, `f.call(o, …)`, `f.apply(o, args)` and `f.bind(o, …)` pass `o`,
   and a plain call `f(x)` passes `undefined`. `arguments` in its body holds the call's
   arguments (an `any[]`), and a left-out argument is `undefined`. Not supported yet: another
-  `this` type, such a function where a function type is expected (it is held as a `Function` or
+  `this` type, an async one, such a function where a function type is expected (it is held as a `Function` or
   `any`), a destructured parameter, and a method call through a typed object (`o.f()` with
   `f: Function` passes no `this`); declare the function and call it with `call` or `apply`
   (below), take the object as an ordinary parameter, or write a class method.

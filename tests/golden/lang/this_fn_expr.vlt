@@ -73,3 +73,10 @@ console.log(arr.size(10), depth);
 // Through an object held as `any`: `o.m(...)` passes `o`.
 const o: any = { n: 5, m: fns.count };
 console.log(o.m(1, 2));
+
+// Held as a `Function` (no other expected type): `call`, `apply` and `bind` pass the object.
+const direct = function (this: any, x: number) {
+  return this.base + x;
+};
+console.log(direct.call({ base: 10 }, 2), direct.apply({ base: 20 }, [3]));
+console.log(direct.bind({ base: 30 })(4));

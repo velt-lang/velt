@@ -12,3 +12,7 @@ const g = function (this: Counter): number {
   return this.n;
 };
 console.log(o.read(), f.call(o), g.call(o));
+const h = async function (this: any) {
+  return this.n;
+};
+console.log(h);

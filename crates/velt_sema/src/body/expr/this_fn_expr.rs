@@ -14,8 +14,8 @@
 //! object-literal method's), so `this` in the body is the receiver the call passes; the second
 //! is `arguments`, the call's arguments. A call through `any` or a proxy passes the object it
 //! reads the function from (velt_vir's call slots), `call`, `apply` and `bind` take it as an
-//! argument, and a plain call passes `undefined`. A `this` of another type than `any`, and the
-//! value where a function type is expected, are not supported yet.
+//! argument, and a plain call passes `undefined`. A `this` of another type than `any`, an async
+//! function, and the value where a function type is expected, are not supported yet.
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
@@ -62,6 +62,16 @@ impl FnCx<'_, '_> {
             );
             return self.error_expr(span);
         };
+        if d.sig.is_async {
+            self.cx.error(
+                Diagnostic::error(
+                    "an async function expression with a `this` parameter is not supported yet",
+                    span,
+                )
+                .with_note("TypeScript allows this; Velt calls such a function only through `any`, which cannot call an async function yet (#924); take the object as an ordinary parameter of an async arrow"),
+            );
+            return self.error_expr(span);
+        }
         let Some(arrow) = self.this_fn_arrow(d, span) else {
             return self.error_expr(span);
         };
