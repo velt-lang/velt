@@ -119,6 +119,13 @@ pub(crate) struct LocalSet {
     /// Promises that rejected while nobody awaited them: reported once the microtask queue is
     /// drained unless their owner claimed them by then (unhandled.rs; each holds a reference).
     pub(super) rejections: Vec<*mut VeltFut>,
+    /// The length of `rejections` at which those their owners claimed meanwhile are let go
+    /// (unhandled.rs `watch`): a loop that never reaches a checkpoint keeps only the ones still
+    /// open.
+    pub(super) compact_at: usize,
+    /// The same for `unhandled`: the converted promises whose promise was handled meanwhile are
+    /// dropped quietly then (task/identity.rs).
+    pub(super) compact_unhandled_at: usize,
     /// The task's gate (none until it first creates a timer; gate.rs).
     pub(super) gate: Option<Arc<super::gate::Gate>>,
 }
@@ -140,6 +147,8 @@ impl LocalSet {
             adopting: 0,
             unhandled: Vec::new(),
             rejections: Vec::new(),
+            compact_at: super::unhandled::COMPACT_MIN,
+            compact_unhandled_at: super::unhandled::COMPACT_MIN,
             gate: None,
         })
     }

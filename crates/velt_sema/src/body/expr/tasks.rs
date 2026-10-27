@@ -473,6 +473,10 @@ impl FnCx<'_, '_> {
         };
         if as_arrow(arg).is_none() {
             let mut e = self.simple_intrinsic(Intrinsic::Spawn, "`spawn`", args, exp, span);
+            if let H::Call { args, .. } = &mut e.kind {
+                args.iter_mut()
+                    .for_each(super::promise_same::unconvert_spawned);
+            }
             self.no_spawned_generators(&e);
             self.spawned_promises(&e);
             if let H::Call { args, .. } = &mut e.kind {

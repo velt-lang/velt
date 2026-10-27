@@ -4,12 +4,14 @@
 //! one home (it has a single owner), so its identity is the address of the place holding it.
 //! An object type that is copied when shared (never changed in place) would lose its identity
 //! that way, so comparing one records a fact that makes it counted once it is shared (boxing/).
-//! Interface and function values: see `ref_identity`. As `Map` and `Set` keys (`KeyEq`), a type
-//! declared with `struct` compares by content instead, field by field.
+//! Interface and function values: see `ref_identity`. A promise is the promise its holder holds
+//! (`promise_identity`). As `Map` and `Set` keys (`KeyEq`), a type declared with `struct` compares
+//! by content instead, field by field.
 
 use velt_sema::hir::{self, TyId, TyKind};
 
 use super::operand::proj;
+use super::rt::Rt;
 use super::{FnLower, Glue};
 use crate::vir::{BinOp, Operand, Place, Proj, Rvalue, Ty};
 
@@ -23,6 +25,9 @@ impl FnLower<'_, '_> {
         // A `struct` key (`KeyEq`, not `===`) compares by content, field by field.
         if self.key_mode && !self.value_mode && self.cx.content_key(ty) {
             return self.same_glue(a, b, ty);
+        }
+        if let TyKind::Promise(..) = self.cx.kind(ty) {
+            return self.promise_identity(a, b);
         }
         if self.cx.is_object(ty) {
             // Function and interface values keep their identity (a code / data pointer) when
@@ -119,6 +124,21 @@ impl FnLower<'_, '_> {
         let code = self.word_eq(a, b, 0);
         let env = self.word_eq(a, b, 1);
         self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitAnd, code, env))
+    }
+
+    /// Identity of the promises at `a` and `b`: each holder of a shared promise is a pointer
+    /// of its own, so the runtime names the promise they hold (`velt_rt_fut_id`, #1682).
+    pub(super) fn promise_identity(&mut self, a: &Place, b: &Place) -> Operand {
+        let (x, y) = (self.promise_id(a), self.promise_id(b));
+        self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, x, y))
+    }
+
+    /// The identity of the promise at `p` (U64 operand).
+    pub(super) fn promise_id(&mut self, p: &Place) -> Operand {
+        let r = self.temp(Ty::U64);
+        let f = Operand::Copy(p.clone());
+        self.call_rt(Rt::FutId, vec![f], Some(Place::local(r)));
+        Operand::Copy(Place::local(r))
     }
 
     /// The env of the closure the generic function value at `p` boxes.

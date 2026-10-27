@@ -40,6 +40,14 @@ const UNSUPPORTED: &[&str] = &[
     "process_lifetime_sync_main_rejection",
     "process_lifetime_top_level_tasks",
     "process_lifetime_spawned_finally",
+    // A shared promise settling resumes its waiters at the executor's next step (the order of
+    // the log), and a converted promise's rejection is reported as its own (no views, #1682).
+    "promise_identity_bounded",
+    "promise_identity_converted_rejects",
+    "promise_identity_defer",
+    "promise_identity_defer_rejects",
+    "promise_identity_defer_twice",
+    "promise_identity_rejection",
 ];
 /// Goldens that need a file system (not available to browser modules).
 const NEEDS_FS: &[&str] = &["fs"];
