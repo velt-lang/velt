@@ -193,7 +193,7 @@ impl FnLower<'_, '_> {
             return self.ret_status(ST_UNSUPPORTED);
         }
         let (fd, fdesc) = self.any_parts(Operand::Copy(f.clone()), any);
-        self.proxy_this_fn_call((&f, &fd, &fdesc), (data, argv, argc, out), ty);
+        self.this_fn_method_call((&f, any, &fd, &fdesc), (data, argv, argc, out), ty);
         self.proxy_array_call(&f, fdesc.clone(), (data, argv, argc, out), ty);
         let a = [argv, argc, out].map(|l| Operand::Copy(Place::local(l)));
         let a = vec![fd, a[0].clone(), a[1].clone(), a[2].clone()];

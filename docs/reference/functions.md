@@ -805,10 +805,26 @@ async function main() {
   expected, as for an arrow.
 - Its `this` is the object it is called on in TS. Without a `this` parameter, `this` in the body
   is TS's error ``'this' implicitly has type 'any' because it does not have a type
-  annotation``, as under `--strict`, also in a generator (`function* () { … }`); with one
-  (`function (this: T, …)`) it is not supported yet as a value (a function value has no
-  receiver): declare the function and call it with `call` or `apply` (below), take the object as
-  an ordinary parameter, or write a class method. A function expression that is the value of an
+  annotation``, as under `--strict`, also in a generator (`function* () { … }`). With
+  `this: any`, the value is a `Function` whose `this` is bound at the call, as in JS: a method
+  call through an `any` object or a proxy (`p.push(x)` where the `get` trap answers the
+  function) passes the object, `f.call(o, …)`, `f.apply(o, args)` and `f.bind(o, …)` pass `o`,
+  and a plain call `f(x)` passes `undefined`. `arguments` in its body holds the call's
+  arguments (an `any[]`), and a left-out argument is `undefined`. Not supported yet: another
+  `this` type, such a function where a function type is expected (it is held as a `Function` or
+  `any`), a destructured parameter, and a method call through a typed object (`o.f()` with
+  `f: Function` passes no `this`); declare the function and call it with `call` or `apply`
+  (below), take the object as an ordinary parameter, or write a class method.
+
+```ts
+const methods: Record<string, Function> = {};
+methods.total = function (this: any, extra: number) {
+  return this.n + extra + arguments.length;
+};
+const total: any = methods.total;
+console.log(total.call({ n: 1 }, 10)); // 12
+```
+ A function expression that is the value of an
   object-literal property (`{ v: 1, get: function () { return this.v; } }`) is a method of the
   literal: `this` is the object, as in TS
   ([`this` in object-literal methods](types.md#this-in-object-literal-methods)).

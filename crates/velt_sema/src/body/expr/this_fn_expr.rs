@@ -144,11 +144,46 @@ impl FnCx<'_, '_> {
                     p.span,
                 )
             } else {
-                let read = synth(
+                // `arguments.length > i ? arguments[i] : undefined`: a left-out argument is
+                // `undefined`.
+                let index = synth(
                     ast::ExprKind::Index {
                         object: Box::new(args()),
-                        index: Box::new(at),
+                        index: Box::new(at.clone()),
                         optional: false,
+                    },
+                    p.span,
+                );
+                let len = synth(
+                    ast::ExprKind::Member {
+                        object: Box::new(args()),
+                        prop: ident("length", p.span),
+                        optional: false,
+                    },
+                    p.span,
+                );
+                let passed = synth(
+                    ast::ExprKind::Binary {
+                        op: ast::BinaryOp::Gt,
+                        lhs: Box::new(len),
+                        rhs: Box::new(at),
+                    },
+                    p.span,
+                );
+                let read = synth(
+                    ast::ExprKind::Cond {
+                        cond: Box::new(passed),
+                        then: Box::new(index),
+                        els: Box::new(synth(
+                            ast::ExprKind::Cast {
+                                expr: Box::new(synth(
+                                    ast::ExprKind::Lit(ast::Lit::Undefined),
+                                    p.span,
+                                )),
+                                ty: named_ty("any", p.span),
+                            },
+                            p.span,
+                        )),
                     },
                     p.span,
                 );
@@ -157,7 +192,7 @@ impl FnCx<'_, '_> {
                     // fills a left-out argument.
                     Some(def) => {
                         let undef = synth(
-                            ast::ExprKind::Ident(ident("undefined", p.span)),
+                            ast::ExprKind::Lit(ast::Lit::Undefined),
                             p.span,
                         );
                         let cond = synth(

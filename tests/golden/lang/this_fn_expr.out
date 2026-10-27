@@ -1,0 +1,17 @@
+function
+show 1 b 2 object
+2
+show 2 c 2 object
+3
+show 5 z 2 object
+6
+show 5 w 2 object
+6
+true 7 1
+true undefined 0
+14
+undefined 10
+8
+get n
+14 0
+14

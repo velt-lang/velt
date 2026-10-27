@@ -2,7 +2,8 @@
 //! value of a function expression with a `this: any` parameter (sema `this_fn_expr.rs`). Held
 //! as an `any` (a `Function`), it is a function: `typeof` is `"function"` (`Cx::is_function_object`),
 //! a plain call `f(x)` (its `AnyApply` slot) is `__apply(undefined, [x])`, and a method call
-//! through a proxy (`proxy_call_body`) is `__apply(receiver, args)` with the proxy as `this`.
+//! through a proxy or an `any` object (`proxy_call_body`, `any_call_body`) is
+//! `__apply(receiver, args)` with that object as `this`.
 //! Its `call`, `apply` and `bind` are methods of the class. A program without such a function
 //! expression doesn't load the class, and its code is unchanged.
 
@@ -140,12 +141,14 @@ impl FnLower<'_, '_> {
         self.ret_status(st);
     }
 
-    /// In `proxy_call_body`, after the `get` trap answered `f` (owned; `any` parts `fd`, `fdesc`) for
-    /// a call on the proxy `data` (of type `pty`): when `f` is a `__ThisFn`, its call with the
-    /// proxy as `this`. Continues in the block for any other `f`.
-    pub(super) fn proxy_this_fn_call(
+    /// In an `AnyCall` slot, after reading the member `f` (owned, of the dynamic type `fty`;
+    /// `any` parts `fd`, `fdesc`) for
+    /// a call on the object `data` (of type `pty`; a proxy's `get` trap answered it): when `f`
+    /// is a `__ThisFn`, its call with the object as `this`. Continues in the block for any
+    /// other `f`.
+    pub(super) fn this_fn_method_call(
         &mut self,
-        (f, fd, fdesc): (&Place, &Operand, &Operand),
+        (f, fty, fd, fdesc): (&Place, TyId, &Operand, &Operand),
         (data, argv, argc, out): (vir::Local, vir::Local, vir::Local, vir::Local),
         pty: TyId,
     ) {
@@ -161,8 +164,7 @@ impl FnLower<'_, '_> {
         let fl = self.copy_to_temp(fd.clone(), Ty::Ptr);
         let r = self.proxy_receiver(data, pty);
         let st = self.this_fn_invoke(fl, t, r, (argv, argc, out));
-        let any = self.cx.any_ty();
-        self.drop_glue(f.clone(), any);
+        self.drop_glue(f.clone(), fty);
         self.ret_status(st);
         self.switch_to(no);
     }

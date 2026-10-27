@@ -1,5 +1,5 @@
 // TypeScript accepts these (tsc --strict); Velt says they are not supported yet (#942): a
-// function value has no receiver.
+// function value has no receiver, and a function expression takes one only with `this: any`.
 interface Counter {
   n: number;
 }

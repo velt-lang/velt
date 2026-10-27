@@ -713,6 +713,8 @@ impl FnLower<'_, '_> {
                 let vt = self.cx.ty(fty);
                 let held = Place::local(self.copy_to_temp(v, vt));
                 let (fd, fdesc) = self.any_parts(Operand::Copy(held.clone()), fty);
+                // A function whose `this` is bound at the call gets the object (this_fn.rs).
+                self.this_fn_method_call((&held, fty, &fd, &fdesc), (data, argv, argc, out), ty);
                 let a = [argv, argc, out].map(|l| Operand::Copy(Place::local(l)));
                 let a = vec![fd, a[0].clone(), a[1].clone(), a[2].clone()];
                 let p = vec![Ty::Ptr, Ty::Ptr, Ty::U64, Ty::Ptr];
