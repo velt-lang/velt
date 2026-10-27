@@ -118,20 +118,46 @@ impl FnCx<'_, '_> {
         matches!(self.cx.ty.kind(t), TyKind::Dyn(id, _) if self.cx.literal_ifaces.contains(id))
     }
 
-    /// `h`, a value of a literal's own interface, as an `any`: printed and written as JSON by
-    /// the glue of the struct it holds, as Node does (`[Getter]`, the getters' results, a
-    /// setter alone left out). Any other `h` as it is.
-    pub(crate) fn literal_iface_as_any(&mut self, h: hir::Expr) -> hir::Expr {
-        if !self.is_literal_iface(h.ty) {
-            return h;
+    /// Does a value of `t` hold a value of a literal's own interface (`t` itself, or an element,
+    /// field or payload of it)?
+    fn holds_literal_iface(&mut self, t: TyId, depth: u32) -> bool {
+        if self.is_literal_iface(t) {
+            return true;
         }
-        match self.any_ty() {
-            Some(any) => self.coerce(h, any),
-            None => h,
+        if depth > 8 {
+            return false;
         }
+        let parts: Vec<TyId> = match self.cx.ty.kind(t).clone() {
+            TyKind::Adt(d, args) => match &self.cx.info[d.0 as usize] {
+                DefInfo::Adt(a) => a.fields.iter().map(|f| f.ty).collect(),
+                _ => vec![],
+            }
+            .into_iter()
+            .map(|f| self.cx.subst(f, &args))
+            .collect(),
+            TyKind::Dyn(..) | TyKind::FnPtr { .. } | TyKind::Closure(_) => vec![],
+            k => crate::types::children(&k),
+        };
+        parts
+            .into_iter()
+            .any(|p| self.holds_literal_iface(p, depth + 1))
     }
 
-    /// `JSON.stringify(x, …)` of a value `x` of a literal's own interface: of `x as any`
+    /// `h`, a value that holds one of a literal's own interface (a literal with getters, or an
+    /// array or object of them), as an `any`: printed and written as JSON by the glue of the
+    /// values it holds, as Node does (`[Getter]`, the getters' results, a setter alone left
+    /// out). Any other `h` as it is.
+    pub(crate) fn literal_iface_as_any(&mut self, h: hir::Expr) -> hir::Expr {
+        if !self.holds_literal_iface(h.ty, 0) {
+            return h;
+        }
+        let Some(any) = self.any_ty() else {
+            return h;
+        };
+        self.try_coerce(h, any).unwrap_or_else(|h| h)
+    }
+
+    /// `JSON.stringify(x, …)` of a value `x` holding one of a literal's own interface: of `x as any`
     /// (`literal_iface_as_any`). `None` for other calls.
     pub(super) fn json_literal_iface(
         &mut self,
@@ -160,7 +186,7 @@ impl FnCx<'_, '_> {
             return None;
         }
         let t = self.trial_type(first)?;
-        if !self.is_literal_iface(t) {
+        if !self.holds_literal_iface(t, 0) {
             return None;
         }
         let mut args = args.to_vec();
